@@ -37,11 +37,11 @@ _SUGGEST_LIVE = {
 }
 
 
-def test_registry_has_two_personas():
-    assert set(PERSONA_REGISTRY) == {"sales_agent", "urban_planner"}
+def test_registry_has_p1_personas():
+    # P1(분양대행·도시계획)은 항상 등록(P2 가산 후에도 보존 — superset 검증).
+    assert {"sales_agent", "urban_planner"} <= set(PERSONA_REGISTRY)
     assert get_persona("sales_agent").name_ko == "분양대행 전문가"
     meta = list_personas()
-    assert len(meta) == 2
     sa = next(m for m in meta if m["key"] == "sales_agent")
     assert len(sa["checklist"]) == 4
     assert sa["billing_key"] == "persona_sales_agent"

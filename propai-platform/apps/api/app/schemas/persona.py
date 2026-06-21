@@ -23,6 +23,18 @@ class PersonaAnalyzeRequest(BaseModel):
     bcode: str | None = Field(default=None, description="법정동코드(분양대행 실거래 조회)")
     pnu: str | None = Field(default=None, description="필지고유번호(시장보고서·규제분석 정밀조회)")
     equity_won: int | None = Field(default=None, description="자기자본(원) — 향후 지불여력 보강용")
+    # ── 설계·시공 페르소나 SSOT 입력(프론트 useProjectContextStore에서 캡처) ──
+    # 시공(constructor)은 total_gfa_sqm 가 없으면 estimate_overview(gt=0) 호출 불가 → E2E 불능.
+    # 설계(designer)는 land_area_sqm·zone_code 가 없으면 폴백 일반박스로 퇴화. 그래서 명시 공급한다.
+    # 미확보 시 runner 가 정직 고지(폴백/추정/partial) — 가짜값 금지(무목업).
+    total_gfa_sqm: float | None = Field(default=None, description="연면적(㎡) — 시공 공사비 견적 입력")
+    land_area_sqm: float | None = Field(default=None, description="대지면적(㎡) — 설계 매스/유닛믹스 입력")
+    zone_code: str | None = Field(default=None, description="용도지역 코드(1R/2R/3R/GC/NC/QI/QR) — 설계 매스·법규한도 비교")
+    building_type: str | None = Field(default=None, description="건물유형(apartment 등) — 시공 평단가 분기")
+    # R11 핸드오프 — 다른 페르소나 PersonaReport dict 묶음(선택). 디벨로퍼 종합이 소비.
+    report_contracts: dict[str, Any] | None = Field(
+        default=None, description="페르소나간 핸드오프 reportContract({persona_key: PersonaReport}) — 디벨로퍼 종합 소비",
+    )
     use_llm: bool = Field(default=False, description="LLM 내러티브·전문가패널 포함 여부(기본 false=무과금)")
 
 

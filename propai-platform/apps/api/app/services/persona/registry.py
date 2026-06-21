@@ -32,8 +32,16 @@ class PersonaSpec:
     checklist: tuple[ChecklistSpec, ...]
     bound_services: tuple[str, ...]   # runner 가 dispatch 하는 서비스 식별자
     expert_lens: str              # ExpertPanelService analysis_type ("sales"/"permit"/"legal")
+    # runner 의 파이프라인 함수 식별자. run_persona 가 if/elif 분기 대신 이 키로
+    # registry-driven dispatch 한다(P2에서 분기 추가 시 등록만 하면 됨). 기본은 key 와 동일.
+    runner_key: str = ""
     output_keys: tuple[str, ...] = field(default_factory=tuple)  # artifacts 의 주요 키(문서화)
     billing_key: str = ""         # service_fees.analysis_modules 키(미설정=무료, R4)
+
+    @property
+    def dispatch_key(self) -> str:
+        """runner 가 dispatch 할 파이프라인 키(미설정 시 key 와 동일)."""
+        return self.runner_key or self.key
 
 
 # ── 분양대행 전문가 ──
@@ -81,9 +89,79 @@ _URBAN = PersonaSpec(
 )
 
 
+# ── 디벨로퍼(사업타당성) 전문가 ──
+_DEVELOPER = PersonaSpec(
+    key="developer",
+    name_ko="디벨로퍼(사업타당성) 전문가",
+    system_prompt=(
+        "당신은 부동산 개발 PF·수지분석 20년 차 디벨로퍼입니다. 사업타당성(매출·원가·순이익·"
+        "ROI/ROE/NPV), 리스크 매트릭스(시장·인허가·자금·공사), Go/No-Go 의사결정을 시행사 관점에서 "
+        "제시합니다. 데이터에 있는 수치만 사용하고, DSCR 등 미산출 지표는 정직하게 고지합니다."
+    ),
+    checklist=(
+        ChecklistSpec("viability", "사업타당성(Top3 수지·ROI)", "dev_viability", "ROI·등급"),
+        ChecklistSpec("risk", "리스크 매트릭스(시장·인허가·자금·공사)", "dev_risk", "리스크 등급"),
+        ChecklistSpec("irr_npv", "IRR/NPV/DSCR 수익성", "dev_irr_npv", "NPV·DSCR"),
+        ChecklistSpec("go_nogo", "Go/No-Go 판정", "dev_go_nogo", "투자 결정"),
+    ),
+    bound_services=("feasibility_v2", "auto_recommend_top3", "feasibility_interpreter"),
+    expert_lens="feasibility",   # ROSTERS 보유 키(business/developer 강등 회피)
+    runner_key="developer",
+    output_keys=("recommendations", "risk_matrix", "kpi", "go_nogo"),
+    billing_key="persona_developer",
+)
+
+# ── 설계(CAD/BIM) 전문가 ──
+_DESIGNER = PersonaSpec(
+    key="designer",
+    name_ko="설계(건축·BIM) 전문가",
+    system_prompt=(
+        "당신은 건축사·BIM 설계 18년 차 전문가입니다. 매스 배치(건폐율·용적률·층수), 유닛믹스 "
+        "(수익 극대화 평형 배분), 법규 준수(건폐/용적/높이 한도), 세대수·전용률 효율을 실무 관점에서 "
+        "검토합니다. 데이터에 있는 수치만 사용하고, 미확보 항목은 정직하게 고지합니다."
+    ),
+    checklist=(
+        ChecklistSpec("layout", "매스 배치(건폐·용적·층수)", "design_layout", "매스 규모"),
+        ChecklistSpec("unit_mix", "유닛믹스(수익 극대 평형배분)", "design_unit_mix", "세대수·매출"),
+        ChecklistSpec("compliance", "법규 준수(건폐/용적/높이)", "design_compliance", "한도 여유"),
+        ChecklistSpec("efficiency", "세대수·전용률 효율", "design_efficiency", "효율"),
+    ),
+    bound_services=("design_mass", "unit_mix_optimizer", "design_interpreter"),
+    expert_lens="design",
+    runner_key="designer",
+    output_keys=("mass", "unit_mix", "compliance", "efficiency"),
+    billing_key="persona_designer",
+)
+
+# ── 시공(공사비·적산) 전문가 ──
+_CONSTRUCTOR = PersonaSpec(
+    key="constructor",
+    name_ko="시공(공사비·적산) 전문가",
+    system_prompt=(
+        "당신은 건설 원가관리·VE(가치공학) 20년 차 전문가입니다. 공사비 견적(지상·지하·조경·간접·"
+        "최저~최대 레인지), QTO 물량(레미콘·철근·거푸집 등), 평단가 적정성, 원가비율·안전마진을 "
+        "실무 관점에서 검토합니다. 데이터에 있는 수치만 사용하고, 미확보 항목은 정직하게 고지합니다."
+    ),
+    checklist=(
+        ChecklistSpec("unit_cost", "공사비 견적(평단가·레인지)", "const_unit_cost", "평단가"),
+        ChecklistSpec("qto", "QTO 물량 적산(부위별)", "const_qto", "물량 항목수"),
+        ChecklistSpec("schedule", "공기·구조 적정성", "const_schedule", "구조계수"),
+        ChecklistSpec("cost_safety", "원가비율·안전마진", "const_cost_safety", "레인지 폭"),
+    ),
+    bound_services=("estimate_overview", "cost_interpreter"),
+    expert_lens="cost",
+    runner_key="constructor",
+    output_keys=("estimate", "qto", "range", "safety"),
+    billing_key="persona_constructor",
+)
+
+
 PERSONA_REGISTRY: dict[str, PersonaSpec] = {
     _SALES.key: _SALES,
     _URBAN.key: _URBAN,
+    _DEVELOPER.key: _DEVELOPER,
+    _DESIGNER.key: _DESIGNER,
+    _CONSTRUCTOR.key: _CONSTRUCTOR,
 }
 
 

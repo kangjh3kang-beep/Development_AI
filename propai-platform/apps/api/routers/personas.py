@@ -34,6 +34,14 @@ def _ctx(req: PersonaAnalyzeRequest) -> dict[str, Any]:
         # runner.py(분양 build_report·regulation.analyze)가 ctx.get("pnu")로 읽는다.
         "pnu": req.pnu,
         "equity_won": req.equity_won,
+        # 설계(designer)·시공(constructor) SSOT 입력 — runner._run_designer/_run_constructor 가 소비.
+        # 미공급 시 각 파이프라인이 폴백/추정/partial 로 정직 강등(무목업).
+        "total_gfa_sqm": req.total_gfa_sqm,
+        "land_area_sqm": req.land_area_sqm,
+        "zone_code": req.zone_code,
+        "building_type": req.building_type,
+        # R11 핸드오프 — 디벨로퍼 종합(_consume_handoff)이 ctx['report_contracts']로 읽는다.
+        "report_contracts": req.report_contracts,
     }
 
 
@@ -86,6 +94,19 @@ async def analyze_persona_pdf(
         # 분양대행 PDF = 시장조사보고서 빌더 재사용(주소·법정동코드 확보 시).
         pdf = await _sales_pdf(req, report)
         fname = "sales_pricing_report.pdf"
+    elif key == "developer":
+        # 디벨로퍼 PDF = 사업계획서(전용 렌더러·urban 패턴 복제).
+        from app.services.persona import developer_report
+        pdf = developer_report.to_pdf(report)
+        fname = "developer_business_plan.pdf"
+    elif key == "designer":
+        from app.services.persona import designer_report
+        pdf = designer_report.to_pdf(report)
+        fname = "design_review.pdf"
+    elif key == "constructor":
+        from app.services.persona import constructor_report
+        pdf = constructor_report.to_pdf(report)
+        fname = "construction_cost_estimate.pdf"
     else:  # pragma: no cover
         raise HTTPException(status_code=400, detail="해당 페르소나는 PDF를 지원하지 않습니다.")
 

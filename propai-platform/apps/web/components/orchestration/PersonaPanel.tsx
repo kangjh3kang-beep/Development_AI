@@ -71,6 +71,13 @@ interface PersonaRequestBody {
   bcode: string | null;
   pnu: string | null;
   equity_won: number | null;
+  // 설계·시공 페르소나 SSOT 입력 — useProjectContextStore에서 읽기 캡처(미확보면 null·정직 강등).
+  // 시공(constructor): total_gfa_sqm 없으면 백엔드가 partial·정직 고지(estimate_overview gt=0 불가).
+  // 설계(designer): land_area_sqm·zone_code 없으면 폴백 매스로 퇴화(백엔드가 정직 고지).
+  total_gfa_sqm: number | null;
+  land_area_sqm: number | null;
+  zone_code: string | null;
+  building_type: string | null;
   use_llm: boolean;
 }
 
@@ -419,6 +426,8 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   const boundProjectId = useProjectContextStore((s) => s.projectId);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
+  // 설계·시공 페르소나 입력원(SSOT). 설계 산출(연면적·건물유형)이 있으면 시공 견적·설계 매스에 공급.
+  const designData = useProjectContextStore((s) => s.designData);
 
   const [personas, setPersonas] = useState<PersonaMeta[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -468,6 +477,13 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
       bcode,
       pnu,
       equity_won: feasibilityData?.equityWon ?? null,
+      // 설계·시공 입력 — SSOT 직접 읽기(미확보면 null → 백엔드가 정직 강등). 0 강제 금지(무목업).
+      total_gfa_sqm:
+        designData?.totalGfaSqm && designData.totalGfaSqm > 0 ? designData.totalGfaSqm : null,
+      land_area_sqm:
+        siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0 ? siteAnalysis.landAreaSqm : null,
+      zone_code: siteAnalysis?.zoneCode ?? null,
+      building_type: designData?.buildingType ?? null,
       use_llm: false,
     };
   }, [
@@ -475,13 +491,35 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
     siteAnalysis?.address,
     siteAnalysis?.pnu,
     siteAnalysis?.parcels,
+    siteAnalysis?.landAreaSqm,
+    siteAnalysis?.zoneCode,
     feasibilityData?.equityWon,
+    designData?.totalGfaSqm,
+    designData?.buildingType,
   ]);
 
   // 입력 시그니처(캐시 키 변화 감지) — store의 currentSignature 발상 재사용.
+  // 설계·시공 입력(연면적·대지면적·용도지역·건물유형)이 바뀌면 페르소나 결과를 stale 처리(재실행 유도).
   const inputSig = useMemo(
-    () => JSON.stringify([requestBody.address, requestBody.pnu, requestBody.parcels]),
-    [requestBody.address, requestBody.pnu, requestBody.parcels],
+    () =>
+      JSON.stringify([
+        requestBody.address,
+        requestBody.pnu,
+        requestBody.parcels,
+        requestBody.total_gfa_sqm,
+        requestBody.land_area_sqm,
+        requestBody.zone_code,
+        requestBody.building_type,
+      ]),
+    [
+      requestBody.address,
+      requestBody.pnu,
+      requestBody.parcels,
+      requestBody.total_gfa_sqm,
+      requestBody.land_area_sqm,
+      requestBody.zone_code,
+      requestBody.building_type,
+    ],
   );
 
   // 계정격리 + 주소(컨텍스트) 게이트 — OrchestrateWorkspaceClient.hasContext와 동일 발상.

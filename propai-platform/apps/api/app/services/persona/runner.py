@@ -73,6 +73,38 @@ async def _expert_review(spec: PersonaSpec, ctx: dict[str, Any], address: str | 
         return None
 
 
+def _normalize_zone_code(raw: Any) -> str | None:
+    """용도지역 입력을 설계엔진 단축코드(1R/2R/3R/GC/NC/QI/QR)로 정규화.
+
+    프론트 SSOT(siteAnalysis.zoneCode)는 용도지역 '한글명'(예: 제2종일반주거지역)을 보내지만
+    BuildingComplianceService.get_zone_limits()·AutoDesignEngine.get_legal_limits()의 ZONE_LIMITS는
+    단축코드만 키로 가진다. 한글명이 그대로 들어오면 None 조회 → 법규준수가 'missing'으로 강등돼
+    실제 한도비교가 발화하지 않는다. 호출 전 여기서 한글명↔코드를 맞춘다(서비스 본문 무변경·R13).
+
+    재사용: 코드↔한글 권위 매핑은 design_spec.ZONE_LABELS(검증/UI 공용)를 단일 출처로 역인덱싱.
+    이미 단축코드면 그대로. 매핑 실패(미지원 용도=전용주거·녹지·관리·중심상업 등 코드 없음)는
+    None 반환 → 호출부가 'missing' 정직 고지(가짜 코드 금지·무목업).
+    """
+    if not raw:
+        return None
+    s = str(raw).replace(" ", "").strip()
+    if not s:
+        return None
+    # 이미 단축코드(ZONE_LIMITS 키)면 그대로.
+    try:
+        from app.services.cad.design_spec import ZONE_LABELS
+    except Exception:  # noqa: BLE001 — design_spec 임포트 실패 시 정직하게 미정규화(None 강등 방지 위해 원값 유지)
+        return s if len(s) <= 3 and s.isascii() else None
+    if s in ZONE_LABELS:
+        return s
+    # 한글명 → 코드(역인덱스). '지역' 접미사·표기변형을 흡수해 매칭.
+    for code, kor in ZONE_LABELS.items():
+        k = kor.replace(" ", "")
+        if s == k or s == f"{k}지역" or k in s:
+            return code
+    return None
+
+
 def _derive_status(checklist_items: list[dict[str, Any]]) -> str:
     """체크리스트 판정 → 전체 status(R12 잠정 강등)."""
     statuses = {c.get("status") for c in checklist_items}
@@ -446,6 +478,341 @@ def _far_trust(zone_limits: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+# ── 디벨로퍼(사업타당성) 파이프라인 ──
+
+async def _run_developer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any],
+                         use_llm: bool) -> tuple[dict, list[dict], dict, list[str]]:
+    """FeasibilityServiceV2.auto_recommend_top3(규칙기반·서비스 직접호출) 조립 → 체크리스트.
+
+    전담 interpreter(feasibility_interpreter)가 실재하므로 use_llm 시 정밀 내러티브를 흡수한다
+    (auto_recommend_top3 내부가 use_llm=True면 ai_interpretation 채움). R2 폴백은 디벨로퍼
+    종합부(expert_panel feasibility 렌즈)에만 적용된다. 라우터 우회·service 직접호출(R13).
+    """
+    honesty: list[str] = []
+    address = await _resolve_address(db, ctx)
+    recommend: dict[str, Any] | None = None
+
+    if address:
+        try:
+            from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+            # equity_won 전달 시 ROE 경로 확보(미전달=기본). use_llm 으로 전담 interpreter 분기.
+            kwargs: dict[str, Any] = {"address": address, "use_llm": use_llm}
+            eq = ctx.get("equity_won")
+            if eq:
+                kwargs["equity_won"] = int(eq)
+            recommend = await FeasibilityServiceV2().auto_recommend_top3(**kwargs)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("사업타당성(Top3) 산출 실패", err=str(e)[:100])
+            honesty.append("사업타당성(Top3 수지) 산출 중 오류 — 주소/용도지역을 확인하세요(무목업).")
+    else:
+        honesty.append("주소 미확보 — 사업타당성은 부지 주소 기준으로 산출됩니다(무목업).")
+
+    # ── 체크리스트(규칙기반·무과금) ──
+    items = [
+        checklist.judge_dev_viability(spec.checklist[0].label, recommend),
+        checklist.judge_dev_risk(spec.checklist[1].label, recommend),
+        checklist.judge_dev_irr_npv(spec.checklist[2].label, recommend),
+        checklist.judge_dev_go_nogo(spec.checklist[3].label, recommend),
+    ]
+
+    # ── 핸드오프 소비(R11) — ctx.report_contracts 가 있으면 하류 페르소나 산출물을 종합 참조 ──
+    handoff = _consume_handoff(ctx)
+
+    artifacts: dict[str, Any] = {
+        "interpreter_available": True,
+        "interpreter_note": "디벨로퍼는 feasibility_interpreter(전담) 사용 — 종합부만 expert_panel(feasibility) 폴백.",
+        "recommendations": (recommend or {}).get("recommendations"),
+        "all_results_count": len((recommend or {}).get("all_results") or []),
+        "kpi": _dev_kpi(recommend),
+        "risk_matrix": next((i["value"] for i in items if i["step"] == "risk"), None),
+        "go_nogo": next((i["value"] for i in items if i["step"] == "go_nogo"), None),
+        "scenario_status": (recommend or {}).get("scenario_status"),
+        "land_price_reliable": (recommend or {}).get("land_price_reliable"),
+        "zone_type": (recommend or {}).get("zone_type"),
+        "effective_far_pct": (recommend or {}).get("effective_far_pct"),
+        "address": address,
+    }
+    if handoff:
+        artifacts["handoff"] = handoff
+    # 전담 interpreter 결과(use_llm 시 auto_recommend_top3 가 채움) 흡수 — 종합 내러티브.
+    ai = (recommend or {}).get("ai_interpretation")
+    if isinstance(ai, dict) and ai:
+        artifacts["ai_interpretation"] = ai
+
+    # 정직 고지 — 잠정 시나리오·토지비 신뢰성·DSCR 미산출.
+    if (recommend or {}).get("scenario_status") == "tentative":
+        honesty.append("선행절차 전제 잠정 시나리오 — 확정 수익률/확신 %는 억제합니다(R12).")
+    if (recommend or {}).get("land_price_reliable") is False:
+        honesty.append("공시지가 미확보 — 절대 수익성(ROI·순이익)은 참고용입니다(랭킹은 유효·정직).")
+    honesty.append("DSCR(부채상환계수)은 현 수지엔진 산출 범위 밖 — 별도 금융모델 필요(미확보·정직 고지).")
+    disclosure = (recommend or {}).get("honest_disclosure")
+    if disclosure:
+        honesty.append(str(disclosure))
+
+    # ③ trust 흡수 — Top1 수익성 신뢰성 신호(land_price_reliable 노출).
+    verification = {"trust": {"land_price_reliable": (recommend or {}).get("land_price_reliable"),
+                              "scenario_status": (recommend or {}).get("scenario_status")}}
+    return artifacts, items, verification, honesty
+
+
+def _dev_kpi(recommend: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Top1 핵심 KPI 슬림(매출·원가·순이익·ROI/ROE/NPV·등급) — 핸드오프 노출용."""
+    recs = (recommend or {}).get("recommendations") or []
+    if not recs:
+        return None
+    f = recs[0].get("feasibility") or {}
+    return {
+        "type_name": recs[0].get("type_name"),
+        "total_revenue_won": f.get("total_revenue_won"),
+        "total_cost_won": f.get("total_cost_won"),
+        "net_profit_won": f.get("net_profit_won"),
+        "roi_pct": f.get("roi_pct"), "roe_pct": f.get("roe_pct"),
+        "npv_won": f.get("npv_won"), "grade": f.get("grade"),
+    }
+
+
+def _consume_handoff(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """다른 페르소나 reportContract(R11)를 ctx 로 받으면 종합용 슬림 요약을 만든다.
+
+    ctx['report_contracts'] = {persona_key: PersonaReport dict, ...} 형태(선택). 없으면 None.
+    하류 산출물(설계 매스·시공 견적·도시계획 게이트)을 디벨로퍼 종합 판단에 노출한다.
+    """
+    contracts = ctx.get("report_contracts")
+    if not isinstance(contracts, dict) or not contracts:
+        return None
+    out: dict[str, Any] = {}
+    for pkey, rep in contracts.items():
+        if not isinstance(rep, dict):
+            continue
+        out[pkey] = {
+            "status": rep.get("status"),
+            "checklist": [{"step": c.get("step"), "status": c.get("status")}
+                          for c in (rep.get("checklist") or [])],
+        }
+    return out or None
+
+
+# ── 설계(건축·BIM) 파이프라인 ──
+
+async def _run_designer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any],
+                        use_llm: bool) -> tuple[dict, list[dict], dict, list[str]]:
+    """compute_design_mass(라우터 함수 직접호출·LLM미호출) + UnitMixOptimizer 조립 → 체크리스트.
+
+    매스는 _resolve_mass 우회 대신 라우터 함수 compute_design_mass 를 직접 await(선례
+    project_dashboard.py 의 estimate_overview 직접호출). use_llm 시 design_interpreter(전담)로
+    설계 검토 내러티브를 흡수한다. AutoZoning 직접콜은 회피(mass 자동산출이 흡수·R7).
+    """
+    honesty: list[str] = []
+    address = await _resolve_address(db, ctx)
+    mass: dict[str, Any] | None = None
+    unit_mix: dict[str, Any] | None = None
+
+    # 매스 산출 입력: land_area_sqm + zone_code(있으면 AutoDesignEngine 자동 최적 매스).
+    # [HIGH] 프론트 SSOT는 용도지역 '한글명'(제2종일반주거지역)을 보내지만 설계엔진/법규
+    # 서비스의 ZONE_LIMITS는 단축코드(2R 등)만 키로 가진다. 호출 전 정규화해 한글명이
+    # None→missing 으로 강등되는 문제를 해소(서비스 본문 무변경). 미지원 용도는 None→정직 고지.
+    land_area = ctx.get("land_area_sqm")
+    zone_code = _normalize_zone_code(ctx.get("zone_code"))
+    try:
+        from app.routers.design_v61 import BimGenerateRequest, compute_design_mass
+        req_kwargs: dict[str, Any] = {}
+        if land_area:
+            req_kwargs["land_area_sqm"] = float(land_area)
+        if zone_code:
+            req_kwargs["zone_code"] = str(zone_code)
+        # 매스 직접 치수가 ctx 에 있으면 우선(폭·깊이·층수).
+        for k_ctx, k_req in (("building_width_m", "building_width_m"),
+                             ("building_depth_m", "building_depth_m"),
+                             ("floor_count", "floor_count")):
+            if ctx.get(k_ctx) is not None:
+                req_kwargs[k_req] = ctx[k_ctx]
+        # land_area·치수 어느 것도 없으면 폴백 매스(compute_design_mass 내부 합리적 기본값).
+        mass = await compute_design_mass(str(ctx.get("project_id") or "-"),
+                                         BimGenerateRequest(**req_kwargs))
+        if not (land_area or ctx.get("building_width_m")):
+            honesty.append("대지면적/매스 치수 미확보 — 표준 폴백 매스로 산출(실치수 입력 시 정밀화·정직).")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("설계 매스 산출 실패", err=str(e)[:100])
+        honesty.append("설계 매스 산출 중 오류 — 대지면적/용도지역을 확인하세요(무목업).")
+
+    # 유닛믹스 최적화(SLSQP·실패 시 greedy 폴백 내장·LLM미호출).
+    if mass:
+        try:
+            from app.services.feasibility.unit_mix_optimizer import (
+                UnitMixInput,
+                UnitMixOptimizer,
+            )
+            far = mass.get("far_pct") or 250
+            bcr = mass.get("bcr_pct") or 60
+            la = float(land_area or 0)
+            total_gfa = (la * float(far) / 100) if la > 0 else 0.0
+            if total_gfa > 0:
+                unit_mix = UnitMixOptimizer().optimize(UnitMixInput(
+                    total_gfa_sqm=total_gfa, max_far_pct=float(far), max_bcr_pct=float(bcr),
+                    land_area_sqm=la, region=str(ctx.get("region") or "서울"),
+                ))
+            else:
+                honesty.append("연면적(GFA) 미산출(대지면적 필요) — 유닛믹스 최적화 보류(무목업).")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("유닛믹스 최적화 실패", err=str(e)[:100])
+
+    # 법규 한도 — zone_code 로 BuildingComplianceService.get_zone_limits(법정 한도) 조회(static).
+    # 한도는 비율(0.60·3.00) → 퍼센트(60·300)로 환산해 매스 bcr/far(%)와 동일 단위 비교(R1).
+    # zone_code 미확보면 None → judge_design_compliance 가 'missing' 정직 고지(no-op pass 방지).
+    zone_limits: dict[str, Any] | None = None
+    if zone_code:
+        try:
+            from services.building_compliance_service import BuildingComplianceService
+            legal = BuildingComplianceService.get_zone_limits(str(zone_code))
+            if legal is not None:
+                zone_limits = {
+                    "zone_code": str(zone_code),
+                    "max_bcr_pct": round(legal.building_coverage_ratio * 100, 2),
+                    "max_far_pct": round(legal.floor_area_ratio * 100, 2),
+                }
+        except Exception as e:  # noqa: BLE001 — 한도 조회 실패는 None(정직 고지로 강등)
+            logger.warning("법정 한도 조회 실패", err=str(e)[:100], zone=str(zone_code))
+    else:
+        honesty.append("용도지역(zone_code) 미확보 — 법규 한도 정량 비교는 보류합니다(정직).")
+
+    items = [
+        checklist.judge_design_layout(spec.checklist[0].label, mass),
+        checklist.judge_design_unit_mix(spec.checklist[1].label, unit_mix),
+        checklist.judge_design_compliance(spec.checklist[2].label, mass, zone_limits),
+        checklist.judge_design_efficiency(spec.checklist[3].label, unit_mix),
+    ]
+
+    artifacts: dict[str, Any] = {
+        "interpreter_available": True,
+        "interpreter_note": "설계는 design_interpreter(전담) 사용 — 매스 6섹션 해석(use_llm 시).",
+        "mass": mass,
+        "unit_mix": unit_mix,
+        "compliance": next((i["value"] for i in items if i["step"] == "compliance"), None),
+        "efficiency": next((i["value"] for i in items if i["step"] == "efficiency"), None),
+        "address": address,
+    }
+
+    # ── (use_llm) 설계 전담 interpreter — 매스+유닛믹스 투입(R2: 전담 실재) ──
+    if use_llm and mass:
+        try:
+            from app.services.ai.design_interpreter import DesignInterpreter
+            design_input = {**mass, "zone_code": zone_code, "building_use": "공동주택"}
+            if unit_mix and unit_mix.get("units"):
+                design_input["units"] = [
+                    {"type": u.get("code"), "area_sqm": u.get("area_sqm"),
+                     "total_count": u.get("count")} for u in unit_mix["units"]
+                ]
+                design_input["total_units"] = unit_mix.get("total_units")
+            interp = await DesignInterpreter().generate_interpretation(design_input)
+            if isinstance(interp, dict) and interp:
+                artifacts["ai_interpretation"] = interp
+        except Exception as e:  # noqa: BLE001
+            logger.warning("설계 AI 해석 실패", err=str(e)[:100])
+            honesty.append("설계 내러티브 생성 실패 — 매스·유닛믹스(규칙기반)는 유효합니다.")
+
+    verification = {"trust": {"mass_source": "compute_design_mass",
+                              "unit_mix_method": (unit_mix or {}).get("method")}}
+    return artifacts, items, verification, honesty
+
+
+# ── 시공(공사비·적산) 파이프라인 ──
+
+async def _run_constructor(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any],
+                           use_llm: bool) -> tuple[dict, list[dict], dict, list[str]]:
+    """estimate_overview(라우터 함수 직접 await·선례 project_dashboard.py) 조립 → 체크리스트.
+
+    공사비 개요(지상·지하·조경·간접·최저~최대 레인지 + 기하 QTO)를 산출하고, use_llm 시
+    cost_interpreter(전담)로 VE 절감·리스크 내러티브를 흡수한다. service primitive 추가추출
+    없이 라우터 함수 직접 await(R13 무변경 경계). GFA 미확보면 정직 차단(무목업).
+    """
+    honesty: list[str] = []
+    address = await _resolve_address(db, ctx)
+    est: dict[str, Any] | None = None
+
+    total_gfa = ctx.get("total_gfa_sqm")
+    if total_gfa and float(total_gfa) > 0:
+        try:
+            from app.routers.cost import OverviewCostRequest, estimate_overview
+            est = await estimate_overview(
+                OverviewCostRequest(
+                    building_type=str(ctx.get("building_type") or "apartment"),
+                    total_gfa_sqm=float(total_gfa),
+                    floor_count_above=int(ctx.get("floor_count_above") or 1),
+                    floor_count_below=int(ctx.get("floor_count_below") or 0),
+                    structure_type=str(ctx.get("structure_type") or "RC"),
+                    project_id=str(ctx.get("project_id")) if ctx.get("project_id") else None,
+                ),
+                db,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("공사비 견적 산출 실패", err=str(e)[:100])
+            honesty.append("공사비 견적 산출 중 오류 — 연면적/구조/층수 입력을 확인하세요(무목업).")
+    else:
+        honesty.append("연면적(total_gfa_sqm) 미전달 — 공사비 견적은 연면적 기준으로 산출됩니다(무목업).")
+
+    items = [
+        checklist.judge_const_unit_cost(spec.checklist[0].label, est),
+        checklist.judge_const_qto(spec.checklist[1].label, est),
+        checklist.judge_const_schedule(spec.checklist[2].label, est),
+        checklist.judge_const_cost_safety(spec.checklist[3].label, est),
+    ]
+
+    artifacts: dict[str, Any] = {
+        "interpreter_available": True,
+        "interpreter_note": "시공은 cost_interpreter(전담) 사용 — VE 절감·리스크 해석(use_llm 시).",
+        "estimate": {k: (est or {}).get(k) for k in (
+            "building_type", "structure_type", "total_gfa_sqm", "gfa_above_sqm",
+            "gfa_below_sqm", "unit_cost_per_sqm", "total_won", "per_pyeong_won")} if est else None,
+        "range": (est or {}).get("range"),
+        "qto": {"item_count": len((est or {}).get("items") or []),
+                "unit_price_source": (est or {}).get("unit_price_source"),
+                "qto_source": (est or {}).get("qto_source"),
+                "items": (est or {}).get("items")} if est else None,
+        "safety": next((i["value"] for i in items if i["step"] == "cost_safety"), None),
+        "address": address,
+    }
+
+    # ── (use_llm) 시공 전담 interpreter — 공사비 결과 투입(R2: 전담 실재) ──
+    if use_llm and est:
+        try:
+            from app.services.ai.cost_interpreter import CostInterpreter
+            cost_input = {
+                "total_cost": est.get("total_won"),
+                "cost_per_sqm": est.get("unit_cost_per_sqm"),
+                "cost_per_pyeong": est.get("per_pyeong_won"),
+                "building_type": est.get("building_type"),
+                "total_gfa_sqm": est.get("total_gfa_sqm"),
+                "floor_count": int(ctx.get("floor_count_above") or 0),
+                "cost_items": [
+                    {"category": i.get("name"), "amount": i.get("cost_won"),
+                     "unit_price": i.get("unit_cost_won")}
+                    for i in (est.get("items") or [])
+                ],
+            }
+            interp = await CostInterpreter().generate_interpretation(cost_input)
+            if isinstance(interp, dict) and interp:
+                artifacts["ai_interpretation"] = interp
+        except Exception as e:  # noqa: BLE001
+            logger.warning("공사비 AI 해석 실패", err=str(e)[:100])
+            honesty.append("공사비 내러티브 생성 실패 — 견적·QTO(규칙기반)는 유효합니다.")
+
+    if est and (est.get("unit_price_source") != "db"):
+        honesty.append("단가 일부 fallback(DB 단가 미반영) — 표준 추정 총액은 유효(정직 표기).")
+    verification = {"trust": {"unit_price_source": (est or {}).get("unit_price_source"),
+                              "qto_source": (est or {}).get("qto_source")}}
+    return artifacts, items, verification, honesty
+
+
+# ── 파이프라인 dispatch 맵(registry.dispatch_key → 파이프라인 함수) ──
+_PIPELINES = {
+    "sales_agent": _run_sales,
+    "urban_planner": _run_urban,
+    "developer": _run_developer,
+    "designer": _run_designer,
+    "constructor": _run_constructor,
+}
+
+
 # ── 진입점 ──
 
 async def run_persona(key: str, db: AsyncSession, ctx: dict[str, Any],
@@ -456,12 +823,12 @@ async def run_persona(key: str, db: AsyncSession, ctx: dict[str, Any],
         raise ValueError(f"알 수 없는 페르소나: {key}")
 
     # ① 사실기반 작성 + 체크리스트
-    if key == "sales_agent":
-        artifacts, items, verification, honesty = await _run_sales(db, spec, ctx, use_llm)
-    elif key == "urban_planner":
-        artifacts, items, verification, honesty = await _run_urban(db, spec, ctx, use_llm)
-    else:  # pragma: no cover — 등록되었으나 미구현 페르소나(방어)
+    # registry-driven dispatch — spec.dispatch_key 로 파이프라인 함수를 찾는다(if/elif 제거).
+    # 신규 페르소나는 registry 에 PersonaSpec 추가 + _PIPELINES 에 1줄 등록만 하면 된다(R9).
+    pipeline = _PIPELINES.get(spec.dispatch_key)
+    if pipeline is None:  # pragma: no cover — 등록되었으나 파이프라인 미배선(방어)
         raise ValueError(f"페르소나 runner 미구현: {key}")
+    artifacts, items, verification, honesty = await pipeline(db, spec, ctx, use_llm)
 
     address = artifacts.get("address")
 
