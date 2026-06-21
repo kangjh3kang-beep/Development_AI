@@ -63,6 +63,11 @@ def test_generate_pass_with_recommendation(monkeypatch):
     assert out["proposals"] and out["proposals"][0]["verdict"]["verdict"] == "pass"
     assert out["recommendation"] is not None and out["recommendation"]["verdict"] == "pass"
     assert out["site"]["far_source"] == "ordinance"
+    # 전역 원칙: 결과물에 근거 부착 — site/proposal evidence 존재 + 링크
+    assert out["site"]["evidence"] and any(e.get("link") for e in out["site"]["evidence"])
+    assert out["proposals"][0]["evidence"] and all(
+        "confidence" in e for e in out["proposals"][0]["evidence"]
+    )
 
 
 def test_generate_permit_denied_all_fail(monkeypatch):

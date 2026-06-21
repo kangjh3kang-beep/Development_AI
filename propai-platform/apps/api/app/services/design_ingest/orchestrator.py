@@ -16,6 +16,11 @@ from app.services.design_ingest.composition import (
     compose,
     site_context_from_zone,
 )
+from app.services.design_ingest.provenance import (
+    legal_envelope_evidence,
+    permit_evidence,
+    proposal_evidence,
+)
 from app.services.design_ingest.search_service import SiteQuery, search_drawings
 
 logger = logging.getLogger(__name__)
@@ -140,7 +145,9 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             permit_complexity=permit_complexity,
             far_source=site.far_source,
         )
-        proposals.append({"candidate": cd, "verdict": verdict})
+        # 모든 결과물에 근거 부착(전역 원칙): 추정·적합성·법적한도 출처/링크.
+        evidence = [e.to_dict() for e in proposal_evidence(cd, site)]
+        proposals.append({"candidate": cd, "verdict": verdict, "evidence": evidence})
 
     # 추천 = pass 우선, 없으면 conditional, 그래도 없으면 None(정직).
     recommendation = None
@@ -189,9 +196,16 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.debug("design 오케스트레이터 capture 생략: %s", str(e)[:120])
 
+    # 부지·법적 한도·인허가 근거(전역 원칙: 결과물에 근거+링크 기본 제공).
+    site_summary = _site_summary(site)
+    site_summary["evidence"] = (
+        [e.to_dict() for e in legal_envelope_evidence(site)]
+        + [permit_evidence(permit).to_dict()]
+    )
+
     return {
         "ok": True,
-        "site": _site_summary(site),
+        "site": site_summary,
         "permit": permit,
         "proposals": proposals,
         "recommendation": recommendation,

@@ -14,6 +14,12 @@ from app.services.design_ingest.orchestrator import (
     generate_design_proposals,
 )
 from app.services.design_ingest.parsers import detect_format, parse_design_file
+from app.services.design_ingest.provenance import (
+    Evidence,
+    legal_envelope_evidence,
+    permit_evidence,
+    proposal_evidence,
+)
 from app.services.design_ingest.search_service import (
     DrawingMatch,
     SiteQuery,
@@ -27,6 +33,7 @@ __all__ = [
     "DesignRequest",
     "DesignSpec",
     "DrawingMatch",
+    "Evidence",
     "RoomSpec",
     "SiteContext",
     "SiteQuery",
@@ -36,7 +43,10 @@ __all__ = [
     "fit_score",
     "generate_design_proposals",
     "ingest_design_file",
+    "legal_envelope_evidence",
     "parse_design_file",
+    "permit_evidence",
+    "proposal_evidence",
     "search_drawings",
     "site_context_from_zone",
 ]
