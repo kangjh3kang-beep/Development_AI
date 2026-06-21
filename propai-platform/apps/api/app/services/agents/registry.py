@@ -112,11 +112,31 @@ def _build_market() -> SpecialistAgent:
 
 # ── 심의: 심의분석엔진(deliberation-review) BFF 도메인 — 인·허가/심의 프로세스 ──
 
+def _stage_basis(stage: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """단계 criteria의 legal_basis(법령명·조항·요지) + 1차출처 링크를 집계(설명가능성 전파, 중복 제거)."""
+    basis: list[dict[str, Any]] = []
+    links: list[str] = []
+    for c in (stage.get("criteria") or []):
+        for lb in (c.get("legal_basis") or []):
+            entry = {"law": lb.get("law"), "article": lb.get("article"), "summary": lb.get("summary")}
+            if entry not in basis:
+                basis.append(entry)
+            src = lb.get("source")
+            if src and src not in links:
+                links.append(src)
+    return basis, links
+
+
 def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
-    """심의엔진 PermitProcessResult → SpecialistAgent findings/summary 정규화(결정론 매핑, 수치 생성 X)."""
-    findings = [{"check_id": st.get("stage_id"), "status": st.get("conformance"),
-                 "current": st.get("verification_status"), "limit": None,
-                 "note": st.get("name")} for st in (res.get("stages") or [])]
+    """심의엔진 PermitProcessResult → SpecialistAgent findings/summary 정규화(결정론 매핑, 수치 생성 X).
+
+    ★설명가능성 전파(EX2): 각 finding에 근거(basis: 법령명·조항·요지)+링크(links: 1차출처 URL) 기본 동반."""
+    findings: list[dict[str, Any]] = []
+    for st in (res.get("stages") or []):
+        basis, links = _stage_basis(st)
+        findings.append({"check_id": st.get("stage_id"), "status": st.get("conformance"),
+                         "current": st.get("verification_status"), "limit": None,
+                         "note": st.get("name"), "basis": basis, "links": links})
     return {"findings": findings,
             "summary": {"available": True, "spec_id": res.get("spec_id"),
                         "overall_conformance": res.get("overall_conformance"),
