@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v274-parcel-bcode-rerun";
+const CACHE_NAME = "propai-v275-ux-evidence";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
