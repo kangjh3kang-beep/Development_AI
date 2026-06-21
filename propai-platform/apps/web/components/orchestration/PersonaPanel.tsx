@@ -472,7 +472,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
       .catch((e) => {
         if (!alive) return;
         setListError(
-          e instanceof ApiClientError ? e.message : "페르소나 목록을 불러오지 못했습니다.",
+          e instanceof ApiClientError ? e.message : "전문가 목록을 불러오지 못했습니다.",
         );
         setPersonas([]);
       });
@@ -573,7 +573,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
       } catch (e) {
         setReport(null);
         setRunError(
-          e instanceof ApiClientError ? e.message : "페르소나 분석에 실패했습니다.",
+          e instanceof ApiClientError ? e.message : "전문가 분석에 실패했습니다.",
         );
       } finally {
         setRunning(false);
@@ -631,7 +631,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   return (
     <section className="grid gap-3">
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
-        <p className="mb-1 text-sm font-bold text-[var(--text-primary)]">실무 전문가 페르소나</p>
+        <p className="mb-1 text-sm font-bold text-[var(--text-primary)]">실무 전문가 분석</p>
         <p className="mb-3 text-[11px] text-[var(--text-secondary)]">
           분양대행·도시계획 전문가가 동일 부지 데이터로 실무 체크리스트·산출물을 정리합니다. 분석 항목은
           체크리스트로 미리 확인하고, 실행하면 핸드오프 보고서(PDF/PPT)로 받습니다.
@@ -642,7 +642,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
           <p className="mb-2 text-[11px] text-[var(--status-error)]">{listError}</p>
         )}
         {personas === null && !listError && (
-          <p className="text-[11px] text-[var(--text-tertiary)]">페르소나 목록 불러오는 중…</p>
+          <p className="text-[11px] text-[var(--text-tertiary)]">전문가 목록 불러오는 중…</p>
         )}
         {personas && personas.length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">

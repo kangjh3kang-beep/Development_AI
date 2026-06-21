@@ -179,7 +179,7 @@ export const PROJECT_TOOLS: ProjectTool[] = [
   { route: "boq", label: "공내역서(BOQ)", icon: "tool_boq" },
   { route: "multi-parcel", label: "다필지 통합", icon: "tool_parcel" },
   { route: "blockchain", label: "블록체인", icon: "tool_chain" },
-  { route: "agent", label: "AI 에이전트", icon: "tool_agent" },
+  { route: "agent", label: "AI 분석", icon: "tool_agent" },
 ];
 
 /** 프로젝트 도구 라우트(프로젝트 상세 하위 절대경로 빌더). */

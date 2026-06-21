@@ -343,8 +343,8 @@ export function OrchestratorPanel({
         >
           {(
             [
-              { id: "dag", label: "DAG 분석", hint: "노드 기반 가이드/별도/선택/프로필" },
-              { id: "persona", label: "전문가 페르소나", hint: "분양대행·도시계획 실무 오라클" },
+              { id: "dag", label: "통합 분석", hint: "항목 기반 가이드/별도/선택/프로필" },
+              { id: "persona", label: "실무 전문가 분석", hint: "분양대행·도시계획 실무 전문가" },
             ] as const
           ).map((t) => {
             const active = view === t.id;

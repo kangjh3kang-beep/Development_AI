@@ -489,7 +489,7 @@ export function MarketInsightsWorkspaceClient() {
         scopeNodes={["sales"]}
         balance={balance}
         runDisabled={!inputAddress || insufficient}
-        title="오케스트레이션 분석(베타)"
+        title="통합 분석(베타)"
         subtitle="분양성·분양가 분석을 레지스트리 기반으로 실행합니다. 상류(부지·설계) 의존은 자동 포함됩니다."
       />
 

@@ -39,7 +39,7 @@ export interface WorkflowProfile {
 }
 
 /**
- * 프리셋 4종 — 실무 페르소나별 기본 워크플로우.
+ * 프리셋 4종 — 실무 전문가별 기본 워크플로우.
  * createdAt=0(코드 상수). builtin:true라 UI에서 수정·삭제 불가(복제만 노출).
  */
 export const PRESET_PROFILES: WorkflowProfile[] = [
