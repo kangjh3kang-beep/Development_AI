@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts.rationale import LegalRef
+
 
 class CriterionResult(BaseModel):
     criterion_id: str
@@ -18,6 +20,8 @@ class CriterionResult(BaseModel):
     calc_trace: dict | None = None
     legal_refs: list[str] = Field(default_factory=list)
     basis_article: str | None = None
+    # 설명가능성 기본화 — 근거조문 해소(법령명·조항·요지·시행일·1차출처 링크). 미해소 시 [](식별자만, 무음 금지).
+    legal_basis: list[LegalRef] = Field(default_factory=list)
 
 
 class StageResult(BaseModel):
