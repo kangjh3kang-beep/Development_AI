@@ -97,6 +97,7 @@ class GenerateRequest(BaseModel):
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
     verify: bool = False                     # True면 추천안 독립검증(선택형·LLM)
+    interpret: bool = False                  # True면 추천안 LLM 해석 6섹션(선택형·LLM)
 
 
 # ── 내부 헬퍼 ──
@@ -224,6 +225,7 @@ async def generate(
         "tenant_id": str(current.tenant_id),  # ★인증값 강제
         "project_id": req.project_id,
         "verify": req.verify,
+        "interpret": req.interpret,
     }
     if req.building_use:
         kwargs["building_use"] = req.building_use

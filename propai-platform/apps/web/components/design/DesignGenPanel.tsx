@@ -109,6 +109,10 @@ type GenerateResult = {
     summary?: string;
     issues?: { severity?: string; note?: string; claim?: string; message?: string; detail?: string }[];
   } | null;
+  interpretation?: {
+    sections: Record<string, string>;
+    input?: Record<string, unknown>;
+  } | null;
   search_status: { count: number; skipped_reason: string | null };
   notes: string[];
 };
@@ -291,6 +295,7 @@ export function DesignGenPanel({ projectId }: Props) {
   const [avgUnit, setAvgUnit] = useState<number>(84);
   const [topN, setTopN] = useState<number>(3);
   const [verifyOpt, setVerifyOpt] = useState<boolean>(false);  // AI 검증 포함(선택형)
+  const [interpretOpt, setInterpretOpt] = useState<boolean>(false);  // AI 설계 해석 포함(선택형)
 
   // 업로드(ingest)
   const [file, setFile] = useState<File | null>(null);
@@ -401,6 +406,7 @@ export function DesignGenPanel({ projectId }: Props) {
           top_n: topN,
           project_id: projectId || null,
           verify: verifyOpt,
+          interpret: interpretOpt,
         },
       });
       setResult(data);
@@ -577,6 +583,10 @@ export function DesignGenPanel({ projectId }: Props) {
           <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
             <input type="checkbox" checked={verifyOpt} onChange={(e) => setVerifyOpt(e.target.checked)} />
             AI 검증 포함(추천안 독립검증 · LLM 호출)
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+            <input type="checkbox" checked={interpretOpt} onChange={(e) => setInterpretOpt(e.target.checked)} />
+            AI 설계 해석 포함(추천안 6섹션 · LLM 호출)
           </label>
         </div>
         {genErr && <p className="text-xs text-[var(--status-error)]">{genErr}</p>}
@@ -816,6 +826,39 @@ export function DesignGenPanel({ projectId }: Props) {
                     ))}
                   </ul>
                 ) : null}
+              </div>
+            )}
+
+            {/* AI 설계 해석(선택형) — 추천안 6섹션(왜 이 매스인지·법규부합·개선) */}
+            {result.interpretation?.sections && (
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2.5 text-xs">
+                <div className="mb-1.5 font-semibold text-[var(--text-secondary)]">
+                  AI 설계 해석 <span className="text-[var(--text-hint)]">(추천안 · LLM)</span>
+                </div>
+                <dl className="space-y-1.5">
+                  {(
+                    [
+                      ["design_overview", "설계 개요"],
+                      ["mass_strategy", "매스 전략"],
+                      ["floor_efficiency", "평면 효율"],
+                      ["compliance_review", "법규 준수"],
+                      ["circulation_core", "동선·코어"],
+                      ["improvement", "개선 제안"],
+                    ] as const
+                  )
+                    .filter(([k]) => (result.interpretation?.sections?.[k] || "").trim())
+                    .map(([k, label]) => (
+                      <div key={k}>
+                        <dt className="font-medium text-[var(--accent-strong)]">{label}</dt>
+                        <dd className="text-[var(--text-tertiary)] whitespace-pre-line">
+                          {result.interpretation?.sections?.[k]}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+                <div className="mt-1.5 text-[var(--text-hint)]">
+                  AI 보조 해석 — 수치는 추천안 데이터 기준, 최종 설계·인허가 책임은 건축사.
+                </div>
               </div>
             )}
 

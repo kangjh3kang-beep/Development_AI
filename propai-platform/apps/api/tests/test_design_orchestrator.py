@@ -121,6 +121,120 @@ def test_verify_proposal_passes_zone_name_to_verifier(monkeypatch):
     assert captured["source"]["land_area_sqm"] == 1000.0           # FAR 재계산 분모
 
 
+# ── LLM 해석 배선(_build_interpretation_input · interpret 게이트) ──
+
+def test_build_interpretation_input_maps_mass_and_limits():
+    # 후보+부지 한도 → 인터프리터 매스 입력(footprint·연면적·실효FAR·층수·높이·세대·한도) 매핑
+    from app.services.design_ingest.composition import SiteContext
+
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0,
+                       legal_far_pct=200.0, far_source="ordinance", floor_height_m=3.0)
+    cand = {"estimated_gfa_sqm": 1800.0, "estimated_floors": 6, "estimated_units": 16}
+    data = orch._build_interpretation_input(site, cand)
+    assert data["zone_code"] == "2R"
+    assert data["building_footprint_sqm"] == 600.0          # 1000×60%
+    assert data["total_floor_area_sqm"] == 1800.0
+    assert data["far_pct"] == 180.0                          # 1800/1000×100 (실효 달성)
+    assert data["num_floors"] == 6 and data["building_height_m"] == 18.0
+    assert data["total_units"] == 16
+    assert data["max_far_pct"] == 200.0 and data["max_bcr_pct"] == 60.0
+
+
+def test_build_interpretation_input_omits_unknown():
+    # 한도/추정 미상이면 해당 키 미포함(지어내기 방지)
+    from app.services.design_ingest.composition import SiteContext
+
+    site = SiteContext(area_sqm=1000.0, zone_code="2R")  # 한도 미상
+    data = orch._build_interpretation_input(site, {})    # 추정 없음
+    assert "building_footprint_sqm" not in data and "total_floor_area_sqm" not in data
+    assert "far_pct" not in data and "max_far_pct" not in data
+    assert data["zone_code"] == "2R"  # 항상 있는 컨텍스트만
+
+
+def test_generate_interpret_gated_and_attached(monkeypatch):
+    # ★선택형 해석 — interpret=True면 추천안에 DesignInterpreter 6섹션 부착, 기본(False)이면 미실행
+    _patch_search(monkeypatch, [_fp_match()])
+    calls = {"n": 0}
+    sections = {
+        "design_overview": "개요", "mass_strategy": "매스", "floor_efficiency": "효율",
+        "compliance_review": "법규부합", "circulation_core": "동선", "improvement": "개선",
+    }
+
+    class _FakeInterp:
+        fallback_key = "design_overview"
+
+        async def generate_interpretation(self, _data):
+            calls["n"] += 1
+            return sections
+
+    import app.services.ai.design_interpreter as di
+    monkeypatch.setattr(di, "DesignInterpreter", _FakeInterp)
+
+    # interpret=True → 해석 부착(추천 있음)
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0, interpret=True)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["recommendation"] is not None
+    assert out["interpretation"]["sections"] == sections
+    assert "input" in out["interpretation"] and calls["n"] == 1
+
+    # interpret=False(기본) → 미실행·None
+    calls["n"] = 0
+    req2 = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                         dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0)
+    out2 = asyncio.run(generate_design_proposals(req2))
+    assert out2["interpretation"] is None and calls["n"] == 0
+
+
+def test_interpret_proposal_none_when_llm_empty(monkeypatch):
+    # LLM이 빈 결과(미가용) → 정직 None
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+
+    class _EmptyInterp:
+        async def generate_interpretation(self, _data):
+            return {}
+
+    import app.services.ai.design_interpreter as di
+    monkeypatch.setattr(di, "DesignInterpreter", _EmptyInterp)
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0,
+                       legal_far_pct=200.0, far_source="ordinance")
+    out = _aio.run(orch._interpret_proposal(site, {"estimated_gfa_sqm": 1800.0}))
+    assert out is None
+
+
+def test_interpret_proposal_none_when_only_fallback_key(monkeypatch):
+    # ★LLM이 JSON 파싱 실패 폴백(design_overview 단독=원문 한 덩어리)만 주면 정상 해석 아님 → None
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+
+    class _FallbackOnlyInterp:
+        fallback_key = "design_overview"
+
+        async def generate_interpretation(self, _data):
+            return {"design_overview": "죄송하지만 JSON으로 응답할 수 없습니다 ..."}
+
+    import app.services.ai.design_interpreter as di
+    monkeypatch.setattr(di, "DesignInterpreter", _FallbackOnlyInterp)
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0,
+                       legal_far_pct=200.0, far_source="ordinance")
+    out = _aio.run(orch._interpret_proposal(site, {"estimated_gfa_sqm": 1800.0}))
+    assert out is None
+
+
+def test_interpret_proposal_none_when_no_mass_basis():
+    # 매스 근거(연면적·footprint) 전무 → LLM 호출 없이 정직 None
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+
+    site = SiteContext(area_sqm=1000.0, zone_code="2R")  # 한도 미상 → footprint None
+    out = _aio.run(orch._interpret_proposal(site, {}))   # 추정 없음
+    assert out is None
+
+
 def test_generate_permit_denied_all_fail(monkeypatch):
     _patch_search(monkeypatch, [_fp_match()])
     # 보전녹지지역은 M06(일반분양) 불허 → 전부 fail, 추천 없음

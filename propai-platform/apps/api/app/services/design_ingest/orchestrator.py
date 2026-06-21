@@ -56,6 +56,7 @@ class DesignRequest:
     project_id: str | None = None
     top_n: int = 3
     verify: bool = False                 # True면 추천안에 VerifierService 독립검증(선택형·LLM)
+    interpret: bool = False              # True면 추천안에 DesignInterpreter 6섹션 LLM 해석(선택형)
 
 
 def _assess(
@@ -132,6 +133,66 @@ async def _verify_proposal(
         return await VerifierService().verify("design_generation", source, candidate)
     except Exception as e:  # noqa: BLE001 — 검증 실패가 생성 결과를 깨면 안 됨
         logger.info("design 추천안 검증 생략: %s", str(e)[:120])
+        return None
+
+
+def _build_interpretation_input(site: SiteContext, candidate: dict) -> dict:
+    """조합 후보(+부지 한도)를 DesignInterpreter 입력 매스 데이터로 매핑(순수 함수).
+
+    DesignInterpreter는 매스(폭·깊이·층수·건폐/용적·평형) 기준 6섹션을 해석한다. 조합 후보엔
+    실폭·실깊이가 없으므로 부지 한도(footprint·max_gfa)와 추정 연면적/층수/세대수로 채운다.
+    far_pct(실효 달성)는 추정 연면적÷대지면적, 한도는 site.legal_*로 대조 근거를 제공한다.
+    값 미상이면 키를 넣지 않음(인터프리터가 '데이터 없음' 처리 — 지어내기 방지).
+    """
+    data: dict = {"zone_code": site.zone_code, "building_use": site.building_use_kr}
+    fp = site.buildable_footprint_sqm
+    if fp:
+        data["building_footprint_sqm"] = fp
+    gfa = candidate.get("estimated_gfa_sqm")
+    if gfa:
+        data["total_floor_area_sqm"] = gfa
+        if site.area_sqm and site.area_sqm > 0:
+            data["far_pct"] = round(float(gfa) / site.area_sqm * 100.0, 1)  # 실효 달성 용적률
+    floors = candidate.get("estimated_floors")
+    if floors:
+        data["num_floors"] = floors
+        data["floor_height_m"] = site.floor_height_m
+        data["building_height_m"] = round(float(floors) * site.floor_height_m, 1)
+    units = candidate.get("estimated_units")
+    if units is not None:
+        data["total_units"] = units
+    if site.legal_far_pct is not None:
+        data["max_far_pct"] = site.legal_far_pct
+    if site.legal_bcr_pct is not None:
+        data["max_bcr_pct"] = site.legal_bcr_pct
+    return data
+
+
+async def _interpret_proposal(site: SiteContext, candidate: dict) -> dict | None:
+    """추천 설계안을 DesignInterpreter로 LLM 해석(6섹션). best-effort·선택형(req.interpret).
+
+    LLM 미가용/실패 시 None(호출자가 정직 고지). 계측은 BaseInterpreter 단일경유(전역규칙)로
+    DesignInterpreter 내부에서 수행된다. 매스 근거가 전혀 없으면(footprint·연면적 미상) None.
+    """
+    payload = _build_interpretation_input(site, candidate)
+    # 매스 근거(연면적 또는 footprint)가 없으면 해석할 실데이터 부재 → 정직 None(지어내기 방지).
+    if "total_floor_area_sqm" not in payload and "building_footprint_sqm" not in payload:
+        return None
+    try:
+        from app.services.ai.design_interpreter import DesignInterpreter
+
+        interp = DesignInterpreter()
+        result = await interp.generate_interpretation(payload)
+        # 빈 dict(LLM 실패) 또는 내용 없음 → 정직 None.
+        if not result or not any(str(v).strip() for v in result.values()):
+            return None
+        # ★JSON 파싱 실패 폴백({fallback_key: 원문 한 덩어리})을 정상 해석으로 노출 금지(무목업·정직).
+        #   fallback_key 외 실내용 섹션이 하나도 없으면 LLM 출력 형식 실패로 보고 None.
+        if not any(k != interp.fallback_key and str(v).strip() for k, v in result.items()):
+            return None
+        return {"sections": result, "input": payload}
+    except Exception as e:  # noqa: BLE001 — 해석 실패가 생성 결과를 깨면 안 됨
+        logger.info("design 추천안 LLM 해석 생략: %s", str(e)[:120])
         return None
 
 
@@ -214,6 +275,13 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             site, proposals[recommendation["index"]]["candidate"], permit, zone_name=req.zone_name
         )
 
+    # LLM 해석(선택형) — 추천안에 DesignInterpreter 6섹션(왜 이 매스인지·법규부합·개선) 부착.
+    interpretation = None
+    if req.interpret and recommendation is not None:
+        interpretation = await _interpret_proposal(
+            site, proposals[recommendation["index"]]["candidate"]
+        )
+
     notes: list[str] = []
     if not matches:
         notes.append(
@@ -264,6 +332,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "proposals": proposals,
         "recommendation": recommendation,
         "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None
+        "interpretation": interpretation,  # 선택형 LLM 해석 6섹션(interpret=True 시) 또는 None
         "search_status": {"count": len(matches), "skipped_reason": search.get("skipped_reason")},
         "notes": notes,
     }
