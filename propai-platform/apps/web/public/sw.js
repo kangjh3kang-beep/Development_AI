@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v267-operations-ssot-sweep";
+const CACHE_NAME = "propai-v268-multiparcel-integrated";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

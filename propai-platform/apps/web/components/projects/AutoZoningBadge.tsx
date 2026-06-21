@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { mapZoningRich, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
@@ -70,6 +71,13 @@ type ZoningAnalysisResponse = {
   special_parcel?: SpecialParcel | null;
 };
 
+/** 다필지 통합분석 응답(부분) — 배지에 필요한 dominant_zone/혼재 신호만(읽기 소비). 옵셔널. */
+type IntegratedZoneSummary = {
+  dominant_zone?: string | null;
+  dominant_basis?: string | null;
+  parcel_count?: number | null;
+};
+
 /* ── Component ── */
 
 export function AutoZoningBadge({ address }: { address: string }) {
@@ -80,6 +88,39 @@ export function AutoZoningBadge({ address }: { address: string }) {
   const updateSiteAnalysis = useProjectContextStore(
     (s) => s.updateSiteAnalysis,
   );
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // ── 다필지 통합 배지(읽기 소비·로컬 state) — parcelCount>1 && 필지목록>1일 때만 ──
+  //   dominant_zone+'혼재' 배지를 단일 배지 앞에 보강. 미확보 시 기존 단일 배지만(degrade).
+  const ssotParcels = siteAnalysis?.parcels ?? null;
+  const isMultiParcel = (siteAnalysis?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  const parcelsSig = useMemo(() => {
+    if (!isMultiParcel || !ssotParcels) return "";
+    return ssotParcels.map((p) => `${p.pnu}:${p.areaSqm ?? ""}`).sort().join("|");
+  }, [isMultiParcel, ssotParcels]);
+  const [integrated, setIntegrated] = useState<IntegratedZoneSummary | null>(null);
+  useEffect(() => {
+    if (!isMultiParcel || !ssotParcels || ssotParcels.length < 2) { setIntegrated(null); return; }
+    const iKey = `integrated:${ssotParcels.length}:${parcelsSig}`;
+    const cached = getCachedAnalysis<IntegratedZoneSummary>(iKey, TTL_7D);
+    if (cached) { setIntegrated(cached); return; }
+    let alive = true;
+    const triggeredProjectId = useProjectContextStore.getState().projectId;
+    void apiClient.post<IntegratedZoneSummary>("/zoning/integrated-analysis", {
+      useMock: false,
+      body: {
+        parcels: ssotParcels.map((p) => ({ pnu: p.pnu, address: p.address, area_sqm: p.areaSqm, land_category: p.landCategory })),
+        use_llm: false,
+      },
+    }).then((res) => {
+      if (!alive) return;
+      if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
+      setIntegrated(res);
+      setCachedAnalysis(iKey, res);
+    }).catch(() => { /* 무목업: 실패 시 통합 배지 미표시(단일 degrade) */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMultiParcel, parcelsSig]);
 
   useEffect(() => {
     if (!address || address.trim().length < 3) {
@@ -228,7 +269,16 @@ export function AutoZoningBadge({ address }: { address: string }) {
     <div className="space-y-2">
       {/* Badge row: zone type + metrics */}
       <div className="flex flex-wrap items-center gap-3">
-        {/* Zone type badge */}
+        {/* 다필지 통합 대표 용도지역 배지(integrated 확보 시만) — 단일 배지 앞에 '혼재' 신호와 함께. */}
+        {isMultiParcel && integrated?.dominant_zone && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-4 py-2 text-xs font-bold text-[var(--accent-strong)]">
+            {integrated.dominant_zone}
+            <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
+              통합 {integrated.parcel_count ?? siteAnalysis?.parcelCount ?? (ssotParcels?.length ?? 0)}필지 · 혼재
+            </span>
+          </span>
+        )}
+        {/* Zone type badge (대표 단일 필지) */}
         <span className="rounded-full bg-[rgba(14,116,144,0.12)] px-4 py-2 text-xs font-semibold text-[var(--accent-strong)]">
           {result.zone_type}
         </span>

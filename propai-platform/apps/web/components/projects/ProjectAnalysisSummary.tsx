@@ -6,14 +6,28 @@
  * (거대 타이포·목업 상수 없이 실데이터 중심의 정보밀도·가독성 우선)
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { apiClient } from "@/lib/api-client";
+import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { formatAnalysisValue } from "@/lib/formatters";
+
+// 다필지 통합분석 응답(부분) — 요약 표시에 필요한 필드만(읽기 소비). 전부 옵셔널(부분응답 가드).
+type IntegratedSummary = {
+  parcel_count?: number | null;
+  dominant_zone?: string | null;
+  dominant_basis?: string | null;
+  integrated?: {
+    blended_bcr_eff_pct?: number | null;
+    blended_far_eff_pct?: number | null;
+    integrated_gfa_sqm?: number | null;
+  } | null;
+};
 
 const eok = (won: number | null | undefined): string | null =>
   won != null ? `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : null;
@@ -85,6 +99,38 @@ export function ProjectAnalysisSummary() {
     return () => { alive = false; };
   }, [site?.address, projectId]);
 
+  // ── 다필지 통합분석 읽기 소비(로컬 state·SSOT 미기록) — parcelCount>1 && 필지목록>1일 때만 ──
+  //   요약의 '통합 N필지' 라벨 옆에 dominant_zone/blended/통합GFA를 보강 표시. 없으면 단일 degrade.
+  const ssotParcels = site?.parcels ?? null;
+  const isMultiParcelSite = (site?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  const parcelsSig = useMemo(() => {
+    if (!isMultiParcelSite || !ssotParcels) return "";
+    return ssotParcels.map((p) => `${p.pnu}:${p.areaSqm ?? ""}`).sort().join("|");
+  }, [isMultiParcelSite, ssotParcels]);
+  const [integrated, setIntegrated] = useState<IntegratedSummary | null>(null);
+  useEffect(() => {
+    if (!isMultiParcelSite || !ssotParcels || ssotParcels.length < 2) { setIntegrated(null); return; }
+    const iKey = `integrated:${ssotParcels.length}:${parcelsSig}`;
+    const cached = getCachedAnalysis<IntegratedSummary>(iKey, TTL_7D);
+    if (cached) { setIntegrated(cached); return; }
+    let alive = true;
+    const triggeredProjectId = useProjectContextStore.getState().projectId;
+    void apiClient.post<IntegratedSummary>("/zoning/integrated-analysis", {
+      useMock: false,
+      body: {
+        parcels: ssotParcels.map((p) => ({ pnu: p.pnu, address: p.address, area_sqm: p.areaSqm, land_category: p.landCategory })),
+        use_llm: false,
+      },
+    }).then((res) => {
+      if (!alive) return;
+      if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
+      setIntegrated(res);
+      setCachedAnalysis(iKey, res);
+    }).catch(() => { /* 무목업: 실패 시 통합 보강 미표시(단일 degrade) */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMultiParcelSite, parcelsSig]);
+
   const hasAny = !!(site || design || cost || feas || esg);
   if (!hasAny) return null; // 분석 전 프로젝트는 표시하지 않음(아래 파이프라인이 실행 CTA 담당)
 
@@ -132,6 +178,27 @@ export function ProjectAnalysisSummary() {
         ? "실제 적용 한도(실효·건폐/용적·조례반영)"
         : "실제 적용 한도(실효·건폐/용적)"
     : "실제 적용 한도(실효·건폐/용적)";
+
+  // 다필지 통합 보강 표시값 — integrated 확보 시 dominant_zone(혼재 표기)·통합 GFA 등을 우선.
+  //   미확보(단일/로딩/실패)면 기존 단일 degrade(site.zoneCode/zoneMixed).
+  const zoneRowValue = integrated?.dominant_zone
+    ? (integrated.dominant_basis === "mixed_review_required" || site?.zoneMixed
+        ? `${integrated.dominant_zone} 외 (혼재·분리검토)`
+        : integrated.dominant_zone)
+    : site?.zoneCode
+      ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode)
+      : "—";
+  // 통합 실효 건폐/용적·통합 GFA 행(다필지 통합 확보 시에만 노출).
+  const integratedRows: Array<[string, string]> = integrated?.integrated
+    ? [
+        ...(integrated.integrated.blended_bcr_eff_pct != null || integrated.integrated.blended_far_eff_pct != null
+          ? [["통합 건폐/용적(실효)", `${pct(integrated.integrated.blended_bcr_eff_pct)} / ${pct(integrated.integrated.blended_far_eff_pct)}`] as [string, string]]
+          : []),
+        ...(integrated.integrated.integrated_gfa_sqm != null
+          ? [["통합 GFA(연면적)", num(Math.round(integrated.integrated.integrated_gfa_sqm), " ㎡")] as [string, string]]
+          : []),
+      ]
+    : [];
 
   return (
     <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
@@ -191,8 +258,9 @@ export function ProjectAnalysisSummary() {
           rows={[
             ["주소", site?.address ?? "—"],
             ["PNU", site?.pnu ?? "—"],
-            ["용도지역", site?.zoneCode ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode) : "—"],
+            ["용도지역", zoneRowValue],
             [landAreaLabel, landAreaValue],
+            ...integratedRows,
             ["공시지가(㎡)", officialPrice != null ? num(officialPrice, " 원") : "—"],
             ["최근접 지하철", subway?.name ? `${subway.name} (${num(subway.distance_m, "m")})` : "—"],
             ["최근접 학교", school?.name ? `${school.name} (${num(school.distance_m, "m")})` : "—"],

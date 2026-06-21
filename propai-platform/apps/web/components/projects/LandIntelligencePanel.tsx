@@ -65,6 +65,50 @@ type ZoningAnalysisResponse = {
   } | null;
 };
 
+// 다필지 통합분석 응답(POST /api/v1/zoning/integrated-analysis) — 면적가중 건폐/용적·통합GFA·
+//   인접성·통합 시나리오를 한 번에 제공. 중첩/배열은 부분응답 가능성에 대비해 전부 옵셔널(런타임 가드 일치).
+type IntegratedAnalysisResponse = {
+  parcel_count?: number | null;
+  zone_mix?: Array<{
+    zone?: string | null;
+    area_sqm?: number | null;
+    share_pct?: number | null;
+    bcr_legal?: number | null;
+    far_legal?: number | null;
+    bcr_eff?: number | null;
+    far_eff?: number | null;
+  }> | null;
+  dominant_zone?: string | null;
+  dominant_basis?: string | null; // 'area_share' | 'mixed_review_required' 등
+  integrated?: {
+    total_area_sqm?: number | null;
+    blended_bcr_eff_pct?: number | null;
+    blended_far_eff_pct?: number | null;
+    blended_bcr_legal_pct?: number | null;
+    blended_far_legal_pct?: number | null;
+    far_basis_note?: string | null;
+    integrated_gfa_sqm?: number | null;
+    integrated_footprint_sqm?: number | null;
+    gfa_basis?: string | null;
+  } | null;
+  adjacency?: {
+    contiguous?: boolean | null;
+    components?: number | null;
+    note?: string | null;
+  } | null;
+  developability?: string | null;
+  resolvable?: string | null;
+  blocking_parcels?: unknown[] | null;
+  honest_disclosure?: string | null;
+  scenario?: {
+    status?: "computed" | "tentative" | "blocked" | string | null;
+    disclosure?: string | null;
+    [key: string]: unknown;
+  } | null;
+  per_parcel?: unknown[] | null;
+  warnings?: string[] | null;
+};
+
 type TransactionItem = {
   deal_amount?: string;
   deal_year?: string;
@@ -243,6 +287,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
 
+  // ── 다필지 통합분석(/zoning/integrated-analysis) API state ──
+  //   parcelCount>1 && parcels.length>1일 때만 호출. 결과는 '읽기 소비'(SSOT 재기록 금지) — 로컬 state.
+  const [integratedData, setIntegratedData] = useState<IntegratedAnalysisResponse | null>(null);
+  const [integratedLoading, setIntegratedLoading] = useState(false);
+  const [integratedError, setIntegratedError] = useState<string | null>(null);
+
   // ── GIS layer toggles ──
   const [gisLayers, setGisLayers] = useState<Record<string, boolean>>({
     "용도지역": true,
@@ -411,6 +461,74 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.address, zoningData?.land_area_sqm]);
 
+  // ── 다필지 여부(SSOT 기준) — parcelCount>1 && 실제 필지목록>1일 때만 통합분석 경로 진입 ──
+  //   (단일/유효<2는 위 단일 경로(/zoning/analyze·/feasibility/auto-recommend)를 그대로 사용)
+  const ssotParcels = siteAnalysis?.parcels ?? null;
+  const isMultiParcel =
+    (siteAnalysis?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  // 통합분석 페이로드/캐시 키에 쓸 필지 시그니처(목록이 바뀌면 재호출). pnu 순서 무관하게 안정화.
+  const parcelsSig = useMemo(() => {
+    if (!isMultiParcel || !ssotParcels) return "";
+    return ssotParcels
+      .map((p) => `${p.pnu}:${p.areaSqm ?? ""}`)
+      .sort()
+      .join("|");
+  }, [isMultiParcel, ssotParcels]);
+
+  // ── 다필지 통합분석 fetch — 면적가중 건폐/용적·통합GFA·인접성·통합 시나리오를 한 번에 소비. ──
+  //   ★읽기 소비 원칙: 결과는 로컬 state로만 보관(updateSiteAnalysis로 SSOT 재기록 금지).
+  //   projectId 캡처→응답 시 재확인 가드(분석 중 프로젝트 전환 시 stale 결과 반영 차단).
+  useEffect(() => {
+    if (!isMultiParcel || !ssotParcels || ssotParcels.length < 2) {
+      setIntegratedData(null);
+      setIntegratedError(null);
+      return;
+    }
+
+    // 캐싱 키에 parcelCount + 필지 시그니처 포함(필지목록 변경 시 자동 무효화).
+    const iKey = `integrated:${ssotParcels.length}:${parcelsSig}`;
+    const iCached = getCachedAnalysis<IntegratedAnalysisResponse>(iKey, TTL_7D);
+    if (iCached) { setIntegratedData(iCached); setIntegratedLoading(false); return; }
+
+    let cancelled = false;
+    // 응답 시 프로젝트 전환 여부를 재확인하기 위한 캡처(계정/프로젝트 격리 — 기존 패턴).
+    const triggeredProjectId = useProjectContextStore.getState().projectId;
+    async function fetchIntegrated() {
+      setIntegratedLoading(true);
+      setIntegratedError(null);
+      try {
+        const res = await apiClient.post<IntegratedAnalysisResponse>("/zoning/integrated-analysis", {
+          useMock: false,
+          body: {
+            parcels: (ssotParcels ?? []).map((p) => ({
+              pnu: p.pnu,
+              address: p.address,
+              area_sqm: p.areaSqm,
+              land_category: p.landCategory,
+            })),
+            // 자동 통합 fetch는 시나리오 자동 경로와 동일하게 LLM 미사용(심층 분석은 별도 버튼 경로).
+            use_llm: false,
+          },
+        });
+        // 응답 도착 시 활성 프로젝트가 바뀌었으면(전환 race) 반영 중단 — stale 결과 차단.
+        if (cancelled) return;
+        if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
+        setIntegratedData(res);
+        setCachedAnalysis(iKey, res);
+      } catch (err) {
+        if (!cancelled) {
+          setIntegratedError(err instanceof Error ? err.message : "다필지 통합분석 실패");
+        }
+      } finally {
+        if (!cancelled) setIntegratedLoading(false);
+      }
+    }
+
+    const timer = setTimeout(fetchIntegrated, 900);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMultiParcel, parcelsSig]);
+
   // ── Local calculation engine (fallback) ──
   const localResult = useMemo(() => {
     if (!data?.address) return null;
@@ -548,27 +666,42 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   //   못 채웠어도, 이 게이트만으로 잠정 렌더(배지·점선·배너)를 강제한다 → "도로 타운하우스 88%
   //   확정" 할루시네이션을 이중으로 차단. (POSSIBLE이면 일반 부지로 간주해 확정% 무회귀 유지.)
   const specialGateTentative = useMemo(() => {
-    const dev = (zoningData?.special_parcel?.is_special === true)
-      ? (zoningData.special_parcel.developability ?? null)
-      : (siteAnalysis?.specialParcel?.isSpecial ? (siteAnalysis.specialParcel.developability ?? null) : null);
-    if (dev == null) return false;
-    return String(dev).toUpperCase() !== "POSSIBLE"; // POSSIBLE 외 모든 게이트는 잠정 처리
-  }, [zoningData?.special_parcel, siteAnalysis?.specialParcel]);
+    // 소스 합류(우선순위 무관·하나라도 비-POSSIBLE이면 잠정): ①/zoning/analyze special_parcel
+    //   ②다필지 통합 developability(integrated-analysis) ③store specialParcel.
+    const candidates: Array<string | null> = [
+      (zoningData?.special_parcel?.is_special === true)
+        ? (zoningData.special_parcel.developability ?? null)
+        : null,
+      integratedData?.developability ?? null,
+      (siteAnalysis?.specialParcel?.isSpecial ? (siteAnalysis.specialParcel.developability ?? null) : null),
+    ];
+    const devs = candidates.filter((d): d is string => d != null);
+    if (devs.length === 0) return false;
+    // POSSIBLE 외 모든 게이트는 잠정 처리 — 하나라도 비-POSSIBLE이면 잠정.
+    return devs.some((d) => String(d).toUpperCase() !== "POSSIBLE");
+  }, [zoningData?.special_parcel, integratedData?.developability, siteAnalysis?.specialParcel]);
   // 시나리오 전체가 선행절차 전제 잠정치인지 — 백엔드 scenario_status·후보 tentative·특이부지 게이트.
   const isScenarioTentative = useMemo(() => {
     const status = deepAnalysisResult?.scenarioStatus ?? scenarioData?.scenarioStatus;
     if (status === "tentative") return true;
     if (specialGateTentative) return true;
+    // 다필지 통합 시나리오 status가 'computed'가 아니면(tentative/blocked) 확정% 억제.
+    const iStatus = integratedData?.scenario?.status;
+    if (iStatus != null && iStatus !== "computed") return true;
     return scenarioItems.some((s) => "tentative" in s && s.tentative === true);
-  }, [deepAnalysisResult?.scenarioStatus, scenarioData?.scenarioStatus, specialGateTentative, scenarioItems]);
+  }, [deepAnalysisResult?.scenarioStatus, scenarioData?.scenarioStatus, specialGateTentative, integratedData?.scenario?.status, scenarioItems]);
   // 잠정 사유(첫 후보 우선) + 정직고지 — 잠정 안내 배너 표시용. 특이부지 honest_disclosure도 표면화.
   const tentativeDisclosure = useMemo(() => {
     const fromItem = scenarioItems.find((s) => "tentativeReason" in s && s.tentativeReason)?.tentativeReason as string | undefined;
     const specialHonest = (zoningData?.special_parcel?.is_special === true)
       ? (zoningData.special_parcel.honest_disclosure ?? null)
       : (siteAnalysis?.specialParcel?.isSpecial ? (siteAnalysis.specialParcel.honest ?? null) : null);
-    return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? specialHonest ?? null;
-  }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest, zoningData?.special_parcel, siteAnalysis?.specialParcel]);
+    // 다필지 통합분석의 정직고지(scenario.disclosure 우선, 없으면 honest_disclosure)도 표면화.
+    const integratedHonest = integratedData
+      ? ((integratedData.scenario?.disclosure ?? null) ?? (integratedData.honest_disclosure ?? null))
+      : null;
+    return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? integratedHonest ?? specialHonest ?? null;
+  }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest, integratedData, zoningData?.special_parcel, siteAnalysis?.specialParcel]);
 
   const analysis = {
     zoning: {
@@ -719,6 +852,118 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     )}
                     {zoningLoading && <span className="text-[8px] text-[var(--text-hint)]">조회 중...</span>}
                   </div>
+                </div>
+              )}
+
+              {/* ── 다필지 통합분석 카드 — parcelCount>1일 때만 렌더(읽기 소비, SSOT 미기록). ──
+                  대표 단일필지가 아닌, 면적가중 건폐/용적·통합GFA·용도혼재·인접성을 종합 표시한다.
+                  무목업: integratedData 미확보(로딩/실패)면 정직표기, 확보 시에만 수치 노출. */}
+              {isMultiParcel && (
+                <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] p-4">
+                  <p className="text-[10px] font-black text-[var(--accent-strong)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                    <Icons.Layers />
+                    다필지 통합분석
+                    <span className="normal-case tracking-normal text-[var(--text-hint)]">
+                      · {integratedData?.parcel_count ?? siteAnalysis?.parcelCount ?? (ssotParcels?.length ?? 0)}필지
+                    </span>
+                  </p>
+                  {integratedLoading && !integratedData ? (
+                    <div className="flex items-center gap-2 py-1">
+                      <Icons.Loader />
+                      <span className="text-xs text-[var(--text-secondary)]">통합분석 조회 중...</span>
+                    </div>
+                  ) : integratedData ? (
+                    <div className="space-y-3">
+                      {/* 대표 용도지역(혼재 배지) */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {integratedData.dominant_zone && (
+                          <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">
+                            {integratedData.dominant_zone}
+                          </span>
+                        )}
+                        {integratedData.dominant_basis === "mixed_review_required" && (
+                          <span className="rounded-full border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-2.5 py-1 text-[10px] font-black text-[var(--status-warning)]">
+                            혼재 · 분리검토
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 면적가중 실효 건폐/용적 + 통합 GFA */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
+                          <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest mb-0.5">건폐율(통합실효)</p>
+                          <p className="text-base font-black text-[var(--text-primary)]">
+                            {integratedData.integrated?.blended_bcr_eff_pct != null
+                              ? `${integratedData.integrated.blended_bcr_eff_pct}%`
+                              : "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
+                          <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
+                          <p className="text-base font-black text-[var(--text-primary)]">
+                            {integratedData.integrated?.blended_far_eff_pct != null
+                              ? `${integratedData.integrated.blended_far_eff_pct}%`
+                              : "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
+                          <p className="text-[8px] font-black text-teal-400 uppercase tracking-widest mb-0.5">통합 GFA</p>
+                          <p className="text-base font-black text-[var(--text-primary)]">
+                            {integratedData.integrated?.integrated_gfa_sqm != null
+                              ? `${Math.round(integratedData.integrated.integrated_gfa_sqm).toLocaleString()}㎡`
+                              : "—"}
+                          </p>
+                        </div>
+                      </div>
+                      {integratedData.integrated?.far_basis_note && (
+                        <p className="text-[9px] text-[var(--text-hint)] leading-relaxed">{integratedData.integrated.far_basis_note}</p>
+                      )}
+
+                      {/* 용도별 면적/비율(zone_mix) — 혼재 부지의 용도별 분포 정직표기. */}
+                      {(integratedData.zone_mix?.length ?? 0) > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest">용도별 구성</p>
+                          {(integratedData.zone_mix ?? []).map((z, i) => (
+                            <div key={`zmix-${i}`} className="flex items-center justify-between text-[10px]">
+                              <span className="font-bold text-[var(--text-secondary)]">{z.zone ?? "—"}</span>
+                              <span className="text-[var(--text-hint)]">
+                                {z.area_sqm != null ? `${Math.round(z.area_sqm).toLocaleString()}㎡` : "—"}
+                                {z.share_pct != null ? ` · ${z.share_pct}%` : ""}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* 인접성 안내(통합개발 가능여부 신호) */}
+                      {integratedData.adjacency?.note && (
+                        <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+                          <span className="font-black text-[var(--accent-strong)]">인접성</span> · {integratedData.adjacency.note}
+                        </p>
+                      )}
+
+                      {/* 시나리오 status 분기: computed=확정, tentative/blocked=잠정 배너(확정% 억제) */}
+                      {integratedData.scenario?.status && integratedData.scenario.status !== "computed" && (
+                        <div className="rounded-lg border border-dashed border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] p-2.5">
+                          <p className="text-[10px] font-black text-[var(--status-warning)] uppercase tracking-widest mb-1 flex items-center gap-1.5">
+                            <Icons.AlertCircle />
+                            {integratedData.scenario.status === "blocked" ? "개발 제한 · 통합 시나리오 보류" : "선행절차 전제 · 잠정 (확정 아님)"}
+                          </p>
+                          {(integratedData.scenario.disclosure || integratedData.honest_disclosure) && (
+                            <p className="text-[10px] leading-relaxed text-[var(--text-secondary)] font-medium">
+                              {integratedData.scenario.disclosure || integratedData.honest_disclosure}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-[var(--text-hint)] leading-relaxed">
+                      {integratedError
+                        ? `통합분석을 불러오지 못했습니다 — ${integratedError}`
+                        : "필지 보강 완료 후 자동으로 통합분석이 표시됩니다."}
+                    </p>
+                  )}
                 </div>
               )}
 
