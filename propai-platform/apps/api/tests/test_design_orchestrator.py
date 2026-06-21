@@ -235,6 +235,80 @@ def test_interpret_proposal_none_when_no_mass_basis():
     assert out is None
 
 
+# ── 자가학습 폐루프(추천안→analysis_ledger 적재·ledger_hash 노출) ──
+
+def test_proposal_to_ledger_payload_has_input_and_output():
+    from app.services.design_ingest.composition import SiteContext
+
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_far_pct=200.0,
+                       far_source="ordinance")
+    cand = {"primary_drawing_type": "floor_plan", "disciplines_covered": ["건축"],
+            "estimated_gfa_sqm": 1800.0, "estimated_floors": 6, "estimated_units": 16,
+            "parking_required": 16, "compliant": True, "score": 0.8}
+    p = orch._proposal_to_ledger_payload(cand, {"verdict": "pass"}, site,
+                                         tenant_id="T1", project_id="P1")
+    assert p["kind"] == "design_generation"
+    # curate_few_shot이 input_summary를 뽑는 'input' 키(부지조건) 존재
+    assert p["input"]["zone_code"] == "2R" and p["input"]["area_sqm"] == 1000.0
+    # good_output 핵심(설계안 요약)
+    assert p["estimated_gfa_sqm"] == 1800.0 and p["verdict"] == "pass"
+    assert any(f["check_id"] == "GFA" for f in p["findings_brief"])
+    # ★해시 테넌트 스코프 — 교차테넌트 큐레이션 차단(input엔 미포함, 부지조건만 유지)
+    assert p["tenant_id"] == "T1" and p["project_id"] == "P1"
+    assert "tenant_id" not in p["input"]
+
+
+def test_proposal_ledger_payload_hash_scoped_by_tenant():
+    # 동일 부지+설계라도 테넌트가 다르면 payload(→content_hash)가 달라져 교차조인 불가
+    from app.services.design_ingest.composition import SiteContext
+    from app.services.ledger.analysis_ledger_service import _content_hash
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_far_pct=200.0, far_source="ordinance")
+    cand = {"primary_drawing_type": "floor_plan", "estimated_gfa_sqm": 1800.0, "compliant": True}
+    pa = orch._proposal_to_ledger_payload(cand, {"verdict": "pass"}, site, tenant_id="A")
+    pb = orch._proposal_to_ledger_payload(cand, {"verdict": "pass"}, site, tenant_id="B")
+    assert _content_hash(pa) != _content_hash(pb)  # 테넌트별 해시 분기
+
+
+def test_generate_records_ledger_and_exposes_hash(monkeypatch):
+    # ★추천안이 원장에 적재되면 그 content_hash가 추천 제안안에 ledger_hash로 노출(피드백 조인키)
+    _patch_search(monkeypatch, [_fp_match()])
+    captured = {}
+
+    async def _fake_append(*, analysis_type, payload, tenant_id=None, project_id=None, source="quick"):
+        captured.update(analysis_type=analysis_type, payload=payload, source=source)
+        return {"ok": True, "unchanged": False, "version": 1, "content_hash": "led123abc"}
+
+    import app.services.ledger.analysis_ledger_service as ls
+    monkeypatch.setattr(ls, "append_analysis", _fake_append)
+
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["recommendation"] is not None
+    rec = out["proposals"][out["recommendation"]["index"]]
+    assert rec["ledger_hash"] == "led123abc"
+    assert captured["analysis_type"] == "design_generation" and captured["source"] == "design_generation"
+    assert captured["payload"]["input"]["zone_code"] == "2R"
+
+
+def test_generate_ledger_failure_degrades_no_hash(monkeypatch):
+    # 원장 적재 실패(quota 등) → ledger_hash 미부착(정직 폴백), 생성은 비차단
+    _patch_search(monkeypatch, [_fp_match()])
+
+    async def _fail_append(**_k):
+        return {"ok": False, "quota_exceeded": True}
+
+    import app.services.ledger.analysis_ledger_service as ls
+    monkeypatch.setattr(ls, "append_analysis", _fail_append)
+
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["recommendation"] is not None
+    rec = out["proposals"][out["recommendation"]["index"]]
+    assert "ledger_hash" not in rec  # 미적재 → 키 없음(정직)
+
+
 def test_generate_permit_denied_all_fail(monkeypatch):
     _patch_search(monkeypatch, [_fp_match()])
     # 보전녹지지역은 M06(일반분양) 불허 → 전부 fail, 추천 없음

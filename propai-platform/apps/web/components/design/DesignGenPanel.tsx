@@ -105,7 +105,12 @@ type Verdict = {
   notes: string[];
 };
 
-type Proposal = { candidate: Candidate; verdict: Verdict; evidence: Evidence[] };
+type Proposal = {
+  candidate: Candidate;
+  verdict: Verdict;
+  evidence: Evidence[];
+  ledger_hash?: string | null;  // 추천안 원장 적재 해시(피드백 큐레이션 조인키) — 추천안만 존재
+};
 
 type GenerateResult = {
   ok: boolean;
@@ -530,9 +535,12 @@ export function DesignGenPanel({ projectId }: Props) {
   }
 
   // 설계안 피드백(👍👎) → 기존 성장 피드백 엔드포인트(ai_feedback 적재, 사람승인 게이트).
-  // 현재 동작: service별 down율 집계(compute_down_rates)로 개선대상(design_orchestrator) 식별.
-  // few-shot 자동 큐레이션은 analysis_ledger 연계가 필요해 후속(현재는 미연계 — 과대표현 금지).
-  async function handleFeedback(idx: number, c: Candidate, verdict: "up" | "down") {
+  // service별 down율 집계(compute_down_rates)로 개선대상(design_orchestrator) 식별 +
+  // ★추천안은 ledger_hash(원장 적재 해시)로 키잉 → curate_few_shot이 우수 제안안을
+  //   few-shot 예시로 큐레이션(사람 승인 게이트). 미적재(원장 해시 없음)면 도면해시로 정직 폴백.
+  async function handleFeedback(
+    idx: number, c: Candidate, verdict: "up" | "down", ledgerHash?: string | null,
+  ) {
     let correction: string | null = null;
     if (verdict === "down" && typeof window !== "undefined") {
       correction = window.prompt("개선 의견(선택):")?.trim() || null;
@@ -543,7 +551,8 @@ export function DesignGenPanel({ projectId }: Props) {
           target_type: "recommendation",
           verdict,
           service: "design_orchestrator",
-          content_hash: c.primary_content_hash || null,
+          // 제안안 단위 큐레이션 우선(원장 해시) → 없으면 주 도면 해시 폴백.
+          content_hash: ledgerHash || c.primary_content_hash || null,
           correction,
         },
       });
@@ -1057,7 +1066,7 @@ export function DesignGenPanel({ projectId }: Props) {
                         <button
                           type="button"
                           aria-label="좋은 설계안"
-                          onClick={() => handleFeedback(i, c, "up")}
+                          onClick={() => handleFeedback(i, c, "up", p.ledger_hash)}
                           disabled={feedback[i] === "up"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >
@@ -1066,7 +1075,7 @@ export function DesignGenPanel({ projectId }: Props) {
                         <button
                           type="button"
                           aria-label="개선 필요"
-                          onClick={() => handleFeedback(i, c, "down")}
+                          onClick={() => handleFeedback(i, c, "down", p.ledger_hash)}
                           disabled={feedback[i] === "down"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >

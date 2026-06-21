@@ -196,6 +196,79 @@ async def _interpret_proposal(site: SiteContext, candidate: dict) -> dict | None
         return None
 
 
+def _proposal_to_ledger_payload(
+    candidate: dict, verdict: dict, site: SiteContext,
+    *, tenant_id: str | None = None, project_id: str | None = None,
+) -> dict:
+    """추천 설계안 → analysis_ledger payload(자가학습 few-shot 큐레이션의 '좋은 출력').
+
+    curate_few_shot이 input/request/context 키로 input_summary를 뽑으므로, 부지조건을 'input'에
+    담는다(good_output=이 payload 요약). 비교·재현 핵심만(대용량 제외). [[project_analysis_ledger]]
+    ★tenant_id/project_id를 payload에 포함 → content_hash=sha256(payload)가 테넌트 스코프가 되어,
+    동일 부지+설계라도 타 테넌트 ledger 항목과 조인되지 않음(curate_few_shot 조인이 hash-only라
+    테넌트 무관인 점의 교차테넌트 큐레이션 방지). 'input'엔 안 넣어 input_summary는 부지조건만 유지.
+    """
+    return {
+        "kind": "design_generation",
+        "schema_version": "design_generation/v1",
+        "tenant_id": tenant_id,      # 해시 테넌트 스코프(교차테넌트 큐레이션 차단)
+        "project_id": project_id,    # 해시 프로젝트 스코프
+        "primary_content_hash": candidate.get("primary_content_hash"),  # 주 도면 스코프(설계 식별)
+        # 입력 컨텍스트(큐레이션 input_summary 추출 키) — 부지조건.
+        "input": {
+            "zone_code": site.zone_code,
+            "area_sqm": site.area_sqm,
+            "building_use": site.building_use_kr,
+            "far_source": site.far_source,
+        },
+        # 좋은 출력(설계안 요약).
+        "verdict": verdict.get("verdict"),
+        "primary_drawing_type": candidate.get("primary_drawing_type"),
+        "disciplines_covered": candidate.get("disciplines_covered"),
+        "estimated_gfa_sqm": candidate.get("estimated_gfa_sqm"),
+        "estimated_floors": candidate.get("estimated_floors"),
+        "estimated_units": candidate.get("estimated_units"),
+        "parking_required": candidate.get("parking_required"),
+        "compliant": candidate.get("compliant"),
+        "score": candidate.get("score"),
+        "findings_brief": [
+            {"check_id": "GFA", "status": "info",
+             "current": candidate.get("estimated_gfa_sqm"), "limit": site.max_gfa_sqm},
+            {"check_id": "VERDICT", "status": verdict.get("verdict"),
+             "current": None, "limit": None},
+        ],
+    }
+
+
+async def _record_proposal_ledger(
+    candidate: dict, verdict: dict, site: SiteContext, req: DesignRequest
+) -> str | None:
+    """추천 설계안을 analysis_ledger에 append(자가학습 폐루프 전제고리). best-effort.
+
+    반환: 원장 content_hash(피드백 👍/👎의 큐레이션 조인키) 또는 None(미적재·정직).
+    quota 초과/실패는 None으로 정직 강등(생성 결과 비차단). 멱등(동일 payload→동일 hash).
+    """
+    try:
+        from app.services.ledger import analysis_ledger_service as ledger
+
+        res = await ledger.append_analysis(
+            analysis_type="design_generation",
+            payload=_proposal_to_ledger_payload(
+                candidate, verdict, site,
+                tenant_id=req.tenant_id, project_id=req.project_id,
+            ),
+            tenant_id=req.tenant_id,
+            project_id=req.project_id,
+            source="design_generation",
+        )
+        if isinstance(res, dict) and res.get("ok") and res.get("content_hash"):
+            return str(res["content_hash"])
+        return None
+    except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 생성 결과를 깨면 안 됨
+        logger.info("design 추천안 원장 적재 생략: %s", str(e)[:120])
+        return None
+
+
 def _site_summary(site: SiteContext) -> dict:
     return {
         "zone_code": site.zone_code,
@@ -281,6 +354,17 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         interpretation = await _interpret_proposal(
             site, proposals[recommendation["index"]]["candidate"]
         )
+
+    # 자가학습 폐루프 — 추천안을 analysis_ledger에 적재(best-effort)하고 content_hash를 노출.
+    # 이 해시가 프론트 피드백(👍/👎)의 큐레이션 조인키 → curate_few_shot이 우수 제안안을
+    # few-shot 예시로 축적(사람 승인 게이트). 미적재 시 None(프론트는 도면해시로 정직 폴백).
+    if recommendation is not None:
+        rec_proposal = proposals[recommendation["index"]]
+        ledger_hash = await _record_proposal_ledger(
+            rec_proposal["candidate"], rec_proposal["verdict"], site, req
+        )
+        if ledger_hash:
+            rec_proposal["ledger_hash"] = ledger_hash
 
     notes: list[str] = []
     if not matches:
