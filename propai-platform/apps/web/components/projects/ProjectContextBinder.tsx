@@ -5,6 +5,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { apiClient } from "@/lib/api-client";
 import { applyRemoteSnapshot } from "@/lib/projectSync";
+import { buildSiteMetaPatch } from "@/lib/project-site-meta";
 
 type ProjectMetaLite = {
   id: string;
@@ -72,17 +73,10 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
 
         // 메타 병합(컨텍스트 우선, 빈 필드만 백엔드 meta로 보강).
         // 사용자 분석(컨텍스트)이 이미 채운 값은 절대 덮어쓰지 않는다.
+        // ★U1: address 포함 — 스냅샷 복원이 address 없는 siteAnalysis로 덮어도 meta.address로
+        //   보강해 통합분석 게이트(hasContext=address||pnu)가 막히지 않게 한다.
         const site = useProjectContextStore.getState().siteAnalysis;
-        const patch: Partial<{ landAreaSqm: number; zoneCode: string; pnu: string }> = {};
-        if ((site?.landAreaSqm ?? null) == null && meta.total_area_sqm != null && meta.total_area_sqm > 0) {
-          patch.landAreaSqm = meta.total_area_sqm;
-        }
-        if (!site?.zoneCode && meta.zone_type) {
-          patch.zoneCode = meta.zone_type;
-        }
-        if (!site?.pnu && meta.pnu_codes && meta.pnu_codes?.length > 0) {
-          patch.pnu = meta.pnu_codes[0];
-        }
+        const patch = buildSiteMetaPatch(site, meta);
         if (Object.keys(patch).length > 0) {
           useProjectContextStore.getState().updateSiteAnalysis(patch);
         }
