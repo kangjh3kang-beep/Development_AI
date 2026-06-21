@@ -99,9 +99,11 @@ class CalcEngine:
 
         value, entries = self._dispatch(target, payload, elements)
         if held_reasons:  # 강등 사유를 calc_trace에 명시(무라벨 HELD 제거).
+            # basis_article은 법령 조문 슬롯 — HELD 강등은 비법령 내부근거(분류 신뢰도 방법론)이므로 빈값(법령 근거
+            # 없음·정직), 내부 불변식 표기(INV-12)는 note로 이동(법령 해소 시 비법령 식별자 '미해소' 혼선 제거).
             entries.append(CalcTraceEntry(
-                rule_id="held_reason", basis_article="INV-12(분류 confidence 상속·불확실→HELD)",
-                note="HELD 강등 사유 — " + "; ".join(held_reasons)))
+                rule_id="held_reason", basis_article="",
+                note="HELD 강등 사유(INV-12: 분류 confidence 상속·불확실→HELD) — " + "; ".join(held_reasons)))
 
         status = RecordStatus.HELD if held else RecordStatus.AGREED
         q = LegalQuantity(

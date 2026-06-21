@@ -56,7 +56,11 @@ def test_held_reason_recorded_in_trace():
         target=CalcTarget.BUILDING_AREA, payload={"outer_area": 600.0},
         elements=[CalcElement(semantic_type=SemanticType.UNKNOWN, area=10.0, confidence=0.9)])
     assert q.status == RecordStatus.HELD
-    assert any(e.rule_id == "held_reason" and "UNKNOWN" in (e.note or "") for e in q.calc_trace.entries)
+    held = next(e for e in q.calc_trace.entries if e.rule_id == "held_reason")
+    assert "UNKNOWN" in (held.note or "")
+    # 슬롯 혼선 제거: 비법령 내부근거(INV-12)는 법령 슬롯(basis_article) 아닌 note에(법령 해소 '미해소' 혼선 방지).
+    assert held.basis_article == ""
+    assert "INV-12" in (held.note or "")
 
 
 def test_far_unknown_parking_held_and_not_excluded():
