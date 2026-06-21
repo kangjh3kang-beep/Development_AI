@@ -110,8 +110,50 @@ def _build_market() -> SpecialistAgent:
                            tool=_market_tool, interpreter=None, panel=_default_panel)
 
 
+# ── 심의: 심의분석엔진(deliberation-review) BFF 도메인 — 인·허가/심의 프로세스 ──
+
+def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
+    """심의엔진 PermitProcessResult → SpecialistAgent findings/summary 정규화(결정론 매핑, 수치 생성 X)."""
+    findings = [{"check_id": st.get("stage_id"), "status": st.get("conformance"),
+                 "current": st.get("verification_status"), "limit": None,
+                 "note": st.get("name")} for st in (res.get("stages") or [])]
+    return {"findings": findings,
+            "summary": {"available": True, "spec_id": res.get("spec_id"),
+                        "overall_conformance": res.get("overall_conformance"),
+                        "overall_verification": res.get("overall_verification"),
+                        "run_id": res.get("run_id")}}
+
+
+async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """심의 도메인 — 심의엔진 /api/v1/permit/process 호출(인·허가/심의 프로세스). 수치/판정은 엔진 결정론 산출만.
+
+    엔진 URL 미설정 시 graceful(미연동 — findings 비움 + reason). 라이브 실패도 표면화(무음 단정 금지)."""
+    from app.core.config import get_settings
+    s = get_settings()
+    base = (getattr(s, "DELIBERATION_ENGINE_URL", "") or "").rstrip("/")
+    if not base:
+        return {"findings": [], "summary": {"available": False, "reason": "engine_url_unset"}}
+    token = getattr(s, "DELIBERATION_ENGINE_TOKEN", "") or ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as cli:
+            r = await cli.post(f"{base}/api/v1/permit/process", json=data, headers=headers)
+            r.raise_for_status()
+            res = r.json()
+    except Exception as exc:  # noqa: BLE001 — 라이브 실패는 graceful 표면화(무음 단정 금지)
+        return {"findings": [],
+                "summary": {"available": False, "reason": f"engine_call_failed:{type(exc).__name__}"}}
+    return _map_permit_response(res if isinstance(res, dict) else {})
+
+
+def _build_deliberation() -> SpecialistAgent:
+    return SpecialistAgent(domain="심의", task_type="permit_process",
+                           tool=_deliberation_tool, interpreter=None)
+
+
 _FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far,
-              "cost": _build_cost, "market": _build_market}
+              "cost": _build_cost, "market": _build_market, "심의": _build_deliberation}
 AVAILABLE_DOMAINS = tuple(_FACTORIES.keys())
 
 
