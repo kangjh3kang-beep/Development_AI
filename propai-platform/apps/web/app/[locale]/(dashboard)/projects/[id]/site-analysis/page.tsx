@@ -10,6 +10,7 @@ import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { LandProfileCard } from "@/components/projects/LandProfileCard";
+import { UtilizationMaximizerCard } from "@/components/projects/UtilizationMaximizerCard";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -1114,6 +1115,17 @@ export default function SiteAnalysisPage() {
               transition={{ delay: 0.15 }}
             >
               <LandProfileCard />
+            </motion.div>
+
+            {/* ── 토지 활용성 극대화 + AI 현실최적조합(U3) — 토지특성 다음 레이어 ──
+                SSOT siteAnalysis→optimizeUtilization 파생 소비(이론최대 vs 현실최적·기부채납 최소화).
+                미확보 시 null(미표시). */}
+            <motion.div
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.18 }}
+            >
+              <UtilizationMaximizerCard />
             </motion.div>
 
             <motion.div
