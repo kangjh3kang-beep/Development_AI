@@ -52,6 +52,7 @@ type IngestResult = {
 
 type Candidate = {
   primary_drawing_type: string;
+  primary_content_hash?: string | null;
   scale_factor: number | null;
   estimated_gfa_sqm: number | null;
   estimated_floors: number | null;
@@ -260,6 +261,8 @@ export function DesignGenPanel({ projectId }: Props) {
 
   // 추천안 적용(모세혈관 SSOT 반영) — 적용된 설계안 인덱스.
   const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
+  // 설계안 피드백(👍👎) — 자가학습 신호(인덱스→verdict).
+  const [feedback, setFeedback] = useState<Record<number, "up" | "down">>({});
 
   async function handleIngest() {
     if (!file) return;
@@ -284,6 +287,7 @@ export function DesignGenPanel({ projectId }: Props) {
     setGenErr(null);
     setResult(null);
     setAppliedIdx(null);
+    setFeedback({});
     try {
       const data = await apiClient.post<GenerateResult>("/design-gen/generate", {
         body: {
@@ -372,6 +376,30 @@ export function DesignGenPanel({ projectId }: Props) {
     });
     markStageComplete("design");
     setAppliedIdx(idx);
+  }
+
+  // 설계안 피드백(👍👎) → 기존 성장 피드백 엔드포인트(ai_feedback 적재, 사람승인 게이트).
+  // 현재 동작: service별 down율 집계(compute_down_rates)로 개선대상(design_orchestrator) 식별.
+  // few-shot 자동 큐레이션은 analysis_ledger 연계가 필요해 후속(현재는 미연계 — 과대표현 금지).
+  async function handleFeedback(idx: number, c: Candidate, verdict: "up" | "down") {
+    let correction: string | null = null;
+    if (verdict === "down" && typeof window !== "undefined") {
+      correction = window.prompt("개선 의견(선택):")?.trim() || null;
+    }
+    try {
+      await apiClient.post("/growth/feedback", {
+        body: {
+          target_type: "recommendation",
+          verdict,
+          service: "design_orchestrator",
+          content_hash: c.primary_content_hash || null,
+          correction,
+        },
+      });
+      setFeedback((f) => ({ ...f, [idx]: verdict }));
+    } catch {
+      // 피드백 전송 실패는 조용히 무시(본 기능 비차단).
+    }
   }
 
   return (
@@ -691,6 +719,30 @@ export function DesignGenPanel({ projectId }: Props) {
                           공사비·수지 등 하류 분석에 연면적·층수·세대수 반영됨
                         </span>
                       )}
+                      {/* 자가학습 피드백 — 👍👎(👎는 개선 의견 선택입력)로 성장 루프에 신호 전달 */}
+                      <span className="ml-auto inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="좋은 설계안"
+                          onClick={() => handleFeedback(i, c, "up")}
+                          disabled={feedback[i] === "up"}
+                          className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
+                        >
+                          👍
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="개선 필요"
+                          onClick={() => handleFeedback(i, c, "down")}
+                          disabled={feedback[i] === "down"}
+                          className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
+                        >
+                          👎
+                        </button>
+                        {feedback[i] && (
+                          <span className="text-[11px] text-[var(--text-tertiary)]">의견 감사합니다</span>
+                        )}
+                      </span>
                     </div>
                   </div>
                 );

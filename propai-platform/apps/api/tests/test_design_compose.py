@@ -167,6 +167,24 @@ def test_compute_parking_design_no_basis_returns_none():
     assert pk["required"] is None and pk["feasible"] is None
 
 
+def test_compose_exposes_primary_content_hash():
+    # 피드백(👍👎) 학습 연결키 — 주 도면 content_hash가 후보/to_dict에 노출
+    s = _site()
+    matches = [{"point_id": "fp1", "drawing_type": "floor_plan", "total_area_sqm": 500.0,
+                "score": 0.95, "content_hash": "abc123def4560000"}]
+    top = compose(s, matches)[0]
+    assert top.primary_content_hash == "abc123def4560000"
+    assert top.to_dict()["primary_content_hash"] == "abc123def4560000"
+    # content_hash 없는 매치는 None(정직)
+    top2 = compose(s, [{"point_id": "x", "drawing_type": "floor_plan",
+                        "total_area_sqm": 500.0, "score": 0.9}])[0]
+    assert top2.primary_content_hash is None
+    # ★비-hex content_hash는 None으로 차단(타 경로와 계약 통일)
+    top3 = compose(s, [{"point_id": "y", "drawing_type": "floor_plan", "total_area_sqm": 500.0,
+                        "score": 0.9, "content_hash": "../etc/passwd"}])[0]
+    assert top3.primary_content_hash is None
+
+
 def test_compose_attaches_parking_fields():
     # 조합 결과에 주차설계 필드가 부착되는지(통합)
     s = _site()

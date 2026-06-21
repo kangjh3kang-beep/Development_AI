@@ -9,7 +9,15 @@ buildable·compliant 한 Top-N 설계 초안을 만든다. 모든 추정은 warn
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
+
+# content_hash(SHA-256 hex) 형식 가드 — object_store/search_service와 동일 계약(오염값 차단).
+_HEX_HASH = re.compile(r"[0-9a-f]{16,128}")
+
+
+def _valid_hash(v: object) -> str | None:
+    return v if isinstance(v, str) and _HEX_HASH.fullmatch(v) else None
 
 # 세대수 추정 시 전용률(연면적→전용 환산, 대략) — 추정치임을 명시.
 _DEFAULT_EFFICIENCY = 0.75
@@ -63,6 +71,7 @@ class CompositionCandidate:
 
     selected: dict[str, str]            # drawing_type -> point_id
     primary_drawing_type: str
+    primary_content_hash: str | None = None  # 주 도면 content_hash — 피드백(👍👎) 신호 연결키(down율 식별)
     scale_factor: float | None = None
     estimated_gfa_sqm: float | None = None
     estimated_floors: int | None = None
@@ -80,6 +89,7 @@ class CompositionCandidate:
         return {
             "selected": self.selected,
             "primary_drawing_type": self.primary_drawing_type,
+            "primary_content_hash": self.primary_content_hash,
             "scale_factor": self.scale_factor,
             "estimated_gfa_sqm": self.estimated_gfa_sqm,
             "estimated_floors": self.estimated_floors,
@@ -277,6 +287,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
         candidates.append(CompositionCandidate(
             selected=selected,
             primary_drawing_type=_g(fp, "drawing_type") or "unknown",
+            primary_content_hash=_valid_hash(_g(fp, "content_hash")),  # 피드백 신호 연결키(hex 검증)
             scale_factor=scale,
             estimated_gfa_sqm=est_gfa,
             estimated_floors=est_floors,
