@@ -62,6 +62,7 @@ class DrawingMatch:
     summary: str | None = None
     content_hash: str | None = None   # 원본 조회(presigned) 키 산출용
     stored: bool = False              # R2 원본 보관 여부(object_key 존재) — '원본 보기' 노출용
+    has_thumbnail: bool = False       # 썸네일(프록시) 보관 여부 — 인라인 미리보기 노출용
 
     @classmethod
     def from_scored(cls, point: object) -> DrawingMatch:
@@ -77,6 +78,7 @@ class DrawingMatch:
             summary=(payload.get("summary") or "")[:300] or None,
             content_hash=payload.get("content_hash"),
             stored=bool(payload.get("object_key")),
+            has_thumbnail=bool(payload.get("has_thumbnail")),
         )
 
     def to_dict(self) -> dict:
@@ -90,6 +92,7 @@ class DrawingMatch:
             "summary": self.summary,
             "content_hash": self.content_hash,
             "stored": self.stored,
+            "has_thumbnail": self.has_thumbnail,
         }
 
 

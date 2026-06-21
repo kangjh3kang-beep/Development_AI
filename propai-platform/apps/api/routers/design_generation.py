@@ -173,7 +173,20 @@ async def search(
         keywords=req.keywords,
         tenant_id=str(current.tenant_id),  # ★항상 인증값 — 클라이언트 tenant 주입 불가
     )
-    return await search_drawings(query, top_k=top_k)
+    result = await search_drawings(query, top_k=top_k)
+    # 썸네일 보관 결과에 인라인 미리보기용 presigned URL 첨부(서버측·테넌트 스코프·단기).
+    if object_store.is_configured():
+        tid = str(current.tenant_id)
+        for r in result.get("results", []):
+            if r.get("has_thumbnail") and r.get("content_hash"):
+                try:
+                    # content_hash 비정상(비-hex) 시 thumb_key가 ValueError → None 강등(검색 비차단).
+                    r["thumb_url"] = object_store.presigned_get_url(
+                        object_store.thumb_key(tid, r["content_hash"]), tid, expires=600
+                    )
+                except Exception:  # noqa: BLE001 — 미리보기 URL 실패는 검색 결과를 깨지 않음
+                    r["thumb_url"] = None
+    return result
 
 
 @router.post("/generate", dependencies=[Depends(enforce_llm_quota)])
@@ -246,19 +259,28 @@ async def laws_for_domain(
 @router.get("/drawings/{content_hash}/url")
 async def drawing_original_url(
     content_hash: str,
+    variant: str = Query("original"),  # original | thumb(저해상 프록시)
     current: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """업로드한 원본 도면의 단기 조회 URL(presigned). ★서버 권위적·테넌트 스코프(IDOR-proof).
+    """업로드한 도면의 단기 조회 URL(presigned). ★서버 권위적·테넌트 스코프(IDOR-proof).
 
-    content_hash만 받고 object_key는 인증 테넌트로 서버가 조회·재구성한다(클라이언트 키 미신뢰).
-    미보관/미설정/타테넌트 → 404(존재 은닉). 원본은 비공개 — 단기 서명 URL로만 노출.
+    content_hash만 받고 키는 인증 테넌트로 서버가 조회·재구성한다(클라이언트 키 미신뢰).
+    variant=thumb는 썸네일(프록시·deterministic 키), original은 원본(Qdrant object_key 조회).
+    미보관/미설정/타테넌트 → 404(존재 은닉). 비공개 — 단기 서명 URL로만 노출.
     """
     if not object_store.is_configured():
         raise HTTPException(status_code=404, detail="원본 저장소가 구성되지 않았습니다.")
-    key = await get_drawing_object_key(content_hash, str(current.tenant_id))
+    tid = str(current.tenant_id)
+    if variant == "thumb":
+        try:
+            key: str | None = object_store.thumb_key(tid, content_hash)
+        except ValueError as e:  # content_hash 형식 오류
+            raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.") from e
+    else:
+        key = await get_drawing_object_key(content_hash, tid)
     if not key:
         raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.")
-    url = object_store.presigned_get_url(key, str(current.tenant_id), expires=600)
+    url = object_store.presigned_get_url(key, tid, expires=600)
     if not url:
         raise HTTPException(status_code=404, detail="원본 조회 URL을 생성할 수 없습니다.")
     return {"url": url, "expires_in": 600}

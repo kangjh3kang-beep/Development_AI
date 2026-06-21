@@ -108,6 +108,85 @@ def test_compress_empty_passthrough():
     assert enc is None and body == b""
 
 
+# ── 썸네일/프록시: 이미지만 WebP 저해상 + 키 ──
+def _png(w=1000, h=800) -> bytes:
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (10, 20, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_make_thumbnail_image_to_webp():
+    import io
+
+    from PIL import Image
+    thumb = os_mod.make_thumbnail(_png(), "도면.png")
+    assert thumb is not None
+    out = Image.open(io.BytesIO(thumb))
+    assert out.format == "WEBP" and max(out.size) <= 512
+
+
+def test_make_thumbnail_non_image_none():
+    for fn in ("a.dxf", "a.pdf", "a.ifc", "a.xlsx", "a.unknown"):
+        assert os_mod.make_thumbnail(b"data" * 100, fn) is None
+    assert os_mod.make_thumbnail(b"", "a.png") is None       # 빈입력
+    assert os_mod.make_thumbnail(b"notanimage", "a.png") is None  # 손상 → None(정직)
+
+
+def test_make_thumbnail_rejects_oversized_pixels(monkeypatch):
+    # ★디컴프레션밤 가드 — 헤더 픽셀수가 한도 초과면 디코딩 전 None(메모리 폭증 차단).
+    monkeypatch.setattr(os_mod, "_THUMB_MAX_DECODE_PX", 100)  # 작은 한도로 거부경로 검증
+    assert os_mod.make_thumbnail(_png(1000, 800), "big.png") is None  # 800K px > 100 → None
+
+
+def test_thumb_key():
+    assert os_mod.thumb_key("T1", _H) == f"design/T1/{_H}_thumb.webp"
+    k = os_mod.thumb_key("../x", _H)  # tenant 정화
+    assert k.startswith("design/") and ".." not in k and k.endswith("_thumb.webp")
+    with pytest.raises(ValueError):
+        os_mod.thumb_key("T1", "NOThex")
+
+
+def test_presigned_blocks_cross_tenant_thumb(monkeypatch):
+    # ★썸네일 키에도 owner 프리픽스 가드 적용 — 타테넌트 썸네일 서명 거부
+    _set_env(monkeypatch)
+    tk = os_mod.thumb_key("T1", _H)
+    assert os_mod.presigned_get_url(tk, "T2") is None       # 타테넌트 → None
+    assert os_mod.presigned_get_url(tk, "T1") is not None    # 본인 → 발급
+
+
+async def test_store_thumbnail_image_stored(monkeypatch):
+    from app.services.design_ingest import ingest_service
+    captured = {}
+
+    async def _ne(_k):
+        return False
+
+    async def _put(_k, d, ct, content_encoding=None):
+        captured["ct"], captured["data"] = ct, d
+        return True, None
+
+    monkeypatch.setattr(os_mod, "is_configured", lambda: True)
+    monkeypatch.setattr(os_mod, "object_exists", _ne)
+    monkeypatch.setattr(os_mod, "put_object", _put)
+    ok = await ingest_service._store_thumbnail(_png(), "a.png", _H, "T1")
+    assert ok is True and captured["ct"] == "image/webp" and len(captured["data"]) > 0
+
+
+async def test_store_thumbnail_non_image_false(monkeypatch):
+    from app.services.design_ingest import ingest_service
+    monkeypatch.setattr(os_mod, "is_configured", lambda: True)
+    assert await ingest_service._store_thumbnail(b"dxfdata", "a.dxf", _H, "T1") is False
+
+
+async def test_store_thumbnail_unconfigured_false(monkeypatch):
+    from app.services.design_ingest import ingest_service
+    monkeypatch.setattr(os_mod, "is_configured", lambda: False)
+    assert await ingest_service._store_thumbnail(_png(), "a.png", _H, "T1") is False
+
+
 def test_auth_headers_signs_content_encoding(monkeypatch):
     _set_env(monkeypatch)
     conf = os_mod._conf()

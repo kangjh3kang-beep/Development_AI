@@ -45,6 +45,7 @@ type IngestResult = {
   stored?: boolean;
   object_key?: string | null;
   store_skip_reason?: string | null;
+  has_thumbnail?: boolean;
   warnings: string[];
   spec: Record<string, unknown>;
 };
@@ -117,6 +118,8 @@ type DrawingMatch = {
   summary?: string | null;
   content_hash?: string | null;
   stored?: boolean;
+  has_thumbnail?: boolean;
+  thumb_url?: string | null;
 };
 
 type SearchResult = { ok: boolean; results: DrawingMatch[]; count: number; skipped_reason: string | null };
@@ -337,15 +340,16 @@ export function DesignGenPanel({ projectId }: Props) {
     }
   }
 
-  // 원본 도면 조회 — 서버가 인증 테넌트로 presigned URL 발급(클라이언트 키 미전송) → 새 탭.
-  async function handleOpenOriginal(contentHash: string) {
+  // 원본/썸네일 조회 — 서버가 인증 테넌트로 presigned URL 발급(클라이언트 키 미전송) → 새 탭.
+  async function handleOpenOriginal(contentHash: string, variant: "original" | "thumb" = "original") {
     try {
+      const q = variant === "thumb" ? "?variant=thumb" : "";
       const data = await apiClient.get<{ url: string }>(
-        `/design-gen/drawings/${encodeURIComponent(contentHash)}/url`,
+        `/design-gen/drawings/${encodeURIComponent(contentHash)}/url${q}`,
       );
       if (data?.url) window.open(data.url, "_blank", "noopener,noreferrer");
     } catch {
-      // 미보관/미설정 등은 정직 무시(버튼은 stored=true일 때만 노출).
+      // 미보관/미설정 등은 정직 무시(버튼은 stored/has_thumbnail일 때만 노출).
     }
   }
 
@@ -481,6 +485,15 @@ export function DesignGenPanel({ projectId }: Props) {
                       원본 보기
                     </button>
                   )}
+                  {ingest.has_thumbnail && ingest.content_hash && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenOriginal(ingest.content_hash, "thumb")}
+                      className="ml-1 font-semibold text-[var(--accent-strong)] underline"
+                    >
+                      미리보기
+                    </button>
+                  )}
                 </>
               ) : (
                 <span className="text-[var(--text-tertiary)]"> · 원본 미보관({ingest.store_skip_reason || "사유 미상"})</span>
@@ -545,6 +558,21 @@ export function DesignGenPanel({ projectId }: Props) {
                         {m.total_area_sqm != null ? `${m.total_area_sqm.toLocaleString()}㎡` : "면적 미상"}
                         {m.source_format ? ` · ${m.source_format}` : ""}
                       </div>
+                      {m.thumb_url && (
+                        // 저해상 프록시(presigned·단기·동적 외부 URL) 인라인 미리보기 — 원본 대신
+                        // 작은 썸네일만 조회. next/image는 단기 presigned·임의 R2 호스트에 부적합(plain img).
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={m.thumb_url}
+                          alt={m.title || "도면 미리보기"}
+                          loading="lazy"
+                          onError={(e) => {
+                            // presigned 만료(600초)·일시오류 시 깨진 이미지 대신 숨김(정직).
+                            e.currentTarget.style.display = "none";
+                          }}
+                          className="mt-1.5 max-h-32 w-full rounded-md border border-[var(--line)] object-contain"
+                        />
+                      )}
                       {m.summary && <div className="mt-1 line-clamp-2 text-[var(--text-tertiary)]">{m.summary}</div>}
                       {m.stored && m.content_hash && (
                         <button

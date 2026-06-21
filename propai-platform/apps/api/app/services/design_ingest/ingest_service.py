@@ -26,6 +26,7 @@ def _index(
     project_id: str | None,
     tenant_id: str | None,
     object_key: str | None = None,
+    has_thumbnail: bool = False,
 ) -> tuple[bool, str | None]:
     """Qdrant design_drawings에 멱등 업서트(point_id=content_hash 기반). 반환: (성공, 실패사유)."""
     try:
@@ -37,6 +38,7 @@ def _index(
         payload["project_id"] = project_id
         payload["tenant_id"] = tenant_id
         payload["object_key"] = object_key  # R2 원본 키(없으면 None=미저장, 정직)
+        payload["has_thumbnail"] = has_thumbnail  # 썸네일(프록시) 보관 여부 — 인라인 미리보기용
         client = get_qdrant_client()
         client.upsert(
             collection_name=DESIGN_COLLECTION,
@@ -80,6 +82,31 @@ async def _store_original(
         return None, False, "store_error"
 
 
+async def _store_thumbnail(
+    content: bytes, filename: str, content_hash: str, tenant_id: str | None
+) -> bool:
+    """이미지 도면의 저해상 WebP 썸네일(프록시)을 R2에 저장(best-effort). 반환: 보관 여부.
+
+    이미지 아님/미설정/실패는 False(정직 — 미생성). 동일 키 존재 시 재생성 없이 True(dedup).
+    """
+    from app.services.design_ingest import object_store
+
+    if not object_store.is_configured():
+        return False
+    thumb = object_store.make_thumbnail(content, filename)
+    if thumb is None:
+        return False
+    try:
+        key = object_store.thumb_key(tenant_id, content_hash)
+        if await object_store.object_exists(key):
+            return True
+        ok, _ = await object_store.put_object(key, thumb, "image/webp")
+        return ok
+    except Exception as e:  # noqa: BLE001 — 썸네일 저장 실패는 본기능 비차단
+        logger.debug("design_ingest 썸네일 저장 생략: %s", str(e)[:120])
+        return False
+
+
 async def ingest_design_file(
     *,
     filename: str,
@@ -98,12 +125,16 @@ async def ingest_design_file(
     object_key, stored, store_skip_reason = await _store_original(
         content, filename, spec.content_hash(), tenant_id
     )
+    # 썸네일(프록시) — 이미지 도면만, 검색결과 인라인 미리보기용(원본 cold·프록시 hot).
+    has_thumbnail = await _store_thumbnail(content, filename, spec.content_hash(), tenant_id)
 
     indexed = False
     index_skip_reason: str | None = None
     vector, embed_reason = await embed_text(spec.to_embedding_text())
     if vector is not None and len(vector) == EMBED_DIM:
-        indexed, index_skip_reason = _index(spec, vector, project_id, tenant_id, object_key)
+        indexed, index_skip_reason = _index(
+            spec, vector, project_id, tenant_id, object_key, has_thumbnail
+        )
     elif vector is not None:
         index_skip_reason = "embed_dim_mismatch"
     else:
@@ -144,6 +175,7 @@ async def ingest_design_file(
         # 원본 저장(R2): stored=True면 보관(또는 중복제거됨), object_key는 presigned 조회용.
         "stored": stored,
         "object_key": object_key,
+        "has_thumbnail": has_thumbnail,  # 이미지 썸네일(프록시) 보관 여부 — 미리보기 노출용
         # 미저장 사유(정직): object_store_not_configured|deduplicated|r2_status_*|r2_error|store_error|None
         "store_skip_reason": store_skip_reason,
         "warnings": spec.meta.get("warnings", []),
