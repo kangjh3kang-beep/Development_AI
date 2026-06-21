@@ -4,6 +4,7 @@ from app.services.design_ingest.composition import (
     SiteContext,
     compose,
     compute_parking_design,
+    compute_parking_layout,
     fit_score,
     map_building_use_kr,
     site_context_from_zone,
@@ -217,6 +218,33 @@ def test_compose_ranking_stable_with_shared_set():
     assert len(cands) == 2 and cands[0].score >= cands[1].score  # 내림차순 유지
     # 두 후보 모두 동일 분야세트(건축+구조) → completeness 동일, 정렬은 fitness 기반
     assert set(cands[0].disciplines_covered) == set(cands[1].disciplines_covered)
+
+
+def test_compute_parking_layout_packs_stalls():
+    # footprint 600㎡(정사각 ≈24.5m) · 100대 요구 → 베이/열 패킹·소요층수·대표 좌표
+    s = _site()  # footprint 600
+    lay = compute_parking_layout(s, 100)
+    assert lay is not None
+    assert lay["stalls_per_floor"] > 0 and lay["floors_for_parking"] >= 1
+    # 소요층수 = ceil(요구 / 층당)
+    import math as _m
+    assert lay["floors_for_parking"] == _m.ceil(100 / lay["stalls_per_floor"])
+    # 대표 좌표 — 표준 구획 치수, 캡 이내
+    assert lay["stalls"] and all(st["w"] == 2.5 and st["l"] == 5.0 for st in lay["stalls"])
+    assert len(lay["stalls"]) <= lay["stalls_per_floor"]
+
+
+def test_compute_parking_layout_small_footprint_unfit():
+    # footprint이 1베이(16m)보다 작으면 자동배치 불가 정직 고지
+    s = _site(area_sqm=100.0, legal_bcr_pct=20.0, legal_far_pct=50.0)  # footprint 20㎡ → 한 변 ~4.5m
+    lay = compute_parking_layout(s, 10)
+    assert lay is not None and lay["stalls_per_floor"] == 0
+    assert lay["floors_for_parking"] is None and "자동배치 불가" in lay["note"]
+
+
+def test_compute_parking_layout_none_when_no_basis():
+    assert compute_parking_layout(SiteContext(area_sqm=1000.0), 10) is None  # footprint 미상
+    assert compute_parking_layout(_site(), 0) is None                        # 요구 0
 
 
 def test_compose_attaches_parking_fields():

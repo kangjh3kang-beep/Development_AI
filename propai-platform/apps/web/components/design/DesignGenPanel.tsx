@@ -65,6 +65,15 @@ type Candidate = {
   parking_area_sqm: number | null;
   parking_basement_floors: number | null;
   parking_feasible: boolean | null;
+  parking_layout?: {
+    stalls_per_floor: number;
+    floors_for_parking: number | null;
+    footprint_w_m: number;
+    footprint_d_m: number;
+    stalls: { x: number; y: number; w: number; l: number }[];
+    total_required: number;
+    note: string;
+  } | null;
   compliant: boolean;
   score: number;
   warnings: string[];
@@ -210,6 +219,43 @@ function Metric({ label, value }: { label: string; value: string | number | null
         {value === null || value === undefined || value === "" ? "—" : value}
       </div>
     </div>
+  );
+}
+
+// 주차 자동배치도(스키매틱) — footprint(m) 좌표를 SVG로 렌더. 최대 변 260px로 스케일.
+function ParkingLayoutSvg({
+  layout,
+}: {
+  layout: NonNullable<Candidate["parking_layout"]>;
+}) {
+  const w = layout.footprint_w_m;
+  const d = layout.footprint_d_m;
+  if (!(w > 0) || !(d > 0) || !layout.stalls?.length) return null;
+  const scale = 260 / Math.max(w, d);
+  return (
+    <svg
+      width={Math.round(w * scale)}
+      height={Math.round(d * scale)}
+      viewBox={`0 0 ${w} ${d}`}
+      preserveAspectRatio="xMinYMin meet"
+      className="mt-1 rounded border border-[var(--line)] bg-[var(--surface)]"
+      role="img"
+      aria-label="주차 자동배치도(스키매틱)"
+    >
+      <rect x={0} y={0} width={w} height={d} fill="none" stroke="var(--line)" strokeWidth={0.3} />
+      {layout.stalls.map((s, i) => (
+        <rect
+          key={i}
+          x={s.x}
+          y={s.y}
+          width={s.w}
+          height={s.l}
+          fill="var(--accent-soft)"
+          stroke="var(--accent-strong)"
+          strokeWidth={0.12}
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -820,6 +866,20 @@ export function DesignGenPanel({ projectId }: Props) {
                             {" "}· 배치 {c.parking_feasible ? "현실적" : "비현실(재검토)"}
                           </span>
                         )}
+                      </div>
+                    )}
+                    {/* 주차 자동배치도(스키매틱) */}
+                    {c.parking_layout && c.parking_layout.stalls_per_floor > 0 && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        주차 자동배치(스키매틱): 층당 {c.parking_layout.stalls_per_floor}대 ·{" "}
+                        {c.parking_layout.floors_for_parking}개층
+                        <ParkingLayoutSvg layout={c.parking_layout} />
+                        {c.parking_layout.stalls.length < c.parking_layout.stalls_per_floor && (
+                          <span className="text-[var(--text-hint)]">
+                            배치도는 대표 {c.parking_layout.stalls.length}구획만 표시(전체 층당 {c.parking_layout.stalls_per_floor}대).{" "}
+                          </span>
+                        )}
+                        <span className="text-[var(--text-hint)]">{c.parking_layout.note}</span>
                       </div>
                     )}
                     {/* 도면 세트(분야별 조합) + 커버리지 갭 */}

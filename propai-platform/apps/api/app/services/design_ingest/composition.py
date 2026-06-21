@@ -86,6 +86,7 @@ class CompositionCandidate:
     parking_area_sqm: float | None = None   # 소요 주차면적(대당 33㎡)
     parking_basement_floors: int | None = None  # 지하주차 추정 층수(부지 footprint 기준 우선)
     parking_feasible: bool | None = None    # 주차 배치 현실성(지하층 과다 아님). 미상 None
+    parking_layout: dict | None = None      # 주차 자동배치도(스키매틱 — 층당대수·소요층수·좌표)
     disciplines_covered: list[str] = field(default_factory=list)  # 도면 세트가 포함한 분야
     missing_disciplines: list[str] = field(default_factory=list)  # 권장 핵심분야 중 미확보(정직 갭)
     compliant: bool = False
@@ -108,6 +109,7 @@ class CompositionCandidate:
             "parking_area_sqm": self.parking_area_sqm,
             "parking_basement_floors": self.parking_basement_floors,
             "parking_feasible": self.parking_feasible,
+            "parking_layout": self.parking_layout,
             "compliant": self.compliant,
             "score": self.score,
             "warnings": list(self.warnings),
@@ -200,6 +202,62 @@ def compute_parking_design(
         # 주차 필요하나 건폐율 한도(footprint) 미상 → 배치 현실성 미판정(정직 고지·None 유지).
         out["warnings"].append("건폐율 한도 미상 — 주차 배치 현실성 미판정(지하주차 층수 미산)")
     return out
+
+
+# 표준 직각주차 모듈(주차장법 일반형) — 단위 m.
+_STALL_W = 2.5          # 주차구획 폭(일반형)
+_STALL_L = 5.0          # 주차구획 길이
+_AISLE = 6.0            # 직각주차 차로 너비
+_BAY_DEPTH = _STALL_L * 2 + _AISLE   # 복렬(양면주차+중앙차로) 베이 깊이 = 16.0m
+_LAYOUT_STALL_CAP = 300              # 배치 좌표 페이로드 상한(시각화용)
+
+
+def compute_parking_layout(site: SiteContext, required_stalls: int | None) -> dict | None:
+    """footprint에 표준 직각주차 모듈을 자동 패킹 → 층당 대수·소요층수·대표층 배치 좌표(스키매틱).
+
+    rectangular footprint 가정(부지 width/depth 비율 반영, 미상 시 정사각). 램프·기둥·구조·경사
+    미반영의 개략 자동배치다(정직 고지). footprint/대수 미상이면 None.
+    """
+    fp = site.buildable_footprint_sqm
+    if not fp or fp <= 0 or not required_stalls or required_stalls <= 0:
+        return None
+    if site.width_m and site.depth_m and site.width_m > 0 and site.depth_m > 0:
+        fw = round(math.sqrt(fp * (site.width_m / site.depth_m)), 1)
+    else:
+        fw = round(math.sqrt(fp), 1)
+    fd = round(fp / fw, 1) if fw > 0 else 0.0
+
+    # 폭 방향 끝단 동선(진입·회전) 1개 차감해 보수화(과대산정 방지·개략 상한).
+    stalls_per_row = max(0, int((fw - _AISLE) // _STALL_W))
+    bays = int(fd // _BAY_DEPTH)
+    stalls_per_floor = bays * 2 * stalls_per_row
+    note = "스키매틱 자동배치(직각주차 2.5×5.0m·차로 6.0m) — 램프·기둥·구조 미반영(개략)"
+    if stalls_per_floor <= 0:
+        return {
+            "stalls_per_floor": 0, "floors_for_parking": None,
+            "footprint_w_m": fw, "footprint_d_m": fd, "stalls": [],
+            "total_required": required_stalls,
+            "note": "footprint이 주차 1베이(약 16m)보다 작아 자동배치 불가 — 기계식/지하 검토",
+        }
+
+    floors = math.ceil(required_stalls / stalls_per_floor)
+    # 대표 1개 층 배치 좌표(상한 캡).
+    cap = min(required_stalls, stalls_per_floor, _LAYOUT_STALL_CAP)
+    stalls: list[dict] = []
+    for b in range(bays):
+        y0 = b * _BAY_DEPTH
+        for side in (0, 1):  # 베이 양쪽 2열(복렬)
+            y = round(y0 + (0.0 if side == 0 else _STALL_L + _AISLE), 1)
+            for c in range(stalls_per_row):
+                if len(stalls) >= cap:
+                    break
+                stalls.append({"x": round(c * _STALL_W, 1), "y": y, "w": _STALL_W, "l": _STALL_L})
+    return {
+        "stalls_per_floor": stalls_per_floor,
+        "floors_for_parking": floors,
+        "footprint_w_m": fw, "footprint_d_m": fd,
+        "stalls": stalls, "total_required": required_stalls, "note": note,
+    }
 
 
 def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[CompositionCandidate]:
@@ -321,6 +379,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             parking_area_sqm=pk["area_sqm"],
             parking_basement_floors=pk["basement_floors_site"],  # footprint 기준(미상 None)
             parking_feasible=pk["feasible"],
+            parking_layout=compute_parking_layout(site, est_parking),  # 주차 자동배치도(스키매틱)
             compliant=compliant,
             score=score,
             warnings=warnings,
