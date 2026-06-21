@@ -341,10 +341,13 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             (cur?.parcelCount ?? 1) > 1 &&
             typeof cur?.landAreaSqmTotal === "number" &&
             cur.landAreaSqmTotal > 0;
+          // ★#185 무한렌더 가드: SSOT address는 '입력 정체성'이므로 분석 결과(res.address·백엔드
+          //   정규화)로 덮어쓰지 않는다. 덮어쓰면 res.address≠입력일 때 이 effect(deps=[data?.address])가
+          //   재발화→재분석→재기록 순환으로 렌더가 폭주한다(Minified React #185·부지분석 첫진입 크래시).
+          //   분석은 zoneCode/pnu만 enrich하고 address는 SSOT(사용자 입력)를 보존한다.
           const zPayload = {
             estimatedValue: cur?.estimatedValue ?? null,
             zoneCode: res.zone_limits?.zone_key ?? res.zone_type ?? null,
-            address: res.address,
             pnu: res.pnu ?? cur?.pnu ?? null,
           };
           updateSiteAnalysis(

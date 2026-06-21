@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v280-route-loading";
+const CACHE_NAME = "propai-v281-no185-loop";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

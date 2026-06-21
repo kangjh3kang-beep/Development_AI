@@ -161,10 +161,12 @@ export function AutoZoningBadge({ address }: { address: string }) {
             (cur?.parcelCount ?? 1) > 1 &&
             typeof cur?.landAreaSqmTotal === "number" &&
             cur.landAreaSqmTotal > 0;
+          // ★#185 무한렌더 가드(LandIntelligencePanel과 동일 전역계약): SSOT address는 입력 정체성이라
+          //   분석 결과(data.address·백엔드 정규화)로 덮어쓰지 않는다. 덮어쓰면 data.address≠입력 시
+          //   이 effect(deps=[address])가 재발화→재분석→재기록 순환으로 렌더 폭주(#185). address는 SSOT 보존.
           const basePayload = {
             estimatedValue: cur?.estimatedValue ?? null,
             zoneCode: data.zone_limits?.zone_key ?? data.zone_type ?? null,
-            address: data.address,
             pnu: data.pnu ?? cur?.pnu ?? null,
             ...mapZoningRich(data),
           };
