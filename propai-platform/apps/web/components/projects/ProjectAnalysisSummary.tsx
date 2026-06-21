@@ -16,6 +16,7 @@ import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { formatAnalysisValue } from "@/lib/formatters";
+import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
 
 // 다필지 통합분석 응답(부분) — 요약 표시에 필요한 필드만(읽기 소비). 전부 옵셔널(부분응답 가드).
 type IntegratedSummary = {
@@ -317,6 +318,44 @@ export function ProjectAnalysisSummary() {
           ]}
         />
       </div>
+
+      {/* 검증 4계층 — 사업수지 기준(feasibility 노드, expertPanel=true).
+          showTrustBadge는 원장 검증 완료(integrity.verified=true) 일 때만 활성화.
+          context는 핵심 사업성 지표(JSON 직렬화 가능)만 전달 — 실데이터 있을 때만 렌더. */}
+      {feas && (
+        <div className="mt-5">
+          <AnalysisVerificationPanel
+            nodeId="feasibility"
+            analysisType="feasibility"
+            address={site?.address ?? undefined}
+            context={{
+              profitRatePct: feas.profitRatePct,
+              totalCostWon: feas.totalCostWon,
+              totalRevenueWon: feas.totalRevenueWon,
+              grade: feas.grade,
+            }}
+            // 근거 계층(EvidencePanel)+데이터 출처 칩 활성화 — 사업성 핵심수치의 산식 근거를
+            // 함께 노출해 비전문가도 "이 값이 왜 이렇게 나왔나"를 검증할 수 있게 한다(근거 기본제공).
+            evidenceItems={(() => {
+              const ev: { label: string; value: string; basis: string }[] = [
+                { label: "투자 수익률(ROI)", value: pct(feas.profitRatePct),
+                  basis: `순이익 ÷ 총사업비 × 100${feas.grade ? ` · 사업성 등급 ${feas.grade}` : ""}` },
+              ];
+              if (feas.totalRevenueWon != null && feas.totalCostWon != null)
+                ev.push({ label: "예상 순이익", value: eok(feas.totalRevenueWon - feas.totalCostWon) ?? "—",
+                  basis: "총매출 − 총사업비" });
+              if (feas.totalCostWon != null)
+                ev.push({ label: "총사업비", value: eok(feas.totalCostWon) ?? "—",
+                  basis: "토지비 + 공사비 + 금융비 + 세금" });
+              if (feas.totalRevenueWon != null)
+                ev.push({ label: "총매출(분양)", value: eok(feas.totalRevenueWon) ?? "—",
+                  basis: "분양가 × 분양면적" });
+              return ev;
+            })()}
+            showTrustBadge={integrity?.verified === true}
+          />
+        </div>
+      )}
     </section>
   );
 }
