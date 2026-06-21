@@ -5,6 +5,12 @@ import { Button, Card, CardContent } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { NumberInput } from "@/components/common/NumberInput";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import {
+  adaptEvidence,
+  type BackendEvidence,
+  type BackendLegalRef,
+} from "@/lib/evidence/adaptEvidence";
 
 /* ── Types ── */
 
@@ -37,6 +43,69 @@ interface GresbResult {
   benchmark_meta?: { version?: string; source?: string };
   recommendations: Recommendation[];
   potential_score: number;
+  // 백엔드가 evidence/legal_refs를 반환하면 우선 사용(현재 미반환 → 응답 점수로 트레이스 구성).
+  evidence?: BackendEvidence[];
+  legal_refs?: BackendLegalRef[];
+}
+
+/**
+ * GRESB 점수 산출 근거(EvidencePanel) — 백엔드 evidence가 있으면 우선,
+ * 없으면 응답의 구성요소 점수·벤치마크로 산식 트레이스를 만든다(가짜값/가짜URL 0).
+ */
+function buildGresbEvidence(r: GresbResult): EvidenceItem[] {
+  const backend = adaptEvidence(r.evidence, r.legal_refs);
+  if (backend.length > 0) return backend;
+
+  const c = r.components;
+  const items: EvidenceItem[] = [
+    {
+      label: "총점",
+      value: `${r.total_score}/${r.max_score}점 (${r.grade})`,
+      basis: "경영 + 성과 + 개발 구성점수 합산",
+    },
+    {
+      label: "Management(경영)",
+      value: `${c.management.score}/${c.management.max}점`,
+      basis: "ESG 정책·거버넌스 등 경영 구성 가중점수",
+    },
+    {
+      label: "Performance(성과)",
+      value: `${c.performance.score}/${c.performance.max}점`,
+      basis: "에너지·온실가스·용수 등 실측 성과 벤치마크 대비 점수",
+    },
+    {
+      label: "Development(개발)",
+      value: `${c.development.score}/${c.development.max}점`,
+      basis: "녹색건축 인증·재생에너지 등 개발단계 점수",
+    },
+  ];
+  if (c.energy) {
+    items.push({
+      label: "에너지 강도",
+      value: `${(c.energy.value ?? 0).toFixed(1)} (${c.energy.rating})`,
+      basis: `벤치마크 ${c.energy.benchmark} 대비 (${r.benchmark_type})`,
+    });
+  }
+  if (c.ghg) {
+    items.push({
+      label: "온실가스 강도",
+      value: `${(c.ghg.value ?? 0).toFixed(1)} (${c.ghg.rating})`,
+      basis: `벤치마크 ${c.ghg.benchmark} 대비 (${r.benchmark_type})`,
+    });
+  }
+  items.push({
+    label: "잠재 점수",
+    value: `${r.potential_score}점`,
+    basis: "개선 권고사항을 모두 반영했을 때 도달 가능 점수",
+  });
+  if (r.benchmark_meta?.source) {
+    items.push({
+      label: "기준 출처",
+      value: r.benchmark_meta.source,
+      basis: r.benchmark_meta.version ? `버전 v${r.benchmark_meta.version}` : "GRESB 벤치마크",
+    });
+  }
+  return items;
 }
 
 interface FormData {
@@ -481,6 +550,10 @@ export default function GresbScoreCard() {
                 })}
               </div>
             )}
+
+            {/* 산출 근거(EvidencePanel) — 구성점수·가중치·벤치마크로 트레이스 구성.
+                ★법령 URL은 백엔드 get_legal_refs 출력만(프론트 URL 조립 금지) — 미반환 시 basis 텍스트만. */}
+            <EvidencePanel items={buildGresbEvidence(result)} title="GRESB 점수 산출 근거" />
           </div>
         )}
       </CardContent>
