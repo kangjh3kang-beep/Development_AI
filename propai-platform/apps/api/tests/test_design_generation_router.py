@@ -299,7 +299,7 @@ async def test_laws_for_unknown_domain_404():
 async def test_drawing_url_404_when_not_configured(monkeypatch):
     monkeypatch.setattr(dg.object_store, "is_configured", lambda: False)
     with pytest.raises(HTTPException) as ei:
-        await dg.drawing_original_url("abc123def4560000", _user())
+        await dg.drawing_original_url("abc123def4560000", current=_user())
     assert ei.value.status_code == 404
 
 
@@ -311,8 +311,41 @@ async def test_drawing_url_404_when_key_absent(monkeypatch):
 
     monkeypatch.setattr(dg, "get_drawing_object_key", _none)
     with pytest.raises(HTTPException) as ei:
-        await dg.drawing_original_url("abc123def4560000", _user())
+        await dg.drawing_original_url("abc123def4560000", current=_user())
     assert ei.value.status_code == 404
+
+
+async def test_search_enriches_thumb_url(monkeypatch):
+    async def _fake_search(query, top_k=5):
+        return {"ok": True, "results": [
+            {"point_id": "p", "score": 0.9, "content_hash": "abc123def4560000", "has_thumbnail": True},
+            {"point_id": "q", "score": 0.8, "content_hash": "abc123def4560001", "has_thumbnail": False},
+        ], "count": 2, "skipped_reason": None}
+
+    monkeypatch.setattr(dg, "search_drawings", _fake_search)
+    monkeypatch.setattr(dg.object_store, "is_configured", lambda: True)
+    monkeypatch.setattr(dg.object_store, "thumb_key", lambda t, h: f"design/{t}/{h}_thumb.webp")
+    monkeypatch.setattr(dg.object_store, "presigned_get_url",
+                        lambda key, owner, expires=600: f"https://r2/{key}")
+    out = await dg.search(dg.SearchRequest(drawing_type="floor_plan"), _user())
+    r0, r1 = out["results"]
+    assert r0["thumb_url"].startswith("https://r2/design/")  # has_thumbnail → 첨부
+    assert "thumb_url" not in r1                              # 썸네일 없음 → 미첨부
+
+
+async def test_drawing_url_thumb_variant_skips_lookup(monkeypatch):
+    user = _user()
+    monkeypatch.setattr(dg.object_store, "is_configured", lambda: True)
+    monkeypatch.setattr(dg.object_store, "thumb_key", lambda t, h: f"design/{t}/{h}_thumb.webp")
+    monkeypatch.setattr(dg.object_store, "presigned_get_url",
+                        lambda key, owner, expires=600: f"https://r2/{key}")
+
+    async def _boom(_h, _t):
+        raise AssertionError("thumb variant must not do original object_key lookup")
+
+    monkeypatch.setattr(dg, "get_drawing_object_key", _boom)
+    out = await dg.drawing_original_url("abc123def4560000", variant="thumb", current=user)
+    assert "_thumb.webp" in out["url"]
 
 
 async def test_drawing_url_success(monkeypatch):
@@ -327,7 +360,7 @@ async def test_drawing_url_success(monkeypatch):
     monkeypatch.setattr(dg, "get_drawing_object_key", _key)
     monkeypatch.setattr(dg.object_store, "presigned_get_url",
                         lambda key, owner, expires=600: f"https://r2/{key}?sig=x")
-    out = await dg.drawing_original_url("abc123def4560000", user)
+    out = await dg.drawing_original_url("abc123def4560000", current=user)
     assert out["url"].startswith("https://r2/design/")
     assert out["expires_in"] == 600
     # content_hash·tenant가 인증 컨텍스트로 조회에 전달됐는지

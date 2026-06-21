@@ -17,6 +17,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import hmac
+import io
 import logging
 import os
 import re
@@ -108,6 +109,50 @@ def compress_for_storage(data: bytes, filename: str) -> tuple[bytes, str | None]
         except Exception as e:  # noqa: BLE001 — 압축 실패는 원본 저장으로 강등
             logger.debug("R2 gzip 압축 생략: %s", str(e)[:120])
     return data, None
+
+
+# 썸네일/프록시 — 이미지 도면만 PIL로 저해상 WebP 생성(뷰어용 hot 프록시, 원본은 cold).
+# PDF/DXF/IFC는 래스터화 의존성이 없어 미생성(정직 — 후속).
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+_THUMB_MAX_PX = 512
+_THUMB_QUALITY = 80
+# 디컴프레션밤 가드 — 헤더상 픽셀수가 이보다 크면 디코딩 전 거부(메모리 증폭 DoS 차단).
+# 25MB 압축 이미지가 수억 픽셀로 펼쳐질 수 있어, 썸네일엔 충분한 보수 상한을 둔다.
+_THUMB_MAX_DECODE_PX = 40_000_000  # 4천만px(예: 6325×6325) — 512 썸네일엔 충분
+
+
+def make_thumbnail(data: bytes, filename: str) -> bytes | None:
+    """이미지 도면 → 저해상 WebP 썸네일(최대 512px). 이미지 아님/과대/실패 시 None(정직).
+
+    원본은 cold에 두고 검색결과·미리보기는 이 작은 프록시(원본의 극히 일부)만 조회한다.
+    ★디컴프레션밤 가드: 헤더 크기(im.size)로 픽셀수 선검사 후 초과 시 디코딩 없이 거부.
+    """
+    if _ext(filename) not in _IMAGE_EXTS or not data:
+        return None
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(data))  # 지연 로드 — 여기선 헤더만(전량 디코딩 아님)
+        w, h = im.size
+        if w * h > _THUMB_MAX_DECODE_PX:
+            logger.debug("R2 썸네일 생략: 픽셀 과대(%dx%d) — 디컴프레션밤 가드", w, h)
+            return None  # thumbnail()/convert() 디코딩 전에 거부(메모리 폭증 차단)
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")  # RGBA/P 등 → WebP 저장 가능 모드
+        im.thumbnail((_THUMB_MAX_PX, _THUMB_MAX_PX))
+        out = io.BytesIO()
+        im.save(out, format="WEBP", quality=_THUMB_QUALITY)
+        return out.getvalue()
+    except Exception as e:  # noqa: BLE001 — 썸네일 실패는 본기능 비차단(미생성)
+        logger.debug("R2 썸네일 생성 생략: %s", str(e)[:120])
+        return None
+
+
+def thumb_key(tenant_id: str | None, content_hash: str) -> str:
+    """썸네일(프록시) 객체 키 — 원본과 동일 네임스페이스, _thumb.webp 접미."""
+    if not _HEX_HASH.fullmatch(content_hash or ""):
+        raise ValueError("invalid content_hash")
+    return f"design/{_safe_segment(tenant_id)}/{content_hash}_thumb.webp"
 
 
 def _safe_segment(value: str | None, default: str = "_shared") -> str:
