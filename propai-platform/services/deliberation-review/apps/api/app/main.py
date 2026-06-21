@@ -79,6 +79,9 @@ def create_app() -> FastAPI:
     from app.api.routes.reg_routes import router as reg_router
     app.include_router(reg_router)
 
+    from app.api.routes.project_routes import router as project_router
+    app.include_router(project_router)
+
     return app
 
 

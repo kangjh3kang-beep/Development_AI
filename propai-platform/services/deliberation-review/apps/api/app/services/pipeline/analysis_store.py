@@ -9,12 +9,16 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.analysis import AnalysisResult
+from app.contracts.project_data import ProjectFieldData, ProjectFinding, ProjectQuantity
 from app.db.models.analysis_models import AnalysisRunModel
 from app.db.models.r1_5_models import LegalQuantityModel
 from app.db.models.r3_models import FindingModel
+
+_MAX_PROJECT_ROWS = 1000  # 프로젝트 per-field 조회 행 상한(거대 응답 방어). 운영 상수 — 법정 파라미터 아님(INV-3 무관).
 
 
 def _enum(v: Any) -> Any:
@@ -98,3 +102,48 @@ async def get_analysis(session: AsyncSession, run_id: str,
     if tenant_id is not None and row.organization_id is not None and row.organization_id != tenant_id:
         return None  # 교차테넌트 조회 차단(엔진측 2차 방어선)
     return AnalysisResult.model_validate(row.result)
+
+
+def _f(v: Any) -> float | None:
+    """Numeric(Decimal)→float(JSON 직렬화·계약 정규화). None은 그대로."""
+    return float(v) if v is not None else None
+
+
+async def get_project_field_data(session: AsyncSession, project_id: uuid.UUID, *,
+                                 tenant_id: uuid.UUID | None = None,
+                                 max_rows: int = _MAX_PROJECT_ROWS) -> ProjectFieldData:
+    """프로젝트에 귀속된 분석들의 per-field 값(legal_quantity/finding) 집계 조회 — '필드별 데이터 제공'의 읽기 측.
+
+    테넌트 격리(#8a): tenant_id 제공 시 organization_id 일치 행만(교차테넌트 차단). run_count는 distinct 분석 run
+    수(AnalysisRunModel 직접 count — per-field 캡과 무관하게 정확). per-field 행은 max_rows로 상한(거대 응답 방어);
+    상한 도달 시 truncated=True로 표면화(무음 절단 금지). 결정론 정렬(created_at, id 타이브레이크)."""
+    def _scope(model: Any):
+        stmt = select(model).where(model.project_id == project_id)
+        if tenant_id is not None:
+            stmt = stmt.where(model.organization_id == tenant_id)
+        # max_rows+1 fetch로 절단 감지(별도 count 불필요)
+        return stmt.order_by(model.created_at, model.id).limit(max_rows + 1)
+
+    lq_rows = (await session.execute(_scope(LegalQuantityModel))).scalars().all()
+    fnd_rows = (await session.execute(_scope(FindingModel))).scalars().all()
+    truncated = len(lq_rows) > max_rows or len(fnd_rows) > max_rows
+    lq_rows, fnd_rows = lq_rows[:max_rows], fnd_rows[:max_rows]
+
+    run_stmt = select(func.count()).select_from(AnalysisRunModel).where(AnalysisRunModel.project_id == project_id)
+    if tenant_id is not None:
+        run_stmt = run_stmt.where(AnalysisRunModel.organization_id == tenant_id)
+    run_count = int((await session.execute(run_stmt)).scalar_one())
+
+    quantities = [ProjectQuantity(
+        analysis_id=(str(r.analysis_id) if r.analysis_id is not None else None),
+        snapshot_id=r.snapshot_id, variable_id=r.variable_id, value=_f(r.value),
+        unit=r.unit, status=r.status, confidence=r.confidence, calc_rule_version=r.calc_rule_version,
+    ) for r in lq_rows]
+    findings = [ProjectFinding(
+        analysis_id=(str(r.analysis_id) if r.analysis_id is not None else None),
+        snapshot_id=r.snapshot_id, rule_id=r.rule_id, verdict=r.verdict, gated_status=r.gated_status,
+        basis_article=r.basis_article, measured_value=_f(r.measured_value), limit_value=_f(r.limit_value),
+        composite_confidence=r.composite_confidence, requires_committee=r.requires_committee,
+    ) for r in fnd_rows]
+    return ProjectFieldData(project_id=str(project_id), run_count=run_count, truncated=truncated,
+                            quantities=quantities, findings=findings)

@@ -122,6 +122,56 @@ async def test_save_analysis_attributes_project_id(db):
     await db.commit()
 
 
+def _rules_calc_input(pnu: str) -> AnalysisInput:
+    # rules+calc_targets → findings·legal_quantities 동반 산출(프로젝트 집계 검증에 의미).
+    return AnalysisInput(
+        pnu=pnu, application_date=date(2026, 1, 1),
+        rules=[{"rule": {"rule_id": "far_limit", "target_variable": "far_floor_area",
+                         "basis_article": "국토계획법 시행령"}, "measured": 250.0, "limit": 200.0}],
+        calc_targets=[{"target": "building_area", "payload": {"outer_area": 500.0},
+                       "elements": [{"semantic_type": "EXT_WALL", "confidence": 0.9}]}],
+    )
+
+
+async def test_get_project_field_data_aggregates_and_isolates(db):
+    # ★프로젝트 스코프 읽기 — 귀속된 분석들의 per-field 값 집계 + 테넌트 격리(#8a) + 정확 run_count.
+    from sqlalchemy import delete
+
+    from app.db.models.analysis_models import AnalysisRunModel
+    from app.db.models.r1_5_models import LegalQuantityModel
+    from app.db.models.r3_models import FindingModel
+    from app.services.pipeline.analysis_store import get_project_field_data
+    pid, tid, other_pid, other_tid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rids = []
+    # 동일 프로젝트+테넌트 2 run(집계 대상) + 다른 프로젝트 1 + 동일 프로젝트·다른 테넌트 1(격리로 제외돼야).
+    s1 = await save_analysis(db, run_analysis(_rules_calc_input("1111010100100000010")), tenant_id=tid, project_id=pid)
+    s2 = await save_analysis(db, run_analysis(_rules_calc_input("1111010100100000011")), tenant_id=tid, project_id=pid)
+    s3 = await save_analysis(db, run_analysis(_rules_calc_input("1111010100100000012")), tenant_id=tid, project_id=other_pid)
+    s4 = await save_analysis(db, run_analysis(_rules_calc_input("1111010100100000013")), tenant_id=other_tid, project_id=pid)
+    rids = [uuid.UUID(s.run_id) for s in (s1, s2, s3, s4)]
+    in_scope, cross_tenant_rid = {str(rids[0]), str(rids[1])}, str(rids[3])
+
+    data = await get_project_field_data(db, pid, tenant_id=tid)
+    assert data.project_id == str(pid)
+    assert data.run_count == 2                        # 동일 테넌트+프로젝트 run만(정확 count)
+    assert data.quantities and data.findings          # 필드 데이터 존재
+    assert all(isinstance(q.value, float) for q in data.quantities if q.value is not None)  # Numeric→float 정규화
+    got_runs = {q.analysis_id for q in data.quantities} | {f.analysis_id for f in data.findings}
+    assert got_runs <= in_scope                        # 스코프 내 run에서만
+    assert cross_tenant_rid not in got_runs            # 교차테넌트 행 제외(격리)
+    assert other_pid != pid and str(rids[2]) not in got_runs  # 다른 프로젝트 행도 제외
+
+    # tenant 미지정(레거시/직접) — 프로젝트의 전 테넌트 행 포함(run1,2,4 = 3).
+    data_all = await get_project_field_data(db, pid)
+    assert data_all.run_count == 3
+
+    for rid in rids:
+        for tbl in (FindingModel, LegalQuantityModel):
+            await db.execute(delete(tbl).where(tbl.analysis_id == rid))
+        await db.execute(delete(AnalysisRunModel).where(AnalysisRunModel.id == rid))
+    await db.commit()
+
+
 async def test_save_analysis_persists_input_payload(db):
     # INC-14: 원시 입력 보존 — reconcile 불일치 시 동일입력 재실행(결정론)을 위해 analysis_run에 저장.
     from sqlalchemy import delete
