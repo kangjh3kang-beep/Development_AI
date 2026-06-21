@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from app.services.design_ingest.vector_store import (
@@ -59,6 +60,8 @@ class DrawingMatch:
     total_area_sqm: float | None = None
     source_format: str | None = None
     summary: str | None = None
+    content_hash: str | None = None   # 원본 조회(presigned) 키 산출용
+    stored: bool = False              # R2 원본 보관 여부(object_key 존재) — '원본 보기' 노출용
 
     @classmethod
     def from_scored(cls, point: object) -> DrawingMatch:
@@ -72,6 +75,8 @@ class DrawingMatch:
             total_area_sqm=payload.get("total_area_sqm"),
             source_format=payload.get("source_format"),
             summary=(payload.get("summary") or "")[:300] or None,
+            content_hash=payload.get("content_hash"),
+            stored=bool(payload.get("object_key")),
         )
 
     def to_dict(self) -> dict:
@@ -83,7 +88,39 @@ class DrawingMatch:
             "total_area_sqm": self.total_area_sqm,
             "source_format": self.source_format,
             "summary": self.summary,
+            "content_hash": self.content_hash,
+            "stored": self.stored,
         }
+
+
+async def get_drawing_object_key(content_hash: str, tenant_id: str) -> str | None:
+    """content_hash(+tenant)로 Qdrant에서 원본 object_key를 조회(원본 presigned 발급용).
+
+    ★서버 권위적·테넌트 스코프: point_id를 tenant+hash로 재계산해 직접 retrieve하므로
+    타 테넌트 객체는 구조적으로 조회 불가(IDOR-proof). payload.tenant_id 재확인으로 이중방어.
+    미가용/미존재 시 None(정직). 클라이언트가 object_key를 직접 넘기지 않는다.
+    """
+    from app.services.design_ingest.design_spec import compute_point_id
+
+    # content_hash 형식 검증 — 저장경로(object_key)의 hex 계약과 통일(잘못된 입력 즉시 차단).
+    if not re.fullmatch(r"[0-9a-f]{16,128}", content_hash or ""):
+        return None
+    try:
+        from apps.api.database.init_qdrant import get_qdrant_client
+
+        pid = compute_point_id(content_hash, tenant_id)
+        client = get_qdrant_client()
+        points = client.retrieve(collection_name=DESIGN_COLLECTION, ids=[pid], with_payload=True)
+        if not points:
+            return None
+        payload = getattr(points[0], "payload", None) or {}
+        # 이중방어 — 포인트 소유 테넌트 일치 확인(불일치면 조회 거부).
+        if str(payload.get("tenant_id") or "") != str(tenant_id):
+            return None
+        return payload.get("object_key") or None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("design 원본키 조회 실패: %s", str(e)[:120])
+        return None
 
 
 def _build_filter(q: SiteQuery):

@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
 from app.models.project import Project
+from app.services.design_ingest import object_store
 from app.services.design_ingest.ingest_service import ingest_design_file
 from app.services.design_ingest.law_coverage import (
     DESIGN_LAW_MAP,
@@ -47,7 +48,11 @@ from app.services.design_ingest.orchestrator import (
     generate_design_proposals,
 )
 from app.services.design_ingest.parsers import detect_format
-from app.services.design_ingest.search_service import SiteQuery, search_drawings
+from app.services.design_ingest.search_service import (
+    SiteQuery,
+    get_drawing_object_key,
+    search_drawings,
+)
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -236,3 +241,24 @@ async def laws_for_domain(
             detail=f"알 수 없는 도메인입니다. 가능: {', '.join(sorted(DESIGN_LAW_MAP))}",
         )
     return {"domain": domain, "laws": laws_for(domain, sigungu=sigungu)}
+
+
+@router.get("/drawings/{content_hash}/url")
+async def drawing_original_url(
+    content_hash: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """업로드한 원본 도면의 단기 조회 URL(presigned). ★서버 권위적·테넌트 스코프(IDOR-proof).
+
+    content_hash만 받고 object_key는 인증 테넌트로 서버가 조회·재구성한다(클라이언트 키 미신뢰).
+    미보관/미설정/타테넌트 → 404(존재 은닉). 원본은 비공개 — 단기 서명 URL로만 노출.
+    """
+    if not object_store.is_configured():
+        raise HTTPException(status_code=404, detail="원본 저장소가 구성되지 않았습니다.")
+    key = await get_drawing_object_key(content_hash, str(current.tenant_id))
+    if not key:
+        raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.")
+    url = object_store.presigned_get_url(key, str(current.tenant_id), expires=600)
+    if not url:
+        raise HTTPException(status_code=404, detail="원본 조회 URL을 생성할 수 없습니다.")
+    return {"url": url, "expires_in": 600}
