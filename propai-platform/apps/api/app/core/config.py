@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     EPD_KOREA_API_KEY: str = ""
     EPD_KOREA_BASE_URL: str = "https://www.epd.or.kr/api"
 
+    # 심의분석엔진(deliberation-review) — 인·허가/심의 프로세스 호출. 미설정 시 심의 에이전트 graceful(미연동).
+    DELIBERATION_ENGINE_URL: str = ""
+    DELIBERATION_ENGINE_TOKEN: str = ""
+
     # 소상공인시장진흥공단 상가(상권)정보 API (data.go.kr B553077)
     # 신버전 baroApi 통합 엔드포인트 (resId/catId로 세부 조회 지정)
     SEMAS_API_KEY: str = ""
