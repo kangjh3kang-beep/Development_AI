@@ -12,6 +12,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -641,6 +642,28 @@ export function ProjectFinanceWorkspaceClient({
                   interpretationTitle="AI 가치평가 해석"
                 />
               </div>
+              {/* ★근거 기본제공: '신뢰도 70%'가 왜 그 값인지 산식 근거를 붙인다. 모두 avmResult 실제 값만(가짜값 0). */}
+              <EvidencePanel
+                className="mt-4"
+                title="AVM 시세 산출 근거"
+                items={[
+                  {
+                    label: labels.avmConfidenceLabel,
+                    value: formatPercent(avmResult.confidence_score),
+                    basis: `비교 거래사례 ${avmResult.comparable_count}건의 가격 분산·유사도 기반 신뢰도 — 사례가 많고 가격 편차가 작을수록 높음(모델 ${avmResult.model_version})`,
+                  },
+                  {
+                    label: labels.avmUnitPriceLabel,
+                    value: formatCurrency(locale, avmResult.price_per_sqm),
+                    basis: `비교 거래사례 ${avmResult.comparable_count}건의 면적당(㎡) 거래가 가중평균`,
+                  },
+                  {
+                    label: labels.avmEstimateLabel,
+                    value: formatCurrency(locale, avmResult.estimated_price),
+                    basis: `㎡당 ${formatCurrency(locale, avmResult.price_per_sqm)} × 대상 면적 — 비교사례 ${avmResult.comparable_count}건 기반 AVM 추정`,
+                  },
+                ]}
+              />
               </>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
@@ -684,8 +707,11 @@ export function ProjectFinanceWorkspaceClient({
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {(riskResult.factors ?? []).map((factor, index) => (
                         <li key={`${factor.factor ?? "factor"}-${index}`}>
-                          {factor.factor ?? "factor"}:{" "}
-                          {factor.detail ?? JSON.stringify(factor)}
+                          <span className="font-semibold text-[var(--text-primary)]">{factor.factor ?? "factor"}</span>
+                          {typeof factor.score === "number" ? (
+                            <span className="ml-1.5 text-[11px] text-[var(--text-hint)]">(기여도 {factor.score}점)</span>
+                          ) : null}
+                          : {factor.detail ?? JSON.stringify(factor)}
                         </li>
                       ))}
                     </ul>
