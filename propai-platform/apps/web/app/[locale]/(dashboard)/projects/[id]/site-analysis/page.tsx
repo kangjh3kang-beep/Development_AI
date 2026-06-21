@@ -9,6 +9,7 @@ import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { LandProfileCard } from "@/components/projects/LandProfileCard";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -21,6 +22,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
+import { normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
 const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
@@ -797,6 +799,15 @@ export default function SiteAnalysisPage() {
             },
           });
         }
+
+        // 종상향 per-scenario(미래 토지특성)를 SSOT에 보존 — 그동안 로컬 l3Data에만 머물러
+        // 하류(토지특성 foundation·추천·설계)가 읽지 못하던 Stage B를 단일 진실원으로 전파(U2).
+        // 무목업: 시나리오가 없으면 명시적 null로 덮어 직전 주소 잔류(stale)를 차단한다.
+        updateSiteAnalysis({
+          upzoningScenarios: normalizeUpzoningScenarios(
+            landResult.upzoning?.scenarios ?? landResult.upzoning_scenarios,
+          ),
+        });
       } catch {
         // L3 데이터 실패는 무시 — 기본 분석만 표시
       }
@@ -1093,6 +1104,17 @@ export default function SiteAnalysisPage() {
                 {analysisError}
               </div>
             )}
+
+            {/* ── 토지특성(부지 생명력) foundation — 모든 분석의 1번·중심 ──
+                SSOT siteAnalysis→buildLandProfile 파생 소비(Stage A 현시점 + Stage B 미래).
+                다운스트림(설계·수지·인허가)이 의존하는 토대를 가장 먼저 보여준다. 미확보 시 null(미표시). */}
+            <motion.div
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+            >
+              <LandProfileCard />
+            </motion.div>
 
             <motion.div
               initial={{ opacity: 0, y: 40 }}

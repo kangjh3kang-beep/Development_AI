@@ -16,7 +16,10 @@
 //   - special_parcel(dict): is_special / developability / resolvable / factors[]
 //                           (각 factor.category) / honest_disclosure  (special_parcel.detect_special_parcel)
 
-import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+import type {
+  SiteAnalysisData,
+  UpzoningScenarioData,
+} from "@/store/useProjectContextStore";
 
 // 응답 타입은 느슨하게(필요한 키만 옵셔널 정의). 모든 키가 옵셔널 — 구버전/부분 응답 무손상.
 type FarRange = { min_pct?: number | null; max_pct?: number | null } | null | undefined;
@@ -65,6 +68,69 @@ const FEASIBILITY_RANK: Record<string, number> = { "상": 0, "중": 1, "하": 2 
 // 유한 숫자만 통과(NaN/Infinity/비숫자는 거름). 미확보 시 undefined.
 function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+// 문자열 정규화(공백 제거, 빈값은 null).
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+// 백엔드 per-scenario 종상향 응답(rich) — 모든 키 옵셔널·unknown(부분/구버전 응답 무손상).
+type RawUpzoningScenario = {
+  path?: unknown;
+  target_zone?: unknown;
+  expected_far_pct_low?: unknown;
+  expected_far_pct_high?: unknown;
+  feasibility?: unknown;
+  feasibility_reason?: unknown;
+  legal_basis?: unknown;
+};
+
+/**
+ * 백엔드 종상향 per-scenario 배열을 UpzoningScenarioData[](미래 토지특성 SSOT)로 정규화.
+ *
+ * - 배열이 아니면 null(쓰기 경로 없음 — stale 방지는 호출부에서 명시 null로 처리).
+ * - 의미 있는 필드(경로/목표/가능성/예상용적/근거/사유)가 하나도 없는 잡음 항목은 제외.
+ * - 정규화 결과가 비면 null(빈 배열로 SSOT 오염 방지).
+ * 무목업: 숫자가 아닌 용적률은 null(가짜 0/문자열 금지). 순수 함수.
+ */
+export function normalizeUpzoningScenarios(
+  raw: unknown,
+): UpzoningScenarioData[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: UpzoningScenarioData[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const s = item as RawUpzoningScenario;
+    const path = str(s.path);
+    const targetZone = str(s.target_zone);
+    const feasibility = str(s.feasibility);
+    const expectedFarLowPct = num(s.expected_far_pct_low) ?? null;
+    const expectedFarHighPct = num(s.expected_far_pct_high) ?? null;
+    const legalBasis = str(s.legal_basis);
+    const rationale = str(s.feasibility_reason);
+    if (
+      path == null &&
+      targetZone == null &&
+      feasibility == null &&
+      expectedFarLowPct == null &&
+      expectedFarHighPct == null &&
+      legalBasis == null &&
+      rationale == null
+    ) {
+      continue;
+    }
+    out.push({
+      path,
+      targetZone,
+      feasibility,
+      expectedFarLowPct,
+      expectedFarHighPct,
+      legalBasis,
+      rationale,
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 // factors[]를 라벨 문자열 배열로 정규화(객체면 category > label > name 추출, 문자열이면 그대로).
@@ -140,6 +206,12 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
   // 최상 가능성 등급 — upzoning.scenarios 우선, 동봉된 upzoning_scenarios 폴백. 없으면 null.
   patch.upzoningFeasibilityTop =
     topFeasibility(r.upzoning?.scenarios ?? r.upzoning_scenarios) ?? null;
+
+  // per-scenario 종상향 상세(미래 토지특성 SSOT) — 확보 시 보존, 미확보 시 명시적 null로 덮어
+  //   직전 주소의 종상향 시나리오 잔류(stale)를 차단한다(특이부지·종상향과 동일 계약).
+  patch.upzoningScenarios = normalizeUpzoningScenarios(
+    r.upzoning?.scenarios ?? r.upzoning_scenarios,
+  );
 
   // 특이부지 게이트 — is_special truthy일 때만 객체, 아니면 명시적 null(직전 부지 특이정보 초기화).
   const sp = r.special_parcel;
