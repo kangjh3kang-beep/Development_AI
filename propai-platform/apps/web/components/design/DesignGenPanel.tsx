@@ -53,6 +53,9 @@ type IngestResult = {
 type Candidate = {
   primary_drawing_type: string;
   primary_content_hash?: string | null;
+  selected?: Record<string, string>;
+  disciplines_covered?: string[];
+  missing_disciplines?: string[];
   scale_factor: number | null;
   estimated_gfa_sqm: number | null;
   estimated_floors: number | null;
@@ -736,6 +739,18 @@ export function DesignGenPanel({ projectId }: Props) {
                             {" "}· 배치 {c.parking_feasible ? "현실적" : "비현실(재검토)"}
                           </span>
                         )}
+                      </div>
+                    )}
+                    {/* 도면 세트(분야별 조합) + 커버리지 갭 */}
+                    {c.selected && Object.keys(c.selected).length > 0 && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        도면 세트 {Object.keys(c.selected).length}종
+                        {c.disciplines_covered?.length ? ` · 분야: ${c.disciplines_covered.join(", ")}` : ""}
+                        {c.missing_disciplines?.length ? (
+                          <span style={{ color: "var(--status-warning)" }}>
+                            {" "}· 미확보: {c.missing_disciplines.join(", ")}(도면 업로드 시 보강)
+                          </span>
+                        ) : null}
                       </div>
                     )}
                     {p.verdict.notes?.length > 0 && (
