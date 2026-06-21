@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v268-multiparcel-integrated";
+const CACHE_NAME = "propai-v269-persona-mode";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

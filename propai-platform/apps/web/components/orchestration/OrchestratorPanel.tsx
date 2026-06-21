@@ -32,6 +32,7 @@ import { PlanPreview } from "./PlanPreview";
 import { RunProgressTimeline } from "./RunProgressTimeline";
 import { InputResolveModal } from "./InputResolveModal";
 import { ProfileManager } from "./ProfileManager";
+import { PersonaPanel } from "./PersonaPanel";
 import { nodesToOptions } from "@/lib/orchestration/selector-adapter";
 import { computeClosure } from "@/lib/orchestration/dependency-graph";
 import { NODES } from "@/lib/orchestration/node-registry";
@@ -104,6 +105,11 @@ export interface OrchestratorPanelProps {
   title?: string;
   /** 패널 부제. */
   subtitle?: string;
+  /**
+   * 프로젝트 ID(있을 때만 '전문가 페르소나' 뷰 탭 노출). 미전달 시 페르소나 탭 미표시
+   * (MarketInsights 등 projectId 없는 소비처는 기존 4모드만 그대로 — 무회귀).
+   */
+  projectId?: string;
 }
 
 export function OrchestratorPanel({
@@ -112,6 +118,7 @@ export function OrchestratorPanel({
   runDisabled = false,
   title = "분석 항목 선택",
   subtitle = "필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다.",
+  projectId,
 }: OrchestratorPanelProps) {
   const runMode = useOrchestrationStore((s) => s.runMode);
   const picked = useOrchestrationStore((s) => s.picked);
@@ -129,6 +136,10 @@ export function OrchestratorPanel({
   const setNodeState = useOrchestrationStore((s) => s.setNodeState);
 
   const { runNode } = useNodeRunner();
+
+  // 5번째 표면(view) — DAG 4모드(dag) ↔ 전문가 페르소나(persona). ★RunMode 미확장(plan 엔진 무영향).
+  // 로컬 state라 새로고침 시 dag로 초기화(휘발 정책 — 결과는 서버 재산출 가능).
+  const [view, setView] = useState<"dag" | "persona">("dag");
 
   // 별도(standalone) 모드 입력해소 모달 대상.
   const [resolveTarget, setResolveTarget] = useState<NodeId | null>(null);
@@ -317,8 +328,59 @@ export function OrchestratorPanel({
   const unlimited = !!balance?.unlimited;
   const isStandalone = runMode === "standalone";
 
+  // 페르소나 뷰는 projectId가 있을 때만(통합 분석 워크스페이스). 미전달 소비처는 기존과 동일.
+  const personaEnabled = !!projectId;
+  const showPersona = personaEnabled && view === "persona";
+
   return (
     <section className="grid gap-4">
+      {/* 5번째 표면 전환 — DAG 분석 ↔ 전문가 페르소나(projectId 있을 때만 노출). RunModeSwitcher는 불변. */}
+      {personaEnabled && (
+        <div
+          role="tablist"
+          aria-label="분석 표면"
+          className="flex flex-wrap gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-1.5"
+        >
+          {(
+            [
+              { id: "dag", label: "DAG 분석", hint: "노드 기반 가이드/별도/선택/프로필" },
+              { id: "persona", label: "전문가 페르소나", hint: "분양대행·도시계획 실무 오라클" },
+            ] as const
+          ).map((t) => {
+            const active = view === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setView(t.id)}
+                className={`flex flex-col items-start gap-0.5 rounded-xl px-3.5 py-2 text-left transition-colors ${
+                  active
+                    ? "bg-[var(--accent-strong)] text-white"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-card)]"
+                }`}
+              >
+                <span className="text-sm font-bold">{t.label}</span>
+                <span
+                  className={`text-[10px] font-normal ${active ? "text-white/80" : "text-[var(--text-tertiary)]"}`}
+                >
+                  {t.hint}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 페르소나 뷰: DAG 셀렉터/계획/타임라인을 전부 건너뛰고 PersonaPanel만 렌더(plan 엔진 무영향). */}
+      {showPersona && projectId && (
+        <PersonaPanel projectId={projectId} runDisabled={runDisabled} />
+      )}
+
+      {/* 이하 DAG 4모드 블록 — 페르소나 뷰가 아닐 때만 렌더(기존 동작 byte-identical). */}
+      {!showPersona && (
+        <>
       <RunModeSwitcher value={runMode} onChange={onModeChange} />
 
       {/* 프로필 모드: 워크플로우 관리(프리셋·커스텀·순서). 셀렉터 위에 렌더 */}
@@ -402,6 +464,8 @@ export function OrchestratorPanel({
           onAutoRunUpstream={onAutoRunUpstream}
           onManualSubmit={onManualSubmit}
         />
+      )}
+        </>
       )}
     </section>
   );
