@@ -14,7 +14,7 @@
  * 네트워크 호출은 버튼 클릭 시에만(자동 마운트 fetch·WebGL 없음 → 진입 멈춤 위험 없음).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -251,6 +251,34 @@ export function DesignGenPanel({ projectId }: Props) {
   const [laws, setLaws] = useState<LawsResult | null>(null);
   const [lawsLoading, setLawsLoading] = useState(false);
   const [lawsErr, setLawsErr] = useState<string | null>(null);
+
+  // 도면 분류 택소노미(백엔드 단일 출처 — 실무 전수조사 반영). 분야별 그룹.
+  const [taxonomy, setTaxonomy] = useState<Record<string, { code: string; ko: string }[]>>({});
+  useEffect(() => {
+    let alive = true;
+    apiClient
+      .get<{ by_discipline: Record<string, { code: string; ko: string }[]> }>(
+        "/design-gen/drawing-types",
+      )
+      .then((d) => {
+        if (alive) setTaxonomy(d?.by_discipline ?? {});
+      })
+      .catch(() => {
+        /* 실패 시 정적 폴백 라벨/옵션 사용(아래) */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // code → 한국어명(택소노미 우선, 없으면 정적 폴백/코드).
+  function labelOf(code?: string | null): string {
+    if (!code) return "미상";
+    for (const items of Object.values(taxonomy)) {
+      const hit = items.find((i) => i.code === code);
+      if (hit) return hit.ko;
+    }
+    return DRAWING_TYPE_LABEL[code] ?? code;
+  }
 
   // 유사 도면 검색(search)
   const [searchType, setSearchType] = useState<string>("");
@@ -494,7 +522,7 @@ export function DesignGenPanel({ projectId }: Props) {
           {ingestErr && <p className="mt-2 text-xs text-[var(--status-error)]">{ingestErr}</p>}
           {ingest && (
             <div className="mt-2 text-xs text-[var(--text-secondary)]">
-              <span className="font-bold text-[var(--text-primary)]">{ingest.drawing_type}</span> · {ingest.source_format} ·{" "}
+              <span className="font-bold text-[var(--text-primary)]">{labelOf(ingest.drawing_type)}</span> · {ingest.source_format} ·{" "}
               {ingest.indexed ? (
                 <span style={{ color: "var(--status-success)" }}>색인 완료</span>
               ) : (
@@ -548,11 +576,22 @@ export function DesignGenPanel({ projectId }: Props) {
               onChange={(e) => setSearchType(e.target.value)}
               className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
             >
-              {DRAWING_TYPE_OPTIONS.map((t) => (
-                <option key={t || "all"} value={t}>
-                  {t ? DRAWING_TYPE_LABEL[t] : "전체 유형"}
-                </option>
-              ))}
+              <option value="">전체 유형</option>
+              {Object.keys(taxonomy).length > 0
+                ? Object.entries(taxonomy).map(([disc, items]) => (
+                    <optgroup key={disc} label={disc}>
+                      {items.map((it) => (
+                        <option key={it.code} value={it.code}>
+                          {it.ko}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : DRAWING_TYPE_OPTIONS.filter(Boolean).map((t) => (
+                    <option key={t} value={t}>
+                      {DRAWING_TYPE_LABEL[t] ?? t}
+                    </option>
+                  ))}
             </select>
             <input
               value={searchKeywords}
@@ -577,7 +616,7 @@ export function DesignGenPanel({ projectId }: Props) {
                     <div key={`${m.point_id}-${idx}`} className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-bold text-[var(--text-primary)]">
-                          {m.drawing_type ? DRAWING_TYPE_LABEL[m.drawing_type] ?? m.drawing_type : "미상"}
+                          {labelOf(m.drawing_type)}
                           {m.title ? ` · ${m.title}` : ""}
                         </span>
                         <span className="text-[var(--text-tertiary)]">유사 {(m.score * 100).toFixed(0)}</span>

@@ -289,6 +289,14 @@ async def test_laws_for_known_domain():
     assert out["domain"] == "zoning" and isinstance(out["laws"], list)
 
 
+async def test_drawing_types_taxonomy():
+    out = await dg.drawing_types(_user())
+    by = out["by_discipline"]
+    assert "건축" in by and "구조" in by and "소방" in by
+    codes = [d["code"] for items in by.values() for d in items]
+    assert "structural_plan" in codes and "site_plan" in codes
+
+
 async def test_laws_for_unknown_domain_404():
     with pytest.raises(HTTPException) as ei:
         await dg.laws_for_domain("nonsense", None, _user())
