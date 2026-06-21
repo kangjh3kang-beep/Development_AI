@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import hmac
 import logging
@@ -88,6 +89,27 @@ def mime_for(filename: str) -> str:
     return _EXT_MIME.get(_ext(filename), "application/octet-stream")
 
 
+# 텍스트성 도면만 압축(큰 절감). xlsx(=zip)·pdf·이미지는 이미 압축돼 재압축 이득 없음(패스).
+_COMPRESSIBLE = {".dxf", ".ifc"}
+_GZIP_LEVEL = 6  # 속도/압축률 균형(텍스트 도면)
+
+
+def compress_for_storage(data: bytes, filename: str) -> tuple[bytes, str | None]:
+    """텍스트 도면(DXF/IFC)을 gzip 압축(저장GB 절감). 반환: (바이트, content_encoding|None).
+
+    Content-Encoding: gzip로 저장하면 presigned 조회 시 브라우저가 투명 해제한다(원본 복원).
+    실제로 줄어들 때만 압축 적용(안전), 이미 압축된 형식·실패 시 원본 그대로(정직).
+    """
+    if _ext(filename) in _COMPRESSIBLE and data:
+        try:
+            comp = gzip.compress(data, compresslevel=_GZIP_LEVEL)
+            if len(comp) < len(data):
+                return comp, "gzip"
+        except Exception as e:  # noqa: BLE001 — 압축 실패는 원본 저장으로 강등
+            logger.debug("R2 gzip 압축 생략: %s", str(e)[:120])
+    return data, None
+
+
 def _safe_segment(value: str | None, default: str = "_shared") -> str:
     """키 세그먼트 안전화 — '/'·'..'·개행 등 제거(화이트리스트). 빈값이면 default."""
     t = (value or "").strip() or default
@@ -147,7 +169,13 @@ def _object_url(conf: dict, key: str) -> str:
 
 
 def _auth_headers(
-    conf: dict, method: str, key: str, *, payload_hash: str, content_type: str | None = None
+    conf: dict,
+    method: str,
+    key: str,
+    *,
+    payload_hash: str,
+    content_type: str | None = None,
+    content_encoding: str | None = None,
 ) -> dict[str, str]:
     """헤더 기반 SigV4 서명 → 요청 헤더(Authorization 포함). path-style 경로 사용."""
     amz_date, datestamp = _amz_times()
@@ -160,6 +188,8 @@ def _auth_headers(
     }
     if content_type:
         headers["content-type"] = content_type
+    if content_encoding:
+        headers["content-encoding"] = content_encoding
     signed_headers = ";".join(sorted(headers))
     canonical_headers = "".join(f"{h}:{headers[h]}\n" for h in sorted(headers))
 
@@ -241,8 +271,13 @@ async def object_exists(key: str) -> bool:
         return False
 
 
-async def put_object(key: str, data: bytes, content_type: str) -> tuple[bool, str | None]:
-    """객체 업로드(PUT). 반환: (성공, 실패사유|None). 미설정/오류는 정직 강등(예외 비전파)."""
+async def put_object(
+    key: str, data: bytes, content_type: str, content_encoding: str | None = None
+) -> tuple[bool, str | None]:
+    """객체 업로드(PUT). 반환: (성공, 실패사유|None). 미설정/오류는 정직 강등(예외 비전파).
+
+    content_encoding(예: gzip) 지정 시 Content-Encoding 헤더로 저장 → 조회 시 브라우저 투명 해제.
+    """
     conf = _conf()
     if not conf:
         return False, "object_store_not_configured"
@@ -250,7 +285,10 @@ async def put_object(key: str, data: bytes, content_type: str) -> tuple[bool, st
         import httpx
 
         payload_hash = _sha256_hex(data)
-        headers = _auth_headers(conf, "PUT", key, payload_hash=payload_hash, content_type=content_type)
+        headers = _auth_headers(
+            conf, "PUT", key, payload_hash=payload_hash,
+            content_type=content_type, content_encoding=content_encoding,
+        )
         url = _object_url(conf, key)
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.put(url, headers=headers, content=data)
