@@ -104,6 +104,18 @@ type LawsResult = {
   laws: LawRecord[];
 };
 
+type DrawingMatch = {
+  point_id: string;
+  score: number;
+  drawing_type?: string | null;
+  title?: string | null;
+  total_area_sqm?: number | null;
+  source_format?: string | null;
+  summary?: string | null;
+};
+
+type SearchResult = { ok: boolean; results: DrawingMatch[]; count: number; skipped_reason: string | null };
+
 /* ── 표시 헬퍼 ── */
 const CONF_LABEL: Record<string, string> = {
   ordinance: "실효(조례)",
@@ -127,6 +139,19 @@ const VERDICT_STYLE: Record<string, { label: string; color: string }> = {
   conditional: { label: "조건부", color: "var(--status-warning)" },
   fail: { label: "부적합", color: "var(--status-error)" },
 };
+
+// 도면 종류 한글 라벨(검색 필터·결과 표시용).
+const DRAWING_TYPE_LABEL: Record<string, string> = {
+  site_plan: "배치도",
+  floor_plan: "평면도",
+  section: "단면도",
+  elevation: "입면도",
+  parking: "주차설계",
+  spec_sheet: "설계스펙",
+  bim: "BIM",
+  unknown: "미상",
+};
+const DRAWING_TYPE_OPTIONS = ["", "site_plan", "floor_plan", "section", "elevation", "parking"];
 
 function fmtValue(v: Evidence["value"]): string | number {
   if (v === null || v === undefined) return "—";
@@ -186,6 +211,8 @@ type Props = { projectId?: string | null };
 
 export function DesignGenPanel({ projectId }: Props) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
 
   // 부지 컨텍스트 기본값(1회 시드 — store 미기록).
   const [areaSqm, setAreaSqm] = useState<number>(() => {
@@ -216,6 +243,16 @@ export function DesignGenPanel({ projectId }: Props) {
   const [lawsLoading, setLawsLoading] = useState(false);
   const [lawsErr, setLawsErr] = useState<string | null>(null);
 
+  // 유사 도면 검색(search)
+  const [searchType, setSearchType] = useState<string>("");
+  const [searchKeywords, setSearchKeywords] = useState<string>("");
+  const [searchRes, setSearchRes] = useState<SearchResult | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+
+  // 추천안 적용(모세혈관 SSOT 반영) — 적용된 설계안 인덱스.
+  const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
+
   async function handleIngest() {
     if (!file) return;
     setUploading(true);
@@ -238,6 +275,7 @@ export function DesignGenPanel({ projectId }: Props) {
     setLoading(true);
     setGenErr(null);
     setResult(null);
+    setAppliedIdx(null);
     try {
       const data = await apiClient.post<GenerateResult>("/design-gen/generate", {
         body: {
@@ -271,6 +309,48 @@ export function DesignGenPanel({ projectId }: Props) {
     } finally {
       setLawsLoading(false);
     }
+  }
+
+  async function handleSearch() {
+    setSearchLoading(true);
+    setSearchErr(null);
+    setSearchRes(null);
+    try {
+      const data = await apiClient.post<SearchResult>("/design-gen/search", {
+        body: {
+          drawing_type: searchType || null,
+          area_sqm: areaSqm > 0 ? areaSqm : null,
+          keywords: searchKeywords || "",
+          top_k: 8,
+        },
+      });
+      setSearchRes(data);
+    } catch (e) {
+      setSearchErr(errMessage(e));
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  // 추천 설계안 → 모세혈관 SSOT 반영(클릭 1회 쓰기 — 렌더 중 쓰기 아님 → 무한렌더 무관).
+  // 하류(공사비·수지)가 읽는 핵심 필드만 정직 매핑. 미산출 값은 null(가짜값 금지).
+  function handleApply(c: Candidate, idx: number) {
+    if (!c.estimated_gfa_sqm || c.estimated_gfa_sqm <= 0) return; // 적용할 연면적 없음
+    // far 분모는 백엔드가 한도 산정에 쓴 면적 우선(사용자가 입력란을 바꿔도 결과와 정합).
+    const denom = result?.site.area_sqm ?? areaSqm;
+    const far = denom > 0 ? Math.round((c.estimated_gfa_sqm / denom) * 100) : null;
+    updateDesignData({
+      totalGfaSqm: c.estimated_gfa_sqm,
+      floorCount: c.estimated_floors,
+      buildingType: buildingUse || "공동주택",
+      bcr: null, // 후보엔 건축면적비 직접 산출 없음 → 정직 null(하류 영향 시 별도 산정)
+      far,
+      unitCount: c.estimated_units ?? null,
+      unitTypes: null,
+      efficiencyPct: null,
+    });
+    markStageComplete("design");
+    setAppliedIdx(idx);
   }
 
   return (
@@ -382,6 +462,64 @@ export function DesignGenPanel({ projectId }: Props) {
           )}
         </div>
 
+        {/* 유사 도면 검색(search) */}
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+          <div className="text-xs font-semibold text-[var(--text-secondary)]">
+            🔍 유사 도면 검색 <span className="font-normal text-[var(--text-tertiary)]">업로드된 도면을 유형·면적({areaSqm.toLocaleString()}㎡)·키워드로 조회</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select
+              value={searchType}
+              onChange={(e) => setSearchType(e.target.value)}
+              className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
+            >
+              {DRAWING_TYPE_OPTIONS.map((t) => (
+                <option key={t || "all"} value={t}>
+                  {t ? DRAWING_TYPE_LABEL[t] : "전체 유형"}
+                </option>
+              ))}
+            </select>
+            <input
+              value={searchKeywords}
+              onChange={(e) => setSearchKeywords(e.target.value)}
+              placeholder="키워드(선택)"
+              className="min-w-[140px] flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
+            />
+            <Button variant="secondary" onClick={handleSearch} disabled={searchLoading}>
+              {searchLoading ? "검색 중…" : "유사 도면 검색"}
+            </Button>
+          </div>
+          {searchErr && <p className="mt-2 text-xs text-[var(--status-error)]">{searchErr}</p>}
+          {searchRes && (
+            <div className="mt-2">
+              {searchRes.results.length === 0 ? (
+                <p className="text-xs text-[var(--text-tertiary)]">
+                  일치하는 도면이 없습니다{searchRes.skipped_reason ? `(${searchRes.skipped_reason})` : ""}. 도면을 업로드하면 검색됩니다.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {searchRes.results.map((m, idx) => (
+                    <div key={`${m.point_id}-${idx}`} className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-[var(--text-primary)]">
+                          {m.drawing_type ? DRAWING_TYPE_LABEL[m.drawing_type] ?? m.drawing_type : "미상"}
+                          {m.title ? ` · ${m.title}` : ""}
+                        </span>
+                        <span className="text-[var(--text-tertiary)]">유사 {(m.score * 100).toFixed(0)}</span>
+                      </div>
+                      <div className="mt-0.5 text-[var(--text-secondary)]">
+                        {m.total_area_sqm != null ? `${m.total_area_sqm.toLocaleString()}㎡` : "면적 미상"}
+                        {m.source_format ? ` · ${m.source_format}` : ""}
+                      </div>
+                      {m.summary && <div className="mt-1 line-clamp-2 text-[var(--text-tertiary)]">{m.summary}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* 생성 결과 */}
         {result && (
           <div className="space-y-4">
@@ -468,6 +606,21 @@ export function DesignGenPanel({ projectId }: Props) {
                       </ul>
                     )}
                     <EvidencePanel title="설계안 근거" items={toEvidenceItems(p.evidence)} className="mt-2" defaultOpen={false} />
+                    {/* 모세혈관 적용 — 연면적이 있어야 하류(공사비·수지)로 전파 가능 */}
+                    <div className="mt-3 flex items-center gap-2">
+                      <Button
+                        variant={appliedIdx === i ? "secondary" : "primary"}
+                        onClick={() => handleApply(c, i)}
+                        disabled={!c.estimated_gfa_sqm || c.estimated_gfa_sqm <= 0 || appliedIdx === i}
+                      >
+                        {appliedIdx === i ? "적용됨 ✓" : "이 설계안 적용"}
+                      </Button>
+                      {appliedIdx === i && (
+                        <span className="text-[11px] text-[var(--text-tertiary)]">
+                          공사비·수지 등 하류 분석에 연면적·층수·세대수 반영됨
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
