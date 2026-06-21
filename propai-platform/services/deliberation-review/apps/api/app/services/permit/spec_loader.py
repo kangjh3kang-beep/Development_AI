@@ -26,7 +26,7 @@ _DEFAULT = PermitProcessSpec(
                 CriterionRef(criterion_id="bcr", kind=CriterionKind.QUANTITATIVE,
                              ssot_ref="building_area", basis_article="국토계획법 시행령"),
                 CriterionRef(criterion_id="layout", kind=CriterionKind.QUALITATIVE,
-                             ssot_ref="placement_fit"),
+                             ssot_ref="배치적정성"),   # 실 qual_facts feature명과 정합(매칭 키)
             ],
             deliverables=["배치도", "면적표"], authority="건축위원회",
             submittals=["건축계획서"],
@@ -35,7 +35,7 @@ _DEFAULT = PermitProcessSpec(
             stage_id="landscape_review", name="경관심의", stage_type="의제심의",
             predecessors=["building_review"], required_inputs=["use_zone"],
             criteria_refs=[CriterionRef(criterion_id="scenery", kind=CriterionKind.QUALITATIVE,
-                                        ssot_ref="scenery_fit")],
+                                        ssot_ref="경관조화")],   # 실 qual_facts feature명과 정합
             deliverables=["경관계획서"], authority="경관위원회",
             applies_zones=[],  # 조건 없으면 항상; 운영 스펙에서 좁힘
         ),
