@@ -37,6 +37,7 @@
 | ORPH1 | orphan 조문 배선(§77 건폐율 등) + 기준별 정밀 다중 근거(법률+시행령) 연결 — CriterionRef.legal_ref_ids | HIGH 0 | `72f5eeda` |
 | SLOT1 | calc_engine 근거 슬롯 정리(INV-12→note) — 전수조사 끊긴링크 #2 해소(2건 모두 복구) | HIGH 0 | `19e282ab` |
 | DLAGENT | 설계 SpecialistAgent(플랫폼) + 엔진 호출 공통 헬퍼 — 시스템1·2 모두 엔진+플랫폼 에이전트 노출 완성 | HIGH 0 | `08579462` |
+| P2A | 결과예측 휴리스틱(승인 가능성 등급+근거+한계, 정밀확률 무날조) + 플랫폼 전파 — outcome_predictor 슬롯 | 2회 수렴 | `cecda8b4` |
 
 ## 3. 진행 중
 
@@ -68,7 +69,7 @@
 - 정밀 조문화: 추가 법령의 정밀 조문번호·요지를 law.go.kr 라이브(LIVE_NETWORK·MOLEG 키, 사용자 승인) 검증으로 격상.
 - 잔여 orphan: 국토계획법§84(둘 이상 용도지역 안분)·§36(용도지역 지정) — 안분/zone-designation 로직 도입 시 인용 연결.
 - 운영 연동(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱·라이브 법령).
-- Phase 2: 생성형(매스/세대수 — design_gen 정합)·결과예측(StageSpec.outcome_predictor).
+- Phase 2b: 생성형(매스/세대수/배치 — design_gen 정합). [Phase 2a 결과예측 휴리스틱은 완료, pluggable ML은 후속.]
 - 시스템2 후속: 설계 SpecialistAgent(플랫폼), Phase2 생성형(매스/세대수 — design_gen 정합).
 - 운영(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱).
 
