@@ -7,6 +7,7 @@
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { DesignStudio } from "@/components/design/DesignStudio";
+import { DesignGenPanel } from "@/components/design/DesignGenPanel";
 import { CadBimIntegrationPanel } from "@/components/design/CadBimIntegrationPanel";
 
 export default function DesignStudioPage() {
@@ -18,7 +19,9 @@ export default function DesignStudioPage() {
         <>
           {/* 1) AI 자동설계(매싱·법규) */}
           <DesignStudio projectId={projectId} />
-          {/* 2) 실 CAD/BIM 설계·작성·편집 스튜디오(2D 도면·3D 조감·생성·수정·저장) */}
+          {/* 2) AI 설계생성(검색·조합·인허가·근거) — 도면 업로드→설계안 Top-N */}
+          <DesignGenPanel projectId={projectId} />
+          {/* 3) 실 CAD/BIM 설계·작성·편집 스튜디오(2D 도면·3D 조감·생성·수정·저장) */}
           <CadBimIntegrationPanel projectId={projectId} dictionary={{}} />
         </>
       ) : (
