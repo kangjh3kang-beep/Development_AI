@@ -33,6 +33,7 @@
 | 전수조사 | 부동산개발·건축 법규 391개 유니버스(9 카테고리) + 갭/끊긴링크/고아 진단 | — | (docs/LEGAL_REFS_AUDIT_2026-06-21.md) |
 | LAW1 | missing_high 25건 추가(집합건물법 등) + 끊긴링크(경관법) 복구, _REFS 26→51 | HIGH 0 | `717d093e` |
 | LAW2 | missing_other 20건 추가(_REFS 51→71) + resolve_text 견고성 근본강화(substring→최장일치→접두 앵커) | 3회 수렴 | `7c8c4167` |
+| EX2 | 심의 에이전트 findings에 근거(법령·조항·요지)+링크 전파 — 설명가능성 기본화 엔진+플랫폼 완성 | HIGH 0 | `170976cf` |
 
 ## 3. 진행 중
 
@@ -61,8 +62,8 @@
 
 ## 7. 잔여·다음
 
-- **EX2**: 플랫폼 BFF/`심의`·`설계` 에이전트 findings에 근거+링크 전파(롤아웃 범위=엔진+플랫폼).
 - 참조법규: 정밀 조문화(law.go.kr 라이브 검증), orphan(국토계획법§77 건폐율·§84 안분) 배선, calc_engine INV-12 슬롯 정리.
+- 설계 SpecialistAgent(플랫폼, 동일 _map_permit_response 재사용으로 근거+링크 전파 상속).
 - 시스템2 후속: 설계 SpecialistAgent(플랫폼), Phase2 생성형(매스/세대수 — design_gen 정합).
 - 운영(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱).
 
