@@ -11,31 +11,13 @@ import logging
 
 from app.services.design_ingest.design_spec import DesignSpec
 from app.services.design_ingest.parsers import parse_design_file
+from app.services.design_ingest.vector_store import (
+    DESIGN_COLLECTION,
+    EMBED_DIM,
+    embed_text,
+)
 
 logger = logging.getLogger(__name__)
-
-# init_qdrant.py와 동일한 컬렉션명(가산 정의).
-DESIGN_COLLECTION = "design_drawings"
-_EMBED_MODEL = "text-embedding-3-small"
-_EMBED_DIM = 1536
-
-
-async def _embed(text: str) -> tuple[list[float] | None, str | None]:
-    """텍스트 임베딩(best-effort). 반환: (벡터, 생략사유). 성공 시 (vector, None)."""
-    try:
-        from openai import AsyncOpenAI
-
-        from apps.api.config import get_settings
-
-        key = get_settings().openai_api_key
-        if not key:
-            return None, "no_openai_key"
-        client = AsyncOpenAI(api_key=key)
-        resp = await client.embeddings.create(model=_EMBED_MODEL, input=text[:8000])
-        return list(resp.data[0].embedding), None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("design_ingest 임베딩 실패: %s", str(e)[:120])
-        return None, "embed_error"
 
 
 def _index(
@@ -76,8 +58,8 @@ async def ingest_design_file(
 
     indexed = False
     index_skip_reason: str | None = None
-    vector, embed_reason = await _embed(spec.to_embedding_text())
-    if vector is not None and len(vector) == _EMBED_DIM:
+    vector, embed_reason = await embed_text(spec.to_embedding_text())
+    if vector is not None and len(vector) == EMBED_DIM:
         indexed, index_skip_reason = _index(spec, vector, project_id, tenant_id)
     elif vector is not None:
         index_skip_reason = "embed_dim_mismatch"
