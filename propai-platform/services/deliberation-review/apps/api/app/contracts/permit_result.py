@@ -35,7 +35,9 @@ class StageResult(BaseModel):
     deliverables: list[str] = Field(default_factory=list)
 
 
-class PermitProcessResult(BaseModel):
+class ProcessResult(BaseModel):
+    """프로세스 산출(프로세스-불문) — permit·design 공유. spec_id로 프로세스 종류 구분."""
+
     spec_id: str
     spec_version: str
     run_id: str | None = None
@@ -43,3 +45,7 @@ class PermitProcessResult(BaseModel):
     stages: list[StageResult] = Field(default_factory=list)
     overall_conformance: str = "HELD"                       # 종합(worst-of)
     overall_verification: str = "NEEDS_REVIEW"              # 최악 검증상태
+
+
+# 후방호환 별칭 — 기존 permit 코드 무파손(시스템1 동일 타입).
+PermitProcessResult = ProcessResult

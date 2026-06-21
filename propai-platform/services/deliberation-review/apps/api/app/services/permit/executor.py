@@ -11,8 +11,6 @@ from app.contracts.permit_result import PermitProcessResult, StageResult
 from app.services.permit.measurement import measure, worst_conformance
 from app.services.permit.spec_loader import applicable_stages
 
-# 결손 검사 대상 입력 키(컨텍스트에서 채움). use_zone은 필수 입력의 대표.
-_INPUT_KEYS = ("use_zone",)
 _VERIFY_RANK = {"CONFIRMED": 0, "NEEDS_REVIEW": 1, "BLOCKED": 2}
 
 
@@ -24,11 +22,15 @@ def _verify_stage(result: AnalysisResult) -> str:
     return max(statuses, key=lambda s: _VERIFY_RANK.get(s, 1))
 
 
-def run_permit_process(result: AnalysisResult, spec: PermitProcessSpec, *,
-                       dev_type: str | None = None, use_zone: str | None = None) -> PermitProcessResult:
-    """AnalysisResult + 스펙 → PermitProcessResult(로드맵+단계별 계측+대응+검증). 결정론·소비 read-only."""
+def run_process(result: AnalysisResult, spec: PermitProcessSpec, *,
+                dev_type: str | None = None, use_zone: str | None = None,
+                provided_inputs: dict | None = None) -> PermitProcessResult:
+    """AnalysisResult + 프로세스 스펙 → ProcessResult(로드맵+단계별 계측+대응+검증). 결정론·소비 read-only.
+
+    프로세스-불문 — permit·design 등 어떤 ProcessSpec이든 구동(spec_id로 구분). provided_inputs는 단계 required_inputs
+    충족 여부 판정용 컨텍스트(설계 라이프사이클의 완결성 — 기획/매스/평면 등 산출물 존재 표시). use_zone은 항상 포함."""
     stages = applicable_stages(spec, dev_type=dev_type, use_zone=use_zone)
-    inputs = {"use_zone": use_zone}
+    inputs = {"use_zone": use_zone, **(provided_inputs or {})}
     stage_verify = _verify_stage(result)
     stage_results: list[StageResult] = []
     for st in stages:
@@ -49,7 +51,7 @@ def _run_stage(result: AnalysisResult, st: StageSpec, inputs: dict,
     sr = StageResult(stage_id=st.stage_id, name=st.name, stage_type=st.stage_type,
                      authority=st.authority, submittals=list(st.submittals),
                      deliverables=list(st.deliverables))
-    missing = [k for k in st.required_inputs if k in _INPUT_KEYS and not inputs.get(k)]
+    missing = [k for k in st.required_inputs if not inputs.get(k)]   # 선언된 모든 required_inputs 검사(완결성)
     if missing:
         sr.status = "NEEDS_INPUT"
         sr.issues = [f"필요 입력 결손: {', '.join(missing)}"]   # 무음 금지 — 표면화
@@ -61,3 +63,7 @@ def _run_stage(result: AnalysisResult, st: StageSpec, inputs: dict,
     sr.remediation = [f"{c.criterion_id}: 보완 필요({c.basis_article or '근거조문 확인'})"
                       for c in crits if c.conformance in ("미흡", "조건부")]
     return sr
+
+
+# 후방호환 별칭 — 기존 permit 경로 무파손(시스템1 동일 함수).
+run_permit_process = run_process
