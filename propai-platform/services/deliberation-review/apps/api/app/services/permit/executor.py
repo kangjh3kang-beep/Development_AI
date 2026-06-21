@@ -1,0 +1,63 @@
+"""INC-PD2 — 프로세스 실행기: 스펙을 읽어 단계별로 AnalysisResult를 소비·계측·검증(얇은 결정론).
+
+INV-13: AnalysisResult를 read-only 소비(재계산·라이브 호출 없음). 검증은 엔진 게이트 산출(finding.gated_status)
+재사용. 입력 결손은 NEEDS_INPUT로 표면화(무음 금지). 동일 입력+스펙 → 동일 결과(결정론).
+"""
+from __future__ import annotations
+
+from app.contracts.analysis import AnalysisResult
+from app.contracts.permit_process import PermitProcessSpec, StageSpec
+from app.contracts.permit_result import PermitProcessResult, StageResult
+from app.services.permit.measurement import measure, worst_conformance
+from app.services.permit.spec_loader import applicable_stages
+
+# 결손 검사 대상 입력 키(컨텍스트에서 채움). use_zone은 필수 입력의 대표.
+_INPUT_KEYS = ("use_zone",)
+_VERIFY_RANK = {"CONFIRMED": 0, "NEEDS_REVIEW": 1, "BLOCKED": 2}
+
+
+def _verify_stage(result: AnalysisResult) -> str:
+    """단계 검증 — 엔진 게이트 산출(finding.gated_status) worst-of 재사용. finding 없으면 NEEDS_REVIEW(보수)."""
+    statuses = [f.gated_status.value for f in result.findings]
+    if not statuses:
+        return "NEEDS_REVIEW"
+    return max(statuses, key=lambda s: _VERIFY_RANK.get(s, 1))
+
+
+def run_permit_process(result: AnalysisResult, spec: PermitProcessSpec, *,
+                       dev_type: str | None = None, use_zone: str | None = None) -> PermitProcessResult:
+    """AnalysisResult + 스펙 → PermitProcessResult(로드맵+단계별 계측+대응+검증). 결정론·소비 read-only."""
+    stages = applicable_stages(spec, dev_type=dev_type, use_zone=use_zone)
+    inputs = {"use_zone": use_zone}
+    stage_verify = _verify_stage(result)
+    stage_results: list[StageResult] = []
+    for st in stages:
+        sr = _run_stage(result, st, inputs, stage_verify, use_zone)
+        stage_results.append(sr)
+    overall_c = worst_conformance([s.conformance for s in stage_results])
+    overall_v = max((s.verification_status for s in stage_results),
+                    key=lambda s: _VERIFY_RANK.get(s, 1), default="NEEDS_REVIEW")
+    return PermitProcessResult(
+        spec_id=spec.spec_id, spec_version=spec.version, run_id=result.run_id,
+        roadmap=[s.stage_id for s in stages], stages=stage_results,
+        overall_conformance=overall_c, overall_verification=overall_v,
+    )
+
+
+def _run_stage(result: AnalysisResult, st: StageSpec, inputs: dict,
+               stage_verify: str, use_zone: str | None) -> StageResult:
+    sr = StageResult(stage_id=st.stage_id, name=st.name, stage_type=st.stage_type,
+                     authority=st.authority, submittals=list(st.submittals),
+                     deliverables=list(st.deliverables))
+    missing = [k for k in st.required_inputs if k in _INPUT_KEYS and not inputs.get(k)]
+    if missing:
+        sr.status = "NEEDS_INPUT"
+        sr.issues = [f"필요 입력 결손: {', '.join(missing)}"]   # 무음 금지 — 표면화
+        return sr
+    crits = [measure(result, ref, use_zone) for ref in st.criteria_refs]
+    sr.criteria = crits
+    sr.conformance = worst_conformance([c.conformance for c in crits])
+    sr.verification_status = stage_verify
+    sr.remediation = [f"{c.criterion_id}: 보완 필요({c.basis_article or '근거조문 확인'})"
+                      for c in crits if c.conformance in ("미흡", "조건부")]
+    return sr
