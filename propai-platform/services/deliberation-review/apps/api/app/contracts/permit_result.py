@@ -24,6 +24,25 @@ class CriterionResult(BaseModel):
     legal_basis: list[LegalRef] = Field(default_factory=list)
 
 
+class CapacityEnvelope(BaseModel):
+    """매스 캐파 검증(Phase 2b) — 엔진 SSOT(용적/건폐) 기반 최대 허용 규모 + 제공 매스 적정성 검증(생성 아님).
+
+    ★검증 전용: 최대 연면적/건축면적을 SSOT 한도로 산정하고 제공 매스(proposed_gfa)와 대조(부합/미흡/미상).
+    정북일조·심의 완화 등 추가 제약은 별도(design_gen solar_envelope 소관) — caveat로 표면화(과대 단정 금지).
+    """
+
+    max_gfa_sqm: float | None = None        # 최대 연면적 = 대지면적 × 용적률
+    max_footprint_sqm: float | None = None  # 최대 건축면적 = 대지면적 × 건폐율
+    plot_area_sqm: float | None = None
+    far_pct: float | None = None
+    bcr_pct: float | None = None
+    proposed_gfa_sqm: float | None = None
+    conformance: str = "미상"               # 부합 | 미흡 | 미상(캐파/제공 매스 부재)
+    margin_sqm: float | None = None         # 여유 = 최대연면적 − 제공연면적(계산식)
+    legal_basis: list[LegalRef] = Field(default_factory=list)
+    caveat: str = "SSOT 한도(용적·건폐) 기반 최대 캐파 — 정북일조·완화 등 추가 제약 별도(design_gen 소관)"
+
+
 class OutcomePrediction(BaseModel):
     """단계 승인 가능성 예측(Phase 2a) — 결정론 휴리스틱. ★정밀 확률(%) 미생성(학습모델 없이 날조 금지).
 
@@ -51,6 +70,7 @@ class StageResult(BaseModel):
     submittals: list[str] = Field(default_factory=list)
     deliverables: list[str] = Field(default_factory=list)
     outcome: OutcomePrediction | None = None   # Phase 2a 승인 가능성 예측(outcome_predictor 설정 단계만)
+    capacity: CapacityEnvelope | None = None   # Phase 2b 매스 캐파 검증(설계 massing 단계만)
 
 
 class ProcessResult(BaseModel):
