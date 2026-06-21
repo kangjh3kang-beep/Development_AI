@@ -70,15 +70,20 @@ async def ingest_design_file(
     try:
         from app.services.growth.capture_service import record_event
 
+        # 도메인 메타는 payload 아래로(capture 화이트리스트 규약 — 평면 키는 폐기됨).
         record_event(
             "design_ingest",
             {
-                "drawing_type": spec.drawing_type,
-                "source_format": spec.source_format,
-                "indexed": indexed,
-                "content_hash": spec.content_hash(),
-                "has_area": spec.total_area_sqm is not None,
-                "project_id": project_id,
+                "service": "design_ingest",
+                "tenant_id": tenant_id,
+                "payload": {
+                    "drawing_type": spec.drawing_type,
+                    "source_format": spec.source_format,
+                    "indexed": indexed,
+                    "content_hash": spec.content_hash(),
+                    "has_area": spec.total_area_sqm is not None,
+                    "project_id": project_id,
+                },
             },
         )
     except Exception as e:  # noqa: BLE001

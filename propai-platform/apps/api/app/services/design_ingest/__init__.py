@@ -9,6 +9,10 @@ from app.services.design_ingest.composition import (
 )
 from app.services.design_ingest.design_spec import DesignSpec, RoomSpec, detect_drawing_type
 from app.services.design_ingest.ingest_service import ingest_design_file
+from app.services.design_ingest.orchestrator import (
+    DesignRequest,
+    generate_design_proposals,
+)
 from app.services.design_ingest.parsers import detect_format, parse_design_file
 from app.services.design_ingest.search_service import (
     DrawingMatch,
@@ -20,6 +24,7 @@ from app.services.design_ingest.vector_store import DESIGN_COLLECTION
 __all__ = [
     "DESIGN_COLLECTION",
     "CompositionCandidate",
+    "DesignRequest",
     "DesignSpec",
     "DrawingMatch",
     "RoomSpec",
@@ -29,6 +34,7 @@ __all__ = [
     "detect_drawing_type",
     "detect_format",
     "fit_score",
+    "generate_design_proposals",
     "ingest_design_file",
     "parse_design_file",
     "search_drawings",
