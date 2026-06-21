@@ -141,6 +141,7 @@ def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
             "summary": {"available": True, "spec_id": res.get("spec_id"),
                         "overall_conformance": res.get("overall_conformance"),
                         "overall_verification": res.get("overall_verification"),
+                        "overall_outcome": res.get("overall_outcome"),   # Phase 2a 종합 승인 가능성 전파
                         "run_id": res.get("run_id")}}
 
 

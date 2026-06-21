@@ -44,6 +44,7 @@ _DEFAULT = PermitProcessSpec(
         StageSpec(
             stage_id="building_permit", name="건축허가", stage_type="본허가",
             predecessors=["building_review"], required_inputs=["use_zone"],
+            outcome_predictor="heuristic_v1",   # Phase 2a 승인 가능성 예측(본허가 단계)
             criteria_refs=[CriterionRef(criterion_id="height", kind=CriterionKind.QUANTITATIVE,
                                         ssot_ref="building_height", basis_article="건축법",
                                         legal_ref_ids=["건축법§60", "건축법§61"])],   # 높이제한·일조

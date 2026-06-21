@@ -56,7 +56,7 @@ _DESIGN = ProcessSpec(
         StageSpec(
             stage_id="deliverable_verify", name="결과물 검증", stage_type="설계",
             predecessors=["floor_plan"], required_inputs=["use_zone"],
-            deliverables=["설계 검증 리포트"],
+            deliverables=["설계 검증 리포트"], outcome_predictor="heuristic_v1",   # Phase 2a 승인 가능성 예측
         ),
     ],
 )

@@ -29,20 +29,26 @@ def run_process(result: AnalysisResult, spec: PermitProcessSpec, *,
 
     프로세스-불문 — permit·design 등 어떤 ProcessSpec이든 구동(spec_id로 구분). provided_inputs는 단계 required_inputs
     충족 여부 판정용 컨텍스트(설계 라이프사이클의 완결성 — 기획/매스/평면 등 산출물 존재 표시). use_zone은 항상 포함."""
+    from app.services.predict.outcome import overall_outcome, predict_stage
+
     stages = applicable_stages(spec, dev_type=dev_type, use_zone=use_zone)
     inputs = {"use_zone": use_zone, **(provided_inputs or {})}
     stage_verify = _verify_stage(result)
     stage_results: list[StageResult] = []
     for st in stages:
         sr = _run_stage(result, st, inputs, stage_verify, use_zone)
+        if st.outcome_predictor:   # Phase 2a 슬롯 — 설정 단계만 승인 가능성 예측(결정론 휴리스틱)
+            sr.outcome = predict_stage(sr, st.outcome_predictor)
         stage_results.append(sr)
     overall_c = worst_conformance([s.conformance for s in stage_results])
     overall_v = max((s.verification_status for s in stage_results),
                     key=lambda s: _VERIFY_RANK.get(s, 1), default="NEEDS_REVIEW")
+    overall_o = overall_outcome([s.outcome.likelihood for s in stage_results if s.outcome])
     return PermitProcessResult(
         spec_id=spec.spec_id, spec_version=spec.version, run_id=result.run_id,
         roadmap=[s.stage_id for s in stages], stages=stage_results,
         overall_conformance=overall_c, overall_verification=overall_v,
+        overall_outcome=overall_o,
     )
 
 

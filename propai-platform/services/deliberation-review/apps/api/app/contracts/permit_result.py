@@ -24,6 +24,19 @@ class CriterionResult(BaseModel):
     legal_basis: list[LegalRef] = Field(default_factory=list)
 
 
+class OutcomePrediction(BaseModel):
+    """단계 승인 가능성 예측(Phase 2a) — 결정론 휴리스틱. ★정밀 확률(%) 미생성(학습모델 없이 날조 금지).
+
+    likelihood 등급 + 도출근거(rationale)+투입신호(basis)+한계(caveat) 동반(설명가능성). pluggable ML은 후속.
+    """
+
+    likelihood: str = "미상"           # 높음 | 보통 | 낮음 | 미상
+    predictor: str = "heuristic_v1"
+    rationale: str = ""                # 왜 이 등급인지(도출 근거)
+    basis: list[str] = Field(default_factory=list)   # 투입 신호(완결성/부합도/검증)
+    caveat: str = "결정론 휴리스틱 — 통계/학습모델 아님, 위원 재량 미반영"
+
+
 class StageResult(BaseModel):
     stage_id: str
     name: str
@@ -37,6 +50,7 @@ class StageResult(BaseModel):
     authority: str | None = None
     submittals: list[str] = Field(default_factory=list)
     deliverables: list[str] = Field(default_factory=list)
+    outcome: OutcomePrediction | None = None   # Phase 2a 승인 가능성 예측(outcome_predictor 설정 단계만)
 
 
 class ProcessResult(BaseModel):
@@ -49,6 +63,7 @@ class ProcessResult(BaseModel):
     stages: list[StageResult] = Field(default_factory=list)
     overall_conformance: str = "HELD"                       # 종합(worst-of)
     overall_verification: str = "NEEDS_REVIEW"              # 최악 검증상태
+    overall_outcome: str = "미상"                           # Phase 2a 종합 승인 가능성(높음/보통/낮음/미상)
 
 
 # 후방호환 별칭 — 기존 permit 코드 무파손(시스템1 동일 타입).
