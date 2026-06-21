@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.billing_deps import enforce_llm_quota
 from app.models.project import Project
 from app.services.design_ingest import object_store
+from app.services.design_ingest.design_spec import drawing_types_by_discipline
 from app.services.design_ingest.ingest_service import ingest_design_file
 from app.services.design_ingest.law_coverage import (
     DESIGN_LAW_MAP,
@@ -254,6 +255,14 @@ async def laws_for_domain(
             detail=f"알 수 없는 도메인입니다. 가능: {', '.join(sorted(DESIGN_LAW_MAP))}",
         )
     return {"domain": domain, "laws": laws_for(domain, sigungu=sigungu)}
+
+
+@router.get("/drawing-types")
+async def drawing_types(
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """도면 분류 택소노미(분야별) — 프론트 검색 필터·라벨의 단일 출처(실무 전수조사 반영)."""
+    return {"by_discipline": drawing_types_by_discipline()}
 
 
 @router.get("/drawings/{content_hash}/url")

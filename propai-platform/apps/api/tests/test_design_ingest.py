@@ -110,6 +110,36 @@ def test_point_id_tenant_namespaced():
     assert len(a.point_id(tenant_id="T1")) == 36
 
 
+def test_detect_drawing_type_taxonomy():
+    from app.services.design_ingest.design_spec import (
+        DRAWING_TYPES,
+        detect_drawing_type,
+        drawing_types_by_discipline,
+    )
+    # 기존 5종 하위호환
+    assert detect_drawing_type("배치도") == "site_plan"
+    assert detect_drawing_type("1층평면도") == "floor_plan"
+    assert detect_drawing_type("남측입면도") == "elevation"
+    assert detect_drawing_type("종단면도") == "section"
+    assert detect_drawing_type("주차계획도") == "parking"
+    # 분야별 신규(복합 키워드 우선 — 'X평면도'가 floor_plan으로 오분류되지 않음)
+    assert detect_drawing_type("구조평면도") == "structural_plan"
+    assert detect_drawing_type("전기간선계통도") == "electrical_plan"
+    assert detect_drawing_type("급배수위생계통도") == "plumbing_plan"
+    assert detect_drawing_type("토목우배수도") == "civil_plan"
+    assert detect_drawing_type("조경식재도") == "landscape_plan"
+    assert detect_drawing_type("천장도") == "ceiling_plan"
+    assert detect_drawing_type("창호일람표") == "window_door_schedule"
+    assert detect_drawing_type("정북일조분석도") == "daylight_analysis"
+    assert detect_drawing_type("a.txt") == "unknown"
+    # 택소노미 규모·분야 그룹
+    assert len(DRAWING_TYPES) >= 35 and "unknown" in DRAWING_TYPES
+    by = drawing_types_by_discipline()
+    assert {"구조", "전기", "기계설비", "급배수위생", "소방", "토목", "조경", "통신"} <= set(by)
+    # 각 항목 계약(code/ko/set)
+    assert all("code" in d and "ko" in d for items in by.values() for d in items)
+
+
 def test_parse_design_file_routing_and_honesty():
     # PDF는 비전 경로 안내(경고) + 형식 보존. IFC 잘못된 바이트는 파싱실패 경고.
     ifc = parse_design_file(b"dummy", "model.ifc")
