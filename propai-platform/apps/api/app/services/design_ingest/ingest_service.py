@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def _index(
-    spec: DesignSpec, vector: list[float], project_id: str | None, tenant_id: str | None
+    spec: DesignSpec,
+    vector: list[float],
+    project_id: str | None,
+    tenant_id: str | None,
+    object_key: str | None = None,
 ) -> tuple[bool, str | None]:
     """Qdrant design_drawings에 멱등 업서트(point_id=content_hash 기반). 반환: (성공, 실패사유)."""
     try:
@@ -32,6 +36,7 @@ def _index(
         payload = spec.to_payload()
         payload["project_id"] = project_id
         payload["tenant_id"] = tenant_id
+        payload["object_key"] = object_key  # R2 원본 키(없으면 None=미저장, 정직)
         client = get_qdrant_client()
         client.upsert(
             collection_name=DESIGN_COLLECTION,
@@ -48,6 +53,28 @@ def _index(
         return False, "qdrant_error"
 
 
+async def _store_original(
+    content: bytes, filename: str, content_hash: str, tenant_id: str | None
+) -> tuple[str | None, bool, str | None]:
+    """원본 파일을 R2에 저장(content_hash 키 dedup·테넌트 격리). 반환: (object_key, stored, 사유).
+
+    미설정/실패는 정직 강등(예외 비전파). 이미 존재하면 재업로드 없이 stored=True(중복제거).
+    """
+    from app.services.design_ingest import object_store
+
+    if not object_store.is_configured():
+        return None, False, "object_store_not_configured"
+    try:
+        key = object_store.object_key(tenant_id, content_hash, filename)  # 잘못된 해시는 ValueError→강등
+        if await object_store.object_exists(key):
+            return key, True, "deduplicated"  # 동일 내용 이미 보관(재업로드 생략)
+        ok, reason = await object_store.put_object(key, content, object_store.mime_for(filename))
+        return (key, True, None) if ok else (None, False, reason)
+    except Exception as e:  # noqa: BLE001 — 원본 저장 실패가 인제스트(색인)를 깨면 안 됨
+        logger.warning("design_ingest 원본 저장 생략: %s", str(e)[:120])
+        return None, False, "store_error"
+
+
 async def ingest_design_file(
     *,
     filename: str,
@@ -61,11 +88,17 @@ async def ingest_design_file(
     """
     spec = await parse_design_file_async(content, filename)
 
+    # 원본 파일 영속(R2, best-effort) — content_hash 키로 중복제거·테넌트 격리.
+    # 미설정/실패는 정직 강등(stored=False+사유). 원본은 비공개(presigned로만 조회).
+    object_key, stored, store_skip_reason = await _store_original(
+        content, filename, spec.content_hash(), tenant_id
+    )
+
     indexed = False
     index_skip_reason: str | None = None
     vector, embed_reason = await embed_text(spec.to_embedding_text())
     if vector is not None and len(vector) == EMBED_DIM:
-        indexed, index_skip_reason = _index(spec, vector, project_id, tenant_id)
+        indexed, index_skip_reason = _index(spec, vector, project_id, tenant_id, object_key)
     elif vector is not None:
         index_skip_reason = "embed_dim_mismatch"
     else:
@@ -85,6 +118,7 @@ async def ingest_design_file(
                     "drawing_type": spec.drawing_type,
                     "source_format": spec.source_format,
                     "indexed": indexed,
+                    "stored": stored,
                     "content_hash": spec.content_hash(),
                     "has_area": spec.total_area_sqm is not None,
                     "project_id": project_id,
@@ -102,6 +136,11 @@ async def ingest_design_file(
         "indexed": indexed,
         # 미인덱싱 사유(정직 구분): no_openai_key|embed_error|embed_dim_mismatch|qdrant_error|None
         "index_skip_reason": index_skip_reason,
+        # 원본 저장(R2): stored=True면 보관(또는 중복제거됨), object_key는 presigned 조회용.
+        "stored": stored,
+        "object_key": object_key,
+        # 미저장 사유(정직): object_store_not_configured|deduplicated|r2_status_*|r2_error|store_error|None
+        "store_skip_reason": store_skip_reason,
         "warnings": spec.meta.get("warnings", []),
         "spec": spec.to_payload(),
     }
