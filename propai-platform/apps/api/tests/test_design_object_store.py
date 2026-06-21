@@ -1,0 +1,212 @@
+"""R2 객체 저장(object_store) + 원본 저장 배선 단위테스트.
+
+라이브 R2 없이 검증: ①SigV4 서명키를 AWS 공식 테스트벡터로 정확성 확인 ②키 테넌트격리·중복제거
+③미설정 시 정직 강등(stored=False) ④presigned URL·헤더 구조 ⑤_store_original dedup/degrade.
+"""
+
+import hashlib
+import hmac
+
+import pytest
+
+from app.services.design_ingest import object_store as os_mod
+
+# R2 자격증명(테스트용 더미) — 환경 설정 시 동작 경로 검증용.
+_ENV = {
+    "R2_ACCOUNT_ID": "acct123",
+    "R2_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+    "R2_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "R2_BUCKET": "design-originals",
+}
+
+
+def _set_env(monkeypatch, **over):
+    for k, v in {**_ENV, **over}.items():
+        monkeypatch.setenv(k, v)
+
+
+# ── SigV4: AWS S3 'GET Object' 공식 예제로 서명 정확성 검증(라이브 R2 불필요) ──
+def test_sigv4_matches_aws_s3_get_example():
+    # AWS 문서 'Signature Calculations for the Authorization Header'의 GET Object 예제.
+    # _derive_signing_key + 최종 HMAC이 AWS 정답 서명과 일치해야 함(서명 체인 정확성 보증).
+    secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    string_to_sign = (
+        "AWS4-HMAC-SHA256\n"
+        "20130524T000000Z\n"
+        "20130524/us-east-1/s3/aws4_request\n"
+        "7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972"
+    )
+    skey = os_mod._derive_signing_key(secret, "20130524", "us-east-1", "s3")
+    sig = hmac.new(skey, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    assert sig == "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+
+
+def test_sha256_hex_empty():
+    assert os_mod._sha256_hex(b"") == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+
+# ── 객체 키: 테넌트 격리 + content_hash 중복제거 ──
+_H = "abc1230000def456"  # 유효 hex content_hash(테스트용, 16자)
+
+
+def test_object_key_tenant_isolation_and_dedup():
+    a = os_mod.object_key("T1", _H, "배치도.dxf")
+    b = os_mod.object_key("T1", _H, "배치도.dxf")
+    assert a == b == f"design/T1/{_H}.dxf"          # 동일 → 멱등(dedup)
+    assert os_mod.object_key("T2", _H, "x.dxf") == f"design/T2/{_H}.dxf"  # 테넌트 분리
+    assert a != os_mod.object_key("T2", _H, "x.dxf")
+    # tenant 미상 → _shared 프리픽스(전역)
+    assert os_mod.object_key(None, _H, "a.pdf") == f"design/_shared/{_H}.pdf"
+    # 미지원 확장자는 확장자 없이(키 안정)
+    assert os_mod.object_key("T1", _H, "noext") == f"design/T1/{_H}"
+
+
+def test_object_key_sanitizes_tenant_traversal():
+    # ★path traversal/교차테넌트 차단 — '/'·'..'·개행이 키 경로를 이탈하지 못함
+    k = os_mod.object_key("../other/x", _H, "a.dxf")
+    assert k.startswith("design/")
+    assert "/" not in k.split("design/")[1].rsplit("/", 1)[0]  # tenant 세그먼트에 '/' 없음
+    assert ".." not in k
+    assert os_mod.object_key("a\nb", _H, "a.dxf") == f"design/a_b/{_H}.dxf"
+
+
+def test_object_key_rejects_bad_content_hash():
+    for bad in ("", "NOT-HEX!!", "../etc", "g" * 20):  # 비-hex
+        with pytest.raises(ValueError):
+            os_mod.object_key("T1", bad, "a.dxf")
+
+
+def test_mime_for():
+    assert os_mod.mime_for("a.pdf") == "application/pdf"
+    assert os_mod.mime_for("a.DXF") == "application/dxf"
+    assert os_mod.mime_for("a.unknown") == "application/octet-stream"
+
+
+# ── 미설정 시 비활성(정직 강등) — 네트워크 호출 없음 ──
+def test_unconfigured_is_disabled(monkeypatch):
+    for k in _ENV:
+        monkeypatch.delenv(k, raising=False)
+    assert os_mod.is_configured() is False
+    assert os_mod.presigned_get_url("design/T1/h.pdf", "T1") is None
+
+
+async def test_put_object_unconfigured_returns_reason(monkeypatch):
+    for k in _ENV:
+        monkeypatch.delenv(k, raising=False)
+    ok, reason = await os_mod.put_object("k", b"data", "application/pdf")
+    assert ok is False and reason == "object_store_not_configured"
+
+
+async def test_object_exists_unconfigured_false(monkeypatch):
+    for k in _ENV:
+        monkeypatch.delenv(k, raising=False)
+    assert await os_mod.object_exists("k") is False
+
+
+# ── 설정 시: 헤더/presigned 구조(서명 자체는 네트워크 없이 생성) ──
+def test_is_configured_and_conf(monkeypatch):
+    _set_env(monkeypatch)
+    assert os_mod.is_configured() is True
+    conf = os_mod._conf()
+    assert conf["host"] == "acct123.r2.cloudflarestorage.com"
+    assert conf["endpoint"] == "https://acct123.r2.cloudflarestorage.com"
+
+
+def test_auth_headers_structure(monkeypatch):
+    _set_env(monkeypatch)
+    conf = os_mod._conf()
+    h = os_mod._auth_headers(conf, "PUT", "design/T1/h.pdf",
+                             payload_hash=os_mod._sha256_hex(b"x"), content_type="application/pdf")
+    assert h["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/")
+    assert "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date" in h["Authorization"]
+    assert h["host"] == "acct123.r2.cloudflarestorage.com"
+    assert "x-amz-date" in h and "x-amz-content-sha256" in h
+
+
+def test_presigned_url_structure(monkeypatch):
+    _set_env(monkeypatch)
+    url = os_mod.presigned_get_url("design/T1/abc.pdf", "T1", expires=300)
+    assert url is not None
+    assert url.startswith("https://acct123.r2.cloudflarestorage.com/design-originals/design/T1/abc.pdf?")
+    assert "X-Amz-Algorithm=AWS4-HMAC-SHA256" in url
+    assert "X-Amz-Expires=300" in url
+    assert "X-Amz-Signature=" in url
+    assert "X-Amz-Credential=AKIAIOSFODNN7EXAMPLE" in url
+
+
+def test_presigned_blocks_cross_tenant(monkeypatch):
+    # ★IDOR 차단 — 요청자 테넌트(T2)가 타 테넌트(T1) 키 서명 요청 시 None
+    _set_env(monkeypatch)
+    assert os_mod.presigned_get_url("design/T1/abc.pdf", "T2") is None
+    # 본인 키는 발급됨
+    assert os_mod.presigned_get_url("design/T2/abc.pdf", "T2") is not None
+
+
+def test_presigned_expires_clamped(monkeypatch):
+    _set_env(monkeypatch)
+    url = os_mod.presigned_get_url("design/T1/k", "T1", expires=99999999)  # 7일 초과 → 클램프
+    assert "X-Amz-Expires=604800" in url
+
+
+# ── _store_original 배선: dedup/degrade ──
+async def test_store_original_unconfigured(monkeypatch):
+    from app.services.design_ingest import ingest_service
+    monkeypatch.setattr(os_mod, "is_configured", lambda: False)
+    key, stored, reason = await ingest_service._store_original(b"d", "a.dxf", _H, "T1")
+    assert key is None and stored is False and reason == "object_store_not_configured"
+
+
+async def test_store_original_uploads_when_new(monkeypatch):
+    from app.services.design_ingest import ingest_service
+
+    async def _not_exists(_k):
+        return False
+
+    async def _put(_k, _d, _ct):
+        return True, None
+
+    monkeypatch.setattr(os_mod, "is_configured", lambda: True)
+    monkeypatch.setattr(os_mod, "object_exists", _not_exists)
+    monkeypatch.setattr(os_mod, "put_object", _put)
+    key, stored, reason = await ingest_service._store_original(b"d", "배치.dxf", _H, "T1")
+    assert key == f"design/T1/{_H}.dxf" and stored is True and reason is None
+
+
+async def test_store_original_dedup_skips_upload(monkeypatch):
+    from app.services.design_ingest import ingest_service
+    calls = {"put": 0}
+
+    async def _exists(_k):
+        return True
+
+    async def _put(_k, _d, _ct):
+        calls["put"] += 1
+        return True, None
+
+    monkeypatch.setattr(os_mod, "is_configured", lambda: True)
+    monkeypatch.setattr(os_mod, "object_exists", _exists)
+    monkeypatch.setattr(os_mod, "put_object", _put)
+    key, stored, reason = await ingest_service._store_original(b"d", "a.dxf", _H, "T1")
+    assert stored is True and reason == "deduplicated" and calls["put"] == 0  # 재업로드 안 함
+
+
+async def test_store_original_put_failure_degrades(monkeypatch):
+    from app.services.design_ingest import ingest_service
+
+    async def _not_exists(_k):
+        return False
+
+    async def _put(_k, _d, _ct):
+        return False, "r2_status_403"
+
+    monkeypatch.setattr(os_mod, "is_configured", lambda: True)
+    monkeypatch.setattr(os_mod, "object_exists", _not_exists)
+    monkeypatch.setattr(os_mod, "put_object", _put)
+    key, stored, reason = await ingest_service._store_original(b"d", "a.dxf", _H, "T1")
+    assert key is None and stored is False and reason == "r2_status_403"
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))
