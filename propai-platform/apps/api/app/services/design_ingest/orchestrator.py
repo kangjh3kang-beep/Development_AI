@@ -36,6 +36,7 @@ class DesignRequest:
     area_sqm: float
     zone_code: str = "2R"               # AutoDesignEngine 법적한도 조회용(코드)
     zone_name: str | None = None        # PermitValidator 인허가 판정용(한글 용도지역명)
+    sigungu: str | None = None          # 조례 근거 링크용(지자체명) — 없으면 조례링크 pending(정직)
     dev_type: str = "M06"               # 개발유형 코드(M06=일반분양, 기본)
     building_use: str = "공동주택"       # 검색 질의/도면 적합도용
     ordinance_far_pct: float | None = None
@@ -145,8 +146,8 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             permit_complexity=permit_complexity,
             far_source=site.far_source,
         )
-        # 모든 결과물에 근거 부착(전역 원칙): 추정·적합성·법적한도 출처/링크.
-        evidence = [e.to_dict() for e in proposal_evidence(cd, site)]
+        # 모든 결과물에 근거 부착(전역 원칙): 추정·적합성·법적한도 출처/링크(레지스트리 단일출처).
+        evidence = [e.to_dict() for e in proposal_evidence(cd, site, sigungu=req.sigungu)]
         proposals.append({"candidate": cd, "verdict": verdict, "evidence": evidence})
 
     # 추천 = pass 우선, 없으면 conditional, 그래도 없으면 None(정직).
@@ -199,8 +200,8 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     # 부지·법적 한도·인허가 근거(전역 원칙: 결과물에 근거+링크 기본 제공).
     site_summary = _site_summary(site)
     site_summary["evidence"] = (
-        [e.to_dict() for e in legal_envelope_evidence(site)]
-        + [permit_evidence(permit).to_dict()]
+        [e.to_dict() for e in legal_envelope_evidence(site, sigungu=req.sigungu)]
+        + [permit_evidence(permit, sigungu=req.sigungu).to_dict()]
     )
 
     return {

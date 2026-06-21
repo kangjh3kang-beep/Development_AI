@@ -113,6 +113,43 @@ _BLDG_DEC = "건축법 시행령"
 _PARKING = "주차장법"
 _PARKING_DEC = "주차장법 시행령"
 _GREEN = "녹색건축물 조성 지원법"
+# ── 설계생성·전수조사 보강(부동산개발·건축 관련 법규) 법령명 상수 ──
+_CONDO = "집합건물의 소유 및 관리에 관한 법률"
+_REG = "부동산등기법"
+_FIRE = "소방시설 설치 및 관리에 관한 법률"
+_FIRE_PREV = "화재의 예방 및 안전관리에 관한 법률"
+_FIRE_EVAC = "건축물의 피난·방화구조 등의 기준에 관한 규칙"
+_ENV = "환경영향평가법"
+_DISASTER = "자연재해대책법"
+_TRAFFIC = "도시교통정비 촉진법"
+_APPRAISAL = "감정평가 및 감정평가사에 관한 법률"
+_PRICE_DISCLOSURE = "부동산 가격공시에 관한 법률"
+_REALTX = "부동산 거래신고 등에 관한 법률"
+_FARMLAND = "농지법"
+_FOREST = "산지관리법"
+_GREENBELT = "개발제한구역의 지정 및 관리에 관한 특별조치법"
+_SMALL_REDEV = "빈집 및 소규모주택 정비에 관한 특례법"
+_LANDSCAPE = "경관법"
+_HERITAGE = "매장유산 보호 및 조사에 관한 법률"
+_DEVELOPER = "부동산개발업의 관리 및 육성에 관한 법률"
+# ── 2차 전수조사 보강(관리·재정·기부채납·국유재산·시공·토지·구역) ──
+_APT_MGMT = "공동주택관리법"
+_DEV_LEVY = "개발이익 환수에 관한 법률"
+_STATE_PROP = "국유재산법"
+_PUBLIC_PROP = "공유재산 및 물품 관리법"
+_CULTURAL = "문화유산의 보존 및 활용에 관한 법률"
+_PRIVATE_RENTAL = "민간임대주택에 관한 특별법"
+_BLDG_SALES = "건축물의 분양에 관한 법률"
+_URBAN_REGEN = "도시재생 활성화 및 지원에 관한 특별법"
+_URBAN_RENEW = "도시재정비 촉진을 위한 특별법"
+_TRANSIT = "역세권의 개발 및 이용에 관한 법률"
+_LAND_DEV = "택지개발촉진법"
+_INDUSTRIAL = "산업입지 및 개발에 관한 법률"
+_CONSTR_IND = "건설산업기본법"
+_CONSTR_TECH = "건설기술 진흥법"
+_LAND_COMP = "공익사업을 위한 토지 등의 취득 및 보상에 관한 법률"
+_CADASTRAL = "공간정보의 구축 및 관리 등에 관한 법률"
+_LAND_USE_REG = "토지이용규제 기본법"
 
 LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 국토의 계획 및 이용에 관한 법률 ──
@@ -165,9 +202,61 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "zeb_certification":          _ref(_GREEN, None, "제로에너지건축물(ZEB) 인증"),
     # ── WP-R 확장: 정비 (법령 루트) ──
     "urban_redevelopment":        _ref("도시 및 주거환경정비법", None, "도시·주거환경정비사업(현행본)"),
+    # ── 설계생성 전수조사 보강: 집합건물·등기(분양 권리·대지권) ──
+    "condo_ownership":            _ref(_CONDO, "제20조", "대지사용권의 일체성(세대별 대지지분)"),
+    "condo_reconstruction":       _ref(_CONDO, "제47조", "재건축 결의(구분소유자·의결권 4/5)"),
+    "condo_management":           _ref(_CONDO, "제23조", "관리단의 구성(분양 후 운영)"),
+    "land_right_registration":    _ref(_REG, None, "대지권 등기(구분건물 일체성)"),
+    # ── 소방·방화 ──
+    "fire_safety":                _ref(_FIRE, None, "소방시설 설치 및 관리"),
+    "fire_prevention":            _ref(_FIRE_PREV, None, "화재의 예방 및 안전관리"),
+    "fire_evac_structure":        _ref(_FIRE_EVAC, None, "피난·방화구조 기준(피난계단·방화구획)"),
+    # ── 환경·재해·교통 영향평가(인허가 협의) ──
+    "env_impact":                 _ref(_ENV, None, "환경영향평가"),
+    "disaster_impact":            _ref(_DISASTER, None, "재해영향평가(자연재해대책)"),
+    "traffic_impact":             _ref(_TRAFFIC, None, "교통영향평가"),
+    # ── 감정평가·공시·거래(자산가치·근거가액) ──
+    "appraisal":                  _ref(_APPRAISAL, None, "감정평가(자산·담보·보상)"),
+    "official_land_price":        _ref(_PRICE_DISCLOSURE, "제10조", "개별공시지가의 결정·공시"),
+    "realtx_report":              _ref(_REALTX, None, "부동산 거래신고·토지거래허가"),
+    # ── 농지·산지(개발행위 전용허가) ──
+    "farmland_conversion":        _ref(_FARMLAND, "제34조", "농지전용허가"),
+    "forest_conversion":          _ref(_FOREST, "제14조", "산지전용허가"),
+    # ── 구역·정비·경관·문화유산 ──
+    "greenbelt":                  _ref(_GREENBELT, None, "개발제한구역 행위제한"),
+    "small_housing_redev":        _ref(_SMALL_REDEV, None, "가로주택·소규모주택 정비(모아주택)"),
+    "landscape_review":           _ref(_LANDSCAPE, None, "경관계획·경관심의"),
+    "buried_heritage":            _ref(_HERITAGE, None, "매장유산 지표·발굴조사(착공 전)"),
+    # ── 디벨로퍼 ──
+    "developer_registration":     _ref(_DEVELOPER, None, "부동산개발업 등록"),
+    # ── 2차 보강: 관리·재정·기부채납·국유/공유재산 ──
+    "apartment_management":       _ref(_APT_MGMT, None, "공동주택 관리(입대의·장기수선·하자보수)"),
+    "development_levy":           _ref(_DEV_LEVY, None, "개발부담금(개발이익 환수)"),
+    "public_facility_contribution": _ref(_KOOKTO, "제65조", "개발행위에 따른 공공시설의 귀속(기부채납)"),
+    "state_property":             _ref(_STATE_PROP, None, "국유재산 사용·대부·매각"),
+    "public_property":            _ref(_PUBLIC_PROP, None, "공유재산 관리(기부채납 수령)"),
+    # ── 2차 보강: 분양·임대·정비·구역 ──
+    "apartment_sales":            _ref(_BLDG_SALES, None, "건축물(비주택) 분양신고"),
+    "private_rental":             _ref(_PRIVATE_RENTAL, None, "등록 민간임대주택"),
+    "urban_regeneration":         _ref(_URBAN_REGEN, None, "도시재생활성화지역"),
+    "urban_renewal_promotion":    _ref(_URBAN_RENEW, None, "재정비촉진지구"),
+    "transit_oriented":           _ref(_TRANSIT, None, "역세권개발구역"),
+    "land_dev_promotion":         _ref(_LAND_DEV, None, "택지개발지구"),
+    "industrial_site":            _ref(_INDUSTRIAL, None, "산업단지 지정·개발"),
+    # ── 2차 보강: 시공·토지·지적·문화유산 ──
+    "construction_industry":      _ref(_CONSTR_IND, None, "건설업 도급·하도급"),
+    "construction_tech":          _ref(_CONSTR_TECH, None, "건설사업관리·품질·안전관리"),
+    "land_compensation":          _ref(_LAND_COMP, None, "수용·협의취득·손실보상"),
+    "cadastral":                  _ref(_CADASTRAL, None, "지목·지번·경계(지적)·측량"),
+    "land_use_regulation":        _ref(_LAND_USE_REG, None, "토지이용계획확인(지역·지구 규제)"),
+    "cultural_heritage":          _ref(_CULTURAL, None, "문화유산 보호구역·현상변경 허가"),
     # ── 조례(동적) — sigungu 런타임 치환. url은 조례명 확정 시 build_ordinance_url로 주입 ──
-    "ordinance_bcr":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "건폐율(지자체별)", "url": ""},
-    "ordinance_far":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "용적률(지자체별)", "url": ""},
+    "ordinance_bcr": {
+        "law_name": "{sigungu} 도시계획 조례", "article": "", "title": "건폐율(지자체별)", "url": "",
+    },
+    "ordinance_far": {
+        "law_name": "{sigungu} 도시계획 조례", "article": "", "title": "용적률(지자체별)", "url": "",
+    },
 }
 
 # 블루프린트 ②-3 내부 키 ↔ 본 레지스트리 도메인 키 별칭(하위호환·중복 데이터 0).
@@ -219,13 +308,12 @@ def get_legal_refs(keys, *, sigungu: str | None = None) -> list[dict]:
         if ref is None:
             continue
         record = {"key": _resolve_key(key), **ref}
-        law_name = record.get("law_name", "")
-        if "{sigungu}" in law_name:
-            if sigungu:
-                ordinance_name = law_name.replace("{sigungu}", sigungu)
-                record["law_name"] = ordinance_name
-                record["url"] = build_ordinance_url(ordinance_name)
-            # sigungu 미상이면 플레이스홀더 유지 + url 빈 슬롯 → pending.
+        law_name = record.get("law_name") or ""
+        if "{sigungu}" in law_name and sigungu:
+            ordinance_name = law_name.replace("{sigungu}", sigungu)
+            record["law_name"] = ordinance_name
+            record["url"] = build_ordinance_url(ordinance_name)
+        # sigungu 미상이면 조례 플레이스홀더 유지 + url 빈 슬롯 → pending.
         record["url_status"] = "verified" if record.get("url") else "pending"
         out.append(record)
     return out

@@ -9,6 +9,12 @@ from app.services.design_ingest.composition import (
 )
 from app.services.design_ingest.design_spec import DesignSpec, RoomSpec, detect_drawing_type
 from app.services.design_ingest.ingest_service import ingest_design_file
+from app.services.design_ingest.law_coverage import (
+    DESIGN_LAW_MAP,
+    all_referenced_laws,
+    laws_for,
+    verify_coverage,
+)
 from app.services.design_ingest.orchestrator import (
     DesignRequest,
     generate_design_proposals,
@@ -29,6 +35,7 @@ from app.services.design_ingest.vector_store import DESIGN_COLLECTION
 
 __all__ = [
     "DESIGN_COLLECTION",
+    "DESIGN_LAW_MAP",
     "CompositionCandidate",
     "DesignRequest",
     "DesignSpec",
@@ -37,16 +44,19 @@ __all__ = [
     "RoomSpec",
     "SiteContext",
     "SiteQuery",
+    "all_referenced_laws",
     "compose",
     "detect_drawing_type",
     "detect_format",
     "fit_score",
     "generate_design_proposals",
     "ingest_design_file",
+    "laws_for",
     "legal_envelope_evidence",
     "parse_design_file",
     "permit_evidence",
     "proposal_evidence",
     "search_drawings",
     "site_context_from_zone",
+    "verify_coverage",
 ]
