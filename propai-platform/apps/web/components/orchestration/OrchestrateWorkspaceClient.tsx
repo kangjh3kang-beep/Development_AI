@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { OrchestratorPanel } from "@/components/orchestration/OrchestratorPanel";
+import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type { NodeId } from "@/lib/orchestration/types";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -73,9 +74,19 @@ export function OrchestrateWorkspaceClient({ projectId }: { projectId: string })
   return (
     <div className="grid gap-4">
       {!hasContext && (
-        <div className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4 text-xs text-[var(--text-secondary)]">
-          통합 분석을 실행하려면 먼저 부지(주소·PNU)가 필요합니다. 부지분석에서 주소를 등록한 뒤 다시
-          시도하세요.
+        <div className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
+          <p className="text-sm font-bold text-[var(--text-primary)]">분석을 시작하려면 주소를 먼저 등록하세요</p>
+          <p className="mt-1 mb-3 text-xs text-[var(--text-secondary)]">
+            주소를 선택하면 용도지역·대지면적·공시지가를 자동으로 불러오고 분석이 시작됩니다.
+          </p>
+          {/* U1b: 차단 문구 대신 그 자리에서 주소 등록 — GlobalAddressSearch가 store(siteAnalysis)를
+              자동 갱신하면 hasContext가 true로 바뀌어 분석 흐름으로 전환된다(쉬운 말·인라인 등록). */}
+          <GlobalAddressSearch
+            onChange={(entries: AddressEntry[]) => {
+              void entries;
+            }}
+            placeholder="주소를 검색하세요 (예: 서울 동작구 상도동 210-453)"
+          />
         </div>
       )}
       <OrchestratorPanel
