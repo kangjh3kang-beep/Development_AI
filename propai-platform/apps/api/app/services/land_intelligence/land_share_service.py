@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 PYEONG_SQM = 3.305785  # 1평 = 3.305785㎡ (대지지분 평 환산 공용 상수)
 
 
+def _condo_legal_refs() -> list[dict]:
+    """집합건물 대지지분(대지사용권) 산정의 법령 근거(verified 딥링크) — 가산 필드.
+
+    레지스트리 미가용(import 실패) 시 빈 리스트(graceful, 기존 응답 무손상).
+    근거: 집합건물법 구분소유(제1·2조)·대지사용권 일체성(제20조)·관리단(제23조)·분양자 담보책임(제9조).
+    """
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs([
+            "condo_ownership", "condo_section_def", "land_use_right",
+            "condo_management_body", "condo_seller_warranty",
+        ])
+    except Exception:  # noqa: BLE001 — 근거 부착 실패는 핵심 산정에 무영향(정직 빈 리스트)
+        return []
+
+
 class LandShareService:
     """집합건물 세대별 대지지분 분석."""
 
@@ -109,6 +126,9 @@ class LandShareService:
             "building_name": (title or {}).get("building_name", ""),
             "main_purpose": (title or {}).get("main_purpose", ""),
             "units": result_units,
+            # ── 법령 근거(가산) — 집합건물 대지지분(대지사용권) 산정의 규범 근거. ──
+            #   special_parcel.legal_basis 패턴과 동일하게 verified 딥링크를 부착(소비처 옵셔널).
+            "legal_refs": _condo_legal_refs(),
             "validation": {
                 "sum_land_share_sqm": sum_share,
                 "plat_area_sqm": plat_r,

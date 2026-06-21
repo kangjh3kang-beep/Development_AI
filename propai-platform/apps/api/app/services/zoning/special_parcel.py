@@ -216,6 +216,171 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
     return None
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# 규제 선행절차 레이어(가산) — 지목/구역이 아닌 '개발규모·입지' 임계로 작동하는 인허가
+#   선행요건(소방 성능위주설계·도로법 접도구역/연결허가·하수도 원인자부담금·소규모 환경영향평가).
+#   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability), _RANK 게이트 활용.
+#   값(연면적/층수/도로폭/면적)이 임계 미만이거나 미상이면 None(과탐 방지·정직).
+# ──────────────────────────────────────────────────────────────────────────
+
+# 성능위주설계 대상(소방시설법 시행령) — 일반 임계(보수): 연면적 20만㎡↑ 또는 층수 30층↑(높이 120m↑),
+#   지하층 포함 30층↑, 아파트는 50층↑(높이 200m↑). 정밀요건은 소방서 사전협의로 확정.
+_PWD_GFA_SQM = 200_000.0
+_PWD_FLOORS = 30
+
+
+def _num(v) -> float | None:
+    """숫자 변환(실패/None → None). 임계 비교 전 안전 캐스팅."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rule_by_fire_performance(result: dict) -> dict[str, Any] | None:
+    """소방 성능위주설계(PBD) 대상 규모 임계 판정 — 연면적/층수 기반 선행 사전검토.
+
+    대형 개발만 해당(임계 미만은 None). 일반건축물 인허가에 앞서 소방 성능위주설계 평가단
+    심의가 선행되므로 CONDITIONAL(선행절차형)로 고지한다.
+    """
+    gfa = _num(result.get("total_floor_area_sqm")) or _num(result.get("gfa_sqm")) \
+        or _num(result.get("max_gfa_sqm"))
+    floors = _num(result.get("floors")) or _num(result.get("floor_count")) \
+        or _num(result.get("ground_floors"))
+    triggers: list[str] = []
+    if gfa is not None and gfa >= _PWD_GFA_SQM:
+        triggers.append(f"연면적 {gfa:,.0f}㎡(≥20만㎡)")
+    if floors is not None and floors >= _PWD_FLOORS:
+        triggers.append(f"지상 {int(floors)}층(≥30층)")
+    if not triggers:
+        return None
+    return {
+        "category": "소방 성능위주설계(PBD) 대상",
+        "developability": "CONDITIONAL",
+        "implications": [
+            "개발규모(" + ", ".join(triggers) + ")가 성능위주설계 대상 임계에 해당해, 일반 건축허가에 앞서 "
+            "소방 성능위주설계(PBD) 평가단 사전검토·심의가 선행됩니다.",
+            "정밀 대상 여부·요건은 관할 소방서 사전협의로 확정해야 합니다.",
+        ],
+        "legal_basis": ["소방시설 설치 및 관리에 관한 법률 제8조(성능위주설계)"],
+        "permit_prerequisites": ["소방 성능위주설계 대상 여부 확인", "관할 소방서 사전협의·평가단 심의"],
+    }
+
+
+def _rule_by_road_law(result: dict) -> dict[str, Any] | None:
+    """도로법 접도구역·연결허가 판정 — 도로(특히 국도·고속국도) 인접 시 선행 협의·허가.
+
+    접도구역(도로 경계로부터 일정거리 건축제한)·도로 연결허가(진출입로 설치)는 도로관리청
+    선행 협의 대상이므로 CONDITIONAL로 고지한다. 신호 없으면 None.
+    """
+    blob = " ".join(str(x) for x in (result.get("special_districts") or [])) \
+        + " " + str(result.get("road_type") or "") + " " + str(result.get("abutting_road_name") or "")
+    has_abutting_zone = result.get("road_abutting_zone") is True or "접도구역" in blob
+    near_managed_road = any(k in blob for k in ("국도", "고속국도", "일반국도", "지방도", "도로법"))
+    if not (has_abutting_zone or near_managed_road):
+        return None
+    impl = []
+    if has_abutting_zone:
+        impl.append("접도구역(도로 경계선에서 일정거리)에 해당해 건축물 신축·증축 등에 도로관리청 협의·허가가 필요합니다.")
+    if near_managed_road:
+        impl.append("도로법상 도로(국도·지방도 등)에 진출입로를 설치하려면 도로 연결허가(연결로 구조·간격 기준)가 선행됩니다.")
+    return {
+        "category": "도로법 접도구역·연결허가 대상",
+        "developability": "CONDITIONAL",
+        "implications": impl,
+        "legal_basis": [
+            "도로법 제40조(접도구역의 지정)",
+            "도로법 제52조(도로와 다른 시설의 연결)",
+        ],
+        "permit_prerequisites": [
+            "접도구역 해당 여부·건축제한 확인(도로관리청)",
+            "도로 연결(진출입로) 허가 신청·구조기준 충족",
+        ],
+    }
+
+
+def _rule_by_sewer(result: dict) -> dict[str, Any] | None:
+    """하수도법 원인자부담금·개인하수처리시설 판정 — 신·증축으로 오수 발생량 증가 시 선행 부담.
+
+    하수처리구역 내 신·증축은 원인자부담금, 하수처리구역 밖은 개인하수처리시설 설치가
+    수반되므로 CAUTION(사전확인)으로 고지한다. 명시 신호 없으면 None(과탐 방지).
+    """
+    in_sewer_area = result.get("in_sewer_service_area")
+    blob = str(result.get("sewer_status") or "") + " " \
+        + " ".join(str(x) for x in (result.get("special_districts") or []))
+    has_signal = in_sewer_area is not None or any(
+        k in blob for k in ("하수처리구역", "개인하수처리", "원인자부담", "정화조")
+    )
+    if not has_signal:
+        return None
+    impl = ["신·증축으로 오수 발생량이 늘면 하수도 원인자부담금이 부과될 수 있습니다."]
+    prereq = ["오수 발생량 산정·원인자부담금 추정"]
+    if in_sewer_area is False or "개인하수처리" in blob or "정화조" in blob:
+        impl.append("하수처리구역 밖이면 개인하수처리시설(정화조·오수처리시설) 설치·신고가 선행됩니다.")
+        prereq.append("개인하수처리시설 설치·신고(하수처리구역 외)")
+    return {
+        "category": "하수도 원인자부담금·개인하수처리시설",
+        "developability": "CAUTION",
+        "implications": impl,
+        "legal_basis": [
+            "하수도법 제61조(원인자부담금 등)",
+            "하수도법 제34조(개인하수처리시설의 설치)",
+        ],
+        "permit_prerequisites": prereq,
+    }
+
+
+def _rule_by_small_eia(result: dict) -> dict[str, Any] | None:
+    """소규모 환경영향평가 규모 임계 판정 — 보전·관리·녹지·농림 등에서 일정 면적↑ 개발 시 선행.
+
+    소규모 환경영향평가는 보전이 필요한 지역(관리·농림·자연환경보전·녹지 등)에서 사업면적이
+    대상 규모(지역별 5,000~60,000㎡ 등) 이상이면 선행되므로 CONDITIONAL로 고지한다.
+    용도지역이 도시지역(주거·상업·공업)이거나 면적 미상/소규모면 None.
+    """
+    zone = str(result.get("zone_type") or "")
+    family = _zone_family(zone)
+    # 소규모 환경영향평가는 비도시(관리·농림·자연환경보전)·녹지에서 주로 작동.
+    target_family = family in ("관리", "농림", "자연환경보전", "녹지")
+    if not target_family:
+        return None
+    area = _num(result.get("area_sqm")) or _num(result.get("land_area_sqm")) \
+        or _num(result.get("total_area_sqm")) or _num(result.get("area"))
+    # 보수적 일반 임계: 관리·농림·자연환경보전 5,000㎡↑(개발사업 일반 하한).
+    # ★면적이 확보(>0)되고 임계를 충족할 때만 게이트한다. 면적 미상이면 None(게이트 안 함=일상부지 보존).
+    #   다른 _rule_by_* 게이트의 '면적/규모 미상 시 None' 패턴과 일관 — 면적 미상 필지를 거짓 환경평가
+    #   경고로 강등하던 무회귀 위반(계획관리·녹지 일상필지 오탐)을 제거한다.
+    THRESH_SQM = 5_000.0
+    if area is None or area < THRESH_SQM:
+        return None
+    size_note = f"사업면적 {area:,.0f}㎡"
+    return {
+        "category": "소규모 환경영향평가 대상(규모 임계)",
+        "developability": "CONDITIONAL",
+        "implications": [
+            f"보전·관리 성격 용도지역({zone})에서 {size_note}의 개발은 소규모 환경영향평가 대상에 해당할 수 있어, "
+            "사업계획 승인·인허가에 앞서 평가 협의가 선행됩니다.",
+            "정확한 대상 규모는 지역·사업유형별 기준(환경영향평가법 시행령)으로 확정해야 합니다.",
+        ],
+        "legal_basis": ["환경영향평가법 제43조(소규모 환경영향평가의 대상)"],
+        "permit_prerequisites": [
+            "소규모 환경영향평가 대상 규모 해당 여부 확인",
+            "환경영향평가 협의(승인기관 경유)",
+        ],
+    }
+
+
+def _rules_by_regulation_thresholds(result: dict) -> list[dict[str, Any]]:
+    """규모·입지 임계 기반 선행절차 규제 묶음(소방·도로법·하수도·소규모 환경영향평가)."""
+    out: list[dict[str, Any]] = []
+    for fn in (_rule_by_fire_performance, _rule_by_road_law, _rule_by_sewer, _rule_by_small_eia):
+        r = fn(result)
+        if r:
+            out.append(r)
+    return out
+
+
 def _zone_category_mismatch(land_category: str, zone_type: str) -> str | None:
     """지목과 용도지역의 비일상 조합 주석(예: 학교용지가 일반상업지역)."""
     c, z = (land_category or ""), (zone_type or "")
@@ -242,6 +407,9 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
     fr = _rule_by_road(result)
     if fr:
         factors.append(fr)
+    # 규모·입지 임계 기반 선행절차 규제(소방 PBD·도로법 접도/연결·하수도 원인자부담·소규모 환경영향평가).
+    #   기존 지목/구역/접도 요인과 동일 구조로 가산(임계 미만/미상이면 아무것도 추가 안 함).
+    factors.extend(_rules_by_regulation_thresholds(result))
 
     mismatch = _zone_category_mismatch(land_category, zone_type)
 
@@ -322,7 +490,10 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
         return {"resolvable": "NO",
                 "resolution_paths": ["GB 해제는 국가·광역 도시계획 차원으로 개별 사업자가 해결 불가"],
                 "alternatives": ["예외적 허가행위(GB 내 허용용도)만 검토", "해당 필지 제외·사업구역 재획정", "GB 경계 외 대체부지"]}
-    if "도로" in c:
+    # ★도로법(접도구역·연결허가)은 도로 지목(도시계획시설 도로 폐도)과 다른 해결경로를 가지므로,
+    #   '도로' 부분문자열이 이 신규 규제요인을 가로채지 않도록 먼저 제외한다(아래 전용 분기로 위임).
+    #   (category에 "도로법/접도구역/연결허가"가 들어가면 도시계획시설 도로 폐도 분기로 새지 않는다.)
+    if "도로" in c and not any(k in c for k in ("도로법", "접도구역", "연결허가")):
         # ★도로 폐도 경우의 수 — 단정 불가 아님. 도로 기능·주민동의·대체도로에 따라 가능/불가 갈림.
         return {"resolvable": "CONDITIONAL",
                 "resolution_paths": ["도시계획시설(도로) 폐지·변경(지구단위계획/도시관리계획 입안·결정)",
@@ -363,6 +534,23 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
     if "종교" in c:
         return {"resolvable": "CONDITIONAL", "resolution_paths": ["용도변경 검토", "종교법인 기본재산 처분 절차"],
                 "alternatives": ["존치 전제 부분개발", "해당 필지 제외"]}
+    # ── 규모·입지 임계 기반 선행절차 규제(소방·도로법·하수도·환경영향평가) — 표준 절차로 해결 가능 ──
+    if "성능위주설계" in c or "PBD" in c or "소방" in c:
+        return {"resolvable": "YES",
+                "resolution_paths": ["소방 성능위주설계 평가단 사전검토·심의 통과", "관할 소방서 사전협의"],
+                "alternatives": ["대상 임계 미만으로 규모 조정", "설계에 소방 성능설계 비용·일정 반영"]}
+    if "도로법" in c or "접도구역" in c or "연결허가" in c:
+        return {"resolvable": "CONDITIONAL",
+                "resolution_paths": ["도로관리청 접도구역 협의·건축제한 확인", "도로 연결(진출입로) 허가 취득"],
+                "alternatives": ["접도구역 회피 배치(이격거리 확보)", "대체 진출입 동선 확보", "허가비용·구조기준 설계 반영"]}
+    if "하수도" in c or "원인자부담" in c or "개인하수처리" in c:
+        return {"resolvable": "YES",
+                "resolution_paths": ["원인자부담금 산정·납부", "하수처리구역 외는 개인하수처리시설 설치·신고"],
+                "alternatives": ["부담금·시설비를 사업수지에 반영", "오수 발생량 저감 설계"]}
+    if "환경영향평가" in c:
+        return {"resolvable": "CONDITIONAL",
+                "resolution_paths": ["소규모 환경영향평가 협의(승인기관 경유)", "대상 규모 해당 여부 사전확인"],
+                "alternatives": ["대상 규모 미만으로 사업면적 조정", "협의 의견 반영 설계 변경"]}
     return {"resolvable": "CONDITIONAL", "resolution_paths": ["관계기관 협의"], "alternatives": ["해당 필지 제외 검토"]}
 
 

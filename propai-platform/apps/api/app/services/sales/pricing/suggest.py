@@ -96,6 +96,22 @@ def _cost_validation(
         return None
 
 
+def _sales_legal_refs() -> list[dict]:
+    """분양가 추천 결과에 부착할 분양 관련 법령 근거(verified 딥링크) — 가산 필드.
+
+    레지스트리 미가용 시 빈 리스트(graceful, 기존 응답 무손상).
+    근거: 건축물분양법 분양신고(제5조)·분양보증/신탁(제6조), 분양가상한제(주택법 제57조).
+    """
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs([
+            "building_sales_filing", "building_sales_guarantee", "housing_price_cap",
+        ])
+    except Exception:  # noqa: BLE001
+        return []
+
+
 async def _site_location(
     db: AsyncSession, site_id: uuid.UUID,
 ) -> tuple[str | None, str | None, str | None]:
@@ -278,6 +294,7 @@ async def suggest_base_price(
         "trust": trust.to_dict(),                 # 신뢰도·이상치·경고(투명)
         "tiers": tiers,                           # 신축 프리미엄 3안(공급 평당가 기준)
         "cost_validation": cost_val,              # 2차 가드: 원가 회수 검증(None=원가엔진 미가용)
+        "legal_refs": _sales_legal_refs(),        # 분양 관련 법령 근거(가산) — 건축물분양법 신고·보증
         "note": (f"적정분양가 = 주변 실거래({trust.to_dict()['used_sources']}) 시세에 신축 프리미엄. "
                  f"평당가는 {area_basis_label} 기준(전용률 {_JEONYULRYUL}). 신뢰도 {trust.confidence:.0%}. "
                  "기준단가 채택 후 층/동/라인/평형 가중치로 분산." + cost_note),

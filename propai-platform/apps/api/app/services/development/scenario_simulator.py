@@ -84,6 +84,45 @@ def _magdo(scheme: str) -> dict[str, Any] | None:
     }
 
 
+# ── 사업방식 → 근거법령 키(legal_reference_registry) 매핑 ──
+#   시나리오↔규범 일치(가산)용. 소규모정비특례법(가로주택·소규모재건축·자율주택·소규모재개발),
+#   정비법(재개발·재건축·주거환경개선·공공정비), 도시개발법, 국토계획법(지구단위·입지규제최소),
+#   결합건축(건축법), 리모델링(주택법) 등. 미매핑 방식은 빈 리스트(무해).
+_SCHEME_LEGAL_KEYS: dict[str, list[str]] = {
+    "단순 건축": ["building_permit", "zone_use"],
+    "지구단위계획 연계": ["district_unit_plan"],
+    "도시개발사업(도시개발법)": ["urban_dev_replot"],
+    "가로주택정비사업": ["small_housing_overview", "small_housing_road_project", "small_housing_sell_claim"],
+    "모아주택/모아타운": ["small_housing_overview", "small_housing_road_project", "small_housing_sell_claim"],
+    "재개발·재건축(정비사업)": ["redev_impl", "redev_mgmt"],
+    "자율주택정비사업": ["small_housing_overview", "small_housing_road_project"],
+    "소규모재개발사업": ["small_housing_overview", "small_housing_road_project", "small_housing_sell_claim"],
+    "소규모재건축사업": ["small_housing_overview", "small_housing_road_project", "small_housing_sell_claim"],
+    "주거환경개선사업": ["redev_impl"],
+    "공공재개발·공공재건축": ["redev_impl", "redev_mgmt"],
+    "공동주택 리모델링": ["housing_approval"],
+    "결합건축": ["bldg_far"],
+    "입지규제최소구역": ["zone_use"],
+    "도심복합개발사업": ["urban_complex"],
+    "역세권 장기전세주택(시프트)": ["housing_approval"],
+    "지구단위계획": ["district_unit_plan"],
+    "대지조성사업": ["housing_approval"],
+}
+
+
+def _scheme_legal_refs(scheme: str) -> list[dict]:
+    """사업방식별 근거법령(verified 딥링크) — 가산 필드. 미매핑/실패 시 빈 리스트(무해)."""
+    keys = _SCHEME_LEGAL_KEYS.get(scheme or "")
+    if not keys:
+        return []
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _is_residential(zone: str) -> bool:
     return "주거" in (zone or "")
 
@@ -881,6 +920,8 @@ class DevelopmentScenarioSimulator:
         _zone = c.get("primary_zone")
         for _s in S:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
+            # 시나리오↔규범 일치(가산) — 각 사업방식의 근거법령 verified 딥링크 부착(소비처 옵셔널).
+            _s["legal_refs"] = _scheme_legal_refs(_s.get("scheme", ""))
 
         return S
 

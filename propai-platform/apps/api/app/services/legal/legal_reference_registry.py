@@ -113,6 +113,19 @@ _BLDG_DEC = "건축법 시행령"
 _PARKING = "주차장법"
 _PARKING_DEC = "주차장법 시행령"
 _GREEN = "녹색건축물 조성 지원법"
+# ── 갭법규 보강(P0~P1) 법령 공식명 상수 ──
+_CONDO = "집합건물의 소유 및 관리에 관한 법률"      # 구분소유·대지사용권·관리단·분양자 담보책임
+_SALES = "건축물의 분양에 관한 법률"               # 분양신고·분양보증/신탁
+_EIA = "환경영향평가법"                            # 소규모환경영향평가(규모 임계)
+_FIRE_FACILITY = "소방시설 설치 및 관리에 관한 법률"  # 성능위주설계 등
+_FIRE_PREVENT = "화재의 예방 및 안전관리에 관한 법률"  # 화재예방법
+_EVAC_RULE = "건축물의 피난·방화구조 등의 기준에 관한 규칙"  # 직통계단·방화구획
+_ROAD = "도로법"                                  # 접도구역·연결허가
+_SEWER = "하수도법"                               # 원인자부담금·개인하수처리시설
+_SMALL_HOUSING = "빈집 및 소규모주택 정비에 관한 특례법"  # 가로주택·소규모재건축
+_METRO = "수도권정비계획법"                        # 인구집중유발시설·과밀부담금
+_NATIONAL_PROPERTY = "국유재산법"                  # 국유재산 용도폐지·매각
+_PUBLIC_PROPERTY = "공유재산 및 물품 관리법"        # 공유재산 용도폐지·매각
 
 LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 국토의 계획 및 이용에 관한 법률 ──
@@ -165,6 +178,43 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "zeb_certification":          _ref(_GREEN, None, "제로에너지건축물(ZEB) 인증"),
     # ── WP-R 확장: 정비 (법령 루트) ──
     "urban_redevelopment":        _ref("도시 및 주거환경정비법", None, "도시·주거환경정비사업(현행본)"),
+    # ── 갭법규 P0~P1: 집합건물법(구분소유·대지사용권·관리단·분양자 담보책임) ──
+    #   조문은 ②-1 검증형식(제N조)으로 확정된 핵심 조항만 딥링크. 미검증은 루트 폴백.
+    "condo_ownership":            _ref(_CONDO, "제1조", "건물의 구분소유"),
+    "condo_section_def":          _ref(_CONDO, "제2조", "정의(구분소유권·전유부분·대지사용권)"),
+    "land_use_right":             _ref(_CONDO, "제20조", "전유부분과 대지사용권의 일체성"),
+    "condo_management_body":      _ref(_CONDO, "제23조", "관리단의 당연 설립 등"),
+    "condo_seller_warranty":      _ref(_CONDO, "제9조", "담보책임(분양자·시공자)"),
+    # ── 갭법규 P0~P1: 건축물분양법(분양신고·분양보증/신탁) ──
+    # ★딥링크 정합: 건축물분양법 제4조는 '분양 시기 등'이고 '분양신고'는 제5조다.
+    #   키 의미(building_sales_filing=분양신고)와 일치하도록 제5조로 정정한다(제4조 title='분양신고' 불일치 해소).
+    "building_sales_filing":      _ref(_SALES, "제5조", "분양신고"),
+    "building_sales_guarantee":   _ref(_SALES, "제6조", "분양보증·신탁 등(분양받은 자 보호)"),
+    # ── 갭법규 P0~P1: 환경영향평가법(소규모환경영향평가 — 규모 임계) ──
+    "small_eia":                  _ref(_EIA, "제43조", "소규모 환경영향평가의 대상"),
+    # ── 갭법규 P0~P1: 소방(성능위주설계·직통계단·방화구획) ──
+    "fire_performance_design":    _ref(_FIRE_FACILITY, "제8조", "성능위주설계(특정소방대상물)"),
+    "fire_prevention":            _ref(_FIRE_PREVENT, None, "화재예방·안전관리(현행본)"),
+    "evacuation_stairs":          _ref(_EVAC_RULE, None, "직통계단·피난계단(피난·방화구조 규칙)"),
+    "fire_compartment":           _ref(_EVAC_RULE, None, "방화구획(피난·방화구조 규칙)"),
+    # ── 갭법규 P0~P1: 도로법(접도구역·연결허가) ──
+    "road_abutting_zone":         _ref(_ROAD, "제40조", "접도구역의 지정"),
+    "road_connection_permit":     _ref(_ROAD, "제52조", "도로와 다른 시설의 연결(연결허가)"),
+    # ── 갭법규 P0~P1: 하수도법(원인자부담금·개인하수처리시설) ──
+    "sewer_cause_charge":         _ref(_SEWER, "제61조", "원인자부담금 등"),
+    "private_sewage_facility":    _ref(_SEWER, "제34조", "개인하수처리시설의 설치"),
+    # ── 갭법규 P0~P1: 소규모주택정비특례법(가로주택·소규모재건축) ──
+    "small_housing_overview":     _ref(_SMALL_HOUSING, None, "빈집·소규모주택 정비사업(현행본)"),
+    "small_housing_road_project": _ref(_SMALL_HOUSING, "제2조", "정의(가로주택정비·소규모재건축 등 정비사업)"),
+    "small_housing_sell_claim":   _ref(_SMALL_HOUSING, "제35조", "매도청구"),
+    # ── 갭법규 P1: 수도권정비계획법(인구집중유발시설·과밀부담금) ──
+    "metro_overconcentration":    _ref(_METRO, "제7조", "과밀억제권역의 행위 제한(인구집중유발시설)"),
+    "metro_congestion_charge":    _ref(_METRO, "제12조", "과밀부담금의 부과·징수"),
+    # ── 갭법규 P1: 학교용지·기부채납·국공유재산 보강 ──
+    "school_land_contribution":   _ref(_KOOKTO, "제52조의2", "공공시설등의 설치비용 등(기부채납·공공기여)"),
+    "school_land_special":        _ref("학교용지 확보 등에 관한 특례법", None, "학교용지 확보·부담금(현행본)"),
+    "national_property_disposal": _ref(_NATIONAL_PROPERTY, None, "국유재산 용도폐지·처분(현행본)"),
+    "public_property_disposal":   _ref(_PUBLIC_PROPERTY, None, "공유재산 용도폐지·처분(현행본)"),
     # ── 조례(동적) — sigungu 런타임 치환. url은 조례명 확정 시 build_ordinance_url로 주입 ──
     "ordinance_bcr":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "건폐율(지자체별)", "url": ""},
     "ordinance_far":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "용적률(지자체별)", "url": ""},
