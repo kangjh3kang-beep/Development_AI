@@ -37,6 +37,31 @@ def test_quantitative_criterion_carries_basis_and_link():
     assert cr.legal_basis and cr.legal_basis[0].source.startswith("https://")   # 법령 근거+링크
 
 
+def test_explicit_legal_ref_ids_wire_specific_articles():
+    # orphan §77 배선 + 정밀 다중 근거 — bcr 기준에 국토계획법§77·시행령§84 명시 연결
+    res = SimpleNamespace(legal_quantities=[LegalQuantity(variable_id="building_area", value=500.0),
+                                            LegalQuantity(variable_id="plot_area", value=1000.0)],
+                          qualitative=[])
+    ref = CriterionRef(criterion_id="bcr", kind=CriterionKind.QUANTITATIVE, ssot_ref="building_area",
+                       basis_article="국토계획법 시행령",
+                       legal_ref_ids=["국토계획법§77", "국토계획법시행령§84"])
+    cr = measure_quantitative(res, ref, _ZONE)
+    ids = {r.ref_id for r in cr.legal_basis}
+    assert "국토계획법§77" in ids and "국토계획법시행령§84" in ids   # 정밀 조문 근거 동반(§77 orphan 배선)
+    assert all(r.source for r in cr.legal_basis)                    # 모두 1차출처 링크 동반
+
+
+def test_default_specs_wire_far_bcr_articles():
+    # 기본 스펙(permit·design)의 far/bcr 기준에 §77/§78·시행령§84/§85가 연결됐는지(orphan 해소)
+    from app.services.design.design_spec_loader import load_design_spec
+    from app.services.permit.spec_loader import load_default_spec
+    for spec in (load_default_spec(), load_design_spec()):
+        refs = {c.criterion_id: c.legal_ref_ids
+                for s in spec.stages for c in s.criteria_refs}
+        assert "국토계획법§77" in refs.get("bcr", [])
+        assert "국토계획법§78" in refs.get("far", [])
+
+
 def _enforce_basis_links(out):
     # enforcement: basis_article 있는 모든 기준은 legal_basis(근거+링크) 동반(무음 금지)
     for s in out.stages:

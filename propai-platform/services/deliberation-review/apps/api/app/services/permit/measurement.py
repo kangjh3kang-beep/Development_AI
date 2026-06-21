@@ -11,7 +11,7 @@ from app.contracts.analysis import AnalysisResult
 from app.contracts.permit_process import CriterionKind, CriterionRef
 from app.contracts.permit_result import CriterionResult
 from app.contracts.rationale import LegalRef
-from app.services.explain.legal_refs import resolve_text
+from app.services.explain.legal_refs import resolve, resolve_text
 from app.services.legal_calc.zone_limit_provider import resolve_zone_limit
 
 _CONFORMANCE_RANK = {"부합": 0, "조건부": 1, "미흡": 2, "HELD": 3}
@@ -19,12 +19,26 @@ _CONFORMANCE_RANK = {"부합": 0, "조건부": 1, "미흡": 2, "HELD": 3}
 _GRADE_CONFORMANCE = {"HIGH": "부합", "MEDIUM": "조건부", "LOW": "미흡", "NONE": "미흡"}
 
 
-def _legal_basis(basis_article: str | None) -> list[LegalRef]:
-    """근거조문(자유텍스트) → LegalRef(법령명·조항·요지·시행일·1차출처 링크). 미해소 시 [](무음 금지·식별자만)."""
+def _legal_basis(basis_article: str | None,
+                 legal_ref_ids: list[str] | None = None) -> list[LegalRef]:
+    """근거 LegalRef(법령명·조항·요지·시행일·1차출처 링크) 목록 — 명시 식별자(정밀 조문) + 자유텍스트 해소.
+
+    legal_ref_ids: 사전 정확 키(예 국토계획법§77·국토계획법시행령§84) → resolve(미등록 None 스킵, 날조 금지).
+    basis_article: 자유텍스트 → resolve_text. 중복(ref_id) 제거. 미해소는 동반 안 함(식별자만, 무음 금지)."""
+    out: list[LegalRef] = []
+    seen: set[str] = set()
+    for rid in (legal_ref_ids or []):
+        ref = resolve(rid)
+        if ref is not None and ref.ref_id not in seen:
+            out.append(ref)
+            seen.add(ref.ref_id)
     d = resolve_text(basis_article)
-    if not d:
-        return []
-    return [LegalRef(**{k: v for k, v in d.items() if k != "match"})]
+    if d:
+        ref = LegalRef(**{k: v for k, v in d.items() if k != "match"})
+        if ref.ref_id not in seen:
+            out.append(ref)
+            seen.add(ref.ref_id)
+    return out
 
 
 def _measured_for(result: AnalysisResult, variable_id: str) -> float | None:
@@ -45,7 +59,7 @@ def measure_quantitative(result: AnalysisResult, ref: CriterionRef,
     source = resolved[1] if resolved else None
     cr = CriterionResult(criterion_id=ref.criterion_id, kind=ref.kind.value,
                          measured=area, limit=limit_pct, basis_article=ref.basis_article,
-                         legal_basis=_legal_basis(ref.basis_article))   # 근거+링크 기본 동반
+                         legal_basis=_legal_basis(ref.basis_article, ref.legal_ref_ids))   # 근거+링크 기본 동반
     if area is None:
         return cr   # 측정값 부재 → HELD(무음 금지)
     trace = {"measured_area": area, "plot_area": plot_area, "limit_pct": limit_pct,
@@ -68,7 +82,7 @@ def measure_qualitative(result: AnalysisResult, ref: CriterionRef) -> CriterionR
     """정성 등급 밴드 — L3-C QualAssessment(item 매칭)의 등급을 부합도로 매핑(등급 존재≠부합). 없으면 HELD."""
     cr = CriterionResult(criterion_id=ref.criterion_id, kind=ref.kind.value,
                          basis_article=ref.basis_article,
-                         legal_basis=_legal_basis(ref.basis_article))   # 근거+링크 기본 동반
+                         legal_basis=_legal_basis(ref.basis_article, ref.legal_ref_ids))   # 근거+링크 기본 동반
     keys = [k for k in (ref.criterion_id, ref.ssot_ref) if k]
     for qa in result.qualitative:
         item = qa.item or ""

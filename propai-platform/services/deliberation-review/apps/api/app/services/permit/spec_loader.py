@@ -22,9 +22,11 @@ _DEFAULT = PermitProcessSpec(
             required_inputs=["use_zone"],
             criteria_refs=[
                 CriterionRef(criterion_id="far", kind=CriterionKind.QUANTITATIVE,
-                             ssot_ref="far_floor_area", basis_article="국토계획법 시행령"),
+                             ssot_ref="far_floor_area", basis_article="국토계획법 시행령",
+                             legal_ref_ids=["국토계획법§78", "국토계획법시행령§85"]),   # 용적률 법률+시행령
                 CriterionRef(criterion_id="bcr", kind=CriterionKind.QUANTITATIVE,
-                             ssot_ref="building_area", basis_article="국토계획법 시행령"),
+                             ssot_ref="building_area", basis_article="국토계획법 시행령",
+                             legal_ref_ids=["국토계획법§77", "국토계획법시행령§84"]),   # 건폐율 법률+시행령(§77 배선)
                 CriterionRef(criterion_id="layout", kind=CriterionKind.QUALITATIVE,
                              ssot_ref="배치적정성"),   # 실 qual_facts feature명과 정합(매칭 키)
             ],
@@ -43,7 +45,8 @@ _DEFAULT = PermitProcessSpec(
             stage_id="building_permit", name="건축허가", stage_type="본허가",
             predecessors=["building_review"], required_inputs=["use_zone"],
             criteria_refs=[CriterionRef(criterion_id="height", kind=CriterionKind.QUANTITATIVE,
-                                        ssot_ref="building_height", basis_article="건축법")],
+                                        ssot_ref="building_height", basis_article="건축법",
+                                        legal_ref_ids=["건축법§60", "건축법§61"])],   # 높이제한·일조
             deliverables=["허가도서"], authority="허가권자(시군구)",
             submittals=["건축허가신청서"],
         ),
