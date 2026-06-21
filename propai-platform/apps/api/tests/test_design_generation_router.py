@@ -276,6 +276,87 @@ async def test_ingest_rejects_other_tenant_project(monkeypatch):
     assert ei.value.status_code == 403 and called["n"] == 0
 
 
+# ── ingest-batch: 콜드스타트 부트스트랩(tenant 강제·파일별 격리·집계) ──
+async def test_ingest_batch_forces_tenant_and_aggregates(monkeypatch):
+    captured: list[str | None] = []
+
+    async def _fake_ingest(*, filename, content, project_id=None, tenant_id=None):
+        captured.append(tenant_id)
+        return {"ok": True, "indexed": filename == "a.dxf", "drawing_type": "floor_plan",
+                "content_hash": "deadbeef", "index_skip_reason": None,
+                "stored": True, "store_skip_reason": None}
+
+    monkeypatch.setattr(dg, "ingest_design_file", _fake_ingest)
+    user = _user()
+    out = await dg.ingest_batch(
+        [_upload(b"d1", "a.dxf"), _upload(b"d2", "b.dxf")], None, user, _FakeDB(None)
+    )
+    assert out["ok"] is True
+    assert out["total"] == 2 and out["indexed"] == 1 and out["not_indexed"] == 1 and out["failed"] == 0
+    assert all(t == str(user.tenant_id) for t in captured)  # ★전부 인증값 강제
+    assert len(out["results"]) == 2
+
+
+async def test_ingest_batch_partial_failure_isolated(monkeypatch):
+    # 한 파일 형식 오류(_read_upload 400)는 그 파일만 fail — 배치 전체는 계속
+    async def _fake_ingest(*, filename, content, project_id=None, tenant_id=None):
+        return {"ok": True, "indexed": True}
+
+    monkeypatch.setattr(dg, "ingest_design_file", _fake_ingest)
+    out = await dg.ingest_batch(
+        [_upload(b"ok", "good.dxf"), _upload(b"bad", "bad.xyz")], None, _user(), _FakeDB(None)
+    )
+    assert out["ok"] is True and out["total"] == 2
+    assert out["indexed"] == 1 and out["failed"] == 1
+    bad = [r for r in out["results"] if r["filename"] == "bad.xyz"][0]
+    assert bad["ok"] is False and "error" in bad
+
+
+async def test_ingest_batch_too_many_413(monkeypatch):
+    monkeypatch.setattr(dg, "ingest_design_file", lambda **_k: None)
+    files = [_upload(b"d", f"f{i}.dxf") for i in range(dg._MAX_BATCH_FILES + 1)]
+    with pytest.raises(HTTPException) as ei:
+        await dg.ingest_batch(files, None, _user(), _FakeDB(None))
+    assert ei.value.status_code == 413
+
+
+async def test_ingest_batch_empty_400(monkeypatch):
+    monkeypatch.setattr(dg, "ingest_design_file", lambda **_k: None)
+    with pytest.raises(HTTPException) as ei:
+        await dg.ingest_batch([], None, _user(), _FakeDB(None))
+    assert ei.value.status_code == 400
+
+
+async def test_ingest_batch_total_bytes_cap_stops_and_reports(monkeypatch):
+    # 누적 용량 상한 초과 시 이후 파일은 처리 중단·정직 실패 보고(부분 처리)
+    async def _fake_ingest(*, filename, content, project_id=None, tenant_id=None):
+        return {"ok": True, "indexed": True, "drawing_type": "floor_plan"}
+
+    monkeypatch.setattr(dg, "ingest_design_file", _fake_ingest)
+    monkeypatch.setattr(dg, "_MAX_BATCH_TOTAL_BYTES", 5)  # 매우 작게
+    out = await dg.ingest_batch(
+        [_upload(b"aaa", "a.dxf"), _upload(b"bbb", "b.dxf"), _upload(b"ccc", "c.dxf")],
+        None, _user(), _FakeDB(None),
+    )
+    assert out["total"] == 3 and out["indexed"] == 1 and out["failed"] == 2
+    over = [r for r in out["results"] if not r["ok"]]
+    assert len(over) == 2 and all("용량 상한" in r["error"] for r in over)
+
+
+async def test_ingest_batch_rejects_other_tenant_project(monkeypatch):
+    called = {"n": 0}
+
+    async def _fake_ingest(**_k):
+        called["n"] += 1
+        return {}
+
+    monkeypatch.setattr(dg, "ingest_design_file", _fake_ingest)
+    db = _FakeDB(uuid.uuid4())  # 타 테넌트 소유 프로젝트
+    with pytest.raises(HTTPException) as ei:
+        await dg.ingest_batch([_upload(b"d", "a.dxf")], str(uuid.uuid4()), _user(), db)
+    assert ei.value.status_code == 403 and called["n"] == 0  # 소유검증 선행, 인제스트 미호출
+
+
 # ── laws: coverage / domain ──
 async def test_laws_coverage_returns_verify_and_laws():
     out = await dg.laws_coverage(None, _user())

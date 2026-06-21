@@ -68,6 +68,10 @@ _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 _MAX_AREA_SQM = 5_000_000.0
 _MAX_TOP_K = 50
 _MAX_TOP_N = 10
+# 콜드스타트 배치 인제스트(표준설계 일괄적재) — 한 요청 파일 수 상한(DoS·과금 폭주 방지).
+_MAX_BATCH_FILES = 50
+# 배치 누적 용량 상한 — 거대 배치의 처리시간/외부 임베딩 호출 폭주 방어(파일당 25MB와 별개).
+_MAX_BATCH_TOTAL_BYTES = 200 * 1024 * 1024  # 200MB
 
 
 # ── 요청 스키마(★tenant_id 필드 없음 — 인증 컨텍스트에서만 강제) ──
@@ -156,6 +160,79 @@ async def ingest(
         project_id=project_id,
         tenant_id=str(current.tenant_id),  # ★클라이언트 입력 무시 — 인증값만
     )
+
+
+@router.post("/ingest-batch", dependencies=[Depends(enforce_llm_quota)])
+async def ingest_batch(
+    files: list[UploadFile] = File(...),
+    project_id: str | None = Form(None),
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """표준설계 도면 다중 일괄 인제스트 — 콜드스타트 코퍼스 부트스트랩.
+
+    파일별 독립 처리: 일부 파일 실패가 전체 배치를 막지 않는다(정직 — 파일별 결과 보고).
+    tenant_id는 인증 컨텍스트 강제(클라이언트 입력 무시), project_id는 소유 검증.
+    중복(동일 content_hash)은 point_id 멱등 업서트로 안전 — 별도 중복카운트는 신뢰 신호가
+    없어 표기하지 않고, 색인 여부(indexed/not_indexed)만 정직 집계한다.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="업로드 파일이 없습니다.")
+    if len(files) > _MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"한 번에 최대 {_MAX_BATCH_FILES}개까지 업로드할 수 있습니다.",
+        )
+    await _verify_project_ownership(db, project_id, current.tenant_id)
+
+    results: list[dict[str, Any]] = []
+    counts = {"total": len(files), "indexed": 0, "not_indexed": 0, "failed": 0}
+    total_bytes = 0
+    for idx, f in enumerate(files):
+        name = f.filename or ""
+        try:
+            data = await _read_upload(f)  # 파일별 빈/크기/형식 검증(실패는 이 파일만 fail)
+            total_bytes += len(data)
+            if total_bytes > _MAX_BATCH_TOTAL_BYTES:
+                # 누적 용량 초과 — 이 파일부터 나머지는 처리하지 않고 정직 보고(부분 처리·중단).
+                cap_mb = _MAX_BATCH_TOTAL_BYTES // (1024 * 1024)
+                for rf in files[idx:]:
+                    counts["failed"] += 1
+                    results.append({
+                        "filename": rf.filename or "",
+                        "ok": False,
+                        "error": f"배치 누적 용량 상한({cap_mb}MB) 초과 — 미처리(나눠서 업로드)",
+                    })
+                break
+            res = await ingest_design_file(
+                filename=name,
+                content=data,
+                project_id=project_id,
+                tenant_id=str(current.tenant_id),  # ★인증값 강제
+            )
+            if res.get("indexed"):
+                counts["indexed"] += 1
+            else:
+                counts["not_indexed"] += 1
+            results.append({
+                "filename": name,
+                "ok": True,
+                "drawing_type": res.get("drawing_type"),
+                "content_hash": res.get("content_hash"),
+                "indexed": res.get("indexed"),
+                "index_skip_reason": res.get("index_skip_reason"),
+                "stored": res.get("stored"),
+                "store_skip_reason": res.get("store_skip_reason"),
+            })
+        except HTTPException as he:  # _read_upload 검증 실패(빈/크기/형식) — 이 파일만 fail
+            counts["failed"] += 1
+            results.append({"filename": name, "ok": False, "error": str(he.detail)})
+        except Exception as e:  # noqa: BLE001 — 한 파일 예외가 배치 전체를 깨면 안 됨
+            counts["failed"] += 1
+            logger.info("배치 인제스트 파일 실패(%s): %s", name, str(e)[:140])
+            results.append({"filename": name, "ok": False, "error": str(e)[:160]})
+
+    return {"ok": True, **counts, "results": results}
 
 
 @router.post("/search")

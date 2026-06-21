@@ -50,6 +50,25 @@ type IngestResult = {
   spec: Record<string, unknown>;
 };
 
+type BatchIngestResult = {
+  ok: boolean;
+  total: number;
+  indexed: number;
+  not_indexed: number;
+  failed: number;
+  results: {
+    filename: string;
+    ok: boolean;
+    drawing_type?: string;
+    content_hash?: string;
+    indexed?: boolean;
+    index_skip_reason?: string | null;
+    stored?: boolean;
+    store_skip_reason?: string | null;
+    error?: string;
+  }[];
+};
+
 type Candidate = {
   primary_drawing_type: string;
   primary_content_hash?: string | null;
@@ -302,6 +321,11 @@ export function DesignGenPanel({ projectId }: Props) {
   const [uploading, setUploading] = useState(false);
   const [ingest, setIngest] = useState<IngestResult | null>(null);
   const [ingestErr, setIngestErr] = useState<string | null>(null);
+  // 콜드스타트 배치 업로드(표준설계 일괄적재)
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchIngestResult | null>(null);
+  const [batchErr, setBatchErr] = useState<string | null>(null);
 
   // 생성(generate)
   const [loading, setLoading] = useState(false);
@@ -385,6 +409,25 @@ export function DesignGenPanel({ projectId }: Props) {
       setIngestErr(errMessage(e));
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleBatchIngest() {
+    if (batchFiles.length === 0) return;
+    setBatchUploading(true);
+    setBatchErr(null);
+    setBatchResult(null);
+    try {
+      const form = new FormData();
+      for (const f of batchFiles) form.append("files", f);
+      if (projectId) form.append("project_id", projectId);
+      const data = await apiClient.post<BatchIngestResult>("/design-gen/ingest-batch", { body: form });
+      setBatchResult(data);
+      refreshCorpus();  // 일괄 색인 후 코퍼스 현황 갱신
+    } catch (e) {
+      setBatchErr(errMessage(e));
+    } finally {
+      setBatchUploading(false);
     }
   }
 
@@ -660,6 +703,58 @@ export function DesignGenPanel({ projectId }: Props) {
               )}
             </div>
           )}
+
+          {/* 콜드스타트 배치 업로드 — 표준설계 다중 파일 일괄 적재(코퍼스 부트스트랩) */}
+          <div className="mt-3 border-t border-dashed border-[var(--line)] pt-3">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+              📦 일괄 업로드 <span className="font-normal text-[var(--text-tertiary)]">표준설계 다중 파일을 한 번에 색인(콜드스타트 · 최대 50개)</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                multiple
+                accept=".xlsx,.xlsm,.xls,.dxf,.ifc,.pdf,.png,.jpg,.jpeg,.webp"
+                onChange={(e) => setBatchFiles(e.target.files ? Array.from(e.target.files) : [])}
+                className="text-xs text-[var(--text-secondary)]"
+              />
+              <Button
+                variant="secondary"
+                onClick={handleBatchIngest}
+                disabled={batchFiles.length === 0 || batchUploading}
+              >
+                {batchUploading ? `업로드 중…(${batchFiles.length})` : `일괄 색인(${batchFiles.length})`}
+              </Button>
+            </div>
+            {batchErr && <p className="mt-2 text-xs text-[var(--status-error)]">{batchErr}</p>}
+            {batchResult && (
+              <div className="mt-2 text-xs text-[var(--text-secondary)]">
+                총 <span className="font-bold text-[var(--text-primary)]">{batchResult.total}</span>건 ·{" "}
+                <span style={{ color: "var(--status-success)" }}>색인 {batchResult.indexed}</span>
+                {batchResult.not_indexed > 0 && (
+                  <span style={{ color: "var(--status-warning)" }}> · 미색인 {batchResult.not_indexed}</span>
+                )}
+                {batchResult.failed > 0 && (
+                  <span style={{ color: "var(--status-error)" }}> · 실패 {batchResult.failed}</span>
+                )}
+                <ul className="mt-1 max-h-40 overflow-auto list-inside list-disc text-[var(--text-tertiary)]">
+                  {batchResult.results.map((r, i) => (
+                    <li key={`${r.filename}-${i}`}>
+                      <span className="text-[var(--text-secondary)]">{i + 1}. {r.filename || "(이름없음)"}</span>
+                      {r.ok ? (
+                        r.indexed ? (
+                          <span style={{ color: "var(--status-success)" }}> — {labelOf(r.drawing_type || "")} 색인</span>
+                        ) : (
+                          <span style={{ color: "var(--status-warning)" }}> — 미색인({r.index_skip_reason || "사유 미상"})</span>
+                        )
+                      ) : (
+                        <span style={{ color: "var(--status-error)" }}> — 실패({r.error || "사유 미상"})</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 유사 도면 검색(search) */}
