@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v271-evidence-contract";
+const CACHE_NAME = "propai-v272-evidence-phase2";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

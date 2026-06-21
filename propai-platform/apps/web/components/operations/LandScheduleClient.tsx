@@ -27,6 +27,8 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
   { pick: "NearbyTransactionsMap", height: 440, loadingMessage: "주변 실거래 지도 로딩…" },
 );
 import { analyzeRegistry } from "@/lib/registry-analyze";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -110,6 +112,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const [highlight, setHighlight] = useState("");
   // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
   const [notice, setNotice] = useState<{ kind: "info" | "warn"; text: string } | null>(null);
+  // 적정 매입가 추정 산출 근거(EvidencePanel) — 백엔드 build_evidence_block 출력(가산 필드).
+  const [priceEvidence, setPriceEvidence] = useState<{ jibun: string; evidence?: BackendEvidence[]; legalRefs?: BackendLegalRef[] } | null>(null);
   const [modalRow, setModalRow] = useState<LandRow | null>(null);
   const [shareRow, setShareRow] = useState<LandRow | null>(null); // 대지지분 분석 대상 행
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -261,7 +265,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   // 매입예정가 적정가 분석(주소→PNU 공시지가 × 지역 시세보정). 결과는 수정 가능.
   const estimatePrice = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
-    setBusy(r.id); setNotice(null);
+    setBusy(r.id); setNotice(null); setPriceEvidence(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
       const res = await fetch(`${apiBase()}/land-price/estimate`, {
@@ -275,6 +279,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           expected_price: d.estimated_total_won,
           ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
         });
+        // 산출 근거(EvidencePanel)를 패널로 노출 — 백엔드 evidence/legal_refs(가산 필드).
+        setPriceEvidence({ jibun: r.jibun, evidence: d.evidence, legalRefs: d.legal_refs });
         // 충실한 산정 근거를 비경고(info) 톤으로 안내. 결과 금액 + 산정식 + 출처/주의.
         setNotice({
           kind: "info",
@@ -597,6 +603,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           <button onClick={() => setNotice(null)} className={`shrink-0 ${notice.kind === "info" ? "text-[var(--accent-strong)]" : "text-[var(--status-warning)]"}`}>✕</button>
         </div>
       )}
+
+      {/* 적정 매입가 산출 근거(EvidencePanel) — adaptEvidence로 legal_ref_key 조인.
+          url_status=pending이면 LegalRefChip 텍스트 폴백(가짜 링크 0). items 없으면 미렌더. */}
+      {(() => {
+        if (!priceEvidence) return null;
+        const items = adaptEvidence(priceEvidence.evidence, priceEvidence.legalRefs);
+        return items.length > 0 ? (
+          <EvidencePanel items={items} title={`「${priceEvidence.jibun}」 적정 매입가 산출 근거`} />
+        ) : null;
+      })()}
 
       {rows.length > 0 && (
         <>

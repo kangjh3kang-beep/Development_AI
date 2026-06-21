@@ -21,7 +21,19 @@ class SiteScoreRequest(BaseModel):
 @router.post("")
 async def site_score(req: SiteScoreRequest):
     """부지 컨텍스트에서 0~100 입지 점수 + 피처별 기여도(설명가능)를 산출."""
-    return compute_site_score(req.context, req.region_baseline)
+    result = compute_site_score(req.context, req.region_baseline)
+    # ── 전역정책 Phase0: 근거·법령·신선도 공용 블록 가산(additive, graceful) ──
+    # 기존 score/grade/factors 무손상, evidence/legal_refs/provenance만 추가.
+    try:
+        from app.services.site_score.site_score_service import build_site_score_evidence
+
+        ev = build_site_score_evidence(result)
+        result.setdefault("evidence", ev.get("evidence", []))
+        result.setdefault("legal_refs", ev.get("legal_refs", []))
+        result.setdefault("provenance", ev.get("provenance", []))
+    except Exception:  # noqa: BLE001 — 근거 블록 실패해도 입지점수 결과 무손상
+        pass
+    return result
 
 
 class PoiInfraRequest(BaseModel):
@@ -131,7 +143,7 @@ async def poi_infra(req: PoiInfraRequest):
         except Exception:  # noqa: BLE001 - site_score 실패는 POI 결과를 막지 않는다
             site = None
 
-    return {
+    resp: dict[str, Any] = {
         "available": True, "radius_m": req.radius_m,
         "coordinates": {"lat": lat, "lon": lon}, "geocoded_from": geocoded_from,
         "categories": cats,
@@ -142,6 +154,48 @@ async def poi_infra(req: PoiInfraRequest):
         "integrated_location_score": integrated,
         "score_basis": "통합=POI접근성55%+종합입지45%" if integrated is not None else "POI접근성 단독(context 미제공)",
     }
+
+    # ── 전역정책 Phase0: 근거·법령·신선도 공용 블록 가산(additive, graceful) ──
+    # POI 접근성·통합점수 근거 트레이스 + site_score factors 근거(용도지역=zone_use 법령)
+    # 를 합쳐 한 블록으로 부착. 기존 키 무손상, evidence/legal_refs/provenance만 추가.
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+        from app.services.site_score.site_score_service import build_site_score_evidence
+
+        items: list[dict[str, Any]] = [{
+            "label": "POI 접근성 점수",
+            "value": f"{poi_score}점",
+            "basis": "POI 카테고리 가중치 × 거리감쇠 밴딩(250m=1.0~2500m=0.1) + 밀도보너스 — Kakao Local 반경검색",
+        }]
+        if integrated is not None:
+            items.append({
+                "label": "통합 입지점수",
+                "value": f"{integrated}점",
+                "basis": "POI 접근성 55% + 종합입지(상권·실거래·용도지역·지가) 45% 가중평균(연구기반)",
+            })
+        # 종합입지(site_score) factors 근거 — zone_use 법령키 포함.
+        # POI 항목("POI 접근성 점수"·"통합 입지점수")과 factor 라벨은 겹치지 않아 그대로 합친다.
+        ref_keys: list[str] = []
+        if isinstance(site, dict):
+            site_ev = build_site_score_evidence(site)
+            for it in site_ev.get("evidence", []) or []:
+                items.append(it)
+            for r in site_ev.get("legal_refs", []) or []:
+                k = r.get("key") if isinstance(r, dict) else None
+                if k:
+                    ref_keys.append(str(k))
+        ev = build_evidence_block(
+            items=items,
+            legal_ref_keys=ref_keys or None,
+            sources=["kakao_local", "vworld_zoning", "vworld_land_info", "molit_transactions"],
+        )
+        resp.setdefault("evidence", ev.get("evidence", []))
+        resp.setdefault("legal_refs", ev.get("legal_refs", []))
+        resp.setdefault("provenance", ev.get("provenance", []))
+    except Exception:  # noqa: BLE001 — 근거 블록 실패해도 POI 결과 무손상
+        pass
+
+    return resp
 
 
 class EnvelopeRequest(BaseModel):

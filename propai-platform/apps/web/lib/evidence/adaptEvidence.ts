@@ -38,9 +38,10 @@ function resolveUrl(ref: BackendLegalRef): string | null {
   const status = (ref.url_status || "").trim();
   const url = (ref.url || "").trim();
   if (!url) return null;
-  // 명시적 pending이면 링크 금지. status 미지정이어도 url이 있으면 통과(verified 가정은
-  // 하지 않되, 빈 url만 거른다 — 백엔드가 pending 시 url을 비워 보내기 때문).
-  if (status === "pending") return null;
+  // ★전역 규칙: verified일 때만 클릭 링크 제공(죽은링크 금지·verified만 신뢰).
+  // pending·미지정·기타 상태는 링크 미전달 → LegalRefChip 텍스트 폴백.
+  // (백엔드 get_legal_refs는 verified 키에만 url+url_status='verified'를 채운다.)
+  if (status !== "verified") return null;
   return url;
 }
 
