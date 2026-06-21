@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v278-rerun-needfix";
+const CACHE_NAME = "propai-v279-floor-perspectives";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
