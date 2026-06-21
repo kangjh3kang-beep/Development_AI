@@ -66,3 +66,20 @@ async def test_deliberation_tool_graceful_when_url_unset(monkeypatch):
     assert out["findings"] == []
     assert out["summary"]["available"] is False
     assert out["summary"]["reason"] == "engine_url_unset"
+
+
+def test_design_domain_registered():
+    # 설계 라이프사이클 에이전트 등록(시스템2 플랫폼 노출)
+    assert "설계" in AVAILABLE_DOMAINS
+    a = get_specialist("설계")
+    assert a.domain == "설계" and a.analysis_type == "domain_agent_설계"
+
+
+async def test_design_tool_graceful_when_url_unset(monkeypatch):
+    from app.services.agents.registry import _design_tool
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_TOKEN=""),
+    )
+    out = await _design_tool({"pnu": "1111010100100000001"})
+    assert out["findings"] == [] and out["summary"]["available"] is False
