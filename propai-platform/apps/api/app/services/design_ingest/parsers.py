@@ -159,11 +159,27 @@ def parse_design_file(content: bytes, filename: str) -> DesignSpec:
         spec.meta["warnings"] = ["IFC는 BIMIFCService로 처리 — 인제스천 연동 후속(Phase1)"]
         return spec
     if fmt in ("pdf", "image"):
+        # PDF/이미지는 멀티모달 비전 경로 필요 → 비동기 parse_design_file_async를 쓰라는 정직 고지.
+        # (동기 경로에서는 LLM 호출 불가 — 메타만 채운 스텁 반환.)
         spec = DesignSpec(source_format=fmt)
         spec.title = (filename or "").rsplit("/", 1)[-1] or None
         spec.drawing_type = detect_drawing_type(filename)
-        spec.meta["warnings"] = ["PDF/이미지는 비전 LLM 파싱 경로(후속) — 현재 메타만 추출"]
+        spec.meta["warnings"] = ["PDF/이미지는 비전 LLM 경로(parse_design_file_async) 필요 — 동기경로는 메타만"]
         return spec
     spec = DesignSpec(source_format="unknown")
     spec.meta["warnings"] = [f"지원하지 않는 형식: {filename}"]
     return spec
+
+
+async def parse_design_file_async(content: bytes, filename: str) -> DesignSpec:
+    """비동기 진입점 — 이미지/PDF는 비전 LLM, 그 외는 동기 파서로 위임.
+
+    인제스천(ingest_service)은 이 경로를 사용해야 스캔/렌더 도면(이미지·PDF)을
+    멀티모달로 구조화할 수 있다. 비전 실패는 정직 스텁으로 강등(예외 없음).
+    """
+    fmt = detect_format(filename)
+    if fmt in ("pdf", "image"):
+        from app.services.design_ingest.vision_parser import parse_drawing_with_vision
+
+        return await parse_drawing_with_vision(content, filename, fmt)
+    return parse_design_file(content, filename)

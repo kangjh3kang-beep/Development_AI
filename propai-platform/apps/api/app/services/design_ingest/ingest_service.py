@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from app.services.design_ingest.design_spec import DesignSpec
-from app.services.design_ingest.parsers import parse_design_file
+from app.services.design_ingest.parsers import parse_design_file_async
 from app.services.design_ingest.vector_store import (
     DESIGN_COLLECTION,
     EMBED_DIM,
@@ -54,7 +54,7 @@ async def ingest_design_file(
 
     Returns: {ok, drawing_type, source_format, content_hash, indexed, spec, warnings}
     """
-    spec = parse_design_file(content, filename)
+    spec = await parse_design_file_async(content, filename)
 
     indexed = False
     index_skip_reason: str | None = None
