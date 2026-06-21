@@ -70,6 +70,57 @@ def test_generate_pass_with_recommendation(monkeypatch):
     )
 
 
+def test_generate_verify_gated_and_attached(monkeypatch):
+    # ★선택형 검증 — verify=True면 추천안에 VerifierService 결과 부착, 기본(False)이면 미실행
+    _patch_search(monkeypatch, [_fp_match()])
+    calls = {"n": 0}
+
+    async def _fake_verify(_site, _candidate, _permit, zone_name=None):
+        calls["n"] += 1
+        return {"verdict": "pass", "issues": [], "summary": "검증 통과"}
+
+    monkeypatch.setattr(orch, "_verify_proposal", _fake_verify)
+
+    # verify=True → 검증 부착(추천 있음)
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0, verify=True)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["recommendation"] is not None
+    assert out["verification"] == {"verdict": "pass", "issues": [], "summary": "검증 통과"}
+    assert calls["n"] == 1
+
+    # verify=False(기본) → 미실행·None
+    calls["n"] = 0
+    req2 = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                         dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0)
+    out2 = asyncio.run(generate_design_proposals(req2))
+    assert out2["verification"] is None and calls["n"] == 0
+
+
+def test_verify_proposal_passes_zone_name_to_verifier(monkeypatch):
+    # ★_verify_proposal이 VerifierService에 한글 zone_name+면적을 넘겨 법정한도 가드 활성화
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+    captured = {}
+
+    class _FakeVerifier:
+        async def verify(self, analysis_type, source, output):
+            captured["type"], captured["source"], captured["output"] = analysis_type, source, output
+            return {"verdict": "pass", "issues": [], "summary": "ok"}
+
+    import app.services.verification.verifier_service as vs
+    monkeypatch.setattr(vs, "VerifierService", _FakeVerifier)
+
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_far_pct=200.0, far_source="ordinance")
+    out = _aio.run(orch._verify_proposal(site, {"estimated_gfa_sqm": 1500.0}, {"is_permitted": True},
+                                         zone_name="제2종일반주거지역"))
+    assert out["verdict"] == "pass"
+    assert captured["type"] == "design_generation"
+    assert captured["source"]["zone_name"] == "제2종일반주거지역"  # 법정한도 대조 키
+    assert captured["source"]["land_area_sqm"] == 1000.0           # FAR 재계산 분모
+
+
 def test_generate_permit_denied_all_fail(monkeypatch):
     _patch_search(monkeypatch, [_fp_match()])
     # 보전녹지지역은 M06(일반분양) 불허 → 전부 fail, 추천 없음
