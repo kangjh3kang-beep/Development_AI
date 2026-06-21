@@ -94,6 +94,21 @@ def test_content_hash_deterministic_and_pointid():
     assert c.content_hash() != a.content_hash()
 
 
+def test_point_id_tenant_namespaced():
+    """★교차테넌트 멱등 충돌 차단: 동일 내용이라도 테넌트가 다르면 point_id가 달라야 함."""
+    a = parse_excel(_make_xlsx(), "x.xlsx")
+    b = parse_excel(_make_xlsx(), "x.xlsx")
+    # 같은 테넌트 = 멱등(동일 point_id)
+    assert a.point_id(tenant_id="T1") == b.point_id(tenant_id="T1")
+    # 다른 테넌트 = 다른 point_id(소유표시 덮어쓰기 불가)
+    assert a.point_id(tenant_id="T1") != a.point_id(tenant_id="T2")
+    # 테넌트 미지정(하위호환) = hash-only
+    assert a.point_id() == a.point_id(tenant_id=None)
+    assert a.point_id() != a.point_id(tenant_id="T1")
+    # 형식 유지(36자 UUID)
+    assert len(a.point_id(tenant_id="T1")) == 36
+
+
 def test_parse_design_file_routing_and_honesty():
     # IFC/PDF는 정직 고지(경고) + 형식 보존
     ifc = parse_design_file(b"dummy", "model.ifc")

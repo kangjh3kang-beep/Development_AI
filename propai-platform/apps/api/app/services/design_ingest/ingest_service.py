@@ -35,7 +35,12 @@ def _index(
         client = get_qdrant_client()
         client.upsert(
             collection_name=DESIGN_COLLECTION,
-            points=[PointStruct(id=spec.point_id(), vector=vector, payload=payload)],
+            # ★point_id에 tenant_id 결합 — 교차테넌트 멱등 덮어쓰기(소유표시 탈취) 차단.
+            points=[
+                PointStruct(
+                    id=spec.point_id(tenant_id=tenant_id), vector=vector, payload=payload
+                )
+            ],
         )
         return True, None
     except Exception as e:  # noqa: BLE001
