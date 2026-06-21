@@ -145,19 +145,89 @@ def parse_dxf(content: bytes, filename: str = "") -> DesignSpec:
     return spec
 
 
+def _ifc_quantity_area(entity: object) -> float:
+    """엔티티에 부착된 IfcElementQuantity의 IfcQuantityArea 합(㎡). 없으면 0."""
+    total = 0.0
+    for d in (getattr(entity, "IsDefinedBy", None) or []):
+        if d.is_a("IfcRelDefinesByProperties"):
+            pset = d.RelatingPropertyDefinition
+            if pset.is_a("IfcElementQuantity"):
+                for q in pset.Quantities:
+                    if q.is_a("IfcQuantityArea"):
+                        total += q.AreaValue or 0.0
+    return total
+
+
+def parse_ifc(content: bytes, filename: str = "") -> DesignSpec:
+    """IFC(BIM) → DesignSpec. 층수(IfcBuildingStorey)·공간(IfcSpace)·면적(IfcElementQuantity)·
+    요소종류를 추출한다(검색/조합용). 상세 물량·원가 QTO는 BIMIFCService가 담당(중복 산정 안 함).
+
+    ifcopenshell은 파일경로 입력이라 임시파일로 기록 후 파싱한다(BIMIFCService와 동일 전제).
+    파싱 실패/미가용은 예외 없이 부분 추출 + warnings로 정직 고지(추정 금지·가짜값 금지).
+    """
+    import contextlib
+    import os
+    import tempfile
+
+    spec = DesignSpec(source_format="ifc", drawing_type="bim")
+    spec.title = (filename or "").rsplit("/", 1)[-1] or None
+
+    tmp: str | None = None
+    try:
+        import ifcopenshell
+
+        with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as tf:
+            tf.write(content)
+            tmp = tf.name
+        ifc = ifcopenshell.open(tmp)  # 모델을 메모리에 로드(이후 파일 삭제 무방)
+
+        storeys = ifc.by_type("IfcBuildingStorey")
+        spaces = ifc.by_type("IfcSpace")
+        spec.floor_count = len(storeys) or None  # 0이면 None(가짜값 금지)
+
+        # 면적: ★IfcSpace의 바닥면적 합(연면적 의미 — 엑셀 total_area_sqm과 동일 축).
+        #   벽·슬래브 표면적(IfcBuildingElement)은 '바닥면적'이 아니므로 합산하지 않는다(의미 혼동 방지).
+        #   상세 물량(벽/슬래브 면적·체적·원가)은 BIMIFCService가 담당.
+        floor_area = 0.0
+        rooms: list[RoomSpec] = []
+        for s in spaces[:50]:
+            nm = (getattr(s, "Name", None) or "").strip()[:60]
+            a = round(_ifc_quantity_area(s), 2) or None
+            if nm or a:
+                rooms.append(RoomSpec(name=nm or "(이름없음)", area_sqm=a))
+            if a:
+                floor_area += a
+        spec.rooms = rooms  # IfcSpace는 세대가 아닐 수 있어 rooms로만(unit_count 추정 안 함)
+        if floor_area > 0:
+            spec.total_area_sqm = round(floor_area, 2)
+            spec.meta["ifc_area_basis"] = "space_floor_area"  # 근거: 공간 바닥면적 합(표면적 아님)
+
+        types = sorted({el.is_a() for el in ifc.by_type("IfcBuildingElement")})[:50]
+        spec.layers = types
+        spec.raw_summary = (
+            f"IFC {ifc.schema} · 층 {len(storeys)} · 공간 {len(spaces)} · "
+            f"요소종류 {', '.join(types[:20])}"
+        )[:4000]
+        dt = detect_drawing_type(filename)
+        spec.drawing_type = dt if dt != "unknown" else "bim"
+    except Exception as e:  # noqa: BLE001 — 파싱 실패/미가용은 정직 스텁(예외 비전파)
+        spec.meta["warnings"] = [f"IFC 파싱 실패: {str(e)[:120]}"]
+    finally:
+        if tmp:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+    return spec
+
+
 def parse_design_file(content: bytes, filename: str) -> DesignSpec:
-    """형식 판별 후 적절한 파서로 위임. IFC/PDF/이미지는 정직 고지(후속 경로)."""
+    """형식 판별 후 적절한 파서로 위임. PDF/이미지는 비전(비동기) 경로 안내."""
     fmt = detect_format(filename)
     if fmt == "excel":
         return parse_excel(content, filename)
     if fmt == "dxf":
         return parse_dxf(content, filename)
     if fmt == "ifc":
-        # IFC는 기존 BIMIFCService(apps/api/services/bim_ifc_service.py, IfcOpenShell)가 QTO를 담당.
-        spec = DesignSpec(source_format="ifc", drawing_type="bim")
-        spec.title = (filename or "").rsplit("/", 1)[-1] or None
-        spec.meta["warnings"] = ["IFC는 BIMIFCService로 처리 — 인제스천 연동 후속(Phase1)"]
-        return spec
+        return parse_ifc(content, filename)
     if fmt in ("pdf", "image"):
         # PDF/이미지는 멀티모달 비전 경로 필요 → 비동기 parse_design_file_async를 쓰라는 정직 고지.
         # (동기 경로에서는 LLM 호출 불가 — 메타만 채운 스텁 반환.)
@@ -182,4 +252,9 @@ async def parse_design_file_async(content: bytes, filename: str) -> DesignSpec:
         from app.services.design_ingest.vision_parser import parse_drawing_with_vision
 
         return await parse_drawing_with_vision(content, filename, fmt)
+    if fmt == "ifc":
+        # ifcopenshell 파싱은 CPU 바운드(대형 IFC) → 스레드로 오프로드(이벤트루프 비차단).
+        import asyncio
+
+        return await asyncio.to_thread(parse_design_file, content, filename)
     return parse_design_file(content, filename)
