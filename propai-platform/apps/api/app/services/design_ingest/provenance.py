@@ -155,13 +155,29 @@ def proposal_evidence(candidate: dict, site, *, sigungu: str | None = None) -> l
             basis="연면적 × 전용률 0.75 ÷ 평균 평형 — 실제 평면 세대분할과 다를 수 있음",
             source="설계엔진 추정(휴리스틱)", confidence="estimated",
         ))
-    parking = candidate.get("estimated_parking")
+    parking = candidate.get("parking_required")
+    if parking is None:
+        parking = candidate.get("estimated_parking")  # 하위호환
     if parking is not None:
+        label, link = _ref_link("parking_min", sigungu)  # 주차장법 제19조 부설주차장
+        p_area = candidate.get("parking_area_sqm")
+        basis = "법정 부설주차 산정(주차장법 단순화·대당 33㎡·지역/전용별 세부기준 미반영)"
+        if p_area is not None:
+            basis += f" — 소요 주차면적 {p_area}㎡"
         out.append(Evidence(
-            claim="추정 주차대수", value=parking,
-            basis="세대당 1대 규칙(주차장법 부설주차장·조례 미반영 추정)",
-            source="설계엔진 추정(규칙)", confidence="estimated",
+            claim="법정 주차대수(부설주차장)", value=parking,
+            basis=basis, source=label, confidence="rule", link=link,
         ))
+        # 주차 배치 가능성(부지 footprint 기준 지하주차 층수) — 추정(footprint 기준).
+        feasible = candidate.get("parking_feasible")
+        if feasible is not None:
+            bf = candidate.get("parking_basement_floors")
+            note = "" if feasible else " — 비현실(지상주차·필로티·대지 재검토)"
+            out.append(Evidence(
+                claim="주차 배치 가능성", value=feasible,
+                basis=f"소요 주차면적 ÷ 건축면적(footprint) ≈ 지하 {bf}층 필요{note}",
+                source="설계엔진 산정(footprint 기준)", confidence="estimated",
+            ))
 
     # 적합성(compliant) 근거 — 법적 한도 출처(레지스트리)에 연동.
     src, link, conf = _far_attrs(far_source, sigungu)

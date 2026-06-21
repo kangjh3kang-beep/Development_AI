@@ -33,6 +33,7 @@ class SiteContext:
     far_source: str = "unknown"          # ordinance(실효) | statutory(법정) | unknown
     floor_height_m: float = 3.0
     avg_unit_area_sqm: float = 84.0      # 세대 추정용 평균 평형(전용 기준 입력)
+    building_use_kr: str = "공동주택"     # 주차 산정용 표준 분류(PARKING_RULES 키)
     warnings: list[str] = field(default_factory=list)  # 부지/한도 산출 경고(예: 미지정 zone 폴백)
 
     @property
@@ -66,7 +67,11 @@ class CompositionCandidate:
     estimated_gfa_sqm: float | None = None
     estimated_floors: int | None = None
     estimated_units: int | None = None
-    estimated_parking: int | None = None
+    estimated_parking: int | None = None    # = parking_required(하위호환 별칭)
+    parking_required: int | None = None     # 법정 부설주차 대수(주차장법 단순화)
+    parking_area_sqm: float | None = None   # 소요 주차면적(대당 33㎡)
+    parking_basement_floors: int | None = None  # 지하주차 추정 층수(부지 footprint 기준 우선)
+    parking_feasible: bool | None = None    # 주차 배치 현실성(지하층 과다 아님). 미상 None
     compliant: bool = False
     score: float = 0.0
     warnings: list[str] = field(default_factory=list)
@@ -80,6 +85,10 @@ class CompositionCandidate:
             "estimated_floors": self.estimated_floors,
             "estimated_units": self.estimated_units,
             "estimated_parking": self.estimated_parking,
+            "parking_required": self.parking_required,
+            "parking_area_sqm": self.parking_area_sqm,
+            "parking_basement_floors": self.parking_basement_floors,
+            "parking_feasible": self.parking_feasible,
             "compliant": self.compliant,
             "score": self.score,
             "warnings": list(self.warnings),
@@ -112,6 +121,66 @@ def _scale_factor(fp_area: float | None, footprint: float | None) -> float | Non
     if fp_area <= footprint:
         return 1.0  # 그대로 들어감
     return round(math.sqrt(footprint / fp_area), 4)
+
+
+# 주차 배치 가능성 — 지하주차 추정 층수가 이보다 많으면 비현실(지상주차·필로티·대지 재검토).
+_MAX_REASONABLE_BASEMENT = 5
+
+
+def map_building_use_kr(building_use: str | None) -> str:
+    """건축 용도 문자열 → 주차장법 산정용 표준 분류(PARKING_RULES 키). 미상이면 공동주택."""
+    s = (building_use or "").strip().lower()
+    if any(k in s for k in ("apt", "housing", "공동주택", "아파트", "주거", "resid")):
+        return "공동주택"
+    if any(k in s for k in ("근린", "근생", "retail", "commerc", "상가", "판매")):
+        return "근린생활시설"
+    if any(k in s for k in ("업무", "office", "오피스")):
+        return "업무시설"
+    return "공동주택"
+
+
+def compute_parking_design(
+    site: SiteContext, est_units: int | None, est_gfa: float | None
+) -> dict:
+    """법정 부설주차 산정 + 부지 footprint 기준 지하주차 층수·배치 가능성.
+
+    주차 대수/면적은 AutoDesignEngine 정본(`_compute_parking`, 주차장법 단순화·대당 33㎡)을
+    재사용한다(DRY). 지하주차 층수는 일반 기준(500㎡/층)과 부지 footprint 기준을 함께 내고,
+    footprint 기준(지하 1개 층 ≈ 건축면적)으로 배치 현실성을 판정한다. 미상값은 None(정직).
+    반환: {required, area_sqm, basement_floors, basement_floors_site, feasible, warnings}
+    """
+    out: dict = {
+        "required": None, "area_sqm": None, "basement_floors": None,
+        "basement_floors_site": None, "feasible": None, "warnings": [],
+    }
+    if est_gfa is None and not est_units:
+        return out  # 산정 근거 없음(추정 금지)
+    try:
+        from app.services.cad.auto_design_engine import _compute_parking
+    except Exception:  # noqa: BLE001
+        out["warnings"].append("주차 산정 엔진 미연동 — 주차 미산정")
+        return out
+
+    pk = _compute_parking(int(est_units or 0), float(est_gfa or 0.0), site.building_use_kr)
+    out["required"] = pk["required"]
+    out["area_sqm"] = pk["area_sqm"]
+    out["basement_floors"] = pk["basement_floors"]  # 일반 500㎡/층 기준
+
+    fp = site.buildable_footprint_sqm
+    if pk["required"] > 0 and fp and fp > 0:
+        bf_site = math.ceil(pk["area_sqm"] / fp)  # 부지 건축면적 기준 지하 층수
+        out["basement_floors_site"] = bf_site
+        out["feasible"] = bf_site <= _MAX_REASONABLE_BASEMENT
+        if not out["feasible"]:
+            out["warnings"].append(
+                f"주차 확보에 지하 {bf_site}층 필요 — 비현실(지상주차·필로티·대지 재검토)"
+            )
+    elif pk["required"] == 0:
+        out["feasible"] = True  # 주차 0대 = 배치 부담 없음(정직)
+    else:
+        # 주차 필요하나 건폐율 한도(footprint) 미상 → 배치 현실성 미판정(정직 고지·None 유지).
+        out["warnings"].append("건폐율 한도 미상 — 주차 배치 현실성 미판정(지하주차 층수 미산)")
+    return out
 
 
 def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[CompositionCandidate]:
@@ -173,10 +242,17 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
                 est_units = int(est_gfa * _DEFAULT_EFFICIENCY / site.avg_unit_area_sqm)
             warnings.append("세대수는 연면적×전용률 추정치(실제 평면 세대분할과 다를 수 있음)")
 
-        # 주차: 세대당 1대 규칙 추정(주차도면 실제 대수는 검색 페이로드에 미포함 — 후속 연동).
-        est_parking = est_units if (est_units and est_units > 0) else None
-        if est_units and est_units > 0:
-            warnings.append("주차대수는 세대당 1대 규칙 추정")
+        # 주차: 법정 부설주차 산정(주차장법 단순화, 정본 _compute_parking 재사용) +
+        # 부지 footprint 기준 지하주차 층수·배치 가능성.
+        pk = compute_parking_design(site, est_units, est_gfa)
+        est_parking = pk["required"]
+        warnings.extend(pk["warnings"])
+        if est_parking and est_parking > 0:
+            bf = pk["basement_floors_site"]  # footprint 기준(미상이면 None)
+            warnings.append(
+                f"주차 {est_parking}대·면적 {pk['area_sqm']}㎡(주차장법 단순 산정·대당 33㎡)"
+                + (f" — 지하 약 {bf}층 필요" if bf else "")
+            )
         elif est_units == 0:
             warnings.append("추정 세대수 0 — 평형 대비 연면적 과소(설계 재검토 필요)")
 
@@ -205,7 +281,11 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             estimated_gfa_sqm=est_gfa,
             estimated_floors=est_floors,
             estimated_units=est_units,
-            estimated_parking=est_parking,
+            estimated_parking=est_parking,  # 하위호환 별칭(=parking_required)
+            parking_required=pk["required"],
+            parking_area_sqm=pk["area_sqm"],
+            parking_basement_floors=pk["basement_floors_site"],  # footprint 기준(미상 None)
+            parking_feasible=pk["feasible"],
             compliant=compliant,
             score=score,
             warnings=warnings,
@@ -224,6 +304,7 @@ def site_context_from_zone(
     width_m: float | None = None,
     depth_m: float | None = None,
     avg_unit_area_sqm: float = 84.0,
+    building_use_kr: str = "공동주택",
 ) -> SiteContext:
     """AutoDesignEngine 법정한도로 SiteContext 구성(best-effort). 조례(실효) 값이 오면 우선.
 
@@ -265,5 +346,6 @@ def site_context_from_zone(
         legal_far_pct=far_pct,
         far_source=source,
         avg_unit_area_sqm=avg_unit_area_sqm,
+        building_use_kr=building_use_kr,
         warnings=ctx_warnings,
     )

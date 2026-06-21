@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from app.services.design_ingest.composition import (
     SiteContext,
     compose,
+    map_building_use_kr,
     site_context_from_zone,
 )
 from app.services.design_ingest.provenance import (
@@ -117,6 +118,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         ordinance_far_pct=req.ordinance_far_pct,
         ordinance_bcr_pct=req.ordinance_bcr_pct,
         avg_unit_area_sqm=req.avg_unit_area_sqm,
+        building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
     )
 
     # 인허가 게이트(규칙기반, best-effort).

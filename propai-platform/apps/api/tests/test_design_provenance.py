@@ -55,12 +55,24 @@ def test_permit_evidence_rule_and_unknown():
 def test_proposal_evidence_estimates_have_no_link():
     site = _ord_site()
     candidate = {"estimated_gfa_sqm": 1500.0, "estimated_floors": 3,
-                 "estimated_units": 13, "estimated_parking": 13, "compliant": True}
+                 "estimated_units": 13, "estimated_parking": 13,
+                 "parking_required": 13, "parking_area_sqm": 429.0,
+                 "parking_basement_floors": 1, "parking_feasible": True,
+                 "compliant": True}
     ev = proposal_evidence(candidate, site)
     claims = {e.claim: e for e in ev}
-    for key in ("추정 연면적", "추정 세대수", "추정 주차대수"):
+    # 연면적·세대수는 추정(링크 없음)
+    for key in ("추정 연면적", "추정 세대수"):
         assert claims[key].confidence == "estimated" and claims[key].link is None
     assert "0.75" in claims["추정 세대수"].basis
+    # ★주차는 이제 법정 규칙(주차장법) — confidence rule + 법령링크 verified
+    pk = claims["법정 주차대수(부설주차장)"]
+    assert pk.confidence == "rule" and pk.value == 13
+    assert pk.link and "law.go.kr" in pk.link  # 주차장법 제19조
+    assert "429.0㎡" in pk.basis
+    # 배치 가능성(footprint 기준 추정)
+    feas = claims["주차 배치 가능성"]
+    assert feas.confidence == "estimated" and feas.value is True
     # 적합성은 조례 출처 — sigungu 없으면 링크 pending(None), confidence ordinance
     comp = claims["법적 한도 적합성"]
     assert comp.confidence == "ordinance" and comp.link is None

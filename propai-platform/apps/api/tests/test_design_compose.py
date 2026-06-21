@@ -3,7 +3,9 @@
 from app.services.design_ingest.composition import (
     SiteContext,
     compose,
+    compute_parking_design,
     fit_score,
+    map_building_use_kr,
     site_context_from_zone,
 )
 
@@ -107,11 +109,71 @@ def test_compose_merges_site_warnings():
 
 
 def test_compose_zero_units_guard():
-    # 작은 footprint + 큰 평형 → 추정 세대 0 → 주차 1대규칙 경고 대신 '세대수 0' 경고, parking None
+    # 작은 footprint + 큰 평형 → 추정 세대 0 → '세대수 0' 경고. 공동주택 0세대=주차 0대(정밀)
     s = _site(area_sqm=100.0, legal_bcr_pct=20.0, legal_far_pct=50.0)  # footprint20, gfa50
     matches = [{"point_id": "fp", "drawing_type": "floor_plan", "total_area_sqm": 20.0, "score": 0.9}]
     top = compose(s, matches)[0]
     assert top.estimated_units == 0
-    assert top.estimated_parking is None
+    assert top.estimated_parking == 0 and top.parking_required == 0  # 0세대→0대(정직)
+    assert top.parking_feasible is True  # 주차 0대 = 배치 부담 없음
     assert any("세대수 0" in w for w in top.warnings)
-    assert not any("세대당 1대" in w for w in top.warnings)
+
+
+def test_map_building_use_kr():
+    assert map_building_use_kr("apt-housing") == "공동주택"
+    assert map_building_use_kr("아파트") == "공동주택"
+    assert map_building_use_kr("근린생활시설") == "근린생활시설"
+    assert map_building_use_kr("office") == "업무시설"
+    assert map_building_use_kr(None) == "공동주택"  # 미상 폴백
+    assert map_building_use_kr("듣보용도") == "공동주택"
+
+
+def test_compute_parking_design_apartment():
+    # 공동주택 13세대 → 세대당 1대 = 13대, 대당 33㎡ = 429㎡. footprint 600 → 지하 1층, 현실적
+    s = _site()  # footprint 600
+    pk = compute_parking_design(s, est_units=13, est_gfa=1500.0)
+    assert pk["required"] == 13
+    assert pk["area_sqm"] == 429.0           # 13 × 33
+    assert pk["basement_floors_site"] == 1   # ceil(429/600)
+    assert pk["feasible"] is True
+
+
+def test_compute_parking_design_infeasible_when_footprint_tiny():
+    # 큰 주차 수요 + 아주 작은 footprint → 지하층 과다 → 비현실(feasible False + 경고)
+    s = _site(area_sqm=10000.0, legal_bcr_pct=5.0, legal_far_pct=400.0)  # footprint 500
+    # 면적당 산정용으로 업무시설(gfa 기반): gfa 40000 → 40000/150 ≈ 266대 × 33 = 8778㎡
+    s.building_use_kr = "업무시설"
+    pk = compute_parking_design(s, est_units=0, est_gfa=40000.0)
+    assert pk["required"] > 0 and pk["area_sqm"] > 0
+    assert pk["basement_floors_site"] is not None and pk["basement_floors_site"] > 5
+    assert pk["feasible"] is False
+    assert any("비현실" in w for w in pk["warnings"])
+
+
+def test_compute_parking_design_footprint_unknown_warns():
+    # 주차 필요하나 footprint(건폐율 한도) 미상 → 배치 현실성 미판정(None) + 정직 경고
+    s = SiteContext(area_sqm=1000.0)  # legal_bcr_pct None → footprint None
+    pk = compute_parking_design(s, est_units=13, est_gfa=1500.0)
+    assert pk["required"] == 13                 # 대수는 산정됨
+    assert pk["basement_floors_site"] is None   # footprint 미상 → 지하층 미산
+    assert pk["feasible"] is None               # 배치 현실성 미판정(정직)
+    assert any("미판정" in w for w in pk["warnings"])
+
+
+def test_compute_parking_design_no_basis_returns_none():
+    # 산정 근거 없음(gfa None & units None) → 전부 None(추정 금지)
+    s = _site()
+    pk = compute_parking_design(s, est_units=None, est_gfa=None)
+    assert pk["required"] is None and pk["feasible"] is None
+
+
+def test_compose_attaches_parking_fields():
+    # 조합 결과에 주차설계 필드가 부착되는지(통합)
+    s = _site()
+    matches = [{"point_id": "fp1", "drawing_type": "floor_plan", "total_area_sqm": 500.0, "score": 0.95}]
+    top = compose(s, matches)[0]
+    assert top.parking_required is not None and top.parking_required > 0
+    assert top.parking_area_sqm == top.parking_required * 33.0
+    assert top.parking_feasible is True
+    d = top.to_dict()
+    assert "parking_area_sqm" in d and "parking_feasible" in d
