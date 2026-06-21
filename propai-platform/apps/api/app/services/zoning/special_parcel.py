@@ -366,6 +366,217 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
     return {"resolvable": "CONDITIONAL", "resolution_paths": ["관계기관 협의"], "alternatives": ["해당 필지 제외 검토"]}
 
 
+def _zone_family(zone_type: str | None) -> str | None:
+    """용도지역명 → 규제성격 대분류(상업/주거/공업/녹지/관리/농림/자연환경).
+
+    혼재 판정(상업+주거 등 성격 상이)에서 '임의 단일화 금지'를 위한 분류용. 매칭 안 되면 None.
+    """
+    z = (zone_type or "").replace(" ", "").strip()
+    if not z:
+        return None
+    # 순서 주의: '자연녹지'·'자연환경보전' 등 '자연' 접두가 녹지/보전 어느 쪽인지 명확히 분기.
+    if "상업" in z:
+        return "상업"
+    if "공업" in z:
+        return "공업"
+    if "녹지" in z:
+        return "녹지"
+    if "주거" in z:
+        return "주거"
+    if "자연환경보전" in z or ("자연" in z and "보전" in z):
+        return "자연환경보전"
+    if "관리" in z:
+        return "관리"
+    if "농림" in z:
+        return "농림"
+    return None
+
+
+def _aggregate_integrated_zoning(enriched: list[dict]) -> dict[str, Any]:
+    """다필지 통합 용도지역·실효/법정 한도·통합 GFA를 면적가중으로 집계(순수함수·외부콜 0).
+
+    입력(enriched): 각 필지 dict는 `_enrich_effective_and_special`가 in-place로 부착한
+      _far_eff/_bcr_eff(실효=조례), _far_legal/_bcr_legal(법정상한), _far_basis(실효 근거),
+      그리고 area_sqm(=areaSqm)·zone_type을 갖는다. (이 함수는 그 키만 읽고 재계산하지 않는다.)
+
+    산식 핵심:
+      ① dominant_zone: zone별 면적합산 → max(면적). dominant_basis="area_weighted".
+         동률(상위 두 zone 면적이 ±5% 이내) 또는 규제성격 상이(상업+주거 등 _zone_family 혼재)면
+         "mixed_review_required"로 표기(임의 단일화 금지).
+      ② blended_*_eff = Σ(area_i×eff_i)/Σarea — 결측(eff None) 필지는 가중에서 제외 + warning.
+         blended_*_legal도 동일 방식으로 별도 산출(실효=조례, 법정=*_legal 분리).
+      ③ integrated_gfa = Σ(area_i×far_eff_i/100) — ★단순 통합면적×blended_far 금지(혼재 과대방지).
+         gfa_basis="per_parcel_effective_sum". 통합 건폐 바닥면적도 Σ(area_i×bcr_eff_i/100).
+      far_basis_note: 조례 미확보로 법정폴백된 필지 수를 명시(_far_basis가 법정폴백 신호일 때).
+
+    반환: {parcel_count, zone_mix[...], dominant_zone, dominant_basis, blended_far_eff_pct,
+           blended_bcr_eff_pct, blended_far_legal_pct, blended_bcr_legal_pct, total_area_sqm,
+           integrated_gfa_sqm, integrated_footprint_sqm, gfa_basis, far_basis_note, warnings}.
+    미확보·산출불가 항목은 null(무목업) + warnings에 정직 기재.
+    """
+    parcels = list(enriched or [])
+    warnings: list[str] = []
+
+    def _area(p: dict) -> float:
+        try:
+            a = float(p.get("area_sqm") or 0)
+        except (TypeError, ValueError):
+            a = 0.0
+        return a if a > 0 else 0.0
+
+    def _num(v) -> float | None:
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    total_area = round(sum(_area(p) for p in parcels), 2)
+
+    # ── ① zone별 면적합산 + zone_mix(필지 한도 분포) ──
+    zone_area: dict[str, float] = {}
+    # zone별 대표 한도(같은 zone은 법정한도 동일 → 첫 유효값 채택, 실효는 필지별이라 면적가중 별도).
+    zone_legal: dict[str, dict] = {}
+    zone_eff_acc: dict[str, dict] = {}  # zone별 실효 가중합 누적(면적가중)
+    for p in parcels:
+        z = (p.get("zone_type") or "").strip() or "미상"
+        a = _area(p)
+        zone_area[z] = zone_area.get(z, 0.0) + a
+        zl = zone_legal.setdefault(z, {"bcr_legal": None, "far_legal": None})
+        if zl["bcr_legal"] is None:
+            zl["bcr_legal"] = _num(p.get("_bcr_legal"))
+        if zl["far_legal"] is None:
+            zl["far_legal"] = _num(p.get("_far_legal"))
+        acc = zone_eff_acc.setdefault(z, {"a_bcr": 0.0, "w_bcr": 0.0, "a_far": 0.0, "w_far": 0.0})
+        be, fe = _num(p.get("_bcr_eff")), _num(p.get("_far_eff"))
+        if a > 0 and be is not None:
+            acc["a_bcr"] += a
+            acc["w_bcr"] += a * be
+        if a > 0 and fe is not None:
+            acc["a_far"] += a
+            acc["w_far"] += a * fe
+
+    zone_mix: list[dict[str, Any]] = []
+    for z, a in sorted(zone_area.items(), key=lambda kv: kv[1], reverse=True):
+        acc = zone_eff_acc.get(z, {})
+        bcr_eff = round(acc["w_bcr"] / acc["a_bcr"], 1) if acc.get("a_bcr") else None
+        far_eff = round(acc["w_far"] / acc["a_far"], 1) if acc.get("a_far") else None
+        zone_mix.append({
+            "zone": z,
+            "area_sqm": round(a, 2),
+            "share_pct": round(a / total_area * 100, 1) if total_area else None,
+            "bcr_legal": zone_legal.get(z, {}).get("bcr_legal"),
+            "far_legal": zone_legal.get(z, {}).get("far_legal"),
+            "bcr_eff": bcr_eff,
+            "far_eff": far_eff,
+        })
+
+    # ── dominant_zone 판정(동률·규제성격 혼재 시 mixed_review_required) ──
+    dominant_zone: str | None
+    dominant_basis = "area_weighted"
+    real_zones = [(z, a) for z, a in zone_area.items() if z != "미상" and a > 0]
+    if not real_zones:
+        dominant_zone = None
+        warnings.append("용도지역 미확보 — 대표 용도지역을 산정할 수 없습니다(통합 한도 산출 제한).")
+    else:
+        ranked = sorted(real_zones, key=lambda kv: kv[1], reverse=True)
+        top_zone, top_area = ranked[0]
+        # 규제성격 혼재(상업+주거 등): 성격 대분류가 2개 이상이면 임의 단일화 금지.
+        families = {f for f in (_zone_family(z) for z, _a in real_zones) if f}
+        mixed_family = len(families) >= 2
+        # 동률: 상위 두 zone 면적이 ±5% 이내.
+        tie = False
+        if len(ranked) >= 2:
+            second_area = ranked[1][1]
+            if top_area > 0 and abs(top_area - second_area) / top_area <= 0.05:
+                tie = True
+        if mixed_family or tie:
+            dominant_zone = "mixed_review_required"
+            reason = []
+            if mixed_family:
+                reason.append(f"규제성격 상이({'·'.join(sorted(families))})")
+            if tie:
+                reason.append("상위 용도지역 면적 동률(±5% 이내)")
+            warnings.append(
+                "용도지역 혼재 — 대표 용도지역을 단일화하지 않고 검토 필요로 표기합니다("
+                + ", ".join(reason) + "). 통합 한도는 면적가중 실효치로 산출됩니다."
+            )
+        else:
+            dominant_zone = top_zone
+
+    # ── ② blended(면적가중) — 결측 필지는 가중 제외 + warning ──
+    def _blended(key: str, label: str) -> float | None:
+        a_sum = 0.0
+        w_sum = 0.0
+        missing = 0
+        for p in parcels:
+            a = _area(p)
+            v = _num(p.get(key))
+            if a > 0 and v is not None:
+                a_sum += a
+                w_sum += a * v
+            elif a > 0 and v is None:
+                missing += 1
+        if missing:
+            warnings.append(f"{label} 결측 {missing}개 필지 — 면적가중에서 제외하고 산출했습니다.")
+        return round(w_sum / a_sum, 1) if a_sum else None
+
+    blended_far_eff = _blended("_far_eff", "실효 용적률")
+    blended_bcr_eff = _blended("_bcr_eff", "실효 건폐율")
+    blended_far_legal = _blended("_far_legal", "법정 용적률")
+    blended_bcr_legal = _blended("_bcr_legal", "법정 건폐율")
+
+    # ── ③ integrated_gfa = Σ(area_i×far_eff_i/100) — 통합면적×blended_far 사용 금지 ──
+    integrated_gfa = 0.0
+    integrated_footprint = 0.0
+    gfa_area_used = 0.0
+    for p in parcels:
+        a = _area(p)
+        fe = _num(p.get("_far_eff"))
+        be = _num(p.get("_bcr_eff"))
+        if a > 0 and fe is not None:
+            integrated_gfa += a * fe / 100.0
+            gfa_area_used += a
+        if a > 0 and be is not None:
+            integrated_footprint += a * be / 100.0
+    integrated_gfa_val = round(integrated_gfa, 2) if gfa_area_used else None
+    integrated_footprint_val = round(integrated_footprint, 2) if gfa_area_used else None
+
+    # far_basis_note: 조례 미확보로 법정폴백된 필지 수(_far_basis가 법정 신호일 때).
+    #   far_tier_service의 far_basis 문자열에 '법정'이 들어가면 조례 미반영 폴백으로 본다.
+    legal_fallback = 0
+    for p in parcels:
+        if (p.get("zone_type") or "").strip():
+            basis = str(p.get("_far_basis") or "")
+            if not basis or "법정" in basis:
+                legal_fallback += 1
+    if legal_fallback:
+        far_basis_note = (
+            f"{legal_fallback}개 필지는 조례 실효 용적률 미확보로 법정상한을 폴백 적용했습니다"
+            "(실효치는 조례 확정 시 하향될 수 있음)."
+        )
+    else:
+        far_basis_note = "전 필지 조례 실효 용적률 반영(법정폴백 없음)."
+
+    return {
+        "parcel_count": len(parcels),
+        "total_area_sqm": total_area or None,
+        "zone_mix": zone_mix,
+        "dominant_zone": dominant_zone,
+        "dominant_basis": dominant_basis,
+        "blended_far_eff_pct": blended_far_eff,
+        "blended_bcr_eff_pct": blended_bcr_eff,
+        "blended_far_legal_pct": blended_far_legal,
+        "blended_bcr_legal_pct": blended_bcr_legal,
+        "integrated_gfa_sqm": integrated_gfa_val,
+        "integrated_footprint_sqm": integrated_footprint_val,
+        "gfa_basis": "per_parcel_effective_sum",
+        "far_basis_note": far_basis_note,
+        "warnings": warnings,
+    }
+
+
 def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
     """다필지 종합 특이부지 판정 — 한 필지의 특이성이 사업 전체를 제약할 수 있으므로,
     필지별 감지 후 가장 제약 큰 게이트로 사업 전체를 판정하고, 차단필지·대안을 도출한다.

@@ -1227,6 +1227,225 @@ async def parcels_info(req: ParcelsInfoRequest):
     return {"parcels": out}
 
 
+class IntegratedAnalysisRequest(BaseModel):
+    """다필지 통합분석 요청 — 통합 용도지역·실효/법정 한도·통합 GFA·인접성·게이트·시나리오.
+
+    parcels: [{pnu?, address?, jibun?, bcode?, area_sqm?, land_category?, zone_type?, geometry?}]
+    equity_won: 시나리오 위임(auto_recommend_top3)용 자기자본(미지정 시 서비스 기본).
+    use_llm: 기본 false(무과금). True일 때만 시나리오 AI 내러티브 포함(규칙기반 통합집계는 무과금).
+    """
+    parcels: list[dict] = []
+    equity_won: int | None = None
+    use_llm: bool = False
+
+
+@router.post("/integrated-analysis")
+async def integrated_analysis(req: IntegratedAnalysisRequest):
+    """다필지 '통합분석'(통합면적이 아니라 통합 용도/건폐/용적/개발방향) — additive·정직.
+
+    파이프라인(전부 기존함수 재사용):
+      enrich_parcel_list 보강 → _enrich_effective_and_special(필지별 실효+특이 in-place)
+      → detect_multi_parcel(통합 게이트) → _parcel_adjacency(인접성) → _aggregate_integrated_zoning(집계).
+    시나리오(BE-3): 게이트/인접성에 따라 blocked·tentative·computed로 분기. computed 시
+      FeasibilityServiceV2.auto_recommend_top3에 통합면적·dominant 용도·blended 한도로 1회 위임.
+    무목업: 미확보·degrade는 null + warnings(가짜값 금지). 무과금: use_llm 기본 false.
+    """
+    from app.services.zoning.special_parcel import (
+        detect_multi_parcel,
+        _aggregate_integrated_zoning,
+        gate_decision,
+    )
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+
+    raw_parcels = req.parcels or []
+    if not isinstance(raw_parcels, list) or not raw_parcels:
+        from fastapi import HTTPException
+        raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
+
+    warnings: list[str] = []
+    items = raw_parcels[:120]  # 1회 상한(대량은 클라가 분할 호출)
+
+    # ── 1) enrich_parcel_list 보강(면적·용도지역·지목·공시지가). 입력 override는 보강 후 우선 적용.
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    # 입력에서 사용자가 직접 준 zone_type/land_category/area_sqm/geometry override를 병합(정직 우선).
+    #   enrich가 채운 값이 없거나 입력값이 명시되면 입력을 채택(가짜 생성 아님 — 사용자 제공 실값).
+    for src, p in zip(items, enriched):
+        if src.get("zone_type") and not p.get("zone_type"):
+            p["zone_type"] = src["zone_type"]
+        # land_category: enrich는 jimok 키로 채운다 → detect_*가 읽는 land_category로 정렬.
+        lc = src.get("land_category") or p.get("jimok")
+        if lc:
+            p.setdefault("land_category", lc)
+        if src.get("geometry") is not None:
+            p["geometry"] = src["geometry"]
+        if src.get("area_sqm") and not p.get("area_sqm"):
+            p["area_sqm"] = src["area_sqm"]
+
+    # ── 2) 필지별 실효(조례)+법정+특이 게이트 in-place 부착(공용 헬퍼 — land-report와 동일 의미).
+    await _enrich_effective_and_special(enriched)
+
+    # ── 3) 통합 게이트(detect_multi_parcel) — land_category 키로 특이부지 종합 판정.
+    #     detect_*는 land_category/zone_type/pnu/address를 읽으므로 jimok→land_category 보강.
+    gate_input: list[dict] = []
+    for p in enriched:
+        gate_input.append({
+            **p,
+            "land_category": p.get("land_category") or p.get("jimok"),
+        })
+    multi = detect_multi_parcel(gate_input)
+    developability = multi.get("developability")
+    resolvable = multi.get("resolvable")
+    blocking_parcels = multi.get("blocking_parcels") or []
+    honest_disclosure = multi.get("honest_disclosure")
+
+    # ── 4) 인접성(_parcel_adjacency) — geometry 부족 다수면 contiguous=None(미확정 정직고지).
+    geoms = [p.get("geometry") for p in enriched]
+    present = [g for g in geoms if g]
+    if len(present) < 2 and len(enriched) >= 2:
+        # 형상 데이터가 2개 미만 → 인접성 확인 불가(가짜 True 금지).
+        adjacency = {"contiguous": None, "components": None,
+                     "note": "형상(geometry) 데이터 부족 — 인접성 확인 불가(통합개발 가능 여부 미확정)"}
+        warnings.append("필지 형상(geometry) 미확보 다수 — 인접성 미확정으로 통합 시나리오는 잠정 처리됩니다.")
+    else:
+        adjacency = _parcel_adjacency(geoms)
+
+    # ── 5) 통합 용도/건폐/용적/GFA 집계(순수함수·외부콜 0).
+    integrated_zoning = _aggregate_integrated_zoning(enriched)
+    warnings.extend(integrated_zoning.get("warnings") or [])
+
+    # per_parcel(정직·경량) — 필지별 실효/법정/특이 요약(통합 산출 근거 추적용).
+    per_parcel: list[dict] = []
+    for p in enriched:
+        per_parcel.append({
+            "pnu": p.get("pnu"), "address": p.get("address"),
+            "area_sqm": p.get("area_sqm"), "zone_type": p.get("zone_type"),
+            "land_category": p.get("land_category") or p.get("jimok"),
+            "bcr_eff_pct": p.get("_bcr_eff"), "far_eff_pct": p.get("_far_eff"),
+            "bcr_legal_pct": p.get("_bcr_legal"), "far_legal_pct": p.get("_far_legal"),
+            "far_basis": p.get("_far_basis"),
+            "special_parcel": p.get("_special"),
+            "status": p.get("status", "ok"), "reason": p.get("reason"),
+        })
+
+    # ── 6) 통합 시나리오(BE-3) — 게이트·인접성에 따라 blocked / tentative / computed.
+    contiguous = adjacency.get("contiguous")
+    gate = gate_decision(developability, resolvable)
+    total_area = integrated_zoning.get("total_area_sqm")
+    dominant_zone = integrated_zoning.get("dominant_zone")
+    scenario: dict = {}
+
+    if gate == "BLOCK" or contiguous is False:
+        # 원천 차단 — 시나리오 미산정(가짜 개발규모 금지), 정직고지.
+        reason = honest_disclosure or "통합개발 제약(개발 불가 또는 필지 비인접)으로 개발규모를 산정하지 않습니다."
+        if contiguous is False:
+            reason = (honest_disclosure + " " if honest_disclosure else "") + \
+                "필지가 비인접하여 통합개발이 불가합니다(분리개발 또는 진입로 확보 선행)."
+        scenario = {"status": "blocked", "disclosure": reason, "recommendations": []}
+    elif contiguous is None:
+        # 인접성 미확정 — 시나리오 잠정(정직고지). 확정 % 억제.
+        scenario = {
+            "status": "tentative",
+            "disclosure": "필지 인접성이 미확정(형상 데이터 부족)이라 통합 시나리오는 잠정치입니다(확정 아님). "
+                          "지적도 형상 확보 후 통합개발 가능 여부를 확정하십시오.",
+            "recommendations": [],
+        }
+    elif gate == "TENTATIVE":
+        # 조건부(인허가·전용·협의·선행절차 전제) — 시나리오 산정하되 확정 % 억제 신호.
+        scenario = {
+            "status": "tentative",
+            "disclosure": honest_disclosure
+            or "선행절차 통과를 전제로 한 잠정치입니다(확정 아님). 확정 % 표시는 억제됩니다.",
+            "recommendations": [],
+        }
+    else:
+        # POSSIBLE + contiguous=True → 원칙적으로 computed.
+        # ★단, 용도지역 '혼재'(dominant 미확정/면적가중 동률 또는 zone_mix 2종+)면 'tentative'로 강등한다:
+        #   시나리오 위임(auto_recommend_top3)은 통합면적만 입력받고 용도/한도는 '대표주소'로 재도출하므로,
+        #   혼재 부지에서 단일 대표 용도 기준 수지를 confirmed처럼 보이면 신뢰를 과대표시한다(정직 위배).
+        #   통합 blended 한도는 표시·검증용이며, 혼재는 용도지역별 분리 검토가 필요함을 정직 고지한다.
+        zone_mix = integrated_zoning.get("zone_mix") or []
+        is_mixed = (
+            dominant_zone is None
+            or integrated_zoning.get("dominant_basis") == "mixed_review_required"
+            or len(zone_mix) >= 2
+        )
+        if is_mixed:
+            scenario = {
+                "status": "tentative",
+                "disclosure": "용도지역이 혼재(2종 이상 또는 면적가중 동률)되어 통합 시나리오는 잠정치입니다 — "
+                              "시나리오 수지는 대표 용도 기준이고 통합 한도(blended)는 표시·검증용입니다. "
+                              "용도지역별 분리 검토를 권고합니다(확정 아님).",
+            }
+        else:
+            scenario = {"status": "computed"}
+
+    # computed·tentative(차단 아님)일 때만 시나리오 위임(auto_recommend_top3) 1회.
+    if scenario.get("status") in ("computed", "tentative"):
+        try:
+            from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+            # 대표 주소·시군구: 첫 개발가능 필지 주소를 site 라벨로, 시군구는 _extract_sigungu.
+            # ★위임(auto_recommend_top3)에는 '통합면적(total_area)'만 입력으로 반영된다. zone_type/한도는
+            #   위임 내부에서 대표주소로 재도출되므로, 아래 dominant_zone·blended_*는 '표시·검증용'(위임 미주입)이며
+            #   site.zone_basis='representative_parcel'로 실계산 기준이 대표필지임을 명시한다(표시값↔실계산 구분).
+            rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
+            region = _extract_sigungu({"address": rep_addr}) or "서울"
+            site = {
+                "total_area_sqm": total_area,
+                "zone_type": dominant_zone,
+                "far": integrated_zoning.get("blended_far_eff_pct"),
+                "bcr": integrated_zoning.get("blended_bcr_eff_pct"),
+                "zone_basis": "representative_parcel",  # 위임 수지는 대표 용도 기준(통합 blended는 표시·검증용)
+            }
+            kwargs: dict = {
+                "address": rep_addr,
+                "land_area_sqm": total_area,
+                "region": region,
+                "use_llm": req.use_llm,
+            }
+            if req.equity_won is not None:
+                kwargs["equity_won"] = req.equity_won
+            top3 = await FeasibilityServiceV2().auto_recommend_top3(**kwargs)
+            # 신뢰블록 additive 부착(zone_type/zone_limits 보유 → 법령링크·근거 트레이스).
+            if isinstance(top3, dict):
+                _attach_trust_blocks(top3)
+            scenario["site"] = site
+            scenario["top3"] = top3
+        except Exception as e:  # noqa: BLE001 — 위임 실패는 시나리오 degrade(정직), 통합집계는 유지.
+            logger.warning("통합 시나리오 위임 실패: %s", str(e)[:160])
+            scenario["status"] = "tentative" if scenario.get("status") == "computed" else scenario.get("status")
+            scenario["disclosure"] = (scenario.get("disclosure") or "") + \
+                " 시나리오 산정 위임에 실패해 통합 한도만 제공합니다(개발규모 미산정)."
+            warnings.append("시나리오 산정(auto_recommend_top3) 위임 실패 — 통합 집계만 반환합니다.")
+
+    return {
+        "parcel_count": integrated_zoning.get("parcel_count"),
+        "special_count": multi.get("special_count"),
+        "zone_mix": integrated_zoning.get("zone_mix"),
+        "dominant_zone": dominant_zone,
+        "dominant_basis": integrated_zoning.get("dominant_basis"),
+        "integrated": {
+            "total_area_sqm": total_area,
+            "blended_bcr_eff_pct": integrated_zoning.get("blended_bcr_eff_pct"),
+            "blended_far_eff_pct": integrated_zoning.get("blended_far_eff_pct"),
+            "blended_bcr_legal_pct": integrated_zoning.get("blended_bcr_legal_pct"),
+            "blended_far_legal_pct": integrated_zoning.get("blended_far_legal_pct"),
+            "far_basis_note": integrated_zoning.get("far_basis_note"),
+            "integrated_gfa_sqm": integrated_zoning.get("integrated_gfa_sqm"),
+            "integrated_footprint_sqm": integrated_zoning.get("integrated_footprint_sqm"),
+            "gfa_basis": integrated_zoning.get("gfa_basis"),
+        },
+        "adjacency": adjacency,
+        "developability": developability,
+        "resolvable": resolvable,
+        "blocking_parcels": blocking_parcels,
+        "honest_disclosure": honest_disclosure,
+        "scenario": scenario,
+        "per_parcel": per_parcel,
+        "warnings": warnings,
+    }
+
+
 class ParcelAtPointRequest(BaseModel):
     """지도 클릭 좌표 → 필지 조회(다필지 지도 클릭선택용)."""
     lat: float
