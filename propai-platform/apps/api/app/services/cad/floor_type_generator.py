@@ -428,4 +428,23 @@ class FloorTypeGenerator:
                 }
                 for f in floor_set.floors
             ],
+            # ── 법령 근거(가산) — 세대분할(전유부분)·주차 산정의 규범 근거. ──
+            #   집합건물 전유부분/대지사용권(집합건물법)·부설주차장(주차장법). 소비처 옵셔널.
+            "legal_refs": _floor_legal_refs(),
         }
+
+
+def _floor_legal_refs() -> list[dict]:
+    """세대분할(전유부분 구획)·부설주차 산정의 법령 근거(verified 딥링크) — 가산 필드.
+
+    레지스트리 미가용 시 빈 리스트(graceful, 기존 응답 무손상).
+    근거: 집합건물법 구분소유(제1·2조)·전유부분과 대지사용권 일체성(제20조)·부설주차장(주차장법).
+    """
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs([
+            "condo_ownership", "condo_section_def", "land_use_right", "parking_min",
+        ])
+    except Exception:  # noqa: BLE001
+        return []

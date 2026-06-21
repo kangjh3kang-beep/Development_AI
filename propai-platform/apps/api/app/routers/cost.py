@@ -63,6 +63,62 @@ class OverviewCostRequest(BaseModel):
     floor_height_m: float = 3.0
 
 
+def _overview_evidence(
+    *,
+    unit: int,
+    structure_type: str,
+    expected: dict[str, Any],
+    gfa_above: float,
+    gfa_below: float,
+    qto_source: str,
+    unit_price_source: str,
+) -> list[dict[str, Any]]:
+    """공사비 추정 근거 트레이스(label·value·basis). EvidencePanel 소비형.
+
+    공사비는 기술법규(건축법 등)가 아니라 산업표준·원가관리 기반이라 법령키는 붙이지
+    않는다(legal_ref_key 미부착 — 가짜 근거 금지). 산식·출처만 정직하게 기록한다.
+    """
+    won = lambda v: f"{int(v):,}원"  # noqa: E731 — 간단 포맷 헬퍼
+    items: list[dict[str, Any]] = [
+        {
+            "label": "기준단가(구조계수 적용)",
+            "value": f"{unit:,}원/㎡",
+            "basis": f"건축개요 기반 표준단가(2026 기준) × 구조계수({structure_type}={_STRUCT_FACTOR.get(structure_type, 1.0)})",
+        },
+        {
+            "label": "지상 공사비",
+            "value": won(expected.get("aboveground_won", 0)),
+            "basis": f"지상면적 {gfa_above:,.0f}㎡ × 기준단가",
+        },
+        {
+            "label": "지하 공사비",
+            "value": won(expected.get("underground_won", 0)),
+            "basis": f"지하면적 {gfa_below:,.0f}㎡ × 기준단가 × 30% 할증(지하·주차 특수성)",
+        },
+        {
+            "label": "조경 공사비",
+            "value": won(expected.get("landscape_won", 0)),
+            "basis": "(지상+지하 공사비) × 조경비율 1.5%",
+        },
+        {
+            "label": "간접비(설계·감리·예비·일반관리)",
+            "value": won(expected.get("indirect_won", 0)),
+            "basis": "직접공사비 기준 표준요율(2026): 설계·감리·예비·일반관리 합계",
+        },
+        {
+            "label": "기하 정밀적산(QTO) 기준",
+            "value": "BIM 실치수" if qto_source == "bim" else "연면적·층수 역산(derived)",
+            "basis": "설계 매스(BIM) 실치수 우선, 없으면 연면적·층수로 역산한 항목별 물량",
+        },
+        {
+            "label": "항목 단가 출처",
+            "value": "DB 단가(standard_quantity_estimator)" if unit_price_source == "db" else "하드코딩 fallback",
+            "basis": "단가 SSOT(material_unit_prices) 1건 이상 반영 시 DB, 전부 미반영이면 fallback",
+        },
+    ]
+    return items
+
+
 async def _resolve_design_mass(db: AsyncSession, project_id: str) -> dict[str, Any] | None:
     """프로젝트 최신 design_versions의 매스 치수(폭·깊이·층수)를 조회(없으면 None)."""
     import uuid as _uuid
@@ -199,6 +255,25 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         items_qto = []
         unit_price_source = "fallback"
 
+    # ── 전역정책 Phase0: 근거·신선도 공용 블록(build_evidence_block 경유) ──
+    # 공사비는 법령근거가 없으므로 legal_ref_keys는 비운다(정직 — 가짜 법령키 발명 금지).
+    # provenance=설계 매스(design_versions)·단가DB(material_unit_prices) 출처. 모두 graceful.
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        ev_block = build_evidence_block(
+            items=_overview_evidence(
+                unit=int(unit), structure_type=req.structure_type, expected=expected,
+                gfa_above=gfa_above, gfa_below=gfa_below,
+                qto_source=qto_source, unit_price_source=unit_price_source,
+            ),
+            legal_ref_keys=[],  # 공사비 추정은 산업표준·원가관리 기반(법령 근거 없음)
+            # 단가DB·설계매스 출처(레지스트리 미등록 — provenance가 registered:false로 정직 표기).
+            sources=["material_unit_prices", "design_versions"],
+        )
+    except Exception:  # noqa: BLE001 — 공용블록 실패해도 공사비 결과 무손상
+        ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
+
     return {
         "building_type": req.building_type, "structure_type": req.structure_type,
         "total_gfa_sqm": gfa, "gfa_above_sqm": round(gfa_above, 1), "gfa_below_sqm": round(gfa_below, 1),
@@ -214,6 +289,10 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         # 항목 단가 출처 요약 — DB 단가 1건 이상 반영 시 "db", 전부 하드코딩 fallback이면 "fallback".
         "unit_price_source": unit_price_source,
         "note": "건축개요 기반 표준 추정(지상/지하/조경/간접) + 기하(geometry) 정밀 적산. 설계 매스(BIM) 있으면 실치수로 자동 정밀화.",
+        # 산출 근거·신선도(evidence/legal_refs/provenance) — additive, 기존 키 무손상.
+        "evidence": ev_block["evidence"],
+        "legal_refs": ev_block["legal_refs"],
+        "provenance": ev_block["provenance"],
     }
 
 

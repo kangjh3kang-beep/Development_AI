@@ -6,22 +6,60 @@ import structlog
 
 logger = structlog.get_logger()
 
+# ── 부동산개발 관련 모니터링 대상 법령 ──
+# id: 법제처(국가법령정보센터) lawService.do 호출용 법령 ID. 실접속 확인된 ID만 보유하며,
+#   ID 미확보 법령은 id=None으로 정직 표기한다(가짜 ID로 죽은 API 호출 금지 — 무목업 원칙).
+#   ID 보유 법령만 check_law_updates에서 실제 공포일자 폴링 대상이 된다.
 MONITORED_LAWS = [
+    # ── 핵심(critical) — 용도지역·건축·주택·정비·세금 직결 ──
     {"name": "건축법", "id": "1003714", "critical": True},
     {"name": "국토의 계획 및 이용에 관한 법률", "id": "1011903", "critical": True},
     {"name": "주택법", "id": "1009672", "critical": True},
     {"name": "녹색건축물 조성 지원법", "id": "1011751", "critical": True},
+    {"name": "도시 및 주거환경정비법", "id": None, "critical": True},
+    {"name": "빈집 및 소규모주택 정비에 관한 특례법", "id": None, "critical": True},
+    {"name": "도시개발법", "id": None, "critical": True},
+    {"name": "집합건물의 소유 및 관리에 관한 법률", "id": None, "critical": True},
+    {"name": "건축물의 분양에 관한 법률", "id": None, "critical": True},
+    # ── 일반(non-critical) — 토지·세금·환경·소방·인프라 인허가 ──
     {"name": "건설산업기본법", "id": "1007557", "critical": False},
     {"name": "공익사업을 위한 토지 등의 취득 및 보상에 관한 법률", "id": "1008363", "critical": False},
+    {"name": "환경영향평가법", "id": None, "critical": False},
+    {"name": "소방시설 설치 및 관리에 관한 법률", "id": None, "critical": False},
+    {"name": "도로법", "id": None, "critical": False},
+    {"name": "하수도법", "id": None, "critical": False},
+    {"name": "수도권정비계획법", "id": None, "critical": False},
+    {"name": "지방세법", "id": None, "critical": False},
+    {"name": "재건축초과이익 환수에 관한 법률", "id": None, "critical": False},
+    {"name": "농지법", "id": None, "critical": False},
+    {"name": "산지관리법", "id": None, "critical": False},
 ]
 
+# 실제 모니터링 법령 수(과장 금지 — 동적 산출). 폴링 가능(법제처 ID 보유) 법령은 별도 집계.
+MONITORED_LAW_COUNT = len(MONITORED_LAWS)
+POLLABLE_LAW_COUNT = sum(1 for _law in MONITORED_LAWS if _law.get("id"))
+
+
 class RegulationMonitorService:
-    """40개 법령 변경 자동 감지 (법제처 API)"""
+    """부동산개발 관련 법령 변경 자동 감지 (법제처 국가법령정보센터 API).
+
+    모니터링 대상은 MONITORED_LAWS(현재 {count}개: 건축·국토계획·주택·정비·환경·소방·도로·
+    하수도·세금 등 부동산개발 직결 법령). 이 중 법제처 법령 ID가 확보된 {pollable}개는
+    공포일자 변경을 실시간 폴링하며, ID 미확보 법령은 목록 표기만 한다(가짜 ID 호출 금지).
+    """  # noqa: D412 — 인스턴스화 시 _docstring을 실수치로 보정(아래 __init__).
+
+    def __init__(self) -> None:
+        # docstring의 플레이스홀더를 실제 법령 수로 치환(과장 '40개' 하드코딩 제거).
+        if self.__class__.__doc__ and "{count}" in self.__class__.__doc__:
+            self.__class__.__doc__ = self.__class__.__doc__.format(
+                count=MONITORED_LAW_COUNT, pollable=POLLABLE_LAW_COUNT
+            )
 
     def check_for_changes(self, days_back: int = 7) -> list[dict]:
-        """동기 버전 — 모니터링 중인 법령 목록 반환."""
+        """동기 버전 — 모니터링 중인 법령 목록 반환(ID 미확보 법령 포함, 정직 표기)."""
         return [
             {"law_name": law["name"], "law_id": law["id"], "critical": law["critical"],
+             "pollable": bool(law["id"]),
              "change_type": "amendment", "impact_level": "high" if law["critical"] else "medium"}
             for law in MONITORED_LAWS
         ]
@@ -46,6 +84,9 @@ class RegulationMonitorService:
         cutoff_date = datetime.now() - timedelta(days=days_back)
         async with httpx.AsyncClient(timeout=30.0) as client:
             for law in MONITORED_LAWS:
+                # 법제처 ID 미확보 법령은 폴링 생략(가짜 ID로 죽은 API 호출 금지 — 무목업).
+                if not law.get("id"):
+                    continue
                 try:
                     params = {"OC": settings.MOLEG_API_KEY, "target": "law", "type": "JSON", "ID": law["id"]}
                     resp = await client.get(f"{settings.MOLEG_BASE_URL}/lawService.do", params=params)

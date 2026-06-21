@@ -27,6 +27,7 @@ import {
   relativeKoreanTime,
 } from "@/lib/use-analysis-cache";
 import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import type {
   EnvironmentResult,
   EnvironmentSeason,
@@ -204,6 +205,52 @@ function OrdinanceSection({ data }: { data: OrdinanceResult | null }) {
       )}
     </div>
   );
+}
+
+/**
+ * 환경분석 산출 근거(EvidencePanel) — 응답(일조·조망·스카이라인) 수치로 산식 트레이스를 만든다.
+ * 백엔드가 evidence/legal_refs를 반환하지 않는 약식 분석이라 basis 텍스트만 구성한다
+ * (가짜값/가짜URL 0 · 법령 URL 프론트 조립 금지). 값이 없는 항목은 추가하지 않는다(빈행 방지).
+ */
+function buildEnvironmentEvidence(r: EnvironmentResult): EvidenceItem[] {
+  const items: EvidenceItem[] = [];
+  const solar = r.solar;
+  const view = r.view;
+  const skyline = r.skyline;
+
+  if (solar) {
+    const seasonLabel = solar.season_label ?? SEASON_LABEL[solar.season ?? "winter"];
+    const hours = solar.sunlight_hours ?? solar.sunlight_hours_winter;
+    if (hours != null) {
+      items.push({
+        label: `${seasonLabel} 일조시간`,
+        value: `${n1(hours)}h (${solar.grade})`,
+        basis: `천문 근사식 태양궤적으로 9~15시 약식 일조시간 산출 → ${GRADE_META[solar.grade]?.desc ?? ""}`,
+      });
+    }
+    if (solar.north_setback?.applies) {
+      items.push({
+        label: "정북 일조사선 이격",
+        value: `${n1(solar.north_setback.required_m)}m`,
+        basis: solar.north_setback.detail || "정북 인접대지경계선 일조사선 기준 이격",
+      });
+    }
+  }
+  if (view) {
+    items.push({
+      label: "조망 개방도",
+      value: `${Math.round(view.openness_score)}점`,
+      basis: `8방위 개방도 평가 · 주변 가림 비율 ${n1(view.blocked_ratio_pct)}%`,
+    });
+  }
+  if (skyline) {
+    items.push({
+      label: "스카이라인",
+      value: skyline.position,
+      basis: `대상 ${n1(skyline.subject_height_m)}m vs 주변 평균 ${n1(skyline.neighbor_avg_m)}m·최고 ${n1(skyline.neighbor_max_m)}m 비교`,
+    });
+  }
+  return items;
 }
 
 export function EnvironmentAnalysisPanel({
@@ -657,6 +704,10 @@ export function EnvironmentAnalysisPanel({
             {res.sources && res.sources?.length > 0 && (
               <p className="mt-2 text-[10px] text-[var(--text-hint)]">출처: {res.sources.join(" · ")}</p>
             )}
+
+            {/* 산출 근거(EvidencePanel) — 일조·조망·스카이라인 수치의 산식을 한 줄씩(가짜값/가짜URL 0).
+                약식 분석이라 basis 텍스트만(법령 URL 프론트 조립 금지). 빈 items면 미렌더. */}
+            <EvidencePanel className="mt-3" items={buildEnvironmentEvidence(res)} title="환경분석 산출 근거" />
 
             {/* ── 지자체 조례 병행검토 ── */}
             <OrdinanceSection data={ordinance} />

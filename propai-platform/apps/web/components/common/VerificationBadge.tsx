@@ -131,7 +131,12 @@ export function VerificationBadge({
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-[var(--text-secondary)]">🛡 AI 검증</span>
+          <span
+            className="text-[11px] font-bold text-[var(--text-secondary)]"
+            title="데이터 오류 감지 · 계산 재검증 · 규칙 검사"
+          >
+            🛡 AI 검증 <span className="font-normal text-[var(--text-hint)]">(데이터 오류 감지·계산 재검증·규칙 검사)</span>
+          </span>
           {loading && <span className="text-[11px] text-[var(--text-hint)]">검증 중…</span>}
           {meta && (
             <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${meta.cls}`}>
@@ -153,6 +158,9 @@ export function VerificationBadge({
       {open && result && (
         <div className="mt-2 space-y-1.5 border-t border-[var(--line)] pt-2">
           {result.summary && <p className="text-[11px] text-[var(--text-secondary)]">{result.summary}</p>}
+          {(result.issues?.length ?? 0) > 0 && (
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">데이터 오류 감지</p>
+          )}
           {(result.issues ?? []).map((it, i) => (
             <div key={i} className="text-[11px]">
               <span className={`font-bold ${SEV_CLS[it.severity] || ""}`}>[{typeLabel(it.type)}]</span>{" "}
@@ -162,7 +170,7 @@ export function VerificationBadge({
           ))}
           {(result.calc_checks?.length ?? 0) > 0 && (
             <div className="mt-1.5 border-t border-[var(--line)] pt-1.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">결정론 계산검증</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">계산 재검증</p>
               {result.calc_checks!.map((c, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
                   <span className="text-[var(--text-secondary)]">
@@ -175,7 +183,7 @@ export function VerificationBadge({
               ))}
             </div>
           )}
-          {!result.generated && <p className="text-[10px] text-[var(--text-hint)]">규칙기반 사전검사 + 결정론 재계산 적용됨</p>}
+          {!result.generated && <p className="text-[10px] text-[var(--text-hint)]">규칙 검사 + 계산 재검증 적용됨</p>}
         </div>
       )}
 

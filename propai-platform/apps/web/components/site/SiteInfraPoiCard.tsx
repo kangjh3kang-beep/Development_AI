@@ -10,6 +10,8 @@
 
 import { useCallback, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 type Cat = { label: string; count: number; nearest_m: number | null; unavailable?: boolean };
 type Resp = {
@@ -23,6 +25,10 @@ type Resp = {
   categories?: Record<string, Cat>;
   geocoded_from?: string | null;
   coordinates?: { lat: number; lon: number };
+  // 전역정책 Phase0: 근거·법령링크·신선도(백엔드 build_evidence_block 출력 — additive).
+  evidence?: BackendEvidence[];
+  legal_refs?: BackendLegalRef[];
+  provenance?: { name?: string }[];
 };
 
 const RADII = [500, 1000, 2000];
@@ -120,6 +126,13 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
             ))}
           </div>
           <p className="text-[10px] text-[var(--text-hint)]">출처: Kakao Local 장소 카테고리 검색 · 좌표: VWorld 지오코딩</p>
+
+          {/* 산출 근거 + 법령 원문(EvidencePanel) — adaptEvidence로 legal_ref_key 조인.
+              url_status=pending이면 LegalRefChip이 텍스트 폴백(가짜 링크 0). */}
+          {(() => {
+            const items = adaptEvidence(data.evidence, data.legal_refs);
+            return items.length > 0 ? <EvidencePanel items={items} title="입지점수 산출 근거" /> : null;
+          })()}
         </div>
       )}
     </div>

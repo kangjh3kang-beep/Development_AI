@@ -148,23 +148,23 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "도메인 에이전트 오케스트레이션",
+    heroTitle: "영역별 AI 통합 분석",
     heroDescription:
-      "자산, 개발, 거래, 금융 에이전트를 실제 `/agents/domain` API에 연결해 승인 필요 상태와 권고안을 한 화면에서 검증합니다.",
+      "자산, 개발, 거래, 금융 영역의 AI 분석을 실제 `/agents/domain` API에 연결해 승인 필요 상태와 권고안을 한 화면에서 검증합니다.",
     heroHint:
-      "단건 심화 분석과 멀티도메인 오케스트레이션을 같은 프로젝트 컨텍스트에서 바로 비교할 수 있습니다.",
+      "단건 심화 분석과 여러 영역 통합 분석을 같은 프로젝트 컨텍스트에서 바로 비교할 수 있습니다.",
     tokenHint:
       "분석을 위해 로그인이 필요합니다.",
     projectTitle: "프로젝트 컨텍스트",
     projectHint:
-      "라이브 프로젝트를 선택하거나 기존 프로젝트 UUID를 직접 입력해 에이전트 실행 대상을 고정합니다.",
+      "라이브 프로젝트를 선택하거나 기존 프로젝트 UUID를 직접 입력해 AI 분석 실행 대상을 고정합니다.",
     projectSelectLabel: "라이브 프로젝트",
     manualProjectIdLabel: "수동 프로젝트 UUID",
     currentProjectLabel: "현재 대상",
     noProjectsLabel: "라이브 프로젝트가 없으면 기존 UUID를 직접 입력하세요.",
     authError: "실시간 호출을 위해 API 인증이 필요합니다.",
     missingProjectError: "실존 프로젝트 UUID가 필요합니다.",
-    domainSelectionError: "오케스트레이션에 포함할 도메인을 하나 이상 선택해야 합니다.",
+    domainSelectionError: "통합 분석에 포함할 영역을 하나 이상 선택해야 합니다.",
     projectLoadError: "프로젝트 목록을 불러오지 못했습니다.",
     configurationTitle: "실행 구성",
     questionLabel: "투자 판단 질문",
@@ -174,13 +174,13 @@ const LABELS: Record<Locale, Labels> = {
     ltvLabel: "LTV",
     scheduleBufferLabel: "일정 버퍼(월)",
     preLeasingLabel: "선임대 비율",
-    orchestrationDomainsLabel: "멀티도메인 범위",
+    orchestrationDomainsLabel: "통합 분석 범위",
     runFocusedAction: "단건 분석",
-    runOrchestrationAction: "오케스트레이션 실행",
+    runOrchestrationAction: "통합 분석 실행",
     focusedTitle: "단건 분석 결과",
     focusedEmpty: "아직 단건 분석 결과가 없습니다.",
-    portfolioTitle: "멀티도메인 오케스트레이션",
-    portfolioEmpty: "오케스트레이션을 실행하면 도메인별 권고안과 승인 상태가 여기에 표시됩니다.",
+    portfolioTitle: "여러 영역 통합 분석",
+    portfolioEmpty: "통합 분석을 실행하면 영역별 권고안과 승인 상태가 여기에 표시됩니다.",
     portfolioSummaryLabel: "포트폴리오 요약",
     projectIdLabel: "프로젝트 ID",
     domainLabel: "도메인",
@@ -403,10 +403,10 @@ const AGENT_READ_UI = {
   },
   ko: {
     historyTitle: "실행 이력",
-    historyEmpty: "현재 프로젝트에는 저장된 도메인 에이전트 실행 이력이 없습니다.",
+    historyEmpty: "현재 프로젝트에는 저장된 영역별 AI 분석 실행 이력이 없습니다.",
     historyErrorTitle: "실행 이력을 불러올 수 없습니다.",
     historyErrorDetail:
-      "저장된 도메인 에이전트 이력 조회가 실패했습니다. API 연결 또는 액세스 토큰 상태를 복구한 뒤 다시 시도하세요.",
+      "저장된 영역별 AI 분석 이력 조회가 실패했습니다. API 연결 또는 액세스 토큰 상태를 복구한 뒤 다시 시도하세요.",
     approvalTitle: "승인 큐",
     approvalEmpty: "현재 프로젝트에 대기 중인 승인 항목이 없습니다.",
     approvalErrorTitle: "승인 큐를 불러올 수 없습니다.",

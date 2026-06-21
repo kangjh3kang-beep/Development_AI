@@ -9,6 +9,9 @@
 import { useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 type Tier = { tier: string; label: string; premium_pct: number; per_pyeong_10k: number; per_sqm_10k: number; ref_unit_total_10k: number };
 type Suggest = {
@@ -16,6 +19,8 @@ type Suggest = {
   market_reference?: { market_pp_supply_10k?: number; market_pp_exclusive_10k?: number; dong?: { median?: number; n?: number }; sigungu?: { median?: number; n?: number } };
   trust?: { confidence?: number; verdict?: string; used_sources?: string[]; excluded_outliers?: { name?: string; reason?: string }[]; warnings?: string[] };
   tiers?: Tier[]; note?: string;
+  // 전역정책 Phase0: 근거·법령링크·신선도(백엔드 build_evidence_block 출력 — additive).
+  evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[]; provenance?: { name?: string }[];
 };
 
 const eok = (man?: number) => (man && man > 0 ? `${(man / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : "-");
@@ -87,6 +92,26 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
             <span className="text-[10px] text-[var(--text-hint)]">채택 시 전 타입 기준단가(㎡당)로 일괄 반영</span>
           </div>
           <p className="mt-1.5 text-[10px] leading-snug text-[var(--text-hint)]">{data.note}</p>
+
+          {/* 산출 근거 + 법령 원문(EvidencePanel) — adaptEvidence로 legal_ref_key 조인.
+              url_status=pending이면 LegalRefChip이 텍스트 폴백(가짜 링크 0). */}
+          {(() => {
+            const items = adaptEvidence(data.evidence, data.legal_refs);
+            return items.length > 0 ? <div className="mt-2"><EvidencePanel items={items} title="적정분양가 산출 근거" /></div> : null;
+          })()}
+
+          {/* AI 검증 배지 — 분양가 산출(원천 실거래 vs 산출값) 교차검증 자동 실행. */}
+          <div className="mt-2">
+            <VerificationBadge
+              analysisType="fair_price"
+              context={{
+                address: data.address,
+                market_reference: data.market_reference,
+                tiers: data.tiers,
+                trust: data.trust,
+              }}
+            />
+          </div>
         </>
       )}
     </div>

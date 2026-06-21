@@ -40,6 +40,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
         # 분석 모듈(시장 인구/소득 등) 건당 사용료 맵. 기본 빈 dict = 전부 무료.
         # 관리자가 설정한 키만 과금되고, 미설정 키는 0원(무료·실행).
+        # 설정 가능한 키 예: persona_sales_agent / persona_urban_planner(실무 전문가 페르소나 LLM,
+        #   use_llm=True일 때만 적용·미설정=무료) — service_fee_analysis_module(key)가 미설정 시 0 반환.
         "analysis_modules": {},
         # 대량 다필지 배치 — 필지당 단가(원). 기본 0 = 무료(관리자 미책정 시 무료 실행).
         "bulk_parcel_per_unit": 0,

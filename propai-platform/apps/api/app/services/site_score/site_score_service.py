@@ -173,6 +173,71 @@ _FNAME = {
     "zoning": "용도지역 가치", "school": "교육 접근성", "landprice": "지가 수준",
 }
 
+# 입지점수 산출에 쓰인 원천 데이터 출처(provenance 신선도 집계 대상).
+# 상권/교통은 Kakao Local POI, 용도지역/지가는 VWorld, 시장활성도는 MOLIT 실거래.
+_SITE_SCORE_SOURCES = ["kakao_local", "vworld_zoning", "vworld_land_info", "molit_transactions"]
+
+
+def build_site_score_evidence(result: dict[str, Any]) -> dict[str, Any]:
+    """입지점수 결과(factors) → 근거·법령·신선도 공용 블록(전역정책 Phase0, additive).
+
+    compute_site_score가 만든 factors[]를 한 줄씩 근거 트레이스로 변환한다(각 피처의
+    원시값·정규화·기여도·산식 note를 그대로 노출 — 가짜 근거 금지). 용도지역(zoning)
+    피처가 있을 때만 법령 근거(zone_use=국토계획법 제76조 용도지역 건축제한)를 연결한다.
+    근거 부재(factors 비었거나 점수 미산출)면 빈 블록(정직). graceful try/except.
+    """
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        factors = result.get("factors") if isinstance(result.get("factors"), list) else []
+        if not factors:
+            return build_evidence_block()  # 빈 블록(정직 — 산출 데이터 부족)
+
+        items: list[dict[str, Any]] = []
+        ref_keys: list[str] = []
+        for f in factors:
+            if not isinstance(f, dict):
+                continue
+            key = f.get("key")
+            name = f.get("name") or key or ""
+            if not name:
+                continue
+            # value=원시값, basis=기여도·정규화·산식 사유(note). 가중 재정규화 결과까지 투명 노출.
+            contrib = f.get("contribution")
+            norm = f.get("normalized")
+            eff_w = f.get("effective_weight")
+            basis_parts = [str(f.get("note") or "").strip()]
+            if norm is not None and eff_w is not None and contrib is not None:
+                basis_parts.append(f"정규화 {norm}점 × 가중 {eff_w} = 기여 {contrib}점")
+            basis = " · ".join(p for p in basis_parts if p) or None
+            item: dict[str, Any] = {"label": name, "value": f.get("raw"), "basis": basis}
+            # 용도지역 피처에만 법령 근거(국토계획법 제76조) 연결 — 레지스트리 verified 키.
+            if key == "zoning":
+                item["legal_ref_key"] = "zone_use"
+                ref_keys.append("zone_use")
+            items.append(item)
+
+        # 종합점수 한 줄(연구기반 가중평균 산식 — weight_basis 노출).
+        if result.get("score") is not None:
+            items.append({
+                "label": "입지 종합점수",
+                "value": f"{result.get('score')}점 ({result.get('grade') or '-'})",
+                "basis": str(result.get("weight_basis") or "연구기반 가중평균").strip(),
+            })
+
+        return build_evidence_block(
+            items=items,
+            legal_ref_keys=ref_keys,
+            sources=_SITE_SCORE_SOURCES,
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 무손상(빈 블록 폴백)
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            return build_evidence_block()
+        except Exception:  # noqa: BLE001
+            return {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
+
 
 def _deep_find_str(obj: Any, keys: tuple[str, ...]) -> str | None:
     """문자열 값 깊이탐색(zone_type 등)."""

@@ -88,7 +88,7 @@ export function ExpertPanelCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-black text-[var(--text-primary)]">
-            🧑‍⚖️ 전문가 패널 검증
+            🧑‍⚖️ 전문가 검토 패널
             {cached && <span className="ml-2 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">저장된 결과</span>}
           </p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
@@ -99,7 +99,7 @@ export function ExpertPanelCard({
           <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
             <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)}
               className="h-4 w-4 accent-[var(--accent-strong)]" disabled={loading} />
-            정밀 모드
+            정밀 모드 <span className="font-normal text-[var(--text-hint)]">(약 3분, 여러 전문가 토론)</span>
           </label>
           <button onClick={run} disabled={loading || !context}
             className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">

@@ -84,6 +84,7 @@ export function OrchestrateWorkspaceClient({ projectId }: { projectId: string })
         runDisabled={!hasContext || insufficient}
         title="통합 분석"
         subtitle="토지→법률→설계→분양→수지→금융 전 단계를 가이드/별도/선택/프로필로 실행합니다. 상류 의존은 자동 포함됩니다."
+        projectId={projectId}
       />
     </div>
   );

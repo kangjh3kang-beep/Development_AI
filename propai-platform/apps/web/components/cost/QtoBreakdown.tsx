@@ -8,12 +8,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 type QtoItem = { name?: string; work?: string; element?: string; quantity?: number; unit?: string; unit_cost_won?: number; cost_won?: number };
 type Overview = {
   total_gfa_sqm?: number; gfa_above_sqm?: number; gfa_below_sqm?: number;
   range?: { min_won?: number; expected_won?: number; max_won?: number };
   items?: QtoItem[]; qto_source?: string; geometry?: Record<string, unknown>; note?: string;
+  // 전역정책 Phase0: 산출 근거·법령링크·신선도(백엔드 build_evidence_block 출력 — additive).
+  evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[]; provenance?: { name?: string }[];
 };
 
 const won = (v?: number | null) => (v == null ? "—" : `${Math.round(v).toLocaleString()}원`);
@@ -101,6 +105,13 @@ export function QtoBreakdown({ projectId }: { projectId: string }) {
         </div>
       )}
       {res.note && <p className="text-[10px] text-[var(--text-hint)]">{res.note}</p>}
+
+      {/* 공사비 산출 근거(EvidencePanel) — adaptEvidence로 백엔드 evidence/legal_refs 조인.
+          공사비는 법령근거 없음 → 산식·출처만 표기. items.length>0면 렌더(빈 패널 방지). */}
+      {(() => {
+        const ev = adaptEvidence(res.evidence, res.legal_refs);
+        return ev.length > 0 ? <EvidencePanel items={ev} title="공사비 산출 근거" /> : null;
+      })()}
     </div>
   );
 }

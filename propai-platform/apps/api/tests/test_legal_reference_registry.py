@@ -90,7 +90,7 @@ class TestUrlFormat:
             assert url.startswith(prefix), f"{key} URL이 /법령/ 형식 아님: {url}"
 
     def test_article_segment_is_korean_ordinal(self):
-        """조문이 지정된 키는 URL 마지막 세그먼트가 '제N조'(인코딩)로 끝난다."""
+        """조문이 지정된 키는 URL 마지막 세그먼트가 '제N조'(가지번호 '제N조의M' 포함)로 끝난다."""
         for key, ref in LEGAL_REFERENCES.items():
             if key.startswith("ordinance_"):
                 continue
@@ -99,7 +99,8 @@ class TestUrlFormat:
                 continue  # 루트 폴백(예: urban_complex)
             last_segment = unquote(ref["url"].rsplit("/", 1)[-1])
             assert last_segment == article
-            assert last_segment.startswith("제") and last_segment.endswith("조")
+            # '제N조' 또는 가지번호 '제N조의M'(예: 제52조의2) — 레지스트리 _format_article 계약.
+            assert last_segment.startswith("제") and "조" in last_segment
 
     def test_no_arabic_only_or_english_article(self):
         """②-1 금지 형식: '/55', '/article55' 등 불가."""

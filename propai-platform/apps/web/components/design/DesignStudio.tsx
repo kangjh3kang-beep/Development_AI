@@ -606,6 +606,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 pnu={siteAnalysis?.pnu || undefined}
                 zone={siteAnalysis?.zoneCode || effectiveZoning}
                 landAreaSqm={effectiveLandAreaSqm(siteAnalysis) ?? (form.landArea ? Number(form.landArea) : undefined)}
+                farLimitPct={siteAnalysis?.effectiveFarPct ?? undefined}
+                bcrLimitPct={siteAnalysis?.effectiveBcrPct ?? undefined}
               />
             </div>
           )}

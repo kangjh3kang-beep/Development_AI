@@ -217,7 +217,7 @@ export default function ProjectDetailPage() {
   const d = dictionary.pages.projectDetail;
 
   return (
-    <div className="flex flex-col gap-16 pb-20 font-sans">
+    <div className="flex flex-col gap-8 pb-16 font-sans">
       {/* ⓪ 커맨드센터 HUD 스트립 — 프로젝트 허브 식별·LIVE(시각 전용) */}
       <ModuleCommandStrip label="PROJECT HUB · 전략 허브" meta={`ID ${id}`} />
 
@@ -244,9 +244,9 @@ export default function ProjectDetailPage() {
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-lg)]"
+          className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]"
         >
-          <div className="flex flex-wrap items-start justify-between gap-6 mb-6">
+          <div className="flex flex-wrap items-start justify-between gap-6 mb-5">
             <div className="space-y-2">
               <p className="cc-meta tracking-[0.3em]">Project Metadata</p>
               <h2 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">{projectFromStore?.name || meta.name}</h2>
@@ -290,7 +290,7 @@ export default function ProjectDetailPage() {
               </div>
             )}
           </div>
-          <div className="mt-8 border-t border-[var(--line-strong)] pt-8">
+          <div className="mt-6 border-t border-[var(--line-strong)] pt-6">
             <h3 className="text-sm font-bold text-[var(--text-primary)] mb-4">현장(부지) 이미지 관리</h3>
             <ImageUpload 
               value={projectFromStore?.siteImageUrl}
@@ -305,14 +305,14 @@ export default function ProjectDetailPage() {
       ) : null}
 
       {/* ── High-Fidelity Project Hero ── */}
-      <section className="relative overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] group">
+      <section className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-12 shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Background Elements */}
         <div className="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/15" />
         <div className="absolute -left-20 bottom-0 h-96 w-96 rounded-full bg-blue-500/5 blur-[100px]" />
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] dark:invert pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
-          <div className="space-y-10">
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
+          <div className="space-y-6">
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -330,7 +330,7 @@ export default function ProjectDetailPage() {
               transition={{ delay: 0.1 }}
               className="space-y-6"
             >
-              <h1 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.95] break-keep sm:text-5xl md:text-6xl lg:text-7xl">
+              <h1 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.95] break-keep sm:text-4xl md:text-5xl lg:text-6xl">
                 {meta?.name ?? "알 수 없는 프로젝트"}<span className="text-[var(--accent-strong)]">.</span>
               </h1>
               <div className="flex flex-wrap items-center gap-6">
@@ -350,20 +350,20 @@ export default function ProjectDetailPage() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.3 }}
-            className="flex flex-wrap gap-8"
+            className="flex flex-wrap gap-5"
           >
             {[
               { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : "분석 전", color: "text-[var(--text-primary)]" },
               { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전"), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
-              <div key={i} className="cc-bracketed relative min-w-[240px] overflow-hidden rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
+              <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <i className="cc-bracket cc-bracket--tl" />
                 <i className="cc-bracket cc-bracket--br" />
-                <p className="cc-label tracking-[0.4em] mb-4">{stat.label}</p>
-                <p className={`cc-num text-4xl font-[1000] ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
+                <p className="cc-label tracking-[0.4em] mb-3">{stat.label}</p>
+                <p className={`cc-num text-3xl font-[1000] ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
                   {stat.value}
                 </p>
-                <div className="absolute top-8 right-10 opacity-0 group-hover/stat:opacity-100 transition-opacity duration-500">
+                <div className="absolute top-6 right-6 opacity-0 group-hover/stat:opacity-100 transition-opacity duration-500">
                   <svg className="h-6 w-6 text-[var(--accent-strong)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
                 </div>
               </div>

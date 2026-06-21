@@ -200,7 +200,7 @@ const moduleCopy: Record<Locale, LocaleCopy> = {
       },
     },
     agent: {
-      timelineTitle: "AI 에이전트 타임라인",
+      timelineTitle: "AI 분석 타임라인",
       timelineDescription: "7단계 실행 흐름과 재연결 상태를 Mock 이벤트로 시각화합니다.",
       connectionTitle: "스트림 연결 상태",
       reconnectLabel: "재연결 시뮬레이션",

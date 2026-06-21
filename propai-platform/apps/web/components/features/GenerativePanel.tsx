@@ -16,7 +16,7 @@ export default function GenerativePanel() {
     { 
       id: "msg-0", 
       role: "ai", 
-      content: "PropAI 건축 생성 에이전트가 활성화되었습니다. 대지 면적, 용도, 목표 층수 등 가설계 요구 사항을 입력해 주세요. 법규 및 일조권을 분석하여 최적의 3D 매스(Mass) 모델을 생성합니다."
+      content: "PropAI 건축 생성 AI가 활성화되었습니다. 대지 면적, 용도, 목표 층수 등 가설계 요구 사항을 입력해 주세요. 법규 및 일조권을 분석하여 최적의 3D 매스(Mass) 모델을 생성합니다."
     }
   ]);
   const [input, setInput] = useState("");

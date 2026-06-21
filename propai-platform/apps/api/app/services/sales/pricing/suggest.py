@@ -96,6 +96,53 @@ def _cost_validation(
         return None
 
 
+# 분양가 추천에 부착할 분양 관련 법령 근거 키(레지스트리 단일출처).
+# 건축물분양법 분양신고(제5조)·분양보증/신탁(제6조), 분양가상한제(주택법 제57조).
+_SALES_LEGAL_REF_KEYS = ["building_sales_filing", "building_sales_guarantee", "housing_price_cap"]
+
+
+def _sales_legal_refs() -> list[dict]:
+    """분양가 추천 결과에 부착할 분양 관련 법령 근거(verified 딥링크) — 가산 필드.
+
+    레지스트리 미가용 시 빈 리스트(graceful, 기존 응답 무손상).
+    """
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(_SALES_LEGAL_REF_KEYS)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _price_evidence(
+    market_pp_supply: float, area_basis_label: str, tiers: list[dict[str, Any]],
+    trust: Any,
+) -> list[dict[str, Any]]:
+    """적정분양가 산출 근거 트레이스(EvidencePanel 소비 구조) — graceful 빈배열.
+
+    주변 실거래(앵커)·신축 프리미엄 3안·분양가상한제 근거를 한 줄씩 트레이스한다.
+    법령 근거는 분양가상한제(housing_price_cap) 키만 연결(분양가 산출의 직접 한도 근거).
+    """
+    try:
+        used = ", ".join(getattr(trust, "used", None) or []) or "주변 실거래"
+        ev: list[dict[str, Any]] = [{
+            "label": "주변 시세(공급환산)",
+            "value": f"{round(market_pp_supply):,}만원/평",
+            "basis": f"주변 실거래({used}) 교차검증 — {area_basis_label} 기준",
+        }]
+        for t in tiers or []:
+            ev.append({
+                "label": f"적정분양가 — {t.get('label', '')}",
+                "value": f"{int(t.get('per_pyeong_10k') or 0):,}만원/평",
+                "basis": f"주변 시세 × 신축 프리미엄 +{t.get('premium_pct', 0)}%",
+                # 분양가상한제 적용지역이면 상한 근거가 됨(레지스트리 단일출처).
+                "legal_ref_key": "housing_price_cap",
+            })
+        return ev
+    except Exception:  # noqa: BLE001
+        return []
+
+
 async def _site_location(
     db: AsyncSession, site_id: uuid.UUID,
 ) -> tuple[str | None, str | None, str | None]:
@@ -187,9 +234,17 @@ async def suggest_base_price(
                 "note": "현장에 연결된 부지 주소가 없습니다 — 프로젝트 부지분석 후 다시 시도하세요."}
 
     lawd = (bcode or "").strip() or None
-    if not lawd and pnu:
+    # ★bcode 오염 가드(전역전파): 입력 bcode는 비권위(엑셀 양식 예시값 잔류·외부전달 오염 가능).
+    #   부지 PNU(부지분석 확정 권위값)의 시군구(앞 5자리)와 어긋나면 잘못된 지역 실거래를 조회해
+    #   엉뚱한 적정분양가가 나오므로, 오염으로 보고 무시하고 PNU로 유도한다(권위출처 우선).
+    pnu_lawd = None  # conv[0]=시군구 5자리(법정동코드 아님) — 아래 비교는 양변 [:5]로 정규화
+    if pnu:
         conv = pnu_to_bcode(pnu)
-        lawd = conv[0] if conv else None
+        pnu_lawd = conv[0] if conv else None
+    if lawd and pnu_lawd and lawd[:5] != pnu_lawd[:5]:
+        lawd = None  # 시군구 불일치 = 오염 → PNU 우선
+    if not lawd and pnu_lawd:
+        lawd = pnu_lawd
     if not lawd:
         # 프로젝트에 PNU가 없으면 주소를 VWorld로 지오코딩해 PNU→법정동코드 유도(자체 충족).
         try:
@@ -259,6 +314,21 @@ async def suggest_base_price(
     cost_val = _cost_validation(dev_type, tiers, construction_cost_per_gfa_won)
     cost_note = f" ⚠️ {cost_val['warning']}" if (cost_val and cost_val.get("warning")) else ""
 
+    # ── 전역정책 Phase0: 근거·법령·신선도 공용 블록(build_evidence_block 경유) ──
+    # legal_refs/trust는 하위호환 위해 기존 키도 유지하고, evidence·provenance를 가산한다.
+    # provenance=molit_transactions(실거래) 신선도. 모두 graceful(실패→빈배열).
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        ev_block = build_evidence_block(
+            items=_price_evidence(market_pp_supply, area_basis_label, tiers, trust),
+            legal_ref_keys=_SALES_LEGAL_REF_KEYS,
+            trust=trust,
+            sources=["molit_transactions"],
+        )
+    except Exception:  # noqa: BLE001 — 공용블록 실패해도 분양가 결과 무손상
+        ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
+
     return {
         "data_source": "live",
         "address": address,
@@ -278,6 +348,10 @@ async def suggest_base_price(
         "trust": trust.to_dict(),                 # 신뢰도·이상치·경고(투명)
         "tiers": tiers,                           # 신축 프리미엄 3안(공급 평당가 기준)
         "cost_validation": cost_val,              # 2차 가드: 원가 회수 검증(None=원가엔진 미가용)
+        # ★Phase0 공용 근거블록 — legal_refs(레지스트리 단일출처) + evidence·provenance 가산.
+        "legal_refs": ev_block.get("legal_refs") or _sales_legal_refs(),
+        "evidence": ev_block.get("evidence", []),       # 산출 근거 트레이스(EvidencePanel)
+        "provenance": ev_block.get("provenance", []),   # 원천(실거래) 신선도
         "note": (f"적정분양가 = 주변 실거래({trust.to_dict()['used_sources']}) 시세에 신축 프리미엄. "
                  f"평당가는 {area_basis_label} 기준(전용률 {_JEONYULRYUL}). 신뢰도 {trust.confidence:.0%}. "
                  "기준단가 채택 후 층/동/라인/평형 가중치로 분산." + cost_note),

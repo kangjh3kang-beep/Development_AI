@@ -11,7 +11,7 @@
  */
 
 export function TrustBadge({
-  label = "블록체인 기반 위변조 방지 검증",
+  label = "분석 원장 봉인 · 위변조 방지",
   note = "분석 결과는 해시체인 원장에 봉인되어 위·변조 시 즉시 탐지됩니다.",
   className = "",
 }: {

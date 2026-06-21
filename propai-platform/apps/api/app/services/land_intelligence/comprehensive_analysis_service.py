@@ -120,6 +120,117 @@ CONSTRUCTION_COST_PER_SQM: dict[str, int] = {
 }
 
 
+def _extract_sigungu_from_address(address: str | None) -> str | None:
+    """주소에서 시군구명 추출(조례 url 치환용). 특별·광역시도 토큰은 제외(가짜 조례명 방지)."""
+    import re
+
+    addr = address or ""
+    if not addr:
+        return None
+    # ★re.finditer로 모든 '시/군/구' 토큰을 순회하며 특별/광역시도가 아닌 첫 토큰을 채택한다
+    #   ('서울특별시 강남구'→'강남구', '부산광역시 해운대구'→'해운대구', '경기도 성남시 분당구'→'성남시').
+    #   re.search는 첫 매치('서울특별시')만 보고 특별시 가드로 None을 반환해, 서울25구·광역시(최고가 시장)
+    #   조례 딥링크가 누락되던 기능완전성 갭을 해소(가짜 조례명 방지는 특별/광역 스킵으로 유지).
+    for m in re.finditer(r"(\S{2,4}[시군구])(?:\s|$)", addr):
+        cand = m.group(1)
+        if "특별" not in cand and "광역" not in cand:
+            return cand
+    return None
+
+
+def _build_site_evidence_block(result: dict) -> dict[str, Any]:
+    """종합 부지분석 결과 → 근거·법령·신선도 공용 블록(전역정책 Phase0, additive).
+
+    effective_far(sec1)의 법정/조례/실효 용적률·건폐율을 한 줄씩 트레이스하고,
+    국토계획법 시행령 한도(far_limit/bcr_limit) + 조례(ordinance_far/bcr) 법령 근거를
+    레지스트리(get_legal_refs)로 연결한다. URL은 전적으로 레지스트리 출력만 사용.
+    zone_type 미확정·근거 부재면 빈 블록(가짜 링크·할루시네이션 금지). graceful.
+    """
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        zone_type = (result.get("zone_type") or "").strip()
+        sec1 = result.get("effective_far") if isinstance(result.get("effective_far"), dict) else {}
+        if not zone_type or not sec1:
+            return build_evidence_block()  # 빈 블록(정직)
+
+        national_far = sec1.get("national_far_pct")
+        national_bcr = sec1.get("national_bcr_pct")
+        ordinance_far = sec1.get("ordinance_far_pct")
+        ordinance_bcr = sec1.get("ordinance_bcr_pct")
+        effective_far = sec1.get("effective_far_pct")
+        effective_bcr = sec1.get("effective_bcr_pct")
+        ordinance_confirmed = bool(sec1.get("ordinance_confirmed"))
+        sigungu = _extract_sigungu_from_address(result.get("address"))
+
+        items: list[dict[str, Any]] = []
+        ref_keys: list[str] = []
+
+        # 법정 상한(국토계획법 시행령 제85·84조) — far_limit/bcr_limit 근거.
+        if national_far is not None:
+            items.append({
+                "label": "법정 용적률 상한",
+                "value": f"{round(float(national_far))}%",
+                "basis": f"{zone_type} 국가 법정상한(국토계획법 시행령)",
+                "legal_ref_key": "far_limit",
+            })
+            ref_keys.append("far_limit")
+        if national_bcr is not None:
+            items.append({
+                "label": "법정 건폐율 상한",
+                "value": f"{round(float(national_bcr))}%",
+                "basis": f"{zone_type} 국가 법정상한(국토계획법 시행령)",
+                "legal_ref_key": "bcr_limit",
+            })
+            ref_keys.append("bcr_limit")
+
+        # 조례 실효값(법정과 다르고 조례가 확인된 경우만) — ordinance_far/bcr 근거.
+        if ordinance_confirmed and ordinance_far is not None and ordinance_far != national_far:
+            items.append({
+                "label": "조례 적용 용적률",
+                "value": f"{round(float(ordinance_far))}%",
+                "basis": f"{sigungu or '지자체'} 도시계획 조례 실효값",
+                "legal_ref_key": "ordinance_far",
+            })
+            ref_keys.append("ordinance_far")
+        if ordinance_confirmed and ordinance_bcr is not None and ordinance_bcr != national_bcr:
+            items.append({
+                "label": "조례 적용 건폐율",
+                "value": f"{round(float(ordinance_bcr))}%",
+                "basis": f"{sigungu or '지자체'} 도시계획 조례 실효값",
+                "legal_ref_key": "ordinance_bcr",
+            })
+            ref_keys.append("ordinance_bcr")
+
+        # 실효(적용) 한도 — min(법정, 조례). 법령키는 위 한도 근거를 공유하므로 생략(중복 방지).
+        if effective_far is not None:
+            items.append({
+                "label": "실효 용적률(적용)",
+                "value": f"{round(float(effective_far))}%",
+                "basis": "min(법정상한, 조례) — 실제 설계·분석 적용값",
+            })
+        if effective_bcr is not None:
+            items.append({
+                "label": "실효 건폐율(적용)",
+                "value": f"{round(float(effective_bcr))}%",
+                "basis": "min(법정상한, 조례) — 실제 설계·분석 적용값",
+            })
+
+        return build_evidence_block(
+            items=items,
+            legal_ref_keys=ref_keys,
+            sigungu=sigungu,
+            sources=["vworld_zoning", "vworld_land_info", "molit_transactions"],
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 무손상(빈 블록 폴백)
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            return build_evidence_block()
+        except Exception:  # noqa: BLE001
+            return {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
+
+
 class ComprehensiveAnalysisService:
     """주소 입력만으로 7개 분석 카테고리를 자동 수행."""
 
@@ -235,6 +346,18 @@ class ComprehensiveAnalysisService:
                 result["warnings"] = (_warns if isinstance(_warns, list) else []) + special.get("warnings", [])
                 result["developability"] = special.get("developability")
         except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
+            pass
+
+        # ── 전역정책 Phase0: 근거·법령링크·신선도 공용 블록(additive, graceful) ──
+        # 용적률/건폐율 법정·조례·실효 한도를 근거 트레이스 + 레지스트리 법령링크로 부착해
+        # "용적률 200%가 왜 나왔나"에 법령 원문까지 답한다(EvidencePanel 소비). AI 해석 전에
+        # 부착해 인터프리터도 그라운딩하게 한다(setdefault — 기존 키 있으면 보존).
+        try:
+            _ev_block = _build_site_evidence_block(result)
+            result.setdefault("evidence", _ev_block.get("evidence", []))
+            result.setdefault("legal_refs", _ev_block.get("legal_refs", []))
+            result.setdefault("provenance", _ev_block.get("provenance", []))
+        except Exception:  # noqa: BLE001 — 근거 블록 부착 실패는 무손상
             pass
 
         # Phase 3: AI 해석 생성 (선택적 — API 키 있을 때만)

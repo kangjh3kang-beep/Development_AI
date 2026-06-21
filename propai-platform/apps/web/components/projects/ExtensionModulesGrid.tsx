@@ -77,7 +77,7 @@ const EXTENSION_MODULES: ExtensionModule[] = [
   { route: "drone", label: "드론 측량", code: "DRONE", description: "드론 촬영·현장 측량 데이터 워크스페이스." },
   { route: "supervision", label: "감리 허브", code: "SUPERVISION", description: "시공 감리 모니터링 화면.", demo: true },
   { route: "operations", label: "자산 운영", code: "OPERATIONS", description: "준공 후 운영 KPI·유지보수·센서 현황 조회." },
-  { route: "agent", label: "AI 에이전트", code: "AGENT", description: "에이전트 커맨드 콘솔 — 작업 지시·활동 로그.", demo: true },
+  { route: "agent", label: "AI 분석", code: "AGENT", description: "AI 분석 콘솔 — 작업 지시·활동 로그.", demo: true },
   { route: "blockchain", label: "블록체인 원장", code: "BLOCKCHAIN", description: "기록 무결성·거래 원장 워크스페이스." },
   { route: "multi-parcel", label: "다필지 통합", code: "MULTI-PARCEL", description: "복수 필지 합필·통합 개발 검토 화면.", demo: true },
 ];

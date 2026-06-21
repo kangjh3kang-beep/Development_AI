@@ -236,7 +236,7 @@ const EN_LABELS: Labels = {
 
 const KO_LABELS: Labels = {
   heroTitle: "전자 승인 운영 센터",
-  heroDescription: "에이전트 분석 라우트를 열지 않고도 대기 중인 결재, 완료된 결정, 실행 내역을 한 곳에서 검토합니다.",
+  heroDescription: "AI 분석 라우트를 열지 않고도 대기 중인 결재, 완료된 결정, 실행 내역을 한 곳에서 검토합니다.",
   tokenHint: "분석을 위해 로그인이 필요합니다.",
   projectTitle: "프로젝트 컨텍스트",
   projectHint: "감사 범위를 특정 프로젝트로 유지할 때 라이브 프로젝트를 선택하거나 UUID를 직접 입력하세요.",

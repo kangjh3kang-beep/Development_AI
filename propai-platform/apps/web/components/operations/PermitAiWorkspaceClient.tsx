@@ -309,6 +309,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             pnu={siteAnalysis?.pnu || undefined}
             zone={site?.zone_type || undefined}
             landAreaSqm={site?.land_area_sqm ?? effectiveLandAreaSqm(siteAnalysis) ?? undefined}
+            farLimitPct={siteAnalysis?.effectiveFarPct ?? undefined}
+            bcrLimitPct={siteAnalysis?.effectiveBcrPct ?? undefined}
           />
 
           {/* 다필지 통합 개발 — 최적·최고 용적률 산정 */}
