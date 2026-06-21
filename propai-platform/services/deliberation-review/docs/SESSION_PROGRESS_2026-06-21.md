@@ -38,6 +38,7 @@
 | SLOT1 | calc_engine 근거 슬롯 정리(INV-12→note) — 전수조사 끊긴링크 #2 해소(2건 모두 복구) | HIGH 0 | `19e282ab` |
 | DLAGENT | 설계 SpecialistAgent(플랫폼) + 엔진 호출 공통 헬퍼 — 시스템1·2 모두 엔진+플랫폼 에이전트 노출 완성 | HIGH 0 | `08579462` |
 | P2A | 결과예측 휴리스틱(승인 가능성 등급+근거+한계, 정밀확률 무날조) + 플랫폼 전파 — outcome_predictor 슬롯 | 2회 수렴 | `cecda8b4` |
+| MASS1 | 검증형 매스 캐파(SSOT 용적/건폐×대지 → 최대 GFA + 제공 매스 검증) — design_gen 비중복(검증 전용) | HIGH 0 | `b04e35ad` |
 
 ## 3. 진행 중
 
@@ -69,7 +70,8 @@
 - 정밀 조문화: 추가 법령의 정밀 조문번호·요지를 law.go.kr 라이브(LIVE_NETWORK·MOLEG 키, 사용자 승인) 검증으로 격상.
 - 잔여 orphan: 국토계획법§84(둘 이상 용도지역 안분)·§36(용도지역 지정) — 안분/zone-designation 로직 도입 시 인용 연결.
 - 운영 연동(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱·라이브 법령).
-- Phase 2b: 생성형(매스/세대수/배치 — design_gen 정합). [Phase 2a 결과예측 휴리스틱은 완료, pluggable ML은 후속.]
+- Phase 2 후속: 결과예측 pluggable ML(데이터·배포팀), 생성형 매스/세대수 본격(design_gen 트랙 소관 — 엔진은 MASS1 검증형으로 비중복). design_gen 전용률 0.75 하드코딩(INV-11 의심)은 해당 트랙 개선 대상.
+- 매스 캐파 검증 입력 배선: proposed_gfa를 design 라우트 본문에서 수신(현재 run_design_process provided로 지원, 라우트 노출은 후속).
 - 시스템2 후속: 설계 SpecialistAgent(플랫폼), Phase2 생성형(매스/세대수 — design_gen 정합).
 - 운영(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱).
 
