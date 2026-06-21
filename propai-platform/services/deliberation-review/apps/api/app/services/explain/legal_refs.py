@@ -255,6 +255,99 @@ _REFS: dict[str, LegalRef] = {
         ref_id="경관법", law="경관법", article="제9조(경관계획)·경관심의·지자체 경관조례",
         summary="경관계획·경관심의로 가로경관·스카이라인 관리(절대 높이제한과 별개로 주변 대비 돌출 조정).",
         source=f"{_LAW}/법령/경관법"),
+    # ── 전수조사 후순위 관련법규(LAW2) — 입지제약·기반시설·개발사업 의제·절차 근거 확충 ──
+    "토지이용규제기본법": LegalRef(
+        ref_id="토지이용규제기본법", law="토지이용규제 기본법",
+        article="지역·지구등 지정·토지이용계획확인서",
+        summary="지역·지구등의 지정·운영과 토지이용계획확인서(행위제한 확인)의 기본 근거.",
+        source=f"{_LAW}/법령/토지이용규제기본법"),
+    "국토계획법시행규칙": LegalRef(
+        ref_id="국토계획법시행규칙", law="국토의 계획 및 이용에 관한 법률 시행규칙",
+        article="개발행위허가 등 절차·서식",
+        summary="국토계획법·시행령 위임의 절차·서식·세부기준.",
+        source=f"{_LAW}/법령/국토의계획및이용에관한법률시행규칙"),
+    "개발제한구역법": LegalRef(
+        ref_id="개발제한구역법", law="개발제한구역의 지정 및 관리에 관한 특별조치법",
+        article="개발제한구역 행위제한·해제",
+        summary="개발제한구역(그린벨트)의 건축 등 행위제한과 해제 기준(입지 가부).",
+        source=f"{_LAW}/법령/개발제한구역의지정및관리에관한특별조치법"),
+    "공원녹지법": LegalRef(
+        ref_id="공원녹지법", law="도시공원 및 녹지 등에 관한 법률",
+        article="도시공원·녹지·공원녹지기본계획",
+        summary="도시공원·녹지의 결정·확보와 공원녹지 기준(개발 시 확보 의무).",
+        source=f"{_LAW}/법령/도시공원및녹지등에관한법률"),
+    "도로법": LegalRef(
+        ref_id="도로법", law="도로법", article="도로점용허가·접도구역",
+        summary="도로 점용허가·접도구역 등 진입로·도로 관련 제약.",
+        source=f"{_LAW}/법령/도로법"),
+    "건축물분양법": LegalRef(
+        ref_id="건축물분양법", law="건축물의 분양에 관한 법률",
+        article="분양신고·분양시기·분양관리신탁",
+        summary="일정 건축물의 분양신고·분양시기 제한·분양관리신탁 등 분양 규율.",
+        source=f"{_LAW}/법령/건축물의분양에관한법률"),
+    "건축설비기준규칙": LegalRef(
+        ref_id="건축설비기준규칙", law="건축물의 설비기준 등에 관한 규칙",
+        article="승강기·환기·급배수 등 설비",
+        summary="건축물 설비(승강기·환기·급배수·피뢰 등) 설치 기준.",
+        source=f"{_LAW}/법령/건축물의설비기준등에관한규칙"),
+    "건축구조기준규칙": LegalRef(
+        ref_id="건축구조기준규칙", law="건축물의 구조기준 등에 관한 규칙",
+        article="구조안전·구조계산",
+        summary="건축물 구조안전 확인·구조계산 기준.",
+        source=f"{_LAW}/법령/건축물의구조기준등에관한규칙"),
+    "도시재정비촉진법": LegalRef(
+        ref_id="도시재정비촉진법", law="도시재정비 촉진을 위한 특별법",
+        article="재정비촉진지구·촉진계획",
+        summary="광역 재정비촉진지구 지정과 촉진계획(용적률·기반시설 특례).",
+        source=f"{_LAW}/법령/도시재정비촉진을위한특별법"),
+    "도시재생법": LegalRef(
+        ref_id="도시재생법", law="도시재생 활성화 및 지원에 관한 특별법",
+        article="도시재생활성화지역·재생사업",
+        summary="쇠퇴지역 도시재생활성화계획 수립·지원.",
+        source=f"{_LAW}/법령/도시재생활성화및지원에관한특별법"),
+    "택지개발촉진법": LegalRef(
+        ref_id="택지개발촉진법", law="택지개발촉진법", article="택지개발지구·예정지구 지정",
+        summary="택지개발지구 지정과 공영 택지개발 절차.",
+        source=f"{_LAW}/법령/택지개발촉진법"),
+    "공공주택특별법": LegalRef(
+        ref_id="공공주택특별법", law="공공주택 특별법", article="공공주택지구·공공주택사업",
+        summary="공공주택지구 지정과 공공주택 건설·공급 특례(개발사업 의제 포함).",
+        source=f"{_LAW}/법령/공공주택특별법"),
+    "산업입지법": LegalRef(
+        ref_id="산업입지법", law="산업입지 및 개발에 관한 법률", article="산업단지 지정·개발",
+        summary="산업단지(국가·일반·도시첨단·농공) 지정·개발 절차.",
+        source=f"{_LAW}/법령/산업입지및개발에관한법률"),
+    "역세권개발법": LegalRef(
+        ref_id="역세권개발법", law="역세권의 개발 및 이용에 관한 법률",
+        article="역세권개발구역·개발사업",
+        summary="철도 역세권 개발구역 지정·복합개발(지자체 역세권활성화 조례와 별개 법률).",
+        source=f"{_LAW}/법령/역세권의개발및이용에관한법률"),
+    "수도권정비계획법": LegalRef(
+        ref_id="수도권정비계획법", law="수도권정비계획법",
+        article="과밀억제·성장관리·자연보전권역",
+        summary="수도권 권역 구분과 인구집중유발시설 총량·입지 규제.",
+        source=f"{_LAW}/법령/수도권정비계획법"),
+    "군사기지법": LegalRef(
+        ref_id="군사기지법", law="군사기지 및 군사시설 보호법",
+        article="보호구역·비행안전구역 협의(높이)",
+        summary="군사기지·시설 보호구역의 건축·높이 협의(비행안전구역 등 입지 제약).",
+        source=f"{_LAW}/법령/군사기지및군사시설보호법"),
+    "공항시설법": LegalRef(
+        ref_id="공항시설법", law="공항시설법", article="장애물 제한표면(높이 제한)",
+        summary="공항 주변 장애물 제한표면에 따른 건축물 높이 제한.",
+        source=f"{_LAW}/법령/공항시설법"),
+    "하수도법": LegalRef(
+        ref_id="하수도법", law="하수도법", article="배수설비·원인자부담금",
+        summary="공공하수도 연결·배수설비·원인자부담금 등 기반시설 연계.",
+        source=f"{_LAW}/법령/하수도법"),
+    "수도법": LegalRef(
+        ref_id="수도법", law="수도법", article="급수공사·원인자부담금",
+        summary="상수도 급수공사·원인자부담금 등 기반시설 연계.",
+        source=f"{_LAW}/법령/수도법"),
+    "국토기본법": LegalRef(
+        ref_id="국토기본법", law="국토기본법", article="국토종합계획 등 계획체계",
+        summary="국토종합계획·도종합계획 등 상위 국토계획 체계.",
+        source=f"{_LAW}/법령/국토기본법"),
 }
 
 
@@ -291,8 +384,12 @@ def resolve_text(text: str | None) -> dict | None:
     for k, ref in _REFS.items():
         if "§" in k and k.split("§", 1)[0] == norm:
             return {**ref.model_dump(), "match": "law_level"}
-    # 3) 법령 수준 키가 norm에 포함(예: '건축법 제46조/도시계획' → '건축법')
-    for k, ref in _REFS.items():
-        if "§" not in k and k in norm:
-            return {**ref.model_dump(), "match": "law_level"}
+    # 3) 등록 법령수준 키가 norm의 ★접두(prefix)일 때 최장일치(삽입순 비의존·결정론). 시행규칙/시행령이 부모법보다 우선
+    #    (예: '국토계획법 시행규칙 제3조'→'국토계획법시행규칙'). ★substring이 아닌 prefix 앵커 — 한국 법령명은 접두
+    #    합성이라 정당 인용은 법령명이 맨 앞에 옴. 따라서 '민간임대주택법'·'상수도법'·'유료도로법'·'부설주차장법'이
+    #    각각 '주택법'·'수도법'·'도로법'·'주차장법'으로 오해소되지 않고 미등록 → None(표면화·날조 금지).
+    candidates = [(k, ref) for k, ref in _REFS.items() if "§" not in k and norm.startswith(k)]
+    if candidates:
+        k, ref = max(candidates, key=lambda kr: len(kr[0]))   # 가장 긴(구체적) 접두 키 우선
+        return {**ref.model_dump(), "match": "law_level"}
     return None
