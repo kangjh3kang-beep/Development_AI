@@ -42,6 +42,16 @@ def detect_drawing_type(filename: str = "", hints: str = "") -> str:
     return "unknown"
 
 
+def compute_point_id(content_hash: str, tenant_id: str | None = None) -> str:
+    """content_hash(+tenant_id) → Qdrant 결정적 포인트 ID(uuid5).
+
+    인제스트(저장)와 조회(원본 presigned)가 동일 규칙으로 ID를 재계산해 공유한다.
+    tenant_id 결합으로 테넌트별 네임스페이스 분리(교차테넌트 충돌 차단·미지정 시 hash-only 호환).
+    """
+    seed = f"{tenant_id}:{content_hash}" if tenant_id else content_hash
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
 @dataclass
 class RoomSpec:
     """도면에서 추출한 공간(룸) 1건."""
@@ -115,8 +125,7 @@ class DesignSpec:
         유지하면서, 타 테넌트가 동일 바이트 파일을 올려 소유표시(payload.tenant_id)를
         덮어쓰는 교차테넌트 충돌을 구조적으로 차단한다(tenant_id 미지정 시 hash-only 호환).
         """
-        seed = f"{tenant_id}:{self.content_hash()}" if tenant_id else self.content_hash()
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+        return compute_point_id(self.content_hash(), tenant_id)
 
     def to_payload(self) -> dict:
         """Qdrant 페이로드(검색 필터/표시용). PII 미포함 — 원문 바이트 저장 안 함."""

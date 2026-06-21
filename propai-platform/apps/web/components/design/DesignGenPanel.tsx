@@ -42,6 +42,9 @@ type IngestResult = {
   content_hash: string;
   indexed: boolean;
   index_skip_reason: string | null;
+  stored?: boolean;
+  object_key?: string | null;
+  store_skip_reason?: string | null;
   warnings: string[];
   spec: Record<string, unknown>;
 };
@@ -112,6 +115,8 @@ type DrawingMatch = {
   total_area_sqm?: number | null;
   source_format?: string | null;
   summary?: string | null;
+  content_hash?: string | null;
+  stored?: boolean;
 };
 
 type SearchResult = { ok: boolean; results: DrawingMatch[]; count: number; skipped_reason: string | null };
@@ -332,6 +337,18 @@ export function DesignGenPanel({ projectId }: Props) {
     }
   }
 
+  // 원본 도면 조회 — 서버가 인증 테넌트로 presigned URL 발급(클라이언트 키 미전송) → 새 탭.
+  async function handleOpenOriginal(contentHash: string) {
+    try {
+      const data = await apiClient.get<{ url: string }>(
+        `/design-gen/drawings/${encodeURIComponent(contentHash)}/url`,
+      );
+      if (data?.url) window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch {
+      // 미보관/미설정 등은 정직 무시(버튼은 stored=true일 때만 노출).
+    }
+  }
+
   // 추천 설계안 → 모세혈관 SSOT 반영(클릭 1회 쓰기 — 렌더 중 쓰기 아님 → 무한렌더 무관).
   // 하류(공사비·수지)가 읽는 핵심 필드만 정직 매핑. 미산출 값은 null(가짜값 금지).
   function handleApply(c: Candidate, idx: number) {
@@ -451,6 +468,23 @@ export function DesignGenPanel({ projectId }: Props) {
               ) : (
                 <span style={{ color: "var(--status-warning)" }}>미색인({ingest.index_skip_reason || "사유 미상"})</span>
               )}
+              {ingest.stored ? (
+                <>
+                  {" · "}
+                  <span style={{ color: "var(--status-success)" }}>원본 보관</span>
+                  {ingest.content_hash && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenOriginal(ingest.content_hash)}
+                      className="ml-1 font-semibold text-[var(--accent-strong)] underline"
+                    >
+                      원본 보기
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="text-[var(--text-tertiary)]"> · 원본 미보관({ingest.store_skip_reason || "사유 미상"})</span>
+              )}
               {ingest.warnings?.length > 0 && (
                 <ul className="mt-1 list-inside list-disc text-[var(--text-tertiary)]">
                   {ingest.warnings.map((w, i) => (
@@ -512,6 +546,15 @@ export function DesignGenPanel({ projectId }: Props) {
                         {m.source_format ? ` · ${m.source_format}` : ""}
                       </div>
                       {m.summary && <div className="mt-1 line-clamp-2 text-[var(--text-tertiary)]">{m.summary}</div>}
+                      {m.stored && m.content_hash && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenOriginal(m.content_hash as string)}
+                          className="mt-1 font-semibold text-[var(--accent-strong)] underline"
+                        >
+                          원본 보기
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

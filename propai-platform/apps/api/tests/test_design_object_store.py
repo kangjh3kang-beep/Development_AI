@@ -208,5 +208,58 @@ async def test_store_original_put_failure_degrades(monkeypatch):
     assert key is None and stored is False and reason == "r2_status_403"
 
 
+# ── compute_point_id(저장·조회 공유 ID 규칙) ──
+def test_compute_point_id_deterministic_and_tenant_namespaced():
+    from app.services.design_ingest.design_spec import DesignSpec, compute_point_id
+    assert compute_point_id(_H, "T1") == compute_point_id(_H, "T1")     # 결정적
+    assert compute_point_id(_H, "T1") != compute_point_id(_H, "T2")     # 테넌트 분리
+    assert compute_point_id(_H) != compute_point_id(_H, "T1")           # 미지정=hash-only
+    # DesignSpec.point_id와 동일 규칙(저장↔조회 공유)
+    spec = DesignSpec(source_format="dxf", total_area_sqm=84.0)
+    assert spec.point_id("T1") == compute_point_id(spec.content_hash(), "T1")
+
+
+# ── get_drawing_object_key: 테넌트 스코프 조회 + 이중방어 ──
+class _FakePoint:
+    def __init__(self, payload):
+        self.payload = payload
+
+
+def _patch_qdrant(monkeypatch, points):
+    class _Client:
+        def retrieve(self, **_k):
+            return points
+
+    import apps.api.database.init_qdrant as initq
+    monkeypatch.setattr(initq, "get_qdrant_client", lambda: _Client())
+
+
+async def test_get_object_key_returns_for_owner(monkeypatch):
+    from app.services.design_ingest.search_service import get_drawing_object_key
+    _patch_qdrant(monkeypatch, [_FakePoint({"tenant_id": "T1", "object_key": f"design/T1/{_H}.dxf"})])
+    key = await get_drawing_object_key(_H, "T1")
+    assert key == f"design/T1/{_H}.dxf"
+
+
+async def test_get_object_key_blocks_tenant_mismatch(monkeypatch):
+    # payload 소유 테넌트(T1)와 요청자(T2) 불일치 → None(이중방어)
+    from app.services.design_ingest.search_service import get_drawing_object_key
+    _patch_qdrant(monkeypatch, [_FakePoint({"tenant_id": "T1", "object_key": f"design/T1/{_H}.dxf"})])
+    assert await get_drawing_object_key(_H, "T2") is None
+
+
+async def test_get_object_key_none_when_absent(monkeypatch):
+    from app.services.design_ingest.search_service import get_drawing_object_key
+    _patch_qdrant(monkeypatch, [])
+    assert await get_drawing_object_key(_H, "T1") is None
+
+
+async def test_get_object_key_rejects_bad_hash():
+    # ★저장경로(object_key)와 hex 계약 통일 — 잘못된 content_hash는 Qdrant 조회 전 None
+    from app.services.design_ingest.search_service import get_drawing_object_key
+    for bad in ("", "NOT-HEX", "../etc/passwd", "g" * 20):
+        assert await get_drawing_object_key(bad, "T1") is None
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

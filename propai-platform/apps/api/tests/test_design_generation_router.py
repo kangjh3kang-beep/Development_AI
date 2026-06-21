@@ -295,5 +295,44 @@ async def test_laws_for_unknown_domain_404():
     assert ei.value.status_code == 404
 
 
+# ── 원본 조회(presigned) 엔드포인트: 테넌트 스코프·정직 404 ──
+async def test_drawing_url_404_when_not_configured(monkeypatch):
+    monkeypatch.setattr(dg.object_store, "is_configured", lambda: False)
+    with pytest.raises(HTTPException) as ei:
+        await dg.drawing_original_url("abc123def4560000", _user())
+    assert ei.value.status_code == 404
+
+
+async def test_drawing_url_404_when_key_absent(monkeypatch):
+    monkeypatch.setattr(dg.object_store, "is_configured", lambda: True)
+
+    async def _none(_h, _t):
+        return None
+
+    monkeypatch.setattr(dg, "get_drawing_object_key", _none)
+    with pytest.raises(HTTPException) as ei:
+        await dg.drawing_original_url("abc123def4560000", _user())
+    assert ei.value.status_code == 404
+
+
+async def test_drawing_url_success(monkeypatch):
+    user = _user()
+    captured = {}
+    monkeypatch.setattr(dg.object_store, "is_configured", lambda: True)
+
+    async def _key(h, t):
+        captured["hash"], captured["tenant"] = h, t
+        return f"design/{t}/{h}.dxf"
+
+    monkeypatch.setattr(dg, "get_drawing_object_key", _key)
+    monkeypatch.setattr(dg.object_store, "presigned_get_url",
+                        lambda key, owner, expires=600: f"https://r2/{key}?sig=x")
+    out = await dg.drawing_original_url("abc123def4560000", user)
+    assert out["url"].startswith("https://r2/design/")
+    assert out["expires_in"] == 600
+    # content_hash·tenant가 인증 컨텍스트로 조회에 전달됐는지
+    assert captured["hash"] == "abc123def4560000" and captured["tenant"] == str(user.tenant_id)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
