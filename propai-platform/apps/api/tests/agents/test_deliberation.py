@@ -29,6 +29,28 @@ def test_map_permit_response_maps_stages():
     assert out["findings"][0]["note"] == "건축심의"
 
 
+def test_map_permit_response_propagates_basis_and_links():
+    # EX2 — finding에 근거(법령명·조항·요지)+링크(1차출처 URL) 기본 동반(설명가능성 전파)
+    res = {"spec_id": "permit-default", "stages": [{
+        "stage_id": "building_review", "name": "건축심의",
+        "conformance": "미흡", "verification_status": "NEEDS_REVIEW",
+        "criteria": [{"criterion_id": "far", "legal_basis": [
+            {"law": "국토의 계획 및 이용에 관한 법률 시행령", "article": "제85조(용적률)",
+             "summary": "용도지역별 용적률 최대한도.",
+             "source": "https://www.law.go.kr/법령/국토의계획및이용에관한법률시행령"}]}]}]}
+    f = _map_permit_response(res)["findings"][0]
+    assert f["basis"] and f["basis"][0]["law"].startswith("국토")
+    assert f["links"] and f["links"][0].startswith("https://")
+
+
+def test_map_permit_response_no_basis_is_empty_not_missing():
+    # 근거 없는 단계도 basis/links 키는 존재(빈 리스트) — 무음 누락 아님
+    res = {"spec_id": "design-default", "stages": [{"stage_id": "massing", "name": "매스",
+            "conformance": "HELD", "verification_status": "NEEDS_REVIEW", "criteria": []}]}
+    f = _map_permit_response(res)["findings"][0]
+    assert f["basis"] == [] and f["links"] == []
+
+
 def test_map_permit_response_empty_stages():
     out = _map_permit_response({"spec_id": "x"})
     assert out["findings"] == [] and out["summary"]["available"] is True
