@@ -290,6 +290,22 @@ export function DesignGenPanel({ projectId }: Props) {
     return DRAWING_TYPE_LABEL[code] ?? code;
   }
 
+  // 설계 코퍼스 현황(축적 가시화) — 분야별 누적 도면 수.
+  const [corpus, setCorpus] = useState<{ total: number; by_discipline: Record<string, number> } | null>(null);
+  async function refreshCorpus() {
+    try {
+      const d = await apiClient.get<{ total: number; by_discipline: Record<string, number> }>(
+        "/design-gen/corpus-stats",
+      );
+      setCorpus({ total: d?.total ?? 0, by_discipline: d?.by_discipline ?? {} });
+    } catch {
+      /* 미가용 시 미표시(정직) */
+    }
+  }
+  useEffect(() => {
+    void refreshCorpus();
+  }, []);
+
   // 유사 도면 검색(search)
   const [searchType, setSearchType] = useState<string>("");
   const [searchKeywords, setSearchKeywords] = useState<string>("");
@@ -313,6 +329,7 @@ export function DesignGenPanel({ projectId }: Props) {
       if (projectId) form.append("project_id", projectId);
       const data = await apiClient.post<IngestResult>("/design-gen/ingest", { body: form });
       setIngest(data);
+      refreshCorpus();  // 색인 후 코퍼스 현황 갱신
     } catch (e) {
       setIngestErr(errMessage(e));
     } finally {
@@ -520,8 +537,17 @@ export function DesignGenPanel({ projectId }: Props) {
 
         {/* 도면 업로드(ingest) */}
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-4">
-          <div className="text-xs font-semibold text-[var(--text-secondary)]">
-            📐 설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-[var(--text-secondary)]">
+              📐 설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
+            </div>
+            {corpus && corpus.total > 0 && (
+              <div className="text-[11px] text-[var(--text-tertiary)]">
+                축적 도면 <span className="font-bold text-[var(--accent-strong)]">{corpus.total.toLocaleString()}</span>건
+                {Object.keys(corpus.by_discipline).length > 0 &&
+                  ` · ${Object.entries(corpus.by_discipline).map(([d, n]) => `${d} ${n}`).join(", ")}`}
+              </div>
+            )}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input

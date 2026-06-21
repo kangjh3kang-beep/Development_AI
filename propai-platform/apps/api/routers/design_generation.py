@@ -51,6 +51,7 @@ from app.services.design_ingest.orchestrator import (
 from app.services.design_ingest.parsers import detect_format
 from app.services.design_ingest.search_service import (
     SiteQuery,
+    corpus_stats,
     get_drawing_object_key,
     search_drawings,
 )
@@ -265,6 +266,14 @@ async def drawing_types(
 ) -> dict[str, Any]:
     """도면 분류 택소노미(분야별) — 프론트 검색 필터·라벨의 단일 출처(실무 전수조사 반영)."""
     return {"by_discipline": drawing_types_by_discipline()}
+
+
+@router.get("/corpus-stats")
+async def corpus_stats_endpoint(
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """테넌트의 누적 설계도면 코퍼스 현황(분야별 건수) — 축적 가시화·코퍼스 갭. tenant 인증 강제."""
+    return await corpus_stats(str(current.tenant_id))
 
 
 @router.get("/drawings/{content_hash}/url")

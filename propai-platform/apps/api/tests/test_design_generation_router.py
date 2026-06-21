@@ -289,6 +289,20 @@ async def test_laws_for_known_domain():
     assert out["domain"] == "zoning" and isinstance(out["laws"], list)
 
 
+async def test_corpus_stats_endpoint(monkeypatch):
+    captured = {}
+
+    async def _fake(tid):
+        captured["tid"] = tid
+        return {"ok": True, "total": 7, "by_discipline": {"건축": 5, "구조": 2}, "skipped_reason": None}
+
+    monkeypatch.setattr(dg, "corpus_stats", _fake)
+    user = _user()
+    out = await dg.corpus_stats_endpoint(user)
+    assert out["total"] == 7 and out["by_discipline"]["건축"] == 5
+    assert captured["tid"] == str(user.tenant_id)  # 테넌트 인증값 강제
+
+
 async def test_drawing_types_taxonomy():
     out = await dg.drawing_types(_user())
     by = out["by_discipline"]

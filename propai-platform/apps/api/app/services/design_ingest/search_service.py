@@ -235,3 +235,34 @@ async def search_design_set(
         m.to_dict() for m in sorted(merged.values(), key=lambda x: x.score, reverse=True)
     ]
     return {"ok": True, "results": results, "count": len(results), "skipped_reason": None}
+
+
+async def corpus_stats(tenant_id: str) -> dict:
+    """테넌트의 누적 설계도면 코퍼스 현황(분야별 count) — 축적 가시화·코퍼스 갭 식별.
+
+    Qdrant count(임베딩 0·테넌트 스코프). best-effort(미가용 시 0+사유). count_filter에 tenant 강제.
+    Returns: {ok, total, by_discipline:{분야:건수}, skipped_reason}.
+    """
+    from app.services.design_ingest.design_spec import DRAWING_TYPE_META
+
+    disciplines = sorted({m["discipline"] for m in DRAWING_TYPE_META.values()})
+    try:
+        from apps.api.database.init_qdrant import get_qdrant_client
+
+        client = get_qdrant_client()
+
+        def _count(disc: str | None) -> int:
+            q = SiteQuery(tenant_id=tenant_id, discipline=disc)
+            res = client.count(
+                collection_name=DESIGN_COLLECTION, count_filter=_build_filter(q), exact=True
+            )
+            return int(getattr(res, "count", 0) or 0)
+
+        total = _count(None)
+        # 빈/신규 테넌트는 분야별 카운트 생략(11→1회) — 첫 진입 비용 절감.
+        by_discipline = {d: n for d in disciplines if (n := _count(d))} if total else {}
+    except Exception as e:  # noqa: BLE001 — 현황 조회 실패는 비차단(정직 강등)
+        logger.warning("design 코퍼스 현황 실패: %s", str(e)[:120])
+        return {"ok": True, "total": 0, "by_discipline": {}, "skipped_reason": "qdrant_error"}
+
+    return {"ok": True, "total": total, "by_discipline": by_discipline, "skipped_reason": None}
