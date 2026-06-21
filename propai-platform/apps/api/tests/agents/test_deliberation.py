@@ -51,6 +51,12 @@ def test_map_permit_response_no_basis_is_empty_not_missing():
     assert f["basis"] == [] and f["links"] == []
 
 
+def test_map_permit_response_propagates_overall_outcome():
+    # Phase 2a — 종합 승인 가능성 등급이 에이전트 summary로 전파
+    res = {"spec_id": "permit-default", "overall_outcome": "보통", "stages": []}
+    assert _map_permit_response(res)["summary"]["overall_outcome"] == "보통"
+
+
 def test_map_permit_response_empty_stages():
     out = _map_permit_response({"spec_id": "x"})
     assert out["findings"] == [] and out["summary"]["available"] is True
