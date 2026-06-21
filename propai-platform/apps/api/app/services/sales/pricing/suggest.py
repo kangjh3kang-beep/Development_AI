@@ -234,9 +234,17 @@ async def suggest_base_price(
                 "note": "현장에 연결된 부지 주소가 없습니다 — 프로젝트 부지분석 후 다시 시도하세요."}
 
     lawd = (bcode or "").strip() or None
-    if not lawd and pnu:
+    # ★bcode 오염 가드(전역전파): 입력 bcode는 비권위(엑셀 양식 예시값 잔류·외부전달 오염 가능).
+    #   부지 PNU(부지분석 확정 권위값)의 시군구(앞 5자리)와 어긋나면 잘못된 지역 실거래를 조회해
+    #   엉뚱한 적정분양가가 나오므로, 오염으로 보고 무시하고 PNU로 유도한다(권위출처 우선).
+    pnu_lawd = None  # conv[0]=시군구 5자리(법정동코드 아님) — 아래 비교는 양변 [:5]로 정규화
+    if pnu:
         conv = pnu_to_bcode(pnu)
-        lawd = conv[0] if conv else None
+        pnu_lawd = conv[0] if conv else None
+    if lawd and pnu_lawd and lawd[:5] != pnu_lawd[:5]:
+        lawd = None  # 시군구 불일치 = 오염 → PNU 우선
+    if not lawd and pnu_lawd:
+        lawd = pnu_lawd
     if not lawd:
         # 프로젝트에 PNU가 없으면 주소를 VWorld로 지오코딩해 PNU→법정동코드 유도(자체 충족).
         try:
