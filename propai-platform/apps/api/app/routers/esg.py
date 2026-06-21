@@ -17,10 +17,12 @@ epd_service = EPDCarbonService()
 # 기존 응답 필드는 1개도 변경하지 않고 legal_refs 1블록만 setdefault로 가산한다.
 # law.go.kr URL은 legal_reference_registry.get_legal_refs 출력만 사용하며(여기서
 # URL 직접 조립 금지), 레지스트리 실존 키만 쓴다 — 녹색건축 인증·건축물 에너지효율
-# 등급·제로에너지건축물(ZEB) 인증(근거법: 녹색건축물 조성 지원법, 조문 딥링크
-# 미검증 → 법령 루트 링크). 부착 실패 시 원본 무손상 반환(graceful).
+# 등급·제로에너지건축물(ZEB) 인증(근거법: 녹색건축물 조성 지원법). green_building/
+# energy_efficiency/zeb_certification은 법령 루트 링크이고, building_energy_rating은
+# 같은 법 제17조(에너지효율등급·ZEB 인증) verified 딥링크다 — BEEC 등급 산출의 조문 근거.
+# 부착 실패 시 원본 무손상 반환(graceful).
 # ─────────────────────────────────────────────────────────────────────────────
-_ESG_LEGAL_REF_KEYS = ["green_building", "energy_efficiency", "zeb_certification"]
+_ESG_LEGAL_REF_KEYS = ["green_building", "energy_efficiency", "zeb_certification", "building_energy_rating"]
 
 
 def _attach_esg_legal_refs(result):
