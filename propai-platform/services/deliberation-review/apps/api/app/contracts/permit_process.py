@@ -43,10 +43,17 @@ class StageSpec(BaseModel):
     outcome_predictor: str | None = None  # Phase 2 슬롯(Phase 1 = None)
 
 
-class PermitProcessSpec(BaseModel):
-    """버전드 프로세스 스펙 — 재현(snapshot 결속)·확장(스펙 추가)."""
+class ProcessSpec(BaseModel):
+    """버전드 프로세스 스펙(프로세스-불문) — 재현(snapshot 결속)·확장(스펙 추가).
+
+    permit(인·허가/심의)·design(설계 라이프사이클) 등 여러 프로세스가 동일 코어를 공유(spec_id로 구분).
+    """
 
     spec_id: str
     version: str
     effective_date: str                 # ISO date(축 결속·재현)
     stages: list[StageSpec] = Field(default_factory=list)
+
+
+# 후방호환 별칭 — 기존 permit 코드 무파손(시스템1 동일 타입).
+PermitProcessSpec = ProcessSpec
