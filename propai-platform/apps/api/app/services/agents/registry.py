@@ -144,10 +144,11 @@ def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
                         "run_id": res.get("run_id")}}
 
 
-async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
-    """심의 도메인 — 심의엔진 /api/v1/permit/process 호출(인·허가/심의 프로세스). 수치/판정은 엔진 결정론 산출만.
+async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any]:
+    """심의엔진 프로세스 엔드포인트(permit/design) 공통 호출. 수치/판정은 엔진 결정론 산출만.
 
-    엔진 URL 미설정 시 graceful(미연동 — findings 비움 + reason). 라이브 실패도 표면화(무음 단정 금지)."""
+    엔진 URL 미설정 시 graceful(미연동 — findings 비움 + reason). 라이브 실패도 표면화(무음 단정 금지).
+    응답(ProcessResult)을 _map_permit_response로 정규화 → finding마다 근거(법령·조항·요지)+링크 동반(EX2)."""
     from app.core.config import get_settings
     s = get_settings()
     base = (getattr(s, "DELIBERATION_ENGINE_URL", "") or "").rstrip("/")
@@ -158,7 +159,7 @@ async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=60.0) as cli:
-            r = await cli.post(f"{base}/api/v1/permit/process", json=data, headers=headers)
+            r = await cli.post(f"{base}{path}", json=data, headers=headers)
             r.raise_for_status()
             res = r.json()
     except Exception as exc:  # noqa: BLE001 — 라이브 실패는 graceful 표면화(무음 단정 금지)
@@ -167,13 +168,29 @@ async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
     return _map_permit_response(res if isinstance(res, dict) else {})
 
 
+async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """심의 도메인 — 인·허가/심의 프로세스(엔진 /api/v1/permit/process)."""
+    return await _call_engine_process(data, "/api/v1/permit/process")
+
+
+async def _design_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """설계 도메인 — 건축설계 라이프사이클 프로세스(엔진 /api/v1/design/process)."""
+    return await _call_engine_process(data, "/api/v1/design/process")
+
+
 def _build_deliberation() -> SpecialistAgent:
     return SpecialistAgent(domain="심의", task_type="permit_process",
                            tool=_deliberation_tool, interpreter=None)
 
 
+def _build_design() -> SpecialistAgent:
+    return SpecialistAgent(domain="설계", task_type="design_process",
+                           tool=_design_tool, interpreter=None)
+
+
 _FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far,
-              "cost": _build_cost, "market": _build_market, "심의": _build_deliberation}
+              "cost": _build_cost, "market": _build_market,
+              "심의": _build_deliberation, "설계": _build_design}
 AVAILABLE_DOMAINS = tuple(_FACTORIES.keys())
 
 
