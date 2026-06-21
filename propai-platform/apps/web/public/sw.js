@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v283-evidence-parity";
+const CACHE_NAME = "propai-v284-dscr-evidence";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

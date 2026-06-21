@@ -199,8 +199,14 @@ export function DevelopmentFinancePanel() {
 
             <p className="text-[11px] leading-5 text-[var(--text-hint)]">
               총사업비 {eok(result.total_project_cost_won)} 기준. 금융비는 만기일시상환(복리)·
-              표준 수수료율로 산정되며, 자금구조는 자기자본 30% 가정입니다. DSCR은 임대형 NOI
-              추정 기준이며 분양형은 별도 현금흐름(DCF)을 참고하세요.
+              표준 수수료율로 산정되며, 자금구조는 자기자본 30% 가정입니다.
+              {result.dscr != null ? (
+                <> DSCR(=연 NOI ÷ 연 이자 {eok(result.annual_debt_service_won)}, 부채상환 근사)은 임대형 NOI를
+                  매출의 약 4%(개략 NOI 환산)로 추정한 기준이며, 분양형은 별도 현금흐름(DCF)을 참고하세요.</>
+              ) : (
+                <> DSCR은 임대 NOI(매출의 약 4% 개략 추정)가 없어 분양형으로 간주해 미산정했습니다 — 분양형은
+                  별도 현금흐름(DCF)을 참고하세요.</>
+              )}
             </p>
           </>
         ) : hasFeasibility && busy ? (
