@@ -367,7 +367,12 @@ export function GlobalAddressSearch({
     //   행(infoStatus==="ok")만 재조회를 건너뛴다(중복 외부콜 방지). 이게 누락돼 엑셀 잔여값
     //   (예 상도동 210-453=543·211-204=8500)이 영구 미검증으로 남던 근본버그를 해소한다.
     const need = entries.filter((e) =>
-      (e.fullAddress || e.jibunAddress || e.pnu) && e.infoStatus !== "ok",
+      (e.fullAddress || e.jibunAddress || e.pnu) &&
+      // ★'ok'여도 핵심값(용도지역·면적) 미확보면 재조회 대상으로 본다. 백엔드가 zone_type=null인데
+      //   status='ok'를 반환하던 무성실패로 infoStatus='ok'로 굳은 필지(예 상도동 210-453)를,
+      //   재보강 버튼이 enrichParcels에 넘겨도 이 need 필터(과거 infoStatus!=='ok'만 봄)가 제외해
+      //   'need.length===0 → return'으로 아무것도 못 하던 버그를 해소(버튼 stuck감지 !zoneCode와 일치).
+      (e.infoStatus !== "ok" || !e.zoneCode || !(e.areaSqm && e.areaSqm > 0)),
     );
     if (need.length === 0) return;
     // ★형제 bcode 전파는 '시군구가 같은 형제'에 한해서만 — 안전 가드(근본수정).
@@ -509,7 +514,9 @@ export function GlobalAddressSearch({
     if (latest.length > 0) {
       const stillNeed = latest.filter((a) => {
         if (!a.__uid) return false;
-        if (a.infoStatus === "ok") return false;
+        // ★'ok'여도 핵심값(용도지역·면적) 미확보면 자기치유 재시도 대상(무성실패 보완·need 필터와 일치).
+        //   enrichTries 최대 2시도 캡으로 무한루프는 방지된다.
+        if (a.infoStatus === "ok" && a.zoneCode && a.areaSqm && a.areaSqm > 0) return false;
         if (!(a.fullAddress || a.jibunAddress || a.pnu)) return false;
         return (enrichTries.current.get(a.__uid) ?? 0) < 2; // 최대 2시도
       });

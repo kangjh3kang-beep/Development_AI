@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v277-evidence-cards";
+const CACHE_NAME = "propai-v278-rerun-needfix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
