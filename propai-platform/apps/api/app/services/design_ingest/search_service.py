@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.services.design_ingest.vector_store import (
     DESIGN_COLLECTION,
@@ -25,6 +25,7 @@ class SiteQuery:
     """검색 입력(부지 조건). 지정된 값만 필터/질의에 반영(미지정은 무제약)."""
 
     drawing_type: str | None = None   # site_plan|floor_plan|section|elevation|parking
+    discipline: str | None = None     # 분야 필터(건축/구조/전기/…) — payload.discipline 대조
     zone_type: str | None = None      # 용도지역(질의 텍스트에만 반영)
     area_sqm: float | None = None     # 면적 — 질의텍스트(임베딩)에 항상 반영
     area_tolerance_pct: float = 30.0
@@ -133,6 +134,8 @@ def _build_filter(q: SiteQuery):
     must: list = []
     if q.drawing_type:
         must.append(FieldCondition(key="drawing_type", match=MatchValue(value=q.drawing_type)))
+    if q.discipline:
+        must.append(FieldCondition(key="discipline", match=MatchValue(value=q.discipline)))
     if q.tenant_id:
         must.append(FieldCondition(key="tenant_id", match=MatchValue(value=q.tenant_id)))
     # 면적 하드필터는 명시 활성화 시에만(면적 None 도면 침묵 누락 방지). 평소엔 임베딩으로 소프트 반영.
@@ -181,3 +184,54 @@ async def search_drawings(query: SiteQuery, top_k: int = 5) -> dict:
 
     matches = [DrawingMatch.from_scored(h).to_dict() for h in hits]
     return {"ok": True, "results": matches, "count": len(matches), "skipped_reason": None}
+
+
+async def search_design_set(
+    query: SiteQuery, supplement_disciplines: list[str], broad_k: int = 8, k_each: int = 2
+) -> dict:
+    """도면 세트 조합용 후보를 모은다 — broad 질의 + 비건축 분야 보강(★임베딩 1회 재사용).
+
+    단일 질의는 건축 편향이라 구조·전기 등 분야 도면이 덜 검색된다. 같은 질의 벡터로
+    ①broad 질의(필터의 discipline 없음 → 건축·일반 다종 coverage) ②supplement_disciplines 각각의
+    분야 필터 질의(각 분야 최고점 k_each건 보장)를 돌려 병합(중복 제거·점수순). discipline payload
+    없는 구(舊) 적재분은 분야 필터에 안 걸리므로, 호출부는 빈 결과 시 plain search로 폴백(하위호환).
+    tenant_id는 호출부가 인증값으로 강제 주입. supplement_disciplines가 빈 리스트면 broad만 수행
+    (search_drawings와 동치). 분야 질의 중 하나라도 예외면 all-or-nothing(폴백 안전망 의존).
+    Returns: {ok, results, count, skipped_reason}.
+    skipped_reason: no_openai_key|embed_error|embed_dim_mismatch|qdrant_error|None.
+    """
+    vector, reason = await embed_text(query.to_query_text())
+    if vector is None:
+        return {"ok": True, "results": [], "count": 0, "skipped_reason": reason}
+    if len(vector) != EMBED_DIM:
+        return {"ok": True, "results": [], "count": 0, "skipped_reason": "embed_dim_mismatch"}
+
+    try:
+        from apps.api.database.init_qdrant import get_qdrant_client
+
+        client = get_qdrant_client()
+        merged: dict[str, DrawingMatch] = {}
+
+        def _collect(qfilter, limit: int) -> None:
+            resp = client.query_points(
+                collection_name=DESIGN_COLLECTION, query=vector,
+                query_filter=qfilter, limit=max(1, limit), with_payload=True,
+            )
+            for h in (getattr(resp, "points", None) or []):
+                m = DrawingMatch.from_scored(h)
+                if m.point_id and (m.point_id not in merged or m.score > merged[m.point_id].score):
+                    merged[m.point_id] = m
+
+        # ① broad — 건축/일반 다종 coverage(discipline 필터 없음, query.discipline는 None 가정)
+        _collect(_build_filter(query), broad_k)
+        # ② 비건축 분야 보강 — 각 분야 필터로 최고점 보장
+        for disc in supplement_disciplines:
+            _collect(_build_filter(replace(query, discipline=disc)), k_each)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("design 분야별 검색 실패: %s", str(e)[:120])
+        return {"ok": True, "results": [], "count": 0, "skipped_reason": "qdrant_error"}
+
+    results = [
+        m.to_dict() for m in sorted(merged.values(), key=lambda x: x.score, reverse=True)
+    ]
+    return {"ok": True, "results": results, "count": len(results), "skipped_reason": None}

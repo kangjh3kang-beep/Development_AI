@@ -22,9 +22,18 @@ from app.services.design_ingest.provenance import (
     permit_evidence,
     proposal_evidence,
 )
-from app.services.design_ingest.search_service import SiteQuery, search_drawings
+from app.services.design_ingest.search_service import (
+    SiteQuery,
+    search_design_set,
+    search_drawings,
+)
 
 logger = logging.getLogger(__name__)
+
+# 세트 보강 검색 분야(건축은 broad 질의가 커버 → 비건축 분야만 분야필터로 보강).
+_SET_SUPPLEMENT_DISCIPLINES = (
+    "구조", "전기", "기계설비", "급배수위생", "소방", "토목", "조경", "통신", "공통",
+)
 
 # 인허가 복잡도가 이 이상이면 'conditional'(난이도 높음 — 사람 검토 필요).
 _HARD_PERMIT_COMPLEXITY = 4
@@ -134,8 +143,15 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         tenant_id=req.tenant_id,
         project_id=req.project_id,
     )
-    search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+    # 분야별 도면 세트 검색(broad 건축 + 비건축 분야 보강, 임베딩 1회). 분야 payload 없는
+    # 구(舊) 적재분은 분야필터에 안 걸리므로 빈 결과 시 plain search로 폴백(하위호환).
+    search = await search_design_set(
+        query, list(_SET_SUPPLEMENT_DISCIPLINES), broad_k=max(8, req.top_n * 3), k_each=2
+    )
     matches = search.get("results", [])
+    if not matches:
+        search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+        matches = search.get("results", [])
 
     candidates = compose(site, matches, top_n=req.top_n)
 

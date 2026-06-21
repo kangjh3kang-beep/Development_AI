@@ -250,6 +250,8 @@ class DesignSpec:
             "content_hash": self.content_hash(),
             "source_format": self.source_format,
             "drawing_type": self.drawing_type,
+            # 분야(공통/건축/구조/전기/…) — 분야별 검색 필터용(택소노미 단일출처에서 파생).
+            "discipline": DRAWING_TYPE_META.get(self.drawing_type, {}).get("discipline"),
             "title": self.title,
             "total_area_sqm": self.total_area_sqm,
             "floor_count": self.floor_count,
