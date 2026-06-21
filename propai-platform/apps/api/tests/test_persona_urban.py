@@ -90,6 +90,49 @@ async def test_urban_no_address_partial(monkeypatch):
     assert any("주소" in n for n in out["honesty_notes"])
 
 
+async def test_urban_parcels_only_aggregates(monkeypatch):
+    """다필지 전용 입력(parcels만·address 미전달) — 대표필지 재조준 + 통합 집계.
+
+    회귀 방어: parcels-only 페이로드가 zone/method/permit 'missing'으로 빠지지 않고,
+    대표 주소(첫 필지)로 permit/regulation을 산출하고 _aggregate_integrated_zoning을
+    채워야 한다. enrich는 외부 API를 타지 않도록 monkeypatch로 hermetic 대체.
+    """
+    _patch_urban(monkeypatch)  # permit/regulation 가짜 — site.zone_type/methods 제공
+
+    async def _fake_enrich(addresses):
+        # AutoZoningService·calc_effective_far 우회(외부콜 0) — 집계가 읽는 키만 부착.
+        return [{"address": a, "zone_type": "일반상업지역", "area_sqm": 1000,
+                 "_far_eff": 700, "_bcr_eff": 60, "_far_legal": 800, "_bcr_legal": 60,
+                 "land_category": None} for a in addresses]
+
+    monkeypatch.setattr(
+        "app.services.persona.runner._enrich_for_aggregate", _fake_enrich)
+
+    out = await run_persona("urban_planner", _FakeDB(),
+                            {"parcels": ["서울특별시 동작구 상도동 211-204",
+                                         "서울특별시 동작구 상도동 211-376"]},
+                            use_llm=False)
+    # 대표 주소 = 첫 필지로 재조준
+    assert out["address"] == "서울특별시 동작구 상도동 211-204"
+    art = out["artifacts"]
+    # zone/method/permit 가 'missing'으로 빠지지 않는다(핵심 회귀 방어).
+    by_step = {c["step"]: c["status"] for c in out["checklist"]}
+    assert by_step["zone"] != "missing"
+    assert by_step["method"] != "missing"
+    assert by_step["permit"] != "missing"
+    # 통합 한도(면적가중) 집계가 채워진다.
+    iz = art["integrated_zoning"]
+    assert iz and iz["parcel_count"] == 2
+    assert iz["total_area_sqm"] == 2000.0
+    assert iz["dominant_zone"] == "일반상업지역"
+    # 다필지 게이트(POSSIBLE/YES) → PASS
+    assert (art.get("gate") or {}).get("decision") == "PASS"
+    # 대표필지 재조준 정직 고지
+    assert any("다필지" in n for n in out["honesty_notes"])
+    # 무과금(use_llm=False)
+    assert out["billing"]["estimated_fee_krw"] == 0
+
+
 async def test_urban_pdf_renders(monkeypatch):
     _patch_urban(monkeypatch)
     out = await run_persona("urban_planner", _FakeDB(),

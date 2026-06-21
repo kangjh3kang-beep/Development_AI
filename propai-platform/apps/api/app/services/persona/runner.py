@@ -200,6 +200,14 @@ async def _run_urban(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any],
     honesty: list[str] = []
     address = await _resolve_address(db, ctx)
     parcels = [a.strip() for a in (ctx.get("parcels") or []) if a and a.strip()]
+    # 다필지 전용 페이로드(parcels만·address/project 미전달)에서도 분석을 수행한다.
+    # 대표 주소를 첫 필지로 재조준(다필지 분석주소=대표필지 규칙) — permit/regulation은 대표
+    # 주소로, 통합 한도는 전 필지 enrich 집계로 산출한다. 단일 address 경로는 무변경.
+    if not address and parcels:
+        address = parcels[0]
+        honesty.append(
+            "다필지 전용 입력 — 대표 주소를 첫 필지로 재조준해 인허가/규제를 산출하고, "
+            "용도/건폐/용적·통합GFA는 전 필지 면적가중으로 통합 집계합니다(정직).")
     if not address:
         honesty.append("주소 미확보 — 도시계획 분석을 위해 주소 또는 프로젝트 부지가 필요합니다(무목업).")
         empty = {"interpreter_available": False,
