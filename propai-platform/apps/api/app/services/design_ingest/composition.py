@@ -12,6 +12,11 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from app.services.design_ingest.design_spec import DRAWING_TYPE_META
+
+# 건물 설계 권장 핵심 분야 — 이 분야 도면이 없으면 세트 불완전(정직 고지·업로드 유도).
+_CORE_DISCIPLINES = ("건축", "구조", "전기", "기계설비", "급배수위생", "소방")
+
 # content_hash(SHA-256 hex) 형식 가드 — object_store/search_service와 동일 계약(오염값 차단).
 _HEX_HASH = re.compile(r"[0-9a-f]{16,128}")
 
@@ -81,6 +86,8 @@ class CompositionCandidate:
     parking_area_sqm: float | None = None   # 소요 주차면적(대당 33㎡)
     parking_basement_floors: int | None = None  # 지하주차 추정 층수(부지 footprint 기준 우선)
     parking_feasible: bool | None = None    # 주차 배치 현실성(지하층 과다 아님). 미상 None
+    disciplines_covered: list[str] = field(default_factory=list)  # 도면 세트가 포함한 분야
+    missing_disciplines: list[str] = field(default_factory=list)  # 권장 핵심분야 중 미확보(정직 갭)
     compliant: bool = False
     score: float = 0.0
     warnings: list[str] = field(default_factory=list)
@@ -90,6 +97,8 @@ class CompositionCandidate:
             "selected": self.selected,
             "primary_drawing_type": self.primary_drawing_type,
             "primary_content_hash": self.primary_content_hash,
+            "disciplines_covered": list(self.disciplines_covered),
+            "missing_disciplines": list(self.missing_disciplines),
             "scale_factor": self.scale_factor,
             "estimated_gfa_sqm": self.estimated_gfa_sqm,
             "estimated_floors": self.estimated_floors,
@@ -226,11 +235,24 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
     candidates: list[CompositionCandidate] = []
     for fp in primaries[: max(1, top_n)]:
         warnings: list[str] = list(site.warnings)  # 부지/한도 경고 승계(정직 전파)
-        selected = {(_g(fp, "drawing_type") or "unknown"): str(_g(fp, "point_id") or "")}
-        # 동반 도면(있으면) 1건씩 첨부.
-        for comp_type in ("site_plan", "parking"):
-            if comp_type not in selected and by_type.get(comp_type):
-                selected[comp_type] = str(_g(by_type[comp_type][0], "point_id") or "")
+        primary_type = _g(fp, "drawing_type") or "unknown"
+        selected = {primary_type: str(_g(fp, "point_id") or "")}
+        # ★분야별 도면 세트 조합 — 매칭된 모든 도면종류의 최고점 1건씩 첨부(by_type 이미 점수 정렬).
+        #   건축 평면뿐 아니라 구조·전기·기계·위생·소방·토목·조경·통신 도면을 코퍼스에서 끌어모은다.
+        for t, lst in by_type.items():
+            if t and t != "unknown" and t not in selected and lst:
+                selected[t] = str(_g(lst[0], "point_id") or "")
+
+        # 분야 커버리지 — 세트가 포함한 분야 + 권장 핵심분야 중 미확보(정직 갭 고지).
+        disciplines = sorted({
+            DRAWING_TYPE_META.get(t, {}).get("discipline", "기타")
+            for t in selected if t != "unknown"
+        })
+        missing_disc = [d for d in _CORE_DISCIPLINES if d not in disciplines]
+        if missing_disc:
+            warnings.append(
+                f"분야별 도면 미확보: {', '.join(missing_disc)} — 해당 분야 도면 업로드 시 세트 보강"
+            )
 
         fp_area = _g(fp, "total_area_sqm")
         scale = _scale_factor(float(fp_area) if fp_area else None, footprint)
@@ -288,6 +310,8 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             selected=selected,
             primary_drawing_type=_g(fp, "drawing_type") or "unknown",
             primary_content_hash=_valid_hash(_g(fp, "content_hash")),  # 피드백 신호 연결키(hex 검증)
+            disciplines_covered=disciplines,
+            missing_disciplines=missing_disc,
             scale_factor=scale,
             estimated_gfa_sqm=est_gfa,
             estimated_floors=est_floors,

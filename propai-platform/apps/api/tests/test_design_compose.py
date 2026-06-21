@@ -185,6 +185,40 @@ def test_compose_exposes_primary_content_hash():
     assert top3.primary_content_hash is None
 
 
+def test_compose_assembles_discipline_drawing_set():
+    # ★분야별 도면 세트 조합 — 건축+구조+전기 매칭 → selected에 전 종류, 분야 커버리지·미확보 갭
+    s = _site()
+    matches = [
+        {"point_id": "fp1", "drawing_type": "floor_plan", "total_area_sqm": 500.0, "score": 0.95},
+        {"point_id": "st1", "drawing_type": "structural_plan", "total_area_sqm": None, "score": 0.9},
+        {"point_id": "el1", "drawing_type": "electrical_plan", "total_area_sqm": None, "score": 0.85},
+    ]
+    top = compose(s, matches)[0]
+    # 세트에 3개 종류 모두 포함
+    assert set(top.selected) == {"floor_plan", "structural_plan", "electrical_plan"}
+    # 분야 커버: 건축·구조·전기
+    assert {"건축", "구조", "전기"} <= set(top.disciplines_covered)
+    # 미확보 핵심분야(기계설비·급배수위생·소방) 정직 고지
+    assert "기계설비" in top.missing_disciplines and "소방" in top.missing_disciplines
+    assert any("분야별 도면 미확보" in w for w in top.warnings)
+    d = top.to_dict()
+    assert "disciplines_covered" in d and "missing_disciplines" in d
+
+
+def test_compose_ranking_stable_with_shared_set():
+    # 분야세트 풍부화 후에도 동일 동반세트 후보는 score 내림차순 유지(회귀 안전).
+    s = _site()
+    matches = [
+        {"point_id": "a", "drawing_type": "floor_plan", "total_area_sqm": 590.0, "score": 0.99},
+        {"point_id": "b", "drawing_type": "floor_plan", "total_area_sqm": 590.0, "score": 0.50},
+        {"point_id": "st", "drawing_type": "structural_plan", "total_area_sqm": None, "score": 0.9},
+    ]
+    cands = compose(s, matches, top_n=2)
+    assert len(cands) == 2 and cands[0].score >= cands[1].score  # 내림차순 유지
+    # 두 후보 모두 동일 분야세트(건축+구조) → completeness 동일, 정렬은 fitness 기반
+    assert set(cands[0].disciplines_covered) == set(cands[1].disciplines_covered)
+
+
 def test_compose_attaches_parking_fields():
     # 조합 결과에 주차설계 필드가 부착되는지(통합)
     s = _site()
