@@ -182,7 +182,18 @@ export function FeasibilityResultView() {
     evidence?: EvidenceTrace[] | null;
     legal_refs?: LegalRef[] | null;
   };
-  const evidenceItems = buildEvidenceItems(trust.evidence, trust.legal_refs);
+  const backendEvidence = buildEvidenceItems(trust.evidence, trust.legal_refs);
+  // ★근거 기본제공(전역원칙): 백엔드가 구조화 evidence를 안 줘도 결과 수치로 산식 트레이스를 구성해
+  //   "왜 이 ROI/NPV인가"에 답한다. 백엔드 evidence가 있으면 그것을 우선(가짜 법령URL 0·산식 basis만).
+  //   기존엔 evidence 부재 시 빈 배열 → 근거 패널이 통째로 사라져 큰 숫자만 떠 있었다(오도 위험).
+  const evidenceItems: EvidenceItem[] = backendEvidence.length > 0 ? backendEvidence : [
+    { label: "총 수입", value: formatWon(result.total_revenue_won), basis: "분양·임대 매출 합계" },
+    { label: "총 비용", value: formatWon(result.total_cost_won), basis: "토지·공사·금융·기타·세금 등 사업비 전 항목 합계(아래 비용 구성 차트 참조)" },
+    { label: "세전 이익", value: formatWon(result.net_profit_won), basis: "총 수입 − 총 비용" },
+    { label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 수입 × 100" },
+    { label: "ROI", value: `${result.roi_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 사업비 × 100 — 투입자본 대비 수익률" },
+    { label: "NPV", value: formatWon(result.npv_won), basis: "기간별 현금흐름을 할인율로 현재가치 환산한 순현재가치(할인율·기간은 입력 가정)" },
+  ];
 
   return (
     <div className="space-y-12 animate-premium-fade">

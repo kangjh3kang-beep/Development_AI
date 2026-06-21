@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v281-no185-loop";
+const CACHE_NAME = "propai-v282-analysis-parity";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

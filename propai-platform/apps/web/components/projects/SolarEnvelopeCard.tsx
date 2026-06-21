@@ -18,7 +18,8 @@ type Shadow = {
 type Envelope = {
   applies_north_light: boolean; binding: string; daylight_loss_pct: number;
   far_gfa_sqm: number; effective_gfa_sqm: number; max_floors: number; max_height_m: number;
-  daylight_ceiling_m?: number; min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
+  daylight_ceiling_m?: number; daylight_ceiling_floors?: number;
+  min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
   far_pct?: number; bcr_pct?: number; zone?: string;
   geometry_source?: string; road_side?: string; shadow_analysis?: Shadow; note?: string; error?: string;
   // 백엔드가 evidence/legal_refs를 반환하면 우선 사용(현재 미반환 → 프론트 산식 트레이스로 폴백).
@@ -71,6 +72,26 @@ export function SolarEnvelopeCard({
     ? "⚠ 용도지역 미확정 — 추정값(신뢰도 낮음)"
     : "⚠ 용도지역 기본값 추정 — 실효 용적률 미산정(신뢰도 낮음)";
 
+  // ★층수 3관점(BuildableEnvelopeCard와 동일 전역계약): 단일 '현실 최고층'(=용적률÷법정건폐율)은
+  //   '건폐율 만충 시 최소 층수'라 오도다. 층수 제한이 없다면 공동주택은 단지 쾌적도·통경축·동간거리를
+  //   위해 건폐율을 20~30%로 낮춰 더 높게 짓는다. ① 법정 최소(건폐율 만충) ② 실무 권장(쾌적 건폐율)
+  //   ③ 법적 가능 최고(일조 높이한도·용적률 중 먼저 걸리는 한도)로 분리 표기한다. ②③은 추정임을 밝힌다.
+  const farForFloors = res.far_pct ?? null;
+  const dlMax =
+    res.daylight_ceiling_floors != null ? res.daylight_ceiling_floors
+    : res.daylight_ceiling_m != null ? Math.floor(res.daylight_ceiling_m / 3) : null;
+  const farBoundMax = farForFloors != null ? Math.round(farForFloors / 15) : null; // 최저 실무 건폐율 15% 가정
+  const rawLegalMax = dlMax != null && farBoundMax != null ? Math.min(dlMax, farBoundMax) : (farBoundMax ?? dlMax);
+  // 법정최소(max_floors) 하한 가드로 역전 방지.
+  const legalMaxFloors = rawLegalMax != null ? Math.max(res.max_floors, rawLegalMax) : null;
+  // 실무 권장: 쾌적 건폐율 30%(보수)~20%(여유). [법정최소, 법적최고]로 클램프해 순서 강제.
+  const floorCap = legalMaxFloors ?? Number.POSITIVE_INFINITY;
+  const practLow = farForFloors != null ? Math.min(floorCap, Math.max(res.max_floors, Math.round(farForFloors / 30))) : null;
+  const practHigh = farForFloors != null ? Math.min(floorCap, Math.round(farForFloors / 20)) : null;
+  const practicalFloors =
+    practLow != null && practHigh != null && practHigh > practLow ? `${practLow}~${practHigh}층`
+    : practLow != null ? `${practLow}층` : "—";
+
   // 산출 근거(EvidencePanel) — 백엔드 evidence가 있으면 우선, 없으면 응답 수치로 산식 트레이스 구성.
   // ★법령 URL은 백엔드 get_legal_refs 출력만(프론트 URL 조립 금지) — 미반환 구간은 basis 텍스트만.
   const backendEvidence = adaptEvidence(res.evidence, res.legal_refs);
@@ -87,9 +108,19 @@ export function SolarEnvelopeCard({
       basis: `대지면적 ${sqm(areaForBasis)} × 용적률 ${res.far_pct ?? "—"}%${usedFallback ? " · 용도지역 기본값(추정)" : " · 실효 용적률"}`,
     },
     {
-      label: "현실 최고층",
+      label: "법정 최소층수(건폐율 만충 시)",
       value: `${res.max_floors}층`,
-      basis: `건축가능 연면적 ÷ (대지면적 × 건폐율 ${res.bcr_pct ?? "—"}%) ≈ 층수`,
+      basis: `용적률 ${res.far_pct ?? "—"}% ÷ 법정 건폐율 ${res.bcr_pct ?? "—"}% — 바닥을 최대로 깔았을 때의 최소 층수(현실 권장 아님)`,
+    },
+    {
+      label: "실무 권장 층수(추정)",
+      value: practicalFloors,
+      basis: `단지 쾌적도·통경축·동간거리 확보 위해 건폐율 20~30%로 낮춰 설계 — 용적률 ${res.far_pct ?? "—"}% ÷ 건폐율 20~30%. 통상 설계 가정 기반 추정`,
+    },
+    {
+      label: "법적 가능 최고층(추정)",
+      value: legalMaxFloors != null ? `${legalMaxFloors}층` : "—",
+      basis: `min(일조 높이한도 ${res.daylight_ceiling_m ?? "—"}m÷층고3m, 용적률 ${res.far_pct ?? "—"}%÷최저건폐율15%) — 바닥 최소로 깔아 올렸을 때의 법적 한계. 일조·용적률 중 먼저 걸리는 것이 한도`,
     },
     {
       label: "정북일조 천장",
@@ -132,7 +163,13 @@ export function SolarEnvelopeCard({
 
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile label="건축가능 연면적" value={sqm(res.effective_gfa_sqm)} sub={`용적률한도 ${sqm(res.far_gfa_sqm)}`} accent />
-        <Tile label="현실 최고층" value={`${res.max_floors}층`} sub={`약 ${res.max_height_m}m`} />
+        <Tile
+          label="실무 권장 층수"
+          tip={`단일 '현실 최고층'은 오해 소지가 있어 3관점으로 표기합니다. ①법정 최소 ${res.max_floors}층 = 용적률÷법정건폐율(바닥 최대로 깔 때). ②실무 권장 ${practicalFloors} = 쾌적 건폐율 20~30%·통경축·동간거리 감안(통상 설계·추정). ③법적 가능 최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"} = 일조 높이한도 기준(추정).`}
+          value={practicalFloors}
+          sub={`법정최소 ${res.max_floors}층 · 법적최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"}`}
+          accent
+        />
         <Tile label="정북일조 천장" value={res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—"} sub={res.applies_north_light ? "사선 최고선" : "미적용 용도"} />
         <Tile label="일조 손실률" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
       </div>
@@ -172,10 +209,10 @@ export function SolarEnvelopeCard({
   );
 }
 
-function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Tile({ label, value, sub, accent, tip }: { label: string; value: string; sub?: string; accent?: boolean; tip?: string }) {
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
+      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]" title={tip}>{label}</p>
       <p className={`mt-1 text-base font-[1000] ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
       {sub ? <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">{sub}</p> : null}
     </div>
