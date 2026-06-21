@@ -32,6 +32,11 @@ COLLECTIONS = {
         "distance": Distance.COSINE,
         "description": "프로젝트 문서 임베딩 (보고서, 분석 결과)",
     },
+    "design_drawings": {
+        "size": 1536,
+        "distance": Distance.COSINE,
+        "description": "설계 도면 임베딩 (배치도/평면도/단면도/입면도/주차 — 검색+조합용)",
+    },
 }
 
 
