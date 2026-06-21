@@ -28,9 +28,11 @@ _DESIGN = ProcessSpec(
             predecessors=["programming"], required_inputs=["use_zone"],
             criteria_refs=[
                 CriterionRef(criterion_id="far", kind=CriterionKind.QUANTITATIVE,
-                             ssot_ref="far_floor_area", basis_article="국토계획법 시행령"),
+                             ssot_ref="far_floor_area", basis_article="국토계획법 시행령",
+                             legal_ref_ids=["국토계획법§78", "국토계획법시행령§85"]),   # 용적률 법률+시행령
                 CriterionRef(criterion_id="bcr", kind=CriterionKind.QUANTITATIVE,
-                             ssot_ref="building_area", basis_article="국토계획법 시행령"),
+                             ssot_ref="building_area", basis_article="국토계획법 시행령",
+                             legal_ref_ids=["국토계획법§77", "국토계획법시행령§84"]),   # 건폐율 법률+시행령(§77 배선)
             ],
             deliverables=["법규검토서"],
         ),

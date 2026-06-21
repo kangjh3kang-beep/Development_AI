@@ -23,6 +23,9 @@ class CriterionRef(BaseModel):
     ssot_ref: str | None = None        # QUANTITATIVE: 산정변수 id(target_variable). QUALITATIVE: rubric id
     measure: str = "limit_ratio"        # 부합도 산식 식별자(측정 방식 — 법정 수치 아님)
     basis_article: str | None = None
+    # 명시 근거조문 식별자(legal_refs 사전 키) — 정밀 조문 근거를 결정적으로 연결(예 건폐율=국토계획법§77+시행령§84).
+    # basis_article(자유텍스트 해소)에 더해 명시 키로 정확·다중 근거 부착(설명가능성 정밀화·orphan 조문 배선).
+    legal_ref_ids: list[str] = Field(default_factory=list)
 
 
 class StageSpec(BaseModel):
