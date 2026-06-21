@@ -93,7 +93,8 @@ export interface AddressEntry {
   buildingName?: string;
   mainPurpose?: string;
   unitCount?: number;
-  infoStatus?: "ok" | "ambiguous" | "failed"; // 토지정보 보강 결과
+  // 토지정보 보강 결과. partial = PNU는 확보했으나 용도지역 등 일부 미확보(재보강 가능).
+  infoStatus?: "ok" | "partial" | "ambiguous" | "failed";
 }
 
 /** 종합 토지분석 결과 요약 — onAnalyzed 콜백으로 전달(store 비기록 모드에서도 면적 자동채움 등 유지) */
@@ -167,6 +168,8 @@ export function GlobalAddressSearch({
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   // 지도 클릭 필지 선택 패널 표시 여부(다필지 모드 전용)
   const [showMapPicker, setShowMapPicker] = useState(false);
+  // 수동 재보강 진행중인 필지 uid 집합 — 버튼 '조회중…' 표시 + 중복클릭 가드(이중요청 방지).
+  const [rerunningUids, setRerunningUids] = useState<Set<string>>(new Set());
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
@@ -389,16 +392,24 @@ export function GlobalAddressSearch({
     // 키 = "시군구|동" 조합(동명만으로는 전파하지 않음). 시군구가 없으면 키를 만들지 않는다.
     const sgDongBcode = new Map<string, string>();
     for (const e of entries) {
-      const b = e.bcode || (e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "");
+      // ★검증된 bcode만 형제전파 학습 — PNU 동반(실제 조회로 확정)만 신뢰한다.
+      //   엑셀 입력 bcode는 양식 예시값(의정부 4115·강남 1168)이 1~2행에 남아 주소와 어긋날 수
+      //   있어 형제 학습에서 제외(오염 전파 방지). PNU 없는 엑셀 bcode는 백엔드가 주소로 재해소.
+      const b = e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "";
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
       const d = dongOf(src);
       if (b && b.length >= 10 && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b.slice(0, 10));
     }
     const bcodeFor = (e: AddressEntry): string => {
-      if (e.bcode) return e.bcode; // 자기 bcode가 있으면 그대로(가장 신뢰 가능).
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
+      // ★엑셀 bcode 오염 가드(근본수정): 양식 예시 bcode(의정부 4115010100·강남 1168010100)가
+      //   1~2행에 남아 주소(예: 동작구)와 시군구가 어긋나면 잘못된 지역을 조회해 용도지역/건폐/
+      //   용적을 못 불러온다('보완필요' 고착). PNU가 동반된 bcode(실제 조회로 확정)이거나, 시군구
+      //   없는 짧은주소(=bcode 힌트 필요)일 때만 자기 bcode를 신뢰한다. 그 외(풀주소+PNU없는
+      //   엑셀 bcode)는 오염으로 보고 버려, 백엔드가 주소로 재해소하게 한다.
+      if (e.bcode && (e.pnu || !sg)) return e.bcode;
       // 시군구가 없는 짧은주소는 형제 bcode를 물려받지 않는다 → 백엔드 C2 자동해소(ok)에 위임.
       if (!sg) return "";
       const d = dongOf(src);
@@ -603,6 +614,36 @@ export function GlobalAddressSearch({
   }, [writeToContext, updateSiteAnalysis]);
   // 재시도 setTimeout이 항상 최신 enrichParcels를 호출하도록 ref 동기화(렌더마다 갱신).
   enrichParcelsRef.current = enrichParcels;
+
+  // ★수동 재보강(재실행) — 자동 재시도 2회 소진 후 '보완필요'로 굳은 필지를 사용자가 직접 다시
+  //   조회한다. 핵심: enrichTries를 0으로 리셋해야 enrichParcels 내부 자기치유 게이트(최대 2시도)에
+  //   다시 걸려 재시도가 실효한다. 백엔드 연도폴백+status 정직화(partial)와 합쳐, 일시장애가 아닌
+  //   '데이터 부재'였던 필지도 공공데이터 갱신 시 채워질 기회를 준다. 무목업: 끝내 미해소면 다시
+  //   정직하게 '보완필요'로 남는다(가짜 zone 생성 없음).
+  const manualRerun = useCallback(async (targets: AddressEntry[]) => {
+    const valid = targets.filter((e) => e.__uid && (e.fullAddress || e.jibunAddress || e.pnu));
+    if (valid.length === 0) return;
+    // 중복클릭 가드: 이미 재보강 중인 필지는 제외.
+    const fresh = valid.filter((e) => !rerunningUids.has(e.__uid as string));
+    if (fresh.length === 0) return;
+    for (const e of fresh) {
+      if (e.__uid) enrichTries.current.set(e.__uid, 0); // 시도횟수 리셋 → 자기치유 재가동
+    }
+    setRerunningUids((prev) => {
+      const next = new Set(prev);
+      for (const e of fresh) if (e.__uid) next.add(e.__uid);
+      return next;
+    });
+    try {
+      await enrichParcelsRef.current(fresh);
+    } finally {
+      setRerunningUids((prev) => {
+        const next = new Set(prev);
+        for (const e of fresh) if (e.__uid) next.delete(e.__uid);
+        return next;
+      });
+    }
+  }, [rerunningUids]);
 
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {
@@ -947,6 +988,27 @@ export function GlobalAddressSearch({
               {parcelStats.needFixCnt > 0 && (
                 <span className="rounded bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-1.5 py-0.5 font-semibold text-[var(--status-warning)]">보완필요 {parcelStats.needFixCnt}</span>
               )}
+              {/* ★일괄 재보강: 면적/용도지역 미확보(infoStatus≠ok) 필지를 한 번에 다시 조회.
+                  자동 재시도 2회 소진 후 굳은 필지의 수동 복구경로(추적 fix_design의 '전체 재보강'). */}
+              {(() => {
+                const stuck = displayAddresses.filter((a) =>
+                  (a.fullAddress || a.jibunAddress || a.pnu) &&
+                  (!(a.areaSqm && a.areaSqm > 0) || (a.infoStatus != null && a.infoStatus !== "ok") || !a.zoneCode),
+                );
+                if (stuck.length === 0) return null;
+                const anyBusy = stuck.some((a) => a.__uid && rerunningUids.has(a.__uid));
+                return (
+                  <button
+                    type="button"
+                    disabled={anyBusy}
+                    onClick={() => { void manualRerun(stuck); }}
+                    title="보완필요 필지의 토지정보를 한 번에 다시 조회합니다"
+                    className="rounded border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] disabled:opacity-50"
+                  >
+                    {anyBusy ? "조회중…" : `↻ 보완필요 ${stuck.length}건 재보강`}
+                  </button>
+                );
+              })()}
             </div>
           )}
           {/* 대표 필지 안내(다필지 전용) — 부지분석은 '통합' 기준이고, 아래 표기는 표시용 대표(개발가능
@@ -979,7 +1041,7 @@ export function GlobalAddressSearch({
               <li key={`${row.label}-${idx}`} className="flex items-start gap-2 px-3 py-1.5 hover:bg-[var(--surface-muted)]/40">
                 <span className="mt-0.5 w-7 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-hint)]">{idx + 1}</span>
                 <div className="min-w-0 flex-1">
-                  {/* 1행: 지번 + 면적 */}
+                  {/* 1행: 지번 + 면적 + (보완필요 시) 재보강 버튼 */}
                   <div className="flex items-center gap-2">
                     <span className="flex-1 truncate text-[12px] font-medium text-[var(--text-primary)]" title={row.label}>{row.label}</span>
                     {row.areaSqm && row.areaSqm > 0 ? (
@@ -989,6 +1051,25 @@ export function GlobalAddressSearch({
                     ) : (
                       <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">{isAnalyzing ? "조회중…" : "보완필요"}</span>
                     )}
+                    {/* ★재보강(재실행): 면적 미확보 또는 용도지역 미확보(infoStatus≠ok) 필지만 노출.
+                        클릭 시 해당 필지만 시도횟수 리셋 후 재조회(공공데이터 갱신분 반영 기회). */}
+                    {(() => {
+                      const uid = row.entry.__uid;
+                      const needFix = !(row.areaSqm && row.areaSqm > 0) || (row.entry.infoStatus != null && row.entry.infoStatus !== "ok") || !row.zoneCode;
+                      if (!needFix || !uid) return null;
+                      const busy = rerunningUids.has(uid);
+                      return (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => { void manualRerun([row.entry]); }}
+                          title="이 필지의 토지정보(용도지역·면적 등)를 다시 조회합니다"
+                          className="shrink-0 rounded border border-[var(--line)] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] disabled:opacity-50"
+                        >
+                          {busy ? "조회중…" : "↻ 재보강"}
+                        </button>
+                      );
+                    })()}
                   </div>
                   {/* 엑셀 입력↔공부상 면적 괴리 경고 — 공부상(권원) 채택했음을 정직 고지(입력값 참고 보존) */}
                   {row.areaWarning && (
