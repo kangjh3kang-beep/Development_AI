@@ -84,6 +84,40 @@ def test_mime_for():
     assert os_mod.mime_for("a.unknown") == "application/octet-stream"
 
 
+# ── 압축: 텍스트 도면만 gzip + 라운드트립(투명 해제) ──
+def test_compress_text_drawing_gzip_roundtrip():
+    import gzip
+    raw = ("0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n" * 500).encode()
+    body, enc = os_mod.compress_for_storage(raw, "배치도.dxf")
+    assert enc == "gzip" and len(body) < len(raw)       # 압축됨
+    assert gzip.decompress(body) == raw                  # 원본 무손실 복원(투명 해제 정합)
+    # IFC도 압축
+    _, enc2 = os_mod.compress_for_storage(b"ISO-10303-21;\n" * 200, "model.ifc")
+    assert enc2 == "gzip"
+
+
+def test_compress_skips_already_compressed():
+    # 이미 압축된 형식(이미지·pdf·xlsx)·미지원은 패스(원본 그대로·encoding None)
+    for fn in ("a.png", "a.jpg", "a.pdf", "a.xlsx", "a.unknown"):
+        body, enc = os_mod.compress_for_storage(b"binarydata" * 50, fn)
+        assert enc is None and body == b"binarydata" * 50
+
+
+def test_compress_empty_passthrough():
+    body, enc = os_mod.compress_for_storage(b"", "a.dxf")
+    assert enc is None and body == b""
+
+
+def test_auth_headers_signs_content_encoding(monkeypatch):
+    _set_env(monkeypatch)
+    conf = os_mod._conf()
+    h = os_mod._auth_headers(conf, "PUT", "design/T1/h.dxf", payload_hash=os_mod._sha256_hex(b"x"),
+                             content_type="application/dxf", content_encoding="gzip")
+    assert h.get("content-encoding") == "gzip"
+    # 서명된 헤더 목록에 content-encoding 포함(서명 정합)
+    assert "content-encoding" in h["Authorization"].split("SignedHeaders=")[1]
+
+
 # ── 미설정 시 비활성(정직 강등) — 네트워크 호출 없음 ──
 def test_unconfigured_is_disabled(monkeypatch):
     for k in _ENV:
@@ -159,19 +193,27 @@ async def test_store_original_unconfigured(monkeypatch):
 
 
 async def test_store_original_uploads_when_new(monkeypatch):
+    import gzip
+
     from app.services.design_ingest import ingest_service
+    captured = {}
 
     async def _not_exists(_k):
         return False
 
-    async def _put(_k, _d, _ct):
+    async def _put(_k, data, _ct, content_encoding=None):
+        captured["data"], captured["enc"] = data, content_encoding
         return True, None
 
     monkeypatch.setattr(os_mod, "is_configured", lambda: True)
     monkeypatch.setattr(os_mod, "object_exists", _not_exists)
     monkeypatch.setattr(os_mod, "put_object", _put)
-    key, stored, reason = await ingest_service._store_original(b"d", "배치.dxf", _H, "T1")
+    raw = ("0\nLINE\n8\n0\n" * 300).encode()  # 텍스트 도면 → 압축 대상
+    key, stored, reason = await ingest_service._store_original(raw, "배치.dxf", _H, "T1")
     assert key == f"design/T1/{_H}.dxf" and stored is True and reason is None
+    # ★텍스트 도면은 gzip 압축돼 전송됐는지(저장GB 절감)
+    assert captured["enc"] == "gzip" and len(captured["data"]) < len(raw)
+    assert gzip.decompress(captured["data"]) == raw
 
 
 async def test_store_original_dedup_skips_upload(monkeypatch):
@@ -198,7 +240,7 @@ async def test_store_original_put_failure_degrades(monkeypatch):
     async def _not_exists(_k):
         return False
 
-    async def _put(_k, _d, _ct):
+    async def _put(_k, _d, _ct, content_encoding=None):
         return False, "r2_status_403"
 
     monkeypatch.setattr(os_mod, "is_configured", lambda: True)

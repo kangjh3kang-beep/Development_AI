@@ -59,6 +59,7 @@ async def _store_original(
     """원본 파일을 R2에 저장(content_hash 키 dedup·테넌트 격리). 반환: (object_key, stored, 사유).
 
     미설정/실패는 정직 강등(예외 비전파). 이미 존재하면 재업로드 없이 stored=True(중복제거).
+    ★압축정책(텍스트 gzip)은 신규 인제스트에만 적용 — 기존 저장 객체엔 소급 안 됨(필요 시 별도 백필).
     """
     from app.services.design_ingest import object_store
 
@@ -68,7 +69,11 @@ async def _store_original(
         key = object_store.object_key(tenant_id, content_hash, filename)  # 잘못된 해시는 ValueError→강등
         if await object_store.object_exists(key):
             return key, True, "deduplicated"  # 동일 내용 이미 보관(재업로드 생략)
-        ok, reason = await object_store.put_object(key, content, object_store.mime_for(filename))
+        # 텍스트 도면(DXF/IFC)은 gzip 압축해 저장GB 절감(Content-Encoding으로 조회 시 투명 해제).
+        body, encoding = object_store.compress_for_storage(content, filename)
+        ok, reason = await object_store.put_object(
+            key, body, object_store.mime_for(filename), content_encoding=encoding
+        )
         return (key, True, None) if ok else (None, False, reason)
     except Exception as e:  # noqa: BLE001 — 원본 저장 실패가 인제스트(색인)를 깨면 안 됨
         logger.warning("design_ingest 원본 저장 생략: %s", str(e)[:120])
