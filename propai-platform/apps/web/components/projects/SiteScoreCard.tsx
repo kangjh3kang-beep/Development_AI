@@ -9,9 +9,53 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 type Factor = { key: string; name: string; raw: unknown; normalized: number; effective_weight: number; contribution: number; note: string };
-type ScoreResult = { score: number | null; grade: string | null; factors: Factor[]; weight_basis?: string; covered?: number; total_features?: number; calibrated?: boolean; message?: string };
+type ScoreResult = {
+  score: number | null; grade: string | null; factors: Factor[]; weight_basis?: string;
+  covered?: number; total_features?: number; calibrated?: boolean; message?: string;
+  // 백엔드가 evidence/legal_refs를 반환하면 우선 사용(있으면 그것 우선·없으면 factor 산식 트레이스로 폴백).
+  evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[];
+};
+
+/**
+ * 입지 점수 산출 근거(EvidencePanel) — 백엔드 evidence가 있으면 우선,
+ * 없으면 응답 factor(가중치·정규화값·기여도)로 산식 트레이스를 만든다(가짜값/가짜URL 0).
+ * 점수 = Σ(정규화값 × 가중치) → 지표별 기여도로 한 줄씩 근거를 보여준다.
+ */
+function buildSiteScoreEvidence(r: ScoreResult): EvidenceItem[] {
+  const backend = adaptEvidence(r.evidence, r.legal_refs);
+  if (backend.length > 0) return backend;
+
+  const items: EvidenceItem[] = [];
+  if (r.score != null) {
+    items.push({
+      label: "입지 총점",
+      value: `${r.score}/100점${r.grade ? ` (${r.grade})` : ""}`,
+      basis: `지표별 (정규화값 × 가중치) 기여도 합산${r.calibrated ? " · 지역보정 적용" : ""}`,
+    });
+  }
+  // 지표별 기여도: 점수 = Σ(정규화값 × 가중치). 각 지표의 산식을 한 줄씩 보여준다.
+  for (const f of r.factors ?? []) {
+    if (!f || !f.name) continue;
+    const weightPct = Math.round((f.effective_weight ?? 0) * 100);
+    items.push({
+      label: f.name,
+      value: `+${f.contribution}점`,
+      basis: `정규화 ${Math.round(f.normalized ?? 0)}점 × 가중치 ${weightPct}%${f.note ? ` · ${f.note}` : ""}`,
+    });
+  }
+  if (r.weight_basis) {
+    items.push({
+      label: "가중치 근거",
+      value: `${r.covered ?? "—"}/${r.total_features ?? "—"}개 지표`,
+      basis: r.weight_basis,
+    });
+  }
+  return items;
+}
 
 const GRADE_CLR: Record<string, string> = {
   "A+": "text-emerald-500", A: "text-emerald-500", "B+": "text-sky-500",
@@ -77,6 +121,10 @@ export function SiteScoreCard() {
         ))}
       </div>
       {res.weight_basis && <p className="mt-3 text-[10px] text-[var(--text-hint)]">{res.weight_basis}</p>}
+
+      {/* 산출 근거(EvidencePanel) — 점수 = Σ(정규화값 × 가중치) 산식을 지표별로 한 줄씩.
+          ★법령 URL은 백엔드 get_legal_refs 출력만(프론트 URL 조립 금지) — 미반환 시 basis 텍스트만. */}
+      <EvidencePanel className="mt-3" items={buildSiteScoreEvidence(res)} title="입지 점수 산출 근거" />
     </div>
   );
 }

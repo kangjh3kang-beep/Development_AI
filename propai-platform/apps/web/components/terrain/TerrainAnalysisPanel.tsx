@@ -16,6 +16,7 @@ import {
   relativeKoreanTime,
 } from "@/lib/use-analysis-cache";
 import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import {
   Area,
   AreaChart,
@@ -102,6 +103,49 @@ function VolumeBar({ label, value, color, max }: { label: string; value: number;
       </div>
     </div>
   );
+}
+
+/**
+ * 지형분석 산출 근거(EvidencePanel) — 응답(경사·토공·단면) 수치로 산식 트레이스를 만든다.
+ * 광역 DEM 근사라 백엔드가 evidence/legal_refs를 반환하지 않아 basis 텍스트만 구성한다
+ * (가짜값/가짜URL 0 · 법령 URL 프론트 조립 금지). 값이 없는 항목은 추가하지 않는다(빈행 방지).
+ */
+function buildTerrainEvidence(r: TerrainResult): EvidenceItem[] {
+  const items: EvidenceItem[] = [];
+  const slope = r.slope;
+  const earth = r.earthwork;
+  const sec = r.cross_section;
+  const confPct = r.confidence != null ? Math.round(r.confidence * 100) : null;
+
+  if (slope) {
+    items.push({
+      label: "평균 경사도",
+      value: `${slope.mean_pct.toFixed(1)}% (${slope.class})`,
+      basis: `${SLOPE_META[slope.class].desc} · 최대경사 ${slope.max_pct.toFixed(1)}%${r.elevation_source ? ` · 표고소스 ${r.elevation_source}` : ""}`,
+    });
+  }
+  if (earth) {
+    items.push({
+      label: "순 토공량",
+      value: `${n0(earth.net_m3)}m³ (${earth.balance})`,
+      basis: `절토 ${n0(earth.cut_volume_m3)}m³ − 성토 ${n0(earth.fill_volume_m3)}m³ · 기준고 ${n1(earth.base_level_m)}m`,
+    });
+  }
+  if (sec) {
+    items.push({
+      label: "지형 고저차",
+      value: `${n1(sec.relief_m)}m`,
+      basis: `단면 최고 ${n1(sec.max_elev_m)}m − 최저 ${n1(sec.min_elev_m)}m (방위 ${Math.round(sec.bearing_deg)}°·길이 ${n0(sec.length_m)}m)`,
+    });
+  }
+  if (confPct != null) {
+    items.push({
+      label: "분석 신뢰도",
+      value: `${confPct}%`,
+      basis: `표본 ${n0(r.sample_count)}점${r.resolution_m != null ? ` · 해상도 ${n1(r.resolution_m)}m` : ""} 기반 약식 추정`,
+    });
+  }
+  return items;
 }
 
 export function TerrainAnalysisPanel({
@@ -460,6 +504,10 @@ export function TerrainAnalysisPanel({
                 출처: {res.sources.join(" · ")}
               </p>
             )}
+
+            {/* 산출 근거(EvidencePanel) — 경사·토공·단면 수치의 산식을 한 줄씩(가짜값/가짜URL 0).
+                약식 DEM 근사라 basis 텍스트만(법령 URL 프론트 조립 금지). 빈 items면 미렌더. */}
+            <EvidencePanel className="mt-3" items={buildTerrainEvidence(res)} title="지형분석 산출 근거" />
           </>
         )}
       </CardContent>

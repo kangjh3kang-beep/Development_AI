@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v276-verification-panel";
+const CACHE_NAME = "propai-v277-evidence-cards";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
