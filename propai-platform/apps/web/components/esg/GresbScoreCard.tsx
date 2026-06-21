@@ -66,17 +66,17 @@ function buildGresbEvidence(r: GresbResult): EvidenceItem[] {
     {
       label: "Management(경영)",
       value: `${c.management.score}/${c.management.max}점`,
-      basis: "ESG 정책·거버넌스 등 경영 구성 가중점수",
+      basis: `ESG 정책·거버넌스 등 경영 구성 점수 · 만점 ${c.management.max}점(총점 100점의 30% 비중) · 현재 ${c.management.score}점 반영`,
     },
     {
       label: "Performance(성과)",
       value: `${c.performance.score}/${c.performance.max}점`,
-      basis: "에너지·온실가스·용수 등 실측 성과 벤치마크 대비 점수",
+      basis: `에너지·온실가스·용수 등 실측 성과 벤치마크 대비 점수 · 만점 ${c.performance.max}점(총점 100점의 50% 비중) · 현재 ${c.performance.score}점 반영`,
     },
     {
       label: "Development(개발)",
       value: `${c.development.score}/${c.development.max}점`,
-      basis: "녹색건축 인증·재생에너지 등 개발단계 점수",
+      basis: `녹색건축 인증·재생에너지 등 개발단계 점수 · 만점 ${c.development.max}점(총점 100점의 20% 비중) · 현재 ${c.development.score}점 반영`,
     },
   ];
   if (c.energy) {
@@ -205,19 +205,21 @@ function ComponentBar({ label, score, max }: { label: string; score: number; max
   );
 }
 
-function BenchmarkBadge({ label, value, benchmark, rating }: {
-  label: string; value: number; benchmark: number; rating: string;
+function BenchmarkBadge({ label, value, benchmark, rating, unit }: {
+  label: string; value: number; benchmark: number; rating: string; unit?: string;
 }) {
   const ratingColors: Record<string, string> = {
     "우수": "bg-green-100 text-green-700 border-green-200",
     "보통": "bg-yellow-100 text-yellow-700 border-yellow-200",
     "개선필요": "bg-red-100 text-red-700 border-red-200",
   };
+  const unitStr = unit ? ` ${unit}` : "";
+  const ratio = benchmark > 0 ? `${((value / benchmark) * 100).toFixed(0)}%` : "—";
   return (
     <div className={`rounded-lg border p-2 ${ratingColors[rating] || "border-gray-200 bg-gray-50"}`}>
       <p className="text-[10px] font-medium uppercase">{label}</p>
-      <p className="text-sm font-semibold">{value.toFixed(1)}</p>
-      <p className="text-[10px]">벤치마크: {benchmark} | {rating}</p>
+      <p className="text-sm font-semibold">{value.toFixed(1)}{unitStr}</p>
+      <p className="text-[10px]">벤치마크: {benchmark}{unitStr} ({ratio}) | {rating}</p>
     </div>
   );
 }
@@ -506,6 +508,7 @@ export default function GresbScoreCard() {
                     value={result.components.energy.value}
                     benchmark={result.components.energy.benchmark}
                     rating={result.components.energy.rating}
+                    unit="kWh/m²"
                   />
                 )}
                 {result.components.ghg && (
@@ -514,33 +517,38 @@ export default function GresbScoreCard() {
                     value={result.components.ghg.value}
                     benchmark={result.components.ghg.benchmark}
                     rating={result.components.ghg.rating}
+                    unit="kgCO₂/m²"
                   />
                 )}
               </div>
             )}
 
-            {/* Recommendations */}
+            {/* Recommendations — sorted by potential_gain(impact) descending */}
             {(result.recommendations?.length ?? 0) > 0 && (
               <div className="space-y-2">
-                <p className="text-xs font-semibold text-gray-700">개선 권고사항</p>
-                {(result.recommendations ?? []).map((rec, i) => {
+                <p className="text-xs font-semibold text-gray-700">개선 권고사항 (영향도 순)</p>
+                {[...(result.recommendations ?? [])].sort((a, b) => b.potential_gain - a.potential_gain).map((rec, i) => {
                   const cost = COST_LABELS[rec.cost_grade] || COST_LABELS.medium;
+                  const impactLabel = rec.potential_gain >= 10 ? "매우 높음" : rec.potential_gain >= 6 ? "높음" : "중간";
                   return (
                     <div
-                      key={i}
+                      key={`${rec.area}-${rec.action}`}
                       className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3"
                     >
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
-                        {rec.priority}
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700" title={`원래 우선순위: ${rec.priority}, 영향도: ${impactLabel}`}>
+                        {i + 1}
                       </span>
                       <div className="flex-1">
                         <p className="text-xs font-medium text-gray-800">{rec.action}</p>
                         <div className="mt-1 flex items-center gap-2">
-                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="실현 시 단축 추가 점수">
                             +{rec.potential_gain}점
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${cost.color}`}>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${cost.color}`} title="구현 비용 수준">
                             {cost.text}
+                          </span>
+                          <span className="rounded px-1.5 py-0.5 bg-gray-200 text-[10px] text-gray-600" title={`점수 기여도: ${impactLabel}`}>
+                            영향 {impactLabel}
                           </span>
                           <span className="text-[10px] text-gray-400">{rec.area}</span>
                         </div>

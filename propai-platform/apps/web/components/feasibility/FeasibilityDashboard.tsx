@@ -1,9 +1,10 @@
 import React from "react";
 import { Card, CardContent } from "@propai/ui";
-import { 
+import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from "recharts";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
 type FeasibilityData = {
   massing?: {
@@ -64,6 +65,23 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
     { name: "세전 순수익", amount: financials.net_profit_10k },
   ];
 
+  // ★근거 기본제공: ROI/NPV/순수익이 '왜 이 값인가'를 산식으로 보인다. 모두 data의 실제 값으로만 구성(가짜값 0).
+  //   estimated_*·전용률75%·NPV 할인은 가설계 추정이므로 basis에 '추정'을 정직 표기한다.
+  const evidenceItems: EvidenceItem[] = [
+    { label: "예상 세전 순수익", value: formatPrice(financials.net_profit_10k), basis: "분양 수익 − 총 사업비" },
+    { label: "예상 수익률(ROI)", value: `${financials.roi_percent}%`, basis: "세전 순수익 ÷ 총 사업비 × 100 — 투입자본 대비 수익률(추정)" },
+    { label: "총 사업비", value: formatPrice(financials.total_cost_10k), basis: "토지 매입비 + 예상 건축비 + 부대 비용(아래 지출 구조 차트 참조)" },
+    { label: "분양 수익", value: formatPrice(financials.total_revenue_10k), basis: `건축가능 연면적 ${massing.gfa_pyeong.toLocaleString()}평 × 평당 분양가 ${formatPrice(assumptions?.avg_pyeong_price_10k || 0)} × 전용률 75%(추정)` },
+    { label: "건축비 단가", value: `평당 ${(assumptions?.construction_cost_per_pyeong_10k ?? 0).toLocaleString()}만원`, basis: "예상 건축비 산정 단가(추정)" },
+  ];
+  if (financials.npv_10k != null) {
+    evidenceItems.push({
+      label: "순현재가치(NPV)",
+      value: formatPrice(financials.npv_10k),
+      basis: `할인율 ${((assumptions?.npv_discount_rate ?? 0.08) * 100).toFixed(0)}%·${assumptions?.npv_dev_period_years ?? 3}년 가정의 개략 할인값(참고용·정밀 IRR/NPV는 정밀 수지엔진)`,
+    });
+  }
+
   return (
     <div className="flex flex-col gap-6 mt-8 mb-8">
       <div className="sa-di-block">
@@ -85,7 +103,12 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                     <span className="font-semibold text-sm">{zoneType || "정보 없음"}</span>
                   </div>
                   <div className="flex justify-between border-b border-[var(--line-light)] pb-2">
-                    <span className="text-[var(--text-secondary)] text-sm">예상 건폐율 / 용적률</span>
+                    <span
+                      className="text-[var(--text-secondary)] text-sm"
+                      title="가설계 기준 추정값입니다. 실효 용적률(조례)·법정 상한과 다를 수 있으니 부지분석의 '건축 가능 범위'(정북일조·실효 한도)를 함께 확인하세요."
+                    >
+                      예상 건폐율 / 용적률 <span className="text-[10px] text-[var(--text-hint)]">(추정)</span>
+                    </span>
                     <span className="font-semibold text-sm text-[var(--status-info)]">
                       {massing.estimated_bca}% / {massing.estimated_far}%
                     </span>
@@ -205,6 +228,11 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                 </div>
               </CardContent>
             </Card>
+          </div>
+
+          {/* 산출 근거(EvidencePanel) — ROI/NPV/순수익 산식 트레이스. data의 실제 값만 사용(가짜값/가짜URL 0). */}
+          <div className="md:col-span-2">
+            <EvidencePanel items={evidenceItems} title="사업 타당성 산출 근거" />
           </div>
         </div>
       </div>
