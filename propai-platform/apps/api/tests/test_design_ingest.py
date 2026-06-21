@@ -110,6 +110,16 @@ def test_point_id_tenant_namespaced():
     assert len(a.point_id(tenant_id="T1")) == 36
 
 
+def test_to_payload_includes_discipline():
+    # payload에 분야(discipline) 포함 — 분야별 검색 필터용(택소노미 파생)
+    s = DesignSpec(source_format="dxf", drawing_type="structural_plan")
+    assert s.to_payload()["discipline"] == "구조"
+    s2 = DesignSpec(source_format="dxf", drawing_type="floor_plan")
+    assert s2.to_payload()["discipline"] == "건축"
+    s3 = DesignSpec(source_format="unknown", drawing_type="unknown")
+    assert s3.to_payload()["discipline"] is None  # 미상은 None(정직)
+
+
 def test_detect_drawing_type_taxonomy():
     from app.services.design_ingest.design_spec import (
         DRAWING_TYPES,

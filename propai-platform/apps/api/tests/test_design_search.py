@@ -96,6 +96,58 @@ def test_search_happy_path(monkeypatch):
     assert out["results"][0]["title"] == "84A"
 
 
+def test_build_filter_discipline():
+    # 분야 필터 — discipline + tenant = must 2건
+    f = _build_filter(SiteQuery(discipline="구조", tenant_id="t1"))
+    assert f is not None and len(f.must) == 2
+
+
+def test_search_design_set_merges_broad_and_disciplines(monkeypatch):
+    async def _fake_embed(_t):
+        return [0.1] * ss.EMBED_DIM, None
+
+    class _FakeResp:
+        def __init__(self, pts):
+            self.points = pts
+
+    calls = {"n": 0}
+
+    class _FakeClient:
+        def query_points(self, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:  # broad — 건축 다종
+                return _FakeResp([
+                    _FakePoint("p1", 0.95, {"drawing_type": "floor_plan", "discipline": "건축"}),
+                    _FakePoint("p2", 0.90, {"drawing_type": "elevation", "discipline": "건축"}),
+                ])
+            # 분야 보강 — 신규 분야 도면 + p1 중복(낮은 점수, dedupe로 0.95 유지 확인)
+            return _FakeResp([
+                _FakePoint(f"d{calls['n']}", 0.5, {"drawing_type": "structural_plan", "discipline": "구조"}),
+                _FakePoint("p1", 0.40, {"drawing_type": "floor_plan", "discipline": "건축"}),
+            ])
+
+    monkeypatch.setattr(ss, "embed_text", _fake_embed)
+    import apps.api.database.init_qdrant as iq
+    monkeypatch.setattr(iq, "get_qdrant_client", lambda: _FakeClient())
+
+    out = asyncio.run(ss.search_design_set(SiteQuery(area_sqm=84.0), ["구조", "전기"], broad_k=8, k_each=2))
+    assert out["ok"] and out["skipped_reason"] is None
+    assert calls["n"] == 3  # broad 1 + 분야 2
+    ids = [r["point_id"] for r in out["results"]]
+    assert ids.count("p1") == 1 and "p2" in ids and "d2" in ids  # 중복제거 + 분야 보강
+    # 점수순 + 중복 p1은 높은 점수(0.95) 유지
+    assert out["results"][0]["point_id"] == "p1" and out["results"][0]["score"] == 0.95
+
+
+def test_search_design_set_skips_when_no_key(monkeypatch):
+    async def _no_key(_t):
+        return None, "no_openai_key"
+
+    monkeypatch.setattr(ss, "embed_text", _no_key)
+    out = asyncio.run(ss.search_design_set(SiteQuery(area_sqm=84.0), ["구조"]))
+    assert out["ok"] and out["count"] == 0 and out["skipped_reason"] == "no_openai_key"
+
+
 def test_search_qdrant_error_degrades(monkeypatch):
     async def _fake_embed(_text):
         return [0.1] * ss.EMBED_DIM, None
