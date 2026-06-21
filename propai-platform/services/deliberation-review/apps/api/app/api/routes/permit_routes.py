@@ -61,8 +61,8 @@ async def permit_process(payload: dict = Body(...), session: AsyncSession = Depe
             dependencies=[Depends(require_token)])
 async def get_permit_run(run_id: str, session: AsyncSession = Depends(get_session),
                          tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> PermitProcessResult:
-    out = await get_permit_process(session, run_id, tenant_id=tenant_id)
-    if out is None:
+    out = await get_permit_process(session, run_id, tenant_id=tenant_id, spec_id="permit-default")
+    if out is None:   # 미존재/타테넌트/타프로세스(design 등) 동일 404(프로세스 분리·존재은닉)
         raise HTTPException(status_code=404, detail="permit process run not found")
     return out
 
@@ -72,4 +72,4 @@ async def get_permit_run(run_id: str, session: AsyncSession = Depends(get_sessio
 async def list_project_permit(project_id: uuid.UUID, session: AsyncSession = Depends(get_session),
                               tenant_id: uuid.UUID | None = Depends(get_tenant_id)
                               ) -> list[PermitProcessResult]:
-    return await get_project_permit(session, project_id, tenant_id=tenant_id)
+    return await get_project_permit(session, project_id, tenant_id=tenant_id, spec_id="permit-default")
