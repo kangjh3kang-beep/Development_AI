@@ -602,6 +602,8 @@ from apps.api.routers import presale as _presale_router  # 분양·청약 정보
 app.include_router(_presale_router.router, tags=["분양정보"])  # 자체 prefix=/api/v1/presale
 from apps.api.routers import design_references as _design_ref_router  # 표준설계 참조 라이브러리(P7)
 app.include_router(_design_ref_router.router, tags=["설계 참조 라이브러리"])  # 자체 prefix=/api/v1/design-references
+from apps.api.routers import personas as _personas_router  # P1 실무 전문가 페르소나(분양대행·도시계획)
+app.include_router(_personas_router.router, prefix="/api/v1", tags=["실무 전문가 페르소나"])  # /api/v1/personas
 app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])
 app.include_router(user_store.router, prefix="/api/v1", tags=["사용자 저장소"])
