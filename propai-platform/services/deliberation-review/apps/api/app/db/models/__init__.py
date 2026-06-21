@@ -58,3 +58,4 @@ from app.db.models.l3c_models import (  # noqa: F401
 )
 from app.db.models.analysis_models import AnalysisRunModel  # noqa: F401
 from app.db.models.cache_models import ExternalSourceCacheModel  # noqa: F401
+from app.db.models.permit_models import PermitProcessRunModel  # noqa: F401
