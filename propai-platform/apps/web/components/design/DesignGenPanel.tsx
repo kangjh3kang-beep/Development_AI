@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -22,6 +23,12 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
+
+// WebGL/three 번들을 초기 로드에서 분리 — SSR 회피, 지연 마운트로 메인스레드 점유 방지.
+const ProposalMassPreview = dynamic(
+  () => import("./ProposalMassPreview").then((m) => m.ProposalMassPreview),
+  { ssr: false },
+);
 
 /* ── 백엔드 계약 타입 ── */
 type Confidence = "ordinance" | "statutory" | "rule" | "measured" | "estimated" | "unknown";
@@ -397,6 +404,8 @@ export function DesignGenPanel({ projectId }: Props) {
   const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
   // 설계안 피드백(👍👎) — 자가학습 신호(인덱스→verdict).
   const [feedback, setFeedback] = useState<Record<number, "up" | "down">>({});
+  // 3D 매스 프리뷰 토글(추천 카드 전용) — per-proposal 독립 토글.
+  const [show3d, setShow3d] = useState<Record<number, boolean>>({});
 
   async function handleIngest() {
     if (!file) return;
@@ -442,6 +451,7 @@ export function DesignGenPanel({ projectId }: Props) {
     setResult(null);
     setAppliedIdx(null);
     setFeedback({});
+    setShow3d({});
     try {
       const data = await apiClient.post<GenerateResult>("/design-gen/generate", {
         body: {
@@ -1086,6 +1096,46 @@ export function DesignGenPanel({ projectId }: Props) {
                         )}
                       </span>
                     </div>
+                    {/* 3D 매스 프리뷰 — 추천 카드 전용. 치수 데이터 있을 때만 버튼 노출(정직). */}
+                    {isRec && (() => {
+                      const floors = c.estimated_floors ?? 0;
+                      const gfa = c.estimated_gfa_sqm ?? 0;
+                      const fpW = c.parking_layout?.footprint_w_m;
+                      const fpD = c.parking_layout?.footprint_d_m;
+                      const hasFp = typeof fpW === "number" && isFinite(fpW) && fpW > 0
+                        && typeof fpD === "number" && isFinite(fpD) && fpD > 0;
+                      const canShow3d = floors > 0 && (hasFp || gfa > 0);
+                      if (!canShow3d) return null;
+                      // 치수 도출: parking_layout footprint 우선, 없으면 gfa/floors 역산.
+                      let w: number, d: number;
+                      if (hasFp) {
+                        w = fpW as number;
+                        d = fpD as number;
+                      } else {
+                        const fp = gfa / floors;
+                        const rawD = Math.sqrt(fp / 1.6);
+                        d = Math.min(40, Math.max(8, rawD));
+                        w = Math.min(120, Math.max(8, fp / d)); // 대형 footprint 시 비현실 폭 방지(개략)
+                      }
+                      return (
+                        <div className="mt-3">
+                          <Button
+                            variant="secondary"
+                            onClick={() => setShow3d((prev) => ({ ...prev, [i]: !prev[i] }))}
+                          >
+                            🧊 3D 매스 {show3d[i] ? "닫기" : "보기"}
+                          </Button>
+                          {show3d[i] && (
+                            <div className="mt-2">
+                              <ProposalMassPreview width={w} depth={d} floors={floors} />
+                              <span className="mt-1 block text-[11px] text-[var(--text-hint)]">
+                                개략 매스(추정 치수 기준 · 정밀 BIM 아님). 정확한 3D·도면은 &apos;CAD/BIM 스튜디오&apos;에서.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
