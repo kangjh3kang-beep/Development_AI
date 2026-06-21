@@ -24,6 +24,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import {
+  adaptEvidence,
+  type BackendEvidence,
+  type BackendLegalRef,
+} from "@/lib/evidence/adaptEvidence";
 
 /* ── 백엔드 계약(읽기 전용 타입) ── */
 
@@ -367,6 +373,20 @@ function ArtifactCards({ artifacts }: { artifacts: Record<string, unknown> }) {
     cards.push(<CostValidationCard key="cost" data={a.cost_validation as Record<string, unknown>} />);
   if (!cards.length) return null;
   return <div className="grid gap-2 sm:grid-cols-2">{cards}</div>;
+}
+
+/** 백엔드 build_evidence_block 출력(verification.evidence_block) — 근거+법령링크 조인용. */
+function EvidenceSection({ verification }: { verification: Record<string, unknown> }) {
+  // verification.evidence_block = {evidence[], legal_refs[], provenance[], trust} (additive·없을 수 있음).
+  const block = verification?.evidence_block as
+    | { evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[] }
+    | undefined
+    | null;
+  // adaptEvidence로 evidence[]+legal_refs[]를 EvidencePanel 소비형으로 합성(verified url만 링크).
+  const items = adaptEvidence(block?.evidence, block?.legal_refs);
+  // 근거 0건이면 렌더 안 함(빈 패널 방지·무목업).
+  if (items.length === 0) return null;
+  return <EvidencePanel title="산출 근거·법령" items={items} />;
 }
 
 /** verification(trust·expert_panel)·gate를 보조 칩으로 표면화(확정%는 status=confirmed일 때만). */
@@ -742,6 +762,9 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
 
           {/* artifact 카드(존재 키만) */}
           <ArtifactCards artifacts={report.artifacts ?? {}} />
+
+          {/* 산출 근거·법령링크(verification.evidence_block — 있을 때만, 무목업) */}
+          <EvidenceSection verification={report.verification ?? {}} />
 
           {/* 다운로드 */}
           <div className="flex flex-wrap items-center gap-2 border-t border-[var(--line-strong)] pt-3">

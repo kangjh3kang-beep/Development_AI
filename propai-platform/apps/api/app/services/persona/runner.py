@@ -813,6 +813,201 @@ _PIPELINES = {
 }
 
 
+# ── 근거·법령링크 공용 부착(전역정책 Phase0, additive) ──
+
+def _num_str(v: Any, suffix: str = "") -> str | None:
+    """숫자를 보기 좋은 문자열로(없으면 None — 빈 근거행 방지). graceful."""
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        # 정수면 소수점 제거, 아니면 그대로(천단위 콤마).
+        s = f"{round(f):,}" if abs(f - round(f)) < 1e-9 else f"{f:,.1f}"
+        return f"{s}{suffix}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _ev_urban(artifacts: dict[str, Any]) -> tuple[list[dict], list[str], list[str]]:
+    """도시계획 — zone_limits(법정/조례/실효 용적·건폐) + 인허가 위임법령 근거.
+
+    이미 산출된 artifacts.zone_limits 만 읽어 근거 트레이스를 만든다(재계산 0).
+    법령키는 이해단계가 검증한 실존 verified키만(far_limit/bcr_limit/ordinance_*/zone_use/building_permit).
+    """
+    items: list[dict[str, Any]] = []
+    keys: list[str] = []
+    zl = artifacts.get("zone_limits") if isinstance(artifacts.get("zone_limits"), dict) else {}
+    far = (zl.get("far") or {}) if isinstance(zl, dict) else {}
+    bcr = (zl.get("bcr") or {}) if isinstance(zl, dict) else {}
+    # 법정 상한(국토계획법 시행령 제85·84조).
+    v = _num_str(far.get("legal"), "%")
+    if v:
+        items.append({"label": "법정 용적률 상한", "value": v,
+                      "basis": "용도지역 국가 법정상한(국토계획법 시행령)", "legal_ref_key": "far_limit"})
+        keys.append("far_limit")
+    v = _num_str(bcr.get("legal"), "%")
+    if v:
+        items.append({"label": "법정 건폐율 상한", "value": v,
+                      "basis": "용도지역 국가 법정상한(국토계획법 시행령)", "legal_ref_key": "bcr_limit"})
+        keys.append("bcr_limit")
+    # 조례 실효값(있고 법정과 다를 때만 — 중복·가짜 방지).
+    if far.get("ordinance") is not None and far.get("ordinance") != far.get("legal"):
+        v = _num_str(far.get("ordinance"), "%")
+        if v:
+            items.append({"label": "조례 적용 용적률", "value": v,
+                          "basis": "지자체 도시계획 조례 실효값", "legal_ref_key": "ordinance_far"})
+            keys.append("ordinance_far")
+    if bcr.get("ordinance") is not None and bcr.get("ordinance") != bcr.get("legal"):
+        v = _num_str(bcr.get("ordinance"), "%")
+        if v:
+            items.append({"label": "조례 적용 건폐율", "value": v,
+                          "basis": "지자체 도시계획 조례 실효값", "legal_ref_key": "ordinance_bcr"})
+            keys.append("ordinance_bcr")
+    # 실효(적용) 한도 — 위 한도 근거 공유(법령키 생략·중복 방지).
+    v = _num_str(far.get("effective"), "%")
+    if v:
+        items.append({"label": "실효 용적률(적용)", "value": v,
+                      "basis": "min(법정상한, 조례) — 실제 설계·분석 적용값"})
+    v = _num_str(bcr.get("effective"), "%")
+    if v:
+        items.append({"label": "실효 건폐율(적용)", "value": v,
+                      "basis": "min(법정상한, 조례) — 실제 설계·분석 적용값"})
+    # 인허가 위임법령(추천 방식 존재 시) — 용도제한·건축허가 근거.
+    if (artifacts.get("permit") or {}).get("methods"):
+        items.append({"label": "용도지역 용도제한", "value": "국토계획법 제76조",
+                      "basis": "용도지역에서의 건축물 제한", "legal_ref_key": "zone_use"})
+        keys.append("zone_use")
+        items.append({"label": "인허가 근거", "value": "건축법 제11조",
+                      "basis": "건축허가(개발방식별 위임법령)", "legal_ref_key": "building_permit"})
+        keys.append("building_permit")
+    return items, keys, ["vworld_zoning", "vworld_land_info", "molit_transactions"]
+
+
+def _ev_developer(artifacts: dict[str, Any]) -> tuple[list[dict], list[str], list[str]]:
+    """디벨로퍼 — Top1 수익성 + 토지비 신뢰도 + 용적률 법정한도 근거(산식기반·세금 basis 표기)."""
+    items: list[dict[str, Any]] = []
+    keys: list[str] = []
+    kpi = artifacts.get("kpi") if isinstance(artifacts.get("kpi"), dict) else {}
+    if kpi:
+        net = _num_str(kpi.get("net_profit_won"), "원")
+        if net:
+            items.append({"label": "사업타당성 순이익(Top1)", "value": net,
+                          "basis": "매출−원가(토지·공사·금융·세금) 산식"})
+        roi = _num_str(kpi.get("roi_pct"), "%")
+        if roi:
+            items.append({"label": "ROI(총사업비 대비)", "value": roi,
+                          "basis": "순이익 / 총사업비 × 100(산식기반)"})
+    far = _num_str(artifacts.get("effective_far_pct"), "%")
+    if far:
+        items.append({"label": "용적률 법정한도(수익률 영향)", "value": far,
+                      "basis": "zone_type 법정용적률(국토계획법 시행령)", "legal_ref_key": "far_limit"})
+        keys.append("far_limit")
+    lpr = artifacts.get("land_price_reliable")
+    if lpr is not None:
+        items.append({"label": "토지비 신뢰도", "value": "확보" if lpr else "미확보",
+                      "basis": "개별공시지가 확보 여부", "legal_ref_key": "official_land_price"})
+        keys.append("official_land_price")
+    return items, keys, ["molit_official_price", "molit_transactions"]
+
+
+def _ev_designer(artifacts: dict[str, Any]) -> tuple[list[dict], list[str], list[str]]:
+    """설계 — 법정 건폐/용적 한도(건축법 55/56조) + 설계 실제값 + 위반 판정 근거."""
+    items: list[dict[str, Any]] = []
+    keys: list[str] = []
+    comp = artifacts.get("compliance") if isinstance(artifacts.get("compliance"), dict) else {}
+    mass = artifacts.get("mass") if isinstance(artifacts.get("mass"), dict) else {}
+    # 법정 한도(zone_code 조회 성공 시 compliance 에 max_*_pct 존재).
+    v = _num_str((comp or {}).get("max_bcr_pct"), "%")
+    if v:
+        items.append({"label": "법정 건폐율 한도", "value": v,
+                      "basis": "zone_code 법정상한(건축법 제55조)", "legal_ref_key": "bldg_bcr"})
+        keys.append("bldg_bcr")
+    v = _num_str((comp or {}).get("max_far_pct"), "%")
+    if v:
+        items.append({"label": "법정 용적률 한도", "value": v,
+                      "basis": "zone_code 법정상한(건축법 제56조)", "legal_ref_key": "bldg_far"})
+        keys.append("bldg_far")
+    # 설계 실제값(AutoDesignEngine 산출 — 산식기반·법령키 없음).
+    v = _num_str((comp or {}).get("bcr_pct") or (mass or {}).get("bcr_pct"), "%")
+    if v:
+        items.append({"label": "설계 건폐율(실제)", "value": v, "basis": "AutoDesignEngine 최적 매스 산출"})
+    v = _num_str((comp or {}).get("far_pct") or (mass or {}).get("far_pct"), "%")
+    if v:
+        items.append({"label": "설계 용적률(실제)", "value": v, "basis": "AutoDesignEngine 최적 매스 산출"})
+    return items, keys, ["vworld_zoning", "vworld_land_info"]
+
+
+def _ev_constructor(artifacts: dict[str, Any]) -> tuple[list[dict], list[str], list[str]]:
+    """시공 — 평단가·총액·레인지 근거(법령 0건·산식만, 단가출처 정직 표기)."""
+    items: list[dict[str, Any]] = []
+    est = artifacts.get("estimate") if isinstance(artifacts.get("estimate"), dict) else {}
+    rng = artifacts.get("range") if isinstance(artifacts.get("range"), dict) else {}
+    if est:
+        v = _num_str(est.get("unit_cost_per_sqm"), "원/㎡")
+        if v:
+            items.append({"label": "평단가(기준)", "value": v,
+                          "basis": "2026년 기준 건축물 유형별 표준단가"})
+        v = _num_str(est.get("total_won"), "원")
+        if v:
+            items.append({"label": "직접공사비 총액", "value": v,
+                          "basis": "연면적(GFA) × 평단가(규칙기반 추정)"})
+    if rng:
+        lo = _num_str(rng.get("min_won"), "원")
+        hi = _num_str(rng.get("max_won"), "원")
+        if lo and hi:
+            items.append({"label": "공사비 레인지(최저~최대)", "value": f"{lo} ~ {hi}",
+                          "basis": "물가·자재비 변동 감안(±spread)"})
+    # 법령 근거 0건(시공은 산식기반) — sources도 미접촉(내부 기준단가).
+    return items, [], []
+
+
+# persona_key → 근거 빌더 함수. sales_agent 는 suggest 내부 trust 흡수라 별도 빌더 없음.
+_EVIDENCE_BUILDERS = {
+    "urban_planner": _ev_urban,
+    "developer": _ev_developer,
+    "designer": _ev_designer,
+    "constructor": _ev_constructor,
+}
+
+
+def _persona_evidence(persona_key: str, artifacts: dict[str, Any],
+                      verification: dict[str, Any]) -> dict[str, Any] | None:
+    """5페르소나 공통 근거·법령링크 부착 헬퍼(build_evidence_block 공용경유·additive).
+
+    이미 산출된 artifacts/verification만 읽어 근거 트레이스를 만들고, 검증된 verified
+    법령키만 레지스트리로 연결한다(신규키 발명·URL조립 0). 근거가 없으면 None(빈 패널 방지).
+    sales_agent 는 suggest 내부에 trust가 이미 흡수돼 별도 evidence를 만들지 않는다(전파만).
+    모든 단계 try/except graceful — 실패해도 페르소나 출력은 무손상.
+    """
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        builder = _EVIDENCE_BUILDERS.get(persona_key)
+        if builder is None:
+            return None
+        items, keys, sources = builder(artifacts or {})
+        if not items:
+            return None  # 근거 부재 → 빈 블록 미부착(정직·무목업)
+        # 조례 url 치환용 시군구 — 주소에서 추출(없으면 조례는 pending).
+        sigungu = None
+        try:
+            from app.services.land_intelligence.comprehensive_analysis_service import (
+                _extract_sigungu_from_address,
+            )
+            sigungu = _extract_sigungu_from_address(artifacts.get("address"))
+        except Exception:  # noqa: BLE001
+            pass
+        # trust — verification.trust(있으면) 흡수(이미 dict면 그대로 통과).
+        trust = (verification or {}).get("trust")
+        return build_evidence_block(
+            items=items, legal_ref_keys=keys, sigungu=sigungu,
+            trust=trust if isinstance(trust, dict) else None, sources=sources,
+        )
+    except Exception as e:  # noqa: BLE001 — 근거 부착 실패는 무손상(미부착)
+        logger.warning("페르소나 근거 블록 부착 스킵", err=str(e)[:100], persona=persona_key)
+        return None
+
+
 # ── 진입점 ──
 
 async def run_persona(key: str, db: AsyncSession, ctx: dict[str, Any],
@@ -839,6 +1034,12 @@ async def run_persona(key: str, db: AsyncSession, ctx: dict[str, Any],
 
     # ④ 정직 고지 → status(R12)
     status = _derive_status(items)
+
+    # 근거·법령링크 공용 부착(전역정책 Phase0, additive·graceful) — 기존 출력 무손상.
+    # 근거가 없거나 실패하면 미부착(빈 패널 방지·무목업). sales_agent 는 suggest trust 흡수.
+    evidence_block = _persona_evidence(spec.key, artifacts, verification)
+    if evidence_block:
+        verification["evidence_block"] = evidence_block
 
     # 응답 슬림화: PDF/PPT 재사용용 풀 보고서는 응답에서 제거(별도 엔드포인트가 재생성).
     artifacts.pop("_market_report_full", None)
