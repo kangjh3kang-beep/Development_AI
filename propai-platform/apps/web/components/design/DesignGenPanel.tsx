@@ -94,6 +94,12 @@ type GenerateResult = {
   permit: { is_permitted?: boolean; permit_complexity?: number; reason?: string } | null;
   proposals: Proposal[];
   recommendation: { index: number; verdict: string } | null;
+  verification?: {
+    verdict: string;
+    generated?: boolean;
+    summary?: string;
+    issues?: { severity?: string; note?: string; claim?: string; message?: string; detail?: string }[];
+  } | null;
   search_status: { count: number; skipped_reason: string | null };
   notes: string[];
 };
@@ -238,6 +244,7 @@ export function DesignGenPanel({ projectId }: Props) {
   const [buildingUse, setBuildingUse] = useState<string>("공동주택");
   const [avgUnit, setAvgUnit] = useState<number>(84);
   const [topN, setTopN] = useState<number>(3);
+  const [verifyOpt, setVerifyOpt] = useState<boolean>(false);  // AI 검증 포함(선택형)
 
   // 업로드(ingest)
   const [file, setFile] = useState<File | null>(null);
@@ -330,6 +337,7 @@ export function DesignGenPanel({ projectId }: Props) {
           avg_unit_area_sqm: avgUnit,
           top_n: topN,
           project_id: projectId || null,
+          verify: verifyOpt,
         },
       });
       setResult(data);
@@ -503,6 +511,10 @@ export function DesignGenPanel({ projectId }: Props) {
           <Button variant="secondary" onClick={handleLaws} disabled={lawsLoading}>
             {lawsLoading ? "조회 중…" : "참조 법규 보기"}
           </Button>
+          <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+            <input type="checkbox" checked={verifyOpt} onChange={(e) => setVerifyOpt(e.target.checked)} />
+            AI 검증 포함(추천안 독립검증 · LLM 호출)
+          </label>
         </div>
         {genErr && <p className="text-xs text-[var(--status-error)]">{genErr}</p>}
 
@@ -689,6 +701,49 @@ export function DesignGenPanel({ projectId }: Props) {
                   {result.permit.is_permitted ? "가능" : "불가/미확인"}
                 </span>
                 {result.permit.reason && <span className="text-[var(--text-tertiary)]"> — {result.permit.reason}</span>}
+              </div>
+            )}
+
+            {/* 독립 검증 결과(선택형) — 추천안 할루시네이션/계산오류 검증·정직고지 */}
+            {result.verification && (
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-xs">
+                <span className="font-semibold text-[var(--text-secondary)]">독립 검증: </span>
+                <span
+                  className="font-bold"
+                  style={{
+                    color:
+                      result.verification.verdict === "pass"
+                        ? "var(--status-success)"
+                        : result.verification.verdict === "warn"
+                          ? "var(--status-warning)"
+                          : result.verification.verdict === "fail"
+                            ? "var(--status-error)"
+                            : "var(--text-tertiary)",
+                  }}
+                >
+                  {result.verification.verdict === "pass"
+                    ? "이상 없음"
+                    : result.verification.verdict === "warn"
+                      ? "주의"
+                      : result.verification.verdict === "fail"
+                        ? "오류 의심"
+                        : "확인 필요"}
+                </span>
+                {result.verification.summary && (
+                  <span className="text-[var(--text-tertiary)]"> — {result.verification.summary}</span>
+                )}
+                {result.verification.generated === false && (
+                  <span className="text-[var(--text-hint)]"> (규칙기반)</span>
+                )}
+                {result.verification.issues?.length ? (
+                  <ul className="mt-1 list-inside list-disc text-[var(--text-tertiary)]">
+                    {result.verification.issues.slice(0, 6).map((it, i) => (
+                      <li key={i}>
+                        [{it.severity || "info"}] {it.note || it.claim || it.message || it.detail || ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             )}
 

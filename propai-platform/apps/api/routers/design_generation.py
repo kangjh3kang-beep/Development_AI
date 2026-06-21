@@ -95,6 +95,7 @@ class GenerateRequest(BaseModel):
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
+    verify: bool = False                     # True면 추천안 독립검증(선택형·LLM)
 
 
 # ── 내부 헬퍼 ──
@@ -221,6 +222,7 @@ async def generate(
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제
         "project_id": req.project_id,
+        "verify": req.verify,
     }
     if req.building_use:
         kwargs["building_use"] = req.building_use

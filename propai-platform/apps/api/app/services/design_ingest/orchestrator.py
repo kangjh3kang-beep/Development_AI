@@ -55,6 +55,7 @@ class DesignRequest:
     tenant_id: str | None = None
     project_id: str | None = None
     top_n: int = 3
+    verify: bool = False                 # True면 추천안에 VerifierService 독립검증(선택형·LLM)
 
 
 def _assess(
@@ -104,6 +105,33 @@ def _check_permit(zone_name: str | None, dev_type: str) -> dict | None:
         return check_permit_feasibility(dev_type, zone_name)
     except Exception as e:  # noqa: BLE001
         logger.info("design 오케스트레이터 인허가 판정 생략: %s", str(e)[:120])
+        return None
+
+
+async def _verify_proposal(
+    site: SiteContext, candidate: dict, permit: dict | None, zone_name: str | None = None
+) -> dict | None:
+    """추천 설계안을 VerifierService로 독립 검증(할루시네이션/계산오류·정직고지). best-effort.
+
+    선택형(req.verify)일 때만 호출. LLM 미가용 시 규칙기반 폴백(VerifierService 내부). 실패는 None.
+    ★source에 한글 용도지역명(zone_name)+면적을 넣어 법정한도 대조·FAR 재계산 가드가 작동하게 한다.
+    """
+    try:
+        from app.services.verification.verifier_service import VerifierService
+
+        source = {
+            "zone_code": site.zone_code,
+            "zone_name": zone_name,        # 법정한도 대조 가드 키(range_rules가 한글명으로 탐색)
+            "area_sqm": site.area_sqm,
+            "land_area_sqm": site.area_sqm,  # calc_ledger FAR 재계산 분모
+            "max_gfa_sqm": site.max_gfa_sqm,
+            "buildable_footprint_sqm": site.buildable_footprint_sqm,
+            "far_source": site.far_source,
+            "permit_ok": permit.get("is_permitted") if permit else None,
+        }
+        return await VerifierService().verify("design_generation", source, candidate)
+    except Exception as e:  # noqa: BLE001 — 검증 실패가 생성 결과를 깨면 안 됨
+        logger.info("design 추천안 검증 생략: %s", str(e)[:120])
         return None
 
 
@@ -179,6 +207,13 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         )
         recommendation = {"index": proposals.index(best), "verdict": best["verdict"]["verdict"]}
 
+    # 검증·정직고지(선택형) — 추천안에 VerifierService 독립검증 배치([6] 단계).
+    verification = None
+    if req.verify and recommendation is not None:
+        verification = await _verify_proposal(
+            site, proposals[recommendation["index"]]["candidate"], permit, zone_name=req.zone_name
+        )
+
     notes: list[str] = []
     if not matches:
         notes.append(
@@ -228,6 +263,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "permit": permit,
         "proposals": proposals,
         "recommendation": recommendation,
+        "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None
         "search_status": {"count": len(matches), "skipped_reason": search.get("skipped_reason")},
         "notes": notes,
     }
