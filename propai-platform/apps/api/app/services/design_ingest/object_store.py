@@ -1,0 +1,346 @@
+"""설계 원본 파일 객체 저장 — Cloudflare R2(S3 호환) 백엔드.
+
+설계생성 자가학습은 업로드된 도면 원본을 축적해야 하는데(수TB), 벡터DB(Qdrant)는 메타·임베딩만
+보관하므로 원본은 별도 객체 스토리지에 둔다. 결정된 방향은 **Cloudflare R2**(egress 무료).
+
+설계 원칙:
+- ★신규 파이썬 의존성 0 — boto3 없이 httpx + AWS SigV4(stdlib hmac/hashlib)로 R2 S3 API 호출
+  (기존 storage_service의 'httpx REST·무의존' 관례 계승).
+- ★자격증명은 인증/시크릿에서만(get_clean_env_key → admin secrets 오버레이). 미설정 시 비활성
+  (best-effort 정직 강등 — 기능을 깨지 않고 stored=False + 사유 반환).
+- ★테넌트 격리 + 중복제거: 키 = design/{tenant_id}/{content_hash}{ext}. 동일 내용은 1회만 저장.
+- ★원본은 비공개(presigned URL로만 조회) — 자격증명·서명은 절대 로그에 남기지 않는다.
+"""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import hmac
+import io
+import logging
+import os
+import re
+from datetime import UTC, datetime
+from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
+
+# 키 세그먼트 안전화 — 경로 분리자/특수문자 제거(path traversal·교차테넌트 키 차단).
+_UNSAFE_SEGMENT = re.compile(r"[^A-Za-z0-9_-]")
+_HEX_HASH = re.compile(r"[0-9a-f]{16,128}")
+
+_ALGORITHM = "AWS4-HMAC-SHA256"
+_REGION = "auto"   # R2는 region이 'auto'
+_SERVICE = "s3"
+_UNSIGNED = "UNSIGNED-PAYLOAD"
+
+# 확장자 → MIME(원본 다운로드 시 올바른 타입 — 미상은 octet-stream).
+_EXT_MIME = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".dxf": "application/dxf",
+    ".ifc": "application/x-step",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+
+def _conf() -> dict | None:
+    """R2 자격증명/버킷을 시크릿에서 읽는다(미설정이면 None=비활성)."""
+    try:
+        from app.services.ai.key_sanitizer import get_clean_env_key
+
+        getk = get_clean_env_key
+    except Exception:  # noqa: BLE001 — 시크릿 헬퍼 없으면 환경변수 직접(키오염 가드 우회 — 가시성 경고)
+        logger.warning("R2 object_store: key_sanitizer 미가용 — 환경변수 직접 사용(값 미로깅)")
+        getk = lambda k: (os.environ.get(k) or "").strip()  # noqa: E731
+
+    account = getk("R2_ACCOUNT_ID")
+    access = getk("R2_ACCESS_KEY_ID")
+    secret = getk("R2_SECRET_ACCESS_KEY")
+    bucket = getk("R2_BUCKET")
+    if not (account and access and secret and bucket):
+        return None
+    endpoint = getk("R2_ENDPOINT") or f"https://{account}.r2.cloudflarestorage.com"
+    host = endpoint.split("://", 1)[-1].rstrip("/")
+    return {
+        "account": account, "access": access, "secret": secret,
+        "bucket": bucket, "endpoint": endpoint.rstrip("/"), "host": host,
+    }
+
+
+def is_configured() -> bool:
+    """R2 사용 가능 여부(자격증명 모두 설정)."""
+    return _conf() is not None
+
+
+def _ext(filename: str) -> str:
+    name = (filename or "").lower()
+    for ext in _EXT_MIME:
+        if name.endswith(ext):
+            return ext
+    return ""
+
+
+def mime_for(filename: str) -> str:
+    return _EXT_MIME.get(_ext(filename), "application/octet-stream")
+
+
+# 텍스트성 도면만 압축(큰 절감). xlsx(=zip)·pdf·이미지는 이미 압축돼 재압축 이득 없음(패스).
+_COMPRESSIBLE = {".dxf", ".ifc"}
+_GZIP_LEVEL = 6  # 속도/압축률 균형(텍스트 도면)
+
+
+def compress_for_storage(data: bytes, filename: str) -> tuple[bytes, str | None]:
+    """텍스트 도면(DXF/IFC)을 gzip 압축(저장GB 절감). 반환: (바이트, content_encoding|None).
+
+    Content-Encoding: gzip로 저장하면 presigned 조회 시 브라우저가 투명 해제한다(원본 복원).
+    실제로 줄어들 때만 압축 적용(안전), 이미 압축된 형식·실패 시 원본 그대로(정직).
+    """
+    if _ext(filename) in _COMPRESSIBLE and data:
+        try:
+            comp = gzip.compress(data, compresslevel=_GZIP_LEVEL)
+            if len(comp) < len(data):
+                return comp, "gzip"
+        except Exception as e:  # noqa: BLE001 — 압축 실패는 원본 저장으로 강등
+            logger.debug("R2 gzip 압축 생략: %s", str(e)[:120])
+    return data, None
+
+
+# 썸네일/프록시 — 이미지 도면만 PIL로 저해상 WebP 생성(뷰어용 hot 프록시, 원본은 cold).
+# PDF/DXF/IFC는 래스터화 의존성이 없어 미생성(정직 — 후속).
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+_THUMB_MAX_PX = 512
+_THUMB_QUALITY = 80
+# 디컴프레션밤 가드 — 헤더상 픽셀수가 이보다 크면 디코딩 전 거부(메모리 증폭 DoS 차단).
+# 25MB 압축 이미지가 수억 픽셀로 펼쳐질 수 있어, 썸네일엔 충분한 보수 상한을 둔다.
+_THUMB_MAX_DECODE_PX = 40_000_000  # 4천만px(예: 6325×6325) — 512 썸네일엔 충분
+
+
+def make_thumbnail(data: bytes, filename: str) -> bytes | None:
+    """이미지 도면 → 저해상 WebP 썸네일(최대 512px). 이미지 아님/과대/실패 시 None(정직).
+
+    원본은 cold에 두고 검색결과·미리보기는 이 작은 프록시(원본의 극히 일부)만 조회한다.
+    ★디컴프레션밤 가드: 헤더 크기(im.size)로 픽셀수 선검사 후 초과 시 디코딩 없이 거부.
+    """
+    if _ext(filename) not in _IMAGE_EXTS or not data:
+        return None
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(data))  # 지연 로드 — 여기선 헤더만(전량 디코딩 아님)
+        w, h = im.size
+        if w * h > _THUMB_MAX_DECODE_PX:
+            logger.debug("R2 썸네일 생략: 픽셀 과대(%dx%d) — 디컴프레션밤 가드", w, h)
+            return None  # thumbnail()/convert() 디코딩 전에 거부(메모리 폭증 차단)
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")  # RGBA/P 등 → WebP 저장 가능 모드
+        im.thumbnail((_THUMB_MAX_PX, _THUMB_MAX_PX))
+        out = io.BytesIO()
+        im.save(out, format="WEBP", quality=_THUMB_QUALITY)
+        return out.getvalue()
+    except Exception as e:  # noqa: BLE001 — 썸네일 실패는 본기능 비차단(미생성)
+        logger.debug("R2 썸네일 생성 생략: %s", str(e)[:120])
+        return None
+
+
+def thumb_key(tenant_id: str | None, content_hash: str) -> str:
+    """썸네일(프록시) 객체 키 — 원본과 동일 네임스페이스, _thumb.webp 접미."""
+    if not _HEX_HASH.fullmatch(content_hash or ""):
+        raise ValueError("invalid content_hash")
+    return f"design/{_safe_segment(tenant_id)}/{content_hash}_thumb.webp"
+
+
+def _safe_segment(value: str | None, default: str = "_shared") -> str:
+    """키 세그먼트 안전화 — '/'·'..'·개행 등 제거(화이트리스트). 빈값이면 default."""
+    t = (value or "").strip() or default
+    return _UNSAFE_SEGMENT.sub("_", t) or default
+
+
+def object_key(tenant_id: str | None, content_hash: str, filename: str = "") -> str:
+    """객체 키 — 테넌트 격리 + content_hash 중복제거. design/{tenant}/{hash}{ext}.
+
+    tenant_id는 화이트리스트 정화(경로 조작·교차테넌트 키 차단), content_hash는 hex 검증.
+    tenant_id 미상이면 '_shared'(전역) 프리픽스. content_hash가 같으면 동일 키 → 멱등 dedup.
+    """
+    if not _HEX_HASH.fullmatch(content_hash or ""):
+        raise ValueError("invalid content_hash")  # SHA-256 hex만 허용(키 안정성)
+    return f"design/{_safe_segment(tenant_id)}/{content_hash}{_ext(filename)}"
+
+
+# ── AWS SigV4 (stdlib) ──
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _hmac(key: bytes, msg: str) -> bytes:
+    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+
+def _derive_signing_key(secret: str, datestamp: str, region: str, service: str) -> bytes:
+    """SigV4 서명키 도출(HMAC 체인). region/service 파라미터화로 AWS 공식 벡터 검증 가능."""
+    k_date = _hmac(("AWS4" + secret).encode("utf-8"), datestamp)
+    k_region = _hmac(k_date, region)
+    k_service = _hmac(k_region, service)
+    return _hmac(k_service, "aws4_request")
+
+
+def _signing_key(secret: str, datestamp: str) -> bytes:
+    return _derive_signing_key(secret, datestamp, _REGION, _SERVICE)
+
+
+def _uri_encode(key: str, *, encode_slash: bool) -> str:
+    """RFC3986 경로 인코딩(SigV4 규칙). encode_slash=False면 '/'는 보존(경로용)."""
+    safe = "-_.~" + ("" if encode_slash else "/")
+    return quote(key, safe=safe)
+
+
+def _amz_times() -> tuple[str, str]:
+    now = datetime.now(UTC)
+    return now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+
+
+def _canonical_uri(conf: dict, key: str) -> str:
+    """path-style 경로(/{bucket}/{key}) — '/'는 보존하고 나머지만 인코딩."""
+    return "/" + _uri_encode(f"{conf['bucket']}/{key}", encode_slash=False)
+
+
+def _object_url(conf: dict, key: str) -> str:
+    return f"{conf['endpoint']}{_canonical_uri(conf, key)}"
+
+
+def _auth_headers(
+    conf: dict,
+    method: str,
+    key: str,
+    *,
+    payload_hash: str,
+    content_type: str | None = None,
+    content_encoding: str | None = None,
+) -> dict[str, str]:
+    """헤더 기반 SigV4 서명 → 요청 헤더(Authorization 포함). path-style 경로 사용."""
+    amz_date, datestamp = _amz_times()
+    canonical_uri = _canonical_uri(conf, key)
+
+    headers = {
+        "host": conf["host"],
+        "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amz_date,
+    }
+    if content_type:
+        headers["content-type"] = content_type
+    if content_encoding:
+        headers["content-encoding"] = content_encoding
+    signed_headers = ";".join(sorted(headers))
+    canonical_headers = "".join(f"{h}:{headers[h]}\n" for h in sorted(headers))
+
+    canonical_request = "\n".join(
+        [method, canonical_uri, "", canonical_headers, signed_headers, payload_hash]
+    )
+    scope = f"{datestamp}/{_REGION}/{_SERVICE}/aws4_request"
+    string_to_sign = "\n".join(
+        [_ALGORITHM, amz_date, scope, _sha256_hex(canonical_request.encode("utf-8"))]
+    )
+    signature = hmac.new(
+        _signing_key(conf["secret"], datestamp), string_to_sign.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    authorization = (
+        f"{_ALGORITHM} Credential={conf['access']}/{scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    return {**headers, "Authorization": authorization}
+
+
+def presigned_get_url(key: str, owner_tenant_id: str | None, expires: int = 600) -> str | None:
+    """원본 조회용 presigned GET URL(쿼리 서명). 미설정/소유불일치/오류 시 None(정직).
+
+    ★교차테넌트 차단: 키가 요청자 테넌트 프리픽스(design/{owner}/)에 속할 때만 서명 발급.
+    원본은 비공개 버킷에 두고 단기 서명 URL로만 조회한다(자격증명 노출 없음).
+    """
+    conf = _conf()
+    if not conf:
+        return None
+    # 소유권 가드 — 호출자 테넌트 소유 키만 서명(IDOR 차단).
+    if not key.startswith(f"design/{_safe_segment(owner_tenant_id)}/"):
+        return None
+    try:
+        amz_date, datestamp = _amz_times()
+        scope = f"{datestamp}/{_REGION}/{_SERVICE}/aws4_request"
+        exp = max(1, min(expires, 604800))  # 1초~7일
+        canonical_uri = _canonical_uri(conf, key)
+        qs_params = {
+            "X-Amz-Algorithm": _ALGORITHM,
+            "X-Amz-Credential": f"{conf['access']}/{scope}",
+            "X-Amz-Date": amz_date,
+            "X-Amz-Expires": str(exp),
+            "X-Amz-SignedHeaders": "host",
+        }
+        canonical_qs = "&".join(
+            f"{quote(k, safe='-_.~')}={quote(v, safe='-_.~')}" for k, v in sorted(qs_params.items())
+        )
+        canonical_headers = f"host:{conf['host']}\n"
+        canonical_request = "\n".join(
+            ["GET", canonical_uri, canonical_qs, canonical_headers, "host", _UNSIGNED]
+        )
+        string_to_sign = "\n".join(
+            [_ALGORITHM, amz_date, scope, _sha256_hex(canonical_request.encode("utf-8"))]
+        )
+        signature = hmac.new(
+            _signing_key(conf["secret"], datestamp), string_to_sign.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        return f"{conf['endpoint']}{canonical_uri}?{canonical_qs}&X-Amz-Signature={signature}"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("R2 presigned URL 생성 실패: %s", str(e)[:120])
+        return None
+
+
+async def object_exists(key: str) -> bool:
+    """HEAD로 객체 존재 확인(중복제거용). 미설정/오류 시 False(=재업로드 시도)."""
+    conf = _conf()
+    if not conf:
+        return False
+    try:
+        import httpx
+
+        headers = _auth_headers(conf, "HEAD", key, payload_hash=_sha256_hex(b""))
+        url = _object_url(conf, key)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.head(url, headers=headers)
+        return resp.status_code == 200
+    except Exception as e:  # noqa: BLE001
+        logger.debug("R2 HEAD 실패(존재 미확인): %s", str(e)[:120])
+        return False
+
+
+async def put_object(
+    key: str, data: bytes, content_type: str, content_encoding: str | None = None
+) -> tuple[bool, str | None]:
+    """객체 업로드(PUT). 반환: (성공, 실패사유|None). 미설정/오류는 정직 강등(예외 비전파).
+
+    content_encoding(예: gzip) 지정 시 Content-Encoding 헤더로 저장 → 조회 시 브라우저 투명 해제.
+    """
+    conf = _conf()
+    if not conf:
+        return False, "object_store_not_configured"
+    try:
+        import httpx
+
+        payload_hash = _sha256_hex(data)
+        headers = _auth_headers(
+            conf, "PUT", key, payload_hash=payload_hash,
+            content_type=content_type, content_encoding=content_encoding,
+        )
+        url = _object_url(conf, key)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.put(url, headers=headers, content=data)
+        if resp.status_code in (200, 201):
+            return True, None
+        logger.warning("R2 PUT 실패: status=%s", resp.status_code)
+        return False, f"r2_status_{resp.status_code}"
+    except Exception as e:  # noqa: BLE001 — 자격증명/네트워크 실패는 본기능 비차단
+        logger.warning("R2 PUT 예외: %s", str(e)[:120])
+        return False, "r2_error"

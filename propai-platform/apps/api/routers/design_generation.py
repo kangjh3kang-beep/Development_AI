@@ -35,6 +35,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
 from app.models.project import Project
+from app.services.design_ingest import object_store
+from app.services.design_ingest.design_spec import drawing_types_by_discipline
 from app.services.design_ingest.ingest_service import ingest_design_file
 from app.services.design_ingest.law_coverage import (
     DESIGN_LAW_MAP,
@@ -47,7 +49,11 @@ from app.services.design_ingest.orchestrator import (
     generate_design_proposals,
 )
 from app.services.design_ingest.parsers import detect_format
-from app.services.design_ingest.search_service import SiteQuery, search_drawings
+from app.services.design_ingest.search_service import (
+    SiteQuery,
+    get_drawing_object_key,
+    search_drawings,
+)
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -89,6 +95,7 @@ class GenerateRequest(BaseModel):
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
+    verify: bool = False                     # True면 추천안 독립검증(선택형·LLM)
 
 
 # ── 내부 헬퍼 ──
@@ -168,7 +175,20 @@ async def search(
         keywords=req.keywords,
         tenant_id=str(current.tenant_id),  # ★항상 인증값 — 클라이언트 tenant 주입 불가
     )
-    return await search_drawings(query, top_k=top_k)
+    result = await search_drawings(query, top_k=top_k)
+    # 썸네일 보관 결과에 인라인 미리보기용 presigned URL 첨부(서버측·테넌트 스코프·단기).
+    if object_store.is_configured():
+        tid = str(current.tenant_id)
+        for r in result.get("results", []):
+            if r.get("has_thumbnail") and r.get("content_hash"):
+                try:
+                    # content_hash 비정상(비-hex) 시 thumb_key가 ValueError → None 강등(검색 비차단).
+                    r["thumb_url"] = object_store.presigned_get_url(
+                        object_store.thumb_key(tid, r["content_hash"]), tid, expires=600
+                    )
+                except Exception:  # noqa: BLE001 — 미리보기 URL 실패는 검색 결과를 깨지 않음
+                    r["thumb_url"] = None
+    return result
 
 
 @router.post("/generate", dependencies=[Depends(enforce_llm_quota)])
@@ -202,6 +222,7 @@ async def generate(
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제
         "project_id": req.project_id,
+        "verify": req.verify,
     }
     if req.building_use:
         kwargs["building_use"] = req.building_use
@@ -236,3 +257,41 @@ async def laws_for_domain(
             detail=f"알 수 없는 도메인입니다. 가능: {', '.join(sorted(DESIGN_LAW_MAP))}",
         )
     return {"domain": domain, "laws": laws_for(domain, sigungu=sigungu)}
+
+
+@router.get("/drawing-types")
+async def drawing_types(
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """도면 분류 택소노미(분야별) — 프론트 검색 필터·라벨의 단일 출처(실무 전수조사 반영)."""
+    return {"by_discipline": drawing_types_by_discipline()}
+
+
+@router.get("/drawings/{content_hash}/url")
+async def drawing_original_url(
+    content_hash: str,
+    variant: str = Query("original"),  # original | thumb(저해상 프록시)
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """업로드한 도면의 단기 조회 URL(presigned). ★서버 권위적·테넌트 스코프(IDOR-proof).
+
+    content_hash만 받고 키는 인증 테넌트로 서버가 조회·재구성한다(클라이언트 키 미신뢰).
+    variant=thumb는 썸네일(프록시·deterministic 키), original은 원본(Qdrant object_key 조회).
+    미보관/미설정/타테넌트 → 404(존재 은닉). 비공개 — 단기 서명 URL로만 노출.
+    """
+    if not object_store.is_configured():
+        raise HTTPException(status_code=404, detail="원본 저장소가 구성되지 않았습니다.")
+    tid = str(current.tenant_id)
+    if variant == "thumb":
+        try:
+            key: str | None = object_store.thumb_key(tid, content_hash)
+        except ValueError as e:  # content_hash 형식 오류
+            raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.") from e
+    else:
+        key = await get_drawing_object_key(content_hash, tid)
+    if not key:
+        raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.")
+    url = object_store.presigned_get_url(key, tid, expires=600)
+    if not url:
+        raise HTTPException(status_code=404, detail="원본 조회 URL을 생성할 수 없습니다.")
+    return {"url": url, "expires_in": 600}

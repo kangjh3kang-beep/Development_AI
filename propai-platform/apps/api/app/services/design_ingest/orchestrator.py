@@ -22,9 +22,18 @@ from app.services.design_ingest.provenance import (
     permit_evidence,
     proposal_evidence,
 )
-from app.services.design_ingest.search_service import SiteQuery, search_drawings
+from app.services.design_ingest.search_service import (
+    SiteQuery,
+    search_design_set,
+    search_drawings,
+)
 
 logger = logging.getLogger(__name__)
+
+# 세트 보강 검색 분야(건축은 broad 질의가 커버 → 비건축 분야만 분야필터로 보강).
+_SET_SUPPLEMENT_DISCIPLINES = (
+    "구조", "전기", "기계설비", "급배수위생", "소방", "토목", "조경", "통신", "공통",
+)
 
 # 인허가 복잡도가 이 이상이면 'conditional'(난이도 높음 — 사람 검토 필요).
 _HARD_PERMIT_COMPLEXITY = 4
@@ -46,6 +55,7 @@ class DesignRequest:
     tenant_id: str | None = None
     project_id: str | None = None
     top_n: int = 3
+    verify: bool = False                 # True면 추천안에 VerifierService 독립검증(선택형·LLM)
 
 
 def _assess(
@@ -98,6 +108,33 @@ def _check_permit(zone_name: str | None, dev_type: str) -> dict | None:
         return None
 
 
+async def _verify_proposal(
+    site: SiteContext, candidate: dict, permit: dict | None, zone_name: str | None = None
+) -> dict | None:
+    """추천 설계안을 VerifierService로 독립 검증(할루시네이션/계산오류·정직고지). best-effort.
+
+    선택형(req.verify)일 때만 호출. LLM 미가용 시 규칙기반 폴백(VerifierService 내부). 실패는 None.
+    ★source에 한글 용도지역명(zone_name)+면적을 넣어 법정한도 대조·FAR 재계산 가드가 작동하게 한다.
+    """
+    try:
+        from app.services.verification.verifier_service import VerifierService
+
+        source = {
+            "zone_code": site.zone_code,
+            "zone_name": zone_name,        # 법정한도 대조 가드 키(range_rules가 한글명으로 탐색)
+            "area_sqm": site.area_sqm,
+            "land_area_sqm": site.area_sqm,  # calc_ledger FAR 재계산 분모
+            "max_gfa_sqm": site.max_gfa_sqm,
+            "buildable_footprint_sqm": site.buildable_footprint_sqm,
+            "far_source": site.far_source,
+            "permit_ok": permit.get("is_permitted") if permit else None,
+        }
+        return await VerifierService().verify("design_generation", source, candidate)
+    except Exception as e:  # noqa: BLE001 — 검증 실패가 생성 결과를 깨면 안 됨
+        logger.info("design 추천안 검증 생략: %s", str(e)[:120])
+        return None
+
+
 def _site_summary(site: SiteContext) -> dict:
     return {
         "zone_code": site.zone_code,
@@ -134,8 +171,15 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         tenant_id=req.tenant_id,
         project_id=req.project_id,
     )
-    search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+    # 분야별 도면 세트 검색(broad 건축 + 비건축 분야 보강, 임베딩 1회). 분야 payload 없는
+    # 구(舊) 적재분은 분야필터에 안 걸리므로 빈 결과 시 plain search로 폴백(하위호환).
+    search = await search_design_set(
+        query, list(_SET_SUPPLEMENT_DISCIPLINES), broad_k=max(8, req.top_n * 3), k_each=2
+    )
     matches = search.get("results", [])
+    if not matches:
+        search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+        matches = search.get("results", [])
 
     candidates = compose(site, matches, top_n=req.top_n)
 
@@ -162,6 +206,13 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             key=lambda p: (rank[p["verdict"]["verdict"]], float(p["candidate"].get("score") or 0.0)),
         )
         recommendation = {"index": proposals.index(best), "verdict": best["verdict"]["verdict"]}
+
+    # 검증·정직고지(선택형) — 추천안에 VerifierService 독립검증 배치([6] 단계).
+    verification = None
+    if req.verify and recommendation is not None:
+        verification = await _verify_proposal(
+            site, proposals[recommendation["index"]]["candidate"], permit, zone_name=req.zone_name
+        )
 
     notes: list[str] = []
     if not matches:
@@ -212,6 +263,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "permit": permit,
         "proposals": proposals,
         "recommendation": recommendation,
+        "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None
         "search_status": {"count": len(matches), "skipped_reason": search.get("skipped_reason")},
         "notes": notes,
     }
