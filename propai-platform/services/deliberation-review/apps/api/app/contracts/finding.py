@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import FiniteFloat, Probability
+
 
 class Verdict(str, Enum):
     COMPLIANT = "COMPLIANT"
@@ -25,10 +27,10 @@ class Finding(BaseModel):
     verdict: Verdict
     conditional_relaxations: list[str] = Field(default_factory=list)
     requires_committee: bool = False
-    composite_confidence: float = 0.0
+    composite_confidence: Probability = 0.0
     # 미게이트 기본값 = NEEDS_REVIEW(보수적). FindingGate 통과 전엔 확정 아님(무음 오통과 금지).
     gated_status: GatedStatus = GatedStatus.NEEDS_REVIEW
     conflicts: list[str] = Field(default_factory=list)
     basis_article: str | None = None
-    measured_value: float | None = None
-    limit_value: float | None = None
+    measured_value: FiniteFloat | None = None
+    limit_value: FiniteFloat | None = None

@@ -19,3 +19,12 @@ celery_app.conf.update(
     task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
     task_eager_propagates=True,
 )
+
+# INC-14: 주기 라이브 정합(reconcile_all). celery beat 기동 시에만 발화(dev/eager·테스트는 미발화).
+# 간격은 운영 cadence(settings, 법정 수치 아님). 태스크는 이름 문자열로 참조(import 불필요).
+celery_app.conf.beat_schedule = {
+    "reconcile-mirrors": {
+        "task": "verify.reconcile_all",
+        "schedule": float(settings.RECONCILE_INTERVAL_SECONDS),
+    },
+}

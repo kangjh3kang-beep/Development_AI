@@ -42,6 +42,24 @@ def create_app() -> FastAPI:
         allow_credentials=False,
     )
 
+    # 레이트리밋(security) — 클라이언트별 분당 상한. 0=비활성(기본). 외부 1차출처 쿼터/비용 폭주 방어.
+    from app.core.rate_limit import FixedWindowRateLimiter
+    limiter = FixedWindowRateLimiter(settings.REQUESTS_PER_MINUTE)
+
+    @app.middleware("http")
+    async def _rate_limit(request, call_next):
+        # /health는 가용성 프로브 → 면제. 키=인증 토큰(사용자 단위) 우선, 없으면 클라이언트 IP.
+        if limiter.enabled and request.url.path != "/health":
+            key = request.headers.get("authorization") or (request.client.host if request.client else "anon")
+            if not limiter.check(key):
+                from starlette.responses import JSONResponse
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "rate_limit_exceeded", "retry_after_s": 60},
+                    headers={"Retry-After": "60"},
+                )
+        return await call_next(request)
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -57,6 +75,18 @@ def create_app() -> FastAPI:
 
     from app.api.routes.ops_routes import router as ops_router
     app.include_router(ops_router)
+
+    from app.api.routes.reg_routes import router as reg_router
+    app.include_router(reg_router)
+
+    from app.api.routes.project_routes import router as project_router
+    app.include_router(project_router)
+
+    from app.api.routes.permit_routes import router as permit_router
+    app.include_router(permit_router)
+
+    from app.api.routes.design_routes import router as design_router
+    app.include_router(design_router)
 
     return app
 

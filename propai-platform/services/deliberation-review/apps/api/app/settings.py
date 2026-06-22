@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pathlib
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # apps/api/app/settings.py → repo root(propai-review)/.env
@@ -30,6 +31,13 @@ class Settings(BaseSettings):
     USE_MOCK_ADAPTERS: bool = True
     # 비동기(Celery): 기본 eager(브로커 없는 dev는 동기 폴백). 운영은 false + worker+redis로 진짜 비동기.
     CELERY_TASK_ALWAYS_EAGER: bool = True
+    # INC-14: 라이브 외부 호출(LiveNetwork) 토글 — 기본 False=mock(NetworkError). 공급측 reconcile/harvester
+    # 한정(INV-13: 소비경로는 이 플래그와 무관하게 라이브 미호출). True 시 실 httpx GET.
+    LIVE_NETWORK: bool = False
+    # reconcile 주기잡(celery beat) 간격(초). 운영 인프라 cadence(법정 수치 아님, INV-3 비대상).
+    RECONCILE_INTERVAL_SECONDS: int = 86400
+    # reconcile 불일치 시 단일 관할 재분석 디스패치 상한(큐 폭주 방어). 초과분은 로깅 후 절단(무음0). 인프라 수치.
+    RECONCILE_MAX_REANALYZE: int = 100
     # 유사사례 임베더: hash(결정론 폴백) | openai(실 의미 임베딩). openai는 OPENAI_API_KEY 필요.
     EMBEDDER: str = "hash"
     OPENAI_API_KEY: str = ""
@@ -38,10 +46,10 @@ class Settings(BaseSettings):
     QDRANT_URL: str = ""
     # 국가법령정보센터(법제처 law.go.kr DRF) — OC=MOLEG_API_KEY. 법령 교차검증 1차출처.
     MOLEG_API_KEY: str = ""
-    MOLEG_BASE_URL: str = "http://www.law.go.kr/DRF"
+    MOLEG_BASE_URL: str = "https://www.law.go.kr/DRF"  # https — API 키 평문 전송 MITM 방지
     # 국토부 건축물대장(data.go.kr) — serviceKey=MOLIT_API_KEY. 용적률/건폐율 교차검증 1차출처.
     MOLIT_API_KEY: str = ""
-    MOLIT_BLD_URL: str = "http://apis.data.go.kr/1613000/BldRgstHubService"
+    MOLIT_BLD_URL: str = "https://apis.data.go.kr/1613000/BldRgstHubService"  # https
     # VWORLD NED(공시지가/토지이용계획) — key=VWORLD_API_KEY + Referer 도메인 검증(필수).
     VWORLD_NED_URL: str = "https://api.vworld.kr/ned/data"
     VWORLD_REQ_URL: str = "https://api.vworld.kr/req"  # 지오코더(address)·2D데이터(data) 공통 base
@@ -54,6 +62,9 @@ class Settings(BaseSettings):
     VLLM_MODEL: str = "claude-sonnet-4-6"
     # /api/v1/analyze 베어러 토큰. 빈 값 = 개방(dev). 설정 시 'Authorization: Bearer <token>' 요구.
     API_TOKEN: str = ""
+    # 클라이언트별 분당 요청 상한(레이트리밋). 0=비활성(기본). 외부 1차출처 쿼터/비용 폭주 방어.
+    # ⚠️ 프로세스 로컬 카운터 — 다중 워커 분산 강제는 Redis 등 필요(app.core.rate_limit 한계 참조).
+    REQUESTS_PER_MINUTE: int = 0
     # 관할 해석 외부 어댑터: mock | vworld. vworld는 VWORLD_API_KEY 있으면 실 호출, 없으면 fallback.
     JURISDICTION_ADAPTER: str = "mock"
     VWORLD_API_KEY: str = ""
@@ -66,6 +77,16 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""  # 마스터키 폴백 3순위(플랫폼 _fernet 우선순위와 동일)
     # 플랫폼 .env(들)에서 마스터키를 런타임 참조(복사 없이 단일 출처). 쉼표구분 경로. 값 아님(경로).
     PLATFORM_ENV_FILE: str = ""
+
+    @model_validator(mode="after")
+    def _production_fail_closed(self) -> "Settings":
+        """운영(production) 부팅 시 무인증·와일드카드 CORS 거부(무음 개방 차단)."""
+        if self.ENV == "production":
+            if not self.API_TOKEN:
+                raise ValueError("production은 API_TOKEN 필수(인증 fail-closed)")
+            if self.CORS_ORIGINS.strip() == "*":
+                raise ValueError("production은 와일드카드 CORS_ORIGINS 금지(명시 도메인 목록 필요)")
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

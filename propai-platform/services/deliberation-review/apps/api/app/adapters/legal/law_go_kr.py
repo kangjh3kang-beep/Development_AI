@@ -24,16 +24,10 @@ class LawGoKrSource:
     def _get(self, path: str, params: dict) -> dict | None:
         if not self.oc:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            resp = httpx.get(f"{self.base_url}/{path}", params={"OC": self.oc, **params}, timeout=20.0)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            return None  # 라이브 실패 → None(상위가 교차검증 결손 처리)
+        # INC-11: 캐시 경유(적중→동일 출력, 결정론 0영향). OC(기관코드)는 cache_key 제외(시크릿 비유출).
+        from app.adapters.cache.source_cache import cached_get
+        return cached_get(self.name, f"{self.base_url}/{path}", {"OC": self.oc, **params},
+                          secret_param_keys=("OC",), timeout=20.0)
 
     def search_law(self, query: str, display: int = 5) -> dict | None:
         """법령 검색(lawSearch.do) — query로 법령 목록 JSON."""

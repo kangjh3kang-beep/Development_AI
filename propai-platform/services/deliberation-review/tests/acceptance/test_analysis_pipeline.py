@@ -66,3 +66,63 @@ def test_pipeline_surfaces_skips():
     assert any("legal_calc" in s for s in r.skipped)
     assert any("judge" in s for s in r.skipped)
     assert r.report is not None
+
+
+def _dual_path_input(declared: float):
+    # building_area 산정 = 600 - 100(필로티) = 500. declared와 대조(L5 이중경로).
+    return AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1), axis_date=date(2026, 1, 1),
+        drawing={"scale_text": "1:100"},
+        calc_targets=[
+            {"target": "building_area", "payload": {"outer_area": 600.0},
+             "elements": [{"semantic_type": "PILOTIS", "area": 100.0, "confidence": 0.95}],
+             "declared": declared},
+        ],
+        rules=[
+            {"rule": {"rule_id": "ba_rule", "comparator": "<=", "target_variable": "building_area",
+                      "basis_article": "건축법 시행령"},
+             "measured": 500.0, "limit": 1000.0, "confidence": 0.95},
+        ],
+        citations=[{"ref": "건축법 시행령"}],
+        mirror_rules=[{"ref": "건축법 시행령", "effective_date": "2025-01-01"}],
+    )
+
+
+def test_pipeline_dual_path_mismatch_flags_needs_review():
+    # 명기(600) vs 산정(500) 불일치(>area_tol) → dual_path HELD → finding NEEDS_REVIEW + 사유 표면화.
+    r = run_analysis(_dual_path_input(declared=600.0))
+    item = r.report.find("ba_rule")
+    dp = item.evidence["dual_path"]
+    assert dp is not None and dp["status"] == "HELD"
+    assert dp["table_value"] == 600.0 and dp["geom_value"] == 500.0
+    assert item.status.value == "NEEDS_REVIEW"
+    assert "dual_path_HELD" in (item.evidence["gate_reason"] or "")
+
+
+def test_pipeline_dual_path_match_agreed():
+    # 명기(500)=산정(500) → dual_path AGREED(불일치 강등 없음).
+    r = run_analysis(_dual_path_input(declared=500.0))
+    item = r.report.find("ba_rule")
+    dp = item.evidence["dual_path"]
+    assert dp is not None and dp["status"] == "AGREED"
+    assert "dual_path_HELD" not in (item.evidence["gate_reason"] or "")
+
+
+def test_report_item_human_labels():
+    # INC-2: 등록된 룰/지표 id는 사람친화 title/recommendation 동반(결정론 룰→라벨). 미등록은 None(item_id 폴백).
+    from app.services.report.labels import label_for
+    assert label_for("far_limit")["title"] == "용적률 한도"
+    assert label_for("unknown_rule_xyz") is None
+    r = run_analysis(_INPUT)
+    far = r.report.find("far_limit")
+    assert far.title == "용적률 한도" and far.recommendation
+
+
+def test_pipeline_view_sim_wired_and_unhandled_surfaced():
+    # INC-1: view 시뮬이 실제 호출되어 SimMetric 산출(이전 미배선 데드패스). 미배선 키는 skipped로 표면화.
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        sim_inputs={"view": {"facade_width": 10.0, "street_width": 20.0, "geom_confidence": 0.9},
+                    "unknown_metric": {"x": 1}}))
+    assert any(m.metric_id == "facade_occupancy_ratio" for m in r.sim_metrics)
+    assert any("미배선 입력 키" in s for s in r.skipped)

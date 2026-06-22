@@ -30,6 +30,21 @@ def test_graph_queries():
     assert "relax:far_relax" in g.relaxations_for_rule("far_limit")
 
 
+def test_variable_node_gets_national_limit_when_zone_given():
+    # P5 — use_zone 제공 시 VARIABLE 노드에 데이터파일 1차출처 국가 상한 부착(입력 limit echo 아님).
+    g = build_reg_graph(_RULES, use_zone="제2종일반주거지역")
+    far_var = next(n for n in g.nodes if n.id == "var:far_floor_area")
+    assert far_var.limit_value == 250.0 and far_var.limit_unit == "%"
+    assert "시행령" in (far_var.limit_source or "")
+    h_var = next(n for n in g.nodes if n.id == "var:building_height")  # 국가상한 비대상 → 미부착
+    assert h_var.limit_value is None
+
+
+def test_variable_node_no_limit_without_zone():
+    g = build_reg_graph(_RULES)  # zone 미제공 → 한도 미부착(기존 동작 보존·결정론)
+    assert next(n for n in g.nodes if n.id == "var:far_floor_area").limit_value is None
+
+
 def test_pipeline_reg_graph_wired():
     r = run_analysis(AnalysisInput(
         pnu="1111010100100000002", application_date=date(2026, 1, 1), drawing={"scale_text": "1:100"},

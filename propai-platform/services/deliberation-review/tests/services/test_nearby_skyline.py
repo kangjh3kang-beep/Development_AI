@@ -57,7 +57,7 @@ def test_pipeline_surrounding(monkeypatch):
         return _Resp({"response": {"status": "OK", "result": {"featureCollection": {"features": []}}}})
 
     monkeypatch.setattr(httpx, "get", _get)
-    r = run_analysis(AnalysisInput(pnu="unknown", application_date=date(2026, 1, 1),
+    r = run_analysis(AnalysisInput(pnu="", application_date=date(2026, 1, 1),
                                    address="서울특별시 종로구 청운동 1", collect_surrounding=True))
     assert r.surrounding_context is not None
     assert r.surrounding_context["building_count"] == 3

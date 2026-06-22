@@ -110,8 +110,88 @@ def _build_market() -> SpecialistAgent:
                            tool=_market_tool, interpreter=None, panel=_default_panel)
 
 
+# ── 심의: 심의분석엔진(deliberation-review) BFF 도메인 — 인·허가/심의 프로세스 ──
+
+def _stage_basis(stage: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """단계 criteria의 legal_basis(법령명·조항·요지) + 1차출처 링크를 집계(설명가능성 전파, 중복 제거)."""
+    basis: list[dict[str, Any]] = []
+    links: list[str] = []
+    for c in (stage.get("criteria") or []):
+        for lb in (c.get("legal_basis") or []):
+            entry = {"law": lb.get("law"), "article": lb.get("article"), "summary": lb.get("summary")}
+            if entry not in basis:
+                basis.append(entry)
+            src = lb.get("source")
+            if src and src not in links:
+                links.append(src)
+    return basis, links
+
+
+def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
+    """심의엔진 PermitProcessResult → SpecialistAgent findings/summary 정규화(결정론 매핑, 수치 생성 X).
+
+    ★설명가능성 전파(EX2): 각 finding에 근거(basis: 법령명·조항·요지)+링크(links: 1차출처 URL) 기본 동반."""
+    findings: list[dict[str, Any]] = []
+    for st in (res.get("stages") or []):
+        basis, links = _stage_basis(st)
+        findings.append({"check_id": st.get("stage_id"), "status": st.get("conformance"),
+                         "current": st.get("verification_status"), "limit": None,
+                         "note": st.get("name"), "basis": basis, "links": links})
+    return {"findings": findings,
+            "summary": {"available": True, "spec_id": res.get("spec_id"),
+                        "overall_conformance": res.get("overall_conformance"),
+                        "overall_verification": res.get("overall_verification"),
+                        "overall_outcome": res.get("overall_outcome"),   # Phase 2a 종합 승인 가능성 전파
+                        "run_id": res.get("run_id")}}
+
+
+async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any]:
+    """심의엔진 프로세스 엔드포인트(permit/design) 공통 호출. 수치/판정은 엔진 결정론 산출만.
+
+    엔진 URL 미설정 시 graceful(미연동 — findings 비움 + reason). 라이브 실패도 표면화(무음 단정 금지).
+    응답(ProcessResult)을 _map_permit_response로 정규화 → finding마다 근거(법령·조항·요지)+링크 동반(EX2)."""
+    from app.core.config import get_settings
+    s = get_settings()
+    base = (getattr(s, "DELIBERATION_ENGINE_URL", "") or "").rstrip("/")
+    if not base:
+        return {"findings": [], "summary": {"available": False, "reason": "engine_url_unset"}}
+    token = getattr(s, "DELIBERATION_ENGINE_TOKEN", "") or ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as cli:
+            r = await cli.post(f"{base}{path}", json=data, headers=headers)
+            r.raise_for_status()
+            res = r.json()
+    except Exception as exc:  # noqa: BLE001 — 라이브 실패는 graceful 표면화(무음 단정 금지)
+        return {"findings": [],
+                "summary": {"available": False, "reason": f"engine_call_failed:{type(exc).__name__}"}}
+    return _map_permit_response(res if isinstance(res, dict) else {})
+
+
+async def _deliberation_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """심의 도메인 — 인·허가/심의 프로세스(엔진 /api/v1/permit/process)."""
+    return await _call_engine_process(data, "/api/v1/permit/process")
+
+
+async def _design_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """설계 도메인 — 건축설계 라이프사이클 프로세스(엔진 /api/v1/design/process)."""
+    return await _call_engine_process(data, "/api/v1/design/process")
+
+
+def _build_deliberation() -> SpecialistAgent:
+    return SpecialistAgent(domain="심의", task_type="permit_process",
+                           tool=_deliberation_tool, interpreter=None)
+
+
+def _build_design() -> SpecialistAgent:
+    return SpecialistAgent(domain="설계", task_type="design_process",
+                           tool=_design_tool, interpreter=None)
+
+
 _FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far,
-              "cost": _build_cost, "market": _build_market}
+              "cost": _build_cost, "market": _build_market,
+              "심의": _build_deliberation, "설계": _build_design}
 AVAILABLE_DOMAINS = tuple(_FACTORIES.keys())
 
 

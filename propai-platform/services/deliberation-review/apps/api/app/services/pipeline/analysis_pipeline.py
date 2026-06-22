@@ -8,6 +8,7 @@ Preflight(R0) → 법정 산정(R1.5) → 판정(R3) → 공학 시뮬(L3-B) →
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 
 from app.contracts.analysis import AnalysisInput, AnalysisResult
@@ -15,7 +16,7 @@ from app.contracts.calc_rule import CalcRuleSet
 from app.contracts.finding import Finding
 from app.contracts.legal_quantity import CalcElement, CalcTarget, LegalQuantity
 from app.contracts.mirror import MirrorSnapshot
-from app.contracts.precedent import PrecedentCase, PrecedentStat
+from app.contracts.precedent import PrecedentCase, PrecedentStat, StatStatus
 from app.contracts.preflight import PreflightContext
 from app.contracts.qualitative import QualAssessment
 from app.contracts.report import ReviewReport
@@ -25,16 +26,22 @@ from app.contracts.verification import GateItem
 from app.contracts.versioning import Snapshot, Version
 from app.core.errors import PreflightRefused
 from app.core.hashing import input_hash
-from app.services.extraction.dual_path import resolve_elements
+from app.core.parameters import param
+from app.services.explain.legal_refs import resolve_text
+from app.services.extraction.extraction_orchestrator import orchestrate_extraction
+from app.services.gate.confidence_composer import ConfidenceComposer
+from app.services.gate.finding_gate import FindingGate
 from app.services.judge.evaluator import EvalCase, Evaluator
 from app.services.legal_calc.calc_engine import CalcEngine
 from app.services.legal_calc.variable_seed import build_calc_variable_registry
 from app.services.precedent.stat_aggregator import StatAggregator
 from app.services.qualitative.qual_evaluator import QualEvaluator
 from app.services.reg_graph.builder import build_reg_graph
+from app.services.report.labels import label_for
 from app.services.report.report_builder import ReportBuilder
 from app.services.sim.sim_engine import SimEngine
 from app.services.verify.citation_check import CitationCheck
+from app.services.verify.dual_path_check import DualPathCheck, DualPathResult
 from app.services.verify.final_gate import FinalGate
 
 
@@ -49,6 +56,9 @@ def _grade(confidence: float) -> str:
 def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     skipped: list[str] = []
     ih = input_hash({"input": inp.model_dump(mode="json")})
+    # INC-11: 외부 1차출처 캐시 항목을 현재 snapshot에 결속(어댑터 fetch가 contextvar 참조 — 시그니처 미변경).
+    from app.adapters.cache.source_cache import set_snapshot
+    set_snapshot(inp.snapshot_id)
 
     # 버전축 스냅샷(산정규칙=법규셋 동일 axis, INV-6).
     axis = inp.axis_date or inp.application_date or date(2026, 1, 1)
@@ -60,49 +70,38 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
 
     payload = {"pnu": inp.pnu, "application_date": inp.application_date, "drawing": inp.drawing or {}}
 
-    # 0a) 멀티모달 도면 자동해석 (P-A) — 도면 시트 → 구조화 요소(없으면 빈, 날조 금지).
-    drawing_source: str | None = None
-    auto_elements: list[dict] = []
-    dext = None
-    if inp.drawings:
-        from app.adapters.vision.drawing_extractor import build_drawing_extractor
-        from app.contracts.drawing_extraction import DrawingSheet
-        extractor = build_drawing_extractor()
-        dext = extractor.extract([DrawingSheet(**d) for d in inp.drawings])
-        drawing_source = dext.source
-        auto_elements = dext.to_pipeline_elements()
-        if dext.source == "none":
-            skipped.append("drawing_extract: 도면 이미지/힌트 없음 (요소 자동추출 불가)")
-        for note in dext.notes:
-            skipped.append(f"drawing_extract: {note}")
-
-    # P-A.2) 도면 면적표 + 추출요소 → calc_targets 자동구성(명시 입력 우선, 없으면 도면 자동).
-    calc_targets = list(inp.calc_targets)
-    calc_targets_source: str | None = "INPUT" if inp.calc_targets else None
-    if not calc_targets and dext is not None:
-        from app.services.extraction.calc_target_builder import build_calc_targets_from_drawing
-        auto_ct, ct_notes = build_calc_targets_from_drawing(dext)
-        if auto_ct:
-            calc_targets = auto_ct
-            calc_targets_source = "DRAWING_AUTO"
-        for n in ct_notes:
-            skipped.append(f"calc_target_auto: {n}")
-
-    # 0b) 이중경로 추출 (P1) — BIM(IFC) 우선, 없으면 VLLM/2D(도면 자동추출 + 직접입력). source 표면화.
-    extraction = resolve_elements({"ifc": inp.ifc, "elements": auto_elements + inp.elements})
-    if extraction.source == "none":
-        skipped.append("extraction: no ifc/elements/drawings (산정/판정은 calc_targets/rules 직접 입력 사용)")
+    # 0a/P-A.2/0b) 추출 오케스트레이터 (INC-10) — 도면 자동해석·calc_target 자동구성·이중경로를
+    # 명시적 에이전트 파이프라인(역할합의→추출가→취합가→calc_target→이중경로→검증가)으로 실체화.
+    # 취합가는 LLM이 아니라 결정론 합의(CrossSourceValidator). 단계 타이밍·강등사유는 extraction_trace로 노출.
+    bundle = orchestrate_extraction(
+        drawings=inp.drawings, drawing=inp.drawing, explicit_calc_targets=inp.calc_targets,
+        ifc=inp.ifc, direct_elements=inp.elements,
+    )
+    drawing_source = bundle.drawing_source
+    auto_elements = bundle.drawing_elements
+    calc_targets = bundle.calc_targets
+    calc_targets_source = bundle.calc_targets_source
+    extraction = bundle.extraction
+    skipped.extend(bundle.skipped)
 
     # 1) Preflight (R0) — 거부 시 비차단 표면화.
     preflight: PreflightContext | None = None
+    preflight_blocked = False
     from app.services.preflight.preflight_gate import run_preflight
     try:
         preflight = run_preflight(payload, snapshot)
     except PreflightRefused as exc:
-        skipped.append(f"preflight_refused: {exc}")
+        preflight_blocked = True  # 게이트 선행 — 도면 전제(축척/관할) 미해소 → 도면 자동산정 차단 신호
+        skipped.append(f"preflight_refused: {exc} — 도면 전제(축척/관할 등) 미해소")
 
     # 2) 법정 산정 (R1.5) — 명시 calc_targets 또는 도면 자동구성(P-A.2)
     legal_quantities: list[LegalQuantity] = []
+    # 게이트 선행 — preflight 거부 상태의 '도면 자동' 산정은 전제(축척/관할) 미해소로 신뢰 제한 표면화(무음 강등 금지).
+    if preflight_blocked and calc_targets_source == "DRAWING_AUTO":
+        skipped.append("legal_calc: ⚠️ preflight 거부 상태 도면 자동산정 — 전제(축척/관할) 미해소, "
+                       "결과 신뢰 제한(preflight_blocked)")
+    # L5 정량 이중경로 — 명기(면적표 최종값) vs 산정값 대조 결과(변수별). 명기 없으면 빈 채로 None 유지(날조 금지).
+    dual_path_by_variable: dict[str, DualPathResult] = {}
     if calc_targets:
         registry = build_calc_variable_registry()
         rule_set = CalcRuleSet(versions=[])  # 기본 파라미터(JSON) 사용
@@ -110,21 +109,28 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             else CalcEngine(rule_set=rule_set, base_date=inp.application_date, registry=registry)
         for t in calc_targets:
             elements = [CalcElement(**e) for e in t.get("elements", [])]
-            legal_quantities.append(
-                engine.compute(CalcTarget(t["target"]), payload=t.get("payload", {}),
-                               elements=elements, snapshot=snapshot)
-            )
+            lq = engine.compute(CalcTarget(t["target"]), payload=t.get("payload", {}),
+                                elements=elements, snapshot=snapshot)
+            legal_quantities.append(lq)
+            # 면적표 명기 최종값(declared) 제공 시 산정값(lq.value)과 대조 — 밴드(area_tol) 초과 시 HELD.
+            declared = t.get("declared")
+            if declared is not None and lq.value is not None:
+                dual_path_by_variable[lq.variable_id] = DualPathCheck(
+                    tol=float(param("area_tol"))).check(table=float(declared), geom=lq.value)
     else:
         skipped.append("legal_calc: no calc_targets")
 
     # 3) 판정 (R3) — 3값, 거짓 불합격 금지.
     findings: list[Finding] = []
     parsed_rules: list[Rule] = []
+    rule_id_to_variable: dict[str, str] = {}  # finding↔이중경로(변수) 매핑용
     if inp.rules:
         evaluator = Evaluator()
         for r in inp.rules:
             rule = Rule(**r["rule"])
             parsed_rules.append(rule)
+            if rule.target_variable:
+                rule_id_to_variable[rule.rule_id] = rule.target_variable
             case = EvalCase(
                 rule=rule,
                 measured_value=r.get("measured"),
@@ -146,16 +152,24 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         sim_metrics.append(sim.run_egress(inp.sim_inputs["egress"]))
     if inp.sim_inputs.get("parking"):
         sim_metrics.append(sim.run_parking(inp.sim_inputs["parking"]))
+    if inp.sim_inputs.get("view"):
+        sim_metrics.append(sim.run_view(inp.sim_inputs["view"]))  # 조망/스카이라인(이전 미배선 데드패스 해소)
+    # 미배선 sim_inputs 키는 무음 무시 금지 — 표면화(무음0).
+    _unhandled = [k for k in inp.sim_inputs if k not in {"sunlight", "egress", "parking", "view"}]
+    if _unhandled:
+        skipped.append(f"sim: 미배선 입력 키 무시 — {_unhandled}")
     if not sim_metrics:
         skipped.append("sim: no sim_inputs")
 
     # 5) 유사사례 (L4) — Qdrant 벡터검색(P-C)으로 유사사례 선별 후 성숙도 게이팅.
     precedent: PrecedentStat | None = None
     precedent_source: str | None = None
+    precedent_search_meta: dict | None = None
     if inp.issue and inp.corpus:
         from app.services.precedent.precedent_search import PrecedentSearch
         corpus = [PrecedentCase(**c) for c in inp.corpus]
-        matched, matches = PrecedentSearch().search_cases(inp.issue, corpus)
+        matched, matches, precedent_search_meta = PrecedentSearch().search_cases(
+            inp.issue, corpus, return_meta=True)  # 임계·탈락분·선택사유 동반(설명가능성)
         if matched:
             precedent = StatAggregator().aggregate(inp.issue, matched)
             precedent_source = "VECTOR_SEARCH"
@@ -197,7 +211,9 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             if geocoded and geocoded.get("pnu"):
                 effective_pnu = geocoded["pnu"]
             else:
-                skipped.append("geocode: 주소→PNU 도출 실패")
+                skipped.append("geocode: 주소→PNU 조회 결과 없음 — 키 설정됨(외부 장애/주소 미해소 미상)")
+        else:
+            skipped.append("geocode: 지오코더 미설정(키 없음) — 주소→PNU 도출 불가")
 
     # 6.36) 주변 건물 스카이라인 + 3D 일조 시뮬 (VWORLD lt_c_bldginfo + shapely). 좌표(geocoded) 필요.
     surrounding_context = None
@@ -210,24 +226,32 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 surrounding_context = nb.skyline_from(buildings, inp.surrounding_radius_m)
                 # 대상지 필지 geometry 있으면 3D 일조(동지 9~15시 그림자) 분석.
                 if geocoded.get("site_geometry"):
-                    from app.services.sim.shadow_3d import sunlight_analysis
+                    from app.services.sim.shadow_3d import sunlight_analysis, sunlight_metric
                     sun = sunlight_analysis(geocoded["site_geometry"], buildings, geocoded["lat"])
                     if sun is not None:
                         surrounding_context["sunlight"] = sun
+                        sm = sunlight_metric(sun)  # SimMetric emit 게이트(근거 강제·미달 flag)
+                        if sm is not None:
+                            sim_metrics.append(sm)
                 # 신축안 층수 → 주변 스카이라인 대비 돌출도(경관심의 참고).
                 if inp.proposed_floors:
-                    from app.services.sim.skyline_protrusion import skyline_protrusion
+                    from app.services.sim.skyline_protrusion import protrusion_metric, skyline_protrusion
                     prot = skyline_protrusion(surrounding_context, inp.proposed_floors)
                     if prot is not None:
                         surrounding_context["protrusion"] = prot
+                        pm = protrusion_metric(prot)  # SimMetric emit 게이트(돌출 flag)
+                        if pm is not None:
+                            sim_metrics.append(pm)
             else:
-                skipped.append("surrounding: 주변 건물 수집 결손")
+                skipped.append("surrounding: 주변 건물 조회 결과 없음 — 키 설정됨(외부 장애/결손 미상)")
+        else:
+            skipped.append("surrounding: 주변건물 어댑터 미설정(키 없음)")
 
     # 6.4) 대지 규제 카드 자동수집 (VWORLD NED 토지특성+토지이용계획) — 심의 입력 전제 1차출처 고정.
     land_card = None
     if inp.collect_land_card and len(effective_pnu) >= 19:
         from app.services.land.land_card import collect_land_card
-        land_card = collect_land_card(effective_pnu, inp.land_year or "2024")
+        land_card = collect_land_card(effective_pnu, inp.land_year or "2024", as_of=inp.application_date)
         if land_card is None:
             skipped.append("land_card: 토지특성/토지이용계획 결손(키/PNU 확인)")
 
@@ -270,16 +294,30 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                     svs.append(SourceValue(source="molit_building", value=mval,
                                            ref=f"건축물대장:{cf['building_pnu']}"))
             if lp_src is not None and cf.get("land_pnu"):
-                lval = lp_src.land_price(cf["land_pnu"], cf.get("land_year", "2024"))
+                _ly = cf.get("land_year", "2024")
+                lval = lp_src.land_price(cf["land_pnu"], _ly)
                 if lval is not None:
+                    try:
+                        _vintage = date(int(_ly), 1, 1)  # 공시지가 기준연도 → 신선도 비교 기준일
+                    except (TypeError, ValueError):
+                        _vintage = None
                     svs.append(SourceValue(source="vworld_landprice", value=lval,
-                                           ref=f"개별공시지가:{cf['land_pnu']}"))
+                                           ref=f"개별공시지가:{cf['land_pnu']}",
+                                           data_vintage=_vintage, max_age_days=730))  # 연1회 갱신 → 2년 허용
             if lu_src is not None and cf.get("land_use_pnu") and cf.get("land_use_contains"):
                 has = lu_src.has_zone(cf["land_use_pnu"], cf["land_use_contains"])
                 if has is not None:
                     svs.append(SourceValue(source="vworld_landuse", value=has,
                                            ref=f"토지이용계획:{cf['land_use_pnu']}"))
-            cross_validations.append(cv.validate(cf["fact_key"], svs))
+            # INC-12: 합의 직전 신선도 게이트 — as_of(신청일) 대비 노후 출처 표면화(NEEDS_REVIEW 보수화).
+            # P4: 실측 사실(면적 등)은 입력 cf.rel_tol(상대오차)로 ±임계 합의 — 정상 측정차의 거짓 CONFLICT 방지.
+            # 안전 read(유한·[0,1] 수치만, 그 외 0.0=정확일치=무회귀). inf/거대값의 거짓 UNANIMOUS 차단.
+            # validator도 동일 방어 clamp(전 호출자) — 여기는 defense-in-depth. 사실별 opt-in이라 일괄 거짓합의 없음.
+            _rt = cf.get("rel_tol")
+            rel_tol = (float(_rt) if (isinstance(_rt, (int, float)) and not isinstance(_rt, bool)
+                                      and math.isfinite(_rt) and 0 <= _rt <= 1.0) else 0.0)
+            cross_validations.append(
+                cv.validate(cf["fact_key"], svs, as_of=inp.application_date, rel_tol=rel_tol))
 
     # 7) 정성 (L3-C) — 인용접지 등급화.
     qualitative: list[QualAssessment] = []
@@ -290,50 +328,103 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     else:
         skipped.append("qualitative: no qual_facts")
 
-    # 8) 최종 게이팅 + 산출 리포트 (L5 FinalGate → L6 ReportBuilder)
+    # 8) 신뢰도 합성(R3) + finding 게이팅 + 최종 게이팅 (ConfidenceComposer/FindingGate → L5 FinalGate → L6)
+    composer = ConfidenceComposer()
+    fgate = FindingGate()
     gate = FinalGate()
+    gated_findings: list[Finding] = []
     items: list[dict] = []
     for fnd in findings:
+        # R3 신뢰도 합성 — 충돌 패널티·하드게이트 반영(원시 input_confidence 통과 해소).
+        composed = composer.compose([fnd.composite_confidence], conflicts=fnd.conflicts)
+        fnd = fgate.apply(fnd.model_copy(update={"composite_confidence": composed}))  # gated_status 채움(박제 해소)
+        gated_findings.append(fnd)
         verification = citation_checks.get(fnd.basis_article)
+        # 이 finding의 대상 변수에 명기 vs 산정 이중경로 결과가 있으면 게이트에 반영(불일치 HELD→NEEDS_REVIEW).
+        dp = dual_path_by_variable.get(rule_id_to_variable.get(fnd.rule_id, ""))
         gated = gate.apply(GateItem(
             composite_confidence=fnd.composite_confidence,
             conflicts=fnd.conflicts,
             verification=verification,
-            dual_path_status=None,
+            dual_path_status=dp.status.value if dp else None,
         ))
+        # basis_article(조문 ID) → 법령 본문 해소(설명가능성). 미해소 시 표면화(무음 금지).
+        legal_basis = resolve_text(fnd.basis_article) or {
+            "ref": fnd.basis_article, "resolved": None,
+            "note": "법령 본문 미해소 — basis_article 조문 단위 정밀화 필요"}
+        _flbl = label_for(fnd.rule_id) or {}
         items.append({
             "item_id": fnd.rule_id,
+            "title": _flbl.get("title"),                  # 사람친화 라벨(미등록=None→UI item_id 폴백)
+            "recommendation": _flbl.get("recommendation"),
             "verdict": fnd.verdict.value,
             "status": gated.status.value,
             "confidence_grade": _grade(fnd.composite_confidence),
             "basis_article": fnd.basis_article,
             "evidence": {
                 "basis_article": fnd.basis_article,
+                "legal_basis": legal_basis,
                 "measured": fnd.measured_value,
                 "limit": fnd.limit_value,
                 "requires_committee": fnd.requires_committee,
                 "conditional_relaxations": fnd.conditional_relaxations,
                 "verified": verification.passed if verification else False,
+                # 게이트 강등 사유(below_threshold/conflict/unverified/dual_path_HELD 등) 표면화 —
+                # FinalGate가 이미 산출한 reason을 노출만(무음 강등 제거).
+                "gate_reason": gated.reason,
+                # 정량 이중경로(명기 vs 산정) 대조 근거 — delta·tol 초과 시 HELD 사유 정량화.
+                "dual_path": ({"table_value": dp.table_value, "geom_value": dp.geom_value,
+                               "delta": round(dp.delta, 4), "status": dp.status.value,
+                               "caveat": "명기(면적표 선언값) vs 산정값 대조(밴드 area_tol). 산정 geom이 "
+                                         "명기 입력 기반이면 자기참조 주의 — 독립 기하경로(shoelace 등)는 후속"}
+                              if dp else None),
             },
         })
+    findings = gated_findings  # result.findings에 합성 confidence·gated_status 반영(박제 해소)
+
     # 플래그된 공학 지표는 '확인 필요' 항목으로 합류(무음 통과 금지).
     for m in sim_metrics:
         if m.flags:
+            _mlbl = label_for(m.metric_id) or {}
             items.append({
                 "item_id": m.metric_id,
+                "title": _mlbl.get("title"),
+                "recommendation": _mlbl.get("recommendation"),
                 "status": "NEEDS_REVIEW",
                 "confidence_grade": _grade(m.confidence),
                 "evidence": {"metric": m.metric_id, "value": m.value, "required": m.required,
-                             "flags": m.flags, "model": m.method_trace.model if m.method_trace else None},
+                             "flags": m.flags, "model": m.method_trace.model if m.method_trace else None,
+                             # finding item과 대칭 — MethodTrace에 이미 담긴 법령근거 노출(미설정 시 None 표면화).
+                             "basis_article": m.method_trace.basis_article if m.method_trace else None,
+                             "legal_basis": (resolve_text(m.method_trace.basis_article)
+                                             if (m.method_trace and m.method_trace.basis_article) else None)},
             })
+
+    # 유사사례 통계도 report 항목으로 합류 — 분포·반복조건의 도출이유·한계·출처 동반(VECTOR_SEARCH 단일 문자열로만 부착되던 갭 해소).
+    if precedent is not None and precedent.status == StatStatus.SUFFICIENT:
+        items.append({
+            "item_id": f"precedent:{inp.issue}",
+            "title": f"유사사례 통계 — {inp.issue}",
+            "status": "NEEDS_REVIEW",  # 참고 항목 — 확정 아님(INV-24 후보)
+            "evidence": {
+                "distribution": precedent.distribution,
+                "common_conditions": precedent.common_conditions,
+                "n": precedent.n,
+                "source": precedent_source,
+                "search_meta": precedent_search_meta,
+                "rationale": precedent.rationale.model_dump() if precedent.rationale else None,
+                "caveats": ["유사사례 통계는 참고 — 규범적 구속력 없음(INV-24)"],
+            },
+        })
 
     report: ReviewReport = ReportBuilder().build(
         items, snapshot_id=inp.snapshot_id, model_version=inp.model_version
     )
 
-    # 9) 규제 지식그래프 (P3) — 조문↔룰↔변수↔완화.
+    # 9) 규제 지식그래프 (P3) — 조문↔룰↔변수↔완화. land_card 용도지역 시 변수에 국가 규제 상한 독립 부착(P5·1차출처).
     reg_graph = (
-        build_reg_graph(parsed_rules, inp.mirror_rules)
+        build_reg_graph(parsed_rules, inp.mirror_rules,
+                        use_zone=(land_card.use_zone if land_card else None))
         if (parsed_rules or inp.mirror_rules) else None
     )
 
@@ -343,9 +434,11 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         drawing_source=drawing_source,
         drawing_elements_n=len(auto_elements),
         calc_targets_source=calc_targets_source,
+        extraction_trace=bundle.deterministic_trace(),
         extraction_source=extraction.source,
         bim_elements=(extraction.bim.elements if extraction.bim else []),
         preflight=preflight,
+        preflight_blocked=preflight_blocked,
         legal_quantities=legal_quantities,
         findings=findings,
         sim_metrics=sim_metrics,

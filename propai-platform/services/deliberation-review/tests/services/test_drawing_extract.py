@@ -90,6 +90,67 @@ def test_calc_target_auto_from_area_table():
     assert r.legal_quantities[0].value == 500.0  # 600 - 100(필로티 제외)
 
 
+def test_drawing_auto_balcony_depth_passthrough():
+    # INC-3: 도면 자동경로에서 BALCONY 깊이(depth) 승계 검증 — 깊이 2.0 > 기준 1.5 → 제외 안함.
+    # (측정치 승계 전엔 depth가 소실돼 0.0으로 잘못 제외됐음 → 592. 이제 600 유지.)
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "building_area", "outer_area": 600.0},
+                   "element_hints": [{"semantic_hint": "BALCONY", "hint_strength": 0.9,
+                                      "area": 8.0, "depth": 2.0}]}]))
+    assert r.calc_targets_source == "DRAWING_AUTO"
+    assert r.legal_quantities[0].value == 600.0  # 깊이 2.0 > 1.5 → 제외 대상 아님
+
+
+def test_calc_target_builder_carries_measurements():
+    # INC-3: build_calc_targets_from_drawing이 length/depth/underground/accessory를 excl로 승계(미상=None).
+    from app.contracts.drawing_extraction import DrawingExtraction, ExtractedElement
+    from app.services.extraction.calc_target_builder import build_calc_targets_from_drawing
+    ext = DrawingExtraction(
+        source="HINTS",
+        area_tables=[{"target": "building_area", "outer_area": 600.0}],
+        elements=[ExtractedElement(element_id="e1", semantic_hint="PARKING", hint_strength=0.9,
+                                   area=150.0, underground=True, accessory=True)])
+    targets, _ = build_calc_targets_from_drawing(ext)
+    el = targets[0]["elements"][0]
+    assert el["underground"] is True and el["accessory"] is True
+
+
+def test_drawing_auto_multirow_gross_floor_area():
+    # INC-7: 다행(층별) 면적표 → 연면적 자동산정(각 층 바닥면적 합).
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "gross_floor_area",
+                                  "rows": [{"floor": "1F", "area": 100.0},
+                                           {"floor": "2F", "area": 120.0},
+                                           {"floor": "3F", "area": 80.0}]}}]))
+    assert r.calc_targets_source == "DRAWING_AUTO"
+    gfa = r.legal_quantities[0]
+    assert gfa.variable_id == "gross_floor_area" and gfa.value == 300.0
+
+
+def test_area_sanity_flags_contradiction_and_ratio():
+    # INC-6: 제외 area 합 > 외곽 → 모순, 단일 area/외곽 > 상한 → 환각 의심(둘 다 무음 승계 차단).
+    from app.services.extraction.area_sanity import area_sanity_notes
+    contradiction = area_sanity_notes(100.0, [{"area": 150.0}])
+    assert any("모순" in n for n in contradiction)
+    ratio = area_sanity_notes(100.0, [{"area": 95.0}])  # 0.95 > 0.9 상한
+    assert any("환각 의심" in n for n in ratio)
+    assert area_sanity_notes(100.0, [{"area": 30.0}]) == []  # 정상 → 무경고
+
+
+def test_area_sanity_surfaced_in_pipeline():
+    # 도면 자동경로의 모순 면적이 r.skipped로 표면화(무음0).
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "building_area", "outer_area": 100.0},
+                   "element_hints": [{"semantic_hint": "PILOTIS", "hint_strength": 0.9, "area": 150.0}]}]))
+    assert any("area_sanity" in s for s in r.skipped)
+
+
 def test_calc_target_explicit_input_wins():
     # 명시 calc_targets가 있으면 도면 자동구성보다 우선(INPUT).
     r = run_analysis(AnalysisInput(

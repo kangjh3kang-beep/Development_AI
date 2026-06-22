@@ -4,11 +4,9 @@
 """
 from __future__ import annotations
 
-from app.adapters.network import LiveNetwork, NetworkError
+from app.adapters.network import LiveNetwork, NetworkError, host_allowed
 from app.contracts.source_document import DocTier, SourceDocument
 from app.core.hashing import input_hash
-
-_WHITELIST = ("law.go.kr", "elis.go.kr", "eum.go.kr")
 
 
 class Tier2SiteHarvester:
@@ -16,7 +14,8 @@ class Tier2SiteHarvester:
         self.network = network or LiveNetwork()
 
     def harvest(self, url: str, jurisdiction: str = "") -> list[SourceDocument]:
-        if not any(host in url for host in _WHITELIST):
+        # hostname 정확/접미사 매칭(host_allowed) — substring 우회(law.go.kr.evil.com) 차단.
+        if not host_allowed(url):
             raise NetworkError(f"non-whitelisted source rejected: {url}")
         raw = self.network.get(url)
         return [

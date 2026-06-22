@@ -5,10 +5,14 @@ POST /api/v1/analyze: 분석 실행 + 영속화(run_id 반환). GET /api/v1/anal
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+
+import anyio
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, require_token
+from app.api.deps import get_project_id, get_session, get_tenant_id, require_token
 from app.contracts.analysis import AnalysisInput, AnalysisResult
 from app.core.errors import DomainError
 from app.services.pipeline.analysis_pipeline import run_analysis
@@ -19,17 +23,68 @@ router = APIRouter(prefix="/api/v1", tags=["analysis"])
 
 
 @router.post("/analyze", response_model=AnalysisResult, dependencies=[Depends(require_token)])
-async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session)) -> AnalysisResult:
+async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session),
+                  tenant_id: uuid.UUID | None = Depends(get_tenant_id),
+                  project_id: uuid.UUID | None = Depends(get_project_id)) -> AnalysisResult:
+    # INC-11: 분석 전 캐시 적재(L2→L1, snapshot 결속) · 분석 후 신규 fetch 영속(L1→L2). 모두 best-effort
+    # (캐시는 데이터 확보 단계만 — 실패해도 분석 진행, 결정론 영향 0).
+    from app.adapters.cache.source_cache import flush_to_db, warm_from_db
     try:
-        result = run_analysis(payload)
+        await warm_from_db(session, payload.snapshot_id)
+    except Exception:
+        await session.rollback()  # 캐시 적재 실패 → 직접 fetch 경로로 degrade(무음 단정 금지: 분석은 진행)
+    # INC-13: 적재된 미러(공급측 DB)를 in-memory로 warm → 소비측 sync get이 DB-backed 미러를 읽음(INV-13 read-only).
+    try:
+        from app.supply.mirror.mirror_store import warm_mirror_from_db
+        await warm_mirror_from_db(session, payload.pnu)
+    except Exception:
+        await session.rollback()  # 미러 적재 실패 → 미적재 보수 게이팅으로 degrade(분석 진행)
+    try:
+        # 동기·장시간(VLLM/라이브 네트워크) 분석을 threadpool로 오프로드 → 이벤트루프 비블로킹
+        # (단일 워커 루프 점유로 인한 동시요청 직렬화 방지·throughput 회복).
+        result = await anyio.to_thread.run_sync(run_analysis, payload)
     except DomainError as exc:
-        raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}") from exc
-    return await save_analysis(session, result)
+        # 예외 원문(내부 식별자/경로) 노출 금지 — 안정 코드만 반환(원문은 서버 추적 from exc).
+        raise HTTPException(status_code=422, detail=f"domain_error:{type(exc).__name__}") from exc
+    try:
+        await flush_to_db(session)
+    except Exception:
+        await session.rollback()  # 캐시 영속 실패 → 다음 분석이 재fetch(분석 결과엔 무영향)
+    # INC-14: 원시 입력 보존 — reconcile 불일치 시 이 관할(pnu) 분석을 동일입력으로 재실행(결정론).
+    # #8a: BFF가 보낸 X-Tenant-Id를 organization_id로 적재(테넌트 격리 키).
+    # project_id: X-Project-Id를 적재 → 분석 결과를 프로젝트에 귀속(프로젝트 단위 데이터베이스).
+    return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"),
+                               tenant_id=tenant_id, project_id=project_id)
+
+
+@router.post("/analyze/upload", response_model=AnalysisResult, dependencies=[Depends(require_token)])
+async def analyze_upload(payload: dict = Body(...), session: AsyncSession = Depends(get_session),
+                         tenant_id: uuid.UUID | None = Depends(get_tenant_id),
+                         project_id: uuid.UUID | None = Depends(get_project_id)) -> AnalysisResult:
+    """INC-17 — 도면 업로드 분석(멀티모달 진입점). files(base64 이미지/PDF)를 drawings로 자동 구성 후 동일 run_analysis 위임.
+
+    멀티파트(python-multipart) 의존 없이 JSON base64 수신(프런트 readAsDataURL 호환). 이미지=data-uri 인라인,
+    PDF=PyMuPDF 페이지 분할(미설치 시 422 pdf_split_unavailable graceful degrade). 사용자가 image_ref JSON을
+    손으로 적던 편의성 갭 해소. 보안/멱등/영속/테넌트격리는 위임 대상 analyze가 그대로 보장(중복 0)."""
+    from app.adapters.vision.upload_intake import UploadError, build_drawings
+    files = payload.pop("files", None)
+    try:
+        built = build_drawings(files or [])
+    except UploadError as exc:
+        raise HTTPException(status_code=422, detail=f"upload_error:{exc}") from exc
+    payload["drawings"] = list(payload.get("drawings") or []) + built  # 기존 drawings 보존 + 업로드분 합류
+    try:
+        inp = AnalysisInput(**payload)
+    except ValidationError as exc:  # 입력오류만 422(내부 버그는 500으로 전파)
+        raise HTTPException(status_code=422, detail="invalid_input") from exc
+    return await analyze(payload=inp, session=session, tenant_id=tenant_id, project_id=project_id)
 
 
 @router.get("/analyze/{run_id}", response_model=AnalysisResult, dependencies=[Depends(require_token)])
-async def get_analysis_run(run_id: str, session: AsyncSession = Depends(get_session)) -> AnalysisResult:
-    result = await get_analysis(session, run_id)
+async def get_analysis_run(run_id: str, session: AsyncSession = Depends(get_session),
+                           tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
+    # #8a: tenant_id 제공 시 소유 필터(교차테넌트 조회 차단·심층방어). 미존재/타테넌트 동일 404(존재은닉).
+    result = await get_analysis(session, run_id, tenant_id=tenant_id)
     if result is None:
         raise HTTPException(status_code=404, detail="analysis run not found")
     return result

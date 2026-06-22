@@ -14,6 +14,7 @@ from app.contracts.legal_quantity import (
     CalcElement,
     CalcTarget,
     CalcTrace,
+    CalcTraceEntry,
     LegalQuantity,
     emit,
 )
@@ -21,7 +22,11 @@ from app.contracts.semantic_element import SemanticType
 from app.contracts.versioning import Snapshot
 from app.core.errors import RuleContractError
 from app.core.parameters import param
-from app.services.legal_calc.area_calculator import AreaCalculator
+from app.services.legal_calc.area_calculator import (
+    AreaCalculator,
+    ParkingFarEligibility,
+    parking_far_eligibility,
+)
 from app.services.legal_calc.calc_params import CalcParamSource
 from app.services.legal_calc.height_floor_calc import HeightFloorCalc
 
@@ -76,9 +81,29 @@ class CalcEngine:
         # INV-12: 분류 confidence 상속 + 불확실/UNKNOWN → HELD.
         min_conf = min((e.confidence for e in elements), default=1.0)
         has_unknown = any(e.semantic_type == SemanticType.UNKNOWN for e in elements)
-        held = has_unknown or min_conf < float(param("calc_min_input_confidence"))
+        threshold = float(param("calc_min_input_confidence"))
+        # HELD 사유를 누적 — status=HELD만으로 '왜 HELD인지' 식별 못 하던 갭 해소(설명가능성).
+        held_reasons: list[str] = []
+        if has_unknown:
+            held_reasons.append("입력 요소에 UNKNOWN(의미 미분류) 포함")
+        if min_conf < threshold:
+            held_reasons.append(f"입력 분류 신뢰도 {round(min_conf, 2)} < 임계 {threshold}")
+        # 용적률 산정 시 주차 제외 적격성 미상(지하/부속 미확인) → HELD(전량제외 무음 거짓적합 방지).
+        if target == CalcTarget.FAR_FLOOR_AREA and any(
+            e.semantic_type == SemanticType.PARKING
+            and parking_far_eligibility(e) is ParkingFarEligibility.UNKNOWN
+            for e in elements
+        ):
+            held_reasons.append("주차 제외 적격성 미상(지하/부속 미확인)")
+        held = bool(held_reasons)
 
         value, entries = self._dispatch(target, payload, elements)
+        if held_reasons:  # 강등 사유를 calc_trace에 명시(무라벨 HELD 제거).
+            # basis_article은 법령 조문 슬롯 — HELD 강등은 비법령 내부근거(분류 신뢰도 방법론)이므로 빈값(법령 근거
+            # 없음·정직), 내부 불변식 표기(INV-12)는 note로 이동(법령 해소 시 비법령 식별자 '미해소' 혼선 제거).
+            entries.append(CalcTraceEntry(
+                rule_id="held_reason", basis_article="",
+                note="HELD 강등 사유(INV-12: 분류 confidence 상속·불확실→HELD) — " + "; ".join(held_reasons)))
 
         status = RecordStatus.HELD if held else RecordStatus.AGREED
         q = LegalQuantity(
@@ -93,7 +118,20 @@ class CalcEngine:
         )
         return emit(q)
 
+    _REQUIRED = {
+        CalcTarget.BUILDING_AREA: ("outer_area",),
+        CalcTarget.GROSS_FLOOR_AREA: ("floor_areas",),
+        CalcTarget.FAR_FLOOR_AREA: ("gross_floor_area",),
+        CalcTarget.PLOT_AREA: ("parcel_area",),
+        CalcTarget.BUILDING_HEIGHT: ("raw_height",),
+        CalcTarget.FLOOR_COUNT: ("above_ground_floors",),
+    }
+
     def _dispatch(self, target, payload, elements):
+        # 필수 페이로드 키 검증 — 결손 시 무음 KeyError(→500 붕괴) 대신 RuleContractError(→422 DomainError).
+        for key in self._REQUIRED.get(target, ()):
+            if key not in payload:
+                raise RuleContractError(f"calc target {target.value} requires payload['{key}'] (결손)")
         if target == CalcTarget.BUILDING_AREA:
             return self.area.building_area(payload["outer_area"], elements)
         if target == CalcTarget.GROSS_FLOOR_AREA:

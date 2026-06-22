@@ -7,14 +7,33 @@ from __future__ import annotations
 
 from app.contracts.reg_graph import NodeKind, RegEdge, RegGraph, RegNode
 from app.contracts.rule import Rule
+from app.services.explain.legal_refs import resolve_text
 
 
-def build_reg_graph(rules: list[Rule], mirror_rules: list[dict] | None = None) -> RegGraph:
+def build_reg_graph(rules: list[Rule], mirror_rules: list[dict] | None = None,
+                    use_zone: str | None = None) -> RegGraph:
+    """rules(+미러) → RegGraph. use_zone 제공 시 VARIABLE 노드에 엔진 독립 해소 국가 규제 상한 부착
+    (zone_limit_provider=데이터파일 1차출처, 입력 limit echo 아님). 플랫폼 한도와 divergence 관측원(P5)."""
+    from app.services.legal_calc.zone_limit_provider import resolve_zone_limit
+
     nodes: dict[str, RegNode] = {}
     edges: list[RegEdge] = []
 
     def add(node_id: str, kind: NodeKind, label: str | None = None) -> None:
-        nodes.setdefault(node_id, RegNode(id=node_id, kind=kind, label=label))
+        if node_id in nodes:
+            return
+        extra: dict = {}
+        if kind == NodeKind.ARTICLE and label:  # 조문 ID → 법령 본문 해소(설명가능성)
+            r = resolve_text(label)
+            if r:
+                extra = {"law": r["law"], "article": r["article"], "summary": r["summary"],
+                         "effective_date": r.get("effective_date"), "source": r["source"],
+                         "resolved": r["match"]}
+        elif kind == NodeKind.VARIABLE and use_zone and label:  # 변수 → 국가 규제 상한 독립 해소(1차출처)
+            lim = resolve_zone_limit(use_zone, label)
+            if lim:
+                extra = {"limit_value": lim[0], "limit_unit": "%", "limit_source": lim[1]}
+        nodes[node_id] = RegNode(id=node_id, kind=kind, label=label, **extra)
 
     for r in rules:
         rid = f"rule:{r.rule_id}"

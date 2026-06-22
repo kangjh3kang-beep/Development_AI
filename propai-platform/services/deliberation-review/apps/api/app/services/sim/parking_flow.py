@@ -4,7 +4,7 @@ from __future__ import annotations
 from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
 from app.services.sim.sim_params import SimParamSource
 
-_BASIS = "주차장법 시행규칙"
+_BASIS = "주차장법시행규칙§6"  # 노외주차장 구조·설비기준(resolve_text 해소 가능 — legal_refs 등록)
 
 
 def run(parking: dict, params: SimParamSource) -> SimMetric:
@@ -25,7 +25,10 @@ def run(parking: dict, params: SimParamSource) -> SimMetric:
 
     trace = MethodTrace(
         model="parking_geometry",
-        assumptions=["회전반경 최소기준 비교"],
+        assumptions=[
+            "회전반경 최소기준 비교(param 주입값 — 설계기준 의존)",
+            "⚠️ 통로폭/단부거리는 본 지표에서 미검증 — 회전반경만 비교(docstring 범위 중 일부). 별도 검증 필요",
+        ],
         inputs={"turn_radius": turn_radius},
         basis_article=_BASIS,
     )

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from app.contracts.drawing_extraction import DrawingExtraction
+from app.services.extraction.area_sanity import area_sanity_notes
 
 
 def build_calc_targets_from_drawing(ext: DrawingExtraction) -> tuple[list[dict], list[str]]:
@@ -15,20 +16,36 @@ def build_calc_targets_from_drawing(ext: DrawingExtraction) -> tuple[list[dict],
         return [], ["면적표(outer_area) 미검출 → 면적 자동산정 불가"]
 
     # area 보유 + 타입 확정(UNKNOWN 제외) 요소만 제외 측정치 후보(보수, 날조 금지).
+    # length/depth/underground/accessory 동반 승계 — EAVE/BALCONY/PARKING 제외 정확 산정(미상=None 유지→HELD).
     excl = [
-        {"semantic_type": e.semantic_hint, "area": e.area, "confidence": e.hint_strength}
+        {"semantic_type": e.semantic_hint, "area": e.area, "confidence": e.hint_strength,
+         "length": e.length or 0.0, "depth": e.depth or 0.0,
+         "underground": e.underground, "accessory": e.accessory}
         for e in ext.elements
         if e.area is not None and e.semantic_hint != "UNKNOWN"
     ]
     targets: list[dict] = []
     for at in ext.area_tables:
         outer = at.get("outer_area")
-        if outer is None:
-            notes.append(f"면적표({at.get('target')}): outer_area 없음 → skip")
-            continue
-        targets.append({
-            "target": at.get("target", "building_area"),
-            "payload": {"outer_area": float(outer)},
-            "elements": excl,
-        })
+        if outer is not None:
+            # 단일 외곽면적 → 건축면적 산정(제외 측정치 승계). area sanity로 모순/환각 표면화.
+            notes.extend(area_sanity_notes(float(outer), excl))
+            targets.append({
+                "target": at.get("target", "building_area"),
+                "payload": {"outer_area": float(outer)},
+                "elements": excl,
+            })
+        elif at.get("rows"):
+            # 다행(층별) 면적표 → 연면적 산정(각 층 바닥면적 합). 층 면적 결손은 표면화(무음0, INC-7).
+            floor_areas = [float(r["area"]) for r in at["rows"] if r.get("area") is not None]
+            if floor_areas:
+                targets.append({
+                    "target": at.get("target", "gross_floor_area"),
+                    "payload": {"floor_areas": floor_areas},
+                    "elements": [],
+                })
+            else:
+                notes.append(f"면적표({at.get('target')}): 층별 면적 결손 → 연면적 자동산정 skip")
+        else:
+            notes.append(f"면적표({at.get('target')}): outer_area/rows 없음 → skip")
     return targets, notes

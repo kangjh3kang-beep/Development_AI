@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Boolean, Float, Integer, String, Text
+from sqlalchemy import Boolean, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,12 +38,17 @@ class RuleCandidateModel(Base, CommonMixin):
 
 class MirrorSnapshotModel(Base, CommonMixin):
     __tablename__ = "mirror_snapshot"
+    # INC-13: 멱등·동시writer 안전 — (jurisdiction, snapshot_id) 원자적 upsert(on_conflict) 근거.
+    __table_args__ = (UniqueConstraint("jurisdiction", "snapshot_id",
+                                       name="uq_mirror_snapshot_jur_sid"),)
 
     snapshot_id: Mapped[str] = mapped_column(String(64))
     jurisdiction: Mapped[str] = mapped_column(String(64))
     version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     rules: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     active_candidate_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # INC-14: 라이브 본문 해시 provenance(reconcile diff 기준, 0015). nullable=legacy/미설정 허용.
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class HITLTaskModel(Base, CommonMixin):

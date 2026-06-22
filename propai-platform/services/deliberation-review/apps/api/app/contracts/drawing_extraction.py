@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 _VALID_TYPES = {
     "PILOTIS", "BALCONY", "EAVE", "BASEMENT", "PARKING", "CORE_STAIR",
     "EXT_WALL", "PLOT_BOUNDARY", "BUILDING_LINE", "UNKNOWN",
@@ -36,14 +38,25 @@ class DrawingSheet(BaseModel):
 
 
 class ExtractedElement(BaseModel):
-    """도면에서 추출된 요소 1건. area/quantity는 정량(산정 입력으로 승계 가능)."""
+    """도면에서 추출된 요소 1건. area/quantity는 정량(산정 입력으로 승계 가능).
+
+    length/depth/underground/accessory: 제외 산정에 필요한 측정치(EAVE 처마길이·BALCONY 깊이·
+    PARKING 지하/부속). 미상=None 유지 → 하류 CalcElement에서 HELD 표면화(무음 전량제외 금지).
+    """
 
     element_id: str
     semantic_hint: str                     # SemanticType 이름 또는 UNKNOWN
-    hint_strength: float = 0.0
+    hint_strength: Probability = 0.0
     area: float | None = None
     quantity: float | None = None
-    provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint}
+    length: float | None = None            # EAVE 처마 제외길이 산정용(실척)
+    depth: float | None = None             # BALCONY 발코니 깊이 산정용(실척)
+    area_px: float | None = None           # 도면단위 면적(축척 환산 전, INC-4)
+    length_px: float | None = None         # 도면단위 길이(축척 환산 전, INC-4)
+    underground: bool | None = None        # PARKING 지하 여부(용적률 제외 적격성)
+    accessory: bool | None = None          # PARKING 부속 여부(용적률 제외 적격성)
+    consensus_status: str | None = None    # N-패스 합의(UNANIMOUS/MAJORITY/CONFLICT/SINGLE, INC-9)
+    provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint, scale_*}
 
 
 class DrawingExtraction(BaseModel):

@@ -4,12 +4,17 @@ import pathlib
 from tools.static_scan import scan_for_numeric_legal_constants
 
 _APP_DIR = pathlib.Path(__file__).resolve().parents[2] / "apps" / "api" / "app"
+# 법정상수 아닌 정당한 예외(부동소수 비교 오차 등) — AST 스캐너가 지수표기까지 잡으므로 명시 제외.
+# 측정치/지역변수(법정상수 아님) — 정확한 이름만(substring 면제 금지: floor_area_ratio=FAR 등 법정명 누수 방지).
+_ALLOW = ("_FLOAT_TOL", "area", "depth", "sunny_hours", "shaded_ratio",
+          "existing_floor_area", "rooftop_area",  # 면적 측정 입력(기본 0.0=부재 센티넬)
+          "rel_tol", "_MAX_REL_TOL")  # P4: 교차검증 상대오차·상한(검증 허용오차 — _FLOAT_TOL 동류, 법정 한도 아님)
 
 
 def test_no_hardcoded_legal_params():
     offenders: dict[str, list[str]] = {}
     for py in _APP_DIR.rglob("*.py"):
-        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"))
+        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"), allowlist=_ALLOW)
         if hits:
             offenders[str(py.relative_to(_APP_DIR))] = hits
     assert offenders == {}, f"hardcoded legal params found: {offenders}"

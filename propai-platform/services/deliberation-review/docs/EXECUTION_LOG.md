@@ -256,12 +256,131 @@
 - skyline_protrusion(skyline, proposed_floors): 신축안 층수 vs 주변 평균(ratio_vs_avg)·최고(exceeds_context_max)
   → 등급(LOW 최고이내 / MEDIUM 최고초과 / HIGH 최고 2배초과). 결손 None, 부분 스카이라인도 가능항목만 산출.
 - 배선: AnalysisInput.proposed_floors → pipeline 6.36 surrounding_context["protrusion"]. AT 3, 전체 270 passed, ruff clean.
-- 후속: 조례 시점태깅(서울 2025~28 한시완화) · 역세권 거리요건(250~350m, 지하철역 데이터) 정량 필터.
+- 후속: 역세권 거리요건(250~350m, 지하철역 데이터) 정량 게이팅.
+
+### ✅ 설명가능성 표준 + 토지/종상향 영역 적용 + 조례 시점태깅
+- 워크플로 2종: ① 서울 한시완화·역세권 거리 1차출처 검증(HIGH) → docs/VERIFIED_FACTS_zoning.md.
+  ② 엔진 전 산출물 근거동반 현황 전수매핑(4영역) — 공통결손: 법령ID만 흐름·도출식 부재·INV-20 하드코딩·
+  심의민감 산출(shadow/skyline)이 근거게이트 우회·무음 강등.
+- 표준 3종: **contracts/rationale.py**(LegalRef·RationaleInput·Rationale[summary·formula·inputs·legal_basis·caveats]),
+  **services/explain/legal_refs.py**(조문ID→법령명·조항호·요지·시행일·1차출처 사전 22종, 미등록 placeholder 표면화).
+- 적용: remaining_capacity·multipath 각 산출에 rationale 동반. **조례 연결**(잔여용량이 시행령만 쓰던 모순
+  해소 — PNU 시도 조례 우선). **조례 시점태깅** ordinance_far(as_of) + 한시완화 '조건부 가능' 표면화(단정 금지).
+  pipeline application_date→as_of 배선.
+- 검증: 실 청운동 유사(제1종일반 150% vs 기존 323.6% 초과 / 역세권활성화 근린상업 600% 순증 35,149㎡) rationale
+  동반 출력 확인. AT 5(test_explainability) + 전체 **275 passed, ruff clean**.
+### ✅ 설명가능성 확장 — sim(일조/경관)
+- shadow_3d.sunlight_analysis·skyline_protrusion 반환에 rationale 동반(건축법§61·시행령§86 / 경관법§9·건축법§60).
+- 무음 오판 수정: sunny_hours_9to15가 '연속'이 아닌 과반일조 시각 총합임을 caveat로 표면화(시행령§86 연속판정과 별개).
+- INV-20: sunlight_threshold(과반임계) 함수 파라미터화 + method에 동적 반영. AT 2 + 전체 **277 passed, ruff clean**.
+### ✅ 설명가능성 확장 — report/reg_graph basis_article 본문 해소 (★작업경로=모노레포 정본)
+- **작업 경로 이전**: 정본=모노레포 `services/deliberation-review`(독립 워크트리 Development_AI_deliberation,
+  브랜치 feature/deliberation-review). 원본 propai-review는 보관. 원본 068c3af→정본 rsync 동기화.
+- legal_refs에 **법령 수준 키 4종**(국토계획법시행령/국토계획법/건축법시행령/건축법) + **resolve_text()** —
+  거친 basis_article("국토계획법 시행령" 등 조문번호 없음)을 best-effort 해소, match=exact/law_level 정직 표기.
+- reg_graph RegNode에 law/article/summary/effective_date/source/resolved 속성 → ARTICLE 노드가 법령 본문·출처
+  동반(ID만 흐르던 결손 해소). pipeline evidence에 legal_basis 결속, 미해소는 표면화(무음 금지).
+- 검증: AT 2(test_basis_resolve) + 전체 **279 passed, ruff clean**(정본 워크트리).
+### ✅ 설명가능성 확장 — legal_calc CalcTrace 제외 정량
+- CalcTraceEntry에 threshold/threshold_unit/measured/excluded_amount 필드 + calc_params.meta()로
+  basis_article·description·value 전파(calc_params.json의 근거가 출력에 소실되던 결손 해소).
+- area_calculator(처마/발코니/필로티/지하·주차/건축선)·height_floor_calc(옥탑 비율) 각 제외에 임계·실측·차감량·근거 동반.
+  예: "발코니 깊이 1.2m ≤ 기준 1.5m(건축법 시행령 제119조)".
+- AT 4(test_calc_trace_explain) + 전체 **283 passed, ruff clean**.
+### ✅ 설명가능성 확장 — final_gate 강등사유 + cross_validation 출처 ref (★전 영역 완료)
+- final_gate: NEEDS_REVIEW 강등 시 reason 라벨(unverified / below_threshold(값<임계) / conflict /
+  dual_path_HELD) — 무음 강등 제거.
+- cross_validation: CrossValidation.sources(SourceValue 값+1차출처 ref) 보존 — by_source가 값만 담아
+  역추적 불가하던 결손 해소.
+- AT 2(test_gate_xval_explain) + 전체 **285 passed, ruff clean**.
+- **★설명가능성 전 영역 완료**: land·sim·report/reg_graph·legal_calc·final_gate·cross_validation 모든
+  핵심 산출에 도출이유(summary·formula·inputs)·법령(legal_basis 본문·출처)·한계(caveats)·정량근거 동반.
 
 ### 통합 최종 스냅샷(diag)
 - 전 출처 표면화: drawing_source/calc_targets_source/precedent_source/mirror_source.
 - precedent_source=VECTOR_SEARCH(P-C 배선), 도면 자동(S8) drawing_source=HINTS→extraction VLLM.
 - **결정론 보존**(hash_equal·full_equal=true), 순수계산 51ms. 모든 신규 배선이 무음 오판 0·결정론 불변식 유지.
+
+### ✅ 멀티모달 고도화 INC-10 — 추출 오케스트레이터(P-에이전트 완료)
+- **계약**: 신규 `contracts/extraction_bundle.py`(ExtractionBundle/ExtractionStage). `AnalysisResult.extraction_trace` 가산.
+- **구현**: 신규 `services/extraction/extraction_orchestrator.py` `orchestrate_extraction(...)->ExtractionBundle` —
+  인라인 0a(도면추출)/P-A.2(calc_target)/0b(이중경로)를 6단계 명시 파이프라인으로 분리:
+  ①role_resolve(SheetRoleResolver 관측·재사용) ②extract(추출가) ③verify(cross_sheet 관측) ④aggregate(취합가)
+  ⑤calc_target ⑥dual_path. 단계 타이밍·강등사유를 `trace`로 노출(관측성). `analysis_pipeline.py`는 인라인 39줄 →
+  오케스트레이터 호출 13줄로 단순화.
+- **불변식 보존**: **취합가는 LLM 미관여**(`merge_with_consensus`=CrossSourceValidator 결정론). 단일 패스는 SINGLE
+  (원순서·값 보존, consensus_status 메타만 — `to_pipeline_elements`/`calc_target_builder` 비소비로 산출 비누수).
+  N-패스는 `vision_consensus_passes`(기본 1) param + 비전 경로만(동일 캐시입력 INC-8 → 재현). `extraction_trace`는
+  비결정 timing 제외 결정론 투영(완전동치 보존). CONFLICT→needs_review를 trace status + skipped로 표면화(무음0).
+- **검증**: AT 8(특성화 2 + 오케스트레이터 6) + 전체 **370 passed**(362→370), ruff clean, static_scan 0. 적대적 다관점
+  리뷰(behavior 4.7/gate 4.7/quality 4.5, min 4.5 ≥ 게이트) — 10개 엣지 입력 byte 동일(0 mismatch), 결정론 2회 동일 확인.
+
+### ✅ 멀티모달 고도화 INC-11 — 외부 1차출처 응답 캐시 계층(P-데이터 착수)
+- **계약/스키마**: 신규 `contracts`-급 `db/models/cache_models.ExternalSourceCacheModel`(external_source_cache:
+  cache_key uniq·adapter·endpoint·params_hash·payload JSONB·content_hash·etag·fetched_at·snapshot_id·status)
+  + **alembic 0013_external_source_cache**(revises 0012, review schema, up/down 가역).
+- **구현**: 신규 `adapters/cache/source_cache.py` — vision_cache(INC-8)의 분산/영속 확장. **L1 프로세스 인메모리**
+  (sync `cached_get` — 어댑터 동기 httpx 경로, 적중→동일 출력 결정론, TTL·만료 회수·상한 eviction) +
+  **L2 DB 영속**(async `warm_from_db`/`flush_to_db` — `analyze` 라우트 경계에서 best-effort, snapshot 결속).
+  8개 어댑터(law_go_kr·molit_building·vworld_landprice/landuse/landchar/building/nearby/geocoder)의 인라인
+  httpx.get을 공유 `cached_get` 경유로(원 시그니처/예외 보존). run_analysis가 `set_snapshot`로 snapshot 결속.
+- **불변식**: 캐시는 데이터 확보 단계만 — **결정론 영향 0**(적중→동일 입력→동일 출력). 미스/실패→graceful None
+  (무음0, None 미캐시→재시도). **secret(OC/key/serviceKey)는 cache_key·DB에서 제외**(비유출, 실 호출엔 포함).
+  jurisdiction/vworld.py는 계약 상이(AdapterTimeout)로 의도적 제외. 테스트 간 캐시 격리(conftest autouse clear).
+- **검증**: AT 9(적중·시크릿제외·None미캐시·TTL·어댑터경유·키없음·만료회수·flush-commit실패보존·DB라운드트립) + 전체
+  **379 passed**(370→379), ruff clean, static_scan 0. 적대적 다관점 리뷰(gate 4.8·determinism 8.7·quality 8.5,
+  전부 gate_pass) — 시크릿 비유출·결정론 코드 증명, 7건 기각·LOW 3건 반영(flush dirty-clear→commit 후, 만료 eviction, warm rollback).
+
+### ✅ 멀티모달 고도화 INC-12 — 수집 신선도 게이트(P-데이터)
+- **변경**: `SourceValue`에 collected_at/data_vintage/max_age_days + **is_stale(as_of)**(data_vintage→collected_at 우선,
+  max_age_days 초과; **wall-clock 미사용 순수 메타 비교=결정론**). `CrossValidation.stale_sources` + needs_review에 stale 포함.
+  `validator.validate(fact_key, values, as_of=None)` — 합의 직전 노후 출처 표면화. `LandCard`에 max_age_days + **is_stale(as_of)**.
+- **배선**: 파이프라인 cross_facts가 `as_of=application_date` 전달 + landprice SourceValue에 data_vintage(land_year)/max_age 730.
+  collect_land_card가 stdr_year vs as_of 노후 시 note(max_age 365, is_stale과 동일 임계).
+- **불변식**: **as_of None이면 신선도 미평가**(후방호환 — vision_consensus의 merge_with_consensus 등 기존 호출자 무영향).
+  status는 합의 결과 정직 보존(노후를 CONFLICT로 위장 안 함), 노후는 stale_sources+needs_review로만 표면화(무음0). 결정론.
+- **검증**: AT 6(is_stale·validator 게이트·as_of 무전달 호환·결정론·LandCard.is_stale·파이프라인 e2e) + 전체 **385 passed**
+  (379→385), ruff clean, static_scan 0. 적대적 집중 리뷰 4.7(gate_pass) — LOW(LandCard dead 필드) 해소(collected_at 제거·is_stale로 max_age 소비).
+
+### ✅ 멀티모달 고도화 INC-13 — 수집 데이터 DB 영속화(P-데이터)
+- **구현**: INC-11 warm 패턴 재사용 — **L1 in-memory(MirrorStore, 폴백/테스트) + L2 DB(mirror_snapshot)**.
+  mirror_store에 async write_snapshot_to_db/load_active_snapshot_from_db/warm_mirror_from_db. **소비측
+  run_analysis 불변**(여전히 default_store().get) — analyze 라우트가 warm(DB→in-memory)으로 DB-backed 미러 가시화
+  (INV-13 read-only, 라이브 미호출). MirrorWriter.persist_to_db·CorpusIngest.persist_to_db(async). 공급측
+  `supply/db_persist.py`(source_document/precedent_case upsert, emit INV-23). run_harvest_job이 source_document 영속.
+- **불변식**: 소비측 read-only(INV-13). ACTIVE-only(writer). in-memory 폴백 유지(직접 run_analysis 비파괴). 멱등.
+  신규 마이그레이션 없음(테이블 0005/0008 기존) — 단, 리뷰 후 동시성 보강용 0014 추가(아래).
+- **검증**: AT 6(DB 라운드트립·폴백·문서/사례 멱등·출처강제·harvest 교차루프 회귀·MirrorStore 상한) + 전체 **391 passed**
+  (385→391), ruff clean, static_scan 0. 적대적 다관점 리뷰(inv13 8.5·persist 8.2·quality 7.5, 전부 gate_pass) — 확인 3건 해소:
+  **(HIGH)** run_harvest_job asyncio.run이 글로벌 async 엔진 풀을 새 루프서 재사용 → 장수 워커 2회차+ 'Event loop is
+  closed' 무음 실패 → **일회용 NullPool 엔진 + 실패 로깅**(무음0); **(MED)** mirror_snapshot 동시 writer 중복 행(유니크
+  제약 부재) → **alembic 0014 (jurisdiction,snapshot_id) 유니크 + on_conflict_do_nothing**(원자 멱등, 중복정리 가역); **(LOW)**
+  MirrorStore eviction 상한 + harvest 영속 회귀 테스트. 7건 기각(load tie-break 단일writer 도달불가 등).
+
+### ✅ 멀티모달 고도화 INC-15 — INV-13 라이브 호출 정적검사(P-데이터)
+- **구현**: AST 스캐너 `tools/live_call_scan.py`(기존 tools/static_scan.py 선례 위치) — 소비경로의 직접
+  `httpx.*`/`requests.*` 네트워크 호출(캐시 우회)을 위반으로 탐지. 허용=AdapterCache(`cached_get`, 스캔 대상 외).
+- **강제**: `tests/acceptance/test_live_call_scan.py` — adapters/regulation·adapters/legal·services/land·
+  services/cross_validate 스캔 → 위반 0 + 스캐너 자기검증 4(httpx/requests/Client 탐지·cached_get 허용·allowlist).
+- **불변식**: INV-13(소비측 라이브 미호출·무음0)을 코드로 강제 — 캐시 우회 httpx.get을 소비경로에 추가하면 AT 차단.
+  프로덕션 코드 변경 0(dev/CI 가드). 별칭 import 미탐 한계 docstring 명시(정직).
+- **검증**: AT 5 + 전체 **396 passed**(391→396), ruff clean. 현 소비경로는 INC-11로 전부 cached_get 경유라 위반 0.
+  저리스크·무프로덕션변경 + 스캐너 자기검증 → 전체 워크플로 생략(비례), 자기리뷰.
+
+### ✅ 멀티모달 고도화 INC-14 — reconcile_mirror 완결(P-데이터 마지막 무거운 항목)
+- **구현**: 라이브 1차출처 재대조 → content_hash diff → 불일치 시 미러 새 snapshot append → 영향 분석 재실행.
+  - alembic **0015**: `mirror_snapshot.content_hash`(라이브 본문 해시 provenance·diff 기준) + `analysis_run.input_payload`(동일입력 재실행 보존), 둘 다 nullable(legacy 비파괴)·down 가역. MirrorSnapshot 계약+write/load store 배선.
+  - **LiveNetwork.get**: env 게이트 `LIVE_NETWORK`(기본 False=mock NetworkError; True=실 httpx GET, follow_redirects=False, 실패는 NetworkError 일원화). INV-13 정적검사 그린(adapters/network.py·tasks/는 소비 스캔 대상 외).
+  - **reconcile_mirror_db**(순수 async DB): 미러 로드→content_hash diff→불일치 시 결정론 snapshot_id `rcl-<hash[:16]>` append(on_conflict_do_nothing 멱등)→영향 run(input_payload.pnu==jurisdiction) 조회→reconcile_log(관측성). match/no_baseline/no_mirror/no_jurisdiction 전부 reason 표면화(무음0).
+  - **reconcile_mirror**(sync Celery): 라이브 게이트→`_body_hash`(sha256)→`_run_reconcile_db`(NullPool 교차루프 안전+running-loop 가드)→default_store put(공급측 writer)→재분석 dedup+상한(`RECONCILE_MAX_REANALYZE`) 절단 로깅 후 reanalyze_task 디스패치. citation_ref urlencode.
+  - **reanalyze_task**: DB 최신 미러 warm(H1 다중워커 stale 방지)→동일입력 run_analysis(결정론)→결과 save_analysis append(H2 미영속 해소). warm/persist best-effort(NullPool), 실패 표면화.
+  - **reconcile_all** + celery **beat_schedule**(`RECONCILE_INTERVAL_SECONDS`): 미러 보유 distinct 관할 fan-out(주기 진입점, beat 기동 시만 발화).
+- **적대적 다관점 리뷰**(결정론·INV13 6.5 / 영속·멱등 5.5 / 무음실패·품질 6.0, 전체 6.0 gate_pass) — 확인 5건 해소:
+  **(HIGH)** 다중워커서 재분석이 stale 인메모리 미러 사용(analyze_task가 DB warm 안 함) → 별도 **reanalyze_task가 DB warm 후 실행**; **(HIGH)** 재분석 결과 fire-and-forget(어디에도 미영속) → **save_analysis로 새 run append**; **(MED)** snapshot_id 주입이 input_hash 변경+rules verbatim 복사=라벨회전인데 주석은 "재평가" 과장 → **docstring 정직 정정**(본문→rules 재파싱은 재하베스트 몫, lineage 후속 명시); **(MED)** citation_ref 미인코딩 URL 인젝션 → **urlencode + follow_redirects=False**; **(MED)** 단일 관할 재분석 fan-out 무상한 → **dedup(동일입력 1회)+상한 절단 로깅**.
+- **검증**: 신규 AT + 전체 **414 passed**(396→414, skipped 0), ruff clean, static_scan 0, test_consume_static·test_live_call_scan 그린, alembic 0015 down(0014)→up(0015) 가역.
+- **★성장루프 재검증(5렌즈 적대 워크플로 + 결함 재검증, 25 에이전트)**: gate_pass(HIGH 0; determinism 7.5·persist 8.5·silent 7·security 7.5·fix-correctness 8.5, 거짓양성 14건 기각). 확인 비블로킹 보강(커밋 `101a205d`): **(MED 보안)** `LiveNetwork.get` 임의 url 수용 → https 강제 + 1차출처 호스트 정확/접미사 화이트리스트(`host_allowed`, law/elis/eum.go.kr, substring 우회 `law.go.kr.evil.com` 차단) · Tier2 하베스터 동일 적용; **(LOW 관측성)** reconcile_log에 no_mirror/no_jurisdiction 기록(no_baseline/match/mismatch 대칭, 무음0 일관성). **보류(문서화)**: input_payload `address` PII 평문(재실행 결정론과 충돌·테넌트 RLS는 플랫폼 전역 사안) · reconcile_all 관할 fan-out 상한(신뢰소스 LOW). 보강 후 **419 passed**, ruff clean.
+- **푸시**: HEAD **`101a205d`**(INC-14 `a0cf3838` + 보강 `101a205d`) → origin `feature/deliberation-review` (kangjh3kang-beep/Development_AI, SSH) 동기화 완료.
+- **운영 잔여**: 실 worker+redis(CELERY_TASK_ALWAYS_EAGER=false)+celery beat 기동 · `LIVE_NETWORK=on`+실 law.go.kr/ELIS 연동(키·URL 확정) · reanalysis lineage(old→new run 링크) · (보류) PII 최소화·테넌트 귀속.
 
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +

@@ -7,17 +7,20 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import FiniteFloat, Probability
+from app.contracts.enums import Comparator
 from app.contracts.finding import Finding, Verdict
 from app.contracts.rule import Rule
+from app.core.errors import RuleContractError
 from app.services.judge.relaxation import evaluate_relaxations
 
 
 class EvalCase(BaseModel):
     rule: Rule
-    measured_value: float | None = None
-    limit_value: float | None = None
+    measured_value: FiniteFloat | None = None
+    limit_value: FiniteFloat | None = None
     relaxation_states: dict[str, str] = Field(default_factory=dict)
-    input_confidence: float = 1.0
+    input_confidence: Probability = 1.0
     conflicts: list[str] = Field(default_factory=list)
 
 
@@ -55,12 +58,15 @@ class Evaluator:
     def _violates(case: EvalCase) -> bool:
         measured, limit = case.measured_value, case.limit_value
         comparator = case.rule.comparator
-        if comparator == "<=":
+        if comparator == Comparator.LE:
             return measured > limit
-        if comparator == ">=":
+        if comparator == Comparator.GE:
             return measured < limit
-        if comparator == "<":
+        if comparator == Comparator.LT:
             return measured >= limit
-        if comparator == ">":
+        if comparator == Comparator.GT:
             return measured <= limit
-        return measured != limit
+        if comparator == Comparator.EQ:
+            return measured != limit
+        # enum이라 도달 불가 — 미정의 comparator 무음 '!=' 폴백 제거(방어).
+        raise RuleContractError(f"unsupported comparator: {comparator}")

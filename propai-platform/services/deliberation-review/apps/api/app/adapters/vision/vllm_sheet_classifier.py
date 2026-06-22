@@ -67,20 +67,24 @@ class AnthropicVisionClient:
             f"표제란 힌트: {hint_text or '(없음)'}."
         )
         from app.adapters.vision.image_source import build_content
+        from app.adapters.vision.vision_cache import cache_key, get_or_call
         content = build_content(image_ref, prompt)  # 이미지면 멀티모달 [image, text]
-        try:
-            resp = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
-                json={"model": self.model, "max_tokens": 16,
-                      "messages": [{"role": "user", "content": content}]},
-                timeout=20.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["content"][0]["text"]
-        except Exception:
-            return None  # 라이브 실패 → degrade(무음 단정 금지, 상위가 신호 결손 처리)
+
+        def _call() -> str | None:
+            try:
+                resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
+                    json={"model": self.model, "max_tokens": 16, "temperature": 0,  # 결정론(샘플링 제거)
+                          "messages": [{"role": "user", "content": content}]},
+                    timeout=20.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data["content"][0]["text"]
+            except Exception:
+                return None  # 라이브 실패 → degrade(무음 단정 금지, 상위가 신호 결손 처리)
+        return get_or_call(cache_key(self.model, image_ref, "ROLE:" + prompt), _call)
 
 
 def build_sheet_classifier(vision_client: VisionClient | None = None):

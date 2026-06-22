@@ -27,18 +27,12 @@ class VworldLandUseSource:
         """PNU 토지이용계획 용도지역지구명 목록. 결손/오류 None."""
         if not self.key or len(pnu) < 19:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            r = httpx.get(
-                f"{self.base}/getLandUseAttr",
-                params={"key": self.key, "pnu": pnu, "format": "json", "numOfRows": "50"},
-                headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.base}/getLandUseAttr",
+            {"key": self.key, "pnu": pnu, "format": "json", "numOfRows": "50"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None
         body = data.get("landUses") or data.get("landUse") or {}
         code = str(body.get("resultCode", ""))

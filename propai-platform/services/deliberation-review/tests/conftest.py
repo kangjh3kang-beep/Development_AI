@@ -33,6 +33,11 @@ def _test_adapter_isolation(monkeypatch):
     monkeypatch.setattr(_settings, "MOLEG_API_KEY", "", raising=False)
     monkeypatch.setattr(_settings, "OPENAI_API_KEY", "", raising=False)
     monkeypatch.setattr(_settings, "MOLIT_API_KEY", "", raising=False)
+    # 프로세스 인메모리 캐시 격리(INC-11 source_cache / INC-8 vision_cache) — 테스트 간 적중 오염 차단.
+    from app.adapters.cache import source_cache
+    from app.adapters.vision import vision_cache
+    source_cache.clear()
+    vision_cache.clear()
 
 
 @pytest.fixture

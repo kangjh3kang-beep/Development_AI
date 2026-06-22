@@ -42,20 +42,15 @@ class VworldNearbyBuildings:
     def buildings_near(self, lon: float, lat: float, radius_m: int = 150) -> list[dict] | None:
         if not self.key:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
         d = radius_m * _DEG_PER_M
-        try:
-            r = httpx.get(f"{self.req}/data",
-                          params={"service": "data", "request": "GetFeature", "data": "lt_c_bldginfo",
-                                  "key": self.key, "format": "json", "crs": "EPSG:4326",
-                                  "geomFilter": f"BOX({lon - d},{lat - d},{lon + d},{lat + d})", "size": "1000"},
-                          headers=self.headers, timeout=20.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.req}/data",
+            {"service": "data", "request": "GetFeature", "data": "lt_c_bldginfo",
+             "key": self.key, "format": "json", "crs": "EPSG:4326",
+             "geomFilter": f"BOX({lon - d},{lat - d},{lon + d},{lat + d})", "size": "1000"},
+            secret_param_keys=("key",), headers=self.headers, timeout=20.0)
+        if data is None:
             return None
         resp = data.get("response", {})
         if resp.get("status") != "OK":

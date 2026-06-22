@@ -5,6 +5,12 @@
     "mode": "relative",
     "description": "면적 변수 허용오차 밴드(상대비). 밴드 초과 시 충돌 보류(HELD)."
   },
+  "area_ratio_max": {
+    "value": 0.9,
+    "unit": "ratio",
+    "mode": "relative",
+    "description": "단일 제외요소 area / 외곽면적 상한. 초과 시 비전 추출 환각 의심 → 표면화(INC-6 sanity)."
+  },
   "length_tol": {
     "value": 0.02,
     "unit": "ratio",
@@ -76,5 +82,11 @@
     "unit": "count",
     "mode": "threshold",
     "description": "유사사례 통계 제시 최소 사례수. 미달 시 INSUFFICIENT(thin-data 날조 금지, INV-22)."
+  },
+  "vision_consensus_passes": {
+    "value": 1,
+    "unit": "count",
+    "mode": "count",
+    "description": "비전 추출가 N-패스 수(INC-10 취합가 합의 입력). 기본 1=단일 패스(현행, 출력 동일성 보존). >1이면 동일 캐시입력(INC-8) 다중 패스를 결정론 합의(merge_with_consensus)로 취합."
   }
 }

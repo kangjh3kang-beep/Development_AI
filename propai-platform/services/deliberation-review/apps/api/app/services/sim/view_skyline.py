@@ -7,7 +7,7 @@ from __future__ import annotations
 from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
 from app.core.confidence import clamp01
 
-_BASIS = "경관 정량지표"
+_BASIS = "경관법§9"  # 경관계획·경관심의(resolve_text 해소 가능 — legal_refs 등록). 정량 입면점유 지표의 법적 맥락
 
 
 def run(streetscape: dict) -> SimMetric:
@@ -26,7 +26,10 @@ def run(streetscape: dict) -> SimMetric:
     occupancy = clamp01(float(facade_width) / float(street_width))
     trace = MethodTrace(
         model="skyline_ratio",
-        assumptions=["입면폭/가로폭 비"],
+        assumptions=[
+            "입면폭/가로폭 단일 단면 비율 — 통경축 차폐율·시점 위치 미반영(docstring상 통경축 차폐는 별도 미산출)",
+            "clamp01로 1.0 상한 절단(초과 점유는 1.0으로 포화)",
+        ],
         inputs={"facade_width": facade_width, "street_width": street_width},
         basis_article=_BASIS,
     )

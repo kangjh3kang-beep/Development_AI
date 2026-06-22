@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from app.contracts.sim_metric import MetricStatus, SimMetric, emit
+from app.contracts.sim_metric import MetricStatus, MetricUnit, SimMetric, emit
 from app.core.errors import MethodTraceMissing
 from app.services.sim.sim_engine import SimEngine
 from tools.static_scan import scan_for_numeric_legal_constants
@@ -31,8 +31,10 @@ def test_sim_constants_parameterized():
     r2 = SimEngine(params={"egress_walk_speed_mps": 0.8}).run_egress(PLAN_WITH_STAIR)
     assert r1.value != r2.value
     offenders = {}
+    # 측정치/지역변수(법정상수 아님) — static_scan이 법정명+benign값까지 잡으므로 명시 제외.
+    allow = ("sunny_hours", "shaded_ratio", "area", "depth")
     for py in _SIM_DIR.rglob("*.py"):
-        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"))
+        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"), allowlist=allow)
         if hits:
             offenders[py.name] = hits
     assert offenders == {}
@@ -63,6 +65,18 @@ def test_parking_turn_radius_flag():
     assert m.value < m.required
 
 
+def test_parking_view_basis_resolves_and_scope_caveat():
+    # 주차/조망 지표가 법령본문 해소 가능 + 범위 한계 caveat 동반(법령접지·무음 미흡 제거).
+    from app.services.explain.legal_refs import resolve_text
+    assert resolve_text("주차장법시행규칙§6") is not None
+    assert resolve_text("경관법§9") is not None
+    pm = SimEngine().run_parking({"turn_radius": 5.0, "geom_confidence": 0.9})
+    assert any("통로폭" in a for a in pm.method_trace.assumptions)  # 범위 한계 표면화
+    vm = SimEngine().run_view({"facade_width": 10.0, "street_width": 20.0, "geom_confidence": 0.9})
+    assert vm.method_trace.basis_article == "경관법§9"
+    assert any("통경축" in a for a in vm.method_trace.assumptions)
+
+
 def test_egress_missing_distance_unavailable():
     # 보행거리 결손 → 크래시 없이 UNAVAILABLE(INV-21).
     plan = {"elements": ["CORE_STAIR"], "geom_confidence": 0.9}
@@ -71,7 +85,27 @@ def test_egress_missing_distance_unavailable():
     assert "missing_travel_distance" in m.flags
 
 
+def test_egress_nonpositive_speed_unavailable():
+    # 보행속도 0/음수 주입 → 0division(500)/음수시간 무음 오판 없이 UNAVAILABLE(INV-21 견고성).
+    m0 = SimEngine(params={"egress_walk_speed_mps": 0}).run_egress(PLAN_WITH_STAIR)
+    assert m0.status == MetricStatus.UNAVAILABLE
+    assert "invalid_egress_params" in m0.flags
+    assert m0.value is None
+    mneg = SimEngine(params={"egress_flow_coefficient": -1.0}).run_egress(PLAN_WITH_STAIR)
+    assert mneg.status == MetricStatus.UNAVAILABLE  # 음수 flow → 음수시간 차단
+
+
 def test_sunlight_trace_surfaces_model_limitation():
     # 모델 한계(정오 단일 그림자 근사)가 method_trace로 표면화(감사 D절/INV-19).
     m = SimEngine().run_sunlight(SITE_WITH_ADJACENT)
     assert any("근사" in a for a in m.method_trace.assumptions)
+
+
+def test_sim_metric_unit_enum_contract():
+    # 계약 강제: 유효 문자열 단위는 enum으로 변환, JSON은 값('s')로 직렬화(프런트 호환), 임의 단위 거부.
+    from pydantic import ValidationError
+    m = SimMetric(metric_id="x", unit="s")
+    assert m.unit is MetricUnit.SECONDS and m.unit == "s"
+    assert m.model_dump(mode="json")["unit"] == "s"
+    with pytest.raises(ValidationError):
+        SimMetric(metric_id="x", unit="furlongs")  # 비계약 단위 — 무음 통과 차단

@@ -13,6 +13,7 @@ from app.contracts.drawing_extraction import (
     ExtractedElement,
     normalize_semantic_hint,
 )
+from app.core.confidence import clamp01
 from app.settings import env_or_setting, settings
 
 
@@ -22,15 +23,32 @@ class DrawingVisionClient(Protocol):
     def extract_elements(self, image_ref: str, hint_text: str | None) -> list[dict] | None: ...
 
 
+def _measurements(d: dict) -> dict:
+    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지). area_px/length_px는 축척 환산 전 도면단위.
+
+    polygon(도면 경계좌표) 제공 시 슈레이스로 area_px 결정론 산출(INC-5b) → 축척 환산은 apply_scale(INC-4).
+    """
+    area_px = d.get("area_px")
+    if area_px is None and d.get("polygon"):
+        from app.services.extraction.geometry_area import shoelace_area
+        area_px = shoelace_area(d["polygon"])
+    return {
+        "length": d.get("length"), "depth": d.get("depth"),
+        "area_px": area_px, "length_px": d.get("length_px"),
+        "underground": d.get("underground"), "accessory": d.get("accessory"),
+    }
+
+
 def _from_hints(sheet: DrawingSheet) -> list[ExtractedElement]:
     out: list[ExtractedElement] = []
     for i, h in enumerate(sheet.element_hints):
         out.append(ExtractedElement(
             element_id=f"{sheet.sheet_id}-h{i}",
             semantic_hint=normalize_semantic_hint(h.get("semantic_hint")),
-            hint_strength=float(h.get("hint_strength", 0.0) or 0.0),
+            hint_strength=clamp01(float(h.get("hint_strength", 0.0) or 0.0)),
             area=h.get("area"),
             quantity=h.get("quantity"),
+            **_measurements(h),
             provenance={"sheet": sheet.sheet_id, "src": "hint", "role": sheet.sheet_role},
         ))
     return out
@@ -42,9 +60,10 @@ def _from_vision(sheet: DrawingSheet, raw: list[dict]) -> list[ExtractedElement]
         out.append(ExtractedElement(
             element_id=f"{sheet.sheet_id}-v{i}",
             semantic_hint=normalize_semantic_hint(r.get("type") or r.get("semantic_hint")),
-            hint_strength=float(r.get("confidence", 0.0) or 0.0),
+            hint_strength=clamp01(float(r.get("confidence", 0.0) or 0.0)),
             area=r.get("area"),
             quantity=r.get("quantity"),
+            **_measurements(r),
             provenance={"sheet": sheet.sheet_id, "src": "vision", "role": sheet.sheet_role},
         ))
     return out
@@ -56,17 +75,21 @@ class DrawingExtractor:
     def __init__(self, vision_client: DrawingVisionClient | None = None) -> None:
         self.vision_client = vision_client
 
-    def extract(self, sheets: list[DrawingSheet]) -> DrawingExtraction:
+    def extract(self, sheets: list[DrawingSheet], scale=None) -> DrawingExtraction:
         elements: list[ExtractedElement] = []
         area_tables: list[dict] = []
         notes: list[str] = []
         used_vision = False
         used_hints = False
         for sh in sheets:
-            if sh.area_table and sh.area_table.get("outer_area") is not None:
-                area_tables.append({"target": sh.area_table.get("target", "building_area"),
-                                    "outer_area": float(sh.area_table["outer_area"]),
+            at = sh.area_table
+            if at and at.get("outer_area") is not None:
+                area_tables.append({"target": at.get("target", "building_area"),
+                                    "outer_area": float(at["outer_area"]),
                                     "sheet": sh.sheet_id})
+            elif at and at.get("rows"):  # 다행 면적표(층별) — 연면적 자동산정용(INC-7)
+                area_tables.append({"target": at.get("target", "gross_floor_area"),
+                                    "rows": at["rows"], "sheet": sh.sheet_id})
             if self.vision_client is not None and sh.image_ref:
                 raw = self.vision_client.extract_elements(sh.image_ref, sh.titleblock_text or sh.sheet_role)
                 if raw:
@@ -80,7 +103,10 @@ class DrawingExtractor:
             elif not (self.vision_client is not None and sh.image_ref):
                 notes.append(f"{sh.sheet_id}: 이미지/힌트 없음 → 추출 불가(날조 금지)")
         source = "VLLM_VISION" if used_vision else ("HINTS" if used_hints else "none")
-        return DrawingExtraction(source=source, elements=elements, area_tables=area_tables, notes=notes)
+        ext = DrawingExtraction(source=source, elements=elements, area_tables=area_tables, notes=notes)
+        # 축척 주입 시 픽셀/도면단위 측정치를 실척으로 결정론 환산(INC-4). scale 없으면 무변환.
+        from app.services.extraction.scale_convert import apply_scale
+        return apply_scale(ext, scale)
 
 
 class AnthropicDrawingVisionClient:
@@ -105,22 +131,27 @@ class AnthropicDrawingVisionClient:
             f"표제란/역할 힌트: {hint_text or '(없음)'}."
         )
         from app.adapters.vision.image_source import build_content
+        from app.adapters.vision.vision_cache import cache_key, get_or_call
         content = build_content(image_ref, prompt)  # 이미지면 멀티모달 [image, text]
-        try:
-            resp = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
-                json={"model": self.model, "max_tokens": 1024,
-                      "messages": [{"role": "user", "content": content}]},
-                timeout=40.0,
-            )
-            resp.raise_for_status()
-            text = resp.json()["content"][0]["text"]
-            import json as _json
-            parsed = _json.loads(text[text.find("["): text.rfind("]") + 1])
-            return parsed if isinstance(parsed, list) else None
-        except Exception:
-            return None  # 라이브 실패 → degrade(상위가 힌트 폴백/결손 처리)
+
+        def _call() -> list[dict] | None:
+            try:
+                resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
+                    json={"model": self.model, "max_tokens": 1024, "temperature": 0,  # 결정론(샘플링 제거)
+                          "messages": [{"role": "user", "content": content}]},
+                    timeout=40.0,
+                )
+                resp.raise_for_status()
+                text = resp.json()["content"][0]["text"]
+                import json as _json
+                parsed = _json.loads(text[text.find("["): text.rfind("]") + 1])
+                return parsed if isinstance(parsed, list) else None
+            except Exception:
+                return None  # 라이브 실패 → degrade(상위가 힌트 폴백/결손 처리)
+        # 동일 도면 재분석 시 캐시 적중 → 재현성·비용절감(temperature=0과 함께 INV-1 복원).
+        return get_or_call(cache_key(self.model, image_ref, prompt), _call)
 
 
 def build_drawing_extractor(vision_client: DrawingVisionClient | None = None) -> DrawingExtractor:

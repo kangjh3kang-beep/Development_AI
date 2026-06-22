@@ -11,11 +11,13 @@ from app.contracts.verification import VerificationResult
 
 
 def _to_date(value: object) -> date | None:
+    if isinstance(value, datetime):  # datetime은 date 하위 — date 변환 먼저(시행일 비교 정확)
+        return value.date()
     if isinstance(value, date):
         return value
     if isinstance(value, str):
         try:
-            return datetime.strptime(value, "%Y-%m-%d").date()
+            return date.fromisoformat(value.strip()[:10])  # ISO date/datetime('…T…') 앞 10자 파싱
         except ValueError:
             return None
     return None

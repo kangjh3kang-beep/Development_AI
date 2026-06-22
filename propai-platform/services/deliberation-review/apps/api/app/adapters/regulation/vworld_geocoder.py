@@ -21,18 +21,13 @@ class VworldGeocoder:
         return bool(self.key)
 
     def _getcoord(self, address: str, addr_type: str):
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            r = httpx.get(f"{self.req}/address",
-                          params={"service": "address", "request": "getcoord", "key": self.key,
-                                  "address": address, "type": addr_type, "format": "json"},
-                          headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.req}/address",
+            {"service": "address", "request": "getcoord", "key": self.key,
+             "address": address, "type": addr_type, "format": "json"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None
         resp = data.get("response", {})
         if resp.get("status") != "OK":
@@ -45,19 +40,14 @@ class VworldGeocoder:
 
     def _coord_to_parcel(self, lon: float, lat: float) -> tuple[str | None, dict | None]:
         """좌표 → (PNU, 필지 geometry). 3D 일조 시뮬에 site_geometry 사용."""
-        try:
-            import httpx
-        except ImportError:
-            return None, None
-        try:
-            r = httpx.get(f"{self.req}/data",
-                          params={"service": "data", "request": "GetFeature", "data": "LP_PA_CBND_BUBUN",
-                                  "key": self.key, "format": "json", "crs": "EPSG:4326",
-                                  "geomFilter": f"POINT({lon} {lat})", "size": "1"},
-                          headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.req}/data",
+            {"service": "data", "request": "GetFeature", "data": "LP_PA_CBND_BUBUN",
+             "key": self.key, "format": "json", "crs": "EPSG:4326",
+             "geomFilter": f"POINT({lon} {lat})", "size": "1"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None, None
         feats = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
         if not feats:

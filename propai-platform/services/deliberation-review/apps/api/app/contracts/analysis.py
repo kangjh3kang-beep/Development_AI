@@ -24,7 +24,7 @@ from app.contracts.sim_metric import SimMetric
 
 class AnalysisInput(BaseModel):
     # Preflight / version axis
-    pnu: str
+    pnu: str = Field(default="", pattern=r"^([0-9]{19})?$")  # 19자리 PNU 또는 빈(주소 도출). 비19자리 거부
     application_date: date | None = None
     axis_date: date | None = None
     snapshot_id: str = "snap-1"
@@ -37,8 +37,8 @@ class AnalysisInput(BaseModel):
     ifc: str | None = None
     elements: list[dict] = Field(default_factory=list)
 
-    # R1.5 법정 산정
-    calc_targets: list[dict] = Field(default_factory=list)  # [{target, payload, elements:[CalcElement]}]
+    # R1.5 법정 산정 (declared 선택: 면적표 명기 최종값 → 산정값과 L5 이중경로 대조, 불일치 시 dual_path HELD)
+    calc_targets: list[dict] = Field(default_factory=list)  # [{target, payload, elements:[CalcElement], declared?}]
     # R3 판정
     rules: list[dict] = Field(default_factory=list)         # [{rule, measured, limit, relaxation_states, ...}]
     # L3-B 공학 시뮬
@@ -72,9 +72,13 @@ class AnalysisResult(BaseModel):
     drawing_source: str | None = None      # P-A: VLLM_VISION | HINTS | none (도면 자동해석 경로)
     drawing_elements_n: int = 0            # 도면에서 자동추출된 요소 수
     calc_targets_source: str | None = None  # P-A.2: INPUT | DRAWING_AUTO | None (산정 입력 출처)
+    # INC-10: 추출 오케스트레이터 단계 trace(역할합의→추출가→취합가→calc_target→이중경로→검증가).
+    # 결정론 투영(타이밍 제외) — 단계 status/강등사유 표면화(무음0), 동일 입력 동일 결과(INV-1).
+    extraction_trace: list[dict] = Field(default_factory=list)
     extraction_source: str | None = None  # P1: BIM | VLLM | none
     bim_elements: list[BimElement] = Field(default_factory=list)
     preflight: PreflightContext | None = None
+    preflight_blocked: bool = False  # 게이트 선행 — 전제(축척/관할) 미해소로 도면 자동산정 차단됨(무음 강등 금지)
     legal_quantities: list[LegalQuantity] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     sim_metrics: list[SimMetric] = Field(default_factory=list)

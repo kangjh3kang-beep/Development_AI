@@ -9,18 +9,24 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import FiniteFloat, Probability
 from app.contracts.enums import RecordStatus, Unit
 from app.contracts.semantic_element import SemanticElement, SemanticType
 from app.core.errors import CalcTraceMissing
 
 
 class CalcTraceEntry(BaseModel):
-    """단일 산정 규칙 적용 기록(근거조문 + 제외 요소)."""
+    """단일 산정 규칙 적용 기록(근거조문 + 제외 요소 + 정량 근거)."""
 
     rule_id: str
     basis_article: str
     excluded_elements: list[SemanticType] = Field(default_factory=list)
     note: str | None = None
+    # 제외 정량 근거(설명가능성) — 적용 임계·단위·실측·차감량. 재현·검증 가능하게.
+    threshold: float | None = None
+    threshold_unit: str | None = None
+    measured: float | None = None
+    excluded_amount: float | None = None
 
 
 class CalcTrace(BaseModel):
@@ -48,14 +54,20 @@ class CalcTarget(str, Enum):
 
 
 class CalcElement(BaseModel):
-    """산정 입력 요소 — 의미타입 + 제외 측정치 + 분류 신뢰도(상속용)."""
+    """산정 입력 요소 — 의미타입 + 제외 측정치 + 분류 신뢰도(상속용).
+
+    underground/accessory: 주차의 용적률 제외 적격성 판정용(시행령 §119①4: 지하 AND 부속만 제외).
+    None=미상 → 무음 전량제외 금지(거짓적합 방지), 산정은 HELD로 표면화.
+    """
 
     semantic_type: SemanticType
-    confidence: float = 1.0
+    confidence: Probability = 1.0
     area: float = 0.0
     length: float = 0.0
     depth: float = 0.0
     element_id: str | None = None
+    underground: bool | None = None  # 지하 여부(주차 제외 적격성). None=미상
+    accessory: bool | None = None    # 부속(비독립) 여부(주차 제외 적격성). None=미상
 
     @classmethod
     def from_semantic(
@@ -64,6 +76,8 @@ class CalcElement(BaseModel):
         area: float = 0.0,
         length: float = 0.0,
         depth: float = 0.0,
+        underground: bool | None = None,
+        accessory: bool | None = None,
     ) -> "CalcElement":
         return cls(
             semantic_type=se.semantic_type,
@@ -72,6 +86,8 @@ class CalcElement(BaseModel):
             length=length,
             depth=depth,
             element_id=se.element_id,
+            underground=underground,
+            accessory=accessory,
         )
 
 
@@ -79,10 +95,10 @@ class LegalQuantity(BaseModel):
     """법정 산정값 1건(변수사전 id 바인딩 + 근거추적 + 상태)."""
 
     variable_id: str
-    value: float | None = None
+    value: FiniteFloat | None = None
     unit: Unit = Unit.M2
     status: RecordStatus = RecordStatus.AGREED
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     calc_trace: CalcTrace | None = None
     calc_rule_version: str | None = None
     snapshot_id: str | None = None
