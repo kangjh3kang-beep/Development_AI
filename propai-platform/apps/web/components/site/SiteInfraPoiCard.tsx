@@ -22,6 +22,8 @@ type Resp = {
   integrated_location_score?: number | null;
   score_basis?: string;
   transit_time?: { to?: string; driving_min?: number; distance_m?: number } | null;
+  // 고속도로 접근성 대표값(선형 도로 → 최근접 IC/톨게이트 거리). 미가용 시 null(정직).
+  highway_access?: { nearest_m?: number; via?: string; basis?: string } | null;
   categories?: Record<string, Cat>;
   geocoded_from?: string | null;
   coordinates?: { lat: number; lon: number };
@@ -32,6 +34,15 @@ type Resp = {
 };
 
 const RADII = [500, 1000, 2000];
+
+// 카테고리 → 그룹 묶음(가독성). 카테고리가 많아져 그룹(교통/생활/공공/여가)으로 나눠 보여준다.
+//   백엔드 신규 키워드그룹(KW_*) 포함. 미정의 코드는 '기타' 그룹으로 폴백(누락 없이 표시).
+const POI_GROUPS: { key: string; label: string; codes: string[] }[] = [
+  { key: "transit", label: "교통", codes: ["SW8", "KW_TRAINSTATION", "KW_BUSTERMINAL", "KW_HIGHWAY_IC", "KW_TOLLGATE"] },
+  { key: "life", label: "생활", codes: ["MT1", "KW_DEPT", "CS2", "BK9", "HP8", "PM9", "FD6", "CE7"] },
+  { key: "public", label: "공공·교육", codes: ["SC4", "AC5", "PO3", "KW_GOVOFFICE"] },
+  { key: "leisure", label: "여가·문화", codes: ["PARK", "CT1", "KW_THEATER", "KW_GYM", "KW_GOLF", "AT4"] },
+];
 
 function scoreColor(s: number): string {
   if (s >= 80) return "text-emerald-400";
@@ -108,23 +119,60 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
             {data.transit_time?.driving_min != null && (
               <span className="text-[11px] text-[var(--text-secondary)]">🚇 {data.transit_time.to} 차량 <b className="text-[var(--accent-strong)]">{data.transit_time.driving_min}분</b></span>
             )}
+            {data.highway_access?.nearest_m != null && (
+              <span className="text-[11px] text-[var(--text-secondary)]" title={data.highway_access.basis}>
+                🛣 고속도로 {data.highway_access.via ?? "IC"} <b className="text-[var(--accent-strong)]">{data.highway_access.nearest_m.toLocaleString()}m</b>
+              </span>
+            )}
             <span className="text-[10px] text-[var(--text-hint)]">반경 {data.radius_m}m{data.geocoded_from ? ` · 좌표 ${data.geocoded_from}` : ""}{data.score_basis ? ` · ${data.score_basis}` : ""}</span>
           </div>
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
-            {Object.entries(data.categories ?? {}).map(([code, c]) => (
-              <div key={code} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5">
-                <p className="text-[11px] font-bold text-[var(--text-primary)]">{c.label}</p>
-                {c.unavailable ? (
-                  <p className="text-[10px] text-[var(--text-tertiary)]">조회 불가</p>
-                ) : (
-                  <p className="text-[10px] text-[var(--text-secondary)]">
-                    <b className="text-[var(--accent-strong)]">{c.count.toLocaleString()}</b>개
-                    {c.nearest_m != null ? <span className="text-[var(--text-hint)]"> · 최근접 {c.nearest_m}m</span> : null}
-                  </p>
-                )}
+
+          {/* 카테고리를 그룹(교통/생활/공공·교육/여가·문화)으로 묶어 표시 — 카테고리가 많아져
+              가독성 위해 그룹핑. 값 없는 카테고리(count 0·미조회)는 DataField 규칙대로 렌더하지 않는다
+              ('—'/'분석 전' 금지). 조회 자체가 불가한 항목만 정직하게 '조회 불가'로 표기. */}
+          {(() => {
+            const cats = data.categories ?? {};
+            const used = new Set<string>();
+            const groups = POI_GROUPS.map((g) => {
+              const entries = g.codes
+                .map((code) => [code, cats[code]] as const)
+                .filter(([code, c]) => {
+                  if (!c) return false;
+                  used.add(code);
+                  return c.unavailable || c.count > 0; // 값 있거나 정직고지('조회 불가')만 표시
+                });
+              return { ...g, entries };
+            });
+            // 그룹에 안 잡힌 잔여 카테고리는 '기타'로 폴백(누락 없이 광범위 표시).
+            const rest = Object.entries(cats).filter(
+              ([code, c]) => !used.has(code) && c && (c.unavailable || c.count > 0),
+            );
+            const all = rest.length > 0 ? [...groups, { key: "etc", label: "기타", codes: [], entries: rest }] : groups;
+            return (
+              <div className="space-y-3">
+                {all.filter((g) => g.entries.length > 0).map((g) => (
+                  <div key={g.key}>
+                    <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{g.label}</p>
+                    <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
+                      {g.entries.map(([code, c]) => (
+                        <div key={code} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5">
+                          <p className="text-[11px] font-bold text-[var(--text-primary)]">{c!.label}</p>
+                          {c!.unavailable ? (
+                            <p className="text-[10px] text-[var(--text-tertiary)]">조회 불가</p>
+                          ) : (
+                            <p className="text-[10px] text-[var(--text-secondary)]">
+                              <b className="text-[var(--accent-strong)]">{c!.count.toLocaleString()}</b>개
+                              {c!.nearest_m != null ? <span className="text-[var(--text-hint)]"> · 최근접 {c!.nearest_m}m</span> : null}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
           <p className="text-[10px] text-[var(--text-hint)]">출처: Kakao Local 장소 카테고리 검색 · 좌표: VWorld 지오코딩</p>
 
           {/* 산출 근거 + 법령 원문(EvidencePanel) — adaptEvidence로 legal_ref_key 조인.

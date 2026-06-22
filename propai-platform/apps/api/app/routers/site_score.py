@@ -113,6 +113,27 @@ async def poi_infra(req: PoiInfraRequest):
     if park is not None:
         cats["PARK"] = {"label": "공원", **park}
 
+    # ── 광역 인프라 보강(additive·보조지표) — 대형관공서·백화점·터미널·기차역·고속도로IC·
+    #    톨게이트·체육관·골프장·공연장. 카테고리코드가 없어 키워드 그룹 합산으로 수집한다.
+    #    ※ _POI_WEIGHTS 에 미포함 → 기존 POI 접근성 점수 산식에 영향 없음(보조 표시 전용).
+    try:
+        kw_cats = await kakao.keyword_group_inventory(lat, lon, radius=req.radius_m)
+        for code, val in (kw_cats or {}).items():
+            cats.setdefault(code, val)  # 기존 키 보존(혹시 충돌 시 덮어쓰지 않음)
+    except Exception:  # noqa: BLE001 — 광역 인프라 보강 실패해도 기존 POI 결과 무손상
+        kw_cats = {}
+
+    # 고속도로 접근성 대표값 — 선형 도로는 점 POI가 아니므로 '최근접 IC/톨게이트 거리'로 정직 대표.
+    highway_access = None
+    ic = cats.get("KW_HIGHWAY_IC") or {}
+    toll = cats.get("KW_TOLLGATE") or {}
+    ic_m, toll_m = ic.get("nearest_m"), toll.get("nearest_m")
+    cands = [m for m in (ic_m, toll_m) if isinstance(m, (int, float))]
+    if cands:
+        nearest_kind = "IC" if (ic_m is not None and (toll_m is None or ic_m <= toll_m)) else "톨게이트"
+        highway_access = {"nearest_m": min(cands), "via": nearest_kind,
+                          "basis": "고속도로 등 선형 도로는 점 POI가 아니므로 최근접 IC/톨게이트 거리로 대표"}
+
     # 실소요시간 — 최근접 지하철역까지 자동차 길찾기(Kakao Mobility). 미가용 시 None(정직).
     transit_time = None
     sw = cats.get("SW8") or {}
@@ -148,6 +169,7 @@ async def poi_infra(req: PoiInfraRequest):
         "coordinates": {"lat": lat, "lon": lon}, "geocoded_from": geocoded_from,
         "categories": cats,
         "transit_time": transit_time,
+        "highway_access": highway_access,
         "poi_accessibility_score": poi_score,
         "contributions": scored["contributions"],
         "site_score": site,

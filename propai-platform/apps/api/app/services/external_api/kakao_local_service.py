@@ -33,10 +33,29 @@ POI_CATEGORIES: list[tuple[str, str]] = [
     ("CS2", "편의점"),
     ("BK9", "은행"),
     ("PO3", "공공기관"),
-    ("CT1", "문화시설"),
+    ("CT1", "문화시설"),  # 공연장·전시관·박물관 등 — 카카오 문화시설 카테고리
     ("AT4", "관광명소"),
     ("FD6", "음식점"),
     ("CE7", "카페"),
+]
+
+# ── 키워드 기반 POI 그룹(카카오 카테고리코드가 없는 광역 인프라) ──
+#   누락 없는 광범위 수집 원칙: 대형관공서·백화점·터미널·기차역·고속도로IC·톨게이트·
+#   체육관·골프장·공연장을 키워드 반경검색으로 보강한다. 선형(고속도로·순환도로)은
+#   점 POI가 아니므로 '최근접 IC/톨게이트 거리'로 대표(가짜 점 POI 생성 금지).
+#   각 그룹은 여러 키워드를 합산(중복 장소는 distance_m 기준 최근접 1건만 집계)한다.
+#   키 형식: 그룹코드 -> (라벨, [키워드...]). 그룹코드는 카테고리코드와 충돌하지 않게 'KW_' 접두.
+KEYWORD_POI_GROUPS: list[tuple[str, str, list[str]]] = [
+    ("KW_GOVOFFICE", "대형 행정/의회", ["시청", "도청", "구청", "군청", "시의회", "도의회", "구의회"]),
+    ("KW_DEPT", "백화점", ["백화점"]),
+    # ※ 공원(PARK)은 라우터가 별도 키워드검색으로 이미 접근성 점수에 반영 — 중복 방지로 여기선 제외.
+    ("KW_BUSTERMINAL", "버스터미널", ["버스터미널", "고속버스터미널"]),
+    ("KW_TRAINSTATION", "기차역", ["기차역", "KTX역"]),
+    ("KW_HIGHWAY_IC", "고속도로 IC", ["IC", "나들목", "분기점"]),  # 선형 도로 대표: 최근접 진출입로 거리
+    ("KW_TOLLGATE", "톨게이트", ["톨게이트", "요금소"]),
+    ("KW_GYM", "체육관", ["체육관", "실내체육관"]),
+    ("KW_GOLF", "골프장", ["골프장", "컨트리클럽"]),
+    ("KW_THEATER", "공연장", ["공연장", "콘서트홀"]),
 ]
 
 
@@ -165,7 +184,8 @@ class KakaoLocalService:
         results = await asyncio.gather(*[_one(c, l) for c, l in cats], return_exceptions=True)
         out: dict[str, Any] = {}
         for res in results:
-            if isinstance(res, Exception) or res is None:
+            # return_exceptions=True는 CancelledError 등 BaseException도 반환할 수 있어 Exception보다 넓게 가드.
+            if isinstance(res, BaseException) or res is None:
                 continue
             code, label, r = res
             if r is None:
@@ -173,3 +193,57 @@ class KakaoLocalService:
             else:
                 out[code] = {"label": label, **r}
         return {"available": True, "radius_m": radius, "center": {"lat": lat, "lon": lon}, "categories": out}
+
+    async def keyword_group_inventory(
+        self, lat: float, lon: float, radius: int = 1000,
+        groups: Optional[list[tuple[str, str, list[str]]]] = None,
+    ) -> dict[str, Any]:
+        """키워드 그룹 인벤토리 — 카테고리코드 없는 광역 인프라를 키워드 합산으로 수집.
+
+        그룹별로 여러 키워드를 병렬 조회한 뒤, 같은 장소명은 최근접 1건만 남겨
+        중복을 제거하고 {label, count(고유 장소 수), nearest_m, items}로 합산한다.
+        키 미설정/조회 실패 그룹은 unavailable=True(가짜 POI 생성 금지).
+        """
+        grps = groups if groups is not None else KEYWORD_POI_GROUPS
+        if not _rest_key():
+            return {}
+        sem = asyncio.Semaphore(6)
+
+        async def _kw(query: str):
+            async with sem:
+                return await self.keyword_search(lat, lon, query, radius)
+
+        # ★전 그룹의 모든 키워드를 한 번에 병렬 조회(그룹 간 직렬 제거 — 최대 그룹수만큼 누적되던
+        #   라운드트립을 1회 배치로 평탄화). Semaphore(6)이 동시 호출 상한을 유지해 폭주를 막는다.
+        flat = [(gi, q) for gi, (_c, _l, kws) in enumerate(grps) for q in kws]
+        results = await asyncio.gather(*[_kw(q) for _gi, q in flat], return_exceptions=True)
+        by_group: dict[int, list[Any]] = {}
+        for (gi, _q), r in zip(flat, results):
+            by_group.setdefault(gi, []).append(r)
+
+        out: dict[str, Any] = {}
+        for gi, (code, label, _keywords) in enumerate(grps):
+            # 그룹 키워드 결과를 합치며 같은 장소는 가장 가까운 1건만 보존(중복 제거).
+            merged: dict[str, dict[str, Any]] = {}
+            any_ok = False
+            for r in by_group.get(gi, []):
+                if not isinstance(r, dict):
+                    continue
+                any_ok = True
+                for it in r.get("items", []) or []:
+                    nm = it.get("name") or ""
+                    # 동명 다른 지점(예: 같은 체인 분점)을 1건으로 병합하지 않도록 근사좌표를 키에 포함.
+                    key = f"{nm}@{round(float(it.get('lat') or 0), 4)},{round(float(it.get('lon') or 0), 4)}"
+                    prev = merged.get(key)
+                    if prev is None or (
+                        it.get("distance_m") is not None
+                        and (prev.get("distance_m") is None or it["distance_m"] < prev["distance_m"])
+                    ):
+                        merged[key] = it
+            if not any_ok:
+                out[code] = {"label": label, "count": 0, "nearest_m": None, "items": [], "unavailable": True}
+                continue
+            items = sorted(merged.values(), key=lambda x: (x.get("distance_m") is None, x.get("distance_m") or 0))
+            nearest = next((it.get("distance_m") for it in items if it.get("distance_m") is not None), None)
+            out[code] = {"label": label, "count": len(items), "nearest_m": nearest, "items": items[:15]}
+        return out

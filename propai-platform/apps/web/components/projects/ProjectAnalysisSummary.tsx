@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
@@ -79,6 +80,7 @@ function Section({
   dataSource,
   fetchedAt,
   hasAny,
+  detailLink,
   children,
 }: {
   title: string;
@@ -86,6 +88,8 @@ function Section({
   fetchedAt?: string | null;
   /** 이 섹션에 표시할 값이 하나라도 있는지(false면 섹션 전체 미렌더). */
   hasAny?: boolean;
+  /** 풀버전(상세·수정) 페이지로 가는 링크(선택). href·label 둘 다 있을 때만 노출. */
+  detailLink?: { href: string; label: string } | null;
   children: React.ReactNode;
 }) {
   if (hasAny === false) return null;
@@ -94,6 +98,15 @@ function Section({
       <h4 className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
         {title}
         <DataLineageTooltip dataSource={dataSource} fetchedAt={fetchedAt} />
+        {detailLink && (
+          // 풀버전(상세·수정) 진입 — 요약↔풀버전 라우팅 연결. Link라 데이터 fetch 없음(#185 무관).
+          <Link
+            href={detailLink.href}
+            className="ml-auto inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-2.5 py-0.5 text-[10px] font-black text-[var(--accent-strong)] transition-all hover:scale-105"
+          >
+            {detailLink.label} ↗
+          </Link>
+        )}
       </h4>
       <dl className="mt-3 divide-y divide-[var(--line)]">{children}</dl>
     </div>
@@ -442,7 +455,13 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
 
         {/* 6. 공사비 — 있으면 DataField, 없으면 StagePreview */}
         {hasCost ? (
-          <Section title="공사비" dataSource={cost?.source ? `공사비 산정(${cost.source})` : undefined} fetchedAt={site?.fetchedAt}>
+          <Section
+            title="공사비"
+            dataSource={cost?.source ? `공사비 산정(${cost.source})` : undefined}
+            fetchedAt={site?.fetchedAt}
+            // 풀버전: BIM 5D 적산(QTO) 대시보드(/cost) — 부위별 물량·상세내역 조회·수정.
+            detailLink={costRoute ? { href: costRoute, label: "BIM 적산 상세·수정" } : null}
+          >
             <DataField label="총공사비" value={eok(cost?.totalConstructionCostWon)} />
             <DataField label="평당" value={numOrNull(cost?.perPyeongWon, " 원")} />
             <DataField label="직접공사비" value={eok(cost?.directWon)} />
@@ -460,7 +479,11 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
 
         {/* 7. 수지·사업성 — 있으면 DataField, 없으면 StagePreview */}
         {hasFeas ? (
-          <Section title="수지·사업성">
+          <Section
+            title="수지·사업성"
+            // 풀버전: 사업성 분석 에디터(/feasibility) — /api/v2/feasibility/calculate 기반 현장부합 조회·수정.
+            detailLink={feasRoute ? { href: feasRoute, label: "수지분석 상세·수정" } : null}
+          >
             <DataField label="총사업비" value={eok(feas?.totalCostWon)} />
             <DataField label="분양매출" value={eok(feas?.totalRevenueWon)} />
             <DataField label="순이익" value={eok(netProfit)} accent />
