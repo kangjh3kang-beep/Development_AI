@@ -1,24 +1,39 @@
 "use client";
 
 import { Card, CardContent } from "@propai/ui";
+import {
+  Building,
+  Building2,
+  Construction,
+  Factory,
+  Handshake,
+  Home,
+  Hotel,
+  House,
+  Landmark,
+  Store,
+  TrainFront,
+  TreePine,
+  Wallet,
+} from "lucide-react";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 
 const MODULE_PRESETS = [
-  { code: "M01", label: "재개발", icon: "🏗️" },
-  { code: "M02", label: "재건축", icon: "🏢" },
-  { code: "M03", label: "역세권개발", icon: "🚇" },
-  { code: "M04", label: "지역주택조합", icon: "🏠" },
-  { code: "M05", label: "임대협동조합", icon: "🤝" },
-  { code: "M06", label: "일반분양", icon: "🏬" },
-  { code: "M07", label: "주상복합", icon: "🏙️" },
-  { code: "M08", label: "오피스텔", icon: "🏨" },
-  { code: "M09", label: "지식산업센터", icon: "🏭" },
-  { code: "M10", label: "단독주택", icon: "🏡" },
-  { code: "M11", label: "전원주택", icon: "🌳" },
-  { code: "M12", label: "타운하우스", icon: "🏘️" },
-  { code: "M13", label: "도시형생활", icon: "🌆" },
-  { code: "M14", label: "공공임대", icon: "🏛️" },
-  { code: "M15", label: "민간리츠", icon: "💰" },
+  { code: "M01", label: "재개발", icon: Construction },
+  { code: "M02", label: "재건축", icon: Building2 },
+  { code: "M03", label: "역세권개발", icon: TrainFront },
+  { code: "M04", label: "지역주택조합", icon: Home },
+  { code: "M05", label: "임대협동조합", icon: Handshake },
+  { code: "M06", label: "일반분양", icon: Store },
+  { code: "M07", label: "주상복합", icon: Building2 },
+  { code: "M08", label: "오피스텔", icon: Hotel },
+  { code: "M09", label: "지식산업센터", icon: Factory },
+  { code: "M10", label: "단독주택", icon: House },
+  { code: "M11", label: "전원주택", icon: TreePine },
+  { code: "M12", label: "타운하우스", icon: Building },
+  { code: "M13", label: "도시형생활", icon: Building2 },
+  { code: "M14", label: "공공임대", icon: Landmark },
+  { code: "M15", label: "민간리츠", icon: Wallet },
 ];
 
 export function ProjectTypeSelector() {
@@ -41,7 +56,7 @@ export function ProjectTypeSelector() {
                   : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"
               }`}
             >
-              <span className="text-base">{m.icon}</span>
+              <m.icon className="size-4 shrink-0" aria-hidden />
               <span className="font-mono text-xs text-slate-400">{m.code}</span>
               <span>{m.label}</span>
             </button>

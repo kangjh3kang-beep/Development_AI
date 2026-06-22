@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ClipboardList, Leaf, Map } from "lucide-react";
 import { StageIcon } from "@/components/common/StageIcon";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -267,7 +268,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                     <div className="relative flex h-[400px] items-center justify-center rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] overflow-hidden group/map shadow-inner">
                       <div className="absolute inset-0 bg-indigo-500/5 group-hover/map:bg-indigo-500/10 transition-colors" />
                       <div className="text-center relative z-10">
-                        <span className="text-7xl filter drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">🗺️</span>
+                        <Map className="mx-auto size-20 text-[var(--accent-strong)] drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]" aria-label="GIS 지도" />
                         <p className="mt-6 text-[10px] font-black uppercase tracking-[0.5em] text-[var(--accent-strong)] animate-pulse">GIS Intelligence Active</p>
                       </div>
                     </div>
@@ -350,7 +351,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                         </div>
                       ) : (
                         <div className="flex flex-col items-center gap-4 rounded-[2.5rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center">
-                          <span className="text-4xl">📋</span>
+                          <ClipboardList className="size-10 text-[var(--text-tertiary)]" aria-hidden />
                           <p className="text-sm font-black text-[var(--text-primary)]">법규검토 미실행</p>
                           <p className="text-xs leading-relaxed text-[var(--text-secondary)] max-w-md">아직 이 프로젝트의 법규 준수 검토 결과가 없습니다. ‘법규검토’ 모듈에서 분석을 실행하면 건폐율·용적률·높이제한 적합성과 위반 근거가 여기에 연동됩니다.</p>
                           <Link href={`/${locale}/projects/${projectId}/legal`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">법규 분석 실행 ↗</Link>
@@ -364,7 +365,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                   <div className="flex flex-col gap-12">
                     {!esgHasData && (
                       <div className="flex flex-col items-center gap-4 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center">
-                        <span className="text-4xl">🌿</span>
+                        <Leaf className="size-9 text-[var(--success)]" aria-hidden />
                         <p className="text-sm font-black text-[var(--text-primary)]">ESG/탄소 분석 전</p>
                         <p className="text-xs text-[var(--text-secondary)] max-w-md">이 프로젝트의 ESG·탄소 데이터가 아직 없습니다. ‘ESG/탄소 경영’ 모듈에서 분석을 실행하면 내재·운영 탄소가 여기에 연동됩니다.</p>
                         <Link href={`/${locale}/esg`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">ESG 분석 ↗</Link>

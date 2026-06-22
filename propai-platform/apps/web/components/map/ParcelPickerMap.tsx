@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
@@ -400,10 +401,10 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
         </div>
       )}
       {status === "notfound" && (
-        <p className="text-[11px] font-semibold text-amber-500">⚠ {statusMsg}</p>
+        <p className="inline-flex items-baseline gap-1 text-[11px] font-semibold text-amber-500"><AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {statusMsg}</p>
       )}
       {status === "error" && (
-        <p className="text-[11px] font-semibold text-red-500">✕ {statusMsg}</p>
+        <p className="inline-flex items-baseline gap-1 text-[11px] font-semibold text-red-500"><X className="size-3.5 self-center shrink-0" aria-hidden /> {statusMsg}</p>
       )}
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}

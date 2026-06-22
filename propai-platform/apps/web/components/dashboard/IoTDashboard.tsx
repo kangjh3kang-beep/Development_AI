@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { Droplet, Info, type LucideIcon, RadioTower, Siren, Thermometer, Wind, Zap } from "lucide-react";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { apiClient } from "@/lib/api-client";
@@ -20,11 +21,11 @@ import { motion } from "framer-motion";
 
 const SEVERITY_TOKENS: Record<
   MaintenanceAlert["severity"],
-  { color: string; label: string; icon: string }
+  { color: string; label: string; icon: LucideIcon }
 > = {
-  critical: { color: "var(--spot)", label: "긴급", icon: "🚨" },
-  warning: { color: "var(--warning)", label: "주의", icon: "⚡" },
-  info: { color: "var(--info)", label: "정보", icon: "ℹ️" },
+  critical: { color: "var(--spot)", label: "긴급", icon: Siren },
+  warning: { color: "var(--warning)", label: "주의", icon: Zap },
+  info: { color: "var(--info)", label: "정보", icon: Info },
 };
 
 const LINE_COLORS: Record<string, string> = {
@@ -34,11 +35,11 @@ const LINE_COLORS: Record<string, string> = {
   energy: "var(--success)",
 };
 
-const SENSOR_ICONS: Record<string, string> = {
-  temperature: "🌡️",
-  humidity: "💧",
-  co2: "🍃",
-  energy: "⚡",
+const SENSOR_ICONS: Record<string, LucideIcon> = {
+  temperature: Thermometer,
+  humidity: Droplet,
+  co2: Wind,
+  energy: Zap,
 };
 
 export function IoTDashboard() {
@@ -93,8 +94,11 @@ export function IoTDashboard() {
           >
             <Card className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] overflow-hidden group hover:scale-[1.02] transition-all duration-500">
               <CardContent className="p-8 relative">
-                <div className="absolute top-4 right-6 text-2xl opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500">
-                  {SENSOR_ICONS[s.type] ?? "📡"}
+                <div className="absolute top-4 right-6 opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500">
+                  {(() => {
+                    const SensorIcon = SENSOR_ICONS[s.type] ?? RadioTower;
+                    return <SensorIcon className="size-7" aria-hidden />;
+                  })()}
                 </div>
                 <p className="text-[10px] font-[1000] uppercase tracking-[0.3em] text-[var(--text-hint)]">{s.type}</p>
                 <div className="mt-4 flex items-baseline gap-2">
@@ -193,6 +197,7 @@ export function IoTDashboard() {
             <div className="mt-10 flex-grow space-y-6 overflow-y-auto pr-2 custom-scrollbar">
               {(data.alerts ?? []).map((alert, i) => {
                 const token = SEVERITY_TOKENS[alert.severity];
+                const SeverityIcon = token.icon;
                 return (
                   <motion.div
                     key={alert.id}
@@ -205,7 +210,7 @@ export function IoTDashboard() {
                     <div className="relative z-10 flex items-start justify-between gap-4">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                           <span className="text-lg">{token.icon}</span>
+                           <SeverityIcon className="size-5 shrink-0" style={{ color: token.color }} aria-hidden />
                            <p className="text-xs font-[1000] text-[var(--text-primary)] uppercase tracking-tighter">
                              {alert.equipment_name}
                            </p>

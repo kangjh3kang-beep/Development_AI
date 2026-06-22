@@ -9,6 +9,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
+import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -461,8 +462,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         <p className="text-sm text-[var(--text-secondary)] mt-1">한국 건축법 기반 즉시 계산 + AI 심층 분석</p>
         </div>
         <button onClick={() => setEasy((v) => !v)}
-          className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-bold transition-colors ${easy ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
-          {easy ? "🟢 쉬운 설명 켜짐" : "💡 쉬운 설명"}
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-bold transition-colors ${easy ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
+          <Lightbulb className="size-3.5" aria-hidden />{easy ? "쉬운 설명 켜짐" : "쉬운 설명"}
         </button>
       </motion.div>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -479,8 +480,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         )}
         {siteMatch === "mismatch" && (
           <p className="text-xs text-amber-500 mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-            ⚠ 부지분석 데이터가 다른 주소({siteAnalysis?.address})의 결과입니다 — 현 프로젝트
+            <AlertTriangle className="size-3.5" aria-hidden />
+            부지분석 데이터가 다른 주소({siteAnalysis?.address})의 결과입니다 — 현 프로젝트
             {projectRecord?.address ? `(${projectRecord.address})` : ""} 기준 재분석이 필요합니다
             <Link href={siteAnalysisHref} className="font-bold text-[var(--accent-strong)] underline underline-offset-2">부지분석 다시 실행 ↗</Link>
           </p>
@@ -496,8 +497,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         {siteMatch !== "mismatch" && siteAnalysis?.specialParcel?.isSpecial && (
           <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-500">
             <p className="flex flex-wrap items-center gap-1.5 font-bold">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-              ⚠ 특이부지 감지
+              <AlertTriangle className="size-3.5" aria-hidden />
+              특이부지 감지
               {siteAnalysis.specialParcel.developability ? ` · 개발가능성 ${siteAnalysis.specialParcel.developability}` : ""}
               {siteAnalysis.specialParcel.factors?.length ? ` (${siteAnalysis.specialParcel.factors.join(", ")})` : ""}
             </p>
@@ -543,7 +544,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         </button>
       </motion.div>
 
-      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
+      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="inline-flex items-center gap-1.5 text-sm text-red-400 font-bold"><AlertTriangle className="size-4" aria-hidden />{error.message}</p></div>}
 
       {calc && (
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
@@ -590,7 +591,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                   <div key={row.k} className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
                     <span className="font-bold text-[var(--text-secondary)]">{row.k}</span>
                     <span className="cc-num text-[var(--text-hint)]">적용 {row.v}{row.u} / 한도 {row.max}{row.u}</span>
-                    <span className="font-black" style={{ color: ok ? "var(--status-success)" : "var(--status-error)" }}>{ok ? "✓ 적합" : "⚠ 초과"}</span>
+                    <span className="inline-flex items-center gap-1 font-black" style={{ color: ok ? "var(--status-success)" : "var(--status-error)" }}>{ok ? (<><CheckCircle2 className="size-3.5" aria-hidden />적합</>) : (<><AlertTriangle className="size-3.5" aria-hidden />초과</>)}</span>
                   </div>
                 );
               })}
@@ -700,7 +701,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                           <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">예상 전용 연면적 약 {estGfa.toLocaleString()}㎡</p>
                         )}
                         {selectedMassing === m.name && (
-                          <p className="mt-1.5 text-[10px] font-black text-[var(--accent-strong)]">✓ 선택됨 — 비교 기준</p>
+                          <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-black text-[var(--accent-strong)]"><Check className="size-3" aria-hidden />선택됨 — 비교 기준</p>
                         )}
                       </button>
                     );

@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ClipboardList, FileText, Receipt, Scale, ScrollText, Settings } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -159,7 +160,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">📜</span>
+            <ScrollText className="size-6 shrink-0 text-[var(--accent-strong)]" aria-hidden />
             <div>
               <div className="mb-1 flex items-center gap-2">
                 <span className="cc-meta">REGISTRY · RIGHTS ANALYSIS</span>
@@ -217,7 +218,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           <div className="mt-4 flex items-center gap-3">
             <button onClick={() => run()} disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
-              {loading ? "등기 분석 중…" : "⚖ 등기 권리분석"}
+              {loading ? "등기 분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />등기 권리분석</span>)}
             </button>
             {loading && progress && <span className="text-xs text-[var(--text-secondary)]">{progress}</span>}
             {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
@@ -230,10 +231,10 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-black text-[var(--accent-strong)]">🧾 프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
+              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
               <button onClick={() => void analyzeAll()} disabled={loading || !!busyId || rows.length === 0}
                 className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                {busyId ? "분석 중…" : "⚖ 전체 분석"}
+                {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
               </button>
             </div>
             <div className="mt-3 space-y-1.5">
@@ -271,7 +272,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           {result.fetched?.pdf_url && (
             <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
               <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
-                <p className="text-xs text-[var(--text-secondary)]">📄 발급된 등기부등본 원본(PDF) — 서버 저장(30일 후 자동삭제)</p>
+                <p className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]"><FileText className="size-4 shrink-0" aria-hidden />발급된 등기부등본 원본(PDF) — 서버 저장(30일 후 자동삭제)</p>
                 <div className="flex gap-2">
                   <a href={result.fetched.pdf_url} target="_blank" rel="noopener noreferrer"
                     className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">PDF 보기 ↗</a>
@@ -328,7 +329,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           {result.status !== "ok" && (
             <Card className="rounded-[var(--radius-2xl)] border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
-                <p className="text-sm font-bold text-[var(--status-warning)]">⚙ 등기부 분석 안내</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--status-warning)]"><Settings className="size-4" aria-hidden />등기부 분석 안내</p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">{result.message}</p>
                 <p className="mt-2 text-[11px] text-[var(--text-hint)]">위의 "등기부등본 내용 직접 입력"으로 분석하거나, 등기부 API(CODEF) 설정을 완료하세요.</p>
               </CardContent>
@@ -340,7 +341,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-black text-[var(--accent-strong)]">⚖ 등기 권리분석 (법무사·변호사 AI)</p>
+                  <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Scale className="size-4" aria-hidden />등기 권리분석 (법무사·변호사 AI)</p>
                   {ai.safety_grade && (
                     <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold ${GRADE[ai.safety_grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
                       안전성 {ai.safety_grade}
@@ -386,7 +387,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 )}
                 {(ai.risks?.length ?? 0) > 0 && (
                   <div className="mt-3">
-                    <p className="text-xs font-bold text-[var(--status-error)]">⚠ 권리 리스크</p>
+                    <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--status-error)]"><AlertTriangle className="size-3.5" aria-hidden />권리 리스크</p>
                     <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                       {ai.risks!.map((r, i) => <li key={i}>· {r}</li>)}
                     </ul>
@@ -402,7 +403,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       {/* 하단 서브메뉴: 토지조서 연동 */}
       <Card className="rounded-[var(--radius-2xl)] border-[var(--line)] shadow-[var(--shadow-sm)]">
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
-          <p className="text-xs text-[var(--text-secondary)]">📋 여러 필지의 소유·지분·매입가·계약/동의를 한눈에 관리하려면 토지조서로 이동하세요.</p>
+          <p className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]"><ClipboardList className="size-4 shrink-0" aria-hidden />여러 필지의 소유·지분·매입가·계약/동의를 한눈에 관리하려면 토지조서로 이동하세요.</p>
           <Link href={`/${locale}/land-schedule`} className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90">
             토지조서 바로가기 →
           </Link>

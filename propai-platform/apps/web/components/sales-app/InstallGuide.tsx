@@ -11,6 +11,7 @@
  * 정직성: 미지원 환경 폴백(단계 안내), 설치 강요 없음. 모바일 우선·다크·토큰색.
  */
 import { useMemo, useState } from "react";
+import { Smartphone } from "lucide-react";
 import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
 
 function isIos(): boolean {
@@ -39,7 +40,7 @@ export default function InstallGuide() {
   return (
     <div className="space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
       <div className="flex items-center gap-2">
-        <span className="text-lg">📲</span>
+        <Smartphone className="size-5 text-[var(--accent-strong)]" aria-hidden />
         <p className="text-sm font-black text-[var(--text-primary)]">홈 화면에 앱 추가</p>
       </div>
       <p className="text-xs text-[var(--text-secondary)]">

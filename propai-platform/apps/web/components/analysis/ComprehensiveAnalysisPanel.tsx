@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
@@ -30,8 +31,8 @@ function formatManWon(value: number): string {
 
 /* ── Sub-components ── */
 
-function SectionCard({ title, icon, children, defaultOpen = false }: {
-  title: string; icon: string; children: React.ReactNode; defaultOpen?: boolean;
+function SectionCard({ title, icon: Icon, children, defaultOpen = false }: {
+  title: string; icon: LucideIcon; children: React.ReactNode; defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -40,7 +41,7 @@ function SectionCard({ title, icon, children, defaultOpen = false }: {
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[var(--surface-soft)] transition-colors"
       >
-        <span className="text-lg">{icon}</span>
+        <Icon className="size-5 text-[var(--text-secondary)]" aria-hidden />
         <span className="flex-1 text-sm font-bold text-[var(--text-primary)]">{title}</span>
         <span className="text-[var(--text-hint)] text-xs">{open ? "▲" : "▼"}</span>
       </button>
@@ -319,7 +320,7 @@ export function ComprehensiveAnalysisPanel() {
           {/* AI 시장분석 종합 해석 (market_interpretation) */}
           {result.market_interpretation && (
             <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
-              <h3 className="text-sm font-bold text-emerald-400 mb-3">📊 AI 시장분석</h3>
+              <h3 className="mb-3 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-400"><BarChart3 className="size-4" aria-hidden /> AI 시장분석</h3>
               <div className="space-y-3">
                 {result.market_interpretation.market_overview && (
                   <MarketAiBlock label="시장 종합 현황" text={result.market_interpretation.market_overview} />
@@ -344,7 +345,7 @@ export function ComprehensiveAnalysisPanel() {
           )}
 
           {/* Section 1: 실효용적률 */}
-          <SectionCard title="1. 실효용적률 산정" icon="📊" defaultOpen>
+          <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <Field label="법정 건폐율 (국토계획법)" value={`${ef.national_bcr_pct ?? "-"}%`} />
               <Field label="법정 용적률 (국토계획법)" value={`${ef.national_far_pct ?? "-"}%`} />
@@ -369,7 +370,7 @@ export function ComprehensiveAnalysisPanel() {
 
           {/* Section 1-B: 용적률 최적화 시뮬레이션 */}
           {ef.far_optimization?.scenarios && (
-            <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon="📈" defaultOpen>
+            <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon={TrendingUp} defaultOpen>
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <Field label="현재 기본 용적률" value={`${ef.far_optimization.base_far}%`} />
                 <Field label="최대 달성 가능" value={`${ef.far_optimization.max_achievable_far}%`} />
@@ -414,7 +415,7 @@ export function ComprehensiveAnalysisPanel() {
           )}
 
           {/* Section 2: 개발방식별 적정공급면적 */}
-          <SectionCard title="2. 개발방식별 적정공급면적 산정" icon="🏗️" defaultOpen>
+          <SectionCard title="2. 개발방식별 적정공급면적 산정" icon={Construction} defaultOpen>
             {supplyAreas.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -508,7 +509,7 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 3: 토지 주변시세 */}
-          <SectionCard title="3. 토지 주변시세" icon="💰">
+          <SectionCard title="3. 토지 주변시세" icon={Wallet}>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <Field label="공시지가 (원/m²)" value={formatManWon(landPrices.official_price_per_sqm / 10000)} />
               <Field label="공시지가 총액" value={formatWon(landPrices.total_official_value_won)} />
@@ -522,7 +523,7 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 4: 물건별 주변 실거래가 */}
-          <SectionCard title="4. 물건별 주변 실거래가" icon="🏠">
+          <SectionCard title="4. 물건별 주변 실거래가" icon={Home}>
             {Object.keys(transactions).length > 0 && !transactions.error ? (
               <div className="space-y-2">
                 {Object.entries(transactions).map(([type, data]) => {
@@ -549,7 +550,7 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 5: 물건별 분양가 */}
-          <SectionCard title="5. 개발유형별 예상 분양가" icon="🏷️">
+          <SectionCard title="5. 개발유형별 예상 분양가" icon={Tag}>
             {salePrices.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {salePrices.map((sp: AnalysisResult) => (
@@ -568,7 +569,7 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 6: 입지분석 */}
-          <SectionCard title="6. 입지분석" icon="📍">
+          <SectionCard title="6. 입지분석" icon={MapPin}>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <Field label="입지 점수" value={`${location.location_score ?? "-"}점 (${location.grade ?? "-"})`} />
               {location.transportation?.nearest_subway && (
@@ -585,7 +586,7 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 7: 주변 개발계획 */}
-          <SectionCard title="7. 주변 개발계획 및 규제" icon="🗺️">
+          <SectionCard title="7. 주변 개발계획 및 규제" icon={Map}>
             {(devPlans.land_use_regulations?.length > 0 || devPlans.special_districts?.length > 0) ? (
               <div className="space-y-2">
                 {devPlans.land_use_regulations?.length > 0 && (

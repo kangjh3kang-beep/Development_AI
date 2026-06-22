@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
 import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
@@ -205,8 +206,8 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                           {/* 특이부지 게이트 — 임야·학교용지·GB·맹지 등은 '개발 가능' 단정 대신 개발가능성·정직고지로 표기. */}
                           {zoningPreview.special?.isSpecial && (
                             <div className="flex flex-col gap-1 rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-3 py-2">
-                              <p className="text-[11px] font-bold text-[var(--status-warning)]">
-                                ⚠ 특이부지{zoningPreview.special.factors.length > 0 ? ` · ${zoningPreview.special.factors.join(" · ")}` : ""}
+                              <p className="inline-flex flex-wrap items-center gap-1 text-[11px] font-bold text-[var(--status-warning)]">
+                                <AlertTriangle className="size-3" aria-hidden />특이부지{zoningPreview.special.factors.length > 0 ? ` · ${zoningPreview.special.factors.join(" · ")}` : ""}
                                 {zoningPreview.special.developability && (
                                   <span className="font-semibold"> — {DEVELOPABILITY_LABEL[zoningPreview.special.developability] ?? zoningPreview.special.developability}</span>
                                 )}

@@ -10,6 +10,7 @@
  * 통합(scope=all) 마스킹 카드는 드로어를 열지 않고 "현장 진입 후 열람" 유도(부모 CrmPanel 처리).
  */
 
+import { Clock, Footprints, type LucideIcon, Mail, MessageCircle, PenLine, Shuffle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 
@@ -45,12 +46,12 @@ const STAGES: { key: string; label: string }[] = [
 ];
 const STAGE_LABEL: Record<string, string> = Object.fromEntries(STAGES.map((s) => [s.key, s.label]));
 
-const KIND_META: Record<string, { icon: string; label: string; cls: string }> = {
-  consult: { icon: "💬", label: "상담", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300" },
-  visit: { icon: "🚶", label: "방문", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
-  stage: { icon: "🔀", label: "단계변경", cls: "border-violet-500/40 bg-violet-500/10 text-violet-300" },
-  message: { icon: "✉️", label: "문자/알림톡", cls: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
-  note: { icon: "📝", label: "메모", cls: "border-slate-500/40 bg-slate-500/10 text-slate-300" },
+const KIND_META: Record<string, { icon: LucideIcon; label: string; cls: string }> = {
+  consult: { icon: MessageCircle, label: "상담", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300" },
+  visit: { icon: Footprints, label: "방문", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
+  stage: { icon: Shuffle, label: "단계변경", cls: "border-violet-500/40 bg-violet-500/10 text-violet-300" },
+  message: { icon: Mail, label: "문자/알림톡", cls: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
+  note: { icon: PenLine, label: "메모", cls: "border-slate-500/40 bg-slate-500/10 text-slate-300" },
 };
 
 // 차단/스킵/실패 사유 친화 라벨(정보통신망법 제50조 안내). 키는 백엔드 reason_code 와 1:1.
@@ -230,7 +231,7 @@ export default function CustomerCardDrawer({
 
         {/* 문자/알림톡 발송 */}
         <section className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-          <h3 className="mb-2 text-sm font-black text-[var(--text-primary)]">✉️ 문자 / 알림톡 발송</h3>
+          <h3 className="mb-2 inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Mail className="size-4" aria-hidden />문자 / 알림톡 발송</h3>
           <div className="mb-2 flex gap-2">
             {(["sms", "alimtalk"] as const).map((c) => (
               <button
@@ -319,7 +320,7 @@ export default function CustomerCardDrawer({
 
         {/* 타임라인 */}
         <section>
-          <h3 className="mb-2 text-sm font-black text-[var(--text-primary)]">🕑 활동 타임라인</h3>
+          <h3 className="mb-2 inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Clock className="size-4" aria-hidden />활동 타임라인</h3>
           {loading ? (
             <div className="h-16 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]" />
           ) : err ? (
@@ -333,15 +334,16 @@ export default function CustomerCardDrawer({
           ) : (
             <ol className="space-y-2">
               {items.map((it, i) => {
-                const m = KIND_META[it.kind] ?? { icon: "•", label: it.kind, cls: "border-[var(--line)] text-[var(--text-secondary)]" };
+                const m = KIND_META[it.kind] ?? { icon: MessageCircle, label: it.kind, cls: "border-[var(--line)] text-[var(--text-secondary)]" };
+                const KindIcon = m.icon;
                 return (
                   <li
                     key={it.id ?? i}
                     className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-2.5"
                   >
                     <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${m.cls}`}>
-                        {m.icon} {m.label}
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black ${m.cls}`}>
+                        <KindIcon className="size-3" aria-hidden /> {m.label}
                       </span>
                       {it.kind === "stage" && (
                         <span className="text-[11px] text-[var(--text-secondary)]">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 
@@ -56,8 +57,8 @@ export function ProjectExistenceGuard({
   if (notFound) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] text-3xl">
-          🔍
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+          <Search className="size-7" aria-label="프로젝트를 찾을 수 없음" />
         </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">

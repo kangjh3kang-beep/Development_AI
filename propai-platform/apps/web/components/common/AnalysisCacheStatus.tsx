@@ -7,6 +7,8 @@
  * - isStale: 입력(원·첨부·보강 데이터) 변경 감지 → "재분석 권장" 배너 + 재분석 버튼.
  * - 캐시 없음(둘 다 false): 아무것도 렌더하지 않음(패널 기본 실행 UI 사용).
  */
+import { CheckCircle2, RefreshCw } from "lucide-react";
+
 export function AnalysisCacheStatus({
   isFresh,
   isStale,
@@ -27,9 +29,12 @@ export function AnalysisCacheStatus({
   if (isStale) {
     return (
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-        <p className="text-xs text-amber-200">
-          🔄 입력값(원·첨부·보강 데이터)이 변경되었습니다 — 기존 결과를 표시 중이며{" "}
-          <b>재분석을 권장</b>합니다.
+        <p className="flex items-start gap-1.5 text-xs text-amber-200">
+          <RefreshCw className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            입력값(원·첨부·보강 데이터)이 변경되었습니다 — 기존 결과를 표시 중이며{" "}
+            <b>재분석을 권장</b>합니다.
+          </span>
         </p>
         <button
           onClick={onRerun}
@@ -44,8 +49,8 @@ export function AnalysisCacheStatus({
   if (isFresh) {
     return (
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5">
-        <span className="text-xs font-bold text-emerald-300">
-          ✓ 검증된 분석 재사용
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300">
+          <CheckCircle2 className="size-3.5" aria-hidden /> 검증된 분석 재사용
         </span>
         {relativeLabel && (
           <span className="text-[11px] text-[var(--text-secondary)]">

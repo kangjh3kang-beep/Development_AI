@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Construction, House, LockKeyhole } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { getStoredSiteToken } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
@@ -82,8 +83,8 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
           className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[var(--accent-soft)] blur-3xl"
         />
         <div className="relative flex items-start gap-4">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-2xl shadow-[var(--shadow-xs)]">
-            🏗️
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[var(--shadow-xs)]">
+            <Construction className="size-6" aria-hidden />
           </span>
           <div className="min-w-0">
             <span className="cc-meta">FIELD APP · MY SITES</span>
@@ -134,7 +135,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
         </div>
       ) : sites.length === 0 ? (
         <div className="sa-empty">
-          <span className="sa-empty__icon" aria-hidden>🏚️</span>
+          <span className="sa-empty__icon" aria-hidden><House className="mx-auto size-9 opacity-70" /></span>
           <p className="text-sm font-semibold text-[var(--text-secondary)]">소속된 현장이 없습니다.</p>
           <p className="text-xs text-[var(--text-tertiary)]">현장 관리자가 조직도에 추가하면 여기에 표시됩니다.</p>
         </div>
@@ -197,7 +198,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-tertiary)]">
-                        <span aria-hidden>🔐</span> 2차 비밀번호
+                        <LockKeyhole className="size-3.5" aria-hidden /> 2차 비밀번호
                       </span>
                     )}
                     <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--accent-strong)] transition-transform group-hover:translate-x-0.5">

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { BarChart3, Dices, Keyboard, ScrollText } from "lucide-react";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { ProjectTypeSelector } from "./ProjectTypeSelector";
 import { ModuleInputForm } from "./ModuleInputForm";
@@ -20,10 +21,10 @@ interface Props {
 }
 
 const TABS = [
-  { key: "input" as const, label: "Intelligence Input", icon: "⌨️" },
-  { key: "result" as const, label: "Analysis Report", icon: "📊" },
-  { key: "montecarlo" as const, label: "Risk Simulation", icon: "🎲" },
-  { key: "version" as const, label: "History Ledger", icon: "📜" },
+  { key: "input" as const, label: "Intelligence Input", icon: Keyboard },
+  { key: "result" as const, label: "Analysis Report", icon: BarChart3 },
+  { key: "montecarlo" as const, label: "Risk Simulation", icon: Dices },
+  { key: "version" as const, label: "History Ledger", icon: ScrollText },
 ] as const;
 
 export function FeasibilityEditorV2({ projectId }: Props) {
@@ -280,7 +281,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                   transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                 />
               )}
-              <span className="relative z-10">{tab.icon}</span>
+              <tab.icon className="relative z-10 size-4" aria-hidden />
               <span className="relative z-10">{tab.label}</span>
             </button>
           ))}

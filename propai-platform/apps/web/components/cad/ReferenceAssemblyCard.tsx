@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import type {
   AssembleResponse,
@@ -302,8 +303,8 @@ export function ReferenceAssemblyCard({ item, siteContext, onApply }: ReferenceA
                     검증 위반
                   </span>
                   {violationMsgs.map((v, i) => (
-                    <p key={`v${i}`} className="text-[11px] font-bold text-red-400">
-                      ⚠ {v}
+                    <p key={`v${i}`} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-red-400">
+                      <AlertTriangle className="size-3.5" aria-hidden />{v}
                     </p>
                   ))}
                 </div>

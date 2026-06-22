@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { AlertTriangle, Building2, Route, TrainFront } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
@@ -77,7 +78,7 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-black text-[var(--text-primary)]">🏙 입지 인프라(POI) 분석</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Building2 className="size-4" aria-hidden />입지 인프라(POI) 분석</p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
             반경 내 교통·교육·의료·생활·금융·문화 시설을 Kakao Local로 정량 조사해 접근성을 평가합니다.
           </p>
@@ -99,7 +100,7 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
       {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
 
       {data && !data.available && (
-        <p className="mt-3 text-xs text-amber-500">⚠ {data.reason || "입지 인프라 데이터를 사용할 수 없습니다."}</p>
+        <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-amber-500"><AlertTriangle className="size-3.5" aria-hidden />{data.reason || "입지 인프라 데이터를 사용할 수 없습니다."}</p>
       )}
 
       {data && data.available && (
@@ -117,11 +118,11 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
               <span className={`cc-num text-xl font-black ${scoreColor(data.poi_accessibility_score ?? 0)}`}>{data.poi_accessibility_score ?? 0}</span>
             </span>
             {data.transit_time?.driving_min != null && (
-              <span className="text-[11px] text-[var(--text-secondary)]">🚇 {data.transit_time.to} 차량 <b className="text-[var(--accent-strong)]">{data.transit_time.driving_min}분</b></span>
+              <span className="text-[11px] text-[var(--text-secondary)]"><TrainFront className="mr-1 inline size-3.5 align-text-bottom" aria-hidden />{data.transit_time.to} 차량 <b className="text-[var(--accent-strong)]">{data.transit_time.driving_min}분</b></span>
             )}
             {data.highway_access?.nearest_m != null && (
               <span className="text-[11px] text-[var(--text-secondary)]" title={data.highway_access.basis}>
-                🛣 고속도로 {data.highway_access.via ?? "IC"} <b className="text-[var(--accent-strong)]">{data.highway_access.nearest_m.toLocaleString()}m</b>
+                <Route className="mr-1 inline size-3.5 align-text-bottom" aria-hidden />고속도로 {data.highway_access.via ?? "IC"} <b className="text-[var(--accent-strong)]">{data.highway_access.nearest_m.toLocaleString()}m</b>
               </span>
             )}
             <span className="text-[10px] text-[var(--text-hint)]">반경 {data.radius_m}m{data.geocoded_from ? ` · 좌표 ${data.geocoded_from}` : ""}{data.score_basis ? ` · ${data.score_basis}` : ""}</span>

@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { BarChart3, Landmark } from "lucide-react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
@@ -299,7 +300,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
           className="flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] transition-all hover:bg-[var(--accent-strong)] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
           title={hasDesign ? "PF 대출 심사용 보고서를 생성합니다" : "먼저 설계를 생성하세요"}
         >
-          <span className="text-[13px] leading-none">🏦</span>
+          <Landmark className="size-4" aria-hidden />
           PF심사용 보고서 생성
         </button>
       </div>
@@ -307,7 +308,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
       {!hasDesign ? (
         /* ── 빈상태(무목업): 설계 전이면 가짜 수치 없이 정직 안내 ── */
         <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-10 text-center">
-          <span className="text-2xl">📊</span>
+          <BarChart3 className="size-7 text-[var(--text-tertiary)]" aria-hidden />
           <p className="text-sm font-bold text-[var(--text-secondary)]">설계를 생성하면 사업성·환경 요약이 자동으로 채워집니다</p>
           <p className="max-w-md text-xs leading-relaxed text-[var(--text-hint)]">
             위에서 설계안을 적용하면 연면적·층수를 기준으로 공사비·수지(ROI·NPV)·ESG가 연동되어 표시됩니다.
@@ -481,7 +482,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
               >
                 <div className="mb-4 flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <span className="text-lg">🏦</span>
+                    <Landmark className="size-5" aria-hidden />
                     <h4 className="text-base font-black text-[var(--text-primary)]">PF심사용 사업성 보고서</h4>
                   </div>
                   <button

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Contact } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import ConsentModal, { type ConsentResult, type ConsentTemplate } from "@/components/desk/ConsentModal";
@@ -123,8 +124,8 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
               <input ref={cardRef} type="file" accept="image/*" capture="environment" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void matchByCard(f); }} />
               <button onClick={() => cardRef.current?.click()} disabled={matchBusy}
-                className="w-full rounded-lg border border-dashed border-[var(--line-strong)] py-2.5 text-sm font-bold text-[var(--accent-strong)] disabled:opacity-50">
-                {matchBusy ? "인식 중…" : "📇 명함 촬영/업로드 → 직원 매칭"}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--line-strong)] py-2.5 text-sm font-bold text-[var(--accent-strong)] disabled:opacity-50">
+                {matchBusy ? "인식 중…" : (<><Contact className="size-4" aria-hidden />명함 촬영/업로드 → 직원 매칭</>)}
               </button>
             </>
           ) : (

@@ -15,6 +15,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { PartyPopper } from "lucide-react";
 import {
   useProjectContextStore,
   type ProjectCompletenessKey,
@@ -179,8 +180,8 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </Link>
           </>
         ) : (
-          <p className="text-sm font-bold text-[var(--text-secondary)]">
-            모든 추천 단계를 완료했습니다 — 라이프사이클 완료 🎉
+          <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-secondary)]">
+            모든 추천 단계를 완료했습니다 — 라이프사이클 완료 <PartyPopper className="size-4" aria-hidden />
           </p>
         )}
       </div>

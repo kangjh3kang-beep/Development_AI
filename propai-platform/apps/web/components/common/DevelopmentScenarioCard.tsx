@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Building2, Construction, HelpCircle, House, Link2, Pin, Scale, Scissors } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 
 function hashStr(s: string): string {
@@ -118,7 +119,7 @@ export function DevelopmentScenarioCard({
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-black text-[var(--text-primary)]">🏗 최적 개발방식 시뮬레이션</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Construction className="size-4" aria-hidden /> 최적 개발방식 시뮬레이션</p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
             지구단위·도시개발·가로주택·모아주택·역세권 등 정책 적용요건을 판정해 최적 사업방안을 제안합니다(다필지 인접성 포함).
           </p>
@@ -138,8 +139,8 @@ export function DevelopmentScenarioCard({
             {site.total_area_sqm != null && <span className="text-[var(--text-secondary)]">{site.total_area_sqm.toLocaleString()}㎡</span>}
             {site.near_station != null && <span className="text-[var(--text-secondary)]">역세권 {site.near_station ? "○" : "✕"}{site.near_station_m != null ? ` (${site.near_station_m}m)` : ""}</span>}
             {site.multi && adj && (
-              <span className={`rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-emerald-500/30 text-emerald-400" : adj.contiguous === false ? "border-rose-500/30 text-rose-400" : "border-amber-500/30 text-amber-400"}`}>
-                {adj.contiguous === true ? "🔗 통합개발 가능" : adj.contiguous === false ? "✂ 통합개발 불가" : "❔ 인접성 미상"}
+              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-emerald-500/30 text-emerald-400" : adj.contiguous === false ? "border-rose-500/30 text-rose-400" : "border-amber-500/30 text-amber-400"}`}>
+                {adj.contiguous === true ? (<><Link2 className="size-3.5" aria-hidden />통합개발 가능</>) : adj.contiguous === false ? (<><Scissors className="size-3.5" aria-hidden />통합개발 불가</>) : (<><HelpCircle className="size-3.5" aria-hidden />인접성 미상</>)}
               </span>
             )}
             {site.buildings && (site.buildings.buildings_found ?? 0) > 0 && (
@@ -151,8 +152,8 @@ export function DevelopmentScenarioCard({
               </span>
             )}
             {site.block_aging && (site.block_aging.buildings_found ?? 0) > 0 && (
-              <span className={`rounded-lg border px-2 py-0.5 font-bold ${site.block_aging.meets_2_3 ? "border-rose-500/30 text-rose-400" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
-                🏚 블록노후 {Math.round((site.block_aging.old_ratio ?? 0) * 100)}%
+              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${site.block_aging.meets_2_3 ? "border-rose-500/30 text-rose-400" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
+                <House className="size-3.5" aria-hidden />블록노후 {Math.round((site.block_aging.old_ratio ?? 0) * 100)}%
                 {` (반경${site.block_aging.radius_m}m·${site.block_aging.buildings_found}동${site.block_aging.meets_2_3 ? "·2/3충족" : ""})`}
               </span>
             )}
@@ -160,14 +161,14 @@ export function DevelopmentScenarioCard({
 
           {/* 추천 */}
           <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
-            <p className="text-xs font-black text-[var(--accent-strong)]">📌 추천 사업방안: {result.ai?.best_scheme || result.recommended.scheme}</p>
+            <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--accent-strong)]"><Pin className="size-3.5" aria-hidden /> 추천 사업방안: {result.ai?.best_scheme || result.recommended.scheme}</p>
             {(result.ai?.why || result.recommended.reason) && (
               <p className="mt-1 text-sm leading-relaxed text-[var(--text-primary)]">{result.ai?.why || result.recommended.reason}</p>
             )}
             {result.ai?.summary && <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">{result.ai.summary}</p>}
             {(result.ai?.cautions?.length ?? 0) > 0 && (
               <ul className="mt-1.5 space-y-0.5 text-[11px] text-amber-500">
-                {result.ai!.cautions!.map((c, i) => <li key={i}>⚠ {c}</li>)}
+                {result.ai!.cautions!.map((c, i) => <li key={i} className="flex items-start gap-1"><AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{c}</span></li>)}
               </ul>
             )}
           </div>
@@ -175,7 +176,7 @@ export function DevelopmentScenarioCard({
           {/* 매도청구 요약 */}
           {result.magdo_summary && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
-              <p className="text-xs font-black text-[var(--text-primary)]">⚖ 매도청구 분석 {result.magdo_summary.scheme ? `· ${result.magdo_summary.scheme}` : ""}</p>
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]"><Scale className="size-3.5 shrink-0" aria-hidden />매도청구 분석 {result.magdo_summary.scheme ? `· ${result.magdo_summary.scheme}` : ""}</p>
               {result.magdo_summary.applicable ? (
                 <div className="mt-2 space-y-1.5 text-xs text-[var(--text-secondary)]">
                   <p>동의 요건: <b className="text-[var(--text-primary)]">{result.magdo_summary.consent_required}</b></p>
@@ -213,7 +214,7 @@ export function DevelopmentScenarioCard({
                 {s.notes && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{s.notes}</p>}
                 {s.applicable !== "불가" && (s.buildable_types?.length ?? 0) > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    <span className="text-[10px] font-bold text-[var(--text-tertiary)]">🏢 건축 가능</span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--text-tertiary)]"><Building2 className="size-3" aria-hidden /> 건축 가능</span>
                     {s.buildable_types!.map((t, j) => (
                       <span key={j} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-strong)]">{t}</span>
                     ))}
@@ -228,8 +229,8 @@ export function DevelopmentScenarioCard({
                       <p className="text-emerald-500">장점: {s.pros!.join(" · ")}</p>
                     )}
                     {s.magdo && (
-                      <p className="text-rose-400 md:col-span-2">
-                        ⚖ 매도청구: 동의 {s.magdo.consent_threshold_pct}% 충족 시 잔여 ~{s.magdo.claimable_remainder_pct}% 청구 가능 ({s.magdo.basis})
+                      <p className="inline-flex items-start gap-1 text-rose-400 md:col-span-2">
+                        <Scale className="mt-0.5 size-3.5 shrink-0" aria-hidden /><span>매도청구: 동의 {s.magdo.consent_threshold_pct}% 충족 시 잔여 ~{s.magdo.claimable_remainder_pct}% 청구 가능 ({s.magdo.basis})</span>
                       </p>
                     )}
                   </div>

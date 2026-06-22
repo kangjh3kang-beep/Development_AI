@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { AlertTriangle, ClipboardList, Lock } from "lucide-react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
@@ -290,7 +291,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
     <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-lg">📋</span>
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><ClipboardList className="size-5" aria-hidden /></span>
           <div>
             <h3 className="text-base font-bold text-[var(--text-primary)]">프로젝트 분석 요약</h3>
             <p className="text-[11px] text-[var(--text-secondary)]">저장된 분석 결과(단일 데이터원) — 모든 모듈에서 동일하게 활용됩니다.</p>
@@ -306,7 +307,11 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
                   : "bg-rose-500/10 text-rose-500 border border-rose-500/30"
               }`}
             >
-              {integrity.verified ? `🔒 원장 검증됨 · v${integrity.version}` : "⚠ 무결성 이상"}
+              {integrity.verified ? (
+                <span className="inline-flex items-center gap-1"><Lock className="size-3" aria-hidden />원장 검증됨 · v{integrity.version}</span>
+              ) : (
+                <span className="inline-flex items-center gap-1"><AlertTriangle className="size-3" aria-hidden />무결성 이상</span>
+              )}
             </span>
           )}
           {feas?.grade ? (

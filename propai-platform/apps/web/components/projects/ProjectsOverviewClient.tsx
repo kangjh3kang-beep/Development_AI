@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Construction } from "lucide-react";
 import { Button, Card, CardContent } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import type {
@@ -183,7 +184,7 @@ export function ProjectsOverviewClient({
             <div className="relative z-10 p-12 text-center flex flex-col items-center">
               <span className="cc-label mb-6">NO ACTIVE PROJECTS</span>
               <div className="h-20 w-20 rounded-[2.5rem] bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] mb-8 shadow-[var(--shadow-lg)] border border-[var(--line)]">
-                 🏗️
+                <Construction className="size-9" aria-hidden />
               </div>
               <h3 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
                 {labels.emptyStateTitle}

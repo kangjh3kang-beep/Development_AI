@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { Check, Construction, DraftingCompass, Search, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -764,7 +765,7 @@ export function DesignGenPanel({ projectId }: Props) {
       <CardContent className="space-y-5 p-5">
         <div>
           <CardTitle className="flex items-center gap-2">
-            🏗️ AI 설계생성 <span className="text-xs font-normal text-[var(--text-tertiary)]">검색·조합·인허가·근거</span>
+            <Construction className="size-5" aria-hidden />AI 설계생성 <span className="text-xs font-normal text-[var(--text-tertiary)]">검색·조합·인허가·근거</span>
           </CardTitle>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
             부지조건으로 인허가 부합 설계안 초안을 생성하고, 모든 산출에 근거·법령링크를 제공합니다.
@@ -905,8 +906,8 @@ export function DesignGenPanel({ projectId }: Props) {
         {/* 도면 업로드(ingest) */}
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-[var(--text-secondary)]">
-              📐 설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">
+              <DraftingCompass className="size-4" aria-hidden />설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
             </div>
             {corpus && corpus.total > 0 && (
               <div className="text-[11px] text-[var(--text-tertiary)]">
@@ -1027,8 +1028,8 @@ export function DesignGenPanel({ projectId }: Props) {
 
         {/* 유사 도면 검색(search) */}
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-          <div className="text-xs font-semibold text-[var(--text-secondary)]">
-            🔍 유사 도면 검색 <span className="font-normal text-[var(--text-tertiary)]">업로드된 도면을 유형·면적({areaSqm.toLocaleString()}㎡)·키워드로 조회</span>
+          <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">
+            <Search className="size-4" aria-hidden />유사 도면 검색 <span className="font-normal text-[var(--text-tertiary)]">업로드된 도면을 유형·면적({areaSqm.toLocaleString()}㎡)·키워드로 조회</span>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <select
@@ -1454,7 +1455,7 @@ export function DesignGenPanel({ projectId }: Props) {
                         onClick={() => handleApply(c, i)}
                         disabled={!c.estimated_gfa_sqm || c.estimated_gfa_sqm <= 0 || appliedIdx === i}
                       >
-                        {appliedIdx === i ? "적용됨 ✓" : "이 설계안 적용"}
+                        {appliedIdx === i ? (<span className="inline-flex items-center gap-1.5">적용됨 <Check className="size-4" aria-hidden /></span>) : "이 설계안 적용"}
                       </Button>
                       {appliedIdx === i && (
                         <span className="text-[11px] text-[var(--text-tertiary)]">
@@ -1470,7 +1471,7 @@ export function DesignGenPanel({ projectId }: Props) {
                           disabled={feedback[i] === "up"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >
-                          👍
+                          <ThumbsUp className="size-4" aria-hidden />
                         </button>
                         <button
                           type="button"
@@ -1479,7 +1480,7 @@ export function DesignGenPanel({ projectId }: Props) {
                           disabled={feedback[i] === "down"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >
-                          👎
+                          <ThumbsDown className="size-4" aria-hidden />
                         </button>
                         {feedback[i] && (
                           <span className="text-[11px] text-[var(--text-tertiary)]">의견 감사합니다</span>

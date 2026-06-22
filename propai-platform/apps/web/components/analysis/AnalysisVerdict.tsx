@@ -11,6 +11,7 @@
  * 검증/해석 어느 한쪽만 있어도 동작한다. 디자인 토큰만 사용.
  */
 
+import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 
@@ -113,7 +114,7 @@ export function AnalysisVerdict({
               {/* 아이콘 배지 (펄스로 주목 유도 — prefers-reduced-motion 시 전역 비활성) */}
               <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-strong)] text-[18px] text-white shadow-[var(--shadow-glow)]">
                 <span className="pointer-events-none absolute inset-0 animate-ping rounded-lg bg-[var(--accent-strong)] opacity-20" />
-                <span className="relative">✨</span>
+                <Sparkles className="relative size-5 text-white" aria-hidden />
               </span>
 
               <span className="min-w-0 flex-1">
@@ -153,7 +154,7 @@ export function AnalysisVerdict({
                 className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-strong)]"
               >
                 <span className="flex items-center gap-2">
-                  <span className="text-[13px] font-bold text-[var(--accent-strong)]">✨ {interpretationTitle}</span>
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--accent-strong)]"><Sparkles className="size-3.5" aria-hidden />{interpretationTitle}</span>
                   <span className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
                     {rows.length}개 섹션
                   </span>

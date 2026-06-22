@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AuctionItemsMap, type AuctionMapItem } from "@/components/auction/AuctionItemsMap";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { Construction, Landmark, Map, Search, Trophy } from "lucide-react";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
@@ -567,8 +568,8 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {/* --- 탭 B: 조건검색 --- */}
       {activeTab === "search" ? (
         <div className="space-y-6">
-          <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
-            🔎 내 조건(지역·종류·유찰횟수·감정가·최저입찰가·면적)에 부합하는 경·공매 물건을 <strong className="text-[var(--text-primary)]">실시간으로 찾아</strong> 제공합니다. 조건을 저장하면 매칭 물건을 지속 추적합니다.
+          <p className="inline-flex flex-wrap items-baseline gap-1.5 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+            <Search className="size-4 self-center shrink-0" aria-hidden /> 내 조건(지역·종류·유찰횟수·감정가·최저입찰가·면적)에 부합하는 경·공매 물건을 <strong className="text-[var(--text-primary)]">실시간으로 찾아</strong> 제공합니다. 조건을 저장하면 매칭 물건을 지속 추적합니다.
           </p>
           <form
             onSubmit={handleSearch}
@@ -741,7 +742,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                             : "border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"
                         }`}
                       >
-                        {v === "list" ? "목록" : "🗺️ 지도"}
+                        {v === "list" ? "목록" : (<span className="inline-flex items-center gap-1.5"><Map className="size-3.5" aria-hidden />지도</span>)}
                       </button>
                     ))}
                   </div>
@@ -779,7 +780,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {activeTab === "ranking" ? (
         <div className="space-y-5">
           <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
-            🏆 전국 공매 부동산을 <strong className="text-[var(--text-primary)]">조회수·관심·최저가·할인율</strong> 순으로 보여줍니다. 온비드는 진행중 물건의 <strong className="text-[var(--text-primary)]">최저입찰가를 비공개</strong>하므로, 감정가(실데이터)와 <strong className="text-[var(--text-primary)]">예상낙찰가·예상할인(추정)</strong>으로 저가 기회를 안내합니다.
+            <Trophy className="mr-1 inline size-4 align-text-bottom" aria-hidden />전국 공매 부동산을 <strong className="text-[var(--text-primary)]">조회수·관심·최저가·할인율</strong> 순으로 보여줍니다. 온비드는 진행중 물건의 <strong className="text-[var(--text-primary)]">최저입찰가를 비공개</strong>하므로, 감정가(실데이터)와 <strong className="text-[var(--text-primary)]">예상낙찰가·예상할인(추정)</strong>으로 저가 기회를 안내합니다.
           </p>
           <div className="flex flex-wrap gap-2">
             {RANKING_OPTIONS.map((opt) => (
@@ -826,7 +827,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                           : "border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"
                       }`}
                     >
-                      {v === "list" ? "목록" : "🗺️ 지도"}
+                      {v === "list" ? "목록" : (<span className="inline-flex items-center gap-1.5"><Map className="size-3.5" aria-hidden />지도</span>)}
                     </button>
                   ))}
                 </div>
@@ -870,7 +871,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                       />
                     ) : (
                       <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-muted)] text-[var(--text-hint)]">
-                        🏛️
+                        <Landmark className="size-6" aria-hidden />
                       </span>
                     )}
                     <div className="min-w-0 flex-1">
@@ -1292,8 +1293,8 @@ function DetailModal({
                   />
                 </button>
                 {/* 확대 안내 아이콘(우상단) */}
-                <span className="pointer-events-none absolute right-2 top-2 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
-                  🔍 클릭하면 확대
+                <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                  <Search className="size-3 shrink-0" aria-hidden /> 클릭하면 확대
                 </span>
                 {galleryImages.length > 1 ? (
                   <span className="pointer-events-none absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
@@ -1575,7 +1576,7 @@ function DetailModal({
         <div className="mt-5 rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-sm font-black text-[var(--text-primary)]">🔍 등기부등본 권리분석</p>
+              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Search className="size-4 shrink-0" aria-hidden /> 등기부등본 권리분석</p>
               <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
                 말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
               </p>
@@ -1676,8 +1677,8 @@ function DetailModal({
           <div className="mt-3 rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-sm font-black text-[var(--text-primary)]">
-                  🏗️ 이 물건으로 프로젝트 생성
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
+                  <Construction className="size-4 shrink-0" aria-hidden /> 이 물건으로 프로젝트 생성
                 </p>
                 <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
                   주소·용도지역·면적을 새 프로젝트 화면에 선채움합니다. 면적·용도지역이
@@ -1717,7 +1718,7 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center gap-4 py-16 text-center">
       <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-hint)] opacity-60">
-        🏛️
+        <Landmark className="size-7" aria-hidden />
       </span>
       <p className="text-sm font-bold text-[var(--text-hint)]">{message}</p>
     </div>

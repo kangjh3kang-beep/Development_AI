@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Boxes, CheckCircle2, Clock, Lock, RefreshCw, X } from "lucide-react";
 import { salesApi, clearSiteToken } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import {
@@ -483,9 +484,9 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
         </span>
         <button
           onClick={() => loadBoard()}
-          className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
         >
-          ↻ 새로고침
+          <RefreshCw className="size-3.5" aria-hidden /> 새로고침
         </button>
         <div className="ml-auto flex flex-wrap gap-3 text-xs">
           {Object.entries(LABELS).map(([k, v]) => (
@@ -504,7 +505,7 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
           role="alert"
           className="flex flex-wrap items-center gap-2 rounded-lg border border-[color:color-mix(in_srgb,var(--status-error)_45%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2.5 text-xs font-semibold text-[var(--status-error)]"
         >
-          <span aria-hidden>⚠</span>
+          <AlertTriangle className="size-4 shrink-0" aria-hidden />
           <span>
             {wsAuthError === "unauthenticated"
               ? "세션이 만료되었습니다. 실시간 연결이 중단되었습니다 — 다시 로그인해 주세요."
@@ -531,7 +532,7 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
                 : "border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] text-[var(--status-error)]"
           }`}
         >
-          <span aria-hidden>{toast.tone === "ok" ? "✓" : toast.tone === "warn" ? "⚠" : "✕"}</span>
+          <span aria-hidden className="inline-flex">{toast.tone === "ok" ? <CheckCircle2 className="size-3.5" /> : toast.tone === "warn" ? <AlertTriangle className="size-3.5" /> : <X className="size-3.5" />}</span>
           {toast.text}
         </div>
       )}
@@ -549,7 +550,7 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
       )}
       {!loading && !err && units.length === 0 && (
         <div className="sa-empty">
-          <span className="sa-empty__icon" aria-hidden>🧱</span>
+          <span className="sa-empty__icon" aria-hidden><Boxes className="mx-auto size-9 opacity-70" /></span>
           <p className="text-sm font-semibold text-[var(--text-secondary)]">아직 세대가 없습니다.</p>
           <p className="text-xs text-[var(--text-tertiary)]">상단의 동·호표 생성으로 배치도를 먼저 만들어 주세요.</p>
         </div>
@@ -596,11 +597,11 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
                               >
                                 <span className="font-bold">{u.ho}</span>
                                 {u.status === "HOLD" && !u.held_by_me && (
-                                  <span className="text-[9px] leading-none">🔒 선점중</span>
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] leading-none"><Lock className="size-2.5" aria-hidden /> 선점중</span>
                                 )}
                                 {isMine && (
-                                  <span className={`text-[9px] leading-none tabular-nums ${urgent ? "text-rose-300 font-black" : ""}`}>
-                                    ⏱ {fmtCountdown(left)}
+                                  <span className={`inline-flex items-center gap-0.5 text-[9px] leading-none tabular-nums ${urgent ? "text-rose-300 font-black" : ""}`}>
+                                    <Clock className="size-2.5" aria-hidden /> {fmtCountdown(left)}
                                   </span>
                                 )}
                                 {u.status === "CONTRACTED" && <span className="text-[9px] leading-none">계약</span>}

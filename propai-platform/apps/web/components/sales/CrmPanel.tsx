@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Bot } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import CustomerCardDrawer from "@/components/sales/CustomerCardDrawer";
@@ -210,7 +211,7 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
       </section>
 
       <div className="flex items-center justify-between">
-        <h2 className="font-black text-[var(--text-primary)]">🤖 AI 가망고객 예측 ({preds.length})</h2>
+        <h2 className="inline-flex items-center gap-1.5 font-black text-[var(--text-primary)]"><Bot className="size-5" aria-hidden />AI 가망고객 예측 ({preds.length})</h2>
         <div className="flex gap-2">
           <button onClick={load} className="rounded-lg border border-[var(--line-strong)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)]">재예측</button>
           {preds.length > 0 && <button onClick={applyAll} className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-white">등급 일괄 반영</button>}

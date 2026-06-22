@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Building2 } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
@@ -270,8 +271,8 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           <div className="flex flex-col items-start gap-2">
             <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하거나, 기본조직을 한 번에 생성하세요.</p>
             <button onClick={seedDefault} disabled={busy}
-              className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-              🏢 기본조직 생성 (대행사→본부장→5팀×10명)
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              <Building2 className="size-4" aria-hidden /> 기본조직 생성 (대행사→본부장→5팀×10명)
             </button>
           </div>
         )}

@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { AlertTriangle, CheckCircle2, Clock, Map, Puzzle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 
@@ -123,7 +124,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-black text-[var(--text-primary)]">🗺 대량 구역 일괄 분석</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Map className="size-4" aria-hidden /> 대량 구역 일괄 분석</p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
 수백~수천 필지(주소+반경·PNU 목록·구역 bbox)를 비동기로 일괄 해석합니다. 일부 실패해도 분류는 보존되며, 전 필지 확정 시 통합 집계를 산출합니다.
           </p>
@@ -192,12 +193,12 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
       {result && c && (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold text-[var(--text-primary)]">
+            <span className="inline-flex items-center gap-1 font-bold text-[var(--text-primary)]">
               {["queued", "running"].includes(result.state)
-                ? "⏳ 진행"
+                ? (<span className="inline-flex items-center gap-1"><Clock className="size-3.5" aria-hidden />진행</span>)
                 : result.completeness === "complete"
-                  ? "✅ 완료(전 필지 확정)"
-                  : "✅ 완료(일부 미확정)"} · {result.state}
+                  ? (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(전 필지 확정)</span>)
+                  : (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(일부 미확정)</span>)} · {result.state}
             </span>
             <span className="text-[var(--text-secondary)]">
               총 {c.total} · 확정 {c.confirmed} · 모호 {c.ambiguous} · 미발견 {c.not_found} · 오류 {c.error}
@@ -220,10 +221,10 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
           {/* 통합 집계 */}
           <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
             {result.aggregate?.held ? (
-              <p className="text-amber-500">⏳ 통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
+              <p className="inline-flex items-center gap-1 text-amber-500"><Clock className="size-3.5 shrink-0" aria-hidden />통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
             ) : result.aggregate?.total_area_sqm ? (
-              <p className="text-[var(--text-primary)]">
-                🧩 통합 합필 면적 <b className="text-[var(--accent-strong)]">{Math.round(result.aggregate.total_area_sqm).toLocaleString()}㎡</b>
+              <p className="inline-flex flex-wrap items-center gap-1 text-[var(--text-primary)]">
+                <Puzzle className="size-3.5 shrink-0" aria-hidden />통합 합필 면적 <b className="text-[var(--accent-strong)]">{Math.round(result.aggregate.total_area_sqm).toLocaleString()}㎡</b>
                 {result.aggregate.total_area_sqm ? ` (${Math.round(result.aggregate.total_area_sqm / 3.3058).toLocaleString()}평)` : ""}
               </p>
             ) : (
@@ -239,7 +240,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
           {/* 신뢰루프: 면적 이상치(검토 권고) */}
           {(result.outliers?.length ?? 0) > 0 && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px]">
-              <p className="font-bold text-amber-500">⚠ 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
+              <p className="flex items-center gap-1 font-bold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
               <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                 {result.outliers!.slice(0, 5).map((o, i) => (
                   <li key={i} className="truncate" title={o.reason || o.pnu}>· {o.address || o.pnu} — {o.area_sqm?.toLocaleString()}㎡ ({o.ratio}×)</li>

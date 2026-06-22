@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { loadKakaoMap } from "@/lib/kakao-map";
@@ -442,7 +443,7 @@ export function NearbyTransactionsMap({
         )}
         {payload && !loading && payload.fetch_failed && (
           <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-200 backdrop-blur">
-            ⚠️ {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패이며, 잠시 후 다시 시도해 주세요."}
+            <AlertTriangle className="size-4 shrink-0" aria-hidden /> {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패이며, 잠시 후 다시 시도해 주세요."}
           </div>
         )}
         {payload && !loading && !payload.fetch_failed && activeCategory && activeCategory.groups?.length === 0 && (

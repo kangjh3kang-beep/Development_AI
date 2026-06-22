@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { AlertTriangle, FlaskConical, Map, Satellite } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import type { AvmVisionResult, RoadFrontage } from "./types";
@@ -128,7 +129,7 @@ export function AvmVisionPanel({
       <CardContent className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">🛰️</span>
+            <Satellite className="size-6 text-[var(--text-secondary)]" aria-hidden />
             <div>
               <h2 className="flex items-center gap-2 text-base font-black text-[var(--text-primary)]">
                 이미지융합 AVM
@@ -168,15 +169,15 @@ export function AvmVisionPanel({
           <button
             onClick={() => void run()}
             disabled={busy}
-            className="h-10 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? "영상 분석 중…" : "🛰️ 이미지융합 분석"}
+            {busy ? "영상 분석 중…" : (<><Satellite className="size-4" aria-hidden /> 이미지융합 분석</>)}
           </button>
         </div>
 
         {err && (
-          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-            ⚠ {err}
+          <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {err}
           </p>
         )}
 
@@ -197,7 +198,7 @@ export function AvmVisionPanel({
                   />
                 ) : (
                   <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 p-6 text-center">
-                    <span className="text-3xl">🗺️</span>
+                    <Map className="size-8 text-[var(--text-tertiary)]" aria-hidden />
                     <p className="text-xs font-bold text-[var(--text-secondary)]">
                       {img?.available ? "영상 분석 완료(서버측)" : "항공영상 미취득"}
                     </p>
@@ -322,8 +323,8 @@ export function AvmVisionPanel({
         {res?.ok && (res.note || res.sources?.length) && (
           <div className="mt-3 space-y-1.5">
             {res.note && (
-              <p className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-[11px] leading-relaxed text-violet-200">
-                ⚗ {res.note}
+              <p className="inline-flex items-start gap-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-[11px] leading-relaxed text-violet-200">
+                <FlaskConical className="mt-0.5 size-3.5 shrink-0" aria-hidden />{res.note}
               </p>
             )}
             {res.sources?.length > 0 && (

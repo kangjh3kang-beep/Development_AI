@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { Construction, DraftingCompass } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -164,7 +165,7 @@ export function UnitOutlineBuilder({
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {/* 건축개요(프로젝트 부지분석에서 자동 로드) */}
           <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-            <p className="text-xs font-bold text-[var(--accent-strong)]">📐 건축개요 (프로젝트 부지분석 연동)</p>
+            <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--accent-strong)]"><DraftingCompass className="size-3.5" aria-hidden />건축개요 (프로젝트 부지분석 연동)</p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 ["대지면적", (() => { const a = effectiveLandAreaSqm(sa); return a ? `${a.toLocaleString()}㎡` : "-"; })()],
@@ -244,8 +245,8 @@ export function UnitOutlineBuilder({
           <div className="flex flex-wrap gap-2">
             <button onClick={onClose} className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]">취소</button>
             <button onClick={submitFromDesign} disabled={busy} title="프로젝트 최신 건축설계(BIM)의 층수·평형배분으로 자동 생성"
-              className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-sm font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-              🏗 설계(BIM)에서 자동
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-sm font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              <Construction className="size-4" aria-hidden /> 설계(BIM)에서 자동
             </button>
             <button onClick={submit} disabled={busy} className="rounded-xl bg-[var(--accent-strong)] px-5 py-2 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
               {busy ? "생성 중…" : "동·호표 생성"}

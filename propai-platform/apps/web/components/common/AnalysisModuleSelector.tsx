@@ -15,6 +15,7 @@
  * 색상은 토큰만 사용(하드코딩 금지), WCAG AA 대비 유지.
  */
 
+import { Zap, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 
@@ -36,8 +37,8 @@ export interface AnalysisModuleOption {
   locked?: boolean;
   /** 잠금 해제 CTA 문구(locked일 때만). */
   lockedCtaLabel?: string;
-  /** 카드 헤더 아이콘(직관 — 이모지/짧은 기호). 순수 표시용. */
-  icon?: string;
+  /** 카드 헤더 아이콘(직관). 문자열(이모지/짧은 기호) 또는 lucide 아이콘 컴포넌트. 순수 표시용. */
+  icon?: string | LucideIcon;
   /**
    * 하위 항목(1단계 깊이만). 있으면 이 모듈은 "분류"가 되고 자식은 "항목"이 된다.
    * 부모 체크박스는 3-state(전체선택/부분/해제)로 동작한다.
@@ -194,7 +195,9 @@ export function AnalysisModuleSelector({
                 />
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
-                    {m.icon && <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>}
+                    {m.icon && (typeof m.icon === "string"
+                      ? <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>
+                      : <m.icon className="size-4 text-[var(--text-secondary)]" aria-hidden />)}
                     {m.label}
                     {m.locked && (
                       <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
@@ -235,9 +238,9 @@ export function AnalysisModuleSelector({
                 type="button"
                 onClick={onSelectAll}
                 disabled={runDisabled}
-                className="whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-bold text-[var(--accent-strong)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_8%,transparent)] disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-bold text-[var(--accent-strong)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_8%,transparent)] disabled:opacity-50"
               >
-                ⚡ 전체 자동분석
+                <Zap className="size-4" aria-hidden />전체 자동분석
               </button>
             )}
             {onRun && (
@@ -339,7 +342,9 @@ function ParentModuleCard({
         >
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
-              {m.icon && <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>}
+              {m.icon && (typeof m.icon === "string"
+                ? <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>
+                : <m.icon className="size-4 text-[var(--text-secondary)]" aria-hidden />)}
               {m.label}
               <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-tertiary)]">
                 {onCount}/{toggleable.length}

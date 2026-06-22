@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Lock } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -1649,7 +1650,7 @@ export function ProjectPipelinePanel({
       {guestGateOpen && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setGuestGateOpen(false)}>
           <div className="w-full max-w-sm rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl text-center" onClick={(e) => e.stopPropagation()}>
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-soft)] text-2xl">🔒</div>
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Lock className="size-6" aria-hidden /></div>
             <h3 className="text-lg font-bold text-[var(--text-primary)]">무료 체험을 모두 사용했어요</h3>
             <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
               비회원은 토지분석을 <b>1회</b> 무료로 이용할 수 있습니다.<br />

@@ -9,6 +9,7 @@
  */
 
 import { usePathname } from "next/navigation";
+import { AlertTriangle } from "lucide-react";
 
 export const DISCLAIMER_TEXT =
   "본 분석결과는 참고용이며, 오류가 있을 수 있습니다. 이와 관련해 사통팔땅은 어떠한 책임도 지지 않습니다. 최종판단은 사용자가 최종 결정하는 것입니다.";
@@ -26,7 +27,7 @@ export function Disclaimer({ className = "" }: { className?: string }) {
       role="note"
       className={`flex items-start gap-2 rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text-tertiary)] ${className}`}
     >
-      <span aria-hidden className="shrink-0">⚠️</span>
+      <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
       <span>{DISCLAIMER_TEXT}</span>
     </p>
   );

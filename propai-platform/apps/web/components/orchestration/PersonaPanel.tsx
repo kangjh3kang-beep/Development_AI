@@ -21,6 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -330,7 +331,7 @@ function CostValidationCard({ data }: { data: Record<string, unknown> }) {
   return (
     <ArtifactCard title="원가 회수 검증(2차 가드)">
       {warning ? (
-        <p className="text-[11px] text-[var(--status-warning)]">⚠️ {warning}</p>
+        <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--status-warning)]"><AlertTriangle className="size-3.5" aria-hidden />{warning}</p>
       ) : (
         <p className="text-[11px] text-[var(--status-success)]">시장가가 원가(공사비+간접)를 회수합니다.</p>
       )}

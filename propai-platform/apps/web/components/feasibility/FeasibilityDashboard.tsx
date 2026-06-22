@@ -1,4 +1,5 @@
 import React from "react";
+import { Building2 } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
@@ -86,7 +87,7 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
     <div className="flex flex-col gap-6 mt-8 mb-8">
       <div className="sa-di-block">
         <header className="sa-di-block__head" style={{ cursor: "default", borderBottom: "2px solid var(--accent-strong)" }}>
-          <span className="sa-di-block__icon" aria-hidden>🏢</span>
+          <span className="sa-di-block__icon" aria-hidden><Building2 className="size-5" /></span>
           <span className="sa-di-block__title text-lg font-black text-[var(--accent-strong)]">AI 사업 타당성 분석 (Feasibility Report)</span>
           <span className="sa-di-eyebrow text-white bg-[var(--accent-strong)] px-2 py-0.5 rounded-full">BETA</span>
         </header>

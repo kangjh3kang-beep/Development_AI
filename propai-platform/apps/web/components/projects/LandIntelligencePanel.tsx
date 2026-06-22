@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { AlertTriangle } from "lucide-react";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
@@ -1468,7 +1469,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <p className="text-[10px] text-emerald-400 mt-1 font-bold">
                   {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
-                  {specialParcel && <span className="text-[var(--status-warning)]"> · ⚠ 특이부지</span>}
+                  {specialParcel && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"> · <AlertTriangle className="size-3" aria-hidden />특이부지</span>}
                 </p>
               )}
             </div>

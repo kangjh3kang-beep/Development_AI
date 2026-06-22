@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Construction } from "lucide-react";
 import { motion } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -129,7 +130,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
           </p>
           <div className="flex items-center gap-2">
             {qtoSource === "bim"
-              ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">🏗 BIM 매스 실치수 적산</span>
+              ? <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400"><Construction className="size-3" aria-hidden />BIM 매스 실치수 적산</span>
               : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">건축개요 역산(추정) — 설계/BIM 완성 시 정밀화</span>}
           </div>
         </div>

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Bot, ClipboardList, Key, ShieldCheck } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { salesApi, salesGlobal } from "@/lib/salesApi";
 import type { Locale } from "@/i18n/config";
 import UnitGrid from "@/components/sales/UnitGrid";
@@ -23,8 +25,8 @@ import CrmPanel from "@/components/sales/CrmPanel";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 
 type Tab = "overview" | "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk" | "crm" | "integrity";
-const TABS: { key: Tab; label: string }[] = [
-  { key: "overview", label: "📋 설정·요약" },
+const TABS: { key: Tab; label: string; icon?: LucideIcon }[] = [
+  { key: "overview", label: "설정·요약", icon: ClipboardList },
   { key: "units", label: "세대 배치도" },
   { key: "pricing", label: "분양가" },
   { key: "subscription", label: "청약·당첨" },
@@ -35,8 +37,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "org", label: "조직도" },
   { key: "commission", label: "수수료" },
   { key: "desk", label: "방문 안내데스크" },
-  { key: "crm", label: "🤖 고객 예측" },
-  { key: "integrity", label: "🛡 무결성 가드" },
+  { key: "crm", label: "고객 예측", icon: Bot },
+  { key: "integrity", label: "무결성 가드", icon: ShieldCheck },
 ];
 
 type SiteInfo = {
@@ -101,7 +103,11 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
                 ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-sm)]"
                 : "border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
             }`}>
-            {t.label}
+            {t.icon ? (
+              <span className="inline-flex items-center gap-1.5"><t.icon className="size-4" aria-hidden />{t.label}</span>
+            ) : (
+              t.label
+            )}
           </button>
         ))}
       </div>
@@ -129,9 +135,9 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
                 type="button"
                 onClick={() => setPwOpen(true)}
                 disabled={!siteInfo?.id}
-                className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 px-4 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/20 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 px-4 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/20 disabled:opacity-50"
               >
-                🔑 현장앱 비밀번호 설정/변경
+                <Key className="size-4" aria-hidden /> 현장앱 비밀번호 설정/변경
               </button>
             </div>
             <p className="relative z-10 mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--text-hint)]">
@@ -143,7 +149,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
           <div>
             <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">관리 메뉴</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {[
+              {([
                 { key: "units" as Tab, label: "세대 배치도", desc: "동·호 배치·상태" },
                 { key: "pricing" as Tab, label: "분양가", desc: "회차별 가격표" },
                 { key: "subscription" as Tab, label: "청약·당첨", desc: "접수·추첨·당첨" },
@@ -154,16 +160,18 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
                 { key: "org" as Tab, label: "조직도", desc: "본부·팀·직원" },
                 { key: "commission" as Tab, label: "수수료", desc: "정산·더치페이" },
                 { key: "desk" as Tab, label: "방문 안내데스크", desc: "체크인·방문통계" },
-                { key: "crm" as Tab, label: "🤖 고객 예측", desc: "CRM·전환예측" },
-                { key: "integrity" as Tab, label: "🛡 무결성 가드", desc: "데이터 검증" },
-              ].map((m) => (
+                { key: "crm" as Tab, label: "고객 예측", desc: "CRM·전환예측", icon: Bot },
+                { key: "integrity" as Tab, label: "무결성 가드", desc: "데이터 검증", icon: ShieldCheck },
+              ] as { key: Tab; label: string; desc: string; icon?: LucideIcon }[]).map((m) => (
                 <button
                   key={m.key}
                   type="button"
                   onClick={() => setTab(m.key)}
                   className="flex flex-col items-start rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-left transition hover:border-[var(--accent-strong)] hover:shadow-[var(--shadow-sm)]"
                 >
-                  <span className="text-sm font-black text-[var(--text-primary)]">{m.label}</span>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
+                    {m.icon && <m.icon className="size-4" aria-hidden />}{m.label}
+                  </span>
                   <span className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{m.desc}</span>
                 </button>
               ))}

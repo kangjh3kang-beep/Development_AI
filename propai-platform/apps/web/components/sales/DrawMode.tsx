@@ -5,6 +5,7 @@
  * 청약→당첨→동·호배정 흐름 연결: 청약 당첨자 명부를 당첨 우선순위 순번대로 추첨 대상자로 자동 시드.
  * 백엔드: /sales/draw/groups(목록·생성)·/{id}/candidates(+excel·from-customers·from-winners)·/{id}/candidates/{cid}/draw·/status
  */
+import { Dices, Ticket } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 
@@ -150,7 +151,7 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
             </div>
             {/* 청약→당첨→동·호배정 연계: 당첨자 명부를 당첨 우선순위 순번대로 시드 */}
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-2">
-              <span className="text-[10px] text-[var(--text-tertiary)]">🎟️ 청약 연계</span>
+              <span className="inline-flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]"><Ticket className="size-3.5" aria-hidden />청약 연계</span>
               <select value={annId} onChange={(e) => setAnnId(e.target.value)} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-xs">
                 <option value="">청약 공고 선택…</option>
                 {anns.map((a) => <option key={a.id} value={a.id}>{a.announce_no ?? a.id.slice(0, 8)} · {a.status}</option>)}
@@ -181,7 +182,7 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
                 <span className="text-sm font-black text-[var(--text-primary)]">▶ 지금 차례: #{nextTurn.seq} {nextTurn.name}</span>
                 <button onClick={() => draw(nextTurn.id)} disabled={rolling || busy}
                   className="rounded-lg bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white disabled:opacity-60">
-                  {rolling ? "🎲 추첨 중…" : "🎲 추첨하기"}
+                  <span className="inline-flex items-center gap-1.5"><Dices className="size-4" aria-hidden />{rolling ? "추첨 중…" : "추첨하기"}</span>
                 </button>
               </div>
             )}
@@ -215,7 +216,7 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
           <div className="mx-4 w-full max-w-sm rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-center shadow-[var(--shadow-lg)]">
             {rolling ? (
               <>
-                <div className="mb-3 text-4xl animate-bounce">🎲</div>
+                <div className="mb-3 flex justify-center"><Dices className="size-10 animate-bounce" aria-hidden /></div>
                 <p className="text-lg font-black text-[var(--text-primary)]">추첨 중…</p>
                 <p className="mt-1 text-xs text-[var(--text-tertiary)]">남은 동·호 중 무작위 배정</p>
               </>

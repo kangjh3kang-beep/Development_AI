@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { AlertTriangle, Building2, CheckCircle2 } from "lucide-react";
 import { apiV1BaseUrl } from "@/lib/api-client";
 
 const PYEONG_SQM = 3.305785; // 1평 = 3.305785㎡ (대지지분 평 환산 공용 상수)
@@ -84,7 +85,7 @@ export function LandShareModal({
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="cc-label text-[var(--accent-strong)]">🏢 대지지분(대지권) 분석</p>
+            <p className="inline-flex items-center gap-1.5 cc-label text-[var(--accent-strong)]"><Building2 className="size-4" aria-hidden />대지지분(대지권) 분석</p>
             <h2 className="mt-1 text-base font-black text-[var(--text-primary)]">{jibun}</h2>
             <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
               건축물대장(표제부·전유공용면적) 기반 세대별 대지지분 — Σ세대 대지지분 = 대지면적 정합 검증
@@ -131,7 +132,7 @@ export function LandShareModal({
               }`}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="flex items-center gap-2">
-                    <span>{data.validation.reliable ? "✅" : "⚠"}</span>
+                    <span>{data.validation.reliable ? <CheckCircle2 className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}</span>
                     <span>
                       {/* 합계 일치는 비례배분이라 정의상 성립 → '배분 완료'로 정직 표기(정확성 증명 아님) */}
                       Σ세대 대지지분 <b>{sm(data.validation.sum_land_share_sqm)}</b> = 대지면적 <b>{sm(data.validation.plat_area_sqm)}</b> 비례배분 완료
@@ -168,7 +169,7 @@ export function LandShareModal({
                 </div>
                 {/* 실제로 실패할 수 있는 교차검증: 표제부 세대수 vs 전유부 호수 */}
                 <p className="mt-1.5 flex items-start gap-1.5 border-t border-current/15 pt-1.5 opacity-90">
-                  <span>{data.validation.count_match ? "🔎" : "❗"}</span>
+                  <span>{data.validation.count_match ? <CheckCircle2 className="size-3.5 shrink-0" aria-hidden /> : <AlertTriangle className="size-3.5 shrink-0" aria-hidden />}</span>
                   <span>{data.validation.count_note}</span>
                 </p>
               </div>

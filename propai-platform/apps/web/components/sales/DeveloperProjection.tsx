@@ -9,6 +9,7 @@
  *         GET /sales/admin/site-detail · POST /sales/accounting/entry (현장 헤더=site_id UUID 허용)
  */
 
+import { AlertTriangle } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { salesApi, salesGlobal, won } from "@/lib/salesApi";
 
@@ -260,7 +261,7 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
       </div>
       {overstated && (
         <p className="flex items-center gap-1.5 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--warning)]">
-          <span aria-hidden>⚠</span>
+          <AlertTriangle className="size-3.5" aria-hidden />
           발생주의 손익이 현금흐름 손익보다 큽니다 — 미수금({won(receivable)})까지 매출로 인식된 과대계상 소지가 있습니다. 실수납 기준(현금흐름)을 함께 확인하세요.
         </p>
       )}
@@ -295,7 +296,7 @@ function ReconciliationView({ rec }: { rec?: Reconciliation }) {
   // balanced === false → 불일치. 각 discrepancy 를 라벨 칩 + 상세로 렌더(은폐 금지).
   return (
     <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
-      <b className="flex items-center gap-1.5"><span aria-hidden>⚠</span>독립 대사 불일치 — 현장 원장 점검 필요</b>
+      <b className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />독립 대사 불일치 — 현장 원장 점검 필요</b>
       <div className="mt-1.5 flex flex-col gap-1">
         {disc.map((x, i) => (
           <span key={`${x.key}-${i}`} className="inline-flex flex-wrap items-baseline gap-1">

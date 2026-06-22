@@ -16,6 +16,7 @@ import {
   ZAxis,
 } from "recharts";
 import { motion } from "framer-motion";
+import { AlertTriangle, RadioTower, Siren, Zap } from "lucide-react";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { apiClient } from "@/lib/api-client";
@@ -92,10 +93,10 @@ export function DigitalTwinAnomalyDashboard() {
       {/* KPI 카드 */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "활성 센서", value: summary.total_sensors, unit: "개", color: "text-[var(--info)]", icon: "📡" },
-          { label: "이상 감지", value: summary.anomalies_detected, unit: "건", color: "text-[var(--warning)]", icon: "⚠️" },
-          { label: "긴급 경고", value: summary.critical_count, unit: "건", color: "text-[var(--spot)]", icon: "🚨" },
-          { label: "주의 경고", value: summary.warning_count, unit: "건", color: "text-[var(--warning)]", icon: "⚡" },
+          { label: "활성 센서", value: summary.total_sensors, unit: "개", color: "text-[var(--info)]", icon: RadioTower },
+          { label: "이상 감지", value: summary.anomalies_detected, unit: "건", color: "text-[var(--warning)]", icon: AlertTriangle },
+          { label: "긴급 경고", value: summary.critical_count, unit: "건", color: "text-[var(--spot)]", icon: Siren },
+          { label: "주의 경고", value: summary.warning_count, unit: "건", color: "text-[var(--warning)]", icon: Zap },
         ].map((kpi, i) => (
           <motion.div
             key={kpi.label}
@@ -105,7 +106,8 @@ export function DigitalTwinAnomalyDashboard() {
           >
             <Card className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] overflow-hidden group">
               <CardContent className="p-8 relative">
-                 <div className="absolute top-4 right-6 text-2xl opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500">{kpi.icon}</div>
+                 <kpi.icon className="absolute top-4 right-6 size-7 opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" aria-hidden />
+
                  <p className="cc-label text-[var(--text-hint)]">{kpi.label}</p>
                  <div className="mt-4 flex items-baseline gap-2">
                    <p className={`cc-num text-4xl font-[1000] tracking-tighter ${kpi.color}`}>

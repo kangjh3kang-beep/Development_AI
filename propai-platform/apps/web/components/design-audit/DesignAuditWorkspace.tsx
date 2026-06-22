@@ -17,6 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Boxes, CheckCircle2, Construction, DraftingCompass, Folder, Settings } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -255,7 +256,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">🏗️</span>
+            <Construction className="size-7 text-[var(--accent-strong)]" aria-hidden />
             <div>
               <div className="mb-1 flex items-center gap-2">
                 <span className="cc-meta">DESIGN · AI AUDIT</span>
@@ -369,8 +370,8 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                   {siteMode === "project" ? (
                     projectId && siteAnalysis ? (
                       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-                        <p className="text-xs font-bold text-[var(--accent-strong)]">
-                          📁 {projectName || "활성 프로젝트"} — 부지분석 데이터(읽기 전용)
+                        <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--accent-strong)]">
+                          <Folder className="size-3.5" aria-hidden />{projectName || "활성 프로젝트"} — 부지분석 데이터(읽기 전용)
                         </p>
                         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                           {(
@@ -477,8 +478,8 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                 <div className="grid gap-3 md:grid-cols-2">
                   {/* IFC 업로드 슬롯 */}
                   <div className="rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
-                    <p className="text-xs font-bold text-[var(--text-primary)]">
-                      🧱 BIM 모델 (IFC) <span className="font-normal text-[var(--text-hint)]">— 선택</span>
+                    <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)]">
+                      <Boxes className="size-4" aria-hidden />BIM 모델 (IFC) <span className="font-normal text-[var(--text-hint)]">— 선택</span>
                     </p>
                     <p className="mt-1 text-[11px] text-[var(--text-hint)]">
                       IFC를 첨부하면 도면 기반 수치(층고·면적·코어 등)까지 심사 범위가 넓어집니다.
@@ -536,8 +537,8 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
 
                   {/* DXF 업로드 슬롯 — CAD 2.0 편집본 DXF 호환(.dxf · 최대 20MB) */}
                   <div className="rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
-                    <p className="text-xs font-bold text-[var(--text-primary)]">
-                      📐 CAD 도면 (DXF) <span className="font-normal text-[var(--text-hint)]">— 선택</span>
+                    <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)]">
+                      <DraftingCompass className="size-4" aria-hidden />CAD 도면 (DXF) <span className="font-normal text-[var(--text-hint)]">— 선택</span>
                     </p>
                     <p className="mt-1 text-[11px] text-[var(--text-hint)]">
                       DXF를 첨부하면 도면 파일이 심사 요청에 함께 전송됩니다(.dxf · 최대 20MB).
@@ -600,14 +601,14 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                 (running ? (
                   /* 로딩 — 엔진 체크리스트(예상 진행 표시) */
                   <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
-                    <p className="text-sm font-black text-[var(--accent-strong)]">
-                      ⚙ AI 심사 엔진 실행 중…
+                    <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                      <Settings className="size-4 animate-spin" aria-hidden />AI 심사 엔진 실행 중…
                     </p>
                     <ul className="mt-3 grid gap-1.5">
                       {ENGINE_STEPS.map((label, i) => (
                         <li key={label} className="flex items-center gap-2 text-[12px]">
                           {i < engineIdx ? (
-                            <span className="text-[var(--status-success)]">✓</span>
+                            <CheckCircle2 className="size-3.5 text-[var(--status-success)]" aria-hidden />
                           ) : i === engineIdx ? (
                             <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--accent-strong)]" />
                           ) : (
@@ -688,9 +689,9 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                         onClick={() => void runAudit()}
                         disabled={!siteReady}
                         title={!siteReady ? "1단계에서 부지(주소)를 먼저 입력하세요." : undefined}
-                        className="rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
                       >
-                        🏗️ AI 설계분석 실행
+                        <Construction className="size-4" aria-hidden />AI 설계분석 실행
                       </button>
                       {!siteReady && (
                         <span className="text-xs text-[var(--text-hint)]">

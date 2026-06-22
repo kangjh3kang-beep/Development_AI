@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { Files, Settings } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 
 type RegItem = {
@@ -55,7 +56,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-black text-[var(--text-primary)]">📑 등기부 일괄 조회/다운로드 ({list.length}필지)</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Files className="size-4" aria-hidden /> 등기부 일괄 조회/다운로드 ({list.length}필지)</p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">필지별 소유자·근저당·지분 + 등기부 PDF (상용 등기부 API 연동)</p>
         </div>
         <button onClick={run} disabled={loading}
@@ -66,7 +67,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
 
       {res && !res.configured && (
         <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-400">
-          ⚙ {res.message || "등기부 발급 API 미설정"} <br />
+          <span className="inline-flex items-center gap-1"><Settings className="size-3.5" aria-hidden /> {res.message || "등기부 발급 API 미설정"}</span> <br />
           <span className="text-[var(--text-tertiary)]">대법원 IROS는 공개 API가 없어 상용 등기부 API(CODEF 등) 키 설정이 필요합니다(발급 건당 과금). 키 설정 시 자동 활성화됩니다.</span>
         </div>
       )}

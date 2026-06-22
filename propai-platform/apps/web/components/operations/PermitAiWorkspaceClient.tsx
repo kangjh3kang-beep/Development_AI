@@ -8,7 +8,8 @@
  * 주소는 ProjectAddressInput으로 (1) 프로젝트 선택 (2) 카카오 검색 (3) 변경/추가 입력 모두 지원.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
+import { AlertTriangle, Bot, CheckCircle2, Pin, Puzzle } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -235,7 +236,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "AI 분석 중… (최대 1분)" : "🤖 인허가 분석"}
+              {loading ? "AI 분석 중… (최대 1분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
             </button>
             {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
           </div>
@@ -270,8 +271,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
           {isSpecialParcel && (
             <div className="space-y-2 rounded-[var(--radius-2xl)] border border-[color-mix(in_srgb,var(--status-warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-5 py-4">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-3 py-1 text-xs font-bold text-[var(--status-warning)]">
-                  ⚠ 특이부지{spFactors.length > 0 ? ` · ${spFactors.join(" · ")}` : ""}
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-3 py-1 text-xs font-bold text-[var(--status-warning)]">
+                  <AlertTriangle className="size-3.5" aria-hidden />특이부지{spFactors.length > 0 ? ` · ${spFactors.join(" · ")}` : ""}
                 </span>
                 {spDevelopabilityLabel && (
                   <span className="text-xs font-semibold text-[var(--status-warning)]">
@@ -295,12 +296,12 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             const top = [...result.methods].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
             const s = result.site;
             // 특이부지 게이트가 걸리면 추천 개발방식 앞에 '특이부지' prefix로 잠재치임을 환기(가짜값 아님).
-            const topMethodLabel = top
+            const topMethodLabel: ReactNode = top
               ? isGatedParcel
-                ? `⚠ 특이부지 · ${top.method}`
+                ? (<span className="inline-flex items-center gap-1"><AlertTriangle className="size-4" aria-hidden />특이부지 · {top.method}</span>)
                 : top.method
               : "—";
-            const kpis: [string, string][] = [
+            const kpis: [string, ReactNode][] = [
               ["추천 개발방식", topMethodLabel],
               ["인허가 가능성", top ? `${top.possibility} · ${top.score}점` : "—"],
               ["용도지역", s?.zone_type || "—"],
@@ -386,8 +387,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-black text-[var(--accent-strong)]">
-                    🧩 다필지 통합 개발 · 최적 용적률 산정 ({result.multi_parcel.parcels?.length}개 필지)
+                  <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                    <Puzzle className="size-4" aria-hidden />다필지 통합 개발 · 최적 용적률 산정 ({result.multi_parcel.parcels?.length}개 필지)
                   </p>
                   <span
                     className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
@@ -463,7 +464,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {(result.multi_parcel.integration_issues?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-[var(--status-error)]">⚠ 통합 인허가 문제점</p>
+                      <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--status-error)]"><AlertTriangle className="size-3.5" aria-hidden />통합 인허가 문제점</p>
                       <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                         {result.multi_parcel.integration_issues!.map((it, i) => (
                           <li key={i}>· {it}</li>
@@ -473,7 +474,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                   )}
                   {(result.multi_parcel.integration_solutions?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-[var(--status-success)]">✓ 해결방안</p>
+                      <p className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--status-success)]"><CheckCircle2 className="size-3.5" aria-hidden />해결방안</p>
                       <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                         {result.multi_parcel.integration_solutions!.map((s, i) => (
                           <li key={i}>· {s}</li>
@@ -532,7 +533,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       )}
                       {m.issues?.length > 0 && (
                         <div>
-                          <p className="font-bold text-[var(--status-error)]">⚠ 문제점</p>
+                          <p className="inline-flex items-center gap-1.5 font-bold text-[var(--status-error)]"><AlertTriangle className="size-3.5" aria-hidden />문제점</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                             {(m.issues ?? []).map((it, i) => (
                               <li key={i}>· {it}</li>
@@ -542,7 +543,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       )}
                       {m.solutions?.length > 0 && (
                         <div>
-                          <p className="font-bold text-[var(--status-success)]">✓ 해결방안</p>
+                          <p className="inline-flex items-center gap-1.5 font-bold text-[var(--status-success)]"><CheckCircle2 className="size-3.5" aria-hidden />해결방안</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                             {(m.solutions ?? []).map((s, i) => (
                               <li key={i}>· {s}</li>
@@ -560,11 +561,11 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
           {result.recommendation && (
             <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
-                <p className="text-sm font-black text-[var(--accent-strong)]">📌 종합 권고</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Pin className="size-4" aria-hidden />종합 권고</p>
                 {/* 특이부지 게이트 시 권고 위에 잠재치 환기 — 백엔드 developability 라벨 실값 사용. */}
                 {isGatedParcel && (
-                  <p className="mt-2 text-xs font-semibold text-[var(--status-warning)]">
-                    ⚠ 특이부지(개발가능성 {spDevelopabilityLabel ?? "확인 필요"}) — 아래 권고는 선행절차 통과를 전제로 한 잠재안입니다.
+                  <p className="inline-flex items-start gap-1.5 mt-2 text-xs font-semibold text-[var(--status-warning)]">
+                    <AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden />특이부지(개발가능성 {spDevelopabilityLabel ?? "확인 필요"}) — 아래 권고는 선행절차 통과를 전제로 한 잠재안입니다.
                   </p>
                 )}
                 <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{result.recommendation}</p>

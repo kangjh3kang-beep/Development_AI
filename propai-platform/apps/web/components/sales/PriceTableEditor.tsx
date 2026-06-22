@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 
@@ -52,7 +53,7 @@ export default function PriceTableEditor({ siteCode, roundId }: { siteCode: stri
           Σ구성≠분양가·VAT 과세표준 과소합산 신호. PriceGroupingPanel 과 동일 디자인. */}
       {warnings.length > 0 && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
-          <p className="text-[11px] font-bold text-amber-600">⚠ 원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
+          <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
           <ul className="mt-1 space-y-0.5">
             {warnings.map((w, i) => (
               <li key={i} className="text-[10px] leading-snug text-amber-600/90">

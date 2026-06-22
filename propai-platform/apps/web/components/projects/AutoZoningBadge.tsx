@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -349,8 +350,8 @@ export function AutoZoningBadge({ address }: { address: string }) {
       {isSpecial && (
         <div className="space-y-1.5 rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]">
-              ⚠ 특이부지
+            <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]">
+              <AlertTriangle className="size-3" aria-hidden />특이부지
               {spFactors.length > 0 ? ` · ${spFactors.join(" · ")}` : ""}
             </span>
             {developabilityLabel && (

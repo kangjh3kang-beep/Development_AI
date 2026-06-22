@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Brain, Paperclip } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 /* ──────────────────────────────────────────────────────────────
@@ -316,7 +317,7 @@ export function G2BBidDetailModal({
                           rel="noopener noreferrer"
                           className="cc-interactive flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] hover:border-[var(--accent-strong)]/40"
                         >
-                          <span className="text-base shrink-0" aria-hidden>📎</span>
+                          <Paperclip className="size-4 shrink-0" aria-hidden />
                           <span className="min-w-0 flex-1 truncate font-semibold">{f.name}</span>
                           <span className="cc-meta shrink-0 text-[var(--accent-strong)]">↓</span>
                         </a>
@@ -361,9 +362,9 @@ export function G2BBidDetailModal({
             )}
             <button
               onClick={() => onAnalyze(seed.id, title)}
-              className="flex-[1.4] rounded-xl bg-[var(--accent-strong)] py-3 text-center text-sm font-black text-white shadow-[var(--shadow-md)] transition hover:opacity-90"
+              className="flex-[1.4] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-strong)] py-3 text-center text-sm font-black text-white shadow-[var(--shadow-md)] transition hover:opacity-90"
             >
-              🧠 AI 정밀 입찰 분석
+              <Brain className="size-4" aria-hidden />AI 정밀 입찰 분석
             </button>
           </footer>
         </motion.div>
