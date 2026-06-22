@@ -409,12 +409,14 @@ export function GlobalAddressSearch({
     const bcodeFor = (e: AddressEntry): string => {
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
-      // ★엑셀 bcode 오염 가드(근본수정): 양식 예시 bcode(의정부 4115010100·강남 1168010100)가
-      //   1~2행에 남아 주소(예: 동작구)와 시군구가 어긋나면 잘못된 지역을 조회해 용도지역/건폐/
-      //   용적을 못 불러온다('보완필요' 고착). PNU가 동반된 bcode(실제 조회로 확정)이거나, 시군구
-      //   없는 짧은주소(=bcode 힌트 필요)일 때만 자기 bcode를 신뢰한다. 그 외(풀주소+PNU없는
-      //   엑셀 bcode)는 오염으로 보고 버려, 백엔드가 주소로 재해소하게 한다.
-      if (e.bcode && (e.pnu || !sg)) return e.bcode;
+      // ★엑셀 bcode 오염 가드(근본수정 v2): 양식 예시 bcode(의정부 4115010100·강남 1168010100)가
+      //   예시행에 남아 주소(동작구 상도동)와 지역이 어긋나면 잘못된 지역을 조회해 용도지역/건폐/
+      //   용적을 못 불러온다('보완필요' 고착·재보강 반복 무효). ★이전 버전이 '시군구 미파싱 단축주소
+      //   (!sg)에선 bcode가 힌트로 필요'하다며 오염 bcode를 신뢰한 것이 바로 그 버그 — 단축주소
+      //   "상도동 210-453"+오염bcode가 이 분기를 타 의정부에서 조회→영구 실패. 따라서 PNU가 동반된
+      //   bcode(실제 조회로 확정)일 때만 신뢰하고, PNU 없는 입력 bcode는 전부 버려 백엔드가 주소로
+      //   재해소(VWorld 지오코딩→올바른 PNU·bcode)하게 한다.
+      if (e.bcode && e.pnu) return e.bcode;
       // 시군구가 없는 짧은주소는 형제 bcode를 물려받지 않는다 → 백엔드 C2 자동해소(ok)에 위임.
       if (!sg) return "";
       const d = dongOf(src);
@@ -589,6 +591,23 @@ export function GlobalAddressSearch({
     const repArea = repDevelopable?.area ?? null; // 대표 = 개발가능 첫 필지 면적
     const zones = new Set(valid.map((p) => p.zone).filter((z): z is string => !!z));
 
+    // ★#185 무한렌더 가드: 자기치유 재시도(2회)·다청크 완료가 '동일 통합값'을 반복 기록하면
+    //   siteAnalysis 전체 구독자(GlobalAddressSearch·LandIntelligencePanel 등)가 매번 리렌더돼
+    //   업데이트 깊이 초과(Minified React #185) 크래시로 이어진다. 직전 SSOT와 통합 스칼라값이
+    //   모두 같고 필지 수도 같으면 재기록을 생략해 리렌더 연쇄를 끊는다(값 변화 시에는 정상 기록).
+    {
+      const curSA = useProjectContextStore.getState().siteAnalysis;
+      if (
+        curSA &&
+        curSA.landAreaSqmTotal === totalSqm &&
+        curSA.parcelCount === valid.length &&
+        curSA.repLandAreaSqm === repArea &&
+        (curSA.zoneMixed ?? false) === (zones.size >= 2) &&
+        (curSA.parcels?.length ?? 0) === valid.length
+      ) {
+        return;
+      }
+    }
     // ★대표 분석(triggerComprehensiveAnalysis)이 landAreaSqm=대표를 쓴 뒤 여기서 통합으로 갱신.
     //   경합 시 통합이 최종(이 호출이 enrichParcels 완료 시점 = 대표 분석 이후).
     updateSiteAnalysis({

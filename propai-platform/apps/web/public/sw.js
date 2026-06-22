@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v287-ultrawork-realdata";
+const CACHE_NAME = "propai-v288-enrich-185-fix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
