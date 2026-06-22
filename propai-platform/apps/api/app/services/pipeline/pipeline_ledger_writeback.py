@@ -11,7 +11,9 @@ record_feasibility_result)는 v2_feasibility·cost 등 별도 엔드포인트에
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+import contextlib
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 def _num(v: Any) -> float | None:
@@ -73,11 +75,12 @@ def feasibility_stage_to_adapter(
     feas_data: dict[str, Any], design_data: dict[str, Any]
 ) -> dict[str, Any]:
     """feasibility stage data → record_feasibility_result(result) 인자(별칭 정규화·무날조)."""
-    npv = (
-        _num(feas_data.get("npv_won"))
-        or _num((feas_data.get("dcf") or {}).get("npv_won") if isinstance(feas_data.get("dcf"), dict) else None)
-        or _num((feas_data.get("cash_flow") or {}).get("npv_won") if isinstance(feas_data.get("cash_flow"), dict) else None)
-    )
+
+    def _nested_npv(key: str) -> float | None:
+        sub = feas_data.get(key)
+        return _num(sub.get("npv_won")) if isinstance(sub, dict) else None
+
+    npv = _num(feas_data.get("npv_won")) or _nested_npv("dcf") or _nested_npv("cash_flow")
     return {
         "development_type": feas_data.get("development_type")
         or design_data.get("building_type")
@@ -138,22 +141,20 @@ async def record_pipeline_results(
     if cost_data:
         summary, header = cost_stage_to_adapter(cost_data, design_data)
         if summary.get("total"):  # 총원가 없으면 적재 무의미 — 스킵
-            try:
+            # 원장 적재 실패는 파이프라인 무중단(정직 생략 — 실패 시 out에 키 미생성).
+            with contextlib.suppress(Exception):
                 out["cost"] = await cost_recorder(
                     summary=summary, header=header,
                     tenant_id=tenant_id, project_id=project_id, created_by=created_by)
-            except Exception:  # noqa: BLE001 — 원장 적재 실패는 파이프라인 무중단(정직 생략)
-                pass
 
     feas_data = _stage_data(stages, "feasibility")
     if feas_data:
         result = feasibility_stage_to_adapter(feas_data, design_data)
         if result.get("total_revenue_won") is not None or result.get("profit_rate_pct") is not None:
-            try:
+            # best-effort 무중단(실패 시 out["feasibility"] 미생성 — 정직).
+            with contextlib.suppress(Exception):
                 out["feasibility"] = await feasibility_recorder(
                     result=result, tenant_id=tenant_id, project_id=project_id,
                     pnu=pnu, address=addr, created_by=created_by)
-            except Exception:  # noqa: BLE001 — best-effort 무중단
-                pass
 
     return out

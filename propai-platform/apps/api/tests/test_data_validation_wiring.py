@@ -21,7 +21,8 @@ def test_drops_schema_invalid_rows():
 def test_flags_price_anomaly_with_recent():
     # 40억(400000만원)/84m² ≈ 47.6M원/m² vs 최근 ~5.95M원/m² → IQR 이상치
     rows = [{"deal_date": "2026년 6월 1일", "price_10k_won": 400000, "area_m2": 84.0, "floor": 10}]
-    recent = [5_500_000, 5_700_000, 5_800_000, 5_900_000, 6_000_000, 6_100_000, 6_200_000, 6_300_000, 6_400_000, 6_500_000]
+    recent = [5_500_000, 5_700_000, 5_800_000, 5_900_000, 6_000_000,
+              6_100_000, 6_200_000, 6_300_000, 6_400_000, 6_500_000]
     accepted, report = validate_transactions(rows, region="서울", recent_prices=recent)
     assert len(accepted) == 1
     assert accepted[0]["is_anomaly"] is True
@@ -30,7 +31,8 @@ def test_flags_price_anomaly_with_recent():
 
 def test_no_anomaly_when_in_range():
     rows = [{"deal_date": "2026년 6월 1일", "price_10k_won": 50000, "area_m2": 84.0, "floor": 10}]
-    recent = [5_500_000, 5_700_000, 5_800_000, 5_900_000, 6_000_000, 6_100_000, 6_200_000, 6_300_000, 6_400_000, 6_500_000]
+    recent = [5_500_000, 5_700_000, 5_800_000, 5_900_000, 6_000_000,
+              6_100_000, 6_200_000, 6_300_000, 6_400_000, 6_500_000]
     accepted, report = validate_transactions(rows, region="서울", recent_prices=recent)
     assert accepted[0]["is_anomaly"] is False
     assert report["anomalies"] == 0

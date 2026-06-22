@@ -2,10 +2,10 @@
 공공데이터 무결성 검증 레이어.
 모든 외부 데이터는 이 검증기를 통과한 후에만 시스템에 입력된다.
 """
-from pydantic import BaseModel, field_validator, model_validator, ValidationError
-from typing import Optional, List
-from datetime import date, datetime
 import logging
+from datetime import datetime
+
+from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ class TransactionRecord(BaseModel):
     price_10k_won: int  # 만원 단위
     area_sqm: float
     floor: int
-    building_year: Optional[int] = None
-    road_name: Optional[str] = None
+    building_year: int | None = None
+    road_name: str | None = None
 
     @field_validator("price_10k_won")
     @classmethod
@@ -75,8 +75,8 @@ class TaxRateRecord(BaseModel):
     tax_type: str  # acquisition, transfer, comprehensive
     rate: float  # 0.0 ~ 1.0
     effective_date: str  # YYYY-MM-DD
-    region_code: Optional[str] = None
-    conditions: Optional[dict] = None
+    region_code: str | None = None
+    conditions: dict | None = None
 
     @field_validator("rate")
     @classmethod
@@ -93,7 +93,7 @@ class ZoningRecord(BaseModel):
     zone_type: str
     max_bcr: float  # 건폐율 상한 (%)
     max_far: float  # 용적률 상한 (%)
-    max_height_m: Optional[float] = None
+    max_height_m: float | None = None
 
     @field_validator("max_bcr")
     @classmethod
@@ -172,9 +172,9 @@ class FreshnessChecker:
 
 # --- 수집 파싱 배선(감사 HIGH #2) ---
 def validate_transactions(
-    rows: List[dict],
+    rows: list[dict],
     region: str = "",
-    recent_prices: Optional[list[int]] = None,
+    recent_prices: list[int] | None = None,
 ) -> tuple[list[dict], dict]:
     """외부 실거래가 원본행을 TransactionRecord 스키마로 검증·필터하고, recent_prices가 있으면
     AnomalyDetector(IQR)로 이상치를 플래그한다.
