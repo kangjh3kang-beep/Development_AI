@@ -11,10 +11,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.integrations.molit_client import (
-    _BASE_PATH,
     _RENT_ENDPOINTS,
+    _RTMS_HOST_PATH,
     _TRADE_ENDPOINTS,
     MolitClient,
+    _rtms_path,
 )
 
 
@@ -45,11 +46,14 @@ class TestRentEndpoints:
 
 
 class TestBasePath:
-    """_BASE_PATH 상수 테스트."""
+    """RTMS 경로 빌더 테스트(apis.data.go.kr/1613000 마이그레이션)."""
 
     def test_경로_형식(self):
-        assert _BASE_PATH.startswith("/")
-        assert "RTMSOBJSvc" in _BASE_PATH
+        # 폐기 host(_BASE_PATH/RTMSOBJSvc) → 현 _RTMS_HOST_PATH(/1613000)+_rtms_path 경로빌더로 갱신
+        assert _RTMS_HOST_PATH.startswith("/") and _RTMS_HOST_PATH == "/1613000"
+        path = _rtms_path("getRTMSDataSvcAptTradeDev")
+        assert path.startswith(_RTMS_HOST_PATH + "/")
+        assert path.endswith("/getRTMSDataSvcAptTradeDev")
 
 
 class TestExtractItems:
@@ -165,7 +169,7 @@ class TestClientConfig:
         assert MolitClient.service_name == "molit"
 
     def test_base_url(self):
-        assert MolitClient.base_url == "http://openapi.molit.go.kr"
+        assert MolitClient.base_url == "https://apis.data.go.kr"
 
 
 if __name__ == "__main__":
