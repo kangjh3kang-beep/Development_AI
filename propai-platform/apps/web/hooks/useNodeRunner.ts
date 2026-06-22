@@ -282,19 +282,40 @@ function feedbackToStore(
           { source: "auto" },
         );
         break;
-      case "updateComplianceData":
+      case "updateComplianceData": {
+        // (Fix #1·감사 HIGH) 백엔드 /regulation/analyze 실응답키 정합. 기존엔 백엔드가 emit하지 않는
+        // camelCase 불리언만 읽어 complianceData가 항상 all-null이었다(법규단계 영구 미완료·근거 유실).
+        // limits/evidence/legal_refs/zone_type를 SSOT에 보존(하류 재호출 불요). 적합판정 불리언은
+        // 백엔드가 산출 시(camel 또는 snake) 읽되, 미산출(설계 전 단계)이면 null(설계 후 계산).
+        const r = resp as Record<string, unknown>;
+        const asBool = (camel: string, snake: string): boolean | null => {
+          const v = r[camel] ?? r[snake];
+          return typeof v === "boolean" ? v : null;
+        };
+        const asArr = (...keys: string[]): unknown[] | null => {
+          for (const k of keys) if (Array.isArray(r[k])) return r[k] as unknown[];
+          return null;
+        };
         store.updateComplianceData({
-          bcrCompliant:
-            typeof resp.bcrCompliant === "boolean" ? resp.bcrCompliant : null,
-          farCompliant:
-            typeof resp.farCompliant === "boolean" ? resp.farCompliant : null,
-          heightCompliant:
-            typeof resp.heightCompliant === "boolean" ? resp.heightCompliant : null,
-          violations: Array.isArray(resp.violations)
-            ? (resp.violations as string[])
-            : [],
+          bcrCompliant: asBool("bcrCompliant", "bcr_compliant"),
+          farCompliant: asBool("farCompliant", "far_compliant"),
+          heightCompliant: asBool("heightCompliant", "height_compliant"),
+          violations: Array.isArray(r.violations) ? (r.violations as string[]) : [],
+          limits:
+            r.limits && typeof r.limits === "object"
+              ? (r.limits as Record<string, unknown>)
+              : null,
+          evidence: asArr("evidence"),
+          legalRefs: asArr("legal_refs", "legalRefs"),
+          zoneType:
+            typeof r.zone_type === "string"
+              ? r.zone_type
+              : typeof r.zoneType === "string"
+                ? r.zoneType
+                : null,
         } as ComplianceData);
         break;
+      }
       case "setRecommendedDevType": {
         // (Phase C-1) 추천 노드 → 최상위 추천 개발방식 코드(M01~M15)만 부분패치.
         // updatedAt.feasibility를 stamp하지 않는 전용 액션이라 수지 staleness를 오염시키지 않는다.
