@@ -9,6 +9,8 @@ import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
+import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 // ── Icons ──
 const Icons = {
@@ -61,7 +63,15 @@ type ZoningAnalysisResponse = {
     developability?: string | null;
     resolvable?: string | null;
     severity_label?: string | null;
-    factors?: Array<{ category?: string | null } | string> | null;
+    factors?: Array<
+      | {
+          category?: string | null;
+          legal_basis?: string[] | null;
+          // verified law.go.kr 딥링크(레지스트리 출력) — 클릭 가능 법령 링크.
+          legal_refs?: BackendLegalRef[] | null;
+        }
+      | string
+    > | null;
     honest_disclosure?: string | null;
   } | null;
 };
@@ -836,16 +846,31 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       const factors = (api.factors ?? [])
         .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
         .filter((t) => t.length > 0);
+      // verified 법령링크(요인별 legal_refs 병합·중복 제거) — 죽은 링크 금지(verified만).
+      const seen = new Set<string>();
+      const legalRefs: BackendLegalRef[] = [];
+      for (const f of api.factors ?? []) {
+        if (typeof f === "string" || !f) continue;
+        for (const r of f.legal_refs ?? []) {
+          if (!r || (r.url_status || "").trim() !== "verified" || !(r.url || "").trim()) continue;
+          const k = r.key || r.url || "";
+          if (k && !seen.has(k)) {
+            seen.add(k);
+            legalRefs.push(r);
+          }
+        }
+      }
       return {
         developability: api.developability ?? api.severity_label ?? null,
         factors,
         honest: api.honest_disclosure ?? null,
+        legalRefs,
       };
     }
-    // store 폴백(mapZoningRich가 기록): isSpecial true일 때만.
+    // store 폴백(mapZoningRich가 기록): isSpecial true일 때만. (store엔 legal_refs 미보존 → 빈 링크)
     const st = siteAnalysis?.specialParcel;
     if (st?.isSpecial) {
-      return { developability: st.developability, factors: st.factors ?? [], honest: st.honest };
+      return { developability: st.developability, factors: st.factors ?? [], honest: st.honest, legalRefs: [] as BackendLegalRef[] };
     }
     return null;
   }, [zoningData?.special_parcel, siteAnalysis?.specialParcel]);
@@ -1216,6 +1241,21 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     <p className="text-[10px] leading-relaxed text-[var(--text-secondary)] font-medium">
                       {specialParcel.honest}
                     </p>
+                  )}
+                  {/* 근거법령 — verified면 클릭 가능한 law.go.kr 딥링크 칩(미verified는 미표시·죽은 링크 금지) */}
+                  {specialParcel.legalRefs.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[9px] font-bold text-[var(--text-hint)]">근거법령:</span>
+                      {specialParcel.legalRefs.map((r, i) => (
+                        <LegalRefChip
+                          key={`${r.key || r.law_name || "ref"}-${i}`}
+                          lawName={r.law_name || ""}
+                          article={r.article}
+                          title={r.title}
+                          url={r.url}
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
               )}

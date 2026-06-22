@@ -39,11 +39,17 @@ SCENARIO_MARKER = "potential_upzoning_scenario"
 
 # ── 종상향 경로 카탈로그 ──
 # path: 경로명, target_progression: 용도지역 종상향 단계(현재→목표 후보),
-# legal_basis: 근거법령, default_feasibility/conditions는 시나리오 생성 시 데이터로 보정.
+# legal_basis: 근거법령(텍스트 표기), default_feasibility/conditions는 시나리오 생성 시 데이터로 보정.
+#
+# legal_ref_keys: legal_reference_registry 키 목록(verified URL 부착용). 시나리오 생성 시
+#   get_legal_refs(keys)로 직렬화해 per-scenario `legal_refs`(클릭 가능한 law.go.kr 딥링크)를
+#   부착한다. 지자체 운영기준(역세권 활성화·장기전세 등)은 law.go.kr 딥링크가 없으므로
+#   레지스트리 키를 두지 않고 legal_basis 텍스트로만 정직 표기한다(죽은 링크·날조 링크 금지).
 PATHS = {
     "도시개발사업": {
         "label": "도시개발사업(도시개발법)",
         "legal_basis": "도시개발법 제2·3·4조(도시개발구역 지정) · 국토계획법(용도지역 변경)",
+        "legal_ref_keys": ["urban_dev_replot", "far_law"],
         "timeline_est": "5~10년(구역지정·개발계획·실시계획·환지/수용)",
         "min_area_sqm": 10000,  # 도시지역 1만㎡ 이상(비도시 3만㎡)
         "note": "환지/수용 방식 대규모 개발. 도시기본계획 부합 시 용도지역 상향 결정 가능.",
@@ -51,6 +57,7 @@ PATHS = {
     "지구단위계획수립": {
         "label": "지구단위계획 수립",
         "legal_basis": "국토계획법 제52조(지구단위계획) · 동법 시행령 제46조(완화)",
+        "legal_ref_keys": ["district_unit_plan", "far_law"],
         "timeline_est": "2~5년(입안·결정·심의)",
         "min_area_sqm": 5000,
         "note": "획지·용도 유연화 + 상한용적률. 종세분 상향 또는 인센티브 용적 확보.",
@@ -58,6 +65,7 @@ PATHS = {
     "정비사업": {
         "label": "재개발·재건축(정비사업)",
         "legal_basis": "도시 및 주거환경정비법 · 국토계획법(정비구역 용도지역 변경)",
+        "legal_ref_keys": ["redev_impl", "far_law"],
         "timeline_est": "8~15년(정비구역 지정·조합·관리처분)",
         "min_area_sqm": 10000,
         "note": "노후·불량 2/3 요건 충족 시 정비구역 지정과 함께 종상향 가능.",
@@ -65,6 +73,8 @@ PATHS = {
     "역세권활성화": {
         "label": "역세권 활성화사업(용도상향)",
         "legal_basis": "국토계획법(용도지역 변경) · 서울시 등 역세권 활성화사업 운영기준",
+        # 국토계획법(용도지역 변경)만 verified 딥링크. 서울시 운영기준은 자치 운영지침(law.go.kr 딥링크 없음)→텍스트 유지.
+        "legal_ref_keys": ["far_law"],
         "timeline_est": "3~6년(사업계획·심의)",
         "requires_station": True,
         "note": "역 승강장 인근 입지에서 일반→준주거/상업 상향, 증가용적 공공기여.",
@@ -72,6 +82,8 @@ PATHS = {
     "역세권시프트": {
         "label": "역세권 장기전세주택(시프트)",
         "legal_basis": "국토계획법 · 주택법 · 서울시 역세권 장기전세주택 운영기준",
+        # 국토계획법·주택법은 verified. 서울시 장기전세 운영기준은 자치 운영지침→텍스트 유지(날조 링크 금지).
+        "legal_ref_keys": ["far_law", "housing_approval"],
         "timeline_est": "3~6년",
         "requires_station": True,
         "requires_residential": True,
@@ -80,6 +92,7 @@ PATHS = {
     "공공주택지구": {
         "label": "공공주택지구 지정",
         "legal_basis": "공공주택 특별법 제6조(지구지정) · 국토계획법(용도지역 변경)",
+        "legal_ref_keys": ["public_housing", "far_law"],
         "timeline_est": "5~10년",
         "min_area_sqm": 10000,
         "public_led": True,
@@ -88,6 +101,7 @@ PATHS = {
     "가로주택·모아주택": {
         "label": "가로주택정비·모아주택(소규모정비)",
         "legal_basis": "빈집 및 소규모주택 정비에 관한 특례법 · 국토계획법",
+        "legal_ref_keys": ["small_housing_road_project", "far_law"],
         "timeline_est": "3~6년",
         "max_area_sqm": 100000,
         "requires_residential": True,
@@ -128,6 +142,25 @@ ZONE_PATHS: dict[str, list[str]] = {
     "준주거지역": ["역세권활성화", "지구단위계획수립"],
     "준공업지역": ["정비사업", "지구단위계획수립"],
 }
+
+
+def _scenario_legal_refs(path: dict[str, Any]) -> list[dict]:
+    """경로의 legal_ref_keys를 레지스트리(get_legal_refs)로 직렬화해 verified 법령 링크를 반환.
+
+    - get_legal_refs가 {key,law_name,article,title,url,url_status} 레코드를 만든다.
+      url_status='verified'(law.go.kr 딥링크)만 클릭 링크, 'pending'/빈값은 프론트가 텍스트 폴백.
+    - 레지스트리에 없거나 키 미정 경로는 빈 리스트(legal_basis 텍스트로만 표기 — 날조 링크 금지).
+    - URL은 전적으로 레지스트리 출력만 사용한다(여기서 URL 조립 절대 금지).
+    """
+    keys = path.get("legal_ref_keys") or []
+    if not keys:
+        return []
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys)
+    except Exception:  # noqa: BLE001 — 레지스트리 실패는 텍스트 legal_basis로 graceful degrade.
+        return []
 
 
 def _target_far_pct(
@@ -237,6 +270,9 @@ class UpzoningPotentialAnalyzer:
                 "feasibility": feasibility,
                 "feasibility_reason": reason,
                 "legal_basis": path["legal_basis"],
+                # verified law.go.kr 딥링크(레지스트리 단일출처). 프론트 LegalRefChip가
+                # url_status='verified'는 클릭 링크, 'pending'/빈값은 텍스트 폴백(죽은 링크 금지).
+                "legal_refs": _scenario_legal_refs(path),
                 "timeline_est": path.get("timeline_est"),
                 "caveats": self._caveats(pkey, blockers),
                 "is_estimate": True,  # ★예상치(실현 보장 아님)

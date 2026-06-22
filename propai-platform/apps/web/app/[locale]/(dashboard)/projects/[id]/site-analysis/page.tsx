@@ -24,6 +24,8 @@ import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjec
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
 import { mapZoningRich, normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
+import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
 const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
@@ -130,6 +132,8 @@ type UpzoningScenario = {
   feasibility?: string;
   feasibility_reason?: string;
   legal_basis?: string;
+  // verified law.go.kr 딥링크(레지스트리 출력). url_status='verified'만 클릭 링크, 그 외 텍스트 폴백.
+  legal_refs?: BackendLegalRef[] | null;
   timeline_est?: string;
   caveats?: string[];
   is_estimate?: boolean;
@@ -167,6 +171,48 @@ function formatPriceKr(amount10k: number | null | undefined): string {
     return remain > 0 ? `${eok}억 ${remain.toLocaleString()}만` : `${eok}억`;
   }
   return `${amount10k.toLocaleString()}만`;
+}
+
+/**
+ * 종상향 시나리오 근거법령 렌더 — verified 법령은 LegalRefChip(law.go.kr 딥링크 클릭),
+ * 미verified(지자체 운영기준 등)는 legal_basis 텍스트로 정직 표기(죽은 링크 금지).
+ *
+ * 정직성: legal_refs 중 url_status==='verified' 항목만 칩으로(클릭). verified가 하나도 없으면
+ * 기존처럼 "근거법령: {legal_basis}" 텍스트만(절대 가짜 링크 생성 안 함).
+ */
+function UpzoningLegalRefs({
+  legalRefs,
+  legalBasis,
+}: {
+  legalRefs?: BackendLegalRef[] | null;
+  legalBasis?: string | null;
+}) {
+  const verified = (legalRefs || []).filter(
+    (r) => r && (r.url_status || "").trim() === "verified" && (r.url || "").trim(),
+  );
+  if (verified.length === 0) {
+    // verified 링크 없음 → 텍스트 폴백(기존 동작 보존·죽은 링크 금지).
+    if (!legalBasis) return null;
+    return (
+      <div className="mt-2 text-[9px] text-[var(--text-hint)]">
+        근거법령: {legalBasis}
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-[9px] font-bold text-[var(--text-hint)]">근거법령:</span>
+      {verified.map((r, i) => (
+        <LegalRefChip
+          key={`${r.key || r.law_name || "ref"}-${i}`}
+          lawName={r.law_name || ""}
+          article={r.article}
+          title={r.title}
+          url={r.url}
+        />
+      ))}
+    </div>
+  );
 }
 
 // ── L3 Enhanced Cards Component ──
@@ -388,8 +434,9 @@ function L3EnhancedCards({
                       ))}
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[9px] text-[var(--text-hint)]">
-                    {sc.legal_basis && <span>근거법령: {sc.legal_basis}</span>}
+                  {/* 근거법령 — verified면 클릭 가능한 law.go.kr 딥링크 칩, 미verified는 텍스트(죽은 링크 금지) */}
+                  <UpzoningLegalRefs legalRefs={sc.legal_refs} legalBasis={sc.legal_basis} />
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[9px] text-[var(--text-hint)]">
                     {sc.timeline_est && <span>예상 기간: {sc.timeline_est}</span>}
                   </div>
                   {sc.caveats && sc.caveats?.length > 0 && (

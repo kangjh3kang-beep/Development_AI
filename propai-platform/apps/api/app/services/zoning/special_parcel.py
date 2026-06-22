@@ -22,6 +22,24 @@ from typing import Any
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
 
+def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
+    """특이요인의 legal_ref_keys를 레지스트리(get_legal_refs)로 직렬화해 verified 법령 링크 반환.
+
+    - url_status='verified'(law.go.kr 딥링크)만 프론트가 클릭 링크로, 그 외/빈값은 텍스트 폴백.
+    - 키가 없거나 레지스트리 실패 시 빈 리스트(legal_basis 텍스트로만 정직 표기 — 날조 링크 금지).
+    - URL은 전적으로 레지스트리 출력만 사용한다(여기서 URL 조립 절대 금지).
+    """
+    keys = legal_ref_keys or []
+    if not keys:
+        return []
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys)
+    except Exception:  # noqa: BLE001 — 레지스트리 실패는 텍스트 legal_basis로 graceful degrade.
+        return []
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # 게이트 정책 SSOT — 특이부지 게이트가 시나리오 산출에 어떻게 반영돼야 하는지의 단일 기준.
 #   (auto_recommend_top3 / integrated_recommender 양쪽이 같은 함수를 써서 정책 분기를 일원화한다.
@@ -92,6 +110,9 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
                 "학교용지 확보 등에 관한 특례법",
                 "사립학교법 제28조(재산의 관리·보호) — 사립학교 기본재산 처분 시 관할청 허가",
             ],
+            # verified 법령링크용 레지스트리 키(학교용지 특례법). 도시계획시설(국토계획법 제30·43조)·
+            #   사립학교법은 verified 딥링크 키가 없어 legal_basis 텍스트로만 정직 표기(날조 링크 금지).
+            "legal_ref_keys": ["school_land_special"],
             "permit_prerequisites": [
                 "해당 부지의 도시계획시설(학교) 결정 여부 열람(토지이용계획확인원·도시계획 결정도)",
                 "도시계획시설 폐지/변경 또는 실효 여부 확인 및 절차 착수",
@@ -122,6 +143,8 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
                 "국유재산법·공유재산 및 물품 관리법(용도폐지·매각/양여)",
                 "건축법 제44조(대지와 도로의 관계)",
             ],
+            # 국공유 용도폐지·처분(verified). 도시계획시설 결정·건축법 제44조는 verified 키 없음 → 텍스트 유지.
+            "legal_ref_keys": ["state_property", "public_property"],
             "permit_prerequisites": [
                 "도시계획시설(도로) 폐지·변경 가능성 확인(지구단위계획/도시관리계획)",
                 "이해관계인·주민 의견청취 및 동의", "대체도로 확보·교통영향 검토",
@@ -133,6 +156,7 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "implications": [f"지목이 {c}(으)로 공공용지/기반시설에 해당해, 사실상 일반 분양개발이 불가합니다.",
                              "용도폐지·교환·불용처분 등 행정절차 없이는 건축이 불가합니다."],
             "legal_basis": ["국토계획법 도시·군계획시설", "공유재산 및 물품 관리법(국공유 시)"],
+            "legal_ref_keys": ["public_property"],
             "permit_prerequisites": ["용도폐지·불용처분 가능성 확인", "대체부지 검토"],
         }
     if "공원" in c or "유원지" in c or "체육" in c:
@@ -156,6 +180,7 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "implications": [f"지목이 {c}(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과).",
                              "도시지역(상업·주거)이라도 농지전용 협의/신고 대상일 수 있습니다."],
             "legal_basis": ["농지법 제34조(농지전용허가)·제38조(농지보전부담금)"],
+            "legal_ref_keys": ["farmland_conversion"],
             "permit_prerequisites": ["농지전용허가/협의", "농지보전부담금 산정"],
         }
     if "임야" in c or "산림" in c:  # ★'산' 접두 매칭 제거 — 지목 "산업용지"(공업)를 임야로 오탐하던 버그.
@@ -164,6 +189,7 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "implications": ["지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
                              "대체산림자원조성비가 부과됩니다."],
             "legal_basis": ["산지관리법 제14조(산지전용허가)", "대체산림자원조성비"],
+            "legal_ref_keys": ["forest_conversion"],
             "permit_prerequisites": ["산지전용허가", "경사도/표고/입목축적 검토"],
         }
     return None
@@ -177,10 +203,12 @@ def _rules_by_districts(special_districts: list, zone_type: str) -> list[dict[st
         (("개발제한구역", "그린벨트", "GB"), {"category": "개발제한구역(GB)", "developability": "BLOCKED",
             "implications": ["개발제한구역으로 원칙적으로 신축·개발이 금지됩니다(예외 행위만 허가)."],
             "legal_basis": ["개발제한구역의 지정 및 관리에 관한 특별조치법"],
+            "legal_ref_keys": ["greenbelt"],
             "permit_prerequisites": ["GB 해제 또는 예외 허가대상 여부 확인"]}),
         (("문화재", "역사문화환경"), {"category": "문화재보호구역/역사문화환경 보존지역", "developability": "CONDITIONAL",
             "implications": ["문화재 인근으로 현상변경 허가 및 매장문화재 지표·발굴조사가 필요할 수 있습니다."],
             "legal_basis": ["문화유산의 보존 및 활용에 관한 법률", "매장유산 보호 및 조사에 관한 법률"],
+            "legal_ref_keys": ["cultural_heritage", "buried_heritage"],
             "permit_prerequisites": ["현상변경 허가", "매장문화재 지표조사"]}),
         (("군사", "군사시설"), {"category": "군사시설보호구역", "developability": "CONDITIONAL",
             "implications": ["군사시설보호구역으로 건축 시 군부대 협의(고도·용도 제한)가 필요합니다."],
@@ -265,6 +293,7 @@ def _rule_by_fire_performance(result: dict) -> dict[str, Any] | None:
             "정밀 대상 여부·요건은 관할 소방서 사전협의로 확정해야 합니다.",
         ],
         "legal_basis": ["소방시설 설치 및 관리에 관한 법률 제8조(성능위주설계)"],
+        "legal_ref_keys": ["fire_performance_design"],
         "permit_prerequisites": ["소방 성능위주설계 대상 여부 확인", "관할 소방서 사전협의·평가단 심의"],
     }
 
@@ -294,6 +323,7 @@ def _rule_by_road_law(result: dict) -> dict[str, Any] | None:
             "도로법 제40조(접도구역의 지정)",
             "도로법 제52조(도로와 다른 시설의 연결)",
         ],
+        "legal_ref_keys": ["road_abutting_zone", "road_connection_permit"],
         "permit_prerequisites": [
             "접도구역 해당 여부·건축제한 확인(도로관리청)",
             "도로 연결(진출입로) 허가 신청·구조기준 충족",
@@ -328,6 +358,7 @@ def _rule_by_sewer(result: dict) -> dict[str, Any] | None:
             "하수도법 제61조(원인자부담금 등)",
             "하수도법 제34조(개인하수처리시설의 설치)",
         ],
+        "legal_ref_keys": ["sewer_cause_charge", "private_sewage_facility"],
         "permit_prerequisites": prereq,
     }
 
@@ -364,6 +395,7 @@ def _rule_by_small_eia(result: dict) -> dict[str, Any] | None:
             "정확한 대상 규모는 지역·사업유형별 기준(환경영향평가법 시행령)으로 확정해야 합니다.",
         ],
         "legal_basis": ["환경영향평가법 제43조(소규모 환경영향평가의 대상)"],
+        "legal_ref_keys": ["small_eia"],
         "permit_prerequisites": [
             "소규모 환경영향평가 대상 규모 해당 여부 확인",
             "환경영향평가 협의(승인기관 경유)",
@@ -419,6 +451,9 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
     # 각 요인에 대안·해결방안·해결가능성(resolvable)을 부착.
     for f in factors:
         f.update(_resolution_for(f.get("category", ""), f.get("developability", "")))
+        # verified 법령링크(레지스트리 단일출처) — 프론트가 LegalRefChip로 클릭 링크/텍스트 폴백.
+        #   legal_ref_keys가 없는 요인은 빈 리스트(legal_basis 텍스트로만 정직 표기).
+        f["legal_refs"] = _factor_legal_refs(f.get("legal_ref_keys"))
 
     # 종합 게이트 = 가장 제약 큰 요인.
     gate = max(factors, key=lambda f: _RANK.get(f.get("developability", "POSSIBLE"), 0))["developability"]
