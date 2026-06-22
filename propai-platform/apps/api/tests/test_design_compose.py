@@ -255,6 +255,13 @@ def test_compute_placement_multi_dong_asymmetric_within_bounds():
         assert b["y"] >= 5.5 - 1e-6 and (b["y"] + b["d"]) <= 77.7 - 5.5 + 1e-6
 
 
+def test_compute_placement_dim_area_mismatch_note():
+    # 입력 치수(폭×깊이=100)와 대지면적(1000) 불일치 → 정직 고지(경고 오귀속 방지)
+    s = _site(width_m=10.0, depth_m=10.0)  # area 1000, w*d=100 → 90% 불일치
+    p = compute_placement(s)
+    assert any("불일치" in n for n in p["notes"])
+
+
 def test_compute_placement_single_dong_for_nonresidential():
     # 비주거(근생) → footprint 커도 단일 동(blocks 1개 = building), gap 0
     s = SiteContext(area_sqm=5000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=300.0,
