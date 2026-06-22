@@ -44,6 +44,10 @@ def _ref_link(key: str, sigungu: str | None = None) -> tuple[str, str | None]:
 
     미존재 키는 (key, None). url 없으면(조례 sigungu 미상 등) None(pending·링크 없음).
     """
+    # 공백전용 sigungu('   ')는 truthy라 치환을 통과해 '    도시계획 조례'(미상태그 없음)로 누출 →
+    # 단일 초크포인트(_ref_link·모든 근거링크 경유)에서 strip-then-empty 정규화(정직·입력위생).
+    if isinstance(sigungu, str) and not sigungu.strip():
+        sigungu = None
     refs = get_legal_refs([key], sigungu=sigungu)
     if not refs:
         return key, None

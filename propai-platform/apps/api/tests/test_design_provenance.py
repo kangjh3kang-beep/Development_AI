@@ -21,6 +21,9 @@ def test_ref_link_sigungu_placeholder_sanitized():
     assert link is None                              # sigungu 미상 → pending(링크 없음)
     label2, _ = _ref_link("ordinance_far", "강남구")
     assert "강남구" in label2 and "{" not in label2  # sigungu 확정 시 정상 치환
+    # 공백전용 sigungu도 미상으로 정규화(치환 우회 차단) — '    도시계획 조례' 누출 방지
+    label3, link3 = _ref_link("ordinance_far", "   ")
+    assert "시군구 미상" in label3 and link3 is None and "{" not in label3
 
 
 def test_legal_envelope_evidence_no_placeholder_leak():
