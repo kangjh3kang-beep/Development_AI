@@ -127,7 +127,8 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         missing = ", ".join(cand.get("missing_disciplines") or [])
         rows = [
             ["종합 판정", v],
-            ["추정 연면적", _fmt(cand.get("estimated_gfa_sqm"), "㎡")],
+            ["추정 연면적(보수)", _fmt(cand.get("estimated_gfa_sqm"), "㎡")],
+            ["법적 상한 연면적", _fmt(cand.get("max_envelope_gfa_sqm"), "㎡")],
             ["추정 층수", _fmt(cand.get("estimated_floors"), "층")],
             ["추정 세대수", _fmt(cand.get("estimated_units"), "세대")],
             ["도면 세트(분야)", disc + (f" · 미확보: {missing}" if missing else "")],

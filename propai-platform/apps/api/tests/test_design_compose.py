@@ -88,23 +88,25 @@ def test_compose_score_breakdown_noncompliant_factor():
     assert top.score_breakdown["compliance_factor"] == 0.6
 
 
-def test_compose_est_gfa_underuse_honest_warning():
-    # ★정직고지: 작은 참조평면(200㎡)+높이한도로 est_gfa가 법적 최대연면적의 70% 미만이면
-    #   '보수추정·상향 여지' 경고(조용한 저평가 방지). _site: footprint600·max_gfa2000·max_floors3
-    s = _site()
+def test_compose_est_gfa_envelope_and_underuse_warning():
+    # ★실효 패리티: 작은 참조평면(200㎡)+높이한도면 est_gfa는 보수(600), 법적 상한 envelope는
+    #   부지 잠재력(footprint600×3층=1800) 명시 산출. 둘이 벌어지면 정직 고지(조용한 저평가 제거).
+    s = _site()  # footprint600·max_gfa2000·max_floors3
     top = compose(s, [{"point_id": "small", "drawing_type": "floor_plan",
                        "total_area_sqm": 200.0, "score": 0.9}])[0]
-    assert top.estimated_gfa_sqm == 600.0  # 200×3층(높이한도), max_gfa 2000의 30%
-    assert any("보수추정" in w and "상향 여지" in w for w in top.warnings)
+    assert top.estimated_gfa_sqm == 600.0          # 값 불변(참조평면 기준 보수)
+    assert top.max_envelope_gfa_sqm == 1800.0      # 법적 상한(부지 잠재력) 명시 산출
+    assert "max_envelope_gfa_sqm" in top.to_dict()
+    assert any("법적 상한" in w and "상향 여지" in w for w in top.warnings)
 
 
 def test_compose_est_gfa_no_underuse_warning_when_full():
-    # 큰 평면(600㎡)으로 max_gfa 근접(90%) 시 보수추정 경고 없음(무회귀)
+    # 큰 평면(600㎡)으로 상한 근접(est_gfa==envelope==1800) 시 저평가 경고 없음(무회귀)
     s = _site()
     top = compose(s, [{"point_id": "big", "drawing_type": "floor_plan",
                        "total_area_sqm": 600.0, "score": 0.9}])[0]
-    assert top.estimated_gfa_sqm == 1800.0
-    assert not any("보수추정" in w for w in top.warnings)
+    assert top.estimated_gfa_sqm == 1800.0 and top.max_envelope_gfa_sqm == 1800.0
+    assert not any("법적 상한" in w and "상향 여지" in w for w in top.warnings)
 
 
 def test_compose_sources_provenance():

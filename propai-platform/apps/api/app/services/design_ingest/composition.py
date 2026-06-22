@@ -82,7 +82,8 @@ class CompositionCandidate:
     primary_drawing_type: str = "unknown"
     primary_content_hash: str | None = None  # 주 도면 content_hash — 피드백(👍👎) 신호 연결키(down율 식별)
     scale_factor: float | None = None
-    estimated_gfa_sqm: float | None = None
+    estimated_gfa_sqm: float | None = None       # 참조평면 기준 보수추정(achievable 하한 쪽)
+    max_envelope_gfa_sqm: float | None = None    # 법적 최대 envelope 연면적(상한) — 부지 잠재력 명시
     estimated_floors: int | None = None
     estimated_units: int | None = None
     estimated_parking: int | None = None    # = parking_required(하위호환 별칭)
@@ -109,6 +110,7 @@ class CompositionCandidate:
             "missing_disciplines": list(self.missing_disciplines),
             "scale_factor": self.scale_factor,
             "estimated_gfa_sqm": self.estimated_gfa_sqm,
+            "max_envelope_gfa_sqm": self.max_envelope_gfa_sqm,
             "estimated_floors": self.estimated_floors,
             "estimated_units": self.estimated_units,
             "estimated_parking": self.estimated_parking,
@@ -477,7 +479,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             warnings.append("평면 면적 미상 — 부지 footprint로 층면적 추정")
 
         # 층수·연면적(법적 한도 클램프).
-        est_floors = est_gfa = est_units = None
+        est_floors = est_gfa = est_units = max_envelope_gfa = None
         if per_floor and max_gfa:
             est_floors = max(1, int(max_gfa // per_floor))
             if site.max_floors_est:
@@ -486,14 +488,20 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             if site.avg_unit_area_sqm > 0:
                 est_units = int(est_gfa * _DEFAULT_EFFICIENCY / site.avg_unit_area_sqm)
             warnings.append("세대수는 연면적×전용률 추정치(실제 평면 세대분할과 다를 수 있음)")
-            # ★정직고지(실효 패리티): est_gfa는 단일 참조평면(plate) 적층 보수추정 — 작은 평면+
-            #   높이한도 제약 시 법적 최대연면적보다 낮게 나온다. 가짜가 아니라 과소이므로,
-            #   '더 큰 평면/다동으로 상향 여지'를 명시해 단일분석 대비 조용한 저평가를 방지.
-            if max_gfa > 0 and est_gfa < max_gfa * _GFA_UNDERUSE_RATIO:
-                _util = round(est_gfa / max_gfa * 100)
+            # ★법적 최대 envelope 연면적(상한) — buildable footprint를 최대 활용(다동/타일링 가정)
+            #   했을 때의 법적 상한. 보수추정(est_gfa·참조평면 기준)과 '나란히' 제시해 부지의 법적
+            #   잠재력을 명시 산출 → 단일분석 대비 조용한 저평가를 근본 제거(실효 패리티·정직).
+            #   상한은 '법적 최대 가능치'이지 확정 산출이 아님(실제는 코어/계단/이격으로 낮아짐).
+            if footprint:
+                _floors_cap = site.max_floors_est or est_floors or 1
+                max_envelope_gfa = round(min(max_gfa, footprint * _floors_cap), 2)
+            # 보수추정이 법적 상한 대비 현저히 낮으면(작은 참조평면·높이한도) 정직 고지.
+            if max_envelope_gfa and est_gfa < max_envelope_gfa * _GFA_UNDERUSE_RATIO:
+                _util = round(est_gfa / max_envelope_gfa * 100)
                 warnings.append(
-                    f"연면적은 단일 참조평면 적층 보수추정 — 법적 최대연면적의 약 {_util}%만 활용"
-                    "(작은 참조평면·높이한도 제약). 더 큰 평면/다동 설계로 상향 여지(확정 아님)."
+                    f"추정 연면적은 참조평면 기준 보수치(법적 상한 약 {max_envelope_gfa:,.0f}㎡의 "
+                    f"약 {_util}%) — 작은 참조평면·높이한도 제약. 더 큰 평면/다동 설계로 상한까지 "
+                    "상향 여지(상한은 법적 최대 가능치·확정 아님)."
                 )
 
         # 주차: 법정 부설주차 산정(주차장법 단순화, 정본 _compute_parking 재사용) +
@@ -553,6 +561,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             missing_disciplines=missing_disc,
             scale_factor=scale,
             estimated_gfa_sqm=est_gfa,
+            max_envelope_gfa_sqm=max_envelope_gfa,
             estimated_floors=est_floors,
             estimated_units=est_units,
             estimated_parking=est_parking,  # 하위호환 별칭(=parking_required)

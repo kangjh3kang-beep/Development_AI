@@ -91,6 +91,7 @@ type Candidate = {
   missing_disciplines?: string[];
   scale_factor: number | null;
   estimated_gfa_sqm: number | null;
+  max_envelope_gfa_sqm?: number | null;   // 법적 상한 연면적(부지 잠재력)
   estimated_floors: number | null;
   estimated_units: number | null;
   estimated_parking: number | null;
@@ -1207,10 +1208,13 @@ export function DesignGenPanel({ projectId }: Props) {
                       <span className="text-[11px] text-[var(--text-tertiary)]">점수 {(c.score * 100).toFixed(0)}</span>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <Metric label="연면적" value={c.estimated_gfa_sqm ? `${c.estimated_gfa_sqm.toLocaleString()}㎡` : null} />
+                      <Metric label="연면적(보수)" value={c.estimated_gfa_sqm ? `${c.estimated_gfa_sqm.toLocaleString()}㎡` : null} />
+                      <Metric label="법적 상한" value={c.max_envelope_gfa_sqm ? `${c.max_envelope_gfa_sqm.toLocaleString()}㎡` : null} />
                       <Metric label="층수" value={c.estimated_floors} />
                       <Metric label="세대수" value={c.estimated_units} />
-                      <Metric label="주차" value={c.parking_required != null ? `${c.parking_required}대` : null} />
+                    </div>
+                    <div className="mt-1 text-[10px] text-[var(--text-hint)]">
+                      연면적은 참조평면 기준 보수치, 법적 상한은 부지 최대 잠재력(확정 아님)
                     </div>
                     {/* 점수 산출 근거(랭킹 투명성) — 왜 이 안이 상위인지 */}
                     {c.score_breakdown?.explanation && (
