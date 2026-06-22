@@ -36,3 +36,21 @@ export function useIsAdmin(): boolean | null {
   }, []);
   return isAdmin;
 }
+
+// ★세션 캐시(role): /auth/me의 role은 tier 기반이라 세션 내 불변인데, SidebarNav가 매 페이지
+//   전환마다 재호출하면 느린 백엔드(~2.1s) 왕복이 화면 전환을 점유한다. is-admin과 동일한 모듈
+//   레벨 promise 캐시로 세션당 1회만 호출하고 결과(role 문자열)를 공유한다. 실패는 캐시하지 않아
+//   다음 마운트에서 재시도한다. (role 외 프로필 전체가 필요한 다른 소비처는 영향 없음 — role만 캐시.)
+let _authMeRolePromise: Promise<string> | null = null;
+export function fetchAuthMeRole(): Promise<string> {
+  if (!_authMeRolePromise) {
+    _authMeRolePromise = apiClient
+      .get<{ role?: string }>("/auth/me", { useMock: false })
+      .then((r) => r?.role || "")
+      .catch(() => {
+        _authMeRolePromise = null;
+        return "";
+      });
+  }
+  return _authMeRolePromise;
+}

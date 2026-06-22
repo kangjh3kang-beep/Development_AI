@@ -24,6 +24,10 @@ export type NavNode = {
   href?: string; // 리프이거나, 그룹이면서도 자체 페이지를 가질 때
   icon?: React.ReactNode;
   children?: NavNode[];
+  // ★뷰포트 프리페치 제어 — 자주 안 가는 무거운 라우트(관리자·표준설계 라이브러리 등)는 false로
+  //   두어 사이드바가 화면에 들어오자마자 무거운 RSC 페이로드를 ×N 프리페치하는 대역 점유를 막는다.
+  //   미설정(undefined)이면 Next 기본(뷰포트 프리페치 유지) — 자주 쓰는 핵심 메뉴는 빠른 전환 보존.
+  prefetch?: false;
 };
 
 export type NavSection = {
@@ -113,7 +117,8 @@ export function buildPrimaryNav(locale: string): NavSection[] {
         { id: "deliberation-review", label: "AI 심의분석 엔진", href: p("/deliberation-review"), icon: <IconRegulation /> },
         { id: "bim-studio", label: "3D 모델·공사물량(BIM·적산)", href: p("/bim-studio"), icon: <IconCost /> },
         { id: "meeting-rooms", label: "프로젝트 회의방", href: p("/meeting-rooms"), icon: <IconProject /> },
-        { id: "design-refs", label: "표준설계 라이브러리", href: p("/settings/design-references"), icon: <IconDesign /> },
+        // ★무거운 admin 라우트(measured RSC ~1.6s) — 뷰포트 프리페치 비활성(×4 대역 점유 제거). 클릭 시 정상 로드.
+        { id: "design-refs", label: "표준설계 라이브러리", href: p("/settings/design-references"), icon: <IconDesign />, prefetch: false },
       ],
     },
     // 자산 운영(임대·임차인/임차인포털/시설유지보수/디지털트윈)은 준공 후 운영 단계로 현재 코어
@@ -134,11 +139,12 @@ export function buildPrimaryNav(locale: string): NavSection[] {
       id: "admin",
       title: "관리",
       adminOnly: true,
+      // ★관리자 설정 라우트는 무겁고 자주 진입하지 않음 — 전부 뷰포트 프리페치 비활성(대역 점유 제거).
       items: [
-        { id: "settings", label: "관리자 설정", href: p("/settings"), icon: <IconSRE /> },
-        { id: "users", label: "사용자 관리", href: p("/settings/users"), icon: <IconSRE /> },
-        { id: "billing", label: "과금 금액 설정", href: p("/settings/billing"), icon: <IconSRE /> },
-        { id: "lists", label: "편집 목록 관리", href: p("/settings/lists"), icon: <IconSRE /> },
+        { id: "settings", label: "관리자 설정", href: p("/settings"), icon: <IconSRE />, prefetch: false },
+        { id: "users", label: "사용자 관리", href: p("/settings/users"), icon: <IconSRE />, prefetch: false },
+        { id: "billing", label: "과금 금액 설정", href: p("/settings/billing"), icon: <IconSRE />, prefetch: false },
+        { id: "lists", label: "편집 목록 관리", href: p("/settings/lists"), icon: <IconSRE />, prefetch: false },
       ],
     },
   ];

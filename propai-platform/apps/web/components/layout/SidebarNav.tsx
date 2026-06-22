@@ -11,8 +11,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiClient } from "@/lib/api-client";
-import { fetchIsAdmin } from "@/lib/use-is-admin";
+import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import { useUiReset } from "@/store/useUiReset";
 import {
   type NavNode,
@@ -55,12 +54,12 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
   useEffect(() => {
     let alive = true;
     Promise.all([
-      // ★is-admin은 세션캐시(fetchIsAdmin) 공유 — use-is-admin 등 다른 소비처와 1회 호출만 공유(반복 왕복 제거).
+      // ★is-admin·role 모두 세션캐시(fetchIsAdmin/fetchAuthMeRole) 공유 — 다른 소비처와 1회 호출만
+      //   공유(반복 왕복 제거). 페이지 전환마다 재호출하던 /auth/me·/auth/is-admin 왕복을 세션당 1회로.
       fetchIsAdmin().catch(() => false),
-      apiClient.get<{ role?: string }>("/auth/me", { useMock: false }).catch(() => ({ role: "" })),
-    ]).then(([admin, u]) => {
+      fetchAuthMeRole().catch(() => ""),
+    ]).then(([admin, role]) => {
       if (!alive) return;
-      const role = (u as { role?: string })?.role || "";
       setIsAdmin(admin);
       setIsAssetOps(admin || ["asset_manager", "operations", "운영관리자", "자산운용"].includes(role));
     }).catch(() => { if (alive) { setIsAdmin(false); setIsAssetOps(false); } });
@@ -111,6 +110,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
       <Link
         key={node.id}
         href={node.href!}
+        prefetch={node.prefetch}
         onClick={() => {
           if (active && HOME_RE.test(node.href!)) goHome();
         }}
@@ -136,7 +136,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
       <div key={node.id}>
         <div className={`flex items-center ${leafClass(false)} ${trailActive ? "text-[var(--text-primary)]" : ""} !py-0`}>
           {node.href ? (
-            <Link href={node.href} className="flex flex-1 items-center gap-2.5 py-2 min-w-0">
+            <Link href={node.href} prefetch={node.prefetch} className="flex flex-1 items-center gap-2.5 py-2 min-w-0">
               {node.icon && (
                 <span className={`shrink-0 ${trailActive ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)]"}`}>{node.icon}</span>
               )}
