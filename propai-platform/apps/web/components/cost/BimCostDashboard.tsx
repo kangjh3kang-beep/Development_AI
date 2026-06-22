@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 type CostResult = {
   total_project_cost: number;
@@ -44,6 +45,10 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
   const [mcResult, setMcResult] = useState<MCResult | null>(null);
   const [rates, setRates] = useState<Rate | null>(null);
   const [loading, setLoading] = useState(false);
+  // ★실 BIM 정밀 물량 소스가 프론트에 없으므로, 설계 연면적(designData.totalGfaSqm)으로 개략 물량을 역산한다.
+  //   연면적이 없으면 가짜 고정값(2000m³ 등) 대신 '설계 필요'로 정직 안내(무목업).
+  const totalGfaSqm = useProjectContextStore((s) => s.designData?.totalGfaSqm ?? null);
+  const [needDesign, setNeedDesign] = useState(false);
 
   const fetchRates = useCallback(async () => {
     try {
@@ -55,17 +60,24 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
   }, []);
 
   const handleCalculate = useCallback(async () => {
+    // 연면적이 없으면 가짜 고정 물량 대신 정직하게 설계 선행을 안내(무목업·가짜값0).
+    if (!totalGfaSqm || totalGfaSqm <= 0) { setNeedDesign(true); return; }
+    setNeedDesign(false);
     setLoading(true);
     try {
+      // ★개략 물량 역산(BIM 정밀적산 전·연면적 기반 RC조 표준 원단위) — 실 연면적에 비례하므로
+      //   프로젝트마다 달라진다(고정값 아님). 정밀 물량은 BIM 모델/적산 연동 시 대체.
+      const concreteM3 = Math.max(1, Math.round(totalGfaSqm * 0.5));      // RC조 ~0.5 m³/㎡
+      const windowSet = Math.max(1, Math.round(totalGfaSqm / 40));        // 전용 ~40㎡당 1세트 가정
       const items = [
         {
           work_code: "A01", item_name: "철근콘크리트", spec: "25-240",
-          unit: "m3", quantity: 2000, mat_unit: 82000,
+          unit: "m3", quantity: concreteM3, mat_unit: 82000,
           labor_unit: 45000, exp_unit: 15000,
         },
         {
           work_code: "A05", item_name: "창호", spec: "AL 시스템",
-          unit: "set", quantity: 500, mat_unit: 350000,
+          unit: "set", quantity: windowSet, mat_unit: 350000,
           labor_unit: 80000, exp_unit: 20000,
         },
       ];
@@ -101,7 +113,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, totalGfaSqm]);
 
   return (
     <div className="grid gap-8">
@@ -128,7 +140,18 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
               </Button>
            </div>
         </div>
-        
+
+        {/* ★정직 고지: 물량은 BIM 정밀적산이 아니라 설계 연면적 기반 개략 역산이다(고정 가짜값 아님·실 연면적 비례). */}
+        {needDesign ? (
+          <div className="px-8 py-5 bg-amber-500/10 border-b border-amber-500/30 text-[12px] leading-relaxed text-amber-700">
+            ⚠ 설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 연면적 기반 개략 물량으로 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)
+          </div>
+        ) : costResult && totalGfaSqm ? (
+          <div className="px-8 py-3 bg-[var(--surface-soft)] border-b border-[var(--line)] text-[11px] text-[var(--text-hint)]">
+            개략 물량은 설계 연면적 {fmt(totalGfaSqm)}㎡ 기반 RC조 표준 원단위 역산입니다(BIM 정밀적산 전 추정). 정밀 물량은 BIM 모델·적산 연동 시 대체됩니다.
+          </div>
+        ) : null}
+
         <AnimatePresence>
           {rates && (
             <motion.div 

@@ -22,6 +22,8 @@ import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 import { isValidLocale } from "@/i18n/config";
 
 interface Overview {
@@ -32,6 +34,8 @@ interface Overview {
   design_fee_won: number; supervision_fee_won: number; contingency_won: number; general_expense_won: number;
   indirect_won: number; total_won: number; per_pyeong_won: number;
   range: { min_won: number; expected_won: number; max_won: number };
+  // 백엔드 /cost/estimate-overview가 반환하는 산출근거(기준단가·지상/지하/조경/간접 산식·신뢰도).
+  evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[];
   items?: { name: string; spec?: string; unit?: string; quantity: number; unit_cost_won: number; cost_won: number }[];
   qto_source?: string; // bim | derived
   geometry?: {
@@ -229,7 +233,7 @@ export function CostEstimationClient() {
         iterations: iters, mean, stdDev: Math.round(Math.sqrt(variance)),
         p10: samples[Math.floor(iters * 0.1)], p50: samples[Math.floor(iters * 0.5)], p90: samples[Math.floor(iters * 0.9)],
         min: minV, max: maxV, ci90: [p05, p95], histogram,
-        summary: `${iters.toLocaleString()}회 시뮬레이션 결과, 90% 확률로 총 공사비가 ${fmtKrw(p05)} ~ ${fmtKrw(p95)} 범위에 분포합니다. 자재가격 변동이 가장 큰 리스크 요인입니다.`,
+        summary: `${iters.toLocaleString()}회 시뮬레이션 결과, 90% 확률로 총 공사비가 ${fmtKrw(p05)} ~ ${fmtKrw(p95)} 범위에 분포합니다(개략 공사비 범위 기반).`,
       });
     } finally { setRiskLoading(false); }
   }, [result, iterations]);
@@ -391,6 +395,21 @@ export function CostEstimationClient() {
               </div>
               <p className="mt-4 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] text-[var(--accent-strong)]">🔗 이 공사비가 <b>수지분석·투자수익성(ROI)</b>에 자동 반영됩니다(단일 데이터원).</p>
             </div>
+
+            {/* 산출 근거(EvidencePanel) — 백엔드 evidence가 있으면 우선, 없으면 응답 수치로 산식 트레이스(가짜값/가짜URL 0).
+                "왜 이 공사비인가?"(기준단가·지상/지하/조경/간접 산식)에 답해 ROI 하류까지 근거를 남긴다. */}
+            {(() => {
+              const backendEvidence = adaptEvidence(result.evidence, result.legal_refs);
+              const items: EvidenceItem[] = backendEvidence.length > 0 ? backendEvidence : [
+                { label: "㎡당 기준단가", value: `${result.unit_cost_per_sqm.toLocaleString()}원/㎡`, basis: `용도(${result.building_type})·구조(${result.structure_type}) 표준 평단가` },
+                { label: "지상 직접공사비", value: fmtKrw(result.aboveground_won), basis: `지상 연면적 ${Math.round(result.gfa_above_sqm).toLocaleString()}㎡ × 기준단가` },
+                { label: "지하 직접공사비", value: fmtKrw(result.underground_won), basis: `지하 연면적 ${Math.round(result.gfa_below_sqm).toLocaleString()}㎡ × 기준단가(지하 할증)` },
+                { label: "조경", value: fmtKrw(result.landscape_won), basis: "직접공사비 대비 표준 요율" },
+                { label: "간접비(설계·감리·예비·일반관리)", value: fmtKrw(result.indirect_won), basis: "직접공사비 대비 표준 요율 합계" },
+                { label: "총 공사비", value: fmtKrw(result.total_won), basis: `직접 ${fmtKrw(result.direct_won)} + 간접 ${fmtKrw(result.indirect_won)} · 범위 ${fmtKrw(result.range.min_won)}~${fmtKrw(result.range.max_won)}` },
+              ];
+              return <EvidencePanel className="mt-1" title="개략 공사비 산출 근거" items={items} />;
+            })()}
 
             {/* 항목별 적산(QTO) 요약 — 부위별 정밀 물량은 BIM·적산(Step4)에 위임 */}
             {result.items && result.items?.length > 0 && (
