@@ -256,6 +256,13 @@ def _compute_solar(lat: float, lon: float, zone_type: str | None,
         "north_setback": north,
         "summary": summary,
         "grade": grade,
+        # 정직 라벨(설명가능성): 휴리스틱 약식 판정임을 명시 — 정밀계산 오인 방지.
+        "method": "2D-planar-projection",
+        "limitations": [
+            "주변 가림은 태양 방위 ±18° 평면투영 약식 판정(_is_sun_blocked)",
+            "대기 굴절·지형 기복·반사 미반영",
+            "인접 건물 높이는 footprint 추정고 기반(실측 아님)",
+        ],
     }
 
 

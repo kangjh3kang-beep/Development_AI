@@ -51,12 +51,39 @@ def sun_position(latitude: float, hour: float, declination: float
     return round(altitude, 2), round(azimuth, 2)
 
 
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Andrew's monotone chain 볼록껍질(결정론·math만, numpy 불요).
+
+    내부점·변 위 공선점을 제거해 그림자 다각형이 비볼록/자기교차로 음영을 과대 산정하는 것을 막는다.
+    점이 3개 미만이면 입력을 그대로 반환(축퇴 방지).
+    """
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return list(points)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper: list[tuple[float, float]] = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
 def shadow_polygon(sun_alt: float, sun_az: float,
                    bw: float, bd: float, bh: float
                    ) -> list[tuple[float, float]]:
-    """건물 그림자 다각형 꼭짓점을 계산한다 (평면 2D).
+    """건물 그림자 다각형 꼭짓점을 계산한다 (평면 2D 볼록껍질).
 
-    건물 바닥 좌하단이 (0,0), x=동, y=북 기준.
+    건물 바닥 좌하단이 (0,0), x=동, y=북 기준. 단일 직육면체 매스의 평면투영 근사이며
+    지형 기복·반사·인접 건물 차폐는 미반영(보수적 단순화) — 정밀 분석은 IFC/지형 결합 필요.
     """
     if sun_alt <= 0:
         return []
@@ -77,14 +104,9 @@ def shadow_polygon(sun_alt: float, sun_az: float,
     # 그림자 투영점
     shadow_pts = [(x + dx, y + dy) for x, y in corners]
 
-    # 단순 볼록 껍질 근사: 건물 + 그림자 꼭짓점 합집합
-    all_pts = corners + shadow_pts
-    # convex hull (Graham scan 생략, 단순 정렬)
-    cx = sum(p[0] for p in all_pts) / len(all_pts)
-    cy = sum(p[1] for p in all_pts) / len(all_pts)
-    all_pts.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
-
-    return [(round(x, 1), round(y, 1)) for x, y in all_pts]
+    # 건물 + 그림자 꼭짓점의 진짜 볼록껍질(내부점·공선점 제거 — 비볼록/자기교차 과대 음영 방지).
+    hull = _convex_hull(corners + shadow_pts)
+    return [(round(x, 1), round(y, 1)) for x, y in hull]
 
 
 class ShadowSimulator:

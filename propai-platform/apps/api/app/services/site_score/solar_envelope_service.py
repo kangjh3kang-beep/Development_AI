@@ -157,6 +157,11 @@ def compute_buildable_envelope(
             "daylight_loss_pct": 0.0,
             "max_height_m": round(floors * fh, 1), "max_floors": floors,
             "note": "정북일조 미적용 용도지역 — 용적률/건폐율이 한도. (정밀 높이는 가로구역 최고높이 별도 확인)",
+            "approximation": "far-bcr-only",
+            "assumptions": [
+                "정북일조 미적용 용도지역 — 용적률/건폐율만 적용",
+                "가로구역별 최고높이 별도 확인 필요",
+            ],
         }
 
     # ── 정북일조 스트립 적분 ──
@@ -216,4 +221,10 @@ def compute_buildable_envelope(
             "직사각형 대지 근사(v1)."
             + (f" 일조로 용적률 대비 약 {round(loss,1)}% 건축면적 손실." if binding == "정북일조" else " 용적률이 한도(일조 여유).")
         ),
+        "approximation": "rectangular-lot-strip-integration",
+        "assumptions": [
+            "직사각형 대지(W×D, 정북=깊이축) 가정",
+            "단일 매스·측면 이격 간이(side_setback)",
+            "9m 초과 H≤2d 보수 근사·도로사선 미적용",
+        ],
     }
