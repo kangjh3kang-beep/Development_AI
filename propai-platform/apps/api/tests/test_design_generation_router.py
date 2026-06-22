@@ -211,6 +211,27 @@ async def test_generate_rejects_bad_numeric_inputs(monkeypatch):
     assert e5.value.status_code == 422
 
 
+async def test_generate_pdf_returns_pdf_response(monkeypatch):
+    # /generate/pdf — generate 결과를 PDF로 반환(application/pdf·attachment)
+    async def _fake_gen(_req):
+        return {"ok": True, "site": {"zone_code": "2R", "area_sqm": 1000.0, "far_source": "ordinance"},
+                "permit": None, "proposals": [], "recommendation": None}
+
+    monkeypatch.setattr(dg, "generate_design_proposals", _fake_gen)
+    out = await dg.generate_pdf(dg.GenerateRequest(area_sqm=1000.0), _user(), _FakeDB(None))
+    assert out.media_type == "application/pdf"
+    assert out.body.startswith(b"%PDF") and len(out.body) > 1500
+    assert "attachment" in out.headers.get("content-disposition", "")
+
+
+async def test_generate_pdf_forces_tenant_and_validates(monkeypatch):
+    # PDF 경로도 동일 검증(음수 면적 422) + tenant 강제(generate와 공용 헬퍼)
+    monkeypatch.setattr(dg, "generate_design_proposals", lambda *a, **k: None)
+    with pytest.raises(HTTPException) as ei:
+        await dg.generate_pdf(dg.GenerateRequest(area_sqm=-5), _user(), _FakeDB(None))
+    assert ei.value.status_code == 422
+
+
 async def test_generate_rejects_nan_area(monkeypatch):
     # Pydantic float 기본 allow_inf_nan=True → NaN/inf가 들어올 수 있으므로 라우터가 거부.
     monkeypatch.setattr(dg, "generate_design_proposals", lambda *a, **k: None)

@@ -27,6 +27,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 from pydantic import BaseModel
@@ -272,13 +273,13 @@ async def search(
     return result
 
 
-@router.post("/generate", dependencies=[Depends(enforce_llm_quota)])
-async def generate(
-    req: GenerateRequest,
-    current: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    """부지 조건 → 인허가 부합 설계안 Top-N(근거·법령링크 동반). tenant_id 인증 강제."""
+async def _validated_design_request(
+    req: GenerateRequest, db: AsyncSession, current: CurrentUser
+) -> DesignRequest:
+    """GenerateRequest 검증 + 소유검증 + DesignRequest 구성(generate·generate/pdf 공용).
+
+    tenant_id는 인증 컨텍스트 강제(클라이언트 입력 무시). 값 오류는 422.
+    """
     if not math.isfinite(req.area_sqm) or req.area_sqm <= 0 or req.area_sqm > _MAX_AREA_SQM:
         raise HTTPException(status_code=422, detail="대지면적 값이 올바르지 않습니다.")
     if req.ordinance_bcr_pct is not None and not (0 < req.ordinance_bcr_pct <= 100):
@@ -313,7 +314,37 @@ async def generate(
     }
     if req.building_use:
         kwargs["building_use"] = req.building_use
-    return await generate_design_proposals(DesignRequest(**kwargs))
+    return DesignRequest(**kwargs)
+
+
+@router.post("/generate", dependencies=[Depends(enforce_llm_quota)])
+async def generate(
+    req: GenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """부지 조건 → 인허가 부합 설계안 Top-N(근거·법령링크 동반). tenant_id 인증 강제."""
+    return await generate_design_proposals(await _validated_design_request(req, db, current))
+
+
+@router.post("/generate/pdf", dependencies=[Depends(enforce_llm_quota)])
+async def generate_pdf(
+    req: GenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """부지 조건 → 설계제안 타당성 보고서 PDF(다운로드). generate와 동일 산출을 PDF로."""
+    result = await generate_design_proposals(await _validated_design_request(req, db, current))
+    from app.services.design_ingest.design_proposal_pdf import build_design_proposal_pdf
+    try:
+        pdf = build_design_proposal_pdf(result)
+    except Exception as e:  # noqa: BLE001 — PDF 생성 실패가 500 폭주로 새지 않게 정직 503
+        logger.warning("설계제안 PDF 생성 실패: %s", str(e)[:160])
+        raise HTTPException(status_code=503, detail="PDF 생성에 실패했습니다(라이브러리/폰트 확인).") from e
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="design_proposal.pdf"'},
+    )
 
 
 @router.get("/laws/coverage")
