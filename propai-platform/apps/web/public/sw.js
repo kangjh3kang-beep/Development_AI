@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v294-deliberation-bff";
+const CACHE_NAME = "propai-v295-trust-wiring";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
