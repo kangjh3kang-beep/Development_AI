@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.env.prod
 .env.secrets
 .env.*.secrets
 .pytest_cache/

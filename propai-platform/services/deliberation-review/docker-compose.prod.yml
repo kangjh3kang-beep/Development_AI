@@ -1,0 +1,73 @@
+# PropAI 심의분석 엔진 — 프로덕션 compose(엔진 전용 격리 스택).
+# 메인 백엔드와 무영향: 전용 네트워크(deliberation-net)·전용 볼륨·외부 노출은 8801 단일 포트만.
+# 기동: docker compose -f docker-compose.prod.yml up -d --build
+# 마이그레이션+헬스확인 자동화: ./deploy_engine.sh (권장)
+services:
+  # ── 엔진 전용 격리 DB(PostGIS) ── geoalchemy2/PostGIS 컬럼·review 스키마 사용.
+  deliberation-db:
+    image: postgis/postgis:16-3.4
+    container_name: deliberation-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DELIBERATION_DB_USER:-propai_user}
+      POSTGRES_PASSWORD: ${DELIBERATION_DB_PASSWORD:-propai_pass_prod}
+      POSTGRES_DB: ${DELIBERATION_DB_NAME:-propai_review}
+    volumes:
+      - deliberation-pgdata:/var/lib/postgresql/data
+    networks:
+      - deliberation-net
+    # DB 외부 노출 안 함(메인 백엔드/호스트 포트 충돌 회피). 엔진만 내부 네트워크로 접속.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DELIBERATION_DB_USER:-propai_user} -d ${DELIBERATION_DB_NAME:-propai_review}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ── 심의분석 엔진(FastAPI) ──
+  deliberation-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: propai-deliberation-engine:latest
+    container_name: deliberation-engine
+    restart: unless-stopped
+    ports:
+      - "8801:8801"
+    environment:
+      # DB 는 내부 네트워크의 deliberation-db 서비스명으로 접속(asyncpg). review 스키마는 앱이 사용.
+      DATABASE_URL: postgresql+asyncpg://${DELIBERATION_DB_USER:-propai_user}:${DELIBERATION_DB_PASSWORD:-propai_pass_prod}@deliberation-db:5432/${DELIBERATION_DB_NAME:-propai_review}
+      # MVP: 비동기 워커/redis 없이 동기 폴백(eager). 진짜 비동기는 redis+worker 추가 후 false.
+      CELERY_TASK_ALWAYS_EAGER: "true"
+      # 결정론 해시 임베더(OpenAI 키 불요). 의미 임베딩은 EMBEDDER=openai + OPENAI_API_KEY 로 격상.
+      EMBEDDER: hash
+      # 호스트 기존 Qdrant 재사용 옵션. 빈 값이면 in-memory mock(영속X). 예: http://host.docker.internal:6333
+      QDRANT_URL: ${QDRANT_URL:-}
+      # 엔진 API 보호 베어러 토큰(.env.prod 에 설정). 빈 값이면 개방.
+      API_TOKEN: ${DELIBERATION_API_TOKEN:-}
+      # 외부 출처 키(선택·graceful). 미설정 시 mock/결손표면화 폴백.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MOLEG_API_KEY: ${MOLEG_API_KEY:-}
+      # 프런트 크로스오리진(콘솔/플랫폼). 운영은 구체 도메인 권장.
+      CORS_ORIGINS: ${DELIBERATION_CORS_ORIGINS:-*}
+    depends_on:
+      deliberation-db:
+        condition: service_healthy
+    networks:
+      - deliberation-net
+    healthcheck:
+      # 이미지에 curl 없을 수 있어 python 표준 라이브러리로 /health 점검.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8801/health',timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+networks:
+  deliberation-net:
+    driver: bridge
+    name: deliberation-net
+
+volumes:
+  deliberation-pgdata:
+    name: deliberation-pgdata
