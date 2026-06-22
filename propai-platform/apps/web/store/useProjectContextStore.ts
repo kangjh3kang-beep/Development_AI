@@ -61,6 +61,27 @@ interface OfficialPriceData {
   pricePerSqm: number;
 }
 
+/** 종상향/종변경 잠재 시나리오(미래 토지특성 SSOT) — /zoning/comprehensive 산출 보존(additive).
+ *  배경: comprehensive 응답의 풍부한 per-scenario(경로·목표용도·예상용적·가능성·법령근거)는 그동안
+ *  로컬 state(L3)에만 머물러 하류(추천·설계·수지)가 읽지 못했다. 이를 SSOT에 보존해 토지특성
+ *  foundation(Stage B 미래)이 단일 진실원에서 소비되게 한다(U2). 무목업: 미해소 필드는 null. */
+export interface UpzoningScenarioData {
+  /** 경로명(예: "준주거 → 일반상업"). 없으면 null. */
+  path: string | null;
+  /** 목표 용도지역(없으면 null). */
+  targetZone: string | null;
+  /** 가능성 등급('상'|'중'|'하'). 미해소 null. */
+  feasibility: string | null;
+  /** 예상 재산정 용적률 하단(%) — 없으면 null. */
+  expectedFarLowPct: number | null;
+  /** 예상 재산정 용적률 상단(%) — 없으면 null. */
+  expectedFarHighPct: number | null;
+  /** 근거 법령(없으면 null). */
+  legalBasis: string | null;
+  /** 도출 이유(feasibility_reason 등). 없으면 null. */
+  rationale: string | null;
+}
+
 /** 기초 데이터 파이프라인 — 모든 모듈의 근간 */
 interface SiteAnalysisData {
   // 기본 정보
@@ -91,6 +112,9 @@ interface SiteAnalysisData {
   farBasis?: string | null;           // 실효용적률 최종 근거 라벨
   upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
   upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
+  // 종상향 per-scenario 상세(미래 토지특성 SSOT) — comprehensive 산출 보존(additive·옵셔널).
+  // 미확보(단일 analyze 경로 등) 시 부재/null → buildLandProfile이 집계값으로 폴백(무목업).
+  upzoningScenarios?: UpzoningScenarioData[] | null;
   specialParcel?: {                   // 특이부지 게이트 요약 — 없으면 null
     isSpecial: boolean;
     developability: string | null;    // POSSIBLE|CONDITIONAL|PRECONDITION|RESTRICTED|BLOCKED 등
