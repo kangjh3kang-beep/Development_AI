@@ -345,6 +345,7 @@ _ALIASES: dict[str, str] = {
     "small_housing_redev": "small_housing_overview",     # 소규모정비법(현행본 개요 정본키)
     "land_use_right": "condo_ownership",                 # 집합건물법 제20조(feat 동일조문 → design 정본)
     "condo_management_body": "condo_management",         # 집합건물법 제23조(feat 동일조문 → design 정본)
+    "condo_section_def": "condo_ownership",              # 진실원천 통합 P0 조율 별칭
 }
 
 

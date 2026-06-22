@@ -127,6 +127,8 @@ def _attach_legal_refs(result: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         keys: list[str] = []
+        from app.services.legal.legal_hub import canonicalize_citation, resolve_refs
+
         for stage_name in _STAGE_KEYS:
             stage = result.get(stage_name)
             if not isinstance(stage, dict):
@@ -134,15 +136,18 @@ def _attach_legal_refs(result: dict[str, Any]) -> dict[str, Any]:
             for item in stage.get("items") or []:
                 if not isinstance(item, dict):
                     continue
-                ref_key = _TAX_CODE_LEGAL_KEYS.get(item.get("code"))
-                if ref_key:
+                code = item.get("code")
+                if not isinstance(code, str):
+                    continue
+                raw_ref_key = _TAX_CODE_LEGAL_KEYS.get(code)
+                if raw_ref_key:
+                    # ★F1 보강: LegalHub.canonicalize 경유로 키 단일화
+                    ref_key = canonicalize_citation(raw_ref_key) or raw_ref_key
                     item.setdefault("legal_ref_key", ref_key)
                     if ref_key not in keys:
                         keys.append(ref_key)
 
-        from app.services.legal.legal_reference_registry import get_legal_refs
-
-        result.setdefault("legal_refs", get_legal_refs(keys))
+        result.setdefault("legal_refs", resolve_refs(keys))
     except Exception:  # noqa: BLE001 — 신뢰 블록은 best-effort, 본 응답 무손상.
         result.setdefault("legal_refs", [])
     return result

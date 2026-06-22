@@ -101,13 +101,32 @@ export function AIAssistant() {
   // 비서는 백엔드(api.4t8t.net/api/v1/ai/*)를 직접 호출한다 — Next /api/ai/*는 A1 nginx가 백엔드로
   // 프록시해 닿지 못함(404). 서버(관리자 설정) LLM 키를 쓰므로 사용자 별도 키 불필요.
   const [serverKeyAvailable, setServerKeyAvailable] = useState(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(true);
+
+  const checkServerStatus = useCallback(() => {
+    setIsCheckingStatus(true);
+    // Cache busting parameter added to avoid browser keeping old blocked IPs
+    apiClient.get<{ available?: boolean }>(`/ai/status?t=${Date.now()}`, { useMock: false })
+      .then((d) => {
+        setServerKeyAvailable(!!d?.available);
+      })
+      .catch((err) => {
+        console.warn("AI Status Check Error:", err);
+        setServerKeyAvailable(false);
+      })
+      .finally(() => {
+        setIsCheckingStatus(false);
+      });
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    apiClient.get<{ available?: boolean }>("/ai/status", { useMock: false })
-      .then((d) => { if (alive) setServerKeyAvailable(!!d?.available); })
-      .catch(() => { if (alive) setServerKeyAvailable(false); });
+    if (alive) {
+      checkServerStatus();
+    }
     return () => { alive = false; };
-  }, []);
+  }, [checkServerStatus]);
+
   const connected = serverKeyAvailable;
 
   const [input, setInput] = useState("");
@@ -280,9 +299,9 @@ export function AIAssistant() {
                     <h3 className="text-sm font-[1000] tracking-tighter uppercase italic">PropAI Orchestrator</h3>
                     <div className="flex items-center gap-2">
                       <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">
-                        {connected ? 'Neural Context: Active' : 'Disconnected'}
+                        {isCheckingStatus ? 'Connecting...' : connected ? 'Neural Context: Active' : 'Disconnected'}
                       </p>
-                      {!connected && (
+                      {(!connected && !isCheckingStatus) && (
                         <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
                       )}
                     </div>
@@ -308,15 +327,34 @@ export function AIAssistant() {
               ref={scrollRef}
               className="relative flex h-[380px] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
-              {!connected && (
+              {isCheckingStatus ? (
+                <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-center flex flex-col items-center justify-center gap-3">
+                  <div className="flex gap-1">
+                    <span className="h-2 w-2 bg-[var(--accent-strong)] rounded-full animate-bounce" />
+                    <span className="h-2 w-2 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                    <span className="h-2 w-2 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+                  </div>
+                  <p className="text-xs font-bold text-[var(--accent-strong)] animate-pulse">신경망 엔진과 동기화 중입니다...</p>
+                </div>
+              ) : !connected && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
-                  <p className="text-xs font-bold text-red-400 mb-2">AI 어시스턴트가 아직 연결되지 않았습니다.</p>
+                  <p className="text-xs font-bold text-red-400 mb-2">AI 어시스턴트 통신에 실패했습니다.</p>
                   {isAdmin === true ? (
-                    <Link href="/ko/settings" className="inline-block rounded-lg bg-red-500/20 px-4 py-2 text-xs font-bold text-red-300 hover:bg-red-500/30 transition-colors">
-                      설정으로 이동
-                    </Link>
+                    <div className="flex flex-col gap-2">
+                      <Link href="/ko/settings" className="inline-block rounded-lg bg-red-500/20 px-4 py-2 text-xs font-bold text-red-300 hover:bg-red-500/30 transition-colors">
+                        설정으로 이동
+                      </Link>
+                      <button onClick={checkServerStatus} className="inline-block rounded-lg bg-[var(--surface)] px-4 py-2 text-xs font-bold text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">
+                        다시 연결하기 (Ping)
+                      </button>
+                    </div>
                   ) : (
-                    <p className="text-[11px] text-red-300/80">관리자가 AI 키를 설정하면 이용할 수 있습니다.</p>
+                    <div className="flex flex-col gap-2 items-center">
+                      <p className="text-[11px] text-red-300/80">네트워크 오류이거나 관리자 설정이 필요합니다.</p>
+                      <button onClick={checkServerStatus} className="inline-block rounded-lg bg-[var(--surface)] px-4 py-2 text-xs font-bold text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">
+                        다시 연결하기 (Ping)
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
