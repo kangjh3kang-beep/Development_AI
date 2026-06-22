@@ -25,6 +25,9 @@ export function ProjectAnalysisFlow({
 }) {
   const storeProjectId = useProjectContextStore((s) => s.projectId);
   const storeAddress = useProjectContextStore((s) => s.siteAnalysis?.address ?? "");
+  // 부지분석 완료 여부 — primitive(boolean)만 구독해 리렌더 루프(#185)를 피한다.
+  // (store의 siteAnalysis 객체 자체가 아니라 "용도지역이 채워졌는지" boolean만 본다.)
+  const siteResolved = useProjectContextStore((s) => !!s.siteAnalysis?.zoneCode || s.siteAnalysis?.landAreaSqm != null);
 
   const [showRecommend, setShowRecommend] = useState(false);
 
@@ -67,6 +70,39 @@ export function ProjectAnalysisFlow({
   // ── 통합 분석 흐름 ──
   return (
     <div className="space-y-12">
+      {/* 부지분석 진행 신호 — 결과(siteResolved)가 채워지기 전엔 스피너 + '분석 중',
+          채워지면 명확한 완료 전환 텍스트를 보여 "지금 무슨 일이 일어나는지" 직관화한다.
+          (실제 실행 상태는 하위 ProjectPipelinePanel이 관리 — 여기선 결과 유무만 신호) */}
+      <div
+        className={`flex items-center gap-3 rounded-2xl border px-5 py-3.5 transition-colors ${
+          siteResolved
+            ? "border-[var(--accent-strong)]/30 bg-[var(--accent-soft)]"
+            : "border-[var(--line)] bg-[var(--surface-soft)]"
+        }`}
+        aria-live="polite"
+        aria-busy={!siteResolved}
+      >
+        {siteResolved ? (
+          <>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-strong)] text-white">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </span>
+            <p className="text-sm font-bold text-[var(--accent-strong)]">
+              부지분석 완료 — 용도지역·면적·규제가 아래 요약에 반영되었습니다.
+            </p>
+          </>
+        ) : (
+          <>
+            <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" aria-hidden="true" />
+            <p className="text-sm font-bold text-[var(--text-secondary)]">
+              부지분석 진행 중 — 용도지역·대지면적·조례를 자동 조회하고 있습니다…
+            </p>
+          </>
+        )}
+      </div>
+
       {/* 1단계 — 부지분석 (자동 실행) */}
       <ProjectPipelinePanel
         projectMode

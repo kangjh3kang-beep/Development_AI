@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { ProjectAnalysisSummary } from "@/components/projects/ProjectAnalysisSummary";
+import { HubErrorBoundary } from "@/components/projects/HubErrorBoundary";
 import { currentUserId } from "@/lib/projectSync";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
@@ -24,9 +25,9 @@ const _loading = (label: string) => {
   );
   return LoadingFallback;
 };
-// P1: 딥인티 8탭 허브(LifecycleStageViews)는 상단탭·진행바와 진입 중복이라 개요에서 강등.
-// 각 단계 위젯은 해당 서브페이지에 이미 존재 — 개요는 다음단계 CTA로 순수 진입만 유도.
-const NextStageCta = dynamic(() => import("@/components/projects/NextStageCta").then((m) => m.NextStageCta), { ssr: false, loading: _loading("다음 단계 안내 불러오는 중…") });
+// 다음단계 CTA는 ProjectHealthBoard 하단 '다음 추천 작업' 단일 CTA로 일원화한다.
+// (이전: NextStageCta + 헬스보드 + 진행레일 3중복 → 중복 제거. NextStageCta 컴포넌트는
+//  다른 진입점에서 props 기반으로 여전히 사용 가능 — 허브 개요에서만 렌더 중단.)
 // Phase3(additive): 완성도 헬스보드 — projectCompleteness 셀렉터 + 가이디드 next-action.
 const ProjectHealthBoard = dynamic(() => import("@/components/projects/ProjectHealthBoard").then((m) => m.ProjectHealthBoard), { ssr: false, loading: _loading("프로젝트 완성도 불러오는 중…") });
 const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
@@ -86,13 +87,15 @@ export default function ProjectDetailPage() {
     return () => { cancelled = true; };
   }, [id]);
 
-  // 분석 스냅샷 복원 — ★분석 원장(서버·기기간 공유·무결성) 우선, 없으면 localStorage 폴백.
-  // 원장: 이 프로젝트 체인 → 없으면 같은 주소 간편분석(quick) 체인 승계(계보 연결).
+  // 분석 스냅샷 복원 + 원장 통합보고서 로드 — ★두 작업이 동일 원장(latestLedger("pipeline", {address,projectId}))을
+  //   쓰므로 단일 effect에서 한 번만 호출해 중복 네트워크를 제거한다(이전: 두 effect가 같은 API 2회 호출).
+  //   원장(서버·기기간 공유·무결성) 우선, 스냅샷 복원은 localStorage 폴백. 보고서 표시는 원장 payload만.
   useEffect(() => {
     const addr = meta?.address || projectFromStore?.address;
     if (!addr) return;
     const st = useProjectContextStore.getState();
-    if (st.projectId !== id || st.siteAnalysis) return; // 이미 복원/분석 있음
+    // 스냅샷 복원은 아직 복원/분석이 없을 때만 수행(보고서 표시는 항상 시도).
+    const shouldRestore = st.projectId === id && !st.siteAnalysis;
     let cancelled = false;
 
     const applyResult = (r: { summary?: Record<string, any>; stages?: Array<{ stage: string; status?: string; data?: any }> } | null | undefined) => {
@@ -162,40 +165,32 @@ export default function ProjectDetailPage() {
     };
 
     (async () => {
+      let restored = false;
       try {
-        // ★projectId 기준 복원만 신뢰한다. address는 보조 필터(같은 주소 quick 체인 승계)로만 사용.
+        // ★projectId 기준 복원·보고서만 신뢰한다. address는 보조 필터(같은 주소 quick 체인 승계)로만 사용.
         // (이전: projectId 없이 address 단독 latestLedger 폴백 → 다른 프로젝트 분석이 오염 주입됨)
         const res = await latestLedger("pipeline", { address: addr, projectId: id });
+        if (cancelled) return;
         const payload = extractPayload(res?.data);
-        if (payload && applyResult(payload)) return;
+        // 통합보고서 표시(컨텍스트 복원과 별개로 항상) — 원장 payload.stages가 있으면 보고서형 상세 렌더.
+        if (payload?.stages?.length) setLedgerReport(payload);
+        // 스냅샷 복원(아직 복원·분석 없을 때만). 성공 시 localStorage 폴백 생략.
+        if (shouldRestore && payload && applyResult(payload)) restored = true;
       } catch { /* 원장 실패 → localStorage 폴백 */ }
 
-      // 3) localStorage 폴백(레거시·오프라인)
-      try {
-        const hist = JSON.parse(localStorage.getItem(`propai_pipeline_history__${currentUserId()}`) || "[]") as Array<{
-          address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
-        }>;
-        const norm = (s: string) => s.replace(/\s+/g, "");
-        const match = hist.find((h) => h.address && (norm(h.address) === norm(addr) || norm(addr).includes(norm(h.address)) || norm(h.address).includes(norm(addr))));
-        applyResult(match?.result);
-      } catch { /* 무시 */ }
+      // localStorage 폴백(레거시·오프라인) — 원장 복원 실패 + 복원 대상일 때만.
+      if (!restored && shouldRestore && !cancelled) {
+        try {
+          const hist = JSON.parse(localStorage.getItem(`propai_pipeline_history__${currentUserId()}`) || "[]") as Array<{
+            address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
+          }>;
+          const norm = (s: string) => s.replace(/\s+/g, "");
+          const match = hist.find((h) => h.address && (norm(h.address) === norm(addr) || norm(addr).includes(norm(h.address)) || norm(h.address).includes(norm(addr))));
+          applyResult(match?.result);
+        } catch { /* 무시 */ }
+      }
     })();
 
-    return () => { cancelled = true; };
-  }, [meta?.address, projectFromStore?.address, id]);
-
-  // 원장 통합보고서 로드(컨텍스트 복원과 별개로 항상) — 프로젝트 상세에 보고서형 상세 표시
-  useEffect(() => {
-    const addr = meta?.address || projectFromStore?.address;
-    if (!addr) return;
-    let cancelled = false;
-    (async () => {
-      // ★projectId 기준 보고서만 로드(다른 프로젝트 보고서 오염 방지). address는 체인 키 보조용.
-      const pick = (d: any) => (d && d.payload ? d.payload : null);
-      const res = await latestLedger("pipeline", { address: addr, projectId: id });
-      const payload = pick(res?.data);
-      if (!cancelled && payload?.stages?.length) setLedgerReport(payload);
-    })();
     return () => { cancelled = true; };
   }, [meta?.address, projectFromStore?.address, id]);
 
@@ -224,14 +219,18 @@ export default function ProjectDetailPage() {
       {/* 진행 단계 표시는 layout(LifecycleProgressRail + 컴팩트 파이프라인)에서 단일 렌더한다.
           (이전: 여기서도 ProjectLifecyclePipeline 풀버전을 렌더 → 진행바 중복) */}
 
-      {/* ── 통합 분석 흐름: 부지분석(자동) → 사업모델 추천 ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-      >
-        <ProjectAnalysisFlow projectId={id} projectName={meta?.name} />
-      </motion.div>
+      {/* ── 통합 분석 흐름: 부지분석(자동) → 사업모델 추천 ──
+          HubErrorBoundary로 격리 — 무한 루프(React #185) 등으로 이 영역이 사망해도
+          페이지 전체(흰 화면)는 막고 컴팩트 폴백 + 재시도로 회복 가능하게 한다. */}
+      <HubErrorBoundary label="분석 흐름">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <ProjectAnalysisFlow projectId={id} projectName={meta?.name} />
+        </motion.div>
+      </HubErrorBoundary>
 
       {/* ── Project Metadata (API-driven) ── */}
       {metaLoading ? (
@@ -352,20 +351,29 @@ export default function ProjectDetailPage() {
             transition={{ delay: 0.3 }}
             className="flex flex-wrap gap-5"
           >
+            {/* 히어로 지표 — 값 없으면 '분석 전' 빈 문자열 대신 '수지분석에서 산출' 안내 칩으로 대체(DataField UX 정합). */}
             {[
-              { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : "분석 전", color: "text-[var(--text-primary)]" },
-              { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전"), color: "text-[var(--accent-strong)]" },
+              { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : null, color: "text-[var(--text-primary)]" },
+              { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : null), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
               <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <i className="cc-bracket cc-bracket--tl" />
                 <i className="cc-bracket cc-bracket--br" />
                 <p className="cc-label tracking-[0.4em] mb-3">{stat.label}</p>
-                <p className={`cc-num text-3xl font-[1000] ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
-                  {stat.value}
-                </p>
-                <div className="absolute top-6 right-6 opacity-0 group-hover/stat:opacity-100 transition-opacity duration-500">
-                  <svg className="h-6 w-6 text-[var(--accent-strong)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
-                </div>
+                {stat.value ? (
+                  <p className={`cc-num text-3xl font-[1000] ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
+                    {stat.value}
+                  </p>
+                ) : (
+                  <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1 text-[11px] font-bold text-[var(--text-hint)]">
+                    수지분석에서 산출
+                  </span>
+                )}
+                {stat.value && (
+                  <div className="absolute top-6 right-6 opacity-0 group-hover/stat:opacity-100 transition-opacity duration-500">
+                    <svg className="h-6 w-6 text-[var(--accent-strong)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
+                  </div>
+                )}
               </div>
             ))}
           </motion.div>
@@ -375,8 +383,12 @@ export default function ProjectDetailPage() {
       {/* ── 프로젝트 완성도 헬스보드(Phase3·additive) — 7단계 진행 + 가이디드 next-action ── */}
       <ProjectHealthBoard locale={locale} />
 
-      {/* ── 보고서식 분석 요약(복원된 단일 데이터원) ── */}
-      <ProjectAnalysisSummary />
+      {/* ── 보고서식 분석 요약(복원된 단일 데이터원) ──
+          HubErrorBoundary로 격리 — 요약 렌더 오류가 페이지 전체를 사망시키지 않게 한다.
+          locale 전달 → 미완 단계 StagePreview의 '분석 시작' 라우팅에 사용. */}
+      <HubErrorBoundary label="분석 요약">
+        <ProjectAnalysisSummary locale={locale} />
+      </HubErrorBoundary>
 
       {/* ── 통합 분석 보고서(원장 기반) — 대시보드 분석이력과 동일한 보고서형 상세 ── */}
       {ledgerReport && (
@@ -385,20 +397,12 @@ export default function ProjectDetailPage() {
         </motion.div>
       )}
 
-      {/* ── 다음 단계 CTA(개요 순수화) ── */}
+      {/* ── 확장 모듈 카드 그리드(WP-07) — 도달불가 서브라우트 9종 진입 ──
+          (다음단계 진입 CTA는 위 ProjectHealthBoard 단일 CTA로 일원화 — NextStageCta 중복 제거) */}
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-      >
-        <NextStageCta locale={locale} />
-      </motion.div>
-
-      {/* ── 확장 모듈 카드 그리드(WP-07) — 도달불가 서브라우트 9종 진입 ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 40 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.6 }}
       >
         <ExtensionModulesGrid locale={locale} projectId={id} />
       </motion.div>
