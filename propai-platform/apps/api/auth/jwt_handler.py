@@ -15,7 +15,10 @@ from pydantic import BaseModel
 
 from apps.api.config import Settings, get_settings
 
-_bearer_scheme = HTTPBearer()
+# auto_error=False: Authorization 헤더 누락 시 HTTPBearer 기본동작(403)을 따르지 않고,
+# get_current_user 본문에서 표준 의미(무인증=401)로 직접 거부한다(라우터 계약 "무인증 401" 준수).
+# ★app/services/auth/auth_service.py 와 동일 계약 — 실사용 모듈에도 전역 전파.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class TokenPayload(BaseModel):
@@ -108,10 +111,16 @@ async def _get_auth_settings() -> Settings:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     settings: Settings = Depends(_get_auth_settings),
 ) -> CurrentUser:
     """요청에서 현재 사용자를 추출한다. FastAPI Depends로 사용."""
+    # Authorization 헤더 누락 → 무인증(401). (HTTPBearer auto_error=False로 None 전달됨)
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="인증 정보가 없습니다",
+        )
     token_data = decode_token(credentials.credentials, settings)
 
     if token_data.token_type != "access":
