@@ -2,10 +2,10 @@
 공공데이터 무결성 검증 레이어.
 모든 외부 데이터는 이 검증기를 통과한 후에만 시스템에 입력된다.
 """
-from pydantic import BaseModel, field_validator, model_validator
-from typing import Optional, List
-from datetime import date, datetime
 import logging
+from datetime import datetime
+
+from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ class TransactionRecord(BaseModel):
     price_10k_won: int  # 만원 단위
     area_sqm: float
     floor: int
-    building_year: Optional[int] = None
-    road_name: Optional[str] = None
+    building_year: int | None = None
+    road_name: str | None = None
 
     @field_validator("price_10k_won")
     @classmethod
@@ -75,8 +75,8 @@ class TaxRateRecord(BaseModel):
     tax_type: str  # acquisition, transfer, comprehensive
     rate: float  # 0.0 ~ 1.0
     effective_date: str  # YYYY-MM-DD
-    region_code: Optional[str] = None
-    conditions: Optional[dict] = None
+    region_code: str | None = None
+    conditions: dict | None = None
 
     @field_validator("rate")
     @classmethod
@@ -93,7 +93,7 @@ class ZoningRecord(BaseModel):
     zone_type: str
     max_bcr: float  # 건폐율 상한 (%)
     max_far: float  # 용적률 상한 (%)
-    max_height_m: Optional[float] = None
+    max_height_m: float | None = None
 
     @field_validator("max_bcr")
     @classmethod
@@ -168,3 +168,58 @@ class FreshnessChecker:
             "data_type": data_type,
             "warning": None if is_fresh else f"{data_type} 데이터가 {age_days}일 전 것입니다 (기준: {max_age_days}일)",
         }
+
+
+# --- 수집 파싱 배선(감사 HIGH #2) ---
+def validate_transactions(
+    rows: list[dict],
+    region: str = "",
+    recent_prices: list[int] | None = None,
+) -> tuple[list[dict], dict]:
+    """외부 실거래가 원본행을 TransactionRecord 스키마로 검증·필터하고, recent_prices가 있으면
+    AnomalyDetector(IQR)로 이상치를 플래그한다.
+
+    배경(감사): 정의돼 있으나 소비처 0건이던 검증 스키마·이상치탐지를 실수집 경로(MolitClient
+    ._parse_trade_items 출력)에 배선한다. 무목업 원칙 — 검증 실패행은 가짜 생성 없이 드롭만 하고
+    그 사실을 report로 관측 가능하게 남긴다. molit 정규화 키(deal_date/price_10k_won/area_m2/floor/
+    build_year) 및 일반 키(area_sqm/building_year)를 모두 수용한다.
+
+    반환: (accepted_rows, report{accepted, dropped, anomalies, dropped_detail}).
+    """
+    accepted: list[dict] = []
+    dropped_detail: list[dict] = []
+    anomalies = 0
+    for row in rows or []:
+        try:
+            rec = TransactionRecord(
+                deal_date=str(row.get("deal_date", "")),
+                price_10k_won=int(row.get("price_10k_won") or 0),
+                area_sqm=float(row.get("area_m2") or row.get("area_sqm") or 0),
+                floor=int(row.get("floor") or 0),
+                building_year=(row.get("build_year") or row.get("building_year")) or None,
+            )
+        except (ValidationError, ValueError, TypeError) as e:
+            dropped_detail.append({"row": row, "error": str(e).split("\n")[0]})
+            continue
+        out = dict(row)
+        if recent_prices and len(recent_prices) >= 5:
+            a = AnomalyDetector.check_price_anomaly(
+                rec.price_10k_won, rec.area_sqm, region, recent_prices
+            )
+            out["is_anomaly"] = bool(a.get("is_anomaly"))
+            out["anomaly_reason"] = a.get("reason", "")
+            if out["is_anomaly"]:
+                anomalies += 1
+        accepted.append(out)
+    if dropped_detail:
+        logger.warning(
+            "실거래 검증: 드롭 %d건 / 채택 %d건 (스키마 위반 제외)",
+            len(dropped_detail),
+            len(accepted),
+        )
+    return accepted, {
+        "accepted": len(accepted),
+        "dropped": len(dropped_detail),
+        "anomalies": anomalies,
+        "dropped_detail": dropped_detail,
+    }

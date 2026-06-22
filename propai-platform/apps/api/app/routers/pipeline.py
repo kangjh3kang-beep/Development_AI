@@ -133,6 +133,9 @@ async def run_pipeline(req: PipelineRunRequest):
     except Exception:  # noqa: BLE001
         pass
 
+    # Fix #3: 결정론 cost/feasibility 산출을 분석원장에 적재(모순탐지·lineage·SSOT 합류).
+    await _record_pipeline_ledger(result, req)
+
     # 최종 요약
     summary = {}
     report_data = result.stages.get("report")
@@ -437,6 +440,51 @@ async def _autoload_ledger(stage: str, data: dict[str, Any], sections: dict[str,
         logger.warning("파이프라인 단계 원장 자동적재 실패 — skipped", stage=stage, err=str(e)[:200])
 
 
+async def _resolve_tenant_id() -> str | None:
+    """요청 컨텍스트 user_id → users.tenant_id 해소(없으면 None=익명 체인). best-effort."""
+    try:
+        from app.core.request_context import get_current_user_id
+
+        uid = get_current_user_id()
+        if not uid:
+            return None
+        from sqlalchemy import text
+
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                text("SELECT tenant_id FROM public.users WHERE id = :uid"),
+                {"uid": uid})).first()
+            if row and row[0]:
+                return str(row[0])
+    except Exception as e:  # noqa: BLE001 — 해소 실패는 무중단(익명 체인)이나 관측가능해야 함(불변규칙3)
+        logger.warning("tenant_id 해소 실패 — 익명 체인으로 진행", err=str(e)[:200])
+    return None
+
+
+async def _record_pipeline_ledger(result, req: PipelineRunRequest) -> None:
+    """Fix #3(감사 HIGH): 파이프라인 결정론 산출(cost/feasibility)을 분석원장에 적재.
+
+    /run·/report 공용. 모순탐지·lineage·SSOT 단일출처에 합류시켜, 통합 파이프라인의 권위수치가
+    별도 엔드포인트에서만 적재되던 단선을 닫는다. 결정론 수치는 변경하지 않고 '추가'로 일원화하며,
+    어떤 실패도 응답을 막지 않는다(best-effort, 정직 degrade).
+    """
+    try:
+        from app.services.pipeline.pipeline_ledger_writeback import record_pipeline_results
+
+        tenant_id = await _resolve_tenant_id()
+        recorded = await record_pipeline_results(
+            stages=result.stages,
+            address=getattr(result, "address", None) or req.address,
+            project_id=getattr(result, "project_id", None) or req.project_id,
+            tenant_id=tenant_id,
+        )
+        if recorded:
+            logger.info("파이프라인 원장 write-back", recorded=list(recorded.keys()))
+    except Exception as e:  # noqa: BLE001 — write-back 실패는 본 흐름 무중단(정직표기)
+        logger.warning("파이프라인 원장 write-back 실패 — skipped", err=str(e)[:200])
+
+
 @router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
 async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
@@ -467,6 +515,9 @@ async def generate_report(req: PipelineRunRequest):
         project_id=req.project_id,
         options=req.options,
     )
+
+    # Fix #3: 결정론 cost/feasibility 산출을 분석원장에 적재(/run과 동일 경로·best-effort).
+    await _record_pipeline_ledger(result, req)
 
     # PipelineState → dict 변환 (stages 내부의 StageResult도 직렬화)
     result_dict = result.model_dump()

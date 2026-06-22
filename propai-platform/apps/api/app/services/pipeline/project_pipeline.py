@@ -2129,28 +2129,37 @@ class ProjectPipeline:
         state.stages["feasibility"].data = feasibility_data
 
     async def _run_tax(self, state: PipelineState, opts: dict):
-        """STEP 5: 세금 — 취득세/보유세/양도세 자동 계산."""
+        """STEP 5: 세금 — 취득세/보유세/양도세 + 세후 손익 정합(Fix #4·감사 HIGH).
+
+        취득세 과세표준을 취득가액(토지+건물)으로 좁히고(총사업비 과대과세 제거), 토지 취득세가
+        이미 사업비 levies(land×율)에 포함된 이중계상을 제거하며, 세후 이익·등급을 산출해
+        헤드라인 ROI(세전)와 별도로 정합되게 한다. 산식은 순수 모듈 tax_reconcile에서 검증.
+        """
+        from app.services.pipeline.tax_reconcile import compute_project_taxes
+
         feasibility = state.stages.get("feasibility", StageResult(stage=PipelineStage.FEASIBILITY))
         fdata = feasibility.data
 
-        total_cost = fdata.get("total_project_cost", 0)
-        total_revenue = fdata.get("total_revenue", 0)
-        net_profit = fdata.get("net_profit", 0)
-
-        # 간이 세금 계산
-        acquisition_tax = total_cost * 0.046  # 취득세 4.6% (법인)
-        property_tax = total_cost * 0.004  # 재산세 0.4% (연간)
-        transfer_tax = max(0, net_profit * 0.22)  # 양도소득세 22% (법인)
-        vat = total_revenue * 0.1  # 부가세 10% (건물분)
-
-        total_tax = acquisition_tax + property_tax + transfer_tax
+        taxes = compute_project_taxes(
+            total_revenue=self._as_float(fdata.get("total_revenue", 0)),
+            total_project_cost=self._as_float(fdata.get("total_project_cost", 0)),
+            net_profit_pretax=self._as_float(fdata.get("net_profit", 0)),
+            land_cost=self._as_float(fdata.get("land_cost", 0)),
+            construction_cost=self._as_float(fdata.get("construction_cost", 0)),
+        )
 
         tax_data: dict[str, Any] = {
-            "acquisition_tax": acquisition_tax,
-            "property_tax_annual": property_tax,
-            "transfer_tax": transfer_tax,
-            "vat": vat,
-            "total_tax": total_tax,
+            "acquisition_tax": taxes["acquisition_tax"],  # 취득가액(토지+건물) 기준
+            "acquisition_tax_additional": taxes["acquisition_tax_additional"],  # 사업비 levies 제외 추가분
+            "acquisition_tax_in_cost": taxes["acquisition_tax_in_cost"],  # 사업비에 이미 포함된 토지 취득세
+            "property_tax_annual": taxes["property_tax_annual"],  # 보유세(연간)
+            "transfer_tax": taxes["transfer_tax"],
+            "vat": taxes["vat"],
+            "total_tax": taxes["total_tax"],  # 추가취득 + 보유세 + 양도세
+            # 세후 손익(헤드라인 세전 net_profit/grade와 정합되게 별도 제공).
+            "net_profit_after_tax": taxes["net_profit_after_tax"],
+            "profit_rate_after_tax_pct": taxes["profit_rate_after_tax_pct"],
+            "grade_after_tax": taxes["grade_after_tax"],
         }
 
         overrides = self._stage_overrides_for(opts, "tax")
@@ -2158,13 +2167,13 @@ class ProjectPipeline:
             applied_overrides: dict[str, Any] = {}
             self._patch_remaining_overrides(tax_data, overrides, applied_overrides)
             if applied_overrides:
-                # 구성 항목 수정 시 총액을 재합산해 정합성 유지(총액 직접 지정 시 그 값 우선)
+                # 구성 항목 수정 시 총액을 재합산해 정합성 유지(총액 직접 지정 시 그 값 우선).
                 if "total_tax" not in applied_overrides and any(
                     k in applied_overrides
-                    for k in ("acquisition_tax", "property_tax_annual", "transfer_tax")
+                    for k in ("acquisition_tax_additional", "property_tax_annual", "transfer_tax")
                 ):
                     tax_data["total_tax"] = (
-                        self._as_float(tax_data.get("acquisition_tax"))
+                        self._as_float(tax_data.get("acquisition_tax_additional"))
                         + self._as_float(tax_data.get("property_tax_annual"))
                         + self._as_float(tax_data.get("transfer_tax"))
                     )

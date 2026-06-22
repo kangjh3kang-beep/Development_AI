@@ -176,6 +176,13 @@ interface ComplianceData {
   farCompliant: boolean | null;
   heightCompliant: boolean | null;
   violations: string[];
+  // (Fix #1·감사 HIGH) 법령허브 환류 — 법규단계(/regulation/analyze)가 산출한 정량 한도·근거를
+  // SSOT에 보존(additive·옵셔널). 적합판정 불리언은 설계 산출 후 계산되지만, 한도/근거는 그 이전에도
+  // 보존돼 하류(추천·설계·보고서)가 재호출 없이 읽는다. 백엔드 실응답키(limits/evidence/legal_refs/zone_type) 정합.
+  limits?: Record<string, unknown> | null; // 정량 한도(건폐/용적/높이 등)
+  evidence?: unknown[] | null; // 한도 산출 근거 트레이스(EvidencePanel 구조)
+  legalRefs?: unknown[] | null; // 법령 원문 링크(레지스트리 출력)
+  zoneType?: string | null; // 용도지역
 }
 
 /* ── 필드 단위 provenance(manualFields) 모델 ──
@@ -500,6 +507,19 @@ function hasFeasibilityData(s: ProjectContextState): boolean {
     s.feasibilityData?.totalRevenueWon && s.feasibilityData.totalRevenueWon > 0
   );
 }
+/** 법규(compliance) 실데이터 판정 — 적합판정 불리언/위반 또는 법령허브 산출(정량 한도/근거) 보존 시 true.
+    (Fix #1) 설계 전 단계에서도 백엔드가 정량 한도·근거를 산출하면 법규단계 산출로 인정(환류 단선 해소). */
+function complianceHasData(c: ComplianceData | null | undefined): boolean {
+  if (!c) return false;
+  return (
+    c.bcrCompliant != null ||
+    c.farCompliant != null ||
+    c.heightCompliant != null ||
+    (c.violations?.length ?? 0) > 0 ||
+    (c.limits != null && Object.keys(c.limits).length > 0) ||
+    (c.evidence?.length ?? 0) > 0
+  );
+}
 
 /**
  * 모듈 키별 "실데이터가 준비됐는가" 판정(무목업) — isReadyForFirstCompute 보조.
@@ -524,13 +544,7 @@ function isModuleReady(s: ProjectContextState, key: ModuleKey): boolean {
           (s.esgData.embodiedCarbonKg ?? 0) > 0)
       );
     case "compliance":
-      return !!(
-        s.complianceData &&
-        (s.complianceData.bcrCompliant != null ||
-          s.complianceData.farCompliant != null ||
-          s.complianceData.heightCompliant != null ||
-          (s.complianceData.violations?.length ?? 0) > 0)
-      );
+      return complianceHasData(s.complianceData);
     default:
       return false;
   }
@@ -1287,14 +1301,8 @@ export const useProjectContextStore = create<ProjectContextState>()(
           s.costData?.totalConstructionCostWon &&
           s.costData.totalConstructionCostWon > 0
         );
-        // 법규: 컴플라이언스 데이터(어느 판정이라도 존재)가 채워졌는가.
-        const complianceDone = !!(
-          s.complianceData &&
-          (s.complianceData.bcrCompliant != null ||
-            s.complianceData.farCompliant != null ||
-            s.complianceData.heightCompliant != null ||
-            (s.complianceData.violations?.length ?? 0) > 0)
-        );
+        // 법규: 적합판정 또는 법령허브 산출(한도/근거)이 채워졌는가(Fix #1 — 환류 단선 해소).
+        const complianceDone = complianceHasData(s.complianceData);
         // 금융: finance 단계가 산출(updatedAt stamp)되었는가. 별도 데이터 필드가
         // 없으므로 staleness 타임스탬프를 done 신호로 사용(무목업: 실제 산출 시에만 stamp).
         const financeDone = !!s.updatedAt.finance;
@@ -1334,13 +1342,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
               s.siteAnalysis?.zoneCode
             );
           case "legal":
-            return !!(
-              s.complianceData &&
-              (s.complianceData.bcrCompliant != null ||
-                s.complianceData.farCompliant != null ||
-                s.complianceData.heightCompliant != null ||
-                (s.complianceData.violations?.length ?? 0) > 0)
-            );
+            return complianceHasData(s.complianceData);
           case "design":
           case "bim":
             return !!(s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0);

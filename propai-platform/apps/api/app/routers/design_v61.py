@@ -989,7 +989,7 @@ async def get_bim_glb(project_id: str, req: BimGenerateRequest):
 
 
 async def _load_mass_from_design_version(
-    design_version_id: str, db: AsyncSession
+    design_version_id: str, db: AsyncSession, user: Any = None
 ) -> dict[str, Any] | None:
     """design_versions(UUID) 행에서 저장된 매스를 복원한다(없으면 None).
 
@@ -997,6 +997,11 @@ async def _load_mass_from_design_version(
     _resolve_mass와 동일한 형태(building_width/depth_m, num_floors, floor_height_m)로
     재구성한다. 폭/깊이가 저장돼 있지 않으면(예: cad_2d 편집본) 합리적 기본값으로 보완.
     가짜 데이터 생성 금지 — 조회 실패/무자료 시 None.
+
+    IDOR 차단(감사 HIGH): 행에 tenant 소유권이 분명하면(owner_tenant not None) 요청자(user)의
+    tenant와 일치할 때만 저장 매스를 복원한다. 불일치/무인증이면 '행을 못 본 것'으로 정직 강등(None)
+    → 호출부가 폴백 절차매스로 진행해 타 설계 데이터(design_data_json)가 유출되지 않는다.
+    소유 tenant가 없는 레거시 행(owner_tenant is None)은 기존대로 복원(무파괴).
     """
     import uuid as _uuid
 
@@ -1009,7 +1014,7 @@ async def _load_mass_from_design_version(
     try:
         row = (await db.execute(
             text("""
-                SELECT floor_count, max_height_m, design_data_json
+                SELECT tenant_id, floor_count, max_height_m, design_data_json
                 FROM design_versions
                 WHERE id = :vid LIMIT 1
             """),
@@ -1023,7 +1028,12 @@ async def _load_mass_from_design_version(
     if row is None:
         return None
 
-    floor_count, max_height_m, ddj = row[0], row[1], row[2]
+    owner_tenant, floor_count, max_height_m, ddj = row[0], row[1], row[2], row[3]
+    # 소유권 게이트: 소유 tenant가 분명한데 요청자 불일치/무인증이면 저장 매스를 노출하지 않는다.
+    if owner_tenant is not None and (
+        user is None or str(getattr(user, "tenant_id", "")) != str(owner_tenant)
+    ):
+        return None
     if isinstance(ddj, str):
         try:
             ddj = json.loads(ddj)
@@ -1050,6 +1060,7 @@ async def _load_mass_from_design_version(
 async def get_bim_glb_get(
     design_version_id: str,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user_optional),
     floor_count: int | None = Query(None, ge=1, le=200),
     floor_height_m: float = Query(3.0, gt=2.0),
     building_width_m: float | None = Query(None, gt=0),
@@ -1068,9 +1079,11 @@ async def get_bim_glb_get(
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
     from app.services.bim.ifc_to_gltf_service import IfcToGltfService
 
-    mass = await _load_mass_from_design_version(design_version_id, db)
+    # IDOR 차단: 소유 일치 사용자만 저장 매스를 받고, 무인증/타tenant/행없음은 폴백 절차매스로 강등.
+    mass = await _load_mass_from_design_version(design_version_id, db, user)
+    bim_source = "owned-design-version"
     if mass is None:
-        # UUID 아님/행 없음 → 쿼리·기본 폴백 매스로 정직 절차생성
+        # UUID 아님/행 없음/소유불일치 → 쿼리·기본 폴백 매스로 정직 절차생성(타 설계 데이터 무유출)
         fallback_req = BimGenerateRequest(
             building_width_m=building_width_m,
             building_depth_m=building_depth_m,
@@ -1081,6 +1094,7 @@ async def get_bim_glb_get(
             project_name=project_name,
         )
         mass = _resolve_mass(fallback_req)
+        bim_source = "fallback-procedural"
 
     try:
         ifc_bytes = build_ifc_from_mass(mass, project_name=project_name)
@@ -1098,6 +1112,7 @@ async def get_bim_glb_get(
             "Content-Disposition": f"inline; filename={design_version_id}.glb",
             "ETag": etag,
             "Cache-Control": "public, max-age=300",
+            "X-BIM-Source": bim_source,  # 정직표기: 소유본 복원 vs 폴백 절차매스
         },
     )
 
