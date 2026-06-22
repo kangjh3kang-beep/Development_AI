@@ -5,14 +5,12 @@
 """
 
 import os
-import re
 import sys
-import time
-from datetime import datetime, timezone, UTC
+from datetime import UTC
+
 UTC = UTC
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -820,7 +818,7 @@ class TestOrchestratorHelpers:
 
     @pytest.mark.asyncio
     async def test_execute_step_unknown(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
         orch.db = AsyncMock()
@@ -832,8 +830,9 @@ class TestOrchestratorHelpers:
 
     @pytest.mark.asyncio
     async def test_step_permit(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
         orch.db = AsyncMock()
@@ -867,5 +866,10 @@ class TestOrchestratorHelpers:
         async for event in orch.run(TEST_PROJECT_ID, TEST_TENANT_ID):
             events.append(event)
 
-        # 7단계 × 2이벤트 (running + completed) = 14 이벤트
-        assert len(events) == 14
+        # 7단계 × 2이벤트(running + completed) = 14 + 종료 요약 이벤트(P2-13) 1 = 15
+        assert len(events) == 15
+        # 마지막 이벤트는 pipeline_summary(전체 결과 명시 — 중간 실패 은폐 방지)
+        summary = events[-1]
+        assert summary.event_type == "pipeline_summary"
+        assert summary.data["overall_status"] == "success"
+        assert summary.data["completed_steps"] == 7

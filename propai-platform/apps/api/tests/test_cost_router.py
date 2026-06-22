@@ -2,10 +2,25 @@
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from app.routers.cost import router
+from app.services.auth.auth_service import get_current_user
+
+
+class _User:
+    """get_current_user 의존성 override용 스텁(실 JWT·DB 불요)."""
+
+    id = "00000000-0000-0000-0000-000000000001"
+    tenant_id = "00000000-0000-0000-0000-000000000002"
+    role = "user"
+    is_active = True
+
 
 _app = FastAPI()
 _app.include_router(router)
+# P0-4 보안: cost 라우터는 라우터 레벨 Depends(get_current_user)로 전 라우트 인증 강제.
+# 테스트는 실 JWT·DB 없이 인증된 사용자를 주입(의존성 override)해 라우트 동작을 검증한다.
+_app.dependency_overrides[get_current_user] = lambda: _User()
 client = TestClient(_app)
 
 PROJECT_ID = "test-project-cost"

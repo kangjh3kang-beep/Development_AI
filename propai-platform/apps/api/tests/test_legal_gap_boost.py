@@ -46,8 +46,12 @@ GAP_KEYS = [
 
 # 조문이 확정된(verified 딥링크) 신규 키 → (법령명, 제N조).
 GAP_ARTICLE_CASES = {
-    "condo_ownership": ("집합건물의 소유 및 관리에 관한 법률", "제1조"),
+    # ★머지표 A항(레지스트리 union 머지): condo_ownership 정본키는 제20조(대지사용권의 일체성).
+    #   제1조(건물의 구분소유)는 신규 충돌분리키 condo_definition으로 보존되어 별도 테스트 대상.
+    "condo_ownership": ("집합건물의 소유 및 관리에 관한 법률", "제20조"),
+    "condo_definition": ("집합건물의 소유 및 관리에 관한 법률", "제1조"),
     "condo_section_def": ("집합건물의 소유 및 관리에 관한 법률", "제2조"),
+    # land_use_right는 condo_ownership(제20조 동일 조문) 별칭 → 별칭 해소 검증은 아래 알리아스 테스트로 분리.
     "land_use_right": ("집합건물의 소유 및 관리에 관한 법률", "제20조"),
     "condo_management_body": ("집합건물의 소유 및 관리에 관한 법률", "제23조"),
     "condo_seller_warranty": ("집합건물의 소유 및 관리에 관한 법률", "제9조"),
@@ -128,7 +132,9 @@ class TestWiringLegalRefs:
 
         refs = _condo_legal_refs()
         keys = [r["key"] for r in refs]
-        assert "land_use_right" in keys and "condo_ownership" in keys
+        # 대지사용권(land_use_right)은 머지표 A항 별칭 → 정본키 condo_ownership(집합건물법 제20조)으로 해소된다.
+        # get_legal_refs는 record["key"]에 해소된 정본키를 부착하므로 condo_ownership으로 검증.
+        assert "condo_ownership" in keys and "condo_section_def" in keys
         assert all(r["url_status"] == "verified" for r in refs)
 
     def test_floor_type_refs(self):
@@ -136,7 +142,8 @@ class TestWiringLegalRefs:
 
         refs = _floor_legal_refs()
         keys = [r["key"] for r in refs]
-        assert "land_use_right" in keys and "parking_min" in keys
+        # 대지사용권(land_use_right)은 머지표 A항 별칭 → 정본키 condo_ownership(집합건물법 제20조)으로 해소된다.
+        assert "condo_ownership" in keys and "parking_min" in keys
         assert all(r["url_status"] == "verified" for r in refs)
 
     def test_sales_suggest_refs(self):
@@ -247,10 +254,11 @@ class TestRegulationMonitorBoost:
 
     def test_count_is_real_not_forty(self):
         from app.services.regulation_monitor.regulation_monitor import (
-            MONITORED_LAW_COUNT, MONITORED_LAWS,
+            MONITORED_LAW_COUNT,
+            MONITORED_LAWS,
         )
 
-        assert MONITORED_LAW_COUNT == len(MONITORED_LAWS)
+        assert len(MONITORED_LAWS) == MONITORED_LAW_COUNT
         assert MONITORED_LAW_COUNT != 40  # 과장 '40개' 제거
         assert MONITORED_LAW_COUNT >= 7   # 기존 6개 대비 확장
 
@@ -263,7 +271,8 @@ class TestRegulationMonitorBoost:
     def test_pollable_only_has_real_ids(self):
         """ID 미확보 법령은 폴링 불가(pollable=False) — 가짜 ID 호출 금지(무목업)."""
         from app.services.regulation_monitor.regulation_monitor import (
-            POLLABLE_LAW_COUNT, RegulationMonitorService,
+            POLLABLE_LAW_COUNT,
+            RegulationMonitorService,
         )
 
         ch = RegulationMonitorService().check_for_changes()

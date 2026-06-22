@@ -11,10 +11,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.integrations.molit_client import (
-    _BASE_PATH,
     _RENT_ENDPOINTS,
+    _RTMS_HOST_PATH,
     _TRADE_ENDPOINTS,
     MolitClient,
+    _rtms_path,
 )
 
 
@@ -44,12 +45,21 @@ class TestRentEndpoints:
         assert "apt" in _RENT_ENDPOINTS
 
 
-class TestBasePath:
-    """_BASE_PATH 상수 테스트."""
+class TestRtmsHostPath:
+    """_RTMS_HOST_PATH 상수 및 _rtms_path 경로 변환 테스트.
+
+    구 openapi.molit.go.kr 폐기 후 신 엔드포인트(apis.data.go.kr/1613000)로 이관됨.
+    """
 
     def test_경로_형식(self):
-        assert _BASE_PATH.startswith("/")
-        assert "RTMSOBJSvc" in _BASE_PATH
+        assert _RTMS_HOST_PATH.startswith("/")
+        assert _RTMS_HOST_PATH == "/1613000"
+
+    def test_operation_경로_변환(self):
+        """operation 'getRTMSDataSvcAptTradeDev' → /1613000/{service}/{operation}."""
+        path = _rtms_path("getRTMSDataSvcAptTradeDev")
+        assert path == "/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
+        assert path.startswith(_RTMS_HOST_PATH)
 
 
 class TestExtractItems:
@@ -165,7 +175,8 @@ class TestClientConfig:
         assert MolitClient.service_name == "molit"
 
     def test_base_url(self):
-        assert MolitClient.base_url == "http://openapi.molit.go.kr"
+        # 구 openapi.molit.go.kr 폐기 → 공공데이터포털 신 호스트로 이관.
+        assert MolitClient.base_url == "https://apis.data.go.kr"
 
 
 if __name__ == "__main__":

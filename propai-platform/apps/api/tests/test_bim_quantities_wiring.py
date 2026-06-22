@@ -13,6 +13,7 @@ DB 비의존 — 경량 FastAPI + get_db override(가짜 세션) + 단가 fallba
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,9 +21,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routers.cost import _BIM_WORKCODE_TO_PRICE_KEY, router
+from app.services.auth.auth_service import get_current_user
 from app.services.cost.standard_quantity_estimator import UNIT_PRICES_2026
 from apps.api.database.session import get_db
-from datetime import UTC
 
 TEST_PROJECT_ID = str(uuid.uuid4())
 TEST_TENANT_ID = uuid.uuid4()
@@ -75,7 +76,13 @@ def _make_client(grouped_rows: list[dict]) -> TestClient:
     async def _override_db():
         yield _FakeSession(grouped_rows)
 
+    # P0-4 보안: cost 라우터는 라우터 레벨 Depends(get_current_user) 로 유효 JWT 강제.
+    # 이 테스트는 origin-cost 원가 로직(단가 결합·정직성)을 검증하므로 인증은 가짜 사용자로 우회.
+    async def _override_current_user():
+        return MagicMock(tenant_id=TEST_TENANT_ID, id=uuid.uuid4())
+
     app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = _override_current_user
     return TestClient(app)
 
 
@@ -159,7 +166,7 @@ class TestParseIfcElements:
 
 
 def _mock_db_with_refresh():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     mock_db = AsyncMock()
     mock_db.add = MagicMock()

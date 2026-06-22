@@ -7,8 +7,8 @@ projects router, webhooks 등 남은 대형 갭을 커버한다.
 
 import os
 import sys
-import time
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -187,10 +187,14 @@ class TestOrchestratorSteps:
             async for event in orch.run(TEST_PROJECT_ID, TEST_TENANT_ID):
                 events.append(event)
 
-            # 7단계 × 2이벤트(start + error) = 14
-            assert len(events) == 14
+            # 7단계 × 2이벤트(start + error) + 종료 요약(pipeline_summary) 1 = 15
+            assert len(events) == 15
             error_events = [e for e in events if e.status == "error"]
             assert len(error_events) == 7
+            # 마지막 종료 요약 이벤트는 partial로 정직 보고
+            summary = events[-1]
+            assert summary.event_type == "pipeline_summary"
+            assert summary.data["overall_status"] == "partial"
 
     @pytest.mark.asyncio
     async def test_run_all_steps_success(self):
@@ -204,10 +208,15 @@ class TestOrchestratorSteps:
             async for event in orch.run(TEST_PROJECT_ID, TEST_TENANT_ID):
                 events.append(event)
 
-            # 7단계 × 2이벤트(start + completed) = 14
-            assert len(events) == 14
+            # 7단계 × 2이벤트(start + completed) + 종료 요약(pipeline_summary) 1 = 15
+            assert len(events) == 15
+            # 단계 완료 이벤트 7 + 종료 요약 이벤트 1 = status "completed" 8건
             completed = [e for e in events if e.status == "completed"]
-            assert len(completed) == 7
+            assert len(completed) == 8
+            # 마지막 종료 요약 이벤트는 success로 정직 보고
+            summary = events[-1]
+            assert summary.event_type == "pipeline_summary"
+            assert summary.data["overall_status"] == "success"
 
     def test_determine_investment_grade_전체_경우(self):
         from apps.api.agents.propai_orchestrator import PropAIOrchestrator

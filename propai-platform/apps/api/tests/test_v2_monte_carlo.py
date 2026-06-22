@@ -112,6 +112,7 @@ class TestMonteCarloRealFeasibility:
     def test_construction_cost_up_reduces_profit_exactly(self):
         base_out = _base_output()
         constr = float(base_out.total_construction_cost_won)
+        delta_constr = constr * 0.30
         resp = client.post("/api/v2/feasibility/monte-carlo", json={
             "base": BASE_INPUT,
             "variables": [{
@@ -123,10 +124,29 @@ class TestMonteCarloRealFeasibility:
             "seed": 42,
         })
         assert resp.status_code == 200
-        # 공사비는 수입·세금·금융비와 독립(M06) → +30% 섭동 시 순이익이 정확히
-        # 공사비 증가분만큼 감소(override 정수 절사 1원 이내 오차 허용)
-        expected = float(base_out.net_profit_won) - constr * 0.30
-        assert resp.json()["mean"] == pytest.approx(expected, abs=2.0)
+        # 공사비 +30% 섭동 시 순이익은 정확히 도출 가능한 만큼 감소한다.
+        # GenericModule(M06)의 P0-2 자동추정 로직상 금융비·소프트비(other)가
+        # base_cost(토지+공사)에 비례하므로, 공사비 증가는 다음 3개 항을 통해
+        # 순이익을 끌어내린다(세금·수입은 공사비와 독립):
+        #   ① 공사비 증가분           = delta_constr
+        #   ② 소프트비 7% 증가분       = 0.07 × delta_constr
+        #   ③ PF금융비 증가분         = LTV70% × PF금리5.5% × (사업기간/12) × delta_constr
+        # base에서 금융비·소프트비가 자동추정(미입력)으로 산정된 경우에만 ②③가 적용된다.
+        months = float(BASE_INPUT.get("project_months", 48))
+        soft_factor = 0.07
+        finance_factor = 0.70 * 0.055 * (months / 12.0)
+        auto_estimated = (
+            base_out.cost_detail is not None
+            and float(base_out.total_other_cost_won) > 0
+        )
+        if auto_estimated:
+            expected = float(base_out.net_profit_won) - delta_constr * (
+                1.0 + soft_factor + finance_factor
+            )
+        else:
+            expected = float(base_out.net_profit_won) - delta_constr
+        # 정수 절사·반올림 누적 오차 허용(원 단위 round 3개소 → 수원 이내)
+        assert resp.json()["mean"] == pytest.approx(expected, abs=10.0)
 
     def test_unknown_variable_422(self):
         resp = client.post("/api/v2/feasibility/monte-carlo", json={

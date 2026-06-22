@@ -11,9 +11,12 @@ from apps.api.routers.specialist_agents import router
 
 
 class _FakeUser:
-    def __init__(self, tenant_id="tenant-x"):
+    # role은 RBAC가 활성(casbin 가용)인 CI에서 domain_agents:write 권한을 가진 역할로 둔다.
+    # RBAC 거부/허용 자체를 검증하는 테스트는 _rbac_check를 직접 monkeypatch한다.
+    def __init__(self, tenant_id="tenant-x", role="admin"):
         self.user_id = "u1"
         self.tenant_id = tenant_id
+        self.role = role
 
 
 def _app() -> FastAPI:
@@ -75,8 +78,8 @@ def test_dispatch_rbac_denied_returns_403(monkeypatch):
 
 
 def test_dispatch_rbac_allowed_passes(monkeypatch):
-    from apps.api.routers import specialist_agents as mod
     from apps.api.core.coordinator import AgentCoordinator
+    from apps.api.routers import specialist_agents as mod
     monkeypatch.setattr(mod, "_rbac_check", lambda role, res, act: True)
 
     async def fake(self, domain, data, **ctx):

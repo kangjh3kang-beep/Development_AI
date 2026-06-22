@@ -7,14 +7,13 @@ test_collaboration_deps에서 별도 검증됨.
 
 import uuid
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.routers.v2_collaboration as v2mod
 import app.services.collaboration.collaboration_repo as repo
 from app.core.database import get_db
-from app.routers.v2_collaboration import router, _require_member, _require_reviewer
+from app.routers.v2_collaboration import _require_member, _require_reviewer, router
 from app.services.auth.auth_service import get_current_user
 
 OID = uuid.uuid4()
@@ -86,8 +85,11 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
         doc.reviewed_at = now
         return doc
 
-    async def _fake_audit(db, *, filename, data):
+    async def _fake_audit(db, *, filename, data, project_id=None, tenant_id=None,
+                          created_by=None, **_):
         # SP3-4 8엔진 투입을 결정론 fake로 대체(실 orchestrator/ezdxf 불필요).
+        # Phase 0 unit d: 라우터가 원장 backlink 컨텍스트(project_id/tenant_id/created_by)를
+        # thread-through 하므로 fake도 해당 kwargs를 수용.
         return ("completed", {"verdict": "적합", "findings_count": 1,
                               "engines_run": 1, "engines_skipped": 7})
 
