@@ -202,6 +202,13 @@ async def test_generate_rejects_bad_numeric_inputs(monkeypatch):
     with pytest.raises(HTTPException) as e3:
         await dg.generate(dg.GenerateRequest(area_sqm=1000.0, avg_unit_area_sqm=0), user, db)
     assert e3.value.status_code == 422
+    # 부지 폭/깊이 음수 → 422(PG3)
+    with pytest.raises(HTTPException) as e4:
+        await dg.generate(dg.GenerateRequest(area_sqm=1000.0, width_m=-5), user, db)
+    assert e4.value.status_code == 422
+    with pytest.raises(HTTPException) as e5:
+        await dg.generate(dg.GenerateRequest(area_sqm=1000.0, depth_m=0), user, db)
+    assert e5.value.status_code == 422
 
 
 async def test_generate_rejects_nan_area(monkeypatch):
@@ -211,6 +218,12 @@ async def test_generate_rejects_nan_area(monkeypatch):
         with pytest.raises(HTTPException) as ei:
             await dg.generate(dg.GenerateRequest(area_sqm=bad), _user(), _FakeDB(None))
         assert ei.value.status_code == 422
+    # width/depth NaN·inf도 거부(PG3)
+    for fld in ("width_m", "depth_m"):
+        with pytest.raises(HTTPException) as ej:
+            await dg.generate(dg.GenerateRequest(area_sqm=1000.0, **{fld: float("inf")}),
+                              _user(), _FakeDB(None))
+        assert ej.value.status_code == 422
 
 
 async def test_search_clamps_tolerance(monkeypatch):

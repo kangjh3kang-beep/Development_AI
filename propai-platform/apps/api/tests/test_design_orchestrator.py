@@ -70,6 +70,18 @@ def test_generate_pass_with_recommendation(monkeypatch):
     )
 
 
+def test_generate_threads_site_dims_to_placement(monkeypatch):
+    # ★PG3: 부지 실치수(width/depth)가 orchestrator→site_context→compute_placement까지 전달돼
+    #   배치 폴리곤이 정사각 폴백이 아닌 실치수를 사용
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        width_m=40.0, depth_m=25.0)
+    out = asyncio.run(generate_design_proposals(req))
+    pl = out["proposals"][0]["candidate"]["placement"]
+    assert pl is not None and pl["site"] == {"w": 40.0, "d": 25.0}  # 실치수 사용(정사각 아님)
+
+
 def test_generate_verify_gated_and_attached(monkeypatch):
     # ★선택형 검증 — verify=True면 추천안에 VerifierService 결과 부착, 기본(False)이면 미실행
     _patch_search(monkeypatch, [_fp_match()])

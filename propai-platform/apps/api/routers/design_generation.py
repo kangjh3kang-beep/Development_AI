@@ -97,6 +97,8 @@ class GenerateRequest(BaseModel):
     building_use: str | None = None          # 건축 용도(미지정 시 엔진 기본)
     ordinance_far_pct: float | None = None   # 조례 용적률(실효, 있으면 우선)
     ordinance_bcr_pct: float | None = None   # 조례 건폐율(실효, 있으면 우선)
+    width_m: float | None = None             # 부지 폭(m) — 건물 배치 폴리곤 정확화(선택)
+    depth_m: float | None = None             # 부지 깊이(m) — 선택
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
@@ -287,6 +289,9 @@ async def generate(
         raise HTTPException(status_code=422, detail="용적률(%) 값이 올바르지 않습니다.")
     if not math.isfinite(req.avg_unit_area_sqm) or req.avg_unit_area_sqm <= 0:
         raise HTTPException(status_code=422, detail="평균 평형(㎡) 값이 올바르지 않습니다.")
+    for _label, _v in (("부지 폭", req.width_m), ("부지 깊이", req.depth_m)):
+        if _v is not None and (not math.isfinite(_v) or _v <= 0 or _v > 100_000):
+            raise HTTPException(status_code=422, detail=f"{_label}(m) 값이 올바르지 않습니다.")
     await _verify_project_ownership(db, req.project_id, current.tenant_id)
 
     kwargs: dict[str, Any] = {
@@ -297,6 +302,8 @@ async def generate(
         "dev_type": req.dev_type,
         "ordinance_far_pct": req.ordinance_far_pct,
         "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        "width_m": req.width_m,
+        "depth_m": req.depth_m,
         "avg_unit_area_sqm": req.avg_unit_area_sqm,
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제

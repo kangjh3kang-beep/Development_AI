@@ -51,6 +51,8 @@ class DesignRequest:
     building_use: str = "공동주택"       # 검색 질의/도면 적합도용
     ordinance_far_pct: float | None = None
     ordinance_bcr_pct: float | None = None
+    width_m: float | None = None         # 부지 폭(m) — 건물 배치 폴리곤 정확화(미상 시 √면적 정사각)
+    depth_m: float | None = None         # 부지 깊이(m)
     avg_unit_area_sqm: float = 84.0
     tenant_id: str | None = None
     project_id: str | None = None
@@ -288,6 +290,8 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         req.area_sqm,
         ordinance_far_pct=req.ordinance_far_pct,
         ordinance_bcr_pct=req.ordinance_bcr_pct,
+        width_m=req.width_m,                  # 부지 실치수 → 건물 배치 폴리곤 정확화
+        depth_m=req.depth_m,
         avg_unit_area_sqm=req.avg_unit_area_sqm,
         building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
     )

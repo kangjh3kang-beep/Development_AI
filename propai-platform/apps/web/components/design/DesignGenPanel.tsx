@@ -395,6 +395,8 @@ export function DesignGenPanel({ projectId }: Props) {
   const [sigungu, setSigungu] = useState<string>("");
   const [buildingUse, setBuildingUse] = useState<string>("공동주택");
   const [avgUnit, setAvgUnit] = useState<number>(84);
+  const [siteW, setSiteW] = useState<number>(0);   // 부지 폭(m·선택) — 건물 배치 정확화
+  const [siteD, setSiteD] = useState<number>(0);   // 부지 깊이(m·선택)
   const [topN, setTopN] = useState<number>(3);
   const [verifyOpt, setVerifyOpt] = useState<boolean>(false);  // AI 검증 포함(선택형)
   const [interpretOpt, setInterpretOpt] = useState<boolean>(false);  // AI 설계 해석 포함(선택형)
@@ -531,6 +533,8 @@ export function DesignGenPanel({ projectId }: Props) {
           zone_name: zoneName || null,
           sigungu: sigungu || null,
           building_use: buildingUse || null,
+          width_m: siteW > 0 ? siteW : null,   // 선택 — 입력 시 건물 배치 폴리곤 정확화
+          depth_m: siteD > 0 ? siteD : null,
           avg_unit_area_sqm: avgUnit,
           top_n: topN,
           project_id: projectId || null,
@@ -699,6 +703,14 @@ export function DesignGenPanel({ projectId }: Props) {
           <label className="text-xs font-semibold text-[var(--text-secondary)]">
             평균 평형(㎡)
             <NumberInput value={avgUnit} onChange={(v) => setAvgUnit(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            부지 폭(m)<span className="font-normal text-[var(--text-hint)]"> 선택</span>
+            <NumberInput value={siteW} onChange={(v) => setSiteW(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            부지 깊이(m)<span className="font-normal text-[var(--text-hint)]"> 선택</span>
+            <NumberInput value={siteD} onChange={(v) => setSiteD(Math.max(0, v ?? 0))} allowDecimal />
           </label>
           <label className="text-xs font-semibold text-[var(--text-secondary)]">
             설계안 개수

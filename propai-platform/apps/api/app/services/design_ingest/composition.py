@@ -322,6 +322,12 @@ def compute_placement(site: SiteContext) -> dict | None:
     notes: list[str] = []
     if site.width_m and site.depth_m and site.width_m > 0 and site.depth_m > 0:
         site_w, site_d = round(site.width_m, 1), round(site.depth_m, 1)
+        # 입력 치수(폭×깊이)와 대지면적이 크게 어긋나면 정직 고지(경고 오귀속 방지).
+        if abs(site_w * site_d - area) / area > 0.15:
+            notes.append(
+                f"입력 부지치수(폭×깊이={round(site_w * site_d)}㎡)와 "
+                f"대지면적({round(area)}㎡) 불일치 — 치수 확인 필요"
+            )
     else:
         side = round(math.sqrt(area), 1)
         site_w = site_d = side
