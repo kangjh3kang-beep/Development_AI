@@ -34,6 +34,41 @@ def _emit_growth_verdict(analysis_type: str, verdict: str) -> None:
         pass
 
 
+def _emit_growth_issues(analysis_type: str, issues: list[dict[str, Any]]) -> None:
+    """검출된 검증 이슈의 '유형'을 자가성장 엔진에 기억(어떤 오류가 어디서 반복되는지).
+
+    verdict(pass/warn/fail)만 기억하던 것을 넘어, 반복되는 오류 '유형'을 축적해
+    재발방지 학습(군집·개선)의 데이터원을 만든다(verify_issue 이벤트). best-effort·
+    논블로킹·로직불변 — 어떤 예외도 검증 반환/판정에 영향 없음.
+    ★PII 방지: 값이 담긴 자유서술 claim은 적재하지 않고, 유형(type)·심각도(severity)만 기억.
+    """
+    if not issues:
+        return
+    try:
+        from app.services.growth import capture_service
+
+        types = [str(i.get("type") or "기타") for i in issues if isinstance(i, dict)]
+        sevs = [str(i.get("severity") or "low") for i in issues if isinstance(i, dict)]
+        if not types:
+            return
+        count = len(types)
+        # 페이로드 비대화 방어 — 군집엔 상위 50개 유형 분포면 충분(count는 원본 유지).
+        types, sevs = types[:50], sevs[:50]
+        # 심각도 집계(critical>high>medium>low) — 현재 검증기는 high/medium/low만 쓰나 향후 대비.
+        top_sev = next((s for s in ("critical", "high", "medium") if s in sevs), "low")
+        capture_service.record_event("verify_issue", {
+            "surface": "api", "service": analysis_type, "severity": top_sev,
+            "payload": {
+                "analysis_type": analysis_type,
+                "issue_types": types,      # 유형만(예: '수치불일치') — claim 제외(PII 방지)
+                "severities": sevs,
+                "issue_count": count,
+            },
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _SYSTEM = """\
 당신은 부동산개발 분석의 '검증관'입니다. 아래 [분석 출력]이 [원본 데이터]에 실제로
 근거하는지 엄격히 검증합니다. 다음을 탐지하세요:
@@ -130,8 +165,9 @@ class VerifierService:
         out = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
 
         try:
-            from app.services.ai.llm_provider import get_llm
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.llm_provider import get_llm
 
             _now = datetime.now()
             user = _TMPL.format(
@@ -156,6 +192,7 @@ class VerifierService:
             elif "medium" in sev and verdict == "pass":
                 verdict = "warn"
             _emit_growth_verdict(analysis_type, verdict)  # 성장엔진 품질신호(best-effort)
+            _emit_growth_issues(analysis_type, issues)    # 오류 유형 기억(재발방지 데이터원)
             return {
                 "generated": True,
                 "verdict": verdict,
@@ -169,6 +206,7 @@ class VerifierService:
             logger.warning("검증 LLM 실패, 규칙기반 폴백", err=str(e)[:100])
             _fb_verdict = "fail" if any(i["severity"] == "high" for i in pre) else ("warn" if pre else "pass")
             _emit_growth_verdict(analysis_type, _fb_verdict)  # 성장엔진 품질신호(best-effort)
+            _emit_growth_issues(analysis_type, pre)          # 오류 유형 기억(폴백 경로도)
             return {
                 "generated": False,
                 "verdict": _fb_verdict,
