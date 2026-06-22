@@ -35,6 +35,7 @@ import { ProfileManager } from "./ProfileManager";
 import { PersonaPanel } from "./PersonaPanel";
 import { nodesToOptions } from "@/lib/orchestration/selector-adapter";
 import { computeClosure } from "@/lib/orchestration/dependency-graph";
+import { buildRunAllSelection } from "@/lib/orchestration/run-all-selection";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type { AnalysisNode, NodeId, SsotInputSpec } from "@/lib/orchestration/types";
 import { useNodeRunner } from "@/hooks/useNodeRunner";
@@ -110,6 +111,11 @@ export interface OrchestratorPanelProps {
    * (MarketInsights 등 projectId 없는 소비처는 기존 4모드만 그대로 — 무회귀).
    */
   projectId?: string;
+  /**
+   * (U5) 단순화 뷰: 첫 화면에 「전체 분석 한 번에」 큰 버튼 1개를 보이고, 4모드·페르소나·항목 선택은
+   * 「고급 옵션」 접기로 이동(무삭제·무회귀). 미전달(기본 false) 소비처는 기존 레이아웃 그대로.
+   */
+  simplified?: boolean;
 }
 
 export function OrchestratorPanel({
@@ -119,6 +125,7 @@ export function OrchestratorPanel({
   title = "분석 항목 선택",
   subtitle = "필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다.",
   projectId,
+  simplified = false,
 }: OrchestratorPanelProps) {
   const runMode = useOrchestrationStore((s) => s.runMode);
   const picked = useOrchestrationStore((s) => s.picked);
@@ -281,6 +288,17 @@ export function OrchestratorPanel({
     void executePlan(steps, true); // 2클릭: 신선분 포함 강제 실행
   }, [runMode, forcePreview, buildPlan, executePlan]);
 
+  // (U5) 「전체 분석 한 번에」 — 단순화 뷰의 1클릭 기본 실행. scope 전체 노드를 선택(상류 의존은
+  // buildPlan 폐포가 자동 포함)하고 selective로 실행한다. force=false라 이미 신선한 항목은 스킵(재과금 회피),
+  // 처음 실행 땐 전부 대상. 비용 동의는 runDisabled(코인 게이트)·모듈요율(기본 0=무료)로 상위가 이미 통제.
+  const onRunAll = useCallback(() => {
+    setForcePreview(false);
+    if (runMode !== "selective") setRunMode("selective");
+    setPicked(buildRunAllSelection(scopeNodes));
+    const steps = buildPlan("selective");
+    void executePlan(steps, false);
+  }, [runMode, scopeNodes, setRunMode, setPicked, buildPlan, executePlan]);
+
   // 별도 모드: 노드 단건 실행 요청 → 입력 해소 모달.
   const requestStandalone = useCallback((id: NodeId) => {
     setResolveTarget(id);
@@ -334,6 +352,47 @@ export function OrchestratorPanel({
 
   return (
     <section className="grid gap-4">
+      {/* (U5) 단순화 뷰: 「전체 분석 한 번에」 큰 버튼 1개 — 상류 의존 포함 단계순 자동 실행. */}
+      {simplified && (
+        <div className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
+          <p className="text-sm font-bold text-[var(--text-primary)]">{title}</p>
+          {subtitle && (
+            <p className="mt-1 mb-3 text-xs text-[var(--text-secondary)]">{subtitle}</p>
+          )}
+          <button
+            type="button"
+            onClick={onRunAll}
+            disabled={runDisabled}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent-strong)] px-6 py-4 text-base font-black text-white shadow-[var(--shadow-glow)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            전체 분석 한 번에
+          </button>
+          <p className="mt-2 text-[10px] text-[var(--text-hint)]">
+            상류 의존을 포함해 단계 순서로 자동 실행합니다. 세부 조정은 아래 「고급 옵션」에서.
+          </p>
+        </div>
+      )}
+
+      {/* (U5) 고급 옵션 접기 — 단순화 뷰에서만 접힘. 비단순화 소비처는 display:contents+open으로
+          기존 레이아웃 byte-identical(무회귀). summary는 단순화 뷰에서만 노출. */}
+      <details
+        {...(simplified ? {} : { open: true })}
+        className={
+          simplified
+            ? "rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)]"
+            : "contents"
+        }
+      >
+        <summary
+          className={
+            simplified
+              ? "cursor-pointer select-none px-4 py-3 text-sm font-bold text-[var(--text-secondary)]"
+              : "hidden"
+          }
+        >
+          고급 옵션 — 단계별·전문가별·분석 항목 선택
+        </summary>
+        <div className={simplified ? "grid gap-4 p-4 pt-0" : "contents"}>
       {/* 5번째 표면 전환 — DAG 분석 ↔ 전문가 페르소나(projectId 있을 때만 노출). RunModeSwitcher는 불변. */}
       {personaEnabled && (
         <div
@@ -446,13 +505,22 @@ export function OrchestratorPanel({
         </div>
       )}
 
-      {/* 실행 진행 — 모든 모드 공통(plan + nodeResult). 단건 재실행은 별도 모달 경유. */}
-      <RunProgressTimeline
-        plan={plan}
-        nodeResult={nodeResult}
-        onRunNode={requestStandalone}
-        runDisabled={runDisabled}
-      />
+        </>
+      )}
+        </div>
+      </details>
+
+      {/* 실행 진행 — 모든 모드 공통(plan + nodeResult). 단건 재실행은 별도 모달 경유.
+          (U5) 고급 접기 밖에 두어 단순화 뷰에서도 「전체 분석 한 번에」 진행이 항상 보이게 한다.
+          페르소나 뷰에서는 기존과 동일하게 숨김(!showPersona 게이트 유지·무회귀). */}
+      {!showPersona && (
+        <RunProgressTimeline
+          plan={plan}
+          nodeResult={nodeResult}
+          onRunNode={requestStandalone}
+          runDisabled={runDisabled}
+        />
+      )}
 
       {/* 별도 모드 입력 해소 모달 */}
       {resolveTarget && (
@@ -464,8 +532,6 @@ export function OrchestratorPanel({
           onAutoRunUpstream={onAutoRunUpstream}
           onManualSubmit={onManualSubmit}
         />
-      )}
-        </>
       )}
     </section>
   );
