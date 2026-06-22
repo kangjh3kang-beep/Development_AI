@@ -99,6 +99,7 @@ export function PwaRuntimeProvider({ children }: PropsWithChildren) {
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const installPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const updateRequestedRef = useRef(false);
+  const controllerReloadedRef = useRef(false);
 
   useEffect(() => {
     if (!hasServiceWorkerSupport()) {
@@ -107,6 +108,9 @@ export function PwaRuntimeProvider({ children }: PropsWithChildren) {
 
     let cancelled = false;
     let updateFoundHandler: (() => void) | null = null;
+    // 등록 시점에 이미 제어 중인 SW가 있었는가(=재방문자). 첫 방문의 최초 clients.claim에
+    // 의한 controllerchange는 이미 최신이라 새로고침이 불필요하므로 구분한다.
+    const hadControllerAtStart = !!navigator.serviceWorker.controller;
 
     const syncRegistrationState = (registration: ServiceWorkerRegistration) => {
       registrationRef.current = registration;
@@ -138,6 +142,9 @@ export function PwaRuntimeProvider({ children }: PropsWithChildren) {
       try {
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
+          // ★sw.js 업데이트 체크 시 HTTP 캐시를 우회한다. 이게 없으면 브라우저가 CDN의
+          //   max-age(과거 4h) 동안 새 sw.js를 다시 받지 않아, 새 버전 배포가 감지조차 안 된다.
+          updateViaCache: "none",
         });
 
         if (cancelled) {
@@ -158,10 +165,17 @@ export function PwaRuntimeProvider({ children }: PropsWithChildren) {
     };
 
     const handleControllerChange = () => {
-      if (!updateRequestedRef.current) {
+      if (controllerReloadedRef.current) {
+        return; // 무한 새로고침 방지(페이지 로드당 1회만)
+      }
+      // 새 서비스워커가 제어를 넘겨받음(skipWaiting 활성). 재방문자이거나 사용자가 직접
+      // 업데이트를 요청한 경우, 최신 프론트 즉시 반영을 위해 1회 새로고침한다.
+      // 첫 방문(기존 컨트롤러 없음)의 최초 claim은 이미 최신이라 새로고침하지 않는다.
+      // ★이게 없으면 새 sw가 활성화돼도 페이지가 구버전 코드를 계속 실행한다(수동 새로고침 전까지).
+      if (!hadControllerAtStart && !updateRequestedRef.current) {
         return;
       }
-
+      controllerReloadedRef.current = true;
       window.location.reload();
     };
 
