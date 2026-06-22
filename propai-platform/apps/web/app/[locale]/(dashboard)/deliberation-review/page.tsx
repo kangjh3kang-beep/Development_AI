@@ -1,6 +1,7 @@
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { DeliberationConsole } from "@/components/deliberation/DeliberationConsole";
+import { DeliberationResultPanel } from "@/components/analysis/DeliberationResultPanel";
 
 /**
  * AI 심의분석 엔진 — 차세대 비전 페이지.
@@ -87,7 +88,10 @@ export default async function DeliberationReviewPage({
         </p>
       </section>
 
-      {/* 라이브 콘솔 — 심의분석 엔진(propai-review) /analyze 배선 */}
+      {/* 심의분석 결과(BFF) — 플랫폼 인증 경유 /api/v1/deliberation/analyze 풀통합(graceful degrade) */}
+      <DeliberationResultPanel />
+
+      {/* 라이브 콘솔 — 심의분석 엔진(propai-review) /analyze 직접배선(개발자용 원시입력) */}
       <DeliberationConsole />
     </div>
   );

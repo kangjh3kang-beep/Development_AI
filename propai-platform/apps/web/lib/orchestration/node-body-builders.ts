@@ -308,9 +308,57 @@ export function buildNodeBody(
       break;
     }
 
-    case "audit":
+    case "audit": {
+      // 심의분석(POST /api/v1/deliberation/analyze) — BFF AnalyzeRequest = {payload, project_id?}.
+      // payload는 엔진 AnalysisInput으로 정규화된다(_engine_contract.build_input_dump).
+      // ★백엔드 _run_design_review(project_pipeline.py)의 엔진 입력 매핑과 동일하게 구성한다:
+      //   - pnu: 19자리 숫자만(아니면 빈 문자열 — prevalidate가 19자리 아닌 비빈값을 거부).
+      //   - address: 부지분석 주소(주소 기반 진입 허용).
+      //   - calc_targets: building_area / gross_floor_area 산출 대상.
+      //   - rules: BCR/FAR 한도 비교 규칙. ★rule_id는 반드시 rule 객체 안에 둔다
+      //     (prevalidate가 rules[i].rule.rule_id 필수 — 평면 rule_id면 rule_missing으로 거부).
+      // 무목업: 입력 미확보 시 빈 payload가 아니라 "채울 수 있는 필드만" 넣는다(measured/limit는 양수일 때만).
+      // measured는 설계(designData.bcr·far) 실값, limit는 부지 실효 한도(effectiveBcrPct·effectiveFarPct,
+      // 미확보 시 법정 nationalBcrPct·nationalFarPct 폴백) — 백엔드 site.max_bcr/max_far(실효)와 동일 의미.
+      const payload: Record<string, unknown> = {};
+      // pnu: 19자리 숫자만 — 아니면 생략(주소 기반 진입). prevalidate 계약 일치.
+      if (pnu && /^\d{19}$/.test(pnu)) payload.pnu = pnu;
+      if (address) payload.address = address;
+      payload.calc_targets = [
+        { target: "building_area" },
+        { target: "gross_floor_area" },
+      ];
+      // BCR/FAR 한도 비교 규칙 — measured(설계 실값)·limit(부지 한도)가 모두 양수일 때만 동반 주입(무목업).
+      const rules: Record<string, unknown>[] = [];
+      const measuredBcr = positiveNum(design?.bcr);
+      const limitBcr =
+        positiveNum(site?.effectiveBcrPct) ?? positiveNum(site?.nationalBcrPct);
+      if (measuredBcr != null && limitBcr != null) {
+        rules.push({
+          rule: { rule_id: "BCR_LIMIT", comparator: "<=" },
+          measured: measuredBcr,
+          limit: limitBcr,
+        });
+      }
+      const measuredFar = positiveNum(design?.far);
+      const limitFar =
+        positiveNum(site?.effectiveFarPct) ?? positiveNum(site?.nationalFarPct);
+      if (measuredFar != null && limitFar != null) {
+        rules.push({
+          rule: { rule_id: "FAR_LIMIT", comparator: "<=" },
+          measured: measuredFar,
+          limit: limitFar,
+        });
+      }
+      if (rules.length >= 1) payload.rules = rules;
+      // BFF는 graceful — 입력이 비어도 degraded로 정직 처리하므로 missing 강제 안 함(needs-input 게이트 불요).
+      body.payload = payload;
+      if (projectId) body.project_id = projectId;
+      break;
+    }
+
     default: {
-      // audit는 available:false라 호출 경로에 도달하지 않는다(호출측 가드). body 미구성.
+      // 정의되지 않은 노드는 body 미구성(호출측 가드).
       break;
     }
   }

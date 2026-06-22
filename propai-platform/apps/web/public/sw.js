@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v293-p1-poi-links";
+const CACHE_NAME = "propai-v294-deliberation-bff";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

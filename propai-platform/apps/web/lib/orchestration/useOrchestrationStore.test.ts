@@ -115,13 +115,18 @@ describe("buildPlan — 폐포 + 위상정렬 + 신선분 스킵 + 과금표시"
     expect(steps.length).toBe(0);
   });
 
-  it("available:false(audit) 노드는 시드해도 skipped-unavailable(0 강제 금지)", () => {
+  it("available:true(audit·심의엔진 BFF 풀통합) 노드는 시드 시 실행대상(빈 데이터·미신선이라 스킵 아님)", () => {
+    // ★새 계약: audit은 심의분석엔진 BFF 풀통합으로 available:true(실행대상)다.
+    // buildPlan은 미가용(unavailable) 스킵 분기를 더는 타지 않는다. moduleKey=null·미신선이라
+    // 신선스킵도 아니므로 실행대상(skipped:false)이 된다. 입력 미확보 시의 needs-input 게이팅은
+    // 런타임(resolveInputs)이 담당하며, BFF가 graceful degrade를 보장하므로 빈 입력도 안전하다.
     useOrchestrationStore.getState().setPicked({ audit: true });
     const steps = useOrchestrationStore.getState().buildPlan("selective");
     const audit = steps.find((s) => s.node === "audit")!;
-    expect(audit.skipped).toBe(true);
-    expect(audit.skipReason).toBe("unavailable");
-    expect(audit.chargeable).toBe(false);
+    expect(audit).toBeDefined();
+    expect(audit.skipped).toBe(false);
+    expect(audit.skipReason).toBeUndefined();
+    expect(audit.chargeable).toBe(true); // stage:audit billingKey
   });
 
   it("과금표시: 실행 대상이고 billingKey 있으면 chargeable=true", () => {

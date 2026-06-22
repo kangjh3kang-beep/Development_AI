@@ -89,6 +89,15 @@ class Settings(BaseSettings):
         description="Supabase pgBouncer 사용 시 True (prepared statements 비활성화)",
     )
 
+    # ── 심의/설계도면 자동분석 엔진(별도 서비스) BFF ──
+    # 엔진은 같은 모노레포 services/deliberation-review에 있지만 패키지명 `app` 충돌로
+    # 직접 import 불가 → BFF가 서버사이드 HTTP로 호출한다.
+    # ★URL 미설정(기본 "")이면 BFF는 절대 엔진을 부르지 않고 graceful degraded 응답만 낸다.
+    deliberation_engine_url: str = ""              # 예: http://127.0.0.1:8100 (빈 값=비활성·degraded)
+    deliberation_engine_api_token: str = ""        # 엔진 Bearer 토큰(엔진 인증 활성화 시)
+    deliberation_engine_connect_timeout_s: float = 5.0   # 연결 타임아웃(초)
+    deliberation_engine_read_timeout_s: float = 30.0     # 응답 읽기 타임아웃(초·결정론 입력)
+
     # ── Supabase ──
     supabase_url: str = Field(default="", description="Supabase 프로젝트 URL (예: https://xxx.supabase.co)")
     supabase_anon_key: str = Field(default="", description="Supabase 익명 키 (클라이언트용)")

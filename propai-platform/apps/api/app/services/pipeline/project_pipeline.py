@@ -22,6 +22,9 @@ logger = structlog.get_logger(__name__)
 class PipelineStage(StrEnum):
     SITE_ANALYSIS = "site_analysis"
     DESIGN = "design"
+    # 심의/설계도면 자동분석(별도 엔진 BFF). design→design_review→cost 의존.
+    # ★엔진 미연결 시 SKIPPED로 처리해 파이프라인 전체를 깨지 않는다(graceful).
+    DESIGN_REVIEW = "design_review"
     COST = "cost"
     FEASIBILITY = "feasibility"
     TAX = "tax"
@@ -185,6 +188,8 @@ class ProjectPipeline:
                     await self._run_site_analysis(state, opts)
                 elif stage == PipelineStage.DESIGN:
                     await self._run_design(state, opts)
+                elif stage == PipelineStage.DESIGN_REVIEW:
+                    await self._run_design_review(state, opts)
                 elif stage == PipelineStage.COST:
                     await self._run_cost(state, opts)
                 elif stage == PipelineStage.FEASIBILITY:
@@ -196,8 +201,13 @@ class ProjectPipeline:
                 elif stage == PipelineStage.REPORT:
                     await self._run_report(state, opts)
 
-                stage_result.status = PipelineStatus.COMPLETED
-                await self._verify_stage(state, stage)   # P5: 단계 산출 검증(additive)
+                # 단계함수가 이미 설정한 status를 존중한다. design_review처럼 엔진 미연결 시
+                # SKIPPED(또는 FAILED)로 바꾼 경우 그 상태를 보존해야 한다 — 무조건 COMPLETED로
+                # 덮으면 degraded SKIPPED가 COMPLETED로 위장된다(정직성 위반). 단계함수가 상태를
+                # 건드리지 않은 평시(RUNNING 유지)에만 COMPLETED로 승격한다(기존 단계 동작 무회귀).
+                if stage_result.status == PipelineStatus.RUNNING:
+                    stage_result.status = PipelineStatus.COMPLETED
+                await self._verify_stage(state, stage)   # P5: 단계 산출 검증(additive·COMPLETED 단계만)
             except Exception as e:
                 stage_result.status = PipelineStatus.FAILED
                 stage_result.error = str(e)[:500]
@@ -1531,6 +1541,70 @@ class ProjectPipeline:
             state.stages["design"].data["compliance"] = {
                 "error": f"법규 검증 실패: {str(e)[:200]}",
             }
+
+    async def _run_design_review(self, state: PipelineState, opts: dict):
+        """STEP 2.5: 심의/설계도면 자동분석 — 설계 결과를 심의 엔진 BFF로 검토.
+
+        ★graceful: 엔진 미연결/오류 시 단계 data를 degraded로 채우고 정상 반환한다.
+        예외를 던지지 않으므로(또는 던져도 run 루프가 FAILED로 격리) cost 등 하류 단계가
+        영향받지 않는다. 결정론 산출 수치는 변경하지 않는다(검토 결과를 표면화만).
+        """
+        sr = state.stages.get(PipelineStage.DESIGN_REVIEW.value)
+        try:
+            site = state.site_to_design or SiteToDesignPayload()
+            design = state.design_to_cost or DesignToCostPayload()
+            design_data = state.stages["design"].data if "design" in state.stages else {}
+            design_data = design_data if isinstance(design_data, dict) else {}
+
+            # 설계 산출 → 엔진 AnalysisInput 입력 구성(검토 규칙: 건폐율·용적률 한도 비교).
+            pnu = site.pnu_codes[0] if site.pnu_codes else ""
+            building_area = float(design_data.get("building_area_sqm") or 0.0)
+            total_gfa = float(design.total_gfa_sqm or design_data.get("total_gfa_sqm") or 0.0)
+            land_area = float(site.land_area_sqm or 0.0)
+            payload: dict[str, Any] = {
+                "pnu": pnu if (pnu and len(str(pnu)) == 19 and str(pnu).isdigit()) else "",
+                "address": site.address or state.address or "",
+                "calc_targets": [
+                    {"target": "building_area"},
+                    {"target": "gross_floor_area"},
+                ],
+                "rules": [
+                    {"rule": {"rule_id": "BCR_LIMIT", "comparator": "<="},
+                     "measured": round(building_area / land_area * 100, 2) if land_area else 0.0,
+                     "limit": float(site.max_bcr or 0.0)},
+                    {"rule": {"rule_id": "FAR_LIMIT", "comparator": "<="},
+                     "measured": round(total_gfa / land_area * 100, 2) if land_area else 0.0,
+                     "limit": float(site.max_far or 0.0)},
+                ],
+            }
+
+            # BFF 직접 호출(같은 프로세스 함수 재사용) — 라우터/인증 우회, 엔진 graceful 계약 동일.
+            from app.services.deliberation._engine_contract import build_input_dump, prevalidate
+            from apps.api.app.routers.deliberation import _post_analyze, _wrap_result
+
+            dump = build_input_dump(payload)
+            err = prevalidate(dump)
+            if err:
+                if sr:
+                    sr.data = {"status": "degraded", "reason": err}
+                    sr.status = PipelineStatus.SKIPPED
+                return
+
+            data, reason = await _post_analyze(dump)
+            if reason != "ok" or data is None:
+                # ★엔진 미연결/오류 → degraded skip(파이프라인 무파괴).
+                if sr:
+                    sr.data = {"status": "degraded", "reason": reason}
+                    sr.status = PipelineStatus.SKIPPED
+                return
+
+            wrapped = _wrap_result(data, str(data.get("run_id") or ""))
+            if sr:
+                sr.data = wrapped
+        except Exception as e:  # noqa: BLE001 — 심의 검토 실패가 파이프라인을 깨지 않게 흡수.
+            if sr:
+                sr.data = {"status": "degraded", "reason": f"design_review_error:{str(e)[:140]}"}
+                sr.status = PipelineStatus.SKIPPED
 
     async def _run_cost(self, state: PipelineState, opts: dict):
         """STEP 3: 공사비 — 표준물량 추정 → 원가계산서 엔진 연동."""

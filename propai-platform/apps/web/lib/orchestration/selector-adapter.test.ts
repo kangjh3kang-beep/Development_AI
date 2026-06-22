@@ -1,6 +1,7 @@
 // selector-adapter 단위테스트 — Phase B B3
-// nodesToOptions: storylineStage 그룹핑, coinCost=feeOf(미설정 0), locked(audit unavailable / 폐포강제),
+// nodesToOptions: storylineStage 그룹핑, coinCost=feeOf(미설정 0), locked(폐포강제),
 // description(신선·미가용·의존 정직표기), required=land.
+// ★audit은 심의엔진 BFF 풀통합으로 available:true(unlock) — 폐포강제일 때만 '의존 항목' locked.
 import { describe, it, expect } from "vitest";
 import { nodesToOptions } from "./selector-adapter";
 import type { SelectorAdapterCtx } from "./selector-adapter";
@@ -93,13 +94,15 @@ describe("nodesToOptions — coinCost(관리자 요율, 하드코딩 금지)", (
 });
 
 describe("nodesToOptions — locked(정직 표기)", () => {
-  it("audit(available:false)는 locked + '심의엔진 연동 예정'", () => {
+  it("audit(available:true·심의엔진 BFF 풀통합)는 unlock — 평시 근거 표기", () => {
+    // ★새 계약: audit은 심의분석엔진 BFF 풀통합으로 available:true가 됐다.
+    // 더는 unavailableLocked가 아니므로(폐포 강제도 없음) locked:false·lockedCtaLabel 미표기.
+    // description은 평시 그라운딩 출처(근거:)를 표기한다(미가용 라벨이 아님).
     const opts = nodesToOptions(ALL, zeroFee, baseCtx);
     const audit = flatten(opts).get("audit");
-    expect(audit?.locked).toBe(true);
-    expect(audit?.lockedCtaLabel).toBe("심의엔진 연동 예정");
-    // 미가용은 reportContract.unavailableLabel을 정직 표기.
-    expect(audit?.description).toBe("심의엔진 연동 예정");
+    expect(audit?.locked).toBe(false);
+    expect(audit?.lockedCtaLabel).toBeUndefined();
+    expect(audit?.description?.startsWith("근거:")).toBe(true);
   });
 
   it("폐포 강제 노드는 locked + '의존 항목(자동 포함)'", () => {
@@ -113,14 +116,17 @@ describe("nodesToOptions — locked(정직 표기)", () => {
     expect(legal?.lockedCtaLabel).toBe("의존 항목(자동 포함)");
   });
 
-  it("available:false가 폐포강제보다 우선(audit은 항상 심의엔진 라벨)", () => {
+  it("audit(available:true)도 폐포강제면 '의존 항목(자동 포함)' locked(미가용 우선 분기 제거)", () => {
+    // ★새 계약: audit이 available:true가 되어 unavailableLocked 분기를 더는 타지 않는다.
+    // 따라서 폐포 강제(상류 의존)면 다른 노드와 동일하게 closure-forced locked('의존 항목')로 표기된다.
     const ctx: SelectorAdapterCtx = {
       isFresh: () => false,
-      isClosureForced: () => true, // 전부 강제라 해도
+      isClosureForced: () => true, // 전부 강제로 가정
     };
     const opts = nodesToOptions(ALL, zeroFee, ctx);
     const audit = flatten(opts).get("audit");
-    expect(audit?.lockedCtaLabel).toBe("심의엔진 연동 예정");
+    expect(audit?.locked).toBe(true);
+    expect(audit?.lockedCtaLabel).toBe("의존 항목(자동 포함)");
   });
 });
 

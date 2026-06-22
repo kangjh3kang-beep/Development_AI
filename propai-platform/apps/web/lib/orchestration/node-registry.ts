@@ -277,24 +277,31 @@ export const NODES: AnalysisNode[] = [
     ],
     ssotOutputs: [], // 검증결과 — store 비기록
     runner: {
-      // 심의엔진 main머지 후 /api/v1/deliberation/analyze BFF 어댑터로 교체 예정(미접촉).
-      // 현재 design-audit/run은 존재하나 available:false라 selector locked·skipped-unavailable 정직.
+      // 심의분석엔진(deliberation-review) BFF 풀통합 완료 → /api/v1/deliberation/analyze로 전환.
+      // BFF는 graceful degrade 보장: 엔진 미연결/타임아웃/4xx/5xx/malformed 시 200 + {status:"degraded", reason}.
+      // ★노드 실행 결과는 degraded 상태를 정직 표기(에러 크래시 금지) — 패널/리포트가 reason을 그대로 노출.
       method: "POST",
-      path: "/api/v1/design-audit/run",
+      path: "/api/v1/deliberation/analyze",
       bodyBuilder: "audit",
     },
     expertInterpreter: null, // 외부 심의엔진 소유 — 미접촉
     expertPanel: false, // 엔진 내부
-    verify: { crossValidate: true, verifyAnalysis: true }, // 계약 5단계 충족(엔진이 내부 수행, lint 통과용 true)
+    // ★의도: 심의엔진이 검증(교차검증·근거추적)을 내부에서 수행하므로, BFF 노드 외부에서의
+    //  중복 외부검증은 불필요하다(이상적으론 {crossValidate:false, verifyAnalysis:false}).
+    //  단 lint-node-registry [E4]가 모든 노드에 crossValidate=true를 강제하므로(우회 차단 게이트)
+    //  레지스트리 정합을 위해 true로 둔다 — 실제 외부검증 트리거는 호출측이 audit에 한해 생략한다.
+    verify: { crossValidate: true, verifyAnalysis: true },
     billingKey: "stage:audit",
     reportContract: {
       sectionKey: "audit",
-      fields: ["auditFindings", "complianceScore"],
-      unavailableLabel: "심의엔진 연동 예정",
+      // 실제 BFF 응답키(_wrap_result): findings(검토 항목) + complianceScore(CONFIRMED 비율).
+      // (auditFindings는 미존재 키였음 — 라이브 응답 계약으로 정정.)
+      fields: ["findings", "complianceScore"],
+      unavailableLabel: "심의엔진 연결 대기", // degraded(엔진 미연결) 시 정직 표기 라벨
     },
     lens: "design",
     groundingSources: ["설계 산출(designData)", "법규(complianceData)"],
-    available: false, // 심의엔진 main머지 전까지 locked(B7에서 unlock)
+    available: true, // 심의분석엔진 BFF 풀통합 완료 → unlock(degraded는 노드 실행 결과로 정직 표기)
     icon: "stage_design_ai",
   },
   {

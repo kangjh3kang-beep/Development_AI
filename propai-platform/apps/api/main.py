@@ -216,6 +216,15 @@ except ImportError:
         from app.routers.parcel_batch import router as parcel_batch_router
     except ImportError:
         parcel_batch_router = None
+
+# 심의/설계도면 자동분석 엔진 BFF(별도 엔진 서비스 HTTP 게이트웨이) — 미설정 시 degraded만 응답
+try:
+    from apps.api.app.routers.deliberation import router as deliberation_router
+except ImportError:
+    try:
+        from app.routers.deliberation import router as deliberation_router
+    except ImportError:
+        deliberation_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -758,6 +767,8 @@ if ai_analyze_router is not None:
     app.include_router(ai_analyze_router, tags=["ai"])  # 자체 prefix=/api/v1/ai
 if parcel_batch_router is not None:
     app.include_router(parcel_batch_router, tags=["대량 다필지 배치"])  # 자체 prefix=/api/v1/parcels/batch
+if deliberation_router is not None:
+    app.include_router(deliberation_router, tags=["심의분석 엔진"])  # 자체 prefix=/api/v1/deliberation
 if market_router is not None:
     # PUBLIC 마켓(구인구직·프로필·홍보) — 자체 prefix=/api/v1/market, 현장 격리 없음
     app.include_router(market_router, tags=["구인구직 마켓(public)"])
