@@ -76,3 +76,43 @@ def test_emit_growth_issues_never_raises(monkeypatch):
 
     monkeypatch.setattr(cap, "record_event", _boom)
     _emit_growth_issues("cost", [{"type": "x", "severity": "high"}])  # 예외 없이 반환되어야 함
+
+
+# ── analyzer 소비(consumer): verify_issue 군집 → recurring-error insight (순수) ──
+
+def test_cluster_verify_issues_groups_and_thresholds():
+    from app.services.growth.analyzer import _cluster_verify_issues
+
+    # 1시간 윈도우. feasibility의 '수치불일치' 4건(warn 임계3↑), '범위위반' 1건(임계미만 제외)
+    rows = [
+        ("feasibility", {"issue_types": ["수치불일치"], "severities": ["high"]}, None),
+        ("feasibility", {"issue_types": ["수치불일치", "범위위반"], "severities": ["high", "low"]}, None),
+        ("feasibility", {"issue_types": ["수치불일치"], "severities": ["medium"]}, None),
+        ("feasibility", {"issue_types": ["수치불일치"], "severities": ["high"]}, None),
+    ]
+    out = _cluster_verify_issues(rows, hours=1.0)
+    # 수치불일치 4건 → warn 승격, 범위위반 1건 → 임계 미만 제외
+    assert len(out) == 1
+    ins = out[0]
+    assert ins["insight_type"] == "recurring_verify_error" and ins["severity"] == "warn"
+    m = ins["metrics_json"]
+    assert m["service"] == "feasibility" and m["issue_type"] == "수치불일치"
+    assert m["count"] == 4 and m["high_count"] == 3  # high 2 + (medium 제외) ... high만 카운트
+
+
+def test_cluster_verify_issues_critical_and_proposepr():
+    from app.services.growth.analyzer import _cluster_verify_issues
+
+    rows = [("avm", {"issue_types": ["데이터오류감지"], "severities": ["high"]}, None) for _ in range(8)]
+    out = _cluster_verify_issues(rows, hours=1.0)
+    assert out and out[0]["severity"] == "critical"
+    assert out[0]["recommended_action"] == "propose_pr"  # critical → 개선 PR 제안
+
+
+def test_cluster_verify_issues_empty_and_malformed():
+    from app.services.growth.analyzer import _cluster_verify_issues
+
+    # 빈 입력·비정상 payload(issue_types 누락/비리스트)는 안전하게 무시
+    assert _cluster_verify_issues([], hours=1.0) == []
+    rows = [("x", {}, None), ("y", {"issue_types": "notalist"}, None), ("z", None, None)]
+    assert _cluster_verify_issues(rows, hours=1.0) == []

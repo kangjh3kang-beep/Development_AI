@@ -23,12 +23,13 @@ narrative/recommended_action/status='open'). best-effort: 실패해도 배치는
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,12 @@ logger = logging.getLogger(__name__)
 ERR_WARN_COUNT = 20
 ERR_CRIT_COUNT = 100
 ERR_TOP_N = 20  # 인사이트로 승격하는 상위 빈발군 수.
+
+# recurring_verify_error: 동일 (service, issue_type) 시간당 검출 건수 임계.
+# verify_issue 는 분석당 1회로 저빈도라 error_cluster(js/api)보다 낮은 임계를 쓴다.
+VERIFY_ERR_WARN_COUNT = 3
+VERIFY_ERR_CRIT_COUNT = 8
+VERIFY_ERR_TOP_N = 10
 
 # fallback_rate: service별 폴백률(%) 임계.
 FALLBACK_WARN_PCT = 15.0
@@ -94,6 +101,61 @@ def _classify_error_count(count: int) -> str | None:
     if count >= ERR_WARN_COUNT:
         return "warn"
     return None
+
+
+def _classify_verify_recurrence(count: int) -> str | None:
+    """동일 (service, issue_type) 시간당 검출 건수 → severity. 임계 미만이면 None."""
+    if count >= VERIFY_ERR_CRIT_COUNT:
+        return "critical"
+    if count >= VERIFY_ERR_WARN_COUNT:
+        return "warn"
+    return None
+
+
+def _cluster_verify_issues(
+    rows: list[tuple[Any, dict[str, Any], Any]], hours: float
+) -> list[dict[str, Any]]:
+    """verify_issue 이벤트[(service, payload, created_at)] → 재발오류 인사이트 목록(순수·무DB).
+
+    payload.issue_types(리스트)를 평탄화해 (service, issue_type)별로 군집·집계한다.
+    severity는 총 검출빈도(per_hour) 기준으로 산정하며, high_count(severities[idx]가
+    high/critical인 건수)는 metrics·narrative 표기용(심각도 가시화)이다. 임계 미만은 제외.
+    """
+    clusters: dict[tuple[str, str], dict[str, Any]] = {}
+    for service, payload, _created in rows:
+        types = (payload or {}).get("issue_types") or []
+        sevs = (payload or {}).get("severities") or []
+        if not isinstance(types, list):
+            continue
+        for idx, t in enumerate(types):
+            key = (str(service or "?"), str(t))
+            c = clusters.setdefault(key, {
+                "service": key[0], "issue_type": key[1], "count": 0, "high": 0,
+            })
+            c["count"] += 1
+            sev_i = sevs[idx] if isinstance(sevs, list) and idx < len(sevs) else None
+            if sev_i in ("high", "critical"):
+                c["high"] += 1
+
+    out: list[dict[str, Any]] = []
+    ranked = sorted(clusters.values(), key=lambda c: c["count"], reverse=True)[:VERIFY_ERR_TOP_N]
+    for c in ranked:
+        per_hour = c["count"] / hours
+        sev = _classify_verify_recurrence(int(round(per_hour)))
+        if sev is None:
+            continue
+        out.append({
+            "insight_type": "recurring_verify_error",
+            "severity": sev,
+            "tenant_id": None,
+            "recommended_action": "propose_pr" if sev == "critical" else "none",
+            "metrics_json": {
+                "service": c["service"], "issue_type": c["issue_type"],
+                "count": c["count"], "per_hour": round(per_hour, 2),
+                "high_count": c["high"],
+            },
+        })
+    return out
 
 
 def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, float]:
@@ -175,6 +237,7 @@ async def analyze_window(
     insights: list[dict[str, Any]] = []
     try:
         insights.extend(await _analyze_error_cluster(db, window_start, window_end))
+        insights.extend(await _analyze_recurring_verify_errors(db, window_start, window_end))
         insights.extend(await _analyze_fallback_rate(db, window_start, window_end))
         insights.extend(await _analyze_quality_drop(db, window_start, window_end))
         insights.extend(await _analyze_latency_regression(db, window_start, window_end))
@@ -223,10 +286,8 @@ async def analyze_window(
     except Exception as e:  # noqa: BLE001
         logger.warning("growth insight INSERT 실패(%d/%d): %s",
                        inserted, len(insights), str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
     if insights:
         logger.info("growth analyze: 인사이트 %d건 생성(INSERT %d)", len(insights), inserted)
@@ -278,6 +339,23 @@ async def _analyze_error_cluster(db, w0, w1) -> list[dict[str, Any]]:
             },
         })
     return out
+
+
+async def _analyze_recurring_verify_errors(db, w0, w1) -> list[dict[str, Any]]:
+    """verify_issue 를 (service, issue_type) 로 군집해 반복 검출 오류를 인사이트화.
+
+    verifier 가 자동 검출한 오류 '유형'이 특정 분석에서 반복되면 재발오류로 승격(개선 대상).
+    capture(_emit_growth_issues)가 적재한 verify_issue 를 소비하는 폐루프의 분석 단계.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(text(
+        "SELECT service, payload, created_at FROM platform_events "
+        "WHERE event_type='verify_issue' AND created_at >= :w0 AND created_at < :w1"
+    ), {"w0": w0, "w1": w1})).fetchall()
+    hours = max((w1 - w0).total_seconds() / 3600.0, 1e-9)
+    parsed = [(r[0], _as_dict(r[1]), r[2]) for r in rows]
+    return _cluster_verify_issues(parsed, hours)
 
 
 async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
@@ -443,6 +521,10 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
         return (f"[{sev}] 오류 군집 {m.get('signature')} — route={m.get('route')} "
                 f"status={m.get('status_code')} 시간당 {m.get('per_hour')}건"
                 f"(총 {m.get('count')}건).")
+    if t == "recurring_verify_error":
+        return (f"[{sev}] {m.get('service')} 재발 검증오류 '{m.get('issue_type')}' — "
+                f"시간당 {m.get('per_hour')}건(총 {m.get('count')}건, 심각 {m.get('high_count')}건). "
+                f"반복 검출 오류 — 원인 점검·개선 권장.")
     if t == "fallback_rate":
         return (f"[{sev}] {m.get('service')} 폴백률 {m.get('fallback_pct')}% "
                 f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).")
@@ -503,7 +585,7 @@ def _as_dict(v: Any) -> dict[str, Any]:
 
 def default_window(hours: int = 1) -> tuple[datetime, datetime]:
     """기본 분석 윈도우(now-기준 직전 N시간). 태스크 진입점 편의."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return now - timedelta(hours=hours), now
 
 
