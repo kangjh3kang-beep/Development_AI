@@ -47,6 +47,15 @@ def test_cost_mapper_indirect_none_when_unknown():
     assert summary["indirect"] is None
 
 
+def test_cost_mapper_indirect_none_when_direct_exceeds_total():
+    # 비정상 입력(direct>total) → 음수 indirect 날조 금지(None).
+    summary, _ = cost_stage_to_adapter(
+        {"total_construction_cost": 1_000_000_000, "direct_cost": 2_000_000_000}, DESIGN)
+    assert summary["total"] == 1_000_000_000
+    assert summary["direct"] == 2_000_000_000
+    assert summary["indirect"] is None
+
+
 def test_feasibility_mapper_maps_aliases_and_dev_type():
     r = feasibility_stage_to_adapter(FEAS, DESIGN)
     assert r["total_revenue_won"] == 5_000_000_000

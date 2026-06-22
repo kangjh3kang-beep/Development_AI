@@ -457,8 +457,8 @@ async def _resolve_tenant_id() -> str | None:
                 {"uid": uid})).first()
             if row and row[0]:
                 return str(row[0])
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001 — 해소 실패는 무중단(익명 체인)이나 관측가능해야 함(불변규칙3)
+        logger.warning("tenant_id 해소 실패 — 익명 체인으로 진행", err=str(e)[:200])
     return None
 
 

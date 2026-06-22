@@ -51,3 +51,15 @@ def test_zero_cost_safe():
     )
     assert r["acquisition_tax"] == 0
     assert r["profit_rate_after_tax_pct"] == 0
+
+
+def test_negative_pretax_profit_loss_project():
+    # 손실 사업(세전 -5억): 양도세=0(이익 없음), 세후이익은 추가취득세만큼 더 악화, 등급 D.
+    r = compute_project_taxes(
+        total_revenue=2_000_000_000, total_project_cost=4_000_000_000,
+        net_profit_pretax=-500_000_000, land_cost=1_000_000_000, construction_cost=2_000_000_000,
+    )
+    assert r["transfer_tax"] == 0  # 이익 없으면 양도세 없음(max(0, npt))
+    # 세후이익 = -5억 − 추가취득세(0.92억) = -5.92억 (세전보다 악화)
+    assert abs(r["net_profit_after_tax"] - (-592_000_000)) < 1
+    assert r["grade_after_tax"] == "D"

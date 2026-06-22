@@ -11,9 +11,11 @@ record_feasibility_result)는 v2_feasibility·cost 등 별도 엔드포인트에
 """
 from __future__ import annotations
 
-import contextlib
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _num(v: Any) -> float | None:
@@ -141,20 +143,22 @@ async def record_pipeline_results(
     if cost_data:
         summary, header = cost_stage_to_adapter(cost_data, design_data)
         if summary.get("total"):  # 총원가 없으면 적재 무의미 — 스킵
-            # 원장 적재 실패는 파이프라인 무중단(정직 생략 — 실패 시 out에 키 미생성).
-            with contextlib.suppress(Exception):
+            try:
                 out["cost"] = await cost_recorder(
                     summary=summary, header=header,
                     tenant_id=tenant_id, project_id=project_id, created_by=created_by)
+            except Exception as e:  # noqa: BLE001 — 무중단(실패 시 키 미생성)이나 관측가능해야 함(불변규칙3)
+                logger.warning("원장 cost 적재 실패 — skipped: %s", str(e)[:200])
 
     feas_data = _stage_data(stages, "feasibility")
     if feas_data:
         result = feasibility_stage_to_adapter(feas_data, design_data)
         if result.get("total_revenue_won") is not None or result.get("profit_rate_pct") is not None:
-            # best-effort 무중단(실패 시 out["feasibility"] 미생성 — 정직).
-            with contextlib.suppress(Exception):
+            try:
                 out["feasibility"] = await feasibility_recorder(
                     result=result, tenant_id=tenant_id, project_id=project_id,
                     pnu=pnu, address=addr, created_by=created_by)
+            except Exception as e:  # noqa: BLE001 — best-effort 무중단이나 관측가능해야 함(불변규칙3)
+                logger.warning("원장 feasibility 적재 실패 — skipped: %s", str(e)[:200])
 
     return out
