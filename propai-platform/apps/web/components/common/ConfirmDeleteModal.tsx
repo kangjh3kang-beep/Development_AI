@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { AlertTriangle, Check } from "lucide-react";
 
 type ConfirmDeleteModalProps = {
   open: boolean;
@@ -76,7 +77,7 @@ export function ConfirmDeleteModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-rose-500/10 text-xl text-rose-500">⚠</div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-500"><AlertTriangle className="size-5" aria-hidden /></div>
           <h2 className="text-base font-black text-[var(--text-primary)]">{title}</h2>
         </div>
 
@@ -95,7 +96,7 @@ export function ConfirmDeleteModal({
             onClick={copy}
             className="shrink-0 rounded-lg border border-[var(--line-strong)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
           >
-            {copied ? "복사됨 ✓" : "복사"}
+            {copied ? (<span className="inline-flex items-center gap-1">복사됨 <Check className="size-3.5" aria-hidden /></span>) : "복사"}
           </button>
         </div>
 

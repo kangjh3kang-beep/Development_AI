@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { AlertTriangle, BarChart3, Brain, CheckCircle2, Construction, Wallet, type LucideIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
 
@@ -275,7 +276,7 @@ export function G2BBidAnalysisModal({
             {result.analysis_warnings?.length > 0 && (
               <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/30 p-2 text-xs text-yellow-400">
                 {(result.analysis_warnings ?? []).map((w, i) => (
-                  <div key={i}>⚠ {w}</div>
+                  <div key={i} className="flex items-start gap-1.5"><AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden /><span>{w}</span></div>
                 ))}
               </div>
             )}
@@ -406,7 +407,7 @@ export function G2BBidAnalysisModal({
               <section className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
-                    <span className="text-blue-400">🧠</span> AI 입찰 전략 분석
+                    <Brain className="size-4 text-blue-400" aria-hidden /> AI 입찰 전략 분석
                   </h3>
                   {result.ai_interpretation.model_used && (
                     <span className="text-[10px] text-[var(--text-hint)]">
@@ -415,12 +416,12 @@ export function G2BBidAnalysisModal({
                   )}
                 </div>
                 <div className="space-y-3">
-                  <AiSection icon="📊" title="투찰 전략" text={result.ai_interpretation.bid_strategy} />
-                  <AiSection icon="💰" title="사업성 진단" text={result.ai_interpretation.feasibility_view} />
-                  <AiSection icon="⚠️" title="리스크 평가" text={result.ai_interpretation.risk_assessment} />
-                  <AiSection icon="🏗️" title="원가 경쟁력" text={result.ai_interpretation.cost_competitiveness} />
+                  <AiSection icon={BarChart3} title="투찰 전략" text={result.ai_interpretation.bid_strategy} />
+                  <AiSection icon={Wallet} title="사업성 진단" text={result.ai_interpretation.feasibility_view} />
+                  <AiSection icon={AlertTriangle} title="리스크 평가" text={result.ai_interpretation.risk_assessment} />
+                  <AiSection icon={Construction} title="원가 경쟁력" text={result.ai_interpretation.cost_competitiveness} />
                   <AiSection
-                    icon="✅"
+                    icon={CheckCircle2}
                     title="종합 권고"
                     text={result.ai_interpretation.recommendation}
                     emphasis
@@ -477,12 +478,12 @@ function RiskBar({ label, v }: { label: string; v: number }) {
 
 /* LLM 입찰 전략 해석 섹션 카드 (종합권고는 emphasis로 강조) */
 function AiSection({
-  icon,
+  icon: Icon,
   title,
   text,
   emphasis = false,
 }: {
-  icon: string;
+  icon: LucideIcon;
   title: string;
   text: string;
   emphasis?: boolean;
@@ -497,7 +498,7 @@ function AiSection({
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-sm shrink-0">{icon}</span>
+        <Icon className="size-4 shrink-0" aria-hidden />
         <span
           className={`text-xs font-bold ${
             emphasis ? "text-blue-300" : "text-[var(--text-primary)]"

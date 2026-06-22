@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
@@ -69,8 +70,8 @@ export function SolarEnvelopeCard({
   const usedFallback = farLimitPct == null;
   const zoneEmpty = !zone || !zone.trim();
   const fallbackLabel = zoneEmpty
-    ? "⚠ 용도지역 미확정 — 추정값(신뢰도 낮음)"
-    : "⚠ 용도지역 기본값 추정 — 실효 용적률 미산정(신뢰도 낮음)";
+    ? "용도지역 미확정 — 추정값(신뢰도 낮음)"
+    : "용도지역 기본값 추정 — 실효 용적률 미산정(신뢰도 낮음)";
 
   // ★층수 3관점(BuildableEnvelopeCard와 동일 전역계약): 단일 '현실 최고층'(=용적률÷법정건폐율)은
   //   '건폐율 만충 시 최소 층수'라 오도다. 층수 제한이 없다면 공동주택은 단지 쾌적도·통경축·동간거리를
@@ -149,10 +150,10 @@ export function SolarEnvelopeCard({
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {usedFallback && (
             <span
-              className="rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-black text-amber-600"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-black text-amber-600"
               title="실효 용적률이 산정되지 않아 용도지역 기본값으로 추정한 결과입니다. 부지분석(용도지역·실효 용적률)을 완료하면 실제값으로 재계산됩니다."
             >
-              {fallbackLabel}
+              <AlertTriangle className="size-3" aria-hidden />{fallbackLabel}
             </span>
           )}
           <span className={`rounded-full px-2.5 py-1 text-xs font-black ${lossBinding ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}`}>

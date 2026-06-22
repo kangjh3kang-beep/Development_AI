@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { AlertTriangle, Leaf, RefreshCw, Settings } from "lucide-react";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
@@ -77,12 +78,18 @@ export default function ESGPage() {
         </div>
         <button onClick={handleAnalyze} disabled={isPending || !isReady || !form.grossArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "🔄 ESG 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "🌿 ESG 분석"}
+          {isPending ? (
+            <span className="inline-flex items-center gap-1.5"><RefreshCw className="size-4 animate-spin" aria-hidden />ESG 분석 중...</span>
+          ) : !isReady ? (
+            <span className="inline-flex items-center gap-1.5"><Settings className="size-4" aria-hidden />API 키를 먼저 등록하세요</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5"><Leaf className="size-4" aria-hidden />ESG 분석</span>
+          )}
         </button>
         </div>
       </motion.div>
 
-      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
+      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold inline-flex items-center gap-1.5"><AlertTriangle className="size-4" aria-hidden />{error.message}</p></div>}
 
       {ai && (
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
@@ -130,7 +137,7 @@ export default function ESGPage() {
           {ai.recommendations && ai.recommendations?.length > 0 && (
             <div className="cc-panel glass">
               <div className="cc-panel__head">
-                <h3 className="text-lg font-black text-[var(--text-primary)]">🌱 개선 권고사항</h3>
+                <h3 className="text-lg font-black text-[var(--text-primary)] inline-flex items-center gap-1.5"><Leaf className="size-5" aria-hidden />개선 권고사항</h3>
                 <span className="cc-meta">RECOMMENDATIONS</span>
               </div>
               <div className="cc-panel__body space-y-3">

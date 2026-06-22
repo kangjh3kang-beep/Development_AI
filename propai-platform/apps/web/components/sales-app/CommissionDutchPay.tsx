@@ -21,6 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PenLine } from "lucide-react";
 import { salesApi, won } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -775,9 +776,9 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
                       <button
                         onClick={() => startAmend(view)}
                         disabled={busy}
-                        className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]"
                       >
-                        ✎ 분배 변경(재동의)
+                        <PenLine className="size-4" aria-hidden />분배 변경(재동의)
                       </button>
                     </div>
                   )}

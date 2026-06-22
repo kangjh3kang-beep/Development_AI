@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LockKeyhole } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { storeSiteToken } from "@/lib/salesApi";
 import type { Locale } from "@/i18n/config";
@@ -93,8 +94,8 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
             className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[var(--accent-soft)] blur-2xl"
           />
           <div className="relative flex items-center gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-lg">
-              🔐
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <LockKeyhole className="size-5" aria-hidden />
             </span>
             <div className="min-w-0">
               <span className="cc-label">SECURE ENTRY</span>

@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BarChart3, Building2, Landmark, MapPin, Search } from "lucide-react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
@@ -1061,10 +1062,10 @@ export function GlobalAddressSearch({
               )}
               {repInfo.allSpecial && (
                 <span
-                  className="rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1.5 py-0.5 font-bold text-[var(--status-warning)]"
+                  className="inline-flex items-center gap-1 rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1.5 py-0.5 font-bold text-[var(--status-warning)]"
                   title="모든 필지가 특이부지(도로·하천·학교용지 등)로 분류됐습니다. 대표는 표시용 폴백이며 단독 개발가능성은 개별 필지 게이트를 확인하세요."
                 >
-                  ⚠ 대표가 특이부지 — 개별 게이트 확인
+                  <AlertTriangle className="size-3" aria-hidden /> 대표가 특이부지 — 개별 게이트 확인
                 </span>
               )}
             </div>
@@ -1108,7 +1109,7 @@ export function GlobalAddressSearch({
                   {/* 엑셀 입력↔공부상 면적 괴리 경고 — 공부상(권원) 채택했음을 정직 고지(입력값 참고 보존) */}
                   {row.areaWarning && (
                     <div className="mt-0.5 flex items-start gap-1 text-[9.5px] text-[var(--status-warning)]" title={row.areaWarning}>
-                      <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_14%,transparent)] px-1 py-0.5 font-bold">⚠ 면적 보정</span>
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[color-mix(in_srgb,var(--status-warning)_14%,transparent)] px-1 py-0.5 font-bold"><AlertTriangle className="size-3" aria-hidden /> 면적 보정</span>
                       <span className="min-w-0 flex-1">
                         입력 {row.areaInputSqm ? Math.round(row.areaInputSqm).toLocaleString() : "—"}㎡ → 공부상 채택(입력값 점검 필요)
                       </span>
@@ -1134,9 +1135,9 @@ export function GlobalAddressSearch({
                           type="button"
                           onClick={() => setShareParcel(row.entry)}
                           title="공동주택(빌라) — 호실·세대 대지지분 보기/반영"
-                          className="rounded bg-[color-mix(in_srgb,var(--accent-strong)_14%,transparent)] px-1.5 py-0.5 font-bold text-[var(--accent-strong)] hover:bg-[color-mix(in_srgb,var(--accent-strong)_24%,transparent)]"
+                          className="inline-flex items-center gap-1 rounded bg-[color-mix(in_srgb,var(--accent-strong)_14%,transparent)] px-1.5 py-0.5 font-bold text-[var(--accent-strong)] hover:bg-[color-mix(in_srgb,var(--accent-strong)_24%,transparent)]"
                         >
-                          🏢 공동주택{row.unitCount ? ` ${row.unitCount}세대` : ""} · 호실/대지지분 ▸
+                          <Building2 className="size-3" aria-hidden /> 공동주택{row.unitCount ? ` ${row.unitCount}세대` : ""} · 호실/대지지분 ▸
                         </button>
                       )}
                     </div>
@@ -1145,10 +1146,10 @@ export function GlobalAddressSearch({
                   {row.specialParcel?.is_special && (
                     <div className="mt-0.5 flex flex-wrap items-start gap-1 text-[9.5px]">
                       <span
-                        className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--status-warning)]"
+                        className="inline-flex shrink-0 items-center gap-1 rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--status-warning)]"
                         title={row.specialParcel.honest_disclosure || undefined}
                       >
-                        ⚠ 특이부지
+                        <AlertTriangle className="size-3 shrink-0" aria-hidden /> 특이부지
                         {row.specialParcel.factors?.length ? ` · ${row.specialParcel.factors.join("·")}` : ""}
                         {row.specialParcel.severity_label ? ` (${row.specialParcel.severity_label})` : ""}
                       </span>
@@ -1178,9 +1179,9 @@ export function GlobalAddressSearch({
       {!single && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12px] text-[var(--text-secondary)]">
           <span className="text-[13px] font-bold text-[var(--text-primary)]">다필지 등록</span>
-          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]">🔍 검색으로 한 필지씩 추가</span>
+          <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]"><Search className="size-3" aria-hidden /> 검색으로 한 필지씩 추가</span>
           <span className="text-[var(--text-hint)]">또는</span>
-          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]">📊 엑셀로 일괄 등록</span>
+          <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]"><BarChart3 className="size-3" aria-hidden /> 엑셀로 일괄 등록</span>
           <span className="text-[var(--text-hint)]">— 둘 다 사용 가능(혼용 OK)</span>
         </div>
       )}
@@ -1204,15 +1205,15 @@ export function GlobalAddressSearch({
       ) : (
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
           <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="text-[12px] font-bold text-[var(--text-secondary)]">🔍 지번·주소 검색</span>
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--text-secondary)]"><Search className="size-3.5" aria-hidden /> 지번·주소 검색</span>
             {/* 보조: 건물명·아파트는 다음(Daum)이 강함 → 팝업으로 보완(데이터소스 보완) */}
             <button
               type="button"
               disabled={disabled}
               onClick={() => setKakaoOpen(true)}
-              className="whitespace-nowrap text-[11px] font-semibold text-[var(--accent-strong)] hover:underline disabled:opacity-50"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold text-[var(--accent-strong)] hover:underline disabled:opacity-50"
             >
-              🏢 건물명·아파트로 찾기 →
+              <Building2 className="size-3.5" aria-hidden /> 건물명·아파트로 찾기 →
             </button>
           </div>
           <div className="relative flex flex-wrap items-center gap-2">
@@ -1256,7 +1257,7 @@ export function GlobalAddressSearch({
               {directBusy ? "검색 중…" : "＋ 추가"}
             </button>
           </div>
-          {directMsg && <p className="mt-1 text-[12px] font-semibold text-amber-500">⚠ {directMsg}</p>}
+          {directMsg && <p className="mt-1 flex items-center gap-1 text-[12px] font-semibold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {directMsg}</p>}
           <p className="mt-1 text-[10px] text-[var(--text-hint)]">지번·산·농지·맹지·나대지는 지번검색, 아파트·건물명은 ‘건물명·아파트로 찾기’(다음)를 쓰세요.</p>
           {/* 다음(Daum) 팝업 — 외부제어(보조): 건물명·아파트 검색. 닫힘 시 트리거 박스 미표시. */}
           <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
@@ -1270,7 +1271,7 @@ export function GlobalAddressSearch({
       {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강).
           주소·지번 검색은 위 통합 검색(VWorld 자동완성 + 다음 보조)으로 일원화 — 여긴 엑셀·지도만. */}
         <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
-          <span className="mb-1.5 text-[12px] font-bold text-[var(--text-secondary)]">📊 엑셀로 다필지 등록</span>
+          <span className="mb-1.5 inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--text-secondary)]"><BarChart3 className="size-3.5" aria-hidden /> 엑셀로 다필지 등록</span>
           <div className="flex flex-wrap items-center gap-2">
             <input
               ref={fileRef}
@@ -1283,9 +1284,9 @@ export function GlobalAddressSearch({
               type="button"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
-              className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
             >
-              📊 {uploading ? "처리 중…" : "엑셀 파일 선택"}
+              <BarChart3 className="size-3.5" aria-hidden /> {uploading ? "처리 중…" : "엑셀 파일 선택"}
             </button>
             <button
               type="button"
@@ -1298,8 +1299,8 @@ export function GlobalAddressSearch({
           <span className="mt-1.5 text-[11px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역·공시지가 자동수집</span>
           {uploadInfo && (
             <div className="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface)]/60 px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)]">
-              <p>📍 {uploadInfo.note}</p>
-              {uploadInfo.registry && <p className="mt-1 font-semibold text-amber-500">🏛️ {uploadInfo.registry}</p>}
+              <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
+              {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
             </div>
           )}
         </div>

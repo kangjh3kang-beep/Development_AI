@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, LayoutGrid, Mic, Sparkles, Sun } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
@@ -742,7 +743,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               )}
             </div>
             {stt.listening && (
-              <p className="mt-1 text-[11px] font-bold text-red-400">🎙️ 듣는 중… 말씀하세요</p>
+              <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-bold text-red-400"><Mic className="size-3.5" aria-hidden />듣는 중… 말씀하세요</p>
             )}
             {stt.error && (
               <p className="mt-1 text-[11px] text-[var(--text-hint)]">{stt.error}</p>
@@ -989,7 +990,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 }`}
               >
                 <span className="flex items-center gap-2">
-                  <span className="text-[13px]">☀</span>
+                  <Sun className="size-4" aria-hidden />
                   <span className="text-[11px] font-bold text-[var(--text-secondary)]">정북일조 단계후퇴</span>
                 </span>
                 <span className={`text-[10px] font-black ${daylightNorth ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
@@ -1015,7 +1016,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 }`}
               >
                 <span className="flex items-center gap-2">
-                  <span className="text-[13px]">▦</span>
+                  <LayoutGrid className="size-4" aria-hidden />
                   <span className="text-[11px] font-bold text-[var(--text-secondary)]">참조 사례 반영</span>
                 </span>
                 <span className={`text-[10px] font-black ${useReferences ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
@@ -1089,8 +1090,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
           {/* 비치명 경고(예: 구버전 API 응답 rank 보정) — 결과는 표시하되 사실을 고지 */}
           {altWarning && (
-            <p className="text-[11px] font-bold text-amber-400" role="status">
-              ⚠ {altWarning}
+            <p className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-400" role="status">
+              <AlertTriangle className="size-3.5" aria-hidden />{altWarning}
             </p>
           )}
 
@@ -1158,7 +1159,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               >
                 {editing ? "편집 적용 중…" : "편집 적용"}
               </button>
-              {editStt.listening && <p className="mt-1 text-[11px] font-bold text-red-400">🎙️ 듣는 중… 말씀하세요</p>}
+              {editStt.listening && <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-bold text-red-400"><Mic className="size-3.5" aria-hidden />듣는 중… 말씀하세요</p>}
               {appliedChanges.length > 0 && (
                 <p className="mt-2 text-[11px] font-bold text-emerald-500">적용됨: {appliedChanges.join(" · ")}</p>
               )}
@@ -1206,7 +1207,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           {/* 부지가 작아 세대 구성이 불가한 경우 — 엔진이 정직하게 0세대로 응답(가짜 세대 금지). */}
           {alternatives.length > 0 && alternatives.every((a) => (a.summary.total_units ?? 0) === 0) && (
             <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 p-4 text-[12px] font-bold leading-relaxed text-[var(--status-warning)]" role="status">
-              ⚠ 현재 대지면적·용도지역·선호 평형으로는 세대 구성이 어렵습니다(전 설계안 0세대).
+              <AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />현재 대지면적·용도지역·선호 평형으로는 세대 구성이 어렵습니다(전 설계안 0세대).
               대지면적을 키우거나, 더 작은 평형(예: 29A·39A)을 선택하거나, 용적률·세대수 목표를 조정해 다시 생성해 보세요.
               <span className="mt-1 block text-[10px] font-bold text-[var(--text-hint)]">가짜 세대수를 만들지 않고 정직하게 표기합니다.</span>
             </div>
@@ -1297,7 +1298,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             !altLoading &&
             !single && (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface)] p-10 text-center">
-                <span className="text-2xl">✦</span>
+                <Sparkles className="size-6 text-[var(--text-hint)]" aria-hidden />
                 <p className="text-sm font-black text-[var(--text-secondary)]">
                   아직 생성된 설계안이 없습니다
                 </p>
@@ -1516,8 +1517,8 @@ function ReferenceUnusedNote({ reference }: { reference?: ReferenceResultBlock |
   if (!reference || reference.used) return null;
   const note = typeof reference.note === "string" ? reference.note.trim() : "";
   return (
-    <p className="mt-1.5 text-[10px] font-bold text-[var(--text-hint)]">
-      ▦ 참조 사례 미적용{note ? ` — ${note}` : ""}
+    <p className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--text-hint)]">
+      <LayoutGrid className="size-3.5" aria-hidden />참조 사례 미적용{note ? ` — ${note}` : ""}
     </p>
   );
 }
@@ -1626,11 +1627,11 @@ function EvaluationCard({ ev }: { ev: DesignEval }) {
         <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">종합 {overall}점</span>
       </div>
       {errors.length === 0 && warns.length === 0 ? (
-        <p className="mb-3 text-xs font-bold text-emerald-500">✓ 법정 한도 내 적합 — 위반 없음</p>
+        <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-bold text-emerald-500"><CheckCircle2 className="size-4" aria-hidden />법정 한도 내 적합 — 위반 없음</p>
       ) : (
         <div className="mb-3 space-y-1">
           {errors.map((v, i) => (
-            <p key={`e${i}`} className="text-xs font-bold text-red-400">⚠️ {v.message}</p>
+            <p key={`e${i}`} className="inline-flex items-center gap-1.5 text-xs font-bold text-red-400"><AlertTriangle className="size-4" aria-hidden />{v.message}</p>
           ))}
           {warns.map((v, i) => (
             <p key={`w${i}`} className="text-[11px] text-amber-400">· {v.message}</p>

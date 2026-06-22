@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
+import { Bot } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
@@ -195,7 +196,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
       {boq?.ai_cost_analysis && (
         <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-base">🤖</span>
+            <Bot className="size-4 text-[var(--accent-strong)]" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">AI 공사비 해설</h3>
           </div>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">

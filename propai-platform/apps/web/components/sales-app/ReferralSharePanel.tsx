@@ -13,6 +13,7 @@
  * 정직성: QR/Web Share 미지원 폴백, 도용주의 안내, 정보통신망법 고지, 빈상태·로딩·에러.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Upload } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { generateQrMatrix } from "@/lib/qr";
@@ -178,9 +179,10 @@ export default function ReferralSharePanel({ siteId }: { siteId: string }) {
       {activeCode && <StatsBlock api={api} code={activeCode} />}
 
       {/* 도용주의 */}
-      <p className="text-[11px] text-[var(--text-hint)]">
-        ⚠️ 추천코드는 개인 실적 귀속에 사용됩니다. 타인에게 양도·도용 시 실적·수수료 분쟁이 발생할 수 있으니 본인만
-        사용하세요. 공유링크는 누구나 접속할 수 있으나, 귀속은 최초 접촉(first-touch) 기준입니다.
+      <p className="flex items-start gap-1.5 text-[11px] text-[var(--text-hint)]">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <span>추천코드는 개인 실적 귀속에 사용됩니다. 타인에게 양도·도용 시 실적·수수료 분쟁이 발생할 수 있으니 본인만
+        사용하세요. 공유링크는 누구나 접속할 수 있으나, 귀속은 최초 접촉(first-touch) 기준입니다.</span>
       </p>
     </div>
   );
@@ -322,8 +324,8 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
       </div>
 
       {/* Web Share */}
-      <button onClick={webShare} className="w-full rounded-lg border border-[var(--accent-strong)] px-4 py-2.5 text-sm font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]">
-        📤 공유하기 (카카오톡·문자·앱)
+      <button onClick={webShare} className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--accent-strong)] px-4 py-2.5 text-sm font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]">
+        <Upload className="size-4" aria-hidden /> 공유하기 (카카오톡·문자·앱)
       </button>
 
       {/* QR */}
@@ -346,7 +348,7 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
 
       {/* 정보통신망법 고지(notice) */}
       <div className="space-y-1 rounded-xl border border-amber-400/20 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-200/90">
-        <p className="font-bold text-amber-300">📛 공유 시 유의사항(정보통신망법)</p>
+        <p className="inline-flex items-center gap-1.5 font-bold text-amber-300"><AlertTriangle className="size-3.5" aria-hidden />공유 시 유의사항(정보통신망법)</p>
         <p>{share.notice || "광고성 정보 전송 시 수신자의 사전 동의가 필요하며, 야간(오후 9시~익일 오전 8시) 전송은 제한됩니다. 수신거부 방법을 함께 안내하세요."}</p>
         <p className="text-amber-200/70">카카오톡 등으로 공유할 때는 수신자가 직접 동의·요청한 경우에만 발송하세요.</p>
       </div>

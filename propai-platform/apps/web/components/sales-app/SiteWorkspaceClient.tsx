@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { AppWindow, Dices, Map, Radio, WifiOff, Wrench } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { getStoredSiteToken, clearSiteToken, salesApi } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
@@ -239,7 +240,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                 onClick={() => setPwOpen(true)}
                 className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
               >
-                <span aria-hidden>🛠</span> 현장 비밀번호 설정
+                <Wrench className="size-4" aria-hidden /> 현장 비밀번호 설정
               </button>
             )}
             {/* 앱으로 열기 — 진짜 '별도 창(앱 모드)'. 새 탭이 아니라 브라우저 크롬 없는 팝업
@@ -259,7 +260,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
               }}
               className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
             >
-              <span aria-hidden>🪟</span> 앱으로 열기
+              <AppWindow className="size-4" aria-hidden /> 앱으로 열기
             </button>
           </div>
         </div>
@@ -279,7 +280,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           aria-live="polite"
           className="flex items-center gap-2 rounded-xl border border-[color:color-mix(in_srgb,var(--status-warning,#f59e0b)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-warning,#f59e0b)_12%,transparent)] px-4 py-2.5 text-xs font-bold text-[var(--status-warning,#b45309)]"
         >
-          <span aria-hidden>📡</span>
+          <WifiOff className="size-4 shrink-0" aria-hidden />
           오프라인 상태입니다. 인터넷 연결 후 새로고침하면 최신 정보로 갱신됩니다.
         </div>
       )}
@@ -307,7 +308,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                   onClick={() => setTab(t.key)}
                   className="sa-tab"
                 >
-                  {t.icon && <span className="sa-tab__icon" aria-hidden>{t.icon}</span>}
+                  {t.icon && <span className="sa-tab__icon" aria-hidden><t.icon className="size-4" /></span>}
                   {t.label}
                 </button>
               ))}
@@ -331,7 +332,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             return at ? (
               <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">
                 <div className="flex items-center gap-2">
-                  {at.icon && <span aria-hidden className="text-base">{at.icon}</span>}
+                  {at.icon && <at.icon className="size-5 text-[var(--accent-strong)]" aria-hidden />}
                   <h2 className="text-sm font-black text-[var(--text-primary)]">{at.label}</h2>
                 </div>
                 {at.desc && <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--text-tertiary)]">{at.desc}</p>}
@@ -345,11 +346,11 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
               {/* 보드 전환 — 한 번에 하나만 표시(그리드 중복 제거). 선점=실시간 hold/예약, 배치도=2D/3D+계약상세 */}
               <div className="sa-seg w-fit" role="tablist" aria-label="세대 보드 전환">
                 <button role="tab" aria-selected={unitView === "live"} data-active={unitView === "live"}
-                  onClick={() => setUnitView("live")} className="sa-seg__item">🟢 실시간 선점</button>
+                  onClick={() => setUnitView("live")} className="sa-seg__item"><span className="inline-flex items-center gap-1.5"><Radio className="size-4" aria-hidden />실시간 선점</span></button>
                 <button role="tab" aria-selected={unitView === "grid"} data-active={unitView === "grid"}
-                  onClick={() => setUnitView("grid")} className="sa-seg__item">🗺️ 동·호지정</button>
+                  onClick={() => setUnitView("grid")} className="sa-seg__item"><span className="inline-flex items-center gap-1.5"><Map className="size-4" aria-hidden />동·호지정</span></button>
                 <button role="tab" aria-selected={unitView === "draw"} data-active={unitView === "draw"}
-                  onClick={() => setUnitView("draw")} className="sa-seg__item">🎲 동·호추첨</button>
+                  onClick={() => setUnitView("draw")} className="sa-seg__item"><span className="inline-flex items-center gap-1.5"><Dices className="size-4" aria-hidden />동·호추첨</span></button>
               </div>
               {unitView === "live" ? (
                 /* Phase 1-C — 실시간 동호수 선점(hold/release/reserve)·TTL·WS 동기화 */

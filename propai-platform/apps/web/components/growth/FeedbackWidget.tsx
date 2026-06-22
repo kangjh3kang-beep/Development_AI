@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { Hand, Star, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 
@@ -76,8 +77,8 @@ export function FeedbackWidget({
 
   if (state === "sent") {
     return (
-      <span className="text-[11px] text-[var(--text-hint)]">
-        🙏 피드백 감사합니다
+      <span className="inline-flex items-center gap-1 text-[11px] text-[var(--text-hint)]">
+        <Hand className="size-3.5" aria-hidden />피드백 감사합니다
       </span>
     );
   }
@@ -92,7 +93,7 @@ export function FeedbackWidget({
         className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)] transition-colors hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
         aria-label="도움이 됨"
       >
-        👍 도움됨
+        <ThumbsUp className="size-3.5" aria-hidden />도움됨
       </button>
       <button
         type="button"
@@ -102,7 +103,7 @@ export function FeedbackWidget({
         aria-label="개선 필요"
         aria-expanded={state === "form"}
       >
-        👎 개선필요
+        <ThumbsDown className="size-3.5" aria-hidden />개선필요
       </button>
 
       {state === "form" && (
@@ -123,12 +124,12 @@ export function FeedbackWidget({
                   key={n}
                   type="button"
                   onClick={() => setRating((r) => (r === n ? null : n))}
-                  className={`text-[12px] leading-none transition-opacity ${
+                  className={`leading-none text-amber-400 transition-opacity ${
                     rating != null && n <= rating ? "opacity-100" : "opacity-30 hover:opacity-70"
                   }`}
                   aria-label={`${n}점`}
                 >
-                  ⭐
+                  <Star className={`size-3.5 ${rating != null && n <= rating ? "fill-current" : ""}`} aria-hidden />
                 </button>
               ))}
             </div>

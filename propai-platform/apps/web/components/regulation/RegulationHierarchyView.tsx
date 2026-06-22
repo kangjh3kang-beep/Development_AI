@@ -8,6 +8,20 @@
  * (ProjectLegalWorkspaceClient)에서 공용으로 사용한다. (회귀 0 — 기존 렌더 1:1 동일)
  */
 
+import {
+  AlertTriangle,
+  BookOpen,
+  Brain,
+  ClipboardList,
+  Dot,
+  type LucideIcon,
+  Map as MapIcon,
+  Scale,
+  Sparkles,
+  Target,
+  TrafficCone,
+  Wrench,
+} from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -67,11 +81,11 @@ const IMPACT_STYLE: Record<string, string> = {
   중: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   하: "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
 };
-const LEVEL_META: Record<string, { color: string; icon: string }> = {
-  "상위법령": { color: "var(--accent-strong)", icon: "⚖️" },
-  "도시·군계획 / 지구단위계획": { color: "#8b5cf6", icon: "🗺️" },
-  "지자체 조례": { color: "#3b82f6", icon: "📋" },
-  "개별 적용 규제·지구·구역": { color: "#f59e0b", icon: "🚧" },
+const LEVEL_META: Record<string, { color: string; Icon: LucideIcon }> = {
+  "상위법령": { color: "var(--accent-strong)", Icon: Scale },
+  "도시·군계획 / 지구단위계획": { color: "#8b5cf6", Icon: MapIcon },
+  "지자체 조례": { color: "#3b82f6", Icon: ClipboardList },
+  "개별 적용 규제·지구·구역": { color: "#f59e0b", Icon: TrafficCone },
 };
 
 function pyeong(sqm: number | null): string {
@@ -196,7 +210,7 @@ export function RegulationHierarchyView({
         <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-black text-[var(--accent-strong)]">🧠 AI 통합 규제 해석</p>
+              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Brain className="size-4" aria-hidden />AI 통합 규제 해석</p>
               <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${result.ai.generated ? "border-[var(--accent-strong)]/30 text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-tertiary)]"}`}>
                 {result.ai.generated ? "AI 분석" : "규칙기반"}
               </span>
@@ -206,10 +220,10 @@ export function RegulationHierarchyView({
               <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]"><b className="text-[var(--text-primary)]">개발 영향 ·</b> {result.ai.dev_impact}</p>
             )}
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <AiList title="🎯 핵심 제약" items={result.ai.key_constraints} tone="rose" />
-              <AiList title="🛠 대응 전략" items={result.ai.strategies} tone="emerald" />
-              <AiList title="✨ 기회 요인" items={result.ai.opportunities} tone="sky" />
-              <AiList title="⚠ 리스크" items={result.ai.risks} tone="amber" />
+              <AiList title="핵심 제약" icon={Target} items={result.ai.key_constraints} tone="rose" />
+              <AiList title="대응 전략" icon={Wrench} items={result.ai.strategies} tone="emerald" />
+              <AiList title="기회 요인" icon={Sparkles} items={result.ai.opportunities} tone="sky" />
+              <AiList title="리스크" icon={AlertTriangle} items={result.ai.risks} tone="amber" />
             </div>
           </CardContent>
         </Card>
@@ -218,15 +232,15 @@ export function RegulationHierarchyView({
       {/* 규제 계층 스택 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
-          <p className="text-sm font-black text-[var(--text-primary)]">📚 적용 규제 계층 (상위계획 → 개별규제)</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><BookOpen className="size-4" aria-hidden />적용 규제 계층 (상위계획 → 개별규제)</p>
           <div className="mt-4 space-y-3">
             {(result.hierarchy ?? []).map((lv, i) => {
-              const meta = LEVEL_META[lv.level] || { color: "var(--text-secondary)", icon: "•" };
+              const meta = LEVEL_META[lv.level] || { color: "var(--text-secondary)", Icon: Dot };
               return (
                 <div key={lv.level} className="relative rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
                   style={{ marginLeft: `${i * 14}px`, borderLeftColor: meta.color, borderLeftWidth: 3 }}>
-                  <p className="text-xs font-black" style={{ color: meta.color }}>
-                    {meta.icon} {lv.level} <span className="text-[var(--text-hint)]">({lv.items?.length})</span>
+                  <p className="inline-flex items-center gap-1.5 text-xs font-black" style={{ color: meta.color }}>
+                    <meta.Icon className="size-4" aria-hidden /> {lv.level} <span className="text-[var(--text-hint)]">({lv.items?.length})</span>
                   </p>
                   <div className="mt-2 grid gap-1.5">
                     {(lv.items ?? []).map((it, j) => (
@@ -266,8 +280,8 @@ export function RegulationHierarchyView({
       {(result.districts?.length ?? 0) > 0 && (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
-            <p className="text-sm font-black text-[var(--text-primary)]">
-              🚧 적용 규제·지구·구역 전수 <span className="text-[var(--text-hint)]">({result.districts?.length})</span>
+            <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
+              <TrafficCone className="size-4" aria-hidden />적용 규제·지구·구역 전수 <span className="text-[var(--text-hint)]">({result.districts?.length})</span>
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {(result.districts ?? []).map((d, i) => (
@@ -303,14 +317,14 @@ function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
   );
 }
 
-function AiList({ title, items, tone }: { title: string; items?: string[]; tone: string }) {
+function AiList({ title, icon: Icon, items, tone }: { title: string; icon?: LucideIcon; items?: string[]; tone: string }) {
   if (!items || items.length === 0) return null;
   const color: Record<string, string> = {
     rose: "text-rose-400", emerald: "text-emerald-400", sky: "text-sky-400", amber: "text-amber-400",
   };
   return (
     <div>
-      <p className={`text-xs font-bold ${color[tone] || "text-[var(--text-primary)]"}`}>{title}</p>
+      <p className={`inline-flex items-center gap-1.5 text-xs font-bold ${color[tone] || "text-[var(--text-primary)]"}`}>{Icon && <Icon className="size-3.5" aria-hidden />}{title}</p>
       <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
         {items.map((it, i) => <li key={i}>· {it}</li>)}
       </ul>

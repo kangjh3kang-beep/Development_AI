@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Hourglass, Mail, type LucideIcon } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { BillingMeter } from "@/components/billing/BillingMeter";
 
@@ -23,9 +24,9 @@ type MineResp = { can_create: boolean; owned: OwnedTeam[]; memberships: Membersh
 type UsageRow = { user_id: string; email: string; role: string; usage_limit_krw: number; tokens: number; cost_krw: number };
 
 const won = (n: number) => `${Math.round(n || 0).toLocaleString("ko-KR")}원`;
-const STATUS_LABEL: Record<string, string> = {
-  approved: "✅ 승인됨 — 팀 자원 공유 중", pending: "⏳ 가입 승인 대기 중",
-  invited: "📩 팀장 초대 도착 — 동의하면 합류", rejected: "거절됨",
+const STATUS_LABEL: Record<string, { icon?: LucideIcon; label: string }> = {
+  approved: { icon: CheckCircle2, label: "승인됨 — 팀 자원 공유 중" }, pending: { icon: Hourglass, label: "가입 승인 대기 중" },
+  invited: { icon: Mail, label: "팀장 초대 도착 — 동의하면 합류" }, rejected: { label: "거절됨" },
 };
 
 export default function TeamPage() {
@@ -94,7 +95,14 @@ export default function TeamPage() {
             <div key={ms.team_id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--line)] px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-[var(--text-primary)]">{ms.team_name || "팀"}{ms.owner_email && <span className="text-[var(--text-hint)]"> · 팀장 {ms.owner_email}</span>}</p>
-                <p className="text-xs text-[var(--text-secondary)]">{STATUS_LABEL[ms.status] || ms.status}</p>
+                <p className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                  {(() => {
+                    const st = STATUS_LABEL[ms.status];
+                    if (!st) return ms.status;
+                    const Icon = st.icon;
+                    return (<>{Icon && <Icon className="size-3.5" aria-hidden />}{st.label}</>);
+                  })()}
+                </p>
               </div>
               {ms.status === "invited" && (
                 <div className="flex shrink-0 gap-1">

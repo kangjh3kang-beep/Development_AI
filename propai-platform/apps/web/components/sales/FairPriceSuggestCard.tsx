@@ -7,6 +7,7 @@
  * 직접입력(평당 만원) 도 지원. 가짜값 금지: data_source!=live 면 근거/경고 그대로 표기.
  */
 import { useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -102,7 +103,7 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
           </div>
 
           {data.trust?.excluded_outliers && data.trust.excluded_outliers.length > 0 && (
-            <p className="mt-2 text-[10px] text-amber-500/90">⚠ 이상치 제외: {data.trust.excluded_outliers.map((e) => `${e.name}(${e.reason})`).join(", ")}</p>
+            <p className="mt-2 flex items-start gap-1 text-[10px] text-amber-500/90"><AlertTriangle className="mt-px size-3 shrink-0" aria-hidden /><span>이상치 제외: {data.trust.excluded_outliers.map((e) => `${e.name}(${e.reason})`).join(", ")}</span></p>
           )}
 
           {/* 2차 가드: 원가(공사비+간접) 회수 검증 — 시장가가 원가를 못 넘으면 경고(가짜값 아님·정직 표기) */}

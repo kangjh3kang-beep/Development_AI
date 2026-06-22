@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { AlertTriangle } from "lucide-react";
 import { Card, CardContent, Button } from "@propai/ui";
 import { formatCurrencyCompact } from "@/lib/formatters";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -424,8 +425,9 @@ export function CarbonEmissionsWorkspaceClient({
                 <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.scopeTitle}</h3>
                 {/* ★정직 고지: EPD는 자재 내재탄소(A1~A3=대부분 Scope 3)를 측정한다. 아래 Scope 1/2/3 분해는
                     실측이 아니라 업계 통상 가정비율(5/15/80)로 나눈 '추정 구성'이다. 가짜 측정값으로 오인 방지. */}
-                <p className="text-[11px] leading-snug text-amber-600">
-                  ⚠ 추정 구성 — 업계 통상 가정비율(5/15/80)로 분해한 참고값입니다. EPD는 자재 내재탄소(대부분 Scope 3)를 측정하며, 정밀 Scope 분해는 운영단계 실측이 필요합니다.
+                <p className="flex items-start gap-1.5 text-[11px] leading-snug text-amber-600">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span>추정 구성 — 업계 통상 가정비율(5/15/80)로 분해한 참고값입니다. EPD는 자재 내재탄소(대부분 Scope 3)를 측정하며, 정밀 Scope 분해는 운영단계 실측이 필요합니다.</span>
                 </p>
                 <div className="space-y-4">
                   {[

@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { ProjectPresaleMap, type PresaleMarker } from "@/components/presale/ProjectPresaleMap";
 
@@ -137,7 +138,7 @@ export default function SalesInfoPage() {
 
           {!loading && list && !list.available && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]">
-              ⚠️ {list.note || "분양정보를 불러올 수 없습니다."} <span className="text-[var(--text-hint)]">(청약홈 분양정보 API 활용신청·키 설정 후 표시됩니다)</span>
+              <AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />{list.note || "분양정보를 불러올 수 없습니다."} <span className="text-[var(--text-hint)]">(청약홈 분양정보 API 활용신청·키 설정 후 표시됩니다)</span>
             </div>
           )}
 
@@ -219,7 +220,7 @@ function DetailModal({ detail, loading, onClose }: { detail: any; loading: boole
         {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">상세 불러오는 중…</div>}
 
         {!loading && !hasBasic && detail.available === false && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]">⚠️ {detail.note || "상세 정보를 불러올 수 없습니다."}</div>
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]"><AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />{detail.note || "상세 정보를 불러올 수 없습니다."}</div>
         )}
 
         {!loading && (hasBasic || detail.available !== false) && (

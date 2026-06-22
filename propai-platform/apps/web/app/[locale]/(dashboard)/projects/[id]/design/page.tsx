@@ -20,6 +20,7 @@
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
+import { Construction } from "lucide-react";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { DesignStudio } from "@/components/design/DesignStudio";
@@ -117,8 +118,8 @@ export default function DesignPage() {
           transition={{ delay: 0.2 }}
           className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] py-12"
         >
-          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-3xl">
-            🏗
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+            <Construction className="size-7" aria-hidden />
           </span>
           <div className="text-center">
             <p className="text-base font-bold text-[var(--text-primary)]">설계 스튜디오</p>

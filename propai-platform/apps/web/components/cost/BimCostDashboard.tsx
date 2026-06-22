@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -143,8 +144,8 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
 
         {/* ★정직 고지: 물량은 BIM 정밀적산이 아니라 설계 연면적 기반 개략 역산이다(고정 가짜값 아님·실 연면적 비례). */}
         {needDesign ? (
-          <div className="px-8 py-5 bg-amber-500/10 border-b border-amber-500/30 text-[12px] leading-relaxed text-amber-700">
-            ⚠ 설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 연면적 기반 개략 물량으로 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)
+          <div className="flex items-start gap-1.5 px-8 py-5 bg-amber-500/10 border-b border-amber-500/30 text-[12px] leading-relaxed text-amber-700">
+            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden /><span>설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 연면적 기반 개략 물량으로 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)</span>
           </div>
         ) : costResult && totalGfaSqm ? (
           <div className="px-8 py-3 bg-[var(--surface-soft)] border-b border-[var(--line)] text-[11px] text-[var(--text-hint)]">

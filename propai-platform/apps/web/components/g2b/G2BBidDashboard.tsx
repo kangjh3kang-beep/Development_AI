@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { ClipboardList, Construction, FolderTree, Landmark } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
@@ -194,7 +195,7 @@ export default function G2BBidDashboard() {
         <i className="cc-bracket cc-bracket--tr" />
         <i className="cc-bracket cc-bracket--bl" />
         <i className="cc-bracket cc-bracket--br" />
-        <div className="relative z-10 h-11 w-11 rounded-2xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] flex items-center justify-center text-white text-lg">🏛</div>
+        <div className="relative z-10 h-11 w-11 rounded-2xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] flex items-center justify-center text-white"><Landmark className="size-5" aria-hidden /></div>
         <div className="relative z-10">
           <div className="mb-1 flex items-center gap-2">
             <span className="cc-meta">G2B · PUBLIC BID CONTROL</span>
@@ -348,7 +349,7 @@ export default function G2BBidDashboard() {
             </div>
           ) : bids.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
-              <span className="text-5xl mb-3">📋</span>
+              <ClipboardList className="size-12 mb-3 text-[var(--text-tertiary)]" aria-hidden />
               <p className="text-base font-bold text-[var(--text-secondary)]">조건에 맞는 입찰 공고가 없습니다</p>
               <p className="text-sm text-[var(--text-hint)] mt-1">필터를 조정하거나 키워드를 변경해 보세요</p>
             </div>
@@ -533,7 +534,7 @@ function BidCard({
             title="공고 지역(시도)·공고명을 새 프로젝트 화면에 선채움합니다. 정밀 주소는 생성 화면의 주소 검색으로 보강하세요."
             className="w-full rounded-lg border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-3 py-1.5 text-[11px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft)]/70"
           >
-            🏗️ 이 공고로 프로젝트 생성
+            <span className="inline-flex items-center gap-1.5"><Construction className="size-3.5" aria-hidden />이 공고로 프로젝트 생성</span>
           </button>
         </div>
       ) : null}
@@ -600,7 +601,7 @@ function AnalysisHistory({
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
-        <span className="text-5xl mb-3">🗂️</span>
+        <FolderTree className="size-12 mb-3 text-[var(--text-tertiary)]" aria-hidden />
         <p className="text-base font-bold text-[var(--text-secondary)]">저장된 분석 내역이 없습니다</p>
         <p className="text-sm text-[var(--text-hint)] mt-1">입찰 공고에서 AI 정밀분석을 실행하면 여기에 자동 저장됩니다</p>
       </div>

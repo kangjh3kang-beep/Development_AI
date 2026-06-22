@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, Bot, Settings } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -111,7 +112,7 @@ export default function PricingConfigPanel({
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]">
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between px-4 py-3 text-left">
-        <span className="text-sm font-black text-[var(--accent-strong)]">⚙ 분양가 설정 (기준가·가중치·구성)</span>
+        <span className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Settings className="size-4" aria-hidden />분양가 설정 (기준가·가중치·구성)</span>
         <span className="text-xs text-[var(--text-tertiary)]">{open ? "접기 ▲" : "펼치기 ▼"}{msg && ` · ${msg}`}</span>
       </button>
       {open && (
@@ -120,7 +121,7 @@ export default function PricingConfigPanel({
               Σ구성≠분양가·VAT 과세표준 과소합산 신호. PriceGroupingPanel 과 동일 디자인. */}
           {warnings.length > 0 && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
-              <p className="text-[11px] font-bold text-amber-600">⚠ 원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
+              <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
               <ul className="mt-1 space-y-0.5">
                 {warnings.map((w, i) => (
                   <li key={i} className="text-[10px] leading-snug text-amber-600/90">
@@ -215,7 +216,7 @@ export default function PricingConfigPanel({
           <div className="flex flex-wrap justify-end gap-2">
             <button onClick={aiSuggest} disabled={aiBusy || types.length === 0} title="입지·용도지역·평형 기반 AI 기준가/가중치 제안"
               className="rounded-lg border border-[var(--accent-strong)] px-4 py-2 text-sm font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-              {aiBusy ? "AI 제안 중…" : "🤖 AI 분양가 제안"}
+              {aiBusy ? "AI 제안 중…" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 분양가 제안</span>)}
             </button>
             <button onClick={regenerate} className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white hover:opacity-90">설정 적용 → 분양가 재생성</button>
           </div>

@@ -14,6 +14,7 @@
 import { useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { Link2 } from "lucide-react";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -139,8 +140,8 @@ export function InvestmentFeasibilityClient() {
             )}
             {/* 공사비 정밀 분석 연동 표시(단일 데이터원) */}
             {costData?.totalConstructionCostWon != null && (
-              <div className="mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--accent-strong)]">
-                🔗 공사비 정밀 분석 연동 — 정밀 총공사비 <b>{fmtKrw(costData.totalConstructionCostWon)}</b>
+              <div className="mt-3 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--accent-strong)]">
+                <Link2 className="size-3.5 shrink-0" aria-hidden />공사비 정밀 분석 연동 — 정밀 총공사비 <b>{fmtKrw(costData.totalConstructionCostWon)}</b>
                 {costData.rangeMinWon != null && costData.rangeMaxWon != null && <span className="text-[var(--text-tertiary)]"> (범위 {fmtKrw(costData.rangeMinWon)}~{fmtKrw(costData.rangeMaxWon)})</span>}
               </div>
             )}

@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { Construction, DraftingCompass, Link2 } from "lucide-react";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
@@ -284,10 +285,10 @@ export function CostEstimationClient() {
           </p>
         )}
         {hasDesign && (
-          <p className="text-[11px] text-emerald-400">🏗 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-emerald-400"><Construction className="size-3.5 shrink-0" aria-hidden /> 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
         )}
         {!hasDesign && gfaFromSite && !editedGfa && (
-          <p className="text-[11px] text-amber-400">📐 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-amber-400"><DraftingCompass className="size-3.5 shrink-0" aria-hidden /> 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
         )}
 
         {/* 건축개요 입력 */}
@@ -393,7 +394,7 @@ export function CostEstimationClient() {
                   );
                 })}
               </div>
-              <p className="mt-4 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] text-[var(--accent-strong)]">🔗 이 공사비가 <b>수지분석·투자수익성(ROI)</b>에 자동 반영됩니다(단일 데이터원).</p>
+              <p className="mt-4 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] text-[var(--accent-strong)]"><Link2 className="size-3.5 shrink-0" aria-hidden />이 공사비가 <b>수지분석·투자수익성(ROI)</b>에 자동 반영됩니다(단일 데이터원).</p>
             </div>
 
             {/* 산출 근거(EvidencePanel) — 백엔드 evidence가 있으면 우선, 없으면 응답 수치로 산식 트레이스(가짜값/가짜URL 0).
@@ -417,7 +418,7 @@ export function CostEstimationClient() {
                 <h3 className="mb-1 flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
                   <Term label="개략 적산" hint="QTO(Quantity Take-Off, 물량 산출)의 개략 버전. 건축개요로 역산한 표준 물량입니다. 부위별 정밀 물량은 BIM·적산(Step4)에서 실치수로 산출합니다." />
                 </h3>
-                <p className="mb-3 text-[11px] text-[var(--text-hint)]">{hasDesign ? "🏗 설계 연동 — 도면/BIM 완성 시 실 매스로 정밀화됩니다." : "건축개요 기반 표준 적산. 설계 완성 시 정밀화."}</p>
+                <p className="mb-3 flex items-center gap-1.5 text-[11px] text-[var(--text-hint)]">{hasDesign ? (<><Construction className="size-3.5 shrink-0" aria-hidden /> 설계 연동 — 도면/BIM 완성 시 실 매스로 정밀화됩니다.</>) : "건축개요 기반 표준 적산. 설계 완성 시 정밀화."}</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -447,7 +448,7 @@ export function CostEstimationClient() {
                 <div className="mb-2 flex items-center gap-2">
                   <h3 className="text-sm font-black text-[var(--text-primary)]">기하(Geometry) 정밀 적산</h3>
                   {result.geometry.source === "bim"
-                    ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">🏗 BIM 매스 실치수</span>
+                    ? <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400"><Construction className="size-3" aria-hidden /> BIM 매스 실치수</span>
                     : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">개요 역산</span>}
                 </div>
                 <p className="mb-3 text-[11px] text-[var(--text-hint)]">

@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { AlertTriangle } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -529,8 +530,8 @@ function InstantPanel({
           {Array.isArray(data.data_quality.warnings) && data.data_quality.warnings.length > 0 && (
             <ul className="grid gap-1 text-[12px] text-[var(--text-secondary)]">
               {data.data_quality.warnings.map((w, i) => (
-                <li key={i} className="flex gap-1.5">
-                  <span className="text-[var(--status-warning)]">⚠</span>
+                <li key={i} className="flex items-center gap-1.5">
+                  <AlertTriangle className="size-3.5 shrink-0 text-[var(--status-warning)]" aria-hidden />
                   <span>{w}</span>
                 </li>
               ))}

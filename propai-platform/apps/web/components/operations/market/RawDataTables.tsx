@@ -16,6 +16,7 @@
  * 색상은 전부 토큰(하드코딩 금지), 숫자는 sa-di-num(우측정렬·mono)·천단위 콤마.
  */
 
+import { BarChart3, Compass, Home, Users, Wallet } from "lucide-react";
 import type { DataSource } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 
@@ -290,7 +291,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
         <>
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>👥</span>
+              <span className="sa-di-block__icon" aria-hidden><Users className="size-3.5" /></span>
               <span className="sa-di-block__title">인구 규모·가구</span>
               <DataSourceBadge source={asSource(pop.data_source)} />
             </header>
@@ -323,7 +324,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
           {/* 연령대 분포 — 라벨·인원 + 간단 가로 막대(width %) */}
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>📊</span>
+              <span className="sa-di-block__icon" aria-hidden><BarChart3 className="size-3.5" /></span>
               <span className="sa-di-block__title">연령대 분포</span>
               <DataSourceBadge source={asSource(pop.data_source)} />
             </header>
@@ -369,7 +370,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
           {/* 가구원수 분포 — 라벨·비율% (estimated=true면 "추정" 표기) */}
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>🏠</span>
+              <span className="sa-di-block__icon" aria-hidden><Home className="size-3.5" /></span>
               <span className="sa-di-block__title">가구원수 분포</span>
               <DataSourceBadge source={asSource(pop.data_source)} />
             </header>
@@ -405,7 +406,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
           {/* 인구 이동 — 전입·전출·순이동(순이동 부호색) */}
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>🧭</span>
+              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
               <span className="sa-di-block__title">인구 이동</span>
               <DataSourceBadge source={asSource(pop.migration_data_source)} />
             </header>
@@ -453,7 +454,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
       {inc && (
         <div className="sa-di-block">
           <header className="sa-di-block__head" style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden>💰</span>
+            <span className="sa-di-block__icon" aria-hidden><Wallet className="size-3.5" /></span>
             <span className="sa-di-block__title">평균·중위 연소득</span>
             <DataSourceBadge source={asSource(inc.data_source)} />
           </header>

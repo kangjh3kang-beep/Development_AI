@@ -17,6 +17,7 @@
  * 미디어: ImageUpload(/uploads/image) public URL → messages.media_urls[].
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Camera } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { connectSocialWs, type SocialWsEvent, type SocialWsStatus, type SocialWsHandle } from "@/lib/socialWs";
@@ -285,7 +286,7 @@ function RoomsView({
                 {last && (
                   <p className="mt-1.5 line-clamp-1 text-xs text-[var(--text-secondary)]">
                     {isMine && <span className="text-[var(--text-tertiary)]">나: </span>}
-                    {last.kind === "image" ? "📷 사진" : last.kind === "system" ? `ⓘ ${last.body ?? ""}` : last.body || ""}
+                    {last.kind === "image" ? (<span className="inline-flex items-center gap-1"><Camera className="size-3.5" aria-hidden />사진</span>) : last.kind === "system" ? `ⓘ ${last.body ?? ""}` : last.body || ""}
                     {last.created_at && <span className="ml-2 text-[10px] text-[var(--text-hint)]">{fmtTime(last.created_at)}</span>}
                   </p>
                 )}
@@ -859,11 +860,11 @@ function ChatRoom({
       <div className="sa-chatbar flex items-center gap-2 pt-1">
         <button
           onClick={() => setMediaOpen((v) => !v)}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--line)] text-lg text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--line)] text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
           title="사진 첨부"
           aria-label="사진 첨부"
         >
-          📷
+          <Camera className="size-5" aria-hidden />
         </button>
         <input
           value={text}

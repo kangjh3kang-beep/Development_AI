@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, Search, TrendingUp } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -524,14 +525,14 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <span className="cc-meta">LAND · ACQUISITION SCHEDULE</span>
             </div>
             <div className="relative z-10 mt-3 flex items-center gap-3">
-              <span className="text-2xl">🗂️</span>
+              <FolderTree className="size-7 shrink-0 text-[var(--accent-strong)]" aria-hidden />
               <div>
                 <h1 className="text-lg font-black text-[var(--text-primary)]">토지조서 (편입토지 관리)</h1>
                 <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀.</p>
               </div>
             </div>
             <div className="relative z-10 mx-auto mt-6 max-w-xl rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/40 px-6 py-10 text-center">
-              <div className="text-4xl">📁</div>
+              <Folder className="mx-auto size-10 text-[var(--text-tertiary)]" aria-hidden />
               <p className="mt-3 text-base font-black text-[var(--text-primary)]">먼저 프로젝트를 선택하거나 만들어 주세요</p>
               <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-[var(--text-secondary)]">
                 토지조서는 <b className="text-[var(--accent-strong)]">프로젝트별로</b> 관리됩니다. 중앙분석센터의 부지분석 결과는
@@ -568,7 +569,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             <span className="cc-live"><i />LIVE</span>
           </div>
           <div className="relative z-10 mt-3 flex items-center gap-3">
-            <span className="text-2xl">🗂️</span>
+            <FolderTree className="size-7 shrink-0 text-[var(--accent-strong)]" aria-hidden />
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">토지조서 (편입토지 관리)</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀. 등기정보분석과 상호 연동.</p>
@@ -606,16 +607,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
                   title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
                   className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {busy === "classify" ? "감지 중…" : "🔎 유형 자동감지"}
+                  {busy === "classify" ? "감지 중…" : (<span className="inline-flex items-center gap-1.5"><Search className="size-4" aria-hidden />유형 자동감지</span>)}
                 </button>
                 <button onClick={downloadExcel} disabled={!!busy || rows.length === 0}
                   className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}
+                  {busy === "excel" ? "생성 중…" : (<span className="inline-flex items-center gap-1.5"><BarChart3 className="size-4" aria-hidden />토지조서 엑셀</span>)}
                 </button>
                 <button onClick={downloadReport} disabled={!!busy || rows.length === 0}
                   title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) PDF 생성"
                   className="whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-                  {busy === "report" ? "생성 중…" : "📄 토지분석보고서"}
+                  {busy === "report" ? "생성 중…" : (<span className="inline-flex items-center gap-1.5"><FileText className="size-4" aria-hidden />토지분석보고서</span>)}
                 </button>
               </div>
             </div>
@@ -624,7 +625,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           {/* 행 0개 빈 상태 — 무엇을 해야 하는지 친절히 안내(행이 1개라도 있으면 숨김) */}
           {rows.length === 0 && (
             <div className="relative z-10 mt-4 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 px-6 py-8 text-center">
-              <div className="text-3xl">🗂️</div>
+              <FolderTree className="mx-auto size-8 text-[var(--text-tertiary)]" aria-hidden />
               <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">아직 등록된 필지가 없습니다</p>
               <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
                 위에서 <b className="text-[var(--accent-strong)]">지번 주소 검색</b>, <b className="text-[var(--accent-strong)]">엑셀 업로드</b>, 또는 <b className="text-[var(--accent-strong)]">프로젝트 필지 불러오기</b>로 편입토지를 등록하세요.
@@ -642,7 +643,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             : "border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] text-[var(--status-warning)]"
         }`}>
           <span className="flex gap-2">
-            <span className="shrink-0">{notice.kind === "info" ? "ℹ️" : "⚠"}</span>
+            <span className="shrink-0">{notice.kind === "info" ? <Info className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}</span>
             <span>{notice.text}</span>
           </span>
           <button onClick={() => setNotice(null)} className={`shrink-0 ${notice.kind === "info" ? "text-[var(--accent-strong)]" : "text-[var(--status-warning)]"}`}>✕</button>
@@ -718,9 +719,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         {r.parcel_case && !r.unit_label && (
                           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9px]">
                             {r.parcel_case === "aggregate" ? (
-                              <span className="rounded bg-[color-mix(in_srgb,var(--accent-strong)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--accent-strong)]">🏢 공동주택{r.unit_count ? ` ${r.unit_count}세대` : ""}</span>
+                              <span className="inline-flex items-center gap-1 rounded bg-[color-mix(in_srgb,var(--accent-strong)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--accent-strong)]"><Building2 className="size-3" aria-hidden />공동주택{r.unit_count ? ` ${r.unit_count}세대` : ""}</span>
                             ) : r.parcel_case === "building" ? (
-                              <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🏠 단일건물</span>
+                              <span className="inline-flex items-center gap-1 rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]"><Home className="size-3" aria-hidden />단일건물</span>
                             ) : (
                               <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🟩 토지</span>
                             )}
@@ -774,7 +775,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                                 : "border border-[var(--accent-strong)]/40 text-[var(--accent-strong)]"
                             }`}
                           >
-                            {r.parcel_case === "aggregate" ? "🏢 세대 대지지분" : "대지지분"}
+                            {r.parcel_case === "aggregate" ? (<span className="inline-flex items-center gap-1"><Building2 className="size-3" aria-hidden />세대 대지지분</span>) : "대지지분"}
                           </button>
                         )}
                         {r.pdf_url && (
@@ -793,7 +794,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <p className="cc-label text-[var(--accent-strong)]">📊 토지조서 집계</p>
+                <p className="inline-flex items-center gap-1.5 cc-label text-[var(--accent-strong)]"><BarChart3 className="size-4" aria-hidden />토지조서 집계</p>
                 <span className="cc-chip-data">AGGREGATE</span>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -850,7 +851,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           {(highlight || rows.find((r) => r.jibun.trim())?.jibun) && (
             <div>
               <p className="mb-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
-                📈 주변 토지 실거래·시세 <span className="cc-chip-data">RADIUS 1KM</span> <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준</span>
+                <TrendingUp className="size-4" aria-hidden />주변 토지 실거래·시세 <span className="cc-chip-data">RADIUS 1KM</span> <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준</span>
               </p>
               <NearbyTransactionsMap address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""} />
             </div>

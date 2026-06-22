@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { AlertTriangle, Building2, Compass, Sun } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import type { EnvironmentResult, SolarGrade, SkylinePosition } from "./types";
 
@@ -79,7 +80,7 @@ export function EnvironmentSummaryCard({
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-lg">☀️</span>
+            <Sun className="size-5 shrink-0 text-amber-500" aria-hidden />
             <div>
               <h4 className="text-sm font-black text-[var(--text-primary)]">일조 환경 (법정 요건)</h4>
               <p className="text-[10px] text-[var(--text-hint)]">정북 일조사선·동지 일조시간 (약식 추정)</p>
@@ -113,8 +114,8 @@ export function EnvironmentSummaryCard({
         </div>
 
         {setbackApplies && solar.north_setback.detail && (
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
-            ⚠ {solar.north_setback.detail}
+          <p className="mt-2 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
+            <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {solar.north_setback.detail}
           </p>
         )}
         <p className="mt-2 text-[10px] text-[var(--text-hint)]">
@@ -130,7 +131,7 @@ export function EnvironmentSummaryCard({
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-lg">🏙️</span>
+          <Building2 className="size-5 shrink-0" aria-hidden />
           <div>
             <h4 className="text-sm font-black text-[var(--text-primary)]">조망·스카이라인 (분양가치 근거)</h4>
             <p className="text-[10px] text-[var(--text-hint)]">개방도·주변 건물 높이 비교 (약식 추정)</p>
@@ -164,9 +165,9 @@ export function EnvironmentSummaryCard({
           {(view.best_directions ?? []).map((d, i) => (
             <span
               key={`${d}-${i}`}
-              className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
             >
-              🧭 {d} 트임
+              <Compass className="size-3 shrink-0" aria-hidden /> {d} 트임
             </span>
           ))}
         </div>

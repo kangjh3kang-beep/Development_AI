@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { BarChart3, FileText, FolderTree, Lock, Map, RadioTower, type LucideIcon } from "lucide-react";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
@@ -120,10 +121,10 @@ type MonitorResponse = {
   subscriber_only?: boolean | null;
 };
 
-const SOURCE_META: { key: keyof MonitorGroups; label: string; icon: string; desc: string }[] = [
-  { key: "landschedule", label: "보유토지(토지조서)", icon: "🗂️", desc: "토지조서 자동연동" },
-  { key: "excel", label: "업로드 토지", icon: "📄", desc: "Excel 업로드 토지조서" },
-  { key: "region", label: "관심 구역", icon: "🗺️", desc: "지도에서 그린 구역" },
+const SOURCE_META: { key: keyof MonitorGroups; label: string; icon: LucideIcon; desc: string }[] = [
+  { key: "landschedule", label: "보유토지(토지조서)", icon: FolderTree, desc: "토지조서 자동연동" },
+  { key: "excel", label: "업로드 토지", icon: FileText, desc: "Excel 업로드 토지조서" },
+  { key: "region", label: "관심 구역", icon: Map, desc: "지도에서 그린 구역" },
 ];
 
 function formatCurrency(locale: Locale, value: number | null | undefined) {
@@ -656,8 +657,8 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     <div className="space-y-6">
       {/* 자동모니터링 안내 + 수동실행 */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3">
-        <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
-          📡 관심대상(보유토지·업로드·관심구역)을 정기적으로{" "}
+        <p className="inline-flex flex-wrap items-baseline gap-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">
+          <RadioTower className="size-4 self-center shrink-0" aria-hidden /> 관심대상(보유토지·업로드·관심구역)을 정기적으로{" "}
           <strong className="text-[var(--text-primary)]">자동 모니터링</strong>하여 경·공매로 나오는 물건을
           찾아드립니다. 아래에서 즉시 갱신할 수도 있습니다.
         </p>
@@ -681,7 +682,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         {/* ⓐ 보유토지(토지조서) */}
         <div className="flex flex-col rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/40 p-5">
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-lg">🗂️</span>
+            <FolderTree className="size-5" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">보유토지 자동연동</h3>
           </div>
           <p className="flex-1 text-xs leading-relaxed text-[var(--text-secondary)]">
@@ -698,7 +699,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         {/* ⓑ Excel 업로드 */}
         <div className="flex flex-col rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/40 p-5">
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-lg">📄</span>
+            <FileText className="size-5" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">토지조서 Excel 업로드</h3>
           </div>
           <p className="flex-1 text-xs leading-relaxed text-[var(--text-secondary)]">
@@ -757,7 +758,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         {/* ⓒ 등록 현황 요약 */}
         <div className="flex flex-col rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/40 p-5">
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-lg">📊</span>
+            <BarChart3 className="size-5" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">관심대상 현황</h3>
           </div>
           {watchlistQuery.isError ? (
@@ -771,8 +772,8 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   key={m.key}
                   className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2"
                 >
-                  <span className="font-bold text-[var(--text-secondary)]">
-                    {m.icon} {m.label}
+                  <span className="inline-flex items-center gap-1.5 font-bold text-[var(--text-secondary)]">
+                    <m.icon className="size-3.5 shrink-0" aria-hidden /> {m.label}
                   </span>
                   <span className="font-mono font-black tabular-nums text-[var(--text-primary)]">
                     {watchlistQuery.isLoading ? "…" : `${sourceCounts[m.key] ?? 0}건`}
@@ -792,7 +793,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="flex items-center gap-2 text-sm font-black text-[var(--text-primary)]">
-              <span>🗺️</span> 지도에서 관심 구역 그리기
+              <Map className="size-4 shrink-0" aria-hidden /> 지도에서 관심 구역 그리기
             </h3>
             <p className="mt-0.5 text-[11px] text-[var(--text-hint)]">
               {editing
@@ -941,9 +942,9 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   type="button"
                   aria-label={`${r.label ?? "구역"} 확대`}
                   onClick={() => zoomToRegion(r)}
-                  className="hover:text-[var(--accent-strong)]"
+                  className="inline-flex items-center gap-1.5 hover:text-[var(--accent-strong)]"
                 >
-                  🗺️ {formatText(r.label)}
+                  <Map className="size-3.5 shrink-0" aria-hidden /> {formatText(r.label)}
                 </button>
                 <button
                   type="button"
@@ -984,7 +985,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
 
         {monitorQuery.data?.subscriber_only ? (
           <div className="rounded-2xl border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-5 py-4">
-            <p className="text-sm font-black text-[var(--text-primary)]">🔒 구독자 전용 기능</p>
+            <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Lock className="size-4 shrink-0" aria-hidden /> 구독자 전용 기능</p>
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               공·경매 모니터링은 구독자만 이용할 수 있습니다. 구독 후 보유토지·관심물건을 지속
               모니터링하고 AI 분석(LLM 사용량에 따라 과금)을 활용하세요.
@@ -1017,7 +1018,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                 >
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="flex items-center gap-2 text-sm font-black text-[var(--text-primary)]">
-                      <span>{m.icon}</span> {m.label}
+                      <m.icon className="size-4 shrink-0" aria-hidden /> {m.label}
                       <span className="sa-di-eyebrow">{m.desc}</span>
                     </p>
                     <span className="sa-di-token font-mono tabular-nums">

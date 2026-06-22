@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -57,7 +58,7 @@ export function QtoBreakdown({ projectId }: { projectId: string }) {
     return <p className="rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 text-xs text-[var(--text-secondary)]">설계(연면적) 데이터가 있어야 BIM 적산이 가능합니다. ‘AI 자동설계(CAD)’를 먼저 실행하세요.</p>;
   }
   if (loading) return <p className="text-xs text-[var(--text-hint)]">BIM 물량·적산 계산 중…</p>;
-  if (err) return <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {err}</p>;
+  if (err) return <p className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />{err}</p>;
   if (!res) return null;
 
   const isBim = res.qto_source === "bim";

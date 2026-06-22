@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BarChart3, FolderTree, Pencil } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 
 interface Activity {
@@ -169,7 +170,7 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
       {/* 실적 요약 */}
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-black text-[var(--text-primary)]">📊 실적 요약</h2>
+          <h2 className="inline-flex items-center gap-1.5 font-black text-[var(--text-primary)]"><BarChart3 className="size-5" aria-hidden />실적 요약</h2>
           <div className="flex flex-wrap gap-1.5">
             {PERIODS.map((p) => (
               <button
@@ -198,7 +199,7 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
 
       {/* 일지 작성 */}
       <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-        <h2 className="mb-2 font-black text-[var(--text-primary)]">✍️ 업무일지 작성</h2>
+        <h2 className="mb-2 inline-flex items-center gap-1.5 font-black text-[var(--text-primary)]"><Pencil className="size-5" aria-hidden />업무일지 작성</h2>
         <div className="mb-2 flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1">
             <span className="text-[10px] text-[var(--text-tertiary)]">일자</span>
@@ -268,7 +269,7 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
       {/* 일지 목록 */}
       <section className="space-y-2">
         <div className="flex flex-wrap items-end gap-2">
-          <h2 className="font-black text-[var(--text-primary)]">🗂 업무일지 목록</h2>
+          <h2 className="inline-flex items-center gap-1.5 font-black text-[var(--text-primary)]"><FolderTree className="size-5" aria-hidden />업무일지 목록</h2>
           <div className="ml-auto flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-0.5">
               <span className="text-[10px] text-[var(--text-tertiary)]">시작일</span>

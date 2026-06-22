@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, ShieldCheck } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 
 interface Finding { key: string; severity: "critical" | "high" | "medium"; count: number; title: string; detail: string }
@@ -36,7 +37,7 @@ export default function IntegrityGuard({ siteCode }: { siteCode: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-black text-[var(--text-primary)]">🛡 무결성 가드</h2>
+        <h2 className="inline-flex items-center gap-1.5 font-black text-[var(--text-primary)]"><ShieldCheck className="size-5" aria-hidden />무결성 가드</h2>
         <button onClick={run} disabled={busy} className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
           {busy ? "점검 중…" : "재점검"}
         </button>
@@ -54,7 +55,7 @@ export default function IntegrityGuard({ siteCode }: { siteCode: string }) {
 
       {ok === true && (
         <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-center">
-          <p className="text-2xl">✅</p>
+          <CheckCircle2 className="mx-auto size-8 text-emerald-300" aria-hidden />
           <p className="mt-1 text-sm font-bold text-emerald-300">무결성 위반 없음 — 1호1계약·배분·보증·가격 정상</p>
         </div>
       )}

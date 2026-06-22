@@ -16,6 +16,7 @@
  */
 
 import { useRef, useState } from "react";
+import { FileText, Receipt } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 /* ── 공유 타입(설계심사 개요 필드) — ParamConfirmStep·Workspace가 import ── */
@@ -180,9 +181,9 @@ export function BriefUploadStep({
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={busy}
-            className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
           >
-            📄 건축개요 PDF 선택
+            <FileText className="size-4" aria-hidden />건축개요 PDF 선택
           </button>
           {file ? (
             <span className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -237,7 +238,7 @@ export function BriefUploadStep({
           disabled={busy}
           className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
         >
-          {loading ? "개요 추출 중…" : "🧾 개요 필드 추출"}
+          {loading ? "개요 추출 중…" : (<span className="inline-flex items-center gap-1.5"><Receipt className="size-4" aria-hidden />개요 필드 추출</span>)}
         </button>
         {info && <span className="text-xs text-[var(--text-secondary)]">{info}</span>}
         {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}

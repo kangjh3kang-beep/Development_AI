@@ -11,6 +11,7 @@
  * 색상 토큰만 사용.
  */
 
+import { Tag } from "lucide-react";
 import type { PricingBand } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -48,7 +49,7 @@ export function PricingBandPanel({ data }: { data?: PricingBand | null }) {
     return (
       <div className="sa-di-block">
         <header className="sa-di-block__head" style={{ cursor: "default" }}>
-          <span className="sa-di-block__icon" aria-hidden>🏷️</span>
+          <span className="sa-di-block__icon" aria-hidden><Tag className="size-3.5" /></span>
           <span className="sa-di-block__title">적정 분양가 (거래사례비교)</span>
           <DataSourceBadge source="unavailable" />
         </header>
@@ -116,7 +117,7 @@ export function PricingBandPanel({ data }: { data?: PricingBand | null }) {
   return (
     <div className="sa-di-block">
       <header className="sa-di-block__head" style={{ cursor: "default" }}>
-        <span className="sa-di-block__icon" aria-hidden>🏷️</span>
+        <span className="sa-di-block__icon" aria-hidden><Tag className="size-3.5" /></span>
         <span className="sa-di-block__title">적정 분양가 (거래사례비교 + 지불여력)</span>
         <DataSourceBadge source={data.data_source} />
       </header>

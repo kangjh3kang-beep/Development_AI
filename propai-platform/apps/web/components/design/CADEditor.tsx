@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type Konva from "konva";
+import { Check, Download, Eye, EyeOff, Lightbulb, Upload } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import {
   type CadShape,
@@ -1199,7 +1200,7 @@ export default function CADEditor({
           }`}
         >
           {saveStatus === "saving" ? "저장 중..."
-            : saveStatus === "saved" ? `✓ 저장${loadedVersion ? ` v${loadedVersion}` : ""}`
+            : saveStatus === "saved" ? (<span className="inline-flex items-center gap-1"><Check className="size-3" aria-hidden />저장{loadedVersion ? ` v${loadedVersion}` : ""}</span>)
             : saveStatus === "error" ? "재시도"
             : `저장${loadedVersion ? ` (v${loadedVersion})` : ""}`}
         </button>
@@ -1217,7 +1218,7 @@ export default function CADEditor({
           {dxfState === "loading" ? "DXF 생성…"
             : dxfState === "need-save" ? "먼저 저장하세요"
             : dxfState === "error" ? "DXF 실패"
-            : "⬇ 편집본 DXF"}
+            : (<span className="inline-flex items-center gap-1"><Download className="size-3" aria-hidden />편집본 DXF</span>)}
         </button>
         {/* ── DXF 가져오기(파일 → POST import-dxf → shapes 변환) ── */}
         <button
@@ -1226,7 +1227,7 @@ export default function CADEditor({
           title="DXF 파일을 업로드해 도형으로 가져옵니다(폴리라인 → 다각형/선)"
           className="rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white/80 transition-colors hover:bg-white/20 disabled:opacity-50 bg-white/10"
         >
-          {importState === "loading" ? "가져오는 중…" : "⬆ 가져오기"}
+          {importState === "loading" ? "가져오는 중…" : (<span className="inline-flex items-center gap-1"><Upload className="size-3" aria-hidden />가져오기</span>)}
         </button>
         <div className="mx-1 h-5 w-px bg-white/10" />
         {/* ── 전체삭제(confirm — Ctrl+Z 복원 가능) ── */}
@@ -1265,7 +1266,7 @@ export default function CADEditor({
                   visibleLayers[k] ? "text-teal-300" : "text-white/25"
                 }`}
               >
-                {visibleLayers[k] ? "◉" : "○"}
+                {visibleLayers[k] ? <Eye className="size-3.5" aria-hidden /> : <EyeOff className="size-3.5" aria-hidden />}
               </button>
             </div>
           ))}
@@ -1275,7 +1276,7 @@ export default function CADEditor({
       {/* ── 최초 1회 도움말 칩(편집기 첫 진입 안내) ── */}
       {showHelp && !isDrawTool && (
         <div className="absolute left-1/2 top-[4.5rem] z-30 flex max-w-[440px] -translate-x-1/2 items-start gap-3 rounded-2xl border border-teal-400/30 bg-black/80 px-4 py-3 backdrop-blur-xl shadow-2xl">
-          <span className="mt-0.5 text-[14px] leading-none">💡</span>
+          <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-teal-200" aria-hidden />
           <div className="flex-1">
             <p className="text-[11px] font-black text-teal-200">처음이신가요? 이렇게 다듬으세요</p>
             <p className="mt-1 text-[10px] leading-relaxed text-white/65">

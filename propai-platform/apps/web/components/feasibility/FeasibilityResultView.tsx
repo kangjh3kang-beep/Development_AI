@@ -1,5 +1,6 @@
 import { Card, CardContent, Badge, Button } from "@propai/ui";
 import { motion } from "framer-motion";
+import { Gem, Landmark, Sparkles, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { useParams } from "next/navigation";
 import {
   Bar,
@@ -164,12 +165,12 @@ export function FeasibilityResultView() {
   }
 
   const kpis = [
-    { id: "revenue", label: "총 수입", value: formatWon(result.total_revenue_won), color: "text-[var(--accent-strong)]", icon: "💰" },
-    { id: "cost", label: "총 비용", value: formatWon(result.total_cost_won), color: "text-rose-500", icon: "📉" },
-    { id: "profit", label: "세전 이익", value: formatWon(result.net_profit_won), color: "text-blue-500", icon: "📈" },
-    { id: "rate", label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, color: "text-cyan-500", icon: "🎯" },
-    { id: "roi", label: <Term definition={TERM_DEFINITIONS.ROI}>ROI</Term>, value: `${result.roi_pct.toFixed(1)}%`, color: "text-indigo-500", icon: "🏦" },
-    { id: "npv", label: <Term definition={TERM_DEFINITIONS.NPV}>NPV</Term>, value: formatWon(result.npv_won), color: "text-[var(--text-primary)]", icon: "💎" },
+    { id: "revenue", label: "총 수입", value: formatWon(result.total_revenue_won), color: "text-[var(--accent-strong)]", icon: Wallet },
+    { id: "cost", label: "총 비용", value: formatWon(result.total_cost_won), color: "text-rose-500", icon: TrendingDown },
+    { id: "profit", label: "세전 이익", value: formatWon(result.net_profit_won), color: "text-blue-500", icon: TrendingUp },
+    { id: "rate", label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, color: "text-cyan-500", icon: Target },
+    { id: "roi", label: <Term definition={TERM_DEFINITIONS.ROI}>ROI</Term>, value: `${result.roi_pct.toFixed(1)}%`, color: "text-indigo-500", icon: Landmark },
+    { id: "npv", label: <Term definition={TERM_DEFINITIONS.NPV}>NPV</Term>, value: formatWon(result.npv_won), color: "text-[var(--text-primary)]", icon: Gem },
   ];
 
   const costData = Object.entries(result.cost_breakdown_won)
@@ -260,8 +261,8 @@ export function FeasibilityResultView() {
             <Card className="group flex-1 rounded-[2.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
               <CardContent className="p-8">
                 <div className="mb-6 flex items-center justify-between">
-                   <div className="h-10 w-10 rounded-2xl bg-[var(--surface-soft)] flex items-center justify-center text-xl shadow-[var(--shadow-sm)] border border-[var(--line)]">
-                      {kpi.icon}
+                   <div className={`h-10 w-10 rounded-2xl bg-[var(--surface-soft)] flex items-center justify-center shadow-[var(--shadow-sm)] border border-[var(--line)] ${kpi.color}`}>
+                      <kpi.icon className="size-5" aria-hidden />
                    </div>
                    <span className="text-[9px] font-[1000] uppercase tracking-[0.3em] text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">{kpi.label}</span>
                 </div>
@@ -357,7 +358,7 @@ export function FeasibilityResultView() {
            <Card className="relative flex-1 overflow-hidden rounded-[3.5rem] border-none bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 p-1 text-white shadow-[var(--shadow-2xl)]">
               <CardContent className="relative z-10 h-full rounded-[3.4rem] bg-[var(--surface-strong)]/80 p-10 backdrop-blur-3xl flex flex-col border border-white/10">
                  <div className="mb-10 flex h-14 w-14 items-center justify-center rounded-3xl bg-[var(--surface)] shadow-[var(--shadow-lg)] border border-[var(--line-strong)]">
-                    <span className="text-3xl animate-bounce-subtle">✨</span>
+                    <Sparkles className="size-7 animate-bounce-subtle" aria-hidden />
                  </div>
                  <h4 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] mb-4">AI 총평 및 전략 포인트</h4>
                  <p className="flex-1 text-base leading-[1.8] text-[var(--text-secondary)] font-bold italic underline decoration-[var(--line)] underline-offset-8">

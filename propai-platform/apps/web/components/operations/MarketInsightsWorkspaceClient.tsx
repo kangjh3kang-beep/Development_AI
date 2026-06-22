@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, Building, Compass, Download, Files, Lock, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -289,9 +290,9 @@ export function MarketInsightsWorkspaceClient() {
   //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
   const fee = useCallback((k: string) => balance?.module_fees?.[k] ?? 0, [balance]);
   const analysisModules: AnalysisModuleOption[] = useMemo(() => [
-    { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8, icon: "🏘️" },
+    { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8, icon: Building },
     {
-      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석", icon: "👥",
+      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석", icon: Users,
       children: [
         { key: "pop_age", label: "연령·인구 분포", description: "연령대별 인구 구성비", coinCost: fee("pop_age"), estimatedSeconds: 3 },
         { key: "pop_household", label: "가구원수·가구 구성", description: "1~4인+ 가구 구성비", coinCost: fee("pop_household"), estimatedSeconds: 3 },
@@ -299,13 +300,13 @@ export function MarketInsightsWorkspaceClient() {
       ],
     },
     {
-      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정", icon: "💰",
+      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정", icon: Wallet,
       children: [
         { key: "income_avg", label: "평균 연소득", description: "시군구 평균 연소득", coinCost: fee("income_avg"), estimatedSeconds: 3 },
         { key: "income_basis", label: "산출근거(인원·총급여)", description: "근로소득 인원·총급여 원천", coinCost: fee("income_basis"), estimatedSeconds: 2 },
       ],
     },
-    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용", icon: "🎯" },
+    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용", icon: Target },
   ], [isPremiumUser, fee]);
 
   // 선택 변경 — 공용 컴포넌트의 selected 맵을 그대로 반영(말단 항목 평탄 맵).
@@ -460,7 +461,7 @@ export function MarketInsightsWorkspaceClient() {
               onClick={() => setShowDensity((v) => !v)}
               className="flex w-full items-center justify-between gap-2 text-left text-sm font-bold text-[var(--text-primary)]"
             >
-              <span>👥 인구밀도 (행정동) <span className="ml-1 text-xs font-normal text-[var(--text-hint)]">SGIS 경계+인구 코로플레스</span></span>
+              <span className="inline-flex items-center gap-1.5"><Users className="size-4" aria-hidden />인구밀도 (행정동) <span className="ml-1 text-xs font-normal text-[var(--text-hint)]">SGIS 경계+인구 코로플레스</span></span>
               <span className="text-[var(--accent-strong)]">{showDensity ? "▾ 닫기" : "▸ 보기"}</span>
             </button>
             {showDensity && (
@@ -540,12 +541,12 @@ export function MarketInsightsWorkspaceClient() {
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[var(--text-primary)]">📑 시장조사보고서</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
                 <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
                 <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
                   <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
                     className="h-4 w-4 accent-[var(--accent-strong)]" disabled={!!genState} />
-                  🤖 AI 분석 포함 <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
+                  <span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 분석 포함</span> <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
                 </label>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -725,7 +726,7 @@ export function MarketInsightsWorkspaceClient() {
       {report && (
         <div className="sa-di-block">
           <header className="sa-di-block__head" style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden>📝</span>
+            <span className="sa-di-block__icon" aria-hidden><PenLine className="size-4" /></span>
             <span className="sa-di-block__title">시장조사보고서 미리보기</span>
             <span className="sa-di-eyebrow">AI NARRATIVE</span>
           </header>
@@ -783,7 +784,7 @@ export function MarketInsightsWorkspaceClient() {
         (report.demographics.migration.top_inflow_regions?.length ?? 0) > 0 ? (
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>🧭</span>
+              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
               <span className="sa-di-block__title">인구 이동망 (유입 Top)</span>
               <span className="sa-di-eyebrow">MIGRATION</span>
             </header>
@@ -801,7 +802,7 @@ export function MarketInsightsWorkspaceClient() {
         ) : (
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden>🧭</span>
+              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
               <span className="sa-di-block__title">인구 이동망 (전입·전출)</span>
               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "var(--text-tertiary)", backgroundColor: "var(--surface-muted)" }}>데이터 없음</span>
             </header>
@@ -816,7 +817,7 @@ export function MarketInsightsWorkspaceClient() {
       {report?.demographics && (
         <div className="sa-di-block relative overflow-hidden">
           <header className={`sa-di-block__head ${!isPremiumUser ? "opacity-50" : ""}`} style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden>🎯</span>
+            <span className="sa-di-block__icon" aria-hidden><Target className="size-3.5" /></span>
             <span className="sa-di-block__title">마이크로 타겟팅 분석</span>
             <span className="sa-di-eyebrow text-[var(--accent-strong)]">PREMIUM DATA</span>
           </header>
@@ -838,7 +839,7 @@ export function MarketInsightsWorkspaceClient() {
           {!isPremiumUser && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-t from-[var(--bg-primary)] via-[var(--bg-primary)]/80 to-transparent pt-12">
               <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-card)]/95 px-8 py-6 text-center shadow-xl backdrop-blur-md">
-                <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-strong)]/10 text-2xl text-[var(--accent-strong)]">🔒</span>
+                <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-strong)]/10 text-[var(--accent-strong)]"><Lock className="size-6" aria-hidden /></span>
                 <h4 className="text-lg font-black text-[var(--text-primary)]">K-Atlas 금융 데이터 프리미엄 연동</h4>
                 <p className="mt-2 max-w-sm text-sm leading-relaxed text-[var(--text-secondary)]">
                   해당 기능은 관리자가 승인한 <b>엔터프라이즈 및 PRO 등급</b> 전용입니다.<br />
@@ -865,7 +866,7 @@ export function MarketInsightsWorkspaceClient() {
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[var(--text-primary)]">📥 보고서 다운로드</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Download className="size-4" aria-hidden />보고서 다운로드</p>
                 <p className="mt-0.5 text-xs text-[var(--text-secondary)]">위 분석 결과를 PDF/PPT 문서로 저장합니다.</p>
               </div>
               <div className="flex flex-wrap gap-2">

@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BarChart3, HelpCircle, Info, Lightbulb, Link2, Map, Scissors } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
@@ -284,8 +285,8 @@ export function ParcelBoundaryMap({
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-sm font-bold text-[var(--text-primary)]">
-          🗺️ 필지 구획도 {data ? `(${data.parcel_count}필지 · 총 ${data.total_area_sqm?.toLocaleString()}㎡ / ${pyeong(data.total_area_sqm)})` : ""}
+        <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
+          <Map className="size-4 shrink-0" aria-hidden /> 필지 구획도 {data ? `(${data.parcel_count}필지 · 총 ${data.total_area_sqm?.toLocaleString()}㎡ / ${pyeong(data.total_area_sqm)})` : ""}
         </p>
         {loading && <span className="text-xs text-[var(--text-hint)]">불러오는 중…</span>}
       </div>
@@ -296,10 +297,11 @@ export function ParcelBoundaryMap({
         if (!f0?.area_note || f0.area_confidence === "high") return null;
         const low = f0.area_confidence === "low";
         return (
-          <div className={`mb-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
+          <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
             low ? "border-amber-500/30 bg-amber-500/10 text-amber-400" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
           }`}>
-            {low ? "⚠️ 면적 검증 주의 — " : "ℹ️ 면적 출처 — "}{f0.area_note}
+            {low ? <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> : <Info className="size-3.5 self-center shrink-0" aria-hidden />}
+            {low ? "면적 검증 주의 — " : "면적 출처 — "}{f0.area_note}
             {f0.area_ledger_sqm && f0.area_cadastral_sqm && (
               <span className="ml-1 text-[var(--text-hint)]">(대장 {f0.area_ledger_sqm.toLocaleString()}㎡ · 지적 {f0.area_cadastral_sqm.toLocaleString()}㎡)</span>
             )}
@@ -308,14 +310,15 @@ export function ParcelBoundaryMap({
       })()}
       {/* 다필지 인접성(통합개발 가능 여부) */}
       {data && data.parcel_count >= 2 && data.adjacency && (
-        <div className={`mb-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
+        <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
           data.adjacency.contiguous === true
             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
             : data.adjacency.contiguous === false
               ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
               : "border-amber-500/30 bg-amber-500/10 text-amber-400"
         }`}>
-          {data.adjacency.contiguous === true ? "🔗 통합개발 가능 — " : data.adjacency.contiguous === false ? "✂ 통합개발 불가 — " : "❔ 인접성 미상 — "}
+          {data.adjacency.contiguous === true ? <Link2 className="size-3.5 self-center shrink-0" aria-hidden /> : data.adjacency.contiguous === false ? <Scissors className="size-3.5 self-center shrink-0" aria-hidden /> : <HelpCircle className="size-3.5 self-center shrink-0" aria-hidden />}
+          {data.adjacency.contiguous === true ? "통합개발 가능 — " : data.adjacency.contiguous === false ? "통합개발 불가 — " : "인접성 미상 — "}
           {data.adjacency.note}
         </div>
       )}
@@ -323,13 +326,13 @@ export function ParcelBoundaryMap({
       {/* 다필지 종합분석 — 실질 건폐율/용적률 + 개발방법 + 최적추진방안(개발사업분석 핵심) */}
       {data?.integrated_analysis && (data.parcel_count >= 2 || data.integrated_analysis.effective_far_pct) && (
         <div className="mb-2 rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-3 py-2.5">
-          <p className="mb-1.5 text-[11px] font-bold text-[var(--accent-strong)]">📊 통합 종합분석</p>
+          <p className="mb-1.5 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--accent-strong)]"><BarChart3 className="size-3.5 shrink-0" aria-hidden /> 통합 종합분석</p>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--text-secondary)]">
             <span>총 <b className="text-[var(--text-primary)]">{data.integrated_analysis.total_area_pyeong?.toLocaleString()}평</b></span>
             {data.integrated_analysis.effective_bcr_pct != null && <span>실질 건폐율 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_bcr_pct}%</b></span>}
             {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
             {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
-            {data.integrated_analysis.zone_mixed && <span className="text-amber-500">⚠️ 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
           </div>
           {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
             <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">
@@ -339,7 +342,7 @@ export function ParcelBoundaryMap({
             </p>
           )}
           {data.integrated_analysis.recommendation && (
-            <p className="mt-1.5 text-[11px] font-semibold text-[var(--text-primary)]">💡 {data.integrated_analysis.recommendation}</p>
+            <p className="mt-1.5 inline-flex items-baseline gap-1.5 text-[11px] font-semibold text-[var(--text-primary)]"><Lightbulb className="size-3.5 self-center shrink-0" aria-hidden /> {data.integrated_analysis.recommendation}</p>
           )}
         </div>
       )}

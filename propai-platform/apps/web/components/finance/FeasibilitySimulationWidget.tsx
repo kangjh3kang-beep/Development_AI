@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { TrendingUp } from "lucide-react";
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { motion } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
@@ -164,7 +165,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
             )}
             {!hasResult ? (
               <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 rounded-[2.5rem] border border-dashed border-[var(--line-strong)] text-center">
-                <span className="text-4xl opacity-50">📈</span>
+                <TrendingUp className="size-10 opacity-50" aria-hidden />
                 <p className="text-sm font-bold text-[var(--text-secondary)]">시뮬레이션 실행 전</p>
                 <p className="text-xs text-[var(--text-hint)]">‘시뮬레이션 실행’을 누르면 몬테카를로 기반 NPV 분포·VaR가 표시됩니다.</p>
               </div>

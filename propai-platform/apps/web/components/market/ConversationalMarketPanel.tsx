@@ -15,6 +15,7 @@
  */
 
 import { useState, useRef, useEffect, type FormEvent } from "react";
+import { AlertTriangle } from "lucide-react";
 import { Button, Card } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
@@ -238,8 +239,8 @@ function AIResponseCard({ result }: { result: MarketResult }) {
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">
           &ldquo;{result.query}&rdquo; 지역의 실거래 데이터를 표시할 수 없습니다.
         </p>
-        <div className="rounded-[var(--radius-sm)] border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
-          ⚠️ {result.note || "실거래 데이터를 확보하지 못했습니다."}
+        <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
+          <AlertTriangle className="size-4" aria-hidden />{result.note || "실거래 데이터를 확보하지 못했습니다."}
         </div>
       </div>
     );
@@ -299,7 +300,7 @@ function AIResponseCard({ result }: { result: MarketResult }) {
 
       {/* 부분 실패 안내(일부 유형 누락 가능성) */}
       {result.note && (
-        <p className="text-[11px] text-[var(--text-hint)]">⚠️ {result.note}</p>
+        <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--text-hint)]"><AlertTriangle className="size-3.5" aria-hidden />{result.note}</p>
       )}
 
       {/* 출처 메타 */}

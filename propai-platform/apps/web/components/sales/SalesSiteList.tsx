@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Construction, CreditCard, Key, LockKeyhole, Plus, Wrench } from "lucide-react";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 import { salesGlobal } from "@/lib/salesApi";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -89,7 +90,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-2xl">🏗️</span>
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Construction className="size-6" aria-hidden /></span>
         <div>
           <span className="cc-meta">SALES · SITE CONTROL</span>
           <h1 className="mt-0.5 text-lg font-black text-[var(--text-primary)]">분양 현장 관리</h1>
@@ -108,13 +109,13 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
       {/* 새 현장 만들기 — 부각(강조 카드) */}
       <div className="rounded-2xl border-2 border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] p-6 shadow-[var(--shadow-md)]">
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-xl">➕</span>
+          <Plus className="size-5 text-[var(--accent-strong)]" aria-hidden />
           <h2 className="text-base font-black text-[var(--text-primary)]">새 분양 현장 만들기</h2>
         </div>
         <p className="mb-1 text-xs text-[var(--text-secondary)]">현장 이름과 유형을 정하고, 연결할 프로젝트를 선택하면 현장이 자동 구성됩니다(세대·차수·데스크 등).</p>
         {fee != null && fee > 0 && (
-          <p className="mb-4 text-xs font-semibold text-[var(--accent-strong)]">
-            💳 현장 생성 시 사용료 <b>{fee.toLocaleString()}원</b>이 부과됩니다(관리자 책정).
+          <p className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent-strong)]">
+            <CreditCard className="size-4 shrink-0" aria-hidden /><span>현장 생성 시 사용료 <b>{fee.toLocaleString()}원</b>이 부과됩니다(관리자 책정).</span>
           </p>
         )}
         {(fee == null || fee === 0) && <div className="mb-4" />}
@@ -174,22 +175,22 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
                 {/* 관리(설정·요약) vs 현장앱 진입(2차비번 게이트) 명확 분리 */}
                 <div className="mt-3 flex items-center gap-2">
                   <Link href={`/${locale}/sales/${s.site_code}`}
-                    className="flex-1 rounded-lg border border-[var(--line-strong)] px-3 py-2 text-center text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
-                    🛠 관리·설정
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--line-strong)] px-3 py-2 text-center text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
+                    <Wrench className="size-3.5" aria-hidden /> 관리·설정
                   </Link>
                   {/* 현장앱 진입은 UUID(s.id)로 2차비번 게이트(/sales/sites/{id}/workspace)로 이동 */}
                   <Link href={`/${locale}/sales/sites/${s.id}/workspace`}
-                    className="flex-1 rounded-lg bg-[var(--accent-strong)] px-3 py-2 text-center text-xs font-black text-white transition hover:opacity-90">
-                    🔐 현장앱 진입
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--accent-strong)] px-3 py-2 text-center text-xs font-black text-white transition hover:opacity-90">
+                    <LockKeyhole className="size-3.5" aria-hidden /> 현장앱 진입
                   </Link>
                 </div>
                 {/* 2차 비밀번호 설정/변경 — 진입 전에 목록에서 직접(닭-달걀 해소). 권한 없으면 403 안내. */}
                 <button
                   type="button"
                   onClick={() => setPwSite({ id: s.id, name: s.site_name })}
-                  className="mt-2 w-full rounded-lg border border-dashed border-[var(--line-strong)] px-3 py-1.5 text-center text-[11px] font-bold text-[var(--text-tertiary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--line-strong)] px-3 py-1.5 text-center text-[11px] font-bold text-[var(--text-tertiary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
                 >
-                  🔑 현장앱 비밀번호 설정/변경
+                  <Key className="size-3.5" aria-hidden /> 현장앱 비밀번호 설정/변경
                 </button>
               </div>
               );

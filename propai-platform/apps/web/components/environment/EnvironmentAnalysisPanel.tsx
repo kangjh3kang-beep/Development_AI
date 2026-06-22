@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, Compass, Landmark, Sun } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import {
   CartesianGrid,
@@ -157,7 +158,7 @@ function OrdinanceSection({ data }: { data: OrdinanceResult | null }) {
     <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
       <div className="mb-2 flex items-center justify-between">
         <p className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">
-          🏛 지자체 조례 병행검토
+          <Landmark className="size-3.5 shrink-0" aria-hidden /> 지자체 조례 병행검토
         </p>
         {needsCheck && (
           <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-black text-amber-300">
@@ -394,7 +395,7 @@ export function EnvironmentAnalysisPanel({
     <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
       <CardContent className="p-6">
         <div className="flex items-center gap-3">
-          <span className="text-2xl">☀️</span>
+          <Sun className="size-7 shrink-0 text-amber-500" aria-hidden />
           <div>
             <h2 className="flex items-center gap-2 text-base font-black text-[var(--text-primary)]">
               환경분석 (일조·조망·스카이라인)
@@ -461,15 +462,15 @@ export function EnvironmentAnalysisPanel({
           <button
             onClick={() => void run()}
             disabled={busy}
-            className="h-10 whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? "환경 분석 중…" : "☀️ 환경 분석"}
+            {busy ? "환경 분석 중…" : (<><Sun className="size-4" aria-hidden />환경 분석</>)}
           </button>
         </div>
 
         {err && (
-          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-            ⚠ {err}
+          <p className="mt-3 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {err}
           </p>
         )}
 
@@ -480,7 +481,7 @@ export function EnvironmentAnalysisPanel({
           relativeLabel={relativeKoreanTime(at)}
           onRerun={() => void run()}
           busy={busy}
-          rerunLabel="☀️ 재분석"
+          rerunLabel="재분석"
         />
 
         {res?.ok && (
@@ -629,9 +630,9 @@ export function EnvironmentAnalysisPanel({
                       (view.best_directions ?? []).map((d, i) => (
                         <span
                           key={`${d}-${i}`}
-                          className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
+                          className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
                         >
-                          🧭 {d}
+                          <Compass className="size-3 shrink-0" aria-hidden /> {d}
                         </span>
                       ))
                     ) : (
@@ -688,8 +689,8 @@ export function EnvironmentAnalysisPanel({
 
             {/* 정직성 배지(note·basis)·sources */}
             {res.badges?.note && (
-              <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
-                ⚠ {res.badges.note}
+              <p className="mt-4 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
+                <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {res.badges.note}
               </p>
             )}
             {res.badges?.basis && res.badges.basis?.length > 0 && (

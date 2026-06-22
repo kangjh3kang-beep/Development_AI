@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, FileText, Files, Search } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -216,7 +217,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">📑</span>
+            <Files className="size-6 shrink-0 text-[var(--accent-strong)]" aria-hidden />
             <div>
               <div className="mb-1 flex items-center gap-2">
                 <span className="cc-meta">APPRAISAL · DESK VALUATION</span>
@@ -245,7 +246,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             </div>
             <button onClick={() => void run()} disabled={busy !== ""}
               className="h-10 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
-              {busy === "run" ? "서칭·분석 중…" : "🔎 서칭·분석"}
+              {busy === "run" ? "서칭·분석 중…" : (<span className="inline-flex items-center gap-1.5"><Search className="size-4" aria-hidden />서칭·분석</span>)}
             </button>
             <button onClick={() => setShowAdv((v) => !v)}
               className="h-10 rounded-xl border border-[var(--line-strong)] px-4 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">
@@ -265,7 +266,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             </div>
           )}
 
-          {err && <p className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--status-warning)]">⚠ {err}</p>}
+          {err && <p className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />{err}</p>}
         </CardContent>
       </Card>
 
@@ -475,7 +476,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             <div className="mt-6 flex flex-wrap gap-2 border-t border-[var(--line)] pt-4">
               <button onClick={() => void downloadPdf()} disabled={busy !== ""}
                 className="h-10 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
-                {busy === "pdf" ? "PDF 생성 중…" : "📄 보고서 PDF 다운로드"}
+                {busy === "pdf" ? "PDF 생성 중…" : (<span className="inline-flex items-center gap-1.5"><FileText className="size-4" aria-hidden />보고서 PDF 다운로드</span>)}
               </button>
               <button onClick={() => void run()} disabled={busy !== ""}
                 className="h-10 rounded-xl border border-[var(--line-strong)] px-4 text-sm font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">

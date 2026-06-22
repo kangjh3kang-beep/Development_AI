@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Maximize2, MapPin } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
@@ -175,9 +176,9 @@ export function AuctionItemsMap({
       <button
         type="button"
         onClick={fs.toggle}
-        className="absolute right-3 top-3 z-[1] rounded-lg border border-[var(--line)] bg-[var(--surface)]/90 px-2.5 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] backdrop-blur hover:text-[var(--text-primary)]"
+        className="absolute right-3 top-3 z-[1] inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)]/90 px-2.5 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] backdrop-blur hover:text-[var(--text-primary)]"
       >
-        {fs.isFull ? "✕ 닫기" : "⛶ 전체화면"}
+        {fs.isFull ? "✕ 닫기" : (<span className="inline-flex items-center gap-1"><Maximize2 className="size-3.5" aria-hidden />전체화면</span>)}
       </button>
       {(loading || !ready) && (
         <div className="absolute inset-0 z-[2] flex items-center justify-center rounded-xl bg-[var(--surface)]/60 text-xs text-[var(--text-secondary)]">
@@ -185,7 +186,7 @@ export function AuctionItemsMap({
         </div>
       )}
       {note && (
-        <p className="mt-1.5 text-[11px] text-[var(--text-tertiary)]">📍 {note} · 좌표 미확인 물건은 표시되지 않습니다(가짜좌표 없음).</p>
+        <p className="mt-1.5 inline-flex items-baseline gap-1 text-[11px] text-[var(--text-tertiary)]"><MapPin className="size-3.5 self-center shrink-0" aria-hidden /> {note} · 좌표 미확인 물건은 표시되지 않습니다(가짜좌표 없음).</p>
       )}
     </div>
   );

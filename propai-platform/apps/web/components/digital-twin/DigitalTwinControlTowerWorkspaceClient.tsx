@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { RadioTower } from "lucide-react";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -497,7 +498,7 @@ function Stat({ label, value, color = "text-[var(--text-primary)]" }: { label: s
 function Empty({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-3xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 p-8 text-center flex flex-col items-center gap-4">
-       <div className="h-12 w-12 rounded-2xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50">📡</div>
+       <div className="h-12 w-12 rounded-2xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50"><RadioTower className="size-6" aria-hidden /></div>
        <div className="space-y-1">
          <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{title}</p>
          <p className="text-[10px] font-medium leading-relaxed text-[var(--text-hint)]/60 italic">{body}</p>

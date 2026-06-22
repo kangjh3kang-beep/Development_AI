@@ -2,6 +2,15 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  AlertTriangle,
+  Brain,
+  CheckCircle2,
+  Landmark,
+  TrendingUp,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -675,17 +684,17 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       {aiInterpretation && (
         <div className="rounded-[2rem] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-blue-400 text-lg">🧠</span>
+            <Brain className="size-5 text-blue-400" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">
               AI 사업성 종합 해석
             </h3>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <FeasAiSection icon="✅" title="종합 추천" text={aiInterpretation.overall_recommendation} emphasis />
-            <FeasAiSection icon="⚠️" title="리스크 평가" text={aiInterpretation.risk_assessment} />
-            <FeasAiSection icon="💰" title="수익 극대화" text={aiInterpretation.profit_optimization} />
-            <FeasAiSection icon="📈" title="시장 타이밍" text={aiInterpretation.market_timing} />
-            <FeasAiSection icon="🏦" title="자금조달 제안" text={aiInterpretation.financing_advice} />
+            <FeasAiSection icon={CheckCircle2} title="종합 추천" text={aiInterpretation.overall_recommendation} emphasis />
+            <FeasAiSection icon={AlertTriangle} title="리스크 평가" text={aiInterpretation.risk_assessment} />
+            <FeasAiSection icon={Wallet} title="수익 극대화" text={aiInterpretation.profit_optimization} />
+            <FeasAiSection icon={TrendingUp} title="시장 타이밍" text={aiInterpretation.market_timing} />
+            <FeasAiSection icon={Landmark} title="자금조달 제안" text={aiInterpretation.financing_advice} />
           </div>
         </div>
       )}
@@ -823,12 +832,12 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
 /* LLM 사업성 해석 섹션 카드 (종합추천은 emphasis로 강조, 전폭) */
 function FeasAiSection({
-  icon,
+  icon: Icon,
   title,
   text,
   emphasis = false,
 }: {
-  icon: string;
+  icon: LucideIcon;
   title: string;
   text?: string;
   emphasis?: boolean;
@@ -843,7 +852,7 @@ function FeasAiSection({
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-sm shrink-0">{icon}</span>
+        <Icon className="size-4 shrink-0" aria-hidden />
         <span
           className={`text-xs font-bold ${
             emphasis ? "text-blue-300" : "text-[var(--text-primary)]"

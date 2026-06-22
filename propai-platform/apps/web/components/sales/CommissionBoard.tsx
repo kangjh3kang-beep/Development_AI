@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Lock } from "lucide-react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
@@ -107,7 +108,7 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
           <p className="mb-2 text-xs text-[var(--text-secondary)]">
             현재: {BASIS_MASTER.find((b) => b.value === master.basis)?.label ?? master.basis}
             {master.basis === "RATE_OF_PRICE" ? ` · 요율 ${(Number(master.rate) * 100).toFixed(2)}%` : ` · ${won(master.fixed_amount || 0)}`}
-            {master.locked ? " · 🔒확정" : ""}
+            {master.locked ? <span className="inline-flex items-center gap-0.5"> · <Lock className="size-3" aria-hidden />확정</span> : ""}
           </p>
         )}
         <div className="flex flex-wrap items-end gap-2">

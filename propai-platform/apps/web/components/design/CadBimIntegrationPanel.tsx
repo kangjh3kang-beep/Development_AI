@@ -1,6 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  AlertTriangle, Check, Construction, DraftingCompass, Download, Eye,
+  Plane, RectangleVertical, RotateCcw, Ruler, Key, Sparkles, Square,
+  type LucideIcon,
+} from "lucide-react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { CameraControls, Grid, Line, Html, Sphere, TransformControls } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -290,7 +295,7 @@ type CamPresetKey = "aerial" | "perspective" | "front" | "side" | "reset";
 
 interface CamPreset {
   label: string; // 버튼 한글 라벨(비전문가용)
-  icon: string;
+  icon: LucideIcon;
   // span(건물 한 변 기준 크기)을 받아 [카메라위치, 바라보는중심]을 돌려준다.
   compute: (span: number, height: number) => { pos: [number, number, number]; target: [number, number, number] };
 }
@@ -299,31 +304,31 @@ const CAM_PRESETS: Record<CamPresetKey, CamPreset> = {
   // 조감도: 위에서 약 45° 내려다보기(전체 배치 파악)
   aerial: {
     label: "조감도",
-    icon: "▲",
+    icon: Plane,
     compute: (s, h) => ({ pos: [s * 0.9, s * 1.3, s * 0.9], target: [0, h * 0.3, 0] }),
   },
   // 투시도: 사람 눈높이(보행자 시점)에서 비스듬히 보기
   perspective: {
     label: "투시도",
-    icon: "◉",
+    icon: Eye,
     compute: (s, h) => ({ pos: [s * 1.6, h * 0.18, s * 1.6], target: [0, h * 0.35, 0] }),
   },
   // 정면도: 건물 정면을 똑바로 보기
   front: {
     label: "정면",
-    icon: "▮",
+    icon: Square,
     compute: (s, h) => ({ pos: [0, h * 0.5, s * 2.1], target: [0, h * 0.5, 0] }),
   },
   // 측면도: 건물 옆면을 똑바로 보기
   side: {
     label: "측면",
-    icon: "◧",
+    icon: RectangleVertical,
     compute: (s, h) => ({ pos: [s * 2.1, h * 0.5, 0], target: [0, h * 0.5, 0] }),
   },
   // 리셋: 기본 진입 시점으로 복귀
   reset: {
     label: "리셋",
-    icon: "↺",
+    icon: RotateCcw,
     compute: (s, h) => ({ pos: [s * 1.1, s * 0.9, s * 1.1], target: [0, h * 0.3, 0] }),
   },
 };
@@ -1156,7 +1161,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-500"
               title="네트워크 오류로 매스 산출에 실패했습니다. 대지·개요에서 역산한 추정 기본값을 표시 중입니다. '개요 재적용'으로 다시 시도하세요."
             >
-              ⚠ 네트워크 오류로 기본값 사용 중 · 추정치
+              <AlertTriangle className="size-3" aria-hidden />네트워크 오류로 기본값 사용 중 · 추정치
             </span>
           )}
           {!designData?.totalGfaSqm && (
@@ -1220,7 +1225,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                         : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
                   }`}
                 >
-                  {done ? "✓" : n}
+                  {done ? <Check className="size-3" aria-hidden /> : n}
                 </span>
                 <span
                   className={`text-[11px] font-black ${
@@ -1244,8 +1249,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {viewMode === "bim_3d" && !hasDesignBasis ? (
           /* ── 게이트: 설계 기반(개요·부지)이 없으면 3D 캔버스를 마운트하지 않고 정직 안내 ── */
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-[#0a0f14] px-8 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-              <span className="text-2xl">🏗️</span>
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70">
+              <Construction className="size-7" aria-hidden />
             </div>
             <p className="text-base font-black text-white/80">먼저 설계를 생성하세요</p>
             <p className="max-w-sm text-xs leading-relaxed text-white/40">
@@ -1333,6 +1338,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <div className="flex items-center gap-1.5 rounded-2xl border border-white/10 bg-black/45 p-1.5 backdrop-blur-xl shadow-2xl">
                 {(Object.keys(CAM_PRESETS) as CamPresetKey[]).map((key) => {
                   const active = camPreset === key;
+                  const PresetIcon = CAM_PRESETS[key].icon;
                   return (
                     <button
                       key={key}
@@ -1346,7 +1352,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                           : "text-white/55 hover:text-white hover:bg-white/10"
                       }`}
                     >
-                      <span className="text-[11px] leading-none">{CAM_PRESETS[key].icon}</span>
+                      <PresetIcon className="size-3.5" aria-hidden />
                       {CAM_PRESETS[key].label}
                     </button>
                   );
@@ -1410,7 +1416,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                       : "text-white/55 hover:text-white hover:bg-white/10"
                   }`}
                 >
-                  {measureMode ? "■ 측정 ON" : "📏 측정"}
+                  <span className="inline-flex items-center gap-1"><Ruler className="size-3.5" aria-hidden />{measureMode ? "측정 ON" : "측정"}</span>
                 </button>
                 {measureMode && (
                   <span className="whitespace-nowrap text-[10px] font-bold text-white/70">
@@ -1532,7 +1538,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   </>
                 ) : (
                   <>
-                    <span className="text-[12px] leading-none">✦</span>
+                    <Sparkles className="size-3.5" aria-hidden />
                     AI 포토리얼 렌더
                   </>
                 )}
@@ -1621,7 +1627,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   title="AutoCAD 등에서 열 수 있는 벡터 CAD 도면(.dxf)으로 내보냅니다"
                   className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
                 >
-                  {dxfBusy ? "내보내는 중…" : "⬇ DXF(캐드) 내보내기"}
+                  {dxfBusy ? "내보내는 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />DXF(캐드) 내보내기</span>)}
                 </button>
                 {/* §4-E: IFC(.ifc) 내보내기 — Revit/ArchiCAD 등 BIM 저작도구 호환(read-only 해소) */}
                 <button
@@ -1630,7 +1636,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   title="Revit·ArchiCAD 등 BIM 저작도구에서 열 수 있는 IFC4(.ifc) 모델로 내보냅니다"
                   className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
                 >
-                  {ifcBusy ? "내보내는 중…" : "⬇ IFC(BIM) 내보내기"}
+                  {ifcBusy ? "내보내는 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />IFC(BIM) 내보내기</span>)}
                 </button>
                 {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
@@ -1647,7 +1653,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               {/* 게이트: 설계 기반(개요·부지)이 없으면 도면을 만들지 않고 정직 안내 */}
               {!hasDesignBasis && !drawingLoading && (
                 <div className="flex flex-col items-center gap-3 text-center">
-                  <span className="text-2xl">📐</span>
+                  <DraftingCompass className="size-7 text-white/60" aria-hidden />
                   <p className="text-sm font-black text-white/70">먼저 설계를 생성하세요</p>
                   <p className="max-w-xs text-xs leading-relaxed text-white/40">
                     부지분석에서 대지·용도지역을 불러오거나 사업모델 추천에서 건축개요를 선택하면 2D 도면을 자동 생성합니다.
@@ -1865,7 +1871,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               {/* 헤더 */}
               <div className="flex items-center justify-between border-b border-[var(--line)] px-6 py-4">
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[var(--accent-strong)]">✦</span>
+                  <Sparkles className="size-4 text-[var(--accent-strong)]" aria-hidden />
                   <h5 className="text-sm font-black uppercase tracking-widest text-[var(--text-primary)]">AI 포토리얼 렌더</h5>
                 </div>
                 <button
@@ -1988,8 +1994,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 {/* ── 4) 서버 키 미설정(정직 안내, 가짜 이미지 금지) ── */}
                 {renderPhase === "nokey" && (
                   <div className="space-y-4 text-center">
-                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)]">
-                      <span className="text-2xl">🔑</span>
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+                      <Key className="size-6" aria-hidden />
                     </div>
                     <p className="text-sm font-bold text-[var(--text-primary)]">AI 렌더가 아직 준비되지 않았어요</p>
                     <p className="mx-auto max-w-md text-xs leading-relaxed text-[var(--text-secondary)]">

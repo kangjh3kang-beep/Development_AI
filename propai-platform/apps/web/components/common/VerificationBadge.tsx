@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, ShieldCheck, XCircle, type LucideIcon } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { FeedbackWidget } from "@/components/growth/FeedbackWidget";
 
@@ -30,10 +31,10 @@ type VerifyResult = {
   calc_pass_rate?: number | null;
 };
 
-const VERDICT_META: Record<string, { label: string; cls: string; icon: string }> = {
-  pass: { label: "검증 통과", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400", icon: "✅" },
-  warn: { label: "주의", cls: "border-amber-500/30 bg-amber-500/10 text-amber-400", icon: "⚠️" },
-  fail: { label: "오류 발견", cls: "border-rose-500/30 bg-rose-500/10 text-rose-400", icon: "❌" },
+const VERDICT_META: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
+  pass: { label: "검증 통과", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400", icon: CheckCircle2 },
+  warn: { label: "주의", cls: "border-amber-500/30 bg-amber-500/10 text-amber-400", icon: AlertTriangle },
+  fail: { label: "오류 발견", cls: "border-rose-500/30 bg-rose-500/10 text-rose-400", icon: XCircle },
 };
 const SEV_CLS: Record<string, string> = {
   high: "text-rose-400", medium: "text-amber-400", low: "text-[var(--text-tertiary)]",
@@ -132,15 +133,15 @@ export function VerificationBadge({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span
-            className="text-[11px] font-bold text-[var(--text-secondary)]"
+            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-secondary)]"
             title="데이터 오류 감지 · 계산 재검증 · 규칙 검사"
           >
-            🛡 AI 검증 <span className="font-normal text-[var(--text-hint)]">(데이터 오류 감지·계산 재검증·규칙 검사)</span>
+            <ShieldCheck className="size-3.5" aria-hidden /> AI 검증 <span className="font-normal text-[var(--text-hint)]">(데이터 오류 감지·계산 재검증·규칙 검사)</span>
           </span>
           {loading && <span className="text-[11px] text-[var(--text-hint)]">검증 중…</span>}
           {meta && (
             <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${meta.cls}`}>
-              {meta.icon} {meta.label}
+              <meta.icon className="size-3.5" aria-hidden /> {meta.label}
               {(result?.issues?.length ?? 0) > 0 && ` · ${result!.issues.length}건`}
               {result?.grounded_score != null && ` · 근거 ${result.grounded_score}%`}
               {(result?.calc_checks?.length ?? 0) > 0 &&
@@ -173,8 +174,8 @@ export function VerificationBadge({
               <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">계산 재검증</p>
               {result.calc_checks!.map((c, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
-                  <span className="text-[var(--text-secondary)]">
-                    {c.ok ? "✅" : "❌"} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
+                  <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
+                    {c.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" aria-label="통과" /> : <XCircle className="size-3.5 text-rose-400" aria-label="불일치" />} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
                   </span>
                   {!c.ok && (
                     <span className="text-red-500">출력 {c.claimed.toLocaleString()} ≠ 계산 {c.recomputed.toLocaleString()}</span>

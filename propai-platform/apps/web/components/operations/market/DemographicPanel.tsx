@@ -14,6 +14,7 @@
  * 색상은 토큰만 사용(하드코딩 금지), WCAG AA 대비 유지.
  */
 
+import { Home, Users, Wallet } from "lucide-react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import type { DemographicProfile, DataSource, UnitMixRecommendation } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
@@ -81,7 +82,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
     return (
       <div className="sa-di-block">
         <header className="sa-di-block__head" style={{ cursor: "default" }}>
-          <span className="sa-di-block__icon" aria-hidden>👥</span>
+          <span className="sa-di-block__icon" aria-hidden><Users className="size-3.5" /></span>
           <span className="sa-di-block__title">인구·가구·소득 분석</span>
           <DataSourceBadge source="unavailable" />
         </header>
@@ -103,7 +104,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
       {hasPop && (
         <div className="sa-di-block">
           <header className="sa-di-block__head" style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden>👥</span>
+            <span className="sa-di-block__icon" aria-hidden><Users className="size-3.5" /></span>
             <span className="sa-di-block__title">인구·가구 구조</span>
             <DataSourceBadge source={popSource} />
           </header>
@@ -166,7 +167,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
       {hasIncome && (
         <div className="sa-di-block">
           <header className="sa-di-block__head" style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden>💰</span>
+            <span className="sa-di-block__icon" aria-hidden><Wallet className="size-3.5" /></span>
             <span className="sa-di-block__title">지역 거시 소득</span>
             <DataSourceBadge source={incomeSource} />
           </header>
@@ -209,7 +210,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
     {hasMix && (
       <div className="sa-di-block mt-6">
         <header className="sa-di-block__head" style={{ cursor: "default" }}>
-          <span className="sa-di-block__icon" aria-hidden>🏠</span>
+          <span className="sa-di-block__icon" aria-hidden><Home className="size-3.5" /></span>
           <span className="sa-di-block__title">수요기반 평형 MD 추천</span>
           <DataSourceBadge source={unitMix?.data_source} />
         </header>

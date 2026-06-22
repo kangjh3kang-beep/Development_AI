@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, Mountain } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import {
   useAnalysisCache,
@@ -236,7 +237,7 @@ export function TerrainAnalysisPanel({
     <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
       <CardContent className="p-6">
         <div className="flex items-center gap-3">
-          <span className="text-2xl">⛰️</span>
+          <Mountain className="size-7 shrink-0" aria-hidden />
           <div>
             <h2 className="flex items-center gap-2 text-base font-black text-[var(--text-primary)]">
               지형분석 (경사도·토공량·단면)
@@ -284,15 +285,15 @@ export function TerrainAnalysisPanel({
           <button
             onClick={() => void run()}
             disabled={busy}
-            className="h-10 whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? "지형 분석 중…" : "⛰️ 지형 분석"}
+            {busy ? "지형 분석 중…" : (<><Mountain className="size-4" aria-hidden />지형 분석</>)}
           </button>
         </div>
 
         {err && (
-          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-            ⚠ {err}
+          <p className="mt-3 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {err}
           </p>
         )}
 
@@ -303,7 +304,7 @@ export function TerrainAnalysisPanel({
           relativeLabel={relativeKoreanTime(at)}
           onRerun={() => void run()}
           busy={busy}
-          rerunLabel="⛰️ 재분석"
+          rerunLabel="재분석"
         />
 
         {res?.ok && (

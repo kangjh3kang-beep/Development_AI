@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Bot, Landmark, Search } from "lucide-react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -98,7 +99,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             <span className="cc-live"><i />LIVE</span>
           </div>
           <div className="relative z-10 mt-3 flex items-center gap-3">
-            <span className="text-2xl">🏛️</span>
+            <Landmark className="size-7 text-[var(--accent-strong)]" aria-hidden />
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">부동산 규제 연동</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
@@ -123,13 +124,13 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             <label className="flex items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
               <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
                 className="h-4 w-4 accent-[var(--accent-strong)]" disabled={loading} />
-              🤖 AI 통합 해석 포함
+              <span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 통합 해석 포함</span>
             </label>
           </div>
           <div className="relative z-10 mt-4 flex items-center gap-3">
             <button onClick={run} disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
-              {loading ? "규제 분석 중…" : "🔎 규제 분석"}
+              {loading ? "규제 분석 중…" : (<span className="inline-flex items-center gap-1.5"><Search className="size-4" aria-hidden />규제 분석</span>)}
             </button>
             {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
             {llmGated && (

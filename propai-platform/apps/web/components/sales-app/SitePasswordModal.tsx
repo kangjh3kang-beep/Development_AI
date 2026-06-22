@@ -5,6 +5,7 @@
  * POST /sales/sites/{id}/password { password }. 400(짧음)·403(권한없음) 안내.
  */
 import { useEffect, useState } from "react";
+import { CheckCircle2, Wrench } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 interface Props {
@@ -80,8 +81,8 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
             className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[var(--accent-soft)] blur-2xl"
           />
           <div className="relative flex items-center gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-lg">
-              🛠
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <Wrench className="size-5" aria-hidden />
             </span>
             <div className="min-w-0">
               <span className="cc-label">SITE PASSWORD</span>
@@ -98,7 +99,7 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
           {done ? (
             <>
               <p className="flex items-center gap-2 rounded-xl border border-[color:color-mix(in_srgb,var(--status-success)_38%,transparent)] bg-[color:color-mix(in_srgb,var(--status-success)_12%,transparent)] px-3.5 py-3 text-sm font-semibold text-[var(--status-success)]">
-                <span aria-hidden>✅</span> 비밀번호가 저장되었습니다.
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden /> 비밀번호가 저장되었습니다.
               </p>
               <button
                 onClick={onClose}
