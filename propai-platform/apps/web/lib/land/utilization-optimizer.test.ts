@@ -59,14 +59,15 @@ describe("optimizeUtilization — 현실최적(기부채납 최소화)", () => {
   });
 
   it("현실최적 용적률 = base + 채택 완화 합(무날조 정수)", () => {
-    // base 250 + 공개공지 20%(50) + 녹색 15%(38) + 장수명 10%(25) = 363
-    expect(r.realisticOptimalFar).toBe(363);
+    // base 250 + 공개공지 20%(50) + 녹색 15%(38) + 장수명 15%(38) = 376
+    // 장수명주택: 주택건설기준 등에 관한 규정 제65조의2(100분의 115) → +15%(250×0.15=37.5→38)
+    expect(r.realisticOptimalFar).toBe(376);
   });
 
   it("이론최대 용적률 ≥ 현실최적(제외 방안까지 합산)", () => {
     expect(r.theoreticalMaxFar).toBeGreaterThan(r.realisticOptimalFar!);
-    // 이론최대는 지능형건축(15%,38)도 합산 → 363 + 38 = 401
-    expect(r.theoreticalMaxFar).toBe(401);
+    // 이론최대는 지능형건축(15%,38)도 합산 → 376 + 38 = 414
+    expect(r.theoreticalMaxFar).toBe(414);
   });
 
   it("현재 실효 용적률(effective)을 별도 보존", () => {

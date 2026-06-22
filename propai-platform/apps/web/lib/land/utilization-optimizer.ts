@@ -139,9 +139,9 @@ const RULES: IncentiveRule[] = [
     key: "long_life_housing",
     label: "장수명주택 인증",
     category: "장수명주택",
-    fixedBonusPct: 10, // 주택법·주택건설기준: 우수등급 이상 용적률·건폐율 완화 특례
+    fixedBonusPct: 15, // 주택건설기준 등에 관한 규정 제65조의2: 일반 등급 이상 → 용적률·건폐율 100분의 115 이내 완화
     donationRequired: false,
-    legalBasis: "주택법 제38조 / 주택건설기준 등에 관한 규정(장수명 주택 인증 특례)",
+    legalBasis: "주택건설기준 등에 관한 규정 제65조의2(일반 등급 이상, 100분의 115 이내)",
     applies: isResidential,
     notApplicableReason: "공동주택(주거지역) 한정",
     baseFeasibility: "상",

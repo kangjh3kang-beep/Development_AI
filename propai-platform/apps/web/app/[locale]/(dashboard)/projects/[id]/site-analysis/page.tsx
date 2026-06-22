@@ -23,7 +23,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
-import { normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
+import { mapZoningRich, normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
 const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
@@ -761,6 +761,14 @@ export default function SiteAnalysisPage() {
         // ★G 영속/복원: comprehensive 결과를 프로젝트별 분석캐시("l3")에 영속 →
         //  재진입 시 재호출(재분석) 없이 이 캐시에서 복원(아래 useEffect).
         setAnalysisCache("l3", sig, next);
+
+        // ★데이터흐름 명시화: comprehensive 응답의 rich 필드(실효/법정 용적·건폐율·종상향·특이부지)를
+        //  이 페이지 자체 fetch로 SSOT에 기록한다. 이전엔 flat FAR/BCR 필드를 AutoZoningBadge의
+        //  /zoning/analyze 타이밍에 암묵 의존했으나, mapZoningRich로 동일 매핑을 직접 적용해
+        //  land-profile·utilization-optimizer 카드와 용도지역 법정/실효 섹션이 안정적으로 채워진다.
+        //  ★멱등: AutoZoningBadge 경로도 동일 mapZoningRich를 사용 → 후속 write가 동일값을 덮으므로
+        //  이중쓰기여도 무해(무회귀). 아래 upzoningScenarios write와도 동일 결과(같은 source) — 무해.
+        updateSiteAnalysis(mapZoningRich(landResult));
 
         // L3에서 확정 실효용적률이 오면 초기 시드 ordinance를 정밀값으로 승격(다른 필드 보존).
         const ef = landResult.effective_far;

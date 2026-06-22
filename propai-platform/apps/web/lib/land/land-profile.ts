@@ -264,7 +264,9 @@ export function buildLandProfile(
     num(site.effectiveBcrPct),
     num(site.nationalBcrPct),
     BCR_LEGAL_BASIS,
-    (site.farBasis ?? "").trim() || null,
+    // farBasis는 FAR(용적률) 전용 근거 — 건폐율 캡션으로 오표기하지 않도록 null 전달.
+    // (별도 bcrBasis는 SSOT에 없음. 값은 effectiveBcrPct/nationalBcrPct로 정확.)
+    null,
   );
 
   const sp = site.specialParcel;
