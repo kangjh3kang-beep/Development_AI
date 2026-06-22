@@ -123,12 +123,12 @@ def _env_int(name: str, default: int) -> int:
 
 # 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
 # 해당 service 프롬프트에 참고 사례로 주입한다. 예시가 없으면 완전 무동작(기존 동작 불변).
-# ★기본 비활성(INTERP_FEWSHOT 기본 "0"): learning_examples는 tenant_id가 없는 전역 풀이라,
-#   활성화하면 A 테넌트의 사업기밀(주소·재무수치 등 자유서술 good_output)이 B 테넌트 분석
-#   프롬프트로 누출될 수 있다(계정 격리 원칙 위배). 안전한 활성화 전제: ①learning_examples
-#   테넌트 스코핑(tenant_id 컬럼+curate 영속+_load_fewshot tenant 필터) 또는 ②curate 단계
-#   good_output 비식별화(주소/고유수치 제거)+mask_pii 한국주소 패턴 보강. 둘 중 하나 완료 후 on.
-#   배선은 완성(아래)이므로 전제 충족 시 INTERP_FEWSHOT=1로 즉시 활성.
+# ★테넌트 스코핑은 by-construction 완료(_load_fewshot이 현재 요청 tenant 예시만 조회 →
+#   교차테넌트 누출이 코드 차원에서 불가). 따라서 활성 잔여 전제는 데이터 측면 2가지뿐:
+#   ①learning_examples에 tenant_id 컬럼 추가(마이그레이션) ②curate_few_shot이 그 컬럼에
+#   analysis_ledger.tenant_id 영속. 둘 다 self-growth-engine(growth 코어·스키마) 도메인.
+#   현재 기본 비활성("0"): 위 컬럼이 없으면 조회가 안전 degrade(None)하나, 데이터(승격예시)도
+#   0이라 즉시효과 없음 → 컬럼+curate 완료 후 INTERP_FEWSHOT=1로 활성(배선은 완성).
 _FEWSHOT_ENABLED = os.environ.get("INTERP_FEWSHOT", "0") != "0"
 _FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
 _FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
@@ -143,7 +143,18 @@ async def _load_fewshot(service: str) -> dict[str, str] | None:
     """
     if not _FEWSHOT_ENABLED or not service:
         return None
-    cached = _FEWSHOT_CACHE.get(service)
+    # ★테넌트 스코핑(by-construction): 현재 요청 테넌트의 예시만 사용 → 교차테넌트 누출을
+    #   코드 차원에서 차단(플래그가 켜져도 안전). 테넌트 컨텍스트 없으면(배치/크론 등) 미사용.
+    #   컨텍스트 조회 실패도 안전 degrade(추론 비차단) — best-effort 완전성.
+    try:
+        from app.core.request_context import get_current_tenant_id
+        tenant = get_current_tenant_id()
+    except Exception:  # noqa: BLE001
+        return None
+    if not tenant:
+        return None
+    ckey = f"{service}::{tenant}"           # 캐시도 테넌트별 분리
+    cached = _FEWSHOT_CACHE.get(ckey)
     if cached is not None:               # 히트(빈 {} 도 '예시 없음' 캐시로 취급)
         return cached or None
     block: dict[str, str] | None = None
@@ -155,9 +166,9 @@ async def _load_fewshot(service: str) -> dict[str, str] | None:
         async with async_session_factory() as db:
             rows = (await db.execute(_sql(
                 "SELECT input_summary, good_output FROM learning_examples "
-                "WHERE status='active' AND service=:svc AND good_output IS NOT NULL "
-                "ORDER BY created_at DESC LIMIT :lim"
-            ), {"svc": service, "lim": _FEWSHOT_LIMIT})).fetchall()
+                "WHERE status='active' AND service=:svc AND tenant_id=:tid "
+                "AND good_output IS NOT NULL ORDER BY created_at DESC LIMIT :lim"
+            ), {"svc": service, "tid": tenant, "lim": _FEWSHOT_LIMIT})).fetchall()
         if rows:
             parts = [
                 f"[사례 {i}] 입력 요약: {(r[0] or '').strip()[:400]}\n"
@@ -177,7 +188,7 @@ async def _load_fewshot(service: str) -> dict[str, str] | None:
     except Exception as e:  # noqa: BLE001 — few-shot 로드 실패가 추론을 깨면 안 됨
         logger.debug("few-shot 로드 생략(%s): %s", service, str(e)[:120])
         block = None
-    _FEWSHOT_CACHE.set(service, block or {})  # 빈 결과도 캐시(반복 DB조회 방지)
+    _FEWSHOT_CACHE.set(ckey, block or {})  # 빈 결과도 캐시(반복 DB조회 방지·테넌트별)
     return block
 
 
