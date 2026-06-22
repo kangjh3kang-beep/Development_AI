@@ -199,11 +199,14 @@ class StandardQuantityEstimator:
         struct_factor = STRUCTURE_FACTORS.get(structure_type, 1.0)
 
         # 3. 고층 보정계수 (15층 이상 시 구조비 증가)
+        # 30층 가지를 먼저 검사한다 — >=15가 먼저 참이면 고층 전용 완만커브(0.005/층)가
+        # 영구 미도달(데드 elif)이 되어 30층 초과 구조비가 과대 산정되던 결함을 교정.
+        # 경계 30층은 양 커브 모두 1.12로 연속(1.0+15*0.008 = 1.12).
         height_factor = 1.0
-        if floor_count_above >= 15:
-            height_factor = 1.0 + (floor_count_above - 15) * 0.008
-        elif floor_count_above >= 30:
+        if floor_count_above >= 30:
             height_factor = 1.12 + (floor_count_above - 30) * 0.005
+        elif floor_count_above >= 15:
+            height_factor = 1.0 + (floor_count_above - 15) * 0.008
 
         # 4. 지하층 보정 (지하 면적을 총 연면적의 일정 비율로 추정)
         underground_area = total_gfa_sqm * (floor_count_below * 0.15)
