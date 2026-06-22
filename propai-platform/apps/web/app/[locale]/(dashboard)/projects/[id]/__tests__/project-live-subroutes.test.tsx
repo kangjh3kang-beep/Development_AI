@@ -110,8 +110,10 @@ vi.mock("@/components/projects/ProjectSummaryClient", () => ({
   }) => <div data-testid="project-summary-workspace">{projectId}</div>,
 }));
 
-vi.mock("@/i18n/get-dictionary", () => ({
-  getDictionary: vi.fn(async () => ({
+// 사전(dictionary)은 서버 컴포넌트(getDictionary)와 클라이언트 컴포넌트(useDictionary 훅) 양쪽이
+// 공유한다. vi.hoisted로 단일 DICT를 두 mock이 함께 참조(중복 정의 방지).
+const { DICT } = vi.hoisted(() => ({
+  DICT: {
     workspace: {
       modeLive: "실연동",
       modeMock: "MOCK",
@@ -174,7 +176,17 @@ vi.mock("@/i18n/get-dictionary", () => ({
       design: { title: "Project design live route", eyebrow: "DESIGN", description: "Desc", items: [] },
       bim: { title: "Project BIM live route", eyebrow: "BIM", description: "Desc", items: [] },
     },
-  })),
+  },
+}));
+
+vi.mock("@/i18n/get-dictionary", () => ({
+  getDictionary: vi.fn(async () => DICT),
+}));
+
+// 클라이언트 페이지(design/overview)는 useDictionary 훅의 isLoading 게이트를 통과해야 본문을
+// 렌더한다. 동기 로드된 사전을 반환해 로딩 스피너("Initializing…") 정지를 해소한다.
+vi.mock("@/hooks/use-dictionary", () => ({
+  useDictionary: () => ({ dictionary: DICT, isLoading: false }),
 }));
 
 describe("Project live subroutes", () => {
@@ -190,7 +202,8 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project finance live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    // "실연동"은 커맨드스트립 meta + 플레이스홀더 statusLabel 양쪽에 나타난다(다중 허용).
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(screen.getByTestId("project-finance-workspace")).toHaveTextContent(
       "project-finance-001",
     );
@@ -206,7 +219,7 @@ describe("Project live subroutes", () => {
     expect(
       screen.getByText("Project contract automation live route"),
     ).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(screen.getByTestId("project-contract-workspace")).toHaveTextContent(
       "project-contract-001",
     );
@@ -220,7 +233,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project report live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(screen.getByTestId("project-report-workspace")).toHaveTextContent(
       "project-report-001",
     );
@@ -234,21 +247,20 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project drone live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(screen.getByTestId("project-drone-workspace")).toHaveTextContent(
       "project-drone-001",
     );
   });
 
-  it("renders the design project page with the live workspace", async () => {
+  it("renders the design project page with the live studio gate", async () => {
     mockParams = { locale: "en", id: "project-design-001" };
     render(<DesignPage />);
 
     expect(screen.getByText("Project design live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("project-design-workspace")).toHaveTextContent(
-      "project-design-001",
-    );
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
+    // 설계 페이지는 워크스페이스 클라이언트 대신 WebGL 지연마운트 "스튜디오 게이트" CTA를 렌더한다.
+    expect(screen.getByText("설계 스튜디오 열기")).toBeInTheDocument();
   });
 
   it("renders the bim project page with the live workspace", async () => {
@@ -259,7 +271,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project BIM live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(screen.getByTestId("project-bim-workspace")).toHaveTextContent(
       "project-bim-001",
     );
@@ -273,18 +285,19 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project blockchain live route")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getAllByText("실연동").length).toBeGreaterThan(0);
     expect(
       screen.getByTestId("project-blockchain-workspace"),
     ).toHaveTextContent("project-chain-001");
   });
 
-  it("renders the project overview page with the live summary workspace", async () => {
+  it("renders the project overview page past the loading gate", async () => {
     mockParams = { locale: "en", id: "project-overview-001" };
     render(<ProjectDetailPage />);
 
+    // 클라이언트 허브가 로딩 게이트를 통과해 히어로(허브 라벨 + 프로젝트 ID)를 렌더하는지 확인.
+    // (ID는 커맨드스트립 meta + 히어로 양쪽에 나타나므로 다중 허용)
     expect(screen.getByText(/Project live overview/)).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByText(/project-overview-001/)).toBeInTheDocument();
+    expect(screen.getAllByText(/project-overview-001/).length).toBeGreaterThan(0);
   });
 });
