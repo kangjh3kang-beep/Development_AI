@@ -149,6 +149,19 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
             ["도면 세트(분야)", disc + (f" · 미확보: {missing}" if missing else "")],
             ["법정 주차", _fmt(cand.get("parking_required"), "대")],
         ]
+        # 정북일조 envelope(건축법 61조) — 주거지역 상부층 북측 단계후퇴 반영(값 있을 때만·무목업).
+        sun = cand.get("sunlight_profile") or {}
+        if sun:
+            bind = "일조가 층수 제약(binding)" if sun.get("binding") else "일조 비제약"
+            rows.append([
+                "일조 envelope(정북사선)",
+                f"{_fmt(sun.get('floors'), '층')} · 연면적 {_fmt(sun.get('gfa'), '㎡')} · "
+                f"북측 기준 이격 {_fmt(sun.get('base_north_m'), 'm')} · {bind}"
+                " (건축법 61조·시행령 86조)",
+            ])
+        eff = cand.get("unit_efficiency")
+        if eff is not None:
+            rows.append(["적용 전용률", f"{round(float(eff) * 100)}%"])
         pl = cand.get("placement") or {}
         if pl:
             st = pl.get("site") or {}
@@ -173,6 +186,29 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
             )
             rows.append(["조합 출처(참조 도면)", src_txt])
         el.append(_kv(rows))
+        # 평형별 분해(unit_breakdown) — 평형별 세대수·구성%(값 있을 때만·무목업).
+        ub = cand.get("unit_breakdown") or []
+        if ub:
+            el.append(Spacer(1, 4))
+            el.append(Paragraph("평형별 분해", body))
+            ub_rows: list[list[Any]] = [["평형", "전용(㎡)", "층당", "총세대", "구성%"]]
+            for u in ub:
+                if not isinstance(u, dict):
+                    continue
+                ub_rows.append([
+                    _fmt(u.get("type")), _fmt(u.get("area_sqm")),
+                    _fmt(u.get("count_per_floor")), _fmt(u.get("total_count")),
+                    _fmt(u.get("ratio_pct"), "%"),
+                ])
+            ubt = Table(ub_rows, colWidths=[34 * mm, 34 * mm, 34 * mm, 34 * mm, 34 * mm])
+            ubt.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            el.append(ubt)
         notes = [str(n) for n in (verdict.get("notes") or [])]
         for n in (cand.get("warnings") or []):
             notes.append(str(n))

@@ -51,9 +51,12 @@ class DesignRequest:
     building_use: str = "공동주택"       # 검색 질의/도면 적합도용
     ordinance_far_pct: float | None = None
     ordinance_bcr_pct: float | None = None
+    ordinance_height_m: float | None = None   # 조례 절대 높이한도(m) — 매스 층수캡(P2·없으면 법정/코드값)
+    ordinance_setback_m: float | None = None  # 조례 이격거리(m) — 배치·일조 base(없으면 법정/코드값)
     width_m: float | None = None         # 부지 폭(m) — 건물 배치 폴리곤 정확화(미상 시 √면적 정사각)
     depth_m: float | None = None         # 부지 깊이(m)
     avg_unit_area_sqm: float = 84.0
+    unit_types: list[str] | None = None  # 평형 믹스(예: ["59A","84A"]) — 평형별 분해 산출(P1)
     land_category: str | None = None     # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지·종교 등)
     special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
     # 다필지(≥2) 통합 입력 — 각 원소 {area_sqm, zone_code, zone_name, ordinance_far_pct,
@@ -113,6 +116,31 @@ def _check_permit(zone_name: str | None, dev_type: str) -> dict | None:
         return check_permit_feasibility(dev_type, zone_name)
     except Exception as e:  # noqa: BLE001
         logger.info("design 오케스트레이터 인허가 판정 생략: %s", str(e)[:120])
+        return None
+
+
+async def _derive_reference_mass(req: DesignRequest, area_sqm: float) -> dict | None:
+    """유사사례 매스 힌트 도출(P0-2) — cad design_reference_service 정본 재사용(DRY·best-effort).
+
+    derive_reference_mass_hint(법규 인지 v2 정렬·기하 보유 사례 종횡비)를 호출해 SiteContext.
+    reference_mass로 주입할 힌트 dict({used, hint:{aspect,...}, ...})를 만든다. DB 세션은
+    AsyncSessionLocal로 단발 오픈(라우터 미경유 호출도 동작). 실패/미가용 시 None(정직·무시딩).
+    공동주택 등 주거 용도일 때만 의미가 있으므로 use 무관하게 호출하되 결과 used=False면 미적용.
+    """
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.services.cad.design_reference_service import derive_reference_mass_hint
+
+        async with AsyncSessionLocal() as db:
+            return await derive_reference_mass_hint(
+                db,
+                site_area_sqm=area_sqm,
+                zone_code=req.zone_code,
+                building_use=req.building_use,
+                unit_types=list(req.unit_types or []),
+            )
+    except Exception as e:  # noqa: BLE001 — 참조 힌트 실패가 생성 결과를 깨면 안 됨
+        logger.info("design 유사사례 매스 힌트 생략: %s", str(e)[:120])
         return None
 
 
@@ -460,11 +488,16 @@ async def _record_proposal_ledger(
 def _site_summary(site: SiteContext) -> dict:
     return {
         "zone_code": site.zone_code,
+        "zone_name": site.zone_name,
         "area_sqm": site.area_sqm,
         "buildable_footprint_sqm": site.buildable_footprint_sqm,
         "max_gfa_sqm": site.max_gfa_sqm,
         "max_floors_est": site.max_floors_est,
+        "legal_height_m": site.legal_height_m,        # 절대 높이한도(m·없으면 None)
+        "max_floors_by_height": site.max_floors_by_height,  # 높이한도→층수(없으면 None=무캡)
         "far_source": site.far_source,
+        "bcr_source": site.bcr_source,
+        "height_source": site.height_source,
         "warnings": list(site.warnings),
     }
 
@@ -478,6 +511,9 @@ async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: boo
     # ★다필지 통합(≥2필지) — canonical 통합엔진 재사용: 면적가중 실효한도·통합GFA(Σ면적×far_eff)·
     #   다필지 특이게이트. 통합 부지는 단일 사각형 아님 → 실치수 미사용(√면적 정사각·정직).
     multi = _aggregate_parcels(req)
+    # ★유사사례 매스 힌트(P0-2) — 부지면적 기준으로 1회 도출해 site에 시딩(검색 환류·best-effort).
+    _ref_area = (multi["aggregation"].get("total_area_sqm") if multi else None) or req.area_sqm
+    reference_mass = await _derive_reference_mass(req, _ref_area)
     if multi:
         agg = multi["aggregation"]
         _dom = agg.get("dominant_zone")
@@ -495,8 +531,12 @@ async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: boo
                    else req.ordinance_bcr_pct)
         site = site_context_from_zone(
             req.zone_code, eff_area,
+            zone_name=eff_zone_name,              # 23종 fail-closed 한도 키(dominant 용도지역)
             ordinance_far_pct=eff_far, ordinance_bcr_pct=eff_bcr,
+            ordinance_height_m=req.ordinance_height_m, ordinance_setback_m=req.ordinance_setback_m,
             avg_unit_area_sqm=req.avg_unit_area_sqm,
+            unit_types=req.unit_types,            # 평형 믹스(평형별 분해 산출)
+            reference_mass=reference_mass,        # 유사사례 매스 힌트(검색 환류)
             building_use_kr=map_building_use_kr(req.building_use),
         )
         special = _special_from_multi(multi["special"])
@@ -505,10 +545,15 @@ async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: boo
         eff_area = req.area_sqm
         site = site_context_from_zone(
             req.zone_code, req.area_sqm,
+            zone_name=req.zone_name,              # 23종 fail-closed 한도 키(P1-4)
             ordinance_far_pct=req.ordinance_far_pct, ordinance_bcr_pct=req.ordinance_bcr_pct,
+            ordinance_height_m=req.ordinance_height_m,  # 조례 높이/이격 주입(P2-5)
+            ordinance_setback_m=req.ordinance_setback_m,
             width_m=req.width_m,                  # 부지 실치수 → 건물 배치 폴리곤 정확화
             depth_m=req.depth_m,
             avg_unit_area_sqm=req.avg_unit_area_sqm,
+            unit_types=req.unit_types,            # 평형 믹스(평형별 분해 산출·P1)
+            reference_mass=reference_mass,        # 유사사례 매스 힌트(검색 환류·P0-2)
             building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
         )
         # ★특이부지 게이트(전역규칙: detect_special_parcel 우선) — 학교용지·GB·농지·산지·맹지 등

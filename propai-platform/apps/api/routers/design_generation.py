@@ -100,6 +100,8 @@ class GenerateRequest(BaseModel):
     building_use: str | None = None          # 건축 용도(미지정 시 엔진 기본)
     ordinance_far_pct: float | None = None   # 조례 용적률(실효, 있으면 우선)
     ordinance_bcr_pct: float | None = None   # 조례 건폐율(실효, 있으면 우선)
+    ordinance_height_m: float | None = None  # 조례 절대 높이한도(m) — 매스 층수캡(선택·없으면 법정/코드)
+    ordinance_setback_m: float | None = None # 조례 이격거리(m) — 배치·일조 base(선택·없으면 법정/코드)
     width_m: float | None = None             # 부지 폭(m) — 건물 배치 폴리곤 정확화(선택)
     depth_m: float | None = None             # 부지 깊이(m) — 선택
     land_category: str | None = None         # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지 등)
@@ -107,6 +109,7 @@ class GenerateRequest(BaseModel):
     parcels: list[dict] | None = None        # 다필지(≥2) 통합 — 각 {area_sqm,zone_code,zone_name,
     #   ordinance_far_pct,ordinance_bcr_pct,land_category,special_districts}. 주어지면 면적가중 통합
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
+    unit_types: list[str] | None = None      # 평형 믹스(예: ["59A","84A"]) — cad UNIT_TYPES 화이트리스트 검증
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
     verify: bool = False                     # True면 추천안 독립검증(선택형·LLM)
@@ -296,9 +299,28 @@ async def _validated_design_request(
         raise HTTPException(status_code=422, detail="용적률(%) 값이 올바르지 않습니다.")
     if not math.isfinite(req.avg_unit_area_sqm) or req.avg_unit_area_sqm <= 0:
         raise HTTPException(status_code=422, detail="평균 평형(㎡) 값이 올바르지 않습니다.")
-    for _label, _v in (("부지 폭", req.width_m), ("부지 깊이", req.depth_m)):
+    for _label, _v in (
+        ("부지 폭", req.width_m), ("부지 깊이", req.depth_m),
+        ("조례 높이한도", req.ordinance_height_m), ("조례 이격거리", req.ordinance_setback_m),
+    ):
         if _v is not None and (not math.isfinite(_v) or _v <= 0 or _v > 100_000):
             raise HTTPException(status_code=422, detail=f"{_label}(m) 값이 올바르지 않습니다.")
+    # 평형 믹스는 cad UNIT_TYPES(39A~114A) 화이트리스트만 허용 — 미허용 값은 정직 거부(임의 평형 차단).
+    unit_types: list[str] | None = None
+    if req.unit_types is not None:
+        if not isinstance(req.unit_types, list):
+            raise HTTPException(status_code=422, detail="평형 믹스(unit_types) 형식이 올바르지 않습니다.")
+        from app.services.cad.auto_design_engine import UNIT_TYPES
+
+        invalid = [t for t in req.unit_types if t not in UNIT_TYPES]
+        if invalid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"허용되지 않은 평형: {', '.join(map(str, invalid))} "
+                f"(허용: {', '.join(sorted(UNIT_TYPES))}).",
+            )
+        # 입력순 중복제거(컴포지션의 unique 처리와 일관).
+        unit_types = list(dict.fromkeys(req.unit_types)) or None
     if req.parcels is not None:  # 다필지 통합 입력 검증(각 필지 면적 양수·개수 상한)
         if not isinstance(req.parcels, list) or len(req.parcels) > _MAX_PARCELS:
             raise HTTPException(status_code=422, detail=f"필지 목록이 올바르지 않습니다(최대 {_MAX_PARCELS}개).")
@@ -316,12 +338,15 @@ async def _validated_design_request(
         "dev_type": req.dev_type,
         "ordinance_far_pct": req.ordinance_far_pct,
         "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        "ordinance_height_m": req.ordinance_height_m,   # 조례 높이한도(m) — 매스 층수캡
+        "ordinance_setback_m": req.ordinance_setback_m,  # 조례 이격거리(m) — 배치·일조 base
         "width_m": req.width_m,
         "depth_m": req.depth_m,
         "land_category": req.land_category,
         "special_districts": req.special_districts,
         "parcels": req.parcels,
         "avg_unit_area_sqm": req.avg_unit_area_sqm,
+        "unit_types": unit_types,                        # 검증된 평형 믹스(화이트리스트·중복제거)
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제
         "project_id": req.project_id,

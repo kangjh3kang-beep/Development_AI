@@ -94,6 +94,26 @@ type Candidate = {
   max_envelope_gfa_sqm?: number | null;   // 법적 상한 연면적(부지 잠재력)
   estimated_floors: number | null;
   estimated_units: number | null;
+  unit_breakdown?: {
+    type: string;
+    area_sqm: number;
+    count_per_floor: number;
+    total_count: number;
+    ratio_pct?: number;
+  }[] | null;
+  unit_efficiency?: number | null;          // 적용 전용률(평형 기반·상수 탈피)
+  sunlight_profile?: {
+    floors: number;
+    gfa: number;
+    base_north_m: number;
+    binding: boolean;
+    profile?: { floor: number; north_setback_m: number }[];
+  } | null;
+  reference_hint?: {
+    aspect?: number;
+    basis?: string | null;
+    [k: string]: unknown;
+  } | null;
   estimated_parking: number | null;
   parking_required: number | null;
   parking_area_sqm: number | null;
@@ -260,6 +280,9 @@ const DRAWING_TYPE_LABEL: Record<string, string> = {
   unknown: "미상",
 };
 const DRAWING_TYPE_OPTIONS = ["", "site_plan", "floor_plan", "section", "elevation", "parking"];
+
+// 평형 믹스 옵션 — 백엔드 cad UNIT_TYPES(39A~114A) 화이트리스트와 동일(단일출처 일관·미허용 거부됨).
+const UNIT_TYPE_OPTIONS = ["39A", "49A", "59A", "74A", "84A", "114A"];
 
 function fmtValue(v: Evidence["value"]): string | number {
   if (v === null || v === undefined) return "—";
@@ -429,6 +452,9 @@ export function DesignGenPanel({ projectId }: Props) {
   const [sigungu, setSigungu] = useState<string>("");
   const [buildingUse, setBuildingUse] = useState<string>("공동주택");
   const [avgUnit, setAvgUnit] = useState<number>(84);
+  const [unitTypes, setUnitTypes] = useState<string[]>([]);   // 평형 믹스(선택) — cad UNIT_TYPES 화이트리스트
+  const [ordHeight, setOrdHeight] = useState<number>(0);   // 조례 높이한도(m·선택) — 매스 층수캡
+  const [ordSetback, setOrdSetback] = useState<number>(0); // 조례 이격거리(m·선택) — 배치·일조 base
   const [siteW, setSiteW] = useState<number>(0);   // 부지 폭(m·선택) — 건물 배치 정확화
   const [siteD, setSiteD] = useState<number>(0);   // 부지 깊이(m·선택)
   const [landCategory, setLandCategory] = useState<string>("");  // 지목(선택) — 특이부지 게이트
@@ -566,6 +592,9 @@ export function DesignGenPanel({ projectId }: Props) {
       depth_m: siteD > 0 ? siteD : null,
       land_category: landCategory || null,  // 지목(선택) — 특이부지 게이트(학교용지·농지·산지 등)
       avg_unit_area_sqm: avgUnit,
+      unit_types: unitTypes.length > 0 ? unitTypes : null,  // 평형 믹스(선택) — 미선택 시 미송신(평형별 분해 생략)
+      ordinance_height_m: ordHeight > 0 ? ordHeight : null,  // 조례 높이한도(선택) — 미입력 시 미송신
+      ordinance_setback_m: ordSetback > 0 ? ordSetback : null,  // 조례 이격(선택) — 미입력 시 미송신
       top_n: topN,
       project_id: projectId || null,
       verify: verifyOpt,
@@ -805,9 +834,47 @@ export function DesignGenPanel({ projectId }: Props) {
             />
           </label>
           <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            조례 높이한도(m)<span className="font-normal text-[var(--text-hint)]"> 선택·매스 층수캡</span>
+            <NumberInput value={ordHeight} onChange={(v) => setOrdHeight(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            조례 이격거리(m)<span className="font-normal text-[var(--text-hint)]"> 선택·배치/일조</span>
+            <NumberInput value={ordSetback} onChange={(v) => setOrdSetback(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
             설계안 개수
             <NumberInput value={topN} onChange={(v) => setTopN(Math.max(1, Math.min(v ?? 1, 10)))} />
           </label>
+        </div>
+
+        {/* 평형 믹스(선택) — 선택 시 평형별 세대수·구성%·전용률 산출. 미선택 시 단일 전용률 추정(정직). */}
+        <div>
+          <div className="text-xs font-semibold text-[var(--text-secondary)]">
+            평형 믹스<span className="font-normal text-[var(--text-hint)]"> 선택 · 선택 시 평형별 세대수/구성%/전용률 산출</span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {UNIT_TYPE_OPTIONS.map((ut) => {
+              const on = unitTypes.includes(ut);
+              return (
+                <button
+                  key={ut}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setUnitTypes((prev) => (on ? prev.filter((t) => t !== ut) : [...prev, ut]))
+                  }
+                  className="rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors"
+                  style={{
+                    borderColor: on ? "var(--accent-strong)" : "var(--line)",
+                    backgroundColor: on ? "var(--accent-strong)" : "var(--surface)",
+                    color: on ? "var(--text-on-accent, #fff)" : "var(--text-secondary)",
+                  }}
+                >
+                  {ut}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -1245,6 +1312,67 @@ export function DesignGenPanel({ projectId }: Props) {
                     {c.score_breakdown?.explanation && (
                       <div className="mt-1 text-[10px] text-[var(--text-tertiary)]" title={c.score_breakdown.formula}>
                         점수 근거: {c.score_breakdown.explanation}
+                      </div>
+                    )}
+                    {/* 정북일조 envelope(건축법 61조) — 주거지역 상부층 북측 단계후퇴 반영(값 있을 때만) */}
+                    {c.sunlight_profile && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        ☀ 일조 envelope(정북사선·건축법 61조): {c.sunlight_profile.floors}층 ·{" "}
+                        연면적 {Math.round(c.sunlight_profile.gfa).toLocaleString()}㎡ · 북측 기준 이격 {c.sunlight_profile.base_north_m}m
+                        {c.sunlight_profile.binding ? (
+                          <span style={{ color: "var(--status-warning)" }}> · 일조가 층수 제약(binding)</span>
+                        ) : (
+                          <span className="text-[var(--text-hint)]"> · 일조 비제약</span>
+                        )}
+                        {c.sunlight_profile.profile && c.sunlight_profile.profile.length > 0 && (
+                          <span className="text-[var(--text-hint)]">
+                            {" "}· 상부층 북측후퇴{" "}
+                            {(() => {
+                              const top = c.sunlight_profile.profile[c.sunlight_profile.profile.length - 1];
+                              return `최상층 ${top.floor}층 이격 ${top.north_setback_m}m`;
+                            })()}
+                          </span>
+                        )}
+                        <div className="text-[10px] text-[var(--text-hint)]">근거: 건축법 61조·시행령 86조(정북 9m/h2 단계후퇴)</div>
+                      </div>
+                    )}
+                    {/* 평형별 분해(unit_breakdown) — 평형별 세대수·구성%·전용률(값 있을 때만·무목업) */}
+                    {c.unit_breakdown && c.unit_breakdown.length > 0 && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        평형 분해
+                        {c.unit_efficiency != null && (
+                          <span className="text-[var(--text-hint)]"> · 전용률 {(c.unit_efficiency * 100).toFixed(0)}%</span>
+                        )}
+                        <table className="mt-1 w-full border-collapse text-[10px]">
+                          <thead>
+                            <tr className="text-[var(--text-tertiary)]">
+                              <th className="border-b border-[var(--line)] py-0.5 text-left">평형</th>
+                              <th className="border-b border-[var(--line)] py-0.5 text-right">전용(㎡)</th>
+                              <th className="border-b border-[var(--line)] py-0.5 text-right">층당</th>
+                              <th className="border-b border-[var(--line)] py-0.5 text-right">총세대</th>
+                              <th className="border-b border-[var(--line)] py-0.5 text-right">구성%</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {c.unit_breakdown.map((u) => (
+                              <tr key={u.type} className="text-[var(--text-secondary)]">
+                                <td className="py-0.5 text-left font-semibold">{u.type}</td>
+                                <td className="py-0.5 text-right">{u.area_sqm}</td>
+                                <td className="py-0.5 text-right">{u.count_per_floor}</td>
+                                <td className="py-0.5 text-right">{u.total_count}</td>
+                                <td className="py-0.5 text-right">{u.ratio_pct != null ? `${u.ratio_pct}%` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div className="text-[10px] text-[var(--text-hint)]">근거: cad 평형 그리디 라운드로빈 배치(실 평면 세대분할과 다를 수 있음)</div>
+                      </div>
+                    )}
+                    {/* 유사사례 매스 힌트(reference_hint) — 종횡비 시딩 근거(검색 환류·값 있을 때만) */}
+                    {c.reference_hint && c.reference_hint.aspect != null && (
+                      <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                        유사사례 매스 시딩: 종횡비 {Number(c.reference_hint.aspect).toFixed(2)}
+                        {c.reference_hint.basis ? ` · ${c.reference_hint.basis}` : ""}(검색 환류)
                       </div>
                     )}
                     {/* 조합 출처(provenance) — 어느 코퍼스 도면에서 조합됐는지 근거 */}

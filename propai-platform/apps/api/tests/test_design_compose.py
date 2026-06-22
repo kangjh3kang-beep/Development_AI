@@ -469,3 +469,114 @@ def test_compose_attaches_parking_fields():
     assert top.parking_feasible is True
     d = top.to_dict()
     assert "parking_area_sqm" in d and "parking_feasible" in d
+
+
+# ── P0~P2 성숙기능 배선(cad→design_ingest) 테스트 ─────────────────────────────
+
+from app.services.design_ingest.composition import (  # noqa: E402
+    _sunlight_envelope,
+    compute_unit_breakdown,
+)
+
+
+def test_unit_breakdown_greedy_mix_no_fake_units():
+    # P1-3: cad UNIT_TYPES 그리디 라운드로빈으로 평형 믹스 분해(소형 우선·가짜세대 금지)
+    ub = compute_unit_breakdown(per_floor_net_sqm=500.0, floors=10, unit_types=["59A", "84A"])
+    assert ub is not None
+    assert ub["total_units"] > 0
+    # 평형별 세대수 모두 양수(0세대 유형은 제외 — 가짜 1세대 강제 없음)
+    assert all(u["count_per_floor"] > 0 and u["total_count"] > 0 for u in ub["units"])
+    # 구성%(전용 면적 가중) 합 ~100
+    assert abs(sum(u["ratio_pct"] for u in ub["units"]) - 100.0) < 1.0
+    # 전용률은 평형 기반 산출(상수 0.75 탈피) — 합리적 범위
+    assert 0.70 <= ub["efficiency"] <= 0.82
+
+
+def test_unit_breakdown_none_when_infeasible_or_unknown():
+    # 인식 불가 평형 → None(폴백은 호출자 책임)
+    assert compute_unit_breakdown(500.0, 10, ["ZZZ"]) is None
+    # 층당 순면적이 최소 평형보다 작음 → 세대 성립 불가 → None(무가짜세대)
+    assert compute_unit_breakdown(20.0, 5, ["84A"]) is None
+    # 근거 없음(면적/층수 미상) → None
+    assert compute_unit_breakdown(None, 10, ["59A"]) is None
+    assert compute_unit_breakdown(500.0, 0, ["59A"]) is None
+
+
+def test_sunlight_envelope_residential_binding():
+    # P0-1: 주거지역에서 정북일조 단계후퇴가 매스 층수/연면적을 제약(binding)
+    s = SiteContext(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                    legal_bcr_pct=60.0, legal_far_pct=250.0, far_source="statutory",
+                    legal_setback_m=1.0)
+    env = _sunlight_envelope(s, bldg_w=30.0, bldg_d=20.0, far_floors=15, max_gfa=2500.0)
+    assert env is not None
+    assert env["binding"] is True              # 15층 요구 대비 일조로 증층 제약
+    assert env["floors"] < 15
+    assert len(env["profile"]) == env["floors"]
+    # 상부층일수록 북측 후퇴(inset) 증가(또는 동일) — 단조 비감소
+    insets = [p["inset_m"] for p in env["profile"]]
+    assert insets == sorted(insets)
+
+
+def test_sunlight_envelope_not_applicable_non_residential():
+    # 준주거·상업·공업은 정북일조 미적용 → None(법 61조 적용범위 외)
+    for zn in ("준주거지역", "일반상업지역", "준공업지역"):
+        s = SiteContext(area_sqm=1000.0, zone_code="GC", zone_name=zn,
+                        legal_bcr_pct=60.0, legal_far_pct=500.0)
+        assert _sunlight_envelope(s, bldg_w=30.0, bldg_d=20.0, far_floors=20,
+                                  max_gfa=10000.0) is None
+
+
+def test_compose_seeds_reference_hint_and_sunlight():
+    # P0-1+P0-2: 유사사례 종횡비 시딩 + 일조 envelope가 후보에 반영
+    s = SiteContext(area_sqm=1500.0, zone_code="2R", zone_name="제2종일반주거지역",
+                    legal_bcr_pct=60.0, legal_far_pct=250.0, far_source="statutory",
+                    legal_setback_m=1.0, unit_types=["59A", "84A"],
+                    reference_mass={"used": True,
+                                    "hint": {"aspect": 2.0, "basis": "유사사례 종횡비 2.00"}})
+    matches = [{"point_id": "fp1", "drawing_type": "floor_plan",
+                "total_area_sqm": 700.0, "score": 0.95}]
+    top = compose(s, matches, top_n=1)[0]
+    d = top.to_dict()
+    # 평형 분해 부착(P1-3)
+    assert d["unit_breakdown"] and len(d["unit_breakdown"]) >= 1
+    assert d["unit_efficiency"] is not None and d["estimated_units"] > 0
+    # 일조 envelope 부착(P0-1)
+    assert d["sunlight_profile"] is not None
+    assert d["sunlight_profile"]["floors"] >= 1
+    # 유사사례 힌트 부착(P0-2·검색 환류)
+    assert d["reference_hint"] is not None and d["reference_hint"]["aspect"] == 2.0
+    assert any("유사사례 피드백" in w for w in d["warnings"])
+
+
+def test_site_context_zone_23_failclosed():
+    # P1-4: 23종 fail-closed 계약 — 인식 zone은 확정 한도, 미인식은 None(무근거 폴백 금지)
+    # 인식: 일반상업지역(7코드엔 없으나 23종엔 있음 — 확충 효과)
+    s_known = site_context_from_zone("GC", 1000.0, zone_name="일반상업지역")
+    assert s_known.legal_far_pct is not None and s_known.legal_bcr_pct is not None
+    assert s_known.far_source in ("statutory", "ordinance")
+    # 미인식 zone_name + 미인식 코드 → 확정 한도 None(fail-closed)·정직 경고
+    s_unk = site_context_from_zone("ZZZ", 1000.0, zone_name="없는지역")
+    # zone_code ZZZ는 7코드 폴백표가 있으므로 far가 채워질 수 있다 → fail-closed 검증은
+    # zone_name 미인식 경고가 떴는지로 확인(무경고 폴백 차단).
+    assert any("미확정" in w or "fail-closed" in w for w in s_unk.warnings)
+
+
+def test_site_context_ordinance_height_setback_injection():
+    # P2-5: 조례 height/setback 주입 → 매스 층수캡·이격 base 반영(floor_height 기본 3.0m)
+    s = site_context_from_zone("3R", 2000.0, zone_name="제3종일반주거지역",
+                               ordinance_height_m=30.0, ordinance_setback_m=3.0)
+    assert s.legal_height_m == 30.0 and s.height_source == "ordinance"
+    assert s.legal_setback_m == 3.0
+    # 높이 30m / 층고 3m = 10층 캡
+    assert s.max_floors_by_height == 10
+
+
+def test_site_context_height_caps_floors():
+    # 높이한도가 FAR 산정 층수보다 작으면 max_floors_est가 높이로 캡(min)
+    # 제1종전용주거: far 100·bcr 50·height 10m → 높이캡 3층
+    s = site_context_from_zone("1R", 1000.0, zone_name="제1종전용주거지역")
+    assert s.legal_height_m == 10.0
+    # max_floors_by_height = 10//3 = 3
+    assert s.max_floors_by_height == 3
+    # max_floors_est는 FAR(far100,bcr50: gfa1000/fp500=2)·높이(3) 중 작은 값
+    assert s.max_floors_est is not None and s.max_floors_est <= 3

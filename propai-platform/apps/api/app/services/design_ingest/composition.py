@@ -41,14 +41,20 @@ class SiteContext:
 
     area_sqm: float
     zone_code: str = "2R"
+    zone_name: str | None = None         # 한글 용도지역명(23종 fail-closed 한도 조회 키)
     width_m: float | None = None
     depth_m: float | None = None
     legal_bcr_pct: float | None = None   # 건폐율 한도(%)
     legal_far_pct: float | None = None   # 용적률 한도(%)
     legal_setback_m: float | None = None # 최소 이격거리(m) — 건물 배치 폴리곤 산출용
+    legal_height_m: float | None = None  # 절대 높이한도(m) — 매스 층수 캡(미상 None=무캡)
+    height_source: str = "unknown"       # ordinance(조례) | statutory(법정) | unknown
+    bcr_source: str = "unknown"          # 건폐율 출처(far_source와 분리 표기)
     far_source: str = "unknown"          # ordinance(실효) | statutory(법정) | unknown
     floor_height_m: float = 3.0
     avg_unit_area_sqm: float = 84.0      # 세대 추정용 평균 평형(전용 기준 입력)
+    unit_types: list[str] | None = None  # 평형 믹스(예: ["59A","84A"]) — 평형별 분해 산출용
+    reference_mass: dict | None = None    # 유사사례 매스 힌트(derive_reference_mass_hint·{aspect,...})
     building_use_kr: str = "공동주택"     # 주차 산정용 표준 분류(PARKING_RULES 키)
     warnings: list[str] = field(default_factory=list)  # 부지/한도 산출 경고(예: 미지정 zone 폴백)
 
@@ -65,12 +71,22 @@ class SiteContext:
         return round(self.area_sqm * self.legal_far_pct / 100.0, 2)
 
     @property
+    def max_floors_by_height(self) -> int | None:
+        """절대 높이한도(m) → 최대 층수. 높이한도 미상이면 None(무캡·정직)."""
+        if self.legal_height_m is None or self.legal_height_m <= 0 or self.floor_height_m <= 0:
+            return None
+        return max(1, int(self.legal_height_m // self.floor_height_m))
+
+    @property
     def max_floors_est(self) -> int | None:
         fp = self.buildable_footprint_sqm
         gfa = self.max_gfa_sqm
         if not fp or not gfa:
             return None
-        return max(1, int(gfa // fp))
+        far_floors = max(1, int(gfa // fp))
+        h_floors = self.max_floors_by_height
+        # 높이한도가 있으면 FAR·높이 중 더 제약적인 쪽(min)으로 캡(일조/절대높이 준수·정직).
+        return min(far_floors, h_floors) if h_floors else far_floors
 
 
 @dataclass
@@ -86,6 +102,10 @@ class CompositionCandidate:
     max_envelope_gfa_sqm: float | None = None    # 법적 최대 envelope 연면적(상한) — 부지 잠재력 명시
     estimated_floors: int | None = None
     estimated_units: int | None = None
+    unit_breakdown: list[dict] | None = None  # 평형별 분해(type·area·count_per_floor·total·ratio_pct)
+    unit_efficiency: float | None = None       # 적용 전용률(평형/유형 기반·상수 탈피 시 산출 근거)
+    sunlight_profile: dict | None = None       # 정북일조 단계후퇴 envelope(층별 북측후퇴·일조준수 연면적)
+    reference_hint: dict | None = None         # 유사사례 매스 힌트(종횡비·근거) — 검색 환류(피드백 시딩)
     estimated_parking: int | None = None    # = parking_required(하위호환 별칭)
     parking_required: int | None = None     # 법정 부설주차 대수(주차장법 단순화)
     parking_area_sqm: float | None = None   # 소요 주차면적(대당 33㎡)
@@ -113,6 +133,10 @@ class CompositionCandidate:
             "max_envelope_gfa_sqm": self.max_envelope_gfa_sqm,
             "estimated_floors": self.estimated_floors,
             "estimated_units": self.estimated_units,
+            "unit_breakdown": self.unit_breakdown,
+            "unit_efficiency": self.unit_efficiency,
+            "sunlight_profile": self.sunlight_profile,
+            "reference_hint": self.reference_hint,
             "estimated_parking": self.estimated_parking,
             "parking_required": self.parking_required,
             "parking_area_sqm": self.parking_area_sqm,
@@ -403,6 +427,126 @@ def compute_placement(site: SiteContext) -> dict | None:
     }
 
 
+# 세대 순면적률(전용+공용 분배 추정) — 연면적 중 세대 배치 가능 순면적 비율(코어·복도 차감 근사).
+# 평형 분해 시 층면적이 아닌 '연면적×이 비율'을 세대 배치 풀로 본다(상수 0.75 탈피의 보조 근거).
+_NET_AREA_RATIO = 0.82
+
+
+def compute_unit_breakdown(
+    per_floor_net_sqm: float | None, floors: int | None, unit_types: list[str] | None
+) -> dict | None:
+    """평형 믹스를 cad UNIT_TYPES 그리디 라운드로빈으로 분해(정본 재사용·DRY).
+
+    AutoDesignEngine.compute_unit_layout의 세대 배분 알고리즘(소형 우선 라운드로빈·층당 순면적
+    내에서만 배치, 가짜 1세대 강제 금지)과 동일한 산식으로 평형별 세대수·구성%를 낸다.
+    전용률은 평형 면적 가중 평균(공급=전용/전용률 가정)으로 산출 → 상수 0.75 탈피.
+    per_floor_net/층수/평형 미상이거나 세대 0이면 None(무가짜세대·정직).
+    반환: {units:[{type,area_sqm,count_per_floor,total_count,ratio_pct}], total_units, efficiency}
+    """
+    if not per_floor_net_sqm or per_floor_net_sqm <= 0 or not floors or floors <= 0:
+        return None
+    try:
+        from app.services.cad.auto_design_engine import UNIT_TYPES
+    except Exception:  # noqa: BLE001 — 정본 미연동 시 평형 분해 생략(정직)
+        return None
+    types = [t for t in (unit_types or []) if t in UNIT_TYPES]
+    if not types:
+        return None  # 인식 가능한 평형 없음 — 분해 생략(상수 폴백은 호출자 책임)
+
+    unique_types = list(dict.fromkeys(types))                              # 입력순 중복제거
+    greedy_order = sorted(unique_types, key=lambda t: UNIT_TYPES[t])       # 소형 우선
+    counts: dict[str, int] = {t: 0 for t in unique_types}
+    remaining = float(per_floor_net_sqm)
+    placed = True
+    while placed:                                                          # 라운드로빈 1세대씩
+        placed = False
+        for ut in greedy_order:
+            if UNIT_TYPES[ut] <= remaining:
+                counts[ut] += 1
+                remaining -= UNIT_TYPES[ut]
+                placed = True
+
+    units: list[dict] = []
+    total_units = 0
+    for ut in unique_types:
+        cpf = counts[ut]
+        if cpf <= 0:
+            continue  # 성립 불가 유형은 0세대(가짜 1세대 강제 금지)
+        total = cpf * int(floors)
+        units.append({
+            "type": ut, "area_sqm": UNIT_TYPES[ut],
+            "count_per_floor": cpf, "total_count": total,
+        })
+        total_units += total
+    if total_units == 0:
+        return None  # 순면적이 최소 평형보다 작아 세대 성립 불가 — 무가짜세대(정직)
+    # 구성%(전용 면적 가중) 부착.
+    total_area = sum(u["area_sqm"] * u["total_count"] for u in units) or 1.0
+    for u in units:
+        u["ratio_pct"] = round(u["area_sqm"] * u["total_count"] / total_area * 100, 1)
+    # 전용률 = 전용면적 가중 평균 / (가정 공급면적). 평형 면적 자체가 전용 기준 입력이므로,
+    # 공급 환산 효율은 평형이 클수록 소폭 높다는 통상 패턴을 반영(소형 0.72 ~ 대형 0.80 선형 근사).
+    avg_unit = total_area / sum(u["total_count"] for u in units)
+    efficiency = round(min(0.82, max(0.70, 0.70 + (avg_unit - 39.0) / 75.0 * 0.12)), 3)
+    return {"units": units, "total_units": total_units, "efficiency": efficiency}
+
+
+# 정북일조(건축법 61조) 적용 용도지역 — 전용·일반주거지역만(준주거·상업·공업 제외).
+# 입력이 한글 용도지역명·코드 어느 쪽이든 '주거' 식별로 판정(detect_special_parcel류 토큰).
+_SUNLIGHT_ZONE_CODES = frozenset({"1R", "2R", "3R"})
+
+
+def _is_sunlight_zone(site: SiteContext) -> bool:
+    """정북일조 사선제한(건축법 61조) 적용 대상 — 전용·일반주거지역. 준주거·상업·공업 제외."""
+    code = (site.zone_code or "").strip()
+    if code in _SUNLIGHT_ZONE_CODES:
+        return True
+    name = (site.zone_name or "").replace(" ", "")
+    # '준주거'·상업·공업은 제외, '전용주거'·'일반주거'만 일조 대상(국토계획법 체계).
+    if "준주거" in name:
+        return False
+    return ("전용주거" in name) or ("일반주거" in name)
+
+
+def _sunlight_envelope(
+    site: SiteContext,
+    *,
+    bldg_w: float,
+    bldg_d: float,
+    far_floors: int,
+    max_gfa: float,
+) -> dict | None:
+    """정북일조 단계후퇴(건축법 61조)를 매스 GFA/층수에 반영(cad 정본 재사용·DRY).
+
+    AutoDesignEngine의 `compute_north_step_profile`(시행령 86조 9m/h2 산식)을 그대로 호출해,
+    참조평면 footprint(폭×깊이) 기준 상부층 북측 후퇴로 줄어든 '일조 준수 연면적·층수'를 산출한다.
+    주거지역(일조 대상)에서만 호출하며, 그 결과 연면적·층수가 단순 FAR 산정보다 작으면(일조가
+    binding) 그 값으로 매스를 보정한다(근거: 건축법 일조 정북사선). 비주거·산정불가는 None.
+    반환: {floors, gfa, profile, base_north_m, binding} 또는 None(미적용·산정불가).
+    """
+    if not _is_sunlight_zone(site) or bldg_w <= 0 or bldg_d <= 0 or far_floors <= 0:
+        return None
+    try:
+        from app.services.cad.auto_design_engine import compute_north_step_profile
+    except Exception:  # noqa: BLE001 — 엔진 미연동 시 일조 미반영(정직·무캡)
+        return None
+    # 설계 북측 세트백 = 법정 최소 이격(없으면 정북 기본 1.5m). cad와 동일 base 의미.
+    base_north = max(1.5, site.legal_setback_m or 0.0)
+    profile, sun_gfa, sun_floors = compute_north_step_profile(
+        building_w=bldg_w, building_d=bldg_d, max_floors=far_floors,
+        floor_height_m=site.floor_height_m, base_north_m=base_north,
+        max_total_floor_area=max_gfa,
+    )
+    binding = sun_floors < far_floors  # 일조가 FAR 산정 층수보다 더 제약하면 binding
+    return {
+        "floors": sun_floors,
+        "gfa": round(min(sun_gfa, max_gfa), 2),
+        "profile": profile,
+        "base_north_m": round(base_north, 2),
+        "binding": binding,
+    }
+
+
 def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[CompositionCandidate]:
     """검색된 도면들로 부지 맞춤 설계 초안 Top-N을 조합한다.
 
@@ -480,16 +624,81 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             per_floor = footprint
             warnings.append("평면 면적 미상 — 부지 footprint로 층면적 추정")
 
+        # ★유사사례 피드백 시딩(P0-2) — derive_reference_mass_hint(orchestrator가 주입)의 종횡비를
+        #   매스 footprint 형상에 환류한다. 검색결과가 매스 생성에 실제로 영향(아래 일조 envelope의
+        #   폭/깊이 산출에 사용)을 미치게 해, 코사인 검색이 '조회'에 그치지 않고 매스에 시딩되게 한다.
+        reference_hint = None
+        _ref = site.reference_mass if isinstance(site.reference_mass, dict) else None
+        _ref_aspect = None
+        if _ref and _ref.get("used") and isinstance(_ref.get("hint"), dict):
+            try:
+                _a = float(_ref["hint"].get("aspect") or 0.0)
+                if _a > 0:
+                    _ref_aspect = _a
+                    reference_hint = _ref["hint"]
+                    _basis = reference_hint.get("basis") or f"유사사례 종횡비 {_a:.2f} 매스 시딩"
+                    warnings.append(f"유사사례 피드백 반영 — {_basis}(검색 환류)")
+            except (TypeError, ValueError):
+                reference_hint = None
+
         # 층수·연면적(법적 한도 클램프).
         est_floors = est_gfa = est_units = max_envelope_gfa = None
+        sunlight_profile = unit_breakdown = unit_efficiency = None
         if per_floor and max_gfa:
             est_floors = max(1, int(max_gfa // per_floor))
             if site.max_floors_est:
                 est_floors = min(est_floors, site.max_floors_est)
             est_gfa = round(min(max_gfa, per_floor * est_floors), 2)
-            if site.avg_unit_area_sqm > 0:
+
+            # ★정북일조(건축법 61조) 매스 envelope 반영 — 주거지역에서 상부층 북측 단계후퇴로
+            #   줄어드는 일조 준수 연면적/층수를 cad 정본(compute_north_step_profile)으로 산출.
+            #   일조가 binding이면(FAR 산정보다 작으면) GFA·층수를 일조 준수치로 보정(정직).
+            #   매스 footprint 폭/깊이는 ①유사사례 종횡비(시딩) ②배치 폴리곤 ③per_floor 정사각 순.
+            _bldg = (placement or {}).get("building") if placement else None
+            if _ref_aspect and per_floor > 0:
+                # 유사사례 종횡비(전면/깊이) 적용 — depth=√(면적/aspect), width=aspect×depth.
+                _bd = round(math.sqrt(per_floor / _ref_aspect), 1)
+                _bw = round(per_floor / _bd, 1) if _bd > 0 else round(math.sqrt(per_floor), 1)
+            elif _bldg and _bldg.get("w") and _bldg.get("d"):
+                _bw, _bd = float(_bldg["w"]), float(_bldg["d"])
+            else:
+                _side = math.sqrt(per_floor) if per_floor > 0 else 0.0
+                _bw = _bd = round(_side, 1)
+            sun = _sunlight_envelope(
+                site, bldg_w=_bw, bldg_d=_bd, far_floors=est_floors, max_gfa=max_gfa
+            )
+            if sun:
+                sunlight_profile = sun
+                # 일조가 층수를 더 제약하면(binding) 층수를 보정. 그리고 상부층 북측 단계후퇴로
+                # 줄어든 일조준수 연면적(sun["gfa"])이 평탄 추정(est_gfa)보다 작으면 GFA도 보정
+                # — 사선한도를 매스 GFA에 실제로 반영(근거: 건축법 일조 정북사선·정직).
+                _gfa_before, _floors_before = est_gfa, est_floors
+                if sun["binding"]:
+                    est_floors = sun["floors"]
+                if sun["gfa"] < est_gfa:
+                    est_gfa = round(sun["gfa"], 2)
+                if est_floors != _floors_before or est_gfa < _gfa_before:
+                    warnings.append(
+                        f"정북일조 사선제한(건축법 61조) 반영 — 상부층 북측 단계후퇴로 {est_floors}층·"
+                        f"연면적 {est_gfa:,.0f}㎡(일조 준수 envelope·근거: 건축법 일조 정북사선)"
+                    )
+
+            # ★평형별 분해(cad UNIT_TYPES 그리디 라운드로빈 재사용) — 연면적 순면적 풀에서 평형
+            #   믹스 배치. 평형 미상이면 종전 단일 전용률 추정(상수)으로 폴백(정직 표기).
+            _net_pool = est_gfa * _NET_AREA_RATIO if est_gfa else None
+            _per_floor_net = (_net_pool / est_floors) if (_net_pool and est_floors) else None
+            ub = compute_unit_breakdown(_per_floor_net, est_floors, site.unit_types)
+            if ub:
+                unit_breakdown = ub["units"]
+                unit_efficiency = ub["efficiency"]
+                est_units = ub["total_units"]
+                warnings.append(
+                    f"세대수는 평형 믹스({'/'.join(u['type'] for u in ub['units'])}) 그리디 배치 추정"
+                    f"(전용률 {ub['efficiency']:.0%}·실 평면 세대분할과 다를 수 있음)"
+                )
+            elif site.avg_unit_area_sqm > 0:
                 est_units = int(est_gfa * _DEFAULT_EFFICIENCY / site.avg_unit_area_sqm)
-            warnings.append("세대수는 연면적×전용률 추정치(실제 평면 세대분할과 다를 수 있음)")
+                warnings.append("세대수는 연면적×전용률 추정치(실제 평면 세대분할과 다를 수 있음)")
             # ★법적 최대 envelope 연면적(상한) — buildable footprint를 최대 활용(다동/타일링 가정)
             #   했을 때의 법적 상한. 보수추정(est_gfa·참조평면 기준)과 '나란히' 제시해 부지의 법적
             #   잠재력을 명시 산출 → 단일분석 대비 조용한 저평가를 근본 제거(실효 패리티·정직).
@@ -566,6 +775,10 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             max_envelope_gfa_sqm=max_envelope_gfa,
             estimated_floors=est_floors,
             estimated_units=est_units,
+            unit_breakdown=unit_breakdown,        # 평형별 분해(없으면 None — 평형 미상/세대 0)
+            unit_efficiency=unit_efficiency,      # 적용 전용률(평형 기반·상수 탈피 근거)
+            sunlight_profile=sunlight_profile,    # 정북일조 단계후퇴 envelope(주거·미적용 None)
+            reference_hint=reference_hint,        # 유사사례 매스 힌트(검색 환류·없으면 None)
             estimated_parking=est_parking,  # 하위호환 별칭(=parking_required)
             parking_required=pk["required"],
             parking_area_sqm=pk["area_sqm"],
@@ -587,55 +800,116 @@ def site_context_from_zone(
     zone_code: str,
     area_sqm: float,
     *,
+    zone_name: str | None = None,
     ordinance_far_pct: float | None = None,
     ordinance_bcr_pct: float | None = None,
+    ordinance_height_m: float | None = None,
+    ordinance_setback_m: float | None = None,
     width_m: float | None = None,
     depth_m: float | None = None,
     avg_unit_area_sqm: float = 84.0,
+    unit_types: list[str] | None = None,
+    reference_mass: dict | None = None,
     building_use_kr: str = "공동주택",
 ) -> SiteContext:
-    """AutoDesignEngine 법정한도로 SiteContext 구성(best-effort). 조례(실효) 값이 오면 우선.
+    """용도지역 법정한도로 SiteContext 구성(best-effort). 조례(실효) 값이 오면 우선.
 
-    실효(조례) 한도가 주어지면 far_source='ordinance'(전역규칙: 용적률은 실효 우선),
-    아니면 법정상한 'statutory', 조회 실패 시 'unknown'.
+    한도 출처 우선순위(P1-4 zone 23종 확충):
+      1. zone_name(한글)이 있으면 23종 fail-closed 계약(resolve_zone_limits)으로 확정/미확정 판정.
+         미인식 zone은 max_*_pct=None(fail-closed) — 무근거 한도 폴백 금지(정직 경고).
+      2. zone_code(7종)는 AutoDesignEngine 법정표로 보완 — height/setback 등 계약 미보유 필드,
+         그리고 23종 미매칭 시 코드 기반 폴백(legacy 동작 보존). statutory_fallback 정직 표기.
+      3. 조례(실효) far/bcr/height/setback가 명시되면 최우선(전역규칙: 용적률은 실효 우선).
+
+    far_source: ordinance(실효) | statutory(법정확정) | statutory_fallback(코드 폴백) | unknown(미확정).
+    height_source/bcr_source 동일 패턴으로 분리 표기.
     """
-    far_pct = bcr_pct = setback_m = None
-    source = "unknown"
+    far_pct = bcr_pct = height_m = setback_m = None
+    far_source = bcr_source = height_source = "unknown"
     ctx_warnings: list[str] = []
+
+    # 1) zone_name 기반 23종 fail-closed 계약(권위 한도). 미인식이면 확정 한도 None(fail-closed).
+    if zone_name:
+        try:
+            from app.services.zoning.zone_limit_contract import resolve_zone_limits
+
+            res = resolve_zone_limits(zone_name)
+            if res.matched:
+                far_pct, bcr_pct = res.max_far_pct, res.max_bcr_pct
+                far_source = bcr_source = "statutory"
+                # 절대 높이한도(m) — 23종 SSOT(legal_zone_limits) 보유분만(주거 전용 등). 없으면 None.
+                try:
+                    from app.services.zoning.legal_zone_limits import legal_limits_for
+
+                    _ll = legal_limits_for(zone_name)
+                    if _ll and _ll.get("max_height_m"):
+                        height_m = float(_ll["max_height_m"])
+                        height_source = "statutory"
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                ctx_warnings.append(
+                    f"용도지역 한도 미확정({res.fallback_reason or zone_name}) — "
+                    "확정 한도 없음(fail-closed). 조례/코드 보완 또는 정밀 확인 필요."
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 2) zone_code(7종) 법정표 — height/setback 보완 + 23종 미매칭 시 far/bcr 폴백(legacy 보존).
     try:
         from app.services.cad.auto_design_engine import AutoDesignEngineService
 
         legal = AutoDesignEngineService.get_legal_limits(zone_code)
-        far_pct = legal.get("max_far_percent")
-        bcr_pct = legal.get("max_bcr_percent")
-        setback_m = legal.get("min_setback_m")  # 이격거리(있으면 배치 폴리곤에 사용)
-        source = "statutory"
-        # 미지정 zone 폴백·엔진 경고를 정직 전파(SiteContext.warnings → 후보 warnings로 승계).
-        if legal.get("limits_source") == "fallback_default":
-            source = "statutory_fallback"
+        code_fallback = legal.get("limits_source") == "fallback_default"
+        if far_pct is None and legal.get("max_far_percent") is not None:
+            far_pct = legal.get("max_far_percent")
+            far_source = "statutory_fallback" if code_fallback else "statutory"
+        if bcr_pct is None and legal.get("max_bcr_percent") is not None:
+            bcr_pct = legal.get("max_bcr_percent")
+            bcr_source = "statutory_fallback" if code_fallback else "statutory"
+        if setback_m is None and legal.get("min_setback_m") is not None:
+            setback_m = legal.get("min_setback_m")  # 이격거리(배치 폴리곤·일조 base)
+        # 코드 절대 높이한도(m>0만 — 0은 '무제한' 신호). 23종에서 못 채웠을 때만 보완.
+        if height_m is None and legal.get("max_height_m"):
+            height_m = float(legal["max_height_m"])
+            height_source = "statutory_fallback" if code_fallback else "statutory"
+        if code_fallback and not zone_name:
             ctx_warnings.append(f"미지정 용도지역 '{zone_code}' — 법정 기본값 폴백(정밀 확인 필요)")
         for w in (legal.get("warnings") or [])[:2]:
             ctx_warnings.append(str(w))
     except Exception:  # noqa: BLE001
         pass
 
-    # 용적률(FAR) 실효 우선(전역규칙). far_source는 FAR 출처만 표기 — BCR 출처는 v1 미추적.
+    # 3) 조례(실효) 최우선(전역규칙). far_source는 FAR 출처만 표기.
     if ordinance_far_pct is not None:
         far_pct = ordinance_far_pct
-        source = "ordinance"
+        far_source = "ordinance"
     if ordinance_bcr_pct is not None:
         bcr_pct = ordinance_bcr_pct
+        bcr_source = "ordinance"
+    # 조례 height/setback 주입(P2-5) — 있으면 매스 높이캡·이격에 반영(없으면 법정/코드값 유지).
+    if ordinance_height_m is not None and ordinance_height_m > 0:
+        height_m = ordinance_height_m
+        height_source = "ordinance"
+    if ordinance_setback_m is not None and ordinance_setback_m > 0:
+        setback_m = ordinance_setback_m
 
     return SiteContext(
         area_sqm=area_sqm,
         zone_code=zone_code,
+        zone_name=zone_name,
         width_m=width_m,
         depth_m=depth_m,
         legal_bcr_pct=bcr_pct,
         legal_far_pct=far_pct,
         legal_setback_m=setback_m,
-        far_source=source,
+        legal_height_m=height_m,
+        height_source=height_source,
+        bcr_source=bcr_source,
+        far_source=far_source,
         avg_unit_area_sqm=avg_unit_area_sqm,
+        unit_types=unit_types,
+        reference_mass=reference_mass,
         building_use_kr=building_use_kr,
         warnings=ctx_warnings,
     )
