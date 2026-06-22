@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,6 +8,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -656,6 +657,19 @@ export default function SiteAnalysisPage() {
   // 동일 주소 comprehensive 중복 호출 방지 가드(자동진입 useEffect 재실행·동시성 대비).
   const l3FetchKeyRef = useRef<string | null>(null);
 
+  // ── 다필지 여부 판정(SSOT 기준) — LandIntelligencePanel과 동일 게이트 규칙을 재사용한다. ──
+  //   parcelCount>1 이고 실제 필지목록(parcels)이 2개 이상일 때만 '다필지'로 본다.
+  //   (단일/유효<2는 통합 개발방식 카드를 띄우지 않는다 — 단일필지엔 미표시.)
+  const ssotParcels = siteAnalysis?.parcels ?? null;
+  const isMultiParcel =
+    (siteAnalysis?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  // 개발방식 시뮬 카드에 넘길 필지 주소목록(string[]) — 통합SSOT(siteAnalysis.parcels)의
+  //   각 필지 지번주소를 그대로 사용한다(대표 1필지 아님). 빈 주소는 거른다(가짜값 방지).
+  const scenarioParcels = useMemo(
+    () => (isMultiParcel && ssotParcels ? ssotParcels.map((p) => p.address).filter(Boolean) : []),
+    [isMultiParcel, ssotParcels],
+  );
+
   // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
   // 컨텍스트 데이터를 siteData로 시드한다. 사용자가 직접 '새 분석'을 누른 경우(userInitiated)는 예외.
   // ★프로젝트 진입(주소 보유) 시에는 주소입력창(SiteInitiator)을 띄우지 않고 곧장 결과뷰로 진입한다.
@@ -1088,6 +1102,17 @@ export default function SiteAnalysisPage() {
             >
               <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>
+
+            {/* ── 다필지(2필지↑) 통합 개발방식 시뮬레이션 ──
+                통합SSOT(siteAnalysis.parcels·parcelCount) 기준으로 다필지일 때만 노출한다(단일필지 미표시).
+                기존 공용 카드(/development-methods/scenarios 래핑)를 재사용해 정책별(지구단위·도시개발·
+                가로주택·모아주택·역세권) 적용요건·인접성(통합개발 가능여부)을 판정한다. 백엔드 무신규. */}
+            {isMultiParcel && scenarioParcels.length > 1 && (
+              <DevelopmentScenarioCard
+                address={siteAnalysis?.address?.trim() || siteData.address}
+                parcels={scenarioParcels}
+              />
+            )}
 
             {/* ── 입지분석 카드(복원): 입지 점수 + 입지 인프라(POI) ──
                 두 카드 모두 useProjectContextStore.siteAnalysis를 직접 소비해 자동 초기화하므로

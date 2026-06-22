@@ -27,6 +27,7 @@ import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 
 type MethodResult = {
@@ -58,6 +59,18 @@ type MultiParcel = {
   integration_solutions?: string[];
 };
 
+// 특이부지 게이트(가산·옵셔널) — 백엔드 permit_analysis_service가 detect_special_parcel 결과를
+// result.site.special_parcel에 그대로 실어보낸다(is_special일 때만 객체, 일상부지는 null).
+// AutoZoningBadge/LandIntelligencePanel의 확립된 특이부지 게이트 타입과 동형(읽기 소비).
+type SpecialParcel = {
+  is_special?: boolean | null;
+  developability?: string | null; // POSSIBLE|CAUTION|CONDITIONAL|PRECONDITION|BLOCKED
+  resolvable?: string | null; // YES|CONDITIONAL|NO
+  severity_label?: string | null;
+  factors?: Array<{ category?: string | null } | string> | null;
+  honest_disclosure?: string | null;
+};
+
 type PermitAnalysis = {
   ai?: boolean;
   summary: string;
@@ -69,9 +82,15 @@ type PermitAnalysis = {
     max_bcr?: number | null;
     max_far?: number | null;
     land_area_sqm?: number | null;
+    // 특이부지 게이트(가산) — null이면 일상부지(미표시). 가짜 생성 금지.
+    special_parcel?: SpecialParcel | null;
   };
   multi_parcel?: MultiParcel;
 };
+
+// 특이부지 게이트 중 '주의 환기가 필요한' 개발가능성(법정한도가 그대로 실현되지 않음).
+// 이 등급이면 시나리오/추천 표시에 특이부지 경고 prefix를 단다(AutoZoningBadge와 일관).
+const GATED_DEVELOPABILITY = new Set(["BLOCKED", "PRECONDITION", "CONDITIONAL", "RESTRICTED", "CAUTION"]);
 
 // 인허가 가능성 → 상태색(토큰). 하드코딩 색 금지 — color-mix로 표면/보더 파생.
 const POSSIBILITY_STYLE: Record<string, string> = {
@@ -128,6 +147,22 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   }, [addr, extra, siteAnalysis]);
 
   const site = result?.site;
+
+  // ── 특이부지 게이트 ──
+  // 백엔드가 result.site.special_parcel(detect_special_parcel 산출)에 실어준 값만 읽는다(가짜 생성 0).
+  // is_special일 때만 객체. developability(영문) → 한국어 라벨(미지 등급은 severity_label 폴백).
+  // factors는 객체({category}) 또는 문자열 혼재 → 표시 라벨 배열로 정규화. 모두 null 가드.
+  const sp = site?.special_parcel ?? null;
+  const isSpecialParcel = sp?.is_special === true;
+  const spFactors = (sp?.factors ?? [])
+    .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
+    .filter((t) => t.length > 0);
+  const spDevelopabilityLabel =
+    (sp?.developability && DEVELOPABILITY_LABEL[sp.developability]) ||
+    (typeof sp?.severity_label === "string" ? sp.severity_label : null);
+  // 법정한도가 그대로 실현되지 않는 등급이면 시나리오·추천에 경고 prefix를 붙인다(POSSIBLE은 게이트 미적용).
+  const isGatedParcel =
+    isSpecialParcel && !!sp?.developability && GATED_DEVELOPABILITY.has(sp.developability);
 
   return (
     <div className="grid gap-6">
@@ -228,12 +263,45 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       {/* 부지 요약 + 종합 */}
       {result && (
         <>
+          {/* 특이부지 게이트 — 임야·학교용지·GB·맹지·도시계획시설 등은 용도지역상 법정 최대
+              연면적/용적률이 그대로 실현되지 않는다. is_special일 때만 경고 배너를 시나리오/추천
+              위에 표시해, 아래 개발방식 시뮬레이션을 일반 개발지처럼 단정 해석하지 않도록 한다.
+              값은 모두 백엔드 detect_special_parcel 실값(developability·factors·honest_disclosure). */}
+          {isSpecialParcel && (
+            <div className="space-y-2 rounded-[var(--radius-2xl)] border border-[color-mix(in_srgb,var(--status-warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-5 py-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-3 py-1 text-xs font-bold text-[var(--status-warning)]">
+                  ⚠ 특이부지{spFactors.length > 0 ? ` · ${spFactors.join(" · ")}` : ""}
+                </span>
+                {spDevelopabilityLabel && (
+                  <span className="text-xs font-semibold text-[var(--status-warning)]">
+                    개발가능성: {spDevelopabilityLabel}
+                  </span>
+                )}
+                {isGatedParcel && (
+                  <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+                    법정 최대 용적률·연면적이 그대로 실현되지 않을 수 있어, 아래 개발방식은 선행절차 통과를 전제로 한 잠재치입니다.
+                  </span>
+                )}
+              </div>
+              {sp?.honest_disclosure && (
+                <p className="text-xs leading-5 text-[var(--text-secondary)]">{sp.honest_disclosure}</p>
+              )}
+            </div>
+          )}
+
           {/* 한눈 요약(at-a-glance) — 최적 개발방식·핵심 규제 지표 */}
           {(() => {
             const top = [...result.methods].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
             const s = result.site;
+            // 특이부지 게이트가 걸리면 추천 개발방식 앞에 '특이부지' prefix로 잠재치임을 환기(가짜값 아님).
+            const topMethodLabel = top
+              ? isGatedParcel
+                ? `⚠ 특이부지 · ${top.method}`
+                : top.method
+              : "—";
             const kpis: [string, string][] = [
-              ["추천 개발방식", top ? top.method : "—"],
+              ["추천 개발방식", topMethodLabel],
               ["인허가 가능성", top ? `${top.possibility} · ${top.score}점` : "—"],
               ["용도지역", s?.zone_type || "—"],
               ["용적률 한도", s?.max_far != null ? `${s.max_far}%` : "—"],
@@ -493,6 +561,12 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
                 <p className="text-sm font-black text-[var(--accent-strong)]">📌 종합 권고</p>
+                {/* 특이부지 게이트 시 권고 위에 잠재치 환기 — 백엔드 developability 라벨 실값 사용. */}
+                {isGatedParcel && (
+                  <p className="mt-2 text-xs font-semibold text-[var(--status-warning)]">
+                    ⚠ 특이부지(개발가능성 {spDevelopabilityLabel ?? "확인 필요"}) — 아래 권고는 선행절차 통과를 전제로 한 잠재안입니다.
+                  </p>
+                )}
                 <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{result.recommendation}</p>
               </CardContent>
             </Card>

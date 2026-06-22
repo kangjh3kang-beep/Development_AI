@@ -3,12 +3,16 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
 type TaxItem = {
   code: string;
   name: string;
   stage: string;
   amount_won: number;
+  // 산출 근거(산식·적용세율·다주택중과·누진구간). kr-tax-calculator가 실제 계산한
+  // 값으로만 채운다. 규칙추정(일정비율) 항목은 근거가 없으므로 undefined로 둔다.
+  evidence?: EvidenceItem[];
 };
 
 type TaxResult = {
@@ -30,6 +34,44 @@ function formatWon(value: number): string {
   if (Math.abs(value) >= 1e8) return `${(value / 1e8).toFixed(1)}억`;
   if (Math.abs(value) >= 1e4) return `${(value / 1e4).toFixed(0)}만`;
   return value.toLocaleString();
+}
+
+// 백분율을 보기 좋게(소수점 자투리 제거) 표시. 예: 6 → "6%", 6.6 → "6.6%".
+function pct(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded}%`;
+}
+
+// 세액 한 항목 = (항목행) + 근거가 있으면 (근거패널행). 표 레이아웃 유지를 위해
+// 근거패널은 전체 폭(colSpan)으로 항목 바로 아래에 접이식으로 노출한다.
+function FragmentRow({ item }: { item: TaxItem }) {
+  const hasEvidence = Array.isArray(item.evidence) && item.evidence.length > 0;
+  return (
+    <>
+      <tr className="hover:bg-[var(--surface-soft)]/50 transition-colors group">
+        <td className="px-8 py-4 font-mono text-[10px] font-bold text-[var(--text-hint)]">{item.code}</td>
+        <td className="px-8 py-4 text-[13px] font-bold text-[var(--text-primary)]">{item.name}</td>
+        <td className="px-8 py-4">
+          <span className="px-3 py-1 rounded-full bg-[var(--surface-soft)] text-[9px] font-black uppercase text-[var(--text-tertiary)] border border-[var(--line)]">
+            {item.stage}
+          </span>
+        </td>
+        <td className="px-8 py-4 text-right">
+          <p className="text-[14px] font-[1000] text-[var(--text-primary)] tracking-tight">
+            {formatWon(item.amount_won)}
+          </p>
+        </td>
+      </tr>
+      {hasEvidence && (
+        <tr className="bg-[var(--surface-soft)]/30">
+          <td colSpan={4} className="px-8 pb-4 pt-0">
+            {/* 산식·적용세율·다주택중과·누진구간 근거(계산기 실값) */}
+            <EvidencePanel title={`${item.name} 산출 근거`} items={item.evidence!} defaultOpen={false} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
 }
 
 export function TaxCalculationDashboard() {
@@ -59,9 +101,22 @@ export function TaxCalculationDashboard() {
       // 취득 단계
       const acqRes = calculateAcquisitionTax(purchase, 1);
       const acqItems: TaxItem[] = [
-        { code: "ACQ-01", name: "취득세", stage: "acquisition", amount_won: acqRes.acquisitionTax },
-        { code: "ACQ-02", name: "농어촌특별세", stage: "acquisition", amount_won: acqRes.ruralTax },
-        { code: "ACQ-03", name: "지방교육세", stage: "acquisition", amount_won: acqRes.educationTax },
+        {
+          code: "ACQ-01", name: "취득세", stage: "acquisition", amount_won: acqRes.acquisitionTax,
+          // 근거: 취득세 = 취득가 × 적용세율(주택 1~3% 구간), 모두 계산기 실값
+          evidence: [
+            { label: "산식", value: "취득가 × 적용세율" },
+            { label: "취득가", value: formatWon(acqRes.acquisitionPrice), basis: `${acqRes.acquisitionPrice.toLocaleString()}원` },
+            { label: "적용세율", value: pct(acqRes.taxRate), basis: "주택 취득세 구간(6억↓ 1% · 9억↓ 2% · 9억↑ 3%)" },
+            { label: "취득세", value: `${acqRes.acquisitionTax.toLocaleString()}원`, basis: `${acqRes.acquisitionPrice.toLocaleString()} × ${pct(acqRes.taxRate)}` },
+          ],
+        },
+        { code: "ACQ-02", name: "농어촌특별세", stage: "acquisition", amount_won: acqRes.ruralTax,
+          // 근거: 농특세 = 취득세 × 10%(계산기 실값)
+          evidence: [{ label: "산식", value: "취득세 × 10%" }, { label: "취득세", value: `${acqRes.acquisitionTax.toLocaleString()}원` }] },
+        { code: "ACQ-03", name: "지방교육세", stage: "acquisition", amount_won: acqRes.educationTax,
+          // 근거: 지방교육세 = 취득세 × 10%(계산기 실값)
+          evidence: [{ label: "산식", value: "취득세 × 10%" }, { label: "취득세", value: `${acqRes.acquisitionTax.toLocaleString()}원` }] },
         { code: "ACQ-04", name: "인지세", stage: "acquisition", amount_won: purchase > 1e9 ? 350000 : 150000 },
         { code: "ACQ-05", name: "등록면허세", stage: "acquisition", amount_won: Math.round(purchase * 0.002) },
         { code: "ACQ-06", name: "국민주택채권 매입", stage: "acquisition", amount_won: Math.round(purchase * 0.01) },
@@ -72,8 +127,25 @@ export function TaxCalculationDashboard() {
       // 공사/보유 단계
       const propRes = calculateComprehensivePropertyTax(purchase, 1);
       const utilItems: TaxItem[] = [
-        { code: "UTL-01", name: "재산세", stage: "utility", amount_won: propRes.propertyTax },
-        { code: "UTL-02", name: "종합부동산세", stage: "utility", amount_won: propRes.comprehensiveTax },
+        {
+          code: "UTL-01", name: "재산세", stage: "utility", amount_won: propRes.propertyTax,
+          // 근거: 과세표준 = 공시가격 × 공정시장가액비율, 재산세는 과표 누진세율 적용(계산기 실값)
+          evidence: [
+            { label: "산식", value: "과세표준 × 누진세율" },
+            { label: "공정시장가액비율", value: pct(propRes.fairMarketRatio) },
+            { label: "과세표준", value: `${propRes.taxBase.toLocaleString()}원`, basis: `공시가격 × ${pct(propRes.fairMarketRatio)}` },
+            { label: "재산세", value: `${propRes.propertyTax.toLocaleString()}원`, basis: "과표 구간별 누진(6천만↓ 0.1% ~ 3억↑ 0.4%)" },
+          ],
+        },
+        {
+          code: "UTL-02", name: "종합부동산세", stage: "utility", amount_won: propRes.comprehensiveTax,
+          // 근거: 공시가 11억 초과분에만 부과(계산기 실값). 미부과 시 0원 정직 표기.
+          evidence: [
+            { label: "산식", value: "공시가 기본공제 초과분 × 누진세율" },
+            { label: "공정시장가액비율", value: pct(propRes.fairMarketRatio) },
+            { label: "종합부동산세", value: `${propRes.comprehensiveTax.toLocaleString()}원`, basis: propRes.comprehensiveTax > 0 ? "1세대1주택 11억 초과분 과세" : "기본공제(11억) 이하 — 미부과" },
+          ],
+        },
         { code: "UTL-03", name: "도시계획세", stage: "utility", amount_won: Math.round(propRes.propertyTax * 0.14) },
         { code: "UTL-04", name: "지역자원시설세", stage: "utility", amount_won: Math.round(propRes.propertyTax * 0.1) },
         { code: "UTL-05", name: "건설부담금", stage: "utility", amount_won: Math.round(gfa * 15000) },
@@ -107,9 +179,28 @@ export function TaxCalculationDashboard() {
         isSingleHome: false,
         expenses: Math.round(purchase * 0.02),
       });
+      // 양도세 근거(모두 계산기 실값): 다주택 중과는 houseCount=2일 때만 표기(현재 1주택→0).
+      const cgEvidence: EvidenceItem[] = [
+        { label: "산식", value: "과세표준 × 적용세율 − 누진공제" },
+        { label: "양도차익", value: `${cgRes.capitalGain.toLocaleString()}원`, basis: "양도가 − 취득가 − 필요경비" },
+      ];
+      if (cgRes.ltcgRate > 0) {
+        cgEvidence.push({ label: "장기보유특별공제율", value: pct(cgRes.ltcgRate), basis: `보유 ${3}년 기준` });
+      }
+      cgEvidence.push({ label: "과세표준", value: `${cgRes.taxBase.toLocaleString()}원`, basis: "양도소득금액 − 기본공제(250만)" });
+      cgEvidence.push({ label: "적용세율", value: pct(cgRes.appliedRate), basis: "양도소득세 누진세율(6~45%)" });
+      if (cgRes.multiHomeSurcharge > 0) {
+        cgEvidence.push({ label: "다주택 중과", value: `+${pct(cgRes.multiHomeSurcharge)}`, basis: "2주택 +20%p · 3주택↑ +30%p" });
+      }
+      cgEvidence.push({ label: "산출세액", value: `${cgRes.calculatedTax.toLocaleString()}원` });
+
       const dispItems: TaxItem[] = [
-        { code: "DSP-01", name: "양도소득세", stage: "disposal", amount_won: cgRes.calculatedTax },
-        { code: "DSP-02", name: "지방소득세(양도)", stage: "disposal", amount_won: cgRes.localTax },
+        { code: "DSP-01", name: "양도소득세", stage: "disposal", amount_won: cgRes.calculatedTax, evidence: cgEvidence },
+        {
+          code: "DSP-02", name: "지방소득세(양도)", stage: "disposal", amount_won: cgRes.localTax,
+          // 근거: 지방소득세 = 양도소득세 × 10%(계산기 실값)
+          evidence: [{ label: "산식", value: "양도소득세 × 10%" }, { label: "양도소득세", value: `${cgRes.calculatedTax.toLocaleString()}원` }],
+        },
         { code: "DSP-03", name: "법인세(법인매각시)", stage: "disposal", amount_won: Math.round((saleTotal - purchase) * 0.22) },
         { code: "DSP-04", name: "지방소득세(법인)", stage: "disposal", amount_won: Math.round((saleTotal - purchase) * 0.022) },
         { code: "DSP-05", name: "중개수수료(매도)", stage: "disposal", amount_won: Math.round(saleTotal * 0.003) },
@@ -258,20 +349,8 @@ export function TaxCalculationDashboard() {
                   </thead>
                   <tbody className="divide-y divide-[var(--line)]">
                     {filteredItems.map((item) => (
-                      <tr key={item.code} className="hover:bg-[var(--surface-soft)]/50 transition-colors group">
-                        <td className="px-8 py-4 font-mono text-[10px] font-bold text-[var(--text-hint)]">{item.code}</td>
-                        <td className="px-8 py-4 text-[13px] font-bold text-[var(--text-primary)]">{item.name}</td>
-                        <td className="px-8 py-4">
-                           <span className="px-3 py-1 rounded-full bg-[var(--surface-soft)] text-[9px] font-black uppercase text-[var(--text-tertiary)] border border-[var(--line)]">
-                             {item.stage}
-                           </span>
-                        </td>
-                        <td className="px-8 py-4 text-right">
-                          <p className="text-[14px] font-[1000] text-[var(--text-primary)] tracking-tight">
-                            {formatWon(item.amount_won)}
-                          </p>
-                        </td>
-                      </tr>
+                      // Fragment로 항목행 + (근거 있으면) 근거패널행을 함께 렌더
+                      <FragmentRow key={item.code} item={item} />
                     ))}
                   </tbody>
                 </table>

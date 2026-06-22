@@ -164,6 +164,7 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
 // AutoZoningBadge, LandIntelligencePanel, SiteInitiator 등 여러 곳에서 공유.
 export const DEVELOPABILITY_LABEL: Record<string, string> = {
   POSSIBLE: "개발 가능",
+  CAUTION: "사전확인 필요",
   CONDITIONAL: "조건부 가능",
   PRECONDITION: "선행절차 필요",
   RESTRICTED: "제한적",

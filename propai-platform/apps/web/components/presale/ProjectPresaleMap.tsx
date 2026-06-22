@@ -19,7 +19,23 @@ export type PresaleMarker = {
   area_name: string; product: string; product_label: string; status: string;
   receipt_begin: string; receipt_end: string; total_households: string;
   url: string; lat: number; lon: number; distance_m: number;
+  // ↓ 백엔드 nearby() 항목이 _normalize에서 실제로 함께 내려주는 보조 필드(전부 선택·없으면 미표시).
+  //   분양가(price_min/max_man)·주택형별(models)은 nearby에 없고 상세(detail) 조회에서만 받으므로
+  //   여기서는 가짜로 만들지 않고, 마커 팝업의 '상세 보기' → 상세 모달에서만 표시한다(정직).
+  move_in?: string;      // 입주예정월(MVN_PREARNGE_YM)
+  house_kind?: string;   // 분양/공급 구분(HOUSE_SECD_NM)
+  developer?: string;    // 시행사(BSNS_MBY_NM)
+  recruit_date?: string; // 모집공고일(RCRIT_PBLANC_DE)
+  winner_date?: string;  // 당첨자 발표일(PRZWNER_PRESNATN_DE)
+  homepage?: string;     // 분양 홈페이지(HMPG_ADRES)
 };
+
+// 외부 API 문자열(단지명·시행사 등)을 팝업 HTML에 넣기 전 최소 이스케이프(주입 방지).
+function esc(s?: string | null): string {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] || c
+  ));
+}
 
 // 상태별 색상(분양중/분양예정/분양완료) — 지도 마커 구분.
 const STATUS_COLOR: Record<string, string> = {
@@ -94,12 +110,20 @@ export function ProjectPresaleMap({
       pts.push([it.lat, it.lon]);
       const col = STATUS_COLOR[st] || "#64748b";
       const stLabel = STATUS_LABEL[st] || st;
-      const html = `<div style="min-width:190px;max-width:250px;font-family:sans-serif;">
-          <div style="font-weight:700;font-size:13px;color:#0f172a;">${it.name}</div>
-          <div style="font-size:11px;margin:2px 0 4px;"><b style="color:${col};">${stLabel}</b> <span style="color:#64748b;">· ${it.product_label}</span></div>
-          <div style="font-size:11px;color:#475569;">접수 ${it.receipt_begin || "-"} ~ ${it.receipt_end || "-"}</div>
-          <div style="font-size:11px;color:#475569;">공급 ${it.total_households || "-"}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
-          <div style="margin-top:5px;font-size:11px;color:#2563eb;font-weight:700;cursor:pointer;">상세 보기(청약일정·분양가) ↗</div>
+      // 보조 정보 행 — nearby() 응답에 실제로 있는 값만(없으면 아예 빼서 가짜 표시 방지).
+      const extraRows: string[] = [];
+      // 분양/공급 구분 + 시행사(있을 때만)
+      const kindDev = [it.house_kind, it.developer].filter(Boolean).map(esc).join(" · ");
+      if (kindDev) extraRows.push(`<div style="font-size:11px;color:#475569;">${kindDev}</div>`);
+      // 입주예정월(MVN_PREARNGE_YM) — 분양 의사결정 핵심 일정
+      if (it.move_in) extraRows.push(`<div style="font-size:11px;color:#475569;">입주예정 ${esc(it.move_in)}</div>`);
+      const html = `<div style="min-width:190px;max-width:260px;font-family:sans-serif;">
+          <div style="font-weight:700;font-size:13px;color:#0f172a;">${esc(it.name)}</div>
+          <div style="font-size:11px;margin:2px 0 4px;"><b style="color:${col};">${esc(stLabel)}</b> <span style="color:#64748b;">· ${esc(it.product_label)}</span></div>
+          <div style="font-size:11px;color:#475569;">접수 ${esc(it.receipt_begin) || "-"} ~ ${esc(it.receipt_end) || "-"}</div>
+          <div style="font-size:11px;color:#475569;">공급 ${esc(it.total_households) || "-"}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
+          ${extraRows.join("")}
+          <div style="margin-top:5px;font-size:11px;color:#2563eb;font-weight:700;cursor:pointer;">상세 보기(주택형별 분양가·일정) ↗</div>
         </div>`;
       const dot = document.createElement("div");
       const op = st === "마감" ? 0.6 : 0.95; // 분양완료는 약하게

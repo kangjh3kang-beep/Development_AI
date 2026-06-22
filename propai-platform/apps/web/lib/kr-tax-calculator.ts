@@ -4,7 +4,9 @@
  */
 
 // ── 양도소득세 누진세율 (2025년 기준) ──
-const PROGRESSIVE_BRACKETS = [
+// export: 매트릭스/근거패널 등 다른 컴포넌트가 같은 세율구간을 그대로 인용하도록 공개.
+//         (가짜값 방지 — 계산에 쓰는 상수와 화면 표기가 단일 출처)
+export const PROGRESSIVE_BRACKETS = [
   { limit: 14_000_000, rate: 0.06, deduction: 0 },
   { limit: 50_000_000, rate: 0.15, deduction: 1_260_000 },
   { limit: 88_000_000, rate: 0.24, deduction: 5_760_000 },
@@ -32,7 +34,8 @@ const LTCG_1HOME = [
 ];
 
 // ── 취득세율 (주택) ──
-const ACQ_TAX_BRACKETS = [
+// export: 매트릭스/근거패널이 동일 취득세 구간을 인용하도록 공개(단일 출처).
+export const ACQ_TAX_BRACKETS = [
   { limit: 600_000_000, rate: 0.01 },
   { limit: 900_000_000, rate: 0.02 },
   { limit: Infinity, rate: 0.03 },

@@ -8,6 +8,7 @@ import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
 // ── Icons ──
 const Icons = {
@@ -105,7 +106,22 @@ type IntegratedAnalysisResponse = {
     disclosure?: string | null;
     [key: string]: unknown;
   } | null;
-  per_parcel?: unknown[] | null;
+  // 필지별 상세(백엔드 router per_parcel) — 통합 산출근거 추적용. 중첩/결측 대비 전부 옵셔널.
+  per_parcel?: Array<{
+    pnu?: string | null;
+    address?: string | null;
+    area_sqm?: number | null;
+    zone_type?: string | null;
+    bcr_eff_pct?: number | null;
+    far_eff_pct?: number | null;
+    bcr_legal_pct?: number | null;
+    far_legal_pct?: number | null;
+    far_basis?: string | null;
+    special_parcel?: { is_special?: boolean | null; developability?: string | null } | null;
+    status?: string | null;
+    reason?: string | null;
+    [key: string]: unknown;
+  }> | null;
   warnings?: string[] | null;
 };
 
@@ -292,6 +308,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const [integratedData, setIntegratedData] = useState<IntegratedAnalysisResponse | null>(null);
   const [integratedLoading, setIntegratedLoading] = useState(false);
   const [integratedError, setIntegratedError] = useState<string | null>(null);
+  // 필지별 상세(per_parcel) 토글 — 기본 접힘(통합 요약 우선, 필요 시 펼쳐 산출근거 추적).
+  const [perParcelOpen, setPerParcelOpen] = useState(false);
 
   // ── GIS layer toggles ──
   const [gisLayers, setGisLayers] = useState<Record<string, boolean>>({
@@ -706,6 +724,59 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? integratedHonest ?? specialHonest ?? null;
   }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest, integratedData, zoningData?.special_parcel, siteAnalysis?.specialParcel]);
 
+  // ── 다필지 통합 산출근거(EvidencePanel) — 백엔드가 반환한 실값으로만 산식 트레이스 구성. ──
+  //   가짜값/가짜URL 0: 응답에 없는 값(null)은 항목 자체를 만들지 않는다(가짜0 금지·정직 미표시).
+  //   통합GFA=Σ(필지면적×실효용적률), 건폐면적=Σ(필지면적×실효건폐율), 면적가중 실효 건폐/용적의
+  //   근거(gfa_basis·far_basis_note)를 그대로 인용한다(백엔드 산식 미접촉).
+  const integratedEvidenceItems = useMemo<EvidenceItem[]>(() => {
+    const ig = integratedData?.integrated;
+    if (!ig) return [];
+    const items: EvidenceItem[] = [];
+    // 통합 대지면적(Σ 필지면적)
+    if (ig.total_area_sqm != null) {
+      items.push({
+        label: "통합 대지면적",
+        value: `${Math.round(ig.total_area_sqm).toLocaleString()}㎡`,
+        basis: `${integratedData?.parcel_count ?? (ssotParcels?.length ?? 0)}개 필지 면적 합계(Σ)`,
+      });
+    }
+    // 통합 GFA — gfa_basis 근거가 있으면 그대로 인용(예: per_parcel_effective_sum).
+    if (ig.integrated_gfa_sqm != null) {
+      items.push({
+        label: "통합 연면적(GFA)",
+        value: `${Math.round(ig.integrated_gfa_sqm).toLocaleString()}㎡`,
+        basis: ig.gfa_basis
+          ? `Σ(필지면적 × 실효용적률) · ${ig.gfa_basis}`
+          : "Σ(필지면적 × 실효용적률)",
+      });
+    }
+    // 통합 건폐면적 — Σ(필지면적×실효건폐율)
+    if (ig.integrated_footprint_sqm != null) {
+      items.push({
+        label: "통합 건폐면적",
+        value: `${Math.round(ig.integrated_footprint_sqm).toLocaleString()}㎡`,
+        basis: "Σ(필지면적 × 실효건폐율)",
+      });
+    }
+    // 면적가중 실효 건폐율 — far_basis_note 근거 인용(있을 때).
+    if (ig.blended_bcr_eff_pct != null) {
+      items.push({
+        label: "면적가중 실효 건폐율",
+        value: `${ig.blended_bcr_eff_pct}%`,
+        basis: ig.far_basis_note ?? "필지별 실효 건폐율의 면적가중 평균",
+      });
+    }
+    // 면적가중 실효 용적률 — far_basis_note 근거 인용(있을 때).
+    if (ig.blended_far_eff_pct != null) {
+      items.push({
+        label: "면적가중 실효 용적률",
+        value: `${ig.blended_far_eff_pct}%`,
+        basis: ig.far_basis_note ?? "필지별 실효 용적률의 면적가중 평균",
+      });
+    }
+    return items;
+  }, [integratedData?.integrated, integratedData?.parcel_count, ssotParcels?.length]);
+
   const analysis = {
     zoning: {
       current: zoningData?.zone_type || aiData?.zoning?.current || localResult?.zoningName || "용도지역 분석 대기",
@@ -891,7 +962,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                         )}
                       </div>
 
-                      {/* 면적가중 실효 건폐/용적 + 통합 GFA */}
+                      {/* 면적가중 실효 건폐/용적 + 통합 GFA (실효 우선·법정상한 보조병기 — 실효>법정 모순 방지) */}
                       <div className="grid grid-cols-3 gap-2">
                         <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
                           <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest mb-0.5">건폐율(통합실효)</p>
@@ -900,6 +971,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                               ? `${integratedData.integrated.blended_bcr_eff_pct}%`
                               : "—"}
                           </p>
+                          {/* 실효 < 법정상한일 때만 법정 보조병기(가짜0 금지 — legal이 실제로 존재하고 더 클 때만) */}
+                          {integratedData.integrated?.blended_bcr_eff_pct != null &&
+                            integratedData.integrated?.blended_bcr_legal_pct != null &&
+                            integratedData.integrated.blended_bcr_legal_pct > integratedData.integrated.blended_bcr_eff_pct && (
+                              <span className="block text-[8px] text-[var(--text-hint)]">법정상한 {integratedData.integrated.blended_bcr_legal_pct}%</span>
+                            )}
                         </div>
                         <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
                           <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
@@ -908,6 +985,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                               ? `${integratedData.integrated.blended_far_eff_pct}%`
                               : "—"}
                           </p>
+                          {integratedData.integrated?.blended_far_eff_pct != null &&
+                            integratedData.integrated?.blended_far_legal_pct != null &&
+                            integratedData.integrated.blended_far_legal_pct > integratedData.integrated.blended_far_eff_pct && (
+                              <span className="block text-[8px] text-[var(--text-hint)]">법정상한 {integratedData.integrated.blended_far_legal_pct}%</span>
+                            )}
                         </div>
                         <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
                           <p className="text-[8px] font-black text-teal-400 uppercase tracking-widest mb-0.5">통합 GFA</p>
@@ -918,31 +1000,106 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                           </p>
                         </div>
                       </div>
+
+                      {/* 통합 대지면적·건폐면적 — 대지/GFA/건폐면적 3요소 규모 파악(있는 값만 정직표기) */}
+                      {(integratedData.integrated?.total_area_sqm != null ||
+                        integratedData.integrated?.integrated_footprint_sqm != null) && (
+                        <div className="grid grid-cols-2 gap-2">
+                          {integratedData.integrated?.total_area_sqm != null && (
+                            <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
+                              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-widest mb-0.5">통합 대지면적</p>
+                              <p className="text-sm font-black text-[var(--text-primary)]">
+                                {Math.round(integratedData.integrated.total_area_sqm).toLocaleString()}㎡
+                              </p>
+                            </div>
+                          )}
+                          {integratedData.integrated?.integrated_footprint_sqm != null && (
+                            <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
+                              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-widest mb-0.5">통합 건폐면적</p>
+                              <p className="text-sm font-black text-[var(--text-primary)]">
+                                {Math.round(integratedData.integrated.integrated_footprint_sqm).toLocaleString()}㎡
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {integratedData.integrated?.far_basis_note && (
                         <p className="text-[9px] text-[var(--text-hint)] leading-relaxed">{integratedData.integrated.far_basis_note}</p>
                       )}
 
-                      {/* 용도별 면적/비율(zone_mix) — 혼재 부지의 용도별 분포 정직표기. */}
+                      {/* 통합 산출근거(EvidencePanel) — 응답 실값으로만 산식 트레이스(가짜값/가짜URL 0) */}
+                      {integratedEvidenceItems.length > 0 && (
+                        <EvidencePanel items={integratedEvidenceItems} title="통합분석 산출 근거" defaultOpen={false} />
+                      )}
+
+                      {/* 용도별 면적/비율 + 용도별 규제한도(zone_mix) — 혼재 부지의 용도별 분포·실효/법정 한도 정직표기.
+                          ★null 가드: 조례 미확보 등으로 *_eff/*_legal이 null이면 해당 한도는 미표시(가짜0 금지). */}
                       {(integratedData.zone_mix?.length ?? 0) > 0 && (
-                        <div className="space-y-1">
-                          <p className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest">용도별 구성</p>
-                          {(integratedData.zone_mix ?? []).map((z, i) => (
-                            <div key={`zmix-${i}`} className="flex items-center justify-between text-[10px]">
-                              <span className="font-bold text-[var(--text-secondary)]">{z.zone ?? "—"}</span>
-                              <span className="text-[var(--text-hint)]">
-                                {z.area_sqm != null ? `${Math.round(z.area_sqm).toLocaleString()}㎡` : "—"}
-                                {z.share_pct != null ? ` · ${z.share_pct}%` : ""}
-                              </span>
-                            </div>
-                          ))}
+                        <div className="space-y-1.5">
+                          <p className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest">용도별 구성 · 규제한도</p>
+                          {(integratedData.zone_mix ?? []).map((z, i) => {
+                            // 건폐/용적을 실효(법정상한) 한 줄로 병기 — 실효 우선, 법정은 보조.
+                            const bcrTxt =
+                              z.bcr_eff != null
+                                ? `건폐 ${z.bcr_eff}%${z.bcr_legal != null && z.bcr_legal > z.bcr_eff ? `(법정 ${z.bcr_legal}%)` : ""}`
+                                : z.bcr_legal != null
+                                ? `건폐 법정 ${z.bcr_legal}%`
+                                : null;
+                            const farTxt =
+                              z.far_eff != null
+                                ? `용적 ${z.far_eff}%${z.far_legal != null && z.far_legal > z.far_eff ? `(법정 ${z.far_legal}%)` : ""}`
+                                : z.far_legal != null
+                                ? `용적 법정 ${z.far_legal}%`
+                                : null;
+                            const limitParts = [bcrTxt, farTxt].filter((t): t is string => !!t);
+                            return (
+                              <div key={`zmix-${i}`} className="rounded-lg bg-[var(--surface-soft)] px-2.5 py-1.5 border border-[var(--line)]">
+                                <div className="flex items-center justify-between text-[10px]">
+                                  <span className="font-bold text-[var(--text-secondary)]">{z.zone ?? "—"}</span>
+                                  <span className="text-[var(--text-hint)]">
+                                    {z.area_sqm != null ? `${Math.round(z.area_sqm).toLocaleString()}㎡` : "—"}
+                                    {z.share_pct != null ? ` · ${z.share_pct}%` : ""}
+                                  </span>
+                                </div>
+                                {limitParts.length > 0 && (
+                                  <p className="mt-0.5 text-[9px] text-[var(--text-tertiary)]">{limitParts.join(" · ")}</p>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 
-                      {/* 인접성 안내(통합개발 가능여부 신호) */}
-                      {integratedData.adjacency?.note && (
-                        <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
-                          <span className="font-black text-[var(--accent-strong)]">인접성</span> · {integratedData.adjacency.note}
-                        </p>
+                      {/* 인접성 안내(통합개발 가능여부 신호) — 연담여부·단편수 구조화 병기.
+                          ★null 가드: contiguous=null(형상 미확보)은 '아니오'가 아닌 '미확정'으로(오도 방지). */}
+                      {(integratedData.adjacency?.note ||
+                        integratedData.adjacency?.contiguous != null ||
+                        integratedData.adjacency?.components != null) && (
+                        <div className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+                          <span className="font-black text-[var(--accent-strong)]">인접성</span>
+                          {integratedData.adjacency?.contiguous != null && (
+                            <span
+                              className={`ml-1.5 rounded-full px-2 py-0.5 text-[9px] font-black ${
+                                integratedData.adjacency.contiguous
+                                  ? "bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
+                                  : "bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] text-[var(--status-warning)]"
+                              }`}
+                            >
+                              연담 {integratedData.adjacency.contiguous ? "예" : "아니오"}
+                            </span>
+                          )}
+                          {integratedData.adjacency?.contiguous == null && (
+                            <span className="ml-1.5 rounded-full bg-[var(--surface-soft)] px-2 py-0.5 text-[9px] font-black text-[var(--text-hint)]">
+                              연담 미확정
+                            </span>
+                          )}
+                          {integratedData.adjacency?.components != null && (
+                            <span className="ml-1.5 text-[var(--text-hint)]">· 단편 {integratedData.adjacency.components}개</span>
+                          )}
+                          {integratedData.adjacency?.note && (
+                            <span className="ml-1"> · {integratedData.adjacency.note}</span>
+                          )}
+                        </div>
                       )}
 
                       {/* 시나리오 status 분기: computed=확정, tentative/blocked=잠정 배너(확정% 억제) */}
@@ -956,6 +1113,80 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                             <p className="text-[10px] leading-relaxed text-[var(--text-secondary)] font-medium">
                               {integratedData.scenario.disclosure || integratedData.honest_disclosure}
                             </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 통합분석 경고(warnings) — 혼재·조례결측·형상미확보·위임실패 등 정직표기(무목업).
+                          백엔드가 실제 축적한 string[]만 노출(가짜 경고 생성 금지). */}
+                      {(integratedData.warnings?.length ?? 0) > 0 && (
+                        <div className="rounded-lg border border-[color-mix(in_srgb,var(--status-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-2.5">
+                          <p className="text-[10px] font-black text-[var(--status-warning)] uppercase tracking-widest mb-1 flex items-center gap-1.5">
+                            <Icons.AlertCircle />검토 경고 · {integratedData.warnings?.length}건
+                          </p>
+                          <ul className="space-y-0.5">
+                            {(integratedData.warnings ?? []).map((w, i) => (
+                              <li key={`iwarn-${i}`} className="text-[10px] leading-relaxed text-[var(--text-secondary)]">· {w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* 필지별 상세(per_parcel) — 통합 산출근거 추적용. 토글(기본 접힘). 실효(법정)·특이·상태 정직표기. */}
+                      {(integratedData.per_parcel?.length ?? 0) > 0 && (
+                        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)]">
+                          <button
+                            type="button"
+                            onClick={() => setPerParcelOpen((v) => !v)}
+                            aria-expanded={perParcelOpen}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left"
+                          >
+                            <span className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest">
+                              필지별 상세 · {integratedData.per_parcel?.length}필지
+                            </span>
+                            <span className="text-[10px] font-semibold text-[var(--accent-strong)]">{perParcelOpen ? "접기" : "펼치기"}</span>
+                          </button>
+                          {perParcelOpen && (
+                            <div className="space-y-1.5 border-t border-[var(--line)] px-3 py-2">
+                              {(integratedData.per_parcel ?? []).map((p, i) => {
+                                // 건폐/용적 실효(법정) 한 줄 — null은 미표시(가짜0 금지).
+                                const bcr = p.bcr_eff_pct != null
+                                  ? `건폐 ${p.bcr_eff_pct}%${p.bcr_legal_pct != null && p.bcr_legal_pct > p.bcr_eff_pct ? `(법정 ${p.bcr_legal_pct}%)` : ""}`
+                                  : null;
+                                const far = p.far_eff_pct != null
+                                  ? `용적 ${p.far_eff_pct}%${p.far_legal_pct != null && p.far_legal_pct > p.far_eff_pct ? `(법정 ${p.far_legal_pct}%)` : ""}`
+                                  : null;
+                                const metrics = [bcr, far].filter((t): t is string => !!t);
+                                const isSpecial = p.special_parcel?.is_special === true;
+                                return (
+                                  <div key={`pp-${i}`} className="rounded-md bg-[var(--surface-muted)] px-2.5 py-1.5 border border-[var(--line)]">
+                                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                                      <span className="font-bold text-[var(--text-secondary)] truncate">
+                                        {p.address ?? p.pnu ?? `필지 ${i + 1}`}
+                                      </span>
+                                      <span className="shrink-0 text-[var(--text-hint)]">
+                                        {p.area_sqm != null ? `${Math.round(p.area_sqm).toLocaleString()}㎡` : "—"}
+                                      </span>
+                                    </div>
+                                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[9px] text-[var(--text-tertiary)]">
+                                      {p.zone_type && <span className="font-semibold text-[var(--text-secondary)]">{p.zone_type}</span>}
+                                      {metrics.length > 0 && <span>{metrics.join(" · ")}</span>}
+                                      {isSpecial && p.special_parcel?.developability && (
+                                        <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1.5 py-0.5 font-black text-[var(--status-warning)]">
+                                          특이 · {DEVELOPABILITY_LABEL[p.special_parcel.developability] ?? p.special_parcel.developability}
+                                        </span>
+                                      )}
+                                      {p.status && p.status !== "ok" && (
+                                        <span className="rounded-full bg-[var(--surface-soft)] px-1.5 py-0.5 font-black text-[var(--text-hint)]">{p.status}</span>
+                                      )}
+                                    </div>
+                                    {p.reason && (
+                                      <p className="mt-0.5 text-[9px] leading-relaxed text-[var(--text-hint)]">{p.reason}</p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
                       )}

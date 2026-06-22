@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v285-u1-site-gate";
+const CACHE_NAME = "propai-v286-ultrawork-analysis";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
