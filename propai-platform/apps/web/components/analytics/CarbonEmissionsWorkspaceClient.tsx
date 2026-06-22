@@ -4,30 +4,31 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, Button } from "@propai/ui";
 import { formatCurrencyCompact } from "@/lib/formatters";
 import { NumberInput } from "@/components/common/NumberInput";
+import { apiClient } from "@/lib/api-client";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
-const EPD_DB: Record<string, { gwp: number; category: string }> = {
-  "보통 포틀랜드 시멘트": { gwp: 0.93, category: "A1-A3" },
-  "철근_SD400": { gwp: 1.46, category: "A1-A3" },
-  "일반 콘크리트 (C25)": { gwp: 0.13, category: "A1-A3" },
-  "고강도 콘크리트 (C35)": { gwp: 0.16, category: "A1-A3" },
-  "EPS단열재": { gwp: 3.3, category: "A1-A3" },
-  "삼중유리": { gwp: 1.44, category: "A1-A3" },
-  "로이유리": { gwp: 1.2, category: "A1-A3" },
-  "구조용강재_H형강": { gwp: 2.0, category: "A1-A3" },
-  "CLT 구조목": { gwp: -0.5, category: "A1-A3" },
-  "OSB 합판": { gwp: 0.46, category: "A1-A3" },
-  "단열재 (미네랄울)": { gwp: 1.2, category: "A1-A3" },
-  "저탄소 콘크리트 (슬래그 30%)": { gwp: 0.09, category: "A1-A3" },
-  "재활용 철근 (EAF)": { gwp: 0.7, category: "A1-A3" },
-};
-
-const ALT_MAP: Record<string, Array<{ name: string; gwp: number }>> = {
-  "보통 포틀랜드 시멘트": [{ name: "저탄소 시멘트 (GGBS 50%)", gwp: 0.52 }, { name: "석회석 시멘트", gwp: 0.65 }],
-  "철근_SD400": [{ name: "재활용 철근 (EAF)", gwp: 0.7 }, { name: "스테인리스 철근", gwp: 1.1 }],
-  "일반 콘크리트 (C25)": [{ name: "저탄소 콘크리트 (슬래그 30%)", gwp: 0.09 }, { name: "지오폴리머 콘크리트", gwp: 0.07 }],
-  "EPS단열재": [{ name: "미네랄울 단열재", gwp: 1.2 }, { name: "셋뢰로오스 화이버", gwp: 0.8 }],
-  "구조용강재_H형강": [{ name: "CLT 구조목", gwp: -0.5 }, { name: "재활용 강재 (EAF)", gwp: 1.0 }],
-};
+// ★자재 선택 목록 — 백엔드 EPD Korea Database(EPD_KOREA_DATABASE) 등록 키와 동일하게 맞춘다.
+//   (목록 외 자재는 백엔드가 산출에서 제외하므로, 등록된 자재명만 노출해 누락을 막는다.)
+//   주의: 여기에는 GWP(탄소계수) 같은 "값"을 절대 두지 않는다 — 값은 모두 백엔드 응답에서만 온다.
+const MATERIAL_NAMES = [
+  "보통 포틀랜드 시멘트",
+  "고강도 콘크리트 (C35)",
+  "일반 콘크리트 (C25)",
+  "레미콘_35MPa",
+  "철근_SD400",
+  "철근 (SD500)",
+  "구조용강재_H형강",
+  "구조용 강재 (H형강)",
+  "저탄소 콘크리트 (슬래그 30%)",
+  "재활용 철근 (EAF)",
+  "단열재 (미네랄울)",
+  "단열재 (EPS)",
+  "EPS단열재",
+  "삼중유리",
+  "로이유리",
+  "CLT 구조목",
+  "OSB 합판",
+];
 
 interface MaterialBreakdown {
   material: string;
@@ -37,6 +38,7 @@ interface MaterialBreakdown {
   category: string;
 }
 
+// 백엔드 /esg/epd/carbon-footprint 응답 계약(받는 값만 사용).
 interface CarbonResult {
   total_carbon_footprint_kgco2e: number;
   materials_assessed: number;
@@ -52,6 +54,7 @@ interface Alternative {
   carbon_reduction_pct: number;
 }
 
+// 백엔드 /esg/epd/low-carbon-alternatives 응답 계약(받는 값만 사용).
 interface AlternativesResult {
   original_material: string;
   original_carbon_kgco2e: number;
@@ -132,6 +135,10 @@ export function CarbonEmissionsWorkspaceClient({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<CarbonResult | null>(null);
   const [alternatives, setAlternatives] = useState<Record<string, AlternativesResult>>({});
+  // 호출 실패/무자료 시 정직 표기용 메시지(가짜 데이터 생성 금지).
+  const [error, setError] = useState<string | null>(null);
+  // 대안 조회 중인 자재명(중복 클릭 방지·로딩 표시).
+  const [altLoading, setAltLoading] = useState<string | null>(null);
 
   const addMaterial = () => {
     if (!newName || !newQty) return;
@@ -151,51 +158,81 @@ export function CarbonEmissionsWorkspaceClient({
   const runAnalysis = async () => {
     if (materials.length === 0) return;
     setIsAnalyzing(true);
+    setError(null);
     try {
-      await new Promise((r) => setTimeout(r, 300));
-      const breakdown: MaterialBreakdown[] = materials.map((m) => {
-        const epd = EPD_DB[m.name] ?? { gwp: 1.0, category: "A1-A3" };
-        return {
-          material: m.name,
-          quantity_kg: m.quantity_kg,
-          epd_kgco2e_per_kg: epd.gwp,
-          carbon_footprint_kgco2e: Math.round(m.quantity_kg * epd.gwp),
-          category: epd.category,
-        };
+      // ★실제 백엔드 호출 — EPD Korea Database 기반 탄소발자국 산출(클라이언트 하드코딩 GWP 제거).
+      //   body = { material_list: [{ name, quantity_kg }] } (EPDRequest 계약).
+      const payload = await apiClient.post<CarbonResult>("/esg/epd/carbon-footprint", {
+        body: { material_list: materials.map((m) => ({ name: m.name, quantity_kg: m.quantity_kg })) },
+        useMock: false,
+        timeoutMs: 60000,
       });
+
+      // 받는 값만 사용 + null 가드(가짜 기본값 주입 금지).
+      const breakdown = Array.isArray(payload?.breakdown) ? payload.breakdown : [];
+      if (breakdown.length === 0) {
+        // 백엔드 EPD DB에 없는 자재만 입력된 경우 → 정직 표기(빈 결과).
+        setResult(null);
+        setError("입력하신 자재가 EPD 데이터베이스에 등록되어 있지 않아 탄소발자국을 산출할 수 없습니다. 등록된 자재명을 선택해 주세요.");
+        return;
+      }
       setResult({
-        total_carbon_footprint_kgco2e: breakdown.reduce((s, b) => s + b.carbon_footprint_kgco2e, 0),
-        materials_assessed: breakdown.length,
+        total_carbon_footprint_kgco2e: Number(payload.total_carbon_footprint_kgco2e ?? 0),
+        materials_assessed: Number(payload.materials_assessed ?? breakdown.length),
         breakdown,
-        standard: "ISO 21930 / EN 15804",
-        data_source: "한국환경산업기술원 EPD DB",
+        standard: payload.standard ?? "ISO 21930:2017",
+        data_source: payload.data_source ?? "EPD Korea Database",
       });
+      // 새 분석 시작 시 이전 대안 결과 초기화(자재 변경과 불일치 방지).
+      setAlternatives({});
+    } catch (e) {
+      // 호출 실패 → 정직 표기(가짜 데이터 생성 안 함).
+      const msg = e instanceof Error ? e.message : "탄소발자국 분석 실패";
+      setResult(null);
+      setError(`탄소발자국 분석 중 오류가 발생했습니다(${msg}). 잠시 후 다시 시도해 주세요.`);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   const fetchAlternative = async (materialName: string, quantityKg: number) => {
-    const alts = ALT_MAP[materialName];
-    if (!alts) return;
-    const origGwp = EPD_DB[materialName]?.gwp ?? 1.0;
-    const origCarbon = Math.round(quantityKg * origGwp);
-    setAlternatives((prev) => ({
-      ...prev,
-      [materialName]: {
-        original_material: materialName,
-        original_carbon_kgco2e: origCarbon,
-        alternatives: alts.map((a) => {
-          const altCarbon = Math.round(quantityKg * a.gwp);
-          return {
-            alternative_name: a.name,
-            epd_kgco2e_per_kg: a.gwp,
-            alt_carbon_footprint_kgco2e: altCarbon,
-            carbon_reduction_pct: origCarbon > 0 ? Math.round(((origCarbon - altCarbon) / origCarbon) * 100) : 0,
-          };
-        }),
-      },
-    }));
+    if (altLoading) return;
+    setAltLoading(materialName);
+    try {
+      // ★실제 백엔드 호출 — 동일 카테고리 저탄소 대안 추천(클라이언트 하드코딩 대안맵 제거).
+      //   엔드포인트는 쿼리 파라미터(material_name, quantity_kg)로 받음.
+      const qs = new URLSearchParams({
+        material_name: materialName,
+        quantity_kg: String(quantityKg),
+      }).toString();
+      const payload = await apiClient.post<AlternativesResult>(
+        `/esg/epd/low-carbon-alternatives?${qs}`,
+        { useMock: false, timeoutMs: 60000 },
+      );
+      const alts = Array.isArray(payload?.alternatives) ? payload.alternatives : [];
+      setAlternatives((prev) => ({
+        ...prev,
+        [materialName]: {
+          original_material: payload?.original_material ?? materialName,
+          original_carbon_kgco2e: Number(payload?.original_carbon_kgco2e ?? 0),
+          alternatives: alts,
+        },
+      }));
+    } catch (e) {
+      // 대안 조회 실패 → 빈 대안(가짜 추천 생성 안 함) + 메시지.
+      const msg = e instanceof Error ? e.message : "대안 조회 실패";
+      setAlternatives((prev) => ({
+        ...prev,
+        [materialName]: {
+          original_material: materialName,
+          original_carbon_kgco2e: 0,
+          alternatives: [],
+        },
+      }));
+      setError(`저탄소 대안 조회 중 오류가 발생했습니다(${msg}).`);
+    } finally {
+      setAltLoading(null);
+    }
   };
 
   // Scope 배출 구성 (건축자재는 Scope 3가 대부분)
@@ -212,6 +249,28 @@ export function CarbonEmissionsWorkspaceClient({
   const maxBreakdownCarbon = useMemo(() => {
     if (!result) return 1;
     return Math.max(...(result.breakdown ?? []).map((b) => Math.abs(b.carbon_footprint_kgco2e)), 1);
+  }, [result]);
+
+  // 산출 근거(EvidencePanel) — 모든 항목이 실응답 실값에서 옴(가짜 0 금지).
+  const evidence: EvidenceItem[] = useMemo(() => {
+    if (!result) return [];
+    return [
+      {
+        label: "총 탄소발자국",
+        value: `${result.total_carbon_footprint_kgco2e.toLocaleString()} kgCO₂eq`,
+        basis: "Σ(자재별 수량 × EPD 탄소계수)",
+      },
+      {
+        label: "적용 기준",
+        value: result.standard,
+        basis: "건축자재 환경성적표지(EPD) 산정 표준",
+      },
+      {
+        label: "데이터 출처",
+        value: result.data_source,
+        basis: `분석 자재 ${result.materials_assessed}종 · 백엔드 EPD DB 실값`,
+      },
+    ];
   }, [result]);
 
   return (
@@ -262,21 +321,7 @@ export function CarbonEmissionsWorkspaceClient({
                 className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm font-medium"
               >
                 <option value="">선택...</option>
-                {[
-                  "보통 포틀랜드 시멘트",
-                  "철근_SD400",
-                  "일반 콘크리트 (C25)",
-                  "고강도 콘크리트 (C35)",
-                  "EPS단열재",
-                  "삼중유리",
-                  "로이유리",
-                  "구조용강재_H형강",
-                  "CLT 구조목",
-                  "OSB 합판",
-                  "단열재 (미네랄울)",
-                  "저탄소 콘크리트 (슬래그 30%)",
-                  "재활용 철근 (EAF)",
-                ].map((m) => (
+                {MATERIAL_NAMES.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
@@ -331,6 +376,13 @@ export function CarbonEmissionsWorkspaceClient({
           >
             {isAnalyzing ? t.calculating : t.calculateBtn}
           </Button>
+
+          {/* 오류·무자료 정직 표기 (가짜 데이터 대체 금지) */}
+          {error && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+              {error}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -362,11 +414,19 @@ export function CarbonEmissionsWorkspaceClient({
             </div>
           </div>
 
+          {/* 산출 근거(공용 EvidencePanel) — 산식·출처 트레이스(실값만) */}
+          <EvidencePanel title="산출 근거" items={evidence} defaultOpen={false} />
+
           {/* Scope Breakdown */}
           {scopeData && (
             <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
               <CardContent className="p-8 space-y-6">
                 <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.scopeTitle}</h3>
+                {/* ★정직 고지: EPD는 자재 내재탄소(A1~A3=대부분 Scope 3)를 측정한다. 아래 Scope 1/2/3 분해는
+                    실측이 아니라 업계 통상 가정비율(5/15/80)로 나눈 '추정 구성'이다. 가짜 측정값으로 오인 방지. */}
+                <p className="text-[11px] leading-snug text-amber-600">
+                  ⚠ 추정 구성 — 업계 통상 가정비율(5/15/80)로 분해한 참고값입니다. EPD는 자재 내재탄소(대부분 Scope 3)를 측정하며, 정밀 Scope 분해는 운영단계 실측이 필요합니다.
+                </p>
                 <div className="space-y-4">
                   {[
                     { label: t.scope1, value: scopeData.scope1, pct: 5, color: "bg-amber-500" },
@@ -421,9 +481,10 @@ export function CarbonEmissionsWorkspaceClient({
                           </span>
                           <button
                             onClick={() => fetchAlternative(b.material, b.quantity_kg)}
-                            className="text-[10px] font-bold text-indigo-600 hover:underline uppercase"
+                            disabled={altLoading === b.material}
+                            className="text-[10px] font-bold text-indigo-600 hover:underline uppercase disabled:opacity-50"
                           >
-                            {t.alternativeBtn}
+                            {altLoading === b.material ? t.calculating : t.alternativeBtn}
                           </button>
                         </div>
                       </div>
@@ -439,24 +500,31 @@ export function CarbonEmissionsWorkspaceClient({
                           <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">
                             {t.alternativeTitle}
                           </p>
-                          {alternatives[b.material].alternatives.map((alt) => (
-                            <div
-                              key={alt.alternative_name}
-                              className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-emerald-500/5 px-4 py-2 border border-emerald-200 dark:border-emerald-500/10"
-                            >
-                              <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                                {alt.alternative_name}
-                              </span>
-                              <div className="flex items-center gap-4">
-                                <span className="text-xs text-emerald-600">
-                                  {alt.alt_carbon_footprint_kgco2e.toLocaleString()} kgCO₂eq
+                          {alternatives[b.material].alternatives.length === 0 ? (
+                            // 대안 없음/조회 실패 → 정직 표기(가짜 추천 금지).
+                            <p className="text-xs font-medium text-[var(--text-tertiary)]">
+                              조회된 저탄소 대안이 없습니다.
+                            </p>
+                          ) : (
+                            alternatives[b.material].alternatives.map((alt) => (
+                              <div
+                                key={alt.alternative_name}
+                                className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-emerald-500/5 px-4 py-2 border border-emerald-200 dark:border-emerald-500/10"
+                              >
+                                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                                  {alt.alternative_name}
                                 </span>
-                                <span className="rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white">
-                                  -{alt.carbon_reduction_pct}% {t.reductionLabel}
-                                </span>
+                                <div className="flex items-center gap-4">
+                                  <span className="text-xs text-emerald-600">
+                                    {alt.alt_carbon_footprint_kgco2e.toLocaleString()} kgCO₂eq
+                                  </span>
+                                  <span className="rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                    -{alt.carbon_reduction_pct}% {t.reductionLabel}
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))
+                          )}
                         </div>
                       )}
                     </div>

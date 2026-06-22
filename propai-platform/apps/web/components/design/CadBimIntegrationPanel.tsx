@@ -17,6 +17,8 @@ import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -59,6 +61,49 @@ function mapUse(bt?: string | null): string {
   return "공동주택";
 }
 
+// ── 법규 준수율 표시(additive·읽기전용) — DesignOutcomeSummary와 동일 SSOT·동일 규칙 ──
+// 적용값(designData.bcr/far)과 법정/조례 한도(siteAnalysis.ordinance)를 비교해 "법정 60% 이내 ✓"
+// 식으로 표시한다. 법령 원문 칩은 W1이 저장한 trustMeta.legalRefs(레지스트리 출력)를 재사용한다.
+// 한도가 없으면 준수 판정을 생략(무목업 — 가짜 한도/판정 절대 금지).
+
+/** 백엔드 legal_refs[] 레코드(레지스트리 출력) — 필요한 필드만 옵셔널로. */
+type DesignLegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+};
+
+/** SSOT(siteAnalysis.trustMeta?.legalRefs)에서 법령 근거 배열을 안전하게 읽는다.
+ *  store 타입에 trustMeta가 명명돼 있지 않으므로(가산 저장) 좁은 캐스트로만 접근. */
+function readTrustLegalRefs(siteAnalysis: unknown): DesignLegalRef[] {
+  const meta = (
+    siteAnalysis as { trustMeta?: { legalRefs?: DesignLegalRef[] | null } | null } | null
+  )?.trustMeta;
+  const refs = meta?.legalRefs;
+  if (!Array.isArray(refs)) return [];
+  return refs.filter((r) => r && typeof r.law_name === "string" && r.law_name.trim());
+}
+
+/** 근거키 우선순위로 법령 칩 데이터를 고른다. url은 백엔드 제공값만(직접 조립 금지). */
+function pickLegalRef(refs: DesignLegalRef[], keys: string[]): EvidenceLegalRef | null {
+  for (const key of keys) {
+    const hit = refs.find((r) => (r.key ?? "").trim() === key);
+    if (hit?.law_name) {
+      return { lawName: hit.law_name, article: hit.article, title: hit.title, url: hit.url };
+    }
+  }
+  return null;
+}
+
+/** 퍼센트 표시(소수 1자리까지, 정수는 정수로). null/비정상 → null. */
+function fmtPctLabel(v?: number | null): string | null {
+  if (v == null || !isFinite(v)) return null;
+  const n = Math.round(v * 10) / 10;
+  return `${n}%`;
+}
+
 /** CAD 2D·3D BIM이 공유하는 단일 건축 기하(선택한 건축개요에서 파생). */
 interface DesignSpec {
   building_width_m: number;
@@ -80,6 +125,9 @@ interface DesignSpec {
   total_units?: number | null;
   daylightNorth?: boolean;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴)
   project_name: string;
+  // ★/mass 호출이 네트워크 오류 등으로 실패해 "추정 기본값"으로 채워졌는지 표시(정직표기).
+  //  true면 화면에 "기본값 사용 중" 오버레이를 띄워 산출값으로 오인되지 않도록 한다. 기본 false.
+  isFallback?: boolean;
 }
 
 // 클라이언트 절차생성 3D 매스 — 건축개요(폭·깊이·층수·층고)만으로 즉시 생성.
@@ -469,6 +517,83 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     };
   }, [editMode, editMetrics, spec, designData]);
 
+  // ── 법규 준수율(건폐율/용적률) — 적용값 vs 법정·조례 한도(부지분석 SSOT) ──
+  // 적용값=spec.bcr/far(설계 적용값), 한도=siteAnalysis.ordinance의 실효(조례) 우선→법정 상한.
+  // 한도가 없으면 ratio/compliant를 null로 둬 "법정 N% 이내" 판정을 생략한다(가짜 한도 금지).
+  // EvidencePanel 근거는 DesignOutcomeSummary와 동일 SSOT(trustMeta.legalRefs)를 재사용한다.
+  const compliance = useMemo(() => {
+    const ord = siteAnalysis?.ordinance ?? null;
+    // 한도: 실효(조례 반영) 우선 → 법정 상한. 둘 다 없으면 null(판정 생략).
+    const bcrLimit = ord?.effectiveBcr ?? ord?.nationalBcr ?? null;
+    const farLimit = ord?.effectiveFar ?? ord?.nationalFar ?? null;
+    const bcrApplied = spec?.bcr ?? null;
+    const farApplied = spec?.far ?? null;
+    // 준수 판정: 적용값 ≤ 한도(둘 다 유효한 수치일 때만). 그 외 null(미판정).
+    const within = (a: number | null, lim: number | null): boolean | null =>
+      a != null && isFinite(a) && lim != null && isFinite(lim) && lim > 0 ? a <= lim + 0.05 : null;
+    return {
+      bcrLimit, farLimit, bcrApplied, farApplied,
+      bcrWithin: within(bcrApplied, bcrLimit),
+      farWithin: within(farApplied, farLimit),
+      // 한도 라벨이 조례 실효인지(법정 상한 단순값과 구분).
+      bcrIsOrdinance: ord?.ordinanceBcr != null,
+      farIsOrdinance: ord?.ordinanceFar != null,
+      limitBasis: ord?.legalBasis?.trim() || "법정·조례 한도(부지분석 SSOT)",
+    };
+  }, [siteAnalysis, spec]);
+
+  // 법규 근거(EvidencePanel) — 적용값·한도·법령 원문 칩을 트레이스(읽기만, 재호출·재계산 없음).
+  const complianceEvidence: EvidenceItem[] = useMemo(() => {
+    const items: EvidenceItem[] = [];
+    const refs = readTrustLegalRefs(siteAnalysis);
+    const ord = siteAnalysis?.ordinance ?? null;
+    const farLimitLabel = fmtPctLabel(compliance.farLimit);
+    const bcrLimitLabel = fmtPctLabel(compliance.bcrLimit);
+    const farRef = pickLegalRef(
+      refs,
+      ord?.ordinanceFar != null ? ["ordinance_far", "far_limit", "far_law"] : ["far_limit", "far_law"],
+    );
+    const bcrRef = pickLegalRef(
+      refs,
+      ord?.ordinanceBcr != null ? ["ordinance_bcr", "bcr_limit", "bcr_law"] : ["bcr_limit", "bcr_law"],
+    );
+    const farApplied = fmtPctLabel(compliance.farApplied);
+    if (farApplied) {
+      items.push({
+        label: "적용 용적률",
+        value: farApplied,
+        basis: "설계 적용값",
+        legalRef: farLimitLabel ? null : farRef,
+      });
+    }
+    if (farLimitLabel) {
+      items.push({
+        label: compliance.farIsOrdinance ? "용적률 한도(조례 실효)" : "법정 용적률 한도",
+        value: farLimitLabel,
+        basis: compliance.limitBasis,
+        legalRef: farRef,
+      });
+    }
+    const bcrApplied = fmtPctLabel(compliance.bcrApplied);
+    if (bcrApplied) {
+      items.push({
+        label: "적용 건폐율",
+        value: bcrApplied,
+        basis: "설계 적용값",
+        legalRef: bcrLimitLabel ? null : bcrRef,
+      });
+    }
+    if (bcrLimitLabel) {
+      items.push({
+        label: compliance.bcrIsOrdinance ? "건폐율 한도(조례 실효)" : "법정 건폐율 한도",
+        value: bcrLimitLabel,
+        basis: compliance.limitBasis,
+        legalRef: bcrRef,
+      });
+    }
+    return items;
+  }, [siteAnalysis, compliance]);
+
   // ── 3D BIM 모델(IFC→glTF) 로딩 — 백엔드가 생성한 실제 매스 모델 ──
   const [bimScene, setBimScene] = useState<THREE.Group | null>(null);
   const [bimLoading, setBimLoading] = useState(false);
@@ -592,6 +717,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       land_area_sqm: landArea, zone_code: zone, building_use: use, building_type: designData?.buildingType ?? null,
       gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
       total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
+      isFallback: true,  // ★/mass 실패 → 역산 추정 기본값. 정직 오버레이('추정치') 발화용.
     };
 
     try {
@@ -615,6 +741,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         far: designData?.far ?? m.far_pct ?? null,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
+        isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
       });
     } catch {
       setSpec(fallback);
@@ -1068,8 +1195,17 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               ["용도", spec?.building_type || spec?.building_use || "-"],
               ["연면적", spec?.gfa ? `${Math.round(spec.gfa).toLocaleString()}㎡` : "자동산출"],
               ["층수", spec ? `${spec.floor_count}F` : "-"],
-              ["건폐율", spec?.bcr != null ? `${spec.bcr}%` : "-"],
-              ["용적률", spec?.far != null ? `${spec.far}%` : "-"],
+              // 건폐율/용적률: 적용값 + 법정·조례 한도 대비 준수 판정(한도 있을 때만 — 가짜 한도 금지).
+              ["건폐율", spec?.bcr != null
+                ? `${spec.bcr}%${compliance.bcrLimit != null
+                  ? ` (${compliance.bcrIsOrdinance ? "조례" : "법정"} ${fmtPctLabel(compliance.bcrLimit)} ${compliance.bcrWithin === true ? "이내 ✓" : compliance.bcrWithin === false ? "초과 ⚠" : ""})`
+                  : ""}`
+                : "-"],
+              ["용적률", spec?.far != null
+                ? `${spec.far}%${compliance.farLimit != null
+                  ? ` (${compliance.farIsOrdinance ? "조례" : "법정"} ${fmtPctLabel(compliance.farLimit)} ${compliance.farWithin === true ? "이내 ✓" : compliance.farWithin === false ? "초과 ⚠" : ""})`
+                  : ""}`
+                : "-"],
               ["건물규모", spec ? `${spec.building_width_m}×${spec.building_depth_m}m` : "-"],
               ["세대/호실", spec?.total_units != null ? `${spec.total_units}` : "-"],
             ].map(([k, v]) => (
@@ -1081,6 +1217,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         )}
         <div className="ml-auto flex items-center gap-3">
+          {/* ★/mass 호출 실패 → 추정 기본값 사용 중임을 정직 표기(산출값으로 오인 방지) */}
+          {spec?.isFallback && (
+            <span
+              className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-500"
+              title="네트워크 오류로 매스 산출에 실패했습니다. 대지·개요에서 역산한 추정 기본값을 표시 중입니다. '개요 재적용'으로 다시 시도하세요."
+            >
+              ⚠ 네트워크 오류로 기본값 사용 중 · 추정치
+            </span>
+          )}
           {!designData?.totalGfaSqm && (
             <span className="text-[10px] text-[var(--text-hint)]">※ 사업모델 추천에서 개요 선택 시 정밀 반영(현재 대지·용도지역 자동산출)</span>
           )}
@@ -1097,6 +1242,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             ↻ 개요 재적용
           </button>
         </div>
+        {/* 건폐율/용적률 준수 판정의 근거(적용값·법정/조례 한도·법령 원문) — 한도 SSOT 있을 때만 표시 */}
+        {complianceEvidence.length > 0 && (
+          <EvidencePanel
+            title="법규 준수 근거 (건폐율·용적률)"
+            items={complianceEvidence}
+            defaultOpen={false}
+            className="w-full"
+          />
+        )}
       </div>
 
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}

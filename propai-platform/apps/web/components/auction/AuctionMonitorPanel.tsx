@@ -74,10 +74,15 @@ type RegionsResponse = {
   total?: number | null;
 };
 
-type EstWin = {
+// 낙찰가능가 추정 메타(백엔드 _attach_est_win → est_win_detail).
+//  is_estimate=True(항상), confidence(low|medium|high), 가정·근거 포함.
+type EstWinDetail = {
   est_win_low?: number | null;
   est_win_mid?: number | null;
   est_win_high?: number | null;
+  win_rate_mid?: number | null;
+  confidence?: string | null;
+  basis?: string | null;
   is_estimate?: boolean | null;
 } | null;
 
@@ -88,7 +93,11 @@ type MonitorMatch = {
   appraisal_price?: number | null;
   min_bid_price?: number | null;
   fail_count?: number | null;
-  est_win?: EstWin;
+  // ★백엔드 계약(_attach_est_win): est_win=중앙값 숫자, 범위/메타는 별도 키.
+  est_win?: number | null; // 낙찰가능가 중앙값(원) | None
+  est_win_low?: number | null;
+  est_win_high?: number | null;
+  est_win_detail?: EstWinDetail;
   status?: string | null;
   watch_target_id?: number | string | null;
   watch_label?: string | null;
@@ -1075,11 +1084,22 @@ function MatchTable({ matches, locale }: { matches: MonitorMatch[]; locale: Loca
               <td className="sa-di-num text-[var(--text-secondary)]">
                 {item.fail_count == null ? "-" : `${item.fail_count}회`}
               </td>
-              {/* 낙찰가능가(추정)는 핵심 KPI → 데이터 액센트 강조 */}
+              {/* 낙찰가능가(추정)는 핵심 KPI → 데이터 액센트 강조.
+                  백엔드 계약상 est_win=중앙값 숫자. is_estimate(추정 플래그)는
+                  est_win_detail에서 읽어 추정이면 "(예상)" 배지로 정직 표기. */}
               <td className="sa-di-num text-[var(--data-accent)]">
-                {item.est_win?.est_win_mid == null
-                  ? "-"
-                  : formatCurrency(locale, item.est_win.est_win_mid)}
+                {item.est_win == null ? (
+                  "-"
+                ) : (
+                  <span className="inline-flex items-center justify-end gap-1">
+                    {formatCurrency(locale, item.est_win)}
+                    {item.est_win_detail?.is_estimate ? (
+                      <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-hint)]">
+                        예상
+                      </span>
+                    ) : null}
+                  </span>
+                )}
               </td>
               <td className="text-[var(--text-secondary)]">{formatText(item.status)}</td>
             </tr>

@@ -13,6 +13,8 @@ import {
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { NumberInput } from "@/components/common/NumberInput";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -22,13 +24,6 @@ type ProjectSummary = {
   address: string | null;
   total_area_sqm: number | null;
   updated_at: string;
-};
-
-type PaginatedResponse<T> = {
-  items: T[];
-  page: number;
-  page_size: number;
-  has_next: boolean;
 };
 
 type KepcoCalculationResponse = {
@@ -78,6 +73,8 @@ type Labels = {
   certifyAction: string;
   authError: string;
   missingProjectError: string;
+  missingUsageError: string;
+  missingAreaError: string;
   noProjectsLabel: string;
   totalBillLabel: string;
   energyDemandLabel: string;
@@ -87,6 +84,9 @@ type Labels = {
   projectLoadErrorTitle: string;
   projectLoadErrorDetail: string;
   retryAction: string;
+  kepcoBasisTitle: string;
+  certBasisTitle: string;
+  basisServerNote: string;
 };
 
 const LABELS: Record<Locale, Labels> = {
@@ -117,6 +117,8 @@ const LABELS: Record<Locale, Labels> = {
     certifyAction: "인증 계산",
     authError: "실시간 호출을 위해 API 인증이 필요합니다.",
     missingProjectError: "실존 프로젝트 UUID가 필요합니다.",
+    missingUsageError: "사용량(kWh)을 0보다 크게 입력해야 합니다.",
+    missingAreaError: "연면적(㎡)을 0보다 크게 입력해야 합니다.",
     noProjectsLabel: "라이브 프로젝트가 아직 없습니다. 기존 UUID를 직접 입력해야 합니다.",
     totalBillLabel: "총 청구액",
     energyDemandLabel: "연간 에너지 수요",
@@ -127,6 +129,10 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "인증 대상 프로젝트 목록을 불러오지 못했습니다. 기존 UUID 수동 입력은 계속 사용할 수 있습니다.",
     retryAction: "다시 시도",
+    kepcoBasisTitle: "요금 산출 근거",
+    certBasisTitle: "인증 산출 근거",
+    basisServerNote:
+      "모든 수치는 서버 `energy` API가 테넌트별 단가·계수로 산출한 실값입니다.",
   },
   en: {
     heroTitle: "Energy certification workspace",
@@ -155,6 +161,8 @@ const LABELS: Record<Locale, Labels> = {
     certifyAction: "Estimate certification",
     authError: "API authentication is required for live workspace calls.",
     missingProjectError: "A real project UUID is required.",
+    missingUsageError: "Usage (kWh) must be greater than 0.",
+    missingAreaError: "Gross area (sqm) must be greater than 0.",
     noProjectsLabel:
       "No live projects are available yet. Enter a known existing UUID to proceed.",
     totalBillLabel: "Total bill",
@@ -166,6 +174,10 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "The certification project picker failed to load. Manual UUID input remains available.",
     retryAction: "Retry",
+    kepcoBasisTitle: "Billing calculation basis",
+    certBasisTitle: "Certification calculation basis",
+    basisServerNote:
+      "All figures are live values computed by the server `energy` API using tenant-specific tariffs and coefficients.",
   },
   "zh-CN": {
     heroTitle: "能源认证工作台",
@@ -194,6 +206,8 @@ const LABELS: Record<Locale, Labels> = {
     certifyAction: "估算认证",
     authError: "实时调用需要 API 身份认证。",
     missingProjectError: "必须提供真实项目 UUID。",
+    missingUsageError: "用电量(kWh)必须大于 0。",
+    missingAreaError: "总建筑面积(㎡)必须大于 0。",
     noProjectsLabel: "当前还没有实时项目。可手动输入已有项目 UUID。",
     totalBillLabel: "总账单",
     energyDemandLabel: "年度能源需求",
@@ -204,6 +218,10 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "认证项目选择列表加载失败，但仍可手动输入已有项目 UUID。",
     retryAction: "重试",
+    kepcoBasisTitle: "电费计算依据",
+    certBasisTitle: "认证计算依据",
+    basisServerNote:
+      "所有数值均由服务器 `energy` API 按租户单价与系数实时计算得出。",
   },
 };
 
@@ -235,6 +253,13 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  // 인증 실패(401/403)는 가짜 응답 대신 "로그인/인증 필요"로 정직하게 알린다.
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `요청이 상태 코드 ${error.status}로 실패했습니다.`;
+  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -253,8 +278,11 @@ export function EnergyOperationsWorkspaceClient({
     setIsMounted(true);
   }, []);
 
-  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
-  const canUseLiveApi = true;
+  // 실제 런타임 설정을 읽어 라이브 호출 가능 여부를 판정한다(하드코딩 금지).
+  // ProjectEsgWorkspaceClient와 동일 패턴: live 모드이거나 액세스 토큰이 있으면 호출 허용.
+  const runtimeConfig = apiClient.getRuntimeConfig();
+  const canUseLiveApi =
+    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -327,33 +355,35 @@ export function EnergyOperationsWorkspaceClient({
   async function handleCalculateKepco(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
+    setKepcoResult(null);
+    // 인증이 없으면 가짜 계산 대신 정직하게 안내(서버가 테넌트별 단가로 산출).
+    if (!canUseLiveApi) {
+      setWorkspaceError(labels.authError);
+      return;
+    }
+    const usage = kepcoForm.usageKwh ?? 0;
+    if (usage <= 0) {
+      // 백엔드 스키마는 usage_kwh > 0을 요구한다(422 방지).
+      setWorkspaceError(labels.missingUsageError);
+      return;
+    }
     setIsCalculating(true);
     try {
-      await new Promise((r) => setTimeout(r, 200));
-      const usage = kepcoForm.usageKwh || 0;
-      const demand = kepcoForm.demandKw || 0;
-      const type = kepcoForm.contractType;
-      const ratePerKwh = type === "industrial" ? 110 : type === "education" ? 100 : 130;
-      const basePer = type === "industrial" ? 7220 : type === "education" ? 5550 : 6160;
-      const baseCharge = Math.round(demand * basePer);
-      const energyCharge = Math.round(usage * ratePerKwh);
-      const climateFund = Math.round(usage * 9);
-      const fuelAdj = Math.round(usage * 5);
-      const subTotal = baseCharge + energyCharge + climateFund + fuelAdj;
-      const vat = Math.round(subTotal * 0.1);
-      setKepcoResult({
-        contract_type: type,
-        usage_kwh: usage,
-        demand_kw: demand,
-        base_charge_krw: baseCharge,
-        energy_charge_krw: energyCharge,
-        climate_fund_krw: climateFund,
-        fuel_adjustment_krw: fuelAdj,
-        vat_krw: vat,
-        total_bill_krw: subTotal + vat,
-      });
+      // 실제 백엔드 호출 — 단가/계수/세율은 모두 서버(테넌트별 KepcoRateCache)가 결정한다.
+      const result = await apiClient.post<KepcoCalculationResponse>(
+        "/energy/kepco/calculate",
+        {
+          useMock: false,
+          body: {
+            usage_kwh: usage,
+            contract_type: kepcoForm.contractType,
+            demand_kw: kepcoForm.demandKw ?? 0,
+          },
+        },
+      );
+      setKepcoResult(result);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : "계산 오류");
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
     } finally {
       setIsCalculating(false);
     }
@@ -362,42 +392,42 @@ export function EnergyOperationsWorkspaceClient({
   async function handleEstimateCertification(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
+    setCertificationResult(null);
+    if (!canUseLiveApi) {
+      setWorkspaceError(labels.authError);
+      return;
+    }
+    // 백엔드는 인증 기록을 실존 프로젝트 FK로 저장하므로 실제 프로젝트 UUID가 필요하다.
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+    const area = certificationForm.totalAreaSqm ?? 0;
+    if (area <= 0) {
+      // 백엔드 스키마는 total_area_sqm > 0을 요구한다(422 방지).
+      setWorkspaceError(labels.missingAreaError);
+      return;
+    }
     setIsCertifying(true);
     try {
-      await new Promise((r) => setTimeout(r, 200));
-      const area = certificationForm.totalAreaSqm || 10000;
-      const floors = Number(certificationForm.floors) || 10;
-      const wwr = Number(certificationForm.windowWallRatio) || 0.3;
-      const bems = Number(certificationForm.bemsSavingRate) || 0.08;
-      const insGrade = certificationForm.insulationGrade;
-      const insK = insGrade === "premium" ? 0.75 : insGrade === "standard" ? 1.0 : 1.25;
-      const baseEUI = 140 * insK * (1 + (wwr - 0.3) * 0.5);
-      const annualDemand = Math.round(area * baseEUI);
-      const renewableRatio = insGrade === "premium" ? 0.25 : insGrade === "standard" ? 0.15 : 0.08;
-      const renewableGen = Math.round(annualDemand * renewableRatio);
-      const independence = renewableGen / annualDemand;
-      const bemsSaving = Math.round(annualDemand * bems);
-      const effectiveEUI = baseEUI * (1 - bems) * (1 - renewableRatio);
-      const energyGrade = effectiveEUI < 60 ? "1++" : effectiveEUI < 90 ? "1+" : effectiveEUI < 120 ? "1" : effectiveEUI < 150 ? "2" : effectiveEUI < 200 ? "3" : "4";
-      const zebGrade = independence >= 1.0 ? "ZEB 1" : independence >= 0.8 ? "ZEB 2" : independence >= 0.6 ? "ZEB 3" : independence >= 0.4 ? "ZEB 4" : independence >= 0.2 ? "ZEB 5" : "해당없음";
-      const recs: string[] = [];
-      if (wwr > 0.4) recs.push("창면적비 축소 검토 (0.4 이하 권장)");
-      if (insGrade !== "premium") recs.push("단열 등급 상향 검토 (열관류율 0.15 W/m²K 이하)");
-      if (bems < 0.1) recs.push("BEMS 고도화로 추가 절감 가능 (목표 10% 이상)");
-      if (independence < 0.2) recs.push("태양광 패널 설치 면적 확대 권고");
-      recs.push(`건물 에너지효율등급 ${energyGrade} 달성 가능`);
-      setCertificationResult({
-        energy_grade: energyGrade,
-        zeb_grade: zebGrade,
-        annual_energy_demand_kwh: annualDemand,
-        annual_renewable_generation_kwh: renewableGen,
-        energy_independence_rate: Math.round(independence * 1000) / 1000,
-        bems_saving_rate: bems,
-        bems_saving_kwh: bemsSaving,
-        recommendations: recs,
-      });
+      // 실제 백엔드 호출 — 에너지 등급/ZEB/수요량/권고는 모두 서버 산식이 산출한다.
+      const result = await apiClient.post<EnergyCertificationResponse>(
+        "/energy/certification",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            total_area_sqm: area,
+            floors: Number(certificationForm.floors) || 1,
+            window_wall_ratio: Number(certificationForm.windowWallRatio) || 0.35,
+            insulation_grade: certificationForm.insulationGrade,
+            bems_saving_rate: Number(certificationForm.bemsSavingRate) || 0,
+          },
+        },
+      );
+      setCertificationResult(result);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : "인증 오류");
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
     } finally {
       setIsCertifying(false);
     }
@@ -607,6 +637,14 @@ export function EnergyOperationsWorkspaceClient({
                 />
               </div>
             ) : null}
+            {kepcoResult ? (
+              // 산출 근거 — 백엔드 energy_service 산식을 그대로 표기(받는 값만 사용).
+              <EvidencePanel
+                title={labels.kepcoBasisTitle}
+                className="mt-5"
+                items={buildKepcoEvidence(locale, kepcoResult, labels.basisServerNote)}
+              />
+            ) : null}
           </CardContent>
         </Card>
 
@@ -732,6 +770,15 @@ export function EnergyOperationsWorkspaceClient({
                     ))}
                   </ul>
                 </div>
+                {/* 산출 근거 — 백엔드 인증 산식을 그대로 표기(받는 값만 사용). */}
+                <EvidencePanel
+                  title={labels.certBasisTitle}
+                  items={buildCertificationEvidence(
+                    locale,
+                    certificationResult,
+                    labels.basisServerNote,
+                  )}
+                />
               </div>
             ) : null}
           </CardContent>
@@ -739,6 +786,97 @@ export function EnergyOperationsWorkspaceClient({
       </div>
     </section>
   );
+}
+
+// KEPCO 요금 근거 — 백엔드 energy_service.calculate_kepco_bill 산식 그대로.
+// 단가/계수는 서버 KepcoRateCache(테넌트별 관리자 설정)에서 결정되므로 여기서 추정하지 않는다.
+// basis 문자열은 받은 실값만 조합한다(하드코딩 단가/계수 없음).
+function buildKepcoEvidence(
+  locale: string,
+  result: KepcoCalculationResponse,
+  serverNote: string,
+): EvidenceItem[] {
+  const krw = (v: number) => formatCurrency(locale, v);
+  return [
+    {
+      label: "계약종별",
+      value: result.contract_type,
+      basis: serverNote,
+    },
+    {
+      label: "기본 요금",
+      value: krw(result.base_charge_krw),
+      basis: `수요전력 ${result.demand_kw.toLocaleString(locale)} kW × 서버 기본단가(테넌트별)`,
+    },
+    {
+      label: "전력량 요금",
+      value: krw(result.energy_charge_krw),
+      basis: `사용량 ${result.usage_kwh.toLocaleString(locale)} kWh × 서버 전력량단가(테넌트별)`,
+    },
+    {
+      label: "기후환경 요금",
+      value: krw(result.climate_fund_krw),
+      basis: "전력량 요금 × 3.7% (energy_charge × 0.037)",
+    },
+    {
+      label: "연료비 조정액",
+      value: krw(result.fuel_adjustment_krw),
+      basis: `사용량 ${result.usage_kwh.toLocaleString(locale)} kWh × 서버 연료비조정단가`,
+    },
+    {
+      label: "부가가치세 (VAT)",
+      value: krw(result.vat_krw),
+      basis: "소계(기본+전력량+연료비+기후환경) × 10%",
+    },
+    {
+      label: "총 청구액",
+      value: krw(result.total_bill_krw),
+      basis: "소계 + VAT",
+    },
+  ];
+}
+
+// 에너지 인증 근거 — 백엔드 energy_service.certify_energy / energy_grade 산식 그대로.
+// 등급 임계(A+≤60, A≤90, B≤130, C≤170, D)는 백엔드 energy_grade 정의를 설명만 한다.
+function buildCertificationEvidence(
+  locale: string,
+  result: EnergyCertificationResponse,
+  serverNote: string,
+): EvidenceItem[] {
+  const kwh = (v: number) => `${v.toLocaleString(locale)} kWh`;
+  return [
+    {
+      label: "에너지 등급",
+      value: result.energy_grade,
+      basis:
+        "단위면적당 연간 수요(kWh/㎡) 기준 서버 판정 (A+≤60, A≤90, B≤130, C≤170, 그 외 D)",
+    },
+    {
+      label: "ZEB 등급",
+      value: result.zeb_grade,
+      basis: serverNote,
+    },
+    {
+      label: "연간 에너지 수요",
+      value: kwh(result.annual_energy_demand_kwh),
+      basis: "ZEB 산정 수요 − BEMS 절감량(서버 산출)",
+    },
+    {
+      label: "연간 재생에너지 발전량",
+      value: kwh(result.annual_renewable_generation_kwh),
+      basis: serverNote,
+    },
+    {
+      label: "에너지 자립률",
+      value: `${(result.energy_independence_rate * 100).toFixed(1)}%`,
+      basis: "재생에너지 발전량 ÷ 에너지 수요(서버 산출)",
+    },
+    {
+      label: "BEMS 절감량",
+      value: kwh(result.bems_saving_kwh),
+      basis: `연간 수요 × BEMS 절감률 ${(result.bems_saving_rate * 100).toFixed(1)}%`,
+    },
+  ];
 }
 
 function MetricTile({
