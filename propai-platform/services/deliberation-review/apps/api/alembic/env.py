@@ -35,6 +35,11 @@ def run_migrations_offline() -> None:
 
 
 def _do_run_migrations(connection) -> None:
+    # ★review 스키마 선생성(멱등): alembic 은 version_table_schema=review 에 alembic_version
+    #   테이블을 마이그레이션 실행 '전'에 만들려 하는데, 스키마는 0001_base 가 생성한다(chicken-egg).
+    #   여기서 스키마를 먼저 보장하지 않으면 "schema review does not exist" 로 부트스트랩 실패한다.
+    connection.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
+    connection.commit()
     _configure(connection=connection)
     with context.begin_transaction():
         context.run_migrations()
