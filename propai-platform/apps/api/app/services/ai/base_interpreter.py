@@ -113,6 +113,73 @@ _RESULT_CACHE = _TTLCache(ttl_sec=_CACHE_TTL_SEC)
 _REDIS_CACHE_ENABLED = os.environ.get("INTERP_REDIS_CACHE", "1") != "0"
 _PROMPT_CACHE_ENABLED = os.environ.get("INTERP_PROMPT_CACHE", "1") != "0"
 
+def _env_int(name: str, default: int) -> int:
+    """환경변수 정수 파싱(비정수면 기본값) — 잘못된 env가 공유 코어 import를 깨지 않게."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
+# 해당 service 프롬프트에 참고 사례로 주입한다. 예시가 없으면 완전 무동작(기존 동작 불변).
+# ★기본 비활성(INTERP_FEWSHOT 기본 "0"): learning_examples는 tenant_id가 없는 전역 풀이라,
+#   활성화하면 A 테넌트의 사업기밀(주소·재무수치 등 자유서술 good_output)이 B 테넌트 분석
+#   프롬프트로 누출될 수 있다(계정 격리 원칙 위배). 안전한 활성화 전제: ①learning_examples
+#   테넌트 스코핑(tenant_id 컬럼+curate 영속+_load_fewshot tenant 필터) 또는 ②curate 단계
+#   good_output 비식별화(주소/고유수치 제거)+mask_pii 한국주소 패턴 보강. 둘 중 하나 완료 후 on.
+#   배선은 완성(아래)이므로 전제 충족 시 INTERP_FEWSHOT=1로 즉시 활성.
+_FEWSHOT_ENABLED = os.environ.get("INTERP_FEWSHOT", "0") != "0"
+_FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
+_FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
+
+
+async def _load_fewshot(service: str) -> dict[str, str] | None:
+    """active learning_examples(해당 service)를 few-shot 프롬프트 블록으로 로드.
+
+    반환 {"text": 프롬프트 블록, "sig": 캐시분리 서명} 또는 None(예시없음/비활성/실패).
+    best-effort·TTL 캐시(빈 결과도 캐시해 반복 DB조회 방지). 사람 승인(active)만 사용하고
+    익명 요약(input_summary/good_output)만 인용한다(원본 미저장 원칙 계승).
+    """
+    if not _FEWSHOT_ENABLED or not service:
+        return None
+    cached = _FEWSHOT_CACHE.get(service)
+    if cached is not None:               # 히트(빈 {} 도 '예시 없음' 캐시로 취급)
+        return cached or None
+    block: dict[str, str] | None = None
+    try:
+        from sqlalchemy import text as _sql
+
+        from app.core.database import async_session_factory
+
+        async with async_session_factory() as db:
+            rows = (await db.execute(_sql(
+                "SELECT input_summary, good_output FROM learning_examples "
+                "WHERE status='active' AND service=:svc AND good_output IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT :lim"
+            ), {"svc": service, "lim": _FEWSHOT_LIMIT})).fetchall()
+        if rows:
+            parts = [
+                f"[사례 {i}] 입력 요약: {(r[0] or '').strip()[:400]}\n"
+                f"우수 출력: {(r[1] or '').strip()[:800]}"
+                for i, r in enumerate(rows, 1)
+            ]
+            joined = "\n\n".join(parts)
+            block = {
+                "text": (
+                    "## 참고: 승인된 우수 분석 사례(few-shot)\n"
+                    "아래는 유사 입력에 대한 과거의 사람-승인 우수 출력입니다. 형식·관점·근거 "
+                    "제시 방식만 참고하고, ★반드시 현재 제공된 데이터에만 근거해 작성하세요"
+                    "(사례의 수치를 그대로 옮기지 말 것·없으면 '데이터 없음').\n\n" + joined
+                ),
+                "sig": hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16],
+            }
+    except Exception as e:  # noqa: BLE001 — few-shot 로드 실패가 추론을 깨면 안 됨
+        logger.debug("few-shot 로드 생략(%s): %s", service, str(e)[:120])
+        block = None
+    _FEWSHOT_CACHE.set(service, block or {})  # 빈 결과도 캐시(반복 DB조회 방지)
+    return block
+
 
 async def _redis_get(key: str | None) -> dict[str, str] | None:
     """P4-L2: Redis에서 결과 조회. 미가용/오류 시 None(무중단).
@@ -338,8 +405,8 @@ class BaseInterpreter:
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
         if not candidates:
             try:
-                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _gate_cands
-                candidates = _gate_cands.get(self.name)
+                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _GATE_CANDS
+                candidates = _GATE_CANDS.get(self.name)
             except Exception:  # noqa: BLE001 — 게이트 registry 조회 실패는 기본 폴백.
                 candidates = None
         if not candidates:
@@ -347,8 +414,8 @@ class BaseInterpreter:
             return _PROMPT_VERSION
         chosen: str | None = None
         try:
-            from apps.api.database.session import AsyncSessionLocal
             from app.services.growth import schema_guard
+            from apps.api.database.session import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
                 val = await schema_guard.get_setting(db, f"prompt.{self.name}")
@@ -408,6 +475,10 @@ class BaseInterpreter:
         except Exception:  # noqa: BLE001
             self._active_prompt_version = _PROMPT_VERSION
 
+        # 자가학습 few-shot(사람 승인 우수 사례) 로드 — 있으면 프롬프트·캐시키에 반영,
+        # 없거나 비활성이면 None → 이하 전 경로가 기존과 동일(완전 무동작·동작 불변).
+        fewshot = await _load_fewshot(self.name)
+
         # P4: evidence_text는 결과를 바꾸므로 캐시 키에 포함(근거 다르면 캐시 분리).
         if cache_data is not None and evidence_text:
             cache_data = {"_data": cache_data, "_evidence": evidence_text}
@@ -417,6 +488,9 @@ class BaseInterpreter:
         # Phase 1: prior_context도 결과를 바꾸므로 캐시키에 포함(prior 다르면 캐시 분리).
         if cache_data is not None and prior_context:
             cache_data = {"_data": cache_data, "_prior": prior_context}
+        # few-shot도 결과를 바꾸므로 캐시키에 포함(예시 변경 시 캐시 분리·재생성).
+        if cache_data is not None and fewshot:
+            cache_data = {"_data": cache_data, "_fewshot": fewshot["sig"]}
 
         # P4: L1(in-process) → L2(Redis) 순으로 조회. 적중 시 LLM 스킵.
         cache_key = self._cache_key(cache_data) if cache_data is not None else None
@@ -446,6 +520,9 @@ class BaseInterpreter:
         if evidences:
             joined = "\n".join(evidences)
             user_prompt = f"{user_prompt}\n\n## 추가 근거 자료\n{joined}"
+        # 자가학습 few-shot(사람 승인 우수 사례) — 별도 섹션(그라운딩 주의 포함). 없으면 무동작.
+        if fewshot:
+            user_prompt = f"{user_prompt}\n\n{fewshot['text']}"
         # 검증 재생성 피드백 부착 — 직전 출력의 결함(할루시네이션·수치불일치 등)을
         # 교정하도록 강한 지시를 프롬프트 말미에 추가(1회 재생성용).
         if self._retry_feedback:
