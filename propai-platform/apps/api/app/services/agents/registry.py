@@ -155,7 +155,8 @@ async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any
     base = (getattr(s, "DELIBERATION_ENGINE_URL", "") or "").rstrip("/")
     if not base:
         return {"findings": [], "summary": {"available": False, "reason": "engine_url_unset"}}
-    token = getattr(s, "DELIBERATION_ENGINE_TOKEN", "") or ""
+    # ★토큰 키 통일: 호스트 .env·BFF와 동일한 DELIBERATION_ENGINE_API_TOKEN 사용(불일치 시 401).
+    token = getattr(s, "DELIBERATION_ENGINE_API_TOKEN", "") or ""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     import httpx
     try:

@@ -66,7 +66,7 @@ async def test_deliberation_tool_graceful_when_url_unset(monkeypatch):
     # 엔진 URL 미설정 → 미연동 graceful(네트워크 호출 없음)
     monkeypatch.setattr(
         "app.core.config.get_settings",
-        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_TOKEN=""),
+        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_API_TOKEN=""),
     )
     out = await _deliberation_tool({"pnu": "1111010100100000001"})
     assert out["findings"] == []
@@ -85,7 +85,7 @@ async def test_design_tool_graceful_when_url_unset(monkeypatch):
     from app.services.agents.registry import _design_tool
     monkeypatch.setattr(
         "app.core.config.get_settings",
-        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_TOKEN=""),
+        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_API_TOKEN=""),
     )
     out = await _design_tool({"pnu": "1111010100100000001"})
     assert out["findings"] == [] and out["summary"]["available"] is False
