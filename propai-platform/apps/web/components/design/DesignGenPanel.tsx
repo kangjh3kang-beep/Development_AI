@@ -17,7 +17,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
-import { apiClient, ApiClientError } from "@/lib/api-client";
+import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -416,6 +416,7 @@ export function DesignGenPanel({ projectId }: Props) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [genErr, setGenErr] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);   // 설계제안 PDF 다운로드 진행
 
   // 법규(laws)
   const [laws, setLaws] = useState<LawsResult | null>(null);
@@ -518,6 +519,67 @@ export function DesignGenPanel({ projectId }: Props) {
     }
   }
 
+  // generate·generate/pdf 공용 요청 body(부지조건). 한 곳에서 관리해 두 경로 동일 산출 보장.
+  function genBody() {
+    return {
+      area_sqm: areaSqm,
+      zone_code: zoneCode || "2R",
+      zone_name: zoneName || null,
+      sigungu: sigungu || null,
+      building_use: buildingUse || null,
+      width_m: siteW > 0 ? siteW : null,   // 선택 — 입력 시 건물 배치 폴리곤 정확화
+      depth_m: siteD > 0 ? siteD : null,
+      avg_unit_area_sqm: avgUnit,
+      top_n: topN,
+      project_id: projectId || null,
+      verify: verifyOpt,
+      interpret: interpretOpt,
+    };
+  }
+
+  // 설계제안 타당성 보고서 PDF 다운로드(blob) — AuditPdfDownload 패턴 준용(토큰·JSON폴백·정직).
+  async function handleDownloadPdf() {
+    setPdfBusy(true);
+    setGenErr(null);
+    try {
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(`${apiV1BaseUrl()}/design-gen/generate/pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(genBody()),
+      });
+      const ct = res.headers.get("content-type") ?? "";
+      if (!res.ok || ct.includes("application/json")) {
+        // PDF 대신 JSON(오류)이면 정직 메시지(빈 파일 다운로드 방지).
+        let msg = `PDF 생성 실패 (HTTP ${res.status}).`;
+        try {
+          const p = (await res.json()) as { detail?: string; message?: string };
+          msg = p?.detail || p?.message || msg;
+        } catch { /* 본문 없음 */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "design_proposal.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setGenErr(errMessage(e));
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   async function handleGenerate() {
     setLoading(true);
     setGenErr(null);
@@ -526,22 +588,7 @@ export function DesignGenPanel({ projectId }: Props) {
     setFeedback({});
     setShow3d({});
     try {
-      const data = await apiClient.post<GenerateResult>("/design-gen/generate", {
-        body: {
-          area_sqm: areaSqm,
-          zone_code: zoneCode || "2R",
-          zone_name: zoneName || null,
-          sigungu: sigungu || null,
-          building_use: buildingUse || null,
-          width_m: siteW > 0 ? siteW : null,   // 선택 — 입력 시 건물 배치 폴리곤 정확화
-          depth_m: siteD > 0 ? siteD : null,
-          avg_unit_area_sqm: avgUnit,
-          top_n: topN,
-          project_id: projectId || null,
-          verify: verifyOpt,
-          interpret: interpretOpt,
-        },
-      });
+      const data = await apiClient.post<GenerateResult>("/design-gen/generate", { body: genBody() });
       setResult(data);
     } catch (e) {
       setGenErr(errMessage(e));
@@ -724,6 +771,13 @@ export function DesignGenPanel({ projectId }: Props) {
           </Button>
           <Button variant="secondary" onClick={handleLaws} disabled={lawsLoading}>
             {lawsLoading ? "조회 중…" : "참조 법규 보기"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleDownloadPdf}
+            disabled={pdfBusy || areaSqm <= 0 || avgUnit <= 0}
+          >
+            {pdfBusy ? "PDF 생성 중…" : "📄 보고서 PDF"}
           </Button>
           <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
             <input type="checkbox" checked={verifyOpt} onChange={(e) => setVerifyOpt(e.target.checked)} />
