@@ -127,6 +127,8 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 "auth/*.py" = ["B008"]
 "apps/api/app/api/endpoints/**/*.py" = ["B008"]
 "app/api/endpoints/**/*.py" = ["B008"]
+"apps/api/app/services/auth/*.py" = ["B008"]
+"app/services/auth/*.py" = ["B008"]
 # 테스트: 한국어 함수명(N802) + sys.path.insert 임포트 순서(E402)
 "**/tests/*.py" = ["N802", "E402"]
 "**/tests/**/*.py" = ["N802", "E402"]
