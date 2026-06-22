@@ -560,13 +560,19 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     if multi is not None:
         agg = multi["aggregation"]
         _zm = agg.get("dominant_zone")
+        # ★BLOCK이면 통합GFA는 '법정 천장'일 뿐 실현 불가(특이부지 차단) — 정직 마킹(오독 방지).
+        if blocked:
+            agg["ceiling_only"] = True
         notes.append(
             f"[다필지 통합] {agg.get('parcel_count')}개 필지·통합면적 "
             f"{round(agg.get('total_area_sqm') or 0):,}㎡·면적가중 용적률 "
             f"{agg.get('blended_far_eff_pct')}%·통합GFA {round(agg.get('integrated_gfa_sqm') or 0):,}㎡"
-            f"(대표 용도지역 {_zm}). " + (agg.get("far_basis_note") or "")
+            f"(대표 용도지역 {_zm})." + ("" if not blocked
+            else " ※특이부지 차단 — 위 통합GFA는 법정 천장값일 뿐 현 상태 실현 불가.")
+            + (" " + agg.get("far_basis_note") if (not blocked and agg.get("far_basis_note")) else "")
         )
-        notes.append("[다필지] 통합 연면적(정확)은 multi_parcel.integrated_gfa_sqm 기준(결측 필지 면적 제외).")
+        if not blocked:
+            notes.append("[다필지] 통합 연면적(정확)은 multi_parcel.integrated_gfa_sqm 기준(결측 필지 면적 제외).")
         for w in (agg.get("warnings") or [])[:4]:
             notes.append(f"[다필지] {w}")
     elif req.parcels and len(req.parcels) >= 2:

@@ -145,6 +145,9 @@ def test_generate_multi_parcel_special_block(monkeypatch):
     assert out["special_parcel"] and out["special_parcel"]["gate"] == "BLOCK"
     assert out["special_parcel"].get("multi_parcel") is True
     assert out["proposals"] == [] and out["recommendation"] is None
+    # ★정직: BLOCK 시 통합GFA는 법정 천장일 뿐 실현 불가 — ceiling_only 마킹 + 천장 고지
+    assert out["multi_parcel"]["aggregation"].get("ceiling_only") is True
+    assert any("법정 천장" in n for n in out["notes"])
 
 
 def test_generate_single_parcel_no_multi(monkeypatch):
