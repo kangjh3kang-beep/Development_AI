@@ -7,6 +7,7 @@
 프론트는 base64(수 MB) 대신 짧은 URL만 보관하므로 localStorage 용량 문제도 해소된다.
 """
 
+import os
 import uuid
 
 import httpx
@@ -28,6 +29,22 @@ _ALLOWED_TYPES: dict[str, str] = {
 
 class StorageError(Exception):
     """스토리지 업로드 실패."""
+
+
+def _conf(env_names: tuple[str, ...], attr: str, default: str = "") -> str:
+    """Supabase 설정값 읽기 — os.environ 우선, 그다음 캐시된 settings, 마지막 기본값.
+
+    왜 os.environ 우선인가: 관리자 화면에서 등록한 키(SUPABASE_URL 등)는 앱 시작 시
+    DB→os.environ 오버레이로 들어온다. 그런데 `get_settings()`는 @lru_cache 라
+    최초 호출 시점의 env 만 캐시 → 오버레이가 그 뒤에 일어나면 settings 는 빈 값으로
+    고착될 수 있다. os.environ 을 먼저 보면 ① 관리자 등록 URL 이 재배포 없이 반영되고
+    ② .env 의 SERVICE_ROLE_KEY(보안상 관리자 DENYLIST 라 .env 전용) 도 확실히 반영된다.
+    """
+    for name in env_names:
+        v = os.environ.get(name)
+        if v:
+            return v
+    return (getattr(get_settings(), attr, "") or default)
 
 
 async def _ensure_bucket(
@@ -65,10 +82,12 @@ async def upload_image(
         content_type: MIME 타입 (image/png 등)
         prefix: 버킷 내 경로 프리픽스
     """
-    settings = get_settings()
-    base = (getattr(settings, "supabase_url", "") or "").rstrip("/")
-    key = getattr(settings, "supabase_service_role_key", "") or ""
-    bucket = getattr(settings, "supabase_storage_bucket", "") or "propai-uploads"
+    base = _conf(("SUPABASE_URL",), "supabase_url").rstrip("/")
+    # service_role 키는 두 이름 모두 허용 — 기존 SUPABASE_SERVICE_ROLE_KEY + 신규 대시보드
+    # 명칭(SUPABASE_SERVICE_SECRET_KEY, sb_secret_…). 어느 이름으로 등록해도 동작.
+    key = _conf(("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_SECRET_KEY"), "supabase_service_role_key")
+    # 버킷명은 관리자 catalog(SUPABASE_BUCKET)·config(SUPABASE_STORAGE_BUCKET) 양쪽 키를 허용.
+    bucket = _conf(("SUPABASE_BUCKET", "SUPABASE_STORAGE_BUCKET"), "supabase_storage_bucket", "propai-uploads")
 
     if not base or not key:
         raise StorageError(
@@ -103,9 +122,8 @@ _REGISTRY_BUCKET = "propai-registry"
 
 
 def _sb_conf() -> tuple[str, str]:
-    settings = get_settings()
-    base = (getattr(settings, "supabase_url", "") or "").rstrip("/")
-    key = getattr(settings, "supabase_service_role_key", "") or ""
+    base = _conf(("SUPABASE_URL",), "supabase_url").rstrip("/")
+    key = _conf(("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_SECRET_KEY"), "supabase_service_role_key")
     if not base or not key:
         raise StorageError("Supabase Storage 미설정(SUPABASE_URL/SERVICE_ROLE_KEY)")
     return base, key

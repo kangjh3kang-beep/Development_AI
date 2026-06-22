@@ -128,6 +128,12 @@ CATALOG: list[dict[str, Any]] = [
      "secret": False, "kind": "text", "guide_url": "https://supabase.com/dashboard"},
     {"name": "SUPABASE_BUCKET", "label": "Supabase 업로드 버킷명", "group": "스토리지·기타",
      "secret": False, "kind": "text"},
+    # service_role(=신규 대시보드의 'Secret key', sb_secret_…) — 서버측 업로드/버킷생성에 필수.
+    # 모든 RLS를 우회하는 god-key라 기본은 DENYLIST 였으나, 운영 편의를 위해 관리자 등록을 허용한다
+    # (암호화 시크릿DB 저장·관리자 게이팅). DB비번/연결URL 등 더 위험한 키는 계속 DENYLIST 유지.
+    {"name": "SUPABASE_SERVICE_SECRET_KEY", "label": "Supabase Secret 키(service_role)", "group": "스토리지·기타",
+     "secret": True, "kind": "text", "guide_url": "https://supabase.com/dashboard",
+     "desc": "Supabase 대시보드 > Project Settings > API > 'Secret key'(=구 service_role) 값. 서버 업로드 전용·비공개. (구 이름 SUPABASE_SERVICE_ROLE_KEY 로 등록해도 동작)"},
     {"name": "PUBLIC_API_BASE", "label": "공개 API 베이스 URL(프록시 절대화)", "group": "스토리지·기타",
      "secret": False, "kind": "text"},
 ]
@@ -139,7 +145,9 @@ _CUSTOM_GROUP = "사용자 추가"
 _NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 _DENYLIST = {
     "DATABASE_URL", "DATABASE_URL_ASYNC", "APP_SECRET_KEY", "JWT_SECRET_KEY",
-    "SECRET_STORE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_PASSWORD",
+    "SECRET_STORE_KEY", "SUPABASE_DB_PASSWORD",
+    # ★SUPABASE_SERVICE_ROLE_KEY 는 운영 편의를 위해 관리자 등록 허용(위 CATALOG 참조). DB비번/
+    #   연결URL/마스터키 등 더 위험한 키는 차단 유지 — 관리자 패널 침해가 DB 전체 탈취로 번지는 것 방지.
     "POSTGRES_PASSWORD", "REDIS_URL", "PATH", "PYTHONPATH", "HOME",
 }
 
