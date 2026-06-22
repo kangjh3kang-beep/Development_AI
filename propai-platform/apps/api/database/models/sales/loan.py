@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, DateTime
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +31,8 @@ class SalesLoanAgreement(Base, PKMixin, SiteMixin):
     program_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sales_loan_programs.id"))
     borrower_customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     approved_amount: Mapped[int | None] = mapped_column(Numeric(16, 0))
-    status: Mapped[str] = mapped_column(String(12), server_default="APPLIED")  # APPLIED/APPROVED/EXECUTED/REPAID/DEFAULTED
+    # 약정 상태: APPLIED/APPROVED/EXECUTED(실행)/REPAID(상환완료)/DEFAULTED(연체부도).
+    status: Mapped[str] = mapped_column(String(12), server_default="APPLIED")
 
 
 class SalesLoanDisbursement(Base, PKMixin):
@@ -41,3 +42,6 @@ class SalesLoanDisbursement(Base, PKMixin):
     amount: Mapped[int | None] = mapped_column(Numeric(16, 0))
     disbursed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     repaid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 누적 상환액(원). 부분상환을 여러 번 받아도 합산하며, amount 에 도달하면 완납으로 본다.
+    # 0(기본)부터 시작 — disbursed_at 만 있고 repaid_amount=0 이면 미상환.
+    repaid_amount: Mapped[int] = mapped_column(Numeric(16, 0), server_default="0")

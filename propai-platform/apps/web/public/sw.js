@@ -1,5 +1,29 @@
-const CACHE_NAME = "propai-v296-ux-plain-land";
+const CACHE_NAME = "propai-v297-salesapp-merge";
 const OFFLINE_URL = "/offline";
+
+// ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
+//   네트워크 실패 시에도 옛 데이터를 '살아있는 값'처럼 돌려주면 오결제·권한혼동·옛 잔액
+//   표시 등 위험이 있어, 이런 경로는 stale 캐시 폴백 없이 정직한 오프라인(503)만 반환한다.
+//   (셸/정적 자산만 캐시 — API 는 기본 network-first, 민감경로는 no-store.)
+const API_NO_STORE_PATTERNS = [
+  /\/auth\b/,        // 로그인/토큰/세션
+  /\/login\b/,
+  /\/logout\b/,
+  /\/token\b/,
+  /\/secrets?\b/,    // 관리자 시크릿
+  /\/sales(\b|-|\/)/, // 현장앱 전체(역할·세대선점·수납·수수료 등 실시간/머니패스)
+                      //  ★하이픈 변형도 포함: /sales/ 뿐 아니라 /api/v1/sales-summary 같은 머니패스 롤업도 no-store.
+  /\/billing\b/,     // 과금
+  /\/payments?\b/,   // 수납·결제
+  /\/commission\b/,  // 수수료
+  /\/balance\b/,     // 잔액
+  /\/me\b/,          // 내 계정/권한
+];
+
+// 요청 URL 이 민감(no-store) API 경로인지 판정.
+function isNoStoreApi(pathname) {
+  return API_NO_STORE_PATTERNS.some((re) => re.test(pathname));
+}
 const APP_SHELL_ASSETS = [
   "/",
   "/ko",
@@ -92,6 +116,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (url.pathname.startsWith("/api/")) {
+    // 민감 API(인증/현장/머니패스)는 캐시 금지 + stale 폴백 금지(정직한 오프라인 503).
+    if (isNoStoreApi(url.pathname)) {
+      event.respondWith(apiNoStore(request));
+      return;
+    }
     event.respondWith(apiNetworkFirst(request));
     return;
   }
@@ -143,6 +172,23 @@ async function cacheFirst(request) {
   }
 }
 
+// 민감 API(인증/현장/머니패스): 항상 네트워크. 응답을 캐시하지 않고(no-store),
+// 네트워크 실패 시 옛 데이터를 돌려주지 않고 정직한 오프라인(503)만 반환한다.
+// → 옛 잔액/권한/세대상태를 '살아있는 값'으로 오인하게 하는 위험을 원천 차단.
+async function apiNoStore(request) {
+  try {
+    return await fetch(request);
+  } catch {
+    return new Response(
+      JSON.stringify({ error: "오프라인 상태입니다", offline: true, stale: false }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      },
+    );
+  }
+}
+
 async function apiNetworkFirst(request) {
   try {
     const response = await fetch(request);
@@ -151,13 +197,26 @@ async function apiNetworkFirst(request) {
   } catch {
     const cached = await caches.match(request);
     if (cached) {
-      return cached;
+      // 오프라인 캐시 폴백 — '옛 데이터'임을 헤더로 정직하게 표기한다(silent 위장 금지).
+      // 응답 본문은 보존하되 X-PropAI-Stale 헤더로 신선도를 알린다.
+      // ★향후 network-first 화면 stale 배지용 hook(현재 소비처 없음=backlog). 무해한 응답헤더라
+      //   부착은 유지한다(나중에 그런 화면이 생기면 api-client 에서 이 헤더만 다시 감지하면 됨).
+      const headers = new Headers(cached.headers);
+      headers.set("X-PropAI-Stale", "1");
+      return new Response(cached.body, {
+        status: cached.status,
+        statusText: cached.statusText,
+        headers,
+      });
     }
 
-    return new Response(JSON.stringify({ error: "오프라인 상태입니다" }), {
-      status: 503,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-    });
+    return new Response(
+      JSON.stringify({ error: "오프라인 상태입니다", offline: true, stale: false }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      },
+    );
   }
 }
 

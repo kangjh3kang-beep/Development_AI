@@ -11,7 +11,19 @@ reportlab 은 desk_appraisal_pdf.py 와 동일하게 함수 내부에서 지연 
 from __future__ import annotations
 
 import io
+import ipaddress
+import logging
+import socket
+import urllib.request
 from typing import Any
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
+
+# 직인 이미지 다운로드 정책. SSRF(내부망/메타데이터 접근) 차단·과대응답 차단을 위한 상수.
+_STAMP_ALLOWED_SCHEMES = frozenset({"http", "https"})  # file://, gopher:// 등 비웹 스킴 차단
+_STAMP_FETCH_TIMEOUT = 8                                # 연결·읽기 타임아웃(초)
+_STAMP_MAX_BYTES = 5 * 1024 * 1024                      # 직인 이미지 최대 5MB(메모리 폭주 차단)
 
 
 def mask_rrn(rrn: str | None) -> str:
@@ -26,25 +38,97 @@ def mask_rrn(rrn: str | None) -> str:
     return f"{visible}{'*' * max(0, len(digits) - 6)}" or "-"
 
 
+def _is_blocked_ip(host: str) -> bool:
+    """host(이름 또는 IP)가 사설/루프백/링크로컬/메타데이터 대역으로 해석되면 True(차단).
+
+    DNS 가 가리키는 모든 주소를 검사해 'DNS rebinding'(공개 도메인이 내부 IP 로 해석)도 막는다.
+    이름 해석 실패는 '안전 우선'으로 차단(True)한다 — 직인은 부가요소라 못 받으면 텍스트 폴백.
+    """
+    candidates: list[str] = []
+    try:
+        # 이미 IP 문자열이면 그대로, 아니면 DNS 로 해석한 모든 주소를 후보로.
+        ipaddress.ip_address(host)
+        candidates.append(host)
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None)
+            candidates = [str(info[4][0]) for info in infos]
+        except OSError:
+            return True  # 해석 불가 → 차단(안전 우선)
+    if not candidates:
+        return True
+    for addr in candidates:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return True
+        # ★[allowlist 화] 개별 대역을 일일이 나열(블록리스트)하면 빠뜨린 비공인 대역으로 우회된다.
+        #   특히 CGNAT(100.64.0.0/10)는 is_private/is_link_local 어디에도 안 잡혀 과거 통과했다(이통사
+        #   내부망·클라우드 NAT 대역 SSRF 표적). is_global=공인 라우팅 가능 주소만 True 이므로,
+        #   '공인 주소가 아니면(=is_global False) 전부 차단'으로 뒤집어 CGNAT·사설·루프백·링크로컬
+        #   (169.254 메타데이터)·예약·멀티캐스트·미지정을 한 번에 막는다.
+        if not ip.is_global:
+            return True
+    return False
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """리다이렉트 대상(Location)을 매 홉 재검증 — 공개 호스트→내부 IP 302 우회(SSRF) 차단."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, PLR0913
+        parts = urlsplit(newurl)
+        if parts.scheme.lower() not in _STAMP_ALLOWED_SCHEMES:
+            raise OSError(f"리다이렉트 차단: 허용되지 않은 스킴({parts.scheme})")
+        host = parts.hostname
+        if not host or _is_blocked_ip(host):
+            raise OSError(f"리다이렉트 차단: 내부망/사설 호스트({host})")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _fetch_stamp_flowable(stamp_url: str | None, mm: Any) -> Any | None:
-    """직인 이미지 URL → reportlab Image flowable(최대 26mm). 실패 시 None(텍스트 폴백)."""
+    """직인 이미지 URL → reportlab Image flowable(최대 26mm). 실패 시 None(텍스트 폴백).
+
+    ★[SSRF 차단] 외부에서 등록한 stamp_url 을 서버가 직접 fetch 하므로, 검증 없이 열면
+    내부망·클라우드 메타데이터(169.254.169.254)·file:// 같은 로컬자원을 끌어올 수 있다(SSRF).
+      ① 스킴은 http/https 만 허용(file/gopher/ftp 등 차단)
+      ② 호스트가 사설/루프백/링크로컬/예약 대역으로 해석되면 차단(DNS rebinding 포함)
+      ③ 응답 크기를 5MB 로 상한(과대응답 메모리 폭주 차단)
+      ④ 타임아웃 유지
+    실패·차단은 발급을 막지 않고 None(텍스트 '(인)' 폴백)으로 graceful 처리하되, 차단 사유는
+    분류 로깅한다(silent-drop 금지 — 보안 차단이 조용히 묻히지 않게).
+    """
     if not stamp_url:
         return None
+    parts = urlsplit(stamp_url)
+    if parts.scheme.lower() not in _STAMP_ALLOWED_SCHEMES:
+        logger.warning("직인 fetch 차단: 허용되지 않은 스킴(%s) — 텍스트 폴백", parts.scheme)
+        return None
+    host = parts.hostname
+    if not host or _is_blocked_ip(host):
+        logger.warning("직인 fetch 차단: 내부망/사설/해석불가 호스트(%s) — 텍스트 폴백(SSRF 방지)", host)
+        return None
     try:
-        import urllib.request
-
         from reportlab.platypus import Image
 
-        with urllib.request.urlopen(stamp_url, timeout=8) as resp:  # noqa: S310
-            data = resp.read()
+        # ★[SSRF·리다이렉트 재검증] urlopen 은 3xx 리다이렉트를 자동 추종한다 — 검증된 공개 호스트가
+        #   내부 IP 로 302 시키면 우회된다. 리다이렉트 대상의 스킴/호스트를 매 홉마다 재검증한다.
+        opener = urllib.request.build_opener(_SafeRedirectHandler)
+        req = urllib.request.Request(stamp_url, method="GET")  # noqa: S310 — 위에서 스킴/호스트 검증 완료
+        with opener.open(req, timeout=_STAMP_FETCH_TIMEOUT) as resp:  # noqa: S310
+            # 크기 상한 + 1바이트만 읽어 초과 여부 판정(상한 넘으면 차단).
+            data = resp.read(_STAMP_MAX_BYTES + 1)
         if not data:
+            return None
+        if len(data) > _STAMP_MAX_BYTES:
+            logger.warning("직인 fetch 차단: 응답 크기 상한(%d) 초과 — 텍스트 폴백", _STAMP_MAX_BYTES)
             return None
         img = Image(io.BytesIO(data))
         ratio = (img.imageHeight or 1) / (img.imageWidth or 1)
         img.drawWidth = 26 * mm
         img.drawHeight = 26 * mm * ratio
         return img
-    except Exception:  # noqa: BLE001 — 직인 로드 실패는 발급을 막지 않음(텍스트 '(인)' 폴백)
+    except Exception as exc:  # noqa: BLE001 — 직인 로드 실패는 발급을 막지 않음(텍스트 '(인)' 폴백)
+        logger.info("직인 이미지 로드 실패 → 텍스트 폴백: %s", str(exc)[:160])
         return None
 
 
@@ -65,7 +149,11 @@ def build_termination_cert_pdf(cert: dict[str, Any], *, fetch_stamp: bool = True
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     from reportlab.platypus import (
-        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
     )
 
     try:

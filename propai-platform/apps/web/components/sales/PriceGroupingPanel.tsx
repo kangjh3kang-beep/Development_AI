@@ -11,6 +11,16 @@ import { salesApi } from "@/lib/salesApi";
 type Unit = { id: string; dong: string; ho: string; floor: number; line?: string; aspect?: string; type_name?: string };
 const eok = (man?: number) => (man && man > 0 ? `${(man / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : "-");
 
+// ★[iter-2 gap 거짓0 해소] round-trip 잔차(gap)를 eok()(만원→억, 소수1) 로 환산하면 1~499 만원
+//   (수만~수백만원) 잔차가 전부 '−0억'으로 뭉개져 가짜 완벽수렴으로 보인다. gap 전용 적응형 포맷:
+//   |gap|<1만원이면 '○원', 1만원~1억 미만이면 '○○만원', 1억 이상이면 '○.○억'. (gap 은 만원 단위)
+const fmtGap = (gapMan: number): string => {
+  const abs = Math.abs(gapMan);
+  if (abs < 1) return `${Math.round(abs * 10000).toLocaleString()}원`;   // 1만원 미만 → 원 단위
+  if (abs < 10000) return `${Math.round(abs).toLocaleString()}만원`;      // 1억 미만 → 만원 단위
+  return `${(abs / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;  // 1억 이상 → 억
+};
+
 export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { siteCode: string; roundId: string; onChanged?: () => void }) {
   const api = salesApi(siteCode);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -23,6 +33,9 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
   const [msg, setMsg] = useState("");
   const [target, setTarget] = useState("");      // 목표 총매출(억)
   const [solveBusy, setSolveBusy] = useState(false);
+  // ★[iter-3 warning 종단배선] 백엔드 decompose 가 만든 원가구성 경고(흡수금지·왜곡·음수clamp)를
+  //   배열로 받아 배너로 노출한다(과거엔 폐기돼 화면서 안 보였음 — dead 채널 해소).
+  const [warnings, setWarnings] = useState<{ message: string; unit_count?: number }[]>([]);
 
   const loadRevenue = useCallback(() => {
     api.get<{ total_revenue_10k: number; breakdown?: { label: string; amount_10k: number; vat_10k: number }[] }>(`/pricing/revenue?round_id=${roundId}`)
@@ -52,15 +65,17 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
     const v = Number(value);
     if (sel.size === 0) { setMsg("세대를 선택하세요."); return; }
     if (!v) { setMsg("값을 입력하세요."); return; }
-    setBusy(true); setMsg("");
+    setBusy(true); setMsg(""); setWarnings([]);
     try {
       // RATE 는 %를 비율로(예: 10 → 0.10). FIXED/OVERRIDE_PSQM 은 원 단위 그대로.
       const payloadVal = mode === "RATE" ? v / 100 : v;
-      const r = await api.post<{ ok: boolean; total_revenue_10k?: number; applied_units?: number; note?: string }>(
+      const r = await api.post<{ ok: boolean; total_revenue_10k?: number; applied_units?: number; group_reused?: boolean; warnings?: { message: string; unit_count?: number }[]; note?: string }>(
         "/pricing/group-apply", { round_id: roundId, unit_ids: Array.from(sel), mode, value: payloadVal });
       if (r?.ok) {
-        setMsg(`${r.applied_units}세대 적용 — 총매출 ${eok(r.total_revenue_10k)}`);
+        // group_reused=true 면 더블클릭·재시도가 새 그룹을 만들지 않고 기존 그룹을 재사용했다는 멱등 표시.
+        setMsg(`${r.applied_units}세대 적용 — 총매출 ${eok(r.total_revenue_10k)}${r.group_reused ? " (기존 그룹 갱신)" : ""}`);
         setRevenue(r.total_revenue_10k ?? revenue);
+        setWarnings(r.warnings || []);
         setSel(new Set());
         onChanged?.();
       } else setMsg(r?.note || "적용 실패");
@@ -71,12 +86,19 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
   const solveTarget = async () => {
     const eokVal = Number(target);
     if (!eokVal) { setMsg("목표 총매출(억)을 입력하세요."); return; }
-    setSolveBusy(true); setMsg("");
+    setSolveBusy(true); setMsg(""); setWarnings([]);
     try {
-      const r = await api.post<{ ok: boolean; base_unit_price?: number; achieved_total_10k?: number; note?: string }>(
+      const r = await api.post<{ ok: boolean; base_unit_price?: number; achieved_total_10k?: number; gap_10k?: number; gap_won?: number; warnings?: { message: string; unit_count?: number }[]; note?: string }>(
         "/pricing/solve-base", { round_id: roundId, target_total_10k: Math.round(eokVal * 10000) });
       if (r?.ok) {
-        setMsg(`역산 완료 — 기준단가 ${r.base_unit_price?.toLocaleString()}원/㎡, 달성 ${eok(r.achieved_total_10k)}`);
+        setWarnings(r.warnings || []);
+        // round-trip 잔차(목표−실달성)를 정직 표기 — 세대별 반올림 누적으로 0 이 아닐 수 있음.
+        // gap_won(원, floor 편향 없는 정확값)이 오면 만원으로 환산해 쓰고, 없으면 gap_10k 폴백.
+        const gapMan = r.gap_won != null ? r.gap_won / 10000 : (r.gap_10k ?? 0);
+        // 0 이 아니면 적응형 포맷으로 표기(거짓 −0억 금지). 부호: 양수=미달, 음수=초과.
+        const gapTxt = Math.round(Math.abs(gapMan) * 10000) >= 1
+          ? ` · 오차 ${gapMan > 0 ? "미달 −" : "초과 +"}${fmtGap(gapMan)}(반올림)` : " · 정확 수렴";
+        setMsg(`역산 완료 — 기준단가 ${r.base_unit_price?.toLocaleString()}원/㎡, 달성 ${eok(r.achieved_total_10k)}${gapTxt}`);
         setRevenue(r.achieved_total_10k ?? revenue); onChanged?.();
       } else setMsg(r?.note || "역산 실패");
     } catch { setMsg("역산 실패(권한·면적 확인)."); }
@@ -100,6 +122,21 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
               {b.label} {eok(b.amount_10k)}{b.vat_10k > 0 ? ` (VAT ${eok(b.vat_10k)})` : ""}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* ★[iter-3 warning 배너] 원가구성 경고(흡수금지·왜곡·음수clamp) 정직 노출 — Σ구성≠분양가·
+          VAT 과세표준 과소합산 신호. 운영자가 원가구성 비율(합=1)·정액 설정을 점검하도록 안내. */}
+      {warnings.length > 0 && (
+        <div className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+          <p className="text-[11px] font-bold text-amber-600">⚠ 원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
+          <ul className="mt-1 space-y-0.5">
+            {warnings.map((w, i) => (
+              <li key={i} className="text-[10px] leading-snug text-amber-600/90">
+                · {w.message}{w.unit_count != null ? ` (세대 ${w.unit_count})` : ""}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -1,11 +1,13 @@
 """관리자 전용 — 분양(sales)/모델하우스(mh) RLS 부트스트랩 운영 엔드포인트.
 
 엔드포인트(prefix=/api/v1/admin/sales-rls):
-- GET  /status   : sales_/mh_ 테이블 rowsecurity·정책수 집계.
-- POST /apply    : RLS ENABLE + p_site/p_org 멱등 적용(only_table 카나리·dry_run 지원).
+- GET  /status   : sales_/mh_ 테이블 rowsecurity·force·정책수 집계.
+- POST /apply    : RLS ENABLE+FORCE + p_site/p_org 멱등 적용(only_table 카나리·dry_run 지원).
 - POST /rollback : 전 sales_/mh_ 테이블 RLS DISABLE + 정책 DROP(1콜 롤백).
 
-권한: role ∈ 관리자군(JWT). ★FORCE 미적용. 멱등·무파괴.
+권한: role ∈ 관리자군(JWT). ★ENABLE+FORCE 적용. 멱등·무파괴.
+★실효 전제: 앱 DB 접속 role 이 'BYPASSRLS 아님'이어야 FORCE 가 의미를 가진다
+(앱 전용 non-bypassrls role 분리는 인프라 = deploy-pending).
 """
 
 from __future__ import annotations
@@ -52,7 +54,13 @@ async def sales_rls_apply(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """RLS ENABLE + p_site/p_org 멱등 적용. only_table(카나리)·dry_run 지원."""
+    """RLS ENABLE+FORCE + p_site/p_org 멱등 적용. only_table(카나리)·dry_run 지원.
+
+    ★권한거부 응답계약 구분 신호: 이 관리자 엔드포인트는 app 계층(_require_admin)에서
+    권한 미달 시 403 을 반환한다. 반면 일반 sales 업무 엔드포인트의 '데이터 거부'는
+    RLS 정책이 0행(빈 결과)으로 fail-closed 시킨다(403 아님). 즉 403=app계층 권한거부,
+    0행=RLS 격리거부 로 신호가 다르다(둘을 혼동하지 말 것).
+    """
     await _require_admin(current, db)
     return await sales_rls_bootstrap.ensure_sales_rls(
         db, only_table=req.only_table, dry_run=req.dry_run

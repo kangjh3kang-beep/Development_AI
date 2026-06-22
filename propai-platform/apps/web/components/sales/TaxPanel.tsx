@@ -39,12 +39,24 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
       setMsg({ ok: true, text: "세금계산서 발행(DRAFT) 완료" }); load();
     } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
+  // building: 집계 빌드(POST)가 진행 중인지 표시(버튼 중복클릭/이중빌드 방지).
+  const [building, setBuilding] = useState(false);
+  // 집계 조회/갱신: ★[미배선 회귀 해소(iter-8 HIGH)] 쓰기(빌드)는 POST /tax/withholding-statements/build 로,
+  //   읽기는 GET /tax/withholding-statements 로 분리됐다(iter-7). 과거 이 화면은 GET 만 호출해
+  //   빌드된 명세가 없으면 항상 '지급총액 0/원천징수 0' 으로 보였다(기능 회귀). 이제 한 버튼이
+  //   ①POST /build(멱등 delete-before-insert 재집계) → ②GET read 로 재조회하는 순서로 동작한다.
+  //   build 가 같은 (현장·기간)을 몇 번 눌러도 행수·합계가 불변(멱등)이라 중복적재가 없다.
   const queryWh = async () => {
     setMsg(null);
+    setBuilding(true);
     try {
+      // ① 빌드(쓰기): 기간 명세를 재집계해 적재. period 는 'YYYY-MM'.
+      await api.post("/tax/withholding-statements/build", { period });
+      // ② 읽기(safe GET): 방금 빌드된 명세 합계를 조회해 화면에 반영(지급총액≠0 복원).
       const r = await api.get<{ gross: number; withholding: number }>(`/tax/withholding-statements?period=${period}`);
       setWh(r);
     } catch (e) { setMsg({ ok: false, text: errText(e) }); }
+    finally { setBuilding(false); }
   };
 
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
@@ -93,7 +105,7 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
         <h3 className="mb-3 font-bold text-[var(--text-primary)]">지급명세서(원천징수 집계)</h3>
         <div className="flex flex-wrap items-end gap-2">
           <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" className={`${IN} w-32`} />
-          <button onClick={queryWh} className={BTN}>집계 조회</button>
+          <button onClick={queryWh} disabled={building} className={BTN}>{building ? "집계 중…" : "집계 조회/갱신"}</button>
         </div>
         {wh && (
           <p className="mt-2 text-sm text-[var(--text-primary)]">

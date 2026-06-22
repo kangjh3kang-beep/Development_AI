@@ -22,8 +22,9 @@
 - GET  /work-logs/summary?period=                            실적 집계(상담/방문/계약)
 """
 
+import logging
 import uuid
-from datetime import date, datetime, time, timezone, UTC
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -31,19 +32,36 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.api.deps_sales import SalesCtx, resolve_site, sales_ctx
+
+# ★SSOT(단일 출처): 폴백 역할 집합은 deps_sales 한 곳에서만 정의한다. 과거 본 모듈이 동일
+# 리터럴을 중복정의해 드리프트(한쪽만 수정 시 불일치) 위험이 있었어 import 로 전환한다.
+from app.api.deps_sales import (
+    _DEVELOPER_ROLES,
+    _SUPERADMIN_ROLES,
+    SalesCtx,
+    resolve_site,
+    sales_ctx,
+)
 from apps.api.database.models.sales.contract_crm_ad import SalesCustomer
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 crm_enhance_router = APIRouter(tags=["sales-crm-enhance"])
+logger = logging.getLogger("sales.crm")
+
+# 발송 차단/보류 사유의 기계코드(프론트 BLOCK_REASON 맵과 1:1). 사람이 읽는 prose(blocked_reason)와
+# 함께 reason_code 를 내려, 프론트가 코드로 친화 라벨을 고르게 한다(예전엔 prose만 내려와 맵이 죽어 있었음).
+REASON_NO_CONSENT = "no_consent"   # 마케팅 수신동의 없음
+REASON_NIGHT = "night"             # 야간(21~08) 광고성 발송 제한
+REASON_NO_SENDER = "no_sender"     # 발신번호(발신프로필) 미등록
+REASON_NO_KEY = "no_key"           # 발송 채널 키 미설정(알림톡 biz 키 등)
+REASON_DISPATCH_FAIL = "dispatch_fail"  # 외부 발송 API 오류(타임아웃·네트워크 등)
 
 # 계약단계 정규값(고객 status/단계 변경 화이트리스트)
 _STAGES = {"LEAD", "CONSULT", "VISIT", "RESERVED", "SIGNED", "MIDDLE", "BALANCE", "CLOSED", "DROPPED"}
 # 히스토리 종류
 _KINDS = {"consult", "visit", "stage", "message", "note"}
-# 플랫폼 User.role → sales 전역역할 폴백(현장 노드 없을 때)
-_SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
-_DEVELOPER_ROLES = {"developer", "시행사", "dev"}
+# 플랫폼 User.role → sales 전역역할 폴백(현장 노드 없을 때)은 deps_sales SSOT 사용
+# (_SUPERADMIN_ROLES/_DEVELOPER_ROLES import). 본 모듈 중복정의는 제거(드리프트 차단).
 
 
 # ── 멱등 테이블/컬럼(_ensure) ────────────────────────────────────────────────
@@ -137,16 +155,29 @@ async def _my_site_roles(db: AsyncSession, user) -> dict[str, str]:
     # 플랫폼 슈퍼/시행사 또는 본인 테넌트 소유현장 → 노드 없어도 멤버십 인정(DEVELOPER)
     if role_lower in _SUPERADMIN_ROLES or role_lower in _DEVELOPER_ROLES or user_tenant:
         owned = (await db.execute(select(SalesSite).where(
-            SalesSite.organization_id == user_tenant, SalesSite.deleted_at.is_(None)))).scalars().all() if user_tenant else []
+            SalesSite.organization_id == user_tenant,
+            SalesSite.deleted_at.is_(None)))).scalars().all() if user_tenant else []
         default_role = "SUPERADMIN" if role_lower in _SUPERADMIN_ROLES else "DEVELOPER"
         for s in owned:
             roles.setdefault(str(s.id), default_role)
     return roles
 
 
+# 한국 표준시(KST, UTC+9 고정·서머타임 없음). 야간 광고성 발송 제한(정보통신망법 제50조)은
+# '국내 수신자 기준 야간(21~08시)' 이므로 KST 로 판정해야 한다. 서버 컨테이너가 UTC 로 도는데
+# .astimezone()(서버 로컬TZ) 으로 판정하면 UTC 기준이 되어 야간 차단이 9시간 어긋나 오작동한다.
+_KST = timezone(timedelta(hours=9))
+
+
 def _night_guard(now: datetime) -> bool:
-    """야간(21:00~08:00) 광고성 발송 제한 가드(정보통신망법 제50조). True=차단대상."""
-    local = now.astimezone()  # 서버 로컬타임존 기준
+    """야간(21:00~08:00) 광고성 발송 제한 가드(정보통신망법 제50조). True=차단대상.
+
+    ★[KST 고정·iter-2 MED] 기존 .astimezone()(서버 로컬TZ) 은 컨테이너가 UTC 로 돌면 야간 판정이
+      9시간 어긋나 오작동했다(국내 수신자 기준이 아님). 국내 수신자 기준 KST(UTC+9) 로 고정 변환해
+      판정한다. naive datetime 이 들어오면 UTC 로 간주해 보정 후 KST 로 변환한다(모호성 제거)."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    local = now.astimezone(_KST)  # 한국 표준시(KST) 기준
     return local.time() >= time(21, 0) or local.time() < time(8, 0)
 
 
@@ -323,21 +354,31 @@ async def send_message(customer_id: uuid.UUID, body: MessageSend,
     consent_ok = consent > 0
 
     status = "PENDING"
-    blocked_reason = None
+    blocked_reason = None   # 사람이 읽는 한국어 사유(하위호환)
+    reason_code = None      # 기계코드(프론트 BLOCK_REASON 맵 키) — 동시 제공
     from app.core.config_sales import sales_settings
 
     if not consent_ok:
-        status, blocked_reason = "BLOCKED", "수신동의(MARKETING)가 없어 광고성 발송이 차단되었습니다"
+        status, reason_code = "BLOCKED", REASON_NO_CONSENT
+        blocked_reason = "수신동의(MARKETING)가 없어 광고성 발송이 차단되었습니다"
     elif _night_guard(datetime.now(UTC)):
-        status, blocked_reason = "BLOCKED", "야간(21~08시) 광고성 발송 제한(정보통신망법)"
+        status, reason_code = "BLOCKED", REASON_NIGHT
+        blocked_reason = "야간(21~08시) 광고성 발송 제한(정보통신망법)"
     elif not sales_settings.kakao_sender_key:
         # 발신번호(발신프로필) 사전등록 전제 — 미등록 시 안전 폴백(기록만)
-        status, blocked_reason = "SKIPPED", "발신번호(발신프로필) 미등록 — 안전 폴백(기록만)"
+        status, reason_code = "SKIPPED", REASON_NO_SENDER
+        blocked_reason = "발신번호(발신프로필) 미등록 — 안전 폴백(기록만)"
     else:
-        status = await _dispatch_message(channel, c.phone_e164, body)
+        status, reason_code = await _dispatch_message(channel, c.phone_e164, body)
+        if reason_code == REASON_NO_KEY:
+            blocked_reason = "발송 채널(알림톡) 키 미설정 — 안전 폴백(기록만)"
+        elif reason_code == REASON_DISPATCH_FAIL:
+            blocked_reason = "외부 발송 API 오류 — 잠시 후 재시도하세요(기록만)"
 
     msg_id = uuid.uuid4()
     sent_at = "now()" if status == "SENT" else "NULL"
+    # ★silent-drop 방지: SENT/SKIPPED/BLOCKED/FAILED 어떤 결과든 항상 발송이력(sales_message_log)에
+    #   status 로 영속한다. 실패(FAILED)도 행으로 남아 운영자가 재시도/추적할 수 있다(0으로 은폐 금지).
     await db.execute(text(
         "INSERT INTO sales_message_log"
         " (id, customer_id, site_id, actor_user_id, channel, template, body, status, consent_checked, sent_at)"
@@ -353,25 +394,36 @@ async def send_message(customer_id: uuid.UUID, body: MessageSend,
     await db.commit()
     return {"id": str(msg_id), "channel": channel, "status": status,
             "consent_checked": consent_ok, "blocked_reason": blocked_reason,
+            "reason_code": reason_code,
             "opt_out_notice": "수신거부 080 안내 포함 필요(광고성)" if consent_ok else None}
 
 
-async def _dispatch_message(channel: str, phone: str, body: MessageSend) -> str:
-    """실제 외부발송 위임(키 미설정·실패 시 안전 상태문자열 반환). 기록은 호출부에서 수행."""
+async def _dispatch_message(channel: str, phone: str, body: MessageSend) -> tuple[str, str | None]:
+    """실제 외부발송 위임 — (status, reason_code) 반환. 기록은 호출부에서 수행.
+
+    정직/분류: 실패를 0/빈값으로 은폐하지 않는다. 키 미설정(SKIPPED)과 외부 API 오류(FAILED)를
+    구분해 reason_code 로 내려주고, 오류는 예외 타입과 함께 분류 로깅한다(원인 추적 가능).
+    """
     from app.core.config_sales import sales_settings
     if channel == "alimtalk" and not sales_settings.kakao_biz_key:
-        return "SKIPPED"
+        return "SKIPPED", REASON_NO_KEY
     try:
         import httpx
         async with httpx.AsyncClient(timeout=10) as cli:
-            await cli.post(
+            resp = await cli.post(
                 "https://kakaoapi.example/v2/sender/send",
                 headers={"Authorization": f"Bearer {sales_settings.kakao_biz_key or ''}"},
                 json={"senderKey": sales_settings.kakao_sender_key, "to": phone,
                       "templateCode": body.template or "CRM_GENERAL", "text": body.body})
-        return "SENT"
-    except Exception:  # noqa: BLE001 — 외부발송 실패는 차단·기록만(흐름 무영향)
-        return "FAILED"
+        # HTTP 4xx/5xx 도 발송 실패로 분류(2xx 만 성공). 200대가 아니면 FAILED 로 기록.
+        if resp.status_code >= 400:
+            logger.warning("CRM 메시지 발송 실패(HTTP %s) channel=%s", resp.status_code, channel)
+            return "FAILED", REASON_DISPATCH_FAIL
+        return "SENT", None
+    except Exception as exc:  # noqa: BLE001 — 외부발송 오류는 흐름을 막지 않되 분류 로깅 후 FAILED 기록
+        logger.warning("CRM 메시지 발송 예외 channel=%s err=%s: %s",
+                       channel, type(exc).__name__, exc)
+        return "FAILED", REASON_DISPATCH_FAIL
 
 
 # ── 4) 업무일지 ──────────────────────────────────────────────────────────────
@@ -388,8 +440,8 @@ async def create_work_log(body: WorkLogCreate, request: Request,
         try:
             site = await resolve_site(request, db)
             target = str(site.id)
-        except HTTPException:
-            raise HTTPException(400, "site_id 또는 X-Site-Code 가 필요합니다")
+        except HTTPException as e:
+            raise HTTPException(400, "site_id 또는 X-Site-Code 가 필요합니다") from e
     if target not in roles:
         raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")
 
@@ -437,9 +489,11 @@ async def list_work_logs(request: Request, from_: date | None = None, to: date |
     where = ["site_id = ANY(:sids)", "user_id = :uid"]
     params: dict = {"sids": list(sites), "uid": str(user.id)}
     if from_:
-        where.append("log_date >= :from"); params["from"] = from_
+        where.append("log_date >= :from")
+        params["from"] = from_
     if to:
-        where.append("log_date <= :to"); params["to"] = to
+        where.append("log_date <= :to")
+        params["to"] = to
     rows = (await db.execute(text(
         "SELECT id, site_id, log_date, summary, activities, metrics, created_at"
         f" FROM sales_work_logs WHERE {' AND '.join(where)} ORDER BY log_date DESC, created_at DESC"),
@@ -472,7 +526,8 @@ async def work_log_summary(request: Request, period: str = "month",
     rows = (await db.execute(text(
         "SELECT site_id, kind,"
         "       count(*) FILTER (WHERE kind <> 'stage') AS cnt,"
-        "       count(*) FILTER (WHERE kind = 'stage' AND stage_to IN ('RESERVED','SIGNED','MIDDLE','BALANCE')) AS contracts"
+        "       count(*) FILTER (WHERE kind = 'stage' AND stage_to IN "
+        "                        ('RESERVED','SIGNED','MIDDLE','BALANCE')) AS contracts"
         " FROM sales_customer_history"
         " WHERE site_id = ANY(:sids) AND actor_user_id = :uid"
         f"   AND created_at >= now() - interval '{interval}'"

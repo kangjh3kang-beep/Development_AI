@@ -27,7 +27,8 @@ export interface HistoryItem {
 
 interface MessageResult {
   status?: string; // SENT | BLOCKED | SKIPPED | FAILED
-  blocked_reason?: string | null;
+  reason_code?: string | null; // 기계코드(no_consent/night/no_sender/no_key/dispatch_fail) — 친화 라벨 매핑용
+  blocked_reason?: string | null; // 사람이 읽는 한국어 사유(백엔드 prose, 폴백 표시용)
   opt_out_notice?: string | null;
 }
 
@@ -52,7 +53,7 @@ const KIND_META: Record<string, { icon: string; label: string; cls: string }> = 
   note: { icon: "📝", label: "메모", cls: "border-slate-500/40 bg-slate-500/10 text-slate-300" },
 };
 
-// 차단/스킵 사유 친화 라벨(정보통신망법 제50조 안내).
+// 차단/스킵/실패 사유 친화 라벨(정보통신망법 제50조 안내). 키는 백엔드 reason_code 와 1:1.
 const BLOCK_REASON: Record<string, string> = {
   no_consent: "수신동의 없음 — 마케팅 수신동의 후 발송 가능합니다.",
   consent: "수신동의 없음 — 마케팅 수신동의 후 발송 가능합니다.",
@@ -61,10 +62,14 @@ const BLOCK_REASON: Record<string, string> = {
   no_sender: "발신번호 미등록 — 발신프로필 등록 후 발송됩니다.",
   sender: "발신번호 미등록 — 발신프로필 등록 후 발송됩니다.",
   no_key: "발송 채널 미설정 — 키 등록 전까지 기록만 보관됩니다.",
+  dispatch_fail: "외부 발송 오류 — 잠시 후 다시 시도하세요(기록만 보관됨).",
 };
-function friendlyReason(reason?: string | null): string {
-  if (!reason) return "발송이 처리되지 않았습니다.";
-  return BLOCK_REASON[reason] ?? reason;
+// reason_code(기계코드) 우선, 없으면 prose(blocked_reason) 폴백. 백엔드가 코드를 함께 내려주므로
+// 코드로 일관 라벨을 고른다(예전엔 prose만 와서 이 맵이 사실상 죽어 있었음).
+function friendlyReason(code?: string | null, prose?: string | null): string {
+  if (code && BLOCK_REASON[code]) return BLOCK_REASON[code];
+  if (prose) return prose;
+  return "발송이 처리되지 않았습니다.";
 }
 
 const KINDS: { key: string; label: string }[] = [
@@ -174,11 +179,11 @@ export default function CustomerCardDrawer({
         setBody("");
         setTemplate("");
       } else if (status === "BLOCKED") {
-        setToast({ tone: "warn", text: `발송 차단: ${friendlyReason(r.blocked_reason)}` });
+        setToast({ tone: "warn", text: `발송 차단: ${friendlyReason(r.reason_code, r.blocked_reason)}` });
       } else if (status === "SKIPPED") {
-        setToast({ tone: "warn", text: `발송 보류: ${friendlyReason(r.blocked_reason)}` });
+        setToast({ tone: "warn", text: `발송 보류: ${friendlyReason(r.reason_code, r.blocked_reason)}` });
       } else {
-        setToast({ tone: "err", text: "발송 실패 — 잠시 후 다시 시도하세요." });
+        setToast({ tone: "err", text: `발송 실패: ${friendlyReason(r.reason_code, r.blocked_reason)}` });
       }
       load();
       onChanged?.();

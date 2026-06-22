@@ -117,6 +117,18 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
 // LLM·파이프라인 단계가 길 수 있어 넉넉히 두되, 무한대기는 차단한다.
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+// ── 오프라인 stale 신호(X-PropAI-Stale) — 현재 소비처 없음(backlog) ─────────────
+// 서비스워커(public/sw.js)의 apiNetworkFirst 는 네트워크 실패 시 캐시 본문을 그대로 돌려주되
+// 응답 헤더에 X-PropAI-Stale:1 을 붙여 '옛 데이터'임을 정직하게 알린다(silent 위장 금지).
+//
+// ★현재 프론트엔드에 이 헤더를 소비하는 화면이 없다(미배선). 과거 도입했던 전역 이벤트 발행/
+//   구독 헬퍼(STALE_EVENT/onStaleResponse/emitStaleSignal)는 소비처 0 인 dead code 였으므로 제거했다.
+//   - sales 등 no-store 머니패스 경로(sw.js isNoStoreApi → apiNoStore)는 오프라인 시 옛 캐시를
+//     절대 돌려주지 않고 정직한 503만 반환하므로 이 헤더가 붙지 않는다(그 화면은 navigator.onLine
+//     + online/offline 이벤트로 오프라인을 직접 표기).
+//   - 비민감 network-first 화면용 stale 배지 배선은 그런 화면이 생길 때 추가한다(backlog).
+//     sw.js 는 헤더 부착을 유지하므로(무해한 응답헤더) 그때 이 파일에서 헤더 감지만 다시 붙이면 된다.
+
 function isAbsoluteUrl(path: string) {
   return /^https?:\/\//.test(path);
 }
@@ -311,6 +323,7 @@ async function executeFetch(
     // 정상 응답(2xx~5xx 모두) 계측 — 성공/오류는 trackApiCall 내부에서 분기.
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     trackApiCall(path, response.status, Math.round(now - startedAt));
+    // (X-PropAI-Stale 응답헤더 감지/전역 이벤트 발행은 소비 화면이 없어 제거 — 위 주석 참조. backlog)
     return response;
   } catch (err) {
     // 네트워크 실패/타임아웃: status 0(또는 408)으로 api_error 계측.

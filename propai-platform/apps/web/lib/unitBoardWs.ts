@@ -4,7 +4,11 @@
  * 백엔드 계약(_workspace/61 §3·§7):
  *   - 연결: WS {origin}/ws/sales/board:{site_id}  (채널형 ws_manager, 채널=board:{site_id})
  *           토큰은 백엔드 미검증이나 ?token={access_jwt} 로 첨부(향후 게이팅 대비).
- *   - 서버→클라: {type:"UNIT_STATUS", event:HOLD|RELEASE|RESERVE, unit_id, status, held_by, expires_at, ts}
+ *   - 서버→클라: {type:"UNIT_STATUS", event:HOLD|RELEASE|RESERVE, unit_id, status, expires_at, ts}
+ *     ★held_by(점유 직원 UUID)는 broadcast 에 싣지 않는다(개인정보). WS 는 모든 구독자에게 같은
+ *       페이로드를 뿌려 수신자별 권한 마스킹이 불가하므로, 점유여부(status=HOLD)만 보낸다. '내가
+ *       잡았는지'는 클라이언트가 자신의 hold_token 보유로 판단하고, 점유자 신원이 필요하면 권한
+ *       마스킹이 적용된 GET /units/board 를 재조회한다(백엔드 _broadcast 와 응답계약 SSOT 동기화).
  *   - 클라→서버: {type:"PING"}(heartbeat) — 서버 PONG 미보장(채널 broadcast 전용)이라 응답 의존 안 함.
  *
  * 설계(socialWs 패턴 차용):
@@ -22,7 +26,7 @@ export interface UnitStatusEvent {
   event?: "HOLD" | "RELEASE" | "RESERVE" | string;
   unit_id: string;
   status: string;
-  held_by?: string | null;
+  // held_by 는 응답계약에서 의도적으로 제외(개인정보). 백엔드 _broadcast 가 싣지 않으므로 타입에서도 제거.
   expires_at?: string | null;
   ts?: string;
 }
@@ -31,10 +35,20 @@ export type UnitBoardWsEvent = UnitStatusEvent | { type: string; [k: string]: un
 
 type MessageListener = (ev: UnitBoardWsEvent) => void;
 type StatusListener = (s: UnitBoardWsStatus) => void;
+// 인증/인가 거부(영구) 사유 통지 — 상위가 재진입(토큰갱신/현장 비밀번호 재입력)을 안내할 수 있게.
+export type AuthErrorReason = "unauthenticated" | "forbidden";
+type AuthErrorListener = (reason: AuthErrorReason, code: number) => void;
 
 const PING_INTERVAL_MS = 25_000;
 const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
+
+// 백엔드 거부 close 코드(ws_routes 계약):
+//   4401 = 인증 실패(토큰 없음/위조/만료) — 토큰을 갱신/재발급하기 전엔 재연결해도 동일 거부.
+//   4403 = 인가 실패(그 현장 비멤버) — 멤버십이 바뀌기 전엔 재연결해도 동일 거부.
+//   4429 = 연결/메시지 throttle 초과 — 일시적이라 지수 백오프로 재시도해야 한다.
+const WS_CLOSE_UNAUTHENTICATED = 4401;
+const WS_CLOSE_FORBIDDEN = 4403;
 
 export interface UnitBoardWsHandle {
   /** 리스너 해제 + 연결 정리. 언마운트 시 반드시 호출. */
@@ -45,14 +59,17 @@ export interface UnitBoardWsHandle {
 
 /**
  * 현장 보드 채널(board:{siteId})에 구독한다. 인스턴스별 단일 소켓.
- * @param siteId    현장 UUID. WS 채널 board:{siteId} 구독.
- * @param onMessage UNIT_STATUS 이벤트 수신 콜백.
- * @param onStatus  연결 상태(connecting/open/closed) 변화 콜백(재연결 시 보드 재조회 트리거용).
+ * @param siteId      현장 UUID. WS 채널 board:{siteId} 구독.
+ * @param onMessage   UNIT_STATUS 이벤트 수신 콜백.
+ * @param onStatus    연결 상태(connecting/open/closed) 변화 콜백(재연결 시 보드 재조회 트리거용).
+ * @param onAuthError (선택) 인증(4401)/인가(4403) 영구 거부 시 1회 통지. 이 경우 자동재연결을 멈추므로
+ *                    상위는 토큰 갱신/현장 재진입을 안내해야 한다(무한 재연결 폭주 차단).
  */
 export function connectUnitBoardWs(
   siteId: string,
   onMessage: MessageListener,
   onStatus?: StatusListener,
+  onAuthError?: AuthErrorListener,
 ): UnitBoardWsHandle {
   let socket: WebSocket | null = null;
   let status: UnitBoardWsStatus = "closed";
@@ -174,10 +191,26 @@ export function connectUnitBoardWs(
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (socket === ws) socket = null;
       clearTimers();
       setStatus("closed");
+      // 인증(4401)/인가(4403) 거부는 '영구 사유'다 — 토큰/멤버십이 바뀌기 전엔 재연결해도 똑같이
+      // 거부되며, 30s마다 무한 재연결하면 인증·인가 재평가만 폭주(연결 throttle 가치 상쇄)한다.
+      // 따라서 재연결을 멈추고 상위에 1회 통지(토큰 갱신/현장 재진입 안내)한다.
+      const code = ev?.code;
+      if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
+        manualClose = true; // scheduleReconnect 차단(이후 자동재연결 안 함).
+        if (onAuthError) {
+          try {
+            onAuthError(code === WS_CLOSE_UNAUTHENTICATED ? "unauthenticated" : "forbidden", code);
+          } catch {
+            /* noop */
+          }
+        }
+        return;
+      }
+      // 그 외(4429 throttle·1000/1001 정상종료·네트워크 단절 등)는 지수 백오프로 재연결한다.
       scheduleReconnect();
     };
   };

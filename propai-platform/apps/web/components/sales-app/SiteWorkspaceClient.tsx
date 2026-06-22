@@ -74,6 +74,14 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   // 세대 탭 보드 전환: 실시간 선점(live) ↔ 배치도·상세(grid). 두 보드 동시 렌더(중복) 방지.
   const [unitView, setUnitView] = useState<"live" | "grid" | "draw">("live");
   const [err, setErr] = useState("");
+  // 오프라인 단일 진실(머니패스 화면 정직성).
+  //  ★이 화면 데이터는 전부 /sales/*(서비스워커 sw.js 의 no-store 경로 = apiNoStore)로,
+  //    오프라인 시 옛 캐시를 돌려주지 않고 정직한 503만 반환한다. 따라서 X-PropAI-Stale 헤더는
+  //    이 화면엔 절대 오지 않는다(그 헤더는 apiNetworkFirst 비민감 캐시화면에서만 부착).
+  //    예전 stale 배지(X-PropAI-Stale 구독)는 이 화면선 영구 발화 불가한 dead-wire 라 제거됐다.
+  //  → 오프라인 UX 를 navigator.onLine + online/offline 이벤트로 일원화해 양방향(이탈/복귀)
+  //    선제 표기한다(옛 데이터 위장 없이 '지금 오프라인'만 정직하게 알림).
+  const [offline, setOffline] = useState(false);
 
   // 분양가 탭용 차수(round) 로딩 — 기존 SalesSiteWorkspace 동일 방식.
   const [rounds, setRounds] = useState<{ id: string; name: string }[]>([]);
@@ -123,6 +131,11 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           }
           if (st === 404 || st === 422) {
             setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
+          } else if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            // ★오프라인 메시지는 오프라인 배너(offline state)가 단일 출처다 — 여기서 err 에 같은
+            //   문구를 또 세우면 배너+err 이중 표기가 된다. 그래서 err 는 비우고(중복 제거),
+            //   온라인 복귀 시 online 이벤트 핸들러가 loadRole 을 자동 재호출해 자가치유한다.
+            setErr("");
           } else {
             setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
           }
@@ -140,6 +153,28 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   useEffect(() => {
     captureLandingRef();
   }, []);
+
+  // 오프라인 단일 진실 — navigator.onLine 초기값 + online/offline 이벤트로 양방향 선제 표기.
+  //  머니패스 화면이라 '지금 오프라인'을 즉시 명시(가짜/옛 데이터 노출 금지). 복귀 시 즉시 해제.
+  //  ★self-heal(자가치유): online 복귀 시 배너 해제만 하면 오프라인 중 실패한 역할 조회(role=null)가
+  //    그대로 남아 화면이 빈 채 멈춘다. 그래서 online 이벤트에서 loadRole() 을 재호출해 네트워크
+  //    복귀를 스스로 회복한다(UnitLiveBoard WS 재연결 self-heal 과 동일 패턴). offline 이벤트는
+  //    배너 표기만.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOffline = () => setOffline(true);
+    const onOnline = () => {
+      setOffline(false);
+      loadRole(); // 복귀 즉시 역할 재조회(오프라인 중 실패한 로딩 자가 회복).
+    };
+    setOffline(navigator.onLine === false); // 마운트 시점에 이미 오프라인이면 선제 표기.
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [loadRole]);
 
   // 분양가 탭 진입 시 차수 로딩(role 확정 후 1회). siteId를 siteCode로 전달(UUID 해석).
   useEffect(() => {
@@ -233,6 +268,19 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       {err && (
         <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
           {err}
+        </div>
+      )}
+
+      {/* 오프라인 배너(단일 진실) — navigator.onLine 기반. 이 화면 데이터는 no-store(옛 캐시 폴백 없음)라
+          오프라인이면 최신값을 받을 수 없음을 정직하게 알린다(가짜·옛 데이터 위장 금지). 복귀 시 자동 해제. */}
+      {offline && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-2 rounded-xl border border-[color:color-mix(in_srgb,var(--status-warning,#f59e0b)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-warning,#f59e0b)_12%,transparent)] px-4 py-2.5 text-xs font-bold text-[var(--status-warning,#b45309)]"
+        >
+          <span aria-hidden>📡</span>
+          오프라인 상태입니다. 인터넷 연결 후 새로고침하면 최신 정보로 갱신됩니다.
         </div>
       )}
 

@@ -137,21 +137,70 @@ def _validate_participants(participants: list[Participant], total_amount: int) -
 
 
 async def _ledger(ctx: SalesCtx, agreement_id: uuid.UUID, event: str, payload: dict) -> None:
-    """합의 이벤트를 해시체인 원장에 best-effort 기록(변조탐지·분쟁증거). 실패해도 본 흐름 무영향."""
+    """합의 이벤트를 해시체인 원장에 기록(변조탐지·분쟁증거). 본 흐름(합의 처리)은 막지 않되,
+    실패를 '조용히 무시'하지 않는다 — 분쟁 대비 정산 원장 무결성 보존이 목적이므로,
+    원장 봉인이 실패하면 WARN 로깅 + 감사기록(append_audit)으로 '봉인 실패 사실'을 강제로 남긴다.
+
+    append_analysis 자체가 예외를 흡수하고 dict 를 돌려주므로(ok=False/quota_exceeded), 그
+    실패신호도 점검해 audit 로 승격한다(은폐 금지). audit 기록까지 실패하면 그때만 WARN 후 통과.
+    """
+    tenant_id = getattr(ctx.user, "tenant_id", None)
+    tid = str(tenant_id) if tenant_id else None
+    failure_reason: str | None = None
     try:
         from app.services.ledger import analysis_ledger_service as ledger
-        tenant_id = getattr(ctx.user, "tenant_id", None)
-        await ledger.append_analysis(
+        res = await ledger.append_analysis(
             analysis_type="commission_agreement",
             payload={"event": event, "agreement_id": str(agreement_id),
                      "site_id": str(ctx.site_id), **payload},
-            tenant_id=str(tenant_id) if tenant_id else None,
+            tenant_id=tid,
             project_id=str(agreement_id),
             source="sales_commission",
             created_by=str(ctx.user.id),
         )
-    except Exception as e:  # noqa: BLE001 — 원장 기록 실패는 합의 처리를 막지 않음(정직표기)
-        logger.warning("수수료 합의 원장 기록 실패 — skipped", event=event, agreement_id=str(agreement_id), err=str(e)[:200])
+        # append_analysis 는 예외를 흡수하고 {ok: False, ...} 를 돌려줄 수 있다 — 실패신호 점검.
+        if isinstance(res, dict) and res.get("ok") is False:
+            failure_reason = res.get("message") or ("quota_exceeded" if res.get("quota_exceeded") else "append_failed")
+    except Exception as e:  # noqa: BLE001 — 원장 기록 실패는 합의 처리를 막지 않음(아래서 audit 로 승격)
+        failure_reason = str(e)[:200]
+
+    if failure_reason is None:
+        return
+    # ★봉인 실패 = 은폐 금지: WARN + 감사기록(audit) 강제 — 분쟁 대비 '봉인 실패' 흔적 보존.
+    #   structlog 는 첫 인자(메시지)를 내부적으로 'event' 로 쓰므로, 우리 도메인 이벤트는
+    #   반드시 다른 키(ledger_event)로 넘긴다 — event= 키 충돌 시 TypeError 로 로깅 자체가 깨져
+    #   '봉인 실패 흔적'을 또 잃는다(은폐의 재은폐). 그래서 키명을 분리한다.
+    logger.warning("수수료 합의 원장 봉인 실패 — audit 로 승격", ledger_event=event,
+                   agreement_id=str(agreement_id), reason=failure_reason)
+    # ★[은폐의 재은폐 차단] append_audit 도 내부에서 예외를 흡수하고 {ok: False}(특히 quota_exceeded)
+    #   를 돌려줄 수 있다. 봉인 실패의 가장 흔한 원인이 '쿼터 초과'인데, audit 적재 역시 같은 쿼터에
+    #   걸리면 raise 없이 {ok: False} 만 돌아와 '봉인 실패 흔적'까지 조용히 사라진다.
+    #   → 예외(append_audit raise) 와 'ok:False 반환'을 동일하게 취급해 최종 WARN 으로 강등한다
+    #     (둘 다 실패해도 최소 1줄 로그는 남겨 무음소실을 막는다).
+    audit_failed_reason: str | None = None
+    try:
+        from app.services.ledger import audit_ledger
+        ares = await audit_ledger.append_audit(
+            action=f"commission_agreement.ledger_seal_failed:{event}",
+            user_id=str(ctx.user.id),
+            resource_type="commission_agreement",
+            resource_id=str(agreement_id),
+            tenant_id=tid,
+            metadata={"site_id": str(ctx.site_id), "event": event, "reason": failure_reason},
+        )
+        # append_audit → append_analysis 도 {ok: False, ...} 를 돌려줄 수 있다(예: quota_exceeded).
+        if isinstance(ares, dict) and ares.get("ok") is False:
+            audit_failed_reason = ares.get("message") or (
+                "quota_exceeded" if ares.get("quota_exceeded") else "audit_append_failed")
+    except Exception as e2:  # noqa: BLE001 — audit 까지 실패하면 그때만 WARN 후 통과(본 흐름 무영향)
+        audit_failed_reason = str(e2)[:200]
+
+    if audit_failed_reason is not None:
+        # 봉인도 실패, audit 승격도 실패 — 최소 로그(sealed_failed_and_audit_skipped)로 강등.
+        #   (ledger_event 키 사용 — structlog 의 예약 키 'event'(메시지) 충돌 방지.)
+        logger.warning("수수료 합의 봉인실패 audit 기록도 실패 — sealed_failed_and_audit_skipped",
+                       ledger_event=event, agreement_id=str(agreement_id),
+                       seal_reason=failure_reason, audit_reason=audit_failed_reason)
 
 
 # ── 조회 헬퍼 ────────────────────────────────────────────────────────────────

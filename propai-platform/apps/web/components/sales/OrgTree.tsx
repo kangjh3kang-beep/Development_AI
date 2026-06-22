@@ -7,19 +7,48 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { ApiClientError } from "@/lib/api-client";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Node { id: string; path: string; node_type: string; display_name?: string | null }
 
-const NODE_TYPES: { value: string; label: string }[] = [
-  { value: "AGENCY", label: "분양대행사" },
-  { value: "SUBAGENCY", label: "대대행" },
-  { value: "GM_DIRECTOR", label: "총괄본부장" },
-  { value: "DIRECTOR", label: "본부장" },
+// ★[정합(iter-6)] 로스터 표는 상위 N명만 그린다(긴 조직 잘림). 표시행 합(footer '행 합')은 반드시
+//   '실제로 그린 행들'의 합과 일치해야 한다(과거엔 footer 가 서버 전체 로스터 합 roster_totals 를
+//   썼는데, 31명+ 현장에선 화면 30행 합 ≠ footer 라 사용자가 데이터 오류로 오해했다). 표시상한과
+//   합산을 순수 헬퍼로 분리해 화면·footer 가 같은 한 부를 쓰게 하고, 회귀를 테스트로 고정한다.
+export const ROSTER_DISPLAY_LIMIT = 30;
+type RosterRow = { contracts: number; customers: number; work_logs: number };
+/** 주어진 로스터 행들의 활동 합계(계약·고객·업무일지) — 표시행 합/전체 합 어디서나 동일 규칙. */
+export function sumRosterRows(rows: RosterRow[]): RosterRow {
+  return rows.reduce(
+    (acc, r) => ({
+      contracts: acc.contracts + (r.contracts || 0),
+      customers: acc.customers + (r.customers || 0),
+      work_logs: acc.work_logs + (r.work_logs || 0),
+    }),
+    { contracts: 0, customers: 0, work_logs: 0 },
+  );
+}
+
+// ★[라벨 SSOT(iter-7)] node_type→한국어 라벨의 정본은 '백엔드' overview._LABEL 한 부다.
+//   같은 화면에서 트리 배지(LABEL[node_type])는 프론트 상수를, 로스터 표(role_label)는 백엔드
+//   _LABEL 을 써서, 과거엔 DIRECTOR 같은 노드가 배지='본부장' vs 표='이사' 로 모순 표시됐다
+//   ('직급별 관리' 핵심가치 훼손). 그래서 프론트 라벨을 백엔드 _LABEL 과 6개 전부 byte-동일로
+//   맞춘다(트리배지·로스터표·드롭다운이 모두 같은 한국어 문자열). 위계는 도메인상 자연스러운
+//   '본부장(GM_DIRECTOR) > 이사(DIRECTOR)'(site_auth._ROLE_LABEL 과도 동일)를 정본으로 택했다.
+//   ★변경 시 백엔드 overview._LABEL 도 함께 바꿔야 하며, OrgTree.contract.test.ts·
+//     test_sales_org.py 가 두 소스의 라벨 '값' 일치를 회귀로 고정한다.
+// ★export(iter-7): OrgTree.contract.test.ts 가 라벨 '값' 패리티와 '트리배지=로스터표' 동일문자열을
+//   byte-동일로 고정할 수 있도록 NODE_TYPES·LABEL 을 내보낸다(테스트가 화면과 같은 한 부를 소비).
+export const NODE_TYPES: { value: string; label: string }[] = [
+  { value: "AGENCY", label: "대행본사" },
+  { value: "SUBAGENCY", label: "대행지사" },
+  { value: "GM_DIRECTOR", label: "본부장" },
+  { value: "DIRECTOR", label: "이사" },
   { value: "TEAM_LEADER", label: "팀장" },
-  { value: "MEMBER", label: "팀원" },
+  { value: "MEMBER", label: "직원" },
 ];
-const LABEL: Record<string, string> = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]));
+export const LABEL: Record<string, string> = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]));
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
 export default function OrgTree({ siteCode }: { siteCode: string }) {
@@ -31,8 +60,19 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [busy, setBusy] = useState(false);
   // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
   const [loaded, setLoaded] = useState(false);
-  type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
+  // Ov: 백엔드 TeamOverviewResponse(overview.py) 의 superset 중 프론트가 소비하는 키.
+  // ★[혼동해소(iter-3)] totals(범위 안 전체 노드 합 — 본사 AGENCY/SUBAGENCY 귀속분 포함)와
+  //   roster_totals(아래 표에 보이는 직급 행만의 합)를 둘 다 받아 화면에 명시한다. 과거엔 totals 만
+  //   소비해, '헤더 계약수(전체 합)'와 '표의 행 합'이 달라 보일 때 사용자가 데이터 오류로 오해했다
+  //   (본사 노드에 직접 귀속된 계약이 있으면 totals > 행 합). 두 합을 분리 표기해 혼동을 없앤다.
+  type Totals = { contracts: number; customers: number; work_logs: number };
+  type Ov = { members: number; totals: Totals; roster_totals?: Totals; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
   const [ov, setOv] = useState<Ov | null>(null);
+  // ★[정직성(iter-7)] team-overview 로드 실패를 화면에 명시한다. 과거엔 .catch(()=>setOv(null)) 가
+  //   401/403/5xx 를 모두 '패널 미표시'로 흡수해, 백엔드가 silent-fail 을 제거한 정직성이 화면에
+  //   전달되지 않았다(권한부족·서버오류를 사용자가 구분 못 함). 4xx=권한/요청 문제, 5xx=서버 오류로
+  //   나눠 인라인 안내한다(빈값 은폐 금지).
+  const [ovErr, setOvErr] = useState<{ kind: "auth" | "server"; status: number } | null>(null);
   // #5 해촉/정산 — 노드 수수료 정산 명세(기발생−기지급=미지급, 세금분개).
   type Settle = { tax_type: string; contracts: number; earned_gross: number; paid_gross: number; outstanding_gross: number; settlement: { withholding: number; vat: number; net: number; total_paid: number } };
   const [settle, setSettle] = useState<{ name: string; data: Settle } | null>(null);
@@ -40,7 +80,15 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const load = useCallback(() => {
     // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
     api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([])).finally(() => setLoaded(true));
-    api.get<Ov>("/org/team-overview").then((r) => setOv(r)).catch(() => setOv(null));
+    // team-overview: 성공 시 ov 세팅·에러 해제. 실패 시 status 로 권한(4xx)/서버(5xx)를 분류해 인라인
+    // 안내한다(은폐 금지). status 0(네트워크/타임아웃)도 서버오류로 분류해 '문제 있음'을 알린다.
+    api.get<Ov>("/org/team-overview")
+      .then((r) => { setOv(r); setOvErr(null); })
+      .catch((e) => {
+        const status = e instanceof ApiClientError ? e.status : 0;
+        setOv(null);
+        setOvErr({ kind: status >= 400 && status < 500 ? "auth" : "server", status });
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -93,25 +141,51 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     finally { setBusy(false); }
   };
 
+  // ★표시행(상위 N명)과 그 합을 한 번만 계산해, 표 본문(.map)과 footer '행 합'이 같은 한 부를
+  //   쓰도록 한다(화면 ≠ footer 불일치 차단). 전체 로스터 합은 서버 roster_totals 로 따로 명시한다.
+  const rosterAll = ov?.roster ?? [];
+  const rosterShown = rosterAll.slice(0, ROSTER_DISPLAY_LIMIT);
+  const shownTotals = sumRosterRows(rosterShown);
+  const isTruncated = rosterAll.length > rosterShown.length;
+  // ★[게이트 완화(iter-7)] 과거엔 ov.members>0 일 때만 패널을 그려, 로스터 직급(MEMBER~GM_DIRECTOR)이
+  //   0명이어도 본사(AGENCY/SUBAGENCY) 노드에 직접 귀속된 실적(totals/roster_totals)이 있으면 패널이
+  //   통째로 사라져 그 실적이 화면에서 소실됐다. 이제 '표시할 데이터가 하나라도 있으면'(관리대상 인원
+  //   또는 어떤 활동 합계가 0 초과) 패널을 그린다(본사 귀속 실적 소실 방지).
+  const tNonZero = (t?: Totals) => !!t && (t.contracts > 0 || t.customers > 0 || t.work_logs > 0);
+  const hasOvData = !!ov && (ov.members > 0 || tNonZero(ov.totals) || tNonZero(ov.roster_totals));
+
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
   return (
     <div className="space-y-4">
+      {/* ★[정직성(iter-7)] team-overview 로드 실패를 숨기지 않고 인라인 안내. 권한(4xx)/서버(5xx) 구분. */}
+      {ovErr && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-xs text-[var(--text-secondary)]">
+          {ovErr.kind === "auth" ? (
+            <span>팀 현황을 볼 권한이 없거나 현장 접근이 만료되었습니다(코드 {ovErr.status}). 현장 재진입 또는 관리자에게 권한을 확인하세요.</span>
+          ) : (
+            <span>팀 현황을 불러오지 못했습니다(서버 오류{ovErr.status ? ` 코드 ${ovErr.status}` : "·연결 실패"}). 잠시 후 다시 시도하세요.</span>
+          )}
+        </div>
+      )}
       {/* P2-3 팀 현황(내 하위 조직 활동 집계) */}
-      {ov && ov.members > 0 && (
+      {hasOvData && ov && (
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+          {/* 헤더는 '전체 합(totals)' — 범위 안 전체 노드(본사 AGENCY/SUBAGENCY 귀속분 포함)의 합계다.
+              아래 표의 행 합(roster_totals)과 다를 수 있어, 헤더에 '전체 합(본사 포함)'을 명시한다. */}
           <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
             <span className="font-bold text-[var(--text-secondary)]">팀 현황(하위 조직)</span>
             <span className="text-[var(--text-tertiary)]">관리대상 <b className="text-[var(--text-primary)]">{ov.members}</b>명</span>
-            <span className="text-[var(--text-tertiary)]">계약 <b className="text-[var(--accent-strong)]">{ov.totals.contracts}</b></span>
-            <span className="text-[var(--text-tertiary)]">고객 <b className="text-[var(--accent-strong)]">{ov.totals.customers}</b></span>
-            <span className="text-[var(--text-tertiary)]">업무일지 <b className="text-[var(--accent-strong)]">{ov.totals.work_logs}</b></span>
+            <span className="text-[var(--text-tertiary)]">전체 계약 <b className="text-[var(--accent-strong)]">{ov.totals.contracts}</b></span>
+            <span className="text-[var(--text-tertiary)]">전체 고객 <b className="text-[var(--accent-strong)]">{ov.totals.customers}</b></span>
+            <span className="text-[var(--text-tertiary)]">전체 업무일지 <b className="text-[var(--accent-strong)]">{ov.totals.work_logs}</b></span>
+            <span className="text-[9px] text-[var(--text-hint)]">전체 합(본사 포함)</span>
           </div>
           <div className="max-h-40 overflow-auto">
             <table className="w-full text-[11px]">
               <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-center font-medium">인원</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th><th className="text-center font-medium">정산</th></tr></thead>
               <tbody>
-                {ov.roster.slice(0, 30).map((r, i) => (
+                {rosterShown.map((r, i) => (
                   <tr key={i} className="border-t border-[var(--line)]/50">
                     <td className="py-0.5 text-[var(--text-tertiary)]">{r.role_label}</td>
                     <td className="text-[var(--text-secondary)]">{r.name}{!r.assigned && <span className="ml-1 text-[9px] text-[var(--text-hint)]">(미배정)</span>}</td>
@@ -130,8 +204,43 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
                   </tr>
                 ))}
               </tbody>
+              {/* ★[정합(iter-6)] footer '행 합'은 반드시 위에 '실제로 그린 행(상위 N명)'의 합이어야
+                  한다(shownTotals — 화면과 1:1). 전체 로스터 합(서버 roster_totals)은 표가 잘린 경우에만
+                  '로스터 전체 합' 행으로 따로 명시해, '화면 행 합'과 '전체 합'을 혼동하지 않게 한다.
+                  과거엔 footer 가 roster_totals(서버 전체 로스터 합)를 써서 31명+ 현장에선 보이는 30행
+                  합과 어긋났다(이 루프가 제거하려던 '행 합 vs 전체 합' 혼동의 재도입). */}
+              <tfoot>
+                <tr className="border-t-2 border-[var(--line)] font-bold text-[var(--text-secondary)]">
+                  <td className="py-0.5" colSpan={3}>행 합(표시 {rosterShown.length}명)</td>
+                  <td className="text-right text-[var(--text-primary)]">{shownTotals.contracts}</td>
+                  <td className="text-right text-[var(--text-primary)]">{shownTotals.customers}</td>
+                  <td className="text-right text-[var(--text-primary)]">{shownTotals.work_logs}</td>
+                  <td colSpan={2} />
+                </tr>
+                {/* 표가 잘린 경우에만(전체 > 표시) 서버 전체 로스터 합을 별도 행으로 명시. */}
+                {isTruncated && ov.roster_totals && (
+                  <tr className="border-t border-[var(--line)] text-[var(--text-tertiary)]">
+                    <td className="py-0.5" colSpan={3}>로스터 전체 합({rosterAll.length}명)</td>
+                    <td className="text-right">{ov.roster_totals.contracts}</td>
+                    <td className="text-right">{ov.roster_totals.customers}</td>
+                    <td className="text-right">{ov.roster_totals.work_logs}</td>
+                    <td colSpan={2} />
+                  </tr>
+                )}
+              </tfoot>
             </table>
           </div>
+          {isTruncated && (
+            <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+              상위 {rosterShown.length}명 표시 (총 {rosterAll.length}명) — 표 하단 <b>로스터 전체 합</b>은 전체 인원 기준입니다.
+            </p>
+          )}
+          <p className="mt-1 text-[10px] text-[var(--text-hint)]">
+            ※ 헤더 <b>전체 합</b>은 범위 안 전체 노드(본사 대행본사·대행지사 귀속 포함) 합계,
+            표 하단 <b>행 합</b>은 <b>위 표에 보이는 행</b>(상위 {rosterShown.length}명)만의 합계입니다.
+            인원이 많아 일부만 표시된 경우 <b>로스터 전체 합</b>(전체 직급 인원)을 함께 표기합니다 —
+            본사에 직접 귀속된 실적이 있으면 전체 합이 더 클 수 있습니다.
+          </p>
           <p className="mt-1 text-[10px] text-[var(--text-hint)]">근태·수수료·단체메시지는 각 전용 탭(수수료·방문 데스크·소셜)에서 관리합니다.</p>
         </div>
       )}
@@ -179,7 +288,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-[var(--text-hint)]">계층(대행사＞대대행＞총괄본부장＞본부장＞팀장＞팀원)은 수수료 2단 배분의 기준이 됩니다. 이동 시 하위 조직도 함께 이동합니다.</p>
+      <p className="text-[11px] text-[var(--text-hint)]">계층(대행본사＞대행지사＞본부장＞이사＞팀장＞직원)은 수수료 2단 배분의 기준이 됩니다. 이동 시 하위 조직도 함께 이동합니다.</p>
 
       {/* #5 해촉/정산 명세 모달 */}
       {settle && (
