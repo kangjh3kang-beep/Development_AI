@@ -393,7 +393,20 @@ class MolitClient(BaseAPIClient):
                     "jimok": str(g("jimok", "지목", "")),
                     "land_use": str(g("landUse", "용도지역", "")),
                 })
-            return result
+            # (Fix #2·감사 HIGH) 수집 검증 게이트 — 정의만 돼 있고 소비처 0건이던 TransactionRecord
+            # 스키마를 실수집 경로에 배선. 가격<=0·면적(0~1000)·층(-5~120) 위반행을 드롭한다
+            # (무목업: 가짜 생성 없이 드롭만, 드롭 사실은 로그로 관측).
+            from app.services.data_validation.validator import validate_transactions
+
+            validated, vreport = validate_transactions(result)
+            if vreport["dropped"]:
+                logger.warning(
+                    "실거래 스키마 검증 드롭",
+                    prop_type=prop_type,
+                    dropped=vreport["dropped"],
+                    accepted=vreport["accepted"],
+                )
+            return validated
         except Exception:
             logger.warning("실거래 파싱 실패", prop_type=prop_type)
             return []
