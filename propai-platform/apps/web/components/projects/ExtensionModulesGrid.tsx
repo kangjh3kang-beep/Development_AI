@@ -70,7 +70,7 @@ interface ExtensionModule {
 
 /** 도달불가 서브라우트 — 통합 분석(B6-2 신규 진입) + 부가 작업공간. 순서는 분석→여정(설계→적산→…) 기준. */
 const EXTENSION_MODULES: ExtensionModule[] = [
-  { route: "orchestrate", label: "통합 분석", code: "ORCHESTRATE", description: "토지→법률→설계→분양→수지→금융 9단계를 가이드/별도/선택/프로필로 실행하는 오케스트레이터." },
+  { route: "orchestrate", label: "통합 분석", code: "ORCHESTRATE", description: "토지→법률→설계→분양→수지→금융 전 단계를 「한 번에」 실행하고, 필요하면 단계별로 골라 실행합니다." },
   { route: "cad", label: "CAD·BIM 스튜디오", code: "CAD", description: "AI 설계안의 CAD 편집·3D 검토·DXF 내보내기 통합 스튜디오." },
   { route: "cost", label: "BIM 5D 적산", code: "COST", description: "BIM 물량 기반 공사비 적산 대시보드(QTO 엔진)." },
   { route: "contracts", label: "전자 계약", code: "CONTRACTS", description: "계약 관리 워크스페이스 — 계약 문서·진행 현황." },
