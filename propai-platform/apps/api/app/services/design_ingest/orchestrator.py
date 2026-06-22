@@ -54,6 +54,8 @@ class DesignRequest:
     width_m: float | None = None         # 부지 폭(m) — 건물 배치 폴리곤 정확화(미상 시 √면적 정사각)
     depth_m: float | None = None         # 부지 깊이(m)
     avg_unit_area_sqm: float = 84.0
+    land_category: str | None = None     # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지·종교 등)
+    special_districts: list | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
     tenant_id: str | None = None
     project_id: str | None = None
     top_n: int = 3
@@ -108,6 +110,47 @@ def _check_permit(zone_name: str | None, dev_type: str) -> dict | None:
         return check_permit_feasibility(dev_type, zone_name)
     except Exception as e:  # noqa: BLE001
         logger.info("design 오케스트레이터 인허가 판정 생략: %s", str(e)[:120])
+        return None
+
+
+def _detect_special(req: DesignRequest) -> dict | None:
+    """특이부지 게이트(전역규칙: detect_special_parcel 우선) — best-effort.
+
+    지목(land_category)·특별구역(special_districts)이 주어졌을 때만 판정한다(입력 없으면 None).
+    학교용지·GB·농지·산지·종교·맹지 등 비일상 토지를 감지해 일상 개발규모 산출을 게이팅.
+    반환: {is_special, developability, severity_label, resolvable, gate(BLOCK/TENTATIVE/PASS),
+           factors, note} 또는 None(특이 없음·입력 없음·판정 실패).
+    """
+    if not (req.land_category or req.special_districts):
+        return None
+    try:
+        from app.services.zoning.special_parcel import (
+            detect_special_parcel,
+            gate_decision,
+            tentative_marker,
+        )
+
+        sp = detect_special_parcel({
+            "land_category": req.land_category or "",
+            "zone_type": req.zone_name or "",
+            "special_districts": list(req.special_districts or []),
+        })
+        if not (sp and sp.get("is_special")):
+            return None
+        gate = gate_decision(sp.get("developability"), sp.get("resolvable"))
+        return {
+            "is_special": True,
+            "developability": sp.get("developability"),
+            "severity_label": sp.get("severity_label"),
+            "resolvable": sp.get("resolvable"),
+            "gate": gate,
+            "factors": sp.get("factors"),
+            "note": tentative_marker(
+                sp.get("developability"), sp.get("resolvable"), sp.get("severity_label")
+            ),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.info("design 오케스트레이터 특이부지 판정 생략: %s", str(e)[:120])
         return None
 
 
@@ -296,30 +339,40 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
     )
 
+    # ★특이부지 게이트(전역규칙: detect_special_parcel 우선) — 학교용지·GB·농지·산지·맹지 등
+    #   비일상 토지에 일상 buildable envelope를 무비판 생성하는 할루시네이션을 차단(정직).
+    special = _detect_special(req)
+    sp_gate = special["gate"] if special else "PASS"
+    blocked = sp_gate == "BLOCK"
+
     # 인허가 게이트(규칙기반, best-effort).
     permit = _check_permit(req.zone_name, req.dev_type)
     permit_ok = permit.get("is_permitted") if permit else None
     permit_complexity = permit.get("permit_complexity") if permit else None
 
     # 도면 검색(best-effort) — 용도지역명+용도 키워드로 풀 조회 후 조합.
-    query = SiteQuery(
-        zone_type=req.zone_name,
-        area_sqm=req.area_sqm,
-        keywords=req.building_use,
-        tenant_id=req.tenant_id,
-        project_id=req.project_id,
-    )
-    # 분야별 도면 세트 검색(broad 건축 + 비건축 분야 보강, 임베딩 1회). 분야 payload 없는
-    # 구(舊) 적재분은 분야필터에 안 걸리므로 빈 결과 시 plain search로 폴백(하위호환).
-    search = await search_design_set(
-        query, list(_SET_SUPPLEMENT_DISCIPLINES), broad_k=max(8, req.top_n * 3), k_each=2
-    )
-    matches = search.get("results", [])
-    if not matches:
-        search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+    #   특이부지 BLOCK이면 후보 미생성(가짜 개발규모 차단) — 검색·조합 생략.
+    search: dict = {"results": [], "skipped_reason": "special_parcel_blocked" if blocked else None}
+    matches: list = []
+    if not blocked:
+        query = SiteQuery(
+            zone_type=req.zone_name,
+            area_sqm=req.area_sqm,
+            keywords=req.building_use,
+            tenant_id=req.tenant_id,
+            project_id=req.project_id,
+        )
+        # 분야별 도면 세트 검색(broad 건축 + 비건축 분야 보강, 임베딩 1회). 분야 payload 없는
+        # 구(舊) 적재분은 분야필터에 안 걸리므로 빈 결과 시 plain search로 폴백(하위호환).
+        search = await search_design_set(
+            query, list(_SET_SUPPLEMENT_DISCIPLINES), broad_k=max(8, req.top_n * 3), k_each=2
+        )
         matches = search.get("results", [])
+        if not matches:
+            search = await search_drawings(query, top_k=max(3, req.top_n * 3))
+            matches = search.get("results", [])
 
-    candidates = compose(site, matches, top_n=req.top_n)
+    candidates = [] if blocked else compose(site, matches, top_n=req.top_n)
 
     proposals: list[dict] = []
     for c in candidates:
@@ -344,6 +397,13 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             key=lambda p: (rank[p["verdict"]["verdict"]], float(p["candidate"].get("score") or 0.0)),
         )
         recommendation = {"index": proposals.index(best), "verdict": best["verdict"]["verdict"]}
+
+    # ★특이부지 TENTATIVE — 후보는 산출하되 잠정 강등(확정 아님·확신 억제, 전역규칙).
+    if special is not None and sp_gate == "TENTATIVE":
+        for p in proposals:
+            p["candidate"].setdefault("warnings", []).append(special["note"])
+        if recommendation is not None:
+            recommendation["tentative"] = True
 
     # 검증·정직고지(선택형) — 추천안에 VerifierService 독립검증 배치([6] 단계).
     verification = None
@@ -378,6 +438,12 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         )
     if permit is None and req.zone_name is None:
         notes.append("용도지역명 미제공 — 인허가 가능성 미확인(zone_name 제공 시 판정)")
+    if special is not None:
+        _sl = special.get("severity_label") or "비일상 토지"
+        if sp_gate == "BLOCK":
+            notes.append(f"[특이부지] {_sl} — 개발 게이트(개발규모·수지 미산정). {special['note']}")
+        elif sp_gate == "TENTATIVE":
+            notes.append(f"[특이부지] {_sl} — 잠정(확정 아님). {special['note']}")
     notes.append("AI 보조 초안 — 최종 인허가·설계 책임은 건축사")
 
     # 성장 루프 신호(capture, PII 없음).
@@ -417,6 +483,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "ok": True,
         "site": site_summary,
         "permit": permit,
+        "special_parcel": special,  # 특이부지 게이트 결과(없으면 None) — 정직·할루시네이션 방어
         "proposals": proposals,
         "recommendation": recommendation,
         "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None

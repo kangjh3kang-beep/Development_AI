@@ -100,6 +100,8 @@ class GenerateRequest(BaseModel):
     ordinance_bcr_pct: float | None = None   # 조례 건폐율(실효, 있으면 우선)
     width_m: float | None = None             # 부지 폭(m) — 건물 배치 폴리곤 정확화(선택)
     depth_m: float | None = None             # 부지 깊이(m) — 선택
+    land_category: str | None = None         # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지 등)
+    special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
@@ -305,6 +307,8 @@ async def _validated_design_request(
         "ordinance_bcr_pct": req.ordinance_bcr_pct,
         "width_m": req.width_m,
         "depth_m": req.depth_m,
+        "land_category": req.land_category,
+        "special_districts": req.special_districts,
         "avg_unit_area_sqm": req.avg_unit_area_sqm,
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제

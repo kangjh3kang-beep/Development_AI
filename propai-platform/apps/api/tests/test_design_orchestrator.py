@@ -70,6 +70,45 @@ def test_generate_pass_with_recommendation(monkeypatch):
     )
 
 
+def test_generate_special_parcel_block_gb(monkeypatch):
+    # ★특이부지 BLOCK(개발제한구역) — 후보 미생성·추천 None(가짜 개발규모 차단·정직), 검색도 생략
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        special_districts=["개발제한구역"])
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["special_parcel"] and out["special_parcel"]["gate"] == "BLOCK"
+    assert out["proposals"] == [] and out["recommendation"] is None  # 가짜 규모 미산정
+    assert out["search_status"]["skipped_reason"] == "special_parcel_blocked"
+    assert any("특이부지" in n for n in out["notes"])
+
+
+def test_generate_special_parcel_tentative_school(monkeypatch):
+    # ★특이부지 TENTATIVE(학교용지) — 후보는 산출하되 잠정 강등(추천 tentative·경고 부착, 확정 아님)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        land_category="학교용지")
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["special_parcel"] and out["special_parcel"]["gate"] == "TENTATIVE"
+    assert out["proposals"]  # 후보는 생성됨
+    assert out["recommendation"] is not None and out["recommendation"].get("tentative") is True
+    # 잠정 사유가 후보 경고에 정직 부착
+    assert any("잠정" in w for w in out["proposals"][0]["candidate"].get("warnings", []))
+
+
+def test_generate_no_special_parcel_normal(monkeypatch):
+    # 일상 토지(지목 '대', 특별구역 없음) → 특이부지 None·통상 산출(무회귀)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        land_category="대")
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["special_parcel"] is None
+    assert out["proposals"] and out["recommendation"] is not None
+    assert "tentative" not in out["recommendation"]
+
+
 def test_generate_threads_site_dims_to_placement(monkeypatch):
     # ★PG3: 부지 실치수(width/depth)가 orchestrator→site_context→compute_placement까지 전달돼
     #   배치 폴리곤이 정사각 폴백이 아닌 실치수를 사용

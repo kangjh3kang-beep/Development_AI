@@ -100,6 +100,22 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         ["용적률 기준", far_src],
     ]))
 
+    # 특이부지 게이트(있을 때만) — 학교용지·GB·농지·맹지 등 비일상 토지 정직 고지(할루시네이션 방어)
+    sp = result.get("special_parcel") or {}
+    if sp.get("is_special"):
+        gate_label = {"BLOCK": "개발 게이트(개발규모 미산정)", "TENTATIVE": "잠정(확정 아님)",
+                      "PASS": "경미"}.get(str(sp.get("gate")), str(sp.get("gate") or "—"))
+        el.append(Paragraph("⚠ 특이부지 판정", h))
+        el.append(_kv([
+            ["유형/심각도", _fmt(sp.get("severity_label"))],
+            ["개발가능성", _fmt(sp.get("developability"))],
+            ["해결가능성", _fmt(sp.get("resolvable"))],
+            ["게이트", gate_label],
+        ]))
+        if sp.get("note"):
+            el.append(Spacer(1, 3))
+            el.append(Paragraph(str(sp["note"]), small))
+
     # S2 추천 설계안
     el.append(Paragraph("2. 추천 설계안", h))
     if not cand:
