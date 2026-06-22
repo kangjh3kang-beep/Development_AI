@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v288-enrich-185-fix";
+const CACHE_NAME = "propai-v289-envelope-legalrefs";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

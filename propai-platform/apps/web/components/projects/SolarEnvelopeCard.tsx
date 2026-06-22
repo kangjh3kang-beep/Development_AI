@@ -3,7 +3,7 @@
 /**
  * 정북일조 빌더블 인벨로프 카드(프로퍼티 주입형) — 인허가/설계 화면 공용.
  * /api/v1/site-score/envelope 호출 → 건축가능 최대 연면적·현실 층수·일조 손실률 + 동지 일영(그림자).
- * 한국 정북일조(건축법 시행령 §86)를 정량화 — 글로벌 툴이 모르는 차별점.
+ * 한국 정북일조(건축법 시행령 제86조)를 정량화 — 글로벌 툴이 모르는 차별점.
  */
 
 import { useEffect, useState } from "react";
@@ -126,7 +126,7 @@ export function SolarEnvelopeCard({
       label: "정북일조 천장",
       value: res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—",
       basis: res.applies_north_light
-        ? "정북 인접대지경계선 정북일조 사선(건축법 시행령 §86) 적분 최고선"
+        ? "정북 인접대지경계선 정북일조 사선(건축법 시행령 제86조) 적분 최고선"
         : "정북일조 미적용 용도(사선 제한 없음)",
     },
     {

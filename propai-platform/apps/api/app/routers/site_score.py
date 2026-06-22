@@ -258,4 +258,27 @@ async def buildable_envelope(req: EnvelopeRequest):
     result["geometry_source"] = geom_source
     if road_side:
         result["road_side"] = road_side   # 접도 유형(가로구역 최고높이·개발여건 참고)
+    # ── 전역정책 Phase0: 근거·법령 공용 블록 가산(additive·graceful·다른 site-score 엔드포인트 동일 패턴) ──
+    #   건축가능범위 산출근거에 용적률/건폐율(국토계획법 제76·78조·시행령 제85조)·정북일조(건축법
+    #   제61조·시행령 제86조) 법령링크를 제공한다(진실원천 배선 누락 해소). § 기호 대신 '제N조' 통상어.
+    #   기존 키(far_pct·daylight_ceiling_m 등) 무손상, evidence/legal_refs만 추가. 산식(solar_envelope) 미접촉.
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+        far_pct = result.get("far_pct")
+        bcr_pct = result.get("bcr_pct")
+        dc_m = result.get("daylight_ceiling_m")
+        result.setdefault("evidence", [
+            {"label": "용적률 허용 연면적", "value": f"{round(result.get('far_gfa_sqm') or 0):,}㎡",
+             "basis": f"대지면적 × 용적률 {far_pct if far_pct is not None else '—'}%", "legal_ref_key": "far_limit"},
+            {"label": "법정 건폐율", "value": f"{bcr_pct if bcr_pct is not None else '—'}%",
+             "basis": "용도지역 안에서의 건폐율(국토계획법 시행령 제84조)", "legal_ref_key": "bcr_limit"},
+            {"label": "일조 규제 높이 한도", "value": (f"{dc_m}m" if dc_m is not None else "—"),
+             "basis": "정북방향 인접대지경계선 일조 사선제한(건축법 제61조·시행령 제86조)",
+             "legal_ref_key": "daylight_height_dec"},
+        ])
+        result.setdefault("legal_refs", get_legal_refs(
+            ["far_law", "far_limit", "bcr_law", "bcr_limit", "daylight_height", "daylight_height_dec"]
+        ))
+    except Exception:  # noqa: BLE001 — 근거 블록 실패해도 인벨로프 결과 무손상
+        pass
     return result

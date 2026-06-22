@@ -125,7 +125,7 @@ export function BuildableEnvelopeCard() {
       label: "일조 규제 높이 한도",
       value: res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—",
       basis: res.applies_north_light
-        ? "정북 인접대지경계선 정북일조 사선(건축법 시행령 §86) 적분 최고선"
+        ? "정북 인접대지경계선 정북일조 사선(건축법 시행령 제86조) 적분 최고선"
         : "정북일조 미적용 용도(사선 제한 없음)",
     },
     {
