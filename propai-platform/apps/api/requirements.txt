@@ -77,7 +77,9 @@ structlog==24.4.0
 pytz==2024.2
 
 # Energy Simulation
-eppy==0.5.63
+# eppy 제거: 코드 import 0건(미구현 계획 의존)인데 beautifulsoup4<=4.8.0을 강제해 전체 의존성
+# 설치를 ResolutionImpossible로 차단(langchain 등은 bs4 4.12 필요). 에너지 시뮬 실제 구현 시
+# bs4 호환 버전으로 재도입할 것.
 
 # ML Experiment Tracking
 mlflow==2.17.2
