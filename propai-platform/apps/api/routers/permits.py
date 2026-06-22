@@ -430,5 +430,31 @@ async def ai_permit_analysis(
     result = await PermitAnalysisService().analyze(
         addr, req.site or {}, parcels=req.parcels, use_llm=req.use_llm
     )
+    # ── 전역정책 Phase0: 인허가 분석 결과에 근거·법령링크 공용블록 가산(additive·graceful·response_model 없음) ──
+    #   인허가 가능성 판정의 법적 근거(국토계획법 용도지역·건폐·용적, 건축법 건폐·용적·일조, 지자체 조례)를
+    #   클릭 가능한 법령링크로 제공한다(진실원천 배선갭 해소·레지스트리 verified 키 사용). 기존 result 무손상,
+    #   evidence/legal_refs/provenance만 setdefault로 가산(이미 있으면 보존). 조례는 시군구로 url 치환.
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        # 조례 url 치환용 시군구 추출 — ★'구'(자치구·가장 구체적)를 우선하고, 없으면 마지막 시/군을
+        #   쓴다. '서울특별시 동작구'에서 첫 매칭(서울특별시·광역시)을 잡으면 조례가 엉뚱한 광역시로
+        #   가리키므로(구 단위 조례 다수), 구를 우선해 '동작구 도시계획 조례'로 정확히 치환한다.
+        _sg_toks = [t for t in addr.split() if len(t) >= 2 and t.endswith(("구", "시", "군"))]
+        sg = next((t for t in _sg_toks if t.endswith("구")), None) or (_sg_toks[-1] if _sg_toks else None)
+        ev_block = build_evidence_block(
+            legal_ref_keys=[
+                "zone_use", "bcr_law", "far_law", "bldg_bcr", "bldg_far",
+                "daylight_height", "ordinance_bcr", "ordinance_far",
+            ],
+            sigungu=sg,
+            # provenance 출처는 레지스트리 등록명만(미등록명은 registered:false 무의미). VWorld 토지특성=vworld_land_info.
+            sources=["vworld_land_info"],
+        )
+        for _k in ("evidence", "legal_refs", "provenance"):
+            if ev_block.get(_k):
+                result.setdefault(_k, ev_block[_k])
+    except Exception:  # noqa: BLE001 — 근거블록 실패해도 인허가 분석 결과 무손상
+        pass
     await cache_put("permit_ai_analysis", cache_key, result)
     return result
