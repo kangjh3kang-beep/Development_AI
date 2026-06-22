@@ -211,12 +211,57 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     }
   }, [projectId, siteAnalysis, setRows]);
 
-  // 프로젝트 전환 시 토지조서가 비어있으면 부지분석 필지로 자동 시드(기존 작업은 보존)
+  // ★자동 시드/재시드 — 프로젝트 전환·필지수 증가 시 부지분석 필지(전체)로 토지조서를 채운다.
+  //   근본버그: 이전에 일부(예: 5)만 시드된 상태에서 부지분석이 전체 필지(예: 33)로 갱신돼도
+  //   `rows.length>0`만 보고 재시드를 차단해 5필지에 고착됐다(전문분석↔토지조서 불일치).
+  //   재시드 트리거:
+  //     (a) 토지조서가 비어있거나, (b) 직전 시드 프로젝트와 현재가 다르면(전환·재마운트 직후),
+  //     (c) 같은 프로젝트에서 부지분석 필지수가 직전 시드 필지수보다 늘었으면(예: 5→33).
+  //   ★편집 무손실 핵심:
+  //     - 같은 프로젝트에서 행 수가 이미 부지분석 필지수 이상이면(완성 시드 + 사용자 편집/추가)
+  //       재시드하지 않는다(rows.length>=parcelCount 가드).
+  //     - 재마운트 시(last=null) 행 수가 부지분석 필지수 이상이면 '완성된 기존 작업'으로 보고
+  //       보존하고, 부지분석 필지수보다 적으면(부분 5필지) 전체로 재시드한다(고착 해소).
+  const lastSeededRef = useRef<{ projectId: string; parcelCount: number } | null>(null);
   useEffect(() => {
     if (!projectId) return;
-    if (rows.length > 0) return;
-    if (!siteAnalysis?.parcels?.length && !siteAnalysis?.address) return;
+    const parcelCount = siteAnalysis?.parcels?.length ?? 0;
+    if (parcelCount === 0 && !siteAnalysis?.address) return;
+    const last = lastSeededRef.current;
+    const sameProject = last?.projectId === projectId;
+
+    // 이미 부지분석 필지수만큼(이상) 채워져 있으면 완성 시드로 간주 — 사용자 편집 보존.
+    //   (parcelCount===0 단일 폴백은 rows.length>0이면 보존.)
+    const alreadyComplete =
+      rows.length > 0 &&
+      (parcelCount === 0 ? true : rows.length >= parcelCount);
+
+    let needsSeed: boolean;
+    if (rows.length === 0) {
+      needsSeed = true; // 비어있음 → 최초 시드
+    } else if (sameProject) {
+      // 같은 프로젝트: 부지분석 필지수가 마지막 시드보다 늘었고 아직 다 못 채웠을 때만 재시드.
+      needsSeed = parcelCount > 0 && rows.length < parcelCount && last!.parcelCount < parcelCount;
+    } else {
+      // 다른 프로젝트(전환·재마운트): 완성 상태가 아니면(부분/고착) 재시드, 완성이면 보존.
+      needsSeed = !alreadyComplete;
+    }
+    if (!needsSeed) {
+      // 보존 시에도 현재 상태를 기록해 이후 비교 기준을 맞춘다(중복 시드 방지).
+      if (!sameProject) lastSeededRef.current = { projectId, parcelCount: Math.max(parcelCount, rows.length) || 1 };
+      return;
+    }
+
+    // 다른 프로젝트로 전환했는데 행이 남아있고 부지분석 필지가 아직 없으면(전환 직후 컨텍스트
+    // 미수신) 잘못 비우지 않도록 시드 보류 — parcels가 도착하면 다시 평가된다.
+    if (!sameProject && rows.length > 0 && parcelCount === 0) {
+      return;
+    }
     loadFromProject();
+    lastSeededRef.current = {
+      projectId,
+      parcelCount: parcelCount || 1,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -10,6 +10,7 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -347,6 +348,29 @@ export function ProjectPermitWorkspaceClient({
         current.buildingType || projectQuery.data.building_type || "공동주택",
     }));
   }, [projectQuery.data]);
+
+  // ★다필지 통합면적 우선: 프로젝트 레코드 total_area_sqm은 대표(단일) 면적일 수 있어
+  //   다필지 부지에서 인허가 가능규모(건축면적·연면적) 산정이 1필지 기준으로 축소된다.
+  //   부지분석 SSOT의 통합면적(effectiveLandAreaSqm)으로 폼 대지면적을 보정해
+  //   /building-compliance/check가 전체 필지 통합 기준으로 가능규모를 산정하게 한다.
+  //   단일필지면 effectiveLandAreaSqm=landAreaSqm이라 무회귀.
+  // ★LOW fix(수동편집 클로버 방지): 같은 통합면적은 1회만 보정한다. 보정 후 사용자가 폼 면적을
+  //   수동조정했는데 siteAnalysis가 무관한 이유로 다시 바뀌어도 같은 eff면 재보정하지 않는다.
+  //   통합면적 자체가 변하면(필지 추가 등) 새 eff로 1회 보정(그 변화는 반영이 타당).
+  const lastAppliedAreaRef = useRef<number | null>(null);
+  useEffect(() => {
+    const isMulti = (siteAnalysis?.parcelCount ?? 1) > 1;
+    if (!isMulti) return;
+    const eff = effectiveLandAreaSqm(siteAnalysis);
+    if (eff == null || eff <= 0) return;
+    if (lastAppliedAreaRef.current === eff) return;
+    lastAppliedAreaRef.current = eff;
+    setForm((current) =>
+      current.areaSqm === String(eff)
+        ? current
+        : { ...current, areaSqm: String(eff) },
+    );
+  }, [siteAnalysis]);
 
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)

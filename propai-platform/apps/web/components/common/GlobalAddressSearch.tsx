@@ -18,6 +18,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
 import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
@@ -627,6 +628,13 @@ export function GlobalAddressSearch({
         ownerType: "",
       })),
     });
+
+    // ★H2: 보강 완료 직후 서버 스냅샷 푸시를 명시적으로 예약한다. 평소엔 store 구독
+    //   (ProjectSyncProvider)이 updateSiteAnalysis 변화에 자동 예약하지만, 여기서 직접
+    //   호출해 전체 필지(parcels[])가 담긴 siteAnalysis가 /projects/{id}.analysis_snapshot에
+    //   확실히 영속되게 한다(재진입 시 1필지 스냅샷이 통합 필지를 덮어쓰던 H2 타이밍 버그 방지).
+    //   debounce·UUID·SSOT 무결성 가드는 scheduleSnapshotSync 내부에서 동일 적용된다.
+    scheduleSnapshotSync();
 
     // ★K3 재조준 폐기(이전 'K1 대표 재조준' 제거): 다필지는 이제 LandIntelligencePanel이
     //   /zoning/integrated-analysis로 전체 통합분석(면적가중 건폐/용적·통합GFA·인접성·통합 시나리오)을

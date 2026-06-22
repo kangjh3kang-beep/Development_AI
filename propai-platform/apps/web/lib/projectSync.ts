@@ -333,8 +333,29 @@ export function applyRemoteSnapshot(
   const localTs = _maxTs(ctx.updatedAt);
   if (localTs > backendTs) return; // 로컬이 더 최신 → 보존
 
+  // ★H2 병합 가드: 로컬 siteAnalysis가 다필지(parcels[])를 이미 보유하는데, 들어오는
+  //   원격 스냅샷의 siteAnalysis가 필지 배열이 더 빈약(없음/대표 1필지)하면 — 보강(enrichParcels)
+  //   완료 전 시점에 푸시된 '대표 단일필지' 스냅샷이 timestamp만 같거나 살짝 높아 전체 필지를
+  //   덮어쓰는 타이밍 사고가 생긴다. 통합 필지를 보존하기 위해 siteAnalysis만 로컬값을 유지한다
+  //   (그 외 모듈은 원격 우선 규칙 그대로). 무목업: 로컬이 빈약하면 원격을 그대로 채택.
+  const localSA = ctx.siteAnalysis as { parcels?: unknown[] } | null;
+  const remoteSA = (effective.siteAnalysis ?? null) as { parcels?: unknown[] } | null;
+  const localParcelN = Array.isArray(localSA?.parcels) ? localSA!.parcels!.length : 0;
+  const remoteParcelN = Array.isArray(remoteSA?.parcels) ? remoteSA!.parcels!.length : 0;
+  // ★보존 조건은 '원격이 대표 단일/빈 아티팩트(<=1)'일 때로 좁힌다. 정당한 교차기기 필지
+  //   감소(예: 33→20 실편집, 원격 newer)는 remoteParcelN>1 이라 보존하지 않고 원격을 채택해
+  //   lost-update(원격 최신 무시)를 피한다 — 보강 전 '대표 1필지' 덮어쓰기 사고만 막는다.
+  const preserveLocalSiteAnalysis = localParcelN > 1 && remoteParcelN <= 1;
+  if (preserveLocalSiteAnalysis) {
+    console.warn(
+      `[projectSync] 원격 스냅샷이 대표 단일/빈 필지(${remoteParcelN}) — siteAnalysis는 로컬 통합 필지(${localParcelN}) 보존`,
+    );
+  }
+
   useProjectContextStore.setState({
-    siteAnalysis: (effective.siteAnalysis ?? null) as never,
+    siteAnalysis: (preserveLocalSiteAnalysis
+      ? ctx.siteAnalysis
+      : (effective.siteAnalysis ?? null)) as never,
     designData: (effective.designData ?? null) as never,
     feasibilityData: (effective.feasibilityData ?? null) as never,
     costData: (effective.costData ?? null) as never,
@@ -343,7 +364,19 @@ export function applyRemoteSnapshot(
     completedStages: (effective.completedStages ?? []) as never,
     currentStage: (effective.currentStage ?? null) as never,
     analysisResults: (effective.analysisResults ?? []) as never,
-    updatedAt: (effective.updatedAt ?? {}) as never,
+    // ★MEDIUM fix: siteAnalysis를 로컬(통합 다필지)로 보존할 때 updatedAt.siteAnalysis 도 로컬값을
+    //   유지한다. 그렇지 않고 원격(1필지 시대) updatedAt 을 통째로 덮으면, 보존한 다필지 면적과
+    //   원격에서 채택한 feasibility/design/cost(1필지 기준 매출·공사비)가 동시 표시되는데
+    //   isStale 이 둘의 updatedAt 을 같은 원격값으로 보아 stale 을 못 잡아 '조용한 불일치'가 된다.
+    //   siteAnalysis 타임스탬프를 로컬(=다필지 분석 시점, 더 최신)로 두면 isStale("feasibility"/
+    //   "design"/"cost")=true → 기존 자동재계산 CTA 가 떠 파생값을 통합 기준으로 치유한다.
+    updatedAt: (preserveLocalSiteAnalysis
+      ? {
+          ...(effective.updatedAt ?? {}),
+          siteAnalysis:
+            ((ctx.updatedAt as Record<string, number> | undefined)?.siteAnalysis) ?? Date.now(),
+        }
+      : (effective.updatedAt ?? {})) as never,
     // provenance·캐시 복원(currentSnapshot과 대칭) — 구 스냅샷(필드 부재)은 ?? {} 폴백.
     manualFields: (effective.manualFields ?? {}) as never,
     analysisCache: (effective.analysisCache ?? {}) as never,
