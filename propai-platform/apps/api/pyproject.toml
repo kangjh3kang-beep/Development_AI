@@ -121,6 +121,8 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 # FastAPI는 Depends()를 인자 기본값으로 사용하는 것이 표준 패턴
 "apps/api/routers/*.py" = ["B008"]
 "routers/*.py" = ["B008"]
+"app/routers/*.py" = ["B008"]
+"apps/api/app/routers/*.py" = ["B008"]
 "apps/api/auth/*.py" = ["B008"]
 "auth/*.py" = ["B008"]
 "apps/api/app/api/endpoints/**/*.py" = ["B008"]
