@@ -76,9 +76,14 @@ describe("DigitalTwinControlTowerWorkspaceClient", () => {
     renderWithQueryClient(<DigitalTwinControlTowerWorkspaceClient locale="en" />);
 
     expect(
-      await screen.findByText("Digital twin, risk, and permit readiness"),
+      await screen.findByText(
+        (_content, element) =>
+          element?.tagName.toLowerCase() === "h3" &&
+          element.textContent?.replace(/\s+/g, " ").trim() ===
+            "Digital twin, risk, and permit readiness.",
+      ),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Songdo Ops Tower")).toBeInTheDocument();
+    expect((await screen.findAllByText("Songdo Ops Tower")).length).toBeGreaterThan(0);
     expect(await screen.findByText("watch")).toBeInTheDocument();
     expect(await screen.findByText("Unified risk grade C with manageable downside.")).toBeInTheDocument();
     expect(await screen.findByText(/SEUMTER-20260325-OPS01-ABC123/)).toBeInTheDocument();
@@ -116,9 +121,9 @@ describe("DigitalTwinControlTowerWorkspaceClient", () => {
     renderWithQueryClient(<DigitalTwinControlTowerWorkspaceClient locale="en" />);
 
     await screen.findByText("Busan Ready Hub");
-    await userEvent.click(screen.getByRole("button", { name: "Save status snapshot" }));
-    await userEvent.click(screen.getByRole("button", { name: "Analyze unified risk" }));
-    await userEvent.click(screen.getByRole("button", { name: "Submit permit package" }));
+    await userEvent.click(screen.getByRole("button", { name: "COMMIT SNAPSHOT" }));
+    await userEvent.click(screen.getByRole("button", { name: "EXECUTE_RISK_AI" }));
+    await userEvent.click(screen.getByRole("button", { name: "INIT_LIFECYCLE" }));
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(

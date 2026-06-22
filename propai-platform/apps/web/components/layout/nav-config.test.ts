@@ -10,11 +10,10 @@ import {
 const NAV = buildPrimaryNav("en");
 
 describe("buildPrimaryNav", () => {
-  it("6 섹션 순서 + 게이팅", () => {
+  it("섹션 순서 + 게이팅(asset-ops는 운영단계 단절로 네비에서 숨김)", () => {
     expect(NAV.map((s) => s.id)).toEqual([
-      "review", "land-finance", "execution", "design", "asset-ops", "admin",
+      "review", "land-finance", "execution", "design", "admin",
     ]);
-    expect(NAV.find((s) => s.id === "asset-ops")?.assetOpsOnly).toBe(true);
     expect(NAV.find((s) => s.id === "admin")?.adminOnly).toBe(true);
   });
 
@@ -60,11 +59,13 @@ describe("자동 펼침(activeGroupIds / activeSectionIds)", () => {
   });
 
   it("리프 활성 → 섹션만 펼침(그룹 펼침 없음)", () => {
-    expect(activeSectionIds(NAV, "/en/g2b")).toEqual(["execution"]);
+    // 공공입찰(g2b)은 '사업 획득 채널'로 토지·자금(land-finance) 섹션의 리프다.
+    expect(activeSectionIds(NAV, "/en/g2b")).toEqual(["land-finance"]);
     expect(activeGroupIds(NAV, "/en/g2b")).toEqual([]);
   });
 
   it("nodeHasActive — 하위경로 포함", () => {
-    expect(nodeHasActive(NAV[0].items[2], "/en/projects/abc")).toBe(true); // 프로젝트 관리
+    const projects = NAV[0].items.find((n) => n.id === "projects")!; // 프로젝트 관리
+    expect(nodeHasActive(projects, "/en/projects/abc")).toBe(true);
   });
 });

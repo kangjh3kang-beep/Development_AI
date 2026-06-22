@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithQueryClient } from "@/test/render-with-query-client";
 import DigitalTwinPage from "../digital-twin/page";
 import MaintenancePage from "../maintenance/page";
 import TenantPage from "../tenant/page";
@@ -113,12 +114,20 @@ describe("Operations live pages", () => {
     expect(screen.getByText("hero-off")).toBeInTheDocument();
   });
 
-  it("renders the tenant page with the tenant-only workspace", async () => {
-    render(await TenantPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("renders the tenant page with the tenant management live workspace", async () => {
+    renderWithQueryClient(
+      await TenantPage({ params: Promise.resolve({ locale: "en" }) }),
+    );
 
-    expect(screen.getByText("테넌트 경험 센터")).toBeInTheDocument();
-    expect(screen.getByText("tenant")).toBeInTheDocument();
-    expect(screen.getByText("hero-off")).toBeInTheDocument();
+    // Page now renders TenantWorkspaceClient (a live useQuery workspace) only —
+    // no ModulePlaceholder / OperationsIntelligenceWorkspaceClient.
+    expect(
+      screen.getByText(
+        "View project-based tenant lists, lease status, and payment overview.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Payment overview")).toBeInTheDocument();
+    expect(screen.getByText("Tenant list")).toBeInTheDocument();
   });
 
   it("renders the digital twin page with the v53 control tower", async () => {

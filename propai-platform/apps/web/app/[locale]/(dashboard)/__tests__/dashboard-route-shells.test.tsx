@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithQueryClient } from "@/test/render-with-query-client";
 import CostPage from "../analytics/cost/page";
 import ESGPage from "../analytics/esg/page";
 import InvestmentPage from "../analytics/investment/page";
@@ -335,14 +336,24 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home with the premium hero and KPI cards", async () => {
+  it("renders the dashboard home with the command-center hero and project entry CTAs", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByText("PropAI")).toBeInTheDocument();
-    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
-    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
+    // 히어로: 차분한 분야 라벨 + 가치제안 헤드라인(딕셔너리 비의존 하드카피)
+    expect(screen.getByText("부동산 개발 분석")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.",
+      ),
+    ).toBeInTheDocument();
+    // 활성 진행 단계 섹션 헤더
+    expect(screen.getByText("활성 진행 단계")).toBeInTheDocument();
+    // 핵심 행동: 프로젝트 생성(accent) → /en/projects/new
+    expect(
+      screen.getByRole("link", { name: /프로젝트 생성/ }),
+    ).toHaveAttribute("href", "/en/projects/new");
+    // 활성 진행 단계 "전체 보기" → /en/projects
+    expect(screen.getByRole("link", { name: "전체 보기" })).toHaveAttribute(
       "href",
       "/en/projects",
     );
@@ -367,28 +378,43 @@ describe("Dashboard route shells", () => {
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
   });
 
-  it("renders the investment analytics shell with the live workspace", async () => {
+  it("renders the investment analytics shell with the feasibility console header", async () => {
     render(<InvestmentPage />);
 
-    expect(screen.getByText("투자 운영 컨트롤타워")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
+    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목
+    expect(
+      screen.getByText("INVESTMENT · FEASIBILITY CONSOLE"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("LIVE").length).toBeGreaterThan(0);
+    expect(screen.getByText("투자수익성 분석")).toBeInTheDocument();
   });
 
-  it("renders the ESG analytics shell with the energy workspace", async () => {
-    render(<ESGPage />);
+  it("renders the ESG analytics shell with the carbon console header and input form", async () => {
+    // ESGPage가 useAIAnalyze(useMutation)를 사용하므로 QueryClientProvider 필요
+    renderWithQueryClient(<ESGPage />);
 
-    expect(screen.getByText("에너지 인증 작업 공간")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("energy-workspace")).toHaveTextContent("en");
+    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목 + 입력 폼 라벨
+    expect(screen.getByText("ESG · CARBON CONSOLE")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("ESG / 탄소 경영")).toBeInTheDocument();
+    expect(screen.getByText("건물 정보 / INPUT")).toBeInTheDocument();
   });
 
-  it("renders the cost analytics shell with the cost workspace", async () => {
+  it("renders the cost analytics shell with the estimation console header and tabs", async () => {
     render(<CostPage />);
 
-    expect(screen.getByText("공사비 분석 허브")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("cost-workspace")).toHaveTextContent("en");
+    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목 + 탭 버튼
+    expect(
+      screen.getByText("COST · ESTIMATION CONSOLE"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("공사비 분석")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "단계별 분석" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "기성·실적관리(EVM)" }),
+    ).toBeInTheDocument();
   });
 
 });

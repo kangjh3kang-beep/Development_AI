@@ -3,13 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KakaoCallbackWorkspaceClient } from "@/components/auth/KakaoCallbackWorkspaceClient";
 import { apiClient } from "@/lib/api-client";
 
-const { pushMock } = vi.hoisted(() => ({
+const { pushMock, replaceMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: pushMock,
+    replace: replaceMock,
   }),
 }));
 
@@ -33,6 +35,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
   beforeEach(() => {
     window.localStorage.clear();
     pushMock.mockReset();
+    replaceMock.mockReset();
     vi.mocked(apiClient.post).mockReset();
   });
 
@@ -65,12 +68,13 @@ describe("KakaoCallbackWorkspaceClient", () => {
     });
 
     expect(
-      await screen.findByText(
-        "Kakao authentication completed and the browser session has been stored.",
-      ),
+      await screen.findByText("Welcome back. Taking you to the dashboard."),
     ).toBeInTheDocument();
     expect(window.localStorage.getItem("propai_access_token")).toBe(
       "kakao-access-001",
+    );
+    expect(window.localStorage.getItem("propai_refresh_token")).toBe(
+      "kakao-refresh-001",
     );
   });
 
@@ -84,9 +88,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
     );
 
     expect(
-      screen.getByText(
-        "The Kakao callback payload is incomplete. Check that the code parameter is present.",
-      ),
+      screen.getByText("The sign-in info is invalid. Please start over."),
     ).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
   });
