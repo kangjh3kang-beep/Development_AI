@@ -4,8 +4,10 @@
 # 마이그레이션+헬스확인 자동화: ./deploy_engine.sh (권장)
 services:
   # ── 엔진 전용 격리 DB(PostGIS) ── geoalchemy2/PostGIS 컬럼·review 스키마 사용.
+  # ★ARM64(A1 aarch64) 호환: 공식 postgis/postgis는 amd64 전용이라 ARM 호스트에서 크래시(Restarting 255).
+  #   imresamu/postgis는 멀티아치(amd64+arm64) PostGIS라 A1에서 정상 기동.
   deliberation-db:
-    image: postgis/postgis:16-3.4
+    image: imresamu/postgis:16-3.4
     container_name: deliberation-db
     restart: unless-stopped
     environment:
