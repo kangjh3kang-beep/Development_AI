@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v289-envelope-legalrefs";
+const CACHE_NAME = "propai-v290-isadmin-cache";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

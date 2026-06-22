@@ -12,6 +12,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { fetchIsAdmin } from "@/lib/use-is-admin";
 import { useUiReset } from "@/store/useUiReset";
 import {
   type NavNode,
@@ -54,11 +55,11 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
   useEffect(() => {
     let alive = true;
     Promise.all([
-      apiClient.get<{ is_admin?: boolean }>("/auth/is-admin", { useMock: false }).catch(() => ({ is_admin: false })),
+      // ★is-admin은 세션캐시(fetchIsAdmin) 공유 — use-is-admin 등 다른 소비처와 1회 호출만 공유(반복 왕복 제거).
+      fetchIsAdmin().catch(() => false),
       apiClient.get<{ role?: string }>("/auth/me", { useMock: false }).catch(() => ({ role: "" })),
-    ]).then(([a, u]) => {
+    ]).then(([admin, u]) => {
       if (!alive) return;
-      const admin = (a as { is_admin?: boolean })?.is_admin === true;
       const role = (u as { role?: string })?.role || "";
       setIsAdmin(admin);
       setIsAssetOps(admin || ["asset_manager", "operations", "운영관리자", "자산운용"].includes(role));
