@@ -391,8 +391,10 @@ def compute_placement(site: SiteContext) -> dict | None:
         )
     return {
         **base,
+        # area_sqm은 BCR footprint(actual_fp)로 캡 — w·d 개별 반올림이 곱에서 BCR을 초과(드리프트)
+        # 하지 않게 정직 클램프(스키매틱 rect는 유지, 보고 면적은 법적 footprint 이내).
         "building": {"x": bx, "y": by, "w": bldg_w, "d": bldg_d,
-                     "area_sqm": round(bldg_w * bldg_d, 1)},
+                     "area_sqm": round(min(bldg_w * bldg_d, actual_fp), 1)},
         "blocks": blocks,                   # 동별 배치 사각형(단일동이면 1개=building)
         "dong_count": n_dong,
         "gap_m": _DONG_GAP_M if n_dong > 1 else 0.0,

@@ -52,6 +52,9 @@ def _ref_link(key: str, sigungu: str | None = None) -> tuple[str, str | None]:
     article = r.get("article")
     if article:
         label = f"{label} {article}"
+    # 미치환 플레이스홀더({sigungu} 등) 리터럴 노출 방지 — sigungu 미상 시 정직 표기(근거 품질).
+    if "{sigungu}" in label:
+        label = label.replace("{sigungu}", "해당 지자체").strip() + " (시군구 미상)"
     return label, (r.get("url") or None)
 
 

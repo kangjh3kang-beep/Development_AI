@@ -148,6 +148,51 @@ def test_generate_verify_gated_and_attached(monkeypatch):
     assert out2["verification"] is None and calls["n"] == 0
 
 
+def test_verify_proposal_exception_returns_none(monkeypatch):
+    # ★안전망: VerifierService가 raise해도 _verify_proposal은 None 반환(생성 비차단·best-effort)
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+
+    class _BoomVerifier:
+        async def verify(self, *a, **k):
+            raise RuntimeError("verifier boom")
+
+    import app.services.verification.verifier_service as vs
+    monkeypatch.setattr(vs, "VerifierService", _BoomVerifier)
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_far_pct=200.0, far_source="ordinance")
+    out = _aio.run(orch._verify_proposal(site, {"estimated_gfa_sqm": 1500.0}, None, zone_name="제2종일반주거지역"))
+    assert out is None  # 예외 삼키고 None(비차단)
+
+
+def test_interpret_proposal_exception_returns_none(monkeypatch):
+    # ★안전망: DesignInterpreter가 raise해도 _interpret_proposal은 None 반환(생성 비차단)
+    import asyncio as _aio
+
+    from app.services.design_ingest.composition import SiteContext
+
+    class _BoomInterp:
+        def __init__(self, *a, **k):
+            raise RuntimeError("interp boom")
+
+    import app.services.ai.design_interpreter as di
+    monkeypatch.setattr(di, "DesignInterpreter", _BoomInterp)
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_far_pct=200.0, far_source="ordinance")
+    out = _aio.run(orch._interpret_proposal(site, {"estimated_gfa_sqm": 1500.0}))
+    assert out is None
+
+
+def test_generate_conditional_only_recommendation(monkeypatch):
+    # ★추천 우선순위: pass 없고 conditional만 있을 때 conditional이 추천됨(zone_name 미상→permit None→conditional)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name=None,
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["recommendation"] is not None
+    assert out["recommendation"]["verdict"] == "conditional"  # pass 없음 → conditional 추천
+    assert all(p["verdict"]["verdict"] != "pass" for p in out["proposals"])
+
+
 def test_verify_proposal_passes_zone_name_to_verifier(monkeypatch):
     # ★_verify_proposal이 VerifierService에 한글 zone_name+면적을 넘겨 법정한도 가드 활성화
     import asyncio as _aio

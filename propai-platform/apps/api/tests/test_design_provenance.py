@@ -6,10 +6,29 @@
 
 from app.services.design_ingest.composition import SiteContext
 from app.services.design_ingest.provenance import (
+    _ref_link,
     legal_envelope_evidence,
     permit_evidence,
     proposal_evidence,
 )
+
+
+def test_ref_link_sigungu_placeholder_sanitized():
+    # ★근거 품질: sigungu 미상 시 미치환 플레이스홀더 '{sigungu}'가 리터럴 노출되면 안 됨(정직).
+    label, link = _ref_link("ordinance_far", None)
+    assert "{" not in label and "}" not in label  # 플레이스홀더 누출 0
+    assert "시군구 미상" in label                   # 정직 표기
+    assert link is None                              # sigungu 미상 → pending(링크 없음)
+    label2, _ = _ref_link("ordinance_far", "강남구")
+    assert "강남구" in label2 and "{" not in label2  # sigungu 확정 시 정상 치환
+
+
+def test_legal_envelope_evidence_no_placeholder_leak():
+    # evidence source(PDF·프론트 칩에 노출)에 미치환 플레이스홀더 없음
+    s = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0,
+                    legal_far_pct=200.0, far_source="ordinance")
+    for e in legal_envelope_evidence(s, sigungu=None):
+        assert "{" not in str(e.to_dict().get("source"))
 
 
 def _ord_site():

@@ -109,6 +109,17 @@ def test_compose_est_gfa_no_underuse_warning_when_full():
     assert not any("법적 상한" in w and "상향 여지" in w for w in top.warnings)
 
 
+def test_compute_placement_area_not_exceed_bcr_footprint():
+    # ★정확성: 건물 area_sqm은 BCR footprint(actual_fp)를 초과하면 안 됨(w·d 개별반올림 드리프트 제거)
+    from app.services.design_ingest.composition import compute_placement
+    for w, d, bcr in [(40, 25, 60), (33, 33, 50), (50, 20, 70), (17, 23, 40)]:
+        s = _site(area_sqm=float(w * d), legal_bcr_pct=float(bcr), width_m=float(w), depth_m=float(d))
+        pl = compute_placement(s)
+        if pl and pl.get("building"):
+            actual_fp = min(s.buildable_footprint_sqm, pl["buildable_region_sqm"])
+            assert pl["building"]["area_sqm"] <= actual_fp + 0.05, (w, d, bcr)
+
+
 def test_compose_sources_provenance():
     # ★근거(provenance): 조합 출처가 채택 도면 종류·유사도·hash를 노출(어느 코퍼스에서 왔는지)
     s = _site()
