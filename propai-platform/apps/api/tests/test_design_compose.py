@@ -225,6 +225,61 @@ def test_compute_placement_tiny_site_no_fake_building():
     assert p["building"] is None and p["setback_binds"] is True
 
 
+# ── 다동(단지) 배치(PG2) ──
+
+def test_compute_placement_multi_dong_grid():
+    # 공동주택·대형 부지(footprint>1200) → 분동. 동수≥2·blocks=동수·각 동 부지 안·면적>0.
+    s = SiteContext(area_sqm=5000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=300.0,
+                    far_source="ordinance", width_m=100.0, depth_m=50.0, legal_setback_m=3.0,
+                    building_use_kr="공동주택")
+    p = compute_placement(s)
+    assert p["dong_count"] >= 2 and len(p["blocks"]) == p["dong_count"]
+    assert p["gap_m"] > 0
+    for b in p["blocks"]:
+        assert b["w"] > 0 and b["d"] > 0
+        assert b["x"] >= 3.0 - 0.05 and (b["x"] + b["w"]) <= 100.0 - 3.0 + 0.05  # 이격 경계 내
+        assert b["y"] >= 3.0 - 0.05 and (b["y"] + b["d"]) <= 50.0 - 3.0 + 0.05
+    assert any("단지 배치" in n for n in p["notes"])
+
+
+def test_compute_placement_multi_dong_asymmetric_within_bounds():
+    # 비대칭 부지에서도 라운딩 후 모든 동이 이격 경계 내(영역 클램프로 드리프트 0)
+    s = SiteContext(area_sqm=200.0 * 77.7, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=300.0,
+                    far_source="ordinance", width_m=200.0, depth_m=77.7, legal_setback_m=5.5,
+                    building_use_kr="공동주택")
+    p = compute_placement(s)
+    assert p["dong_count"] >= 2
+    for b in p["blocks"]:
+        assert b["w"] > 0 and b["d"] > 0
+        assert b["x"] >= 5.5 - 1e-6 and (b["x"] + b["w"]) <= 200.0 - 5.5 + 1e-6
+        assert b["y"] >= 5.5 - 1e-6 and (b["y"] + b["d"]) <= 77.7 - 5.5 + 1e-6
+
+
+def test_compute_placement_single_dong_for_nonresidential():
+    # 비주거(근생) → footprint 커도 단일 동(blocks 1개 = building), gap 0
+    s = SiteContext(area_sqm=5000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=300.0,
+                    far_source="ordinance", width_m=100.0, depth_m=50.0, legal_setback_m=3.0,
+                    building_use_kr="근린생활시설")
+    p = compute_placement(s)
+    assert p["dong_count"] == 1 and len(p["blocks"]) == 1 and p["gap_m"] == 0.0
+
+
+def test_compute_placement_small_apartment_single_dong():
+    # 공동주택이라도 footprint<=1동 상한(1200)이면 단일 동
+    s = _site(width_m=40.0, depth_m=25.0, legal_setback_m=3.0, building_use_kr="공동주택")
+    # area 1000·BCR60 → footprint 600 < 1200 → 단일
+    p = compute_placement(s)
+    assert p["dong_count"] == 1 and len(p["blocks"]) == 1
+
+
+def test_layout_dong_blocks_gap_too_large_returns_none():
+    from app.services.design_ingest.composition import _layout_dong_blocks
+    # 가용영역 10×10·동간거리 20 → 셀 음수 → None(단일 폴백 신호)
+    assert _layout_dong_blocks(0.0, 10.0, 10.0, 500.0, 4, 20.0) is None
+    # n<=1도 None(단일 경로 사용)
+    assert _layout_dong_blocks(0.0, 50.0, 50.0, 500.0, 1, 6.0) is None
+
+
 def test_compose_exposes_placement():
     # compose 결과 후보/to_dict에 placement(부지+건물 폴리곤) 노출
     s = _site(width_m=40.0, depth_m=25.0, legal_setback_m=3.0)

@@ -103,6 +103,9 @@ type Candidate = {
   placement?: {
     site: { w: number; d: number };
     building: { x: number; y: number; w: number; d: number; area_sqm: number } | null;
+    blocks?: { x: number; y: number; w: number; d: number }[];
+    dong_count?: number;
+    gap_m?: number;
     setback_m: number;
     buildable_region_sqm: number;
     setback_binds: boolean;
@@ -313,7 +316,12 @@ function PlacementSvg({
   const sd = placement.site.d;
   if (!(sw > 0) || !(sd > 0)) return null;
   const s = placement.setback_m;
-  const b = placement.building;
+  // 동별 블록(다동) 우선 렌더, 없으면 단일 building으로 폴백.
+  const blocks = placement.blocks?.length
+    ? placement.blocks
+    : placement.building
+      ? [placement.building]
+      : [];
   const scale = 260 / Math.max(sw, sd);
   return (
     <svg
@@ -340,9 +348,10 @@ function PlacementSvg({
           strokeDasharray="1 1"
         />
       )}
-      {/* 건물 footprint */}
-      {b && (
+      {/* 동별 footprint(다동 단지면 여러 개) */}
+      {blocks.map((b, i) => (
         <rect
+          key={`${b.x}-${b.y}-${i}`}
           x={b.x}
           y={b.y}
           width={b.w}
@@ -351,7 +360,7 @@ function PlacementSvg({
           stroke="var(--accent-strong)"
           strokeWidth={0.4}
         />
-      )}
+      ))}
     </svg>
   );
 }
@@ -1105,9 +1114,11 @@ export function DesignGenPanel({ projectId }: Props) {
                     {c.placement && (
                       <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
                         건물 배치(스키매틱): 부지 {c.placement.site.w}×{c.placement.site.d}m · 이격 {c.placement.setback_m}m
-                        {c.placement.building
-                          ? ` · 건물 ${c.placement.building.w}×${c.placement.building.d}m(${Math.round(c.placement.building.area_sqm)}㎡)`
-                          : " · 배치 불가"}
+                        {c.placement.dong_count && c.placement.dong_count > 1
+                          ? ` · ${c.placement.dong_count}개 동(동간거리 ${c.placement.gap_m}m)`
+                          : c.placement.building
+                            ? ` · 건물 ${c.placement.building.w}×${c.placement.building.d}m(${Math.round(c.placement.building.area_sqm)}㎡)`
+                            : " · 배치 불가"}
                         <PlacementSvg placement={c.placement} />
                         {c.placement.setback_binds && (
                           <span style={{ color: "var(--status-warning)" }}>

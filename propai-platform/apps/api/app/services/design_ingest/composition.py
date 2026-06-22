@@ -263,6 +263,51 @@ def compute_parking_layout(site: SiteContext, required_stalls: int | None) -> di
     }
 
 
+# 다동(단지) 배치 추정 상수 — 스키매틱(동수·동간거리·일조 정밀계획은 별도).
+_MAX_BLOCK_FP_SQM = 1200.0   # 동 1개 표준 plate 면적 상한(板상형 대형동 가정) — 초과 시 분동
+_MAX_DONG = 12               # 동수 상한(스키매틱 과밀 방지)
+_DONG_GAP_M = 6.0            # 개략 동간거리(일조 정밀계산 별도)
+_DONG_PLATE_RATIO = 2.5      # 동 板상형 폭:깊이 비(개략)
+
+
+def _layout_dong_blocks(
+    origin: float, region_w: float, region_d: float, total_fp: float, n: int, gap: float
+) -> list[dict] | None:
+    """가용영역(원점 offset=origin·크기 region_w×region_d)에 n개 동을 그리드 배치(부지 좌표계).
+
+    동 합계 footprint=total_fp(건폐율 보존), 동간거리 gap. 板상형 비율로 셀 내 중앙 배치.
+    동간거리·동크기가 셀에 안 들어가면 None(호출자 단일동 폴백). n<=1이면 None(단일 경로 사용).
+    """
+    if n <= 1 or region_w <= 0 or region_d <= 0 or total_fp <= 0:
+        return None
+    cols = max(1, math.ceil(math.sqrt(n)))
+    rows = max(1, math.ceil(n / cols))
+    cell_w = (region_w - (cols - 1) * gap) / cols
+    cell_d = (region_d - (rows - 1) * gap) / rows
+    if cell_w <= 0 or cell_d <= 0:
+        return None
+    per_fp = total_fp / n
+    bd = min(cell_d, max(2.0, math.sqrt(per_fp / _DONG_PLATE_RATIO)))
+    bw = min(cell_w, (per_fp / bd) if bd > 0 else cell_w)
+    if bw <= 0 or bd <= 0:
+        return None
+    right = origin + region_w   # 가용영역 우변/상변 — 라운딩 후 초과 방지(이격선 보장).
+    top = origin + region_d
+    blocks: list[dict] = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        cx = origin + c * (cell_w + gap)
+        cy = origin + r * (cell_d + gap)
+        bxr = round(cx + (cell_w - bw) / 2, 1)
+        byr = round(cy + (cell_d - bd) / 2, 1)
+        blocks.append({
+            "x": bxr, "y": byr,
+            "w": round(min(bw, right - bxr), 1),   # 영역 경계 클램프(라운딩 드리프트 제거)
+            "d": round(min(bd, top - byr), 1),
+        })
+    return blocks
+
+
 def compute_placement(site: SiteContext) -> dict | None:
     """부지 경계 내 이격 적용 건물 배치 폴리곤(스키매틱·좌표). 원점 (0,0)=부지 좌하단.
 
@@ -315,10 +360,28 @@ def compute_placement(site: SiteContext) -> dict | None:
                 "note": "이격 적용 시 유효 배치영역 없음(배치 불가·극소 부지)"}
     bx = round((site_w - bldg_w) / 2, 1)   # 부지 중앙 배치
     by = round((site_d - bldg_d) / 2, 1)
+
+    # 다동(단지) 배치 추정 — 공동주택이고 footprint가 1동 상한 초과면 분동(板상형 그리드).
+    # 그 외(비주거·소형)는 단일 동(=building rect). 그리드 불가 시 단일 폴백(정직).
+    use_kr = site.building_use_kr or ""
+    n_dong = (min(_MAX_DONG, math.ceil(actual_fp / _MAX_BLOCK_FP_SQM))
+              if (use_kr == "공동주택" and actual_fp > _MAX_BLOCK_FP_SQM) else 1)
+    blocks = _layout_dong_blocks(setback, region_w, region_d, actual_fp, n_dong, _DONG_GAP_M)
+    if not blocks:                          # 단일 동(또는 그리드 불가 폴백)
+        blocks = [{"x": bx, "y": by, "w": bldg_w, "d": bldg_d}]
+        n_dong = 1
+    if n_dong > 1:
+        notes.append(
+            f"단지 배치 개략 추정: {n_dong}개 동·동간거리 {_DONG_GAP_M}m(동수·일조 정밀계획 별도)"
+            " — blocks는 시각 스키매틱(동간공지로 합계<건폐율 가능)·면적/GFA는 건폐율 기준"
+        )
     return {
         **base,
         "building": {"x": bx, "y": by, "w": bldg_w, "d": bldg_d,
                      "area_sqm": round(bldg_w * bldg_d, 1)},
+        "blocks": blocks,                   # 동별 배치 사각형(단일동이면 1개=building)
+        "dong_count": n_dong,
+        "gap_m": _DONG_GAP_M if n_dong > 1 else 0.0,
         "setback_binds": setback_binds,
         "note": "스키매틱 배치(이격 적용·중앙) — 건축선/대지형상/맹지/램프 미반영(개략)",
     }
