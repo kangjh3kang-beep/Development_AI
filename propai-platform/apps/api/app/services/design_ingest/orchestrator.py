@@ -201,6 +201,7 @@ def _aggregate_parcels(req: DesignRequest) -> dict | None:
                 "land_category": p.get("land_category") or "",
                 "zone_type": zn or "",
                 "special_districts": list(p.get("special_districts") or []),
+                "area_sqm": area,  # 면적임계 규제(소방PBD·하수도 원인자부담·소규모환경평가) 단일경로 패리티
                 "pnu": p.get("pnu"), "address": p.get("address"),
             })
         return {
@@ -429,12 +430,19 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         _dom = agg.get("dominant_zone")
         eff_zone_name = _dom if (_dom and _dom != "mixed_review_required") else req.zone_name
         eff_area = agg.get("total_area_sqm") or req.area_sqm
+        # ★site 한도는 정확값(integrated_gfa/footprint=Σ per-parcel) 기준 far로 역산해 주입한다.
+        #   결측 필지가 있으면 blended×total은 과대해지므로(분모 불일치), integrated를 정합 기준으로
+        #   삼아 site.max_gfa = integrated_gfa가 되게 한다(과대추정 방지·정직). 결측 없으면 동일.
+        _ig, _if = agg.get("integrated_gfa_sqm"), agg.get("integrated_footprint_sqm")
+        eff_far = (round(_ig / eff_area * 100, 1) if (_ig and eff_area)
+                   else agg.get("blended_far_eff_pct") if agg.get("blended_far_eff_pct") is not None
+                   else req.ordinance_far_pct)
+        eff_bcr = (round(_if / eff_area * 100, 1) if (_if and eff_area)
+                   else agg.get("blended_bcr_eff_pct") if agg.get("blended_bcr_eff_pct") is not None
+                   else req.ordinance_bcr_pct)
         site = site_context_from_zone(
             req.zone_code, eff_area,
-            ordinance_far_pct=(agg.get("blended_far_eff_pct")
-                               if agg.get("blended_far_eff_pct") is not None else req.ordinance_far_pct),
-            ordinance_bcr_pct=(agg.get("blended_bcr_eff_pct")
-                               if agg.get("blended_bcr_eff_pct") is not None else req.ordinance_bcr_pct),
+            ordinance_far_pct=eff_far, ordinance_bcr_pct=eff_bcr,
             avg_unit_area_sqm=req.avg_unit_area_sqm,
             building_use_kr=map_building_use_kr(req.building_use),
         )
@@ -558,8 +566,12 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             f"{agg.get('blended_far_eff_pct')}%·통합GFA {round(agg.get('integrated_gfa_sqm') or 0):,}㎡"
             f"(대표 용도지역 {_zm}). " + (agg.get("far_basis_note") or "")
         )
+        notes.append("[다필지] 통합 연면적(정확)은 multi_parcel.integrated_gfa_sqm 기준(결측 필지 면적 제외).")
         for w in (agg.get("warnings") or [])[:4]:
             notes.append(f"[다필지] {w}")
+    elif req.parcels and len(req.parcels) >= 2:
+        # 다필지 입력했으나 통합 산출 실패(import/예외) → 단일 부지 기준 강등을 정직 고지(silent 금지).
+        notes.append("[다필지] 통합 산출 실패 — 단일 부지(대표값) 기준으로 평가했습니다.")
     if special is not None:
         _sl = special.get("severity_label") or "비일상 토지"
         if sp_gate == "BLOCK":
