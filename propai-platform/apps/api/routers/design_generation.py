@@ -69,6 +69,8 @@ _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 _MAX_AREA_SQM = 5_000_000.0
 _MAX_TOP_K = 50
 _MAX_TOP_N = 10
+# 다필지 통합 입력 상한 — 한 개발구역 통합 설계 규모(대량배치는 별도 parcel_batch 경로).
+_MAX_PARCELS = 200
 # 콜드스타트 배치 인제스트(표준설계 일괄적재) — 한 요청 파일 수 상한(DoS·과금 폭주 방지).
 _MAX_BATCH_FILES = 50
 # 배치 누적 용량 상한 — 거대 배치의 처리시간/외부 임베딩 호출 폭주 방어(파일당 25MB와 별개).
@@ -102,6 +104,8 @@ class GenerateRequest(BaseModel):
     depth_m: float | None = None             # 부지 깊이(m) — 선택
     land_category: str | None = None         # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지 등)
     special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
+    parcels: list[dict] | None = None        # 다필지(≥2) 통합 — 각 {area_sqm,zone_code,zone_name,
+    #   ordinance_far_pct,ordinance_bcr_pct,land_category,special_districts}. 주어지면 면적가중 통합
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     top_n: int = 3                           # 설계안 개수(1~10)
     project_id: str | None = None            # 연결 프로젝트(소유 검증됨)
@@ -295,6 +299,13 @@ async def _validated_design_request(
     for _label, _v in (("부지 폭", req.width_m), ("부지 깊이", req.depth_m)):
         if _v is not None and (not math.isfinite(_v) or _v <= 0 or _v > 100_000):
             raise HTTPException(status_code=422, detail=f"{_label}(m) 값이 올바르지 않습니다.")
+    if req.parcels is not None:  # 다필지 통합 입력 검증(각 필지 면적 양수·개수 상한)
+        if not isinstance(req.parcels, list) or len(req.parcels) > _MAX_PARCELS:
+            raise HTTPException(status_code=422, detail=f"필지 목록이 올바르지 않습니다(최대 {_MAX_PARCELS}개).")
+        for _p in req.parcels:
+            _a = _p.get("area_sqm") if isinstance(_p, dict) else None
+            if not isinstance(_a, (int, float)) or not math.isfinite(_a) or _a <= 0:
+                raise HTTPException(status_code=422, detail="각 필지의 대지면적(area_sqm)이 올바르지 않습니다.")
     await _verify_project_ownership(db, req.project_id, current.tenant_id)
 
     kwargs: dict[str, Any] = {
@@ -309,6 +320,7 @@ async def _validated_design_request(
         "depth_m": req.depth_m,
         "land_category": req.land_category,
         "special_districts": req.special_districts,
+        "parcels": req.parcels,
         "avg_unit_area_sqm": req.avg_unit_area_sqm,
         "top_n": max(1, min(req.top_n, _MAX_TOP_N)),
         "tenant_id": str(current.tenant_id),  # ★인증값 강제

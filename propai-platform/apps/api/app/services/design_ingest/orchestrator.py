@@ -56,6 +56,9 @@ class DesignRequest:
     avg_unit_area_sqm: float = 84.0
     land_category: str | None = None     # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지·종교 등)
     special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
+    # 다필지(≥2) 통합 입력 — 각 원소 {area_sqm, zone_code, zone_name, ordinance_far_pct,
+    #   ordinance_bcr_pct, land_category, special_districts}. 주어지면 면적가중 통합으로 우선.
+    parcels: list[dict] | None = None
     tenant_id: str | None = None
     project_id: str | None = None
     top_n: int = 3
@@ -157,6 +160,90 @@ def _detect_special(req: DesignRequest) -> dict | None:
         }
     except Exception as e:  # noqa: BLE001
         logger.info("design 오케스트레이터 특이부지 판정 생략: %s", str(e)[:120])
+        return None
+
+
+def _aggregate_parcels(req: DesignRequest) -> dict | None:
+    """다필지(≥2) 통합 — canonical 통합엔진 재사용(DRY·진실원천 일관). best-effort.
+
+    각 필지를 site_context_from_zone으로 실효/법정 한도 산출 → _aggregate_integrated_zoning
+    (면적가중 blended far/bcr·통합GFA=Σ면적×far_eff/100·dominant zone·zone_mix)로 집계,
+    detect_multi_parcel로 다필지 특이부지 게이트. 단일/입력없음이면 None.
+    반환: {aggregation, special(detect_multi_parcel), per_parcel} 또는 None.
+    """
+    parcels = req.parcels
+    if not parcels or len(parcels) < 2:
+        return None
+    try:
+        from app.services.zoning.special_parcel import (
+            _aggregate_integrated_zoning,
+            detect_multi_parcel,
+        )
+
+        enriched: list[dict] = []
+        sp_inputs: list[dict] = []
+        for p in parcels:
+            area = float(p.get("area_sqm") or 0)
+            zc = p.get("zone_code") or req.zone_code
+            zn = p.get("zone_name") or req.zone_name
+            of, ob = p.get("ordinance_far_pct"), p.get("ordinance_bcr_pct")
+            s_eff = site_context_from_zone(zc, area, ordinance_far_pct=of, ordinance_bcr_pct=ob)
+            s_leg = site_context_from_zone(zc, area)  # 조례 미적용 = 법정상한
+            enriched.append({
+                "area_sqm": area,
+                "zone_type": zn or zc,
+                "_far_eff": s_eff.legal_far_pct, "_bcr_eff": s_eff.legal_bcr_pct,
+                "_far_legal": s_leg.legal_far_pct, "_bcr_legal": s_leg.legal_bcr_pct,
+                # far_basis_note 정확화: 조례 미반영(=법정폴백)이면 '법정' 신호 포함.
+                "_far_basis": "조례 실효" if s_eff.far_source == "ordinance" else "법정상한(조례 미확보)",
+            })
+            sp_inputs.append({
+                "land_category": p.get("land_category") or "",
+                "zone_type": zn or "",
+                "special_districts": list(p.get("special_districts") or []),
+                "pnu": p.get("pnu"), "address": p.get("address"),
+            })
+        return {
+            "aggregation": _aggregate_integrated_zoning(enriched),
+            "special": detect_multi_parcel(sp_inputs),
+            "per_parcel": enriched,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.info("design 오케스트레이터 다필지 통합 생략: %s", str(e)[:120])
+        return None
+
+
+def _special_from_multi(ms: dict | None) -> dict | None:
+    """detect_multi_parcel 결과 → 단일 _detect_special과 동일 형태의 게이트 dict(또는 None).
+
+    전 필지 일상(POSSIBLE)이면 None. 아니면 gate_decision으로 BLOCK/TENTATIVE/PASS 환원.
+    """
+    if not ms or ms.get("developability") in (None, "POSSIBLE"):
+        return None
+    try:
+        from app.services.zoning.special_parcel import gate_decision, tentative_marker
+
+        gate = gate_decision(ms.get("developability"), ms.get("resolvable"))
+        if gate == "PASS":
+            return None
+        note = (
+            ms.get("honest_disclosure")
+            if gate == "BLOCK"
+            else tentative_marker(ms.get("developability"), ms.get("resolvable"))
+        )
+        blocking = ms.get("blocking_parcels") or []
+        return {
+            "is_special": True,
+            "developability": ms.get("developability"),
+            "severity_label": f"다필지 특이({ms.get('special_count', 0)}/{ms.get('parcel_count', 0)}필지)",
+            "resolvable": ms.get("resolvable"),
+            "gate": gate,
+            "factors": blocking,
+            "note": note or ms.get("note") or "다필지 특이부지 — 정밀 확인 필요.",
+            "multi_parcel": True,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.info("design 오케스트레이터 다필지 게이트 환원 생략: %s", str(e)[:120])
         return None
 
 
@@ -334,25 +421,43 @@ def _site_summary(site: SiteContext) -> dict:
 
 async def generate_design_proposals(req: DesignRequest) -> dict:
     """부지조건 → 검증된 설계 초안 Top-N(정직 판정·추천). 도면 없으면 평가만 반환."""
-    site = site_context_from_zone(
-        req.zone_code,
-        req.area_sqm,
-        ordinance_far_pct=req.ordinance_far_pct,
-        ordinance_bcr_pct=req.ordinance_bcr_pct,
-        width_m=req.width_m,                  # 부지 실치수 → 건물 배치 폴리곤 정확화
-        depth_m=req.depth_m,
-        avg_unit_area_sqm=req.avg_unit_area_sqm,
-        building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
-    )
-
-    # ★특이부지 게이트(전역규칙: detect_special_parcel 우선) — 학교용지·GB·농지·산지·맹지 등
-    #   비일상 토지에 일상 buildable envelope를 무비판 생성하는 할루시네이션을 차단(정직).
-    special = _detect_special(req)
+    # ★다필지 통합(≥2필지) — canonical 통합엔진 재사용: 면적가중 실효한도·통합GFA(Σ면적×far_eff)·
+    #   다필지 특이게이트. 통합 부지는 단일 사각형 아님 → 실치수 미사용(√면적 정사각·정직).
+    multi = _aggregate_parcels(req)
+    if multi:
+        agg = multi["aggregation"]
+        _dom = agg.get("dominant_zone")
+        eff_zone_name = _dom if (_dom and _dom != "mixed_review_required") else req.zone_name
+        eff_area = agg.get("total_area_sqm") or req.area_sqm
+        site = site_context_from_zone(
+            req.zone_code, eff_area,
+            ordinance_far_pct=(agg.get("blended_far_eff_pct")
+                               if agg.get("blended_far_eff_pct") is not None else req.ordinance_far_pct),
+            ordinance_bcr_pct=(agg.get("blended_bcr_eff_pct")
+                               if agg.get("blended_bcr_eff_pct") is not None else req.ordinance_bcr_pct),
+            avg_unit_area_sqm=req.avg_unit_area_sqm,
+            building_use_kr=map_building_use_kr(req.building_use),
+        )
+        special = _special_from_multi(multi["special"])
+    else:
+        eff_zone_name = req.zone_name
+        eff_area = req.area_sqm
+        site = site_context_from_zone(
+            req.zone_code, req.area_sqm,
+            ordinance_far_pct=req.ordinance_far_pct, ordinance_bcr_pct=req.ordinance_bcr_pct,
+            width_m=req.width_m,                  # 부지 실치수 → 건물 배치 폴리곤 정확화
+            depth_m=req.depth_m,
+            avg_unit_area_sqm=req.avg_unit_area_sqm,
+            building_use_kr=map_building_use_kr(req.building_use),  # 주차 산정용 표준 분류
+        )
+        # ★특이부지 게이트(전역규칙: detect_special_parcel 우선) — 학교용지·GB·농지·산지·맹지 등
+        #   비일상 토지에 일상 buildable envelope를 무비판 생성하는 할루시네이션을 차단(정직).
+        special = _detect_special(req)
     sp_gate = special["gate"] if special else "PASS"
     blocked = sp_gate == "BLOCK"
 
-    # 인허가 게이트(규칙기반, best-effort).
-    permit = _check_permit(req.zone_name, req.dev_type)
+    # 인허가 게이트(규칙기반, best-effort) — 다필지면 dominant(면적최대) 용도지역 기준.
+    permit = _check_permit(eff_zone_name, req.dev_type)
     permit_ok = permit.get("is_permitted") if permit else None
     permit_complexity = permit.get("permit_complexity") if permit else None
 
@@ -362,8 +467,8 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     matches: list = []
     if not blocked:
         query = SiteQuery(
-            zone_type=req.zone_name,
-            area_sqm=req.area_sqm,
+            zone_type=eff_zone_name,
+            area_sqm=eff_area,
             keywords=req.building_use,
             tenant_id=req.tenant_id,
             project_id=req.project_id,
@@ -415,7 +520,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     verification = None
     if req.verify and recommendation is not None:
         verification = await _verify_proposal(
-            site, proposals[recommendation["index"]]["candidate"], permit, zone_name=req.zone_name
+            site, proposals[recommendation["index"]]["candidate"], permit, zone_name=eff_zone_name
         )
 
     # LLM 해석(선택형) — 추천안에 DesignInterpreter 6섹션(왜 이 매스인지·법규부합·개선) 부착.
@@ -442,8 +547,19 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
             f"참조 도면 없음(검색 사유: {search.get('skipped_reason') or 'no_match'}) — "
             "인허가·법적 envelope 평가만 제공. 도면 업로드 시 설계 초안 생성."
         )
-    if permit is None and req.zone_name is None:
+    if permit is None and eff_zone_name is None:
         notes.append("용도지역명 미제공 — 인허가 가능성 미확인(zone_name 제공 시 판정)")
+    if multi is not None:
+        agg = multi["aggregation"]
+        _zm = agg.get("dominant_zone")
+        notes.append(
+            f"[다필지 통합] {agg.get('parcel_count')}개 필지·통합면적 "
+            f"{round(agg.get('total_area_sqm') or 0):,}㎡·면적가중 용적률 "
+            f"{agg.get('blended_far_eff_pct')}%·통합GFA {round(agg.get('integrated_gfa_sqm') or 0):,}㎡"
+            f"(대표 용도지역 {_zm}). " + (agg.get("far_basis_note") or "")
+        )
+        for w in (agg.get("warnings") or [])[:4]:
+            notes.append(f"[다필지] {w}")
     if special is not None:
         _sl = special.get("severity_label") or "비일상 토지"
         if sp_gate == "BLOCK":
@@ -490,6 +606,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "site": site_summary,
         "permit": permit,
         "special_parcel": special,  # 특이부지 게이트 결과(없으면 None) — 정직·할루시네이션 방어
+        "multi_parcel": multi,      # 다필지 통합 집계(없으면 None) — 면적가중 한도·통합GFA·필지별
         "proposals": proposals,
         "recommendation": recommendation,
         "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None

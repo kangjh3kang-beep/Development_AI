@@ -100,6 +100,21 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         ["용적률 기준", far_src],
     ]))
 
+    # 다필지 통합(있을 때만) — 면적가중 실효한도·통합GFA·대표 용도지역(정직·근거)
+    mp = (result.get("multi_parcel") or {}).get("aggregation") or {}
+    if mp:
+        el.append(Paragraph("다필지 통합", h))
+        el.append(_kv([
+            ["필지 수", _fmt(mp.get("parcel_count"), "개")],
+            ["통합 대지면적", _fmt(mp.get("total_area_sqm"), "㎡")],
+            ["대표 용도지역", _fmt(mp.get("dominant_zone"))],
+            ["면적가중 용적률(실효)", _fmt(mp.get("blended_far_eff_pct"), "%")],
+            ["통합 연면적(Σ필지별)", _fmt(mp.get("integrated_gfa_sqm"), "㎡")],
+        ]))
+        if mp.get("far_basis_note"):
+            el.append(Spacer(1, 3))
+            el.append(Paragraph(str(mp["far_basis_note"]), small))
+
     # 특이부지 게이트(있을 때만) — 학교용지·GB·농지·맹지 등 비일상 토지 정직 고지(할루시네이션 방어)
     sp = result.get("special_parcel") or {}
     if sp.get("is_special"):

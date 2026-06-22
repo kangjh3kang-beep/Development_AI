@@ -168,6 +168,16 @@ type GenerateResult = {
     gate: string;
     note?: string | null;
   } | null;
+  multi_parcel: {
+    aggregation: {
+      parcel_count?: number;
+      total_area_sqm?: number | null;
+      dominant_zone?: string | null;
+      blended_far_eff_pct?: number | null;
+      integrated_gfa_sqm?: number | null;
+      far_basis_note?: string | null;
+    };
+  } | null;
   proposals: Proposal[];
   recommendation: { index: number; verdict: string; tentative?: boolean } | null;
   verification?: {
@@ -1145,6 +1155,21 @@ export function DesignGenPanel({ projectId }: Props) {
                 <div className="mt-1.5 text-[var(--text-hint)]">
                   AI 보조 해석 — 수치는 추천안 데이터 기준, 최종 설계·인허가 책임은 건축사.
                 </div>
+              </div>
+            )}
+
+            {/* 다필지 통합 배너(있을 때만) — 면적가중 실효한도·통합GFA·대표 용도지역 */}
+            {result.multi_parcel?.aggregation && (
+              <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs">
+                <div className="font-bold text-[var(--text-primary)]">
+                  🗺 다필지 통합: {result.multi_parcel.aggregation.parcel_count}개 필지 · 통합면적 {(result.multi_parcel.aggregation.total_area_sqm || 0).toLocaleString()}㎡
+                </div>
+                <div className="mt-0.5 text-[var(--text-secondary)]">
+                  대표 용도지역 {result.multi_parcel.aggregation.dominant_zone || "—"} · 면적가중 용적률(실효) {result.multi_parcel.aggregation.blended_far_eff_pct ?? "—"}% · 통합 연면적 {(result.multi_parcel.aggregation.integrated_gfa_sqm || 0).toLocaleString()}㎡
+                </div>
+                {result.multi_parcel.aggregation.far_basis_note && (
+                  <div className="mt-0.5 text-[var(--text-tertiary)]">{result.multi_parcel.aggregation.far_basis_note}</div>
+                )}
               </div>
             )}
 

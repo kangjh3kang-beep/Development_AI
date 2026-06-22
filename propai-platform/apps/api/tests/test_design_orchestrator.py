@@ -109,6 +109,55 @@ def test_generate_no_special_parcel_normal(monkeypatch):
     assert "tentative" not in out["recommendation"]
 
 
+def test_generate_multi_parcel_aggregation(monkeypatch):
+    # ★다필지 통합: 2필지(제2종 1000㎡·far200 + 준주거 2000㎡·far400) → 면적가중 통합
+    _patch_search(monkeypatch, [_fp_match()])
+    parcels = [
+        {"area_sqm": 1000.0, "zone_code": "2R", "zone_name": "제2종일반주거지역",
+         "ordinance_far_pct": 200.0, "ordinance_bcr_pct": 60.0},
+        {"area_sqm": 2000.0, "zone_code": "3R", "zone_name": "준주거지역",
+         "ordinance_far_pct": 400.0, "ordinance_bcr_pct": 60.0},
+    ]
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", parcels=parcels)
+    out = asyncio.run(generate_design_proposals(req))
+    agg = out["multi_parcel"]["aggregation"]
+    assert agg["total_area_sqm"] == 3000.0                       # 통합면적
+    assert agg["blended_far_eff_pct"] == 333.3                   # 면적가중 (200×1000+400×2000)/3000
+    assert agg["integrated_gfa_sqm"] == 10000.0                  # Σ면적×far/100 (혼재 과대방지)
+    assert agg["dominant_zone"] == "준주거지역"                   # 면적최대(2000)
+    assert out["proposals"]                                       # 통합 부지로 설계안 생성
+    assert any("다필지 통합" in n for n in out["notes"])
+
+
+def test_generate_multi_parcel_special_block(monkeypatch):
+    # ★다필지 + GB 필지 포함 → 사업 전체 BLOCK(가장 제약 큰 필지가 좌우)·후보 미생성
+    _patch_search(monkeypatch, [_fp_match()])
+    parcels = [
+        {"area_sqm": 1000.0, "zone_code": "2R", "zone_name": "제2종일반주거지역",
+         "ordinance_far_pct": 200.0, "ordinance_bcr_pct": 60.0},
+        {"area_sqm": 500.0, "zone_code": "2R", "zone_name": "제2종일반주거지역",
+         "special_districts": ["개발제한구역"]},
+    ]
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", parcels=parcels)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["special_parcel"] and out["special_parcel"]["gate"] == "BLOCK"
+    assert out["special_parcel"].get("multi_parcel") is True
+    assert out["proposals"] == [] and out["recommendation"] is None
+
+
+def test_generate_single_parcel_no_multi(monkeypatch):
+    # 1필지(또는 parcels 없음)는 통합 미적용(multi_parcel None·기존 단일경로 무회귀)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        parcels=[{"area_sqm": 1000.0, "zone_code": "2R"}])  # 1필지
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["multi_parcel"] is None
+    assert out["proposals"] and out["recommendation"] is not None
+
+
 def test_generate_threads_site_dims_to_placement(monkeypatch):
     # ★PG3: 부지 실치수(width/depth)가 orchestrator→site_context→compute_placement까지 전달돼
     #   배치 폴리곤이 정사각 폴백이 아닌 실치수를 사용
