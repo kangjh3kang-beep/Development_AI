@@ -55,7 +55,7 @@ class DesignRequest:
     depth_m: float | None = None         # 부지 깊이(m)
     avg_unit_area_sqm: float = 84.0
     land_category: str | None = None     # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지·종교 등)
-    special_districts: list | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
+    special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
     tenant_id: str | None = None
     project_id: str | None = None
     top_n: int = 3
@@ -138,6 +138,14 @@ def _detect_special(req: DesignRequest) -> dict | None:
         if not (sp and sp.get("is_special")):
             return None
         gate = gate_decision(sp.get("developability"), sp.get("resolvable"))
+        # 게이트별 정직 문구: BLOCK은 '개발 불가' 정직고지, TENTATIVE는 '잠정·선행절차 전제'.
+        note = (
+            (sp.get("honest_disclosure") or "현 상태로는 일반 개발이 어려운 토지입니다(개발 불가).")
+            if gate == "BLOCK"
+            else tentative_marker(
+                sp.get("developability"), sp.get("resolvable"), sp.get("severity_label")
+            )
+        )
         return {
             "is_special": True,
             "developability": sp.get("developability"),
@@ -145,9 +153,7 @@ def _detect_special(req: DesignRequest) -> dict | None:
             "resolvable": sp.get("resolvable"),
             "gate": gate,
             "factors": sp.get("factors"),
-            "note": tentative_marker(
-                sp.get("developability"), sp.get("resolvable"), sp.get("severity_label")
-            ),
+            "note": note,
         }
     except Exception as e:  # noqa: BLE001
         logger.info("design 오케스트레이터 특이부지 판정 생략: %s", str(e)[:120])
