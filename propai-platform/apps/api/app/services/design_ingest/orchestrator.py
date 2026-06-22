@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.services.design_ingest.composition import (
     SiteContext,
@@ -248,6 +248,55 @@ def _special_from_multi(ms: dict | None) -> dict | None:
         return None
 
 
+def _remaining_after_block(req: DesignRequest, multi: dict) -> list[dict] | None:
+    """다필지 BLOCK 시 차단필지(해결가능성 NO)를 제외한 잔여 필지 목록(없으면 None).
+
+    detect_multi_parcel.per_parcel의 index·special.resolvable==NO로 차단필지를 식별한다.
+    잔여가 0이면 None(전부 차단 — 대안 없음·정직).
+    """
+    if not req.parcels:
+        return None
+    per = ((multi or {}).get("special") or {}).get("per_parcel") or []
+    blocked_idx = {
+        p.get("index") for p in per
+        if p.get("special") and (p["special"] or {}).get("resolvable") == "NO"
+    }
+    if not blocked_idx:
+        return None
+    remaining = [p for i, p in enumerate(req.parcels) if i not in blocked_idx]
+    return remaining or None
+
+
+async def _remaining_alternative(req: DesignRequest, multi: dict) -> dict | None:
+    """차단필지 제외 잔여 필지로 설계안 1회 자동 재산정(BLOCK의 actionable 해결방법).
+
+    잔여 1필지면 단일 부지로, 2필지↑면 통합으로 재산정. 재귀는 _allow_remaining=False로 차단.
+    """
+    remaining = _remaining_after_block(req, multi)
+    if not remaining:
+        return None
+    if len(remaining) == 1:
+        p = remaining[0]
+        sub = replace(
+            req, parcels=None,
+            area_sqm=float(p.get("area_sqm") or req.area_sqm),
+            zone_code=p.get("zone_code") or req.zone_code,
+            zone_name=p.get("zone_name") or req.zone_name,
+            ordinance_far_pct=p.get("ordinance_far_pct"),
+            ordinance_bcr_pct=p.get("ordinance_bcr_pct"),
+            land_category=p.get("land_category"),
+            special_districts=p.get("special_districts"),
+            width_m=None, depth_m=None,
+        )
+    else:
+        sub = replace(req, parcels=remaining)
+    try:
+        return await generate_design_proposals(sub, _allow_remaining=False)
+    except Exception as e:  # noqa: BLE001
+        logger.info("design 잔여 필지 대안 재산정 생략: %s", str(e)[:120])
+        return None
+
+
 async def _verify_proposal(
     site: SiteContext, candidate: dict, permit: dict | None, zone_name: str | None = None
 ) -> dict | None:
@@ -420,8 +469,12 @@ def _site_summary(site: SiteContext) -> dict:
     }
 
 
-async def generate_design_proposals(req: DesignRequest) -> dict:
-    """부지조건 → 검증된 설계 초안 Top-N(정직 판정·추천). 도면 없으면 평가만 반환."""
+async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: bool = True) -> dict:
+    """부지조건 → 검증된 설계 초안 Top-N(정직 판정·추천). 도면 없으면 평가만 반환.
+
+    _allow_remaining: 다필지 BLOCK 시 차단필지를 제외한 잔여 필지로 1회 자동 재산정(대안)
+      허용 여부(내부 재귀 가드 — 잔여 대안 내부에서 다시 잔여를 파지 않게 False로 호출).
+    """
     # ★다필지 통합(≥2필지) — canonical 통합엔진 재사용: 면적가중 실효한도·통합GFA(Σ면적×far_eff)·
     #   다필지 특이게이트. 통합 부지는 단일 사각형 아님 → 실치수 미사용(√면적 정사각·정직).
     multi = _aggregate_parcels(req)
@@ -612,6 +665,20 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.debug("design 오케스트레이터 capture 생략: %s", str(e)[:120])
 
+    # ★BLOCK의 actionable 해결방법 — 다필지 차단 시 차단필지 제외 잔여 필지로 자동 재산정(대안).
+    #   단순 '실현 불가'에 그치지 않고 '차단필지 빼면 이만큼 가능'을 제시(정직·실행가능).
+    remaining_alternative = None
+    if blocked and multi is not None and _allow_remaining:
+        remaining_alternative = await _remaining_alternative(req, multi)
+        if remaining_alternative:
+            _ra_agg = (remaining_alternative.get("multi_parcel") or {}).get("aggregation") or {}
+            _ra_area = _ra_agg.get("total_area_sqm") or remaining_alternative.get("site", {}).get("area_sqm")
+            _ra_n = len(_remaining_after_block(req, multi) or [])
+            notes.append(
+                f"[해결방법] 차단필지 제외 시 잔여 {_ra_n}개 필지(면적 "
+                f"{round(_ra_area or 0):,}㎡)로 개발 가능 — remaining_alternative에 재산정 설계안 제시."
+            )
+
     # 부지·법적 한도·인허가 근거(전역 원칙: 결과물에 근거+링크 기본 제공).
     site_summary = _site_summary(site)
     site_summary["evidence"] = (
@@ -625,6 +692,7 @@ async def generate_design_proposals(req: DesignRequest) -> dict:
         "permit": permit,
         "special_parcel": special,  # 특이부지 게이트 결과(없으면 None) — 정직·할루시네이션 방어
         "multi_parcel": multi,      # 다필지 통합 집계(없으면 None) — 면적가중 한도·통합GFA·필지별
+        "remaining_alternative": remaining_alternative,  # BLOCK 해결방법: 차단필지 제외 잔여 재산정(없으면 None)
         "proposals": proposals,
         "recommendation": recommendation,
         "verification": verification,  # 선택형 독립검증 결과(verify=True 시) 또는 None

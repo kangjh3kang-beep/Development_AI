@@ -150,6 +150,39 @@ def test_generate_multi_parcel_special_block(monkeypatch):
     assert any("법정 천장" in n for n in out["notes"])
 
 
+def test_generate_multi_parcel_block_remaining_alternative(monkeypatch):
+    # ★BLOCK 해결방법: 차단필지(GB·해결불가) 제외 잔여 필지로 자동 재산정 대안 제시
+    _patch_search(monkeypatch, [_fp_match()])
+    parcels = [
+        {"area_sqm": 1000.0, "zone_code": "2R", "zone_name": "제2종일반주거지역",
+         "ordinance_far_pct": 200.0, "ordinance_bcr_pct": 60.0},
+        {"area_sqm": 2000.0, "zone_code": "3R", "zone_name": "준주거지역",
+         "ordinance_far_pct": 400.0, "ordinance_bcr_pct": 60.0},
+        {"area_sqm": 500.0, "zone_code": "2R", "zone_name": "제2종일반주거지역",
+         "special_districts": ["개발제한구역"]},  # 차단(해결불가)
+    ]
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", parcels=parcels)
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["proposals"] == []  # 전체는 차단
+    ra = out["remaining_alternative"]
+    assert ra is not None  # ★해결방법 제시
+    assert ra["multi_parcel"]["aggregation"]["total_area_sqm"] == 3000.0  # GB 500 제외
+    assert ra["proposals"] and ra["recommendation"] is not None          # 잔여로 설계안 생성
+    assert ra["remaining_alternative"] is None                            # 재귀가드(1회만)
+    assert any("해결방법" in n for n in out["notes"])
+
+
+def test_generate_no_remaining_alternative_when_no_parcels(monkeypatch):
+    # 단일 부지 BLOCK(다필지 아님)은 잔여 대안 없음(제외할 필지 없음 — 정직)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        special_districts=["개발제한구역"])
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["proposals"] == [] and out["remaining_alternative"] is None
+
+
 def test_generate_single_parcel_no_multi(monkeypatch):
     # 1필지(또는 parcels 없음)는 통합 미적용(multi_parcel None·기존 단일경로 무회귀)
     _patch_search(monkeypatch, [_fp_match()])
