@@ -1214,7 +1214,7 @@ export function DesignGenPanel({ projectId }: Props) {
                       <Metric label="세대수" value={c.estimated_units} />
                     </div>
                     <div className="mt-1 text-[10px] text-[var(--text-hint)]">
-                      연면적은 참조평면 기준 보수치, 법적 상한은 부지 최대 잠재력(확정 아님)
+                      연면적은 참조평면 기준 보수치, 법적 상한은 부지 최대 잠재력(다동 배치 전제·확정 아님)
                     </div>
                     {/* 점수 산출 근거(랭킹 투명성) — 왜 이 안이 상위인지 */}
                     {c.score_breakdown?.explanation && (
