@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { InspectionOperationsWorkspaceClient } from "@/components/analytics/InspectionOperationsWorkspaceClient";
@@ -79,7 +79,7 @@ describe("InspectionOperationsWorkspaceClient", () => {
       apiBaseUrl: "/api/proxy",
       useMocksByDefault: true,
       hasAccessToken: false,
-      mode: "hybrid",
+      mode: "mock",
     });
 
     vi.mocked(apiClient.get).mockResolvedValue({

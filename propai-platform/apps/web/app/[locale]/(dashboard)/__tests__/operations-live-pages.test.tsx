@@ -116,7 +116,7 @@ describe("Operations live pages", () => {
 
   it("renders the tenant page with the tenant management live workspace", async () => {
     renderWithQueryClient(
-      await TenantPage({ params: Promise.resolve({ locale: "en" }) }),
+      (await TenantPage({ params: Promise.resolve({ locale: "en" }) }))!,
     );
 
     // Page now renders TenantWorkspaceClient (a live useQuery workspace) only —
