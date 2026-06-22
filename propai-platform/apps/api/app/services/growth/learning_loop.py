@@ -28,9 +28,10 @@ best-effort: 어떤 예외도 호출경로(주간 배치)를 죽이지 않는다
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ async def curate_few_shot(db, *, since_days: int = 7,
     from sqlalchemy import text
 
     summary: dict[str, Any] = {"scanned": 0, "curated": 0, "skipped": 0}
-    since = datetime.now(timezone.utc) - timedelta(days=since_days)
+    since = datetime.now(UTC) - timedelta(days=since_days)
 
     try:
         # up 피드백 중 content_hash 가 있어 원장 좋은출력에 연결 가능한 것만.
@@ -158,7 +159,7 @@ async def curate_few_shot(db, *, since_days: int = 7,
         # 원장에서 해당 content_hash 의 좋은출력 payload 조회(가장 최신 버전).
         try:
             led = (await db.execute(text(
-                "SELECT payload, analysis_type FROM analysis_ledger "
+                "SELECT payload, analysis_type, tenant_id FROM analysis_ledger "
                 "WHERE content_hash = :ch ORDER BY version DESC LIMIT 1"
             ), {"ch": content_hash})).fetchone()
         except Exception as e:  # noqa: BLE001
@@ -170,6 +171,8 @@ async def curate_few_shot(db, *, since_days: int = 7,
 
         ledger_payload = led[0]
         led_atype = led[1] or analysis_type
+        # ★테넌트 영속: 원장의 tenant_id를 학습예시에 보존 → few-shot 주입 시 테넌트 격리(누출 차단).
+        led_tenant = led[2]  # SELECT가 payload·analysis_type·tenant_id 3컬럼 보장
         good_output = _summarize_payload(ledger_payload)
         # 입력요약: 원장 payload 의 입력 컨텍스트(있으면) 또는 analysis_type 라벨.
         input_ctx: Any = None
@@ -185,13 +188,14 @@ async def curate_few_shot(db, *, since_days: int = 7,
             res = await db.execute(text(
                 "INSERT INTO learning_examples "
                 "(input_summary, good_output, service, analysis_type, "
-                " source_feedback_id, content_hash, status) "
-                "VALUES (:isum, :gout, :svc, :at, :fid, :ch, 'candidate') "
+                " source_feedback_id, content_hash, tenant_id, status) "
+                "VALUES (:isum, :gout, :svc, :at, :fid, :ch, :tid, 'candidate') "
                 "ON CONFLICT (service, content_hash) DO NOTHING "
                 "RETURNING id"
             ), {
                 "isum": input_summary, "gout": good_output, "svc": service,
                 "at": led_atype, "fid": str(fb_id), "ch": content_hash,
+                "tid": led_tenant,
             })
             await db.commit()
             inserted = res.fetchone()
@@ -201,10 +205,8 @@ async def curate_few_shot(db, *, since_days: int = 7,
                 summary["skipped"] += 1  # 멱등 충돌(이미 등록됨).
         except Exception as e:  # noqa: BLE001
             logger.debug("L3 candidate 등록 실패: %s", str(e)[:120])
-            try:
+            with contextlib.suppress(Exception):
                 await db.rollback()
-            except Exception:  # noqa: BLE001
-                pass
             summary["skipped"] += 1
 
     if summary["curated"]:
@@ -276,7 +278,7 @@ async def compute_down_rates(db, *, w_hours: int = 168) -> dict[str, dict[str, A
     from sqlalchemy import text
 
     out: dict[str, dict[str, Any]] = {}
-    since = datetime.now(timezone.utc) - timedelta(hours=w_hours)
+    since = datetime.now(UTC) - timedelta(hours=w_hours)
 
     try:
         fb_rows = (await db.execute(text(

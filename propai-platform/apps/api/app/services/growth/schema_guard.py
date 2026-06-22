@@ -9,7 +9,9 @@ CREATE TABLE/INDEX IF NOT EXISTS 만 사용(파괴적 변경 없음). best-effor
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from datetime import UTC
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,10 +99,17 @@ CREATE TABLE IF NOT EXISTS learning_examples (
     analysis_type text,
     source_feedback_id uuid,
     content_hash text,
+    tenant_id text,
     status varchar(20) NOT NULL DEFAULT 'candidate',
     created_at timestamptz NOT NULL DEFAULT now()
 )
 """
+
+# 기존 테이블(컬럼 추가 전 생성분)에 대한 멱등 컬럼 보강 — alembic 체인 우회(파괴적 변경 없음).
+# ★tenant_id: few-shot 테넌트 격리(교차테넌트 누출 차단)의 데이터 측 전제. ADD COLUMN IF NOT EXISTS.
+_COLUMN_ADDS = [
+    "ALTER TABLE learning_examples ADD COLUMN IF NOT EXISTS tenant_id text",
+]
 
 _INDEXES = [
     # platform_events
@@ -126,6 +135,9 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_le_service_status ON learning_examples (service, status)",
     "CREATE INDEX IF NOT EXISTS idx_le_created ON learning_examples (created_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_le_service_hash ON learning_examples (service, content_hash)",
+    # few-shot 테넌트 스코핑 조회(service, tenant_id, status) — 풀스캔 방지.
+    "CREATE INDEX IF NOT EXISTS idx_le_service_tenant_status "
+    "ON learning_examples (service, tenant_id, status)",
 ]
 
 
@@ -143,6 +155,8 @@ async def ensure_schema(db: AsyncSession, force: bool = False) -> bool:
         await db.execute(text(_AI_FEEDBACK_DDL))
         await db.execute(text(_PLATFORM_SETTINGS_DDL))
         await db.execute(text(_LEARNING_EXAMPLES_DDL))
+        for alter in _COLUMN_ADDS:           # 기존 테이블 멱등 컬럼 보강(신규생성엔 무동작)
+            await db.execute(text(alter))
         for ddl in _INDEXES:
             await db.execute(text(ddl))
         await db.commit()
@@ -150,10 +164,8 @@ async def ensure_schema(db: AsyncSession, force: bool = False) -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("growth schema_guard 실패: %s", str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return False
 
 
@@ -181,11 +193,11 @@ async def get_setting(db, key: str, scope: str = "global"):
             return None
         value, ttl = row[0], row[1]
         if ttl is not None:
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
+            from datetime import datetime
+            now = datetime.now(UTC)
             # ttl 이 naive 면 UTC 로 가정해 비교(드라이버별 tz 처리 방어).
             if ttl.tzinfo is None:
-                ttl = ttl.replace(tzinfo=timezone.utc)
+                ttl = ttl.replace(tzinfo=UTC)
             if ttl <= now:
                 return None  # 만료 → 논리적 원복.
         if isinstance(value, str):
@@ -220,10 +232,8 @@ async def set_setting(db, key: str, value, *, scope: str = "global",
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("set_setting 실패(%s): %s", key, str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return False
 
 
@@ -237,8 +247,6 @@ async def clear_setting(db, key: str, scope: str = "global") -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("clear_setting 실패(%s): %s", key, str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return False

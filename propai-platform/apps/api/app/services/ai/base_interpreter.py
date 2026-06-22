@@ -123,12 +123,12 @@ def _env_int(name: str, default: int) -> int:
 
 # 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
 # 해당 service 프롬프트에 참고 사례로 주입한다. 예시가 없으면 완전 무동작(기존 동작 불변).
-# ★테넌트 스코핑은 by-construction 완료(_load_fewshot이 현재 요청 tenant 예시만 조회 →
-#   교차테넌트 누출이 코드 차원에서 불가). 따라서 활성 잔여 전제는 데이터 측면 2가지뿐:
-#   ①learning_examples에 tenant_id 컬럼 추가(마이그레이션) ②curate_few_shot이 그 컬럼에
-#   analysis_ledger.tenant_id 영속. 둘 다 self-growth-engine(growth 코어·스키마) 도메인.
-#   현재 기본 비활성("0"): 위 컬럼이 없으면 조회가 안전 degrade(None)하나, 데이터(승격예시)도
-#   0이라 즉시효과 없음 → 컬럼+curate 완료 후 INTERP_FEWSHOT=1로 활성(배선은 완성).
+# ★전제 모두 충족(2026-06): ①테넌트 스코핑 by-construction(_load_fewshot이 현재 tenant 예시만
+#   조회 → 교차테넌트 누출 코드차원 불가) ②schema_guard가 learning_examples.tenant_id 멱등 보장
+#   ③curate_few_shot이 analysis_ledger.tenant_id 영속. 즉 배선·데이터·격리 100% 완성.
+# ★기본 비활성("0") 유지 이유: 전 interpreter 공유 LLM 프롬프트를 바꾸는 변경이라 스테이징
+#   검증 후 관리자가 INTERP_FEWSHOT=1로 의도적 go-live(즉시·가역). 켜져도 안전(테넌트격리+
+#   컬럼없으면 degrade+승격예시 0이면 무동작). 끄면 즉시 기존 동작.
 _FEWSHOT_ENABLED = os.environ.get("INTERP_FEWSHOT", "0") != "0"
 _FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
 _FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
