@@ -114,6 +114,14 @@ type Candidate = {
   } | null;
   compliant: boolean;
   score: number;
+  score_breakdown?: {
+    fitness: number;
+    completeness: number;
+    completeness_factor: number;
+    compliance_factor: number;
+    formula: string;
+    explanation: string;
+  } | null;
   warnings: string[];
 };
 
@@ -1149,6 +1157,12 @@ export function DesignGenPanel({ projectId }: Props) {
                       <Metric label="세대수" value={c.estimated_units} />
                       <Metric label="주차" value={c.parking_required != null ? `${c.parking_required}대` : null} />
                     </div>
+                    {/* 점수 산출 근거(랭킹 투명성) — 왜 이 안이 상위인지 */}
+                    {c.score_breakdown?.explanation && (
+                      <div className="mt-1 text-[10px] text-[var(--text-tertiary)]" title={c.score_breakdown.formula}>
+                        점수 근거: {c.score_breakdown.explanation}
+                      </div>
+                    )}
                     {/* 주차설계 상세 */}
                     {c.parking_required != null && (
                       <div className="mt-2 text-[11px] text-[var(--text-secondary)]">

@@ -93,6 +93,7 @@ class CompositionCandidate:
     missing_disciplines: list[str] = field(default_factory=list)  # 권장 핵심분야 중 미확보(정직 갭)
     compliant: bool = False
     score: float = 0.0
+    score_breakdown: dict | None = None  # 점수 산출 근거(적합도·완성도·적법 가중) — 랭킹 투명성(근거)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -115,6 +116,7 @@ class CompositionCandidate:
             "placement": self.placement,
             "compliant": self.compliant,
             "score": self.score,
+            "score_breakdown": self.score_breakdown,
             "warnings": list(self.warnings),
         }
 
@@ -498,7 +500,23 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
         # 점수 = 적합도 × 완성도(동반 도면 수) × 적법.
         fitness = fit_score(fp, site)
         completeness = min(1.0, len(selected) / 3.0)
-        score = round(fitness * (0.6 + 0.4 * completeness) * (1.0 if compliant else 0.6), 4)
+        # ★score는 미반올림 factor로 계산(기존 단일식과 비트단위 동일 — 행위보존). 반올림은 표시용만.
+        completeness_factor = 0.6 + 0.4 * completeness
+        compliance_factor = 1.0 if compliant else 0.6
+        score = round(fitness * completeness_factor * compliance_factor, 4)
+        # 랭킹 근거(왜 이 안이 상위인지 투명 공개) — 전역 '근거 제공' 원칙
+        cf_disp = round(completeness_factor, 4)  # breakdown·explanation 표시용 반올림
+        score_breakdown = {
+            "fitness": round(fitness, 4),                  # 부지 적합도(면적 적합·도면종류 가중)
+            "completeness": round(completeness, 4),        # 도면세트 완성도(분야 수/3)
+            "completeness_factor": cf_disp,                # 완성도 가중(0.6~1.0)
+            "compliance_factor": compliance_factor,        # 적법 1.0 / 미확정·부적합 0.6
+            "formula": "score = 적합도 × (0.6 + 0.4×완성도) × 적법가중",
+            "explanation": (
+                f"적합도 {fitness:.2f} · 완성도 {completeness:.0%}(×{cf_disp}) · "
+                f"{'적법' if compliant else '적법성 미확정/부적합'}(×{compliance_factor}) → 종합 {score}"
+            ),
+        }
 
         candidates.append(CompositionCandidate(
             selected=selected,
@@ -519,6 +537,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             placement=placement,                                       # 건물 배치 폴리곤(부지 공유)
             compliant=compliant,
             score=score,
+            score_breakdown=score_breakdown,
             warnings=warnings,
         ))
 

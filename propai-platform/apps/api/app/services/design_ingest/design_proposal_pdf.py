@@ -131,6 +131,9 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
             else:
                 place = f"부지 {site_dim} · 배치 불가({_fmt(pl.get('note'))})"
             rows.append(["건물 배치(스키매틱)", place])
+        sb = cand.get("score_breakdown") or {}
+        if sb.get("explanation"):
+            rows.append(["선정 근거(점수)", str(sb["explanation"])])  # 랭킹 투명성(근거)
         el.append(_kv(rows))
         notes = [str(n) for n in (verdict.get("notes") or [])]
         for n in (cand.get("warnings") or []):

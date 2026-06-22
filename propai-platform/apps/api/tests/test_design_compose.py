@@ -58,6 +58,36 @@ def test_compose_compliant_candidate():
     assert top.compliant is True and top.score > 0
 
 
+def test_compose_score_breakdown_transparency():
+    # ★근거: 점수 산출 3성분(적합도·완성도가중·적법가중)이 노출되고 곱이 score와 일치(랭킹 투명성)
+    s = _site()
+    matches = [
+        {"point_id": "fp1", "drawing_type": "floor_plan", "total_area_sqm": 500.0, "score": 0.95},
+        {"point_id": "sp1", "drawing_type": "site_plan", "total_area_sqm": 980.0, "score": 0.9},
+        {"point_id": "pk1", "drawing_type": "parking", "total_area_sqm": None, "score": 0.8},
+    ]
+    top = compose(s, matches, top_n=1)[0]
+    sb = top.score_breakdown
+    assert sb is not None
+    assert set(sb) >= {"fitness", "completeness", "completeness_factor", "compliance_factor",
+                       "formula", "explanation"}
+    # 곱이 score와 일치(반올림 오차 허용)
+    recomputed = round(sb["fitness"] * sb["completeness_factor"] * sb["compliance_factor"], 4)
+    assert abs(recomputed - top.score) < 0.01
+    assert sb["compliance_factor"] == 1.0  # compliant 후보
+    assert "종합" in sb["explanation"]
+
+
+def test_compose_score_breakdown_noncompliant_factor():
+    # 부적합 후보는 적법가중 0.6 노출(정직 — 왜 점수가 낮은지)
+    s = _site()
+    matches = [{"point_id": "big", "drawing_type": "floor_plan", "total_area_sqm": 5000.0, "score": 0.9}]
+    top = compose(s, matches)[0]
+    assert top.compliant is False
+    assert top.score_breakdown is not None
+    assert top.score_breakdown["compliance_factor"] == 0.6
+
+
 def test_compose_noncompliant_when_drawing_oversized():
     # footprint 600인데 참조도면 5000㎡ → 축소 sqrt(600/5000)=0.346 < 0.5 → 부적합(과대)
     s = _site()
