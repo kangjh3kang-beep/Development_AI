@@ -15,13 +15,20 @@
  */
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
-import { apiClient, ApiClientError } from "@/lib/api-client";
+import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
+
+// WebGL/three 번들을 초기 로드에서 분리 — SSR 회피, 지연 마운트로 메인스레드 점유 방지.
+const ProposalMassPreview = dynamic(
+  () => import("./ProposalMassPreview").then((m) => m.ProposalMassPreview),
+  { ssr: false },
+);
 
 /* ── 백엔드 계약 타입 ── */
 type Confidence = "ordinance" | "statutory" | "rule" | "measured" | "estimated" | "unknown";
@@ -50,14 +57,41 @@ type IngestResult = {
   spec: Record<string, unknown>;
 };
 
+type BatchIngestResult = {
+  ok: boolean;
+  total: number;
+  indexed: number;
+  not_indexed: number;
+  failed: number;
+  results: {
+    filename: string;
+    ok: boolean;
+    drawing_type?: string;
+    content_hash?: string;
+    indexed?: boolean;
+    index_skip_reason?: string | null;
+    stored?: boolean;
+    store_skip_reason?: string | null;
+    error?: string;
+  }[];
+};
+
 type Candidate = {
   primary_drawing_type: string;
   primary_content_hash?: string | null;
   selected?: Record<string, string>;
+  sources?: {
+    drawing_type: string;
+    point_id: string;
+    score: number;
+    content_hash?: string | null;
+    area_sqm?: number | null;
+  }[];
   disciplines_covered?: string[];
   missing_disciplines?: string[];
   scale_factor: number | null;
   estimated_gfa_sqm: number | null;
+  max_envelope_gfa_sqm?: number | null;   // 법적 상한 연면적(부지 잠재력)
   estimated_floors: number | null;
   estimated_units: number | null;
   estimated_parking: number | null;
@@ -65,8 +99,37 @@ type Candidate = {
   parking_area_sqm: number | null;
   parking_basement_floors: number | null;
   parking_feasible: boolean | null;
+  parking_layout?: {
+    stalls_per_floor: number;
+    floors_for_parking: number | null;
+    footprint_w_m: number;
+    footprint_d_m: number;
+    stalls: { x: number; y: number; w: number; l: number }[];
+    total_required: number;
+    note: string;
+  } | null;
+  placement?: {
+    site: { w: number; d: number };
+    building: { x: number; y: number; w: number; d: number; area_sqm: number } | null;
+    blocks?: { x: number; y: number; w: number; d: number }[];
+    dong_count?: number;
+    gap_m?: number;
+    setback_m: number;
+    buildable_region_sqm: number;
+    setback_binds: boolean;
+    note: string;
+    notes: string[];
+  } | null;
   compliant: boolean;
   score: number;
+  score_breakdown?: {
+    fitness: number;
+    completeness: number;
+    completeness_factor: number;
+    compliance_factor: number;
+    formula: string;
+    explanation: string;
+  } | null;
   warnings: string[];
 };
 
@@ -77,7 +140,12 @@ type Verdict = {
   notes: string[];
 };
 
-type Proposal = { candidate: Candidate; verdict: Verdict; evidence: Evidence[] };
+type Proposal = {
+  candidate: Candidate;
+  verdict: Verdict;
+  evidence: Evidence[];
+  ledger_hash?: string | null;  // 추천안 원장 적재 해시(피드백 큐레이션 조인키) — 추천안만 존재
+};
 
 type GenerateResult = {
   ok: boolean;
@@ -92,13 +160,35 @@ type GenerateResult = {
     evidence: Evidence[];
   };
   permit: { is_permitted?: boolean; permit_complexity?: number; reason?: string } | null;
+  special_parcel: {
+    is_special: boolean;
+    developability?: string | null;
+    severity_label?: string | null;
+    resolvable?: string | null;
+    gate: string;
+    note?: string | null;
+  } | null;
+  multi_parcel: {
+    aggregation: {
+      parcel_count?: number;
+      total_area_sqm?: number | null;
+      dominant_zone?: string | null;
+      blended_far_eff_pct?: number | null;
+      integrated_gfa_sqm?: number | null;
+      far_basis_note?: string | null;
+    };
+  } | null;
   proposals: Proposal[];
-  recommendation: { index: number; verdict: string } | null;
+  recommendation: { index: number; verdict: string; tentative?: boolean } | null;
   verification?: {
     verdict: string;
     generated?: boolean;
     summary?: string;
     issues?: { severity?: string; note?: string; claim?: string; message?: string; detail?: string }[];
+  } | null;
+  interpretation?: {
+    sections: Record<string, string>;
+    input?: Record<string, unknown>;
   } | null;
   search_status: { count: number; skipped_reason: string | null };
   notes: string[];
@@ -213,6 +303,102 @@ function Metric({ label, value }: { label: string; value: string | number | null
   );
 }
 
+// 주차 자동배치도(스키매틱) — footprint(m) 좌표를 SVG로 렌더. 최대 변 260px로 스케일.
+function ParkingLayoutSvg({
+  layout,
+}: {
+  layout: NonNullable<Candidate["parking_layout"]>;
+}) {
+  const w = layout.footprint_w_m;
+  const d = layout.footprint_d_m;
+  if (!(w > 0) || !(d > 0) || !layout.stalls?.length) return null;
+  const scale = 260 / Math.max(w, d);
+  return (
+    <svg
+      width={Math.round(w * scale)}
+      height={Math.round(d * scale)}
+      viewBox={`0 0 ${w} ${d}`}
+      preserveAspectRatio="xMinYMin meet"
+      className="mt-1 rounded border border-[var(--line)] bg-[var(--surface)]"
+      role="img"
+      aria-label="주차 자동배치도(스키매틱)"
+    >
+      <rect x={0} y={0} width={w} height={d} fill="none" stroke="var(--line)" strokeWidth={0.3} />
+      {layout.stalls.map((s, i) => (
+        <rect
+          key={i}
+          x={s.x}
+          y={s.y}
+          width={s.w}
+          height={s.l}
+          fill="var(--accent-soft)"
+          stroke="var(--accent-strong)"
+          strokeWidth={0.12}
+        />
+      ))}
+    </svg>
+  );
+}
+
+// 건물 배치 폴리곤(스키매틱) — 부지 경계 + 이격 가용영역 + 건물 footprint. 최대 변 260px.
+function PlacementSvg({
+  placement,
+}: {
+  placement: NonNullable<Candidate["placement"]>;
+}) {
+  const sw = placement.site.w;
+  const sd = placement.site.d;
+  if (!(sw > 0) || !(sd > 0)) return null;
+  const s = placement.setback_m;
+  // 동별 블록(다동) 우선 렌더, 없으면 단일 building으로 폴백.
+  const blocks = placement.blocks?.length
+    ? placement.blocks
+    : placement.building
+      ? [placement.building]
+      : [];
+  const scale = 260 / Math.max(sw, sd);
+  return (
+    <svg
+      width={Math.round(sw * scale)}
+      height={Math.round(sd * scale)}
+      viewBox={`0 0 ${sw} ${sd}`}
+      preserveAspectRatio="xMinYMin meet"
+      className="mt-1 rounded border border-[var(--line)] bg-[var(--surface)]"
+      role="img"
+      aria-label="건물 배치 폴리곤(스키매틱)"
+    >
+      {/* 부지 경계 */}
+      <rect x={0} y={0} width={sw} height={sd} fill="none" stroke="var(--text-tertiary)" strokeWidth={0.4} />
+      {/* 이격 가용영역(점선) */}
+      {sw - 2 * s > 0 && sd - 2 * s > 0 && (
+        <rect
+          x={s}
+          y={s}
+          width={sw - 2 * s}
+          height={sd - 2 * s}
+          fill="none"
+          stroke="var(--line)"
+          strokeWidth={0.25}
+          strokeDasharray="1 1"
+        />
+      )}
+      {/* 동별 footprint(다동 단지면 여러 개) */}
+      {blocks.map((b, i) => (
+        <rect
+          key={`${b.x}-${b.y}-${i}`}
+          x={b.x}
+          y={b.y}
+          width={b.w}
+          height={b.d}
+          fill="var(--accent-soft)"
+          stroke="var(--accent-strong)"
+          strokeWidth={0.4}
+        />
+      ))}
+    </svg>
+  );
+}
+
 function VerdictBadge({ verdict }: { verdict: string }) {
   const s = VERDICT_STYLE[verdict] ?? { label: verdict, color: "var(--text-tertiary)" };
   return (
@@ -243,19 +429,29 @@ export function DesignGenPanel({ projectId }: Props) {
   const [sigungu, setSigungu] = useState<string>("");
   const [buildingUse, setBuildingUse] = useState<string>("공동주택");
   const [avgUnit, setAvgUnit] = useState<number>(84);
+  const [siteW, setSiteW] = useState<number>(0);   // 부지 폭(m·선택) — 건물 배치 정확화
+  const [siteD, setSiteD] = useState<number>(0);   // 부지 깊이(m·선택)
+  const [landCategory, setLandCategory] = useState<string>("");  // 지목(선택) — 특이부지 게이트
   const [topN, setTopN] = useState<number>(3);
   const [verifyOpt, setVerifyOpt] = useState<boolean>(false);  // AI 검증 포함(선택형)
+  const [interpretOpt, setInterpretOpt] = useState<boolean>(false);  // AI 설계 해석 포함(선택형)
 
   // 업로드(ingest)
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [ingest, setIngest] = useState<IngestResult | null>(null);
   const [ingestErr, setIngestErr] = useState<string | null>(null);
+  // 콜드스타트 배치 업로드(표준설계 일괄적재)
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchIngestResult | null>(null);
+  const [batchErr, setBatchErr] = useState<string | null>(null);
 
   // 생성(generate)
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [genErr, setGenErr] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);   // 설계제안 PDF 다운로드 진행
 
   // 법규(laws)
   const [laws, setLaws] = useState<LawsResult | null>(null);
@@ -290,6 +486,22 @@ export function DesignGenPanel({ projectId }: Props) {
     return DRAWING_TYPE_LABEL[code] ?? code;
   }
 
+  // 설계 코퍼스 현황(축적 가시화) — 분야별 누적 도면 수.
+  const [corpus, setCorpus] = useState<{ total: number; by_discipline: Record<string, number> } | null>(null);
+  async function refreshCorpus() {
+    try {
+      const d = await apiClient.get<{ total: number; by_discipline: Record<string, number> }>(
+        "/design-gen/corpus-stats",
+      );
+      setCorpus({ total: d?.total ?? 0, by_discipline: d?.by_discipline ?? {} });
+    } catch {
+      /* 미가용 시 미표시(정직) */
+    }
+  }
+  useEffect(() => {
+    void refreshCorpus();
+  }, []);
+
   // 유사 도면 검색(search)
   const [searchType, setSearchType] = useState<string>("");
   const [searchKeywords, setSearchKeywords] = useState<string>("");
@@ -301,6 +513,8 @@ export function DesignGenPanel({ projectId }: Props) {
   const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
   // 설계안 피드백(👍👎) — 자가학습 신호(인덱스→verdict).
   const [feedback, setFeedback] = useState<Record<number, "up" | "down">>({});
+  // 3D 매스 프리뷰 토글(추천 카드 전용) — per-proposal 독립 토글.
+  const [show3d, setShow3d] = useState<Record<number, boolean>>({});
 
   async function handleIngest() {
     if (!file) return;
@@ -313,10 +527,92 @@ export function DesignGenPanel({ projectId }: Props) {
       if (projectId) form.append("project_id", projectId);
       const data = await apiClient.post<IngestResult>("/design-gen/ingest", { body: form });
       setIngest(data);
+      refreshCorpus();  // 색인 후 코퍼스 현황 갱신
     } catch (e) {
       setIngestErr(errMessage(e));
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleBatchIngest() {
+    if (batchFiles.length === 0) return;
+    setBatchUploading(true);
+    setBatchErr(null);
+    setBatchResult(null);
+    try {
+      const form = new FormData();
+      for (const f of batchFiles) form.append("files", f);
+      if (projectId) form.append("project_id", projectId);
+      const data = await apiClient.post<BatchIngestResult>("/design-gen/ingest-batch", { body: form });
+      setBatchResult(data);
+      refreshCorpus();  // 일괄 색인 후 코퍼스 현황 갱신
+    } catch (e) {
+      setBatchErr(errMessage(e));
+    } finally {
+      setBatchUploading(false);
+    }
+  }
+
+  // generate·generate/pdf 공용 요청 body(부지조건). 한 곳에서 관리해 두 경로 동일 산출 보장.
+  function genBody() {
+    return {
+      area_sqm: areaSqm,
+      zone_code: zoneCode || "2R",
+      zone_name: zoneName || null,
+      sigungu: sigungu || null,
+      building_use: buildingUse || null,
+      width_m: siteW > 0 ? siteW : null,   // 선택 — 입력 시 건물 배치 폴리곤 정확화
+      depth_m: siteD > 0 ? siteD : null,
+      land_category: landCategory || null,  // 지목(선택) — 특이부지 게이트(학교용지·농지·산지 등)
+      avg_unit_area_sqm: avgUnit,
+      top_n: topN,
+      project_id: projectId || null,
+      verify: verifyOpt,
+      interpret: interpretOpt,
+    };
+  }
+
+  // 설계제안 타당성 보고서 PDF 다운로드(blob) — AuditPdfDownload 패턴 준용(토큰·JSON폴백·정직).
+  async function handleDownloadPdf() {
+    setPdfBusy(true);
+    setGenErr(null);
+    try {
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(`${apiV1BaseUrl()}/design-gen/generate/pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(genBody()),
+      });
+      const ct = res.headers.get("content-type") ?? "";
+      if (!res.ok || ct.includes("application/json")) {
+        // PDF 대신 JSON(오류)이면 정직 메시지(빈 파일 다운로드 방지).
+        let msg = `PDF 생성 실패 (HTTP ${res.status}).`;
+        try {
+          const p = (await res.json()) as { detail?: string; message?: string };
+          msg = p?.detail || p?.message || msg;
+        } catch { /* 본문 없음 */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "design_proposal.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setGenErr(errMessage(e));
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -326,20 +622,9 @@ export function DesignGenPanel({ projectId }: Props) {
     setResult(null);
     setAppliedIdx(null);
     setFeedback({});
+    setShow3d({});
     try {
-      const data = await apiClient.post<GenerateResult>("/design-gen/generate", {
-        body: {
-          area_sqm: areaSqm,
-          zone_code: zoneCode || "2R",
-          zone_name: zoneName || null,
-          sigungu: sigungu || null,
-          building_use: buildingUse || null,
-          avg_unit_area_sqm: avgUnit,
-          top_n: topN,
-          project_id: projectId || null,
-          verify: verifyOpt,
-        },
-      });
+      const data = await apiClient.post<GenerateResult>("/design-gen/generate", { body: genBody() });
       setResult(data);
     } catch (e) {
       setGenErr(errMessage(e));
@@ -418,9 +703,12 @@ export function DesignGenPanel({ projectId }: Props) {
   }
 
   // 설계안 피드백(👍👎) → 기존 성장 피드백 엔드포인트(ai_feedback 적재, 사람승인 게이트).
-  // 현재 동작: service별 down율 집계(compute_down_rates)로 개선대상(design_orchestrator) 식별.
-  // few-shot 자동 큐레이션은 analysis_ledger 연계가 필요해 후속(현재는 미연계 — 과대표현 금지).
-  async function handleFeedback(idx: number, c: Candidate, verdict: "up" | "down") {
+  // service별 down율 집계(compute_down_rates)로 개선대상(design_orchestrator) 식별 +
+  // ★추천안은 ledger_hash(원장 적재 해시)로 키잉 → curate_few_shot이 우수 제안안을
+  //   few-shot 예시로 큐레이션(사람 승인 게이트). 미적재(원장 해시 없음)면 도면해시로 정직 폴백.
+  async function handleFeedback(
+    idx: number, c: Candidate, verdict: "up" | "down", ledgerHash?: string | null,
+  ) {
     let correction: string | null = null;
     if (verdict === "down" && typeof window !== "undefined") {
       correction = window.prompt("개선 의견(선택):")?.trim() || null;
@@ -431,7 +719,8 @@ export function DesignGenPanel({ projectId }: Props) {
           target_type: "recommendation",
           verdict,
           service: "design_orchestrator",
-          content_hash: c.primary_content_hash || null,
+          // 제안안 단위 큐레이션 우선(원장 해시) → 없으면 주 도면 해시 폴백.
+          content_hash: ledgerHash || c.primary_content_hash || null,
           correction,
         },
       });
@@ -499,6 +788,23 @@ export function DesignGenPanel({ projectId }: Props) {
             <NumberInput value={avgUnit} onChange={(v) => setAvgUnit(Math.max(0, v ?? 0))} allowDecimal />
           </label>
           <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            부지 폭(m)<span className="font-normal text-[var(--text-hint)]"> 선택</span>
+            <NumberInput value={siteW} onChange={(v) => setSiteW(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            부지 깊이(m)<span className="font-normal text-[var(--text-hint)]"> 선택</span>
+            <NumberInput value={siteD} onChange={(v) => setSiteD(Math.max(0, v ?? 0))} allowDecimal />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
+            지목<span className="font-normal text-[var(--text-hint)]"> 선택·특이부지</span>
+            <input
+              value={landCategory}
+              onChange={(e) => setLandCategory(e.target.value)}
+              placeholder="예: 학교용지·전·답·임야"
+              className="mt-1 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
+            />
+          </label>
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">
             설계안 개수
             <NumberInput value={topN} onChange={(v) => setTopN(Math.max(1, Math.min(v ?? 1, 10)))} />
           </label>
@@ -511,17 +817,37 @@ export function DesignGenPanel({ projectId }: Props) {
           <Button variant="secondary" onClick={handleLaws} disabled={lawsLoading}>
             {lawsLoading ? "조회 중…" : "참조 법규 보기"}
           </Button>
+          <Button
+            variant="secondary"
+            onClick={handleDownloadPdf}
+            disabled={pdfBusy || areaSqm <= 0 || avgUnit <= 0}
+          >
+            {pdfBusy ? "PDF 생성 중…" : "📄 보고서 PDF"}
+          </Button>
           <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
             <input type="checkbox" checked={verifyOpt} onChange={(e) => setVerifyOpt(e.target.checked)} />
             AI 검증 포함(추천안 독립검증 · LLM 호출)
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+            <input type="checkbox" checked={interpretOpt} onChange={(e) => setInterpretOpt(e.target.checked)} />
+            AI 설계 해석 포함(추천안 6섹션 · LLM 호출)
           </label>
         </div>
         {genErr && <p className="text-xs text-[var(--status-error)]">{genErr}</p>}
 
         {/* 도면 업로드(ingest) */}
         <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-4">
-          <div className="text-xs font-semibold text-[var(--text-secondary)]">
-            📐 설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-[var(--text-secondary)]">
+              📐 설계파일 업로드 <span className="font-normal text-[var(--text-tertiary)]">xlsx · dxf · ifc · pdf · png · jpg · webp (최대 25MB)</span>
+            </div>
+            {corpus && corpus.total > 0 && (
+              <div className="text-[11px] text-[var(--text-tertiary)]">
+                축적 도면 <span className="font-bold text-[var(--accent-strong)]">{corpus.total.toLocaleString()}</span>건
+                {Object.keys(corpus.by_discipline).length > 0 &&
+                  ` · ${Object.entries(corpus.by_discipline).map(([d, n]) => `${d} ${n}`).join(", ")}`}
+              </div>
+            )}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input
@@ -578,6 +904,58 @@ export function DesignGenPanel({ projectId }: Props) {
               )}
             </div>
           )}
+
+          {/* 콜드스타트 배치 업로드 — 표준설계 다중 파일 일괄 적재(코퍼스 부트스트랩) */}
+          <div className="mt-3 border-t border-dashed border-[var(--line)] pt-3">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+              📦 일괄 업로드 <span className="font-normal text-[var(--text-tertiary)]">표준설계 다중 파일을 한 번에 색인(콜드스타트 · 최대 50개)</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                multiple
+                accept=".xlsx,.xlsm,.xls,.dxf,.ifc,.pdf,.png,.jpg,.jpeg,.webp"
+                onChange={(e) => setBatchFiles(e.target.files ? Array.from(e.target.files) : [])}
+                className="text-xs text-[var(--text-secondary)]"
+              />
+              <Button
+                variant="secondary"
+                onClick={handleBatchIngest}
+                disabled={batchFiles.length === 0 || batchUploading}
+              >
+                {batchUploading ? `업로드 중…(${batchFiles.length})` : `일괄 색인(${batchFiles.length})`}
+              </Button>
+            </div>
+            {batchErr && <p className="mt-2 text-xs text-[var(--status-error)]">{batchErr}</p>}
+            {batchResult && (
+              <div className="mt-2 text-xs text-[var(--text-secondary)]">
+                총 <span className="font-bold text-[var(--text-primary)]">{batchResult.total}</span>건 ·{" "}
+                <span style={{ color: "var(--status-success)" }}>색인 {batchResult.indexed}</span>
+                {batchResult.not_indexed > 0 && (
+                  <span style={{ color: "var(--status-warning)" }}> · 미색인 {batchResult.not_indexed}</span>
+                )}
+                {batchResult.failed > 0 && (
+                  <span style={{ color: "var(--status-error)" }}> · 실패 {batchResult.failed}</span>
+                )}
+                <ul className="mt-1 max-h-40 overflow-auto list-inside list-disc text-[var(--text-tertiary)]">
+                  {batchResult.results.map((r, i) => (
+                    <li key={`${r.filename}-${i}`}>
+                      <span className="text-[var(--text-secondary)]">{i + 1}. {r.filename || "(이름없음)"}</span>
+                      {r.ok ? (
+                        r.indexed ? (
+                          <span style={{ color: "var(--status-success)" }}> — {labelOf(r.drawing_type || "")} 색인</span>
+                        ) : (
+                          <span style={{ color: "var(--status-warning)" }}> — 미색인({r.index_skip_reason || "사유 미상"})</span>
+                        )
+                      ) : (
+                        <span style={{ color: "var(--status-error)" }}> — 실패({r.error || "사유 미상"})</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 유사 도면 검색(search) */}
@@ -747,12 +1125,89 @@ export function DesignGenPanel({ projectId }: Props) {
               </div>
             )}
 
+            {/* AI 설계 해석(선택형) — 추천안 6섹션(왜 이 매스인지·법규부합·개선) */}
+            {result.interpretation?.sections && (
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2.5 text-xs">
+                <div className="mb-1.5 font-semibold text-[var(--text-secondary)]">
+                  AI 설계 해석 <span className="text-[var(--text-hint)]">(추천안 · LLM)</span>
+                </div>
+                <dl className="space-y-1.5">
+                  {(
+                    [
+                      ["design_overview", "설계 개요"],
+                      ["mass_strategy", "매스 전략"],
+                      ["floor_efficiency", "평면 효율"],
+                      ["compliance_review", "법규 준수"],
+                      ["circulation_core", "동선·코어"],
+                      ["improvement", "개선 제안"],
+                    ] as const
+                  )
+                    .filter(([k]) => (result.interpretation?.sections?.[k] || "").trim())
+                    .map(([k, label]) => (
+                      <div key={k}>
+                        <dt className="font-medium text-[var(--accent-strong)]">{label}</dt>
+                        <dd className="text-[var(--text-tertiary)] whitespace-pre-line">
+                          {result.interpretation?.sections?.[k]}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+                <div className="mt-1.5 text-[var(--text-hint)]">
+                  AI 보조 해석 — 수치는 추천안 데이터 기준, 최종 설계·인허가 책임은 건축사.
+                </div>
+              </div>
+            )}
+
+            {/* 다필지 통합 배너(있을 때만) — 면적가중 실효한도·통합GFA·대표 용도지역 */}
+            {result.multi_parcel?.aggregation && (
+              <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs">
+                <div className="font-bold text-[var(--text-primary)]">
+                  🗺 다필지 통합: {result.multi_parcel.aggregation.parcel_count}개 필지 · 통합면적 {(result.multi_parcel.aggregation.total_area_sqm || 0).toLocaleString()}㎡
+                </div>
+                <div className="mt-0.5 text-[var(--text-secondary)]">
+                  대표 용도지역 {result.multi_parcel.aggregation.dominant_zone || "—"} · 면적가중 용적률(실효) {result.multi_parcel.aggregation.blended_far_eff_pct ?? "—"}% · 통합 연면적 {(result.multi_parcel.aggregation.integrated_gfa_sqm || 0).toLocaleString()}㎡
+                </div>
+                {result.multi_parcel.aggregation.far_basis_note && (
+                  <div className="mt-0.5 text-[var(--text-tertiary)]">{result.multi_parcel.aggregation.far_basis_note}</div>
+                )}
+              </div>
+            )}
+
+            {/* 특이부지 게이트 배너(있을 때만) — 학교용지·GB·농지·맹지 등 정직 고지(할루시네이션 방어) */}
+            {result.special_parcel?.is_special && (
+              <div
+                className="rounded-md border px-3 py-2 text-xs"
+                style={{
+                  borderColor: result.special_parcel.gate === "BLOCK" ? "var(--status-error)" : "var(--status-warning)",
+                  background: "color-mix(in srgb, var(--status-warning) 8%, transparent)",
+                }}
+              >
+                <div className="font-bold text-[var(--text-primary)]">
+                  ⚠ 특이부지: {result.special_parcel.severity_label || "비일상 토지"}
+                  {result.special_parcel.gate === "BLOCK"
+                    ? " — 개발 게이트(개발규모·수지 미산정)"
+                    : result.special_parcel.gate === "TENTATIVE"
+                      ? " — 잠정(확정 아님)"
+                      : ""}
+                </div>
+                <div className="mt-0.5 text-[var(--text-secondary)]">
+                  개발가능성 {result.special_parcel.developability || "—"} · 해결가능성 {result.special_parcel.resolvable || "—"}
+                </div>
+                {result.special_parcel.note && (
+                  <div className="mt-0.5 text-[var(--text-tertiary)]">{result.special_parcel.note}</div>
+                )}
+              </div>
+            )}
+
             {/* 제안 카드 */}
             <div className="space-y-3">
               <div className="text-xs font-bold text-[var(--text-secondary)]">
                 설계안 {result.proposals.length}건
                 {result.recommendation && (
-                  <span className="ml-2 text-[var(--accent-strong)]">· 추천: #{result.recommendation.index + 1}</span>
+                  <span className="ml-2 text-[var(--accent-strong)]">
+                    · 추천: #{result.recommendation.index + 1}
+                    {result.recommendation.tentative && " (잠정)"}
+                  </span>
                 )}
               </div>
               {result.proposals.length === 0 && (
@@ -778,11 +1233,26 @@ export function DesignGenPanel({ projectId }: Props) {
                       <span className="text-[11px] text-[var(--text-tertiary)]">점수 {(c.score * 100).toFixed(0)}</span>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <Metric label="연면적" value={c.estimated_gfa_sqm ? `${c.estimated_gfa_sqm.toLocaleString()}㎡` : null} />
+                      <Metric label="연면적(보수)" value={c.estimated_gfa_sqm ? `${c.estimated_gfa_sqm.toLocaleString()}㎡` : null} />
+                      <Metric label="법적 상한" value={c.max_envelope_gfa_sqm ? `${c.max_envelope_gfa_sqm.toLocaleString()}㎡` : null} />
                       <Metric label="층수" value={c.estimated_floors} />
                       <Metric label="세대수" value={c.estimated_units} />
-                      <Metric label="주차" value={c.parking_required != null ? `${c.parking_required}대` : null} />
                     </div>
+                    <div className="mt-1 text-[10px] text-[var(--text-hint)]">
+                      연면적은 참조평면 기준 보수치, 법적 상한은 부지 최대 잠재력(다동 배치 전제·확정 아님)
+                    </div>
+                    {/* 점수 산출 근거(랭킹 투명성) — 왜 이 안이 상위인지 */}
+                    {c.score_breakdown?.explanation && (
+                      <div className="mt-1 text-[10px] text-[var(--text-tertiary)]" title={c.score_breakdown.formula}>
+                        점수 근거: {c.score_breakdown.explanation}
+                      </div>
+                    )}
+                    {/* 조합 출처(provenance) — 어느 코퍼스 도면에서 조합됐는지 근거 */}
+                    {c.sources && c.sources.length > 0 && (
+                      <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                        조합 출처: {c.sources.slice(0, 8).map((s) => `${s.drawing_type}(유사 ${Math.round((s.score || 0) * 100)}%)`).join(" · ")}
+                      </div>
+                    )}
                     {/* 주차설계 상세 */}
                     {c.parking_required != null && (
                       <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
@@ -793,6 +1263,41 @@ export function DesignGenPanel({ projectId }: Props) {
                           <span style={{ color: c.parking_feasible ? "var(--status-success)" : "var(--status-error)" }}>
                             {" "}· 배치 {c.parking_feasible ? "현실적" : "비현실(재검토)"}
                           </span>
+                        )}
+                      </div>
+                    )}
+                    {/* 주차 자동배치도(스키매틱) */}
+                    {c.parking_layout && c.parking_layout.stalls_per_floor > 0 && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        주차 자동배치(스키매틱): 층당 {c.parking_layout.stalls_per_floor}대 ·{" "}
+                        {c.parking_layout.floors_for_parking}개층
+                        <ParkingLayoutSvg layout={c.parking_layout} />
+                        {c.parking_layout.stalls.length < c.parking_layout.stalls_per_floor && (
+                          <span className="text-[var(--text-hint)]">
+                            배치도는 대표 {c.parking_layout.stalls.length}구획만 표시(전체 층당 {c.parking_layout.stalls_per_floor}대).{" "}
+                          </span>
+                        )}
+                        <span className="text-[var(--text-hint)]">{c.parking_layout.note}</span>
+                      </div>
+                    )}
+                    {/* 건물 배치 폴리곤(스키매틱) — 부지 경계+이격+건물 footprint */}
+                    {c.placement && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        건물 배치(스키매틱): 부지 {c.placement.site.w}×{c.placement.site.d}m · 이격 {c.placement.setback_m}m
+                        {c.placement.dong_count && c.placement.dong_count > 1
+                          ? ` · ${c.placement.dong_count}개 동(동간거리 ${c.placement.gap_m}m)`
+                          : c.placement.building
+                            ? ` · 건물 ${c.placement.building.w}×${c.placement.building.d}m(${Math.round(c.placement.building.area_sqm)}㎡)`
+                            : " · 배치 불가"}
+                        <PlacementSvg placement={c.placement} />
+                        {c.placement.setback_binds && (
+                          <span style={{ color: "var(--status-warning)" }}>
+                            ⚠ 이격이 건폐율보다 배치 제약(실배치 {Math.round(c.placement.buildable_region_sqm)}㎡).{" "}
+                          </span>
+                        )}
+                        <span className="text-[var(--text-hint)]">{c.placement.note}</span>
+                        {c.placement.notes?.length > 0 && (
+                          <span className="text-[var(--text-hint)]"> {c.placement.notes.join(" · ")}</span>
                         )}
                       </div>
                     )}
@@ -833,7 +1338,7 @@ export function DesignGenPanel({ projectId }: Props) {
                         <button
                           type="button"
                           aria-label="좋은 설계안"
-                          onClick={() => handleFeedback(i, c, "up")}
+                          onClick={() => handleFeedback(i, c, "up", p.ledger_hash)}
                           disabled={feedback[i] === "up"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >
@@ -842,7 +1347,7 @@ export function DesignGenPanel({ projectId }: Props) {
                         <button
                           type="button"
                           aria-label="개선 필요"
-                          onClick={() => handleFeedback(i, c, "down")}
+                          onClick={() => handleFeedback(i, c, "down", p.ledger_hash)}
                           disabled={feedback[i] === "down"}
                           className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-[var(--surface-soft)] disabled:opacity-50"
                         >
@@ -853,6 +1358,46 @@ export function DesignGenPanel({ projectId }: Props) {
                         )}
                       </span>
                     </div>
+                    {/* 3D 매스 프리뷰 — 추천 카드 전용. 치수 데이터 있을 때만 버튼 노출(정직). */}
+                    {isRec && (() => {
+                      const floors = c.estimated_floors ?? 0;
+                      const gfa = c.estimated_gfa_sqm ?? 0;
+                      const fpW = c.parking_layout?.footprint_w_m;
+                      const fpD = c.parking_layout?.footprint_d_m;
+                      const hasFp = typeof fpW === "number" && isFinite(fpW) && fpW > 0
+                        && typeof fpD === "number" && isFinite(fpD) && fpD > 0;
+                      const canShow3d = floors > 0 && (hasFp || gfa > 0);
+                      if (!canShow3d) return null;
+                      // 치수 도출: parking_layout footprint 우선, 없으면 gfa/floors 역산.
+                      let w: number, d: number;
+                      if (hasFp) {
+                        w = fpW as number;
+                        d = fpD as number;
+                      } else {
+                        const fp = gfa / floors;
+                        const rawD = Math.sqrt(fp / 1.6);
+                        d = Math.min(40, Math.max(8, rawD));
+                        w = Math.min(120, Math.max(8, fp / d)); // 대형 footprint 시 비현실 폭 방지(개략)
+                      }
+                      return (
+                        <div className="mt-3">
+                          <Button
+                            variant="secondary"
+                            onClick={() => setShow3d((prev) => ({ ...prev, [i]: !prev[i] }))}
+                          >
+                            🧊 3D 매스 {show3d[i] ? "닫기" : "보기"}
+                          </Button>
+                          {show3d[i] && (
+                            <div className="mt-2">
+                              <ProposalMassPreview width={w} depth={d} floors={floors} />
+                              <span className="mt-1 block text-[11px] text-[var(--text-hint)]">
+                                개략 매스(추정 치수 기준 · 정밀 BIM 아님). 정확한 3D·도면은 &apos;CAD/BIM 스튜디오&apos;에서.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

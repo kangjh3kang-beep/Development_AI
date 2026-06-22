@@ -148,6 +148,39 @@ def test_search_design_set_skips_when_no_key(monkeypatch):
     assert out["ok"] and out["count"] == 0 and out["skipped_reason"] == "no_openai_key"
 
 
+def test_corpus_stats_by_discipline(monkeypatch):
+    class _CountRes:
+        def __init__(self, c):
+            self.count = c
+
+    class _FakeClient:
+        def count(self, **kw):
+            f = kw.get("count_filter")
+            disc = None
+            if f is not None:
+                for c in f.must:
+                    if getattr(c, "key", None) == "discipline":
+                        disc = c.match.value
+            return _CountRes({None: 5, "건축": 2, "구조": 1}.get(disc, 0))
+
+    import apps.api.database.init_qdrant as iq
+    monkeypatch.setattr(iq, "get_qdrant_client", lambda: _FakeClient())
+    out = asyncio.run(ss.corpus_stats("t1"))
+    assert out["ok"] and out["total"] == 5 and out["skipped_reason"] is None
+    assert out["by_discipline"]["건축"] == 2 and out["by_discipline"]["구조"] == 1
+    assert all(v > 0 for v in out["by_discipline"].values())  # 0건 분야 제외
+
+
+def test_corpus_stats_degrades(monkeypatch):
+    def _boom():
+        raise RuntimeError("qdrant down")
+
+    import apps.api.database.init_qdrant as iq
+    monkeypatch.setattr(iq, "get_qdrant_client", _boom)
+    out = asyncio.run(ss.corpus_stats("t1"))
+    assert out["ok"] and out["total"] == 0 and out["skipped_reason"] == "qdrant_error"
+
+
 def test_search_qdrant_error_degrades(monkeypatch):
     async def _fake_embed(_text):
         return [0.1] * ss.EMBED_DIM, None
