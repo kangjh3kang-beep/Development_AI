@@ -53,9 +53,12 @@ else
 fi
 
 echo "[deploy] 4/5 alembic upgrade head(엔진 컨테이너 내부 · 멱등)"
-# Dockerfile WORKDIR=/app/apps/api 이므로 alembic.ini(script_location/prepend_sys_path) 정합.
-# alembic 은 이미 적용된 리비전을 건너뛰므로 재실행 안전.
-$DC exec -T "$ENGINE_SVC" alembic upgrade head
+# ★cwd=/app 강제 + config 명시: alembic.ini 의 script_location=apps/api/alembic·
+#   prepend_sys_path=apps/api 는 repo-root(/app) 상대 경로다. 그런데 Dockerfile 최종
+#   WORKDIR 은 /app/apps/api 라, exec 가 그 cwd 에서 돌면 apps/api/apps/api/alembic 로
+#   어긋나 "Path doesn't exist: apps/api/alembic" 로 실패한다. -w /app 으로 repo-root 에서
+#   실행하면 경로가 /app/apps/api/alembic 로 정합. alembic 은 적용분 건너뛰므로 재실행 안전.
+$DC exec -T -w /app "$ENGINE_SVC" alembic -c apps/api/alembic.ini upgrade head
 
 echo "[deploy] 5/5 /health 확인"
 ok=0
