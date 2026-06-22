@@ -26,6 +26,8 @@ def _valid_hash(v: object) -> str | None:
 
 # 세대수 추정 시 전용률(연면적→전용 환산, 대략) — 추정치임을 명시.
 _DEFAULT_EFFICIENCY = 0.75
+# 연면적 활용률 정직고지 임계 — est_gfa가 법적 최대연면적의 이 비율 미만이면 '보수추정' 경고.
+_GFA_UNDERUSE_RATIO = 0.7
 # 참조도면을 부지에 맞추는 최소 허용 스케일 — 이보다 더 축소해야 하면(도면이 부지의 4배 초과)
 # 현실적 조합 불가로 보아 부적합 처리(정직).
 _MIN_SCALE = 0.5
@@ -484,6 +486,15 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             if site.avg_unit_area_sqm > 0:
                 est_units = int(est_gfa * _DEFAULT_EFFICIENCY / site.avg_unit_area_sqm)
             warnings.append("세대수는 연면적×전용률 추정치(실제 평면 세대분할과 다를 수 있음)")
+            # ★정직고지(실효 패리티): est_gfa는 단일 참조평면(plate) 적층 보수추정 — 작은 평면+
+            #   높이한도 제약 시 법적 최대연면적보다 낮게 나온다. 가짜가 아니라 과소이므로,
+            #   '더 큰 평면/다동으로 상향 여지'를 명시해 단일분석 대비 조용한 저평가를 방지.
+            if max_gfa > 0 and est_gfa < max_gfa * _GFA_UNDERUSE_RATIO:
+                _util = round(est_gfa / max_gfa * 100)
+                warnings.append(
+                    f"연면적은 단일 참조평면 적층 보수추정 — 법적 최대연면적의 약 {_util}%만 활용"
+                    "(작은 참조평면·높이한도 제약). 더 큰 평면/다동 설계로 상향 여지(확정 아님)."
+                )
 
         # 주차: 법정 부설주차 산정(주차장법 단순화, 정본 _compute_parking 재사용) +
         # 부지 footprint 기준 지하주차 층수·배치 가능성.

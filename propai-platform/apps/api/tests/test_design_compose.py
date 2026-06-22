@@ -88,6 +88,25 @@ def test_compose_score_breakdown_noncompliant_factor():
     assert top.score_breakdown["compliance_factor"] == 0.6
 
 
+def test_compose_est_gfa_underuse_honest_warning():
+    # ★정직고지: 작은 참조평면(200㎡)+높이한도로 est_gfa가 법적 최대연면적의 70% 미만이면
+    #   '보수추정·상향 여지' 경고(조용한 저평가 방지). _site: footprint600·max_gfa2000·max_floors3
+    s = _site()
+    top = compose(s, [{"point_id": "small", "drawing_type": "floor_plan",
+                       "total_area_sqm": 200.0, "score": 0.9}])[0]
+    assert top.estimated_gfa_sqm == 600.0  # 200×3층(높이한도), max_gfa 2000의 30%
+    assert any("보수추정" in w and "상향 여지" in w for w in top.warnings)
+
+
+def test_compose_est_gfa_no_underuse_warning_when_full():
+    # 큰 평면(600㎡)으로 max_gfa 근접(90%) 시 보수추정 경고 없음(무회귀)
+    s = _site()
+    top = compose(s, [{"point_id": "big", "drawing_type": "floor_plan",
+                       "total_area_sqm": 600.0, "score": 0.9}])[0]
+    assert top.estimated_gfa_sqm == 1800.0
+    assert not any("보수추정" in w for w in top.warnings)
+
+
 def test_compose_sources_provenance():
     # ★근거(provenance): 조합 출처가 채택 도면 종류·유사도·hash를 노출(어느 코퍼스에서 왔는지)
     s = _site()
