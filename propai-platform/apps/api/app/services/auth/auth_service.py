@@ -1,18 +1,21 @@
 from datetime import datetime, timedelta
-from typing import Optional
+
+import structlog
+from bcrypt import checkpw, gensalt, hashpw
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from bcrypt import hashpw, checkpw, gensalt
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.auth import User, AuditLog
-import structlog
+from app.models.auth import User
 
 logger = structlog.get_logger()
-security = HTTPBearer()
+# auto_error=False: Authorization 헤더 누락 시 HTTPBearer 기본동작(403)을 따르지 않고,
+# get_current_user 본문에서 표준 의미(무인증=401)로 직접 거부한다(라우터 계약 "무인증 401" 준수).
+security = HTTPBearer(auto_error=False)
 
 def hash_password(password: str) -> str:
     return hashpw(password.encode(), gensalt()).decode()
@@ -20,7 +23,7 @@ def hash_password(password: str) -> str:
 def verify_password(plain: str, hashed: str) -> bool:
     return checkpw(plain.encode(), hashed.encode())
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "type": "access"})
@@ -33,9 +36,12 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
+    # Authorization 헤더 누락 → 무인증(401). (HTTPBearer auto_error=False로 None 전달됨)
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="인증 정보가 없습니다")
     try:
         payload = jwt.decode(
             credentials.credentials,
@@ -47,8 +53,8 @@ async def get_current_user(
         token_kind = payload.get("type") or payload.get("token_type")
         if not user_id or token_kind != "access":
             raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="토큰 검증 실패")
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="토큰 검증 실패") from exc
     # 정식 User 모델(tenant_id) 사용 — app.models.auth.User(stale, organization_id)는 실 스키마와 불일치(500).
     from apps.api.database.models.user import User as DBUser
     result = await db.execute(
@@ -65,7 +71,7 @@ _optional_security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_optional_security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_security),
     db: AsyncSession = Depends(get_db),
 ):
     """토큰이 없거나 만료/무효면 401을 던지지 않고 None을 반환한다.

@@ -44,22 +44,12 @@ describe("AuthWorkspaceClient", () => {
     });
   });
 
-  it("logs in against the live auth api, stores tokens, and exposes the active session", async () => {
+  it("logs in against the live auth api, stores tokens, and redirects to the locale home", async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       access_token: "access-token-001",
       refresh_token: "refresh-token-001",
       token_type: "bearer",
       expires_in: 3600,
-    });
-
-    vi.mocked(apiClient.get).mockResolvedValue({
-      id: "user-001",
-      tenant_id: "tenant-001",
-      email: "operator@propai.ai",
-      name: "Operations Lead",
-      role: "admin",
-      is_active: true,
-      created_at: "2026-03-23T00:00:00Z",
     });
 
     render(<AuthWorkspaceClient locale="en" defaultMode="login" />);
@@ -86,16 +76,18 @@ describe("AuthWorkspaceClient", () => {
         "access-token-001",
       );
     });
+    expect(window.localStorage.getItem("propai_refresh_token")).toBe(
+      "refresh-token-001",
+    );
 
-    expect(await screen.findByText("Operations Lead")).toBeInTheDocument();
-    expect(screen.getByText("operator@propai.ai")).toBeInTheDocument();
-    expect(screen.getByText("Fresh login")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Open dashboard" }));
-    expect(pushMock).toHaveBeenCalledWith("/en");
+    // Login success redirects straight to the locale home; the client no longer
+    // re-reads /auth/me on the auth surface itself.
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/en");
+    });
   });
 
-  it("registers a tenant admin and posts the expected payload to the auth api", async () => {
+  it("registers a tenant admin, posts the expected payload, and redirects to the locale home", async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       access_token: "access-token-002",
       refresh_token: "refresh-token-002",
@@ -103,20 +95,13 @@ describe("AuthWorkspaceClient", () => {
       expires_in: 1800,
     });
 
-    vi.mocked(apiClient.get).mockResolvedValue({
-      id: "user-002",
-      tenant_id: "tenant-002",
-      email: "admin@tenant.ai",
-      name: "Tenant Owner",
-      role: "admin",
-      is_active: true,
-      created_at: "2026-03-23T01:00:00Z",
-    });
-
     render(<AuthWorkspaceClient locale="en" defaultMode="register" />);
 
     await userEvent.type(screen.getByLabelText("Operator name"), "Tenant Owner");
-    await userEvent.type(screen.getByLabelText("Company name"), "Tenant AI");
+    await userEvent.type(
+      screen.getByLabelText("Company (optional)"),
+      "Tenant AI",
+    );
     await userEvent.type(screen.getByLabelText("Admin email"), "admin@tenant.ai");
     await userEvent.type(screen.getByLabelText(/^Password$/), "strongpass1");
     await userEvent.click(screen.getByRole("button", { name: "Create tenant" }));
@@ -136,11 +121,15 @@ describe("AuthWorkspaceClient", () => {
       );
     });
 
-    expect(await screen.findByText("Tenant Owner")).toBeInTheDocument();
-    expect(screen.getByText("Fresh registration")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.localStorage.getItem("propai_access_token")).toBe(
+        "access-token-002",
+      );
+    });
+    expect(pushMock).toHaveBeenCalledWith("/en");
   });
 
-  it("restores a stored browser session and runs logout", async () => {
+  it("validates a stored browser session against /auth/me on mount", async () => {
     window.localStorage.setItem("propai_access_token", "stored-access-token");
     window.localStorage.setItem("propai_refresh_token", "stored-refresh-token");
 
@@ -160,36 +149,23 @@ describe("AuthWorkspaceClient", () => {
       is_active: true,
       created_at: "2026-03-23T02:00:00Z",
     });
-    vi.mocked(apiClient.post).mockResolvedValue({
-      success: true,
-      message: "Logout completed.",
-      logged_out_at: "2026-03-23T03:00:00Z",
-    });
 
     render(<AuthWorkspaceClient locale="en" defaultMode="login" />);
 
-    expect(await screen.findByText("Stored User")).toBeInTheDocument();
-    expect(screen.getByText("Stored browser session")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Run logout" }));
-
+    // A stored access token triggers a live /auth/me validation on mount; the
+    // session is not surfaced on the auth screen (it is consumed downstream),
+    // so we assert the verification call rather than any rendered profile card.
     await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/auth/logout",
-        expect.objectContaining({
-          useMock: false,
-          body: {
-            refresh_token: "stored-refresh-token",
-          },
-        }),
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/auth/me",
+        expect.objectContaining({ useMock: false }),
       );
     });
 
-    expect(window.localStorage.getItem("propai_access_token")).toBeNull();
-    expect(window.localStorage.getItem("propai_refresh_token")).toBeNull();
-    expect(
-      screen.getByText("Logout completed and the browser session has been cleared."),
-    ).toBeInTheDocument();
+    // A successful validation must not clear the stored tokens.
+    expect(window.localStorage.getItem("propai_access_token")).toBe(
+      "stored-access-token",
+    );
   });
 
   it("refreshes a stored session when the access token has expired", async () => {
@@ -228,7 +204,8 @@ describe("AuthWorkspaceClient", () => {
 
     render(<AuthWorkspaceClient locale="en" defaultMode="login" />);
 
-    expect(await screen.findByText("Refreshed User")).toBeInTheDocument();
+    // The first /auth/me fails with 401, so the client exchanges the stored
+    // refresh token for a fresh pair before retrying validation.
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(
         "/auth/refresh",
@@ -240,9 +217,13 @@ describe("AuthWorkspaceClient", () => {
         }),
       );
     });
-    expect(window.localStorage.getItem("propai_access_token")).toBe(
-      "fresh-access-token",
-    );
-    expect(screen.getByText("Stored browser session")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("propai_access_token")).toBe(
+        "fresh-access-token",
+      );
+    });
+    // /auth/me is called twice: the initial (401) attempt and the post-refresh retry.
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

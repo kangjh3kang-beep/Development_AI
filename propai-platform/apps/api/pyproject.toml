@@ -80,8 +80,8 @@ dependencies = [
     "casbin>=1.33.0",
     "bcrypt>=4.0.0,<5.0.0",
     "PyJWT>=2.9.0",
-    # 에너지 시뮬레이션
-    "eppy>=0.5.0",
+    # 에너지 시뮬레이션: eppy 제거(코드 import 0·미구현 계획). beautifulsoup4<=4.8.0 강제로
+    # 전체 의존성 설치 차단(langchain 등 bs4 4.12 필요) → 실제 구현 시 bs4 호환 버전으로 재도입.
 ]
 
 [project.optional-dependencies]
@@ -127,6 +127,8 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 "auth/*.py" = ["B008"]
 "apps/api/app/api/endpoints/**/*.py" = ["B008"]
 "app/api/endpoints/**/*.py" = ["B008"]
+"apps/api/app/services/auth/*.py" = ["B008"]
+"app/services/auth/*.py" = ["B008"]
 # 테스트: 한국어 함수명(N802) + sys.path.insert 임포트 순서(E402)
 "**/tests/*.py" = ["N802", "E402"]
 "**/tests/**/*.py" = ["N802", "E402"]

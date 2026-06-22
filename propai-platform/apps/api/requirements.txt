@@ -41,7 +41,9 @@ faiss-cpu==1.9.0
 geopandas==1.0.1
 shapely==2.0.6
 pyproj==3.7.0
-gdal==3.9.3
+# gdal은 시스템 libgdal 버전과 일치해야 소스빌드된다. 정확핀은 빌드 환경(CI/로컬)의 libgdal과
+# 불일치 시 빌드 실패하므로, 시스템에서 제공 가능한 범위로 둔다. CI는 gdal==$(gdal-config --version)로 선설치.
+gdal>=3.6,<3.12
 folium==0.18.0
 ezdxf==1.3.4
 svgwrite==1.4.3
@@ -75,7 +77,9 @@ structlog==24.4.0
 pytz==2024.2
 
 # Energy Simulation
-eppy==0.5.63
+# eppy 제거: 코드 import 0건(미구현 계획 의존)인데 beautifulsoup4<=4.8.0을 강제해 전체 의존성
+# 설치를 ResolutionImpossible로 차단(langchain 등은 bs4 4.12 필요). 에너지 시뮬 실제 구현 시
+# bs4 호환 버전으로 재도입할 것.
 
 # ML Experiment Tracking
 mlflow==2.17.2
@@ -101,6 +105,9 @@ PyMuPDF==1.24.10
 # Micro 호스트 OOM 위험이라 미도입 — requests+BeautifulSoup 경량 파서만 사용.
 beautifulsoup4==4.12.3
 lxml==5.3.0
+# MOLIT 실거래가 XML 파싱 1차 파서(molit_client; 미설치 시 regex 폴백). 누락 시 폴백이라 동작은
+# 하나, 1차 경로 활성화·완전성 위해 명시(경량 순수파이썬).
+xmltodict==0.14.2
 
 # LiveKit 화상회의 (Phase 3)
 livekit-api==1.1.0

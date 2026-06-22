@@ -1,145 +1,51 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import DashboardPage from "../page";
 
-vi.mock("@/components/dashboard/DashboardClientPanel", () => ({
-  DashboardClientPanel: ({
-    locale,
-    summaryTitle,
-  }: {
-    locale: string;
-    summaryTitle: string;
-  }) => (
-    <div data-testid="dashboard-client-panel">
-      <span>{locale}</span>
-      <span>{summaryTitle}</span>
-    </div>
-  ),
-}));
-
-vi.mock("@/components/pwa/PwaStatusCard", () => ({
-  PwaStatusCard: () => <div data-testid="pwa-status-card">PWA status card</div>,
-}));
-
-vi.mock("@/i18n/get-dictionary", () => ({
-  getDictionary: vi.fn(async () => ({
-    meta: {
-      siteName: "PropAI",
-    },
-    dashboard: {
-      title: "Dashboard home",
-      welcome: "Welcome to PropAI",
-      description: "Live operating center",
-      summaryTitle: "Summary panel",
-    },
-    nav: {
-      projects: "Projects",
-      auction: "Auction",
-      tax: "Tax",
-      approvals: "Approval Ops",
-    },
-    workspace: {
-      connectionTitle: "Connections",
-      sourceLabel: "Sources",
-      onlineLabel: "Online",
-      offlineLabel: "Offline",
-      featuredProjectLabel: "Featured project",
-      openProjectLabel: "Open project",
-      integrationRestLabel: "REST",
-      integrationGraphqlLabel: "GraphQL",
-      integrationRealtimeLabel: "Realtime",
-      modeMock: "MOCK",
-      modeLive: "실연동",
-      modeWaiting: "WAITING",
-    },
-    pages: {
-      projectDetail: {
-        summary: {
-          hub: "HUB",
-          name: "NAME",
-          pnu: "PNU",
-          zone: "ZONE",
-          npv: "NPV",
-          roi: "ROI",
-        },
-      },
-    },
-    deepIntegration: {
-      lifecycle: {
-        title: "Lifecycle",
-      },
-    },
-    modulePlaceholders: {
-      maintenance: { title: "Maintenance", eyebrow: "MAINTENANCE", description: "Desc", items: [] },
-      tenant: { title: "Tenant", eyebrow: "TENANT", description: "Desc", items: [] },
-      tax: { title: "Tax", eyebrow: "TAX", description: "Desc", items: [] },
-      approvals: { title: "Approval Ops", eyebrow: "APPROVALS", description: "Desc", items: [] },
-      auction: { title: "Auction", eyebrow: "AUCTION", description: "Desc", items: [] },
-    },
-    pwa: {
-      eyebrow: "G163 / PWA",
-      title: "PWA status",
-      description: "Offline shell",
-      runtimeLabel: "Runtime",
-      runtimeReady: "Ready",
-      runtimeRegistering: "Registering",
-      runtimeError: "Error",
-      runtimeUnsupported: "Unsupported",
-      installLabel: "Install",
-      installAvailable: "Ready to install",
-      installInstalled: "Installed",
-      installUnavailable: "Browser-controlled",
-      notificationsLabel: "Notifications",
-      notificationsGranted: "Granted",
-      notificationsDefault: "Permission required",
-      notificationsDenied: "Blocked",
-      notificationsUnsupported: "Unsupported",
-      cacheLabel: "Cache",
-      cacheReady: "Shell cached",
-      cachePending: "Priming cache",
-      cacheUnsupported: "Not available",
-      updateTitle: "Update ready",
-      updateDescription: "Apply update",
-      installAction: "Install workspace",
-      enableNotificationsAction: "Enable notifications",
-      testNotificationAction: "Send test notification",
-      refreshAction: "Refresh PWA",
-      offlineAction: "Open offline page",
-      errorTitle: "PWA runtime issue",
-      testNotificationTitle: "PropAI field sync",
-      testNotificationBody: "Offline workspace ready",
-    },
-  })),
-}));
-
+// 대시보드 홈은 현재 사전(getDictionary) 없이 한국어 정적 카피를 직접 렌더하며,
+// 진행단계/KPI/프로젝트 데이터는 클라이언트 로더(useEffect+apiClient)가 비동기로 채운다.
+// 따라서 이 테스트는 서버 컴포넌트가 동기적으로 확정 렌더하는 핵심 진입 동선
+// (히어로 카피 + 실제 내비게이션 목적지)을 검증한다.
 describe("Dashboard home navigation", () => {
-  it("renders the hero entry links and real overview card destinations", async () => {
+  it("renders the hero entry links and real overview navigation destinations", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByText("PropAI")).toBeInTheDocument();
-    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
+    // 히어로 헤드라인/서브카피 — 사용자가 처음 보는 핵심 가치제안.
+    expect(
+      screen.getByRole("heading", {
+        name: "개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("부동산 개발 분석")).toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
+    // 핵심 행동(accent) — 프로젝트 생성 진입 동선이 /en/projects/new 로 연결된다.
+    // "프로젝트 생성" 라벨은 히어로 + 빈상태 로더에 중복 등장하므로 href로 식별한다.
+    const allLinks = screen.getAllByRole("link");
+    const newProjectLinks = allLinks.filter(
+      (link) => link.getAttribute("href") === "/en/projects/new",
+    );
+    expect(newProjectLinks.length).toBeGreaterThan(0);
+
+    // 이용 가이드 진입 동선.
+    expect(allLinks.some((link) => link.getAttribute("href") === "/en/guide")).toBe(true);
+  });
+
+  it("renders the active pipeline section and real card destinations", async () => {
+    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+
+    // 활성 진행 단계 섹션 헤더(실시간 모니터링 진입점).
+    expect(screen.getByText("활성 진행 단계")).toBeInTheDocument();
+
+    // 섹션 우상단 "전체 보기" → 프로젝트 목록(/en/projects).
+    expect(screen.getByRole("link", { name: "전체 보기" })).toHaveAttribute(
       "href",
       "/en/projects",
     );
 
-    const allLinks = screen.getAllByRole("link");
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/auction")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tax")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tenant")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/inspection")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/webrtc")).toBeDefined();
-  });
-
-  it("renders the KPI summary and active pipeline cards", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
-    expect(screen.getByText("3,500억")).toBeInTheDocument();
-    expect(screen.getByText("강남 게이트웨이 신축")).toBeInTheDocument();
-    expect(screen.getByText("송도 호라이즌 개발")).toBeInTheDocument();
-    expect(screen.getByText("남산 에코타워 리모델링")).toBeInTheDocument();
+    // 사이드바 규제 동향 → 규제 분석(/en/regulations) 진입.
+    expect(screen.getByRole("link", { name: "규제 분석 열기 →" })).toHaveAttribute(
+      "href",
+      "/en/regulations",
+    );
   });
 });

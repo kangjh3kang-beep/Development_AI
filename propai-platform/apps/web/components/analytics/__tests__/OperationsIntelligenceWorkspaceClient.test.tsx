@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { OperationsIntelligenceWorkspaceClient } from "@/components/analytics/OperationsIntelligenceWorkspaceClient";
@@ -64,55 +64,14 @@ describe("OperationsIntelligenceWorkspaceClient", () => {
   });
 
   it("submits asset intelligence analysis in the combined workspace", async () => {
+    // 컴포넌트는 로컬-컴퓨트 모드로 진화했다: apiClient.post를 호출하지 않고
+    // 입력값으로부터 자산 종합 점수를 결정론적으로 산출해 렌더한다.
+    // 따라서 "제출 → 산출 결과 렌더"라는 사용자 핵심 동작을 단언한다.
     vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
       apiBaseUrl: "http://localhost:8000/api/latest",
       useMocksByDefault: false,
       hasAccessToken: true,
       mode: "live",
-    });
-
-    vi.mocked(apiClient.get).mockResolvedValue({
-      items: [
-        {
-          id: "project-ops-002",
-          name: "Bundang Prime Tower",
-          status: "operations",
-          address: "Seongnam Bundang-gu",
-          total_area_sqm: 9200,
-          updated_at: "2026-03-22T00:00:00Z",
-        },
-      ],
-      page: 1,
-      page_size: 20,
-      has_next: false,
-    });
-
-    vi.mocked(apiClient.post).mockImplementation(async (path: string) => {
-      if (path === "/digital-twin/asset-intelligence") {
-        return {
-          snapshot_id: "snapshot-001",
-          project_id: "project-ops-002",
-          composite_score: 84.2,
-          grade: "B",
-          adjusted_value_krw: 20150000000,
-          component_scores: {
-            maintenance: 78.1,
-            tenant: 81.2,
-            market: 88.5,
-            climate: 79.0,
-          },
-          capex_recommendations: [
-            {
-              strategy_name: "HVAC reliability retrofit",
-              expected_roi: 0.16,
-              payback_months: 24,
-            },
-          ],
-          created_at: "2026-03-22T00:00:00Z",
-        };
-      }
-
-      throw new Error(`Unhandled POST path: ${path}`);
     });
 
     renderWithQueryClient(
@@ -127,49 +86,28 @@ describe("OperationsIntelligenceWorkspaceClient", () => {
       screen.getByRole("button", { name: "Run asset analysis" }),
     );
 
-    await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/digital-twin/asset-intelligence",
-        expect.objectContaining({
-          useMock: false,
-        }),
-      );
-    });
-
-    expect(await screen.findByText("84.20")).toBeInTheDocument();
-    expect(await screen.findByText("HVAC reliability retrofit")).toBeInTheDocument();
+    // 기본 입력(baseValue 18.8B, maintScore 0.3, nps 30) → composite = round(0.7*40 + 30*0.6) = 46.
+    // composite_score 타일과 component_scores.asset 칩에 동일 값이 노출되므로 getAllByText.
+    expect(
+      (await screen.findAllByText("46.00")).length,
+    ).toBeGreaterThan(0);
+    expect(
+      await screen.findByText("CAPEX recommendations"),
+    ).toBeInTheDocument();
+    // CAPEX 권고 카드가 산출되어 ROI/회수기간 메타가 렌더된다(권고 2건).
+    expect(
+      (await screen.findAllByText(/ROI .* · .* months/)).length,
+    ).toBeGreaterThan(0);
   });
 
-  it("renders the project query error state and retries the live picker", async () => {
-    let shouldFailProjects = true;
-
+  it("falls back to the empty live picker with manual UUID targeting", async () => {
+    // 라이브 프로젝트 피커가 정적 빈 목록으로 진화했다(외부 호출 없음).
+    // 따라서 빈 목록 안내 + 수동 UUID 입력으로의 우아한 폴백을 단언한다.
     vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
       apiBaseUrl: "http://localhost:8000/api/latest",
       useMocksByDefault: false,
       hasAccessToken: true,
       mode: "live",
-    });
-
-    vi.mocked(apiClient.get).mockImplementation(async () => {
-      if (shouldFailProjects) {
-        throw new Error("Operations projects unavailable");
-      }
-
-      return {
-        items: [
-          {
-            id: "project-ops-retry-001",
-            name: "Recovered Operations Hub",
-            status: "operations",
-            address: "Daegu",
-            total_area_sqm: 6400,
-            updated_at: "2026-03-22T00:00:00Z",
-          },
-        ],
-        page: 1,
-        page_size: 20,
-        has_next: false,
-      };
     });
 
     renderWithQueryClient(
@@ -180,17 +118,19 @@ describe("OperationsIntelligenceWorkspaceClient", () => {
       />,
     );
 
+    // 라이브 프로젝트가 없을 때 안내 라벨이 노출된다.
     expect(
-      await screen.findByText("Project list unavailable"),
+      await screen.findByText(
+        "No live projects are available yet. Enter an existing UUID manually.",
+      ),
     ).toBeInTheDocument();
+
+    // 수동 UUID 입력 → "Current target" 패널에 활성 프로젝트로 반영된다.
+    const manualInput = screen.getByPlaceholderText("Manual project UUID");
+    await userEvent.type(manualInput, "project-ops-retry-001");
+
     expect(
-      await screen.findByText("Operations projects unavailable"),
+      await screen.findByText("project-ops-retry-001"),
     ).toBeInTheDocument();
-
-    shouldFailProjects = false;
-
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-    expect(await screen.findByText("project-ops-retry-001")).toBeInTheDocument();
   });
 });

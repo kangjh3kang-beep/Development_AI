@@ -108,7 +108,8 @@ def _org_client(member, project, *, user_tenant) -> TestClient:
         tenant_id = user_tenant
 
     async def _fake_db():
-        yield _SeqSession(member, project)
+        # 2차 조회는 select(Project.organization_id) — 스칼라(UUID)를 돌려준다(전체 Project 아님).
+        yield _SeqSession(member, project.organization_id)
 
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = lambda: _OrgUser()

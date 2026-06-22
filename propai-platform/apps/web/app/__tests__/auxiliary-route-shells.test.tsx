@@ -6,7 +6,7 @@ import OfflinePage from "../offline/page";
 
 vi.mock("@/components/feasibility/FeasibilityEditorV2", () => ({
   FeasibilityEditorV2: () => (
-    <div>Feasibility workspace</div>
+    <div data-testid="feasibility-workspace">Feasibility workspace</div>
   ),
 }));
 

@@ -43,8 +43,18 @@ class TestAvmCrossValidate:
         assert r["estimated_value_per_sqm"] == r["idw_estimate"]
         assert r["estimated_value_per_sqm"] < 1500
 
-    def test_모델없음_idw단독(self):
+    def test_모델없음_지역실거래_교차검증(self):
+        # 모델(ml) 미적재(폴백) 시에도 신뢰루프는 상시 활성: IDW(지역 거리가중) 앵커와
+        # 비교사례 중앙값(거리무관·이상치강건)을 2번째 독립신호로 교차검증한다.
+        # ml_model 신호는 없고, 정상 비교사례라 이상치 배제 없이 IDW 앵커 부근으로 수렴한다.
         svc = AVMService(); svc.model = None
         r = svc.estimate_value(_FEATS, _COMPS, 37.3, 127.0)
-        assert r["cross_validation"] is None
-        assert r["estimated_value_per_sqm"] == r["idw_estimate"]
+        cv = r["cross_validation"]
+        assert cv is not None
+        assert set(cv["used_sources"]) == {"idw_local", "comparable_median"}
+        assert not any(e["name"] == "ml_model" for e in cv["excluded_outliers"])
+        assert cv["verdict"] in ("pass", "warn")
+        assert r["model_used"] is False
+        # 정상 비교사례(이탈 없음) → 이상치 배제 0건, IDW 앵커 부근(±5%)으로 수렴
+        assert cv["excluded_outliers"] == []
+        assert abs(r["estimated_value_per_sqm"] - r["idw_estimate"]) <= r["idw_estimate"] * 0.05

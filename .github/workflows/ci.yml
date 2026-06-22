@@ -24,8 +24,20 @@ jobs:
           cache: pip
           cache-dependency-path: propai-platform/apps/api/requirements.txt
 
+      - name: Install GDAL native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdal-bin libgdal-dev
+
       - name: Install dependencies
-        run: pip install -r apps/api/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          # gdal 파이썬 바인딩은 시스템 libgdal 버전과 일치해야 소스빌드된다. requirements의 정확핀 대신
+          # 시스템 버전으로 먼저 설치하면, 이후 requirements(gdal 범위)는 충족돼 재빌드하지 않는다.
+          export CPLUS_INCLUDE_PATH=/usr/include/gdal
+          export C_INCLUDE_PATH=/usr/include/gdal
+          pip install "gdal==$(gdal-config --version)"
+          pip install -r apps/api/requirements.txt
 
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api

@@ -32,22 +32,6 @@ describe("EnergyOperationsWorkspaceClient", () => {
       mode: "live",
     });
 
-    vi.mocked(apiClient.get).mockResolvedValue({
-      items: [
-        {
-          id: "project-energy-001",
-          name: "Songdo Green Tower",
-          status: "design",
-          address: "Incheon Songdo",
-          total_area_sqm: 12000,
-          updated_at: "2026-03-22T00:00:00Z",
-        },
-      ],
-      page: 1,
-      page_size: 20,
-      has_next: false,
-    });
-
     vi.mocked(apiClient.post).mockImplementation(async (path: string) => {
       if (path === "/energy/certification") {
         return {
@@ -73,7 +57,18 @@ describe("EnergyOperationsWorkspaceClient", () => {
     expect(
       await screen.findByText("Energy certification workspace"),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Songdo Green Tower")).toBeInTheDocument();
+
+    // The project picker is a stubbed empty live feed; certification persists
+    // against a real project FK, so the operator supplies a UUID manually and
+    // a gross area for the (>0) backend schema before the call is allowed.
+    await userEvent.type(
+      screen.getByPlaceholderText("Manual project UUID"),
+      "project-energy-001",
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Gross area (sqm)"),
+      "12000",
+    );
 
     await userEvent.click(
       screen.getByRole("button", { name: "Estimate certification" }),
@@ -84,11 +79,16 @@ describe("EnergyOperationsWorkspaceClient", () => {
         "/energy/certification",
         expect.objectContaining({
           useMock: false,
+          body: expect.objectContaining({
+            project_id: "project-energy-001",
+            total_area_sqm: 12000,
+          }),
         }),
       );
     });
 
-    expect(await screen.findByText("A+")).toBeInTheDocument();
+    // The grade renders both as a metric tile and in the evidence panel.
+    expect((await screen.findAllByText("A+")).length).toBeGreaterThan(0);
     expect(
       await screen.findByText((content) =>
         content.includes("Increase rooftop PV capacity."),
@@ -96,9 +96,7 @@ describe("EnergyOperationsWorkspaceClient", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the project query error state and retries the live picker", async () => {
-    let shouldFailProjects = true;
-
+  it("blocks certification with an honest error when no project target is provided", async () => {
     vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
       apiBaseUrl: "http://localhost:8000/api/latest",
       useMocksByDefault: false,
@@ -106,43 +104,21 @@ describe("EnergyOperationsWorkspaceClient", () => {
       mode: "live",
     });
 
-    vi.mocked(apiClient.get).mockImplementation(async () => {
-      if (shouldFailProjects) {
-        throw new Error("Projects feed unavailable");
-      }
-
-      return {
-        items: [
-          {
-            id: "project-energy-retry-001",
-            name: "Recovery Energy Tower",
-            status: "operations",
-            address: "Busan",
-            total_area_sqm: 8600,
-            updated_at: "2026-03-22T00:00:00Z",
-          },
-        ],
-        page: 1,
-        page_size: 20,
-        has_next: false,
-      };
-    });
-
     renderWithQueryClient(<EnergyOperationsWorkspaceClient locale="en" />);
 
     expect(
-      await screen.findByText("Project list unavailable"),
+      await screen.findByText("Energy certification workspace"),
     ).toBeInTheDocument();
+
+    // No live projects, no manual UUID: submitting must not fire a backend call
+    // and must surface the honest "real project UUID required" guard instead.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Estimate certification" }),
+    );
+
     expect(
-      await screen.findByText("Projects feed unavailable"),
+      await screen.findByText("A real project UUID is required."),
     ).toBeInTheDocument();
-
-    shouldFailProjects = false;
-
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-    expect(
-      await screen.findByText("project-energy-retry-001"),
-    ).toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

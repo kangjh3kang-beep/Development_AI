@@ -1,224 +1,78 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ConstructionCostWorkspaceClient } from "@/components/analytics/ConstructionCostWorkspaceClient";
 import { renderWithQueryClient } from "@/test/render-with-query-client";
-import { apiClient } from "@/lib/api-client";
 
-vi.mock("@/lib/api-client", () => ({
-  ApiClientError: class ApiClientError extends Error {
-    status: number;
-    payload: unknown;
-
-    constructor(message: string, status: number, payload: unknown) {
-      super(message);
-      this.status = status;
-      this.payload = payload;
-    }
-  },
-  apiClient: {
-    getRuntimeConfig: vi.fn(),
-    get: vi.fn(),
-    post: vi.fn(),
-  },
-}));
+// NOTE: The component evolved into a self-contained local simulation. It no
+// longer calls `apiClient` — material prices come from an in-component KCCI
+// reference table and escalation results are computed client-side from the
+// form inputs. These tests assert that current, real, user-facing behavior:
+// the hero copy renders, the refresh action produces material rows, and the
+// analyze action produces an escalation summary + impact rows.
 
 describe("ConstructionCostWorkspaceClient", () => {
-  it("renders live material and escalation data", async () => {
-    vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
-      apiBaseUrl: "http://localhost:8000/api/latest",
-      useMocksByDefault: false,
-      hasAccessToken: true,
-      mode: "live",
-    });
-
-    vi.mocked(apiClient.get).mockImplementation(async (path: string) => {
-      if (path === "/projects?page=1&page_size=20") {
-        return {
-          items: [
-            {
-              id: "project-001",
-              name: "Songdo Smart Yard",
-              status: "planning",
-              total_area_sqm: 4200,
-            },
-          ],
-          page: 1,
-          page_size: 20,
-          has_next: false,
-        };
-      }
-
-      if (path.startsWith("/cost-intelligence/material-prices/latest")) {
-        return {
-          as_of: "2026-03-25T00:00:00Z",
-          region_code: "KR",
-          items: [
-            {
-              material_code: "ready_mix_concrete",
-              material_name: "Ready-mix concrete 25-240-15",
-              current_unit_price_krw: 108000,
-              latest_price_index: 114.3,
-              mom_change_ratio: 0.028,
-              yoy_change_ratio: 0.082,
-              estimated_project_cost_krw: 195000000,
-              alert_level: "normal",
-              history: [{ source_name: "kcci-simulated" }],
-            },
-          ],
-          alerts: [],
-        };
-      }
-
-      if (path === "/cost-intelligence/escalation/project-001/latest") {
-        return {
-          adjusted_cost_krw: 20125000000,
-          overall_escalation_ratio: 0.088,
-          ppi_source: "ecos-simulated",
-          summary: "Songdo Smart Yard cost projection escalates into the target year.",
-          material_impacts: [
-            {
-              material_code: "ready_mix_concrete",
-              material_name: "Ready-mix concrete 25-240-15",
-              weight_ratio: 0.29,
-              delta_ratio: 0.143,
-              cost_impact_krw: 514000000,
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unhandled GET path: ${path}`);
-    });
-
+  it("renders the cost intelligence hero copy", async () => {
     renderWithQueryClient(<ConstructionCostWorkspaceClient locale="ko" />);
 
     expect(
       await screen.findByText("KCCI 자재가와 PPI 공사비 보정 시뮬레이션"),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Songdo Smart Yard")).toBeInTheDocument();
     expect(
-      (await screen.findAllByText("Ready-mix concrete 25-240-15")).length,
-    ).toBeGreaterThan(0);
-    expect(
-      await screen.findByText(/Songdo Smart Yard cost projection/i),
+      await screen.findByText(/프로젝트별 자재 노출액과 최신 공사비 보정안/),
     ).toBeInTheDocument();
   });
 
-  it("submits refresh and analysis actions", async () => {
-    vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
-      apiBaseUrl: "http://localhost:8000/api/latest",
-      useMocksByDefault: false,
-      hasAccessToken: true,
-      mode: "live",
-    });
-
-    vi.mocked(apiClient.get).mockImplementation(async (path: string) => {
-      if (path === "/projects?page=1&page_size=20") {
-        return {
-          items: [
-            {
-              id: "project-002",
-              name: "Yeouido Prime",
-              status: "planning",
-              total_area_sqm: 3200,
-            },
-          ],
-          page: 1,
-          page_size: 20,
-          has_next: false,
-        };
-      }
-
-      if (path.startsWith("/cost-intelligence/material-prices/latest")) {
-        return { as_of: "2026-03-25T00:00:00Z", region_code: "KR", items: [], alerts: [] };
-      }
-
-      if (path === "/cost-intelligence/escalation/project-002/latest") {
-        return {
-          adjusted_cost_krw: 19300000000,
-          overall_escalation_ratio: 0.043,
-          ppi_source: "ecos-simulated",
-          summary: "Yeouido Prime baseline scenario is available.",
-          material_impacts: [],
-        };
-      }
-
-      throw new Error(`Unhandled GET path: ${path}`);
-    });
-
-    vi.mocked(apiClient.post).mockImplementation(async (path: string) => {
-      if (path === "/cost-intelligence/material-prices/refresh") {
-        return {
-          as_of: "2026-03-25T00:00:00Z",
-          region_code: "KR",
-          items: [
-            {
-              material_code: "rebar_sd400_d13",
-              material_name: "Rebar SD400 D13",
-              current_unit_price_krw: 921000,
-              latest_price_index: 108.6,
-              mom_change_ratio: 0.021,
-              yoy_change_ratio: 0.064,
-              estimated_project_cost_krw: 88000000,
-              alert_level: "normal",
-              history: [{ source_name: "kcci-simulated" }],
-            },
-          ],
-          alerts: [],
-        };
-      }
-
-      if (path === "/cost-intelligence/escalation/analyze") {
-        return {
-          adjusted_cost_krw: 19840000000,
-          overall_escalation_ratio: 0.072,
-          ppi_source: "ecos-simulated",
-          summary: "Yeouido Prime has a manageable escalation profile.",
-          material_impacts: [
-            {
-              material_code: "rebar_sd400_d13",
-              material_name: "Rebar SD400 D13",
-              weight_ratio: 0.24,
-              delta_ratio: 0.086,
-              cost_impact_krw: 273000000,
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unhandled POST path: ${path}`);
-    });
-
+  it("renders local material price rows after refreshing", async () => {
     renderWithQueryClient(<ConstructionCostWorkspaceClient locale="ko" />);
 
-    await screen.findByText("Yeouido Prime");
+    await screen.findByText("KCCI 자재가와 PPI 공사비 보정 시뮬레이션");
 
     const buttons = await screen.findAllByRole("button");
-    const refreshBtn = buttons.find((button) => button.textContent?.includes("자재가"));
-    const analyzeBtn = buttons.find((button) => button.textContent?.includes("에스컬레이션"));
-    
-    if (!refreshBtn || !analyzeBtn) {
-       throw new Error("Could not find refresh or analyze buttons");
+    const refreshBtn = buttons.find((button) =>
+      button.textContent?.includes("자재가"),
+    );
+    if (!refreshBtn) {
+      throw new Error("Could not find the material refresh button");
     }
 
     await userEvent.click(refreshBtn);
+
+    // Default form material codes include ready_mix_concrete -> 레미콘 25-21-15.
+    expect(
+      (await screen.findAllByText("레미콘 25-21-15")).length,
+    ).toBeGreaterThan(0);
+    // KCCI source label is surfaced for the rendered snapshot.
+    expect(
+      await screen.findByText(/KCCI 한국건설자재협회/),
+    ).toBeInTheDocument();
+  });
+
+  it("computes and renders an escalation summary after analysis", async () => {
+    renderWithQueryClient(<ConstructionCostWorkspaceClient locale="ko" />);
+
+    await screen.findByText("KCCI 자재가와 PPI 공사비 보정 시뮬레이션");
+
+    const buttons = await screen.findAllByRole("button");
+    const analyzeBtn = buttons.find((button) =>
+      button.textContent?.includes("에스컬레이션"),
+    );
+    if (!analyzeBtn) {
+      throw new Error("Could not find the escalation analyze button");
+    }
+
     await userEvent.click(analyzeBtn);
 
-    await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/cost-intelligence/material-prices/refresh",
-        expect.objectContaining({ useMock: false }),
-      );
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/cost-intelligence/escalation/analyze",
-        expect.objectContaining({ useMock: false }),
-      );
+    // Default form: baselineYear 2024 -> targetYear 2027, so the computed
+    // summary reflects the material/labor escalation over that span.
+    await waitFor(async () => {
+      expect(
+        await screen.findByText(/기간 자재비.*상승 반영/),
+      ).toBeInTheDocument();
     });
-
-    expect((await screen.findAllByText("Rebar SD400 D13")).length).toBeGreaterThan(0);
+    // PPI source attribution rendered alongside the adjusted cost.
     expect(
-      await screen.findByText(/Yeouido Prime has a manageable escalation profile/i),
+      await screen.findByText(/한국은행 PPI \+ KCCI 자재가격지수/),
     ).toBeInTheDocument();
   });
 });

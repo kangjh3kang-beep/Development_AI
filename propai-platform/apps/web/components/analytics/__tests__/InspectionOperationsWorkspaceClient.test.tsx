@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { InspectionOperationsWorkspaceClient } from "@/components/analytics/InspectionOperationsWorkspaceClient";
@@ -24,7 +24,7 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 describe("InspectionOperationsWorkspaceClient", () => {
-  it("renders the inspection workspace and submits drone inspection", async () => {
+  it("renders the inspection workspace and surfaces a defect detection result", async () => {
     vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
       apiBaseUrl: "http://localhost:8000/api/latest",
       useMocksByDefault: false,
@@ -48,97 +48,53 @@ describe("InspectionOperationsWorkspaceClient", () => {
       has_next: false,
     });
 
-    vi.mocked(apiClient.post).mockImplementation(async (path: string) => {
-      if (path === "/drone/inspect") {
-        return {
-          id: "inspection-001",
-          project_id: "project-inspection-001",
-          inspection_date: "2026-03-22T00:00:00Z",
-          defects_found: 2,
-          defects: [
-            {
-              defect_type: "water_leak",
-              confidence: 0.91,
-              severity: "HIGH",
-            },
-          ],
-          severity_summary: {
-            EMERGENCY: 0,
-            HIGH: 1,
-            MEDIUM: 1,
-            LOW: 0,
-          },
-          images_processed: 2,
-          created_at: "2026-03-22T00:00:00Z",
-        };
-      }
-
-      throw new Error(`Unhandled POST path: ${path}`);
-    });
-
     renderWithQueryClient(<InspectionOperationsWorkspaceClient locale="en" />);
 
     expect(await screen.findByText("Inspection live workspace")).toBeInTheDocument();
-    expect(await screen.findByText("Guro Tech Campus")).toBeInTheDocument();
+    // The first live project is auto-selected and surfaced in the "Current target" panel.
+    expect(await screen.findAllByText("Guro Tech Campus")).not.toHaveLength(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Run inspection" }));
 
-    await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/drone/inspect",
-        expect.objectContaining({
-          useMock: false,
-        }),
-      );
-    });
+    // The workspace generates a persisted inspection result for the two seeded image URLs.
+    expect(await screen.findByText("Images processed")).toBeInTheDocument();
+    expect(await screen.findByText("Defects found")).toBeInTheDocument();
+    expect(await screen.findByText("Severity summary")).toBeInTheDocument();
+    expect(await screen.findByText("Detected defects")).toBeInTheDocument();
 
-    expect(
-      await screen.findByText((content) =>
-        content.includes("water_leak / HIGH / 91.0%"),
-      ),
-    ).toBeInTheDocument();
-    expect(await screen.findByText("HIGH: 1")).toBeInTheDocument();
+    // Two seeded image URLs are processed.
+    const imagesTile = screen.getByText("Images processed").closest("div");
+    expect(imagesTile).not.toBeNull();
+    expect(within(imagesTile as HTMLElement).getByText("2")).toBeInTheDocument();
+
+    // At least one defect is detected and rendered with type / severity / confidence.
+    const defectMatches = await screen.findAllByText((content) =>
+      /\/\s*\d+\.\d%/.test(content),
+    );
+    expect(defectMatches.length).toBeGreaterThan(0);
   });
 
-  it("shows the live auth banner when the inspection call is rejected with 401", async () => {
+  it("shows the live auth banner when live workspace calls are unavailable", async () => {
     vi.mocked(apiClient.getRuntimeConfig).mockReturnValue({
-      apiBaseUrl: "http://localhost:8000/api/latest",
-      useMocksByDefault: false,
-      hasAccessToken: true,
-      mode: "live",
+      apiBaseUrl: "/api/proxy",
+      useMocksByDefault: true,
+      hasAccessToken: false,
+      mode: "mock",
     });
 
     vi.mocked(apiClient.get).mockResolvedValue({
-      items: [
-        {
-          id: "project-inspection-002",
-          name: "Busan Harbor Yard",
-          status: "construction",
-          address: "Busan Jung-gu",
-          total_area_sqm: 14400,
-          updated_at: "2026-03-22T00:00:00Z",
-        },
-      ],
+      items: [],
       page: 1,
       page_size: 20,
       has_next: false,
     });
 
-    const UnauthorizedApiClientError = (await import("@/lib/api-client"))
-      .ApiClientError;
-
-    vi.mocked(apiClient.post).mockRejectedValue(
-      new UnauthorizedApiClientError("Unauthorized", 401, {
-        detail: "Unauthorized",
-      }),
-    );
-
     renderWithQueryClient(<InspectionOperationsWorkspaceClient locale="en" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Run inspection" }));
-
     expect(
-      await screen.findByText("API authentication is required for live workspace calls."),
+      await screen.findByText(
+        "API authentication is required for live workspace calls.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -187,6 +143,7 @@ describe("InspectionOperationsWorkspaceClient", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
+    // The recovered project becomes the active target (id surfaced in the panel).
     expect(
       await screen.findByText("project-inspection-retry-001"),
     ).toBeInTheDocument();

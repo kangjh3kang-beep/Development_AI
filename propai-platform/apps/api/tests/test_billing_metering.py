@@ -5,7 +5,7 @@
 """
 import os
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import pytest
 
@@ -114,8 +114,10 @@ class TestDeductionOrder:
         )
         assert add == pytest.approx(1500.0)
         update = next(s for s in sess.executed if "UPDATE public.users SET llm_billed_krw" in s[0])
-        # topup_krw 그대로 5000 (월기본 12250 > 1500이므로 충전 미차감)
-        assert update[1]["t"] == pytest.approx(5000.0)
+        # 원자 차감(:draw)으로 충전에서 0원만 차감 → topup 그대로 5000 보존
+        #   (월기본 12250 > 1500이므로 초과 없음 → topup_draw=0)
+        assert update[1]["draw"] == pytest.approx(0.0)
+        assert 5000.0 - update[1]["draw"] == pytest.approx(5000.0)
         # llm_usage_log INSERT 발생 + service 귀속
         insert = next(s for s in sess.executed if "INSERT INTO llm_usage_log" in s[0])
         assert insert[1]["svc"] == "market"
@@ -139,7 +141,9 @@ class TestDeductionOrder:
         add = await bs.record_usage_usd(sess, "u1", 1.0, service="feasibility")
         assert add == pytest.approx(1500.0)
         update = next(s for s in sess.executed if "UPDATE public.users SET llm_billed_krw" in s[0])
-        assert update[1]["t"] == pytest.approx(4500.0)
+        # 월기본 잔여 1000 소진 → 초과 500을 충전에서 차감(:draw=500) → topup 5000-500=4500
+        assert update[1]["draw"] == pytest.approx(500.0)
+        assert 5000.0 - update[1]["draw"] == pytest.approx(4500.0)
 
     async def test_no_service_skips_usage_log(self, monkeypatch):
         import app.services.billing.billing_service as bs

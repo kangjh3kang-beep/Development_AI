@@ -33,11 +33,13 @@ describe("apiClient", () => {
     window.localStorage.clear();
   });
 
-  it("reports mock mode when mocks are enabled by default", async () => {
-    const { apiClient } = await loadApiClient();
+  it("reports mock mode when mocks are explicitly enabled", async () => {
+    const { apiClient } = await loadApiClient({
+      NEXT_PUBLIC_USE_MOCKS: "true",
+    });
 
     expect(apiClient.getRuntimeConfig()).toEqual({
-      apiBaseUrl: "/api/proxy",
+      apiBaseUrl: "http://localhost:8000/api/v1",
       useMocksByDefault: true,
       hasAccessToken: false,
       mode: "mock",
@@ -52,7 +54,7 @@ describe("apiClient", () => {
     window.localStorage.setItem("propai_access_token", "live-token");
 
     expect(apiClient.getRuntimeConfig()).toEqual({
-      apiBaseUrl: "/api/proxy",
+      apiBaseUrl: "http://localhost:8000/api/v1",
       useMocksByDefault: false,
       hasAccessToken: true,
       mode: "live",
@@ -64,7 +66,9 @@ describe("apiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
     resolveMockRequest.mockResolvedValue({ source: "mock" });
 
-    const { apiClient } = await loadApiClient();
+    const { apiClient } = await loadApiClient({
+      NEXT_PUBLIC_USE_MOCKS: "true",
+    });
     const response = await apiClient.get<{ source: string }>("/projects");
 
     expect(response).toEqual({ source: "mock" });

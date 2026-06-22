@@ -54,11 +54,12 @@ describe("NodeRunCard — 상태·검증·그라운딩 정직고지", () => {
     expect(screen.getByTitle("미확보(정직 표기)")).toBeInTheDocument();
   });
 
-  it("available:false(audit)는 미가용 정직 라벨 표기 + 백엔드 0 강제 없음", () => {
+  it("available:true(audit, 심의엔진 BFF 통합)는 라벨 표기 + 미가용 라벨 비표기", () => {
     render(<NodeRunCard nodeId="audit" />);
     expect(screen.getByText("AI 설계심의")).toBeInTheDocument();
-    // reportContract.unavailableLabel 정직 표기.
-    expect(screen.getByText("심의엔진 연동 예정")).toBeInTheDocument();
+    // 심의분석엔진 BFF 풀통합으로 audit 노드 unlock(node-registry available:true) →
+    // !node.available 분기의 미가용 라벨("심의엔진 연결 대기")은 렌더되지 않는다.
+    expect(screen.queryByText("심의엔진 연결 대기")).not.toBeInTheDocument();
   });
 
   it("error 상태는 오류 메시지 표기 + 다시 실행 CTA", () => {

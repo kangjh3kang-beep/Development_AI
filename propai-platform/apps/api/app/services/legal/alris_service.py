@@ -1,12 +1,12 @@
-from typing import Dict, List, Optional
-from app.core.config import settings
 import structlog
 
+from app.core.config import settings
+
 try:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-    from langchain_community.vectorstores import FAISS
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
     from langchain.schema import Document
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import FAISS
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 except ImportError:
     ChatOpenAI = None  # type: ignore[assignment,misc]
     OpenAIEmbeddings = None  # type: ignore[assignment,misc]
@@ -20,13 +20,16 @@ class ALRISService:
     """ALRIS: RAG 기반 건축 법규 자동 검토 (40개 법령)"""
 
     def __init__(self):
-        if ChatOpenAI is not None:
+        # langchain 미설치 또는 OPENAI_API_KEY 미설정 시 LLM/임베딩을 구성하지 않는다.
+        # ChatOpenAI/OpenAIEmbeddings는 생성자에서 키 부재 시 OpenAIError를 던지므로,
+        # llm_provider.get_llm과 동일하게 키가 있을 때만 클라이언트를 만든다(무키 환경 안전).
+        if ChatOpenAI is not None and settings.OPENAI_API_KEY:
             self.llm = ChatOpenAI(model=settings.OPENAI_MODEL, api_key=settings.OPENAI_API_KEY, temperature=0.0)
             self.embeddings = OpenAIEmbeddings(api_key=settings.OPENAI_API_KEY)
         else:
             self.llm = None
             self.embeddings = None
-        self.vectorstore: Optional[object] = None
+        self.vectorstore: object | None = None
         if self.embeddings is not None:
             self._init_vectorstore()
 

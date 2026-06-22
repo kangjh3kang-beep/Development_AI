@@ -17,6 +17,13 @@ class TestCeleryAppMeta:
             "check-standard-prices-weekly",
             "check-pension-increase-monthly",
             "sync-onbid-auctions-daily",
+            "flush-growth-events",
+            "analyze-growth-hourly",
+            "analyze-growth-daily",
+            "evaluate-healing",
+            "evaluate-correction",
+            "evaluate-improvement-daily",
+            "run-learning-weekly",
         }
         assert len(BEAT_SCHEDULE_NAMES) == len(set(BEAT_SCHEDULE_NAMES))  # 중복 금지
 
@@ -33,6 +40,13 @@ class TestCeleryAppMeta:
             "app.tasks.rate_tasks.check_pension_increase",
             "app.tasks.cost_tasks.recalculate_project_cost",
             "app.tasks.auction_sync_task.sync_onbid_auctions",
+            "app.tasks.growth_tasks.flush_growth_events",
+            "app.tasks.growth_tasks.analyze_growth",
+            "app.tasks.growth_tasks.evaluate_healing",
+            "app.tasks.growth_tasks.evaluate_correction",
+            "app.tasks.growth_tasks.evaluate_improvement",
+            "app.tasks.growth_pr_task.run_pr_bot",
+            "app.tasks.growth_learning_task.run_learning",
         }
         assert len(TASK_NAMES) == len(set(TASK_NAMES))  # 중복 금지
 

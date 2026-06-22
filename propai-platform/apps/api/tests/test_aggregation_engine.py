@@ -4,11 +4,11 @@
 """
 
 import pytest
+
 from app.services.feasibility.aggregation_engine import (
-    determine_grade,
     aggregate_feasibility,
     compare_scenarios,
-    GRADE_THRESHOLDS,
+    determine_grade,
 )
 
 
@@ -101,14 +101,17 @@ class TestAggregate:
         assert npv < net
 
     def test_with_equity(self):
-        """자기자본 기준 ROI."""
+        """자기자본 제공 시: roi_pct는 총사업비 기준(표준 정의)으로 유지되고,
+        자기자본 기준 레버리지 수익률은 별도 roe_pct 필드에 담긴다."""
         result = aggregate_feasibility(
             total_revenue_won=100_000_000_000,
             total_construction_cost_won=80_000_000_000,
             equity_won=20_000_000_000,
         )
-        # ROI = 200억 / 200억 × 100 = 100%
-        assert result["roi_pct"] == 100.0
+        # ROI(사업수익률) = 순이익 200억 / 총사업비 800억 × 100 = 25%
+        assert result["roi_pct"] == 25.0
+        # ROE(자기자본수익률) = 순이익 200억 / 자기자본 200억 × 100 = 100%
+        assert result["roe_pct"] == 100.0
 
 
 class TestCompareScenarios:
