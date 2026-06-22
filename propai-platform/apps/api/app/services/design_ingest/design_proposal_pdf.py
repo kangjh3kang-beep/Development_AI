@@ -134,6 +134,12 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         sb = cand.get("score_breakdown") or {}
         if sb.get("explanation"):
             rows.append(["선정 근거(점수)", str(sb["explanation"])])  # 랭킹 투명성(근거)
+        srcs = cand.get("sources") or []
+        if srcs:  # 조합 출처(provenance) — 어느 코퍼스 도면에서 조합됐는지 근거
+            src_txt = " · ".join(
+                f"{s.get('drawing_type')}(유사 {round((s.get('score') or 0) * 100)}%)" for s in srcs[:8]
+            )
+            rows.append(["조합 출처(참조 도면)", src_txt])
         el.append(_kv(rows))
         notes = [str(n) for n in (verdict.get("notes") or [])]
         for n in (cand.get("warnings") or []):

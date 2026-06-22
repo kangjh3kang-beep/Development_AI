@@ -76,7 +76,8 @@ class CompositionCandidate:
     """조합 결과 1건(설계 초안)."""
 
     selected: dict[str, str]            # drawing_type -> point_id
-    primary_drawing_type: str
+    sources: list[dict] = field(default_factory=list)  # 조합 출처(근거) — 종류·유사도·hash·면적
+    primary_drawing_type: str = "unknown"
     primary_content_hash: str | None = None  # 주 도면 content_hash — 피드백(👍👎) 신호 연결키(down율 식별)
     scale_factor: float | None = None
     estimated_gfa_sqm: float | None = None
@@ -99,6 +100,7 @@ class CompositionCandidate:
     def to_dict(self) -> dict:
         return {
             "selected": self.selected,
+            "sources": list(self.sources),
             "primary_drawing_type": self.primary_drawing_type,
             "primary_content_hash": self.primary_content_hash,
             "disciplines_covered": list(self.disciplines_covered),
@@ -433,11 +435,24 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
         warnings: list[str] = list(site.warnings)  # 부지/한도 경고 승계(정직 전파)
         primary_type = _g(fp, "drawing_type") or "unknown"
         selected = {primary_type: str(_g(fp, "point_id") or "")}
+        source_matches: dict[str, dict] = {primary_type: fp}  # 조합 출처(근거) — 종류별 채택 도면
         # ★분야별 도면 세트 조합 — 매칭된 모든 도면종류의 최고점 1건씩 첨부(by_type 이미 점수 정렬).
         #   건축 평면뿐 아니라 구조·전기·기계·위생·소방·토목·조경·통신 도면을 코퍼스에서 끌어모은다.
         for t, lst in by_type.items():
             if t and t != "unknown" and t not in selected and lst:
                 selected[t] = str(_g(lst[0], "point_id") or "")
+                source_matches[t] = lst[0]
+        # 조합 출처 목록(어느 코퍼스 도면에서 왔는지) — 전역 '근거 제공' 원칙(provenance)
+        sources = [
+            {
+                "drawing_type": t,
+                "point_id": str(_g(m, "point_id") or ""),
+                "score": round(float(_g(m, "score") or 0.0), 4),  # 검색 유사도
+                "content_hash": _valid_hash(_g(m, "content_hash")),
+                "area_sqm": _g(m, "total_area_sqm"),
+            }
+            for t, m in source_matches.items()
+        ]
 
         # 분야 커버리지 — 세트가 포함한 분야 + 권장 핵심분야 중 미확보(정직 갭 고지).
         disciplines = sorted({
@@ -520,6 +535,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
 
         candidates.append(CompositionCandidate(
             selected=selected,
+            sources=sources,
             primary_drawing_type=_g(fp, "drawing_type") or "unknown",
             primary_content_hash=_valid_hash(_g(fp, "content_hash")),  # 피드백 신호 연결키(hex 검증)
             disciplines_covered=disciplines,

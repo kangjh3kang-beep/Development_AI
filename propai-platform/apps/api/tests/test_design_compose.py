@@ -88,6 +88,28 @@ def test_compose_score_breakdown_noncompliant_factor():
     assert top.score_breakdown["compliance_factor"] == 0.6
 
 
+def test_compose_sources_provenance():
+    # ★근거(provenance): 조합 출처가 채택 도면 종류·유사도·hash를 노출(어느 코퍼스에서 왔는지)
+    s = _site()
+    matches = [
+        {"point_id": "fp1", "drawing_type": "floor_plan", "total_area_sqm": 500.0, "score": 0.95,
+         "content_hash": "a1b2c3d4e5f60718"},  # 유효 16자 hex
+        {"point_id": "sp1", "drawing_type": "site_plan", "total_area_sqm": 980.0, "score": 0.9},
+    ]
+    top = compose(s, matches, top_n=1)[0]
+    srcs = top.sources
+    assert srcs and isinstance(srcs, list)
+    by_t = {x["drawing_type"]: x for x in srcs}
+    assert "floor_plan" in by_t and "site_plan" in by_t  # 채택된 모든 종류 출처 노출
+    assert by_t["floor_plan"]["point_id"] == "fp1"
+    assert by_t["floor_plan"]["score"] == 0.95
+    assert by_t["floor_plan"]["content_hash"] == "a1b2c3d4e5f60718"  # 유효 hex hash 통과
+    # 짧은(무효) hash는 None으로 정직 처리 — site_plan은 hash 미제공 → None
+    assert by_t["site_plan"]["content_hash"] is None
+    # to_dict 직렬화 경로에도 포함
+    assert "sources" in top.to_dict() and len(top.to_dict()["sources"]) == len(srcs)
+
+
 def test_compose_noncompliant_when_drawing_oversized():
     # footprint 600인데 참조도면 5000㎡ → 축소 sqrt(600/5000)=0.346 < 0.5 → 부적합(과대)
     s = _site()

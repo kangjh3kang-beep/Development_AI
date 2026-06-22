@@ -80,6 +80,13 @@ type Candidate = {
   primary_drawing_type: string;
   primary_content_hash?: string | null;
   selected?: Record<string, string>;
+  sources?: {
+    drawing_type: string;
+    point_id: string;
+    score: number;
+    content_hash?: string | null;
+    area_sqm?: number | null;
+  }[];
   disciplines_covered?: string[];
   missing_disciplines?: string[];
   scale_factor: number | null;
@@ -1161,6 +1168,12 @@ export function DesignGenPanel({ projectId }: Props) {
                     {c.score_breakdown?.explanation && (
                       <div className="mt-1 text-[10px] text-[var(--text-tertiary)]" title={c.score_breakdown.formula}>
                         점수 근거: {c.score_breakdown.explanation}
+                      </div>
+                    )}
+                    {/* 조합 출처(provenance) — 어느 코퍼스 도면에서 조합됐는지 근거 */}
+                    {c.sources && c.sources.length > 0 && (
+                      <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                        조합 출처: {c.sources.slice(0, 8).map((s) => `${s.drawing_type}(유사 ${Math.round((s.score || 0) * 100)}%)`).join(" · ")}
                       </div>
                     )}
                     {/* 주차설계 상세 */}
