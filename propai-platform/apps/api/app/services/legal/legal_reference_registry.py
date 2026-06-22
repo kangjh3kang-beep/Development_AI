@@ -17,10 +17,29 @@
 - build_ordinance_url(ordinance_name) -> str
 - get_legal_refs(keys, sigungu=None)  -> list[dict]   (블루프린트 WP-1 호환)
 """
-from urllib.parse import quote
+import logging
+from urllib.parse import quote, urlparse
+
+logger = logging.getLogger(__name__)
 
 # law.go.kr 대표 URL (법령정보식별주소 = 한글주소). 개정 시 자동으로 현행본을 가리킨다.
 LAW_GO_KR_BASE = "https://www.law.go.kr"
+
+# 신뢰 법령 출처 호스트(진실원천). 이 외 호스트/비https URL은 url_status 'verified' 불가 +
+# inject_urls 주입 거부 — 오링크·SSRF·할루시네이션 링크가 진실원천을 오염시키지 못하게 한다.
+_TRUSTED_LEGAL_HOSTS = ("law.go.kr", "elis.go.kr", "eum.go.kr")
+
+
+def _is_trusted_legal_host(url: str | None) -> bool:
+    """URL이 신뢰 법령 출처(https + 허용 호스트 또는 그 서브도메인)인지. 그 외는 False(무날조)."""
+    try:
+        parsed = urlparse(url or "")
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    return any(host == h or host.endswith("." + h) for h in _TRUSTED_LEGAL_HOSTS)
 
 # 분류 키워드 — ②-1 규칙: '법령' 또는 '자치법규'를 그대로 한글로.
 _CATEGORY_LAW = "법령"
@@ -387,8 +406,9 @@ def get_legal_refs(keys, *, sigungu: str | None = None) -> list[dict]:
             ordinance_name = law_name.replace("{sigungu}", sigungu)
             record["law_name"] = ordinance_name
             record["url"] = build_ordinance_url(ordinance_name)
+        # 신뢰 법령호스트(law.go.kr 등)만 'verified' — 그 외/빈 url은 'pending'(LegalRefChip 텍스트 폴백).
         # sigungu 미상이면 조례 플레이스홀더 유지 + url 빈 슬롯 → pending.
-        record["url_status"] = "verified" if record.get("url") else "pending"
+        record["url_status"] = "verified" if _is_trusted_legal_host(record.get("url")) else "pending"
         out.append(record)
     return out
 
@@ -397,8 +417,13 @@ def inject_urls(url_map: dict) -> None:
     """조례 등 동적 URL 런타임 주입(블루프린트 WP-1 호환).
 
     url_map[key] = url. 레지스트리에 존재하는 키만 갱신(데이터 매핑만, 계산 없음).
+    비신뢰 호스트/비https URL은 주입을 거부한다(진실원천 오염 방지 — 무날조·정직 거부).
     """
     for key, url in (url_map or {}).items():
         resolved = _resolve_key(key)
-        if resolved is not None and url:
-            LEGAL_REFERENCES[resolved]["url"] = url
+        if resolved is None or not url:
+            continue
+        if not _is_trusted_legal_host(url):
+            logger.warning("inject_urls 거부 — 비신뢰 법령호스트: key=%s url=%s", key, str(url)[:120])
+            continue
+        LEGAL_REFERENCES[resolved]["url"] = url
