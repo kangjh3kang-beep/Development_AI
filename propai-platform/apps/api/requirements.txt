@@ -105,6 +105,9 @@ PyMuPDF==1.24.10
 # Micro 호스트 OOM 위험이라 미도입 — requests+BeautifulSoup 경량 파서만 사용.
 beautifulsoup4==4.12.3
 lxml==5.3.0
+# MOLIT 실거래가 XML 파싱 1차 파서(molit_client; 미설치 시 regex 폴백). 누락 시 폴백이라 동작은
+# 하나, 1차 경로 활성화·완전성 위해 명시(경량 순수파이썬).
+xmltodict==0.14.2
 
 # LiveKit 화상회의 (Phase 3)
 livekit-api==1.1.0
