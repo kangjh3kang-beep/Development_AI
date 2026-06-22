@@ -43,6 +43,7 @@ class SiteContext:
     depth_m: float | None = None
     legal_bcr_pct: float | None = None   # 건폐율 한도(%)
     legal_far_pct: float | None = None   # 용적률 한도(%)
+    legal_setback_m: float | None = None # 최소 이격거리(m) — 건물 배치 폴리곤 산출용
     far_source: str = "unknown"          # ordinance(실효) | statutory(법정) | unknown
     floor_height_m: float = 3.0
     avg_unit_area_sqm: float = 84.0      # 세대 추정용 평균 평형(전용 기준 입력)
@@ -87,6 +88,7 @@ class CompositionCandidate:
     parking_basement_floors: int | None = None  # 지하주차 추정 층수(부지 footprint 기준 우선)
     parking_feasible: bool | None = None    # 주차 배치 현실성(지하층 과다 아님). 미상 None
     parking_layout: dict | None = None      # 주차 자동배치도(스키매틱 — 층당대수·소요층수·좌표)
+    placement: dict | None = None           # 건물 배치 폴리곤(부지경계 내 이격 적용·중앙 배치 좌표)
     disciplines_covered: list[str] = field(default_factory=list)  # 도면 세트가 포함한 분야
     missing_disciplines: list[str] = field(default_factory=list)  # 권장 핵심분야 중 미확보(정직 갭)
     compliant: bool = False
@@ -110,6 +112,7 @@ class CompositionCandidate:
             "parking_basement_floors": self.parking_basement_floors,
             "parking_feasible": self.parking_feasible,
             "parking_layout": self.parking_layout,
+            "placement": self.placement,
             "compliant": self.compliant,
             "score": self.score,
             "warnings": list(self.warnings),
@@ -260,6 +263,67 @@ def compute_parking_layout(site: SiteContext, required_stalls: int | None) -> di
     }
 
 
+def compute_placement(site: SiteContext) -> dict | None:
+    """부지 경계 내 이격 적용 건물 배치 폴리곤(스키매틱·좌표). 원점 (0,0)=부지 좌하단.
+
+    부지 치수(width/depth) 알려지면 사용, 미상이면 면적√ 정사각 가정(개략 고지). 이격거리만큼
+    경계에서 안으로 들인 가용영역에 건폐율(BCR) footprint 크기의 건물 사각형을 중앙 배치한다.
+    ★이격이 건폐율보다 배치를 더 제약하면(가용영역<BCR footprint) 실배치<BCR로 정직 플래그.
+    램프/건축선/대지형상/맹지 미반영의 개략 배치다(정직 고지). 면적 미상이면 None.
+    """
+    area = site.area_sqm
+    if not area or area <= 0:
+        return None
+    notes: list[str] = []
+    if site.width_m and site.depth_m and site.width_m > 0 and site.depth_m > 0:
+        site_w, site_d = round(site.width_m, 1), round(site.depth_m, 1)
+    else:
+        side = round(math.sqrt(area), 1)
+        site_w = site_d = side
+        notes.append("부지 치수 미상 — 면적 기준 정사각 가정(개략)")
+
+    _sb = site.legal_setback_m
+    has_setback = _sb is not None and _sb > 0
+    setback = round(_sb, 2) if (_sb is not None and _sb > 0) else 1.0
+    if not has_setback:
+        notes.append("이격거리 미상 — 1.0m 가정(정밀 확인 필요)")
+
+    region_w = round(max(0.0, site_w - 2 * setback), 1)
+    region_d = round(max(0.0, site_d - 2 * setback), 1)
+    region_area = round(region_w * region_d, 1)
+    base = {"site": {"w": site_w, "d": site_d}, "setback_m": setback,
+            "buildable_region_sqm": region_area, "notes": notes}
+    if region_w <= 0 or region_d <= 0:
+        return {**base, "building": None, "setback_binds": True,
+                "note": "이격 적용 시 가용영역 없음 — 부지 과소 또는 이격 과대(배치 불가)"}
+
+    target_fp = site.buildable_footprint_sqm  # BCR footprint(한도 미상이면 None)
+    actual_fp = min(target_fp, region_area) if (target_fp and target_fp > 0) else region_area
+    setback_binds = bool(target_fp and target_fp > region_area + 0.5)
+    if setback_binds:
+        notes.append(
+            f"이격거리가 건폐율보다 배치 제약 — 실배치 {round(region_area)}㎡ "
+            f"< BCR {round(target_fp or 0)}㎡"
+        )
+
+    # 가용영역 비율 유지하며 actual_fp 크기로 축소, 가용영역 중앙 배치.
+    scale = min(1.0, math.sqrt(actual_fp / region_area)) if region_area > 0 else 0.0
+    bldg_w = round(region_w * scale, 1)
+    bldg_d = round(region_d * scale, 1)
+    if bldg_w <= 0 or bldg_d <= 0:   # 극소 부지 — 라운딩 후 0크기면 0면적 '가짜 건물' 금지(정직)
+        return {**base, "building": None, "setback_binds": True,
+                "note": "이격 적용 시 유효 배치영역 없음(배치 불가·극소 부지)"}
+    bx = round((site_w - bldg_w) / 2, 1)   # 부지 중앙 배치
+    by = round((site_d - bldg_d) / 2, 1)
+    return {
+        **base,
+        "building": {"x": bx, "y": by, "w": bldg_w, "d": bldg_d,
+                     "area_sqm": round(bldg_w * bldg_d, 1)},
+        "setback_binds": setback_binds,
+        "note": "스키매틱 배치(이격 적용·중앙) — 건축선/대지형상/맹지/램프 미반영(개략)",
+    }
+
+
 def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[CompositionCandidate]:
     """검색된 도면들로 부지 맞춤 설계 초안 Top-N을 조합한다.
 
@@ -289,6 +353,9 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
                 float(_g(lst[0], "score") or 0.0),
             ),
         )
+
+    # 건물 배치 폴리곤은 부지 단위(모든 후보 공유) — 1회 산출 후 각 후보에 부착.
+    placement = compute_placement(site)
 
     candidates: list[CompositionCandidate] = []
     for fp in primaries[: max(1, top_n)]:
@@ -380,6 +447,7 @@ def compose(site: SiteContext, matches: list[dict], top_n: int = 3) -> list[Comp
             parking_basement_floors=pk["basement_floors_site"],  # footprint 기준(미상 None)
             parking_feasible=pk["feasible"],
             parking_layout=compute_parking_layout(site, est_parking),  # 주차 자동배치도(스키매틱)
+            placement=placement,                                       # 건물 배치 폴리곤(부지 공유)
             compliant=compliant,
             score=score,
             warnings=warnings,
@@ -405,7 +473,7 @@ def site_context_from_zone(
     실효(조례) 한도가 주어지면 far_source='ordinance'(전역규칙: 용적률은 실효 우선),
     아니면 법정상한 'statutory', 조회 실패 시 'unknown'.
     """
-    far_pct = bcr_pct = None
+    far_pct = bcr_pct = setback_m = None
     source = "unknown"
     ctx_warnings: list[str] = []
     try:
@@ -414,6 +482,7 @@ def site_context_from_zone(
         legal = AutoDesignEngineService.get_legal_limits(zone_code)
         far_pct = legal.get("max_far_percent")
         bcr_pct = legal.get("max_bcr_percent")
+        setback_m = legal.get("min_setback_m")  # 이격거리(있으면 배치 폴리곤에 사용)
         source = "statutory"
         # 미지정 zone 폴백·엔진 경고를 정직 전파(SiteContext.warnings → 후보 warnings로 승계).
         if legal.get("limits_source") == "fallback_default":
@@ -438,6 +507,7 @@ def site_context_from_zone(
         depth_m=depth_m,
         legal_bcr_pct=bcr_pct,
         legal_far_pct=far_pct,
+        legal_setback_m=setback_m,
         far_source=source,
         avg_unit_area_sqm=avg_unit_area_sqm,
         building_use_kr=building_use_kr,

@@ -100,6 +100,15 @@ type Candidate = {
     total_required: number;
     note: string;
   } | null;
+  placement?: {
+    site: { w: number; d: number };
+    building: { x: number; y: number; w: number; d: number; area_sqm: number } | null;
+    setback_m: number;
+    buildable_region_sqm: number;
+    setback_binds: boolean;
+    note: string;
+    notes: string[];
+  } | null;
   compliant: boolean;
   score: number;
   warnings: string[];
@@ -290,6 +299,59 @@ function ParkingLayoutSvg({
           strokeWidth={0.12}
         />
       ))}
+    </svg>
+  );
+}
+
+// 건물 배치 폴리곤(스키매틱) — 부지 경계 + 이격 가용영역 + 건물 footprint. 최대 변 260px.
+function PlacementSvg({
+  placement,
+}: {
+  placement: NonNullable<Candidate["placement"]>;
+}) {
+  const sw = placement.site.w;
+  const sd = placement.site.d;
+  if (!(sw > 0) || !(sd > 0)) return null;
+  const s = placement.setback_m;
+  const b = placement.building;
+  const scale = 260 / Math.max(sw, sd);
+  return (
+    <svg
+      width={Math.round(sw * scale)}
+      height={Math.round(sd * scale)}
+      viewBox={`0 0 ${sw} ${sd}`}
+      preserveAspectRatio="xMinYMin meet"
+      className="mt-1 rounded border border-[var(--line)] bg-[var(--surface)]"
+      role="img"
+      aria-label="건물 배치 폴리곤(스키매틱)"
+    >
+      {/* 부지 경계 */}
+      <rect x={0} y={0} width={sw} height={sd} fill="none" stroke="var(--text-tertiary)" strokeWidth={0.4} />
+      {/* 이격 가용영역(점선) */}
+      {sw - 2 * s > 0 && sd - 2 * s > 0 && (
+        <rect
+          x={s}
+          y={s}
+          width={sw - 2 * s}
+          height={sd - 2 * s}
+          fill="none"
+          stroke="var(--line)"
+          strokeWidth={0.25}
+          strokeDasharray="1 1"
+        />
+      )}
+      {/* 건물 footprint */}
+      {b && (
+        <rect
+          x={b.x}
+          y={b.y}
+          width={b.w}
+          height={b.d}
+          fill="var(--accent-soft)"
+          stroke="var(--accent-strong)"
+          strokeWidth={0.4}
+        />
+      )}
     </svg>
   );
 }
@@ -1037,6 +1099,25 @@ export function DesignGenPanel({ projectId }: Props) {
                           </span>
                         )}
                         <span className="text-[var(--text-hint)]">{c.parking_layout.note}</span>
+                      </div>
+                    )}
+                    {/* 건물 배치 폴리곤(스키매틱) — 부지 경계+이격+건물 footprint */}
+                    {c.placement && (
+                      <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                        건물 배치(스키매틱): 부지 {c.placement.site.w}×{c.placement.site.d}m · 이격 {c.placement.setback_m}m
+                        {c.placement.building
+                          ? ` · 건물 ${c.placement.building.w}×${c.placement.building.d}m(${Math.round(c.placement.building.area_sqm)}㎡)`
+                          : " · 배치 불가"}
+                        <PlacementSvg placement={c.placement} />
+                        {c.placement.setback_binds && (
+                          <span style={{ color: "var(--status-warning)" }}>
+                            ⚠ 이격이 건폐율보다 배치 제약(실배치 {Math.round(c.placement.buildable_region_sqm)}㎡).{" "}
+                          </span>
+                        )}
+                        <span className="text-[var(--text-hint)]">{c.placement.note}</span>
+                        {c.placement.notes?.length > 0 && (
+                          <span className="text-[var(--text-hint)]"> {c.placement.notes.join(" · ")}</span>
+                        )}
                       </div>
                     )}
                     {/* 도면 세트(분야별 조합) + 커버리지 갭 */}

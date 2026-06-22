@@ -5,6 +5,7 @@ from app.services.design_ingest.composition import (
     compose,
     compute_parking_design,
     compute_parking_layout,
+    compute_placement,
     fit_score,
     map_building_use_kr,
     site_context_from_zone,
@@ -166,6 +167,71 @@ def test_compute_parking_design_no_basis_returns_none():
     s = _site()
     pk = compute_parking_design(s, est_units=None, est_gfa=None)
     assert pk["required"] is None and pk["feasible"] is None
+
+
+# ── 건물 배치 폴리곤(compute_placement) ──
+
+def test_compute_placement_known_dims_centered_within_setback():
+    # 부지 40×25, 이격 3 → 가용 34×19. BCR 60%→footprint 600㎡. 건물은 가용영역 중앙 배치.
+    s = _site(width_m=40.0, depth_m=25.0, legal_setback_m=3.0)
+    p = compute_placement(s)
+    assert p is not None and p["site"] == {"w": 40.0, "d": 25.0}
+    assert p["setback_m"] == 3.0
+    assert p["buildable_region_sqm"] == round(34.0 * 19.0, 1)
+    b = p["building"]
+    # 건물이 부지 안에 들어가고(이격 경계 내), 중앙 배치(좌우 여백 대칭)
+    assert b["x"] >= 3.0 - 0.05 and (b["x"] + b["w"]) <= 40.0 - 3.0 + 0.05
+    assert abs(b["x"] - (40.0 - b["w"]) / 2) < 0.05
+    assert b["area_sqm"] > 0 and p["setback_binds"] is False
+
+
+def test_compute_placement_square_fallback_when_dims_unknown():
+    # 부지 치수 미상 → 면적√ 정사각 가정 + 정직 고지
+    s = _site(width_m=None, depth_m=None, legal_setback_m=2.0)  # area 1000 → 31.6각
+    p = compute_placement(s)
+    assert p["site"]["w"] == p["site"]["d"]  # 정사각
+    assert any("정사각" in n for n in p["notes"])
+
+
+def test_compute_placement_setback_binds_flag():
+    # 작은 부지 + 큰 이격 → 가용영역 < BCR footprint → setback_binds True + 정직 경고
+    # 부지 20×20(400㎡)·이격 5 → 가용 10×10=100㎡. BCR 60%×400=240㎡ > 100 → binds.
+    s = SiteContext(area_sqm=400.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
+                    far_source="ordinance", width_m=20.0, depth_m=20.0, legal_setback_m=5.0)
+    p = compute_placement(s)
+    assert p["setback_binds"] is True
+    assert any("배치 제약" in n for n in p["notes"])
+    assert p["building"]["area_sqm"] <= p["buildable_region_sqm"] + 0.1
+
+
+def test_compute_placement_no_region_when_setback_too_large():
+    # 이격이 부지 절반 이상 → 가용영역 0 → building None + 배치불가 고지
+    s = SiteContext(area_sqm=100.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
+                    far_source="ordinance", width_m=10.0, depth_m=10.0, legal_setback_m=6.0)
+    p = compute_placement(s)
+    assert p["building"] is None and p["setback_binds"] is True
+    assert "가용영역 없음" in p["note"]
+
+
+def test_compute_placement_none_when_no_area():
+    assert compute_placement(SiteContext(area_sqm=0.0)) is None
+
+
+def test_compute_placement_tiny_site_no_fake_building():
+    # 극소 부지(6×6)·이격 2.9 → 가용 0.2×0.2, 라운딩 후 0크기 → 가짜 0면적 건물 금지(building None)
+    s = SiteContext(area_sqm=36.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
+                    far_source="ordinance", width_m=6.0, depth_m=6.0, legal_setback_m=2.9)
+    p = compute_placement(s)
+    assert p["building"] is None and p["setback_binds"] is True
+
+
+def test_compose_exposes_placement():
+    # compose 결과 후보/to_dict에 placement(부지+건물 폴리곤) 노출
+    s = _site(width_m=40.0, depth_m=25.0, legal_setback_m=3.0)
+    top = compose(s, [{"point_id": "fp1", "drawing_type": "floor_plan",
+                       "total_area_sqm": 500.0, "score": 0.95}])[0]
+    assert top.placement is not None and top.placement["building"] is not None
+    assert top.to_dict()["placement"]["site"]["w"] == 40.0
 
 
 def test_compose_exposes_primary_content_hash():
