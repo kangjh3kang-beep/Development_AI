@@ -349,11 +349,19 @@ export interface ProjectContextState {
   // "user"로 stamp된 필드는 auto 갱신의 덮어쓰기가 차단된다(merge 가드).
   manualFields: ManualFieldsMap;
 
+  // 다필지 보강(enrichParcels) 진행 신호(휘발성·런타임 전용) — 보강 시작 시 true,
+  // 모든 청크 완료 후 1회 false. 제출 완전성 게이트(프로젝트 생성)가 이 플래그를 읽어
+  // 통합값 미수집(대표 1필지 부분상태) 캡처를 막는다. 단일필지·미검색은 항상 false(무회귀).
+  // persist되더라도 setProject/clearProject가 false로 리셋해 stale true가 고착되지 않게 한다.
+  parcelEnrichPending: boolean;
+
   // Actions
   // projectId 단일 SSOT writer. name/status를 원자 저장하고, address가 주어지면
   // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
   setProject: (id: string, name: string, status: string, address?: string) => void;
   clearProject: () => void;
+  // 다필지 보강 진행 신호 writer(휘발성). enrichParcels 시작/완료 시 호출.
+  setParcelEnrichPending: (pending: boolean) => void;
 
   // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   // auto: user 플래그 필드를 patch에서 제거(전부 제거돼 빈 patch면 갱신·stamp 생략).
@@ -838,6 +846,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
       // 필드 단위 provenance 병행 맵
       manualFields: {},
 
+      // 다필지 보강 진행 신호(휘발성 — 초기 false)
+      parcelEnrichPending: false,
+
       /* ── Actions ── */
 
       setProject: (id, name, status, address) => {
@@ -885,6 +896,8 @@ export const useProjectContextStore = create<ProjectContextState>()(
           projectName: name,
           projectStatus: status,
           snapshots,
+          // 프로젝트 전환 시 휘발성 보강 신호 리셋(이전 프로젝트 보강 진행이 새 프로젝트로 누출 방지).
+          parcelEnrichPending: false,
           ...(snap
             ? {
                 // 복원 우선. 단, 복원 스냅샷에 주소가 없고 시드 주소가 있으면 보조 주입.
@@ -934,8 +947,16 @@ export const useProjectContextStore = create<ProjectContextState>()(
           updatedAt: {},
           analysisCache: {},
           manualFields: {},
+          // 휘발성 보강 신호 리셋(새 프로젝트 진입 시 stale true 고착 방지).
+          parcelEnrichPending: false,
           ...INITIAL_CROSS_MODULE,
         });
+      },
+
+      setParcelEnrichPending: (pending) => {
+        // 휘발성 런타임 신호만 갱신(스냅샷·provenance 무접촉 — withSnap 미사용).
+        if (get().parcelEnrichPending === pending) return;
+        set({ parcelEnrichPending: pending });
       },
 
       getAnalysisCache: (kind) => {

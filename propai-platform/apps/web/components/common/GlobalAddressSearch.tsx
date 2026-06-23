@@ -439,6 +439,18 @@ export function GlobalAddressSearch({
       status?: string | null;
     };
     const seq = ++enrichSeq.current;
+    // ★제출 완전성 게이트용 진행 신호: 다필지 보강이 시작되면 pending=true.
+    //   모든 청크 완료(또는 중단) 후 finishPending()으로 1회 false. finishPending은 '이 run이
+    //   여전히 최신(seq===enrichSeq.current)일 때만' 끈다 — 새 보강이 시작돼 stale로 빠진
+    //   run의 종료가 활성 run의 pending을 잘못 끄는 것을 막는다(경합 가드와 협조).
+    //   단일필지·미검색은 enrichParcels가 호출되지 않거나 need.length===0으로 조기반환해
+    //   여기 도달하지 않으므로 pending은 항상 false(무회귀).
+    useProjectContextStore.getState().setParcelEnrichPending(true);
+    const finishPending = () => {
+      if (seq === enrichSeq.current) {
+        useProjectContextStore.getState().setParcelEnrichPending(false);
+      }
+    };
     const CHUNK = 60; // 필지당 최대 3 외부콜 — 타임아웃 회피 위해 분할 호출(부분결과 즉시 반영)
     // 전 청크 보강 결과를 uid별로 누적(통합 면적은 청크별 중간이 아니라 '완료 후 1회'만 기록).
     const enrichedByUid = new Map<string, P>();
@@ -457,7 +469,7 @@ export function GlobalAddressSearch({
       } catch {
         continue; // 이 청크 실패는 '보완필요'로 남김(가짜 생성 없음)
       }
-      if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 stale 머지 폐기
+      if (seq !== enrichSeq.current) { finishPending(); return; } // 더 새로운 보강이 시작됐으면 stale 머지 폐기
       // 결과 __rid(슬라이스 인덱스)→해당 행의 불변 uid로 변환해 매칭.
       //   (참조매칭은 triggerComprehensiveAnalysis가 객체를 교체하면 깨지지만, uid는 spread로 보존돼 안전.)
       const byUid = new Map<string, P>();
@@ -507,7 +519,7 @@ export function GlobalAddressSearch({
       }));
     }
 
-    if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 이후 단계(자기치유·SSOT) 폐기
+    if (seq !== enrichSeq.current) { finishPending(); return; } // 더 새로운 보강이 시작됐으면 이후 단계(자기치유·SSOT) 폐기
 
     // ── 자기치유 재시도: 끝내 ok가 아닌 필지가 있으면 1회 더 보강(모든 필지가 결국 enrich) ──
     //   무목업: 전송 실패·경합 등 일시 사유로 누락된 필지를 백엔드 단독해소(라이브 검증됨)로 다시
@@ -515,6 +527,9 @@ export function GlobalAddressSearch({
     //   최신 state를 functional updater로 읽어(경합 무관) ok 아닌 필지를 모은다.
     let latest: AddressEntry[] = [];
     setAddresses((prev) => { latest = prev; return prev; });
+    // ★재시도 예약 여부 — true면 이 run은 pending을 끄지 않고, 예약된 재시도(새 seq로 pending을
+    //   다시 true)가 신호 수명을 이어받는다. 끄고-켜는 깜빡임으로 제출 게이트가 잠깐 열리는 것 방지.
+    let retryScheduled = false;
     if (latest.length > 0) {
       const stillNeed = latest.filter((a) => {
         if (!a.__uid) return false;
@@ -528,21 +543,30 @@ export function GlobalAddressSearch({
         for (const a of stillNeed) {
           if (a.__uid) enrichTries.current.set(a.__uid, (enrichTries.current.get(a.__uid) ?? 0) + 1);
         }
+        retryScheduled = true;
         // 다음 틱에 재보강(현 호출 스택 밖에서 새 seq로 — 경합 가드와 자연스럽게 협조).
-        setTimeout(() => { void enrichParcelsRef.current(stillNeed); }, 400);
+        //   pending은 끄지 않는다(재시도가 인계). 단, 재시도 함수가 즉시 need.length===0으로
+        //   조기반환하면 pending이 영영 true로 남을 수 있으므로, 그 경우엔 여기서 끈다(안전 가드).
+        setTimeout(() => {
+          const before = enrichSeq.current;
+          void enrichParcelsRef.current(stillNeed);
+          // enrichParcels가 동기 구간에서 seq를 증가시키지 않았다면(need.length===0 조기반환)
+          //   인계가 일어나지 않은 것 → 이 run의 신호를 정리한다(stuck-true 방지).
+          if (enrichSeq.current === before) finishPending();
+        }, 400);
       }
     }
 
     // ── 전 청크 완료 후 통합 면적 기록(SSOT) — 1회만 ──
     // WP-D: store 비기록 모드면 생략(콜백 전용). 단일/미확보 회귀 0: 유효필지 2개 미만이면 변경 없음.
-    if (!writeToContext) return;
+    if (!writeToContext) { if (!retryScheduled) finishPending(); return; }
     // 프로젝트 전환 중이면 기록 중단(무관 프로젝트 SSOT 오염 차단 — 계정격리).
     // ★생성 핸드오프 예외: 보강 시작 시점에 프로젝트가 없었으면(triggeredProjectId=null) 그 검색은
     //   곧 생성될 신규 프로젝트의 것이다. null→신규 id 전환은 '무관 프로젝트로의 전환'이 아니므로
     //   통합 면적 기록을 막지 않는다(이게 막혀서 통합 11,229이 설계/사업개요에 도달하지 못하던
     //   근본버그). 실제 오염(서로 다른 실제 id로 전환)일 때만 차단해 계정격리는 유지한다.
     const activePidForSsot = useProjectContextStore.getState().projectId;
-    if (triggeredProjectId !== null && activePidForSsot !== triggeredProjectId) return;
+    if (triggeredProjectId !== null && activePidForSsot !== triggeredProjectId) { if (!retryScheduled) finishPending(); return; }
     // ★'전체' 필지의 최신 state(latest=방금 functional updater로 읽음) + 이번 보강 누적값을 병합해
     //   '최종 유효 면적'을 산출한다. entries(이 호출의 입력)는 재시도 시 부분집합일 수 있으므로
     //   전체 합계는 반드시 latest(전 필지 최신값) 기준으로 계산해야 통합 면적이 정확하다.
@@ -571,7 +595,7 @@ export function GlobalAddressSearch({
       .filter((p) => p.area > 0 && (p.status == null || p.status === "ok"));
 
     // 유효 필지 1개 이하(단일/미확보) → SSOT 변경 없음(기존 대표 landAreaSqm 유지).
-    if (valid.length < 2) return;
+    if (valid.length < 2) { if (!retryScheduled) finishPending(); return; }
 
     // ★개발가능성 우선 정렬 — '대표' 필지를 입력 순서(valid[0])가 아니라 '개발 가능한 가장 큰
     //   필지'로 고른다. (근본버그: 입력 순서가 [도로, 주거]면 도로=특이부지가 대표가 되어 부지분석이
@@ -607,6 +631,8 @@ export function GlobalAddressSearch({
         (curSA.zoneMixed ?? false) === (zones.size >= 2) &&
         (curSA.parcels?.length ?? 0) === valid.length
       ) {
+        // 동일 통합값 → 재기록 생략. 단, 통합 메타가 이미 일치=완전 상태이므로 보강은 사실상 완료.
+        if (!retryScheduled) finishPending();
         return;
       }
     }
@@ -646,6 +672,9 @@ export function GlobalAddressSearch({
     //   담당하므로 재조준을 제거해도 유지된다. 1차 종합분석(handleAddressSelect의
     //   triggerComprehensiveAnalysis, 첫 페인트·단일필지용)은 그대로 유지된다.
     //   위에서 기록한 통합 면적 메타(landAreaSqmTotal·repLandAreaSqm·parcelCount·parcels)만 보존한다.
+
+    // ★보강 완료(통합 SSOT 기록 성공) — 진행 신호 해제(재시도 예약 시엔 재시도가 인계).
+    if (!retryScheduled) finishPending();
   }, [writeToContext, updateSiteAnalysis]);
   // 재시도 setTimeout이 항상 최신 enrichParcels를 호출하도록 ref 동기화(렌더마다 갱신).
   enrichParcelsRef.current = enrichParcels;

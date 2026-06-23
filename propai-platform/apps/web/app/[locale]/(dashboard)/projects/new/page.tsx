@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { effectiveLandAreaSqm, isParcelSetConsistent } from "@/lib/site-area";
 import dynamic from "next/dynamic";
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
 // ★성능: 무거운 주소검색/이미지업로드 폼을 dynamic(ssr:false)로 분리해 page 청크·hydration을 줄인다.
@@ -28,6 +28,13 @@ export default function NewProjectPage() {
   const clearProject = useProjectContextStore(state => state.clearProject);
   const setProject = useProjectContextStore(state => state.setProject);
   const updateSiteAnalysis = useProjectContextStore(state => state.updateSiteAnalysis);
+  // ★제출 완전성 게이트(반응형 구독): 다필지 보강(enrichParcels)이 진행중이거나 필지 집합이
+  //   아직 불완전(parcelCount≠parcels.length 또는 통합면적 미확보)이면 제출을 막는다.
+  //   보강 미완 상태(대표 1필지 107㎡ 부분상태)가 신규 프로젝트의 진실원천으로 캡처돼
+  //   12필지 통합값이 애초에 누락되던 회귀를 차단한다. 단일필지·미검색은 항상 통과(무회귀).
+  const parcelEnrichPending = useProjectContextStore(state => state.parcelEnrichPending);
+  const liveSiteAnalysis = useProjectContextStore(state => state.siteAnalysis);
+  const parcelGateBlocked = parcelEnrichPending || !isParcelSetConsistent(liveSiteAnalysis);
 
   // 새 프로젝트 진입 시 이전 데이터 초기화 후 PreCheck 핸드오프(있으면) 1회 소비 (mount 1회)
   const [handoff] = useState<PreCheckHandoff | null>(() => {
@@ -62,6 +69,10 @@ export default function NewProjectPage() {
 
   const handleSubmit = async () => {
     if (!name.trim() || !location.trim()) return;
+    // ★완전성 게이트: 다필지 보강 진행중이거나 필지 집합 불완전이면 캡처를 차단한다.
+    //   (보강 완료 전 제출 시 대표 1필지 부분상태가 캡처돼 통합값이 누락되던 근본버그 방지.)
+    //   보강 완료 후 parcelGateBlocked=false가 되면 자동으로 다시 누를 수 있다.
+    if (parcelGateBlocked) return;
     setIsSubmitting(true);
 
     // ★항상 '최신' siteAnalysis를 읽는다. 다필지 보강(enrichParcels)은 비동기라, 제출 직전 막
@@ -224,7 +235,7 @@ export default function NewProjectPage() {
             <span className="cc-chip-data">STEP 02</span>
             <span className="cc-label">분석 시작</span>
           </div>
-          <span className="cc-live"><i />{isSubmitting ? "RUNNING" : "STANDBY"}</span>
+          <span className="cc-live"><i />{isSubmitting ? "RUNNING" : parcelGateBlocked ? "ENRICHING" : "STANDBY"}</span>
         </header>
         <div className="relative z-10 cc-panel__body">
 
@@ -242,7 +253,7 @@ export default function NewProjectPage() {
 
           <button
             onClick={handleSubmit}
-            disabled={!name.trim() || !location.trim() || isSubmitting}
+            disabled={!name.trim() || !location.trim() || isSubmitting || parcelGateBlocked}
             className="w-full sm:w-auto relative overflow-hidden rounded-2xl py-4 px-10 text-sm font-black transition-all shadow-[var(--shadow-md)] flex items-center justify-center gap-2
             cursor-pointer disabled:cursor-not-allowed
             bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] text-white hover:shadow-[0_0_20px_rgba(45,212,191,0.4)] hover:-translate-y-0.5
@@ -253,11 +264,22 @@ export default function NewProjectPage() {
                 <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 분석 시작 중...
               </>
+            ) : parcelGateBlocked ? (
+              <>
+                <span className="h-4 w-4 border-2 border-[var(--text-secondary)]/30 border-t-[var(--text-secondary)] rounded-full animate-spin" />
+                필지 보강 진행중…
+              </>
             ) : (
               "프로젝트 시작 →"
             )}
           </button>
         </div>
+
+        {parcelGateBlocked && !isSubmitting && (
+          <p className="mt-4 inline-flex w-fit items-center gap-1.5 rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-strong)]">
+            ⏳ 다필지 통합 보강이 진행 중입니다. 완료되면 자동으로 시작 버튼이 활성화됩니다(통합 면적·필지목록 확보 후 정확한 분석을 위해 잠시 기다려 주세요).
+          </p>
+        )}
 
         <div className="mt-6 pt-6 border-t border-[var(--line)] flex items-start gap-3 text-[var(--text-hint)]">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
