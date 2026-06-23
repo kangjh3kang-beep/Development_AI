@@ -35,6 +35,21 @@ export function ProjectAnalysisFlow({
   // (이전: 여기서도 setProject 호출 → 중복 writer로 출처 불일치 발생)
   void projectName;
 
+  // ★persist hydration race 가드(React #185 방지·"분석 흐름 영역 표시 중 일시 오류" 근본수정):
+  //   첫 렌더(hydration 전 storeProjectId=null)에 GlobalAddressSearch를 마운트하면, microtask 뒤
+  //   persist 복원이 projectId를 채우며 즉시 언마운트 전환이 일어나고, 그 급전환 중 setProject·
+  //   deps 재생성 연쇄로 React #185(max update depth)가 터져 HubErrorBoundary가 폴백을 띄운다.
+  //   hydration/바인딩 전(null)엔 스켈레톤만 렌더해 조기 마운트→언마운트 경합을 구조적으로 차단한다
+  //   (바인딩 후 재렌더에서 hasAddress를 올바르게 평가 — 새로고침해야 정상이던 현상 해소).
+  if (storeProjectId === null) {
+    return (
+      <div
+        className="h-48 animate-pulse rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)]"
+        aria-hidden
+      />
+    );
+  }
+
   // store 컨텍스트가 현재 프로젝트와 일치할 때만 저장된 주소를 신뢰한다.
   const contextMatches = storeProjectId === projectId;
   const hasAddress = contextMatches && !!storeAddress;
