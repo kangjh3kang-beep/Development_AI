@@ -23,33 +23,66 @@ _STATION_RE = re.compile(r"[가-힣]{2,}(?<![구지권])역(?![가-힣])")
 _MOUNTAIN_LOT_RE = re.compile(r"산\s?\d")
 
 # 용도지역별 법적 한도 (국토의 계획 및 이용에 관한 법률 제78조)
+#  · max_height_m: 미터 단위 높이 제한(대부분 가로구역별 최고높이로 별도 관리 → None).
+#  · max_floors: 층수 제한(★녹지지역). 국토계획법 시행령 별표 — 녹지지역 안에서 건축할 수
+#    있는 건축물은 원칙적으로 4층 이하. 녹지가 아닌 지역은 층수 SSOT 제한이 없어 None.
+#    이 값이 1곳(solar_envelope)에만 고립되어 '높이 제한없음'으로 표시되던 버그의 SSOT 정본.
 ZONE_LIMITS = {
-    "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height_m": 10},  # 시행령 84조 상한 50%
-    "제2종전용주거지역": {"max_bcr": 50, "max_far": 150, "max_height_m": 12},
-    "제1종일반주거지역": {"max_bcr": 60, "max_far": 200, "max_height_m": None},
-    "제2종일반주거지역": {"max_bcr": 60, "max_far": 250, "max_height_m": None},
-    "제3종일반주거지역": {"max_bcr": 50, "max_far": 300, "max_height_m": None},
-    "준주거지역": {"max_bcr": 70, "max_far": 500, "max_height_m": None},
-    "중심상업지역": {"max_bcr": 90, "max_far": 1500, "max_height_m": None},
-    "일반상업지역": {"max_bcr": 80, "max_far": 1300, "max_height_m": None},
-    "근린상업지역": {"max_bcr": 70, "max_far": 900, "max_height_m": None},
-    "유통상업지역": {"max_bcr": 80, "max_far": 1100, "max_height_m": None},
-    "전용공업지역": {"max_bcr": 70, "max_far": 300, "max_height_m": None},
-    "일반공업지역": {"max_bcr": 70, "max_far": 350, "max_height_m": None},
-    "준공업지역": {"max_bcr": 70, "max_far": 400, "max_height_m": None},
-    "보전녹지지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
-    "생산녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None},
-    "자연녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None},
+    "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height_m": 10, "max_floors": None},  # 시행령 84조 상한 50%
+    "제2종전용주거지역": {"max_bcr": 50, "max_far": 150, "max_height_m": 12, "max_floors": None},
+    "제1종일반주거지역": {"max_bcr": 60, "max_far": 200, "max_height_m": None, "max_floors": None},
+    "제2종일반주거지역": {"max_bcr": 60, "max_far": 250, "max_height_m": None, "max_floors": None},
+    "제3종일반주거지역": {"max_bcr": 50, "max_far": 300, "max_height_m": None, "max_floors": None},
+    "준주거지역": {"max_bcr": 70, "max_far": 500, "max_height_m": None, "max_floors": None},
+    "중심상업지역": {"max_bcr": 90, "max_far": 1500, "max_height_m": None, "max_floors": None},
+    "일반상업지역": {"max_bcr": 80, "max_far": 1300, "max_height_m": None, "max_floors": None},
+    "근린상업지역": {"max_bcr": 70, "max_far": 900, "max_height_m": None, "max_floors": None},
+    "유통상업지역": {"max_bcr": 80, "max_far": 1100, "max_height_m": None, "max_floors": None},
+    "전용공업지역": {"max_bcr": 70, "max_far": 300, "max_height_m": None, "max_floors": None},
+    "일반공업지역": {"max_bcr": 70, "max_far": 350, "max_height_m": None, "max_floors": None},
+    "준공업지역": {"max_bcr": 70, "max_far": 400, "max_height_m": None, "max_floors": None},
+    # ★녹지지역: 건폐 20%·용적 80~100%이나 '4층 이하' 층수 제한이 더 강한 제약.
+    #   자연녹지 현실 용적률 = 건폐 20%×4층 = 80%(법정 100%는 5층 필요 → 층수제한이 바인딩).
+    "보전녹지지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None, "max_floors": 4},
+    "생산녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None, "max_floors": 4},
+    "자연녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None, "max_floors": 4},
     # 관리지역·농림·자연환경보전 (시행령 84·85조) — 누락 시 해당 지역 법규검증이
     # 빈 결과(=통과로 보임)로 끝나는 문제가 있어 보완 (2026-06 리뷰 M-7)
-    "보전관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
-    "생산관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
-    "계획관리지역": {"max_bcr": 40, "max_far": 100, "max_height_m": None},
-    "농림지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
-    "자연환경보전지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
-    "역세권개발구역": {"max_bcr": 80, "max_far": 700, "max_height_m": None},
-    "도시재생활성화구역": {"max_bcr": 80, "max_far": 500, "max_height_m": None},
+    "보전관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None, "max_floors": None},
+    "생산관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None, "max_floors": None},
+    "계획관리지역": {"max_bcr": 40, "max_far": 100, "max_height_m": None, "max_floors": None},
+    "농림지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None, "max_floors": None},
+    "자연환경보전지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None, "max_floors": None},
+    "역세권개발구역": {"max_bcr": 80, "max_far": 700, "max_height_m": None, "max_floors": None},
+    "도시재생활성화구역": {"max_bcr": 80, "max_far": 500, "max_height_m": None, "max_floors": None},
 }
+
+
+def build_zone_limits(zone_key: str, limits: dict) -> dict:
+    """ZONE_LIMITS 항목 → 표준 zone_limits 페이로드(공용 빌더, SSOT 단일경유).
+
+    ★녹지지역 등 max_floors가 있고 max_height_m이 None이면 '실효 높이'(층수×기본층고
+    3.0m)를 함께 산출해 전파한다 — 종합규제분석이 높이를 '제한 없음'으로 오표시하던
+    버그를 출처(SSOT)에서 차단. 실효 높이는 층수×층고 근사값임을 height_basis로 정직 표기.
+    """
+    max_floors = limits.get("max_floors")
+    max_height_m = limits.get("max_height_m")
+    payload: dict = {
+        "max_bcr_pct": limits["max_bcr"],
+        "max_far_pct": limits["max_far"],
+        "max_height_m": max_height_m,
+        "max_floors": max_floors,
+        "zone_key": zone_key,
+        "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+    }
+    if max_height_m is None and max_floors:
+        eff = round(max_floors * 3.0, 1)
+        payload["effective_height_m"] = eff
+        payload["height_basis"] = (
+            f"국토계획법 시행령 별표 — 녹지지역 {max_floors}층 이하"
+            f"(실효 높이≈{eff}m = {max_floors}층×3.0m 층고 근사)"
+        )
+    return payload
 
 
 class AutoZoningService:
@@ -98,13 +131,7 @@ class AutoZoningService:
                 zone_key = self._normalize_zone_name(result["zone_type"])
                 limits = ZONE_LIMITS.get(zone_key)
                 if limits:
-                    result["zone_limits"] = {
-                        "max_bcr_pct": limits["max_bcr"],
-                        "max_far_pct": limits["max_far"],
-                        "max_height_m": limits["max_height_m"],
-                        "zone_key": zone_key,
-                        "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
-                    }
+                    result["zone_limits"] = build_zone_limits(zone_key, limits)
             result["special_districts"] = self._detect_special_districts(
                 str(result.get("zone_type") or ""), address
             )
@@ -154,13 +181,7 @@ class AutoZoningService:
             zone_key = self._normalize_zone_name(result["zone_type"])
             limits = ZONE_LIMITS.get(zone_key)
             if limits:
-                result["zone_limits"] = {
-                    "max_bcr_pct": limits["max_bcr"],
-                    "max_far_pct": limits["max_far"],
-                    "max_height_m": limits["max_height_m"],
-                    "zone_key": zone_key,
-                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
-                }
+                result["zone_limits"] = build_zone_limits(zone_key, limits)
             else:
                 result["warnings"].append(
                     f"'{result['zone_type']}' 용도지역의 법적 한도를 자동 매핑할 수 없습니다."

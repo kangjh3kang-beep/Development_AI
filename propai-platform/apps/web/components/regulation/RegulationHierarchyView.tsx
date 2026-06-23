@@ -68,7 +68,13 @@ export type RegResult = {
   land_area_sqm: number | null;
   land_category: string | null;
   land_use_situation: string | null;
-  limits: { bcr: LimitTrio; far: LimitTrio; height: { value: number | null; unit: string }; parking: { description: string } };
+  limits: {
+    bcr: LimitTrio;
+    far: LimitTrio;
+    // height.value: 미터 제한이 없고 층수 제한(녹지 4층 등)만 있으면 실효 높이(층수×층고 근사).
+    height: { value: number | null; unit: string; max_floors?: number | null; basis?: string | null };
+    parking: { description: string };
+  };
   hierarchy: HierLevel[];
   districts: District[];
   ai: RegAI | null;
@@ -187,8 +193,15 @@ export function RegulationHierarchyView({
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
               <p className="text-[11px] font-bold text-[var(--text-secondary)]">높이 제한</p>
               <p className="mt-1 text-lg font-black text-[var(--text-primary)]">
-                {result.limits.height.value != null ? `${result.limits.height.value}${result.limits.height.unit}` : "제한 없음"}
+                {result.limits.height.max_floors != null
+                  ? `${result.limits.height.max_floors}층 이하${result.limits.height.value != null ? ` (약 ${result.limits.height.value}${result.limits.height.unit})` : ""}`
+                  : result.limits.height.value != null
+                    ? `${result.limits.height.value}${result.limits.height.unit}`
+                    : "제한 없음"}
               </p>
+              {result.limits.height.basis && (
+                <p className="mt-1 text-[10px] leading-snug text-[var(--text-tertiary)]">{result.limits.height.basis}</p>
+              )}
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
               <p className="text-[11px] font-bold text-[var(--text-secondary)]">주차 기준</p>

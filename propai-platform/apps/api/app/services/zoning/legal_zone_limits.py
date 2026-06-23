@@ -161,6 +161,8 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
         "max_far_pct": max_far,
         "min_far_pct": min_far,
         "max_height_m": limits.get("max_height_m"),
+        # 층수 제한(★녹지지역 4층 등). SSOT(ZONE_LIMITS)에서 위임. 녹지 외 지역은 None.
+        "max_floors": limits.get("max_floors"),
         "legal_basis": LEGAL_BASIS,
         # 옵셔널: 건폐율/용적률 한도의 법령 원문링크 근거키(레지스트리 키와 일치).
         # 기존 키는 전부 유지하며, 소비자는 이 키를 옵셔널로 읽는다(없어도 무해).

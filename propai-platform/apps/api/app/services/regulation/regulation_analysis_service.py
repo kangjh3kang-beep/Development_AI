@@ -178,10 +178,21 @@ class RegulationAnalysisService:
                 "unit": "%",
             }
 
+        # 높이: 법정 미터 제한(max_height_m)이 우선이나, 녹지지역처럼 미터 제한이 없고
+        # 층수 제한(4층 등)만 있는 경우 실효 높이(effective_height_m=층수×층고 근사)를 채택해
+        # '제한 없음'으로 오표시되던 버그를 차단. max_floors/height_basis는 additive로 노출.
+        height_value = zl.get("max_height_m")
+        if height_value is None:
+            height_value = zl.get("effective_height_m")
         return {
             "bcr": trio("max_bcr_pct", "ordinance_bcr_pct", "effective_bcr_pct"),
             "far": trio("max_far_pct", "ordinance_far_pct", "effective_far_pct"),
-            "height": {"value": zl.get("max_height_m"), "unit": "m"},
+            "height": {
+                "value": height_value,
+                "unit": "m",
+                "max_floors": zl.get("max_floors"),
+                "basis": zl.get("height_basis"),
+            },
             "parking": {"description": "주차장법 시행령 별표1 부설주차장 설치기준 적용(용도·면적별 산정)"},
         }
 

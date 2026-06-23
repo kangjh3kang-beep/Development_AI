@@ -52,6 +52,11 @@ ZONE_DEFAULTS: dict[str, dict[str, Any]] = {
     "일반상업지역": {"max_bcr": 80, "max_far": 1300, "max_height": 0, "setback_m": 0},
     "근린상업지역": {"max_bcr": 70, "max_far": 900, "max_height": 0, "setback_m": 0},
     "준공업지역": {"max_bcr": 70, "max_far": 400, "max_height": 0, "setback_m": 0},
+    # ★녹지지역: 키 부재 시 ZONE_DEFAULTS.get()가 빈 dict→상위 폴백(주거 bcr60/far200)으로
+    #   자연녹지를 주거한도로 오판정하던 문제를 차단. 건폐20·용적80~100·4층 이하(SSOT 정합).
+    "보전녹지지역": {"max_bcr": 20, "max_far": 80, "max_height": 0, "max_floors": 4, "setback_m": 0},
+    "생산녹지지역": {"max_bcr": 20, "max_far": 100, "max_height": 0, "max_floors": 4, "setback_m": 0},
+    "자연녹지지역": {"max_bcr": 20, "max_far": 100, "max_height": 0, "max_floors": 4, "setback_m": 0},
 }
 
 # ── 주차대수 산정 기준 (주차장법 시행령 §6) ──────────────────────────

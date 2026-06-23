@@ -652,25 +652,30 @@ class LandInfoService:
 
     @staticmethod
     def _zone_limits_for(zone_type: str) -> dict[str, Any] | None:
-        """용도지역명 → 법정 건폐율/용적률 한도(국토계획법 시행령 ZONE_LIMITS)."""
+        """용도지역명 → 법정 건폐율/용적률 한도(국토계획법 시행령 ZONE_LIMITS).
+
+        ★녹지지역 등 층수 제한(max_floors)이 있는 용도지역은 max_height_m이 None이라도
+        '실효 높이(effective_height_m = 층수×기본층고 3.0m)'를 함께 산출해 전파한다.
+        이로써 종합규제분석이 높이를 '제한 없음'으로 오표시하던 6경로 버그를 SSOT에서 차단한다.
+        실효 높이는 층수×층고 근사값임을 height_basis로 정직 표기(무목업).
+        """
         if not zone_type:
             return None
-        from app.services.zoning.auto_zoning_service import ZONE_LIMITS
+        from app.services.zoning.auto_zoning_service import ZONE_LIMITS, build_zone_limits
 
         key = zone_type.replace(" ", "").strip()
+        matched_key = key if key in ZONE_LIMITS else None
         limits = ZONE_LIMITS.get(key)
         if not limits:
             for k, v in ZONE_LIMITS.items():
                 if k in key or key in k:
                     limits = v
+                    matched_key = k
                     break
-        if not limits:
+        if not limits or matched_key is None:
             return None
-        return {
-            "max_bcr_pct": limits.get("max_bcr"),
-            "max_far_pct": limits.get("max_far"),
-            "max_height_m": limits.get("max_height_m"),
-        }
+        # 공용 빌더(SSOT 단일경유)로 max_floors + effective_height_m(녹지 4층 실효높이)까지 전파.
+        return build_zone_limits(matched_key, limits)
 
     @staticmethod
     def _zone_from_districts(districts: list[dict[str, Any]]) -> str | None:

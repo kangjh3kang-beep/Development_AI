@@ -22,14 +22,10 @@ from app.services.zoning.legal_zone_limits import legal_limits_for
 # 정북일조 적용 용도지역(전용/일반주거). 준주거·상업·공업은 통상 미적용/완화.
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
 
-# ★녹지지역 층수 제한(국토계획법 시행령 별표 — 녹지지역 안에서 건축할 수 있는 건축물은 4층 이하 일반).
+# ★녹지지역 층수 제한(자연녹지 4층 등)은 SSOT(legal_limits_for → ZONE_LIMITS.max_floors)에서
+#   위임받는다. 종전 로컬 _ZONE_MAX_FLOORS dict(중복 지식)은 제거하고 단일 출처로 일원화.
 #   자연녹지는 건폐율 20%·용적률 100%이나 4층 제한 때문에 현실 용적률 = 20%×4층 = 80%(<법정 100%).
 #   이 제한을 무시하면 ceil(100/20)=5층·용적률 100%로 과대 산정된다.
-_ZONE_MAX_FLOORS: dict[str, int] = {
-    "자연녹지지역": 4,
-    "생산녹지지역": 4,
-    "보전녹지지역": 4,
-}
 
 
 def dims_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -121,18 +117,18 @@ def _zone_limits(zone: str) -> dict[str, Any]:
     ★권위 테이블(legal_zone_limits, 국토계획법 시행령 §84/§85) 우선. 자체 ZONE_DEFAULTS 는
     자연녹지 등 녹지지역이 없어 미매칭 시 250% 기본값으로 떨어져 '자연녹지에 용적률 250%' 같은
     심각한 과대(할루시네이션)를 유발했다 → 권위 테이블에 위임해 자연녹지=건폐20/용적100 으로 정합.
-    녹지지역은 층수 제한(_ZONE_MAX_FLOORS)도 함께 실어 현실 용적률(건폐율×제한층수)을 산정한다.
+    녹지지역은 층수 제한(legal_limits_for.max_floors, SSOT)도 함께 실어 현실 용적률(건폐율×제한층수)을 산정한다.
     """
     legal = legal_limits_for(zone)
     if legal and legal.get("max_far_pct"):
-        key = legal.get("zone_type") or ""
         out: dict[str, Any] = {
             "max_bcr": legal.get("max_bcr_pct", 60),
             "max_far": legal.get("max_far_pct", 250),
             "max_height": 0,
         }
-        if _ZONE_MAX_FLOORS.get(key):
-            out["max_floors"] = _ZONE_MAX_FLOORS[key]
+        # 층수 제한(녹지 4층 등)은 SSOT(legal_limits_for.max_floors)에서 위임받는다.
+        if legal.get("max_floors"):
+            out["max_floors"] = legal["max_floors"]
         return out
     # 보조: 자체 ZONE_DEFAULTS(권위 테이블 미매칭 시 — 주요 주거/상업/공업은 보유)
     for k, v in ZONE_DEFAULTS.items():
