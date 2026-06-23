@@ -207,6 +207,28 @@ function setStoredTokens(access?: string, refresh?: string) {
   }
 }
 
+// ★세션 만료 단일 처리(근본): refresh token까지 무효(401/403)면 세션이 끝난 것이다. 이때
+//   에러를 컴포넌트로 던져 화면마다 제각각 크래시(#185 등)·홈버튼 무력화로 번지게 두지 않고,
+//   여기 단일 choke point에서 토큰을 정리하고 로그인으로 graceful 리다이렉트한다. 1회만(중복·루프
+//   방지) 실행하며, 이미 로그인/회원가입 페이지면 건너뛴다(리다이렉트 루프 차단).
+let _sessionExpiredHandled = false;
+function handleSessionExpired(): void {
+  if (typeof window === "undefined" || _sessionExpiredHandled) return;
+  if (/\/(login|register)(\/|$|\?)/.test(window.location.pathname)) return;
+  _sessionExpiredHandled = true;
+  try {
+    window.localStorage.removeItem("propai_access_token");
+    window.localStorage.removeItem("propai_refresh_token");
+  } catch {
+    /* noop */
+  }
+  const m = window.location.pathname.match(/^\/(ko|en|zh-CN)(\/|$)/);
+  const locale = m ? m[1] : "ko";
+  // next로 복귀경로 보존(로그인 후 돌아오기). 하드 내비게이션으로 상태 완전 초기화(크래시 루프 차단).
+  const next = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/${locale}/login?next=${next}`;
+}
+
 // 동시 401 다발 시 갱신 호출을 1개로 묶는다(중복 refresh 방지).
 let _refreshInFlight: Promise<boolean> | null = null;
 
@@ -227,6 +249,7 @@ function refreshAccessToken(): Promise<boolean> {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
+      // refresh 실패는 false 반환만(세션종료 리다이렉트는 request의 단일 choke point에서 처리).
       if (!res.ok) return false;
       const data = (await res.json()) as { access_token?: string; refresh_token?: string };
       if (data?.access_token) {
@@ -365,13 +388,18 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&
-    !isAuthPath(path) &&
-    getRefreshToken()
+    !isAuthPath(path)
   ) {
-    const refreshed = await refreshAccessToken();
-    if (refreshed) {
-      response = await executeFetch(path, method, options);
+    if (getRefreshToken()) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await executeFetch(path, method, options);
+      }
     }
+    // 재시도 후에도 401(refresh 실패/부재)이면 세션 종료 → 단일 choke point에서 로그인 리다이렉트.
+    //   화면마다 401 에러가 번져 #185 크래시·홈버튼 무력화로 이어지던 cascade를 원천 차단(근본).
+    //   (403=권한거부는 제외 — 로그인돼 있으나 권한 없음이라 리다이렉트 대상 아님.)
+    if (response.status === 401) handleSessionExpired();
   }
 
   const payload = await parseResponse(response);
