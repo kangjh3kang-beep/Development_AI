@@ -169,6 +169,43 @@ function topFeasibility(scenarios: Scenario[] | null | undefined): string | unde
 }
 
 /**
+ * upzoning(종상향) 3필드만 SSOT 부분 패치로 추출(단일·통합 응답 공용 계약).
+ *
+ * `/zoning/analyze`(단일)와 `/zoning/integrated-analysis`(다필지 통합)는 모두 동형 키
+ * (upzoning / upzoning_scenarios / potential_far_range)로 종상향을 반환한다. 이 헬퍼로
+ * 두 경로가 한 곳을 고치면 함께 따라오게 하고(공용화), 다필지에서는 통합 응답의 종상향이
+ * 단일 대표필지 종상향을 덮어쓰도록 한다(통합값 우선).
+ *
+ * 무목업: 종상향 미확보 시 세 필드를 명시적 null로 기록(직전 부지/대표필지 잔류 차단).
+ */
+export function mapUpzoning(resp: unknown): Partial<SiteAnalysisData> {
+  const patch: Partial<SiteAnalysisData> = {};
+  if (resp == null || typeof resp !== "object") {
+    patch.upzoningPotentialFarHigh = null;
+    patch.upzoningFeasibilityTop = null;
+    patch.upzoningScenarios = null;
+    return patch;
+  }
+  const r = resp as NonNullable<ZoningRichResponse>;
+
+  // 종상향 잠재 상한(potential_far_range dict {min_pct,max_pct}) — upzoning 내부 우선, top-level 폴백.
+  const range = r.upzoning?.potential_far_range ?? r.potential_far_range;
+  patch.upzoningPotentialFarHigh =
+    range != null && typeof range === "object" ? (num(range.max_pct) ?? null) : null;
+
+  // 최상 가능성 등급 — upzoning.scenarios 우선, 동봉된 upzoning_scenarios 폴백. 없으면 null.
+  patch.upzoningFeasibilityTop =
+    topFeasibility(r.upzoning?.scenarios ?? r.upzoning_scenarios) ?? null;
+
+  // per-scenario 종상향 상세 — 확보 시 보존, 미확보 시 명시적 null로 덮어 잔류(stale)를 차단.
+  patch.upzoningScenarios = normalizeUpzoningScenarios(
+    r.upzoning?.scenarios ?? r.upzoning_scenarios,
+  );
+
+  return patch;
+}
+
+/**
  * /zoning/analyze 응답(또는 동형 객체)에서 rich 필드를 추출해 SiteAnalysisData 부분 패치로 변환.
  *
  * ★주소 변경 시 직전 부지 값 잔류(stale) 방지: rich 필드는 "현재 주소"의 속성이므로, 응답이
@@ -198,20 +235,8 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
       ? ef.far_basis
       : null;
 
-  // 종상향 잠재 상한(potential_far_range dict {min_pct,max_pct}) — upzoning 내부 우선, top-level 폴백.
-  const range = r.upzoning?.potential_far_range ?? r.potential_far_range;
-  patch.upzoningPotentialFarHigh =
-    range != null && typeof range === "object" ? (num(range.max_pct) ?? null) : null;
-
-  // 최상 가능성 등급 — upzoning.scenarios 우선, 동봉된 upzoning_scenarios 폴백. 없으면 null.
-  patch.upzoningFeasibilityTop =
-    topFeasibility(r.upzoning?.scenarios ?? r.upzoning_scenarios) ?? null;
-
-  // per-scenario 종상향 상세(미래 토지특성 SSOT) — 확보 시 보존, 미확보 시 명시적 null로 덮어
-  //   직전 주소의 종상향 시나리오 잔류(stale)를 차단한다(특이부지·종상향과 동일 계약).
-  patch.upzoningScenarios = normalizeUpzoningScenarios(
-    r.upzoning?.scenarios ?? r.upzoning_scenarios,
-  );
+  // 종상향(종상향 잠재 상한·최상 가능성·per-scenario) — 단일/통합 공용 헬퍼로 추출(stale 명시 null 포함).
+  Object.assign(patch, mapUpzoning(r));
 
   // 특이부지 게이트 — is_special truthy일 때만 객체, 아니면 명시적 null(직전 부지 특이정보 초기화).
   const sp = r.special_parcel;

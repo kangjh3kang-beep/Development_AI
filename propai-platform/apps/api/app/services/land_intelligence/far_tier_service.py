@@ -254,11 +254,18 @@ def calc_upzoning(
     land_area: float,
     location: Any = None,
     dev_plans: Any = None,
+    *,
+    parcel_count: int = 1,
+    adjacency_contiguous: bool | None = None,
 ) -> dict[str, Any]:
     """현행 실효 용적률과 **분리된** 종상향/종변경 잠재 시나리오(예상치)를 산출.
 
     규칙엔진(UpzoningPotentialAnalyzer)에 수집 데이터(면적·역세권·특수구역·시군구)를
     전달한다. 목표 용도지역의 조례 용적률은 OrdinanceService 캐시를 동기 resolver로 주입한다.
+
+    다필지 통합분석에서는 통합 면적(land_area)과 함께 통합 필지수(parcel_count)·인접성
+    (adjacency_contiguous)을 주입한다. 단일필지 경로는 기본값(1·None)으로 종전과 동일하게 동작한다
+    (하위호환·무회귀). 통합 면적이 커져 종상향 경로의 최소면적을 충족하면 가능성이 상향된다.
     """
     try:
         from app.services.zoning.upzoning_potential import UpzoningPotentialAnalyzer
@@ -288,8 +295,8 @@ def calc_upzoning(
             sigungu=sigungu,
             near_station=near_station,
             near_station_m=near_station_m,
-            adjacency_contiguous=None,
-            parcel_count=1,
+            adjacency_contiguous=adjacency_contiguous,
+            parcel_count=parcel_count,
             special_districts=special_districts,
             ordinance_far_resolver=ordinance_far_cache_resolver,
         )

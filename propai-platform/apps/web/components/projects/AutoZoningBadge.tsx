@@ -6,7 +6,7 @@ import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
-import { mapZoningRich, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { mapZoningRich, mapUpzoning, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 
 /* ── Response type ── */
 
@@ -72,11 +72,16 @@ type ZoningAnalysisResponse = {
   special_parcel?: SpecialParcel | null;
 };
 
-/** 다필지 통합분석 응답(부분) — 배지에 필요한 dominant_zone/혼재 신호만(읽기 소비). 옵셔널. */
+/** 다필지 통합분석 응답(부분) — 배지에 필요한 dominant_zone/혼재 신호 + 통합 종상향(읽기 소비). 옵셔널.
+ *  upzoning/upzoning_scenarios/potential_far_range는 단일 /zoning/analyze 응답과 동형 키이며
+ *  mapUpzoning이 그대로 추출한다(통합 면적 기준 종상향 → SSOT 보존). 미산출 시 null/빈배열. */
 type IntegratedZoneSummary = {
   dominant_zone?: string | null;
   dominant_basis?: string | null;
   parcel_count?: number | null;
+  upzoning?: unknown;
+  upzoning_scenarios?: unknown;
+  potential_far_range?: unknown;
 };
 
 /* ── Component ── */
@@ -118,6 +123,11 @@ export function AutoZoningBadge({ address }: { address: string }) {
       if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
       setIntegrated(res);
       setCachedAnalysis(iKey, res);
+      // ★다필지 통합 종상향(upzoning)을 SSOT에 기록(통합값 우선). 단일 /zoning/analyze 경로는
+      //   대표 1필지(작은 면적·parcel_count=1)로 종상향을 과소판정하므로, 통합 면적 기준으로 산정한
+      //   integrated.upzoning을 SSOT 진실원천으로 보존한다. 미산출(null/빈배열)이면 mapUpzoning이
+      //   세 필드를 명시적 null로 기록(무목업·잔류 차단). 단일 경로 가드(아래)가 이 값을 덮지 않는다.
+      updateSiteAnalysis(mapUpzoning(res), { source: "auto" });
     }).catch(() => { /* 무목업: 실패 시 통합 배지 미표시(단일 degrade) */ });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,6 +172,17 @@ export function AutoZoningBadge({ address }: { address: string }) {
             (cur?.parcelCount ?? 1) > 1 &&
             typeof cur?.landAreaSqmTotal === "number" &&
             cur.landAreaSqmTotal > 0;
+          // ★다필지 통합 종상향 보존 가드(landAreaSqm 보존 가드와 동일 계약): 이 호출은 "대표 1필지"
+          //   (단일 PNU·작은 면적·parcel_count=1) 분석이라 mapZoningRich가 추출하는 종상향
+          //   (upzoning*)도 대표필지 기준 과소판정값이다. 다필지(parcelCount>1 && landAreaSqmTotal>0)면
+          //   통합 면적 기준으로 산정된 integrated.upzoning(위 effect가 SSOT에 기록)을 덮어쓰지 않도록
+          //   단일 종상향 3필드를 페이로드에서 제거한다(통합값 우선·단일유래 차단). 단일필지는 그대로.
+          const rich = mapZoningRich(data);
+          if (isMultiParcel) {
+            delete rich.upzoningPotentialFarHigh;
+            delete rich.upzoningFeasibilityTop;
+            delete rich.upzoningScenarios;
+          }
           // ★#185 무한렌더 가드(LandIntelligencePanel과 동일 전역계약): SSOT address는 입력 정체성이라
           //   분석 결과(data.address·백엔드 정규화)로 덮어쓰지 않는다. 덮어쓰면 data.address≠입력 시
           //   이 effect(deps=[address])가 재발화→재분석→재기록 순환으로 렌더 폭주(#185). address는 SSOT 보존.
@@ -169,7 +190,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
             estimatedValue: cur?.estimatedValue ?? null,
             zoneCode: data.zone_limits?.zone_key ?? data.zone_type ?? null,
             pnu: data.pnu ?? cur?.pnu ?? null,
-            ...mapZoningRich(data),
+            ...rich,
           };
           updateSiteAnalysis(
             isMultiParcel

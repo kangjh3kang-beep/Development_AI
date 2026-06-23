@@ -1418,6 +1418,57 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                 " 시나리오 산정 위임에 실패해 통합 한도만 제공합니다(개발규모 미산정)."
             warnings.append("시나리오 산정(auto_recommend_top3) 위임 실패 — 통합 집계만 반환합니다.")
 
+    # ── 7) 통합 종상향(upzoning) 1회 산출(additive·정직) — 통합 면적/필지수/인접성 주입.
+    #     ★근본수정: 단일필지 경로는 calc_upzoning을 대표 1필지(작은 면적·parcel_count=1)로 호출해
+    #     "면적 미달"로 종상향 가능성을 과소판정했다. 다필지에서는 통합 면적(total_area)·통합 필지수
+    #     (parcel_count)·인접성(contiguous)을 주입해 통합 기준으로 가능성을 산정한다.
+    #     무목업: 대표 용도지역이 미확정/혼재(dominant_zone None·mixed_review_required)면 단일 zone 종상향
+    #     경로를 적용할 수 없으므로 산출하지 않는다(null + 정직고지). 결정론 산출만(수치 생성 X).
+    upzoning: dict = {}
+    upzoning_scenarios: list = []
+    potential_far_range = None
+    if (
+        dominant_zone
+        and dominant_zone != "mixed_review_required"
+        and total_area
+        and contiguous is not False  # 비인접(False)이면 통합개발 불가 → 통합 종상향 미적용
+    ):
+        try:
+            from app.services.land_intelligence import far_tier_service
+
+            # 시군구: 대표(첫 유효주소) 필지 주소로 도출(조례 용적률 resolver 입력).
+            up_addr = next((p.get("address") for p in enriched if p.get("address")), "")
+            up_sigungu = _extract_sigungu({"address": up_addr})
+            # 통합 special_districts 집계(규제/특수구역 → 종상향 제약). 필지별 합집합(중복 제거).
+            agg_sd: list = []
+            for p in enriched:
+                for sd in (p.get("special_districts") or []):
+                    if sd not in agg_sd:
+                        agg_sd.append(sd)
+            # calc_upzoning은 base.local_ordinance.sigungu로 시군구를, base.special_districts로
+            # 규제구역을 읽는다 → 통합값을 담은 경량 base를 구성해 주입(외부콜 0·결정론).
+            up_base = {
+                "local_ordinance": {"sigungu": up_sigungu} if up_sigungu else {},
+                "special_districts": agg_sd,
+            }
+            upzoning = far_tier_service.calc_upzoning(
+                up_base,
+                dominant_zone,
+                float(total_area),
+                None,
+                None,
+                parcel_count=int(integrated_zoning.get("parcel_count") or len(enriched) or 1),
+                adjacency_contiguous=contiguous,  # True/None(미확정) 그대로 전달(가짜 True 금지)
+            )
+            if isinstance(upzoning, dict):
+                upzoning_scenarios = upzoning.get("scenarios", []) or []
+                potential_far_range = upzoning.get("potential_far_range")
+        except Exception as e:  # noqa: BLE001 — 종상향 산출 실패는 통합집계를 손상하지 않는다(정직 null).
+            logger.warning("통합 종상향(upzoning) 산출 실패: %s", str(e)[:160])
+            upzoning = {}
+            upzoning_scenarios = []
+            potential_far_range = None
+
     return {
         "parcel_count": integrated_zoning.get("parcel_count"),
         "special_count": multi.get("special_count"),
@@ -1441,6 +1492,10 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "blocking_parcels": blocking_parcels,
         "honest_disclosure": honest_disclosure,
         "scenario": scenario,
+        # ── 통합 종상향(upzoning) — 단일 /zoning/analyze 응답과 동형 키(additive). 미산출 시 null·빈배열(무목업).
+        "upzoning": upzoning or None,
+        "upzoning_scenarios": upzoning_scenarios,
+        "potential_far_range": potential_far_range,
         "per_parcel": per_parcel,
         "warnings": warnings,
     }
