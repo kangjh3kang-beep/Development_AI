@@ -111,6 +111,7 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
         from app.services.zoning.legal_zone_limits import (
             _has_relaxation_basis,
             check_against_legal,
+            check_floors_against_legal,
         )
 
         # ★현행/잠재 2계층 분리: 현행 실효 용적률 검증은 종상향/잠재 시나리오 서브트리를
@@ -134,6 +135,25 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
             zone_type, bcr_pct=eff_bcr, far_pct=eff_far, has_basis=has_basis,
             regulation_payload=[s_output, s_source],
             plan_payload=[s_output, s_source],
+        ):
+            issues.append(it)
+
+        # ★층수/높이 법정제한 대조(녹지 4층 등) — far/bcr만으론 '4층 제한'을 못 잡아
+        #   8~13층 비현실 산정·'높이 제한없음' 오표기가 검증을 통과하던 갭을 닫는다.
+        #   층수·높이(m)·높이표기 문자열을 폭넓게 탐색(현행 페이로드만, 잠재 시나리오 제외).
+        floors = _find(s_source, s_output, (
+            "max_floors", "floors", "floor_count", "stories", "num_floors",
+            "recommended_floors", "지상층수", "층수",
+        ))
+        height_m = _find(s_source, s_output, (
+            "max_height_m", "height_m", "building_height_m", "최고높이", "건축물높이",
+        ))
+        height_text = _find_str(s_source, s_output, (
+            "height_limit", "max_height", "height", "높이제한", "높이",
+        ))
+        for it in check_floors_against_legal(
+            zone_type, floors=floors, height_m=height_m,
+            height_text=height_text, has_basis=has_basis,
         ):
             issues.append(it)
 

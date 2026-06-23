@@ -464,6 +464,104 @@ def _judge_excess(
     }
 
 
+# 높이/층수 '제한없음'으로 잘못 표기됐는지 탐지하는 문자열 신호.
+# 녹지 등 층수 제한이 있는 용도지역에서 이런 표기가 나오면 할루시네이션(검증 누락)이다.
+_NO_LIMIT_TOKENS: tuple[str, ...] = (
+    "제한없음", "제한 없음", "무제한", "없음", "unlimited", "no limit", "n/a",
+)
+# 층고(층당 높이) 가정 — 4층×3m≈12m. 높이(m) 환산·표기에 사용.
+_FLOOR_HEIGHT_M: float = 3.0
+
+
+def check_floors_against_legal(
+    zone_type: str | None,
+    floors: Any = None,
+    height_m: Any = None,
+    height_text: Any = None,
+    has_basis: bool = False,
+) -> list[dict[str, Any]]:
+    """층수/높이가 용도지역 법정 제한(녹지 4층 등)을 위반하는지 근거기반 판정.
+
+    far/bcr와 달리 층수 제한은 녹지(자연·생산·보전)에서 핵심이다(건폐율·용적률만으론
+    '4층 제한'을 못 잡아 8~13층 같은 비현실 산정·'높이 제한없음' 오표기가 검증을 통과했다).
+
+    적발 3종:
+      ① 층수 초과: 제시 층수 > 법정 max_floors(예: 자연녹지 8층 > 4층).
+      ② '제한없음' 모순: 층수 제한이 있는 용도지역에 높이/층수가 '제한없음'으로 표기됨.
+      ③ 높이(m) 초과: 제시 높이 > 법정 층수×층고(예: 자연녹지 30m > 4층≈12m).
+
+    severity: 근거 없으면 high(할루시네이션 의심), 근거 있어도 녹지는 인센티브 비대상이라 warn.
+    층수 제한이 없는 용도지역(주거·상업 등 max_floors=None)은 빈 리스트(검증 대상 아님).
+    """
+    limits = legal_limits_for(zone_type)
+    if limits is None:
+        return []
+    max_floors = limits.get("max_floors")
+    if not max_floors:
+        return []  # 층수 제한이 없는 용도지역 — 층수/높이는 다른 규칙(일조·가로구역)에 위임.
+
+    zone = limits["zone_type"]
+    non_incentive = _is_non_incentive_zone(zone)
+    legal_height = round(max_floors * _FLOOR_HEIGHT_M)  # 약 12m(4층)
+    # 근거가 있어도 녹지(인센티브 비대상)는 warn, 그 외 근거없음은 high.
+    sev = "warn" if (has_basis or non_incentive) else "high"
+
+    issues: list[dict[str, Any]] = []
+
+    # ① 층수 초과 ──────────────────────────────────────────────
+    try:
+        if floors is not None and float(floors) > max_floors + 0.5:
+            issues.append({
+                "type": "층수제한초과",
+                "claim": f"{float(floors):g}층",
+                "severity": sev,
+                "note": (
+                    f"{zone}은 {max_floors}층(약 {legal_height}m) 이하 제한이 있으나 "
+                    f"{float(floors):g}층이 제시됨 — "
+                    + ("완화근거 검토 필요(녹지는 인센티브 비대상, 재확인)."
+                       if sev == "warn" else
+                       f"근거 미제시(할루시네이션 의심). 건폐율·용적률만으론 층수 제한이 "
+                       f"드러나지 않으니 {max_floors}층 상한을 반드시 적용.")
+                ),
+            })
+    except (TypeError, ValueError):
+        pass
+
+    # ② '제한없음' 모순 ────────────────────────────────────────
+    if height_text:
+        t = str(height_text).replace(" ", "").lower()
+        if any(tok.replace(" ", "").lower() in t for tok in _NO_LIMIT_TOKENS):
+            issues.append({
+                "type": "높이제한오표기",
+                "claim": f"높이 {height_text}",
+                "severity": "medium",
+                "note": (
+                    f"{zone}은 {max_floors}층(약 {legal_height}m) 이하 제한이 있으나 "
+                    f"높이가 '{height_text}'(제한없음)으로 표기됨 — 오표기. "
+                    f"{max_floors}층 제한을 명시할 것."
+                ),
+            })
+
+    # ③ 높이(m) 초과 ──────────────────────────────────────────
+    try:
+        if height_m is not None and float(height_m) > legal_height + 1.0:
+            issues.append({
+                "type": "높이제한초과",
+                "claim": f"높이 {float(height_m):g}m",
+                "severity": sev,
+                "note": (
+                    f"{zone}은 {max_floors}층(약 {legal_height}m) 이하 제한이 있으나 "
+                    f"{float(height_m):g}m가 제시됨 — "
+                    + ("완화근거 검토 필요(재확인)." if sev == "warn"
+                       else f"근거 미제시(할루시네이션 의심). 약 {legal_height}m 상한 적용 권고.")
+                ),
+            })
+    except (TypeError, ValueError):
+        pass
+
+    return issues
+
+
 def check_against_legal(
     zone_type: str | None,
     bcr_pct: float | None = None,
