@@ -121,21 +121,15 @@ CONSTRUCTION_COST_PER_SQM: dict[str, int] = {
 
 
 def _extract_sigungu_from_address(address: str | None) -> str | None:
-    """주소에서 시군구명 추출(조례 url 치환용). 특별·광역시도 토큰은 제외(가짜 조례명 방지)."""
-    import re
+    """주소 → 도시계획조례 정본 레벨 행정구역명(조례값·딥링크 공용).
 
-    addr = address or ""
-    if not addr:
-        return None
-    # ★re.finditer로 모든 '시/군/구' 토큰을 순회하며 특별/광역시도가 아닌 첫 토큰을 채택한다
-    #   ('서울특별시 강남구'→'강남구', '부산광역시 해운대구'→'해운대구', '경기도 성남시 분당구'→'성남시').
-    #   re.search는 첫 매치('서울특별시')만 보고 특별시 가드로 None을 반환해, 서울25구·광역시(최고가 시장)
-    #   조례 딥링크가 누락되던 기능완전성 갭을 해소(가짜 조례명 방지는 특별/광역 스킵으로 유지).
-    for m in re.finditer(r"(\S{2,4}[시군구])(?:\s|$)", addr):
-        cand = m.group(1)
-        if "특별" not in cand and "광역" not in cand:
-            return cand
-    return None
+    ★단일 SSOT(ordinance_service.resolve_ordinance_region)를 경유한다 — 특별시/광역시는 시
+    본청(서울특별시), 도 산하는 시/군(용인시)이 용적률/건폐율 도시계획조례의 정본이며 자치구는
+    별도 조례가 없다(국토의 계획 및 이용에 관한 법률 제77·78조). 종전엔 자치구(강남구)를 반환해
+    조례 딥링크 연결실패·값 미로드를 유발했다. 조례 관련 모든 레벨 해소를 이 한 출처로 일원화.
+    """
+    from app.services.land_intelligence.ordinance_service import resolve_ordinance_region
+    return resolve_ordinance_region(address)
 
 
 def _build_site_evidence_block(result: dict) -> dict[str, Any]:

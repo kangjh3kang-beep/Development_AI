@@ -198,11 +198,11 @@ class RegulationAnalysisService:
 
     @staticmethod
     def _sigungu(address: str) -> str:
-        parts = (address or "").split()
-        for i, p in enumerate(parts):
-            if p.endswith(("시", "군", "구")) and i > 0:
-                return p
-        return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
+        # ★조례 정본 레벨 단일 SSOT 경유(ordinance_service.resolve_ordinance_region):
+        #   특별시/광역시→시 본청(서울특별시), 도 산하→시/군. 자치구(동작구 등)는 용적률/건폐율
+        #   도시계획조례가 없어 조회 미스·연결실패를 유발하던 종전 버그(i>0로 시 본청 스킵)를 제거.
+        from app.services.land_intelligence.ordinance_service import resolve_ordinance_region
+        return resolve_ordinance_region(address) or ""
 
     def _hierarchy(
         self, zone: str, zone2: str, districts: list[dict], sigungu: str, zl: dict
