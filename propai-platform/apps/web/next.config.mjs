@@ -22,6 +22,7 @@ const nextConfig = {
       "three",
       "@react-three/fiber",
       "@react-three/drei",
+      "lucide-react",
       // konva·react-konva는 제외: CADEditor가 런타임 require()로 로드하는데
       // optimizePackageImports의 배럴 재작성이 require() 반환 객체의 named export를
       // undefined로 만들어 Konva 캔버스가 무에러로 비렌더됨(빈 캔버스 버그 근본원인).

@@ -7,12 +7,15 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm, isParcelSetConsistent } from "@/lib/site-area";
 import dynamic from "next/dynamic";
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
-// ★성능: 무거운 주소검색/이미지업로드 폼을 dynamic(ssr:false)로 분리해 page 청크·hydration을 줄인다.
-//   '프로젝트 생성' 클릭→이동 시 STEP01 셸(제목·프로젝트명)은 즉시 표시되고 폼은 lazy 로드(스켈레톤)
-//   → 서버 RSC 0.3s·번들 정상(57KB)인데 클라이언트 마운트만 느리던 전환 체감을 완화한다.
+// ★성능: 무거운 주소검색/이미지업로드 폼을 dynamic으로 분리해 page 청크를 줄인다.
+//   GlobalAddressSearch는 SSR을 허용한다(ssr:false 제거) — 입력칸 HTML이 서버렌더로 즉시
+//   페인트되어 '프로젝트 생성' 클릭→이동 시 첫 입력칸이 곧바로 보인다(전환 체감 단축).
+//   ★SSR안전 확인됨: 본체·정적 import(KakaoAddressSearch·MapShell·LandShareModal)의 모든
+//   window/document/localStorage 접근은 함수/useEffect 내부거나 typeof 가드이며, 지도
+//   (ParcelPickerMapDynamic·ssr:false)와 모달은 state 게이트라 초기 SSR 그래프에 안 잡힌다.
 const GlobalAddressSearch = dynamic(
   () => import("@/components/common/GlobalAddressSearch").then((m) => ({ default: m.GlobalAddressSearch })),
-  { ssr: false, loading: () => <div className="h-44 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface)]" /> },
+  { loading: () => <div className="h-44 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface)]" /> },
 );
 const ImageUpload = dynamic(
   () => import("@/components/ui/ImageUpload").then((m) => ({ default: m.ImageUpload })),

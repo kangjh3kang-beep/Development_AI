@@ -1,4 +1,6 @@
-import { resolveMockRequest } from "@/mocks/handlers";
+// ★전역전파방지(CLAUDE.md): mocks/handlers 정적 import 제거 → live 빌드(useMock=false)에서
+//   mocks/* dead-code 그래프가 api-client 의존(184파일 전역)에서 구조 분리되어 초기 청크가 가벼워진다.
+//   실제 mock 경로(useMock=true)에서만 동적 import로 로드(동작 무회귀, await만 추가).
 import { isMockMode } from "@/lib/runtime-mode";
 import { trackEvent, isGrowthEndpoint } from "@/lib/growth/event-collector";
 
@@ -348,6 +350,7 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
   const useMock = options.useMock ?? useMocksByDefault;
 
   if (useMock) {
+    const { resolveMockRequest } = await import("@/mocks/handlers");
     const mockResponse = await resolveMockRequest<T>(method, path);
 
     if (mockResponse !== undefined) {

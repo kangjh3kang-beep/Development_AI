@@ -85,6 +85,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             {/* 강조(accent)는 핵심 행동 단 1곳에만 — 프로젝트 생성 */}
             <Link
               href={`/${locale}/projects/new`}
+              prefetch={true}
               className="group/btn flex h-14 items-center justify-center gap-3 rounded-2xl bg-[var(--accent-strong)] px-8 text-base font-semibold text-white transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
             >
               <span>프로젝트 생성</span>
