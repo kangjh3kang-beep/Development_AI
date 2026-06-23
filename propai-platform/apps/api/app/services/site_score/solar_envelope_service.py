@@ -17,9 +17,19 @@ import math
 from typing import Any
 
 from app.services.permit.building_code_rules import ZONE_DEFAULTS
+from app.services.zoning.legal_zone_limits import legal_limits_for
 
 # 정북일조 적용 용도지역(전용/일반주거). 준주거·상업·공업은 통상 미적용/완화.
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
+
+# ★녹지지역 층수 제한(국토계획법 시행령 별표 — 녹지지역 안에서 건축할 수 있는 건축물은 4층 이하 일반).
+#   자연녹지는 건폐율 20%·용적률 100%이나 4층 제한 때문에 현실 용적률 = 20%×4층 = 80%(<법정 100%).
+#   이 제한을 무시하면 ceil(100/20)=5층·용적률 100%로 과대 산정된다.
+_ZONE_MAX_FLOORS: dict[str, int] = {
+    "자연녹지지역": 4,
+    "생산녹지지역": 4,
+    "보전녹지지역": 4,
+}
 
 
 def dims_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -106,10 +116,30 @@ def shadow_analysis(height_m: float, latitude: float = 37.5) -> dict[str, Any]:
 
 
 def _zone_limits(zone: str) -> dict[str, Any]:
+    """용도지역 → 건폐율/용적률/층수 한도.
+
+    ★권위 테이블(legal_zone_limits, 국토계획법 시행령 §84/§85) 우선. 자체 ZONE_DEFAULTS 는
+    자연녹지 등 녹지지역이 없어 미매칭 시 250% 기본값으로 떨어져 '자연녹지에 용적률 250%' 같은
+    심각한 과대(할루시네이션)를 유발했다 → 권위 테이블에 위임해 자연녹지=건폐20/용적100 으로 정합.
+    녹지지역은 층수 제한(_ZONE_MAX_FLOORS)도 함께 실어 현실 용적률(건폐율×제한층수)을 산정한다.
+    """
+    legal = legal_limits_for(zone)
+    if legal and legal.get("max_far_pct"):
+        key = legal.get("zone_type") or ""
+        out: dict[str, Any] = {
+            "max_bcr": legal.get("max_bcr_pct", 60),
+            "max_far": legal.get("max_far_pct", 250),
+            "max_height": 0,
+        }
+        if _ZONE_MAX_FLOORS.get(key):
+            out["max_floors"] = _ZONE_MAX_FLOORS[key]
+        return out
+    # 보조: 자체 ZONE_DEFAULTS(권위 테이블 미매칭 시 — 주요 주거/상업/공업은 보유)
     for k, v in ZONE_DEFAULTS.items():
         if k in (zone or "") or (zone or "") in k:
             return v
-    return {"max_bcr": 60, "max_far": 250, "max_height": 0}
+    # 최종 폴백: 미매칭 용도지역은 보수적 추정(과대 금지 — 녹지를 250%로 부풀리던 사고 차단).
+    return {"max_bcr": 60, "max_far": 200, "max_height": 0}
 
 
 def compute_buildable_envelope(
@@ -148,16 +178,43 @@ def compute_buildable_envelope(
 
     if not applies:
         # 정북일조 미적용(준주거·상업 등) → 용적률·건폐율로 층수. ceil=FAR 담는 최소 층수(round 내림 과소산정 방지).
-        floors = max(1, math.ceil(far / bcr)) if bcr > 0 else 1
+        floors_by_far = max(1, math.ceil(far / bcr)) if bcr > 0 else 1
+        zone_max_floors = lim.get("max_floors")
+        if zone_max_floors and bcr > 0 and floors_by_far > zone_max_floors:
+            # ★층수 제한이 용적률보다 강한 제약(녹지 4층 등): 현실 연면적 = 건폐율 바닥 × 제한층수.
+            #   예) 자연녹지 건폐20%·4층 → 현실 용적률 80%(=20%×4) < 법정 100%. 법정 대신 이 값을 채택.
+            floors = zone_max_floors
+            realistic_gfa = bcr_footprint * floors
+            realistic_far = bcr * floors
+            binding = "층수제한"
+        else:
+            floors = floors_by_far
+            realistic_gfa = far_gfa
+            realistic_far = far
+            binding = "용적률"
         return {
             "applies_north_light": False,
-            "zone": zone, "bcr_pct": round(bcr * 100, 1), "far_pct": round(far * 100, 1),
-            "far_gfa_sqm": round(far_gfa), "envelope_gfa_sqm": round(far_gfa),
-            "effective_gfa_sqm": round(far_gfa), "binding": "용적률",
+            "zone": zone, "bcr_pct": round(bcr * 100, 1),
+            "far_pct": round(far * 100, 1),                       # 법정 용적률 상한
+            "realistic_far_pct": round(realistic_far * 100, 1),   # 현실 용적률(층수제한 반영)
+            "far_gfa_sqm": round(far_gfa),                        # 법정 상한 연면적
+            "envelope_gfa_sqm": round(realistic_gfa),
+            "effective_gfa_sqm": round(realistic_gfa),            # ★연동 소비처가 쓰는 현실 연면적
+            "binding": binding,
             "daylight_loss_pct": 0.0,
             "max_height_m": round(floors * fh, 1), "max_floors": floors,
-            "note": "정북일조 미적용 용도지역 — 용적률/건폐율이 한도. (정밀 높이는 가로구역 최고높이 별도 확인)",
-            "approximation": "far-bcr-only",
+            "zone_max_floors": zone_max_floors,
+            "note": (
+                "정북일조 미적용 용도지역 — 용적률/건폐율이 한도."
+                + (
+                    f" 녹지 {zone_max_floors}층 제한으로 현실 용적률 {round(realistic_far * 100, 1)}%"
+                    f"(=건폐율 {round(bcr * 100)}%×{zone_max_floors}층) < 법정 {round(far * 100, 1)}%."
+                    if binding == "층수제한"
+                    else ""
+                )
+                + " (정밀 높이는 가로구역 최고높이 별도 확인)"
+            ),
+            "approximation": "far-bcr-floorcap",
             "assumptions": [
                 "정북일조 미적용 용도지역 — 용적률/건폐율만 적용",
                 "가로구역별 최고높이 별도 확인 필요",

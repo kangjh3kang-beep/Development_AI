@@ -20,6 +20,8 @@ type Envelope = {
   max_floors: number; max_height_m: number; daylight_ceiling_m?: number;
   daylight_ceiling_floors?: number; geometry_source?: string;
   far_pct?: number; bcr_pct?: number; zone?: string;
+  // 현실 용적률(층수제한 반영)·녹지 층수제한 — 백엔드가 binding="층수제한"일 때 동반(자연녹지 4층 → 80%).
+  realistic_far_pct?: number; zone_max_floors?: number | null;
   min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
   road_side?: string; note?: string; error?: string;
   // 백엔드가 evidence/legal_refs를 반환하면 우선 사용(현재 미반환 → 프론트 산식 트레이스로 폴백).
@@ -75,6 +77,11 @@ export function BuildableEnvelopeCard() {
   //   20~30%로 낮춰 더 높게 짓는다. 이를 ① 법정 최소(건폐율 만충) ② 실무 권장(쾌적 건폐율) ③ 법적
   //   가능 최고(일조 높이한도 기준)로 분리 표기한다. ②③은 설계 가정 기반 추정임을 함께 밝힌다.
   const farForFloors = res.far_pct ?? null;
+  // 현실 용적률(층수제한 반영) — 녹지 4층 등으로 법정 용적률을 못 채우면 백엔드가 realistic_far_pct·
+  //   zone_max_floors·binding="층수제한"을 동반. 예) 자연녹지 건폐20%·4층 → 현실 80%(<법정 100%).
+  const floorLimited = res.binding === "층수제한";
+  const realisticFarPct = res.realistic_far_pct ?? res.far_pct ?? null;
+  const zoneMaxFloors = res.zone_max_floors ?? null;
   // ★법적 가능 최고층 먼저 산출: 일조 높이한도만 보면 오도(162.8m÷3≈54층). 실제론 용적률이 총
   //   연면적을 제한하므로 바닥을 최소(실무 최저 건폐율 ~15%)로 깔아 올려도 '용적률-한정'에 걸린다.
   //   → min(일조-한정, 용적률-한정). 단 법정 최소(max_floors)보다 낮아지지 않게 하한 가드(역전 방지).
@@ -86,7 +93,11 @@ export function BuildableEnvelopeCard() {
   const legalMaxFloors = rawLegalMax != null ? Math.max(res.max_floors, rawLegalMax) : null;
   // 실무 권장 층수: 쾌적 건폐율 30%(보수)~20%(여유) 가정. ★[법정최소, 법적최고] 범위로 클램프해
   //   '법정최소 ≤ 실무권장 ≤ 법적최고' 순서를 강제(자체 모순 표기 방지).
-  const floorCap = legalMaxFloors ?? Number.POSITIVE_INFINITY;
+  // 녹지 층수제한(zone_max_floors)이 있으면 실무 권장 층수도 그 이하로 캡(자연녹지 4층 → 8~13층 같은 과대 차단).
+  const floorCap = Math.min(
+    legalMaxFloors ?? Number.POSITIVE_INFINITY,
+    zoneMaxFloors ?? Number.POSITIVE_INFINITY,
+  );
   const practLow = farForFloors != null ? Math.min(floorCap, Math.max(res.max_floors, Math.round(farForFloors / 30))) : null;
   const practHigh = farForFloors != null ? Math.min(floorCap, Math.round(farForFloors / 20)) : null;
   const practicalFloors =
@@ -100,7 +111,9 @@ export function BuildableEnvelopeCard() {
     {
       label: "건축가능 연면적",
       value: eok(res.effective_gfa_sqm),
-      basis: `대지면적 ${eok(area ?? 0)} × 용적률 ${res.far_pct ?? "—"}%${lossBinding ? ` → 정북일조 한도 적용(min)` : ""}`,
+      basis: floorLimited
+        ? `대지면적 ${eok(area ?? 0)} × 현실 용적률 ${realisticFarPct ?? "—"}%(건폐율 ${res.bcr_pct ?? "—"}%×${zoneMaxFloors}층 제한) · 법정 ${res.far_pct ?? "—"}%`
+        : `대지면적 ${eok(area ?? 0)} × 용적률 ${res.far_pct ?? "—"}%${lossBinding ? ` → 정북일조 한도 적용(min)` : ""}`,
     },
     {
       label: "용적률 허용 연면적",
