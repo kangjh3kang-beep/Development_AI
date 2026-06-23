@@ -109,9 +109,9 @@ export function SolarEnvelopeCard({
       basis: `대지면적 ${sqm(areaForBasis)} × 용적률 ${res.far_pct ?? "—"}%${usedFallback ? " · 용도지역 기본값(추정)" : " · 실효 용적률"}`,
     },
     {
-      label: "법정 최소층수(건폐율 만충 시)",
+      label: "용적률 실현 최소층수(건폐율 만충 시)",
       value: `${res.max_floors}층`,
-      basis: `용적률 ${res.far_pct ?? "—"}% ÷ 법정 건폐율 ${res.bcr_pct ?? "—"}% — 바닥을 최대로 깔았을 때의 최소 층수(현실 권장 아님)`,
+      basis: `용적률 ${res.far_pct ?? "—"}% ÷ 건폐율 ${res.bcr_pct ?? "—"}% — 바닥을 최대로 깔았을 때 전체 용적률을 쓰는 데 필요한 최소 층수(설계 파생값 · 법정 최소층수 아님 · 현실 권장 아님)`,
     },
     {
       label: "실무 권장 층수(추정)",
