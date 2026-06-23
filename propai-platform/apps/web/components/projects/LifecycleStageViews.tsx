@@ -8,7 +8,7 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api-client";
+import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 
@@ -57,7 +57,8 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
 
   const projectQuery = useQuery({
     queryKey: ["projects", "detail", projectId],
-    queryFn: () => apiClient.get<Record<string, any>>(`/projects/${projectId}`),
+    // 공용 dedup 캐시 경유 — page.tsx·ProjectContextBinder와 동일 /projects/{id} 중복호출(3×) 제거.
+    queryFn: () => fetchProjectMeta<Record<string, any>>(projectId),
   });
 
   const p = projectQuery.data || {};

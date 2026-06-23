@@ -93,10 +93,12 @@ export default function NewProjectPage() {
       console.error("프로젝트 저장 경고(이동은 계속):", err);
     }
 
-    // 서비스 사용료: 프로젝트 생성 1건 차감(로그인 구독자, best-effort — 실패해도 진행)
-    try {
-      await apiClient.post("/billing/charge", { body: { action: "project_create" }, useMock: false });
-    } catch { /* 비로그인/실패 무시 */ }
+    // 서비스 사용료: 프로젝트 생성 1건 차감(로그인 구독자, best-effort — 실패해도 진행).
+    // ★비블로킹: 이전엔 await로 ~0.57s 동안 이동을 막았다. 과금은 결과를 안 쓰는 best-effort라
+    //   백그라운드로 fire-and-forget → 제출→이동 임계경로에서 제거(체감 로딩 단축).
+    void apiClient
+      .post("/billing/charge", { body: { action: "project_create" }, useMock: false })
+      .catch(() => { /* 비로그인/실패 무시 */ });
 
     // 백엔드 영속화: 실제 projects row 생성 → 파이프라인 메타데이터(GET /projects/{id}) 로드 가능.
     // 부지분석 면적을 시드로 전달(점진 강화의 출발점). best-effort — 실패해도 로컬 ID로 진행.

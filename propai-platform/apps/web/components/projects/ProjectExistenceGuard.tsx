@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
-import { apiClient, ApiClientError } from "@/lib/api-client";
+import { ApiClientError } from "@/lib/api-client";
+import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { useProjectStore } from "@/store/useProjectStore";
 
 /**
@@ -36,7 +37,7 @@ export function ProjectExistenceGuard({
 
     (async () => {
       try {
-        await apiClient.get(`/projects/${projectId}`);
+        await fetchProjectMeta(projectId);
         // 200 — 존재함. children 렌더 유지.
       } catch (err) {
         if (cancelled) return;

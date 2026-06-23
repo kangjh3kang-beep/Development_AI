@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
-import { apiClient } from "@/lib/api-client";
 import { applyRemoteSnapshot } from "@/lib/projectSync";
+import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { buildSiteMetaPatch } from "@/lib/project-site-meta";
 
 type ProjectMetaLite = {
@@ -54,7 +54,7 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
     // 2) 백엔드 meta가 resolve되면 name/status/address를 보강(동일 projectId라 리셋 없음).
     (async () => {
       try {
-        const meta = await apiClient.get<ProjectMetaLite>(`/projects/${projectId}`);
+        const meta = await fetchProjectMeta<ProjectMetaLite>(projectId);
         if (cancelled || !meta) return;
         const cur = useProjectContextStore.getState();
         if (cur.projectId !== projectId) return;

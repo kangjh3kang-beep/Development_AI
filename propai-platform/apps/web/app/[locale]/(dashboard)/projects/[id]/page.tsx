@@ -11,6 +11,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
 import { apiClient } from "@/lib/api-client";
+import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
@@ -75,7 +76,7 @@ export default function ProjectDetailPage() {
     let cancelled = false;
     async function fetchMeta() {
       try {
-        const res = await apiClient.get<ProjectMeta>(`/projects/${id}`);
+        const res = await fetchProjectMeta<ProjectMeta>(id);
         if (!cancelled) setMeta(res);
       } catch {
         // fallback — no metadata available
