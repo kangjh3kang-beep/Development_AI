@@ -94,3 +94,41 @@ async def check_regulation(
         regulation_type=body.regulation_type,
         project_info=body.project_info,
     )
+
+
+# ── 고시 원문 검색(전수 다운로드 없이 타깃 검색) ──
+@router.get("/gosi/search", summary="고시 원문 내용 검색(법제처 행정규칙 본문·무다운로드)")
+async def gosi_search(
+    q: str,
+    max_results: int = 3,
+    current_user: CurrentUser = Depends(RequirePermission("regulation", "read")),
+) -> dict:
+    """국가 고시(행정규칙) 본문을 법제처 DRF로 검색·발췌(파일 다운로드 없이). 지역 결정고시는 토지이음."""
+    from app.services.legal.gosi_search_service import GosiSearchService
+    return await GosiSearchService().search_content(q, max_results=max(1, min(max_results, 5)))
+
+
+# ── LLM 관련법령 탐색 + 정본 교차검증 ──
+class LegalDiscoverRequest(BaseModel):
+    """부지/개발 맥락(용도지역·지목·개발방식·시설유형·특이사항·시군구 등)."""
+
+    context: dict
+
+
+@router.post(
+    "/legal-discovery",
+    summary="LLM 관련법령·고시 탐색 + 정본(LegalHub) 교차검증",
+    dependencies=[Depends(enforce_llm_quota)],
+)
+@limiter.limit(ai_limiter)
+async def legal_discovery(
+    request: Request,
+    body: LegalDiscoverRequest,
+    current_user: CurrentUser = Depends(RequirePermission("regulation", "read")),
+) -> dict:
+    """LLM이 맥락에 맞는 핵심·관련 법령/조례/고시를 식별 → 정본 교차검증(verified_ssot/llm_unverified).
+
+    무날조: 정본 미등재는 검증권고로 정직 표기, 해석 불가 인용은 제외. 지역 고시 토지이음 deep-link 동반.
+    """
+    from app.services.legal.legal_discovery_service import LegalDiscoveryService
+    return await LegalDiscoveryService().discover(body.context or {})

@@ -41,6 +41,27 @@ class _LegalHub:
         """임의 법령·조문 → 검증 URL(law.go.kr 한글주소). 미확보 시 법령 루트."""
         return _reg.build_law_url(law_name, article)
 
+    # ── 고시 계층(국가 행정규칙 + 지역 고시) ──
+    def gosi(self, name: str) -> dict:
+        """국가 고시·훈령·예규(행정규칙) → 검증 레코드. 국가기관이 법령 위임으로 발한 구속력 있는 규칙.
+
+        예: 분양가상한제 산정 고시, 건축물 에너지효율등급 인증 고시. law.go.kr/행정규칙 검증 링크.
+        """
+        url = _reg.build_admrule_url(name)
+        return {
+            "name": name, "category": "고시",
+            "url": url,
+            "url_status": "verified" if _reg._is_trusted_legal_host(url) else "pending",
+        }
+
+    def regional_gosi(self, sido: str | None = None, sigungu: str | None = None) -> dict:
+        """지역 고시(도시관리계획 결정·지형도면·실시계획인가) → 토지이음 고시정보 deep-link(시군구 스코프).
+
+        부지단위 자동매칭은 LURIS 고시 API 연동 시 제공(현재 시군구 목록 링크). tojieum_supplement 위임.
+        """
+        from app.services.legal.tojieum_supplement import gosi_info
+        return gosi_info(sido, sigungu)
+
     # ── 조문키 경로(심의엔진 인용 통합) ──
     def by_article(self, law_name: str, article: Any = None) -> dict:
         """조문 인용(law§article) → 통합 레코드.
