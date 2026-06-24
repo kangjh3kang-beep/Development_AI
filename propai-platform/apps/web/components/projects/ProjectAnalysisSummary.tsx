@@ -22,6 +22,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
+import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
@@ -345,10 +346,18 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         return <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">{tiles}</div>;
       })()}
 
-      {/* 입지점수(SiteScore) + 빌더블 인벨로프(정북일조) */}
+      {/* 입지점수(SiteScore) + 빌더블 인벨로프(정북일조) + 일조·배치 최적안 */}
       <div className="mt-5 space-y-3">
         <SiteScoreCard />
         <BuildableEnvelopeCard />
+        {(effArea != null && effArea > 0) || site?.pnu ? (
+          <SolarPlacementCard
+            address={site?.address}
+            pnu={site?.pnu}
+            zone={site?.zoneCode}
+            landAreaSqm={effArea}
+          />
+        ) : null}
       </div>
 
       {/* 섹션 카드 */}
