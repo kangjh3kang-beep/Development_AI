@@ -24,6 +24,7 @@ import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
@@ -366,6 +367,15 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             landAreaSqm={effArea}
           />
         ) : null}
+        {/* 개발방식 시뮬레이션 + 평수 티어 매트릭스(단일·다필지 공통, opt-in 버튼) */}
+        {(site?.address || (ssotParcels?.length ?? 0) > 0) && (
+          <DevelopmentScenarioCard
+            address={site?.address}
+            parcels={(ssotParcels ?? [])
+              .map((p) => p.address)
+              .filter((a): a is string => !!a && a.trim().length > 0)}
+          />
+        )}
       </div>
 
       {/* 섹션 카드 */}
