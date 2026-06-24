@@ -24,6 +24,9 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
+import { AiInsightCard } from "@/components/projects/AiInsightCard";
+import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
+import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 
@@ -36,7 +39,7 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
   { pick: "NearbyTransactionsMap", height: 520, loadingMessage: "주변 실거래 지도 로딩…" },
 );
 
-type TabKey = "land" | "regulation" | "development" | "solar" | "feasibility" | "summary" | "boundary";
+type TabKey = "land" | "regulation" | "infra" | "development" | "solar" | "feasibility" | "summary" | "boundary";
 
 const eok = (won: number | null | undefined): string =>
   won == null ? "—" : `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
@@ -69,6 +72,7 @@ export default function SiteCanvasPage() {
   const TABS: { key: TabKey; label: string; icon: typeof Layers }[] = [
     { key: "land", label: "토지", icon: Layers },
     { key: "regulation", label: "규제", icon: Ruler },
+    { key: "infra", label: "입지", icon: MapIcon },
     { key: "development", label: "개발방식", icon: Construction },
     { key: "solar", label: "일조·배치", icon: Sun },
     { key: "feasibility", label: "수지", icon: Coins },
@@ -166,8 +170,17 @@ export default function SiteCanvasPage() {
             {tab === "regulation" && (
               <>
                 <BuildableEnvelopeCard />
+                <RegulationDigestCard address={site?.address} />
                 <PermitGuideCard />
                 <DrillCta to={proj("legal")}>규제 계층·인허가 상세</DrillCta>
+              </>
+            )}
+            {tab === "infra" && (
+              <>
+                {site?.address ? <SiteInfraPoiCard address={site.address} /> : (
+                  <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-xs text-[var(--text-secondary)]">주소를 선택하면 입지점수·주변 인프라(POI)를 조회합니다.</p>
+                )}
+                <DrillCta to={proj("site-analysis")}>입지·상권 상세</DrillCta>
               </>
             )}
             {tab === "development" && (
@@ -205,6 +218,7 @@ export default function SiteCanvasPage() {
             )}
             {tab === "summary" && (
               <>
+                <AiInsightCard address={site?.address} />
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
                   <p className="text-xs font-black text-[var(--text-primary)]">사업 종합(한눈에)</p>
                   <dl className="mt-2 space-y-1.5 text-[11px]">
