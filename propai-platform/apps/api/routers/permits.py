@@ -325,6 +325,18 @@ async def get_permit_feasibility_matrix(
     )
 
 
+@router.get("/guide")
+async def permit_guide(facility_type: str = "단독주택", sigungu: str | None = None):
+    """쉬운 규제안내서 — 시설물(건축물 용도)별 인허가 절차(단계별)+관련법령(verified)+제출서류.
+
+    토지이음 '규제안내서 > 쉬운 규제안내서'의 법령엔진 연계판. 주택류(단독·공동·다세대)는
+    주택법 절차(사업계획승인·주택공급)를 추가한다. 무날조: 법령 링크는 레지스트리 verified만.
+    """
+    from app.services.permit.permit_guide_service import get_permit_guide
+
+    return get_permit_guide(facility_type, sigungu=sigungu)
+
+
 @router.post("/submit", response_model=PermitStatusResponse)
 async def submit_permit(
     body: PermitSubmissionRequest,

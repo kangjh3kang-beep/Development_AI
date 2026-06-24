@@ -238,6 +238,13 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── WP-R 확장: 인허가 (housing_project_approval은 _ALIASES → housing_approval) ──
     "building_permit":            _ref(_BLDG, "제11조", "건축허가"),
     "use_permission":             _ref(_BLDG, "제22조", "건축물의 사용승인"),
+    # ── 토지이음 쉬운 규제안내서: 시설물별 인허가 절차(단계별) 보강 ──
+    "building_pre_decision":      _ref(_BLDG, "제10조", "건축 관련 입지와 규모의 사전결정"),
+    "building_report":            _ref(_BLDG, "제14조", "건축신고"),
+    "use_change":                 _ref(_BLDG, "제19조", "용도변경"),
+    "construction_start":         _ref(_BLDG, "제21조", "착공신고 등"),
+    "construction_supervision":   _ref(_BLDG, "제25조", "건축물의 공사감리"),
+    "housing_supply_approval":    _ref("주택공급에 관한 규칙", "제20조", "입주자모집 승인·공고(주택공급 승인)"),
     # ── WP-R 확장: 설계 ──
     "evacuation":                 _ref(_BLDG, "제49조", "건축물의 피난시설 및 용도제한 등"),
     "structure_safety":           _ref(_BLDG, "제48조", "구조내력 등(구조안전 확인)"),
