@@ -6,24 +6,26 @@ import structlog
 
 logger = structlog.get_logger()
 
-# ── 부동산개발 관련 모니터링 대상 법령 ──
-# id: 법제처(국가법령정보센터) lawService.do 호출용 법령 ID. 실접속 확인된 ID만 보유하며,
+# ── 부동산개발 관련 모니터링 대상 법령 (법령 정본 60종 — legal_reference_registry 정본 커버리지) ──
+# id: 법제처(국가법령정보센터) lawService.do 호출용 6자리 법령 ID. 실접속 확인된 ID만 보유하며,
 #   ID 미확보 법령은 id=None으로 정직 표기한다(가짜 ID로 죽은 API 호출 금지 — 무목업 원칙).
 #   ID 보유 법령만 check_law_updates에서 실제 공포일자 폴링 대상이 된다.
-# ★법제처 법령ID는 2026-06-24 lawSearch.do 조회 + lawService.do 본문 응답으로 '실작동 검증'된 6자리
-#   법령ID만 사용한다(이전 7자리 ID는 본문 미반환=잠복결함이었음 → 전수 정정). 전 20종 폴링 가능.
+# ★검증 강화(2026-06-24): 법령ID는 lawService.do 본문의 '법령명_한글'이 대상 법령명과 '정확히 일치'함을
+#   전수 확인한 ID만 사용한다(이전엔 '기본정보 존재'만 확인 → 다른 법을 가리키는 ID가 통과하던 잠복결함).
+#   이 강화 검증으로 기존 2건의 오ID 정정: 주택법 000243→001809(000243은 민간임대주택법),
+#   지방세법 001006→001649(001006은 지방교부세법). 전 60종 본문명 일치·폴링 가능.
 MONITORED_LAWS = [
-    # ── 핵심(critical) — 용도지역·건축·주택·정비·세금 직결 ──
+    # ── 핵심(critical) — 용도지역·건축·주택·정비 직결 ──
     {"name": "건축법", "id": "001823", "critical": True},
     {"name": "국토의 계획 및 이용에 관한 법률", "id": "009294", "critical": True},
-    {"name": "주택법", "id": "000243", "critical": True},
+    {"name": "주택법", "id": "001809", "critical": True},
     {"name": "녹색건축물 조성 지원법", "id": "011557", "critical": True},
     {"name": "도시 및 주거환경정비법", "id": "009410", "critical": True},
     {"name": "빈집 및 소규모주택 정비에 관한 특례법", "id": "012805", "critical": True},
     {"name": "도시개발법", "id": "002024", "critical": True},
     {"name": "집합건물의 소유 및 관리에 관한 법률", "id": "001262", "critical": True},
     {"name": "건축물의 분양에 관한 법률", "id": "009760", "critical": True},
-    # ── 일반(non-critical) — 토지·세금·환경·소방·인프라 인허가 ──
+    # ── 기존 일반 — 토지보상·환경·소방·인프라·세금 ──
     {"name": "건설산업기본법", "id": "001808", "critical": False},
     {"name": "공익사업을 위한 토지 등의 취득 및 보상에 관한 법률", "id": "009295", "critical": False},
     {"name": "환경영향평가법", "id": "002016", "critical": False},
@@ -31,10 +33,60 @@ MONITORED_LAWS = [
     {"name": "도로법", "id": "001821", "critical": False},
     {"name": "하수도법", "id": "001815", "critical": False},
     {"name": "수도권정비계획법", "id": "000266", "critical": False},
-    {"name": "지방세법", "id": "001006", "critical": False},
+    {"name": "지방세법", "id": "001649", "critical": False},
     {"name": "재건축초과이익 환수에 관한 법률", "id": "010209", "critical": False},
     {"name": "농지법", "id": "000479", "critical": False},
     {"name": "산지관리법", "id": "009412", "critical": False},
+    # ── 정본66 확장(2026-06-24) — 토지·개발 ──
+    {"name": "개발이익 환수에 관한 법률", "id": "001829", "critical": False},
+    {"name": "개발제한구역의 지정 및 관리에 관한 특별조치법", "id": "002018", "critical": False},
+    {"name": "산업입지 및 개발에 관한 법률", "id": "001839", "critical": False},
+    {"name": "택지개발촉진법", "id": "000242", "critical": False},
+    {"name": "역세권의 개발 및 이용에 관한 법률", "id": "011184", "critical": False},
+    {"name": "도시재생 활성화 및 지원에 관한 특별법", "id": "011869", "critical": False},
+    {"name": "도시재정비 촉진을 위한 특별법", "id": "010088", "critical": False},
+    {"name": "도심 복합개발 지원에 관한 법률", "id": "014616", "critical": False},
+    # ── 주택·건축물 관리 ──
+    {"name": "공공주택 특별법", "id": "009595", "critical": False},
+    {"name": "민간임대주택에 관한 특별법", "id": "000243", "critical": False},
+    {"name": "공동주택관리법", "id": "012345", "critical": False},
+    {"name": "건축물관리법", "id": "013478", "critical": False},
+    {"name": "부동산개발업의 관리 및 육성에 관한 법률", "id": "010446", "critical": False},
+    # ── 부동산 거래·등기·가격공시 ──
+    {"name": "부동산 가격공시에 관한 법률", "id": "001827", "critical": False},
+    {"name": "부동산 거래신고 등에 관한 법률", "id": "012480", "critical": False},
+    {"name": "부동산등기법", "id": "001697", "critical": False},
+    {"name": "감정평가 및 감정평가사에 관한 법률", "id": "012481", "critical": False},
+    # ── 세금 ──
+    {"name": "소득세법", "id": "001565", "critical": False},
+    {"name": "종합부동산세법", "id": "009873", "critical": False},
+    {"name": "인지세법", "id": "001568", "critical": False},
+    # ── 임대차 ──
+    {"name": "상가건물 임대차보호법", "id": "009276", "critical": False},
+    {"name": "주택임대차보호법", "id": "001248", "critical": False},
+    # ── 환경·재해·폐기물 ──
+    {"name": "가축분뇨의 관리 및 이용에 관한 법률", "id": "010297", "critical": False},
+    {"name": "자연재해대책법", "id": "000959", "critical": False},
+    {"name": "폐기물관리법", "id": "001771", "critical": False},
+    # ── 문화·교육·경관 ──
+    {"name": "문화유산의 보존 및 활용에 관한 법률", "id": "001607", "critical": False},
+    {"name": "매장유산 보호 및 조사에 관한 법률", "id": "011152", "critical": False},
+    {"name": "교육환경 보호에 관한 법률", "id": "012494", "critical": False},
+    {"name": "경관법", "id": "010447", "critical": False},
+    {"name": "학교용지 확보 등에 관한 특례법", "id": "000894", "critical": False},
+    # ── 교통·주차·안전 ──
+    {"name": "도시교통정비 촉진법", "id": "001754", "critical": False},
+    {"name": "주차장법", "id": "001814", "critical": False},
+    {"name": "철도안전법", "id": "009766", "critical": False},
+    {"name": "화재의 예방 및 안전관리에 관한 법률", "id": "014189", "critical": False},
+    # ── 공간정보·규제·국공유재산·건설기술 ──
+    {"name": "공간정보의 구축 및 관리 등에 관한 법률", "id": "011023", "critical": False},
+    {"name": "토지이용규제 기본법", "id": "010071", "critical": False},
+    {"name": "국유재산법", "id": "001598", "critical": False},
+    {"name": "공유재산 및 물품 관리법", "id": "010000", "critical": False},
+    {"name": "건설기술 진흥법", "id": "001807", "critical": False},
+    # ── 편의증진 (법제처 본문명은 가운뎃점 ㆍ 사용, ID는 본문 검증됨) ──
+    {"name": "장애인·노인·임산부 등의 편의증진 보장에 관한 법률", "id": "000186", "critical": False},
 ]
 
 # 실제 모니터링 법령 수(과장 금지 — 동적 산출). 폴링 가능(법제처 ID 보유) 법령은 별도 집계.
