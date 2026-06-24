@@ -38,6 +38,8 @@ const ICONS: Record<string, JSX.Element> = {
   tool_boq: <><rect width="8" height="4" x="8" y="2" rx="1" ry="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M12 11h4" /><path d="M12 16h4" /><path d="M8 11h.01" /><path d="M8 16h.01" /></>,
   // 다필지 통합 — 그리드
   tool_parcel: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 12h18" /><path d="M12 3v18" /></>,
+  // 지도 단일창 — 지도/접힌 레이어
+  tool_map: <><path d="M14.5 4 9 6 4 4v14l5 2 5.5-2 5 2V4z" /><path d="M9 6v14" /><path d="M14.5 4v14" /></>,
   // 블록체인 — 링크
   tool_chain: <><path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><line x1="8" x2="16" y1="12" y2="12" /></>,
   // AI 에이전트 — 봇

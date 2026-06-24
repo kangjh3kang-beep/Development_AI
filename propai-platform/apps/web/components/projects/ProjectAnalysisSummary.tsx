@@ -370,7 +370,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         {/* 개발방식 시뮬레이션 + 평수 티어 매트릭스(단일·다필지 공통, opt-in 버튼) */}
         {(site?.address || (ssotParcels?.length ?? 0) > 0) && (
           <DevelopmentScenarioCard
-            address={site?.address}
+            address={site?.address ?? undefined}
             parcels={(ssotParcels ?? [])
               .map((p) => p.address)
               .filter((a): a is string => !!a && a.trim().length > 0)}
