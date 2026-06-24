@@ -9,6 +9,12 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from app.services.senior_agents.spec import SeniorAgentSpec
+from app.services.senior_agents.specs.accountant import ACCOUNTANT_SPEC
+from app.services.senior_agents.specs.architect import ARCHITECT_SPEC
+from app.services.senior_agents.specs.bim_specialist import BIM_SPECIALIST_SPEC
+from app.services.senior_agents.specs.deliberation_member import DELIBERATION_MEMBER_SPEC
+from app.services.senior_agents.specs.financial_advisor import FINANCIAL_ADVISOR_SPEC
+from app.services.senior_agents.specs.tax_advisor import TAX_ADVISOR_SPEC
 from app.services.senior_agents.specs.urban_planner import URBAN_PLANNER_SPEC
 
 _REGISTRY: dict[str, SeniorAgentSpec] = {}
@@ -46,5 +52,15 @@ def validate_registry() -> dict[str, list[str]]:
             if (bad := [r.rule_id for r in spec.invalid_rules()])}
 
 
-# ── 기본 spec 등록(register 게이트 경유) ──
-register(URBAN_PLANNER_SPEC)
+# ── 기본 spec 등록(register 게이트 경유·판단자격 검사 통과 필수) ──
+# 도시계획=P0 PoC, 금융=P0, 설계=P1, BIM·심의·세무·회계=P2(전부 additive·신규 도메인).
+for _spec in (
+    URBAN_PLANNER_SPEC,
+    FINANCIAL_ADVISOR_SPEC,
+    ARCHITECT_SPEC,
+    BIM_SPECIALIST_SPEC,
+    DELIBERATION_MEMBER_SPEC,
+    TAX_ADVISOR_SPEC,
+    ACCOUNTANT_SPEC,
+):
+    register(_spec)

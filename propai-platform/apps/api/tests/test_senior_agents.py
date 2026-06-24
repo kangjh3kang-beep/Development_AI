@@ -144,3 +144,84 @@ def test_redevelopment_formula_dimension():
     prop = next(r for r in spec.decision_rules if r.rule_id == "urban.redevelopment_proportion")
     assert "비례율/100" in prop.judgment or "비례율(%)" in prop.judgment
     assert "권리가액" in prop.judgment
+
+
+# ── 6종 spec 누적(금융·세무·회계·설계·BIM·심의) ──
+
+_EXPECTED_KEYS = {
+    "senior_urban_planner", "senior_financial_advisor", "senior_architect",
+    "senior_bim_specialist", "senior_deliberation_member", "senior_tax_advisor",
+    "senior_accountant",
+}
+
+
+def test_all_seven_specs_registered():
+    keys = {s.key for s in list_senior_agents()}
+    assert keys == _EXPECTED_KEYS
+    assert validate_registry() == {}  # 전 spec 판단자격(basis+tradeoff) 통과 = citation 게이트
+
+
+@pytest.mark.parametrize("key", sorted(_EXPECTED_KEYS))
+def test_spec_substance_all(key):
+    spec = get_senior_agent(key)
+    assert spec is not None
+    # 결정규칙 ≥2·전부 판단자격(분류기 배제)·전부 basis(verified 근거) 부착
+    assert len(spec.decision_rules) >= 2
+    assert all(r.is_judgment() for r in spec.decision_rules)
+    assert all(r.basis.strip() for r in spec.decision_rules)
+    # 실패모드(할루시네이션 가드 포함)·체크리스트·역추적 단계 존재
+    assert spec.failure_modes and spec.checklist
+    assert any(s.backtrack_to for s in spec.reasoning_steps)
+    # 면허책임 게이트 명시(정직성)
+    assert "최종" in spec.license_gate and "책임" in spec.license_gate
+    # 콜드스타트 정직: 골든사례 0 → junior(시니어 분장 금지)
+    assert spec.maturity_for(0) == Maturity.JUNIOR_ASSIST
+
+
+def test_financial_spec_domain_facts():
+    spec = get_senior_agent("senior_financial_advisor")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    # 한국 PF 자기자본 단계규제 26/27/28 = 10/15/20%
+    eq = rules["fin.equity_ratio_reg"].judgment
+    assert "2026" in eq and "10%" in eq and "2027" in eq and "15%" in eq and "2028" in eq and "20%" in eq
+    # DSCR 1.25x 게이트
+    assert "1.25" in rules["fin.dscr_gate"].judgment
+    # ICR 선언-구현 일치(거치단계 이자보상배율)
+    assert "ICR" in rules["fin.icr_gate"].judgment
+    # Development Spread <150bp 경고·<0 BLOCK
+    ds = rules["fin.development_spread"].judgment
+    assert "150bp" in ds and "BLOCK" in ds
+
+
+def test_architect_spec_domain_facts():
+    spec = get_senior_agent("senior_architect")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    # 정북후퇴 현행 10m 임계(구법 9m 아님)
+    assert "10m" in rules["design.bukchuk_setback"].judgment
+    # 동지 일조: 법정 2시간 reject 게이트 + 판례 4시간 AND 2시간 분쟁경고 분리(OR 회귀 차단)
+    daylight = rules["design.winter_daylight_gate"].judgment
+    assert "2시간" in daylight and "4시간" in daylight and "reject" in daylight
+    assert "AND" in daylight  # 판례 수인한도는 4h AND 2h(OR 아님)
+
+
+def test_tax_spec_domain_facts():
+    spec = get_senior_agent("senior_tax_advisor")
+    bases = " ".join(r.basis for r in spec.decision_rules)
+    for law in ("지방세법", "소득세법", "종합부동산세법", "국세기본법"):
+        assert law in bases
+
+
+def test_accountant_spec_domain_facts():
+    spec = get_senior_agent("senior_accountant")
+    bases = " ".join(r.basis for r in spec.decision_rules)
+    assert "1115" in bases and "1116" in bases and "1023" in bases
+
+
+def test_deliberation_spec_domain_facts():
+    spec = get_senior_agent("senior_deliberation_member")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    prob = rules["delib.outcome_probability"]
+    # 강행규정 위반은 확률 아닌 BLOCK 단정(judgment 또는 exception)
+    assert "BLOCK" in (prob.judgment + prob.exception)
+    # 다조항 동시(CSP) 검증
+    assert "동시" in rules["delib.multi_clause_csp"].judgment
