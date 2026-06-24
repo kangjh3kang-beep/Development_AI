@@ -77,6 +77,9 @@ class MonteCarloResponse(BaseModel):
     mean_npv: float = Field(description="NPV 평균 (원)")
     std_npv: float = Field(description="NPV 표준편차 (원)")
 
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
+
     class Config:
         """Pydantic 모델 설정."""
         from_attributes = True

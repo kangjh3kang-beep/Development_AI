@@ -72,6 +72,8 @@ class EuTaxonomyCheckResponse(BaseModel):
     passed_count: int
     total_count: int
     recommendations: list[str]
+    # 표준 근거 블록(#5) — 적합성·기준 충족현황·산식(기준값)·법령링크. 미부착 시 None.
+    evidence: dict | None = Field(default=None)
 
 
 # ── 엔드포인트 ──
@@ -104,6 +106,42 @@ async def check_eu_taxonomy(
     _checker = EuTaxonomyChecker(db)
     result = EuTaxonomyChecker.check(building)
 
+    # 표준 근거 블록(#5): EU Taxonomy 실제 판정·기준 충족현황·기준값(산식)·법령링크 가산.
+    # graceful(실패해도 검증 결과는 정상 반환)·무목업(실값/실 기준값/실 rationale만).
+    evidence = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        items = [
+            {
+                "label": "적합성 판정",
+                "value": result.alignment,
+                "basis": "TSC 전부+DNSH 전부+MSS 전부 통과=Aligned, TSC 일부 통과=Partially, 그외 Not",
+            },
+            {
+                "label": "기준 충족",
+                "value": f"{result.passed_count}/{result.total_count}",
+                "basis": "TSC(3)+DNSH(4)+MSS(1) 8개 기준 중 통과 개수",
+            },
+        ]
+        # 개별 기준은 실제 판정 결과(actual_value·threshold·rationale)를 그대로 근거화.
+        for c in result.criteria:
+            items.append({
+                "label": f"[{c.category}] {c.name}",
+                "value": f"{'통과' if c.passed else '미통과'} (실측 {c.actual_value} / 기준 {c.threshold})",
+                "basis": c.rationale,
+            })
+        evidence = build_evidence_block(
+            items=items,
+            # 국내 근거 법령(녹색건축물 조성 지원법·환경영향평가법). EU 규정 URL은
+            # 레지스트리 미보유이므로 링크 없이 텍스트만(할루시네이션 링크 금지).
+            legal_ref_keys=["green_building", "energy_efficiency",
+                            "zeb_certification", "building_energy_rating", "env_impact"],
+            sources=["EU Taxonomy Regulation (EU) 2020/852 TSC/DNSH/MSS"],
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 결과를 막지 않음.
+        evidence = None
+
     return EuTaxonomyCheckResponse(
         alignment=result.alignment,
         criteria=[
@@ -120,4 +158,5 @@ async def check_eu_taxonomy(
         passed_count=result.passed_count,
         total_count=result.total_count,
         recommendations=result.recommendations,
+        evidence=evidence,
     )

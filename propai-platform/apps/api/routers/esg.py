@@ -70,6 +70,66 @@ async def run_esg_assessment(
     except Exception:
         ai = {}
 
+    # 표준 근거 블록(#5): ESG/GRESB 실제 산출 점수·탄소·산식·법령링크를 가산.
+    # graceful(실패해도 평가 결과는 정상 반환)·무목업(실값/실산식만, 빈 패널 금지).
+    evidence = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        gfa = body.gross_floor_area_sqm or 0
+        # 탄소 강도(kgCO2e/㎡) = 총탄소(tCO2e)×1000 / 연면적(㎡). 음수/0면 None.
+        intensity = round(carbon_total * 1000 / gfa, 2) if gfa else None
+        items = []
+        if report.environmental_score is not None:
+            items.append({
+                "label": "환경(E) 점수",
+                "value": report.environmental_score,
+                "basis": "탄소강도·에너지자립률·기후위험 기반 결정론 산식(0~100)",
+            })
+        if report.social_score is not None:
+            items.append({
+                "label": "사회(S) 점수",
+                "value": report.social_score,
+                "basis": "재해율(LTIR)·지역사회 프로그램 수 기반 산식(0~100)",
+            })
+        if report.governance_score is not None:
+            items.append({
+                "label": "지배구조(G) 점수",
+                "value": report.governance_score,
+                "basis": "이사회 독립성 비율 기반 산식(58 + 비율×42)",
+            })
+        if assessment.score is not None:
+            items.append({
+                "label": "종합 ESG 점수",
+                "value": assessment.score,
+                "basis": "E×0.45 + S×0.25 + G×0.30 가중평균",
+            })
+        if assessment.rating is not None:
+            items.append({
+                "label": "GRESB 등급",
+                "value": assessment.rating,
+                "basis": "종합점수 임계 판정(>=85 5Star, >=75 4Star, >=65 3Star, >=55 2Star)",
+            })
+        items.append({
+            "label": "총 탄소배출량(tCO2e)",
+            "value": carbon_total,
+            "basis": "Scope1 + Scope2 + Scope3 합계",
+        })
+        if intensity is not None:
+            items.append({
+                "label": "탄소 강도(kgCO2e/㎡)",
+                "value": intensity,
+                "basis": "총탄소(tCO2e)×1000 / 연면적(㎡)",
+            })
+        evidence = build_evidence_block(
+            items=items,
+            legal_ref_keys=["green_building", "energy_efficiency",
+                            "zeb_certification", "building_energy_rating"],
+            sources=["GRESB 2025 평가 기준"],
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 결과를 막지 않음.
+        evidence = None
+
     return ESGAssessmentResponse(
         assessment_id=assessment.id,
         project_id=report.project_id,
@@ -83,6 +143,7 @@ async def run_esg_assessment(
         carbon_total_tco2e=carbon_total,
         disclosures=report.disclosures_json or [],
         action_plan=assessment.action_plan,
+        evidence=evidence,
         ai_carbon_assessment=ai.get("carbon_assessment"),
         ai_reduction_strategy=ai.get("reduction_strategy"),
         ai_certification_pathway=ai.get("certification_pathway"),

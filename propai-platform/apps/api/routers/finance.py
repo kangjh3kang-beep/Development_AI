@@ -1,5 +1,6 @@
 """Finance router for jeonse, union contribution, and feasibility analysis."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +22,7 @@ from apps.api.services.jeonse_risk_service import JeonseRiskService
 from apps.api.services.union_management_service import UnionManagementService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _to_feasibility_response(result) -> FeasibilityAnalysisResponse:
