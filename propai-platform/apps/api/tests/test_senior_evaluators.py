@@ -1,0 +1,72 @@
+"""시니어 정량 평가기(금융) 단위테스트 — 실수치 PASS/WARN/BLOCK·방어적 파싱."""
+
+from app.services.senior_agents.evaluators import (
+    BLOCK,
+    PASS,
+    WARN,
+    evaluate_financial,
+    worst_verdict,
+)
+from app.services.senior_agents.evaluators.base import num
+
+
+def _by_id(evals):
+    return {e.rule_id: e for e in evals}
+
+
+def test_dscr_verdicts():
+    assert _by_id(evaluate_financial({"noi": 125, "debt_service": 100}))["fin.dscr_gate"].verdict == PASS
+    assert _by_id(evaluate_financial({"noi": 120, "debt_service": 100}))["fin.dscr_gate"].verdict == WARN
+    assert _by_id(evaluate_financial({"noi": 90, "debt_service": 100}))["fin.dscr_gate"].verdict == BLOCK
+    e = _by_id(evaluate_financial({"noi": 125, "debt_service": 100}))["fin.dscr_gate"]
+    assert e.value == 1.25 and e.unit == "x" and e.basis
+
+
+def test_icr_verdict():
+    assert _by_id(evaluate_financial({"noi": 90, "interest": 100}))["fin.icr_gate"].verdict == BLOCK
+    assert _by_id(evaluate_financial({"noi": 120, "interest": 100}))["fin.icr_gate"].verdict == PASS
+
+
+def test_development_spread_verdicts():
+    pass_e = _by_id(evaluate_financial({"stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.045}))
+    assert pass_e["fin.development_spread"].verdict == PASS  # YoC 7% - 4.5% = 250bp
+    assert pass_e["fin.development_spread"].value == 250.0
+    warn_e = _by_id(evaluate_financial({"stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.06}))
+    assert warn_e["fin.development_spread"].verdict == WARN  # 100bp
+    block_e = _by_id(evaluate_financial({"stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.08}))
+    assert block_e["fin.development_spread"].verdict == BLOCK  # -100bp
+
+
+def test_equity_ratio_by_year():
+    # 10% 자기자본: 2026(기준10%) PASS, 2027(기준15%) WARN
+    e26 = _by_id(evaluate_financial({"equity": 100, "total_cost": 1000, "project_year": 2026}))
+    assert e26["fin.equity_ratio_reg"].verdict == PASS and e26["fin.equity_ratio_reg"].value == 10.0
+    e27 = _by_id(evaluate_financial({"equity": 100, "total_cost": 1000, "project_year": 2027}))
+    assert e27["fin.equity_ratio_reg"].verdict == WARN
+    # 연도 미지정 → 최신(20%) 기준 → 10%는 WARN
+    edef = _by_id(evaluate_financial({"equity": 100, "total_cost": 1000}))
+    assert edef["fin.equity_ratio_reg"].verdict == WARN
+
+
+def test_debt_yield():
+    assert _by_id(evaluate_financial({"noi": 80, "loan_amount": 1000}))["fin.debt_sizing"].verdict == PASS
+    assert _by_id(evaluate_financial({"noi": 70, "loan_amount": 1000}))["fin.debt_sizing"].verdict == WARN
+
+
+def test_missing_or_invalid_inputs_skip_no_mockup():
+    # 입력 없음 → 평가 0건(가짜 수치 금지)
+    assert evaluate_financial({}) == []
+    # 분모 0 → 해당 평가 생략
+    assert "fin.dscr_gate" not in _by_id(evaluate_financial({"noi": 100, "debt_service": 0}))
+    # 비수치/불리언 → 생략
+    assert evaluate_financial({"noi": "abc", "debt_service": 100}) == []
+    assert num({"x": True}, "x") is None
+    assert num({"x": float("nan")}, "x") is None
+    assert num({"x": "1.5"}, "x") == 1.5
+
+
+def test_worst_verdict():
+    evals = evaluate_financial({"noi": 90, "debt_service": 100,            # DSCR BLOCK
+                               "stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.045})  # spread PASS
+    assert worst_verdict(evals) == BLOCK
+    assert worst_verdict([]) is None

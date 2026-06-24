@@ -334,6 +334,37 @@ def test_orchestrator_overrides():
     assert "시니어 보조" in c2.maturity
 
 
+def test_orchestrator_consult_with_evaluations():
+    o = _orch()
+    # 금융 자문 + 실수치 입력 → 정량 판정(evaluations) 첨부
+    c = o.consult("금융", context={"inputs": {
+        "noi": 90, "debt_service": 100,  # DSCR 0.9 → BLOCK
+        "equity": 100, "total_cost": 1000, "project_year": 2027,  # 10%<15% → WARN
+    }})
+    assert c.evaluations  # 비어있지 않음
+    verdicts = {e["rule_id"]: e["verdict"] for e in c.evaluations}
+    assert verdicts["fin.dscr_gate"] == "BLOCK"
+    assert verdicts["fin.equity_ratio_reg"] == "WARN"
+    assert c.overall_verdict == "BLOCK"  # 최악판정
+    assert any("차단(BLOCK)" in n for n in c.honest_notes)
+    # 평가에도 근거 동반(citation)
+    assert all(e["basis"].strip() for e in c.evaluations)
+
+
+def test_orchestrator_consult_no_inputs_note():
+    o = _orch()
+    c = o.consult("금융")  # 입력 없음
+    assert c.evaluations == () and c.overall_verdict is None
+    assert any("정량 입력" in n for n in c.honest_notes)
+
+
+def test_orchestrator_no_evaluator_for_urban():
+    o = _orch()
+    # 도시계획은 아직 평가기 없음 → inputs 줘도 evaluations 비고, 안내노트 없음
+    c = o.consult("도시계획", context={"inputs": {"noi": 100}})
+    assert c.evaluations == () and c.overall_verdict is None
+
+
 def test_coerce_matched_ids_defensive():
     from app.services.senior_agents.orchestrator import _coerce_matched_ids
     assert _coerce_matched_ids(None) is None

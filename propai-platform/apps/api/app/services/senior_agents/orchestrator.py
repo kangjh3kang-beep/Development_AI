@@ -21,6 +21,7 @@ from app.services.senior_agents.confidence import (
     confidence_label,
     needs_expert_review,
 )
+from app.services.senior_agents.evaluators import BLOCK, EVALUATORS, WARN, worst_verdict
 from app.services.senior_agents.registry import get_senior_agent, list_senior_agents
 from app.services.senior_agents.spec import DecisionRule, Maturity, SeniorAgentSpec
 
@@ -58,6 +59,8 @@ class SeniorConsultation:
     citations: tuple[str, ...]          # 근거(basis) 집합 — A2 citation 표면
     license_gate: str
     honest_notes: tuple[str, ...] = field(default_factory=tuple)
+    evaluations: tuple[dict[str, Any], ...] = field(default_factory=tuple)  # 정량 실측 판정(입력 시)
+    overall_verdict: str | None = None  # 평가 종합 최악판정(PASS/WARN/BLOCK·없으면 None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +77,8 @@ class SeniorConsultation:
             "citations": list(self.citations),
             "license_gate": self.license_gate,
             "honest_notes": list(self.honest_notes),
+            "evaluations": list(self.evaluations),
+            "overall_verdict": self.overall_verdict,
         }
 
 
@@ -178,6 +183,16 @@ class SeniorOrchestrator:
         needs_review = needs_expert_review(confidence, high_risk=hr)
         label = confidence_label(confidence, high_risk=hr)
 
+        # 정량 평가(입력 수치 제공 시): decision_rule을 실측 PASS/WARN/BLOCK로 판정.
+        evaluator = EVALUATORS.get(spec.key)
+        inputs = ctx.get("inputs")
+        evaluations: tuple[dict[str, Any], ...] = ()
+        overall: str | None = None
+        if evaluator and isinstance(inputs, dict):
+            evals = evaluator(inputs)
+            evaluations = tuple(e.to_dict() for e in evals)
+            overall = worst_verdict(evals)
+
         notes: list[str] = []
         if maturity is Maturity.JUNIOR_ASSIST:
             notes.append(f"검증 보조 단계(골든사례 {gc}건<{spec.domain_min_cases}) — 면허전문가 검토 필수.")
@@ -187,6 +202,12 @@ class SeniorOrchestrator:
             notes.append("고위험 도메인 — 보수적 판정·신뢰컷 상향 적용.")
         if not rules:
             notes.append("적용 가능한 판단 규칙 없음 — 입력/도메인 재확인 필요.")
+        if evaluator and not evaluations:
+            notes.append("정량 입력(예: noi·total_cost·market_cap_rate) 제공 시 실측 PASS/WARN/BLOCK 산출.")
+        if overall == BLOCK:
+            notes.append("★차단(BLOCK) 항목 존재 — 해당 지표 미충족, 사업성/요건 재검토 필요.")
+        elif overall == WARN:
+            notes.append("경고(WARN) 항목 존재 — 보수 가정·조건부 검토 권장.")
 
         citations = tuple(sorted({r.basis.strip() for r in rules}))
         return SeniorConsultation(
@@ -203,6 +224,8 @@ class SeniorOrchestrator:
             citations=citations,
             license_gate=spec.license_gate,
             honest_notes=tuple(notes),
+            evaluations=evaluations,
+            overall_verdict=overall,
         )
 
     def consult_multi(
