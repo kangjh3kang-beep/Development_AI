@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { createDebouncedStorage } from "@/lib/debounced-storage";
 
 /* ── Types ── */
 
@@ -815,68 +816,6 @@ export function purifyPersistedContextState(
 }
 
 /* ── Store ── */
-
-/**
- * 디바운스 persist 저장소(근본수정) — 기존엔 모든 상태변경(set)마다 누적 snapshots·analysisCache
- * 포함 스토어 '전체'를 메인스레드에서 동기 JSON 직렬화→localStorage 기록했다. 새 프로젝트 진입의
- * clearProject() 같은 대형 set이 이 동기 직렬화를 유발해 화면 전환을 막던 지연의 진원지였다.
- * → 직렬화+쓰기를 트레일링 디바운스(기본 500ms)로 비동기화해 동기 메인스레드 점유를 제거한다.
- * 데이터 유실 방지: pagehide·탭 숨김 시 즉시 flush(하드 내비게이션·세션만료 리다이렉트 포함).
- */
-function createDebouncedStorage<S>(delay = 500): PersistStorage<S> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let pending: { name: string; value: StorageValue<S> } | null = null;
-  const flush = (): void => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    if (!pending || typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(pending.name, JSON.stringify(pending.value));
-    } catch {
-      /* quota 초과·직렬화 실패는 무시(다음 변경에서 재기록) */
-    }
-    pending = null;
-  };
-  if (typeof window !== "undefined") {
-    // 페이지 이탈·탭 숨김 직전에 대기분을 반드시 기록(유실 0).
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flush();
-    });
-  }
-  return {
-    getItem: (name) => {
-      if (typeof window === "undefined") return null;
-      try {
-        const raw = window.localStorage.getItem(name);
-        return raw ? (JSON.parse(raw) as StorageValue<S>) : null;
-      } catch {
-        return null;
-      }
-    },
-    setItem: (name, value) => {
-      // 동기 직렬화 금지 — 최신 상태 참조만 잡아두고 트레일링 디바운스로 비동기 기록.
-      pending = { name, value };
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(flush, delay);
-    },
-    removeItem: (name) => {
-      if (pending && pending.name === name) pending = null;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      if (typeof window === "undefined") return;
-      try {
-        window.localStorage.removeItem(name);
-      } catch {
-        /* noop */
-      }
-    },
-  };
-}
 
 export const useProjectContextStore = create<ProjectContextState>()(
   persist(

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { createDebouncedStorage } from "@/lib/debounced-storage";
 
 /**
  * 토지조서(편입토지 관리) 스토어 — 프로젝트별 영속.
@@ -143,6 +144,6 @@ export const useLandScheduleStore = create<State>()(
           return { byProject: { ...s.byProject, [k]: (s.byProject[k] || []).filter((r) => r.id !== id) } };
         }),
     }),
-    { name: "propai-land-schedule" },
+    { name: "propai-land-schedule", storage: createDebouncedStorage<State>() },
   ),
 );

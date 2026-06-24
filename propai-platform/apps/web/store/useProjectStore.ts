@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
+import { createDebouncedStorage } from '@/lib/debounced-storage';
 
 type ProjectStatus = 'draft' | 'planning' | 'design' | 'permit' | 'construction' | 'completed' | 'archived';
 
@@ -145,6 +146,7 @@ export const useProjectStore = create<ProjectState>()(
     }),
     {
       name: 'propai-project-storage',
+      storage: createDebouncedStorage(),
       // 서버 업로드 URL(짧음)은 영속화하고, base64(data:) 폴백만 제외한다.
       // base64는 수 MB라 localStorage(약 5MB) 용량초과(QuotaExceededError)를 유발하므로
       // 세션 메모리에만 유지한다. (서버 업로드 = Supabase Storage public URL)
