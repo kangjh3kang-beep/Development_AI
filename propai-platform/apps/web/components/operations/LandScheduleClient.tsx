@@ -556,7 +556,10 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }
 
   return (
-    <div className="grid gap-6">
+    // ★grid-cols-1(=minmax(0,1fr)) 필수: 기본 grid 트랙은 min-width:auto라 넓은 토지조서 테이블이
+    //   트랙을 뷰포트 밖으로 밀어내 '프레임 안에 안 들어오는' 오버플로우가 났다. minmax(0,1fr)로
+    //   트랙을 가둬야 안쪽 overflow-x-auto(테이블)가 정상 스크롤된다.
+    <div className="grid min-w-0 grid-cols-1 gap-6">
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />

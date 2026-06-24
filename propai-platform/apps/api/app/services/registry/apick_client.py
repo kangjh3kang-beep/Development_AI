@@ -77,7 +77,24 @@ async def fetch_registry(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # ① 열람 요청 → ic_id (성공:{"data":{"ic_id":N,"success":1}} / 에러:data.error 또는 result.error)
-            r1 = await client.post(f"{_HOST}/rest/iros/1", headers=headers, data=form)
+            #   ★열람 단계는 과금 전(ic_id 발급 전)이라, 일시 타임아웃/연결오류는 1회 재시도해 신뢰성↑.
+            r1 = None
+            for attempt in range(2):
+                try:
+                    r1 = await client.post(f"{_HOST}/rest/iros/1", headers=headers, data=form)
+                    break
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as te:
+                    if attempt == 0:
+                        await asyncio.sleep(1.5)
+                        continue
+                    # 2회 모두 타임아웃/연결오류 → 정직 분류(빈 메시지 예외도 타입명으로 진단 가능).
+                    logger.warning("apick 열람 연결/타임아웃 실패", err=f"{type(te).__name__}: {str(te)[:120]}")
+                    return {**item, "status": "provider_timeout",
+                            "message": "apick 등기 발급 서버 응답 지연·연결 실패(대법원 인터넷등기소/발급 연동 지연). "
+                                       "잠시 후 ‘자동채움’을 다시 시도하거나 등기부 내용을 직접 입력하세요."}
+            if r1 is None:  # 도달 불가(위에서 return) — 타입 안전 가드.
+                return {**item, "status": "provider_timeout",
+                        "message": "apick 등기 발급 서버 응답을 받지 못했습니다. 잠시 후 다시 시도하세요."}
             try:
                 j1 = r1.json()
             except Exception:  # noqa: BLE001
@@ -131,6 +148,12 @@ async def fetch_registry(
             "has_pdf": bool(pdf_b64),
             "owner": None,  # 구조화 미제공 → LLM이 registry_text에서 추출
         }
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+        # ★빈 메시지 예외(httpx 타임아웃류는 str(e)가 비기 쉬움) → 타입명으로 진단 가능하게 기록.
+        logger.warning("apick 등기 발급 타임아웃/연결 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
+        return {**item, "status": "provider_timeout",
+                "message": "apick 등기 발급 서버 응답 지연(타임아웃) — 발급 PDF 생성 지연 또는 대법원 인터넷등기소 "
+                           "지연일 수 있습니다. 잠시 후 다시 시도하거나 등기부 내용을 직접 입력하세요."}
     except Exception as e:  # noqa: BLE001
-        logger.warning("apick 등기 조회 실패", err=str(e)[:150])
-        return {**item, "status": "error", "message": str(e)[:200]}
+        logger.warning("apick 등기 조회 실패", err=f"{type(e).__name__}: {str(e)[:150]}")
+        return {**item, "status": "error", "message": f"{type(e).__name__}: {str(e)[:180]}"}
