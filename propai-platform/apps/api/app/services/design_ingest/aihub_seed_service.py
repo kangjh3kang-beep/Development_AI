@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 from typing import Any
 
@@ -30,11 +31,13 @@ class AihubSeedService:
 
     @staticmethod
     def _key() -> str:
-        return (getattr(settings, "AIHUB_API_KEY", "") or "").strip()
+        # ★관리자 시크릿(secret_store)은 런타임 os.environ에 반영된다 → os.getenv 우선(시작 캐시 settings 폴백).
+        return (os.getenv("AIHUB_API_KEY") or getattr(settings, "AIHUB_API_KEY", "") or "").strip()
 
     @staticmethod
     def _base() -> str:
-        return (getattr(settings, "AIHUB_BASE_URL", "") or "https://api.aihub.or.kr").rstrip("/")
+        return (os.getenv("AIHUB_BASE_URL") or getattr(settings, "AIHUB_BASE_URL", "")
+                or "https://api.aihub.or.kr").rstrip("/")
 
     def _headers(self) -> dict[str, str]:
         return {"apikey": self._key()}
