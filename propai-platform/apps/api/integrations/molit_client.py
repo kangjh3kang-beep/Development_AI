@@ -82,57 +82,77 @@ class MolitClient(BaseAPIClient):
         lawd_cd: str,
         deal_ymd: str,
         prop_type: str = "apt",
-        num_rows: int = 100,
+        num_rows: int = 1000,
+        max_pages: int = 10,
     ) -> list[dict[str, Any]]:
-        """실거래 데이터를 조회하여 표준화된 목록으로 반환한다.
+        """실거래 데이터를 **전수 수집**(totalCount 페이지 루프)하여 표준화 목록으로 반환한다.
+
+        ★무음절단 제거(원칙: 광범위 누락없는 수집): 단일 페이지(numOfRows=100)로 끊지 않고
+        totalCount까지 페이지를 순회한다. max_pages 상한 도달 시 절단을 경고 로깅(은닉 금지).
 
         Args:
             lawd_cd: 법정동코드 (5자리)
             deal_ymd: 거래년월 (YYYYMM)
             prop_type: 부동산 유형 (apt/villa/house/officetel/land/commercial)
-            num_rows: 조회 건수
+            num_rows: 페이지당 조회 건수 / max_pages: 페이지 상한(num_rows×max_pages 까지 수집)
         """
         endpoint = _TRADE_ENDPOINTS.get(prop_type, _TRADE_ENDPOINTS["apt"])
-        data = await self._request(
-            "GET",
-            _rtms_path(endpoint),
-            params={
-                "serviceKey": self.settings.molit_api_key,
-                "LAWD_CD": lawd_cd,
-                "DEAL_YMD": deal_ymd,
-                "pageNo": "1",
-                "numOfRows": str(num_rows),
-                "_type": "json",
-            },
-            cache_key=f"molit:trade:{prop_type}:{lawd_cd}:{deal_ymd}:{num_rows}",
-            cache_ttl=86400,
+        return await self._collect_paginated(
+            endpoint, lawd_cd, deal_ymd, num_rows, max_pages,
+            cache_ns=f"molit:trade:{prop_type}",
+            parse=lambda d: self._parse_trade_items(d, prop_type),
+            kind=f"실거래({prop_type})",
         )
-        return self._parse_trade_items(data, prop_type)
 
     async def get_rent_transactions(
         self,
         lawd_cd: str,
         deal_ymd: str,
         prop_type: str = "apt",
-        num_rows: int = 100,
+        num_rows: int = 1000,
+        max_pages: int = 10,
     ) -> list[dict[str, Any]]:
-        """전월세 실거래 데이터를 조회하여 표준화된 목록으로 반환한다."""
+        """전월세 실거래 데이터를 **전수 수집**(totalCount 페이지 루프)하여 표준화 목록으로 반환한다."""
         endpoint = _RENT_ENDPOINTS.get(prop_type, _RENT_ENDPOINTS["apt"])
-        data = await self._request(
-            "GET",
-            _rtms_path(endpoint),
-            params={
-                "serviceKey": self.settings.molit_api_key,
-                "LAWD_CD": lawd_cd,
-                "DEAL_YMD": deal_ymd,
-                "pageNo": "1",
-                "numOfRows": str(num_rows),
-                "_type": "json",
-            },
-            cache_key=f"molit:rent:{prop_type}:{lawd_cd}:{deal_ymd}:{num_rows}",
-            cache_ttl=86400,
+        return await self._collect_paginated(
+            endpoint, lawd_cd, deal_ymd, num_rows, max_pages,
+            cache_ns=f"molit:rent:{prop_type}",
+            parse=self._parse_rent_items,
+            kind=f"전월세({prop_type})",
         )
-        return self._parse_rent_items(data)
+
+    async def _collect_paginated(
+        self, endpoint: str, lawd_cd: str, deal_ymd: str,
+        num_rows: int, max_pages: int, *, cache_ns: str,
+        parse: Any, kind: str,
+    ) -> list[dict[str, Any]]:
+        """공통 페이지 루프 — response.body.totalCount까지 전수 수집(무음절단 제거). 페이지별 캐시."""
+        all_items: list[dict[str, Any]] = []
+        total: int | None = None
+        page = 1
+        while page <= max_pages:
+            data = await self._request(
+                "GET", _rtms_path(endpoint),
+                params={
+                    "serviceKey": self.settings.molit_api_key,
+                    "LAWD_CD": lawd_cd, "DEAL_YMD": deal_ymd,
+                    "pageNo": str(page), "numOfRows": str(num_rows), "_type": "json",
+                },
+                cache_key=f"{cache_ns}:{lawd_cd}:{deal_ymd}:{num_rows}:p{page}",
+                cache_ttl=86400,
+            )
+            items = parse(data)
+            all_items.extend(items)
+            total = self._extract_total_count(data)
+            # 더 받을 게 없으면 종료: 빈 페이지·totalCount 미상·이미 전수 수집.
+            if not items or total is None or len(all_items) >= total:
+                break
+            page += 1
+        if total is not None and len(all_items) < total:
+            logger.warning("MOLIT 페이지 상한 도달 — 일부 절단(수집 미완)",
+                           kind=kind, collected=len(all_items), total=total,
+                           lawd_cd=lawd_cd, deal_ymd=deal_ymd, max_pages=max_pages)
+        return all_items
 
     # ── 개별 조회 (하위 호환) ──
 
@@ -343,6 +363,16 @@ class MolitClient(BaseAPIClient):
         if isinstance(items, dict):
             items = [items]
         return items if isinstance(items, list) else []
+
+    @staticmethod
+    def _extract_total_count(data: dict) -> int | None:
+        """공통: response.body.totalCount → int(없으면 None). 페이지 루프 종료 판단용."""
+        body = (data.get("response") or {}).get("body") or {}
+        tc = body.get("totalCount")
+        try:
+            return int(tc) if tc not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
 
     def _parse_trade_items(
         self, data: dict, prop_type: str,
