@@ -15,6 +15,12 @@
 
 import { useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+
+type EngineRule = {
+  rule: { rule_id: string; comparator: string; basis_article: string };
+  measured: number; limit: number; confidence: number;
+};
 
 /* ── BFF 응답 계약(apps/api/app/routers/deliberation.py audit 노드 래핑) ── */
 // 판정 1건(엔진 finding 미러). measured/limit은 정량 비교값(없을 수 있음).
@@ -112,6 +118,29 @@ export function DeliberationResultPanel() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ★실부지 심의 배선 — SSOT(부지분석+설계)에서 pnu·규제한도(limit)·설계값(measured)을 primitive로 읽어
+  //   고정 SAMPLE 대신 '내 프로젝트' 부지를 심의한다(#185 안전: 객체 셀렉터 미사용, primitive만 구독).
+  const pnu = useProjectContextStore((s) => s.siteAnalysis?.pnu ?? null);
+  const address = useProjectContextStore((s) => s.siteAnalysis?.address ?? null);
+  const farLimit = useProjectContextStore((s) => s.siteAnalysis?.effectiveFarPct ?? null);
+  const bcrLimit = useProjectContextStore((s) => s.siteAnalysis?.effectiveBcrPct ?? null);
+  const farMeasured = useProjectContextStore((s) => s.designData?.far ?? null);
+  const bcrMeasured = useProjectContextStore((s) => s.designData?.bcr ?? null);
+
+  // 실부지 입력 가능 여부: pnu + (설계 measured & 규제 limit) 1쌍 이상이면 실심의, 아니면 데모(샘플).
+  const realRules: EngineRule[] = [];
+  if (farMeasured != null && farLimit != null)
+    realRules.push({ rule: { rule_id: "far_limit", comparator: "<=", basis_article: "국토계획법 시행령" }, measured: farMeasured, limit: farLimit, confidence: 0.9 });
+  if (bcrMeasured != null && bcrLimit != null)
+    realRules.push({ rule: { rule_id: "bcr_limit", comparator: "<=", basis_article: "건축법 시행령" }, measured: bcrMeasured, limit: bcrLimit, confidence: 0.9 });
+  const isRealSite = !!pnu && realRules.length > 0;
+
+  function buildPayload(): Record<string, unknown> {
+    if (!isRealSite) return SAMPLE_PAYLOAD;
+    const today = new Date().toISOString().slice(0, 10);
+    return { pnu, application_date: today, axis_date: today, drawing: { scale_text: "1:100" }, calc_targets: [], rules: realRules };
+  }
+
   async function run() {
     setLoading(true);
     setError(null);
@@ -119,7 +148,7 @@ export function DeliberationResultPanel() {
     try {
       // BFF는 인증 필수(apiClient가 토큰 자동 주입). 경로는 /api/v1 자동 prefix.
       const res = await apiClient.post<DeliberationResult>("/deliberation/analyze", {
-        body: { payload: SAMPLE_PAYLOAD },
+        body: { payload: buildPayload() },
       });
       setResult(res);
     } catch (e) {
@@ -156,11 +185,23 @@ export function DeliberationResultPanel() {
       <i className="cc-bracket cc-bracket--br" />
 
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-black text-[var(--text-primary)]">심의분석 결과(BFF)</h2>
+        <h2 className="inline-flex items-center gap-2 text-lg font-black text-[var(--text-primary)]">
+          심의분석 결과
+          {isRealSite ? (
+            <span className="rounded-md bg-[var(--status-success)]/15 px-2 py-0.5 text-[11px] font-bold text-[var(--status-success)]">
+              실부지 · {address || pnu}
+            </span>
+          ) : (
+            <span className="rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-hint)]">
+              데모 입력(샘플)
+            </span>
+          )}
+        </h2>
         <span className="cc-meta text-[var(--text-tertiary)]">POST /api/v1/deliberation/analyze</span>
       </div>
       <p className="relative z-10 mt-1 text-xs text-[var(--text-secondary)]">
-        설계 산출(건폐율·용적률·높이)을 심의분석엔진 규칙으로 판정한다. 결정론·근거추적·무음 오판 0.
+        설계 산출(건폐율·용적률)을 심의분석엔진 규칙으로 판정한다. 결정론·근거추적·무음 오판 0.
+        {!isRealSite && " 현재는 고정 샘플 — 프로젝트에서 부지분석+설계를 실행하면 ‘내 부지’가 자동 심의됩니다."}
       </p>
 
       <div className="relative z-10 mt-4">
