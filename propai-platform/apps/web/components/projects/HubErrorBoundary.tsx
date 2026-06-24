@@ -7,8 +7,10 @@
  * 페이지 전체를 사망(흰 화면)시키지 않도록, 해당 영역만 컴팩트한 인라인 폴백으로 격리한다.
  *  · getDerivedStateFromError: 오류 발생 시 상태를 폴백으로 전환.
  *  · componentDidCatch: error.message·componentStack을 console.error로 남겨 진단 가능하게.
+ *  · ★1회 자동복구: 첫 오류면 짧은 지연 뒤 자식을 자동 재마운트한다. persist hydration/바인딩
+ *    경합 같은 '일시' 오류("새로고침하면 정상")를 사용자 클릭 없이 자가치유한다.
  *  · 재시도 버튼: 상태를 리셋해 자식을 1회 다시 마운트(일시 오류 회복).
- *  · 무한 재마운트 방지: 같은 영역에서 2회 이상 터지면 재시도 버튼을 숨긴다(루프 차단).
+ *  · 무한 재마운트 방지: 같은 영역에서 2회 이상 터지면 자동복구·재시도 버튼을 모두 차단한다(루프 차단).
  *
  * 디자인 토큰만 사용(다크 기본). hooks 미사용(에러 바운더리는 class만 가능).
  */
@@ -28,6 +30,11 @@ interface HubErrorBoundaryState {
 }
 
 export class HubErrorBoundary extends Component<HubErrorBoundaryProps, HubErrorBoundaryState> {
+  /** 1회 자동복구 타이머(언마운트 시 정리). */
+  private autoRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 자동복구를 이미 1회 시도했는지 — 자동 재마운트 무한루프 방지. */
+  private autoRetried = false;
+
   constructor(props: HubErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, errorCount: 0 };
@@ -46,6 +53,19 @@ export class HubErrorBoundary extends Component<HubErrorBoundaryProps, HubErrorB
       errorInfo?.componentStack,
     );
     this.setState((prev) => ({ errorCount: prev.errorCount + 1 }));
+    // ★1회 자동복구: 첫 오류면 짧은 지연(hydration/바인딩 경합 진정) 뒤 자식을 자동 재마운트.
+    //   '일시' 오류는 사용자 클릭 없이 자가치유하고, 재차 터지면 errorCount≥2로 영구 차단(폭주 방지).
+    if (!this.autoRetried) {
+      this.autoRetried = true;
+      this.autoRetryTimer = setTimeout(() => {
+        this.autoRetryTimer = null;
+        this.setState({ hasError: false });
+      }, 280);
+    }
+  }
+
+  componentWillUnmount(): void {
+    if (this.autoRetryTimer) clearTimeout(this.autoRetryTimer);
   }
 
   handleRetry = (): void => {
