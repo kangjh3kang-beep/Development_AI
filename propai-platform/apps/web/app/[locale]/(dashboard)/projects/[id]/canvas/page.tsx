@@ -24,9 +24,15 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 
+import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
+
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
   { pick: "ParcelBoundaryMap", height: 520, loadingMessage: "구획도 로딩…" },
+);
+const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
+  () => import("@/components/map/NearbyTransactionsMap"),
+  { pick: "NearbyTransactionsMap", height: 520, loadingMessage: "주변 실거래 지도 로딩…" },
 );
 
 type TabKey = "land" | "regulation" | "development" | "solar" | "boundary";
@@ -39,6 +45,8 @@ export default function SiteCanvasPage() {
   const [tab, setTab] = useState<TabKey>("land");
   // 필지 선택/변경 패널(지도 클릭선택+검색+엑셀) — 부지 미확정 시 기본 펼침, 확정 후 접힘.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 우측 지도 모드 — 구획도(필지경계·용도지역) ↔ 실거래(주변 가격 마커, jootek/Naver式).
+  const [mapMode, setMapMode] = useState<"boundary" | "transactions">("boundary");
 
   const ssotParcels = site?.parcels ?? null;
   const effArea = effectiveLandAreaSqm(site);
@@ -188,14 +196,37 @@ export default function SiteCanvasPage() {
           </div>
         </div>
 
-        {/* 우: 자급식 구획도 지도 */}
+        {/* 우: 지도(구획도 ↔ 실거래 토글) */}
         <div className="overflow-hidden rounded-2xl border border-[var(--line)]">
-          {mapAddresses.length > 0 ? (
-            <ParcelBoundaryMap parcels={mapAddresses} primaryZone={site?.zoneCode || undefined} />
+          <div className="flex items-center gap-1 border-b border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1.5">
+            {([["boundary", "구획도"], ["transactions", "실거래"]] as const).map(([m, label]) => (
+              <button key={m} onClick={() => setMapMode(m)}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition ${
+                  mapMode === m ? "bg-[var(--accent-strong)] text-white"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}>
+                {label}
+              </button>
+            ))}
+            <span className="ml-auto text-[10px] text-[var(--text-hint)]">
+              {mapMode === "boundary" ? "필지경계·용도지역(지적편집도 토글)" : "주변 실거래 가격 마커"}
+            </span>
+          </div>
+          {mapMode === "boundary" ? (
+            mapAddresses.length > 0 ? (
+              <ParcelBoundaryMap parcels={mapAddresses} primaryZone={site?.zoneCode || undefined} />
+            ) : (
+              <div className="flex h-[520px] items-center justify-center text-sm text-[var(--text-hint)]">
+                표시할 필지가 없습니다.
+              </div>
+            )
           ) : (
-            <div className="flex h-[520px] items-center justify-center text-sm text-[var(--text-hint)]">
-              표시할 필지가 없습니다.
-            </div>
+            (site?.address || site?.pnu) ? (
+              <NearbyTransactionsMap address={site?.address ?? undefined} pnu={site?.pnu ?? undefined} />
+            ) : (
+              <div className="flex h-[520px] items-center justify-center text-sm text-[var(--text-hint)]">
+                주소가 필요합니다.
+              </div>
+            )
           )}
         </div>
       </div>
