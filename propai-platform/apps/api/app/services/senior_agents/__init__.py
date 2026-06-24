@@ -16,6 +16,13 @@ from app.services.senior_agents.confidence import (
     make_interval,
     needs_expert_review,
 )
+from app.services.senior_agents.orchestrator import (
+    DOMAIN_ROUTES,
+    HIGH_RISK_AGENT_KEYS,
+    SeniorConsultation,
+    SeniorOrchestrator,
+    senior_orchestrator,
+)
 from app.services.senior_agents.registry import (
     get_senior_agent,
     list_senior_agents,
@@ -33,4 +40,6 @@ __all__ = [
     "DecisionRule", "Maturity", "ReasoningStep", "SeniorAgentSpec",
     "Interval", "compute_confidence", "confidence_label", "make_interval", "needs_expert_review",
     "get_senior_agent", "list_senior_agents", "register", "validate_registry",
+    "SeniorOrchestrator", "SeniorConsultation", "senior_orchestrator",
+    "DOMAIN_ROUTES", "HIGH_RISK_AGENT_KEYS",
 ]

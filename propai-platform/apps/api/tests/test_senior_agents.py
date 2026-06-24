@@ -225,3 +225,85 @@ def test_deliberation_spec_domain_facts():
     assert "BLOCK" in (prob.judgment + prob.exception)
     # 다조항 동시(CSP) 검증
     assert "동시" in rules["delib.multi_clause_csp"].judgment
+
+
+# ── SeniorOrchestrator(자문 라우팅·게이팅 코어) ──
+
+def _orch():
+    from app.services.senior_agents.orchestrator import SeniorOrchestrator
+    return SeniorOrchestrator()
+
+
+def test_orchestrator_route_domain_and_key():
+    o = _orch()
+    assert o.route("금융") == "senior_financial_advisor"
+    assert o.route("urban") == "senior_urban_planner"
+    assert o.route("BIM") == "senior_bim_specialist"
+    # 이미 키면 그대로 통과
+    assert o.route("senior_tax_advisor") == "senior_tax_advisor"
+    # 미해당
+    assert o.route("우주항공") is None
+    assert o.route("") is None
+
+
+def test_orchestrator_consult_structure_and_citation_gate():
+    o = _orch()
+    c = o.consult("도시계획")
+    assert c.agent_key == "senior_urban_planner"
+    # citation 게이트: 프레임워크 전 룰이 basis(근거) 동반 + 판단자격
+    assert c.decision_framework
+    assert all(r["basis"].strip() for r in c.decision_framework)
+    assert all(r.get("tradeoff", "").strip() for r in c.decision_framework)
+    # citations 집합이 basis에서 도출
+    assert c.citations and all(s.strip() for s in c.citations)
+    # 콜드스타트 정직: junior + 면허게이트 + 정직 노트
+    assert "보조" in c.maturity
+    assert "최종" in c.license_gate
+    assert any("골든사례" in n for n in c.honest_notes)
+    assert 0.0 <= c.confidence <= 1.0
+    # 직렬화
+    assert c.to_dict()["agent_key"] == "senior_urban_planner"
+
+
+def test_orchestrator_high_risk_threshold():
+    o = _orch()
+    # 금융·세무·심의 = 고위험(임계 상향)
+    fin = o.consult("금융", context={"data_completeness": 0.7, "rule_fit": 0.7,
+                                     "rag_strength": 0.7, "correction_rate": 0.3})
+    assert fin.high_risk is True
+    # 동일 신호라도 고위험은 신뢰컷 높아 전문가확인 강등되기 쉬움
+    assert fin.needs_expert_review is True
+    # 비고위험(도시계획)은 같은 신호에서 통과
+    urb = o.consult("도시계획", context={"data_completeness": 0.7, "rule_fit": 0.7,
+                                        "rag_strength": 0.7, "correction_rate": 0.3})
+    assert urb.high_risk is False
+    assert urb.needs_expert_review is False
+
+
+def test_orchestrator_matched_rules_filter_and_rule_fit():
+    o = _orch()
+    c = o.consult("도시계획", context={"matched_rule_ids": ["urban.upzone_potential"]})
+    ids = [r["rule_id"] for r in c.decision_framework]
+    assert ids == ["urban.upzone_potential"]  # 부분집합 필터
+
+
+def test_orchestrator_unknown_raises():
+    o = _orch()
+    with pytest.raises(ValueError):
+        o.consult("존재하지않는도메인")
+
+
+def test_orchestrator_consult_multi_dedup():
+    o = _orch()
+    res = o.consult_multi(["도시계획", "금융", "urban", "우주"])  # urban 중복·우주 무시
+    keys = [c.agent_key for c in res]
+    assert keys == ["senior_urban_planner", "senior_financial_advisor"]
+
+
+def test_orchestrator_available_lists_all():
+    o = _orch()
+    av = o.available()
+    assert {a["key"] for a in av} == _EXPECTED_KEYS
+    # 고위험 플래그 정합
+    hr = {a["key"] for a in av if a["high_risk"]}
+    assert hr == {"senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member"}
