@@ -1794,6 +1794,8 @@ class CostEscalationResponse(BaseModel):
     alerts: list[CostEscalationAlertResponse] = Field(default_factory=list)
     summary: str
     created_at: datetime
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 class DigitalTwinStatusRequest(BaseModel):

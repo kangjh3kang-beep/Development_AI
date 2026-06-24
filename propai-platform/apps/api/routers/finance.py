@@ -28,6 +28,27 @@ logger = logging.getLogger(__name__)
 def _to_feasibility_response(result) -> FeasibilityAnalysisResponse:
     assumptions = result.assumptions or {}
     cashflows = result.cash_flow_yearly or []
+    discount_rate = float(assumptions.get("discount_rate", 0.05))
+    # 표준 근거 블록(#5): NPV·IRR·회수기간·위험점수의 실값·산식·출처를 가산(graceful·무목업).
+    evidence_block = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        evidence_block = build_evidence_block(
+            items=[
+                {"label": "순현재가치(NPV)", "value": round(result.npv),
+                 "basis": f"Σ 연도별 현금흐름/(1+할인율 {discount_rate:.1%})^t − 총투자비(DCF)"},
+                {"label": "내부수익률(IRR)", "value": round(result.irr, 4),
+                 "basis": "NPV=0이 되는 할인율(이분법 수치해)"},
+                {"label": "회수기간(월)", "value": result.payback_period_months,
+                 "basis": "누적 현금흐름이 0을 넘는 시점(선형보간)"},
+                {"label": "위험점수", "value": round(result.risk_score, 4),
+                 "basis": "IRR·회수기간·할인율 페널티 − 영업이익률 크레딧 가중합"},
+            ],
+            sources=["프로젝트 투자·매출 가정(사용자 입력)"],
+        )
+    except Exception as e:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음(가산·정직).
+        logger.warning("사업성 분석 근거 블록 생성 스킵: %s", str(e)[:120])
     return FeasibilityAnalysisResponse(
         id=result.id,
         project_id=result.project_id,
@@ -38,13 +59,14 @@ def _to_feasibility_response(result) -> FeasibilityAnalysisResponse:
         total_investment_krw=result.total_investment,
         total_revenue_krw=result.total_revenue,
         risk_score=result.risk_score,
-        discount_rate=float(assumptions.get("discount_rate", 0.05)),
+        discount_rate=discount_rate,
         annual_growth_rate=float(assumptions.get("annual_growth_rate", 0.02)),
         analysis_years=int(assumptions.get("analysis_years", len(cashflows) or 10)),
         exit_value_krw=float(assumptions.get("exit_value_krw", result.total_investment)),
         cashflows=cashflows,
         assumptions=assumptions,
         created_at=result.created_at,
+        evidence=evidence_block,
     )
 
 
@@ -63,12 +85,31 @@ async def analyze_jeonse_risk(
         jeonse_price=body.jeonse_price,
         sale_price=body.sale_price,
     )
+    # 표준 근거 블록(#5): 전세가율·위험점수의 실값·산식·출처를 가산(graceful·무목업).
+    evidence_block = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        evidence_block = build_evidence_block(
+            items=[
+                {"label": "전세가율", "value": round(result.jeonse_ratio, 4),
+                 "basis": "전세가 ÷ 매매가(추정시세)"},
+                {"label": "위험등급", "value": result.risk_level,
+                 "basis": "전세가율 구간 분류(SAFE<0.6≤LOW<0.7≤MEDIUM<0.8≤HIGH<0.9≤CRITICAL)"},
+                {"label": "위험점수", "value": round(result.risk_score, 4),
+                 "basis": f"위험등급 {result.risk_level} 기준 점수"},
+            ],
+            sources=["국토교통부 실거래가(MOLIT)"],
+        )
+    except Exception as e:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음(가산·정직).
+        logger.warning("전세 리스크 근거 블록 생성 스킵: %s", str(e)[:120])
     return JeonseRiskResponse(
         jeonse_ratio=result.jeonse_ratio,
         risk_level=result.risk_level,
         risk_score=result.risk_score,
         analysis=result.analysis,
         factors=result.factors,
+        evidence=evidence_block,
     )
 
 
@@ -89,12 +130,31 @@ async def calculate_union_contribution(
         target_area_sqm=body.target_area_sqm,
         avg_sale_price_per_sqm=body.avg_sale_price_per_sqm,
     )
+    # 표준 근거 블록(#5): 비례율·분담금의 실값·산식·출처를 가산(graceful·무목업).
+    evidence_block = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        evidence_block = build_evidence_block(
+            items=[
+                {"label": "비례율", "value": round(result.proportional_rate, 4),
+                 "basis": "총사업비 ÷ 총감정가(비례율법)"},
+                {"label": "개인 분담금", "value": round(result.individual_contribution),
+                 "basis": "입주희망면적×평균분양가 − (개인감정가×비례율)"},
+                {"label": "총사업비", "value": round(result.total_project_cost),
+                 "basis": "입력 총사업비(조합 기준)"},
+            ],
+            sources=["조합 제출 감정평가·사업비 자료"],
+        )
+    except Exception as e:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음(가산·정직).
+        logger.warning("조합 분담금 근거 블록 생성 스킵: %s", str(e)[:120])
     return UnionContributionResponse(
         proportional_rate=result.proportional_rate,
         individual_contribution=result.individual_contribution,
         total_project_cost=result.total_project_cost,
         breakdown=result.breakdown,
         scenarios=result.scenarios,
+        evidence=evidence_block,
     )
 
 
