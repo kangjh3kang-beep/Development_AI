@@ -266,6 +266,9 @@ class AVMValuationResponse(BaseModel):
     appreciation_outlook: str | None = Field(default=None, description="향후 가치 전망")
     investment_recommendation: str | None = Field(default=None, description="투자 관점 종합 의견")
 
+    # ── 표준 근거 블록(#5 evidence 전 라우터 표준화) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
+
 
 class AVMRequest(BaseModel):
     """AVM 시세 추정 요청"""
