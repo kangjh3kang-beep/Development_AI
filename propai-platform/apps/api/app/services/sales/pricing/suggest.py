@@ -219,6 +219,48 @@ async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> 
     }
 
 
+async def _nearby_presale_reference(sigungu5: str) -> dict[str, Any]:
+    """청약홈 주변 분양 — 적정분양가 '참고·교차검증' 출처(★앵커 아님).
+
+    ★용인 신봉동 과대표시 사고 교훈: 주변 분양가를 산정 앵커로 쓰면 럭셔리 분양가에 2배 과대된다.
+    따라서 여기서는 청약홈 주변 분양가를 '참고·교차검증'으로만 surface하고(실거래 앵커는 그대로 유지),
+    분양가 산정 tiers/앵커 로직은 일절 건드리지 않는다. graceful(실패→available False, 결과 무손상).
+    """
+    from app.services.land_intelligence.presale_service import _LAWD_TO_AREA, PresaleService
+
+    area = _LAWD_TO_AREA.get((sigungu5 or "")[:2])
+    if not area:
+        return {"available": False, "note": "청약홈 지역 매핑 불가"}
+    try:
+        svc = PresaleService()
+        listing = await svc.list_announcements(area=area, product="apt", months_back=12, max_items=50)
+        if not listing.get("available"):
+            return {"available": False, "area": area, "note": listing.get("note") or "청약홈 분양정보 미확보"}
+        items = listing.get("items") or []
+        samples: list[dict[str, Any]] = []
+        prices: list[float] = []
+        for it in items[:2]:  # 최근 2건만 분양가 상세 조회(지연 최소).
+            try:
+                d = await svc.detail(it.get("house_manage_no") or "", it.get("pblanc_no") or "", "apt")
+            except Exception:  # noqa: BLE001
+                d = {}
+            pmin, pmax = d.get("price_min_man"), d.get("price_max_man")
+            for p in (pmin, pmax):
+                if isinstance(p, (int, float)) and p > 0:
+                    prices.append(float(p))
+            samples.append({"name": it.get("name"), "status": it.get("status"),
+                            "recruit_date": it.get("recruit_date"),
+                            "price_min_man": pmin, "price_max_man": pmax})
+        return {
+            "available": True, "area": area, "count": listing.get("count"),
+            "samples": samples,
+            "price_range_man": ([round(min(prices)), round(max(prices))] if prices else None),
+            "note": "청약홈 주변 분양가는 '참고·교차검증'입니다 — 적정분양가 산정은 주변 실거래 앵커 기준(주변 분양가 과대표시 방지).",
+        }
+    except Exception:  # noqa: BLE001 — 청약홈 실패는 적정분양가 결과 무손상(참고 누락만).
+        return {"available": False, "area": area, "note": "청약홈 조회 실패"}
+
+
 async def suggest_base_price(
     db: AsyncSession, site_id: uuid.UUID, bcode: str | None = None,
     construction_cost_per_gfa_won: int | None = None,
@@ -329,6 +371,20 @@ async def suggest_base_price(
     except Exception:  # noqa: BLE001 — 공용블록 실패해도 분양가 결과 무손상
         ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
 
+    # ── 청약홈 주변 분양가 참고·교차검증(★앵커 아님 — 가격 tiers 무변경). 과대표시 방지 위해 '참고'로만. ──
+    nearby_presale = await _nearby_presale_reference(sigungu5)
+    if nearby_presale.get("available") and nearby_presale.get("price_range_man"):
+        pr = nearby_presale["price_range_man"]
+        _ev_list = ev_block.get("evidence")
+        if not isinstance(_ev_list, list):
+            _ev_list = []
+            ev_block["evidence"] = _ev_list
+        _ev_list.append({
+            "label": "주변 분양가(청약홈) 참고",
+            "value": f"{pr[0]:,}~{pr[1]:,}만원",
+            "basis": "청약홈 인근 분양 단지 분양가 — 거래사례비교 '참고'(산정 앵커는 주변 실거래, 주변 분양가 과대표시 방지)",
+        })
+
     return {
         "data_source": "live",
         "address": address,
@@ -352,6 +408,7 @@ async def suggest_base_price(
         "legal_refs": ev_block.get("legal_refs") or _sales_legal_refs(),
         "evidence": ev_block.get("evidence", []),       # 산출 근거 트레이스(EvidencePanel)
         "provenance": ev_block.get("provenance", []),   # 원천(실거래) 신선도
+        "nearby_presale": nearby_presale,               # ★청약홈 주변 분양가 참고·교차검증(앵커 아님)
         "note": (f"적정분양가 = 주변 실거래({trust.to_dict()['used_sources']}) 시세에 신축 프리미엄. "
                  f"평당가는 {area_basis_label} 기준(전용률 {_JEONYULRYUL}). 신뢰도 {trust.confidence:.0%}. "
                  "기준단가 채택 후 층/동/라인/평형 가중치로 분산." + cost_note),
