@@ -99,3 +99,48 @@ def test_reasoning_steps_have_backtrack_gate():
     # critic M1: 단선 아닌 역추적(최소 1개 단계에 backtrack_to)
     spec = get_senior_agent("senior_urban_planner")
     assert any(s.backtrack_to for s in spec.reasoning_steps)
+
+
+# ── 리뷰 반영: NaN 게이트·registry 불변·label 임계·산식 차원 ──
+
+def test_confidence_nan_inf_does_not_bypass_gate():
+    import math
+    c = compute_confidence(data_completeness=math.nan, rule_fit=1, rag_strength=1, correction_rate=0)
+    assert 0.0 <= c <= 1.0 and not math.isnan(c)  # NaN이 confidence로 전파되지 않음
+    with pytest.raises(ValueError):
+        make_interval(math.nan, 0.5, basis="x")
+    with pytest.raises(ValueError):
+        make_interval(0.1, math.inf, basis="x")
+
+
+def test_confidence_label_tracks_threshold():
+    assert confidence_label(0.85) == "신뢰"                  # 일반 신뢰컷 0.8
+    assert confidence_label(0.85, high_risk=True) == "보통"   # 고위험 신뢰컷 0.95 미달
+
+
+def test_registry_immutable_and_register_gate():
+    from types import MappingProxyType
+
+    from app.services.senior_agents.registry import SENIOR_AGENT_REGISTRY, register
+    from app.services.senior_agents.spec import SeniorAgentSpec
+
+    assert isinstance(SENIOR_AGENT_REGISTRY, MappingProxyType)
+    with pytest.raises(TypeError):
+        SENIOR_AGENT_REGISTRY["hack"] = None  # 읽기전용 — 외부 변조 차단
+    with pytest.raises(ValueError):
+        register(get_senior_agent("senior_urban_planner"))  # 중복 키 거부
+    bad = SeniorAgentSpec(
+        key="t_bad", name_ko="x", persona="p", knowledge_refs=(),
+        decision_rules=(DecisionRule(rule_id="b", condition="c", judgment="j", basis="", tradeoff=""),),
+        checklist=(), failure_modes=(), reasoning_steps=(), verify_lens="x", license_gate="x",
+    )
+    with pytest.raises(ValueError):
+        register(bad)  # 판단자격 미달(분류기) 거부
+
+
+def test_redevelopment_formula_dimension():
+    # ★HIGH 수정: 비례율(%)과 권리가액(÷100) 차원 정합
+    spec = get_senior_agent("senior_urban_planner")
+    prop = next(r for r in spec.decision_rules if r.rule_id == "urban.redevelopment_proportion")
+    assert "비례율/100" in prop.judgment or "비례율(%)" in prop.judgment
+    assert "권리가액" in prop.judgment
