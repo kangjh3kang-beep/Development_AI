@@ -87,23 +87,23 @@ class TestSetbackVerification:
 class TestSunlightVerification:
     """정북방향 일조권 이격거리 테스트."""
 
-    def test_north_setback_9m_below(self):
-        """9m 이하 건물: 이격거리 = max(높이*0.5, 1.0)."""
-        # 8m 건물 → 필요 이격거리 4.0m
-        assert _calculate_north_setback(8.0) == 4.0
+    def test_north_setback_10m_below(self):
+        """10m 이하 건물: 1.5m 이상(시행령 86조 2023.9.12 개정 현행)."""
+        # 8m 건물 → 법정 1.5m (구버전 4.0m은 저층 과대이격 결함)
+        assert _calculate_north_setback(8.0) == 1.5
 
-    def test_north_setback_9m_exact(self):
-        """9m 건물: 이격거리 = max(9*0.5, 1.0) = 4.5."""
-        assert _calculate_north_setback(9.0) == 4.5
+    def test_north_setback_10m_exact(self):
+        """10m 건물(임계): 1.5m."""
+        assert _calculate_north_setback(10.0) == 1.5
 
-    def test_north_setback_above_9m(self):
-        """9m 초과 건물: (높이-9)*0.5 + 4.5."""
-        # 15m 건물 → (15-9)*0.5 + 4.5 = 7.5
+    def test_north_setback_above_10m(self):
+        """10m 초과 건물: 높이의 1/2."""
+        # 15m 건물 → 15/2 = 7.5
         assert _calculate_north_setback(15.0) == 7.5
 
     def test_north_setback_very_low(self):
-        """매우 낮은 건물: 최소 1.0m."""
-        assert _calculate_north_setback(1.0) == 1.0
+        """매우 낮은 건물도 법정 하한 1.5m."""
+        assert _calculate_north_setback(1.0) == 1.5
 
     def test_sunlight_violation(self):
         """정북방향 이격거리 미달 시 위반 감지."""
@@ -125,7 +125,7 @@ class TestSunlightVerification:
         design = DesignData(
             points=[], lines=[], surfaces=[],
             building_height_m=8.0,
-            north_setback_m=5.0,  # 필요: 4.0m
+            north_setback_m=5.0,  # 필요: 1.5m (10m 이하)
         )
         limits = LegalLimits(0.60, 2.50, 35.0, 1.0, 2.0)
         verifier = LegalRegulationVerifier()

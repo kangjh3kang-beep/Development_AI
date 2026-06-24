@@ -167,17 +167,17 @@ class TestWALegalCorrections:
         assert sunlight["mode"] == "not_applicable"
 
     def test_2r_same_input_sunlight_cap_maintained(self, engine: AutoDesignEngineService):
-        """2R 동일 입력 — 정북일조 캡 유지(북측이격 3m<4.5m → 최고높이 9m, 시행령 86조)."""
+        """2R 동일 입력 — 정북일조 캡(북측이격 3m<5.0m → 최고높이 10m, 시행령 86조 현행)."""
         inp = SiteInput(site_area_sqm=286, zone_code="2R", building_use="공동주택")
         result = engine.generate(inp)
-        assert result.summary["building_height_m"] <= 9.0
+        assert result.summary["building_height_m"] <= 10.0
         sunlight = result.summary["basis"]["sunlight"]
         assert sunlight["applied"] is True
         assert sunlight["mode"] == "hard_cap"
-        assert sunlight["max_height_by_sunlight_m"] == 9.0
+        assert sunlight["max_height_by_sunlight_m"] == 10.0
 
     def test_sunlight_cap_formula_wide_north_setback(self, engine: AutoDesignEngineService):
-        """북측이격 d≥4.5m → 일조 최고높이 2d (9m 이하 부분 1.5m 룰 반영 교정 산식)."""
+        """북측이격 d≥5.0m → 일조 최고높이 2d (10m 이하 부분 1.5m 룰 반영 교정 산식)."""
         inp = SiteInput(
             site_area_sqm=500, zone_code="2R",
             setback_m={"north": 6.0, "south": 2.0, "east": 1.5, "west": 1.5},
