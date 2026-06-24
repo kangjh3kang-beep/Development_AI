@@ -93,6 +93,7 @@ export function ParcelBoundaryMap({
   highlight,
   onParcelClick,
   primaryZone,
+  defaultUseDistrict,
 }: {
   parcels: string[];
   statusColors?: Record<string, string>; // 주소 → 채움색(계약/동의 상태강조)
@@ -102,6 +103,8 @@ export function ParcelBoundaryMap({
   // 부지분석 확정 용도지역(siteAnalysis.zoneCode) — 구획도·시나리오 용도지역 표기를 단일 출처로
   // 정합시키기 위한 SSOT 오버레이. 주(첫) 필지에만 적용(지적도 토지특성 vs 확정값 불일치 해소).
   primaryZone?: string | null;
+  // 지적편집도(용도지역 색면) 기본 ON — 토지이음式 용도지역 색면을 통합 구획도뷰에서 바로 표시.
+  defaultUseDistrict?: boolean;
 }) {
   const list = useMemo(() => parcels.map((s) => s.trim()).filter(Boolean), [parcels]);
   const key = list.join("||");
@@ -384,7 +387,7 @@ export function ParcelBoundaryMap({
       )}
       <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
         <div ref={mapEl} className={fs.mapClass("h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
-        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} initialDistrict={defaultUseDistrict} />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
