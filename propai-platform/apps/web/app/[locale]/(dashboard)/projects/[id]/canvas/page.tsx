@@ -26,6 +26,7 @@ import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
+import { LegalDiscoveryCard } from "@/components/projects/LegalDiscoveryCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { BuildCostCard } from "@/components/projects/BuildCostCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
@@ -181,6 +182,7 @@ export default function SiteCanvasPage() {
                 )}
                 <BuildableEnvelopeCard />
                 <RegulationDigestCard address={site?.address} />
+                <LegalDiscoveryCard address={site?.address} />
                 <PermitGuideCard />
                 <DrillCta to={proj("legal")}>규제 계층·인허가 상세</DrillCta>
               </>
