@@ -24,6 +24,15 @@ _ANALYZE_DDL = (
 )
 
 
+def _cache_success(result: dict[str, Any] | None) -> bool:
+    """캐시 적중을 '성공 분석'만 인정 — LLM 폴백('분석 불가', ai.generated=False)은 캐시 미스로
+    취급해 재분석한다(provider/LLM 회복 후 stale 실패가 영구 서빙되는 것 방지·self-heal)."""
+    if not isinstance(result, dict):
+        return False
+    ai = result.get("ai")
+    return bool(isinstance(ai, dict) and ai.get("generated"))
+
+
 def _norm_addr(s: str | None) -> str:
     return " ".join((s or "").split()).strip()
 
@@ -77,10 +86,10 @@ async def peek_analyze_cache(
         return None
     key = _cache_key(address, pnu, realty_type, dong, ho)
     hit = _ANALYZE_CACHE.get(key)
-    if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+    if hit and (time.time() - hit[0]) < _ANALYZE_TTL and _cache_success(hit[1]):
         return {**hit[1], "cached": True}
     db_hit = await _db_cache_get(key)
-    if db_hit:
+    if db_hit and _cache_success(db_hit):
         _ANALYZE_CACHE[key] = (time.time(), db_hit)  # 인메모리 승격
         return {**db_hit, "cached": True}
     return None
@@ -240,10 +249,10 @@ class RegistryAnalysisService:
         if not (registry_text and registry_text.strip()):
             cache_key = _cache_key(address, pnu, realty_type, dong, ho)
             hit = _ANALYZE_CACHE.get(cache_key)
-            if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+            if hit and (time.time() - hit[0]) < _ANALYZE_TTL and _cache_success(hit[1]):
                 return {**hit[1], "cached": True}
             db_hit = await _db_cache_get(cache_key)
-            if db_hit:
+            if db_hit and _cache_success(db_hit):
                 _ANALYZE_CACHE[cache_key] = (time.time(), db_hit)
                 return {**db_hit, "cached": True}
 
@@ -332,12 +341,17 @@ class RegistryAnalysisService:
                 # 공부 소유구분이 비면 등기 소유형태로 대체 표기
                 land["owner_type"] = deriv["ownership_form"]
         out = {"status": "ok", "origin": origin, "land": land, "fetched": fetched_meta, "ai": ai}
-        if cache_key:
+        # ★성공(generated=True)만 캐시 — 실패한 권리분석(LLM 폴백 '분석 불가')을 캐시하면 provider/LLM
+        #   회복 후에도 stale 실패가 영구 서빙되어 사용자가 복구 불가(자동채움이 계속 빈값). 실패는 재시도 시
+        #   fresh로 다시 분석되게 한다(단, 성공 캐시는 유지해 apick 재발급 과금을 방지).
+        ai_ok = bool(isinstance(ai, dict) and ai.get("generated"))
+        if cache_key and ai_ok:
             _ANALYZE_CACHE[cache_key] = (time.time(), out)
             await _db_cache_put(cache_key, out)  # 영속·공유(페이지·배포 무관 재사용)
         return out
 
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
+        raw = ""  # 파싱 실패 시 진단용(except에서 raw_head 로깅) — 잘린 JSON 등 근본추적.
         try:
             from app.services.ai.llm_provider import get_llm
             from app.services.ai.base_interpreter import GROUNDING_RULE
@@ -345,7 +359,9 @@ class RegistryAnalysisService:
 
             addr_line = f"## 대상 부동산\n- 주소: {address}\n" if address else ""
             user = _TMPL.format(addr_line=addr_line, registry=registry)
-            llm = get_llm(timeout=70, max_tokens=2500)
+            # ★max_tokens 4096: 권리분석 JSON(소유권·근저당·압류·기타권리·rights_analysis 산문 등)이
+            #   2500토큰을 넘으면 응답이 잘려 json.loads가 실패→'분석 불가' 폴백이 떴다(근본). 헤드룸 확보.
+            llm = get_llm(timeout=70, max_tokens=4096)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
@@ -360,7 +376,9 @@ class RegistryAnalysisService:
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("등기 권리분석 LLM 실패, 폴백", err=str(e)[:100])
+            # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
+            logger.warning("등기 권리분석 LLM 실패, 폴백",
+                           err=f"{type(e).__name__}: {str(e)[:100]}", raw_head=(raw or "")[:180])
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
