@@ -190,6 +190,8 @@ class TaxResultResponse(BaseModel):
     disposal: dict[str, Any] = {}
     # 법령 원문링크(레지스트리 출력 — 세목별 근거. additive, 구버전 빈 배열)
     legal_refs: list[dict[str, Any]] = []
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict[str, Any] | None = None
 
 
 class ModuleListResponse(BaseModel):

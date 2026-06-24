@@ -187,6 +187,51 @@ class IntegratedRecommender:
             + (gate.get("honest_disclosure") or "")
         ).strip()
 
+        # ── 표준 근거 블록(#5): 통합면적·현행 실효용적률·1위 추천의 산식·법령을 가산(graceful). ──
+        # 무목업: 실제 산출한 통합면적·실효용적률(SSOT calc_effective_far)·최상위 composite만 트레이스.
+        # 법령(verified): 국토계획법 제78조(far_law·용적률)·제76조(zone_use·용도제한)·제52조(district_unit_plan).
+        # build_evidence_block 실패해도 추천 결과는 그대로 반환(가산·정직).
+        evidence_block: dict[str, Any] | None = None
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            ev_items: list[dict[str, Any]] = [
+                {
+                    "label": "통합 부지면적",
+                    "value": f"{round(integrated_area, 1):,}㎡",
+                    "basis": f"유효 필지({len(valid)}개) 면적 합산(parcel_subset_policy='{parcel_subset_policy}')",
+                },
+                {
+                    "label": "현행 실효용적률",
+                    "value": f"{baseline_far}%",
+                    "basis": f"주용도지역 '{primary_zone}' 기준 calc_effective_far(법정→조례→계획상한 SSOT)",
+                },
+            ]
+            top = ranked[0] if ranked else None
+            if isinstance(top, dict):
+                ev_items.append({
+                    "label": "1위 추천 사업방식",
+                    "value": top.get("type_name") or top.get("method"),
+                    "basis": (
+                        f"종합점수 {top.get('composite')} (순이익0.5+수익률0.3+인허가0.2 가중, far_basis="
+                        f"'{top.get('far_basis')}', 적용 용적률 {top.get('applied_far_pct')}%)"
+                        f"{'' if land_price_reliable else ' · 공시지가 미확보로 절대값 참고용'}"
+                    ),
+                })
+            ev_items.append({
+                "label": "시나리오 상태",
+                "value": "tentative" if is_tentative else "actual",
+                "basis": ("선행절차형 특이부지 포함 — 현행 후보는 선행절차 통과 전제 잠정치"
+                          if is_tentative else "통상 부지 — 현행 실효용적률 기준 확정 비교"),
+            })
+            evidence_block = build_evidence_block(
+                items=ev_items,
+                legal_ref_keys=["far_law", "zone_use", "district_unit_plan"],
+                sources=["vworld_zoning", "molit_official_price"],
+            )
+        except Exception:  # noqa: BLE001 — 근거 블록 실패는 추천 결과를 막지 않음.
+            evidence_block = None
+
         return {
             "site": {
                 "addresses": addrs,
@@ -205,6 +250,8 @@ class IntegratedRecommender:
             "land_price_reliable": land_price_reliable,
             "honest_disclosure": honest,
             "note": "2차 증분 — 현행 실효용적률 + 종상향 잠재(2계층) 평가. 다층렌즈/엔진연동은 후속.",
+            # ★표준 근거 블록(#5, 가산) — 통합면적·실효용적률·1위 추천 산식·법령(verified). 기존 키 무손상.
+            "evidence": evidence_block,
         }
 
     # ------------------------------------------------------------------

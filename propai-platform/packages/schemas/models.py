@@ -510,6 +510,8 @@ class FeasibilityAnalysisResponse(BaseModel):
     cashflows: list[FeasibilityCashflowRow] = Field(default_factory=list)
     assumptions: dict = Field(default_factory=dict)
     created_at: datetime
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
 
 
 # ──────────────────────────────────────
@@ -531,6 +533,8 @@ class JeonseRiskResponse(BaseModel):
     risk_score: float = Field(ge=0, le=1, description="위험 점수")
     analysis: str = Field(description="종합 분석")
     factors: list[dict] = Field(default_factory=list, description="위험 요인")
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
 
 
 # ──────────────────────────────────────
@@ -554,6 +558,8 @@ class UnionContributionResponse(BaseModel):
     total_project_cost: float = Field(description="총 사업비 (원)")
     breakdown: dict = Field(description="분담금 산출 내역")
     scenarios: list[dict] = Field(default_factory=list, description="시나리오별 분담금")
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
 
 
 # ──────────────────────────────────────
@@ -595,6 +601,8 @@ class ConstructionScheduleResponse(BaseModel):
     schedule: list[dict] = Field(description="공정별 일정")
     critical_path: list[str] = Field(description="주공정선 (Critical Path)")
     milestones: list[dict] = Field(default_factory=list, description="주요 마일스톤")
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 class ClimateRiskRequest(BaseModel):
@@ -612,6 +620,8 @@ class ClimateRiskResponse(BaseModel):
     overall_risk_level: str = Field(description="종합 등급 (LOW/MEDIUM/HIGH/CRITICAL)")
     risk_factors: list[dict] = Field(default_factory=list, description="위험 요인")
     mitigation_tips: list[str] = Field(default_factory=list, description="리스크 대응 방안")
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 class DefectClassificationRequest(BaseModel):
@@ -628,6 +638,8 @@ class DefectClassificationResponse(BaseModel):
     confidence: float = Field(ge=0, le=1, description="AI 판정 신뢰도")
     description: str = Field(description="하자 상세 설명")
     repair_recommendation: str = Field(description="보수 권장 사항")
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 class ZEBEnergyRequest(BaseModel):
@@ -646,6 +658,8 @@ class ZEBEnergyResponse(BaseModel):
     zeb_grade: str = Field(description="ZEB 등급 (1~5등급 또는 미달)")
     energy_independence_rate: float = Field(description="에너지 자립률 (%)")
     recommendations: list[str] = Field(default_factory=list, description="에너지 개선 권장 사항")
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 # ──────────────────────────────────────
@@ -760,6 +774,8 @@ class KepcoCalculationResponse(BaseModel):
     fuel_adjustment_krw: float
     vat_krw: float
     total_bill_krw: float
+    # 표준 근거 블록(#5): 요금 산식·구성·출처를 가산(graceful·선택). 미부착 시 None.
+    evidence: dict | None = Field(default=None)
 
 
 class DataRoomDocumentInput(BaseModel):
@@ -950,6 +966,8 @@ class ESGAssessmentResponse(BaseModel):
     carbon_total_tco2e: float | None = None
     disclosures: list[dict] = Field(default_factory=list)
     action_plan: str | None = None
+    # 표준 근거 블록(#5) — 산출 점수·탄소·산식·법령링크·신선도. 미부착 시 None(스키마 무손상).
+    evidence: dict | None = Field(default=None)
 
 
 class InsuranceRecommendationResponse(BaseModel):
@@ -986,6 +1004,8 @@ class ClimateRiskAssessmentResponse(BaseModel):
     mitigation_tips: list[str] = Field(default_factory=list)
     insurance_recommendations: list[InsuranceRecommendationResponse] = Field(default_factory=list)
     created_at: datetime
+    # 표준 근거 블록(#5): 위험점수·연간기대손실 산식·출처를 가산(graceful·선택). 미부착 시 None.
+    evidence: dict | None = Field(default=None)
 
 
 class MarketingContentRequest(BaseModel):
@@ -1491,6 +1511,8 @@ class EnergyCertificationResponse(BaseModel):
     bems_saving_rate: float
     bems_saving_kwh: float
     recommendations: list[str] = Field(default_factory=list)
+    # 표준 근거 블록(#5): 에너지등급·ZEB·수요량 산식·출처를 가산(graceful·선택). 미부착 시 None.
+    evidence: dict | None = Field(default=None)
 
 
 class ChatbotSessionCreateRequest(BaseModel):
@@ -1772,6 +1794,8 @@ class CostEscalationResponse(BaseModel):
     alerts: list[CostEscalationAlertResponse] = Field(default_factory=list)
     summary: str
     created_at: datetime
+    # ── 표준 근거 블록(#5 evidence) ──
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
 
 class DigitalTwinStatusRequest(BaseModel):

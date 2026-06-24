@@ -4,6 +4,7 @@
 VaR, Expected Shortfall 등 리스크 지표를 산출하는 API.
 """
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +17,7 @@ from apps.api.database.session import get_db
 from apps.api.services.monte_carlo_service import MonteCarloService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ── 요청/응답 스키마 ──
@@ -76,6 +78,9 @@ class MonteCarloResponse(BaseModel):
     # 통계 요약
     mean_npv: float = Field(description="NPV 평균 (원)")
     std_npv: float = Field(description="NPV 표준편차 (원)")
+
+    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
+    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
 
     class Config:
         """Pydantic 모델 설정."""

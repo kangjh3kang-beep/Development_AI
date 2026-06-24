@@ -289,6 +289,48 @@ class DevelopmentScenarioSimulator:
             )
         if use_llm:
             result["ai"] = await self._llm(ctx, scenarios)
+
+        # ── 표준 근거 블록(#5): 통합면적·실효용적률·추천 사업방식의 산식·법령을 가산(graceful). ──
+        # 무목업: 실제 산출한 총면적·블렌디드 실효용적률·추천 시나리오(가능/조건부 1위)만 트레이스.
+        # 법령(verified): 국토계획법 제78조(far_law·용적률)·제76조(zone_use·용도제한)·제52조(district_unit_plan).
+        # build_evidence_block 실패해도 시뮬레이션 결과는 그대로 반환(가산·정직).
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            ev_items: list[dict[str, Any]] = []
+            if total_area:
+                ev_items.append({
+                    "label": "통합 부지면적",
+                    "value": f"{round(total_area, 1):,}㎡",
+                    "basis": f"필지 {len(addrs)}개 면적 합산" if multi else "단일 필지 면적",
+                })
+            if far_effective:
+                ev_items.append({
+                    "label": "실효 용적률(현행)",
+                    "value": f"{far_effective}%",
+                    "basis": (f"면적가중 블렌디드 실효용적률(현행·조례 반영)"
+                              + (f", 법정상한 {far_legal}%" if far_legal else "")),
+                })
+            ev_items.append({
+                "label": "추천 사업방식",
+                "value": recommended.get("scheme"),
+                "basis": (f"적합도(가능>조건부>불가)·예상 용적률 정렬 1위"
+                          + (f", 예상 용적률 {recommended.get('est_far')}%" if recommended.get("est_far") else "")),
+            })
+            if applicable:
+                ev_items.append({
+                    "label": "적용가능 사업방식 수",
+                    "value": len(applicable),
+                    "basis": f"정책별 적용요건 판정 결과 '가능/조건부' {len(applicable)}건 / 전체 {len(scenarios)}건",
+                })
+            result["evidence"] = build_evidence_block(
+                items=ev_items,
+                legal_ref_keys=["far_law", "zone_use", "district_unit_plan"],
+                sources=["vworld_zoning"],
+            )
+        except Exception:  # noqa: BLE001 — 근거 블록 실패는 시뮬레이션 결과를 막지 않음.
+            pass
+
         return result
 
     # ── 부지 수집 ──

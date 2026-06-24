@@ -329,6 +329,63 @@ async def desk_appraisal(
             "수익형은 임대수익 기준, 원가법은 토지+건물 재조달 기준. 용도·임대안정성에 따라 채택."
         )
 
+    # ── 표준 근거 블록(#5): 탁상감정의 채택가·산식·교차검증·법령을 표준 계약으로 가산(graceful). ──
+    # 무목업: 실제 산출한 채택 단가/총액·공시지가기준법 산식·교차검증 편차만 트레이스(실값).
+    # 법령(verified): 감정평가법 제3조(land_appraisal)·부동산공시법 제10조(official_land_price).
+    # build_evidence_block 실패해도 탁상감정 결과는 그대로 반환(가산·정직).
+    evidence_block: dict[str, Any] | None = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        ev_items: list[dict[str, Any]] = [
+            {
+                "label": "채택 단가",
+                "value": f"{appraised_unit:,}원/㎡",
+                "basis": weight_note,
+            },
+            {
+                "label": "공시지가기준법 단가",
+                "value": f"{pub_unit_price:,}원/㎡",
+                "basis": method_pub["rationale"],
+            },
+        ]
+        if appraised_total is not None:
+            ev_items.append({
+                "label": "채택 총액",
+                "value": f"{appraised_total:,}원",
+                "basis": f"채택 단가 {appraised_unit:,}원/㎡ × 면적 {round(area_f or 0, 1):,}㎡ (참고용 추정, 수정 가능)",
+            })
+        if method_cmp:
+            ev_items.append({
+                "label": "거래사례비교법 단가",
+                "value": f"{cmp_unit_price:,}원/㎡",
+                "basis": method_cmp["rationale"],
+            })
+        ev_items.append({
+            "label": "교차검증 신뢰도",
+            "value": confidence,
+            "basis": f"복수 시나리오(보정계수·실거래 가중 분포) 교차검증 CV {cross_check['cv_pct']}% → 신뢰도 = 1 − CV×3(하한 0.4)",
+        })
+        if building:
+            ev_items.append({
+                "label": "건물가치(원가법)",
+                "value": f"{building['building_value_won']:,}원",
+                "basis": building["rationale"],
+            })
+        if income:
+            ev_items.append({
+                "label": "수익환원법 가치",
+                "value": f"{income['income_value_won']:,}원",
+                "basis": income["rationale"],
+            })
+        evidence_block = build_evidence_block(
+            items=ev_items,
+            legal_ref_keys=["land_appraisal", "official_land_price"],
+            sources=["molit_official_price", "vworld_land_info"],
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 탁상감정 결과를 막지 않음.
+        evidence_block = None
+
     return {
         "ok": True,
         "appraised_price_per_sqm": appraised_unit,
@@ -357,4 +414,6 @@ async def desk_appraisal(
         "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
                       "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "
                       "법적 효력이 있는 가치 산정은 감정평가법인에 의뢰해야 하며, 본 값은 사용자가 수정할 수 있습니다.",
+        # ★표준 근거 블록(#5, 가산) — 채택가 산식·교차검증·법령(verified) 트레이스. 기존 키 무손상.
+        "evidence": evidence_block,
     }

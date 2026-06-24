@@ -16,10 +16,27 @@
 - **구획도 다운로드**: 신규 `POST /zoning/parcel-boundaries/export`(geojson→png→pdf). GeoJSON은 메모리 데이터 직렬화(결정론).
 - **맥락형 동기화**: 이미 달성된 메커니즘 재배치(전 패널 SSOT 구독). `effectiveLandAreaSqm` 강제·#185 가드 적용.
 
-## 맥락형 탭 구조 (좌측 rail)
-토지 | 규제 | 건물 | **개발방식** | 일조·배치 | 수지 | 통합분석
-- 각 탭 = 기존 패널 도킹(LandIntelligencePanel·AutoZoningBadge·BuildableEnvelopeCard·SolarPlacementCard·DevelopmentScenarioCard·NearbyTransactionsMap 등).
+## ★요약 + 드릴다운 원칙 (2026-06-24 사용자 정련)
+지도페이지(SiteCanvas)는 **요약 산출 분석만** 제공한다. **상세 분석·자료 제공은 각 기능 패널의 전용
+메뉴/페이지로 연결**(drill-down)한다. 즉 지도페이지 = 개요 허브, 상세는 기존 25개 전용 페이지가 책임.
+- 각 맥락형 탭 = ①핵심 요약 카드(3~5지표) + ②"상세보기 →" CTA(해당 기능 페이지로 라우팅).
+- 이미 존재하는 전용 페이지(site-analysis·design·cost·feasibility·legal·permit·esg·report·cad·bim 등)를
+  버리지 않고 **상세 뷰로 재활용** → 지도페이지는 과밀 방지·진입 속도 유지, 상세는 깊이 유지.
+- 효과: ①한 화면에서 전체 조망(요약) ②필요 시 1클릭으로 해당 패널 상세 진입(자료·다운로드·편집).
+  창 이동은 "원할 때만"(요약 단계는 무이동, 상세는 의도적 drill-down).
+
+## 맥락형 탭 구조 (좌측 rail — 요약 카드 + 상세 CTA)
+| 탭 | 요약(지도페이지 표시) | 상세 연결(드릴다운) |
+|----|---------------------|--------------------|
+| 토지 | 지번·지목·면적·공시지가·용도지역 | → /site-analysis(토지대장·실거래·적정매입가) |
+| 규제 | 건폐/용적(실효)·특이부지·지구단위 | → /legal·/permit(규제계층·인허가 상세) |
+| 건물 | 건축물대장 요약·노후도 | → /site-analysis(대장 전문·집합건물 대지지분) |
+| 개발방식 | **평수 티어 매트릭스(가능/조건부/불가)**·추천 | → /permit(인허가 로드맵·시나리오 상세) |
+| 일조·배치 | 최적 배치안·8방위 일조 요약 | → /design(설계 스튜디오·CAD/BIM) |
+| 수지 | ROI·총사업비·매출 요약 | → /feasibility(수지 편집·민감도) |
+| 통합분석 | AI 해석 요약·신뢰도·리스크 | → /report(은행제출 보고서·PDF) |
 - 탭 전환 = **로컬 view state**(orchestration store·SSOT 무접촉 — RunMode 오류 재발 방지).
+- 요약 카드는 기존 패널의 '요약 모드'(props로 compact) 또는 경량 요약 컴포넌트, 상세는 기존 페이지 그대로.
 
 ## 스토리보드 (프로젝트 생성 단일창)
 STEP0 진입(검색창+지도) → STEP1 주소검색→지도 flyTo·필지 하이라이트 → STEP2 필지확정→좌패널 자동채움(스켈레톤→실데이터) → STEP3 (다필지)인접필지 추가선택→바텀 버킷 누적·인접성검증 → STEP4 구획도 인라인 오버레이(미리보기+PNG/PDF) → STEP5 6탭 순차 채움 → STEP6 개발방식 매트릭스→최적안 → STEP7 프로젝트 저장. (전 과정 창 이동 0.)

@@ -79,6 +79,8 @@ class DevelopmentMethodResponse(BaseModel):
     )
     ahp_weights: dict[str, float] = Field(description="AHP 가중치")
     analysis_summary: str | None = Field(description="분석 요약")
+    # ★표준 근거 블록(#5, 가산) — 추천 방법·AHP 가중·BCR 산식·법령(verified). 기존 필드 무손상.
+    evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence/legal_refs/provenance/trust)")
 
     class Config:
         """Pydantic 모델 설정."""
@@ -131,6 +133,46 @@ async def evaluate_development_methods(
 
     ahp_weights: dict[str, float] = result.ahp_weights_json or {}
 
+    # ── 표준 근거 블록(#5): 추천 방법·종합점수·간이 BCR·AHP 가중의 산식·법령을 가산(graceful). ──
+    # 무목업: 실제 산출한 추천 방법·가중 점수·BCR·평가 기준 수만 트레이스(실값).
+    # 법령(verified): 국토계획법 제78조(far_law·용적률)·제76조(zone_use·용도지역 제한).
+    # build_evidence_block 실패해도 평가 결과는 그대로 반환(가산·정직).
+    evidence_block: dict | None = None
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        ev_items: list[dict[str, Any]] = [
+            {
+                "label": "추천 개발방법",
+                "value": result.recommended_method,
+                "basis": f"7개 방법 AHP 가중 종합점수 최댓값({result.recommended_method_score})",
+            },
+            {
+                "label": "간이 BCR",
+                "value": result.bcr,
+                "basis": "간이 비용효익비(편익/비용) — 부지 프로파일 기반 추정",
+            },
+        ]
+        if ahp_weights:
+            ev_items.append({
+                "label": "AHP 평가기준 수",
+                "value": len(ahp_weights),
+                "basis": "AHP(계층분석법) 가중치 기준 개수 — 가중합 종합점수 산정",
+            })
+        if method_scores:
+            ev_items.append({
+                "label": "평가 개발방법 수",
+                "value": len(method_scores),
+                "basis": "단독·합동·환지·도시개발·도시정비·PPP·리모델링 등 평가 대상 방법 수",
+            })
+        evidence_block = build_evidence_block(
+            items=ev_items,
+            legal_ref_keys=["far_law", "zone_use"],
+            sources=["vworld_zoning"],
+        )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 평가 결과를 막지 않음.
+        evidence_block = None
+
     return DevelopmentMethodResponse(
         id=result.id,
         project_id=result.project_id,
@@ -142,6 +184,7 @@ async def evaluate_development_methods(
         method_scores=method_scores,
         ahp_weights=ahp_weights,
         analysis_summary=result.analysis_summary,
+        evidence=evidence_block,
     )
 
 
