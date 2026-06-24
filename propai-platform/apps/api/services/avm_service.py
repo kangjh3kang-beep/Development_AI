@@ -604,6 +604,28 @@ class AVMService:
         except Exception as e:  # noqa: BLE001
             logger.warning("AVM AI 해석 생성 스킵", error=str(e)[:120])
 
+        # ── 표준 근거 블록(#5): 추정 시세의 값·산식·출처·신뢰도를 표준 계약으로 가산(graceful). ──
+        evidence_block: dict[str, Any] | None = None
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            method_basis = (
+                "거래사례비교법(주변 실거래 기반 추정)"
+                if model_version != "simple-estimate-fallback"
+                else "공시지가×면적×보정계수(실거래 비교사례 부족 시 폴백)"
+            )
+            evidence_block = build_evidence_block(
+                items=[
+                    {"label": "추정 시세", "value": round(predicted_price), "basis": method_basis},
+                    {"label": "㎡당 단가", "value": round(price_per_sqm), "basis": "추정시세 ÷ 대지/전용면적"},
+                    {"label": "신뢰도", "value": round(confidence, 3),
+                     "basis": f"비교사례 {len(comparables)}건 · 모델 {self._model_stage}"},
+                ],
+                sources=["국토교통부 실거래가(MOLIT)", "개별공시지가(공공데이터)"],
+            )
+        except Exception as e:  # noqa: BLE001 — 근거 블록 실패는 AVM 결과를 막지 않음(가산·정직).
+            logger.warning("AVM 근거 블록 생성 스킵", error=str(e)[:120])
+
         return AVMValuationResponse(
             id=valuation.id,
             project_id=valuation.project_id,
@@ -618,6 +640,7 @@ class AVMService:
             market_position=narrative.get("market_position"),
             appreciation_outlook=narrative.get("appreciation_outlook"),
             investment_recommendation=narrative.get("investment_recommendation"),
+            evidence=evidence_block,
         )
 
     # ── MAPE 검증 ──
