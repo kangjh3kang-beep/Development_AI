@@ -108,6 +108,23 @@ class AihubSeedService:
                         "reason": "다운로드 실패 — 활용신청 승인·datasetkey·filekey·디스크 확인",
                         "output_tail": out[-1500:]}
 
+            # ★컨테이너에 unzip 미설치 → aihubshell이 cat-병합한 .zip을 못 푼다. 파이썬 zipfile로 직접
+            #   압축해제(시스템 의존 제거). 중첩(zip-in-zip) 3단계까지. 추출 후 원본 zip 제거(디스크 절약).
+            import zipfile
+            archives_extracted = 0
+            for _ in range(3):
+                zips = [p for p in tmp.rglob("*.zip") if p.is_file()]
+                if not zips:
+                    break
+                for z in zips:
+                    try:
+                        with zipfile.ZipFile(z) as zf:
+                            zf.extractall(z.parent / f"{z.stem}_x")
+                        z.unlink()
+                        archives_extracted += 1
+                    except Exception:  # noqa: BLE001 — 손상/부분 zip은 건너뜀(정직).
+                        continue
+
             # 압축해제된 도면 파일 walk → 인제스트(max_files 상한).
             from app.services.design_ingest.ingest_service import ingest_design_file
             ingested, skipped, failed, total = 0, 0, 0, 0
@@ -132,6 +149,7 @@ class AihubSeedService:
                     failed += 1
             return {
                 "available": True, "dataset_key": dataset_key, "file_key": file_key,
+                "archives_extracted": archives_extracted,
                 "total_drawings": total, "ingested": ingested, "skipped": skipped, "failed": failed,
                 "samples": samples,
                 "note": "aihubshell로 다운로드·압축해제한 도면을 design_drawings(Qdrant)에 시드 인제스트. 도면 확장자만(라벨 JSON 제외).",
