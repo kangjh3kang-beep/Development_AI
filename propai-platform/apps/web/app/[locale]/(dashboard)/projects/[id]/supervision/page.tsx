@@ -1,304 +1,64 @@
 "use client";
 
+/**
+ * 감리·공정 모니터링 — 준비 중(예정 기능). 무목업 원칙:
+ *   이전 영어 정적 목업(Supervision Hub·Project Alpha: Block C·Material 아이콘 텍스트노출)을 제거하고,
+ *   실제 감리/공정 데이터가 배선되기 전까지 한국어 정직 안내 + 실존 기능 링크로 대체한다.
+ */
+
 import { useParams } from "next/navigation";
+import Link from "next/link";
+import { ClipboardCheck, Hammer, Layers, FileText, ArrowRight, Clock } from "lucide-react";
 
 export default function SupervisionPage() {
-  const { id } = useParams() as { id: string };
+  const params = useParams();
+  const locale = (params?.locale as string) || "ko";
+  const id = params?.id as string;
+  const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
+
+  const links: { to: string; label: string; desc: string; icon: typeof Layers }[] = [
+    { to: proj("cost"), label: "BIM 적산·공사비", desc: "부위별 물량·공사비(5D) 산출", icon: Hammer },
+    { to: proj("design"), label: "설계 스튜디오·CAD/BIM", desc: "도면·모델·법규 검토", icon: Layers },
+    { to: proj("report"), label: "통합 보고서", desc: "사업 종합 보고서·PDF", icon: FileText },
+  ];
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-120px)] relative overflow-hidden bg-[var(--surface-strong)] text-[var(--text-primary)] rounded-xl border border-[var(--line)]">
-      {/* Top Header */}
-      <header className="h-16 border-b border-[var(--line)] bg-[var(--surface-strong)]/95 backdrop-blur flex items-center justify-between px-6 shrink-0 z-20">
-        <div className="flex items-center gap-4">
-          {/* Breadcrumbs inline for space saving */}
-          <span className="cc-meta hidden sm:inline">SUPERVISION HUB · MONITORING</span>
-          <div className="hidden md:flex items-center gap-2 text-sm">
-            <span className="text-[var(--text-tertiary)]">Home</span>
-            <span className="text-[var(--text-hint)] text-xs material-symbols-outlined">chevron_right</span>
-            <span className="text-[var(--text-tertiary)]">Project Alpha</span>
-            <span className="text-[var(--text-hint)] text-xs material-symbols-outlined">chevron_right</span>
-            <span className="text-[var(--text-primary)] font-medium">Supervision Hub</span>
+    <div className="mx-auto max-w-3xl py-8">
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-6 sm:p-8">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+            <ClipboardCheck className="size-5" aria-hidden />
+          </span>
+          <div>
+            <p className="inline-flex items-center gap-1.5 text-xl font-black text-[var(--text-primary)]">
+              감리·공정 모니터링
+              <span className="inline-flex items-center gap-1 rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-hint)]">
+                <Clock className="size-3" aria-hidden /> 준비 중
+              </span>
+            </p>
+            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">현장 감리·공정 진척·품질/안전 점검을 실시간으로 모니터링하는 허브</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="cc-live"><i />LIVE</span>
-          <div className="relative w-64 hidden sm:block">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] text-[20px]">search</span>
-            <input className="w-full bg-[var(--surface-soft)] border border-[var(--line)] rounded-lg py-2 pl-10 pr-4 text-sm text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent-strong)] placeholder-[var(--text-hint)]" placeholder="Search logs, alerts..." type="text"/>
-          </div>
-          <button className="relative p-2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] rounded-lg hover:bg-[var(--surface-soft)] transition-colors">
-            <span className="material-symbols-outlined">notifications</span>
-            <span className="absolute top-2 right-2 size-2 bg-[var(--status-error)] rounded-full border-2 border-[var(--surface-strong)]"></span>
-          </button>
-        </div>
-      </header>
 
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
-        <div className="max-w-[1600px] mx-auto flex flex-col gap-6">
-          {/* Page Heading & Actions */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div>
-              <h2 className="text-3xl font-bold text-[var(--text-primary)] tracking-tight">Project Alpha: Block C</h2>
-              <p className="text-[var(--text-tertiary)] mt-1">Real-time monitoring and automation center</p>
-            </div>
-            <div className="flex gap-3">
-              <button className="px-4 py-2 rounded-lg bg-[var(--surface-soft)] text-[var(--text-primary)] border border-[var(--line)] hover:border-[var(--data-accent-line)] text-sm font-medium flex items-center gap-2 transition-colors">
-                <span className="material-symbols-outlined text-[18px]">download</span> Export Report
-              </button>
-              <button className="px-4 py-2 rounded-lg bg-[var(--accent-strong)] text-white hover:opacity-90 text-sm font-medium flex items-center gap-2 shadow-[var(--shadow-glow)] transition-all">
-                <span className="material-symbols-outlined text-[18px]">add</span> New Log Entry
-              </button>
-            </div>
-          </div>
+        <p className="mt-5 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm leading-relaxed text-[var(--text-secondary)]">
+          이 화면은 실제 현장 감리·공정 데이터가 연동되기 전이라 <b className="text-[var(--text-primary)]">예시(가짜) 데이터를 표시하지 않습니다</b>.
+          시공 단계에서 바로 활용할 수 있는 적산·설계·보고 기능은 아래에서 이용하세요.
+        </p>
 
-          {/* KPI Stats Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="cc-panel cc-interactive p-5 relative overflow-hidden group">
-              <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                <span className="material-symbols-outlined text-6xl text-[var(--data-accent)]">analytics</span>
-              </div>
-              <p className="cc-label mb-1">Total Completion</p>
-              <div className="flex items-end gap-2">
-                <p className="cc-num text-3xl font-bold">42%</p>
-                <span className="text-[var(--status-success)] text-xs font-medium mb-1 flex items-center">+2.4% <span className="material-symbols-outlined text-[14px]">arrow_upward</span></span>
-              </div>
-              <div className="w-full bg-[var(--surface)] h-1 mt-4 rounded-full overflow-hidden">
-                <div className="bg-[var(--data-accent)] h-full rounded-full" style={{width: "42%"}}></div>
-              </div>
-            </div>
-
-            <div className="cc-panel p-5 relative overflow-hidden">
-              <p className="cc-label mb-1">Days Remaining</p>
-              <div className="flex items-end gap-2">
-                <p className="cc-num text-3xl font-bold">120</p>
-                <span className="text-[var(--text-hint)] text-xs font-medium mb-1">On Schedule</span>
-              </div>
-              <div className="flex gap-1 mt-4">
-                <div className="h-1 flex-1 bg-[var(--status-success)] rounded-full"></div>
-                <div className="h-1 flex-1 bg-[var(--status-success)] rounded-full"></div>
-                <div className="h-1 flex-1 bg-[var(--surface)] rounded-full"></div>
-              </div>
-            </div>
-
-            <div className="cc-panel p-5 relative overflow-hidden">
-              <p className="cc-label mb-1">Safety Score</p>
-              <div className="flex items-end gap-2">
-                <p className="cc-num text-3xl font-bold">98</p>
-                <span className="text-[var(--text-tertiary)] text-sm font-medium mb-1">/ 100</span>
-              </div>
-              <p className="text-[var(--status-success)] text-xs mt-2 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[16px]">check_circle</span> No incidents this week
-              </p>
-            </div>
-
-            <div className="cc-panel p-5 relative overflow-hidden">
-              <p className="cc-label mb-1">Manpower on Site</p>
-              <div className="flex items-end gap-2">
-                <p className="cc-num text-3xl font-bold">145</p>
-                <span className="text-[var(--text-tertiary)] text-sm font-medium mb-1">Workers</span>
-              </div>
-              <div className="flex -space-x-2 mt-3 overflow-hidden">
-                <img alt="Worker Avatar" className="inline-block h-6 w-6 rounded-full ring-2 ring-[var(--surface-strong)]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBH8qDsz-W43Fbg3FZopas1jysQ77VZ25JeiMcMRDVgpLlzFP8LAw1OwKWhwlMyVju1niSMPURGaWS6AQt18BM8r_JMkg5WejpNrd2P7QQhwDcpzGUjy79w7enzNFaW_TPuFfOsyONUc2GzwqGOSS1UxU9k9YFPVywPDkG4v_TGTM2biOsFJrY1rmAvXWyEVPFLrrYuVbJ8lFkpH0bE01_YPZP1rXH-0EAanFvpzNU9laeQXY1B3d-PzK1qOtZ4LrGUQttJRRE_KBI"/>
-                <img alt="Worker Avatar" className="inline-block h-6 w-6 rounded-full ring-2 ring-[var(--surface-strong)]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBCR01dDXQBZZBrXzVI-wzls2rU-Z_P8L9XUD1SkOwuTtp954naCyO7vvWq5kjvm9wTK734_16lIT5RBmZYTQuGlg4PWPWB3-xGZdh9t511sXMf4aVogecdZzhyW9H3plvx0QxhxK5HL--8pR_RkqM2MC1SP9owz3Zuge7NCQiB4fZew2wjl2GRzrPUcc9v7S2SLrN4F2oH9SHt1t46s43E_OE5QRPY4Kwhn2Xy0fyFzGkq-J5kr-J1g_GNfFmA08SFq33Os5jx2yw"/>
-                <img alt="Worker Avatar" className="inline-block h-6 w-6 rounded-full ring-2 ring-[var(--surface-strong)]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDtpPlE9A3b69OA1mu7znfxVo-jZg4v_YnEfiqeiTxJ67LrT71SqUOfLIDcpildx8skJ8BdkKNruLsZpuVNY0Zy96reLoBN_vxcA380eLrET4lcczGubih5flSq2VX_S5VTmRADQPj9oKn0AbjXCEoi9JvXAE8QceXQRnDKplnQRYqmrnV3SGlSG45pAPZ6gfde3mUcttki37zBUNQnUfSATkPQh7-d2c_2CJsXPIYzdD4nSdhR_CjjrbnYVi6Hj43F0t6koBfu96o"/>
-                <span className="h-6 w-6 rounded-full bg-[var(--surface)] ring-2 ring-[var(--surface-strong)] flex items-center justify-center text-[10px] text-[var(--text-primary)] font-medium">+142</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Main Grid Content */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            {/* LEFT COLUMN: Operations & Visuals (Span 2) */}
-            <div className="xl:col-span-2 flex flex-col gap-6">
-              {/* Drone Feed Card */}
-              <div className="cc-panel cc-bracketed rounded-xl overflow-hidden flex flex-col">
-                <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
-                <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
-                <div className="p-4 border-b border-[var(--line-subtle)] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="cc-live"><i />LIVE DRONE SURVEILLANCE</span>
-                  </div>
-                  <div className="flex bg-[var(--surface-soft)] rounded-lg p-1">
-                    <button className="px-3 py-1 rounded-md bg-[var(--surface)] text-[var(--text-primary)] text-xs font-medium">Live Feed</button>
-                    <button className="px-3 py-1 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs font-medium transition-colors">BIM Model</button>
-                  </div>
-                </div>
-                <div className="relative aspect-video w-full bg-black group">
-                  {/* Video Placeholder */}
-                  <div className="absolute inset-0 bg-cover bg-center opacity-80" style={{backgroundImage: "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDDQ0qOdFFG2kXOXbaxbMZhjpWBXhbcX3gSR5kSfHVjfke2dMZ8k0G62NiDeX1LjI95KoHZs2D6gHEC9cuYs_VTt4M0BkNS-ODwAcy0lzJLIneWgCFiyamGKkjWVDzqMtq0bE-UVICawV0jP6TQbfSQDcf6AKCb8UzQqcgLINVuATj6Iz9eV-Hs3tWTzs9t6ZJicSFVTKjhSiOSyk0weyOk9YHFO2js9_iGbPY9K6KniBjQ6PAzbkbsuk68GIBB8fIU1VD-ga64aX4')"}}></div>
-                  {/* Overlay UI */}
-                  <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-2 py-1 rounded text-xs text-white font-mono border border-white/10">
-                    CAM-04 • ALT: 45m • 4K
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="size-16 rounded-full bg-[var(--accent-strong)]/90 text-white flex items-center justify-center hover:scale-105 transition-transform backdrop-blur-sm shadow-xl">
-                      <span className="material-symbols-outlined text-3xl">play_arrow</span>
-                    </button>
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
-                    <div className="flex items-center justify-between text-white text-xs">
-                      <p>Sector 4 Overview</p>
-                      <p>Updated: 2 mins ago</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Task Progress List */}
-              <div className="cc-panel p-5">
-                <h3 className="cc-meta mb-4">SITE PROGRESS TRACKER</h3>
-                <div className="space-y-5">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-[var(--text-primary)] font-medium">Foundation & Substructure</span>
-                      <span className="cc-num text-[var(--status-success)] font-bold">100%</span>
-                    </div>
-                    <div className="w-full bg-[var(--surface)] h-2 rounded-full overflow-hidden">
-                      <div className="bg-[var(--status-success)] h-full rounded-full" style={{width: "100%"}}></div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-[var(--text-primary)] font-medium">Structural Framing</span>
-                      <span className="cc-num text-[var(--data-accent)] font-bold">65%</span>
-                    </div>
-                    <div className="w-full bg-[var(--surface)] h-2 rounded-full overflow-hidden">
-                      <div className="bg-[var(--data-accent)] h-full rounded-full relative overflow-hidden" style={{width: "65%"}}>
-                        <div className="absolute inset-0 bg-white/20 animate-[pulse_2s_infinite]"></div>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-[var(--text-primary)] font-medium">Electrical Rough-in</span>
-                      <span className="cc-num text-[var(--status-warning)] font-bold">22%</span>
-                    </div>
-                    <div className="w-full bg-[var(--surface)] h-2 rounded-full overflow-hidden">
-                      <div className="bg-[var(--status-warning)] h-full rounded-full" style={{width: "22%"}}></div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-[var(--text-primary)] font-medium">Plumbing & HVAC</span>
-                      <span className="cc-num text-[var(--text-hint)] font-bold">Pending</span>
-                    </div>
-                    <div className="w-full bg-[var(--surface)] h-2 rounded-full overflow-hidden">
-                      <div className="bg-[var(--text-hint)] h-full rounded-full w-0"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Daily Log Entry */}
-              <div className="cc-panel p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="cc-meta">DAILY SITE LOG</h3>
-                  <span className="cc-num text-xs text-[var(--text-tertiary)]">Oct 24, 2023</span>
-                </div>
-                <div className="flex flex-col gap-4">
-                  <textarea className="w-full bg-[var(--surface-soft)] border border-[var(--line)] rounded-lg p-3 text-sm text-[var(--text-primary)] placeholder-[var(--text-hint)] focus:outline-none focus:border-[var(--accent-strong)] resize-none h-24 transition-colors" placeholder="Enter today's site observations..."></textarea>
-                  <div className="border-2 border-dashed border-[var(--line)] rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[var(--data-accent-line)] hover:bg-[var(--surface-soft)] transition-colors">
-                    <span className="material-symbols-outlined text-[var(--text-tertiary)] text-3xl mb-2">cloud_upload</span>
-                    <p className="text-sm text-[var(--text-secondary)] font-medium">Drop site report or photos here</p>
-                    <p className="text-xs text-[var(--text-hint)] mt-1">PDF, JPG, PNG up to 10MB</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* RIGHT COLUMN: Analytics & Alerts (Span 1) */}
-            <div className="flex flex-col gap-6">
-              {/* Payment Automation */}
-              <div className="cc-panel p-5 flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="cc-meta">PROGRESS PAYMENT</h3>
-                  <button className="text-[var(--data-accent)] hover:text-[var(--text-primary)] transition-colors">
-                    <span className="material-symbols-outlined">more_horiz</span>
-                  </button>
-                </div>
-                <div className="flex items-center justify-center py-4 relative">
-                  {/* Donut Chart Representation */}
-                  <div className="size-40 rounded-full p-4 relative" style={{background: "linear-gradient(to top right, var(--data-accent), color-mix(in srgb, var(--data-accent) 55%, transparent))"}}>
-                    <div className="absolute inset-0 rounded-full" style={{background: "conic-gradient(var(--data-accent) 15%, transparent 0)", transform: "rotate(-90deg)"}}></div>
-                    <div className="size-full bg-[var(--surface-strong)] rounded-full flex flex-col items-center justify-center z-10 relative">
-                      <span className="cc-label text-[var(--text-tertiary)]">Verified Value</span>
-                      <span className="cc-num text-[var(--text-primary)] text-xl font-bold">$125K</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-3 mt-2">
-                  <div className="flex justify-between items-center py-2 border-b border-[var(--line-subtle)]">
-                    <span className="text-[var(--text-tertiary)] text-sm">Completed Work</span>
-                    <span className="cc-num text-[var(--text-primary)] font-medium text-sm">15%</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-[var(--line-subtle)]">
-                    <span className="text-[var(--text-tertiary)] text-sm">Eligible Payment</span>
-                    <span className="cc-num text-[var(--text-primary)] font-medium text-sm">$125,000</span>
-                  </div>
-                </div>
-                <button className="mt-6 w-full py-3 bg-[var(--accent-strong)] hover:opacity-90 text-white rounded-lg font-medium text-sm transition-all shadow-[var(--shadow-glow)] flex justify-center items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">receipt_long</span> Generate Certificate
-                </button>
-              </div>
-
-              {/* Error & Alerts Panel */}
-              <div className="cc-panel flex flex-col flex-1">
-                <div className="p-5 border-b border-[var(--line-subtle)] flex items-center justify-between">
-                  <h3 className="cc-meta">ALERTS & DETECTIONS</h3>
-                  <span className="cc-chip-data" style={{color: "var(--status-error)", background: "color-mix(in srgb, var(--status-error) 18%, transparent)", borderColor: "color-mix(in srgb, var(--status-error) 30%, transparent)"}}>3 New</span>
-                </div>
-                <div className="flex-1 overflow-y-auto max-h-[500px] p-4 space-y-3">
-                  {/* Alert Card 1 */}
-                  <div className="bg-[var(--surface-soft)] border border-[var(--status-error)]/30 rounded-lg p-3 hover:border-[var(--status-error)]/60 transition-colors cursor-pointer group">
-                    <div className="flex items-start gap-3">
-                      <div className="bg-[var(--status-error)]/20 p-2 rounded text-[var(--status-error)] mt-0.5">
-                        <span className="material-symbols-outlined text-[20px]">warning</span>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="text-[var(--text-primary)] text-sm font-medium leading-snug">BIM Deviation Detected</h4>
-                        <p className="text-[var(--text-tertiary)] text-xs mt-1 leading-relaxed">HVAC Ducting in Sector 4 does not match approved model.</p>
-                        <div className="flex gap-2 mt-3">
-                          <button className="text-xs bg-[var(--status-error)] text-white px-3 py-1.5 rounded hover:opacity-90 transition-opacity">Review</button>
-                          <button className="text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] px-2 py-1.5 transition-colors">Dismiss</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Alert Card 2 */}
-                  <div className="bg-[var(--surface-soft)] border border-[var(--status-warning)]/30 rounded-lg p-3 hover:border-[var(--status-warning)]/60 transition-colors cursor-pointer">
-                    <div className="flex items-start gap-3">
-                      <div className="bg-[var(--status-warning)]/20 p-2 rounded text-[var(--status-warning)] mt-0.5">
-                        <span className="material-symbols-outlined text-[20px]">schedule</span>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="text-[var(--text-primary)] text-sm font-medium leading-snug">Schedule Slip Risk</h4>
-                        <p className="text-[var(--text-tertiary)] text-xs mt-1 leading-relaxed">Concrete curing delayed by 4h due to weather conditions.</p>
-                        <div className="mt-2 text-xs text-[var(--status-warning)] font-medium">Impact: +1 Day</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Alert Card 3 */}
-                  <div className="bg-[var(--surface-soft)] border border-[var(--line)] rounded-lg p-3 hover:border-[var(--line-strong)] transition-colors cursor-pointer">
-                    <div className="flex items-start gap-3">
-                      <div className="bg-[var(--surface)] p-2 rounded text-[var(--text-secondary)] mt-0.5">
-                        <span className="material-symbols-outlined text-[20px]">image</span>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="text-[var(--text-primary)] text-sm font-medium leading-snug">Missing Photo Log</h4>
-                        <p className="text-[var(--text-tertiary)] text-xs mt-1 leading-relaxed">Zone B daily photo documentation incomplete.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-3 border-t border-[var(--line-subtle)] text-center">
-                  <button className="text-xs text-[var(--data-accent)] hover:text-[var(--text-primary)] font-medium transition-colors">View All History</button>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="mt-4 grid gap-2">
+          {links.map((l) => (
+            <Link key={l.to} href={l.to}
+              className="group flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 transition hover:border-[var(--accent-strong)]">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+                <l.icon className="size-4" aria-hidden />
+              </span>
+              <span className="flex-1">
+                <span className="block text-sm font-bold text-[var(--text-primary)]">{l.label}</span>
+                <span className="block text-xs text-[var(--text-hint)]">{l.desc}</span>
+              </span>
+              <ArrowRight className="size-4 text-[var(--text-hint)] transition group-hover:text-[var(--accent-strong)]" aria-hidden />
+            </Link>
+          ))}
         </div>
       </div>
     </div>
