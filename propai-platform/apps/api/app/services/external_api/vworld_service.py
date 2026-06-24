@@ -701,38 +701,58 @@ class VWorldService:
         """
         if not settings.VWORLD_API_KEY:
             return []
+        # ★전수 수집(원칙: 광범위 누락없는 수집): numOfRows=30 단일호출은 중첩규제가 많은 필지에서
+        #   무음 절단됐다. totalCount까지 페이지를 순회한다(상한 도달 시 절단 경고).
+        results: list[dict] = []
+        total: int | None = None
         try:
             async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
-                resp = await client.get(
-                    f"{self.NED_BASE_URL}/getLandUseAttr",
-                    params={
-                        "key": settings.VWORLD_API_KEY,
-                        "pnu": pnu,
-                        "format": "json",
-                        "numOfRows": "30",
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                fields = data.get("landUses", {}).get("field", [])
-                if not fields:
-                    return []
-                if not isinstance(fields, list):
-                    fields = [fields]
-                results = []
-                for item in fields:
-                    results.append({
-                        "district_name": item.get("prposAreaDstrcCodeNm", ""),
-                        "district_code": item.get("prposAreaDstrcCode", ""),
-                        "conflict_status": item.get("cnflcAtNm", ""),
-                        "land_name": item.get("ldCodeNm", ""),
-                        "register_date": item.get("registDt", ""),
-                        "last_updated": item.get("lastUpdtDt", ""),
-                    })
+                page = 1
+                while page <= 10:  # 상한 10×100 = 1000 규제(현실적으로 1페이지 내)
+                    resp = await client.get(
+                        f"{self.NED_BASE_URL}/getLandUseAttr",
+                        params={
+                            "key": settings.VWORLD_API_KEY,
+                            "pnu": pnu,
+                            "format": "json",
+                            "numOfRows": "100",
+                            "pageNo": str(page),
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    land_uses = data.get("landUses", {}) or {}
+                    fields = land_uses.get("field", [])
+                    if not isinstance(fields, list):
+                        fields = [fields] if fields else []
+                    if not fields:
+                        break
+                    for item in fields:
+                        results.append({
+                            "district_name": item.get("prposAreaDstrcCodeNm", ""),
+                            "district_code": item.get("prposAreaDstrcCode", ""),
+                            "conflict_status": item.get("cnflcAtNm", ""),
+                            "land_name": item.get("ldCodeNm", ""),
+                            "register_date": item.get("registDt", ""),
+                            "last_updated": item.get("lastUpdtDt", ""),
+                        })
+                    tc = land_uses.get("totalCount")
+                    try:
+                        total = int(tc) if tc not in (None, "") else None
+                    except (TypeError, ValueError):
+                        total = None
+                    if total is None or len(results) >= total:
+                        break
+                    page += 1
+                if total is not None and len(results) < total:
+                    logger.warning(
+                        "VWorld 토지이용계획 페이지 상한 — 일부 절단: pnu=%s collected=%d total=%d",
+                        pnu, len(results), total,
+                    )
                 return results
         except Exception as e:
             logger.error("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
-            return []
+            return results  # 부분 수집분이라도 반환(전체 손실 방지)
 
     # ── VWORLD 정적 영상(항공/위성 정사영상) ──
     IMAGE_URL = "https://api.vworld.kr/req/image"
