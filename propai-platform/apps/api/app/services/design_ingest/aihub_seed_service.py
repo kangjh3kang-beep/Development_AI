@@ -147,11 +147,15 @@ class AihubSeedService:
                         samples.append({"file": p.name, "indexed": res.get("indexed"), "type": res.get("drawing_type")})
                 except Exception:  # noqa: BLE001
                     failed += 1
+            # 진단: 다운로드 산출물 트리(상위) + aihubshell 로그 꼬리(0건일 때 원인 파악).
+            tree = [str(p.relative_to(tmp)) for p in sorted(tmp.rglob("*")) if p.is_file()][:25]
             return {
                 "available": True, "dataset_key": dataset_key, "file_key": file_key,
                 "archives_extracted": archives_extracted,
                 "total_drawings": total, "ingested": ingested, "skipped": skipped, "failed": failed,
                 "samples": samples,
+                "downloaded_files": tree,
+                "download_log": out[-2000:] if total == 0 else None,
                 "note": "aihubshell로 다운로드·압축해제한 도면을 design_drawings(Qdrant)에 시드 인제스트. 도면 확장자만(라벨 JSON 제외).",
             }
         finally:
