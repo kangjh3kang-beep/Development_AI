@@ -35,9 +35,68 @@ async def analyze(req: TerrainAnalyzeRequest) -> dict:
 
     from app.services.terrain.terrain_service import analyze_terrain
 
-    return await analyze_terrain(
+    result = await analyze_terrain(
         address=(req.address or "").strip() or None,
         pnu=(req.pnu or "").strip() or None,
         target_level_m=req.target_level_m,
         section_bearing_deg=req.section_bearing_deg,
     )
+
+    # 표준 근거 블록(#5): DEM으로 실제 산출한 경사도·토공량·기복 값과 그 산식·출처만
+    # items로 가산(graceful·무목업). 지형분석은 물리계산이라 법령근거(legal_ref)는 없고,
+    # 표고 원천(SRTM 30m·VWorld)을 evidence basis로 명시한다. ok:false면 부착하지 않는다.
+    if isinstance(result, dict) and result.get("ok"):
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            slope = result.get("slope") or {}
+            earthwork = result.get("earthwork") or {}
+            section = result.get("cross_section") or {}
+            src_note = result.get("elevation_source") or "OpenTopoData SRTM 30m"
+            ev_items: list[dict] = []
+
+            # 경사도(평균·최대) — _compute_slope 중앙차분 산출값
+            if slope.get("mean_pct") is not None:
+                ev_items.append({
+                    "label": "평균 경사율",
+                    "value": f"{slope.get('mean_pct')}% ({slope.get('class', '')})",
+                    "basis": f"DEM 격자 중앙차분 기울기 평균 — {src_note}",
+                })
+            if slope.get("max_pct") is not None:
+                ev_items.append({
+                    "label": "최대 경사율",
+                    "value": f"{slope.get('max_pct')}%",
+                    "basis": f"DEM 격자 셀별 기울기 최대 — {src_note}",
+                })
+            # 토공량(절토/성토/순량) — _compute_earthwork base_level 기준
+            if earthwork.get("cut_volume_m3") is not None:
+                ev_items.append({
+                    "label": "절토/성토/순(토공)",
+                    "value": (
+                        f"절토 {earthwork.get('cut_volume_m3'):,}㎥ / "
+                        f"성토 {earthwork.get('fill_volume_m3'):,}㎥ / "
+                        f"순 {earthwork.get('net_m3'):,}㎥ ({earthwork.get('balance', '')})"
+                    ),
+                    "basis": (
+                        f"기준고 {earthwork.get('base_level_m')}m 대비 셀별 (표고-기준고)×셀면적 합산 — "
+                        f"개략추정, 다짐/팽창률 미반영"
+                    ),
+                })
+            # 지형 기복(단면 최고-최저)
+            if section.get("relief_m") is not None:
+                ev_items.append({
+                    "label": "지형 기복(단면)",
+                    "value": f"{section.get('relief_m')}m",
+                    "basis": f"중심 통과 단면 프로필 최고-최저 표고차 — {src_note}",
+                })
+
+            if ev_items:
+                result["evidence"] = build_evidence_block(
+                    items=ev_items,
+                    legal_ref_keys=None,  # 물리(DEM)계산 — 법령근거 없음(정직표기)
+                    sources=["vworld_land_info"],  # 좌표·필지 원천(레지스트리 등록 소스만)
+                )
+        except Exception:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음.
+            pass
+
+    return result

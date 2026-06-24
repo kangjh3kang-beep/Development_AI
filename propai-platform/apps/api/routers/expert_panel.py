@@ -28,6 +28,50 @@ async def analyze_panel(
     if not req.context:
         raise HTTPException(status_code=400, detail="분석 맥락(context)이 필요합니다.")
     mode = "deep" if req.mode == "deep" else "single"
-    return await ExpertPanelService().analyze(
+    result = await ExpertPanelService().analyze(
         analysis_type=req.analysis_type, context=req.context, address=req.address, mode=mode
     )
+
+    # 표준 근거 블록(#5): 패널이 실제 산출한 검증 신뢰도·참여 전문가 수 등 집계값만
+    # items로 가산(graceful·무목업). 폴백(generated=False)이거나 신뢰도 미산출이면 부착 안 함.
+    if isinstance(result, dict) and result.get("generated"):
+        try:
+            from app.services.data_validation.evidence_contract import build_evidence_block
+
+            verification = result.get("verification") or {}
+            experts = result.get("experts") or []
+            roster = result.get("roster") or []
+            ev_items: list[dict] = []
+
+            # 검증 신뢰도(패널이 산출한 0~100 정수) — 실제 값이 있을 때만
+            if verification.get("confidence") is not None:
+                ev_items.append({
+                    "label": "패널 검증 신뢰도",
+                    "value": verification.get("confidence"),
+                    "basis": "다관점 전문가 검토·통합 후 산출(0~100, LLM 패널)",
+                })
+            # 참여 전문가 수(실제 의견을 낸 전문가)
+            if experts:
+                ev_items.append({
+                    "label": "참여 전문가",
+                    "value": f"{len(experts)}명 ({', '.join(roster) if roster else ''})",
+                    "basis": f"분석유형 '{result.get('analysis_type', '')}' 전문가 로스터 다관점 분석",
+                })
+            # 식별 리스크 수(검증 단계 산출)
+            risks = verification.get("risks") or []
+            if risks:
+                ev_items.append({
+                    "label": "식별 핵심 리스크",
+                    "value": f"{len(risks)}건",
+                    "basis": "전문가 패널 검증(반론·맹점 포함) 단계 도출",
+                })
+
+            if ev_items:
+                result["evidence"] = build_evidence_block(
+                    items=ev_items,
+                    legal_ref_keys=None,  # 분석유형 무관 — 패널 자체는 특정 법령에 종속 안 됨(정직표기)
+                )
+        except Exception:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음.
+            pass
+
+    return result
