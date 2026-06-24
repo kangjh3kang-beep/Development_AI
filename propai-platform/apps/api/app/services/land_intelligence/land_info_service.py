@@ -491,6 +491,24 @@ class LandInfoService:
                 except Exception:  # noqa: BLE001 — 규제법령집 부착 실패는 무손상(graceful)
                     pass
 
+                # ★토지이음 '행위제한설명' 보강 — 도로조건(접도요건)·건축선(후퇴)·고시정보 deep-link.
+                #   road_side(land_characteristics)·sigungu 기반 결정론 산출(무목업·근거기반).
+                try:
+                    from app.services.legal.tojieum_supplement import (
+                        assess_road_conditions, building_line_setback, gosi_info,
+                    )
+                    _lc = result.get("land_characteristics") or {}
+                    _road_side = _lc.get("road_side") or (result.get("land_register") or {}).get("road_side")
+                    _sigungu2 = (result.get("local_ordinance") or {}).get("sigungu")
+                    _sido2 = (result.get("local_ordinance") or {}).get("sido")
+                    result["action_restriction_detail"] = {
+                        "road_conditions": assess_road_conditions(_road_side),
+                        "building_line": building_line_setback(_road_side),
+                        "gosi_info": gosi_info(_sido2, _sigungu2),
+                    }
+                except Exception:  # noqa: BLE001 — 보강 실패는 무손상(graceful)
+                    pass
+
             # 개별공시지가 (VWORLD NED)
             if isinstance(price_data, dict) and price_data:
                 result["official_prices"] = [price_data]
