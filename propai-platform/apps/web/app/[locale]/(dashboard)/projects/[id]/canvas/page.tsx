@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight } from "lucide-react";
+import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight, MousePointerClick, ChevronDown } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -22,6 +22,7 @@ import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCa
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
@@ -36,6 +37,8 @@ export default function SiteCanvasPage() {
   const id = params?.id as string;
   const site = useProjectContextStore((s) => s.siteAnalysis);
   const [tab, setTab] = useState<TabKey>("land");
+  // 필지 선택/변경 패널(지도 클릭선택+검색+엑셀) — 부지 미확정 시 기본 펼침, 확정 후 접힘.
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const ssotParcels = site?.parcels ?? null;
   const effArea = effectiveLandAreaSqm(site);
@@ -67,11 +70,19 @@ export default function SiteCanvasPage() {
     );
   }
 
+  // 부지 미확정 — SiteCanvas에서 바로 필지를 검색/지도클릭/엑셀로 선택(SSOT 기록 → 아래 분석 자동 채움).
   if (!site?.address && !site?.pnu && mapAddresses.length === 0) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center text-sm text-[var(--text-secondary)]">
-        부지(주소/필지)를 먼저 분석하면 지도 단일창이 채워집니다 —{" "}
-        <Link href={proj("site-analysis")} className="ml-1 font-bold text-[var(--accent-strong)]">부지분석으로 →</Link>
+      <div className="mx-auto max-w-2xl py-10">
+        <div className="mb-4 text-center">
+          <p className="inline-flex items-center gap-1.5 text-lg font-black text-[var(--text-primary)]">
+            <MapIcon className="size-5 text-[var(--accent-strong)]" aria-hidden /> 지도 단일창 — 부지 선택
+          </p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            주소 검색·지도 클릭·엑셀로 필지를 선택하면 한 화면에서 분석이 채워집니다(다필지 통합 지원).
+          </p>
+        </div>
+        <GlobalAddressSearch placeholder="주소·지번을 검색하거나 지도에서 필지를 클릭하세요" />
       </div>
     );
   }
@@ -89,12 +100,31 @@ export default function SiteCanvasPage() {
             </span>
           )}
         </p>
-        <ParcelExportButton
-          parcels={ssotParcels?.map((p) => ({ pnu: p.pnu, address: p.address }))}
-          address={site?.address}
-          pnu={site?.pnu}
-        />
+        <div className="flex items-center gap-2">
+          <button onClick={() => setPickerOpen((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition ${
+              pickerOpen ? "border-[var(--accent-strong)] text-[var(--accent-strong)]"
+                : "border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"}`}>
+            <MousePointerClick className="size-3.5" aria-hidden /> 필지 선택/변경
+            <ChevronDown className={`size-3 transition ${pickerOpen ? "rotate-180" : ""}`} aria-hidden />
+          </button>
+          <ParcelExportButton
+            parcels={ssotParcels?.map((p) => ({ pnu: p.pnu, address: p.address }))}
+            address={site?.address}
+            pnu={site?.pnu}
+          />
+        </div>
       </div>
+
+      {/* 필지 선택/변경(지도 클릭선택+검색+엑셀, SSOT 기록 → 카드·지도 자동 갱신) */}
+      {pickerOpen && (
+        <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-soft)] p-3">
+          <GlobalAddressSearch
+            initialAddress={site?.address || undefined}
+            placeholder="주소·지번 검색 또는 지도에서 필지 클릭(다필지 통합)"
+          />
+        </div>
+      )}
 
       {/* 2분할: 좌 요약 탭 rail + 우 지도 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[400px_1fr]">
