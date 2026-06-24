@@ -85,9 +85,19 @@ class GosiSearchService:
         except Exception as e:  # noqa: BLE001
             logger.warning("법제처 고시 검색 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
             return {"available": False, "reason": "법제처 API 호출 실패", "results": []}
-        items = ((data.get("AdmRulSearch") or {}).get("admrul")) or []
+        # 법제처 DRF 응답 루트키 방어(JSON 구조 변형: AdmRulSearch/admRulSearch/LawSearch …).
+        root = {}
+        for rk in ("AdmRulSearch", "admRulSearch", "LawSearch", "admrulSearch"):
+            if isinstance(data.get(rk), dict):
+                root = data[rk]
+                break
+        items = root.get("admrul") or root.get("law") or data.get("admrul") or []
         if isinstance(items, dict):
             items = [items]
+        if not items:
+            # 진단: 빈 결과 시 실제 최상위/루트 키를 노출(라이브 구조 파악·무목업 정직).
+            logger.info("법제처 고시 검색 0건", query=query, top_keys=list(data.keys())[:6],
+                        root_keys=list(root.keys())[:8] if root else [])
         results = []
         for it in items[:max_results]:
             name = it.get("행정규칙명") or it.get("법령명한글")

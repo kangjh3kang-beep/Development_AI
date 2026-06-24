@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import structlog
@@ -87,10 +88,18 @@ class LegalDiscoveryService:
             url = _reg.build_ordinance_url(law)
             art = ""
         else:  # 법령(기본)
-            rec = LegalHub.by_article(law, article)
+            # ★다중 조문 분리(LLM이 "제76조, 제77조, 제78조"처럼 묶어 반환) — 각각 정본 대조해 하나라도
+            #   등재되면 verified_ssot로 인정(해당 매칭 조문·개념키 채택). 정본 매칭 정확도↑.
+            arts = [a.strip() for a in re.split(r"[,/·;]|및|과|와", str(article or "")) if a.strip()]
+            rec = LegalHub.by_article(law, article)  # 원본(단일/첫시도) 기본
+            for a in arts:
+                r = LegalHub.by_article(law, a)
+                if r.get("key"):
+                    rec = r
+                    break
             registry_key = rec.get("key")
             url = rec.get("url")
-            art = rec.get("article") or (article or "")
+            art = rec.get("article") or (arts[0] if arts else (article or ""))
         return {
             "law": law,
             "article": art,

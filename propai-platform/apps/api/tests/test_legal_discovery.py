@@ -60,3 +60,16 @@ def test_gosi_and_ordinance_category_routing(monkeypatch):
     assert "자치법규" in unquote(ord_["url"])  # 조례 = law.go.kr/자치법규
     # 지역 고시(토지이음) 동반 — gosi_info는 list_url 키.
     assert out["regional_gosi"] is not None and "eum.go.kr" in (out["regional_gosi"].get("list_url") or "")
+
+
+def test_multi_article_split_matches_registry(monkeypatch):
+    """LLM이 '제76조, 제77조, 제78조'처럼 묶어 반환해도 분리해 정본 매칭 → verified_ssot."""
+    svc = LegalDiscoveryService()
+    mock = [{"law": "국토의 계획 및 이용에 관한 법률", "article": "제76조, 제77조, 제78조",
+             "category": "법령", "reason": "용도지역", "importance": "core", "confidence": 0.95}]
+    async def fake(_c): return mock
+    monkeypatch.setattr(svc, "_llm_search", fake)
+    out = _run(svc.discover({}))
+    c = out["core_laws"][0]
+    assert c["verification"] == "verified_ssot" and c["registry_key"]  # 분리 매칭으로 등재 인정
+    assert c["article"] in ("제76조", "제77조", "제78조")  # 매칭된 단일 조문 채택
