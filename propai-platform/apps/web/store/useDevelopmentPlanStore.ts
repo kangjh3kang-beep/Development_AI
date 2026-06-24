@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { createDebouncedStorage } from "@/lib/debounced-storage";
 
 /**
  * 주변 개발계획(신설역·구역지정·도로 등) 스토어 — 프로젝트별 영속.
@@ -111,6 +112,6 @@ export const useDevelopmentPlanStore = create<State>()(
           };
         }),
     }),
-    { name: "propai-development-plan" },
+    { name: "propai-development-plan", storage: createDebouncedStorage<State>() },
   ),
 );

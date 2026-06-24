@@ -12,6 +12,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { createDebouncedStorage } from "@/lib/debounced-storage";
 
 import {
   computeClosure,
@@ -540,6 +541,7 @@ export const useOrchestrationStore = create<OrchestrationState>()(
     {
       name: "propai-orchestration",
       version: 1,
+      storage: createDebouncedStorage(),
       // 영속 대상 = customProfiles·byProject·activeProfileId만(§2-D).
       // 실행 휘발물(plan·nodeResult·picked·nodeOrder·runMode)은 persist 제외 → 새로고침 시 초기화.
       partialize: (state) => ({
