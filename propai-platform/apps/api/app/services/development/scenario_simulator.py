@@ -175,12 +175,27 @@ class DevelopmentScenarioSimulator:
             special_gate.get("developability") in {"BLOCKED"}
             or special_gate.get("resolvable") in {"NO"}
         ):
-            # 후보생성 중단 — 개발규모/시나리오 미산정(정직). 게이트·정직고지만 반환.
-            #   ★recommended는 null이 아닌 '정직 고지' 형태로 유지(프론트 contract 보존·회귀0):
-            #     scheme="개발 불가(특이부지)"·est_far=None으로 가짜 개발규모를 산정하지 않는다.
+            # 후보생성 중단 — 가짜 개발규모/시나리오는 미산정(무목업). 다만 ★사용자 피드백:
+            #   '개발 불가'로 끝내지 말고 인허가·도시계획 변경 등 '개발가능 방안(선행절차)'을 제시한다.
+            #   special_parcel이 이미 보유한 resolution_paths·permit_prerequisites·alternatives·법령을
+            #   추천 '방안'으로 surface(가짜 규모는 여전히 미산정 — 정직).
             disclosure = special_gate.get("honest_disclosure") or (
-                "통상 절차로 해결 불가능한 제약이 포함되어 개발방식 시나리오를 산정하지 않습니다."
+                "통상 절차로는 즉시 개발이 어려운 제약이 포함됩니다."
             )
+            # 해결 방안 집계(게이트 resolution_paths + 각 factor permit_prerequisites + alternatives).
+            methods, ref_keys, alternatives = self._resolution_from_gate(special_gate)
+            try:
+                from app.services.legal.legal_reference_registry import get_legal_refs
+                method_refs = get_legal_refs(ref_keys) if ref_keys else []
+            except Exception:  # noqa: BLE001
+                method_refs = []
+            # 추천: '개발 불가'가 아니라 '선행절차(도시계획 변경·인허가) 통과 시 개발 가능' 방안 제시.
+            has_path = bool(methods)
+            rec_scheme = ("특이부지 개발 — 선행절차(도시계획 변경·인허가) 방안" if has_path
+                          else "현 제약상 통상 개발 불가 — 대안 검토")
+            rec_reason = (disclosure + " 다만 아래 선행절차(인허가·도시계획 변경 등)를 거치면 개발이 가능할 수 있습니다."
+                          if has_path else
+                          disclosure + " 통상 개발경로가 막혀 있어, 대안(필지 제외·용도 재검토)을 검토하세요.")
             return {
                 "site": {
                     "address": address, "region": self._region(address),
@@ -190,16 +205,21 @@ class DevelopmentScenarioSimulator:
                     "special_parcel_gate": special_gate,
                 },
                 "special_parcel_gate": special_gate,
-                "scenarios": [],  # 가짜 시나리오 미생성(무목업)
+                "scenarios": [],  # 가짜 개발규모 시나리오는 미생성(무목업)
                 "recommended": {
-                    "scheme": "개발 불가(특이부지)",
+                    "scheme": rec_scheme,
                     "est_far": None,
-                    "reason": disclosure,
+                    "reason": rec_reason,
                 },
+                # ★개발가능 방안(선행절차) — 인허가·도시계획 변경 등 actionable 경로 + 법령(verified).
+                "resolution_methods": methods,
+                "resolution_legal_refs": method_refs,
+                "alternatives": alternatives,
+                "developable_via_precondition": has_path,
                 "fallback_simple_build": None,
                 "magdo_summary": None,
                 "honest_disclosure": disclosure,
-                "blocked": True,
+                "blocked": not has_path,  # 선행절차 경로가 있으면 완전 blocked 아님(조건부 가능).
             }
 
         # 인접성: 통합개발(합필/일단지)은 필지가 맞닿아야 가능
@@ -605,6 +625,29 @@ class DevelopmentScenarioSimulator:
             return round(sum(a * f for a, f in w) / tot, 1) if tot else None
         fars = [f for _, f in w]
         return round(sum(fars) / len(fars), 1)
+
+    @staticmethod
+    def _resolution_from_gate(special_gate: dict) -> tuple[list[str], list[str], list[str]]:
+        """특이부지 게이트에서 '개발가능 방안(선행절차)'·법령키·대안을 집계.
+
+        ★사용자 피드백: '개발 불가'로 끝내지 말고 인허가·도시계획 변경 등 개발가능 방법을 제시.
+        special_parcel이 보유한 resolution_paths(게이트)·permit_prerequisites(각 factor)·alternatives를
+        중복 없이 모은다. 반환: (methods, legal_ref_keys, alternatives).
+        """
+        methods: list[str] = []
+        ref_keys: list[str] = []
+        for p in (special_gate.get("resolution_paths") or []):
+            if p and p not in methods:
+                methods.append(p)
+        for f in (special_gate.get("factors") or []):
+            for pre in (f.get("permit_prerequisites") or []):
+                if pre and pre not in methods:
+                    methods.append(pre)
+            for k in (f.get("legal_ref_keys") or []):
+                if k and k not in ref_keys:
+                    ref_keys.append(k)
+        alternatives = [a for a in (special_gate.get("alternatives") or []) if a]
+        return methods, ref_keys, alternatives
 
     # 평수 티어 경계(㎡) — scenario 면적 게이트 상수와 정합(SINGLE_SMALL_MAX_SQM=1000 등 재사용 의미).
     #   T1<165(50평) T2<330(100평) T3<1000(300평) T4<3300(1000평) T5≥3300.
