@@ -113,17 +113,31 @@ def _build_market() -> SpecialistAgent:
 # ── 심의: 심의분석엔진(deliberation-review) BFF 도메인 — 인·허가/심의 프로세스 ──
 
 def _stage_basis(stage: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    """단계 criteria의 legal_basis(법령명·조항·요지) + 1차출처 링크를 집계(설명가능성 전파, 중복 제거)."""
+    """단계 criteria의 legal_basis(법령명·조항·요지) + 1차출처 링크를 집계(설명가능성 전파, 중복 제거).
+
+    ★법령 단일경유(#2): 심의엔진 인용(law§article)을 LegalHub로 통합한다 — registry(정본)의
+    검증 URL(law.go.kr)·개념키를 교차 부착해, 엔진 인덱스와 분석 인덱스가 동일 진실원천을 가리키게 한다.
+    링크는 registry 검증 URL을 우선(verified)하고, 없으면 엔진 1차출처(source)를 폴백(무날조).
+    """
+    from app.services.legal.legal_hub import LegalHub
+
     basis: list[dict[str, Any]] = []
     links: list[str] = []
     for c in (stage.get("criteria") or []):
         for lb in (c.get("legal_basis") or []):
-            entry = {"law": lb.get("law"), "article": lb.get("article"), "summary": lb.get("summary")}
+            law = lb.get("law")
+            article = lb.get("article")
+            hub = LegalHub.by_article(law, article) if law else {}
+            entry = {
+                "law": law, "article": article, "summary": lb.get("summary"),
+                "url": hub.get("url"), "url_status": hub.get("url_status"), "key": hub.get("key"),
+            }
             if entry not in basis:
                 basis.append(entry)
-            src = lb.get("source")
-            if src and src not in links:
-                links.append(src)
+            # registry 검증 URL 우선, 없으면 엔진 source 폴백(둘 다 없으면 링크 없음 — 가짜 금지).
+            url = hub.get("url") if hub.get("url_status") == "verified" else (lb.get("source") or None)
+            if url and url not in links:
+                links.append(url)
     return basis, links
 
 
