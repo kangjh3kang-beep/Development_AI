@@ -191,6 +191,8 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "bcr_law":            _ref(_KOOKTO, "제77조", "용도지역의 건폐율"),
     "far_law":            _ref(_KOOKTO, "제78조", "용도지역의 용적률"),
     "district_unit_plan": _ref(_KOOKTO, "제52조", "지구단위계획의 내용"),
+    "mixed_zone_rule":    _ref(_KOOKTO, "제84조", "둘 이상의 용도지역·지구·구역에 걸치는 대지에 대한 적용 기준"),
+    "mixed_zone_rule_dec": _ref(_KOOKTO_DEC, "제94조", "2 이상의 용도지역에 걸치는 토지에 대한 적용기준"),
     # ── 국토계획법 시행령 (실효 한도: 별표 위임) ──
     "bcr_limit":          _ref(_KOOKTO_DEC, "제84조", "용도지역 안에서의 건폐율"),
     "far_limit":          _ref(_KOOKTO_DEC, "제85조", "용도지역 안에서의 용적률"),

@@ -509,6 +509,19 @@ class LandInfoService:
                 except Exception:  # noqa: BLE001 — 보강 실패는 무손상(graceful)
                     pass
 
+                # ★혼재 용도지역(둘 이상 용도지역에 걸치는 대지) 면적가중 건폐/용적(국토계획법 제84조).
+                #   zone_type_secondary가 있으면 두 용도지역의 한도를 면적가중 평가(면적 미확보 시 정직).
+                try:
+                    _sec = result.get("zone_type_secondary")
+                    if _sec and result.get("zone_type") and _sec != result.get("zone_type"):
+                        from app.services.zoning.legal_zone_limits import mixed_zone_limits
+                        result["mixed_zone_assessment"] = mixed_zone_limits([
+                            {"zone_type": result.get("zone_type")},
+                            {"zone_type": _sec},
+                        ])
+                except Exception:  # noqa: BLE001 — 혼재 평가 실패는 무손상
+                    pass
+
             # 개별공시지가 (VWORLD NED)
             if isinstance(price_data, dict) and price_data:
                 result["official_prices"] = [price_data]
