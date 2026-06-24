@@ -76,7 +76,11 @@ class AihubSeedService:
                 return {"available": False, "reason": "aihubshell CLI 다운로드 실패"}
             args = ["-mode", "l"] + (["-datasetkey", str(dataset_key)] if dataset_key else [])
             rc, out = await self._run(shell, args, tmp, timeout=120)
-            return {"available": rc == 0, "dataset_key": dataset_key, "rc": rc, "output": out[:8000]}
+            # 건축/도면/설계 관련 라인은 항상 추려 반환(전체 목록은 길어 절단될 수 있어 키워드 우선 노출).
+            kw = [ln.strip() for ln in out.splitlines()
+                  if any(k in ln for k in ("건축", "도면", "설계", "평면", "단면", "입면"))]
+            return {"available": rc == 0, "dataset_key": dataset_key, "rc": rc,
+                    "matched": kw[:40], "output": out[:60000]}
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
