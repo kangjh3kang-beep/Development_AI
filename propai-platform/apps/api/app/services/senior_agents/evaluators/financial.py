@@ -14,6 +14,7 @@ from app.services.senior_agents.evaluators.base import (
     WARN,
     RuleEvaluation,
     num,
+    num_or,
 )
 
 # 한국 PF 자기자본비율 단계 규제(2024 부동산 PF 제도 개선방안) — 연도별 기준.
@@ -58,7 +59,7 @@ def evaluate_financial(inputs: dict) -> list[RuleEvaluation]:
             rule_id="fin.development_spread", label="Development Spread", value=round(spread * 10000, 1),
             unit="bp", verdict=verdict, threshold="≥150bp 권장 (음수 BLOCK)",
             basis="부동산개발 표준 수익성 지표(Yield-on-Cost·cap rate spread)",
-            detail=f"YoC {yoc*100:.2f}% − 시장 cap {cap*100:.2f}% = {spread*10000:.0f}bp"))
+            detail=f"YoC {yoc*100:.2f}% − 시장 cap {cap*100:.2f}% = {spread*10000:.1f}bp"))
 
     # 자기자본비율 = 자기자본 / 총사업비. 연도 규제(26/27/28=10/15/20%) 미달 WARN.
     equity, year = num(inputs, "equity"), num(inputs, "project_year")
@@ -69,14 +70,15 @@ def evaluate_financial(inputs: dict) -> list[RuleEvaluation]:
         out.append(RuleEvaluation(
             rule_id="fin.equity_ratio_reg", label="자기자본비율", value=round(ratio * 100, 1), unit="%",
             verdict=WARN if ratio < req else PASS, threshold=f"≥{req*100:.0f}% ({yr_txt})",
-            basis="금융당국 부동산 PF 제도 개선방안(2024) 자기자본비율 단계 상향(2026~2028)",
+            basis=("금융당국 부동산 PF 제도 개선방안(2024) 자기자본비율 단계 유도기준"
+                   "(인센티브 차등·강제 최저선 아님, 2026~2028)"),
             detail=f"자기자본 {equity:,.0f} / 총사업비 {tc:,.0f} = {ratio*100:.1f}% vs 기준 {req*100:.0f}%"))
 
     # Debt Yield = NOI / 대출액. 최소(기본 8%) 미달 WARN.
     loan = num(inputs, "loan_amount")
     if noi is not None and loan and loan > 0:
         dy = noi / loan
-        dy_min = num(inputs, "debt_yield_min") or DEBT_YIELD_MIN_DEFAULT
+        dy_min = num_or(inputs, "debt_yield_min", DEBT_YIELD_MIN_DEFAULT)
         out.append(RuleEvaluation(
             rule_id="fin.debt_sizing", label="Debt Yield", value=round(dy * 100, 2), unit="%",
             verdict=WARN if dy < dy_min else PASS, threshold=f"≥{dy_min*100:.0f}%",

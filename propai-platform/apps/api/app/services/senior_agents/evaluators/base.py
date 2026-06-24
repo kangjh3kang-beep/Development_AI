@@ -48,6 +48,12 @@ def num(inputs: dict[str, Any], key: str) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def num_or(inputs: dict[str, Any], key: str, default: float) -> float:
+    """num()이되 결측만 default(명시된 0 등 falsy 유효값은 보존 — `or DEFAULT` falsy버그 차단)."""
+    v = num(inputs, key)
+    return default if v is None else v
+
+
 def worst_verdict(evaluations: list[RuleEvaluation]) -> str | None:
     """평가 집합의 최악 판정(없으면 None) — 종합 게이트 표기용."""
     if not evaluations:

@@ -7,7 +7,7 @@ from app.services.senior_agents.evaluators import (
     evaluate_financial,
     worst_verdict,
 )
-from app.services.senior_agents.evaluators.base import num
+from app.services.senior_agents.evaluators.base import num, num_or
 
 
 def _by_id(evals):
@@ -63,6 +63,13 @@ def test_missing_or_invalid_inputs_skip_no_mockup():
     assert num({"x": True}, "x") is None
     assert num({"x": float("nan")}, "x") is None
     assert num({"x": "1.5"}, "x") == 1.5
+
+
+def test_num_or_preserves_explicit_zero():
+    # ★전역전파방지: 명시된 0(falsy 유효값)은 default로 덮이지 않음(or 버그 차단)
+    assert num_or({"x": 0}, "x", 0.08) == 0.0
+    assert num_or({}, "x", 0.08) == 0.08          # 결측만 default
+    assert num_or({"x": "bad"}, "x", 0.08) == 0.08  # 비수치=결측 취급
 
 
 def test_worst_verdict():
