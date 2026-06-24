@@ -51,12 +51,22 @@ class AihubSeedService:
             return None
 
     async def _run(self, shell: Path, args: list[str], cwd: Path, timeout: int = 1800) -> tuple[int, str]:
-        """aihubshell 실행(apikey 주입). (returncode, 출력)."""
+        """aihubshell 실행(apikey 주입). (returncode, 출력).
+
+        ★한국 프록시(AIHUB_PROXY) 지정 시 curl(aihubshell 내부)이 그 IP로 경유 — AI Hub의 해외 IP
+        다운로드 차단(클라우드 IP 502)을 한국 ISP 경유로 우회. 미지정 시 직결(다운로드는 차단될 수 있음).
+        """
+        from app.core.config import settings as _s
         key = self._key()
         cmd = ["bash", str(shell), *args, "-aihubapikey", key]
+        env = dict(os.environ)
+        proxy = (os.getenv("AIHUB_PROXY") or getattr(_s, "AIHUB_PROXY", "") or "").strip()
+        if proxy:
+            env["http_proxy"] = env["https_proxy"] = env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(cwd), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                *cmd, cwd=str(cwd), env=env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             return proc.returncode or 0, (out or b"").decode("utf-8", "replace")

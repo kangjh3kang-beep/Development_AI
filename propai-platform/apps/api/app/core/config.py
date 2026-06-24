@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     #   건축 도면 데이터(48,033장) 등을 design_ingest 시드로 자동 다운로드·인제스트.
     AIHUB_API_KEY: str = ""
     AIHUB_BASE_URL: str = "https://api.aihub.or.kr"
+    # ★AI Hub 다운로드는 한국 ISP IP만 허용(클라우드/해외 IP 502 차단). 한국 프록시(http(s)://host:port)
+    #   를 지정하면 aihubshell 다운로드를 그 IP로 경유한다(목록은 비차단이라 프록시 불필요).
+    AIHUB_PROXY: str = ""
 
     EPD_KOREA_API_KEY: str = ""
     EPD_KOREA_BASE_URL: str = "https://www.epd.or.kr/api"
