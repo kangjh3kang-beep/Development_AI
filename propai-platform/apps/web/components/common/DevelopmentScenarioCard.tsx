@@ -56,6 +56,12 @@ type SimResult = {
   };
   scenarios: Scenario[];
   recommended: { scheme: string; est_far?: number | null; reason?: string };
+  // ★특이부지 '개발 불가' 대신 개발가능 방안(인허가·도시계획 변경 선행절차) 제시.
+  resolution_methods?: string[];
+  resolution_legal_refs?: { key: string; law_name: string; article?: string | null; url?: string | null; url_status?: string }[];
+  alternatives?: string[];
+  developable_via_precondition?: boolean;
+  honest_disclosure?: string;
   magdo_summary?: MagdoSummary | null;
   ai?: { generated?: boolean; summary?: string; best_scheme?: string; why?: string; alternatives?: string[]; cautions?: string[] } | null;
   pyeong_classification?: {
@@ -179,6 +185,44 @@ export function DevelopmentScenarioCard({
               </ul>
             )}
           </div>
+
+          {/* ★특이부지 개발가능 방안(선행절차) — '개발 불가' 대신 인허가·도시계획 변경 경로 제시 */}
+          {(result.resolution_methods?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-amber-500">
+                <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 개발가능 방안(선행절차)
+              </p>
+              {result.honest_disclosure && (
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">{result.honest_disclosure}</p>
+              )}
+              <ol className="mt-2 space-y-1 text-[11px] leading-relaxed text-[var(--text-primary)]">
+                {result.resolution_methods!.map((m, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <span className="grid size-4 shrink-0 place-items-center rounded-full bg-amber-500/20 text-[10px] font-black text-amber-500">{i + 1}</span>
+                    <span>{m}</span>
+                  </li>
+                ))}
+              </ol>
+              {(result.resolution_legal_refs?.length ?? 0) > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {result.resolution_legal_refs!.map((r) => {
+                    const label = `${r.law_name}${r.article ? ` ${r.article}` : ""}`;
+                    return r.url && r.url_status === "verified" ? (
+                      <a key={r.key} href={r.url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-0.5 rounded-md border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-strong)]/10">
+                        {label} <Link2 className="size-2.5" aria-hidden />
+                      </a>
+                    ) : (
+                      <span key={r.key} className="rounded-md border border-[var(--line)] px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">{label}</span>
+                    );
+                  })}
+                </div>
+              )}
+              {(result.alternatives?.length ?? 0) > 0 && (
+                <p className="mt-2 text-[10px] text-[var(--text-hint)]">대안: {result.alternatives!.join(" · ")}</p>
+              )}
+            </div>
+          )}
 
           {/* ★평수 티어 개발방식 매트릭스 — 총평수별 가능/조건부/불가 상세 분류 */}
           {result.pyeong_classification && (() => {
