@@ -154,7 +154,7 @@ async def predict_design_change(req: PredictRequest) -> dict[str, Any]:
     if not zone_type:
         data_basis += " · 용도지역 미상(법규초과 예측 제한)"
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "address": req.address,
         "zone_type": zone_type or None,
@@ -169,3 +169,65 @@ async def predict_design_change(req: PredictRequest) -> dict[str, Any]:
         "data_gaps": data_gaps,
         "sources": sources or ["사용자 입력 설계 파라미터"],
     }
+
+    # 표준 근거 블록(#5): 실제 산출한 한도·리스크 집계값만 items로(무목업·graceful).
+    # 사용한 법정한도(limits_used)와 적용 법령(건폐율 §77·용적률 §78·일조높이 §61·
+    # 주차 §19·피난 §49) 키만 부착한다. 빈 블록은 만들지 않는다.
+    try:
+        from app.services.data_validation.evidence_contract import build_evidence_block
+
+        limits = prediction.get("limits_used") or {}
+        ev_items: list[dict[str, Any]] = []
+        legal_keys: list[str] = []
+
+        # 건폐율 법정한도(매핑된 경우만)
+        if limits.get("max_bcr") is not None:
+            ev_items.append({
+                "label": "법정 건폐율 한도",
+                "value": f"{limits['max_bcr']}%",
+                "basis": f"용도지역 '{zone_type or '미상'}' — 국토계획법 §77/건축법 §55",
+                "legal_ref_key": "bcr_law",
+            })
+            legal_keys.append("bcr_law")
+        # 용적률 법정한도
+        if limits.get("max_far") is not None:
+            ev_items.append({
+                "label": "법정 용적률 한도",
+                "value": f"{limits['max_far']}%",
+                "basis": f"용도지역 '{zone_type or '미상'}' — 국토계획법 §78/건축법 §56",
+                "legal_ref_key": "far_law",
+            })
+            legal_keys.append("far_law")
+        # 높이제한(무제한이면 None — 그 경우 부착 안 함)
+        if limits.get("max_height_m") is not None:
+            ev_items.append({
+                "label": "법정 높이제한",
+                "value": f"{limits['max_height_m']}m",
+                "basis": "일조 등 확보를 위한 높이제한 — 건축법 §61",
+                "legal_ref_key": "daylight_height",
+            })
+            legal_keys.append("daylight_height")
+        # 리스크 집계(실제 산출한 건수만)
+        ev_items.append({
+            "label": "예측 리스크 집계",
+            "value": f"고위험 {summary.get('high', 0)} / 주의 {summary.get('warn', 0)} / 참고 {summary.get('info', 0)}건",
+            "basis": "설계 파라미터 vs 법정한도·필수요소·정량정합 룰 평가(결정적)",
+        })
+        # 주차/피난 관련 리스크가 실제로 잡혔으면 해당 법령 키 부착
+        risk_items = {r.get("item", "") for r in risks}
+        if any("주차" in it for it in risk_items):
+            legal_keys.append("parking_min")
+        if any(("피난" in it) or ("계단" in it) for it in risk_items):
+            legal_keys.append("evacuation")
+
+        if ev_items:
+            result["evidence"] = build_evidence_block(
+                items=ev_items,
+                legal_ref_keys=legal_keys or None,
+                sigungu=None,
+                sources=sources or None,
+            )
+    except Exception:  # noqa: BLE001 — 근거 블록 실패는 기존 결과를 막지 않음.
+        pass
+
+    return result
