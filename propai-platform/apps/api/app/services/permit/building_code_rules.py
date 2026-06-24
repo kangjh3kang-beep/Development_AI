@@ -17,8 +17,16 @@ RASE 방법론 기반: 각 법규 조항을 Requirement/Applicability/Selection/
 from __future__ import annotations
 
 import math
-from enum import StrEnum
+import sys
 from typing import Any
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:  # Python 3.10 호환성 백포트(코드베이스 공통 패턴) — 프로덕션 3.12엔 무영향.
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 from pydantic import BaseModel
 

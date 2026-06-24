@@ -304,3 +304,70 @@ async def buildable_envelope(req: EnvelopeRequest):
     except Exception:  # noqa: BLE001 — 근거 블록 실패해도 인벨로프 결과 무손상
         pass
     return result
+
+
+class PlacementRequest(BaseModel):
+    land_area_sqm: float = 0
+    zone: str = ""
+    address: str = ""                       # 위도 추정(동지 일조) — 미지정 시 37.5
+    land_width_m: float | None = None
+    land_depth_m: float | None = None
+    floor_height_m: float = 3.0
+    pnu: str | None = None                   # 주면 VWorld 실측 폴리곤으로 치수 정밀화
+    geometry: dict | None = None
+    latitude: float | None = None
+    priority: str = "balanced"               # balanced | daylight | density
+
+
+@router.post("/placement")
+async def solar_placement(req: PlacementRequest):
+    """일조·건물배치 정밀분석 — 토지모양·향·층별높이 기반 다각도 최적 배치안.
+
+    8방위 동지 일조시간(일조권 충족)·배치 대안(판상형/탑상형/중정형)별 남향세대·평균 일조·
+    밀도·효율을 산정하고 우선순위(balanced/daylight/density)별 최적안을 제시한다.
+    PNU/geometry 제공 시 VWorld 실측 폴리곤으로 대지 치수(W×D)를 정밀 반영(부정형 포함).
+    """
+    from app.services.site_score.solar_envelope_service import dims_from_polygon
+    from app.services.site_score.solar_placement_service import analyze_solar_placement
+
+    width, depth, area = req.land_width_m, req.land_depth_m, req.land_area_sqm
+    geom_source = "입력값/근사"
+    geometry = req.geometry
+
+    if req.pnu and geometry is None:
+        try:
+            from app.services.external_api.vworld_service import VWorldService
+            vw = VWorldService()
+            parcel = await vw.get_parcel_by_pnu(req.pnu)
+            geometry = (parcel or {}).get("geometry")
+        except Exception:  # noqa: BLE001
+            geometry = None
+
+    if geometry is not None:
+        dims = dims_from_polygon(geometry)
+        if dims:
+            width, depth = dims["width_m"], dims["depth_m"]
+            if not area or area <= 0:
+                area = dims["area_sqm"]
+            geom_source = f"VWorld 실측 폴리곤(부정형 {round(dims['irregularity'] * 100, 1)}%)"
+
+    if not area or area <= 0:
+        return {"error": "대지면적 또는 PNU/geometry가 필요합니다."}
+
+    result = analyze_solar_placement(
+        land_area_sqm=area, zone=req.zone, address=req.address,
+        land_width_m=width, land_depth_m=depth,
+        floor_height_m=req.floor_height_m,
+        latitude=req.latitude, priority=req.priority,
+    )
+    if isinstance(result, dict) and not result.get("error"):
+        result["geometry_source"] = geom_source
+        # 근거·법령(일조권·용적률·건폐율) 공용 블록 — 다른 site-score 엔드포인트와 동일 패턴.
+        try:
+            from app.services.legal.legal_reference_registry import get_legal_refs
+            result.setdefault("legal_refs", get_legal_refs(
+                ["daylight_height", "daylight_height_dec", "far_limit", "bcr_limit"]
+            ))
+        except Exception:  # noqa: BLE001 — 근거 블록 실패해도 결과 무손상
+            pass
+    return result
