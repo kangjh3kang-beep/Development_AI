@@ -27,6 +27,8 @@ import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
+import { BuildCostCard } from "@/components/projects/BuildCostCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 
@@ -169,6 +171,14 @@ export default function SiteCanvasPage() {
             )}
             {tab === "regulation" && (
               <>
+                {site?.zoneCode && (site?.effectiveFarPct != null || site?.effectiveBcrPct != null) && (
+                  <VerificationBadge analysisType="site" context={{
+                    zone_type: site.zoneCode,
+                    effective_far: site.effectiveFarPct,
+                    effective_bcr: site.effectiveBcrPct,
+                    land_area_sqm: effArea,
+                  }} />
+                )}
                 <BuildableEnvelopeCard />
                 <RegulationDigestCard address={site?.address} />
                 <PermitGuideCard />
@@ -213,7 +223,9 @@ export default function SiteCanvasPage() {
                 ) : (
                   <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-xs text-[var(--text-secondary)]">수지 분석 전 — 수지 페이지에서 매출·원가·ROI를 산출하세요.</p>
                 )}
+                <BuildCostCard address={site?.address} landAreaSqm={effArea} zone={site?.zoneCode} />
                 <DrillCta to={proj("feasibility")}>수지 편집·민감도 상세</DrillCta>
+                <DrillCta to={proj("cost")}>BIM 적산·공사비 상세</DrillCta>
               </>
             )}
             {tab === "summary" && (
