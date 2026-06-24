@@ -46,6 +46,7 @@ export function KakaoMapControls({
   ready,
   onFullscreen,
   isFullscreen,
+  initialDistrict,
 }: {
   mapRef: { current: any };
   ready: boolean;
@@ -53,9 +54,11 @@ export function KakaoMapControls({
   onFullscreen?: () => void;
   /** 현재 풀스크린 여부 — 아이콘/라벨(확대↔축소) 전환. */
   isFullscreen?: boolean;
+  /** 지적편집도(용도지역 색면) 초기 ON 여부 — 통합 구획도뷰는 토지이음式 색면을 기본 표시. */
+  initialDistrict?: boolean;
 }) {
   const [mapType, setMapType] = useState<MapType>("ROADMAP");
-  const [district, setDistrict] = useState(false);
+  const [district, setDistrict] = useState(!!initialDistrict);
   const [measure, setMeasure] = useState<null | "distance" | "area">(null);
   const [measureText, setMeasureText] = useState("");
   const [rvOn, setRvOn] = useState(false);

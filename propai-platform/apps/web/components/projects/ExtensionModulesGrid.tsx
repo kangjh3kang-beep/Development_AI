@@ -79,7 +79,7 @@ const EXTENSION_MODULES: ExtensionModule[] = [
   { route: "operations", label: "자산 운영", code: "OPERATIONS", description: "준공 후 운영 KPI·유지보수·센서 현황 조회." },
   { route: "agent", label: "AI 분석", code: "AGENT", description: "AI 분석 콘솔 — 작업 지시·활동 로그.", demo: true },
   { route: "blockchain", label: "블록체인 원장", code: "BLOCKCHAIN", description: "기록 무결성·거래 원장 워크스페이스." },
-  { route: "multi-parcel", label: "다필지 통합", code: "MULTI-PARCEL", description: "복수 필지 합필·통합 개발 검토 화면.", demo: true },
+  { route: "multi-parcel", label: "다필지 통합", code: "MULTI-PARCEL", description: "복수 필지 통합 구획도(토지이음급)·면적가중 건폐/용적·통합 GFA·인접성 분석." },
 ];
 
 export function ExtensionModulesGrid({ locale, projectId }: { locale: string; projectId: string }) {

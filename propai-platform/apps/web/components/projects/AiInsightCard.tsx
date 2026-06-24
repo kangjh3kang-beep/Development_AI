@@ -10,6 +10,8 @@
 import { useEffect, useState } from "react";
 import { Sparkles, TrendingUp, AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 type AiInterp = { overall_summary?: string; risk_factors?: string; opportunity_factors?: string };
 type ZoningResp = { ai_interpretation?: AiInterp };
@@ -24,7 +26,14 @@ export function AiInsightCard({ address }: { address?: string | null }) {
   const [ai, setAi] = useState<AiInterp | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const key = address ? `propai_ai_insight_${hash(address.trim())}` : "";
+  // ★다필지 통합: SSOT 통합값을 읽어 /zoning/analyze에 전달 → AI 해석이 대표번지가 아니라
+  //   '통합 N필지' 기준으로 종합 판단(통합분석 근본해소).
+  const site = useProjectContextStore((s) => s.siteAnalysis);
+  const parcelCount = site?.parcelCount ?? 1;
+  const integratedArea = effectiveLandAreaSqm(site) ?? null;
+  const isMulti = (parcelCount ?? 1) > 1 && !!integratedArea && integratedArea > 0;
+  // 캐시 키에 필지수·통합면적 반영(통합/대표 결과 분리 캐시).
+  const key = address ? `propai_ai_insight_${hash(address.trim())}_${isMulti ? `m${parcelCount}_${Math.round(integratedArea!)}` : "s"}` : "";
 
   // 캐시 복원(재과금 방지).
   useEffect(() => {
@@ -38,7 +47,17 @@ export function AiInsightCard({ address }: { address?: string | null }) {
     setLoading(true); setError("");
     try {
       const r = await apiClient.post<ZoningResp>("/zoning/analyze", {
-        body: { address: address.trim() }, useMock: false, timeoutMs: 60000,
+        body: {
+          address: address.trim(),
+          // 다필지면 통합 컨텍스트 전달(대표번지 아닌 통합 N필지 기준 해석).
+          ...(isMulti ? {
+            parcel_count: parcelCount,
+            integrated_area_sqm: integratedArea,
+            integrated_far_pct: site?.effectiveFarPct ?? undefined,
+            integrated_bcr_pct: site?.effectiveBcrPct ?? undefined,
+          } : {}),
+        },
+        useMock: false, timeoutMs: 60000,
       });
       const interp = r?.ai_interpretation ?? null;
       if (interp && (interp.overall_summary || interp.risk_factors || interp.opportunity_factors)) {
@@ -61,6 +80,11 @@ export function AiInsightCard({ address }: { address?: string | null }) {
       <div className="flex items-center justify-between gap-2">
         <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
           <Sparkles className="size-4" aria-hidden /> AI 통합 해석
+          {isMulti && (
+            <span className="rounded-md bg-[var(--accent-strong)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+              통합 {parcelCount}필지 · {Math.round(integratedArea!).toLocaleString()}㎡
+            </span>
+          )}
         </p>
         <button onClick={run} disabled={loading}
           className="rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[11px] font-black text-white hover:opacity-90 disabled:opacity-50">
