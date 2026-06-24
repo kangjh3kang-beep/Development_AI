@@ -462,3 +462,32 @@ async def drawing_original_url(
     if not url:
         raise HTTPException(status_code=404, detail="원본 조회 URL을 생성할 수 없습니다.")
     return {"url": url, "expires_in": 600}
+
+
+# ── AI Hub 데이터 자동 다운로드 → 설계생성 시드 인제스트(총괄관리자 전용) ──
+class AihubSeedRequest(BaseModel):
+    dataset_key: str            # AI Hub 데이터셋 키
+    file_sn: str                # 파일 일련번호(info에서 확인)
+    max_files: int = 100        # tar 내 도면 인제스트 상한
+
+
+@router.post("/seed/aihub")
+async def seed_aihub(
+    req: AihubSeedRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """AI Hub 데이터셋 자동 다운로드 → design_drawings 시드 인제스트(설계생성 콜드스타트).
+
+    전제(일회성·관리자): AIHUB_API_KEY 시크릿 + 데이터셋 '활용신청 승인'. 이후 완전 자동.
+    무목업: 미설정·미승인·다운로드 실패는 정직 상태 반환(가짜 시드 금지). 총괄관리자 전용.
+    """
+    from app.services.billing.billing_service import is_super_admin
+    if not await is_super_admin(db, current.user_id):
+        raise HTTPException(status_code=403, detail="AI Hub 시드 인제스트는 총괄관리자 전용입니다.")
+    from app.services.design_ingest.aihub_seed_service import AihubSeedService
+    return await AihubSeedService().ingest_dataset(
+        req.dataset_key, req.file_sn,
+        max_files=max(1, min(req.max_files, 2000)),
+        tenant_id=str(current.tenant_id),
+    )

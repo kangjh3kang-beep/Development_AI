@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     MOLEG_API_KEY: str = ""
     MOLEG_BASE_URL: str = "http://www.law.go.kr/DRF"
 
+    # AI Hub(aihub.or.kr) 데이터 자동 다운로드 — apikey(마이페이지 발급) + 데이터셋 활용신청 승인 전제.
+    #   건축 도면 데이터(48,033장) 등을 design_ingest 시드로 자동 다운로드·인제스트.
+    AIHUB_API_KEY: str = ""
+    AIHUB_BASE_URL: str = "https://api.aihub.or.kr"
+
     EPD_KOREA_API_KEY: str = ""
     EPD_KOREA_BASE_URL: str = "https://www.epd.or.kr/api"
 
