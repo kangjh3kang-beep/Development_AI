@@ -1,137 +1,136 @@
-"""AI Hub(aihub.or.kr) 데이터 자동 다운로드 → design_ingest 시드 인제스트.
+"""AI Hub(aihub.or.kr) 자동 다운로드(aihubshell CLI) → design_ingest 시드 인제스트.
 
-사용자 확인: AI Hub는 자동 다운로드 API가 있다(aihubshell CLI가 래핑하는 REST).
-  - 데이터셋 정보/파일트리: GET {base}/info/{datasetkey}.do   (헤더 apikey)
-  - 파일 다운로드:        GET {base}/down/{datasetkey}.do?fileSn={fileSn}  (헤더 apikey) → tar(또는 파일)
-전제(일회성·관리자): ①AI Hub 계정 ②마이페이지 apikey 발급(AIHUB_API_KEY 시크릿) ③해당 데이터셋
-  '활용신청 승인'. 이후 본 서비스로 **완전 자동** 다운로드+인제스트(건축 도면 48,033장 등) → Qdrant
-  design_drawings(설계생성 콜드스타트 시드).
-무목업: apikey 미설정·승인 전·다운로드 실패는 정직 상태 반환(가짜 시드 금지). 도면류만 인제스트.
+★실제 메커니즘(사용자 제공 공식 문서): aihubshell CLI를 쓴다.
+  - CLI 받기: curl -o aihubshell https://api.aihub.or.kr/api/aihubshell.do  (+chmod +x)
+  - 목록:   aihubshell -mode l [-datasetkey {k}]            → 데이터셋/파일트리(파일명|용량|filekey)
+  - 다운로드: aihubshell -mode d -datasetkey {k} [-filekey {a,b}] -aihubapikey '{key}'
+            → zip parts 자동 병합·압축해제·아카이브 제거(다운 위치=실행 CWD). 미지정 filekey=전체.
+전제(일회성·관리자): apikey 발급(AIHUB_API_KEY 시크릿) + 데이터셋 '활용신청 승인'(완료).
+디스크 안전: 전체(TB) 대신 '특정 filekey 1~수개'만 임시폴더에 받아 도면 인제스트 후 정리(bounded).
+무목업: 키미설정·미승인·실패는 정직 상태(가짜 시드 금지).
 """
 from __future__ import annotations
 
-import io
+import asyncio
 import os
-import tarfile
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
-import httpx
 import structlog
-
-from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
-# 도면 인제스트 대상 확장자(이미지·PDF·CAD). 라벨링 JSON 등 비도면은 제외.
+_SHELL_URL = "https://api.aihub.or.kr/api/aihubshell.do"
 _DRAWING_EXT = (".pdf", ".png", ".jpg", ".jpeg", ".dwg", ".dxf", ".tif", ".tiff")
 
 
 class AihubSeedService:
-    """AI Hub 데이터셋 자동 다운로드 + 도면 인제스트(시드)."""
+    """AI Hub aihubshell CLI 자동 다운로드 + 도면 시드 인제스트."""
 
     @staticmethod
     def _key() -> str:
-        # ★관리자 시크릿(secret_store)은 런타임 os.environ에 반영된다 → os.getenv 우선(시작 캐시 settings 폴백).
+        # 관리자 시크릿(secret_store)은 런타임 os.environ 반영 → os.getenv 우선.
+        from app.core.config import settings
         return (os.getenv("AIHUB_API_KEY") or getattr(settings, "AIHUB_API_KEY", "") or "").strip()
 
-    @staticmethod
-    def _base() -> str:
-        return (os.getenv("AIHUB_BASE_URL") or getattr(settings, "AIHUB_BASE_URL", "")
-                or "https://api.aihub.or.kr").rstrip("/")
-
-    def _headers(self) -> dict[str, str]:
-        return {"apikey": self._key()}
-
-    async def dataset_info(self, dataset_key: str) -> dict[str, Any]:
-        """데이터셋 파일트리 조회(fileSn·이름) — 다운로드 전 무엇을 받을지 확인."""
-        if not self._key():
-            return {"available": False, "reason": "AIHUB_API_KEY 미설정(마이페이지 apikey 발급 필요)"}
+    async def _ensure_shell(self, workdir: Path) -> Path | None:
+        """aihubshell CLI를 workdir에 받고 실행권한 부여. 실패 시 None."""
+        shell = workdir / "aihubshell"
         try:
-            async with httpx.AsyncClient(timeout=30.0, headers=self._headers()) as c:
-                r = await c.get(f"{self._base()}/info/{dataset_key}.do")
+            import httpx
+            async with httpx.AsyncClient(timeout=60.0) as c:
+                r = await c.get(_SHELL_URL)
                 r.raise_for_status()
-                text = r.text
-            return {"available": True, "dataset_key": dataset_key, "raw": text[:4000]}
+                shell.write_bytes(r.content)
+            shell.chmod(0o755)
+            return shell
         except Exception as e:  # noqa: BLE001
-            logger.warning("aihub.info_failed", err=f"{type(e).__name__}: {str(e)[:120]}")
-            return {"available": False, "reason": "AI Hub info 호출 실패(승인·키 확인)"}
-
-    async def _download_bytes(self, dataset_key: str, file_sn: str) -> bytes | None:
-        """파일(보통 tar) 다운로드 → bytes. 미승인/오류 시 None(정직)."""
-        try:
-            async with httpx.AsyncClient(timeout=300.0, headers=self._headers()) as c:
-                r = await c.get(f"{self._base()}/down/{dataset_key}.do", params={"fileSn": file_sn})
-                r.raise_for_status()
-                ctype = (r.headers.get("content-type") or "").lower()
-                # 다운로드 실패는 보통 JSON/HTML 에러로 온다 → 도면 바이너리만 인정.
-                if "json" in ctype or "html" in ctype:
-                    logger.warning("aihub.down_not_binary", dataset=dataset_key, file_sn=file_sn, ctype=ctype)
-                    return None
-                return r.content
-        except Exception as e:  # noqa: BLE001
-            logger.warning("aihub.down_failed", err=f"{type(e).__name__}: {str(e)[:120]}")
+            logger.warning("aihub.shell_fetch_failed", err=f"{type(e).__name__}: {str(e)[:120]}")
             return None
 
-    async def ingest_dataset(
-        self, dataset_key: str, file_sn: str, *,
-        max_files: int = 100, tenant_id: str | None = None,
-    ) -> dict[str, Any]:
-        """데이터셋 파일(tar) 다운로드 → 도면 추출 → design_ingest 인제스트(최대 max_files).
+    async def _run(self, shell: Path, args: list[str], cwd: Path, timeout: int = 1800) -> tuple[int, str]:
+        """aihubshell 실행(apikey 주입). (returncode, 출력)."""
+        key = self._key()
+        cmd = ["bash", str(shell), *args, "-aihubapikey", key]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, cwd=str(cwd), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode or 0, (out or b"").decode("utf-8", "replace")
+        except asyncio.TimeoutError:
+            return 124, "시간초과(다운로드 지연 — 더 작은 filekey로 분할 권장)"
+        except Exception as e:  # noqa: BLE001
+            return 1, f"{type(e).__name__}: {str(e)[:160]}"
 
-        무목업: apikey/승인/다운로드 실패는 정직 상태. 도면 확장자만 인제스트(라벨 JSON 제외).
+    async def list_datasets(self, dataset_key: str | None = None) -> dict[str, Any]:
+        """데이터셋/파일트리 목록(aihubshell -mode l). datasetkey 주면 파일트리(filekey 확인)."""
+        if not self._key():
+            return {"available": False, "reason": "AIHUB_API_KEY 미설정"}
+        tmp = Path(tempfile.mkdtemp(prefix="aihub_"))
+        try:
+            shell = await self._ensure_shell(tmp)
+            if not shell:
+                return {"available": False, "reason": "aihubshell CLI 다운로드 실패"}
+            args = ["-mode", "l"] + (["-datasetkey", str(dataset_key)] if dataset_key else [])
+            rc, out = await self._run(shell, args, tmp, timeout=120)
+            return {"available": rc == 0, "dataset_key": dataset_key, "rc": rc, "output": out[:8000]}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    async def ingest_dataset(
+        self, dataset_key: str, file_key: str | None = None, *,
+        max_files: int = 100, tenant_id: str | None = None, timeout: int = 1800,
+    ) -> dict[str, Any]:
+        """특정 filekey 다운로드(aihubshell -mode d) → 압축해제 도면 → design_ingest 인제스트.
+
+        디스크 안전: file_key는 ★권장(미지정 시 전체=TB). 임시폴더 작업 후 정리.
         """
         if not self._key():
-            return {"available": False, "reason": "AIHUB_API_KEY 미설정 — 마이페이지 apikey 발급 후 관리자 시크릿 입력 필요",
-                    "ingested": 0}
-        blob = await self._download_bytes(dataset_key, file_sn)
-        if not blob:
-            return {"available": False,
-                    "reason": "다운로드 실패 — 데이터셋 '활용신청 승인' 여부·apikey·fileSn 확인",
-                    "ingested": 0}
-
-        from app.services.design_ingest.ingest_service import ingest_design_file
-
-        ingested, skipped, failed = 0, 0, 0
-        results: list[dict[str, Any]] = []
-        # tar면 내부 도면을 순회, 아니면 단일 파일로 취급.
+            return {"available": False, "reason": "AIHUB_API_KEY 미설정 — 관리자 시크릿 입력 필요", "ingested": 0}
+        tmp = Path(tempfile.mkdtemp(prefix="aihub_dl_"))
         try:
-            tf = tarfile.open(fileobj=io.BytesIO(blob), mode="r:*")
-            members = [m for m in tf.getmembers() if m.isfile() and m.name.lower().endswith(_DRAWING_EXT)]
-            for m in members:
-                if ingested >= max_files:
-                    break
-                fobj = tf.extractfile(m)
-                if fobj is None:
+            shell = await self._ensure_shell(tmp)
+            if not shell:
+                return {"available": False, "reason": "aihubshell CLI 다운로드 실패", "ingested": 0}
+            args = ["-mode", "d", "-datasetkey", str(dataset_key)]
+            if file_key:
+                args += ["-filekey", str(file_key)]
+            rc, out = await self._run(shell, args, tmp, timeout=timeout)
+            if rc != 0:
+                return {"available": True, "ingested": 0, "rc": rc,
+                        "reason": "다운로드 실패 — 활용신청 승인·datasetkey·filekey·디스크 확인",
+                        "output_tail": out[-1500:]}
+
+            # 압축해제된 도면 파일 walk → 인제스트(max_files 상한).
+            from app.services.design_ingest.ingest_service import ingest_design_file
+            ingested, skipped, failed, total = 0, 0, 0, 0
+            samples: list[dict[str, Any]] = []
+            for p in sorted(tmp.rglob("*")):
+                if not p.is_file() or p.name == "aihubshell":
                     continue
-                content = fobj.read()
+                if not p.suffix.lower() in _DRAWING_EXT:
+                    continue
+                total += 1
+                if ingested >= max_files:
+                    continue
                 try:
-                    res = await ingest_design_file(filename=m.name.split("/")[-1], content=content,
-                                                   tenant_id=tenant_id)
+                    res = await ingest_design_file(filename=p.name, content=p.read_bytes(), tenant_id=tenant_id)
                     if res.get("indexed"):
                         ingested += 1
                     else:
                         skipped += 1
-                    results.append({"file": m.name.split("/")[-1], "indexed": res.get("indexed"),
-                                    "type": res.get("drawing_type")})
+                    if len(samples) < 10:
+                        samples.append({"file": p.name, "indexed": res.get("indexed"), "type": res.get("drawing_type")})
                 except Exception:  # noqa: BLE001
                     failed += 1
-            tf.close()
-            total_drawings = len(members)
-        except tarfile.TarError:
-            # tar 아님 = 단일 도면 파일. 확장자 무관하게 1건 인제스트 시도.
-            try:
-                res = await ingest_design_file(filename=f"aihub_{dataset_key}_{file_sn}", content=blob,
-                                               tenant_id=tenant_id)
-                ingested = 1 if res.get("indexed") else 0
-                skipped = 0 if res.get("indexed") else 1
-                results.append({"file": f"{dataset_key}/{file_sn}", "indexed": res.get("indexed")})
-                total_drawings = 1
-            except Exception:  # noqa: BLE001
-                return {"available": True, "ingested": 0, "reason": "단일 파일 인제스트 실패"}
-
-        return {
-            "available": True, "dataset_key": dataset_key, "file_sn": file_sn,
-            "total_drawings": total_drawings, "ingested": ingested, "skipped": skipped, "failed": failed,
-            "samples": results[:10],
-            "note": "AI Hub 도면 → design_drawings(Qdrant) 시드 인제스트. 승인된 데이터셋만(무목업).",
-        }
+            return {
+                "available": True, "dataset_key": dataset_key, "file_key": file_key,
+                "total_drawings": total, "ingested": ingested, "skipped": skipped, "failed": failed,
+                "samples": samples,
+                "note": "aihubshell로 다운로드·압축해제한 도면을 design_drawings(Qdrant)에 시드 인제스트. 도면 확장자만(라벨 JSON 제외).",
+            }
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
