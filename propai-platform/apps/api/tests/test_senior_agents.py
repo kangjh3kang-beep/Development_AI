@@ -307,3 +307,35 @@ def test_orchestrator_available_lists_all():
     # 고위험 플래그 정합
     hr = {a["key"] for a in av if a["high_risk"]}
     assert hr == {"senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member"}
+
+
+def test_orchestrator_no_valid_matched_empties_framework():
+    o = _orch()
+    c = o.consult("도시계획", context={"matched_rule_ids": ["없는규칙"]})
+    assert c.decision_framework == () and c.citations == ()
+    assert any("적용 가능한 판단 규칙 없음" in n for n in c.honest_notes)
+
+
+def test_orchestrator_empty_matched_is_full():
+    o = _orch()
+    # 빈 리스트(falsy)=필터 없음 → 전체 판단 프레임워크
+    c = o.consult("도시계획", context={"matched_rule_ids": []})
+    full = o.consult("도시계획")
+    assert len(c.decision_framework) == len(full.decision_framework) >= 3
+
+
+def test_orchestrator_overrides():
+    o = _orch()
+    # high_risk override: 비고위험 도시계획을 고위험으로 강제
+    c = o.consult("도시계획", high_risk=True)
+    assert c.high_risk is True
+    # golden_case_count override: ≥50이면 senior 승격(정직 maturity)
+    c2 = o.consult("도시계획", golden_case_count=60)
+    assert "시니어 보조" in c2.maturity
+
+
+def test_high_risk_trust_reachable():
+    # MED 보강: 고위험 '신뢰' 라벨이 강신호(≥0.9)에서 도달 가능(기존 0.95=불가 교정)
+    assert confidence_label(0.92, high_risk=True) == "신뢰"
+    assert confidence_label(0.85, high_risk=True) == "보통"
+    assert confidence_label(0.82) == "신뢰"  # 일반은 0.8 하한
