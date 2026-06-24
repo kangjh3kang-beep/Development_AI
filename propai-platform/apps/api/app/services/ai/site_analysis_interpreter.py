@@ -291,6 +291,17 @@ class SiteAnalysisInterpreter(BaseInterpreter):
         # Section 7-2: 특이부지 감지(학교·GB·농지·산지·맹지·문화재 등) — ★LLM 그라운딩 필수.
         #   이 블록을 프롬프트에 넣지 않으면 LLM이 '최대 연면적 가능'류를 독자 서술하는
         #   할루시네이션이 발생한다(감사 적발: 의정부동224 학교용지 오분석 회귀 위험).
+        # ★다필지 통합: 대표번지가 아니라 통합 N필지 기준임을 LLM에 명시(통합분석 반영).
+        ig = data.get("integrated")
+        if isinstance(ig, dict) and ig.get("is_multi_parcel"):
+            compact["integrated_multi_parcel"] = {
+                "parcel_count": ig.get("parcel_count"),
+                "total_area_sqm": ig.get("total_area_sqm"),
+                "blended_far_pct": ig.get("blended_far_pct"),
+                "blended_bcr_pct": ig.get("blended_bcr_pct"),
+                "note": ig.get("note"),
+            }
+
         sp = data.get("special_parcel")
         if isinstance(sp, dict) and sp.get("is_special"):
             compact["special_parcel"] = {

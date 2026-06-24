@@ -24,6 +24,12 @@ class ZoningAnalyzeRequest(BaseModel):
     bcode: str | None = None  # 카카오 법정동 코드 (10자리)
     jibun_address: str | None = None  # 카카오 지번 주소
     refresh: bool = False  # True면 저장된 조례 해석을 무시하고 재조사(사용자 '재분석' 실행)
+    # ★다필지 통합 컨텍스트(옵셔널) — 다필지일 때 AI 해석이 대표번지가 아니라 '통합 N필지'
+    #   기준으로 종합 판단하도록 주입. 미전달 시 기존(단일/대표) 동작 무회귀.
+    parcel_count: int | None = None         # 통합 필지 수(>1이면 다필지 통합 해석)
+    integrated_area_sqm: float | None = None  # 통합 대지면적(㎡) — 면적가중 합
+    integrated_far_pct: float | None = None   # 통합(면적가중) 실효 용적률(%)
+    integrated_bcr_pct: float | None = None   # 통합(면적가중) 실효 건폐율(%)
 
 
 def _zone_limits_compact(zone_type: str | None) -> dict | None:
@@ -421,10 +427,16 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
             except Exception:  # noqa: BLE001
                 pass
 
+        # ★다필지 통합 컨텍스트: parcel_count>1 + 통합면적이 오면 인터프리터가 대표번지가 아니라
+        #   '통합 N필지' 기준으로 종합 판단하게 land_area_sqm을 통합값으로 대체하고 메타를 주입한다.
+        #   (미전달 시 단일/대표 동작 무회귀 — 통합분석 미구현 근본해소.)
+        _is_multi = bool(req.parcel_count and req.parcel_count > 1 and req.integrated_area_sqm and req.integrated_area_sqm > 0)
+        _interp_area = float(req.integrated_area_sqm) if (_is_multi and req.integrated_area_sqm is not None) else result.get("land_area_sqm")
+
         interp_input = {
             "address": result.get("address"),
             "zone_type": zt,
-            "land_area_sqm": result.get("land_area_sqm"),
+            "land_area_sqm": _interp_area,
             # 법정한도(그라운딩): 인터프리터가 무근거 상향 서술을 못 하도록 명시.
             "zone_limits": {
                 "max_far_pct": zone_limits.get("max_far_pct"),
@@ -443,6 +455,16 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
             },
             # 특이부지(학교용지 등): LLM이 '최대 연면적 가능'을 무근거로 단언하지 않도록 그라운딩.
             "special_parcel": special,
+            # ★다필지 통합: 대표번지가 아니라 '통합 N필지' 기준임을 명시(LLM이 통합 종합판단).
+            "integrated": ({
+                "is_multi_parcel": True,
+                "parcel_count": req.parcel_count,
+                "total_area_sqm": _interp_area,
+                "blended_far_pct": req.integrated_far_pct,
+                "blended_bcr_pct": req.integrated_bcr_pct,
+                "note": f"이 분석은 대표 1필지가 아니라 통합 {req.parcel_count}필지(합계 "
+                        f"{round(float(_interp_area or 0)):,}㎡) 기준입니다. 대지면적·개발규모는 통합값으로 판단하세요.",
+            } if _is_multi else None),
         }
         # 화면 경로에서도 계층/종상향을 캡처하도록 응답에 동봉(프론트 옵셔널 렌더).
         result.setdefault("effective_far", effective_far_tier)
