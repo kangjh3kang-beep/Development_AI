@@ -58,6 +58,13 @@ type SimResult = {
   recommended: { scheme: string; est_far?: number | null; reason?: string };
   magdo_summary?: MagdoSummary | null;
   ai?: { generated?: boolean; summary?: string; best_scheme?: string; why?: string; alternatives?: string[]; cautions?: string[] } | null;
+  pyeong_classification?: {
+    area_sqm: number; pyeong: number; tier: string; tier_label: string;
+    possible: string[]; conditional: string[]; blocked: string[];
+    self_standing_only: boolean;
+    tier_guide: { tier: string; label: string; unlocks: string }[];
+    note: string;
+  } | null;
 };
 
 const APP_STYLE: Record<string, string> = {
@@ -172,6 +179,63 @@ export function DevelopmentScenarioCard({
               </ul>
             )}
           </div>
+
+          {/* ★평수 티어 개발방식 매트릭스 — 총평수별 가능/조건부/불가 상세 분류 */}
+          {result.pyeong_classification && (() => {
+            const pc = result.pyeong_classification!;
+            return (
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
+                <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]">
+                  <Scale className="size-3.5 shrink-0" aria-hidden />
+                  평수별 개발방식 분류 · 약 {pc.pyeong.toLocaleString()}평 ({pc.tier_label})
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">{pc.note}</p>
+                {/* 가능/조건부/불가 칩 그룹 */}
+                <div className="mt-2.5 space-y-2">
+                  {([
+                    ["가능", pc.possible, "emerald"],
+                    ["조건부", pc.conditional, "amber"],
+                    ["불가", pc.blocked, "zinc"],
+                  ] as const).map(([label, items, tone]) =>
+                    items.length > 0 ? (
+                      <div key={label} className="flex flex-wrap items-center gap-1.5">
+                        <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${
+                          tone === "emerald" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                            : tone === "amber" ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                            : "border-[var(--line-strong)] bg-[var(--surface)] text-[var(--text-tertiary)]"}`}>
+                          {label} {items.length}
+                        </span>
+                        {items.map((s) => (
+                          <span key={s} className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                            tone === "zinc" ? "text-[var(--text-tertiary)] line-through opacity-70"
+                              : "text-[var(--text-secondary)]"}`}>{s}</span>
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+                {/* 평수 티어 가이드(해금 사다리) — 현 티어 하이라이트 */}
+                <div className="mt-3 grid grid-cols-5 gap-1">
+                  {pc.tier_guide.map((t) => (
+                    <div key={t.tier}
+                      className={`rounded-md border p-1 text-center ${
+                        t.tier === pc.tier ? "border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10"
+                          : "border-[var(--line)] bg-[var(--surface)]"}`}
+                      title={t.unlocks}>
+                      <p className={`text-[10px] font-black ${t.tier === pc.tier ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>{t.tier}</p>
+                      <p className="text-[9px] leading-tight text-[var(--text-hint)]">{t.label.replace(/\(.*\)/, "")}</p>
+                    </div>
+                  ))}
+                </div>
+                {pc.self_standing_only && (
+                  <p className="mt-2 inline-flex items-start gap-1 text-[11px] leading-relaxed text-amber-500">
+                    <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+                    <span>인접 필지를 지도에서 추가 선택해 통합하면 상위 티어 개발방식이 해금됩니다.</span>
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* 매도청구 요약 */}
           {result.magdo_summary && (

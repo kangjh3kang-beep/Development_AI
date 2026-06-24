@@ -3,8 +3,8 @@ import { isHrefActive } from "@/components/layout/nav-config";
 import { PROJECT_TOOLS, projectToolHref, STAGE_META } from "./lifecycle-stages";
 
 describe("PROJECT_TOOLS — 프로젝트 도구 인덱스 SSOT", () => {
-  it("고아 도구 7종 — route 유일 + 라벨/아이콘 비어있지 않음", () => {
-    expect(PROJECT_TOOLS).toHaveLength(7);
+  it("고아 도구 8종 — route 유일 + 라벨/아이콘 비어있지 않음", () => {
+    expect(PROJECT_TOOLS).toHaveLength(8);
     const routes = PROJECT_TOOLS.map((t) => t.route);
     expect(new Set(routes).size).toBe(routes.length); // 중복 없음
     for (const t of PROJECT_TOOLS) {
@@ -23,6 +23,7 @@ describe("PROJECT_TOOLS — 프로젝트 도구 인덱스 SSOT", () => {
 
   it("기대 라우트 집합(회귀 고정)", () => {
     expect(PROJECT_TOOLS.map((t) => t.route)).toEqual([
+      "canvas",
       "cad",
       "collaboration",
       "cost",

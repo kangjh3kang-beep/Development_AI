@@ -461,6 +461,10 @@ class ParcelExcelService:
         #    토지특성(NED)으로 자동 채운다. 사용자는 주소만 적으면 나머지는 시스템이 조회.
         await self._enrich_fill(parcels)
 
+        # ★bad-data 자가치유: 엑셀의 어긋난 법정동코드로 만든 PNU 라 용도지역을 못 불러온 행을
+        #   주소로 재해소(올바른 PNU 재확보). 중복PNU 탐지 전에 수행해 치유된 PNU 가 dedup 에 반영되게 함.
+        await self._heal_stale_pnu(parcels)
+
         # C3: 중복 PNU 탐지 — 서로 다른 행이 같은 PNU로 해석되면 거의 항상 오매칭(동명이의·
         #     번지누락). 2건 이상 동일 PNU는 ambiguous로 강등(가짜 확신 차단). 1필지만 같은 PNU면 정상.
         from collections import Counter
@@ -679,6 +683,47 @@ class ParcelExcelService:
 
         await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)
 
+    async def _heal_stale_pnu(self, parcels: list[dict[str, Any]]) -> bool:
+        """★bad-data 자가치유: PNU는 확보됐지만 용도지역을 못 불러온 행을 주소로 재해소한다.
+
+        엑셀에 적힌 법정동코드(bcode)가 실제 주소와 어긋나면 그 코드로 만든 PNU가 '존재하지 않는
+        필지'를 가리켜 NED 토지특성 조회가 빈값이 된다(용도지역·건폐율·용적률이 영구히 안 불러와짐).
+        이런 행은 need_geocode(=PNU 없는 행)에 안 들어가 재지오코딩도 안 돼 그대로 멈춰 있었다.
+
+        해법(공공데이터=권위 원천 우선): zone_type을 못 채운 PNU 행 중 주소/지번이 있는 행은
+        잘못된 PNU를 폐기하고 주소로 재지오코딩 → 올바른 PNU 재확보 → 한 번 더 보강한다.
+        엑셀의 비권위 코드가 zone 로드를 깨뜨리던 문제를 근본 해소. 무한루프 방지로 호출측에서 1회만.
+
+        Returns: 재해소를 시도한 행이 있었으면 True(호출측이 후처리 재집계 여부 판단).
+        """
+        stale = [
+            i for i, p in enumerate(parcels)
+            if p.get("pnu")
+            and not p.get("zone_type")
+            and (p.get("address") or p.get("jibun"))
+            and not p.get("_stale_pnu_retried")  # 1회 재시도 가드
+        ]
+        if not stale:
+            return False
+        for i in stale:
+            p = parcels[i]
+            p["_stale_pnu_retried"] = True
+            p["pnu"] = None  # 잘못된 PNU 폐기 → _geocode_fill 이 주소로 재해소
+            # 어긋난 bcode 도 비운다(재지오코딩 결과와의 불일치 경고 오발동 방지·주소 권위 우선).
+            p["bcode"] = ""
+        await self._geocode_fill(parcels, stale)
+        await self._enrich_fill(parcels)
+        # 재해소 실패(주소로도 PNU 못 잡음) 행은 정직하게 failed 로 — bad PNU 로 set 됐던 'ok' 가
+        # pnu=None 인 채 남아 'status=ok 인데 데이터 없음'(silent bad data)이 되는 것을 차단.
+        for i in stale:
+            p = parcels[i]
+            if not p.get("pnu") and p.get("status") not in ("ambiguous", "failed"):
+                p["status"] = "failed"
+                p["reason"] = (p.get("reason") or
+                               "입력된 법정동코드가 주소와 어긋나 용도지역을 확인하지 못했습니다 — "
+                               "시·군·구+번지 포함 정확한 주소로 보완하세요(잘못된 코드는 무시).")
+        return True
+
     async def enrich_parcel_list(
         self, items: list[dict[str, Any]], with_building: bool = True,
     ) -> list[dict[str, Any]]:
@@ -715,6 +760,9 @@ class ParcelExcelService:
         if need_geocode:
             await self._geocode_fill(parcels, need_geocode)
         await self._enrich_fill(parcels)
+
+        # ★bad-data 자가치유: 잘못된 bcode 로 만든 PNU 라 용도지역을 못 불러온 행을 주소로 재해소.
+        await self._heal_stale_pnu(parcels)
 
         # PNU 미확보(지오코딩 실패) → 정직 실패표기. ambiguous는 _geocode_fill이 이미 표기.
         for p in parcels:

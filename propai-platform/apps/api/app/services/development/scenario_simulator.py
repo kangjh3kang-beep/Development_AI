@@ -254,6 +254,8 @@ class DevelopmentScenarioSimulator:
                             "reason": recommended.get("notes") or recommended.get("pros", [""])[0]},
             "fallback_simple_build": next(s for s in scenarios if s["scheme"] == "단순 건축"),
             "magdo_summary": magdo_summary,
+            # ★평수 티어 매트릭스(소규모 필지 가능/조건부/불가 상세 분류) — 순수 additive 뷰.
+            "pyeong_classification": self._classify_by_pyeong_tier(total_area, scenarios),
         }
         # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
         #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
@@ -604,6 +606,65 @@ class DevelopmentScenarioSimulator:
         fars = [f for _, f in w]
         return round(sum(fars) / len(fars), 1)
 
+    # 평수 티어 경계(㎡) — scenario 면적 게이트 상수와 정합(SINGLE_SMALL_MAX_SQM=1000 등 재사용 의미).
+    #   T1<165(50평) T2<330(100평) T3<1000(300평) T4<3300(1000평) T5≥3300.
+    _PYEONG_TIERS = (
+        (165.0, "T1", "~50평(<165㎡)", "단순건축만(단독·다가구·다세대)"),
+        (330.0, "T2", "50~100평(<330㎡)", "+자율주택정비(주거)"),
+        (1000.0, "T3", "100~300평(<1000㎡)", "단독 정비 하한 직전 — 인접 통합 권고"),
+        (3300.0, "T4", "300~1000평(<3300㎡)", "+모아주택(≥1500㎡)·지구단위 편입"),
+        (float("inf"), "T5", "1000평+(≥3300㎡)", "+지구단위 단독(≥5000)·도시개발(≥10000)·정비사업"),
+    )
+
+    @staticmethod
+    def _classify_by_pyeong_tier(area_sqm: float | None, scenarios: list[dict]) -> dict[str, Any]:
+        """현 부지 면적을 평수 티어로 분류 + 시나리오 판정을 가능/조건부/불가 매트릭스로 재집계.
+
+        ★순수 additive 뷰 — _scenarios 의 applicable 판정(이미 면적 게이트 반영)을 평수 축으로
+        재구성할 뿐, 신규 게이트·상수를 만들지 않는다(결정론·기존 판정 무회귀).
+        사용자 요청="소규모 단일/다필지의 총평수별 가능·불가 개발방식 상세 분류"의 백엔드 계약.
+        """
+        area = float(area_sqm or 0)
+        pyeong = round(area / 3.3058, 1) if area else 0.0
+        tier, tier_label = "T1", "~50평(<165㎡)"
+        for boundary, t, label, _unlocks in DevelopmentScenarioSimulator._PYEONG_TIERS:
+            if area < boundary:
+                tier, tier_label = t, label
+                break
+        rank = {"가능": 0, "조건부": 1, "불가": 2}
+        matrix = sorted(
+            ({
+                "scheme": s["scheme"],
+                "status": s.get("applicable"),          # 가능 | 조건부 | 불가
+                "reason": s.get("notes") or (s.get("cons") or [""])[0],
+                "est_far_pct": s.get("est_far"),
+            } for s in scenarios),
+            key=lambda m: rank.get(m["status"], 3),
+        )
+        possible = [m["scheme"] for m in matrix if m["status"] == "가능"]
+        conditional = [m["scheme"] for m in matrix if m["status"] == "조건부"]
+        blocked = [m["scheme"] for m in matrix if m["status"] == "불가"]
+        self_standing_only = possible == ["단순 건축"] and not conditional
+        return {
+            "area_sqm": round(area, 1), "pyeong": pyeong,
+            "tier": tier, "tier_label": tier_label,
+            "matrix": matrix,
+            "possible": possible, "conditional": conditional, "blocked": blocked,
+            "self_standing_only": self_standing_only,
+            "tier_guide": [
+                {"tier": t, "label": label, "unlocks": unlocks}
+                for _b, t, label, unlocks in DevelopmentScenarioSimulator._PYEONG_TIERS
+            ],
+            "note": (
+                f"단일 소규모 필지(약 {pyeong:g}평)는 단순건축 외 통합·정비·지구단위·역세권형 사업의 "
+                "단독 검토대상이 아닙니다 — 인접 필지 통합 또는 기존 지구단위/정비구역 편입 시 "
+                "가능 방식이 확장됩니다."
+                if self_standing_only else
+                f"약 {pyeong:g}평({tier}) 기준 — 가능 {len(possible)}·조건부 {len(conditional)}·불가 "
+                f"{len(blocked)} 방식. 다필지 통합 시 상위 티어 방식 검토 가능."
+            ),
+        }
+
     # ── 규칙기반 시나리오 ──
     def _scenarios(self, c: dict) -> list[dict]:
         area = c.get("total_area_sqm") or 0
@@ -648,6 +709,15 @@ class DevelopmentScenarioSimulator:
             "소규모재개발사업", "주거환경개선사업", "공공재개발·공공재건축",
             "입지규제최소구역", "대지조성사업",
         }
+        # ★단일 소규모 필지가 '단독'으로 추진 가능한 방식(나머지는 인접 통합/구역 편입/기존
+        #   건축물·세대수 요건이 있어 단독 검토대상이 못 됨). 단순건축만 자립 가능.
+        SELF_STANDING_SCHEMES = {"단순 건축"}
+        # 단일 필지가 통합·정비·지구단위·역세권형 사업의 '단독' 검토대상이 되는 현실 하한(약 300평).
+        #   이 미만의 '단일' 필지는 가로구역/블록/구역을 단독으로 구성할 수 없어 단독 추진 불가
+        #   (인접 필지 통합 또는 기존 지구단위/정비구역 편입 시에만 가능).
+        SINGLE_SMALL_MAX_SQM = 1000.0
+        single_small = (not multi) and 0 < area < SINGLE_SMALL_MAX_SQM
+        _pyeong = round(area / 3.3058) if area else 0
 
         def add(scheme, applicable, est_far, contrib, requirements, pros, cons, notes):
             # 다필지인데 비인접이면 통합개발 정책은 불가로 강등
@@ -655,6 +725,16 @@ class DevelopmentScenarioSimulator:
                 applicable = "불가"
                 cons = [*(cons or []), "필지 비인접 — 통합개발 불가"]
                 notes = f"⚠ {adj_note}. 통합개발 불가 — 필지별 개별개발 검토"
+            # ★단일 소규모 필지: 통합·정비·지구단위·역세권형 사업은 단독 검토대상 아님(불가 강등).
+            #   사용자가 지적한 "50~100평에 지구단위/도시개발/역세권 제시" 오류의 근본 차단.
+            elif single_small and scheme not in SELF_STANDING_SCHEMES and applicable != "불가":
+                applicable = "불가"
+                cons = [*(cons or []),
+                        f"단일 소규모 필지({round(area):,}㎡·약 {_pyeong:,}평) — 단독 추진 규모 미달"]
+                notes = (f"⚠ 단일 {round(area):,}㎡(약 {_pyeong:,}평) 필지는 단독으로 통합·정비·"
+                         "지구단위·역세권형 사업의 검토대상이 될 수 없습니다 — 인접 필지 통합(합필/"
+                         "일단지) 또는 기존 지구단위계획구역·정비구역 편입 시에만 가능. "
+                         "현 단계 현실적 추진방안: 단순 건축(현 용도지역 한도 내).")
             S.append({"scheme": scheme, "applicable": applicable,
                       "est_far": round(est_far) if est_far else None,
                       "contribution_pct": contrib, "requirements": requirements,
