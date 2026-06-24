@@ -1,8 +1,8 @@
 """한국 정북일조 빌더블 인벨로프(베팅 D) — 실제 건축가능 최대 볼륨·층수 산정.
 
-건축법 시행령 제86조(정북방향 일조 확보 이격):
- - 전용/일반주거지역: 높이 9m 이하 부분은 정북 인접대지경계에서 1.5m 이상,
-   9m 초과 부분은 그 부분 높이의 1/2 이상 이격.  → 거리 d에서 최대높이 H(d)=max(9, 2·(d−1.5)+9)? 보수적으로 H≤2d.
+건축법 시행령 제86조(정북방향 일조 확보 이격·2023.9.12 개정 현행 임계 10m):
+ - 전용/일반주거지역: 높이 10m 이하 부분은 정북 인접대지경계에서 1.5m 이상,
+   10m 초과 부분은 그 부분 높이의 1/2 이상 이격.  → 거리 d에서 최대높이 H(d)=max(10, 2d) 보수 근사.
 정북사선을 남북깊이에 대해 스트립 적분해 '일조로 실제 지을 수 있는' 최대 연면적을 구하고,
 용적률(FAR) 한도와 비교해 '바인딩 제약'과 '일조 손실률'을 제시한다.
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.services.common.sunlight_setback import max_height_for_north_distance_m
 from app.services.permit.building_code_rules import ZONE_DEFAULTS
 from app.services.zoning.legal_zone_limits import legal_limits_for
 
@@ -228,8 +229,8 @@ def compute_buildable_envelope(
         if d < 1.5:
             h = 0.0
         else:
-            # 9m 초과는 H/2 이격 → H ≤ 2d (보수적). 9m 이하는 1.5m 이격으로 허용.
-            h = max(9.0, 2.0 * d)
+            # 10m 초과는 H/2 이격 → H ≤ 2d (보수적). 10m 이하는 1.5m 이격으로 허용(공용 산식).
+            h = max_height_for_north_distance_m(d)
         max_h = max(max_h, h)
         envelope_volume += usable_W * dz * h
 
@@ -269,7 +270,7 @@ def compute_buildable_envelope(
         "max_height_m": round(realistic_floors * fh, 1),
         "bcr_footprint_sqm": round(bcr_footprint),
         "note": (
-            "정북일조 사선(9m↓ 1.5m·9m↑ H/2 이격) 남북깊이 적분 최대 연면적. "
+            "정북일조 사선(10m↓ 1.5m·10m↑ H/2 이격) 남북깊이 적분 최대 연면적. "
             f"공동주택 다동 배치 시 동간 채광거리 {min_spacing_080}m(0.8H) 확보 필요. "
             "도로사선제한은 2015년 폐지(가로구역별 최고높이로 대체)되어 미적용. "
             "직사각형 대지 근사(v1)."
@@ -279,6 +280,6 @@ def compute_buildable_envelope(
         "assumptions": [
             "직사각형 대지(W×D, 정북=깊이축) 가정",
             "단일 매스·측면 이격 간이(side_setback)",
-            "9m 초과 H≤2d 보수 근사·도로사선 미적용",
+            "10m 초과 H≤2d 보수 근사·도로사선 미적용",
         ],
     }

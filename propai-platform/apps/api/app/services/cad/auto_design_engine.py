@@ -18,6 +18,11 @@ from typing import Any, NamedTuple
 
 import structlog
 
+from app.services.common.sunlight_setback import (
+    max_height_for_north_distance_m,
+    required_north_setback_m,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -147,9 +152,9 @@ def compute_north_step_profile(
 ) -> tuple[list[dict[str, float]], float, int]:
     """정북일조 사선제한 단계후퇴 프로파일을 산출한다(결정론).
 
-    건축법 61조·시행령 86조(W-A ① 교정 산식): 높이 9m 이하 부분은 정북 인접대지
-    경계선에서 1.5m 이상, 9m 초과 부분은 해당 높이의 1/2 이상 이격. 따라서 층의
-    윗변 높이 h=층수×층고에 대해 필요 북측 이격 d=max(base, h<=9 ? 1.5 : h/2).
+    건축법 61조·시행령 86조(W-A ① 교정 산식·2023.9.12 개정 임계 10m): 높이 10m 이하
+    부분은 정북 인접대지경계선에서 1.5m 이상, 10m 초과 부분은 해당 높이의 1/2 이상 이격.
+    따라서 층의 윗변 높이 h=층수×층고에 대해 필요 북측 이격 d=max(base, h<=10 ? 1.5 : h/2).
     base(=설계 북측 세트백)를 넘는 만큼(inset)만 상부 층이 북쪽으로 후퇴한다.
 
     Returns: (profile, 단계후퇴 반영 총연면적, 실제 층수)
@@ -161,8 +166,8 @@ def compute_north_step_profile(
     min_depth = max(4.0, building_d * 0.35)  # 후퇴해도 세대 성립 최소 깊이
     for f in range(1, max(1, max_floors) + 1):
         top_h = f * floor_height_m
-        # 정북일조(시행령 86조): 9m 이하 부분 1.5m / 9m 초과 부분 h/2
-        req_north = max(base_north_m, 1.5 if top_h <= 9.0 else top_h / 2.0)
+        # 정북일조(시행령 86조·현행 10m): 10m 이하 1.5m / 10m 초과 h/2 (공용 산식)
+        req_north = required_north_setback_m(top_h, base_north_m)
         inset = max(0.0, req_north - base_north_m)
         depth_f = building_d - inset
         if depth_f < min_depth:
@@ -202,7 +207,7 @@ def _north_step_stop_reason(
     if 0 < max_floors_by_height <= num_floors:
         return "height"
     next_h = (num_floors + 1) * floor_height_m
-    req_north = max(base_north_m, 1.5 if next_h <= 9.0 else next_h / 2.0)
+    req_north = required_north_setback_m(next_h, base_north_m)
     depth_next = building_d - max(0.0, req_north - base_north_m)
     if depth_next < max(4.0, building_d * 0.35):
         return "sunlight"  # 다음 층은 후퇴 한계로 세대 성립 불가 → 일조가 증층을 막음
@@ -446,12 +451,9 @@ class AutoDesignEngineService:
             sunlight_mode = "step_profile"
         else:
             if sunlight_zone:
-                # W-A ① 교정 산식(건축법 시행령 86조 단순화): 높이 9m 이하 부분은 북측
-                # 1.5m 이격으로 충족 → 북측이격 d>=4.5m면 최고높이 2d, d<4.5m면 9m 캡.
-                # (기존 d*2 일괄 적용은 9m 이하 부분 1.5m 룰 누락으로 과소 산정)
-                max_height_by_sunlight = (
-                    north_setback * 2.0 if north_setback >= 4.5 else 9.0
-                )
+                # W-A ① 교정 산식(시행령 86조·현행 10m): 높이 10m 이하 부분은 북측 1.5m
+                # 이격으로 충족 → 북측이격 d>=5.0m면 최고높이 2d, d<5.0m면 10m 캡(공용 산식).
+                max_height_by_sunlight = max_height_for_north_distance_m(north_setback)
                 max_floors_by_sunlight = int(max_height_by_sunlight / fh)
                 sunlight_mode = "hard_cap"
             else:
@@ -870,13 +872,13 @@ class AutoDesignEngineService:
         )
         if sunlight_mode == "hard_cap":
             sunlight_formula = (
-                "건축법 61조·시행령 86조 단순화 — 정북이격 d≥4.5m: 최고높이 2d / "
-                "d<4.5m: 9m (높이 9m 이하 부분은 1.5m 이격으로 충족)"
+                "건축법 61조·시행령 86조(현행 10m) — 정북이격 d≥5.0m: 최고높이 2d / "
+                "d<5.0m: 10m (높이 10m 이하 부분은 1.5m 이격으로 충족)"
             )
         elif sunlight_mode == "step_profile":
             sunlight_formula = (
-                "단계후퇴 — 층 상단높이 h≤9m: 북측이격 max(기본세트백, 1.5m) / "
-                "h>9m: max(기본세트백, h/2)"
+                "단계후퇴 — 층 상단높이 h≤10m: 북측이격 max(기본세트백, 1.5m) / "
+                "h>10m: max(기본세트백, h/2)"
             )
         else:
             sunlight_formula = "정북일조 미적용 — 건축법 61조 적용범위(전용·일반주거지역) 외"

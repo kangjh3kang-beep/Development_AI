@@ -518,7 +518,7 @@ def _sunlight_envelope(
 ) -> dict | None:
     """정북일조 단계후퇴(건축법 61조)를 매스 GFA/층수에 반영(cad 정본 재사용·DRY).
 
-    AutoDesignEngine의 `compute_north_step_profile`(시행령 86조 9m/h2 산식)을 그대로 호출해,
+    AutoDesignEngine의 `compute_north_step_profile`(시행령 86조 현행 10m/h2 산식)을 그대로 호출해,
     참조평면 footprint(폭×깊이) 기준 상부층 북측 후퇴로 줄어든 '일조 준수 연면적·층수'를 산출한다.
     주거지역(일조 대상)에서만 호출하며, 그 결과 연면적·층수가 단순 FAR 산정보다 작으면(일조가
     binding) 그 값으로 매스를 보정한다(근거: 건축법 일조 정북사선). 비주거·산정불가는 None.

@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.common.sunlight_setback import required_north_setback_m
+
 
 @dataclass
 class DesignPoint:
@@ -361,11 +363,11 @@ class BuildingComplianceService:
 # ── 정북방향 이격거리 계산 (건축법 제61조) ──
 
 def _calculate_north_setback(building_height_m: float) -> float:
-    """건축법 제61조 기준 정북방향 이격거리를 산출한다.
+    """건축법 제61조·시행령 제86조(2023.9.12 개정) 정북방향 이격거리(공용 산식).
 
-    - 9m 이하: max(높이 * 0.5, 1.0)
-    - 9m 초과: max((높이 - 9) * 0.5 + 4.5, 3.0)
-      (9m까지 4.5m + 초과분 * 0.5, 최소 3.0m)
+    - 10m 이하: 1.5m 이상
+    - 10m 초과: 해당 높이의 1/2 이상
+    (구버전은 임계 9m + 저층에 높이/2를 적용해 저층을 과대 이격했음 → 법-정합 일원화.)
 
     Args:
         building_height_m: 건물 높이 (m)
@@ -373,10 +375,7 @@ def _calculate_north_setback(building_height_m: float) -> float:
     Returns:
         정북방향 최소 이격거리 (m)
     """
-    if building_height_m <= 9.0:
-        return max(building_height_m * 0.5, 1.0)
-    else:
-        return max((building_height_m - 9.0) * 0.5 + 4.5, 3.0)
+    return required_north_setback_m(building_height_m)
 
 
 # ── 7개 용도지역별 법규 기본값 ──
