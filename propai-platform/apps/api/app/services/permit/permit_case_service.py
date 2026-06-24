@@ -12,6 +12,7 @@ raw item을 PermitCaseRecord로 정규화한 뒤 분위수(건폐율·용적률 
 
 from __future__ import annotations
 
+import statistics
 from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -181,6 +182,20 @@ class PermitCaseService:
             if permit_d is not None and permit_d >= cutoff:
                 recent += 1
 
+        # ── 인허가 소요기간(데이터계획 #2): 허가→착공·허가→사용승인 일수 중앙값(두 날짜 보유 사례만) ──
+        def _dur_p50(from_field: str, to_field: str) -> int | None:
+            days: list[int] = []
+            for r in records:
+                fv, tv = getattr(r, from_field, None), getattr(r, to_field, None)
+                if not fv or not tv:
+                    continue
+                a, b = cls._parse_iso(fv), cls._parse_iso(tv)
+                if a is not None and b is not None and b >= a:
+                    days.append((b - a).days)
+            if len(days) < _MIN_SAMPLES_FOR_PERCENTILES:
+                return None
+            return int(statistics.median(days))
+
         return PermitCaseSummary(
             count=count,
             bcr_p25=bcr_q[0] if bcr_q else None,
@@ -191,6 +206,8 @@ class PermitCaseService:
             far_p75=far_q[2] if far_q else None,
             main_use_top3=top3,
             recent_24m_count=recent,
+            permit_to_start_days_p50=_dur_p50("permit_date", "construction_start_date"),
+            permit_to_approval_days_p50=_dur_p50("permit_date", "approval_date"),
         )
 
     @staticmethod

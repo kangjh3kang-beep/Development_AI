@@ -50,6 +50,9 @@ class PermitCaseSummary(BaseModel):
     far_p75: Optional[float] = None               # 용적률 75분위(%)
     main_use_top3: list[str] = Field(default_factory=list)  # 주용도 상위 3개
     recent_24m_count: int = 0                     # 최근 24개월 허가 건수
+    # 인허가 소요기간(데이터계획 #2) — 표본 5건 미만이면 None(과대해석 방지).
+    permit_to_start_days_p50: Optional[int] = None     # 허가→착공 소요일 중앙값
+    permit_to_approval_days_p50: Optional[int] = None  # 허가→사용승인 소요일 중앙값
 
 
 class PermitCaseResponse(BaseModel):
