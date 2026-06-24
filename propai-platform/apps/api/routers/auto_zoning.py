@@ -943,6 +943,59 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     }
 
 
+# ── 구획도(필지 경계) 다운로드 — GeoJSON / PNG / PDF (P3) ──
+#   기존 parcel_boundaries() 결과(features + merged_geometry)를 재사용. 직렬화/렌더는 서비스
+#   모듈(parcel_boundary_export·parcel_boundary_pdf)에 위임해 라우터를 슬림·테스트 가능하게 한다.
+class ParcelExportRequest(ParcelBoundariesRequest):
+    format: str = "geojson"  # geojson | png | pdf
+
+
+@router.post("/parcel-boundaries/export")
+async def parcel_boundaries_export(req: ParcelExportRequest):
+    """구획도(필지 경계) 다운로드 — format: geojson | png | pdf.
+
+    parcel_boundaries() 결과(features+merged_geometry)를 재사용. GeoJSON은 무의존(항상 가능),
+    PNG는 matplotlib, PDF는 reportlab(미설치 시 415 정직 안내). 무목업: 데이터 없으면 400.
+    """
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse, Response
+    from app.services.land_intelligence.parcel_boundary_export import export_geojson, export_png
+
+    base = ParcelBoundariesRequest(parcels=req.parcels, address=req.address, pnu=req.pnu)
+    result = await parcel_boundaries(base)
+    if not result.get("features"):
+        raise HTTPException(400, "구획도를 생성할 필지가 없습니다(주소/PNU 확인).")
+
+    fmt = (req.format or "geojson").lower()
+    fname = f"parcel_boundary_{result.get('parcel_count', 0)}lots"
+
+    if fmt == "geojson":
+        return JSONResponse(
+            export_geojson(result),
+            headers={"Content-Disposition": f'attachment; filename="{fname}.geojson"'},
+            media_type="application/geo+json",
+        )
+    if fmt == "png":
+        try:
+            png = export_png(result)
+        except Exception as e:  # noqa: BLE001 — 렌더 실패는 정직 안내(가짜 이미지 금지)
+            raise HTTPException(415, f"PNG 렌더 실패: {str(e)[:120]}") from e
+        return Response(png, media_type="image/png",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.png"'})
+    if fmt == "pdf":
+        try:
+            from app.services.land_intelligence.parcel_boundary_pdf import build_parcel_boundary_pdf
+            pdf = build_parcel_boundary_pdf(result)
+        except ImportError:
+            raise HTTPException(
+                415, "PDF 생성 모듈(reportlab) 미설치 — GeoJSON/PNG로 다운로드하세요.") from None
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(415, f"PDF 생성 실패: {str(e)[:120]}") from e
+        return Response(pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+    raise HTTPException(400, f"지원하지 않는 형식: {fmt} (geojson|png|pdf)")
+
+
 def _parcel_adjacency(geoms: list) -> dict:
     """필지 폴리곤 인접성(연결요소) 판정 — shapely."""
     present = [g for g in geoms if g]

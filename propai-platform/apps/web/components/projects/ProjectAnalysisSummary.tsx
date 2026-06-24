@@ -23,6 +23,7 @@ import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
+import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
@@ -346,8 +347,15 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         return <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">{tiles}</div>;
       })()}
 
-      {/* 입지점수(SiteScore) + 빌더블 인벨로프(정북일조) + 일조·배치 최적안 */}
+      {/* 입지점수(SiteScore) + 빌더블 인벨로프(정북일조) + 일조·배치 최적안 + 구획도 다운로드 */}
       <div className="mt-5 space-y-3">
+        {(site?.address || site?.pnu || (ssotParcels?.length ?? 0) > 0) && (
+          <ParcelExportButton
+            parcels={ssotParcels?.map((p) => ({ pnu: p.pnu, address: p.address }))}
+            address={site?.address}
+            pnu={site?.pnu}
+          />
+        )}
         <SiteScoreCard />
         <BuildableEnvelopeCard />
         {(effArea != null && effArea > 0) || site?.pnu ? (
