@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight, MousePointerClick, ChevronDown } from "lucide-react";
+import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight, MousePointerClick, ChevronDown, Coins, FileText } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -35,13 +35,17 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
   { pick: "NearbyTransactionsMap", height: 520, loadingMessage: "주변 실거래 지도 로딩…" },
 );
 
-type TabKey = "land" | "regulation" | "development" | "solar" | "boundary";
+type TabKey = "land" | "regulation" | "development" | "solar" | "feasibility" | "summary" | "boundary";
+
+const eok = (won: number | null | undefined): string =>
+  won == null ? "—" : `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
 
 export default function SiteCanvasPage() {
   const params = useParams();
   const locale = (params?.locale as string) || "ko";
   const id = params?.id as string;
   const site = useProjectContextStore((s) => s.siteAnalysis);
+  const feas = useProjectContextStore((s) => s.feasibilityData);
   const [tab, setTab] = useState<TabKey>("land");
   // 필지 선택/변경 패널(지도 클릭선택+검색+엑셀) — 부지 미확정 시 기본 펼침, 확정 후 접힘.
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -66,6 +70,8 @@ export default function SiteCanvasPage() {
     { key: "regulation", label: "규제", icon: Ruler },
     { key: "development", label: "개발방식", icon: Construction },
     { key: "solar", label: "일조·배치", icon: Sun },
+    { key: "feasibility", label: "수지", icon: Coins },
+    { key: "summary", label: "통합", icon: FileText },
     { key: "boundary", label: "구획도", icon: Download },
   ];
 
@@ -175,6 +181,39 @@ export default function SiteCanvasPage() {
               <>
                 <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} />
                 <DrillCta to={proj("design")}>설계 스튜디오·CAD/BIM 상세</DrillCta>
+              </>
+            )}
+            {tab === "feasibility" && (
+              <>
+                {feas && (feas.totalCostWon != null || feas.totalRevenueWon != null || feas.roiPct != null) ? (
+                  <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
+                    <p className="text-xs font-black text-[var(--text-primary)]">사업 수지 요약 {feas.grade ? `· ${feas.grade}` : ""}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-center text-[11px]">
+                      <div><p className="text-[var(--text-hint)]">총 사업비</p><p className="font-bold text-[var(--text-primary)]">{eok(feas.totalCostWon)}</p></div>
+                      <div><p className="text-[var(--text-hint)]">분양 매출</p><p className="font-bold text-[var(--text-primary)]">{eok(feas.totalRevenueWon)}</p></div>
+                      <div><p className="text-[var(--text-hint)]">ROI</p><p className="font-bold text-[var(--accent-strong)]">{feas.roiPct != null ? `${feas.roiPct.toFixed(1)}%` : "—"}</p></div>
+                      <div><p className="text-[var(--text-hint)]">순이익</p><p className="font-bold text-[var(--text-primary)]">{feas.totalRevenueWon != null && feas.totalCostWon != null ? eok(feas.totalRevenueWon - feas.totalCostWon) : "—"}</p></div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-xs text-[var(--text-secondary)]">수지 분석 전 — 수지 페이지에서 매출·원가·ROI를 산출하세요.</p>
+                )}
+                <DrillCta to={proj("feasibility")}>수지 편집·민감도 상세</DrillCta>
+              </>
+            )}
+            {tab === "summary" && (
+              <>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
+                  <p className="text-xs font-black text-[var(--text-primary)]">사업 종합(한눈에)</p>
+                  <dl className="mt-2 space-y-1.5 text-[11px]">
+                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">대지면적</dt><dd className="font-bold text-[var(--text-primary)]">{effArea ? `${Math.round(effArea).toLocaleString()}㎡ (${Math.round(effArea / 3.305785).toLocaleString()}평)` : "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">용도지역</dt><dd className="font-bold text-[var(--text-primary)]">{site?.zoneCode || "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">필지</dt><dd className="font-bold text-[var(--text-primary)]">{(ssotParcels?.length ?? 0) > 1 ? `통합 ${ssotParcels!.length}필지` : "단일"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">수지 ROI</dt><dd className="font-bold text-[var(--accent-strong)]">{feas?.roiPct != null ? `${feas.roiPct.toFixed(1)}%` : "분석 전"}</dd></div>
+                  </dl>
+                  <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-hint)]">각 탭의 요약을 종합한 한눈 보기입니다. 은행제출용 통합 보고서는 상세 페이지에서 생성하세요.</p>
+                </div>
+                <DrillCta to={proj("report")}>통합 보고서(은행제출)·PDF 상세</DrillCta>
               </>
             )}
             {tab === "boundary" && (
