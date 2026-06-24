@@ -334,6 +334,16 @@ def test_orchestrator_overrides():
     assert "시니어 보조" in c2.maturity
 
 
+def test_coerce_matched_ids_defensive():
+    from app.services.senior_agents.orchestrator import _coerce_matched_ids
+    assert _coerce_matched_ids(None) is None
+    assert _coerce_matched_ids([]) is None          # 빈값=필터 없음
+    assert _coerce_matched_ids("urban.x") == {"urban.x"}  # 문자열=단일 id(문자분해 방지)
+    assert _coerce_matched_ids(["a", "b"]) == {"a", "b"}
+    with pytest.raises(ValueError):
+        _coerce_matched_ids(123)                    # 비-iterable → 500 대신 명확 거부
+
+
 def test_high_risk_trust_reachable():
     # MED 보강: 고위험 '신뢰' 라벨이 강신호(≥0.9)에서 도달 가능(기존 0.95=불가 교정)
     assert confidence_label(0.92, high_risk=True) == "신뢰"

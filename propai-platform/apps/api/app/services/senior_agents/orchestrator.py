@@ -87,6 +87,21 @@ def _citation_gated_rules(
     return rules
 
 
+def _coerce_matched_ids(matched: Any) -> set[str] | None:
+    """matched_rule_ids 방어적 정규화(외부 입력 안전).
+
+    None/빈값→None(필터 없음), 문자열→단일 id({s})(문자분해 방지),
+    list/tuple/set→문자열 집합. 그 외(정수·dict 등)→ValueError(미처리 500 차단).
+    """
+    if not matched:
+        return None
+    if isinstance(matched, str):
+        return {matched}
+    if isinstance(matched, (list, tuple, set)):
+        return {str(x) for x in matched}
+    raise ValueError(f"matched_rule_ids는 문자열 리스트여야 합니다(got {type(matched).__name__}).")
+
+
 def _rule_to_dict(r: DecisionRule) -> dict[str, str]:
     d = {"rule_id": r.rule_id, "condition": r.condition, "judgment": r.judgment,
          "basis": r.basis, "tradeoff": r.tradeoff}
@@ -146,8 +161,7 @@ class SeniorOrchestrator:
         hr = high_risk if high_risk is not None else (spec.key in HIGH_RISK_AGENT_KEYS)
 
         # 적용 판단(citation 게이트). matched_rule_ids 미지정 시 전 판단 프레임워크 제시.
-        matched = ctx.get("matched_rule_ids")
-        matched_set = set(matched) if matched else None
+        matched_set = _coerce_matched_ids(ctx.get("matched_rule_ids"))
         rules = _citation_gated_rules(spec, matched_set)
 
         # confidence 신호: 미지정은 None(중립 0.5). rule_fit=적용 룰 비율(matched 지정 시).

@@ -60,3 +60,43 @@ def test_consult_requires_auth():
     app.include_router(senior_router.router, prefix="/api/v1")
     r = TestClient(app).get("/api/v1/senior/agents")
     assert r.status_code in (401, 403)
+
+
+# ── 리뷰 HIGH/MED: 입력검증(미처리 500·정보노출 차단) ──
+
+def test_consult_matched_rule_ids_non_list_returns_422():
+    # ★HIGH: 비-리스트 matched_rule_ids → 500 아닌 422(스택 노출 차단)
+    r = _client().post("/api/v1/senior/consult",
+                       json={"domain": "도시계획", "context": {"matched_rule_ids": 123}})
+    assert r.status_code == 422
+
+
+def test_consult_matched_rule_ids_non_string_elem_422():
+    r = _client().post("/api/v1/senior/consult",
+                       json={"domain": "도시계획", "context": {"matched_rule_ids": [1, 2]}})
+    assert r.status_code == 422
+
+
+def test_consult_matched_rule_ids_valid_filters():
+    r = _client().post("/api/v1/senior/consult",
+                       json={"domain": "도시계획",
+                             "context": {"matched_rule_ids": ["urban.upzone_potential"]}})
+    assert r.status_code == 200
+    ids = [d["rule_id"] for d in r.json()["decision_framework"]]
+    assert ids == ["urban.upzone_potential"]
+
+
+def test_consult_domain_whitespace_stripped():
+    r = _client().post("/api/v1/senior/consult", json={"domain": "  금융  "})
+    assert r.status_code == 200
+    assert r.json()["agent_key"] == "senior_financial_advisor"
+
+
+def test_consult_domain_blank_422():
+    r = _client().post("/api/v1/senior/consult", json={"domain": "   "})
+    assert r.status_code == 422
+
+
+def test_consult_multi_too_many_domains_422():
+    r = _client().post("/api/v1/senior/consult-multi", json={"domains": ["금융"] * 21})
+    assert r.status_code == 422

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.services.senior_agents import senior_orchestrator
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
@@ -18,16 +18,49 @@ from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 router = APIRouter(prefix="/senior", tags=["시니어 전문가 에이전트"])
 
 
+def _validate_context(v: dict[str, Any] | None) -> dict[str, Any] | None:
+    """context.matched_rule_ids 타입 가드(비-리스트/비-문자열 → 422로 정직 거부)."""
+    if v is None:
+        return v
+    m = v.get("matched_rule_ids")
+    if m is not None:
+        if not isinstance(m, (list, tuple)):
+            raise ValueError("context.matched_rule_ids는 문자열 리스트여야 합니다.")
+        if not all(isinstance(x, str) for x in m):
+            raise ValueError("context.matched_rule_ids 원소는 문자열이어야 합니다.")
+    return v
+
+
 class SeniorConsultRequest(BaseModel):
-    domain: str = Field(..., description="도메인(한/영: 금융·세무·심의·도시계획·설계·BIM·회계) 또는 에이전트 키")
+    domain: str = Field(..., min_length=1, max_length=64,
+                        description="도메인(한/영: 금융·세무·심의·도시계획·설계·BIM·회계) 또는 에이전트 키")
     context: dict[str, Any] | None = Field(
         None, description="신호(data_completeness/rule_fit/rag_strength/correction_rate[0,1]·matched_rule_ids)")
     high_risk: bool | None = Field(None, description="고위험 강제(미지정=도메인 기본)")
 
+    @field_validator("domain")
+    @classmethod
+    def _strip_domain(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("domain은 빈 문자열일 수 없습니다.")
+        return v
+
+    @field_validator("context")
+    @classmethod
+    def _check_context(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _validate_context(v)
+
 
 class SeniorConsultMultiRequest(BaseModel):
-    domains: list[str] = Field(..., description="다도메인(개발사업=도시+금융+설계 등). 중복·미해당 자동 정리")
+    domains: list[str] = Field(..., min_length=1, max_length=20,
+                               description="다도메인(개발사업=도시+금융+설계 등). 중복·미해당 자동 정리")
     context: dict[str, Any] | None = None
+
+    @field_validator("context")
+    @classmethod
+    def _check_context(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _validate_context(v)
 
 
 @router.get("/agents", summary="시니어 에이전트 목록(고위험·성숙도)")
