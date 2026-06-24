@@ -10,29 +10,31 @@ logger = structlog.get_logger()
 # id: 법제처(국가법령정보센터) lawService.do 호출용 법령 ID. 실접속 확인된 ID만 보유하며,
 #   ID 미확보 법령은 id=None으로 정직 표기한다(가짜 ID로 죽은 API 호출 금지 — 무목업 원칙).
 #   ID 보유 법령만 check_law_updates에서 실제 공포일자 폴링 대상이 된다.
+# ★법제처 법령ID는 2026-06-24 lawSearch.do 조회 + lawService.do 본문 응답으로 '실작동 검증'된 6자리
+#   법령ID만 사용한다(이전 7자리 ID는 본문 미반환=잠복결함이었음 → 전수 정정). 전 20종 폴링 가능.
 MONITORED_LAWS = [
     # ── 핵심(critical) — 용도지역·건축·주택·정비·세금 직결 ──
-    {"name": "건축법", "id": "1003714", "critical": True},
-    {"name": "국토의 계획 및 이용에 관한 법률", "id": "1011903", "critical": True},
-    {"name": "주택법", "id": "1009672", "critical": True},
-    {"name": "녹색건축물 조성 지원법", "id": "1011751", "critical": True},
-    {"name": "도시 및 주거환경정비법", "id": None, "critical": True},
-    {"name": "빈집 및 소규모주택 정비에 관한 특례법", "id": None, "critical": True},
-    {"name": "도시개발법", "id": None, "critical": True},
-    {"name": "집합건물의 소유 및 관리에 관한 법률", "id": None, "critical": True},
-    {"name": "건축물의 분양에 관한 법률", "id": None, "critical": True},
+    {"name": "건축법", "id": "001823", "critical": True},
+    {"name": "국토의 계획 및 이용에 관한 법률", "id": "009294", "critical": True},
+    {"name": "주택법", "id": "000243", "critical": True},
+    {"name": "녹색건축물 조성 지원법", "id": "011557", "critical": True},
+    {"name": "도시 및 주거환경정비법", "id": "009410", "critical": True},
+    {"name": "빈집 및 소규모주택 정비에 관한 특례법", "id": "012805", "critical": True},
+    {"name": "도시개발법", "id": "002024", "critical": True},
+    {"name": "집합건물의 소유 및 관리에 관한 법률", "id": "001262", "critical": True},
+    {"name": "건축물의 분양에 관한 법률", "id": "009760", "critical": True},
     # ── 일반(non-critical) — 토지·세금·환경·소방·인프라 인허가 ──
-    {"name": "건설산업기본법", "id": "1007557", "critical": False},
-    {"name": "공익사업을 위한 토지 등의 취득 및 보상에 관한 법률", "id": "1008363", "critical": False},
-    {"name": "환경영향평가법", "id": None, "critical": False},
-    {"name": "소방시설 설치 및 관리에 관한 법률", "id": None, "critical": False},
-    {"name": "도로법", "id": None, "critical": False},
-    {"name": "하수도법", "id": None, "critical": False},
-    {"name": "수도권정비계획법", "id": None, "critical": False},
-    {"name": "지방세법", "id": None, "critical": False},
-    {"name": "재건축초과이익 환수에 관한 법률", "id": None, "critical": False},
-    {"name": "농지법", "id": None, "critical": False},
-    {"name": "산지관리법", "id": None, "critical": False},
+    {"name": "건설산업기본법", "id": "001808", "critical": False},
+    {"name": "공익사업을 위한 토지 등의 취득 및 보상에 관한 법률", "id": "009295", "critical": False},
+    {"name": "환경영향평가법", "id": "002016", "critical": False},
+    {"name": "소방시설 설치 및 관리에 관한 법률", "id": "009503", "critical": False},
+    {"name": "도로법", "id": "001821", "critical": False},
+    {"name": "하수도법", "id": "001815", "critical": False},
+    {"name": "수도권정비계획법", "id": "000266", "critical": False},
+    {"name": "지방세법", "id": "001006", "critical": False},
+    {"name": "재건축초과이익 환수에 관한 법률", "id": "010209", "critical": False},
+    {"name": "농지법", "id": "000479", "critical": False},
+    {"name": "산지관리법", "id": "009412", "critical": False},
 ]
 
 # 실제 모니터링 법령 수(과장 금지 — 동적 산출). 폴링 가능(법제처 ID 보유) 법령은 별도 집계.
