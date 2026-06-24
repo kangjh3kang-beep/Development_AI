@@ -648,6 +648,15 @@ class DevelopmentScenarioSimulator:
             "소규모재개발사업", "주거환경개선사업", "공공재개발·공공재건축",
             "입지규제최소구역", "대지조성사업",
         }
+        # ★단일 소규모 필지가 '단독'으로 추진 가능한 방식(나머지는 인접 통합/구역 편입/기존
+        #   건축물·세대수 요건이 있어 단독 검토대상이 못 됨). 단순건축만 자립 가능.
+        SELF_STANDING_SCHEMES = {"단순 건축"}
+        # 단일 필지가 통합·정비·지구단위·역세권형 사업의 '단독' 검토대상이 되는 현실 하한(약 300평).
+        #   이 미만의 '단일' 필지는 가로구역/블록/구역을 단독으로 구성할 수 없어 단독 추진 불가
+        #   (인접 필지 통합 또는 기존 지구단위/정비구역 편입 시에만 가능).
+        SINGLE_SMALL_MAX_SQM = 1000.0
+        single_small = (not multi) and 0 < area < SINGLE_SMALL_MAX_SQM
+        _pyeong = round(area / 3.3058) if area else 0
 
         def add(scheme, applicable, est_far, contrib, requirements, pros, cons, notes):
             # 다필지인데 비인접이면 통합개발 정책은 불가로 강등
@@ -655,6 +664,16 @@ class DevelopmentScenarioSimulator:
                 applicable = "불가"
                 cons = [*(cons or []), "필지 비인접 — 통합개발 불가"]
                 notes = f"⚠ {adj_note}. 통합개발 불가 — 필지별 개별개발 검토"
+            # ★단일 소규모 필지: 통합·정비·지구단위·역세권형 사업은 단독 검토대상 아님(불가 강등).
+            #   사용자가 지적한 "50~100평에 지구단위/도시개발/역세권 제시" 오류의 근본 차단.
+            elif single_small and scheme not in SELF_STANDING_SCHEMES and applicable != "불가":
+                applicable = "불가"
+                cons = [*(cons or []),
+                        f"단일 소규모 필지({round(area):,}㎡·약 {_pyeong:,}평) — 단독 추진 규모 미달"]
+                notes = (f"⚠ 단일 {round(area):,}㎡(약 {_pyeong:,}평) 필지는 단독으로 통합·정비·"
+                         "지구단위·역세권형 사업의 검토대상이 될 수 없습니다 — 인접 필지 통합(합필/"
+                         "일단지) 또는 기존 지구단위계획구역·정비구역 편입 시에만 가능. "
+                         "현 단계 현실적 추진방안: 단순 건축(현 용도지역 한도 내).")
             S.append({"scheme": scheme, "applicable": applicable,
                       "est_far": round(est_far) if est_far else None,
                       "contribution_pct": contrib, "requirements": requirements,
