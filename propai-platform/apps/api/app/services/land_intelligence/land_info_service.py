@@ -475,6 +475,39 @@ class LandInfoService:
                     "districts": land_use,
                     "regulations": self._extract_regulations_from_land_use(land_use),
                 }
+                # ★토지이음 '지역지구별 규제법령집'을 법령엔진(진실원천)에 실시간 반영:
+                #   fetch된 각 지역지구 designation → 관련 법령조문(law.go.kr verified 링크)으로 매핑.
+                #   매핑 실패 designation은 unmatched로 정직 표기(가짜 링크 금지). 부착 실패는 무손상.
+                try:
+                    from app.services.legal.legal_reference_registry import (
+                        legal_refs_for_districts,
+                    )
+                    _sigungu = (result.get("local_ordinance") or {}).get("sigungu")
+                    _dlr = legal_refs_for_districts(land_use, sigungu=_sigungu)
+                    result["land_use_plan"]["district_legal_refs"] = _dlr["refs"]
+                    result["land_use_plan"]["district_legal_by_district"] = _dlr["by_district"]
+                    if _dlr["unmatched"]:
+                        result["land_use_plan"]["district_legal_unmatched"] = _dlr["unmatched"]
+                except Exception:  # noqa: BLE001 — 규제법령집 부착 실패는 무손상(graceful)
+                    pass
+
+                # ★토지이음 '행위제한설명' 보강 — 도로조건(접도요건)·건축선(후퇴)·고시정보 deep-link.
+                #   road_side(land_characteristics)·sigungu 기반 결정론 산출(무목업·근거기반).
+                try:
+                    from app.services.legal.tojieum_supplement import (
+                        assess_road_conditions, building_line_setback, gosi_info,
+                    )
+                    _lc = result.get("land_characteristics") or {}
+                    _road_side = _lc.get("road_side") or (result.get("land_register") or {}).get("road_side")
+                    _sigungu2 = (result.get("local_ordinance") or {}).get("sigungu")
+                    _sido2 = (result.get("local_ordinance") or {}).get("sido")
+                    result["action_restriction_detail"] = {
+                        "road_conditions": assess_road_conditions(_road_side),
+                        "building_line": building_line_setback(_road_side),
+                        "gosi_info": gosi_info(_sido2, _sigungu2),
+                    }
+                except Exception:  # noqa: BLE001 — 보강 실패는 무손상(graceful)
+                    pass
 
             # 개별공시지가 (VWORLD NED)
             if isinstance(price_data, dict) and price_data:

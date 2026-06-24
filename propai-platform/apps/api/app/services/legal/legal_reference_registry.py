@@ -179,6 +179,11 @@ _BF_ACT = "장애인·노인·임산부 등의 편의증진 보장에 관한 법
 _BLDG_MGMT = "건축물관리법"                            # 건축물 해체의 허가
 _HOUSING_LEASE = "주택임대차보호법"                     # 주택 임대차 대항력(약칭 주택임대차법)
 _COMMERCIAL_LEASE = "상가건물 임대차보호법"            # 상가 임대차 계약갱신 요구(약칭 상가임대차법)
+# ── 토지이음 지역지구별 규제법령집 보강(getLandUseAttr districts → 법령조문 매핑용) ──
+_EDU_ENV = "교육환경 보호에 관한 법률"                 # 교육환경보호구역(절대·상대보호구역) 금지행위
+_RAILWAY = "철도안전법"                                # 철도보호지구 행위제한
+_WASTE = "폐기물관리법"                                # 폐기물처리시설 설치제한지역
+_LIVESTOCK = "가축분뇨의 관리 및 이용에 관한 법률"     # 가축사육제한구역
 
 LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 국토의 계획 및 이용에 관한 법률 ──
@@ -194,6 +199,17 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "bldg_far":           _ref(_BLDG, "제56조", "건축물의 용적률"),
     "daylight_height":    _ref(_BLDG, "제61조", "일조 등의 확보를 위한 건축물의 높이 제한"),
     "site_open_space":    _ref(_BLDG, "제58조", "대지 안의 공지"),
+    "building_line":      _ref(_BLDG, "제46조", "건축선의 지정"),
+    "building_line_limit": _ref(_BLDG, "제47조", "건축선에 따른 건축 제한"),
+    "road_relation":      _ref(_BLDG, "제44조", "대지와 도로의 관계(접도요건)"),
+    # ── 토지이음 지역지구별 규제법령집 보강(국토계획법 용도지구·도시계획시설 + 개별법) ──
+    "specific_use_district": _ref(_KOOKTO, "제37조", "용도지구의 지정(특정용도제한지구·경관·고도지구 등)"),
+    "urban_planning_facility": _ref(_KOOKTO, "제43조", "도시·군계획시설(도로·광장·공원 등)의 결정"),
+    "edu_env_protection": _ref(_EDU_ENV, "제9조", "교육환경보호구역에서의 금지행위(절대·상대보호구역)"),
+    "railway_protection": _ref(_RAILWAY, "제45조", "철도보호지구에서의 행위 제한"),
+    "waste_landfill_restrict": _ref(_WASTE, "제25조", "폐기물처리시설 설치제한지역"),
+    "livestock_restrict": _ref(_LIVESTOCK, "제8조", "가축사육의 제한(가축사육제한구역)"),
+    "landscape_district": _ref(_LANDSCAPE, "제9조", "경관계획(중점경관관리구역·경관지구)"),
     # ── 건축법 시행령 (일조 위임기준) ──
     "daylight_height_dec": _ref(_BLDG_DEC, "제86조", "일조 등의 확보를 위한 건축물의 높이 제한"),
     # ── 주택법 ──
@@ -427,3 +443,80 @@ def inject_urls(url_map: dict) -> None:
             logger.warning("inject_urls 거부 — 비신뢰 법령호스트: key=%s url=%s", key, str(url)[:120])
             continue
         LEGAL_REFERENCES[resolved]["url"] = url
+
+
+# ── 토지이음 지역지구별 규제법령집 매핑(진실원천 실시간 반영) ──
+#   getLandUseAttr(VWORLD NED)이 돌려주는 지역지구 designation 이름을 키워드로 매칭해
+#   관련 법령 조문 키 목록으로 변환한다. 부지마다 fetch되는 지역지구가 그 자리에서
+#   규제법령집(조문+law.go.kr 링크)을 carry하게 하여, 토지이음의 '지역지구별 규제법령집'을
+#   법령엔진(진실원천)에 실시간 반영한다. 매칭 실패는 정직하게 unmatched로 표기(가짜 링크 금지).
+#   (키워드, [법령키]) — 더 구체적인 키워드가 앞에 오도록 배치(부분일치 우선순위).
+_DISTRICT_LAW_KEYWORDS: tuple[tuple[tuple[str, ...], list[str]], ...] = (
+    # 용도지역(건폐율·용적률·용도제한) — 토지이음 '건폐율·용적률' 핵심.
+    (("전용주거", "일반주거", "준주거", "중심상업", "일반상업", "근린상업", "유통상업",
+      "전용공업", "일반공업", "준공업", "보전녹지", "생산녹지", "자연녹지",
+      "보전관리", "생산관리", "계획관리", "농림", "자연환경보전"),
+     ["zone_use", "bcr_law", "far_law", "bcr_limit", "far_limit"]),
+    (("지구단위계획",), ["district_unit_plan"]),
+    # 도로·도시계획시설(대로·중로·소로·광장·공원) — 건축선·접도요건 + 시설결정.
+    (("건축선",), ["building_line", "building_line_limit"]),
+    (("대로", "중로", "소로", "도로"), ["road_relation", "urban_planning_facility"]),
+    (("광장", "공원", "주차장", "유원지", "녹지대"), ["urban_planning_facility"]),
+    (("대지안의공지", "대지 안의 공지"), ["site_open_space"]),
+    # 교육환경보호구역(절대·상대보호구역·학교환경) — 교육환경보호법.
+    (("절대보호구역", "상대보호구역", "교육환경", "학교환경", "학교"), ["edu_env_protection"]),
+    # 용도지구(특정용도제한·경관·고도·방화·미관) — 국토계획법 제37조.
+    (("특정용도제한지구", "고도지구", "방화지구", "미관지구", "방재지구", "취락지구", "개발진흥지구"),
+     ["specific_use_district"]),
+    (("중점경관", "경관관리구역", "경관지구"), ["landscape_district"]),
+    # 개별법 지역지구.
+    (("철도보호", "철도안전"), ["railway_protection"]),
+    (("과밀억제권역",), ["metro_overconcentration"]),
+    (("폐기물매립", "폐기물처리"), ["waste_landfill_restrict"]),
+    (("가축사육제한", "가축분뇨"), ["livestock_restrict"]),
+    (("문화유산", "문화재", "현상변경", "역사문화환경"), ["cultural_heritage"]),
+    (("개발제한구역", "그린벨트"), ["greenbelt"]),
+    (("농업진흥", "농지"), ["farmland_conversion"]),
+    (("보전산지", "임업용산지", "공익용산지"), ["forest_conversion"]),
+    (("정비구역", "재개발", "재건축", "주거환경개선"), ["small_housing_overview"]),
+)
+
+
+def legal_refs_for_districts(
+    district_names, *, sigungu: str | None = None
+) -> dict[str, object]:
+    """지역지구 designation 이름들 → 규제법령집(조문+law.go.kr 링크). 진실원천 단일경유.
+
+    토지이음 '지역지구별 규제법령집'의 법령엔진 반영 — 각 designation을 키워드 매칭해 관련
+    법령키를 모으고 get_legal_refs로 verified 링크를 반환한다(무날조·정직).
+
+    Returns:
+        {"refs": [법령레코드…], "by_district": {designation: [법령키…]}, "unmatched": [designation…]}
+        unmatched = 법령 매핑이 없는 designation(가짜 링크 금지 — 정직 표기).
+    """
+    by_district: dict[str, list[str]] = {}
+    unmatched: list[str] = []
+    all_keys: list[str] = []
+    seen_names: set[str] = set()
+    for raw in district_names or []:
+        name = (raw if isinstance(raw, str) else (raw.get("district_name") or raw.get("name") or "")) if raw else ""
+        name = str(name).strip()
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        nm = name.replace(" ", "")
+        found: list[str] = []
+        for kws, lawkeys in _DISTRICT_LAW_KEYWORDS:
+            if any(kw.replace(" ", "") in nm for kw in kws):
+                for k in lawkeys:
+                    if k not in found:
+                        found.append(k)
+        if found:
+            by_district[name] = found
+            for k in found:
+                if k not in all_keys:
+                    all_keys.append(k)
+        else:
+            unmatched.append(name)
+    refs = get_legal_refs(all_keys, sigungu=sigungu)
+    return {"refs": refs, "by_district": by_district, "unmatched": unmatched}
