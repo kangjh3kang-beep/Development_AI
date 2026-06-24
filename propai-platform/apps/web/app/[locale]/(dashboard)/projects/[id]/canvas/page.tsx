@@ -23,6 +23,7 @@ import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 
@@ -165,6 +166,7 @@ export default function SiteCanvasPage() {
             {tab === "regulation" && (
               <>
                 <BuildableEnvelopeCard />
+                <PermitGuideCard />
                 <DrillCta to={proj("legal")}>규제 계층·인허가 상세</DrillCta>
               </>
             )}

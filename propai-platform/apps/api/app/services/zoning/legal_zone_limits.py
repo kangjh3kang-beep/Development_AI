@@ -647,3 +647,77 @@ def check_against_legal(
             )
         )
     return issues
+
+
+def mixed_zone_limits(zones: list[dict[str, Any]]) -> dict[str, Any]:
+    """둘 이상 용도지역에 걸치는 대지의 건폐율/용적률(국토계획법 제84조·시행령 제94조).
+
+    토지이음 '인허가 사례1'(두 개 이상 용도지역 → 건폐율·용적률 면적가중) 등가물.
+    규칙: 가장 작은 용도지역 부분이 330㎡ 이하면 가장 넓은 용도지역에 포함(흡수) 적용,
+          초과면 각 용도지역별 한도를 면적가중 평균해 대지 전체에 적용.
+
+    Args:
+        zones: [{"zone_type": 용도지역명, "area_sqm": 면적}] — 부지 내 각 용도지역.
+    Returns:
+        {is_mixed, per_zone[...], blended_bcr_pct, blended_far_pct, dominant_zone?, absorbed?,
+         rule, total_area_sqm?, legal_ref_keys, note}. 면적 미확보 시 가중치 None(정직).
+    """
+    parts = [z for z in (zones or []) if z.get("zone_type")]
+    # 중복 용도지역명 병합(같은 용도지역이 여러 조각이면 면적 합산).
+    merged: dict[str, float | None] = {}
+    for z in parts:
+        zt = str(z["zone_type"]).strip()
+        a = z.get("area_sqm")
+        if zt not in merged:
+            merged[zt] = (float(a) if a else None)
+        elif a and merged[zt] is not None:
+            merged[zt] += float(a)
+    uniq = list(merged.items())
+    if len(uniq) < 2:
+        return {"is_mixed": False}
+
+    legal_keys = ["mixed_zone_rule", "mixed_zone_rule_dec", "bcr_law", "far_law"]
+    per_zone = []
+    for zt, a in uniq:
+        L = legal_limits_for(zt) or {}
+        per_zone.append({"zone_type": zt, "area_sqm": a,
+                         "max_bcr_pct": L.get("max_bcr_pct"), "max_far_pct": L.get("max_far_pct")})
+
+    has_area = all(a for _, a in uniq)
+    if not has_area:
+        return {
+            "is_mixed": True, "per_zone": per_zone,
+            "blended_bcr_pct": None, "blended_far_pct": None,
+            "rule": "면적가중(미산정)", "legal_ref_keys": legal_keys,
+            "note": ("둘 이상 용도지역에 걸치는 대지 — 면적가중 건폐율/용적률 적용(국토계획법 제84조). "
+                     "용도지역별 면적분할 미확보로 가중치 미산정(정직). 각 용도지역 면적 확보 시 자동 산정."),
+        }
+
+    total = sum(float(a) for _, a in uniq)
+    smallest_zt, smallest_a = min(uniq, key=lambda kv: kv[1])
+    largest_zt, _ = max(uniq, key=lambda kv: kv[1])
+
+    # 330㎡ 이하 작은 부분 흡수(시행령 제94조) — 2개 용도지역에서만 단순 적용.
+    if len(uniq) == 2 and float(smallest_a) <= 330.0:
+        L = legal_limits_for(largest_zt) or {}
+        return {
+            "is_mixed": True, "per_zone": per_zone, "total_area_sqm": round(total, 1),
+            "absorbed": smallest_zt, "dominant_zone": largest_zt,
+            "blended_bcr_pct": L.get("max_bcr_pct"), "blended_far_pct": L.get("max_far_pct"),
+            "rule": "330㎡이하 흡수", "legal_ref_keys": legal_keys,
+            "note": (f"작은 부분({smallest_zt} {round(float(smallest_a))}㎡ ≤ 330㎡)은 {largest_zt}에 "
+                     "포함 적용(국토계획법 시행령 제94조). 건폐율/용적률은 큰 용도지역 기준."),
+        }
+
+    # 면적가중 평균.
+    bw = sum(float(a) * ((legal_limits_for(zt) or {}).get("max_bcr_pct") or 0) for zt, a in uniq)
+    fw = sum(float(a) * ((legal_limits_for(zt) or {}).get("max_far_pct") or 0) for zt, a in uniq)
+    return {
+        "is_mixed": True, "per_zone": per_zone, "total_area_sqm": round(total, 1),
+        "dominant_zone": largest_zt,
+        "blended_bcr_pct": round(bw / total, 1) if total else None,
+        "blended_far_pct": round(fw / total, 1) if total else None,
+        "rule": "면적가중", "legal_ref_keys": legal_keys,
+        "note": ("둘 이상 용도지역 면적가중 건폐율/용적률(국토계획법 제84조·시행령 제94조). "
+                 "각 용도지역별 한도를 면적비로 가중평균."),
+    }
