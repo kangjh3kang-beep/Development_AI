@@ -475,6 +475,21 @@ class LandInfoService:
                     "districts": land_use,
                     "regulations": self._extract_regulations_from_land_use(land_use),
                 }
+                # ★토지이음 '지역지구별 규제법령집'을 법령엔진(진실원천)에 실시간 반영:
+                #   fetch된 각 지역지구 designation → 관련 법령조문(law.go.kr verified 링크)으로 매핑.
+                #   매핑 실패 designation은 unmatched로 정직 표기(가짜 링크 금지). 부착 실패는 무손상.
+                try:
+                    from app.services.legal.legal_reference_registry import (
+                        legal_refs_for_districts,
+                    )
+                    _sigungu = (result.get("local_ordinance") or {}).get("sigungu")
+                    _dlr = legal_refs_for_districts(land_use, sigungu=_sigungu)
+                    result["land_use_plan"]["district_legal_refs"] = _dlr["refs"]
+                    result["land_use_plan"]["district_legal_by_district"] = _dlr["by_district"]
+                    if _dlr["unmatched"]:
+                        result["land_use_plan"]["district_legal_unmatched"] = _dlr["unmatched"]
+                except Exception:  # noqa: BLE001 — 규제법령집 부착 실패는 무손상(graceful)
+                    pass
 
             # 개별공시지가 (VWORLD NED)
             if isinstance(price_data, dict) and price_data:
