@@ -44,6 +44,7 @@ def _is_trusted_legal_host(url: str | None) -> bool:
 # 분류 키워드 — ②-1 규칙: '법령' 또는 '자치법규'를 그대로 한글로.
 _CATEGORY_LAW = "법령"
 _CATEGORY_ORDINANCE = "자치법규"
+_CATEGORY_ADMRULE = "행정규칙"  # 고시·훈령·예규(국가기관이 법령 위임으로 발하는 행정규칙)
 
 
 def _normalize_name(name: str) -> str:
@@ -107,6 +108,18 @@ def build_ordinance_url(ordinance_name: str) -> str:
     if not name:
         return ""
     return f"{LAW_GO_KR_BASE}/{quote(_CATEGORY_ORDINANCE)}/{quote(name)}"
+
+
+def build_admrule_url(admrule_name: str) -> str:
+    """행정규칙(고시·훈령·예규) 딥링크(한글주소) 생성 — {base}/행정규칙/{고시명}.
+
+    고시는 국가기관이 법령 위임으로 발하는 행정규칙(예: 분양가상한제 산정 고시, 건축물 에너지효율등급
+    인증 고시). law.go.kr 행정규칙 카테고리로 검증 링크를 구성. 명칭이 비면 빈 문자열(호출부 pending).
+    """
+    name = _normalize_name(admrule_name)
+    if not name:
+        return ""
+    return f"{LAW_GO_KR_BASE}/{quote(_CATEGORY_ADMRULE)}/{quote(name)}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
