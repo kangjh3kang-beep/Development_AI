@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
 
+    # 벡터 검색(Qdrant) — 성장 뇌(MemoryHub) 의미 회상·design retrieval에 사용.
+    # ★전수감사 보강: Settings에 필드가 없으면 extra='ignore'로 prod env(QDRANT_HOST)가 무시되어
+    #   qdrant_client.getattr가 항상 None→:memory: 폴백(워커↔API 교차 불가·의미회상 영구 휴면)이었음.
+    #   필드를 선언해 prod에서 환경변수로 실제 Qdrant 서비스를 가리킬 수 있게 한다(미설정 시 ""→:memory:).
+    QDRANT_HOST: str = ""
+    QDRANT_PORT: int = 6333
+
     VWORLD_API_KEY: str = ""
     VWORLD_BASE_URL: str = "https://api.vworld.kr/req"
 
