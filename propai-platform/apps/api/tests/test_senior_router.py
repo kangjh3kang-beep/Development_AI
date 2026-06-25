@@ -4,14 +4,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from apps.api.auth.jwt_handler import get_current_user
+from apps.api.database.session import get_db
 from apps.api.routers import senior_agents as senior_router
 
 
 def _client() -> TestClient:
     app = FastAPI()
     app.include_router(senior_router.router, prefix="/api/v1")
-    # auth 의존성 오버라이드(계정격리 게이트는 라우터에 존재 — 테스트는 통과 유저 주입)
+    # auth·db 의존성 오버라이드(use_llm=False 경로는 db 미사용 — 더미 주입)
     app.dependency_overrides[get_current_user] = lambda: {"id": "t", "tenant_id": "t"}
+    app.dependency_overrides[get_db] = lambda: None
     return TestClient(app)
 
 
@@ -100,3 +102,74 @@ def test_consult_domain_blank_422():
 def test_consult_multi_too_many_domains_422():
     r = _client().post("/api/v1/senior/consult-multi", json={"domains": ["금융"] * 21})
     assert r.status_code == 422
+
+
+# ── use_llm: AI 서술(narrative) 경로 ──
+
+def test_consult_default_no_llm_structured():
+    # use_llm 미지정(기본 False) → narrative 없음(결정론). include_reasoning 미요청이라 reasoning None.
+    r = _client().post("/api/v1/senior/consult", json={"domain": "금융"})
+    assert r.status_code == 200
+    assert r.json().get("reasoning") is None
+
+
+def test_consult_use_llm_injects_narrative(monkeypatch):
+    # use_llm=True → 추론 동반 강제 + narrative 주입(LLM·과금게이트 모킹).
+    async def fake_narrative(prompt, *, use_llm):
+        return "종합: 조건부 Go(모킹)"
+
+    async def fake_enforce(db):
+        return None
+
+    async def fake_debate(debate, *, use_llm):
+        return {"pro": "적합 논증(모킹)", "con": "부적합 논증(모킹)"}
+
+    monkeypatch.setattr(senior_router, "generate_senior_narrative", fake_narrative)
+    monkeypatch.setattr(senior_router, "generate_senior_debate", fake_debate)
+    monkeypatch.setattr("app.core.billing_deps.enforce_llm_quota", fake_enforce, raising=False)
+
+    r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})
+    assert r.status_code == 200
+    reasoning = r.json()["reasoning"]
+    assert reasoning is not None  # use_llm → include_reasoning 강제
+    assert reasoning["mode"] == "llm" and reasoning["narrative"] == "종합: 조건부 Go(모킹)"
+    # 금융=고위험 → debate 발동 → debate_result 주입
+    assert reasoning["debate_result"] == {"pro": "적합 논증(모킹)", "con": "부적합 논증(모킹)"}
+
+
+def test_consult_use_llm_quota_402_propagates(monkeypatch):
+    # use_llm=True + 한도 초과(is_blocked) → enforce_llm_quota 402가 라우터로 전파(차단 누락 방지).
+    async def blocked(db, uid):
+        return True
+
+    async def not_team_over(db, uid):
+        return False
+
+    monkeypatch.setattr("app.core.billing_deps.get_current_user_id", lambda: "u1")
+    monkeypatch.setattr("app.core.billing_deps.billing_service.is_blocked", blocked, raising=False)
+    monkeypatch.setattr("app.core.billing_deps.billing_service.team_limit_exceeded",
+                        not_team_over, raising=False)
+    # narrative까지 가기 전에 402여야 함(과금 게이트 선행).
+    r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})
+    assert r.status_code == 402
+
+
+def test_consult_use_llm_graceful_when_narrative_none(monkeypatch):
+    # LLM 미설정/실패(narrative None) → 결정론 구조 유지(서비스 중단 없음).
+    async def none_narrative(prompt, *, use_llm):
+        return None
+
+    async def none_debate(debate, *, use_llm):
+        return None
+
+    async def fake_enforce(db):
+        return None
+
+    monkeypatch.setattr(senior_router, "generate_senior_narrative", none_narrative)
+    monkeypatch.setattr(senior_router, "generate_senior_debate", none_debate)
+    monkeypatch.setattr("app.core.billing_deps.enforce_llm_quota", fake_enforce, raising=False)
+
+    r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})
+    assert r.status_code == 200
+    reasoning = r.json()["reasoning"]
+    assert reasoning is not None and reasoning["mode"] == "structured" and reasoning["narrative"] is None

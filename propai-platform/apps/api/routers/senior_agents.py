@@ -11,11 +11,25 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.senior_agents import senior_orchestrator
+from app.services.senior_agents.llm_runner import (
+    generate_senior_debate,
+    generate_senior_narrative,
+)
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/senior", tags=["시니어 전문가 에이전트"])
+
+
+async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
+    """use_llm=True일 때만 LLM 한도 게이트(미설정=무료·persona 패턴 동일). 무과금 경로는 통과."""
+    if not use_llm:
+        return
+    from app.core.billing_deps import enforce_llm_quota
+    await enforce_llm_quota(db)
 
 
 def _validate_context(v: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -37,6 +51,7 @@ class SeniorConsultRequest(BaseModel):
     context: dict[str, Any] | None = Field(
         None, description="신호(data_completeness/rule_fit/rag_strength/correction_rate[0,1]·matched_rule_ids)")
     high_risk: bool | None = Field(None, description="고위험 강제(미지정=도메인 기본)")
+    use_llm: bool = Field(False, description="AI 종합 서술(FinCoT narrative) 생성 — 기본 off·무과금, on 시 한도게이트")
 
     @field_validator("domain")
     @classmethod
@@ -70,17 +85,36 @@ async def list_agents(
     return {"agents": senior_orchestrator.available()}
 
 
-@router.post("/consult", summary="시니어 자문(단일 도메인·결정론)")
+@router.post("/consult", summary="시니어 자문(단일 도메인·결정론, use_llm 시 AI 서술)")
 async def consult(
     req: SeniorConsultRequest,
     current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    # use_llm이면 FinCoT 프롬프트 조립 위해 추론 동반 강제(없으면 narrative 생성 불가).
+    ctx = dict(req.context or {})
+    if req.use_llm:
+        ctx["include_reasoning"] = True
     try:
         result = senior_orchestrator.consult(
-            req.domain, context=req.context, high_risk=req.high_risk)
+            req.domain, context=ctx or None, high_risk=req.high_risk)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    return result.to_dict()
+    out = result.to_dict()
+    # AI 서술(use_llm·추론 동반 시): 단일경유 LLM으로 narrative 생성·주입(graceful — 실패 시 결정론 구조 유지).
+    # ★빈 분석(irac_steps 0건)은 LLM 호출·과금 생략(서술할 근거 없음). db는 use_llm 경로에서만 실사용.
+    reasoning = out.get("reasoning")
+    if req.use_llm and isinstance(reasoning, dict) and reasoning.get("prompt") and reasoning.get("irac_steps"):
+        await _enforce_llm_if_needed(db, True)
+        narrative = await generate_senior_narrative(reasoning["prompt"], use_llm=req.use_llm)
+        if narrative:
+            reasoning["narrative"] = narrative
+            reasoning["mode"] = "llm"
+        # 적대 debate(고위험/저신뢰/위반 발동 시): pro/con 실행→debate_result 주입(graceful).
+        debate_result = await generate_senior_debate(reasoning.get("debate"), use_llm=req.use_llm)
+        if debate_result:
+            reasoning["debate_result"] = debate_result
+    return out
 
 
 @router.post("/consult-multi", summary="시니어 자문(다도메인·중복제거)")

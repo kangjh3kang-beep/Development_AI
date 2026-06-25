@@ -358,11 +358,18 @@ def test_orchestrator_consult_no_inputs_note():
     assert any("정량 입력" in n for n in c.honest_notes)
 
 
-def test_orchestrator_no_evaluator_for_bim():
+def test_orchestrator_bim_and_deliberation_evaluations():
     o = _orch()
-    # BIM은 아직 평가기 없음 → inputs 줘도 evaluations 비고
-    c = o.consult("BIM", context={"inputs": {"noi": 100}})
-    assert c.evaluations == () and c.overall_verdict is None
+    # BIM: critical clash 1건 → BLOCK
+    b = o.consult("BIM", context={"inputs": {"clash_count": 4, "critical_clash_count": 1}})
+    ev = {e["rule_id"]: e for e in b.evaluations}
+    assert ev["bim.clash_triage"]["verdict"] == "BLOCK" and b.overall_verdict == "BLOCK"
+    # 심의: 건폐율 초과 → CSP BLOCK
+    d = o.consult("심의", context={"inputs": {"bcr_actual": 70, "bcr_limit": 60,
+                                            "far_actual": 200, "far_limit": 250}})
+    ev2 = {e["rule_id"]: e for e in d.evaluations}
+    assert ev2["delib.multi_clause_csp"]["verdict"] == "BLOCK"
+    assert "건폐율" in ev2["delib.multi_clause_csp"]["detail"]
 
 
 def test_orchestrator_tax_and_accounting_evaluations():
@@ -399,6 +406,23 @@ def test_orchestrator_architect_evaluation_reuses_setback_helper():
     assert ev["design.bukchuk_setback"]["verdict"] == "BLOCK"
     assert ev["design.winter_daylight_gate"]["verdict"] == "BLOCK"  # 90<120분
     assert c.overall_verdict == "BLOCK"
+
+
+def test_orchestrator_include_reasoning():
+    o = _orch()
+    # include_reasoning 미요청 → reasoning None(기본 무변경)
+    base = o.consult("금융")
+    assert base.reasoning is None
+    # 요청 시 → FinCoT 구조(IRAC·debate[고위험]) 첨부, LLM 미주입이라 structured
+    r = o.consult("금융", context={"include_reasoning": True,
+                                  "inputs": {"noi": 90, "debt_service": 100}})
+    assert r.reasoning is not None
+    assert r.reasoning["mode"] == "structured" and r.reasoning["narrative"] is None
+    assert len(r.reasoning["irac_steps"]) >= 1
+    assert r.reasoning["debate"] is not None  # 금융=고위험 → debate 발동
+    # IRAC 결론에 평가 verdict 반영(DSCR BLOCK)
+    dscr = next(s for s in r.reasoning["irac_steps"] if s["rule_id"] == "fin.dscr_gate")
+    assert "BLOCK" in dscr["conclusion"]
 
 
 def test_coerce_matched_ids_defensive():
