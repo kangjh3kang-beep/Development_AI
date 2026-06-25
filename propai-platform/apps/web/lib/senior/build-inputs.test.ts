@@ -112,10 +112,38 @@ describe("buildSeniorInputs", () => {
     expect(buildSeniorInputs("senior_legal_scrivener", {})).toBeUndefined();
   });
 
-  it("미매핑 도메인(설계·세무·회계·BIM·도시계획) → undefined", () => {
+  it("도시계획: 수지 종후자산(총분양수입)·총사업비 → post/cost(비례율 분자·사업비)", () => {
+    const r = buildSeniorInputs("senior_urban_planner", {
+      feasibilityData: { totalRevenueWon: 12_000_000_000, totalCostWon: 9_000_000_000 },
+    });
+    expect(r).toEqual({ post_appraisal_total: 12_000_000_000, total_project_cost: 9_000_000_000 });
+  });
+
+  it("도시계획: 분모(종전평가)는 자동매핑 안 함 — 토지만 탁상이라 비례율 과대 오도(수동입력)", () => {
+    // estimatedValue(토지·탁상)가 있어도 prior_appraisal_total로 새지 않는다(무목업·오도 방지).
+    const r = buildSeniorInputs("senior_urban_planner", {
+      siteAnalysis: { estimatedValue: 5_000_000_000 },
+      feasibilityData: { totalRevenueWon: 12_000_000_000, totalCostWon: 9_000_000_000 },
+    });
+    expect(r).toEqual({ post_appraisal_total: 12_000_000_000, total_project_cost: 9_000_000_000 });
+    expect(r).not.toHaveProperty("prior_appraisal_total");
+  });
+
+  it("도시계획: 부분 보유(종후만)도 emit — 평가기가 종전평가 입력까지 비례율 생략", () => {
+    expect(
+      buildSeniorInputs("senior_urban_planner", { feasibilityData: { totalRevenueWon: 12_000_000_000 } }),
+    ).toEqual({ post_appraisal_total: 12_000_000_000 });
+    // 0/음수/결측은 생략(분자·사업비 무효 — posNum)
+    expect(
+      buildSeniorInputs("senior_urban_planner", { feasibilityData: { totalRevenueWon: 0, totalCostWon: -1 } }),
+    ).toBeUndefined();
+    expect(buildSeniorInputs("senior_urban_planner", {})).toBeUndefined();
+  });
+
+  it("미매핑 도메인(설계·세무·회계·BIM) → undefined", () => {
     for (const k of [
       "senior_architect", "senior_tax_advisor", "senior_accountant",
-      "senior_bim_specialist", "senior_urban_planner",
+      "senior_bim_specialist",
     ]) {
       expect(buildSeniorInputs(k, { designData: { bcr: 50, far: 200 } })).toBeUndefined();
     }
