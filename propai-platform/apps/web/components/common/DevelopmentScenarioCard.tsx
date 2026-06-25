@@ -56,6 +56,12 @@ type SimResult = {
   };
   scenarios: Scenario[];
   recommended: { scheme: string; est_far?: number | null; reason?: string };
+  // ★P0: 일부 필지가 차단(구거/하천/GB)이어도 '가용 필지'로 산출한 실개발방식(개발불가만 제시 해소).
+  available_subset?: {
+    parcels?: string[]; parcel_count?: number; total_area_sqm?: number | null;
+    scenarios?: Scenario[]; recommended?: { scheme: string; est_far?: number | null; reason?: string };
+  } | null;
+  excluded_parcels?: { address?: string; zone?: string; area?: number | null }[];
   // ★특이부지 '개발 불가' 대신 개발가능 방안(인허가·도시계획 변경 선행절차) 제시.
   resolution_methods?: string[];
   resolution_legal_refs?: { key: string; law_name: string; article?: string | null; url?: string | null; url_status?: string }[];
@@ -306,6 +312,38 @@ export function DevelopmentScenarioCard({
               )}
             </div>
           )}
+
+          {/* ★P0: 가용 필지 개발방식(일부 필지 차단 시) — '개발불가'만 보이던 것 해소 */}
+          {result.available_subset?.scenarios?.length ? (
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5">
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-emerald-500">
+                <Building2 className="size-3.5" aria-hidden /> 가용 필지 개발방식
+                {result.available_subset.parcel_count != null && (
+                  <span className="font-bold text-[var(--text-secondary)]">
+                    ({result.available_subset.parcel_count}필지
+                    {result.available_subset.total_area_sqm ? ` · ${result.available_subset.total_area_sqm.toLocaleString()}㎡` : ""})
+                  </span>
+                )}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                {(result.excluded_parcels?.length ?? 0) > 0 && (
+                  <>차단 {result.excluded_parcels!.length}필지(구거·하천·GB 등) 제외 후 </>
+                )}
+                가용 필지로 산출한 실제 개발방식입니다(전체 통합개발은 차단필지 선행절차 통과 시 가능).
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {result.available_subset.scenarios!.map((s, i) => (
+                  <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2">
+                    <span className="text-[12px] font-bold text-[var(--text-primary)]">{s.scheme}</span>
+                    <span className="flex items-center gap-2 text-[10px]">
+                      {s.est_far != null && <span className="font-bold text-[var(--accent-strong)]">예상 용적 {s.est_far}%</span>}
+                      <span className={`rounded-full border px-2 py-0.5 font-bold ${APP_STYLE[s.applicable] || APP_STYLE["불가"]}`}>{s.applicable}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {/* 시나리오 목록 */}
           <div className="space-y-2">
