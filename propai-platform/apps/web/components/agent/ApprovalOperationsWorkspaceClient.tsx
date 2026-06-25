@@ -661,7 +661,7 @@ export function ApprovalOperationsWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       <Card>
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.35fr_0.9fr]">
           <div>

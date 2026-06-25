@@ -169,7 +169,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
   const trendRows = re?.trend_series ?? [];
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 1) 유형별 매매 시세 */}
       <div className="sa-di-block">
         <header className="sa-di-block__head" style={{ cursor: "default" }}>

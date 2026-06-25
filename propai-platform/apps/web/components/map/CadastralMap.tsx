@@ -86,7 +86,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
          <div className="absolute -bottom-20 -left-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/5 blur-[80px]" />
          <h2 className="text-xl font-bold tracking-tight text-[var(--text-primary)] mb-8">{labels.parcelInfoTitle}</h2>
          
-         <div className="grid gap-6">
+         <div className="grid grid-cols-1 gap-6 min-w-0">
           <div className="relative overflow-hidden rounded-[1.5rem] border border-[var(--accent-strong)]/40 bg-gradient-to-br from-[var(--accent-strong)]/10 to-transparent p-6 shadow-[inset_0_0_20px_rgba(45,212,191,0.05)]">
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] mb-2">
               Selected Parcel

@@ -28,7 +28,7 @@ export default async function ProjectContractsPage({
       : dictionary.workspace.modeMock;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <ModuleCommandStrip label="CONTRACTS · 계약 관리" meta={runtimeMode} />
       <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["contracts"].eyebrow}

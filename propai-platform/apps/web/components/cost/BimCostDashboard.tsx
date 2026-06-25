@@ -117,7 +117,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
   }, [projectId, totalGfaSqm]);
 
   return (
-    <div className="grid gap-8">
+    <div className="grid grid-cols-1 gap-8 min-w-0">
       {/* Simulation Control Header */}
       <Card className="border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
         <div className="bg-[var(--surface-soft)] p-6 border-b border-[var(--line)] flex items-center justify-between">

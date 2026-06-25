@@ -273,7 +273,7 @@ export default function SettingsPage() {
           </header>
 
           <div className="cc-panel__body relative z-10 space-y-10">
-            <div className="grid gap-8">
+            <div className="grid grid-cols-1 gap-8 min-w-0">
               <div className="space-y-3">
                 <label className="cc-label">
                   LLM Provider (공급자)

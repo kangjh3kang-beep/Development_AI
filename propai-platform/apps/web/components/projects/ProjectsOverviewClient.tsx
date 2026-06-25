@@ -89,7 +89,7 @@ export function ProjectsOverviewClient({
   const errorDetail: string | null = null;
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-4 px-2">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex gap-2 p-1 bg-[var(--surface-strong)] rounded-full border border-[var(--line-strong)]">

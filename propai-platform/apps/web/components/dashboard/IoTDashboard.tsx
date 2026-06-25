@@ -72,7 +72,7 @@ export function IoTDashboard() {
 
   if (isLoading) {
     return (
-      <div className="grid gap-6">
+      <div className="grid grid-cols-1 gap-6 min-w-0">
         <SkeletonLoader count={1} itemClassName="h-32 rounded-[2rem]" />
         <SkeletonLoader count={2} itemClassName="h-64 rounded-[3rem]" />
       </div>

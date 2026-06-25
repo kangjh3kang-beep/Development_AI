@@ -36,6 +36,8 @@ type AI = {
   seizure?: Array<{ type?: string; holder?: string; detail?: string; date?: string }>;
   mortgage?: Array<{ max_claim?: string; mortgagee?: string; date?: string }>;
   other_rights?: string[];
+  baseline_right?: string;
+  acquired_extinguished?: string;
   right_to_demand_sale?: { possible?: string; reason?: string };
   rights_analysis?: string;
   risks?: string[];
@@ -73,11 +75,13 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  // ★다필지 일괄 결과(필지별 누적) — 단일 result만 덮어써 마지막 1건만 보이던 부정합 해소.
+  const [batchResults, setBatchResults] = useState<{ jibun: string; rowId: string; result: Result | null }[] | null>(null);
   const [newJibun, setNewJibun] = useState("");
 
-  const run = useCallback(async (overrideAddr?: string, rowId?: string) => {
+  const run = useCallback(async (overrideAddr?: string, rowId?: string): Promise<Result | null> => {
     const target = (typeof overrideAddr === "string" ? overrideAddr : addr) || siteAnalysis?.address || "";
-    if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return; }
+    if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return null; }
     if (rowId) setBusyId(rowId); else setLoading(true);
     setError(""); setResult(null); setProgress("");
     try {
@@ -112,8 +116,10 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         if (r.fetched?.pdf_url) patch.pdf_url = r.fetched.pdf_url;
         if (Object.keys(patch).length) updateRow(projectId, rowId, patch);
       }
+      return r;
     } catch (e) {
       setError(e instanceof Error ? e.message : "등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+      return null;
     } finally {
       if (rowId) setBusyId(null); else setLoading(false);
       setProgress("");
@@ -135,11 +141,20 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
 
-  // 다필지 일괄 분석(순차 — CODEF 과부하 방지)
+  // ★다필지 일괄 분석(순차 — CODEF 과부하 방지). 필지별 결과를 누적 보관(마지막 1건만 남던 부정합 해소).
   const analyzeAll = useCallback(async () => {
+    setBatchResults([]);
+    const acc: { jibun: string; rowId: string; result: Result | null }[] = [];
     for (const r of rows) {
-      if (r.jibun.trim()) await run(r.jibun.trim(), r.id);
+      const j = r.jibun.trim();
+      if (!j) continue;
+      const res = await run(j, r.id);
+      acc.push({ jibun: j, rowId: r.id, result: res });
+      setBatchResults([...acc]);
     }
+    // 종료 후 첫 성공(권리분석 ai) 필지를 상세로 고정(데스크 시세추정과 동일 UX — 마지막 1건이 남던 비대칭 해소).
+    const first = acc.find((x) => x.result?.ai);
+    if (first?.result) setResult(first.result);
   }, [rows, run]);
 
   // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
@@ -156,7 +171,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const own = ai?.ownership || {};
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
           <div className="flex items-center gap-3">
@@ -255,6 +270,32 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 </div>
               ))}
             </div>
+            {/* ★일괄 권리분석 결과(필지별 누적) — 마지막 1건만 보이던 부정합 해소. '상세'로 전체 분석 표시 */}
+            {batchResults && batchResults.length > 0 && (
+              <div className="mt-3 space-y-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/40 p-3">
+                <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+                  일괄 권리분석 결과 ({batchResults.filter((b) => b.result?.ai).length}/{batchResults.length})
+                </p>
+                {batchResults.map((b, i) => {
+                  const grade = b.result?.ai?.safety_grade;
+                  return (
+                    <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="min-w-[150px] flex-1 truncate font-semibold text-[var(--text-primary)]" title={b.jibun}>{b.jibun}</span>
+                      {grade ? (
+                        <span className={`rounded-full border px-2 py-0.5 font-bold ${GRADE[grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>안전성 {grade}</span>
+                      ) : (
+                        <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
+                      )}
+                      {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
+                      {b.result && (
+                        <button onClick={() => setResult(b.result)}
+                          className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <input value={newJibun} onChange={(e) => setNewJibun(e.target.value)} placeholder="지번 주소 추가(예: …동 56-20)"
                 onKeyDown={(e) => { if (e.key === "Enter" && newJibun.trim()) { addRow(projectId, { jibun: newJibun.trim() }); setNewJibun(""); } }}
@@ -331,7 +372,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
               <CardContent className="p-6">
                 <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--status-warning)]"><Settings className="size-4" aria-hidden />등기부 분석 안내</p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">{result.message}</p>
-                <p className="mt-2 text-[11px] text-[var(--text-hint)]">위의 "등기부등본 내용 직접 입력"으로 분석하거나, 등기부 API(CODEF) 설정을 완료하세요.</p>
+                <p className="mt-2 text-[11px] text-[var(--text-hint)]">위의 ‘등기부등본 내용 직접 입력’으로 분석하거나, 등기부 API(CODEF) 설정을 완료하세요.</p>
               </CardContent>
             </Card>
           )}
@@ -379,6 +420,23 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     body={(ai.mortgage?.length ?? 0) > 0 ? ai.mortgage!.map((m) => `채권최고액 ${m.max_claim || "-"} (${m.mortgagee || "-"})`).join(" / ") : "없음"} />
                 </div>
 
+                {/* 법무사 핵심판단: 말소기준권리·인수/소멸 */}
+                {(ai.baseline_right || ai.acquired_extinguished) && (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {ai.baseline_right && (
+                      <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)]/40 p-3">
+                        <p className="text-xs font-bold text-[var(--accent-strong)]">말소기준권리</p>
+                        <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">{ai.baseline_right}</p>
+                      </div>
+                    )}
+                    {ai.acquired_extinguished && (
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                        <p className="text-xs font-bold text-[var(--text-primary)]">인수 / 소멸 권리</p>
+                        <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">{ai.acquired_extinguished}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {ai.rights_analysis && (
                   <div className="mt-4">
                     <p className="text-xs font-bold text-[var(--text-primary)]">권리관계 종합 분석</p>

@@ -17,7 +17,7 @@ export default async function MarketInsightsPage({ params }: MarketInsightsPageP
   const meta = dictionary.modulePlaceholders["market-insights"];
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 실 시장분석 화면 헤더 — 목업 배너 제거(무목업), 제목만 유지. 본문은 실데이터(실거래·AI시세·보고서). */}
       <header className="space-y-1.5 px-2">
         <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">

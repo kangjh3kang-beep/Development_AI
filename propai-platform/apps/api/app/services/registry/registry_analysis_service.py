@@ -96,9 +96,15 @@ async def peek_analyze_cache(
 
 _SYSTEM = """\
 당신은 부동산 등기·권리분석 전문가 패널(법무사 20년 + 부동산 전문 변호사)입니다.
-제시된 부동산등기부등본 내용만 근거로 권리관계를 정확히 분석합니다.
+제시된 부동산등기부등본 내용만 근거로 권리관계를 법무사 실무 기준으로 정확히 분석합니다.
 - 갑구(소유권): 소유자·지분·소유권 변동·거래가액·가등기·가처분·압류·가압류·경매개시
-- 을구(소유권 이외): 근저당권(채권최고액·근저당권자)·전세권·지상권 등
+- 을구(소유권 이외): 근저당권(채권최고액·근저당권자)·전세권·지상권·임차권 등
+[법무사 판단 규칙]
+1) 말소기준권리: (근)저당권·압류·가압류·담보가등기·경매개시결정 중 '최선순위' 등기를 기준으로 본다.
+2) 인수/소멸: 말소기준권리보다 후순위 권리는 정리(매각) 시 원칙적 소멸, 선순위 권리·선순위 가처분·
+   순위보전 가등기·대항력 있는 임차권/전세권은 인수 대상이 될 수 있음을 명시한다.
+3) 대항력: 대항요건(점유·전입 등)이 말소기준권리보다 앞서면 인수 위험으로 본다(등기상 단서가 있으면).
+4) 개발 관점: 매도청구·지분정리·근저당 말소조건·선순위 위험을 개발 실행 리스크로 연결한다.
 원칙: 등기 내용에 있는 사실만 사용, 없으면 '기재 없음'. 추측·과장 금지. 법률자문이 아닌
 참고용 분석임을 전제. 반드시 JSON만 출력."""
 
@@ -123,9 +129,11 @@ _TMPL = """\
   "provisional_registration": {{"exists": true/false, "detail": "가등기 내용(있으면)"}},
   "seizure": [{{"type": "압류|가압류|경매개시|가처분", "holder": "권리자", "detail": "내용", "date": "일자"}}],
   "mortgage": [{{"max_claim": "채권최고액", "mortgagee": "근저당권자", "date": "설정일"}}],
-  "other_rights": ["전세권·지상권 등 기타 권리(있으면)"],
+  "other_rights": ["전세권·지상권·임차권 등 기타 권리(있으면)"],
+  "baseline_right": "말소기준권리(최선순위 (근)저당·압류·가압류·담보가등기·경매개시 등) — 없으면 '해당 없음'",
+  "acquired_extinguished": "인수/소멸 권리 요약(말소기준권리 기준 후순위 소멸·선순위/대항력 인수, 1~3문장) — 판단불가면 '기재 없음'",
   "right_to_demand_sale": {{"possible": "가능|조건부|불가|판단보류", "reason": "근거(소유구조·권리관계 관점)"}},
-  "rights_analysis": "권리관계 종합 분석(3~5문장)",
+  "rights_analysis": "권리관계 종합 분석(말소기준권리·인수/소멸·대항력 포함, 3~5문장)",
   "risks": ["거래·개발상 권리 리스크 1~4개"],
   "safety_grade": "안전|주의|위험",
   "summary": "한줄 요약"
@@ -184,6 +192,26 @@ def _registry_text_from_codef(reg: dict[str, Any]) -> str:
                     if dl.get("resContents"):
                         parts.append(f"[{t}] {dl['resContents']}")
     return "\n".join(parts)[:8000]
+
+
+def _pdf_to_text(pdf_bytes: bytes) -> str:
+    """등기부등본 PDF에서 분석용 텍스트 추출(법무사 권리분석 입력 보강).
+    apick xlsx 추출이 비어 PDF만 확보된 경우의 폴백. 텍스트형 PDF만 추출되며
+    스캔(이미지) PDF는 빈 문자열을 반환한다(graceful — OCR 미적용, 무리한 추측 금지).
+    PyMuPDF(이미 의존성·해촉증명서 래스터에 사용) 재사용 — 신규 의존성 없음."""
+    if not pdf_bytes:
+        return ""
+    try:
+        try:
+            import pymupdf as _fitz  # PyMuPDF ≥1.24
+        except ImportError:
+            import fitz as _fitz  # 구버전 별칭
+        doc = _fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = "\n".join(page.get_text() for page in doc)
+        doc.close()
+        return text.strip()[:8000]
+    except Exception:  # noqa: BLE001 — 의존성/추출 실패 시 빈 문자열(폴백 경로 유지)
+        return ""
 
 
 class RegistryAnalysisService:
@@ -297,18 +325,28 @@ class RegistryAnalysisService:
                     source = _registry_text_from_codef(reg)
                     origin = "codef"
                 # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
+                # + ★PDF 그라운딩: 구조화 텍스트(xlsx)가 비어 PDF만 확보된 경우, PDF 본문에서 직접
+                #   텍스트를 추출해 분석 소스로 사용(권리분석이 'PDF 미분석'으로 통째 누락되던 갭 해소).
+                #   추출 실패(이미지 PDF 등) 시 source는 그대로 비어 아래 'empty' 정직 처리.
                 pdf_url = None
                 b64 = reg.get("pdf_base64")
                 if b64:
                     try:
                         import base64 as _b64
 
+                        pdf_bytes = _b64.b64decode(b64)
+                        if not (source and source.strip()):
+                            pdf_text = _pdf_to_text(pdf_bytes)
+                            if pdf_text:
+                                source = pdf_text
+                                origin = f"{reg.get('origin') or 'apick'}+pdf"
+
                         from apps.api.services.storage_service import upload_registry_pdf
 
-                        up = await upload_registry_pdf(_b64.b64decode(b64), ttl_days=30)
+                        up = await upload_registry_pdf(pdf_bytes, ttl_days=30)
                         pdf_url = up.get("url")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("등기부 PDF 저장 실패", err=str(e)[:80])
+                        logger.warning("등기부 PDF 처리 실패", err=str(e)[:80])
                 fetched_meta = {
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),

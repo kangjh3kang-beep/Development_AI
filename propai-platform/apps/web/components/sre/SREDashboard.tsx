@@ -116,7 +116,7 @@ export function SREDashboard() {
   const lastSuccessBackup = data.backup_logs?.find((b) => b.status === "success");
 
   return (
-    <section className="grid gap-8" aria-label="SRE 시스템 성능 관제">
+    <section className="grid grid-cols-1 gap-8 min-w-0" aria-label="SRE 시스템 성능 관제">
       {/* SLA Core Metrics */}
       <div className="grid gap-4 sm:grid-cols-3">
         {/* Uptime Gauge */}

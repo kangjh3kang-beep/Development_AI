@@ -16,7 +16,7 @@ export default async function AnalysisPage({ params }: AnalysisPageProps) {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <ComprehensiveAnalysisPanel />
     </div>
   );

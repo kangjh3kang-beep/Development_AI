@@ -252,7 +252,7 @@ export function CostEstimationClient() {
   const sectionCls = "grid gap-5 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6";
 
   return (
-    <section className="grid gap-8">
+    <section className="grid grid-cols-1 gap-8 min-w-0">
       {/* 헤더 */}
       <div>
         <div className="flex items-center gap-3 mb-1.5">

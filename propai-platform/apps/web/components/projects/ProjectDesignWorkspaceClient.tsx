@@ -213,7 +213,7 @@ export function ProjectDesignWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* ── Main Hero Dashboard Header ── */}
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--accent-strong)]/5 blur-[80px] rounded-full transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/10" />
@@ -365,7 +365,7 @@ export function ProjectDesignWorkspaceClient({
         </Card>
 
         {/* Quantities & Environmental Dashboard */}
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-6 min-w-0">
           {/* Business Feasibility Stat Cards */}
           {results && (
             <div className="grid gap-4.5 md:grid-cols-2">
