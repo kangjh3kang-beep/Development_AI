@@ -283,6 +283,31 @@ class FeasibilityServiceV2:
             result["special_parcel"] = special
             result["honest_disclosure"] = special.get("honest_disclosure")
 
+        # ── ★P1 미래속성(종상향 잠재) 첨부 — '토지속성 확정(현재+미래)' 비전 배선 ──
+        # 현행 추천(effective_far 기준)에 더해, 종상향(역세권/일반) 시 잠재 용적률을 정직 제시한다.
+        # 종상향은 현행 한도가 아닌 '잠재'(상위계획·도시계획위 심의 통과 전제 예상치) — 확정 아님.
+        # 기존 종상향 엔진(far_tier_service.calc_upzoning) 재사용(신규 산식 0)·graceful(실패해도 추천 불변).
+        try:
+            from ..land_intelligence.far_tier_service import calc_upzoning
+
+            _up_base = {
+                "local_ordinance": {"sigungu": region} if region else {},
+                "special_districts": special_districts,
+                "infrastructure": zoning.get("infrastructure") or zoning.get("location") or {},
+            }
+            upz = calc_upzoning(_up_base, zone_type, float(site_area or 0))
+            if upz and upz.get("potential_far_range"):
+                result["upzoning_potential"] = {
+                    "current_far_pct": round(max_far, 1),
+                    "potential_far_range": upz.get("potential_far_range"),
+                    "scenarios": upz.get("scenarios"),
+                    "summary": upz.get("summary"),
+                    "disclaimer": upz.get("disclaimer")
+                    or "종상향은 현행 한도가 아닌 '잠재'이며 상위계획·심의 통과를 전제로 한 예상치입니다(확정 아님).",
+                }
+        except Exception as e:  # noqa: BLE001 — 종상향 잠재 첨부 실패는 추천을 막지 않음(graceful)
+            logger.warning("종상향 잠재 첨부 스킵(graceful): %s", str(e)[:160])
+
         # ── 시니어 금융전문가 자문 모세혈관 배선(P1·ROI게이트) ──
         # Top 후보의 자기자본비율(자기자본/총사업비)을 시니어 금융 평가기로 검증해
         # 비현실 수익구조(과거 ROI566% 사건류)에 정직 경고를 첨부한다.
