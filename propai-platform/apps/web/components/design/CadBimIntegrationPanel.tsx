@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   AlertTriangle, Check, Construction, DraftingCompass, Download, Eye,
   Plane, RectangleVertical, RotateCcw, Ruler, Key, Sparkles, Square,
+  Maximize2, Minimize2,
   type LucideIcon,
 } from "lucide-react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
@@ -182,6 +183,44 @@ function SectionClipper({ enabled, cutHeight }: { enabled: boolean; cutHeight: n
       invalidate();
     };
   }, [gl, invalidate, enabled, cutHeight]);
+  return null;
+}
+
+// 카메라 컨트롤 드래그(회전/이동/줌) 시 매 변경마다 invalidate를 호출해 demand 루프에서도
+// 화면이 즉시 따라오게 한다. CameraControls의 onChange(변경 이벤트)에 invalidate를 배선.
+// (전체화면은 frameloop="always"라 항상 렌더되지만, 일반 demand 모드에서 드래그가 끊기지 않도록 보강.)
+function ControlsInvalidator({ controlsRef }: { controlsRef: React.RefObject<CameraControls | null> }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    const cc = controlsRef.current;
+    if (!cc) return;
+    const onChange = () => invalidate();
+    // drei CameraControls는 EventDispatcher라 addEventListener("update"/"control")로 변경을 받는다.
+    cc.addEventListener("update", onChange);
+    cc.addEventListener("control", onChange);
+    cc.addEventListener("controlstart", onChange);
+    cc.addEventListener("controlend", onChange);
+    return () => {
+      cc.removeEventListener("update", onChange);
+      cc.removeEventListener("control", onChange);
+      cc.removeEventListener("controlstart", onChange);
+      cc.removeEventListener("controlend", onChange);
+    };
+  }, [controlsRef, invalidate]);
+  return null;
+}
+
+// 모델(절차/서버)·치수가 바뀌면 demand 루프에서 1프레임 강제 렌더한다.
+// 과거: spec→ProceduralBuilding 마운트 직후 데이터가 안정되며 더 이상 프레임을 요청하지 않아
+// (서버 glb 로드 등으로 리렌더가 끼면) "박스가 떴다가 빈 그리드로 사라지는" 것처럼 보이던 문제 보강.
+function SceneInvalidator({ token }: { token: string }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    invalidate();
+    // 마운트/스왑 직후 레이아웃·재질 준비가 한 박자 늦을 수 있어 다음 틱에도 한 번 더 그린다.
+    const id = requestAnimationFrame(() => invalidate());
+    return () => cancelAnimationFrame(id);
+  }, [token, invalidate]);
   return null;
 }
 
@@ -401,7 +440,23 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [viewMode, setViewMode] = useState<"cad_2d" | "bim_3d">("cad_2d");
   // 3D 자동회전은 기본 꺼짐(무한회전이 과거 메인스레드 점유→멈춤의 직접원인). 버튼으로만 켠다.
   const [autoRotate, setAutoRotate] = useState(false);
+  // 1차-A: 전체화면 편집 모드 — 켜면 뷰포트를 전 뷰포트(fixed inset-0)로 띄워 캔버스가 포인터를
+  //  100% 받게 한다(우측 AI 패널이 캔버스 위를 덮어 드래그를 가로채던 핵심 원인 해소). ESC/X로 해제.
+  const [fullscreen, setFullscreen] = useState(false);
   const t = dictionary;
+
+  // 전체화면 동안 ESC로 해제 + body 스크롤 잠금(오버레이가 페이지와 겹치지 않도록).
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [fullscreen]);
 
   // 선택한 건축개요(모세혈관 스토어) — CAD/BIM 기하의 단일 출처
   const designData = useProjectContextStore((s) => s.designData);
@@ -541,6 +596,50 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
   // AI 해석 패널 접기(기본 열림) — 접으면 3D가 전폭이 되고 휠 스크롤이 캔버스(CameraControls)로 직접 전달.
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
+
+  // ── 2차-A: 편집기 시드 기하(실제 설계 footprint+코어+세대분할선) — 더미 30×20 박스 제거 ──
+  // 소스 우선순위: ① bimMass(서버 매스 실측 width/depth) ② spec(역산 매스). 저장 도면(/drawings/load)이
+  // 있으면 CADEditor가 그쪽을 우선한다(이 시드는 미저장일 때만 적용). 3D ProceduralBuilding의 코어
+  // 규칙(min(w*0.32,7)×min(d*0.32,7) 중앙)과 동일하게 만들어 2D 편집기·3D 매스가 같은 footprint를 공유한다.
+  const editorSeedGeometry = useMemo(() => {
+    // 매스 실측이 있으면 우선(서버 /bim/generate mass), 없으면 spec(역산).
+    const mw = bimMass && typeof bimMass.building_width_m === "number" ? (bimMass.building_width_m as number) : null;
+    const md = bimMass && typeof bimMass.building_depth_m === "number" ? (bimMass.building_depth_m as number) : null;
+    const w = (mw && mw > 0 ? mw : spec?.building_width_m) || 0;
+    const d = (md && md > 0 ? md : spec?.building_depth_m) || 0;
+    if (!(w > 0 && d > 0)) return undefined; // 기하 미상 → CADEditor 폴백(사각형)
+    // 외곽 사각형(원점 0,0) — 실제 건물 폭×깊이.
+    const outline = [
+      { x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: d }, { x: 0, y: d },
+    ];
+    // 코어(중앙 EV·계단실) — ProceduralBuilding과 동일 비율.
+    const coreW = Math.min(w * 0.32, 7);
+    const coreD = Math.min(d * 0.32, 7);
+    const core = coreW > 0 && coreD > 0
+      ? { x: (w - coreW) / 2, y: (d - coreD) / 2, w: coreW, h: coreD }
+      : null;
+    // 세대 분할선(있을 때만) — 세대수 추정으로 동(x축) 분할 수직선. 미상이면 생략(날조 금지).
+    const totalUnits = spec?.total_units ?? (bimMass && typeof bimMass.total_units === "number" ? (bimMass.total_units as number) : null);
+    const floors = spec?.floor_count || 0;
+    const walls: Array<[number, number, number, number]> = [];
+    if (totalUnits && totalUnits > 0 && floors > 0) {
+      const perFloor = Math.max(1, Math.round(totalUnits / floors));
+      // 한 층 세대를 x축으로 균등 분할(스키매틱). 너무 촘촘하면(≤2.5m) 생략.
+      if (perFloor > 1 && w / perFloor >= 2.5) {
+        for (let i = 1; i < perFloor; i++) {
+          const x = (w / perFloor) * i;
+          walls.push([x, 0, x, d]);
+        }
+      }
+    }
+    return {
+      outline,
+      outerWidthM: w,
+      outerDepthM: d,
+      core,
+      walls: walls.length > 0 ? walls : null,
+    };
+  }, [bimMass, spec]);
 
   // ── 3D 카메라 시점 프리셋(비전문가용 시점 전환) ──
   const camControlsRef = useRef<CameraControls | null>(null);
@@ -1241,7 +1340,30 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       </div>
 
       {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
-      <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">
+      <div
+        className={
+          fullscreen
+            ? "fixed inset-0 z-[60] h-screen w-screen overflow-hidden rounded-none border-0 bg-[#0d1520] shadow-none group"
+            : "relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group"
+        }
+      >
+        {/* 1차-A: 전체화면 토글. ON이면 뷰포트를 전 뷰포트 오버레이로 띄워 캔버스가 포인터를 100%
+            받게 한다(우측 AI 패널이 드래그를 가로채던 핵심 원인 해소). ESC 또는 이 버튼으로 해제.
+            위치는 다른 HUD와 비충돌: 편집모드=우상단(EPSG칩 아래), 그 외=우상단 코너.
+            (좌하단은 편집모드 'Building Geometry' 패널과 충돌하므로 회피.) */}
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? "전체화면 종료 (ESC)" : "전체화면으로 크게 보기·편집"}
+          aria-label={fullscreen ? "전체화면 종료" : "전체화면"}
+          aria-pressed={fullscreen}
+          className={`absolute z-[70] flex items-center gap-1.5 rounded-full border border-white/15 bg-black/55 px-3.5 py-2 text-[10px] font-black uppercase tracking-widest text-white/75 backdrop-blur-xl shadow-2xl transition-colors hover:bg-white/15 hover:text-white ${
+            editMode ? "right-6 top-16" : "left-6 bottom-6"
+          }`}
+          data-testid="cadbim-fullscreen"
+        >
+          {fullscreen ? (<><Minimize2 className="size-3.5" aria-hidden />전체화면 종료</>) : (<><Maximize2 className="size-3.5" aria-hidden />전체화면</>)}
+        </button>
         {/* Cinematic Backdrop */}
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/20 to-black/60 pointer-events-none z-10" />
 
@@ -1265,11 +1387,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         ) : viewMode === "bim_3d" ? (
           <div className="absolute inset-0">
-            {/* frameloop="demand": 정적 화면에서는 렌더를 멈춰 메인스레드 점유 0.
+            {/* frameloop: 평소엔 "demand"(정적 화면은 렌더 정지 → 메인스레드 점유 0). 단,
+                전체화면 또는 자동회전 중에는 "always"로 올려 드래그(회전/이동/줌)가 매 프레임 부드럽게
+                반영되게 한다(과거 demand 단독에서 드래그 델타가 1프레임만 렌더돼 끊기던 문제 해소).
+                보이는 동안만 always이며, 전체화면을 닫으면 demand로 복귀해 점유가 0으로 돌아간다.
                 preserveDrawingBuffer=true: AI 렌더용 뷰포트 캡처(toDataURL)가 빈 화면이 되지 않도록 마지막 프레임 보존.
                 onCreated: gl(렌더러) 참조 확보(캡처용). */}
             <Canvas
-              frameloop="demand"
+              frameloop={fullscreen || autoRotate ? "always" : "demand"}
               camera={{ position: [25, 20, 25], fov: 40 }}
               gl={{ preserveDrawingBuffer: true }}
               onCreated={({ gl }) => { glRef.current = gl; }}
@@ -1282,6 +1407,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               {/* HDR Environment 제거(네트워크 다운로드·GPU 부하). 기본 조명만 사용. 자동회전은 버튼으로만.
                   CameraControls: 시점 프리셋을 setLookAt으로 "부드럽게 보간 이동"(보간 중에만 invalidate→도달 후 정지). */}
               <CameraControls ref={camControlsRef} makeDefault dampingFactor={0.06} />
+              <ControlsInvalidator controlsRef={camControlsRef} />
+              {/* 모델/치수 스왑 시 demand 루프 강제 1프레임(박스 떴다 사라짐 보강) */}
+              <SceneInvalidator
+                token={`${bimScene ? bimScene.uuid : "proc"}:${spec?.building_width_m ?? 0}x${spec?.building_depth_m ?? 0}x${spec?.floor_count ?? 0}`}
+              />
               <CameraRig
                 controlsRef={camControlsRef}
                 preset={camPreset}
@@ -1580,6 +1710,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               initialFloors={spec?.floor_count}
               initialFloorHeightM={spec?.floor_height_m ?? 3}
               zoneCode={spec?.zone_code}
+              initialGeometryM={editorSeedGeometry}
               onMetricsChange={setEditMetrics}
             />
           </div>
@@ -1733,10 +1864,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               initial={{ opacity: 0, x: 24 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
-              className="absolute right-6 top-[5.5rem] flex max-h-[80%] w-[340px] flex-col gap-3 z-20 overflow-y-auto"
+              /* ★pointer-events-none: 패널 컨테이너 자체는 포인터를 받지 않게 해, 패널 카드 사이
+                 빈 영역(투명 공간)에서의 드래그가 캔버스(CameraControls)로 그대로 전달되게 한다.
+                 (과거 패널이 캔버스 위를 덮어 회전/이동 드래그를 통째로 가로채던 핵심 원인.)
+                 실제 카드·버튼은 아래에서 pointer-events-auto로 다시 켠다(읽기/접기 클릭은 유지). */
+              className="pointer-events-none absolute right-6 top-[5.5rem] flex max-h-[80%] w-[340px] flex-col gap-3 z-20 overflow-y-auto"
             >
               {/* 헤더 행: 제목 + 접기 버튼 */}
-              <div className="flex shrink-0 items-center justify-between rounded-2xl border border-white/10 bg-black/70 px-4 py-2.5 text-white backdrop-blur-2xl shadow-2xl">
+              <div className="pointer-events-auto flex shrink-0 items-center justify-between rounded-2xl border border-white/10 bg-black/70 px-4 py-2.5 text-white backdrop-blur-2xl shadow-2xl">
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">AI 설계 해석</p>
                 <button
                   type="button"
@@ -1752,7 +1887,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="rounded-2xl border border-white/10 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
+                  className="pointer-events-auto rounded-2xl border border-white/10 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
                 >
                   <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] mb-2">AI 자동 매스</p>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
@@ -1772,7 +1907,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="rounded-2xl border border-indigo-400/20 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
+                  className="pointer-events-auto rounded-2xl border border-indigo-400/20 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
                 >
                   <div className="flex items-center gap-2 mb-3">
                     <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
@@ -1801,7 +1936,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
               {/* 해석 로딩 표시 */}
               {!designAi && bimLoading && (
-                <div className="rounded-2xl border border-white/10 bg-black/60 p-4 text-white/50 backdrop-blur-xl text-[10px] font-bold">
+                <div className="pointer-events-auto rounded-2xl border border-white/10 bg-black/60 p-4 text-white/50 backdrop-blur-xl text-[10px] font-bold">
                   AI 설계 해석 생성 중...
                 </div>
               )}
@@ -1821,8 +1956,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </motion.button>
             )}
 
-            {/* HUD Bottom Left */}
-            <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6">
+            {/* HUD Bottom Left — 전체화면 토글(left-6 bottom-6)과 비충돌하도록 위로 올림 */}
+            <div className="absolute bottom-20 left-6 z-20 flex items-center gap-6">
               <div className="flex h-12 items-center gap-4 rounded-2xl bg-black/40 px-6 backdrop-blur-xl border border-white/5">
                   <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]" />
                   <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">Telemetry Streaming</span>

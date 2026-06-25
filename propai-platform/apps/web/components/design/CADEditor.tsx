@@ -67,6 +67,24 @@ interface ComplianceViolation {
 }
 type Tool = "select" | "point" | "poly" | "line" | "rect" | "text" | "dim" | "delete";
 
+/**
+ * 2차-A 시드 기하(미터 단위, 원점=좌상단). 외곽 footprint는 필수, 코어/벽체선은 선택.
+ * 모든 좌표는 "건물 로컬 m"이며 폭 outerWidthM × 깊이 outerDepthM 안에 위치한다.
+ * 편집기 진입 시 px 환산 + 캔버스 중앙배치된다(축소비 k는 외곽·자식 도형에 공통 적용 → 형상 보존).
+ */
+export interface SeedGeometry {
+  /** 외곽 footprint 다각형(m). 비면(2점 이하) 시 outerWidthM×outerDepthM 사각형으로 폴백. */
+  outline: Array<{ x: number; y: number }>;
+  /** bbox 폭(m) — px 환산·중앙배치 기준(외곽 다각형 bbox와 일치해야 함). */
+  outerWidthM: number;
+  /** bbox 깊이(m). */
+  outerDepthM: number;
+  /** 코어(EV·계단실) 사각형(m) — 외곽 내부. 있으면 벽체 레이어 도형으로 시드. */
+  core?: { x: number; y: number; w: number; h: number } | null;
+  /** 세대 분할선 등 추가 벽체선(m, [x1,y1,x2,y2]). 있으면 벽체 레이어 선으로 시드. */
+  walls?: Array<[number, number, number, number]> | null;
+}
+
 /** 편집 중 면적·세대 변경을 부모(스튜디오)에 통지하는 메트릭 페이로드. */
 export interface CADEditorMetrics {
   /** 건축면적(㎡) — 신발끈 면적. */
@@ -95,6 +113,13 @@ interface CADEditorProps {
   initialFloors?: number;
   initialFloorHeightM?: number;
   zoneCode?: string;
+  /**
+   * 2차-A: 실제 설계 기하(외곽 footprint + 벽체/코어 등)를 m 단위로 받는 시드.
+   * 더미 30×20 박스 대신 부모가 spec/bimMass에서 파생한 실제 도형을 주입하면 2D 편집기가
+   * 3D 매스·2D 평면과 동일한 기하로 시작한다. 좌표 단위는 "미터(원점=좌상단 기준 0,0)"이며
+   * 편집기 진입 시 캔버스 중앙에 px 환산·중앙배치된다. 저장본(/drawings/load)이 있으면 그쪽 우선.
+   */
+  initialGeometryM?: SeedGeometry;
   scalePxPerM?: number;     // 기본 10 (px per meter)
   maxBcrPct?: number;
   maxFarPct?: number;
@@ -163,6 +188,7 @@ export default function CADEditor({
   initialFloors = 5,
   initialFloorHeightM = 3,
   zoneCode,
+  initialGeometryM,
   scalePxPerM = 10,
   maxBcrPct,
   maxFarPct,
@@ -717,33 +743,95 @@ export default function CADEditor({
     };
   }, [isReady, rk]);
 
-  /* ── 기본 도형 시드: 크기 측정 완료 + 로드 완료 + 미시드일 때, 실제 건물치수 외곽을 중앙배치 ── */
+  /* ── 기본 도형 시드: 크기 측정 완료 + 로드 완료 + 미시드일 때, 실제 설계 기하를 중앙배치 ──
+     2차-A: initialGeometryM(부모가 spec/bimMass에서 파생한 실제 footprint+코어+벽체)이 있으면
+     그것을 시드한다(더미 30×20 박스 → 실제 설계 기하). 없으면 폭×깊이 사각형(기존 동작) 폴백.
+     모든 자식 도형(코어·벽체선)은 외곽과 동일한 center+scale 변환을 받아 형상이 보존된다. */
   useEffect(() => {
     if (seededRef.current) return;
     if (loadState !== "done") return;
     if (size.w < 50 || size.h < 50) return;
     if (shapes.length > 0) { seededRef.current = true; return; }
-    const wM = initialWidthM && initialWidthM > 0 ? initialWidthM : 30;
-    const dM = initialDepthM && initialDepthM > 0 ? initialDepthM : 20;
-    let wPx = wM * scalePxPerM;
-    let dPx = dM * scalePxPerM;
-    // 캔버스보다 크면 80% 안에 맞춰 축소(보기용 — 비율 유지). 단 면적계산은 px→m 역산이라 영향 없도록 scale은 유지.
+
+    // 1) 외곽(m) 결정: 주입 기하 우선 → 없으면 폭×깊이 사각형 폴백.
+    const geo = initialGeometryM;
+    const validOutline = geo && Array.isArray(geo.outline) && geo.outline.length >= 3;
+    const wM = (validOutline ? geo!.outerWidthM : initialWidthM) || 0;
+    const dM = (validOutline ? geo!.outerDepthM : initialDepthM) || 0;
+    const outW = wM > 0 ? wM : 30;
+    const outD = dM > 0 ? dM : 20;
+    // 외곽 m 좌표(원점 보정): 주입 다각형은 자체 bbox 원점을 (0,0)으로 평행이동해 폭×깊이 안으로 정렬.
+    let outlineM: Array<{ x: number; y: number }>;
+    if (validOutline) {
+      const xs = geo!.outline.map((p) => p.x);
+      const ys = geo!.outline.map((p) => p.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      outlineM = geo!.outline.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+    } else {
+      outlineM = [
+        { x: 0, y: 0 }, { x: outW, y: 0 }, { x: outW, y: outD }, { x: 0, y: outD },
+      ];
+    }
+
+    // 2) px 환산 + 캔버스 중앙배치(축소비 k는 외곽·자식에 공통 적용 → 형상 보존).
+    const wPx0 = outW * scalePxPerM;
+    const dPx0 = outD * scalePxPerM;
     const cx = size.w / 2;
     const cy = size.h / 2;
     const maxW = size.w * 0.7;
     const maxH = size.h * 0.7;
-    const k = Math.min(1, maxW / wPx, maxH / dPx);
-    wPx *= k; dPx *= k;
-    const seed: DesignPoint[] = [
-      { id: nextId(), x: snap(cx - wPx / 2), y: snap(cy - dPx / 2) },
-      { id: nextId(), x: snap(cx + wPx / 2), y: snap(cy - dPx / 2) },
-      { id: nextId(), x: snap(cx + wPx / 2), y: snap(cy + dPx / 2) },
-      { id: nextId(), x: snap(cx - wPx / 2), y: snap(cy + dPx / 2) },
+    const k = Math.min(1, maxW / wPx0, maxH / dPx0);
+    // 건물 로컬 m(원점=좌상단) → 캔버스 px. 중앙배치: 외곽 bbox 중심을 캔버스 중심에 정렬.
+    const sx = scalePxPerM * k;
+    const sy = scalePxPerM * k;
+    const offX = cx - (outW * sx) / 2;
+    const offY = cy - (outD * sy) / 2;
+    const toPx = (xm: number, ym: number): DesignPoint => ({
+      id: nextId(), x: snap(offX + xm * sx), y: snap(offY + ym * sy),
+    });
+
+    const seed: DesignPoint[] = outlineM.map((p) => toPx(p.x, p.y));
+    const seededShapes: CadShape[] = [
+      { id: newShapeId("outline"), kind: "polygon", layer: "outline", points: seed },
     ];
+
+    // 3) 코어(EV·계단실) — 벽체 레이어 사각형(외곽 내부, 동일 변환).
+    if (validOutline && geo!.core && geo!.core.w > 0 && geo!.core.h > 0) {
+      const c = geo!.core;
+      // core 좌표도 outline과 동일 원점 보정(주입 좌표는 절대 m → bbox 원점 기준으로).
+      const xs = geo!.outline.map((p) => p.x);
+      const ys = geo!.outline.map((p) => p.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const cx0 = c.x - minX;
+      const cy0 = c.y - minY;
+      seededShapes.push({
+        id: newShapeId("core"), kind: "rect", layer: "wall",
+        points: [toPx(cx0, cy0), toPx(cx0 + c.w, cy0 + c.h)],
+      });
+    }
+
+    // 4) 세대 분할선 등 추가 벽체선(있으면).
+    if (validOutline && Array.isArray(geo!.walls)) {
+      const xs = geo!.outline.map((p) => p.x);
+      const ys = geo!.outline.map((p) => p.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      for (const w of geo!.walls!) {
+        if (!Array.isArray(w) || w.length < 4) continue;
+        seededShapes.push({
+          id: newShapeId("wl"), kind: "line", layer: "wall",
+          points: [toPx(w[0] - minX, w[1] - minY), toPx(w[2] - minX, w[3] - minY)],
+        });
+      }
+    }
+
     seededRef.current = true;
-    setShapes([{ id: newShapeId("outline"), kind: "polygon", layer: "outline", points: seed }]);
+    setShapes(seededShapes);
     debouncedCheck(seed);
-  }, [loadState, size, shapes.length, initialWidthM, initialDepthM, scalePxPerM, snap, debouncedCheck]);
+    // initialGeometryM은 시드 1회용(seededRef 가드) — deps에 넣어도 재시드는 가드로 막힌다.
+  }, [loadState, size, shapes.length, initialWidthM, initialDepthM, initialGeometryM, scalePxPerM, snap, debouncedCheck]);
 
   /* ── 외곽 정점 드래그(라이브) ── */
   // 드래그 시작 시 1회 스냅샷(이동 전 상태) → undo로 정확 복원.

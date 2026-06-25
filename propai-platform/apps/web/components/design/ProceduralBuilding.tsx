@@ -70,16 +70,28 @@ export function ProceduralBuilding({
   // 매스 group이 바뀌거나(치수 변경) 언마운트될 때 직전 group의 geometry/material을 GPU에서 해제.
   // <primitive>로 주입한 사전생성 객체는 R3F가 자동 dispose하지 않으므로 직접 처분(누수 방지).
   // dispose는 멱등이라 공유 geometry/material에 중복 호출돼도 안전.
+  //
+  // ★박스 떴다 사라짐 근본수정: group을 "동기 dispose"하면, 치수/스펙 변경으로 useMemo가
+  //  새 group을 만드는 순간 직전 group의 geometry가 즉시 해제돼 — R3F가 새 <primitive>를
+  //  커밋·렌더하기 전 1프레임 동안 빈(해제된) 지오메트리가 그려져 "박스가 사라진 것처럼" 보였다.
+  //  해제를 requestAnimationFrame으로 한 틱 미뤄(새 group 커밋·렌더 이후) 시각적 깜빡임을 없앤다.
+  //  언마운트(영구 제거)는 even safe — 다음 프레임에 해제해도 누수가 아니다(멱등·일회성).
   useEffect(() => {
+    const disposed = group;
     return () => {
-      group.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.geometry?.dispose();
-        const mat = m.material;
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else mat?.dispose();
+      const raf = requestAnimationFrame(() => {
+        disposed.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          m.geometry?.dispose();
+          const mat = m.material;
+          if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+          else mat?.dispose();
+        });
       });
+      // rAF 핸들은 클로저 외부로 노출하지 않고, 다음 프레임 1회 실행 후 종료된다.
+      // (effect 재실행/언마운트가 같은 프레임에 연쇄해도 각 group은 독립 캡처라 안전.)
+      void raf;
     };
   }, [group]);
 
