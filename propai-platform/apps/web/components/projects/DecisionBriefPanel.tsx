@@ -250,6 +250,8 @@ export function DecisionBriefPanel({
       //   낡은 브리프가 아니라 최신 입력으로 재산출하게 한다 — 화면(재분석 후)과 PDF의
       //   캐시 괴리(다른 수치)를 차단(무목업·정직). PDF는 항상 화면과 동일한 최신본.
       body.force_refresh = true;
+      // 심의엔진 포함 상태를 PDF에도 미러 — 화면(심의엔진 포함)과 PDF의 괴리 차단(동일 최신본 보장).
+      if (includeDeliberation) body.use_llm = true;
       await downloadBriefPdf(projectId, body);
     } catch (e) {
       setDownloadError(
@@ -258,7 +260,7 @@ export function DecisionBriefPanel({
     } finally {
       setDownloading(false);
     }
-  }, [address, projectId, landAreaSqm]);
+  }, [address, projectId, landAreaSqm, includeDeliberation]);
 
   // ★자동 전체실행 — 주소/유효면적(inputSig) 변경 시 자동 호출(중복은 run 내부 가드로 차단).
   //   inputSig를 트리거로 두어, 다필지 보강으로 통합면적이 바뀌면 자동 재분석된다(stale 방지).
@@ -382,7 +384,17 @@ export function DecisionBriefPanel({
               <input
                 type="checkbox"
                 checked={includeDeliberation}
-                onChange={(e) => setIncludeDeliberation(e.target.checked)}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setIncludeDeliberation(on);
+                  // ★해제 시: 표시 중인 심의엔진 브리프가 stale이 되지 않도록 캐시 시그니처를 무효화해
+                  //   자동실행이 base(무LLM·무과금)로 재산출하게 한다. 켤 때는 자동 고비용 호출을
+                  //   막기 위해 무효화하지 않는다(사용자가 '심의엔진 포함 재분석' 버튼으로 명시 실행).
+                  if (!on) {
+                    lastFetchedSig.current = null;
+                    inFlightSig.current = null;
+                  }
+                }}
                 className="size-4 accent-[var(--accent-strong)]"
               />
               <span className="font-bold text-[var(--text-primary)]">심의엔진 정밀분석 포함</span>

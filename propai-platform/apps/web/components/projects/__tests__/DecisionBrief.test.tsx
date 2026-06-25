@@ -253,6 +253,23 @@ describe("DomainSummaryCard — 표준 카드 + unavailable 정직표기", () =>
 });
 
 describe("DecisionBriefPanel — 자동 전체실행 + N개 도메인 카드", () => {
+  it("★심의엔진 토글 ON + 재분석 → body.use_llm=true 전달(외부 심의엔진 위임 활성화)", async () => {
+    post.mockResolvedValue(makeBrief());
+    render(<DecisionBriefPanel projectId="p1" />);
+    // 마운트 자동실행(use_llm 없음).
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect((post.mock.calls[0][1] as { body: Record<string, unknown> }).body.use_llm).toBeUndefined();
+    await waitFor(() => expect(screen.getByText(/추진 권고 \(GO\)/)).toBeTruthy());
+    // 심의엔진 정밀분석 토글 ON.
+    const toggle = screen.getByRole("checkbox") as HTMLInputElement;
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(true);
+    // '심의엔진 포함 재분석' 클릭 → 2번째 POST에 use_llm=true.
+    fireEvent.click(screen.getByText("심의엔진 포함 재분석"));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect((post.mock.calls[1][1] as { body: Record<string, unknown> }).body.use_llm).toBe(true);
+  });
+
   it("주소가 있으면 마운트 시 자동 호출 → verdict + 도메인 카드 렌더", async () => {
     post.mockResolvedValueOnce(makeBrief());
     render(<DecisionBriefPanel projectId="p1" />);

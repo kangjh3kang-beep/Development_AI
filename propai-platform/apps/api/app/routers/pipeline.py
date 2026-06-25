@@ -102,7 +102,8 @@ def _build_stages_response(result) -> list[PipelineStageStatusResponse]:
 @router.post(
     "/run",
     response_model=PipelineRunResponse,
-    dependencies=[Depends(enforce_llm_quota)],
+    # ★전수감사 보강: 전체 파이프라인(LLM 단계 포함) — 익명 always-LLM 접근 차단 위해 인증도 부착.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
 async def run_pipeline(req: PipelineRunRequest):
     """주소 입력으로 전체 파이프라인 실행."""
@@ -512,6 +513,7 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     "/report",
     response_model=PipelineReport,
     # ★전수감사 보강: 전체 파이프라인(LLM 포함) 실행 — 인증+한도게이트 부착(/run과 동일 계약).
+    # ★잔여 백로그: /report/pdf·/rerun-stage 등 파이프라인 재실행 라우트도 동일 게이트 스윕 권장.
     dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
 async def generate_report(req: PipelineRunRequest):
