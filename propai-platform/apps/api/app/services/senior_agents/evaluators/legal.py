@@ -42,8 +42,10 @@ def evaluate_legal(inputs: dict) -> list[RuleEvaluation]:
         met = owner_met and area_met and building_majority_ok
         area_txt = (f"·면적 {area_ratio*100:.1f}%(요건 {req_area*100:.0f}%)"
                     if area_ratio is not None else "·면적 미입력")
-        # 동별 과반 미검증(재건축·입력 부재) → 정직 고지(인가 전 별도 확인).
-        bmaj_txt = "·동별 과반 미검증(별도 확인)" if (is_rebuild and not building_majority_ok) else ""
+        # 동별 과반 미검증(재건축·소유자/면적은 충족이나 동별 입력 부재) → 정직 고지(인가 전 확인).
+        #   소유자/면적 미달이면 이미 '미달'이 결론이므로 동별 안내는 생략(잉여 제거).
+        bmaj_txt = ("·동별 과반 미검증(별도 확인)"
+                    if (is_rebuild and not building_majority_ok and owner_met and area_met) else "")
         if met:
             status = "충족"
         elif not owner_met or not area_met:
@@ -73,6 +75,6 @@ def evaluate_legal(inputs: dict) -> list[RuleEvaluation]:
             basis="민사집행법(말소기준)·주택임대차보호법(대항력)·감정평가(감정가 통합)",
             detail=(f"감정가 {av:,.0f} − 인수권리(선순위·대항보증금) {sl:,.0f} = "
                     f"실효가치 {max(effective, 0.0):,.0f}원(인수율 {ratio*100:.1f}%)"
-                    + ("·인수권리가 감정가 초과 — 경제성 없음" if over else ""))))
+                    + ("·인수권리가 감정가 이상 — 경제성 없음" if over else ""))))
 
     return out
