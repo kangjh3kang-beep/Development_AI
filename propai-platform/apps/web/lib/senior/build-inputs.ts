@@ -18,12 +18,14 @@ export interface SeniorInputSources {
     effectiveBcrPct?: number | null;
     nationalFarPct?: number | null;
     nationalBcrPct?: number | null;
+    roadWidthM?: number | null;   // 접도 도로폭(m) — 심의 road_width_actual
   } | null;
   designData?: {
     bcr?: number | null;
     far?: number | null;
     heightM?: number | null;      // 설계 건물 높이(m) — 심의 height_actual
     maxHeightM?: number | null;   // 법정 높이 한도(m) — 심의 height_limit
+    totalGfaSqm?: number | null;  // 연면적(㎡) — 건축법 44조 접도 required 산정(≥2000→6m)
   } | null;
   feasibilityData?: {
     totalCostWon?: number | null;
@@ -66,6 +68,14 @@ function buildDeliberationInputs(src: SeniorInputSources): Inputs | undefined {
   if (hA !== undefined && hL !== undefined) {
     inputs.height_actual = hA;
     inputs.height_limit = hL;
+  }
+  // 접도: 실 도로폭(actual·0=맹지 유효) vs 건축법 44조·시행령 28조 required(연면적≥2000㎡→6m·else 4m).
+  //   road_width_m null(도로접면 미확보)이면 생략(무목업). 0(맹지)은 유효 actual→위반 판정.
+  const rwA = nonNegNum(src.siteAnalysis?.roadWidthM);
+  if (rwA !== undefined) {
+    const gfa = nonNegNum(src.designData?.totalGfaSqm);
+    inputs.road_width_actual = rwA;
+    inputs.road_width_required = gfa !== undefined && gfa >= 2000 ? 6 : 4;
   }
   return Object.keys(inputs).length ? inputs : undefined;
 }
