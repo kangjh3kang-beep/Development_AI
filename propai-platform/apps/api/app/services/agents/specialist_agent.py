@@ -31,15 +31,9 @@ def _format_recall_block(rag_memories: list[dict[str, Any]]) -> str:
 
     ★interpreter와 디커플: 회상 자체는 LLM 유무와 무관히 계산·표면화되고(run 반환·ingest provenance),
     이 블록은 LLM 해석기가 있을 때만 prompt에 주입된다(없으면 미사용 — 결정론 수치 불변식엔 무영향).
-    score가 수치가 아닐 때도 안전(KeyError·포맷오류 방지)."""
-    if not rag_memories:
-        return ""
-    lines = ["", "", "[Past Agent Memories (Know-how)]"]
-    for rm in rag_memories:
-        score = rm.get("score")
-        score_s = f" (Score: {score:.2f})" if isinstance(score, (int, float)) and not isinstance(score, bool) else ""
-        lines.append(f"- {rm.get('summary', '')}{score_s}")
-    return "\n".join(lines)
+    포맷·score 안전화는 공용 헬퍼 단일경유(memory_hub.recall_format — expert_panel과 동일 계약)."""
+    from app.services.memory_hub.recall_format import format_recall_block
+    return format_recall_block(rag_memories, header="[Past Agent Memories (Know-how)]")
 
 
 class SpecialistAgent:

@@ -59,3 +59,21 @@ async def test_recall_empty_when_infra_unavailable():
     svc.qdrant = None
     out = await svc.recall_experience(query="x", domain="far", top_k=3)
     assert out == []
+
+
+# ── 공용 회상 포맷터(specialist_agent·expert_panel 단일경유·전역전파 SSOT) ──
+
+def test_format_recall_block_header_and_empty():
+    from app.services.memory_hub.recall_format import format_recall_block
+    assert format_recall_block([], header="[H]") == ""              # 빈 목록 → 빈 문자열
+    block = format_recall_block([{"summary": "용적률 250", "score": 0.9}], header="[H]")
+    assert "[H]" in block and "용적률 250" in block and "(Score: 0.90)" in block
+
+
+def test_format_recall_block_score_safety():
+    # ★score None/bool/문자열/누락이어도 :.2f 포맷오류 없이 점수표기만 생략(expert_panel 깨짐 방지)
+    from app.services.memory_hub.recall_format import format_recall_block
+    for bad in (None, True, "high"):            # None·bool·문자열 → 점수표기 생략(:.2f 오류 방지)
+        out = format_recall_block([{"summary": "x", "score": bad}], header="[H]")
+        assert out.endswith("- x")              # 점수 미표기(오류 없음)
+    assert format_recall_block([{"summary": "y"}], header="[H]").endswith("- y")  # score 키 누락 안전
