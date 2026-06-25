@@ -4,7 +4,8 @@
 """
 import logging
 import re
-from typing import Optional
+from typing import Any
+
 from ..external_api.vworld_service import VWorldService
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class AutoZoningService:
 
     async def analyze_by_address(self, address: str) -> dict:
         """주소로부터 전체 부지 정보를 자동 수집."""
-        result = {
+        result: dict[str, Any] = {
             "address": address,
             "pnu": None,
             "zone_type": None,
@@ -173,6 +174,18 @@ class AutoZoningService:
                         result["official_price_per_sqm"] = lc["official_price_per_sqm"]
                     if lc.get("zone_type_2"):
                         result["zone_type_secondary"] = lc["zone_type_2"]
+                    # 접도(도로접면) → 대표 도로폭(m). estimate_road_width_m 재사용(DRY·NED 실데이터).
+                    # 시니어 심의 접도 CSP·건축법 44조 적합성 입력원(미확보 시 미설정·무목업).
+                    road_side = lc.get("road_side")
+                    if road_side:
+                        # lazy import — land_info_service↔auto_zoning 순환참조 회피.
+                        from ..land_intelligence.land_info_service import (
+                            estimate_road_width_m,
+                        )
+                        result["road_side"] = road_side
+                        rw = estimate_road_width_m(road_side)
+                        if rw is not None:
+                            result["road_width_m"] = rw
             except Exception as e:  # noqa: BLE001
                 result["warnings"].append(f"토지특성 조회 실패: {str(e)}")
 
@@ -206,7 +219,7 @@ class AutoZoningService:
                 return key
         return normalized
 
-    def _detect_zone_from_land_use(self, props: dict) -> Optional[str]:
+    def _detect_zone_from_land_use(self, props: dict) -> str | None:
         """토지이용계획에서 용도지역 추출."""
         land_use_plan = props.get("land_use_plan", "")
         for zone_name in ZONE_LIMITS:
@@ -214,7 +227,7 @@ class AutoZoningService:
                 return zone_name
         return None
 
-    def _detect_zone_from_address(self, address: str) -> Optional[str]:
+    def _detect_zone_from_address(self, address: str) -> str | None:
         """주소 키워드로 용도지역을 추론.
 
         VWORLD API 없이도 주소의 지역명으로 대략적인 용도지역을 판단한다.
