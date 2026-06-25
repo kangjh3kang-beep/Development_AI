@@ -73,6 +73,14 @@ USER_PROMPT_TEMPLATE = """\
 결정·인허가 필요)를 동반, ④"~가능성", "~예상", "전제 충족 시" 등 비단정 표현 사용. **종상향이
 확정/보장된 것처럼 단정 금지.** scenarios가 비어있으면 "정형 종상향 경로 미매핑 — 지자체 확인 필요"로 안내.
 
+## 건축가능항목 선정·랭킹(★무엇을 지을 수 있는가)
+페이로드의 `buildable_options`(top_recommendation·options_top5)는 **별표 허용용도 + 종상향 시나리오**를
+결합해 '이 부지에서 지을 수 있는 사업유형'을 **인허가가능성×가용용적률**로 랭킹한 결과다. 해석 시:
+①최우선 사업유형(top_recommendation)과 상위 후보를 안내하되, ②`is_current=true`는 현행 용도지역 내
+'바로 가능'(far=실효 사실값), `is_current=false`는 종상향 전제(far=예상치)임을 구분, ③`permit_feasibility`
+(현행/상/중/하)와 `via`(달성 경로)를 동반, ④사업성(수익) 비교는 별도 정량분석임을 명시(랭킹은 인허가×용적률
+기준). `buildable_options`가 없으면 이 항목은 생략한다.
+
 ## 특이부지 게이트(★최우선 — 위반 시 할루시네이션)
 페이로드에 `special_parcel`이 있으면 이 부지는 학교용지·개발제한구역(GB)·농지·산지·맹지·문화재·
 공공기반시설 등 **비일상 토지특성**이 감지된 것이다. 이 경우 **반드시**:
@@ -98,6 +106,7 @@ overall_summary에 반드시 포함하라. ④해결불가(resolvable=NO) 요인
   "location_interpretation": "입지 분석 해석 (교통, 교육, 생활 인프라, 입지 등급)",
   "development_plan_interpretation": "개발계획 해석 (토지이용규제, 특수구역, 규제 리스크)",
   "upzoning_interpretation": "종상향/종변경 잠재력 해석 (★예상치 — 현행 실효 용적률과 분리. 유력 경로·목표 용도지역·예상 용적률 범위·가능성 등급·전제(도시계획 결정·인허가)를 비단정 표현으로 안내. scenarios 없으면 미매핑 안내)",
+  "buildable_options_interpretation": "건축가능항목 해석 (★buildable_options 제공 시에만. 최우선 사업유형·상위 후보를 인허가가능성×가용용적률 기준으로 안내. 현행 가능(실효 far) vs 종상향 전제(예상 far) 구분, 인허가 난이도·달성경로 동반. 사업성은 별도 정량분석임을 명시. 미제공 시 빈 문자열)",
   "overall_summary": "종합 평가 (이 부지의 개발 가치를 3~4문장으로 종합 판단)",
   "risk_factors": "주요 리스크 요인 (2~3개 핵심 리스크와 대응 방안)",
   "opportunity_factors": "개발 기회 요인 (2~3개 핵심 기회 요인)"
@@ -118,6 +127,7 @@ class SiteAnalysisInterpreter(BaseInterpreter):
         "location_interpretation",
         "development_plan_interpretation",
         "upzoning_interpretation",
+        "buildable_options_interpretation",
         "overall_summary",
         "risk_factors",
         "opportunity_factors",
@@ -340,6 +350,28 @@ class SiteAnalysisInterpreter(BaseInterpreter):
                 ],
                 "is_estimate": True,
                 "note": "현행 실효 용적률과 분리된 종상향 예상 시나리오(도시계획 결정·인허가 전제).",
+            }
+
+        # Stage 1: 건축가능항목 선정·랭킹(인허가가능성×가용용적률) — ★LLM 그라운딩.
+        #   result에만 붙고 compact에 빠지면 인터프리터가 못 봐서 그라운딩 효과 0(orphan handoff).
+        #   상위 5건 + 최우선 추천을 compact에 실어 LLM이 '무엇을 지을 수 있는가'를 인지하게 한다.
+        bo = data.get("buildable_options")
+        if isinstance(bo, dict) and bo.get("options"):
+            compact["buildable_options"] = {
+                "top_recommendation": bo.get("top_recommendation"),
+                "options_top5": [
+                    {
+                        "product": o.get("product"),
+                        "zone": o.get("zone"),
+                        "achievable_far_pct": o.get("achievable_far_pct"),
+                        "permit_feasibility": o.get("permit_feasibility"),
+                        "is_current": o.get("is_current"),
+                        "via": o.get("via"),
+                    }
+                    for o in (bo.get("options") or [])[:5]
+                ],
+                "summary": bo.get("summary"),
+                "note": "랭킹=인허가가능성×가용용적률. 종상향 항목 far는 예상치(사업성 정량은 Stage 3 별도).",
             }
 
         return compact

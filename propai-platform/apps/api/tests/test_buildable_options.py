@@ -124,6 +124,79 @@ def test_far_unknown_falls_back_to_legal_and_scores_low() -> None:
     assert top["achievable_far_pct"] is not None
 
 
+def test_malformed_upzoning_does_not_crash() -> None:
+    """malformed upzoning(비-dict·비-list scenarios·비-dict 요소)도 crash 없이 현행만 반환."""
+    for bad in (
+        "notadict",                       # 비-dict upzoning
+        {"scenarios": "notalist"},        # 비-list scenarios
+        {"scenarios": [None, "x", 3]},     # 비-dict 요소
+        {"scenarios": [{"feasibility": "상"}]},  # target_zone 누락 요소
+    ):
+        out = rank_buildable_options(
+            zone_type="제2종일반주거지역", effective_far_pct=200, upzoning=bad  # type: ignore[arg-type]
+        )
+        # 현행 옵션은 정상 산출(종상향만 무시).
+        assert out["options"], f"malformed={bad!r} 에서 현행 옵션이 비었음"
+        assert all(o["is_current"] for o in out["options"])
+
+
+def test_unknown_feasibility_falls_back_to_default_weight() -> None:
+    """미상 feasibility 문자열 → 0.5 가중치 폴백·난이도 '확인필요'(crash 없이 정직)."""
+    upz = _upzoning([
+        {
+            "target_zone": "제3종일반주거지역", "expected_far_pct_high": 200,
+            "feasibility": "이상한값", "path": "X", "path_key": "x", "legal_refs": [],
+        }
+    ])
+    out = rank_buildable_options(
+        zone_type="제2종일반주거지역", effective_far_pct=300, upzoning=upz
+    )
+    up_opts = [o for o in out["options"] if o["is_upzoning"]]
+    assert up_opts
+    # 0.5 × 200 = 100.
+    assert any(o["score"] == 100.0 for o in up_opts)
+    assert any(o["permit_difficulty"] == "확인필요" for o in up_opts)
+
+
+def test_missing_feasibility_defaults_to_medium() -> None:
+    """scenario에 feasibility 키 누락 → '중'(0.6) 폴백."""
+    upz = _upzoning([
+        {"target_zone": "제3종일반주거지역", "expected_far_pct_high": 250,
+         "path": "X", "path_key": "x", "legal_refs": []},
+    ])
+    out = rank_buildable_options(
+        zone_type="제2종일반주거지역", effective_far_pct=100, upzoning=upz
+    )
+    up_opts = [o for o in out["options"] if o["is_upzoning"]]
+    assert up_opts and all(o["permit_feasibility"] == "중" for o in up_opts)
+
+
+def test_duplicate_use_grouped_without_redundant_alternatives() -> None:
+    """제1·2종근생이 모두 '근린생활시설'로 그룹화되며, 동일 (via,zone,score) 대안은 중복 제외."""
+    out = rank_buildable_options(zone_type="제2종일반주거지역", effective_far_pct=200)
+    geun = [o for o in out["options"] if o["product"] == "근린생활시설"]
+    assert len(geun) == 1  # 단일 대표로 그룹화
+    # 대표와 동일 (via,zone,score)인 무가치 중복 대안은 제외됨.
+    for alt in geun[0].get("alternatives", []):
+        assert (alt["via"], alt["zone"], alt["score"]) != (
+            geun[0]["via"], geun[0]["zone"], geun[0]["score"]
+        )
+
+
+def test_max_options_truncates() -> None:
+    """max_options 절단이 적용된다."""
+    upz = _upzoning([
+        {"target_zone": "제3종일반주거지역", "expected_far_pct_high": 250,
+         "feasibility": "상", "path": "A", "path_key": "a", "legal_refs": []},
+        {"target_zone": "준주거지역", "expected_far_pct_high": 400,
+         "feasibility": "중", "path": "B", "path_key": "b", "legal_refs": []},
+    ])
+    out = rank_buildable_options(
+        zone_type="제2종일반주거지역", effective_far_pct=200, upzoning=upz, max_options=3
+    )
+    assert len(out["options"]) == 3
+
+
 def test_options_sorted_descending_by_score() -> None:
     upz = _upzoning([
         {

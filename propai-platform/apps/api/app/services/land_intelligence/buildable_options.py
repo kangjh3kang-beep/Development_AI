@@ -132,14 +132,16 @@ def _candidate(
     """건축가능항목 후보 1건(랭킹 점수 포함)."""
     product, building_type = _product_and_type(zone, use)
     weight = _FEASIBILITY_WEIGHT.get(feasibility, 0.5)
-    # 점수 = 인허가가능성 가중치 × 가용 용적률(far 미확인이면 0 → 하위 랭크·정직).
-    score = round(weight * far, 1) if far is not None else 0.0
+    # far를 한 번 정수 반올림해 표시값(achievable_far_pct)·점수(score)를 일관 계산한다
+    # (표시와 점수 근거가 어긋나지 않게). far 미확인이면 score 0(하위 랭크·정직).
+    far_int = round(far) if far is not None else None
+    score = round(weight * far_int, 1) if far_int is not None else 0.0
     return {
         "product": product,            # 사업유형 라벨(아파트/주상복합/오피스텔/상업…)
         "use": use,                    # 별표 허용 용도(원문·그라운딩)
         "building_type": building_type,  # Stage 2/4 매싱 핸드오프용 건축유형
         "zone": zone,                  # 이 항목이 가능한 용도지역(현행 또는 종상향 목표)
-        "achievable_far_pct": round(far) if far is not None else None,
+        "achievable_far_pct": far_int,
         "far_source": far_source,
         "permit_feasibility": feasibility,                 # 현행/상/중/하
         "permit_difficulty": _DIFFICULTY_LABEL.get(feasibility, "확인필요"),
@@ -206,8 +208,14 @@ def rank_buildable_options(
         ))
 
     # ── (B) 종상향 달성가능 용도지역의 건축가능항목(예상치) ──
-    scenarios = (upzoning or {}).get("scenarios") or []
+    # ★견고성(SSOT 계약): malformed 입력(비-dict upzoning·비-list scenarios·비-dict 요소)도
+    #   crash 없이 현행 옵션만 반환하도록 isinstance 가드(직접/미래 호출자 보호).
+    _up = upzoning if isinstance(upzoning, dict) else {}
+    scenarios = _up.get("scenarios")
+    scenarios = scenarios if isinstance(scenarios, list) else []
     for sc in scenarios:
+        if not isinstance(sc, dict):
+            continue
         target_zone = sc.get("target_zone")
         if not target_zone:
             continue
@@ -248,17 +256,23 @@ def rank_buildable_options(
     for (_product, _is_cur), members in groups.items():
         members.sort(key=lambda m: m["score"], reverse=True)
         rep = dict(members[0])
-        # 대안(동일 사업유형의 다른 경로) — 경로·목표지역·점수만 요약(중복 최소).
-        rep["alternatives"] = [
-            {
+        # 대안(동일 사업유형의 다른 경로) — 경로·목표지역·점수 요약. 변별 필드(use) 포함하고,
+        # 대표와 (via,zone,score)가 동일한 무가치 중복(예 제1·2종근생→근린생활시설)은 제외.
+        _seen: set[tuple[Any, Any, float]] = {(rep["via"], rep["zone"], rep["score"])}
+        rep["alternatives"] = []
+        for m in members[1:]:
+            sig = (m["via"], m["zone"], m["score"])
+            if sig in _seen:
+                continue
+            _seen.add(sig)
+            rep["alternatives"].append({
+                "use": m["use"],
                 "via": m["via"],
                 "zone": m["zone"],
                 "achievable_far_pct": m["achievable_far_pct"],
                 "permit_feasibility": m["permit_feasibility"],
                 "score": m["score"],
-            }
-            for m in members[1:]
-        ]
+            })
         options.append(rep)
 
     # 랭킹: ①score 내림차순(인허가가능성×가용용적률) → ②동점 시 FAR 활용 적합도(고밀 사업유형
