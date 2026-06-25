@@ -255,6 +255,7 @@ def build_site_layout(
     angle_candidates = sorted({0.0, round(principal, 1)})
 
     cap60_hit = False
+    spacing_capped = False
     for kind, bw, bd in kinds:
         per_footprint = bw * bd
         # 건폐율 상한 → 동수 캡(총 바닥면적 ≤ footprint_budget). 법적 제약 준수.
@@ -266,7 +267,8 @@ def build_site_layout(
             spacing = round(max(6.0, 0.8 * max(3, min(40, round(far / 30))) * _FLOOR_HEIGHT_M), 1)
             buildings: list = []
             floors, n = 1, 0
-            for _ in range(4):
+            placed_spacing = spacing  # ★실제 배치에 쓰인 간격(기록·정합의 단일 진실)
+            for _ in range(5):
                 placed = _place_grid(buildable_m, bw, bd, spacing, angle)
                 if not placed:
                     break
@@ -276,13 +278,23 @@ def build_site_layout(
                     placed = sorted(placed, key=lambda b: b.centroid.distance(bc))[:max_dongs_by_bcr]
                 n2 = len(placed)
                 floors2 = max(1, min(60, math.ceil(target_gfa / max(1.0, per_footprint * n2))))
-                buildings, floors, n = placed, floors2, n2
+                buildings, floors, n, placed_spacing = placed, floors2, n2, spacing
                 required = round(max(6.0, 0.8 * floors2 * _FLOOR_HEIGHT_M), 1)
                 if n2 <= 1 or required <= spacing + 0.5:
                     break  # 단일동(인접無·인동간격 무관) 또는 간격 정합 → 종료
                 spacing = required  # 더 큰 인동간격으로 재배치(최종 고층 반영)
             if not buildings:
                 continue
+            # ★법적 정합 보장(미수렴 케이스): 실제 배치 간격(placed_spacing)이 허용하는 최대
+            #   층수로 캡한다. 다동(n>1)은 인동간격 0.8H가 높이를 제약하므로, 간격을 키워도
+            #   재배치 못 한 미수렴 안은 '간격이 허용하는 높이'까지만 인정(거짓 일조준수 제거).
+            #   단일동(n≤1)은 인접동이 없어 채광이격 무관 → 캡 미적용.
+            spacing = placed_spacing  # 기록 간격 = 실제 배치 간격(과대표시 제거)
+            if n > 1:
+                floors_max_by_spacing = max(1, int(placed_spacing / (0.8 * _FLOOR_HEIGHT_M)))
+                if floors > floors_max_by_spacing:
+                    floors = floors_max_by_spacing
+                    spacing_capped = True
             height_m = floors * _FLOOR_HEIGHT_M
             realized_gfa = n * per_footprint * floors
             if floors >= 60 and realized_gfa < target_gfa:
@@ -318,6 +330,11 @@ def build_site_layout(
             })
     if cap60_hit:
         notes.append("일부 안은 60층 상한으로 가용 용적률(FAR)을 다 소진하지 못합니다(yield<100%).")
+    if spacing_capped:
+        notes.append(
+            "일부 안은 채광 인동간격(0.8H) 확보를 위해 층수를 제한했습니다 — 동수·간격↔높이 "
+            "트레이드오프로 FAR를 다 못 채울 수 있습니다(필지 통합·단면 재검토 여지)."
+        )
 
     options.sort(key=lambda o: o["score"], reverse=True)
     if not options:

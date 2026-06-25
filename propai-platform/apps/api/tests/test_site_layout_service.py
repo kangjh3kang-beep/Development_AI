@@ -126,22 +126,55 @@ def test_buildable_footprint_inward_offset() -> None:
     assert abs(inner.area - 44 * 34) < 1.0  # (50-6)×(40-6)
 
 
-def test_spacing_consistent_with_final_floors() -> None:
-    """★회귀가드(HIGH): 인동간격이 최종 재산정 층수의 0.8H와 정합(거짓 일조준수 방지).
+def _physical_min_gap_m(option: dict) -> float | None:
+    """배치도 GeoJSON(WGS84)의 동 폴리곤들을 미터 투영해 최근접 동간 실측 거리(없으면 None)."""
+    import itertools
 
-    다동 배치 시 spacing ≥ 0.8×(floors×3) − 오차, 또는 단일동(인접 없음)이어야 한다.
+    from shapely.geometry import shape
+    from shapely.ops import transform
+
+    feats = [shape(f["geometry"]) for f in option["buildings_geojson"]["features"]]
+    if len(feats) < 2:
+        return None
+    c = feats[0].centroid
+    coslat = math.cos(math.radians(c.y))
+
+    def to_m(x, y, z=None):
+        return ((x - c.x) * 111_320 * coslat, (y - c.y) * 110_540)
+
+    ms = [transform(to_m, f) for f in feats]
+    return min(a.distance(b) for a, b in itertools.combinations(ms, 2))
+
+
+def test_physical_spacing_meets_sunlight_setback() -> None:
+    """★회귀가드(HIGH-A): 실제 배치 폴리곤의 물리적 동간거리가 최종 층수의 0.8H 이상.
+
+    기록값(spacing_m)이 아니라 buildings_geojson의 실측 간격을 검사해 '과대표시' 회귀를 막는다.
+    고층·고FAR(미수렴) 케이스를 포함해 다양한 대지에서 위반 0이어야 한다.
     """
-    out = build_site_layout(
-        parcel_geojson=_rect_parcel(120, 100), building_type="공동주택",
-        far_pct=300, bcr_pct=50, land_area_sqm=12000,
-    )
-    for o in out["options"]:
-        if o["buildings"] <= 1:
-            continue  # 단일동은 인동간격 무관
-        required = 0.8 * o["floors"] * 3.0
-        assert o["spacing_m"] >= required - 0.6, (
-            f"인동간격 {o['spacing_m']} < 0.8H {required}(층 {o['floors']}) — 법적 이격 위반"
+    import itertools
+
+    checked = 0
+    for w, d, far, bcr in itertools.product([80, 120, 200], [100, 200], [250, 400, 600], [20, 50]):
+        out = build_site_layout(
+            parcel_geojson=_rect_parcel(w, d), building_type="공동주택",
+            far_pct=far, bcr_pct=bcr, land_area_sqm=w * d * 0.8,
         )
+        for o in out["options"]:
+            if o["buildings"] <= 1:
+                continue  # 단일동은 인접동 없음 → 채광이격 무관
+            checked += 1
+            required = 0.8 * o["floors"] * 3.0
+            # 기록 간격이 실제 배치와 정합(과대표시 제거).
+            assert o["spacing_m"] >= required - 1.0, (
+                f"기록 간격 {o['spacing_m']} < 0.8H {required}(층 {o['floors']})"
+            )
+            # ★물리적 동간거리도 0.8H 이상(거짓 일조준수 제거).
+            gap = _physical_min_gap_m(o)
+            assert gap is None or gap >= required - 1.5, (
+                f"물리 동간거리 {gap:.1f}m < 0.8H {required}m(층 {o['floors']}) — 법적 이격 위반"
+            )
+    assert checked > 0  # 다동 케이스가 실제로 검사됐는지 보증
 
 
 def test_units_from_realized_gfa_not_floor_plates() -> None:
