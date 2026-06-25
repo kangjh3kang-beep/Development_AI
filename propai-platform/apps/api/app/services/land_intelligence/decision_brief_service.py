@@ -175,6 +175,7 @@ class DecisionBriefService:
             await self._run_specialists(
                 site_raw=site_raw, reg_raw=reg_raw, permit_raw=permit_raw,
                 tenant_id=tenant_id, project_id=project_id, address=address,
+                use_llm=use_llm,
             )
             if include_specialists else []
         )
@@ -289,17 +290,19 @@ class DecisionBriefService:
         tenant_id: str | None,
         project_id: str | None,
         address: str | None,
+        use_llm: bool = False,
     ) -> list[dict[str, Any]]:
-        """결정론 SpecialistAgent(zoning/permit)를 부지·인허가 데이터로 auto-dispatch.
+        """결정론 SpecialistAgent(zoning/permit) + (opt-in) 심의엔진을 auto-dispatch.
 
         SpecialistAgent 계층(결정론 도구 → prior → 원장 cite → 모순탐지)을 의사결정 브리프의
         실제 소비처로 연결한다(이전엔 dispatch 엔드포인트만 있고 호출하는 곳이 없어 미배선).
         - zoning: 용도지역 허용용도(결정론).
         - permit: 대표 개발방식 인허가 가능성(결정론).
-        - LLM·과금 없음(두 도메인 모두 interpreter/panel 미장착). 외부엔진(심의/설계)·LLM패널
-          (cost/market)은 지연·과금 이슈로 이번 배선에서 제외(후속 opt-in 백로그).
+        - deliberation(★심의엔진): use_llm=True(opt-in)일 때만 외부 심의엔진(168.x)에 위임해 대표
+          verdict를 가져온다. 지연·과금·네트워크 이슈로 기본 off. 엔진 미설정/타임아웃/거절은
+          status='unavailable'로 정직 강등(반쪽출하 금지·무목업). 결정론 zoning/permit·브리프 무손상.
         - 전체·도메인별 graceful: 데이터 부족/실패는 스킵하고 브리프는 무손상.
-        반환: [{domain, task_type, summary, findings, contradictions, ledger}]
+        반환: [{domain, task_type, summary, findings, contradictions, ledger}] + 심의 엔트리(opt-in).
         """
         try:
             site_raw = site_raw if isinstance(site_raw, dict) else {}
@@ -342,10 +345,92 @@ class DecisionBriefService:
                     "contradictions": r.get("contradictions"),
                     "ledger": r.get("ledger"),
                 })
+
+            # ── ★심의엔진 활성화(opt-in·use_llm 게이트) — 외부 엔진 위임·타임아웃·정직강등 ──
+            #   use_llm=True 일 때만 외부 심의엔진에 위임한다(지연·과금·네트워크). 엔진 미설정·타임아웃·
+            #   거절은 조용히 누락하지 않고 status='unavailable'+reason 으로 표면화한다(반쪽출하 금지).
+            if use_llm:
+                out.append(await self._run_deliberation_engine(site_raw, tenant_id))
             return out
         except Exception as e:  # noqa: BLE001 — 배선 전체 실패는 빈 list(브리프 무손상)
             logger.warning("specialist 배선 전체 스킵(graceful)", error=str(e)[:200])
             return []
+
+    # 심의엔진 활성화(외부 엔진 위임) — 게이트·타임아웃·정직강등 단일 헬퍼(DRY)
+    _deliberation_breaker: Any = None
+
+    async def _run_deliberation_engine(
+        self, site_raw: dict[str, Any], tenant_id: str | None,
+    ) -> dict[str, Any]:
+        """외부 심의엔진(deliberation-review·168.x)에 위임해 대표 verdict 산출(opt-in).
+
+        ★정직 게이트(반쪽출하 금지): 엔진 URL 미설정·circuit open·타임아웃·거절·malformed 응답은
+        모두 {domain:'deliberation', status:'unavailable', reason}로 표면화한다(조용한 누락 금지).
+        절대 raise 하지 않는다(브리프 무손상). 입력 매핑 부적합(pnu 19자리 미확보 등)도 정직 강등.
+        shadow_integration 의 검증된 엔진 caller(_engine_post_analyze)를 재사용하되 전용 breaker·
+        하드 타임아웃으로 격리해 권위 analyze 회로·브리프 응답시간을 오염시키지 않는다(DRY).
+        """
+        try:
+            from apps.api.config import get_settings
+
+            s = get_settings()
+            base = (getattr(s, "deliberation_engine_url", "") or "").strip()
+            if not base:
+                return {"domain": "deliberation", "status": "unavailable",
+                        "reason": "engine_not_configured(심의엔진 URL 미설정 — 관리자 시크릿 입력 필요)"}
+
+            from app.services.deliberation._engine_contract import (
+                build_input_dump,
+                prevalidate,
+            )
+
+            # 엔진 입력(best-effort): pnu(19자리 필수·결정론)·address. 미확보 키는 미러 기본값.
+            pnu = str(site_raw.get("pnu") or "").strip()
+            _addr = site_raw.get("address")
+            payload: dict[str, Any] = {
+                "pnu": pnu if len(pnu) == 19 else "",
+                "address": _addr if isinstance(_addr, str) and _addr.strip() else None,
+            }
+            dump = build_input_dump(payload)
+            pv = prevalidate(dump)
+            if pv:
+                # 매핑 부적합(예: pnu 형식 오류) — 가짜 위임 대신 정직 강등.
+                return {"domain": "deliberation", "status": "unavailable",
+                        "reason": f"input_unmapped({pv})"}
+
+            from apps.api.app.routers.deliberation import _engine_post_analyze
+            from app.services.deliberation.shadow_integration import engine_overall_verdict
+            from apps.api.integrations.base_client import CircuitBreaker
+
+            if DecisionBriefService._deliberation_breaker is None:
+                # 전용 breaker(프로세스 로컬) — 엔진 장애가 브리프 경로를 반복 지연시키지 않게 격리.
+                DecisionBriefService._deliberation_breaker = CircuitBreaker(
+                    failure_threshold=5, recovery_timeout=75.0, half_open_max=3)
+
+            budget = float(getattr(s, "deliberation_engine_async_read_timeout_s", 60.0))
+            tenant = str(tenant_id or "").replace("-", "").lower()
+            result, reason = await asyncio.wait_for(
+                _engine_post_analyze(
+                    dump, deterministic=False, tenant=tenant or None,
+                    breaker=DecisionBriefService._deliberation_breaker),
+                timeout=budget + 5.0)  # caller 내부 타임아웃보다 약간 길게(이중 상한)
+            if result is None:
+                # 엔진 도달 실패/타임아웃/거절 — 정직 강등(reason 표면화).
+                return {"domain": "deliberation", "status": "unavailable", "reason": f"engine_{reason}"}
+            verdict = engine_overall_verdict(result)
+            return {
+                "domain": "deliberation",
+                "status": "ok",
+                "task_type": "deliberation_engine",
+                "verdict": verdict,
+                "findings": result.get("findings") or [],
+                "engine_reason": reason,
+            }
+        except asyncio.TimeoutError:
+            return {"domain": "deliberation", "status": "unavailable", "reason": "engine_timeout"}
+        except Exception as e:  # noqa: BLE001 — 심의엔진 위임 실패는 브리프 무손상(정직 강등)
+            logger.warning("deliberation 엔진 위임 스킵(graceful)", error=str(e)[:200])
+            return {"domain": "deliberation", "status": "unavailable", "reason": "engine_error"}
 
     # ------------------------------------------------------------------
     # 표준 요약 계약 — 도메인별 변환(프론트 도메인무관 동일 렌더)

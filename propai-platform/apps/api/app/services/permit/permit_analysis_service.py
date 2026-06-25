@@ -118,6 +118,7 @@ class PermitAnalysisService:
         site: dict[str, Any] | None = None,
         parcels: list[str] | None = None,
         use_llm: bool = True,
+        with_senior: bool = True,
     ) -> dict[str, Any]:
         site = await self._enrich_site(address, site or {})
         ordinance_txt = await self._ordinance_text(address, site)
@@ -149,6 +150,32 @@ class PermitAnalysisService:
             result["multi_parcel"] = await self._analyze_multi_parcel(
                 merged, primary_site=site, use_llm=use_llm
             )
+
+        # ── 시니어 자문 모세혈관 배선 — 심의(건폐/용적 적합)·도시계획·법무사 ──
+        # 인허가 결과에 시니어 전문가 판단프레임워크·근거·정량 verdict를 첨부한다. 실효(조례 반영)
+        # 용적률/건폐율(actual)을 법정상한(legal_max_far가 있으면 한도)과 심의 CSP로 대조해 준수=PASS·
+        # 초과=BLOCK 실판정을 산출한다(build_compliance_inputs 공용 빌더·DRY).
+        # ★무회귀: with_senior=True 기본이되 attach_senior_consultation_multi는 절대 raise 안 함.
+        if with_senior:
+            try:
+                from app.services.senior_agents.consultation_hook import (
+                    attach_senior_consultation_multi,
+                    build_compliance_inputs,
+                )
+
+                _far_eff = site.get("max_far")
+                _bcr_eff = site.get("max_bcr")
+                # 법정상한(legal_max_far)이 있으면 한도로(조례<법정 초과 검출), 없으면 실효를 한도로.
+                _far_lim = site.get("legal_max_far") or _far_eff
+                _sr_inputs = build_compliance_inputs(
+                    far_actual=_far_eff, far_limit=_far_lim,
+                    bcr_actual=_bcr_eff, bcr_limit=_bcr_eff,
+                )
+                result["senior_consultation"] = attach_senior_consultation_multi(
+                    ["deliberation", "urban", "legal"], _sr_inputs,
+                )
+            except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 인허가 분석 무손상
+                pass
 
         return result
 

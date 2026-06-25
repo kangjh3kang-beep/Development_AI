@@ -61,7 +61,8 @@ _USER_TMPL = """\
 
 class RegulationAnalysisService:
     async def analyze(
-        self, address: str, pnu: str | None = None, use_llm: bool = True
+        self, address: str, pnu: str | None = None, use_llm: bool = True,
+        with_senior: bool = True,
     ) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
 
@@ -133,6 +134,34 @@ class RegulationAnalysisService:
         # is_special일 때만 부착(무목업) — 일상 부지면 키 자체를 넣지 않아 하위호환·무회귀.
         if special_parcel:
             result["special_parcel"] = special_parcel
+
+        # ── 시니어 자문 모세혈관 배선 — 심의(건폐/용적/높이 적합)·도시계획·법무사 ──
+        # 규제 계층 분석에 시니어 판단프레임워크·근거·정량 verdict를 첨부한다. 실효 건폐/용적(actual)을
+        # 법정상한(legal·없으면 실효)과 심의 CSP로 대조해 준수=PASS·초과=BLOCK 실판정을 산출한다
+        # (build_compliance_inputs 공용 빌더·DRY). ★무회귀: 절대 raise 안 함(graceful).
+        if with_senior:
+            try:
+                from app.services.senior_agents.consultation_hook import (
+                    attach_senior_consultation_multi,
+                    build_compliance_inputs,
+                )
+
+                _far = limits.get("far") if isinstance(limits, dict) else {}
+                _bcr = limits.get("bcr") if isinstance(limits, dict) else {}
+                _hgt = limits.get("height") if isinstance(limits, dict) else {}
+                _far = _far if isinstance(_far, dict) else {}
+                _bcr = _bcr if isinstance(_bcr, dict) else {}
+                _hgt = _hgt if isinstance(_hgt, dict) else {}
+                _sr_inputs = build_compliance_inputs(
+                    far_actual=_far.get("effective"), far_limit=_far.get("legal") or _far.get("effective"),
+                    bcr_actual=_bcr.get("effective"), bcr_limit=_bcr.get("legal") or _bcr.get("effective"),
+                    height_actual=_hgt.get("value"), height_limit=_hgt.get("value"),
+                )
+                result["senior_consultation"] = attach_senior_consultation_multi(
+                    ["deliberation", "urban", "legal"], _sr_inputs,
+                )
+            except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 규제 분석 무손상
+                pass
 
         if use_llm:
             result["ai"] = await self._llm(address, zone_type, zone_2, area, limits, districts)
