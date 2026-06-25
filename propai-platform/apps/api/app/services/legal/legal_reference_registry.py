@@ -431,6 +431,8 @@ def get_legal_refs(keys, *, sigungu: str | None = None) -> list[dict]:
     - key·url_status 부착. url_status = 'verified' if url else 'pending'.
     - 조례 키({sigungu} 플레이스홀더)는 sigungu로 치환하고, 치환 시 조례명으로
       build_ordinance_url을 생성해 url_status를 'verified'로 승격한다.
+    - ★호출부는 sigungu에 '조례 정본 레벨' 관할명(ordinance_service.resolve_ordinance_region 경유 —
+      특별시/광역시 자치구는 시 본청)을 넘겨야 한다(자치구명 넘기면 '동작구 도시계획 조례'[허위] 링크).
     - 미존재 키는 건너뛴다(할루시네이션 링크 방지).
     """
     out: list[dict] = []

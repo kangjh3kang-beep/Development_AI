@@ -25,6 +25,12 @@ class ComprehensiveAnalysisRequest(BaseModel):
     project_id: str | None = Field(
         None, description="프로젝트 ID(원장 성장루프 체인 스코프). 미지정 시 주소/PNU 기반 체인."
     )
+    # ★다필지 통합분석: 33필지 등 다필지 업로드 시 필지목록(면적·용도지역 포함)을 전달하면
+    #   종합분석이 '통합면적' 기준으로 산출된다(미전달 시 대표주소 단일필지 = N=1). 단일/다필지 일원화.
+    parcels: list[dict] | None = Field(
+        None,
+        description="필지목록 [{pnu,address,area_sqm,zone_type}]. 다필지 통합분석용(미지정 시 단일).",
+    )
 
 
 @router.post("/comprehensive")
@@ -41,6 +47,7 @@ async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest, current_
         llm_model=req.llm_model,
         tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
         project_id=req.project_id,
+        parcels=req.parcels,
     )
 
 
