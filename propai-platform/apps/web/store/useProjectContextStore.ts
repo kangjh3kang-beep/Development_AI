@@ -113,6 +113,8 @@ interface SiteAnalysisData {
   effectiveFarPct?: number | null;    // 현행 실효 용적률(%) — calc_effective_far(min 법정/조례/계획상한)
   effectiveBcrPct?: number | null;    // 현행 실효 건폐율(%)
   farBasis?: string | null;           // 실효용적률 최종 근거 라벨
+  roadWidthM?: number | null;         // 접도 도로폭(m·NED 도로접면 추정) — 시니어 심의 접도 CSP 입력원
+
   upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
   upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
   // 종상향 per-scenario 상세(미래 토지특성 SSOT) — comprehensive 산출 보존(additive·옵셔널).

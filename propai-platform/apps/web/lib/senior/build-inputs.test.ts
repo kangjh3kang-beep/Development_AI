@@ -18,6 +18,29 @@ describe("buildSeniorInputs", () => {
     expect(r).toEqual({ height_actual: 38, height_limit: 35 });
   });
 
+  it("심의: 접도 도로폭 + 건축법 44조 required(연면적별 4/6m)", () => {
+    // 연면적<2000 → required 4m
+    expect(
+      buildSeniorInputs("senior_deliberation_member", {
+        siteAnalysis: { roadWidthM: 6 }, designData: { totalGfaSqm: 1500 },
+      }),
+    ).toEqual({ road_width_actual: 6, road_width_required: 4 });
+    // 연면적≥2000 → required 6m (도로 4m < 6m → 위반 예정)
+    expect(
+      buildSeniorInputs("senior_deliberation_member", {
+        siteAnalysis: { roadWidthM: 4 }, designData: { totalGfaSqm: 2500 },
+      }),
+    ).toEqual({ road_width_actual: 4, road_width_required: 6 });
+    // 맹지(0m) = 유효 actual(위반 판정 대상) — required 4m
+    expect(
+      buildSeniorInputs("senior_deliberation_member", { siteAnalysis: { roadWidthM: 0 } }),
+    ).toEqual({ road_width_actual: 0, road_width_required: 4 });
+    // 도로폭 null(도로접면 미확보) → 접도 생략(무목업)
+    expect(
+      buildSeniorInputs("senior_deliberation_member", { siteAnalysis: { roadWidthM: null } }),
+    ).toBeUndefined();
+  });
+
   it("심의: 높이한도 0/null(무제한·미산정) → height 생략(무목업)", () => {
     expect(
       buildSeniorInputs("senior_deliberation_member", { designData: { heightM: 38, maxHeightM: 0 } }),

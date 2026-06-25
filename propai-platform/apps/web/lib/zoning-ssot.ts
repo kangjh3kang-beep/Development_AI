@@ -234,6 +234,8 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
     ef && typeof ef.far_basis === "string" && ef.far_basis.trim()
       ? ef.far_basis
       : null;
+  // 접도 도로폭(m·auto_zoning NED 도로접면 추정) — 시니어 심의 접도 CSP 입력원(미확보 시 null).
+  patch.roadWidthM = num((r as { road_width_m?: unknown }).road_width_m) ?? null;
 
   // 종상향(종상향 잠재 상한·최상 가능성·per-scenario) — 단일/통합 공용 헬퍼로 추출(stale 명시 null 포함).
   Object.assign(patch, mapUpzoning(r));
