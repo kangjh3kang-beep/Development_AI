@@ -51,6 +51,23 @@ interface RuleEvaluationView {
   detail: string;
 }
 
+interface IracStepView {
+  rule_id: string;
+  issue: string;
+  rule: string;
+  basis: string;
+  application: string;
+  conclusion: string;
+}
+
+interface SeniorReasoningView {
+  mode: string; // structured | llm
+  irac_steps: IracStepView[];
+  debate: { pro: string; con: string } | null;
+  prompt: string;
+  narrative: string | null;
+}
+
 interface SeniorConsultation {
   agent_key: string;
   name_ko: string;
@@ -67,6 +84,7 @@ interface SeniorConsultation {
   honest_notes: string[];
   evaluations: RuleEvaluationView[];
   overall_verdict: string | null;
+  reasoning: SeniorReasoningView | null;
 }
 
 /* ── verdict/라벨 토큰 매핑(토큰만 — 하드코딩 색상 금지) ── */
@@ -164,9 +182,12 @@ export function SeniorConsultPanel() {
       }
       setRunning(true);
       try {
-        const body: { domain: string; context?: { inputs: Record<string, number> } } = inputs
-          ? { domain: key, context: { inputs } }
-          : { domain: key };
+        // FinCoT 추론(IRAC) 동반 요청 + 매핑된 정량 inputs(있으면).
+        const context: { include_reasoning: true; inputs?: Record<string, number> } = {
+          include_reasoning: true,
+        };
+        if (inputs) context.inputs = inputs;
+        const body = { domain: key, context };
         const res = await apiClient.post<SeniorConsultation>("/senior/consult", {
           body,
           useMock: false,
@@ -327,6 +348,41 @@ export function SeniorConsultPanel() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* FinCoT 추론(IRAC 체인) — include_reasoning 응답 시 */}
+          {result.reasoning && result.reasoning.irac_steps.length > 0 && (
+            <div className="grid gap-1.5">
+              <p className="text-xs font-bold text-[var(--text-primary)]">
+                추론 경로(IRAC)
+                {result.reasoning.debate && (
+                  <span className="ml-1.5 align-middle">
+                    <Badge token="var(--status-info)">적대 검증 대상</Badge>
+                  </span>
+                )}
+              </p>
+              {/* LLM 서술(주입 시·없으면 결정론 구조만) */}
+              {result.reasoning.narrative && (
+                <p className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-soft)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
+                  {result.reasoning.narrative}
+                </p>
+              )}
+              <ol className="grid gap-1.5">
+                {result.reasoning.irac_steps.map((s, i) => (
+                  <li
+                    key={s.rule_id}
+                    className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-soft)] px-3 py-2"
+                  >
+                    <p className="text-[11px] font-semibold text-[var(--text-primary)]">
+                      {i + 1}. 쟁점: {s.issue}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">규칙: {s.rule}</p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">적용: {s.application}</p>
+                    <p className="text-[10px] text-[var(--text-secondary)]">결론: {s.conclusion}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
           )}
 
