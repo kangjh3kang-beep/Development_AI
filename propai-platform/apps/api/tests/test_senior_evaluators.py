@@ -4,7 +4,9 @@ from app.services.senior_agents.evaluators import (
     BLOCK,
     PASS,
     WARN,
+    evaluate_architect,
     evaluate_financial,
+    evaluate_urban,
     worst_verdict,
 )
 from app.services.senior_agents.evaluators.base import num, num_or
@@ -70,6 +72,43 @@ def test_num_or_preserves_explicit_zero():
     assert num_or({"x": 0}, "x", 0.08) == 0.0
     assert num_or({}, "x", 0.08) == 0.08          # 결측만 default
     assert num_or({"x": "bad"}, "x", 0.08) == 0.08  # 비수치=결측 취급
+
+
+def test_urban_proportion_verdicts():
+    base = {"total_project_cost": 100, "prior_appraisal_total": 1000}
+    # 비례율 95% (<100) → WARN
+    e = _by_id(evaluate_urban({**base, "post_appraisal_total": 1050}))["urban.redevelopment_proportion"]
+    assert e.verdict == WARN and e.value == 95.0
+    # 비례율 110% → PASS
+    assert _by_id(evaluate_urban({**base, "post_appraisal_total": 1200}))[
+        "urban.redevelopment_proportion"].verdict == PASS
+    # 종후 ≤ 총사업비 → 비례율 ≤0 → BLOCK
+    assert _by_id(evaluate_urban({**base, "post_appraisal_total": 100}))[
+        "urban.redevelopment_proportion"].verdict == BLOCK
+    # 권리가액·분담금 detail(개별 종전평가·분양가 제공 시)
+    full = _by_id(evaluate_urban({**base, "post_appraisal_total": 1100,
+                                  "prior_appraisal_individual": 500, "member_sale_price": 600}))
+    assert "권리가액" in full["urban.redevelopment_proportion"].detail
+    assert "분담금" in full["urban.redevelopment_proportion"].detail
+    # 종전평가 0/결측 → 생략(무목업)
+    assert evaluate_urban({"post_appraisal_total": 1, "total_project_cost": 1,
+                           "prior_appraisal_total": 0}) == []
+
+
+def test_architect_setback_reuses_helper():
+    # 높이 8m(≤10m) → 필요 1.5m. 실 이격 2m ≥ 1.5 → PASS
+    e = _by_id(evaluate_architect({"building_height_m": 8, "north_distance_m": 2.0}))
+    assert e["design.bukchuk_setback"].verdict == PASS
+    # 높이 30m → 필요 15m(h/2). 실 10m < 15 → BLOCK
+    e2 = _by_id(evaluate_architect({"building_height_m": 30, "north_distance_m": 10}))
+    assert e2["design.bukchuk_setback"].verdict == BLOCK
+    # 동지 연속일조 90분 < 120 → BLOCK, 130분 → PASS
+    assert _by_id(evaluate_architect({"winter_daylight_continuous_min": 90}))[
+        "design.winter_daylight_gate"].verdict == BLOCK
+    assert _by_id(evaluate_architect({"winter_daylight_continuous_min": 130}))[
+        "design.winter_daylight_gate"].verdict == PASS
+    # 결측 → 생략
+    assert evaluate_architect({}) == []
 
 
 def test_worst_verdict():

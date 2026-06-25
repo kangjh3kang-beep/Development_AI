@@ -358,11 +358,34 @@ def test_orchestrator_consult_no_inputs_note():
     assert any("정량 입력" in n for n in c.honest_notes)
 
 
-def test_orchestrator_no_evaluator_for_urban():
+def test_orchestrator_no_evaluator_for_bim():
     o = _orch()
-    # 도시계획은 아직 평가기 없음 → inputs 줘도 evaluations 비고, 안내노트 없음
-    c = o.consult("도시계획", context={"inputs": {"noi": 100}})
+    # BIM은 아직 평가기 없음 → inputs 줘도 evaluations 비고
+    c = o.consult("BIM", context={"inputs": {"noi": 100}})
     assert c.evaluations == () and c.overall_verdict is None
+
+
+def test_orchestrator_urban_evaluation():
+    o = _orch()
+    # 비례율 95%(<100) → WARN, 권리가액·분담금 detail
+    c = o.consult("도시계획", context={"inputs": {
+        "post_appraisal_total": 1_050, "total_project_cost": 100, "prior_appraisal_total": 1_000,
+        "prior_appraisal_individual": 500, "member_sale_price": 600}})
+    ev = {e["rule_id"]: e for e in c.evaluations}
+    assert ev["urban.redevelopment_proportion"]["verdict"] == "WARN"  # 비례율 95%
+    assert ev["urban.redevelopment_proportion"]["value"] == 95.0
+    assert "분담금" in ev["urban.redevelopment_proportion"]["detail"]
+
+
+def test_orchestrator_architect_evaluation_reuses_setback_helper():
+    o = _orch()
+    # 높이 30m → 필요 정북이격 15m(현행 h/2). 실 이격 10m < 15m → BLOCK
+    c = o.consult("설계", context={"inputs": {"building_height_m": 30, "north_distance_m": 10,
+                                            "winter_daylight_continuous_min": 90}})
+    ev = {e["rule_id"]: e for e in c.evaluations}
+    assert ev["design.bukchuk_setback"]["verdict"] == "BLOCK"
+    assert ev["design.winter_daylight_gate"]["verdict"] == "BLOCK"  # 90<120분
+    assert c.overall_verdict == "BLOCK"
 
 
 def test_coerce_matched_ids_defensive():
