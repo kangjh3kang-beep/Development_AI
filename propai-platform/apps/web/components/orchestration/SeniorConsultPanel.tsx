@@ -84,6 +84,11 @@ function confidenceToken(label: string | null | undefined): string {
   return "var(--status-warning)"; // 참고(전문가 확인 필요)
 }
 
+/** 안정 캐시키 — 키 삽입순서와 무관하게 정렬 직렬화(동일 inputs=동일 키). */
+function seniorCacheKey(key: string, inputs: Record<string, number> | undefined): string {
+  return `${key}|${inputs ? JSON.stringify(inputs, Object.keys(inputs).sort()) : ""}`;
+}
+
 function Badge({ token, children }: { token: string; children: React.ReactNode }) {
   return (
     <span
@@ -120,6 +125,8 @@ export function SeniorConsultPanel() {
   const [runError, setRunError] = useState<string | null>(null);
   // 캐시 키 = `${domain}|${inputs 시그니처}` — store 데이터가 바뀌면 재자문(stale 방지).
   const cacheRef = useRef<Record<string, SeniorConsultation>>({});
+  // 현재 표시 결과의 캐시키(신선도 비교용) — store 변경 시 stale 안내.
+  const [resultKey, setResultKey] = useState<string | null>(null);
 
   // GET /senior/agents — 마운트 1회.
   useEffect(() => {
@@ -148,10 +155,11 @@ export function SeniorConsultPanel() {
       setRunError(null);
       // 분석 store에서 도메인별 평가기 inputs 자동 매핑(실재 값만·무목업). 없으면 프레임워크만.
       const inputs = buildSeniorInputs(key, sources);
-      const cacheKey = `${key}|${inputs ? JSON.stringify(inputs) : ""}`;
+      const cacheKey = seniorCacheKey(key, inputs);
       const cached = cacheRef.current[cacheKey];
       if (cached) {
         setResult(cached);
+        setResultKey(cacheKey);
         return;
       }
       setRunning(true);
@@ -165,6 +173,7 @@ export function SeniorConsultPanel() {
         });
         cacheRef.current[cacheKey] = res;
         setResult(res);
+        setResultKey(cacheKey);
       } catch (e) {
         setResult(null);
         setRunError(e instanceof ApiClientError ? e.message : "시니어 자문에 실패했습니다.");
@@ -174,6 +183,13 @@ export function SeniorConsultPanel() {
     },
     [sources],
   );
+
+  // 표시 결과가 stale인가 — store 데이터가 바뀌어 현재 입력 시그니처가 표시 결과의 키와 다르면 true.
+  // (자동 재실행 금지 정책 — 사용자에게 '다시 자문' 안내만 한다.)
+  const stale = useMemo(() => {
+    if (!selectedKey || !result || !resultKey) return false;
+    return seniorCacheKey(selectedKey, buildSeniorInputs(selectedKey, sources)) !== resultKey;
+  }, [selectedKey, result, resultKey, sources]);
 
   return (
     <section className="grid gap-3">
@@ -244,6 +260,23 @@ export function SeniorConsultPanel() {
               )}
             </div>
           </div>
+
+          {/* 신선도 안내 — 분석 데이터 변경 시 재자문 유도(자동 재실행 안 함). */}
+          {stale && selectedKey && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color-mix(in_srgb,var(--status-info)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-info)_8%,transparent)] px-3 py-2">
+              <span className="text-[11px] text-[var(--status-info)]">
+                분석 데이터가 변경되었습니다 — 최신 수치로 다시 자문하세요.
+              </span>
+              <button
+                type="button"
+                onClick={() => consult(selectedKey)}
+                disabled={running}
+                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1 text-[11px] font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:opacity-50"
+              >
+                다시 자문
+              </button>
+            </div>
+          )}
 
           {/* 정량 판정(evaluations — 입력 연동 시·무목업으로 있을 때만) */}
           {result.evaluations && result.evaluations.length > 0 && (
