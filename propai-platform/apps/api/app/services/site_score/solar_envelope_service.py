@@ -112,6 +112,59 @@ def shadow_analysis(height_m: float, latitude: float = 37.5) -> dict[str, Any]:
     }
 
 
+# 시니어 설계에이전트 교차검증 verdict 우선순위(나쁠수록 큼). 키 생략 회피용 기본 매핑.
+_SENIOR_STATUS_RANK = {"block": 3, "warn": 2, "pass": 1, "info": 0}
+
+
+def _senior_architect_review(
+    *, building_height_m: float, north_distance_m: float,
+    winter_daylight_continuous_min: float | None,
+) -> dict[str, Any] | None:
+    """시니어 설계에이전트(evaluators.architect) 교차검증을 best-effort로 호출해 요약 dict 반환.
+
+    ★envelope 흐름을 절대 방해하지 않는다(import/호출 실패 시 None). 결과 RuleEvaluation 리스트를
+    {verdict: 최악상태(block>warn>pass>info), rules:[{label,value,unit,status,note}]} 로 변환.
+    추정/근사 — 직사각 단면·권장 최고층 높이 가정 기반.
+    """
+    try:
+        from app.services.senior_agents.evaluators.architect import evaluate_architect
+
+        inputs: dict[str, Any] = {
+            "building_height_m": building_height_m,
+            "north_distance_m": north_distance_m,
+        }
+        # 동지 연속일조(분)는 산출 가능할 때만 주입(불가하면 키 생략 — 무목업).
+        if winter_daylight_continuous_min is not None:
+            inputs["winter_daylight_continuous_min"] = winter_daylight_continuous_min
+
+        evals = evaluate_architect(inputs)
+        rules: list[dict[str, Any]] = []
+        worst_rank = -1
+        worst_status = "info"
+        for ev in evals:
+            # RuleEvaluation.verdict 는 PASS/WARN/BLOCK → 소문자 status 로 정규화.
+            status = str(getattr(ev, "verdict", "info") or "info").lower()
+            rank = _SENIOR_STATUS_RANK.get(status, 0)
+            if rank > worst_rank:
+                worst_rank, worst_status = rank, status
+            rules.append({
+                "label": getattr(ev, "label", ev.rule_id),
+                "value": getattr(ev, "value", None),
+                "unit": getattr(ev, "unit", ""),
+                "status": status,
+                "note": getattr(ev, "detail", "") or getattr(ev, "threshold", ""),
+            })
+        if not rules:
+            return None
+        return {
+            "verdict": worst_status,                 # 최악 상태(block>warn>pass>info)
+            "rules": rules,
+            "note": "시니어 설계에이전트 교차검증(추정·근사) — 권장 최고층 높이·정북 최소이격 1.5m 가정.",
+        }
+    except Exception:  # noqa: BLE001 — 교차검증 실패는 envelope 본류를 막지 않는다.
+        return None
+
+
 def _zone_limits(zone: str) -> dict[str, Any]:
     """용도지역 → 건폐율/용적률/층수 한도.
 
@@ -189,6 +242,13 @@ def compute_buildable_envelope(
             realistic_gfa = far_gfa
             realistic_far = far
             binding = "용적률"
+        # 신규 층수 필드(프론트 공용 소비) — 정북일조 미적용이라 일조 사선 상한 없음.
+        #   arithmetic_min_floors=건폐율 만충 산술 하한(법적 개념 아님). 권장범위는 현실 용적률% 기준 추정.
+        _arith_min = floors
+        _ceil_floors = zone_max_floors if zone_max_floors else floors
+        _far_p = realistic_far * 100.0
+        _rec_low = max(_arith_min, min(_ceil_floors, round(_far_p / 30.0)))
+        _rec_high = max(_rec_low, min(_ceil_floors, round(_far_p / 20.0)))
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1),
@@ -201,6 +261,18 @@ def compute_buildable_envelope(
             "daylight_loss_pct": 0.0,
             "max_height_m": round(floors * fh, 1), "max_floors": floors,
             "zone_max_floors": zone_max_floors,
+            # ── 층수 필드(신규·추정·정북일조 미적용이라 일조 사선 상한 없음) ──
+            "arithmetic_min_floors": _arith_min,           # 건폐율 만충 산술 하한(★법적 개념 아님)
+            "recommended_floors_low": _rec_low,            # 실무 권장 층수 하한(추정)
+            "recommended_floors_high": _rec_high,          # 실무 권장 층수 상한(추정)
+            "floors_at_north_edge": floors,                # 정북일조 미적용 — 계단식 단면 없음(전층 동일·근사)
+            "floors_at_deep": floors,                      # 정북일조 미적용 — 사선 상한 없음(전층 동일·근사)
+            "floor_height_m": round(fh, 2),                # 사용된 층고(echo)
+            "floor_profile_note": (
+                "정북일조 미적용 용도지역 — 계단식 단면 불요(전층 동일 근사). "
+                "정밀 높이는 가로구역별 최고높이 별도 확인."
+            ),
+            "senior_architect_review": None,               # 정북일조 미적용 — 정북 이격 교차검증 대상 아님
             "note": (
                 "정북일조 미적용 용도지역 — 용적률/건폐율이 한도."
                 + (
@@ -244,11 +316,39 @@ def compute_buildable_envelope(
     realistic_floors = max(1, math.ceil(effective_gfa / bcr_footprint)) if bcr_footprint > 0 else 1
     daylight_ceiling_floors = max(1, int(max_h / fh))
 
+    # ── 정밀 층수 시뮬레이션(계단식 단면 근사) ──
+    # arithmetic_min_floors: '건폐율 만충 산술 하한'(법적 개념 아님 — 유효 연면적을 담는 최소 층수).
+    arithmetic_min_floors = realistic_floors
+    # 실무 권장 범위: 쾌적 건폐율 20~30% 가정으로 far_p(현실 용적률%)를 나눠 층수 추정.
+    far_p = far * 100.0
+    recommended_floors_low = max(
+        arithmetic_min_floors, min(daylight_ceiling_floors, round(far_p / 30.0))
+    )
+    recommended_floors_high = max(
+        recommended_floors_low, min(daylight_ceiling_floors, round(far_p / 20.0))
+    )
+    # 계단식 단면의 북측 최저 층수: 정북 경계 최소이격(1.5m)에서 허용 높이/층고.
+    floors_at_north_edge = max(1, int(max_height_for_north_distance_m(1.5) / fh))
+    # 단면 최고 층수(남측 계단식 후퇴 시 사선 최고선) = 일조 사선 한도 층수.
+    floors_at_deep = daylight_ceiling_floors
+    floor_profile_note = (
+        f"정북 경계측 약 {floors_at_north_edge}층 → 남측 계단식 후퇴 시 최대 {floors_at_deep}층 "
+        f"(층고 {round(fh, 2)}m 기준·직사각 근사·추정)."
+    )
+
     # 공동주택 인동간격(채광 방향): 건축법 시행령 §86② — 통상 0.8H(무창벽 0.5H).
     realistic_height = realistic_floors * fh
     min_spacing_080 = round(0.8 * realistic_height, 1)
     min_spacing_050 = round(0.5 * realistic_height, 1)
     shadow = shadow_analysis(realistic_height, latitude)  # 동지 일영(그림자) 분석
+
+    # 시니어 설계에이전트 교차검증(best-effort — 실패 시 None, envelope 흐름 무영향).
+    # ★shadow_analysis 는 연속 일조 '분'을 산출하지 않으므로 winter_daylight_continuous_min 키는 생략.
+    senior_architect_review = _senior_architect_review(
+        building_height_m=recommended_floors_high * fh,
+        north_distance_m=1.5,
+        winter_daylight_continuous_min=None,
+    )
 
     return {
         "applies_north_light": True,
@@ -266,9 +366,19 @@ def compute_buildable_envelope(
         "buildable_volume_m3": round(envelope_volume),
         "daylight_ceiling_m": round(max_h, 1),            # 정북일조 사선 최고선
         "daylight_ceiling_floors": daylight_ceiling_floors,
-        "max_floors": realistic_floors,                    # 용적률·건폐율 기준 현실 층수
+        "max_floors": realistic_floors,                    # 용적률·건폐율 기준 현실 층수(하위호환 유지)
         "max_height_m": round(realistic_floors * fh, 1),
         "bcr_footprint_sqm": round(bcr_footprint),
+        # ── 정밀 층수 시뮬레이션(신규·추정) ──
+        "arithmetic_min_floors": arithmetic_min_floors,    # 건폐율 만충 산술 하한(★법적 개념 아님)
+        "recommended_floors_low": recommended_floors_low,  # 실무 권장 층수 하한(쾌적 건폐율 30% 가정·추정)
+        "recommended_floors_high": recommended_floors_high,  # 실무 권장 층수 상한(쾌적 건폐율 20% 가정·추정)
+        "floors_at_north_edge": floors_at_north_edge,      # 정북 경계 최소이격(1.5m)측 허용 층수(단면 최저·추정)
+        "floors_at_deep": floors_at_deep,                  # 남측 계단식 후퇴 시 사선 최고선 층수(단면 최고·추정)
+        "floor_height_m": round(fh, 2),                    # 사용된 층고(echo)
+        "floor_profile_note": floor_profile_note,          # 계단식 단면 층수 프로파일 설명(추정)
+        # 시니어 설계에이전트 교차검증(추정·best-effort, 실패 시 None).
+        "senior_architect_review": senior_architect_review,
         "note": (
             "정북일조 사선(10m↓ 1.5m·10m↑ H/2 이격) 남북깊이 적분 최대 연면적. "
             f"공동주택 다동 배치 시 동간 채광거리 {min_spacing_080}m(0.8H) 확보 필요. "
@@ -281,5 +391,7 @@ def compute_buildable_envelope(
             "직사각형 대지(W×D, 정북=깊이축) 가정",
             "단일 매스·측면 이격 간이(side_setback)",
             "10m 초과 H≤2d 보수 근사·도로사선 미적용",
+            "arithmetic_min_floors=건폐율 만충 산술 하한(법적 개념 아님)",
+            "recommended_*·floors_at_*·senior_architect_review=실무 추정/근사(계단식 단면)",
         ],
     }
