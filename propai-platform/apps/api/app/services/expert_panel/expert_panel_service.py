@@ -202,11 +202,11 @@ class ExpertPanelService:
                 logger.warning("expert panel memory recall 스킵", err=str(e)[:160])
 
         # Prepare context string and append recalled memories if present
+        # ★회상 포맷은 공용 헬퍼 단일경유(specialist_agent와 동일 계약) — score None/비수치 안전(:.2f 오류 방지).
         ctx_str = context if isinstance(context, str) else json.dumps(context, ensure_ascii=False)
         if rag_memories:
-            ctx_str += "\n\n[이전 유사 분석 및 참고 노하우]\n"
-            for rm in rag_memories:
-                ctx_str += f"- {rm['summary']} (Score: {rm['score']:.2f})\n"
+            from app.services.memory_hub.recall_format import format_recall_block
+            ctx_str += format_recall_block(rag_memories, header="[이전 유사 분석 및 참고 노하우]")
 
         ctx_str = ctx_str[:4000]
 
