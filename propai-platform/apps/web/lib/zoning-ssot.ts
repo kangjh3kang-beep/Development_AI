@@ -259,6 +259,39 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
   return patch;
 }
 
+/**
+ * 다필지 통합 시 단일 PNU(대표 1필지) 유래 값으로 SSOT를 오염시키지 않도록 가드.
+ *
+ * 배경(SSOT 붕괴 버그): `/zoning/analyze`는 "대표 1필지"(작은 면적·단일 PNU) 분석이라
+ *   mapZoningRich가 추출하는 실효/법정 한도(effectiveFarPct·effectiveBcrPct·nationalFarPct·
+ *   nationalBcrPct·farBasis)와 종상향(upzoning*)이 모두 대표필지 기준이다. 혼재 다필지
+ *   (예: 제2종일반주거 + 자연녹지)에서 대표가 자연녹지(100%/20%)면 store가 오염돼, 인벨로프 카드가
+ *   사업개요(면적가중 통합 192.4%)와 불일치한다. 다필지에서는 통합 경로
+ *   (/zoning/integrated-analysis blended_*_eff_pct)가 진실원천이므로, 단일유래 한도/종상향
+ *   필드를 패치에서 제거해 통합값이 살아남게 한다(통합값 우선). 단일필지면 패치를 그대로 둔다(무회귀).
+ *
+ * 순수 함수(입력 패치를 변형하지 않고 새 객체 반환). 같은 계약을 여러 컴포넌트가 공유해
+ * 한 곳을 고치면 전역이 따라오게 한다(공용화).
+ */
+export function guardMultiParcelRich(
+  patch: Partial<SiteAnalysisData>,
+  isMultiParcel: boolean,
+): Partial<SiteAnalysisData> {
+  if (!isMultiParcel) return patch;
+  const out = { ...patch };
+  // 단일유래 실효/법정 한도 — 통합 경로가 진실원천(대표필지 오염 차단).
+  delete out.effectiveFarPct;
+  delete out.effectiveBcrPct;
+  delete out.nationalFarPct;
+  delete out.nationalBcrPct;
+  delete out.farBasis;
+  // 단일유래 종상향 — 통합 면적 기준 integrated.upzoning이 진실원천(대표필지 과소판정 차단).
+  delete out.upzoningPotentialFarHigh;
+  delete out.upzoningFeasibilityTop;
+  delete out.upzoningScenarios;
+  return out;
+}
+
 // 개발가능성 영문 게이트 → 한국어 라벨 공용 맵.
 // AutoZoningBadge, LandIntelligencePanel, SiteInitiator 등 여러 곳에서 공유.
 export const DEVELOPABILITY_LABEL: Record<string, string> = {

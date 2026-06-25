@@ -14,6 +14,9 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
+// 시니어 건축가 교차검토(정북일조·동지일조 게이트) — 백엔드가 주면 표시, 없으면(null) 미표시(정직).
+type SeniorReviewRule = { label: string; value: number | string; unit?: string; status?: string; note?: string };
+type SeniorReview = { verdict?: string; rules?: SeniorReviewRule[] };
 type Envelope = {
   applies_north_light: boolean; binding: string; daylight_loss_pct: number;
   far_gfa_sqm: number; effective_gfa_sqm: number; envelope_gfa_sqm?: number;
@@ -24,6 +27,17 @@ type Envelope = {
   realistic_far_pct?: number; zone_max_floors?: number | null;
   min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
   road_side?: string; note?: string; error?: string;
+  // ★백엔드 신규 계약(정직화·정밀 시뮬레이션 — SolarEnvelopeCard와 동일):
+  //  arithmetic_min_floors = 건폐율 만충 시 산술하한(법적 개념 아님 — 종전 max_floors 대체 명칭)
+  //  recommended_floors_low/high = 실무 권장 층수 범위(층고·일조 반영)
+  //  floors_at_north_edge/deep = 계단식 단면(북측 N층 → 심부 M층)
+  //  floor_height_m = 층고(m), floor_profile_note = 단면 한 줄 설명
+  //  senior_architect_review = 시니어 건축가 정북일조·동지일조 교차검토(없으면 null → 미표시)
+  arithmetic_min_floors?: number;
+  recommended_floors_low?: number; recommended_floors_high?: number;
+  floors_at_north_edge?: number; floors_at_deep?: number;
+  floor_height_m?: number; floor_profile_note?: string;
+  senior_architect_review?: SeniorReview | null;
   // 백엔드가 evidence/legal_refs를 반환하면 우선 사용(현재 미반환 → 프론트 산식 트레이스로 폴백).
   evidence?: BackendEvidence[]; legal_refs?: BackendLegalRef[];
   shadow_analysis?: {
@@ -34,7 +48,18 @@ type Envelope = {
 
 const eok = (sqm: number) => `${sqm.toLocaleString()}㎡`;
 
-export function BuildableEnvelopeCard() {
+export function BuildableEnvelopeCard({
+  // ★다필지 통합 실효 한도(SSOT 일관) — 부모(ProjectAnalysisSummary)가 /zoning/integrated-analysis로
+  //   산출한 면적가중 blended 실효 용적/건폐(예: 제2종일반주거+자연녹지 혼재 → 192.4%)를 주면
+  //   그 값을 우선 사용한다. 단일 PNU 분석(AutoZoningBadge)이 store.effectiveFarPct에 대표필지
+  //   (자연녹지급 100%/20%)를 써넣어도 화면 사업개요(192.4%)와 불일치하지 않게 한다(SSOT 단일화).
+  //   미전달(단일필지)이면 종전처럼 store 실효값을 사용한다(무회귀).
+  integratedFarPct,
+  integratedBcrPct,
+}: {
+  integratedFarPct?: number | null;
+  integratedBcrPct?: number | null;
+} = {}) {
   const site = useProjectContextStore((s) => s.siteAnalysis);
   const design = useProjectContextStore((s) => s.designData);
   const [res, setRes] = useState<Envelope | null>(null);
@@ -42,10 +67,11 @@ export function BuildableEnvelopeCard() {
   const area = effectiveLandAreaSqm(site);
   const zone = site?.zoneCode ?? "";
   const pnu = site?.pnu ?? null;
-  // 실효 용적률/건폐율(부지분석 SSOT) — 있으면 백엔드 250%/60% 기본 폴백을 회피(정확성).
-  // 없으면 전달하지 않는다(가짜값 금지). 백엔드는 None일 때만 용도지역 기본값을 쓴다.
-  const farLimitPct = site?.effectiveFarPct ?? null;
-  const bcrLimitPct = site?.effectiveBcrPct ?? null;
+  // 실효 용적률/건폐율 — 다필지 통합값(부모 주입) 우선, 없으면 부지분석 SSOT(store) 실효값.
+  // 있으면 백엔드 250%/60% 기본 폴백을 회피(정확성). 없으면 전달하지 않는다(가짜값 금지).
+  // 백엔드는 None일 때만 용도지역 기본값을 쓴다.
+  const farLimitPct = integratedFarPct ?? site?.effectiveFarPct ?? null;
+  const bcrLimitPct = integratedBcrPct ?? site?.effectiveBcrPct ?? null;
 
   useEffect(() => {
     if ((!area || area <= 0) && !pnu) { setRes(null); return; }
@@ -72,10 +98,12 @@ export function BuildableEnvelopeCard() {
     ? "용도지역 미확정 — 추정값(신뢰도 낮음)"
     : "용도지역 기본값 추정 — 실효 용적률 미산정(신뢰도 낮음)";
 
-  // ★층수 3관점(사용자 지적 반영): 단일 '현실 최고층'(=용적률÷법정건폐율)은 '건폐율 만충 시 최소
-  //   층수'라 오도다. 층수 제한이 없다면 공동주택은 단지 쾌적도·통경축·동간거리를 위해 건폐율을
-  //   20~30%로 낮춰 더 높게 짓는다. 이를 ① 법정 최소(건폐율 만충) ② 실무 권장(쾌적 건폐율) ③ 법적
-  //   가능 최고(일조 높이한도 기준)로 분리 표기한다. ②③은 설계 가정 기반 추정임을 함께 밝힌다.
+  // ★층수 3관점(정직화·SolarEnvelopeCard와 동일): 단일 '현실 최고층'(=용적률÷법정건폐율)은
+  //   '건폐율 만충 시 산술하한'이라 오도다(법적 개념 아님). 층수 제한이 없다면 공동주택은 단지
+  //   쾌적도·통경축·동간거리를 위해 건폐율을 20~30%로 낮춰 더 높게 짓는다. ① 산술 하한
+  //   (건폐율 만충·법적 개념 아님) ② 실무 권장(쾌적 건폐율) ③ 법적 가능 최고(일조 높이한도·용적률
+  //   중 먼저 걸리는 한도)로 분리. ★백엔드가 산술하한·실무권장을 직접 주면(정밀) 그 값 우선, 없으면 추정.
+  const arithMinFloors = res.arithmetic_min_floors ?? res.max_floors; // 산술하한(건폐율 만충) — 법적 개념 아님
   const farForFloors = res.far_pct ?? null;
   // 현실 용적률(층수제한 반영) — 녹지 4층 등으로 법정 용적률을 못 채우면 백엔드가 realistic_far_pct·
   //   zone_max_floors·binding="층수제한"을 동반. 예) 자연녹지 건폐20%·4층 → 현실 80%(<법정 100%).
@@ -84,22 +112,28 @@ export function BuildableEnvelopeCard() {
   const zoneMaxFloors = res.zone_max_floors ?? null;
   // ★법적 가능 최고층 먼저 산출: 일조 높이한도만 보면 오도(162.8m÷3≈54층). 실제론 용적률이 총
   //   연면적을 제한하므로 바닥을 최소(실무 최저 건폐율 ~15%)로 깔아 올려도 '용적률-한정'에 걸린다.
-  //   → min(일조-한정, 용적률-한정). 단 법정 최소(max_floors)보다 낮아지지 않게 하한 가드(역전 방지).
+  //   → min(일조-한정, 용적률-한정). 단 산술하한(arithMinFloors)보다 낮아지지 않게 하한 가드(역전 방지).
   const dlMax =
     res.daylight_ceiling_floors != null ? res.daylight_ceiling_floors
-    : res.daylight_ceiling_m != null ? Math.floor(res.daylight_ceiling_m / 3) : null;
+    : res.daylight_ceiling_m != null ? Math.floor(res.daylight_ceiling_m / (res.floor_height_m ?? 3)) : null;
   const farBoundMax = farForFloors != null ? Math.round(farForFloors / 15) : null;  // 최소 실무 건폐율 15% 가정
   const rawLegalMax = dlMax != null && farBoundMax != null ? Math.min(dlMax, farBoundMax) : (farBoundMax ?? dlMax);
-  const legalMaxFloors = rawLegalMax != null ? Math.max(res.max_floors, rawLegalMax) : null;
-  // 실무 권장 층수: 쾌적 건폐율 30%(보수)~20%(여유) 가정. ★[법정최소, 법적최고] 범위로 클램프해
-  //   '법정최소 ≤ 실무권장 ≤ 법적최고' 순서를 강제(자체 모순 표기 방지).
-  // 녹지 층수제한(zone_max_floors)이 있으면 실무 권장 층수도 그 이하로 캡(자연녹지 4층 → 8~13층 같은 과대 차단).
+  const legalMaxFloors = rawLegalMax != null ? Math.max(arithMinFloors, rawLegalMax) : null;
+  // 실무 권장 층수: ★백엔드 recommended_floors_low/high 우선. 없으면 쾌적 건폐율 30%(보수)~20%(여유)
+  //   추정. ★[산술하한, 법적최고] 범위로 클램프해 '산술하한 ≤ 실무권장 ≤ 법적최고' 순서를 강제(자체
+  //   모순 표기 방지). 녹지 층수제한(zone_max_floors)이 있으면 실무 권장도 그 이하로 캡(자연녹지 4층 과대 차단).
   const floorCap = Math.min(
     legalMaxFloors ?? Number.POSITIVE_INFINITY,
     zoneMaxFloors ?? Number.POSITIVE_INFINITY,
   );
-  const practLow = farForFloors != null ? Math.min(floorCap, Math.max(res.max_floors, Math.round(farForFloors / 30))) : null;
-  const practHigh = farForFloors != null ? Math.min(floorCap, Math.round(farForFloors / 20)) : null;
+  const recLow = res.recommended_floors_low;
+  const recHigh = res.recommended_floors_high;
+  const practLow =
+    recLow != null ? recLow
+    : farForFloors != null ? Math.min(floorCap, Math.max(arithMinFloors, Math.round(farForFloors / 30))) : null;
+  const practHigh =
+    recHigh != null ? recHigh
+    : farForFloors != null ? Math.min(floorCap, Math.round(farForFloors / 20)) : null;
   const practicalFloors =
     practLow != null && practHigh != null && practHigh > practLow ? `${practLow}~${practHigh}층`
     : practLow != null ? `${practLow}층` : "—";
@@ -121,9 +155,9 @@ export function BuildableEnvelopeCard() {
       basis: `대지면적 ${eok(area ?? 0)} × 용적률 ${res.far_pct ?? "—"}%${usedFallback ? " · 용도지역 기본값(추정)" : " · 실효 용적률"}`,
     },
     {
-      label: "용적률 실현 최소층수(건폐율 만충 시)",
-      value: `${res.max_floors}층`,
-      basis: `용적률 ${res.far_pct ?? "—"}% ÷ 건폐율 ${res.bcr_pct ?? "—"}% — 바닥을 최대로 깔았을 때 전체 용적률을 쓰는 데 필요한 최소 층수(설계 파생값 · 법정 최소층수 아님 · 현실 권장 아님)`,
+      label: "산술 하한(건폐율 만충 시)",
+      value: `${arithMinFloors}층`,
+      basis: `용적률 ${res.far_pct ?? "—"}% ÷ 건폐율 ${res.bcr_pct ?? "—"}% — 바닥을 최대로 깔았을 때 전체 용적률을 쓰는 데 필요한 산술 하한(설계 파생값 · 법적 개념 아님 · 현실 권장 아님)`,
     },
     {
       label: "실무 권장 층수(추정)",
@@ -178,14 +212,66 @@ export function BuildableEnvelopeCard() {
         <Tile label="건축가능 연면적" value={eok(res.effective_gfa_sqm)} sub={`용적률한도 ${eok(res.far_gfa_sqm)}`} accent />
         <Tile
           label="실무 권장 층수"
-          tip={`단일 '현실 최고층'은 오해 소지가 있어 3관점으로 표기합니다. ①법정 최소 ${res.max_floors}층 = 용적률÷법정건폐율(바닥 최대로 깔 때). ②실무 권장 ${practicalFloors} = 쾌적 건폐율 20~30%·통경축·동간거리 감안(통상 설계·추정). ③법적 가능 최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"} = 일조 높이한도 기준(추정).`}
+          tip={`단일 '현실 최고층'은 오해 소지가 있어 3관점으로 표기합니다. ①산술 하한(건폐율 만충·법적 개념 아님) ${arithMinFloors}층 = 용적률÷건폐율(바닥 최대로 깔 때). ②실무 권장 ${practicalFloors} = 쾌적 건폐율 20~30%·통경축·동간거리 감안(층고 ${res.floor_height_m ?? 3}m·일조 반영). ③법적 가능 최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"} = 일조 높이한도 기준(추정).`}
           value={practicalFloors}
-          sub={`법정최소 ${res.max_floors}층 · 법적최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"}`}
+          sub={`산술하한(건폐율 만충) ${arithMinFloors}층 · 법적최고 ${legalMaxFloors != null ? legalMaxFloors + "층" : "—"}`}
           accent
         />
         <Tile label="일조 규제 높이 한도" tip="북쪽 햇빛을 보호하기 위한 제한 높이(정북일조 천장)" value={res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—"} sub={res.applies_north_light ? "사선 최고선" : "미적용 용도"} />
         <Tile label="일조 규제로 줄어든 비율" tip="일조 규제 때문에 줄어든 연면적 비율(일조 손실률)" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
       </div>
+
+      {/* 계단식 단면 한 줄(백엔드 제공 시) — 정북일조 사선으로 북측은 낮고 심부는 높은 단면. */}
+      {res.floor_profile_note && (
+        <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] leading-snug text-[var(--text-secondary)]">
+          <span className="font-black text-[var(--text-primary)]">계단식 단면</span> · {res.floor_profile_note}
+          {res.floors_at_north_edge != null && res.floors_at_deep != null
+            ? ` (북측 ${res.floors_at_north_edge}층 → 심부 ${res.floors_at_deep}층)`
+            : ""}
+        </p>
+      )}
+
+      {/* 시니어 건축가 교차검토(정북일조·동지일조 게이트) — 백엔드 제공 시에만 표시(없으면 미표시·정직). */}
+      {res.senior_architect_review && (
+        (() => {
+          const sr = res.senior_architect_review;
+          const verdict = (sr.verdict || "").toLowerCase();
+          const tone =
+            verdict.includes("block") || verdict.includes("fail")
+              ? "border-red-500/40 bg-red-500/10 text-red-600"
+              : verdict.includes("warn")
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-600"
+              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600";
+          const ruleTone = (status?: string) => {
+            const s = (status || "").toLowerCase();
+            if (s.includes("block") || s.includes("fail")) return "text-red-600";
+            if (s.includes("warn")) return "text-amber-600";
+            if (s.includes("pass") || s.includes("ok")) return "text-emerald-600";
+            return "text-[var(--text-secondary)]";
+          };
+          return (
+            <div className={`mt-3 rounded-xl border px-4 py-3 ${tone}`}>
+              <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest">
+                시니어 건축가 교차검토
+                {sr.verdict && <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-black">{sr.verdict}</span>}
+              </p>
+              {sr.rules && sr.rules.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {sr.rules.map((r, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
+                      <span className="font-bold text-[var(--text-primary)]">{r.label}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="cc-num">{r.value}{r.unit ? r.unit : ""}</span>
+                        {r.status && <span className={`font-black ${ruleTone(r.status)}`}>{r.status}</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()
+      )}
 
       {(res.min_building_spacing_m || res.road_side) && (
         <p className="mt-2 text-[11px] text-[var(--text-secondary)]">

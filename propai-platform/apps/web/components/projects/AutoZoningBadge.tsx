@@ -6,7 +6,7 @@ import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
-import { mapZoningRich, mapUpzoning, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { mapZoningRich, mapUpzoning, guardMultiParcelRich, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 
 /* ── Response type ── */
 
@@ -177,12 +177,11 @@ export function AutoZoningBadge({ address }: { address: string }) {
           //   (upzoning*)도 대표필지 기준 과소판정값이다. 다필지(parcelCount>1 && landAreaSqmTotal>0)면
           //   통합 면적 기준으로 산정된 integrated.upzoning(위 effect가 SSOT에 기록)을 덮어쓰지 않도록
           //   단일 종상향 3필드를 페이로드에서 제거한다(통합값 우선·단일유래 차단). 단일필지는 그대로.
-          const rich = mapZoningRich(data);
-          if (isMultiParcel) {
-            delete rich.upzoningPotentialFarHigh;
-            delete rich.upzoningFeasibilityTop;
-            delete rich.upzoningScenarios;
-          }
+          // ★다필지 통합 보존 가드(landAreaSqm 가드와 동일 계약): 단일 PNU(대표 1필지) 유래
+          //   실효/법정 한도(effectiveFarPct·effectiveBcrPct·national*·farBasis)·종상향을 패치에서 제거해
+          //   통합 경로(/zoning/integrated-analysis)가 진실원천으로 살아남게 한다(혼재 다필지에서 대표가
+          //   자연녹지 100%/20%일 때 인벨로프가 사업개요 192.4%와 불일치하던 SSOT 붕괴 차단). 공용 헬퍼.
+          const rich = guardMultiParcelRich(mapZoningRich(data), isMultiParcel);
           // ★#185 무한렌더 가드(LandIntelligencePanel과 동일 전역계약): SSOT address는 입력 정체성이라
           //   분석 결과(data.address·백엔드 정규화)로 덮어쓰지 않는다. 덮어쓰면 data.address≠입력 시
           //   이 effect(deps=[address])가 재발화→재분석→재기록 순환으로 렌더 폭주(#185). address는 SSOT 보존.
