@@ -239,6 +239,7 @@ class ComprehensiveAnalysisService:
         *,
         tenant_id: str | None = None,
         project_id: str | None = None,
+        with_senior: bool = True,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -353,6 +354,33 @@ class ComprehensiveAnalysisService:
             result.setdefault("provenance", _ev_block.get("provenance", []))
         except Exception:  # noqa: BLE001 — 근거 블록 부착 실패는 무손상
             pass
+
+        # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — urban(도시계획)·legal(법무사) ──
+        # 시니어 전문가 판단프레임워크·근거(법조문 citation)를 result에 첨부해 메인 분석에
+        # 흐르게 한다. AI 해석 전에 부착해 인터프리터도 그라운딩(전문가 판단기준 인지)한다.
+        # ★무회귀: with_senior=True 기본이되 attach_senior_consultation_multi는 절대 raise 안 함.
+        if with_senior:
+            try:
+                from app.services.senior_agents.consultation_hook import (
+                    attach_senior_consultation_multi,
+                )
+
+                _sr_inputs: dict[str, Any] = {}
+                # 정비사업 비례율 입력(있을 때만) — sec8 종상향/정비 시나리오에 수치가 실릴 수 있음.
+                for _k in (
+                    "post_appraisal_total", "total_project_cost", "prior_appraisal_total",
+                    "prior_appraisal_individual", "member_sale_price",
+                    "consent_owner_count", "total_owner_count",
+                    "consent_area_sqm", "total_area_sqm", "redevelopment_type",
+                ):
+                    _v = base.get(_k) if isinstance(base, dict) else None
+                    if _v is not None:
+                        _sr_inputs[_k] = _v
+                result["senior_consultation"] = attach_senior_consultation_multi(
+                    ["urban", "legal"], _sr_inputs,
+                )
+            except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 메인 분석 무손상
+                pass
 
         # Phase 3: AI 해석 생성 (선택적 — API 키 있을 때만)
         # llm_provider/llm_model이 지정된 경우 get_llm()으로 커스텀 LLM 생성

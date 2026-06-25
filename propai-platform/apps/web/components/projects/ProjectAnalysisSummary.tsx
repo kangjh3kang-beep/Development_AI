@@ -66,6 +66,33 @@ const bcrFarOrNull = (b: number | null | undefined, f: number | null | undefined
   return null;
 };
 
+// 다필지 통합분석 결과(blended 실효·dominant 용도지역)를 SSOT(siteAnalysis)에 보존(멱등).
+//   배경: 통합값이 그동안 이 컴포넌트 로컬 state·prop(BuildableEnvelopeCard)으로만 전파돼,
+//   다른 소비처는 store의 대표 1필지 effectiveFarPct/zoneCode를 직접 읽어 불일치했다. 이 함수로
+//   통합값을 store에 기록해 resolveFarPct/resolveBcrPct/resolveDominantZone가 전역에서 읽게 한다.
+//   멱등: store에 동일 값이 이미 있으면 write를 건너뛰어 불필요한 리렌더·#185 순환을 막는다.
+function persistIntegratedToSsot(res: IntegratedSummary | null | undefined): void {
+  if (!res) return;
+  const far = res.integrated?.blended_far_eff_pct;
+  const bcr = res.integrated?.blended_bcr_eff_pct;
+  const zone = res.dominant_zone;
+  const finiteOrNull = (v: number | null | undefined): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const farV = finiteOrNull(far);
+  const bcrV = finiteOrNull(bcr);
+  const zoneV = typeof zone === "string" && zone.trim() ? zone.trim() : null;
+  if (farV == null && bcrV == null && zoneV == null) return;
+
+  const store = useProjectContextStore.getState();
+  const cur = store.siteAnalysis;
+  const patch: Partial<NonNullable<typeof cur>> = {};
+  if (farV != null && cur?.integratedFarEffPct !== farV) patch.integratedFarEffPct = farV;
+  if (bcrV != null && cur?.integratedBcrEffPct !== bcrV) patch.integratedBcrEffPct = bcrV;
+  if (zoneV != null && cur?.dominantZoneCode !== zoneV) patch.dominantZoneCode = zoneV;
+  if (Object.keys(patch).length === 0) return; // 이미 동일 → no-op(멱등)
+  store.updateSiteAnalysis(patch);
+}
+
 function Tile({ label, value, sub, accent, tip }: { label: string; value: string; sub?: string; accent?: boolean; tip?: string }) {
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4">
@@ -155,7 +182,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
     if (!isMultiParcelSite || !ssotParcels || ssotParcels.length < 2) { setIntegrated(null); return; }
     const iKey = `integrated:${ssotParcels.length}:${parcelsSig}`;
     const cached = getCachedAnalysis<IntegratedSummary>(iKey, TTL_7D);
-    if (cached) { setIntegrated(cached); return; }
+    if (cached) { setIntegrated(cached); persistIntegratedToSsot(cached); return; }
     let alive = true;
     const triggeredProjectId = useProjectContextStore.getState().projectId;
     void apiClient.post<IntegratedSummary>("/zoning/integrated-analysis", {
@@ -169,6 +196,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
       if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
       setIntegrated(res);
       setCachedAnalysis(iKey, res);
+      persistIntegratedToSsot(res);
     }).catch(() => { /* 무목업: 실패 시 통합 보강 미표시(단일 degrade) */ });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

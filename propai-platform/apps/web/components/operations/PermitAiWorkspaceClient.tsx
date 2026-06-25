@@ -28,7 +28,7 @@ import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 
 type MethodResult = {
@@ -378,8 +378,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             pnu={siteAnalysis?.pnu || undefined}
             zone={site?.zone_type || undefined}
             landAreaSqm={site?.land_area_sqm ?? effectiveLandAreaSqm(siteAnalysis) ?? undefined}
-            farLimitPct={siteAnalysis?.effectiveFarPct ?? undefined}
-            bcrLimitPct={siteAnalysis?.effectiveBcrPct ?? undefined}
+            farLimitPct={resolveFarPct(siteAnalysis) ?? undefined}
+            bcrLimitPct={resolveBcrPct(siteAnalysis) ?? undefined}
           />
 
           {/* 다필지 통합 개발 — 최적·최고 용적률 산정 */}

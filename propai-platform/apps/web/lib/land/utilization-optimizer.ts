@@ -13,6 +13,7 @@
 
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { EvidenceItem } from "@/components/common/EvidencePanel";
+import { resolveFarPct } from "@/lib/zoning-ssot";
 
 export type UtilFeasibility = "상" | "중" | "하" | "미확인";
 
@@ -193,8 +194,14 @@ export function optimizeUtilization(
   site: SiteAnalysisData | null | undefined,
 ): UtilizationResult | null {
   if (!site) return null;
+  // 기준 용적률(이론최대 산정 base) — 법정상한 우선(완화 보너스를 법정 기준으로 계산), 없으면
+  // ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정)로 폴백한다. 다필지에서는 단일유래
+  //   nationalFarPct/effectiveFarPct가 store에서 제거(가드)되므로, 통합 실효(integratedFarEffPct)가
+  //   baseFar의 진실원천이 된다(대표필지 자연녹지급 100% 오염 차단). 단일필지는 종전대로 법정우선(무회귀).
   const legalFar = num(site.nationalFarPct);
-  const currentEffectiveFar = num(site.effectiveFarPct);
+  // 현행 실효 용적률(표시·gain 산정용) — ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정).
+  //   다필지면 통합 실효가 단일 대표필지 실효를 대체한다.
+  const currentEffectiveFar = resolveFarPct(site) ?? null;
   const baseFar = legalFar ?? currentEffectiveFar;
   if (baseFar == null) return null;
 

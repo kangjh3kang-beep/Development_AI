@@ -11,6 +11,8 @@
  *  세무(취득가액 semantics)·회계(리스)·BIM(clash) → undefined.
  */
 
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+
 /** 매핑 입력원(store 셀렉터 결과의 부분집합 — 순수성 위해 평면 객체로 받는다). */
 export interface SeniorInputSources {
   siteAnalysis?: {
@@ -18,6 +20,9 @@ export interface SeniorInputSources {
     effectiveBcrPct?: number | null;
     nationalFarPct?: number | null;
     nationalBcrPct?: number | null;
+    // 다필지 통합 실효 한도(SSOT) — resolveFarPct/resolveBcrPct가 단일 실효보다 우선 읽는다.
+    integratedFarEffPct?: number | null;
+    integratedBcrEffPct?: number | null;
     roadWidthM?: number | null;   // 접도 도로폭(m) — 심의 road_width_actual
     estimatedValue?: number | null;  // 부지 추정가(원·AVM/탁상) — 감정평가/법무사 감정가 입력원
   } | null;
@@ -49,13 +54,15 @@ function nonNegNum(v: number | null | undefined): number | undefined {
 function buildDeliberationInputs(src: SeniorInputSources): Inputs | undefined {
   const inputs: Inputs = {};
   const bcrA = nonNegNum(src.designData?.bcr);
-  const bcrL = posNum(src.siteAnalysis?.effectiveBcrPct) ?? posNum(src.siteAnalysis?.nationalBcrPct);
+  // ★SSOT 읽기 통일: 단일 실효(effectiveBcrPct) 직접읽기 대신 resolveBcrPct(통합 > 실효 > 법정)로
+  //   일원화한다(다필지 통합 한도 우선). 한도(분모)이므로 posNum으로 양수만 통과(0/음수 한도 무의미).
+  const bcrL = posNum(resolveBcrPct(src.siteAnalysis));
   if (bcrA !== undefined && bcrL !== undefined) {
     inputs.bcr_actual = bcrA;
     inputs.bcr_limit = bcrL;
   }
   const farA = nonNegNum(src.designData?.far);
-  const farL = posNum(src.siteAnalysis?.effectiveFarPct) ?? posNum(src.siteAnalysis?.nationalFarPct);
+  const farL = posNum(resolveFarPct(src.siteAnalysis));
   if (farA !== undefined && farL !== undefined) {
     inputs.far_actual = farA;
     inputs.far_limit = farL;

@@ -11,6 +11,7 @@ import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
@@ -67,11 +68,13 @@ export function BuildableEnvelopeCard({
   const area = effectiveLandAreaSqm(site);
   const zone = site?.zoneCode ?? "";
   const pnu = site?.pnu ?? null;
-  // 실효 용적률/건폐율 — 다필지 통합값(부모 주입) 우선, 없으면 부지분석 SSOT(store) 실효값.
-  // 있으면 백엔드 250%/60% 기본 폴백을 회피(정확성). 없으면 전달하지 않는다(가짜값 금지).
-  // 백엔드는 None일 때만 용도지역 기본값을 쓴다.
-  const farLimitPct = integratedFarPct ?? site?.effectiveFarPct ?? null;
-  const bcrLimitPct = integratedBcrPct ?? site?.effectiveBcrPct ?? null;
+  // 실효 용적률/건폐율 — 다필지 통합값(부모 주입) 우선, 없으면 부지분석 SSOT(store).
+  // ★SSOT 읽기 통일: store 폴백을 resolveFarPct/resolveBcrPct(통합 > 실효 > 법정)로 일원화 —
+  //   부모가 prop을 안 줘도 store에 보존된 integratedFarEffPct를 읽어 대표 1필지 실효 오염을 피한다.
+  //   있으면 백엔드 250%/60% 기본 폴백을 회피(정확성). 없으면 전달하지 않는다(가짜값 금지).
+  //   백엔드는 None일 때만 용도지역 기본값을 쓴다.
+  const farLimitPct = integratedFarPct ?? resolveFarPct(site) ?? null;
+  const bcrLimitPct = integratedBcrPct ?? resolveBcrPct(site) ?? null;
 
   useEffect(() => {
     if ((!area || area <= 0) && !pnu) { setRes(null); return; }

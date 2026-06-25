@@ -8,7 +8,7 @@ import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
@@ -807,25 +807,26 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     ],
     summary: aiData?.summary || localResult?.summary || null,
     // ── 용적/건폐 한도: 실효 우선(법정상한을 실효처럼 표시하던 결함 교정) ──
-    //   1순위 실효(effective_far 또는 store effectiveBcrPct/effectiveFarPct), 없으면 법정상한(zone_limits)/로컬.
-    //   buildingCoverageMax/floorAreaRatioMax는 화면 표시용 "실효 우선" 값이고,
-    //   legal*Max는 법정상한 보조 라벨용(실효<법정일 때만 병기).
+    //   1순위 실효(effective_far 자체 API 응답), 2순위 SSOT 헬퍼(통합>실효>법정), 없으면 zone_limits/로컬.
+    //   ★SSOT 읽기 통일: 종전 siteAnalysis?.effectiveBcrPct/FarPct 직접읽기 대신 resolveBcrPct/FarPct
+    //   (통합 > 실효 > 법정)로 교체 — 다필지에서 대표 1필지 값 누락/오염 차단. 자체 API 응답이 있으면
+    //   그것이 우선(자체 패치가 SSOT 폴백보다 fresher할 수 있으므로 우선순위 그대로 유지·무회귀).
     buildingCoverageMax:
       zoningData?.effective_far?.effective_bcr_pct ??
-      siteAnalysis?.effectiveBcrPct ??
+      resolveBcrPct(siteAnalysis) ??
       zoningData?.zone_limits?.max_bcr_pct ??
       localResult?.buildingCoverageMax ?? 0,
     floorAreaRatioMax:
       zoningData?.effective_far?.effective_far_pct ??
-      siteAnalysis?.effectiveFarPct ??
+      resolveFarPct(siteAnalysis) ??
       zoningData?.zone_limits?.max_far_pct ??
       localResult?.floorAreaRatioMax ?? 0,
     isEffectiveBcr:
       zoningData?.effective_far?.effective_bcr_pct != null ||
-      siteAnalysis?.effectiveBcrPct != null,
+      resolveBcrPct(siteAnalysis) != null,
     isEffectiveFar:
       zoningData?.effective_far?.effective_far_pct != null ||
-      siteAnalysis?.effectiveFarPct != null,
+      resolveFarPct(siteAnalysis) != null,
     legalBcrMax:
       zoningData?.effective_far?.national_bcr_pct ??
       siteAnalysis?.nationalBcrPct ??

@@ -12,6 +12,7 @@ import { Sparkles, TrendingUp, AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 
 type AiInterp = { overall_summary?: string; risk_factors?: string; opportunity_factors?: string };
 type ZoningResp = { ai_interpretation?: AiInterp };
@@ -50,11 +51,14 @@ export function AiInsightCard({ address }: { address?: string | null }) {
         body: {
           address: address.trim(),
           // 다필지면 통합 컨텍스트 전달(대표번지 아닌 통합 N필지 기준 해석).
+          // ★SSOT 읽기 통일: 그동안 integrated_far/bcr_pct에 대표 1필지 effectiveFarPct를 넣어
+          //   "대표값을 통합값으로 라벨링"하던 버그를 정정 — resolveFarPct/resolveBcrPct(통합 > 실효 > 법정)로
+          //   진짜 면적가중 통합 실효값을 전달한다(통합 미확보면 폴백값, 그래도 단일 대표보다 정합).
           ...(isMulti ? {
             parcel_count: parcelCount,
             integrated_area_sqm: integratedArea,
-            integrated_far_pct: site?.effectiveFarPct ?? undefined,
-            integrated_bcr_pct: site?.effectiveBcrPct ?? undefined,
+            integrated_far_pct: resolveFarPct(site) ?? undefined,
+            integrated_bcr_pct: resolveBcrPct(site) ?? undefined,
           } : {}),
         },
         useMock: false, timeoutMs: 60000,

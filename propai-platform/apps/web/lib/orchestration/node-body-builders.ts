@@ -15,6 +15,7 @@
 //  - 면적은 반드시 effectiveLandAreaSqm(통합면적 우선)으로 읽어 다필지 일관성을 지킨다.
 
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import type {
   SiteAnalysisData,
   DesignData,
@@ -331,8 +332,9 @@ export function buildNodeBody(
       // BCR/FAR 한도 비교 규칙 — measured(설계 실값)·limit(부지 한도)가 모두 양수일 때만 동반 주입(무목업).
       const rules: Record<string, unknown>[] = [];
       const measuredBcr = positiveNum(design?.bcr);
-      const limitBcr =
-        positiveNum(site?.effectiveBcrPct) ?? positiveNum(site?.nationalBcrPct);
+      // ★SSOT 읽기 통일: resolveBcrPct(통합 > 실효 > 법정)로 일원화(다필지 통합 한도 우선).
+      //   한도(comparator <=)이므로 positiveNum으로 양수만 통과(0/음수 한도 무의미).
+      const limitBcr = positiveNum(resolveBcrPct(site));
       if (measuredBcr != null && limitBcr != null) {
         rules.push({
           rule: { rule_id: "BCR_LIMIT", comparator: "<=" },
@@ -341,8 +343,7 @@ export function buildNodeBody(
         });
       }
       const measuredFar = positiveNum(design?.far);
-      const limitFar =
-        positiveNum(site?.effectiveFarPct) ?? positiveNum(site?.nationalFarPct);
+      const limitFar = positiveNum(resolveFarPct(site));
       if (measuredFar != null && limitFar != null) {
         rules.push({
           rule: { rule_id: "FAR_LIMIT", comparator: "<=" },

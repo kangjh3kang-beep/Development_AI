@@ -10,6 +10,7 @@ import { RegulationHierarchyView, type RegResult } from "@/components/regulation
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -404,10 +405,13 @@ export function ProjectLegalWorkspaceClient({
   //   → 설계값(designData.bcr/far) 순. ordinance·실효값이 모두 없으면 기존 동작(공란) 유지.
   // 자동 채움 후에도 사용자가 직접 수정 가능(current 값이 있으면 덮어쓰지 않음).
   useEffect(() => {
+    // ★SSOT 읽기 통일: ordinance 실효한도 1순위(가장 정밀한 조례 확정값) → 통합>실효>법정 헬퍼 폴백.
+    //   다필지에서 ordinance.effectiveFar가 대표필지 기준으로 기록됐을 수 있으나, 법규 워크스페이스
+    //   입력값은 사용자가 직접 수정 가능하므로 보수적으로 ordinance 1순위 유지.
     const ssotEffectiveBcr =
-      siteAnalysis?.ordinance?.effectiveBcr ?? siteAnalysis?.effectiveBcrPct ?? null;
+      siteAnalysis?.ordinance?.effectiveBcr ?? resolveBcrPct(siteAnalysis) ?? null;
     const ssotEffectiveFar =
-      siteAnalysis?.ordinance?.effectiveFar ?? siteAnalysis?.effectiveFarPct ?? null;
+      siteAnalysis?.ordinance?.effectiveFar ?? resolveFarPct(siteAnalysis) ?? null;
     setForm((current) => ({
       ...current,
       address: current.address || siteAnalysis?.address || "",

@@ -263,12 +263,15 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
  * 다필지 통합 시 단일 PNU(대표 1필지) 유래 값으로 SSOT를 오염시키지 않도록 가드.
  *
  * 배경(SSOT 붕괴 버그): `/zoning/analyze`는 "대표 1필지"(작은 면적·단일 PNU) 분석이라
- *   mapZoningRich가 추출하는 실효/법정 한도(effectiveFarPct·effectiveBcrPct·nationalFarPct·
- *   nationalBcrPct·farBasis)와 종상향(upzoning*)이 모두 대표필지 기준이다. 혼재 다필지
- *   (예: 제2종일반주거 + 자연녹지)에서 대표가 자연녹지(100%/20%)면 store가 오염돼, 인벨로프 카드가
- *   사업개요(면적가중 통합 192.4%)와 불일치한다. 다필지에서는 통합 경로
- *   (/zoning/integrated-analysis blended_*_eff_pct)가 진실원천이므로, 단일유래 한도/종상향
- *   필드를 패치에서 제거해 통합값이 살아남게 한다(통합값 우선). 단일필지면 패치를 그대로 둔다(무회귀).
+ *   mapZoningRich가 추출하는 **모든 단일유래 필드**(실효/법정 한도 effectiveFarPct·effectiveBcrPct·
+ *   nationalFarPct·nationalBcrPct·farBasis, 종상향 upzoning*, 접도 roadWidthM, 특이부지
+ *   specialParcel)가 대표필지 기준이다. 혼재 다필지(예: 제2종일반주거 + 자연녹지)에서 대표가
+ *   자연녹지(100%/20%)면 store가 오염돼, 인벨로프 카드가 사업개요(면적가중 통합 192.4%)와
+ *   불일치한다. 다필지에서는 통합 경로(/zoning/integrated-analysis blended_*_eff_pct)가
+ *   진실원천이므로, mapZoningRich가 쓰는 단일유래 필드를 **하나도 빠짐없이** 패치에서 제거해
+ *   통합값이 살아남게 한다(통합값 우선). 단일필지면 패치를 그대로 둔다(무회귀).
+ *   ★불변식: mapZoningRich가 추출 필드를 추가하면 그 필드도 여기 delete에 추가해야 한다
+ *   (대표필지 누출 차단 — 가드가 mapZoningRich의 단일유래 출력 전부를 커버).
  *
  * 순수 함수(입력 패치를 변형하지 않고 새 객체 반환). 같은 계약을 여러 컴포넌트가 공유해
  * 한 곳을 고치면 전역이 따라오게 한다(공용화).
@@ -289,7 +292,58 @@ export function guardMultiParcelRich(
   delete out.upzoningPotentialFarHigh;
   delete out.upzoningFeasibilityTop;
   delete out.upzoningScenarios;
+  // 단일유래 접도 도로폭 — 대표 1필지의 도로접면이라 통합부지 접도와 무관(시니어 심의 접도 CSP 오염 차단).
+  delete out.roadWidthM;
+  // 단일유래 특이부지 게이트 — 대표 1필지 기준이라 혼재 다필지에 잘못 전파되면 하류 게이트 오발동.
+  delete out.specialParcel;
   return out;
+}
+
+/* ── 실효 용적률/건폐율·용도지역 단일 진실원천 리졸버(읽기 통일 헬퍼) ──
+ *
+ * 배경(읽기 분기 버그): 다필지 통합값(integratedFarEffPct 등)은 그동안 일부 컴포넌트엔 prop으로만
+ *   전파되고(BuildableEnvelopeCard), 나머지 소비처는 store.effectiveFarPct(대표 1필지 유래)를 직접
+ *   읽어 사업개요(통합)와 불일치했다. 이 리졸버로 모든 소비처가 "통합값 우선 → 실효 → 법정" 단일
+ *   우선순위로 읽게 해(공용화·한 곳을 고치면 전역이 따라옴), effectiveLandAreaSqm(다필지=통합 우선
+ *   면적 헬퍼)와 대칭되는 단일 계약을 이룬다.
+ *
+ * 무목업: 어떤 값도 없으면 undefined/null(0/가짜 생성 금지). 순수 함수.
+ */
+type ResolvableSite = {
+  integratedFarEffPct?: number | null;
+  integratedBcrEffPct?: number | null;
+  dominantZoneCode?: string | null;
+  effectiveFarPct?: number | null;
+  effectiveBcrPct?: number | null;
+  nationalFarPct?: number | null;
+  nationalBcrPct?: number | null;
+  zoneCode?: string | null;
+} | null | undefined;
+
+// 실효 용적률(%) — 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 undefined.
+export function resolveFarPct(site: ResolvableSite): number | undefined {
+  if (!site) return undefined;
+  return (
+    num(site.integratedFarEffPct) ??
+    num(site.effectiveFarPct) ??
+    num(site.nationalFarPct)
+  );
+}
+
+// 실효 건폐율(%) — resolveFarPct와 동형(통합 > 실효 > 법정). 미확보 시 undefined.
+export function resolveBcrPct(site: ResolvableSite): number | undefined {
+  if (!site) return undefined;
+  return (
+    num(site.integratedBcrEffPct) ??
+    num(site.effectiveBcrPct) ??
+    num(site.nationalBcrPct)
+  );
+}
+
+// 대표(우세) 용도지역 — 통합 dominant_zone 우선, 없으면 단일 zoneCode. 미확보 시 null.
+export function resolveDominantZone(site: ResolvableSite): string | null {
+  if (!site) return null;
+  return str(site.dominantZoneCode) ?? str(site.zoneCode);
 }
 
 // 개발가능성 영문 게이트 → 한국어 라벨 공용 맵.
