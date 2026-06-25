@@ -261,7 +261,14 @@ function MassingDiagram({ name, active, geom }: { name: string; active?: boolean
 }
 
 // ② 폼 기본값 — projectId 전환 리셋·시드 해제 시 복귀 기준(단일 정의).
-const DEFAULT_FORM = { landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택" };
+// floorHeight = 층고(m) 기본 3.0(범위 2.4~4.5) — SolarEnvelopeCard로 전달해 층수 천장을 재계산.
+const DEFAULT_FORM = { landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택", floorHeight: "3.0" };
+
+// SolarEnvelopeCard가 부모로 리프트하는 결과(상단 '예상 층수' 카드 배선용) — 필요한 필드만.
+type EnvLift = {
+  recommended_floors_low?: number; recommended_floors_high?: number;
+  arithmetic_min_floors?: number; max_floors?: number; floor_height_m?: number;
+};
 
 export function DesignStudio({ projectId }: { projectId?: string }) {
   const { isReady } = useAIReady();
@@ -299,6 +306,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   const [userEdited, setUserEdited] = useState(false);
   // 매싱 대안 사용자 선택(판상형/타워형/ㄱ자형). null이면 추천(최고 효율)이 활성.
   const [selectedMassing, setSelectedMassing] = useState<string | null>(null);
+  // ②③ 일조 인벨로프 결과 리프트 — 상단 '예상 층수' 카드를 실무 권장 범위로 배선(ceil(FAR/BCR) 날조 제거).
+  const [envResult, setEnvResult] = useState<EnvLift | null>(null);
 
   // ② projectId 변경 시 폼 기본값 리셋 — 이전 프로젝트의 시드/입력값 잔류 차단.
   const prevProjectRef = useRef(effectiveProjectId);
@@ -374,11 +383,15 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const bcrIsEffective = effBcrPct != null;               // 실효값 적용 여부(라벨·근거 표기용)
     const buildableArea = area * (bcrUsed / 100);
     const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
-    const heightPerFloor = 3.3;
+    const heightPerFloor = Number(form.floorHeight) || 3.3;
     const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : 25;
-    const maxFloors = Math.min(minFloorsFromFar, maxFloorsByHeight);
+    const maxFloors = Math.min(minFloorsFromFar, maxFloorsByHeight); // 산술하한(건폐율 만충) — 법적 개념 아님
     const maxHeight = spec.heightLimit || (maxFloors * heightPerFloor);
     const heightNote = spec.heightLimit ? "법적 높이 제한" : "예상 높이 (제한 없음)";
+    // ★실무 권장 층수(매싱 도식·설명용) — 산술하한(maxFloors)을 그대로 "N층 2개동"으로 노출하면
+    //   과소(4층 등) 오도. 쾌적 건폐율 20% 가정(round(FAR/20))으로 보정하되 높이제한·산술하한 이내로
+    //   클램프해 무날조. geom footprint 계산은 산술하한(maxFloors) 유지(무회귀).
+    const recFloors = Math.max(maxFloors, Math.min(maxFloorsByHeight, Math.round(farUsed / 20)));
     // ③ 매싱 실프리뷰 — calc 실값(연면적·층수·건축가능면적) 기반 footprint 기하 생성.
     const siteSide = Math.sqrt(area);
     const footprintFor = (floors: number) =>
@@ -387,16 +400,16 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
       buildingCoverage: bcrUsed, floorAreaRatio: farUsed,
       bcrIsEffective, bcrLegalMax: spec.buildingCoverageMax,
       farIsEffective, farLegalMax: spec.floorAreaRatioMax,
-      maxFloors, maxHeight: Math.round(maxHeight * 10) / 10,
+      maxFloors, recFloors, maxHeight: Math.round(maxHeight * 10) / 10,
       buildableArea: Math.round(buildableArea * 10) / 10, maxGrossArea: Math.round(maxGross * 10) / 10,
       parking, heightNote, siteSide, setbacks: { front: 6, side: 1.5, rear: 2, unit: "m" },
       massingOptions: [
-        { name: "판상형", description: `${maxFloors}층 2개동, 남향 배치`, efficiency: 78, geom: buildMassingGeom("slab", footprintFor(maxFloors), siteSide, maxFloors) },
-        { name: "타워형", description: `${maxFloors + 2}층 1개동, 중앙코어`, efficiency: 72, geom: buildMassingGeom("tower", footprintFor(maxFloors + 2), siteSide, maxFloors + 2) },
-        { name: "ㄱ자형", description: `${maxFloors}층, 소음차폐 배치`, efficiency: 75, geom: buildMassingGeom("lshape", footprintFor(maxFloors), siteSide, maxFloors) },
+        { name: "판상형", description: `${recFloors}층 2개동, 남향 배치`, efficiency: 78, geom: buildMassingGeom("slab", footprintFor(recFloors), siteSide, recFloors) },
+        { name: "타워형", description: `${recFloors + 2}층 1개동, 중앙코어`, efficiency: 72, geom: buildMassingGeom("tower", footprintFor(recFloors + 2), siteSide, recFloors + 2) },
+        { name: "ㄱ자형", description: `${recFloors}층, 소음차폐 배치`, efficiency: 75, geom: buildMassingGeom("lshape", footprintFor(recFloors), siteSide, recFloors) },
       ],
     };
-  }, [form.landArea, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteAnalysis?.effectiveBcrPct, siteMatch]);
+  }, [form.landArea, form.floorHeight, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteAnalysis?.effectiveBcrPct, siteMatch]);
 
   const handleAIAnalyze = () => {
     mutate({ domain: "design", context: { landArea: `${form.landArea}㎡`, zoningDistrict: form.zoning, buildingUse: form.buildingUse, projectId } });
@@ -404,6 +417,30 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
   const ai = aiResult?.data;
   const calc = localCalc;
+
+  // ②③ 상단 '예상 층수' 카드 값(정직화) — ceil(FAR/BCR)인 calc.maxFloors는 '산술하한'이라
+  //   '예상'으로 노출하면 과소(4층 등) 오도. 일조 인벨로프 결과가 있으면 실무 권장 범위를,
+  //   없으면(미매칭) 로컬 현실추정(low=round(FAR/30)·high=round(FAR/20))을 표시한다(가짜값 0·무날조).
+  const expectedFloors = useMemo<{ val: string; sub: string } | null>(() => {
+    if (!calc) return null;
+    const fh = envResult?.floor_height_m ?? (Number(form.floorHeight) || 3.0);
+    if (envResult && (envResult.recommended_floors_low != null || envResult.recommended_floors_high != null)) {
+      const lo = envResult.recommended_floors_low;
+      const hi = envResult.recommended_floors_high;
+      const val =
+        lo != null && hi != null && hi > lo ? `${lo}~${hi}층`
+        : lo != null ? `${lo}층`
+        : hi != null ? `${hi}층` : "—";
+      return { val, sub: `실무 권장(층고 ${fh}m·일조 반영)` };
+    }
+    // 미매칭 — 로컬 현실추정(쾌적 건폐율 20~30% 가정). ★ceil(FAR/BCR) 금지.
+    const far = calc.floorAreaRatio;
+    if (!(far > 0)) return { val: `${calc.maxFloors}층`, sub: `산술하한(건폐율 만충)` };
+    const low = Math.max(1, Math.round(far / 30));
+    const high = Math.max(low, Math.round(far / 20));
+    const val = high > low ? `${low}~${high}층` : `${low}층`;
+    return { val, sub: `실무 권장(추정)` };
+  }, [calc, envResult, form.floorHeight]);
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
@@ -537,6 +574,20 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
               {["공동주택","업무시설","근린생활시설","숙박시설","판매시설","교육연구시설"].map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
           </div>
+          {/* ③ 층고(m) — 일조 인벨로프 층수 천장 환산에 사용(SolarEnvelopeCard로 전달). 기본 3.0·범위 2.4~4.5. */}
+          <div>
+            <label className="cc-label mb-2 block">층고 (m)</label>
+            <NumberInput allowDecimal placeholder="3.0"
+              value={form.floorHeight === "" ? null : Number(form.floorHeight)}
+              onChange={(n) => {
+                // 층고 범위 2.4~4.5m 클램프(빈값 허용 — 미입력 시 기본 3.0 폴백).
+                const clamped = n == null ? "" : String(Math.min(4.5, Math.max(2.4, n)));
+                setUserEdited(true);
+                setForm((f) => ({ ...f, floorHeight: clamped }));
+              }}
+              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
+            <p className="mt-1 text-[10px] text-[var(--text-hint)]">기본 3.0m · 일조 천장 층수 환산</p>
+          </div>
         </div>
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
@@ -560,7 +611,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
               { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
-              { label: "예상 층수", val: `${calc.maxFloors}층`, sub: `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
+              { label: "예상 층수", val: expectedFloors?.val ?? `${calc.maxFloors}층`, sub: expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
               <div key={k.label} className="cc-panel cc-interactive p-5 text-center">
@@ -609,6 +660,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 landAreaSqm={effectiveLandAreaSqm(siteAnalysis) ?? (form.landArea ? Number(form.landArea) : undefined)}
                 farLimitPct={siteAnalysis?.effectiveFarPct ?? undefined}
                 bcrLimitPct={siteAnalysis?.effectiveBcrPct ?? undefined}
+                floorHeightM={form.floorHeight ? Number(form.floorHeight) : undefined}
+                onResult={(r) => setEnvResult(r)}
               />
             </div>
           )}
@@ -665,7 +718,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 ai?.massingOptions || calc.massingOptions;
               const best = Math.max(...opts.map((o) => o.efficiency || 0));
               return (
-                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3 [&>button]:min-w-0">
                   {opts.map((m, i) => {
                     const isBest = (m.efficiency || 0) === best;
                     // 선택 우선 — 사용자가 고른 대안이 활성. 미선택이면 추천(최고효율)이 활성.
@@ -686,14 +739,14 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                         onClick={() => setSelectedMassing((cur) => (cur === m.name ? null : m.name))}
                         aria-pressed={selectedMassing === m.name}
                         aria-label={`${m.name} 매싱안 선택`}
-                        className={`relative cursor-pointer rounded-xl border p-4 text-left transition-all ${isActive ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[var(--shadow-md)]" : "border-[var(--line)] bg-[var(--surface-muted)] hover:border-[var(--line-strong)] hover:bg-[var(--surface)]"}`}
+                        className={`relative min-w-0 overflow-hidden cursor-pointer rounded-xl border p-4 text-left transition-all ${isActive ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[var(--shadow-md)]" : "border-[var(--line)] bg-[var(--surface-muted)] hover:border-[var(--line-strong)] hover:bg-[var(--surface)]"}`}
                       >
                         {isBest && <span className="absolute right-3 top-3 rounded-full bg-[var(--accent-strong)] px-2 py-0.5 text-[9px] font-black text-white">★ 추천</span>}
                         <MassingDiagram name={m.name} active={isActive} geom={geom} />
-                        <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{m.name}</p>
-                        <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isActive ? "var(--accent-strong)" : "#60a5fa" }} /></div>
+                        <p className="mt-1 text-sm font-bold text-[var(--text-primary)] break-words">{m.name}</p>
+                        <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)] break-words line-clamp-2">{m.description}</p>
+                        <div className="mt-2 flex items-center gap-2 min-w-0">
+                          <div className="h-2 flex-1 min-w-0 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isActive ? "var(--accent-strong)" : "#60a5fa" }} /></div>
                           <span className={`cc-num text-xs font-black ${isActive ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
                           <span className="text-[8px] font-bold text-[var(--text-hint)]">추정</span>
                         </div>
