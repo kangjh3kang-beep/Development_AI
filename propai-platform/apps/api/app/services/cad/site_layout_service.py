@@ -110,7 +110,7 @@ def _place_grid(buildable_m, bldg_w: float, bldg_d: float, spacing_m: float, ang
     격자 회전: buildable 중심 기준으로 -angle 회전한 좌표계에서 축정렬 격자를 깔고, 각 칸을
     +angle 역회전해 원좌표로 되돌린 뒤 buildable.contains(완전 내포)만 채택한다.
     """
-    from shapely.affinity import rotate, translate
+    from shapely.affinity import rotate
     from shapely.geometry import box
 
     cx, cy = buildable_m.centroid.x, buildable_m.centroid.y
@@ -140,13 +140,17 @@ def _daylight_compliance(angle_deg: float, lat_deg: float) -> dict[str, Any]:
     """동의 장변 방위(남향 정렬도)로 일조준수 근사. angle=0(동서로 긺=남향) 최선."""
     from app.services.site_score.solar_placement_service import orientation_daylight
 
-    # 동의 '주 채광면'은 장변이 향하는 남/북. angle을 -90~90로 정규화해 남향 입면 방위로 사용.
-    facing = ((angle_deg + 90) % 180) - 90  # 장변 정렬 → 채광면 방위 근사
+    # 동은 마주보는 두 장변 입면(법선이 180° 반대)을 갖는다. 채광에 유효한 '남향 입면'은
+    # 둘 중 직사광이 많은 쪽이다 → 두 법선을 모두 평가해 더 밝은 쪽(남향 입면)을 채택한다.
+    # 이로써 회전각 부호 규약과 무관하게 남향 입면 일조를 일관 산출한다(부호 모호성 제거).
+    base = ((angle_deg + 90) % 180) - 90  # 장변 정렬 → 입면 법선 후보(-90~90)
+    cand_a = orientation_daylight(base, lat_deg)
+    cand_b = orientation_daylight(((base + 180 + 180) % 360) - 180, lat_deg)
+    actual = cand_a if cand_a["direct_sun_hours"] >= cand_b["direct_sun_hours"] else cand_b
     south = orientation_daylight(0.0, lat_deg)
-    actual = orientation_daylight(facing, lat_deg)
     # 일조권 충족 = orientation_daylight의 meets_daylight_right(09~15 연속2h 또는 08~16 총4h).
     return {
-        "facade_facing_deg": round(facing, 1),
+        "facade_facing_deg": round(actual["facing_deg"], 1),
         "direct_sun_hours": actual["direct_sun_hours"],
         "meets_sunlight": bool(actual.get("meets_daylight_right")),
         "longest_continuous_0915_h": actual.get("longest_continuous_0915_h"),
@@ -210,6 +214,13 @@ def build_site_layout(
     parcel_area_m = parcel_m.area
     # 대지면적: 입력 우선(실효), 없으면 폴리곤 면적(국소투영 근사).
     area = land_area_sqm if (land_area_sqm and land_area_sqm > 0) else parcel_area_m
+    # ★SSOT 정합 고지: 입력 대지면적과 폴리곤 실측이 크게 어긋나면 yield 산식(입력면적 목표)과
+    #   배치(폴리곤) 기준이 달라 yield가 왜곡될 수 있으므로 정직 고지(무날조·다필지 면적 SSOT 패턴).
+    if land_area_sqm and parcel_area_m > 0 and abs(area - parcel_area_m) / parcel_area_m > 0.2:
+        notes.append(
+            f"입력 대지면적({area:,.0f}㎡)과 폴리곤 실측({parcel_area_m:,.0f}㎡)이 괴리 — "
+            "yield는 입력면적 목표 FAR 기준, 동배치는 폴리곤 기준입니다(면적 SSOT 확인 권장)."
+        )
 
     # 세트백 → buildable footprint(균일 내측 오프셋). 도로+인접 보수 기본.
     setback = (road_setback_m if road_setback_m is not None else _DEFAULT_ROAD_SETBACK_M)
@@ -243,27 +254,39 @@ def build_site_layout(
     principal = _principal_angle(buildable_m)
     angle_candidates = sorted({0.0, round(principal, 1)})
 
+    cap60_hit = False
     for kind, bw, bd in kinds:
         per_footprint = bw * bd
-        # 인동간격 추정용 초기 층수(중층 가정). 이는 '간격 산정용 근사'일 뿐 최종 답이 아니다 —
-        # 실제 배치 동수(N)가 정해지면 target_gfa를 충족하도록 층수를 재산정한다(아래).
-        floors_guess = max(3, min(40, round(far / 30)))
-        spacing = round(max(6.0, 0.8 * floors_guess * _FLOOR_HEIGHT_M), 1)  # 채광 0.8H(최소6m)
         # 건폐율 상한 → 동수 캡(총 바닥면적 ≤ footprint_budget). 법적 제약 준수.
         max_dongs_by_bcr = max(1, int(footprint_budget / per_footprint)) if per_footprint else 1
         for angle in angle_candidates:
-            buildings = _place_grid(buildable_m, bw, bd, spacing, angle)
+            # ★인동간격↔층수 수렴 반복(법적 정합): 고층화하면 채광 인동간격(0.8H)이 커져 동수가
+            #   줄고, 그러면 다시 더 고층화된다. 단일 동(인접 없음)이거나 간격이 최종 층수와
+            #   정합될 때까지 재배치해, '배치된 간격 < 최종 층수의 0.8H' 위반(거짓 일조준수)을 막는다.
+            spacing = round(max(6.0, 0.8 * max(3, min(40, round(far / 30))) * _FLOOR_HEIGHT_M), 1)
+            buildings: list = []
+            floors, n = 1, 0
+            for _ in range(4):
+                placed = _place_grid(buildable_m, bw, bd, spacing, angle)
+                if not placed:
+                    break
+                # 건폐율 초과분 절단 — 중심 근접 동 우선 유지(한쪽 모서리 편향 방지).
+                if len(placed) > max_dongs_by_bcr:
+                    bc = buildable_m.centroid
+                    placed = sorted(placed, key=lambda b: b.centroid.distance(bc))[:max_dongs_by_bcr]
+                n2 = len(placed)
+                floors2 = max(1, min(60, math.ceil(target_gfa / max(1.0, per_footprint * n2))))
+                buildings, floors, n = placed, floors2, n2
+                required = round(max(6.0, 0.8 * floors2 * _FLOOR_HEIGHT_M), 1)
+                if n2 <= 1 or required <= spacing + 0.5:
+                    break  # 단일동(인접無·인동간격 무관) 또는 간격 정합 → 종료
+                spacing = required  # 더 큰 인동간격으로 재배치(최종 고층 반영)
             if not buildings:
                 continue
-            # 건폐율 초과분은 절단(가장 먼저 배치된 동 우선 유지). 건폐율 준수 보장.
-            if len(buildings) > max_dongs_by_bcr:
-                buildings = buildings[:max_dongs_by_bcr]
-            n = len(buildings)
-            # ★실배치 동수로 층수 재산정: 적게 들어가면 그만큼 고층화해 FAR를 소진한다(타워 전략).
-            #   60층 상한에 막혀 target을 못 채우면 yield<100%로 정직 표기(부지 제약).
-            floors = max(1, min(60, math.ceil(target_gfa / max(1.0, per_footprint * n))))
             height_m = floors * _FLOOR_HEIGHT_M
             realized_gfa = n * per_footprint * floors
+            if floors >= 60 and realized_gfa < target_gfa:
+                cap60_hit = True
             yield_pct = round(min(100.0, realized_gfa / target_gfa * 100.0), 1) if target_gfa else 0.0
             day = _daylight_compliance(angle, lat0)
             # 조망개방성: 동이 차지하지 않은 가용 대지 비율(오픈스페이스).
@@ -278,7 +301,8 @@ def build_site_layout(
                 "floors": floors,
                 "height_m": round(height_m, 1),
                 "spacing_m": spacing,
-                "total_units_est": min(target_units, n * floors),
+                # ★세대수 = 실현 연면적 / 세대당 면적(층바닥수 아님 — n·floors는 층바닥수다).
+                "total_units_est": round(realized_gfa / _GFA_PER_UNIT_SQM),
                 "daylight": day,
                 "yield_pct": yield_pct,
                 "openness_pct": openness_pct,
@@ -292,6 +316,8 @@ def build_site_layout(
                     ],
                 },
             })
+    if cap60_hit:
+        notes.append("일부 안은 60층 상한으로 가용 용적률(FAR)을 다 소진하지 못합니다(yield<100%).")
 
     options.sort(key=lambda o: o["score"], reverse=True)
     if not options:
@@ -302,6 +328,7 @@ def build_site_layout(
         "zone_type": zone_type,
         "building_type": building_type,
         "land_area_sqm": round(area, 1),
+        "parcel_area_sqm": round(parcel_area_m, 1),
         "far_pct": far,
         "bcr_pct": bcr,
         "target_units_est": target_units,

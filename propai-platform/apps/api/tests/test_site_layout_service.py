@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import math
 
-import pytest
-
 from app.services.cad.site_layout_service import (
     attach_layout_llm_advice,
     build_site_layout,
@@ -70,7 +68,6 @@ def test_south_aligned_meets_daylight() -> None:
         parcel_geojson=_rect_parcel(100, 80), building_type="공동주택",
         far_pct=250, bcr_pct=50, land_area_sqm=8000, priority="daylight",
     )
-    best = out["best"]
     # angle 0 후보가 존재하고 일조권 충족.
     south_opt = next((o for o in out["options"] if o["angle_deg"] == 0.0), None)
     assert south_opt is not None
@@ -127,6 +124,38 @@ def test_buildable_footprint_inward_offset() -> None:
     assert inner is not None
     assert inner.area < parcel.area
     assert abs(inner.area - 44 * 34) < 1.0  # (50-6)×(40-6)
+
+
+def test_spacing_consistent_with_final_floors() -> None:
+    """★회귀가드(HIGH): 인동간격이 최종 재산정 층수의 0.8H와 정합(거짓 일조준수 방지).
+
+    다동 배치 시 spacing ≥ 0.8×(floors×3) − 오차, 또는 단일동(인접 없음)이어야 한다.
+    """
+    out = build_site_layout(
+        parcel_geojson=_rect_parcel(120, 100), building_type="공동주택",
+        far_pct=300, bcr_pct=50, land_area_sqm=12000,
+    )
+    for o in out["options"]:
+        if o["buildings"] <= 1:
+            continue  # 단일동은 인동간격 무관
+        required = 0.8 * o["floors"] * 3.0
+        assert o["spacing_m"] >= required - 0.6, (
+            f"인동간격 {o['spacing_m']} < 0.8H {required}(층 {o['floors']}) — 법적 이격 위반"
+        )
+
+
+def test_units_from_realized_gfa_not_floor_plates() -> None:
+    """★회귀가드(HIGH): 세대수는 실현 연면적/세대면적(층바닥수 n×floors 아님)."""
+    out = build_site_layout(
+        parcel_geojson=_rect_parcel(120, 100), building_type="공동주택",
+        far_pct=300, bcr_pct=50, land_area_sqm=12000,
+    )
+    b = out["best"]
+    per = 484 if b["kind"] == "탑상형" else 600  # 타워 22×22·판상 40×15
+    realized_gfa = b["buildings"] * per * b["floors"]
+    assert b["total_units_est"] == round(realized_gfa / 100.0)
+    # 층바닥수(n×floors)와 명확히 다르다(과소산정 회귀 방지).
+    assert b["total_units_est"] > b["buildings"] * b["floors"]
 
 
 async def test_llm_advice_noop_when_disabled() -> None:
