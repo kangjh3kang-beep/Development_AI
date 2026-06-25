@@ -141,7 +141,9 @@ export function SeniorConsultPanel() {
   const [result, setResult] = useState<SeniorConsultation | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  // 캐시 키 = `${domain}|${inputs 시그니처}` — store 데이터가 바뀌면 재자문(stale 방지).
+  // AI 종합 서술(LLM) 옵트인 — 기본 off(무과금·결정론). on 시 한도게이트(관리자 미설정=무료).
+  const [useLlm, setUseLlm] = useState(false);
+  // 캐시 키 = `${LLM여부}|${domain}|${inputs 시그니처}` — 입력/LLM옵션 바뀌면 재자문(stale 방지).
   const cacheRef = useRef<Record<string, SeniorConsultation>>({});
   // 현재 표시 결과의 캐시키(신선도 비교용) — store 변경 시 stale 안내.
   const [resultKey, setResultKey] = useState<string | null>(null);
@@ -173,7 +175,7 @@ export function SeniorConsultPanel() {
       setRunError(null);
       // 분석 store에서 도메인별 평가기 inputs 자동 매핑(실재 값만·무목업). 없으면 프레임워크만.
       const inputs = buildSeniorInputs(key, sources);
-      const cacheKey = seniorCacheKey(key, inputs);
+      const cacheKey = `${useLlm ? "L" : "D"}|${seniorCacheKey(key, inputs)}`;
       const cached = cacheRef.current[cacheKey];
       if (cached) {
         setResult(cached);
@@ -182,12 +184,12 @@ export function SeniorConsultPanel() {
       }
       setRunning(true);
       try {
-        // FinCoT 추론(IRAC) 동반 요청 + 매핑된 정량 inputs(있으면).
+        // FinCoT 추론(IRAC) 동반 요청 + 매핑된 정량 inputs(있으면) + AI 서술 옵트인.
         const context: { include_reasoning: true; inputs?: Record<string, number> } = {
           include_reasoning: true,
         };
         if (inputs) context.inputs = inputs;
-        const body = { domain: key, context };
+        const body = { domain: key, context, use_llm: useLlm };
         const res = await apiClient.post<SeniorConsultation>("/senior/consult", {
           body,
           useMock: false,
@@ -202,15 +204,16 @@ export function SeniorConsultPanel() {
         setRunning(false);
       }
     },
-    [sources],
+    [sources, useLlm],
   );
 
-  // 표시 결과가 stale인가 — store 데이터가 바뀌어 현재 입력 시그니처가 표시 결과의 키와 다르면 true.
+  // 표시 결과가 stale인가 — store 데이터·LLM옵션이 바뀌어 현재 키가 표시 결과의 키와 다르면 true.
   // (자동 재실행 금지 정책 — 사용자에게 '다시 자문' 안내만 한다.)
   const stale = useMemo(() => {
     if (!selectedKey || !result || !resultKey) return false;
-    return seniorCacheKey(selectedKey, buildSeniorInputs(selectedKey, sources)) !== resultKey;
-  }, [selectedKey, result, resultKey, sources]);
+    const liveKey = `${useLlm ? "L" : "D"}|${seniorCacheKey(selectedKey, buildSeniorInputs(selectedKey, sources))}`;
+    return liveKey !== resultKey;
+  }, [selectedKey, result, resultKey, sources, useLlm]);
 
   return (
     <section className="grid gap-3">
@@ -220,6 +223,17 @@ export function SeniorConsultPanel() {
           7개 분야 시니어(설계·회계·세무·도시계획·심의·BIM·금융)의 판단 프레임워크와 근거를 제시합니다.
           분석 수치가 연동되면 항목별 PASS/경고/차단 판정을 함께 보여줍니다. AI 보조이며 최종 책임은 면허 전문가입니다.
         </p>
+
+        {/* AI 종합 서술 옵트인(기본 off·무과금). on 시 추론을 LLM이 자연어로 종합(관리자 미설정=무료). */}
+        <label className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+          <input
+            type="checkbox"
+            checked={useLlm}
+            onChange={(e) => setUseLlm(e.target.checked)}
+            className="size-3.5 accent-[var(--accent-strong)]"
+          />
+          AI 종합 서술 포함(LLM) — 추론을 자연어로 종합. 미설정 시 무료·키 없으면 구조만 표시
+        </label>
 
         {listError && <p className="mb-2 text-[11px] text-[var(--status-error)]">{listError}</p>}
         {agents === null && !listError && (
