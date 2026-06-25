@@ -16,7 +16,7 @@
  * (구 응답·미가용에서 빈 카드 노이즈 방지). 보조 자문이므로 본 분석을 가리지 않는다.
  */
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
 export interface SeniorEvaluation {
   rule_id?: string;
@@ -94,6 +94,7 @@ export function SeniorVerdictCard({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const panelId = useId();
 
   const domains = (consultation?.consultations ?? []).filter((d) => d && d.agent_key);
   // 자문 미가용/없음 → 렌더 생략(정직·노이즈 방지).
@@ -111,6 +112,7 @@ export function SeniorVerdictCard({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-strong)] sm:p-4"
         aria-expanded={open}
+        aria-controls={panelId}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-[13px] font-bold text-[var(--text-primary)]">{title}</span>
@@ -127,7 +129,7 @@ export function SeniorVerdictCard({
       </button>
 
       {open ? (
-        <div className="space-y-3 border-t border-[var(--line)] p-3 sm:p-4">
+        <div id={panelId} className="space-y-3 border-t border-[var(--line)] p-3 sm:p-4">
           {domains.map((d, i) => (
             <div
               key={d.agent_key ?? i}
@@ -172,8 +174,9 @@ export function SeniorVerdictCard({
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {(d.citations ?? []).slice(0, 8).map((c, k) => (
                     <span
-                      key={k}
-                      className="rounded border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]"
+                      key={c || k}
+                      title={c}
+                      className="max-w-full truncate rounded border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]"
                     >
                       {c}
                     </span>

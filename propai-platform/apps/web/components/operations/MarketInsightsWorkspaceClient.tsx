@@ -774,11 +774,13 @@ export function MarketInsightsWorkspaceClient() {
         />
       )}
 
-      {/* 시니어 금융전문가 자문 verdict(DSCR·자기자본·debt sizing 등) — 백엔드 senior_consultation 소비 */}
+      {/* 시니어 금융전문가 자문 — 백엔드 senior_consultation 소비. ★정직: 시장보고서 경로는
+          총사업비만 전달(NOI·DSCR·자기자본 미합성)이라 통상 프레임워크·근거 중심(정량 verdict는
+          입력 충족 시에만). 제목을 실제 산출에 맞춰 과장하지 않는다. */}
       {report && (
         <SeniorVerdictCard
           consultation={(report as { senior_consultation?: SeniorConsultation }).senior_consultation}
-          title="시니어 금융 자문(대주지표·사업성)"
+          title="시니어 금융 자문(프레임워크·근거)"
         />
       )}
 

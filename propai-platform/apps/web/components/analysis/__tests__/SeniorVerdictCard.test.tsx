@@ -81,6 +81,20 @@ describe("SeniorVerdictCard", () => {
     expect(screen.getByText(/정비사업 입력 미비/)).toBeTruthy();
   });
 
+  it("정량 verdict 없는 정성 자문(finance 프레임워크 전용)도 카드를 렌더한다", () => {
+    // 시장보고서 경로: finance 단일도메인·verdict null·evaluations 빈 배열(총사업비만 전달).
+    const frameworkOnly: SeniorConsultation = {
+      verdict: null,
+      consultations: [
+        { agent_key: "senior_financial_advisor", name_ko: "금융전문가", verdict: null, evaluations: [] },
+      ],
+    };
+    render(<SeniorVerdictCard consultation={frameworkOnly} title="시니어 금융 자문" />);
+    // 정량 verdict 없으므로 '정성 자문' 안내 + 도메인명 노출, crash 없음.
+    expect(screen.getByText(/정성 자문/)).toBeTruthy();
+    expect(screen.getByText("시니어 금융 자문")).toBeTruthy();
+  });
+
   it("접힘/펼침 토글이 동작한다", () => {
     render(<SeniorVerdictCard consultation={SAMPLE} />);
     // 기본 접힘 — evaluations 미표시.
