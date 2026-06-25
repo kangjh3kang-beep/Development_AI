@@ -146,6 +146,9 @@ interface DesignData {
   unitTypes?: string[] | null;      // 평형 구성(예: ["59A","84A"])
   efficiencyPct?: number | null;    // 전용률(%)
   daylightNorth?: boolean | null;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴) 적용 여부
+  // 시니어 자문(심의 CSP) 입력원 — 설계엔진 산출. 미확보면 null(평가 생략·무목업).
+  heightM?: number | null;          // 설계 건물 높이(m·building_height_m)
+  maxHeightM?: number | null;       // 법정 높이 한도(m·max_height_m·0/null=무제한/미산정)
 }
 
 interface FeasibilityData {
