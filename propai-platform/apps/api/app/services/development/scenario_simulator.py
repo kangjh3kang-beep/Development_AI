@@ -175,6 +175,40 @@ class DevelopmentScenarioSimulator:
             special_gate.get("developability") in {"BLOCKED"}
             or special_gate.get("resolvable") in {"NO"}
         ):
+            # ★P0(개발불가만 제시 해소): 다필지에서 '일부' 필지만 차단(구거/하천/GB 등)이면, 차단필지를
+            #   제외한 '가용 필지'로 개발방식을 재산정해 함께 제시한다(detect_multi_parcel의 max/min 게이트가
+            #   최악 1필지로 전체를 BLOCKED로 떨군 것을 보완). 신규 산식 0 — 가용필지로 simulate()를 1회
+            #   재귀호출(차단필지 없으니 정상경로로 시나리오 산출). 필지수 strict 감소라 무한재귀 불가.
+            available_subset = None
+            excluded_parcels: list[dict[str, Any]] = []
+            if multi:
+                avail_addrs: list[str] = []
+                for p in enriched:
+                    sp_i = detect_special_parcel(p)
+                    blocked_i = bool(sp_i and (
+                        sp_i.get("developability") in {"BLOCKED"} or sp_i.get("resolvable") in {"NO"}))
+                    if blocked_i:
+                        excluded_parcels.append({
+                            "address": p.get("address"), "zone": p.get("zone"),
+                            "area": p.get("area"), "gate": sp_i})
+                    elif p.get("address"):
+                        avail_addrs.append(p.get("address"))
+                if avail_addrs and len(avail_addrs) < len(enriched):
+                    try:
+                        sub = await self.simulate(
+                            avail_addrs[0], parcels=avail_addrs[1:], site=site, use_llm=False)
+                        # 가용필지가 또 전면 차단이면(이중특이) None 처리 — 가짜 제시 금지.
+                        if sub.get("scenarios"):
+                            available_subset = {
+                                "parcels": avail_addrs,
+                                "parcel_count": len(avail_addrs),
+                                "total_area_sqm": (sub.get("site") or {}).get("total_area_sqm"),
+                                "scenarios": sub.get("scenarios"),
+                                "recommended": sub.get("recommended"),
+                                "pyeong_classification": sub.get("pyeong_classification"),
+                            }
+                    except Exception as e:  # noqa: BLE001 — subset 재산정 실패는 본 응답을 막지 않음
+                        logger.warning("가용필지 subset 재산정 스킵(graceful)", err=str(e)[:160])
             # 후보생성 중단 — 가짜 개발규모/시나리오는 미산정(무목업). 다만 ★사용자 피드백:
             #   '개발 불가'로 끝내지 말고 인허가·도시계획 변경 등 '개발가능 방안(선행절차)'을 제시한다.
             #   special_parcel이 이미 보유한 resolution_paths·permit_prerequisites·alternatives·법령을
@@ -191,11 +225,24 @@ class DevelopmentScenarioSimulator:
                 method_refs = []
             # 추천: '개발 불가'가 아니라 '선행절차(도시계획 변경·인허가) 통과 시 개발 가능' 방안 제시.
             has_path = bool(methods)
-            rec_scheme = ("특이부지 개발 — 선행절차(도시계획 변경·인허가) 방안" if has_path
-                          else "현 제약상 통상 개발 불가 — 대안 검토")
-            rec_reason = (disclosure + " 다만 아래 선행절차(인허가·도시계획 변경 등)를 거치면 개발이 가능할 수 있습니다."
-                          if has_path else
-                          disclosure + " 통상 개발경로가 막혀 있어, 대안(필지 제외·용도 재검토)을 검토하세요.")
+            # ★가용필지 subset이 산출됐으면 그것을 우선 추천(개발불가→가용필지 실개발방식).
+            _sub = available_subset or {}
+            has_subset = bool(_sub.get("scenarios"))
+            if has_subset:
+                _sub_rec = _sub.get("recommended") or {}
+                rec_scheme = f"가용 {_sub.get('parcel_count')}필지 개발 — {_sub_rec.get('scheme') or '단순 건축'}"
+                rec_reason = (f"일부 필지({len(excluded_parcels)}개: 구거/하천/GB 등)는 통상 개발이 어려우나, "
+                              f"이를 제외한 가용 {_sub.get('parcel_count')}필지"
+                              + (f"(통합 {_sub.get('total_area_sqm')}㎡)" if _sub.get('total_area_sqm') else "")
+                              + f"로는 '{_sub_rec.get('scheme') or '단순 건축'}' 등 개발이 가능합니다. " + disclosure)
+            elif has_path:
+                rec_scheme = "특이부지 개발 — 선행절차(도시계획 변경·인허가) 방안"
+                rec_reason = (disclosure
+                              + " 다만 아래 선행절차(인허가·도시계획 변경 등)를 거치면 개발이 가능할 수 있습니다.")
+            else:
+                rec_scheme = "현 제약상 통상 개발 불가 — 대안 검토"
+                rec_reason = (disclosure
+                              + " 통상 개발경로가 막혀 있어, 대안(필지 제외·용도 재검토)을 검토하세요.")
             return {
                 "site": {
                     "address": address, "region": self._region(address),
@@ -205,12 +252,15 @@ class DevelopmentScenarioSimulator:
                     "special_parcel_gate": special_gate,
                 },
                 "special_parcel_gate": special_gate,
-                "scenarios": [],  # 가짜 개발규모 시나리오는 미생성(무목업)
+                "scenarios": [],  # 전체(full) 기준 시나리오는 미생성(무목업) — 가용필지는 available_subset.
                 "recommended": {
                     "scheme": rec_scheme,
-                    "est_far": None,
+                    "est_far": (_sub.get("recommended") or {}).get("est_far") if has_subset else None,
                     "reason": rec_reason,
                 },
+                # ★P0: 차단필지 제외 '가용 필지'로 실제 산출한 개발방식(개발불가만 제시 해소). 없으면 None.
+                "available_subset": available_subset,
+                "excluded_parcels": excluded_parcels,
                 # ★개발가능 방안(선행절차) — 인허가·도시계획 변경 등 actionable 경로 + 법령(verified).
                 "resolution_methods": methods,
                 "resolution_legal_refs": method_refs,
@@ -219,7 +269,8 @@ class DevelopmentScenarioSimulator:
                 "fallback_simple_build": None,
                 "magdo_summary": None,
                 "honest_disclosure": disclosure,
-                "blocked": not has_path,  # 선행절차 경로가 있으면 완전 blocked 아님(조건부 가능).
+                # 선행절차 경로 또는 가용필지 개발이 있으면 완전 blocked 아님.
+                "blocked": (not has_path) and (not has_subset),
             }
 
         # 인접성: 통합개발(합필/일단지)은 필지가 맞닿아야 가능
