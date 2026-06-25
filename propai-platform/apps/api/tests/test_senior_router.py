@@ -21,7 +21,7 @@ def test_list_agents():
     r = _client().get("/api/v1/senior/agents")
     assert r.status_code == 200
     agents = r.json()["agents"]
-    assert len(agents) == 7
+    assert len(agents) == 9  # 7 + 법무사·감정평가사(통합 권리분석)
     keys = {a["key"] for a in agents}
     assert {"senior_financial_advisor", "senior_urban_planner"} <= keys
     # 고위험 플래그 노출

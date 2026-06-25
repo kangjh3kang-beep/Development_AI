@@ -19,6 +19,13 @@ import { AlertTriangle } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { buildSeniorInputs, type SeniorInputSources } from "@/lib/senior/build-inputs";
+import {
+  MANUAL_INPUTS,
+  coerceManualInputs,
+  hasManualInputs,
+  mergeSeniorInputs,
+  type ManualValueMap,
+} from "@/lib/senior/manual-inputs";
 
 /* ── 백엔드 계약(읽기 전용 타입·to_dict 정합) ── */
 
@@ -104,7 +111,7 @@ function confidenceToken(label: string | null | undefined): string {
 }
 
 /** 안정 캐시키 — 키 삽입순서와 무관하게 정렬 직렬화(동일 inputs=동일 키). */
-function seniorCacheKey(key: string, inputs: Record<string, number> | undefined): string {
+function seniorCacheKey(key: string, inputs: ManualValueMap | undefined): string {
   return `${key}|${inputs ? JSON.stringify(inputs, Object.keys(inputs).sort()) : ""}`;
 }
 
@@ -144,10 +151,21 @@ export function SeniorConsultPanel() {
   const [runError, setRunError] = useState<string | null>(null);
   // AI 종합 서술(LLM) 옵트인 — 기본 off(무과금·결정론). on 시 한도게이트(관리자 미설정=무료).
   const [useLlm, setUseLlm] = useState(false);
+  // 수동 입력(전문 데이터) — 에이전트키 → 필드키 → 원문 문자열. 미입력은 빈문자열(=생략).
+  //   ★무목업: store 자동산출 불가한 사용자 제공 사실(인수권리·동의율·건물감정가)을 '미입력'으로
+  //   투명 표시하고, 입력되면 즉시 해당 정량 판정 활성. 비어있으면 평가기가 항목 생략(가정 0 금지).
+  const [manualRaw, setManualRaw] = useState<Record<string, Record<string, string>>>({});
   // 캐시 키 = `${LLM여부}|${domain}|${inputs 시그니처}` — 입력/LLM옵션 바뀌면 재자문(stale 방지).
   const cacheRef = useRef<Record<string, SeniorConsultation>>({});
-  // 현재 표시 결과의 캐시키(신선도 비교용) — store 변경 시 stale 안내.
+  // 현재 표시 결과의 캐시키(신선도 비교용) — store/수동 입력 변경 시 stale 안내.
   const [resultKey, setResultKey] = useState<string | null>(null);
+
+  // store 자동매핑 + 수동 입력 병합(store 우선·SSOT). 없으면 undefined(프레임워크만).
+  const mergedInputsFor = useCallback(
+    (key: string): ManualValueMap | undefined =>
+      mergeSeniorInputs(buildSeniorInputs(key, sources), coerceManualInputs(key, manualRaw[key])),
+    [sources, manualRaw],
+  );
 
   // GET /senior/agents — 마운트 1회.
   useEffect(() => {
@@ -174,8 +192,8 @@ export function SeniorConsultPanel() {
     async (key: string) => {
       setSelectedKey(key);
       setRunError(null);
-      // 분석 store에서 도메인별 평가기 inputs 자동 매핑(실재 값만·무목업). 없으면 프레임워크만.
-      const inputs = buildSeniorInputs(key, sources);
+      // store 자동매핑 + 수동 입력(전문 데이터) 병합(실재 값만·무목업). 없으면 프레임워크만.
+      const inputs = mergedInputsFor(key);
       const cacheKey = `${useLlm ? "L" : "D"}|${seniorCacheKey(key, inputs)}`;
       const cached = cacheRef.current[cacheKey];
       if (cached) {
@@ -186,7 +204,7 @@ export function SeniorConsultPanel() {
       setRunning(true);
       try {
         // FinCoT 추론(IRAC) 동반 요청 + 매핑된 정량 inputs(있으면) + AI 서술 옵트인.
-        const context: { include_reasoning: true; inputs?: Record<string, number> } = {
+        const context: { include_reasoning: true; inputs?: ManualValueMap } = {
           include_reasoning: true,
         };
         if (inputs) context.inputs = inputs;
@@ -205,23 +223,23 @@ export function SeniorConsultPanel() {
         setRunning(false);
       }
     },
-    [sources, useLlm],
+    [mergedInputsFor, useLlm],
   );
 
-  // 표시 결과가 stale인가 — store 데이터·LLM옵션이 바뀌어 현재 키가 표시 결과의 키와 다르면 true.
+  // 표시 결과가 stale인가 — store·수동입력·LLM옵션이 바뀌어 현재 키가 표시 결과의 키와 다르면 true.
   // (자동 재실행 금지 정책 — 사용자에게 '다시 자문' 안내만 한다.)
   const stale = useMemo(() => {
     if (!selectedKey || !result || !resultKey) return false;
-    const liveKey = `${useLlm ? "L" : "D"}|${seniorCacheKey(selectedKey, buildSeniorInputs(selectedKey, sources))}`;
+    const liveKey = `${useLlm ? "L" : "D"}|${seniorCacheKey(selectedKey, mergedInputsFor(selectedKey))}`;
     return liveKey !== resultKey;
-  }, [selectedKey, result, resultKey, sources, useLlm]);
+  }, [selectedKey, result, resultKey, mergedInputsFor, useLlm]);
 
   return (
     <section className="grid gap-3">
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
         <p className="mb-1 text-sm font-bold text-[var(--text-primary)]">시니어 전문가 자문</p>
         <p className="mb-3 text-[11px] text-[var(--text-secondary)]">
-          7개 분야 시니어(설계·회계·세무·도시계획·심의·BIM·금융)의 판단 프레임워크와 근거를 제시합니다.
+          9개 분야 시니어(설계·회계·세무·도시계획·심의·BIM·금융·법무사·감정평가사)의 판단 프레임워크와 근거를 제시합니다.
           분석 수치가 연동되면 항목별 PASS/경고/차단 판정을 함께 보여줍니다. AI 보조이며 최종 책임은 면허 전문가입니다.
         </p>
 
@@ -272,6 +290,77 @@ export function SeniorConsultPanel() {
         )}
         {runError && <p className="mt-2 text-[11px] text-[var(--status-error)]">{runError}</p>}
       </div>
+
+      {/* 추가 입력(전문 데이터) — store 자동산출 불가한 사용자 제공 사실(인수권리·동의율·건물감정가).
+          ★무목업: 미입력은 '미입력'으로 투명 표시(가정 0 금지), 입력되면 즉시 정량 판정 활성. */}
+      {selectedKey && hasManualInputs(selectedKey) && (
+        <div className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
+          <p className="mb-1 text-xs font-bold text-[var(--text-primary)]">
+            추가 입력 — 전문 데이터(미입력 시 해당 정량 판정 생략 · 입력 시 즉시 활성)
+          </p>
+          <p className="mb-3 text-[10px] text-[var(--text-tertiary)]">
+            등기부 인수권리·조합 동의 현황·건물 감정가 등은 자동 수집 대상이 아닙니다. 값을 넣으면 인수율·동의율·종전평가
+            판정이 바로 활성됩니다(없는 값을 가정하지 않는 무목업 원칙).
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {MANUAL_INPUTS[selectedKey].map((f) => {
+              const cur = manualRaw[selectedKey]?.[f.key] ?? "";
+              const setVal = (val: string) =>
+                setManualRaw((prev) => ({
+                  ...prev,
+                  [selectedKey]: { ...(prev[selectedKey] ?? {}), [f.key]: val },
+                }));
+              const selectOpts =
+                f.kind === "boolean"
+                  ? [
+                      { value: "true", label: "예(동별 과반 충족)" },
+                      { value: "false", label: "아니오" },
+                    ]
+                  : (f.options ?? []);
+              return (
+                <label key={f.key} className="grid min-w-0 gap-1">
+                  <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                    {f.label}
+                    {f.unit ? ` (${f.unit})` : ""}
+                  </span>
+                  {f.kind === "number" ? (
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={cur}
+                      onChange={(e) => setVal(e.target.value)}
+                      placeholder="미입력"
+                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
+                    />
+                  ) : (
+                    <select
+                      value={cur}
+                      onChange={(e) => setVal(e.target.value)}
+                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
+                    >
+                      <option value="">미입력</option>
+                      {selectOpts.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {f.hint && <span className="text-[10px] text-[var(--text-tertiary)]">{f.hint}</span>}
+                </label>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => consult(selectedKey)}
+            disabled={running}
+            className="mt-3 rounded-lg border border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_8%,transparent)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_14%,transparent)] disabled:opacity-50"
+          >
+            입력값으로 자문
+          </button>
+        </div>
+      )}
 
       {result && (
         <div className="grid gap-3 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-card)] p-4">

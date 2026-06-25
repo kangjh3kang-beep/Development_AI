@@ -6,10 +6,12 @@ from app.services.senior_agents.evaluators import (
     PASS,
     WARN,
     evaluate_accounting,
+    evaluate_appraisal,
     evaluate_architect,
     evaluate_bim,
     evaluate_deliberation,
     evaluate_financial,
+    evaluate_legal,
     evaluate_tax,
     evaluate_urban,
     worst_verdict,
@@ -256,12 +258,66 @@ def test_deliberation_csp_unsat_core():
         "delib.multi_clause_csp"].verdict == PASS
 
 
-def test_all_seven_domains_have_evaluator():
-    # 7개 시니어 도메인 전부 평가기 보유(완성)
+def test_appraisal_prior_valuation():
+    # 토지+건물 → 종전평가 합·PASS
+    e = _by_id(evaluate_appraisal({"land_appraised_total": 8e8, "building_appraised_total": 2e8}))[
+        "appraisal.prior_valuation"]
+    assert e.verdict == PASS and e.value == 1_000_000_000.0
+    # 건물 미반영(토지만) → WARN(과소평가 주의)
+    e2 = _by_id(evaluate_appraisal({"land_appraised_total": 8e8}))["appraisal.prior_valuation"]
+    assert e2.verdict == WARN and e2.value == 8e8 and "과소" in e2.detail
+    # 토지 결측 → 생략(무목업)
+    assert evaluate_appraisal({}) == []
+
+
+def test_legal_union_consent():
+    # 재개발: 소유자 80%≥75 + 면적 60%≥50 → 충족 PASS
+    base = {"redevelopment_type": "재개발", "consent_owner_count": 80, "total_owner_count": 100}
+    e = _by_id(evaluate_legal({**base, "consent_area_sqm": 600, "total_area_sqm": 1000}))[
+        "legal.union_consent"]
+    assert e.verdict == PASS and e.value == 80.0
+    # 재건축: 면적 요건 3/4 → 면적 60%<75 → 미달 WARN
+    e2 = _by_id(evaluate_legal({**base, "redevelopment_type": "재건축",
+                               "consent_area_sqm": 600, "total_area_sqm": 1000}))["legal.union_consent"]
+    assert e2.verdict == WARN
+    # 소유자 70%<75 → 미달 WARN
+    e3 = _by_id(evaluate_legal({"redevelopment_type": "재개발", "consent_owner_count": 70,
+                               "total_owner_count": 100}))["legal.union_consent"]
+    assert e3.verdict == WARN
+    # ★재건축: 소유자 80%·면적 80% 충족이나 동별 과반 미입력 → 미검증 WARN(거짓 PASS 방지)
+    e4 = _by_id(evaluate_legal({"redevelopment_type": "재건축", "consent_owner_count": 80,
+                                "total_owner_count": 100, "consent_area_sqm": 800,
+                                "total_area_sqm": 1000}))["legal.union_consent"]
+    assert e4.verdict == WARN and "동별 과반 미검증" in e4.detail
+    # 동별 과반 입력(True) → 충족 PASS
+    e5 = _by_id(evaluate_legal({"redevelopment_type": "재건축", "consent_owner_count": 80,
+                                "total_owner_count": 100, "consent_area_sqm": 800,
+                                "total_area_sqm": 1000, "building_consent_majority": True}))[
+        "legal.union_consent"]
+    assert e5.verdict == PASS
+
+
+def test_legal_rights_takeover_appraisal_integration():
+    # ★통합: 감정가 10억 − 인수권리 3억 = 실효 7억·인수율 30% → WARN
+    e = _by_id(evaluate_legal({"appraised_value": 1e9, "senior_liens_total": 3e8}))[
+        "legal.rights_takeover"]
+    assert e.verdict == WARN and e.value == 30.0 and "실효가치" in e.detail
+    # 인수권리 0(clean) → PASS
+    assert _by_id(evaluate_legal({"appraised_value": 1e9, "senior_liens_total": 0}))[
+        "legal.rights_takeover"].verdict == PASS
+    # 인수권리 ≥ 감정가(경제성 없음) → BLOCK
+    assert _by_id(evaluate_legal({"appraised_value": 1e9, "senior_liens_total": 11e8}))[
+        "legal.rights_takeover"].verdict == BLOCK
+    # 감정가 결측 → 권리분석 생략(무목업·통합 입력 의존)
+    assert "legal.rights_takeover" not in _by_id(evaluate_legal({"senior_liens_total": 3e8}))
+
+
+def test_all_domains_have_evaluator():
+    # 9개 시니어 도메인 전부 평가기 보유(법무사·감정평가사 통합 추가)
     assert set(EVALUATORS) == {
         "senior_financial_advisor", "senior_urban_planner", "senior_architect",
         "senior_tax_advisor", "senior_accountant", "senior_bim_specialist",
-        "senior_deliberation_member",
+        "senior_deliberation_member", "senior_legal_scrivener", "senior_appraiser",
     }
 
 

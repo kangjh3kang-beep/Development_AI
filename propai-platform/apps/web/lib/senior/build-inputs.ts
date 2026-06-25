@@ -19,6 +19,7 @@ export interface SeniorInputSources {
     nationalFarPct?: number | null;
     nationalBcrPct?: number | null;
     roadWidthM?: number | null;   // 접도 도로폭(m) — 심의 road_width_actual
+    estimatedValue?: number | null;  // 부지 추정가(원·AVM/탁상) — 감정평가/법무사 감정가 입력원
   } | null;
   designData?: {
     bcr?: number | null;
@@ -91,6 +92,19 @@ function buildFinancialInputs(src: SeniorInputSources): Inputs | undefined {
   return undefined;
 }
 
+// 감정평가사: 부지 추정가(estimatedValue)를 토지 감정가로 매핑(탁상 추정·건물 감정은 store 부재→토지만).
+function buildAppraiserInputs(src: SeniorInputSources): Inputs | undefined {
+  const land = posNum(src.siteAnalysis?.estimatedValue);
+  return land !== undefined ? { land_appraised_total: land } : undefined;
+}
+
+// 법무사: 감정가(appraised_value)=부지 추정가 전파(★감정평가사 통합) → 권리분석 인수율 기초.
+//   senior_liens_total(인수 선순위·등기 분석)·동의율은 store 부재→해당 평가 생략(무목업).
+function buildLegalInputs(src: SeniorInputSources): Inputs | undefined {
+  const appraised = posNum(src.siteAnalysis?.estimatedValue);
+  return appraised !== undefined ? { appraised_value: appraised } : undefined;
+}
+
 /** 도메인 키 → 평가기 inputs(없으면 undefined → consult는 프레임워크만). */
 export function buildSeniorInputs(
   agentKey: string,
@@ -101,6 +115,10 @@ export function buildSeniorInputs(
       return buildDeliberationInputs(src);
     case "senior_financial_advisor":
       return buildFinancialInputs(src);
+    case "senior_appraiser":
+      return buildAppraiserInputs(src);
+    case "senior_legal_scrivener":
+      return buildLegalInputs(src);
     default:
       return undefined;
   }
