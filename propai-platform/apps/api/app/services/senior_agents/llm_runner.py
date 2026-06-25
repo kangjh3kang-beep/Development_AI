@@ -41,7 +41,7 @@ class SeniorDebateInterpreter(BaseInterpreter):
     name = "senior_reasoning"
     expected_keys = ["text"]
     fallback_key = "text"
-    max_tokens = 1536
+    max_tokens = 1536  # 입장당 간결 논증(narrative 2048보다 작게 — pro/con 2콜 합 통제)
     system_prompt = _DEBATE_SYSTEM
 
 

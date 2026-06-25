@@ -106,12 +106,12 @@ async def consult(
     reasoning = out.get("reasoning")
     if req.use_llm and isinstance(reasoning, dict) and reasoning.get("prompt") and reasoning.get("irac_steps"):
         await _enforce_llm_if_needed(db, True)
-        narrative = await generate_senior_narrative(reasoning["prompt"], use_llm=True)
+        narrative = await generate_senior_narrative(reasoning["prompt"], use_llm=req.use_llm)
         if narrative:
             reasoning["narrative"] = narrative
             reasoning["mode"] = "llm"
         # 적대 debate(고위험/저신뢰/위반 발동 시): pro/con 실행→debate_result 주입(graceful).
-        debate_result = await generate_senior_debate(reasoning.get("debate"), use_llm=True)
+        debate_result = await generate_senior_debate(reasoning.get("debate"), use_llm=req.use_llm)
         if debate_result:
             reasoning["debate_result"] = debate_result
     return out
