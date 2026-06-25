@@ -485,6 +485,91 @@ async def _record_proposal_ledger(
         return None
 
 
+def _senior_architect_inputs(candidate: dict, site: SiteContext) -> dict:
+    """추천 후보 + 부지 → evaluate_architect 입력(평면 성립성)을 산출(best-effort·결측 생략).
+
+    조합 후보에는 코어/복도 정보가 없으므로, 교정된 cad 정본 compute_core_layout으로
+    1동 매스(배치 폴리곤 폭/깊이×층수) 기준 코어수·복도폭·보행거리를 산출해 시니어 게이트
+    입력으로 환산한다(생성→평가 폐루프). 산출 불가 항목은 키를 비워 게이트가 자동 생략되게 한다.
+    """
+    inputs: dict = {}
+    floors = candidate.get("estimated_floors")
+    if isinstance(floors, (int, float)) and floors > 0:
+        inputs["floor_count"] = int(floors)
+    eff = candidate.get("unit_efficiency")
+    if isinstance(eff, (int, float)) and eff > 0:
+        inputs["unit_efficiency"] = float(eff)
+    units = candidate.get("estimated_units")
+    if isinstance(units, (int, float)) and units > 0:
+        inputs["total_units"] = int(units)
+
+    # 1동 매스 폭/깊이 — 배치 폴리곤 building 우선, 미상이면 footprint 정사각 근사.
+    bldg = (candidate.get("placement") or {}).get("building") if candidate.get("placement") else None
+    bw = bd = None
+    if isinstance(bldg, dict) and bldg.get("w") and bldg.get("d"):
+        bw, bd = float(bldg["w"]), float(bldg["d"])
+    elif site.buildable_footprint_sqm and site.buildable_footprint_sqm > 0:
+        import math as _m
+        bw = bd = round(_m.sqrt(site.buildable_footprint_sqm), 1)
+    if bw and bd and inputs.get("floor_count"):
+        per_floor = round(bw * bd, 1)
+        inputs["floor_area_per_floor_sqm"] = per_floor
+        try:
+            from app.services.cad.auto_design_engine import AutoDesignEngineService
+            mass = {
+                "building_width_m": bw, "building_depth_m": bd,
+                "num_floors": inputs["floor_count"],
+                "building_footprint_sqm": per_floor,
+                "total_floor_area_sqm": round(per_floor * inputs["floor_count"], 1),
+            }
+            # 공동주택은 통상 중복도(double)·내화구조 가정(보수). 복도폭·보행거리·코어수 환산.
+            core = AutoDesignEngineService.compute_core_layout(
+                mass, site.building_use_kr, corridor_type="double", fire_resistant=True
+            )
+            inputs["corridor_width_m"] = core["corridor_width_m"]
+            inputs["corridor_type"] = core.get("corridor_type", "double")
+            inputs["num_cores"] = core["num_cores"]
+            # 보행거리(실측 대용): 1동 폭을 코어가 양방향 커버 → 코어당 절반의 절반(코어 중심→끝).
+            #   coarse 추정이나 보행거리 한도 초과 여부 판정엔 충분(정직·근사 표기는 evaluate가 함).
+            nc = max(1, int(core["num_cores"]))
+            inputs["travel_distance_m"] = round(bw / (2.0 * nc), 1)
+            inputs["fire_resistant"] = True
+        except Exception as e:  # noqa: BLE001 — 코어 산출 실패는 게이트 일부 생략(평가 비차단)
+            logger.info("design senior 코어 입력 산출 생략: %s", str(e)[:120])
+    return inputs
+
+
+def _attach_senior_review(candidate: dict, verdict: dict, site: SiteContext) -> None:
+    """추천 후보에 시니어 architect 정량평가(평면 성립성)를 첨부하고 verdict를 정직 강등(in-place).
+
+    BLOCK이 하나라도 있으면 verdict='fail'(미충족 정직), WARN만 있으면 최소 'conditional'로
+    다운그레이드한다. 평가 자체가 실패하면 아무것도 바꾸지 않는다(best-effort·생성 비차단).
+    """
+    try:
+        from app.services.senior_agents.evaluators.architect import evaluate_architect
+        from app.services.senior_agents.evaluators.base import worst_verdict
+
+        inputs = _senior_architect_inputs(candidate, site)
+        evals = evaluate_architect(inputs)
+        if not evals:
+            return
+        worst = worst_verdict(evals)
+        candidate["senior_review"] = {
+            "worst": worst,
+            "evaluations": [e.to_dict() for e in evals],
+            "disclaimer": "AI 보조 초안 — 평면 성립성(코어·복도·피난·전용률) 정량평가. 최종 책임은 건축사.",
+        }
+        # verdict 정직 강등: BLOCK→fail, WARN→최소 conditional(상향은 하지 않음).
+        if worst == "BLOCK":
+            verdict["verdict"] = "fail"
+            verdict.setdefault("notes", []).append("시니어 평면 성립성 평가 BLOCK — 설계 미충족(정직)")
+        elif worst == "WARN" and verdict.get("verdict") == "pass":
+            verdict["verdict"] = "conditional"
+            verdict.setdefault("notes", []).append("시니어 평면 성립성 평가 WARN — 조건부(검토 필요)")
+    except Exception as e:  # noqa: BLE001 — 평가 실패가 생성 결과를 깨면 안 됨
+        logger.info("design senior 평가 첨부 생략: %s", str(e)[:120])
+
+
 def _site_summary(site: SiteContext) -> dict:
     return {
         "zone_code": site.zone_code,
@@ -600,6 +685,9 @@ async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: boo
             permit_complexity=permit_complexity,
             far_source=site.far_source,
         )
+        # ★생성→평가 폐루프 — 시니어 architect 평면 성립성(코어·복도·피난·전용률) 정량평가를
+        #   후보에 첨부하고 미충족 시 verdict를 정직 강등(BLOCK→fail·WARN→conditional). best-effort.
+        _attach_senior_review(cd, verdict, site)
         # 모든 결과물에 근거 부착(전역 원칙): 추정·적합성·법적한도 출처/링크(레지스트리 단일출처).
         evidence = [e.to_dict() for e in proposal_evidence(cd, site, sigungu=req.sigungu)]
         proposals.append({"candidate": cd, "verdict": verdict, "evidence": evidence})

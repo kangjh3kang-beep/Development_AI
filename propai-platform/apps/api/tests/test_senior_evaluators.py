@@ -270,3 +270,77 @@ def test_worst_verdict():
                                "stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.045})  # spread PASS
     assert worst_verdict(evals) == BLOCK
     assert worst_verdict([]) is None
+
+
+# ── D-B: 시니어 평면 성립성 게이트(복도·피난·코어·전용률) ──
+
+def test_architect_corridor_width_gate():
+    # 중복도(기본): 2.4m 미만 BLOCK, 2.4m 이상 PASS
+    assert _by_id(evaluate_architect({"corridor_width_m": 2.0}))[
+        "design.corridor_width"].verdict == BLOCK
+    assert _by_id(evaluate_architect({"corridor_width_m": 2.4}))[
+        "design.corridor_width"].verdict == PASS
+    # 편복도: 1.8m 이상이면 PASS(중복도 기준 2.4 오적용 금지)
+    assert _by_id(evaluate_architect({"corridor_width_m": 1.8, "corridor_type": "single"}))[
+        "design.corridor_width"].verdict == PASS
+    assert _by_id(evaluate_architect({"corridor_width_m": 1.7, "corridor_type": "single"}))[
+        "design.corridor_width"].verdict == BLOCK
+    # 복도폭 결측 → 생략(무목업)
+    assert "design.corridor_width" not in _by_id(evaluate_architect({"floor_count": 3}))
+
+
+def test_architect_egress_gate():
+    # 6층(5층↑) 직통계단 1개 → BLOCK, 2개 → PASS
+    assert _by_id(evaluate_architect({"floor_count": 6, "direct_stair_count": 1}))[
+        "design.egress"].verdict == BLOCK
+    assert _by_id(evaluate_architect({"floor_count": 6, "direct_stair_count": 2}))[
+        "design.egress"].verdict == PASS
+    # 층당 거실 200㎡ 초과(저층이라도) → 직통계단 2개 의무
+    assert _by_id(evaluate_architect({"floor_count": 2, "floor_area_per_floor_sqm": 250,
+                                      "direct_stair_count": 1}))["design.egress"].verdict == BLOCK
+    # 4층·층당 150㎡(둘 다 미달) → egress 룰 미적용(생략)
+    assert "design.egress" not in _by_id(evaluate_architect(
+        {"floor_count": 4, "floor_area_per_floor_sqm": 150, "direct_stair_count": 1}))
+    # 보행거리: 내화 50m 초과 BLOCK / 비내화 30m 이하 PASS
+    assert _by_id(evaluate_architect({"travel_distance_m": 55, "fire_resistant": True}))[
+        "design.egress_travel"].verdict == BLOCK
+    assert _by_id(evaluate_architect({"travel_distance_m": 28, "fire_resistant": False}))[
+        "design.egress_travel"].verdict == PASS
+    assert _by_id(evaluate_architect({"travel_distance_m": 31, "fire_resistant": False}))[
+        "design.egress_travel"].verdict == BLOCK
+
+
+def test_architect_core_adequacy_gate():
+    # 6층↑ EV 누락 → WARN
+    assert _by_id(evaluate_architect({"floor_count": 8, "has_elevator": False}))[
+        "design.core_adequacy"].verdict == WARN
+    # 5층(6 미만) EV 누락 → 미적용(생략)
+    assert "design.core_adequacy" not in _by_id(evaluate_architect(
+        {"floor_count": 5, "has_elevator": False}))
+    # 코어당 세대 과다(200세대/2코어=100>60) → WARN, 적정(100/2=50) → PASS
+    assert _by_id(evaluate_architect({"total_units": 200, "num_cores": 2}))[
+        "design.core_load"].verdict == WARN
+    assert _by_id(evaluate_architect({"total_units": 100, "num_cores": 2}))[
+        "design.core_load"].verdict == PASS
+
+
+def test_architect_unit_efficiency_gate():
+    # 전용률 >100% → BLOCK(물리 불가)
+    assert _by_id(evaluate_architect({"unit_efficiency": 1.05}))[
+        "design.unit_efficiency"].verdict == BLOCK
+    # 전형(70~85%) → PASS
+    assert _by_id(evaluate_architect({"unit_efficiency": 0.78}))[
+        "design.unit_efficiency"].verdict == PASS
+    # 70 미만 / 85 초과 → WARN
+    assert _by_id(evaluate_architect({"unit_efficiency": 0.65}))[
+        "design.unit_efficiency"].verdict == WARN
+    assert _by_id(evaluate_architect({"unit_efficiency": 0.90}))[
+        "design.unit_efficiency"].verdict == WARN
+    # % 입력(78)도 0~1 비율(0.78)과 동일 판정
+    assert _by_id(evaluate_architect({"unit_efficiency": 78}))[
+        "design.unit_efficiency"].value == 78.0
+
+
+def test_architect_empty_inputs_still_empty():
+    # ★회귀방어: 신규 게이트 추가 후에도 빈 입력은 [](평가 생략·무목업)
+    assert evaluate_architect({}) == []

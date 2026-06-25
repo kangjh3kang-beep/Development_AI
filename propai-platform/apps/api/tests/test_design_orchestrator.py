@@ -523,3 +523,61 @@ def test_generate_no_zone_name_permit_unknown(monkeypatch):
     # 인허가 미확인 → conditional
     assert out["proposals"][0]["verdict"]["verdict"] == "conditional"
     assert any("용도지역명 미제공" in n for n in out["notes"])
+
+
+# ── D-C: 생성→평가 폐루프(시니어 architect 평면 성립성) ──
+
+def test_attach_senior_review_block_downgrades_to_fail():
+    from app.services.design_ingest.orchestrator import _attach_senior_review
+    from app.services.design_ingest.composition import SiteContext
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
+                       far_source="ordinance", building_use_kr="공동주택")
+    # 전용률 110%(>100%) → BLOCK → verdict fail로 강등
+    cand = {"estimated_floors": 5, "unit_efficiency": 1.10, "estimated_units": 30,
+            "placement": {"building": {"w": 30.0, "d": 20.0}}}
+    verdict = {"verdict": "pass", "notes": []}
+    _attach_senior_review(cand, verdict, site)
+    assert "senior_review" in cand
+    assert cand["senior_review"]["worst"] == "BLOCK"
+    assert verdict["verdict"] == "fail"
+
+
+def test_attach_senior_review_warn_downgrades_pass_to_conditional():
+    from app.services.design_ingest.orchestrator import _attach_senior_review
+    from app.services.design_ingest.composition import SiteContext
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
+                       far_source="ordinance", building_use_kr="공동주택")
+    # 전용률 65%(<70%) → WARN(없으면 PASS) → pass면 conditional로 강등
+    cand = {"estimated_floors": 4, "unit_efficiency": 0.65, "estimated_units": 20,
+            "placement": {"building": {"w": 25.0, "d": 20.0}}}
+    verdict = {"verdict": "pass", "notes": []}
+    _attach_senior_review(cand, verdict, site)
+    assert cand["senior_review"]["worst"] == "WARN"
+    assert verdict["verdict"] == "conditional"
+
+
+def test_attach_senior_review_noop_when_no_inputs():
+    from app.services.design_ingest.orchestrator import _attach_senior_review
+    from app.services.design_ingest.composition import SiteContext
+    site = SiteContext(area_sqm=1000.0, zone_code="2R", far_source="unknown")  # 한도 미상→footprint None
+    cand = {}  # 평가 입력 없음
+    verdict = {"verdict": "pass", "notes": []}
+    _attach_senior_review(cand, verdict, site)
+    # 평가 입력 없음 → senior_review 미부착·verdict 불변(생성 비차단)
+    assert "senior_review" not in cand and verdict["verdict"] == "pass"
+
+
+def test_generate_attaches_senior_review_to_proposals(monkeypatch):
+    # 통합: 정상 부지면 추천 후보에 senior_review가 첨부됨(폐루프 동작)
+    _patch_search(monkeypatch, [_fp_match()])
+    req = DesignRequest(area_sqm=1000.0, zone_code="2R", zone_name="제2종일반주거지역",
+                        dev_type="M06", ordinance_far_pct=200.0, ordinance_bcr_pct=60.0,
+                        unit_types=["59A", "84A"])
+    out = asyncio.run(generate_design_proposals(req))
+    assert out["proposals"]
+    sr = out["proposals"][0]["candidate"].get("senior_review")
+    # 평형 믹스로 전용률·층수 산출되므로 평면 평가가 부착되어야 함(결측이면 None 허용·무목업)
+    if sr is not None:
+        assert sr["worst"] in ("PASS", "WARN", "BLOCK")
+        assert sr["evaluations"] and all("rule_id" in e for e in sr["evaluations"])
+        assert "건축사" in sr["disclaimer"]

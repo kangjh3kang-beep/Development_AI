@@ -580,3 +580,65 @@ def test_site_context_height_caps_floors():
     assert s.max_floors_by_height == 3
     # max_floors_est는 FAR(far100,bcr50: gfa1000/fp500=2)·높이(3) 중 작은 값
     assert s.max_floors_est is not None and s.max_floors_est <= 3
+
+
+# ── D-A: 동간거리(0.8H)·1동 길이≤80m 게이트 ──
+
+def test_dong_gap_uses_080h_with_min_floor():
+    from app.services.design_ingest.composition import _dong_gap_m, _DONG_GAP_MIN_M
+    # 높이 미상 → 하한 6m(정직 폴백)
+    assert _dong_gap_m(None) == _DONG_GAP_MIN_M
+    assert _dong_gap_m(0) == _DONG_GAP_MIN_M
+    # 높이 30m → 0.8H = 24m
+    assert _dong_gap_m(30.0) == 24.0
+    # 저층(5m → 0.8H=4 < 6) → 하한 6m로 클램프
+    assert _dong_gap_m(5.0) == _DONG_GAP_MIN_M
+
+
+def test_compute_placement_dong_gap_height_based():
+    # 고층 공동주택 다동 → 동간거리가 6m 고정이 아니라 0.8H(>6) 적용
+    s = SiteContext(area_sqm=5000.0, zone_code="3R", legal_bcr_pct=50.0, legal_far_pct=300.0,
+                    legal_height_m=60.0, far_source="ordinance", width_m=100.0, depth_m=50.0,
+                    legal_setback_m=3.0, building_use_kr="공동주택")
+    p = compute_placement(s)
+    if p["dong_count"] > 1:
+        # 60m 높이/3m 층고면 층수 다수 → 0.8H가 6m를 크게 상회
+        assert p["gap_m"] > 6.0
+        assert any("0.8H" in n or "인동간격" in n for n in p["notes"])
+
+
+def test_compute_placement_one_dong_length_capped_80m():
+    # 폭이 매우 긴 부지(149m급 단일매스 유발) → 1동 길이 게이트로 분동(각 동 길이 ≤ ~80m).
+    s = SiteContext(area_sqm=150.0 * 30.0, zone_code="3R", legal_bcr_pct=80.0, legal_far_pct=300.0,
+                    far_source="ordinance", width_m=150.0, depth_m=30.0, legal_setback_m=2.0,
+                    building_use_kr="공동주택")
+    p = compute_placement(s)
+    # 분동되어 최대 1동 길이가 80m 이내(가용영역 제약 폴백 시 경고로 정직 고지)
+    assert p["dong_count"] >= 2
+    if p["max_dong_length_m"] > 80.0:
+        assert any("80" in n for n in p["notes"])
+
+
+def test_compute_core_layout_corridor_type_and_egress():
+    from app.services.cad.auto_design_engine import AutoDesignEngineService as E
+    # 중복도(기본) → 2.4m, 편복도 → 1.8m(공동주택)
+    mass = {"building_width_m": 40.0, "building_depth_m": 15.0,
+            "total_floor_area_sqm": 1200.0, "num_floors": 2,
+            "building_footprint_sqm": 600.0}
+    core_d = E.compute_core_layout(mass, "공동주택", corridor_type="double")
+    core_s = E.compute_core_layout(mass, "공동주택", corridor_type="single")
+    assert core_d["corridor_width_m"] == 2.4 and core_d["corridor_type"] == "double"
+    assert core_s["corridor_width_m"] == 1.8 and core_s["corridor_type"] == "single"
+
+
+def test_compute_core_layout_egress_adds_cores_for_long_block():
+    from app.services.cad.auto_design_engine import AutoDesignEngineService as E
+    # 1동 폭 300m·비내화(보행거리 30m) → 코어가 보행거리 기준으로 증설(연면적 기준보다 많아짐)
+    mass = {"building_width_m": 300.0, "building_depth_m": 15.0,
+            "total_floor_area_sqm": 1500.0, "num_floors": 1,
+            "building_footprint_sqm": 1500.0}
+    core = E.compute_core_layout(mass, "공동주택", fire_resistant=False)
+    # 보행거리 기준 코어수 = ceil(300/(2*30)) = 5 ≥ 연면적기준 ceil(1500/1500)=1
+    assert core["num_cores"] >= 5
+    assert any("보행거리" in w for w in core["core_warnings"])
+    assert core["travel_distance_m"] == 30.0
