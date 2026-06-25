@@ -298,8 +298,24 @@ def compute_parking_layout(site: SiteContext, required_stalls: int | None) -> di
 # 다동(단지) 배치 추정 상수 — 스키매틱(동수·동간거리·일조 정밀계획은 별도).
 _MAX_BLOCK_FP_SQM = 1200.0   # 동 1개 표준 plate 면적 상한(板상형 대형동 가정) — 초과 시 분동
 _MAX_DONG = 12               # 동수 상한(스키매틱 과밀 방지)
-_DONG_GAP_M = 6.0            # 개략 동간거리(일조 정밀계산 별도)
+# D-A 교정: 동간거리 6m '고정'은 채광 인동간격(건축법 시행령 §86② 0.8H) 미달이 잦다.
+# 동간거리는 건물 높이 기반(0.8H)으로 산출하되, 최소 6m는 하한으로 둔다(소형·저층 폴백).
+_DONG_GAP_MIN_M = 6.0        # 동간거리 하한(저층·높이 미상 폴백)
+_DONG_GAP_RATIO = 0.8        # 채광 인동간격 비율(건축법 시행령 §86② 0.8H)
+# D-A 교정: 1동(板상형) 최대 길이 게이트. 80m 초과 단일 매스는 비현실(피난·구조·일조) →
+# 길이 초과 시 분동(동수 증가)으로 강제한다(149m 단일매스 근본 차단).
+_MAX_DONG_LENGTH_M = 80.0
 _DONG_PLATE_RATIO = 2.5      # 동 板상형 폭:깊이 비(개략)
+
+
+def _dong_gap_m(building_height_m: float | None) -> float:
+    """동간거리(채광 인동간격) — 건축법 시행령 §86② 0.8H. 높이 미상이면 하한 6m(정직 폴백).
+
+    solar_envelope_service의 0.8H 산식과 동일(드리프트 방지·DRY). 결과는 최소 6m로 클램프.
+    """
+    if not building_height_m or building_height_m <= 0:
+        return _DONG_GAP_MIN_M
+    return round(max(_DONG_GAP_MIN_M, _DONG_GAP_RATIO * building_height_m), 1)
 
 
 def _layout_dong_blocks(
@@ -399,18 +415,39 @@ def compute_placement(site: SiteContext) -> dict | None:
     bx = round((site_w - bldg_w) / 2, 1)   # 부지 중앙 배치
     by = round((site_d - bldg_d) / 2, 1)
 
-    # 다동(단지) 배치 추정 — 공동주택이고 footprint가 1동 상한 초과면 분동(板상형 그리드).
-    # 그 외(비주거·소형)는 단일 동(=building rect). 그리드 불가 시 단일 폴백(정직).
+    # 동간거리(채광 인동간격 0.8H·건축법 시행령 §86②) — 건물 높이 기반. 높이는 site의
+    # 추정 층수×층고로 산출(미상이면 하한 6m 폴백·정직). solar 0.8H 산식과 동일(DRY).
+    est_floors_for_h = site.max_floors_est or 0
+    bldg_height_m = (est_floors_for_h * site.floor_height_m) if est_floors_for_h > 0 else None
+    dong_gap = _dong_gap_m(bldg_height_m)
+
+    # 다동(단지) 배치 추정 — 공동주택이고 ① footprint가 1동 상한 초과 ② 또는 1동 板상형 길이가
+    # 80m 초과(D-A 게이트)면 분동(板상형 그리드). 그 외(비주거·소형)는 단일 동(=building rect).
     use_kr = site.building_use_kr or ""
-    n_dong = (min(_MAX_DONG, math.ceil(actual_fp / _MAX_BLOCK_FP_SQM))
-              if (use_kr == "공동주택" and actual_fp > _MAX_BLOCK_FP_SQM) else 1)
-    blocks = _layout_dong_blocks(setback, region_w, region_d, actual_fp, n_dong, _DONG_GAP_M)
+    n_dong = 1
+    if use_kr == "공동주택" and actual_fp > 0:
+        # ① 면적 기준 분동
+        n_by_fp = math.ceil(actual_fp / _MAX_BLOCK_FP_SQM) if actual_fp > _MAX_BLOCK_FP_SQM else 1
+        # ② 1동 길이(板상형 폭=√(per_fp×ratio)) ≤ 80m 게이트 → 초과 시 동수 증가.
+        #    per_fp = actual_fp/n, 폭 = √(per_fp×ratio) ≤ MAX → n ≥ actual_fp×ratio / MAX².
+        n_by_len = math.ceil(actual_fp * _DONG_PLATE_RATIO / (_MAX_DONG_LENGTH_M ** 2))
+        n_dong = min(_MAX_DONG, max(1, n_by_fp, n_by_len))
+    blocks = _layout_dong_blocks(setback, region_w, region_d, actual_fp, n_dong, dong_gap)
     if not blocks:                          # 단일 동(또는 그리드 불가 폴백)
         blocks = [{"x": bx, "y": by, "w": bldg_w, "d": bldg_d}]
         n_dong = 1
+    else:
+        # 분동 후에도 단일 동 길이가 80m를 넘으면(그리드 셀 제약으로 분동 불가) 정직 경고.
+        _max_len = max((blk.get("w", 0.0) for blk in blocks), default=0.0)
+        if _max_len > _MAX_DONG_LENGTH_M:
+            notes.append(
+                f"1동 길이 {_max_len:.0f}m가 권장 상한 {_MAX_DONG_LENGTH_M:.0f}m 초과 — "
+                "피난·구조·일조상 추가 분동 권장(가용영역 제약으로 자동 분동 한계)"
+            )
     if n_dong > 1:
         notes.append(
-            f"단지 배치 개략 추정: {n_dong}개 동·동간거리 {_DONG_GAP_M}m(동수·일조 정밀계획 별도)"
+            f"단지 배치 개략 추정: {n_dong}개 동·동간거리 {dong_gap}m"
+            f"(채광 인동간격 0.8H·건축법 시행령 §86②·동수·일조 정밀계획 별도)"
             " — blocks는 시각 스키매틱(동간공지로 합계<건폐율 가능)·면적/GFA는 건폐율 기준"
         )
     return {
@@ -421,7 +458,8 @@ def compute_placement(site: SiteContext) -> dict | None:
                      "area_sqm": round(min(bldg_w * bldg_d, actual_fp), 1)},
         "blocks": blocks,                   # 동별 배치 사각형(단일동이면 1개=building)
         "dong_count": n_dong,
-        "gap_m": _DONG_GAP_M if n_dong > 1 else 0.0,
+        "gap_m": dong_gap if n_dong > 1 else 0.0,
+        "max_dong_length_m": round(max((blk.get("w", 0.0) for blk in blocks), default=0.0), 1),
         "setback_binds": setback_binds,
         "note": "스키매틱 배치(이격 적용·중앙) — 건축선/대지형상/맹지/램프 미반영(개략)",
     }

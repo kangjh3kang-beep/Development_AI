@@ -62,16 +62,43 @@ SUNLIGHT_ZONES: frozenset[str] = frozenset({"1R", "2R", "3R"})
 
 # ── 건축물 용도별 상수 ──
 
-CORRIDOR_WIDTHS: dict[str, float] = {
+# ── 복도폭(건축법 시행령 §48 — 복도 너비) ──
+# 공동주택 공용복도는 '복도형식'에 따라 다르다: 편복도(한쪽 거실)≥1.8m, 중복도(양면 거실)≥2.4m.
+# 기존 1.8m '고정'은 중복도(양면 세대) 평면에 오적용되면 법정 미달이 되므로, 유형별로 분리한다
+# (D-A 교정: 주석↔값 일치·중복도 오적용 해소). CORRIDOR_WIDTHS는 '편복도(single-loaded)'
+# 기준 최소폭이고, 중복도는 CORRIDOR_WIDTHS_DOUBLE를 사용한다.
+CORRIDOR_WIDTHS: dict[str, float] = {  # 편복도(single-loaded) 최소폭
     "공동주택": 1.8,
+    "근린생활시설": 1.8,
+    "업무시설": 1.8,
+    "판매시설": 2.4,
+    "숙박시설": 1.8,
+}
+CORRIDOR_WIDTHS_DOUBLE: dict[str, float] = {  # 중복도(double-loaded·양면거실) 최소폭(≥2.4m)
+    "공동주택": 2.4,
     "근린생활시설": 2.4,
     "업무시설": 2.4,
     "판매시설": 3.0,
-    "숙박시설": 2.0,
+    "숙박시설": 2.4,
 }
+# 편복도 최소폭(시행령 §48 — 공동주택 공용 편복도 1.8m). 미등록 용도 폴백.
+_CORRIDOR_SINGLE_MIN = 1.8
+# 중복도(양면 거실) 최소폭(시행령 §48 — 2.4m). 미등록 용도 폴백.
+_CORRIDOR_DOUBLE_MIN = 2.4
 
 CORE_AREA_SQM = 25.0  # 코어 1개당 면적 (계단+EV+파이프)
 CORE_PER_FLOOR_AREA = 1500.0  # 연면적 N sqm당 코어 1개 (피난규칙)
+
+# 피난 보행거리(피난·방화구조 등의 기준에 관한 규칙 §15 ① — 거실에서 직통계단까지 보행거리).
+# 주요구조부 비내화 30m / 내화·불연(공동주택 등) 50m. 본 엔진은 보수적으로 비내화 30m를 적용해
+# 코어 1개가 커버하는 복도 반경(=보행거리)을 정하고, 1동 길이가 이를 초과하면 코어를 추가한다.
+TRAVEL_DISTANCE_NONCOMBUSTIBLE_M = 50.0  # 내화구조(공동주택 등) 보행거리 한도
+TRAVEL_DISTANCE_DEFAULT_M = 30.0         # 일반(비내화) 보행거리 한도 — 보수 기본
+# 직통계단(피난) 2개소 의무 기준(건축법 시행령 §34 ②): 5층 이상 또는 층당 거실 200㎡ 초과.
+DUAL_STAIR_FLOOR_THRESHOLD = 5
+DUAL_STAIR_FLOOR_AREA_THRESHOLD_SQM = 200.0
+# 승강기(EV) 의무 설치(건축법 §64·시행령 §89): 6층 이상이고 연면적 2,000㎡ 이상.
+ELEVATOR_FLOOR_THRESHOLD = 6
 
 UNIT_TYPES: dict[str, float] = {
     "39A": 39.0,
@@ -525,16 +552,46 @@ class AutoDesignEngineService:
     def compute_core_layout(
         mass: dict[str, Any],
         building_use: str,
+        *,
+        corridor_type: str = "double",
+        fire_resistant: bool = True,
     ) -> dict[str, Any]:
-        """코어 수, 복도폭, 위치를 산출한다."""
+        """코어 수, 복도폭, 위치를 산출한다(피난 보행거리·복도형식 기반·D-A 교정).
+
+        corridor_type: "double"(중복도·양면거실, 기본·보수) | "single"(편복도·한쪽거실).
+          중복도는 §48에 따라 ≥2.4m, 편복도는 ≥1.8m을 적용한다(기존 1.8m 고정·중복도 오적용 해소).
+        fire_resistant: 주요구조부 내화 여부(공동주택 등 True=보행거리 50m / False=30m).
+
+        코어 수는 ① 연면적 기준(CORE_PER_FLOOR_AREA·기존 피난규칙 근사)과
+        ② 피난 보행거리 기준(1동 길이를 코어가 2방향으로 커버 = 코어당 ≈ 2×보행거리)의
+        더 많은 쪽(max)으로 보정한다(균등등분만으로 생기는 과밀·보행거리 초과를 근본 차단).
+        균등등분 간격이 비현실적으로 좁으면(코어가 과밀) 경고를 함께 반환한다(정직).
+        """
         total_floor = mass["total_floor_area_sqm"]
-        num_cores = max(1, math.ceil(total_floor / CORE_PER_FLOOR_AREA))
-        corridor_w = CORRIDOR_WIDTHS.get(building_use, 1.8)
+        bw = float(mass["building_width_m"])
+        bd = float(mass["building_depth_m"])
+        warnings: list[str] = []
 
-        bw = mass["building_width_m"]
-        bd = mass["building_depth_m"]
+        # 복도폭: 복도형식(편/중)에 따라 분리(§48). 중복도(기본)는 ≥2.4m, 편복도는 ≥1.8m.
+        if corridor_type == "single":
+            corridor_w = CORRIDOR_WIDTHS.get(building_use, _CORRIDOR_SINGLE_MIN)
+        else:
+            corridor_w = CORRIDOR_WIDTHS_DOUBLE.get(building_use, _CORRIDOR_DOUBLE_MIN)
 
-        # 코어 위치: 건물 중심축에 등분 배치
+        # ① 연면적 기준 코어 수(기존 근사 — 피난·설비 코어 1개/1500㎡).
+        cores_by_area = max(1, math.ceil(total_floor / CORE_PER_FLOOR_AREA))
+        # ② 피난 보행거리 기준 코어 수: 코어 1개가 좌우 복도를 양방향으로 커버하므로 1동(폭 bw)을
+        #    코어당 약 2×보행거리로 나눈다(거실→직통계단 보행거리 한도, 피난규칙 §15).
+        travel = TRAVEL_DISTANCE_NONCOMBUSTIBLE_M if fire_resistant else TRAVEL_DISTANCE_DEFAULT_M
+        cores_by_egress = max(1, math.ceil(bw / (2.0 * travel))) if bw > 0 else 1
+        num_cores = max(cores_by_area, cores_by_egress)
+        if cores_by_egress > cores_by_area:
+            warnings.append(
+                f"피난 보행거리({travel:.0f}m) 확보 위해 코어 {num_cores}개로 증설"
+                f"(1동 길이 {bw:.0f}m·연면적 기준 {cores_by_area}개→보행거리 기준 {cores_by_egress}개)"
+            )
+
+        # 코어 위치: 건물 중심축에 등분 배치(균등등분은 위치 산출에만 사용 — 수량은 위에서 보정됨).
         core_positions: list[dict[str, float]] = []
         if num_cores == 1:
             core_positions.append({"x": round(bw / 2, 1), "y": round(bd / 2, 1)})
@@ -545,16 +602,26 @@ class AutoDesignEngineService:
                     "x": round(spacing * (i + 1), 1),
                     "y": round(bd / 2, 1),
                 })
+            # 코어 간격이 비현실적으로 좁으면(과밀) 정직 경고 — 코어 폭 ≈ √CORE_AREA(약 5m) 기준.
+            core_side = math.sqrt(CORE_AREA_SQM)
+            if spacing < core_side * 1.5:
+                warnings.append(
+                    f"코어 간격 {spacing:.1f}m가 과밀(코어 폭 약 {core_side:.1f}m 대비 좁음) — "
+                    "코어 통합·평면 재구성 검토 필요"
+                )
 
         total_core_area = num_cores * CORE_AREA_SQM
-        corridor_area = bw * corridor_w  # 중복도 기준
+        corridor_area = bw * corridor_w  # 복도 면적(폭×1동 길이) — 복도형식에 맞는 폭 적용
 
         return {
             "num_cores": num_cores,
             "core_area_sqm": round(total_core_area, 2),
             "corridor_width_m": corridor_w,
+            "corridor_type": corridor_type,        # 복도형식(편/중) — 평면검증·근거 표기
             "corridor_area_sqm": round(corridor_area, 2),
             "core_positions": core_positions,
+            "travel_distance_m": travel,           # 적용 보행거리 한도(피난규칙 §15)
+            "core_warnings": warnings,             # 코어 과밀·보행거리 보정 경고(정직·없으면 [])
         }
 
     # ── 4단계: 세대/호실 자동 배분 ──
