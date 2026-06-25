@@ -62,6 +62,16 @@ def test_reason_structured_default_no_llm():
     assert r.prompt and r.to_dict()["mode"] == "structured"
 
 
+def test_debate_prompts_carry_citation_and_license():
+    r = reason(_CONSULT)
+    assert r.debate is not None
+    # citation 제약·면허경계가 양 입장 프롬프트에 모두 포함(고위험 경로 안전)
+    for side in ("pro", "con"):
+        assert "만들지 마라" in r.debate[side]      # citation 제약
+        assert "면허 경계" in r.debate[side]         # license_gate
+    assert "적합" in r.debate["pro"] and "반박" in r.debate["con"]
+
+
 def test_reason_with_injected_llm():
     r = reason(_CONSULT, llm=lambda prompt: f"서술[{len(prompt)}자]")
     assert r.mode == "llm" and r.narrative is not None and r.narrative.startswith("서술[")

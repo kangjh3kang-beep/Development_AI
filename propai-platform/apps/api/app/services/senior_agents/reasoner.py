@@ -55,7 +55,7 @@ def build_irac_steps(consultation: dict[str, Any]) -> list[dict[str, str]]:
         rid = rule.get("rule_id", "")
         ev = eval_map.get(rid)
         if ev:
-            conclusion = f"{ev.get('verdict', '')}: {ev.get('detail', '')}"
+            conclusion = f"{ev.get('verdict') or '판정'}: {ev.get('detail', '')}"
         else:
             conclusion = "정량 입력 제공 시 판정(미입력 — 전문가 판단 영역)"
         steps.append({
@@ -113,7 +113,9 @@ def build_debate_prompts(consultation: dict[str, Any]) -> dict[str, str]:
         for r in (consultation.get("decision_framework") or [])
         if isinstance(r, dict)
     )
-    base = f"{name}로서 다음 판단 프레임워크에 근거해 논증하라. {_CITATION_RULE}\n프레임워크: {framework}"
+    lic = consultation.get("license_gate", "")
+    base = (f"{name}로서 다음 판단 프레임워크에 근거해 논증하라. {_CITATION_RULE}\n"
+            f"면허 경계: {lic}\n프레임워크: {framework}")
     return {
         "pro": base + "\n[입장] 본 사안이 적합/타당하다는 입장에서 최대한 논증하라.",
         "con": base + "\n[입장] 본 사안이 부적합/고위험이라는 입장에서 최대한 반박하라.",
@@ -125,9 +127,11 @@ def reason(
     *,
     llm: Callable[[str], str] | None = None,
 ) -> SeniorReasoning:
-    """consultation(dict) → 추론 산출. llm 주입 시 서술 생성, 미주입(기본) 시 결정론 구조만.
+    """consultation(dict) → 추론 산출. llm 주입 시 FinCoT 서술 생성, 미주입(기본) 시 결정론 구조만.
 
     llm은 프롬프트(str)→서술(str) 콜러블(BaseInterpreter 어댑터 등). 호출측이 주입(과금·계측은 그쪽).
+    ★debate(pro/con)는 '프롬프트 조립'까지만 한다 — 실제 적대 실행·합성은 후속 런너 책임
+    (reason()의 llm은 FinCoT 프롬프트만 호출). 소비처가 debate.pro/con을 별도 실행해 교차검증한다.
     """
     irac = build_irac_steps(consultation)
     debate = build_debate_prompts(consultation) if should_debate(consultation) else None
