@@ -131,6 +131,23 @@ def test_consult_use_llm_injects_narrative(monkeypatch):
     assert reasoning["mode"] == "llm" and reasoning["narrative"] == "종합: 조건부 Go(모킹)"
 
 
+def test_consult_use_llm_quota_402_propagates(monkeypatch):
+    # use_llm=True + 한도 초과(is_blocked) → enforce_llm_quota 402가 라우터로 전파(차단 누락 방지).
+    async def blocked(db, uid):
+        return True
+
+    async def not_team_over(db, uid):
+        return False
+
+    monkeypatch.setattr("app.core.billing_deps.get_current_user_id", lambda: "u1")
+    monkeypatch.setattr("app.core.billing_deps.billing_service.is_blocked", blocked, raising=False)
+    monkeypatch.setattr("app.core.billing_deps.billing_service.team_limit_exceeded",
+                        not_team_over, raising=False)
+    # narrative까지 가기 전에 402여야 함(과금 게이트 선행).
+    r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})
+    assert r.status_code == 402
+
+
 def test_consult_use_llm_graceful_when_narrative_none(monkeypatch):
     # LLM 미설정/실패(narrative None) → 결정론 구조 유지(서비스 중단 없음).
     async def none_narrative(prompt, *, use_llm):

@@ -99,8 +99,9 @@ async def consult(
         raise HTTPException(status_code=404, detail=str(e)) from e
     out = result.to_dict()
     # AI 서술(use_llm·추론 동반 시): 단일경유 LLM으로 narrative 생성·주입(graceful — 실패 시 결정론 구조 유지).
+    # ★빈 분석(irac_steps 0건)은 LLM 호출·과금 생략(서술할 근거 없음). db는 use_llm 경로에서만 실사용.
     reasoning = out.get("reasoning")
-    if req.use_llm and isinstance(reasoning, dict) and reasoning.get("prompt"):
+    if req.use_llm and isinstance(reasoning, dict) and reasoning.get("prompt") and reasoning.get("irac_steps"):
         await _enforce_llm_if_needed(db, True)
         narrative = await generate_senior_narrative(reasoning["prompt"], use_llm=True)
         if narrative:
