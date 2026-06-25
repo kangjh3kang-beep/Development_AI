@@ -365,6 +365,19 @@ def test_orchestrator_no_evaluator_for_bim():
     assert c.evaluations == () and c.overall_verdict is None
 
 
+def test_orchestrator_tax_and_accounting_evaluations():
+    o = _orch()
+    # 세무: 법인 취득세 12% → WARN
+    t = o.consult("세무", context={"inputs": {"acquisition_price": 500_000_000, "is_corporate": True}})
+    ev = {e["rule_id"]: e for e in t.evaluations}
+    assert ev["tax.acquisition_tax"]["value"] == 12.0 and ev["tax.acquisition_tax"]["verdict"] == "WARN"
+    # 회계: 단기리스 면제
+    a = o.consult("회계", context={"inputs": {"lease_term_months": 6}})
+    ev2 = {e["rule_id"]: e for e in a.evaluations}
+    assert ev2["acct.lease_classification"]["verdict"] == "PASS"
+    assert all(e["basis"].strip() for e in a.evaluations)
+
+
 def test_orchestrator_urban_evaluation():
     o = _orch()
     # 비례율 95%(<100) → WARN, 권리가액·분담금 detail

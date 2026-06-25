@@ -5,6 +5,7 @@ EVALUATORS[agent_key] = 평가함수(inputs: dict) -> list[RuleEvaluation]. orch
 context["inputs"]가 있으면 호출해 자문에 실측 판정을 첨부한다(없으면 프레임워크까지).
 """
 
+from app.services.senior_agents.evaluators.accountant import evaluate_accounting
 from app.services.senior_agents.evaluators.architect import evaluate_architect
 from app.services.senior_agents.evaluators.base import (
     BLOCK,
@@ -14,17 +15,21 @@ from app.services.senior_agents.evaluators.base import (
     worst_verdict,
 )
 from app.services.senior_agents.evaluators.financial import evaluate_financial
+from app.services.senior_agents.evaluators.tax import evaluate_tax
 from app.services.senior_agents.evaluators.urban import evaluate_urban
 
-# 에이전트 키 → 정량 평가함수. 후속 도메인(BIM·세무·회계·심의)은 여기 추가.
+# 에이전트 키 → 정량 평가함수. 후속 도메인(BIM·심의)은 여기 추가.
 EVALUATORS = {
     "senior_financial_advisor": evaluate_financial,
     "senior_urban_planner": evaluate_urban,
     "senior_architect": evaluate_architect,
+    "senior_tax_advisor": evaluate_tax,
+    "senior_accountant": evaluate_accounting,
 }
 
 __all__ = [
     "EVALUATORS", "RuleEvaluation",
     "evaluate_financial", "evaluate_urban", "evaluate_architect",
+    "evaluate_tax", "evaluate_accounting",
     "worst_verdict", "PASS", "WARN", "BLOCK",
 ]

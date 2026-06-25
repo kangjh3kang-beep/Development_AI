@@ -4,8 +4,10 @@ from app.services.senior_agents.evaluators import (
     BLOCK,
     PASS,
     WARN,
+    evaluate_accounting,
     evaluate_architect,
     evaluate_financial,
+    evaluate_tax,
     evaluate_urban,
     worst_verdict,
 )
@@ -147,6 +149,55 @@ def test_urban_negative_inputs_skip():
                            "prior_appraisal_total": 1000}) == []
     assert evaluate_urban({"post_appraisal_total": 1000, "total_project_cost": -50,
                            "prior_appraisal_total": 1000}) == []
+
+
+def test_acquisition_tax_rates():
+    # 주택 6억↓ 1% / 9억↑ 3% / 6~9억 누진(7.5억→2%) / 비주택 4%
+    assert _by_id(evaluate_tax({"acquisition_price": 5e8}))["tax.acquisition_tax"].value == 1.0
+    assert _by_id(evaluate_tax({"acquisition_price": 10e8}))["tax.acquisition_tax"].value == 3.0
+    assert _by_id(evaluate_tax({"acquisition_price": 7.5e8}))["tax.acquisition_tax"].value == 2.0
+    assert _by_id(evaluate_tax({"acquisition_price": 5e8, "property_type": "non_housing"}))[
+        "tax.acquisition_tax"].value == 4.0
+    # 경계: 정확히 6억→1%, 9억→3%
+    assert _by_id(evaluate_tax({"acquisition_price": 6e8}))["tax.acquisition_tax"].value == 1.0
+    assert _by_id(evaluate_tax({"acquisition_price": 9e8}))["tax.acquisition_tax"].value == 3.0
+
+
+def test_acquisition_tax_heavy_warn():
+    # 법인 → 12% WARN, 조정 2주택 → 8% WARN, 비조정 3주택 → 8%
+    e = _by_id(evaluate_tax({"acquisition_price": 5e8, "is_corporate": True}))["tax.acquisition_tax"]
+    assert e.value == 12.0 and e.verdict == WARN
+    e2 = _by_id(evaluate_tax({"acquisition_price": 5e8, "multi_home_count": 2,
+                              "is_adjusted_area": True}))["tax.acquisition_tax"]
+    assert e2.value == 8.0 and e2.verdict == WARN
+    e3 = _by_id(evaluate_tax({"acquisition_price": 5e8, "multi_home_count": 3}))["tax.acquisition_tax"]
+    assert e3.value == 8.0  # 비조정 3주택
+    # 1주택 표준 → PASS
+    assert _by_id(evaluate_tax({"acquisition_price": 5e8}))["tax.acquisition_tax"].verdict == PASS
+    # 음수/결측 생략
+    assert evaluate_tax({}) == [] and evaluate_tax({"acquisition_price": -1}) == []
+
+
+def test_lease_classification():
+    # 단기(≤12개월) → 면제
+    e = _by_id(evaluate_accounting({"lease_term_months": 12}))["acct.lease_classification"]
+    assert e.verdict == PASS and "면제" in e.label
+    # 소액 → 면제(기간 무관)
+    assert "면제" in _by_id(evaluate_accounting({"lease_term_months": 36, "is_low_value": True}))[
+        "acct.lease_classification"].label
+    # 장기 + 리스료·할인율 → 리스부채 PV 산출(연금현가). 24개월·연1200·5% → 2년 연금현가≈2230
+    e2 = _by_id(evaluate_accounting({"lease_term_months": 24, "annual_payment": 1200,
+                                     "discount_rate": 0.05}))["acct.lease_classification"]
+    assert e2.verdict == PASS and e2.value is not None and 2200 <= e2.value <= 2260
+    # 할인율 0 → 단순합(payment×years)
+    e3 = _by_id(evaluate_accounting({"lease_term_months": 24, "annual_payment": 1000,
+                                     "discount_rate": 0}))["acct.lease_classification"]
+    assert e3.value == 2000
+    # 장기지만 리스료·할인율 결측 → 인식대상 표기·PV None
+    e4 = _by_id(evaluate_accounting({"lease_term_months": 36}))["acct.lease_classification"]
+    assert e4.value is None and "인식" in e4.detail
+    # 음수/결측 생략
+    assert evaluate_accounting({}) == [] and evaluate_accounting({"lease_term_months": -1}) == []
 
 
 def test_worst_verdict():
