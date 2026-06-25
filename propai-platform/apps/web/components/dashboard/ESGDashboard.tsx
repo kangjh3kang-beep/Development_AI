@@ -47,7 +47,7 @@ export function ESGDashboard() {
 
   if (isLoading) {
     return (
-      <div className="grid gap-8">
+      <div className="grid grid-cols-1 gap-8 min-w-0">
         <div className="grid gap-8 sm:grid-cols-2">
            <SkeletonLoader count={1} itemClassName="h-44 rounded-[3.5rem]" />
            <SkeletonLoader count={1} itemClassName="h-44 rounded-[3.5rem]" />

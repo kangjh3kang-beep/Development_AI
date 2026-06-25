@@ -51,7 +51,7 @@ export function SafetyCCTVDashboard() {
   const { stats } = data;
 
   return (
-    <section className="grid gap-8" aria-label="지능형 CCTV 안전 관제">
+    <section className="grid grid-cols-1 gap-8 min-w-0" aria-label="지능형 CCTV 안전 관제">
       {/* KPI Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[

@@ -26,7 +26,7 @@ export default async function FinancePage({ params }: FinancePageProps) {
       : dictionary.workspace.modeMock;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <ModuleCommandStrip label="FINANCE · 금융·자금조달" meta={runtimeMode} />
       <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["finance"].eyebrow}

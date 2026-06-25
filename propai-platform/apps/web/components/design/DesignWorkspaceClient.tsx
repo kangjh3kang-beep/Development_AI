@@ -48,7 +48,7 @@ export function DesignWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] px-6 py-5">
         <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
           Workspace
@@ -77,7 +77,7 @@ export function DesignWorkspaceClient({
             statusLabels: labels.statusLabels,
           }}
         />
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-6 min-w-0">
           <FloorPlanViewer
             plan={selectedPlan}
             labels={{

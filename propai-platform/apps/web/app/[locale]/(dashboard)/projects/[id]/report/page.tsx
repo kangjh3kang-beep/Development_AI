@@ -28,7 +28,7 @@ export default async function ReportPage({ params }: ReportPageProps) {
       : dictionary.workspace.modeMock;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <ModuleCommandStrip label="REPORT · 통합 보고서" meta={runtimeMode} />
       <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["report"].eyebrow}

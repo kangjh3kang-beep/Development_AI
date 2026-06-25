@@ -387,7 +387,7 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
   /* ═══ 렌더 ═══ */
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* ── ① 파라미터 패널 ── */}
       <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface-soft)] px-6 py-4">

@@ -55,6 +55,7 @@ class DecisionBriefService:
         equity_won: int | None = None,
         use_llm: bool = False,
         force_refresh: bool = False,
+        include_specialists: bool = True,
         db: Any | None = None,
     ) -> dict[str, Any]:
         """통합 의사결정 브리프를 생성한다.
@@ -72,6 +73,9 @@ class DecisionBriefService:
             equity_won: 자기자본(원) — 디벨로퍼 Go/No-Go ROE 경로 확보용.
             use_llm: LLM 내러티브 포함 여부(기본 false=무과금·무LLM).
             force_refresh: True면 캐시 무시하고 재분석(기본 false=캐시 재사용).
+            include_specialists: ★결정론 SpecialistAgent(zoning/permit) 모세혈관 배선 — 부지·인허가
+                데이터로 auto-dispatch해 도메인 findings·prior 모순·원장 cite를 브리프에 주입(소비처
+                연결). LLM·과금 없음(결정론 도메인만)·graceful(실패는 스킵). 기본 True.
             db: 페르소나 Go/No-Go(run_persona) 호출용 AsyncSession(없으면 verdict 폴백).
 
         Returns:
@@ -164,12 +168,24 @@ class DecisionBriefService:
         if area_override_meta is not None:
             meta["area_override"] = area_override_meta
 
+        # ── ★SpecialistAgent 모세혈관 배선(소비처 연결) — 결정론 도메인 auto-dispatch ──
+        #   부지·인허가 raw에서 추출한 데이터로 zoning/permit 전문가를 호출해 findings·prior 모순·
+        #   원장 cite를 브리프에 주입한다. LLM·과금 0(결정론 도메인만)·전체 graceful(실패는 빈 list).
+        specialists = (
+            await self._run_specialists(
+                site_raw=site_raw, reg_raw=reg_raw, permit_raw=permit_raw,
+                tenant_id=tenant_id, project_id=project_id, address=address,
+            )
+            if include_specialists else []
+        )
+
         brief = {
             "address": address,
             "project_id": project_id,
             "parcel_count": parcel_count,
             "parts": parts,
             "verdict": verdict,
+            "specialists": specialists,
             "billing": self._billing(use_llm),
             "meta": meta,
         }
@@ -235,6 +251,101 @@ class DecisionBriefService:
         if isinstance(land_area_sqm, (int, float)) and land_area_sqm > 0:
             kwargs["land_area_sqm"] = float(land_area_sqm)
         return await FeasibilityServiceV2().auto_recommend_top3(**kwargs)
+
+    # ------------------------------------------------------------------
+    # SpecialistAgent 모세혈관 배선(소비처 연결) — 결정론 도메인 auto-dispatch
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pick_dev_type(permit_raw: dict[str, Any] | None) -> str:
+        """Top3(auto_recommend_top3) raw에서 대표 개발방식 코드(M코드)를 best-effort 추출.
+
+        ★실엔진 계약 = auto_recommend_top3 의 recommendations[i]['development_type']('M06' 등 코드).
+        permit 도구(check_permit_feasibility)는 이 M코드를 ZONE_PERMIT_MATRIX 와 매칭하므로 반드시
+        코드를 넘겨야 한다. type_name(한글명, 예 '일반분양')은 매트릭스 키가 아니므로 추출 대상에서
+        제외한다(한글명을 넘기면 항상 '불가'로 오판). 미확보면 '' 반환 — permit 은 dev_type 미상이면
+        보수적으로 '불가'로 본다(가짜 통과를 만들지 않음)."""
+        if not isinstance(permit_raw, dict):
+            return ""
+        recs = (
+            permit_raw.get("recommendations")
+            or permit_raw.get("top3")
+            or permit_raw.get("recommended_models")
+            or []
+        )
+        first = recs[0] if isinstance(recs, list) and recs and isinstance(recs[0], dict) else {}
+        # development_type(실엔진 정본·M코드) 최우선. 나머지는 형태변동 대비 폴백(type_name은 의도적 제외).
+        for k in ("development_type", "dev_type", "type", "model_key", "model"):
+            v = first.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+
+    async def _run_specialists(
+        self, *,
+        site_raw: dict[str, Any] | None,
+        reg_raw: dict[str, Any] | None,
+        permit_raw: dict[str, Any] | None,
+        tenant_id: str | None,
+        project_id: str | None,
+        address: str | None,
+    ) -> list[dict[str, Any]]:
+        """결정론 SpecialistAgent(zoning/permit)를 부지·인허가 데이터로 auto-dispatch.
+
+        SpecialistAgent 계층(결정론 도구 → prior → 원장 cite → 모순탐지)을 의사결정 브리프의
+        실제 소비처로 연결한다(이전엔 dispatch 엔드포인트만 있고 호출하는 곳이 없어 미배선).
+        - zoning: 용도지역 허용용도(결정론).
+        - permit: 대표 개발방식 인허가 가능성(결정론).
+        - LLM·과금 없음(두 도메인 모두 interpreter/panel 미장착). 외부엔진(심의/설계)·LLM패널
+          (cost/market)은 지연·과금 이슈로 이번 배선에서 제외(후속 opt-in 백로그).
+        - 전체·도메인별 graceful: 데이터 부족/실패는 스킵하고 브리프는 무손상.
+        반환: [{domain, task_type, summary, findings, contradictions, ledger}]
+        """
+        try:
+            site_raw = site_raw if isinstance(site_raw, dict) else {}
+            reg_raw = reg_raw if isinstance(reg_raw, dict) else {}
+            zone = site_raw.get("zone_type") or reg_raw.get("zone_type")
+            if not zone:
+                # 용도지역 없으면 결정론 도메인 입력 불가 — 가짜 디스패치 대신 정직 스킵.
+                return []
+            dev_type = self._pick_dev_type(permit_raw)
+            from apps.api.core.coordinator import AgentCoordinator
+
+            coord = AgentCoordinator()
+            ctx = {"tenant_id": tenant_id, "project_id": project_id, "address": address}
+            domains = {
+                "zoning": {"zone_type": zone},
+                "permit": {"zone_type": zone, "dev_type": dev_type},
+            }
+            results = await asyncio.gather(
+                *(coord.dispatch(d, data, **ctx) for d, data in domains.items()),
+                return_exceptions=True,
+            )
+            out: list[dict[str, Any]] = []
+            for dom, r in zip(domains.keys(), results):
+                if isinstance(r, Exception) or not isinstance(r, dict) or not r.get("ok"):
+                    # ★정직: 시도했으나 실패한 도메인은 '미시도'와 구분되도록 unavailable 엔트리로
+                    #   표면화(parts 의 status='unavailable' 패턴과 동일). 조용히 누락하지 않는다.
+                    reason = (
+                        str(r)[:120] if isinstance(r, Exception)
+                        else (r.get("message") if isinstance(r, dict) else None)
+                    ) or "교차검증 불가"
+                    logger.warning("specialist dispatch 스킵(graceful)", domain=dom, error=str(reason)[:160])
+                    out.append({"domain": dom, "status": "unavailable", "reason": reason})
+                    continue
+                out.append({
+                    "domain": dom,
+                    "status": "ok",
+                    "task_type": r.get("task_type"),
+                    "summary": r.get("summary") or {},
+                    "findings": r.get("findings") or [],
+                    "contradictions": r.get("contradictions"),
+                    "ledger": r.get("ledger"),
+                })
+            return out
+        except Exception as e:  # noqa: BLE001 — 배선 전체 실패는 빈 list(브리프 무손상)
+            logger.warning("specialist 배선 전체 스킵(graceful)", error=str(e)[:200])
+            return []
 
     # ------------------------------------------------------------------
     # 표준 요약 계약 — 도메인별 변환(프론트 도메인무관 동일 렌더)

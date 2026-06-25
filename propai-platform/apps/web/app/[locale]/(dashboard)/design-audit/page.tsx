@@ -6,7 +6,7 @@ export default async function DesignAuditPage({ params }: { params: Promise<{ lo
   const { locale } = await params;
   if (!isValidLocale(locale)) return null;
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <DesignAuditWorkspace locale={locale as Locale} />
     </div>
   );

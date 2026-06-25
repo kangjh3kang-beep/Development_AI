@@ -555,7 +555,7 @@ export function OperationsIntelligenceWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {showHero ? (
         <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8">
@@ -843,7 +843,7 @@ export function OperationsIntelligenceWorkspaceClient({
         ) : null}
 
         {showTenant || showAsset ? (
-          <div className="grid gap-6">
+          <div className="grid grid-cols-1 gap-6 min-w-0">
             {showTenant ? (
               <Card>
                 <CardContent className="p-6">

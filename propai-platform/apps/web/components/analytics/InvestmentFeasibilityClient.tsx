@@ -75,7 +75,7 @@ export function InvestmentFeasibilityClient() {
     : `/${locale}/projects`;
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       <div>
         <div className="flex items-center gap-3 mb-1.5">
           <span className="cc-meta">ROI · SSOT FEED</span>

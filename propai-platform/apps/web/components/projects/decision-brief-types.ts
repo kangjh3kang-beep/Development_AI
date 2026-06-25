@@ -151,12 +151,31 @@ export interface DecisionBriefBilling {
 }
 
 /** 의사결정 브리프 응답 본문(POST /api/v1/projects/{id}/decision-brief). */
+/**
+ * SpecialistAgent 결정론 도메인 결과(zoning/permit) — 백엔드 brief.specialists와 1:1.
+ * 결정론 도구 findings + 원장 cite + prior 모순(contradictions). LLM·과금 없음.
+ * 구 응답엔 없음(옵셔널·graceful).
+ */
+export interface DecisionSpecialist {
+  domain: string;
+  /** 'ok'=결정론 판정 산출 / 'unavailable'=시도했으나 실패(미시도와 구분·정직). 구 응답은 미정의. */
+  status?: "ok" | "unavailable";
+  reason?: string;
+  task_type?: string | null;
+  summary?: Record<string, unknown> | null;
+  findings?: Array<Record<string, unknown>>;
+  contradictions?: unknown;
+  ledger?: { ok?: boolean; version?: number | null; content_hash?: string | null } | null;
+}
+
 export interface DecisionBrief {
   address?: string | null;
   project_id?: string | null;
   parcel_count: number;
   parts: DecisionBriefPart[];
   verdict: DecisionVerdict;
+  /** SpecialistAgent 결정론 교차검증(zoning/permit) — 옵셔널·구 응답 graceful. */
+  specialists?: DecisionSpecialist[];
   billing?: DecisionBriefBilling;
   meta?: DecisionBriefMeta;
   /** 캐시 적중 시 백엔드(analysis_cache)가 최상위에 부착하는 메타(신규 분석엔 없음·옵셔널). */

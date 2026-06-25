@@ -34,7 +34,7 @@ export function RemoteSupervisionRoom({ projectId }: { projectId: string }) {
   }, [transcripts]);
 
   return (
-    <section className="grid gap-6" aria-label="원격 감리 화상회의">
+    <section className="grid grid-cols-1 gap-6 min-w-0" aria-label="원격 감리 화상회의">
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* 실 화상회의 — 공용 LiveKitRoom(시뮬레이션 제거) */}
         <LiveKitRoom projectId={projectId} roomKey="supervision" />

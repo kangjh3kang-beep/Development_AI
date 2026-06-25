@@ -20,7 +20,7 @@ export default async function ProjectsPage({ params }: ProjectsPageProps) {
   const meta = dictionary.modulePlaceholders["projects"];
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 실 목록 화면 헤더 — 목업 배너 제거(무목업), 제목+생성 CTA만 유지 */}
       <header className="flex flex-wrap items-end justify-between gap-4 px-2">
         <div className="space-y-1.5">

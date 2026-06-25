@@ -49,7 +49,7 @@ export default function BimStudioPage() {
       </div>
       <ProjectSwitcher />
       {projectId ? (
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-6 min-w-0">
           <ProjectBimWorkspaceClient locale={loc} projectId={projectId} />
           {/* BIM-적산 연동: 모델 물량(QTO) → 부위별 → 단가 → 5D 공사비 */}
           <section>

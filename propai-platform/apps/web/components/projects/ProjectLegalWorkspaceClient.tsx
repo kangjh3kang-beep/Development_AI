@@ -694,7 +694,7 @@ export function ProjectLegalWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* Hero */}
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
@@ -896,7 +896,7 @@ export function ProjectLegalWorkspaceClient({
       </Card>
 
       {/* Results */}
-      <div className="grid gap-6">
+      <div className="grid grid-cols-1 gap-6 min-w-0">
         {/* 종합 규제 분석 (주 분석): 계층·정량 한도(법정 vs 조례 vs 실효)·영향도·LLM 통합 해석 */}
         <Card>
           <CardContent className="p-6">

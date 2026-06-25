@@ -42,7 +42,7 @@ export function ParkingLogView() {
   const occupancyPercent = Math.round(stats.occupancy_rate * 100);
 
   return (
-    <section className="grid gap-6" aria-label="주차 관제 대시보드">
+    <section className="grid grid-cols-1 gap-6 min-w-0" aria-label="주차 관제 대시보드">
       {/* KPI 카드 */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[

@@ -232,7 +232,7 @@ export function TaxCalculationDashboard() {
   ) ?? [];
 
   return (
-    <div className="grid gap-8">
+    <div className="grid grid-cols-1 gap-8 min-w-0">
       {/* Simulation Inputs */}
       <Card className="border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
         <div className="bg-[var(--surface-soft)] p-6 border-b border-[var(--line)]">
@@ -293,7 +293,7 @@ export function TaxCalculationDashboard() {
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid gap-8"
+            className="grid grid-cols-1 gap-8 min-w-0"
           >
             {/* Summary Highlights */}
             <div className="grid gap-4 md:grid-cols-5">

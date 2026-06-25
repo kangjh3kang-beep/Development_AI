@@ -15,7 +15,7 @@ export default async function PermitsPage({ params }: PermitsPageProps) {
 
   // 레거시 PermitsWorkspaceClient(정적 '로그인 필요' 폼)는 AI 분석과 중복 + 로그인 게이트 오류라 제거.
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <VisionBanner variant="permit" />
       <PermitAiWorkspaceClient locale={locale as Locale} />
     </div>

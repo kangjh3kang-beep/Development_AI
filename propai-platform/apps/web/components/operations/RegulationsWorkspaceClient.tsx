@@ -84,7 +84,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   }, [addr, pnu, useLlm, siteAnalysis]);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <VisionBanner variant="permit" />
       {/* Hero + 입력 — 규제 관제 콘솔 헤더 */}
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">

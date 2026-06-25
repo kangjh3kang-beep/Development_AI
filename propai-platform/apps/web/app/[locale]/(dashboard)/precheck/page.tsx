@@ -13,7 +13,7 @@ export default async function PreCheckPage({ params }: PreCheckPageProps) {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <PreCheckWorkspace />
     </div>
   );

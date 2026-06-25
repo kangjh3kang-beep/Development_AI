@@ -188,7 +188,7 @@ export function TenantWorkspaceClient({
     : "";
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* Hero — 임차인 운영 관제 콘솔 헤더 */}
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <i className="cc-bracket cc-bracket--tl" />
