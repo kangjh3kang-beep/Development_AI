@@ -1245,3 +1245,213 @@ async def get_permit_docs(project_id: str):
         "completed": 0,
         "completion_pct": 0.0,
     }
+
+
+# ── 기하 SSOT 통합(/layout) + 오케스트레이터 노출(/proposals) ──
+
+class LayoutRequest(BimGenerateRequest):
+    """기하 SSOT(/layout) 요청 — /mass 입력(상속) + 평면 브리지·향·LLM 조정 입력.
+
+    /mass와 동일 입력으로 매스를 확정하고, 거기에 동·층·코어·평형별 평면(generate_unit_plan
+    실폴리곤)을 합성해 DesignGeometry 전체를 반환한다. 평형 믹스(unit_types)·필지 폴리곤
+    (site_geometry·향 산출용)·LLM 부지맞춤 조정(llm_adjust·opt-in)을 추가로 받는다.
+    """
+    zone_name: str | None = None                  # 한글 용도지역명(allowed_uses·한도 키)
+    avg_unit_area_sqm: float = Field(84.0, gt=0)  # 평형 미상 시 단일 평형 폴백
+    site_geometry: dict[str, Any] | None = None   # 필지 GeoJSON(향 산출 — 미상이면 향 None)
+    llm_adjust: bool = False                       # True면 추천 평면에 LLM 부지맞춤 미세조정(검증게이트)
+
+
+class ProposalsRequest(BaseModel):
+    """오케스트레이터(generate_design_proposals) 노출 요청(W1) — 부지조건 → 설계안 Top-N.
+
+    tenant_id는 받지 않는다(인증 컨텍스트 강제). project_id는 경로(project_id)로 받아 소유검증.
+    design-gen /generate와 동일 산출이며, 여기서는 설계 스튜디오 경로(/api/v1/design)로도 노출한다.
+    """
+    area_sqm: float = Field(..., gt=0)
+    zone_code: str = "2R"
+    zone_name: str | None = None
+    sigungu: str | None = None
+    dev_type: str = "M06"
+    building_use: str | None = None
+    ordinance_far_pct: float | None = Field(None, gt=0)
+    ordinance_bcr_pct: float | None = Field(None, gt=0, le=100)
+    width_m: float | None = Field(None, gt=0)
+    depth_m: float | None = Field(None, gt=0)
+    avg_unit_area_sqm: float = Field(84.0, gt=0)
+    unit_types: list[str] | None = None
+    top_n: int = Field(3, ge=1, le=10)
+    verify: bool = False
+    interpret: bool = False
+
+
+def _build_site_context_for_layout(req: LayoutRequest, mass: dict[str, Any]):
+    """LayoutRequest + 확정 매스 → compose용 SiteContext(composition 정본 재사용·DRY).
+
+    매스 폭/깊이를 부지 치수 힌트로 넘기고, land_area·zone으로 법정/조례 한도를 채운다.
+    """
+    from app.services.design_ingest.composition import (
+        map_building_use_kr,
+        site_context_from_zone,
+    )
+
+    area = req.land_area_sqm or (
+        float(mass.get("building_width_m") or 0) * float(mass.get("building_depth_m") or 0)
+        * 100.0 / max(1.0, float(mass.get("bcr_pct") or 50.0))
+    )
+    return site_context_from_zone(
+        req.zone_code, area,
+        zone_name=req.zone_name,
+        ordinance_far_pct=None, ordinance_bcr_pct=None,
+        avg_unit_area_sqm=req.avg_unit_area_sqm,
+        unit_types=req.unit_types,
+        building_use_kr=map_building_use_kr(req.building_use),
+    )
+
+
+@router.post("/{project_id}/layout")
+async def compute_design_layout(project_id: str, req: LayoutRequest):
+    """기하 SSOT(DesignGeometry) — /mass 내부호출(매스) + 동·층·코어 + 평형별 평면(평면 브리지).
+
+    하향식 단계: ①/mass(매스 SSOT) ②compose(평형 분해·배치 폴리곤) ③평면 브리지
+    (generate_unit_plan 실폴리곤) ④코어/향 합성 → DesignGeometry 단일 정본 반환.
+    선택형 LLM 부지맞춤 조정(llm_adjust)은 결정론 룰 검증게이트 통과 시에만 적용(폐기→원안 폴백).
+    /mass 하위호환(매스 필드는 그대로 포함). 무날조: 미상은 None·정직고지.
+    """
+    from app.services.design_ingest.composition import (
+        _NET_AREA_RATIO,
+        compose,
+        compute_unit_breakdown,
+    )
+    from app.services.design_ingest.design_geometry import (
+        allowed_uses,
+        build_design_geometry,
+        llm_adjust_unit_plan,
+    )
+
+    # ① 매스(SSOT 단일화) — /mass와 동일 경로.
+    mass = _resolve_mass(req)
+    building_use = req.building_use or "공동주택"
+
+    # ② compose — 평형 분해·배치 폴리곤(참조 도면 있을 때). 도면 없으면 [](아래 매스 기준 폴백).
+    site = _build_site_context_for_layout(req, mass)
+    candidates = compose(site, [], top_n=1)
+    candidate = candidates[0].to_dict() if candidates else None
+
+    # ②-b 도면 없이도 평면 브리지가 동작하도록 — 확정 매스 연면적으로 평형 분해(정본 재사용·DRY).
+    #     compose는 참조도면 없으면 빈 결과라, /layout은 매스 SSOT(연면적·층수)에서 직접 평형을 분해해
+    #     candidate.unit_breakdown을 채운다(평면 브리지 입력 보장 — D3 해소가 도면 유무와 무관).
+    gfa = mass.get("total_floor_area_sqm")
+    nfloors = mass.get("num_floors")
+    if gfa and nfloors and req.unit_types:
+        per_floor_net = (float(gfa) * _NET_AREA_RATIO) / float(nfloors)
+        ub = compute_unit_breakdown(per_floor_net, int(nfloors), req.unit_types)
+        if ub:
+            if candidate is None:
+                candidate = {}
+            candidate.setdefault("unit_breakdown", ub["units"])
+            candidate.setdefault("estimated_units", ub["total_units"])
+            candidate.setdefault("estimated_floors", int(nfloors))
+            candidate.setdefault("estimated_gfa_sqm", float(gfa))
+
+    # ③④ DesignGeometry 어셈블(매스+동+층+코어+평형별 평면) — 기하 SSOT.
+    geometry = build_design_geometry(
+        candidate, _site_summary_for_layout(site),
+        mass=mass, site_geometry=req.site_geometry, building_use=building_use,
+    )
+    geo_dict = geometry.to_dict()
+
+    # ④ LLM 부지맞춤 조정(opt-in·검증게이트) — 추천 평형(첫 평면 보유 유닛)에 best-effort 적용.
+    llm_adjustment = None
+    if req.llm_adjust:
+        target = next((u for u in geo_dict["units"] if u.get("plan")), None)
+        if target is not None:
+            site_ctx = {
+                "zone_name": req.zone_name, "zone_code": req.zone_code,
+                "orientation": geo_dict["site"].get("orientation"),
+                "area_sqm": geo_dict["site"].get("area_sqm"),
+            }
+            adj = await llm_adjust_unit_plan(target, site_context=site_ctx, similar_seeds=[])
+            if adj is not None:
+                llm_adjustment = {"unit_type": target.get("type"), **adj}
+                if adj.get("applied"):
+                    target["plan"]["rooms"] = adj["rooms"]  # 검증 통과분만 정본에 반영
+
+    bw, bd = float(mass["building_width_m"]), float(mass["building_depth_m"])
+    nf, fh = int(mass["num_floors"]), float(mass.get("floor_height_m", req.floor_height_m))
+    return {
+        "project_id": project_id,
+        "geometry": geo_dict,
+        "allowed_uses": allowed_uses(req.zone_name or req.zone_code),
+        "llm_adjustment": llm_adjustment,
+        # /mass 하위호환 필드(기존 소비처 무파손).
+        "building_width_m": round(bw, 2),
+        "building_depth_m": round(bd, 2),
+        "num_floors": nf,
+        "floor_height_m": fh,
+        "building_height_m": round(nf * fh, 2),
+        "bcr_pct": mass.get("bcr_pct"),
+        "far_pct": mass.get("far_pct"),
+        "total_units": candidate.get("estimated_units") if candidate else mass.get("total_units"),
+        "disclaimer": "AI 보조 초안 — 기하 SSOT(매스·배치·평면). 최종 인허가·설계 책임은 건축사.",
+    }
+
+
+def _site_summary_for_layout(site) -> dict[str, Any]:
+    """compose SiteContext → build_design_geometry용 부지요약(면적·치수). 순수 매핑."""
+    return {
+        "area_sqm": site.area_sqm,
+        "zone_code": site.zone_code,
+        "zone_name": site.zone_name,
+        "buildable_footprint_sqm": site.buildable_footprint_sqm,
+        "max_gfa_sqm": site.max_gfa_sqm,
+    }
+
+
+@router.post("/{project_id}/proposals")
+async def generate_design_proposals_endpoint(
+    project_id: str,
+    req: ProposalsRequest,
+    current=Depends(get_current_user),
+):
+    """오케스트레이터 노출(W1) — 부지조건 → 인허가 부합 설계안 Top-N(근거·법령링크 동반).
+
+    설계 스튜디오 경로(/api/v1/design)에서도 generate_design_proposals를 호출할 수 있게 노출한다.
+    tenant_id는 인증 컨텍스트 강제(클라이언트 입력 무시). project_id는 경로로 받아 SSOT 일관.
+    design-gen /generate와 동일 산출(중복 로직 없음 — 동일 오케스트레이터 재사용·DRY).
+    """
+    from app.services.design_ingest.orchestrator import (
+        DesignRequest,
+        generate_design_proposals,
+    )
+
+    kwargs: dict[str, Any] = {
+        "area_sqm": req.area_sqm,
+        "zone_code": req.zone_code,
+        "zone_name": req.zone_name,
+        "sigungu": req.sigungu,
+        "dev_type": req.dev_type,
+        "ordinance_far_pct": req.ordinance_far_pct,
+        "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        "width_m": req.width_m,
+        "depth_m": req.depth_m,
+        "avg_unit_area_sqm": req.avg_unit_area_sqm,
+        "unit_types": req.unit_types,
+        "top_n": req.top_n,
+        "tenant_id": str(getattr(current, "tenant_id", "")) or None,
+        "project_id": project_id if _is_uuid(project_id) else None,
+        "verify": req.verify,
+        "interpret": req.interpret,
+    }
+    if req.building_use:
+        kwargs["building_use"] = req.building_use
+    return await generate_design_proposals(DesignRequest(**kwargs))
+
+
+def _is_uuid(v: str) -> bool:
+    import uuid as _uuid
+    try:
+        _uuid.UUID(str(v))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
