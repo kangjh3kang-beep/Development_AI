@@ -23,7 +23,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
-import { mapZoningRich, normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
+import { mapZoningRich, normalizeUpzoningScenarios, guardMultiParcelRich } from "@/lib/zoning-ssot";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
@@ -815,13 +815,28 @@ export default function SiteAnalysisPage() {
         //  land-profile·utilization-optimizer 카드와 용도지역 법정/실효 섹션이 안정적으로 채워진다.
         //  ★멱등: AutoZoningBadge 경로도 동일 mapZoningRich를 사용 → 후속 write가 동일값을 덮으므로
         //  이중쓰기여도 무해(무회귀). 아래 upzoningScenarios write와도 동일 결과(같은 source) — 무해.
-        updateSiteAnalysis(mapZoningRich(landResult));
+        // ★SSOT 누출 봉합(다필지): /zoning/comprehensive도 "대표 1필지" 분석이라 mapZoningRich가
+        //  추출하는 단일유래 필드(실효/법정 한도·종상향·접도·특이부지)가 혼재 다필지의 통합 SSOT를
+        //  오염시킨다. 다필지면 guardMultiParcelRich로 단일유래 필드를 제거해 통합 경로
+        //  (ProjectAnalysisSummary /zoning/integrated-analysis blended_*_eff_pct)가 살아남게 한다.
+        //  다필지 판정은 store SSOT(parcelCount>1 && parcels>1) — LandIntelligencePanel과 동일 게이트.
+        const ssotForGuard = useProjectContextStore.getState().siteAnalysis;
+        const isMultiParcelWrite =
+          (ssotForGuard?.parcelCount ?? 1) > 1 &&
+          (ssotForGuard?.parcels?.length ?? 0) > 1;
+        updateSiteAnalysis(
+          guardMultiParcelRich(mapZoningRich(landResult), isMultiParcelWrite),
+        );
 
         // L3에서 확정 실효용적률이 오면 초기 시드 ordinance를 정밀값으로 승격(다른 필드 보존).
+        // ★SSOT 누출 봉합(다필지): ordinance.effectiveFar/effectiveBcr는 top-level effectiveFarPct
+        //  가드를 우회하는 또 다른 쓰기 경로다(하류 ProjectAnalysisSummary 등이 ord?.effectiveFar로
+        //  폴백). 다필지에서는 대표 1필지 실효값을 ordinance에 써넣으면 통합값과 불일치하므로
+        //  이 승격을 건너뛴다(통합 경로가 진실원천 — 무회귀: 단일필지는 종전대로 승격).
         const ef = landResult.effective_far;
         const efPct = ef?.effective_far_pct ?? ef?.legal_max_far_pct ?? null;
         const ebPct = ef?.effective_bcr_pct ?? null;
-        if (efPct != null || ebPct != null) {
+        if (!isMultiParcelWrite && (efPct != null || ebPct != null)) {
           const prev = useProjectContextStore.getState().siteAnalysis?.ordinance ?? null;
           updateSiteAnalysis({
             ordinance: {
@@ -842,8 +857,10 @@ export default function SiteAnalysisPage() {
         }
 
         // 기존 건축물 현황(표제부)을 store에 영속(있을 때만, 과하지 않게) — 후속 단계 참조용.
+        // ★SSOT 누출 봉합(다필지): building_detail은 대표 1필지의 표제부라 혼재 다필지의 "대표 건물"로
+        //  오인된다(통합 등가물 없음). 다필지에서는 기록하지 않는다(대표필지 건물정보 누출 차단).
         const bd = landResult.building_detail;
-        if (bd && (bd.main_purpose || bd.total_area_sqm)) {
+        if (!isMultiParcelWrite && bd && (bd.main_purpose || bd.total_area_sqm)) {
           updateSiteAnalysis({
             buildingInfo: {
               buildingName: bd.building_name ?? "",
@@ -859,11 +876,16 @@ export default function SiteAnalysisPage() {
         // 종상향 per-scenario(미래 토지특성)를 SSOT에 보존 — 그동안 로컬 l3Data에만 머물러
         // 하류(토지특성 foundation·추천·설계)가 읽지 못하던 Stage B를 단일 진실원으로 전파(U2).
         // 무목업: 시나리오가 없으면 명시적 null로 덮어 직전 주소 잔류(stale)를 차단한다.
-        updateSiteAnalysis({
-          upzoningScenarios: normalizeUpzoningScenarios(
-            landResult.upzoning?.scenarios ?? landResult.upzoning_scenarios,
-          ),
-        });
+        // ★SSOT 누출 봉합(다필지): 이 write는 위 mapZoningRich(mapUpzoning)와 동일 source라 단일필지엔
+        //  중복(무해)이지만, 다필지에서는 위 guardMultiParcelRich가 upzoningScenarios를 제거한 것을
+        //  대표필지 값으로 되살려 통합값을 덮어쓴다(가드 우회 경로). 따라서 다필지면 건너뛴다.
+        if (!isMultiParcelWrite) {
+          updateSiteAnalysis({
+            upzoningScenarios: normalizeUpzoningScenarios(
+              landResult.upzoning?.scenarios ?? landResult.upzoning_scenarios,
+            ),
+          });
+        }
       } catch {
         // L3 데이터 실패는 무시 — 기본 분석만 표시
       }

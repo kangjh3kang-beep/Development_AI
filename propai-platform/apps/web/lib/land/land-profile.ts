@@ -16,7 +16,7 @@ import type {
   UpzoningScenarioData,
 } from "@/store/useProjectContextStore";
 import type { EvidenceItem } from "@/components/common/EvidencePanel";
-import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, resolveDominantZone } from "@/lib/zoning-ssot";
 
 /** 가능성 등급(종상향). */
 export type LandFeasibility = "상" | "중" | "하";
@@ -249,19 +249,24 @@ export function buildLandProfile(
   if (!site) return null;
   const address = (site.address ?? "").trim() || null;
   const pnu = (site.pnu ?? "").trim() || null;
-  const zoneCode = (site.zoneCode ?? "").trim() || null;
+  // ★SSOT 읽기 통일: 통합 dominant_zone 우선, 없으면 단일 zoneCode(resolveDominantZone).
+  //   다필지 혼재에서 대표필지 용도지역(예: 자연녹지) 대신 dominant_zone(예: 제2종일반주거)이 표시된다.
+  const zoneCode = resolveDominantZone(site);
   if (!address && !pnu && !zoneCode) return null;
 
+  // ★SSOT 읽기 통일: 실효 인자에 통합>실효 두 계층만(법정 포함 resolveFarPct 미사용) — 통합이나 실효가
+  //   있으면 "실효" 라벨, 없으면 national(법정상한)이 "법정상한" 라벨로 표시되어 resolveMetric 의미 보존.
+  //   다필지에서 단일 effectiveFarPct가 store에서 제거(가드)돼도 integratedFarEffPct로 올바른 실효값 표시.
   const far = resolveMetric(
     "용적률",
-    num(site.effectiveFarPct),
+    num(site.integratedFarEffPct ?? site.effectiveFarPct),
     num(site.nationalFarPct),
     FAR_LEGAL_BASIS,
     (site.farBasis ?? "").trim() || null,
   );
   const bcr = resolveMetric(
     "건폐율",
-    num(site.effectiveBcrPct),
+    num(site.integratedBcrEffPct ?? site.effectiveBcrPct),
     num(site.nationalBcrPct),
     BCR_LEGAL_BASIS,
     // farBasis는 FAR(용적률) 전용 근거 — 건폐율 캡션으로 오표기하지 않도록 null 전달.

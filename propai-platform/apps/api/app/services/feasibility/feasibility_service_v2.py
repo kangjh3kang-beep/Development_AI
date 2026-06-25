@@ -93,6 +93,7 @@ class FeasibilityServiceV2:
         region: str = "서울",
         equity_won: int = 10_000_000_000,  # 자기자본 100억 기본
         use_llm: bool = True,
+        with_senior: bool = True,
     ) -> dict:
         """부지 주소로부터 최적 사업모델 Top 3 자동 추천."""
 
@@ -281,6 +282,33 @@ class FeasibilityServiceV2:
         if special:
             result["special_parcel"] = special
             result["honest_disclosure"] = special.get("honest_disclosure")
+
+        # ── 시니어 금융전문가 자문 모세혈관 배선(P1·ROI게이트) ──
+        # Top 후보의 자기자본비율(자기자본/총사업비)을 시니어 금융 평가기로 검증해
+        # 비현실 수익구조(과거 ROI566% 사건류)에 정직 경고를 첨부한다.
+        # ★계산값을 절대 덮어쓰지 않는다 — 자문·경고만 result에 부착(자문은 보조).
+        # ★무회귀: with_senior=True 기본이되 attach_senior_consultation은 절대 raise 안 함.
+        if with_senior and top3:
+            try:
+                from app.services.senior_agents.consultation_hook import (
+                    attach_senior_consultation,
+                )
+
+                _top = top3[0]
+                _feas = _top.get("feasibility") if isinstance(_top, dict) else None
+                _sr_inputs: dict = {}
+                if isinstance(_feas, dict):
+                    _tc = _feas.get("total_cost_won")
+                    if isinstance(_tc, (int, float)) and _tc > 0:
+                        _sr_inputs["total_cost"] = float(_tc)
+                        if equity_won and equity_won > 0:
+                            _sr_inputs["equity"] = float(equity_won)
+                if _sr_inputs:
+                    result["senior_consultation"] = attach_senior_consultation(
+                        "finance", _sr_inputs,
+                    )
+            except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 수지 분석 무손상
+                pass
 
         # Step 5: AI 해석 생성 — 명시실행(use_llm=False면 규칙기반 결과만, LLM 생략)
         if use_llm:

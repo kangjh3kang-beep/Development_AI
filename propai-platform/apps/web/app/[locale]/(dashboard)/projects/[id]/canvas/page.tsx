@@ -17,6 +17,7 @@ import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct, resolveDominantZone } from "@/lib/zoning-ssot";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
@@ -172,11 +173,11 @@ export default function SiteCanvasPage() {
             )}
             {tab === "regulation" && (
               <>
-                {site?.zoneCode && (site?.effectiveFarPct != null || site?.effectiveBcrPct != null) && (
+                {resolveDominantZone(site) && (resolveFarPct(site) != null || resolveBcrPct(site) != null) && (
                   <VerificationBadge analysisType="site" context={{
-                    zone_type: site.zoneCode,
-                    effective_far: site.effectiveFarPct,
-                    effective_bcr: site.effectiveBcrPct,
+                    zone_type: resolveDominantZone(site)!,
+                    effective_far: resolveFarPct(site) ?? null,
+                    effective_bcr: resolveBcrPct(site) ?? null,
                     land_area_sqm: effArea,
                   }} />
                 )}
@@ -237,7 +238,7 @@ export default function SiteCanvasPage() {
                   <p className="text-xs font-black text-[var(--text-primary)]">사업 종합(한눈에)</p>
                   <dl className="mt-2 space-y-1.5 text-[11px]">
                     <div className="flex justify-between"><dt className="text-[var(--text-hint)]">대지면적</dt><dd className="font-bold text-[var(--text-primary)]">{effArea ? `${Math.round(effArea).toLocaleString()}㎡ (${Math.round(effArea / 3.305785).toLocaleString()}평)` : "—"}</dd></div>
-                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">용도지역</dt><dd className="font-bold text-[var(--text-primary)]">{site?.zoneCode || "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-[var(--text-hint)]">용도지역</dt><dd className="font-bold text-[var(--text-primary)]">{resolveDominantZone(site) || "—"}</dd></div>
                     <div className="flex justify-between"><dt className="text-[var(--text-hint)]">필지</dt><dd className="font-bold text-[var(--text-primary)]">{(ssotParcels?.length ?? 0) > 1 ? `통합 ${ssotParcels!.length}필지` : "단일"}</dd></div>
                     <div className="flex justify-between"><dt className="text-[var(--text-hint)]">수지 ROI</dt><dd className="font-bold text-[var(--accent-strong)]">{feas?.roiPct != null ? `${feas.roiPct.toFixed(1)}%` : "분석 전"}</dd></div>
                   </dl>

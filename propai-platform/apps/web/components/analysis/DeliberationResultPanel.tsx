@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 
 type EngineRule = {
   rule: { rule_id: string; comparator: string; basis_article: string };
@@ -122,8 +123,10 @@ export function DeliberationResultPanel() {
   //   고정 SAMPLE 대신 '내 프로젝트' 부지를 심의한다(#185 안전: 객체 셀렉터 미사용, primitive만 구독).
   const pnu = useProjectContextStore((s) => s.siteAnalysis?.pnu ?? null);
   const address = useProjectContextStore((s) => s.siteAnalysis?.address ?? null);
-  const farLimit = useProjectContextStore((s) => s.siteAnalysis?.effectiveFarPct ?? null);
-  const bcrLimit = useProjectContextStore((s) => s.siteAnalysis?.effectiveBcrPct ?? null);
+  // ★SSOT 읽기 통일: 통합 > 실효 > 법정 단일 경유(다필지 통합 한도 우선). 반환값이 항상
+  //   primitive(number|null)이므로 #185 렌더루프 안전(객체 셀렉터 미사용).
+  const farLimit = useProjectContextStore((s) => resolveFarPct(s.siteAnalysis) ?? null);
+  const bcrLimit = useProjectContextStore((s) => resolveBcrPct(s.siteAnalysis) ?? null);
   const farMeasured = useProjectContextStore((s) => s.designData?.far ?? null);
   const bcrMeasured = useProjectContextStore((s) => s.designData?.bcr ?? null);
 

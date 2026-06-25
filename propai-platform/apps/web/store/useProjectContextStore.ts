@@ -115,6 +115,16 @@ interface SiteAnalysisData {
   farBasis?: string | null;           // 실효용적률 최종 근거 라벨
   roadWidthM?: number | null;         // 접도 도로폭(m·NED 도로접면 추정) — 시니어 심의 접도 CSP 입력원
 
+  // ── 다필지 통합 실효 한도/용도지역(integrated SSOT) — /zoning/integrated-analysis 산출 보존 ──
+  // 단일 PNU(대표 1필지) 유래 effective*Pct/zoneCode가 혼재 다필지의 진실원천이 아니므로, 통합 경로
+  // (ProjectAnalysisSummary가 호출)의 면적가중 blended 실효·dominant 용도지역을 SSOT에 보존한다.
+  // 하류 소비처는 resolveFarPct/resolveBcrPct/resolveDominantZone(lib/zoning-ssot)로 이 값을 우선
+  // 읽어 "통합값은 일부 컴포넌트엔 prop으로만 전파되고 나머지는 대표값을 읽던" 읽기 분기를 일원화한다.
+  // 단일필지/통합 미확보면 부재(옵셔널) → 헬퍼가 effective*Pct/zoneCode로 폴백(무회귀).
+  integratedFarEffPct?: number | null;  // 면적가중 통합 실효 용적률(%·blended_far_eff_pct)
+  integratedBcrEffPct?: number | null;  // 면적가중 통합 실효 건폐율(%·blended_bcr_eff_pct)
+  dominantZoneCode?: string | null;     // 통합 대표(우세) 용도지역(dominant_zone)
+
   upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
   upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
   // 종상향 per-scenario 상세(미래 토지특성 SSOT) — comprehensive 산출 보존(additive·옵셔널).

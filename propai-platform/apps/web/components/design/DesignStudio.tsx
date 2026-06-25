@@ -14,6 +14,7 @@ import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
@@ -360,24 +361,27 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const area = Number(form.landArea) || 0;
     const spec = getZoningSpec(effectiveZoning);
     if (!spec || area <= 0) return null;
-    // 실효 용적률 우선: 부지분석(special_parcel/조례/계획 반영) effectiveFarPct가 있으면
+    // 실효 용적률 우선: 부지분석(special_parcel/조례/계획 반영) 실효 용적률이 있으면
     // 법정상한(kr-building-regulations spec.floorAreaRatioMax) 대신 이를 진실원으로 쓴다.
-    // 주소 불일치 잔류 스냅샷이 다른 부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용.
-    // 미확보 시 기존 동작(법정상한 폴백) 유지 — 무회귀.
+    // ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정)로 일원화 — 다필지에서는 통합 실효가
+    //   대표 1필지 실효를 대체한다(인벨로프 카드·사업개요와 일관). 주소 불일치 잔류 스냅샷이 다른
+    //   부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용. 미확보 시 법정상한 폴백 — 무회귀.
+    const resolvedFar = resolveFarPct(siteAnalysis);
     const effFarPct =
-      siteMatch !== "mismatch" && typeof siteAnalysis?.effectiveFarPct === "number" && siteAnalysis.effectiveFarPct > 0
-        ? siteAnalysis.effectiveFarPct
+      siteMatch !== "mismatch" && resolvedFar != null && resolvedFar > 0
+        ? resolvedFar
         : null;
     const farUsed = effFarPct ?? spec.floorAreaRatioMax; // 적용 용적률(%) — 실효 우선, 법정 폴백
     const farIsEffective = effFarPct != null;            // 실효값 적용 여부(라벨·근거 표기용)
     const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
-    // 실효 건폐율 우선: FAR과 동일하게 effectiveBcrPct가 있으면 법정상한(buildingCoverageMax) 대신 사용.
-    // 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch" 조건 동일하게 적용.
-    // 미확보 시 법정상한 폴백 — 무회귀.
+    // 실효 건폐율 우선: FAR과 동일하게 resolveBcrPct(통합 > 실효 > 법정)가 있으면 법정상한
+    // (buildingCoverageMax) 대신 사용. 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch"
+    // 조건 동일하게 적용. 미확보 시 법정상한 폴백 — 무회귀.
+    const resolvedBcr = resolveBcrPct(siteAnalysis);
     const effBcrPct =
-      siteMatch !== "mismatch" && typeof siteAnalysis?.effectiveBcrPct === "number" && siteAnalysis.effectiveBcrPct > 0
-        ? siteAnalysis.effectiveBcrPct
+      siteMatch !== "mismatch" && resolvedBcr != null && resolvedBcr > 0
+        ? resolvedBcr
         : null;
     const bcrUsed = effBcrPct ?? spec.buildingCoverageMax;  // 적용 건폐율(%) — 실효 우선, 법정 폴백
     const bcrIsEffective = effBcrPct != null;               // 실효값 적용 여부(라벨·근거 표기용)
@@ -658,8 +662,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 pnu={siteAnalysis?.pnu || undefined}
                 zone={siteAnalysis?.zoneCode || effectiveZoning}
                 landAreaSqm={effectiveLandAreaSqm(siteAnalysis) ?? (form.landArea ? Number(form.landArea) : undefined)}
-                farLimitPct={siteAnalysis?.effectiveFarPct ?? undefined}
-                bcrLimitPct={siteAnalysis?.effectiveBcrPct ?? undefined}
+                farLimitPct={resolveFarPct(siteAnalysis) ?? undefined}
+                bcrLimitPct={resolveBcrPct(siteAnalysis) ?? undefined}
                 floorHeightM={form.floorHeight ? Number(form.floorHeight) : undefined}
                 onResult={(r) => setEnvResult(r)}
               />
