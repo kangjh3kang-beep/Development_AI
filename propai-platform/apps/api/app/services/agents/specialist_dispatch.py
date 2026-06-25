@@ -58,11 +58,19 @@ async def run_specialist_domains(
             logger.warning("specialist dispatch 스킵(graceful) domain=%s: %s", dom, str(reason)[:160])
             out.append({"domain": dom, "status": "unavailable", "reason": reason})
             continue
+        summary = r.get("summary") if isinstance(r.get("summary"), dict) else {}
+        # ★정직 강등: 도구가 명시적으로 미가용(available=False)을 보고하면(예: 외부 심의엔진 URL 미설정·
+        #   처리불가) ok=True여도 'unavailable'로 표면화한다. 그러지 않으면 '빈 findings + status:ok'
+        #   카드가 '교차검증 통과'로 오인되는 반쪽출하가 된다(엔진은 아무 일도 안 했음).
+        if summary.get("available") is False:
+            out.append({"domain": dom, "status": "unavailable",
+                        "reason": summary.get("reason") or "엔진 미가용"})
+            continue
         out.append({
             "domain": dom,
             "status": "ok",
             "task_type": r.get("task_type"),
-            "summary": r.get("summary") or {},
+            "summary": summary,
             "findings": r.get("findings") or [],
             "contradictions": r.get("contradictions"),
             "ledger": r.get("ledger"),

@@ -63,10 +63,11 @@ async def test_dispatch_only_with_attribution_context(monkeypatch):
 
     _stub_io(monkeypatch, svc, spy=_spy)
 
-    # (1) 귀속 컨텍스트 O → zoning만 디스패치 + result.specialists 주입(permit 없음).
+    # (1) 귀속 컨텍스트 O → zoning+far 결정론 디스패치 + result.specialists 주입(permit 없음=Top3 부재).
     r1 = await svc.analyze("서울특별시 강남구 역삼동 123", project_id="p1", tenant_id="t1")
     assert len(calls) == 1
-    assert list(calls[0][0].keys()) == ["zoning"]
+    assert set(calls[0][0].keys()) == {"zoning", "far"}  # comprehensive=결정론 zoning+far(무과금)
+    assert calls[0][0]["far"]["zone_type"] == "일반상업지역"  # far에 zone·base·area 전달
     assert calls[0][1]["pnu"] == _BASE["pnu"]  # pnu 전파(원장 체인 일관)
     assert r1.get("specialists") and r1["specialists"][0]["domain"] == "zoning"
 

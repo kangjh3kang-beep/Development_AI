@@ -174,6 +174,7 @@ class DecisionBriefService:
         specialists = (
             await self._run_specialists(
                 site_raw=site_raw, reg_raw=reg_raw, permit_raw=permit_raw,
+                use_llm=use_llm,
                 tenant_id=tenant_id, project_id=project_id, address=address,
             )
             if include_specialists else []
@@ -289,20 +290,23 @@ class DecisionBriefService:
         site_raw: dict[str, Any] | None,
         reg_raw: dict[str, Any] | None,
         permit_raw: dict[str, Any] | None,
+        use_llm: bool = False,
         tenant_id: str | None,
         project_id: str | None,
         address: str | None,
     ) -> list[dict[str, Any]]:
-        """결정론 SpecialistAgent(zoning/permit)를 부지·인허가 데이터로 auto-dispatch.
+        """SpecialistAgent를 부지·인허가 데이터로 auto-dispatch(분석 코어 소비처 연결).
 
         SpecialistAgent 계층(결정론 도구 → prior → 원장 cite → 모순탐지)을 의사결정 브리프의
         실제 소비처로 연결한다(이전엔 dispatch 엔드포인트만 있고 호출하는 곳이 없어 미배선).
-        - zoning: 용도지역 허용용도(결정론).
-        - permit: 대표 개발방식 인허가 가능성(결정론).
-        - LLM·과금 없음(두 도메인 모두 interpreter/panel 미장착). 외부엔진(심의/설계)·LLM패널
-          (cost/market)은 지연·과금 이슈로 이번 배선에서 제외(후속 opt-in 백로그).
-        - 전체·도메인별 graceful: 데이터 부족/실패는 스킵하고 브리프는 무손상.
-        반환: [{domain, task_type, summary, findings, contradictions, ledger}]
+        - 기본(무과금·결정론): zoning(용도지역 허용용도)·permit(대표 개발방식 인허가 가능성).
+          interpreter/panel 미장착 = LLM·과금 0.
+        - ★use_llm 옵트인 시 추가: cost·market(LLM 다관점 패널=과금)·심의·설계(외부 심의엔진).
+          과금=관리자설정·미설정 시 무료 원칙에 따라 기본 off. 심의/설계는 Stage1엔 상세 설계도면
+          (rules/elements) 부재라 zone·주소 기반 프로세스만 — 엔진 미설정/입력부족 시 graceful
+          unavailable로 정직 표면화(가짜 결과 생성 안 함).
+        - 전체·도메인별 graceful: 데이터 부족/실패는 unavailable 엔트리로 표면화, 브리프는 무손상.
+        반환: [{domain, status, ...}] (공용 헬퍼 run_specialist_domains 계약).
         """
         site_raw = site_raw if isinstance(site_raw, dict) else {}
         reg_raw = reg_raw if isinstance(reg_raw, dict) else {}
@@ -314,14 +318,36 @@ class DecisionBriefService:
         # ★pnu 전파: 원장 체인은 pnu 우선 키이므로, comprehensive(pnu 키 기록)와 동일 체인에 묶여
         #   prior 모순탐지가 단절되지 않도록 site_raw의 pnu를 함께 넘긴다(없으면 None=address 키 폴백).
         pnu = site_raw.get("pnu") or reg_raw.get("pnu")
+        domains: dict[str, dict[str, Any]] = {
+            "zoning": {"zone_type": zone},
+            "permit": {"zone_type": zone, "dev_type": dev_type},
+        }
+        if use_llm:
+            # cost: 결정론 공사비(상수×GFA) + LLM 다관점 패널. GFA는 부지 supply_areas 우선·면적×용적률 폴백.
+            eff = site_raw.get("effective_far") or {}
+            far = eff.get("effective_far_pct")
+            area = site_raw.get("land_area_sqm")
+            gfa = self._pick_supply_gfa(site_raw.get("supply_areas"), far, area) or self._gfa_from_area_far(area, far)
+            # ★official_price: comprehensive 는 land_prices(sec3)에 중첩 — top-level 아님. 중첩 우선·폴백.
+            _lp = site_raw.get("land_prices") if isinstance(site_raw.get("land_prices"), dict) else {}
+            official = _lp.get("official_price_per_sqm") or site_raw.get("official_price_per_sqm")
+            # ★입력 가드(빈 입력에 LLM 패널 과금 방지 — zoning/permit의 입력가드와 동일 원칙):
+            #   GFA 산출 가능할 때만 cost, 공시지가 신호 있을 때만 market 디스패치(가짜 0원/빈 시장 분석 금지).
+            if gfa:
+                domains["cost"] = {"dev_type": dev_type, "gfa_sqm": gfa}
+            if official:
+                domains["market"] = {"official_price_per_sqm": official}
+            # 심의·설계: 외부 심의엔진(/permit·design/process). AnalysisInput(extra ignore·기본값) — Stage1엔
+            #   zone·주소만 가용(상세도면 부재). 엔진 미설정/처리불가(summary.available=False)면 헬퍼가
+            #   status='unavailable'로 정직 강등('빈 ok' 카드 방지).
+            _engine_input = {"pnu": pnu or "", "address": address}
+            domains["심의"] = dict(_engine_input)
+            domains["설계"] = dict(_engine_input)
         # ★dispatch·graceful·status 표준화는 공용 헬퍼 단일경유(comprehensive 부지분석과 동일 경로).
         from app.services.agents.specialist_dispatch import run_specialist_domains
 
         return await run_specialist_domains(
-            {
-                "zoning": {"zone_type": zone},
-                "permit": {"zone_type": zone, "dev_type": dev_type},
-            },
+            domains,
             tenant_id=tenant_id, project_id=project_id, address=address, pnu=pnu,
         )
 

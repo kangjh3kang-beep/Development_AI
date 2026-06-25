@@ -444,8 +444,13 @@ class ComprehensiveAnalysisService:
         #   호출에만 디스패치한다(무귀속 호출은 zoning 미수집 — 원장 오염 방지).
         if include_specialists and zone_type and (project_id or tenant_id):
             from app.services.agents.specialist_dispatch import run_specialist_domains
+            # zoning(허용유형) + far(실효용적률 vs 법정상한 — base 보유 시 결정론 over-limit 플래그·원장 cite).
+            #   둘 다 in-process·LLM·과금 0. far는 base(land_register 등)·zone·land_area로 calc_effective_far.
+            _spec_domains: dict[str, dict[str, Any]] = {"zoning": {"zone_type": zone_type}}
+            if isinstance(base, dict) and base:
+                _spec_domains["far"] = {"base": base, "zone_type": zone_type, "land_area": land_area}
             result["specialists"] = await run_specialist_domains(
-                {"zoning": {"zone_type": zone_type}},
+                _spec_domains,
                 tenant_id=tenant_id, project_id=project_id, address=address, pnu=_pnu,
             )
 

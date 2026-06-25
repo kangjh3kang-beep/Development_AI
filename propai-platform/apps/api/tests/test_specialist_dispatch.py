@@ -70,6 +70,33 @@ async def test_not_ok_dict_uses_message_reason(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_available_false_downgraded_to_unavailable(monkeypatch):
+    """ok=True여도 도구가 summary.available=False(외부엔진 미설정/처리불가)면 정직하게 unavailable로 강등.
+    '빈 findings + status:ok'가 '교차검증 통과'로 오인되는 반쪽출하 방지."""
+    async def _degraded(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "findings": [],
+                "summary": {"available": False, "reason": "engine_url_unset"}}
+
+    _patch_dispatch(monkeypatch, _degraded)
+    out = await run_specialist_domains({"심의": {"pnu": "", "address": "a"}})
+    assert out[0]["status"] == "unavailable"
+    assert out[0]["reason"] == "engine_url_unset"
+
+
+@pytest.mark.asyncio
+async def test_available_true_stays_ok(monkeypatch):
+    """summary.available=True(엔진 정상 처리)는 status:ok 유지."""
+    async def _live(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "findings": [{"check_id": "S1", "status": "pass"}],
+                "summary": {"available": True, "overall_outcome": "likely"}}
+
+    _patch_dispatch(monkeypatch, _live)
+    out = await run_specialist_domains({"심의": {"pnu": "1168010100101230000"}})
+    assert out[0]["status"] == "ok"
+    assert out[0]["findings"]
+
+
+@pytest.mark.asyncio
 async def test_mixed_ok_and_fail(monkeypatch):
     async def _mixed(self, domain, data, **ctx):
         if domain == "permit":

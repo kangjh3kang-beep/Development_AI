@@ -1122,3 +1122,71 @@ async def test_build_include_specialists_false(monkeypatch):
         address="서울특별시 강남구 역삼동 123", include_specialists=False,
     )
     assert out["specialists"] == []
+
+
+@pytest.mark.asyncio
+async def test_specialists_default_no_llm_only_deterministic(monkeypatch):
+    """use_llm=False(기본)면 결정론 무과금 zoning·permit만 — cost/market/심의/설계 미디스패치."""
+    seen: list[str] = []
+
+    async def _ok(self, domain, data, **ctx):
+        seen.append(domain)
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [], "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06"}]},
+        tenant_id="t", project_id="p", address="a",
+    )
+    assert {d["domain"] for d in out} == {"zoning", "permit"}
+    assert "cost" not in seen and "심의" not in seen and "market" not in seen
+
+
+@pytest.mark.asyncio
+async def test_specialists_use_llm_adds_paid_and_engine_domains(monkeypatch):
+    """★use_llm=True → 기본(zoning·permit)에 cost·market(LLM패널)·심의·설계(외부엔진) 추가·데이터 전달."""
+    seen: dict[str, dict] = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = data
+        return {"ok": True, "domain": domain, "task_type": f"{domain}_t",
+                "summary": {}, "findings": [], "contradictions": None, "ledger": {"ok": True}}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService()._run_specialists(
+        # ★실엔진 계약: official_price_per_sqm 은 comprehensive result의 land_prices(중첩)에 있음(top-level 아님).
+        site_raw={"zone_type": "일반상업지역", "pnu": "1168010100101230000",
+                  "effective_far": {"effective_far_pct": 700}, "land_area_sqm": 1000.0,
+                  "land_prices": {"official_price_per_sqm": 5_000_000}},
+        reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06"}]},
+        use_llm=True, tenant_id="t", project_id="p", address="서울 강남",
+    )
+    assert {d["domain"] for d in out} == {"zoning", "permit", "cost", "market", "심의", "설계"}
+    assert seen["cost"]["dev_type"] == "M06"
+    assert seen["cost"]["gfa_sqm"]  # 면적×용적률(=1000×700/100=7000) 등 GFA 산출 전달
+    assert seen["market"]["official_price_per_sqm"] == 5_000_000  # land_prices 중첩서 추출
+    assert seen["심의"]["pnu"] == "1168010100101230000" and seen["심의"]["address"] == "서울 강남"
+    assert seen["설계"]["pnu"] == "1168010100101230000"
+
+
+@pytest.mark.asyncio
+async def test_specialists_use_llm_guards_empty_cost_market(monkeypatch):
+    """use_llm=True여도 GFA/공시지가 산출 불가면 cost/market 미디스패치(빈 입력 LLM 패널 과금 방지)."""
+    seen: list[str] = []
+
+    async def _ok(self, domain, data, **ctx):
+        seen.append(domain)
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [], "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService()._run_specialists(
+        # GFA 근거(supply_areas·effective_far·land_area) 부재 + land_prices 부재 → cost/market 가드.
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06"}]},
+        use_llm=True, tenant_id="t", project_id="p", address="a",
+    )
+    doms = {d["domain"] for d in out}
+    assert "cost" not in doms and "market" not in doms  # 빈 입력 가드
+    assert {"zoning", "permit", "심의", "설계"} <= doms  # 나머지는 디스패치
