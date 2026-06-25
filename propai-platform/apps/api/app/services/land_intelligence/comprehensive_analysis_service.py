@@ -546,25 +546,46 @@ class ComprehensiveAnalysisService:
         # 주: 종합분석은 중심엔진 shadow 대상 제외 — 플랫폼에 FAR/BCR '적합 verdict'가 없고 effective_far가
         # 합법 완화로 법정상한을 정당 초과할 수 있어 verdict 합성이 거짓 발산을 낳음(shadow_mappers 주석 참조).
 
-        # 성장 뇌(MemoryHub): 종합분석 산출을 도메인 SpecialistAgent로 흘려 회상/원장/자동기억 발화.
-        #   ★best-effort 비차단(.delay) — 분석 응답 지연 0(Celery 워커가 백그라운드 실행). 데이터가
-        #   신뢰 가능한 도메인만(far·zoning·market): 무목업(공시지가 0이면 market 생략). 실패는 graceful.
+        # ★분석 반영(동기·전수감사 #2): SpecialistAgent 결정론 교차검증(zoning 허용용도·far 실효검증
+        #   + 심의/설계 게이트) 결과를 result["specialists"]에 동기 수집해 화면에 반영한다. 그간 아래
+        #   .delay(fire-and-forget)만 있어 결과가 분석에 미반영이던 갭을 해소한다. 비동기 성장뇌 적재
+        #   (.delay)와 분리·병행: 동기 수집=화면 교차검증, .delay=노하우 적재. 실패는 graceful(무손상).
         try:
-            from app.tasks.specialist_tasks import run_domain_specialists_task
-            spec_domains: dict[str, Any] = {
-                "far": {"base": base, "zone_type": zone_type, "land_area": land_area},
-                "zoning": {"zone_type": zone_type},
-            }
+            from app.core.config import get_settings as _get_settings
+            from app.services.agents.specialist_dispatch import (
+                build_sync_specialist_domains,
+                run_specialist_domains,
+            )
+
+            _engine_set = bool((getattr(_get_settings(), "DELIBERATION_ENGINE_URL", "") or "").strip())
+            _sync_domains = build_sync_specialist_domains(
+                zone_type=zone_type, base=base, land_area=land_area,
+                address=address, engine_set=_engine_set,
+            )
+            _specialists = await run_specialist_domains(
+                _sync_domains, tenant_id=tenant_id, project_id=project_id,
+                pnu=_pnu, address=address,
+            )
+            if _specialists:
+                result["specialists"] = _specialists
+        except Exception as e:  # noqa: BLE001 — 교차검증 동기 반영 실패는 분석 무손상(정직 degrade)
+            logger.warning("종합분석 specialist 동기 교차검증 스킵(graceful)", err=str(e)[:160])
+
+        # 성장 뇌(MemoryHub) 비동기 적재(.delay): 위 동기 교차검증(zoning/far[/심의/설계])이
+        #   SpecialistAgent.run을 거치며 이미 MemoryHub ingest를 발화하므로, 여기선 동기 미커버 도메인(market)만
+        #   비동기 적재한다(★중복 ingest 방지 — 동기/비동기를 도메인 단위로 정확히 분리).
+        #   market은 공시지가 의존이라 화면 교차검증 대상에서 제외(무목업)하되 노하우 적재는 수행.
+        try:
             _op = (sec3 or {}).get("official_price_per_sqm")
             if isinstance(_op, (int, float)) and not isinstance(_op, bool) and _op > 0:
-                spec_domains["market"] = {"official_price_per_sqm": _op}
-            run_domain_specialists_task.delay({
-                "domains": spec_domains,
-                "tenant_id": tenant_id, "project_id": project_id,
-                "pnu": _pnu, "address": address,
-            })
+                from app.tasks.specialist_tasks import run_domain_specialists_task
+                run_domain_specialists_task.delay({
+                    "domains": {"market": {"official_price_per_sqm": _op}},
+                    "tenant_id": tenant_id, "project_id": project_id,
+                    "pnu": _pnu, "address": address,
+                })
         except Exception as e:  # noqa: BLE001 — 성장 뇌 트리거 실패는 분석을 막지 않음(정직 degrade)
-            logger.warning("종합분석 specialist 트리거 스킵(graceful)", err=str(e)[:160])
+            logger.warning("종합분석 specialist(market) 적재 스킵(graceful)", err=str(e)[:160])
 
         return result
 

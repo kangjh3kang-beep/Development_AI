@@ -312,39 +312,18 @@ class DecisionBriefService:
                 # 용도지역 없으면 결정론 도메인 입력 불가 — 가짜 디스패치 대신 정직 스킵.
                 return []
             dev_type = self._pick_dev_type(permit_raw)
-            from apps.api.core.coordinator import AgentCoordinator
+            # ★DRY: comprehensive와 동일한 SSOT 헬퍼(run_specialist_domains) 단일경유로 디스패치한다
+            #   (인라인 중복 제거 — 한 곳 고치면 양 소비처 반영). 헬퍼는 도구 available=False(엔진
+            #   미설정 등) 정직강등까지 포함해 인라인본보다 견고하다.
+            from app.services.agents.specialist_dispatch import run_specialist_domains
 
-            coord = AgentCoordinator()
-            ctx = {"tenant_id": tenant_id, "project_id": project_id, "address": address}
-            domains = {
-                "zoning": {"zone_type": zone},
-                "permit": {"zone_type": zone, "dev_type": dev_type},
-            }
-            results = await asyncio.gather(
-                *(coord.dispatch(d, data, **ctx) for d, data in domains.items()),
-                return_exceptions=True,
+            out: list[dict[str, Any]] = await run_specialist_domains(
+                {
+                    "zoning": {"zone_type": zone},
+                    "permit": {"zone_type": zone, "dev_type": dev_type},
+                },
+                tenant_id=tenant_id, project_id=project_id, address=address,
             )
-            out: list[dict[str, Any]] = []
-            for dom, r in zip(domains.keys(), results):
-                if isinstance(r, Exception) or not isinstance(r, dict) or not r.get("ok"):
-                    # ★정직: 시도했으나 실패한 도메인은 '미시도'와 구분되도록 unavailable 엔트리로
-                    #   표면화(parts 의 status='unavailable' 패턴과 동일). 조용히 누락하지 않는다.
-                    reason = (
-                        str(r)[:120] if isinstance(r, Exception)
-                        else (r.get("message") if isinstance(r, dict) else None)
-                    ) or "교차검증 불가"
-                    logger.warning("specialist dispatch 스킵(graceful)", domain=dom, error=str(reason)[:160])
-                    out.append({"domain": dom, "status": "unavailable", "reason": reason})
-                    continue
-                out.append({
-                    "domain": dom,
-                    "status": "ok",
-                    "task_type": r.get("task_type"),
-                    "summary": r.get("summary") or {},
-                    "findings": r.get("findings") or [],
-                    "contradictions": r.get("contradictions"),
-                    "ledger": r.get("ledger"),
-                })
 
             # ── ★심의엔진 활성화(opt-in·use_llm 게이트) — 외부 엔진 위임·타임아웃·정직강등 ──
             #   use_llm=True 일 때만 외부 심의엔진에 위임한다(지연·과금·네트워크). 엔진 미설정·타임아웃·
