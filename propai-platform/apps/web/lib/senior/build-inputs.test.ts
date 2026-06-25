@@ -11,6 +11,22 @@ describe("buildSeniorInputs", () => {
     expect(r).toEqual({ bcr_actual: 55, bcr_limit: 60, far_actual: 240, far_limit: 250 });
   });
 
+  it("심의: 설계 높이 + 법정 높이한도 → height_actual/height_limit 추가", () => {
+    const r = buildSeniorInputs("senior_deliberation_member", {
+      designData: { heightM: 38, maxHeightM: 35 },
+    });
+    expect(r).toEqual({ height_actual: 38, height_limit: 35 });
+  });
+
+  it("심의: 높이한도 0/null(무제한·미산정) → height 생략(무목업)", () => {
+    expect(
+      buildSeniorInputs("senior_deliberation_member", { designData: { heightM: 38, maxHeightM: 0 } }),
+    ).toBeUndefined();
+    expect(
+      buildSeniorInputs("senior_deliberation_member", { designData: { heightM: 38, maxHeightM: null } }),
+    ).toBeUndefined();
+  });
+
   it("심의: 실효한도 없으면 법정상한으로 폴백", () => {
     const r = buildSeniorInputs("senior_deliberation_member", {
       designData: { far: 240 },
