@@ -121,7 +121,11 @@ def test_consult_use_llm_injects_narrative(monkeypatch):
     async def fake_enforce(db):
         return None
 
+    async def fake_debate(debate, *, use_llm):
+        return {"pro": "적합 논증(모킹)", "con": "부적합 논증(모킹)"}
+
     monkeypatch.setattr(senior_router, "generate_senior_narrative", fake_narrative)
+    monkeypatch.setattr(senior_router, "generate_senior_debate", fake_debate)
     monkeypatch.setattr("app.core.billing_deps.enforce_llm_quota", fake_enforce, raising=False)
 
     r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})
@@ -129,6 +133,8 @@ def test_consult_use_llm_injects_narrative(monkeypatch):
     reasoning = r.json()["reasoning"]
     assert reasoning is not None  # use_llm → include_reasoning 강제
     assert reasoning["mode"] == "llm" and reasoning["narrative"] == "종합: 조건부 Go(모킹)"
+    # 금융=고위험 → debate 발동 → debate_result 주입
+    assert reasoning["debate_result"] == {"pro": "적합 논증(모킹)", "con": "부적합 논증(모킹)"}
 
 
 def test_consult_use_llm_quota_402_propagates(monkeypatch):
@@ -153,10 +159,14 @@ def test_consult_use_llm_graceful_when_narrative_none(monkeypatch):
     async def none_narrative(prompt, *, use_llm):
         return None
 
+    async def none_debate(debate, *, use_llm):
+        return None
+
     async def fake_enforce(db):
         return None
 
     monkeypatch.setattr(senior_router, "generate_senior_narrative", none_narrative)
+    monkeypatch.setattr(senior_router, "generate_senior_debate", none_debate)
     monkeypatch.setattr("app.core.billing_deps.enforce_llm_quota", fake_enforce, raising=False)
 
     r = _client().post("/api/v1/senior/consult", json={"domain": "금융", "use_llm": True})

@@ -3,7 +3,9 @@
 import pytest
 
 from app.services.senior_agents.llm_runner import (
+    SeniorDebateInterpreter,
     SeniorNarratorInterpreter,
+    generate_senior_debate,
     generate_senior_narrative,
 )
 
@@ -46,6 +48,43 @@ async def test_empty_invoke_result_returns_none(monkeypatch):
 
     monkeypatch.setattr(SeniorNarratorInterpreter, "_invoke", empty)
     assert await generate_senior_narrative("p", use_llm=True) is None
+
+
+@pytest.mark.asyncio
+async def test_debate_off_or_none_returns_none():
+    assert await generate_senior_debate({"pro": "p", "con": "c"}, use_llm=False) is None
+    assert await generate_senior_debate(None, use_llm=True) is None
+
+
+@pytest.mark.asyncio
+async def test_debate_executes_both_sides(monkeypatch):
+    async def fake_invoke(self, prompt):  # noqa: ANN001, ARG001
+        # 프롬프트 입장에 따라 다른 텍스트(여기선 단순 에코 텍스트)
+        return {"text": f"논증({len(prompt)})"}
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", fake_invoke)
+    r = await generate_senior_debate({"pro": "적합 입장", "con": "부적합 입장"}, use_llm=True)
+    assert r is not None and r["pro"].startswith("논증") and r["con"].startswith("논증")
+
+
+@pytest.mark.asyncio
+async def test_debate_partial_failure_keeps_other_side(monkeypatch):
+    async def half(self, prompt):  # noqa: ANN001, ARG001
+        # '부적합'(con)만 빈결과 → con 생략. 'pro'/'con' 마커로 입장 구분(부분문자열 충돌 회피).
+        return {} if "부적합" in prompt else {"text": "프로 논증"}
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", half)
+    r = await generate_senior_debate({"pro": "적합하다는 입장", "con": "부적합하다는 입장"}, use_llm=True)
+    assert r == {"pro": "프로 논증"}  # con 빈결과는 생략(graceful)
+
+
+@pytest.mark.asyncio
+async def test_debate_both_fail_returns_none(monkeypatch):
+    async def boom(self, prompt):  # noqa: ANN001, ARG001
+        raise RuntimeError("LLM 다운")
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", boom)
+    assert await generate_senior_debate({"pro": "p", "con": "c"}, use_llm=True) is None
 
 
 def test_narrator_single_path_contract():

@@ -64,6 +64,7 @@ interface SeniorReasoningView {
   mode: string; // structured | llm
   irac_steps: IracStepView[];
   debate: { pro: string; con: string } | null;
+  debate_result?: { pro?: string; con?: string } | null; // 적대 debate 실행 결과(use_llm 시)
   prompt: string;
   narrative: string | null;
 }
@@ -397,6 +398,24 @@ export function SeniorConsultPanel() {
                   </li>
                 ))}
               </ol>
+              {/* 적대 검증 결과(pro/con·use_llm 실행 시) */}
+              {result.reasoning.debate_result &&
+                (result.reasoning.debate_result.pro || result.reasoning.debate_result.con) && (
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {result.reasoning.debate_result.pro && (
+                      <div className="rounded-lg border border-[color-mix(in_srgb,var(--status-success)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_6%,transparent)] px-3 py-2">
+                        <p className="mb-0.5 text-[10px] font-bold text-[var(--status-success)]">적합 입장</p>
+                        <p className="text-[10px] text-[var(--text-secondary)]">{result.reasoning.debate_result.pro}</p>
+                      </div>
+                    )}
+                    {result.reasoning.debate_result.con && (
+                      <div className="rounded-lg border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_6%,transparent)] px-3 py-2">
+                        <p className="mb-0.5 text-[10px] font-bold text-[var(--status-error)]">부적합/위험 입장</p>
+                        <p className="text-[10px] text-[var(--text-secondary)]">{result.reasoning.debate_result.con}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
           )}
 

@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.senior_agents import senior_orchestrator
-from app.services.senior_agents.llm_runner import generate_senior_narrative
+from app.services.senior_agents.llm_runner import (
+    generate_senior_debate,
+    generate_senior_narrative,
+)
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -107,6 +110,10 @@ async def consult(
         if narrative:
             reasoning["narrative"] = narrative
             reasoning["mode"] = "llm"
+        # 적대 debate(고위험/저신뢰/위반 발동 시): pro/con 실행→debate_result 주입(graceful).
+        debate_result = await generate_senior_debate(reasoning.get("debate"), use_llm=True)
+        if debate_result:
+            reasoning["debate_result"] = debate_result
     return out
 
 
