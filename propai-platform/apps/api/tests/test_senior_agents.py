@@ -358,11 +358,18 @@ def test_orchestrator_consult_no_inputs_note():
     assert any("정량 입력" in n for n in c.honest_notes)
 
 
-def test_orchestrator_no_evaluator_for_bim():
+def test_orchestrator_bim_and_deliberation_evaluations():
     o = _orch()
-    # BIM은 아직 평가기 없음 → inputs 줘도 evaluations 비고
-    c = o.consult("BIM", context={"inputs": {"noi": 100}})
-    assert c.evaluations == () and c.overall_verdict is None
+    # BIM: critical clash 1건 → BLOCK
+    b = o.consult("BIM", context={"inputs": {"clash_count": 4, "critical_clash_count": 1}})
+    ev = {e["rule_id"]: e for e in b.evaluations}
+    assert ev["bim.clash_triage"]["verdict"] == "BLOCK" and b.overall_verdict == "BLOCK"
+    # 심의: 건폐율 초과 → CSP BLOCK
+    d = o.consult("심의", context={"inputs": {"bcr_actual": 70, "bcr_limit": 60,
+                                            "far_actual": 200, "far_limit": 250}})
+    ev2 = {e["rule_id"]: e for e in d.evaluations}
+    assert ev2["delib.multi_clause_csp"]["verdict"] == "BLOCK"
+    assert "건폐율" in ev2["delib.multi_clause_csp"]["detail"]
 
 
 def test_orchestrator_tax_and_accounting_evaluations():

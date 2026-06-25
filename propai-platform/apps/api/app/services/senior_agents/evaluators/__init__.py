@@ -14,22 +14,26 @@ from app.services.senior_agents.evaluators.base import (
     RuleEvaluation,
     worst_verdict,
 )
+from app.services.senior_agents.evaluators.bim import evaluate_bim
+from app.services.senior_agents.evaluators.deliberation import evaluate_deliberation
 from app.services.senior_agents.evaluators.financial import evaluate_financial
 from app.services.senior_agents.evaluators.tax import evaluate_tax
 from app.services.senior_agents.evaluators.urban import evaluate_urban
 
-# 에이전트 키 → 정량 평가함수. 후속 도메인(BIM·심의)은 여기 추가.
+# 에이전트 키 → 정량 평가함수. 7개 도메인 전수 완성.
 EVALUATORS = {
     "senior_financial_advisor": evaluate_financial,
     "senior_urban_planner": evaluate_urban,
     "senior_architect": evaluate_architect,
     "senior_tax_advisor": evaluate_tax,
     "senior_accountant": evaluate_accounting,
+    "senior_bim_specialist": evaluate_bim,
+    "senior_deliberation_member": evaluate_deliberation,
 }
 
 __all__ = [
     "EVALUATORS", "RuleEvaluation",
     "evaluate_financial", "evaluate_urban", "evaluate_architect",
-    "evaluate_tax", "evaluate_accounting",
+    "evaluate_tax", "evaluate_accounting", "evaluate_bim", "evaluate_deliberation",
     "worst_verdict", "PASS", "WARN", "BLOCK",
 ]
