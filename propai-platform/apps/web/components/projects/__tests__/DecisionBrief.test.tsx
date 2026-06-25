@@ -7,13 +7,17 @@
 // apiClient는 mock(실호출 차단). store는 setState로 초기화. next/navigation useParams는 mock.
 
 import { StrictMode } from "react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 // apiClient mock — POST 실호출 차단·관측. ApiClientError는 실제 클래스 형태로 둔다(상태코드 분류).
 const post = vi.fn();
 vi.mock("@/lib/api-client", () => ({
-  apiClient: { post: (...a: unknown[]) => post(...a) },
+  apiClient: {
+    post: (...a: unknown[]) => post(...a),
+    // PDF 다운로드 idiom(수동 fetch)이 base URL을 읽는다 — 테스트용 고정값.
+    getRuntimeConfig: () => ({ apiBaseUrl: "http://test/api/v1" }),
+  },
   ApiClientError: class ApiClientError extends Error {
     status: number;
     payload: unknown;
@@ -618,5 +622,92 @@ describe("DecisionReuseBanner — Tier2 재사용 프리필/폴백", () => {
     const part = makePart({ part: "permit_design" });
     render(<DecisionReuseBanner part={part} stale />);
     expect(screen.getByText(/최신이 아닐 수 있습니다/)).toBeTruthy();
+  });
+});
+
+describe("DecisionBriefPanel — PDF 다운로드 버튼(blob fetch·정직 에러)", () => {
+  // blob 다운로드 부수효과(URL/anchor) 스텁 — jsdom 미구현/관측용. 각 it 후 원복.
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+  let anchorClick: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    createObjectURL = vi.fn(() => "blob:decision-brief");
+    revokeObjectURL = vi.fn();
+    // URL.createObjectURL/revokeObjectURL는 jsdom에 없으므로 주입.
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeObjectURL;
+    anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    anchorClick.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("브리프 로드 후 PDF 다운로드 클릭 → 올바른 URL·body로 fetch + blob 다운로드", async () => {
+    post.mockResolvedValueOnce(makeBrief());
+    // 성공 PDF 응답 모킹(ok + blob).
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], {
+        type: "application/pdf",
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DecisionBriefPanel projectId="p1" />);
+    // 자동 분석 완료(브리프 적재) 후에야 PDF 버튼이 활성된다.
+    await waitFor(() => expect(screen.getByText(/추진 권고 \(GO\)/)).toBeTruthy());
+    const pdfBtn = screen.getByText("PDF 다운로드").closest("button");
+    expect(pdfBtn).toBeTruthy();
+    expect((pdfBtn as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(pdfBtn as HTMLButtonElement);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    // PDF 엔드포인트 경로 + JSON 본문(주소·통합면적) 종단배선 확인.
+    expect(url).toBe("http://test/api/v1/projects/p1/decision-brief/pdf");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ address: "서울특별시 강남구 역삼동 123", land_area_sqm: 1000 });
+    // PDF 엔드포인트는 build()를 서버에서 재실행하므로 force_refresh 동반(화면·PDF 캐시 괴리 차단).
+    expect(body.force_refresh).toBe(true);
+    // blob 다운로드 부수효과(anchor click + objectURL revoke).
+    await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("PDF 응답 404(미배포) → 정직 에러 표기(silent-fail 금지)", async () => {
+    post.mockResolvedValueOnce(makeBrief());
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DecisionBriefPanel projectId="p1" />);
+    await waitFor(() => expect(screen.getByText(/추진 권고 \(GO\)/)).toBeTruthy());
+    fireEvent.click(screen.getByText("PDF 다운로드").closest("button") as HTMLButtonElement);
+
+    await waitFor(() =>
+      expect(screen.getByText(/아직 배포되지 않았습니다/)).toBeTruthy(),
+    );
+    // 실패 시 다운로드 부수효과(anchor click)는 일어나지 않는다.
+    expect(anchorClick).not.toHaveBeenCalled();
+  });
+
+  it("브리프 로드 전(idle)에는 PDF 버튼 비활성(가짜 빈 PDF 방지)", () => {
+    // 주소는 있으나 post를 미해결 상태로 둬 브리프 미적재 → 버튼 disabled.
+    post.mockReturnValueOnce(new Promise(() => {}));
+    render(<DecisionBriefPanel projectId="p1" autoRun={false} />);
+    const pdfBtn = screen.getByText("PDF 다운로드").closest("button");
+    expect((pdfBtn as HTMLButtonElement).disabled).toBe(true);
   });
 });

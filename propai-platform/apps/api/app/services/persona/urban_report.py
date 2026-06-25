@@ -13,6 +13,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def to_pdf(report: dict[str, Any]) -> bytes:
     from reportlab.lib import colors
@@ -41,14 +43,17 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     art = report.get("artifacts") or {}
     story: list = []
     story.append(Paragraph("도시계획·인허가 검토서", h1))
+    # address·status·interpreter_note 는 동적 입력/엔진 산출이라 XML 이스케이프(크래시 방지).
     story.append(Paragraph(
-        f"{report.get('address') or '-'} · 상태 {report.get('status') or '-'}", body))
+        f"{_esc(report.get('address') or '-')} · 상태 {_esc(report.get('status') or '-')}", body))
     if not art.get("interpreter_available"):
-        story.append(Paragraph(art.get("interpreter_note") or "", warn))
+        story.append(Paragraph(_esc(art.get("interpreter_note") or ""), warn))
     story.append(Spacer(1, 8))
 
     def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> None:
-        data = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        raw = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        # 표 셀은 동적 데이터(용도지역명·개발방식·체크리스트 등)라 XML 이스케이프(전역 전파방지·은폐 금지).
+        data = [[_esc(cell) for cell in row] for row in raw]
         t = Table(data, colWidths=widths)
         t.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -80,10 +85,11 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     if gate:
         story.append(Paragraph("2. 특이부지 게이트(개발 가능성)", h2))
         story.append(Paragraph(
-            f"개발가능성: {gate.get('developability') or '-'} · 해결가능성: {gate.get('resolvable') or '-'} "
-            f"· 판정: {gate.get('decision') or '-'}", body))
+            f"개발가능성: {_esc(gate.get('developability') or '-')} · "
+            f"해결가능성: {_esc(gate.get('resolvable') or '-')} "
+            f"· 판정: {_esc(gate.get('decision') or '-')}", body))
         if gate.get("honest_disclosure"):
-            story.append(Paragraph(gate["honest_disclosure"], warn))
+            story.append(Paragraph(_esc(gate["honest_disclosure"]), warn))
         story.append(Spacer(1, 6))
 
     # 3. 개발방식 비교표(AHP)
@@ -98,7 +104,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     incentives = art.get("incentives") or []
     if incentives:
         for it in incentives:
-            story.append(Paragraph(f"· {it}", body))
+            story.append(Paragraph(f"· {_esc(it)}", body))
     else:
         story.append(Paragraph("현 데이터로 특정 가능한 상향수단 없음 — 지구단위·조례 확인 필요(정직).", warn))
     story.append(Spacer(1, 6))
@@ -108,7 +114,8 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     roadmap = art.get("permit_roadmap") or []
     if roadmap:
         for step in roadmap:
-            story.append(Paragraph(f"[{step.get('phase')}] {step.get('label')}", body))
+            story.append(Paragraph(
+                f"[{_esc(step.get('phase'))}] {_esc(step.get('label'))}", body))
     else:
         story.append(Paragraph("로드맵 산출에 필요한 인허가 데이터 미확보(정직).", warn))
     story.append(Spacer(1, 6))
@@ -123,7 +130,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     if notes:
         story.append(Paragraph("정직 고지", h2))
         for n in notes:
-            story.append(Paragraph(f"· {n}", warn))
+            story.append(Paragraph(f"· {_esc(n)}", warn))
 
     doc.build(story)
     buf.seek(0)

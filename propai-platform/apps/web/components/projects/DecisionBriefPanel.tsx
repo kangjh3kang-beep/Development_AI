@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2, RefreshCw, AlertTriangle, Compass } from "lucide-react";
+import { Loader2, RefreshCw, AlertTriangle, Compass, Download } from "lucide-react";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm, analysisInputSignature } from "@/lib/site-area";
@@ -54,6 +54,65 @@ function toDetailHref(
   return `/${locale}${path}`;
 }
 
+/**
+ * 의사결정 브리프 PDF 다운로드 idiom(PersonaPanel.downloadPersonaBlob 동일) —
+ * apiClient는 JSON만 반환하므로 blob은 수동 fetch한다. 같은 build()를 재실행해 PDF로
+ * 받기 위해 JSON 호출과 동일한 body(address·통합면적)를 보낸다(브리프와 동일 입력 SSOT).
+ * 실패는 백엔드 detail 메시지를 그대로 표면화한다(무목업·정직·silent-fail 금지).
+ */
+async function downloadBriefPdf(
+  projectId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  // apiV1BaseUrl()은 항상 비지 않는 절대/상대 base(`…/api/v1`)를 반환하므로
+  // `|| "/api/proxy"` 분기는 실행될 일이 없는 죽은 폴백이었다 → 제거(혼동 방지·무회귀).
+  const { apiBaseUrl } = apiClient.getRuntimeConfig();
+  const baseUrl = apiBaseUrl;
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("propai_access_token") ?? ""
+      : "";
+  const res = await fetch(
+    `${baseUrl}/projects/${encodeURIComponent(projectId)}/decision-brief/pdf`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    // 백엔드 상태코드를 분류해 정직 메시지로(404=deploy-pending·401/403=권한·429/5xx=일시).
+    let detail =
+      res.status === 404
+        ? "통합 의사결정 PDF 엔드포인트가 아직 배포되지 않았습니다(deploy-pending)."
+        : res.status === 401 || res.status === 403
+          ? "PDF를 받으려면 로그인 또는 권한이 필요합니다."
+          : res.status === 429
+            ? "요청이 많아 잠시 후 다시 시도해야 합니다(요청 한도 초과)."
+            : `PDF 생성에 실패했습니다 (HTTP ${res.status}).`;
+    try {
+      const j = (await res.json()) as { detail?: string };
+      if (j?.detail) detail = j.detail;
+    } catch {
+      /* 본문 비-JSON(예: PDF/HTML) — 위 분류 메시지 유지 */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  // 백엔드 Content-Disposition(decision_brief_{id}.pdf)과 파일명 구분자를 통일(언더스코어).
+  anchor.download = `decision_brief_${projectId}.pdf`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
 export function DecisionBriefPanel({
   projectId,
   /** 자동 전체실행(주소 있으면 마운트 시 자동 호출). 기본 true. */
@@ -82,6 +141,9 @@ export function DecisionBriefPanel({
   const inputSig = analysisInputSignature(siteAnalysis);
 
   const [state, setState] = useState<FetchState>({ kind: "idle" });
+  // PDF 다운로드 상태 — 진행중/에러를 명시 분리(silent-fail 금지). 정상 완료는 브라우저 다운로드.
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   // 같은 입력(주소+면적 시그니처)으로 중복 호출을 막는 두 단계 가드(force면 무시):
   //   - lastFetchedSig: '완료된' 입력(응답 커밋됨) — 재실행 불필요 판정용.
   //   - inFlightSig: '지금 비행 중'인 입력 — ★await 이전에 즉시 세팅해 StrictMode 이중 마운트나
@@ -167,6 +229,30 @@ export function DecisionBriefPanel({
     [address, projectId, landAreaSqm, inputSig, decisionBrief, setDecisionBrief],
   );
 
+  // ── PDF 다운로드 — JSON 브리프와 동일 입력(body)으로 PDF 엔드포인트 호출 ──
+  const onDownloadPdf = useCallback(async () => {
+    if (!address) return;
+    setDownloadError(null);
+    setDownloading(true);
+    try {
+      const body: Record<string, unknown> = { address };
+      if (typeof landAreaSqm === "number" && landAreaSqm > 0) {
+        body.land_area_sqm = landAreaSqm;
+      }
+      // ★PDF 엔드포인트는 build()를 서버에서 다시 실행한다. force_refresh를 동반해 캐시된
+      //   낡은 브리프가 아니라 최신 입력으로 재산출하게 한다 — 화면(재분석 후)과 PDF의
+      //   캐시 괴리(다른 수치)를 차단(무목업·정직). PDF는 항상 화면과 동일한 최신본.
+      body.force_refresh = true;
+      await downloadBriefPdf(projectId, body);
+    } catch (e) {
+      setDownloadError(
+        e instanceof Error ? e.message : "PDF 다운로드에 실패했습니다.",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }, [address, projectId, landAreaSqm]);
+
   // ★자동 전체실행 — 주소/유효면적(inputSig) 변경 시 자동 호출(중복은 run 내부 가드로 차단).
   //   inputSig를 트리거로 두어, 다필지 보강으로 통합면적이 바뀌면 자동 재분석된다(stale 방지).
   useEffect(() => {
@@ -208,20 +294,44 @@ export function DecisionBriefPanel({
           </h3>
           <p className="text-xs text-[var(--text-tertiary)]">{address}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void run(true)}
-          disabled={state.kind === "loading"}
-          className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-black uppercase tracking-wider text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] disabled:opacity-50"
-        >
-          {state.kind === "loading" ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="size-3.5" aria-hidden />
-          )}
-          다시 분석
-        </button>
+        <div className="flex items-center gap-2">
+          {/* PDF 다운로드 — 브리프가 있어야 활성(brief 없으면 비활성). 진행중엔 스피너. */}
+          <button
+            type="button"
+            onClick={() => void onDownloadPdf()}
+            disabled={!brief || state.kind === "loading" || downloading}
+            className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-black uppercase tracking-wider text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] disabled:opacity-50"
+            title={brief ? "통합 의사결정 브리프를 PDF로 내려받습니다." : "분석 완료 후 다운로드할 수 있습니다."}
+          >
+            {downloading ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Download className="size-3.5" aria-hidden />
+            )}
+            {downloading ? "PDF 생성 중…" : "PDF 다운로드"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void run(true)}
+            disabled={state.kind === "loading"}
+            className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-black uppercase tracking-wider text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] disabled:opacity-50"
+          >
+            {state.kind === "loading" ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-3.5" aria-hidden />
+            )}
+            다시 분석
+          </button>
+        </div>
       </div>
+
+      {/* PDF 다운로드 에러 — 정직 표기(silent-fail 금지) */}
+      {downloadError && (
+        <p className="text-[11px] font-bold text-[var(--status-error)]" role="alert">
+          {downloadError}
+        </p>
+      )}
 
       {/* 로딩 */}
       {state.kind === "loading" && (

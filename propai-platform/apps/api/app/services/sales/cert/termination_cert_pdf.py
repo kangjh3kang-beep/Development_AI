@@ -18,6 +18,8 @@ import urllib.request
 from typing import Any
 from urllib.parse import urlsplit
 
+from app.services.common.pdf_escape import esc as _esc
+
 logger = logging.getLogger(__name__)
 
 # 직인 이미지 다운로드 정책. SSRF(내부망/메타데이터 접근) 차단·과대응답 차단을 위한 상수.
@@ -186,7 +188,9 @@ def build_termination_cert_pdf(cert: dict[str, Any], *, fetch_stamp: bool = True
     el: list[Any] = []
 
     el.append(Paragraph("해 촉 증 명 서", title))
-    el.append(Paragraph(f"증명서 번호: {s('certificate_no')}", small))
+    # certificate_no 는 동적 입력이라 esc(Paragraph 직접 보간 → '<','&' 혼입 시 크래시 차단).
+    # ★_kv_table 의 셀은 bare str 이라 reportlab 이 XML 파싱하지 않아 esc 불필요(Paragraph 만 위험).
+    el.append(Paragraph(f"증명서 번호: {_esc(s('certificate_no'))}", small))
     el.append(Spacer(1, 10))
 
     # 1. 인적사항(주민번호 마스킹)
@@ -235,7 +239,8 @@ def build_termination_cert_pdf(cert: dict[str, Any], *, fetch_stamp: bool = True
 
     # 직인 날인 행 (법인명 + 직인 이미지)
     stamp = _fetch_stamp_flowable(cert.get("issuer_stamp_url"), mm) if fetch_stamp else None
-    seal_label = Paragraph(f"{s('issuer_company_name')}  대표 {s('issuer_ceo_name')}", body)
+    # issuer_company_name·issuer_ceo_name 은 사용자 입력 상호/대표명이라 esc(Paragraph 직접 보간).
+    seal_label = Paragraph(f"{_esc(s('issuer_company_name'))}  대표 {_esc(s('issuer_ceo_name'))}", body)
     seal_cell = stamp if stamp is not None else Paragraph("(직인)", body)
     seal_tbl = Table([[seal_label, seal_cell]], colWidths=[120 * mm, 30 * mm])
     seal_tbl.setStyle(TableStyle([
@@ -251,7 +256,8 @@ def build_termination_cert_pdf(cert: dict[str, Any], *, fetch_stamp: bool = True
         "직인은 발급 법인이 등록한 전자 이미지이며, 문서 무결성은 발급 기록(해시체인)으로 보강됩니다.",
         small))
     if cert.get("ledger_hash"):
-        el.append(Paragraph(f"무결성 해시: {s('ledger_hash')}", small))
+        # ledger_hash 는 보통 hex 라 안전하나 동적 값이므로 일관 esc(Paragraph 직접 보간).
+        el.append(Paragraph(f"무결성 해시: {_esc(s('ledger_hash'))}", small))
 
     doc.build(el)
     return buf.getvalue()

@@ -13,6 +13,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def _won_to_eok(v: Any) -> str:
     """원 → 억원 환산 문자열(미확보면 '미확보')."""
@@ -51,13 +53,16 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     art = report.get("artifacts") or {}
     story: list = []
     story.append(Paragraph("부동산 개발 사업계획서", h1))
+    # address·zone_type·status 는 동적 입력/엔진 산출이라 XML 이스케이프(크래시 방지).
     story.append(Paragraph(
-        f"{report.get('address') or '-'} · 용도지역 {art.get('zone_type') or '-'} · "
-        f"상태 {report.get('status') or '-'}", body))
+        f"{_esc(report.get('address') or '-')} · 용도지역 {_esc(art.get('zone_type') or '-')} · "
+        f"상태 {_esc(report.get('status') or '-')}", body))
     story.append(Spacer(1, 8))
 
     def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> None:
-        data = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        raw = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        # 표 셀은 동적 데이터(모델명·금액·등급 등)라 XML 이스케이프(전역 전파방지·은폐 금지).
+        data = [[_esc(cell) for cell in row] for row in raw]
         t = Table(data, colWidths=widths)
         t.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -74,7 +79,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     story.append(Paragraph("1. 사업타당성 핵심 지표 (Top1 추천 모델)", h2))
     kpi = art.get("kpi") or {}
     if kpi:
-        story.append(Paragraph(f"추천 모델: {kpi.get('type_name') or '-'}", body))
+        story.append(Paragraph(f"추천 모델: {_esc(kpi.get('type_name') or '-')}", body))
         _table(["지표", "값"],
                [["총 매출", _won_to_eok(kpi.get("total_revenue_won"))],
                 ["총 사업비", _won_to_eok(kpi.get("total_cost_won"))],
@@ -118,10 +123,11 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     story.append(Paragraph("4. 수익성 지표 (NPV·ROE·DSCR)", h2))
     irr = next((c.get("value") for c in (report.get("checklist") or [])
                 if c.get("step") == "irr_npv"), None) or {}
-    story.append(Paragraph(f"NPV: {_won_to_eok(irr.get('npv_won'))} · "
-                           f"ROE: {irr.get('roe_pct') if irr.get('roe_pct') is not None else '미확보'}%", body))
+    roe = irr.get("roe_pct")
+    story.append(Paragraph(f"NPV: {_esc(_won_to_eok(irr.get('npv_won')))} · "
+                           f"ROE: {_esc(roe) if roe is not None else '미확보'}%", body))
     story.append(Paragraph(
-        irr.get("dscr_note") or "DSCR 미산출(정직 고지) — 별도 금융모델 필요.", warn))
+        _esc(irr.get("dscr_note") or "DSCR 미산출(정직 고지) — 별도 금융모델 필요."), warn))
     story.append(Spacer(1, 6))
 
     # 5. Go/No-Go
@@ -129,8 +135,8 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     gng = art.get("go_nogo") or {}
     if gng:
         story.append(Paragraph(
-            f"판정: {gng.get('decision') or '-'} · 모델: {gng.get('top1') or '-'} · "
-            f"등급: {gng.get('grade') or '-'} · ROI: {gng.get('roi_pct')}%", body))
+            f"판정: {_esc(gng.get('decision') or '-')} · 모델: {_esc(gng.get('top1') or '-')} · "
+            f"등급: {_esc(gng.get('grade') or '-')} · ROI: {_esc(gng.get('roi_pct'))}%", body))
     else:
         story.append(Paragraph("Go/No-Go 판정에 필요한 사업타당성 미확보(정직).", warn))
     story.append(Spacer(1, 6))
@@ -145,7 +151,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     if notes:
         story.append(Paragraph("정직 고지", h2))
         for n in notes:
-            story.append(Paragraph(f"· {n}", warn))
+            story.append(Paragraph(f"· {_esc(n)}", warn))
 
     doc.build(story)
     buf.seek(0)
