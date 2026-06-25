@@ -29,7 +29,14 @@ const ScheduleSupervisionPanel = dynamic(
 
 // 설계(CAD/BIM)는 전용 스튜디오(/design-studio·/bim-studio)로 분리 — 여기선 임베드하지 않음.
 
+// Stage1 통합 의사결정 브리프(Tier1 기본 진입점) — 자급식 패널.
+const DecisionBriefPanel = dynamic(
+  () => import("./DecisionBriefPanel").then((mod) => mod.DecisionBriefPanel),
+  { ssr: false },
+);
+
 type StageType =
+  | "decision_brief"
   | "site_analysis"
   | "legal_compliance"
   | "design_ai"
@@ -38,6 +45,29 @@ type StageType =
   | "permit_portal"
   | "construction"
   | "operations";
+
+// 라이프사이클 3계층(Tier) — 의사결정→상세분석→실행. 기존 8단계는 전부 보존(드릴다운 타깃).
+type TierKey = "decision" | "detail" | "execution";
+const STAGE_TIER: Record<StageType, TierKey> = {
+  // Tier1 = 통합 의사결정(추진할까?) — 신규 기본 진입점.
+  decision_brief: "decision",
+  // Tier2 = 상세 분석(부지·법규·설계·사업성·인허가·ESG) — 의사결정 카드의 드릴다운 대상.
+  site_analysis: "detail",
+  legal_compliance: "detail",
+  design_ai: "detail",
+  feasibility: "detail",
+  esg_dashboard: "detail",
+  permit_portal: "detail",
+  // Tier3 = 실행(시공·운영).
+  construction: "execution",
+  operations: "execution",
+};
+const TIER_LABEL: Record<TierKey, string> = {
+  decision: "의사결정",
+  detail: "상세 분석",
+  execution: "실행",
+};
+const TIER_ORDER: TierKey[] = ["decision", "detail", "execution"];
 
 interface LifecycleStageViewsProps {
   projectId: string;
@@ -48,8 +78,8 @@ interface LifecycleStageViewsProps {
 }
 
 export function LifecycleStageViews({ projectId, dictionary, compact = false }: LifecycleStageViewsProps) {
-  // compact면 보고서 미포함 단계부터(설계), 아니면 입지분석부터.
-  const [activeStage, setActiveStage] = useState<StageType>(compact ? "design_ai" : "site_analysis");
+  // compact면 보고서 미포함 단계부터(설계), 아니면 Tier1 통합 의사결정(신규 기본 진입점)부터.
+  const [activeStage, setActiveStage] = useState<StageType>(compact ? "design_ai" : "decision_brief");
   // 설계 스튜디오(무거운 WebGL CAD/BIM)는 사용자가 명시적으로 열 때만 로드.
   const params = useParams();
   const locale = params.locale as string;
@@ -158,6 +188,8 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
   ];
 
   const allStages = [
+    // Tier1 — 통합 의사결정(신규 기본 진입점). 전용 상세 라우트 없음(패널 내부 CTA가 Tier2로 연결).
+    { id: "decision_brief", name: "통합 의사결정", path: "" },
     { id: "site_analysis", name: t.stageSite || "입지 분석", path: "site-analysis" },
     { id: "legal_compliance", name: t.stageLegal || "법규 검토", path: "legal" },
     { id: "design_ai", name: t.stageDesignAI || "AI 설계", path: "design" },
@@ -167,9 +199,15 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
     { id: "construction", name: t.stageConstruction || "스마트 시공", path: "construction" },
     { id: "operations", name: t.stageOperations || "자산 관리", path: "operations" },
   ];
-  // compact(보고서 동시표시): 보고서와 중복되는 입지·법규·사업성·ESG 제외.
-  const REPORT_COVERED = new Set(["site_analysis", "legal_compliance", "feasibility", "esg_dashboard"]);
+  // compact(보고서 동시표시): 보고서와 중복되는 의사결정·입지·법규·사업성·ESG 제외.
+  const REPORT_COVERED = new Set(["decision_brief", "site_analysis", "legal_compliance", "feasibility", "esg_dashboard"]);
   const stages = compact ? allStages.filter((s) => !REPORT_COVERED.has(s.id)) : allStages;
+  // 3계층 그룹핑(Tier1 의사결정 → Tier2 상세 → Tier3 실행) — 기존 단계 path/탭은 전부 보존.
+  const tieredStages = TIER_ORDER.map((tier) => ({
+    tier,
+    label: TIER_LABEL[tier],
+    items: stages.filter((s) => STAGE_TIER[s.id as StageType] === tier),
+  })).filter((g) => g.items.length > 0);
 
   // 활성 스테이지 메타(없으면 안전 폴백). path가 undefined면 /projects/{id}/undefined 404가 발생하므로
   // 항상 유효한 세그먼트("site-analysis")로 폴백한다.
@@ -188,32 +226,41 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
         </div>
         
         <div className="relative group/nav">
-          <div className="px-2 -mx-2 pb-2">
-            <div className="flex flex-wrap gap-2 rounded-[2rem] bg-[var(--surface-strong)] p-2 border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
-              {stages.map((stage) => (
-                <button
-                  key={stage.id}
-                  onClick={() => setActiveStage(stage.id as StageType)}
-                  className={`relative flex items-center gap-2.5 whitespace-nowrap rounded-full px-5 py-3 text-[11px] font-black uppercase tracking-[0.15em] transition-all duration-500 ${
-                    activeStage === stage.id
-                      ? "text-white"
-                      : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-soft)]"
-                  }`}
-                >
-                  {activeStage === stage.id && (
-                    <motion.div
-                      layoutId="activeStageTab"
-                      className="absolute inset-0 rounded-full bg-gradient-to-r from-teal-500 via-teal-400 to-indigo-500 shadow-[var(--shadow-glow)]"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+          {/* 3계층(Tier) 그룹 탭 — 의사결정 → 상세 분석 → 실행. 기존 8단계 전부 보존(드릴다운 타깃). */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-3 rounded-[2rem] bg-[var(--surface-strong)] p-2.5 border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
+            {tieredStages.map((group, gi) => (
+              <div key={group.tier} className="flex items-center gap-2">
+                {gi > 0 && <span className="mx-1 h-6 w-px bg-[var(--line-strong)]" aria-hidden />}
+                <span className="px-1 text-[9px] font-black uppercase tracking-[0.25em] text-[var(--text-hint)]">
+                  {group.label}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {group.items.map((stage) => (
+                    <button
+                      key={stage.id}
+                      onClick={() => setActiveStage(stage.id as StageType)}
+                      className={`relative flex items-center gap-2.5 whitespace-nowrap rounded-full px-5 py-3 text-[11px] font-black uppercase tracking-[0.15em] transition-all duration-500 ${
+                        activeStage === stage.id
+                          ? "text-white"
+                          : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-soft)]"
+                      }`}
                     >
-                      <div className="absolute inset-0 rounded-full bg-white/10 opacity-50 backdrop-blur-sm" />
-                    </motion.div>
-                  )}
-                  <span className="relative z-10">{<StageIcon id={stage.id} />}</span>
-                  <span className="relative z-10">{stage.name}</span>
-                </button>
-              ))}
-            </div>
+                      {activeStage === stage.id && (
+                        <motion.div
+                          layoutId="activeStageTab"
+                          className="absolute inset-0 rounded-full bg-gradient-to-r from-teal-500 via-teal-400 to-indigo-500 shadow-[var(--shadow-glow)]"
+                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                        >
+                          <div className="absolute inset-0 rounded-full bg-white/10 opacity-50 backdrop-blur-sm" />
+                        </motion.div>
+                      )}
+                      <span className="relative z-10">{<StageIcon id={stage.id} />}</span>
+                      <span className="relative z-10">{stage.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -229,6 +276,9 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
           >
             <div className="relative z-10 h-full flex flex-col gap-10">
               <div className="flex-1">
+                {activeStage === "decision_brief" && (
+                  <DecisionBriefPanel projectId={projectId} />
+                )}
                 {activeStage === "design_ai" && (
                   <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
@@ -435,15 +485,18 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                 )}
               </div>
 
-              <div className="flex justify-end pt-10">
-                <Link
-                  href={`/${locale}/projects/${projectId}/${activeStageSeg}`}
-                  className="group relative inline-flex h-20 items-center justify-center gap-6 rounded-full bg-[var(--accent-strong)] px-14 text-xs font-black text-white uppercase tracking-[0.3em] shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95"
-                >
-                  <span className="relative z-10">{activeStageName} 정밀 분석 모듈 진입 ↗</span>
-                  <div className="absolute inset-0 rounded-full bg-white opacity-0 group-hover:opacity-10 transition-opacity" />
-                </Link>
-              </div>
+              {/* Tier1 의사결정은 전용 상세 라우트가 없다(패널 내부 카드 CTA가 Tier2로 연결) — 하단 CTA 숨김. */}
+              {activeStage !== "decision_brief" && (
+                <div className="flex justify-end pt-10">
+                  <Link
+                    href={`/${locale}/projects/${projectId}/${activeStageSeg}`}
+                    className="group relative inline-flex h-20 items-center justify-center gap-6 rounded-full bg-[var(--accent-strong)] px-14 text-xs font-black text-white uppercase tracking-[0.3em] shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95"
+                  >
+                    <span className="relative z-10">{activeStageName} 정밀 분석 모듈 진입 ↗</span>
+                    <div className="absolute inset-0 rounded-full bg-white opacity-0 group-hover:opacity-10 transition-opacity" />
+                  </Link>
+                </div>
+              )}
             </div>
           </motion.div>
         </AnimatePresence>

@@ -26,6 +26,31 @@ export function effectiveLandAreaSqm(
 }
 
 /**
+ * 분석 입력 시그니처(address + 유효면적) — 같은 입력으로의 중복 분석 방지·stale 판별용 SSOT.
+ *
+ * 왜 필요한가(쉬운 설명):
+ * 의사결정 브리프처럼 무거운 종합분석은 같은 입력이면 다시 부르지 않으려고 "마지막에 분석한 입력"을
+ * 기억해 둔다(dedup 가드). 그런데 주소만 기억하면, 다필지 보강으로 "통합 면적"이 커져도 주소는 그대로라
+ * 옛 대표면적으로 만든 낡은 브리프를 그대로 재사용하는 버그가 생긴다(다필지 대표값 덮어쓰기 클래스).
+ * 그래서 가드 키를 "주소 + 유효면적(effectiveLandAreaSqm)"으로 만들어, 면적이 바뀌면 다른 시그니처가
+ * 되어 자동으로 재분석되게 한다. 면적의존 캐시(decisionBrief 등)는 모두 이 헬퍼로 시그니처를 만들어
+ * 동일한 staleness 규칙을 따르게 한다(한 곳을 고치면 전역이 따라옴).
+ *
+ * 면적 미확보(null)는 "면적 없음"을 뜻하는 빈 토큰으로 두 입력을 동일 취급한다(가짜 면적 생성 금지).
+ */
+export function analysisInputSignature(
+  sa: SiteAnalysisData | null | undefined,
+): string | null {
+  const address = sa?.address ?? null;
+  if (!address) return null; // 주소 없으면 분석 자체가 불가 — 시그니처 없음(가드는 호출 안 함).
+  const area = effectiveLandAreaSqm(sa);
+  // 면적은 정밀도 흔들림(부동소수)으로 시그니처가 진동하지 않게 정수 ㎡로 정규화.
+  const areaToken =
+    typeof area === "number" && area > 0 ? String(Math.round(area)) : "";
+  return `${address}|${areaToken}`;
+}
+
+/**
  * 필지 집합 일관성 — 다필지 통합 메타가 '완전하게' 채워졌는지 검사한다(effectiveLandAreaSqm의 짝).
  *
  * 왜 필요한가(쉬운 설명):

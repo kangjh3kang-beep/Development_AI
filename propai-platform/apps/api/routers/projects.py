@@ -198,6 +198,21 @@ class DecisionBriefRequest(BaseModel):
 
     address: str | None = Field(default=None, description="대표 분석 주소(미지정 시 프로젝트 주소 사용)")
     parcels: list[str] | None = Field(default=None, description="다필지 주소 목록(미지정 시 프로젝트 필지 사용)")
+    # ★다필지 통합면적 종단배선: 프론트(effectiveLandAreaSqm SSOT)가 보낸 유효면적을 수용해
+    #   부지 part의 대지면적·계획 GFA 메트릭을 이 면적 기준으로 재계산한다(통합면적이 KPI에 실반영).
+    #   미전송(None)이면 공유 엔진(ComprehensiveAnalysisService)이 산출한 대표면적을 그대로 쓴다(무회귀).
+    # ★보안 상한 검증(gt=0, le=1e7): 면적은 양수여야 하고(0/음수=가짜면적 차단), 1천만㎡(=10㎢,
+    #   대규모 신도시 단위)를 절대 상한으로 둔다. 악의/버그 입력(예 999999999㎡)이 검증 없이
+    #   권위 KPI(대지면적·GFA·사업성)로 흘러드는 것을 422로 차단한다(무검증 override 방지).
+    land_area_sqm: float | None = Field(
+        default=None,
+        gt=0,
+        le=1e7,
+        description=(
+            "유효 대지면적(㎡) — 다필지 통합면적 우선(미지정 시 엔진 산출 대표면적). "
+            "양수·1e7㎡ 이하만 허용(가짜/과대 면적 차단)."
+        ),
+    )
     equity_won: int | None = Field(default=None, description="자기자본(원) — Go/No-Go ROE 경로")
     use_llm: bool = Field(default=False, description="LLM 내러티브 포함 여부(기본 false=무과금)")
     force_refresh: bool = Field(default=False, description="True면 캐시 무시 재분석(기본 false=캐시 재사용)")
@@ -241,6 +256,8 @@ async def build_decision_brief(
         project_id=str(project_id),
         parcels=parcels or None,
         tenant_id=str(current_user.tenant_id),
+        # 프론트가 보낸 유효면적(다필지 통합면적 우선)을 종단까지 전달 — 부지 KPI 재계산용.
+        land_area_sqm=body.land_area_sqm,
         equity_won=body.equity_won,
         use_llm=body.use_llm,
         force_refresh=body.force_refresh,
