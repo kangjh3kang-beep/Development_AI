@@ -546,6 +546,32 @@ class ComprehensiveAnalysisService:
         # 주: 종합분석은 중심엔진 shadow 대상 제외 — 플랫폼에 FAR/BCR '적합 verdict'가 없고 effective_far가
         # 합법 완화로 법정상한을 정당 초과할 수 있어 verdict 합성이 거짓 발산을 낳음(shadow_mappers 주석 참조).
 
+        # ★분석 반영(동기·전수감사 #2): SpecialistAgent 결정론 교차검증(zoning 허용용도·far 실효검증
+        #   + 심의/설계 게이트) 결과를 result["specialists"]에 동기 수집해 화면에 반영한다. 그간 아래
+        #   .delay(fire-and-forget)만 있어 결과가 분석에 미반영이던 갭을 해소한다. 비동기 성장뇌 적재
+        #   (.delay)와 분리·병행: 동기 수집=화면 교차검증, .delay=노하우 적재. 실패는 graceful(무손상).
+        try:
+            from app.services.agents.specialist_dispatch import run_specialist_domains
+
+            _sync_domains: dict[str, Any] = {
+                "zoning": {"zone_type": zone_type},
+                "far": {"base": base, "zone_type": zone_type, "land_area": land_area},
+            }
+            # 심의/설계: 외부 심의엔진 URL 설정 시에만 동기 디스패치(미설정 시 즉시 unavailable·
+            #   불필요 호출/지연 회피). 엔진 가용 시 registry 심의/설계 고아가 실호출로 해소된다.
+            from app.core.config import get_settings as _get_settings
+            if (getattr(_get_settings(), "DELIBERATION_ENGINE_URL", "") or "").strip():
+                _sync_domains["심의"] = {"zone_type": zone_type, "address": address}
+                _sync_domains["설계"] = {"zone_type": zone_type, "address": address}
+            _specialists = await run_specialist_domains(
+                _sync_domains, tenant_id=tenant_id, project_id=project_id,
+                pnu=_pnu, address=address,
+            )
+            if _specialists:
+                result["specialists"] = _specialists
+        except Exception as e:  # noqa: BLE001 — 교차검증 동기 반영 실패는 분석 무손상(정직 degrade)
+            logger.warning("종합분석 specialist 동기 교차검증 스킵(graceful)", err=str(e)[:160])
+
         # 성장 뇌(MemoryHub): 종합분석 산출을 도메인 SpecialistAgent로 흘려 회상/원장/자동기억 발화.
         #   ★best-effort 비차단(.delay) — 분석 응답 지연 0(Celery 워커가 백그라운드 실행). 데이터가
         #   신뢰 가능한 도메인만(far·zoning·market): 무목업(공시지가 0이면 market 생략). 실패는 graceful.

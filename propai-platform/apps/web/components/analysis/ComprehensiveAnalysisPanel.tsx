@@ -7,6 +7,8 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { BuildableOptionsCard } from "@/components/analysis/BuildableOptionsCard";
+import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialistCard";
+import type { DecisionSpecialist } from "@/components/projects/decision-brief-types";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -324,6 +326,13 @@ export function ComprehensiveAnalysisPanel() {
           <SeniorVerdictCard
             consultation={(result as { senior_consultation?: SeniorConsultation }).senior_consultation}
             title="시니어 종합 자문(심의·도시계획·법무)"
+          />
+
+          {/* ★SpecialistAgent 결정론 교차검증(전수감사 #2) — 백엔드 result.specialists 소비.
+              zoning 허용용도·far 실효검증·심의/설계(엔진 가용 시)를 동기 수집해 화면 반영.
+              그간 .delay fire-and-forget로 결과 미반영이던 갭 해소. specialists 비면 미렌더(graceful). */}
+          <DecisionSpecialistCard
+            specialists={(result as { specialists?: DecisionSpecialist[] }).specialists}
           />
 
           {/* ★특이부지 게이트(학교·GB·맹지·농지 등) — 백엔드 special_parcel/developability 소비.
