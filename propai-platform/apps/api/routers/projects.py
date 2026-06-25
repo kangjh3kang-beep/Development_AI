@@ -3,8 +3,7 @@
 CRUD + 상태 전환 + 소프트 삭제.
 """
 
-from datetime import datetime, timezone, UTC
-UTC = UTC
+from datetime import UTC, datetime  # noqa: F401 (UTC는 하위호환 re-export)
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -16,6 +15,7 @@ from packages.schemas.models import (
     ProjectStatusUpdateRequest,
     ProjectUpdateRequest,
 )
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,9 @@ from apps.api.database.models.project import Project
 from apps.api.database.session import get_db
 from apps.api.metrics import PROJECT_CREATED
 from apps.api.services.audit_service import record_audit
+
+# UTC 하위호환 re-export(기존 `from ...projects import UTC` 호출자 보호) — import 블록 뒤로 이동.
+UTC = UTC
 
 router = APIRouter()
 
@@ -184,6 +187,65 @@ async def get_project(
     """프로젝트 상세 정보를 조회한다."""
     project = await _get_project_or_404(project_id, current_user.tenant_id, db)
     return _to_response(project, include_snapshot=True)
+
+
+class DecisionBriefRequest(BaseModel):
+    """Stage1 통합 의사결정 브리프 요청.
+
+    address/parcels 미지정 시 프로젝트에 저장된 주소·필지를 사용한다(SSOT 일관).
+    use_llm 기본 false(무과금·무LLM). force_refresh로만 캐시 무시 재분석.
+    """
+
+    address: str | None = Field(default=None, description="대표 분석 주소(미지정 시 프로젝트 주소 사용)")
+    parcels: list[str] | None = Field(default=None, description="다필지 주소 목록(미지정 시 프로젝트 필지 사용)")
+    equity_won: int | None = Field(default=None, description="자기자본(원) — Go/No-Go ROE 경로")
+    use_llm: bool = Field(default=False, description="LLM 내러티브 포함 여부(기본 false=무과금)")
+    force_refresh: bool = Field(default=False, description="True면 캐시 무시 재분석(기본 false=캐시 재사용)")
+
+
+@router.post("/{project_id}/decision-brief", summary="Stage1 통합 의사결정 브리프")
+async def build_decision_brief(
+    project_id: UUID,
+    body: DecisionBriefRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """주소 1회 입력으로 부지·시장·법규·인허가/Top3를 모아 단일 종합판정(GO/CONDITIONAL/HOLD)을 낸다.
+
+    기존 엔진(ComprehensiveAnalysisService·RegulationAnalysisService·FeasibilityServiceV2·
+    디벨로퍼 페르소나 Go/No-Go)을 병렬 조립하는 오케스트레이션이다(신규 분석엔진 없음).
+    프로젝트는 테넌트 격리(_get_project_or_404)로 조회하고, 주소/필지 미지정 시 프로젝트 SSOT를 쓴다.
+    """
+    project = await _get_project_or_404(project_id, current_user.tenant_id, db)
+
+    # 과금 게이트(MED) — use_llm=True면 다중 LLM 경로(부지/시장·법규·인허가 인터프리터)를
+    # 트리거하므로 personas.py 패턴(enforce_llm_quota)을 재사용해 한도 초과 시 402 차단한다.
+    # use_llm=False(기본)는 무LLM·무과금이라 게이트를 건너뛴다.
+    if body.use_llm:
+        from app.core.billing_deps import enforce_llm_quota
+        await enforce_llm_quota(db)
+
+    # 주소·필지 SSOT — 요청이 비면 프로젝트 저장값으로 채운다(일관·무목업).
+    address = body.address or project.address
+    parcels = body.parcels
+    if not parcels:
+        try:
+            parcels = [p.address for p in (project.parcels or []) if getattr(p, "address", None)]
+        except Exception:  # noqa: BLE001 — 필지 관계 로딩 실패는 단일주소로 진행
+            parcels = None
+
+    from app.services.land_intelligence.decision_brief_service import DecisionBriefService
+
+    return await DecisionBriefService().build(
+        address=address,
+        project_id=str(project_id),
+        parcels=parcels or None,
+        tenant_id=str(current_user.tenant_id),
+        equity_won=body.equity_won,
+        use_llm=body.use_llm,
+        force_refresh=body.force_refresh,
+        db=db,
+    )
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
