@@ -327,7 +327,7 @@ export function DevelopmentScenarioCard({
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
                 {(result.excluded_parcels?.length ?? 0) > 0 && (
-                  <>차단 {result.excluded_parcels!.length}필지(구거·하천·GB 등) 제외 후 </>
+                  <>개발이 어려운 특이부지 {result.excluded_parcels!.length}필지 제외 후 </>
                 )}
                 가용 필지로 산출한 실제 개발방식입니다(전체 통합개발은 차단필지 선행절차 통과 시 가능).
               </p>
