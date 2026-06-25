@@ -350,7 +350,9 @@ export function OrchestratorPanel({
   // 페르소나 뷰는 projectId가 있을 때만(통합 분석 워크스페이스). 미전달 소비처는 기존과 동일.
   const personaEnabled = !!projectId;
   const showPersona = personaEnabled && view === "persona";
-  // 시니어 자문은 도메인 단위 결정론(projectId 불필요)이나, 탭 노출은 페르소나와 동일 조건(워크스페이스).
+  // 시니어 자문 패널 자체는 무컨텍스트(projectId 불필요)이나, v1 진입점은 워크스페이스(projectId)
+  // 한정으로 의도 — projectId 없는 소비처(예: MarketInsights)에 탭 바를 신설하는 회귀를 피한다.
+  // (무컨텍스트 노출이 필요해지면 탭 컨테이너를 personaEnabled에서 분리하는 후속 작업.)
   const showSenior = personaEnabled && view === "senior";
 
   return (

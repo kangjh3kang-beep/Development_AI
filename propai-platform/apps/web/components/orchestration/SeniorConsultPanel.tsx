@@ -75,7 +75,8 @@ const VERDICT_BADGE: Record<string, { label: string; token: string }> = {
   BLOCK: { label: "차단", token: "var(--status-error)" },
 };
 
-function confidenceToken(label: string): string {
+function confidenceToken(label: string | null | undefined): string {
+  if (typeof label !== "string") return "var(--status-warning)"; // 누락 시 보수(참고)
   if (label.includes("신뢰")) return "var(--status-success)";
   if (label.includes("보통")) return "var(--status-info)";
   return "var(--status-warning)"; // 참고(전문가 확인 필요)
@@ -209,9 +210,12 @@ export function SeniorConsultPanel() {
               {result.high_risk && <Badge token="var(--status-warning)">고위험 도메인</Badge>}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge token={confidenceToken(result.confidence_label)}>
-                신뢰도 {Math.round(result.confidence * 100)}% · {result.confidence_label}
-              </Badge>
+              {/* 깨진 응답(confidence 누락) 방어 — 유한수일 때만 신뢰도 배지 렌더(NaN% 방지). */}
+              {Number.isFinite(result.confidence) && (
+                <Badge token={confidenceToken(result.confidence_label)}>
+                  신뢰도 {Math.round(result.confidence * 100)}% · {result.confidence_label ?? "—"}
+                </Badge>
+              )}
               {result.overall_verdict && VERDICT_BADGE[result.overall_verdict] && (
                 <Badge token={VERDICT_BADGE[result.overall_verdict].token}>
                   종합 {VERDICT_BADGE[result.overall_verdict].label}
@@ -225,7 +229,8 @@ export function SeniorConsultPanel() {
             <div className="grid gap-1.5">
               <p className="text-xs font-bold text-[var(--text-primary)]">정량 판정</p>
               {result.evaluations.map((e) => {
-                const badge = VERDICT_BADGE[e.verdict] ?? VERDICT_BADGE.WARN;
+                // 미지 verdict는 WARN으로 강등(BLOCK→WARN 오인) 대신 원문+중립색(정직).
+                const badge = VERDICT_BADGE[e.verdict] ?? { label: e.verdict, token: "var(--text-tertiary)" };
                 return (
                   <div
                     key={e.rule_id}
