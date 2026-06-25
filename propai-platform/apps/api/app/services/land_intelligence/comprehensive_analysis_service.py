@@ -355,18 +355,38 @@ class ComprehensiveAnalysisService:
         except Exception:  # noqa: BLE001 — 근거 블록 부착 실패는 무손상
             pass
 
-        # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — urban(도시계획)·legal(법무사) ──
+        # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — deliberation(심의)·urban·legal ──
         # 시니어 전문가 판단프레임워크·근거(법조문 citation)를 result에 첨부해 메인 분석에
         # 흐르게 한다. AI 해석 전에 부착해 인터프리터도 그라운딩(전문가 판단기준 인지)한다.
+        # ★정량 verdict 핵심(입력매핑 정교화): 종합분석은 정비사업 입력(비례율·동의율)이 보통 없어
+        #   urban/legal evaluator는 verdict=None(프레임워크·citation만)이었다. 실효 용적률/건폐율과
+        #   법정상한을 심의위원 CSP(delib.multi_clause_csp)에 actual/limit으로 매핑하면 준수=PASS·
+        #   초과=BLOCK 실판정이 산출된다(build_compliance_inputs 공용 빌더로 DRY 매핑).
         # ★무회귀: with_senior=True 기본이되 attach_senior_consultation_multi는 절대 raise 안 함.
         if with_senior:
             try:
                 from app.services.senior_agents.consultation_hook import (
                     attach_senior_consultation_multi,
+                    build_compliance_inputs,
                 )
 
-                _sr_inputs: dict[str, Any] = {}
-                # 정비사업 비례율 입력(있을 때만) — sec8 종상향/정비 시나리오에 수치가 실릴 수 있음.
+                # 심의 CSP 입력(실효 far/bcr=설계 적용값 actual, 법정상한=limit). 한도는 실효가
+                # min(법정,조례)이므로 법정상한(national_*) 초과 여부로 위반을 판정한다. 법정상한이
+                # 없으면 실효값을 한도로 자급평가(actual=limit → 준수 PASS)한다.
+                _far_eff = sec1.get("effective_far_pct")
+                _bcr_eff = sec1.get("effective_bcr_pct")
+                _far_lim = sec1.get("national_far_pct") or _far_eff
+                _bcr_lim = sec1.get("national_bcr_pct") or _bcr_eff
+                _road_w = base.get("road_width_m") if isinstance(base, dict) else None
+                if (isinstance(base, dict) and not _road_w
+                        and isinstance(lr, dict)):
+                    _road_w = lr.get("road_width_m")
+                _sr_inputs: dict[str, Any] = build_compliance_inputs(
+                    far_actual=_far_eff, far_limit=_far_lim,
+                    bcr_actual=_bcr_eff, bcr_limit=_bcr_lim,
+                    road_width_actual=_road_w,
+                )
+                # 정비사업 비례율·동의율 입력(있을 때만) — sec8 종상향/정비 시나리오에 실릴 수 있음.
                 for _k in (
                     "post_appraisal_total", "total_project_cost", "prior_appraisal_total",
                     "prior_appraisal_individual", "member_sale_price",
@@ -377,7 +397,7 @@ class ComprehensiveAnalysisService:
                     if _v is not None:
                         _sr_inputs[_k] = _v
                 result["senior_consultation"] = attach_senior_consultation_multi(
-                    ["urban", "legal"], _sr_inputs,
+                    ["deliberation", "urban", "legal"], _sr_inputs,
                 )
             except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 메인 분석 무손상
                 pass

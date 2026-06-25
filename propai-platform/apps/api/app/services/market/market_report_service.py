@@ -383,6 +383,29 @@ class MarketReportService:
         except Exception:  # noqa: BLE001 — 타임아웃·네트워크·파싱 실패 시 정직 None
             return None, "unavailable"
 
+    @staticmethod
+    def _attach_senior(result: dict[str, Any], feasibility: dict[str, Any] | None) -> None:
+        """시장 보고서에 시니어 금융전문가 자문 첨부(framework·근거; 실 PF입력 있으면 정량 verdict).
+
+        시장 보고서의 개략 수지(feasibility)는 NOI·부채·자기자본 등 대주지표 쌍이 없어 financial
+        evaluator의 정량 verdict는 보통 None(프레임워크·근거만 흐름·무목업 정직). total_cost 등 실값이
+        있으면 그대로 전달한다(가짜 NOI·equity 합성 금지). ★무회귀: 절대 raise 안 함(graceful)."""
+        try:
+            from app.services.senior_agents.consultation_hook import (
+                attach_senior_consultation,
+            )
+
+            _fin = (feasibility or {}).get("financials") if isinstance(feasibility, dict) else None
+            _sr_inputs: dict[str, Any] = {}
+            if isinstance(_fin, dict):
+                # 시장 보고서 단위는 만원(_10k). 총사업비(원) = 만원 × 10000(financial evaluator는 원).
+                _tc = _fin.get("total_cost_10k")
+                if isinstance(_tc, (int, float)) and not isinstance(_tc, bool) and _tc > 0:
+                    _sr_inputs["total_cost"] = float(_tc) * 10000.0
+            result["senior_consultation"] = attach_senior_consultation("finance", _sr_inputs)
+        except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 시장 분석 무손상
+            pass
+
     async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
         
@@ -607,7 +630,7 @@ class MarketReportService:
             "target_persona": (narrative or {}).get("target_persona"),
         }
 
-        return {
+        report = {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "address": address,
             "lawd_cd": lawd_cd,
@@ -628,6 +651,9 @@ class MarketReportService:
             "raw_data": raw_data,
             "analysis": analysis,
         }
+        # ── 시니어 금융전문가 자문 모세혈관 배선(framework·근거; 실 PF입력 있으면 정량 verdict) ──
+        self._attach_senior(report, feasibility)
+        return report
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──
     @staticmethod
