@@ -14,6 +14,7 @@ from apps.api.database.models.v61_cost import (
     CostWorkType, MaterialUnitPrice, BimQuantity, CostCalculationSheet,
     ProgressBilling, LegalRateHistory, StandardPriceUpdate,
 )
+from app.models.memory import AgentMemory
 
 __all__ = [
     "Organization", "User", "Role", "Permission", "RolePermission", "UserRole", "APIKey", "AuditLog",
@@ -28,4 +29,5 @@ __all__ = [
     # v61 공사비
     "CostWorkType", "MaterialUnitPrice", "BimQuantity", "CostCalculationSheet",
     "ProgressBilling", "LegalRateHistory", "StandardPriceUpdate",
+    "AgentMemory",
 ]

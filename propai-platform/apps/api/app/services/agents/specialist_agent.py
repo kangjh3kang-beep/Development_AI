@@ -7,7 +7,8 @@ recorder/prior_loader는 주입(테스트·LLM부재 graceful).
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 
@@ -72,14 +73,36 @@ class SpecialistAgent:
             logger.warning("specialist prior read 실패(graceful)", domain=self.domain, err=str(e)[:160])
             prior = None
 
+        # 2.5) RAG Memory Recall (Memory Hub Brain) — best-effort
+        rag_memories = []
+        try:
+            from app.services.memory_hub.memory_service import MemoryHubService
+            query_str = f"Domain: {self.domain}, Task: {self.task_type}, Data: {str(data)[:200]}"
+            memories = await MemoryHubService().recall_experience(query=query_str, domain=self.domain, top_k=2)
+            # Schema response to dict
+            rag_memories = [
+                {"id": str(m.id), "summary": m.summary, "score": m.score, "source_type": m.source_type}
+                for m in memories
+            ]
+        except Exception as e:
+            logger.warning("specialist memory recall 스킵(graceful)", domain=self.domain, err=str(e)[:160])
+
         # 3) LLM 해석(선택) + citation_gate grounded만 — 수치 비생성
         claims: list[dict[str, Any]] = []
         if self._interpreter is not None:
             try:
                 from app.services.design_audit.blindspot_interpreter import citation_gate
                 from app.services.ledger.prior_context import build_prior_block
+
+                # Combine prior with RAG memories
+                prior_block = build_prior_block(prior)
+                if rag_memories:
+                    prior_block += "\n\n[Past Agent Memories (Know-how)]\n"
+                    for rm in rag_memories:
+                        prior_block += f"- {rm['summary']} (Score: {rm['score']:.2f})\n"
+
                 raw = await self._interpreter.generate_interpretation(
-                    tool_out, prior_context=build_prior_block(prior))
+                    tool_out, prior_context=prior_block)
                 claims = citation_gate(_to_items(raw), findings, prior_evidence=prior)
             except Exception as e:  # noqa: BLE001
                 logger.warning("specialist LLM 해석 스킵(graceful)", domain=self.domain, err=str(e)[:160])
@@ -112,6 +135,42 @@ class SpecialistAgent:
                 logger.warning("specialist panel 스킵(graceful)", domain=self.domain, err=str(e)[:160])
                 panel_out = None
 
+        # 6) 자동 기억화 (Automatic Memory Ingestion) — best-effort
+        try:
+            import uuid
+            # Extract consensus or summaries to save as memory
+            summary_info = tool_out.get("summary") or {}
+            findings_info = findings or []
+
+            # Construct a clear, informative memory block
+            memory_summary = f"Domain Agent ({self.domain}) 실행 결과 요약:\n"
+            memory_summary += f"- 작업 타입: {self.task_type}\n"
+            if summary_info:
+                memory_summary += f"- 주요 수치 및 요약: {summary_info}\n"
+            if findings_info:
+                memory_summary += f"- 검출된 항목 수: {len(findings_info)}개\n"
+            if panel_out:
+                memory_summary += f"- 패널 종합 판정: {panel_out}\n"
+
+            from app.tasks.memory_tasks import ingest_experience_task
+            ingest_payload = {
+                "project_id": project_id,
+                "session_id": f"auto_session_{self.domain}_{uuid.uuid4().hex[:8]}",
+                "domain": self.domain,
+                "source_type": "agent_execution",
+                "summary": memory_summary.strip(),
+                "metadata": {
+                    "pnu": pnu,
+                    "address": address,
+                    "findings_count": len(findings_info),
+                    "claims_count": len(claims)
+                }
+            }
+            ingest_experience_task.delay(ingest_payload)
+            logger.info("specialist memory auto-ingestion task triggered", domain=self.domain)
+        except Exception as e:
+            logger.warning("specialist memory auto-ingestion 스킵(graceful)", domain=self.domain, err=str(e)[:160])
+
         return {
             "domain": self.domain, "task_type": self.task_type,
             "findings": findings, "claims": claims,
@@ -120,4 +179,5 @@ class SpecialistAgent:
             "ledger": {"ok": wb.get("ok"), "version": wb.get("version"),
                        "content_hash": wb.get("content_hash")},
             "panel": panel_out,
+            "rag_memories": rag_memories,
         }
