@@ -1,106 +1,46 @@
-# 🔄 WORK IN PROGRESS — 실시간 작업 현황
+# 🗂️ WORK_STATUS — Phase 4 (apiClient 제거) : 폐기됨 (SUPERSEDED)
 
-> **이 파일은 Antigravity AI와 다른 IDE 간 충돌 방지용입니다.**
-> 아래 "🔒 수정 중" 파일은 건드리지 마세요.
-
----
-
-## 현재 작업자: Antigravity AI (Phase 4: apiClient 제거)
-**마지막 업데이트:** 2026-05-28 18:04 KST
+> ⚠️ **이 문서의 Phase 4 계획(apiClient 제거 → `({} as T)` 치환)은 더 이상 유효하지 않습니다.**
+> 2026-06-19 빌드안정화 세션에서 **폐기 확정**. 새 작업의 기준 문서가 아닙니다.
+> (원래 이 파일은 2026-05-28 Antigravity AI가 IDE 간 충돌 방지용으로 쓰던 실시간 작업판이었습니다.)
 
 ---
 
-## 🔒 현재 수정 중인 파일 (건드리지 마세요)
+## ❌ 폐기 사유 (2026-06-19 검증)
 
-| 파일 | 작업 내용 | 상태 |
-|------|-----------|------|
-| 빌드 확인 중 | cleanup_safe.py + 수동 수정 후 빌드 테스트 | 🔄 진행 중 |
+2026-05-28 진행하던 **"apiClient import 제거 → `apiClient.get<T>()`/`post<T>()`를 빈 객체 `({} as T)`로 치환"** 계획은,
+프로젝트가 그 직후 **Mock → Live(실데이터) 전환**으로 방향을 바꾸면서 **의도적으로 폐기·역전**되었습니다.
 
-> ⚠️ 나머지 ~30개 파일에 apiClient 참조가 남아있지만, 대부분 `canUseLiveApi=false` + `enabled: false`로 런타임에서 실행되지 않습니다.
+검증으로 확인된 사실:
 
----
+- `apiClient`는 제거되지 않았고 오히려 **라이브 데이터 레이어로 유지·강화**됨 (최근 2026-06-17 "폴백 단일화" 등 활발히 유지보수 중).
+- 현재 `main`에서 **apiClient를 import하는 파일 184개 / 실제 API 호출 536곳**(get 277·post 234·put 8·delete 14·patch 3)이 운영 중.
+- 이 계획을 지금 마저 수행하면 536개 라이브 호출이 전부 빈 객체가 되어, **전 플랫폼 실데이터가 죽고 프로젝트 핵심 원칙 "무목업·라이브검증"을 정면으로 위반**함.
+- 당시 "대기 중" 파일들(`FeasibilityWorkspaceClient`, `ProjectSiteAnalysisWorkspaceClient` 등)은 이후 *"빌드 크래시 수정 — 파일 복원"*, *"빌드 깨짐 복구"* 커밋으로 **라이브 버전으로 복원**됨 → Phase 4 일괄 치환이 빌드를 깨뜨려 되돌려졌다는 증거.
 
-## ✅ 수정 완료 — 자유롭게 편집 가능
-
-| 파일 | 완료 시각 |
-|------|-----------|
-| `components/analytics/*` (6개) | 05-27 완료, 커밋 b395cf5 |
-| `components/tax/*` (3개) | 05-27 완료, 커밋 b395cf5 |
-| `components/settings/AiTokenUsageDashboard.tsx` | 05-27 완료, 커밋 b395cf5 |
-| `components/safety/ParkingLogView.tsx` | 05-28 17:35 |
-| `components/safety/SafetyCCTVDashboard.tsx` | 05-28 17:35 |
-| `components/sre/SREDashboard.tsx` | 05-28 17:35 |
-| `components/cad/CadBimSidePanel.tsx` | 05-28 17:36 |
-| `components/cad/CadCompliancePanel.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/DashboardKpiLoader.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/DashboardProjectLoader.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/ESGDashboard.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/InvestmentDashboard.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/IoTDashboard.tsx` | 05-28 17:49 (스크립트) |
-| `components/dashboard/kdx/KdxMonitoringWorkspaceClient.tsx` | 05-28 17:49 (스크립트) |
-| `components/digital-twin/DigitalTwinAnomalyDashboard.tsx` | 05-28 17:49 (스크립트) |
-| `components/finance/FeasibilitySimulationWidget.tsx` | 05-28 17:49 (스크립트) |
-| `components/projects/AutoZoningBadge.tsx` | 05-28 17:49 (스크립트) |
-| `components/projects/ProjectsOverviewClient.tsx` | 05-28 17:49 (스크립트) |
-| `components/projects/ReportPdfDownload.tsx` | 05-28 17:49 (스크립트) |
-| `components/projects/SiteInitiator.tsx` | 05-28 17:49 (스크립트) |
-| `components/agent/AgentOrchestrationWorkspaceClient.tsx` | 05-28 18:02 |
-| `components/agent/ApprovalOperationsWorkspaceClient.tsx` | 05-28 18:03 |
-| `components/cad/CadExportPanel.tsx` | 05-28 17:57 |
-| `components/construction/ContractorIntelligence.tsx` | 05-28 17:57 |
-| + 기타 54개 파일 (스크립트로 apiClient import 제거) | 05-28 17:49 |
+➡️ **결론: apiClient는 그대로 유지한다. Phase 4(제거)는 진행하지 않는다.**
 
 ---
 
-## ⏳ 대기 중 — 아직 수정 안 함
+## ✅ 빌드 안정성 (2026-06-19 검증 결과)
 
-| 파일 | 남은 작업 |
-|------|-----------|
-| `components/analytics/InspectionOperationsWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/auction/AuctionWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/construction/CostAndQuantityDashboard.tsx` | 멀티라인 apiClient 제거 |
-| `components/construction/ScheduleSupervisionPanel.tsx` | 멀티라인 apiClient 제거 |
-| `components/dashboard/DashboardClientPanel.tsx` | 멀티라인 apiClient 제거 |
-| `components/dashboard/kdx/KdxRealtimeChart.tsx` | 멀티라인 apiClient 제거 |
-| `components/digital-twin/DigitalTwinControlTowerWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/feasibility/FeasibilityWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/ApprovalsWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/MarketInsightsWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/PermitsWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/RegulationsWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/SafetyWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/operations/TenantWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/LifecycleStageViews.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectBimWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectBlockchainWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectConstructionWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectContractWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectDesignWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectDroneWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectEsgWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectFinanceWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectLegalWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectPermitWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectReportWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectSiteAnalysisWorkspaceClient.tsx` | 멀티라인 apiClient 제거 |
-| `components/projects/ProjectSummaryClient.tsx` | 멀티라인 apiClient 제거 |
+- `pnpm type-check` (Next 16 typegen + `tsc --noEmit`) : **타입 에러 0건.**
+  - 전제: `pnpm install`로 node_modules 동기화 + `.next` 초기화.
+- 과거에 보이던 타입 에러는 전부 **stale 상태**가 원인이었음(코드 결함 아님):
+  | 증상 | 진짜 원인 | 해소 |
+  |------|-----------|------|
+  | `react-pdf` / `livekit-client` "모듈 없음" | 워크트리 node_modules 미동기화 (루트 lockfile엔 이미 존재) | `pnpm install --frozen-lockfile` (lockfile 무변경) |
+  | `(dashboard)/sales/.../workspace` validator 참조 에러 | 라우트 그룹이 `(fieldapp)`로 이동한 뒤 남은 `.next` stale 아티팩트 | `rm -rf .next` 후 재실행 |
+- **현재 main은 빌드 안정 상태이며, Phase 4용 코드 수정은 필요 없음.**
 
 ---
 
-## 📌 수정 규칙
+## 📌 다른 세션 참고 — build gotcha
 
-1. **apiClient import 제거** → `import { apiClient } from "@/lib/api-client"` 삭제
-2. **apiClient.get<T>() → ({} as T)** 로 교체
-3. **apiClient.post<T>() → ({} as T)** 로 교체
-4. **ApiClientError 분기 제거** → extractErrorMessage 함수 간소화
-5. **Auth 파일 절대 수정 금지** → AuthWorkspaceClient, KakaoCallbackWorkspaceClient
+- 새 워크트리/머지 직후 `react-pdf`·`livekit-client` 등 **"모듈 없음" 타입에러**가 보이면 → **`pnpm install` 미실행**이 원인 (lockfile은 이미 동기화돼 있음).
+- `type-check` 스크립트는 `.next/cache`만 지우므로, 라우트 이동 후 **stale validator**가 남을 수 있음 → `rm -rf .next` 후 재실행.
+- `lint` 스크립트(`eslint . --no-cache`)가 `.open-next`/`.vercel`/`.next` 빌드 산출물까지 스캔해 매우 느림 → eslint ignore 정리 여지(비차단, 후속 개선 권장).
 
 ---
 
-## 🔖 Git 기준점
-
-| 커밋 | 설명 | 빌드 |
-|------|------|------|
-| `b395cf5` | Phase 4 apiClient cleanup 첫 성공 빌드 | ✅ |
-| `8f1505e` | 48개 파일 b395cf5 복원 | ✅ |
-| HEAD | cleanup_safe.py 실행 + 파싱에러 파일 복원 | 🔄 확인 중 |
+(이전 Phase 4 진행 기록은 git 이력 `b395cf5`, `8f1505e` 등에 보존되어 있습니다.)
