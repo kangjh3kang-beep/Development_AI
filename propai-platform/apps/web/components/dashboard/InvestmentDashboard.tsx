@@ -43,7 +43,7 @@ export function InvestmentDashboard() {
 
   if (isLoading) {
     return (
-      <div className="grid gap-8">
+      <div className="grid grid-cols-1 gap-8 min-w-0">
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
            {Array.from({ length: 4 }).map((_, i) => (
              <SkeletonLoader key={i} count={1} itemClassName="h-32 rounded-[2.5rem]" />

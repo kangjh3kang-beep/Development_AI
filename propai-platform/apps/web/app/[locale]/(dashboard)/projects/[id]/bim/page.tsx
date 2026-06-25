@@ -26,7 +26,7 @@ export default async function BimPage({ params }: BimPageProps) {
       : dictionary.workspace.modeMock;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
             <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["bim"].eyebrow}
         title={dictionary.modulePlaceholders["bim"].title}

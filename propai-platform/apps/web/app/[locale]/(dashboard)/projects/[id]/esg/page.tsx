@@ -77,7 +77,7 @@ export default function ESGPage() {
             const grade = (s: number) =>
               s >= 90 ? "S" : s >= 80 ? "A+" : s >= 70 ? "A" : s >= 60 ? "B" : "C";
             return (
-              <div className="grid gap-6">
+              <div className="grid grid-cols-1 gap-6 min-w-0">
                 {/* E — 실 LCA 탄소 기반 */}
                 <div className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)]">
                   <div className="flex items-center justify-between">

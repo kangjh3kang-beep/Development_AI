@@ -166,7 +166,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
     isSpecialParcel && !!sp?.developability && GATED_DEVELOPABILITY.has(sp.developability);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* Hero — 인허가 관제 콘솔 헤더 */}
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />

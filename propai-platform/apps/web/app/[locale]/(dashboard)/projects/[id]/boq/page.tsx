@@ -12,7 +12,7 @@ export default async function BoqAutoPage({
 }) {
   const { id } = await params;
   return (
-    <div className="grid gap-8">
+    <div className="grid grid-cols-1 gap-8 min-w-0">
       {/* ⓪ 커맨드센터 HUD 스트립 — 모듈 식별·LIVE(시각 전용) */}
       <ModuleCommandStrip label="BOQ · 공내역 자동작성" meta="PARAMETRIC ENGINE" />
       <BoqAutoWorkspace projectId={id} />

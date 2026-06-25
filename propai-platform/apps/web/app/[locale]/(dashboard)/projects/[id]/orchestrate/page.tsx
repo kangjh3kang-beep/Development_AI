@@ -15,7 +15,7 @@ export default async function OrchestratePage({
 }) {
   const { id } = await params;
   return (
-    <div className="grid gap-8">
+    <div className="grid grid-cols-1 gap-8 min-w-0">
       {/* ⓪ 커맨드센터 HUD 스트립 — 모듈 식별·LIVE(시각 전용) */}
       <ModuleCommandStrip label="ORCHESTRATE · 통합 분석" meta="9-NODE" />
       <OrchestrateWorkspaceClient projectId={id} />

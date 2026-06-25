@@ -427,7 +427,7 @@ export function MarketInsightsWorkspaceClient() {
   }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* 헤더 — 시장 인텔리전스 관제 콘솔 */}
       <div>
         <div className="flex items-center gap-3">

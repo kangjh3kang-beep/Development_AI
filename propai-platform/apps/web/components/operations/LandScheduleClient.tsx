@@ -513,7 +513,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   //   저장되며, 프로젝트 선택 뒤 토지조서의 '프로젝트 필지 불러오기'로만 명시적 반영한다(자동연동 없음).
   if (!projectId) {
     return (
-      <div className="grid gap-6">
+      <div className="grid grid-cols-1 gap-6 min-w-0">
         <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <i className="cc-bracket cc-bracket--tl" />
           <i className="cc-bracket cc-bracket--tr" />

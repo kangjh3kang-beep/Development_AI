@@ -35,11 +35,16 @@ DOMAIN_ROUTES: dict[str, str] = {
     "deliberation": "senior_deliberation_member", "심의": "senior_deliberation_member",
     "tax": "senior_tax_advisor", "세무": "senior_tax_advisor", "세금": "senior_tax_advisor",
     "accounting": "senior_accountant", "회계": "senior_accountant",
+    "legal": "senior_legal_scrivener", "법무사": "senior_legal_scrivener", "권리분석": "senior_legal_scrivener",
+    "등기": "senior_legal_scrivener",
+    "appraisal": "senior_appraiser", "감정평가": "senior_appraiser", "감정평가사": "senior_appraiser",
+    "종전평가": "senior_appraiser",
 }
 
-# 고위험 도메인(A9): 오판 비용이 큼(심의 부적합·세무 가산세·PF 거절) → confidence 임계 상향.
+# 고위험 도메인(A9): 오판 비용이 큼(심의·세무·PF 거절·권리 인수누락·감정 과대) → confidence 임계 상향.
 HIGH_RISK_AGENT_KEYS: frozenset[str] = frozenset({
     "senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member",
+    "senior_legal_scrivener", "senior_appraiser",
 })
 
 

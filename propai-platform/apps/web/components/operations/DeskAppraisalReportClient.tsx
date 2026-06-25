@@ -6,7 +6,7 @@
  * ⚠ 정식 감정평가서가 아닌 참고용 추정 리포트(법적 효력 없음).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, FileText, Files, Search } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -109,6 +109,11 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   void locale;
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const projectName = useProjectContextStore((s) => s.projectName);
+  const projectId = useProjectContextStore((s) => s.projectId);
+  // ★다필지: 프로젝트에 여러 필지가 있으면 대표번지뿐 아니라 전 필지를 일괄 시세추정한다.
+  //   토지조서·등기부열람과 동일하게 siteAnalysis.parcels(공유 SSOT)를 소비(대표번지만 분석하던 부정합 해소).
+  const parcels = useMemo(() => (projectId ? siteAnalysis?.parcels : null) ?? [], [projectId, siteAnalysis]);
+  const isMulti = parcels.length > 1;
 
   const [addr, setAddr] = useState(siteAnalysis?.address || "");
   const [showAdv, setShowAdv] = useState(false);
@@ -123,6 +128,9 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   const [busy, setBusy] = useState<"" | "run" | "pdf">("");
   const [err, setErr] = useState<string | null>(null);
   const [ranAddr, setRanAddr] = useState("");
+  // ★다필지 일괄 추정 결과(필지별 누적) — 단일 res와 별도 보관해 마지막 1건만 남던 부정합 방지.
+  const [batch, setBatch] = useState<{ address: string; area: number | null; res: Result | null; err: string | null }[] | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
   // AI 해석(온디맨드, avm 인터프리터)
   const [apprNarr, setApprNarr] = useState<{ label: string; text: string }[] | null>(null);
   const [narrLoading, setNarrLoading] = useState(false);
@@ -163,21 +171,54 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
     cap_rate: cap ? Number(cap) / 100 : undefined,
   }), [addr, official, gfa, structure, year, rent, deposit, cap]);
 
+  // 단일 주소 시세추정 호출(단일·일괄 공통). 성공 시 Result, 실패 시 throw.
+  // ★addressOnly: 일괄 경로에선 대표필지의 수동입력(공시지가·GFA·임대료 등)을 전파하지 않고
+  //   주소만 전송 → 각 필지가 자체 공시지가·면적을 자동조회(타 필지 추정가 오염 방지).
+  const fetchAppraisal = useCallback(async (targetAddr: string, opts?: { addressOnly?: boolean }): Promise<Result> => {
+    const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+    const payload = opts?.addressOnly ? { address: targetAddr } : { ...body(), address: targetAddr };
+    const r = await fetch(`${apiBase()}/land-price/desk-appraisal`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`서버 오류(${r.status})`);
+    const d = await r.json();
+    if (!d?.ok) throw new Error(d?.message || "추정 실패");
+    return d as Result;
+  }, [body]);
+
   const run = useCallback(async () => {
     if (!addr.trim()) { setErr("대상지 주소(지번)를 입력하세요."); return; }
     setBusy("run"); setErr(null);
     try {
-      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
-      const r = await fetch(`${apiBase()}/land-price/desk-appraisal`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body()),
-      });
-      if (!r.ok) { setErr(`서버 오류(${r.status}) — 잠시 후 다시 시도하세요.`); return; }
-      const d = await r.json();
-      if (d?.ok) { setRes(d); setRanAddr(addr.trim()); }
-      else setErr((d?.message || "추정 실패") + " — 공시지가가 자동조회되지 않으면 ‘상세 입력’에서 공시지가를 직접 입력 후 다시 실행하세요.");
-    } catch { setErr("추정 요청 실패 — 네트워크 확인 후 다시 시도하세요."); } finally { setBusy(""); }
-  }, [addr, body]);
+      const d = await fetchAppraisal(addr.trim());
+      setRes(d); setRanAddr(addr.trim());
+    } catch (e) {
+      setErr((e instanceof Error ? e.message : "추정 실패") + " — 공시지가가 자동조회되지 않으면 ‘상세 입력’에서 공시지가를 직접 입력 후 다시 실행하세요.");
+    } finally { setBusy(""); }
+  }, [addr, fetchAppraisal]);
+
+  // ★다필지 일괄 시세추정(순차 — 공공데이터 과부하 방지). 필지별 결과를 누적해 요약표로 표시.
+  const analyzeAll = useCallback(async () => {
+    if (!parcels.length) return;
+    setBatchBusy(true); setErr(null);
+    const acc: { address: string; area: number | null; res: Result | null; err: string | null }[] = [];
+    for (const p of parcels) {
+      const a = (p.address || "").trim();
+      if (!a) continue;
+      try {
+        const d = await fetchAppraisal(a, { addressOnly: true });
+        acc.push({ address: a, area: p.areaSqm ?? d.area_sqm ?? null, res: d, err: null });
+      } catch (e) {
+        acc.push({ address: a, area: p.areaSqm ?? null, res: null, err: e instanceof Error ? e.message : "추정 실패" });
+      }
+      setBatch([...acc]); // 진행 중 점진 표시
+    }
+    setBatchBusy(false);
+    // 첫 성공 필지를 상세 보고서로 표시(없으면 그대로 유지)
+    const first = acc.find((x) => x.res?.ok);
+    if (first?.res) { setRes(first.res); setRanAddr(first.address); }
+  }, [parcels, fetchAppraisal]);
 
   const downloadPdf = useCallback(async () => {
     setBusy("pdf"); setErr(null);
@@ -212,7 +253,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   const ms = res?.market_stats || {};
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 입력 카드 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
@@ -269,6 +310,74 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
           {err && <p className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />{err}</p>}
         </CardContent>
       </Card>
+
+      {/* ★다필지: 프로젝트 필지 일괄 시세추정 + 요약표(대표번지만 보던 부정합 해소) */}
+      {isMulti && (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                <Files className="size-4" aria-hidden />프로젝트 필지 ({parcels.length}) — 단일/다필지 일괄 시세추정
+              </p>
+              <button onClick={() => void analyzeAll()} disabled={busy !== "" || batchBusy}
+                className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                {batchBusy ? `분석 중… (${batch?.length ?? 0}/${parcels.length})` : (<span className="inline-flex items-center gap-1.5"><Search className="size-4" aria-hidden />전체 필지 분석</span>)}
+              </button>
+            </div>
+            {batch && batch.length > 0 ? (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-[11px]">
+                  <thead>
+                    <tr className="bg-[var(--surface-strong)] text-[var(--text-tertiary)]">
+                      <th className="px-2.5 py-2 text-left font-bold">필지(지번)</th>
+                      <th className="px-2.5 py-2 text-right font-bold">면적</th>
+                      <th className="px-2.5 py-2 text-right font-bold">채택가</th>
+                      <th className="px-2.5 py-2 text-right font-bold">단가(원/㎡)</th>
+                      <th className="px-2.5 py-2 text-right font-bold">신뢰도</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batch.map((b, i) => (
+                      <tr key={i} onClick={() => { if (b.res?.ok) { setRes(b.res); setRanAddr(b.address); } }}
+                        className={`border-t border-[var(--line)]/60 ${b.res?.ok ? "cursor-pointer hover:bg-[var(--surface-soft)]" : ""} ${ranAddr === b.address ? "bg-[var(--accent-soft)]/40" : ""}`}>
+                        <td className="px-2.5 py-2 font-semibold text-[var(--text-primary)]">{b.address}</td>
+                        <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.area != null ? `${Math.round(b.area).toLocaleString()}㎡` : "—"}</td>
+                        {b.res?.ok ? (
+                          <>
+                            <td className="cc-num px-2.5 py-2 text-right font-bold text-[var(--accent-strong)]">{eok(b.res.appraised_total_won)}</td>
+                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.res.appraised_price_per_sqm.toLocaleString()}</td>
+                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{Math.round(b.res.confidence * 100)}%</td>
+                          </>
+                        ) : (
+                          <td colSpan={3} className="px-2.5 py-2 text-right text-[var(--status-warning)]">{b.err || "추정 실패"}</td>
+                        )}
+                      </tr>
+                    ))}
+                    {(() => {
+                      const ok = batch.filter((b) => b.res?.ok);
+                      if (!ok.length) return null;
+                      const total = ok.reduce((a, b) => a + (b.res?.appraised_total_won ?? 0), 0);
+                      const areaSum = ok.reduce((a, b) => a + (b.area ?? b.res?.area_sqm ?? 0), 0);
+                      return (
+                        <tr className="border-t-2 border-[var(--accent-strong)]/40 bg-[var(--surface-strong)]/50">
+                          <td className="px-2.5 py-2 font-black text-[var(--text-primary)]">통합 ({ok.length}필지)</td>
+                          <td className="cc-num px-2.5 py-2 text-right font-bold text-[var(--text-secondary)]">{areaSum ? `${Math.round(areaSum).toLocaleString()}㎡` : "—"}</td>
+                          <td className="cc-num px-2.5 py-2 text-right font-[1000] text-[var(--accent-strong)]">{eok(total)}</td>
+                          <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{areaSum ? Math.round(total / areaSum).toLocaleString() : "—"}</td>
+                          <td className="px-2.5 py-2" />
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[11px] text-[var(--text-hint)]">행을 클릭하면 해당 필지의 상세 보고서가 아래에 표시됩니다. 통합 채택가는 성공 필지의 합계입니다.</p>
+              </div>
+            ) : (
+              <p className="mt-3 text-[11px] text-[var(--text-secondary)]">‘전체 필지 분석’으로 {parcels.length}개 필지를 일괄 추정합니다(대표번지만 분석하던 부정합 해소). 일괄 분석은 필지별 공시지가·면적을 자동조회하며, 상세 입력(공시지가·건물·임대)은 위 ‘서칭·분석’의 단일 필지에만 적용됩니다.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* 보고서 본문 */}
       {res && (

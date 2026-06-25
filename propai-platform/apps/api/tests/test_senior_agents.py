@@ -151,11 +151,11 @@ def test_redevelopment_formula_dimension():
 _EXPECTED_KEYS = {
     "senior_urban_planner", "senior_financial_advisor", "senior_architect",
     "senior_bim_specialist", "senior_deliberation_member", "senior_tax_advisor",
-    "senior_accountant",
+    "senior_accountant", "senior_legal_scrivener", "senior_appraiser",
 }
 
 
-def test_all_seven_specs_registered():
+def test_all_specs_registered():
     keys = {s.key for s in list_senior_agents()}
     assert keys == _EXPECTED_KEYS
     assert validate_registry() == {}  # 전 spec 판단자격(basis+tradeoff) 통과 = citation 게이트
@@ -215,6 +215,29 @@ def test_accountant_spec_domain_facts():
     spec = get_senior_agent("senior_accountant")
     bases = " ".join(r.basis for r in spec.decision_rules)
     assert "1115" in bases and "1116" in bases and "1023" in bases
+
+
+def test_legal_scrivener_spec_domain_facts():
+    spec = get_senior_agent("senior_legal_scrivener")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    # 권리분석 말소기준권리·조합 동의율(35조)·신탁
+    assert "말소기준권리" in rules["legal.rights_analysis"].judgment
+    assert "제35조" in rules["legal.union_consent"].basis
+    assert any("신탁" in r.judgment for r in spec.decision_rules)
+    # ★감정평가 통합 룰(평가기 rule_id와 1:1 citation 정합·실효가치 산식)
+    assert "실효가치" in rules["legal.rights_takeover"].judgment
+    assert "각 동별" in rules["legal.union_consent"].judgment  # 재건축 35조③ 동별 과반
+    assert "최종" in spec.license_gate and "법무사" in spec.license_gate
+
+
+def test_appraiser_spec_domain_facts():
+    spec = get_senior_agent("senior_appraiser")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    # 공시지가기준법(감칙 14조)·원가법(15조)·종전평가 전파(통합)
+    assert "공시지가기준법" in rules["appraisal.land_official_basis"].judgment
+    assert "원가법" in rules["appraisal.building_cost"].judgment
+    assert "전파" in rules["appraisal.prior_valuation"].judgment  # 법무사·비례율 통합
+    assert "감정평가사" in spec.license_gate
 
 
 def test_deliberation_spec_domain_facts():
@@ -304,9 +327,10 @@ def test_orchestrator_available_lists_all():
     o = _orch()
     av = o.available()
     assert {a["key"] for a in av} == _EXPECTED_KEYS
-    # 고위험 플래그 정합
+    # 고위험 플래그 정합(권리 인수누락·감정 과대도 고위험)
     hr = {a["key"] for a in av if a["high_risk"]}
-    assert hr == {"senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member"}
+    assert hr == {"senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member",
+                  "senior_legal_scrivener", "senior_appraiser"}
 
 
 def test_orchestrator_no_valid_matched_empties_framework():
@@ -370,6 +394,26 @@ def test_orchestrator_bim_and_deliberation_evaluations():
     ev2 = {e["rule_id"]: e for e in d.evaluations}
     assert ev2["delib.multi_clause_csp"]["verdict"] == "BLOCK"
     assert "건폐율" in ev2["delib.multi_clause_csp"]["detail"]
+
+
+def test_orchestrator_appraiser_legal_integration():
+    o = _orch()
+    # 감정평가사: 종전평가
+    a = o.consult("감정평가", context={"inputs": {"land_appraised_total": 8e8,
+                                               "building_appraised_total": 2e8}})
+    av = {e["rule_id"]: e for e in a.evaluations}
+    assert av["appraisal.prior_valuation"]["value"] == 1_000_000_000.0
+    # 법무사: ★감정가 통합 권리분석(감정가 10억·인수 3억→인수율 30% WARN) + 동의율
+    legal = o.consult("법무사", context={"inputs": {
+        "appraised_value": 1e9, "senior_liens_total": 3e8,
+        "redevelopment_type": "재개발", "consent_owner_count": 80, "total_owner_count": 100,
+        "consent_area_sqm": 600, "total_area_sqm": 1000}})
+    ev = {e["rule_id"]: e for e in legal.evaluations}
+    assert ev["legal.rights_takeover"]["value"] == 30.0  # 감정가 기반 인수율
+    assert ev["legal.union_consent"]["verdict"] == "PASS"
+    # consult_multi(감정평가+법무사) 통합 자문
+    multi = o.consult_multi(["감정평가", "법무사"])
+    assert [c.agent_key for c in multi] == ["senior_appraiser", "senior_legal_scrivener"]
 
 
 def test_orchestrator_tax_and_accounting_evaluations():

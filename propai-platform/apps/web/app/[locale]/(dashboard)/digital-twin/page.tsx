@@ -18,7 +18,7 @@ export default async function DigitalTwinPage({
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <DigitalTwinControlTowerWorkspaceClient locale={locale as Locale} />
       <DigitalTwinAnomalyDashboard />
     </div>

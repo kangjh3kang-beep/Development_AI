@@ -978,7 +978,7 @@ export function AuthWorkspaceClient({
 
         {/* 런타임/세션 디버그 패널 제거 — 프로덕션에서 불필요 */}
         {/* eslint-disable-next-line no-constant-condition */}
-        {(false as boolean) && <div className="grid gap-6">
+        {(false as boolean) && <div className="grid grid-cols-1 gap-6 min-w-0">
           <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-6">
               <CardTitle className="text-xl text-[var(--text-primary)]">

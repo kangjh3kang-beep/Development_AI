@@ -355,7 +355,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
   const queryError = firstError ? extractErrorMessage(firstError) : null;
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* Hero — 임대 운영 관제 헤더 */}
       <Card className="cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <div className="cc-grid-bg opacity-40" />

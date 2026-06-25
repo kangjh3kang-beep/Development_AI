@@ -221,7 +221,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
   const okFalseError = result && !result.ok ? result.error : null;
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* Header + Form */}
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-lg)]">
         <div className="flex flex-wrap items-center gap-3">

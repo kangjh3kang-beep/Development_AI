@@ -15,7 +15,7 @@ export default async function LeaseOpsPage({ params }: LeaseOpsPageProps) {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <LeaseOpsWorkspace locale={locale as Locale} />
     </div>
   );

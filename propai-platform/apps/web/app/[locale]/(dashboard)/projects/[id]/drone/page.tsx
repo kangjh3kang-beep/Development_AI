@@ -25,7 +25,7 @@ export default async function DronePage({ params }: DronePageProps) {
       : dictionary.workspace.modeMock;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
             <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["drone"].eyebrow}
         title={dictionary.modulePlaceholders["drone"].title}

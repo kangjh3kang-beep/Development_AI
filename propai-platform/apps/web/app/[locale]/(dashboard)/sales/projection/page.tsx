@@ -5,7 +5,7 @@ export default async function SalesProjectionPage({ params }: { params: Promise<
   const { locale } = await params;
   if (!isValidLocale(locale)) return null;
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <span className="cc-meta">DEVELOPER · PROJECTION</span>

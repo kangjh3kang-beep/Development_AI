@@ -232,7 +232,7 @@ export function PreCheckWorkspace() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* ── 입력 바 (커맨드센터) ── */}
       <section className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
         <div className="cc-grid-bg opacity-40" />

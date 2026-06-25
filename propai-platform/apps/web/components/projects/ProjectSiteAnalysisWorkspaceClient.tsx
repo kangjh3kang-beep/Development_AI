@@ -735,7 +735,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
+    <section className="grid grid-cols-1 gap-6 min-w-0">
       {/* auto 모드: 입력폼·Hero·필지지도 없이 상태 안내 + AVM/필지/비교거래 카드만 렌더 */}
       {autoMode ? (
         <>

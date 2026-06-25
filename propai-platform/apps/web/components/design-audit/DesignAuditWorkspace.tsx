@@ -251,7 +251,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
   const userCount = fields.length - extractedCount;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 헤더 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
