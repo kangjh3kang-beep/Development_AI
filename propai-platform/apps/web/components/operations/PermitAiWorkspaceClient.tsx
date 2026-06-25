@@ -15,6 +15,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 
 // 구획도 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
@@ -371,6 +372,12 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               )}
             </CardContent>
           </Card>
+
+          {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}
+          <SeniorVerdictCard
+            consultation={(result as { senior_consultation?: SeniorConsultation }).senior_consultation}
+            title="시니어 인허가 자문(심의·도시계획·법무)"
+          />
 
           {/* 일조권 · 건축가능 볼륨(정북일조 + 동지 일영) — 인허가 핵심 규제 정량화 */}
           <SolarEnvelopeCard
