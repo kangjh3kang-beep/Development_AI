@@ -7,6 +7,8 @@ import type { JSX } from "react";
 const P = { fill: "none", stroke: "currentColor", strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 
 const ICONS: Record<string, JSX.Element> = {
+  // 통합 의사결정(Tier1) — 나침반
+  decision_brief: <><circle cx="12" cy="12" r="10" /><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" /></>,
   // 입지 분석 — 지도 핀
   site_analysis: <><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></>,
   // 법규 검토 — 저울

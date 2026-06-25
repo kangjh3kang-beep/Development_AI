@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 _PY = 3.305785  # 1평 = 3.305785㎡
 
 _CASE_LABEL = {"land": "토지(나대지)", "building": "단일필지 건물", "aggregate": "집합건물(공동주택)"}
@@ -76,7 +78,9 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
 
     el: list[Any] = []
     el.append(Paragraph("토지분석보고서", title))
-    el.append(Paragraph(f"PropAI 사통팔땅 — {proj} · 공공데이터 기반 참고용(감정평가·법적효력 없음)", small))
+    # proj(project_name)은 사용자 입력이라 esc(Paragraph 직접 보간 → '<','&' 혼입 시 크래시 차단).
+    # ★tbl() 의 셀은 bare str 이라 reportlab 이 XML 파싱하지 않아 esc 불필요(Paragraph 만 위험).
+    el.append(Paragraph(f"PropAI 사통팔땅 — {_esc(proj)} · 공공데이터 기반 참고용(감정평가·법적효력 없음)", small))
     el.append(Spacer(1, 6))
 
     # ── 집계 ──
@@ -159,9 +163,10 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
             u = units_by.get(jb) or {}
             units = u.get("units") or []
             bld = p.get("building") or {}
+            # jb(지번)·building_name·unit_count 는 공부/사용자 동적 문자열이라 esc(Paragraph 직접 보간).
             el.append(Paragraph(
-                f"· {jb} — {bld.get('building_name') or '건물명 미상'} / "
-                f"세대수 {bld.get('unit_count') or '-'} / 대지면적 {_sqm(u.get('plat_area_sqm'))}", body))
+                f"· {_esc(jb)} — {_esc(bld.get('building_name') or '건물명 미상')} / "
+                f"세대수 {_esc(bld.get('unit_count') or '-')} / 대지면적 {_sqm(u.get('plat_area_sqm'))}", body))
             if units:
                 rows = [["동", "호", "전유면적(㎡)", "대지지분(㎡)", "대지지분(평)"]]
                 for un in units[:40]:  # 보고서 가독성 상한(초과분은 토지조서 참조)

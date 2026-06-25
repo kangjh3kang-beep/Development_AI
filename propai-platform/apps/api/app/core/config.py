@@ -1,8 +1,9 @@
 import secrets
 import warnings
+from functools import lru_cache
 
 from pydantic_settings import BaseSettings
-from functools import lru_cache
+
 
 class Settings(BaseSettings):
     APP_ENV: str = "development"
@@ -111,6 +112,11 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: int = 100
     RATE_LIMIT_WINDOW_SEC: int = 60
 
+    # 배포 전(샌드박스/개발) 여부 — True면 라이브 DB·공공API·LLM 실호출이 불가한 환경으로 보고
+    #   결과물에 '배포 환경에서만 동작' 정직 표기(deploy_pending)를 단다. 라이브 배포 시 false로
+    #   설정하면 자기 라이브성을 과소표기하지 않는다(기본 True=보수적).
+    DEPLOY_PENDING: bool = True
+
     # 로깅
     LOG_FORMAT: str = "json"
     LOG_LEVEL: str = "INFO"
@@ -153,7 +159,7 @@ def _validate_secret(name: str, value: str) -> None:
     if len(value) < 32:
         raise RuntimeError(f"{name}는 32자 이상이어야 합니다.")
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     s = Settings()
     # 프로덕션 환경에서 빈/약한 비밀키 사용 차단

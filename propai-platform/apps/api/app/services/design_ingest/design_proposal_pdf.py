@@ -15,6 +15,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def _fmt(v: Any, unit: str = "") -> str:
     if v is None or v == "":
@@ -113,7 +115,9 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         ]))
         if mp.get("far_basis_note"):
             el.append(Spacer(1, 3))
-            el.append(Paragraph(str(mp["far_basis_note"]), small))
+            # far_basis_note 는 동적 문자열이라 esc(Paragraph 직접 보간 → 크래시 차단).
+            # ★_kv() 의 셀은 bare str 이라 reportlab 이 XML 파싱하지 않아 esc 불필요(Paragraph 만 위험).
+            el.append(Paragraph(_esc(mp["far_basis_note"]), small))
 
     # 특이부지 게이트(있을 때만) — 학교용지·GB·농지·맹지 등 비일상 토지 정직 고지(할루시네이션 방어)
     sp = result.get("special_parcel") or {}
@@ -129,7 +133,8 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         ]))
         if sp.get("note"):
             el.append(Spacer(1, 3))
-            el.append(Paragraph(str(sp["note"]), small))
+            # note 는 특이부지 동적 고지 문자열이라 esc(Paragraph 직접 보간).
+            el.append(Paragraph(_esc(sp["note"]), small))
 
     # S2 추천 설계안
     el.append(Paragraph("2. 추천 설계안", h))
@@ -209,11 +214,13 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
                 ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ]))
             el.append(ubt)
-        notes = [str(n) for n in (verdict.get("notes") or [])]
+        # notes·warnings 는 동적 문자열이라 esc(아래 <br/> join 후 Paragraph 에 들어감).
+        notes = [_esc(n) for n in (verdict.get("notes") or [])]
         for n in (cand.get("warnings") or []):
-            notes.append(str(n))
+            notes.append(_esc(n))
         if notes:
             el.append(Spacer(1, 3))
+            # <br/> 는 의도적 줄바꿈 마크업이라 보존(각 note 의 동적 부분은 위에서 esc 완료).
             el.append(Paragraph("· " + "<br/>· ".join(notes[:10]), small))
 
     # S3 인허가·법규
@@ -231,10 +238,12 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
     legal_lines: list[str] = []
     for ev in (site.get("evidence") or []) + ((chosen or {}).get("evidence") or []):
         if isinstance(ev, dict) and ev.get("link"):
-            legal_lines.append(f"{ev.get('claim') or ev.get('source') or '근거'}: {ev['link']}")
+            # claim·source·link 모두 동적('&' 흔한 URL 포함)이라 esc(아래 <br/> join 후 Paragraph 에 들어감).
+            legal_lines.append(f"{_esc(ev.get('claim') or ev.get('source') or '근거')}: {_esc(ev['link'])}")
     if legal_lines:
         el.append(Spacer(1, 3))
         el.append(Paragraph("관련 법령(verified):", body))
+        # <br/> 는 의도적 줄바꿈 마크업 보존(각 라인의 동적 부분은 위에서 esc 완료).
         el.append(Paragraph("<br/>".join(legal_lines[:12]), small))
 
     # S4 면책
@@ -246,7 +255,8 @@ def build_design_proposal_pdf(result: dict[str, Any]) -> bytes:
         small,
     ))
     for n in (site.get("warnings") or [])[:6]:
-        el.append(Paragraph(f"· {n}", small))
+        # 부지 경고 문자열은 동적이라 esc(Paragraph 직접 보간).
+        el.append(Paragraph(f"· {_esc(n)}", small))
 
     doc.build(el)
     return buf.getvalue()

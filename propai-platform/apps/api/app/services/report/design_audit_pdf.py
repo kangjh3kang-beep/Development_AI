@@ -17,18 +17,26 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def _fmt(v: Any) -> str:
+    """동적 값을 표시 문자열로. ★reportlab Paragraph 안전을 위해 항상 XML 이스케이프한다.
+
+    finding 텍스트·overall·metrics 등 모든 동적 텍스트가 _fmt 를 거쳐 Paragraph 에 들어가므로
+    여기 한 곳에서 _esc 하면 '<'/'&'/'</para>' 가 섞여도 ValueError(→HTTP500) 없이 정상
+    렌더된다(전역 전파방지·은폐 금지). 정적 한글 헤더는 _fmt 미경유라 무영향.
+    """
     if v is None:
         return "-"
     if isinstance(v, bool):
-        return "예" if v else "아니오"
+        return _esc("예" if v else "아니오")
     if isinstance(v, (int, float)):
         try:
-            return f"{v:,}" if abs(v) >= 1000 else str(v)
+            return _esc(f"{v:,}" if abs(v) >= 1000 else str(v))
         except (TypeError, ValueError):
-            return str(v)
-    return str(v)
+            return _esc(str(v))
+    return _esc(str(v))
 
 
 _SEVERITY_LABEL = {
@@ -187,9 +195,10 @@ def build_design_audit_pdf(audit: dict[str, Any]) -> bytes:
     el: list[Any] = []
 
     el.append(Paragraph("설계심사 리포트", title))
+    # project_id·id·created_at 는 동적 식별자라 esc(드물지만 '<','&' 혼입 시 크래시 차단).
     el.append(Paragraph(
-        f"PropAI 사통팔땅 · 프로젝트 {audit.get('project_id') or '미상'} · "
-        f"심사 ID {audit.get('id', '')} · {audit.get('created_at') or ''}", small))
+        f"PropAI 사통팔땅 · 프로젝트 {_esc(audit.get('project_id') or '미상')} · "
+        f"심사 ID {_esc(audit.get('id', ''))} · {_esc(audit.get('created_at') or '')}", small))
     el.append(Spacer(1, 8))
 
     # ── S0 종합판정·요약 ──
@@ -209,7 +218,8 @@ def build_design_audit_pdf(audit: dict[str, Any]) -> bytes:
         rows = [["표본", "내용"]]
         for i, c in enumerate(comps[:15], start=1):
             label = str(c.get("title") or c.get("id") or f"표본 {i}")
-            desc = ", ".join(f"{k}: {_fmt(v)}" for k, v in c.items() if k not in {"title", "id"})
+            # desc 는 Paragraph 로 들어가므로 키(k)도 esc(값 _fmt 는 이미 esc). label 은 bare 셀이라 무영향.
+            desc = ", ".join(f"{_esc(k)}: {_fmt(v)}" for k, v in c.items() if k not in {"title", "id"})
             rows.append([label, Paragraph(desc or "-", body)])
         el.append(_kv_table(rows))
     else:
@@ -258,7 +268,8 @@ def build_design_audit_pdf(audit: dict[str, Any]) -> bytes:
             rows.append([
                 law_label or _finding_id(f),
                 Paragraph(_fmt(_finding_text(f)), body),
-                Paragraph(link, small),
+                # link 은 레지스트리 URL(쿼리스트링에 '&' 흔함)이라 esc 해야 Paragraph 크래시 차단.
+                Paragraph(_esc(link), small),
             ])
         t = Table(rows, colWidths=[40 * mm, 75 * mm, 55 * mm])
         t.setStyle(TableStyle([
@@ -296,7 +307,8 @@ def build_design_audit_pdf(audit: dict[str, Any]) -> bytes:
             gate_mark = " · 인용검문: 치환됨" if gate.get("gated") else ""
             el.append(Paragraph(
                 f"<b>[AI 추정]</b> {_fmt(it.get('claim'))}", body))
-            el.append(Paragraph(f"근거: {basis} · 신뢰도: {conf}{gate_mark}", small))
+            # basis·conf 는 엔진 산출 동적 문자열이라 esc(Paragraph 직접 보간). gate_mark 는 정적.
+            el.append(Paragraph(f"근거: {_esc(basis)} · 신뢰도: {_esc(conf)}{gate_mark}", small))
         if isinstance(blindspot, dict) and blindspot.get("summary"):
             el.append(Paragraph(f"요약: {_fmt(blindspot['summary'])}", small))
         el.append(Paragraph(

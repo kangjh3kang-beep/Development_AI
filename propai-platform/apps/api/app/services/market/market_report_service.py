@@ -12,6 +12,8 @@ from typing import Any
 
 import structlog
 
+from app.services.common.pdf_escape import esc as _esc
+
 logger = structlog.get_logger(__name__)
 
 # 주소에서 시/군/구 토큰 추출. KOSIS·SGIS는 통합시(수원·성남·고양 등)를 다르게 표기한다:
@@ -707,7 +709,9 @@ class MarketReportService:
         body = ParagraphStyle("body", parent=ss["BodyText"], fontName=font, fontSize=10, leading=16)
         story: list = []
         story.append(Paragraph("시장조사보고서", h1))
-        story.append(Paragraph(f"{rep['address']} · 생성 {rep['generated_at']} · 최근 {len(rep['months'])}개월", body))
+        # address·generated_at 는 사용자/엔진 동적 입력이라 esc(주소에 '<','&' 가능 → Paragraph 크래시 차단).
+        story.append(Paragraph(
+            f"{_esc(rep['address'])} · 생성 {_esc(rep['generated_at'])} · 최근 {len(rep['months'])}개월", body))
         story.append(Spacer(1, 8))
 
         # 대상지 지도 캡처
@@ -723,9 +727,14 @@ class MarketReportService:
 
         nar = rep.get("narrative") or {}
         story.append(Paragraph("1. 시장 요약", h2))
-        story.append(Paragraph(nar.get("summary") or "-", body))
+        # summary 는 AI/엔진 내러티브라 esc(LLM 출력에 '<','&' 혼입 시 크래시 차단).
+        story.append(Paragraph(_esc(nar.get("summary") or "-"), body))
         if rep.get("zone_type") or rep.get("official_price_per_sqm"):
-            story.append(Paragraph(f"용도지역: {rep.get('zone_type') or '-'} · 공시지가(㎡): {_eok((rep.get('official_price_per_sqm') or 0)/10000) if rep.get('official_price_per_sqm') else '-'}", body))
+            # zone_type 은 엔진 용도지역 문자열이라 esc(공시지가는 숫자라 안전).
+            opp = rep.get("official_price_per_sqm")
+            opp_txt = _eok(opp / 10000) if opp else "-"
+            story.append(Paragraph(
+                f"용도지역: {_esc(rep.get('zone_type') or '-')} · 공시지가(㎡): {opp_txt}", body))
         story.append(Spacer(1, 6))
 
         def stat_table(title: str, data: dict, unit_label: str):
@@ -839,7 +848,8 @@ class MarketReportService:
                       f"{mig.get('total_outflow'):,}" if mig.get("total_outflow") is not None else "-"]]
             story.append(Paragraph("인구 이동", body))
             story.append(_simple_table(mrows, [60 * mm, 55 * mm, 55 * mm]))
-            story.append(Paragraph(f"출처: {pop.get('source', '-')} ({pop.get('data_source', '-')})", cap))
+            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간).
+            story.append(Paragraph(f"출처: {_esc(pop.get('source', '-'))} ({_esc(pop.get('data_source', '-'))})", cap))
             story.append(Spacer(1, 8))
 
         inc = raw.get("income")
@@ -851,27 +861,32 @@ class MarketReportService:
                      ["평균 소득", f"{_eok(avg)}원" if avg else "데이터 없음"],
                      ["중위 소득" + ("(추정)" if inc.get("median_estimated") else ""), f"{_eok(med)}원" if med else "데이터 없음"]]
             story.append(_simple_table(irows, [80 * mm, 90 * mm]))
-            story.append(Paragraph(f"출처: {inc.get('source', '-')} ({inc.get('data_source', '-')})", cap))
+            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간).
+            story.append(Paragraph(f"출처: {_esc(inc.get('source', '-'))} ({_esc(inc.get('data_source', '-'))})", cap))
             story.append(Spacer(1, 8))
 
         # 적정 분양가(있을 때만)
         pb = (rep.get("pricing_band") or {})
         if pb and pb.get("data_source") not in (None, "unavailable") and pb.get("fair_price_10k"):
             story.append(Paragraph("7. 적정 분양가(거래사례비교)", h2))
-            story.append(Paragraph(f"적정 분양가: {_eok(pb['fair_price_10k'])}원 · 지불여력 판정: {pb.get('affordability_verdict', '-')}", body))
-            story.append(Paragraph(pb.get("note", ""), cap))
+            # affordability_verdict·note 는 엔진 산출 동적 문자열이라 esc(Paragraph 직접 보간).
+            story.append(Paragraph(
+                f"적정 분양가: {_eok(pb['fair_price_10k'])}원 · "
+                f"지불여력 판정: {_esc(pb.get('affordability_verdict', '-'))}", body))
+            story.append(Paragraph(_esc(pb.get("note", "")), cap))
             story.append(Spacer(1, 8))
 
         story.append(Paragraph("8. 기회 요인", h2))
+        # opportunities·risks·price_trend 는 AI/엔진 내러티브라 esc(Paragraph 직접 보간).
         for o in (nar.get("opportunities") or ["-"]):
-            story.append(Paragraph(f"· {o}", body))
+            story.append(Paragraph(f"· {_esc(o)}", body))
         story.append(Spacer(1, 4))
         story.append(Paragraph("9. 리스크 요인", h2))
         for r in (nar.get("risks") or ["-"]):
-            story.append(Paragraph(f"· {r}", body))
+            story.append(Paragraph(f"· {_esc(r)}", body))
         story.append(Spacer(1, 4))
         story.append(Paragraph("10. 가격 동향", h2))
-        story.append(Paragraph(nar.get("price_trend") or "-", body))
+        story.append(Paragraph(_esc(nar.get("price_trend") or "-"), body))
 
         # 면책 고지
         story.append(Spacer(1, 14))
