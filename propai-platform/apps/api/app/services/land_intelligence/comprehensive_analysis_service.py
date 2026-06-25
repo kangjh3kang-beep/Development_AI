@@ -275,8 +275,10 @@ class ComprehensiveAnalysisService:
 
         # ★(단일/다필지 일원화) parcels 제공 시 면적가중 통합집계로 land_area·zone_type·effective_far를
         #   덮어쓴다 — 이후 7섹션·GFA·유형별검증이 전부 '통합면적' 기준으로 산출된다(543㎡ 단일 버그 제거).
-        #   N=1은 _aggregate_integrated_zoning의 항등이라 단일필지 결과와 정확히 일치(무회귀).
-        #   미제공(레거시 단일주소 호출)은 위 단일 경로 그대로(무변경).
+        #   목적은 N≥2 통합. N=1은 _aggregate의 구조적 항등(total=단일면적·blended=그 값)이라 단일과 사실상
+        #   동일하나, 프론트가 실효치(farPct)를 직접 제공하면 그 출처(parcels-info)가 single-path base 산출과
+        #   미세 차이날 수 있다(프론트는 length>1일 때만 전송 → 운영 UI는 N=1 override 미도달).
+        #   미제공(레거시 단일주소 호출)은 위 단일 경로 그대로(완전 무변경).
         integrated = await self._integrated_context(parcels) if parcels else None
         if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
             land_area = float(integrated["total_area_sqm"])
@@ -290,7 +292,8 @@ class ComprehensiveAnalysisService:
             # sec1(실효용적률 카드)도 통합 실효치로 정합 + 통합 메타 부착(혼재 시 검토필요 표기 유지).
             sec1 = {
                 **(sec1 if isinstance(sec1, dict) else {}),
-                "effective_far_pct": effective_far, "effective_bcr_pct": effective_bcr,
+                "effective_far_pct": effective_far,
+                "effective_bcr_pct": effective_bcr,
                 "integrated": True, "parcel_count": integrated.get("parcel_count"),
                 "dominant_zone": dz, "zone_mix": integrated.get("zone_mix"),
             }

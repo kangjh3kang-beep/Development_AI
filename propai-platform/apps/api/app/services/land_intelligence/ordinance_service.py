@@ -288,7 +288,7 @@ class OrdinanceService:
         # ★조례 관할명 정규화(공용 SSOT resolve_ordinance_region 재사용) — 특별시/광역시 자치구
         #   (동작구 등)는 조례 제정권이 없어 시 본청('서울특별시')으로 승격. 일반 시/군은 그대로.
         #   인용(legal_basis)·실시간 검색명을 이 관할로 일원화('동작구 도시계획 조례'[허위] 제거).
-        jurisdiction = resolve_ordinance_region(address) or (sigungu or sido)
+        jurisdiction = resolve_ordinance_region(address) or sigungu or (sido if sido != "미확인" else None)
 
         # 0차: 저장된 분석 재사용(자동 재조사 금지 — 사용자 재분석 시에만 갱신)
         if not force_refresh:
