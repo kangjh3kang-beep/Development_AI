@@ -408,6 +408,23 @@ def test_orchestrator_architect_evaluation_reuses_setback_helper():
     assert c.overall_verdict == "BLOCK"
 
 
+def test_orchestrator_include_reasoning():
+    o = _orch()
+    # include_reasoning 미요청 → reasoning None(기본 무변경)
+    base = o.consult("금융")
+    assert base.reasoning is None
+    # 요청 시 → FinCoT 구조(IRAC·debate[고위험]) 첨부, LLM 미주입이라 structured
+    r = o.consult("금융", context={"include_reasoning": True,
+                                  "inputs": {"noi": 90, "debt_service": 100}})
+    assert r.reasoning is not None
+    assert r.reasoning["mode"] == "structured" and r.reasoning["narrative"] is None
+    assert len(r.reasoning["irac_steps"]) >= 1
+    assert r.reasoning["debate"] is not None  # 금융=고위험 → debate 발동
+    # IRAC 결론에 평가 verdict 반영(DSCR BLOCK)
+    dscr = next(s for s in r.reasoning["irac_steps"] if s["rule_id"] == "fin.dscr_gate")
+    assert "BLOCK" in dscr["conclusion"]
+
+
 def test_coerce_matched_ids_defensive():
     from app.services.senior_agents.orchestrator import _coerce_matched_ids
     assert _coerce_matched_ids(None) is None
