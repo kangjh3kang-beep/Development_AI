@@ -22,6 +22,7 @@ from app.services.senior_agents.confidence import (
     needs_expert_review,
 )
 from app.services.senior_agents.evaluators import BLOCK, EVALUATORS, WARN, worst_verdict
+from app.services.senior_agents.reasoner import reason as _reason
 from app.services.senior_agents.registry import get_senior_agent, list_senior_agents
 from app.services.senior_agents.spec import DecisionRule, Maturity, SeniorAgentSpec
 
@@ -61,6 +62,7 @@ class SeniorConsultation:
     honest_notes: tuple[str, ...] = field(default_factory=tuple)
     evaluations: tuple[dict[str, Any], ...] = field(default_factory=tuple)  # 정량 실측 판정(입력 시)
     overall_verdict: str | None = None  # 평가 종합 최악판정(PASS/WARN/BLOCK·없으면 None)
+    reasoning: dict[str, Any] | None = None  # FinCoT 추론(include_reasoning 시·없으면 None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +81,7 @@ class SeniorConsultation:
             "honest_notes": list(self.honest_notes),
             "evaluations": list(self.evaluations),
             "overall_verdict": self.overall_verdict,
+            "reasoning": self.reasoning,
         }
 
 
@@ -210,6 +213,21 @@ class SeniorOrchestrator:
             notes.append("경고(WARN) 항목 존재 — 보수 가정·조건부 검토 권장.")
 
         citations = tuple(sorted({r.basis.strip() for r in rules}))
+
+        # FinCoT 추론(요청 시·결정론 구조). LLM 서술은 미주입(기본 off) — 호출측이 runner 주입 시 생성.
+        reasoning: dict[str, Any] | None = None
+        if ctx.get("include_reasoning"):
+            reasoning = _reason({
+                "name_ko": spec.name_ko,
+                "license_gate": spec.license_gate,
+                "decision_framework": [_rule_to_dict(r) for r in rules],
+                "evaluations": list(evaluations),
+                "high_risk": hr,
+                "needs_expert_review": needs_review,
+                "overall_verdict": overall,
+                "citations": list(citations),
+            }).to_dict()
+
         return SeniorConsultation(
             agent_key=spec.key,
             name_ko=spec.name_ko,
@@ -226,6 +244,7 @@ class SeniorOrchestrator:
             honest_notes=tuple(notes),
             evaluations=evaluations,
             overall_verdict=overall,
+            reasoning=reasoning,
         )
 
     def consult_multi(

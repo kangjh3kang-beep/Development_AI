@@ -2,10 +2,13 @@
 
 from app.services.senior_agents.evaluators import (
     BLOCK,
+    EVALUATORS,
     PASS,
     WARN,
     evaluate_accounting,
     evaluate_architect,
+    evaluate_bim,
+    evaluate_deliberation,
     evaluate_financial,
     evaluate_tax,
     evaluate_urban,
@@ -201,6 +204,65 @@ def test_lease_classification():
     assert e4.value is None and "인식" in e4.detail
     # 음수/결측 생략
     assert evaluate_accounting({}) == [] and evaluate_accounting({"lease_term_months": -1}) == []
+
+
+def test_bim_clash_and_recall():
+    # clash: critical>0 BLOCK·acceptable만 WARN·0 PASS
+    assert _by_id(evaluate_bim({"clash_count": 5, "critical_clash_count": 2}))[
+        "bim.clash_triage"].verdict == BLOCK
+    assert _by_id(evaluate_bim({"clash_count": 3, "critical_clash_count": 0}))[
+        "bim.clash_triage"].verdict == WARN
+    assert _by_id(evaluate_bim({"clash_count": 0}))["bim.clash_triage"].verdict == PASS
+    # 법규 recall: 위반>0 BLOCK·미검증<100% WARN·전수충족 PASS
+    assert _by_id(evaluate_bim({"total_rules": 100, "checked_rules": 100, "failed_rules": 3}))[
+        "bim.code_compliance_recall"].verdict == BLOCK
+    warn = _by_id(evaluate_bim({"total_rules": 100, "checked_rules": 80, "failed_rules": 0}))[
+        "bim.code_compliance_recall"]
+    assert warn.verdict == WARN and warn.value == 80.0
+    assert _by_id(evaluate_bim({"total_rules": 100, "checked_rules": 100, "failed_rules": 0}))[
+        "bim.code_compliance_recall"].verdict == PASS
+    # 결측/분모0 생략
+    assert evaluate_bim({}) == [] and "bim.code_compliance_recall" not in _by_id(
+        evaluate_bim({"total_rules": 0, "checked_rules": 0}))
+    # recall clamp: checked>total → 100% PASS(과대 검토수 클램프)
+    over = _by_id(evaluate_bim({"total_rules": 100, "checked_rules": 150, "failed_rules": 0}))[
+        "bim.code_compliance_recall"]
+    assert over.value == 100.0 and over.verdict == PASS
+    # critical>clash 비정합 → clash로 클램프(안전측 BLOCK)
+    cl = _by_id(evaluate_bim({"clash_count": 2, "critical_clash_count": 5}))["bim.clash_triage"]
+    assert cl.value == 2.0 and cl.verdict == BLOCK
+
+
+def test_deliberation_csp_unsat_core():
+    # 전 조항 충족 → PASS
+    ok = _by_id(evaluate_deliberation({"bcr_actual": 50, "bcr_limit": 60, "far_actual": 200,
+        "far_limit": 250, "height_actual": 30, "height_limit": 35, "road_width_actual": 6,
+        "road_width_required": 4}))["delib.multi_clause_csp"]
+    assert ok.verdict == PASS and ok.value == 0
+    # 용적률 초과 + 접도 미달 → BLOCK·unsat core 2건
+    bad = _by_id(evaluate_deliberation({"far_actual": 300, "far_limit": 250,
+        "road_width_actual": 3, "road_width_required": 4}))["delib.multi_clause_csp"]
+    assert bad.verdict == BLOCK and bad.value == 2
+    assert "용적률" in bad.detail and "접도" in bad.detail
+    # 조항 미제공 → 생략(무목업)
+    assert evaluate_deliberation({}) == []
+    # 부분 제공(건폐율만) → 그 조항만 검증. value는 float 통일
+    one = _by_id(evaluate_deliberation({"bcr_actual": 70, "bcr_limit": 60}))["delib.multi_clause_csp"]
+    assert one.verdict == BLOCK and one.value == 1.0 and isinstance(one.value, float)
+    # ★MED: limit 0·음수(미확보) → 해당 조항 생략(거짓 위반 방지·무목업)
+    assert evaluate_deliberation({"bcr_actual": 60, "bcr_limit": 0}) == []
+    # 경계: actual==limit → 충족(PASS)
+    assert _by_id(evaluate_deliberation({"bcr_actual": 60, "bcr_limit": 60}))[
+        "delib.multi_clause_csp"].verdict == PASS
+
+
+def test_all_seven_domains_have_evaluator():
+    # 7개 시니어 도메인 전부 평가기 보유(완성)
+    assert set(EVALUATORS) == {
+        "senior_financial_advisor", "senior_urban_planner", "senior_architect",
+        "senior_tax_advisor", "senior_accountant", "senior_bim_specialist",
+        "senior_deliberation_member",
+    }
 
 
 def test_worst_verdict():

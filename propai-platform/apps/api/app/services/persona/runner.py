@@ -492,7 +492,13 @@ async def _run_developer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any
     address = await _resolve_address(db, ctx)
     recommend: dict[str, Any] | None = None
 
-    if address:
+    # ── 핸드오프 재사용(R11·중복연산 제거) — 상위 오케스트레이터(예: Decision Brief)가
+    #   이미 auto_recommend_top3 결과를 가졌다면 ctx.recommend_override 로 넘겨 재계산을 막는다.
+    #   값이 dict 일 때만 채택(없으면 종전대로 직접 산출 — additive·무회귀). ──
+    override = ctx.get("recommend_override")
+    if isinstance(override, dict) and override.get("recommendations") is not None:
+        recommend = override
+    elif address:
         try:
             from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
             # equity_won 전달 시 ROE 경로 확보(미전달=기본). use_llm 으로 전담 interpreter 분기.

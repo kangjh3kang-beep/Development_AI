@@ -33,6 +33,7 @@ import { RunProgressTimeline } from "./RunProgressTimeline";
 import { InputResolveModal } from "./InputResolveModal";
 import { ProfileManager } from "./ProfileManager";
 import { PersonaPanel } from "./PersonaPanel";
+import { SeniorConsultPanel } from "./SeniorConsultPanel";
 import { nodesToOptions } from "@/lib/orchestration/selector-adapter";
 import { computeClosure } from "@/lib/orchestration/dependency-graph";
 import { buildRunAllSelection } from "@/lib/orchestration/run-all-selection";
@@ -144,9 +145,9 @@ export function OrchestratorPanel({
 
   const { runNode } = useNodeRunner();
 
-  // 5번째 표면(view) — DAG 4모드(dag) ↔ 전문가 페르소나(persona). ★RunMode 미확장(plan 엔진 무영향).
+  // 표면(view) — DAG 4모드(dag) ↔ 전문가 페르소나(persona) ↔ 시니어 자문(senior). ★RunMode 미확장(plan 엔진 무영향).
   // 로컬 state라 새로고침 시 dag로 초기화(휘발 정책 — 결과는 서버 재산출 가능).
-  const [view, setView] = useState<"dag" | "persona">("dag");
+  const [view, setView] = useState<"dag" | "persona" | "senior">("dag");
 
   // 별도(standalone) 모드 입력해소 모달 대상.
   const [resolveTarget, setResolveTarget] = useState<NodeId | null>(null);
@@ -349,6 +350,10 @@ export function OrchestratorPanel({
   // 페르소나 뷰는 projectId가 있을 때만(통합 분석 워크스페이스). 미전달 소비처는 기존과 동일.
   const personaEnabled = !!projectId;
   const showPersona = personaEnabled && view === "persona";
+  // 시니어 자문 패널 자체는 무컨텍스트(projectId 불필요)이나, v1 진입점은 워크스페이스(projectId)
+  // 한정으로 의도 — projectId 없는 소비처(예: MarketInsights)에 탭 바를 신설하는 회귀를 피한다.
+  // (무컨텍스트 노출이 필요해지면 탭 컨테이너를 personaEnabled에서 분리하는 후속 작업.)
+  const showSenior = personaEnabled && view === "senior";
 
   return (
     <section className="grid gap-4">
@@ -404,6 +409,7 @@ export function OrchestratorPanel({
             [
               { id: "dag", label: "통합 분석", hint: "항목 기반 가이드/별도/선택/프로필" },
               { id: "persona", label: "실무 전문가 분석", hint: "분양대행·도시계획 실무 전문가" },
+              { id: "senior", label: "시니어 자문", hint: "7분야 시니어 판단·근거·정량판정" },
             ] as const
           ).map((t) => {
             const active = view === t.id;
@@ -437,8 +443,11 @@ export function OrchestratorPanel({
         <PersonaPanel projectId={projectId} runDisabled={runDisabled} />
       )}
 
+      {/* 시니어 자문 뷰: SeniorConsultPanel만 렌더(서버 오라클·plan 엔진 무영향·자족). */}
+      {showSenior && <SeniorConsultPanel />}
+
       {/* 이하 DAG 4모드 블록 — 페르소나 뷰가 아닐 때만 렌더(기존 동작 byte-identical). */}
-      {!showPersona && (
+      {!showPersona && !showSenior && (
         <>
       <RunModeSwitcher value={runMode} onChange={onModeChange} />
 
@@ -513,7 +522,7 @@ export function OrchestratorPanel({
       {/* 실행 진행 — 모든 모드 공통(plan + nodeResult). 단건 재실행은 별도 모달 경유.
           (U5) 고급 접기 밖에 두어 단순화 뷰에서도 「전체 분석 한 번에」 진행이 항상 보이게 한다.
           페르소나 뷰에서는 기존과 동일하게 숨김(!showPersona 게이트 유지·무회귀). */}
-      {!showPersona && (
+      {!showPersona && !showSenior && (
         <RunProgressTimeline
           plan={plan}
           nodeResult={nodeResult}
