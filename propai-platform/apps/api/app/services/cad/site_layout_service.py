@@ -309,10 +309,12 @@ def build_site_layout(
             options.append({
                 "kind": kind,
                 "angle_deg": round(angle, 1),
+                # 단일동(n≤1)은 인접동이 없어 인동간격 개념이 무의미 → None(오도 방지).
+                "spacing_meaningful": n > 1,
                 "buildings": n,
                 "floors": floors,
                 "height_m": round(height_m, 1),
-                "spacing_m": spacing,
+                "spacing_m": spacing if n > 1 else None,
                 # ★세대수 = 실현 연면적 / 세대당 면적(층바닥수 아님 — n·floors는 층바닥수다).
                 "total_units_est": round(realized_gfa / _GFA_PER_UNIT_SQM),
                 "daylight": day,
