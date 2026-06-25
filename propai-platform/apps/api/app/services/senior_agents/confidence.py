@@ -14,7 +14,10 @@ from dataclasses import dataclass
 
 _W = {"completeness": 0.35, "rule_fit": 0.25, "rag_strength": 0.25, "track_record": 0.15}
 THRESHOLD_REVIEW = 0.6        # 미만 = 전문가 확인 필요
-THRESHOLD_HIGH_RISK = 0.75    # 고위험 도메인 상향 임계
+THRESHOLD_HIGH_RISK = 0.75    # 고위험 도메인 상향 임계(전문가 확인 강등)
+# '신뢰' 라벨 하한 — 강등컷과 분리(강등컷+0.2는 고위험에서 0.95=사실상 도달불가였음).
+THRESHOLD_TRUST = 0.8            # 일반 '신뢰' 하한
+THRESHOLD_HIGH_RISK_TRUST = 0.9  # 고위험 '신뢰' 하한(상향이되 강신호로 도달 가능)
 
 
 def _clip01(x: float | None) -> float:
@@ -48,10 +51,10 @@ def needs_expert_review(confidence: float, *, high_risk: bool = False) -> bool:
 
 
 def confidence_label(confidence: float, *, high_risk: bool = False) -> str:
-    # 라벨 등급을 게이트 임계와 정합: 강등컷=needs_expert_review 임계, 신뢰컷=임계+0.2(고위험 상향).
+    # 라벨 등급을 게이트 임계와 정합: 강등컷=needs_expert_review 임계, 신뢰컷=별도 상수(도달 가능).
     if needs_expert_review(confidence, high_risk=high_risk):
         return "참고(전문가 확인 필요)"
-    trust_cut = (THRESHOLD_HIGH_RISK if high_risk else THRESHOLD_REVIEW) + 0.2
+    trust_cut = THRESHOLD_HIGH_RISK_TRUST if high_risk else THRESHOLD_TRUST
     return "신뢰" if confidence >= trust_cut else "보통"
 
 

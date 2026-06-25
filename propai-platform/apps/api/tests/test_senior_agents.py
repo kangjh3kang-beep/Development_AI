@@ -225,3 +225,194 @@ def test_deliberation_spec_domain_facts():
     assert "BLOCK" in (prob.judgment + prob.exception)
     # 다조항 동시(CSP) 검증
     assert "동시" in rules["delib.multi_clause_csp"].judgment
+
+
+# ── SeniorOrchestrator(자문 라우팅·게이팅 코어) ──
+
+def _orch():
+    from app.services.senior_agents.orchestrator import SeniorOrchestrator
+    return SeniorOrchestrator()
+
+
+def test_orchestrator_route_domain_and_key():
+    o = _orch()
+    assert o.route("금융") == "senior_financial_advisor"
+    assert o.route("urban") == "senior_urban_planner"
+    assert o.route("BIM") == "senior_bim_specialist"
+    # 이미 키면 그대로 통과
+    assert o.route("senior_tax_advisor") == "senior_tax_advisor"
+    # 미해당
+    assert o.route("우주항공") is None
+    assert o.route("") is None
+
+
+def test_orchestrator_consult_structure_and_citation_gate():
+    o = _orch()
+    c = o.consult("도시계획")
+    assert c.agent_key == "senior_urban_planner"
+    # citation 게이트: 프레임워크 전 룰이 basis(근거) 동반 + 판단자격
+    assert c.decision_framework
+    assert all(r["basis"].strip() for r in c.decision_framework)
+    assert all(r.get("tradeoff", "").strip() for r in c.decision_framework)
+    # citations 집합이 basis에서 도출
+    assert c.citations and all(s.strip() for s in c.citations)
+    # 콜드스타트 정직: junior + 면허게이트 + 정직 노트
+    assert "보조" in c.maturity
+    assert "최종" in c.license_gate
+    assert any("골든사례" in n for n in c.honest_notes)
+    assert 0.0 <= c.confidence <= 1.0
+    # 직렬화
+    assert c.to_dict()["agent_key"] == "senior_urban_planner"
+
+
+def test_orchestrator_high_risk_threshold():
+    o = _orch()
+    # 금융·세무·심의 = 고위험(임계 상향)
+    fin = o.consult("금융", context={"data_completeness": 0.7, "rule_fit": 0.7,
+                                     "rag_strength": 0.7, "correction_rate": 0.3})
+    assert fin.high_risk is True
+    # 동일 신호라도 고위험은 신뢰컷 높아 전문가확인 강등되기 쉬움
+    assert fin.needs_expert_review is True
+    # 비고위험(도시계획)은 같은 신호에서 통과
+    urb = o.consult("도시계획", context={"data_completeness": 0.7, "rule_fit": 0.7,
+                                        "rag_strength": 0.7, "correction_rate": 0.3})
+    assert urb.high_risk is False
+    assert urb.needs_expert_review is False
+
+
+def test_orchestrator_matched_rules_filter_and_rule_fit():
+    o = _orch()
+    c = o.consult("도시계획", context={"matched_rule_ids": ["urban.upzone_potential"]})
+    ids = [r["rule_id"] for r in c.decision_framework]
+    assert ids == ["urban.upzone_potential"]  # 부분집합 필터
+
+
+def test_orchestrator_unknown_raises():
+    o = _orch()
+    with pytest.raises(ValueError):
+        o.consult("존재하지않는도메인")
+
+
+def test_orchestrator_consult_multi_dedup():
+    o = _orch()
+    res = o.consult_multi(["도시계획", "금융", "urban", "우주"])  # urban 중복·우주 무시
+    keys = [c.agent_key for c in res]
+    assert keys == ["senior_urban_planner", "senior_financial_advisor"]
+
+
+def test_orchestrator_available_lists_all():
+    o = _orch()
+    av = o.available()
+    assert {a["key"] for a in av} == _EXPECTED_KEYS
+    # 고위험 플래그 정합
+    hr = {a["key"] for a in av if a["high_risk"]}
+    assert hr == {"senior_financial_advisor", "senior_tax_advisor", "senior_deliberation_member"}
+
+
+def test_orchestrator_no_valid_matched_empties_framework():
+    o = _orch()
+    c = o.consult("도시계획", context={"matched_rule_ids": ["없는규칙"]})
+    assert c.decision_framework == () and c.citations == ()
+    assert any("적용 가능한 판단 규칙 없음" in n for n in c.honest_notes)
+
+
+def test_orchestrator_empty_matched_is_full():
+    o = _orch()
+    # 빈 리스트(falsy)=필터 없음 → 전체 판단 프레임워크
+    c = o.consult("도시계획", context={"matched_rule_ids": []})
+    full = o.consult("도시계획")
+    assert len(c.decision_framework) == len(full.decision_framework) >= 3
+
+
+def test_orchestrator_overrides():
+    o = _orch()
+    # high_risk override: 비고위험 도시계획을 고위험으로 강제
+    c = o.consult("도시계획", high_risk=True)
+    assert c.high_risk is True
+    # golden_case_count override: ≥50이면 senior 승격(정직 maturity)
+    c2 = o.consult("도시계획", golden_case_count=60)
+    assert "시니어 보조" in c2.maturity
+
+
+def test_orchestrator_consult_with_evaluations():
+    o = _orch()
+    # 금융 자문 + 실수치 입력 → 정량 판정(evaluations) 첨부
+    c = o.consult("금융", context={"inputs": {
+        "noi": 90, "debt_service": 100,  # DSCR 0.9 → BLOCK
+        "equity": 100, "total_cost": 1000, "project_year": 2027,  # 10%<15% → WARN
+    }})
+    assert c.evaluations  # 비어있지 않음
+    verdicts = {e["rule_id"]: e["verdict"] for e in c.evaluations}
+    assert verdicts["fin.dscr_gate"] == "BLOCK"
+    assert verdicts["fin.equity_ratio_reg"] == "WARN"
+    assert c.overall_verdict == "BLOCK"  # 최악판정
+    assert any("차단(BLOCK)" in n for n in c.honest_notes)
+    # 평가에도 근거 동반(citation)
+    assert all(e["basis"].strip() for e in c.evaluations)
+
+
+def test_orchestrator_consult_no_inputs_note():
+    o = _orch()
+    c = o.consult("금융")  # 입력 없음
+    assert c.evaluations == () and c.overall_verdict is None
+    assert any("정량 입력" in n for n in c.honest_notes)
+
+
+def test_orchestrator_no_evaluator_for_bim():
+    o = _orch()
+    # BIM은 아직 평가기 없음 → inputs 줘도 evaluations 비고
+    c = o.consult("BIM", context={"inputs": {"noi": 100}})
+    assert c.evaluations == () and c.overall_verdict is None
+
+
+def test_orchestrator_tax_and_accounting_evaluations():
+    o = _orch()
+    # 세무: 법인 취득세 12% → WARN
+    t = o.consult("세무", context={"inputs": {"acquisition_price": 500_000_000, "is_corporate": True}})
+    ev = {e["rule_id"]: e for e in t.evaluations}
+    assert ev["tax.acquisition_tax"]["value"] == 12.0 and ev["tax.acquisition_tax"]["verdict"] == "WARN"
+    # 회계: 단기리스 면제
+    a = o.consult("회계", context={"inputs": {"lease_term_months": 6}})
+    ev2 = {e["rule_id"]: e for e in a.evaluations}
+    assert ev2["acct.lease_classification"]["verdict"] == "PASS"
+    assert all(e["basis"].strip() for e in a.evaluations)
+
+
+def test_orchestrator_urban_evaluation():
+    o = _orch()
+    # 비례율 95%(<100) → WARN, 권리가액·분담금 detail
+    c = o.consult("도시계획", context={"inputs": {
+        "post_appraisal_total": 1_050, "total_project_cost": 100, "prior_appraisal_total": 1_000,
+        "prior_appraisal_individual": 500, "member_sale_price": 600}})
+    ev = {e["rule_id"]: e for e in c.evaluations}
+    assert ev["urban.redevelopment_proportion"]["verdict"] == "WARN"  # 비례율 95%
+    assert ev["urban.redevelopment_proportion"]["value"] == 95.0
+    assert "분담금" in ev["urban.redevelopment_proportion"]["detail"]
+
+
+def test_orchestrator_architect_evaluation_reuses_setback_helper():
+    o = _orch()
+    # 높이 30m → 필요 정북이격 15m(현행 h/2). 실 이격 10m < 15m → BLOCK
+    c = o.consult("설계", context={"inputs": {"building_height_m": 30, "north_distance_m": 10,
+                                            "winter_daylight_continuous_min": 90}})
+    ev = {e["rule_id"]: e for e in c.evaluations}
+    assert ev["design.bukchuk_setback"]["verdict"] == "BLOCK"
+    assert ev["design.winter_daylight_gate"]["verdict"] == "BLOCK"  # 90<120분
+    assert c.overall_verdict == "BLOCK"
+
+
+def test_coerce_matched_ids_defensive():
+    from app.services.senior_agents.orchestrator import _coerce_matched_ids
+    assert _coerce_matched_ids(None) is None
+    assert _coerce_matched_ids([]) is None          # 빈값=필터 없음
+    assert _coerce_matched_ids("urban.x") == {"urban.x"}  # 문자열=단일 id(문자분해 방지)
+    assert _coerce_matched_ids(["a", "b"]) == {"a", "b"}
+    with pytest.raises(ValueError):
+        _coerce_matched_ids(123)                    # 비-iterable → 500 대신 명확 거부
+
+
+def test_high_risk_trust_reachable():
+    # MED 보강: 고위험 '신뢰' 라벨이 강신호(≥0.9)에서 도달 가능(기존 0.95=불가 교정)
+    assert confidence_label(0.92, high_risk=True) == "신뢰"
+    assert confidence_label(0.85, high_risk=True) == "보통"
+    assert confidence_label(0.82) == "신뢰"  # 일반은 0.8 하한

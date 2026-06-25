@@ -662,6 +662,8 @@ from apps.api.routers import personas as _personas_router  # P1 실무 전문가
 app.include_router(_personas_router.router, prefix="/api/v1", tags=["실무 전문가 페르소나"])  # /api/v1/personas
 from apps.api.routers import design_generation as _design_gen_router  # 설계 생성(인제스트·검색·생성·법규)
 app.include_router(_design_gen_router.router)  # 자체 prefix=/api/v1/design-gen, tags는 라우터에 정의
+from apps.api.routers import senior_agents as _senior_agents_router  # 시니어 전문가 에이전트 자문(결정론)
+app.include_router(_senior_agents_router.router, prefix="/api/v1", tags=["시니어 전문가 에이전트"])  # /api/v1/senior/*
 app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])
 app.include_router(user_store.router, prefix="/api/v1", tags=["사용자 저장소"])
