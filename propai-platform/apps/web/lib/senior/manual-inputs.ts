@@ -47,7 +47,7 @@ export const MANUAL_INPUTS: Record<string, ManualInputField[]> = {
         { value: "재개발", label: "재개발" },
         { value: "재건축", label: "재건축" },
       ],
-      hint: "조합설립 동의 요건이 달라짐(재개발=면적 1/2·재건축=면적 3/4+각 동별 과반)",
+      hint: "조합설립 동의 요건(도시정비법 35조): 공통 소유자 3/4 · 면적은 재개발 1/2·재건축 3/4 + 재건축은 각 동별 과반 추가",
     },
     { key: "consent_owner_count", label: "동의 토지등소유자 수", kind: "number", unit: "명" },
     { key: "total_owner_count", label: "전체 토지등소유자 수", kind: "number", unit: "명" },

@@ -69,6 +69,8 @@ describe("mergeSeniorInputs", () => {
   });
 
   it("★store 값 우선(SSOT) — store가 보유하면 수동을 덮어씀", () => {
+    // 합성 충돌(실제 키 네임스페이스는 겹치지 않음 — legal 수동엔 appraised_value 없음).
+    //   merge primitive의 우선순위(향후 store 보유 시 자동매핑 우선)만 검증한다.
     const merged = mergeSeniorInputs(
       { appraised_value: 900_000_000 }, // store(자동)
       { appraised_value: 100 },         // 수동(보완)
