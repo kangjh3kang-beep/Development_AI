@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
+import type { DecisionBrief } from "@/components/projects/decision-brief-types";
 
 /* ── Types ── */
 
@@ -303,9 +305,12 @@ type ModuleKey =
   | "feasibility"
   | "finance"
   | "esg"
-  | "compliance";
+  | "compliance"
+  // Stage1 통합 의사결정 브리프 — 부지분석(주소·통합면적·용도지역 등) 파생물.
+  // staleness 시스템에 편입해, 업스트림(siteAnalysis)이 더 최신이면 '재분석 필요'로 판정한다.
+  | "decisionBrief";
 
-/** 다운스트림 모듈 → 직접 업스트림 의존성 (기존 키 불변, finance만 추가) */
+/** 다운스트림 모듈 → 직접 업스트림 의존성 (기존 키 불변, finance·decisionBrief 추가) */
 const MODULE_UPSTREAM: Record<ModuleKey, ModuleKey[]> = {
   siteAnalysis: [],
   design: ["siteAnalysis"],
@@ -315,6 +320,13 @@ const MODULE_UPSTREAM: Record<ModuleKey, ModuleKey[]> = {
   finance: ["feasibility", "cost"],
   esg: ["design"],
   compliance: ["siteAnalysis", "design"],
+  // 통합 의사결정 브리프는 부지분석 입력(주소·통합면적·용도지역)에 의존한다.
+  // siteAnalysis가 갱신되면 isStale('decisionBrief')=true → 패널이 '재분석' 배지/CTA 노출
+  // (자동재실행 금지·인간게이트). 단, 주소/유효면적 자체가 바뀐 경우는 updateSiteAnalysis가
+  // 브리프를 null로 리셋하므로(옛 입력 판정 표시 차단) 이 stale 경로와 책임이 겹치지 않는다:
+  //   · 주소/유효면적 변경 → null 리셋(브리프 없음 → isStale=false, 패널이 새로 자동산출)
+  //   · 그 외 부지 필드 변경(예: 용도지역) → 브리프 보존 + stale 배지(인간 재분석 게이트)
+  decisionBrief: ["siteAnalysis"],
 };
 
 /* ── State interface ── */
@@ -359,6 +371,21 @@ export interface ProjectContextState {
   // persist되더라도 setProject/clearProject가 false로 리셋해 stale true가 고착되지 않게 한다.
   parcelEnrichPending: boolean;
 
+  // ── Stage1 통합 의사결정 브리프(옵셔널·휘발성 런타임 캐시) ──
+  // POST /api/v1/projects/{id}/decision-brief 결과를 적재한다(additive·하위호환).
+  // ★모세혈관 배선됨(P2): MODULE_UPSTREAM.decisionBrief=['siteAnalysis']로 staleness 시스템에
+  //   편입돼, 부지분석이 더 최신이면 isStale('decisionBrief')=true가 된다. 실소비처:
+  //     ① 생산자 패널(DecisionBriefPanel) — 자동호출 dedup + isStale 재분석 CTA.
+  //     ② Tier2 드릴다운 재사용 — 인허가/사업성 패널이 decisionBrief.parts에서 해당 도메인
+  //        요약을 읽어 'Stage1 통합분석 기반' 프리필/배너로 재사용(중복 재분석 회피).
+  //   (그 외 Tier2 패널 일괄 재사용은 backlog — 스파이럴 방지로 명확한 1~2곳만 패턴 정립.)
+  // 휘발성: ①스냅샷(snapOf) 영속 대상 아님(staleness 타임스탬프도 함께 제외) ②persist
+  //   partialize 로 localStorage 직렬화에서도 제외(새로고침 후 옛 입력 판정 hydrate 잔류 차단).
+  //   명시적 null 리셋으로 비운다 — setProject/clearProject(프로젝트 전환·초기화),
+  //   updateSiteAnalysis에서 주소/유효면적이 바뀌면(=stale) null 리셋, purifyPollutedSnapshot
+  //   (오염 정화)도 null. 이전 프로젝트·이전 입력의 판정이 누출·재사용되지 않게 한다.
+  decisionBrief: DecisionBrief | null;
+
   // Actions
   // projectId 단일 SSOT writer. name/status를 원자 저장하고, address가 주어지면
   // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
@@ -366,6 +393,8 @@ export interface ProjectContextState {
   clearProject: () => void;
   // 다필지 보강 진행 신호 writer(휘발성). enrichParcels 시작/완료 시 호출.
   setParcelEnrichPending: (pending: boolean) => void;
+  // 통합 의사결정 브리프 writer(옵셔널·휘발성). DecisionBriefPanel이 분석 완료 시 적재.
+  setDecisionBrief: (brief: DecisionBrief | null) => void;
 
   // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   // auto: user 플래그 필드를 patch에서 제거(전부 제거돼 빈 patch면 갱신·stamp 생략).
@@ -503,6 +532,16 @@ const INITIAL_CROSS_MODULE = {
 };
 
 /** 현재 cross-module 상태를 스냅샷으로 추출 */
+/** updatedAt 맵에서 휘발성 decisionBrief 타임스탬프만 제거한 새 맵 반환(원본 불변). */
+function omitDecisionBriefStamp(
+  updatedAt: Partial<Record<ModuleKey, number>>,
+): Partial<Record<ModuleKey, number>> {
+  if (updatedAt.decisionBrief == null) return updatedAt;
+  const next = { ...updatedAt };
+  delete next.decisionBrief;
+  return next;
+}
+
 function snapOf(s: ProjectContextState): ProjectSnapshot {
   return {
     siteAnalysis: s.siteAnalysis,
@@ -514,7 +553,9 @@ function snapOf(s: ProjectContextState): ProjectSnapshot {
     completedStages: s.completedStages,
     currentStage: s.currentStage,
     analysisResults: s.analysisResults,
-    updatedAt: s.updatedAt,
+    // ★decisionBrief는 스냅샷·영속 제외(휘발성)이므로, 그 staleness 타임스탬프도 스냅샷에서
+    //   제외한다(브리프 없는데 타임스탬프만 남는 불일치 차단). 다른 모듈 타임스탬프는 보존.
+    updatedAt: omitDecisionBriefStamp(s.updatedAt),
     analysisCache: s.analysisCache,
     // 구 hydrated state(필드 부재) 호환 — analysisCache와 동일하게 ?? {} 방어.
     manualFields: s.manualFields ?? {},
@@ -713,6 +754,8 @@ export function addressTokenMismatch(
 /** 오염 스냅샷 정화 — siteAnalysis와 그 파생(designData)을 null로, completedStages에서
     site-analysis/design을 제거한다. 해당 updatedAt stamp·manualFields도 함께 정리해
     "null 데이터가 산출됨으로 잔존 → 최초 자동산출 차단" 부작용을 막는다. 그 외 필드 보존.
+    ★decisionBrief(통합 의사결정 판정)도 siteAnalysis 파생이므로 함께 null로 정화한다 — 오염
+    주소 기준의 옛 판정이 hydrate 후 잔류해 새 부지에 재사용되는 누출을 막는다(siteAnalysis와 대칭).
     원본 객체는 변경하지 않고 정화된 사본을 반환한다. */
 export function purifyPollutedSnapshot(
   snap: Record<string, unknown>,
@@ -734,6 +777,8 @@ export function purifyPollutedSnapshot(
     ...snap,
     siteAnalysis: null,
     designData: null,
+    // siteAnalysis 파생 — 오염 주소 기준 옛 판정 잔류·재사용 차단(siteAnalysis와 대칭 정화).
+    decisionBrief: null,
     completedStages,
     updatedAt,
     manualFields,
@@ -853,6 +898,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
       // 다필지 보강 진행 신호(휘발성 — 초기 false)
       parcelEnrichPending: false,
 
+      // 통합 의사결정 브리프(휘발성 — 초기 null)
+      decisionBrief: null,
+
       /* ── Actions ── */
 
       setProject: (id, name, status, address) => {
@@ -902,6 +950,8 @@ export const useProjectContextStore = create<ProjectContextState>()(
           snapshots,
           // 프로젝트 전환 시 휘발성 보강 신호 리셋(이전 프로젝트 보강 진행이 새 프로젝트로 누출 방지).
           parcelEnrichPending: false,
+          // 의사결정 브리프도 휘발성 — 이전 프로젝트 판정이 새 프로젝트로 누출되지 않게 리셋.
+          decisionBrief: null,
           ...(snap
             ? {
                 // 복원 우선. 단, 복원 스냅샷에 주소가 없고 시드 주소가 있으면 보조 주입.
@@ -953,6 +1003,8 @@ export const useProjectContextStore = create<ProjectContextState>()(
           manualFields: {},
           // 휘발성 보강 신호 리셋(새 프로젝트 진입 시 stale true 고착 방지).
           parcelEnrichPending: false,
+          // 의사결정 브리프 리셋(프로젝트 비움 시 이전 판정 잔류 방지).
+          decisionBrief: null,
           ...INITIAL_CROSS_MODULE,
         });
       },
@@ -961,6 +1013,26 @@ export const useProjectContextStore = create<ProjectContextState>()(
         // 휘발성 런타임 신호만 갱신(스냅샷·provenance 무접촉 — withSnap 미사용).
         if (get().parcelEnrichPending === pending) return;
         set({ parcelEnrichPending: pending });
+      },
+
+      setDecisionBrief: (brief) => {
+        // 휘발성 런타임 캐시만 갱신(스냅샷·provenance 무접촉 — withSnap 미사용).
+        // ★staleness 편입: 브리프 적재 시 updatedAt.decisionBrief를 stamp해, 이후 siteAnalysis가
+        //   더 최신이면 isStale('decisionBrief')=true가 되어 '재분석' CTA를 띄울 수 있게 한다.
+        //   null 리셋(전환·정화 등)이면 타임스탬프도 함께 제거 → own==null → isStale=false
+        //   (브리프 없는데 stale로 오판하지 않게).
+        set((state) => {
+          if (brief == null) {
+            return {
+              decisionBrief: null,
+              updatedAt: omitDecisionBriefStamp(state.updatedAt),
+            };
+          }
+          return {
+            decisionBrief: brief,
+            updatedAt: stampedAt(state, "decisionBrief"),
+          };
+        });
       },
 
       getAnalysisCache: (kind) => {
@@ -996,19 +1068,40 @@ export const useProjectContextStore = create<ProjectContextState>()(
             if (Object.keys(guarded).length === 0) return {};
             patch = guarded;
           }
+          const mergedSiteAnalysis = {
+            ...(state.siteAnalysis ?? {
+              estimatedValue: null,
+              landAreaSqm: null,
+              zoneCode: null,
+              address: null,
+              pnu: null,
+            }),
+            ...patch,
+          } as SiteAnalysisData;
           const next: Partial<ProjectContextState> = {
-            siteAnalysis: {
-              ...(state.siteAnalysis ?? {
-                estimatedValue: null,
-                landAreaSqm: null,
-                zoneCode: null,
-                address: null,
-                pnu: null,
-              }),
-              ...patch,
-            } as SiteAnalysisData,
+            siteAnalysis: mergedSiteAnalysis,
             updatedAt: stampedAt(state, "siteAnalysis"),
           };
+          // ★stale 의사결정 브리프 리셋(HIGH 'stale-brief'): 주소 또는 유효면적(다필지 통합면적 우선)이
+          //   바뀌면, 이전 입력으로 만든 브리프는 더 이상 유효하지 않다(다필지 보강으로 통합면적이 커진
+          //   경우 등). null로 리셋해 패널이 새 입력으로 재분석하게 한다(가짜 stale 재사용 금지).
+          //   면적의존 캐시는 모두 이 staleness 규칙을 따라야 한다(공용 effectiveLandAreaSqm 기준).
+          if (state.decisionBrief) {
+            const prevAddr = state.siteAnalysis?.address ?? null;
+            const prevArea = effectiveLandAreaSqm(state.siteAnalysis);
+            const nextAddr = mergedSiteAnalysis.address ?? null;
+            const nextArea = effectiveLandAreaSqm(mergedSiteAnalysis);
+            if (prevAddr !== nextAddr || prevArea !== nextArea) {
+              next.decisionBrief = null;
+              // ★staleness 정합: 브리프를 리셋하면 updatedAt.decisionBrief도 함께 제거한다.
+              //   (setDecisionBrief(null)과 동일 규칙 — 리셋 vs stale표기 일원화) 위에서 이미
+              //   siteAnalysis를 stamp했으므로, 타임스탬프를 안 지우면 '브리프 없는데 stale'로
+              //   오판될 수 있다. own==null로 두어 isStale('decisionBrief')=false 보장.
+              if (next.updatedAt) {
+                next.updatedAt = omitDecisionBriefStamp(next.updatedAt);
+              }
+            }
+          }
           if (source === "user") {
             // user 갱신 — patch의 각 키를 stamp(이후 auto 덮어쓰기 차단).
             const now = Date.now();
@@ -1426,6 +1519,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
       name: "propai-project-context",
       // ★전 상태변경의 동기 직렬화 점유 제거(화면 전환 지연 근본해소). pagehide flush로 유실 0.
       storage: createDebouncedStorage<ProjectContextState>(500),
+      // ★decisionBrief 영속 제외 — 통합 의사결정 브리프는 휘발성 런타임 캐시다(주석 :366의 약속을
+      //   실제로 보장). localStorage 에 영속되면 새로고침 후 옛 입력(이전 면적/주소) 판정이
+      //   hydrate 로 잔류해 stale 재사용·교차오염을 일으킨다. partialize 로 그 한 필드만 직렬화에서
+      //   빼고 나머지 상태는 그대로 영속한다(무회귀). 빠진 필드는 hydrate 시 초기값 null.
+      partialize: (state) => {
+        const persisted: Record<string, unknown> = { ...state };
+        delete persisted.decisionBrief;
+        // ★브리프 자체가 영속 제외이므로 그 staleness 타임스탬프(updatedAt.decisionBrief)도 함께
+        //   제외한다. 안 그러면 새로고침 후 '브리프는 없는데 타임스탬프만 남은' 불일치 상태가 되어
+        //   isStale 판정 기반(own != null)이 어긋난다. 다른 모듈 타임스탬프는 그대로 영속(무회귀).
+        if (
+          persisted.updatedAt &&
+          typeof persisted.updatedAt === "object" &&
+          "decisionBrief" in (persisted.updatedAt as Record<string, unknown>)
+        ) {
+          const ua = { ...(persisted.updatedAt as Record<string, unknown>) };
+          delete ua.decisionBrief;
+          persisted.updatedAt = ua;
+        }
+        return persisted as unknown as ProjectContextState;
+      },
       // WP-D: 오염 스냅샷 정화 마이그레이션 — hydrate 시 프로젝트 레코드 주소와
       // 핵심 토큰이 불일치하는 스냅샷·live 필드의 siteAnalysis와 파생 designData를
       // null로 정화하고 completedStages에서 site-analysis/design을 제거한다

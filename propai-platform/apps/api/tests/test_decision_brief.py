@@ -623,7 +623,376 @@ async def test_permit_summarizer_graceful(monkeypatch):
     assert len(out["parts"]) == 3
 
 
+# ── ★iter-3: land_area_sqm 종단배선(통합면적 → 부지 KPI 재계산) ──
+
+
+def _site_metric(out, key):
+    """부지 part 의 key_metrics 에서 안정 key 로 값을 뽑는다(라벨 비의존)."""
+    site_part = next(p for p in out["parts"] if p["part"] == PART_SITE_MARKET)
+    return next(m["value"] for m in site_part["key_metrics"] if m.get("key") == key)
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_recalculates_area_and_gfa(monkeypatch):
+    """[HIGH1] build(land_area_sqm=3000) → 부지 part 의 대지면적·계획 GFA 가 3000 기반으로 재계산.
+
+    엔진(_SITE_OK)은 대표면적 1000㎡·실효용적률 700%·supply_areas 대표 GFA 7000㎡ 를 낸다.
+    프론트가 다필지 통합면적 3000㎡ 를 보내면, decision_brief 레이어가 대지면적=3000㎡,
+    GFA=3000×700/100=21000㎡ 로 KPI 를 재계산해야 한다(통합면적이 KPI에 실반영·종단배선).
+    """
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=3000,
+    )
+    assert _site_metric(out, "land_area") == 3000, "override 통합면적이 대지면적 KPI에 반영돼야 한다"
+    assert _site_metric(out, "gfa") == 21000.0, "GFA = 통합면적 3000 × 실효용적률 700% / 100"
+    site_part = next(p for p in out["parts"] if p["part"] == PART_SITE_MARKET)
+    assert "21000" in site_part["summary_oneliner"]
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_absent_uses_engine_area(monkeypatch):
+    """[HIGH1 무회귀] land_area_sqm 미전송이면 엔진 대표면적(1000)·supply_areas GFA(7000) 유지."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert _site_metric(out, "land_area") == 1000.0, "override 없으면 엔진 대표면적 유지(무회귀)"
+    # supply_areas 대표 물건(주상복합 7000) — override 미주입 경로는 기존대로 supply_areas 우선.
+    assert _site_metric(out, "gfa") == 7000.0
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_nonpositive_ignored(monkeypatch):
+    """[HIGH1 보수] override 가 0/음수면 무시하고 엔진 대표면적 사용(가짜 0면적 차단)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=0,
+    )
+    assert _site_metric(out, "land_area") == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_splits_cache(monkeypatch):
+    """[HIGH1·캐시분리] 같은 주소라도 면적이 다르면 캐시 키가 분리돼 도메인을 재호출한다(stale 방지)."""
+    calls = {"n": 0}
+
+    async def _site(self, *a, **k):
+        calls["n"] += 1
+        return _SITE_OK
+
+    async def _reg(self, *a, **k):
+        return _REG_OK
+
+    async def _permit(self, *a, **k):
+        return _PERMIT_OK
+
+    monkeypatch.setattr(DecisionBriefService, "_run_site_market", _site)
+    monkeypatch.setattr(DecisionBriefService, "_run_regulation", _reg)
+    monkeypatch.setattr(DecisionBriefService, "_run_permit_design", _permit)
+
+    store: dict[str, dict] = {}
+
+    async def _get(kind, key):
+        return store.get(key)
+
+    async def _put(kind, key, payload):
+        store[key] = payload
+
+    monkeypatch.setattr(analysis_cache, "cache_get", _get)
+    monkeypatch.setattr(analysis_cache, "cache_put", _put)
+
+    svc = DecisionBriefService()
+    await svc.build(address="동일주소", land_area_sqm=1000)
+    await svc.build(address="동일주소", land_area_sqm=1000)  # 동일 면적 → 캐시 재사용
+    assert calls["n"] == 1
+    await svc.build(address="동일주소", land_area_sqm=3000)  # 면적 변경 → 캐시 분리·재호출
+    assert calls["n"] == 2, "면적이 다르면 캐시가 분리돼 재분석돼야 한다(stale 방지)"
+
+
 def test_module_imports_clean():
     """순수 import 가능(런타임 DDL·외부 의존 없이 로딩)."""
     assert hasattr(decision_brief_service, "DecisionBriefService")
     assert asyncio.iscoroutinefunction(DecisionBriefService.build)
+
+
+# ── ★iter-4: override 단위 일관성 고지(모순 제거)·면적 괴리 메타·deploy_pending 게이트·equity 0 ──
+
+
+@pytest.mark.asyncio
+async def test_override_diverging_adds_honest_disclosure_reason(monkeypatch):
+    """[잔여 격차 고지·iter-5 갭 봉합 반영] 통합면적이 엔진 대표면적과 다르면 잔여 격차 고지가 붙는다.
+
+    iter-5: 통합면적은 이제 Top3 엔진에 전달돼 규모(GFA)·수익성(ROI)이 같은 통합면적 기준이다(단위
+    괴리 봉합). 다만 용도지역/규제·특이부지 판정은 대표필지(주소) 기준이라는 잔여 격차가 남으므로,
+    '규모·수익성=통합면적 기준, 용도/규제 판정=대표필지 기준'이라는 잔여 격차 고지를 명시한다.
+    """
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=3000,
+    )
+    reasons = out["verdict"]["reasons"]
+    assert any("통합면적 기준으로 산정" in r and "대표필지" in r for r in reasons), \
+        "통합면적≠대표면적이면 잔여 격차 고지가 reasons에 있어야 한다(규모·수익성=통합·용도/규제=대표필지)"
+
+
+@pytest.mark.asyncio
+async def test_override_matching_area_no_disclosure(monkeypatch):
+    """[무회귀] override 가 엔진 대표면적과 같으면(5% 이내) 잡음 고지를 넣지 않는다."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=1000,  # 엔진 대표면적과 동일
+    )
+    reasons = out["verdict"]["reasons"]
+    assert not any("대표필지" in r and "통합면적 기준으로 산정" in r for r in reasons), \
+        "동일 면적이면 잔여 격차 고지는 생략(잡음 방지)"
+
+
+@pytest.mark.asyncio
+async def test_no_override_no_disclosure(monkeypatch):
+    """[무회귀] override 미전송이면 고지·area_override 메타 둘 다 없다."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert not any("대표필지" in r and "통합면적 기준으로 산정" in r for r in out["verdict"]["reasons"])
+    assert "area_override" not in out["meta"]
+
+
+@pytest.mark.asyncio
+async def test_area_override_meta_warns_on_large_divergence(monkeypatch):
+    """[HIGH·security] 통합면적이 엔진 대표면적의 5배 초과면 meta.area_override.warning 부착."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    # 엔진 대표면적 1000㎡ × 6배 = 6000㎡ (>5배) — 라우터 상한(1e7) 이내라도 괴리 경고.
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=6000,
+    )
+    meta = out["meta"]["area_override"]
+    assert meta["override_area_sqm"] == 6000.0
+    assert meta["engine_area_sqm"] == 1000.0
+    assert meta["ratio"] == 6.0
+    assert "warning" in meta, "5배 초과 괴리는 경고를 달아야 한다(잘못된 면적 가시화)"
+
+
+@pytest.mark.asyncio
+async def test_area_override_meta_no_warn_within_range(monkeypatch):
+    """[무회귀] 5배 이내(예 3배)면 area_override 메타는 있으나 warning 은 없다."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=3000,
+    )
+    meta = out["meta"]["area_override"]
+    assert meta["ratio"] == 3.0
+    assert "warning" not in meta
+
+
+def _patch_deploy_settings(monkeypatch, *, deploy_pending=None, app_env=None):
+    """settings 의 DEPLOY_PENDING/APP_ENV 와 model_fields_set(명시 여부)을 함께 패치한다.
+
+    ★_deploy_pending() 은 DEPLOY_PENDING '명시'(model_fields_set) 여부로 우선순위를 가른다.
+    deploy_pending 인자를 주면 '명시 설정'으로 보고 model_fields_set 에 'DEPLOY_PENDING'을 넣는다.
+    None 이면 '미명시'(model_fields_set 에서 제거)로 두어 APP_ENV 추론 경로를 검증한다.
+    """
+    from app.core import config as config_mod
+
+    # pydantic v2: model_fields_set 는 읽기전용 property(setter 없음) — 백킹 속성
+    # __pydantic_fields_set__ 을 패치한다(model_fields_set 이 이를 그대로 반영).
+    fields_set = set(getattr(config_mod.settings, "model_fields_set", set()) or set())
+    if deploy_pending is not None:
+        monkeypatch.setattr(config_mod.settings, "DEPLOY_PENDING", deploy_pending, raising=False)
+        fields_set.add("DEPLOY_PENDING")
+    else:
+        fields_set.discard("DEPLOY_PENDING")
+    if app_env is not None:
+        monkeypatch.setattr(config_mod.settings, "APP_ENV", app_env, raising=False)
+    monkeypatch.setattr(config_mod.settings, "__pydantic_fields_set__", fields_set, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_deploy_pending_gated_by_settings(monkeypatch):
+    """[MED] deploy_pending 은 명시 DEPLOY_PENDING 게이팅(하드코딩 아님) — false면 라이브 표기."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    # 라이브 배포 가정(DEPLOY_PENDING=false 명시) → meta.deploy_pending=False.
+    _patch_deploy_settings(monkeypatch, deploy_pending=False)
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert out["meta"]["deploy_pending"] is False, "DEPLOY_PENDING=false면 자기 라이브성 과소표기 금지"
+
+
+@pytest.mark.asyncio
+async def test_deploy_pending_default_true(monkeypatch):
+    """[MED 무회귀] DEPLOY_PENDING 명시 True(개발)면 deploy_pending=True(보수적 정직표기)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    _patch_deploy_settings(monkeypatch, deploy_pending=True, app_env="development")
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert out["meta"]["deploy_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_deploy_pending_production_auto_false(monkeypatch):
+    """[MED 풋건] DEPLOY_PENDING 미명시 + APP_ENV=production → 자동 False(수동조치 의존 제거)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    # DEPLOY_PENDING 을 명시하지 않고(미설정) APP_ENV=production 만 — 라이브로 자동 추론.
+    _patch_deploy_settings(monkeypatch, deploy_pending=None, app_env="production")
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert out["meta"]["deploy_pending"] is False, "production 이면 DEPLOY_PENDING 미설정이라도 라이브로 본다"
+
+
+@pytest.mark.asyncio
+async def test_deploy_pending_explicit_overrides_app_env(monkeypatch):
+    """[MED 우선순위] APP_ENV=production 이라도 DEPLOY_PENDING=true 명시면 그 값이 우선(True)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    _patch_deploy_settings(monkeypatch, deploy_pending=True, app_env="production")
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert out["meta"]["deploy_pending"] is True, "명시 DEPLOY_PENDING 이 APP_ENV 추론보다 우선"
+
+
+@pytest.mark.asyncio
+async def test_deploy_pending_non_production_default_true(monkeypatch):
+    """[MED 무회귀] DEPLOY_PENDING 미명시 + APP_ENV=development → 보수적 True(배포 전)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    _patch_deploy_settings(monkeypatch, deploy_pending=None, app_env="development")
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert out["meta"]["deploy_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_equity_zero_passed_to_engine(monkeypatch):
+    """[MED] 자기자본 0(전액 차입)도 엔진에 전달된다('if equity_won' 누락 버그 수정).
+
+    'if equity_won' 은 0을 falsy 로 보아 자기자본=0 입력을 엔진에 전달하지 못했다. 0(레버리지
+    100%) 시나리오도 auto_recommend_top3 에 kwargs['equity_won']=0 으로 넘어가야 한다.
+    """
+    captured: dict[str, object] = {}
+
+    async def _fake_top3(self, **kwargs):
+        captured.update(kwargs)
+        return _PERMIT_OK
+
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    monkeypatch.setattr(FeasibilityServiceV2, "auto_recommend_top3", _fake_top3)
+    # _run_permit_design 만 실제 경로로 호출(나머지 도메인은 패치).
+    await DecisionBriefService()._run_permit_design(
+        "서울특별시 강남구 역삼동 123", 0, False,
+    )
+    assert "equity_won" in captured, "equity_won=0 도 엔진 kwargs 로 전달돼야 한다(0=전액 차입)"
+    assert captured["equity_won"] == 0
+
+
+@pytest.mark.asyncio
+async def test_equity_none_not_passed(monkeypatch):
+    """[MED 무회귀] equity_won=None 이면 kwargs 에 넣지 않는다(엔진 기본값 사용)."""
+    captured: dict[str, object] = {}
+
+    async def _fake_top3(self, **kwargs):
+        captured.update(kwargs)
+        return _PERMIT_OK
+
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    monkeypatch.setattr(FeasibilityServiceV2, "auto_recommend_top3", _fake_top3)
+    await DecisionBriefService()._run_permit_design(
+        "서울특별시 강남구 역삼동 123", None, False,
+    )
+    assert "equity_won" not in captured
+
+
+# ── ★iter-5: 통합면적 verdict 종단배선(판정 ROI 도 통합면적 기준) ──
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_passed_to_top3_engine(monkeypatch):
+    """[MED·arch] 통합면적(land_area_sqm)이 auto_recommend_top3 엔진에 전달돼 판정 ROI 도 통합기준.
+
+    엔진(feasibility_service_v2:92)이 land_area_sqm 을 수용하므로, decision_brief 가 통합면적을
+    그대로 엔진에 넘겨 FAR→GFA→ROI 전부 통합면적 기준으로 산정되게 해야 한다(표시 GFA 와 판정 ROI
+    단위 일치). 양수일 때만 전달한다.
+    """
+    captured: dict[str, object] = {}
+
+    async def _fake_top3(self, **kwargs):
+        captured.update(kwargs)
+        return _PERMIT_OK
+
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    monkeypatch.setattr(FeasibilityServiceV2, "auto_recommend_top3", _fake_top3)
+    await DecisionBriefService()._run_permit_design(
+        "서울특별시 강남구 역삼동 123", None, False, 3000.0,
+    )
+    assert captured.get("land_area_sqm") == 3000.0, \
+        "통합면적이 Top3 엔진에 전달돼야 한다(판정 ROI 도 통합면적 기준·단위 일치)"
+
+
+@pytest.mark.asyncio
+async def test_land_area_override_nonpositive_not_passed_to_engine(monkeypatch):
+    """[MED 보수·무회귀] 0/음수 통합면적은 엔진에 전달하지 않는다(가짜 0면적 차단·엔진 대표면적 사용)."""
+    captured: dict[str, object] = {}
+
+    async def _fake_top3(self, **kwargs):
+        captured.update(kwargs)
+        return _PERMIT_OK
+
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    monkeypatch.setattr(FeasibilityServiceV2, "auto_recommend_top3", _fake_top3)
+    await DecisionBriefService()._run_permit_design(
+        "서울특별시 강남구 역삼동 123", None, False, 0,
+    )
+    assert "land_area_sqm" not in captured, "0/음수 면적은 엔진 대표면적 사용(무회귀)"
+
+
+@pytest.mark.asyncio
+async def test_build_threads_override_area_into_top3(monkeypatch):
+    """[MED·arch 종단] build(land_area_sqm=3000) → _run_permit_design 거쳐 엔진까지 통합면적 전달."""
+    captured: dict[str, object] = {}
+
+    async def _site(self, *a, **k):
+        return _SITE_OK
+
+    async def _reg(self, *a, **k):
+        return _REG_OK
+
+    async def _fake_top3(self, **kwargs):
+        captured.update(kwargs)
+        return _PERMIT_OK
+
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    monkeypatch.setattr(DecisionBriefService, "_run_site_market", _site)
+    monkeypatch.setattr(DecisionBriefService, "_run_regulation", _reg)
+    monkeypatch.setattr(FeasibilityServiceV2, "auto_recommend_top3", _fake_top3)
+
+    async def _miss(kind, key):
+        return None
+
+    async def _put(kind, key, payload):
+        pass
+
+    monkeypatch.setattr(analysis_cache, "cache_get", _miss)
+    monkeypatch.setattr(analysis_cache, "cache_put", _put)
+
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=3000,
+    )
+    assert captured.get("land_area_sqm") == 3000.0, "build → _run_permit_design → 엔진까지 통합면적 종단배선"
+    # 갭 봉합 반영: 잔여 격차 고지(규모·수익성=통합·용도/규제=대표필지)는 여전히 존재.
+    assert any("통합면적 기준으로 산정" in r and "대표필지" in r for r in out["verdict"]["reasons"])
+
+
+@pytest.mark.asyncio
+async def test_developer_go_nogo_ctx_carries_land_area(monkeypatch):
+    """[MED 정합] db 주입 시 페르소나 ctx 에 통합면적(land_area_sqm)이 함께 전달된다(설계 매스 정합)."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    captured_ctx: dict[str, object] = {}
+
+    import app.services.persona.runner as runner_mod
+
+    async def _fake_run_persona(key, db, ctx, use_llm=False):
+        captured_ctx.update(ctx)
+        return {"artifacts": {"go_nogo": {"decision": "Go(추진 권고)", "top1": "주상복합",
+                                          "grade": "A", "roi_pct": 12.5}}}
+
+    monkeypatch.setattr(runner_mod, "run_persona", _fake_run_persona)
+    await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", land_area_sqm=3000, db=object(),
+    )
+    assert captured_ctx.get("land_area_sqm") == 3000.0, "통합면적이 페르소나 ctx 에 전달돼야 한다"
+    # Top3 핸드오프(중복 재계산 방지)도 유지.
+    assert "recommend_override" in captured_ctx

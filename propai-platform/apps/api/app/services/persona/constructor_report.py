@@ -13,6 +13,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def _won_to_eok(v: Any) -> str:
     if v in (None, ""):
@@ -51,13 +53,16 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     story: list = []
     story.append(Paragraph("공사비 견적서 (개산)", h1))
     est = art.get("estimate") or {}
+    # address·building_type·structure_type·status 는 동적이라 XML 이스케이프(크래시 방지).
     story.append(Paragraph(
-        f"{report.get('address') or '-'} · {est.get('building_type') or '-'} / "
-        f"{est.get('structure_type') or '-'} · 상태 {report.get('status') or '-'}", body))
+        f"{_esc(report.get('address') or '-')} · {_esc(est.get('building_type') or '-')} / "
+        f"{_esc(est.get('structure_type') or '-')} · 상태 {_esc(report.get('status') or '-')}", body))
     story.append(Spacer(1, 8))
 
     def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> None:
-        data = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        raw = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        # 표 셀은 동적 데이터(연면적·단가·QTO 항목 등)라 XML 이스케이프(전역 전파방지·은폐 금지).
+        data = [[_esc(cell) for cell in row] for row in raw]
         t = Table(data, colWidths=widths)
         t.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -98,7 +103,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
         safety = art.get("safety") or {}
         if safety.get("spread_pct") is not None:
             story.append(Paragraph(
-                f"레인지 폭 {safety.get('spread_pct')}% — 폭이 클수록 예산 버퍼 필요.", body))
+                f"레인지 폭 {_esc(safety.get('spread_pct'))}% — 폭이 클수록 예산 버퍼 필요.", body))
             story.append(Spacer(1, 6))
     else:
         _table(["구분", "금액"], [], [80 * mm, 80 * mm])
@@ -114,8 +119,9 @@ def to_pdf(report: dict[str, Any]) -> bytes:
            [60 * mm, 35 * mm, 25 * mm, 40 * mm])
     if qto:
         story.append(Paragraph(
-            f"항목 {qto.get('item_count') or 0}건 · 단가 출처 {qto.get('unit_price_source') or '-'} · "
-            f"적산 출처 {qto.get('qto_source') or '-'}", body))
+            f"항목 {_esc(qto.get('item_count') or 0)}건 · "
+            f"단가 출처 {_esc(qto.get('unit_price_source') or '-')} · "
+            f"적산 출처 {_esc(qto.get('qto_source') or '-')}", body))
         if qto.get("unit_price_source") != "db":
             story.append(Paragraph(
                 "단가 일부 fallback(DB 단가 미반영) — 표준 추정 총액은 유효(정직 표기).", warn))
@@ -131,7 +137,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     if notes:
         story.append(Paragraph("정직 고지", h2))
         for n in notes:
-            story.append(Paragraph(f"· {n}", warn))
+            story.append(Paragraph(f"· {_esc(n)}", warn))
 
     doc.build(story)
     buf.seek(0)

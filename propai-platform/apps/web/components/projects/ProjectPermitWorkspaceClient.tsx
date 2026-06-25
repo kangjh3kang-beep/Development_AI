@@ -11,6 +11,8 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
+import { findDecisionPart } from "@/components/projects/decision-brief-types";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -322,6 +324,11 @@ export function ProjectPermitWorkspaceClient({
 
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const designData = useProjectContextStore((s) => s.designData);
+  // ★Tier2 재사용(P2): Stage1 통합 브리프의 '인허가·사업모델 Top3' 도메인 요약을 읽어
+  //   'Stage1 통합분석 기반' 배너로 재사용한다(중복 재분석 회피). 브리프가 없으면 폴백(미렌더).
+  const decisionBrief = useProjectContextStore((s) => s.decisionBrief);
+  const briefStale = useProjectContextStore((s) => s.isStale("decisionBrief"));
+  const permitBriefPart = findDecisionPart(decisionBrief, "permit_design");
 
   const projectQuery = useQuery({
     queryKey: ["projects", "detail", projectId, "permit-live"],
@@ -525,6 +532,9 @@ export function ProjectPermitWorkspaceClient({
           ) : null}
         </CardContent>
       </Card>
+
+      {/* ★Stage1 통합분석 기반 — 인허가·Top3 도메인 요약 재사용(없으면 미렌더·폴백) */}
+      <DecisionReuseBanner part={permitBriefPart} stale={briefStale} />
 
       {/* Context + Form */}
       <Card>

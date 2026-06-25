@@ -17,6 +17,8 @@ import Link from "next/link";
 import { Link2 } from "lucide-react";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
+import { findDecisionPart } from "@/components/projects/decision-brief-types";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale } from "@/i18n/config";
 
@@ -36,6 +38,11 @@ export function InvestmentFeasibilityClient() {
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
   const costData = useProjectContextStore((s) => s.costData);
   const projectId = useProjectContextStore((s) => s.projectId);
+  // ★Tier2 재사용(P2): Stage1 통합 브리프의 '인허가·사업모델 Top3'(Top1·ROI) 도메인 요약을
+  //   읽어 'Stage1 통합분석 기반' 배너로 재사용한다(중복 재분석 회피). 브리프 없으면 폴백(미렌더).
+  const decisionBrief = useProjectContextStore((s) => s.decisionBrief);
+  const briefStale = useProjectContextStore((s) => s.isStale("decisionBrief"));
+  const permitBriefPart = findDecisionPart(decisionBrief, "permit_design");
 
   // 수지 산출 여부(무목업): 매출 또는 총사업비가 실제로 채워졌을 때만 결과로 인정.
   const hasResult = !!(
@@ -79,6 +86,9 @@ export function InvestmentFeasibilityClient() {
           프로젝트 <b className="text-[var(--text-primary)]">수지분석</b>에서 산출한 결과를 단일 진실원으로 표시합니다(순이익·수익률·ROI·자기자본수익률·NPV·총사업비). 입력·재계산은 수지분석 화면에서 수행합니다.
         </p>
       </div>
+
+      {/* ★Stage1 통합분석 기반 — 인허가·Top3(Top1·ROI) 도메인 요약 재사용(없으면 미렌더·폴백) */}
+      <DecisionReuseBanner part={permitBriefPart} stale={briefStale} />
 
       {/* 수지 미산출 — CTA(무목업: 가짜 0 대신 정직 안내) */}
       {!hasResult && (

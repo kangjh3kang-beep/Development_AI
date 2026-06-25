@@ -7,6 +7,7 @@ from datetime import UTC, datetime  # noqa: F401 (UTC는 하위호환 re-export)
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from packages.schemas.enums import ProjectStatus
 from packages.schemas.models import (
     PaginatedResponse,
@@ -198,6 +199,21 @@ class DecisionBriefRequest(BaseModel):
 
     address: str | None = Field(default=None, description="대표 분석 주소(미지정 시 프로젝트 주소 사용)")
     parcels: list[str] | None = Field(default=None, description="다필지 주소 목록(미지정 시 프로젝트 필지 사용)")
+    # ★다필지 통합면적 종단배선: 프론트(effectiveLandAreaSqm SSOT)가 보낸 유효면적을 수용해
+    #   부지 part의 대지면적·계획 GFA 메트릭을 이 면적 기준으로 재계산한다(통합면적이 KPI에 실반영).
+    #   미전송(None)이면 공유 엔진(ComprehensiveAnalysisService)이 산출한 대표면적을 그대로 쓴다(무회귀).
+    # ★보안 상한 검증(gt=0, le=1e7): 면적은 양수여야 하고(0/음수=가짜면적 차단), 1천만㎡(=10㎢,
+    #   대규모 신도시 단위)를 절대 상한으로 둔다. 악의/버그 입력(예 999999999㎡)이 검증 없이
+    #   권위 KPI(대지면적·GFA·사업성)로 흘러드는 것을 422로 차단한다(무검증 override 방지).
+    land_area_sqm: float | None = Field(
+        default=None,
+        gt=0,
+        le=1e7,
+        description=(
+            "유효 대지면적(㎡) — 다필지 통합면적 우선(미지정 시 엔진 산출 대표면적). "
+            "양수·1e7㎡ 이하만 허용(가짜/과대 면적 차단)."
+        ),
+    )
     equity_won: int | None = Field(default=None, description="자기자본(원) — Go/No-Go ROE 경로")
     use_llm: bool = Field(default=False, description="LLM 내러티브 포함 여부(기본 false=무과금)")
     force_refresh: bool = Field(default=False, description="True면 캐시 무시 재분석(기본 false=캐시 재사용)")
@@ -217,15 +233,16 @@ async def build_decision_brief(
     프로젝트는 테넌트 격리(_get_project_or_404)로 조회하고, 주소/필지 미지정 시 프로젝트 SSOT를 쓴다.
     """
     project = await _get_project_or_404(project_id, current_user.tenant_id, db)
+    return await _build_decision_brief(project, project_id, body, current_user, db)
 
-    # 과금 게이트(MED) — use_llm=True면 다중 LLM 경로(부지/시장·법규·인허가 인터프리터)를
-    # 트리거하므로 personas.py 패턴(enforce_llm_quota)을 재사용해 한도 초과 시 402 차단한다.
-    # use_llm=False(기본)는 무LLM·무과금이라 게이트를 건너뛴다.
-    if body.use_llm:
-        from app.core.billing_deps import enforce_llm_quota
-        await enforce_llm_quota(db)
 
-    # 주소·필지 SSOT — 요청이 비면 프로젝트 저장값으로 채운다(일관·무목업).
+def _resolve_brief_inputs(
+    project: Project, body: "DecisionBriefRequest",
+) -> tuple[str | None, list[str] | None]:
+    """주소·필지 SSOT 해석 — 요청이 비면 프로젝트 저장값으로 채운다(일관·무목업).
+
+    JSON 브리프 엔드포인트와 PDF 엔드포인트가 동일 입력을 쓰도록 공용화(드리프트 방지).
+    """
     address = body.address or project.address
     parcels = body.parcels
     if not parcels:
@@ -233,18 +250,65 @@ async def build_decision_brief(
             parcels = [p.address for p in (project.parcels or []) if getattr(p, "address", None)]
         except Exception:  # noqa: BLE001 — 필지 관계 로딩 실패는 단일주소로 진행
             parcels = None
+    return address, parcels or None
+
+
+async def _build_decision_brief(
+    project: Project,
+    project_id: UUID,
+    body: "DecisionBriefRequest",
+    current_user: CurrentUser,
+    db: AsyncSession,
+) -> dict:
+    """통합 의사결정 브리프 dict 산출 — JSON·PDF 엔드포인트 공용(과금 게이트 포함).
+
+    과금 게이트(MED) — use_llm=True면 다중 LLM 경로(부지/시장·법규·인허가 인터프리터)를
+    트리거하므로 personas.py 패턴(enforce_llm_quota)을 재사용해 한도 초과 시 402 차단한다.
+    use_llm=False(기본)는 무LLM·무과금이라 게이트를 건너뛴다.
+    """
+    if body.use_llm:
+        from app.core.billing_deps import enforce_llm_quota
+        await enforce_llm_quota(db)
+
+    address, parcels = _resolve_brief_inputs(project, body)
 
     from app.services.land_intelligence.decision_brief_service import DecisionBriefService
 
     return await DecisionBriefService().build(
         address=address,
         project_id=str(project_id),
-        parcels=parcels or None,
+        parcels=parcels,
         tenant_id=str(current_user.tenant_id),
+        # 프론트가 보낸 유효면적(다필지 통합면적 우선)을 종단까지 전달 — 부지 KPI 재계산용.
+        land_area_sqm=body.land_area_sqm,
         equity_won=body.equity_won,
         use_llm=body.use_llm,
         force_refresh=body.force_refresh,
         db=db,
+    )
+
+
+@router.post("/{project_id}/decision-brief/pdf", summary="Stage1 통합 의사결정 브리프 PDF")
+async def build_decision_brief_pdf(
+    project_id: UUID,
+    body: DecisionBriefRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """통합 의사결정 브리프를 산출(build)해 PDF(application/pdf)로 스트리밍 다운로드한다.
+
+    JSON 엔드포인트(/decision-brief)와 동일한 build()·입력 SSOT·과금 게이트·테넌트 격리를 쓰고,
+    결과 dict 만 decision_brief_pdf.to_pdf 로 렌더한다(persona PDF 패턴 재사용·신규 엔진 없음).
+    """
+    project = await _get_project_or_404(project_id, current_user.tenant_id, db)
+    brief = await _build_decision_brief(project, project_id, body, current_user, db)
+
+    from app.services.land_intelligence import decision_brief_pdf
+
+    pdf = decision_brief_pdf.to_pdf(brief)
+    return StreamingResponse(
+        iter([pdf]), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="decision_brief_{project_id}.pdf"'},
     )
 
 

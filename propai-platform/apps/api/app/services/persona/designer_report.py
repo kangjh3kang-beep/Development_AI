@@ -13,6 +13,8 @@ from __future__ import annotations
 import io
 from typing import Any
 
+from app.services.common.pdf_escape import esc as _esc
+
 
 def _fmt(v: Any, suffix: str = "") -> str:
     return f"{v}{suffix}" if v not in (None, "") else "미확보"
@@ -45,12 +47,15 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     art = report.get("artifacts") or {}
     story: list = []
     story.append(Paragraph("건축 설계 검토서", h1))
+    # address·status 는 동적 입력/엔진 산출이라 XML 이스케이프(크래시 방지).
     story.append(Paragraph(
-        f"{report.get('address') or '-'} · 상태 {report.get('status') or '-'}", body))
+        f"{_esc(report.get('address') or '-')} · 상태 {_esc(report.get('status') or '-')}", body))
     story.append(Spacer(1, 8))
 
     def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> None:
-        data = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        raw = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        # 표 셀은 동적 데이터(평형코드·세대수·법정한도 등)라 XML 이스케이프(전역 전파방지·은폐 금지).
+        data = [[_esc(cell) for cell in row] for row in raw]
         t = Table(data, colWidths=widths)
         t.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -89,8 +94,8 @@ def to_pdf(report: dict[str, Any]) -> bytes:
            [40 * mm, 40 * mm, 40 * mm, 40 * mm])
     if um.get("total_units"):
         story.append(Paragraph(
-            f"총 {um.get('total_units')}세대 · 매출 약 {um.get('total_revenue_100m')}억원 · "
-            f"GFA 효율 {um.get('gfa_efficiency_pct')}% · 방식 {um.get('method')}", body))
+            f"총 {_esc(um.get('total_units'))}세대 · 매출 약 {_esc(um.get('total_revenue_100m'))}억원 · "
+            f"GFA 효율 {_esc(um.get('gfa_efficiency_pct'))}% · 방식 {_esc(um.get('method'))}", body))
         story.append(Spacer(1, 6))
 
     # 3. 법규 준수
@@ -103,7 +108,8 @@ def to_pdf(report: dict[str, Any]) -> bytes:
                [55 * mm, 50 * mm, 55 * mm])
         viol = comp.get("violations") or []
         if viol:
-            story.append(Paragraph("초과 항목: " + ", ".join(viol) + " — 매스 재조정 필요", warn))
+            joined = ", ".join(str(v) for v in viol)
+            story.append(Paragraph("초과 항목: " + _esc(joined) + " — 매스 재조정 필요", warn))
     else:
         _table(["구분", "실제", "법정한도"], [], [55 * mm, 50 * mm, 55 * mm])
 
@@ -112,9 +118,9 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     eff = art.get("efficiency") or {}
     if eff:
         story.append(Paragraph(
-            f"GFA 효율 {_fmt(eff.get('gfa_efficiency_pct'), '%')} · "
-            f"전용률 {_fmt(eff.get('efficiency_ratio'))} · "
-            f"필요 주차 {_fmt(eff.get('total_parking_required'), '대')}", body))
+            f"GFA 효율 {_esc(_fmt(eff.get('gfa_efficiency_pct'), '%'))} · "
+            f"전용률 {_esc(_fmt(eff.get('efficiency_ratio')))} · "
+            f"필요 주차 {_esc(_fmt(eff.get('total_parking_required'), '대'))}", body))
     else:
         story.append(Paragraph("효율 진단에 필요한 유닛믹스 미확보(정직).", warn))
     story.append(Spacer(1, 6))
@@ -129,7 +135,7 @@ def to_pdf(report: dict[str, Any]) -> bytes:
     if notes:
         story.append(Paragraph("정직 고지", h2))
         for n in notes:
-            story.append(Paragraph(f"· {n}", warn))
+            story.append(Paragraph(f"· {_esc(n)}", warn))
 
     doc.build(story)
     buf.seek(0)
