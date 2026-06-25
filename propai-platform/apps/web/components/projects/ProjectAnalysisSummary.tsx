@@ -358,7 +358,14 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
           />
         )}
         <SiteScoreCard />
-        <BuildableEnvelopeCard />
+        {/* ★다필지 통합 실효 한도를 인벨로프에 주입(SSOT 단일화) — 사업개요가 보여주는 면적가중
+            blended 실효(예: 제2종일반주거+자연녹지 혼재 192.4%)를 그대로 전달해, 단일 PNU 분석이
+            store.effectiveFarPct에 대표필지(자연녹지급 100%/20%)를 써넣어 생긴 화면 내 불일치를 차단.
+            단일필지/통합 미확보면 undefined → 카드가 종전처럼 store 실효값 사용(무회귀). */}
+        <BuildableEnvelopeCard
+          integratedFarPct={integrated?.integrated?.blended_far_eff_pct ?? undefined}
+          integratedBcrPct={integrated?.integrated?.blended_bcr_eff_pct ?? undefined}
+        />
         {(effArea != null && effArea > 0) || site?.pnu ? (
           <SolarPlacementCard
             address={site?.address}

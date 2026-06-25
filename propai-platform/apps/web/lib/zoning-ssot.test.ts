@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mapZoningRich, normalizeUpzoningScenarios } from "@/lib/zoning-ssot";
+import { mapZoningRich, normalizeUpzoningScenarios, guardMultiParcelRich } from "@/lib/zoning-ssot";
 
 describe("normalizeUpzoningScenarios", () => {
   it("배열이 아니면 null", () => {
@@ -69,5 +69,42 @@ describe("mapZoningRich — upzoningScenarios(stale 방지)", () => {
   it("upzoning 정보가 없으면 upzoningScenarios=null로 명시(직전 부지 잔류 차단)", () => {
     const patch = mapZoningRich({ effective_far: { effective_far_pct: 200 } });
     expect(patch.upzoningScenarios).toBeNull();
+  });
+});
+
+describe("guardMultiParcelRich — 다필지 SSOT 오염 차단(혼재 대표필지)", () => {
+  it("혼재 다필지: 대표 1필지(자연녹지 100%/20%) 유래 실효/법정 한도를 제거해 통합값(192.4%)이 살아남게 한다", () => {
+    // 대표가 자연녹지인 /zoning/analyze 응답 → mapZoningRich 결과(대표필지 100%/20%).
+    const rich = mapZoningRich({
+      effective_far: {
+        national_far_pct: 100, national_bcr_pct: 20,
+        effective_far_pct: 100, effective_bcr_pct: 20,
+        far_basis: "자연녹지지역 법정상한",
+      },
+    });
+    expect(rich.effectiveFarPct).toBe(100); // 가드 전: 대표필지 자연녹지급
+    const guarded = guardMultiParcelRich(rich, true);
+    // 다필지에서는 단일유래 실효/법정 한도를 제거 → 통합 경로(192.4%)가 store에 살아남는다.
+    expect("effectiveFarPct" in guarded).toBe(false);
+    expect("effectiveBcrPct" in guarded).toBe(false);
+    expect("nationalFarPct" in guarded).toBe(false);
+    expect("nationalBcrPct" in guarded).toBe(false);
+    expect("farBasis" in guarded).toBe(false);
+  });
+
+  it("단일필지(isMultiParcel=false): 패치를 그대로 둔다(무회귀)", () => {
+    const rich = mapZoningRich({
+      effective_far: { effective_far_pct: 250, effective_bcr_pct: 60 },
+    });
+    const guarded = guardMultiParcelRich(rich, false);
+    expect(guarded.effectiveFarPct).toBe(250);
+    expect(guarded.effectiveBcrPct).toBe(60);
+    expect(guarded).toBe(rich); // 단일필지는 동일 참조 반환(부작용 없음)
+  });
+
+  it("순수 함수: 입력 패치를 변형하지 않는다", () => {
+    const rich = mapZoningRich({ effective_far: { effective_far_pct: 100 } });
+    guardMultiParcelRich(rich, true);
+    expect(rich.effectiveFarPct).toBe(100); // 원본 보존
   });
 });
