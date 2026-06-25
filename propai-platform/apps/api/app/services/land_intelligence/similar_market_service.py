@@ -85,11 +85,13 @@ async def find_similar_designs(
 
         q = SiteQuery(
             zone_type=zone_type,
-            area_sqm=float(area_sqm) if area_sqm else None,
+            # 0/음수 면적은 미산정으로 보고 None(양수만 임베딩 소프트 반영).
+            area_sqm=area_sqm if (area_sqm and area_sqm > 0) else None,
             keywords=_keywords_for(label),
             tenant_id=DESIGN_REFERENCE_TENANT_ID,  # 공유 참조 라이브러리 스코프
         )
-        r = await search_drawings(q, top_k=top_k)
+        # 직접 호출 안전망 — 과대 top_k로 인한 Qdrant 부하 방어(라우터 경로는 기본 4).
+        r = await search_drawings(q, top_k=max(1, min(top_k, 20)))
         return {
             "results": r.get("results", []),
             "count": r.get("count", 0),

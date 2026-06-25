@@ -118,3 +118,41 @@ async def test_similar_market_feasibility_augments_recommendations(monkeypatch) 
     assert out["land_price_reliable"] is True
     assert out["stage"] == "similar_market_feasibility"
     assert "market_research_note" in out
+
+
+async def test_block_and_honest_policy_preserved(monkeypatch) -> None:
+    """특이부지 BLOCK(빈 recommendations·honest_disclosure) 정직정책이 그대로 보존된다."""
+    class FakeSvc:
+        async def auto_recommend_top3(self, **kwargs):
+            return {
+                "address": kwargs["address"],
+                "zone_type": "자연녹지지역",
+                "land_area_sqm": 1000,
+                "recommendations": [],  # BLOCK → 후보 미생성
+                "special_parcel": {"developability": "BLOCKED"},
+                "honest_disclosure": "통상 절차로 해결 불가능한 제약 — 개발규모 미산정.",
+                "land_price_reliable": False,
+            }
+
+    import app.services.feasibility.feasibility_service_v2 as fv2
+    monkeypatch.setattr(fv2, "FeasibilityServiceV2", FakeSvc)
+
+    out = await similar_market_feasibility(address="자연녹지 부지", top_n=3)
+    # 빈 recommendations에서 가산 루프 0회·예외 없음, 정직 필드 보존.
+    assert out["recommendations"] == []
+    assert out["honest_disclosure"].startswith("통상 절차로")
+    assert out["land_price_reliable"] is False
+    assert out["stage"] == "similar_market_feasibility"
+
+
+async def test_skipped_reason_passthrough(monkeypatch) -> None:
+    """검색 미가용(no_openai_key 등) 사유가 그대로 패스스루된다(정직 표기)."""
+    async def fake_search(q, top_k=5):
+        return {"results": [], "count": 0, "skipped_reason": "no_openai_key"}
+
+    import app.services.design_ingest.search_service as ss
+    monkeypatch.setattr(ss, "search_drawings", fake_search)
+
+    out = await find_similar_designs(zone_type="X", area_sqm=0, label="오피스텔")
+    assert out["count"] == 0
+    assert out["skipped_reason"] == "no_openai_key"  # search_service 사유 보존

@@ -326,11 +326,27 @@ class ComprehensiveAnalysisService:
                 rank_buildable_options,
             )
 
-            result["buildable_options"] = rank_buildable_options(
+            _bo = rank_buildable_options(
                 zone_type=zone_type,
                 effective_far_pct=sec1.get("effective_far_pct"),
                 upzoning=sec8,
             )
+            # Stage 3 가산: 상위 사업유형에 유사 설계 도면(참조 라이브러리)을 첨부해 시장조사
+            #   미리보기를 제공한다(가산만·무회귀, 검색 실패는 graceful). top 2만 — latency 절제.
+            try:
+                from app.services.land_intelligence.similar_market_service import (
+                    attach_similar_designs_to_options,
+                )
+
+                _bo["options"] = await attach_similar_designs_to_options(
+                    _bo.get("options") or [], zone_type=zone_type,
+                    area_sqm=land_area, top_n=2,
+                )
+                if _bo.get("options"):
+                    _bo["top_recommendation"] = _bo["options"][0]
+            except Exception:  # noqa: BLE001 — 유사도면 가산 실패는 무손상(옵션은 유지)
+                pass
+            result["buildable_options"] = _bo
         except Exception:  # noqa: BLE001 — 건축가능항목 산출 실패는 기존 분석 무손상
             pass
 
