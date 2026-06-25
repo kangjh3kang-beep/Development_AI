@@ -17,9 +17,9 @@
 - 각 지방자치단체 도시계획 조례
 """
 
-import re
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -285,6 +285,10 @@ class OrdinanceService:
         region_info = self._extract_region(address)
         sido = region_info["sido"]
         sigungu = region_info["sigungu"]
+        # ★조례 관할명 정규화(공용 SSOT resolve_ordinance_region 재사용) — 특별시/광역시 자치구
+        #   (동작구 등)는 조례 제정권이 없어 시 본청('서울특별시')으로 승격. 일반 시/군은 그대로.
+        #   인용(legal_basis)·실시간 검색명을 이 관할로 일원화('동작구 도시계획 조례'[허위] 제거).
+        jurisdiction = resolve_ordinance_region(address) or sigungu or (sido if sido != "미확인" else None)
 
         # 0차: 저장된 분석 재사용(자동 재조사 금지 — 사용자 재분석 시에만 갱신)
         if not force_refresh:
@@ -313,8 +317,8 @@ class OrdinanceService:
             "last_updated": None,
         }
 
-        # 1차: 법제처 API 실시간 조회
-        api_result = await self._fetch_from_moleg_api(sido or "", sigungu, zone_type)
+        # 1차: 법제처 API 실시간 조회(정규화 관할명으로 검색 — '동작구' 부재조례 회피).
+        api_result = await self._fetch_from_moleg_api(sido or "", sigungu, zone_type, jurisdiction=jurisdiction)
         if api_result and api_result.get("bcr") is not None:
             ord_bcr = api_result["bcr"]
             ord_far = api_result["far"]
@@ -325,7 +329,7 @@ class OrdinanceService:
             result["source"] = "법제처API"
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
-            result["legal_basis"] = f"{sigungu or sido} 도시계획 조례"
+            result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
             _attach_provenance(result, confidence=0.95, recheck=False,
                                disclaimer="법제처 자치법규 실시간 조회값(도시계획조례 본문).")
             await _save_resolution(result, sigungu, zone_type)
@@ -341,7 +345,7 @@ class OrdinanceService:
             result["effective_bcr"] = min(national_bcr, c_bcr)
             result["effective_far"] = min(national_far, c_far)
             result["source"] = "지자체 조례(정적캐시)"
-            result["legal_basis"] = f"{sigungu or sido} 도시계획 조례"
+            result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
             _attach_provenance(result, confidence=0.80, recheck=True,
                                disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.")
             await _save_resolution(result, sigungu, zone_type)
@@ -360,14 +364,15 @@ class OrdinanceService:
         return result
 
     async def _fetch_from_moleg_api(
-        self, sido: str, sigungu: str | None, zone_type: str
+        self, sido: str, sigungu: str | None, zone_type: str, *, jurisdiction: str | None = None
     ) -> dict[str, Any] | None:
-        """법제처 API로 도시계획조례 실시간 조회."""
+        """법제처 API로 도시계획조례 실시간 조회. jurisdiction=정규화 관할명(특별시/광역시는 시 본청)."""
         api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
         if not api_key:
             return None
 
-        search_name = f"{sigungu or sido} 도시계획 조례" if sigungu else f"{sido} 도시계획 조례"
+        # ★정규화 관할명으로 검색 — 특별시/광역시 자치구는 소속 시도 조례('동작구 도시계획 조례'[부재] 회피).
+        search_name = f"{jurisdiction or sigungu or sido} 도시계획 조례"
 
         try:
             # Step 1: 자치법규 목록 검색 (User-Agent 필수)
@@ -388,7 +393,7 @@ class OrdinanceService:
                 ordin_list_xml = resp.text
 
             # 조례 일련번호 추출
-            ordin_id = self._parse_ordin_id(ordin_list_xml, sigungu or sido)
+            ordin_id = self._parse_ordin_id(ordin_list_xml, jurisdiction or sigungu or sido)
             if not ordin_id:
                 return None
 
@@ -407,7 +412,7 @@ class OrdinanceService:
                 ordin_text = resp.text
 
             # Step 3: 본문에서 건폐율/용적률 파싱
-            return self._parse_bcr_far_from_text(ordin_text, zone_type, sigungu or sido)
+            return self._parse_bcr_far_from_text(ordin_text, zone_type, jurisdiction or sigungu or sido)
 
         except Exception as e:
             logger.warning("법제처 API 조례 조회 실패: %s %s (%s)", sido, sigungu, str(e))
