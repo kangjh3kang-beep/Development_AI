@@ -19,7 +19,7 @@
       "frontier": { "title": "Commercial & public frontier", "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems." }
     },
     "engineTitle": "Deliberation engine composition",
-    "engineNote": "Engine core implemented · platform integration pending",
+    "engineNote": "Engine core implemented · platform integration wired (live output after deployment)",
     "layers": [
       "Preflight (jurisdiction · base date · scale)",
       "Sheet role · element classification",

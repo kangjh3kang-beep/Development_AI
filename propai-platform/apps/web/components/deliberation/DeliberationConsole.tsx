@@ -1,17 +1,27 @@
 "use client";
 
 /**
- * 심의분석 라이브 콘솔 — 플랫폼 프런트 ↔ 심의분석 엔진(propai-review) /analyze 배선.
+ * 심의분석 라이브 콘솔 — 플랫폼 프런트 → **중심엔진 BFF**(/api/v1/deliberation/analyze) → 엔진.
  *
- * 원시 입력(JSON) → 엔진 11계층 분석 → 구획 보고서/판정/공학지표/유사사례/정성 렌더.
- * 엔진 URL은 NEXT_PUBLIC_DELIBERATION_ENGINE_URL(기본 http://localhost:8801). 미연결 시 정직 안내.
+ * 원시 입력(JSON) → BFF(인증·테넌트결속·멱등·무결성·감사·degrade) → 엔진 11계층 → 구획 보고서 렌더.
+ * 엔진 오리진은 서버측 BFF에만 존재(브라우저 비노출). apiClient가 Bearer 자동부착·401 자동 refresh.
  */
 
 import { useState } from "react";
 
-// || (??가 아니라) — 빈 문자열/미설정 모두 기본값으로. 항상 절대 URL이어야 fetch 파싱 가능.
-const ENGINE_URL =
-  process.env.NEXT_PUBLIC_DELIBERATION_ENGINE_URL || "http://localhost:8801";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+
+// BFF degrade/정상 공용 봉투(§5). degraded=true면 result=null·reason 표면화(무음0).
+type EngineEnvelope = {
+  degraded: boolean;
+  reason?: string;
+  result: AnalysisResult | null;
+  reused?: boolean;
+  run_id?: string;
+  deterministic?: boolean;
+  audit_degraded?: boolean;
+  audit_skipped?: string[];
+};
 
 type Finding = {
   rule_id: string;
@@ -117,17 +127,25 @@ function Tag({ value }: { value: string }) {
 export function DeliberationConsole() {
   const [input, setInput] = useState(JSON.stringify(SAMPLE, null, 2));
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [degrade, setDegrade] = useState<{ reason: string; skipped: string[] } | null>(null);
+  const [meta, setMeta] = useState<{ reused: boolean; run_id?: string; audit_degraded: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [ms, setMs] = useState<number | null>(null);
 
-  async function run() {
-    setLoading(true);
+  function reset() {
     setError(null);
     setResult(null);
-    let body: unknown;
+    setDegrade(null);
+    setMeta(null);
+  }
+
+  async function run() {
+    setLoading(true);
+    reset();
+    let body: Record<string, unknown>;
     try {
-      body = JSON.parse(input);
+      body = JSON.parse(input) as Record<string, unknown>;
     } catch (e) {
       setError("입력 JSON 파싱 오류: " + (e as Error).message);
       setLoading(false);
@@ -135,22 +153,28 @@ export function DeliberationConsole() {
     }
     try {
       const t0 = performance.now();
-      const res = await fetch(`${ENGINE_URL}/api/v1/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      // 중심엔진 BFF 경유(인증·테넌트결속·멱등·무결성·감사·degrade). apiClient가 Bearer/타임아웃/401 처리.
+      const env = await apiClient.post<EngineEnvelope>("/deliberation/analyze", { body });
       setMs(Math.round(performance.now() - t0));
-      if (!res.ok) {
-        setError(`HTTP ${res.status}: ${await res.text()}`);
+      if (env.degraded) {
+        // 무음0: 합성 결과 없이 사유 표면화(NEEDS_REVIEW).
+        setDegrade({ reason: env.reason ?? "unknown", skipped: env.audit_skipped ?? [] });
       } else {
-        setResult((await res.json()) as AnalysisResult);
+        setResult(env.result);
+        setMeta({ reused: !!env.reused, run_id: env.run_id, audit_degraded: !!env.audit_degraded });
       }
     } catch (e) {
-      setError(
-        `엔진 미연결(${ENGINE_URL}). 엔진을 먼저 구동하세요 — propai-review에서 ` +
-          `uvicorn app.main:app --port 8801. (${(e as Error).message})`,
-      );
+      if (e instanceof ApiClientError) {
+        if (e.status === 401) {
+          setError("인증이 필요합니다. 다시 로그인해 주세요.");
+        } else if (e.status === 422) {
+          setError(`입력 선검증 실패(422): ${JSON.stringify(e.payload)}`);
+        } else {
+          setError(`요청 실패 (HTTP ${e.status}): ${e.message}`);
+        }
+      } else {
+        setError(`요청 중 오류: ${(e as Error).message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -164,7 +188,7 @@ export function DeliberationConsole() {
       <i className="cc-bracket cc-bracket--br" />
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-black text-[var(--text-primary)]">라이브 심의분석 콘솔</h2>
-        <span className="cc-meta text-[var(--text-tertiary)]">ENGINE · {ENGINE_URL}</span>
+        <span className="cc-meta text-[var(--text-tertiary)]">ENGINE · BFF 경유(인증·감사)</span>
       </div>
       <p className="relative z-10 mt-1 text-xs text-[var(--text-secondary)]">
         원시 입력 → 엔진 11계층(Preflight·법정산정·판정·공학시뮬·유사사례·검증·정성·게이팅·리포트) → 구획 보고서.
@@ -199,11 +223,30 @@ export function DeliberationConsole() {
 
         <div className="min-h-72 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm">
           {error && <p className="whitespace-pre-wrap text-xs text-[var(--status-error)]">{error}</p>}
-          {!error && !result && <p className="text-xs text-[var(--text-tertiary)]">분석을 실행하면 결과가 표시됩니다.</p>}
+          {degrade && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Tag value="NEEDS_REVIEW" />
+                <span className="text-xs font-semibold text-[var(--status-warning)]">
+                  심의 엔진 강등(degraded) · 사유: {degrade.reason}
+                </span>
+              </div>
+              <p className="text-[11px] text-[var(--text-tertiary)]">
+                합성 결과 없이 정직 강등(무음0). 엔진/감사 상태를 확인하세요.
+                {degrade.skipped.length > 0 && ` · 감사: ${degrade.skipped.join(", ")}`}
+              </p>
+            </div>
+          )}
+          {!error && !degrade && !result && (
+            <p className="text-xs text-[var(--text-tertiary)]">분석을 실행하면 결과가 표시됩니다.</p>
+          )}
           {result && (
             <div className="space-y-3">
               <div className="text-[11px] text-[var(--text-tertiary)]">
                 input_hash <code className="text-[var(--accent-strong)]">{result.input_hash.slice(0, 16)}…</code> · snapshot {result.snapshot_id}
+                {meta?.run_id && <> · run <code>{meta.run_id.slice(0, 8)}</code></>}
+                {meta?.reused && <> · <span className="text-[var(--status-success)]">멱등 재사용</span></>}
+                {meta?.audit_degraded && <> · <span className="text-[var(--status-warning)]">감사 강등</span></>}
               </div>
               <div>
                 <div className="cc-label text-[var(--text-tertiary)]">최종 구획(L5/L6)</div>
