@@ -26,6 +26,22 @@ def _to_items(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _format_recall_block(rag_memories: list[dict[str, Any]]) -> str:
+    """회상된 과거 경험(MemoryHub)을 prior_context 뒤에 덧붙일 텍스트 블록으로 정규화.
+
+    ★interpreter와 디커플: 회상 자체는 LLM 유무와 무관히 계산·표면화되고(run 반환·ingest provenance),
+    이 블록은 LLM 해석기가 있을 때만 prompt에 주입된다(없으면 미사용 — 결정론 수치 불변식엔 무영향).
+    score가 수치가 아닐 때도 안전(KeyError·포맷오류 방지)."""
+    if not rag_memories:
+        return ""
+    lines = ["", "", "[Past Agent Memories (Know-how)]"]
+    for rm in rag_memories:
+        score = rm.get("score")
+        score_s = f" (Score: {score:.2f})" if isinstance(score, (int, float)) and not isinstance(score, bool) else ""
+        lines.append(f"- {rm.get('summary', '')}{score_s}")
+    return "\n".join(lines)
+
+
 class SpecialistAgent:
     """단일 도메인 전문가 에이전트. 결정론 도구 → prior → (LLM+citation_gate) → 원장 cite."""
 
@@ -36,6 +52,8 @@ class SpecialistAgent:
         recorder: Callable[..., Any] | None = None,
         prior_loader: Callable[..., Any] | None = None,
         panel: Callable[..., Any] | None = None,
+        recaller: Callable[..., Any] | None = None,
+        ingester: Callable[..., Any] | None = None,
     ) -> None:
         self.domain = domain
         self.task_type = task_type
@@ -44,6 +62,10 @@ class SpecialistAgent:
         self._recorder = recorder
         self._prior_loader = prior_loader
         self._panel = panel
+        # ★recaller/ingester 주입(recorder·prior_loader와 동일 DI 패턴) — 미주입 시 MemoryHub 기본.
+        #   하드 import를 run()에서 떼어내 테스트·graceful·교체를 일원화(인프라 부재 시 기본이 import 실패→graceful).
+        self._recaller = recaller
+        self._ingester = ingester
 
     @property
     def analysis_type(self) -> str:
@@ -73,18 +95,22 @@ class SpecialistAgent:
             logger.warning("specialist prior read 실패(graceful)", domain=self.domain, err=str(e)[:160])
             prior = None
 
-        # 2.5) RAG Memory Recall (Memory Hub Brain) — best-effort
-        rag_memories = []
+        # 2.5) RAG Memory Recall (Memory Hub Brain) — best-effort. 회상은 interpreter 유무와 무관히
+        #   계산되어 run() 반환·ingest provenance로 표면화된다(아래) — '계산 후 버림' 단절 차단(#2 디커플).
+        rag_memories: list[dict[str, Any]] = []
         try:
-            from app.services.memory_hub.memory_service import MemoryHubService
+            recaller = self._recaller
+            if recaller is None:
+                from app.services.memory_hub.memory_service import MemoryHubService
+                recaller = MemoryHubService().recall_experience
             query_str = f"Domain: {self.domain}, Task: {self.task_type}, Data: {str(data)[:200]}"
-            memories = await MemoryHubService().recall_experience(query=query_str, domain=self.domain, top_k=2)
-            # Schema response to dict
+            memories = await recaller(query=query_str, domain=self.domain, top_k=2)
+            # MemoryRecallResponse → dict(소비처 단순화)
             rag_memories = [
                 {"id": str(m.id), "summary": m.summary, "score": m.score, "source_type": m.source_type}
-                for m in memories
+                for m in (memories or [])
             ]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 임베딩/Qdrant/인프라 부재는 graceful(분석 무중단)
             logger.warning("specialist memory recall 스킵(graceful)", domain=self.domain, err=str(e)[:160])
 
         # 3) LLM 해석(선택) + citation_gate grounded만 — 수치 비생성
@@ -94,13 +120,8 @@ class SpecialistAgent:
                 from app.services.design_audit.blindspot_interpreter import citation_gate
                 from app.services.ledger.prior_context import build_prior_block
 
-                # Combine prior with RAG memories
-                prior_block = build_prior_block(prior)
-                if rag_memories:
-                    prior_block += "\n\n[Past Agent Memories (Know-how)]\n"
-                    for rm in rag_memories:
-                        prior_block += f"- {rm['summary']} (Score: {rm['score']:.2f})\n"
-
+                # prior + 회상 과거경험을 결합(회상 블록은 헬퍼로 정규화 — interpreter와 디커플)
+                prior_block = build_prior_block(prior) + _format_recall_block(rag_memories)
                 raw = await self._interpreter.generate_interpretation(
                     tool_out, prior_context=prior_block)
                 claims = citation_gate(_to_items(raw), findings, prior_evidence=prior)
@@ -112,6 +133,9 @@ class SpecialistAgent:
         recorder = self._recorder
         if recorder is None:
             from app.services.ledger.ledger_adapters import record_specialist_result as recorder
+        # ★원장 payload는 결정론 산출(수치·findings·claims)만 — 회상결과(rag_memories)는 의도적 제외.
+        #   메모리 스토어 상태에 따라 변동(id·score) → content_hash 멱등성·모순탐지(detect_contradictions)
+        #   오염 방지(결정론 불변식 보존). 회상은 advisory로 run() 반환·ingest provenance에만 표면화(6단계).
         payload = {
             "kind": "domain_agent", "schema_version": "domain_agent/v2",
             "domain": self.domain, "task_type": self.task_type,
@@ -152,7 +176,10 @@ class SpecialistAgent:
             if panel_out:
                 memory_summary += f"- 패널 종합 판정: {panel_out}\n"
 
-            from app.tasks.memory_tasks import ingest_experience_task
+            ingester = self._ingester
+            if ingester is None:
+                from app.tasks.memory_tasks import ingest_experience_task
+                ingester = ingest_experience_task.delay
             ingest_payload = {
                 "project_id": project_id,
                 "session_id": f"auto_session_{self.domain}_{uuid.uuid4().hex[:8]}",
@@ -163,12 +190,16 @@ class SpecialistAgent:
                     "pnu": pnu,
                     "address": address,
                     "findings_count": len(findings_info),
-                    "claims_count": len(claims)
+                    "claims_count": len(claims),
+                    # ★#2 디커플: 이번 실행이 회상한 과거 경험을 함께 기록(회상→저장 provenance 연결).
+                    #   interpreter 유무와 무관히 저장돼, 회상이 '계산 후 버림'으로 단절되지 않게 한다.
+                    "recalled_memory_ids": [rm.get("id") for rm in rag_memories],
+                    "recalled_count": len(rag_memories),
                 }
             }
-            ingest_experience_task.delay(ingest_payload)
+            ingester(ingest_payload)
             logger.info("specialist memory auto-ingestion task triggered", domain=self.domain)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — Celery/인프라 부재는 graceful(분석 무중단)
             logger.warning("specialist memory auto-ingestion 스킵(graceful)", domain=self.domain, err=str(e)[:160])
 
         return {

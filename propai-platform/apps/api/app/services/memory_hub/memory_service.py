@@ -153,10 +153,18 @@ class MemoryHubService:
                     created_at = datetime.fromisoformat(created_raw)
                 except ValueError:
                     created_at = None
+            # ★id 위조 금지: point id가 유효 UUID가 아니면(정수/레거시/외부주입 등) 가짜 uuid4 날조 대신
+            #   해당 항목을 스킵한다. 날조된 id는 어떤 agent_memories 행도 가리키지 못해 recalled_memory_ids
+            #   provenance를 silent 훼손(상류 dedup/추적/감사 불가)하므로, 추적 가능한 항목만 회상에 포함한다.
+            try:
+                mem_id = uuid.UUID(str(scored_point.id))
+            except (ValueError, TypeError, AttributeError):
+                logger.warning("회상 항목 id 비-UUID(스킵·위조금지): %s", str(scored_point.id)[:80])
+                continue
             try:
                 results.append(
                     MemoryRecallResponse(
-                        id=uuid.UUID(scored_point.id) if '-' in str(scored_point.id) else uuid.uuid4(),
+                        id=mem_id,
                         domain=payload.get("domain", ""),
                         source_type=payload.get("source_type", ""),
                         summary=payload.get("summary", ""),
