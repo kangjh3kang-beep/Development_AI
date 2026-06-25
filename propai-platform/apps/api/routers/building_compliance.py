@@ -292,6 +292,29 @@ async def check_compliance(
     violations = raw.get("violations", []) or []
     compliant = bool(raw.get("compliant", False))
 
+    # 중심엔진 수렴 관측(shadow, 기본 off·best-effort·무중단) — 위반 케이스를 엔진 rules로 대조.
+    # ★shadow off면 테넌트 조회조차 안 함(무비용). 라우터에 인증/테넌트 없음 → project.tenant_id로 도출.
+    try:
+        from apps.api.config import get_settings
+
+        if get_settings().deliberation_shadow_enabled:
+            from app.services.deliberation import shadow_integration, shadow_mappers
+            mapped = shadow_mappers.building_compliance(raw)
+            if mapped:
+                from sqlalchemy import select
+
+                from apps.api.database.models.project import Project
+                tid = (await db.execute(
+                    select(Project.tenant_id).where(Project.id == req.project_id))).scalar_one_or_none()
+                # 비차단 observe(엔진 RTT가 검증 응답을 막지 않음). tid 없으면 no-op.
+                shadow_integration.observe(
+                    "building_compliance",
+                    (tid.hex if hasattr(tid, "hex") else str(tid)) if tid is not None else None,
+                    mapped)
+    except Exception as _e:  # noqa: BLE001 — 관측은 법규검증 흐름 절대 방해 금지(로그만, design_audit와 대칭)
+        import structlog
+        structlog.get_logger(__name__).warning("shadow 관측 실패(building_compliance)", err=str(_e)[:120])
+
     # ── 프론트(ComplianceCheckResponse) 계약으로 변환 ──
     checks = [
         {

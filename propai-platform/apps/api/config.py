@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     debug: bool = False
     environment: str = Field(default="development", description="development | staging | production")
 
+    # ── 심의분석 엔진(별도 서비스) 연동: BFF가 서버사이드로 호출 ──
+    # 빈 URL = 미연결 → /deliberation/* 는 degrade(engine_unreachable). 토큰은 엔진 .env.secrets와 동일값(수기 동기화).
+    deliberation_engine_url: str = ""
+    deliberation_engine_api_token: str = ""
+    deliberation_engine_connect_timeout_s: float = 5.0
+    deliberation_engine_read_timeout_s: float = 30.0       # 순수 결정론 입력(동기)
+    deliberation_engine_async_read_timeout_s: float = 60.0  # 네트워크 의존 입력
+    deliberation_async_result_timeout_s: float = 900.0      # 비동기 task 결과 대기 상한(초과→async_timeout degrade)
+    deliberation_shadow_enabled: bool = False               # 중심엔진 수렴 shadow 비교 적재(기본 off·운영 무중단)
+    deliberation_shadow_engine_timeout_s: float = 5.0       # shadow 엔진 호출 상한(관측이 도메인 응답 지연 금지)
+    deliberation_monitor_timeout_s: float = 20.0            # baseline-staleness 법제처 모니터 호출 상한(hang→degrade)
+
     @field_validator("debug", mode="before")
     @classmethod
     def normalize_debug(cls, value: Any) -> bool:

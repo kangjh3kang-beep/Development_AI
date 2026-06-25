@@ -433,6 +433,8 @@ class ComprehensiveAnalysisService:
                 contradiction_count=len(contradictions["contradictions"]),
                 max_severity=contradictions["max_severity"],
             )
+        # 주: 종합분석은 중심엔진 shadow 대상 제외 — 플랫폼에 FAR/BCR '적합 verdict'가 없고 effective_far가
+        # 합법 완화로 법정상한을 정당 초과할 수 있어 verdict 합성이 거짓 발산을 낳음(shadow_mappers 주석 참조).
         return result
 
     # ────────────────────────────────────────────

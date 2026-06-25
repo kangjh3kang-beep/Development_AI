@@ -800,6 +800,13 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning("analysis_ledger 라우터 등록 실패", err=str(_e)[:160])
 
+# 중심 엔진 통합 BFF — 심의/설계도면 자동분석 엔진 게이트웨이 → /api/v1/deliberation/*
+try:
+    from apps.api.app.routers.deliberation import router as deliberation_router
+    app.include_router(deliberation_router, tags=["심의분석 엔진"])  # 자체 prefix
+except Exception as _e:  # noqa: BLE001
+    logger.warning("deliberation 라우터 등록 실패", err=str(_e)[:160])
+
 # BOQ 자동화 — 공내역서 마스터(B1) + 드래프트(B2) + 개산 연동 → /api/v1/boq-auto/*
 try:
     from apps.api.app.routers.boq_auto import router as boq_auto_router

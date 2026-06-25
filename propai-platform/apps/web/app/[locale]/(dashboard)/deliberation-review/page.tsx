@@ -2,12 +2,16 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { DeliberationConsole } from "@/components/deliberation/DeliberationConsole";
 import { DeliberationResultPanel } from "@/components/analysis/DeliberationResultPanel";
+import { EngineHealthCard } from "@/components/deliberation/EngineHealthCard";
+import { RegDivergenceCard } from "@/components/deliberation/RegDivergenceCard";
+import { ShadowConvergenceCard } from "@/components/deliberation/ShadowConvergenceCard";
 
 /**
  * AI 심의분석 엔진 — 차세대 비전 페이지.
  *
  * 멀티모달 AI(VLLM) 기반 설계도서 자동해석 → 차세대 심의분석 엔진 비전을 타이틀로 분산배치한다.
- * 엔진 코어(심의분석 11계층)는 별도 백엔드(propai-review)로 구현 완료 · 플랫폼 통합 예정(정직 표기).
+ * 엔진 코어(심의분석 11계층)는 별도 백엔드(propai-review)로 구현 완료 · 플랫폼 통합 배선 완료(BFF degrade-safe,
+ * 운영카드·콘솔 라이브 BFF 경유) · 라이브 산출은 배포(키/인프라) 후(정직 표기).
  */
 export default async function DeliberationReviewPage({
   params,
@@ -88,10 +92,17 @@ export default async function DeliberationReviewPage({
         </p>
       </section>
 
+      {/* 운영 카드 — 엔진 헬스(BFF health) + 중심엔진 수렴(shadow) + 규제 출처 정합(reg drift) */}
+      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <EngineHealthCard />
+        <ShadowConvergenceCard />
+        <RegDivergenceCard />
+      </section>
+
       {/* 심의분석 결과(BFF) — 플랫폼 인증 경유 /api/v1/deliberation/analyze 풀통합(graceful degrade) */}
       <DeliberationResultPanel />
 
-      {/* 라이브 콘솔 — 심의분석 엔진(propai-review) /analyze 직접배선(개발자용 원시입력) */}
+      {/* 라이브 콘솔 — 중심엔진 BFF /api/v1/deliberation/analyze 경유 */}
       <DeliberationConsole />
     </div>
   );
