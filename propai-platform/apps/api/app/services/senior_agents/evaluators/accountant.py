@@ -3,7 +3,7 @@
 accountant spec(acct.lease_classification)을 실제 입력으로 평가. 무목업: 결측 생략.
 입력(context['inputs']): lease_term_months(리스기간 개월)·is_low_value(소액리스 여부 bool)·
 annual_payment(연간 리스료 원)·discount_rate(내재이자율·분율 예 0.05).
-단기(≤12개월)/소액 → 면제(비용처리). 장기 → 사용권자산·리스부채 인식(연금현가).
+단기(≤12개월) 또는 소액(is_low_value·기간 무관) → 면제(비용처리). 장기 → 사용권자산·리스부채 인식(연금현가).
 """
 
 from __future__ import annotations

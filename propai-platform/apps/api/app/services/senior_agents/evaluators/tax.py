@@ -2,7 +2,7 @@
 
 tax_advisor 도메인의 취득세를 실제 입력으로 산출. 무목업: 결측 생략·미확정 별도 표기.
 입력(context['inputs']): acquisition_price(취득가액 원)·property_type('housing'/'non_housing')·
-multi_home_count(보유주택수)·is_corporate(법인 bool)·is_adjusted_area(조정대상지역 bool).
+multi_home_count(★취득 완료 후 총 보유 주택 수)·is_corporate(법인 bool)·is_adjusted_area(조정대상지역 bool).
 주택 6억↓ 1%·6~9억 1~3% 누진·9억↑ 3%·비주택 4%·다주택/법인 중과 8/12%.
 농특세(85㎡초과 0.2%)·지방교육세는 세부조건 복잡 → 본세 산출 + 별도 정직 표기(무목업).
 """
@@ -53,7 +53,11 @@ def evaluate_tax(inputs: dict) -> list[RuleEvaluation]:
     if price is None or price < 0:
         return out
 
-    ptype = inputs.get("property_type") or "housing"
+    raw_ptype = inputs.get("property_type")
+    # 미인식 값(land·commercial 등)은 주택으로 가정하되 detail에 정직 표기(침묵 폴백 금지·무목업).
+    ptype = raw_ptype if raw_ptype in ("housing", "non_housing") else "housing"
+    caveat = (f" ※property_type '{raw_ptype}' 미인식→주택 가정"
+              if raw_ptype and raw_ptype not in ("housing", "non_housing") else "")
     homes_n = num(inputs, "multi_home_count")
     homes = int(homes_n) if homes_n is not None else 1
     is_corp = bool(inputs.get("is_corporate"))
@@ -67,5 +71,5 @@ def evaluate_tax(inputs: dict) -> list[RuleEvaluation]:
         threshold="주택 1~3%·비주택 4%·다주택/법인 중과 8·12%",
         basis="지방세법 제11조(부동산 취득세율)·다주택·법인 중과(2020.8 개정)",
         detail=(f"취득가액 {price:,.0f}×{rate:.2f}%={tax:,.0f}원({desc}). "
-                f"농특세(전용 85㎡초과 0.2%)·지방교육세 별도")))
+                f"농특세(전용 85㎡초과 0.2%)·지방교육세 별도{caveat}")))
     return out

@@ -176,6 +176,9 @@ def test_acquisition_tax_heavy_warn():
     assert _by_id(evaluate_tax({"acquisition_price": 5e8}))["tax.acquisition_tax"].verdict == PASS
     # 음수/결측 생략
     assert evaluate_tax({}) == [] and evaluate_tax({"acquisition_price": -1}) == []
+    # 미인식 property_type → 주택 가정이되 detail에 정직 표기(침묵 폴백 금지)
+    e_land = _by_id(evaluate_tax({"acquisition_price": 5e8, "property_type": "land"}))["tax.acquisition_tax"]
+    assert e_land.value == 1.0 and "미인식" in e_land.detail
 
 
 def test_lease_classification():
