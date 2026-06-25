@@ -858,15 +858,38 @@ def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
     if req.land_area_sqm:
         from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
 
+        # ★건축유형별 매싱 목적함수 배선(선결·additive): building_use·unit_types를 전달하고,
+        #   massing_strategy로 건축유형을 추론해 목적함수(고층저밀/고밀/혼합)를 주입한다.
+        #   추론·목적 산출 실패는 graceful(목적 미주입=기존 동작 보존·무회귀).
+        massing_objective = None
+        building_type = None
+        try:
+            from app.services.cad.massing_strategy import (
+                classify_building_type,
+                resolve_massing_objective,
+            )
+
+            building_type = classify_building_type(
+                req.zone_code, building_use=req.building_use,
+            )
+            massing_objective = resolve_massing_objective(building_type, req.zone_code)
+        except Exception:  # noqa: BLE001
+            massing_objective = None
+
         svc = AutoDesignEngineService()
         site = SiteInput(
             site_area_sqm=req.land_area_sqm,
             zone_code=req.zone_code,
+            building_use=req.building_use,
+            target_unit_types=req.unit_types or ["84A"],
             floor_height_m=req.floor_height_m,
+            massing_objective=massing_objective,
         )
         legal = svc.get_legal_limits(req.zone_code)
         eff = svc.compute_effective_site(site)
         mass = svc.compute_optimal_mass(site, eff, legal)
+        if building_type:
+            mass.setdefault("building_type", building_type)
         return _enrich_interior(mass)
     # 최종 폴백: 합리적 기본값
     mass = {
