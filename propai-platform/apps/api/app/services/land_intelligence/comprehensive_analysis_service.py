@@ -516,6 +516,27 @@ class ComprehensiveAnalysisService:
             )
         # 주: 종합분석은 중심엔진 shadow 대상 제외 — 플랫폼에 FAR/BCR '적합 verdict'가 없고 effective_far가
         # 합법 완화로 법정상한을 정당 초과할 수 있어 verdict 합성이 거짓 발산을 낳음(shadow_mappers 주석 참조).
+
+        # 성장 뇌(MemoryHub): 종합분석 산출을 도메인 SpecialistAgent로 흘려 회상/원장/자동기억 발화.
+        #   ★best-effort 비차단(.delay) — 분석 응답 지연 0(Celery 워커가 백그라운드 실행). 데이터가
+        #   신뢰 가능한 도메인만(far·zoning·market): 무목업(공시지가 0이면 market 생략). 실패는 graceful.
+        try:
+            from app.tasks.specialist_tasks import run_domain_specialists_task
+            spec_domains: dict[str, Any] = {
+                "far": {"base": base, "zone_type": zone_type, "land_area": land_area},
+                "zoning": {"zone_type": zone_type},
+            }
+            _op = (sec3 or {}).get("official_price_per_sqm")
+            if isinstance(_op, (int, float)) and not isinstance(_op, bool) and _op > 0:
+                spec_domains["market"] = {"official_price_per_sqm": _op}
+            run_domain_specialists_task.delay({
+                "domains": spec_domains,
+                "tenant_id": tenant_id, "project_id": project_id,
+                "pnu": _pnu, "address": address,
+            })
+        except Exception as e:  # noqa: BLE001 — 성장 뇌 트리거 실패는 분석을 막지 않음(정직 degrade)
+            logger.warning("종합분석 specialist 트리거 스킵(graceful)", err=str(e)[:160])
+
         return result
 
     # ────────────────────────────────────────────
