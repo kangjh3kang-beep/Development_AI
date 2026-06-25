@@ -13,10 +13,12 @@
  * 색상은 토큰만(하드코딩 금지)·한국어.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { buildSeniorInputs, type SeniorInputSources } from "@/lib/senior/build-inputs";
 
 /* ── 백엔드 계약(읽기 전용 타입·to_dict 정합) ── */
 
@@ -101,12 +103,22 @@ function Badge({ token, children }: { token: string; children: React.ReactNode }
 
 // 시니어 자문은 도메인 단위 결정론(projectId 등 컨텍스트 불필요) — props 없음(자족 컴포넌트).
 export function SeniorConsultPanel() {
+  // ★읽기 소비만(store 쓰기 액션 미호출). 분석 데이터를 평가기 inputs로 자동 매핑한다.
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+  const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
+  const sources = useMemo<SeniorInputSources>(
+    () => ({ siteAnalysis, designData, feasibilityData }),
+    [siteAnalysis, designData, feasibilityData],
+  );
+
   const [agents, setAgents] = useState<SeniorAgentMeta[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [result, setResult] = useState<SeniorConsultation | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  // 캐시 키 = `${domain}|${inputs 시그니처}` — store 데이터가 바뀌면 재자문(stale 방지).
   const cacheRef = useRef<Record<string, SeniorConsultation>>({});
 
   // GET /senior/agents — 마운트 1회.
@@ -130,29 +142,38 @@ export function SeniorConsultPanel() {
     };
   }, []);
 
-  const consult = useCallback(async (key: string) => {
-    setSelectedKey(key);
-    setRunError(null);
-    const cached = cacheRef.current[key];
-    if (cached) {
-      setResult(cached);
-      return;
-    }
-    setRunning(true);
-    try {
-      const res = await apiClient.post<SeniorConsultation>("/senior/consult", {
-        body: { domain: key },
-        useMock: false,
-      });
-      cacheRef.current[key] = res;
-      setResult(res);
-    } catch (e) {
-      setResult(null);
-      setRunError(e instanceof ApiClientError ? e.message : "시니어 자문에 실패했습니다.");
-    } finally {
-      setRunning(false);
-    }
-  }, []);
+  const consult = useCallback(
+    async (key: string) => {
+      setSelectedKey(key);
+      setRunError(null);
+      // 분석 store에서 도메인별 평가기 inputs 자동 매핑(실재 값만·무목업). 없으면 프레임워크만.
+      const inputs = buildSeniorInputs(key, sources);
+      const cacheKey = `${key}|${inputs ? JSON.stringify(inputs) : ""}`;
+      const cached = cacheRef.current[cacheKey];
+      if (cached) {
+        setResult(cached);
+        return;
+      }
+      setRunning(true);
+      try {
+        const body: { domain: string; context?: { inputs: Record<string, number> } } = inputs
+          ? { domain: key, context: { inputs } }
+          : { domain: key };
+        const res = await apiClient.post<SeniorConsultation>("/senior/consult", {
+          body,
+          useMock: false,
+        });
+        cacheRef.current[cacheKey] = res;
+        setResult(res);
+      } catch (e) {
+        setResult(null);
+        setRunError(e instanceof ApiClientError ? e.message : "시니어 자문에 실패했습니다.");
+      } finally {
+        setRunning(false);
+      }
+    },
+    [sources],
+  );
 
   return (
     <section className="grid gap-3">
