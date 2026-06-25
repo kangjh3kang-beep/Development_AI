@@ -44,6 +44,36 @@ async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest, current_
     )
 
 
+class SimilarMarketRequest(BaseModel):
+    address: str = Field(..., description="분석 대상 주소")
+    land_area_sqm: float | None = Field(None, description="대지면적(㎡). 미지정 시 자동감지.")
+    region: str = Field("서울", description="지역(공사비 권역).")
+    equity_won: int = Field(10_000_000_000, description="자기자본(원). ROE 산정용.")
+    use_llm: bool = Field(False, description="AI 해석 포함 여부.")
+    top_n: int = Field(3, ge=1, le=5, description="유사건축물 시장조사 가산 상위 추천 수.")
+
+
+@router.post("/similar-market")
+async def run_similar_market_feasibility(req: SimilarMarketRequest):
+    """Stage 3 — 유사건축물 시장조사·사업성. (인증은 라우터 레벨 dependency로 강제)
+
+    검증된 사업성 엔진(auto_recommend_top3: 인허가 게이트·특이부지·senior 금융)의 사업유형별
+    추천에, 설계 참조 라이브러리(시드 코퍼스)에서 검색한 유사 설계 도면을 가산해 반환한다.
+    """
+    from app.services.land_intelligence.similar_market_service import (
+        similar_market_feasibility,
+    )
+
+    return await similar_market_feasibility(
+        address=req.address,
+        land_area_sqm=req.land_area_sqm,
+        region=req.region,
+        equity_won=req.equity_won,
+        use_llm=req.use_llm,
+        top_n=req.top_n,
+    )
+
+
 @router.get("/llm-providers")
 async def list_llm_providers():
     """사용 가능한 LLM 프로바이더 목록 반환.
