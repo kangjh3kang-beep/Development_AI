@@ -151,6 +151,11 @@ class SiteInput:
     # (결정론). 우선순위 — 명시 massing_kind > 참조 비례 > auto(대지비율).
     # None=미사용(기존 동작 완전 불변). 형식: {aspect, ref_id, title, similarity, ...}.
     reference_mass: dict[str, Any] | None = None
+    # ★건축유형별 매싱 목적함수(옵셔널·additive). massing_strategy.resolve_massing_objective가
+    # 반환하는 MassingObjective dict. 핵심 키 target_bcr_ratio(<1.0이면 footprint를
+    # 건폐율 상한 미만으로 축소 → 층수↑·고층저밀). None=목적함수 미사용(기존 동작 완전
+    # 불변 — footprint는 건폐율 상한 만충). 형식: {objective, target_bcr_ratio, ...}.
+    massing_objective: dict[str, Any] | None = None
 
 
 # 매스 형상 정의 — aspect=전면/깊이 비, fp_factor=최대 건축면적 대비 플로어플레이트 계수.
@@ -370,7 +375,19 @@ class AutoDesignEngineService:
 
         # 건폐율 제약 → 최대 건축면적
         max_footprint = site_area * max_bcr
-        building_footprint = min(max_footprint, eff_area)
+        # ★매싱 목적함수(opt-in): target_bcr_ratio<1.0이면 건폐율 상한보다 작게 깔아
+        # (고층저밀) max_floors_by_far가 자동 증가 → 높이 최대 달성(공동주택 목적).
+        # None/무objective/ratio>=1.0이면 1.0=기존 동작(상한 만충) 보존(무회귀).
+        target_bcr_ratio = 1.0
+        objective = getattr(site_input, "massing_objective", None)
+        if isinstance(objective, dict):
+            try:
+                r = float(objective.get("target_bcr_ratio", 1.0))
+                if 0.0 < r < 1.0:
+                    target_bcr_ratio = r
+            except (TypeError, ValueError):
+                target_bcr_ratio = 1.0
+        building_footprint = min(max_footprint * target_bcr_ratio, eff_area)
 
         # 건물 치수 (유효 영역 내 직사각형)
         eff_w = effective["effective_width_m"]
@@ -538,6 +555,11 @@ class AutoDesignEngineService:
             "massing_kind": (mk if form else "auto"),
             "massing_label": (form["label"] if form else "자동(대지비율)"),
         }
+        # ★매싱 목적함수 적용 출처(있을 때만·additive). target_bcr_ratio<1.0이면 고층저밀
+        # 적용됨을 정직 표기. 미주입/ratio=1.0이면 키 추가 안 함(기존 동작 불변).
+        if isinstance(objective, dict) and 0.0 < target_bcr_ratio < 1.0:
+            result["massing_objective"] = objective.get("objective")
+            result["target_bcr_ratio_applied"] = round(target_bcr_ratio, 3)
         if north_step_profile is not None:
             result["north_step_profile"] = north_step_profile
             result["daylight_step"] = True
@@ -933,6 +955,10 @@ class AutoDesignEngineService:
             "massing_kind": mass.get("massing_kind", "auto"),
             "massing_label": mass.get("massing_label", "자동(대지비율)"),
         }
+        # ★매싱 목적함수 적용 출처(있을 때만·additive·정직 표기). 미적용이면 키 없음(기존 동작 불변).
+        if mass.get("massing_objective"):
+            summary["massing_objective"] = mass["massing_objective"]
+            summary["target_bcr_ratio_applied"] = mass.get("target_bcr_ratio_applied")
         if not unit_layout.get("units_feasible", True):
             summary["units_note"] = unit_layout.get("infeasible_reason", "세대 성립 불가")
 

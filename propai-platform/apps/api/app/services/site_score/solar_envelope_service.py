@@ -192,6 +192,24 @@ def _zone_limits(zone: str) -> dict[str, Any]:
     return {"max_bcr": 60, "max_far": 200, "max_height": 0}
 
 
+def _comfort_bcr_divisors(massing_objective: dict[str, Any] | None) -> tuple[float, float]:
+    """건축유형별 권장 층수 산정용 '쾌적 건폐율' 분모(low, high)를 반환한다.
+
+    권장 층수 ≈ 현실 용적률% ÷ 쾌적 건폐율%. 기본(objective 없음)은 30/20(기존 동작
+    보존·무회귀). 공동주택(고층저밀·max_height_min_coverage)은 낮은 건폐율(많은 층수),
+    빌라/연립(고밀·max_coverage)·상업(max_both)은 높은 건폐율(적은 층수)을 가정한다(추정).
+    """
+    default = (30.0, 20.0)
+    if not isinstance(massing_objective, dict):
+        return default
+    obj = str(massing_objective.get("objective") or "")
+    if obj == "max_height_min_coverage":      # 공동주택 고층저밀 — 낮은 건폐율
+        return (20.0, 15.0)
+    if obj in ("max_coverage", "max_both", "mixed_use_residential"):  # 빌라/상업/혼합 — 고밀
+        return (40.0, 30.0)
+    return default
+
+
 def compute_buildable_envelope(
     *,
     land_area_sqm: float,
@@ -203,8 +221,15 @@ def compute_buildable_envelope(
     far_limit_pct: float | None = None,
     side_setback_m: float = 0.5,
     latitude: float = 37.5,
+    massing_objective: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """정북일조 인벨로프 기반 최대 건축가능 연면적·층수·볼륨과 용적률 대비 손실 산정."""
+    """정북일조 인벨로프 기반 최대 건축가능 연면적·층수·볼륨과 용적률 대비 손실 산정.
+
+    massing_objective(opt-in·additive): massing_strategy.resolve_massing_objective가
+    반환하는 MassingObjective dict. 권장 층수 산정의 '쾌적 건폐율' 분모를 건축유형별로
+    조정한다 — 공동주택(고층저밀)은 낮은 건폐율(많은 층수)을, 빌라/상업은 높은 건폐율
+    (적은 층수)을 가정. None이면 기존 30/20 분모 보존(무회귀).
+    """
     if land_area_sqm <= 0:
         return {"error": "대지면적이 필요합니다."}
 
@@ -212,6 +237,10 @@ def compute_buildable_envelope(
     bcr = (bcr_limit_pct if bcr_limit_pct is not None else lim.get("max_bcr", 60)) / 100.0
     far = (far_limit_pct if far_limit_pct is not None else lim.get("max_far", 250)) / 100.0
     fh = max(2.4, floor_height_m)
+    # ★건축유형별 쾌적 건폐율 분모(권장 층수 = 현실 용적률% ÷ 쾌적 건폐율%). 기본 30/20
+    #   (low/high)을 보존하되, objective가 있으면 유형별로 조정(무회귀 — None=기본).
+    #   공동주택(고층저밀)=낮은 건폐율(20/15)·빌라/상업(고밀)=높은 건폐율(40/30).
+    comfort_bcr_low, comfort_bcr_high = _comfort_bcr_divisors(massing_objective)
 
     # 대지 치수: 미입력 시 정사각형 가정(정북=깊이 D)
     if not land_width_m or not land_depth_m:
@@ -247,8 +276,9 @@ def compute_buildable_envelope(
         _arith_min = floors
         _ceil_floors = zone_max_floors if zone_max_floors else floors
         _far_p = realistic_far * 100.0
-        _rec_low = max(_arith_min, min(_ceil_floors, round(_far_p / 30.0)))
-        _rec_high = max(_rec_low, min(_ceil_floors, round(_far_p / 20.0)))
+        # 쾌적 건폐율 분모: 기본 30/20, objective 있으면 유형별(무회귀 — None=기본).
+        _rec_low = max(_arith_min, min(_ceil_floors, round(_far_p / comfort_bcr_low)))
+        _rec_high = max(_rec_low, min(_ceil_floors, round(_far_p / comfort_bcr_high)))
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1),
@@ -319,13 +349,14 @@ def compute_buildable_envelope(
     # ── 정밀 층수 시뮬레이션(계단식 단면 근사) ──
     # arithmetic_min_floors: '건폐율 만충 산술 하한'(법적 개념 아님 — 유효 연면적을 담는 최소 층수).
     arithmetic_min_floors = realistic_floors
-    # 실무 권장 범위: 쾌적 건폐율 20~30% 가정으로 far_p(현실 용적률%)를 나눠 층수 추정.
+    # 실무 권장 범위: 쾌적 건폐율 가정으로 far_p(현실 용적률%)를 나눠 층수 추정.
+    # 분모는 기본 30/20(기존 동작 보존), objective 있으면 건축유형별로 조정(무회귀).
     far_p = far * 100.0
     recommended_floors_low = max(
-        arithmetic_min_floors, min(daylight_ceiling_floors, round(far_p / 30.0))
+        arithmetic_min_floors, min(daylight_ceiling_floors, round(far_p / comfort_bcr_low))
     )
     recommended_floors_high = max(
-        recommended_floors_low, min(daylight_ceiling_floors, round(far_p / 20.0))
+        recommended_floors_low, min(daylight_ceiling_floors, round(far_p / comfort_bcr_high))
     )
     # 계단식 단면의 북측 최저 층수: 정북 경계 최소이격(1.5m)에서 허용 높이/층고.
     floors_at_north_edge = max(1, int(max_height_for_north_distance_m(1.5) / fh))
