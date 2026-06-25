@@ -82,7 +82,16 @@ interface AutoRecommendApiResponse {
   all_results: BackendRecommendItem[];
   total_types_analyzed: number;
   ai_interpretation?: FeasibilityInterpretation | null;
+  // ★P1 미래속성(종상향 잠재) — 현행 추천에 더해 종상향 시 잠재 용적률(예상치·확정 아님).
+  upzoning_potential?: {
+    current_far_pct?: number;
+    potential_far_range?: { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+    scenarios?: Record<string, unknown>[] | null;
+    summary?: string | null;
+    disclaimer?: string | null;
+  } | null;
 }
+type UpzoningPotential = AutoRecommendApiResponse["upzoning_potential"];
 
 // 백엔드 응답 → 프론트엔드 모델 변환
 function mapToRecommendedModel(item: BackendRecommendItem, rank: number): RecommendedModel {
@@ -236,6 +245,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [aiInterpretation, setAiInterpretation] = useState<FeasibilityInterpretation | null>(null);
   const [allModels, setAllModels] = useState<RecommendedModel[]>([]);
   const [analysisCount, setAnalysisCount] = useState(0);
+  // ★P1: 종상향 잠재(미래 토지속성) — 현행 추천과 분리 표기(예상치·확정 아님).
+  const [upzoning, setUpzoning] = useState<UpzoningPotential>(null);
   const [showFullTable, setShowFullTable] = useState(false);
 
   // Modal state
@@ -255,6 +266,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     setProgress(0);
     setTopModels([]);
     setAllModels([]);
+    setUpzoning(null);
     setAiInterpretation(null);
 
     // Simulate progress
@@ -288,6 +300,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       setTopModels(mappedRecs.slice(0, 3));
       setAllModels(mappedAll);
       setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
+      setUpzoning(response.upzoning_potential ?? null);
       setAiInterpretation(response.ai_interpretation ?? null);
 
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장 (partial merge)
@@ -679,6 +692,32 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── ★P1 미래속성: 종상향 잠재(현행 추천과 분리·예상치) ── */}
+      {upzoning?.potential_far_range && (upzoning.potential_far_range.max_pct ?? 0) > (upzoning.current_far_pct ?? 0) && (
+        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+          <div className="mb-2 flex items-center gap-2">
+            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <h3 className="text-base font-black text-[var(--text-primary)]">미래 토지속성 — 종상향 잠재(예상치)</h3>
+          </div>
+          <p className="text-sm text-[var(--text-secondary)]">
+            현행 실효 용적률 <b className="text-[var(--text-primary)]">{upzoning.current_far_pct}%</b> 기준 추천입니다.
+            종상향(역세권·지구단위 등) 시 잠재 용적률은{" "}
+            <b className="text-amber-400">
+              {upzoning.potential_far_range.min_pct === upzoning.potential_far_range.max_pct
+                ? `${upzoning.potential_far_range.max_pct}%`
+                : `${upzoning.potential_far_range.min_pct}~${upzoning.potential_far_range.max_pct}%`}
+            </b>
+            까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다.
+          </p>
+          {upzoning.summary && (
+            <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-tertiary)]">{upzoning.summary}</p>
+          )}
+          {upzoning.disclaimer && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)]">{upzoning.disclaimer}</p>
+          )}
+        </div>
+      )}
 
       {/* ── LLM(Claude) 사업성 종합 해석 ── */}
       {aiInterpretation && (

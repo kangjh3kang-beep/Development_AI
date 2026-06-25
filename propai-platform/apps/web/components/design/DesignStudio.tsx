@@ -265,6 +265,24 @@ function MassingDiagram({ name, active, geom }: { name: string; active?: boolean
 // floorHeight = 층고(m) 기본 3.0(범위 2.4~4.5) — SolarEnvelopeCard로 전달해 층수 천장을 재계산.
 const DEFAULT_FORM = { landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택", floorHeight: "3.0" };
 
+// ★P3(추천→설계 연결): 추천 개발모델명(designData.buildingType, 예 '아파트'·'오피스텔'·'주상복합')을
+//   설계 폼의 건물용도 옵션(공동주택/업무시설/근린생활시설/숙박시설/판매시설/교육연구시설)으로 매핑.
+//   매핑 불가 시 null(시드 안 함 — 추측 금지). 키워드 기반(개발모델 명칭 다양성 흡수).
+const _BUILDING_USE_OPTIONS = ["공동주택", "업무시설", "근린생활시설", "숙박시설", "판매시설", "교육연구시설"];
+function mapBuildingTypeToUse(buildingType: string | null | undefined): string | null {
+  const t = (buildingType || "").trim();
+  if (!t) return null;
+  if (_BUILDING_USE_OPTIONS.includes(t)) return t; // 이미 정식 용도명
+  // 개발모델 명칭 → 건축법 용도 키워드 매핑.
+  if (/아파트|공동주택|도시형생활주택|주상복합|연립|다세대|타운하우스|빌라|주택조합|재건축|재개발/.test(t)) return "공동주택";
+  if (/오피스텔|업무|사무|지식산업|오피스/.test(t)) return "업무시설";
+  if (/근린생활|상가|상업|점포|소매/.test(t)) return "근린생활시설";
+  if (/숙박|호텔|생활숙박|레지던스/.test(t)) return "숙박시설";
+  if (/판매|쇼핑|백화점|마트|물류/.test(t)) return "판매시설";
+  if (/교육|연구|학교|병원|의료/.test(t)) return "교육연구시설";
+  return null; // 미상 — 시드 안 함(무목업)
+}
+
 // SolarEnvelopeCard가 부모로 리프트하는 결과(상단 '예상 층수' 카드 배선용) — 필요한 필드만.
 type EnvLift = {
   recommended_floors_low?: number; recommended_floors_high?: number;
@@ -277,6 +295,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
+  // ★P3: 추천(AutoRecommend)이 기록한 건물용도(designData.buildingType)를 설계 폼 시드로 읽는다.
+  const recommendedBuildingType = useProjectContextStore((s) => s.designData?.buildingType);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const [easy, setEasy] = useState(false);   // 일반인용 쉬운 설명 토글
 
@@ -339,12 +359,16 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     // ★다필지면 통합 면적(effectiveLandAreaSqm)으로 폼을 시드한다 — 단일 PNU 분석이
     //   landAreaSqm을 대표값으로 덮어써도 설계가 통합 면적 기준으로 GFA를 계산하게.
     const seedArea = effectiveLandAreaSqm(siteAnalysis);
+    // ★P3: 추천 건물용도(designData.buildingType)를 폼 건물용도로 시드(매핑 성공 시·사용자 미수정 시).
+    //   추천 '주상복합'→'공동주택' 등. 매핑 불가/미입력이면 기존값 유지(무목업·추측 금지).
+    const seededUse = !userEdited ? mapBuildingTypeToUse(recommendedBuildingType) : null;
     setForm((prev) => ({
       ...prev,
       landArea: seedArea ? String(seedArea) : prev.landArea,
       zoning: !zoneEdited && seededZone ? seededZone : prev.zoning,
+      buildingUse: seededUse || prev.buildingUse,
     }));
-  }, [siteAnalysis, zoneEdited, isSiteMatched, userEdited]);
+  }, [siteAnalysis, zoneEdited, isSiteMatched, userEdited, recommendedBuildingType]);
 
   // 용도지역 단일출처(SSOT) 해소: 사용자가 직접 수정하지 않았으면 부지분석
   // zoneCode를 정규화한 값을 GFA 계산의 진실원으로 사용한다. form.zoning은 비동기
