@@ -102,7 +102,8 @@ def _build_stages_response(result) -> list[PipelineStageStatusResponse]:
 @router.post(
     "/run",
     response_model=PipelineRunResponse,
-    dependencies=[Depends(enforce_llm_quota)],
+    # ★전수감사 보강: 전체 파이프라인(LLM 단계 포함) — 익명 always-LLM 접근 차단 위해 인증도 부착.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
 async def run_pipeline(req: PipelineRunRequest):
     """주소 입력으로 전체 파이프라인 실행."""
@@ -485,7 +486,13 @@ async def _record_pipeline_ledger(result, req: PipelineRunRequest) -> None:
         logger.warning("파이프라인 원장 write-back 실패 — skipped", err=str(e)[:200])
 
 
-@router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
+@router.post(
+    "/interpret",
+    summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)",
+    # ★전수감사 보강: LLM(_interpret_stage) 직접 트리거인데 인증·쿼터가 전무했음(미인증·미과금
+    #   비용남용 가능). 인증(get_current_user) + 한도게이트(enforce_llm_quota)를 함께 부착.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
 
@@ -502,7 +509,13 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     return out
 
 
-@router.post("/report", response_model=PipelineReport)
+@router.post(
+    "/report",
+    response_model=PipelineReport,
+    # ★전수감사 보강: 전체 파이프라인(LLM 포함) 실행 — 인증+한도게이트 부착(/run과 동일 계약).
+    # ★잔여 백로그: /report/pdf·/rerun-stage 등 파이프라인 재실행 라우트도 동일 게이트 스윕 권장.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def generate_report(req: PipelineRunRequest):
     """파이프라인 실행 + 통합 보고서 생성.
 
