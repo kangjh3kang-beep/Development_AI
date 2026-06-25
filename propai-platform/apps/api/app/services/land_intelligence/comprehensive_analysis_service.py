@@ -317,6 +317,23 @@ class ComprehensiveAnalysisService:
             "warnings": base.get("warnings", []),
         }
 
+        # ── Stage 1: 건축가능항목 선정·랭킹(인허가가능성 × 가용용적률) — additive·graceful ──
+        #   현행 실효 용적률(sec1)과 종상향 시나리오(sec8)를 결합해 '이 부지에서 무엇을 지을
+        #   수 있는가'를 사업유형별로 랭킹한다(별표 허용용도를 결정입력으로 승격). AI 해석 전에
+        #   부착해 인터프리터도 건축가능항목을 그라운딩하게 한다(무회귀: 실패는 무손상).
+        try:
+            from app.services.land_intelligence.buildable_options import (
+                rank_buildable_options,
+            )
+
+            result["buildable_options"] = rank_buildable_options(
+                zone_type=zone_type,
+                effective_far_pct=sec1.get("effective_far_pct"),
+                upzoning=sec8,
+            )
+        except Exception:  # noqa: BLE001 — 건축가능항목 산출 실패는 기존 분석 무손상
+            pass
+
         # ── 특이부지 감지(학교·GB·농지·산지·맹지·문화재 등) — ★LLM 그라운딩용 배선 ──
         #   감사 적발(orphan handoff): 종합분석이 special_parcel을 결과에 넣지 않아
         #   site_analysis_interpreter가 특이제약을 인지 못하고 '최대 연면적 가능'류를 독자
