@@ -24,6 +24,10 @@ def evaluate_appraisal(inputs: dict) -> list[RuleEvaluation]:
         has_bldg = bldg_raw is not None and bldg_raw >= 0
         bldg = bldg_raw if has_bldg else 0.0
         prior = land + bldg
+        # 음수 입력(감정가는 음수 불가)은 결측과 구분해 입력 오류 고지(데이터 신뢰).
+        bldg_note = (" (건물 감정가 음수 — 입력 확인·토지만 반영·탁상 추정)"
+                     if (bldg_raw is not None and bldg_raw < 0)
+                     else " (건물 감정 미반영·토지만 → 종전평가 과소 주의·탁상 추정)")
         out.append(RuleEvaluation(
             rule_id="appraisal.prior_valuation", label="종전자산 감정(토지+건물)",
             value=round(prior, 0), unit="원",
@@ -32,5 +36,5 @@ def evaluate_appraisal(inputs: dict) -> list[RuleEvaluation]:
             basis="감정평가에 관한 규칙(제14·15조)·도시정비법(종전자산평가)",
             detail=(f"토지 {land:,.0f}원"
                     + (f" + 건물 {bldg:,.0f}원 = 종전평가 {prior:,.0f}원" if has_bldg
-                       else " (건물 감정 미반영·토지만 → 종전평가 과소 주의·탁상 추정)"))))
+                       else bldg_note))))
     return out

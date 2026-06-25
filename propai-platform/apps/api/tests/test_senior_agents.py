@@ -224,6 +224,9 @@ def test_legal_scrivener_spec_domain_facts():
     assert "말소기준권리" in rules["legal.rights_analysis"].judgment
     assert "제35조" in rules["legal.union_consent"].basis
     assert any("신탁" in r.judgment for r in spec.decision_rules)
+    # ★감정평가 통합 룰(평가기 rule_id와 1:1 citation 정합·실효가치 산식)
+    assert "실효가치" in rules["legal.rights_takeover"].judgment
+    assert "각 동별" in rules["legal.union_consent"].judgment  # 재건축 35조③ 동별 과반
     assert "최종" in spec.license_gate and "법무사" in spec.license_gate
 
 

@@ -284,6 +284,17 @@ def test_legal_union_consent():
     e3 = _by_id(evaluate_legal({"redevelopment_type": "재개발", "consent_owner_count": 70,
                                "total_owner_count": 100}))["legal.union_consent"]
     assert e3.verdict == WARN
+    # ★재건축: 소유자 80%·면적 80% 충족이나 동별 과반 미입력 → 미검증 WARN(거짓 PASS 방지)
+    e4 = _by_id(evaluate_legal({"redevelopment_type": "재건축", "consent_owner_count": 80,
+                                "total_owner_count": 100, "consent_area_sqm": 800,
+                                "total_area_sqm": 1000}))["legal.union_consent"]
+    assert e4.verdict == WARN and "동별 과반 미검증" in e4.detail
+    # 동별 과반 입력(True) → 충족 PASS
+    e5 = _by_id(evaluate_legal({"redevelopment_type": "재건축", "consent_owner_count": 80,
+                                "total_owner_count": 100, "consent_area_sqm": 800,
+                                "total_area_sqm": 1000, "building_consent_majority": True}))[
+        "legal.union_consent"]
+    assert e5.verdict == PASS
 
 
 def test_legal_rights_takeover_appraisal_integration():
