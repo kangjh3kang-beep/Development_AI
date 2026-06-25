@@ -71,6 +71,8 @@ function buildDeliberationInputs(src: SeniorInputSources): Inputs | undefined {
   }
   // 접도: 실 도로폭(actual·0=맹지 유효) vs 건축법 44조·시행령 28조 required(연면적≥2000㎡→6m·else 4m).
   //   road_width_m null(도로접면 미확보)이면 생략(무목업). 0(맹지)은 유효 actual→위반 판정.
+  //   ★v1 범위: 일반 연면적 룰만(공장 3000㎡·막다른도로 완화·자동차전용도로 의제는 후속 — 보수적
+  //   기본값이라 거짓 BLOCK은 없으나 특수 케이스 거짓 PASS 여지·최종 인허가청 확인 게이트).
   const rwA = nonNegNum(src.siteAnalysis?.roadWidthM);
   if (rwA !== undefined) {
     const gfa = nonNegNum(src.designData?.totalGfaSqm);
