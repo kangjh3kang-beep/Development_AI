@@ -58,6 +58,9 @@ function buildDeliberationInputs(src: SeniorInputSources): Inputs | undefined {
     inputs.far_limit = farL;
   }
   // 높이: 설계 높이(actual) vs 법정 높이한도(limit). 한도 0/null(무제한/미산정)이면 생략(무목업).
+  // ★provenance: heightM=설계엔진 building_height(층수×층고 근사·플랫폼 canonical 높이와 동일).
+  //   maxHeightM=용도지역 법정상한(ZONE_LIMITS·조례/가로구역 최고높이 미반영·보수적 상한 → 거짓 BLOCK 없음).
+  //   향후 실측 매스높이·조례 실효 높이한도(effectiveMaxHeightM) 확보 시 우선 폴백(백엔드 백로그).
   const hA = nonNegNum(src.designData?.heightM);
   const hL = posNum(src.designData?.maxHeightM);
   if (hA !== undefined && hL !== undefined) {
