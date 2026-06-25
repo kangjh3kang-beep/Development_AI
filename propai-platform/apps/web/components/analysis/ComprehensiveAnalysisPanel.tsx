@@ -5,6 +5,7 @@ import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, ty
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
+import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialistCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -343,6 +344,9 @@ export function ComprehensiveAnalysisPanel() {
               </div>
             </div>
           )}
+
+          {/* ★SpecialistAgent 결정론 교차검증(부지분석 broad 경로 소비처 연결) — 용도지역 허용유형 */}
+          <DecisionSpecialistCard specialists={result.specialists} />
 
           {/* Section 1: 실효용적률 */}
           <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen>

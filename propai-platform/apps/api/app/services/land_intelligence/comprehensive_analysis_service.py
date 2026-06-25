@@ -239,6 +239,7 @@ class ComprehensiveAnalysisService:
         *,
         tenant_id: str | None = None,
         project_id: str | None = None,
+        include_specialists: bool = True,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -433,6 +434,21 @@ class ComprehensiveAnalysisService:
                 contradiction_count=len(contradictions["contradictions"]),
                 max_severity=contradictions["max_severity"],
             )
+        # ★SpecialistAgent 모세혈관 배선(부지분석 broad 경로) — 용도지역 허용유형 결정론 교차검증.
+        #   comprehensive는 dev_type(Top3 추천)이 없어 zoning 도메인만 디스패치한다(LLM·과금 0·graceful).
+        #   decision_brief는 permit까지 자체 수행하므로 include_specialists=False로 호출해 이중 디스패치를
+        #   피한다(공용 헬퍼 run_specialist_domains 단일경유). 실패/원장부재는 unavailable/graceful.
+        #   ★귀속 게이트(project_id or tenant_id): SpecialistAgent.run은 결과를 원장에 append 하는데,
+        #   귀속 컨텍스트가 없으면(익명 약식분석·project_pipeline 내부호출 등) 모든 호출이 동일 NULL-tenant
+        #   주소체인을 공유해 교차 사용자 모순 오발생·NULL-tenant 쿼터 잠식을 유발한다. 따라서 귀속 가능한
+        #   호출에만 디스패치한다(무귀속 호출은 zoning 미수집 — 원장 오염 방지).
+        if include_specialists and zone_type and (project_id or tenant_id):
+            from app.services.agents.specialist_dispatch import run_specialist_domains
+            result["specialists"] = await run_specialist_domains(
+                {"zoning": {"zone_type": zone_type}},
+                tenant_id=tenant_id, project_id=project_id, address=address, pnu=_pnu,
+            )
+
         # 주: 종합분석은 중심엔진 shadow 대상 제외 — 플랫폼에 FAR/BCR '적합 verdict'가 없고 effective_far가
         # 합법 완화로 법정상한을 정당 초과할 수 있어 verdict 합성이 거짓 발산을 낳음(shadow_mappers 주석 참조).
         return result

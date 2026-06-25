@@ -209,11 +209,14 @@ class DecisionBriefService:
             ComprehensiveAnalysisService,
         )
         # use_llm=False면 llm_provider 미지정으로 호출(인터프리터 LLM 생략 경로 유지).
+        # ★include_specialists=False: decision_brief는 _run_specialists에서 zoning+permit을 자체
+        #   디스패치하므로, comprehensive의 zoning 디스패치를 끄고 이중 디스패치/중복 원장기록을 피한다.
         return await ComprehensiveAnalysisService().analyze(
             address=address,
             llm_provider="anthropic" if use_llm else None,
             tenant_id=tenant_id,
             project_id=project_id,
+            include_specialists=False,
         )
 
     async def _run_regulation(self, address: str | None, use_llm: bool) -> dict[str, Any]:
@@ -301,51 +304,26 @@ class DecisionBriefService:
         - 전체·도메인별 graceful: 데이터 부족/실패는 스킵하고 브리프는 무손상.
         반환: [{domain, task_type, summary, findings, contradictions, ledger}]
         """
-        try:
-            site_raw = site_raw if isinstance(site_raw, dict) else {}
-            reg_raw = reg_raw if isinstance(reg_raw, dict) else {}
-            zone = site_raw.get("zone_type") or reg_raw.get("zone_type")
-            if not zone:
-                # 용도지역 없으면 결정론 도메인 입력 불가 — 가짜 디스패치 대신 정직 스킵.
-                return []
-            dev_type = self._pick_dev_type(permit_raw)
-            from apps.api.core.coordinator import AgentCoordinator
+        site_raw = site_raw if isinstance(site_raw, dict) else {}
+        reg_raw = reg_raw if isinstance(reg_raw, dict) else {}
+        zone = site_raw.get("zone_type") or reg_raw.get("zone_type")
+        if not zone:
+            # 용도지역 없으면 결정론 도메인 입력 불가 — 가짜 디스패치 대신 정직 스킵.
+            return []
+        dev_type = self._pick_dev_type(permit_raw)
+        # ★pnu 전파: 원장 체인은 pnu 우선 키이므로, comprehensive(pnu 키 기록)와 동일 체인에 묶여
+        #   prior 모순탐지가 단절되지 않도록 site_raw의 pnu를 함께 넘긴다(없으면 None=address 키 폴백).
+        pnu = site_raw.get("pnu") or reg_raw.get("pnu")
+        # ★dispatch·graceful·status 표준화는 공용 헬퍼 단일경유(comprehensive 부지분석과 동일 경로).
+        from app.services.agents.specialist_dispatch import run_specialist_domains
 
-            coord = AgentCoordinator()
-            ctx = {"tenant_id": tenant_id, "project_id": project_id, "address": address}
-            domains = {
+        return await run_specialist_domains(
+            {
                 "zoning": {"zone_type": zone},
                 "permit": {"zone_type": zone, "dev_type": dev_type},
-            }
-            results = await asyncio.gather(
-                *(coord.dispatch(d, data, **ctx) for d, data in domains.items()),
-                return_exceptions=True,
-            )
-            out: list[dict[str, Any]] = []
-            for dom, r in zip(domains.keys(), results):
-                if isinstance(r, Exception) or not isinstance(r, dict) or not r.get("ok"):
-                    # ★정직: 시도했으나 실패한 도메인은 '미시도'와 구분되도록 unavailable 엔트리로
-                    #   표면화(parts 의 status='unavailable' 패턴과 동일). 조용히 누락하지 않는다.
-                    reason = (
-                        str(r)[:120] if isinstance(r, Exception)
-                        else (r.get("message") if isinstance(r, dict) else None)
-                    ) or "교차검증 불가"
-                    logger.warning("specialist dispatch 스킵(graceful)", domain=dom, error=str(reason)[:160])
-                    out.append({"domain": dom, "status": "unavailable", "reason": reason})
-                    continue
-                out.append({
-                    "domain": dom,
-                    "status": "ok",
-                    "task_type": r.get("task_type"),
-                    "summary": r.get("summary") or {},
-                    "findings": r.get("findings") or [],
-                    "contradictions": r.get("contradictions"),
-                    "ledger": r.get("ledger"),
-                })
-            return out
-        except Exception as e:  # noqa: BLE001 — 배선 전체 실패는 빈 list(브리프 무손상)
-            logger.warning("specialist 배선 전체 스킵(graceful)", error=str(e)[:200])
-            return []
+            },
+            tenant_id=tenant_id, project_id=project_id, address=address, pnu=pnu,
+        )
 
     # ------------------------------------------------------------------
     # 표준 요약 계약 — 도메인별 변환(프론트 도메인무관 동일 렌더)
