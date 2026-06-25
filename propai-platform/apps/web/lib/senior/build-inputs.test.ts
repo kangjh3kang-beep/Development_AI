@@ -98,6 +98,20 @@ describe("buildSeniorInputs", () => {
     expect(r).toEqual({ equity: 0, total_cost: 10_000_000_000 });
   });
 
+  it("감정평가사: 부지 추정가 → 토지 감정가(land_appraised_total)", () => {
+    expect(
+      buildSeniorInputs("senior_appraiser", { siteAnalysis: { estimatedValue: 800_000_000 } }),
+    ).toEqual({ land_appraised_total: 800_000_000 });
+    expect(buildSeniorInputs("senior_appraiser", {})).toBeUndefined();
+  });
+
+  it("법무사: 부지 추정가 → 감정가(appraised_value·★감정평가 통합 권리분석 기초)", () => {
+    expect(
+      buildSeniorInputs("senior_legal_scrivener", { siteAnalysis: { estimatedValue: 1_000_000_000 } }),
+    ).toEqual({ appraised_value: 1_000_000_000 });
+    expect(buildSeniorInputs("senior_legal_scrivener", {})).toBeUndefined();
+  });
+
   it("미매핑 도메인(설계·세무·회계·BIM·도시계획) → undefined", () => {
     for (const k of [
       "senior_architect", "senior_tax_advisor", "senior_accountant",
