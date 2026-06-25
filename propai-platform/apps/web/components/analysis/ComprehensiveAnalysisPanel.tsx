@@ -145,6 +145,9 @@ export function ComprehensiveAnalysisPanel() {
   const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
   // 다필지: 검색·엑셀로 등록된 전 필지 주소(2필지↑ 시 통합 개발방식 분석 노출)
   const [parcels, setParcels] = useState<string[]>([]);
+  // ★다필지 통합분석용 필지 상세(면적·용도지역·실효한도) — 백엔드 통합집계 전송 페이로드.
+  //   AddressEntry가 보유한 areaSqm/zoneCode/farPct/bcrPct를 백엔드 집계 입력키로 매핑한다.
+  const [parcelRows, setParcelRows] = useState<Record<string, unknown>[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +176,9 @@ export function ComprehensiveAnalysisPanel() {
           address,
           llm_provider: selectedProvider || undefined,
           llm_model: selectedModel || undefined,
+          // ★다필지(2필지↑)면 통합집계용 필지목록 전송 → 종합분석이 '통합면적' 기준 산출(543㎡ 단일 버그 제거).
+          //   단일/미등록은 미전송(백엔드 단일경로 = N=1 항등). 면적 보유 필지만.
+          ...(parcelRows.length > 1 ? { parcels: parcelRows } : {}),
         },
         useMock: false,
       });
@@ -182,7 +188,7 @@ export function ComprehensiveAnalysisPanel() {
     } finally {
       setLoading(false);
     }
-  }, [address, selectedProvider, selectedModel]);
+  }, [address, selectedProvider, selectedModel, parcelRows]);
 
   const ef = result?.effective_far || {};
   const supplyAreas: AnalysisResult[] = result?.supply_areas || [];
@@ -208,6 +214,22 @@ export function ComprehensiveAnalysisPanel() {
                 if (next && next !== address) { setResult(null); setError(null); }
                 if (next) setAddress(next);
                 setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
+                // 통합집계 페이로드: 면적 있는 필지만, 백엔드 _aggregate 입력키로 매핑(실효치 보유 시 재계산 생략).
+                setParcelRows(
+                  entries
+                    .filter((e) => (e.areaSqm ?? 0) > 0)
+                    .map((e) => ({
+                      pnu: e.pnu ?? null,
+                      address: e.jibunAddress || e.fullAddress || e.roadAddress,
+                      area_sqm: e.areaSqm,
+                      zone_type: e.zoneCode ?? null,
+                      // 백엔드 _integrated_context가 읽는 키(farPct/bcrPct=실효·farLegalPct=법정).
+                      farPct: e.farPct ?? null,
+                      bcrPct: e.bcrPct ?? null,
+                      farLegalPct: e.farLegalPct ?? null,
+                      bcrLegalPct: e.bcrLegalPct ?? null,
+                    })),
+                );
               }}
               placeholder="분석할 주소 검색 · 다필지는 엑셀로 일괄 등록"
             />

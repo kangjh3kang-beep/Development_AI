@@ -12,12 +12,12 @@ from typing import Any
 
 import structlog
 
-from app.services.land_intelligence.land_info_service import LandInfoService
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
     get_permitted_types,
 )
+from app.services.land_intelligence.land_info_service import LandInfoService
 
 logger = structlog.get_logger()
 
@@ -240,6 +240,7 @@ class ComprehensiveAnalysisService:
         tenant_id: str | None = None,
         project_id: str | None = None,
         with_senior: bool = True,
+        parcels: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -272,6 +273,31 @@ class ComprehensiveAnalysisService:
         effective_far = sec1["effective_far_pct"]
         effective_bcr = sec1["effective_bcr_pct"]
 
+        # ★(단일/다필지 일원화) parcels 제공 시 면적가중 통합집계로 land_area·zone_type·effective_far를
+        #   덮어쓴다 — 이후 7섹션·GFA·유형별검증이 전부 '통합면적' 기준으로 산출된다(543㎡ 단일 버그 제거).
+        #   목적은 N≥2 통합. N=1은 _aggregate의 구조적 항등(total=단일면적·blended=그 값)이라 단일과 사실상
+        #   동일하나, 프론트가 실효치(farPct)를 직접 제공하면 그 출처(parcels-info)가 single-path base 산출과
+        #   미세 차이날 수 있다(프론트는 length>1일 때만 전송 → 운영 UI는 N=1 override 미도달).
+        #   미제공(레거시 단일주소 호출)은 위 단일 경로 그대로(완전 무변경).
+        integrated = await self._integrated_context(parcels) if parcels else None
+        if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+            land_area = float(integrated["total_area_sqm"])
+            dz = integrated.get("dominant_zone")
+            if dz and dz != "mixed_review_required":
+                zone_type = dz
+            if integrated.get("blended_far_eff_pct") is not None:
+                effective_far = float(integrated["blended_far_eff_pct"])
+            if integrated.get("blended_bcr_eff_pct") is not None:
+                effective_bcr = float(integrated["blended_bcr_eff_pct"])
+            # sec1(실효용적률 카드)도 통합 실효치로 정합 + 통합 메타 부착(혼재 시 검토필요 표기 유지).
+            sec1 = {
+                **(sec1 if isinstance(sec1, dict) else {}),
+                "effective_far_pct": effective_far,
+                "effective_bcr_pct": effective_bcr,
+                "integrated": True, "parcel_count": integrated.get("parcel_count"),
+                "dominant_zone": dz, "zone_mix": integrated.get("zone_mix"),
+            }
+
         sec2 = self._calc_supply_areas(zone_type, land_area, effective_far, effective_bcr)
         sec3 = self._calc_land_prices(base, land_area)
         sec5 = self._calc_sale_prices(address, zone_type)
@@ -299,6 +325,9 @@ class ComprehensiveAnalysisService:
             "pnu": base.get("pnu"),
             "zone_type": zone_type,
             "land_area_sqm": land_area,
+            # 통합집계 산물(다필지 시) — 프론트 통합 카드·인터프리터 그라운딩용. 단일/미제공은 None.
+            "integrated_zoning": integrated,
+            "parcel_count": (integrated or {}).get("parcel_count") if integrated else (len(parcels) if parcels else 1),
             "effective_far": sec1,
             "supply_areas": sec2,
             "land_prices": sec3,
@@ -538,6 +567,55 @@ class ComprehensiveAnalysisService:
             logger.warning("종합분석 specialist 트리거 스킵(graceful)", err=str(e)[:160])
 
         return result
+
+    async def _integrated_context(self, parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+        """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
+
+        ★공용 단일경유: /zoning/integrated-analysis와 동일한 _enrich_effective_and_special(필지별
+        실효=조례+법정+특이 in-place)+_aggregate_integrated_zoning(면적가중)을 재사용한다(중복산식 0).
+        프론트가 이미 면적·용도지역을 제공하므로 enrich_parcel_list(외부 재수집)는 생략 — 핫패스 경량.
+        N=1은 항등(단일필지값과 동일)이라 단일/다필지가 한 경로로 일원화된다(543㎡ 드리프트 버그 제거).
+        실패는 graceful None(단일 경로로 무회귀 폴백).
+        """
+        def _f(v: Any) -> float | None:
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        items: list[dict[str, Any]] = []
+        for p in parcels or []:
+            if not isinstance(p, dict):
+                continue
+            # 프론트 camelCase(AddressEntry) ↔ 집계 입력키(_far_eff 등) 정규화.
+            q: dict[str, Any] = {
+                "pnu": p.get("pnu"),
+                "address": p.get("address") or p.get("jibunAddress") or p.get("fullAddress"),
+                "zone_type": p.get("zone_type") or p.get("zoneCode") or p.get("zoneType"),
+                "land_category": p.get("land_category") or p.get("landCategory") or p.get("jimok"),
+                "area_sqm": _f(p.get("area_sqm") if p.get("area_sqm") is not None else p.get("areaSqm")),
+                # 실효/법정(프론트 farPct/bcrPct가 이미 조례반영 실효치 — 있으면 재계산 생략).
+                "_far_eff": _f(p.get("_far_eff") if p.get("_far_eff") is not None else p.get("farPct")),
+                "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
+                "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
+                "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
+            }
+            if (q["area_sqm"] or 0) > 0:
+                items.append(q)
+        if not items:
+            return None
+        try:
+            from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+            # 실효치 미보유 필지가 있으면(프론트 미보강) 라우터 공용 enrich로 보강(조례 1회캐시·순수계산).
+            #   ★/zoning/integrated-analysis와 동일 산식 단일경유 — 보유 시 재계산 0(핫패스 경량).
+            if any(it.get("_far_eff") is None and it.get("zone_type") for it in items):
+                from apps.api.routers.auto_zoning import _enrich_effective_and_special
+                await _enrich_effective_and_special(items)
+            return _aggregate_integrated_zoning(items)
+        except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
+            logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])
+            return None
 
     # ────────────────────────────────────────────
     # Section 1: 실효용적률 산정 (단일출처 far_tier_service 위임)
