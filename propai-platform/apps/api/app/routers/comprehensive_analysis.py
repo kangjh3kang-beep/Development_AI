@@ -79,6 +79,55 @@ async def run_similar_market_feasibility(
     )
 
 
+class SiteLayoutRequest(BaseModel):
+    parcel_geojson: dict | None = Field(
+        None, description="대지 경계 GeoJSON geometry(WGS84). 미지정 시 pnu로 조회."
+    )
+    pnu: str | None = Field(None, description="필지 PNU(parcel_geojson 미지정 시 VWorld 조회).")
+    zone_type: str = Field("", description="용도지역.")
+    building_type: str = Field("", description="건축유형(빌라류면 판상 전용).")
+    far_pct: float | None = Field(None, description="가용 용적률(%). 미지정 시 통념 폴백.")
+    bcr_pct: float | None = Field(None, description="건폐율 상한(%). 동수 캡에 사용.")
+    land_area_sqm: float | None = Field(None, description="대지면적(㎡). 미지정 시 폴리곤 면적.")
+    priority: str = Field("balanced", description="배치 우선순위: balanced|daylight|density.")
+    use_llm: bool = Field(False, description="LLM 부지맞춤 조언 포함 여부(기하는 결정론 불변).")
+
+
+@router.post("/site-layout")
+async def run_site_layout(req: SiteLayoutRequest, current_user=Depends(get_current_user)):
+    """Stage 4 — 토지모양·향·접도 기반 배치도(buildable footprint + 동배치) on 구역도.
+
+    대지 폴리곤을 세트백 오프셋해 buildable footprint를 만들고, 동을 그리드 샘플링으로 배치해
+    일조준수·yield·조망 멀티오브젝티브로 최적안을 산출한다. 폴리곤 미확보 시 정직 고지.
+    """
+    from app.services.cad.site_layout_service import (
+        attach_layout_llm_advice,
+        build_site_layout,
+    )
+
+    geojson = req.parcel_geojson
+    # parcel_geojson 미지정 + pnu 있으면 VWorld로 경계 조회(graceful).
+    if not geojson and req.pnu:
+        try:
+            from app.services.external_api.vworld_service import VWorldService
+
+            parcel = await VWorldService().get_parcel_by_pnu(req.pnu)
+            geojson = (parcel or {}).get("geometry")
+        except Exception:  # noqa: BLE001 — 조회 실패는 honest 빈 배치로 진행
+            geojson = None
+
+    layout = build_site_layout(
+        parcel_geojson=geojson,
+        zone_type=req.zone_type,
+        building_type=req.building_type,
+        far_pct=req.far_pct,
+        bcr_pct=req.bcr_pct,
+        land_area_sqm=req.land_area_sqm,
+        priority=req.priority,
+    )
+    return await attach_layout_llm_advice(layout, use_llm=req.use_llm)
+
+
 @router.get("/llm-providers")
 async def list_llm_providers():
     """사용 가능한 LLM 프로바이더 목록 반환.
