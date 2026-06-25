@@ -62,10 +62,8 @@ _LOW_RISE_RESIDENTIAL = frozenset({
     TYPE_VILLA, TYPE_ROWHOUSE, "다세대주택", "다가구주택", "연립", "도시형생활주택",
 })
 
-# 상업지·준주거 용도지역 코드(주상복합·상업 판정). auto_design ZONE_LIMITS 키 체계.
+# 상업지·준주거 용도지역 코드(상업 분기 판정). auto_design ZONE_LIMITS 키 체계.
 _COMMERCIAL_ZONE_CODES = frozenset({"GC", "NC", "CC", "QR"})
-# 상업지(주상복합 비주거 의무비율 '연면적 기준' 적용) — 준주거는 용적률 트랙으로 분리.
-_PURE_COMMERCIAL_ZONE_CODES = frozenset({"GC", "NC", "CC"})
 
 # 정북일조 적용 한글 용도지역 키워드(코드가 아닌 한글명으로 들어올 때 보강).
 _NORTH_LIGHT_ZONE_KEYWORDS = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
@@ -114,7 +112,6 @@ def classify_building_type(
     is_commercial_zone = zc in _COMMERCIAL_ZONE_CODES or any(
         k in zc for k in ("상업", "준주거")
     )
-    is_pure_commercial_zone = zc in _PURE_COMMERCIAL_ZONE_CODES or "상업" in zc
 
     # (1) 명시 용도가 상업(판매·업무·근생·상가)이면 상업시설(주거 아님).
     commercial_use = bool(use) and (
@@ -135,12 +132,21 @@ def classify_building_type(
         or any(k in use for k in ("주택", "공동주택", "아파트", "주거"))
     )
 
-    # (3) 상업지/준주거에서 주거를 함께 짓는다 → 주상복합(혼합용도).
-    if is_commercial_zone and residential_use:
-        if is_pure_commercial_zone:
+    # 명시적 거주 신호: building_use에 주거 키워드 포함, 또는 세대수/GFA가 주거 규모를 암시.
+    # ★수정(오분류 정정): 상업지(일반/근린/중심/유통상업)에서 주상복합을 반환하려면
+    # 반드시 거주 의도를 나타내는 명시적 신호가 있어야 한다. 신호 없는 순수 상업지역은
+    # 상업시설(max_both)이 기본. 준주거(QR)는 주거 기본 성격이라 신호 없어도 주거 취급.
+    explicit_residential_signal = bool(use) and residential_use
+    is_jun_jugeo_zone = zc == "QR" or "준주거" in zc
+    # 주상복합 판정: 준주거이거나 명시적 거주 신호가 있는 상업지.
+    mixed_use_signal = is_jun_jugeo_zone or explicit_residential_signal
+
+    # (3) 상업지/준주거 분기 — 거주 신호 있으면 주상복합, 없으면 상업시설.
+    if is_commercial_zone:
+        if mixed_use_signal:
             return TYPE_MIXED_USE
-        # 준주거(QR): 주거 비중이 높은 혼합 — 주상복합 트랙으로 통일(목적함수에서 트랙 분리).
-        return TYPE_MIXED_USE
+        # 거주 신호 없는 순수 상업지역(일반상업·근린상업 등) → 상업시설.
+        return TYPE_COMMERCIAL
 
     # (4) 저층 주거 규모 → 빌라/연립(정북일조 사선이 층수 지배).
     if residential_use:
