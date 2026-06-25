@@ -120,7 +120,7 @@ export function BuildableOptionsCard({
                         가용 용적률 {o.achievable_far_pct}%
                       </span>
                     ) : null}
-                    <Chip token={token}>인허가 {o.permit_feasibility}</Chip>
+                    <Chip token={token}>인허가 {o.permit_feasibility ?? "확인필요"}</Chip>
                     <Chip token={o.is_current ? "var(--status-success)" : "var(--status-info)"}>
                       {o.is_current ? "현행 가능" : "종상향 전제(예상)"}
                     </Chip>

@@ -60,4 +60,26 @@ describe("BuildableOptionsCard", () => {
     render(<BuildableOptionsCard data={SAMPLE} />);
     expect(screen.getByText(/APT_FP.jpg/)).toBeTruthy();
   });
+
+  it("유사 설계 미확보(count 0·skipped_reason)·permit_feasibility 누락도 안전 렌더", () => {
+    // 프로덕션 흔한 상태: 임베딩 미가용 → count 0 + skipped_reason. permit_feasibility 누락.
+    const data: BuildableOptions = {
+      options: [
+        {
+          product: "오피스텔",
+          achievable_far_pct: 400,
+          via: "현행 용도지역",
+          is_current: true,
+          similar_designs: { count: 0, results: [], skipped_reason: "embed_dim_mismatch" },
+        },
+      ],
+    };
+    render(<BuildableOptionsCard data={data} />);
+    expect(screen.getByText("오피스텔")).toBeTruthy();
+    // 유사 설계 라벨 미노출(count 0).
+    expect(screen.queryByText(/유사 설계:/)).toBeNull();
+    // permit_feasibility 누락 시 '확인필요' 폴백(literal 'undefined' 미노출).
+    expect(screen.getByText(/인허가 확인필요/)).toBeTruthy();
+    expect(screen.queryByText(/인허가 undefined/)).toBeNull();
+  });
 });
