@@ -78,8 +78,17 @@
 ### 차단 없음 — 통합자 작업
 - **머지**: `feat/senior-agents-foundation` → main. origin/main과 충돌은 `public/sw.js` CACHE_NAME 버전라인 trivial 단일 충돌만 예상(senior=v332·상위본 택일). senior 코드는 클린머지. 머지 후 A1 재빌드(프론트)·`deploy.sh`(백엔드, origin/main 기준).
 
+### ✅ 증분 D — 정비사업 비례율 활성 완료 (`bc560787`, 2026-06-25 추가 세션)
+- **순수 프론트 배선**(백엔드 `evaluate_urban` 무변경) — 도시계획전문가 비례율 평가기에 입력을 흘려 UI 정량판정 활성.
+  - `build-inputs.ts` `buildUrbanInputs`: 수지(`feasibilityData`) 종후자산 `totalRevenueWon`→`post_appraisal_total`, 총사업비 `totalCostWon`→`total_project_cost` 자동매핑(SSOT).
+  - `manual-inputs.ts` `senior_urban_planner` 5필드: `prior_appraisal_total`(종전자산총평가=비례율 분모·활성 전제)·`post`/`total_project_cost`(수지 미실행 폴백·store 우선)·`prior_appraisal_individual`·`member_sale_price`(권리가액·분담금).
+  - **★분모(종전평가=토지+건물 감정)는 자동매핑 안 함**: `estimatedValue`는 토지만·탁상 → 분모 과소 → 비례율 과대(오도) → 수동입력으로(무목업, 테스트로 잠금).
+  - 키 5종 백엔드 `evaluate_urban`과 **1:1 grep 정합**. 라이브: 종전100억·종후120억·사업비90억 → **비례율 30% WARN**(권리가액 1.5억·분담금 4.5억)·종후200억 → **110% PASS**·종전평가 미입력 시 **생략(무목업)**.
+- 게이트: **vitest 29 PASS(+5)**·tsc 0·eslint 0·**next build EXIT 0**·독립 코드리뷰 **9.4 ACCEPT**(critical/high/med 0; LOW 2건=coerce 0가드 비대칭[법무사 0보존 계약 충돌로 의도 유지]·"필수" 미강제[백엔드 게이트가 차단]=백로그). `sw v332→v333`.
+- 보드 갱신·메모리 `project_senior_agents_foundation.md` 본문 반영 완료. 머지/배포는 **통합자 경계**(senior 전용 additive·무충돌).
+
 ### 후속 기능 (비차단·데이터/배선)
-1. **정비사업 비례율 활성**: `evaluators/urban.py`의 비례율/권리가액/분담금 룰은 구현돼 있으나 **종전평가(토지+건물 감정) 입력**이 선행. 이제 감정평가사 종전평가 + 법무사 수동입력으로 종전평가를 얻을 수 있으므로, **종전평가 → urban 비례율 입력 전파**를 배선하면 비례율 정량판정 활성 가능(현재는 종후자산·총사업비도 필요 → 추가 입력/배선).
+1. ~~**정비사업 비례율 활성**~~ → ✅ **증분 D 완료**(위). 잔여 데이터 정련(선택): `prior_appraisal_individual`을 조합원 단위 일괄(세대별 분담금 표)로 확장하면 관리처분 시뮬레이션 가능. 종후자산을 관리처분 추산액(조합원분양분+일반분양분 분리)으로 정밀화하면 `totalRevenueWon` 근사 대비 오차 축소.
 2. **수동입력 영속화(선택)**: 현재 수동입력은 로컬 컴포넌트 state(읽기소비 경계 유지). 프로젝트별 저장이 필요하면 store/백엔드 영속 검토(과금·계정격리 준수).
 3. **분석코어 모세혈관 배선**: 별도 세션이 `analysis-core wiring`(SpecialistAgent→decision_brief/comprehensive) 진행 중(보드 line 376). senior_agents와 충돌 없음(additive).
 
