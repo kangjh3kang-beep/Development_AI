@@ -15,6 +15,7 @@ from __future__ import annotations
 from app.services.senior_agents.evaluators.base import (
     BLOCK,
     PASS,
+    WARN,
     RuleEvaluation,
     num,
 )
@@ -22,7 +23,8 @@ from app.services.senior_agents.evaluators.base import (
 # 건축법 시행령 제86조 제1항(2023.9.12 개정) 정북일조 임계·이격(공용 sunlight_setback와 동일).
 NORTH_SETBACK_HEIGHT_THRESHOLD_M = 10.0
 NORTH_SETBACK_MIN_LOW_M = 1.5
-WINTER_DAYLIGHT_MIN_MINUTES = 120.0  # 동지 09~15시 연속 2시간(법정 채광 인동간격 예외요건)
+WINTER_DAYLIGHT_MIN_MINUTES = 120.0       # 동지 09~15시 연속 2시간(법정 채광 인동간격 예외요건)
+WINTER_DAYLIGHT_DISPUTE_TOTAL_MINUTES = 240.0  # 동지 08~16시 총 4시간(판례 수인한도)
 
 
 def _required_north_setback(height_m: float) -> float:
@@ -46,14 +48,24 @@ def evaluate_architect(inputs: dict) -> list[RuleEvaluation]:
             basis="건축법 시행령 제86조 제1항(정북 일조 높이제한·2023.9.12 개정 현행 10m)",
             detail=f"북측 이격 {nd:.2f}m vs 필요 {req:.2f}m (높이 {h:.1f}m)"))
 
-    # 동지 연속일조: 09~15시 연속 2시간(120분) 미만 BLOCK(법정 인허가 게이트).
+    # 동지 연속일조(법정 게이트): 09~15시 연속 2시간(120분) 미만 BLOCK(인허가 reject).
     cont = num(inputs, "winter_daylight_continuous_min")
-    if cont is not None:
+    if cont is not None and cont >= 0:
         out.append(RuleEvaluation(
-            rule_id="design.winter_daylight_gate", label="동지 연속일조", value=round(cont, 0), unit="분",
+            rule_id="design.winter_daylight_gate", label="동지 연속일조(법정)", value=round(cont, 0), unit="분",
             verdict=PASS if cont >= WINTER_DAYLIGHT_MIN_MINUTES else BLOCK,
             threshold="≥120분(동지 09~15시 연속 2h)",
             basis="건축법 시행령 제86조 제3항(채광 인동간격 예외=동지 09~15시 2시간)",
             detail=f"동지 09~15시 연속 일조 {cont:.0f}분 vs 법정 {WINTER_DAYLIGHT_MIN_MINUTES:.0f}분"))
+        # 분쟁 경고(판례 수인한도·별도): 법정 게이트는 통과(연속 2h)하나 총 4h 미만 → 일조분쟁 위험 WARN.
+        total = num(inputs, "winter_daylight_total_min")
+        if (total is not None and total >= 0 and cont >= WINTER_DAYLIGHT_MIN_MINUTES
+                and total < WINTER_DAYLIGHT_DISPUTE_TOTAL_MINUTES):
+            out.append(RuleEvaluation(
+                rule_id="design.winter_daylight_dispute", label="동지 일조분쟁(판례)",
+                value=round(total, 0), unit="분", verdict=WARN,
+                threshold="≥240분(08~16시 총 4h) AND 연속 2h",
+                basis="일조방해 수인한도 판례(동지 08~16시 4h AND 09~15시 2h)",
+                detail=f"08~16시 총 일조 {total:.0f}분<240분 — 법정 게이트는 충족하나 일조분쟁 위험"))
 
     return out

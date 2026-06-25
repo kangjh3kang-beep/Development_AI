@@ -23,7 +23,8 @@ def evaluate_urban(inputs: dict) -> list[RuleEvaluation]:
     post = num(inputs, "post_appraisal_total")
     cost = num(inputs, "total_project_cost")
     prior = num(inputs, "prior_appraisal_total")
-    if post is not None and cost is not None and prior and prior > 0:
+    # 종후·총사업비는 비음수, 종전평가(분모)는 양수여야 평가(음수=비물리 입력 생략·무목업).
+    if post is not None and post >= 0 and cost is not None and cost >= 0 and prior and prior > 0:
         rate = (post - cost) / prior * 100  # 비례율(%)
         verdict = BLOCK if rate <= 0 else (WARN if rate < 100 else PASS)
         detail = (f"비례율=(종후 {post:,.0f}−총사업비 {cost:,.0f})/종전 {prior:,.0f}×100 = {rate:.1f}%")

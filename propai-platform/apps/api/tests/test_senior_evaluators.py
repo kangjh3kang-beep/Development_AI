@@ -111,6 +111,44 @@ def test_architect_setback_reuses_helper():
     assert evaluate_architect({}) == []
 
 
+def test_boundary_equality_cases():
+    # ★회귀방어: 부등호 경계(<↔<=) 뒤집힘 검출
+    # 비례율 정확히 100% → PASS (≥100)
+    assert _by_id(evaluate_urban({"post_appraisal_total": 1100, "total_project_cost": 100,
+        "prior_appraisal_total": 1000}))["urban.redevelopment_proportion"].verdict == PASS
+    # 비례율 정확히 0(post==cost) → BLOCK (≤0)
+    assert _by_id(evaluate_urban({"post_appraisal_total": 100, "total_project_cost": 100,
+        "prior_appraisal_total": 1000}))["urban.redevelopment_proportion"].verdict == BLOCK
+    # 정북: h=10 임계(≤10→1.5), nd=req 정확등가 → PASS
+    assert _by_id(evaluate_architect({"building_height_m": 10, "north_distance_m": 1.5}))[
+        "design.bukchuk_setback"].verdict == PASS
+    # 동지 정확히 120분 → PASS (≥120)
+    assert _by_id(evaluate_architect({"winter_daylight_continuous_min": 120}))[
+        "design.winter_daylight_gate"].verdict == PASS
+    # DSCR 정확히 1.25 → PASS
+    assert _by_id(evaluate_financial({"noi": 125, "debt_service": 100}))["fin.dscr_gate"].verdict == PASS
+
+
+def test_winter_daylight_dispute_warning():
+    # 법정 게이트 통과(연속 130분≥120)이나 총 200분<240 → 분쟁경고 WARN(별도 룰)
+    ev = _by_id(evaluate_architect({"winter_daylight_continuous_min": 130, "winter_daylight_total_min": 200}))
+    assert ev["design.winter_daylight_gate"].verdict == PASS
+    assert ev["design.winter_daylight_dispute"].verdict == WARN
+    # 총 4h(240) 충족 → 분쟁경고 없음
+    ev2 = _by_id(evaluate_architect({"winter_daylight_continuous_min": 130, "winter_daylight_total_min": 260}))
+    assert "design.winter_daylight_dispute" not in ev2
+    # 연속 음수 → 생략(무목업)
+    assert evaluate_architect({"winter_daylight_continuous_min": -5}) == []
+
+
+def test_urban_negative_inputs_skip():
+    # 음수 총사업비/종후평가 → 비물리 입력 생략(무목업)
+    assert evaluate_urban({"post_appraisal_total": -1, "total_project_cost": 100,
+                           "prior_appraisal_total": 1000}) == []
+    assert evaluate_urban({"post_appraisal_total": 1000, "total_project_cost": -50,
+                           "prior_appraisal_total": 1000}) == []
+
+
 def test_worst_verdict():
     evals = evaluate_financial({"noi": 90, "debt_service": 100,            # DSCR BLOCK
                                "stabilized_noi": 70, "total_cost": 1000, "market_cap_rate": 0.045})  # spread PASS
