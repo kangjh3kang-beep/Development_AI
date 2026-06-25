@@ -6,6 +6,9 @@ import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+import { BuildableOptionsCard } from "@/components/analysis/BuildableOptionsCard";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -135,7 +138,6 @@ interface ProviderInfo {
 
 /* ── Main Component ── */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnalysisResult = Record<string, any>;
 
 export function ComprehensiveAnalysisPanel() {
@@ -300,6 +302,61 @@ export function ComprehensiveAnalysisPanel() {
           <SeniorVerdictCard
             consultation={(result as { senior_consultation?: SeniorConsultation }).senior_consultation}
             title="시니어 종합 자문(심의·도시계획·법무)"
+          />
+
+          {/* ★특이부지 게이트(학교·GB·맹지·농지 등) — 백엔드 special_parcel/developability 소비.
+              표시 누락 시 '최대 연면적 가능' 오해 위험이므로 경고를 명시 렌더(orphan handoff 해소). */}
+          {result.special_parcel?.is_special && (
+            <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-[var(--status-warning)]">특이부지 제약 감지</span>
+                {result.developability ? (
+                  <span className="rounded-full border border-[var(--status-warning)]/40 px-2 py-0.5 text-[10px] font-semibold text-[var(--status-warning)]">
+                    {result.developability}
+                  </span>
+                ) : null}
+              </div>
+              {(result.special_parcel.honest_disclosure || result.special_parcel.development_caveat) && (
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">
+                  {result.special_parcel.honest_disclosure || result.special_parcel.development_caveat}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ★건축가능항목 랭킹(Stage 1) — 백엔드 buildable_options 소비(orphan handoff 해소) */}
+          <BuildableOptionsCard data={result.buildable_options} />
+
+          {/* ★종상향/종변경 잠재(예상치 — 현행과 분리) — 백엔드 upzoning 소비 */}
+          {Array.isArray(result.upzoning_scenarios) && result.upzoning_scenarios.length > 0 && (
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-[var(--text-primary)]">종상향 잠재 시나리오</span>
+                <span className="text-[10px] text-[var(--text-secondary)]">★예상치 — 현행 실효 용적률과 분리</span>
+                {result.potential_far_range ? (
+                  <span className="text-xs font-semibold text-[var(--accent-strong)]">
+                    예상 상한 {result.potential_far_range.min_pct}~{result.potential_far_range.max_pct}%
+                  </span>
+                ) : null}
+              </div>
+              <ul className="mt-2 space-y-1">
+                {result.upzoning_scenarios.slice(0, 4).map((s: Record<string, any>, i: number) => (
+                  <li key={i} className="text-[11px] text-[var(--text-secondary)]">
+                    · {s.path} → {s.target_zone}
+                    {s.expected_far_pct_high != null ? ` (예상 ${s.expected_far_pct_high}%)` : ""}
+                    {s.feasibility ? ` · 가능성 ${s.feasibility}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* ★산출 근거·법령링크(EvidencePanel) — 백엔드 evidence/legal_refs 소비.
+              '용적률 200% 왜 나왔나'의 법령 원문까지 표면화(근거 기본제공·할루시네이션 가드 전역원칙). */}
+          <EvidencePanel
+            items={adaptEvidence(result.evidence, result.legal_refs)}
+            title="산출 근거·법령"
+            defaultOpen={false}
           />
 
           {/* AI 종합 요약 */}
