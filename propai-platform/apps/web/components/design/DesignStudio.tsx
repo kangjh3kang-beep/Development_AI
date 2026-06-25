@@ -350,8 +350,10 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
       setForm((prev) => {
         const landArea = userEdited ? prev.landArea : DEFAULT_FORM.landArea;
         const zoning = zoneEdited ? prev.zoning : DEFAULT_FORM.zoning;
-        if (landArea === prev.landArea && zoning === prev.zoning) return prev;
-        return { ...prev, landArea, zoning };
+        // P3 정합: buildingUse도 landArea/zoning과 동일하게 미수정 시 기본값 복귀(타 부지 추천 잔류 차단).
+        const buildingUse = userEdited ? prev.buildingUse : DEFAULT_FORM.buildingUse;
+        if (landArea === prev.landArea && zoning === prev.zoning && buildingUse === prev.buildingUse) return prev;
+        return { ...prev, landArea, zoning, buildingUse };
       });
       return;
     }
