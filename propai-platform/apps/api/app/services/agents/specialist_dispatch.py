@@ -25,6 +25,31 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def build_sync_specialist_domains(
+    *,
+    zone_type: str,
+    base: dict[str, Any],
+    land_area: float,
+    address: str | None,
+    engine_set: bool,
+) -> dict[str, dict[str, Any]]:
+    """동기 SpecialistAgent 교차검증 도메인 입력 빌더(전수감사 #2·테스트 가능 순수함수).
+
+    항상 결정론 도메인(zoning 허용용도·far 실효검증)을 포함한다. 심의/설계는 외부 심의엔진 URL이
+    설정된 경우(engine_set=True)에만 추가한다 — 미설정 시 즉시 unavailable이 될 도메인을 디스패치
+    목록에 넣어 불필요한 호출·지연을 만들지 않기 위함이며, 엔진 가용 시 registry 심의/설계 고아가
+    실호출로 해소된다. 순수 dict 빌더라 게이트 분기를 단위테스트로 고정한다(무거운 import 무관).
+    """
+    domains: dict[str, dict[str, Any]] = {
+        "zoning": {"zone_type": zone_type},
+        "far": {"base": base, "zone_type": zone_type, "land_area": land_area},
+    }
+    if engine_set:
+        domains["심의"] = {"zone_type": zone_type, "address": address}
+        domains["설계"] = {"zone_type": zone_type, "address": address}
+    return domains
+
+
 async def run_specialist_domains(
     domains: dict[str, dict[str, Any]],
     *,

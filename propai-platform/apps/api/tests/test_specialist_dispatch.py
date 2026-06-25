@@ -111,3 +111,29 @@ async def test_mixed_ok_and_fail(monkeypatch):
     by = {d["domain"]: d for d in out}
     assert by["zoning"]["status"] == "ok"
     assert by["permit"]["status"] == "unavailable"
+
+
+# ── 동기 교차검증 도메인 빌더(게이트 분기) — 전수감사 #2 회귀가드(경량·무거운 import 무관) ──
+from app.services.agents.specialist_dispatch import build_sync_specialist_domains  # noqa: E402
+
+
+def test_sync_domains_gate_off_zoning_far_only():
+    """엔진 미설정(engine_set=False) → 결정론 zoning/far만(심의/설계 제외·불필요 지연 회피)."""
+    d = build_sync_specialist_domains(
+        zone_type="제2종일반주거지역", base={"k": 1}, land_area=500.0,
+        address="서울 강남구", engine_set=False,
+    )
+    assert set(d.keys()) == {"zoning", "far"}
+    assert d["zoning"]["zone_type"] == "제2종일반주거지역"
+    assert d["far"]["land_area"] == 500.0
+
+
+def test_sync_domains_gate_on_includes_deliberation_design():
+    """엔진 설정(engine_set=True) → 심의/설계 추가(registry 고아 실호출 해소)."""
+    d = build_sync_specialist_domains(
+        zone_type="일반상업지역", base={}, land_area=0.0,
+        address="서울 중구", engine_set=True,
+    )
+    assert set(d.keys()) == {"zoning", "far", "심의", "설계"}
+    assert d["심의"]["address"] == "서울 중구"
+    assert d["설계"]["zone_type"] == "일반상업지역"

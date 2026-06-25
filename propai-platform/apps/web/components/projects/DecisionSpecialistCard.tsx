@@ -22,13 +22,26 @@ const SPECIALIST_LABEL: Record<string, string> = {
 
 /** 결정론 finding에서 표시용 텍스트를 best-effort 추출(키 형태 변동에 견고). */
 function findingText(f: Record<string, unknown>): string {
-  for (const k of ["claim", "label", "text", "message", "name", "title"]) {
+  for (const k of ["claim", "label", "text", "message", "name", "title", "note"]) {
     const v = f[k];
     if (typeof v === "string" && v.trim()) return v.trim();
   }
   const label = f.label ?? f.key;
   const value = f.value;
   if (label != null && value != null) return `${String(label)}: ${String(value)}`;
+  // ★registry 표준 finding shape({check_id, status, current, limit, unit}) 폴백 — zoning/far 등
+  //   결정론 도구 finding이 claim/label/note 없이 수치 형태일 때 '결과 없음' 오표시를 방지한다.
+  const checkId = f.check_id;
+  const current = f.current;
+  if (checkId != null || current != null) {
+    const unit = typeof f.unit === "string" ? f.unit : "";
+    const cur = current != null ? `${String(current)}${unit}` : "";
+    const lim = f.limit != null ? ` / ${String(f.limit)}${unit}` : "";
+    const status = f.status != null ? ` (${String(f.status)})` : "";
+    const head = checkId != null ? `${String(checkId)}: ` : "";
+    const body = `${cur}${lim}${status}`.trim();
+    if (head || body) return `${head}${body}`.trim();
+  }
   return "";
 }
 
