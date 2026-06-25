@@ -571,8 +571,8 @@ class ComprehensiveAnalysisService:
         except Exception as e:  # noqa: BLE001 — 교차검증 동기 반영 실패는 분석 무손상(정직 degrade)
             logger.warning("종합분석 specialist 동기 교차검증 스킵(graceful)", err=str(e)[:160])
 
-        # 성장 뇌(MemoryHub) 비동기 적재(.delay): 위 동기 교차검증(zoning/far)이 SpecialistAgent.run을
-        #   거치며 이미 MemoryHub ingest를 발화하므로, 여기선 동기 경로가 다루지 않는 도메인(market)만
+        # 성장 뇌(MemoryHub) 비동기 적재(.delay): 위 동기 교차검증(zoning/far[/심의/설계])이
+        #   SpecialistAgent.run을 거치며 이미 MemoryHub ingest를 발화하므로, 여기선 동기 미커버 도메인(market)만
         #   비동기 적재한다(★중복 ingest 방지 — 동기/비동기를 도메인 단위로 정확히 분리).
         #   market은 공시지가 의존이라 화면 교차검증 대상에서 제외(무목업)하되 노하우 적재는 수행.
         try:
