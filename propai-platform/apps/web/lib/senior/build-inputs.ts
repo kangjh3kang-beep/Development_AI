@@ -7,8 +7,10 @@
  * 확신 매핑(v1):
  *  - 심의(senior_deliberation_member): 설계 bcr/far(actual) vs 실효(조례)한도(limit) → 다조항 CSP.
  *  - 금융(senior_financial_advisor): 자기자본/총사업비 → 자기자본비율(연도 미상 시 최신 기준).
- * 미매핑(의미·단위 불명확 또는 store 미보유): 도시계획(정비사업 자산평가)·설계(실측 이격/일조분)·
- *  세무(취득가액 semantics)·회계(리스)·BIM(clash) → undefined.
+ *  - 도시계획(senior_urban_planner): 수지의 종후자산(총분양수입)·총사업비 → 비례율 분자/사업비
+ *    (분모인 종전자산평가는 토지+건물 감정이라 store 미보유 → 수동입력 surface; manual-inputs 참조).
+ * 미매핑(의미·단위 불명확 또는 store 미보유): 설계(실측 이격/일조분)·세무(취득가액 semantics)·
+ *  회계(리스)·BIM(clash) → undefined.
  */
 
 /** 매핑 입력원(store 셀렉터 결과의 부분집합 — 순수성 위해 평면 객체로 받는다). */
@@ -30,6 +32,7 @@ export interface SeniorInputSources {
   } | null;
   feasibilityData?: {
     totalCostWon?: number | null;
+    totalRevenueWon?: number | null;  // 총 분양수입(매출) — 정비사업 종후자산총평가 근사(비례율 분자)
     equityWon?: number | null;
   } | null;
 }
@@ -105,6 +108,21 @@ function buildLegalInputs(src: SeniorInputSources): Inputs | undefined {
   return appraised !== undefined ? { appraised_value: appraised } : undefined;
 }
 
+// 도시계획: 정비사업 비례율=(종후자산총평가−총사업비)/종전자산총평가×100.
+//   ★수지(타당성) 산출을 비례율 분자/사업비로 배선(SSOT) — 종후자산총평가≈총분양수입(totalRevenueWon·
+//   완공자산 총 매각가치, 관리처분 추산액과는 ±오차→평가기가 종후 미확정 잠정·민감도 동반), 총사업비=
+//   totalCostWon. 분모인 종전자산평가(토지+건물 감정)는 store 미보유(estimatedValue는 토지만·탁상 →
+//   분모 과소→비례율 과대 오도) → 자동매핑하지 않고 수동입력(manual-inputs senior_urban_planner)으로 받는다.
+//   각각 독립적으로 emit(부분 보유 시 평가기가 종전평가 입력될 때까지 비례율 생략 — 무목업).
+function buildUrbanInputs(src: SeniorInputSources): Inputs | undefined {
+  const inputs: Inputs = {};
+  const post = posNum(src.feasibilityData?.totalRevenueWon);  // 종후자산총평가(비례율 분자)
+  const cost = posNum(src.feasibilityData?.totalCostWon);     // 총사업비
+  if (post !== undefined) inputs.post_appraisal_total = post;
+  if (cost !== undefined) inputs.total_project_cost = cost;
+  return Object.keys(inputs).length ? inputs : undefined;
+}
+
 /** 도메인 키 → 평가기 inputs(없으면 undefined → consult는 프레임워크만). */
 export function buildSeniorInputs(
   agentKey: string,
@@ -119,6 +137,8 @@ export function buildSeniorInputs(
       return buildAppraiserInputs(src);
     case "senior_legal_scrivener":
       return buildLegalInputs(src);
+    case "senior_urban_planner":
+      return buildUrbanInputs(src);
     default:
       return undefined;
   }
