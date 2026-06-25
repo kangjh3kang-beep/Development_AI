@@ -337,12 +337,31 @@ class DecisionBriefService:
                 domains["cost"] = {"dev_type": dev_type, "gfa_sqm": gfa}
             if official:
                 domains["market"] = {"official_price_per_sqm": official}
-            # 심의·설계: 외부 심의엔진(/permit·design/process). AnalysisInput(extra ignore·기본값) — Stage1엔
-            #   zone·주소만 가용(상세도면 부재). 엔진 미설정/처리불가(summary.available=False)면 헬퍼가
-            #   status='unavailable'로 정직 강등('빈 ok' 카드 방지).
-            _engine_input = {"pnu": pnu or "", "address": address}
+            # 심의·설계: 외부 심의엔진(/permit·design/process). Stage1 가용 컨텍스트(용도지역·대지면적·
+            #   계획 연면적·개발방식)를 엔진 입력으로 정규화 공급 → legal_precheck(법정 용적/건폐 한도+근거)
+            #   + massing 용량검증(계획 GFA vs 법정 최대 연면적)이 실수치 산출(이전엔 zone·주소만 → 빈 결과).
+            #   상세 도면(rules/elements) 부재분은 엔진이 HELD/NEEDS_INPUT로 정직 표면화(가짜 생성 0).
+            #   엔진 미설정/처리불가(summary.available=False)면 헬퍼가 status='unavailable'로 정직 강등.
+            #   pnu는 19자리 ASCII 정규형만 전송(전각/유니코드 숫자 포함 비규격은 엔진 ASCII 패턴 422 →
+            #   빈값 전송으로 address 지오코딩 폴백, 무음 실패 방지).
+            _pnu_s = str(pnu) if pnu else ""
+            _pnu19 = _pnu_s if (_pnu_s.isascii() and _pnu_s.isdigit() and len(_pnu_s) == 19) else ""
+            _engine_input: dict[str, Any] = {"pnu": _pnu19, "address": address, "use_zone": zone}
+            if dev_type:
+                _engine_input["dev_type"] = dev_type
+            # 대지면적 → plot_area 산정입력(calc_targets) — 용량검증·용적/건폐 비율의 분모(부재 시 엔진 '미상').
+            if isinstance(area, (int, float)) and not isinstance(area, bool) and area > 0:
+                _engine_input["calc_targets"] = [
+                    {"target": "plot_area", "payload": {"parcel_area": float(area)}}]
             domains["심의"] = dict(_engine_input)
-            domains["설계"] = dict(_engine_input)
+            # 설계는 추가로 계획 GFA를 provided로 공급 → massing 용량검증(제안 GFA ≤ 최대 연면적 = 대지×용적률)
+            #   수행. program=기획정보(용도·규모) 가용 표시(기획 단계 완결성). 상세 매스/배치/평면은 도면 확보 후.
+            _design_input = dict(_engine_input)
+            _design_provided: dict[str, Any] = {"program": True}
+            if gfa:
+                _design_provided["proposed_gfa"] = float(gfa)
+            _design_input["provided"] = _design_provided
+            domains["설계"] = _design_input
         # ★dispatch·graceful·status 표준화는 공용 헬퍼 단일경유(comprehensive 부지분석과 동일 경로).
         from app.services.agents.specialist_dispatch import run_specialist_domains
 

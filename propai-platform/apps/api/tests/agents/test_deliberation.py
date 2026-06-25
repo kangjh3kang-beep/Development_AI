@@ -89,3 +89,40 @@ async def test_design_tool_graceful_when_url_unset(monkeypatch):
     )
     out = await _design_tool({"pnu": "1111010100100000001"})
     assert out["findings"] == [] and out["summary"]["available"] is False
+
+
+def test_map_permit_response_surfaces_capacity_and_measures():
+    # 실결과화 — 매스 용량검증(capacity)·정량 계측(measures)·완결성 status를 finding/summary로 표면화.
+    res = {"spec_id": "design-default", "overall_conformance": "조건부",
+           "stages": [
+               {"stage_id": "legal_precheck", "name": "법규 사전검토", "status": "DONE",
+                "conformance": "HELD", "verification_status": "NEEDS_REVIEW",
+                "criteria": [{"criterion_id": "far", "kind": "QUANTITATIVE",
+                              "measured": None, "limit": 250.0, "conformance": "HELD"}]},
+               {"stage_id": "massing", "name": "매스 스터디", "status": "NEEDS_INPUT",
+                "conformance": "HELD", "verification_status": "NEEDS_REVIEW",
+                "issues": ["필요 입력 결손: massing"],
+                "capacity": {"plot_area_sqm": 1000.0, "far_pct": 250.0, "max_gfa_sqm": 2500.0,
+                             "proposed_gfa_sqm": 2400.0, "margin_sqm": 100.0, "conformance": "부합"}}]}
+    out = _map_permit_response(res)
+    lp, ms = out["findings"][0], out["findings"][1]
+    # 정량 계측(far 한도)·완결성 status 표면화(measured=None=HELD도 정직 전파)
+    assert lp["stage_status"] == "DONE"
+    assert lp["measures"][0]["criterion"] == "far" and lp["measures"][0]["limit"] == 250.0
+    # 매스 용량검증·결손 issues 표면화
+    assert ms["stage_status"] == "NEEDS_INPUT" and ms["issues"]
+    assert ms["capacity"]["max_gfa_sqm"] == 2500.0 and ms["capacity"]["conformance"] == "부합"
+    # 용량검증은 종합 summary로 hoist(소비처 단순화)
+    assert out["summary"]["capacity"]["margin_sqm"] == 100.0
+
+
+def test_map_permit_response_empty_capacity_not_surfaced():
+    # 캐파 전 지표 None(산정 불가) → capacity 키 부재(가짜 0/빈 카드 방지)
+    res = {"spec_id": "design-default", "stages": [{
+        "stage_id": "massing", "name": "매스", "status": "NEEDS_INPUT",
+        "conformance": "HELD", "verification_status": "NEEDS_REVIEW",
+        "capacity": {"plot_area_sqm": None, "far_pct": None, "max_gfa_sqm": None,
+                     "proposed_gfa_sqm": None, "margin_sqm": None, "conformance": None}}]}
+    out = _map_permit_response(res)
+    assert "capacity" not in out["findings"][0]
+    assert "capacity" not in out["summary"]

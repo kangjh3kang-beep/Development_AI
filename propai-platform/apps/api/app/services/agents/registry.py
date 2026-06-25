@@ -141,22 +141,65 @@ def _stage_basis(stage: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]
     return basis, links
 
 
+_CAPACITY_KEYS = ("plot_area_sqm", "far_pct", "bcr_pct", "max_gfa_sqm", "max_footprint_sqm",
+                  "proposed_gfa_sqm", "margin_sqm", "conformance", "caveat")
+
+
+def _stage_measures(stage: dict[str, Any]) -> list[dict[str, Any]]:
+    """단계 criteria의 정량 계측(실측/한도/부합/등급)을 표면화. 측정값/한도 부재(HELD)도 정직 전파."""
+    out: list[dict[str, Any]] = []
+    for c in (stage.get("criteria") or []):
+        if not isinstance(c, dict):
+            continue
+        out.append({"criterion": c.get("criterion_id"), "kind": c.get("kind"),
+                    "measured": c.get("measured"), "limit": c.get("limit"),
+                    "conformance": c.get("conformance"), "grade": c.get("grade")})
+    return out
+
+
 def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
     """심의엔진 PermitProcessResult → SpecialistAgent findings/summary 정규화(결정론 매핑, 수치 생성 X).
 
-    ★설명가능성 전파(EX2): 각 finding에 근거(basis: 법령명·조항·요지)+링크(links: 1차출처 URL) 기본 동반."""
+    ★설명가능성 전파(EX2): 각 finding에 근거(basis: 법령명·조항·요지)+링크(links: 1차출처 URL) 기본 동반.
+    ★실결과화: 엔진이 산출한 정량 계측(criteria: 실측/한도)과 매스 용량검증(capacity: 계획 GFA vs 법정 최대
+    연면적·여유·부합)을 finding/summary에 표면화한다. 이전 매핑은 단계 부합도만 옮기고 capacity·실측을 누락 →
+    설계 핵심 산출(규모 적정성)이 보이지 않았다. 단계 완결성 status(NEEDS_INPUT 등)·결손 issues도 전파(무음 금지)."""
     findings: list[dict[str, Any]] = []
+    capacity_summary: dict[str, Any] | None = None
     for st in (res.get("stages") or []):
         basis, links = _stage_basis(st)
-        findings.append({"check_id": st.get("stage_id"), "status": st.get("conformance"),
-                         "current": st.get("verification_status"), "limit": None,
-                         "note": st.get("name"), "basis": basis, "links": links})
-    return {"findings": findings,
-            "summary": {"available": True, "spec_id": res.get("spec_id"),
-                        "overall_conformance": res.get("overall_conformance"),
-                        "overall_verification": res.get("overall_verification"),
-                        "overall_outcome": res.get("overall_outcome"),   # Phase 2a 종합 승인 가능성 전파
-                        "run_id": res.get("run_id")}}
+        f: dict[str, Any] = {
+            "check_id": st.get("stage_id"), "status": st.get("conformance"),
+            "stage_status": st.get("status"),   # DONE | NEEDS_INPUT | HELD (완결성 — 무음 금지)
+            "current": st.get("verification_status"), "limit": None,
+            "note": st.get("name"), "basis": basis, "links": links,
+        }
+        issues = st.get("issues")
+        if isinstance(issues, list) and issues:
+            f["issues"] = issues             # 필요입력 결손 등 예상쟁점 표면화
+        measures = _stage_measures(st)
+        if measures:
+            f["measures"] = measures         # far/bcr 등 실측·한도(HELD 포함)
+        cap = st.get("capacity")
+        if isinstance(cap, dict) and any(cap.get(k) is not None for k in _CAPACITY_KEYS):
+            cap_brief = {k: cap.get(k) for k in _CAPACITY_KEYS}
+            cap_brief["legal_basis"] = cap.get("legal_basis") or []
+            # ★부합 판정 기준 명시(오독 방지): 용량 한도(far_pct)는 엔진의 국가 법정상한(SSOT)이다.
+            #   조례 실효용적률이 더 낮으면 실제 가용 여유는 margin보다 작을 수 있어, '부합'을 조례부합으로
+            #   읽지 않도록 기준을 동반한다(근거·정직 원칙). proposed_gfa 비교가 있을 때만 부착.
+            if cap.get("proposed_gfa_sqm") is not None:
+                cap_brief["conformance_basis"] = "국가 법정상한(SSOT far_pct) 기준 — 조례 상한 별도 확인"
+            f["capacity"] = cap_brief        # 매스 용량검증(설계 핵심 산출)
+            capacity_summary = cap_brief     # 종합 요약에 hoist(현재 capacity 보유 단계는 massing 단일)
+        findings.append(f)
+    summary = {"available": True, "spec_id": res.get("spec_id"),
+               "overall_conformance": res.get("overall_conformance"),
+               "overall_verification": res.get("overall_verification"),
+               "overall_outcome": res.get("overall_outcome"),   # Phase 2a 종합 승인 가능성 전파
+               "run_id": res.get("run_id")}
+    if capacity_summary is not None:
+        summary["capacity"] = capacity_summary
+    return {"findings": findings, "summary": summary}
 
 
 async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any]:

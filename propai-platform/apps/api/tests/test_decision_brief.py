@@ -1190,3 +1190,53 @@ async def test_specialists_use_llm_guards_empty_cost_market(monkeypatch):
     doms = {d["domain"] for d in out}
     assert "cost" not in doms and "market" not in doms  # 빈 입력 가드
     assert {"zoning", "permit", "심의", "설계"} <= doms  # 나머지는 디스패치
+
+
+@pytest.mark.asyncio
+async def test_specialists_engine_input_enriched(monkeypatch):
+    """★실결과화 — 심의/설계 엔진 입력에 use_zone·dev_type·calc_targets[plot_area] 공급,
+    설계엔 추가로 provided{program, proposed_gfa}(계획 GFA). 이전엔 zone·주소만 → 엔진 빈 결과."""
+    seen: dict[str, dict] = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = data
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [], "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "제2종일반주거지역", "land_area_sqm": 1000.0,
+                  "pnu": "1111010100100000001",
+                  "effective_far": {"effective_far_pct": 250.0}},
+        reg_raw={}, permit_raw={"recommendations": [{"development_type": "M06"}]},
+        use_llm=True, tenant_id="t", project_id="p", address="서울특별시 동작구 상도동 1",
+    )
+    for dom in ("심의", "설계"):
+        d = seen[dom]
+        assert d["use_zone"] == "제2종일반주거지역"
+        assert d["dev_type"] == "M06"
+        assert d["calc_targets"][0]["target"] == "plot_area"
+        assert d["calc_targets"][0]["payload"]["parcel_area"] == 1000.0
+    # 설계만 provided(계획 GFA = 1000×250/100 = 2500), 심의엔 provided 없음(permit/process 미사용)
+    assert "provided" not in seen["심의"]
+    assert seen["설계"]["provided"]["program"] is True
+    assert seen["설계"]["provided"]["proposed_gfa"] == 2500.0
+
+
+@pytest.mark.asyncio
+async def test_specialists_engine_input_rejects_malformed_pnu(monkeypatch):
+    """비19자리 pnu는 엔진에 빈 문자열로 전송(엔진 422 회피, address 지오코딩 폴백). use_zone은 정상 전달."""
+    seen: dict[str, dict] = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = data
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [], "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "제2종일반주거지역", "land_area_sqm": 1000.0,
+                  "pnu": "11680-101", "effective_far": {"effective_far_pct": 250.0}},
+        reg_raw={}, permit_raw={"recommendations": [{"development_type": "M06"}]},
+        use_llm=True, tenant_id="t", project_id="p", address="서울특별시 동작구 상도동 1",
+    )
+    assert seen["심의"]["pnu"] == ""   # 비규격 pnu → 빈 문자열(주소 폴백)
+    assert seen["심의"]["use_zone"] == "제2종일반주거지역"
