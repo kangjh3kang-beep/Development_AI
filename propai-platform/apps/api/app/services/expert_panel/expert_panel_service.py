@@ -182,10 +182,32 @@ class ExpertPanelService:
         context: dict[str, Any] | str,
         address: str = "",
         mode: str = "single",
+        skip_memory: bool = False,
     ) -> dict[str, Any]:
         roster = ROSTERS.get(analysis_type, _DEFAULT_ROSTER)
         subject = _SUBJECTS.get(analysis_type, "부동산개발 분석")
+
+        # 1. RAG Recall (if not skipped)
+        rag_memories = []
+        if not skip_memory:
+            try:
+                from app.services.memory_hub.memory_service import MemoryHubService
+                query_str = f"Subject: {subject}, Context: {str(context)[:200]}"
+                memories = await MemoryHubService().recall_experience(query=query_str, domain=analysis_type, top_k=2)
+                rag_memories = [
+                    {"id": str(m.id), "summary": m.summary, "score": m.score}
+                    for m in memories
+                ]
+            except Exception as e:
+                logger.warning("expert panel memory recall 스킵", err=str(e)[:160])
+
+        # Prepare context string and append recalled memories if present
         ctx_str = context if isinstance(context, str) else json.dumps(context, ensure_ascii=False)
+        if rag_memories:
+            ctx_str += "\n\n[이전 유사 분석 및 참고 노하우]\n"
+            for rm in rag_memories:
+                ctx_str += f"- {rm['summary']} (Score: {rm['score']:.2f})\n"
+
         ctx_str = ctx_str[:4000]
 
         if mode in ("deep", "graph"):
@@ -203,13 +225,45 @@ class ExpertPanelService:
         result["analysis_type"] = analysis_type
         result["mode"] = mode
         result["roster"] = [r["role"] for r in roster]
+        if rag_memories:
+            result["rag_memories"] = rag_memories
+
+        # 2. RAG Ingestion (if not skipped)
+        if not skip_memory and result.get("consensus"):
+            try:
+                import uuid
+
+                from app.tasks.memory_tasks import ingest_experience_task
+
+                memory_summary = f"Expert Panel ({analysis_type}) 다관점 합의 요약:\n"
+                memory_summary += f"- 주제: {subject}\n"
+                memory_summary += f"- 합의 결론: {result['consensus']}\n"
+                if result.get("verification", {}).get("risks"):
+                    memory_summary += f"- 핵심 리스크: {', '.join(result['verification']['risks'])}\n"
+
+                ingest_payload = {
+                    "project_id": None,
+                    "session_id": f"auto_panel_{analysis_type}_{uuid.uuid4().hex[:8]}",
+                    "domain": analysis_type,
+                    "source_type": "expert_panel",
+                    "summary": memory_summary.strip(),
+                    "metadata": {
+                        "address": address,
+                        "expert_count": len(roster)
+                    }
+                }
+                ingest_experience_task.delay(ingest_payload)
+            except Exception as e:
+                logger.warning("expert panel memory auto-ingestion 스킵", err=str(e)[:160])
+
         return result
 
     async def _single(self, subject, address, ctx, roster) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             roster_str = "\n".join(f"- {r['role']} ({r['lens']})" for r in roster)
             user = _PANEL_TMPL.format(subject=subject, address=address or "대상지",
@@ -232,9 +286,10 @@ class ExpertPanelService:
 
     async def _deep(self, subject, address, ctx, roster) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             async def one_expert(r: dict) -> dict[str, Any]:
                 user = _EXPERT_TMPL.format(role=r["role"], lens=r["lens"],

@@ -97,7 +97,7 @@ def _market_tool(data: dict[str, Any]) -> dict[str, Any]:
 async def _default_panel(domain: str, context: dict[str, Any]) -> dict[str, Any]:
     """ExpertPanelService 다관점(GROUNDING_RULE+할루시네이션 게이트). LLM 부재 시 graceful fallback 구조."""
     from app.services.expert_panel.expert_panel_service import ExpertPanelService
-    return await ExpertPanelService().analyze(domain, context, mode="single")
+    return await ExpertPanelService().analyze(domain, context, mode="single", skip_memory=True)
 
 
 def _build_cost() -> SpecialistAgent:
@@ -204,9 +204,52 @@ def _build_design() -> SpecialistAgent:
                            tool=_design_tool, interpreter=None)
 
 
+# ── 정비사업 비례율: 시니어 도시계획전문가 평가기(evaluate_urban) 재사용 — 단일 산식 출처 ──
+
+_URBAN_VERDICT_STATUS = {"PASS": "pass", "WARN": "warn", "BLOCK": "fail"}
+
+
+def _redevelopment_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """계층1 결정론 정비사업 비례율 도구 — senior evaluate_urban 재사용(★단일 산식 출처).
+
+    비례율=(종후자산총평가−총사업비)/종전자산총평가×100·권리가액·분담금. 수치는 evaluate_urban
+    에서만 생성(불변·시니어 평가기와 동일 산식 — 한 곳 고치면 전역 반영). 입력 미비(종전/종후/
+    사업비)면 findings 비움(무목업·정직). RuleEvaluation → findings/summary 정규화.
+
+    ★senior_agents 패키지는 별도 브랜치(feat/senior-agents-foundation) 산출물 — 머지 전 환경에선
+    부재할 수 있어 import 를 graceful 처리(없으면 정직 미연동 표기·크래시 금지). 머지 후 자동 활성."""
+    try:
+        from app.services.senior_agents.evaluators.urban import evaluate_urban
+    except ImportError:
+        return {"findings": [], "summary": {"available": False, "reason": "senior_evaluator_unavailable"}}
+
+    evals = evaluate_urban(data if isinstance(data, dict) else {})
+    findings: list[dict[str, Any]] = []
+    for e in evals:
+        findings.append({
+            "check_id": e.rule_id.split(".")[-1].upper(),
+            "status": _URBAN_VERDICT_STATUS.get(e.verdict, "info"),
+            "current": e.value, "limit": None, "unit": e.unit,
+            "note": e.detail, "basis": [{"summary": e.basis}],
+        })
+    summary: dict[str, Any] = {"available": bool(evals)}
+    if evals:
+        e0 = evals[0]
+        summary.update({"proportion_rate_pct": e0.value, "verdict": e0.verdict, "detail": e0.detail})
+    else:
+        summary["reason"] = "inputs_incomplete"  # 종전/종후/사업비 미비 → 비례율 생략(무목업)
+    return {"findings": findings, "summary": summary}
+
+
+def _build_redevelopment() -> SpecialistAgent:
+    return SpecialistAgent(domain="정비사업", task_type="redevelopment_proportion",
+                           tool=_redevelopment_tool, interpreter=None)
+
+
 _FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far,
               "cost": _build_cost, "market": _build_market,
-              "심의": _build_deliberation, "설계": _build_design}
+              "심의": _build_deliberation, "설계": _build_design,
+              "정비사업": _build_redevelopment}
 AVAILABLE_DOMAINS = tuple(_FACTORIES.keys())
 
 

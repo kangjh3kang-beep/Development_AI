@@ -297,6 +297,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("growth schema_guard 호출 실패 — 마이그레이션에 의존")
 
+    # 성장 뇌(MemoryHub) — agent_memories 테이블 멱등 보장(없으면 자동 기억저장 ingest 실패).
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.memory_hub import schema_guard as memory_schema_guard
+        async with AsyncSessionLocal() as _s:
+            mok = await memory_schema_guard.ensure_memory_schema(_s)
+        logger.info("memory schema_guard", ensured=mok)
+    except Exception:
+        logger.warning("memory schema_guard 호출 실패 — 마이그레이션에 의존")
+
     # LangSmith LLM 추적 활성화(키 있을 때만). load_into_env 이후여야 관리자 키가 반영됨.
     try:
         from apps.api.core.observability import init_langsmith
