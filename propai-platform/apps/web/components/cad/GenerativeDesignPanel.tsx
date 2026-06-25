@@ -540,6 +540,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
         buildingType: intent?.building_use ?? "공동주택",
         bcr: summary.bcr_percent,
         far: summary.far_percent,
+        // 시니어 자문(심의 height CSP) 입력원 — 설계엔진 산출 높이·법정한도(미산정 시 null·무목업).
+        heightM: summary.building_height_m ?? null,
+        maxHeightM: summary.max_height_m ?? null,
         // 세대 구성도 SSOT에 기록 — 도면·해석·수지의 "세대수·평형 부재" 해소.
         unitCount: summary.total_units ?? null,
         unitTypes: unitTypes.length > 0 ? unitTypes : null,

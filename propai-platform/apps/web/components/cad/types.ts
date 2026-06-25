@@ -171,6 +171,8 @@ export type AutoDesignSummary = {
   total_floor_area_sqm: number;
   num_floors: number;
   building_height_m: number;
+  /** 법정 높이 한도(m·용도지역 max_height_m). 0/null=무제한 또는 미산정. 구버전 응답엔 부재 — 옵셔널. */
+  max_height_m?: number | null;
   bcr_percent: number;
   far_percent: number;
   total_units: number;
