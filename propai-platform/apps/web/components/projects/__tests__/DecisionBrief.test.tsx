@@ -34,10 +34,12 @@ vi.mock("next/navigation", () => ({
 import { DecisionBriefPanel } from "@/components/projects/DecisionBriefPanel";
 import { DecisionVerdictCard } from "@/components/projects/DecisionVerdictCard";
 import { DomainSummaryCard } from "@/components/projects/DomainSummaryCard";
+import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import type {
-  DecisionBrief,
-  DecisionBriefPart,
+import {
+  findDecisionPart,
+  type DecisionBrief,
+  type DecisionBriefPart,
 } from "@/components/projects/decision-brief-types";
 
 // ── 백엔드 표준 계약 형태의 픽스처(decision_brief_service.py 반환 구조와 1:1) ──
@@ -119,6 +121,9 @@ beforeEach(() => {
       address: "서울특별시 강남구 역삼동 123",
     },
     decisionBrief: null,
+    // staleness 통합 테스트 격리 — 모듈 타임스탬프 초기화(이전 테스트 잔류 차단).
+    updatedAt: {},
+    manualFields: {},
   });
 });
 
@@ -490,5 +495,128 @@ describe("DecisionBriefPanel — in-flight dedup + latest-input-wins(StrictMode 
     await waitFor(() =>
       expect(useProjectContextStore.getState().decisionBrief?.parcel_count).toBe(3),
     );
+  });
+});
+
+// ── P2 ① staleness 통합(모세혈관) — store 레벨 ──
+describe("store.isStale('decisionBrief') — staleness 캐스케이드 편입", () => {
+  it("setDecisionBrief가 updatedAt.decisionBrief를 stamp한다(이전엔 미기록)", () => {
+    const st = useProjectContextStore.getState();
+    expect(useProjectContextStore.getState().updatedAt.decisionBrief).toBeUndefined();
+    act(() => st.setDecisionBrief(makeBrief()));
+    expect(
+      useProjectContextStore.getState().updatedAt.decisionBrief,
+    ).toBeTypeOf("number");
+    // 브리프 직후 stale 아님(업스트림이 더 최신이 아니므로).
+    expect(useProjectContextStore.getState().isStale("decisionBrief")).toBe(false);
+  });
+
+  it("브리프 보존 + 업스트림(용도지역만) 갱신 → isStale('decisionBrief')=true(재분석 게이트)", async () => {
+    const st = useProjectContextStore.getState();
+    act(() => st.setDecisionBrief(makeBrief()));
+    // 주소/유효면적은 그대로, 용도지역만 변경 → 브리프 null 리셋 안 됨(보존) + siteAnalysis stamp.
+    await new Promise((r) => setTimeout(r, 2)); // 타임스탬프 단조 증가 보장.
+    act(() =>
+      useProjectContextStore.getState().updateSiteAnalysis({ zoneCode: "제2종일반주거지역" }),
+    );
+    // 브리프는 보존(주소/면적 불변)되고, 부지분석이 더 최신 → stale.
+    expect(useProjectContextStore.getState().decisionBrief).not.toBeNull();
+    expect(useProjectContextStore.getState().isStale("decisionBrief")).toBe(true);
+  });
+
+  it("주소/유효면적 변경 → 브리프 null 리셋 + updatedAt.decisionBrief도 제거(stale 아님)", () => {
+    const st = useProjectContextStore.getState();
+    act(() => st.setDecisionBrief(makeBrief()));
+    expect(useProjectContextStore.getState().updatedAt.decisionBrief).toBeTypeOf("number");
+    // 유효면적 변경(다필지 통합면적) → 리셋 경로.
+    act(() =>
+      useProjectContextStore.getState().updateSiteAnalysis({
+        landAreaSqmTotal: 9000,
+        parcelCount: 3,
+      }),
+    );
+    // 브리프 null + 타임스탬프 제거 → own==null → isStale=false(브리프 없는데 stale 오판 금지).
+    expect(useProjectContextStore.getState().decisionBrief).toBeNull();
+    expect(useProjectContextStore.getState().updatedAt.decisionBrief).toBeUndefined();
+    expect(useProjectContextStore.getState().isStale("decisionBrief")).toBe(false);
+  });
+
+  it("setDecisionBrief(null) → 타임스탬프도 함께 제거(리셋 vs stale표기 일원화)", () => {
+    const st = useProjectContextStore.getState();
+    act(() => st.setDecisionBrief(makeBrief()));
+    expect(useProjectContextStore.getState().updatedAt.decisionBrief).toBeTypeOf("number");
+    act(() => useProjectContextStore.getState().setDecisionBrief(null));
+    expect(useProjectContextStore.getState().updatedAt.decisionBrief).toBeUndefined();
+  });
+});
+
+// ── P2 ① staleness 통합 — 패널 재분석 CTA(인간게이트·자동재실행 금지) ──
+describe("DecisionBriefPanel — stale 재분석 CTA(자동재실행 금지)", () => {
+  it("브리프 보존된 채 부지분석(용도지역만)이 더 최신이면 '재분석' 배지/CTA 노출", async () => {
+    // 1차: 자동 전체실행으로 브리프 산출(ready) → POST 1회.
+    post.mockResolvedValue(makeBrief());
+    render(<DecisionBriefPanel projectId="p1" />);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText(/추진 권고 \(GO\)/)).toBeTruthy());
+
+    // 부지분석에서 주소/유효면적이 아닌 '용도지역'만 변경 → inputSig 불변(자동재실행 미발화)
+    //   + 브리프 보존 + siteAnalysis 타임스탬프가 브리프보다 최신 → stale.
+    await new Promise((r) => setTimeout(r, 2));
+    act(() =>
+      useProjectContextStore.getState().updateSiteAnalysis({ zoneCode: "제2종일반주거지역" }),
+    );
+    // stale 배지 + 재분석 버튼 노출(자동재실행 금지 — POST는 추가로 발사되지 않음).
+    await waitFor(() =>
+      expect(screen.getByText(/최신이 아닐 수 있습니다/)).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: "재분석" })).toBeTruthy();
+    // ★자동재실행 금지(인간게이트) — 용도지역 변경만으로 POST가 재발사되지 않아야 한다.
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── P2 ② Tier2 드릴다운 재사용 — DecisionReuseBanner + findDecisionPart ──
+describe("findDecisionPart — parts 안전조회(SSOT)", () => {
+  it("존재하는 part는 반환, 없으면 null(폴백)", () => {
+    const brief = makeBrief();
+    expect(findDecisionPart(brief, "permit_design")?.part).toBe("permit_design");
+    expect(findDecisionPart(brief, "site_market")?.part).toBe("site_market");
+    expect(findDecisionPart(null, "permit_design")).toBeNull();
+    expect(
+      findDecisionPart({ ...brief, parts: [] }, "permit_design"),
+    ).toBeNull();
+  });
+});
+
+describe("DecisionReuseBanner — Tier2 재사용 프리필/폴백", () => {
+  it("part 있으면 'Stage1 통합분석 기반' + 한줄요약 렌더", () => {
+    const part = makePart({
+      part: "permit_design",
+      summary_oneliner: "추천 주상복합 · ROI 12.5% · 2개 Top 모델",
+    });
+    render(<DecisionReuseBanner part={part} />);
+    expect(screen.getByText("Stage1 통합분석 기반")).toBeTruthy();
+    expect(screen.getByText(/추천 주상복합 · ROI 12.5%/)).toBeTruthy();
+  });
+
+  it("part 없으면(null) 아무것도 렌더하지 않음(기존 동작 폴백·무회귀)", () => {
+    const { container } = render(<DecisionReuseBanner part={null} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("unavailable part는 가짜 요약 위장 금지(미렌더)", () => {
+    const part = makePart({
+      part: "permit_design",
+      status: "unavailable",
+      reason: "site_id 미확보",
+    });
+    const { container } = render(<DecisionReuseBanner part={part} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("stale=true면 정직 고지(최신 아닐 수 있음) 동반", () => {
+    const part = makePart({ part: "permit_design" });
+    render(<DecisionReuseBanner part={part} stale />);
+    expect(screen.getByText(/최신이 아닐 수 있습니다/)).toBeTruthy();
   });
 });

@@ -69,6 +69,11 @@ export function DecisionBriefPanel({
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const decisionBrief = useProjectContextStore((s) => s.decisionBrief);
   const setDecisionBrief = useProjectContextStore((s) => s.setDecisionBrief);
+  // ★staleness 모세혈관 — 부지분석(주소/면적 외 용도지역 등)이 브리프보다 최신이면 stale.
+  //   주소/유효면적 변경은 store가 브리프를 null 리셋(→ stale=false, 자동 재산출)하므로,
+  //   이 stale 신호는 '브리프는 보존됐지만 업스트림이 갱신된' 경우에만 켜진다. 자동재실행하지
+  //   않고(인간게이트) '재분석' 배지/CTA만 노출한다(자동재실행 금지).
+  const briefStale = useProjectContextStore((s) => s.isStale("decisionBrief"));
   const address = siteAnalysis?.address ?? null;
   const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
   // ★dedup/staleness 시그니처 = 주소 + 유효면적(다필지 통합면적 우선). 주소만이 아니라 면적까지
@@ -253,6 +258,40 @@ export function DecisionBriefPanel({
       {/* 완료 — 종합 판정 + 3개 통합 도메인 카드(부지·시장/법규/인허가·Top3) */}
       {state.kind === "ready" && brief && (
         <div className="flex flex-col gap-6">
+          {/* ★stale 배지(staleness 모세혈관) — 부지분석이 브리프보다 최신이면 '재분석' CTA.
+              자동재실행하지 않고 사용자가 직접 '다시 분석'을 누르게 한다(인간게이트).
+              (이 블록은 state.kind==='ready'일 때만 렌더되므로 별도 loading 가드 불필요.) */}
+          {briefStale && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3"
+              style={{
+                borderColor:
+                  "color-mix(in srgb, var(--status-warning) 35%, transparent)",
+                backgroundColor:
+                  "color-mix(in srgb, var(--status-warning) 8%, transparent)",
+              }}
+              role="status"
+            >
+              <div className="flex items-start gap-2.5">
+                <RefreshCw
+                  className="mt-0.5 size-4 shrink-0 text-[var(--status-warning)]"
+                  aria-hidden
+                />
+                <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                  부지분석이 갱신되어 이 통합 판정이 최신이 아닐 수 있습니다. 다시 분석을
+                  눌러 최신 입력으로 재산출하세요.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void run(true)}
+                className="shrink-0 rounded-full bg-[var(--accent-strong)] px-4 py-1.5 text-[11px] font-black uppercase tracking-wider text-white"
+              >
+                재분석
+              </button>
+            </div>
+          )}
+
           {deployPending && (
             <div className="flex items-start gap-2.5 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] px-4 py-3">
               <AlertTriangle

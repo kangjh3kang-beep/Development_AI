@@ -162,3 +162,18 @@ export interface DecisionBrief {
   /** 캐시 적중 시 백엔드(analysis_cache)가 최상위에 부착하는 메타(신규 분석엔 없음·옵셔널). */
   _cache?: DecisionBriefCacheMeta;
 }
+
+/**
+ * 브리프 parts에서 특정 도메인 part를 안전하게 조회(SSOT 단일 출처).
+ *
+ * Tier2 드릴다운 패널(인허가·사업성 등)이 Stage1 통합분석 결과를 재사용할 때, 매번
+ * `parts.find(...)`를 복붙하지 않고 이 헬퍼로 일원화한다(키 드리프트·silent-null 방지).
+ * brief나 part가 없으면 null을 반환한다(폴백=기존 동작·무회귀).
+ */
+export function findDecisionPart(
+  brief: DecisionBrief | null | undefined,
+  partId: DecisionBriefPartId,
+): DecisionBriefPart | null {
+  if (!brief?.parts) return null;
+  return brief.parts.find((p) => p.part === partId) ?? null;
+}

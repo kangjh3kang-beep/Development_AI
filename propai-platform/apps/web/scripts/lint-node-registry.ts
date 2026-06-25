@@ -25,9 +25,11 @@ export interface LintResult {
 }
 
 /**
- * useProjectContextStore의 MODULE_UPSTREAM(7키 DAG) 미러.
+ * useProjectContextStore의 MODULE_UPSTREAM(DAG) 미러.
  * store는 미수정 원칙이라 export하지 않으므로, 드리프트 검사용으로 여기 동기화한다.
- * 코드 대조: apps/web/store/useProjectContextStore.ts L255-264 (변경 시 이 미러도 갱신).
+ * 코드 대조: apps/web/store/useProjectContextStore.ts MODULE_UPSTREAM (변경 시 이 미러도 갱신).
+ * ★decisionBrief는 부지분석 파생 staleness 키일 뿐 오케스트레이션 노드와 무관하므로,
+ *   미러 동기화(타입 충족)만 하고 노드 폐포(W1) 검사 대상엔 들어가지 않는다(moduleKey 보유 노드 없음).
  */
 const MODULE_UPSTREAM_MIRROR: Record<ModuleKey, ModuleKey[]> = {
   siteAnalysis: [],
@@ -37,6 +39,7 @@ const MODULE_UPSTREAM_MIRROR: Record<ModuleKey, ModuleKey[]> = {
   finance: ["feasibility", "cost"],
   esg: ["design"],
   compliance: ["siteAnalysis", "design"],
+  decisionBrief: ["siteAnalysis"],
 };
 
 /** ModuleKey 폐포(MODULE_UPSTREAM 미러 기준 전이 상류). */
