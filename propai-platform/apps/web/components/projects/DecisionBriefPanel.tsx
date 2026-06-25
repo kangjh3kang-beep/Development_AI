@@ -29,6 +29,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm, analysisInputSignature } from "@/lib/site-area";
 import { DecisionVerdictCard } from "@/components/projects/DecisionVerdictCard";
 import { DomainSummaryCard } from "@/components/projects/DomainSummaryCard";
+import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialistCard";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
 
 /** 호출 상태 — 로딩/에러/완료를 명시적으로 구분(silent-fail 금지). */
@@ -448,6 +449,9 @@ export function DecisionBriefPanel({
               />
             ))}
           </div>
+
+          {/* ★SpecialistAgent 결정론 교차검증(소비처 연결) — specialists 없으면 렌더 안 함 */}
+          <DecisionSpecialistCard specialists={brief.specialists} deployPending={brief.meta?.deploy_pending} />
         </div>
       )}
     </div>

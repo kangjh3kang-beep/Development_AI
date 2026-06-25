@@ -109,11 +109,13 @@ _PERMIT_OK = {
     "land_price_reliable": True,
     "scenario_status": "actual",
     "total_types_analyzed": 5,
+    # ★실엔진(auto_recommend_top3) 계약: 각 recommendation 은 development_type(M코드)+type_name(한글명)
+    #   둘 다 방출한다. _pick_dev_type 는 development_type(코드)만 써야 한다(type_name은 매트릭스 키 아님).
     "recommendations": [
-        {"type_name": "주상복합",
+        {"development_type": "M06", "type_name": "주상복합",
          "feasibility": {"net_profit_won": 100_00000000, "roi_pct": 12.5,
                          "roe_pct": 25.0, "npv_won": 80_00000000, "grade": "A"}},
-        {"type_name": "오피스텔",
+        {"development_type": "M07", "type_name": "오피스텔",
          "feasibility": {"net_profit_won": 60_00000000, "roi_pct": 8.0, "grade": "B"}},
     ],
     "all_results": [{}, {}, {}],
@@ -996,3 +998,127 @@ async def test_developer_go_nogo_ctx_carries_land_area(monkeypatch):
     assert captured_ctx.get("land_area_sqm") == 3000.0, "통합면적이 페르소나 ctx 에 전달돼야 한다"
     # Top3 핸드오프(중복 재계산 방지)도 유지.
     assert "recommend_override" in captured_ctx
+
+
+# ──────────────────────────────────────────────────────────────────
+# ★SpecialistAgent 모세혈관 배선(zoning/permit auto-dispatch·소비처 연결)
+# ──────────────────────────────────────────────────────────────────
+
+def test_pick_dev_type_best_effort():
+    """Top3 raw에서 대표 개발방식 M코드 추출 — ★실엔진 정본 키 development_type 최우선.
+
+    ★HIGH 회귀가드: auto_recommend_top3 는 recommendations[i]['development_type']('M06' 등 코드)를
+    내보낸다. 이 키를 못 읽으면 permit 도구에 빈 dev_type 이 가서 항상 '불가' 오판(거짓 음성)."""
+    pick = DecisionBriefService._pick_dev_type
+    # 실엔진 정본 키(development_type=M코드) 최우선 추출.
+    assert pick({"recommendations": [{"development_type": "M06", "type_name": "일반분양"}]}) == "M06"
+    assert pick({"recommendations": [{"dev_type": "M01"}]}) == "M01"  # 폴백 키
+    assert pick({"top3": [{"model": "M02"}]}) == "M02"
+    # ★type_name(한글명)은 매트릭스 키가 아니므로 추출 제외(넘기면 항상 '불가' 오판).
+    assert pick({"recommendations": [{"type_name": "일반분양"}]}) == ""
+    assert pick({}) == ""
+    assert pick(None) == ""
+    assert pick({"recommendations": []}) == ""
+    assert pick({"recommendations": ["not-a-dict"]}) == ""
+
+
+@pytest.mark.asyncio
+async def test_specialists_skip_when_no_zone():
+    """용도지역 없으면 결정론 도메인 입력 불가 → 정직 스킵(가짜 디스패치 안 함)."""
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={}, reg_raw={}, permit_raw={},
+        tenant_id=None, project_id=None, address="a",
+    )
+    assert out == []
+
+
+def _patch_dispatch(monkeypatch, fn):
+    import apps.api.core.coordinator as coord_mod
+    monkeypatch.setattr(coord_mod.AgentCoordinator, "dispatch", fn)
+
+
+@pytest.mark.asyncio
+async def test_specialists_populated_when_dispatch_ok(monkeypatch):
+    """dispatch ok → zoning·permit specialists 주입(소비처 연결). dev_type 추출도 전달."""
+    seen: dict[str, dict] = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = data
+        return {"ok": True, "domain": domain, "task_type": f"{domain}_t",
+                "summary": {"k": 1}, "findings": [{"claim": f"{domain} 결정론"}],
+                "contradictions": None, "ledger": {"ok": True, "version": 1}}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06"}]},
+        tenant_id="t", project_id="p", address="a",
+    )
+    assert {d["domain"] for d in out} == {"zoning", "permit"}
+    assert all(d["status"] == "ok" for d in out)
+    assert all(d["findings"] for d in out)
+    assert seen["permit"]["dev_type"] == "M06"  # ★실엔진 development_type 추출→permit 도구 전달
+    assert seen["zoning"]["zone_type"] == "일반상업지역"
+
+
+@pytest.mark.asyncio
+async def test_specialists_unavailable_entry_when_dispatch_raises(monkeypatch):
+    """dispatch 예외(예: 원장 DB 다운)는 조용히 누락하지 않고 status='unavailable'로 정직 표면화."""
+    async def _boom(self, domain, data, **ctx):
+        raise RuntimeError("ledger down")
+
+    _patch_dispatch(monkeypatch, _boom)
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={}, permit_raw={},
+        tenant_id=None, project_id=None, address="a",
+    )
+    assert {d["domain"] for d in out} == {"zoning", "permit"}
+    assert all(d["status"] == "unavailable" for d in out)
+    assert all(d.get("reason") for d in out)  # 사유 표기(정직)
+
+
+@pytest.mark.asyncio
+async def test_specialists_permit_pass_real_validator():
+    """★HIGH 회귀가드(미목업·실 permit_validator 경유): development_type(M06)이 일반상업지역에서
+    허용 → permit specialist 'pass'. _pick_dev_type 가 development_type 을 못 읽으면 빈 dev_type 이
+    가서 permit 이 'fail'(거짓 음성)이 되어 이 단언이 깨진다."""
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06", "type_name": "일반분양"}]},
+        tenant_id=None, project_id=None, address="서울특별시 강남구 역삼동 123",
+    )
+    by = {d["domain"]: d for d in out}
+    assert "permit" in by, "permit specialist 가 배선돼야 한다"
+    permit = by["permit"]
+    # 원장(DB) 부재 시 ledger.ok=False 일 수 있으나 결정론 findings 는 산출돼야 한다(graceful).
+    assert permit.get("status") == "ok"
+    permit_f = next((f for f in (permit.get("findings") or []) if f.get("check_id") == "PERMIT"), None)
+    assert permit_f is not None and permit_f["status"] == "pass", f"M06/일반상업지역=허용인데 {permit_f}"
+    assert permit.get("summary", {}).get("is_permitted") is True
+
+
+@pytest.mark.asyncio
+async def test_build_includes_specialists_and_no_regression(monkeypatch):
+    """build()에 specialists 주입 + 기존 parts/verdict 계약 무회귀."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+
+    async def _ok(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "task_type": f"{domain}_t",
+                "summary": {}, "findings": [{"claim": "c"}],
+                "contradictions": None, "ledger": {"ok": True}}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService().build(address="서울특별시 강남구 역삼동 123")
+    assert "specialists" in out
+    assert {d["domain"] for d in out["specialists"]} == {"zoning", "permit"}
+    assert len(out["parts"]) == 3  # 기존 계약 무회귀
+
+
+@pytest.mark.asyncio
+async def test_build_include_specialists_false(monkeypatch):
+    """include_specialists=False면 배선 미실행(specialists=[])."""
+    _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)
+    out = await DecisionBriefService().build(
+        address="서울특별시 강남구 역삼동 123", include_specialists=False,
+    )
+    assert out["specialists"] == []
