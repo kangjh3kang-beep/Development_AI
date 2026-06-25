@@ -145,6 +145,10 @@ export function DecisionBriefPanel({
   // PDF 다운로드 상태 — 진행중/에러를 명시 분리(silent-fail 금지). 정상 완료는 브라우저 다운로드.
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // ★심의엔진 정밀분석 옵트인(전수감사 보강): 기본 off(무LLM·무과금·무네트워크). on이면 use_llm=True를
+  //   백엔드에 전달해 외부 심의엔진(11페이즈 verification/conformance) 위임 경로를 활성화한다.
+  //   그간 UI가 use_llm을 전혀 안 보내 외부 심의엔진이 분석폼에서 도달 불가였던 broken_wiring 해소.
+  const [includeDeliberation, setIncludeDeliberation] = useState(false);
   // 같은 입력(주소+면적 시그니처)으로 중복 호출을 막는 두 단계 가드(force면 무시):
   //   - lastFetchedSig: '완료된' 입력(응답 커밋됨) — 재실행 불필요 판정용.
   //   - inFlightSig: '지금 비행 중'인 입력 — ★await 이전에 즉시 세팅해 StrictMode 이중 마운트나
@@ -187,6 +191,8 @@ export function DecisionBriefPanel({
           body.land_area_sqm = landAreaSqm;
         }
         if (force) body.force_refresh = true;
+        // 심의엔진 정밀분석 옵트인 — use_llm=True면 백엔드가 외부 심의엔진(168.x) 위임을 실행한다.
+        if (includeDeliberation) body.use_llm = true;
         const data = await apiClient.post<DecisionBrief>(
           `/projects/${encodeURIComponent(projectId)}/decision-brief`,
           { body },
@@ -227,7 +233,7 @@ export function DecisionBriefPanel({
         if (mySeq === reqSeq.current) inFlightSig.current = null;
       }
     },
-    [address, projectId, landAreaSqm, inputSig, decisionBrief, setDecisionBrief],
+    [address, projectId, landAreaSqm, inputSig, decisionBrief, setDecisionBrief, includeDeliberation],
   );
 
   // ── PDF 다운로드 — JSON 브리프와 동일 입력(body)으로 PDF 엔드포인트 호출 ──
@@ -369,6 +375,30 @@ export function DecisionBriefPanel({
       {/* 완료 — 종합 판정 + 3개 통합 도메인 카드(부지·시장/법규/인허가·Top3) */}
       {state.kind === "ready" && brief && (
         <div className="flex flex-col gap-6">
+          {/* ★심의엔진 정밀분석 옵트인 — use_llm을 백엔드에 전달해 외부 심의엔진(11페이즈) 위임 활성화.
+              기본 off(무LLM·무과금). 토글 후 '심의엔진 포함 재분석'으로 적용(엔진 미설정 시 정직 unavailable). */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
+            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={includeDeliberation}
+                onChange={(e) => setIncludeDeliberation(e.target.checked)}
+                className="size-4 accent-[var(--accent-strong)]"
+              />
+              <span className="font-bold text-[var(--text-primary)]">심의엔진 정밀분석 포함</span>
+              <span>(LLM·네트워크 — 외부 심의엔진 11페이즈 verification/conformance. 기본 off=무과금)</span>
+            </label>
+            {includeDeliberation && (
+              <button
+                type="button"
+                onClick={() => void run(true)}
+                className="shrink-0 rounded-full bg-[var(--accent-strong)] px-4 py-1.5 text-[11px] font-black uppercase tracking-wider text-white"
+              >
+                심의엔진 포함 재분석
+              </button>
+            )}
+          </div>
+
           {/* ★stale 배지(staleness 모세혈관) — 부지분석이 브리프보다 최신이면 '재분석' CTA.
               자동재실행하지 않고 사용자가 직접 '다시 분석'을 누르게 한다(인간게이트).
               (이 블록은 state.kind==='ready'일 때만 렌더되므로 별도 loading 가드 불필요.) */}
