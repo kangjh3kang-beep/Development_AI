@@ -22,6 +22,7 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
   { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
 );
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { VisionBanner } from "@/components/common/VisionBanner";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";
@@ -150,6 +151,12 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             context={result as unknown as Record<string, unknown>}
             interpretation={result.ai?.summary}
             interpretationTitle="AI 규제 해석"
+          />
+
+          {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}
+          <SeniorVerdictCard
+            consultation={(result as { senior_consultation?: SeniorConsultation }).senior_consultation}
+            title="시니어 규제 자문(심의·도시계획·법무)"
           />
 
           {/* 종합 규제 계층·정량 한도·영향도·LLM 통합 해석 (공용 렌더) */}

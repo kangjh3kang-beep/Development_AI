@@ -5,6 +5,7 @@ import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, ty
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -294,6 +295,12 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="대지면적" value={formatArea(result.land_area_sqm)} />
             </div>
           </div>
+
+          {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}
+          <SeniorVerdictCard
+            consultation={(result as { senior_consultation?: SeniorConsultation }).senior_consultation}
+            title="시니어 종합 자문(심의·도시계획·법무)"
+          />
 
           {/* AI 종합 요약 */}
           {result.ai_interpretation?.overall_summary && (

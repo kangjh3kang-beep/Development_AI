@@ -13,6 +13,7 @@ import type {
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
@@ -770,6 +771,14 @@ export function MarketInsightsWorkspaceClient() {
         <FeasibilityDashboard
           data={report.feasibility_analysis}
           zoneType={report.zone_type}
+        />
+      )}
+
+      {/* 시니어 금융전문가 자문 verdict(DSCR·자기자본·debt sizing 등) — 백엔드 senior_consultation 소비 */}
+      {report && (
+        <SeniorVerdictCard
+          consultation={(report as { senior_consultation?: SeniorConsultation }).senior_consultation}
+          title="시니어 금융 자문(대주지표·사업성)"
         />
       )}
 
