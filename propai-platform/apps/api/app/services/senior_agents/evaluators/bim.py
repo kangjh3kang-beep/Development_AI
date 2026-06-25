@@ -26,6 +26,7 @@ def evaluate_bim(inputs: dict) -> list[RuleEvaluation]:
     if clash is not None and clash >= 0:
         crit_raw = num(inputs, "critical_clash_count")
         crit = crit_raw if (crit_raw is not None and crit_raw >= 0) else 0.0
+        crit = min(crit, clash)  # critical은 총 clash를 넘을 수 없음(입력 비정합 클램프)
         verdict = BLOCK if crit > 0 else (WARN if clash > 0 else PASS)
         out.append(RuleEvaluation(
             rule_id="bim.clash_triage", label="간섭(clash) critical", value=round(crit, 0), unit="건",

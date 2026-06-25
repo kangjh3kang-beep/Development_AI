@@ -4,6 +4,8 @@ deliberation_member spec(delib.multi_clause_csp)을 실제 입력으로 평가. 
 입력(context['inputs']·각 쌍 제공 시 검증): bcr_actual/bcr_limit(건폐율%)·far_actual/far_limit(용적률%)·
 height_actual/height_limit(높이m)·road_width_actual/road_width_required(접도m).
 건폐/용적/높이=actual≤limit(초과 위반), 접도=actual≥required(미달 위반). 하나라도 위반 시 BLOCK.
+한도(limit/required)가 0·음수면 미확보로 보고 해당 조항 생략(거짓 위반 방지·무목업).
+일조는 향·동지 음영 계산이 필요해 v1 제외(후속 solar_placement_service 연계).
 """
 
 from __future__ import annotations
@@ -24,19 +26,19 @@ def evaluate_deliberation(inputs: dict) -> list[RuleEvaluation]:
     checked: list[str] = []
     violations: list[str] = []
 
-    # max-제약: actual ≤ limit (초과=위반).
+    # max-제약: actual ≤ limit (초과=위반). limit 0·음수=미확보 → 생략(거짓 위반 방지).
     for key, label in _MAX_CLAUSES:
         a = num(inputs, f"{key}_actual")
         lim = num(inputs, f"{key}_limit")
-        if a is not None and lim is not None:
+        if a is not None and lim is not None and lim > 0:
             checked.append(label)
             if a > lim:
                 violations.append(f"{label} {a:g}>{lim:g}")
 
-    # min-제약(접도): actual ≥ required (미달=위반).
+    # min-제약(접도): actual ≥ required (미달=위반). required 0·음수=미확보 → 생략.
     rw_a = num(inputs, "road_width_actual")
     rw_r = num(inputs, "road_width_required")
-    if rw_a is not None and rw_r is not None:
+    if rw_a is not None and rw_r is not None and rw_r > 0:
         checked.append("접도")
         if rw_a < rw_r:
             violations.append(f"접도 {rw_a:g}<{rw_r:g}")
@@ -48,7 +50,7 @@ def evaluate_deliberation(inputs: dict) -> list[RuleEvaluation]:
     detail = (f"동시검증 {len(checked)}개({'·'.join(checked)}): "
               + (f"위반(unsat core): {', '.join(violations)}" if violations else "전 조항 동시 충족"))
     return [RuleEvaluation(
-        rule_id="delib.multi_clause_csp", label="다조항 동시검증", value=len(violations), unit="건",
+        rule_id="delib.multi_clause_csp", label="다조항 동시검증", value=float(len(violations)), unit="건",
         verdict=verdict, threshold="전 조항 동시 충족(위반 0)",
         basis="건축법·국토계획법 정량기준(건폐/용적/높이/접도)",
         detail=detail)]

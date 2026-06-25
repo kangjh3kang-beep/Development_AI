@@ -224,6 +224,13 @@ def test_bim_clash_and_recall():
     # 결측/분모0 생략
     assert evaluate_bim({}) == [] and "bim.code_compliance_recall" not in _by_id(
         evaluate_bim({"total_rules": 0, "checked_rules": 0}))
+    # recall clamp: checked>total → 100% PASS(과대 검토수 클램프)
+    over = _by_id(evaluate_bim({"total_rules": 100, "checked_rules": 150, "failed_rules": 0}))[
+        "bim.code_compliance_recall"]
+    assert over.value == 100.0 and over.verdict == PASS
+    # critical>clash 비정합 → clash로 클램프(안전측 BLOCK)
+    cl = _by_id(evaluate_bim({"clash_count": 2, "critical_clash_count": 5}))["bim.clash_triage"]
+    assert cl.value == 2.0 and cl.verdict == BLOCK
 
 
 def test_deliberation_csp_unsat_core():
@@ -239,9 +246,14 @@ def test_deliberation_csp_unsat_core():
     assert "용적률" in bad.detail and "접도" in bad.detail
     # 조항 미제공 → 생략(무목업)
     assert evaluate_deliberation({}) == []
-    # 부분 제공(건폐율만) → 그 조항만 검증
+    # 부분 제공(건폐율만) → 그 조항만 검증. value는 float 통일
     one = _by_id(evaluate_deliberation({"bcr_actual": 70, "bcr_limit": 60}))["delib.multi_clause_csp"]
-    assert one.verdict == BLOCK and one.value == 1
+    assert one.verdict == BLOCK and one.value == 1.0 and isinstance(one.value, float)
+    # ★MED: limit 0·음수(미확보) → 해당 조항 생략(거짓 위반 방지·무목업)
+    assert evaluate_deliberation({"bcr_actual": 60, "bcr_limit": 0}) == []
+    # 경계: actual==limit → 충족(PASS)
+    assert _by_id(evaluate_deliberation({"bcr_actual": 60, "bcr_limit": 60}))[
+        "delib.multi_clause_csp"].verdict == PASS
 
 
 def test_all_seven_domains_have_evaluator():
