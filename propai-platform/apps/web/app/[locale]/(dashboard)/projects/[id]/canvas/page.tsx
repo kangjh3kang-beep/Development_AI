@@ -26,6 +26,7 @@ import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
+import { AiInsightStrip } from "@/components/projects/AiInsightStrip";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
 import { LegalDiscoveryCard } from "@/components/projects/LegalDiscoveryCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
@@ -163,6 +164,11 @@ export default function SiteCanvasPage() {
               </button>
             ))}
           </div>
+
+          {/* 각 탭 상단 경량 AI 인사이트(통합 탭 풀카드와 동일 캐시 — 'LLM 미적용' 갭 해소). 통합/구획도 탭 제외. */}
+          {site?.address && tab !== "summary" && tab !== "boundary" ? (
+            <div className="mt-3"><AiInsightStrip address={site.address} /></div>
+          ) : null}
 
           <div className="mt-3 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
             {tab === "land" && (
