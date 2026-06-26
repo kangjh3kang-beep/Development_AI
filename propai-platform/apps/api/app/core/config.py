@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # C2R(Coordinate-to-Render) 이미지 렌더 provider — Google Gemini(generativelanguage REST).
+    # ★extra='ignore'라 Settings에 필드가 없으면 prod env의 GEMINI_API_KEY가 무시되므로 명시 선언.
+    #   미설정(빈 문자열)이면 c2r 렌더는 가짜 이미지를 만들지 않고 정직하게 provider_unconfigured 반환.
+    GEMINI_API_KEY: str = ""
+
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
 
