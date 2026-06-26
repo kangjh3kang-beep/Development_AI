@@ -29,6 +29,7 @@ import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { AiInsightStrip } from "@/components/projects/AiInsightStrip";
 import { DecisionBriefPanel } from "@/components/projects/DecisionBriefPanel";
 import { SeniorConsultPanel } from "@/components/orchestration/SeniorConsultPanel";
+import { BuildableMassPreview } from "@/components/projects/BuildableMassPreview";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
 import { LegalDiscoveryCard } from "@/components/projects/LegalDiscoveryCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
@@ -230,6 +231,8 @@ export default function SiteCanvasPage() {
             {tab === "solar" && (
               <>
                 <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} compact />
+                {/* ★P3.5② 법정 최대 매스 3D 미리보기(SSOT far/bcr/면적 파생·보기 게이트·근사 정직). 정밀은 설계 스튜디오. */}
+                <BuildableMassPreview farPct={resolveFarPct(site)} bcrPct={resolveBcrPct(site)} areaSqm={effArea} />
                 <DrillCta to={proj("design")}>설계 스튜디오·CAD/BIM 상세</DrillCta>
               </>
             )}
