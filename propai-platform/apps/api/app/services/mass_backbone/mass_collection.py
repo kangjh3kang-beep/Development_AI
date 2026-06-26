@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 from app.services.mass_backbone.mass_aggregation import aggregate_mass_templates
+from app.services.mass_backbone.region_util import dominant_region, region_from_address
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,10 @@ async def collect_templates(
 ) -> dict[str, Any]:
     """PNU 목록 → 대장 수집(fetcher) → 종류별 매스 템플릿 집계 + 수집 메타(provenance).
 
-    반환 = {region, zone_code, requested, fetched, templates}.
-    requested=유효(비어있지 않은) PNU 수, fetched=실제 대장 확보 수 → 수집 커버리지를 정직 표기.
+    반환 = {region, input_region, derived_region, zone_code, requested, fetched, templates}.
+    ★region = 저장에 쓸 최종 시군구. 입력 라벨(region)을 신뢰하지 않고 **수집된 대장 주소에서 도출**한
+      시군구(derived_region)를 우선 사용한다(프론트 regionFromAddress와 동일 규칙 → 조회 항상 일치).
+      도출 실패(주소 무·미매칭) 시에만 입력 라벨로 폴백. requested/fetched=수집 커버리지 정직 표기.
     """
     records: list[dict[str, Any]] = []
     requested = 0
@@ -54,11 +57,18 @@ async def collect_templates(
             records.append(rec)
             fetched += 1
 
+    # ★region 정규화(SSOT): 수집 record 주소에서 시군구 도출 → 프론트 조회 키와 일치. 도출 실패 시
+    #   입력 라벨도 시군구로 한 번 정규화 시도(주소형 라벨 대비), 그래도 실패하면 입력 원문 폴백.
+    derived = dominant_region(r.get("address") or r.get("road_address") for r in records)
+    eff_region = derived or region_from_address(region) or region
+
     templates = aggregate_mass_templates(
-        records, region=region, zone_code=zone_code, source=source, min_samples=min_samples
+        records, region=eff_region, zone_code=zone_code, source=source, min_samples=min_samples
     )
     return {
-        "region": region,
+        "region": eff_region,
+        "input_region": region,
+        "derived_region": derived,
         "zone_code": zone_code,
         "requested": requested,
         "fetched": fetched,

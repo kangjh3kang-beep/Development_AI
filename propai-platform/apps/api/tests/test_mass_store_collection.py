@@ -48,6 +48,20 @@ def test_collect_fetcher_error_is_isolated():
     assert any(t["building_type"] == "업무시설" for t in out["templates"])
 
 
+def test_collect_normalizes_region_from_record_address():
+    # ★입력 라벨이 어긋나도(예: '동탄2') 대장 주소에서 시군구(화성시)로 정규화 → 프론트 조회 키와 일치(SSOT).
+    async def fetcher(pnu):
+        return {"main_purpose": "아파트", "bcr_pct": 20, "far_pct": 200,
+                "ground_floors": 20, "total_area_sqm": 50000,
+                "address": "경기도 화성시 동탄대로 123"}
+
+    out = asyncio.run(mass_collection.collect_templates(
+        ["1", "2"], region="동탄2", fetcher=fetcher))
+    assert out["region"] == "화성시"          # 입력 '동탄2' 대신 도출 시군구 사용
+    assert out["input_region"] == "동탄2" and out["derived_region"] == "화성시"
+    assert all(t["region"] == "화성시" for t in out["templates"])
+
+
 def test_collect_empty_input():
     async def fetcher(pnu):  # 호출되지 않아야 함
         raise AssertionError("빈 입력엔 fetcher 미호출")

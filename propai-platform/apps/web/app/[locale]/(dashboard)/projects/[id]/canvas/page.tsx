@@ -18,6 +18,7 @@ import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/ma
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct, resolveDominantZone } from "@/lib/zoning-ssot";
+import { regionFromAddress } from "@/lib/region";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
@@ -232,7 +233,7 @@ export default function SiteCanvasPage() {
               <>
                 <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} compact />
                 {/* ★P3.5② 법정 최대 매스 3D 미리보기(SSOT far/bcr/면적 파생·보기 게이트·근사 정직). 정밀은 설계 스튜디오. */}
-                <BuildableMassPreview farPct={resolveFarPct(site)} bcrPct={resolveBcrPct(site)} areaSqm={effArea} />
+                <BuildableMassPreview farPct={resolveFarPct(site)} bcrPct={resolveBcrPct(site)} areaSqm={effArea} region={regionFromAddress(site?.address)} />
                 <DrillCta to={proj("design")}>설계 스튜디오·CAD/BIM 상세</DrillCta>
               </>
             )}

@@ -31,8 +31,9 @@ _MAX_PNUS = 2000
 
 
 class CollectRequest(BaseModel):
-    region: str = Field(..., min_length=1, description="지역 라벨(예: 동탄2)")
-    pnus: list[str] = Field(..., min_length=1, description="수집 대상 PNU(19자리) 목록")
+    # region은 폴백 힌트일 뿐 — 실제 저장 region은 수집된 대장 주소에서 시군구로 정규화된다(SSOT).
+    region: str = Field(..., min_length=1, description="시군구 폴백 라벨(예: 화성시). 보통 대장 주소에서 자동 도출됨")
+    pnus: list[str] = Field(..., min_length=1, description="수집 대상 PNU(19자리) 목록(같은 시군구·단일 zone 권장)")
     zone_code: str | None = Field(None, description="용도지역(단일 zone 권장 — 혼재 시 median 왜곡)")
 
 
@@ -52,12 +53,15 @@ async def collect_templates(
     result = await mass_collection.collect_templates(
         pnus, region=body.region, zone_code=body.zone_code, fetcher=registry.get_building_by_pnu,
     )
+    # ★저장 region = collect가 정규화한 시군구(result["region"])로 일치(프론트 조회 키와 동일 SSOT).
+    #   body.region(자유 라벨)을 쓰면 templates(정규화 region)와 DELETE 스코프가 어긋남.
+    eff_region = result["region"]
     saved = await mass_store.replace_templates(
-        db, result["templates"], region=body.region, zone_code=body.zone_code,
+        db, result["templates"], region=eff_region, zone_code=body.zone_code,
     )
     logger.info(
-        "mass-templates collect", region=body.region, requested=result["requested"],
-        fetched=result["fetched"], saved=saved, truncated=truncated,
+        "mass-templates collect", region=eff_region, input_region=body.region,
+        requested=result["requested"], fetched=result["fetched"], saved=saved, truncated=truncated,
     )
     # submitted=원본 요청 PNU 수(truncated 시 requested는 잘린 후 기준이라 원규모 소실 방지).
     # saved=저장된 '종류(building_type) 행' 수(= len(templates)); fetched=대장 확보 PNU 수와 구분.
