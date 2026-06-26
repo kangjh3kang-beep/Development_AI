@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight, MousePointerClick, ChevronDown, Coins, FileText } from "lucide-react";
+import { Map as MapIcon, Layers, Sun, Construction, Ruler, Download, ArrowRight, MousePointerClick, ChevronDown, Coins, FileText, Users } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -28,6 +28,7 @@ import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { AiInsightStrip } from "@/components/projects/AiInsightStrip";
 import { DecisionBriefPanel } from "@/components/projects/DecisionBriefPanel";
+import { SeniorConsultPanel } from "@/components/orchestration/SeniorConsultPanel";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
 import { LegalDiscoveryCard } from "@/components/projects/LegalDiscoveryCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
@@ -45,7 +46,7 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
   { pick: "NearbyTransactionsMap", height: 520, loadingMessage: "주변 실거래 지도 로딩…" },
 );
 
-type TabKey = "land" | "regulation" | "infra" | "development" | "solar" | "feasibility" | "summary" | "boundary";
+type TabKey = "land" | "regulation" | "infra" | "development" | "solar" | "feasibility" | "senior" | "summary" | "boundary";
 
 const eok = (won: number | null | undefined): string =>
   won == null ? "—" : `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
@@ -84,6 +85,8 @@ export default function SiteCanvasPage() {
   }, [ssotParcels, site?.address]);
 
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
+  // 전역 자산·권리 관리 페이지(프로젝트 무관·SSOT 필지 공유). Tier2 별도 관리 페이지 연동.
+  const glob = (p: string) => `/${locale}/${p}`;
 
   const TABS: { key: TabKey; label: string; icon: typeof Layers }[] = [
     { key: "land", label: "토지", icon: Layers },
@@ -92,6 +95,7 @@ export default function SiteCanvasPage() {
     { key: "development", label: "개발방식", icon: Construction },
     { key: "solar", label: "일조·배치", icon: Sun },
     { key: "feasibility", label: "수지", icon: Coins },
+    { key: "senior", label: "시니어자문", icon: Users },
     { key: "summary", label: "통합", icon: FileText },
     { key: "boundary", label: "구획도", icon: Download },
   ];
@@ -181,6 +185,12 @@ export default function SiteCanvasPage() {
               <>
                 {site?.address ? <AutoZoningBadge address={site.address} /> : null}
                 <DrillCta to={proj("site-analysis")}>토지·실거래·적정매입가 상세</DrillCta>
+                {/* ★자산·권리 관리(Tier2 별도 관리 페이지·SSOT 필지 공유) — 토지조서·등기/권리분석·시세추정 */}
+                <div className="flex flex-wrap gap-1.5">
+                  <DrillCta to={glob("land-schedule")}>토지조서 관리</DrillCta>
+                  <DrillCta to={glob("registry-analysis")}>등기부·권리분석</DrillCta>
+                  <DrillCta to={glob("desk-appraisal")}>AI 시세추정</DrillCta>
+                </div>
               </>
             )}
             {tab === "regulation" && (
@@ -193,7 +203,7 @@ export default function SiteCanvasPage() {
                     land_area_sqm: effArea,
                   }} />
                 )}
-                <BuildableEnvelopeCard />
+                <BuildableEnvelopeCard compact />
                 <RegulationDigestCard address={site?.address} />
                 <LegalDiscoveryCard address={site?.address} />
                 <PermitGuideCard />
@@ -219,7 +229,7 @@ export default function SiteCanvasPage() {
             )}
             {tab === "solar" && (
               <>
-                <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} />
+                <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} compact />
                 <DrillCta to={proj("design")}>설계 스튜디오·CAD/BIM 상세</DrillCta>
               </>
             )}
@@ -241,6 +251,13 @@ export default function SiteCanvasPage() {
                 <BuildCostCard address={site?.address} landAreaSqm={effArea} zone={site?.zoneCode} />
                 <DrillCta to={proj("feasibility")}>수지 편집·민감도 상세</DrillCta>
                 <DrillCta to={proj("cost")}>BIM 적산·공사비 상세</DrillCta>
+              </>
+            )}
+            {tab === "senior" && (
+              <>
+                {/* ★시니어 자문(9전문가 PASS/WARN/BLOCK+법조문) — jootek 미보유 차별자. 자급식(SSOT 소비·무과금). */}
+                <SeniorConsultPanel />
+                <DrillCta to={proj("orchestrate")}>AI 오케스트레이션·전문가 패널 상세</DrillCta>
               </>
             )}
             {tab === "summary" && (
