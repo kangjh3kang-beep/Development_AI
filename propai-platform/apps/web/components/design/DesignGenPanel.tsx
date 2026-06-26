@@ -21,6 +21,7 @@ import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -448,8 +449,14 @@ export function DesignGenPanel({ projectId }: Props) {
     return a && a > 0 ? Math.round(a) : 1000;
   });
   const [zoneCode, setZoneCode] = useState<string>(() => siteAnalysis?.zoneCode || "2R");
-  // 용도지역명은 store에 별도 평탄 필드가 없어 빈값 시드(정직 — 사용자가 인허가용 정식 명칭 입력).
-  const [zoneName, setZoneName] = useState<string>("");
+  // 용도지역명(한글) — 부지분석 SSOT의 zoneCode가 한글 용도지역명(예: "일반상업지역")을 담으면
+  //  그대로 시드한다. 이 값이 인허가 판정(check_permit)·매스 한도 키로 쓰여 "용도지역명 미제공"
+  //  단선을 해소한다. 코드형(2R/GC 등)·미확보면 빈값(정직 — 사용자가 정식명 입력).
+  const [zoneName, setZoneName] = useState<string>(
+    () => (/주거지역|상업지역|공업지역|녹지지역|준주거|준공업/.test(siteAnalysis?.zoneCode || "")
+      ? (siteAnalysis?.zoneCode as string)
+      : ""),
+  );
   const [sigungu, setSigungu] = useState<string>("");
   const [buildingUse, setBuildingUse] = useState<string>("공동주택");
   const [avgUnit, setAvgUnit] = useState<number>(84);
@@ -583,10 +590,18 @@ export function DesignGenPanel({ projectId }: Props) {
 
   // generate·generate/pdf 공용 요청 body(부지조건). 한 곳에서 관리해 두 경로 동일 산출 보장.
   function genBody() {
+    // ★실효(조례) 용적률·건폐율을 부지분석 SSOT에서 직접 주입(통합>실효>법정).
+    //  미주입 시 백엔드가 zone_code 조회 실패→법정 미지정 폴백(~250%)으로 빠져 설계안이
+    //  비현실(저층·과소면적)해진다. 실효값을 ordinance_*로 보내면 far_source="ordinance"로
+    //  최우선 적용되어 상단 패널(1300%)과 설계생성이 동일 한도를 쓴다(SSOT 일치).
+    const farEff = resolveFarPct(siteAnalysis);   // 예: 일반상업 1300
+    const bcrEff = resolveBcrPct(siteAnalysis);   // 예: 80
     return {
       area_sqm: areaSqm,
       zone_code: zoneCode || "2R",
       zone_name: zoneName || null,
+      ordinance_far_pct: farEff && farEff > 0 ? farEff : null,   // 실효 용적률(%) — 있으면 최우선
+      ordinance_bcr_pct: bcrEff && bcrEff > 0 ? bcrEff : null,   // 실효 건폐율(%) — 있으면 최우선
       sigungu: sigungu || null,
       building_use: buildingUse || null,
       width_m: siteW > 0 ? siteW : null,   // 선택 — 입력 시 건물 배치 폴리곤 정확화

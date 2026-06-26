@@ -274,11 +274,26 @@ def compute_buildable_envelope(
         # 신규 층수 필드(프론트 공용 소비) — 정북일조 미적용이라 일조 사선 상한 없음.
         #   arithmetic_min_floors=건폐율 만충 산술 하한(법적 개념 아님). 권장범위는 현실 용적률% 기준 추정.
         _arith_min = floors
-        _ceil_floors = zone_max_floors if zone_max_floors else floors
+        # ★권장 층수 상한 캡:
+        #   - 층수제한(녹지 4층 등)이 있으면 그 값으로 캡(현실 용적률=건폐율×제한층).
+        #   - 층수제한이 없는 용도지역(상업·준주거 — 정북일조 사선 없음)은 산술하한(_arith_min)
+        #     으로 권장을 누르지 않는다(과거 버그: _ceil_floors=floors 라 min 캡이 권장을 17층
+        #     같은 만충 산술하한으로 붕괴시켜, 고FAR 상업지 주상복합 권장이 비현실로 낮았다).
+        #     절대 높이한도(있으면)를 환산 캡으로, 없으면 무제한(탑상형 고층 — FAR÷쾌적건폐율).
+        _max_h = lim.get("max_height")
+        _height_cap_floors = max(1, int(_max_h / fh)) if _max_h and _max_h > 0 else None
+        _ceil_floors = zone_max_floors or _height_cap_floors   # None=무제한(상업 고층)
         _far_p = realistic_far * 100.0
+
+        def _cap_floors(v: int) -> int:
+            """_ceil_floors(층수제한/높이환산)가 있으면 그 값으로만 캡 — 없으면 무제한."""
+            return min(_ceil_floors, v) if _ceil_floors else v
+
         # 쾌적 건폐율 분모: 기본 30/20, objective 있으면 유형별(무회귀 — None=기본).
-        _rec_low = max(_arith_min, min(_ceil_floors, round(_far_p / comfort_bcr_low)))
-        _rec_high = max(_rec_low, min(_ceil_floors, round(_far_p / comfort_bcr_high)))
+        #   권장 = 현실 용적률% ÷ 쾌적 건폐율%(탑상형 footprint 가정). 예) 상업 1300%·30/20
+        #   → 43~65층(주상복합 실무 밴드). 산술하한보다 낮아지지 않게 max로 하한 보장.
+        _rec_low = max(_arith_min, _cap_floors(round(_far_p / comfort_bcr_low)))
+        _rec_high = max(_rec_low, _cap_floors(round(_far_p / comfort_bcr_high)))
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1),
