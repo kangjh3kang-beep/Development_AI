@@ -163,6 +163,15 @@ except ImportError:
     except ImportError:
         comprehensive_analysis_router = None
 
+# C2R(Coordinate-to-Render) — 부지 좌표 기반 렌더 브리프·이미지 렌더 (자체 prefix="/c2r")
+try:
+    from apps.api.app.routers.c2r import router as c2r_router
+except ImportError:
+    try:
+        from app.routers.c2r import router as c2r_router
+    except ImportError:
+        c2r_router = None
+
 # 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
 try:
     from apps.api.app.routers.g2b_bid import router as g2b_router
@@ -945,3 +954,6 @@ if comprehensive_analysis_router is not None:
     app.include_router(comprehensive_analysis_router, prefix="/api/v2/analysis", tags=["종합 부지분석"])
     # 프론트(apiClient)는 /api/v1 접두 → v1 별칭 등록(404 해소: /analysis/llm-providers·/analysis/comprehensive)
     app.include_router(comprehensive_analysis_router, prefix="/api/v1/analysis", tags=["종합 부지분석 v1"])
+if c2r_router is not None:
+    # C2R: 라우터 자체 prefix="/c2r" → /api/v1/c2r/brief·/api/v1/c2r/render
+    app.include_router(c2r_router, prefix="/api/v1")
