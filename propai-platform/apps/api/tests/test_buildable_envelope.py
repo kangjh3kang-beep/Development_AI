@@ -84,3 +84,30 @@ def test_precise_floor_fields_present_non_north_light_zone():
     assert r["arithmetic_min_floors"] == r["max_floors"]
     assert r["recommended_floors_low"] <= r["recommended_floors_high"]
     assert r["senior_architect_review"] is None  # 정북일조 미적용 — 정북 이격 교차검증 대상 아님
+
+
+def test_commercial_high_far_recommended_above_arithmetic_min():
+    """★B0 회귀방지: 고FAR 상업지(층수제한 없음)는 권장층수가 산술하한으로 붕괴되면 안 된다.
+
+    과거 버그: 비주거 분기 _ceil_floors=floors(산술하한)라 min 캡이 권장을 17층 같은 만충
+    산술하한으로 눌렀다. 일반상업 1300%·건폐율80% → 산술하한 17이지만 실무 권장(탑상형
+    쾌적건폐율 30/20)은 43~65층 밴드여야 한다.
+    """
+    r = compute_buildable_envelope(land_area_sqm=14959, zone="일반상업지역",
+                                   bcr_limit_pct=80, far_limit_pct=1300, floor_height_m=3.0)
+    assert r["applies_north_light"] is False
+    arith = r["arithmetic_min_floors"]
+    rec_high = r["recommended_floors_high"]
+    # 권장 상한이 산술하한보다 의미있게 높아야 한다(탑상형 고층 — 붕괴 아님).
+    assert rec_high > arith, f"권장 상한 {rec_high} ≤ 산술하한 {arith}(B0 캡 버그 재발)"
+    assert r["recommended_floors_low"] >= arith        # 하한은 산술하한 이상 보장
+    assert 30 <= rec_high <= 80                          # 주상복합 실무 밴드 근방
+
+
+def test_green_zone_floor_cap_preserved():
+    """무회귀: 층수제한(녹지) 용도지역은 여전히 zone_max_floors로 권장이 캡된다."""
+    g = compute_buildable_envelope(land_area_sqm=1000, zone="자연녹지지역", floor_height_m=3.0)
+    zmax = g.get("zone_max_floors")
+    if zmax:  # 권위 테이블에 녹지 층수제한이 있을 때만 검증
+        assert g["recommended_floors_high"] <= zmax
+        assert g["recommended_floors_low"] <= zmax
