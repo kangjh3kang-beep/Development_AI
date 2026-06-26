@@ -316,6 +316,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("memory schema_guard 호출 실패 — 마이그레이션에 의존")
 
+    # 매스 백본 — mass_templates 테이블 멱등 보장(없으면 매스 템플릿 수집 영속이 실패).
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.mass_backbone import schema_guard as mass_schema_guard
+        async with AsyncSessionLocal() as _s:
+            msok = await mass_schema_guard.ensure_mass_schema(_s)
+        logger.info("mass schema_guard", ensured=msok)
+    except Exception:
+        logger.warning("mass schema_guard 호출 실패 — 마이그레이션/지연생성에 의존")
+
     # LangSmith LLM 추적 활성화(키 있을 때만). load_into_env 이후여야 관리자 키가 반영됨.
     try:
         from apps.api.core.observability import init_langsmith
@@ -914,6 +924,15 @@ try:
     app.include_router(design_audit_router, tags=["설계심사(Design Audit)"])
 except Exception as e:
     logger.warning("app/routers/design_audit 로드 실패", error=str(e))
+
+# 매스 백본(P3.5-Data D1.5-wire): 건축물대장 종류별 매스 템플릿 수집(관리자)·조회(D2 소비).
+# 자체 prefix=/api/v1/mass-templates(충돌0). 미배포 환경에서도 라우터 등록은 무중단.
+try:
+    from app.routers.mass_templates import router as mass_templates_router
+
+    app.include_router(mass_templates_router, tags=["매스 백본"])
+except Exception as e:
+    logger.warning("app/routers/mass_templates 로드 실패", error=str(e))
 
 # 프론트가 호출하나 미마운트였던 app/routers 4종(자체 prefix 보유, 기존 라우트와 경로
 # 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는
