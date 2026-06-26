@@ -5,77 +5,14 @@
  * POST /zoning/analyze → ai_interpretation{overall_summary, risk_factors, opportunity_factors}.
  * SiteCanvas '통합' 탭의 LLM 해석(기존 규칙기반 rollup 보완). opt-in(버튼)+localStorage 캐시(재과금 방지).
  * jootek 미보유 PropAI 차별 — 비전문가 대행(전문가 수준 종합 판단·기회·리스크).
+ * ★해석 생성/캐시/다필지 통합 로직은 공용 훅 useAiInsight 단일경유(AiInsightStrip과 동일 캐시키).
  */
 
-import { useEffect, useState } from "react";
 import { Sparkles, TrendingUp, AlertTriangle } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
-
-type AiInterp = { overall_summary?: string; risk_factors?: string; opportunity_factors?: string };
-type ZoningResp = { ai_interpretation?: AiInterp };
-
-function hash(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
-}
+import { useAiInsight } from "@/components/projects/useAiInsight";
 
 export function AiInsightCard({ address }: { address?: string | null }) {
-  const [ai, setAi] = useState<AiInterp | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  // ★다필지 통합: SSOT 통합값을 읽어 /zoning/analyze에 전달 → AI 해석이 대표번지가 아니라
-  //   '통합 N필지' 기준으로 종합 판단(통합분석 근본해소).
-  const site = useProjectContextStore((s) => s.siteAnalysis);
-  const parcelCount = site?.parcelCount ?? 1;
-  const integratedArea = effectiveLandAreaSqm(site) ?? null;
-  const isMulti = (parcelCount ?? 1) > 1 && !!integratedArea && integratedArea > 0;
-  // 캐시 키에 필지수·통합면적 반영(통합/대표 결과 분리 캐시).
-  const key = address ? `propai_ai_insight_${hash(address.trim())}_${isMulti ? `m${parcelCount}_${Math.round(integratedArea!)}` : "s"}` : "";
-
-  // 캐시 복원(재과금 방지).
-  useEffect(() => {
-    if (!key || typeof window === "undefined") { setAi(null); return; }
-    try { const raw = window.localStorage.getItem(key); if (raw) setAi(JSON.parse(raw)); else setAi(null); }
-    catch { setAi(null); }
-  }, [key]);
-
-  async function run() {
-    if (!address?.trim() || loading) return;
-    setLoading(true); setError("");
-    try {
-      const r = await apiClient.post<ZoningResp>("/zoning/analyze", {
-        body: {
-          address: address.trim(),
-          // 다필지면 통합 컨텍스트 전달(대표번지 아닌 통합 N필지 기준 해석).
-          // ★SSOT 읽기 통일: 그동안 integrated_far/bcr_pct에 대표 1필지 effectiveFarPct를 넣어
-          //   "대표값을 통합값으로 라벨링"하던 버그를 정정 — resolveFarPct/resolveBcrPct(통합 > 실효 > 법정)로
-          //   진짜 면적가중 통합 실효값을 전달한다(통합 미확보면 폴백값, 그래도 단일 대표보다 정합).
-          ...(isMulti ? {
-            parcel_count: parcelCount,
-            integrated_area_sqm: integratedArea,
-            integrated_far_pct: resolveFarPct(site) ?? undefined,
-            integrated_bcr_pct: resolveBcrPct(site) ?? undefined,
-          } : {}),
-        },
-        useMock: false, timeoutMs: 60000,
-      });
-      const interp = r?.ai_interpretation ?? null;
-      if (interp && (interp.overall_summary || interp.risk_factors || interp.opportunity_factors)) {
-        setAi(interp);
-        try { if (key) window.localStorage.setItem(key, JSON.stringify(interp)); } catch { /* quota */ }
-      } else {
-        setError("AI 해석을 생성하지 못했습니다(LLM 미응답).");
-      }
-    } catch {
-      setError("AI 해석 생성에 실패했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { ai, loading, error, run, isMulti, parcelCount, integratedArea } = useAiInsight(address);
 
   if (!address?.trim()) return null;
 
