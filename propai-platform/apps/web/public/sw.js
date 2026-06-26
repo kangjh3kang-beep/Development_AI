@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v350-unified-workspace";
+const CACHE_NAME = "propai-v351-unified-p1p2";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
