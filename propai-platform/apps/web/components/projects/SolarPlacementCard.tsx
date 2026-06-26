@@ -41,8 +41,12 @@ const GRADE_COLOR: Record<string, string> = {
 
 export function SolarPlacementCard({
   address, pnu, zone, landAreaSqm,
+  /** ★통합 단일창(Tier1) 요약 모드 — 추천 배치안+8방위만, 배치 대안 비교·근거 상세는 숨김(1줄 요약).
+   *  기본 false(기존 소비처 ProjectAnalysisSummary 무손상). */
+  compact = false,
 }: {
   address?: string | null; pnu?: string | null; zone?: string | null; landAreaSqm?: number | null;
+  compact?: boolean;
 }) {
   const [res, setRes] = useState<Placement | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,17 +84,19 @@ export function SolarPlacementCard({
         <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
           <Sun className="size-4" aria-hidden /> 일조·건물배치 최적안
         </p>
-        {/* 우선순위 토글 — 다각도(일조 vs 밀도) 트레이드오프 */}
-        <div className="flex gap-1 rounded-lg bg-[var(--surface)] p-0.5">
-          {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => (
-            <button key={p} onClick={() => setPriority(p)}
-              className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition ${
-                priority === p ? "bg-[var(--accent-strong)] text-white"
-                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}>
-              {PRIORITY_LABEL[p]}
-            </button>
-          ))}
-        </div>
+        {/* 우선순위 토글 — 다각도(일조 vs 밀도) 트레이드오프. compact 요약에선 숨김(기본 균형). */}
+        {!compact && (
+          <div className="flex gap-1 rounded-lg bg-[var(--surface)] p-0.5">
+            {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => (
+              <button key={p} onClick={() => setPriority(p)}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition ${
+                  priority === p ? "bg-[var(--accent-strong)] text-white"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}>
+                {PRIORITY_LABEL[p]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 최적 배치안 */}
@@ -123,6 +129,13 @@ export function SolarPlacementCard({
         </div>
       )}
 
+      {/* ★compact(통합 단일창 요약)=추천+8방위만. 배치 대안 비교·근거 상세는 1줄 요약으로 접고 전용 페이지로. */}
+      {compact ? (
+        <p className="mt-3 text-[10px] leading-relaxed text-[var(--text-hint)]">
+          배치 대안 {res.placement_options.length}개 비교(판상/탑상/중정 등) · 상세는 설계·일조 페이지에서.
+        </p>
+      ) : (
+        <>
       {/* 배치 대안 비교 */}
       <div className="mt-4 space-y-2">
         <p className="text-[11px] font-bold text-[var(--text-secondary)]">배치 대안 비교(점수순)</p>
@@ -153,6 +166,8 @@ export function SolarPlacementCard({
         근거: 태양궤도 천문식 + 건축법 시행령 제86조(정북일조·인동간격 0.8H·일조권 09~15시 연속 2h).
         직사각형 대지·표준 매스타입 근사(정밀 3D 음영은 BIM 매스 결합 시).
       </p>
+        </>
+      )}
     </div>
   );
 }

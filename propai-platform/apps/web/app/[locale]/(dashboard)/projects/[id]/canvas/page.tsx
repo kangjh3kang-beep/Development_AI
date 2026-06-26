@@ -193,7 +193,7 @@ export default function SiteCanvasPage() {
                     land_area_sqm: effArea,
                   }} />
                 )}
-                <BuildableEnvelopeCard />
+                <BuildableEnvelopeCard compact />
                 <RegulationDigestCard address={site?.address} />
                 <LegalDiscoveryCard address={site?.address} />
                 <PermitGuideCard />
@@ -219,7 +219,7 @@ export default function SiteCanvasPage() {
             )}
             {tab === "solar" && (
               <>
-                <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} />
+                <SolarPlacementCard address={site?.address} pnu={site?.pnu} zone={site?.zoneCode} landAreaSqm={effArea} compact />
                 <DrillCta to={proj("design")}>설계 스튜디오·CAD/BIM 상세</DrillCta>
               </>
             )}
