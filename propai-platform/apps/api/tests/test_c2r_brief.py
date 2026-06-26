@@ -4,6 +4,7 @@
 """
 
 from app.services.c2r.render_brief import synthesize_brief
+from app.services.c2r.think_before import evaluate
 from app.services.site_score.solar_envelope_service import compute_buildable_envelope
 
 
@@ -100,3 +101,38 @@ def test_missing_area_honest_in_assumptions():
     brief = synthesize_brief(parcel=parcel, envelope=env)
     joined = " ".join(brief["assumptions"])
     assert "면적" in joined
+
+
+def test_footprint_fallback_when_envelope_lacks_bcr_footprint():
+    """인벨로프에 bcr_footprint_sqm 가 없으면 대지면적×건폐율로 폴백(비-정북일조 용도지역)."""
+    parcel = _sample_parcel()  # land_area 660, max_bcr 60
+    # bcr_footprint_sqm 없이 bcr_pct 만 있는 인벨로프(비-정북일조 분기 모사)
+    env = {"bcr_pct": 60.0, "max_floors": 10, "envelope_gfa_sqm": 1650.0}
+    brief = synthesize_brief(parcel=parcel, envelope=env)
+    # 660 × 0.60 = 396.0 (가짜가 아닌 산출 폴백)
+    assert brief["program"]["footprint_sqm"] == 396.0
+
+
+def test_footprint_none_when_truly_unknown():
+    """면적·건폐율 모두 미상이면 가짜값 없이 None(정직)."""
+    parcel = _sample_parcel()
+    parcel["land_area_sqm"] = None
+    parcel["zone_limits"] = {}
+    env = {"max_floors": 5}
+    brief = synthesize_brief(parcel=parcel, envelope=env)
+    assert brief["program"]["footprint_sqm"] is None
+
+
+def test_requested_floors_exceeding_envelope_blocks_think_before():
+    """사용자 요청 층수가 인벨로프 상한을 초과하면 Think-Before가 진행을 차단(모순)."""
+    env = _sample_envelope()
+    max_floors = env.get("max_floors")
+    brief = synthesize_brief(
+        parcel=_sample_parcel(), envelope=env,
+        program={"building_use": "공동주택", "target_floors": (max_floors or 5) + 20},
+    )
+    # 요청 층수가 envelope 와 분리되어 브리프에 반영
+    assert brief["program"]["target_floors"] == (max_floors or 5) + 20
+    verdict = evaluate(brief)
+    assert verdict["proceed"] is False
+    assert any("층수" in q for q in verdict["open_questions"])

@@ -36,6 +36,22 @@ def _constraint(value: Any, *, basis: str, source: str, confidence: str) -> dict
     }
 
 
+def _footprint_sqm(parcel: dict[str, Any], envelope: dict[str, Any]) -> float | None:
+    """1층 바닥면적(건폐 footprint) — envelope 직접값 우선, 없으면 대지면적×건폐율로 산출.
+
+    비-정북일조 용도지역(준주거/상업/녹지 등)은 envelope 에 bcr_footprint_sqm 가 없을 수 있어
+    대지면적×건폐율(%) 로 폴백한다. 둘 다 미상이면 None(가짜 수치 금지·정직).
+    """
+    fp = envelope.get("bcr_footprint_sqm")
+    if fp is not None:
+        return fp
+    land = envelope.get("land_area_sqm") or parcel.get("land_area_sqm")
+    bcr = envelope.get("bcr_pct", (parcel.get("zone_limits") or {}).get("max_bcr_pct"))
+    if land and bcr:
+        return round(float(land) * (float(bcr) / 100.0), 1)
+    return None
+
+
 def _envelope_constraints(parcel: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
     """건폐율/용적률/높이/공지(이격) 제약을 근거계약으로 묶는다(각 값에 basis/source)."""
     limits = parcel.get("zone_limits") or {}
@@ -202,8 +218,11 @@ def synthesize_brief(
         "program": {
             "building_use": use,                       # 용도(공동주택/근생/주상복합 등)
             "scale": scale,                            # 규모(저층/중층/고층)
-            "target_floors": envelope.get("max_floors"),
-            "footprint_sqm": envelope.get("bcr_footprint_sqm"),
+            # 사용자 요청 층수 우선 → 없으면 인벨로프 권장 상한 폴백.
+            #  ★요청값을 envelope 와 분리해 둬야 Think-Before 의 '매스>인벨로프' 모순 검사가
+            #    자동경로에서도 실제로 발화한다(요청이 상한 초과면 차단).
+            "target_floors": program.get("target_floors") or envelope.get("max_floors"),
+            "footprint_sqm": _footprint_sqm(parcel, envelope),
             "gfa_sqm": envelope.get("effective_gfa_sqm") or envelope.get("envelope_gfa_sqm"),
         },
         "design_language": program.get("style")

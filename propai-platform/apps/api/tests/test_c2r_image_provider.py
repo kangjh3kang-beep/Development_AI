@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.services.c2r.image_provider import render_image
+from app.services.c2r.image_provider import _sanitize, render_image
 
 
 def _brief() -> dict:
@@ -73,3 +73,45 @@ async def test_provider_name_normalized(monkeypatch, provider):
     _strip_keys(monkeypatch)
     out = await render_image(_brief(), provider=provider)
     assert out["status"] == "provider_unconfigured"
+
+
+def test_sanitize_redacts_secrets():
+    """에러 텍스트의 key=/Bearer/x-goog-api-key 토큰이 가려진다(키 유출 차단)."""
+    secret = "AIzaSyD-EXAMPLE-SECRET-KEY-123456789"
+    for raw in (
+        f"400 Bad Request for url: https://x/y?key={secret}",
+        f"Authorization: Bearer {secret} failed",
+        f"x-goog-api-key: {secret} invalid",
+    ):
+        out = _sanitize(raw, limit=500)
+        assert secret not in out, raw
+        assert "***" in out
+
+
+async def test_gemini_error_does_not_leak_key(monkeypatch):
+    """gemini 호출이 키를 담은 예외로 실패해도 reason/로그에 키가 새지 않는다(HIGH 회귀방지)."""
+    secret = "AIzaSyD-LEAK-CHECK-9876543210"
+    monkeypatch.setenv("GEMINI_API_KEY", secret)
+
+    class _BoomClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            # 업스트림 에러 문자열에 키가 섞여 들어오는 최악 케이스를 모사.
+            raise RuntimeError(f"401 Unauthorized url=https://g/m:generateContent?key={secret}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _BoomClient)
+    out = await render_image(_brief(), provider="gemini")
+    assert out["status"] == "render_error"
+    assert out["image"] is None
+    assert secret not in out["reason"]
+    assert secret[:10] not in out["reason"]
