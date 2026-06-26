@@ -93,6 +93,28 @@ interface AutoRecommendApiResponse {
 }
 type UpzoningPotential = AutoRecommendApiResponse["upzoning_potential"];
 
+// ★100% 완성: IntegratedRecommender(/optimal-recommend) 현행+종상향 2축 통합 순위 후보.
+//   종상향(far_basis='종상향') 후보는 '미래 토지속성 반영 추천'으로 랭킹에 실반영(배너 아닌 실후보).
+interface OptimalRankedCandidate {
+  method?: string;
+  type_name?: string;
+  applied_far_pct?: number | null;
+  net_profit?: number | null;
+  profit_rate_pct?: number | null;
+  npv?: number | null;
+  composite?: number | null;
+  far_basis?: string; // "현행" | "종상향"
+  target_zone?: string | null;
+  tentative?: boolean;
+}
+interface OptimalRecommendResponse {
+  ranked?: OptimalRankedCandidate[];
+  integrated_area_sqm?: number;
+  baseline_far_pct?: number;
+  scenario_status?: string;
+  honest_disclosure?: string | null;
+}
+
 // 백엔드 응답 → 프론트엔드 모델 변환
 function mapToRecommendedModel(item: BackendRecommendItem, rank: number): RecommendedModel {
   return {
@@ -247,6 +269,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [analysisCount, setAnalysisCount] = useState(0);
   // ★P1: 종상향 잠재(미래 토지속성) — 현행 추천과 분리 표기(예상치·확정 아님).
   const [upzoning, setUpzoning] = useState<UpzoningPotential>(null);
+  // ★100% 완성: 종상향 시 추천 사업방식(IntegratedRecommender 2축 랭킹의 종상향 후보) — 실랭킹 반영.
+  const [upzoningRanked, setUpzoningRanked] = useState<OptimalRankedCandidate[]>([]);
   const [showFullTable, setShowFullTable] = useState(false);
 
   // Modal state
@@ -267,6 +291,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     setTopModels([]);
     setAllModels([]);
     setUpzoning(null);
+    setUpzoningRanked([]);
     setAiInterpretation(null);
 
     // Simulate progress
@@ -303,6 +328,26 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       setUpzoning(response.upzoning_potential ?? null);
       setAiInterpretation(response.ai_interpretation ?? null);
 
+      // ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹에 반영되도록 IntegratedRecommender(2축)를
+      //   ★fire-and-forget(메인 로딩을 막지 않음·외부수집 별도) — 종상향(far_basis='종상향') 후보를 비동기 surface.
+      //   실패해도 본 추천 불변(graceful). 메인 추천은 위에서 이미 렌더 완료라 로딩 인디케이터는 즉시 해제된다.
+      const _optAddrs = [address.trim(), ...parcels].filter(Boolean);
+      void (async () => {
+        try {
+          const opt = await apiClient.post<OptimalRecommendResponse>("/development-methods/optimal-recommend", {
+            body: { addresses: _optAddrs, parcel_subset_policy: "전체" },
+            useMock: false,
+          });
+          setUpzoningRanked(
+            (opt?.ranked ?? [])
+              .filter((c) => c.far_basis === "종상향" && (c.net_profit != null || c.profit_rate_pct != null))
+              .slice(0, 4),
+          );
+        } catch {
+          setUpzoningRanked([]); // graceful — 종상향 랭킹 미확보(현행 추천은 정상)
+        }
+      })();
+
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장 (partial merge)
       updateSiteAnalysis({
         address,
@@ -314,7 +359,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     } finally {
       setIsLoading(false);
     }
-  }, [address, region, landArea]);
+  }, [address, region, landArea, parcels]);
 
   // embedded 모드: 마운트 시 store의 주소로 1회 자동 분석 (통합 흐름의 "단계 확인 후" 진입점)
   const embeddedAutoRunRef = useRef(false);
@@ -716,6 +761,39 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
           {upzoning.disclaimer && (
             <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)]">{upzoning.disclaimer}</p>
           )}
+        </div>
+      )}
+
+      {/* ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹 반영(IntegratedRecommender 2축의 종상향 후보).
+          ★배너(upzoning_potential)와 독립 — 두 엔진(calc_upzoning vs IntegratedRecommender) 판정이 달라도 노출. */}
+      {upzoningRanked.length > 0 && (
+        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+          <div className="mb-2 flex items-center gap-2">
+            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <h3 className="text-base font-black text-[var(--text-primary)]">종상향 시 추천 사업방식(수익순·잠재)</h3>
+          </div>
+          <div className="space-y-1.5">
+            {upzoningRanked.map((c) => (
+              <div key={`${c.method ?? ""}-${c.target_zone ?? ""}-${c.applied_far_pct ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2">
+                <span className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-amber-400">종상향</span>
+                  <span className="text-[12px] font-bold text-[var(--text-primary)]">{c.type_name || c.method}</span>
+                  {c.applied_far_pct != null && (
+                    <span className="text-[10px] text-[var(--text-tertiary)]">용적 {c.applied_far_pct}%</span>
+                  )}
+                </span>
+                <span className="flex items-center gap-2 text-[10px]">
+                  {c.profit_rate_pct != null && (
+                    <span className="font-bold text-[var(--accent-strong)]">수익률 {c.profit_rate_pct.toFixed(1)}%</span>
+                  )}
+                  {c.composite != null && <span className="text-[var(--text-tertiary)]">종합 {c.composite.toFixed(1)}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">
+            종상향 후보는 고시·심의 통과를 전제로 한 조건부 시나리오입니다(확정 아님). 수익성은 동일 면적 상대비교.
+          </p>
         </div>
       )}
 
