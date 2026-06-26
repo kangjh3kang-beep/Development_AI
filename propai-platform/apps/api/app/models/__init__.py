@@ -15,6 +15,7 @@ from apps.api.database.models.v61_cost import (
     ProgressBilling, LegalRateHistory, StandardPriceUpdate,
 )
 from app.models.memory import AgentMemory
+from app.models.mass_template import MassTemplate
 
 __all__ = [
     "Organization", "User", "Role", "Permission", "RolePermission", "UserRole", "APIKey", "AuditLog",
@@ -30,4 +31,5 @@ __all__ = [
     "CostWorkType", "MaterialUnitPrice", "BimQuantity", "CostCalculationSheet",
     "ProgressBilling", "LegalRateHistory", "StandardPriceUpdate",
     "AgentMemory",
+    "MassTemplate",
 ]
