@@ -57,9 +57,13 @@ export function BuildableEnvelopeCard({
   //   미전달(단일필지)이면 종전처럼 store 실효값을 사용한다(무회귀).
   integratedFarPct,
   integratedBcrPct,
+  /** ★통합 단일창(Tier1) 요약 모드 — 상위 KPI(헤더+4타일)만 노출, 상세(계단식/시니어검토/그림자/근거)
+   *  숨김. 기본 false(기존 소비처 ProjectAnalysisSummary 무손상). */
+  compact = false,
 }: {
   integratedFarPct?: number | null;
   integratedBcrPct?: number | null;
+  compact?: boolean;
 } = {}) {
   const site = useProjectContextStore((s) => s.siteAnalysis);
   const design = useProjectContextStore((s) => s.designData);
@@ -224,6 +228,9 @@ export function BuildableEnvelopeCard({
         <Tile label="일조 규제로 줄어든 비율" tip="일조 규제 때문에 줄어든 연면적 비율(일조 손실률)" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
       </div>
 
+      {/* ★compact(통합 단일창 요약)=헤더+4타일 KPI만. 아래 상세 일괄 숨김(가독성·드릴다운은 전용 페이지). */}
+      {!compact && (
+        <>
       {/* 계단식 단면 한 줄(백엔드 제공 시) — 정북일조 사선으로 북측은 낮고 심부는 높은 단면. */}
       {res.floor_profile_note && (
         <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] leading-snug text-[var(--text-secondary)]">
@@ -317,6 +324,8 @@ export function BuildableEnvelopeCard({
       {/* 산출 근거(EvidencePanel) — 응답 수치로 산식 트레이스 구성(가짜값/가짜URL 0).
           용적률·일조 한도 산식을 한 줄씩 보여 "왜 이 연면적·층수인가?"에 답한다. */}
       <EvidencePanel className="mt-3" items={evidenceItems} title="건축 가능 범위 산출 근거" />
+        </>
+      )}
     </div>
   );
 }
