@@ -27,6 +27,7 @@ import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { AiInsightStrip } from "@/components/projects/AiInsightStrip";
+import { DecisionBriefPanel } from "@/components/projects/DecisionBriefPanel";
 import { RegulationDigestCard } from "@/components/projects/RegulationDigestCard";
 import { LegalDiscoveryCard } from "@/components/projects/LegalDiscoveryCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
@@ -48,6 +49,16 @@ type TabKey = "land" | "regulation" | "infra" | "development" | "solar" | "feasi
 
 const eok = (won: number | null | undefined): string =>
   won == null ? "—" : `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
+
+/** 전용 페이지 드릴다운 CTA(요약→상세). ★모듈 레벨 — 렌더 내 컴포넌트 생성 금지(react-hooks/static-components). */
+function DrillCta({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link href={to}
+      className="mt-2 inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">
+      {children} <ArrowRight className="size-3" aria-hidden />
+    </Link>
+  );
+}
 
 export default function SiteCanvasPage() {
   const params = useParams();
@@ -84,15 +95,6 @@ export default function SiteCanvasPage() {
     { key: "summary", label: "통합", icon: FileText },
     { key: "boundary", label: "구획도", icon: Download },
   ];
-
-  function DrillCta({ to, children }: { to: string; children: React.ReactNode }) {
-    return (
-      <Link href={to}
-        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">
-        {children} <ArrowRight className="size-3" aria-hidden />
-      </Link>
-    );
-  }
 
   // 부지 미확정 — SiteCanvas에서 바로 필지를 검색/지도클릭/엑셀로 선택(SSOT 기록 → 아래 분석 자동 채움).
   if (!site?.address && !site?.pnu && mapAddresses.length === 0) {
@@ -149,6 +151,10 @@ export default function SiteCanvasPage() {
           />
         </div>
       )}
+
+      {/* ★상단 히어로 — AI 종합판정(Go/CONDITIONAL/HOLD). 자급식(SSOT 주소 자동실행)·단일창 최상위 결론.
+          jootek 미보유 차별자(부지+법규+인허가+설계Top3 통합 판정)를 첫 화면에 전면 배치(P0②). */}
+      <DecisionBriefPanel projectId={id} />
 
       {/* 2분할: 좌 요약 탭 rail + 우 지도 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[400px_1fr]">
