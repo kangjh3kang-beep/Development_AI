@@ -105,6 +105,67 @@ def test_collect_validation_empty_pnus():
     assert r.status_code == 422   # pnus min_length=1 검증
 
 
+def test_collect_region_admin_persists(monkeypatch):
+    async def search_fn(dong):
+        return "4113510800100010000" if "정자동" in dong else None
+
+    async def title_fn(sgg, bjd):
+        return [{"main_purpose": "아파트", "bcr_pct": 18, "far_pct": 200, "ground_floors": 20,
+                 "total_area_sqm": 50000, "address": "경기도 성남시 분당구 정자동 1"}]
+
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
+    app, sess = _make_app(user=_Admin())
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/collect-region",
+                    json={"groups": [{"dongs": ["경기도 성남시 분당구 정자동", "없는동"]}]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    g = body["groups"][0]
+    assert g["region"] == "분당구" and g["resolved_dongs"] == 1   # 미해석 동 제외
+    rgn = next(x for x in body["regions"] if x["region"] == "분당구")
+    assert rgn["saved"] >= 1 and rgn["records"] == 1
+    assert any("DELETE" in c[0].upper() for c in sess.calls)   # 스냅샷 교체 실행
+
+
+def test_collect_region_merges_duplicate_region_groups(monkeypatch):
+    # ★같은 시군구가 2개 그룹으로 와도 record 병합 → region당 1 스냅샷(후행이 선행 silent 삭제 방지·MEDIUM-1).
+    async def search_fn(dong):
+        m = {"정자동": "4113510800100010000", "백현동": "4113511800100010000"}
+        return next((v for k, v in m.items() if k in dong), None)
+
+    async def title_fn(sgg, bjd):
+        addr = "경기도 성남시 분당구 정자동 1" if bjd == "10800" else "경기도 성남시 분당구 백현동 1"
+        far = 200 if bjd == "10800" else 240
+        return [{"main_purpose": "아파트", "bcr_pct": 20, "far_pct": far, "ground_floors": 20,
+                 "total_area_sqm": 50000, "address": addr}]
+
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
+    app, sess = _make_app(user=_Admin())
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [
+        {"dongs": ["경기도 성남시 분당구 정자동"]},
+        {"dongs": ["경기도 성남시 분당구 백현동"]},
+    ]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # 두 그룹 모두 분당구 → region 1개로 병합, 표본 2건(병합 후 median far=220)
+    assert len(body["regions"]) == 1
+    rgn = body["regions"][0]
+    assert rgn["region"] == "분당구" and rgn["records"] == 2
+    apt = next(t for t in rgn["templates"] if t["building_type"] == "공동주택")
+    assert apt["sample_count"] == 2 and apt["median_far_pct"] == 220.0
+    # DELETE는 분당구에 대해 1회만(스냅샷 충돌 없음)
+    assert sum(1 for c in sess.calls if "DELETE" in c[0].upper()) == 1
+
+
+def test_collect_region_blocks_non_admin(monkeypatch):
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (None, None))  # 게이트가 먼저 차단
+    app, _ = _make_app(user=_NonAdmin())
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [{"dongs": ["x"]}]})
+    assert r.status_code == 403
+
+
 def test_list_requires_auth():
     # get_current_user 미override → auth_service가 무토큰 401(인증 게이트 실경로 회귀방어).
     app = FastAPI()

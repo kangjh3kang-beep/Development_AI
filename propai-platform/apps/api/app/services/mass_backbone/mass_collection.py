@@ -22,6 +22,69 @@ logger = logging.getLogger(__name__)
 
 # PNU(19자리 문자열) → 정규화 대장 record(dict) 또는 None(무자료/미승인). building_registry_service 시그니처.
 Fetcher = Callable[[str], Awaitable["dict[str, Any] | None"]]
+# 법정동명(주소) → PNU(19자리) 또는 None. VWorld search_address 어댑터.
+SearchFn = Callable[[str], Awaitable["str | None"]]
+# (시군구코드, 법정동코드) → 정규화 record 목록. BuildingRegistryService.list_titles_by_bjdong.
+TitleFn = Callable[[str, str], Awaitable["list[dict[str, Any]]"]]
+
+
+async def collect_region(
+    dongs: Iterable[Any],
+    *,
+    search_fn: SearchFn,
+    title_fn: TitleFn,
+    region_hint: str | None = None,
+    source: str = "building_registry",
+    min_samples: int = 1,
+    max_dongs: int = 30,
+) -> dict[str, Any]:
+    """법정동명 목록 → (search_fn으로 PNU 해석 → title_fn으로 표제부 벌크 수집) → 종류별 매스 집계.
+
+    신도시 시드용 — 개별 PNU 없이 법정동 단위로 다수 건축물을 수집한다(무목업: 실 표제부만).
+    ★region = 수집 record 주소에서 시군구 자동 도출(프론트 조회 키와 일치, region_hint는 폴백).
+    ★단일 시군구 동들을 한 호출로(혼재 시 dominant 1개로 라벨됨 — caller가 시군구별로 호출 권장).
+    반환 = {region, input_region, derived_region, requested_dongs, resolved_dongs, records, templates}.
+    """
+    records: list[dict[str, Any]] = []
+    requested_dongs = 0
+    resolved_dongs = 0
+    for raw in list(dongs)[:max_dongs]:
+        dong = str(raw or "").strip()
+        if not dong:
+            continue
+        requested_dongs += 1
+        try:
+            pnu = await search_fn(dong)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("법정동 PNU 검색 실패 %s: %s", dong, str(e)[:120])
+            pnu = None
+        if not pnu or len(pnu) < 19:
+            continue
+        try:
+            recs = await title_fn(pnu[:5], pnu[5:10])
+        except Exception as e:  # noqa: BLE001 — 개별 동 실패 격리
+            logger.warning("표제부 벌크 실패 %s(%s): %s", dong, pnu[:10], str(e)[:120])
+            recs = []
+        if recs:
+            records.extend(recs)
+            resolved_dongs += 1
+
+    derived = dominant_region(r.get("address") or r.get("road_address") for r in records)
+    eff_region = derived or region_from_address(region_hint) or region_hint
+    templates = (
+        aggregate_mass_templates(records, region=eff_region, source=source, min_samples=min_samples)
+        if eff_region else []
+    )
+    return {
+        "region": eff_region,
+        "input_region": region_hint,
+        "derived_region": derived,
+        "requested_dongs": requested_dongs,
+        "resolved_dongs": resolved_dongs,
+        "records": len(records),
+        "records_list": records,   # 원자료 — caller가 같은 region 그룹을 record 단위로 병합할 때 사용
+        "templates": templates,
+    }
 
 
 async def collect_templates(

@@ -62,6 +62,58 @@ def test_collect_normalizes_region_from_record_address():
     assert all(t["region"] == "화성시" for t in out["templates"])
 
 
+def test_collect_region_bulk_resolves_and_aggregates():
+    # 동명→PNU(search_fn)→법정동코드→표제부 벌크(title_fn). 미해석/빈 동은 건너뜀, region 자동 도출.
+    pnu_map = {
+        "경기도 성남시 분당구 정자동": "4113510800100010000",  # bjdong=10800
+        "경기도 성남시 분당구 백현동": "4113511800100010000",  # bjdong=11800
+        "없는동": None,
+    }
+    titles = {
+        "10800": [
+            {"main_purpose": "아파트", "bcr_pct": 18, "far_pct": 200, "ground_floors": 20,
+             "total_area_sqm": 50000, "address": "경기도 성남시 분당구 정자동 1"},
+            {"main_purpose": "제1종근린생활시설", "bcr_pct": 58, "far_pct": 150, "ground_floors": 5,
+             "total_area_sqm": 1200, "address": "경기도 성남시 분당구 정자동 2"},
+        ],
+        "11800": [
+            {"main_purpose": "아파트", "bcr_pct": 22, "far_pct": 240, "ground_floors": 25,
+             "total_area_sqm": 60000, "address": "경기도 성남시 분당구 백현동 1"},
+        ],
+    }
+
+    async def search_fn(dong):
+        return pnu_map.get(dong)
+
+    async def title_fn(sgg, bjd):
+        return titles.get(bjd, [])
+
+    out = asyncio.run(mass_collection.collect_region(
+        ["경기도 성남시 분당구 정자동", "경기도 성남시 분당구 백현동", "없는동", ""],
+        search_fn=search_fn, title_fn=title_fn))
+    assert out["requested_dongs"] == 3   # 빈 문자열 제외
+    assert out["resolved_dongs"] == 2    # '없는동'은 PNU 미해석 → skip
+    assert out["records"] == 3
+    assert out["region"] == "분당구"      # 표제부 주소에서 시군구 자동 도출(프론트 키와 일치)
+    bt = {t["building_type"]: t for t in out["templates"]}
+    assert bt["공동주택"]["sample_count"] == 2   # 정자동·백현동 아파트
+    assert bt["공동주택"]["median_far_pct"] == 220.0   # median(200,240)
+    assert bt["근린생활시설"]["sample_count"] == 1
+
+
+def test_collect_region_no_resolution_uses_hint_or_empty():
+    async def search_fn(dong):
+        return None  # 전부 미해석
+
+    async def title_fn(sgg, bjd):
+        raise AssertionError("미해석 동엔 title_fn 미호출")
+
+    out = asyncio.run(mass_collection.collect_region(
+        ["x", "y"], search_fn=search_fn, title_fn=title_fn, region_hint="분당구"))
+    assert out["resolved_dongs"] == 0 and out["records"] == 0
+    assert out["templates"] == []        # 무자료 → 빈 목록(가짜 생성 금지)
+
+
 def test_collect_empty_input():
     async def fetcher(pnu):  # 호출되지 않아야 함
         raise AssertionError("빈 입력엔 fetcher 미호출")
