@@ -485,8 +485,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   확보) '칩+고급서랍' 레이아웃을 쓴다. 편집해도 레이아웃이 안 바뀌어 입력칸이 언마운트되지 않으므로
   //   타이핑 중 포커스 상실이 없다(서랍 안 NumberInput은 키 입력마다 onChange라 이 분리가 필수).
   const layoutSeeded = isSiteMatched && seededLandAreaSqm != null;
-  // autoSeeded(=아직 사용자가 손대지 않음)는 '부지분석 자동' 출처 배지 표시용으로만 쓴다.
-  const autoSeeded = layoutSeeded && !userEdited;
+  // '부지분석 자동' vs '직접 수정' 배지는 칩 렌더에서 !userEdited로 직접 분기한다(별도 변수 불필요).
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
