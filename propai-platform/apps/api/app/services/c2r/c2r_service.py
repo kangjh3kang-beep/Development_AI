@@ -129,6 +129,13 @@ def _attach_geometry_hash(
     if footprint is not None:
         geom_fp["footprint_sqm"] = footprint
 
+    # ★핵심 기하키(인벨로프의 far/bcr/연면적/층수 등)를 하나도 못 담았으면 — 인벨로프 산출이
+    #   실패(대지면적 미확보 등)한 빈 지문이다. 이런 브리프엔 hash를 붙이지 않는다(가드가 '검증 안 된
+    #   브리프'로 정직하게 차단하도록). 빈 지문에 hash를 붙이면 '빈 일치'로 가드를 우회한다(MEDIUM 수정).
+    core_keys = set(_GEOM_FINGERPRINT_KEYS)
+    if not any(k in core_keys for k in geom_fp):
+        return  # 검증할 기하 신호 없음 → hash 미부착(brief 무변경)
+
     # 2키만 additive 부착 — 기존 브리프 구조·키는 그대로.
     brief["geometry_fingerprint"] = geom_fp
     brief["geometry_hash"] = compute_geometry_hash(geom_fp)

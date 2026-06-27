@@ -52,6 +52,15 @@ def check_render_allowed(brief: dict[str, Any]) -> dict[str, Any]:
 
     fingerprint = brief.get("geometry_fingerprint")
 
+    # 1-b) 기하요약이 '빈 dict'면 = 검증할 기하 신호가 없는 브리프(인벨로프 산출 실패 등).
+    #      빈 지문에 hash만 붙어 '빈 일치'로 통과하는 우회를 막는다(MEDIUM 수정·방어 심화).
+    if isinstance(fingerprint, dict) and not fingerprint:
+        return {
+            "allowed": False,
+            "reason": "geometry_fingerprint 비어있음 — 검증할 기하 신호 없음(인벨로프 미산출)",
+            "status": "blocked_by_unverified_geometry",
+        }
+
     # 2) 지문과 기하요약이 둘 다 있으면 재계산해 대조한다(변조 탐지).
     if isinstance(fingerprint, dict):
         recomputed = compute_geometry_hash(fingerprint)
@@ -64,4 +73,8 @@ def check_render_allowed(brief: dict[str, Any]) -> dict[str, Any]:
         return {"allowed": True, "reason": None, "status": "allowed"}
 
     # 3) 지문만 있고 기하요약은 없다 → 외부 검증 해시로 간주해 허용(현 단계 정책).
+    #    ★ENFORCE 승격 전 봉인 필요(2 우회구멍·shadow에선 무영향, 우리 파이프라인은 항상 fingerprint 동반):
+    #      (a) fingerprint 생략 우회: 이 case를 'fingerprint 필수'로 강화(blocked)해야 임의 해시 통과를 막는다.
+    #      (b) self-consistent 위조: 평문 sha256은 {임의 fp, 그 fp의 hash} 통째 위조를 못 막는다 — /render가
+    #          /brief 산출물만 받는 신뢰경계가 아니라면 HMAC(서버 비밀키 서명)/서버측 brief 캐시 바인딩 필요.
     return {"allowed": True, "reason": None, "status": "allowed"}

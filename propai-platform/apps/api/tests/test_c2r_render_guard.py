@@ -151,3 +151,12 @@ def test_render_enforce_blocks_unverified_brief():
     assert out["status"] == "blocked_by_unverified_geometry"
     assert out["render_guard"] == "enforced"
     assert out.get("image") is None  # render 미호출 → 이미지 키 자체가 없음(가짜 이미지 없음)
+
+
+def test_guard_blocks_empty_fingerprint():
+    """★빈 geometry_fingerprint(인벨로프 산출 실패)는 hash가 있어도 차단 — '빈 일치' 우회 방지(MEDIUM)."""
+    from app.services.cad.provenance import compute_geometry_hash
+    brief = {"geometry_hash": compute_geometry_hash({}), "geometry_fingerprint": {}}
+    res = check_render_allowed(brief)
+    assert res["allowed"] is False
+    assert res["status"] == "blocked_by_unverified_geometry"
