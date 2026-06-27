@@ -509,8 +509,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         calc.maxFloors,
       );
     // 우측 지표(무날조 — calc/envResult 실값만). 층수는 일조 인벨로프 권장층수가 있으면 그 값을, 없으면 maxFloors.
+    // 층수 폴백은 calc.recFloors(현실 권장) — 좌측 '예상 층수' 카드가 의도적으로 피한
+    // calc.maxFloors(산술하한·과소 오도)를 우측 칩이 노출하지 않게 좌·우 층수 정의를 맞춘다.
     const floors =
-      envResult?.recommended_floors_high ?? envResult?.recommended_floors_low ?? calc.maxFloors;
+      envResult?.recommended_floors_high ?? envResult?.recommended_floors_low ?? calc.recFloors;
     // 예상 전용 연면적 = 최대 연면적 × 효율(%) — 좌측 카드의 estGfa와 동일 식.
     const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * ((active.efficiency || 0) / 100)) : null;
     return { active, geom, isBest: (active.efficiency || 0) === best, floors, estGfa };
@@ -895,8 +897,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                     { label: "건축면적", val: calc.buildableArea != null ? `${Math.round(calc.buildableArea).toLocaleString()}㎡` : "—" },
                     { label: "예상 전용 연면적", val: activeMassing.estGfa != null ? `${activeMassing.estGfa.toLocaleString()}㎡` : "—" },
                     { label: "효율", val: activeMassing.active.efficiency != null ? `${activeMassing.active.efficiency}%` : "—" },
-                    { label: "건폐율(BCR)", val: resolveBcrPct(siteAnalysis) != null ? `${resolveBcrPct(siteAnalysis)}%` : `${calc.buildingCoverage}%` },
-                    { label: "용적률(FAR)", val: resolveFarPct(siteAnalysis) != null ? `${resolveFarPct(siteAnalysis)}%` : `${calc.floorAreaRatio}%` },
+                    // BCR/FAR은 좌측 calc 확정값으로 단일화 — calc는 이미 주소 정합성(mismatch) 가드를
+                    // 통과한 buildingCoverage/floorAreaRatio라, 다른 부지 잔류 분석이 칩을 오염시키지 않게
+                    // 가드를 자동 상속하고 좌·우 출처가 한곳으로 묶인다(SSOT).
+                    { label: "건폐율(BCR)", val: calc.buildingCoverage != null ? `${calc.buildingCoverage}%` : "—" },
+                    { label: "용적률(FAR)", val: calc.floorAreaRatio != null ? `${calc.floorAreaRatio}%` : "—" },
                   ].map((chip) => (
                     <div key={chip.label} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-center">
                       <p className="cc-label text-[10px] text-[var(--text-hint)]">{chip.label}</p>
