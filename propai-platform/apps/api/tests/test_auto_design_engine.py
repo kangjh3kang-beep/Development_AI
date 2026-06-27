@@ -250,3 +250,62 @@ class TestWALegalCorrections:
         assert "주차장법 단순화" in basis["parking_formula"]
         assert "코어" in basis["core_formula"]
         assert basis["applied_limits"]["statutory_max_far_percent"] == 200.0
+
+
+def _mass(zone: str, area: float) -> dict:
+    """zone·면적으로 compute_optimal_mass 결과를 산출(테스트 헬퍼)."""
+    svc = AutoDesignEngineService
+    si = SiteInput(site_area_sqm=area, zone_code=zone)
+    return svc.compute_optimal_mass(si, svc.compute_effective_site(si), svc.get_legal_limits(zone))
+
+
+class TestPodiumTowerMassing:
+    """★Podium-Tower 실무 매스(B1) — 고FAR 비일조 상업/준주거는 저층 podium+고층 tower 분할.
+
+    단일 만층 박스(예 16층) 비현실 해소: 실무 주상복합은 footprint를 줄이고 30~60층으로 올린다.
+    정북일조(주거)·저FAR은 단일박스 보존(무회귀).
+    """
+
+    def test_commercial_high_far_is_podium_tower(self):
+        """일반상업(GC) 고FAR → podium_tower 프로파일·현실 고층(단일 만층 박스 아님)."""
+        m = _mass("GC", 14959)
+        assert m.get("massing_profile") == "podium_tower"
+        assert "podium" in m and "tower" in m
+        # 저층 podium + 고층 tower, tower가 podium보다 높다(고층 주거).
+        assert m["tower"]["floors"] > m["podium"]["floors"]
+        # 만층 산술하한(고FAR/건폐율 ≈ 13~17층)보다 의미있게 높은 현실 고층.
+        assert m["num_floors"] >= 25, f"podium-tower 층수 {m['num_floors']} — 비현실 저층"
+        # tower 플로어플레이트는 podium보다 작다(footprint 축소 고층화).
+        assert m["tower"]["footprint_sqm"] < m["podium"]["footprint_sqm"]
+
+    def test_podium_tower_far_within_legal(self):
+        """composite 연면적이 법정 용적률을 초과하지 않는다(과대 금지·무날조)."""
+        legal = AutoDesignEngineService.get_legal_limits("GC")
+        m = _mass("GC", 14959)
+        assert m["far_pct"] <= legal["max_far_percent"] + 1.0  # 부동소수 여유
+
+    def test_residential_zone_keeps_single_box(self):
+        """제2종일반주거(정북일조·저FAR)는 podium-tower 미적용(단일박스 보존·무회귀)."""
+        m = _mass("2R", 660)
+        assert m.get("massing_profile") != "podium_tower"
+        assert "podium" not in m
+
+    def test_units_use_residential_floors_not_total(self):
+        """★무날조: 세대수는 주거(tower) 층수 기준 — podium(상가·주차) 층을 주거로 중복계산 금지."""
+        m = _mass("GC", 14959)
+        res_floors = m["floors_for_units"]
+        assert res_floors == m["tower"]["floors"] < m["num_floors"]  # podium 제외
+        core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
+        layout = AutoDesignEngineService.compute_unit_layout(m, core, ["84A"], "공동주택")
+        # 세대수 = 층당세대 × 주거층수(=floors_for_units), 만층(num_floors) 아님.
+        for u in layout["units"]:
+            if u["count_per_floor"] > 0:
+                assert u["total_count"] == u["count_per_floor"] * res_floors
+
+    def test_explicit_massing_kind_respected(self):
+        """사용자가 massing_kind 명시(slab 등) 시 podium-tower로 덮어쓰지 않는다(존중)."""
+        svc = AutoDesignEngineService
+        si = SiteInput(site_area_sqm=14959, zone_code="GC", massing_kind="slab")
+        m = svc.compute_optimal_mass(si, svc.compute_effective_site(si), svc.get_legal_limits("GC"))
+        assert m.get("massing_profile") != "podium_tower"
+        assert m.get("massing_kind") == "slab"
