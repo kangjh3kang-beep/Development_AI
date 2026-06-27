@@ -21,6 +21,10 @@ class _StubResult:
     def all(self):
         return self._rows
 
+    def first(self):
+        # is_super_admin의 SELECT tier 경로용 — stub은 tier 미보유 → None(비-super_admin)
+        return None
+
 
 class _StubSession:
     """AsyncSession 대역 — execute/commit 캡쳐(라이브 DB 무관)."""
@@ -40,12 +44,8 @@ class _StubSession:
         pass
 
 
-class _Admin:
-    is_superuser = True
-
-
-class _NonAdmin:
-    is_superuser = False
+class _User:
+    id = "u1"
 
 
 class _FakeRegistry:
@@ -60,7 +60,7 @@ class _FakeRegistry:
         return self._DATA.get(pnu)
 
 
-def _make_app(rows=None, user=None):
+def _make_app(rows=None, *, super_admin=True):
     app = FastAPI()
     app.include_router(mt.router)
     sess = _StubSession(rows=rows)
@@ -69,13 +69,17 @@ def _make_app(rows=None, user=None):
         yield sess
 
     app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[get_current_user] = lambda: (user or _Admin())
+    app.dependency_overrides[get_current_user] = lambda: _User()
+    if super_admin:
+        # 게이트 통과: require_super_admin 직접 override(실제 is_super_admin DB조회 우회)
+        app.dependency_overrides[mt.require_super_admin] = lambda: _User()
+    # super_admin=False면 require_super_admin 미override → is_super_admin(stub)→False→403
     return app, sess
 
 
 def test_collect_admin_persists(monkeypatch):
     monkeypatch.setattr(mt, "BuildingRegistryService", _FakeRegistry)
-    app, sess = _make_app(user=_Admin())
+    app, sess = _make_app()
     client = TestClient(app)
     r = client.post(
         "/api/v1/mass-templates/collect",
@@ -92,14 +96,29 @@ def test_collect_admin_persists(monkeypatch):
 
 def test_collect_blocks_non_admin(monkeypatch):
     monkeypatch.setattr(mt, "BuildingRegistryService", _FakeRegistry)
-    app, _ = _make_app(user=_NonAdmin())
+    app, _ = _make_app(super_admin=False)
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect", json={"region": "x", "pnus": ["1"]})
-    assert r.status_code == 403   # superuser 아님 → require_role(ADMIN) 차단
+    assert r.status_code == 403   # super_admin 아님 → require_super_admin 차단
+
+
+def test_collect_requires_auth():
+    # get_current_user 미override → 무토큰 401(POST 게이트 인증 실경로 회귀방어).
+    app = FastAPI()
+    app.include_router(mt.router)
+    sess = _StubSession()
+
+    async def _db():
+        yield sess
+
+    app.dependency_overrides[get_db] = _db
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/collect", json={"region": "x", "pnus": ["1"]})
+    assert r.status_code in (401, 403)   # 무인증 차단
 
 
 def test_collect_validation_empty_pnus():
-    app, _ = _make_app(user=_Admin())
+    app, _ = _make_app()
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect", json={"region": "x", "pnus": []})
     assert r.status_code == 422   # pnus min_length=1 검증
@@ -114,7 +133,7 @@ def test_collect_region_admin_persists(monkeypatch):
                  "total_area_sqm": 50000, "address": "경기도 성남시 분당구 정자동 1"}]
 
     monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
-    app, sess = _make_app(user=_Admin())
+    app, sess = _make_app()
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region",
                     json={"groups": [{"dongs": ["경기도 성남시 분당구 정자동", "없는동"]}]})
@@ -140,7 +159,7 @@ def test_collect_region_merges_duplicate_region_groups(monkeypatch):
                  "total_area_sqm": 50000, "address": addr}]
 
     monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
-    app, sess = _make_app(user=_Admin())
+    app, sess = _make_app()
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [
         {"dongs": ["경기도 성남시 분당구 정자동"]},
@@ -160,7 +179,7 @@ def test_collect_region_merges_duplicate_region_groups(monkeypatch):
 
 def test_collect_region_blocks_non_admin(monkeypatch):
     monkeypatch.setattr(mt, "_make_region_collectors", lambda: (None, None))  # 게이트가 먼저 차단
-    app, _ = _make_app(user=_NonAdmin())
+    app, _ = _make_app(super_admin=False)
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [{"dongs": ["x"]}]})
     assert r.status_code == 403
@@ -186,7 +205,7 @@ def test_list_templates_returns_store_rows():
         "region": "동탄2", "building_type": "공동주택", "sample_count": 3,
         "median_bcr_pct": 22.0, "median_far_pct": 200.0,
     }]
-    app, _ = _make_app(rows=rows, user=_Admin())
+    app, _ = _make_app(rows=rows)
     client = TestClient(app)
     r = client.get("/api/v1/mass-templates", params={"region": "동탄2"})
     assert r.status_code == 200
