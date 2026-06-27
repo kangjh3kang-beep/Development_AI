@@ -351,6 +351,95 @@ class AutoDesignEngineService:
         return max_bcr, max_far
 
     @staticmethod
+    def _compute_podium_tower(
+        *,
+        site_area: float,
+        eff_w: float,
+        eff_d: float,
+        max_bcr: float,
+        max_far: float,
+        fh: float,
+        max_floors_by_height: int,
+        sunlight_zone: bool,
+        podium_floors: int = 4,
+    ) -> dict[str, Any] | None:
+        """고FAR·비일조 용도지역(상업·준주거)의 Podium-Tower 분할 매스(결정론).
+
+        실무 주상복합은 단일 균일박스(만층)가 아니라 **저층 podium(상가·주차·로비 — 지상 큰 판)
+        + 고층 tower(주거 — 작은 플로어플레이트)** 로 짓는다. 단일 만층 박스(예 16층)는 footprint를
+        대지 가득 깔아 비현실적이며, 실무는 footprint를 줄이고 30~60층으로 올린다.
+
+        적용 게이트: 정북일조 미적용(상업/준주거 등) + 고FAR(≥500%)에서만. 그 외(주거·저FAR)는
+        None을 반환해 기존 단일박스를 보존한다(무회귀). 결정론·무날조(미충족 시 None).
+        """
+        far_pct = max_far * 100.0
+        eff_area = eff_w * eff_d
+        if sunlight_zone or far_pct < 500.0 or site_area <= 0 or eff_area <= 0:
+            return None
+
+        gfa_cap = site_area * max_far  # 용적률 허용 총 연면적
+
+        # ── podium: 지상 저층(상가·주차·로비), 건폐율 max 큰 판 ──
+        podium_floors = max(1, podium_floors)
+        podium_fp = min(site_area * max_bcr, eff_area)
+        podium_gfa = podium_fp * podium_floors
+        p_scale = math.sqrt(podium_fp / eff_area) if eff_area > 0 else 0.0
+        podium_w = round(eff_w * min(p_scale, 1.0), 1)
+        podium_d = round(eff_d * min(p_scale, 1.0), 1)
+
+        # ── tower: 고층 주거, 쾌적 플로어플레이트(주상복합 실무 15~30%·중앙 22%) ──
+        tower_bcr = min(0.22, max_bcr)
+        tower_fp = min(site_area * tower_bcr, podium_fp)
+        if tower_fp <= 0:
+            return None
+        remaining_gfa = max(0.0, gfa_cap - podium_gfa)   # podium이 쓰고 남은 연면적
+        tower_floors_by_far = int(remaining_gfa / tower_fp)
+        # 높이 캡(있으면) — podium 제외 잔여 층수. max_floors_by_height가 거대(미적용)면 FAR만.
+        if max_floors_by_height < 10**5:
+            tower_floors_by_height = max(0, max_floors_by_height - podium_floors)
+        else:
+            tower_floors_by_height = tower_floors_by_far
+        tower_floors = max(0, min(tower_floors_by_far, tower_floors_by_height))
+        if tower_floors < 1:
+            return None  # tower가 1층도 안 나오면 podium-tower 부적합 → 단일박스 유지
+
+        binding = "far" if tower_floors_by_far <= tower_floors_by_height else "height"
+        tower_gfa = tower_fp * tower_floors
+        t_scale = math.sqrt(tower_fp / eff_area) if eff_area > 0 else 0.0
+        tower_w = round(eff_w * min(t_scale, 1.0), 1)
+        tower_d = round(eff_d * min(t_scale, 1.0), 1)
+
+        total_floors = podium_floors + tower_floors
+        total_height = total_floors * fh
+        total_gfa = podium_gfa + tower_gfa
+
+        return {
+            "podium": {
+                "footprint_sqm": round(podium_fp, 1), "floors": podium_floors,
+                "height_m": round(podium_floors * fh, 1),
+                "width_m": podium_w, "depth_m": podium_d,
+                "bcr_pct": round(podium_fp / site_area * 100, 1) if site_area > 0 else 0,
+                "use": "상가·주차·로비",
+            },
+            "tower": {
+                "footprint_sqm": round(tower_fp, 1), "floors": tower_floors,
+                "height_m": round(tower_floors * fh, 1),
+                "width_m": tower_w, "depth_m": tower_d,
+                "bcr_pct": round(tower_bcr * 100, 1),
+                "use": "주거",
+            },
+            "total_floors": total_floors,
+            "total_height_m": total_height,
+            "total_gfa": total_gfa,
+            "binding": binding,
+            "basis": (
+                f"podium {podium_floors}층(건폐율 {round(max_bcr * 100)}% 큰 판)"
+                f"+tower {tower_floors}층(건폐율 {round(tower_bcr * 100)}% 작은 판)로 분할 — "
+                "고FAR 상업지 주상복합 실무 매스(단일 만층 박스 비현실 해소)"
+            ),
+        }
+
+    @staticmethod
     def compute_optimal_mass(
         site_input: SiteInput,
         effective: dict[str, float],
@@ -566,6 +655,43 @@ class AutoDesignEngineService:
         # §4-B: 참조 프로비넌스(있을 때만 — additive). 미주입 시 키 없음(기존 동작 불변).
         if ref_provenance is not None:
             result["reference"] = ref_provenance
+
+        # ── Podium-Tower 실무 매스(고FAR·비일조 상업/준주거 auto) ──
+        # 단일 균일박스(만층·예 16층) 대신 저층 podium(상가·주차·지상 큰 판)+고층 tower(주거·작은
+        # 판)로 분할해 실무 주상복합(30~60층)에 부합시킨다. 정북일조(주거)·저FAR(<500%)·정북단계
+        # 후퇴(step_profile) 모드는 미적용(단일박스 보존·무회귀). headline(층수·높이·연면적·치수·
+        # BCR)을 현실 composite로 갱신하고 podium/tower 상세를 additive로 싣는다.
+        pt = (
+            AutoDesignEngineService._compute_podium_tower(
+                site_area=site_area, eff_w=eff_w, eff_d=eff_d,
+                max_bcr=max_bcr, max_far=max_far, fh=fh,
+                max_floors_by_height=max_floors_by_height,
+                sunlight_zone=sunlight_zone,
+            )
+            if north_step_profile is None  # 정북단계후퇴 모드와 배타(주거 전용)
+            else None
+        )
+        if pt is not None:
+            twr = pt["tower"]
+            result["massing_profile"] = "podium_tower"
+            result["podium"] = pt["podium"]
+            result["tower"] = twr
+            result["residential_floors"] = twr["floors"]      # 주거(tower) 층수 — 세대수 산정 기준(후속 정밀화)
+            result["commercial_floors"] = pt["podium"]["floors"]  # 저층부(상가·주차)
+            # headline을 현실 composite로 갱신 — 대표 floor plate는 tower(주거 기준층).
+            result["num_floors"] = pt["total_floors"]
+            result["building_height_m"] = round(pt["total_height_m"], 2)
+            result["total_floor_area_sqm"] = round(pt["total_gfa"], 2)
+            result["building_width_m"] = twr["width_m"]
+            result["building_depth_m"] = twr["depth_m"]
+            result["building_footprint_sqm"] = round(twr["footprint_sqm"], 2)
+            # BCR=podium 지상피복(건물 지상 점유), FAR=composite 연면적/대지.
+            result["bcr_pct"] = (
+                round(pt["podium"]["footprint_sqm"] / site_area * 100, 2) if site_area > 0 else 0
+            )
+            result["far_pct"] = round(pt["total_gfa"] / site_area * 100, 2) if site_area > 0 else 0
+            result["binding_constraint"] = pt["binding"]
+            result["massing_label"] = "포디움-타워(주상복합)"
         return result
 
     # ── 3단계: 코어 + 복도 배치 ──
