@@ -12,6 +12,7 @@
 의존성 0이라 어디서나 직접 검증한다(test_mass_contract와 동일한 importorskip 패턴).
 """
 
+import asyncio
 import threading
 
 import pytest
@@ -231,3 +232,166 @@ def test_project_name_change_yields_cache_hit():
     r2 = BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", project_name="B")
     _resolve_mass(r1)
     assert _resolve_mass(r2)["_cache_hit"] is True  # 이름만 다름 → 같은 열쇠 → 히트
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 3) generate_bim_model 무거운계산 캐시(INC6-b — 라우터, graceful skip)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# 핵심 회귀잠금(무회귀·무날조·정확성):
+# - 동일 설계입력 2회 → 2회째 cached=True, ai_interpretation·ifc_bytes(len) 동일.
+# - ★증빙(핵심): build_ifc_from_mass·DesignInterpreter를 monkeypatch로 호출횟수 카운트 →
+#     2회째 0회 호출(LLM/IFC 생략 = 시간/비용 절감의 실증).
+# - ★정확성: 다른 project_id·같은 설계입력 → cached=True지만 응답 project_id/glb_url은 각자 신선(오염 0).
+# - ★결정성: 같은 설계입력·다른 project_name → cached=False(독립 미스) + 각자 자기 project_name 기준 ifc_bytes
+#     (ifc_bytes가 IFC 라벨=project_name에 의존하므로, bim_key가 project_name을 포함해야 결정성 유지).
+# - 다른 설계입력(zone) → cached=False(독립 — 캐시 교차오염 없음).
+
+
+def _import_bim_router():
+    """generate_bim_model·BimGenerateRequest + monkeypatch 대상 모듈을 import(불가하면 graceful skip).
+
+    왜(쉬운 설명): 라우터는 인증·DB 등 전체 의존성을 끌어오므로 가벼운 환경에선 import가 안 될 수 있다.
+      그런 환경에선 건너뛰고, 전체 의존성이 깔린 CI/프로덕션에서만 '라우터 실코드'로 BIM 캐시 배선을 검증한다.
+    """
+    pytest.importorskip("fastapi")
+    try:
+        from app.routers import design_v61
+        from app.services.ai import design_interpreter as di_mod
+        from app.services.bim import ifc_generator_service as ifc_mod
+    except Exception as e:  # noqa: BLE001 — 의존성 부재 환경은 정직하게 skip
+        pytest.skip(f"BIM 라우터 import 불가(이 환경엔 전체 의존성 없음): {str(e)[:80]}")
+    return design_v61, ifc_mod, di_mod
+
+
+def _patch_heavy_compute(monkeypatch, design_v61, ifc_mod, di_mod):
+    """무거운 계산(IFC 빌드·DesignInterpreter)을 가짜로 갈아끼우고 호출횟수를 센다.
+
+    반환: counts dict — {"ifc": IFC빌드 호출수, "llm": DesignInterpreter 호출수}.
+    2회째 호출에서 이 값들이 안 늘어나면(0회) = 무거운 계산을 캐시가 실제로 생략했다는 증빙이다.
+    """
+    counts = {"ifc": 0, "llm": 0}
+
+    def _fake_build_ifc(mass, project_name="PropAI"):  # noqa: ANN001
+        counts["ifc"] += 1
+        return b"FAKE_IFC_BYTES_1234567890"  # 길이 25 — ifc_bytes(len) 결정값
+
+    class _FakeInterpreter:
+        async def generate_interpretation(self, payload):  # noqa: ANN001
+            counts["llm"] += 1
+            return {"design_overview": "fake", "mass_strategy": "fake"}
+
+    # ★라우터가 함수 안에서 import하므로(지연 import), 원본 모듈의 심볼을 갈아끼운다 →
+    #   라우터의 `from ... import build_ifc_from_mass/DesignInterpreter`가 이 가짜를 집어온다.
+    monkeypatch.setattr(ifc_mod, "build_ifc_from_mass", _fake_build_ifc)
+    monkeypatch.setattr(di_mod, "DesignInterpreter", _FakeInterpreter)
+    return counts
+
+
+def test_bim_second_call_is_cache_hit_and_skips_heavy_compute(monkeypatch):
+    """동일 설계입력 2회 → 2회째 cached=True + LLM/IFC 0회 호출(무거운계산 생략·핵심 증빙)."""
+    design_v61, ifc_mod, di_mod = _import_bim_router()
+    counts = _patch_heavy_compute(monkeypatch, design_v61, ifc_mod, di_mod)
+    req = design_v61.BimGenerateRequest(
+        land_area_sqm=2000.0, zone_code="GC", building_use="공동주택",
+    )
+
+    first = asyncio.run(design_v61.generate_bim_model("proj-1", req))
+    assert first["cached"] is False                 # 첫 호출은 미스
+    assert counts == {"ifc": 1, "llm": 1}           # 첫 호출은 IFC·LLM 각 1회 수행
+
+    second = asyncio.run(design_v61.generate_bim_model("proj-1", req))
+    assert second["cached"] is True                 # 두 번째는 무거운계산 캐시 히트
+    # ★핵심 증빙: 카운트가 안 늘었다 = 2회째 IFC빌드·LLM 호출 0회(전부 생략 → 56초→즉시).
+    assert counts == {"ifc": 1, "llm": 1}
+
+    # 캐시된 무거운계산 값(해석·ifc길이)은 1회째와 동일(무회귀).
+    assert second["ai_interpretation"] == first["ai_interpretation"]
+    assert second["ifc_bytes"] == first["ifc_bytes"] == 25
+
+
+def test_bim_same_design_different_project_keeps_project_fresh(monkeypatch):
+    """다른 project_id·같은 설계입력 → cached=True지만 project_id/glb_url은 각자 신선(캐시 오염 0)."""
+    design_v61, ifc_mod, di_mod = _import_bim_router()
+    counts = _patch_heavy_compute(monkeypatch, design_v61, ifc_mod, di_mod)
+    req = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC")
+
+    r1 = asyncio.run(design_v61.generate_bim_model("proj-AAA", req))
+    r2 = asyncio.run(design_v61.generate_bim_model("proj-BBB", req))  # 같은 설계입력, 다른 프로젝트
+
+    assert r2["cached"] is True                      # 무거운계산은 캐시 적중
+    assert counts == {"ifc": 1, "llm": 1}            # 2회째에도 무거운계산 0회 추가
+    # ★정확성: project_id·glb_url은 절대 캐시 공유 안 됨(각자 신선).
+    assert r1["project_id"] == "proj-AAA"
+    assert r2["project_id"] == "proj-BBB"
+    assert r1["glb_url"] == "/api/v1/design/proj-AAA/bim/model.glb"
+    assert r2["glb_url"] == "/api/v1/design/proj-BBB/bim/model.glb"
+    # 무거운계산 결정 부분(해석·ifc길이)은 둘이 동일(같은 설계입력이므로).
+    assert r1["ai_interpretation"] == r2["ai_interpretation"]
+    assert r1["ifc_bytes"] == r2["ifc_bytes"]
+
+
+def test_bim_same_design_different_project_name_independent_ifc(monkeypatch):
+    """같은 설계입력·다른 project_name 2회 → 2회째 cached=False(독립 미스), 각자 자기 project_name 기준 ifc_bytes.
+
+    ★HIGH 회귀잠금: ifc_bytes(IFC 바이트수)는 project_name(IFC 라벨)에 의존하므로, bim_key가 project_name을
+      포함하지 않으면 2회째가 1회째 ifc_len을 잘못 반환(결정성 위반). 여기선 가짜 build_ifc_from_mass가
+      project_name 길이를 바이트수에 반영하게 해, 두 project_name의 ifc_bytes가 실제로 갈리는지 단언한다.
+    """
+    design_v61, ifc_mod, di_mod = _import_bim_router()
+
+    # 가짜 IFC 빌더: project_name 길이를 바이트수에 반영(서로 다른 이름 → 서로 다른 ifc_bytes).
+    def _fake_build_ifc_len_by_name(mass, project_name="PropAI"):  # noqa: ANN001
+        return b"X" * (100 + len(project_name))
+
+    class _FakeInterpreter:
+        async def generate_interpretation(self, payload):  # noqa: ANN001
+            return {"design_overview": "fake", "mass_strategy": "fake"}
+
+    monkeypatch.setattr(ifc_mod, "build_ifc_from_mass", _fake_build_ifc_len_by_name)
+    monkeypatch.setattr(di_mod, "DesignInterpreter", _FakeInterpreter)
+
+    # 같은 설계입력, project_name만 다름.
+    req_a = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", project_name="AA")
+    req_b = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", project_name="BBBBBB")
+
+    first = asyncio.run(design_v61.generate_bim_model("proj-1", req_a))
+    second = asyncio.run(design_v61.generate_bim_model("proj-1", req_b))
+
+    # ★bim_key에 project_name 포함 → 다른 이름은 독립 미스(1회째 ifc_len을 잘못 공유하지 않음).
+    assert first["cached"] is False
+    assert second["cached"] is False
+    # 각 응답 ifc_bytes는 자기 project_name 길이 기준(결정성 회복) — 두 값이 실제로 다르다.
+    assert first["ifc_bytes"] == 100 + len("AA")        # 102
+    assert second["ifc_bytes"] == 100 + len("BBBBBB")   # 106
+    assert first["ifc_bytes"] != second["ifc_bytes"]
+
+
+def test_bim_different_design_input_is_independent_miss(monkeypatch):
+    """다른 설계입력(zone) → cached=False(독립 열쇠) + 각자 무거운계산 1회씩 수행(교차오염 0)."""
+    design_v61, ifc_mod, di_mod = _import_bim_router()
+    counts = _patch_heavy_compute(monkeypatch, design_v61, ifc_mod, di_mod)
+    r_gc = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC")
+    r_2r = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="2R")  # zone 다름
+
+    first = asyncio.run(design_v61.generate_bim_model("p", r_gc))
+    second = asyncio.run(design_v61.generate_bim_model("p", r_2r))
+
+    assert first["cached"] is False
+    assert second["cached"] is False                 # 다른 설계입력 → 다른 열쇠 → 둘 다 미스
+    assert counts == {"ifc": 2, "llm": 2}            # 서로 독립 산출(각 1회씩 = 합 2회)
+
+
+def test_bim_mass_compliance_always_fresh_on_hit(monkeypatch):
+    """히트 경로에서도 mass·compliance는 per-request 신선(매스 캐시에서 새로 조립·캐시값 아님)."""
+    design_v61, ifc_mod, di_mod = _import_bim_router()
+    _patch_heavy_compute(monkeypatch, design_v61, ifc_mod, di_mod)
+    req = design_v61.BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC")
+
+    first = asyncio.run(design_v61.generate_bim_model("proj-1", req))
+    second = asyncio.run(design_v61.generate_bim_model("proj-1", req))
+
+    assert second["cached"] is True
+    # mass·compliance는 무거운계산 캐시값이 아니라 _resolve_mass에서 매번 조립 → 두 응답에 동일 구조로 존재.
+    assert second["mass"] == first["mass"]           # 같은 설계입력이므로 값 동일(신선 조립)
+    assert ("compliance" in second) and ("compliance" in first)
