@@ -41,6 +41,30 @@ function _stripFences(s: string): string {
   return (m ? m[1] : s).trim();
 }
 
+/** ```json …``` 코드펜스를 제거한 표시용 텍스트(raw 코드블록 노출 방지·전역 공용). */
+export function cleanFenceText(text: string | null | undefined): string {
+  return text ? text.replace(/```(?:json)?/gi, "").trim() : "";
+}
+
+/**
+ * LLM 텍스트에서 JSON을 추출해 객체로 승격(상위 파싱 실패분 복구·전역 공용).
+ * AI가 구조화 data 없이 텍스트(펜스/중괄호)로만 줄 때 raw JSON 코드블록 노출을 막고 카드로
+ * 렌더하기 위함. 실패 시 null(호출부는 cleanFenceText 정제 텍스트로 폴백).
+ */
+export function extractStructuredFromText<T = unknown>(text: string | null | undefined): T | null {
+  if (!text) return null;
+  try {
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const raw = fence ? fence[1] : (text.match(/\{[\s\S]*\}/)?.[0] ?? "");
+    if (!raw) return null;
+    const obj = JSON.parse(raw) as unknown;
+    if (obj && typeof obj === "object") return obj as T;
+  } catch {
+    /* 파싱 실패 → null(정제 텍스트 폴백) */
+  }
+  return null;
+}
+
 async function fetchAIAnalysis<T = unknown>(
   request: AIAnalysisRequest,
 ): Promise<AIAnalysisResponse<T>> {

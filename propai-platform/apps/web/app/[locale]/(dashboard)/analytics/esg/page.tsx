@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, Leaf, RefreshCw, Settings } from "lucide-react";
-import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 
@@ -26,7 +26,9 @@ export default function ESGPage() {
     mutate({ domain: "esg", context: { buildingType: form.buildingType, grossArea: `${form.grossArea}㎡`, energySource: form.energySource, renewableEnergyRatio: `${form.renewableRatio}%` } });
   };
 
-  const ai = aiResult?.data;
+  // ★raw JSON 노출 해소(전역 공용): 구조화 data 없이 텍스트로만 줄 때 텍스트에서 ESG JSON을
+  //  추출해 승격(카드 렌더). 필드 가드(ai.carbonFootprint && 등)가 부분객체를 보호한다.
+  const ai = aiResult?.data ?? extractStructuredFromText<ESGResult>(aiResult?.text);
   const gradeColor = (g?: string) => !g ? "bg-slate-500" : g.includes("1") || g === "최우수" ? "bg-emerald-500" : g.includes("2") || g === "우수" ? "bg-blue-500" : g.includes("3") || g === "우량" ? "bg-amber-500" : "bg-slate-500";
 
   return (
@@ -170,10 +172,11 @@ export default function ESGPage() {
         </motion.div>
       )}
 
-      {aiResult && !ai && aiResult.text && (
+      {/* 구조화 승격 실패 시에만 정제 텍스트(코드펜스 제거) — raw JSON 코드블록 노출 방지. */}
+      {aiResult && !ai && cleanFenceText(aiResult.text) && (
         <div className="glass rounded-2xl p-6 border border-[var(--line)]">
           <h3 className="text-lg font-black text-[var(--text-primary)] mb-2">AI ESG 분석 결과</h3>
-          <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiResult.text}</p>
+          <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{cleanFenceText(aiResult.text)}</p>
         </div>
       )}
     </div>

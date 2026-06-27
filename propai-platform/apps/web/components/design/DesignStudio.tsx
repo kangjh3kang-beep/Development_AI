@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
-import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -446,6 +446,16 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   };
 
   const ai = aiResult?.data;
+  // ★raw JSON 노출 해소(전역 공용 헬퍼): AI가 구조화 데이터(data) 없이 텍스트로만 줄 때,
+  //  extractStructuredFromText로 JSON을 추출해 승격한다(summary/매싱안 있는 설계 응답만 채택).
+  //  실패 시 cleanFenceText로 코드펜스 제거한 정제 텍스트만 보여 raw 코드블록 노출을 막는다.
+  const aiText = aiResult?.text;
+  const aiFromText = useMemo<DesignResult | null>(() => {
+    const obj = ai ? null : extractStructuredFromText<DesignResult>(aiText);
+    return obj && (obj.summary || Array.isArray(obj.massingOptions)) ? obj : null;
+  }, [ai, aiText]);
+  const aiEff = ai ?? aiFromText;   // 구조화 우선, 없으면 텍스트에서 추출한 구조
+  const aiCleanText = cleanFenceText(aiText);
   const calc = localCalc;
 
   // ②③ 상단 '예상 층수' 카드 값(정직화) — ceil(FAR/BCR)인 calc.maxFloors는 '산술하한'이라
@@ -712,7 +722,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
               <span className="cc-label text-[var(--text-secondary)]">SETBACK</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">건축선 이격거리</h3>
               {/* ④ 출처 정직 표기 — 엔진(AI) 산출값 도착 전에는 기본 가정치임을 명시 */}
-              {ai?.setbacks ? (
+              {aiEff?.setbacks ? (
                 <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">AI 분석 산출값</span>
               ) : (
                 <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-500">기본 가정치</span>
@@ -720,9 +730,9 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             </div>
             <div className="grid grid-cols-3 gap-4 text-center">
               {[
-                { label: "전면", val: ai?.setbacks?.front ?? calc.setbacks.front },
-                { label: "측면", val: ai?.setbacks?.side ?? calc.setbacks.side },
-                { label: "후면", val: ai?.setbacks?.rear ?? calc.setbacks.rear },
+                { label: "전면", val: aiEff?.setbacks?.front ?? calc.setbacks.front },
+                { label: "측면", val: aiEff?.setbacks?.side ?? calc.setbacks.side },
+                { label: "후면", val: aiEff?.setbacks?.rear ?? calc.setbacks.rear },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
                   <p className="cc-label text-[var(--text-hint)]">{s.label}</p>
@@ -730,7 +740,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 </div>
               ))}
             </div>
-            {!ai?.setbacks && (
+            {!aiEff?.setbacks && (
               <p className="mt-3 text-[10px] leading-snug text-[var(--text-hint)]">
                 일반 가정치(전면 6m·측면 1.5m·후면 2m)입니다. 실제 이격거리는 전면도로 폭·지구단위계획·정북일조 사선에 따라 달라지며, 심층 설계 분석 실행 시 산출값으로 대체됩니다.
               </p>
@@ -745,7 +755,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             {easy && <p className="mb-3 text-[11px] text-[var(--accent-strong)]">{EASY["매싱"]} 효율(전용률)이 높을수록 같은 면적에서 분양·임대 면적이 많아 유리합니다. ★가 추천안.</p>}
             {(() => {
               const opts: Array<{ name: string; description: string; efficiency: number; geom?: MassingGeom | null }> =
-                ai?.massingOptions || calc.massingOptions;
+                Array.isArray(aiEff?.massingOptions) ? aiEff.massingOptions : calc.massingOptions;
               const best = Math.max(...opts.map((o) => o.efficiency || 0));
               return (
                 <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3 [&>button]:min-w-0">
@@ -794,17 +804,18 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             })()}
           </div>
 
-          {ai?.summary && (
+          {aiEff?.summary && (
             <div className="glass rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
               <h3 className="text-lg font-black text-blue-400 mb-2">AI 설계 의견</h3>
-              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
+              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiEff.summary}</p>
             </div>
           )}
 
-          {aiResult && !ai && aiResult.text && (
+          {/* 구조화 추출 실패 시에만 정제 텍스트(코드펜스 제거) 표시 — raw JSON 코드블록 노출 방지. */}
+          {aiResult && !aiEff && aiCleanText && (
             <div className="glass rounded-2xl p-6 border border-[var(--line)]">
               <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">AI 설계 결과</h3>
-              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiResult.text}</p>
+              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiCleanText}</p>
             </div>
           )}
         </motion.div>
