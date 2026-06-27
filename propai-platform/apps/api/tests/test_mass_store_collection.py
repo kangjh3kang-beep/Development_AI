@@ -45,7 +45,7 @@ def test_collect_fetcher_error_is_isolated():
 
     out = asyncio.run(mass_collection.collect_templates(["ok", "bad"], region="마곡", fetcher=fetcher))
     assert out["requested"] == 2 and out["fetched"] == 1  # 예외 PNU는 건너뜀
-    assert any(t["building_type"] == "업무시설" for t in out["templates"])
+    assert any(t["building_type"] == "오피스텔" for t in out["templates"])  # 오피스텔 독립 분류
 
 
 def test_collect_normalizes_region_from_record_address():
