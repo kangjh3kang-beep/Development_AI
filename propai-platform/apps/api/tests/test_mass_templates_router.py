@@ -251,9 +251,11 @@ def test_seed_design_with_mass_reference(monkeypatch):
     # ★매스 레퍼런스가 설계엔진 target_far/bcr 시드로 전달돼 '지역 실측 전형' 매스가 생성되는지(엔진 stub).
     calls = []
 
-    def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m, target_far=None, target_bcr=None):
-        calls.append({"target_far": target_far, "target_bcr": target_bcr})
-        return {"num_floors": 5 if target_far else 30, "far_pct": target_far or 250.0, "bcr_pct": target_bcr or 50.0}
+    def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
+                      target_far=None, target_bcr=None, target_floors=None, daylight_step=True):
+        calls.append({"target_far": target_far, "target_bcr": target_bcr, "target_floors": target_floors})
+        return {"num_floors": target_floors or (5 if target_far else 30),
+                "far_pct": target_far or 250.0, "bcr_pct": target_bcr or 50.0}
 
     monkeypatch.setattr(mt, "_compute_mass", _stub_compute)
     import app.services.mass_backbone.mass_reference as mref
@@ -274,9 +276,11 @@ def test_seed_design_with_mass_reference(monkeypatch):
     assert body["region"] == "분당구"
     assert body["legal_max_mass"] is not None and body["regional_typical_mass"] is not None
     assert body["mass_reference"]["median_far_pct"] == 89.2
-    # _compute_mass 2회: 법정(target None) → 시드(target=실측 89.2/16.8)
-    assert calls[0]["target_far"] is None
+    # _compute_mass 2회: 법정(target None) → 시드(target=실측 89.2/16.8 + median 5층)
+    assert calls[0]["target_far"] is None and calls[0]["target_floors"] is None
     assert calls[1]["target_far"] == 89.2 and calls[1]["target_bcr"] == 16.8
+    assert calls[1]["target_floors"] == 5   # ★실측 median_floors(5.0)→round→target_floors 시드 전달
+    assert body["regional_typical_mass"]["num_floors"] == 5
 
 
 def test_seed_design_no_mass_reference_graceful(monkeypatch):

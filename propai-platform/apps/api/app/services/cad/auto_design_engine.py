@@ -156,6 +156,11 @@ class SiteInput:
     # 건폐율 상한 미만으로 축소 → 층수↑·고층저밀). None=목적함수 미사용(기존 동작 완전
     # 불변 — footprint는 건폐율 상한 만충). 형식: {objective, target_bcr_ratio, ...}.
     massing_objective: dict[str, Any] | None = None
+    # ★목표 층수(옵셔널·additive): 정북일조 단계후퇴(daylight_step=True) 경로에서 층수 상한으로 작용한다.
+    #   '지역 실측 전형' 시드(매스 백본 median_floors)처럼 전형 층수까지만 짓고 과도한 고층화를 막는 용도.
+    #   min(FAR한도, 높이한도, target_floors)로 적용 → 법정 높이 초과 불가(자동 클램프). None=미적용(기존 동작
+    #   완전 불변). hard_cap 경로(daylight_step=False)에서는 무시(단계후퇴 전제 — 그 경로는 일조 하드캡이 지배).
+    target_floors: int | None = None
 
 
 # 매스 형상 정의 — aspect=전면/깊이 비, fp_factor=최대 건축면적 대비 플로어플레이트 계수.
@@ -579,7 +584,10 @@ class AutoDesignEngineService:
             # 정북일조 "단계후퇴" 모드: 단일 세트백 높이캡을 쓰지 않고(FAR·높이 한도만),
             # 상부 층을 북쪽으로 후퇴시켜 더 높이 짓고 일조를 확보(결정론 사선제한).
             base_north = max(1.5, north_setback)
-            cap_floors = max(1, min(max_floors_by_far * 3, max_floors_by_height))  # 후퇴로 더 높이 가능
+            # ★target_floors(옵셔널)는 층수 상한으로만 작용(min에 포함 → 법정 높이 초과 불가·자동 클램프).
+            #   '지역 실측 전형' 시드가 전형 층수까지만 짓게 함. None이면 999로 무영향(기존 동작 불변).
+            _tf = getattr(site_input, "target_floors", None)
+            cap_floors = max(1, min(max_floors_by_far * 3, max_floors_by_height, _tf or 999))  # 후퇴로 더 높이 가능
             north_step_profile, total_floor_area, num_floors = compute_north_step_profile(
                 building_w, building_d, cap_floors, fh, base_north, max_total_floor,
             )

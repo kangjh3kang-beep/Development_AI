@@ -187,14 +187,22 @@ class SeedDesignRequest(BaseModel):
 def _compute_mass(
     *, land_area_sqm: float, zone_code: str, building_use: str, floor_height_m: float,
     target_far: float | None = None, target_bcr: float | None = None,
+    daylight_step: bool = True, target_floors: int | None = None,
 ) -> dict:
-    """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프)."""
+    """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프).
+
+    ★daylight_step=True(기본): 정북일조 단계후퇴 해석(법 61조) — 단일 세트백 하드캡(저층 3층 고정) 대신
+      층별 후퇴로 법정 한도까지 실제 층수를 산출(법정최대·지역전형을 같은 일조해석으로 일관 비교).
+    ★target_floors: 지역 실측 전형 층수 상한(median_floors). min(FAR,높이,target_floors)로 적용 → 법정
+      높이 초과 불가. 실측 전형이 전형 층수까지만 짓고 과도 고층화 방지(nuance 해소).
+    """
     from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
 
     svc = AutoDesignEngineService()
     site = SiteInput(
         site_area_sqm=land_area_sqm, zone_code=zone_code, building_use=building_use,
         floor_height_m=floor_height_m, target_far_percent=target_far, target_bcr_percent=target_bcr,
+        daylight_step=daylight_step, target_floors=target_floors,
     )
     legal = svc.get_legal_limits(zone_code)
     eff = svc.compute_effective_site(site)
@@ -226,14 +234,21 @@ async def seed_design(
     targets = mass_seed_targets(mass_ref)
     regional_mass = None
     if targets:
+        # ★실측 median 층수까지 반영(nuance 해소): 단계후퇴로 일조 하드캡(3층) 해제 + target_floors=median으로
+        #   전형 층수 상한. 건폐/용적 시드와 함께 '지역 실측 전형'(예 5층·저밀)을 산출.
+        tf = targets.get("target_floors")
+        target_floors = round(tf) if isinstance(tf, (int, float)) and tf and tf > 0 else None
         regional_mass = _compute_mass(
             **common, target_far=targets["target_far_percent"], target_bcr=targets["target_bcr_percent"],
+            target_floors=target_floors,
         )
     return {
         "region": region,
         "legal_max_mass": legal_mass,
         "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
         "mass_reference": mass_ref,               # 시드 출처(provenance)
-        "note": ("regional_typical_mass=이 지역 같은 종류 건축물 실측 중앙값(건폐/용적)을 설계엔진 목표강도로 "
-                 "시드한 매스. 실측 매스 없으면 None(법정 최대만). 엔진이 min(법정,목표) 클램프(가짜 상향 없음)."),
+        "note": ("legal_max_mass·regional_typical_mass 모두 정북일조 단계후퇴(법 61조) 해석. "
+                 "regional_typical_mass=이 지역 같은 종류 실측 중앙값(건폐/용적/층수)을 설계엔진에 "
+                 "시드한 전형 매스(층수=median까지·과도 고층화 방지). "
+                 "실측 매스 없으면 None(법정 최대만). 엔진이 min(법정,목표) 클램프(가짜 상향 없음)."),
     }
