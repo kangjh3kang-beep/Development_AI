@@ -11,6 +11,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 
+from app.services.cad.geometry_invariants import check_mass_invariants
+from app.services.cad.provenance import (
+    ENGINE_SOURCE_VERSION,
+    compute_input_hash,
+    make_run_id,
+)
 from app.services.design_ingest.composition import (
     SiteContext,
     compose,
@@ -587,6 +593,75 @@ def _site_summary(site: SiteContext) -> dict:
     }
 
 
+def _proposal_contract(cd: dict, site: SiteContext) -> dict | None:
+    """추천 후보(candidate dict)에 C2R 계약을 만들어 돌려준다(geometry_invariants·provenance).
+
+    이게 왜 필요한가(쉬운 설명): 추천흐름의 후보는 compose()가 도면을 조합해 만든 거라
+    자동설계 엔진의 generate()를 안 거친다 → 기하검증(PASS/WARN/FAIL)·재현성(run_id)이 빠져 있다.
+    그래서 여기서 후보+부지 값으로 '부분 매스 dict'를 만들어 기존 공용 검증기에 통과시키고,
+    후보를 식별하는 결정적 지문으로 run_id/input_hash를 붙인다(전부 기존 헬퍼 재사용·신규 계산 0).
+
+    ★무날조: 후보에서 알 수 있는 mass 키만 채운다. 미상 키는 넣지 않으며,
+      check_mass_invariants는 미상 키면 해당 체크를 SKIP한다(가짜 PASS/FAIL 없음).
+      ★bcr_pct/far_pct '값'만 알고 적용 한도(applied_max_*)는 후보가 산정하지 않으므로
+        법정초과(INV-GEO-LEGAL) 체크는 자연히 SKIP된다(가짜 법정초과 FAIL 금지).
+    ★provenance rule_trace는 생략한다 — 여기 입력은 SiteInput이 아니라 SiteContext라
+      build_rule_trace에 줄 정본 법규 입력이 없다(가짜 법규 entry 금지·정직).
+
+    Returns:
+        {"geometry_invariants": <dict>, "run_id": str, "input_hash": str, "source_version": str}
+        — 계약 산출에 실패하면 None(호출부가 best-effort로 흡수·추천흐름 무회귀).
+    """
+    # ① 후보+부지 → 부분 매스 dict(있는 값만·무날조). 키명은 check_mass_invariants가 읽는 실제 키.
+    mass_partial: dict = {}
+    floors = cd.get("estimated_floors")          # → num_floors(층수 정합 체크)
+    if floors is not None:
+        mass_partial["num_floors"] = floors
+    # 연면적: 추정 연면적(estimated_gfa_sqm, achievable 하한)을 쓴다 — 후보가 실제로 짓는다고
+    #   '주장'하는 연면적이라 footprint·층수와 정합 점검에 더 맞다(max_envelope는 법적 천장이라 과대).
+    gfa = cd.get("estimated_gfa_sqm")            # → total_floor_area_sqm(세대 성립 체크 입력)
+    if gfa is not None:
+        mass_partial["total_floor_area_sqm"] = gfa
+    # 건축면적: 부지의 건폐율 기반 건축가능 면적(SiteContext property·한도 미상이면 None).
+    footprint = site.buildable_footprint_sqm     # → building_footprint_sqm(건축면적≤대지 체크)
+    if footprint is not None:
+        mass_partial["building_footprint_sqm"] = footprint
+
+    # ② 기하 불변식 점검(공용 검증기·판정만). building_use는 site의 표준 한글 분류(주거 0세대 체크 키).
+    #    ★units_feasible는 후보의 '세대 산출 결과 자체'에서 도출한다(주차 현실성 parking_feasible과
+    #      의미축이 다름 — 그건 별개 축이라 여기서 쓰지 않는다). 후보가 세대를 못 올렸으면
+    #      (estimated_units 0/None) 이는 '버그 0세대'가 아니라 '이 부지에선 세대 성립이 어렵다'는
+    #      정당한 결과 → units_feasible=False(→ _check_units가 WARN으로 둠, 가짜 FAIL 금지).
+    #      세대가 있으면(>0) _check_units는 total_units>0으로 자연 통과하므로 신호 불필요(None).
+    _est_units = cd.get("estimated_units")
+    _units_feasible = None if (_est_units or 0) > 0 else False
+    geo = check_mass_invariants(
+        mass_partial,
+        site_area_sqm=site.area_sqm,
+        total_units=cd.get("estimated_units"),
+        building_use=site.building_use_kr,
+        units_feasible=_units_feasible,
+    )
+
+    # ③ provenance — 후보를 식별하는 '결정적 입력 지문'으로 input_hash→run_id(같은 입력 같은 run_id·멱등).
+    #    날짜·랜덤 같은 변하는 값은 절대 안 넣는다(결정론). 미상 필드는 None(가짜값 금지·무날조).
+    fingerprint = {
+        "zone_name": site.zone_name,
+        "area_sqm": site.area_sqm,
+        "building_use": site.building_use_kr,
+        "estimated_floors": floors,
+        "estimated_gfa_sqm": gfa,
+        "primary_content_hash": cd.get("primary_content_hash"),
+    }
+    input_hash = compute_input_hash(fingerprint)
+    return {
+        "geometry_invariants": geo.to_dict(),
+        "run_id": make_run_id(input_hash),
+        "input_hash": input_hash,
+        "source_version": ENGINE_SOURCE_VERSION,
+    }
+
+
 async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: bool = True) -> dict:
     """부지조건 → 검증된 설계 초안 Top-N(정직 판정·추천). 도면 없으면 평가만 반환.
 
@@ -690,7 +765,18 @@ async def generate_design_proposals(req: DesignRequest, *, _allow_remaining: boo
         _attach_senior_review(cd, verdict, site)
         # 모든 결과물에 근거 부착(전역 원칙): 추정·적합성·법적한도 출처/링크(레지스트리 단일출처).
         evidence = [e.to_dict() for e in proposal_evidence(cd, site, sigungu=req.sigungu)]
-        proposals.append({"candidate": cd, "verdict": verdict, "evidence": evidence})
+        # ★C2R 계약 부착(additive·best-effort) — 추천흐름 후보는 generate()를 안 거쳐 기하검증·
+        #   재현성이 빠져 있었다. 후보+부지로 부분 매스를 만들어 공용 검증기에 통과시키고
+        #   결정적 run_id/input_hash를 붙인다. 계약 산출 실패는 흡수(contract=None)하고 proposal은
+        #   정상 반환한다(주 사용자대면 추천흐름은 절대 깨지면 안 됨·무회귀).
+        try:
+            contract = _proposal_contract(cd, site)
+        except Exception as e:  # noqa: BLE001 — 계약 산출 실패가 추천을 깨면 안 됨(best-effort)
+            logger.info("design proposal 계약 부착 생략: %s", str(e)[:120])
+            contract = None
+        proposals.append(
+            {"candidate": cd, "verdict": verdict, "evidence": evidence, "contract": contract}
+        )
 
     # 추천 = pass 우선, 없으면 conditional, 그래도 없으면 None(정직).
     recommendation = None
