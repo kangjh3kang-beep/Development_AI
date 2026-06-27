@@ -481,7 +481,12 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   // 이때는 일반인에게 편집 폼 대신 '확정 칩'(읽기전용)만 보여주고, 편집 폼은 고급 서랍 뒤로 숨긴다.
   // userEdited면(사용자가 직접 수정) 종전 편집 동선을 그대로 보존(무회귀).
   const seededLandAreaSqm = effectiveLandAreaSqm(siteAnalysis);
-  const autoSeeded = isSiteMatched && !userEdited && seededLandAreaSqm != null;
+  // ★레이아웃 게이트(layoutSeeded)는 userEdited에 의존하지 않는다 — 부지분석이 연동되면(주소 일치+면적
+  //   확보) '칩+고급서랍' 레이아웃을 쓴다. 편집해도 레이아웃이 안 바뀌어 입력칸이 언마운트되지 않으므로
+  //   타이핑 중 포커스 상실이 없다(서랍 안 NumberInput은 키 입력마다 onChange라 이 분리가 필수).
+  const layoutSeeded = isSiteMatched && seededLandAreaSqm != null;
+  // autoSeeded(=아직 사용자가 손대지 않음)는 '부지분석 자동' 출처 배지 표시용으로만 쓴다.
+  const autoSeeded = layoutSeeded && !userEdited;
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
@@ -832,26 +837,32 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         </div>
         {/* 입력 영역 — 부지분석 연동 시(autoSeeded) 일반인은 '확정 칩'(읽기전용)만 보고,
             편집은 '직접 조정(고급)' 서랍에서. 미연동/사용자 직접수정 시 종전처럼 편집 폼을 직접 노출. */}
-        {autoSeeded ? (
+        {/* ★레이아웃은 layoutSeeded(=부지연동)로만 분기 — 편집해도 폼이 같은 부모(서랍) 안에 머물러
+            언마운트/포커스 상실이 없다. 칩 값은 '현재값'(편집 반영)을 보여주고, 편집은 서랍에서 한다. */}
+        {layoutSeeded ? (
           <>
-            {/* 확정 칩 3개 — 값은 실제 시드값만(가짜값 금지). 각 칩에 '부지분석 자동' 출처 배지. */}
+            {/* 확정 칩 3개 — 현재 적용값(편집하면 즉시 반영). 아직 미수정이면 '부지분석 자동' 배지. */}
             <InspectorGrid minItemRem={9}>
               {[
-                { label: "대지면적", value: `${Math.round(seededLandAreaSqm!).toLocaleString()} ㎡` },
+                { label: "대지면적", value: `${Math.round(form.landArea ? Number(form.landArea) : seededLandAreaSqm!).toLocaleString()} ㎡` },
                 { label: "용도지역", value: effectiveZoning },
                 { label: "건물용도", value: form.buildingUse },
               ].map((chip) => (
                 <div key={chip.label} className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
                   <div className="mb-1 flex items-center gap-1.5">
                     <span className="cc-label whitespace-nowrap text-[var(--text-secondary)]">{chip.label}</span>
-                    <span className="inline-flex shrink-0 items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--text-tertiary)]" title="부지분석이 자동 반영한 값 — 재분석 시 갱신됩니다. 직접 조정하려면 아래 '직접 조정(고급)'을 펼치세요.">부지분석 자동</span>
+                    {!userEdited ? (
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--text-tertiary)]" title="부지분석이 자동 반영한 값 — 재분석 시 갱신됩니다. 직접 조정하려면 아래 '직접 조정(고급)'을 펼치세요.">부지분석 자동</span>
+                    ) : (
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--accent-strong)]" title="직접 조정한 값입니다.">직접 수정</span>
+                    )}
                   </div>
                   <p className="cc-num truncate text-base font-black text-[var(--text-primary)]" title={chip.value}>{chip.value}</p>
                 </div>
               ))}
             </InspectorGrid>
-            {/* 직접 조정(고급) — 펼치면 기존 편집 폼 4필드(대지면적·용도지역·건물용도·층고) 그대로.
-                편집하면 setUserEdited(true)로 종전 동작(자동 시드 중단·calc 재산출). */}
+            {/* 직접 조정(고급) — 펼치면 편집 폼 4필드 그대로. 폼은 layoutSeeded 동안 항상 이 서랍 안에
+                머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. */}
             <AdvancedDrawer label="직접 조정(고급)" className="mt-4">
               <InspectorGrid minItemRem={12}>
                 {landAreaField}
@@ -863,7 +874,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </>
         ) : (
           <>
-            {/* 미연동/사용자 직접수정 — 종전 편집 동선 보존. 단 층고는 일반인 기본화면에서 빼고 고급 서랍으로. */}
+            {/* 미연동(부지분석 없음) — 사용자가 입력해야 하므로 편집 폼 직접 노출. 층고만 고급 서랍으로. */}
             <InspectorGrid minItemRem={12}>
               {landAreaField}
               {zoningField}
@@ -876,10 +887,13 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </AdvancedDrawer>
           </>
         )}
-        {/* 부지분석 연동 안내 — 자동 LLM 호출은 과금 이슈로 하지 않고, 버튼 클릭 시 실행됨을 알린다. */}
-        {autoSeeded && isReady && (
+        {/* 부지분석 연동 안내 — 자동 LLM 호출은 과금 이슈로 하지 않고, 버튼 클릭 시 실행됨을 알린다.
+            키 유무와 무관하게 연동 사실은 알린다(키 없으면 등록 후 가능 안내). */}
+        {layoutSeeded && (
           <p className="mt-4 text-[11px] leading-snug text-[var(--text-hint)]">
-            부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다.
+            {isReady
+              ? "부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다."
+              : "부지분석 연동됨 — API 키 등록 후 심층 분석으로 AI 설계 의견을 추가할 수 있습니다."}
           </p>
         )}
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
@@ -940,24 +954,27 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
             </div>
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
-            {/* 무날조: 실제 비교가 의미있는 항목만 '검증'으로 표기한다. 종전에는 건폐율·높이·주차가
-                적용값=한도(자가비교)라 항상 '적합'으로 떠 정보가치가 0이었다. 실질 비교가 되는
-                용적률(적용 vs 법정상한)만 검증 행으로 남기고, 건폐율·높이는 법정상한 이내 단일 배지로 통합. */}
+            {/* ★무날조: 적용값 vs 법정상한을 '실제 비교'한다. 적용 건폐율/용적률은 종상향·인센티브로
+                법정상한을 넘을 수 있으므로(실효값) 항상 '적합'으로 단정하지 않고 실비교로 적합/초과를 가린다.
+                종전 자가비교(적용=한도) 행은 제거. 높이는 법정 제한이 없으면(상업·준주거) '제한 없음'으로 정직 표기. */}
             <div className="space-y-1.5">
-              {(() => {
-                const ok = Number(calc.floorAreaRatio) <= Number(calc.farLegalMax) + 1e-6;
+              {[
+                { k: "건폐율", v: Number(calc.buildingCoverage), max: Number(calc.bcrLegalMax) },
+                { k: "용적률", v: Number(calc.floorAreaRatio), max: Number(calc.farLegalMax) },
+              ].map((row) => {
+                const ok = row.v <= row.max + 1e-6;
                 return (
-                  <div className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
-                    <span className="font-bold text-[var(--text-secondary)]">용적률</span>
-                    <span className="cc-num text-[var(--text-hint)]">적용 {calc.floorAreaRatio}% / 법정상한 {calc.farLegalMax}%</span>
+                  <div key={row.k} className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
+                    <span className="font-bold text-[var(--text-secondary)]">{row.k}</span>
+                    <span className="cc-num text-[var(--text-hint)]">적용 {row.v}% / 법정상한 {row.max}%</span>
                     <span className="inline-flex items-center gap-1 font-black" style={{ color: ok ? "var(--status-success)" : "var(--status-error)" }}>{ok ? (<><CheckCircle2 className="size-3.5" aria-hidden />적합</>) : (<><AlertTriangle className="size-3.5" aria-hidden />초과</>)}</span>
                   </div>
                 );
-              })()}
-              {/* 건폐율·높이는 위 자동계산 자체가 법정상한 이내로 산출되므로(적용=한도) 통합 배지로 표기. */}
+              })}
+              {/* 높이 — 법정 제한이 있으면 그 사실을, 없으면(상업·준주거 등) '제한 없음'을 정직 표기(녹색 단정 금지). */}
               <div className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
-                <span className="font-bold text-[var(--text-secondary)]">건폐율 · 높이</span>
-                <span className="inline-flex items-center gap-1 font-black" style={{ color: "var(--status-success)" }}><CheckCircle2 className="size-3.5" aria-hidden />법정상한 이내</span>
+                <span className="font-bold text-[var(--text-secondary)]">높이</span>
+                <span className="cc-num text-[var(--text-hint)]">{calc.heightNote === "법적 높이 제한" ? `법정 제한 ${calc.maxHeight}m 적용` : `제한 없음 (약 ${calc.maxHeight}m)`}</span>
               </div>
             </div>
           </div>
