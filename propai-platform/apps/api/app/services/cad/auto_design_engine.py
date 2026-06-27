@@ -19,10 +19,8 @@ from typing import Any, NamedTuple
 import structlog
 
 from app.core.config import settings
-from app.services.cad.envelope_result import mass_to_envelope_result
+from app.services.cad.design_contract import build_mass_contract  # 계약 부착 공용 헬퍼
 from app.services.cad.geometry_invariants import check_mass_invariants
-from app.services.cad.provenance import compute_input_hash
-from app.services.cad.rule_trace import build_rule_trace
 from app.services.common.sunlight_setback import (
     max_height_for_north_distance_m,
     required_north_setback_m,
@@ -1249,43 +1247,21 @@ class AutoDesignEngineService:
             ),
         }
 
-        # 4-c. EnvelopeResult 단일계약 부착(INC2-a·additive·무회귀).
-        #   매스 dict를 표준 그릇(EnvelopeResult)으로 '변환만' 해서 compliance에 새 키로 싣는다.
-        #   ★기존 design_payload/summary/compliance 키·수치·소비처는 전혀 손대지 않는다 —
-        #     새 키 envelope_result만 추가(소비처 마이그레이션은 후속 증분 = 리스크 격리).
-        #   provenance(INC3): site_input의 '결정적 입력 필드'로 핑거프린트를 만들어 넘긴다.
-        #     → 어댑터가 input_hash·run_id를 결정론적으로 채운다(같은 입력→같은 run_id→멱등).
-        #     ★결정론: target_unit_types는 sorted로 순서를 고정(canonical_json sort_keys와 함께
-        #       리스트 순서까지 안정화). getattr은 옵셔널 필드 미상 시 None(가짜값 금지·무날조).
-        input_fingerprint = {
-            "site_area_sqm": site_input.site_area_sqm,
-            "zone_code": site_input.zone_code,
-            "building_use": site_input.building_use,
-            "target_unit_types": sorted(site_input.target_unit_types or []),
-            "floor_height_m": site_input.floor_height_m,
-            "target_far_percent": getattr(site_input, "target_far_percent", None),
-            "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
-            "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
-            "ordinance_bcr_percent": getattr(site_input, "ordinance_bcr_percent", None),
-        }
-        envelope_result = mass_to_envelope_result(
+        # 4-c. C2R 계약(envelope_result+geometry_invariants+rule_trace+rule_set_hash) 부착 — 공용 헬퍼.
+        #   ★전역 공용화: 이 계약 묶기를 build_mass_contract 한 곳으로 추출했다(generate·/mass·/layout·/bim 공용).
+        #     예전엔 이 블록이 generate()에만 손으로 길게 박혀 있어, 사용자 주 진입(/mass 등)엔 계약이 안 실렸다.
+        #     이제 한 함수만 부르면 같은 계약이 따라온다(한 곳 고치면 전역이 따라옴·국소패치 금지).
+        #   ★거동 동일(무회귀): 헬퍼는 예전 inline과 같은 입력으로 같은 계약을 만든다 — 핑거프린트(provenance)도
+        #     site_input의 같은 결정적 필드로 구성한다(중복 제거). 매스 산출 키·수치는 전혀 손대지 않는다.
+        contract = build_mass_contract(
             mass,
+            site_input=site_input,
+            legal=legal,
             total_units=unit_layout.get("total_units"),
-            geo_invariants=mass.get("geometry_invariants"),
-            input_fingerprint=input_fingerprint,
+            units_feasible=unit_layout.get("units_feasible"),
         )
-
-        # 4-d. rule_trace + rule_set_hash 부착(INC5-a·additive·★수치 무변경).
-        #   '어떤 법규가 어떤 값으로 적용됐는지'를 mass/legal/site_input에서 '읽기만' 해서 추적표로 만들고,
-        #   그 묶음(rule_set)의 결정적 해시(rule_set_hash)를 §4 provenance triad의 마지막 칸으로 채운다.
-        #   ★기존 매스 산출·compliance/summary/payload 키·수치는 전혀 손대지 않는다(읽기 전용 구성).
-        rule_trace, rule_set = build_rule_trace(site_input, legal, mass)
-        rule_set_hash = compute_input_hash(rule_set)  # 결정론(normalize+canonical 재사용)
-        # Pydantic 모델은 model_copy(update=...)로 불변 갱신 — 원본 손대지 않고 새 필드만 채운다.
-        envelope_result = envelope_result.model_copy(
-            update={"rule_trace": rule_trace, "rule_set_hash": rule_set_hash}
-        )
-        compliance["envelope_result"] = envelope_result.model_dump(mode="json")
+        compliance["envelope_result"] = contract["envelope_result"]
+        compliance["geometry_invariants"] = contract["geometry_invariants"]
 
         logger.info(
             "자동 설계 생성 완료",

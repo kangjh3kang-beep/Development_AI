@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
+from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
 from apps.api.database.session import get_db
@@ -841,10 +842,30 @@ def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -
     return mass
 
 
+def _attach_mass_contract(mass: dict[str, Any], req: BimGenerateRequest) -> dict[str, Any]:
+    """site/legal이 없는 분기(명시 치수·폴백)에서 매스에 C2R 계약을 부착한다(공용·무날조).
+
+    이 분기는 대지정보(SiteInput)·법규(legal)가 없으므로 rule_trace/rule_set_hash는 생략하고
+    (가짜 법규 entry 금지), envelope_result+geometry_invariants만 붙인다. provenance 핑거프린트는
+    req의 결정적 필드(zone·use·치수·층고)로 구성해 같은 요청이면 같은 run_id가 나오게 한다(멱등).
+    """
+    fingerprint = {
+        "zone_code": req.zone_code,
+        "building_use": req.building_use,
+        "building_width_m": mass.get("building_width_m"),
+        "building_depth_m": mass.get("building_depth_m"),
+        "num_floors": mass.get("num_floors"),
+        "floor_height_m": mass.get("floor_height_m", req.floor_height_m),
+    }
+    mass["compliance"] = build_mass_contract(mass, fingerprint=fingerprint)
+    return mass
+
+
 def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
     """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출.
 
-    확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강한다.
+    확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강하고,
+    C2R 계약(envelope_result·geometry_invariants·rule_trace)을 부착한다(전 분기 공용·additive).
     """
     if req.building_width_m and req.building_depth_m and req.floor_count:
         mass = {
@@ -853,7 +874,11 @@ def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
             "num_floors": req.floor_count,
             "floor_height_m": req.floor_height_m,
         }
-        return _enrich_interior(mass)
+        mass = _enrich_interior(mass)
+        # ★C2R 계약 부착(공용 헬퍼) — 명시 치수 분기는 site/legal이 없으므로 rule_trace는 생략(무날조).
+        #   envelope_result+geometry_invariants만 붙는다. 핑거프린트는 req의 결정적 필드로 구성.
+        _attach_mass_contract(mass, req)
+        return mass
     # 자동 산출: AutoDesignEngine(대지면적+용도지역 → 최적 매스)
     if req.land_area_sqm:
         from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
@@ -890,13 +915,22 @@ def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
         mass = svc.compute_optimal_mass(site, eff, legal)
         if building_type:
             mass.setdefault("building_type", building_type)
-        return _enrich_interior(mass)
+        mass = _enrich_interior(mass)
+        # ★C2R 계약 부착(공용 헬퍼) — 자동산출 분기는 site·legal이 있으므로 rule_trace/rule_set_hash까지 채운다.
+        #   total_units는 이 시점 미상이라 None → 세대 점검 SKIP(가짜 0세대 FAIL 금지·무날조).
+        #   ★_enrich_interior 이후에 부착(실내요소가 반영된 매스 기준).
+        contract = build_mass_contract(mass, site_input=site, legal=legal)
+        mass["compliance"] = contract  # additive — mass dict에 부착(/mass·/layout·/bim 응답이 동봉)
+        return mass
     # 최종 폴백: 합리적 기본값
     mass = {
         "building_width_m": 12.0, "building_depth_m": 9.0,
         "num_floors": req.floor_count or 5, "floor_height_m": req.floor_height_m,
     }
-    return _enrich_interior(mass)
+    mass = _enrich_interior(mass)
+    # ★C2R 계약 부착(공용 헬퍼) — 폴백 분기도 site/legal 없음 → envelope_result+geometry_invariants만(무날조).
+    _attach_mass_contract(mass, req)
+    return mass
 
 
 @router.post("/{project_id}/bim/generate")
@@ -958,6 +992,8 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         "ai_interpretation": ai_interpretation,
         "ifc_bytes": len(ifc_bytes),
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
+        # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
+        "compliance": mass.get("compliance"),
     }
 
 
@@ -994,6 +1030,9 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         "massing_profile": mass.get("massing_profile"),
         "podium": mass.get("podium"),
         "tower": mass.get("tower"),
+        # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
+        #   기존 키는 그대로 두고 새 키 compliance만 추가(소비처 무파손·전역 공용화 결실).
+        "compliance": mass.get("compliance"),
     }
 
 
@@ -1423,6 +1462,8 @@ async def compute_design_layout(project_id: str, req: LayoutRequest):
         "bcr_pct": mass.get("bcr_pct"),
         "far_pct": mass.get("far_pct"),
         "total_units": candidate.get("estimated_units") if candidate else mass.get("total_units"),
+        # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
+        "compliance": mass.get("compliance"),
         "disclaimer": "AI 보조 초안 — 기하 SSOT(매스·배치·평면). 최종 인허가·설계 책임은 건축사.",
     }
 
