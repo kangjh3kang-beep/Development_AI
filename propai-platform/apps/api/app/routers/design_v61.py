@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -119,6 +119,23 @@ class PhotorealRenderRequest(BaseModel):
     # 렌더 프로바이더 선택(선택형) — None이면 서버 기본(replicate ControlNet) 유지(후방호환).
     provider: str | None = None   # "openai" | "google" | "replicate"
     # 모델 ID 선택 — None이면 프로바이더 기본 모델 사용.
+    model: str | None = None
+
+
+class ConceptRenderRequest(BaseModel):
+    """컨셉 조감도/투시도 요청 — 텍스트만으로 컨셉 이미지를 생성(text2img).
+
+    3D 모델이 없거나 컨셉 이미지가 필요할 때 사용한다(설명만으로 조감도/투시도 생성).
+
+    prompt: 건물·부지·분위기 설명(프론트가 건물 컨텍스트를 합성해 보낸다).
+    view: aerial(조감도) | perspective(투시도) | street(거리뷰). 기본 aerial.
+    provider: 이미지 프로바이더 선택(선택형). None이면 서버가 가용분 중 택1.
+    model: 모델 ID 선택. None이면 프로바이더 기본 모델.
+    """
+    prompt: str = Field(..., min_length=1)
+    # ★view는 허용값만(Literal) — 오타/잘못된 값은 422로 정직 거부(조용히 aerial로 바뀌지 않음).
+    view: Literal["aerial", "perspective", "street"] = "aerial"
+    provider: str | None = None          # "openai" | "google" | "replicate"
     model: str | None = None
 
 
@@ -1422,6 +1439,59 @@ async def render_photoreal(
         "provider": result.get("provider"),
         "model": result.get("model"),
         "message": "비파괴 렌더(원본 3D 불변)",
+        "charged": charged,
+    }
+
+
+@router.post("/{project_id}/render-concept")
+async def render_concept(
+    project_id: str,
+    req: ConceptRenderRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user_optional),
+):
+    """텍스트→컨셉 조감도/투시도(text2img). 3D가 없어도 설명만으로 컨셉 이미지 생성.
+
+    정직 처리:
+    - 이미지 프로바이더 키/SDK 미설정 → status="no_key"(에러 아님, 200). 가짜 이미지 절대 금지.
+    - 외부 호출 실패/빈 결과 → status="error"(사유 안내). 성공 시에만 과금.
+    - 과금코드 concept_render는 관리자 미설정 시 무료(미설정무료 정책).
+    """
+    from app.services.billing import billing_service
+    from app.services.drawing import photoreal_render_service
+
+    result = await photoreal_render_service.render_concept(
+        req.prompt,
+        view=req.view,
+        provider=req.provider,
+        model=req.model,
+    )
+
+    # 키 미설정/실패는 그대로 정직 반환(과금 없음).
+    if result.get("status") != "ok":
+        return result
+
+    # 생성 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
+    # ★concept_render 과금코드 — 관리자 미설정 시 0원=무료(미설정무료 정책).
+    charged = None
+    if user is not None:
+        try:
+            await billing_service.load_config(db)
+            c = await billing_service.charge_service(db, user.id, "concept_render")
+            charged = c.get("charged_krw")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
+    # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).
+    return {
+        "status": "ok",
+        "image_url": result.get("image_url"),
+        "image_base64": result.get("image_base64"),
+        "provider": result.get("provider"),
+        "model": result.get("model"),
+        "view": result.get("view"),
+        "message": "컨셉 렌더(text2img)",
         "charged": charged,
     }
 

@@ -35,6 +35,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "land_analysis": 2000,            # 토지분석(구독자) 건당
         "sales_provision": 50000,         # 분양현장 생성 건당(관리자 책정)
         "photoreal_render": 3000,         # AI 포토리얼 렌더(외부 GPU 호출) 건당
+        "concept_render": 0,              # 컨셉 조감도/투시도(text2img) 건당. 기본 0=무료(관리자 미책정 시 무료)
         "registry_issue": 1200,           # 등기부등본 발급·열람 건당(AI 분석 없음)
         "registry_analysis": 2000,        # 등기부등본 권리분석(AI) 건당 — 발급/열람과 차별화
         "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
@@ -61,6 +62,7 @@ _CONFIG: dict[str, Any] = {
         "land_analysis": _DEFAULT_CONFIG["service_fees"]["land_analysis"],
         "sales_provision": _DEFAULT_CONFIG["service_fees"]["sales_provision"],
         "photoreal_render": _DEFAULT_CONFIG["service_fees"]["photoreal_render"],
+        "concept_render": _DEFAULT_CONFIG["service_fees"]["concept_render"],
         "registry_issue": _DEFAULT_CONFIG["service_fees"]["registry_issue"],
         "registry_analysis": _DEFAULT_CONFIG["service_fees"]["registry_analysis"],
         "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
@@ -107,7 +109,7 @@ def apply_config(override: dict[str, Any]) -> None:
             _CONFIG["tiers"].pop(tier, None)
     sf = override.get("service_fees") or {}
     for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
-              "registry_issue", "registry_analysis", "bulk_parcel_per_unit"):
+              "concept_render", "registry_issue", "registry_analysis", "bulk_parcel_per_unit"):
         if k in sf:
             try:
                 _CONFIG["service_fees"][k] = max(0.0, float(sf[k]))  # 음수 차단
@@ -150,6 +152,11 @@ def service_fee_sales_provision() -> float:
 
 def service_fee_photoreal_render() -> float:
     return float(_CONFIG["service_fees"].get("photoreal_render", 3000))
+
+
+def service_fee_concept_render() -> float:
+    """컨셉 조감도/투시도(text2img) 건당 사용료. 관리자 미설정 시 0원(무료·실행)."""
+    return max(0.0, float(_CONFIG["service_fees"].get("concept_render", 0) or 0))
 
 
 def service_fee_registry_analysis() -> float:

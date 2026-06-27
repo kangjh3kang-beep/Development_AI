@@ -41,6 +41,7 @@ from app.core.billing import (
     service_fee_registry_analysis,
     service_fee_registry_issue,
     service_fee_photoreal_render,
+    service_fee_concept_render,
     service_fee_sales_provision,
     service_fee_stage,
     tier_fee_krw,
@@ -500,6 +501,10 @@ def compute_service_fee(tier: str, action: str, analysis_count: int) -> dict[str
         return {"fee_krw": service_fee_sales_provision(), "free": False, "free_remaining": 0}
     if action == "photoreal_render":
         return {"fee_krw": service_fee_photoreal_render(), "free": False, "free_remaining": 0}
+    if action == "concept_render":
+        # 컨셉 렌더(text2img). 관리자 미설정 시 0원=무료(미설정무료 정책).
+        fee = service_fee_concept_render()
+        return {"fee_krw": fee, "free": fee <= 0, "free_remaining": 0}
     if action == "registry_analysis":
         return {"fee_krw": service_fee_registry_analysis(), "free": False, "free_remaining": 0}
     if action == "registry_issue":
