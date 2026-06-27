@@ -12,11 +12,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.billing_deps import enforce_llm_quota
+from app.core.config import settings
 from app.services.auth.auth_service import get_current_user
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/c2r", tags=["C2R 렌더"])
 
@@ -59,7 +63,35 @@ async def render_from_brief(
     """렌더 브리프 → 이미지 렌더(provider). 키 미설정은 200+provider_unconfigured(정직).
 
     ★가짜 이미지 위조 없음: 키 없으면 provider_unconfigured, 호출 실패면 render_error.
+    ★렌더 가드: 검증 안 된 브리프(geometry_hash 없음/불일치)는 ENFORCE 시 렌더 차단,
+      기본 shadow(False)면 경고 로그만 남기고 종전대로 렌더(노출빈도 측정 단계·무회귀).
     """
     from app.services.c2r.image_provider import render_image
+    from app.services.c2r.render_guard import check_render_allowed
+
+    guard = check_render_allowed(req.brief)
+    if not guard["allowed"]:
+        if settings.C2R_RENDER_GUARD_ENFORCE:
+            # enforce 모드 — render_image 호출하지 않고 정직 차단(200·가짜 이미지 없음).
+            #   provider_unconfigured 와 동형(상태·사유만 반환, 이미지 위조 없음).
+            return {
+                "status": guard["status"],
+                "reason": guard["reason"],
+                "render_guard": "enforced",
+            }
+        # shadow 모드(기본) — 차단 사유를 경고로 남기고 종전대로 렌더한다(거동 불변).
+        logger.warning(
+            "c2r 렌더 가드 shadow 경고(차단하지 않음)",
+            guard_status=guard["status"],
+            guard_reason=guard["reason"],
+        )
+        result = await render_image(req.brief, provider=req.provider, settings=req.settings)
+        # 응답에 경고 메타만 additive로 덧붙인다(렌더 결과 자체는 무변경).
+        if isinstance(result, dict):
+            result["render_guard_warning"] = {
+                "status": guard["status"],
+                "reason": guard["reason"],
+            }
+        return result
 
     return await render_image(req.brief, provider=req.provider, settings=req.settings)
