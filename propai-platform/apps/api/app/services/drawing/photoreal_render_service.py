@@ -84,16 +84,27 @@ async def render_photoreal(
     style: str = "실사",
     strength: float = 0.6,
     timeout_s: float = 90.0,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """3D 뷰포트 이미지를 포토리얼 렌더로 변환. 비파괴(원본 불변).
 
+    provider:
+    - None 또는 "replicate": 기존 Replicate REST(ControlNet) 경로 그대로(후방호환·회귀 0).
+    - "openai" / "google": 공용 image_provider로 img2img(3D 캡처를 입력 이미지로 구조 보존).
+
     반환 status:
     - "no_key":  키 미설정 → 정직 안내(가짜 이미지 없음).
-    - "ok":      image_url 포함(외부 렌더 성공).
+    - "ok":      image_url(replicate) 또는 image_base64(openai/google) 포함(렌더 성공).
     - "pending": 서버측 폴링 한도(_POLL_MAX_S) 내 미완료 — 렌더 지연 안내 +
                  prediction_id 포함(가짜 이미지 없음, 에러로 단정하지 않음).
     - "error":   외부 호출 실패 사유(가짜 이미지 없음).
     """
+    # openai/google 선택 시 공용 image_provider 경로로 분기(img2img·정직 강등).
+    if provider in ("openai", "google"):
+        return await _render_via_image_provider(image_base64, style, provider, model, timeout_s)
+
+    # provider None/"replicate" — 아래 기존 Replicate 경로 그대로(미변경·회귀 0).
     api_key = get_render_api_key()
     if not api_key:
         return {
@@ -151,6 +162,49 @@ async def render_photoreal(
     except Exception as e:  # noqa: BLE001
         logger.warning("포토리얼 렌더 처리 오류", err=str(e)[:120])
         return {"status": "error", "message": "렌더 처리 중 오류가 발생했습니다."}
+
+
+async def _render_via_image_provider(
+    image_base64: str,
+    style: str,
+    provider: str,
+    model: str | None,
+    timeout_s: float,
+) -> dict[str, Any]:
+    """openai/google 프로바이더로 img2img 렌더(공용 image_provider 경유).
+
+    3D 캡처를 input_image_b64로 넘겨 구조를 보존(편집/변형)한다. 키/SDK 부재나
+    외부 오류는 가짜 이미지 없이 정직 강등(no_key/error)으로 매핑한다.
+    """
+    # ★기존 가드 유지: 입력 3D 이미지가 비면 먼저 정직 에러(외부 호출 전 차단).
+    if not (image_base64 or "").strip():
+        return {"status": "error", "message": "입력 3D 이미지가 비어 있습니다.", "provider": provider}
+
+    from app.services.ai.image_provider import ImageGenerationError, generate_image
+
+    try:
+        out = await generate_image(
+            provider,
+            prompt=_style_prompt(style),
+            model=model,
+            input_image_b64=image_base64,
+            size="1024x1024",
+            timeout=timeout_s,
+        )
+    except ImageGenerationError as e:
+        # 정직 강등: 키/패키지 부재→no_key, 그 외(api_error 등)→error(가짜 이미지 금지).
+        status = "no_key" if e.error_type in ("key_not_configured", "package_missing") else "error"
+        logger.warning("포토리얼 렌더 이미지 프로바이더 오류", provider=provider, err_type=e.error_type)
+        return {"status": status, "message": str(e), "provider": provider}
+
+    imgs = out.get("images") or []
+    urls = out.get("image_urls") or []
+    # images(base64) 우선, 없으면 image_urls(URL) — 공용 계약(소비처 동일 처리).
+    if imgs:
+        return {"status": "ok", "image_base64": imgs[0], "provider": provider, "model": out.get("model")}
+    if urls:
+        return {"status": "ok", "image_url": urls[0], "provider": provider, "model": out.get("model")}
+    return {"status": "error", "message": "이미지 생성 결과가 비어 있습니다.", "provider": provider}
 
 
 async def _resolve_prediction(
