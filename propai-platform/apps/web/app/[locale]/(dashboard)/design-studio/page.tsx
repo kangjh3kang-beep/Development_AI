@@ -12,7 +12,8 @@ import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder
 export default function DesignStudioPage() {
   const projectId = useProjectContextStore((s) => s.projectId);
   return (
-    <div className="grid gap-6 p-1">
+    // 외곽 gap만 유지(p-1 제거) — 셸이 풀하이트 grid로 화면을 채우도록 함. ProjectSwitcher는 상단 고정.
+    <div className="flex flex-col gap-4">
       <ProjectSwitcher />
       {/* 2차-B: design-studio 직접 진입 시에도 designData/siteAnalysis를 백엔드 스냅샷에서 복원한다.
           이 라우트는 projects/[id] 트리 밖이라 layout의 ProjectContextBinder가 마운트되지 않아,
