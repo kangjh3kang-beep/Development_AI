@@ -164,6 +164,23 @@ interface DesignData {
   // 시니어 자문(심의 CSP) 입력원 — 설계엔진 산출. 미확보면 null(평가 생략·무목업).
   heightM?: number | null;          // 설계 건물 높이(m·building_height_m)
   maxHeightM?: number | null;       // 법정 높이 한도(m·max_height_m·0/null=무제한/미산정)
+  // ── 매스 기하(massGeom) — site/generate가 확정한 건물 덩어리 모양을 draw(CAD·BIM 3D)로 전파 ──
+  // 왜 필요한가(쉬운 설명): 설계 생성 단계에서 정한 "건물 덩어리"(podium-tower 같은 2단 매스 포함)가
+  //   3D 도면 단계로 넘어오지 않아, 도면 단계가 그 정보를 모른 채 단일 박스로 다시 역산하던 문제를 푼다.
+  //   이 필드가 있으면 도면 단계가 /mass 재산출을 건너뛰고 이 모양 그대로 3D를 그린다.
+  // 전부 옵셔널/nullable — 구 스냅샷·persist 왕복(저장→복원) 무손상. 미확보 값은 null(가짜 생성 금지).
+  massGeom?: {
+    buildingWidthM?: number | null;   // 건물 폭(m) — 단일 매스 또는 대표 매스
+    buildingDepthM?: number | null;   // 건물 깊이(m)
+    footprintSqm?: number | null;     // 건축면적(㎡·한 층이 땅을 덮는 넓이) — 부지면적 아님
+    massingProfile?: string | null;   // 매스 형태("podium_tower" 등) — 없으면 null
+    // 저층 큰 판(podium) — 주상복합 2단 매스의 아래 덩어리. 없으면 null.
+    podium?: { widthM?: number | null; depthM?: number | null; floors?: number | null; footprintSqm?: number | null } | null;
+    // 고층 작은 판(tower) — 주상복합 2단 매스의 위 덩어리. 없으면 null.
+    tower?: { widthM?: number | null; depthM?: number | null; floors?: number | null; footprintSqm?: number | null } | null;
+    floorsForUnits?: number | null;   // 주거 세대가 들어가는 층수(podium 상가층 제외) — 없으면 null
+    residentialGfaSqm?: number | null; // 주거 전용 연면적(㎡) — 없으면 null
+  } | null;
 }
 
 interface FeasibilityData {

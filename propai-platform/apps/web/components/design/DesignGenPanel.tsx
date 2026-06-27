@@ -733,6 +733,35 @@ export function DesignGenPanel({ projectId }: Props) {
     // far 분모는 백엔드가 한도 산정에 쓴 면적 우선(사용자가 입력란을 바꿔도 결과와 정합).
     const denom = result?.site.area_sqm ?? areaSqm;
     const far = denom > 0 ? Math.round((c.estimated_gfa_sqm / denom) * 100) : null;
+
+    // ── 매스 기하(massGeom) — 추천안의 건물 덩어리 모양을 draw(3D)로 전파 ──
+    // 왜(쉬운 설명): 도면 단계가 이 모양을 받으면 /mass 재산출 없이 같은 footprint로 3D를 그린다.
+    //   치수는 배치도 건물(placement.building) 우선 → 주차 배치 footprint 폴백. 둘 다 없으면 massGeom 생략(무날조).
+    const pb = c.placement?.building;
+    const pl = c.parking_layout;
+    const bw = pb && pb.w > 0 ? pb.w : (pl && pl.footprint_w_m > 0 ? pl.footprint_w_m : null);
+    const bd = pb && pb.d > 0 ? pb.d : (pl && pl.footprint_d_m > 0 ? pl.footprint_d_m : null);
+    const fp = pb && pb.area_sqm > 0 ? pb.area_sqm : (bw && bd ? bw * bd : null);
+    const massGeom = bw && bd
+      ? {
+          buildingWidthM: Math.round(bw * 10) / 10,
+          buildingDepthM: Math.round(bd * 10) / 10,
+          footprintSqm: fp != null ? Math.round(fp * 10) / 10 : null,
+          massingProfile: null,  // 추천안엔 podium/tower 분리 매스 없음 → 단일 매스(null)
+          podium: null,
+          tower: null,
+          floorsForUnits: c.estimated_floors ?? null,
+          residentialGfaSqm: null,
+        }
+      : null;
+
+    // 평형 구성(unitTypes) — 추천안의 평형별 분해(unit_breakdown)에서 type 목록을 채운다.
+    // 종전엔 null로 비워 도면·라이브수지가 기본(59A,84A)으로만 분할되던 것을 실제 추천 믹스로 정합.
+    const unitTypes =
+      c.unit_breakdown && c.unit_breakdown.length > 0
+        ? c.unit_breakdown.map((u) => u.type).filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+        : null;
+
     updateDesignData({
       totalGfaSqm: c.estimated_gfa_sqm,
       floorCount: c.estimated_floors,
@@ -740,8 +769,9 @@ export function DesignGenPanel({ projectId }: Props) {
       bcr: null, // 후보엔 건축면적비 직접 산출 없음 → 정직 null(하류 영향 시 별도 산정)
       far,
       unitCount: c.estimated_units ?? null,
-      unitTypes: null,
-      efficiencyPct: null,
+      unitTypes: unitTypes && unitTypes.length > 0 ? unitTypes : null,
+      efficiencyPct: c.unit_efficiency ?? null,
+      massGeom,
     });
     markStageComplete("design");
     setAppliedIdx(idx);
