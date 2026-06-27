@@ -261,6 +261,92 @@ function MassingDiagram({ name, active, geom }: { name: string; active?: boolean
   );
 }
 
+/**
+ * 매싱 입체(축측투영) 대형 미리보기 — 우측 캔버스의 '입체 3D' 뷰.
+ * ★중요: WebGL/Three.js를 절대 쓰지 않는다. 순수 SVG 축측투영(axonometric)으로만 입체를
+ *   '느낌'만 보여준다(진짜 인터랙티브 3D·BIM은 onOpen3D 핸드오프 버튼이 담당).
+ * 투영 수학은 MassingDiagram의 우측 악소노메트릭과 동일하되 캔버스를 꽉 채우는 큰 SVG로 그린다.
+ * floorHeightM: 층고(m) — 폼의 floorHeight를 받아 입체 높이를 실값으로 계산(없으면 3.3m 가정).
+ */
+function MassingAxon3D({ geom, floorHeightM, active }: { geom: MassingGeom | null; floorHeightM?: number; active?: boolean }) {
+  const c = active ? "var(--accent-strong)" : "var(--text-tertiary)";
+  const fill = active ? "var(--accent-soft)" : "var(--surface-muted)";
+
+  // 기하 데이터가 없으면 안내 텍스트만(무목업 — 가짜 입체를 그리지 않는다).
+  if (!geom || geom.blocks.length === 0) {
+    return (
+      <svg viewBox="0 0 280 200" className="h-full w-full">
+        <text x="140" y="100" textAnchor="middle" fontSize="11" fill="var(--text-hint)">
+          입체 미리보기를 만들 기하 데이터가 없습니다
+        </text>
+      </svg>
+    );
+  }
+
+  const KX = 0.5, KY = 0.3; // 깊이 단축 계수(MassingDiagram과 동일)
+  const fh = floorHeightM && floorHeightM > 0 ? floorHeightM : 3.3; // 층고(m) — 없으면 3.3 가정
+  const hM = geom.floors * fh; // 건물 총 높이(m) = 층수 × 층고
+
+  const S = geom.siteSide;
+  // 모든 블록의 투영 범위(extent)로 origin/scale 자동 맞춤(MassingDiagram의 s2 방식 차용).
+  let extX = 1, extY = 1;
+  for (const b of geom.blocks) {
+    const dist = S - (b.y + b.h);
+    extX = Math.max(extX, b.x + dist * KX + b.w + b.h * KX);
+    extY = Math.max(extY, hM + dist * KY + b.h * KY);
+  }
+  const PAD = 18;
+  const AW = 280 - PAD * 2, AH = 200 - PAD * 2 - 16; // 하단 라벨 여백 확보
+  const s2 = Math.min(AW / extX, AH / extY);
+  const AYB = 200 - 28; // 지반선 y
+  const AX = PAD;
+  const ordered = [...geom.blocks].sort((a, b) => a.y - b.y); // 북(후면)부터 — 전면이 덮도록
+  const b0 = geom.blocks[0];
+
+  return (
+    <svg viewBox="0 0 280 200" className="h-full w-full">
+      {/* 지반선 */}
+      <line x1={AX - 6} y1={AYB + 2} x2="272" y2={AYB + 2} stroke={c} strokeWidth="1" opacity="0.4" />
+      {ordered.map((b, i) => {
+        const dist = S - (b.y + b.h);
+        const fx = AX + (b.x + dist * KX) * s2;
+        const fy = AYB - dist * KY * s2;
+        const w = b.w * s2;
+        const H = hM * s2;
+        const ox = b.h * KX * s2;
+        const oy = b.h * KY * s2;
+        // 층 슬래브 라인 — 과밀 방지로 60층까지만 그린다(라벨엔 실제 floors 표기).
+        const slabs: number[] = [];
+        for (let f = 1; f < geom.floors && f <= 60; f++) slabs.push(fy - (H * f) / geom.floors);
+        return (
+          <g key={`x${i}`}>
+            {/* 상면(지붕) */}
+            <polygon points={`${fx},${fy - H} ${fx + ox},${fy - H - oy} ${fx + w + ox},${fy - H - oy} ${fx + w},${fy - H}`} fill={c} opacity="0.22" />
+            {/* 측면(우측 깊이면) */}
+            <polygon points={`${fx + w},${fy - H} ${fx + w + ox},${fy - H - oy} ${fx + w + ox},${fy - oy} ${fx + w},${fy}`} fill={c} opacity="0.38" />
+            {/* 전면 */}
+            <rect x={fx} y={fy - H} width={w} height={H} fill={fill} stroke={c} strokeWidth="1" />
+            {/* 층 슬래브 라인(가는 선) */}
+            {slabs.map((sy, j) => (
+              <line key={j} x1={fx} y1={sy} x2={fx + w} y2={sy} stroke={c} strokeWidth="0.5" opacity="0.5" />
+            ))}
+          </g>
+        );
+      })}
+      {/* N 방위(작게) */}
+      <g opacity="0.8">
+        <line x1={AX + 8} y1={28} x2={AX + 8} y2={16} stroke={c} strokeWidth="1" />
+        <polygon points={`${AX + 5},${19} ${AX + 8},${13} ${AX + 11},${19}`} fill={c} />
+        <text x={AX + 8} y={40} textAnchor="middle" fontSize="9" fill={c} fontWeight="700">N</text>
+      </g>
+      {/* 치수/정보 라벨 — 무날조: geom 실값만. 좌하단 동 규모, 우하단 층수·높이·층고 가정. */}
+      <text x={AX} y="190" fontSize="9" fill="var(--text-hint)">동 약 {Math.round(b0.w)}×{Math.round(b0.h)}m</text>
+      <text x="272" y="184" textAnchor="end" fontSize="9" fill="var(--text-hint)">{geom.floors}층 · 약 {Math.round(hM)}m</text>
+      <text x="272" y="194" textAnchor="end" fontSize="8" fill="var(--text-hint)">층고 {fh}m 가정</text>
+    </svg>
+  );
+}
+
 // ② 폼 기본값 — projectId 전환 리셋·시드 해제 시 복귀 기준(단일 정의).
 // floorHeight = 층고(m) 기본 3.0(범위 2.4~4.5) — SolarEnvelopeCard로 전달해 층수 천장을 재계산.
 const DEFAULT_FORM = { landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택", floorHeight: "3.0" };
@@ -329,6 +415,8 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   const [userEdited, setUserEdited] = useState(false);
   // 매싱 대안 사용자 선택(판상형/타워형/ㄱ자형). null이면 추천(최고 효율)이 활성.
   const [selectedMassing, setSelectedMassing] = useState<string | null>(null);
+  // 우측 캔버스 2D/3D 인라인 토글 — "2d"=배치평면(MassingDiagram), "3d"=축측투영 입체(MassingAxon3D·SVG).
+  const [canvasView, setCanvasView] = useState<"2d" | "3d">("2d");
   // ②③ 일조 인벨로프 결과 리프트 — 상단 '예상 층수' 카드를 실무 권장 범위로 배선(ceil(FAR/BCR) 날조 제거).
   const [envResult, setEnvResult] = useState<EnvLift | null>(null);
 
@@ -872,7 +960,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         <div className="min-w-0 xl:sticky xl:top-6 xl:h-[calc(100vh-12rem)]">
           <div className="cc-panel flex h-full flex-col gap-4 overflow-hidden p-5">
             <div className="flex items-center gap-2.5">
-              <span className="cc-label text-[var(--text-secondary)]">CANVAS · 2D MASSING</span>
+              <span className="cc-label text-[var(--text-secondary)]">CANVAS · {canvasView === "3d" ? "3D 입체" : "2D 평면"}</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">매싱 배치 미리보기</h3>
               {calc && activeMassing && (
                 <span className="ml-auto rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
@@ -883,12 +971,53 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
 
             {calc && activeMassing ? (
               <>
-                {/* 대형 2D 매싱 배치도 — 활성안의 geom으로 MassingDiagram을 크게 렌더. */}
+                {/* 2D 평면 / 3D 입체 인라인 토글(세그먼트) — 캔버스 측에서 뷰를 바로 전환.
+                    ★3D는 순수 SVG 축측투영(MassingAxon3D)일 뿐 WebGL 컨텍스트를 새로 띄우지 않는다. */}
+                <div className="flex gap-1.5">
+                  {([
+                    { key: "2d" as const, label: "평면 2D" },
+                    { key: "3d" as const, label: "입체 3D" },
+                  ]).map((opt) => {
+                    const on = canvasView === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setCanvasView(opt.key)}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                          on
+                            ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                            : "border-[var(--line)] text-[var(--text-secondary)]"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 대형 미리보기 — 2D는 MassingDiagram(배치평면), 3D는 MassingAxon3D(축측투영 입체·SVG). */}
                 <div className="flex flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-                  <div className="w-full">
-                    <MassingDiagram name={activeMassing.active.name} active geom={activeMassing.geom} />
+                  <div className="h-full w-full">
+                    {canvasView === "2d" ? (
+                      <MassingDiagram name={activeMassing.active.name} active geom={activeMassing.geom} />
+                    ) : (
+                      <MassingAxon3D
+                        geom={activeMassing.geom}
+                        floorHeightM={form.floorHeight ? Number(form.floorHeight) : undefined}
+                        active
+                      />
+                    )}
                   </div>
                 </div>
+
+                {/* 3D 뷰 정직 고지 — 개념 입체일 뿐, 정밀 3D·BIM은 아래 핸드오프 버튼으로. */}
+                {canvasView === "3d" && (
+                  <p className="text-[11px] leading-snug text-[var(--text-hint)]">
+                    개념 입체(축측투영) — 정밀 3D·BIM은 아래 편집실에서
+                  </p>
+                )}
 
                 {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—". */}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
