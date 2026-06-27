@@ -16,6 +16,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { resolveCanonicalFloors } from "@/lib/design-ssot";
+import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { InspectorGrid } from "@/components/common/InspectorGrid";
@@ -389,6 +390,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   // ★P3: 추천(AutoRecommend)이 기록한 건물용도(designData.buildingType)를 설계 폼 시드로 읽는다.
   const recommendedBuildingType = useProjectContextStore((s) => s.designData?.buildingType);
+  // ★C2R 계약 정본 층수(envelope_result.metrics.canonical_floors) — store에 환류된 계약이 있으면
+  //   층수 정본의 1순위 권위 소스로 쓴다(아래 resolveCanonicalFloors 호출들에 주입). 없으면 null →
+  //   종전 우선순위(일조 권장→recFloors)로 폴백(additive·무회귀). compliance 객체 참조만 구독.
+  const designCompliance = useProjectContextStore((s) => s.designData?.compliance);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const [easy, setEasy] = useState(false);   // 일반인용 쉬운 설명 토글
 
@@ -570,7 +575,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   // ★층수 단일 진실원천(SSOT) — 축측 도식·예상층수 카드·우측 메트릭칩이 모두 이 한 값을 보게 한다.
   //   종전엔 축측(25층 매직캡)·예상(43~65)·칩(65)이 3중 불일치했음. 일조 인벨로프 권장(있으면)
   //   > calc.recFloors(FAR 반영 현실권장) 순으로 도출하고, 셋 다 없으면 null(무날조 — 화면 "—").
-  const canonicalFloors = calc ? resolveCanonicalFloors(envResult, calc.recFloors) : null;
+  // ★C2R 계약 정본 층수 — store 환류 계약(designCompliance)에서 안전 추출(없거나 0이면 null).
+  //   resolveCanonicalFloors의 1순위 인자로 주입 → 계약값이 있으면 그것을 정본으로 채택(무회귀).
+  const contractFloors = contractCanonicalFloors(designCompliance);
+  const canonicalFloors = calc ? resolveCanonicalFloors(envResult, calc.recFloors, contractFloors) : null;
   // ★매싱 도식(좌측 대안카드·우측 캔버스)이 '같은 층수'로 그려지도록 geom 산출 층수를 단일화.
   //   정본(canonicalFloors)→권장(recFloors) 순. 좌우가 이 한 값을 공유해 슬래브 수 불일치를 차단.
   const floorsForGeom = canonicalFloors ?? calc?.recFloors ?? null;
@@ -659,7 +667,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // 어긋나는 것을 방지. AI는 summary·매싱안 등 정성 항목에만 사용.
     // 층수 정본(canonicalFloors) — 산술하한(calc.maxFloors)을 store에 영속화하면 BIM·하류가
     // 과소 층수(4층 등)를 쓰게 됨. 정본 미확보 시 권장(recFloors) 폴백(무날조).
-    const floorCount = resolveCanonicalFloors(envResult, calc.recFloors) ?? calc.recFloors;
+    // ★C2R 계약 정본 층수(contractFloors)를 1순위로 — store에 환류된 계약이 있으면 그 층수를
+    //   store(floorCount)에 영속화한다(권위 소스). 없으면 종전(일조 권장→recFloors) 폴백(무회귀).
+    const floorCount = resolveCanonicalFloors(envResult, calc.recFloors, contractFloors) ?? calc.recFloors;
     // ── 매스 기하(massGeom) 1회 기록 — site/generate가 정한 건물 덩어리를 draw(3D)로 전파 ──
     // 왜(쉬운 설명): 도면 단계가 이 모양을 받으면 /mass 재산출 없이 같은 층수·footprint로 3D를 그린다.
     //   여기(부지 기반 설계)는 단일 매스라 podium/tower는 null(주상복합 2단 매스는 추천안 적용 경로에서 채움).
@@ -711,6 +721,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     hasRealSiteData,
     userEdited,
     envResult,
+    contractFloors,
   ]);
 
   // ── INPUT 편집 필드(공용) ──

@@ -31,18 +31,26 @@ function str(v: unknown): string | null {
 /**
  * 정본 층수(canonicalFloors) — 모든 층수 소비처의 단일 진실원천.
  *
- * 우선순위: 일조 인벨로프 권장 상한(recommended_floors_high) > 권장 하한(recommended_floors_low)
- *   > 로컬 권장 폴백(recFloorsFallback, 양수일 때만). 셋 다 없으면 null(무날조 — 화면은 "—").
+ * 우선순위: ★C2R 계약 정본 층수(contractFloors·envelope_result.metrics.canonical_floors) >
+ *   일조 인벨로프 권장 상한(recommended_floors_high) > 권장 하한(recommended_floors_low) >
+ *   로컬 권장 폴백(recFloorsFallback, 양수일 때만). 모두 없으면 null(무날조 — 화면은 "—").
  *
- * 순수 함수. recFloorsFallback은 호출부에서 calc(법규 계산)가 있을 때만 넘긴다.
+ * ★왜 계약값이 1순위인가(쉬운 설명): 백엔드 설계엔진이 매스를 산출하면서 같이 정한 '정본 층수'가
+ *   가장 권위 있는 값이다(같은 산출 컨텍스트·법규 적용 결과). 이 값이 store에 환류돼 있으면 그것을
+ *   먼저 쓰고, 없을 때만(구 응답·미환류) 기존 일조/로컬 폴백으로 떨어진다(additive·무회귀).
+ *
+ * 순수 함수. contractFloors/recFloorsFallback은 호출부가 있을 때만 넘긴다(미전달=종전 동작).
  */
 export function resolveCanonicalFloors(
   envResult?: { recommended_floors_high?: number | null; recommended_floors_low?: number | null } | null,
   recFloorsFallback?: number | null,
+  contractFloors?: number | null,
 ): number | null {
   // ★층수는 0·음수가 정본으로 새면 안 된다(posNum) — 일조 엔진이 0층을 줘도 칩 "0층"/designData=0
-  //   누수 차단. recFloorsFallback도 양수만(대칭). 셋 다 없으면 null(무날조 — 화면 "—").
+  //   누수 차단. 모든 항이 양수만(대칭). 모두 없으면 null(무날조 — 화면 "—").
+  //   계약값(contractFloors)이 1순위 — 미전달(undefined)이면 종전 우선순위와 완전히 동일하게 동작.
   return (
+    posNum(contractFloors) ??
     posNum(envResult?.recommended_floors_high) ??
     posNum(envResult?.recommended_floors_low) ??
     posNum(recFloorsFallback) ??
@@ -123,6 +131,9 @@ export function deriveDesignSSOT(
   designData: DesignDataInput,
   envResult: DesignEnvInput,
   calc: DesignCalcInput,
+  // ★C2R 계약 정본 층수(envelope_result.metrics.canonical_floors) — 있으면 1순위(권위 소스).
+  //   미전달(undefined)이면 종전 동작과 완전히 동일(additive·무회귀).
+  contractFloors?: number | null,
 ): DesignSSOT {
   // 면적(㎡) — 부지분석 통합/대표 면적. 미확보 시 null.
   const landAreaSqm = num(siteAnalysis?.landAreaSqm) ?? null;
@@ -134,8 +145,8 @@ export function deriveDesignSSOT(
   const gfaSqm = num(calc?.maxGrossArea) ?? 0;
   const buildableAreaSqm = num(calc?.buildableArea) ?? 0;
   const arithmeticMinFloors = num(calc?.maxFloors) ?? 0;
-  // 정본 층수 — 일조 인벨로프 권장 우선, 없으면 calc.recFloors 폴백(calc 있을 때만 의미).
-  const canonicalFloors = resolveCanonicalFloors(envResult, num(calc?.recFloors) ?? null);
+  // 정본 층수 — ★C2R 계약값(contractFloors) 1순위 → 일조 인벨로프 권장 → calc.recFloors 폴백.
+  const canonicalFloors = resolveCanonicalFloors(envResult, num(calc?.recFloors) ?? null, posNum(contractFloors) ?? null);
   const buildingType = str(designData?.buildingType);
   return {
     landAreaSqm,

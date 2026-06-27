@@ -26,6 +26,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
+import { parseDesignCompliance } from "@/lib/design-contract";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -748,6 +749,27 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
   const RENDER_COST_COIN = 5;
 
+  // ── C2R 계약(compliance) store 환류 공용 헬퍼 — /mass·/bim 응답이 동봉한 근거·검증을 store에 저장 ──
+  // 왜 공용화하나(쉬운 설명): 백엔드 응답의 compliance(envelope_result·geometry_invariants)는
+  //   여러 fetch 경로(resolveSpec=/mass, loadBimModel=/bim, 2D effect=/bim)에서 도착한다. 한 곳에만
+  //   환류 코드를 넣으면 진입 순서(2D 먼저 vs 3D 먼저)에 따라 누락된다. 그래서 "응답 dict를 받아
+  //   compliance를 store에 안전 환류"하는 일을 함수 하나로 묶어 모든 경로가 같은 헬퍼만 부르게 한다
+  //   (버그수정 정책의 공용화 원칙 — 한 곳을 고치면 전역이 따라온다).
+  // ★무회귀 가드: designData가 아직 없으면(=/mass·/bim이 설계 계산보다 먼저 도착) 환류하지 않는다.
+  //   이유: updateDesignData는 부분패치를 기존값 위에 머지하는데, designData가 null이면 {compliance}만
+  //   담긴 희소 객체가 design staleness를 찍어(totalGfaSqm 등 필수값 부재) 완료판정을 오염시킨다.
+  //   설계 계산이 끝나 designData가 생긴 뒤에만 compliance를 더한다(additive·무손상).
+  // ★무날조: 응답에 compliance가 없거나 형태가 다르면 parseDesignCompliance가 null → 저장 안 함.
+  const flowCompliance = useCallback(
+    (raw: unknown) => {
+      const parsed = parseDesignCompliance(raw);
+      if (!parsed) return;                 // 계약 없음/형태 불일치 → 환류 안 함(가짜 저장 금지)
+      if (!designData) return;             // 설계 계산 전 도착분은 보류(staleness 오염 방지)
+      updateDesignData({ ...designData, compliance: parsed });
+    },
+    [designData, updateDesignData],
+  );
+
   // ── 공용 기하 산출: 확정 매스(massGeom) 재사용 → 선택 개요(GFA·층수) → 대지+용도지역 자동 ──
   const resolveSpec = useCallback(async () => {
     setSpecLoading(true);
@@ -870,12 +892,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         tower: m.tower ? { width: m.tower.width_m, depth: m.tower.depth_m, floors: m.tower.floors } : null,
         isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
       });
+      // ★C2R 계약 환류 — /mass 응답이 동봉한 m.compliance(envelope_result·geometry_invariants)를
+      //   store에 저장(공용 헬퍼). 종전엔 m의 치수만 읽고 m.compliance를 통째로 버렸다(감사 적발).
+      flowCompliance(m?.compliance);
     } catch {
       setSpec(fallback);
     } finally {
       setSpecLoading(false);
     }
-  }, [projectId, designData, siteAnalysis, resolvedLandArea]);
+  }, [projectId, designData, siteAnalysis, resolvedLandArea, flowCompliance]);
 
   // 마운트 시 1회 기하 산출 — 단, 설계 기반(개요·부지)이 있을 때만(무목업·게이트)
   useEffect(() => {
@@ -946,6 +971,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       .then((d) => {
         if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
         if (d?.mass) setBimMass(d.mass);
+        // ★C2R 계약 환류 — /bim 응답이 동봉한 d.compliance를 store에 저장(공용 헬퍼). 종전엔
+        //   ai_interpretation·mass만 꺼내고 d.compliance를 통째로 버렸다(감사 적발).
+        flowCompliance(d?.compliance);
       })
       .catch(() => { /* 해석 실패는 무시 — 3D 모델은 별도로 로드됨 */ });
 
@@ -989,7 +1017,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setBimLoading(false);
     }
-  }, [projectId, spec, bimBody]);
+  }, [projectId, spec, bimBody, flowCompliance]);
 
   // 절차생성 모델용 카메라 프레이밍 — spec이 준비되고 서버 glb가 아직 없으면 spec 치수로 시점 산정.
   // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
@@ -1088,10 +1116,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         signal: AbortSignal.timeout(90000),
       })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (d?.ai_interpretation) setDesignAi(d.ai_interpretation); })
+        .then((d) => {
+          if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
+          // ★C2R 계약 환류 — 2D 진입 경로도 /bim 응답의 compliance를 store에 저장(공용 헬퍼).
+          //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
+          flowCompliance(d?.compliance);
+        })
         .catch(() => { /* 무시 */ });
     }
-  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, projectId, bimBody]);
+  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, projectId, bimBody, flowCompliance]);
 
   // 활성 도면 SVG 로드
   useEffect(() => {
