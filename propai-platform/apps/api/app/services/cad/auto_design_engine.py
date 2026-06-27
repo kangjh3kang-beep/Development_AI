@@ -19,6 +19,7 @@ from typing import Any, NamedTuple
 import structlog
 
 from app.core.config import settings
+from app.services.cad.envelope_result import mass_to_envelope_result
 from app.services.cad.geometry_invariants import check_mass_invariants
 from app.services.common.sunlight_setback import (
     max_height_for_north_distance_m,
@@ -1245,6 +1246,17 @@ class AutoDesignEngineService:
                 settings.GEOMETRY_INVARIANT_ENFORCE and geo_res.is_fail
             ),
         }
+
+        # 4-c. EnvelopeResult 단일계약 부착(INC2-a·additive·무회귀).
+        #   매스 dict를 표준 그릇(EnvelopeResult)으로 '변환만' 해서 compliance에 새 키로 싣는다.
+        #   ★기존 design_payload/summary/compliance 키·수치·소비처는 전혀 손대지 않는다 —
+        #     새 키 envelope_result만 추가(소비처 마이그레이션은 후속 증분 = 리스크 격리).
+        envelope_result = mass_to_envelope_result(
+            mass,
+            total_units=unit_layout.get("total_units"),
+            geo_invariants=mass.get("geometry_invariants"),
+        )
+        compliance["envelope_result"] = envelope_result.model_dump(mode="json")
 
         logger.info(
             "자동 설계 생성 완료",
