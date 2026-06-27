@@ -45,8 +45,11 @@ class TestPodiumTowerMapping:
     def test_geometry_and_metrics_mapped(self):
         er = mass_to_envelope_result(_podium_tower_mass(), total_units=180)
 
-        # 기하 매핑
+        # 기하 매핑(키 오타 회귀 방지 — depth/층고/높이까지 명시 잠금)
         assert er.geometry.building_width_m == 24.0
+        assert er.geometry.building_depth_m == 18.0
+        assert er.geometry.floor_height_m == 3.0
+        assert er.geometry.building_height_m == 120.0
         assert er.geometry.footprint_sqm == 432.0
         assert er.geometry.num_floors == 40
         assert er.geometry.massing_profile == "podium_tower"
@@ -75,6 +78,16 @@ class TestPodiumTowerMapping:
         mass = {"num_floors": 12, "building_width_m": 20.0}
         er = mass_to_envelope_result(mass)
         assert er.metrics.canonical_floors == 12
+
+    def test_adapter_does_not_mutate_input(self):
+        # ★핵심 무회귀 계약: 어댑터는 순수 읽기 — 입력 mass를 절대 변경하지 않는다.
+        #   향후 어댑터가 mass에 쓰기를 추가하면 이 테스트가 잡는다(소비처 회귀 토양 차단).
+        import copy
+
+        mass = _podium_tower_mass()
+        before = copy.deepcopy(mass)
+        mass_to_envelope_result(mass, total_units=180)
+        assert mass == before
 
 
 class TestNoFabrication:
