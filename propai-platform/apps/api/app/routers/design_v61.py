@@ -1364,8 +1364,10 @@ async def compute_design_layout(project_id: str, req: LayoutRequest):
     # ②-b 도면 없이도 평면 브리지가 동작하도록 — 확정 매스 연면적으로 평형 분해(정본 재사용·DRY).
     #     compose는 참조도면 없으면 빈 결과라, /layout은 매스 SSOT(연면적·층수)에서 직접 평형을 분해해
     #     candidate.unit_breakdown을 채운다(평면 브리지 입력 보장 — D3 해소가 도면 유무와 무관).
-    gfa = mass.get("total_floor_area_sqm")
-    nfloors = mass.get("num_floors")
+    # ★podium-tower 매스면 주거(tower) 연면적·층수로 분해(podium 상가/주차 제외) — /units 경로
+    #   (compute_unit_layout)와 동일 기준으로 정합. 단일박스면 total/num_floors 폴백(무회귀).
+    gfa = mass.get("residential_gfa_sqm") or mass.get("total_floor_area_sqm")
+    nfloors = mass.get("floors_for_units") or mass.get("num_floors")
     if gfa and nfloors and req.unit_types:
         per_floor_net = (float(gfa) * _NET_AREA_RATIO) / float(nfloors)
         ub = compute_unit_breakdown(per_floor_net, int(nfloors), req.unit_types)

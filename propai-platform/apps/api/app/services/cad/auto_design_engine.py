@@ -429,6 +429,7 @@ class AutoDesignEngineService:
             "total_floors": total_floors,
             "total_height_m": total_height,
             "total_gfa": total_gfa,
+            "tower_gfa": tower_gfa,        # 주거(tower) 연면적 — 세대분해 풀(podium 상가/주차 제외)
             "binding": binding,
             "basis": (
                 f"podium {podium_floors}층(건폐율 {round(max_bcr * 100)}% 큰 판)"
@@ -680,6 +681,7 @@ class AutoDesignEngineService:
             result["residential_floors"] = twr["floors"]      # 주거(tower) 층수
             result["commercial_floors"] = pt["podium"]["floors"]  # 저층부(상가·주차)
             result["floors_for_units"] = twr["floors"]        # ★세대수 산정 기준(podium 제외·무날조)
+            result["residential_gfa_sqm"] = round(pt["tower_gfa"], 2)  # 주거 연면적(세대분해 풀·podium 제외)
             # headline을 현실 composite로 갱신 — 대표 floor plate는 tower(주거 기준층).
             result["num_floors"] = pt["total_floors"]
             result["building_height_m"] = round(pt["total_height_m"], 2)
