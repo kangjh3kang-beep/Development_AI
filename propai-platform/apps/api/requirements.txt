@@ -32,6 +32,9 @@ scipy==1.14.1
 # LLM / Agents
 langchain==0.3.7
 langchain-openai==0.2.8
+# Gemini(google) 프로바이더 — get_llm provider="google" 실배선용. ★langchain-core 0.3.x 호환 핀
+#   (2.1.12). 최신 3.x/4.x는 langchain-core>=1.4.7 요구로 위 0.3.7 스택과 비호환이라 고정.
+langchain-google-genai==2.1.12
 langchain-community==0.3.7
 langgraph==0.2.40
 openai==1.54.3

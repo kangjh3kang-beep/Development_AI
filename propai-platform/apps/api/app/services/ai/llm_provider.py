@@ -3,7 +3,10 @@
 지원 프로바이더:
 - anthropic: Claude (claude-sonnet-4-6, claude-opus-4-8, claude-haiku-4-5-20251001)
 - openai: GPT (gpt-4o, gpt-4o-mini)
-- google: Gemini (gemini-2.0-flash, gemini-2.5-pro)
+- google: Gemini (gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash)
+
+★프로바이더 노출은 'API 키 설정 + SDK 패키지 설치' 둘 다 충족 시에만(get_available_providers).
+  langchain-google-genai 미설치 시 GOOGLE_API_KEY가 있어도 google은 노출하지 않는다(반쪽출하 방지).
 
 사용법:
     from app.services.ai.llm_provider import get_llm, get_available_providers
@@ -12,9 +15,9 @@
     providers = get_available_providers()
 
     # LLM 인스턴스 생성
-    llm = get_llm(provider="anthropic", model="claude-sonnet-4-20250514")
+    llm = get_llm(provider="anthropic", model="claude-sonnet-4-6")
     llm = get_llm(provider="openai", model="gpt-4o-mini")
-    llm = get_llm(provider="google", model="gemini-2.0-flash")
+    llm = get_llm(provider="google", model="gemini-2.5-flash")
 """
 
 from __future__ import annotations
@@ -47,13 +50,34 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "google": {
         "name": "Google Gemini",
         "models": [
-            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "tier": "economy"},
+            {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "tier": "economy"},
             {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "tier": "standard"},
+            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (레거시)", "tier": "legacy"},
         ],
         "env_key": "GOOGLE_API_KEY",
-        "default_model": "gemini-2.0-flash",
+        "default_model": "gemini-2.5-flash",
     },
 }
+
+# 프로바이더 키 → LLM SDK 패키지 임포트명(노출 가드용 — 미설치 프로바이더는 드롭다운 미노출).
+_PROVIDER_PACKAGE = {
+    "anthropic": "langchain_anthropic",
+    "openai": "langchain_openai",
+    "google": "langchain_google_genai",
+}
+
+
+def _provider_package_available(provider_key: str) -> bool:
+    """프로바이더 LLM SDK 패키지가 실제 설치됐는지. ★미설치면 노출 금지(반쪽출하/dead-channel 방지).
+
+    예: GOOGLE_API_KEY를 넣어도 langchain-google-genai 미설치면 google을 노출하지 않는다
+    (노출 시 사용자가 선택→get_llm이 ModuleNotFoundError로 분석을 깨뜨리는 것을 사전 차단).
+    """
+    import importlib.util
+    pkg = _PROVIDER_PACKAGE.get(provider_key)
+    if not pkg:
+        return False
+    return importlib.util.find_spec(pkg) is not None
 
 
 def get_available_providers() -> list[dict[str, Any]]:
@@ -68,7 +92,8 @@ def get_available_providers() -> list[dict[str, Any]]:
     available: list[dict[str, Any]] = []
     for key, provider in PROVIDERS.items():
         api_key = get_clean_env_key(provider["env_key"])
-        if api_key:
+        # ★키가 있어도 SDK 패키지가 미설치면 미노출(선택 시 ModuleNotFoundError로 깨지는 반쪽상태 방지).
+        if api_key and _provider_package_available(key):
             available.append({
                 "provider": key,
                 "name": provider["name"],
