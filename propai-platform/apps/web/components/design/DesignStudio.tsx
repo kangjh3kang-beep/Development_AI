@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
-import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -446,26 +446,16 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   };
 
   const ai = aiResult?.data;
-  // ★raw JSON 노출 해소: AI가 구조화 데이터(data) 없이 텍스트(```json …``` 펜스)로만 줄 때,
-  //  그 텍스트에서 JSON을 추출해 구조화로 승격한다. 추출 성공 시 summary·매싱안을 카드로 렌더하고,
-  //  실패 시(아래 폴백) 코드펜스를 제거한 정제 텍스트만 보여 raw 코드블록 노출을 막는다.
+  // ★raw JSON 노출 해소(전역 공용 헬퍼): AI가 구조화 데이터(data) 없이 텍스트로만 줄 때,
+  //  extractStructuredFromText로 JSON을 추출해 승격한다(summary/매싱안 있는 설계 응답만 채택).
+  //  실패 시 cleanFenceText로 코드펜스 제거한 정제 텍스트만 보여 raw 코드블록 노출을 막는다.
   const aiText = aiResult?.text;
   const aiFromText = useMemo<DesignResult | null>(() => {
-    if (ai || !aiText) return null;
-    try {
-      const fence = aiText.match(/```(?:json)?\s*([\s\S]*?)```/i);
-      const raw = fence ? fence[1] : (aiText.match(/\{[\s\S]*\}/)?.[0] ?? "");
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      if (obj && (obj.summary || obj.massingOptions)) return obj as DesignResult;
-    } catch {
-      /* 파싱 실패 → null(정제 텍스트 폴백) */
-    }
-    return null;
+    const obj = ai ? null : extractStructuredFromText<DesignResult>(aiText);
+    return obj && (obj.summary || Array.isArray(obj.massingOptions)) ? obj : null;
   }, [ai, aiText]);
   const aiEff = ai ?? aiFromText;   // 구조화 우선, 없으면 텍스트에서 추출한 구조
-  // 폴백 표시용 정제 텍스트 — 코드펜스 제거(raw 코드블록처럼 보이지 않게).
-  const aiCleanText = aiText ? aiText.replace(/```(?:json)?/gi, "").trim() : "";
+  const aiCleanText = cleanFenceText(aiText);
   const calc = localCalc;
 
   // ②③ 상단 '예상 층수' 카드 값(정직화) — ceil(FAR/BCR)인 calc.maxFloors는 '산술하한'이라
@@ -765,7 +755,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             {easy && <p className="mb-3 text-[11px] text-[var(--accent-strong)]">{EASY["매싱"]} 효율(전용률)이 높을수록 같은 면적에서 분양·임대 면적이 많아 유리합니다. ★가 추천안.</p>}
             {(() => {
               const opts: Array<{ name: string; description: string; efficiency: number; geom?: MassingGeom | null }> =
-                aiEff?.massingOptions || calc.massingOptions;
+                Array.isArray(aiEff?.massingOptions) ? aiEff.massingOptions : calc.massingOptions;
               const best = Math.max(...opts.map((o) => o.efficiency || 0));
               return (
                 <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3 [&>button]:min-w-0">
