@@ -289,7 +289,9 @@ type EnvLift = {
   arithmetic_min_floors?: number; max_floors?: number; floor_height_m?: number;
 };
 
-export function DesignStudio({ projectId }: { projectId?: string }) {
+// onOpen3D: (선택) 우측 캔버스의 "3D·BIM 편집실로 →" 버튼이 호출. 부모(DesignWorkspace)가
+//   3D 스텝(draw)으로 전환하는 함수를 넘긴다. 없으면 버튼을 숨겨(무WebGL) 기존 lazy 3D 아키텍처 보존.
+export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOpen3D?: () => void }) {
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<DesignResult>();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -482,6 +484,38 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     return { val, sub: `실무 권장(추정)` };
   }, [calc, envResult, form.floorHeight]);
 
+  // ★활성 매싱안 단일출처(SSOT) — 좌측 '매싱 대안 비교' 카드와 우측 캔버스가 동일한 활성안을
+  //   보게 한다. 옵션 목록·활성 판정·geom·우측 지표를 한 번에 도출(좌측에서 옵션 클릭 시 우측 즉시 갱신).
+  //   활성 판정 규칙은 좌측 매싱 블록과 동일: 사용자가 고른 안이 있으면 그 안, 없으면 추천(최고 효율).
+  const activeMassing = useMemo(() => {
+    if (!calc) return null;
+    // 옵션 목록: AI 산출값이 있으면 우선, 없으면 로컬 산출 옵션(좌측 매싱 블록과 동일 소스).
+    const opts: Array<{ name: string; description: string; efficiency: number; geom?: MassingGeom | null }> =
+      Array.isArray(aiEff?.massingOptions) ? aiEff.massingOptions : calc.massingOptions;
+    if (!opts.length) return null;
+    const best = Math.max(...opts.map((o) => o.efficiency || 0));
+    // 선택 우선 — 사용자가 고른 대안이 활성, 미선택이면 추천(최고효율). 좌측 카드와 동일.
+    const active =
+      (selectedMassing ? opts.find((o) => o.name === selectedMassing) : null) ??
+      opts.find((o) => (o.efficiency || 0) === best) ??
+      opts[0];
+    // geom 폴백: 로컬 옵션은 산출 geom, AI 옵션은 이름 매칭으로 calc 실값 기반 geom 생성(좌측과 동일 식).
+    const geom =
+      active.geom ??
+      buildMassingGeom(
+        massingKindFromName(active.name),
+        Math.min(calc.maxGrossArea / Math.max(calc.maxFloors, 1), calc.buildableArea),
+        calc.siteSide,
+        calc.maxFloors,
+      );
+    // 우측 지표(무날조 — calc/envResult 실값만). 층수는 일조 인벨로프 권장층수가 있으면 그 값을, 없으면 maxFloors.
+    const floors =
+      envResult?.recommended_floors_high ?? envResult?.recommended_floors_low ?? calc.maxFloors;
+    // 예상 전용 연면적 = 최대 연면적 × 효율(%) — 좌측 카드의 estGfa와 동일 식.
+    const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * ((active.efficiency || 0) / 100)) : null;
+    return { active, geom, isBest: (active.efficiency || 0) === best, floors, estGfa };
+  }, [calc, aiEff, selectedMassing, envResult]);
+
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
 
@@ -588,6 +622,14 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
         )}
       </motion.div>
+
+      {/* ── 2열 레이아웃 ──
+          좌측(인스펙터): 입력 + 결과 패널들을 순서대로. 큰 화면에서는 독립 스크롤.
+          우측(캔버스): 활성 매싱안의 대형 2D 배치도 + 핵심 지표 + 3D 핸드오프. 큰 화면에서는 sticky 고정.
+          작은 화면에서는 1열로 자연스럽게 세로 스택(종전과 동일). */}
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+        {/* 좌측 인스펙터 — 입력·결과 패널(스크롤). 큰 화면에서 독립 스크롤로 우측 캔버스와 분리. */}
+        <div className="min-w-0 space-y-6 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:pr-2">
 
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
         <div className="mb-6 flex items-center gap-2.5">
@@ -820,6 +862,71 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           )}
         </motion.div>
       )}
+        </div>
+        {/* ── 우측 캔버스(sticky) ── 활성 매싱안의 대형 2D 배치도 + 핵심 지표 + 3D 핸드오프.
+            큰 화면에서 좌측 스크롤과 무관하게 항상 보이도록 고정. 작은 화면에서는 좌측 아래로 흐른다.
+            ★WebGL/Three.js 3D 캔버스를 여기 직접 마운트하지 않는다 — 2D(MassingDiagram=SVG) 전용.
+            기존 lazy 3D는 'draw' 스텝에서만 마운트(컨텍스트 고갈 방지)하며, 여기선 버튼으로 핸드오프만 한다. */}
+        <div className="min-w-0 xl:sticky xl:top-6 xl:h-[calc(100vh-12rem)]">
+          <div className="cc-panel flex h-full flex-col gap-4 overflow-hidden p-5">
+            <div className="flex items-center gap-2.5">
+              <span className="cc-label text-[var(--text-secondary)]">CANVAS · 2D MASSING</span>
+              <h3 className="text-sm font-black text-[var(--text-primary)]">매싱 배치 미리보기</h3>
+              {calc && activeMassing && (
+                <span className="ml-auto rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+                  {activeMassing.active.name}{activeMassing.isBest ? " · 추천" : " · 선택"}
+                </span>
+              )}
+            </div>
+
+            {calc && activeMassing ? (
+              <>
+                {/* 대형 2D 매싱 배치도 — 활성안의 geom으로 MassingDiagram을 크게 렌더. */}
+                <div className="flex flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                  <div className="w-full">
+                    <MassingDiagram name={activeMassing.active.name} active geom={activeMassing.geom} />
+                  </div>
+                </div>
+
+                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—". */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {[
+                    { label: "층수", val: activeMassing.floors != null ? `${activeMassing.floors}층` : "—" },
+                    { label: "건축면적", val: calc.buildableArea != null ? `${Math.round(calc.buildableArea).toLocaleString()}㎡` : "—" },
+                    { label: "예상 전용 연면적", val: activeMassing.estGfa != null ? `${activeMassing.estGfa.toLocaleString()}㎡` : "—" },
+                    { label: "효율", val: activeMassing.active.efficiency != null ? `${activeMassing.active.efficiency}%` : "—" },
+                    { label: "건폐율(BCR)", val: resolveBcrPct(siteAnalysis) != null ? `${resolveBcrPct(siteAnalysis)}%` : `${calc.buildingCoverage}%` },
+                    { label: "용적률(FAR)", val: resolveFarPct(siteAnalysis) != null ? `${resolveFarPct(siteAnalysis)}%` : `${calc.floorAreaRatio}%` },
+                  ].map((chip) => (
+                    <div key={chip.label} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-center">
+                      <p className="cc-label text-[10px] text-[var(--text-hint)]">{chip.label}</p>
+                      <p className="cc-num text-sm font-black text-[var(--text-primary)]">{chip.val}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 3D·BIM 핸드오프 — onOpen3D가 있을 때만 노출(없으면 숨김). 여기서 WebGL을 직접 띄우지 않는다. */}
+                {onOpen3D && (
+                  <button
+                    type="button"
+                    onClick={onOpen3D}
+                    className="w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-3 text-sm font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    3D·BIM 편집실로 →
+                  </button>
+                )}
+              </>
+            ) : (
+              // designData(부지면적·용도지역) 게이트 미충족 — 안내 플레이스홀더.
+              <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-6 text-center">
+                <p className="text-sm leading-snug text-[var(--text-hint)]">
+                  부지면적·용도지역을 입력하면<br />매싱 미리보기가 표시됩니다
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
