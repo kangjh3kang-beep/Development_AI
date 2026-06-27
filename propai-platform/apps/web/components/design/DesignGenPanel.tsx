@@ -757,9 +757,11 @@ export function DesignGenPanel({ projectId }: Props) {
 
     // 평형 구성(unitTypes) — 추천안의 평형별 분해(unit_breakdown)에서 type 목록을 채운다.
     // 종전엔 null로 비워 도면·라이브수지가 기본(59A,84A)으로만 분할되던 것을 실제 추천 믹스로 정합.
+    // 중복 평형(예: 84A가 여러 줄)을 Set으로 제거 — 라이브수지의 type별 균등분배가 같은 평형을
+    //   2배 가중하지 않게(분배 왜곡 방지).
     const unitTypes =
       c.unit_breakdown && c.unit_breakdown.length > 0
-        ? c.unit_breakdown.map((u) => u.type).filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+        ? [...new Set(c.unit_breakdown.map((u) => u.type).filter((t): t is string => typeof t === "string" && t.trim().length > 0))]
         : null;
 
     updateDesignData({

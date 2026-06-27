@@ -483,18 +483,22 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   //   '대지면적 데이터 없음'이라 떠 건폐/용적을 못 낸다. 면적은 반드시 실제 부지 면적이어야 하므로
   //   effectiveLandAreaSqm(다필지=통합 우선) → designData에 보존된 부지 면적 순으로만 읽는다.
   //   ★건축면적(footprint)은 '부지 면적'이 아니므로 절대 대체하지 않는다(가짜 면적 금지).
-  const resolvedLandArea = useMemo<number | null>(() => {
+  // 반환: {value, estimated}. estimated=true면 '실측 부지면적'이 아니라 연면적÷용적률 역산(추정)이라
+  //   화면에 '(추정)'으로 정직 표기한다(근거계약·무날조 — 실측과 추정을 구분).
+  const resolvedLand = useMemo<{ value: number | null; estimated: boolean }>(() => {
     const fromSite = effectiveLandAreaSqm(siteAnalysis);
-    if (typeof fromSite === "number" && fromSite > 0) return fromSite;
-    // designData에 부지 면적이 보존돼 있으면(연면적÷용적률로 역산) 차선으로 쓴다 — footprint 아님.
+    if (typeof fromSite === "number" && fromSite > 0) return { value: fromSite, estimated: false };
+    // designData에 부지 면적이 보존돼 있으면(연면적÷용적률로 역산) 차선으로 쓴다 — footprint 아님(추정 표기).
     const gfa = designData?.totalGfaSqm;
     const farPct = designData?.far;
     if (typeof gfa === "number" && gfa > 0 && typeof farPct === "number" && farPct > 0) {
-      const land = gfa / (farPct / 100); // 연면적 ÷ 용적률 = 대지면적(실제 부지 면적)
-      if (isFinite(land) && land > 0) return r2(land);
+      const land = gfa / (farPct / 100); // 연면적 ÷ 용적률 = 대지면적(추정 — 적용 용적률 기준)
+      if (isFinite(land) && land > 0) return { value: r2(land), estimated: true };
     }
-    return null;
+    return { value: null, estimated: false };
   }, [siteAnalysis, designData]);
+  const resolvedLandArea = resolvedLand.value;
+  const landAreaEstimated = resolvedLand.estimated;
 
   // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
   // 선택한 개요(GFA)·확정 매스(massGeom) 또는 부지(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
@@ -757,7 +761,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     //   /mass를 다시 부르면 단일 박스로 역산되며 site의 정본 매스(예: 65층 podium-tower)가 사라진다.
     //   ★층수(floor_count)는 designData.floorCount(site 정본)를 신뢰하고 매스 치수만 massGeom에서 가져온다.
     const mg = designData?.massGeom;
-    if (mg && (mg.buildingWidthM || mg.podium || mg.tower)) {
+    const mgHasPodiumTower = !!(mg?.podium && mg?.tower);
+    // ★단일박스 massGeom이 podium-tower 산출을 가리지 않게 — 재사용은 '진짜 podium-tower 매스'이거나
+    //   /mass를 부를 부지면적이 아예 없을 때만. 단일박스 massGeom이 있어도 부지면적이 있으면 아래
+    //   /mass(백엔드 land_area 분기=compute_optimal_mass)를 타게 해 podium-tower를 받는다(무날조 복원).
+    if (mg && (mg.buildingWidthM || mg.podium || mg.tower) && (mgHasPodiumTower || !landArea)) {
       const fpW = mg.podium?.widthM ?? mg.buildingWidthM;
       const fpD = mg.podium?.depthM ?? mg.buildingDepthM;
       const w = typeof mg.buildingWidthM === "number" && mg.buildingWidthM > 0 ? mg.buildingWidthM : (fpW ?? 40);
@@ -785,24 +793,29 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       return;
     }
 
-    // 선택한 개요(GFA+층수)가 있으면 footprint를 역산해 명시 매스로 고정(CAD↔BIM 일치)
+    // ★부지면적이 있으면 land_area '우선' 바디로 — 명시 width/depth/floor를 보내면 백엔드가 단일박스
+    //   분기로 떨어져 podium/tower를 산출하지 않는다(MEDIUM-2). 그래서 부지면적이 있을 땐 명시 치수를
+    //   빼고 land_area+zone+용도만 보내 백엔드 land_area 분기(compute_optimal_mass = podium/tower)를 탄다.
+    //   부지면적이 없을 때만 GFA/층수로 단일박스 역산(차선·podium-tower 불가).
     let body: Record<string, unknown>;
-    if (gfa && floors) {
+    if (landArea) {
+      body = {
+        land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0,
+        building_use: use,
+        unit_types: designData?.unitTypes && designData.unitTypes.length ? designData.unitTypes : undefined,
+      };
+    } else if (gfa && floors) {
       const footprint = gfa / floors;
       const depth = Math.max(8, Math.min(40, Math.sqrt(footprint / 1.6)));
       const width = Math.max(8, footprint / depth);
       body = {
         building_width_m: r2(width), building_depth_m: r2(depth), floor_count: floors,
-        floor_height_m: 3.0, land_area_sqm: landArea, zone_code: zone,
-        // 용도지역+용도를 함께 보내 백엔드 land_area 분기(podium/tower)를 타게 한다.
-        building_use: designData?.buildingType ?? "공동주택",
+        floor_height_m: 3.0, zone_code: zone, building_use: use,
       };
     } else {
-      // 명시 매스가 없으면 land_area+zone+용도 위주로 보내 백엔드 land_area 분기(compute_optimal_mass의
-      // podium/tower)를 타게 한다 — 단일 width/depth/floor만 보내면 단일 박스 분기로 떨어진다.
       body = {
         land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0,
-        building_use: designData?.buildingType ?? "공동주택",
+        building_use: use,
       };
     }
 
