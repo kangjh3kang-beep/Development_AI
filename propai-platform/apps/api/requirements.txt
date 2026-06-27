@@ -32,9 +32,12 @@ scipy==1.14.1
 # LLM / Agents
 langchain==0.3.7
 langchain-openai==0.2.8
-# Gemini(google) 프로바이더 — get_llm provider="google" 실배선용. ★langchain-core 0.3.x 호환 핀
-#   (2.1.12). 최신 3.x/4.x는 langchain-core>=1.4.7 요구로 위 0.3.7 스택과 비호환이라 고정.
-langchain-google-genai==2.1.12
+# Gemini(google) 프로바이더 — get_llm provider="google" 실배선용.
+#   ★2.1.5 핀(2.1.12 아님): 2.1.6+는 langchain-core>=0.3.75를 강제 → langchain-core 0.3.79+가
+#   langsmith>=0.3.45를 요구하는데, langchain 0.3.7/langchain-community 0.3.7은 langsmith<0.2.0이라
+#   교집합 공집합(ResolutionImpossible). 2.1.5는 langchain-core 0.3.63(langsmith 0.1.x)로 해결.
+#   ★oracle 빌드(requirements.oracle.txt)에도 동일 버전 필수(prod=oracle).
+langchain-google-genai==2.1.5
 langchain-community==0.3.7
 langgraph==0.2.40
 openai==1.54.3
