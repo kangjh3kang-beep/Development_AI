@@ -17,6 +17,17 @@ export function ProceduralBuilding({
   width: number; depth: number; floors: number; floorHeight: number;
   daylightNorth?: boolean; podium?: PtVol | null; tower?: PtVol | null;
 }) {
+  // ★podium/tower '객체'가 아니라 그 '원시값'만 useMemo 본문·deps에서 쓴다.
+  //   왜: deps에 객체(podium/tower)를 넣으면 부모가 매 렌더 새 객체를 주면(값은 같아도) 3D를
+  //   불필요하게 매번 재생성한다. 반대로 본문이 객체를 참조하면서 deps엔 개별필드만 넣으면
+  //   exhaustive-deps 경고 + React Compiler가 메모이제이션을 보존하지 못한다(빌드 경고).
+  //   원시값으로 분해해 본문·deps를 일치시키면: 값이 바뀔 때만 재생성(perf) + 경고 0 + 컴파일러 호환.
+  const podiumW = podium?.width;
+  const podiumD = podium?.depth;
+  const podiumFloors = podium?.floors;
+  const towerW = tower?.width;
+  const towerD = tower?.depth;
+  const towerFloors = tower?.floors;
   const group = useMemo(() => {
     const w = Math.max(4, width || 20);
     const d = Math.max(4, depth || 15);
@@ -47,14 +58,14 @@ export function ProceduralBuilding({
     };
 
     // ── Podium-Tower 2-volume(주상복합 실무 매스) ──
-    const pf = podium && podium.floors > 0 ? Math.round(podium.floors) : 0;
-    const tf = tower && tower.floors > 0 ? Math.round(tower.floors) : 0;
+    const pf = podiumFloors && podiumFloors > 0 ? Math.round(podiumFloors) : 0;
+    const tf = towerFloors && towerFloors > 0 ? Math.round(towerFloors) : 0;
     if (pf > 0 && tf > 0) {
       const g = new THREE.Group();
-      const pw = Math.max(4, podium!.width || w);
-      const pd = Math.max(4, podium!.depth || d);
-      const tw = Math.max(4, tower!.width || w * 0.5);
-      const td = Math.max(4, tower!.depth || d * 0.5);
+      const pw = Math.max(4, (podiumW ?? 0) || w);
+      const pd = Math.max(4, (podiumD ?? 0) || d);
+      const tw = Math.max(4, (towerW ?? 0) || w * 0.5);
+      const td = Math.max(4, (towerD ?? 0) || d * 0.5);
       addStack(g, pw, pd, pf, 0);                 // 저층 podium(넓고 낮게)
       addStack(g, tw, td, tf, pf * fh);           // 고층 tower(좁고 높게) — podium 위
       const totalH = (pf + tf) * fh;
@@ -118,7 +129,7 @@ export function ProceduralBuilding({
     return g;
   }, [
     width, depth, floors, floorHeight, daylightNorth,
-    podium?.width, podium?.depth, podium?.floors, tower?.width, tower?.depth, tower?.floors,
+    podiumW, podiumD, podiumFloors, towerW, towerD, towerFloors,
   ]);
 
   // 매스 group이 바뀌거나(치수 변경) 언마운트될 때 직전 group의 geometry/material을 GPU에서 해제.
