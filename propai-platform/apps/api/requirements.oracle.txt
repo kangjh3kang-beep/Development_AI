@@ -36,6 +36,10 @@ langchain-openai==0.2.8
 langchain-community==0.3.7
 langgraph==0.2.40
 langchain-anthropic==0.3.0
+# Gemini(google) 프로바이더 — ★prod Oracle 빌드는 requirements.oracle.txt를 쓰므로 여기에도 필수.
+#   requirements.txt에만 추가하면 운영 컨테이너에 미설치→get_llm("google") ModuleNotFoundError(노출가드로 graceful).
+#   langchain-core 0.3.x 호환핀(2.1.12, core>=0.3.75,<0.4 교집합 충족).
+langchain-google-genai==2.1.12
 openai==1.54.3
 
 # GIS (경량 — GDAL/geopandas 제외)
