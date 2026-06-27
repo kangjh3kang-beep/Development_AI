@@ -131,6 +131,9 @@ interface DesignSpec {
   far?: number | null;
   total_units?: number | null;
   daylightNorth?: boolean;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴)
+  // ★주상복합 podium-tower 매스(있으면 3D를 저층 큰판+고층 작은판 2-volume으로 렌더).
+  podium?: { width: number; depth: number; floors: number } | null;
+  tower?: { width: number; depth: number; floors: number } | null;
   project_name: string;
   // ★/mass 호출이 네트워크 오류 등으로 실패해 "추정 기본값"으로 채워졌는지 표시(정직표기).
   //  true면 화면에 "기본값 사용 중" 오버레이를 띄워 산출값으로 오인되지 않도록 한다. 기본 false.
@@ -151,6 +154,8 @@ function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: Desig
           floors={spec.floor_count}
           floorHeight={spec.floor_height_m ?? 3}
           daylightNorth={spec.daylightNorth}
+          podium={spec.podium}
+          tower={spec.tower}
         />
       ) : null}
       <Grid
@@ -778,6 +783,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         far: designData?.far ?? m.far_pct ?? null,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
+        // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(backend width_m/depth_m/floors).
+        podium: m.podium ? { width: m.podium.width_m, depth: m.podium.depth_m, floors: m.podium.floors } : null,
+        tower: m.tower ? { width: m.tower.width_m, depth: m.tower.depth_m, floors: m.tower.floors } : null,
         isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
       });
     } catch {
