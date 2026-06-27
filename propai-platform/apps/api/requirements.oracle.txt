@@ -42,6 +42,11 @@ langchain-anthropic==0.3.0
 #   langchain 0.3.7/community는 langsmith<0.2.0이라 ResolutionImpossible. 2.1.5=core 0.3.63로 해결(검증완료).
 langchain-google-genai==2.1.5
 openai==1.54.3
+# 이미지 생성 SDK(image_provider.py) — Gemini 이미지("나노바나나") 네이티브 생성용 google-genai.
+#   ★1.2.0 핀: 1.3.0+는 httpx>=0.28.1 요구인데 openai 1.54.3/qdrant와 함께 httpx==0.27.2 핀이라
+#   ResolutionImpossible. 1.2.0=httpx 0.27.2 호환(검증완료). 모델ID는 GEMINI_IMAGE_MODEL env로 덮어씀.
+#   (gpt-image는 위 openai SDK로, Replicate는 별도 토큰으로 — image_provider 참조.)
+google-genai==1.2.0
 
 # GIS (경량 — GDAL/geopandas 제외)
 shapely==2.0.6
