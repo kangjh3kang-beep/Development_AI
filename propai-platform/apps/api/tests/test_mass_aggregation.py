@@ -12,11 +12,31 @@ from app.services.mass_backbone.mass_aggregation import (
 def test_classify_building_type():
     assert classify_building_type("아파트") == "공동주택"
     assert classify_building_type("제2종근린생활시설") == "근린생활시설"
-    assert classify_building_type("오피스텔") == "업무시설"
     assert classify_building_type("다가구주택") == "단독주택"
     assert classify_building_type("") == "기타"        # 빈값 → 기타(가짜 분류 금지)
     assert classify_building_type(None) == "기타"
-    assert classify_building_type("창고") == "기타"     # 미매칭 → 기타
+    assert classify_building_type("이순신장군동상") == "기타"   # 미매칭 → 기타
+
+
+def test_classify_developer_product_types():
+    # ★개발상품 세부 유형이 포괄 유형(공장/업무/숙박)에 흡수되지 않고 독립 분류되는지(우선순위).
+    assert classify_building_type("지식산업센터") == "지식산업센터"   # NOT 공장
+    assert classify_building_type("아파트형공장") == "지식산업센터"
+    assert classify_building_type("오피스텔") == "오피스텔"           # NOT 업무시설
+    assert classify_building_type("업무시설") == "업무시설"
+    assert classify_building_type("생활숙박시설") == "생활숙박시설"   # NOT 숙박시설
+    assert classify_building_type("관광숙박시설(호텔)") == "숙박시설"
+    assert classify_building_type("일반숙박시설") == "숙박시설"       # 모텔/여관류
+    assert classify_building_type("창고시설") == "창고시설"           # NOT 기타
+    assert classify_building_type("공장") == "공장"
+    assert classify_building_type("운동시설") == "운동시설"
+    assert classify_building_type("판매시설") == "판매시설"
+    # ★부분매칭 오분류 회귀잠금: 의료가 교육보다 먼저(대학병원=의료)·"전시장"으로 좁힘(발전시설≠문화).
+    assert classify_building_type("대학병원") == "의료시설"           # NOT 교육연구시설
+    assert classify_building_type("대학교") == "교육연구시설"
+    assert classify_building_type("발전시설") == "기타"               # "전시" 부분매칭 오탐 제거
+    assert classify_building_type("전시장") == "문화집회시설"
+    assert classify_building_type("전통시장") == "판매시설"           # "시장"→"전통시장"(전시장 가로채기 해소)
 
 
 def _rec(purpose, bcr=None, far=None, floors=None, area=None):
