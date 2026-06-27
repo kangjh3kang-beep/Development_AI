@@ -714,15 +714,23 @@ class AutoDesignEngineService:
           중복도는 §48에 따라 ≥2.4m, 편복도는 ≥1.8m을 적용한다(기존 1.8m 고정·중복도 오적용 해소).
         fire_resistant: 주요구조부 내화 여부(공동주택 등 True=보행거리 50m / False=30m).
 
-        코어 수는 ① 연면적 기준(CORE_PER_FLOOR_AREA·기존 피난규칙 근사)과
-        ② 피난 보행거리 기준(1동 길이를 코어가 2방향으로 커버 = 코어당 ≈ 2×보행거리)의
-        더 많은 쪽(max)으로 보정한다(균등등분만으로 생기는 과밀·보행거리 초과를 근본 차단).
-        균등등분 간격이 비현실적으로 좁으면(코어가 과밀) 경고를 함께 반환한다(정직).
+        코어 수는 ① 층당 바닥판(plate) 면적 기준(CORE_PER_FLOOR_AREA — 코어는 수직 관통이라
+        적층 연면적이 아닌 '층당' 면적으로 산정), ② 피난 보행거리 기준(1동 길이를 코어가 2방향으로
+        커버 = 코어당 ≈ 2×보행거리), ③ 직통계단 2개소 의무(건축법 시행령 §34② — 5층↑/층당 200㎡↑)
+        의 가장 많은 쪽(max)으로 보정한다(고층에서 적층 연면적으로 코어가 폭증해 세대 0이 되는
+        오류·균등등분 과밀·보행거리 초과를 근본 차단). 코어 간격이 좁으면(과밀) 경고를 함께 반환(정직).
         """
-        total_floor = mass["total_floor_area_sqm"]
         bw = float(mass["building_width_m"])
         bd = float(mass["building_depth_m"])
         warnings: list[str] = []
+
+        # ★코어(계단·EV·설비 샤프트)는 모든 층을 수직으로 관통하는 공용공간이라, 코어 '수'는
+        #   '적층 연면적'이 아니라 '층당 바닥판(plate) 면적'과 피난 동선으로 정해야 한다.
+        #   적층 연면적으로 곱하면 고층일수록 코어가 비현실적으로 폭증한다(예: GC 2000㎡ 38층이면
+        #   적층 19,760㎡/1500≈14개 → 타워 440㎡ 바닥판을 코어가 다 먹어 0세대; GC 14959㎡면 99개).
+        #   podium-tower 매스에서는 building_footprint_sqm가 '타워' 바닥판이므로 그대로 plate가 된다.
+        footprint_pf = float(mass.get("building_footprint_sqm") or (bw * bd))
+        floors = int(mass.get("floors_for_units") or mass.get("num_floors") or 1)
 
         # 복도폭: 복도형식(편/중)에 따라 분리(§48). 중복도(기본)는 ≥2.4m, 편복도는 ≥1.8m.
         if corridor_type == "single":
@@ -730,17 +738,29 @@ class AutoDesignEngineService:
         else:
             corridor_w = CORRIDOR_WIDTHS_DOUBLE.get(building_use, _CORRIDOR_DOUBLE_MIN)
 
-        # ① 연면적 기준 코어 수(기존 근사 — 피난·설비 코어 1개/1500㎡).
-        cores_by_area = max(1, math.ceil(total_floor / CORE_PER_FLOOR_AREA))
+        # ① 바닥판 면적 기준 코어 수(피난·설비 코어 1개/CORE_PER_FLOOR_AREA㎡ — '층당' plate 기준).
+        cores_by_area = max(1, math.ceil(footprint_pf / CORE_PER_FLOOR_AREA))
         # ② 피난 보행거리 기준 코어 수: 코어 1개가 좌우 복도를 양방향으로 커버하므로 1동(폭 bw)을
         #    코어당 약 2×보행거리로 나눈다(거실→직통계단 보행거리 한도, 피난규칙 §15).
         travel = TRAVEL_DISTANCE_NONCOMBUSTIBLE_M if fire_resistant else TRAVEL_DISTANCE_DEFAULT_M
         cores_by_egress = max(1, math.ceil(bw / (2.0 * travel))) if bw > 0 else 1
-        num_cores = max(cores_by_area, cores_by_egress)
-        if cores_by_egress > cores_by_area:
+        # ③ 직통계단 2개소 의무(건축법 시행령 §34②): 5층 이상 또는 층당 거실 200㎡ 초과면 코어 ≥2.
+        #    (plate 면적은 거실 면적의 보수적 상한 — plate>200이면 거실>200 가능성을 안전측으로 포함.)
+        cores_by_dual_stair = (
+            2
+            if (floors >= DUAL_STAIR_FLOOR_THRESHOLD or footprint_pf > DUAL_STAIR_FLOOR_AREA_THRESHOLD_SQM)
+            else 1
+        )
+        num_cores = max(cores_by_area, cores_by_egress, cores_by_dual_stair)
+        if cores_by_egress > max(cores_by_area, cores_by_dual_stair):
             warnings.append(
                 f"피난 보행거리({travel:.0f}m) 확보 위해 코어 {num_cores}개로 증설"
-                f"(1동 길이 {bw:.0f}m·연면적 기준 {cores_by_area}개→보행거리 기준 {cores_by_egress}개)"
+                f"(1동 길이 {bw:.0f}m·바닥판 기준 {cores_by_area}개→보행거리 기준 {cores_by_egress}개)"
+            )
+        elif cores_by_dual_stair > cores_by_area:
+            warnings.append(
+                f"직통계단 2개소 의무(건축법 시행령 §34② — {floors}층·층당 약 {footprint_pf:.0f}㎡) "
+                f"반영해 코어 {num_cores}개"
             )
 
         # 코어 위치: 건물 중심축에 등분 배치(균등등분은 위치 산출에만 사용 — 수량은 위에서 보정됨).
@@ -1156,7 +1176,7 @@ class AutoDesignEngineService:
             },
             "parking_formula": parking_formula,
             "core_formula": (
-                f"연면적 {CORE_PER_FLOOR_AREA:.0f}㎡당 코어 1개(피난규칙 단순화), "
+                f"층당 바닥판 {CORE_PER_FLOOR_AREA:.0f}㎡당 코어 1개(피난규칙 단순화·수직관통), "
                 f"코어 1개당 {CORE_AREA_SQM:.0f}㎡"
             ),
         }
