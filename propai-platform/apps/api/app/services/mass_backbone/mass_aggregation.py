@@ -100,3 +100,34 @@ def aggregate_mass_templates(
     # 대표 종류 우선(표본 많은 순)·동수는 종류명 사전순(결정론).
     out.sort(key=lambda t: (-t["sample_count"], t["building_type"]))
     return out
+
+
+def fill_bcr_far_from_recap(
+    templates: list[dict[str, Any]], recap_templates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """표제부 집계(templates)의 결측 건폐/용적을 총괄표제부 집계(recap_templates)의 같은 종류 값으로 보강.
+
+    ★공동주택(아파트)은 동별 표제부에 bcRat/vlRat이 비어 median_bcr/far가 None이 되는데, 총괄표제부
+      (단지 기준)엔 충실하다 → 같은 building_type의 총괄 median으로 채운다(in-place 갱신·반환).
+    ★면적(median_total_area_sqm)·층수·표본수는 표제부 기준 유지 — 총괄 면적은 '단지 총연면적'이라
+      동별 면적과 섞으면 왜곡되므로 보강하지 않는다(건폐/용적만).
+    ★보강 시 provenance(metadata.bcr_far_source='recap_title')로 출처를 정직 표기. 무목업: 총괄에도
+      값이 없으면 그대로 None 유지(가짜 생성 금지).
+    """
+    by_type = {t["building_type"]: t for t in recap_templates}
+    for t in templates:
+        rc = by_type.get(t["building_type"])
+        if not rc:
+            continue
+        filled = False
+        if not t.get("median_bcr_pct") and (rc.get("median_bcr_pct") or 0) > 0:
+            t["median_bcr_pct"] = rc["median_bcr_pct"]
+            filled = True
+        if not t.get("median_far_pct") and (rc.get("median_far_pct") or 0) > 0:
+            t["median_far_pct"] = rc["median_far_pct"]
+            filled = True
+        if filled:
+            meta = t.setdefault("metadata", {})
+            meta["bcr_far_source"] = "recap_title"  # 건폐/용적은 총괄표제부(단지 기준)에서 보강
+            meta["recap_sample"] = rc.get("sample_count")
+    return templates

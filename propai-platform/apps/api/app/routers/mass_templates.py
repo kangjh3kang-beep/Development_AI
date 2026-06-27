@@ -6,7 +6,7 @@
   POST /api/v1/mass-templates/collect-region  법정동명 단위 표제부 벌크 수집→영속(관리자·신도시 시드)
   GET  /api/v1/mass-templates                 저장된 매스 템플릿 조회(region 필수·종류/zone 선택; D2 소비)
 
-prefix=/api/v1/mass-templates. 수집=총괄관리자(require_super_admin·tier=='super_admin')·조회=인증.
+prefix=/api/v1/mass-templates. 수집=총괄관리자(require_role(Role.ADMIN)=tier=='super_admin')·조회=인증.
 저장: mass_templates 런타임 DDL(store가 ensure_mass_schema로 첫 저장 시 멱등 생성 — 부팅 배선과 병행).
 정직성: 무자료/미승인 PNU는 건너뜀(가짜 생성 금지)·조회 무자료는 빈 목록. 단일 zone 수집 권장(혼재 시 median 왜곡).
 """
@@ -14,12 +14,12 @@ prefix=/api/v1/mass-templates. 수집=총괄관리자(require_super_admin·tier=
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rbac import Role, require_role
 from app.services.auth.auth_service import get_current_user
-from app.services.billing.billing_service import is_super_admin
 from app.services.external_api.building_registry_service import BuildingRegistryService
 from app.services.external_api.vworld_service import VWorldService
 from app.services.mass_backbone import mass_aggregation, mass_collection, mass_store
@@ -28,19 +28,12 @@ from apps.api.database.session import get_db
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/mass-templates", tags=["매스 백본"])
 
-
-async def require_super_admin(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """플랫폼 총괄관리자(users.tier=='super_admin') 게이트.
-
-    ★require_role(Role.ADMIN)은 존재하지 않는 users.is_superuser 컬럼에 의존해 항상 deny-all이므로
-      쓰지 않는다. 이 코드베이스의 실제 관리자 신호는 billing_service.is_super_admin(tier 기반)이다.
-    """
-    if not await is_super_admin(db, current_user.id):
-        raise HTTPException(status_code=403, detail="플랫폼 총괄관리자(super_admin) 권한이 필요합니다")
-    return current_user
+# 총괄관리자(super_admin) 게이트 — ★rbac.require_role(Role.ADMIN) 단일 소스 재사용(중복 제거).
+#   require_role은 is_super_admin(users.tier=='super_admin')로 판정(2026-06-27 근본수정·fail-closed).
+#   ⚠️ require_role은 게이트 판정에 app.core.database.get_db를 쓰고(auth.py와 동일), 핸들러는
+#     apps.api.database.session.get_db를 쓴다 → 관리자 요청당 게이트용 읽기 세션 1개가 별도로 열린다
+#     (admin 호출은 드물어 비용 무시 가능). 근본해소는 두 get_db 일원화(플랫폼 전역 부채·별도 작업).
+require_admin = require_role(Role.ADMIN)
 
 # 1회 수집 상한 — 과도한 외부 호출·타임아웃 방지(초과분은 잘라내고 truncated로 정직 표기).
 _MAX_PNUS = 2000
@@ -55,7 +48,7 @@ class CollectRequest(BaseModel):
     zone_code: str | None = Field(None, description="용도지역(단일 zone 권장 — 혼재 시 median 왜곡)")
 
 
-@router.post("/collect", dependencies=[Depends(require_super_admin)])
+@router.post("/collect", dependencies=[Depends(require_admin)])
 async def collect_templates(
     body: CollectRequest,
     db: AsyncSession = Depends(get_db),
@@ -100,7 +93,7 @@ class CollectRegionRequest(BaseModel):
 
 
 def _make_region_collectors():
-    """VWorld 주소검색·건축물대장 벌크를 collect_region용 DI 함수(search_fn·title_fn)로 어댑트."""
+    """VWorld 주소검색·건축물대장 벌크를 collect_region용 DI 함수(search_fn·title_fn·recap_fn)로 어댑트."""
     vw = VWorldService()
     registry = BuildingRegistryService()
 
@@ -111,10 +104,13 @@ def _make_region_collectors():
     async def title_fn(sigungu_cd: str, bjdong_cd: str) -> list[dict]:
         return await registry.list_titles_by_bjdong(sigungu_cd, bjdong_cd)
 
-    return search_fn, title_fn
+    async def recap_fn(sigungu_cd: str, bjdong_cd: str) -> list[dict]:
+        return await registry.list_recap_titles_by_bjdong(sigungu_cd, bjdong_cd)
+
+    return search_fn, title_fn, recap_fn
 
 
-@router.post("/collect-region", dependencies=[Depends(require_super_admin)])
+@router.post("/collect-region", dependencies=[Depends(require_admin)])
 async def collect_region(
     body: CollectRegionRequest,
     db: AsyncSession = Depends(get_db),
@@ -125,13 +121,15 @@ async def collect_region(
     (search_address→PNU→법정동코드→getBrTitleInfo 벌크). 그룹(시군구)별로 region 스냅샷을 멱등 교체.
     ★region은 표제부 주소에서 시군구 자동 도출(프론트 조회 키와 일치). 무자료 법정동은 건너뜀(가짜 생성 금지).
     """
-    search_fn, title_fn = _make_region_collectors()
+    search_fn, title_fn, recap_fn = _make_region_collectors()
     groups = body.groups[:_MAX_GROUPS]
     group_meta: list[dict] = []
-    by_region: dict[str, list] = {}   # 도출 region → record 누적(같은 시군구 그룹 병합 → 1 스냅샷)
+    # 도출 region → {base: 표제부 record, recap: 총괄표제부 record}(같은 시군구 그룹 병합 → 1 스냅샷)
+    by_region: dict[str, dict[str, list]] = {}
     for g in groups:
         out = await mass_collection.collect_region(
-            g.dongs[:_MAX_DONGS], search_fn=search_fn, title_fn=title_fn, region_hint=g.region,
+            g.dongs[:_MAX_DONGS], search_fn=search_fn, title_fn=title_fn, recap_fn=recap_fn,
+            region_hint=g.region,
         )
         group_meta.append({
             "region": out["region"], "input_region": out["input_region"],
@@ -140,18 +138,27 @@ async def collect_region(
         })
         region = out["region"]
         if region and out["records_list"]:
-            by_region.setdefault(region, []).extend(out["records_list"])
+            acc = by_region.setdefault(region, {"base": [], "recap": []})
+            acc["base"].extend(out["records_list"])
+            acc["recap"].extend(out["recap_records_list"])
 
     # ★region별 1회만 스냅샷 교체 — 같은 시군구가 여러 그룹에 걸쳐도 record를 병합해 저장(후행이
     #   선행을 지우는 silent 손실 방지). median은 반드시 record 단위 병합 후 재집계해야 정확.
     regions: list[dict] = []
-    for region, recs in by_region.items():
+    for region, acc in by_region.items():
         templates = mass_aggregation.aggregate_mass_templates(
-            recs, region=region, source="building_registry", min_samples=1,
+            acc["base"], region=region, source="building_registry", min_samples=1,
         )
+        # ★공동주택 등 표제부 결측 건폐/용적을 총괄표제부 집계로 보강(면적·층수는 표제부 기준 유지).
+        if acc["recap"]:
+            recap_templates = mass_aggregation.aggregate_mass_templates(
+                acc["recap"], region=region, source="building_registry", min_samples=1,
+            )
+            mass_aggregation.fill_bcr_far_from_recap(templates, recap_templates)
         saved = await mass_store.replace_templates(db, templates, region=region)
-        logger.info("mass-templates collect-region", region=region, records=len(recs), saved=saved)
-        regions.append({"region": region, "records": len(recs), "saved": saved, "templates": templates})
+        logger.info("mass-templates collect-region", region=region,
+                    records=len(acc["base"]), recap=len(acc["recap"]), saved=saved)
+        regions.append({"region": region, "records": len(acc["base"]), "saved": saved, "templates": templates})
     return {"groups": group_meta, "regions": regions, "max_groups": _MAX_GROUPS, "max_dongs": _MAX_DONGS}
 
 

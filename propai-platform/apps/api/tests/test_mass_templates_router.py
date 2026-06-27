@@ -6,6 +6,7 @@ get_db·get_current_user를 dependency_overrides로 대체하고 BuildingRegistr
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.core.database import get_db as core_get_db  # require_role 게이트가 쓰는 get_db(핸들러와 별개)
 from app.routers import mass_templates as mt
 from app.services.auth.auth_service import get_current_user
 from apps.api.database.session import get_db
@@ -68,12 +69,13 @@ def _make_app(rows=None, *, super_admin=True):
     async def _db():
         yield sess
 
-    app.dependency_overrides[get_db] = _db
+    app.dependency_overrides[get_db] = _db            # 핸들러 세션(apps.api.database.session)
+    app.dependency_overrides[core_get_db] = _db       # 게이트 세션(require_role→app.core.database) 격리
     app.dependency_overrides[get_current_user] = lambda: _User()
     if super_admin:
-        # 게이트 통과: require_super_admin 직접 override(실제 is_super_admin DB조회 우회)
-        app.dependency_overrides[mt.require_super_admin] = lambda: _User()
-    # super_admin=False면 require_super_admin 미override → is_super_admin(stub)→False→403
+        # 게이트 통과: require_admin(=require_role(ADMIN)) 직접 override(실제 is_super_admin DB조회 우회)
+        app.dependency_overrides[mt.require_admin] = lambda: _User()
+    # super_admin=False면 require_admin 미override → is_super_admin(stub)→False→403
     return app, sess
 
 
@@ -132,7 +134,10 @@ def test_collect_region_admin_persists(monkeypatch):
         return [{"main_purpose": "아파트", "bcr_pct": 18, "far_pct": 200, "ground_floors": 20,
                  "total_area_sqm": 50000, "address": "경기도 성남시 분당구 정자동 1"}]
 
-    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
+    async def recap_fn(sgg, bjd):
+        return []
+
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn, recap_fn))
     app, sess = _make_app()
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region",
@@ -158,7 +163,10 @@ def test_collect_region_merges_duplicate_region_groups(monkeypatch):
         return [{"main_purpose": "아파트", "bcr_pct": 20, "far_pct": far, "ground_floors": 20,
                  "total_area_sqm": 50000, "address": addr}]
 
-    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn))
+    async def recap_fn(sgg, bjd):
+        return []
+
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn, recap_fn))
     app, sess = _make_app()
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [
@@ -177,8 +185,33 @@ def test_collect_region_merges_duplicate_region_groups(monkeypatch):
     assert sum(1 for c in sess.calls if "DELETE" in c[0].upper()) == 1
 
 
+def test_collect_region_recap_fills_bcr_far(monkeypatch):
+    # ★공동주택 표제부는 건폐/용적 결측(0)이나 총괄표제부(recap_fn)에 충실 → 보강 검증.
+    async def search_fn(dong):
+        return "4113510800100010000"
+
+    async def title_fn(sgg, bjd):  # 표제부: 공동주택 건폐/용적 0(결측)·층수·면적은 있음
+        return [{"main_purpose": "아파트", "bcr_pct": 0, "far_pct": 0, "ground_floors": 20,
+                 "total_area_sqm": 5000, "address": "경기도 성남시 분당구 정자동 1"}]
+
+    async def recap_fn(sgg, bjd):  # 총괄표제부: 단지 기준 건폐/용적 충실
+        return [{"main_purpose": "아파트", "bcr_pct": 18, "far_pct": 220, "ground_floors": 0,
+                 "total_area_sqm": 90000, "address": "경기도 성남시 분당구 정자동 1"}]
+
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (search_fn, title_fn, recap_fn))
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/collect-region",
+                    json={"groups": [{"dongs": ["경기도 성남시 분당구 정자동"]}]})
+    assert r.status_code == 200, r.text
+    apt = next(t for t in r.json()["regions"][0]["templates"] if t["building_type"] == "공동주택")
+    assert apt["median_bcr_pct"] == 18.0 and apt["median_far_pct"] == 220.0   # 총괄에서 보강
+    assert apt["median_total_area_sqm"] == 5000.0   # ★면적은 표제부 기준 유지(총괄 90000 미혼입)
+    assert apt["metadata"]["bcr_far_source"] == "recap_title"   # provenance
+
+
 def test_collect_region_blocks_non_admin(monkeypatch):
-    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (None, None))  # 게이트가 먼저 차단
+    monkeypatch.setattr(mt, "_make_region_collectors", lambda: (None, None, None))  # 게이트가 먼저 차단
     app, _ = _make_app(super_admin=False)
     client = TestClient(app)
     r = client.post("/api/v1/mass-templates/collect-region", json={"groups": [{"dongs": ["x"]}]})
