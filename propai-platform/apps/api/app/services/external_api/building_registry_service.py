@@ -143,12 +143,11 @@ class BuildingRegistryService:
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def list_titles_by_bjdong(
-        self, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
+    async def _list_by_bjdong(
+        self, endpoint: str, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
     ) -> list[dict[str, Any]]:
-        """법정동(시군구+법정동코드) 단위 표제부(getBrTitleInfo) 벌크 조회 → 정규화 record 목록.
+        """법정동 단위 건축물대장 벌크 조회 공용 — getBrTitleInfo(표제부)·getBrRecapTitleInfo(총괄표제부).
 
-        신도시 매스 백본 시드용 — 한 법정동의 다수 건축물을 한 번에 수집(개별 PNU 불요).
         반환 record 키 = get_building_*와 동일 계약(main_purpose·bcr_pct·far_pct·ground_floors·
         total_area_sqm·address) → aggregate_mass_templates가 그대로 소비. 키 미설정/무자료/오류 → [](가짜 생성 금지).
         """
@@ -163,7 +162,7 @@ class BuildingRegistryService:
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
                 for page in range(1, max_pages + 1):
-                    resp = await client.get(f"{BASE_URL}/getBrTitleInfo", params={**base, "pageNo": str(page)})
+                    resp = await client.get(f"{BASE_URL}/{endpoint}", params={**base, "pageNo": str(page)})
                     resp.raise_for_status()
                     body = resp.json().get("response", {}).get("body", {}) or {}
                     items = (body.get("items", {}) or {}).get("item")
@@ -188,8 +187,33 @@ class BuildingRegistryService:
             self.last_status = "ok" if out else "no_data"
         except Exception as e:  # noqa: BLE001
             self.last_status = "error"
-            logger.warning("표제부 벌크 조회 실패 %s-%s: %s", sigungu_cd, bjdong_cd, str(e)[:120])
+            logger.warning("대장 벌크 조회 실패 %s %s-%s: %s", endpoint, sigungu_cd, bjdong_cd, str(e)[:120])
         return out
+
+    async def list_titles_by_bjdong(
+        self, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
+    ) -> list[dict[str, Any]]:
+        """법정동 단위 표제부(getBrTitleInfo) 벌크 — 동별(개별 건물). 신도시 매스 백본 시드 기본 소스.
+
+        ★공동주택(아파트)은 표제부가 동별이라 건폐/용적(bcRat/vlRat)이 비어있는 경우가 많다 →
+          총괄표제부(list_recap_titles_by_bjdong)로 건폐/용적을 보강한다.
+        """
+        return await self._list_by_bjdong(
+            "getBrTitleInfo", sigungu_cd, bjdong_cd, max_rows=max_rows, max_pages=max_pages,
+        )
+
+    async def list_recap_titles_by_bjdong(
+        self, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
+    ) -> list[dict[str, Any]]:
+        """법정동 단위 총괄표제부(getBrRecapTitleInfo) 벌크 — 집합건물 '단지' 단위.
+
+        공동주택 등 집합건물의 건폐/용적(bcRat/vlRat)이 단지 기준으로 충실해, 표제부가 비운 건폐/용적을
+        보강하는 용도. ★단, total_area_sqm은 단지 총연면적이라 동별 표제부 면적과 섞으면 안 된다(보강은
+        건폐/용적만; 면적·층수는 표제부 기준 유지 — collect_region 병합 규칙 참조).
+        """
+        return await self._list_by_bjdong(
+            "getBrRecapTitleInfo", sigungu_cd, bjdong_cd, max_rows=max_rows, max_pages=max_pages,
+        )
 
     async def get_exclusive_units_by_pnu(self, pnu: str, page_size: int = 1000, max_pages: int = 30) -> list[dict[str, Any]] | None:
         """PNU 기반 집합건축물 전유공용면적(getBrExposPubuseAreaInfo) → 호별 전유면적 집계.

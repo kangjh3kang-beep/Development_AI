@@ -33,6 +33,7 @@ async def collect_region(
     *,
     search_fn: SearchFn,
     title_fn: TitleFn,
+    recap_fn: TitleFn | None = None,
     region_hint: str | None = None,
     source: str = "building_registry",
     min_samples: int = 1,
@@ -43,9 +44,13 @@ async def collect_region(
     신도시 시드용 — 개별 PNU 없이 법정동 단위로 다수 건축물을 수집한다(무목업: 실 표제부만).
     ★region = 수집 record 주소에서 시군구 자동 도출(프론트 조회 키와 일치, region_hint는 폴백).
     ★단일 시군구 동들을 한 호출로(혼재 시 dominant 1개로 라벨됨 — caller가 시군구별로 호출 권장).
-    반환 = {region, input_region, derived_region, requested_dongs, resolved_dongs, records, templates}.
+    ★recap_fn(총괄표제부) 주입 시 별도 수집해 recap_records_list로 반환 — caller가 공동주택 등의
+      결측 건폐/용적을 보강한다(면적·층수는 표제부 기준 유지; 보강은 fill_bcr_far_from_recap 참조).
+    반환 = {region, input_region, derived_region, requested_dongs, resolved_dongs, records, records_list,
+            recap_records_list, templates}.
     """
     records: list[dict[str, Any]] = []
+    recap_records: list[dict[str, Any]] = []
     requested_dongs = 0
     resolved_dongs = 0
     for raw in list(dongs)[:max_dongs]:
@@ -60,14 +65,23 @@ async def collect_region(
             pnu = None
         if not pnu or len(pnu) < 19:
             continue
+        sgg, bjd = pnu[:5], pnu[5:10]
         try:
-            recs = await title_fn(pnu[:5], pnu[5:10])
+            recs = await title_fn(sgg, bjd)
         except Exception as e:  # noqa: BLE001 — 개별 동 실패 격리
             logger.warning("표제부 벌크 실패 %s(%s): %s", dong, pnu[:10], str(e)[:120])
             recs = []
         if recs:
             records.extend(recs)
             resolved_dongs += 1
+        if recap_fn is not None:
+            try:
+                rrecs = await recap_fn(sgg, bjd)
+            except Exception as e:  # noqa: BLE001 — 총괄표제부 실패는 보강만 못할 뿐(기본 수집 불변)
+                logger.warning("총괄표제부 벌크 실패 %s(%s): %s", dong, pnu[:10], str(e)[:120])
+                rrecs = []
+            if rrecs:
+                recap_records.extend(rrecs)
 
     derived = dominant_region(r.get("address") or r.get("road_address") for r in records)
     eff_region = derived or region_from_address(region_hint) or region_hint
@@ -82,7 +96,8 @@ async def collect_region(
         "requested_dongs": requested_dongs,
         "resolved_dongs": resolved_dongs,
         "records": len(records),
-        "records_list": records,   # 원자료 — caller가 같은 region 그룹을 record 단위로 병합할 때 사용
+        "records_list": records,         # 표제부 원자료(동별) — caller가 region별 병합·재집계
+        "recap_records_list": recap_records,  # 총괄표제부 원자료(단지) — 건폐/용적 보강용
         "templates": templates,
     }
 
