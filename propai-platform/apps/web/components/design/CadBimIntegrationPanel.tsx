@@ -539,10 +539,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       buildingUse: designData?.buildingType ?? spec?.building_use ?? null,
       // ★대지면적은 단일출처(resolvedLandArea) — spec.land_area 의존을 폐기해 수지 실패('미리보기 못 불러옴')를 줄인다.
       landAreaSqm: resolvedLandArea ?? spec?.land_area_sqm ?? null,
+      // 역산(추정) 대지면적이면 스트립에 '대지면적 추정' 배지로 정직 표기(실측은 false).
+      landAreaEstimated: resolvedLandArea != null ? landAreaEstimated : false,
       unitTypes: designData?.unitTypes ?? null,
       efficiencyPct: designData?.efficiencyPct ?? null,
     };
-  }, [editMode, editMetrics, spec, designData, resolvedLandArea]);
+  }, [editMode, editMetrics, spec, designData, resolvedLandArea, landAreaEstimated]);
 
   // ── 법규 준수율(건폐율/용적률) — 적용값 vs 법정·조례 한도(부지분석 SSOT) ──
   // 적용값=spec.bcr/far(설계 적용값), 한도=siteAnalysis.ordinance의 실효(조례) 우선→법정 상한.

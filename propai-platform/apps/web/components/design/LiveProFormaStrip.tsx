@@ -25,6 +25,8 @@ export interface LiveProFormaDesign {
   floorCount?: number | null;
   buildingUse?: string | null;
   landAreaSqm?: number | null;
+  /** 대지면적이 실측이 아니라 연면적÷용적률 역산(추정)인지 — true면 수지 결과에 '대지면적 추정' 표기(무날조). */
+  landAreaEstimated?: boolean | null;
   /** 평형 구성(예: ["59A","84A"]). 미전달 시 기본(59A,84A). */
   unitTypes?: string[] | null;
   efficiencyPct?: number | null;
@@ -177,9 +179,17 @@ export function LiveProFormaStrip({ projectId, design, debounceMs = 400, context
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" />
           )}
         </div>
-        {result && (
-          <span className="text-[9px] text-white/30">출처: {result.price_source}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {/* 대지면적이 역산(추정)이면 정직 표기 — 수지는 추정 대지면적 기준임을 알린다(무날조). */}
+          {design.landAreaEstimated && land != null && (
+            <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300/80" title="대지면적이 실측이 아니라 연면적÷용적률 역산(추정)입니다">
+              대지면적 추정
+            </span>
+          )}
+          {result && (
+            <span className="text-[9px] text-white/30">출처: {result.price_source}</span>
+          )}
+        </div>
       </div>
 
       {/* 실패(읽기 전용이라 SSOT 무영향) — 정직 표기(상태코드/사유) */}
