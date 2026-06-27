@@ -989,6 +989,11 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         "far_pct": mass.get("far_pct"),
         "total_units": mass.get("total_units"),
         "unit_width_m": round(float(mass.get("unit_width_m", 8.0)), 2),
+        # ★podium-tower 매스(고FAR 상업지 주상복합) — 3D를 저층 podium+고층 tower 2-volume으로
+        #   렌더하도록 프론트에 통과시킨다. 단일박스 매스면 None(프론트는 단일 렌더로 폴백).
+        "massing_profile": mass.get("massing_profile"),
+        "podium": mass.get("podium"),
+        "tower": mass.get("tower"),
     }
 
 

@@ -912,7 +912,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
   useEffect(() => {
     if (spec && !bimScene) {
-      const span = Math.max(8, spec.building_width_m || 0, spec.building_depth_m || 0);
+      // ★podium-tower면 넓은 podium 저층부도 프레이밍에 포함(tower 폭만 쓰면 podium이 잘림).
+      const span = Math.max(
+        8, spec.building_width_m || 0, spec.building_depth_m || 0,
+        spec.podium?.width || 0, spec.podium?.depth || 0,
+      );
       const height = Math.max(4, (spec.floor_count || 5) * (spec.floor_height_m || 3));
       setModelDims({ span, height, minY: 0 });  // 절차모델은 base가 y=0(층 y=f*fh)
     }
@@ -1418,7 +1422,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <ControlsInvalidator controlsRef={camControlsRef} />
               {/* 모델/치수 스왑 시 demand 루프 강제 1프레임(박스 떴다 사라짐 보강) */}
               <SceneInvalidator
-                token={`${bimScene ? bimScene.uuid : "proc"}:${spec?.building_width_m ?? 0}x${spec?.building_depth_m ?? 0}x${spec?.floor_count ?? 0}`}
+                token={`${bimScene ? bimScene.uuid : "proc"}:${spec?.building_width_m ?? 0}x${spec?.building_depth_m ?? 0}x${spec?.floor_count ?? 0}:pt${spec?.podium?.floors ?? 0}/${spec?.tower?.floors ?? 0}`}
               />
               <CameraRig
                 controlsRef={camControlsRef}
