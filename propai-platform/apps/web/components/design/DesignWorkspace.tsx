@@ -88,7 +88,9 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
       {/* 메인 — 현재 단계의 패널만 표시. 마운트된 패널은 hidden 토글로 상태 보존. */}
       <div className="min-w-0">
         <div className={step === "site" ? "" : "hidden"}>
-          <DesignStudio projectId={projectId} />
+          {/* onOpen3D: 부지 단계 우측 캔버스의 "3D·BIM 편집실로 →" 버튼이 호출 → draw 스텝으로 전환.
+              go("draw")가 기존 lazy 3D(WebGL)를 그때 마운트한다(컨텍스트 고갈 방지 아키텍처 보존). */}
+          <DesignStudio projectId={projectId} onOpen3D={() => go("draw")} />
         </div>
         <div className={step === "generate" ? "" : "hidden"}>
           <DesignGenPanel projectId={projectId} />
