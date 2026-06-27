@@ -289,3 +289,23 @@ class TestPodiumTowerMassing:
         m = _mass("2R", 660)
         assert m.get("massing_profile") != "podium_tower"
         assert "podium" not in m
+
+    def test_units_use_residential_floors_not_total(self):
+        """★무날조: 세대수는 주거(tower) 층수 기준 — podium(상가·주차) 층을 주거로 중복계산 금지."""
+        m = _mass("GC", 14959)
+        res_floors = m["floors_for_units"]
+        assert res_floors == m["tower"]["floors"] < m["num_floors"]  # podium 제외
+        core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
+        layout = AutoDesignEngineService.compute_unit_layout(m, core, ["84A"], "공동주택")
+        # 세대수 = 층당세대 × 주거층수(=floors_for_units), 만층(num_floors) 아님.
+        for u in layout["units"]:
+            if u["count_per_floor"] > 0:
+                assert u["total_count"] == u["count_per_floor"] * res_floors
+
+    def test_explicit_massing_kind_respected(self):
+        """사용자가 massing_kind 명시(slab 등) 시 podium-tower로 덮어쓰지 않는다(존중)."""
+        svc = AutoDesignEngineService
+        si = SiteInput(site_area_sqm=14959, zone_code="GC", massing_kind="slab")
+        m = svc.compute_optimal_mass(si, svc.compute_effective_site(si), svc.get_legal_limits("GC"))
+        assert m.get("massing_profile") != "podium_tower"
+        assert m.get("massing_kind") == "slab"

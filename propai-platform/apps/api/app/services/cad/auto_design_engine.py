@@ -394,11 +394,9 @@ class AutoDesignEngineService:
             return None
         remaining_gfa = max(0.0, gfa_cap - podium_gfa)   # podium이 쓰고 남은 연면적
         tower_floors_by_far = int(remaining_gfa / tower_fp)
-        # 높이 캡(있으면) — podium 제외 잔여 층수. max_floors_by_height가 거대(미적용)면 FAR만.
-        if max_floors_by_height < 10**5:
-            tower_floors_by_height = max(0, max_floors_by_height - podium_floors)
-        else:
-            tower_floors_by_height = tower_floors_by_far
+        # 높이 캡 — podium 제외 잔여 층수. compute_optimal_mass는 절대높이 미지정(상업) 시
+        #   max_floors_by_height=100(소프트캡)을 넘기므로 그대로 podium 제외 잔여를 캡으로 쓴다.
+        tower_floors_by_height = max(0, max_floors_by_height - podium_floors)
         tower_floors = max(0, min(tower_floors_by_far, tower_floors_by_height))
         if tower_floors < 1:
             return None  # tower가 1층도 안 나오면 podium-tower 부적합 → 단일박스 유지
@@ -661,6 +659,8 @@ class AutoDesignEngineService:
         # 판)로 분할해 실무 주상복합(30~60층)에 부합시킨다. 정북일조(주거)·저FAR(<500%)·정북단계
         # 후퇴(step_profile) 모드는 미적용(단일박스 보존·무회귀). headline(층수·높이·연면적·치수·
         # BCR)을 현실 composite로 갱신하고 podium/tower 상세를 additive로 싣는다.
+        # 적용은 ①정북단계후퇴 모드 아님(주거 전용) ②명시 매스형상(massing_kind) 없음(auto)일 때만.
+        #   사용자가 slab/tower 등을 명시하면 그 선택을 존중(podium-tower로 덮어쓰지 않음·메타 모순 방지).
         pt = (
             AutoDesignEngineService._compute_podium_tower(
                 site_area=site_area, eff_w=eff_w, eff_d=eff_d,
@@ -668,16 +668,18 @@ class AutoDesignEngineService:
                 max_floors_by_height=max_floors_by_height,
                 sunlight_zone=sunlight_zone,
             )
-            if north_step_profile is None  # 정북단계후퇴 모드와 배타(주거 전용)
+            if (north_step_profile is None and form is None)
             else None
         )
         if pt is not None:
             twr = pt["tower"]
             result["massing_profile"] = "podium_tower"
+            result["massing_kind"] = "podium_tower"           # 메타 일관(label과 정합)
             result["podium"] = pt["podium"]
             result["tower"] = twr
-            result["residential_floors"] = twr["floors"]      # 주거(tower) 층수 — 세대수 산정 기준(후속 정밀화)
+            result["residential_floors"] = twr["floors"]      # 주거(tower) 층수
             result["commercial_floors"] = pt["podium"]["floors"]  # 저층부(상가·주차)
+            result["floors_for_units"] = twr["floors"]        # ★세대수 산정 기준(podium 제외·무날조)
             # headline을 현실 composite로 갱신 — 대표 floor plate는 tower(주거 기준층).
             result["num_floors"] = pt["total_floors"]
             result["building_height_m"] = round(pt["total_height_m"], 2)
@@ -809,11 +811,15 @@ class AutoDesignEngineService:
                         remaining -= unit_area
                         placed = True
 
+            # ★세대 산정 층수: podium-tower면 주거(tower) 층수만(podium=상가·주차는 세대 제외).
+            #   floors_for_units 없으면(단일박스) num_floors 그대로(무회귀). 무날조: podium 층을
+            #   주거로 중복 계산해 세대수를 부풀리지 않는다.
+            unit_floors = mass.get("floors_for_units") or mass.get("num_floors", 1)
             for ut in unique_types:
                 count_per_floor = counts[ut]
                 if count_per_floor <= 0:
                     continue  # 성립 불가 유형은 0세대 — 가짜 1세대 강제 금지
-                total = count_per_floor * mass["num_floors"]
+                total = count_per_floor * unit_floors
                 units.append({
                     "type": ut,
                     "area_sqm": UNIT_TYPES.get(ut, 84.0),
@@ -834,7 +840,8 @@ class AutoDesignEngineService:
             # 비주거: 호실 면적 기준
             room_area = 50.0  # 기본 호실 면적
             rooms_per_floor = max(1, int(net_area_per_floor / room_area))
-            total_units = rooms_per_floor * mass["num_floors"]
+            unit_floors = mass.get("floors_for_units") or mass.get("num_floors", 1)
+            total_units = rooms_per_floor * unit_floors
             units.append({
                 "type": "일반",
                 "area_sqm": room_area,
@@ -1002,7 +1009,12 @@ class AutoDesignEngineService:
         max_far = legal["max_far_percent"]
         max_h = legal["max_height_m"]
 
-        for _ in range(20):  # 최대 20회 반복 보정
+        # ★podium-tower 매스는 compute_optimal_mass에서 podium+tower 분할로 이미 far≤법정·
+        #   bcr=podium 지상피복(≤max)·높이캡을 충족해 산출됐다. 이 보정 루프는 단일박스 가정
+        #   (fp=width×depth, total=fp×num_floors)으로 재계산하므로 podium GFA를 통째로 버려
+        #   composite를 파괴한다 → podium-tower면 루프를 건너뛴다(headline·podium/tower 정합 보존).
+        _is_podium_tower = mass.get("massing_profile") == "podium_tower"
+        for _ in range(0 if _is_podium_tower else 20):  # 최대 20회 반복 보정(podium-tower는 스킵)
             violation = False
             if mass["bcr_pct"] > max_bcr and mass["building_footprint_sqm"] > 0:
                 mass["building_footprint_sqm"] *= 0.95
