@@ -174,3 +174,66 @@ async def list_templates(
         db, region=region, building_type=building_type, zone_code=zone_code,
     )
     return {"region": region, "count": len(rows), "templates": rows}
+
+
+class SeedDesignRequest(BaseModel):
+    address: str = Field(..., min_length=1, description="부지 주소(시군구 도출→매스 레퍼런스 조회)")
+    land_area_sqm: float = Field(..., gt=0, description="대지면적(㎡)")
+    zone_code: str = Field("2R", description="용도지역 코드")
+    building_use: str = Field("공동주택", description="건축용도(매스 종류 매핑)")
+    floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
+
+
+def _compute_mass(
+    *, land_area_sqm: float, zone_code: str, building_use: str, floor_height_m: float,
+    target_far: float | None = None, target_bcr: float | None = None,
+) -> dict:
+    """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프)."""
+    from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
+
+    svc = AutoDesignEngineService()
+    site = SiteInput(
+        site_area_sqm=land_area_sqm, zone_code=zone_code, building_use=building_use,
+        floor_height_m=floor_height_m, target_far_percent=target_far, target_bcr_percent=target_bcr,
+    )
+    legal = svc.get_legal_limits(zone_code)
+    eff = svc.compute_effective_site(site)
+    return svc.compute_optimal_mass(site, eff, legal)
+
+
+@router.post("/seed-design", dependencies=[Depends(get_current_user)])
+async def seed_design(
+    body: SeedDesignRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """매스 레퍼런스(지역 실측 전형규모)를 시드로 '법정 최대' + '지역 실측 전형' 두 설계 매스를 생성.
+
+    주소→시군구→get_mass_reference(종류 매핑)→설계엔진 target_far/bcr 시드. 실측 매스 없으면 법정 최대만
+    반환(graceful·무목업). 엔진의 min(법정,목표) 클램프로 가짜 상향 없음(실측<법정이면 지역 전형 저밀안).
+    """
+    from app.services.mass_backbone.design_seed import mass_seed_targets
+    from app.services.mass_backbone.mass_reference import get_mass_reference
+    from app.services.mass_backbone.region_util import region_from_address
+
+    common = {
+        "land_area_sqm": body.land_area_sqm, "zone_code": body.zone_code,
+        "building_use": body.building_use, "floor_height_m": body.floor_height_m,
+    }
+    legal_mass = _compute_mass(**common)
+
+    region = region_from_address(body.address)
+    mass_ref = await get_mass_reference(db, region=region, building_type_label=body.building_use)
+    targets = mass_seed_targets(mass_ref)
+    regional_mass = None
+    if targets:
+        regional_mass = _compute_mass(
+            **common, target_far=targets["target_far_percent"], target_bcr=targets["target_bcr_percent"],
+        )
+    return {
+        "region": region,
+        "legal_max_mass": legal_mass,
+        "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
+        "mass_reference": mass_ref,               # 시드 출처(provenance)
+        "note": ("regional_typical_mass=이 지역 같은 종류 건축물 실측 중앙값(건폐/용적)을 설계엔진 목표강도로 "
+                 "시드한 매스. 실측 매스 없으면 None(법정 최대만). 엔진이 min(법정,목표) 클램프(가짜 상향 없음)."),
+    }

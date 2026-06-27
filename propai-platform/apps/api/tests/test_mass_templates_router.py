@@ -245,3 +245,54 @@ def test_list_templates_returns_store_rows():
     body = r.json()
     assert body["region"] == "동탄2" and body["count"] == 1
     assert body["templates"][0]["building_type"] == "공동주택"
+
+
+def test_seed_design_with_mass_reference(monkeypatch):
+    # ★매스 레퍼런스가 설계엔진 target_far/bcr 시드로 전달돼 '지역 실측 전형' 매스가 생성되는지(엔진 stub).
+    calls = []
+
+    def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m, target_far=None, target_bcr=None):
+        calls.append({"target_far": target_far, "target_bcr": target_bcr})
+        return {"num_floors": 5 if target_far else 30, "far_pct": target_far or 250.0, "bcr_pct": target_bcr or 50.0}
+
+    monkeypatch.setattr(mt, "_compute_mass", _stub_compute)
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return {"region": region, "building_type": "공동주택", "sample_count": 84,
+                "median_bcr_pct": 16.8, "median_far_pct": 89.2, "median_floors": 5.0,
+                "source": "mass_backbone(building_registry)"}
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "경기도 성남시 분당구 정자동 1", "land_area_sqm": 1000,
+                          "zone_code": "3R", "building_use": "공동주택"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["region"] == "분당구"
+    assert body["legal_max_mass"] is not None and body["regional_typical_mass"] is not None
+    assert body["mass_reference"]["median_far_pct"] == 89.2
+    # _compute_mass 2회: 법정(target None) → 시드(target=실측 89.2/16.8)
+    assert calls[0]["target_far"] is None
+    assert calls[1]["target_far"] == 89.2 and calls[1]["target_bcr"] == 16.8
+
+
+def test_seed_design_no_mass_reference_graceful(monkeypatch):
+    # 실측 매스 없으면 regional_typical_mass=None·법정 최대만(graceful·무목업)
+    monkeypatch.setattr(mt, "_compute_mass", lambda **kw: {"num_floors": 30, "far_pct": 250.0})
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return None
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "강원특별자치도 양양군 강현면", "land_area_sqm": 1000})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["legal_max_mass"] is not None
+    assert body["regional_typical_mass"] is None
