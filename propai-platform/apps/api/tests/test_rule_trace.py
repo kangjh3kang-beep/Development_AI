@@ -232,3 +232,57 @@ class TestNumbersUnchanged:
         assert result.summary["far_percent"] == er["metrics"]["far_pct"]
         assert result.summary["bcr_percent"] == er["metrics"]["bcr_pct"]
         assert result.summary["total_floor_area_sqm"] == er["metrics"]["gfa_sqm"]
+
+
+class TestLegalLinkVerifiedOnly:
+    """★rule_trace legal_link은 '검증된 법령 딥링크'만 채운다(무날조) — evidence-link 갭 해소.
+
+    국가법령 entry(용적률·건폐율 한도/정북일조)는 law.go.kr 검증 url을 받고,
+    조례·엔진산출 entry는 None을 유지한다(지자체명 부재·법조문 아님 → 가짜 링크 금지).
+    """
+
+    def test_far_bcr_entry_has_verified_law_link(self):
+        # 용적률·건폐율 한도 entry → 국토계획법 시행령 §85(far_limit) 검증 딥링크.
+        site = SiteInput(site_area_sqm=1000, zone_code="2R", building_use="공동주택")
+        legal = _legal("2R")
+        rt, _ = build_rule_trace(site, legal, _mass(site, legal))
+        e = _entry(rt, "건축법시행령_119/국토계획법시행령_84_85")
+        assert e is not None
+        assert isinstance(e["legal_link"], str) and e["legal_link"].startswith("https://www.law.go.kr/")
+        assert "%EC%A0%9C85%EC%A1%B0" in e["legal_link"]  # 제85조(percent-encoded)
+
+    def test_solar_entry_has_verified_law_link(self):
+        # 정북일조 entry(주거지역) → 건축법 §61(daylight_height) 검증 딥링크.
+        site = SiteInput(site_area_sqm=1000, zone_code="2R", building_use="공동주택")
+        legal = _legal("2R")
+        rt, _ = build_rule_trace(site, legal, _mass(site, legal))
+        e = _entry(rt, "건축법_61/시행령_86")
+        assert e is not None
+        assert isinstance(e["legal_link"], str) and e["legal_link"].startswith("https://www.law.go.kr/")
+        assert "%EA%B1%B4%EC%B6%95%EB%B2%95" in e["legal_link"]  # 건축법(percent-encoded)
+
+    def test_ordinance_and_engine_entries_have_no_fake_link(self):
+        # 조례(지자체명 부재)·층수 결속요인(법조문 아님) entry는 legal_link None(무날조).
+        site = SiteInput(
+            site_area_sqm=1000, zone_code="2R", building_use="공동주택",
+            ordinance_far_percent=200, ordinance_bcr_percent=60,
+        )
+        legal = _legal("2R")
+        rt, _ = build_rule_trace(site, legal, _mass(site, legal))
+        ord_e = _entry(rt, "지자체_도시계획조례")
+        if ord_e is not None:
+            assert ord_e["legal_link"] is None
+        bind_e = _entry(rt, "binding_constraint")
+        if bind_e is not None:
+            assert bind_e["legal_link"] is None
+
+    def test_legal_link_does_not_change_rule_set_hash(self):
+        # ★결정론·무회귀: legal_link를 채워도 rule_set_hash는 불변(rule_set은 수치만·링크 제외).
+        site = SiteInput(site_area_sqm=1000, zone_code="2R", building_use="공동주택")
+        legal = _legal("2R")
+        mass = _mass(site, legal)
+        _rt, rule_set = build_rule_trace(site, legal, mass)
+        # rule_set(해시 대상)에는 legal_link/문자열 링크가 없어야 한다.
+        flat = compute_input_hash(rule_set)  # 예외 없이 해시되면 결정적 수치만 담긴 것
+        assert isinstance(flat, str) and len(flat) == 64
+        assert "legal_link" not in rule_set
