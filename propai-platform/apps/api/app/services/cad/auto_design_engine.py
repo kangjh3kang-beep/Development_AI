@@ -1111,6 +1111,9 @@ class AutoDesignEngineService:
             site_area_sqm=site_input.site_area_sqm,
             total_units=unit_layout.get("total_units"),
             building_use=site_input.building_use,
+            # ★엔진이 '성립 불가'를 정직 표기한 정상 0세대(작은 부지)는 버그성 0세대와 구별해
+            #   FAIL이 아니라 경고로 둔다(ENFORCE 승격 시 소형부지 대량 오탐 방지).
+            units_feasible=unit_layout.get("units_feasible"),
         )
         mass["geometry_invariants"] = geo_res.to_dict()  # additive 부착(소비처 표기·후속 재사용)
         if geo_res.is_fail:

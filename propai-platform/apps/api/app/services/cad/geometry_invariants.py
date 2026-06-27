@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 import structlog
@@ -36,7 +36,7 @@ _DEFAULT_TOL = 0.02  # 2%
 _RESIDENTIAL_USES = frozenset({"공동주택", "주거", "아파트", "주상복합", "다세대", "연립"})
 
 
-class GeoStatus(StrEnum):
+class GeoStatus(str, Enum):  # noqa: UP042 — StrEnum은 3.11+ 전용이라 3.10 호환 위해 (str, Enum) 사용(기존 7개 enum과 정합)
     """기하 점검 등급 — 숫자가 클수록 나쁨(최악 집계에 사용)."""
 
     PASS = "PASS"
@@ -291,11 +291,16 @@ def _check_floors(mass: dict[str, Any]) -> InvariantCheck | None:
 
 
 def _check_units(
-    mass: dict[str, Any], total_units: int | None, building_use: str | None
+    mass: dict[str, Any],
+    total_units: int | None,
+    building_use: str | None,
+    units_feasible: bool | None = None,
 ) -> InvariantCheck | None:
     """INV-GEO-UNITS 세대 성립(★0세대 버그 차단).
 
-    주거 매스이고 연면적>0·층수>0인데 total_units==0이면 코어/면적 산정 오류로 본다(FAIL).
+    주거 매스이고 연면적>0·층수>0인데 total_units==0이면 코어/면적 산정 '버그'로 본다(FAIL).
+    ★단 units_feasible=False면(작은 부지에서 순면적<최소평형이라 엔진이 '정직하게' 0세대를 반환한
+      정상 결과) 버그가 아니므로 FAIL이 아니라 PASS_WITH_WARNINGS로 둔다(승격 시 소형부지 대량 오탐 방지).
     total_units가 미상이면 SKIP(가짜 판정 금지).
     """
     code, name = "INV-GEO-UNITS", "세대 성립(0세대 차단)"
@@ -313,9 +318,15 @@ def _check_units(
     if tfa is None or nf is None:
         return None  # 연면적/층수 미상 → SKIP
     if tfa > 0 and nf > 0 and units == 0:
+        if units_feasible is False:
+            # 엔진이 '성립 불가'를 정직하게 표기한 정상 0세대(작은 부지) — 버그 아님. 경고만.
+            return InvariantCheck(
+                code, name, GeoStatus.PASS_WITH_WARNINGS,
+                "0세대(순면적<최소평형 — 정직한 성립 불가, 버그 아님)",
+            )
         return InvariantCheck(
             code, name, GeoStatus.FAIL,
-            "주거 매스인데 0세대 — 코어/면적 산정 오류",
+            "주거 매스인데 0세대 — 코어/면적 산정 오류(버그)",
         )
     return InvariantCheck(code, name, GeoStatus.PASS, f"세대 {units:.0f}세대 성립")
 
@@ -358,6 +369,7 @@ def check_mass_invariants(
     site_area_sqm: float | None = None,
     total_units: int | None = None,
     building_use: str | None = None,
+    units_feasible: bool | None = None,
 ) -> GeometryInvariantResult:
     """건물 매스 dict의 기하 불변식을 모두 점검해 결과 묶음을 돌려준다.
 
@@ -373,7 +385,7 @@ def check_mass_invariants(
         _check_footprint_within_site(mass, site_area_sqm),
         _check_area_conservation(mass),
         _check_floors(mass),
-        _check_units(mass, total_units, building_use),
+        _check_units(mass, total_units, building_use, units_feasible),
         _check_legal(mass),
     ):
         if check is not None:  # None=SKIP(미상)

@@ -72,6 +72,22 @@ class TestUnitsFeasibility:
         assert result.is_fail
         assert any("0세대" in e for e in result.errors)
 
+    def test_residential_zero_units_but_feasible_false_not_fail(self):
+        # ★엔진이 '성립 불가'를 정직 표기한 정상 0세대(작은 부지·순면적<최소평형)는 버그 아님 →
+        #   FAIL이 아니라 PASS_WITH_WARNINGS. ENFORCE 승격 시 소형부지 대량 오탐 방지 회귀잠금.
+        mass = {
+            "building_width_m": 8.0,
+            "building_depth_m": 8.0,
+            "building_footprint_sqm": 64.0,
+            "num_floors": 3,
+            "total_floor_area_sqm": 192.0,
+        }
+        result = check_mass_invariants(
+            mass, total_units=0, building_use="공동주택", units_feasible=False
+        )
+        assert _status_of(result, "INV-GEO-UNITS") is GeoStatus.PASS_WITH_WARNINGS
+        assert not result.is_fail  # 정직한 성립불가는 차단 대상 아님
+
     def test_residential_with_units_passes(self):
         mass = {
             "building_width_m": 22.0,
