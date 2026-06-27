@@ -5,6 +5,7 @@ prefix: /api/v1/design
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any, Optional
 
@@ -14,7 +15,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
+from app.services.cad import design_run_cache  # 설계 매스 input_hash 멱등 캐시(시간절감)
 from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
+from app.services.cad.provenance import compute_input_hash  # 결정적 입력 지문(int/float·키순서 정규화)
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
 from apps.api.database.session import get_db
@@ -861,11 +864,75 @@ def _attach_mass_contract(mass: dict[str, Any], req: BimGenerateRequest) -> dict
     return mass
 
 
+def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
+    """_resolve_mass_uncached의 출력을 '완전히 결정하는' req 필드만 담은 결정적 dict(캐시 열쇠 원료).
+
+    왜(쉬운 설명): 캐시는 '같은 입력이면 같은 결과'라는 멱등성에 기댄다. 그러므로 매스 산출 결과를
+      바꾸는 모든 입력 필드를 빠짐없이 담아야 한다(누락 시 서로 다른 입력이 같은 열쇠가 되어 캐시 오염).
+      반대로 결과에 영향 없는 비결정 필드(project_name 등)는 빼야 한다(같은 결과인데 열쇠가 갈리는 낭비 방지).
+
+    포함 필드 근거(이 필드들이 _resolve_mass_uncached의 모든 분기 입력을 완전히 결정한다):
+      - building_width_m·building_depth_m·floor_count: 명시 치수 분기의 매스를 직접 결정.
+      - floor_height_m: 모든 분기의 층고(높이·envelope)에 들어간다.
+      - land_area_sqm: 자동산출 분기(AutoDesignEngine)의 면적 입력. (치수 분기 vs land_area 분기 갈림도 결정)
+      - zone_code: 자동산출 분기의 법정/조례 한도·건축유형 추론 입력.
+      - building_use: 실내요소(_enrich_interior)·세대평형·건축유형 추론 입력.
+      - unit_types: 자동산출 분기 target_unit_types. ★순서 무관이므로 sorted로 정규화(같은 집합=같은 열쇠).
+
+    제외(비결정·결과 무영향): project_name(IFC 라벨일 뿐 매스 기하 불변), 그리고 LayoutRequest가
+      추가로 받는 필드(zone_name·avg_unit_area_sqm·site_geometry·llm_adjust)는 _resolve_mass가
+      소비하지 않으므로(매스는 BimGenerateRequest 필드만으로 결정) 핑거프린트에 넣지 않는다.
+    """
+    return {
+        "building_width_m": req.building_width_m,
+        "building_depth_m": req.building_depth_m,
+        "floor_count": req.floor_count,
+        "floor_height_m": req.floor_height_m,
+        "land_area_sqm": req.land_area_sqm,
+        "zone_code": req.zone_code,
+        "building_use": req.building_use,
+        # 평형 목록은 순서가 달라도 같은 집합이면 같은 결과 → sorted로 정규화(없으면 None).
+        "unit_types": sorted(req.unit_types) if req.unit_types else None,
+    }
+
+
 def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
+    """_resolve_mass_uncached를 input_hash 멱등 캐시로 감싼 얇은 래퍼(시간절감·무회귀).
+
+    동작(쉬운 설명):
+    - 요청의 결정적 핑거프린트로 열쇠(input_hash)를 만든다 → 같은 입력이면 항상 같은 열쇠.
+    - 캐시에 있으면(히트) 깊은 복사본을 돌려준다 → 호출부가 mass를 고쳐도 캐시 원본은 안 더럽혀진다.
+    - 없으면(미스) 실제 산출(_resolve_mass_uncached)을 돌리고, 깊은 복사본을 캐시에 저장한다.
+
+    ★무회귀: 산출 로직·반환값은 _resolve_mass_uncached가 100% 그대로 한다(캐시는 속도만 바꾼다).
+      run_id·compliance·모든 매스 키가 캐시 유무와 무관하게 동일하다.
+    ★_cache_hit 마커: 응답에 'cached' 표기를 위한 내부 플래그. ★캐시에 저장하는 값에는 넣지 않는다
+      (clean copy 저장) → 다음 호출이 _cache_hit을 자체적으로 다시 세팅(가짜 표기 방지·무날조).
+    """
+    import structlog
+
+    key = compute_input_hash(_request_fingerprint(req))
+    cached = design_run_cache.get(key)
+    structlog.get_logger().info("design_run_cache", hit=bool(cached), key=key[:16])
+    if cached is not None:
+        # 히트: 깊은 복사본 반환(호출부 mutate가 캐시 원본을 오염시키지 않게 격리).
+        result = copy.deepcopy(cached)
+        result["_cache_hit"] = True
+        return result
+    # 미스: 실제 산출 → clean 깊은 복사본을 캐시에 저장(저장본엔 _cache_hit 없음) → 반환본만 마킹.
+    mass = _resolve_mass_uncached(req)
+    design_run_cache.put(key, copy.deepcopy(mass))
+    mass["_cache_hit"] = False
+    return mass
+
+
+def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출.
 
     확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강하고,
     C2R 계약(envelope_result·geometry_invariants·rule_trace)을 부착한다(전 분기 공용·additive).
+
+    ★이 함수는 _resolve_mass(캐시 래퍼)가 호출한다. 로직·반환은 캐시 도입 전과 100% 동일하다(무회귀).
     """
     if req.building_width_m and req.building_depth_m and req.floor_count:
         mass = {
@@ -994,6 +1061,8 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         "compliance": mass.get("compliance"),
+        # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True).
+        "cached": bool(mass.get("_cache_hit")),
     }
 
 
@@ -1033,6 +1102,8 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         #   기존 키는 그대로 두고 새 키 compliance만 추가(소비처 무파손·전역 공용화 결실).
         "compliance": mass.get("compliance"),
+        # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True). 라이브 검증용.
+        "cached": bool(mass.get("_cache_hit")),
     }
 
 
@@ -1464,6 +1535,8 @@ async def compute_design_layout(project_id: str, req: LayoutRequest):
         "total_units": candidate.get("estimated_units") if candidate else mass.get("total_units"),
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         "compliance": mass.get("compliance"),
+        # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True).
+        "cached": bool(mass.get("_cache_hit")),
         "disclaimer": "AI 보조 초안 — 기하 SSOT(매스·배치·평면). 최종 인허가·설계 책임은 건축사.",
     }
 
