@@ -199,7 +199,7 @@ export function MetricBar({ className }: { className?: string }) {
     >
       {/* 근거 인스펙터(펼침 시에만) — 칩 행 위에 쌓여 "왜 이 값이 나왔나"를 한 창에서 보여준다. */}
       {showEvidence && hasEvidence && (
-        <div className="mb-2 max-h-[40vh] space-y-2 overflow-y-auto">
+        <div id="metricbar-evidence" className="mb-2 max-h-[40vh] space-y-2 overflow-y-auto">
           {/* 1) 부지 한도 산출 근거 — Evidence[]를 EvidencePanel로(법령칩 포함). 없으면 생략. */}
           {evidenceItems.length > 0 && (
             <EvidencePanel title="부지 한도 근거" items={evidenceItems} defaultOpen />
@@ -267,6 +267,7 @@ export function MetricBar({ className }: { className?: string }) {
             type="button"
             onClick={() => setShowEvidence((v) => !v)}
             aria-expanded={showEvidence}
+            aria-controls="metricbar-evidence"
             className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-1.5 text-[11px] font-semibold text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-strong)]/40 max-md:ml-0"
           >
             {/* 근거·법령 링크 아이콘(체인) */}
