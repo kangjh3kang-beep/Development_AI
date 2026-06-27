@@ -11,9 +11,26 @@
   router는 auth_service(bcrypt) 의존으로 venv에서 import 불가 → 조립 로직만 미러).
 """
 
+import pytest
+
 from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
 from app.services.cad.design_contract import build_mass_contract
 from app.services.cad.envelope_result import mass_to_envelope_result
+
+
+def _import_router():
+    """라우터 _resolve_mass·BimGenerateRequest를 import한다(불가하면 graceful skip).
+
+    왜(쉬운 설명): 라우터(design_v61)는 인증·DB 등 전체 의존성을 끌어오므로, 의존성이 없는
+      가벼운 venv에서는 import가 안 될 수 있다. 그런 환경에선 이 테스트를 건너뛰고(skip),
+      전체 의존성이 깔린 CI/프로덕션에서만 '라우터 실코드'로 배선을 검증한다(미러 한계 보완).
+    """
+    pytest.importorskip("fastapi")
+    try:
+        from app.routers.design_v61 import BimGenerateRequest, _resolve_mass
+    except Exception as e:  # noqa: BLE001 — 의존성 부재 환경은 정직하게 skip
+        pytest.skip(f"라우터 import 불가(이 환경엔 전체 의존성 없음): {str(e)[:80]}")
+    return _resolve_mass, BimGenerateRequest
 
 
 def _auto_mass(zone: str = "GC", use: str = "공동주택", area: float = 2000.0):
@@ -184,3 +201,51 @@ class TestResolveMassMirror:
         assert response["compliance"] is not None
         assert "envelope_result" in response["compliance"]
         assert response["compliance"]["envelope_result"]["metrics"]["canonical_floors"] is not None
+
+
+class TestResolveMassRouterIntegration:
+    """★미러가 아닌 '라우터 실코드' 통합검증 — _resolve_mass 3분기가 실제로 compliance를 부착하는지 잠근다.
+
+    (코드리뷰 MEDIUM#2 보완) 미러 테스트는 로직을 손으로 복제해 라우터의 '호출'을 검증하지 못한다.
+    이 클래스는 라우터 _resolve_mass를 직접 호출해, 분기 선택·계약 부착 배선을 실코드로 회귀잠금한다.
+    전체 의존성이 깔린 CI/프로덕션에서 실행되고, 가벼운 venv에선 _import_router가 graceful skip한다.
+    """
+
+    def test_explicit_dims_branch_attaches_compliance(self):
+        # 명시 치수 분기 → site/legal 없음 → envelope_result+geometry_invariants만(rule_trace 비고·무날조).
+        _resolve_mass, BimGenerateRequest = _import_router()  # noqa: N806 — 클래스 언팩
+        req = BimGenerateRequest(
+            building_width_m=20.0, building_depth_m=15.0, floor_count=10, zone_code="3R",
+        )
+        mass = _resolve_mass(req)
+        assert "compliance" in mass, "명시 치수 분기가 compliance를 부착해야 한다"
+        er = mass["compliance"]["envelope_result"]
+        assert er["schema_version"] == "propai.envelope_result.v0.1"
+        # site/legal 없으므로 rule_trace는 비어있고 rule_set_hash는 None(가짜 entry 금지·무날조).
+        assert er["rule_trace"] == []
+        assert er["rule_set_hash"] is None
+        # 핑거프린트로 input_hash는 채워진다(정직한 provenance).
+        assert er["input_hash"]
+
+    def test_land_area_branch_attaches_compliance_with_rule_trace(self):
+        # 자동산출 분기 → site+legal 있음 → rule_trace/rule_set_hash까지 채운다.
+        _resolve_mass, BimGenerateRequest = _import_router()  # noqa: N806 — 클래스 언팩
+        req = BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", building_use="공동주택")
+        mass = _resolve_mass(req)
+        assert "compliance" in mass, "자동산출 분기가 compliance를 부착해야 한다"
+        er = mass["compliance"]["envelope_result"]
+        assert er["schema_version"] == "propai.envelope_result.v0.1"
+        assert er["rule_trace"], "site+legal 분기는 rule_trace를 채워야 한다(≥1)"
+        assert er["rule_set_hash"], "site+legal 분기는 rule_set_hash를 채워야 한다"
+
+    def test_resolve_mass_is_deterministic(self):
+        # 같은 요청 → 같은 run_id/input_hash(멱등) — provenance 결정론 회귀잠금.
+        _resolve_mass, BimGenerateRequest = _import_router()  # noqa: N806 — 클래스 언팩
+
+        def _run():
+            req = BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", building_use="공동주택")
+            return _resolve_mass(req)["compliance"]["envelope_result"]
+
+        a, b = _run(), _run()
+        assert a["run_id"] == b["run_id"]
+        assert a["input_hash"] == b["input_hash"]
