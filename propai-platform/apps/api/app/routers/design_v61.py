@@ -1002,47 +1002,87 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
 
 @router.post("/{project_id}/bim/generate")
 async def generate_bim_model(project_id: str, req: BimGenerateRequest):
-    """3D BIM(IFC) 모델을 생성하고 요약 메타 + AI 설계해석을 반환한다."""
+    """3D BIM(IFC) 모델을 생성하고 요약 메타 + AI 설계해석을 반환한다.
+
+    ★무거운계산 캐시(INC6-b·시간/LLM비용 절감): 이 엔드포인트는 한 번에 ~56초가 걸린다 —
+      대부분 DesignInterpreter(Claude LLM, 6섹션)와 build_ifc_from_mass(1.5MB IFC)다.
+      이 무거운 계산 묶음(ai_interpretation + ifc 바이트수)은 '설계입력에 대해 결정적'이다:
+      입력 = {mass, zone_code, building_use, units_data}, units_data도 mass에서 결정된다.
+      그러므로 동일 설계입력 반복 시 input_hash를 열쇠로 보관해두면 LLM/IFC 재계산을 통째로 생략한다.
+
+    ★정확성(캐시 안 하는 것): project_id(경로)·glb_url(project_id 임베드)·mass(round)·compliance는
+      요청마다 신선하게 새로 만든다(절대 캐시 공유 금지). 캐시값은 설계입력 결정 부분(해석/세대/ifc길이)만.
+      → 다른 프로젝트가 같은 설계입력을 보내도 응답의 project_id/glb_url은 각자 신선(오염 0).
+    """
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
 
     mass = _resolve_mass(req)
-    ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
 
-    # ── 세대배치·코어 산출(엔진) — 해석/평면에 "세대수·평형" 반영(데이터 없음 해소) ──
-    units_data: dict = {}
-    try:
-        from app.services.cad.auto_design_engine import AutoDesignEngineService
-        svc = AutoDesignEngineService()
-        core_layout = svc.compute_core_layout(mass, req.building_use)
-        unit_layout = svc.compute_unit_layout(
-            mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
-        )
-        units_data = {
-            "core_positions": core_layout.get("core_positions"),
-            "corridor_width_m": core_layout.get("corridor_width_m"),
-            "units": unit_layout.get("units"),
-            "total_units": unit_layout.get("total_units"),
-        }
-    except Exception:  # noqa: BLE001
-        units_data = {}
+    # ── 무거운계산 캐시 열쇠: mass캐시와 같은 결정적 핑거프린트지만 "bim:" prefix로 네임스페이스 분리 ──
+    #   (mass캐시 값은 매스 dict, bim캐시 값은 해석/ifc길이 묶음 — 같은 열쇠로 섞이면 안 되므로 prefix).
+    # ★왜 bim_key에만 project_name = ifc_bytes(IFC 바이트수)가 project_name(IFC 라벨)에 의존하므로,
+    #   무거운계산 캐시는 project_name까지 열쇠에 넣어 결정성을 지킨다.
+    #   매스 캐시는 기하만이라 project_name 무관(그대로 — _request_fingerprint는 안 건드림).
+    bim_fp = {**_request_fingerprint(req), "project_name": req.project_name}
+    bim_key = "bim:" + compute_input_hash(bim_fp)
+    cached_bim = design_run_cache.get(bim_key)
 
-    # ── DesignInterpreter(Claude) 설계 AI 해석 — 실패해도 모델은 정상 반환 ──
-    ai_interpretation = None
-    try:
-        from app.services.ai.design_interpreter import DesignInterpreter
+    if cached_bim is not None:
+        # 히트: 깊은 복사본에서 무거운계산 결과만 꺼낸다(IFC빌드·core/unit layout·DesignInterpreter 전부 생략).
+        payload = copy.deepcopy(cached_bim)
+        ai_interpretation = payload.get("ai_interpretation")
+        ifc_len = int(payload.get("ifc_len", 0))
+        bim_cache_hit = True
+    else:
+        # 미스: 기존 흐름 그대로 무거운 계산을 수행한 뒤, clean 깊은 복사본을 캐시에 저장한다.
+        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+        ifc_len = len(ifc_bytes)
 
-        interp = await DesignInterpreter().generate_interpretation({
-            **mass,
-            "zone_code": req.zone_code,
-            "building_use": req.building_use,
-            **units_data,
-        })
-        if isinstance(interp, dict) and interp:
-            ai_interpretation = interp
-    except Exception as e:  # noqa: BLE001
-        import structlog
+        # ── 세대배치·코어 산출(엔진) — 해석/평면에 "세대수·평형" 반영(데이터 없음 해소) ──
+        units_data: dict = {}
+        try:
+            from app.services.cad.auto_design_engine import AutoDesignEngineService
+            svc = AutoDesignEngineService()
+            core_layout = svc.compute_core_layout(mass, req.building_use)
+            unit_layout = svc.compute_unit_layout(
+                mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
+            )
+            units_data = {
+                "core_positions": core_layout.get("core_positions"),
+                "corridor_width_m": core_layout.get("corridor_width_m"),
+                "units": unit_layout.get("units"),
+                "total_units": unit_layout.get("total_units"),
+            }
+        except Exception:  # noqa: BLE001
+            units_data = {}
 
-        structlog.get_logger().warning("설계 AI 해석 스킵", error=str(e)[:120])
+        # ── DesignInterpreter(Claude) 설계 AI 해석 — 실패해도 모델은 정상 반환 ──
+        ai_interpretation = None
+        try:
+            from app.services.ai.design_interpreter import DesignInterpreter
+
+            interp = await DesignInterpreter().generate_interpretation({
+                **mass,
+                "zone_code": req.zone_code,
+                "building_use": req.building_use,
+                **units_data,
+            })
+            if isinstance(interp, dict) and interp:
+                ai_interpretation = interp
+        except Exception as e:  # noqa: BLE001
+            import structlog
+
+            structlog.get_logger().warning("설계 AI 해석 스킵", error=str(e)[:120])
+
+        # 무거운계산 묶음을 깊은 복사본으로 저장(양방향 격리·INC6과 동일 패턴).
+        #   ★해석 None(LLM 키없음/실패)도 그대로 캐시 → 다음에도 일관(무날조). 키가 생기면 배포 재시작으로 자동무효화.
+        #   ★units_data는 저장 안 함 = 히트 경로에서 다시 읽지 않고 응답에도 없으므로(죽은 페이로드)
+        #     deepcopy 비용·메모리를 아낀다.
+        design_run_cache.put(bim_key, copy.deepcopy({
+            "ai_interpretation": ai_interpretation,
+            "ifc_len": ifc_len,
+        }))
+        bim_cache_hit = False
 
     return {
         "project_id": project_id,
@@ -1057,12 +1097,13 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
             "total_units": mass.get("total_units"),
         },
         "ai_interpretation": ai_interpretation,
-        "ifc_bytes": len(ifc_bytes),
+        "ifc_bytes": ifc_len,
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         "compliance": mass.get("compliance"),
-        # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True).
-        "cached": bool(mass.get("_cache_hit")),
+        # ★캐시 적중 표기(additive·무날조) — /bim의 cached는 '무거운계산(LLM/IFC) 캐시 적중'을 의미한다
+        #   (mass._cache_hit이 아님). 동일 설계입력 2회째면 LLM/IFC를 생략하고 캐시값을 즉시 반환(True).
+        "cached": bim_cache_hit,
     }
 
 
