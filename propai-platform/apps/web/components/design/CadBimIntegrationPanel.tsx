@@ -131,6 +131,9 @@ interface DesignSpec {
   far?: number | null;
   total_units?: number | null;
   daylightNorth?: boolean;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴)
+  // ★주상복합 podium-tower 매스(있으면 3D를 저층 큰판+고층 작은판 2-volume으로 렌더).
+  podium?: { width: number; depth: number; floors: number } | null;
+  tower?: { width: number; depth: number; floors: number } | null;
   project_name: string;
   // ★/mass 호출이 네트워크 오류 등으로 실패해 "추정 기본값"으로 채워졌는지 표시(정직표기).
   //  true면 화면에 "기본값 사용 중" 오버레이를 띄워 산출값으로 오인되지 않도록 한다. 기본 false.
@@ -151,6 +154,8 @@ function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: Desig
           floors={spec.floor_count}
           floorHeight={spec.floor_height_m ?? 3}
           daylightNorth={spec.daylightNorth}
+          podium={spec.podium}
+          tower={spec.tower}
         />
       ) : null}
       <Grid
@@ -778,6 +783,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         far: designData?.far ?? m.far_pct ?? null,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
+        // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(backend width_m/depth_m/floors).
+        podium: m.podium ? { width: m.podium.width_m, depth: m.podium.depth_m, floors: m.podium.floors } : null,
+        tower: m.tower ? { width: m.tower.width_m, depth: m.tower.depth_m, floors: m.tower.floors } : null,
         isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
       });
     } catch {
@@ -904,7 +912,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
   useEffect(() => {
     if (spec && !bimScene) {
-      const span = Math.max(8, spec.building_width_m || 0, spec.building_depth_m || 0);
+      // ★podium-tower면 넓은 podium 저층부도 프레이밍에 포함(tower 폭만 쓰면 podium이 잘림).
+      const span = Math.max(
+        8, spec.building_width_m || 0, spec.building_depth_m || 0,
+        spec.podium?.width || 0, spec.podium?.depth || 0,
+      );
       const height = Math.max(4, (spec.floor_count || 5) * (spec.floor_height_m || 3));
       setModelDims({ span, height, minY: 0 });  // 절차모델은 base가 y=0(층 y=f*fh)
     }
@@ -1410,7 +1422,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <ControlsInvalidator controlsRef={camControlsRef} />
               {/* 모델/치수 스왑 시 demand 루프 강제 1프레임(박스 떴다 사라짐 보강) */}
               <SceneInvalidator
-                token={`${bimScene ? bimScene.uuid : "proc"}:${spec?.building_width_m ?? 0}x${spec?.building_depth_m ?? 0}x${spec?.floor_count ?? 0}`}
+                token={`${bimScene ? bimScene.uuid : "proc"}:${spec?.building_width_m ?? 0}x${spec?.building_depth_m ?? 0}x${spec?.floor_count ?? 0}:pt${spec?.podium?.floors ?? 0}/${spec?.tower?.floors ?? 0}`}
               />
               <CameraRig
                 controlsRef={camControlsRef}

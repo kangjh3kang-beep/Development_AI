@@ -5,15 +5,70 @@ import * as THREE from "three";
 // 클라이언트 절차생성 3D 매스 — 건축개요(폭·깊이·층수·층고)만으로 즉시 생성.
 // 서버 IFC 파이프라인과 무관하게 "항상 무언가를 렌더"하는 것이 핵심(에디터가 빈 화면이 되지 않도록).
 // 서버 정밀 glb가 도착하면 그쪽을 우선 사용(아래 BuildingModel).
+//
+// ★podium/tower(옵셔널): 주상복합 실무 매스(저층 podium 큰 판 + 고층 tower 작은 판)를 받으면
+//   단일 박스 대신 2-volume(저층 넓고 낮게 + 고층 좁고 높게)으로 렌더한다. 미전달이면 기존 단일
+//   박스(width/depth/floors) 그대로(무회귀).
+type PtVol = { width: number; depth: number; floors: number };
+
 export function ProceduralBuilding({
-  width, depth, floors, floorHeight, daylightNorth,
-}: { width: number; depth: number; floors: number; floorHeight: number; daylightNorth?: boolean }) {
+  width, depth, floors, floorHeight, daylightNorth, podium, tower,
+}: {
+  width: number; depth: number; floors: number; floorHeight: number;
+  daylightNorth?: boolean; podium?: PtVol | null; tower?: PtVol | null;
+}) {
   const group = useMemo(() => {
     const w = Math.max(4, width || 20);
     const d = Math.max(4, depth || 15);
     const nf = Math.max(1, Math.round(floors || 5));
     const fh = Math.max(2.2, floorHeight || 3);
     const wallT = 0.3;
+
+    const matSlab = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.9, metalness: 0.05 });
+    const matGlass = new THREE.MeshStandardMaterial({ color: "#60a5fa", roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.5 });
+    const matMull = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.6 });
+    const matCore = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.85 });
+
+    // 한 볼륨(podium 또는 tower)의 층 스택을 yBase부터 nf개 쌓는다(정북단계후퇴 없음·직육면체).
+    const addStack = (g: THREE.Group, vw: number, vd: number, count: number, yBase: number) => {
+      for (let f = 0; f < count; f++) {
+        const y = yBase + f * fh;
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(vw, 0.25, vd), matSlab);
+        slab.position.set(0, y, 0); slab.castShadow = true; slab.receiveShadow = true; g.add(slab);
+        const fb = new THREE.BoxGeometry(vw * 0.98, fh * 0.86, wallT);
+        const front = new THREE.Mesh(fb, matGlass); front.position.set(0, y + fh / 2, vd / 2); g.add(front);
+        const back = new THREE.Mesh(fb, matGlass); back.position.set(0, y + fh / 2, -vd / 2); g.add(back);
+        const lr = new THREE.BoxGeometry(wallT, fh * 0.86, vd * 0.98);
+        const left = new THREE.Mesh(lr, matGlass); left.position.set(-vw / 2, y + fh / 2, 0); g.add(left);
+        const right = new THREE.Mesh(lr, matGlass); right.position.set(vw / 2, y + fh / 2, 0); g.add(right);
+        const band = new THREE.Mesh(new THREE.BoxGeometry(vw + 0.1, 0.18, vd + 0.1), matMull);
+        band.position.set(0, y + fh * 0.9, 0); g.add(band);
+      }
+    };
+
+    // ── Podium-Tower 2-volume(주상복합 실무 매스) ──
+    const pf = podium && podium.floors > 0 ? Math.round(podium.floors) : 0;
+    const tf = tower && tower.floors > 0 ? Math.round(tower.floors) : 0;
+    if (pf > 0 && tf > 0) {
+      const g = new THREE.Group();
+      const pw = Math.max(4, podium!.width || w);
+      const pd = Math.max(4, podium!.depth || d);
+      const tw = Math.max(4, tower!.width || w * 0.5);
+      const td = Math.max(4, tower!.depth || d * 0.5);
+      addStack(g, pw, pd, pf, 0);                 // 저층 podium(넓고 낮게)
+      addStack(g, tw, td, tf, pf * fh);           // 고층 tower(좁고 높게) — podium 위
+      const totalH = (pf + tf) * fh;
+      // 코어(EV·계단실) — tower footprint 기준, podium~tower 전체 높이 관통.
+      const coreW = Math.min(tw * 0.32, 7);
+      const coreD = Math.min(td * 0.32, 7);
+      const core = new THREE.Mesh(new THREE.BoxGeometry(coreW, totalH, coreD), matCore);
+      core.position.set(0, totalH / 2, 0); core.castShadow = true; g.add(core);
+      // 옥상 파라펫(tower 상부).
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(tw, 0.7, td), matSlab);
+      roof.position.set(0, totalH, 0); g.add(roof);
+      g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.selectable = true; });
+      return g;
+    }
     // P5: 정북일조 단계후퇴. 북(-z)면을 층별로 후퇴(높이/2 사선). 남(+z)면은 고정.
     const baseNorth = 1.5;
     const minDepth = Math.max(4, d * 0.35);
@@ -26,10 +81,6 @@ export function ProceduralBuilding({
       return { depth: depthF, zc: (d - depthF) / 2 }; // 남면 고정, 북면만 안으로
     };
 
-    const matSlab = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.9, metalness: 0.05 });
-    const matGlass = new THREE.MeshStandardMaterial({ color: "#60a5fa", roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.5 });
-    const matMull = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.6 });
-    const matCore = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.85 });
 
     const g = new THREE.Group();
     let lastDepth = d;
@@ -65,7 +116,10 @@ export function ProceduralBuilding({
     // §4-D: gizmo 선택 대상 표시 — 건축 요소(메시)만 선택 가능(격자·헬퍼 제외).
     g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.selectable = true; });
     return g;
-  }, [width, depth, floors, floorHeight, daylightNorth]);
+  }, [
+    width, depth, floors, floorHeight, daylightNorth,
+    podium?.width, podium?.depth, podium?.floors, tower?.width, tower?.depth, tower?.floors,
+  ]);
 
   // 매스 group이 바뀌거나(치수 변경) 언마운트될 때 직전 group의 geometry/material을 GPU에서 해제.
   // <primitive>로 주입한 사전생성 객체는 R3F가 자동 dispose하지 않으므로 직접 처분(누수 방지).
