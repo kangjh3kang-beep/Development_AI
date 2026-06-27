@@ -714,7 +714,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   ]);
 
   // ── INPUT 편집 필드(공용) ──
-  // autoSeeded일 때는 고급 서랍 안에, 아닐 때는 본문에 직접 노출하므로 한 곳에 정의해 재사용한다.
+  // 부지연동(layoutSeeded)이면 고급 서랍 안에, 아닐 때는 본문에 직접 노출하므로 한 곳에 정의해 재사용한다.
   // (핸들러·setUserEdited 등 기존 동작 무변경 — 위치만 분기.)
   const landAreaField = (
     <div className="min-w-0">
@@ -834,7 +834,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           <span className="cc-label text-[var(--text-secondary)]">INPUT · PARAMS</span>
           <h2 className="text-lg font-black text-[var(--text-primary)]">설계 조건</h2>
         </div>
-        {/* 입력 영역 — 부지분석 연동 시(autoSeeded) 일반인은 '확정 칩'(읽기전용)만 보고,
+        {/* 입력 영역 — 부지분석 연동 시(layoutSeeded) 일반인은 '확정 칩'(읽기전용)만 보고,
             편집은 '직접 조정(고급)' 서랍에서. 미연동/사용자 직접수정 시 종전처럼 편집 폼을 직접 노출. */}
         {/* ★레이아웃은 layoutSeeded(=부지연동)로만 분기 — 편집해도 폼이 같은 부모(서랍) 안에 머물러
             언마운트/포커스 상실이 없다. 칩 값은 '현재값'(편집 반영)을 보여주고, 편집은 서랍에서 한다. */}
