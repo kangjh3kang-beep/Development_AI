@@ -169,7 +169,7 @@ async def similar_market_feasibility(
     recommendations = rec.get("recommendations") or []
 
     # 상위 top_n 추천에 유사 설계 도면 가산(사업성 수치는 불변·가산만).
-    for i, r in enumerate(recommendations[: max(0, top_n)]):
+    for r in recommendations[: max(0, top_n)]:
         if not isinstance(r, dict):
             continue
         gfa = ((r.get("unit_summary") or {}).get("total_gfa_sqm")) or site_area
@@ -181,10 +181,32 @@ async def similar_market_feasibility(
         )
         r["similar_designs"] = sd
 
+    # 매스 백본 레퍼런스 가산(P2·무회귀·graceful): 이 지역 같은 종류 건축물의 실측 전형 규모(건폐/용적/
+    #   층수 중앙값)를 각 추천에 첨부. 주소→시군구 도출 후 한 세션으로 유형별 조회. 데이터 없으면 미첨부.
+    try:
+        from app.services.mass_backbone.mass_reference import get_mass_reference
+        from app.services.mass_backbone.region_util import region_from_address
+        from apps.api.database.session import AsyncSessionLocal
+
+        sgg = region_from_address(address)
+        if sgg:
+            async with AsyncSessionLocal() as _db:
+                for r in recommendations[: max(0, top_n)]:
+                    if not isinstance(r, dict):
+                        continue
+                    ref = await get_mass_reference(
+                        _db, region=sgg, building_type_label=r.get("type_name") or r.get("development_type"),
+                    )
+                    if ref:
+                        r["mass_reference"] = ref
+            rec["mass_reference_region"] = sgg
+    except Exception as e:  # noqa: BLE001 — 매스 레퍼런스는 부가정보, 실패해도 사업성/유사도면 불변
+        logger.warning("mass_reference 가산 skip(부가정보): %s", str(e)[:160])  # 영구 미가동 은폐 방지
+
     rec["stage"] = "similar_market_feasibility"
     rec["market_research_note"] = (
         "유사건축물 = 설계 참조 라이브러리(시드 코퍼스) 검색 결과(실데이터). 사업성 수치는 "
         "인허가가능 유형별 재무모델(feasibility v2)이며 토지가 신뢰도·특이부지 게이트·잠정치 "
-        "표기를 그대로 따른다(가짜 ROI 금지)."
+        "표기를 그대로 따른다(가짜 ROI 금지). mass_reference=이 지역 같은 종류 건축물의 실측 전형 규모(부가)."
     )
     return rec
