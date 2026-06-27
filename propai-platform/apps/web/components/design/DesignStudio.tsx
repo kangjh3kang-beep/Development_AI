@@ -644,23 +644,48 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // 정량 법정한도(연면적·층수·건폐율·용적률)는 로컬 SSOT(calc=kr-building-regulations)
     // 단일 출처로 고정한다. AI 자유응답(용적률 환각 등)이 법정한도를 덮어 3D 일조볼륨과
     // 어긋나는 것을 방지. AI는 summary·매싱안 등 정성 항목에만 사용.
+    // 층수 정본(canonicalFloors) — 산술하한(calc.maxFloors)을 store에 영속화하면 BIM·하류가
+    // 과소 층수(4층 등)를 쓰게 됨. 정본 미확보 시 권장(recFloors) 폴백(무날조).
+    const floorCount = resolveCanonicalFloors(envResult, calc.recFloors) ?? calc.recFloors;
+    // ── 매스 기하(massGeom) 1회 기록 — site/generate가 정한 건물 덩어리를 draw(3D)로 전파 ──
+    // 왜(쉬운 설명): 도면 단계가 이 모양을 받으면 /mass 재산출 없이 같은 층수·footprint로 3D를 그린다.
+    //   여기(부지 기반 설계)는 단일 매스라 podium/tower는 null(주상복합 2단 매스는 추천안 적용 경로에서 채움).
+    //   건축면적(footprint)=연면적÷층수(건축가능면적 이내)로 실값 산출, 폭·깊이는 정사각 근사.
+    const footprintSqm =
+      floorCount > 0
+        ? Math.min(calc.maxGrossArea / floorCount, calc.buildableArea)
+        : calc.buildableArea;
+    const side = footprintSqm > 0 ? Math.sqrt(footprintSqm) : 0; // 정사각 근사 한 변(m)
+    const massGeom = footprintSqm > 0 && side > 0
+      ? {
+          buildingWidthM: Math.round(side * 10) / 10,
+          buildingDepthM: Math.round(side * 10) / 10,
+          footprintSqm: Math.round(footprintSqm * 10) / 10,
+          massingProfile: null,          // 단일 매스(주상복합 2단 아님)
+          podium: null,
+          tower: null,
+          floorsForUnits: floorCount > 0 ? floorCount : null,
+          residentialGfaSqm: null,       // 부지 기반 단계는 주거전용 분해 없음 → null(무날조)
+        }
+      : null;
     const next = {
       totalGfaSqm: calc.maxGrossArea,
-      // 층수는 정본(canonicalFloors)으로 기록한다 — 산술하한(calc.maxFloors)을 store에 영속화하면
-      // BIM·하류가 과소 층수(4층 등)를 쓰게 됨. 정본 미확보 시 권장(recFloors) 폴백(무날조).
-      floorCount: resolveCanonicalFloors(envResult, calc.recFloors) ?? calc.recFloors,
+      floorCount,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
+      massGeom,
     };
     const cur = useProjectContextStore.getState().designData;
+    const curMassW = cur?.massGeom?.buildingWidthM ?? null;
     const unchanged =
       cur != null &&
       cur.totalGfaSqm === next.totalGfaSqm &&
       cur.floorCount === next.floorCount &&
       cur.bcr === next.bcr &&
       cur.far === next.far &&
-      cur.buildingType === next.buildingType;
+      cur.buildingType === next.buildingType &&
+      curMassW === (massGeom?.buildingWidthM ?? null);
     if (unchanged) return;
     updateDesignData(next);
     markStageComplete("design");

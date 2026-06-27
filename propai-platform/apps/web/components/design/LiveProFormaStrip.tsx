@@ -25,6 +25,8 @@ export interface LiveProFormaDesign {
   floorCount?: number | null;
   buildingUse?: string | null;
   landAreaSqm?: number | null;
+  /** 대지면적이 실측이 아니라 연면적÷용적률 역산(추정)인지 — true면 수지 결과에 '대지면적 추정' 표기(무날조). */
+  landAreaEstimated?: boolean | null;
   /** 평형 구성(예: ["59A","84A"]). 미전달 시 기본(59A,84A). */
   unitTypes?: string[] | null;
   efficiencyPct?: number | null;
@@ -68,6 +70,8 @@ export function LiveProFormaStrip({ projectId, design, debounceMs = 400, context
   const [result, setResult] = useState<SimResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  // 실패 사유(상태코드/네트워크)를 정직 표면화 — '미리보기 못 불러옴'만 뜨던 것을 개선.
+  const [failReason, setFailReason] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const width = design.buildingWidthM ?? null;
@@ -90,6 +94,7 @@ export function LiveProFormaStrip({ projectId, design, debounceMs = 400, context
     if (!canSim) return;
     setLoading(true);
     setFailed(false);
+    setFailReason(null);
     try {
       const types = typesKey.split(",").filter(Boolean);
       // 균등 비율 — 라이브 미리보기용 기본 분배(백엔드가 합계 0 시 균등 정규화하므로 단순 분배로 충분).
@@ -123,9 +128,18 @@ export function LiveProFormaStrip({ projectId, design, debounceMs = 400, context
       );
       if (!res.ok) throw new Error(String(res.status));
       setResult(await res.json());
-    } catch {
-      // 읽기 전용 미리보기 — 실패는 SSOT에 영향 없음. 정직하게 실패 상태만 표시.
+    } catch (err) {
+      // 읽기 전용 미리보기 — 실패는 SSOT에 영향 없음. 정직하게 실패 사유(상태코드/네트워크)를 표시.
       setFailed(true);
+      const msg = err instanceof Error ? err.message : "";
+      // 숫자만 있으면 HTTP 상태코드 — 사람이 읽을 수 있게 변환. 그 외(타임아웃·네트워크)는 일반 안내.
+      setFailReason(
+        /^\d{3}$/.test(msg)
+          ? `서버 응답 오류(코드 ${msg})`
+          : msg
+            ? "네트워크/시간초과로 수지 미리보기를 받지 못했습니다."
+            : null,
+      );
     } finally {
       setLoading(false);
     }
@@ -165,15 +179,25 @@ export function LiveProFormaStrip({ projectId, design, debounceMs = 400, context
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" />
           )}
         </div>
-        {result && (
-          <span className="text-[9px] text-white/30">출처: {result.price_source}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {/* 대지면적이 역산(추정)이면 정직 표기 — 수지는 추정 대지면적 기준임을 알린다(무날조). */}
+          {design.landAreaEstimated && land != null && (
+            <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300/80" title="대지면적이 실측이 아니라 연면적÷용적률 역산(추정)입니다">
+              대지면적 추정
+            </span>
+          )}
+          {result && (
+            <span className="text-[9px] text-white/30">출처: {result.price_source}</span>
+          )}
+        </div>
       </div>
 
-      {/* 실패(읽기 전용이라 SSOT 무영향) — 정직 표기 */}
+      {/* 실패(읽기 전용이라 SSOT 무영향) — 정직 표기(상태코드/사유) */}
       {failed && !result && (
         <div className="flex items-center justify-between gap-2 py-1">
-          <p className="text-[10px] text-amber-300/80">수지 미리보기를 불러오지 못했습니다.</p>
+          <p className="text-[10px] text-amber-300/80">
+            {failReason ?? "수지 미리보기를 불러오지 못했습니다."}
+          </p>
           <button
             onClick={runSim}
             className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/70 hover:bg-white/20"

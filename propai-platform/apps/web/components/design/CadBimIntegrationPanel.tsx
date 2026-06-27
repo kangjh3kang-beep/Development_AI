@@ -478,9 +478,37 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
   const [editMetrics, setEditMetrics] = useState<CADEditorMetrics | null>(null);
 
+  // ── 대지면적 단일출처(폴백체인) — 부지분석 SSOT만(footprint로 대체 금지·무날조) ──
+  // 왜 필요한가(쉬운 설명): 도면(draw) 단계가 "부지 면적"을 못 받으면 백엔드가 단일 박스로 떨어지고
+  //   '대지면적 데이터 없음'이라 떠 건폐/용적을 못 낸다. 면적은 반드시 실제 부지 면적이어야 하므로
+  //   effectiveLandAreaSqm(다필지=통합 우선) → designData에 보존된 부지 면적 순으로만 읽는다.
+  //   ★건축면적(footprint)은 '부지 면적'이 아니므로 절대 대체하지 않는다(가짜 면적 금지).
+  // 반환: {value, estimated}. estimated=true면 '실측 부지면적'이 아니라 연면적÷용적률 역산(추정)이라
+  //   화면에 '(추정)'으로 정직 표기한다(근거계약·무날조 — 실측과 추정을 구분).
+  const resolvedLand = useMemo<{ value: number | null; estimated: boolean }>(() => {
+    const fromSite = effectiveLandAreaSqm(siteAnalysis);
+    if (typeof fromSite === "number" && fromSite > 0) return { value: fromSite, estimated: false };
+    // designData에 부지 면적이 보존돼 있으면(연면적÷용적률로 역산) 차선으로 쓴다 — footprint 아님(추정 표기).
+    const gfa = designData?.totalGfaSqm;
+    const farPct = designData?.far;
+    if (typeof gfa === "number" && gfa > 0 && typeof farPct === "number" && farPct > 0) {
+      const land = gfa / (farPct / 100); // 연면적 ÷ 용적률 = 대지면적(추정 — 적용 용적률 기준)
+      if (isFinite(land) && land > 0) return { value: r2(land), estimated: true };
+    }
+    return { value: null, estimated: false };
+  }, [siteAnalysis, designData]);
+  const resolvedLandArea = resolvedLand.value;
+  const landAreaEstimated = resolvedLand.estimated;
+
   // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
-  // 선택한 개요(GFA) 또는 부지분석(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
-  const hasDesignBasis = !!(designData?.totalGfaSqm || siteAnalysis?.landAreaSqm || siteAnalysis?.zoneCode);
+  // 선택한 개요(GFA)·확정 매스(massGeom) 또는 부지(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
+  // ★massGeom(site/generate가 확정한 매스)이 있으면 부지분석이 비어도 그 매스로 3D를 그릴 수 있다.
+  const hasDesignBasis = !!(
+    designData?.totalGfaSqm ||
+    designData?.massGeom ||
+    resolvedLandArea ||
+    siteAnalysis?.zoneCode
+  );
 
   // 공용 건축 기하(spec) — /mass로 1회 산출 후 2D·3D가 공유
   const [spec, setSpec] = useState<DesignSpec | null>(null);
@@ -509,11 +537,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       buildingDepthM: useEdit ? editMetrics!.buildingDepthM : (spec?.building_depth_m ?? null),
       floorCount: useEdit ? editMetrics!.floorCount : (spec?.floor_count ?? null),
       buildingUse: designData?.buildingType ?? spec?.building_use ?? null,
-      landAreaSqm: spec?.land_area_sqm ?? null,
+      // ★대지면적은 단일출처(resolvedLandArea) — spec.land_area 의존을 폐기해 수지 실패('미리보기 못 불러옴')를 줄인다.
+      landAreaSqm: resolvedLandArea ?? spec?.land_area_sqm ?? null,
+      // 역산(추정) 대지면적이면 스트립에 '대지면적 추정' 배지로 정직 표기(실측은 false).
+      landAreaEstimated: resolvedLandArea != null ? landAreaEstimated : false,
       unitTypes: designData?.unitTypes ?? null,
       efficiencyPct: designData?.efficiencyPct ?? null,
     };
-  }, [editMode, editMetrics, spec, designData]);
+  }, [editMode, editMetrics, spec, designData, resolvedLandArea, landAreaEstimated]);
 
   // ── 법규 준수율(건폐율/용적률) — 적용값 vs 법정·조례 한도(부지분석 SSOT) ──
   // 적용값=spec.bcr/far(설계 적용값), 한도=siteAnalysis.ordinance의 실효(조례) 우선→법정 상한.
@@ -717,28 +748,77 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
   const RENDER_COST_COIN = 5;
 
-  // ── 공용 기하 산출: 선택한 건축개요(GFA·층수) 우선, 없으면 대지+용도지역으로 자동 ──
+  // ── 공용 기하 산출: 확정 매스(massGeom) 재사용 → 선택 개요(GFA·층수) → 대지+용도지역 자동 ──
   const resolveSpec = useCallback(async () => {
     setSpecLoading(true);
     const base = apiV1BaseUrl();
-    const landArea = effectiveLandAreaSqm(siteAnalysis) || undefined; // 다필지=통합 면적 우선
+    const landArea = resolvedLandArea ?? undefined; // 단일출처 폴백체인(다필지=통합 우선·footprint 대체 금지)
     const zone = siteAnalysis?.zoneCode || "2R";
     const use = mapUse(designData?.buildingType);
     const floors = designData?.floorCount || undefined;
     const gfa = designData?.totalGfaSqm || undefined;
 
-    // 선택한 개요(GFA+층수)가 있으면 footprint를 역산해 명시 매스로 고정(CAD↔BIM 일치)
+    // ── (0) 확정 매스(massGeom) 재사용 — site/generate가 정한 매스가 있으면 /mass 재산출 생략 ──
+    // 왜(쉬운 설명): 설계 생성 단계가 정한 건물 덩어리(podium-tower 포함)를 그대로 3D로 그린다.
+    //   /mass를 다시 부르면 단일 박스로 역산되며 site의 정본 매스(예: 65층 podium-tower)가 사라진다.
+    //   ★층수(floor_count)는 designData.floorCount(site 정본)를 신뢰하고 매스 치수만 massGeom에서 가져온다.
+    const mg = designData?.massGeom;
+    const mgHasPodiumTower = !!(mg?.podium && mg?.tower);
+    // ★단일박스 massGeom이 podium-tower 산출을 가리지 않게 — 재사용은 '진짜 podium-tower 매스'이거나
+    //   /mass를 부를 부지면적이 아예 없을 때만. 단일박스 massGeom이 있어도 부지면적이 있으면 아래
+    //   /mass(백엔드 land_area 분기=compute_optimal_mass)를 타게 해 podium-tower를 받는다(무날조 복원).
+    if (mg && (mg.buildingWidthM || mg.podium || mg.tower) && (mgHasPodiumTower || !landArea)) {
+      const fpW = mg.podium?.widthM ?? mg.buildingWidthM;
+      const fpD = mg.podium?.depthM ?? mg.buildingDepthM;
+      const w = typeof mg.buildingWidthM === "number" && mg.buildingWidthM > 0 ? mg.buildingWidthM : (fpW ?? 40);
+      const d = typeof mg.buildingDepthM === "number" && mg.buildingDepthM > 0 ? mg.buildingDepthM : (fpD ?? 20);
+      const fc = floors ?? mg.floorsForUnits ?? 5; // 정본 층수(site) 우선
+      setSpec({
+        building_width_m: r2(w), building_depth_m: r2(d), floor_count: fc, floor_height_m: 3.0,
+        site_width_m: r2((w ?? 40) + 6), site_depth_m: r2((d ?? 20) + 6),
+        setback_m: 3, unit_width_m: 8, basement_floors: 1,
+        land_area_sqm: landArea, zone_code: zone, building_use: use,
+        building_type: designData?.buildingType ?? null,
+        gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
+        total_units: designData?.unitCount ?? null,
+        daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
+        // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(massGeom passthrough).
+        podium: mg.podium
+          ? { width: mg.podium.widthM ?? w, depth: mg.podium.depthM ?? d, floors: mg.podium.floors ?? 0 }
+          : null,
+        tower: mg.tower
+          ? { width: mg.tower.widthM ?? w, depth: mg.tower.depthM ?? d, floors: mg.tower.floors ?? 0 }
+          : null,
+        isFallback: false, // site/generate 확정 매스(추정 기본값 아님)
+      });
+      setSpecLoading(false);
+      return;
+    }
+
+    // ★부지면적이 있으면 land_area '우선' 바디로 — 명시 width/depth/floor를 보내면 백엔드가 단일박스
+    //   분기로 떨어져 podium/tower를 산출하지 않는다(MEDIUM-2). 그래서 부지면적이 있을 땐 명시 치수를
+    //   빼고 land_area+zone+용도만 보내 백엔드 land_area 분기(compute_optimal_mass = podium/tower)를 탄다.
+    //   부지면적이 없을 때만 GFA/층수로 단일박스 역산(차선·podium-tower 불가).
     let body: Record<string, unknown>;
-    if (gfa && floors) {
+    if (landArea) {
+      body = {
+        land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0,
+        building_use: use,
+        unit_types: designData?.unitTypes && designData.unitTypes.length ? designData.unitTypes : undefined,
+      };
+    } else if (gfa && floors) {
       const footprint = gfa / floors;
       const depth = Math.max(8, Math.min(40, Math.sqrt(footprint / 1.6)));
       const width = Math.max(8, footprint / depth);
       body = {
         building_width_m: r2(width), building_depth_m: r2(depth), floor_count: floors,
-        floor_height_m: 3.0, land_area_sqm: landArea, zone_code: zone,
+        floor_height_m: 3.0, zone_code: zone, building_use: use,
       };
     } else {
-      body = { land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0 };
+      body = {
+        land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0,
+        building_use: use,
+      };
     }
 
     // 폴백 매스도 프로젝트 개요(GFA·층수)에서 역산 — /mass 실패 시에도 "프로젝트와 무관한
@@ -773,7 +853,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const m = await res.json();
       setSpec({
         building_width_m: m.building_width_m, building_depth_m: m.building_depth_m,
-        floor_count: m.num_floors, floor_height_m: m.floor_height_m,
+        // ★층수는 site의 정본(designData.floorCount)을 신뢰 — /mass 응답 num_floors가 정본을 덮지 않게 한다
+        //   (덮으면 site가 정한 65층 등이 /mass 단일추정 층수로 회귀). 정본 미확보 시에만 num_floors 폴백.
+        floor_count: floors ?? m.num_floors, floor_height_m: m.floor_height_m,
         site_width_m: m.site_width_m, site_depth_m: m.site_depth_m,
         setback_m: m.setback_m ?? 3, unit_width_m: m.unit_width_m ?? 8, basement_floors: 1,
         land_area_sqm: landArea, zone_code: zone, building_use: use,
@@ -793,7 +875,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setSpecLoading(false);
     }
-  }, [projectId, designData, siteAnalysis]);
+  }, [projectId, designData, siteAnalysis, resolvedLandArea]);
 
   // 마운트 시 1회 기하 산출 — 단, 설계 기반(개요·부지)이 있을 때만(무목업·게이트)
   useEffect(() => {
@@ -806,13 +888,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     building_depth_m: spec?.building_depth_m,
     floor_count: spec?.floor_count,
     floor_height_m: spec?.floor_height_m ?? 3.0,
-    land_area_sqm: spec?.land_area_sqm,
+    // ★대지면적은 단일출처(resolvedLandArea) 우선 — spec 폴백이 비어도 '대지면적 데이터 없음' 차단.
+    land_area_sqm: resolvedLandArea ?? spec?.land_area_sqm,
     zone_code: spec?.zone_code ?? "2R",
     project_name: spec?.project_name ?? "PropAI",
     // 세대 구성(SSOT) — 평면 세대배치·AI 해석의 "세대수·평형 부재" 해소.
     building_use: designData?.buildingType ?? "공동주택",
     unit_types: designData?.unitTypes ?? undefined,
-  }), [spec, designData]);
+  }), [spec, designData, resolvedLandArea]);
 
   // spec → 도면(generate-full-set) 요청 바디
   // building_use·unit_types를 함께 보내 기준층 평면도를 실제 평형믹스로 분할.
