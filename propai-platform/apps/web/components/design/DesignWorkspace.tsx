@@ -46,9 +46,10 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <div
-      // 풀하이트 named-area 셸. 상단 글로벌 헤더+ProjectSwitcher를 고려한 높이(외곽 무한스택 제거).
-      //  rail은 두 행(main·metrics)에 걸치고, 메인은 가변(1fr), 메트릭바는 내용 높이(auto).
-      className="grid h-[calc(100dvh-9rem)] min-w-0 gap-3"
+      // 풀하이트 named-area 셸. rail은 두 행(main·metrics)에 걸치고, 메인은 가변(1fr), 메트릭바는 내용 높이(auto).
+      //  ★높이: 모바일(헤더가 세로로 접혀 키 큼)은 자연 높이(min-h)로 둬 이중 스크롤을 피하고,
+      //   md+에서만 뷰포트 잔여(100dvh-8rem)로 고정해 메트릭바를 화면 안에 둔다. 메인은 내부 overflow-auto.
+      className="grid min-h-[32rem] min-w-0 gap-3 md:h-[calc(100dvh-8rem)]"
       style={{
         gridTemplateAreas: "'rail main' 'rail metrics'",
         gridTemplateColumns: "56px minmax(0, 1fr)",
@@ -65,8 +66,9 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
         <div
           className={[
             // 기본 56px 폭 아이콘 레일. hover/focus 시에만 절대배치로 폭 확장(라벨 노출).
+            //  확장 시 그림자로 '임시 팝오버'임을 시각적으로 분명히(메인 위에 잠깐 떠 라벨만 보여줌).
             "cc-panel absolute left-0 top-0 flex h-full w-[56px] flex-col gap-2 overflow-hidden p-2 transition-[width] duration-150",
-            "hover:w-[224px] focus-within:w-[224px]",
+            "hover:w-[224px] hover:shadow-[var(--shadow-lg)] focus-within:w-[224px] focus-within:shadow-[var(--shadow-lg)]",
           ].join(" ")}
         >
           <div className="cc-label px-1 pt-1 text-[10px] text-[var(--text-tertiary)]">

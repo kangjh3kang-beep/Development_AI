@@ -67,8 +67,8 @@ export function MetricBar({ className }: { className?: string }) {
 
   // 대지면적 — 다필지 통합 우선 유효 면적(공용 헬퍼). 미확보 시 null.
   const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
-  // 용도지역 — 통합 dominant 우선, 없으면 단일 zoneCode(공용 리졸버). 미확보 시 null.
-  const zone = resolveDominantZone(siteAnalysis) ?? siteAnalysis?.zoneCode ?? null;
+  // 용도지역 — resolveDominantZone이 내부에서 dominantZoneCode ?? zoneCode를 이미 폴백(단일경유).
+  const zone = resolveDominantZone(siteAnalysis);
   // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 실효값(공용 리졸버). 미확보 시 null.
   const bcr = designData?.bcr ?? resolveBcrPct(siteAnalysis) ?? null;
   const far = designData?.far ?? resolveFarPct(siteAnalysis) ?? null;
