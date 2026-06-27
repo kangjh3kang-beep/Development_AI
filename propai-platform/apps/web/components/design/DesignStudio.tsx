@@ -18,6 +18,7 @@ import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { resolveCanonicalFloors } from "@/lib/design-ssot";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
+import { InspectorGrid } from "@/components/common/InspectorGrid";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { SeedDesignMassComparison } from "@/components/design/SeedDesignMassComparison";
 
@@ -771,34 +772,36 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         {/* 좌측 인스펙터 — 입력·결과 패널(스크롤). 큰 화면에서 독립 스크롤로 우측 캔버스와 분리. */}
         <div className="min-w-0 space-y-6 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:pr-2">
 
-      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
+      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-6 border border-[var(--line-strong)]">
         <div className="mb-6 flex items-center gap-2.5">
           <span className="cc-label text-[var(--text-secondary)]">INPUT · PARAMS</span>
           <h2 className="text-lg font-black text-[var(--text-primary)]">설계 조건</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="cc-label mb-2 block">대지면적 (㎡)</label>
+        {/* 입력 필드 그리드 — 좁은 인스펙터 칸에서도 라벨+입력칸이 펴지도록 칸 최소폭 12rem 보장
+            (뷰포트 md: 미디어쿼리 대신 컨테이너 실폭에 반응). min-w-0로 텍스트가 칸을 밀어내는 것을 방지. */}
+        <InspectorGrid minItemRem={12}>
+          <div className="min-w-0">
+            <label className="cc-label mb-2 block whitespace-nowrap">대지면적 (㎡)</label>
             <NumberInput allowDecimal placeholder="500" value={form.landArea === "" ? null : Number(form.landArea)} onChange={(n) => { setUserEdited(true); setForm((f) => ({ ...f, landArea: n != null ? String(n) : "" })); }}
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
+              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
           </div>
-          <div>
-            <label className="cc-label mb-2 block">용도지역</label>
+          <div className="min-w-0">
+            <label className="cc-label mb-2 block whitespace-nowrap">용도지역</label>
             <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setUserEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
             </select>
           </div>
-          <div>
-            <label className="cc-label mb-2 block">건물용도</label>
+          <div className="min-w-0">
+            <label className="cc-label mb-2 block whitespace-nowrap">건물용도</label>
             <select value={form.buildingUse} onChange={(e) => { setUserEdited(true); setForm((f) => ({ ...f, buildingUse: e.target.value })); }}
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["공동주택","업무시설","근린생활시설","숙박시설","판매시설","교육연구시설"].map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
           </div>
           {/* ③ 층고(m) — 일조 인벨로프 층수 천장 환산에 사용(SolarEnvelopeCard로 전달). 기본 3.0·범위 2.4~4.5. */}
-          <div>
-            <label className="cc-label mb-2 block">층고 (m)</label>
+          <div className="min-w-0">
+            <label className="cc-label mb-2 block whitespace-nowrap">층고 (m)</label>
             <NumberInput allowDecimal placeholder="3.0"
               value={form.floorHeight === "" ? null : Number(form.floorHeight)}
               onChange={(n) => {
@@ -807,10 +810,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                 setUserEdited(true);
                 setForm((f) => ({ ...f, floorHeight: clamped }));
               }}
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
+              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
             <p className="mt-1 text-[10px] text-[var(--text-hint)]">기본 3.0m · 일조 천장 층수 환산</p>
           </div>
-        </div>
+        </InspectorGrid>
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
           {isPending ? "심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "심층 설계 분석"}
@@ -842,7 +845,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* 자동계산 칩 — 칩은 폭이 좁아도 무방하므로 칸 최소폭 7rem(컨테이너 실폭 반응).
+              넓으면 종전처럼 4열, 좁아지면 2열→1열로 우아하게 접힘. */}
+          <InspectorGrid minItemRem={7}>
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
               { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
@@ -851,14 +856,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               { label: "예상 층수", val: expectedFloors?.val ?? (canonicalFloors != null ? `${canonicalFloors}층` : `${calc.recFloors}층`), sub: `${expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`} · 산술하한 ${calc.maxFloors}층(건폐율 만충)`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
-              <div key={k.label} className="cc-panel cc-interactive p-5 text-center">
+              <div key={k.label} className="cc-panel cc-interactive min-w-0 p-5 text-center">
                 <p className={`cc-label ${k.color} mb-2`}>{k.label}</p>
                 <p className="cc-num text-2xl font-black">{k.val}</p>
                 <p className="text-[10px] text-[var(--text-hint)]">{k.sub}</p>
                 {easy && EASY[k.label] && <p className="mt-1.5 text-[10px] leading-snug text-[var(--accent-strong)]">{EASY[k.label]}</p>}
               </div>
             ))}
-          </div>
+          </InspectorGrid>
 
           {/* 법규 적합 체크리스트 — 적용값이 법정 한도 이내인지 한눈에 */}
           <div className="cc-panel p-6">
@@ -954,8 +959,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               const opts: Array<{ name: string; description: string; efficiency: number; geom?: MassingGeom | null }> =
                 Array.isArray(aiEff?.massingOptions) ? aiEff.massingOptions : calc.massingOptions;
               const best = Math.max(...opts.map((o) => o.efficiency || 0));
+              // 매싱 대안 카드 — 카드 안에 배치도(MassingDiagram)+설명이 들어가 충분히 넓어야 의미가 있다.
+              // 그래서 칸 최소폭을 14rem으로 크게(컨테이너 실폭 반응). 넓으면 3열, 좁아지면 자연히 1~2열.
               return (
-                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3 [&>button]:min-w-0">
+                <InspectorGrid minItemRem={14} gap={3} className="mt-2 [&>button]:min-w-0">
                   {opts.map((m, i) => {
                     const isBest = (m.efficiency || 0) === best;
                     // 선택 우선 — 사용자가 고른 대안이 활성. 미선택이면 추천(최고효율)이 활성.
@@ -998,7 +1005,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                       </button>
                     );
                   })}
-                </div>
+                </InspectorGrid>
               );
             })()}
           </div>
