@@ -301,6 +301,26 @@ class TestPodiumTowerMassing:
         for u in layout["units"]:
             if u["count_per_floor"] > 0:
                 assert u["total_count"] == u["count_per_floor"] * res_floors
+        # ★회귀잠금(무날조): 30층 이상 주거 타워는 세대가 반드시 성립해야 한다. 과거 코어 수를
+        #   '적층 연면적'으로 산정해 타워 1개층 면적을 코어가 다 먹어 0세대가 되던 버그를 차단.
+        assert layout["total_units"] > 0, "podium-tower 주거 타워가 0세대 — 코어 과대산정 회귀"
+
+    def test_core_count_uses_floor_plate_not_stacked_area(self):
+        """★코어 수는 '층당 바닥판'으로 산정 — 고층에서 적층 연면적으로 폭증(예 38층 14코어) 금지.
+
+        코어는 모든 층을 수직 관통하는 공용공간이라, 코어 수가 건물 높이(적층 연면적)에 비례해
+        늘면 안 된다. 타워 바닥판(약 수백㎡)에 물리적으로 들어갈 수 있는 한도(피난·직통계단 2개소
+        의무 포함) 내에서 산정돼야 한다(무날조: 0세대 유발 과대코어 차단).
+        """
+        m = _mass("GC", 14959)
+        core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
+        # 30층대 주상복합 타워라도 코어는 소수(피난 2개소+a) — 두 자릿수 코어는 비현실.
+        assert 1 <= core["num_cores"] <= 4, f"코어 {core['num_cores']}개 — 적층 연면적 기준 폭증 회귀"
+        # 직통계단 2개소 의무(5층↑/층당 200㎡↑) 반영 — 고층 타워는 최소 2코어.
+        assert core["num_cores"] >= 2
+        # 코어+복도가 타워 1개층 바닥판을 다 먹지 않아 순면적이 양(+)으로 남는다(세대 성립 가능).
+        net = m["building_footprint_sqm"] - core["core_area_sqm"] - core["corridor_area_sqm"]
+        assert net > 0, "코어+복도가 바닥판을 초과 — 순면적 음수(세대 성립 불가) 회귀"
 
     def test_explicit_massing_kind_respected(self):
         """사용자가 massing_kind 명시(slab 등) 시 podium-tower로 덮어쓰지 않는다(존중)."""
