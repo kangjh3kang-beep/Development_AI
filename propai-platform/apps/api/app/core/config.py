@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     #   미설정(빈 문자열)이면 c2r 렌더는 가짜 이미지를 만들지 않고 정직하게 provider_unconfigured 반환.
     GEMINI_API_KEY: str = ""
 
+    # C2R 렌더 가드 — '검증 안 된 브리프(geometry_hash 없음/불일치)'로 이미지가 렌더되는
+    # 오염 경로를 막는다. ★1차는 shadow(기본 False): 차단하지 않고 경고 로그만 남겨 노출빈도를
+    # 측정한다. 충분히 안전하다고 확인되면 True로 올려 실제 차단(enforce)으로 승격한다(무회귀).
+    C2R_RENDER_GUARD_ENFORCE: bool = False
+
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
 

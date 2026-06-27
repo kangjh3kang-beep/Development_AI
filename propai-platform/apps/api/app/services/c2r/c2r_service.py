@@ -16,6 +16,8 @@ from typing import Any
 
 import structlog
 
+from app.services.cad.provenance import compute_geometry_hash
+
 logger = structlog.get_logger(__name__)
 
 
@@ -84,6 +86,54 @@ def _compute_envelope(parcel: dict[str, Any], geometry: dict[str, Any] | None) -
     )
 
 
+# 기하 지문에 넣을 '인벨로프의 결정적 수치 키' — 같은 부지·같은 한도면 항상 같은 값.
+#  ★결정론만 담는다(날짜·uuid·랜덤 금지). 없는 키(None)는 지문에서 제외(가짜 수치 금지).
+_GEOM_FINGERPRINT_KEYS = (
+    "far_pct",            # 법정 용적률 상한(%)
+    "bcr_pct",            # 법정 건폐율 상한(%)
+    "realistic_far_pct",  # 현실 용적률(층수제한 반영, %)
+    "max_height_m",       # 인벨로프 최고 높이(m)
+    "max_floors",         # 인벨로프 현실 층수
+    "effective_gfa_sqm",  # 현실 연면적(㎡)
+    "envelope_gfa_sqm",   # 인벨로프 연면적(㎡)
+)
+
+
+def _attach_geometry_hash(
+    brief: dict[str, Any], parcel: dict[str, Any], envelope: dict[str, Any]
+) -> None:
+    """브리프에 geometry_hash·geometry_fingerprint 를 부착한다(2키만 additive·기존 키 무변경).
+
+    왜(쉬운 설명): 렌더 가드가 '이 브리프가 정말 우리 인벨로프에서 나왔나'를 확인하려면,
+      인벨로프의 결정적 수치를 한데 모은 '기하요약(fingerprint)'과 그 sha256 지문(hash)이 필요하다.
+      대지면적은 인벨로프 dict 에 echo 되지 않으므로 부지 해석(parcel)에서 보강한다.
+
+    ★결정론: 같은 입력이면 항상 같은 fingerprint → 같은 geometry_hash(멱등·재현·변조탐지).
+    ★무날조: 값이 없는 항목은 지문에 넣지 않는다(가짜 0/추정 금지). footprint 도 있을 때만 포함.
+    """
+    geom_fp: dict[str, Any] = {}
+
+    # 인벨로프의 결정적 수치 — 실제로 있는(None 아님) 키만 담는다.
+    for k in _GEOM_FINGERPRINT_KEYS:
+        v = envelope.get(k)
+        if v is not None:
+            geom_fp[k] = v
+
+    # 대지면적 — 인벨로프엔 echo 안 되므로 envelope→parcel 순으로 확보(있을 때만).
+    land_area = envelope.get("land_area_sqm") or parcel.get("land_area_sqm")
+    if land_area is not None:
+        geom_fp["land_area_sqm"] = land_area
+
+    # 1층 바닥면적(footprint) — 브리프 program 에 이미 결정론으로 산출돼 있으면 재사용(있을 때만).
+    footprint = (brief.get("program") or {}).get("footprint_sqm")
+    if footprint is not None:
+        geom_fp["footprint_sqm"] = footprint
+
+    # 2키만 additive 부착 — 기존 브리프 구조·키는 그대로.
+    brief["geometry_fingerprint"] = geom_fp
+    brief["geometry_hash"] = compute_geometry_hash(geom_fp)
+
+
 async def build_foundation(
     pnu_or_address: str,
     options: dict[str, Any] | None = None,
@@ -111,6 +161,10 @@ async def build_foundation(
     brief = synthesize_brief(parcel=parcel, envelope=envelope, program=options)
     if use_llm:
         brief = await enrich_brief_with_llm(brief)
+
+    # 렌더 가드용 기하 지문 부착 — 우리 파이프라인 브리프는 '검증된 브리프'임을 증명하는 표식.
+    #  ★LLM 보강이 brief 를 새 dict 로 갈아끼울 수 있어, 보강 '이후'에 부착해야 살아남는다.
+    _attach_geometry_hash(brief, parcel, envelope)
 
     gate = evaluate(brief)
 
