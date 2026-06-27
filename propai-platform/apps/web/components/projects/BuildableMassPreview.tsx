@@ -21,6 +21,7 @@ import dynamic from "next/dynamic";
 import { Box } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
+import { selectMassTemplate, validMassTemplates, type MassTemplate } from "@/lib/mass-template";
 
 const ProposalMassPreview = dynamic(
   () => import("@/components/design/ProposalMassPreview").then((m) => m.ProposalMassPreview),
@@ -34,13 +35,6 @@ const ProposalMassPreview = dynamic(
   },
 );
 
-type MassTemplate = {
-  building_type: string;
-  sample_count: number;
-  median_bcr_pct: number | null;
-  median_far_pct: number | null;
-  median_floors: number | null;
-};
 type LookupResp = { region: string; count: number; templates: MassTemplate[] };
 
 export function BuildableMassPreview({
@@ -53,13 +47,14 @@ export function BuildableMassPreview({
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"legal" | "real">("legal");
-  // 조회 결과를 '어느 region 것인지'와 함께 보관 → region 변경 시 stale 데이터를 match로 무시
-  //   (effect 본문 동기 setState 없이 깨끗이 갱신; setState는 async 콜백에서만).
-  const [fetched, setFetched] = useState<{ region: string; tpl: MassTemplate | null } | null>(null);
+  const [selectedType, setSelectedType] = useState<string | null>(null);  // 선택 건축물종류(미선택=대표)
+  // 조회 결과를 '어느 region 것인지'와 함께 보관(전 종류 목록) → region 변경 시 stale은 match로 무시
+  //   (effect 본문 동기 setState 없이 갱신; setState는 async 콜백에서만).
+  const [fetched, setFetched] = useState<{ region: string; templates: MassTemplate[] } | null>(null);
 
   const r = (region ?? "").trim();
 
-  // 이 지역 실측 대표 매스(표본 최다·서버가 정렬) 조회 — region 있을 때만. 무자료/오류는 미표시(graceful).
+  // 이 지역 실측 매스(전 종류·표본수 내림차순) 조회 — region 있을 때만. 무자료/오류는 미표시(graceful).
   useEffect(() => {
     if (!r) return;
     let alive = true;
@@ -67,14 +62,10 @@ export function BuildableMassPreview({
       .get<LookupResp>(`/mass-templates?region=${encodeURIComponent(r)}`)
       .then((resp) => {
         if (!alive) return;
-        // 건폐·용적 중앙값이 모두 유효한 첫(=대표) 템플릿만 채택(가짜 규모 금지).
-        const top = (resp?.templates ?? []).find(
-          (t) => (t.median_bcr_pct ?? 0) > 0 && (t.median_far_pct ?? 0) > 0,
-        );
-        setFetched({ region: r, tpl: top ?? null });
+        setFetched({ region: r, templates: resp?.templates ?? [] });
       })
       .catch(() => {
-        if (alive) setFetched({ region: r, tpl: null });
+        if (alive) setFetched({ region: r, templates: [] });
       });
     return () => {
       alive = false;
@@ -84,10 +75,10 @@ export function BuildableMassPreview({
   // 실효 한도·대지면적이 유효할 때만(가짜 규모 금지).
   if (!farPct || !bcrPct || !areaSqm || farPct <= 0 || bcrPct <= 0 || areaSqm <= 0) return null;
 
-  // 현재 region에 매칭되는 조회 결과만 사용(다른 region의 stale 결과 무시).
-  const real = fetched && fetched.region === r ? fetched.tpl : null;
-  const useReal =
-    mode === "real" && !!real && (real.median_bcr_pct ?? 0) > 0 && (real.median_far_pct ?? 0) > 0;
+  // 현재 region 매칭분만 사용(stale 무시) → 건폐·용적 유효 종류 목록 + 선택 종류(없으면 대표=첫).
+  const valid = fetched && fetched.region === r ? validMassTemplates(fetched.templates) : [];
+  const real = selectMassTemplate(valid, selectedType);   // selectedType가 valid에 없으면 대표로 자동 폴백
+  const useReal = mode === "real" && !!real;
   const effBcr = useReal ? real!.median_bcr_pct! : bcrPct;
   const effFar = useReal ? real!.median_far_pct! : farPct;
 
@@ -115,17 +106,34 @@ export function BuildableMassPreview({
         </button>
       </div>
 
-      {/* 실측 표본이 있을 때만 모드 토글 노출(없으면 법정 최대만) */}
-      {real && (
-        <div className="mt-2 inline-flex rounded-lg border border-[var(--line)] p-0.5 text-[11px] font-bold">
-          <button onClick={() => setMode("legal")}
-            className={`rounded-md px-2 py-0.5 transition ${mode === "legal" ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"}`}>
-            법정 최대
-          </button>
-          <button onClick={() => setMode("real")}
-            className={`rounded-md px-2 py-0.5 transition ${mode === "real" ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"}`}>
-            실측 대표
-          </button>
+      {/* 실측 표본이 있을 때만 모드 토글 + 종류 선택 노출(없으면 법정 최대만) */}
+      {valid.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border border-[var(--line)] p-0.5 text-[11px] font-bold">
+            <button onClick={() => setMode("legal")}
+              className={`rounded-md px-2 py-0.5 transition ${mode === "legal" ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"}`}>
+              법정 최대
+            </button>
+            <button onClick={() => setMode("real")}
+              className={`rounded-md px-2 py-0.5 transition ${mode === "real" ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"}`}>
+              실측 대표
+            </button>
+          </div>
+          {/* 실측 모드·종류 2개 이상일 때만 건축물종류 드롭다운(현재 선택 종류=real) */}
+          {mode === "real" && valid.length > 1 && (
+            <select
+              aria-label="건축물종류 선택"
+              value={real?.building_type ?? ""}
+              onChange={(e) => setSelectedType(e.target.value)}
+              className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] font-bold text-[var(--text-primary)]"
+            >
+              {valid.map((t) => (
+                <option key={t.building_type} value={t.building_type}>
+                  {t.building_type} ({t.sample_count}표본)
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
 
