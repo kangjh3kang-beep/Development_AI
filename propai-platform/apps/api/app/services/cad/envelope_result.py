@@ -79,7 +79,8 @@ class EnvelopeMetrics(BaseModel):
 
     bcr_pct: float | None = None                 # 건폐율(%)
     far_pct: float | None = None                 # 용적률(%)
-    gfa_sqm: float | None = None                 # 총 연면적(total_floor_area_sqm·podium 포함 — geometry.residential_gfa_sqm(주거풀, podium 제외)과 구별)
+    # 총 연면적(total_floor_area_sqm·podium 포함) — geometry.residential_gfa_sqm(주거풀·podium 제외)과 구별.
+    gfa_sqm: float | None = None
     canonical_floors: int | None = None          # ★정본 층수(floors_for_units가 있으면 그것, 없으면 num_floors)
     total_units: int | None = None               # 총 세대수
     applied_max_bcr_pct: float | None = None     # 적용 건폐율 한도(목표 반영)
