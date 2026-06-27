@@ -138,6 +138,13 @@ interface SiteAnalysisData {
     honest: string | null;
   } | null;
 
+  // 한도 산출 근거·법령 원문 링크(EvidencePanel/LegalRefChip 소비형) — 부지분석/법규단계가
+  //   백엔드 build_evidence_block(evidence[{claim,value,basis,source,link,confidence}] + legal_refs)을
+  //   SSOT에 가산 보존(있을 때만·옵셔널). 소비처(예: 정본 메트릭바 근거 인스펙터)가 재호출 없이 읽는다.
+  //   없으면 부재 → 소비처는 "근거 없음"으로 정직 처리(무목업). ComplianceData.evidence와 대칭 계약.
+  evidence?: unknown[] | null; // 근거 트레이스(Evidence[] 구조)
+  legalRefs?: unknown[] | null; // 법령 원문 링크(레지스트리 출력)
+
   // 다필지 정보 (LAYER 0) — 선택적 (점진적 확장)
   parcels?: ParcelData[];
   landUseDistricts?: LandUseDistrict[];
