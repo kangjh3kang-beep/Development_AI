@@ -18,11 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import audit_admin_action
+from app.services.billing.billing_service import is_super_admin
+from app.services.secrets import secret_store
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from app.core.audit import audit_admin_action
-from app.services.secrets import secret_store
-from app.services.billing.billing_service import is_super_admin
 
 router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
 
@@ -83,6 +83,7 @@ async def llm_health(
     await _require_admin(current, db)
     import asyncio
     import os as _os
+
     from app.services.ai.key_sanitizer import get_clean_env_key
 
     env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "google": "GOOGLE_API_KEY"}
@@ -119,6 +120,79 @@ async def llm_health(
         out["ok"] = False
         out["error_type"] = type(e).__name__
         out["error"] = msg
+    return out
+
+
+@router.get("/image-health")
+async def image_health(
+    provider: str = "openai",
+    model: str | None = None,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자 이미지 생성 진단 — 키+SDK패키지 존재 + 실제 소형 1회 생성으로 모델 ID 유효성을 확정.
+
+    'Gemini 나노바나나/ gpt-image가 되나?'를 1회 호출로 식별: 키 미설정 / SDK 미설치 /
+    모델 ID 무효(빈응답·404) / 정상(generated>0). 무날조 — 실제 API 응답으로만 ok 판정.
+    """
+    await _require_admin(current, db)
+    import os as _os
+
+    from app.services.ai.image_provider import (
+        _IMAGE_PACKAGE,
+        IMAGE_PROVIDERS,
+        ImageGenerationError,
+        _image_package_available,
+        generate_image,
+        resolve_model,
+    )
+    from app.services.ai.key_sanitizer import get_clean_env_key
+
+    cfg = IMAGE_PROVIDERS.get(provider)
+    if not cfg:
+        return {"provider": provider, "ok": False, "error_type": "unknown_provider",
+                "valid": list(IMAGE_PROVIDERS.keys())}
+    env_name = cfg["env_key"]
+    key = get_clean_env_key(env_name)
+    pkg_ok = _image_package_available(provider)
+    out: dict = {
+        "provider": provider, "env_name": env_name,
+        "key_present": bool(key), "key_len": len(key or ""),
+        "raw_env_present": bool((_os.environ.get(env_name) or "").strip()),
+        "package": _IMAGE_PACKAGE.get(provider), "package_installed": pkg_ok,
+        "model": model or resolve_model(provider),
+    }
+    if not key:
+        out["ok"] = False
+        out["error_type"] = "key_not_configured"
+        out["error"] = f"{env_name}가 os.environ에 비어 있음(시크릿 오버레이/복호화 점검)."
+        return out
+    if not pkg_ok:
+        out["ok"] = False
+        out["error_type"] = "package_missing"
+        out["error"] = f"{_IMAGE_PACKAGE.get(provider)} SDK 미설치 — requirements(+oracle) 추가 후 재배포 필요."
+        return out
+    try:
+        import asyncio
+        res = await asyncio.wait_for(
+            generate_image(provider=provider, prompt="a small solid blue square on white, minimal",
+                           model=model, size="1024x1024", n=1, timeout=90),
+            timeout=100,
+        )
+        imgs = res.get("images") or res.get("image_urls") or []
+        out["ok"] = bool(imgs)
+        out["generated"] = len(imgs)
+        out["model"] = res.get("model")
+        if not imgs:
+            out["error_type"] = "empty_response"
+    except ImageGenerationError as e:
+        out["ok"] = False
+        out["error_type"] = e.error_type
+        out["error"] = str(e)[:260].replace(key, "***")
+    except Exception as e:  # noqa: BLE001
+        out["ok"] = False
+        out["error_type"] = type(e).__name__
+        out["error"] = str(e)[:260].replace(key, "***")
     return out
 
 
