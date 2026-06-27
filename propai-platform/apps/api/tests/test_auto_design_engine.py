@@ -297,24 +297,37 @@ class TestPodiumTowerMassing:
         assert res_floors == m["tower"]["floors"] < m["num_floors"]  # podium 제외
         core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
         layout = AutoDesignEngineService.compute_unit_layout(m, core, ["84A"], "공동주택")
-        # 세대수 = 층당세대 × 주거층수(=floors_for_units), 만층(num_floors) 아님.
+        # 세대수 = 층당세대 × 주거층수(=floors_for_units), 만층(num_floors) 아님(이 입력은 큰
+        #   바닥판 3,291㎡라 수정 전에도 세대는 성립 — 여기선 '주거층수 곱' 불변식만 검증).
         for u in layout["units"]:
             if u["count_per_floor"] > 0:
                 assert u["total_count"] == u["count_per_floor"] * res_floors
-        # ★회귀잠금(무날조): 30층 이상 주거 타워는 세대가 반드시 성립해야 한다. 과거 코어 수를
-        #   '적층 연면적'으로 산정해 타워 1개층 면적을 코어가 다 먹어 0세대가 되던 버그를 차단.
-        assert layout["total_units"] > 0, "podium-tower 주거 타워가 0세대 — 코어 과대산정 회귀"
+
+    def test_small_podium_tower_units_not_zero(self):
+        """★회귀잠금(헤드라인 증상): 작은 타워 바닥판의 podium-tower가 0세대가 되면 안 된다.
+
+        GC 2000㎡는 타워 바닥판이 440㎡로 작다. 과거 코어 수를 '적층 연면적'(19,760㎡)으로 산정해
+        38층이면 코어 14개(350㎡)를 만들고, 이를 440㎡ 바닥판에서 빼니 순면적 38㎡로 붕괴 → 0세대.
+        수정 후엔 코어를 '층당 바닥판'으로 산정(2개)해 136세대가 성립한다. 이 입력이 0세대 증상을
+        실제로 재현하므로 회귀를 직접 잠근다(14959㎡는 바닥판이 커서 수정 전에도 0이 아니었음).
+        """
+        m = _mass("GC", 2000)
+        assert m.get("massing_profile") == "podium_tower"  # 전제: 작은 상업 부지도 podium-tower
+        core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
+        layout = AutoDesignEngineService.compute_unit_layout(m, core, ["59A", "84A"], "공동주택")
+        assert layout["total_units"] > 0, "작은 타워 바닥판 podium-tower가 0세대 — 코어 과대산정 회귀"
+        assert core["num_cores"] <= 4, f"코어 {core['num_cores']}개(440㎡ 바닥판) — 적층연면적 폭증 회귀"
 
     def test_core_count_uses_floor_plate_not_stacked_area(self):
-        """★코어 수는 '층당 바닥판'으로 산정 — 고층에서 적층 연면적으로 폭증(예 38층 14코어) 금지.
+        """★코어 수는 '층당 바닥판'으로 산정 — 고층에서 적층 연면적으로 폭증 금지.
 
         코어는 모든 층을 수직 관통하는 공용공간이라, 코어 수가 건물 높이(적층 연면적)에 비례해
-        늘면 안 된다. 타워 바닥판(약 수백㎡)에 물리적으로 들어갈 수 있는 한도(피난·직통계단 2개소
-        의무 포함) 내에서 산정돼야 한다(무날조: 0세대 유발 과대코어 차단).
+        늘면 안 된다. GC 14959㎡(38층) 타워는 적층 연면적 기준이면 코어 99개로 폭증하지만, 층당
+        바닥판(3,291㎡) 기준이면 3개로 현실화된다(피난·직통계단 2개소 의무 포함 한도 내·무날조).
         """
         m = _mass("GC", 14959)
         core = AutoDesignEngineService.compute_core_layout(m, "공동주택")
-        # 30층대 주상복합 타워라도 코어는 소수(피난 2개소+a) — 두 자릿수 코어는 비현실.
+        # 38층 주상복합 타워라도 코어는 소수(피난 2개소+a) — 두 자릿수(적층연면적 기준 99개)는 비현실.
         assert 1 <= core["num_cores"] <= 4, f"코어 {core['num_cores']}개 — 적층 연면적 기준 폭증 회귀"
         # 직통계단 2개소 의무(5층↑/층당 200㎡↑) 반영 — 고층 타워는 최소 2코어.
         assert core["num_cores"] >= 2

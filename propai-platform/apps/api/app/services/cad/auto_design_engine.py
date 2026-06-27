@@ -726,8 +726,8 @@ class AutoDesignEngineService:
 
         # ★코어(계단·EV·설비 샤프트)는 모든 층을 수직으로 관통하는 공용공간이라, 코어 '수'는
         #   '적층 연면적'이 아니라 '층당 바닥판(plate) 면적'과 피난 동선으로 정해야 한다.
-        #   적층 연면적으로 곱하면 고층일수록 코어가 비현실적으로 폭증(예: 38층이면 14개)해
-        #   타워 1개층 면적을 코어가 거의 다 먹어 세대수가 0이 되는 무날조 오류가 난다.
+        #   적층 연면적으로 곱하면 고층일수록 코어가 비현실적으로 폭증한다(예: GC 2000㎡ 38층이면
+        #   적층 19,760㎡/1500≈14개 → 타워 440㎡ 바닥판을 코어가 다 먹어 0세대; GC 14959㎡면 99개).
         #   podium-tower 매스에서는 building_footprint_sqm가 '타워' 바닥판이므로 그대로 plate가 된다.
         footprint_pf = float(mass.get("building_footprint_sqm") or (bw * bd))
         floors = int(mass.get("floors_for_units") or mass.get("num_floors") or 1)
