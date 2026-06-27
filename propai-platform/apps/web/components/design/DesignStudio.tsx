@@ -15,6 +15,7 @@ import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning }
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveCanonicalFloors } from "@/lib/design-ssot";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
@@ -504,14 +505,19 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     const buildableArea = area * (bcrUsed / 100);
     const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
     const heightPerFloor = Number(form.floorHeight) || 3.3;
-    const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : 25;
+    // 높이제한이 없으면(일반상업·준주거 등) 높이 캡을 적용하지 않는다 — 용적률/건폐율만 층수를
+    // 지배한다. 종전 25층 매직캡은 1300% 상업을 25층으로 과소왜곡했음(무날조). 무한대로 두면
+    // maxFloors=min(산술하한, ∞)=산술하한(불변), recFloors는 FAR(round(far/20))을 반영해 65층으로.
+    const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : Number.POSITIVE_INFINITY;
     const maxFloors = Math.min(minFloorsFromFar, maxFloorsByHeight); // 산술하한(건폐율 만충) — 법적 개념 아님
-    const maxHeight = spec.heightLimit || (maxFloors * heightPerFloor);
-    const heightNote = spec.heightLimit ? "법적 높이 제한" : "예상 높이 (제한 없음)";
     // ★실무 권장 층수(매싱 도식·설명용) — 산술하한(maxFloors)을 그대로 "N층 2개동"으로 노출하면
     //   과소(4층 등) 오도. 쾌적 건폐율 20% 가정(round(FAR/20))으로 보정하되 높이제한·산술하한 이내로
-    //   클램프해 무날조. geom footprint 계산은 산술하한(maxFloors) 유지(무회귀).
+    //   클램프해 무날조. 정본 층수 정렬을 위해 maxHeight 계산보다 먼저 산출한다.
     const recFloors = Math.max(maxFloors, Math.min(maxFloorsByHeight, Math.round(farUsed / 20)));
+    // 높이제한이 없을 땐 권장 층수(recFloors) × 층고로 예상 높이를 잡아 층수 정본과 높이를 정합시킨다
+    // (종전 maxFloors=산술하한 기준이면 65층 권장과 어긋난 낮은 높이를 표시했음).
+    const maxHeight = spec.heightLimit || (recFloors * heightPerFloor);
+    const heightNote = spec.heightLimit ? "법적 높이 제한" : "예상 높이 (제한 없음)";
     // ③ 매싱 실프리뷰 — calc 실값(연면적·층수·건축가능면적) 기반 footprint 기하 생성.
     const siteSide = Math.sqrt(area);
     const footprintFor = (floors: number) =>
@@ -548,6 +554,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   const aiCleanText = cleanFenceText(aiText);
   const calc = localCalc;
 
+  // ★층수 단일 진실원천(SSOT) — 축측 도식·예상층수 카드·우측 메트릭칩이 모두 이 한 값을 보게 한다.
+  //   종전엔 축측(25층 매직캡)·예상(43~65)·칩(65)이 3중 불일치했음. 일조 인벨로프 권장(있으면)
+  //   > calc.recFloors(FAR 반영 현실권장) 순으로 도출하고, 셋 다 없으면 null(무날조 — 화면 "—").
+  const canonicalFloors = calc ? resolveCanonicalFloors(envResult, calc.recFloors) : null;
+
   // ②③ 상단 '예상 층수' 카드 값(정직화) — ceil(FAR/BCR)인 calc.maxFloors는 '산술하한'이라
   //   '예상'으로 노출하면 과소(4층 등) 오도. 일조 인벨로프 결과가 있으면 실무 권장 범위를,
   //   없으면(미매칭) 로컬 현실추정(low=round(FAR/30)·high=round(FAR/20))을 표시한다(가짜값 0·무날조).
@@ -563,14 +574,18 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         : hi != null ? `${hi}층` : "—";
       return { val, sub: `실무 권장(층고 ${fh}m·일조 반영)` };
     }
-    // 미매칭 — 로컬 현실추정(쾌적 건폐율 20~30% 가정). ★ceil(FAR/BCR) 금지.
+    // 미매칭 — 로컬 현실추정(쾌적 건폐율 20~30% 가정). ★ceil(FAR/BCR)=산술하한(maxFloors) 노출 금지.
     const far = calc.floorAreaRatio;
-    if (!(far > 0)) return { val: `${calc.maxFloors}층`, sub: `산술하한(건폐율 만충)` };
+    // FAR이 없으면 정본 층수(canonicalFloors)→권장(recFloors) 순으로(산술하한 maxFloors 노출 금지·무날조).
+    if (!(far > 0)) {
+      const val = canonicalFloors != null ? `${canonicalFloors}층` : `${calc.recFloors}층`;
+      return { val, sub: `권장(용적률 기준)` };
+    }
     const low = Math.max(1, Math.round(far / 30));
     const high = Math.max(low, Math.round(far / 20));
     const val = high > low ? `${low}~${high}층` : `${low}층`;
     return { val, sub: `실무 권장(추정)` };
-  }, [calc, envResult, form.floorHeight]);
+  }, [calc, envResult, form.floorHeight, canonicalFloors]);
 
   // ★활성 매싱안 단일출처(SSOT) — 좌측 '매싱 대안 비교' 카드와 우측 캔버스가 동일한 활성안을
   //   보게 한다. 옵션 목록·활성 판정·geom·우측 지표를 한 번에 도출(좌측에서 옵션 클릭 시 우측 즉시 갱신).
@@ -587,24 +602,25 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       (selectedMassing ? opts.find((o) => o.name === selectedMassing) : null) ??
       opts.find((o) => (o.efficiency || 0) === best) ??
       opts[0];
-    // geom 폴백: 로컬 옵션은 산출 geom, AI 옵션은 이름 매칭으로 calc 실값 기반 geom 생성(좌측과 동일 식).
-    const geom =
-      active.geom ??
-      buildMassingGeom(
-        massingKindFromName(active.name),
-        Math.min(calc.maxGrossArea / Math.max(calc.maxFloors, 1), calc.buildableArea),
-        calc.siteSide,
-        calc.maxFloors,
-      );
-    // 우측 지표(무날조 — calc/envResult 실값만). 층수는 일조 인벨로프 권장층수가 있으면 그 값을, 없으면 maxFloors.
-    // 층수 폴백은 calc.recFloors(현실 권장) — 좌측 '예상 층수' 카드가 의도적으로 피한
-    // calc.maxFloors(산술하한·과소 오도)를 우측 칩이 노출하지 않게 좌·우 층수 정의를 맞춘다.
-    const floors =
-      envResult?.recommended_floors_high ?? envResult?.recommended_floors_low ?? calc.recFloors;
+    // ★층수 정본(canonicalFloors)으로 floors·geom을 둘 다 통일한다 — 종전엔 floors는 인벨로프
+    //   권장(65), geom은 active.geom(=calc.recFloors 기준)이라 칩 층수와 축측 슬래브 수가 어긋났음.
+    //   geom을 active.geom 대신 정본 층수로 재생성해 "축측 슬래브 수 == 칩 층수"가 되게 한다.
+    //   정본이 null이면 calc.recFloors로 폴백(geom은 층수 0이면 그릴 수 없으므로).
+    const floorsForGeom = canonicalFloors ?? calc.recFloors;
+    const fpForFloors = Math.min(calc.maxGrossArea / Math.max(floorsForGeom, 1), calc.buildableArea);
+    const geom = buildMassingGeom(
+      massingKindFromName(active.name),
+      fpForFloors,
+      calc.siteSide,
+      floorsForGeom,
+    );
+    // 우측 지표(무날조 — calc/envResult 실값만). 층수는 정본(canonicalFloors) — null이면 칩에서 "—".
+    const floors = canonicalFloors;
     // 예상 전용 연면적 = 최대 연면적 × 효율(%) — 좌측 카드의 estGfa와 동일 식.
     const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * ((active.efficiency || 0) / 100)) : null;
     return { active, geom, isBest: (active.efficiency || 0) === best, floors, estGfa };
-  }, [calc, aiEff, selectedMassing, envResult]);
+    // envResult는 canonicalFloors에 이미 반영돼 deps에서 생략(중복 의존 경고 방지).
+  }, [calc, aiEff, selectedMassing, canonicalFloors]);
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
@@ -625,7 +641,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // 어긋나는 것을 방지. AI는 summary·매싱안 등 정성 항목에만 사용.
     const next = {
       totalGfaSqm: calc.maxGrossArea,
-      floorCount: calc.maxFloors,
+      // 층수는 정본(canonicalFloors)으로 기록한다 — 산술하한(calc.maxFloors)을 store에 영속화하면
+      // BIM·하류가 과소 층수(4층 등)를 쓰게 됨. 정본 미확보 시 권장(recFloors) 폴백(무날조).
+      floorCount: resolveCanonicalFloors(envResult, calc.recFloors) ?? calc.recFloors,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
@@ -649,6 +667,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     siteMatch,
     hasRealSiteData,
     userEdited,
+    envResult,
   ]);
 
   return (
@@ -783,7 +802,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
               { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
-              { label: "예상 층수", val: expectedFloors?.val ?? `${calc.maxFloors}층`, sub: expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
+              // 예상 층수 — 정본(canonicalFloors) 기준. 폴백도 산술하한(maxFloors) 대신 정본→권장(recFloors).
+              // 산술하한은 sub에 '근거'로만 작게 부기해 정본 층수와 구분(무날조 투명성).
+              { label: "예상 층수", val: expectedFloors?.val ?? (canonicalFloors != null ? `${canonicalFloors}층` : `${calc.recFloors}층`), sub: `${expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`} · 산술하한 ${calc.maxFloors}층(건폐율 만충)`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
               <div key={k.label} className="cc-panel cc-interactive p-5 text-center">
