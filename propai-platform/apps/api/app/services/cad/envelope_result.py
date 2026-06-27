@@ -116,7 +116,9 @@ class EnvelopeResult(BaseModel):
     # ★rule_trace/rule_set_hash(INC5-a·additive) — '어떤 법규가 어떤 값으로 적용됐는지' 추적.
     #   rule_set_hash는 §4 provenance triad(input_hash·geometry_hash·rule_set_hash)의 마지막 한 칸.
     #   둘 다 옵셔널이라 미부착(None/빈 리스트)이어도 기존 직렬화·소비처는 깨지지 않는다.
+    # rule_set_hash = '적용된 규칙 묶음'의 지문(산출 결과값이 아님 — 결과는 geometry_hash가 담당, triad 역할분담).
     rule_set_hash: str | None = None
+    # rule_trace 항목 {rule_code,rule_name,applied,basis,source,legal_link} — evidence 리스트와는 별개 구조(kernel-trace).
     rule_trace: list[dict] = Field(default_factory=list)
 
 
