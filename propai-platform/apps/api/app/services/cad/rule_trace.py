@@ -58,6 +58,27 @@ def _pick(d: dict, *keys: str) -> Any:
     return None
 
 
+def _verified_legal_link(ref_key: str) -> str | None:
+    """마스터 법령 레지스트리에서 '검증된 법령 딥링크(law.go.kr 한글주소)'만 가져온다(무날조).
+
+    왜(쉬운 설명): rule_trace의 출처(source)는 사람이 읽는 법령명 문자열이라 그대로는 링크가 안 된다.
+      legal_reference_registry는 블루프린트 ②-3에서 '검증된 법령명+조문'만 모아 딥링크를 만들어 둔다.
+      여기선 그 검증된 url만 끌어와 붙인다 — 레지스트리에 없거나 url이 비면 None(가짜 링크 절대 금지).
+
+    ★결정론·무회귀: rule_set(해시 대상)에는 링크를 넣지 않으므로(아래 결정적 수치만), 링크를 채워도
+      rule_set_hash는 불변이다. 레지스트리 조회 실패는 링크 없음으로 정직 폴백(예외 전파 안 함).
+    """
+    try:
+        # 지연 import — 모듈 로드 시 순환참조·부작용 0(레지스트리는 순수 데이터 매핑).
+        from app.services.legal.legal_reference_registry import get_legal_ref
+
+        ref = get_legal_ref(ref_key)
+    except Exception:  # noqa: BLE001 — 조회 실패는 링크 없음으로 정직 폴백
+        return None
+    url = ref.get("url") if isinstance(ref, dict) else None
+    return url if isinstance(url, str) and url.strip() else None
+
+
 def build_rule_trace(
     site_input: Any,
     legal: dict | None,
@@ -137,7 +158,9 @@ def build_rule_trace(
         },
         "basis": f"{far_basis}; {bcr_basis}",
         "source": "국토계획법 시행령 §84·85, 건축법 시행령 §119",
-        "legal_link": None,
+        # ★검증된 법령 딥링크 — 용적률 한도(국토계획법 시행령 §85)를 대표 링크로(far_limit 키).
+        #   건폐율(§84)·면적산정(건축법 시행령 §119)은 source 문자열에 함께 표기(단일 링크는 대표 1개).
+        "legal_link": _verified_legal_link("far_limit"),
     })
 
     # ── 2) 정북일조 높이제한(건축법 §61·시행령 §86) ──
@@ -153,7 +176,8 @@ def build_rule_trace(
             },
             "basis": "전용·일반주거지역 정북사선(높이 10m 초과부 h/2 이격)",
             "source": "건축법 §61·시행령 §86",
-            "legal_link": None,
+            # ★검증된 법령 딥링크 — 일조 높이제한 모법(건축법 §61, daylight_height 키). 시행령 §86은 source에 병기.
+            "legal_link": _verified_legal_link("daylight_height"),
         })
 
     # ── 3) 조례 실효 한도(지자체 도시계획조례) ──
@@ -168,6 +192,8 @@ def build_rule_trace(
             },
             "basis": "조례 실효한도(법정 이내로만 적용 — 가짜 상향 금지)",
             "source": "지자체 도시계획조례",
+            # ★조례 딥링크는 지자체명(sigungu)이 있어야 검증 가능(예: "서울특별시 도시계획 조례").
+            #   이 추적표에는 지자체명이 없어 가짜 링크 대신 None으로 둔다(무날조 — build_ordinance_url 미사용).
             "legal_link": None,
         })
 
@@ -183,6 +209,7 @@ def build_rule_trace(
             },
             "basis": f"{binding_constraint}이(가) 층수를 결정",
             "source": "설계엔진 산출(법정 한도·일조·높이 종합)",
+            # 이 entry는 특정 법조문이 아니라 '엔진의 종합 산출'이라 법령 딥링크 대상이 아니다(None — 정직).
             "legal_link": None,
         })
 
