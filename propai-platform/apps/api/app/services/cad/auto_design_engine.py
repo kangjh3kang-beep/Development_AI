@@ -21,6 +21,8 @@ import structlog
 from app.core.config import settings
 from app.services.cad.envelope_result import mass_to_envelope_result
 from app.services.cad.geometry_invariants import check_mass_invariants
+from app.services.cad.provenance import compute_input_hash
+from app.services.cad.rule_trace import build_rule_trace
 from app.services.common.sunlight_setback import (
     max_height_for_north_distance_m,
     required_north_setback_m,
@@ -1271,6 +1273,17 @@ class AutoDesignEngineService:
             total_units=unit_layout.get("total_units"),
             geo_invariants=mass.get("geometry_invariants"),
             input_fingerprint=input_fingerprint,
+        )
+
+        # 4-d. rule_trace + rule_set_hash 부착(INC5-a·additive·★수치 무변경).
+        #   '어떤 법규가 어떤 값으로 적용됐는지'를 mass/legal/site_input에서 '읽기만' 해서 추적표로 만들고,
+        #   그 묶음(rule_set)의 결정적 해시(rule_set_hash)를 §4 provenance triad의 마지막 칸으로 채운다.
+        #   ★기존 매스 산출·compliance/summary/payload 키·수치는 전혀 손대지 않는다(읽기 전용 구성).
+        rule_trace, rule_set = build_rule_trace(site_input, legal, mass)
+        rule_set_hash = compute_input_hash(rule_set)  # 결정론(normalize+canonical 재사용)
+        # Pydantic 모델은 model_copy(update=...)로 불변 갱신 — 원본 손대지 않고 새 필드만 채운다.
+        envelope_result = envelope_result.model_copy(
+            update={"rule_trace": rule_trace, "rule_set_hash": rule_set_hash}
         )
         compliance["envelope_result"] = envelope_result.model_dump(mode="json")
 
