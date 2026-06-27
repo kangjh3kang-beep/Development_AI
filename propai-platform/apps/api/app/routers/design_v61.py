@@ -116,6 +116,10 @@ class PhotorealRenderRequest(BaseModel):
     image_base64: str = Field(..., min_length=1)
     style: str = Field("실사")
     strength: float = Field(0.6, ge=0.0, le=1.0)
+    # 렌더 프로바이더 선택(선택형) — None이면 서버 기본(replicate ControlNet) 유지(후방호환).
+    provider: str | None = None   # "openai" | "google" | "replicate"
+    # 모델 ID 선택 — None이면 프로바이더 기본 모델 사용.
+    model: str | None = None
 
 
 class AltSelectionRequest(BaseModel):
@@ -1387,7 +1391,11 @@ async def render_photoreal(
     from app.services.drawing import photoreal_render_service
 
     result = await photoreal_render_service.render_photoreal(
-        req.image_base64, style=req.style, strength=req.strength
+        req.image_base64,
+        style=req.style,
+        strength=req.strength,
+        provider=req.provider,
+        model=req.model,
     )
 
     # 키 미설정/실패는 그대로 정직 반환(과금 없음).
@@ -1395,6 +1403,7 @@ async def render_photoreal(
         return result
 
     # 렌더 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
+    # ★프로바이더 무관 동일 과금코드(photoreal_render) — INC2는 단일 코드(신규 과금 추가 금지).
     charged = None
     if user is not None:
         try:
@@ -1404,12 +1413,28 @@ async def render_photoreal(
         except Exception:  # noqa: BLE001
             pass
 
+    # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
+    # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).
     return {
         "status": "ok",
-        "image_url": result["image_url"],
+        "image_url": result.get("image_url"),
+        "image_base64": result.get("image_base64"),
+        "provider": result.get("provider"),
+        "model": result.get("model"),
         "message": "비파괴 렌더(원본 3D 불변)",
         "charged": charged,
     }
+
+
+@router.get("/image-providers")
+async def list_image_providers():
+    """프론트 드롭다운용 — 라이브 가용(키+SDK 있는) 이미지 프로바이더만 노출(반쪽출하 방지).
+
+    인증 불요(시크릿 없음·가용목록만). 경로: GET /api/v1/design/image-providers.
+    """
+    from app.services.ai.image_provider import get_available_image_providers
+
+    return {"providers": get_available_image_providers()}
 
 
 @router.get("/{project_id}/permit-docs", response_model=PermitDocsResponse)
