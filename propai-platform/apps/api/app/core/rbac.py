@@ -101,23 +101,35 @@ def require_role(*roles: Role):
     """FastAPI 의존성: 인증된 사용자만 접근 허용 (P0-5 보안 수정).
 
     get_current_user로 JWT 인증을 강제한다(토큰 없으면 get_current_user가 401). Role.ADMIN
-    요구 시 User.is_superuser로 게이트 — 가입 시 role 문자열이 일괄 'admin'이라 신뢰 불가하므로
-    신뢰 가능한 is_superuser 플래그를 쓴다.
+    요구 시 **플랫폼 총괄관리자(users.tier == 'super_admin')** 로 게이트한다(is_super_admin).
 
-    ⚠️ 기존의 `request=None → return True` 폴스루(FastAPI가 미타입 request를 주입하지 않아 사실상
-    상시 우회) + `x-user-role` 헤더 신뢰(클라이언트 조작 가능)는 인증 우회였으므로 제거.
+    ★2026-06-27 근본수정: 기존엔 getattr(user, 'is_superuser')로 판별했으나 **users 테이블에
+      is_superuser 컬럼이 없어**(라이브 UndefinedColumnError 확인) 항상 False = 누구도 통과 못 하는
+      deny-all이었다(관리자 사용자목록 등 마비). 이 코드베이스의 실제 관리자 신호는 tier 기반
+      billing_service.is_super_admin이다. 루트 한 곳을 고쳐 require_role(Role.ADMIN) 전 사용처에 전파.
+
+    ⚠️ 기존의 `request=None → return True` 폴스루 + `x-user-role` 헤더 신뢰(클라이언트 조작 가능)는
+    인증 우회였으므로 제거(유지).
 
     사용 예:
         @router.get("/admin-only", dependencies=[Depends(require_role(Role.ADMIN))])
     """
     from fastapi import Depends, HTTPException
-    from app.services.auth.auth_service import get_current_user
+    from sqlalchemy.ext.asyncio import AsyncSession
 
-    async def dependency(current_user=Depends(get_current_user)):
+    from app.core.database import get_db
+    from app.services.auth.auth_service import get_current_user
+    from app.services.billing.billing_service import is_super_admin
+
+    async def dependency(
+        current_user=Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
         # get_current_user가 유효 토큰을 강제 → 인증된 사용자만 여기 도달.
-        if Role.ADMIN in roles and not getattr(current_user, "is_superuser", False):
+        # Role.ADMIN = 플랫폼 총괄관리자 → tier=='super_admin'(is_super_admin·예외시 False=fail-closed).
+        if Role.ADMIN in roles and not await is_super_admin(db, current_user.id):
             raise HTTPException(
-                status_code=403, detail="관리자(superuser) 권한이 필요합니다",
+                status_code=403, detail="플랫폼 총괄관리자(super_admin) 권한이 필요합니다",
             )
         # 비-ADMIN 역할: 현재 사용처 없음. 인증 사용자면 통과(향후 DB user_roles 모델로 세분화).
         return current_user

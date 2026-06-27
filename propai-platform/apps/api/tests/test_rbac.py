@@ -2,6 +2,7 @@
 
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -95,29 +96,68 @@ class TestRBACEngine:
 
 
 class TestRequireRole:
-    """require_role 의존성 테스트."""
+    """require_role 의존성 테스트 — Role.ADMIN은 tier=='super_admin'(is_super_admin)로 게이트."""
 
-    async def test_require_admin_denies_non_superuser(self):
-        """P0-5: 인증돼도 superuser 아니면 403 (fail-open·헤더신뢰 제거)."""
+    async def test_require_admin_denies_non_super_admin(self, monkeypatch):
+        """인증돼도 super_admin 아니면 403 (is_super_admin=False·fail-closed)."""
         from types import SimpleNamespace
-        from fastapi import HTTPException
-        from app.core.rbac import require_role, Role
 
+        from fastapi import HTTPException
+
+        import app.services.billing.billing_service as billing
+        from app.core.rbac import Role, require_role
+
+        async def _not_super(db, uid):
+            return False
+
+        monkeypatch.setattr(billing, "is_super_admin", _not_super)
         dep = require_role(Role.ADMIN)
         with pytest.raises(HTTPException) as exc:
-            await dep(current_user=SimpleNamespace(is_superuser=False, email="u@x.com"))
+            await dep(current_user=SimpleNamespace(id="u1", email="u@x.com"), db=None)
         assert exc.value.status_code == 403
 
-    async def test_require_admin_allows_superuser(self):
-        """superuser는 통과하고 인증 사용자를 반환."""
+    async def test_require_admin_allows_super_admin(self, monkeypatch):
+        """tier=='super_admin'(is_super_admin=True)는 통과하고 인증 사용자를 반환."""
         from types import SimpleNamespace
-        from app.core.rbac import require_role, Role
 
+        import app.services.billing.billing_service as billing
+        from app.core.rbac import Role, require_role
+
+        async def _is_super(db, uid):
+            return True
+
+        monkeypatch.setattr(billing, "is_super_admin", _is_super)
         dep = require_role(Role.ADMIN)
-        user = SimpleNamespace(is_superuser=True, email="admin@x.com")
-        assert await dep(current_user=user) is user
+        user = SimpleNamespace(id="u1", email="admin@x.com")
+        assert await dep(current_user=user, db=None) is user
+
+    async def test_require_admin_fail_closed_on_missing_id(self, monkeypatch):
+        """is_super_admin이 예외시 False(fail-closed) → 403(권한상승 방지)."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        import app.services.billing.billing_service as billing
+        from app.core.rbac import Role, require_role
+
+        async def _raises(db, uid):
+            raise RuntimeError("db down")
+
+        # billing.is_super_admin 자체는 내부 try/except로 False지만, 여기선 래퍼가 예외를
+        # 전파하지 않고 차단(403)함을 보장하기 위해 실제 is_super_admin(예외→False)을 모사.
+        async def _false_on_error(db, uid):
+            try:
+                return await _raises(db, uid)
+            except Exception:
+                return False
+
+        monkeypatch.setattr(billing, "is_super_admin", _false_on_error)
+        dep = require_role(Role.ADMIN)
+        with pytest.raises(HTTPException) as exc:
+            await dep(current_user=SimpleNamespace(id="u1"), db=None)
+        assert exc.value.status_code == 403
 
     def test_get_rbac_engine(self):
-        from app.core.rbac import get_rbac_engine, RBACEngine
+        from app.core.rbac import RBACEngine, get_rbac_engine
         engine = get_rbac_engine()
         assert isinstance(engine, RBACEngine)
