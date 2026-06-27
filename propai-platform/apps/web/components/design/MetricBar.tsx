@@ -26,6 +26,12 @@ import {
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
+import {
+  summarizeCompliance,
+  ruleTraceToEvidence,
+  contractCanonicalFloors,
+  type GeoStatus,
+} from "@/lib/design-contract";
 
 // 정수 ㎡ 표기(천단위 콤마). 미확보(null)면 "—". (가짜 0 금지 — 호출부에서 null 그대로 전달)
 function fmtSqm(v: number | null | undefined): string {
@@ -48,6 +54,36 @@ function fmtCount(v: number | null | undefined, suffix: string): string {
 // 문자열 표기(용도지역 등). 빈값/미확보면 "—".
 function fmtText(v: string | null | undefined): string {
   return typeof v === "string" && v.trim() ? v.trim() : "—";
+}
+
+/* ── C2R 계약(geometry_invariants) 등급 배지 — PASS/WARN/FAIL을 색으로 한눈에 ── */
+// 백엔드 GeoStatus(PASS/PASS_WITH_WARNINGS/FAIL) → 한글 라벨 + 색. 미상(null)은 회색 "미산출".
+const GEO_STATUS_LABEL: Record<GeoStatus, string> = {
+  PASS: "정상(PASS)",
+  PASS_WITH_WARNINGS: "경고(WARN)",
+  FAIL: "오류(FAIL)",
+};
+const GEO_STATUS_CLASS: Record<GeoStatus, string> = {
+  PASS: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+  PASS_WITH_WARNINGS: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+  FAIL: "border-red-500/40 bg-red-500/10 text-red-400",
+};
+
+function GeoStatusBadge({ status }: { status: GeoStatus | null }) {
+  // 미산출(null)이거나, 백엔드가 미래에 표(label/class)에 없는 새 등급 문자열을 보내도
+  //   정직 회색 배지로 폴백한다(className에 "undefined"가 새지 않도록 방어 — LOW#1).
+  if (!status || !(status in GEO_STATUS_CLASS)) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+        기하검증 미산출
+      </span>
+    );
+  }
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${GEO_STATUS_CLASS[status]}`}>
+      기하검증 {GEO_STATUS_LABEL[status]}
+    </span>
+  );
 }
 
 /* ── 근거 인스펙터: 백엔드 근거 트레이스를 EvidencePanel/LegalRefChip 입력으로 매핑 ── */
@@ -183,9 +219,17 @@ export function MetricBar({ className }: { className?: string }) {
   const special = siteAnalysis?.specialParcel ?? null;
   const isSpecial = !!special?.isSpecial;
 
+  // ── C2R 계약 근거(envelope_result·geometry_invariants) — 백엔드 설계엔진이 동봉한 검증·법규추적 ──
+  //  store(designData.compliance)에 환류된 실제 계약만 읽는다(무목업·무날조 — 없으면 전부 표시 안 함).
+  //  summary=헤드라인(등급·정본층수·run_id·해시), contractEvidence=적용 법규 추적(rule_trace → 근거 행).
+  const compliance = designData?.compliance ?? null;
+  const contractSummary = summarizeCompliance(compliance);
+  const contractEvidence = ruleTraceToEvidence(compliance);
+  const contractFloors = contractCanonicalFloors(compliance);
+
   // 보여줄 근거가 하나라도 있을 때만 '근거 보기' 토글을 노출한다(없으면 종전과 동일).
   const hasEvidence =
-    evidenceItems.length > 0 || legalChips.length > 0 || isSpecial;
+    evidenceItems.length > 0 || legalChips.length > 0 || isSpecial || !!contractSummary;
 
   return (
     <div
@@ -242,8 +286,64 @@ export function MetricBar({ className }: { className?: string }) {
             </div>
           )}
 
+          {/* 4) C2R 계약/검증 — 설계엔진이 동봉한 기하검증·적용법규·재현정보. 계약 있을 때만 표시. */}
+          {contractSummary && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-bold text-[var(--text-secondary)]">C2R 계약 · 설계 검증</p>
+                {/* 기하 불변식 등급 배지(PASS/WARN/FAIL) — 미산출이면 정직 회색 표기. */}
+                <GeoStatusBadge status={contractSummary.status} />
+              </div>
+
+              {/* 계약 헤드라인(정본층수·적용법규수·경고/오류·해시·run_id) — 모두 store 실값만, 미상은 표기 안 함. */}
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[var(--text-tertiary)]">
+                {/* 계약 정본 층수 — 권위 소스(envelope_result.metrics.canonical_floors). 없으면 "미산출". */}
+                <span>
+                  정본 층수{" "}
+                  <span className="font-bold text-[var(--text-primary)]">
+                    {contractFloors != null ? `${contractFloors}층` : "미산출"}
+                  </span>
+                </span>
+                <span>
+                  적용 법규{" "}
+                  <span className="font-bold text-[var(--text-primary)]">{contractSummary.ruleCount}건</span>
+                </span>
+                {contractSummary.warningCount > 0 && (
+                  <span className="text-amber-400">경고 {contractSummary.warningCount}건</span>
+                )}
+                {contractSummary.errorCount > 0 && (
+                  <span className="text-red-400">오류 {contractSummary.errorCount}건</span>
+                )}
+                {contractSummary.ruleSetHashShort && (
+                  <span title="적용 규칙 묶음 지문(rule_set_hash)">
+                    규칙해시 <span className="font-mono text-[var(--text-secondary)]">{contractSummary.ruleSetHashShort}</span>
+                  </span>
+                )}
+                {contractSummary.runId && (
+                  <span title="산출 식별자(run_id) — 재현·출처추적">
+                    run_id <span className="font-mono text-[var(--text-secondary)]">{contractSummary.runId}</span>
+                  </span>
+                )}
+                {contractSummary.schemaVersion && (
+                  <span className="text-[var(--text-hint)]">{contractSummary.schemaVersion}</span>
+                )}
+              </div>
+
+              {/* 적용 법규 추적(rule_trace) → 근거 행. 있으면 EvidencePanel로, 없으면 정직 안내(무날조). */}
+              {contractEvidence.length > 0 ? (
+                <div className="mt-2">
+                  <EvidencePanel title="적용 법규 추적 (rule_trace)" items={contractEvidence} defaultOpen={false} />
+                </div>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">
+                  적용 법규 추적(rule_trace) 근거 없음 — 부지정보(용도지역·한도)가 갖춰지면 채워집니다.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* 데이터가 하나도 없을 때 정직 안내(무목업) — 토글 게이트상 보통은 도달 안 함, 방어용. */}
-          {evidenceItems.length === 0 && !isSpecial && legalChips.length === 0 && (
+          {evidenceItems.length === 0 && !isSpecial && legalChips.length === 0 && !contractSummary && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-[11px] text-[var(--text-tertiary)]">
               표시할 근거가 아직 없습니다 — 부지분석/설계를 실행하면 근거가 채워집니다.
             </div>

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
+import type { DesignCompliance } from "@/lib/design-contract";
 
 /* ── Types ── */
 
@@ -188,6 +189,15 @@ interface DesignData {
     floorsForUnits?: number | null;   // 주거 세대가 들어가는 층수(podium 상가층 제외) — 없으면 null
     residentialGfaSqm?: number | null; // 주거 전용 연면적(㎡) — 없으면 null
   } | null;
+  // ── C2R 계약(compliance) — 백엔드 설계엔진이 /mass·/bim 응답에 동봉하는 "근거·검증" 묶음 ──
+  // 왜 필요한가(쉬운 설명): 백엔드는 매스(층수·면적)를 산출하면서 "어떤 법규가 어떤 값으로
+  //   적용됐고(rule_trace), 기하가 정상인지(PASS/WARN/FAIL), 어느 산출인지(run_id·해시)"를
+  //   같이 계산해 보낸다. 지금까지 프론트는 이걸 한 군데도 안 읽고 버렸다(감사 적발). 이 필드가
+  //   있어야 그 근거를 store에 담아 사용자에게 "근거+링크"로 보여줄 수 있다.
+  // 전부 옵셔널/nullable — 구 스냅샷·persist 왕복(저장→복원)·구 백엔드 응답 무손상(additive).
+  //   값이 없으면 null(가짜 생성 금지) — 소비처는 null을 "없음/미산출"로 정직 표기한다.
+  // 형태는 lib/design-contract.ts의 DesignCompliance(백엔드 envelope_result.py·design_contract.py와 1:1).
+  compliance?: DesignCompliance | null;
 }
 
 interface FeasibilityData {
