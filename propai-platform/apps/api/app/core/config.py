@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "json"
     LOG_LEVEL: str = "INFO"
 
+    # 기하 불변식 하드게이트(설계 매스/폴리곤 무효결과 차단) — 기본 False=그림자(shadow).
+    #   False면 점검은 하되 경고 로그만 남기고 절대 차단하지 않는다(정상 산출 흐름 불변·무회귀).
+    #   True면 FAIL(0세대·면적불보존·법정초과 등) 시 배선부가 결과에 차단 표기를 단다.
+    GEOMETRY_INVARIANT_ENFORCE: bool = False
+
     # Prometheus
     PROMETHEUS_ENABLED: bool = True
 

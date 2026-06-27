@@ -18,6 +18,8 @@ from typing import Any, NamedTuple
 
 import structlog
 
+from app.core.config import settings
+from app.services.cad.geometry_invariants import check_mass_invariants
 from app.services.common.sunlight_setback import (
     max_height_for_north_distance_m,
     required_north_setback_m,
@@ -1100,6 +1102,26 @@ class AutoDesignEngineService:
             mass, core_layout, site_input.target_unit_types, site_input.building_use,
         )
 
+        # 4-b. 기하 불변식 하드게이트(그림자 운영) — 무효 매스(0세대·면적불보존·법정초과 등)를 점검.
+        #   세대수(total_units)를 아는 이 지점에서 점검해야 '주거인데 0세대' 체크가 활성된다.
+        #   ★기본 shadow: 점검 결과를 mass에 부착(additive)하고 FAIL이면 경고 로그만 남긴다.
+        #   settings.GEOMETRY_INVARIANT_ENFORCE=True일 때만 결과에 차단 표기(deny)를 단다(무회귀).
+        geo_res = check_mass_invariants(
+            mass,
+            site_area_sqm=site_input.site_area_sqm,
+            total_units=unit_layout.get("total_units"),
+            building_use=site_input.building_use,
+        )
+        mass["geometry_invariants"] = geo_res.to_dict()  # additive 부착(소비처 표기·후속 재사용)
+        if geo_res.is_fail:
+            logger.warning(
+                "기하 불변식 FAIL",
+                zone=site_input.zone_code,
+                use=site_input.building_use,
+                errors=geo_res.errors,
+                enforce=settings.GEOMETRY_INVARIANT_ENFORCE,
+            )
+
         # 5. DesignPayload 변환
         payload = self.to_design_payload(site_input, effective, mass, core_layout, unit_layout)
 
@@ -1213,6 +1235,12 @@ class AutoDesignEngineService:
             "setback_ok": setback_ok,
             "all_pass": bcr_ok and far_ok and height_ok and setback_ok,
             "corrections_applied": corrections_applied,
+            # 기하 불변식 점검(그림자) — 상태·체크 목록을 정직하게 싣는다(additive).
+            "geometry_invariants": mass.get("geometry_invariants"),
+            # ★차단 표기는 플래그 ON + FAIL일 때만 True(기본 shadow=False라 항상 False).
+            "geometry_invariant_blocked": bool(
+                settings.GEOMETRY_INVARIANT_ENFORCE and geo_res.is_fail
+            ),
         }
 
         logger.info(
