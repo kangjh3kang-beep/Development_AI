@@ -4,7 +4,11 @@ from app.services.legal.legal_discovery_service import LegalDiscoveryService
 from app.services.legal import legal_reference_registry as reg
 
 
-def _run(coro): return asyncio.get_event_loop().run_until_complete(coro)
+def _run(coro):
+    # ★asyncio.run으로 매 호출 새 이벤트루프를 만들고 닫는다(테스트 순서 무관·Python 3.12 정본).
+    #   기존 asyncio.get_event_loop()는 폐기 패턴 — 앞선 비동기 테스트(예: pytest-asyncio)가
+    #   루프를 닫아두면 'no current event loop'로 터진다(전체 스위트 실행 시 순서 의존 실패).
+    return asyncio.run(coro)
 
 
 def test_crossvalidate_classifies_registered_vs_unregistered(monkeypatch):
