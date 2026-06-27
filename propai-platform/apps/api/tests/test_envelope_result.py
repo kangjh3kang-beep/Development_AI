@@ -15,6 +15,13 @@ from app.services.cad.envelope_result import (
     mass_to_envelope_result,
 )
 from app.services.cad.geometry_invariants import GeoStatus
+from app.services.cad.provenance import (
+    ENGINE_SOURCE_VERSION,
+    canonical_json,
+    compute_geometry_hash,
+    compute_input_hash,
+    make_run_id,
+)
 
 
 def _podium_tower_mass() -> dict:
@@ -219,3 +226,147 @@ class TestGenerateAdditiveAttachment:
         assert "total_units" in result.summary
         assert "num_floors" in result.summary
         assert isinstance(result.design_payload, dict)
+
+
+class TestProvenanceHelpers:
+    """순수 provenance 헬퍼(canonical_json·해시·run_id)의 결정론·형식 잠금(INC3)."""
+
+    def test_canonical_json_key_order_invariant(self):
+        # ★canonical: 키 순서가 달라도 같은 내용이면 완전히 같은 문자열(해시 안정성의 핵심).
+        a = {"zone_code": "2R", "site_area_sqm": 1000.0}
+        b = {"site_area_sqm": 1000.0, "zone_code": "2R"}
+        assert canonical_json(a) == canonical_json(b)
+        # 공백이 제거된 한 줄 JSON(구분자 ',' ':'·한글 그대로)
+        assert ", " not in canonical_json({"건물": "동", "수": 2})
+        assert "동" in canonical_json({"건물": "동"})  # ensure_ascii=False
+
+    def test_input_hash_deterministic_and_key_order_invariant(self):
+        # 같은 핑거프린트(키 순서만 다름) → 같은 input_hash(결정론·canonical)
+        fp1 = {"site_area_sqm": 2000.0, "zone_code": "GC", "building_use": "공동주택"}
+        fp2 = {"building_use": "공동주택", "zone_code": "GC", "site_area_sqm": 2000.0}
+        assert compute_input_hash(fp1) == compute_input_hash(fp2)
+        # sha256 16진수 64자
+        h = compute_input_hash(fp1)
+        assert len(h) == 64 and all(c in "0123456789abcdef" for c in h)
+
+    def test_input_hash_differs_for_different_fingerprint(self):
+        # 다른 핑거프린트 → 다른 input_hash(출처 구분)
+        fp1 = {"site_area_sqm": 2000.0, "zone_code": "GC"}
+        fp2 = {"site_area_sqm": 2000.0, "zone_code": "2R"}
+        assert compute_input_hash(fp1) != compute_input_hash(fp2)
+
+    def test_make_run_id_deterministic_format(self):
+        # run_id = "c2r_" + input_hash[:16](결정론·형식 잠금)
+        h = compute_input_hash({"zone_code": "2R"})
+        run_id = make_run_id(h)
+        assert run_id == "c2r_" + h[:16]
+        assert run_id.startswith("c2r_") and len(run_id) == len("c2r_") + 16
+        # 같은 입력해시 → 같은 run_id(멱등)
+        assert make_run_id(h) == run_id
+
+    def test_geometry_hash_deterministic(self):
+        # 같은 기하 → 같은 geometry_hash, 다른 기하 → 다른 해시
+        g1 = {"num_floors": 12, "footprint_sqm": 400.0}
+        g2 = {"footprint_sqm": 400.0, "num_floors": 12}  # 키 순서만 다름
+        assert compute_geometry_hash(g1) == compute_geometry_hash(g2)
+        g3 = {"num_floors": 13, "footprint_sqm": 400.0}
+        assert compute_geometry_hash(g1) != compute_geometry_hash(g3)
+
+
+class TestAdapterProvenance:
+    """어댑터(mass_to_envelope_result)가 provenance 필드를 결정론·무날조로 채우는지(INC3)."""
+
+    def test_input_fingerprint_fills_hash_and_run_id(self):
+        fp = {"site_area_sqm": 2000.0, "zone_code": "GC"}
+        er = mass_to_envelope_result(_podium_tower_mass(), input_fingerprint=fp)
+        # input_hash·run_id가 결정론적으로 채워진다
+        assert er.input_hash == compute_input_hash(fp)
+        assert er.run_id == make_run_id(er.input_hash)
+        # run_id 형식 잠금: "c2r_" + 16hex
+        assert er.run_id.startswith("c2r_") and len(er.run_id) == len("c2r_") + 16
+
+    def test_same_fingerprint_same_run_id_idempotent(self):
+        # ★결정론: 같은 핑거프린트(키 순서만 달라도) → 같은 input_hash·run_id(멱등)
+        fp1 = {"site_area_sqm": 2000.0, "zone_code": "GC", "building_use": "공동주택"}
+        fp2 = {"building_use": "공동주택", "site_area_sqm": 2000.0, "zone_code": "GC"}
+        er1 = mass_to_envelope_result(_podium_tower_mass(), input_fingerprint=fp1)
+        er2 = mass_to_envelope_result(_podium_tower_mass(), input_fingerprint=fp2)
+        assert er1.input_hash == er2.input_hash
+        assert er1.run_id == er2.run_id
+
+    def test_different_fingerprint_different_hash(self):
+        er1 = mass_to_envelope_result(_podium_tower_mass(), input_fingerprint={"zone_code": "GC"})
+        er2 = mass_to_envelope_result(_podium_tower_mass(), input_fingerprint={"zone_code": "2R"})
+        assert er1.input_hash != er2.input_hash
+        assert er1.run_id != er2.run_id
+
+    def test_no_fingerprint_leaves_hash_and_run_id_none(self):
+        # ★무날조: input_fingerprint가 없으면 input_hash/run_id는 None(가짜 해시 금지)
+        er = mass_to_envelope_result(_podium_tower_mass())
+        assert er.input_hash is None
+        assert er.run_id is None
+        # source_version·geometry_hash는 무날조와 무관하게 항상 채워진다
+        assert er.source_version == ENGINE_SOURCE_VERSION
+        assert er.geometry_hash is not None and len(er.geometry_hash) == 64
+
+    def test_geometry_hash_computed_from_output_geometry(self):
+        # geometry_hash는 산출 기하(EnvelopeGeometry)에서 계산된다 — 기하 동일 → 해시 동일
+        mass = _podium_tower_mass()
+        er1 = mass_to_envelope_result(mass)
+        er2 = mass_to_envelope_result(dict(mass))  # 같은 기하 입력
+        assert er1.geometry_hash == er2.geometry_hash
+        assert er1.geometry_hash == compute_geometry_hash(er1.geometry.model_dump(mode="json"))
+        # 기하가 바뀌면(층수↑) geometry_hash도 달라진다
+        mass_diff = dict(mass)
+        mass_diff["floors_for_units"] = 30
+        er3 = mass_to_envelope_result(mass_diff)
+        assert er3.geometry_hash != er1.geometry_hash
+
+    def test_source_version_always_filled(self):
+        # source_version은 코드 상수라 항상 유효(비-dict·빈 입력에도)
+        assert mass_to_envelope_result({}).source_version == ENGINE_SOURCE_VERSION
+        assert mass_to_envelope_result(None).source_version == ENGINE_SOURCE_VERSION  # type: ignore[arg-type]
+
+    def test_non_dict_input_still_has_geometry_hash_and_source(self):
+        # 비-dict 입력도 빈 기하 해시·source_version은 채운다(provenance 일관성)
+        er = mass_to_envelope_result(None)  # type: ignore[arg-type]
+        assert er.geometry_hash is not None and len(er.geometry_hash) == 64
+        assert er.source_version == ENGINE_SOURCE_VERSION
+        # 핑거프린트 없으니 input_hash/run_id는 None(무날조)
+        assert er.input_hash is None and er.run_id is None
+
+
+class TestGenerateProvenanceWiring:
+    """generate() 결과 envelope_result에 provenance가 채워지고 기존 키는 불변(무회귀·INC3)."""
+
+    def test_envelope_result_has_provenance_filled(self):
+        engine = AutoDesignEngineService()
+        result = engine.generate(SiteInput(site_area_sqm=2000, zone_code="GC", building_use="공동주택"))
+        er = result.compliance["envelope_result"]
+        # run_id/input_hash/geometry_hash/source_version 모두 채워짐
+        assert er["run_id"] and er["run_id"].startswith("c2r_")
+        assert er["input_hash"] and len(er["input_hash"]) == 64
+        assert er["geometry_hash"] and len(er["geometry_hash"]) == 64
+        assert er["source_version"] == ENGINE_SOURCE_VERSION
+        # run_id는 input_hash 앞 16자 기반(결정론)
+        assert er["run_id"] == "c2r_" + er["input_hash"][:16]
+
+    def test_generate_run_id_deterministic_same_input(self):
+        # ★멱등: 같은 site_input → 같은 run_id·input_hash(두 번 호출해도 동일)
+        engine = AutoDesignEngineService()
+        si = SiteInput(site_area_sqm=1500, zone_code="2R", building_use="공동주택")
+        er1 = engine.generate(si).compliance["envelope_result"]
+        er2 = engine.generate(si).compliance["envelope_result"]
+        assert er1["run_id"] == er2["run_id"]
+        assert er1["input_hash"] == er2["input_hash"]
+
+    def test_generate_existing_compliance_keys_unchanged(self):
+        # ★무회귀: provenance 배선이 기존 compliance 키를 건드리지 않는다(새 필드는 envelope_result 내부에만).
+        engine = AutoDesignEngineService()
+        result = engine.generate(SiteInput(site_area_sqm=500, zone_code="2R"))
+        for key in (
+            "bcr_ok", "far_ok", "height_ok", "setback_ok", "all_pass",
+            "corrections_applied", "geometry_invariants", "geometry_invariant_blocked",
+            "envelope_result",
+        ):
+            assert key in result.compliance, f"기존 compliance 키 {key} 누락 — 무회귀 위반"

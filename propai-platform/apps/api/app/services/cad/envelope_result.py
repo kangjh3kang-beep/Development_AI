@@ -26,6 +26,12 @@ import structlog
 from pydantic import BaseModel, Field
 
 from app.services.cad.geometry_invariants import GeoStatus  # PASS/PASS_WITH_WARNINGS/FAIL 재사용
+from app.services.cad.provenance import (  # INC3: run_id+해시(재현·출처추적·변조탐지·멱등)
+    ENGINE_SOURCE_VERSION,
+    compute_geometry_hash,
+    compute_input_hash,
+    make_run_id,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -117,11 +123,18 @@ def mass_to_envelope_result(
     total_units: int | None = None,
     evidence: list[dict] | None = None,
     geo_invariants: dict | None = None,
+    input_fingerprint: dict | None = None,
 ) -> EnvelopeResult:
     """compute_optimal_mass 출력(매스 dict)을 표준 EnvelopeResult로 변환하는 순수 함수.
 
     무날조: 매스에 없는 키는 None으로 둔다(가짜값 금지). 매스가 dict가 아니면 예외 없이
     빈 geometry/metrics의 EnvelopeResult를 돌려준다(소비처가 깨지지 않게).
+
+    provenance(INC3): 재현·출처추적·변조탐지·멱등을 위해 run_id+해시를 부착한다.
+      - input_fingerprint가 주어지면 input_hash=sha256(정규화 JSON)·run_id="c2r_"+input_hash[:16]를
+        채운다(★결정론 — 같은 입력이면 항상 같은 값). 없으면 둘 다 None(가짜 해시 금지·무날조).
+      - geometry_hash는 산출 기하(EnvelopeGeometry)에서 항상 계산한다(기하가 비면 빈 dict 해시).
+      - source_version은 코드 상수라 항상 채운다(어느 엔진·법규 기준 산출물인지 표기).
 
     매핑(매스 dict 키 → 표준 그릇):
       building_width_m/building_depth_m/building_footprint_sqm/num_floors/floor_height_m/
@@ -131,9 +144,15 @@ def mass_to_envelope_result(
       status = geo_invariants["status"](있으면) else PASS.
     """
     # 매스가 dict가 아니면 '빈 결과'를 정직하게 돌려준다(예외 금지·소비처 보호).
+    # 단, source_version·geometry_hash(빈 기하)는 항상 채워 provenance 일관성을 유지한다.
     if not isinstance(mass, dict):
         logger.debug("mass_to_envelope_result: 비-dict 입력 — 빈 EnvelopeResult 반환")
-        return EnvelopeResult(geometry=EnvelopeGeometry(), metrics=EnvelopeMetrics())
+        empty_geometry = EnvelopeGeometry()
+        return _attach_provenance(
+            EnvelopeResult(geometry=empty_geometry, metrics=EnvelopeMetrics()),
+            geometry=empty_geometry,
+            input_fingerprint=input_fingerprint,
+        )
 
     floors_for_units = _int_or_none(mass.get("floors_for_units"))
     num_floors = _int_or_none(mass.get("num_floors"))
@@ -181,11 +200,46 @@ def mass_to_envelope_result(
         if isinstance(raw_warnings, list):
             warnings = [str(w) for w in raw_warnings]
 
-    return EnvelopeResult(
+    result = EnvelopeResult(
         status=status,
         geometry=geometry,
         metrics=metrics,
         evidence=list(evidence) if evidence else [],
         geometry_invariants=geo_invariants if isinstance(geo_invariants, dict) else None,
         warnings=warnings,
+    )
+    # provenance(INC3): run_id+해시 부착 — 산출 기하에서 geometry_hash를 계산하고,
+    #   input_fingerprint가 있으면 input_hash·run_id까지 채운다(없으면 None·무날조).
+    return _attach_provenance(
+        result, geometry=geometry, input_fingerprint=input_fingerprint
+    )
+
+
+def _attach_provenance(
+    result: EnvelopeResult,
+    *,
+    geometry: EnvelopeGeometry,
+    input_fingerprint: dict | None,
+) -> EnvelopeResult:
+    """EnvelopeResult에 provenance(run_id·input_hash·geometry_hash·source_version)를 채워 돌려준다.
+
+    무날조: input_fingerprint가 없으면 input_hash/run_id는 None으로 둔다(가짜 해시 금지).
+    geometry_hash는 산출 기하에서 항상 계산한다(기하가 비면 빈 dict 해시).
+    source_version은 코드 상수라 항상 채운다.
+    """
+    # 입력 핑거프린트가 있으면 결정론적 input_hash·run_id를 만든다(없으면 None — 정직).
+    input_hash = compute_input_hash(input_fingerprint) if isinstance(input_fingerprint, dict) else None
+    run_id = make_run_id(input_hash) if input_hash is not None else None
+
+    # 산출 기하의 해시는 항상 계산한다(빈 기하면 빈 dict 해시 → 안정적·변조탐지 가능).
+    geometry_hash = compute_geometry_hash(geometry.model_dump(mode="json"))
+
+    # Pydantic 모델은 model_copy(update=...)로 불변 갱신 — 원본 손대지 않고 새 필드만 채운다.
+    return result.model_copy(
+        update={
+            "run_id": run_id,
+            "input_hash": input_hash,
+            "geometry_hash": geometry_hash,
+            "source_version": ENGINE_SOURCE_VERSION,
+        }
     )

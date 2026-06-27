@@ -1251,10 +1251,26 @@ class AutoDesignEngineService:
         #   매스 dict를 표준 그릇(EnvelopeResult)으로 '변환만' 해서 compliance에 새 키로 싣는다.
         #   ★기존 design_payload/summary/compliance 키·수치·소비처는 전혀 손대지 않는다 —
         #     새 키 envelope_result만 추가(소비처 마이그레이션은 후속 증분 = 리스크 격리).
+        #   provenance(INC3): site_input의 '결정적 입력 필드'로 핑거프린트를 만들어 넘긴다.
+        #     → 어댑터가 input_hash·run_id를 결정론적으로 채운다(같은 입력→같은 run_id→멱등).
+        #     ★결정론: target_unit_types는 sorted로 순서를 고정(canonical_json sort_keys와 함께
+        #       리스트 순서까지 안정화). getattr은 옵셔널 필드 미상 시 None(가짜값 금지·무날조).
+        input_fingerprint = {
+            "site_area_sqm": site_input.site_area_sqm,
+            "zone_code": site_input.zone_code,
+            "building_use": site_input.building_use,
+            "target_unit_types": sorted(site_input.target_unit_types or []),
+            "floor_height_m": site_input.floor_height_m,
+            "target_far_percent": getattr(site_input, "target_far_percent", None),
+            "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
+            "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
+            "ordinance_bcr_percent": getattr(site_input, "ordinance_bcr_percent", None),
+        }
         envelope_result = mass_to_envelope_result(
             mass,
             total_units=unit_layout.get("total_units"),
             geo_invariants=mass.get("geometry_invariants"),
+            input_fingerprint=input_fingerprint,
         )
         compliance["envelope_result"] = envelope_result.model_dump(mode="json")
 
