@@ -255,6 +255,14 @@ class TestProvenanceHelpers:
         fp2 = {"site_area_sqm": 2000.0, "zone_code": "2R"}
         assert compute_input_hash(fp1) != compute_input_hash(fp2)
 
+    def test_input_hash_int_float_normalized(self):
+        # ★멱등 강건성: 같은 부지를 2000(정수) vs 2000.0(실수)으로 넣어도 같은 해시(수치 정규화).
+        assert compute_input_hash({"site_area_sqm": 2000}) == compute_input_hash({"site_area_sqm": 2000.0})
+        # 미세 부동소수(반올림 6자리 이내) 변동도 같은 해시 — 의미없는 변경에 둔감.
+        assert compute_input_hash({"far": 1000.0}) == compute_input_hash({"far": 1000.0000001})
+        # bool은 숫자로 정규화하지 않는다(True가 1.0이 되면 안 됨).
+        assert compute_input_hash({"daylight_step": True}) != compute_input_hash({"daylight_step": 1})
+
     def test_make_run_id_deterministic_format(self):
         # run_id = "c2r_" + input_hash[:16](결정론·형식 잠금)
         h = compute_input_hash({"zone_code": "2R"})

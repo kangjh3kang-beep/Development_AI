@@ -56,9 +56,34 @@ def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+# 핑거프린트 수치 양자화 자릿수 — 미세 부동소수 차이(1 ULP 등)를 같은 값으로 본다.
+_FINGERPRINT_ROUND = 6
+
+
+def normalize_fingerprint(obj: Any) -> Any:
+    """핑거프린트의 숫자를 '같은 값=같은 표현'으로 정규화한다(멱등 안정성·전역 공용).
+
+    왜(쉬운 설명): 같은 부지인데 2000(정수)과 2000.0(실수)을 넣으면 JSON 문자열이 달라져
+      run_id가 갈린다. 모든 숫자를 float로 통일하고 소수 6자리로 반올림해 int/float·미세
+      부동소수 변동에 둔감하게 만든다(불리언은 숫자로 취급하지 않음). dict/list는 재귀 적용.
+    """
+    if isinstance(obj, bool):
+        return obj  # True/False는 숫자가 아니다(파이썬 bool은 int 하위형이라 먼저 거른다)
+    if isinstance(obj, (int, float)):
+        return round(float(obj), _FINGERPRINT_ROUND)
+    if isinstance(obj, dict):
+        return {k: normalize_fingerprint(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [normalize_fingerprint(v) for v in obj]
+    return obj
+
+
 def compute_input_hash(fingerprint: dict) -> str:
-    """입력 핑거프린트(결정적 입력 필드 dict)의 해시 — 같은 입력이면 항상 같은 값."""
-    return sha256_hex(canonical_json(fingerprint))
+    """입력 핑거프린트(결정적 입력 필드 dict)의 해시 — 같은 입력이면 항상 같은 값.
+
+    ★수치 정규화 후 해시 — int/float·미세 부동소수 차이에 둔감(멱등 강건성).
+    """
+    return sha256_hex(canonical_json(normalize_fingerprint(fingerprint)))
 
 
 def compute_geometry_hash(geometry: dict) -> str:
