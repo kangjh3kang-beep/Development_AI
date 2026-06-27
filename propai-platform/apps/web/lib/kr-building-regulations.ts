@@ -188,6 +188,39 @@ export function normalizeZoning(zoning?: string | null): string | null {
   return null;
 }
 
+// 한글 용도지역명 → 설계엔진(zone_code) 코드 변환(공용·DRY).
+// 왜 필요한가(쉬운 설명): 백엔드 AutoDesignEngine은 zone_code를 "2R" 같은 영문코드로 받는다.
+//   한글명("제2종일반주거지역")을 그대로 넘기면 매핑이 어긋나 기본값(2R)으로 조용히 폴백돼
+//   3종·상업 부지가 잘못 계산된다. normalizeZoning으로 변형을 표준 라벨로 모은 뒤 코드로 환산한다.
+//   엔진 ZONE_LIMITS 코드 집합: 1R/2R/3R(일반주거)·QR(준주거)·GC(일반상업)·NC(근린상업)·QI(준공업).
+//   전용주거는 엔진 코드가 없어 가장 가까운 저밀 일조존(1R/2R)으로 근사한다. 미상이면 null(호출측이 생략).
+const _LABEL_TO_CODE: Record<string, string> = {
+  "제1종전용주거지역": "1R",   // 전용주거: 엔진 코드 부재 → 저밀 일조존 근사
+  "제2종전용주거지역": "2R",
+  "제1종일반주거지역": "1R",
+  "제2종일반주거지역": "2R",
+  "제3종일반주거지역": "3R",
+  "준주거지역": "QR",
+  "일반상업지역": "GC",
+  "근린상업지역": "NC",
+  "준공업지역": "QI",
+};
+
+export function zoningToCode(zoning?: string | null): string | null {
+  const cleaned = (zoning || "").toString().replace(/\s+/g, "");
+  if (!cleaned) return null;
+  // 이미 엔진 코드면 그대로 통과
+  if (/^(1R|2R|3R|QR|GC|NC|QI)$/.test(cleaned)) return cleaned;
+  // 표준화된 라벨 우선
+  const norm = normalizeZoning(zoning);
+  if (norm && _LABEL_TO_CODE[norm]) return _LABEL_TO_CODE[norm];
+  // 표준화가 전용주거 등을 보존하지 못한 경우: 원문 라벨/어간 부분일치(종 번호로 구분돼 충돌 없음)
+  for (const [label, code] of Object.entries(_LABEL_TO_CODE)) {
+    if (cleaned.includes(label) || cleaned.includes(label.replace(/지역$/, ""))) return code;
+  }
+  return null;
+}
+
 // ── 주소에서 용도지역 추론 ──
 
 function inferZoningFromAddress(address: string): string {

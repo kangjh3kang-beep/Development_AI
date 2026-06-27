@@ -19,6 +19,7 @@ import { resolveCanonicalFloors } from "@/lib/design-ssot";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
+import { SeedDesignMassComparison } from "@/components/design/SeedDesignMassComparison";
 
 // 일반인용 쉬운 설명(용어 풀이) — '쉬운 설명' 토글 시 표시
 const EASY: Record<string, string> = {
@@ -815,6 +816,19 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           {isPending ? "심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "심층 설계 분석"}
         </button>
       </motion.div>
+
+      {/* ② 지역 실측 전형 매스 비교 — seed-design 연동. 주소가 있을 때만(부지분석 연동) 노출.
+          법정 최대 vs 동네 실측 전형(건축물대장 중앙값 시드)을 나란히 비교해 과도한 사업규모를 방지. */}
+      {siteAnalysis?.address && (
+        <SeedDesignMassComparison
+          address={siteAnalysis.address}
+          landAreaSqm={Number(form.landArea) || effectiveLandAreaSqm(siteAnalysis) || 0}
+          zoning={effectiveZoning}
+          buildingUse={form.buildingUse}
+          floorHeightM={Number(form.floorHeight) || 3}
+          disabled={siteMatch === "mismatch"}
+        />
+      )}
 
       {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="inline-flex items-center gap-1.5 text-sm text-red-400 font-bold"><AlertTriangle className="size-4" aria-hidden />{error.message}</p></div>}
 
