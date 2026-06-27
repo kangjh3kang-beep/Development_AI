@@ -19,6 +19,7 @@ import { resolveCanonicalFloors } from "@/lib/design-ssot";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { InspectorGrid } from "@/components/common/InspectorGrid";
+import { AdvancedDrawer } from "@/components/common/AdvancedDrawer";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { SeedDesignMassComparison } from "@/components/design/SeedDesignMassComparison";
 
@@ -476,6 +477,12 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     return normalizeZoning(siteAnalysis?.zoneCode) || form.zoning;
   }, [zoneEdited, form.zoning, siteAnalysis?.zoneCode, isSiteMatched]);
 
+  // 자동 시드 여부 — 부지분석이 대지면적을 주고(주소 일치), 사용자가 아직 손대지 않은 상태.
+  // 이때는 일반인에게 편집 폼 대신 '확정 칩'(읽기전용)만 보여주고, 편집 폼은 고급 서랍 뒤로 숨긴다.
+  // userEdited면(사용자가 직접 수정) 종전 편집 동선을 그대로 보존(무회귀).
+  const seededLandAreaSqm = effectiveLandAreaSqm(siteAnalysis);
+  const autoSeeded = isSiteMatched && !userEdited && seededLandAreaSqm != null;
+
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
     const spec = getZoningSpec(effectiveZoning);
@@ -702,6 +709,52 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     envResult,
   ]);
 
+  // ── INPUT 편집 필드(공용) ──
+  // autoSeeded일 때는 고급 서랍 안에, 아닐 때는 본문에 직접 노출하므로 한 곳에 정의해 재사용한다.
+  // (핸들러·setUserEdited 등 기존 동작 무변경 — 위치만 분기.)
+  const landAreaField = (
+    <div className="min-w-0">
+      <label className="cc-label mb-2 block whitespace-nowrap">대지면적 (㎡)</label>
+      <NumberInput allowDecimal placeholder="500" value={form.landArea === "" ? null : Number(form.landArea)} onChange={(n) => { setUserEdited(true); setForm((f) => ({ ...f, landArea: n != null ? String(n) : "" })); }}
+        className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
+    </div>
+  );
+  const zoningField = (
+    <div className="min-w-0">
+      <label className="cc-label mb-2 block whitespace-nowrap">용도지역</label>
+      <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setUserEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
+        className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+        {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
+      </select>
+    </div>
+  );
+  const buildingUseField = (
+    <div className="min-w-0">
+      <label className="cc-label mb-2 block whitespace-nowrap">건물용도</label>
+      <select value={form.buildingUse} onChange={(e) => { setUserEdited(true); setForm((f) => ({ ...f, buildingUse: e.target.value })); }}
+        className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+        {["공동주택","업무시설","근린생활시설","숙박시설","판매시설","교육연구시설"].map((u) => <option key={u} value={u}>{u}</option>)}
+      </select>
+    </div>
+  );
+  // ③ 층고(m) — 일조 인벨로프 층수 천장 환산용 전문 파라미터. 일반인 기본화면에서는 빼고
+  //    항상 고급 서랍 안에 둔다(미입력 시 기본 3.0 폴백은 기존대로).
+  const floorHeightField = (
+    <div className="min-w-0">
+      <label className="cc-label mb-2 block whitespace-nowrap">층고 (m)</label>
+      <NumberInput allowDecimal placeholder="3.0"
+        value={form.floorHeight === "" ? null : Number(form.floorHeight)}
+        onChange={(n) => {
+          // 층고 범위 2.4~4.5m 클램프(빈값 허용 — 미입력 시 기본 3.0 폴백).
+          const clamped = n == null ? "" : String(Math.min(4.5, Math.max(2.4, n)));
+          setUserEdited(true);
+          setForm((f) => ({ ...f, floorHeight: clamped }));
+        }}
+        className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
+      <p className="mt-1 text-[10px] text-[var(--text-hint)]">기본 3.0m · 일조 천장 층수 환산</p>
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex flex-wrap items-start justify-between gap-3">
@@ -777,43 +830,58 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           <span className="cc-label text-[var(--text-secondary)]">INPUT · PARAMS</span>
           <h2 className="text-lg font-black text-[var(--text-primary)]">설계 조건</h2>
         </div>
-        {/* 입력 필드 그리드 — 좁은 인스펙터 칸에서도 라벨+입력칸이 펴지도록 칸 최소폭 12rem 보장
-            (뷰포트 md: 미디어쿼리 대신 컨테이너 실폭에 반응). min-w-0로 텍스트가 칸을 밀어내는 것을 방지. */}
-        <InspectorGrid minItemRem={12}>
-          <div className="min-w-0">
-            <label className="cc-label mb-2 block whitespace-nowrap">대지면적 (㎡)</label>
-            <NumberInput allowDecimal placeholder="500" value={form.landArea === "" ? null : Number(form.landArea)} onChange={(n) => { setUserEdited(true); setForm((f) => ({ ...f, landArea: n != null ? String(n) : "" })); }}
-              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
-          </div>
-          <div className="min-w-0">
-            <label className="cc-label mb-2 block whitespace-nowrap">용도지역</label>
-            <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setUserEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
-              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
-              {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
-            </select>
-          </div>
-          <div className="min-w-0">
-            <label className="cc-label mb-2 block whitespace-nowrap">건물용도</label>
-            <select value={form.buildingUse} onChange={(e) => { setUserEdited(true); setForm((f) => ({ ...f, buildingUse: e.target.value })); }}
-              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
-              {["공동주택","업무시설","근린생활시설","숙박시설","판매시설","교육연구시설"].map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
-          </div>
-          {/* ③ 층고(m) — 일조 인벨로프 층수 천장 환산에 사용(SolarEnvelopeCard로 전달). 기본 3.0·범위 2.4~4.5. */}
-          <div className="min-w-0">
-            <label className="cc-label mb-2 block whitespace-nowrap">층고 (m)</label>
-            <NumberInput allowDecimal placeholder="3.0"
-              value={form.floorHeight === "" ? null : Number(form.floorHeight)}
-              onChange={(n) => {
-                // 층고 범위 2.4~4.5m 클램프(빈값 허용 — 미입력 시 기본 3.0 폴백).
-                const clamped = n == null ? "" : String(Math.min(4.5, Math.max(2.4, n)));
-                setUserEdited(true);
-                setForm((f) => ({ ...f, floorHeight: clamped }));
-              }}
-              className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
-            <p className="mt-1 text-[10px] text-[var(--text-hint)]">기본 3.0m · 일조 천장 층수 환산</p>
-          </div>
-        </InspectorGrid>
+        {/* 입력 영역 — 부지분석 연동 시(autoSeeded) 일반인은 '확정 칩'(읽기전용)만 보고,
+            편집은 '직접 조정(고급)' 서랍에서. 미연동/사용자 직접수정 시 종전처럼 편집 폼을 직접 노출. */}
+        {autoSeeded ? (
+          <>
+            {/* 확정 칩 3개 — 값은 실제 시드값만(가짜값 금지). 각 칩에 '부지분석 자동' 출처 배지. */}
+            <InspectorGrid minItemRem={9}>
+              {[
+                { label: "대지면적", value: `${Math.round(seededLandAreaSqm!).toLocaleString()} ㎡` },
+                { label: "용도지역", value: effectiveZoning },
+                { label: "건물용도", value: form.buildingUse },
+              ].map((chip) => (
+                <div key={chip.label} className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <span className="cc-label whitespace-nowrap text-[var(--text-secondary)]">{chip.label}</span>
+                    <span className="inline-flex shrink-0 items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--text-tertiary)]" title="부지분석이 자동 반영한 값 — 재분석 시 갱신됩니다. 직접 조정하려면 아래 '직접 조정(고급)'을 펼치세요.">부지분석 자동</span>
+                  </div>
+                  <p className="cc-num truncate text-base font-black text-[var(--text-primary)]" title={chip.value}>{chip.value}</p>
+                </div>
+              ))}
+            </InspectorGrid>
+            {/* 직접 조정(고급) — 펼치면 기존 편집 폼 4필드(대지면적·용도지역·건물용도·층고) 그대로.
+                편집하면 setUserEdited(true)로 종전 동작(자동 시드 중단·calc 재산출). */}
+            <AdvancedDrawer label="직접 조정(고급)" className="mt-4">
+              <InspectorGrid minItemRem={12}>
+                {landAreaField}
+                {zoningField}
+                {buildingUseField}
+                {floorHeightField}
+              </InspectorGrid>
+            </AdvancedDrawer>
+          </>
+        ) : (
+          <>
+            {/* 미연동/사용자 직접수정 — 종전 편집 동선 보존. 단 층고는 일반인 기본화면에서 빼고 고급 서랍으로. */}
+            <InspectorGrid minItemRem={12}>
+              {landAreaField}
+              {zoningField}
+              {buildingUseField}
+            </InspectorGrid>
+            <AdvancedDrawer label="고급 설정" className="mt-4">
+              <InspectorGrid minItemRem={12}>
+                {floorHeightField}
+              </InspectorGrid>
+            </AdvancedDrawer>
+          </>
+        )}
+        {/* 부지분석 연동 안내 — 자동 LLM 호출은 과금 이슈로 하지 않고, 버튼 클릭 시 실행됨을 알린다. */}
+        {autoSeeded && isReady && (
+          <p className="mt-4 text-[11px] leading-snug text-[var(--text-hint)]">
+            부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다.
+          </p>
+        )}
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
           {isPending ? "심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "심층 설계 분석"}
@@ -872,22 +940,25 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
             </div>
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
+            {/* 무날조: 실제 비교가 의미있는 항목만 '검증'으로 표기한다. 종전에는 건폐율·높이·주차가
+                적용값=한도(자가비교)라 항상 '적합'으로 떠 정보가치가 0이었다. 실질 비교가 되는
+                용적률(적용 vs 법정상한)만 검증 행으로 남기고, 건폐율·높이는 법정상한 이내 단일 배지로 통합. */}
             <div className="space-y-1.5">
-              {[
-                { k: "건폐율", v: calc.buildingCoverage, max: calc.buildingCoverage, u: "%" },
-                { k: "용적률", v: calc.floorAreaRatio, max: calc.farLegalMax, u: "%" },
-                { k: "높이", v: calc.maxHeight, max: calc.maxHeight, u: "m" },
-                { k: "주차", v: calc.parking, max: calc.parking, u: "대" },
-              ].map((row) => {
-                const ok = Number(row.v) <= Number(row.max) + 1e-6;
+              {(() => {
+                const ok = Number(calc.floorAreaRatio) <= Number(calc.farLegalMax) + 1e-6;
                 return (
-                  <div key={row.k} className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
-                    <span className="font-bold text-[var(--text-secondary)]">{row.k}</span>
-                    <span className="cc-num text-[var(--text-hint)]">적용 {row.v}{row.u} / 한도 {row.max}{row.u}</span>
+                  <div className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
+                    <span className="font-bold text-[var(--text-secondary)]">용적률</span>
+                    <span className="cc-num text-[var(--text-hint)]">적용 {calc.floorAreaRatio}% / 법정상한 {calc.farLegalMax}%</span>
                     <span className="inline-flex items-center gap-1 font-black" style={{ color: ok ? "var(--status-success)" : "var(--status-error)" }}>{ok ? (<><CheckCircle2 className="size-3.5" aria-hidden />적합</>) : (<><AlertTriangle className="size-3.5" aria-hidden />초과</>)}</span>
                   </div>
                 );
-              })}
+              })()}
+              {/* 건폐율·높이는 위 자동계산 자체가 법정상한 이내로 산출되므로(적용=한도) 통합 배지로 표기. */}
+              <div className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
+                <span className="font-bold text-[var(--text-secondary)]">건폐율 · 높이</span>
+                <span className="inline-flex items-center gap-1 font-black" style={{ color: "var(--status-success)" }}><CheckCircle2 className="size-3.5" aria-hidden />법정상한 이내</span>
+              </div>
             </div>
           </div>
 
