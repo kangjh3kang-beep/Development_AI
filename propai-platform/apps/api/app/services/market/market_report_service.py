@@ -82,9 +82,12 @@ def _per_pyeong_stat(rows: list) -> dict[str, Any]:
 def _eok(man: float) -> str:
     if not man:
         return "-"
-    if man >= 10000:
-        return f"{man / 10000:.1f}억"
-    return f"{int(man):,}만"
+    # 손실 사업(순이익·NPV 음수)도 부호를 보존해 일관 표기("-5.0억"). 절대값 기준으로 억/만 분기.
+    sign = "-" if man < 0 else ""
+    a = abs(man)
+    if a >= 10000:
+        return f"{sign}{a / 10000:.1f}억"
+    return f"{sign}{int(a):,}만"
 
 
 # ── raw_data 빌더(순수 함수·네트워크 없음) ──────────────────────────────────
@@ -406,9 +409,9 @@ class MarketReportService:
         except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 시장 분석 무손상
             pass
 
-    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None) -> dict[str, Any]:
+    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None, parcels: list[dict] | None = None) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
-        
+
         options = options or {}
         use_sgis = options.get("sgis", False)
         use_kosis = options.get("kosis", False)
@@ -541,6 +544,35 @@ class MarketReportService:
         # ── Phase 3: 사업 타당성 분석 (Feasibility Engine) ──
         from app.services.market.feasibility_service import FeasibilityService
         land_area = float(basic.get("land_area") or basic.get("area_sqm") or 330.0) # 기본 100평
+
+        # ── P1 다필지 통합면적 전파 ──
+        # 프론트가 2필지 이상 보내면(parcels) 대표 1필지 면적이 아니라 '면적가중 통합면적'으로
+        #   land_area를 덮어쓴다(예: 12필지 12,079㎡ → 대표 1,161㎡ 고착 버그 해소).
+        #   ★공용 단일경유: /zoning/integrated-analysis와 동일한 ComprehensiveAnalysisService.
+        #   _integrated_context(면적가중 _aggregate_integrated_zoning 재사용)를 호출 — 산식 복제 0.
+        #   1필지 이하/실패면 통합 안 함(기존 단일 경로 그대로 = 무회귀).
+        integrated: dict[str, Any] | None = None
+        # 방어: 라우터는 parcels를 list[dict] 무스키마로 받으므로 dict 행만 통과시킨다
+        #   (_integrated_context 내부 가드와 이중 안전 — 비정상 행이 섞여도 크래시 없이 무시).
+        _rows = [p for p in parcels if isinstance(p, dict)] if parcels else []
+        if len(_rows) >= 2:
+            try:
+                from app.services.land_intelligence.comprehensive_analysis_service import (
+                    ComprehensiveAnalysisService,
+                )
+
+                integrated = await ComprehensiveAnalysisService()._integrated_context(_rows)
+            except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
+                logger.warning("다필지 통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:120])
+                integrated = None
+        if integrated and (integrated.get("total_area_sqm") or 0) > 0:
+            # 통합면적으로 land_area override → 이후 feasibility·공급면적·GFA가 통합면적 기준 산출.
+            land_area = float(integrated["total_area_sqm"])
+            # 대표 용도지역도 통합 우세값으로 보정(미상/혼재면 기존 zone_type 유지).
+            _dom = integrated.get("dominant_zone")
+            if _dom and _dom not in ("mixed_review_required",):
+                zone_type = _dom
+
         # 대표 평당가는 아파트 평당가를 우선 사용, 없으면 전체 평균 사용
         valid_pp = [v for v in pp_by_type.values() if v is not None]
         target_pp = apt_pp or (sum(valid_pp)/len(valid_pp) if valid_pp else 2000)
@@ -651,6 +683,17 @@ class MarketReportService:
             "raw_data": raw_data,
             "analysis": analysis,
         }
+        # ── P1: 다필지 통합면적 메타(있으면) — 화면/PDF가 "통합 N필지(통합면적)" 표기에 사용 ──
+        #   parcels 미전달/1필지면 키 자체를 생략(단일 경로 무회귀).
+        if integrated and (integrated.get("total_area_sqm") or 0) > 0:
+            report["integrated"] = {
+                "parcel_count": integrated.get("parcel_count"),
+                "total_area_sqm": integrated.get("total_area_sqm"),
+                "dominant_zone": integrated.get("dominant_zone"),
+                "blended_far_eff_pct": integrated.get("blended_far_eff_pct"),
+                "blended_bcr_eff_pct": integrated.get("blended_bcr_eff_pct"),
+                "integrated_gfa_sqm": integrated.get("integrated_gfa_sqm"),
+            }
         # ── 시니어 금융전문가 자문 모세혈관 배선(framework·근거; 실 PF입력 있으면 정량 verdict) ──
         self._attach_senior(report, feasibility)
         return report
@@ -751,14 +794,28 @@ class MarketReportService:
                 story.append(RLImage(io.BytesIO(png), width=165 * mm, height=101 * mm))
                 story.append(Spacer(1, 8))
 
+        # ── narrative 정직 가드(P3-2) — _narrative 폴백 시 빈배열/빈문자열을 "· -"로 찍지 않도록
+        #   "AI 분석 미포함" 한 줄 안내로 대체(무목업·정직). use_llm=False 또는 LLM 호출 실패 모두 해당.
         nar = rep.get("narrative") or {}
+        _ai_missing = "AI 분석 미포함(LLM 키 미설정 또는 호출 실패)"
+
+        # ── P1: 다필지 통합면적 배너(있으면) — "통합 N필지" 표기로 대표 1필지 오인 방지 ──
+        _intg = rep.get("integrated") or {}
+        if _intg.get("parcel_count") and (_intg.get("total_area_sqm") or 0) > 0:
+            _ta = _intg["total_area_sqm"]
+            story.append(Paragraph(
+                f"통합 {_intg['parcel_count']}필지 · 통합 대지면적 "
+                f"{_ta:,.0f}㎡({round(_ta / PYEONG_SQM):,}평) 기준 분석", body))
+            story.append(Spacer(1, 4))
+
         story.append(Paragraph("1. 시장 요약", h2))
         # summary 는 AI/엔진 내러티브라 esc(LLM 출력에 '<','&' 혼입 시 크래시 차단).
-        story.append(Paragraph(_esc(nar.get("summary") or "-"), body))
+        story.append(Paragraph(_esc(nar.get("summary") or _ai_missing), body))
         if rep.get("zone_type") or rep.get("official_price_per_sqm"):
             # zone_type 은 엔진 용도지역 문자열이라 esc(공시지가는 숫자라 안전).
             opp = rep.get("official_price_per_sqm")
-            opp_txt = _eok(opp / 10000) if opp else "-"
+            # ★공시지가 0/None 가드: 0(정수)은 falsy이나 명시 가드로 "0만" 오표시 차단 → "-".
+            opp_txt = _eok(opp / 10000) if (opp and opp > 0) else "-"
             story.append(Paragraph(
                 f"용도지역: {_esc(rep.get('zone_type') or '-')} · 공시지가(㎡): {opp_txt}", body))
         story.append(Spacer(1, 6))
@@ -844,10 +901,72 @@ class MarketReportService:
             ]))
             return t
 
+        # ── 5. 사업 타당성(Feasibility) — 화면엔 있으나 PDF 미렌더였던 ROI·수지 표를 추가(P3-1) ──
+        #   데이터는 build_report가 산출한 rep["feasibility_analysis"]에서. 대지면적은 다필지면 통합면적.
+        fe = rep.get("feasibility_analysis") or {}
+        _fin = fe.get("financials") or {}
+        _mass = fe.get("massing") or {}
+        if _fin and not fe.get("error"):
+            story.append(Paragraph("5. 사업 타당성(Feasibility · 개략 추정)", h2))
+            _roi = _fin.get("roi_percent")
+            _la = _mass.get("land_area_sqm")
+            _gfa = _mass.get("gfa_sqm")
+
+            def _won(v):  # 만원 정수 → "○억/○만원"(0/None은 "-")
+                return f"{_eok(v)}원" if v is not None and v != 0 else "-"
+
+            _land_txt = (
+                f"{_la:,.0f}㎡({round(_la / PYEONG_SQM):,}평)" if _la else "-")
+            _gfa_txt = (
+                f"{_gfa:,.0f}㎡({round(_mass.get('gfa_pyeong') or 0):,}평)" if _gfa else "-")
+            frows = [
+                ["구분", "값"],
+                ["ROI(투자수익률)", f"{_roi:.1f}%" if _roi is not None else "-"],
+                ["총사업비", _won(_fin.get("total_cost_10k"))],
+                ["예상 분양수익", _won(_fin.get("total_revenue_10k"))],
+                ["세전 순수익", _won(_fin.get("net_profit_10k"))],
+                ["NPV(순현재가치)", _won(_fin.get("npv_10k"))],
+                ["대지면적", _land_txt],
+                ["건축가능 연면적", _gfa_txt],
+            ]
+            story.append(_simple_table(frows, [70 * mm, 100 * mm]))
+            # note 는 엔진 산출 동적 문자열이라 esc(가정·면책 명시).
+            story.append(Paragraph(_esc((fe.get("assumptions") or {}).get("note", "")), cap))
+            story.append(Spacer(1, 6))
+
+            # 평형 MD(수요기반 전용면적 배분) — 데이터 있으면 표로(가짜값 금지: unavailable이면 정직 표기).
+            um = rep.get("unit_mix_recommendation") or {}
+            mix = um.get("recommended_mix") or {}
+            if mix and um.get("data_source") not in (None, "unavailable"):
+                story.append(Paragraph("권장 평형 배분(수요기반 MD)", body))
+                mrows = [["평형대", "권장 배분(%)"]] + [[k, f"{v}%"] for k, v in mix.items()]
+                story.append(_simple_table(mrows, [85 * mm, 85 * mm]))
+                story.append(Paragraph(_esc(um.get("rationale", "")), cap))
+            elif um.get("data_source") == "unavailable":
+                story.append(Paragraph(
+                    "권장 평형 배분: 데이터 없음(인구/가구 분석 미선택 — 가구원수 분포 필요)", cap))
+            story.append(Spacer(1, 8))
+
+        # ── 데이터 출처 정직표기 헬퍼(P3-3) ──
+        # mock/unavailable/None 출처면 "(mock)" 같은 가짜 라벨을 노출하지 않고 정직 안내로 대체한다.
+        #   (SGIS/KOSIS 무키 시 _mock_* 반환이 PDF 출처에 그대로 찍히던 결함 제거.)
+        def _is_real_source(ds: Any) -> bool:
+            return str(ds or "").lower() not in ("mock", "unavailable", "fallback", "")
+
+        def _src_caption(label_source: str, ds: Any) -> str:
+            if _is_real_source(ds):
+                return f"출처: {label_source} ({ds})"
+            return "데이터 없음(공공 API 키 미설정 — 실데이터 미연동)"
+
         raw = rep.get("raw_data") or {}
         pop = raw.get("population")
-        if pop:
-            story.append(Paragraph("5. 인구 규모·분포", h2))
+        if pop and not _is_real_source(pop.get("data_source")):
+            # 선택했으나 provider 무키/실패(mock·unavailable) — 가짜 수치 대신 정직 안내(P3-3).
+            story.append(Paragraph("6. 인구 규모·분포", h2))
+            story.append(Paragraph("데이터 없음(공공 API 키 미설정 — 인구통계 실데이터 미연동)", cap))
+            story.append(Spacer(1, 8))
+        elif pop:
+            story.append(Paragraph("6. 인구 규모·분포", h2))
             summ = pop.get("summary") or {}
             srows = [["구분", "값"],
                      ["총인구", f"{summ.get('total_population'):,}명" if summ.get("total_population") else "데이터 없음"],
@@ -874,27 +993,32 @@ class MarketReportService:
                       f"{mig.get('total_outflow'):,}" if mig.get("total_outflow") is not None else "-"]]
             story.append(Paragraph("인구 이동", body))
             story.append(_simple_table(mrows, [60 * mm, 55 * mm, 55 * mm]))
-            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간).
-            story.append(Paragraph(f"출처: {_esc(pop.get('source', '-'))} ({_esc(pop.get('data_source', '-'))})", cap))
+            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간). mock이면 정직 안내.
+            story.append(Paragraph(_esc(_src_caption(pop.get("source", "-"), pop.get("data_source"))), cap))
             story.append(Spacer(1, 8))
 
         inc = raw.get("income")
-        if inc:
-            story.append(Paragraph("6. 소득 수준", h2))
+        if inc and not _is_real_source(inc.get("data_source")):
+            # 선택했으나 provider 무키/실패(mock·unavailable) — 가짜 수치·(mock) 라벨 대신 정직 안내(P3-3).
+            story.append(Paragraph("7. 소득 수준", h2))
+            story.append(Paragraph("데이터 없음(공공 API 키 미설정 — 소득 실데이터 미연동)", cap))
+            story.append(Spacer(1, 8))
+        elif inc:
+            story.append(Paragraph("7. 소득 수준", h2))
             avg = inc.get("avg_income_10k")
             med = inc.get("median_income_10k")
             irows = [["구분", "연소득"],
                      ["평균 소득", f"{_eok(avg)}원" if avg else "데이터 없음"],
                      ["중위 소득" + ("(추정)" if inc.get("median_estimated") else ""), f"{_eok(med)}원" if med else "데이터 없음"]]
             story.append(_simple_table(irows, [80 * mm, 90 * mm]))
-            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간).
-            story.append(Paragraph(f"출처: {_esc(inc.get('source', '-'))} ({_esc(inc.get('data_source', '-'))})", cap))
+            # source·data_source 는 동적 출처 문자열이라 esc(Paragraph 직접 보간). mock이면 정직 안내.
+            story.append(Paragraph(_esc(_src_caption(inc.get("source", "-"), inc.get("data_source"))), cap))
             story.append(Spacer(1, 8))
 
         # 적정 분양가(있을 때만)
         pb = (rep.get("pricing_band") or {})
         if pb and pb.get("data_source") not in (None, "unavailable") and pb.get("fair_price_10k"):
-            story.append(Paragraph("7. 적정 분양가(거래사례비교)", h2))
+            story.append(Paragraph("8. 적정 분양가(거래사례비교)", h2))
             # affordability_verdict·note 는 엔진 산출 동적 문자열이라 esc(Paragraph 직접 보간).
             story.append(Paragraph(
                 f"적정 분양가: {_eok(pb['fair_price_10k'])}원 · "
@@ -902,17 +1026,28 @@ class MarketReportService:
             story.append(Paragraph(_esc(pb.get("note", "")), cap))
             story.append(Spacer(1, 8))
 
-        story.append(Paragraph("8. 기회 요인", h2))
-        # opportunities·risks·price_trend 는 AI/엔진 내러티브라 esc(Paragraph 직접 보간).
-        for o in (nar.get("opportunities") or ["-"]):
-            story.append(Paragraph(f"· {_esc(o)}", body))
+        # ── AI 내러티브(기회·리스크·가격동향) — 빈배열/빈문자열이면 "AI 분석 미포함" 정직표기(P3-2) ──
+        #   _narrative 폴백 시 "· -"만 찍히던 결함 제거(무목업·정직). 값이 있을 때만 항목을 찍는다.
+        story.append(Paragraph("9. 기회 요인", h2))
+        _opps = [o for o in (nar.get("opportunities") or []) if str(o).strip()]
+        if _opps:
+            for o in _opps:
+                story.append(Paragraph(f"· {_esc(o)}", body))
+        else:
+            story.append(Paragraph(_ai_missing, cap))
         story.append(Spacer(1, 4))
-        story.append(Paragraph("9. 리스크 요인", h2))
-        for r in (nar.get("risks") or ["-"]):
-            story.append(Paragraph(f"· {_esc(r)}", body))
+        story.append(Paragraph("10. 리스크 요인", h2))
+        _risks = [r for r in (nar.get("risks") or []) if str(r).strip()]
+        if _risks:
+            for r in _risks:
+                story.append(Paragraph(f"· {_esc(r)}", body))
+        else:
+            story.append(Paragraph(_ai_missing, cap))
         story.append(Spacer(1, 4))
-        story.append(Paragraph("10. 가격 동향", h2))
-        story.append(Paragraph(_esc(nar.get("price_trend") or "-"), body))
+        story.append(Paragraph("11. 가격 동향", h2))
+        _ptrend = str(nar.get("price_trend") or "").strip()
+        story.append(Paragraph(_esc(_ptrend) if _ptrend else _ai_missing,
+                               body if _ptrend else cap))
 
         # 면책 고지
         story.append(Spacer(1, 14))

@@ -40,6 +40,11 @@ interface ProjectAddressInputProps {
   /** 다필지 목록 변경 콜백 — 등록된 전 필지 주소 배열 전달(옵션) */
   onParcelsChange?: (addresses: string[]) => void;
   /**
+   * 다필지 상세 변경 콜백 — 면적·용도지역·용적/건폐 등 전체 AddressEntry 배열 전달(옵션).
+   * 호스트가 통합면적 집계·대표 pnu/좌표 확정 등 SSOT 단일화에 사용한다(onParcelsChange의 상세판).
+   */
+  onEntriesChange?: (entries: AddressEntry[]) => void;
+  /**
    * ProjectContextStore(SSOT) 기록 여부 — 기본 true(프로젝트 주소바는 primary를 store에 기록).
    * 활성 프로젝트와 무관한 탐색용이면 false로 끌 수 있다.
    */
@@ -57,6 +62,7 @@ export function ProjectAddressInput({
   pickerLabel,
   multi: _multi,
   onParcelsChange,
+  onEntriesChange,
   writeToContext = true,
 }: ProjectAddressInputProps) {
   void _multi; // 호환용(무시) — 항상 다필지 UI
@@ -111,6 +117,8 @@ export function ProjectAddressInput({
       .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
       .filter(Boolean);
     onParcelsChange?.(all);
+    // 상세판: 면적·용도지역·용적/건폐 포함 전체 entries를 호스트로 전달(SSOT 단일화용).
+    onEntriesChange?.(entries);
   };
 
   return (
