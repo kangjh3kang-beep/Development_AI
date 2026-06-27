@@ -46,6 +46,14 @@ _BASE_PROMPT = (
 )
 _NEGATIVE_PROMPT = "cartoon, sketch, lowres, blurry, distorted, watermark, text, people"
 
+# 컨셉 렌더(text2img) 시점(view)별 프롬프트 프리픽스 — 입력 설명(prompt) 앞에 붙여
+# 조감도/투시도/거리뷰 구도를 지시한다(3D가 없어도 텍스트만으로 컨셉 이미지 생성).
+_VIEW_PREFIX = {
+    "aerial": "aerial bird's-eye view architectural rendering of",
+    "perspective": "eye-level street perspective photorealistic rendering of",
+    "street": "street-level photorealistic rendering of",
+}
+
 # 서버측 폴링 정책 — Prefer:wait(60s) 한도를 넘겨 202(미완료 prediction)가 와도
 # 에러가 아니라 '접수됨'이므로 여기서 완료까지 이어서 기다린다.
 _POLL_INTERVAL_S = 2.0  # 폴링 간격(초)
@@ -205,6 +213,89 @@ async def _render_via_image_provider(
     if urls:
         return {"status": "ok", "image_url": urls[0], "provider": provider, "model": out.get("model")}
     return {"status": "error", "message": "이미지 생성 결과가 비어 있습니다.", "provider": provider}
+
+
+async def render_concept(
+    prompt: str,
+    *,
+    view: str = "aerial",
+    provider: str | None = None,
+    model: str | None = None,
+    timeout_s: float = 90.0,
+) -> dict[str, Any]:
+    """텍스트만으로 컨셉 조감도/투시도 생성(text2img). 비파괴·무목업·정직 강등.
+
+    3D 모델이 없거나 컨셉 이미지가 필요할 때, 설명(prompt)만으로 이미지를 만든다.
+    공용 image_provider.generate_image를 input_image 없이 호출(=text2img)한다.
+
+    view:
+    - "aerial"(기본): 조감도(새의 눈 시점)
+    - "perspective": 사람 눈높이 투시도
+    - "street": 거리 레벨 뷰
+
+    provider:
+    - None: 라이브 가용(키+SDK) 프로바이더 중 첫 항목을 정직하게 택1.
+      가용 프로바이더가 하나도 없으면 status="no_key"(가짜 이미지 금지).
+    - "openai"/"google"/"replicate": 지정 프로바이더로 생성(image_provider가 지원하는 경우).
+
+    반환 status:
+    - "no_key": 키/SDK 미설정(가용 프로바이더 없음) → 정직 안내(가짜 이미지 없음).
+    - "ok":     image_base64(openai/google) 또는 image_url(replicate) 포함.
+    - "error":  빈 입력·외부 호출 실패·빈 결과(가짜 이미지 없음).
+    """
+    # 빈 설명 가드 — 외부 호출 전 정직 차단(과금·호출 0).
+    if not (prompt or "").strip():
+        return {"status": "error", "message": "설명(prompt)이 비어 있습니다."}
+
+    from app.services.ai.image_provider import (
+        ImageGenerationError,
+        generate_image,
+        get_available_image_providers,
+    )
+
+    # provider 미지정 시 라이브 가용목록 첫 항목으로 정직하게 택1(없으면 no_key).
+    chosen = (provider or "").strip()
+    if not chosen:
+        available = get_available_image_providers()
+        if not available:
+            return {
+                "status": "no_key",
+                "message": "이미지 생성 프로바이더가 설정되지 않았습니다. 관리자 키 설정 후 이용 가능합니다.",
+            }
+        chosen = available[0]["provider"]
+
+    # 시점 프리픽스 + 설명 합성(건물 컨텍스트는 프론트가 prompt에 합성해 보낸다).
+    prefix = _VIEW_PREFIX.get((view or "").strip(), _VIEW_PREFIX["aerial"])
+    final_prompt = f"{prefix} {prompt.strip()}"
+
+    try:
+        out = await generate_image(
+            chosen,
+            prompt=final_prompt,
+            model=model,
+            size="1024x1024",
+            timeout=timeout_s,
+        )
+    except ImageGenerationError as e:
+        # 정직 강등: 키/패키지 부재→no_key, 그 외(api_error 등)→error(가짜 이미지 금지).
+        status = "no_key" if e.error_type in ("key_not_configured", "package_missing") else "error"
+        logger.warning("컨셉 렌더 이미지 프로바이더 오류", provider=chosen, err_type=e.error_type)
+        return {"status": status, "message": str(e), "provider": chosen, "view": view}
+
+    imgs = out.get("images") or []
+    urls = out.get("image_urls") or []
+    # images(base64) 우선, 없으면 image_urls(URL) — 공용 계약(소비처 동일 처리).
+    if imgs:
+        return {
+            "status": "ok", "image_base64": imgs[0],
+            "provider": chosen, "model": out.get("model"), "view": view,
+        }
+    if urls:
+        return {
+            "status": "ok", "image_url": urls[0],
+            "provider": chosen, "model": out.get("model"), "view": view,
+        }
+    return {"status": "error", "message": "이미지 생성 결과가 비어 있습니다.", "provider": chosen, "view": view}
 
 
 async def _resolve_prediction(
