@@ -17,6 +17,12 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+// 유한 '양수'만 통과(0·음수도 거름). 층수처럼 0·음수가 정본으로 새면 안 되는 값에 쓴다(무날조).
+function posNum(v: unknown): number | undefined {
+  const n = num(v);
+  return n != null && n > 0 ? n : undefined;
+}
+
 // 문자열 정규화(공백 제거, 빈값은 null). (zoning-ssot.ts 가드 패턴 차용)
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -34,10 +40,13 @@ export function resolveCanonicalFloors(
   envResult?: { recommended_floors_high?: number | null; recommended_floors_low?: number | null } | null,
   recFloorsFallback?: number | null,
 ): number | null {
+  // ★층수는 0·음수가 정본으로 새면 안 된다(posNum) — 일조 엔진이 0층을 줘도 칩 "0층"/designData=0
+  //   누수 차단. recFloorsFallback도 양수만(대칭). 셋 다 없으면 null(무날조 — 화면 "—").
   return (
-    num(envResult?.recommended_floors_high) ??
-    num(envResult?.recommended_floors_low) ??
-    (recFloorsFallback != null && recFloorsFallback > 0 ? recFloorsFallback : null)
+    posNum(envResult?.recommended_floors_high) ??
+    posNum(envResult?.recommended_floors_low) ??
+    posNum(recFloorsFallback) ??
+    null
   );
 }
 

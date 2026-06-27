@@ -558,6 +558,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   종전엔 축측(25층 매직캡)·예상(43~65)·칩(65)이 3중 불일치했음. 일조 인벨로프 권장(있으면)
   //   > calc.recFloors(FAR 반영 현실권장) 순으로 도출하고, 셋 다 없으면 null(무날조 — 화면 "—").
   const canonicalFloors = calc ? resolveCanonicalFloors(envResult, calc.recFloors) : null;
+  // ★매싱 도식(좌측 대안카드·우측 캔버스)이 '같은 층수'로 그려지도록 geom 산출 층수를 단일화.
+  //   정본(canonicalFloors)→권장(recFloors) 순. 좌우가 이 한 값을 공유해 슬래브 수 불일치를 차단.
+  const floorsForGeom = canonicalFloors ?? calc?.recFloors ?? null;
 
   // ②③ 상단 '예상 층수' 카드 값(정직화) — ceil(FAR/BCR)인 calc.maxFloors는 '산술하한'이라
   //   '예상'으로 노출하면 과소(4층 등) 오도. 일조 인벨로프 결과가 있으면 실무 권장 범위를,
@@ -572,7 +575,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         lo != null && hi != null && hi > lo ? `${lo}~${hi}층`
         : lo != null ? `${lo}층`
         : hi != null ? `${hi}층` : "—";
-      return { val, sub: `실무 권장(층고 ${fh}m·일조 반영)` };
+      // 범위(권장 밴드)와 단일 정본 칩의 관계를 명시 — 칩·축측은 정본 상한(canonicalFloors)을 쓴다.
+      const sub = canonicalFloors != null ? `권장 밴드 · 정본 ${canonicalFloors}층 적용(층고 ${fh}m·일조)` : `실무 권장(층고 ${fh}m·일조 반영)`;
+      return { val, sub };
     }
     // 미매칭 — 로컬 현실추정(쾌적 건폐율 20~30% 가정). ★ceil(FAR/BCR)=산술하한(maxFloors) 노출 금지.
     const far = calc.floorAreaRatio;
@@ -605,22 +610,22 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // ★층수 정본(canonicalFloors)으로 floors·geom을 둘 다 통일한다 — 종전엔 floors는 인벨로프
     //   권장(65), geom은 active.geom(=calc.recFloors 기준)이라 칩 층수와 축측 슬래브 수가 어긋났음.
     //   geom을 active.geom 대신 정본 층수로 재생성해 "축측 슬래브 수 == 칩 층수"가 되게 한다.
-    //   정본이 null이면 calc.recFloors로 폴백(geom은 층수 0이면 그릴 수 없으므로).
-    const floorsForGeom = canonicalFloors ?? calc.recFloors;
-    const fpForFloors = Math.min(calc.maxGrossArea / Math.max(floorsForGeom, 1), calc.buildableArea);
+    //   ★좌측 대안카드와 동일한 컴포넌트 레벨 floorsForGeom을 공유한다(좌우 단일 참조).
+    const geomFloors = floorsForGeom ?? calc.recFloors;
+    const fpForFloors = Math.min(calc.maxGrossArea / Math.max(geomFloors, 1), calc.buildableArea);
     const geom = buildMassingGeom(
       massingKindFromName(active.name),
       fpForFloors,
       calc.siteSide,
-      floorsForGeom,
+      geomFloors,
     );
     // 우측 지표(무날조 — calc/envResult 실값만). 층수는 정본(canonicalFloors) — null이면 칩에서 "—".
     const floors = canonicalFloors;
     // 예상 전용 연면적 = 최대 연면적 × 효율(%) — 좌측 카드의 estGfa와 동일 식.
     const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * ((active.efficiency || 0) / 100)) : null;
     return { active, geom, isBest: (active.efficiency || 0) === best, floors, estGfa };
-    // envResult는 canonicalFloors에 이미 반영돼 deps에서 생략(중복 의존 경고 방지).
-  }, [calc, aiEff, selectedMassing, canonicalFloors]);
+    // envResult는 canonicalFloors(→floorsForGeom)에 이미 반영돼 deps에서 생략(중복 의존 경고 방지).
+  }, [calc, aiEff, selectedMassing, canonicalFloors, floorsForGeom]);
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
@@ -917,13 +922,15 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                     // 선택 우선 — 사용자가 고른 대안이 활성. 미선택이면 추천(최고효율)이 활성.
                     const isActive = selectedMassing ? m.name === selectedMassing : isBest;
                     const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * (m.efficiency / 100)) : null;
-                    // ③ 실프리뷰 geom — 로컬 옵션은 산출 geom, AI 옵션은 이름 매칭으로 동일한
-                    // calc 실값(법정한도 연면적·층수) 기반 geom을 생성(AI 폴백에서도 실척 유지).
-                    const geom = m.geom ?? buildMassingGeom(
+                    // ③ 실프리뷰 geom — 좌측 카드도 우측 캔버스와 '같은 정본 층수(floorsForGeom)'로
+                    //    재생성한다. m.geom(calc recFloors 기준)을 그대로 쓰면 정본(canonicalFloors)과
+                    //    어긋나 좌 '22층'·우 '65층'처럼 보이므로, 정본 층수로 통일(좌우 단일 참조·무날조).
+                    const geomFloors = floorsForGeom ?? calc.recFloors;
+                    const geom = buildMassingGeom(
                       massingKindFromName(m.name),
-                      Math.min(calc.maxGrossArea / Math.max(calc.maxFloors, 1), calc.buildableArea),
+                      Math.min(calc.maxGrossArea / Math.max(geomFloors, 1), calc.buildableArea),
                       calc.siteSide,
-                      calc.maxFloors,
+                      geomFloors,
                     );
                     return (
                       <button
