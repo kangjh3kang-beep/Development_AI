@@ -749,6 +749,47 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
   const RENDER_COST_COIN = 5;
 
+  // ── AI 이미지 엔진(프로바이더/모델) 선택 ──
+  // 백엔드(/design/image-providers)는 "키+SDK가 실제로 준비된" 엔진만 회신한다(반쪽출하 방지).
+  // 목록이 비어 있으면 드롭다운을 숨기고 기존 기본 흐름(provider 미전송 → 백엔드 replicate)을 그대로 쓴다.
+  type ImageModel = { id: string; name?: string | null };
+  type ImageProvider = {
+    provider: string;
+    name?: string | null;
+    models?: ImageModel[] | null;
+    default_model?: string | null;
+    supports_edit?: boolean | null;
+  };
+  // 사용 가능한 엔진 목록(서버가 회신한 가용분만). 로드 실패/빈목록이면 [] → 드롭다운 미표시.
+  const [imageProviders, setImageProviders] = useState<ImageProvider[]>([]);
+  // 현재 선택한 엔진/모델. null이면 백엔드가 기본 엔진을 고른다(무회귀: provider 미전송).
+  const [renderProvider, setRenderProvider] = useState<string | null>(null);
+  const [renderModel, setRenderModel] = useState<string | null>(null);
+
+  // 마운트 시 사용 가능한 이미지 엔진을 1회 로드한다(가용분만).
+  // 실패하거나 목록이 비면 graceful — imageProviders는 []로 남고 드롭다운은 숨겨진다(기존 흐름 유지).
+  useEffect(() => {
+    let alive = true;
+    apiClient
+      .get<{ providers?: ImageProvider[] }>("/design/image-providers")
+      .then((resp) => {
+        if (!alive) return;
+        const list = Array.isArray(resp?.providers) ? resp.providers : [];
+        // provider 식별자가 있는 정상 항목만 채택(불완전 항목 배제).
+        const usable = list.filter((p) => p && typeof p.provider === "string" && p.provider.trim());
+        setImageProviders(usable);
+        // 기본 선택: 첫 엔진 + 그 엔진의 default_model(없으면 첫 모델). 목록 비면 null 유지(기존 흐름).
+        if (usable.length > 0) {
+          const first = usable[0];
+          setRenderProvider(first.provider);
+          const models = Array.isArray(first.models) ? first.models : [];
+          setRenderModel(first.default_model ?? (models[0]?.id ?? null));
+        }
+      })
+      .catch(() => { /* 키 미설정·네트워크 오류 등 — 드롭다운 미표시(기존 replicate 흐름 유지) */ });
+    return () => { alive = false; };
+  }, []);
+
   // ── C2R 계약(compliance) store 환류 공용 헬퍼 — /mass·/bim 응답이 동봉한 근거·검증을 store에 저장 ──
   // 왜 공용화하나(쉬운 설명): 백엔드 응답의 compliance(envelope_result·geometry_invariants)는
   //   여러 fetch 경로(resolveSpec=/mass, loadBimModel=/bim, 2D effect=/bim)에서 도착한다. 한 곳에만
@@ -1281,7 +1322,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           message?: string;
           charged?: number;
         }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
-          body: { image_base64: imageBase64, style: renderStyle },
+          // 무회귀: renderProvider가 null(가용목록 없음/미선택)이면 provider·model을 아예 보내지 않는다
+          // → 백엔드가 기존 기본 엔진(replicate)으로 처리(바디 100% 동일).
+          body: {
+            image_base64: imageBase64,
+            style: renderStyle,
+            ...(renderProvider ? { provider: renderProvider } : {}),
+            ...(renderModel ? { model: renderModel } : {}),
+          },
           timeoutMs: 120_000,
         });
 
@@ -1331,7 +1379,35 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setRenderBusy(false);
     }
-  }, [projectId, bimScene, spec, renderStyle]);
+  }, [projectId, bimScene, spec, renderStyle, renderProvider, renderModel]);
+
+  // ── 조감도/투시도로 렌더(INC3-1 viewport2img 주 경로) ──
+  // 카메라를 해당 프리셋 시점으로 옮긴 뒤, 한 프레임 그려지길 기다렸다가 기존 렌더를 그대로 호출한다.
+  // (코드 중복 없이 runPhotorealRender 재사용 — 프리셋 이동만 선행. 캡처는 preserveDrawingBuffer 활용.)
+  const runPhotorealFromPreset = useCallback(async (presetKey: "aerial" | "perspective") => {
+    // ① 카메라를 조감도/투시도 시점으로 이동(기존 프리셋 보간 로직 재사용).
+    applyPreset(presetKey);
+    // ② ★보간이 '정착'한 뒤 캡처한다. CameraControls 보간(dampingFactor 0.06)은 수백 ms 걸려,
+    //    1~2프레임만 기다리면 '이동 도중' 프레임을 캡처해 엉뚱한 시점이 렌더 입력이 된다.
+    //    applyPreset은 state→useEffect로 '다음 렌더'에 보간을 시작하므로, 한 프레임 뒤 카메라의
+    //    'rest'(정착 완료) 이벤트를 기다린다. 이미 그 시점이거나 이벤트 미발화면 폴백 타임아웃으로 진행.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        camControlsRef.current?.removeEventListener?.("rest", finish);
+        resolve();
+      };
+      requestAnimationFrame(() => {
+        camControlsRef.current?.addEventListener?.("rest", finish);
+        // 폴백: 보간이 매우 짧거나(이미 그 시점) rest가 안 오면 1.4초 후 강제 진행.
+        setTimeout(finish, 1400);
+      });
+    });
+    // ③ 현재 선택한 엔진/모델로 기존 렌더 실행(결과 표시·과금·정직강등 모두 동일 경로).
+    await runPhotorealRender();
+  }, [applyPreset, runPhotorealRender]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -2175,6 +2251,86 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                         ))}
                       </div>
                     </div>
+
+                    {/* AI 엔진·모델 선택 — 서버가 회신한 가용 엔진이 있을 때만 노출(없으면 기존 기본 흐름). */}
+                    {imageProviders.length > 0 && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* 엔진(프로바이더) 선택 — 바꾸면 그 엔진의 기본 모델로 자동 리셋. */}
+                        <div>
+                          <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">AI 엔진</p>
+                          <select
+                            value={renderProvider ?? ""}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setRenderProvider(next);
+                              // 선택한 엔진의 기본 모델(없으면 첫 모델)로 리셋 — 엔진별 모델 불일치 방지.
+                              const p = imageProviders.find((x) => x.provider === next);
+                              const models = Array.isArray(p?.models) ? p.models : [];
+                              setRenderModel(p?.default_model ?? (models[0]?.id ?? null));
+                            }}
+                            className="w-full rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-3 py-2 text-xs font-bold text-[var(--text-primary)]"
+                          >
+                            {imageProviders.map((p) => (
+                              <option key={p.provider} value={p.provider}>
+                                {p.name || p.provider}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* 모델 선택 — 선택한 엔진의 models[]만 노출. */}
+                        <div>
+                          <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">모델</p>
+                          {(() => {
+                            const p = imageProviders.find((x) => x.provider === renderProvider);
+                            const models = Array.isArray(p?.models) ? p.models : [];
+                            return (
+                              <select
+                                value={renderModel ?? ""}
+                                onChange={(e) => setRenderModel(e.target.value)}
+                                disabled={models.length === 0}
+                                className="w-full rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-3 py-2 text-xs font-bold text-[var(--text-primary)] disabled:opacity-50"
+                              >
+                                {models.length === 0 ? (
+                                  <option value="">기본 모델</option>
+                                ) : (
+                                  models.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                      {m.name || m.id}
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 시점 선택 렌더 — 카메라를 조감도/투시도로 옮긴 뒤 그대로 렌더(현재 화면 대신 정해진 시점). */}
+                    <div>
+                      <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">시점으로 바로 렌더</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { void runPhotorealFromPreset("aerial"); }}
+                          disabled={renderBusy}
+                          className="flex items-center gap-1.5 rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Plane className="size-3.5" aria-hidden />
+                          {CAM_PRESETS.aerial.label}로 렌더
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void runPhotorealFromPreset("perspective"); }}
+                          disabled={renderBusy}
+                          className="flex items-center gap-1.5 rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Eye className="size-3.5" aria-hidden />
+                          {CAM_PRESETS.perspective.label}로 렌더
+                        </button>
+                      </div>
+                    </div>
+
                     {/* 과금 안내(쉬운 문구) */}
                     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
                       <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
