@@ -11,6 +11,8 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
 import { findDecisionPart } from "@/components/projects/decision-brief-types";
 import type { Locale } from "@/i18n/config";
@@ -52,6 +54,8 @@ type ComplianceCheckResponse = {
   summary: string;
   /** WP-P: 응답 레벨 법령 근거(공통 인허가 + 위반항목 합산). */
   legal_refs?: LegalRef[];
+  /** 다필지 통합 메타(가산·옵셔널) — 2필지 이상 통합 검사 시에만. */
+  integrated?: IntegratedMeta | null;
 };
 
 type ChecklistItem = {
@@ -401,6 +405,10 @@ export function ProjectPermitWorkspaceClient({
 
     setIsSubmitting(true);
 
+    // 다필지: 프로젝트 컨텍스트 필지(이제 zoneCode 동반)로 통합면적·우세용도를 백엔드에 전달.
+    //   면적은 effectiveLandAreaSqm으로 이미 보정되나, parcels를 보내면 우세용도까지 면적가중된다.
+    const effRows = parcelDataToRows(siteAnalysis?.parcels);
+
     try {
       const [compliance, checklist] = await Promise.all([
         apiClient.post<ComplianceCheckResponse>("/building-compliance/check", {
@@ -415,6 +423,7 @@ export function ProjectPermitWorkspaceClient({
             zone_code: siteAnalysis?.zoneCode || undefined,
             planned_bcr: designData?.bcr ?? undefined,
             planned_far: designData?.far ?? undefined,
+            ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}),
           },
         }),
         apiClient.post<LifecycleChecklistResponse>(
@@ -701,6 +710,9 @@ export function ProjectPermitWorkspaceClient({
             </p>
             {complianceResult ? (
               <div className="mt-4 space-y-4">
+                {complianceResult.integrated && (
+                  <IntegratedParcelsBadge integrated={complianceResult.integrated} />
+                )}
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`rounded-full border px-4 py-1.5 text-xs font-bold ${statusBadgeClass(complianceResult.overall_status)}`}

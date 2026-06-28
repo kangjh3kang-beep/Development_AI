@@ -41,7 +41,10 @@ export function entriesToParcelRows(entries: AddressEntry[]): ParcelRow[] {
  * zone/far/bcr는 없으므로 null — 백엔드는 면적만 통합하고 용도지역은 기존값을 보존한다(graceful).
  */
 export function parcelDataToRows(
-  parcels: ReadonlyArray<{ address?: string; areaSqm?: number | null }> | undefined | null,
+  parcels:
+    | ReadonlyArray<{ address?: string; areaSqm?: number | null; zoneCode?: string | null }>
+    | undefined
+    | null,
 ): ParcelRow[] {
   if (!parcels) return [];
   return parcels
@@ -49,8 +52,9 @@ export function parcelDataToRows(
     .map((p) => ({
       address: p.address || "",
       area_sqm: p.areaSqm ?? null,
-      zone_type: null,
-      farPct: null,
+      // store 필지가 용도지역을 보유하면 면적가중 우세용도 산정에 사용(없으면 null=면적만 통합).
+      zone_type: p.zoneCode ?? null,
+      farPct: null, // 실효 용적/건폐는 store ParcelData에 없음(피커 경로에서만 풀데이터)
       bcrPct: null,
     }));
 }

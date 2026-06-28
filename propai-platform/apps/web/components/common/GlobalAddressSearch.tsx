@@ -623,15 +623,21 @@ export function GlobalAddressSearch({
     //   모두 같고 필지 수도 같으면 재기록을 생략해 리렌더 연쇄를 끊는다(값 변화 시에는 정상 기록).
     {
       const curSA = useProjectContextStore.getState().siteAnalysis;
+      // zone 시그니처(필지별 용도지역 순열) — 면적·필지수가 이미 안정된 뒤 어떤 필지의 zone만
+      //   늦게 해소되는 경우에도 zoneCode가 끝까지 영속되도록 비교에 포함한다(스칼라 join 비교라
+      //   #185 무한렌더 루프를 되살리지 않는다: 한 번 영속되면 다음 패스엔 두 시그니처가 같아 생략).
+      const curZoneSig = (curSA?.parcels ?? []).map((p) => p.zoneCode ?? "").join("|");
+      const newZoneSig = valid.map((p) => p.zone ?? "").join("|");
       if (
         curSA &&
         curSA.landAreaSqmTotal === totalSqm &&
         curSA.parcelCount === valid.length &&
         curSA.repLandAreaSqm === repArea &&
         (curSA.zoneMixed ?? false) === (zones.size >= 2) &&
-        (curSA.parcels?.length ?? 0) === valid.length
+        (curSA.parcels?.length ?? 0) === valid.length &&
+        curZoneSig === newZoneSig
       ) {
-        // 동일 통합값 → 재기록 생략. 단, 통합 메타가 이미 일치=완전 상태이므로 보강은 사실상 완료.
+        // 동일 통합값(zone 포함) → 재기록 생략. 통합 메타가 이미 완전 상태이므로 보강 완료.
         if (!retryScheduled) finishPending();
         return;
       }
@@ -653,6 +659,7 @@ export function GlobalAddressSearch({
         areaSqm: p.area,
         landCategory: p.landCategory,
         ownerType: "",
+        zoneCode: p.zone ?? null, // 용도지역 동반 기록 → 프로젝트 스코프 화면도 면적가중 우세용도 통합 가능
       })),
     });
 
