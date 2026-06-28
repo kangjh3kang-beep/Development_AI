@@ -494,9 +494,15 @@ export function MarketInsightsWorkspaceClient() {
     }
   }, [pendingReport, address, generateReport]);
 
+  // OrchestratorPanel 접기/펼치기 토글 — 베타 패널을 핵심 흐름에서 격리하기 위한 presentational 상태.
+  // 분석/과금/실행 동작에 영향 0. OrchestratorPanel의 props·scopeNodes·balance는 불변.
+  const [showOrchestrator, setShowOrchestrator] = useState(false);
+
   return (
     <section className="grid grid-cols-1 gap-6 min-w-0">
-      {/* 헤더 — 시장 인텔리전스 관제 콘솔 */}
+
+      {/* ── ZONE A: 설정→실행 ─────────────────────────────────────────── */}
+      {/* 헤더 */}
       <div>
         <div className="flex items-center gap-3">
           <span className="cc-meta">MARKET · TRANSACTION INTEL</span>
@@ -508,7 +514,7 @@ export function MarketInsightsWorkspaceClient() {
         </p>
       </div>
 
-      {/* 검색입력(카카오) — 직접입력 → 주소 검색으로 보강 */}
+      {/* 주소 입력(카카오) */}
       <ProjectAddressInput
         value={searchAddr}
         onChange={onAddress}
@@ -517,8 +523,90 @@ export function MarketInsightsWorkspaceClient() {
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
 
-      {/* P3 Zone B — 분석 후 지도를 주소 바로 아래(최상단)에 크게 노출해 스크롤 없이 즉시 보이게.
-          실거래+분양 통합 오버레이 지도 → 필지 구획도 순. 분석 전(address 없음)엔 숨겨 셀렉터가 상단. */}
+      {/* 분석 설정 + 실행 — 모듈 선택과 실행 버튼을 하나의 카드로 묶어 "설정→실행" 흐름을 일원화. */}
+      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <CardContent className="p-5 space-y-4">
+          {/* 선택형 분석 모듈 — 선택분만 실행·과금. */}
+          <AnalysisModuleSelector
+            modules={analysisModules}
+            selected={analysisOptions}
+            onChange={onModulesChange}
+            onSelectAll={onSelectAll}
+            unlimited={!!balance?.unlimited}
+            subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
+          />
+
+          {/* 구분선 */}
+          <div className="h-px bg-[var(--line)]" aria-hidden />
+
+          {/* 실행 버튼 행 */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-[var(--text-primary)]">분석 시작</p>
+              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                분석 시 사용한 LLM 사용량만큼 코인이 자동 차감됩니다
+                {balance?.unlimited ? (
+                  <> · <b className="text-[var(--text-primary)]">무제한(관리자)</b></>
+                ) : totalRemaining !== null && (
+                  <> · 코인 잔여 <b className="text-[var(--text-primary)]">{won(totalRemaining)}</b></>
+                )}
+              </p>
+            </div>
+            <button
+              onClick={runAnalysis}
+              disabled={!inputAddress || insufficient}
+              className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+            >
+              분석 시작
+            </button>
+          </div>
+          {insufficient && (
+            <p className="text-xs font-bold text-[var(--status-warning)]">
+              코인 잔액이 부족합니다. 좌측 코인 미터의 「추가결제」로 충전 후 다시 실행해 주세요.
+            </p>
+          )}
+          {!inputAddress && (
+            <p className="text-xs text-[var(--text-hint)]">먼저 위에서 분석할 주소를 입력하세요.</p>
+          )}
+          {address && (
+            <p className="text-xs text-[var(--text-hint)]">
+              분석 대상: <b className="text-[var(--text-secondary)]">{address}</b> · 실행 후 사용량은 설정 &gt; AI 사용량에서 확인할 수 있습니다.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── ZONE A-ALT: 대안/고급 분석(베타) — 접기 토글로 핵심 흐름과 격리 ── */}
+      {/* B3 채택(additive): 오케스트레이션 노드 기반 분석 실행 — 분양성·분양가(sales) 스코프.
+          기존 시장보고서 흐름과 별개 경로(별도 store). balance.module_fees(미설정 0=무료) 재사용. */}
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]">
+        <button
+          type="button"
+          onClick={() => setShowOrchestrator((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left"
+          aria-expanded={showOrchestrator}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-[var(--text-secondary)]">통합 분석(베타)</span>
+            <span className="rounded-full border border-[var(--line-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">고급 · 분양성·분양가</span>
+          </div>
+          <span className="text-xs text-[var(--accent-strong)]">{showOrchestrator ? "▾ 닫기" : "▸ 펼치기"}</span>
+        </button>
+        {showOrchestrator && (
+          <div className="border-t border-[var(--line)] px-5 pb-5 pt-4">
+            <OrchestratorPanel
+              scopeNodes={["sales"]}
+              balance={balance}
+              runDisabled={!inputAddress || insufficient}
+              title="통합 분석(베타)"
+              subtitle="분양성·분양가 분석을 레지스트리 기반으로 실행합니다. 상류(부지·설계) 의존은 자동 포함됩니다."
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── ZONE B: 지도 — 분석 후 주소 아래 즉시 노출 ─────────────────── */}
+      {/* P3 Zone B: 실거래+분양 통합 오버레이 지도 → 필지 구획도 순. 분석 전엔 숨겨 셀렉터가 상단. */}
       {address && (
         <div className="grid gap-4">
           <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
@@ -541,105 +629,6 @@ export function MarketInsightsWorkspaceClient() {
             )}
           </div>
         </div>
-      )}
-
-      {/* 선택형 분석 모듈 — 공용 AnalysisModuleSelector(선택형이 기본 진입). 선택분만 실행·과금. */}
-      <AnalysisModuleSelector
-        modules={analysisModules}
-        selected={analysisOptions}
-        onChange={onModulesChange}
-        onSelectAll={onSelectAll}
-        unlimited={!!balance?.unlimited}
-        subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
-      />
-
-      {/* B3 채택(additive): 오케스트레이션 노드 기반 분석 실행 — 분양성·분양가(sales) 스코프.
-          기존 시장보고서 흐름과 별개 경로(별도 store). nodesToOptions가 레지스트리에서 옵션을 자동 생성하고,
-          폐포(상류 의존)·신선스킵·과금합계를 선표시한 뒤 동의 실행한다. balance.module_fees(미설정 0=무료) 재사용. */}
-      <OrchestratorPanel
-        scopeNodes={["sales"]}
-        balance={balance}
-        runDisabled={!inputAddress || insufficient}
-        title="통합 분석(베타)"
-        subtitle="분양성·분양가 분석을 레지스트리 기반으로 실행합니다. 상류(부지·설계) 의존은 자동 포함됩니다."
-      />
-
-      {/* 명시 실행 패널 — 자동 실행 제거. 코인 차감 안내 + 잔액 부족 시 충전 유도. */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-[var(--text-primary)]">분석 시작</p>
-              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                분석 시 사용한 LLM 사용량만큼 코인이 자동 차감됩니다
-                {balance?.unlimited ? (
-                  <> · <b className="text-[var(--text-primary)]">무제한(관리자)</b></>
-                ) : totalRemaining !== null && (
-                  <> · 코인 잔여 <b className="text-[var(--text-primary)]">{won(totalRemaining)}</b></>
-                )}
-              </p>
-            </div>
-            <button
-              onClick={runAnalysis}
-              disabled={!inputAddress || insufficient}
-              className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
-            >
-              분석 시작
-            </button>
-          </div>
-          {insufficient && (
-            <p className="mt-2 text-xs font-bold text-[var(--status-warning)]">
-              코인 잔액이 부족합니다. 좌측 코인 미터의 「추가결제」로 충전 후 다시 실행해 주세요.
-            </p>
-          )}
-          {!inputAddress && (
-            <p className="mt-2 text-xs text-[var(--text-hint)]">먼저 위에서 분석할 주소를 입력하세요.</p>
-          )}
-          {address && (
-            <p className="mt-2 text-xs text-[var(--text-hint)]">
-              분석 대상: <b className="text-[var(--text-secondary)]">{address}</b> · 실행 후 사용량은 설정 &gt; AI 사용량에서 확인할 수 있습니다.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* (지도는 위 Zone B로 이동 — 분석 후 상단 노출) */}
-
-      {/* 시장조사보고서 생성 트리거 (미리보기/PDF/PPT) — 분석 실행 버튼(기능 영역) */}
-      {address && (
-        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-          <CardContent className="p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
-                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
-                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
-                  <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--accent-strong)]" disabled={!!genState} />
-                  <span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 분석 포함</span> <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
-                </label>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={generateReport} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {genState === "report" ? "생성 중…" : "미리보기 생성"}
-                </button>
-                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("docx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
-                </button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       )}
 
       {/* 에러 */}
@@ -762,6 +751,43 @@ export function MarketInsightsWorkspaceClient() {
       {/*  [분석 · ANALYSIS] — 위 실데이터를 해석한 결과를 그 다음에 둔다.    */}
       {/* ================================================================ */}
       <SectionDivider kr="분석" en="ANALYSIS · 해석·전망" />
+
+      {/* 시장조사보고서 생성 트리거 — ANALYSIS 구간 상단에 배치해 보고서 생성→결과 표시의 관계를 명확히 함. */}
+      {address && (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
+                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
+                  <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--accent-strong)]" disabled={!!genState} />
+                  <span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 분석 포함</span> <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={generateReport} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "report" ? "생성 중…" : "미리보기 생성"}
+                </button>
+                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("docx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* AI 시세 추정 — 데이터 인텔리전스 metric 블록(실거래 기반 해석값이므로 분석으로 재배치) */}
       <div className="sa-di-block">
@@ -917,7 +943,7 @@ export function MarketInsightsWorkspaceClient() {
               <p className="sa-di-empty">K-Atlas 초정밀 금융·소비 데이터는 제휴 연동 후 제공됩니다. (현재 미연동 — 표본 수치 비표시)</p>
             )}
           </div>
-          
+
           {/* 권한 미달 시 잠금 오버레이 */}
           {!isPremiumUser && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-t from-[var(--bg-primary)] via-[var(--bg-primary)]/80 to-transparent pt-12">
