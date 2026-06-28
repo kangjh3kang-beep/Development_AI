@@ -326,7 +326,7 @@ export default function MultiParcelPage() {
                 )}
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Link href={proj("permit")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">개발방식·인허가 상세 <ArrowRight className="size-3" aria-hidden /></Link>
-                  <Link href={proj("canvas")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">지도 단일창(전탭) <ArrowRight className="size-3" aria-hidden /></Link>
+                  <Link href={proj("canvas")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">중앙분석센터(전탭) <ArrowRight className="size-3" aria-hidden /></Link>
                 </div>
               </section>
 

@@ -35,14 +35,14 @@ export default async function ProjectLayout({
           탑네비(LifecycleNavigator)는 진행바와 중복·라벨불일치로 제거(사장님 결정).
           개요는 아래 링크, 보고서·수지/금융/ESG는 진행바 단계로 접근. */}
       <div className="flex items-center gap-3 px-1">
-        {/* ★통합 단일창(SiteCanvas) = 1차 진입 동선(P0① 발견성). 지도 한 화면에서 전 항목 요약 + Go/NoGo.
-            기존 '개요'는 보조로 유지(additive·무손상). 페이지홉핑 대신 단일창을 디폴트 동선으로. */}
+        {/* ★중앙분석센터(SiteCanvas) = 1차 진입 동선(P0① 발견성). 지도 한 화면에서 전 항목 요약 + Go/NoGo.
+            기존 '개요'는 보조로 유지(additive·무손상). 페이지홉핑 대신 중앙분석센터를 디폴트 동선으로. */}
         <Link
           href={`/${locale}/projects/${id}/canvas`}
           className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-strong)] bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90"
         >
           <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21" /><line x1="9" y1="3" x2="9" y2="18" /><line x1="15" y1="6" x2="15" y2="21" /></svg>
-          통합 단일창
+          중앙분석센터
         </Link>
         <Link
           href={`/${locale}/projects/${id}`}

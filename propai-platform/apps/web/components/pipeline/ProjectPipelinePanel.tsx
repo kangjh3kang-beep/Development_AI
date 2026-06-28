@@ -459,7 +459,7 @@ export function ProjectPipelinePanel({
     void useProjectListStore.getState().syncFromBackend();
   }, []);
 
-  // ★홈/중앙분석센타 클릭 시(같은 라우트라 리마운트 없음) 분석뷰→입력(랜딩)으로 리셋.
+  // ★홈/중앙분석센터 클릭 시(같은 라우트라 리마운트 없음) 분석뷰→입력(랜딩)으로 리셋.
   //  새로고침해야만 홈으로 가던 문제 해결. 프로젝트 허브(projectMode)에선 적용 안 함.
   const homeNonce = useUiReset((s) => s.homeNonce);
   const homeNonceInit = useRef(true);

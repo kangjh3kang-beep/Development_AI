@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * SiteCanvas — 지도 중심 단일창 분석(요약 허브 + 드릴다운). 추가 라우트(기존 페이지 무손상).
+ * SiteCanvas(중앙분석센터) — 지도 중심 통합 분석(요약 허브 + 드릴다운). 추가 라우트(기존 페이지 무손상).
  *
  * 좌: 맥락형 요약 탭(토지/규제/개발방식/일조·배치/구획도) — 각 탭은 핵심 요약 + "상세 →"로
  *     해당 전용 페이지(site-analysis·legal·permit·design 등)에 연결(사용자 정련: 지도=요약, 상세=패널 메뉴).
@@ -108,7 +108,7 @@ export default function SiteCanvasPage() {
       <div className="mx-auto max-w-2xl py-10">
         <div className="mb-4 text-center">
           <p className="inline-flex items-center gap-1.5 text-lg font-black text-[var(--text-primary)]">
-            <MapIcon className="size-5 text-[var(--accent-strong)]" aria-hidden /> 지도 단일창 — 부지 선택
+            <MapIcon className="size-5 text-[var(--accent-strong)]" aria-hidden /> 중앙분석센터 — 부지 선택
           </p>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
             주소 검색·지도 클릭·엑셀로 필지를 선택하면 한 화면에서 분석이 채워집니다(다필지 통합 지원).

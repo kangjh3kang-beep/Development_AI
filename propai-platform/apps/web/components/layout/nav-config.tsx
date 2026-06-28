@@ -46,7 +46,7 @@ export function buildPrimaryNav(locale: string): NavSection[] {
       id: "review",
       title: "사업 검토",
       items: [
-        { id: "center", label: "중앙분석센타", href: `/${locale}`, icon: <IconDashboard /> },
+        { id: "center", label: "중앙분석센터", href: `/${locale}`, icon: <IconDashboard /> },
         { id: "precheck", label: "90초 사업성 진단", href: p("/precheck"), icon: <IconPermit /> },
         // 종합 부지분석 — 주소 1개로 7개 카테고리 자동 보고서(자족형 패널, 프로젝트 없이 단독 실행)
         { id: "comprehensive-analysis", label: "종합 부지분석", href: p("/analysis"), icon: <IconProject /> },

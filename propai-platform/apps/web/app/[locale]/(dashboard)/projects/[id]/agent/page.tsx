@@ -18,7 +18,7 @@ export default function AgentControlPage() {
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
 
   const links: { to: string; label: string; desc: string; icon: typeof Bot }[] = [
-    { to: proj("canvas"), label: "지도 단일창(종합 분석)", desc: "토지·규제·개발방식·수지를 한 화면에서 검토", icon: Sparkles },
+    { to: proj("canvas"), label: "중앙분석센터(종합 분석)", desc: "토지·규제·개발방식·수지를 한 화면에서 검토", icon: Sparkles },
     { to: proj("cost"), label: "BIM 적산·공사비", desc: "부위별 물량·공사비 산출", icon: Hammer },
     { to: proj("report"), label: "통합 보고서", desc: "은행제출용 통합 보고서·PDF", icon: FileText },
   ];

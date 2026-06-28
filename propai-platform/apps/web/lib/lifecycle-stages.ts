@@ -173,7 +173,7 @@ export interface ProjectTool {
 }
 
 export const PROJECT_TOOLS: ProjectTool[] = [
-  { route: "canvas", label: "지도 단일창", icon: "tool_map" },
+  { route: "canvas", label: "중앙분석센터", icon: "tool_map" },
   { route: "cad", label: "설계도면(CAD)", icon: "tool_cad" },
   { route: "collaboration", label: "회의방", icon: "tool_collab" },
   { route: "cost", label: "공사비", icon: "tool_cost" },
