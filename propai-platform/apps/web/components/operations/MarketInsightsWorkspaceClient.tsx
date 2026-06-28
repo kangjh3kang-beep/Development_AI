@@ -32,6 +32,7 @@ const PopulationDensityMap = dynamicMap<React.ComponentProps<typeof PopulationDe
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
+import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -832,6 +833,9 @@ export function MarketInsightsWorkspaceClient() {
           </div>
         </div>
       )}
+
+      {/* 다필지 통합 고지 — 보고서/타당성이 N필지 통합면적 기준임을 명시(근거·투명성). */}
+      {report?.integrated && <IntegratedParcelsBadge integrated={report.integrated} />}
 
       {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
       {report?.feasibility_analysis && (

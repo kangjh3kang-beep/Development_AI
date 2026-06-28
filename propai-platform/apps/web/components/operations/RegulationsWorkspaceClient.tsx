@@ -13,6 +13,7 @@ import { Bot, Landmark, Search } from "lucide-react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
@@ -151,6 +152,8 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
 
       {result && (
         <>
+          {/* 다필지 통합 고지 — 결과가 N필지 통합면적·우세용도 기준임을 명시(근거·투명성). */}
+          {result.integrated && <IntegratedParcelsBadge integrated={result.integrated} />}
           {/* 검증 배지 + AI 규제 해석 요약 통합 카드(상세 해석 카드는 아래 유지). */}
           <AnalysisVerdict
             analysisType="regulation"

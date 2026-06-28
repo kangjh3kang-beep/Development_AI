@@ -6,6 +6,7 @@ import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -32,6 +33,7 @@ type ComplianceCheckResponse = {
   overall_status?: string;
   summary?: string;
   checked_at?: string;
+  integrated?: IntegratedMeta | null;
 };
 
 type ComplianceItem = {
@@ -500,6 +502,10 @@ export function ApprovalsWorkspaceClient({
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--accent-strong)]">
               {labels.complianceLabel}
             </p>
+            {/* 다필지 통합 고지 — 통합면적·우세용도 기준 검사임을 명시. */}
+            {complianceResult.integrated && (
+              <IntegratedParcelsBadge integrated={complianceResult.integrated} className="mt-2" />
+            )}
             <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
               {complianceResult.overall_status ?? "-"}
             </p>

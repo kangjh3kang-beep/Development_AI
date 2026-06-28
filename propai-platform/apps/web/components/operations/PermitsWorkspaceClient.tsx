@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { entriesToParcelRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -22,6 +23,7 @@ type ComplianceCheckResponse = {
   overall_status?: string;
   summary?: string;
   checked_at?: string;
+  integrated?: IntegratedMeta | null;
 };
 
 type ComplianceItem = {
@@ -360,6 +362,10 @@ export function PermitsWorkspaceClient({
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.resultsTitle}
             </p>
+            {/* 다필지 통합 고지 — 통합면적·우세용도 기준 인허가 검사임을 명시. */}
+            {result?.integrated && (
+              <IntegratedParcelsBadge integrated={result.integrated} className="mt-2" />
+            )}
             {result?.results && result.results?.length > 0 ? (
               <div className="mt-4 space-y-3">
                 {(result.results ?? []).map((item, idx) => (
