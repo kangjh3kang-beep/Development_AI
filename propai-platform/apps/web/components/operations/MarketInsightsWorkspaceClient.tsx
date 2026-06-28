@@ -33,6 +33,7 @@ import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
+import { shouldSendParcels } from "@/lib/parcel-rows";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -436,7 +437,7 @@ export function MarketInsightsWorkspaceClient() {
         // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
         body: {
           address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
-          ...(runParcelRows.length > 1 ? { parcels: runParcelRows } : {}),
+          ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
         },
         useMock: false, timeoutMs: 120000,
       });
@@ -464,7 +465,7 @@ export function MarketInsightsWorkspaceClient() {
         // ★다운로드도 미리보기와 동일 payload(options+pnu+parcels) — PDF/PPTX에 인구·소득·통합면적이 누락되지 않게.
         body: JSON.stringify({
           address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
-          ...(runParcelRows.length > 1 ? { parcels: runParcelRows } : {}),
+          ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
         }),
       });
       if (!res.ok) throw new Error(String(res.status));
