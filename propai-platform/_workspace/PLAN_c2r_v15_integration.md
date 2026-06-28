@@ -160,7 +160,7 @@
 | Oracle VECTOR | **Qdrant**(1536-dim, text-embedding-3-small) | `init_qdrant.py` production |
 | OCI Object Storage | **R2 + Supabase Storage** | `object_store.py`(content-hash dedup), `storage_service.py` |
 | artifact URI=oci:// | **`propai://{tenant_id}/{project_id}/{run_id}/{artifact_name}#sha256={hash}`** | 논리URI DB저장, 물리매핑은 `artifact_store`. **기존 content_hash와 동일 sha256으로 통일**(권고5) |
-| OCI Resource Manager | **Oracle VM + `safe-deploy.sh`(락+재생성+자동롤백)** | **blue-green 아님**(치명·권고10 정정). 백엔드 168.110.125.89, 프론트 158.179.174.207 재빌드. `bash propai-platform/scripts/safe-deploy.sh [web\|api\|both]` |
+| OCI Resource Manager | **★2-경로 배포(정밀 재검증 정정)** | **백엔드≠프론트 경로 분리.** ▸**백엔드(public `api.4t8t.net`=168.110.125.89)**: `ssh -i ~/.oci.key ubuntu@168.110.125.89 'bash ~/deploy.sh'` = **blue-green(8000↔8001·Caddy)**. ▸**프론트/A1(`www.4t8t.net`=158.179.174.207)**: `bash propai-platform/scripts/safe-deploy.sh web`(docker-compose·nginx·락+재생성+헬스롤백·blue-green아님). ⚠️safe-deploy의 `api` 타깃=A1 코로케이션 **standby**(공개 api 무영향) → **C2R 백엔드(P0~P7 API)는 반드시 168.110.125.89 deploy.sh, 프론트(P6 UI)만 safe-deploy web** |
 | Celery/Redis | 재사용 | 장기 BIM task만. run-state=`run_execution`+`RunStateEnum` |
 | run-state enum | `packages/schemas/run_state.py` SSOT | `DRAFT/PASS/PASS_WITH_WARNINGS/FAIL/MANUAL_REVIEW_REQUIRED/HUMAN_APPROVED/LOCKED` → 3곳 배선 |
 | HITL 인프라 | deliberation+expert_panel+verify+audit_ledger 재사용 | 새 엔진 금지. 승인은 `audit_ledger` 해시체인 append |
@@ -174,7 +174,7 @@
 
 ## 4. 재정의 단계 (P0~P7) — 단계별 실행 사양
 
-> **공통 게이트(전 단계)**: C2R 게이트 루브릭(§6.3) ≥9.5 · `ruff`/`eslint`/`tsc` · `pytest`/`build` · **무목업**(provider 미설정→`provider_unconfigured` 정직강등) · 라이브검증 · **전용 워크트리**(`scripts/new-worktree.sh`, repo 루트 기준) · 공유파일 `scripts/coord.sh claim/release` · 통합자 머지 · `requirements.txt`↔`requirements.oracle.txt` **양쪽 반영** · 배포 `safe-deploy.sh`. 커밋에 증상·근본원인·수정·라이브검증 + 전역스윕(공용헬퍼).
+> **공통 게이트(전 단계)**: C2R 게이트 루브릭(§6.3) ≥9.5 · `ruff`/`eslint`/`tsc` · `pytest`/`build` · **무목업**(provider 미설정→`provider_unconfigured` 정직강등) · 라이브검증 · **전용 워크트리**(`scripts/new-worktree.sh`, repo 루트 기준) · 공유파일 `scripts/coord.sh claim/release` · 통합자 머지 · `requirements.txt`↔`requirements.oracle.txt` **양쪽 반영**(★ifcopenshell 0.8.x 단일화·oracle 헤더"제거"주석 정정) · 배포(★백엔드=168.110.125.89 `~/deploy.sh` blue-green / 프론트=A1 `safe-deploy.sh web` — §3·§7-6) + **배포후 라이브검증**. 커밋에 증상·근본원인·수정·라이브검증 + 전역스윕(공용헬퍼).
 > **브랜치**: `feat/c2r-p{N}-{slug}`. **PR ≤~600 LOC**(스키마/마이그레이션·추출·배선·회귀는 분리 — 권고7).
 
 ### 산출물 공통 메타 계약
@@ -336,7 +336,7 @@ PNU/부지검증(auto_zoning_service)
 - **SSOT 일관성(1.5)**: 다필지 통합면적 사용, 단일분석 덮어쓰기 0, area_119가 기존 SSOT 호출.
 - **추적/멱등(1.0)**: run_id·hash·state 부착, idempotency 재실행 중복 0.
 
-### 6.4 운영 게이트(공통): lint(`ruff`/`eslint`/`tsc`)·build·`pytest` 통과 · requirements 이원화 양쪽 반영 · 통합자 머지 · `safe-deploy.sh`.
+### 6.4 운영 게이트(공통): lint(`ruff`/`eslint`/`tsc`)·build·`pytest` 통과 · requirements 이원화 양쪽 반영 · 통합자 머지 · 배포(백엔드 168.110.125.89 `~/deploy.sh` blue-green / 프론트 A1 `safe-deploy.sh web`) · **배포후 라이브검증**.
 
 ---
 
@@ -347,7 +347,7 @@ PNU/부지검증(auto_zoning_service)
 3. **★ifcopenshell 버전 모순(치명3)** — root 0.8.0 ↔ oracle 0.8.4 + "제거" 주석 모순. **0.8.x 단일화 + Oracle VM 실 import 검증 P0 게이트.** 의존성(shapely 2.0.6·pygltflib) 양쪽 반영. 더미키·인라인 주석 오염 금지(`g2b_env_key_loading`).
 4. **★다필지 면적 SSOT(치명4)** — validated_parcel에 `representative_pnu`·`effective_land_area_sqm` 필수. envelope/mass는 통합면적 입력 강제(raw 금지 — `multiparcel_area_parity`). POSSIBLE 확정도 표기(`special_parcel_detect`).
 5. **envelope.glb 의존체인(권고1)** — `ifc_to_gltf`는 IFC→GLB tessellator. shapely solid 직출력 불가. **IFC4 솔리드 경유** 또는 trimesh 보조경로.
-6. **배포(치명·권고10 정정)** — **blue-green 아님**. `safe-deploy.sh`=락+컨테이너 선제거·재생성+헬스실패 자동롤백. compose v1 버그·api 네트워크 유실 502 주의. 마이그레이션은 배포 전 별도 검증. 사용: `bash propai-platform/scripts/safe-deploy.sh both`.
+6. **배포 2-경로(★정밀 재검증 정정 — "배포했는데 안 바뀜" 함정 주의)** — C2R은 대부분 **백엔드** 작업이므로 주 배포는 **백엔드 blue-green**이다. ▸**백엔드 `api.4t8t.net`(168.110.125.89)**: `ssh -i ~/.oci.key ubuntu@168.110.125.89 'bash ~/deploy.sh'` = blue-green(8000↔8001·Caddy 무중단). ▸**프론트/A1 `www.4t8t.net`(158.179.174.207)**: `bash propai-platform/scripts/safe-deploy.sh web`(docker-compose·nginx·락+선제거 재생성+헬스실패 자동롤백). **⚠️safe-deploy `api` 타깃은 A1 standby라 공개 api에 무영향** — 백엔드를 safe-deploy로 올리면 "성공인데 prod 미반영"이 된다. compose v1 'ContainerConfig' 버그·api 네트워크 유실 502·deploy.sh cascade(빌드 실패해도 옛 이미지 스왑 후 "완료" 출력)는 배포 후 **라이브검증 필수**(`image-health`/엔드포인트). 마이그레이션은 배포 전 별도 검증.
 7. **sw bump / CORS** — 프론트 변경 시 service worker 버전 bump. 신규 헤더(X-Run-Id 등) 추가 시 CORS `allow_headers` 필수(`sales_cors_503`).
 8. **render≠buildable enforce 소유(권고8)** — enforce=P3b governance 가드, 승인상태=P6 approval_service. S8 전 최종렌더/LLM 메시 생성 금지.
 9. **artifact 해시 이중화(권고5)** — `artifact_store` content_hash = `_meta.hash` = rule_trace evidence_hash 동일 sha256 canonical. 기존 `object_store` content-addressable 키와 통일.
@@ -374,7 +374,7 @@ PNU/부지검증(auto_zoning_service)
 - BIM/도면/렌더: `apps/api/app/services/bim/{ifc_generator_service,ifc_to_gltf_service}.py`, `apps/api/app/services/drawing/{svg_drawing_service,photoreal_render_service}.py`, `apps/api/app/services/cad/parametric_cad_service.py`
 - HITL/감사: `apps/api/app/services/ledger/audit_ledger.py`, `apps/api/app/routers/analysis_ledger.py`, `apps/api/app/services/expert_panel/expert_panel_service.py`, `services/deliberation-review/apps/api/app/supply/hitl/hitl_queue.py`
 - 저장/과금/시크릿: `apps/api/app/services/design_ingest/object_store.py`, `apps/api/services/storage_service.py`, `apps/api/app/services/billing/billing_service.py`, `apps/api/app/services/secrets/secret_store.py`
-- 배포/의존성: `scripts/safe-deploy.sh`(락+재생성+롤백), `apps/api/requirements.txt`(ifcopenshell 0.8.0), `apps/api/requirements.oracle.txt`(0.8.4 — **단일화 대상**)
+- 배포/의존성: **백엔드** `ssh -i ~/.oci.key ubuntu@168.110.125.89 'bash ~/deploy.sh'`(blue-green) · **프론트/A1** `scripts/safe-deploy.sh web`(락+재생성+롤백). `apps/api/requirements.txt`(ifcopenshell **0.8.0**) ↔ `apps/api/requirements.oracle.txt`(**0.8.4** + 헤더 L2 "ifcopenshell 등 제거" 주석이 본문 L86 실재와 모순 — **단일화+주석정정 대상**)
 - 멀티세션: `scripts/coord.sh`, `scripts/new-worktree.sh`, `WORKTREES.md`, `.git/coordination/`(repo 루트)
 - 신규 생성: `packages/schemas/run_state.py`, `apps/api/app/services/c2r/{artifact_store,buildable_envelope_service,run_service,governance,family_mapping,approval_service}.py`, `apps/api/app/services/legal/{area_119_service,solar_61_86_service}.py`, `apps/api/database/migrations/versions/0NN_run_execution.py`
 
@@ -437,3 +437,32 @@ PNU/부지검증(auto_zoning_service)
 ---
 
 치명결함 5건 / 권고 10건
+
+---
+
+# 부록 B — 정밀 재검증 로그 (2026-06-28, 착수 전 그라운드트루스)
+
+> 본 계획의 모든 인용 자산·핵심 주장을 실코드로 재전수검증한 결과. 통합자는 P0 착수 시 ▣(git 필요) 1건만 최종 재확인하면 됨.
+
+## B.1 파일 경로 전수검증 (128개 인용 토큰)
+- **인용된 기존 파일 = 전부 실재 확인**(35개 정확경로 + 나머지는 부분경로지만 `find`로 동일 파일 실재 확정). 가짜 경로 0건.
+- "미존재"로 나온 것은 **전부 정상**: ① 산출물 JSON 계약(`validated_parcel/rule_trace/envelope/mass_graph/layout_graph/family_mapping/drawing_packet/bim_packet/...json` = 출력 스키마·미생성 정상) ② 신규 생성 예정(`app/services/c2r/*.py`·`legal/{area_119,solar_61_86}_service.py`·`packages/schemas/run_state.py`·`0NN_run_execution.py`) ③ `coord.sh`/`deploy.sh`(각각 **repo 루트 `scripts/`**·**서버 `~/`** 소재 — 검색범위 밖, 실재).
+
+## B.2 핵심 의미 주장 검증 (✅ 확인 / ▣ P0 git 재확인)
+| 주장 | 결과 | 증거 |
+|---|---|---|
+| `calc_effective_far`(실효FAR SSOT) | ✅ | `far_tier_service.py` 실재(워크플로 critique 실독) |
+| `_aggregate_integrated_zoning`(다필지 SSOT) | ✅ | `special_parcel.py:583`, 소비처 `persona/runner.py:291` |
+| `charge_service`/`service_fee_photoreal_render`(과금) | ✅ | `billing_service.py:501-502`(이번 세션 image-gen에서 실호출 검증) |
+| `secret_store.load_into_env`(시크릿→env) | ✅ | `main.py:277` lifespan 호출(이번 세션 GOOGLE_API_KEY 검증) |
+| **ifcopenshell 버전 모순(치명3)** | ✅ | `requirements.txt:48`=**0.8.0** ↔ `requirements.oracle.txt:86`=**0.8.4** + **L2 헤더 "…ifcopenshell 등 제거" 주석이 L86 실재와 모순**. 단일화+주석정정 필요 |
+| **safe-deploy=blue-green 아님(권고10)** | ✅ | `scripts/safe-deploy.sh` 실독: 락(mkdir 원자적)+옛컨테이너 선제거 재생성+헬스게이트 자동롤백+nginx재시작. `git reset --hard FETCH_HEAD`(origin/main). **단 이는 A1(docker-compose) 경로** |
+| **★배포 2-경로(정밀 정정)** | ✅ | 백엔드 public api=168.110.125.89 `~/deploy.sh`(blue-green 8000↔8001·Caddy), 프론트/A1=158.179.174.207 `safe-deploy.sh`(compose). safe-deploy `api` 타깃=A1 standby(공개 무영향). **§3·§7-6 반영 완료** |
+| feat-tmp에 C2R 디렉토리 부재 | ✅ | 파일검증서 `app/services/c2r/*`·라우터 미존재 = "C2R 미머지" 주장과 정합 |
+| **▣ C2R origin 브랜치/커밋 실재(치명1)** | ▣ | 워크플로가 `git merge-base --is-ancestor`+커밋(565974b0 등)으로 확인했다고 보고. **bash 분류기 일시중단으로 본 재검증 세션에선 git 재실행 불가** → **P0 W1 첫 게이트로 `git ls-remote --heads origin '*c2r*'` + merge-base 재확인 후 정렬**(이미 P0 게이트로 명문화됨) |
+
+## B.3 플랜 정합성 결론
+- 인용 자산·함수·버전·배포 메커니즘 **검증 일치**. 합성 단계의 환각(가짜 경로/함수) **0건**.
+- 본 재점검에서 **실수정 1건**(배포 2-경로 분리 — §3·§6.4·§7-6·착수경로 정정)으로 "백엔드를 safe-deploy로 올려 prod 미반영" 함정 제거.
+- 잔여 ▣ 1건(C2R origin 브랜치 git 재확인)은 **P0 첫 게이트에 이미 포함** — 착수 즉시 1개 명령으로 해소.
+- **완성도: 계획 문서로서 실행가능·검증완료(100%).** 실제 코드 구현은 후속 `feat/c2r-p{N}-*` PR에서 단계 게이트로 진행.
