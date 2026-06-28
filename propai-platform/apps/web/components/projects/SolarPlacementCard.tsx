@@ -41,7 +41,7 @@ const GRADE_COLOR: Record<string, string> = {
 
 export function SolarPlacementCard({
   address, pnu, zone, landAreaSqm,
-  /** ★통합 단일창(Tier1) 요약 모드 — 추천 배치안+8방위만, 배치 대안 비교·근거 상세는 숨김(1줄 요약).
+  /** ★중앙분석센터(Tier1) 요약 모드 — 추천 배치안+8방위만, 배치 대안 비교·근거 상세는 숨김(1줄 요약).
    *  기본 false(기존 소비처 ProjectAnalysisSummary 무손상). */
   compact = false,
 }: {
@@ -129,7 +129,7 @@ export function SolarPlacementCard({
         </div>
       )}
 
-      {/* ★compact(통합 단일창 요약)=추천+8방위만. 배치 대안 비교·근거 상세는 1줄 요약으로 접고 전용 페이지로. */}
+      {/* ★compact(중앙분석센터 요약)=추천+8방위만. 배치 대안 비교·근거 상세는 1줄 요약으로 접고 전용 페이지로. */}
       {compact ? (
         <p className="mt-3 text-[10px] leading-relaxed text-[var(--text-hint)]">
           배치 대안 {res.placement_options.length}개 비교(판상/탑상/중정 등) · 상세는 설계·일조 페이지에서.
