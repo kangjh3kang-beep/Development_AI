@@ -1,51 +1,52 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import DashboardPage from "../page";
 
-// 대시보드 홈은 현재 사전(getDictionary) 없이 한국어 정적 카피를 직접 렌더하며,
-// 진행단계/KPI/프로젝트 데이터는 클라이언트 로더(useEffect+apiClient)가 비동기로 채운다.
-// 따라서 이 테스트는 서버 컴포넌트가 동기적으로 확정 렌더하는 핵심 진입 동선
-// (히어로 카피 + 실제 내비게이션 목적지)을 검증한다.
+vi.mock("@/components/onboarding/OnboardingWizard", () => ({
+  OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
+}));
+
+vi.mock("@/components/dashboard/DashboardKpiLoader", () => ({
+  DashboardKpiLoader: () => <div data-testid="dashboard-kpi-loader">KPI</div>,
+}));
+
+vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
+  DashboardProjectLoader: ({ locale }: { locale: string }) => (
+    <div data-testid="dashboard-project-loader">{locale}</div>
+  ),
+}));
+
+vi.mock("@/components/dashboard/DashboardEsgScore", () => ({
+  DashboardEsgScore: () => <div data-testid="dashboard-esg-score">ESG</div>,
+}));
+
+vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
+  PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
+}));
+
 describe("Dashboard home navigation", () => {
-  it("renders the hero entry links and real overview navigation destinations", async () => {
+  it("renders the operations console entry links", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    // 히어로 헤드라인/서브카피 — 사용자가 처음 보는 핵심 가치제안.
-    expect(
-      screen.getByRole("heading", {
-        name: "개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.",
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("부동산 개발 분석")).toBeInTheDocument();
+    expect(screen.getByText("사업 관제")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "개발사업의 다음 액션을 한 화면에서 결정합니다." })).toBeInTheDocument();
 
-    // 핵심 행동(accent) — 프로젝트 생성 진입 동선이 /en/projects/new 로 연결된다.
-    // "프로젝트 생성" 라벨은 히어로 + 빈상태 로더에 중복 등장하므로 href로 식별한다.
-    const allLinks = screen.getAllByRole("link");
-    const newProjectLinks = allLinks.filter(
-      (link) => link.getAttribute("href") === "/en/projects/new",
-    );
-    expect(newProjectLinks.length).toBeGreaterThan(0);
-
-    // 이용 가이드 진입 동선.
-    expect(allLinks.some((link) => link.getAttribute("href") === "/en/guide")).toBe(true);
+    expect(screen.getByRole("link", { name: "프로젝트 생성" })).toHaveAttribute("href", "/en/projects/new");
+    expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getAllByRole("link", { name: "프로젝트 전체 보기" })[0]).toHaveAttribute("href", "/en/projects");
   });
 
-  it("renders the active pipeline section and real card destinations", async () => {
+  it("renders lifecycle rail, action queue, and data status wiring", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    // 활성 진행 단계 섹션 헤더(실시간 모니터링 진입점).
-    expect(screen.getByText("활성 진행 단계")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /01\s+부지/ })).toHaveAttribute("href", "/en/land-schedule");
+    expect(screen.getByRole("link", { name: /02\s+권리/ })).toHaveAttribute("href", "/en/registry-analysis");
+    expect(screen.getByRole("link", { name: /07\s+획득/ })).toHaveAttribute("href", "/en/auction");
+    expect(screen.getByRole("link", { name: /08\s+운영/ })).toHaveAttribute("href", "/en/digital-twin");
 
-    // 섹션 우상단 "전체 보기" → 프로젝트 목록(/en/projects).
-    expect(screen.getByRole("link", { name: "전체 보기" })).toHaveAttribute(
-      "href",
-      "/en/projects",
-    );
-
-    // 사이드바 규제 동향 → 규제 분석(/en/regulations) 진입.
-    expect(screen.getByRole("link", { name: "규제 분석 열기 →" })).toHaveAttribute(
-      "href",
-      "/en/regulations",
-    );
+    expect(screen.getByRole("link", { name: /신규 후보지 검토/ })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByRole("link", { name: /종합 부지분석/ })).toHaveAttribute("href", "/en/analysis");
+    expect(screen.getByRole("link", { name: /공공입찰연결/ })).toHaveAttribute("href", "/en/g2b");
+    expect(screen.getByTestId("dashboard-project-loader")).toHaveTextContent("en");
   });
 });

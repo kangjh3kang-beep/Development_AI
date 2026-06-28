@@ -10,24 +10,47 @@ import {
 const NAV = buildPrimaryNav("en");
 
 describe("buildPrimaryNav", () => {
-  it("섹션 순서 + 게이팅(asset-ops는 운영단계 단절로 네비에서 숨김)", () => {
+  it("통합 IA 섹션 순서 + 게이팅", () => {
     expect(NAV.map((s) => s.id)).toEqual([
-      "review", "land-finance", "execution", "design", "admin",
+      "control",
+      "projects",
+      "market-acquisition",
+      "design-center",
+      "operations-center",
+      "admin",
     ]);
+    expect(NAV.find((s) => s.id === "operations-center")?.assetOpsOnly).toBe(true);
     expect(NAV.find((s) => s.id === "admin")?.adminOnly).toBe(true);
   });
 
+  it("최신 main의 관제 동선과 프리페치 정책을 registry에서 전달", () => {
+    const control = NAV.find((s) => s.id === "control")!;
+    expect(control.items.map((n) => n.href)).toEqual(["/en", "/en/precheck", "/en/analysis"]);
+
+    const designRefs = NAV.find((s) => s.id === "design-center")?.items.find((n) => n.id === "design-refs");
+    const adminItems = NAV.find((s) => s.id === "admin")?.items ?? [];
+
+    expect(designRefs?.prefetch).toBe(false);
+    expect(adminItems.map((item) => item.prefetch)).toEqual([false, false, false, false]);
+  });
+
   it("L2 그룹 신설 + L3 children('└' 흉내 제거)", () => {
-    const review = NAV[0];
-    const marketSales = review.items.find((n) => n.id === "market-sales");
+    const projects = NAV.find((s) => s.id === "projects")!;
+    const landRights = projects.items.find((n) => n.id === "land-rights");
+    expect(landRights?.children?.map((c) => c.href)).toEqual([
+      "/en/land-schedule", "/en/registry-analysis", "/en/desk-appraisal",
+    ]);
+    const business = projects.items.find((n) => n.id === "business-analysis");
+    expect(business?.children?.map((c) => c.id)).toEqual(["investment", "cost"]);
+
+    const marketAcquisition = NAV.find((s) => s.id === "market-acquisition")!;
+    const marketSales = marketAcquisition.items.find((n) => n.id === "market-sales");
     expect(marketSales?.children?.map((c) => c.href)).toEqual([
       "/en/market-insights", "/en/sales-info",
     ]);
-    const land = NAV[1].items.find((n) => n.id === "land-schedule");
-    expect(land?.href).toBe("/en/land-schedule"); // 그룹이 자체 페이지도 가짐
-    expect(land?.children?.map((c) => c.id)).toEqual([
-      "registry-analysis", "desk-appraisal",
-    ]);
+    const acquisition = marketAcquisition.items.find((n) => n.id === "acquisition");
+    expect(acquisition?.children?.map((c) => c.href)).toEqual(["/en/auction", "/en/g2b"]);
+
     // 라벨에 '└' 문자 없음(진짜 계층)
     const allLabels = NAV.flatMap((s) => s.items).flatMap((n) => [n.label, ...(n.children ?? []).map((c) => c.label)]);
     expect(allLabels.some((l) => l.includes("└"))).toBe(false);
@@ -48,24 +71,22 @@ describe("isHrefActive", () => {
 describe("자동 펼침(activeGroupIds / activeSectionIds)", () => {
   it("L3 활성 → 부모 그룹·섹션 펼침", () => {
     const path = "/en/registry-analysis";
-    expect(activeGroupIds(NAV, path)).toContain("land-schedule");
-    expect(activeSectionIds(NAV, path)).toContain("land-finance");
+    expect(activeGroupIds(NAV, path)).toContain("land-rights");
+    expect(activeSectionIds(NAV, path)).toContain("projects");
   });
 
-  it("L2 그룹 자체 페이지 활성 → 그룹·섹션 펼침", () => {
+  it("L3 토지조서 활성 → 토지·권리 그룹·섹션 펼침", () => {
     const path = "/en/land-schedule";
-    expect(activeGroupIds(NAV, path)).toContain("land-schedule");
-    expect(activeSectionIds(NAV, path)).toContain("land-finance");
+    expect(activeGroupIds(NAV, path)).toContain("land-rights");
+    expect(activeSectionIds(NAV, path)).toContain("projects");
   });
 
-  it("리프 활성 → 섹션만 펼침(그룹 펼침 없음)", () => {
-    // 공공입찰(g2b)은 '사업 획득 채널'로 토지·자금(land-finance) 섹션의 리프다.
-    expect(activeSectionIds(NAV, "/en/g2b")).toEqual(["land-finance"]);
-    expect(activeGroupIds(NAV, "/en/g2b")).toEqual([]);
+  it("획득 채널 활성 → 사업 획득 그룹·시장획득 섹션 펼침", () => {
+    expect(activeSectionIds(NAV, "/en/g2b")).toEqual(["market-acquisition"]);
+    expect(activeGroupIds(NAV, "/en/g2b")).toEqual(["acquisition"]);
   });
 
   it("nodeHasActive — 하위경로 포함", () => {
-    const projects = NAV[0].items.find((n) => n.id === "projects")!; // 프로젝트 관리
-    expect(nodeHasActive(projects, "/en/projects/abc")).toBe(true);
+    expect(nodeHasActive(NAV[1].items[0], "/en/projects/abc")).toBe(true); // 프로젝트 관리
   });
 });

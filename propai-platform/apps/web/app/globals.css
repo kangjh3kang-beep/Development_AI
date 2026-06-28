@@ -13,6 +13,49 @@
   --font-mono: var(--font-mono);
 }
 
+:root {
+  --font-sans: "Noto Sans KR", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-display: "Pretendard", "Noto Sans KR", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  --background: #f7fafc;
+  --foreground: #18212b;
+  --surface: #ffffff;
+  --surface-soft: #f3f7fa;
+  --surface-muted: #edf3f7;
+  --surface-secondary: #ffffff;
+  --surface-strong: #ffffff;
+  --glass-bg: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(37, 58, 77, 0.12);
+  --glass-blur: 14px;
+  --line: rgba(37, 58, 77, 0.12);
+  --line-subtle: rgba(37, 58, 77, 0.08);
+  --line-strong: rgba(37, 58, 77, 0.20);
+  --text-primary: #18212b;
+  --text-secondary: #53606c;
+  --text-tertiary: #768493;
+  --text-hint: #95a2af;
+  --accent: #2f7dd9;
+  --accent-strong: #1d5fd1;
+  --accent-soft: rgba(29, 95, 209, 0.10);
+  --data-accent: #1b8a5a;
+  --data-accent-soft: rgba(27, 138, 90, 0.10);
+  --data-accent-line: rgba(27, 138, 90, 0.28);
+  --data-glow: none;
+  --grid-line: rgba(37, 58, 77, 0.08);
+  --hud-bracket: rgba(29, 95, 209, 0.36);
+  --hud-scanline: rgba(37, 58, 77, 0.06);
+  --status-success: #1b8a5a;
+  --status-warning: #b7791f;
+  --status-error: #d74e42;
+  --status-info: #2f7dd9;
+  --shadow-xs: 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-sm: 0 1px 3px rgba(24, 33, 43, 0.08);
+  --shadow-md: 0 8px 24px rgba(24, 33, 43, 0.08);
+  --shadow-lg: 0 18px 40px rgba(24, 33, 43, 0.10);
+  --shadow-inner: inset 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-glow: 0 10px 30px rgba(29, 95, 209, 0.16);
+}
+
 /* ── Base Reset ── */
 * {
   box-sizing: border-box;
@@ -26,9 +69,7 @@ html {
 body {
   min-height: 100vh;
   background-color: var(--background);
-  background-image: 
-    radial-gradient(ellipse at 10% 5%, var(--accent-soft), transparent 40%),
-    radial-gradient(ellipse at 90% 50%, rgba(79, 70, 229, 0.05), transparent 40%);
+  background-image: none;
   background-attachment: fixed;
   color: var(--text-primary);
   font-family: var(--font-sans), "Noto Sans KR", "Pretendard", system-ui, sans-serif;
@@ -37,7 +78,7 @@ body {
   text-rendering: optimizeLegibility;
   font-feature-settings: "ss01", "ss02", "cv01";
   line-height: 1.6;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 /* ── Fix Placeholder Contrast ── */
@@ -109,11 +150,11 @@ summary {
 }
 
 /* ── Typography Hierarchy ── */
-h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Space Grotesk", sans-serif; }
-h1 { font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
-h2 { font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; }
-h3 { font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
-h4, h5, h6 { font-weight: 500; letter-spacing: -0.015em; line-height: 1.3; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Pretendard", sans-serif; }
+h1 { font-weight: 700; letter-spacing: 0; line-height: 1.1; }
+h2 { font-weight: 600; letter-spacing: 0; line-height: 1.2; }
+h3 { font-weight: 600; letter-spacing: 0; line-height: 1.25; }
+h4, h5, h6 { font-weight: 500; letter-spacing: 0; line-height: 1.3; }
 
 p {
   line-height: 1.7;
@@ -188,10 +229,10 @@ textarea {
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background: var(--accent-strong);
   border-radius: 999px;
-  box-shadow: inset 0 0 6px rgba(45,212,191,0.5);
+  box-shadow: none;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: var(--text-primary);
+  background: var(--accent);
 }
 
 /* Accessibility */
@@ -593,7 +634,7 @@ textarea {
   .cc-num {
     font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--text-primary);
   }
   /* 데이터 액센트 발광 수치(핵심 KPI 강조) */
@@ -608,7 +649,7 @@ textarea {
     font-size: 0.6875rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: 0;
     color: var(--text-tertiary);
   }
   /* 패널 메타라벨(헤더용, 데이터 액센트) */
@@ -617,7 +658,7 @@ textarea {
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.22em;
+    letter-spacing: 0;
     color: var(--data-accent);
   }
 
@@ -630,7 +671,7 @@ textarea {
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: 0;
     color: var(--data-accent);
   }
   .cc-live > i {
@@ -657,7 +698,7 @@ textarea {
     font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
     font-size: 0.625rem;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0;
     color: var(--data-accent);
     background: var(--data-accent-soft);
     border: 1px solid var(--data-accent-line);
@@ -769,7 +810,7 @@ textarea {
     flex: 1;
     font-size: 0.8125rem;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     color: var(--text-primary);
   }
   /* 펼침 화살표 — 150~200ms 회전만 */
@@ -791,7 +832,7 @@ textarea {
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.16em;
+    letter-spacing: 0;
     color: var(--text-hint);
   }
 
@@ -834,7 +875,7 @@ textarea {
   .sa-di-tile__label {
     font-size: 0.625rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     color: var(--text-hint);
     white-space: nowrap;
     overflow: hidden;
@@ -846,7 +887,7 @@ textarea {
     font-variant-numeric: tabular-nums;
     font-size: 0.875rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--text-primary);
     word-break: break-word;
   }
@@ -855,7 +896,7 @@ textarea {
   .sa-di-tile__value--text {
     font-family: inherit;
     font-size: 0.8125rem;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
   }
 
   /* ── 라벨↔값 데이터 로우(표보다 가벼운 정렬) ── */
@@ -879,7 +920,7 @@ textarea {
     font-variant-numeric: tabular-nums;
     font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--text-primary);
     text-align: right;
   }
@@ -893,7 +934,7 @@ textarea {
     font-size: 0.5625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0;
     color: var(--text-hint);
     border-bottom: 1px solid var(--line);
   }
@@ -912,7 +953,7 @@ textarea {
     font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     text-align: right;
   }
   .sa-di-table th.sa-di-num { text-align: right; }
@@ -937,7 +978,7 @@ textarea {
     font-variant-numeric: tabular-nums;
     font-size: 1rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--text-primary);
   }
 
@@ -950,7 +991,7 @@ textarea {
     border-radius: 0.5rem;
     font-size: 0.6875rem;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     color: var(--text-secondary);
     background: var(--surface-soft);
     border: 1px solid var(--line);
@@ -1021,7 +1062,7 @@ textarea {
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0;
     color: var(--status-error);
   }
 
@@ -1118,7 +1159,7 @@ textarea {
     font-family: var(--font-mono), ui-monospace, monospace;
     font-size: 0.6875rem;       /* 11px */
     font-weight: 600;
-    letter-spacing: 0.18em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-tertiary);
   }
@@ -1135,7 +1176,7 @@ textarea {
   .db-section-title {
     font-size: 1.5rem;          /* 24px */
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     line-height: 1.2;
     color: var(--text-primary);
   }
@@ -1189,7 +1230,7 @@ textarea {
   .db-feature-title {
     font-size: 0.9375rem;        /* 15px */
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     color: var(--text-primary);
     line-height: 1.3;
   }
@@ -1232,7 +1273,7 @@ textarea {
   }
   .db-card__title {
     font-weight: 600;
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
     color: var(--text-primary);
     line-height: 1.25;
   }
@@ -1256,7 +1297,7 @@ textarea {
     font-variant-numeric: tabular-nums;
     font-size: 2.5rem;           /* 40px */
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     line-height: 1;
     color: var(--text-primary);
   }
@@ -1311,7 +1352,7 @@ textarea {
   .db-hero__headline {
     font-size: clamp(1.75rem, 3.5vw, 2.75rem);  /* 28~44px */
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     line-height: 1.2;
     /* 한국어는 어절(띄어쓰기) 단위로만 줄을 바꾼다 — 'keep-all'이 없으면 '사업성'이
        '사업/성'처럼 단어 중간에서 끊겨 어색하다(애플급 한글 조판 기본). */
@@ -1335,10 +1376,9 @@ textarea {
     border-radius: var(--radius-md, 1rem);
     padding: 1.25rem 1.5rem;
     min-height: 116px;
-    /* 사진이 없을 때의 기본 배경(짙은 야간 + 골드 글로우) */
+    /* 사진이 없을 때의 기본 배경(밝은 표면 + 골드 레이어) */
     background:
-      radial-gradient(120% 160% at 88% 12%, color-mix(in srgb, var(--pal-gold) 22%, transparent), transparent 60%),
-      linear-gradient(100deg, #0b0d12 0%, #141821 60%, #0b0d12 100%);
+      linear-gradient(100deg, #fffdf7 0%, #f8edd2 58%, #fffaf0 100%);
     transition: border-color 200ms var(--ease-out-expo), transform 200ms var(--ease-out-expo);
   }
   .palatria-banner:hover { border-color: color-mix(in srgb, var(--pal-gold) 75%, transparent); }
@@ -1352,10 +1392,10 @@ textarea {
     background-repeat: no-repeat;
     opacity: 0.7;
   }
-  /* 글자 쪽(좌측)을 어둡게 덮어 가독성 확보 */
+  /* 글자 쪽(좌측)을 밝은 veil로 덮어 가독성 확보 */
   .palatria-banner__veil {
     position: absolute; inset: 0;
-    background: linear-gradient(90deg, rgba(7,9,13,0.92) 0%, rgba(7,9,13,0.66) 48%, rgba(7,9,13,0.28) 100%);
+    background: linear-gradient(90deg, rgba(255,255,255,0.94) 0%, rgba(255,255,255,0.72) 48%, rgba(255,255,255,0.28) 100%);
   }
   .palatria-banner > :not(.palatria-banner__bg):not(.palatria-banner__veil) { position: relative; z-index: 1; }
 
@@ -1368,7 +1408,7 @@ textarea {
   }
   .palatria-banner__brandtext { display: flex; flex-direction: column; line-height: 1.1; }
   .palatria-banner__eyebrow {
-    font-size: 0.625rem; font-weight: 700; letter-spacing: 0.14em;
+    font-size: 0.625rem; font-weight: 700; letter-spacing: 0;
     color: color-mix(in srgb, var(--pal-gold) 80%, #fff);
   }
   .palatria-banner__name {
@@ -1380,16 +1420,16 @@ textarea {
   /* 중앙 카피(타이포그래피) — 한글 단어 안 끊기게 keep-all */
   .palatria-banner__copy { flex: 1; min-width: 0; word-break: keep-all; }
   .palatria-banner__headline {
-    font-size: clamp(0.95rem, 1.6vw, 1.15rem); font-weight: 800; letter-spacing: -0.01em;
-    color: #f7f3ea;
+    font-size: 1.05rem; font-weight: 800; letter-spacing: 0;
+    color: #2f2a1f;
   }
   .palatria-banner__sub {
     margin-top: 0.15rem; font-size: 0.8125rem; font-weight: 600;
     color: color-mix(in srgb, var(--pal-gold) 65%, #fff);
   }
   .palatria-banner__tagline {
-    margin-top: 0.35rem; font-size: 0.9375rem; font-weight: 800; letter-spacing: -0.01em;
-    color: #fff;
+    margin-top: 0.35rem; font-size: 0.9375rem; font-weight: 800; letter-spacing: 0;
+    color: #3b3121;
   }
 
   /* 우측 행동 */
@@ -1403,7 +1443,7 @@ textarea {
   /* 모바일: 세로 정렬 + 중앙 정렬 */
   @media (max-width: 640px) {
     .palatria-banner { flex-direction: column; text-align: center; gap: 0.875rem; }
-    .palatria-banner__veil { background: linear-gradient(180deg, rgba(7,9,13,0.62) 0%, rgba(7,9,13,0.86) 100%); }
+    .palatria-banner__veil { background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.76) 100%); }
     .palatria-banner__copy { width: 100%; }
   }
 

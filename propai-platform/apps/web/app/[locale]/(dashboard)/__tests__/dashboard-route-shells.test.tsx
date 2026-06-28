@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithQueryClient } from "@/test/render-with-query-client";
 import CostPage from "../analytics/cost/page";
 import ESGPage from "../analytics/esg/page";
 import InvestmentPage from "../analytics/investment/page";
@@ -60,6 +59,28 @@ vi.mock("@/components/dashboard/DashboardClientPanel", () => ({
   ),
 }));
 
+vi.mock("@/components/onboarding/OnboardingWizard", () => ({
+  OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
+}));
+
+vi.mock("@/components/dashboard/DashboardKpiLoader", () => ({
+  DashboardKpiLoader: () => <div data-testid="dashboard-kpi-loader">KPI</div>,
+}));
+
+vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
+  DashboardProjectLoader: ({ locale }: { locale: string }) => (
+    <div data-testid="dashboard-project-loader">{locale}</div>
+  ),
+}));
+
+vi.mock("@/components/dashboard/DashboardEsgScore", () => ({
+  DashboardEsgScore: () => <div data-testid="dashboard-esg-score">ESG</div>,
+}));
+
+vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
+  PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
+}));
+
 vi.mock("@/components/pwa/PwaStatusCard", () => ({
   PwaStatusCard: () => <div data-testid="pwa-status-card">PWA status card</div>,
 }));
@@ -102,6 +123,18 @@ vi.mock("@/components/analytics/InvestmentOperationsWorkspaceClient", () => ({
   }: {
     locale: string;
   }) => <div data-testid="investment-workspace">{locale}</div>,
+}));
+
+vi.mock("@/components/analytics/InvestmentAnalyticsWorkspaceClient", () => ({
+  InvestmentAnalyticsWorkspaceClient: ({
+    locale,
+  }: {
+    locale: string;
+  }) => <div data-testid="investment-workspace">{locale}</div>,
+}));
+
+vi.mock("@/components/analytics/CostEstimationClient", () => ({
+  CostEstimationClient: () => <div data-testid="cost-workspace">cost</div>,
 }));
 
 vi.mock("@/components/analytics/EnergyOperationsWorkspaceClient", () => ({
@@ -162,6 +195,18 @@ vi.mock("@/features/webrtc/RemoteSupervisionRoom", () => ({
 
 vi.mock("@/components/sre/SREDashboard", () => ({
   SREDashboard: () => <div data-testid="sre-dashboard">SRE dashboard</div>,
+}));
+
+vi.mock("@/lib/ai-analyze-client", () => ({
+  useAIReady: () => ({ isReady: false }),
+  useAIAnalyze: () => ({
+    mutate: vi.fn(),
+    data: null,
+    isPending: false,
+    error: null,
+  }),
+  cleanFenceText: (value: string | null | undefined) => value ?? "",
+  extractStructuredFromText: () => null,
 }));
 
 vi.mock("@/i18n/get-dictionary", () => ({
@@ -336,27 +381,14 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home with the command-center hero and project entry CTAs", async () => {
+  it("renders the dashboard home as an operations console", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    // 히어로: 차분한 분야 라벨 + 가치제안 헤드라인(딕셔너리 비의존 하드카피)
-    expect(screen.getByText("부동산 개발 분석")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.",
-      ),
-    ).toBeInTheDocument();
-    // 활성 진행 단계 섹션 헤더
-    expect(screen.getByText("활성 진행 단계")).toBeInTheDocument();
-    // 핵심 행동: 프로젝트 생성(accent) → /en/projects/new
-    expect(
-      screen.getByRole("link", { name: /프로젝트 생성/ }),
-    ).toHaveAttribute("href", "/en/projects/new");
-    // 활성 진행 단계 "전체 보기" → /en/projects
-    expect(screen.getByRole("link", { name: "전체 보기" })).toHaveAttribute(
-      "href",
-      "/en/projects",
-    );
+    expect(screen.getByText("사업 관제")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "개발사업의 다음 액션을 한 화면에서 결정합니다." })).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-kpi-loader")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByRole("link", { name: /공공입찰연결/ })).toHaveAttribute("href", "/en/g2b");
   });
 
   it("renders the projects list page with the overview client", async () => {
@@ -378,43 +410,28 @@ describe("Dashboard route shells", () => {
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
   });
 
-  it("renders the investment analytics shell with the feasibility console header", async () => {
+  it("renders the investment analytics shell with the live workspace", async () => {
     render(<InvestmentPage />);
 
-    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목
-    expect(
-      screen.getByText("INVESTMENT · FEASIBILITY CONSOLE"),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("LIVE").length).toBeGreaterThan(0);
     expect(screen.getByText("투자수익성 분석")).toBeInTheDocument();
-  });
-
-  it("renders the ESG analytics shell with the carbon console header and input form", async () => {
-    // ESGPage가 useAIAnalyze(useMutation)를 사용하므로 QueryClientProvider 필요
-    renderWithQueryClient(<ESGPage />);
-
-    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목 + 입력 폼 라벨
-    expect(screen.getByText("ESG · CARBON CONSOLE")).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
-    expect(screen.getByText("ESG / 탄소 경영")).toBeInTheDocument();
-    expect(screen.getByText("건물 정보 / INPUT")).toBeInTheDocument();
+    expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
   });
 
-  it("renders the cost analytics shell with the estimation console header and tabs", async () => {
+  it("renders the ESG analytics shell with the energy workspace", async () => {
+    render(<ESGPage />);
+
+    expect(screen.getByText("ESG / 탄소 경영")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "API 키를 먼저 등록하세요" })).toBeDisabled();
+  });
+
+  it("renders the cost analytics shell with the cost workspace", async () => {
     render(<CostPage />);
 
-    // 페이지 셸: 콘솔 메타 라벨 + LIVE 칩 + 한국어 제목 + 탭 버튼
-    expect(
-      screen.getByText("COST · ESTIMATION CONSOLE"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.getByText("공사비 분석")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "단계별 분석" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "기성·실적관리(EVM)" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("cost-workspace")).toHaveTextContent("cost");
   });
 
 });

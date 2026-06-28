@@ -88,7 +88,7 @@ export default function SiteCanvasPage() {
       .filter((a): a is string => !!a && a.trim().length > 0);
     if (list.length > 0) return list;
     return site?.address ? [site.address] : [];
-  }, [ssotParcels, site?.address]);
+  }, [ssotParcels, site]);
 
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
   // 전역 자산·권리 관리 페이지(프로젝트 무관·SSOT 필지 공유). Tier2 별도 관리 페이지 연동.
