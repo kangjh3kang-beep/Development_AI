@@ -35,6 +35,7 @@
 - `apps/web/app/globals.css`
 - `apps/web/app/layout.tsx`
 - `apps/web/eslint.config.mjs`
+- `.github/workflows/deploy-cloudflare.yml`
 - `docs/design/navigation-ia-system.md`
 
 ### 검증 결과
@@ -53,11 +54,14 @@
 
 ### 배포/라이브 검증
 
-- 커밋 SHA: amend 후 실시간 공유
+- 앱 커밋 SHA: `800e74771a596dda724a24e05c182f2873ecca83`
 - 푸시 대상: `origin/codex/dashboard-ia-ui-20260629`
 - 배포 방식: staging workflow 또는 연결된 preview 환경 확인 후 실행
-- 라이브 검증 URL: 배포 후 기록
-- 라이브 검증 결과: 배포 후 기록
+- 1차 배포 run: `28340116020`
+- 1차 배포 결과: 실패 - Cloudflare deploy workflow의 backend dependency gate에서 `gdal-config` 누락
+- 보정: `.github/workflows/deploy-cloudflare.yml`에 `gdal-bin libgdal-dev` 설치와 시스템 GDAL 버전 선설치 추가
+- 라이브 검증 URL: 재배포 후 기록
+- 라이브 검증 결과: 재배포 후 기록
 
 ### 다음 단계 진입 조건
 
