@@ -25,6 +25,8 @@ import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { PreCheckInstantPanel } from "@/components/precheck/PreCheckInstantPanel";
+import type { InstantPreCheckResponse } from "@/components/precheck/types";
 import { PermitGuideCard } from "@/components/projects/PermitGuideCard";
 import { AiInsightCard } from "@/components/projects/AiInsightCard";
 import { AiInsightStrip } from "@/components/projects/AiInsightStrip";
@@ -69,6 +71,8 @@ export default function SiteCanvasPage() {
   const id = params?.id as string;
   const site = useProjectContextStore((s) => s.siteAnalysis);
   const feas = useProjectContextStore((s) => s.feasibilityData);
+  // 부지 미확정 진입의 90초 진단 → "이 부지로 분석 시작" 1회 커밋용 SSOT setter.
+  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const [tab, setTab] = useState<TabKey>("land");
   // 필지 선택/변경 패널(지도 클릭선택+검색+엑셀) — 부지 미확정 시 기본 펼침, 확정 후 접힘.
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -104,6 +108,19 @@ export default function SiteCanvasPage() {
 
   // 부지 미확정 — SiteCanvas에서 바로 필지를 검색/지도클릭/엑셀로 선택(SSOT 기록 → 아래 분석 자동 채움).
   if (!site?.address && !site?.pnu && mapAddresses.length === 0) {
+    // ★90초 진단 흡수: 진단 결과의 "이 부지로 분석 시작" CTA를 누를 때만 SSOT에 1회 커밋한다
+    //   (consume-once — 임의 주소가 매 입력마다 store를 오염시키지 않게). GlobalAddressSearch가
+    //   주소 선택 시 updateSiteAnalysis로 부지를 기록하는 기존 메커니즘과 동일한 setter를 재사용한다.
+    //   커밋 후 site.address가 채워져 이 분기가 풀리고 아래 심층 분석(카드·지도)이 자동으로 채워진다.
+    const commitFromPrecheck = (data: InstantPreCheckResponse) => {
+      if (!data.address?.trim()) return;
+      updateSiteAnalysis({
+        address: data.address.trim(),
+        pnu: data.pnu ?? null,
+        zoneCode: data.zone_type || null,
+        landAreaSqm: data.area_sqm ?? null,
+      });
+    };
     return (
       <div className="mx-auto max-w-2xl py-10">
         <div className="mb-4 text-center">
@@ -115,6 +132,15 @@ export default function SiteCanvasPage() {
           </p>
         </div>
         <GlobalAddressSearch placeholder="주소·지번을 검색하거나 지도에서 필지를 클릭하세요" />
+
+        {/* ★90초 빠른진단 인라인 흡수 — 라우트 이동 없이 개발방식 신호등을 그 자리에서 본 뒤
+            "이 부지로 분석 시작"으로 심층 분석으로 이어진다(읽기전용 진단 → CTA 1회 커밋). */}
+        <div className="mt-6 border-t border-[var(--line)] pt-5">
+          <p className="mb-3 text-center text-[12px] font-semibold text-[var(--text-tertiary)]">
+            또는 주소로 90초 빠른진단을 먼저 보고 시작하세요
+          </p>
+          <PreCheckInstantPanel compact onStartAnalysis={commitFromPrecheck} />
+        </div>
       </div>
     );
   }
