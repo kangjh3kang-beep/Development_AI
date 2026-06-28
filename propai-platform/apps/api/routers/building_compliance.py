@@ -103,6 +103,10 @@ class CheckRequest(BaseModel):
     planned_bcr: float | None = None   # 설계값 있으면 비교(designData.bcr, %)
     planned_far: float | None = None   # designData.far, %
     planned_height_m: float | None = None
+    # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
+    #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
+    #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
+    parcels: list[dict] | None = None
 
 
 class AutoCorrectRequest(BaseModel):
@@ -140,15 +144,48 @@ def _severity_to_status(severity: str) -> str:
     return "warning"
 
 
+async def _integrate_parcels(parcels: list[dict] | None) -> dict[str, Any] | None:
+    """다필지(2개 이상) 면적가중 통합집계 → {parcel_count,total_area_sqm,dominant_zone,...} 또는 None.
+
+    ★공용 단일경유: /zoning/integrated-analysis와 동일한 ComprehensiveAnalysisService.
+    _integrated_context(면적가중 _aggregate_integrated_zoning 재사용) — 산식 복제 0.
+    함수 내부 지역 import로 순환참조 회피. dict 행만 통과, 1필지 이하/실패면 None(단일 경로 무회귀).
+    """
+    _rows = [p for p in parcels if isinstance(p, dict)] if parcels else []
+    if len(_rows) < 2:
+        return None
+    try:
+        from app.services.land_intelligence.comprehensive_analysis_service import (
+            ComprehensiveAnalysisService,
+        )
+
+        return await ComprehensiveAnalysisService()._integrated_context(_rows)
+    except Exception:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(검증 무중단)
+        import structlog
+        structlog.get_logger(__name__).warning("다필지 통합집계 실패 — 단일 경로 폴백(graceful)")
+        return None
+
+
 async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
     """설계 전 인허가 검토 — 부지분석(용도지역·대지면적) 기반.
 
     설계 산출물이 아직 없을 때, 법정 한도와 가능 규모(건축면적·연면적)를 산정하고
     개발방식별 인허가 가능성을 AI로 요약한다. 설계 정합 검증과 병행되는 첫 단계.
     """
+    # ── 다필지 통합면적/통합용도 보정(시장보고서와 동일 공용패턴) ──
+    # parcels가 2필지 이상이면 대표 1필지가 아니라 '면적가중 통합면적·우세용도'로
+    #   area_sqm·zone_code를 덮어쓴다(요청에 명시값이 있어도 통합값 우선 — 단 우세용도가
+    #   mixed_review_required면 기존 zone_code 유지). 1필지 이하/실패면 기존값 그대로(무회귀).
+    integrated = await _integrate_parcels(req.parcels)
     zone = (req.zone_code or "").strip()
-    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
     area = float(req.area_sqm or 0)
+    if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+        area = float(integrated["total_area_sqm"])  # 통합면적으로 가능규모 산정
+        _dom = integrated.get("dominant_zone")
+        if _dom and _dom != "mixed_review_required":
+            zone = str(_dom).strip()  # 통합 우세용도로 한도 매칭
+
+    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
     checks: list[dict[str, Any]] = []
 
     if matched:
@@ -255,7 +292,7 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
             if k not in _top_keys:
                 _top_keys.append(k)
 
-    return {
+    out: dict[str, Any] = {
         "project_id": req.project_id,
         "phase": "pre_design",
         "violations": [c for c in checks if c["status"] == "fail"],
@@ -265,6 +302,14 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
         "summary": summary,
         "legal_refs": _legal_refs_for(_top_keys),
     }
+    # 다필지 통합 적용 사실(있으면) — 프론트가 "통합 N필지 기준" 표기에 사용(미전달/1필지면 키 생략).
+    if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+        out["integrated"] = {
+            "parcel_count": integrated.get("parcel_count"),
+            "total_area_sqm": integrated.get("total_area_sqm"),
+            "dominant_zone": integrated.get("dominant_zone"),
+        }
+    return out
 
 
 @router.post("/check", response_model=ComplianceCheckResult)

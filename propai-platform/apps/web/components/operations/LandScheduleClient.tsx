@@ -856,7 +856,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <p className="mb-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
                 <TrendingUp className="size-4" aria-hidden />주변 토지 실거래·시세 <span className="cc-chip-data">RADIUS 1KM</span> <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준</span>
               </p>
-              <NearbyTransactionsMap address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""} />
+              {/* 강조 행(없으면 첫 유효 지번)의 pnu를 함께 전달 — pnu가 없으면 ""로 두어 그 지번 주소로
+                  지오코딩하게 한다(내부 store 폴백이 프로젝트 대표 pnu를 잘못 끌어오는 누수 방지). */}
+              <NearbyTransactionsMap
+                address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""}
+                pnu={(highlight ? rows.find((r) => r.jibun === highlight) : rows.find((r) => r.jibun.trim()))?.pnu ?? ""}
+              />
             </div>
           )}
         </>

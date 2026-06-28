@@ -5,6 +5,7 @@ import { Bot, Building, Compass, Download, Files, Lock, PenLine, Target, Users, 
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
   NearbyTransactionsMap as NearbyTransactionsMapType,
@@ -31,6 +32,8 @@ const PopulationDensityMap = dynamicMap<React.ComponentProps<typeof PopulationDe
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
+import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
+import { shouldSendParcels } from "@/lib/parcel-rows";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -241,6 +244,11 @@ export function MarketInsightsWorkspaceClient() {
   const [searchAddr, setSearchAddr] = useState("");
   // 명시실행: 주소 입력만으로는 분석하지 않고, "분석 실행" 클릭 시에만 runAddress를 확정한다.
   const [runAddress, setRunAddress] = useState("");
+  // 다필지 SSOT: 피커가 올린 전체 필지(면적·용도·용적/건폐·pnu) 후보 → 실행 시 runEntries로 확정.
+  const [entries, setEntries] = useState<AddressEntry[]>([]);
+  const [runEntries, setRunEntries] = useState<AddressEntry[]>([]);
+  // 일괄분석(P2): 「분석 시작」 클릭 시 지도뿐 아니라 시장보고서까지 한 번에 생성하기 위한 대기 플래그.
+  const [pendingReport, setPendingReport] = useState(false);
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [report, setReport] = useState<any | null>(null);
@@ -261,12 +269,44 @@ export function MarketInsightsWorkspaceClient() {
   const [error, setError] = useState("");
   const [balance, setBalance] = useState<Balance | null>(null);
 
-  // 입력 후보 주소(실행 전): 검색 → 없으면 활성 프로젝트 주소.
-  const inputAddress = searchAddr || siteAnalysis?.address || "";
+  // 입력 후보 주소(실행 전): 검색 → 피커가 올린 대표필지 → 활성 프로젝트 주소(폴백).
+  //   ★stale store 주소가 업로드 필지를 덮어쓰지 않도록, 피커 entries 대표를 store보다 우선.
+  const repAddrFromEntries = entries[0]
+    ? (entries[0].jibunAddress || entries[0].fullAddress || entries[0].roadAddress)
+    : "";
+  const inputAddress = searchAddr || repAddrFromEntries || siteAnalysis?.address || "";
   // 실제 분석 대상 주소 — 버튼 클릭으로 확정된 값만 지도/산출에 전달.
   const address = runAddress;
-  // 지도/보고서용 pnu: GlobalAddressSearch가 현재 검색의 pnu를 store에 기록 → 현재 검색분 사용
-  const mapPnu = (rawSite?.pnu as string) || "";
+  // ── 다필지 SSOT 파생(stale store 대신 '현재 피커 선택'을 단일 진실로) ──
+  //   대표필지 = 확정 runEntries[0]. 지도/보고서 pnu는 실제 선택된 필지의 pnu를 우선 사용한다.
+  //   (이전 rawSite.pnu 직접참조는 타 프로젝트 pnu가 새어 지도가 엉뚱한 지역(예: 강릉)을 가리키는 치명버그였음.)
+  const repEntry = runEntries[0];
+  // 피커로 필지를 올린 경우(runEntries 존재) 그 필지의 pnu만 신뢰한다 — pnu가 없으면 빈값으로 두어
+  //   백엔드가 주소(address)로 지오코딩하게 한다(★stale store pnu로 거래수집 구역이 엉뚱하게 잡히는 잔존엣지 차단).
+  //   피커 미사용(프로젝트 드롭다운 단독) 시에만 store pnu 폴백.
+  const mapPnu = runEntries.length > 0
+    ? ((repEntry?.pnu as string) || "")
+    : ((siteAnalysis?.pnu as string) || "");
+  // 등록된 전 필지 주소(구획도 통합 경계용). 비면 대표주소 단독.
+  const runParcelAddrs = useMemo(
+    () => runEntries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean),
+    [runEntries],
+  );
+  // 백엔드 통합집계 입력행(면적가중) — comprehensive_analysis 계약과 동일 키. 면적>0만.
+  const runParcelRows = useMemo(
+    () => runEntries
+      .filter((e) => (e.areaSqm ?? 0) > 0)
+      .map((e) => ({
+        address: e.jibunAddress || e.fullAddress || e.roadAddress,
+        area_sqm: e.areaSqm,
+        zone_type: e.zoneCode ?? null,
+        farPct: e.farPct ?? null,        // 실효(조례 반영)
+        bcrPct: e.bcrPct ?? null,
+        farLegalPct: e.farLegalPct ?? null,  // 법정상한(보조)
+        bcrLegalPct: e.bcrLegalPct ?? null,
+      })),
+    [runEntries],
+  );
   // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
   const mapBcode = mapPnu.slice(0, 10);
   const [showDensity, setShowDensity] = useState(false);
@@ -366,6 +406,11 @@ export function MarketInsightsWorkspaceClient() {
     setSearchAddr(addr);
   }, []);
 
+  // 피커가 올린 다필지 상세(면적·용도·pnu) 후보 보관 — 실행 시 runEntries로 확정한다(SSOT).
+  const onEntries = useCallback((es: AddressEntry[]) => {
+    setEntries(es);
+  }, []);
+
   // 명시 실행: 버튼 클릭 시에만 분석 대상 주소를 확정하고 지도/산출을 트리거한다.
   const runAnalysis = useCallback(() => {
     if (!inputAddress) return;
@@ -373,11 +418,15 @@ export function MarketInsightsWorkspaceClient() {
     setReport(null);
     setMapPayload(null);
     setRunAddress(inputAddress);
+    // SSOT 확정: 실행 시점의 피커 다필지를 분석 대상으로 고정(지도·구획도·보고서가 동일 필지를 본다).
+    setRunEntries(entries);
+    // P2 일괄분석: 지도와 함께 시장보고서까지 한 번에 생성(아래 effect가 address 확정 후 트리거).
+    setPendingReport(true);
     // 실행 후 잔액 갱신(차감 반영) — 약간 지연 후 재조회.
     setTimeout(() => {
       apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
     }, 1500);
-  }, [inputAddress]);
+  }, [inputAddress, entries]);
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
@@ -385,7 +434,11 @@ export function MarketInsightsWorkspaceClient() {
     setGenState("report");
     try {
       const r = await apiClient.post<any>("/market/report", {
-        body: { address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() },
+        // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
+        body: {
+          address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
+          ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
+        },
         useMock: false, timeoutMs: 120000,
       });
       setReport(r);
@@ -398,7 +451,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
+  }, [address, mapPnu, runParcelRows, useLlm, buildOptionsPayload]);
 
   // PDF/PPTX 다운로드(바이너리)
   const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
@@ -409,15 +462,20 @@ export function MarketInsightsWorkspaceClient() {
       const res = await fetch(`${marketApiBase()}/market/report/${fmt}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        // ★다운로드도 options를 포함해야 PDF/PPTX에 인구·소득 데이터가 누락되지 않는다(미리보기와 동일 payload).
-        body: JSON.stringify({ address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() }),
+        // ★다운로드도 미리보기와 동일 payload(options+pnu+parcels) — PDF/PPTX에 인구·소득·통합면적이 누락되지 않게.
+        body: JSON.stringify({
+          address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
+          ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
+        }),
       });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `시장조사보고서_${address}.${fmt}`;
+      // 다필지 대표주소에 / : 등 OS 금칙문자가 있으면 파일명이 깨지므로 치환.
+      const safeName = address.replace(/[\\/:*?"<>|]/g, "_");
+      a.download = `시장조사보고서_${safeName}.${fmt}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -425,7 +483,16 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
+  }, [address, mapPnu, runParcelRows, useLlm, buildOptionsPayload]);
+
+  // P2 일괄분석: 「분석 시작」이 address를 확정하면(pendingReport=true) 시장보고서를 자동 1회 생성한다.
+  //   (지도+보고서를 한 번의 클릭으로 — 사용자 요청 "사업지 입력 후 분석 누르면 일괄분석".)
+  useEffect(() => {
+    if (pendingReport && address) {
+      setPendingReport(false);
+      void generateReport();
+    }
+  }, [pendingReport, address, generateReport]);
 
   return (
     <section className="grid grid-cols-1 gap-6 min-w-0">
@@ -445,6 +512,7 @@ export function MarketInsightsWorkspaceClient() {
       <ProjectAddressInput
         value={searchAddr}
         onChange={onAddress}
+        onEntriesChange={onEntries}
         label="시장 분석 주소"
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
@@ -454,7 +522,8 @@ export function MarketInsightsWorkspaceClient() {
       {address && (
         <div className="grid gap-4">
           <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
-          <ParcelBoundaryMap parcels={[address]} />
+          {/* 구획도: 등록된 전 필지(다필지 통합 경계) — 비면 대표주소 단독. */}
+          <ParcelBoundaryMap parcels={runParcelAddrs.length > 0 ? runParcelAddrs : [address]} />
           {/* P4-B 인구밀도 코로플레스 — 지연로드 토글(SGIS 호출 비용 절약). */}
           <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
             <button
@@ -765,6 +834,9 @@ export function MarketInsightsWorkspaceClient() {
           </div>
         </div>
       )}
+
+      {/* 다필지 통합 고지 — 보고서/타당성이 N필지 통합면적 기준임을 명시(근거·투명성). */}
+      {report?.integrated && <IntegratedParcelsBadge integrated={report.integrated} />}
 
       {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
       {report?.feasibility_analysis && (

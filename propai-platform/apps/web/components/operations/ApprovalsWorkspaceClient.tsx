@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -31,6 +33,7 @@ type ComplianceCheckResponse = {
   overall_status?: string;
   summary?: string;
   checked_at?: string;
+  integrated?: IntegratedMeta | null;
 };
 
 type ComplianceItem = {
@@ -229,6 +232,8 @@ export function ApprovalsWorkspaceClient({
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 다필지 통합(공용): 피커가 올린 전 필지 → 통합 대지면적·용도지역 기준 적합성 검사.
+  const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [complianceResult, setComplianceResult] =
     useState<ComplianceCheckResponse | null>(null);
 
@@ -292,6 +297,8 @@ export function ApprovalsWorkspaceClient({
       return;
     }
 
+    // 다필지: 피커가 올린 필지 우선, 없으면 프로젝트 컨텍스트 필지(면적)로 통합면적 반영.
+    const effRows = parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels);
     setIsSubmitting(true);
     try {
       const res = await apiClient.post<ComplianceCheckResponse>(
@@ -301,6 +308,7 @@ export function ApprovalsWorkspaceClient({
           body: {
             address,
             zoning_district: form.zoning,
+            ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}),
           },
         },
       );
@@ -407,6 +415,7 @@ export function ApprovalsWorkspaceClient({
               <ProjectAddressInput
                 value={form.address}
                 onChange={(address) => setForm((c) => ({ ...c, address }))}
+                onEntriesChange={(es) => setParcelRows(entriesToParcelRows(es))}
                 label={labels.addressLabel}
                 placeholder={labels.addressLabel}
               />
@@ -493,6 +502,10 @@ export function ApprovalsWorkspaceClient({
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--accent-strong)]">
               {labels.complianceLabel}
             </p>
+            {/* 다필지 통합 고지 — 통합면적·우세용도 기준 검사임을 명시. */}
+            {complianceResult.integrated && (
+              <IntegratedParcelsBadge integrated={complianceResult.integrated} className="mt-2" />
+            )}
             <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
               {complianceResult.overall_status ?? "-"}
             </p>

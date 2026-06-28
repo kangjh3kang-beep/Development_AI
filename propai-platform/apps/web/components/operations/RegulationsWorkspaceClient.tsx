@@ -12,6 +12,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Bot, Landmark, Search } from "lucide-react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
@@ -41,6 +43,8 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [llmGated, setLlmGated] = useState(false);
   const [result, setResult] = useState<RegResult | null>(null);
+  // 다필지 통합(공용): 피커가 올린 전 필지 → 면적가중 통합 규제분석을 백엔드로(2필지↑만 전송).
+  const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
 
   // 프로젝트 선택 시 주소(ProjectAddressInput→setAddr)에 더해 PNU도 입력칸에 자동 채움.
   // ProjectAddressInput이 선택 프로젝트의 pnu를 컨텍스트(siteAnalysis.pnu)에 기록하므로,
@@ -56,12 +60,14 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
     const target = addr || siteAnalysis?.address || "";
     if (!target) { setError("주소를 먼저 선택하거나 입력하세요."); return; }
     const targetPnu = pnu.trim() || siteAnalysis?.pnu || undefined;
+    // 다필지: 피커가 올린 필지 우선, 없으면 프로젝트 컨텍스트 필지(면적만)로 통합면적 반영.
+    const effRows = parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels);
     setLoading(true); setError(""); setLlmGated(false); setResult(null);
     try {
       let r: RegResult;
       try {
         r = await apiClient.post<RegResult>("/regulation/analyze", {
-          body: { address: target, pnu: targetPnu, use_llm: useLlm },
+          body: { address: target, pnu: targetPnu, use_llm: useLlm, ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}) },
           useMock: false, timeoutMs: 120000,
         });
       } catch (llmError) {
@@ -69,7 +75,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
         if (useLlm && llmError instanceof ApiClientError && llmError.status === 402) {
           setLlmGated(true);
           r = await apiClient.post<RegResult>("/regulation/analyze", {
-            body: { address: target, pnu: targetPnu, use_llm: false },
+            body: { address: target, pnu: targetPnu, use_llm: false, ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}) },
             useMock: false, timeoutMs: 120000,
           });
         } else {
@@ -82,7 +88,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
     } finally {
       setLoading(false);
     }
-  }, [addr, pnu, useLlm, siteAnalysis]);
+  }, [addr, pnu, useLlm, siteAnalysis, parcelRows]);
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
@@ -114,6 +120,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             <ProjectAddressInput
               value={addr}
               onChange={setAddr}
+              onEntriesChange={(es) => setParcelRows(entriesToParcelRows(es))}
               label="분석 대상지 주소"
               placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요"
               pickerLabel="분석 히스토리"
@@ -145,6 +152,8 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
 
       {result && (
         <>
+          {/* 다필지 통합 고지 — 결과가 N필지 통합면적·우세용도 기준임을 명시(근거·투명성). */}
+          {result.integrated && <IntegratedParcelsBadge integrated={result.integrated} />}
           {/* 검증 배지 + AI 규제 해석 요약 통합 카드(상세 해석 카드는 아래 유지). */}
           <AnalysisVerdict
             analysisType="regulation"

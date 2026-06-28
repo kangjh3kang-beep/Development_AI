@@ -23,6 +23,11 @@ class MarketReportRequest(BaseModel):
     # 선택형 분석 모듈 옵션. 프론트(P1)가 중첩 dict(detail 등)를 보내므로 dict[str, bool]로
     #   제한하면 Pydantic 422가 발생한다 → 값 타입을 풀어 어떤 형태의 옵션도 받도록 완화.
     options: dict | None = None
+    # 다필지(통합분석) 필지목록. 프론트(ComprehensiveAnalysisPanel)가 2개 이상 업로드 시 전송.
+    #   각 행 = {address, area_sqm, zone_type, farPct(실효), bcrPct(실효), farLegalPct?, bcrLegalPct?}.
+    #   2개 이상이면 면적가중 통합면적으로 land_area를 산정한다(대표 1필지 고착 버그 해소).
+    #   None/1개면 기존 단일필지 경로 그대로(무회귀).
+    parcels: list[dict] | None = None
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
@@ -50,7 +55,8 @@ async def market_report(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     lawd_cd, pnu = _resolve(req)
-    return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options)
+    return await MarketReportService().build_report(
+        req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options, parcels=req.parcels)
 
 
 class PopulationDensityRequest(BaseModel):
@@ -92,7 +98,8 @@ async def market_report_pdf(
 ):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
+    rep = await svc.build_report(
+        req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
     pdf = svc.to_pdf(rep)
     return StreamingResponse(
         iter([pdf]), media_type="application/pdf",
@@ -107,7 +114,8 @@ async def market_report_pptx(
 ):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
+    rep = await svc.build_report(
+        req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
     pptx = svc.to_pptx(rep)
     return StreamingResponse(
         iter([pptx]),
@@ -123,7 +131,8 @@ async def market_report_docx(
 ):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
+    rep = await svc.build_report(
+        req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
     docx = svc.to_docx(rep)
     return StreamingResponse(
         iter([docx]),

@@ -32,6 +32,10 @@ class RegulationAnalyzeRequest(BaseModel):
     jibun_address: str | None = None
     use_llm: bool = True
     refresh: bool = False  # True이면 저장본을 무시하고 재분석 후 덮어씀
+    # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
+    #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
+    #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
+    parcels: list[dict] | None = None
 
 
 @router.post(
@@ -64,7 +68,19 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
         raise HTTPException(status_code=400, detail="주소가 필요합니다.")
 
     addr = body.address.strip()
-    cache_key = _key(addr, str(pnu), str(body.use_llm))
+    # 다필지 통합은 별도 캐시 키로 분리(단일/통합 결과가 섞이지 않게) — dict 행만.
+    # ★개수만이 아니라 필지 '구성'(주소·면적·용도)을 시그니처에 반영한다. 같은 대표주소·같은
+    #   개수라도 면적/용도 구성이 다르면 통합결과가 다르므로, 개수만 쓰면 영속 캐시가 충돌한다.
+    #   정렬해 순서 무관하게 만든다(같은 필지 집합이면 입력 순서가 달라도 동일 키).
+    _rows = [p for p in (body.parcels or []) if isinstance(p, dict)]
+    _parcels_sig = (
+        "|".join(sorted(
+            f"{(p.get('address') or '')}:{p.get('area_sqm')}:{p.get('zone_type')}"
+            for p in _rows
+        ))
+        if len(_rows) >= 2 else ""
+    )
+    cache_key = _key(addr, str(pnu), str(body.use_llm), _parcels_sig)
 
     # 저장본이 있고 재분석 요청이 아니면 즉시 반환
     if not body.refresh:
@@ -72,8 +88,9 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
         if cached is not None:
             return cached
 
-    # 실제 분석 실행 → 저장 → 반환
-    result = await RegulationAnalysisService().analyze(addr, pnu=pnu, use_llm=body.use_llm)
+    # 실제 분석 실행 → 저장 → 반환. parcels>=2면 서비스가 통합면적·우세용도로 보정.
+    result = await RegulationAnalysisService().analyze(
+        addr, pnu=pnu, use_llm=body.use_llm, parcels=body.parcels)
     await cache_put("regulation_analyze", cache_key, result)
     return result
 

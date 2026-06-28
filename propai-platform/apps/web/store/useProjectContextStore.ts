@@ -20,6 +20,7 @@ interface ParcelData {
   areaSqm: number;
   landCategory: string; // 지목
   ownerType: string;
+  zoneCode?: string | null; // 용도지역 — 다필지 통합 시 면적가중 우세용도 산정에 사용(없으면 면적만 통합)
 }
 
 /** 토지이용계획 규제 항목 */

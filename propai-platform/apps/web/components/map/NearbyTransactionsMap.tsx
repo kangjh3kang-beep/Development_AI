@@ -118,9 +118,14 @@ export function NearbyTransactionsMap({
   pnu?: string;
 } = {}) {
   const siteAnalysis = useProjectContextStore((st) => st.siteAnalysis);
-  // prop 우선(약식 검색 페이지) → 없으면 활성 프로젝트 store
-  const address = addressProp !== undefined ? addressProp : siteAnalysis?.address || "";
-  const pnu = pnuProp !== undefined ? pnuProp : (siteAnalysis?.pnu as string) || "";
+  const projectId = useProjectContextStore((st) => st.projectId);
+  // 내부 store 폴백은 '활성 프로젝트'에 한정한다(projectId 가드). projectId가 없으면(약식 검색·타 프로젝트
+  //   잔여 컨텍스트) stale 한 pnu/address가 지도로 새어 엉뚱한 지역이 표시되는 누수를 차단한다
+  //   (시장페이지 '강릉 오표시'와 동일 패턴의 공용 가드 — 한 곳을 고쳐 전 소비처가 따라온다).
+  const guardedSite = projectId ? siteAnalysis : null;
+  // prop 우선(약식 검색 페이지가 명시 전달) → 없으면 활성 프로젝트 store(가드된 것만)
+  const address = addressProp !== undefined ? addressProp : guardedSite?.address || "";
+  const pnu = pnuProp !== undefined ? pnuProp : (guardedSite?.pnu as string) || "";
 
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [loading, setLoading] = useState(false);

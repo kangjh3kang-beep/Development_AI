@@ -10,6 +10,8 @@ import { RegulationHierarchyView, type RegResult } from "@/components/regulation
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
+import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 
@@ -518,10 +520,13 @@ export function ProjectLegalWorkspaceClient({
     setRegLoading(true);
 
     (async () => {
+      // 다필지: 프로젝트 컨텍스트 필지(zoneCode 동반)로 통합 규제분석(면적가중 우세용도).
+      const effRows = parcelDataToRows(siteAnalysis?.parcels);
       const reqBody = (useLlm: boolean) => ({
         address: autoAddress,
         pnu: (siteAnalysis?.pnu ?? "").trim() || undefined,
         use_llm: useLlm,
+        ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}),
       });
       try {
         let result: RegResult;
@@ -916,6 +921,7 @@ export function ProjectLegalWorkspaceClient({
             </div>
             {regResult ? (
               <div className="mt-4 grid gap-6">
+                {regResult.integrated && <IntegratedParcelsBadge integrated={regResult.integrated} />}
                 <RegulationHierarchyView result={regResult} locale={locale} />
               </div>
             ) : regLoading ? (

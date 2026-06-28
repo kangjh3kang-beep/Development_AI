@@ -25,6 +25,7 @@ import {
 import { Card, CardContent } from "@propai/ui";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import type { IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import type { Locale } from "@/i18n/config";
 
 /* ── Types (기존 RegulationsWorkspaceClient와 1:1 동일) ── */
@@ -80,6 +81,8 @@ export type RegResult = {
   ai: RegAI | null;
   /** WP-H 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
   evidence?: EvidenceTrace[] | null;
+  /** 다필지 통합 메타(가산·옵셔널) — 2필지 이상 통합 분석 시에만 내려온다. */
+  integrated?: IntegratedMeta | null;
 };
 
 const IMPACT_STYLE: Record<string, string> = {
