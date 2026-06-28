@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { entriesToParcelRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -188,6 +189,8 @@ export function PermitsWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<ComplianceCheckResponse | null>(null);
+  // 다필지 통합(공용): 피커가 올린 전 필지 → 통합 대지면적·용도지역 기준 인허가 적합성 검사.
+  const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
 
   const [form, setForm] = useState({
     address: "",
@@ -217,6 +220,7 @@ export function PermitsWorkspaceClient({
             zoning_district: form.zoning,
             project_type: form.projectType,
             floor_count: Number(form.floorCount) || undefined,
+            ...(shouldSendParcels(parcelRows) ? { parcels: parcelRows } : {}),
           },
         },
       );
@@ -275,6 +279,7 @@ export function PermitsWorkspaceClient({
             <ProjectAddressInput
               value={form.address}
               onChange={(address) => setForm((c) => ({ ...c, address }))}
+              onEntriesChange={(es) => setParcelRows(entriesToParcelRows(es))}
               label={labels.addressLabel}
               placeholder={labels.addressLabel}
             />

@@ -27,6 +27,11 @@ class ComplianceCheckRequest(BaseModel):
     zoning_district: str | None = None
     project_type: str | None = None
     floor_count: int | None = None
+    area_sqm: float | None = None  # 대지면적(명시값 있으면 단일필지 면적으로 사용)
+    # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
+    #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
+    #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
+    parcels: list[dict] | None = None
 
 
 class ComplianceItemResult(BaseModel):
@@ -53,6 +58,8 @@ class ComplianceCheckResponse(BaseModel):
     far_basis: str | None = None             # 실효 산정 근거(법정/조례/계획상한 등)
     developability: str | None = None        # 특이부지 게이트(POSSIBLE/CONDITIONAL/...)
     special_parcel: dict[str, Any] | None = None  # 특이부지 감지 결과(경고·해결방안·정직고지)
+    # 다필지 통합 적용 사실(2필지 이상일 때만) — 프론트가 "통합 N필지 기준" 표기에 사용.
+    integrated: dict[str, Any] | None = None
 
 
 def _normalize_zone(zone: str | None) -> str | None:
@@ -103,6 +110,38 @@ async def check_building_compliance(
             land_area = float(zoning_base.get("land_area_sqm") or 0)
         except Exception:  # noqa: BLE001 — 조회 실패는 미상으로 정직 처리(가짜값 금지)
             zoning_base = {}
+
+    # 명시 area_sqm(단일필지)이 오면 zoning_base 미수집 시에도 가능면적 산정에 사용(폴백).
+    if (land_area or 0) <= 0 and req.area_sqm and req.area_sqm > 0:
+        land_area = req.area_sqm
+
+    # ── 다필지 통합면적/통합용도 보정(시장보고서와 동일 공용패턴) ──
+    # parcels가 2필지 이상이면 대표 1필지가 아니라 '면적가중 통합면적·우세용도'로 zoning_district·
+    #   가능면적을 보정한다(요청에 명시값이 있어도 통합값 우선 — 단 우세용도가 mixed_review_required면
+    #   기존 zone 유지). ★공용 단일경유: /zoning/integrated-analysis와 동일한 ComprehensiveAnalysisService.
+    #   _integrated_context(면적가중 _aggregate_integrated_zoning 재사용) — 산식 복제 0. dict 행만 통과.
+    #   1필지 이하/실패면 통합 안 함(기존 단일 경로 그대로 = 무회귀).
+    integrated: dict[str, Any] | None = None
+    _rows = [p for p in (req.parcels or []) if isinstance(p, dict)]
+    if len(_rows) >= 2:
+        try:
+            from app.services.land_intelligence.comprehensive_analysis_service import (
+                ComprehensiveAnalysisService,
+            )
+
+            integrated = await ComprehensiveAnalysisService()._integrated_context(_rows)
+        except Exception:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(검증 무중단)
+            import structlog
+            structlog.get_logger(__name__).warning("인허가 다필지 통합집계 실패 — 단일 경로 폴백(graceful)")
+            integrated = None
+    if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+        land_area = float(integrated["total_area_sqm"])  # 통합면적으로 가능면적 산정
+        _dom = integrated.get("dominant_zone")
+        if _dom and _dom != "mixed_review_required":
+            _z2 = _normalize_zone(str(_dom))
+            if _z2:  # 통합 우세용도(정규화 성공 시)로 한도 매칭. 정규화 실패면 기존 zone 유지.
+                zone = _z2
+                zone_source = "다필지 통합(우세용도)"
 
     results: list[ComplianceItemResult] = []
     overall = "pass"
@@ -264,6 +303,16 @@ async def check_building_compliance(
         far_basis=far_basis,
         developability=(special.get("developability") if special else "POSSIBLE"),
         special_parcel=special,
+        # 다필지 통합 적용 사실(있으면) — 미전달/1필지면 None(단일 경로 무회귀).
+        integrated=(
+            {
+                "parcel_count": integrated.get("parcel_count"),
+                "total_area_sqm": integrated.get("total_area_sqm"),
+                "dominant_zone": integrated.get("dominant_zone"),
+            }
+            if integrated and float(integrated.get("total_area_sqm") or 0) > 0
+            else None
+        ),
     )
 
 

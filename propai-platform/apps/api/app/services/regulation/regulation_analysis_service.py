@@ -62,7 +62,7 @@ _USER_TMPL = """\
 class RegulationAnalysisService:
     async def analyze(
         self, address: str, pnu: str | None = None, use_llm: bool = True,
-        with_senior: bool = True,
+        with_senior: bool = True, parcels: list[dict] | None = None,
     ) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
 
@@ -76,6 +76,43 @@ class RegulationAnalysisService:
         lup = comp.get("land_use_plan") or {}
         districts_raw = lup.get("districts") or comp.get("special_districts") or []
         area = comp.get("land_area_sqm") or lr.get("area_sqm") or lc.get("area_sqm")
+
+        # ── 다필지 통합면적/통합용도 전파(시장보고서와 동일 공용패턴) ──
+        # 프론트가 2필지 이상 보내면(parcels) 대표 1필지가 아니라 '면적가중 통합면적·우세용도'로
+        #   area·zone_type을 덮어쓴다(예: 12필지 12,079㎡인데 대표 1,161㎡만 분석하던 버그 해소).
+        #   ★공용 단일경유: /zoning/integrated-analysis와 동일한 ComprehensiveAnalysisService.
+        #   _integrated_context(면적가중 _aggregate_integrated_zoning 재사용) — 산식 복제 0.
+        #   1필지 이하/실패면 통합 안 함(기존 단일 경로 그대로 = 무회귀). 통합 적용 시
+        #   zone_limits(zl)도 통합용도 기준으로 재산정해야 limits/hierarchy/evidence가 일관된다.
+        integrated: dict[str, Any] | None = None
+        # 방어: 라우터는 parcels를 list[dict] 무스키마로 받으므로 dict 행만 통과시킨다.
+        _rows = [p for p in parcels if isinstance(p, dict)] if parcels else []
+        if len(_rows) >= 2:
+            try:
+                from app.services.land_intelligence.comprehensive_analysis_service import (
+                    ComprehensiveAnalysisService,
+                )
+
+                integrated = await ComprehensiveAnalysisService()._integrated_context(_rows)
+            except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
+                logger.warning("규제분석 다필지 통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:120])
+                integrated = None
+        if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+            # 통합면적으로 area override → land_area_sqm·가능규모가 통합면적 기준.
+            area = float(integrated["total_area_sqm"])
+            # 대표 용도지역도 통합 우세값으로 보정(미상/혼재면 기존 zone_type 유지).
+            _dom = integrated.get("dominant_zone")
+            if _dom and _dom != "mixed_review_required":
+                zone_type = _dom
+                # 통합용도가 바뀌면 한도(zl)도 그 용도 기준으로 재조회해야 일관(legal_zone_limits 단일출처).
+                try:
+                    from app.services.zoning.legal_zone_limits import legal_limits_for
+
+                    _zl2 = legal_limits_for(zone_type)
+                    if isinstance(_zl2, dict) and _zl2:
+                        zl = _zl2
+                except Exception:  # noqa: BLE001 — 한도 재조회 실패면 기존 zl 유지(무손상)
+                    pass
 
         # ── 정량 한도 ──
         limits = self._limits(zl)
@@ -134,6 +171,15 @@ class RegulationAnalysisService:
         # is_special일 때만 부착(무목업) — 일상 부지면 키 자체를 넣지 않아 하위호환·무회귀.
         if special_parcel:
             result["special_parcel"] = special_parcel
+
+        # 다필지 통합 적용 사실(있으면) — 프론트가 "통합 N필지 기준" 표기에 사용.
+        #   parcels 미전달/1필지면 키 자체를 생략(단일 경로 무회귀).
+        if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+            result["integrated"] = {
+                "parcel_count": integrated.get("parcel_count"),
+                "total_area_sqm": integrated.get("total_area_sqm"),
+                "dominant_zone": integrated.get("dominant_zone"),
+            }
 
         # ── 시니어 자문 모세혈관 배선 — 심의(건폐/용적/높이 적합)·도시계획·법무사 ──
         # 규제 계층 분석에 시니어 판단프레임워크·근거·정량 verdict를 첨부한다. 실효 건폐/용적(actual)을

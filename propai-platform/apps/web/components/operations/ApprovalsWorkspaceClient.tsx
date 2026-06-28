@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -229,6 +230,8 @@ export function ApprovalsWorkspaceClient({
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 다필지 통합(공용): 피커가 올린 전 필지 → 통합 대지면적·용도지역 기준 적합성 검사.
+  const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [complianceResult, setComplianceResult] =
     useState<ComplianceCheckResponse | null>(null);
 
@@ -292,6 +295,8 @@ export function ApprovalsWorkspaceClient({
       return;
     }
 
+    // 다필지: 피커가 올린 필지 우선, 없으면 프로젝트 컨텍스트 필지(면적)로 통합면적 반영.
+    const effRows = parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels);
     setIsSubmitting(true);
     try {
       const res = await apiClient.post<ComplianceCheckResponse>(
@@ -301,6 +306,7 @@ export function ApprovalsWorkspaceClient({
           body: {
             address,
             zoning_district: form.zoning,
+            ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}),
           },
         },
       );
@@ -407,6 +413,7 @@ export function ApprovalsWorkspaceClient({
               <ProjectAddressInput
                 value={form.address}
                 onChange={(address) => setForm((c) => ({ ...c, address }))}
+                onEntriesChange={(es) => setParcelRows(entriesToParcelRows(es))}
                 label={labels.addressLabel}
                 placeholder={labels.addressLabel}
               />
