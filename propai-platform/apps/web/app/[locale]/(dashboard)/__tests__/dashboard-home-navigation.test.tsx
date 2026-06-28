@@ -2,144 +2,50 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import DashboardPage from "../page";
 
-vi.mock("@/components/dashboard/DashboardClientPanel", () => ({
-  DashboardClientPanel: ({
-    locale,
-    summaryTitle,
-  }: {
-    locale: string;
-    summaryTitle: string;
-  }) => (
-    <div data-testid="dashboard-client-panel">
-      <span>{locale}</span>
-      <span>{summaryTitle}</span>
-    </div>
+vi.mock("@/components/onboarding/OnboardingWizard", () => ({
+  OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
+}));
+
+vi.mock("@/components/dashboard/DashboardKpiLoader", () => ({
+  DashboardKpiLoader: () => <div data-testid="dashboard-kpi-loader">KPI</div>,
+}));
+
+vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
+  DashboardProjectLoader: ({ locale }: { locale: string }) => (
+    <div data-testid="dashboard-project-loader">{locale}</div>
   ),
 }));
 
-vi.mock("@/components/pwa/PwaStatusCard", () => ({
-  PwaStatusCard: () => <div data-testid="pwa-status-card">PWA status card</div>,
+vi.mock("@/components/dashboard/DashboardEsgScore", () => ({
+  DashboardEsgScore: () => <div data-testid="dashboard-esg-score">ESG</div>,
 }));
 
-vi.mock("@/i18n/get-dictionary", () => ({
-  getDictionary: vi.fn(async () => ({
-    meta: {
-      siteName: "PropAI",
-    },
-    dashboard: {
-      title: "Dashboard home",
-      welcome: "Welcome to PropAI",
-      description: "Live operating center",
-      summaryTitle: "Summary panel",
-    },
-    nav: {
-      projects: "Projects",
-      auction: "Auction",
-      tax: "Tax",
-      approvals: "Approval Ops",
-    },
-    workspace: {
-      connectionTitle: "Connections",
-      sourceLabel: "Sources",
-      onlineLabel: "Online",
-      offlineLabel: "Offline",
-      featuredProjectLabel: "Featured project",
-      openProjectLabel: "Open project",
-      integrationRestLabel: "REST",
-      integrationGraphqlLabel: "GraphQL",
-      integrationRealtimeLabel: "Realtime",
-      modeMock: "MOCK",
-      modeLive: "실연동",
-      modeWaiting: "WAITING",
-    },
-    pages: {
-      projectDetail: {
-        summary: {
-          hub: "HUB",
-          name: "NAME",
-          pnu: "PNU",
-          zone: "ZONE",
-          npv: "NPV",
-          roi: "ROI",
-        },
-      },
-    },
-    deepIntegration: {
-      lifecycle: {
-        title: "Lifecycle",
-      },
-    },
-    modulePlaceholders: {
-      maintenance: { title: "Maintenance", eyebrow: "MAINTENANCE", description: "Desc", items: [] },
-      tenant: { title: "Tenant", eyebrow: "TENANT", description: "Desc", items: [] },
-      tax: { title: "Tax", eyebrow: "TAX", description: "Desc", items: [] },
-      approvals: { title: "Approval Ops", eyebrow: "APPROVALS", description: "Desc", items: [] },
-      auction: { title: "Auction", eyebrow: "AUCTION", description: "Desc", items: [] },
-    },
-    pwa: {
-      eyebrow: "G163 / PWA",
-      title: "PWA status",
-      description: "Offline shell",
-      runtimeLabel: "Runtime",
-      runtimeReady: "Ready",
-      runtimeRegistering: "Registering",
-      runtimeError: "Error",
-      runtimeUnsupported: "Unsupported",
-      installLabel: "Install",
-      installAvailable: "Ready to install",
-      installInstalled: "Installed",
-      installUnavailable: "Browser-controlled",
-      notificationsLabel: "Notifications",
-      notificationsGranted: "Granted",
-      notificationsDefault: "Permission required",
-      notificationsDenied: "Blocked",
-      notificationsUnsupported: "Unsupported",
-      cacheLabel: "Cache",
-      cacheReady: "Shell cached",
-      cachePending: "Priming cache",
-      cacheUnsupported: "Not available",
-      updateTitle: "Update ready",
-      updateDescription: "Apply update",
-      installAction: "Install workspace",
-      enableNotificationsAction: "Enable notifications",
-      testNotificationAction: "Send test notification",
-      refreshAction: "Refresh PWA",
-      offlineAction: "Open offline page",
-      errorTitle: "PWA runtime issue",
-      testNotificationTitle: "PropAI field sync",
-      testNotificationBody: "Offline workspace ready",
-    },
-  })),
+vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
+  PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
 }));
 
 describe("Dashboard home navigation", () => {
-  it("renders the hero entry links and real overview card destinations", async () => {
+  it("renders the operations console entry links", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByText("PropAI")).toBeInTheDocument();
-    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
+    expect(screen.getByText("사업 관제")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "개발사업의 다음 액션을 한 화면에서 결정합니다." })).toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
-      "href",
-      "/en/projects",
-    );
-
-    const allLinks = screen.getAllByRole("link");
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/auction")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tax")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tenant")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/inspection")).toBeDefined();
-    expect(allLinks.find((link) => link.getAttribute("href") === "/en/webrtc")).toBeDefined();
+    expect(screen.getByRole("link", { name: "프로젝트 생성" })).toHaveAttribute("href", "/en/projects/new");
+    expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getAllByRole("link", { name: "프로젝트 전체 보기" })[0]).toHaveAttribute("href", "/en/projects");
   });
 
-  it("renders the KPI summary and active pipeline cards", async () => {
+  it("renders lifecycle rail, action queue, and data status wiring", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
-    expect(screen.getByText("3,500억")).toBeInTheDocument();
-    expect(screen.getByText("강남 게이트웨이 신축")).toBeInTheDocument();
-    expect(screen.getByText("송도 호라이즌 개발")).toBeInTheDocument();
-    expect(screen.getByText("남산 에코타워 리모델링")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /01\s+부지/ })).toHaveAttribute("href", "/en/land-schedule");
+    expect(screen.getByRole("link", { name: /02\s+권리/ })).toHaveAttribute("href", "/en/registry-analysis");
+    expect(screen.getByRole("link", { name: /07\s+획득/ })).toHaveAttribute("href", "/en/auction");
+    expect(screen.getByRole("link", { name: /08\s+운영/ })).toHaveAttribute("href", "/en/digital-twin");
+
+    expect(screen.getByRole("link", { name: /신규 후보지 검토/ })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByRole("link", { name: /공공입찰연결/ })).toHaveAttribute("href", "/en/g2b");
+    expect(screen.getByTestId("dashboard-project-loader")).toHaveTextContent("en");
   });
 });

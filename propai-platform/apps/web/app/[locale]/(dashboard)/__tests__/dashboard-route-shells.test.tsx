@@ -59,6 +59,28 @@ vi.mock("@/components/dashboard/DashboardClientPanel", () => ({
   ),
 }));
 
+vi.mock("@/components/onboarding/OnboardingWizard", () => ({
+  OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
+}));
+
+vi.mock("@/components/dashboard/DashboardKpiLoader", () => ({
+  DashboardKpiLoader: () => <div data-testid="dashboard-kpi-loader">KPI</div>,
+}));
+
+vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
+  DashboardProjectLoader: ({ locale }: { locale: string }) => (
+    <div data-testid="dashboard-project-loader">{locale}</div>
+  ),
+}));
+
+vi.mock("@/components/dashboard/DashboardEsgScore", () => ({
+  DashboardEsgScore: () => <div data-testid="dashboard-esg-score">ESG</div>,
+}));
+
+vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
+  PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
+}));
+
 vi.mock("@/components/pwa/PwaStatusCard", () => ({
   PwaStatusCard: () => <div data-testid="pwa-status-card">PWA status card</div>,
 }));
@@ -101,6 +123,18 @@ vi.mock("@/components/analytics/InvestmentOperationsWorkspaceClient", () => ({
   }: {
     locale: string;
   }) => <div data-testid="investment-workspace">{locale}</div>,
+}));
+
+vi.mock("@/components/analytics/InvestmentAnalyticsWorkspaceClient", () => ({
+  InvestmentAnalyticsWorkspaceClient: ({
+    locale,
+  }: {
+    locale: string;
+  }) => <div data-testid="investment-workspace">{locale}</div>,
+}));
+
+vi.mock("@/components/analytics/CostEstimationClient", () => ({
+  CostEstimationClient: () => <div data-testid="cost-workspace">cost</div>,
 }));
 
 vi.mock("@/components/analytics/EnergyOperationsWorkspaceClient", () => ({
@@ -161,6 +195,16 @@ vi.mock("@/features/webrtc/RemoteSupervisionRoom", () => ({
 
 vi.mock("@/components/sre/SREDashboard", () => ({
   SREDashboard: () => <div data-testid="sre-dashboard">SRE dashboard</div>,
+}));
+
+vi.mock("@/lib/ai-analyze-client", () => ({
+  useAIReady: () => ({ isReady: false }),
+  useAIAnalyze: () => ({
+    mutate: vi.fn(),
+    data: null,
+    isPending: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/i18n/get-dictionary", () => ({
@@ -335,17 +379,14 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home with the premium hero and KPI cards", async () => {
+  it("renders the dashboard home as an operations console", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByText("PropAI")).toBeInTheDocument();
-    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
-    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
-      "href",
-      "/en/projects",
-    );
+    expect(screen.getByText("사업 관제")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "개발사업의 다음 액션을 한 화면에서 결정합니다." })).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-kpi-loader")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByRole("link", { name: /공공입찰연결/ })).toHaveAttribute("href", "/en/g2b");
   });
 
   it("renders the projects list page with the overview client", async () => {
@@ -370,25 +411,25 @@ describe("Dashboard route shells", () => {
   it("renders the investment analytics shell with the live workspace", async () => {
     render(<InvestmentPage />);
 
-    expect(screen.getByText("투자 운영 컨트롤타워")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(screen.getByText("투자수익성 분석")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
   });
 
   it("renders the ESG analytics shell with the energy workspace", async () => {
     render(<ESGPage />);
 
-    expect(screen.getByText("에너지 인증 작업 공간")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("energy-workspace")).toHaveTextContent("en");
+    expect(screen.getByText("ESG / 탄소 경영")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "⚙️ API 키를 먼저 등록하세요" })).toBeDisabled();
   });
 
   it("renders the cost analytics shell with the cost workspace", async () => {
     render(<CostPage />);
 
-    expect(screen.getByText("공사비 분석 허브")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("cost-workspace")).toHaveTextContent("en");
+    expect(screen.getByText("공사비 분석")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("cost-workspace")).toHaveTextContent("cost");
   });
 
 });

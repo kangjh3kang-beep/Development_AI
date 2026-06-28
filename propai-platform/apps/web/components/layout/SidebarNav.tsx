@@ -101,7 +101,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
     `group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-semibold transition-colors duration-200 ${
       active
         ? "text-[var(--accent-strong)] bg-[var(--accent-soft)] border border-[var(--accent-strong)]/20"
-        : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-white"
+        : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
     }`;
 
   function renderLeaf(node: NavNode, depth: number) {
@@ -119,7 +119,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
           <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-[var(--accent-strong)]" aria-hidden="true" />
         )}
         {node.icon && (
-          <span className={`shrink-0 ${active ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)] group-hover:text-white"}`}>
+          <span className={`shrink-0 ${active ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)] group-hover:text-[var(--text-primary)]"}`}>
             {node.icon}
           </span>
         )}
