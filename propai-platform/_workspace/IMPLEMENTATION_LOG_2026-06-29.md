@@ -65,8 +65,12 @@
 - 3차 배포 run: `28340595011`
 - 3차 배포 결과: 실패 - `pnpm lint -- --quiet`가 ESLint에 `--quiet`을 파일 패턴으로 전달
 - 보정: lint 명령을 `pnpm exec eslint . --quiet --no-cache`로 수정
-- 라이브 검증 URL: 재배포 후 기록
-- 라이브 검증 결과: 재배포 후 기록
+- 4차 배포 run: `28340664087`
+- 4차 배포 결과: 실패 - 웹 deploy gate(type-check, lint, Dashboard IA regression tests)는 통과했고 OpenNext build/assets upload도 성공했으나 Cloudflare Worker script가 Free plan 제한 3 MiB를 초과
+- Cloudflare 오류: `Your Worker exceeded the size limit of 3 MiB. Please upgrade to a paid plan to deploy Workers up to 10 MiB. [code: 10027]`
+- 가장 큰 번들: `.open-next/server-functions/default/apps/web/handler.mjs` 약 20,328.91 KiB
+- 라이브 검증 URL: 미발급
+- 라이브 검증 결과: 미통과 - Cloudflare plan/worker bundle size 제한으로 배포 차단
 
 ### 다음 단계 진입 조건
 
