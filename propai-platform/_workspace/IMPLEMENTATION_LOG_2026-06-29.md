@@ -107,6 +107,10 @@
 - `nginx.conf`에 `location = /health`를 추가해 `/health`가 Next.js가 아니라 FastAPI 백엔드로 직접 프록시되게 했다.
 - 외부 smoke는 `ORACLE_HEALTH_URL`, `${ORACLE_WEB_URL}/ko`, `${ORACLE_WEB_URL}/ko/analysis`를 확인한다.
 - 로컬 Docker/Oracle SSH 키가 현재 실행 환경에 없어 실제 Oracle 컨테이너 교체와 공개 URL smoke는 GitHub workflow dispatch 또는 Oracle 서버 내 실행으로 완료해야 한다.
+- GitHub workflow dispatch run `28341430485`: web deploy gate(type-check, lint, Dashboard IA regression tests)는 통과했다.
+- 같은 run의 Oracle deploy job은 `ORACLE_SSH_HOST`, `ORACLE_SSH_KEY` 시크릿 미등록으로 preflight에서 실패했고, SSH 배포와 public smoke는 안전하게 skipped 처리됐다.
+- 현재 GitHub 등록 시크릿 확인 결과: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`만 존재한다.
+- 공개 후보 `propai.kr` smoke 확인 결과: `/health`, `/ko`, `/ko/analysis` 모두 `www.propai.kr`로 리다이렉트 후 404. 현재 공개 URL은 이번 Stage 01 Oracle 배포 검증 URL로 사용할 수 없다.
 
 ### 다음 단계 진입 조건
 
