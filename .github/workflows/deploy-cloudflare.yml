@@ -89,8 +89,8 @@ jobs:
       ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
       ORACLE_DEPLOY_PATH: ${{ secrets.ORACLE_DEPLOY_PATH || '' }}
       ORACLE_INTERNAL_URL: ${{ secrets.ORACLE_INTERNAL_URL || 'http://localhost:80' }}
-      ORACLE_WEB_URL: ${{ github.event.inputs.web_url || secrets.ORACLE_WEB_URL }}
-      ORACLE_HEALTH_URL: ${{ github.event.inputs.health_url || secrets.ORACLE_HEALTH_URL }}
+      ORACLE_WEB_URL: ${{ github.event.inputs.web_url || secrets.ORACLE_WEB_URL || 'https://4t8t.net' }}
+      ORACLE_HEALTH_URL: ${{ github.event.inputs.health_url || secrets.ORACLE_HEALTH_URL || 'https://api.4t8t.net/health' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -136,11 +136,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$ORACLE_WEB_URL" ]; then
-            ORACLE_WEB_URL="http://$ORACLE_SSH_HOST"
+            ORACLE_WEB_URL="https://4t8t.net"
           fi
           ORACLE_WEB_URL="${ORACLE_WEB_URL%/}"
           if [ -z "$ORACLE_HEALTH_URL" ]; then
-            ORACLE_HEALTH_URL="$ORACLE_WEB_URL/health"
+            ORACLE_HEALTH_URL="https://api.4t8t.net/health"
           fi
 
           curl -fsSL --max-time 20 "$ORACLE_HEALTH_URL" >/tmp/oracle-health.json

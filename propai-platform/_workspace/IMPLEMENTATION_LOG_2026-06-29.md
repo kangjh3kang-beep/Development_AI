@@ -105,15 +105,18 @@
 - Docker Compose v1/v2의 컨테이너명 차이를 흡수하도록 `docker-compose`/`docker compose`, underscore/hyphen container name 후보를 처리한다.
 - `VERIFY_BASE_URL` 환경변수로 서버 내부 smoke 기준 URL을 주입할 수 있게 했다.
 - `nginx.conf`에 `location = /health`를 추가해 `/health`가 Next.js가 아니라 FastAPI 백엔드로 직접 프록시되게 했다.
-- 외부 smoke는 `ORACLE_HEALTH_URL`, `${ORACLE_WEB_URL}/ko`, `${ORACLE_WEB_URL}/ko/analysis`를 확인한다.
+- 외부 smoke는 `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis`를 기본값으로 확인한다.
 - 로컬 Docker/Oracle SSH 키가 현재 실행 환경에 없어 실제 Oracle 컨테이너 교체와 공개 URL smoke는 GitHub workflow dispatch 또는 Oracle 서버 내 실행으로 완료해야 한다.
 - GitHub workflow dispatch run `28341430485`: web deploy gate(type-check, lint, Dashboard IA regression tests)는 통과했다.
 - 같은 run의 Oracle deploy job은 `ORACLE_SSH_HOST`, `ORACLE_SSH_KEY` 시크릿 미등록으로 preflight에서 실패했고, SSH 배포와 public smoke는 안전하게 skipped 처리됐다.
 - 현재 GitHub 등록 시크릿 확인 결과: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`만 존재한다.
-- 공개 후보 `propai.kr` smoke 확인 결과: `/health`, `/ko`, `/ko/analysis` 모두 `www.propai.kr`로 리다이렉트 후 404. 현재 공개 URL은 이번 Stage 01 Oracle 배포 검증 URL로 사용할 수 없다.
+- 사용자 정정: 실제 공개 URL은 `4t8t.net` 계열이다.
+- `4t8t.net` smoke 확인 결과: `https://4t8t.net/ko` 200, `https://4t8t.net/ko/analysis` 200, `https://api.4t8t.net/health` 200.
+- 참고: `https://4t8t.net/health`와 `https://www.4t8t.net/health`는 404다. 프론트 공개 도메인의 `/health`가 아니라 백엔드 공개 도메인 `api.4t8t.net/health`를 라이브 헬스 기준으로 사용해야 한다.
+- `https://api.4t8t.net/api/v1/system/health/full`은 401로 응답했다. 인증 필요 endpoint로 보이며 공개 smoke 기준으로 사용하지 않는다.
 
 ### 다음 단계 진입 조건
 
 - 이번 단계 커밋/푸시 완료
 - Oracle Cloud 배포 workflow dispatch 또는 Oracle 서버 내 `safe-deploy.sh both <ref>` 완료
-- 라이브 URL에서 `/health`, `/ko`, `/ko/analysis` smoke 통과
+- 라이브 URL에서 `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis` smoke 통과
