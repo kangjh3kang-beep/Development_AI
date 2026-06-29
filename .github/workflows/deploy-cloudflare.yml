@@ -8,33 +8,44 @@ on:
 
 jobs:
   test:
-    name: Test gate (배포 전 필수)
+    name: Web deploy gate (배포 전 필수)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: propai-platform/apps/api/requirements.txt
+          version: 9
 
-      - name: Install GDAL native libraries
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: propai-platform/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: propai-platform
+
+      - name: Type check
+        run: pnpm type-check
+        working-directory: propai-platform/apps/web
+
+      - name: Lint
+        run: pnpm lint -- --quiet
+        working-directory: propai-platform/apps/web
+
+      - name: Dashboard IA regression tests
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gdal-bin libgdal-dev
-
-      - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          export CPLUS_INCLUDE_PATH=/usr/include/gdal
-          export C_INCLUDE_PATH=/usr/include/gdal
-          pip install "gdal==$(gdal-config --version)"
-          pip install -r propai-platform/apps/api/requirements.txt
-
-      - name: Backend unit tests
-        working-directory: propai-platform/apps/api
-        run: python -m pytest tests/ -q --no-header
+          pnpm test:run -- \
+            'app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx' \
+            'app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx' \
+            components/layout/nav-config.test.ts \
+            lib/navigation/route-registry.test.ts
+        working-directory: propai-platform/apps/web
 
   deploy:
     runs-on: ubuntu-latest

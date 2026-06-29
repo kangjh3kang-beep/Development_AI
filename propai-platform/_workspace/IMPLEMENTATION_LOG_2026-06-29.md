@@ -59,7 +59,9 @@
 - 배포 방식: staging workflow 또는 연결된 preview 환경 확인 후 실행
 - 1차 배포 run: `28340116020`
 - 1차 배포 결과: 실패 - Cloudflare deploy workflow의 backend dependency gate에서 `gdal-config` 누락
-- 보정: `.github/workflows/deploy-cloudflare.yml`에 `gdal-bin libgdal-dev` 설치와 시스템 GDAL 버전 선설치 추가
+- 2차 배포 run: `28340161512`
+- 2차 배포 결과: 취소 - backend dependency gate는 통과했으나 Cloudflare 웹 배포 전 backend 전체 테스트가 15분가량 무출력 장기 실행
+- 보정: `.github/workflows/deploy-cloudflare.yml`을 웹 배포 목적에 맞춰 type-check, lint, Dashboard IA regression tests 중심의 `Web deploy gate`로 재정렬
 - 라이브 검증 URL: 재배포 후 기록
 - 라이브 검증 결과: 재배포 후 기록
 
