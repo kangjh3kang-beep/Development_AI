@@ -102,12 +102,22 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
             <div
               key={section.id}
               className="relative"
+              onMouseEnter={() => setOpenSectionId(section.id)}
+              onMouseLeave={() =>
+                setOpenSectionId((current) => (current === section.id ? null : current))
+              }
+              onFocus={() => setOpenSectionId(section.id)}
+              onBlur={(event) => {
+                const nextFocused = event.relatedTarget as Node | null;
+                if (nextFocused && event.currentTarget.contains(nextFocused)) return;
+                setOpenSectionId((current) => (current === section.id ? null : current));
+              }}
             >
               <button
                 type="button"
                 aria-expanded={open}
                 aria-haspopup="menu"
-                onClick={() => setOpenSectionId(open ? null : section.id)}
+                onClick={() => setOpenSectionId(section.id)}
                 className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
                   active
                     ? "bg-[var(--text-primary)] text-white"

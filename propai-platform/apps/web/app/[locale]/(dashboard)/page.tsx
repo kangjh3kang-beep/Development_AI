@@ -5,7 +5,7 @@ import {
   Building2,
   Clock,
   ClipboardList,
-  FileText,
+  DraftingCompass,
   Layers3,
   MapPin,
   Search,
@@ -87,13 +87,13 @@ const creationProducts: CreationProduct[] = [
     tone: "sky",
   },
   {
-    title: "투자 의사결정 브리프",
-    routeId: "projects",
-    icon: FileText,
-    intent: "진행 중 프로젝트를 보고서 형태로 묶습니다.",
-    inputs: "프로젝트, 분석 결과, 첨부자료",
-    result: "요약 브리프, 리스크, 승인 요청",
-    time: "약 1분",
+    title: "건축개요·CAD 계획도면",
+    routeId: "design-studio",
+    icon: DraftingCompass,
+    intent: "토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다.",
+    inputs: "주소, 용도지역, 법규 조건",
+    result: "건축개요, CAD 계획도면, 법규 적합성",
+    time: "약 4분",
     tone: "lime",
   },
 ] as const;
@@ -249,7 +249,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             <span className="db-panel-label">생성 허브</span>
             <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">무엇을 만들까요?</h2>
             <p className="mt-1 text-sm font-medium text-[var(--text-secondary)]">
-              기능명이 아니라 최종 산출물을 기준으로 선택합니다.
+              최종 산출물을 기준으로 선택합니다.
             </p>
           </div>
           <Link

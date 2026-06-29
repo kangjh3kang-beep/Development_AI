@@ -715,3 +715,54 @@
 - 이번 단계 커밋/푸시 완료: 예정
 - Oracle Cloud 프론트/백엔드 배포 완료: 예정
 - 라이브 `https://4t8t.net/ko/permits`에서 멀티지도 슬롯, 지적·노후도 탭, 실거래·분양 탭, 주변 필지 선택 탭 확인: 예정
+
+## Stage 11. Workspace menu hover dismissal and output card copy fit
+
+- 기록 시각: 2026-06-29 22:27 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `61714600 feat: add satong multi-map foundation`
+- 범위: 워크스페이스 풀다운 메뉴의 호버/롤아웃 닫힘 동작, 생성 허브 카피 정리, 투자 브리프 카드의 CAD 산출물 카드 대체
+- 완료 판정: 로컬 구현/검증 기준 100%, 라이브 배포 예정
+- 자체 코드리뷰 점수: 9.7 / 10
+
+### 구현 내용
+
+- 상단 워크스페이스 메뉴를 데스크톱 SaaS 내비게이션 관성에 맞게 수정했다.
+  - 메뉴 롤오버 시 해당 풀다운만 열린다.
+  - 다른 메인 메뉴로 이동하면 이전 풀다운은 자동으로 닫힌다.
+  - 메뉴 영역에서 마우스가 벗어나거나 하위 링크를 선택하면 풀다운이 닫힌다.
+  - 키보드 포커스 진입/이탈에도 동일한 단일 오픈 규칙을 적용했다.
+- 생성 허브 보조 문구에서 `기능명이 아니라`를 제거해 `최종 산출물을 기준으로 선택합니다.`로 정리했다.
+- `투자 의사결정 브리프` 카드를 제거하고 `건축개요·CAD 계획도면` 카드로 대체했다.
+  - 설명: `토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다.`
+  - 링크: `/design-studio`
+
+### 변경 파일
+
+- `apps/web/components/layout/WorkspaceNavBar.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.test.tsx`
+- `apps/web/app/[locale]/(dashboard)/page.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx`
+
+### 검증 결과
+
+- 변경 파일 `eslint`: 오류 0, 경고 0
+- `git diff --check`: 통과
+- `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx`: 3 files / 11 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 Playwright smoke:
+  - `http://localhost:3030/ko` 렌더 통과
+  - `최종 산출물을 기준으로 선택합니다.` visible
+  - `기능명이 아니라 ...` 문구 미노출
+  - `건축개요·CAD 계획도면` 카드 visible, `/ko/design-studio` 배선 확인
+  - 풀다운 메뉴 롤오버 단일 오픈, 다른 메뉴 진입 시 이전 풀다운 닫힘, 롤아웃 후 닫힘 확인
+  - horizontal overflow 0
+  - 스크린샷: `/tmp/propai-home-hover-cad-card-20260629.png`
+  - 로컬 백엔드 미기동으로 API resource `ERR_CONNECTION_REFUSED` 콘솔 메시지는 발생했으나 UI 렌더링 검증에는 영향 없음
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 예정
+- Oracle Cloud 프론트/백엔드 배포 완료: 예정
+- 라이브 `https://4t8t.net/ko`에서 풀다운 메뉴 자동 닫힘, 생성 허브 문구, CAD 산출물 카드 확인: 예정
