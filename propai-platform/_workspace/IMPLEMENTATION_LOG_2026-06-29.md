@@ -207,7 +207,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `84773fcf docs: record stage 02 oracle deploy evidence`
 - 범위: Oracle Compose 운영 종속성, `safe-deploy.sh` dependency 기동 순서, 라이브 `/health` body 정상화
-- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 완료 판정: 단계 범위 기준 100%
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 원인 분석
@@ -232,11 +232,14 @@
 - API `depends_on`에 `redis`, `qdrant`를 명시해 재생성 순서를 안정화했다.
 - `safe-deploy.sh`에 API 배포 전 dependency 서비스를 먼저 기동하는 `ensure_dependency_services`를 추가했다.
 - nginx reload 전 네트워크 보장 대상에 `redis`, `qdrant`를 포함해 서비스 alias 유실을 방지했다.
+- 백엔드 A1은 별도 Caddy 블루-그린 구조라 `safe-deploy.sh`를 적용하지 않고, 기존 Redis(host gateway `172.17.0.1:6379`)를 바라보도록 `.env`의 Redis/Celery URL을 보정한 뒤 API를 `8001 -> 8000`으로 블루-그린 전환했다.
 
 ### 변경 파일
 
 - `docker-compose.yml`
 - `scripts/safe-deploy.sh`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+- `docs/A1_BACKEND_MIGRATION_RUNBOOK_2026-06-16.md`
 
 ### 검증 결과
 
@@ -247,14 +250,21 @@
 - `npm run test:run -- 'app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx' 'components/layout/nav-config.test.ts' 'lib/navigation/route-registry.test.ts'`: 3 files / 19 tests 통과
 - `pnpm exec eslint . --quiet --no-cache`: 통과
 - `npm run build`: 통과, 136개 static page 생성 통과
+- 프론트 A1 실제 Compose config 검증: `api` 환경에서 `REDIS_URL=redis://redis:6379/0`, `QDRANT_HOST=qdrant` 확인 통과
+- 프론트 A1 내부 smoke: `http://localhost:80/health` → `status=healthy`, `postgres=healthy`, `redis=healthy`, `qdrant=healthy`
+- 백엔드 A1 내부 smoke: `http://localhost:80/health` → `status=healthy`, `postgres=healthy`, `redis=healthy`, `qdrant=healthy`
+- 공개 smoke: `https://4t8t.net/health` 200 + healthy, `https://api.4t8t.net/health` 200 + healthy, `https://4t8t.net/ko` 200
 
 ### 잔여 리스크
 
-- 로컬 WSL에는 Docker Desktop 연동이 꺼져 있어 `docker compose config`는 로컬에서 실행하지 못했다. Oracle 서버에서 배포 직전 실제 Compose config로 재검증한다.
-- `api.4t8t.net`은 백엔드 A1의 별도 Caddy/컨테이너 구성으로 보이며, 프론트 A1의 `safe-deploy.sh`를 그대로 적용하면 중복 컨테이너를 만들 수 있다. 프론트 A1 health 정상화 후 백엔드 A1은 별도 runbook을 확인해 별도 단계로 다룬다.
+- 로컬 WSL에는 Docker Desktop 연동이 꺼져 있어 `docker compose config`는 로컬에서 실행하지 못했다. Oracle 서버에서 실제 Compose config를 검증해 보완했다.
+- 백엔드 A1은 repo compose가 아니라 `~/deploy.sh` + Caddy 블루-그린 운영이다. 이번에 서버 `.env`를 보정했으므로 후속 배포는 같은 Redis host gateway 값을 유지해야 한다.
+- 백엔드 A1의 `propai-celery-worker`, `propai-celery-flower` 컨테이너는 기존부터 unhealthy로 남아 있다. 공개 API `/health`는 정상화됐지만 Celery 워커 운영성은 별도 단계에서 점검한다.
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 진행 예정
-- Oracle Cloud 프론트 A1 API 배포 완료: 진행 예정
-- 라이브 `https://4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 진행 예정
+- 이번 단계 커밋/푸시 완료: 완료 - `2748e1ba fix: wire oracle api health dependencies`
+- Oracle Cloud 프론트 A1 API 배포 완료: 완료 - `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ 2748e1ba fix: wire oracle api health dependencies 03:36:44`
+- Oracle Cloud 백엔드 A1 API 전환 완료: 완료 - Caddy active port `8000`, `propai-api-8000` Docker health `healthy`
+- 라이브 `https://4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 완료
+- 라이브 `https://api.4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 완료

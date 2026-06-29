@@ -73,6 +73,7 @@
    - `apps/api/.env` + 루트 `.env`를 Micro에서 복사.
    - **★`SECRET_STORE_KEY`를 Micro와 100% 동일하게 고정**. 다르면 `platform_secrets` 복호화 24/24 전부 실패(메모리 교훈: 서버별 휘발 파생키로 복호화붕괴 발생했었음). `DATABASE_URL`·`MOLIT_API_KEY`·`ONBID`·`LIVEKIT`·`SUPABASE`·`KAKAO` 등 전 비밀 동일.
    - `DATABASE_URL` 비밀번호의 `%21`(URL인코딩 `!`) 등 특수문자 그대로 유지(alembic CLI는 이 때문에 깨지므로 마이그레이션은 raw SQL/asyncpg로, 메모리 교훈).
+   - 백엔드 A1의 기본 bridge API 컨테이너는 host gateway로 Redis/Qdrant를 본다. `REDIS_URL=redis://172.17.0.1:6379/0`, `REDIS_CACHE_URL=redis://172.17.0.1:6379/1`, `CELERY_BROKER_URL=redis://172.17.0.1:6379/2`, `CELERY_RESULT_BACKEND=redis://172.17.0.1:6379/3`, `QDRANT_HOST=172.17.0.1`을 유지한다.
 3. **ifcopenshell 선검증**: `python3.12 -m venv /tmp/t && /tmp/t/bin/pip install ifcopenshell==0.8.4` 단독 실행.
    - 성공 → 그대로 진행.
    - 실패 → (a) 소스빌드 시도, 또는 (b) 컨테이너 빌드에서 BIM/IFC 모듈만 옵션화(IfcGeneratorService 경로는 이미 폴백 구조이므로 기능 degrade로 우선 가동 후 후속 해결).
@@ -107,12 +108,12 @@
 - [ ] **A1 capacity** 재시도 대비.
 - [ ] **DATABASE_URL 특수문자(%21)** 보존 — alembic CLI 회피(raw SQL 유지).
 - [ ] **Caddy 포트 80** 기준 라이브호출.
-- [ ] `/health`의 redis·qdrant degraded는 **기존 정상범위**(앱 부팅과 무관) — 단, A1 RAM 여유로 redis 정상화는 별도 P1 과제(SCALING_OPTIMIZATION_PLAN).
+- [ ] `/health`는 `postgres`·`redis`·`qdrant` 모두 `healthy`여야 한다. Redis는 host gateway `172.17.0.1:6379` 기준으로 확인하고, degraded를 정상 범위로 취급하지 않는다.
 - [ ] **realtx(국토부 실거래) 502는 이 이관으로 안 고쳐짐** — data.go.kr 백엔드 장애(별개). 한국 리전 유지로 공공데이터 접근성만 보존.
 
 ## 7. 검증 항목 (컷오버 전/후 동일 수행)
 
-- `GET https://api.4t8t.net/health` → status 200, postgres healthy.
+- `GET https://api.4t8t.net/health` → status 200, postgres/redis/qdrant healthy.
 - 로그인(`/api/v1/auth/login`, admin@4t8t.net) → access_token 발급.
 - `GET /api/v1/auction/ranking?by=views` → 200 + items(ONBID 한국IP 접근 확인).
 - `GET /api/v1/analysis-ledger/verify-all` → verified:true(DB 이관 무결성).
