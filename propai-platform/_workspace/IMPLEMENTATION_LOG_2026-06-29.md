@@ -603,3 +603,59 @@
 - 이번 단계 커밋/푸시 완료: 예정
 - Oracle Cloud 프론트 배포 완료: 예정
 - 라이브 `https://4t8t.net/ko/permits`에서 풀다운 단일 오픈, 통합 필지 입력 카드, overflow 없음 확인: 예정
+
+## Stage 09. Map-first parcel intake fusion
+
+- 기록 시각: 2026-06-29 21:18 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `0f488715 feat: unify parcel intake workflow`
+- 범위: 사용자가 제안한 지도 중심 부동산 탐색 UX를 사통팔땅의 개발사업 필지 입력 목적에 맞게 융합
+- 완료 판정: 로컬 구현/검증 기준 100%, 라이브 배포 예정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 검토 결론
+
+- 첨부 구조의 장점은 `지도 = 주 작업면`, `좌측 패널 = 선택 대상 상세/목록`, `상단 검색 = 즉시 위치 이동`이라는 정보구조다.
+- 사통팔땅에는 시세/실거래 마커 중심으로 복제하지 않고, `필지 확정 → 다필지 구획 → 인허가/사업성 분석` 흐름에 맞게 재구성하는 것이 적합하다.
+- 따라서 좌측 광고/즐겨찾기 성격의 영역은 배제하고, `검색·등록 주소`, `입력/보강/구획도 상태`, `삭제/요약`으로 치환했다.
+
+### 구현 내용
+
+- 다필지 입력 UI를 `지도 기반 필지 입력 작업면`으로 재구성했다.
+  - 상단: `지번·주소 검색`, `건물명·아파트`, `엑셀 파일 선택`, `양식 다운로드`
+  - 좌측: 검색/엑셀/지도에서 등록된 필지 목록, 입력/보강/구획도 상태, 총 필지/면적/지역 요약
+  - 우측: 항상 펼쳐진 지도 선택 영역
+- 검색 결과가 좌표를 포함하면 `ParcelPickerMap`이 해당 좌표로 이동하고 자동 선택 표시를 시도하도록 `autoPreviewFocus`를 추가했다.
+- 기존 엑셀 업로드/필지 보강/지도 클릭 선택 API 배선은 유지했다.
+- 전 단계 카드 3분할 구조는 제거하고, 사용자의 제안처럼 지도 위쪽에 검색·엑셀 조작이 붙는 방식으로 단순화했다.
+
+### 변경 파일
+
+- `apps/web/components/common/GlobalAddressSearch.tsx`
+- `apps/web/components/map/ParcelPickerMap.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- 변경 파일 `eslint`: 오류 0. `ParcelPickerMap.tsx` 기존 React ref 패턴 경고는 잔존
+- `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx`: 3 files / 10 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 Playwright smoke:
+  - `http://localhost:3030/ko/permits` 렌더 통과
+  - `지도 기반 필지 입력 작업면`, `지번·주소 검색`, `엑셀 파일 선택`, `양식 다운로드`, `검색·등록 주소`, 지도 선택 완료 버튼 visible
+  - 워크스페이스 풀다운 단일 오픈 전환 통과
+  - horizontal overflow 0
+  - 로컬 백엔드 미기동으로 API resource `ERR_CONNECTION_REFUSED` 콘솔 메시지는 발생했으나 UI 렌더링 검증에는 영향 없음
+
+### 배포 메모
+
+- 전 단계 `0f488715` 기준 Oracle 배포가 Docker build에서 장시간 정체되어 사용자의 새 UX 피드백과 충돌하므로 원격 build/safe-deploy 프로세스를 중단했다.
+- 새 최종 구조 커밋 후 Oracle Cloud에 다시 배포한다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 예정
+- Oracle Cloud 프론트 배포 완료: 예정
+- 라이브 `https://4t8t.net/ko/permits`에서 지도 중심 필지 입력 작업면, 풀다운 단일 오픈, overflow 없음 확인: 예정

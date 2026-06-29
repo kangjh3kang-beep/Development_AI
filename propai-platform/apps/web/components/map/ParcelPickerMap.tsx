@@ -54,6 +54,8 @@ interface ParcelPickerMapProps {
   onPickMany?: (parcels: ParcelAtPointResult[]) => void;
   /** 검색으로 확정한 필지 주변을 바로 고를 수 있도록 지도 중심 이동 */
   focusTarget?: { lat: number; lon: number; label?: string } | null;
+  /** 검색된 필지를 지도에 자동으로 선택 표시 */
+  autoPreviewFocus?: boolean;
   /** 지도 높이(px), 기본 360 */
   height?: number;
 }
@@ -111,7 +113,7 @@ function toP(sqm: number): string {
   return (sqm / 3.305785).toFixed(1);
 }
 
-export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 }: ParcelPickerMapProps) {
+export function ParcelPickerMap({ onPick, onPickMany, focusTarget, autoPreviewFocus = false, height = 360 }: ParcelPickerMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const fs = useMapFullscreen(mapRef);
@@ -144,6 +146,7 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 
 
   // 연타 응답 경합 가드: 마지막 클릭만 반영(stale 필지 폐기)
   const querySeqRef = useRef(0);
+  const lastAutoFocusKeyRef = useRef("");
 
   useEffect(() => {
     focusTargetRef.current = focusTarget;
@@ -207,7 +210,7 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 
   }, []);
 
   /** 클릭한 좌표로 필지를 조회하고 결과를 pending 상태로 둔다 */
-  const queryParcel = useCallback(async (lat: number, lon: number) => {
+  const queryParcel = useCallback(async (lat: number, lon: number, opts: { autoStage?: boolean } = {}) => {
     const seq = ++querySeqRef.current;
     setStatus("loading");
     setStatusMsg("필지 조회 중…");
@@ -262,6 +265,22 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 
     // lat/lon 정보 보완(확인 카드·staged 레이어에서 좌표 재사용)
     result.lat = lat;
     result.lon = lon;
+
+    if (opts.autoStage) {
+      if (!alreadyStaged) {
+        setStaged((prev) => {
+          if (result.pnu && prev.some((s) => s.pnu === result.pnu)) return prev;
+          return [...prev, result];
+        });
+        addStagedLayer(result);
+      }
+      clearPendingLayer();
+      setPending(null);
+      setStatus("idle");
+      setStatusMsg("");
+      return;
+    }
+
     setPending(result);
 
     // 임시 pending 레이어 표시(파란 폴리곤 + 마커)
@@ -289,7 +308,7 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 
     if (onPickRef.current && !onPickManyRef.current) {
       onPickRef.current(result);
     }
-  }, [clearPendingLayer]);
+  }, [addStagedLayer, clearPendingLayer]);
 
   /** [＋추가] 버튼: pending 필지를 staged에 넣고 녹색 폴리곤으로 고정 */
   const handleConfirmAdd = useCallback(() => {
@@ -393,7 +412,12 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 
     const map = mapRef.current;
     if (!map || focusLat == null || focusLon == null) return;
     map.setView([focusLat, focusLon], 17, { animate: true });
-  }, [focusLat, focusLon]);
+    if (!autoPreviewFocus) return;
+    const key = `${focusLat.toFixed(7)},${focusLon.toFixed(7)}`;
+    if (lastAutoFocusKeyRef.current === key) return;
+    lastAutoFocusKeyRef.current = key;
+    void queryParcel(focusLat, focusLon, { autoStage: true });
+  }, [autoPreviewFocus, focusLat, focusLon, queryParcel]);
 
   // staged 합산 면적 계산
   const totalAreaSqm = staged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
