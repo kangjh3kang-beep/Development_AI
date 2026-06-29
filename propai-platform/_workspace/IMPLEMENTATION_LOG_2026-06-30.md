@@ -65,7 +65,7 @@
 - 기록 시각: 2026-06-30 07:48 KST
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 범위: 설계 스튜디오 용도지역 인식 누락 제거, 국계법/조례/계획 실효 한도 배선 검증, 통합 도면 생성 워크플로우 계획 수립
-- 완료 판정: 로컬 구현/검증 100%, 배포 전 단계
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 공개 URL 검증 99%+ 통과
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 구현 내용
@@ -102,5 +102,21 @@
 
 ### 다음 단계 진입 조건
 
-- 남은 작업: 커밋, 푸시, Oracle safe deploy, 공개 URL 라이브 검증
+- 구현 커밋/푸시 완료:
+  - `82eab512 fix: wire design studio legal limits`
+- Oracle safe deploy 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 82eab512 fix: wire design studio legal limits 23:22:44`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/design-studio`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+  - `https://api.4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+- 라이브 컨테이너 검증:
+  - `자연녹지지역` -> `zone_key='자연녹지지역'`, `fallback_warning=False`
+  - 법정 상한: 건폐율 20%, 용적률 100%
+  - 실효 한도 전달 검증: `ordinance_far_percent=50` -> `applied_far_pct=50`
+  - 매스 결과: `bcr_pct=20.0`, `far_pct=40.0`, `num_floors=2`
 - 다음 구현 단계: 도면편집 화면을 1차 법규분석 → 2차 Top3 건축개요 → 3차 CAD/BIM 생성·명령편집이 한 화면에서 이어지는 통합 워크스페이스로 재구성
