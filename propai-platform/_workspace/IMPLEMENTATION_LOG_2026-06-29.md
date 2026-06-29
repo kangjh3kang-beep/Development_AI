@@ -186,6 +186,17 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료
-- Oracle Cloud 프론트 배포 완료
-- 라이브 URL에서 `https://4t8t.net/ko/design-audit`, `https://4t8t.net/ko/deliberation-review`, `https://4t8t.net/ko/bim-studio`, `https://4t8t.net/ko/meeting-rooms` smoke 통과
+- 이번 단계 커밋/푸시 완료: 완료 - `ced76237 feat: unify design center route shells`
+- Oracle Cloud 프론트 배포 완료: 완료 - 프론트 A1 직접 SSH 배포
+- 라이브 URL에서 `https://4t8t.net/ko/design-audit`, `https://4t8t.net/ko/deliberation-review`, `https://4t8t.net/ko/bim-studio`, `https://4t8t.net/ko/meeting-rooms` smoke 통과: 완료
+
+### Oracle Cloud 배포/라이브 검증
+
+- Oracle 직접 배포 실행: 프론트 A1에서 `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629` 실행
+- Oracle 직접 배포 결과: `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ ced76237 feat: unify design center route shells 03:15:30`
+- 배포 후 서버 상태:
+  - Git HEAD: `ced76237 feat: unify design center route shells`
+  - 컨테이너: `propai-platform_web_1 propai-web:oracle`, `propai-platform_api_1 propai-api:oracle`, `propai-platform_nginx_1 nginx:alpine`, `propai-platform_qdrant_1 qdrant/qdrant:v1.18.1`
+  - 서버 내부 smoke: `/ko/design-audit` 200, `/ko/deliberation-review` 200, `/ko/bim-studio` 200, `/ko/meeting-rooms` 200, `/health` 200
+  - 공개 smoke: `https://4t8t.net/ko/design-audit` 200, `https://4t8t.net/ko/deliberation-review` 200, `https://4t8t.net/ko/bim-studio` 200, `https://4t8t.net/ko/meeting-rooms` 200, `https://4t8t.net/health` 200, `https://api.4t8t.net/health` 200
+  - 서버 디스크: `/dev/sda1` 193G 중 107G 사용, 56%
