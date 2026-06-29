@@ -72,8 +72,24 @@
 - 라이브 검증 URL: 미발급
 - 라이브 검증 결과: 미통과 - Cloudflare plan/worker bundle size 제한으로 배포 차단
 
+### Oracle Cloud 운영 경로 재확인 보정
+
+- 보정 시각: 2026-06-29 KST
+- 사용자 확인: 백엔드와 프론트엔드는 Oracle Cloud에서 운영 중
+- 정정: 위 Cloudflare 결과는 GitHub 루트에 등록된 workflow를 추적한 결과이며, 실제 운영 배포 경로 검증으로 볼 수 없다.
+- 현재 저장소에서 확인한 Oracle 관련 운영 후보:
+  - `docker-compose.yml`: `web`, `api`, `qdrant`, `nginx` 단일 네트워크 구성
+  - `Dockerfile.web`: Next.js standalone 프론트엔드 이미지
+  - `Dockerfile.oracle`: Oracle 단일 컨테이너용 FastAPI 백엔드 이미지
+  - `scripts/safe-deploy.sh`: Oracle A1 단독 배포자용 안전 배포 스크립트, `web|api|both` 지원
+  - `nginx.conf`: `/api/`는 백엔드, 나머지는 프론트엔드로 프록시
+- GitHub에 실제 등록된 workflow는 루트 `.github/workflows` 기준 `CI`, `Deploy to Cloudflare Workers`뿐이다.
+- `propai-platform/.github/workflows/deploy-prod.yml`, `deploy-staging.yml`은 중첩 경로에 있어 현재 GitHub Actions 등록 대상으로 확인되지 않는다.
+- Oracle 운영 서버 컨테이너 상태와 라이브 URL smoke는 아직 검증하지 못했다.
+- 따라서 Stage 01의 올바른 다음 작업은 Cloudflare 크기 제한 해소가 아니라 Oracle 배포 경로에서 커밋 반영, 컨테이너 상태 확인, 공개 URL smoke 검증이다.
+
 ### 다음 단계 진입 조건
 
 - 이번 단계 커밋/푸시 완료
-- staging 또는 preview 배포 완료
+- Oracle Cloud 배포 경로로 staging 또는 production preview 배포 완료
 - 라이브 URL에서 대시보드 접근, 네비게이션 링크, 핵심 라우트 렌더링 smoke 통과
