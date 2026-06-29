@@ -1,13 +1,39 @@
-name: Deploy to Cloudflare Workers
+name: Deploy to Oracle Cloud
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Oracle compose service target"
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - web
+          - api
+      deploy_ref:
+        description: "Git ref to deploy. Empty means the selected workflow ref."
+        required: false
+        type: string
+      web_url:
+        description: "Public web URL for smoke checks. Empty uses ORACLE_WEB_URL secret."
+        required: false
+        type: string
+      health_url:
+        description: "Public health URL for smoke checks. Empty uses ORACLE_HEALTH_URL secret."
+        required: false
+        type: string
+
+concurrency:
+  group: oracle-deploy
+  cancel-in-progress: false
 
 jobs:
-  test:
+  web-gate:
     name: Web deploy gate (배포 전 필수)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -47,36 +73,81 @@ jobs:
             lib/navigation/route-registry.test.ts
         working-directory: propai-platform/apps/web
 
-  deploy:
+  oracle-deploy:
+    name: Deploy and smoke on Oracle Cloud
     runs-on: ubuntu-latest
-    needs: test
-    permissions:
-      contents: read
-      deployments: write
+    needs: web-gate
+    timeout-minutes: 45
+    environment:
+      name: oracle-production
+    env:
+      DEPLOY_TARGET: ${{ github.event.inputs.target || 'both' }}
+      DEPLOY_REF: ${{ github.event.inputs.deploy_ref || github.ref_name }}
+      ORACLE_SSH_HOST: ${{ secrets.ORACLE_SSH_HOST }}
+      ORACLE_SSH_USER: ${{ secrets.ORACLE_SSH_USER || 'ubuntu' }}
+      ORACLE_SSH_PORT: ${{ secrets.ORACLE_SSH_PORT || '22' }}
+      ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      ORACLE_DEPLOY_PATH: ${{ secrets.ORACLE_DEPLOY_PATH || '' }}
+      ORACLE_INTERNAL_URL: ${{ secrets.ORACLE_INTERNAL_URL || 'http://localhost:80' }}
+      ORACLE_WEB_URL: ${{ github.event.inputs.web_url || secrets.ORACLE_WEB_URL }}
+      ORACLE_HEALTH_URL: ${{ github.event.inputs.health_url || secrets.ORACLE_HEALTH_URL }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install
-        working-directory: propai-platform
-
-      - name: Build and Deploy OpenNext to Cloudflare Workers
+      - name: Validate Oracle deployment secrets
         run: |
-          pnpm run build:worker
-          pnpm exec opennextjs-cloudflare deploy
-        working-directory: propai-platform/apps/web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          missing=0
+          for name in ORACLE_SSH_HOST ORACLE_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required for Oracle deployment"
+              missing=1
+            fi
+          done
+          case "$DEPLOY_TARGET" in
+            web|api|both) ;;
+            *) echo "::error::Invalid DEPLOY_TARGET=$DEPLOY_TARGET"; missing=1 ;;
+          esac
+          if [ "$missing" -ne 0 ]; then exit 1; fi
+
+      - name: Deploy over SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ORACLE_SSH_KEY" > ~/.ssh/oracle_deploy_key
+          chmod 600 ~/.ssh/oracle_deploy_key
+          ssh-keyscan -p "$ORACLE_SSH_PORT" -H "$ORACLE_SSH_HOST" >> ~/.ssh/known_hosts
+
+          q() { printf "%q" "$1"; }
+          REMOTE_ENV="ORACLE_DEPLOY_PATH=$(q "$ORACLE_DEPLOY_PATH") DEPLOY_REF=$(q "$DEPLOY_REF") DEPLOY_TARGET=$(q "$DEPLOY_TARGET") ORACLE_INTERNAL_URL=$(q "$ORACLE_INTERNAL_URL")"
+          ssh -i ~/.ssh/oracle_deploy_key \
+            -p "$ORACLE_SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$ORACLE_SSH_USER@$ORACLE_SSH_HOST" \
+            "$REMOTE_ENV bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${ORACLE_DEPLOY_PATH:-$HOME/Development_AI}"
+          VERIFY_BASE_URL="$ORACLE_INTERNAL_URL" \
+            bash propai-platform/scripts/safe-deploy.sh "$DEPLOY_TARGET" "$DEPLOY_REF"
+          echo "== deploy status =="
+          cat /tmp/deploy_status.txt
+          REMOTE
+
+      - name: Public smoke checks
+        run: |
+          set -euo pipefail
+          if [ -z "$ORACLE_WEB_URL" ]; then
+            ORACLE_WEB_URL="http://$ORACLE_SSH_HOST"
+          fi
+          ORACLE_WEB_URL="${ORACLE_WEB_URL%/}"
+          if [ -z "$ORACLE_HEALTH_URL" ]; then
+            ORACLE_HEALTH_URL="$ORACLE_WEB_URL/health"
+          fi
+
+          curl -fsSL --max-time 20 "$ORACLE_HEALTH_URL" >/tmp/oracle-health.json
+          curl -fsSL --max-time 20 "$ORACLE_WEB_URL/ko" >/tmp/oracle-home.html
+          curl -fsSL --max-time 20 "$ORACLE_WEB_URL/ko/analysis" >/tmp/oracle-analysis.html
+
+          echo "Oracle smoke passed:"
+          echo "- health: $ORACLE_HEALTH_URL"
+          echo "- home: $ORACLE_WEB_URL/ko"
+          echo "- analysis: $ORACLE_WEB_URL/ko/analysis"

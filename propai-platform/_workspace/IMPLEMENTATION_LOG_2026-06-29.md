@@ -36,6 +36,8 @@
 - `apps/web/app/layout.tsx`
 - `apps/web/eslint.config.mjs`
 - `.github/workflows/deploy-cloudflare.yml`
+- `nginx.conf`
+- `scripts/safe-deploy.sh`
 - `docs/design/navigation-ia-system.md`
 
 ### 검증 결과
@@ -45,6 +47,12 @@
 - `npm run type-check`: 통과
 - `npm run build`: 통과
 - 웹 패치 범위 `git diff --check`: 통과
+- 2026-06-29 Oracle workflow 보정 후 `pnpm install --frozen-lockfile`: 통과
+- 2026-06-29 Oracle workflow 보정 후 `npm run type-check`: 통과
+- 2026-06-29 Oracle workflow 보정 후 `pnpm exec eslint . --quiet --no-cache`: 통과
+- 2026-06-29 Oracle workflow 보정 후 Dashboard IA regression tests: 4 files / 21 tests 통과
+- 2026-06-29 Oracle workflow 보정 후 `npm run build`: 통과, `/[locale]/analysis` 포함 136개 static page 생성 통과
+- 2026-06-29 `bash -n scripts/safe-deploy.sh`: 통과
 
 ### 잔여 리스크
 
@@ -88,8 +96,20 @@
 - Oracle 운영 서버 컨테이너 상태와 라이브 URL smoke는 아직 검증하지 못했다.
 - 따라서 Stage 01의 올바른 다음 작업은 Cloudflare 크기 제한 해소가 아니라 Oracle 배포 경로에서 커밋 반영, 컨테이너 상태 확인, 공개 URL smoke 검증이다.
 
+### Oracle Cloud 배포 워크플로우 보정
+
+- 루트 GitHub Actions의 기존 Cloudflare workflow를 `Deploy to Oracle Cloud`로 전환했다.
+- 배포 전 web gate는 `type-check`, `eslint --quiet`, Dashboard IA regression tests를 유지한다.
+- 배포 job은 `ORACLE_SSH_HOST`, `ORACLE_SSH_KEY`, 선택 `ORACLE_SSH_USER`, `ORACLE_SSH_PORT`, `ORACLE_DEPLOY_PATH`, `ORACLE_WEB_URL`, `ORACLE_HEALTH_URL` 시크릿을 사용해 Oracle 서버에서 `scripts/safe-deploy.sh`를 실행한다.
+- `scripts/safe-deploy.sh`는 `[web|api|both] [git-ref]`를 지원하도록 보강했다. 이제 stage 브랜치 또는 main ref를 명시 배포할 수 있다.
+- Docker Compose v1/v2의 컨테이너명 차이를 흡수하도록 `docker-compose`/`docker compose`, underscore/hyphen container name 후보를 처리한다.
+- `VERIFY_BASE_URL` 환경변수로 서버 내부 smoke 기준 URL을 주입할 수 있게 했다.
+- `nginx.conf`에 `location = /health`를 추가해 `/health`가 Next.js가 아니라 FastAPI 백엔드로 직접 프록시되게 했다.
+- 외부 smoke는 `ORACLE_HEALTH_URL`, `${ORACLE_WEB_URL}/ko`, `${ORACLE_WEB_URL}/ko/analysis`를 확인한다.
+- 로컬 Docker/Oracle SSH 키가 현재 실행 환경에 없어 실제 Oracle 컨테이너 교체와 공개 URL smoke는 GitHub workflow dispatch 또는 Oracle 서버 내 실행으로 완료해야 한다.
+
 ### 다음 단계 진입 조건
 
 - 이번 단계 커밋/푸시 완료
-- Oracle Cloud 배포 경로로 staging 또는 production preview 배포 완료
-- 라이브 URL에서 대시보드 접근, 네비게이션 링크, 핵심 라우트 렌더링 smoke 통과
+- Oracle Cloud 배포 workflow dispatch 또는 Oracle 서버 내 `safe-deploy.sh both <ref>` 완료
+- 라이브 URL에서 `/health`, `/ko`, `/ko/analysis` smoke 통과
