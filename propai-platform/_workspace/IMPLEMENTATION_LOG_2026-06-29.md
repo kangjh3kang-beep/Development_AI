@@ -396,3 +396,64 @@
 - Backend A1 worker/Flower/Beat systemd active 확인: 완료
 - `celery inspect active_queues`에서 `parcel_batch`, `celery`, `rates`, `auction`, `growth` 확인: 완료
 - 라이브 `https://api.4t8t.net/health` healthy 유지: 완료
+
+## Stage 06. Dashboard IA/workspace shell 방향 수정
+
+- 기록 시각: 2026-06-29 18:14 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `3d0bed71 docs: record stage 05 celery beat deploy evidence`
+- 범위: 좌측 상시 메뉴 제거, 상단 워크스페이스 내비게이션 도입, 홈 대시보드 핵심 액션 중심 단순화, 모바일 overflow 검증
+- 완료 판정: 단계 범위 기준 100%
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 사용자 피드백 반영
+
+- 기존 Stage 02 UI는 설계센터 일부 셸 통합과 색상 조정에 가까웠고, 사용자가 요청한 “워크스페이스/네비게이션 통합 최적화, 워크플로우 단순화, SaaS 대시보드화”와 충분히 부합하지 않았다.
+- 특히 데스크톱 좌측 상시 메뉴가 유지되어 기능 나열형 정보구조가 남았고, 홈 화면도 의사결정 동선보다 기능 목록의 인상이 강했다.
+- 이번 단계에서 방향을 명확히 수정해 데스크톱 좌측 상시 사이드바를 제거하고, 상단 워크스페이스 내비게이션 + 3개 핵심 액션 + 6단계 생애주기 요약으로 홈을 재구성했다.
+
+### 구현 내용
+
+- `(dashboard)/layout.tsx`에서 `SidebarNav`/`BillingMeter` 기반 데스크톱 좌측 aside를 제거했다.
+- `WorkspaceNavBar`를 신설해 기존 route registry/nav config를 재사용하면서 섹션별 우선 링크 3개만 상단에 노출했다.
+- 홈 대시보드를 “오늘의 워크스페이스” 구조로 재작성했다.
+  - 주요 CTA: `프로젝트 생성`, `90초 진단`, `프로젝트 보기`
+  - 핵심 액션: `후보지 진단`, `프로젝트 관리`, `시장·획득 보기`
+  - 생애주기: `후보지 → 분석 → 사업성 → 설계 → 인허가 → 운영`
+- `analysis` 라우트 연결을 registry 실제 id인 `comprehensive-analysis`로 보정했다.
+- 모바일에서 grid 자식이 `min-width:auto`로 폭을 밀던 하단 패널에 `min-w-0`을 적용해 가로 스크롤을 제거했다.
+- `nav-config` 주석을 “좌측 네비게이션”에서 “워크스페이스 내비게이션”으로 정정했다.
+
+### 변경 파일
+
+- `apps/web/app/[locale]/(dashboard)/layout.tsx`
+- `apps/web/app/[locale]/(dashboard)/page.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.test.tsx`
+- `apps/web/components/layout/nav-config.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- 변경 파일 `eslint --no-cache`: 통과, 신규 경고 0
+- `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx components/layout/nav-config.test.ts`: 4 files / 17 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- Playwright local visual smoke:
+  - desktop 1680x1200: heading visible, workspace nav visible, visible aside count 0, horizontal overflow 없음
+  - mobile 390x844: heading visible, desktop workspace nav hidden, visible aside count 0, horizontal overflow 없음
+
+### 잔여 리스크
+
+- 모바일은 여전히 햄버거 버튼을 통해 전체 메뉴 드로어를 제공한다. 데스크톱 좌측 상시 메뉴는 제거했지만, 모바일 메뉴의 정보구조 자체는 후속 단계에서 더 간결한 command palette형으로 바꿀 수 있다.
+- `PipelinePanelClient` 내부는 아직 상세 작업 흐름 UI가 길고 기능 밀도가 높다. 이번 단계에서는 홈/글로벌 IA를 먼저 바로잡고, 상세 패널 내부 리팩터링은 다음 UI 단계에서 다룬다.
+- 최초 방문 온보딩 모달은 기존 동작을 유지했다. 실제 화면 검증은 localStorage 완료 상태로 수행했다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 진행 예정
+- Oracle Cloud 프론트 배포 완료: 진행 예정
+- 라이브 `https://4t8t.net/ko`에서 데스크톱 좌측 상시 메뉴 제거, 상단 워크스페이스 내비게이션, 홈 핵심 액션 노출 확인: 진행 예정

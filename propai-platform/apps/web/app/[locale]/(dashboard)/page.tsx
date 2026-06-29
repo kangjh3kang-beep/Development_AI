@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { DashboardEsgScore } from "@/components/dashboard/DashboardEsgScore";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
@@ -14,28 +13,24 @@ type DashboardPageProps = {
 };
 
 const lifecycleSteps = [
-  { label: "부지", routeId: "land-schedule", tone: "ready" },
-  { label: "권리", routeId: "registry-analysis", tone: "ready" },
-  { label: "규제", routeId: "regulations", tone: "watch" },
-  { label: "사업성", routeId: "investment", tone: "ready" },
+  { label: "후보지", routeId: "precheck", tone: "ready" },
+  { label: "분석", routeId: "comprehensive-analysis", tone: "ready" },
+  { label: "사업성", routeId: "investment", tone: "watch" },
   { label: "설계", routeId: "design-studio", tone: "ready" },
   { label: "인허가", routeId: "permits", tone: "watch" },
-  { label: "획득", routeId: "auction", tone: "ready" },
   { label: "운영", routeId: "digital-twin", tone: "beta" },
 ] as const;
 
 const actionQueue = [
-  { title: "신규 후보지 검토", body: "주소 입력 후 90초 진단으로 부지·규제·사업성 초안을 만듭니다.", routeId: "precheck" },
-  { title: "종합 부지분석", body: "주소 하나로 입지, 규제, 시장, 수지 요약 보고서를 확인합니다.", routeId: "comprehensive-analysis" },
-  { title: "진행 프로젝트 확인", body: "활성 프로젝트의 단계, 최근 분석, 다음 액션을 확인합니다.", routeId: "projects" },
-  { title: "시장·획득 채널 검토", body: "분양 정보, 경매·공매, 공공입찰을 한 묶음으로 점검합니다.", routeId: "market-insights" },
+  { eyebrow: "시작", title: "후보지 진단", body: "주소를 넣고 규제·입지·사업성 초안을 만듭니다.", routeId: "precheck" },
+  { eyebrow: "진행", title: "프로젝트 관리", body: "현재 프로젝트의 단계와 병목을 확인합니다.", routeId: "projects" },
+  { eyebrow: "확장", title: "시장·획득 보기", body: "분양, 경매·공매, 공공입찰을 묶어 봅니다.", routeId: "market-insights" },
 ] as const;
 
-const dataStatus = [
-  { label: "프로젝트", routeId: "projects", status: "연결" },
-  { label: "시장·분양", routeId: "market-insights", status: "연결" },
-  { label: "공공입찰", routeId: "g2b", status: "연결" },
-  { label: "운영 센터", routeId: "digital-twin", status: "베타" },
+const focusMetrics = [
+  { label: "주요 흐름", value: "6단계", body: "후보지부터 운영까지" },
+  { label: "오늘의 시작점", value: "3개", body: "진단·프로젝트·시장" },
+  { label: "운영 상태", value: "Live", body: "API·큐·검색 정상" },
 ] as const;
 
 function hrefFor(locale: string, routeId: string): string {
@@ -58,156 +53,120 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-16 sm:gap-7">
+    <div className="flex flex-col gap-5 pb-12">
       <OnboardingWizard />
 
-      <section className="db-card gap-7 p-6 sm:p-8">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl space-y-4">
-            <span className="db-eyebrow db-eyebrow--ko">사업 관제</span>
-            <div className="space-y-3">
-              <h1 className="text-3xl font-black leading-tight text-[var(--text-primary)] sm:text-4xl">
-                개발사업의 다음 액션을 한 화면에서 결정합니다.
-              </h1>
-              <p className="max-w-2xl text-sm font-medium leading-7 text-[var(--text-secondary)] sm:text-base">
-                후보지 검토, 프로젝트 진행, 시장·획득 채널, 설계·인허가 상태를 개발 생애주기 기준으로 묶었습니다.
-              </p>
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(520px,1fr)]">
+          <div className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+            <span className="db-panel-label">오늘의 워크스페이스</span>
+            <h1 className="mt-2 max-w-2xl text-2xl font-black leading-tight text-[var(--text-primary)] sm:text-3xl">
+              다음 액션만 남긴 개발사업 운영판
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-[var(--text-secondary)]">
+              메뉴를 고르는 시간을 줄이고, 후보지 진단·프로젝트 진행·시장 검토로 바로 이동합니다.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Link
+                href={`/${locale}/projects/new`}
+                className="inline-flex h-11 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white shadow-[var(--shadow-xs)] transition-opacity hover:opacity-90"
+              >
+                프로젝트 생성
+              </Link>
+              <Link
+                href={hrefFor(locale, "precheck")}
+                className="inline-flex h-11 items-center justify-center rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)]"
+              >
+                90초 진단
+              </Link>
+              <Link
+                href={hrefFor(locale, "projects")}
+                className="inline-flex h-11 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-4 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+              >
+                프로젝트 보기
+              </Link>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Link
-              href={`/${locale}/projects/new`}
-              className="inline-flex h-12 items-center justify-center rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-bold text-white shadow-[var(--shadow-sm)] transition-opacity hover:opacity-90"
-            >
-              프로젝트 생성
-            </Link>
-            <Link
-              href={hrefFor(locale, "precheck")}
-              className="inline-flex h-12 items-center justify-center rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-5 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)]"
-            >
-              90초 진단
-            </Link>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {focusMetrics.map((metric) => (
+              <div key={metric.label} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                <p className="text-[11px] font-bold text-[var(--text-tertiary)]">{metric.label}</p>
+                <p className="mt-2 text-2xl font-black text-[var(--text-primary)]">{metric.value}</p>
+                <p className="mt-1 text-xs font-semibold text-[var(--text-secondary)]">{metric.body}</p>
+              </div>
+            ))}
           </div>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-4">
-          {[
-            ["검토", "후보지 입력"],
-            ["분석", "사업성·규제"],
-            ["설계", "CAD·BIM"],
-            ["실행", "분양·운영"],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-              <p className="text-[11px] font-bold text-[var(--text-tertiary)]">{label}</p>
-              <p className="mt-1 text-sm font-black text-[var(--text-primary)]">{value}</p>
-            </div>
-          ))}
         </div>
       </section>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <span className="db-panel-label">핵심 액션</span>
+              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">가장 자주 쓰는 3가지</h2>
+            </div>
+            <Link href={`/${locale}/guide`} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
+              흐름 보기
+            </Link>
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            {actionQueue.map((item) => (
+              <Link
+                key={item.title}
+                href={hrefFor(locale, item.routeId)}
+                className="min-h-32 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--surface)]"
+              >
+                <span className="text-[11px] font-black text-[var(--accent-strong)]">{item.eyebrow}</span>
+                <p className="mt-3 text-base font-black text-[var(--text-primary)]">{item.title}</p>
+                <p className="mt-2 text-xs font-medium leading-5 text-[var(--text-secondary)]">{item.body}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <span className="db-panel-label">생애주기</span>
+          <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">6단계 바로가기</h2>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {lifecycleSteps.map((step, index) => (
+              <Link
+                key={step.label}
+                href={hrefFor(locale, step.routeId)}
+                className={`rounded-lg border px-3 py-2 transition-colors ${toneClass(step.tone)}`}
+              >
+                <span className="text-[10px] font-black opacity-60">{String(index + 1).padStart(2, "0")}</span>
+                <p className="mt-1 text-sm font-black">{step.label}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      </div>
 
       <DashboardKpiLoader />
 
-      <section className="cc-panel p-5">
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <span className="db-panel-label">개발 생애주기 레일</span>
-            <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">부지부터 운영까지 끊기지 않는 흐름</h2>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <section className="min-w-0 space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="db-panel-label">활성 프로젝트</span>
+              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">진행 단계와 병목</h2>
+            </div>
+            <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
+              전체 보기
+            </Link>
           </div>
-          <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
-            프로젝트 전체 보기
-          </Link>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-8">
-          {lifecycleSteps.map((step, index) => (
-            <Link
-              key={step.label}
-              href={hrefFor(locale, step.routeId)}
-              className={`group min-h-24 rounded-xl border p-3 transition-transform hover:-translate-y-0.5 ${toneClass(step.tone)}`}
-            >
-              <span className="cc-num text-xs font-black opacity-60">{String(index + 1).padStart(2, "0")}</span>
-              <p className="mt-3 text-sm font-black">{step.label}</p>
-              <p className="mt-1 text-[11px] font-semibold opacity-70">상태 확인</p>
-            </Link>
-          ))}
-        </div>
-      </section>
+          <DashboardProjectLoader locale={locale} />
+        </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="space-y-6">
+        <section className="min-w-0 space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <div>
+            <span className="db-panel-label">자동 분석</span>
+            <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">다음 계산 흐름</h2>
+          </div>
           <PipelinePanelClient />
-
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="db-panel-label">활성 프로젝트</span>
-                <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">진행 단계와 병목 확인</h2>
-              </div>
-              <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
-                전체 보기
-              </Link>
-            </div>
-            <DashboardProjectLoader locale={locale} />
-          </section>
-        </div>
-
-        <aside className="space-y-6">
-          <section className="cc-panel space-y-4 p-5">
-            <div>
-              <span className="db-panel-label">다음 액션</span>
-              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">오늘 확인할 작업</h2>
-            </div>
-            <div className="space-y-3">
-              {actionQueue.map((item) => (
-                <Link
-                  key={item.title}
-                  href={hrefFor(locale, item.routeId)}
-                  className="block rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--accent-strong)]/40 hover:bg-[var(--surface-muted)]"
-                >
-                  <p className="text-sm font-black text-[var(--text-primary)]">{item.title}</p>
-                  <p className="mt-1 text-xs font-medium leading-5 text-[var(--text-secondary)]">{item.body}</p>
-                </Link>
-              ))}
-            </div>
-          </section>
-
-          <section className="cc-panel space-y-4 p-5">
-            <div>
-              <span className="db-panel-label">데이터 상태</span>
-              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">주요 연결 현황</h2>
-            </div>
-            <div className="divide-y divide-[var(--line)]">
-              {dataStatus.map((item) => (
-                <Link
-                  key={item.label}
-                  href={hrefFor(locale, item.routeId)}
-                  className="flex items-center justify-between gap-3 py-3 text-sm"
-                >
-                  <span className="font-bold text-[var(--text-secondary)]">{item.label}</span>
-                  <span className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--text-primary)]">
-                    {item.status}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </section>
-
-          <DashboardEsgScore />
-
-          <section className="db-card gap-4 p-5">
-            <span className="db-eyebrow db-eyebrow--ko">가이드</span>
-            <h2 className="text-lg font-black text-[var(--text-primary)]">플랫폼 흐름을 처음부터 확인하세요.</h2>
-            <p className="text-sm font-medium leading-6 text-[var(--text-secondary)]">
-              신규 후보지 등록부터 설계·인허가·운영 단계까지의 사용 흐름을 정리했습니다.
-            </p>
-            <Link
-              href={`/${locale}/guide`}
-              className="inline-flex h-11 w-fit items-center justify-center rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)]"
-            >
-              이용 가이드 열기
-            </Link>
-          </section>
-        </aside>
+        </section>
       </div>
     </div>
   );

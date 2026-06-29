@@ -384,11 +384,11 @@ describe("Dashboard route shells", () => {
   it("renders the dashboard home as an operations console", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("사업 관제")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "개발사업의 다음 액션을 한 화면에서 결정합니다." })).toBeInTheDocument();
+    expect(screen.getByText("오늘의 워크스페이스")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "다음 액션만 남긴 개발사업 운영판" })).toBeInTheDocument();
     expect(screen.getByTestId("dashboard-kpi-loader")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
-    expect(screen.getByRole("link", { name: /공공입찰연결/ })).toHaveAttribute("href", "/en/g2b");
+    expect(screen.getByRole("link", { name: /시장·획득 보기/ })).toHaveAttribute("href", "/en/market-insights");
   });
 
   it("renders the projects list page with the overview client", async () => {

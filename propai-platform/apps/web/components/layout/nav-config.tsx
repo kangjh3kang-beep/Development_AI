@@ -1,8 +1,8 @@
 /**
- * 좌측 네비게이션 단일 출처(SSOT) — IA 원칙(docs/design/navigation-ia-system.md) 구현.
+ * 워크스페이스 내비게이션 단일 출처(SSOT) — IA 원칙(docs/design/navigation-ia-system.md) 구현.
  *
  * 최대 3계층: 섹션(L1) → 항목/그룹(L2) → 하위메뉴(L3). 관련 작업은 부모 아래 children으로 중첩한다
- * (나열식·"└" 문자 흉내 금지). 데스크톱 SidebarNav·모바일 드로어가 이 트리 하나를 공통 구동한다.
+ * (나열식·"└" 문자 흉내 금지). 상단 워크스페이스 바·모바일 드로어가 이 트리 하나를 공통 구동한다.
  */
 
 import {
