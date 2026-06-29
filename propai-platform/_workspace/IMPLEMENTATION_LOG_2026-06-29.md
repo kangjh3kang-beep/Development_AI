@@ -850,7 +850,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `7c6024df docs: record satong map console deployment`
 - 범위: 멀티지도 `Next action` 패널에 지도 검토 후 이어지는 최종 산출물을 명시
-- 완료 판정: 로컬 구현/검증 기준 100%, Oracle 배포 예정
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 라이브 검증 99%+ 통과
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 구현 내용
@@ -884,6 +884,17 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 예정
-- Oracle Cloud 프론트 배포 완료: 예정
-- 라이브 `https://4t8t.net/ko/permits` raw HTML에서 연결 산출물 문구 확인: 예정
+- 이번 단계 커밋/푸시 완료: 완료 (`d4b6fcdd feat: show map output connections`)
+- Oracle Cloud 프론트 배포 완료: 완료
+  - `safe-deploy.sh web codex/dashboard-ia-ui-20260629`
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ d4b6fcdd feat: show map output connections`
+  - `propai-platform_web_1`, `propai-platform_api_1`, `nginx`, `redis`, `qdrant` 실행 확인
+  - 원격 Git HEAD: `d4b6fcdd`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/permits`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200
+- 라이브 반영 검증:
+  - raw `https://4t8t.net/ko/permits` HTML에서 `연결 산출물`, `후보지 진단서`, `인허가 체크리스트`, `시장·분양 리포트`, `건축개요·CAD 계획도면`, `지도 레이어 콘솔` 확인
+  - 운영 브라우저 내부 DOM 상호작용은 Stage 12와 동일하게 실제 인증 세션 필요.
+- 판정: 배포·URL·raw HTML 반영·로컬 프로덕션 UI 검증 기준 99%+ 통과. 다음 단계 진행 가능.
