@@ -35,7 +35,7 @@ jobs:
         working-directory: propai-platform/apps/web
 
       - name: Lint
-        run: pnpm lint -- --quiet
+        run: pnpm exec eslint . --quiet --no-cache
         working-directory: propai-platform/apps/web
 
       - name: Dashboard IA regression tests

@@ -62,6 +62,9 @@
 - 2차 배포 run: `28340161512`
 - 2차 배포 결과: 취소 - backend dependency gate는 통과했으나 Cloudflare 웹 배포 전 backend 전체 테스트가 15분가량 무출력 장기 실행
 - 보정: `.github/workflows/deploy-cloudflare.yml`을 웹 배포 목적에 맞춰 type-check, lint, Dashboard IA regression tests 중심의 `Web deploy gate`로 재정렬
+- 3차 배포 run: `28340595011`
+- 3차 배포 결과: 실패 - `pnpm lint -- --quiet`가 ESLint에 `--quiet`을 파일 패턴으로 전달
+- 보정: lint 명령을 `pnpm exec eslint . --quiet --no-cache`로 수정
 - 라이브 검증 URL: 재배포 후 기록
 - 라이브 검증 결과: 재배포 후 기록
 
