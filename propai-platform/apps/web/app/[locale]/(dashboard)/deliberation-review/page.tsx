@@ -2,6 +2,7 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { DeliberationConsole } from "@/components/deliberation/DeliberationConsole";
 import { DeliberationResultPanel } from "@/components/analysis/DeliberationResultPanel";
+import { DesignCenterPageFrame } from "@/components/design-center/DesignCenterPageFrame";
 import { EngineHealthCard } from "@/components/deliberation/EngineHealthCard";
 import { RegDivergenceCard } from "@/components/deliberation/RegDivergenceCard";
 import { ShadowConvergenceCard } from "@/components/deliberation/ShadowConvergenceCard";
@@ -25,29 +26,21 @@ export default async function DeliberationReviewPage({
   const pillars = [v.pillars.multimodal, v.pillars.deterministic, v.pillars.frontier];
 
   return (
-    <div className="grid gap-6 pb-20">
-      {/* 비전 히어로 — 타이틀 분산배치(badge → title → lead) */}
-      <section className="cc-panel cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] p-8 shadow-[var(--shadow-md)]">
-        <i className="cc-bracket cc-bracket--tl" />
-        <i className="cc-bracket cc-bracket--tr" />
-        <i className="cc-bracket cc-bracket--bl" />
-        <i className="cc-bracket cc-bracket--br" />
-        <div className="cc-grid-bg opacity-40" />
-        <div className="relative z-10 flex items-center justify-between gap-3">
-          <span className="cc-meta text-[var(--accent-strong)]">{v.badge}</span>
-          <span className="cc-label rounded-full border border-[var(--line)] px-2.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">
-            {v.engineNote}
-          </span>
-        </div>
-        <h1 className="relative z-10 mt-4 max-w-4xl text-2xl font-black leading-tight text-[var(--text-primary)] sm:text-3xl">
-          {v.title}
-        </h1>
-        <p className="relative z-10 mt-3 max-w-3xl text-sm text-[var(--text-secondary)]">{v.lead}</p>
-        <p className="relative z-10 mt-1 text-xs font-semibold text-[var(--accent-strong)]">
-          {v.areas.engine}
-        </p>
-      </section>
-
+    <DesignCenterPageFrame
+      locale={locale}
+      activeId="deliberation-review"
+      title={v.title}
+      description={v.lead}
+      eyebrow={v.badge}
+      status="live"
+      statusLabel="BFF 연동"
+      metrics={[
+        { label: "엔진", value: "11계층", description: v.areas.engine },
+        { label: "판정", value: "규제 정합", description: "출처·개정 차이 추적" },
+        { label: "운영", value: "Graceful degrade", description: v.engineNote },
+      ]}
+    >
+      <div className="grid gap-6">
       {/* 비전 3주 — 타이틀 분산배치(pillar별 제목) */}
       <section className="grid gap-4 md:grid-cols-3">
         {pillars.map((p, i) => (
@@ -104,6 +97,7 @@ export default async function DeliberationReviewPage({
 
       {/* 라이브 콘솔 — 중심엔진 BFF /api/v1/deliberation/analyze 경유 */}
       <DeliberationConsole />
-    </div>
+      </div>
+    </DesignCenterPageFrame>
   );
 }

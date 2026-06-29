@@ -62,7 +62,13 @@ const ENGINE_STEPS = [
 const MAX_IFC_BYTES = 200 * 1024 * 1024; // 200MB — BIM 모델 상한(클라이언트 사전 차단)
 const MAX_DXF_BYTES = 20 * 1024 * 1024; // 20MB — DXF 상한(백엔드 import-dxf 한도와 동일)
 
-export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
+export function DesignAuditWorkspace({
+  locale,
+  showHeader = true,
+}: {
+  locale: Locale;
+  showHeader?: boolean;
+}) {
   /* 컨텍스트 스토어 — 읽기 전용 구독(액션 호출 금지: 이 화면은 스토어를 수정하지 않는다). */
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
@@ -253,24 +259,26 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
       {/* 헤더 */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-3">
-            <Construction className="size-7 text-[var(--accent-strong)]" aria-hidden />
-            <div>
-              <div className="mb-1 flex items-center gap-2">
-                <span className="cc-meta">DESIGN · AI AUDIT</span>
-                <span className="cc-chip-data">DA-7</span>
+      {showHeader ? (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3">
+              <Construction className="size-7 text-[var(--accent-strong)]" aria-hidden />
+              <div>
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="cc-meta">DESIGN · AI AUDIT</span>
+                  <span className="cc-chip-data">DA-7</span>
+                </div>
+                <h1 className="text-lg font-black text-[var(--text-primary)]">AI 설계분석</h1>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                  부지·건축개요·도면(IFC·DXF)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
+                  인근 인허가 사례 비교·인센티브 경로·사각지대를 AI가 사전 심사합니다.
+                </p>
               </div>
-              <h1 className="text-lg font-black text-[var(--text-primary)]">AI 설계분석</h1>
-              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                부지·건축개요·도면(IFC·DXF)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
-                인근 인허가 사례 비교·인센티브 경로·사각지대를 AI가 사전 심사합니다.
-              </p>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {report ? (
         /* 실행 완료 → 보고서 뷰 + §4-C 후속: 법규 준수 배치도(findings→도면 주석, audit↔drawing) */

@@ -134,3 +134,58 @@
 - Oracle Cloud 배포: 완료 - 프론트 A1 직접 SSH 배포로 `web` target 반영
 - 라이브 URL smoke: 완료 - `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis`, `https://4t8t.net/health` 200
 - 후속 운영 과제: GitHub Actions 기반 자동 Oracle 배포를 위해 `ORACLE_SSH_HOST`, `ORACLE_SSH_KEY` 등 시크릿 등록 필요
+
+## Stage 02. 설계 센터 공통 셸·sibling tab·빈 상태 통합
+
+- 기록 시각: 2026-06-29 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `0aced1f0 docs: record oracle direct deploy evidence`
+- 범위: 설계 센터 독립 페이지 5개, 설계센터 페이지 셸, 관련 테스트/문서
+- 완료 판정: 단계 범위 기준 95% 이상
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 구현 내용
+
+- `components/design-center/DesignCenterPageFrame.tsx`를 추가해 설계 센터 공통 헤더, 상태 배지, 핵심 메트릭, sibling tab을 단일 컴포넌트로 통합했다.
+- sibling tab은 `route-registry`의 `design-center` 항목에서 파생해 사이드바와 같은 IA 출처를 공유한다.
+- `DesignCenterEmptyState`를 추가해 프로젝트 선택이 필요한 설계/CAD/BIM 화면의 빈 상태와 프로젝트 CTA를 통일했다.
+- `design-studio`, `bim-studio`, `design-audit`, `deliberation-review`, `meeting-rooms` 페이지에 공통 셸을 적용했다.
+- `DesignAuditWorkspace`는 `showHeader` prop을 받아 페이지 셸과 중복되는 내부 헤더를 숨길 수 있게 했다.
+- `ProjectSwitcher`의 radius/spacing을 설계센터의 밝은 운영 콘솔 톤에 맞춰 낮췄다.
+- `meeting-rooms`의 별도 비전 배너와 `deliberation-review`의 큰 legacy hero를 공통 셸로 흡수했다.
+
+### 변경 파일
+
+- `apps/web/components/design-center/DesignCenterPageFrame.tsx`
+- `apps/web/components/design-center/DesignCenterPageFrame.test.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/design-center-route-shells.test.tsx`
+- `apps/web/app/[locale]/(dashboard)/design-studio/page.tsx`
+- `apps/web/app/[locale]/(dashboard)/design-audit/page.tsx`
+- `apps/web/app/[locale]/(dashboard)/deliberation-review/page.tsx`
+- `apps/web/app/[locale]/(dashboard)/bim-studio/page.tsx`
+- `apps/web/app/[locale]/(dashboard)/meeting-rooms/page.tsx`
+- `apps/web/components/design-audit/DesignAuditWorkspace.tsx`
+- `apps/web/components/common/ProjectSwitcher.tsx`
+- `docs/design/navigation-ia-system.md`
+
+### 검증 결과
+
+- `npm run type-check`: 통과
+- `npm run test:run -- 'components/design-center/DesignCenterPageFrame.test.tsx' 'app/[locale]/(dashboard)/__tests__/design-center-route-shells.test.tsx' 'app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx' 'components/layout/nav-config.test.ts' 'lib/navigation/route-registry.test.ts'`: 5 files / 24 tests 통과
+- `pnpm exec eslint . --quiet --no-cache`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 브라우저 smoke: `next start -p 3100` 기준 `/ko/design-audit`, `/ko/deliberation-review`, `/ko/bim-studio`, `/ko/meeting-rooms` 헤더·설계센터 탭 렌더 확인
+- 브라우저 스크린샷: `/tmp/propai_stage02_design_center.png`
+- `git diff --check`: 통과
+
+### 잔여 리스크
+
+- 설계 센터 내부의 대형 기능 컴포넌트(`DesignStudio`, BIM viewer, 심의 콘솔) 자체의 세부 카드 스타일은 이번 단계에서 변경하지 않았다.
+- 브라우저 smoke는 Python Playwright 모듈 미설치로 Node Playwright 런타임을 사용했다.
+- 운영 health body의 `redis=unhealthy`는 Stage 01에서 확인된 운영 후속 과제로 남아 있다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료
+- Oracle Cloud 프론트 배포 완료
+- 라이브 URL에서 `https://4t8t.net/ko/design-audit`, `https://4t8t.net/ko/deliberation-review`, `https://4t8t.net/ko/bim-studio`, `https://4t8t.net/ko/meeting-rooms` smoke 통과
