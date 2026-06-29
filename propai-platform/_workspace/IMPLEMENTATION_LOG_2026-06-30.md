@@ -120,3 +120,38 @@
   - 실효 한도 전달 검증: `ordinance_far_percent=50` -> `applied_far_pct=50`
   - 매스 결과: `bcr_pct=20.0`, `far_pct=40.0`, `num_floors=2`
 - 다음 구현 단계: 도면편집 화면을 1차 법규분석 → 2차 Top3 건축개요 → 3차 CAD/BIM 생성·명령편집이 한 화면에서 이어지는 통합 워크스페이스로 재구성
+
+## Stage 16. CAD/BIM integrated command workspace
+
+- 기록 시각: 2026-06-30 08:52 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 범위: CAD/BIM 편집화면의 단계형 스테퍼 제거, 텍스트/음성 CAD 명령 입력 배선, 기존 명령 파서와 CADEditor shapes 모델 연결
+- 완료 판정: 로컬 구현/검증 통과, Oracle 배포 대기
+- 자체 코드리뷰 점수: 9.5 / 10
+
+### 구현 내용
+
+- `CadBimIntegrationPanel`의 ①AI 생성 → ②도면 확인 → ③다듬기 스테퍼를 제거하고 `법규·전략 / 개요·대안 / CAD·BIM` 통합 작업 상태판으로 교체했다.
+- `CADEditor`에 하단 텍스트/음성 명령 바를 추가했다.
+- 기존 `cad-command-parser`를 `CADEditor`의 `CadShape[]` 모델에 어댑트해 `LINE`, `RECT`, `CIRCLE`, `TEXT`, `POLYGON`, `AREA`, `LIST`, `UNDO`, `REDO` 명령을 편집 캔버스에서 실행할 수 있게 했다.
+- 한국어 자연어성 명령 `층수 N`, `N층`, `높이 N`을 즉시 층수/높이 변경으로 반영하도록 추가했다.
+- 기존 `useSpeechToText` 훅을 CAD 편집 명령 바에 연결해 음성 입력이 텍스트 명령으로 들어오도록 배선했다.
+- DXF import 토스트 위치를 명령 바와 충돌하지 않게 상향 조정했다.
+
+### 변경 파일
+
+- `apps/web/components/design/CADEditor.tsx`
+- `apps/web/components/design/CadBimIntegrationPanel.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-30.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- `npx eslint components/design/CADEditor.tsx components/design/CadBimIntegrationPanel.tsx`: 오류 0, 기존 `CadBimIntegrationPanel` hook 경고 3건
+- `npx tsc --noEmit --pretty false`: 통과
+- `npm run test:run -- lib/cad-command-parser.test.ts`: 1 file / 41 tests 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 브라우저 smoke:
+  - `/ko/design-studio`: HTTP 200, 프로젝트 미선택 empty state 정상
+  - `/ko/projects/demo/design`: HTTP 200, 프로젝트 상세 설계 화면 정상 렌더
+  - 로컬 API 미기동으로 `ERR_CONNECTION_REFUSED`가 발생해 프로젝트 컨텍스트 기반 CAD/BIM 패널 실마운트 검증은 라이브 배포 후 수행 예정

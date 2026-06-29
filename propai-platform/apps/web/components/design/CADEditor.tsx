@@ -2,9 +2,11 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type Konva from "konva";
-import { Check, Download, Eye, EyeOff, Lightbulb, Upload } from "lucide-react";
+import { Check, Download, Eye, EyeOff, Lightbulb, Mic, Send, Terminal, Upload } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { executeCommand, getCommandHint } from "@/lib/cad-command-parser";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
+import { useSpeechToText } from "@/lib/use-speech-to-text";
 import {
   type CadShape,
   type CadShapePoint,
@@ -223,9 +225,12 @@ export default function CADEditor({
 
   // 최초 1회 도움말 칩(편집기 진입 시 1회만 노출)
   const [showHelp, setShowHelp] = useState(false);
+  const [commandText, setCommandText] = useState("");
+  const [commandResult, setCommandResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stt = useSpeechToText((text) => setCommandText(text), "ko-KR");
 
   const limits = useMemo(() => {
     const zl = resolveLimits(zoneCode);
@@ -913,6 +918,210 @@ export default function CADEditor({
     [debouncedCheck, commitSnapshot, setOutlineRing],
   );
 
+  /* ── CAD 명령/음성 실행: 기존 cad-command-parser를 CADEditor shapes 모델에 어댑트 ── */
+  const runCanvasCommand = useCallback(
+    (rawCommand?: string) => {
+      const raw = (rawCommand ?? commandText).trim();
+      if (!raw) return;
+      const compact = raw.replace(/\s+/g, " ");
+      const floorMatch =
+        compact.match(/(?:층수|floors?)\s*(\d{1,2})/i) ??
+        compact.match(/(\d{1,2})\s*층/);
+      if (floorMatch) {
+        const nextFloors = Math.max(1, Math.min(50, Number(floorMatch[1])));
+        commitSnapshot();
+        setFloorCount(nextFloors);
+        setBuildingHeight(Math.round(nextFloors * floorHeightM));
+        debouncedCheck(ring);
+        setCommandResult({ ok: true, message: `층수 ${nextFloors}층 적용` });
+        setCommandText("");
+        return;
+      }
+      const heightMatch = compact.match(/(?:높이|height)\s*(\d{1,3}(?:\.\d+)?)/i);
+      if (heightMatch) {
+        const nextHeight = Math.max(3, Math.min(300, Number(heightMatch[1])));
+        commitSnapshot();
+        setBuildingHeight(nextHeight);
+        debouncedCheck(ring);
+        setCommandResult({ ok: true, message: `높이 ${nextHeight}m 적용` });
+        setCommandText("");
+        return;
+      }
+
+      const pendingPoints = new Map<string, CadShapePoint>();
+      const consumedPointIds = new Set<string>();
+      const pendingShapes: CadShape[] = [];
+      let pendingOutline: CadShape | null = null;
+      let directMutation = false;
+      const commandLayer: LayerKey = activeLayer === "outline" ? "wall" : activeLayer;
+      const allPoints = shapes.flatMap((s) => s.points.map((p) => ({ id: p.id, x: p.x, y: p.y })));
+      const rects = shapes
+        .filter((s) => s.kind === "rect" && s.points.length >= 2)
+        .map((s) => {
+          const [a, b] = s.points;
+          return {
+            id: s.id,
+            x: Math.min(a.x, b.x),
+            y: Math.min(a.y, b.y),
+            width: Math.abs(b.x - a.x),
+            height: Math.abs(b.y - a.y),
+          };
+        });
+      const circles = shapes
+        .filter((s) => s.kind === "circle" && s.points.length >= 1)
+        .map((s) => ({ id: s.id, cx: s.points[0].x, cy: s.points[0].y, radius: s.radius ?? 10 }));
+      const texts = shapes
+        .filter((s) => s.kind === "label" && s.points.length >= 1)
+        .map((s) => ({ id: s.id, x: s.points[0].x, y: s.points[0].y, text: s.text ?? "" }));
+      const lines = shapes
+        .filter((s) => s.kind === "line" && s.points.length >= 2)
+        .map((s) => ({ id: s.id, startPointId: s.points[0].id, endPointId: s.points[1].id }));
+      const polygons = shapes
+        .filter((s) => s.kind === "polygon" && s.points.length >= 3)
+        .map((s) => ({ id: s.id, pointIds: s.points.map((p) => p.id) }));
+
+      const pointById = (id: string): CadShapePoint | null =>
+        pendingPoints.get(id) ??
+        allPoints.find((p) => p.id === id) ??
+        null;
+
+      const selectedPointId = selectedIdx != null ? ring[selectedIdx]?.id ?? null : null;
+      const selectedId = selectedPointId ?? outlineShape?.id ?? null;
+      const store = {
+        addPoint: (x: number, y: number) => {
+          const p = { id: nextId(), x: snap(x), y: snap(y) };
+          pendingPoints.set(p.id, p);
+          return p.id;
+        },
+        addLine: (startId: string, endId: string) => {
+          const a = pointById(startId);
+          const b = pointById(endId);
+          if (!a || !b) return;
+          consumedPointIds.add(startId);
+          consumedPointIds.add(endId);
+          pendingShapes.push({
+            id: newShapeId("cmd-ln"),
+            kind: "line",
+            layer: commandLayer,
+            points: [a, b],
+          });
+        },
+        addRect: (x: number, y: number, w: number, h: number) => {
+          pendingShapes.push({
+            id: newShapeId("cmd-rc"),
+            kind: "rect",
+            layer: commandLayer,
+            points: [
+              { id: nextId(), x: snap(x), y: snap(y) },
+              { id: nextId(), x: snap(x + w), y: snap(y + h) },
+            ],
+          });
+        },
+        addCircle: (cx: number, cy: number, r: number) => {
+          pendingShapes.push({
+            id: newShapeId("cmd-c"),
+            kind: "circle",
+            layer: commandLayer,
+            points: [{ id: nextId(), x: snap(cx), y: snap(cy) }],
+            radius: Math.max(1, r),
+          });
+        },
+        addText: (x: number, y: number, text: string) => {
+          pendingShapes.push({
+            id: newShapeId("cmd-t"),
+            kind: "label",
+            layer: activeLayer === "outline" ? "note" : activeLayer,
+            points: [{ id: nextId(), x: snap(x), y: snap(y) }],
+            text,
+          });
+        },
+        addPolygon: (pointIds: string[]) => {
+          const pts = pointIds.map(pointById).filter(Boolean) as CadShapePoint[];
+          if (pts.length < 3) return;
+          pointIds.forEach((id) => consumedPointIds.add(id));
+          const shape = { id: newShapeId("cmd-pg"), kind: "polygon" as const, layer: activeLayer, points: pts };
+          if (activeLayer === "outline") pendingOutline = shape;
+          else pendingShapes.push(shape);
+        },
+        removeSelected: () => {
+          if (selectedIdx == null) return;
+          deleteVertex(selectedIdx);
+          directMutation = true;
+        },
+        undo: () => {
+          undo();
+          directMutation = true;
+        },
+        redo: () => {
+          redo();
+          directMutation = true;
+        },
+        setSelected: (id: string | null) => {
+          if (id == null) setSelectedIdx(null);
+        },
+        points: allPoints,
+        lines,
+        polygons,
+        rects,
+        circles,
+        texts,
+        selectedId,
+        selectedIds: selectedPointId ? [selectedPointId] : [],
+        scale: scalePxPerM,
+        movePoint: (id: string, x: number, y: number) => {
+          commitSnapshot();
+          const nextShapes = shapes.map((s) => ({
+            ...s,
+            points: s.points.map((p) => (p.id === id ? { ...p, x: snap(x), y: snap(y) } : p)),
+          }));
+          setShapes(nextShapes);
+          debouncedCheck(outlineRing(findOutline(nextShapes)));
+          directMutation = true;
+        },
+      };
+
+      const result = executeCommand(compact, store);
+      const loosePointShapes: CadShape[] = [...pendingPoints.values()]
+        .filter((p) => !consumedPointIds.has(p.id))
+        .map((p) => ({
+          id: newShapeId("cmd-pt"),
+          kind: "circle" as const,
+          layer: activeLayer === "outline" ? "note" : activeLayer,
+          points: [p],
+          radius: 3,
+        }));
+      if (result.ok && (pendingOutline || pendingShapes.length > 0 || loosePointShapes.length > 0)) {
+        commitSnapshot();
+        const nextShapes = pendingOutline
+          ? [pendingOutline, ...shapes.filter((s) => s.layer !== "outline"), ...pendingShapes, ...loosePointShapes]
+          : [...shapes, ...pendingShapes, ...loosePointShapes];
+        setShapes(nextShapes);
+        const nextRing = outlineRing(findOutline(nextShapes));
+        if (nextRing.length >= 3) debouncedCheck(nextRing);
+      } else if (result.ok && !directMutation && /^AREA\b|^AA\b|^면적\b/i.test(compact)) {
+        // 조회 명령은 상태 변경 없음.
+      }
+      setCommandResult(result);
+      if (result.ok) setCommandText("");
+    },
+    [
+      activeLayer,
+      commandText,
+      commitSnapshot,
+      debouncedCheck,
+      deleteVertex,
+      floorHeightM,
+      outlineShape,
+      redo,
+      ring,
+      scalePxPerM,
+      selectedIdx,
+      shapes,
+      snap,
+      undo,
+    ],
+  );
+
   /* ── 스테이지 클릭(POLY/LINE/RECT/TEXT 작도 — 기존 정점에 스냅) ── */
   const handleStageClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -1396,7 +1605,7 @@ export default function CADEditor({
       {/* ── DXF 가져오기 결과 토스트(정직 표기: 변환·무시·단위) ── */}
       {importMsg && (
         <div
-          className={`absolute bottom-4 left-1/2 z-30 max-w-[560px] -translate-x-1/2 rounded-2xl border px-4 py-2.5 backdrop-blur-xl shadow-2xl ${
+          className={`absolute bottom-24 left-1/2 z-30 max-w-[560px] -translate-x-1/2 rounded-2xl border px-4 py-2.5 backdrop-blur-xl shadow-2xl ${
             importMsg.kind === "ok" ? "border-teal-400/30 bg-black/80" : "border-rose-400/40 bg-black/80"
           }`}
         >
@@ -1405,6 +1614,69 @@ export default function CADEditor({
           </p>
         </div>
       )}
+
+      {/* ── 하단 명령 바: 텍스트/음성 명령 → 동일 CAD shapes 모델에 즉시 반영 ── */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          runCanvasCommand();
+        }}
+        className="absolute bottom-4 left-4 right-4 z-30 rounded-2xl border border-white/10 bg-black/65 p-2.5 backdrop-blur-xl shadow-2xl lg:left-[292px] lg:right-[252px]"
+      >
+        <div className="flex items-center gap-2">
+          <Terminal className="size-4 shrink-0 text-teal-300" aria-hidden />
+          <input
+            value={commandText}
+            onChange={(e) => setCommandText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setCommandText("");
+                setCommandResult(null);
+              }
+            }}
+            placeholder="LINE 10,10 30,10 · RECT 10,10 20 12 · 층수 5"
+            aria-label="CAD 명령 입력"
+            className="min-w-0 flex-1 bg-transparent text-[12px] font-bold text-white outline-none placeholder:text-white/30"
+          />
+          {stt.supported && (
+            <button
+              type="button"
+              onClick={() => (stt.listening ? stt.stop() : stt.start())}
+              title={stt.listening ? "음성 입력 중지" : "음성으로 명령 입력"}
+              aria-label={stt.listening ? "음성 입력 중지" : "음성으로 명령 입력"}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors ${
+                stt.listening
+                  ? "border-rose-400/50 bg-rose-500/20 text-rose-200"
+                  : "border-white/10 bg-white/10 text-white/65 hover:bg-white/15 hover:text-white"
+              }`}
+            >
+              <Mic className="size-4" aria-hidden />
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={!commandText.trim()}
+            title="명령 실행"
+            aria-label="명령 실행"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-500 text-white transition-opacity hover:bg-teal-400 disabled:opacity-35"
+          >
+            <Send className="size-4" aria-hidden />
+          </button>
+        </div>
+        {(commandText.trim() || commandResult || stt.error) && (
+          <p
+            className={`mt-1.5 truncate text-[10px] font-bold ${
+              commandResult?.ok === false || stt.error ? "text-rose-300" : "text-white/45"
+            }`}
+            title={commandResult?.message || stt.error || getCommandHint(commandText.split(/\s+/)[0] || "")}
+          >
+            {commandResult?.message ||
+              stt.error ||
+              getCommandHint(commandText.split(/\s+/)[0] || "") ||
+              "LINE · RECT · POLYGON · TEXT · AREA · LIST · UNDO"}
+          </p>
+        )}
+      </form>
 
       {/* ── 좌하단: 지오메트리·법규 컴팩트 패널(좁게, 캔버스 비차폐) ── */}
       <div className="absolute bottom-4 left-4 z-20 w-[260px] rounded-2xl border border-white/10 bg-black/60 p-4 backdrop-blur-xl shadow-2xl">

@@ -524,9 +524,6 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [drawingLoading, setDrawingLoading] = useState(false);
   const [drawingError, setDrawingError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  // 3단계 스테퍼 단계(①생성 → ②확인 → ③다듬기). 진입 동선·진행 표시용(읽기 전용 시각화).
-  type StudioStep = 1 | 2 | 3;
-  const studioStep: StudioStep = editMode ? 3 : (spec ? 2 : 1);
 
   // ── 라이브 수지 스트립 입력(읽기 전용) ──
   // 스튜디오 상시: spec 치수. 편집모드: 정점 드래그가 통지한 editMetrics(footprint·매스치수)를 우선.
@@ -1409,6 +1406,33 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     await runPhotorealRender();
   }, [applyPreset, runPhotorealRender]);
 
+  const designWorkbenchItems = [
+    {
+      label: "법규·전략",
+      value:
+        compliance.bcrLimit != null || compliance.farLimit != null
+          ? "법정·조례 한도 연결"
+          : hasDesignBasis
+            ? "부지 조건 수집"
+            : "부지 대기",
+      active: hasDesignBasis,
+    },
+    {
+      label: "개요·대안",
+      value: spec ? `${spec.building_use ?? "건축개요"} · ${spec.floor_count}F` : "Top-N 생성 대기",
+      active: !!spec,
+    },
+    {
+      label: "CAD·BIM",
+      value: editMode
+        ? "명령 편집 중"
+        : drawingCodes.length > 0
+          ? `${drawingCodes.length}개 도면 동기화`
+          : "도면 생성 대기",
+      active: editMode || drawingCodes.length > 0,
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-10">
       <div className="flex flex-wrap items-end justify-between gap-6 px-2">
@@ -1497,50 +1521,36 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
       <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
 
-      {/* ── 3단계 스테퍼(①AI로 생성 → ②도면·3D 확인 → ③직접 다듬고 내보내기) — 쉬운 모드 동선 안내 ── */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 -mt-4">
-        {([
-          [1, "AI로 생성", "슬라이더·자연어로 설계안 생성"],
-          [2, "도면·3D 확인", "평면·단면·3D 매스 확인"],
-          [3, "다듬고 내보내기", "정점 드래그·Ctrl+Z·DXF"],
-        ] as [StudioStep, string, string][]).map(([n, label, hint], i) => {
-          const active = studioStep === n;
-          const done = studioStep > n;
-          return (
-            <div key={n} className="flex items-center gap-2">
-              {i > 0 && <span className="text-[var(--text-hint)]">→</span>}
-              <div
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors ${
-                  active
-                    ? "bg-[var(--accent-strong)]/15 border border-[var(--accent-strong)]/50"
-                    : done
-                      ? "bg-[var(--surface-strong)] border border-[var(--line)]"
-                      : "border border-transparent"
-                }`}
-                title={hint}
-              >
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black ${
-                    active
-                      ? "bg-[var(--accent-strong)] text-white"
-                      : done
-                        ? "bg-[var(--accent-strong)] text-white"
-                        : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
-                  }`}
-                >
-                  {done ? <Check className="size-3" aria-hidden /> : n}
-                </span>
-                <span
-                  className={`text-[11px] font-black ${
-                    active ? "text-[var(--accent-strong)]" : "text-[var(--text-secondary)]"
-                  }`}
-                >
-                  {label}
-                </span>
-              </div>
+      {/* ── 통합 작업 상태: 법규·개요·CAD/BIM을 한 화면의 동시 상태로 표시 ── */}
+      <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-2 -mt-4 md:grid-cols-3">
+        {designWorkbenchItems.map((item) => (
+          <div
+            key={item.label}
+            className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
+              item.active
+                ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10"
+                : "border-[var(--line)] bg-[var(--surface)]"
+            }`}
+          >
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[var(--text-hint)]">
+                {item.label}
+              </p>
+              <p className="mt-0.5 truncate text-xs font-black text-[var(--text-primary)]">
+                {item.value}
+              </p>
             </div>
-          );
-        })}
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                item.active
+                  ? "bg-[var(--accent-strong)] text-white"
+                  : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
+              }`}
+            >
+              {item.active ? <Check className="size-3.5" aria-hidden /> : "•"}
+            </span>
+          </div>
+        ))}
       </div>
 
       {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
