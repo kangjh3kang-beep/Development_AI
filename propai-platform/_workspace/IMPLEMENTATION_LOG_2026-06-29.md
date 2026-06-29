@@ -340,7 +340,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `10d6619e docs: record stage 04 celery deploy evidence`
 - 범위: `rates`/`auction`/`growth` 큐 소비 확대, Celery Beat systemd unit 추가, Beat schedule 파일 영속화, active queue/Beat smoke 검증
-- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 완료 판정: 단계 범위 기준 100%
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 원인 분석
@@ -372,7 +372,16 @@
 - `bash -n propai-platform/scripts/a1-backend-workers.sh`: 통과
 - `git diff --check`: 통과
 - `python3 -m pytest propai-platform/apps/api/tests/test_celery_tasks.py -q`: 10 passed
-- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/systemd/queue 검증으로 대체한다.
+- Backend A1 Docker build: `Dockerfile.oracle` → `propai-api:latest` 빌드 통과
+- Backend A1 API 블루-그린 전환: active `8001 -> 8000`, Caddy `/health` 200
+- Backend A1 queue metadata image smoke: `OPERATIONAL_QUEUES == ["parcel_batch", "celery", "rates", "auction", "growth"]` 통과
+- Backend A1 systemd: `propai-celery-worker`, `propai-celery-flower`, `propai-celery-beat` 모두 active
+- Backend A1 Docker: `propai-celery-worker`, `propai-celery-flower`, `propai-celery-beat`, `propai-api-8000` running 확인
+- Celery registry: 필수 업무 태스크 등록 확인
+- Celery active queues: `parcel_batch`, `celery`, `rates`, `auction`, `growth` 모두 활성 확인
+- Celery Beat smoke: `/var/lib/propai/celery/celerybeat-schedule` PersistentScheduler 사용 및 `flush-growth-events` 발행 확인
+- 공개 smoke: `https://api.4t8t.net/health` 200 + healthy, `https://4t8t.net/health` 200 + healthy, `https://4t8t.net/ko` 200
+- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/systemd/queue 검증으로 대체했다.
 
 ### 잔여 리스크
 
@@ -381,8 +390,9 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 진행 예정
-- Backend A1 API 이미지 빌드 완료: 진행 예정
-- Backend A1 worker/Flower/Beat systemd active 확인: 진행 예정
-- `celery inspect active_queues`에서 `parcel_batch`, `celery`, `rates`, `auction`, `growth` 확인: 진행 예정
-- 라이브 `https://api.4t8t.net/health` healthy 유지: 진행 예정
+- 이번 단계 커밋/푸시 완료: 완료 - `336f8c59 feat: enable backend celery beat queues`, `e33a4541 fix: retry celery inspect during deploy`
+- Backend A1 API 이미지 빌드 완료: 완료 - `propai-api:latest`
+- Backend A1 API 블루-그린 전환 완료: 완료 - active port `8000`
+- Backend A1 worker/Flower/Beat systemd active 확인: 완료
+- `celery inspect active_queues`에서 `parcel_batch`, `celery`, `rates`, `auction`, `growth` 확인: 완료
+- 라이브 `https://api.4t8t.net/health` healthy 유지: 완료
