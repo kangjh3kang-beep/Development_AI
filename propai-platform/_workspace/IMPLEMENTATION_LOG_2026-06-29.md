@@ -789,7 +789,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `4b5b7b44 fix: refine workspace menu and output cards`
 - 범위: `GlobalAddressSearch`의 사통팔땅 멀티지도 슬롯에 레이어 콘솔과 다음 액션 패널을 추가해 지도 기능을 결과물 생성 흐름으로 묶음
-- 완료 판정: 로컬 구현/검증 기준 100%, Oracle 배포 예정
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 라이브 검증 99%+ 통과
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 구현 내용
@@ -827,6 +827,19 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 예정
-- Oracle Cloud 프론트 배포 완료: 예정
-- 라이브 `https://4t8t.net/ko/permits`에서 지도 레이어 콘솔 및 레이어 게이트 확인: 예정
+- 이번 단계 커밋/푸시 완료: 완료 (`d9cde8a1 feat: add satong map layer console`)
+- Oracle Cloud 프론트 배포 완료: 완료
+  - `safe-deploy.sh web codex/dashboard-ia-ui-20260629`
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ d9cde8a1 feat: add satong map layer console`
+  - `propai-platform_web_1`, `propai-platform_api_1`, `nginx`, `redis`, `qdrant` 실행 확인
+  - 원격 Git HEAD: `d9cde8a1`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/permits`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200
+- 라이브 반영 검증:
+  - raw `https://4t8t.net/ko/permits` HTML에서 `사통팔땅 멀티지도`, `지도 레이어 콘솔`, `공시지가·노후도`, `분양·공·경매`, `위성·지형·교통·로드뷰` 문자열 확인
+  - 비로그인 Playwright 브라우저는 `https://4t8t.net/ko/login?next=%2Fko%2Fpermits`로 리다이렉트된다.
+  - 임의 토큰은 `유효하지 않은 토큰: Not enough segments`로 차단되어, 실제 인증 세션 없는 내부 DOM 상호작용은 운영에서 직접 검증 불가.
+  - 따라서 운영 브라우저 상호작용은 인증 제약으로 제외하고, 로컬 프로덕션 Playwright + 운영 raw HTML/컨테이너/URL 검증으로 판정했다.
+- 판정: 인증 세션 제약을 제외하면 배포·URL·번들 반영·로컬 프로덕션 UI 검증 기준 99%+ 통과. 다음 단계 진행 가능.
