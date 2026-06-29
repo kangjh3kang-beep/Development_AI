@@ -170,8 +170,7 @@ restart_direct_containers() {
 verify_registered_tasks() {
   local tmp
   tmp="$(mktemp)"
-  "$DOCKER_BIN" exec "$WORKER_NAME" \
-    celery -A "$CELERY_APP" inspect registered --timeout=10 >"$tmp"
+  inspect_with_retry "registered" "$tmp"
   for task in "${REQUIRED_TASKS[@]}"; do
     if ! grep -Fq "$task" "$tmp"; then
       echo "ERROR: required Celery task is not registered: $task" >&2
@@ -184,11 +183,28 @@ verify_registered_tasks() {
   rm -f "$tmp"
 }
 
+inspect_with_retry() {
+  local method="$1"
+  local outfile="$2"
+  local attempt
+  for attempt in $(seq 1 12); do
+    if "$DOCKER_BIN" exec "$WORKER_NAME" \
+      celery -A "$CELERY_APP" inspect "$method" --timeout=10 >"$outfile" 2>&1; then
+      if ! grep -Fq "No nodes replied" "$outfile"; then
+        return 0
+      fi
+    fi
+    sleep 5
+  done
+  echo "ERROR: celery inspect $method did not reply" >&2
+  cat "$outfile" >&2
+  exit 1
+}
+
 verify_active_queues() {
   local tmp
   tmp="$(mktemp)"
-  "$DOCKER_BIN" exec "$WORKER_NAME" \
-    celery -A "$CELERY_APP" inspect active_queues --timeout=10 >"$tmp"
+  inspect_with_retry "active_queues" "$tmp"
   for queue in "${REQUIRED_QUEUES[@]}"; do
     if ! grep -Fq "'name': '$queue'" "$tmp"; then
       echo "ERROR: required Celery queue is not active: $queue" >&2
@@ -202,7 +218,15 @@ verify_active_queues() {
 }
 
 verify_beat() {
-  "$DOCKER_BIN" logs --tail 80 "$BEAT_NAME" 2>&1 | grep -Eq "beat: Starting|Scheduler"
+  for _ in $(seq 1 12); do
+    if "$DOCKER_BIN" logs --tail 80 "$BEAT_NAME" 2>&1 | grep -Eq "beat: Starting|Scheduler"; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: Celery Beat log smoke failed" >&2
+  "$DOCKER_BIN" logs --tail 120 "$BEAT_NAME" 2>&1 || true
+  exit 1
 }
 
 prepare_beat_state
