@@ -6,7 +6,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `8ee72792 docs: record map output connections deploy`
 - 범위: 상단 워크스페이스 풀다운 메뉴의 버튼→풀다운 이동 중 조기 닫힘 문제 개선
-- 완료 판정: 로컬 구현/검증 기준 100%, Oracle 배포 예정
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 공개 URL 검증 99%+ 통과
 - 자체 코드리뷰 점수: 9.7 / 10
 
 ### 구현 내용
@@ -40,6 +40,22 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 예정
-- Oracle Cloud 프론트 배포 완료: 예정
-- 라이브 `https://4t8t.net/ko`에서 hover bridge 동작 확인: 예정
+- 이번 단계 구현 커밋/푸시 완료:
+  - `3f22ade8 fix: stabilize workspace dropdown hover`
+- Oracle Cloud 프론트 배포 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 3f22ade8 fix: stabilize workspace dropdown hover 21:44:24`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200
+- 라이브 브라우저 검증:
+  - 새 브라우저 세션은 인증 쿠키가 없어 `https://4t8t.net/ko/login?next=%2Fko`로 정상 리다이렉트됨
+  - 인증이 필요한 워크스페이스 DOM의 hover 조작은 로컬 프로덕션 Playwright smoke에서 통과
+  - 라이브 페이지 상태 스크린샷: `/tmp/propai-live-stage14-page-state.png`
+
+### 단계 완료 기록
+
+- 단계 완료 커밋 예정: `docs: record workspace dropdown hover deploy`
+- 다음 단계로 진입 가능: 예
