@@ -1043,6 +1043,12 @@ export function GlobalAddressSearch({
       active: false,
     },
   ];
+  const satongOutputLinks = [
+    { label: "후보지 진단서", detail: "규제·면적·접근성" },
+    { label: "인허가 체크리스트", detail: "허가 가능성·보완 항목" },
+    { label: "시장·분양 리포트", detail: "시세·수요·공급" },
+    { label: "건축개요·CAD 계획도면", detail: "법규 맞춤 계획안" },
+  ];
 
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1612,6 +1618,17 @@ export function GlobalAddressSearch({
                     <span className="px-2 py-1.5 text-[var(--saas-lime)]">검색</span>
                     <span className="border-x border-white/10 px-2 py-1.5">지도검토</span>
                     <span className="px-2 py-1.5">산출물</span>
+                  </div>
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-white/8 p-2">
+                    <p className="mb-1.5 text-[10.5px] font-black text-[var(--saas-lime)]">연결 산출물</p>
+                    <div className="space-y-1.5">
+                      {satongOutputLinks.map((item) => (
+                        <div key={item.label} className="rounded-xl border border-white/10 bg-black/16 px-2.5 py-2">
+                          <p className="text-[11px] font-black text-white">{item.label}</p>
+                          <p className="mt-0.5 text-[10px] font-semibold text-white/58">{item.detail}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>

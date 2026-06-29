@@ -843,3 +843,47 @@
   - 임의 토큰은 `유효하지 않은 토큰: Not enough segments`로 차단되어, 실제 인증 세션 없는 내부 DOM 상호작용은 운영에서 직접 검증 불가.
   - 따라서 운영 브라우저 상호작용은 인증 제약으로 제외하고, 로컬 프로덕션 Playwright + 운영 raw HTML/컨테이너/URL 검증으로 판정했다.
 - 판정: 인증 세션 제약을 제외하면 배포·URL·번들 반영·로컬 프로덕션 UI 검증 기준 99%+ 통과. 다음 단계 진행 가능.
+
+## Stage 13. Multi-map output connection panel
+
+- 기록 시각: 2026-06-29 23:58 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `7c6024df docs: record satong map console deployment`
+- 범위: 멀티지도 `Next action` 패널에 지도 검토 후 이어지는 최종 산출물을 명시
+- 완료 판정: 로컬 구현/검증 기준 100%, Oracle 배포 예정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 구현 내용
+
+- `연결 산출물` 섹션을 추가했다.
+  - `후보지 진단서`: 규제·면적·접근성
+  - `인허가 체크리스트`: 허가 가능성·보완 항목
+  - `시장·분양 리포트`: 시세·수요·공급
+  - `건축개요·CAD 계획도면`: 법규 맞춤 계획안
+- 기능명이 아니라 지도 작업 이후 사용자가 만들 수 있는 결과물을 명확히 보여 주도록 했다.
+- 좁은 우측 패널에서도 텍스트가 밀리지 않도록 세로형 compact row로 배치했다.
+
+### 변경 파일
+
+- `apps/web/components/common/GlobalAddressSearch.tsx`
+- `apps/web/components/common/__tests__/GlobalAddressSearch.test.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- 변경 파일 `eslint`: 오류 0, 경고 0
+- `git diff --check`: 통과
+- `npm run test:run -- components/common/__tests__/GlobalAddressSearch.test.tsx`: 1 file / 2 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 Playwright smoke:
+  - `http://localhost:3030/ko/permits` 렌더 통과
+  - `연결 산출물`, `후보지 진단서`, `인허가 체크리스트`, `시장·분양 리포트`, `건축개요·CAD 계획도면` visible
+  - horizontal overflow 0
+  - 스크린샷: `/tmp/propai-stage13-output-links.png`
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 예정
+- Oracle Cloud 프론트 배포 완료: 예정
+- 라이브 `https://4t8t.net/ko/permits` raw HTML에서 연결 산출물 문구 확인: 예정

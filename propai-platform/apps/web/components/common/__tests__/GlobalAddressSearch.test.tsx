@@ -28,6 +28,10 @@ describe("GlobalAddressSearch multi-map console", () => {
     expect(screen.getByText("실거래·시세")).toBeInTheDocument();
     expect(screen.getByText("분양·공·경매")).toBeInTheDocument();
     expect(screen.getByText("위성·지형·교통·로드뷰")).toBeInTheDocument();
+    expect(screen.getByText("연결 산출물")).toBeInTheDocument();
+    expect(screen.getByText("후보지 진단서")).toBeInTheDocument();
+    expect(screen.getByText("시장·분양 리포트")).toBeInTheDocument();
+    expect(screen.getByText("건축개요·CAD 계획도면")).toBeInTheDocument();
     expect(screen.getByText("상단에서 지번·주소를 검색하거나 엑셀을 올리면 지적·공시지가·노후도 레이어가 열립니다.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /지적도·용도지역/ })).toBeDisabled();
   });
