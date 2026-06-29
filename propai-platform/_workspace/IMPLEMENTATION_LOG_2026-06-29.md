@@ -268,3 +268,60 @@
 - Oracle Cloud 백엔드 A1 API 전환 완료: 완료 - Caddy active port `8000`, `propai-api-8000` Docker health `healthy`
 - 라이브 `https://4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 완료
 - 라이브 `https://api.4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 완료
+
+## Stage 04. Backend A1 Celery worker/Flower 업무 태스크 registry 복구
+
+- 기록 시각: 2026-06-29 13:09:00 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `cbd60b87 docs: record stage 03 oracle health recovery`
+- 범위: Celery 앱 태스크 명시 로딩, 경공매 동기화 태스크 등록, Backend A1 worker/Flower 재기동 표준화
+- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 원인 분석
+
+- 백엔드 A1의 `propai-celery-worker`, `propai-celery-flower`는 Docker status상 healthy로 보였지만, 이는 API 이미지의 기본 `/health` healthcheck가 host network에서 API를 확인한 결과라 worker 자체 검증이 아니었다.
+- `celery inspect registered` 결과가 `empty`라 업무 태스크 registry가 실제로 비어 있었다.
+- `celery_app.py`는 `autodiscover_tasks(["app.tasks"])`에 의존했지만, 현재 태스크 모듈들은 `app.tasks.<module>` 단위로 조건부 등록되므로 워커 시작 시 명시 import가 필요했다.
+- `auction_sync_task.sync_onbid_auctions`는 beat schedule에는 있었지만 Celery task decorator 등록이 누락되어 있었다.
+
+### 구현 내용
+
+- `celery_app.py`에 `TASK_MODULES`를 추가하고, Celery 앱 생성 후 태스크 모듈을 명시 import해 registry 단절을 방지했다.
+- Celery 6 호환을 위해 `broker_connection_retry_on_startup=True`를 설정했다.
+- `auction_sync_task.sync_onbid_auctions`를 `app.tasks.auction_sync_task.sync_onbid_auctions` 태스크로 등록했다.
+- `TASK_NAMES`와 `test_celery_tasks.py`를 확장해 parcel batch, memory ingest, specialist task 메타 계약을 검증하게 했다.
+- `scripts/a1-backend-workers.sh`를 추가해 Backend A1에서 systemd unit을 갱신하고 worker/Flower를 `--network host`, `--no-healthcheck`, Celery registry 검증 방식으로 재기동하도록 표준화했다.
+- `A1_BACKEND_MIGRATION_RUNBOOK_2026-06-16.md`에 worker/Flower 재기동 및 registry 검증 절차를 추가했다.
+
+### 변경 파일
+
+- `apps/api/app/tasks/celery_app.py`
+- `apps/api/app/tasks/auction_sync_task.py`
+- `apps/api/tests/test_celery_tasks.py`
+- `scripts/a1-backend-workers.sh`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+- `docs/A1_BACKEND_MIGRATION_RUNBOOK_2026-06-16.md`
+
+### 검증 결과
+
+- `PYTHONPATH=propai-platform/apps/api python3 - <<'PY' ...`: Celery 미설치 환경 import 계약 통과
+- `python3 -m py_compile ...`: 통과
+- `bash -n propai-platform/scripts/a1-backend-workers.sh`: 통과
+- `git diff --check`: 통과
+- `python3 -m pytest propai-platform/apps/api/tests/test_celery_tasks.py -q`: 9 passed
+- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/registry 검증으로 대체한다.
+
+### 잔여 리스크
+
+- Celery Beat 자동 기동은 이번 단계에서 켜지지 않는다. worker/Flower registry와 parcel batch 큐 운영성을 먼저 닫고, 스케줄러는 별도 단계에서 큐/부하/비용 정책과 함께 다룬다.
+- worker는 기본 `parcel_batch,celery` 큐만 소비한다. `rates`, `auction`, `growth` 큐 소비 확대는 Beat 단계에서 큐별 동시성 정책을 정한 뒤 적용한다.
+- Backend A1은 systemd가 worker/Flower 컨테이너를 소유한다. 직접 `docker run`으로 띄우면 systemd가 예전 unit 기준으로 되살릴 수 있으므로 반드시 `scripts/a1-backend-workers.sh`로 unit을 갱신한다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 진행 예정
+- Backend A1 API 이미지 빌드 완료: 진행 예정
+- Backend A1 worker/Flower 재기동 완료: 진행 예정
+- `celery inspect registered`에서 필수 업무 태스크 확인: 진행 예정
+- 라이브 `https://api.4t8t.net/health` healthy 유지: 진행 예정

@@ -8,6 +8,7 @@ beat_schedule:
 
 from __future__ import annotations
 
+from importlib import import_module
 import os
 
 try:
@@ -19,6 +20,18 @@ except ImportError:  # pragma: no cover
 
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+
+TASK_MODULES = [
+    "app.tasks.rate_tasks",
+    "app.tasks.cost_tasks",
+    "app.tasks.auction_sync_task",
+    "app.tasks.growth_tasks",
+    "app.tasks.growth_pr_task",
+    "app.tasks.growth_learning_task",
+    "app.tasks.parcel_batch_task",
+    "app.tasks.memory_tasks",
+    "app.tasks.specialist_tasks",
+]
 
 
 def _create_app() -> Celery:
@@ -41,6 +54,8 @@ def _create_app() -> Celery:
         task_track_started=True,
         task_acks_late=True,
         worker_prefetch_multiplier=1,
+        broker_connection_retry_on_startup=True,
+        imports=TASK_MODULES,
     )
 
     _app.conf.beat_schedule = {
@@ -127,14 +142,20 @@ def _create_app() -> Celery:
         },
     }
 
-    _app.autodiscover_tasks(["app.tasks"])
     return _app
+
+
+def _import_task_modules() -> None:
+    """앱 생성 후 태스크 모듈을 명시 로드해 워커 registry 단절을 막는다."""
+    for module_name in TASK_MODULES:
+        import_module(module_name)
 
 
 # 모듈 레벨 앱 (celery가 설치된 경우에만)
 app: Celery | None = None
 if Celery is not None:
     app = _create_app()
+    _import_task_modules()
 
 
 # ── 메타 정보 (테스트용) ──
@@ -166,4 +187,7 @@ TASK_NAMES = [
     "app.tasks.growth_tasks.evaluate_improvement",
     "app.tasks.growth_pr_task.run_pr_bot",
     "app.tasks.growth_learning_task.run_learning",
+    "app.tasks.parcel_batch_task.run_batch",
+    "tasks.memory.ingest_experience",
+    "tasks.specialists.run_for_analysis",
 ]

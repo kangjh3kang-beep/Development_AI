@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Restart backend A1 Celery worker and Flower with task-aware healthchecks.
+set -euo pipefail
+
+REPO_DIR="${REPO_DIR:-$HOME/Development_AI/propai-platform}"
+IMAGE="${PROPAI_API_IMAGE:-propai-api:latest}"
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+CELERY_APP="${CELERY_APP:-app.tasks.celery_app:app}"
+WORKER_NAME="${CELERY_WORKER_NAME:-propai-celery-worker}"
+FLOWER_NAME="${CELERY_FLOWER_NAME:-propai-celery-flower}"
+QUEUES="${CELERY_WORKER_QUEUES:-parcel_batch,celery}"
+CONCURRENCY="${CELERY_WORKER_CONCURRENCY:-5}"
+FLOWER_PORT="${CELERY_FLOWER_PORT:-5555}"
+ENV_FILE="$REPO_DIR/.env"
+
+REQUIRED_TASKS=(
+  "app.tasks.parcel_batch_task.run_batch"
+  "app.tasks.rate_tasks.check_legal_rates"
+  "app.tasks.auction_sync_task.sync_onbid_auctions"
+  "app.tasks.growth_tasks.analyze_growth"
+)
+
+cd "$REPO_DIR"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "ERROR: .env not found in $REPO_DIR" >&2
+  exit 1
+fi
+
+"$DOCKER_BIN" image inspect "$IMAGE" >/dev/null
+
+wait_for_running() {
+  local name="$1"
+  local status
+  for _ in $(seq 1 60); do
+    status="$("$DOCKER_BIN" inspect -f '{{.State.Status}}' "$name" 2>/dev/null || true)"
+    if [ "$status" = "running" ]; then
+      echo "$name status=$status"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: $name did not become healthy" >&2
+  "$DOCKER_BIN" logs --tail 120 "$name" 2>&1 || true
+  exit 1
+}
+
+install_systemd_units() {
+  local docker_path
+  docker_path="$(command -v "$DOCKER_BIN")"
+
+  cat >/tmp/propai-celery-worker.service <<UNIT
+[Unit]
+Description=PropAI Celery Worker (Parcel Batch)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-$docker_path rm -f $WORKER_NAME
+ExecStart=$docker_path run --name $WORKER_NAME --rm --network host --env-file $ENV_FILE --no-healthcheck $IMAGE celery -A $CELERY_APP worker -Q $QUEUES --concurrency=$CONCURRENCY
+ExecStop=$docker_path stop -t 10 $WORKER_NAME
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  cat >/tmp/propai-celery-flower.service <<UNIT
+[Unit]
+Description=PropAI Celery Flower (Monitoring)
+After=docker.service propai-celery-worker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-$docker_path rm -f $FLOWER_NAME
+ExecStart=$docker_path run --name $FLOWER_NAME --rm --network host --env-file $ENV_FILE --no-healthcheck $IMAGE celery -A $CELERY_APP flower --url_prefix=flower --port=$FLOWER_PORT
+ExecStop=$docker_path stop -t 10 $FLOWER_NAME
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  sudo install -m 0644 /tmp/propai-celery-worker.service /etc/systemd/system/propai-celery-worker.service
+  sudo install -m 0644 /tmp/propai-celery-flower.service /etc/systemd/system/propai-celery-flower.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable propai-celery-worker.service propai-celery-flower.service >/dev/null
+  sudo systemctl restart propai-celery-worker.service
+  sudo systemctl restart propai-celery-flower.service
+}
+
+restart_direct_containers() {
+  echo "== Restart Celery worker =="
+  "$DOCKER_BIN" rm -f "$WORKER_NAME" >/dev/null 2>&1 || true
+  "$DOCKER_BIN" run -d \
+    --name "$WORKER_NAME" \
+    --restart always \
+    --network host \
+    --env-file "$ENV_FILE" \
+    --no-healthcheck \
+    "$IMAGE" \
+    celery -A "$CELERY_APP" worker -Q "$QUEUES" --concurrency="$CONCURRENCY"
+
+  echo "== Restart Flower =="
+  "$DOCKER_BIN" rm -f "$FLOWER_NAME" >/dev/null 2>&1 || true
+  "$DOCKER_BIN" run -d \
+    --name "$FLOWER_NAME" \
+    --restart always \
+    --network host \
+    --env-file "$ENV_FILE" \
+    --no-healthcheck \
+    "$IMAGE" \
+    celery -A "$CELERY_APP" flower --url_prefix=flower --port="$FLOWER_PORT"
+}
+
+verify_registered_tasks() {
+  local tmp
+  tmp="$(mktemp)"
+  "$DOCKER_BIN" exec "$WORKER_NAME" \
+    celery -A "$CELERY_APP" inspect registered --timeout=10 >"$tmp"
+  for task in "${REQUIRED_TASKS[@]}"; do
+    if ! grep -Fq "$task" "$tmp"; then
+      echo "ERROR: required Celery task is not registered: $task" >&2
+      cat "$tmp" >&2
+      rm -f "$tmp"
+      exit 1
+    fi
+  done
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
+if command -v systemctl >/dev/null && systemctl list-unit-files propai-celery-worker.service >/dev/null 2>&1; then
+  echo "== Install and restart systemd Celery units =="
+  install_systemd_units
+else
+  restart_direct_containers
+fi
+
+wait_for_running "$WORKER_NAME"
+wait_for_running "$FLOWER_NAME"
+
+echo "== Verify registered tasks =="
+verify_registered_tasks
+
+echo "== Verify Flower =="
+curl -fsS "http://localhost:$FLOWER_PORT/flower/" >/dev/null
+
+echo "DONE worker=$WORKER_NAME flower=$FLOWER_NAME image=$IMAGE app=$CELERY_APP queues=$QUEUES"

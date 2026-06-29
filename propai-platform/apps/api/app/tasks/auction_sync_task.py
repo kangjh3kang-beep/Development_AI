@@ -26,6 +26,16 @@ _SIDO_LIST = [
 _COURT_REGION_DELAY_SEC = 2.0
 
 
+def _get_celery_app():
+    """Celery 앱을 지연 임포트한다."""
+    try:
+        from app.tasks.celery_app import app
+
+        return app
+    except (ImportError, RuntimeError):
+        return None
+
+
 def _resolve_service_key() -> str | None:
     """온비드 키: 환경변수 → settings(공용키 폴백) 순. 없으면 None(=unavailable)."""
     import os
@@ -118,3 +128,14 @@ async def _sync_all_regions() -> dict:
 def sync_onbid_auctions() -> dict:
     """경공매 전국 동기화(Celery 진입점). 매일 04:00 실행(beat_schedule)."""
     return asyncio.run(_sync_all_regions())
+
+
+_celery_app = _get_celery_app()
+if _celery_app is not None:
+    sync_onbid_auctions = _celery_app.task(
+        name="app.tasks.auction_sync_task.sync_onbid_auctions",
+        queue="auction",
+        bind=False,
+        max_retries=1,
+        default_retry_delay=300,
+    )(sync_onbid_auctions)

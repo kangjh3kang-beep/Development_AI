@@ -3,7 +3,7 @@
 celery 패키지 없이도 태스크 함수 자체는 실행 가능해야 한다.
 """
 
-from app.tasks.celery_app import BEAT_SCHEDULE_NAMES, TASK_NAMES
+from app.tasks.celery_app import BEAT_SCHEDULE_NAMES, TASK_MODULES, TASK_NAMES
 
 
 class TestCeleryAppMeta:
@@ -47,6 +47,9 @@ class TestCeleryAppMeta:
             "app.tasks.growth_tasks.evaluate_improvement",
             "app.tasks.growth_pr_task.run_pr_bot",
             "app.tasks.growth_learning_task.run_learning",
+            "app.tasks.parcel_batch_task.run_batch",
+            "tasks.memory.ingest_experience",
+            "tasks.specialists.run_for_analysis",
         }
         assert len(TASK_NAMES) == len(set(TASK_NAMES))  # 중복 금지
 
@@ -55,6 +58,21 @@ class TestCeleryAppMeta:
         assert "app.tasks.rate_tasks.check_standard_prices" in TASK_NAMES
         assert "app.tasks.rate_tasks.check_pension_increase" in TASK_NAMES
         assert "app.tasks.cost_tasks.recalculate_project_cost" in TASK_NAMES
+        assert "app.tasks.parcel_batch_task.run_batch" in TASK_NAMES
+
+    def test_task_modules_are_explicit(self):
+        assert set(TASK_MODULES) == {
+            "app.tasks.rate_tasks",
+            "app.tasks.cost_tasks",
+            "app.tasks.auction_sync_task",
+            "app.tasks.growth_tasks",
+            "app.tasks.growth_pr_task",
+            "app.tasks.growth_learning_task",
+            "app.tasks.parcel_batch_task",
+            "app.tasks.memory_tasks",
+            "app.tasks.specialist_tasks",
+        }
+        assert len(TASK_MODULES) == len(set(TASK_MODULES))
 
 
 class TestRateTasks:
