@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import type Konva from "konva";
 import { Check, Download, Eye, EyeOff, Lightbulb, Upload } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { getZoningSpec } from "@/lib/kr-building-regulations";
 import {
   type CadShape,
   type CadShapePoint,
@@ -148,29 +149,11 @@ const LAYER_FILLS: Record<LayerKey, string> = {
   note: "rgba(167,139,250,0.08)",
 };
 
-// 용도지역 코드/명칭 → 법정 상한(개략). 클라이언트 힌트용일 뿐,
-// 권위 검증은 백엔드 building-compliance API가 담당(할루시네이션 가드).
-const ZONE_LIMITS: Record<string, { bcr: number; far: number; height: number }> = {
-  "1R": { bcr: 50, far: 100, height: 0 },
-  "2R": { bcr: 60, far: 200, height: 0 },
-  "3R": { bcr: 50, far: 250, height: 0 },
-  준주거: { bcr: 70, far: 400, height: 0 },
-  일반상업: { bcr: 80, far: 800, height: 0 },
-  근린상업: { bcr: 70, far: 600, height: 0 },
-  제1종전용주거: { bcr: 50, far: 100, height: 0 },
-  제2종전용주거: { bcr: 50, far: 150, height: 0 },
-  제1종일반주거: { bcr: 60, far: 150, height: 0 },
-  제2종일반주거: { bcr: 60, far: 200, height: 0 },
-  제3종일반주거: { bcr: 50, far: 250, height: 0 },
-};
-
 function resolveLimits(zone?: string): { bcr: number; far: number; height: number } | null {
-  if (!zone) return null;
-  if (ZONE_LIMITS[zone]) return ZONE_LIMITS[zone];
-  for (const key of Object.keys(ZONE_LIMITS)) {
-    if (zone.includes(key)) return ZONE_LIMITS[key];
-  }
-  return null;
+  const spec = getZoningSpec(zone || "");
+  return spec
+    ? { bcr: spec.buildingCoverageMax, far: spec.floorAreaRatioMax, height: spec.heightLimit ?? 0 }
+    : null;
 }
 
 let _idSeq = 100;

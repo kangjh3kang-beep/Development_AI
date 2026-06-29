@@ -650,6 +650,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
+  const seedEffectiveFarPct =
+    siteMatch !== "mismatch"
+      ? (siteAnalysis?.integratedFarEffPct ?? siteAnalysis?.effectiveFarPct ?? siteAnalysis?.ordinance?.effectiveFar ?? null)
+      : null;
+  const seedEffectiveBcrPct =
+    siteMatch !== "mismatch"
+      ? (siteAnalysis?.integratedBcrEffPct ?? siteAnalysis?.effectiveBcrPct ?? siteAnalysis?.ordinance?.effectiveBcr ?? null)
+      : null;
 
   // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.
   // BIM(ProjectBimWorkspaceClient)이 designData.totalGfaSqm을 쓰도록 하여
@@ -921,6 +929,8 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           zoning={effectiveZoning}
           buildingUse={form.buildingUse}
           floorHeightM={Number(form.floorHeight) || 3}
+          effectiveFarPct={seedEffectiveFarPct}
+          effectiveBcrPct={seedEffectiveBcrPct}
           disabled={siteMatch === "mismatch"}
         />
       )}

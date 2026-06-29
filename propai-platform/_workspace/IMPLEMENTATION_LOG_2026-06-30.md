@@ -59,3 +59,48 @@
 
 - 단계 완료 커밋 예정: `docs: record workspace dropdown hover deploy`
 - 다음 단계로 진입 가능: 예
+
+## Stage 15. Design studio legal SSOT and zoning coverage
+
+- 기록 시각: 2026-06-30 07:48 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 범위: 설계 스튜디오 용도지역 인식 누락 제거, 국계법/조례/계획 실효 한도 배선 검증, 통합 도면 생성 워크플로우 계획 수립
+- 완료 판정: 로컬 구현/검증 100%, 배포 전 단계
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 구현 내용
+
+- 설계엔진이 표준 한글 용도지역 21종을 직접 인식하도록 보강했다.
+- `자연녹지지역`이 미지원 코드로 처리되어 기본 2종 일반주거 기준으로 추정되던 문제를 제거했다.
+- 프론트 규제 테이블과 CAD 편집 화면의 용도지역 기준을 중앙 규제 테이블로 통합했다.
+- 부지분석 SSOT의 `integrated/effective` 건폐율·용적률이 `/mass-templates/seed-design`으로 전달되도록 배선했다.
+- 매스 산정은 `min(법정, 지자체 조례/계획 실효 한도, 실측 전형 목표)` 기준으로 제한되도록 API 입력과 테스트를 추가했다.
+- `_workspace/DESIGN_STUDIO_LEGAL_PIPELINE_PLAN_2026-06-30.md`에 법령엔진 전파 구조와 도면편집 통합 워크플로우 계획을 기록했다.
+
+### 변경 파일
+
+- `apps/api/app/services/cad/auto_design_engine.py`
+- `apps/api/app/routers/mass_templates.py`
+- `apps/api/tests/test_auto_design_engine.py`
+- `apps/api/tests/test_zone_limits_engine_sync.py`
+- `apps/api/tests/test_mass_templates_router.py`
+- `apps/web/lib/kr-building-regulations.ts`
+- `apps/web/lib/kr-building-regulations.test.ts`
+- `apps/web/components/design/CADEditor.tsx`
+- `apps/web/components/design/DesignStudio.tsx`
+- `apps/web/components/design/SeedDesignMassComparison.tsx`
+- `_workspace/DESIGN_STUDIO_LEGAL_PIPELINE_PLAN_2026-06-30.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- API targeted pytest(Python 3.12 임시 venv): 57 passed, 4 warnings
+- Web selected eslint: 오류 0, 기존 `DesignStudio` hook 경고 3건
+- `npm run test:run -- lib/kr-building-regulations.test.ts`: 1 file / 3 tests 통과
+- `npx tsc --noEmit --pretty false`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+
+### 다음 단계 진입 조건
+
+- 남은 작업: 커밋, 푸시, Oracle safe deploy, 공개 URL 라이브 검증
+- 다음 구현 단계: 도면편집 화면을 1차 법규분석 → 2차 Top3 건축개요 → 3차 CAD/BIM 생성·명령편집이 한 화면에서 이어지는 통합 워크스페이스로 재구성

@@ -136,6 +136,27 @@ class TestAutoDesignLegalLimits:
         limits = engine.get_legal_limits("UNKNOWN")
         assert limits["max_bcr_percent"] == 60.0  # 기본값
 
+    def test_get_legal_limits_natural_green_korean_label(self, engine: AutoDesignEngineService):
+        """자연녹지지역은 표준 용도지역이므로 제2종일반주거 폴백 없이 자체 한도를 사용한다."""
+        limits = engine.get_legal_limits("자연녹지지역")
+        assert limits["max_bcr_percent"] == 20.0
+        assert limits["max_far_percent"] == 100.0
+        assert limits["max_height_m"] == 12.0
+        assert limits["limits_source"] == "statutory_default"
+        assert limits["zone_key"] == "자연녹지지역"
+        assert not any("미지정 용도지역" in warning for warning in limits["warnings"])
+
+    def test_natural_green_generation_respects_green_caps(self, engine: AutoDesignEngineService):
+        """자연녹지지역 공동주택 시드도 녹지지역 한도(건폐율 20%·용적률 100%·4층 근사)를 넘지 않는다."""
+        inp = SiteInput(site_area_sqm=2000, zone_code="자연녹지지역", building_use="공동주택")
+        result = engine.generate(inp)
+        assert result.summary["bcr_percent"] <= 20.0
+        assert result.summary["far_percent"] <= 100.0
+        assert result.summary["num_floors"] <= 4
+        assert result.compliance["bcr_ok"] is True
+        assert result.compliance["far_ok"] is True
+        assert result.compliance["height_ok"] is True
+
 
 class TestAutoDesignComputations:
     """내부 계산 검증."""

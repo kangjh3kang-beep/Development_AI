@@ -93,6 +93,18 @@ const ZONING_DB: Record<string, ZoningSpec> = {
       { title: "오피스텔 + 상가", score: 82, reason: "높은 용적률로 수익형 부동산 최적" },
     ],
   },
+  "중심상업지역": {
+    name: "중심상업지역",
+    buildingCoverageMax: 90,
+    floorAreaRatioMax: 1500,
+    heightLimit: null,
+    category: "상업",
+    devScenarios: [
+      { title: "복합 업무·상업 타워", score: 94, reason: "최고밀 중심지 기능에 맞는 업무·판매 복합 개발 적합" },
+      { title: "호텔·컨벤션 복합", score: 86, reason: "광역 유동인구와 업무 수요를 동시에 활용 가능" },
+      { title: "주상복합 고밀 개발", score: 78, reason: "입지와 주거 허용 조건 확인 시 고밀 복합화 가능" },
+    ],
+  },
   "일반상업지역": {
     name: "일반상업지역",
     buildingCoverageMax: 80,
@@ -117,6 +129,42 @@ const ZONING_DB: Record<string, ZoningSpec> = {
       { title: "소형 오피스텔", score: 72, reason: "1~2인 가구 수요 지역에 적합" },
     ],
   },
+  "유통상업지역": {
+    name: "유통상업지역",
+    buildingCoverageMax: 80,
+    floorAreaRatioMax: 1100,
+    heightLimit: null,
+    category: "상업",
+    devScenarios: [
+      { title: "유통·물류 복합시설", score: 90, reason: "유통 기능과 대형 판매시설 배치에 적합" },
+      { title: "판매시설 + 업무시설", score: 82, reason: "광역 접근성을 활용한 상업·업무 복합화 가능" },
+      { title: "생활형 지원시설", score: 64, reason: "배후 주거지와 접근 조건에 따라 보조 수익시설 가능" },
+    ],
+  },
+  "전용공업지역": {
+    name: "전용공업지역",
+    buildingCoverageMax: 70,
+    floorAreaRatioMax: 300,
+    heightLimit: null,
+    category: "공업",
+    devScenarios: [
+      { title: "제조·생산시설", score: 92, reason: "공업 생산 기능 중심의 대규모 설비 배치에 적합" },
+      { title: "물류·창고시설", score: 78, reason: "대형 차량 동선과 보관 면적 확보에 유리" },
+      { title: "지원 업무시설", score: 46, reason: "주용도 지원 범위와 입지 제한 검토 필요" },
+    ],
+  },
+  "일반공업지역": {
+    name: "일반공업지역",
+    buildingCoverageMax: 70,
+    floorAreaRatioMax: 350,
+    heightLimit: null,
+    category: "공업",
+    devScenarios: [
+      { title: "제조 + 업무 복합", score: 88, reason: "생산과 관리 기능을 한 부지에 배치하기 적합" },
+      { title: "물류센터", score: 80, reason: "교통 접근성이 좋으면 안정적 임대 수요 기대" },
+      { title: "지식산업센터", score: 68, reason: "지역 조례와 허용 용도 확인 시 대안 검토 가능" },
+    ],
+  },
   "준공업지역": {
     name: "준공업지역",
     buildingCoverageMax: 70,
@@ -127,6 +175,30 @@ const ZONING_DB: Record<string, ZoningSpec> = {
       { title: "지식산업센터", score: 95, reason: "준공업지역 대표 개발형태, 세제 혜택" },
       { title: "물류센터", score: 80, reason: "교통 접근성 좋은 위치에 적합" },
       { title: "아파트형 공장 + 근생", score: 70, reason: "업무/제조 + 편의시설 복합" },
+    ],
+  },
+  "보전녹지지역": {
+    name: "보전녹지지역",
+    buildingCoverageMax: 20,
+    floorAreaRatioMax: 80,
+    heightLimit: null,
+    category: "녹지",
+    devScenarios: [
+      { title: "보전형 저밀 활용", score: 42, reason: "환경 보전 목적이 우선되어 개발 강도는 낮게 유지" },
+      { title: "농업·임업 지원시설", score: 36, reason: "허용 범위 내 1차산업 지원시설만 제한적으로 검토" },
+      { title: "생태 체험시설", score: 30, reason: "공익성과 환경 영향 검토가 선행되어야 함" },
+    ],
+  },
+  "생산녹지지역": {
+    name: "생산녹지지역",
+    buildingCoverageMax: 20,
+    floorAreaRatioMax: 100,
+    heightLimit: null,
+    category: "녹지",
+    devScenarios: [
+      { title: "농업 생산 지원시설", score: 70, reason: "생산녹지의 목적에 맞는 저밀 시설 배치 적합" },
+      { title: "근린형 창고·작업장", score: 48, reason: "허용 용도와 주변 민원 리스크 확인 필요" },
+      { title: "저밀 주거·체험시설", score: 40, reason: "입지·허용 용도 확인 시 제한적 검토 가능" },
     ],
   },
   "자연녹지지역": {
@@ -141,16 +213,64 @@ const ZONING_DB: Record<string, ZoningSpec> = {
       { title: "종교시설", score: 50, reason: "녹지지역 허용 용도 중 하나" },
     ],
   },
-  "보전녹지지역": {
-    name: "보전녹지지역",
+  "보전관리지역": {
+    name: "보전관리지역",
     buildingCoverageMax: 20,
     floorAreaRatioMax: 80,
     heightLimit: null,
-    category: "녹지",
+    category: "관리",
     devScenarios: [
-      { title: "개발 제한 (보전 우선)", score: 10, reason: "보전녹지는 개발이 극히 제한됩니다" },
-      { title: "농업/임업 시설", score: 40, reason: "1차산업 용도만 제한적 허용" },
-      { title: "자연 체험시설", score: 25, reason: "생태관광 등 제한적 허용" },
+      { title: "보전형 관리시설", score: 45, reason: "자연환경 보전과 저강도 활용의 균형 필요" },
+      { title: "농림 지원시설", score: 38, reason: "허용 용도와 기반시설 조건 확인 필요" },
+      { title: "소규모 체험시설", score: 28, reason: "개발행위허가와 환경 영향 검토가 선행되어야 함" },
+    ],
+  },
+  "생산관리지역": {
+    name: "생산관리지역",
+    buildingCoverageMax: 20,
+    floorAreaRatioMax: 80,
+    heightLimit: null,
+    category: "관리",
+    devScenarios: [
+      { title: "농업·생산 지원시설", score: 64, reason: "생산 기능 유지와 소규모 시설 배치에 적합" },
+      { title: "창고·가공시설", score: 52, reason: "도로 접면과 허용 용도 확인 시 가능성 검토" },
+      { title: "저밀 주거", score: 35, reason: "개발행위허가와 기반시설 조건이 수익성을 좌우" },
+    ],
+  },
+  "계획관리지역": {
+    name: "계획관리지역",
+    buildingCoverageMax: 40,
+    floorAreaRatioMax: 100,
+    heightLimit: null,
+    category: "관리",
+    devScenarios: [
+      { title: "근린생활시설", score: 76, reason: "관리지역 중 개발 수용성이 비교적 높아 도로변 상업 검토 가능" },
+      { title: "저밀 공동주택", score: 62, reason: "기반시설과 지자체 개발행위허가 조건 확인 필요" },
+      { title: "창고·물류시설", score: 58, reason: "접도·교통 조건이 좋으면 수익형 대안 가능" },
+    ],
+  },
+  "농림지역": {
+    name: "농림지역",
+    buildingCoverageMax: 20,
+    floorAreaRatioMax: 80,
+    heightLimit: null,
+    category: "농림",
+    devScenarios: [
+      { title: "농업·임업 시설", score: 68, reason: "농림 목적에 맞는 생산·관리시설 중심으로 검토" },
+      { title: "농촌 체험시설", score: 36, reason: "관광·체험 허용 조건과 인허가 가능성 확인 필요" },
+      { title: "일반 개발", score: 12, reason: "비농림 목적 개발은 제한이 커 사업성 낮음" },
+    ],
+  },
+  "자연환경보전지역": {
+    name: "자연환경보전지역",
+    buildingCoverageMax: 20,
+    floorAreaRatioMax: 80,
+    heightLimit: null,
+    category: "자연환경",
+    devScenarios: [
+      { title: "보전 중심 관리", score: 36, reason: "자연환경 보전 목적이 우선되어 개발 가능성 낮음" },
+      { title: "생태 연구·관찰시설", score: 28, reason: "공익성과 허용 용도 확인 시 제한적으로 검토" },
+      { title: "일반 수익형 개발", score: 8, reason: "규제 강도가 높아 통상 사업화 리스크 큼" },
     ],
   },
 };
@@ -188,15 +308,10 @@ export function normalizeZoning(zoning?: string | null): string | null {
   return null;
 }
 
-// 한글 용도지역명 → 설계엔진(zone_code) 코드 변환(공용·DRY).
-// 왜 필요한가(쉬운 설명): 백엔드 AutoDesignEngine은 zone_code를 "2R" 같은 영문코드로 받는다.
-//   한글명("제2종일반주거지역")을 그대로 넘기면 매핑이 어긋나 기본값(2R)으로 조용히 폴백돼
-//   3종·상업 부지가 잘못 계산된다. normalizeZoning으로 변형을 표준 라벨로 모은 뒤 코드로 환산한다.
-//   엔진 ZONE_LIMITS 코드 집합: 1R/2R/3R(일반주거)·QR(준주거)·GC(일반상업)·NC(근린상업)·QI(준공업).
-//   전용주거는 엔진 코드가 없어 가장 가까운 저밀 일조존(1R/2R)으로 근사한다. 미상이면 null(호출측이 생략).
+// 한글 용도지역명 → 설계엔진(zone_code) 키 변환(공용·DRY).
+// 기존 7개 축약코드는 하위호환을 위해 유지하고, 축약코드가 없는 표준 용도지역은
+// 정식 한글 라벨 그대로 백엔드 설계엔진에 전달한다. 미상이면 null(호출측이 생략).
 const _LABEL_TO_CODE: Record<string, string> = {
-  "제1종전용주거지역": "1R",   // 전용주거: 엔진 코드 부재 → 저밀 일조존 근사
-  "제2종전용주거지역": "2R",
   "제1종일반주거지역": "1R",
   "제2종일반주거지역": "2R",
   "제3종일반주거지역": "3R",
@@ -214,6 +329,7 @@ export function zoningToCode(zoning?: string | null): string | null {
   // 표준화된 라벨 우선
   const norm = normalizeZoning(zoning);
   if (norm && _LABEL_TO_CODE[norm]) return _LABEL_TO_CODE[norm];
+  if (norm) return norm;
   // 표준화가 전용주거 등을 보존하지 못한 경우: 원문 라벨/어간 부분일치(종 번호로 구분돼 충돌 없음)
   for (const [label, code] of Object.entries(_LABEL_TO_CODE)) {
     if (cleaned.includes(label) || cleaned.includes(label.replace(/지역$/, ""))) return code;
@@ -301,7 +417,8 @@ export type LocalAnalysisResult = {
   summary: string;
 };
 
-export function analyzeLocally(address: string, pnu?: string): LocalAnalysisResult {
+export function analyzeLocally(address: string, _pnu?: string): LocalAnalysisResult {
+  void _pnu;
   const zoningKey = inferZoningFromAddress(address);
   const zoning = ZONING_DB[zoningKey] || ZONING_DB["제2종일반주거지역"];
   const characteristics = inferLandCharacteristics(address, zoning);

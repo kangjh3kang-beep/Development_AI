@@ -182,11 +182,14 @@ class SeedDesignRequest(BaseModel):
     zone_code: str = Field("2R", description="용도지역 코드")
     building_use: str = Field("공동주택", description="건축용도(매스 종류 매핑)")
     floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
+    effective_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)")
+    effective_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)")
 
 
 def _compute_mass(
     *, land_area_sqm: float, zone_code: str, building_use: str, floor_height_m: float,
     target_far: float | None = None, target_bcr: float | None = None,
+    ordinance_far: float | None = None, ordinance_bcr: float | None = None,
     daylight_step: bool = True, target_floors: int | None = None,
 ) -> dict:
     """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프).
@@ -202,6 +205,7 @@ def _compute_mass(
     site = SiteInput(
         site_area_sqm=land_area_sqm, zone_code=zone_code, building_use=building_use,
         floor_height_m=floor_height_m, target_far_percent=target_far, target_bcr_percent=target_bcr,
+        ordinance_far_percent=ordinance_far, ordinance_bcr_percent=ordinance_bcr,
         daylight_step=daylight_step, target_floors=target_floors,
     )
     legal = svc.get_legal_limits(zone_code)
@@ -226,6 +230,7 @@ async def seed_design(
     common = {
         "land_area_sqm": body.land_area_sqm, "zone_code": body.zone_code,
         "building_use": body.building_use, "floor_height_m": body.floor_height_m,
+        "ordinance_far": body.effective_far_pct, "ordinance_bcr": body.effective_bcr_pct,
     }
     legal_mass = _compute_mass(**common)
 
@@ -247,8 +252,15 @@ async def seed_design(
         "legal_max_mass": legal_mass,
         "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
         "mass_reference": mass_ref,               # 시드 출처(provenance)
+        "applied_limit_source": (
+            "site_analysis_effective_limits"
+            if body.effective_far_pct or body.effective_bcr_pct
+            else "engine_zone_defaults"
+        ),
         "note": ("legal_max_mass·regional_typical_mass 모두 정북일조 단계후퇴(법 61조) 해석. "
+                 "부지분석 실효 한도(effective_far_pct/effective_bcr_pct)가 전달되면 "
+                 "지자체 도시계획조례·계획상한을 반영한 min(법정, 조례/계획, 목표) 기준으로 산정. "
                  "regional_typical_mass=이 지역 같은 종류 실측 중앙값(건폐/용적/층수)을 설계엔진에 "
                  "시드한 전형 매스(층수=median까지·과도 고층화 방지). "
-                 "실측 매스 없으면 None(법정 최대만). 엔진이 min(법정,목표) 클램프(가짜 상향 없음)."),
+                 "실측 매스 없으면 None(적용 한도 최대만). 엔진이 min(법정,조례/계획,목표) 클램프(가짜 상향 없음)."),
     }
