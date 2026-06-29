@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { buildPrimaryNav } from "./nav-config";
 import { WorkspaceNavBar } from "./WorkspaceNavBar";
@@ -50,20 +50,68 @@ describe("WorkspaceNavBar", () => {
   });
 
   it("closes the dropdown after rollout or item selection", () => {
-    render(<WorkspaceNavBar sections={buildPrimaryNav("en")} />);
+    vi.useFakeTimers();
 
-    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    const projectButton = within(nav).getByRole("button", { name: /프로젝트/ });
+    try {
+      render(<WorkspaceNavBar sections={buildPrimaryNav("en")} />);
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
 
-    fireEvent.mouseEnter(projectButton.parentElement!);
-    expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
+      const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+      const projectButton = within(nav).getByRole("button", { name: /프로젝트/ });
 
-    fireEvent.mouseLeave(projectButton.parentElement!);
-    expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
+      fireEvent.mouseEnter(projectButton.parentElement!);
+      expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
 
-    fireEvent.click(projectButton);
-    const projectLink = within(nav).getByRole("link", { name: "프로젝트 관리" });
-    fireEvent.click(projectLink);
-    expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
+      fireEvent.mouseLeave(projectButton.parentElement!);
+      expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(140);
+      });
+      expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
+
+      fireEvent.click(projectButton);
+      const projectLink = within(nav).getByRole("link", { name: "프로젝트 관리" });
+      fireEvent.click(projectLink);
+      expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the dropdown open while the pointer crosses into the menu", () => {
+    vi.useFakeTimers();
+
+    try {
+      render(<WorkspaceNavBar sections={buildPrimaryNav("en")} />);
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+
+      const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+      const projectButton = within(nav).getByRole("button", { name: /프로젝트/ });
+
+      fireEvent.mouseEnter(projectButton.parentElement!);
+      expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
+
+      fireEvent.mouseLeave(projectButton.parentElement!);
+      const bridge = within(nav).getByTestId(/workspace-nav-hover-bridge-/);
+      fireEvent.mouseEnter(bridge);
+
+      act(() => {
+        vi.advanceTimersByTime(220);
+      });
+      expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
+
+      fireEvent.mouseLeave(projectButton.parentElement!);
+      act(() => {
+        vi.advanceTimersByTime(140);
+      });
+      expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

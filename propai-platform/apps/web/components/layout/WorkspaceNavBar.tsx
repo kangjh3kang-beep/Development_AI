@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import {
@@ -28,6 +28,32 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
   const [isAssetOps, setIsAssetOps] = useState<boolean | null>(null);
   const [openSectionId, setOpenSectionId] = useState<string | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const openSection = useCallback((sectionId: string) => {
+    clearCloseTimer();
+    setOpenSectionId(sectionId);
+  }, [clearCloseTimer]);
+
+  const closeSection = useCallback((sectionId: string) => {
+    clearCloseTimer();
+    setOpenSectionId((current) => (current === sectionId ? null : current));
+  }, [clearCloseTimer]);
+
+  const scheduleCloseSection = useCallback((sectionId: string) => {
+    clearCloseTimer();
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpenSectionId((current) => (current === sectionId ? null : current));
+      closeTimerRef.current = null;
+    }, 140);
+  }, [clearCloseTimer]);
 
   useEffect(() => {
     let alive = true;
@@ -53,18 +79,27 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setOpenSectionId(null), 0);
+    const timer = window.setTimeout(() => {
+      clearCloseTimer();
+      setOpenSectionId(null);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [pathname]);
+  }, [pathname, clearCloseTimer]);
+
+  useEffect(() => {
+    return () => clearCloseTimer();
+  }, [clearCloseTimer]);
 
   useEffect(() => {
     const closeOnOutside = (event: MouseEvent) => {
       if (!navRef.current?.contains(event.target as Node)) {
+        clearCloseTimer();
         setOpenSectionId(null);
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        clearCloseTimer();
         setOpenSectionId(null);
       }
     };
@@ -74,7 +109,7 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
       document.removeEventListener("mousedown", closeOnOutside);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, []);
+  }, [clearCloseTimer]);
 
   const activeSections = useMemo(
     () => new Set(activeSectionIds(sections, pathname)),
@@ -102,22 +137,20 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
             <div
               key={section.id}
               className="relative"
-              onMouseEnter={() => setOpenSectionId(section.id)}
-              onMouseLeave={() =>
-                setOpenSectionId((current) => (current === section.id ? null : current))
-              }
-              onFocus={() => setOpenSectionId(section.id)}
+              onMouseEnter={() => openSection(section.id)}
+              onMouseLeave={() => scheduleCloseSection(section.id)}
+              onFocus={() => openSection(section.id)}
               onBlur={(event) => {
                 const nextFocused = event.relatedTarget as Node | null;
                 if (nextFocused && event.currentTarget.contains(nextFocused)) return;
-                setOpenSectionId((current) => (current === section.id ? null : current));
+                closeSection(section.id);
               }}
             >
               <button
                 type="button"
                 aria-expanded={open}
                 aria-haspopup="menu"
-                onClick={() => setOpenSectionId(section.id)}
+                onClick={() => openSection(section.id)}
                 className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
                   active
                     ? "bg-[var(--text-primary)] text-white"
@@ -134,30 +167,42 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                 )}
               </button>
               {open && (
-                <div
-                  role="menu"
-                  className="absolute left-0 top-12 z-50 min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
-                >
-                  {links.map((link) => {
-                    const linkActive = isHrefActive(link.href, pathname);
-                    return (
-                      <Link
-                        key={link.id}
-                        href={link.href!}
-                        prefetch={link.prefetch}
-                        onClick={() => setOpenSectionId(null)}
-                        className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
-                          linkActive
-                            ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        <span>{link.label}</span>
-                        {linkActive && <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
-                      </Link>
-                    );
-                  })}
-                </div>
+                <>
+                  <div
+                    aria-hidden="true"
+                    data-testid={`workspace-nav-hover-bridge-${section.id}`}
+                    className="absolute left-0 top-10 z-40 h-2 min-w-64"
+                    onMouseEnter={() => openSection(section.id)}
+                  />
+                  <div
+                    role="menu"
+                    className="absolute left-0 top-12 z-50 min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
+                    onMouseEnter={() => openSection(section.id)}
+                  >
+                    {links.map((link) => {
+                      const linkActive = isHrefActive(link.href, pathname);
+                      return (
+                        <Link
+                          key={link.id}
+                          href={link.href!}
+                          prefetch={link.prefetch}
+                          onClick={() => {
+                            clearCloseTimer();
+                            setOpenSectionId(null);
+                          }}
+                          className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
+                            linkActive
+                              ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                              : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+                          }`}
+                        >
+                          <span>{link.label}</span>
+                          {linkActive && <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           );
