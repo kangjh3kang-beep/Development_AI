@@ -531,6 +531,18 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 진행 예정
-- Oracle Cloud 프론트 배포 완료: 진행 예정
-- 라이브 `https://4t8t.net/ko`에서 결과물 생성 허브, 닫힌 상단 풀다운, 모바일 overflow 없음 확인: 진행 예정
+- 이번 단계 커밋/푸시 완료: 완료 - `1e8f9fdd feat: refactor dashboard around generated outcomes`
+- Oracle Cloud 프론트 배포 완료: 완료 - `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629`
+- 라이브 `https://4t8t.net/ko`에서 결과물 생성 허브, 닫힌 상단 풀다운, 모바일 overflow 없음 확인: 완료
+
+### Oracle Cloud 배포/라이브 검증
+
+- Oracle 직접 배포 실행: 프론트 A1에서 `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629` 실행
+- Oracle 직접 배포 결과: `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ 1e8f9fdd feat: refactor dashboard around generated outcomes 10:58:09`
+- 배포 후 서버 상태:
+  - Git HEAD: `1e8f9fdd feat: refactor dashboard around generated outcomes`
+  - 컨테이너: `propai-platform_web_1 propai-web:oracle`, `propai-platform_api_1 propai-api:oracle`, `propai-platform_nginx_1 nginx:alpine`, `propai-platform_redis_1 redis:7-alpine`, `propai-platform_qdrant_1 qdrant/qdrant:v1.18.1`
+  - 공개 HTTP smoke: `https://4t8t.net/ko` 200, `https://4t8t.net/health` 200 + healthy, `https://api.4t8t.net/health` 200 + healthy
+  - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): desktop 1680x1200 heading true, generation hub true, workspace nav visible true, horizontal overflow false
+  - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): mobile 390x844 heading true, generation hub true, desktop workspace nav hidden, horizontal overflow false
+  - 공개 DOM 대비 스캔: 짙은 파란 배경 + 어두운 텍스트 조합 0건
