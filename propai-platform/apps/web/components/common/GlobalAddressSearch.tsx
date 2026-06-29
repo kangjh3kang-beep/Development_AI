@@ -41,6 +41,7 @@ const NearbyTransactionsMapDynamic = dynamicMap<ComponentProps<typeof NearbyTran
 );
 
 type SatongMapMode = "cadastre" | "select" | "market";
+type SatongLayerTarget = SatongMapMode | "tools";
 
 // 행 불변 식별자 — 객체 spread({...a})로 보존되므로 참조 교체에 영향받지 않는 안정 매칭 키.
 let _uidSeq = 0;
@@ -967,6 +968,82 @@ export function GlobalAddressSearch({
       : null
     : localAnalysis;
 
+  const hasRegisteredParcels = displayAddresses.length > 0;
+  const activeLayerLabel = mapMode === "cadastre"
+    ? "지적·공시·노후"
+    : mapMode === "market"
+      ? "실거래·분양"
+      : "주변 선택";
+  const mapNextAction = !hasRegisteredParcels
+    ? "상단에서 지번·주소를 검색하거나 엑셀을 올리면 지적·공시지가·노후도 레이어가 열립니다."
+    : mapMode === "select"
+      ? "지도에서 주변 필지를 클릭하고 완료하면 목록과 구획도가 함께 갱신됩니다."
+      : "필지 경계와 시장 레이어를 오가며 후보지 검토, 인허가, 설계 산출물로 이어갈 수 있습니다.";
+  const satongLayerGroups: Array<{
+    key: string;
+    label: string;
+    meta: string;
+    description: string;
+    target: SatongLayerTarget;
+    enabled: boolean;
+    active: boolean;
+  }> = [
+    {
+      key: "select",
+      label: "필지 선택",
+      meta: "기본지도",
+      description: "지도 클릭으로 주변 필지를 다중 선택하고 왼쪽 목록에 추가합니다.",
+      target: "select",
+      enabled: true,
+      active: mapMode === "select",
+    },
+    {
+      key: "cadastre",
+      label: "지적도·용도지역",
+      meta: "토지이음식 색면",
+      description: "필지 경계, 지목, 용도지역, 통합개발 외곽선을 한 화면에 표시합니다.",
+      target: "cadastre",
+      enabled: hasRegisteredParcels,
+      active: mapMode === "cadastre",
+    },
+    {
+      key: "value-age",
+      label: "공시지가·노후도",
+      meta: "구획도 색상 모드",
+      description: "공시지가와 건축물 노후도 코로플레스를 필지 경계 위에서 전환합니다.",
+      target: "cadastre",
+      enabled: hasRegisteredParcels,
+      active: mapMode === "cadastre",
+    },
+    {
+      key: "market",
+      label: "실거래·시세",
+      meta: "국토부 거래",
+      description: "주변 거래 사례와 시세 흐름을 필지 위치 기준으로 확인합니다.",
+      target: "market",
+      enabled: hasRegisteredParcels,
+      active: mapMode === "market",
+    },
+    {
+      key: "supply",
+      label: "분양·공·경매",
+      meta: "시장 공급 신호",
+      description: "분양 정보와 공매·경매 검토 신호를 시장 지도 작업면으로 묶습니다.",
+      target: "market",
+      enabled: hasRegisteredParcels,
+      active: mapMode === "market",
+    },
+    {
+      key: "tools",
+      label: "위성·지형·교통·로드뷰",
+      meta: "지도 툴바",
+      description: "위성/하이브리드, 지형도, 교통, 로드뷰, 거리·면적 측정을 지도 우측에서 조작합니다.",
+      target: "tools",
+      enabled: true,
+      active: false,
+    },
+  ];
+
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -1439,7 +1516,7 @@ export function GlobalAddressSearch({
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 py-2">
                 <div>
                   <p className="text-[12px] font-black text-[var(--text-primary)]">사통팔땅 멀티지도</p>
-                  <p className="text-[10.5px] font-semibold text-[var(--text-hint)]">지적·노후도·실거래·분양·주변선택을 한 작업면에서 전환합니다.</p>
+                  <p className="text-[10.5px] font-semibold text-[var(--text-hint)]">지적·용도지역·공시지가·노후도·실거래·분양·로드뷰를 한 작업면에서 전환합니다.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {([
@@ -1465,6 +1542,77 @@ export function GlobalAddressSearch({
                       </button>
                     );
                   })}
+                </div>
+              </div>
+              <div className="mb-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_250px]">
+                <div className="rounded-2xl border border-[var(--line)] bg-white p-2.5">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
+                      <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 지도 레이어 콘솔
+                    </span>
+                    <span className="rounded-full bg-[var(--saas-lime-soft)] px-2.5 py-1 text-[10.5px] font-black text-[var(--saas-lime-text)]">
+                      현재 {activeLayerLabel}
+                    </span>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                    {satongLayerGroups.map((layer) => {
+                      const active = layer.active;
+                      const target = layer.target;
+                      const stateLabel = active ? "활성" : layer.enabled ? "준비됨" : "주소 필요";
+                      const shellClass = `min-h-[104px] rounded-2xl border px-3 py-2.5 text-left transition-all ${
+                        active
+                          ? "border-[var(--saas-lime)] bg-[var(--saas-ink)] text-white shadow-[var(--shadow-glow)]"
+                          : layer.enabled
+                            ? "border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-primary)] hover:border-[var(--accent-strong)] hover:bg-white"
+                            : "border-dashed border-[var(--line-strong)] bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
+                      }`;
+                      const body = (
+                        <>
+                          <div className="flex items-start justify-between gap-2">
+                            <span className={`text-[10px] font-black uppercase ${active ? "text-[var(--saas-lime)]" : "text-[var(--text-hint)]"}`}>
+                              {layer.meta}
+                            </span>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                              active
+                                ? "bg-[var(--saas-lime)] text-[var(--saas-ink)]"
+                                : layer.enabled
+                                  ? "bg-white text-[var(--accent-strong)]"
+                                  : "bg-white/70 text-[var(--text-hint)]"
+                            }`}>
+                              {stateLabel}
+                            </span>
+                          </div>
+                          <p className={`mt-2 text-[13px] font-black ${active ? "text-white" : "text-[var(--text-primary)]"}`}>{layer.label}</p>
+                          <p className={`mt-1 text-[11px] font-semibold leading-5 ${active ? "text-white/72" : "text-[var(--text-secondary)]"}`}>{layer.description}</p>
+                        </>
+                      );
+                      if (target === "tools") {
+                        return <div key={layer.key} className={shellClass}>{body}</div>;
+                      }
+                      return (
+                        <button
+                          key={layer.key}
+                          type="button"
+                          disabled={!layer.enabled}
+                          aria-pressed={active}
+                          onClick={() => setMapMode(target)}
+                          className={`${shellClass} disabled:cursor-not-allowed`}
+                        >
+                          {body}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[var(--saas-ink-line-strong)] bg-[var(--saas-ink)] p-3 text-white">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-[var(--saas-lime)]">Next action</p>
+                  <p className="mt-2 text-sm font-black text-white">검색부터 산출물까지 한 흐름</p>
+                  <p className="mt-2 text-[11px] font-semibold leading-5 text-white/72">{mapNextAction}</p>
+                  <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-full border border-white/10 bg-white/8 text-center text-[10px] font-black">
+                    <span className="px-2 py-1.5 text-[var(--saas-lime)]">검색</span>
+                    <span className="border-x border-white/10 px-2 py-1.5">지도검토</span>
+                    <span className="px-2 py-1.5">산출물</span>
+                  </div>
                 </div>
               </div>
               {mapMode === "cadastre" && mapParcelLabels.length > 0 ? (

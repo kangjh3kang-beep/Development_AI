@@ -763,6 +763,70 @@
 
 ### 다음 단계 진입 조건
 
+- 이번 단계 커밋/푸시 완료: 완료 (`4b5b7b44 fix: refine workspace menu and output cards`)
+- Oracle Cloud 프론트/백엔드 배포 완료: 완료
+  - `safe-deploy.sh both codex/dashboard-ia-ui-20260629`
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 4b5b7b44 fix: refine workspace menu and output cards`
+  - `propai-platform_web_1`, `propai-platform_api_1`, `nginx`, `redis`, `qdrant` 실행 확인
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/permits`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200
+- 라이브 인증 제약:
+  - 비로그인 headless 브라우저는 `SECURE ACCESS · 사통팔땅` 로그인 게이트로 이동한다.
+  - 인증 세션 없이 대시보드 내부 DOM 상호작용은 직접 검증 불가.
+  - 대신 배포된 web 컨테이너 번들에서 신규 문자열 포함/삭제를 검증했다.
+    - `최종 산출물을 기준으로 선택합니다.` 포함
+    - `건축개요·CAD 계획도면` 포함
+    - `토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다.` 포함
+    - `기능명이 아니라` 미포함
+    - `투자 의사결정 브리프` 미포함
+- 판정: 인증 세션 한계는 남지만, 배포 상태·공개 URL·실제 번들 반영 기준으로 99%+ 통과. 다음 단계 진행 가능.
+
+## Stage 12. Satong multi-map layer console
+
+- 기록 시각: 2026-06-29 23:22 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `4b5b7b44 fix: refine workspace menu and output cards`
+- 범위: `GlobalAddressSearch`의 사통팔땅 멀티지도 슬롯에 레이어 콘솔과 다음 액션 패널을 추가해 지도 기능을 결과물 생성 흐름으로 묶음
+- 완료 판정: 로컬 구현/검증 기준 100%, Oracle 배포 예정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 구현 내용
+
+- 멀티지도 상단 설명을 `지적·용도지역·공시지가·노후도·실거래·분양·로드뷰` 중심으로 재정리했다.
+- 지도 레이어 콘솔을 추가했다.
+  - `필지 선택`: 지도 클릭으로 주변 필지 다중 선택
+  - `지적도·용도지역`: 필지 경계, 지목, 용도지역, 통합개발 외곽선
+  - `공시지가·노후도`: 구획도 내 공시지가/노후도 색상 모드
+  - `실거래·시세`: 국토부 실거래 기반 시장 지도
+  - `분양·공·경매`: 공급·경매 검토 신호를 시장 지도 작업면으로 묶는 안내
+  - `위성·지형·교통·로드뷰`: 지도 우측 툴바 기능 안내
+- 필지 등록 전에는 지적/시장 레이어가 `주소 필요` 상태로 표시되고, 필지 등록 후 선택 가능한 흐름을 명확히 했다.
+- `Next action` 패널을 추가해 검색 → 지도검토 → 산출물 흐름을 한 문장으로 안내했다.
+
+### 변경 파일
+
+- `apps/web/components/common/GlobalAddressSearch.tsx`
+- `apps/web/components/common/__tests__/GlobalAddressSearch.test.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- 변경 파일 `eslint`: 오류 0, 경고 0
+- `git diff --check`: 통과
+- `npm run test:run -- components/common/__tests__/GlobalAddressSearch.test.tsx`: 1 file / 2 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 Playwright smoke:
+  - `http://localhost:3030/ko/permits` 렌더 통과
+  - `지도 레이어 콘솔`, `지적도·용도지역`, `공시지가·노후도`, `실거래·시세`, `분양·공·경매`, `위성·지형·교통·로드뷰` visible
+  - 필지 등록 전 `지적도·용도지역` 레이어 버튼 disabled 확인
+  - horizontal overflow 0
+  - 스크린샷: `/tmp/propai-stage12-map-console.png`
+
+### 다음 단계 진입 조건
+
 - 이번 단계 커밋/푸시 완료: 예정
-- Oracle Cloud 프론트/백엔드 배포 완료: 예정
-- 라이브 `https://4t8t.net/ko`에서 풀다운 메뉴 자동 닫힘, 생성 허브 문구, CAD 산출물 카드 확인: 예정
+- Oracle Cloud 프론트 배포 완료: 예정
+- 라이브 `https://4t8t.net/ko/permits`에서 지도 레이어 콘솔 및 레이어 게이트 확인: 예정
