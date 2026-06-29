@@ -454,6 +454,17 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 진행 예정
-- Oracle Cloud 프론트 배포 완료: 진행 예정
-- 라이브 `https://4t8t.net/ko`에서 데스크톱 좌측 상시 메뉴 제거, 상단 워크스페이스 내비게이션, 홈 핵심 액션 노출 확인: 진행 예정
+- 이번 단계 커밋/푸시 완료: 완료 - `dc7a22ae feat: simplify dashboard workspace shell`
+- Oracle Cloud 프론트 배포 완료: 완료 - `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629`
+- 라이브 `https://4t8t.net/ko`에서 데스크톱 좌측 상시 메뉴 제거, 상단 워크스페이스 내비게이션, 홈 핵심 액션 노출 확인: 완료
+
+### Oracle Cloud 배포/라이브 검증
+
+- Oracle 직접 배포 실행: 프론트 A1에서 `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629` 실행
+- Oracle 직접 배포 결과: `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ dc7a22ae feat: simplify dashboard workspace shell 09:34:42`
+- 배포 후 서버 상태:
+  - Git HEAD: `dc7a22ae feat: simplify dashboard workspace shell`
+  - 컨테이너: `propai-platform_web_1 propai-web:oracle`, `propai-platform_api_1 propai-api:oracle`, `propai-platform_nginx_1 nginx:alpine`, `propai-platform_redis_1 redis:7-alpine`, `propai-platform_qdrant_1 qdrant/qdrant:v1.18.1`
+  - 공개 HTTP smoke: `https://4t8t.net/ko` 200, `https://4t8t.net/health` 200 + healthy, `https://api.4t8t.net/health` 200 + healthy
+  - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): desktop 1680x1200 heading true, workspace nav visible true, visible aside 0, horizontal overflow false
+  - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): mobile 390x844 heading true, desktop workspace nav hidden, visible aside 0, horizontal overflow false
