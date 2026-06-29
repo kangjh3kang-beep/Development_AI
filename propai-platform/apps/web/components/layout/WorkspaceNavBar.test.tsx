@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { buildPrimaryNav } from "./nav-config";
 import { WorkspaceNavBar } from "./WorkspaceNavBar";
@@ -23,11 +23,26 @@ describe("WorkspaceNavBar", () => {
     expect(within(nav).getByText("시장·획득")).toBeInTheDocument();
     expect(within(nav).getByText("설계 센터")).toBeInTheDocument();
 
+    fireEvent.click(within(nav).getByRole("button", { name: /시장·획득/ }));
+
     expect(within(nav).getByRole("link", { name: "시장·시세 분석" })).toHaveAttribute(
       "href",
       "/en/market-insights",
     );
     expect(within(nav).queryByText("운영 센터")).not.toBeInTheDocument();
     expect(within(nav).queryByText("관리")).not.toBeInTheDocument();
+  });
+
+  it("keeps only one dropdown menu open", () => {
+    render(<WorkspaceNavBar sections={buildPrimaryNav("en")} />);
+
+    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+
+    fireEvent.click(within(nav).getByRole("button", { name: /시장·획득/ }));
+    expect(within(nav).getByRole("link", { name: "시장·시세 분석" })).toBeInTheDocument();
+
+    fireEvent.click(within(nav).getByRole("button", { name: /프로젝트/ }));
+    expect(within(nav).queryByRole("link", { name: "시장·시세 분석" })).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "프로젝트 관리" })).toBeInTheDocument();
   });
 });

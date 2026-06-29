@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import {
@@ -26,6 +26,8 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [isAssetOps, setIsAssetOps] = useState<boolean | null>(null);
+  const [openSectionId, setOpenSectionId] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -50,6 +52,30 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setOpenSectionId(null), 0);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
+
+  useEffect(() => {
+    const closeOnOutside = (event: MouseEvent) => {
+      if (!navRef.current?.contains(event.target as Node)) {
+        setOpenSectionId(null);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenSectionId(null);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
   const activeSections = useMemo(
     () => new Set(activeSectionIds(sections, pathname)),
     [sections, pathname],
@@ -63,6 +89,7 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
 
   return (
     <nav
+      ref={navRef}
       aria-label="Workspace navigation"
       className="hidden rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] px-3 py-2 shadow-[var(--shadow-sm)] lg:block"
     >
@@ -70,12 +97,17 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
         {visibleSections.slice(0, 5).map((section) => {
           const links = flattenLinks(section.items).slice(0, 3);
           const active = activeSections.has(section.id);
+          const open = openSectionId === section.id;
           return (
-            <details
+            <div
               key={section.id}
-              className="group relative"
+              className="relative"
             >
-              <summary
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-haspopup="menu"
+                onClick={() => setOpenSectionId(open ? null : section.id)}
                 className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
                   active
                     ? "bg-[var(--text-primary)] text-white"
@@ -85,33 +117,39 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                 <span>{section.title}</span>
                 <ChevronDown
                   aria-hidden="true"
-                  className="h-4 w-4 transition-transform group-open:rotate-180"
+                  className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
                 />
                 {active && (
                   <span className="sr-only">현재 섹션</span>
                 )}
-              </summary>
-              <div className="absolute left-0 top-12 z-50 hidden min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)] group-open:block">
-                {links.map((link) => {
-                  const linkActive = isHrefActive(link.href, pathname);
-                  return (
-                    <Link
-                      key={link.id}
-                      href={link.href!}
-                      prefetch={link.prefetch}
-                      className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
-                        linkActive
-                          ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
-                      }`}
-                    >
-                      <span>{link.label}</span>
-                      {linkActive && <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
-                    </Link>
-                  );
-                })}
-              </div>
-            </details>
+              </button>
+              {open && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-12 z-50 min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
+                >
+                  {links.map((link) => {
+                    const linkActive = isHrefActive(link.href, pathname);
+                    return (
+                      <Link
+                        key={link.id}
+                        href={link.href!}
+                        prefetch={link.prefetch}
+                        onClick={() => setOpenSectionId(null)}
+                        className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
+                          linkActive
+                            ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+                        }`}
+                      >
+                        <span>{link.label}</span>
+                        {linkActive && <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
         <Link

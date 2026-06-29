@@ -20,7 +20,6 @@ import { AlertTriangle, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
     L: any;
@@ -53,6 +52,8 @@ interface ParcelPickerMapProps {
   onPick?: (parcel: ParcelAtPointResult) => void;
   /** 다중 필지 선택 완료 콜백 — 완료 버튼 클릭 시 staged 배열 전달 */
   onPickMany?: (parcels: ParcelAtPointResult[]) => void;
+  /** 검색으로 확정한 필지 주변을 바로 고를 수 있도록 지도 중심 이동 */
+  focusTarget?: { lat: number; lon: number; label?: string } | null;
   /** 지도 높이(px), 기본 360 */
   height?: number;
 }
@@ -110,7 +111,7 @@ function toP(sqm: number): string {
   return (sqm / 3.305785).toFixed(1);
 }
 
-export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPickerMapProps) {
+export function ParcelPickerMap({ onPick, onPickMany, focusTarget, height = 360 }: ParcelPickerMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const fs = useMapFullscreen(mapRef);
@@ -134,12 +135,19 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
   onPickRef.current = onPick;
   const onPickManyRef = useRef(onPickMany);
   onPickManyRef.current = onPickMany;
+  const focusTargetRef = useRef(focusTarget);
+  const focusLat = focusTarget?.lat ?? null;
+  const focusLon = focusTarget?.lon ?? null;
   // staged를 ref로도 보관 — queryParcel이 staged를 의존하지 않게 해 지도 재생성(폴리곤 소실)을 막는다.
   const stagedRef = useRef<ParcelAtPointResult[]>([]);
   stagedRef.current = staged;
 
   // 연타 응답 경합 가드: 마지막 클릭만 반영(stale 필지 폐기)
   const querySeqRef = useRef(0);
+
+  useEffect(() => {
+    focusTargetRef.current = focusTarget;
+  }, [focusTarget]);
 
   /** pending 레이어(임시 마커·폴리곤) 지도에서 제거 */
   const clearPendingLayer = useCallback(() => {
@@ -354,6 +362,10 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
           maxZoom: 19,
         }).addTo(map);
         mapRef.current = map;
+        const focus = focusTargetRef.current;
+        if (focus) {
+          map.setView([focus.lat, focus.lon], 17);
+        }
 
         // 지도 클릭 → 필지 조회
         map.on("click", (e: any) => {
@@ -377,6 +389,12 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
     };
   }, [queryParcel]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || focusLat == null || focusLon == null) return;
+    map.setView([focusLat, focusLon], 17, { animate: true });
+  }, [focusLat, focusLon]);
+
   // staged 합산 면적 계산
   const totalAreaSqm = staged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
 
@@ -390,6 +408,7 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
       {/* 안내 메시지 */}
       <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
         지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
+        {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
         <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
       </p>
 

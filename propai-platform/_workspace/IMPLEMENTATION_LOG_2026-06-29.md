@@ -546,3 +546,60 @@
   - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): desktop 1680x1200 heading true, generation hub true, workspace nav visible true, horizontal overflow false
   - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): mobile 390x844 heading true, generation hub true, desktop workspace nav hidden, horizontal overflow false
   - 공개 DOM 대비 스캔: 짙은 파란 배경 + 어두운 텍스트 조합 0건
+
+## Stage 08. Unified parcel intake and controlled workspace menus
+
+- 기록 시각: 2026-06-29 20:57 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `1467308c docs: record stage 07 dashboard deploy evidence`
+- 범위: 상단 풀다운 메뉴 단일 오픈 제어, 공통 지번·주소/엑셀/지도 선택 입력을 하나의 필지 입력 파이프라인으로 통합
+- 완료 판정: 로컬 구현/검증 기준 100%, 라이브 배포 예정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 사용자 피드백 반영
+
+- 다른 메인 메뉴를 눌러도 이전 풀다운이 남아 병행 표시되던 문제를 `details/summary` 제거와 제어 상태 기반 메뉴로 해결했다.
+- 지번·주소 검색, 엑셀 다필지 등록, 지도 선택을 따로 나열하지 않고 `Parcel Intake Pipeline` 카드 안에 하나의 흐름으로 통합했다.
+- 주소/지번 검색 결과가 좌표를 포함하면 지도 확장 선택 패널을 자동으로 열어 주변 필지를 이어서 선택할 수 있게 했다.
+- 엑셀 업로드는 기존 `/zoning/parse-parcels` 파이프라인을 유지해 PNU·면적·용도지역 보강 후 분석 목록과 구획도 반영 흐름을 보존했다.
+- 첨부 팔레트 기반으로 ink/lime/sky 대비를 강화하되, 버튼과 헤더의 글자 대비는 흰색/고대비 토큰으로 정리했다.
+
+### 구현 내용
+
+- `WorkspaceNavBar`를 제어형 드롭다운으로 변경했다.
+  - 한 섹션만 열림
+  - 다른 섹션 클릭 시 기존 메뉴 닫힘
+  - 메뉴 링크 클릭, 외부 클릭, `Escape`, 경로 변경 시 닫힘
+- `GlobalAddressSearch` 다필지 UI를 통합 카드로 재구성했다.
+  - 1단계: 지번·주소 검색
+  - 2단계: 엑셀 일괄 등록
+  - 3단계: 지도 확장 선택
+  - 우측 상태 패널: 입력/보강/구획도 반영 상태와 필지 수 요약
+- `ParcelPickerMap`에 `focusTarget` prop을 추가해 검색 좌표 기준으로 지도 중심 이동이 가능하게 했다.
+
+### 변경 파일
+
+- `apps/web/components/layout/WorkspaceNavBar.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.test.tsx`
+- `apps/web/components/common/GlobalAddressSearch.tsx`
+- `apps/web/components/map/ParcelPickerMap.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- 변경 파일 `eslint`: 오류 0. `ParcelPickerMap.tsx`의 기존 React ref 패턴 경고는 잔존(이번 기능 회귀 없음)
+- `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx`: 1 file / 2 tests 통과
+- `npm run test:run -- app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx components/layout/WorkspaceNavBar.test.tsx`: 3 files / 10 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 smoke:
+  - `http://localhost:3030/ko/permits` 200
+  - Playwright desktop 1440x1100: 통합 필지 입력 카드 visible, 메뉴 단일 오픈 전환 통과, horizontal overflow 0
+  - 로컬 백엔드 미기동으로 API resource `ERR_CONNECTION_REFUSED` 콘솔 메시지는 발생했으나 UI 렌더링과 상호작용 검증에는 영향 없음
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 예정
+- Oracle Cloud 프론트 배포 완료: 예정
+- 라이브 `https://4t8t.net/ko/permits`에서 풀다운 단일 오픈, 통합 필지 입력 카드, overflow 없음 확인: 예정

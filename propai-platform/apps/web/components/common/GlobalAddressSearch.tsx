@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BarChart3, Building2, Landmark, MapPin, Search } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Layers3, Map as MapIcon, MapPin, Search } from "lucide-react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
@@ -170,6 +170,7 @@ export function GlobalAddressSearch({
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   // 지도 클릭 필지 선택 패널 표시 여부(다필지 모드 전용)
   const [showMapPicker, setShowMapPicker] = useState(false);
+  const [mapFocus, setMapFocus] = useState<{ lat: number; lon: number; label?: string } | null>(null);
   // 수동 재보강 진행중인 필지 uid 집합 — 버튼 '조회중…' 표시 + 중복클릭 가드(이중요청 방지).
   const [rerunningUids, setRerunningUids] = useState<Set<string>>(new Set());
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
@@ -763,7 +764,7 @@ export function GlobalAddressSearch({
     if (!single) void enrichParcels(newAddresses);
 
     onChange?.(newAddresses);
-  }, [single, addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext, triggerComprehensiveAnalysis, enrichParcels]);
+  }, [single, addresses, updateSiteAnalysis, onChange, writeToContext, triggerComprehensiveAnalysis, enrichParcels]);
 
   const handleRemove = useCallback((index: number) => {
     const newAddresses = addresses.filter((_, i) => i !== index);
@@ -778,7 +779,7 @@ export function GlobalAddressSearch({
     }
 
     onChange?.(newAddresses);
-  }, [addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext]);
+  }, [addresses, updateSiteAnalysis, onChange, writeToContext]);
 
   // 지번/주소 직접검색(VWorld) → 해석되면 필지로 추가(Daum이 못 찾는 지번 대응).
   const handleDirectAdd = useCallback(async () => {
@@ -790,6 +791,7 @@ export function GlobalAddressSearch({
       const r = await apiClient.post<{
         found: boolean; address?: string; jibun_address?: string;
         pnu?: string | null; bcode?: string | null; reason?: string;
+        lat?: number | null; lon?: number | null;
       }>("/zoning/geocode", { body: { query: q }, useMock: false, timeoutMs: 30000 });
       if (!r.found) {
         setDirectMsg(r.reason || "해당 주소/지번을 찾지 못했습니다.");
@@ -803,6 +805,10 @@ export function GlobalAddressSearch({
         sido: "", sigungu: "", bname: "", buildingName: "",
         zonecode: "", bcode: r.bcode || "",
       });
+      if (!single && r.lat != null && r.lon != null) {
+        setMapFocus({ lat: r.lat, lon: r.lon, label: r.address || q });
+        setShowMapPicker(true);
+      }
       setDirectQuery("");
       setDirectMsg("");
     } catch {
@@ -810,7 +816,7 @@ export function GlobalAddressSearch({
     } finally {
       setDirectBusy(false);
     }
-  }, [directQuery, directBusy, handleAddressSelect]);
+  }, [directQuery, directBusy, handleAddressSelect, single]);
 
   // 토지지번검색 자동완성 — 입력 디바운스(350ms) 후 후보 조회(다음 주소검색처럼).
   const runSearch = useCallback(async (q: string) => {
@@ -928,7 +934,11 @@ export function GlobalAddressSearch({
     setCandidates([]);
     setShowCandidates(false);
     setDirectMsg("");
-  }, [handleAddressSelect]);
+    if (!single && c.lat != null && c.lon != null) {
+      setMapFocus({ lat: c.lat, lon: c.lon, label: c.address });
+      setShowMapPicker(true);
+    }
+  }, [handleAddressSelect, single]);
 
   // 하단 요약 표시용 — store 기록 모드면 SSOT(siteAnalysis), 비기록 모드면 로컬 분석값만
   // 사용한다(무관 프로젝트의 store 데이터가 비기록 화면에 표시되는 혼선 방지).
@@ -1211,17 +1221,6 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 다필지 안내 — 검색 추가와 엑셀 일괄등록이 병행됨을 명시(단일 모드는 숨김) */}
-      {!single && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12px] text-[var(--text-secondary)]">
-          <span className="text-[13px] font-bold text-[var(--text-primary)]">다필지 등록</span>
-          <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]"><Search className="size-3" aria-hidden /> 검색으로 한 필지씩 추가</span>
-          <span className="text-[var(--text-hint)]">또는</span>
-          <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]"><BarChart3 className="size-3" aria-hidden /> 엑셀로 일괄 등록</span>
-          <span className="text-[var(--text-hint)]">— 둘 다 사용 가능(혼용 OK)</span>
-        </div>
-      )}
-
       {/* 주소·지번 검색
           · 단일 모드: 기존 다음(Daum) 주소검색 박스(회귀 없음)
           · 다필지 모드: 통합 스마트 검색 — VWorld 지번·도로명 자동완성(기본, 산·농지·맹지·나대지까지)
@@ -1239,137 +1238,206 @@ export function GlobalAddressSearch({
           </button>
         )
       ) : (
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--text-secondary)]"><Search className="size-3.5" aria-hidden /> 지번·주소 검색</span>
-            {/* 보조: 건물명·아파트는 다음(Daum)이 강함 → 팝업으로 보완(데이터소스 보완) */}
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => setKakaoOpen(true)}
-              className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold text-[var(--accent-strong)] hover:underline disabled:opacity-50"
-            >
-              <Building2 className="size-3.5" aria-hidden /> 건물명·아파트로 찾기 →
-            </button>
-          </div>
-          <div className="relative flex flex-wrap items-center gap-2">
-            <div className="relative min-w-[160px] flex-1">
-              <input
-                value={directQuery}
-                disabled={disabled || directBusy}
-                onChange={(e) => onDirectChange(e.target.value)}
-                onFocus={() => { if (candidates.length) setShowCandidates(true); }}
-                onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
-                placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
-                aria-label="지번·도로명 주소 검색"
-                className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
-              {/* 자동완성 후보 드롭다운 */}
-              {showCandidates && (candidates.length > 0 || searching) && (
-                <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
-                  {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
-                  {candidates.map((c, i) => (
-                    <li key={`${c.address}-${i}`}>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => { e.preventDefault(); pickCandidate(c); }}
-                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] hover:bg-[var(--accent-soft)]"
-                      >
-                        <span className="truncate text-[var(--text-primary)]">{c.address}</span>
-                        <span className="shrink-0 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">{c.kind || "지번"}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+        <div className="overflow-hidden rounded-[22px] border border-[var(--saas-ink-line-strong)] bg-[var(--surface-secondary)] shadow-[var(--shadow-lg)]">
+          <div className="relative overflow-hidden bg-[var(--saas-ink)] px-4 py-3 text-white">
+            <div className="absolute inset-0 opacity-40" style={{
+              backgroundImage: "linear-gradient(90deg, var(--saas-hero-grid-lime) 1px, transparent 1px), linear-gradient(0deg, var(--saas-hero-grid-sky) 1px, transparent 1px)",
+              backgroundSize: "26px 26px",
+            }} />
+            <div className="relative flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--saas-lime)]">Parcel Intake Pipeline</p>
+                <h3 className="mt-1 text-base font-black text-white">필지 검색·엑셀·지도 선택 통합</h3>
+                <p className="mt-1 text-xs font-semibold text-white/76">한 번 등록한 필지는 분석 목록과 아래 구획도에 같이 반영됩니다.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                <span className="inline-flex items-center gap-1 rounded-full border border-white/18 bg-white/10 px-2.5 py-1 text-white">
+                  <Search className="size-3.5" aria-hidden /> 검색
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-white/18 bg-white/10 px-2.5 py-1 text-white">
+                  <FileSpreadsheet className="size-3.5" aria-hidden /> 엑셀
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-white/18 bg-white/10 px-2.5 py-1 text-white">
+                  <MapIcon className="size-3.5" aria-hidden /> 지도
+                </span>
+              </div>
             </div>
-            <button
-              type="button"
-              disabled={disabled || directBusy || !directQuery.trim()}
-              onClick={() => { if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); }}
-              className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {directBusy ? "검색 중…" : "＋ 추가"}
-            </button>
           </div>
-          {directMsg && <p className="mt-1 flex items-center gap-1 text-[12px] font-semibold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {directMsg}</p>}
-          <p className="mt-1 text-[10px] text-[var(--text-hint)]">지번·산·농지·맹지·나대지는 지번검색, 아파트·건물명은 ‘건물명·아파트로 찾기’(다음)를 쓰세요.</p>
-          {/* 다음(Daum) 팝업 — 외부제어(보조): 건물명·아파트 검색. 닫힘 시 트리거 박스 미표시. */}
-          <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
-        </div>
-      )}
 
-      {/* 다른 등록 방식 — 엑셀 일괄 등록 + 지도 클릭 선택(전체폭 스택).
-          (주소·지번 검색은 위 통합 검색으로 일원화. single 모드는 이 영역 미렌더 — 회귀 없음) */}
-      {!single && (
-      <div className="grid grid-cols-1 gap-2">
-      {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강).
-          주소·지번 검색은 위 통합 검색(VWorld 자동완성 + 다음 보조)으로 일원화 — 여긴 엑셀·지도만. */}
-        <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
-          <span className="mb-1.5 inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--text-secondary)]"><BarChart3 className="size-3.5" aria-hidden /> 엑셀로 다필지 등록</span>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelUpload(f); e.target.value = ""; }}
-            />
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
-            >
-              <BarChart3 className="size-3.5" aria-hidden /> {uploading ? "처리 중…" : "엑셀 파일 선택"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void downloadTemplate()}
-              className="text-[12px] font-semibold text-[var(--accent-strong)] underline-offset-2 hover:underline"
-            >
-              양식 다운로드 ↓
-            </button>
-          </div>
-          <span className="mt-1.5 text-[11px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역·공시지가 자동수집</span>
-          {uploadInfo && (
-            <div className="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface)]/60 px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)]">
-              <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
-              {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
+          <div className="grid gap-3 bg-[linear-gradient(135deg,var(--saas-panel-wash),var(--surface-secondary)_58%,var(--saas-sky-soft))] p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-[var(--line)] bg-white/88 p-3 shadow-[var(--shadow-sm)]">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
+                    <span className="flex size-6 items-center justify-center rounded-full bg-[var(--saas-lime)] text-[var(--saas-ink)]">1</span>
+                    지번·주소 검색
+                  </span>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setKakaoOpen(true)}
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--saas-sky-line)] bg-[var(--saas-sky-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-sky-text)] hover:bg-[var(--saas-sky)] disabled:opacity-50"
+                  >
+                    <Building2 className="size-3.5" aria-hidden /> 건물명·아파트
+                  </button>
+                </div>
+                <div className="relative flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[180px] flex-1">
+                    <input
+                      value={directQuery}
+                      disabled={disabled || directBusy}
+                      onChange={(e) => onDirectChange(e.target.value)}
+                      onFocus={() => { if (candidates.length) setShowCandidates(true); }}
+                      onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
+                      placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
+                      aria-label="지번·도로명 주소 검색"
+                      className="h-11 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                    />
+                    {/* 자동완성 후보 드롭다운 */}
+                    {showCandidates && (candidates.length > 0 || searching) && (
+                      <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-white p-1 shadow-[var(--shadow-lg)]">
+                        {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
+                        {candidates.map((c, i) => (
+                          <li key={`${c.address}-${i}`}>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => { e.preventDefault(); pickCandidate(c); }}
+                              className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[12px] hover:bg-[var(--saas-lime-soft)]"
+                            >
+                              <span className="truncate font-bold text-[var(--text-primary)]">{c.address}</span>
+                              <span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-black text-[var(--text-tertiary)]">{c.kind || "지번"}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={disabled || directBusy || !directQuery.trim()}
+                    onClick={() => { if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); }}
+                    className="h-11 rounded-full bg-[var(--accent-strong)] px-4 text-[12px] font-black text-white shadow-[var(--shadow-glow)] hover:brightness-105 disabled:opacity-50"
+                  >
+                    {directBusy ? "검색 중…" : "추가"}
+                  </button>
+                </div>
+                {directMsg && <p className="mt-2 flex items-center gap-1 text-[12px] font-semibold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {directMsg}</p>}
+                <p className="mt-2 text-[11px] text-[var(--text-hint)]">검색 결과는 대표 필지로 등록되고, 좌표가 있으면 지도 확장 선택이 바로 열립니다.</p>
+                {/* 다음(Daum) 팝업 — 외부제어(보조): 건물명·아파트 검색. 닫힘 시 트리거 박스 미표시. */}
+                <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-[var(--saas-sky-line)] bg-white/86 p-3 shadow-[var(--shadow-sm)]">
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
+                    <span className="flex size-6 items-center justify-center rounded-full bg-[var(--saas-sky)] text-[var(--saas-sky-text)]">2</span>
+                    엑셀 일괄 등록
+                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelUpload(f); e.target.value = ""; }}
+                    />
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => fileRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line-strong)] bg-white px-3 py-1.5 text-[12px] font-black text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+                    >
+                      <FileSpreadsheet className="size-3.5" aria-hidden /> {uploading ? "처리 중…" : "파일 선택"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void downloadTemplate()}
+                      className="text-[12px] font-black text-[var(--accent-strong)] underline-offset-2 hover:underline"
+                    >
+                      양식 다운로드 ↓
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역을 보강하고 구획도에 반영합니다.</p>
+                  {uploadInfo && (
+                    <div className="mt-2 rounded-xl border border-[var(--line)] bg-white/72 px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)]">
+                      <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
+                      {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-[var(--saas-lime-line)] bg-white/86 p-3 shadow-[var(--shadow-sm)]">
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
+                    <span className="flex size-6 items-center justify-center rounded-full bg-[var(--saas-lime)] text-[var(--saas-ink)]">3</span>
+                    지도 확장 선택
+                  </span>
+                  <p className="mt-2 text-[11px] text-[var(--text-hint)]">검색한 필지 주변을 클릭해 인접 필지를 한 번에 묶습니다.</p>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setShowMapPicker((v) => !v)}
+                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--saas-ink)] px-3 py-2 text-[12px] font-black text-white transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    <MapIcon className="size-4" aria-hidden />
+                    {showMapPicker ? "지도 접기" : "지도에서 필지 선택"}
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
-        </div>
 
-      {/* 지도에서 선택 — 지도를 직접 클릭해 필지를 추가(다필지 모드 전용). 행 전체(2열) span. */}
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5 md:col-span-2">
-          {/* 토글 헤더 버튼 */}
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setShowMapPicker((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 text-[12px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors disabled:opacity-50"
-          >
-            <span className="flex items-center gap-1.5">
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
-              지도에서 선택
-            </span>
-            {/* 열림/닫힘 화살표 */}
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-              style={{ transform: showMapPicker ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </button>
-          {/* 지도 패널 — 토글 열릴 때만 마운트(Leaflet은 DOM 필요) */}
+            <div className="rounded-2xl border border-[var(--line)] bg-white/78 p-3 shadow-[var(--shadow-sm)]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
+                  <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 통합 반영 상태
+                </span>
+                <span className="rounded-full bg-[var(--saas-lime-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-lime-text)]">
+                  {displayAddresses.length > 0 ? `${displayAddresses.length}필지` : "대기"}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-black">
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-2 text-[var(--text-secondary)]">
+                  입력
+                  <CheckCircle2 className={`mx-auto mt-1 size-4 ${displayAddresses.length > 0 ? "text-[var(--status-success)]" : "text-[var(--text-hint)]"}`} aria-hidden />
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-2 text-[var(--text-secondary)]">
+                  보강
+                  <CheckCircle2 className={`mx-auto mt-1 size-4 ${parcelStats.withAreaCnt > 0 ? "text-[var(--status-success)]" : "text-[var(--text-hint)]"}`} aria-hidden />
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-2 text-[var(--text-secondary)]">
+                  구획도
+                  <CheckCircle2 className={`mx-auto mt-1 size-4 ${displayAddresses.length > 0 ? "text-[var(--status-success)]" : "text-[var(--text-hint)]"}`} aria-hidden />
+                </div>
+              </div>
+              <div className="mt-3 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
+                {displayAddresses.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-black text-[var(--text-primary)]">등록 필지 요약</p>
+                    <p className="text-[12px] font-semibold text-[var(--text-secondary)]">
+                      총 {parcelStats.n.toLocaleString()}필지
+                      {parcelStats.totalSqm > 0 ? ` · ${Math.round(parcelStats.totalSqm).toLocaleString()}㎡` : ""}
+                      {parcelStats.regionCnt > 0 ? ` · ${parcelStats.regionCnt}개 지역` : ""}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-hint)]">상세 목록과 아래 구획도에서 면적·용도지역·인접성을 확인합니다.</p>
+                  </div>
+                ) : (
+                  <div className="flex min-h-24 flex-col justify-center">
+                    <p className="text-[12px] font-black text-[var(--text-primary)]">아직 등록된 필지가 없습니다.</p>
+                    <p className="mt-1 text-[11px] text-[var(--text-hint)]">주소 검색, 엑셀 업로드, 지도 클릭 중 하나로 시작하세요.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {showMapPicker && (
-            <div className="mt-2">
+            <div className="border-t border-[var(--line)] bg-white/82 p-3">
               <MapShell height={360} label="필지 선택 지도" loadingMessage="필지 선택 지도 로딩…">
-                <ParcelPickerMapDynamic onPick={handleMapPick} onPickMany={handleMapPickMany} height={360} />
+                <ParcelPickerMapDynamic onPick={handleMapPick} onPickMany={handleMapPickMany} focusTarget={mapFocus} height={360} />
               </MapShell>
             </div>
           )}
         </div>
-      </div>
       )}
 
       {/* 분석 중 표시 */}
