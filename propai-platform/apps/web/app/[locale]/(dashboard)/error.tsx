@@ -39,7 +39,7 @@ export default function DashboardError({
       <p className="text-xs text-[var(--text-hint)]">{error.message}</p>
       <button
         onClick={reset}
-        className="rounded-xl bg-[var(--accent-strong)] px-6 py-3 text-sm font-black text-[#0a0f14] hover:brightness-110 transition-all"
+        className="rounded-xl bg-[var(--accent-strong)] px-6 py-3 text-sm font-black text-white hover:brightness-110 transition-all"
       >
         다시 시도
       </button>

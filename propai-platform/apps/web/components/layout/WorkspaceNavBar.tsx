@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import {
   type NavNode,
@@ -63,30 +64,34 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
   return (
     <nav
       aria-label="Workspace navigation"
-      className="hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-sm)] lg:block"
+      className="hidden rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] px-3 py-2 shadow-[var(--shadow-sm)] lg:block"
     >
-      <div className="grid gap-2 xl:grid-cols-5">
+      <div className="flex items-center gap-1">
         {visibleSections.slice(0, 5).map((section) => {
           const links = flattenLinks(section.items).slice(0, 3);
           const active = activeSections.has(section.id);
           return (
-            <section
+            <details
               key={section.id}
-              className={`min-w-0 rounded-xl border p-3 ${
-                active
-                  ? "border-[var(--accent-strong)]/35 bg-[var(--accent-soft)]"
-                  : "border-transparent bg-[var(--surface-soft)]"
-              }`}
+              className="group relative"
             >
-              <div className="flex items-center justify-between gap-3">
-                <p className="truncate text-xs font-black text-[var(--text-primary)]">
-                  {section.title}
-                </p>
+              <summary
+                className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
+                  active
+                    ? "bg-[var(--text-primary)] text-white"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <span>{section.title}</span>
+                <ChevronDown
+                  aria-hidden="true"
+                  className="h-4 w-4 transition-transform group-open:rotate-180"
+                />
                 {active && (
-                  <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />
+                  <span className="sr-only">현재 섹션</span>
                 )}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              </summary>
+              <div className="absolute left-0 top-12 z-50 hidden min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)] group-open:block">
                 {links.map((link) => {
                   const linkActive = isHrefActive(link.href, pathname);
                   return (
@@ -94,20 +99,28 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                       key={link.id}
                       href={link.href!}
                       prefetch={link.prefetch}
-                      className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${
+                      className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
                         linkActive
-                          ? "bg-[var(--accent-strong)] text-white"
-                          : "bg-[var(--surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
                       }`}
                     >
-                      {link.label}
+                      <span>{link.label}</span>
+                      {linkActive && <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
                     </Link>
                   );
                 })}
               </div>
-            </section>
+            </details>
           );
         })}
+        <Link
+          href={pathname?.replace(/\/$/, "") || "/"}
+          aria-label="현재 워크스페이스 새로고침"
+          className="ml-auto inline-flex h-10 items-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+        >
+          워크스페이스
+        </Link>
       </div>
     </nav>
   );

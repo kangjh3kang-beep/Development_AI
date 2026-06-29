@@ -1524,7 +1524,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                     active
                       ? "bg-[var(--accent-strong)] text-white"
                       : done
-                        ? "bg-[var(--accent-strong)]/40 text-[var(--text-primary)]"
+                        ? "bg-[var(--accent-strong)] text-white"
                         : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
                   }`}
                 >

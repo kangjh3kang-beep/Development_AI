@@ -438,7 +438,7 @@
 ### 검증 결과
 
 - `git diff --check`: 통과
-- 변경 파일 `eslint --no-cache`: 통과, 신규 경고 0
+- 변경 파일 `eslint --no-cache`: 오류 0. `CadBimIntegrationPanel.tsx` 기존 React hook 경고 3건은 잔존(이번 색상 대비 변경과 무관)
 - `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx components/layout/nav-config.test.ts`: 4 files / 17 tests 통과
 - `npm run type-check`: 통과
 - `npm run build`: 통과, 136개 static page 생성 통과
@@ -468,3 +468,69 @@
   - 공개 HTTP smoke: `https://4t8t.net/ko` 200, `https://4t8t.net/health` 200 + healthy, `https://api.4t8t.net/health` 200 + healthy
   - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): desktop 1680x1200 heading true, workspace nav visible true, visible aside 0, horizontal overflow false
   - 공개 Playwright UI smoke(운영 API 요청은 200 JSON으로 차단해 DB 미변경): mobile 390x844 heading true, desktop workspace nav hidden, visible aside 0, horizontal overflow false
+
+## Stage 07. Result-generation workflow dashboard refinement
+
+- 기록 시각: 2026-06-29 19:30 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `7da3d57e docs: record stage 06 dashboard deploy evidence`
+- 범위: 홈 대시보드를 결과물 생성 중심 워크플로우로 전환, 상단 메뉴를 기본 닫힘 풀다운으로 정리, 첨부 팔레트 기반 SaaS 디자인 토큰 적용
+- 완료 판정: 로컬 구현/검증 기준 100%, 라이브 배포 예정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 사용자 피드백 반영
+
+- “기능 나열”이 아니라 사용자가 어떤 산출물을 만들 수 있는지 즉시 이해하는 메인으로 전환했다.
+- `총 사업비/ROI/탄소 절감률`처럼 데이터가 없을 때 빈 카드로 보이는 KPI는 메인 상단에서 제거했다.
+- 메뉴는 상단 풀다운 구조를 유지하되 기본 펼침을 제거해 첫 화면을 덮지 않도록 했다.
+- 첨부 이미지 2의 팔레트(`Ink Green`, `Soft Lime`, `Light Sky Blue`, `Soft Coral`, `Warm Ivory`)를 전역 디자인 토큰으로 추가했다.
+- Medium “SaaS 디자인 시스템을 만들 때 고려할 7가지”의 원칙을 반영해 색상을 토큰화하고, 기능 없는 방사형 장식은 제거했으며, 필지/그리드를 암시하는 선형 패턴만 남겼다.
+- 사용자 추가 피드백에 따라 진한 파란 배경 위 검정/본문색 텍스트 조합을 제거하고 흰 글씨로 통일했다.
+
+### 구현 내용
+
+- 홈 hero를 `Intelligence Control Room`으로 재구성했다.
+  - 1차 CTA: `후보지 진단서 만들기`
+  - 보조 CTA: `프로젝트 불러오기`
+  - 생성 경로: `부지 입력 → AI 분석 → 보고서 저장`
+- 생성 허브를 6개 산출물 카드로 구성했다.
+  - `후보지 진단서`, `사업성 검토서`, `시장·분양 리포트`, `인허가 체크리스트`, `AI 설계 검토서`, `투자 의사결정 브리프`
+  - 각 카드에 `입력`, `결과`, `예상 시간`, `만들기` 링크를 명시했다.
+- `DashboardKpiLoader`를 홈 상단에서 제거해 빈 KPI 카드가 메인 주목 영역을 차지하지 않도록 했다.
+- `WorkspaceNavBar`의 active section 기본 `open`을 제거해 풀다운 메뉴가 필요할 때만 열리게 했다.
+- `globals.css`에 SaaS palette 토큰을 추가해 색상 사용을 코드/디자인 시스템 관점에서 재사용 가능하게 했다.
+
+### 변경 파일
+
+- `apps/web/app/globals.css`
+- `apps/web/app/[locale]/(dashboard)/page.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.tsx`
+- `apps/web/app/[locale]/(dashboard)/error.tsx`
+- `apps/web/components/design/CadBimIntegrationPanel.tsx`
+- `apps/web/components/sales/UnitLiveBoard.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx`
+- `apps/web/app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- 진한 파란 배경 + 검정/본문색 텍스트 정밀 검색: 잔여 0건
+- 변경 파일 `eslint --no-cache`: 통과, 신규 경고 0
+- `npm run test:run -- app/[locale]/(dashboard)/__tests__/dashboard-home-navigation.test.tsx app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx components/layout/WorkspaceNavBar.test.tsx`: 3 files / 9 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- Playwright local visual smoke:
+  - desktop 1680x1200: status 200, heading visible, generation hub visible, workspace nav visible, horizontal overflow 없음
+  - mobile 390x844: status 200, heading visible, generation hub visible, desktop workspace nav hidden, horizontal overflow 없음
+
+### 잔여 리스크
+
+- `PipelinePanelClient` 내부는 아직 기존 자동 분석 패널의 정보 밀도가 높다. 홈은 결과물 생성 중심으로 정리됐지만, 다음 단계에서는 이 패널도 “산출물별 진행 상태”로 더 단순화해야 한다.
+- 최초 방문 온보딩 모달은 기존 동작을 유지했다. 실제 시각 검증은 localStorage 완료 상태로 수행했다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 진행 예정
+- Oracle Cloud 프론트 배포 완료: 진행 예정
+- 라이브 `https://4t8t.net/ko`에서 결과물 생성 허브, 닫힌 상단 풀다운, 모바일 overflow 없음 확인: 진행 예정

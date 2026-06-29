@@ -63,10 +63,6 @@ vi.mock("@/components/onboarding/OnboardingWizard", () => ({
   OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
 }));
 
-vi.mock("@/components/dashboard/DashboardKpiLoader", () => ({
-  DashboardKpiLoader: () => <div data-testid="dashboard-kpi-loader">KPI</div>,
-}));
-
 vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
   DashboardProjectLoader: ({ locale }: { locale: string }) => (
     <div data-testid="dashboard-project-loader">{locale}</div>
@@ -384,11 +380,12 @@ describe("Dashboard route shells", () => {
   it("renders the dashboard home as an operations console", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(screen.getByText("오늘의 워크스페이스")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "다음 액션만 남긴 개발사업 운영판" })).toBeInTheDocument();
-    expect(screen.getByTestId("dashboard-kpi-loader")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "90초 진단" })).toHaveAttribute("href", "/en/precheck");
-    expect(screen.getByRole("link", { name: /시장·획득 보기/ })).toHaveAttribute("href", "/en/market-insights");
+    expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "필요한 결과물을 고르면 입력부터 보고서까지 이어집니다" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /후보지 진단서 만들기/ })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByText("시장·분양 리포트").closest("a")).toHaveAttribute("href", "/en/market-insights");
   });
 
   it("renders the projects list page with the overview client", async () => {
