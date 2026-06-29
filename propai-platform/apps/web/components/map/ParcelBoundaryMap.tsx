@@ -15,7 +15,6 @@ import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
 import { KakaoMapControls } from "@/components/map/KakaoMapControls";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window { kakao: any }
 }
@@ -33,6 +32,14 @@ type Feature = {
   zone_type_2: string | null;
   zone_limits: { max_bcr_pct?: number; max_far_pct?: number } | null;
   official_price_per_sqm?: number | null;   // 개별공시지가(원/㎡) — P4 공시지가 레이어
+  jimok?: string | null;
+  land_use_situation?: string | null;
+  terrain?: string | null;
+  building_name?: string | null;
+  main_purpose?: string | null;
+  use_approval_date?: string | null;
+  built_year?: number | null;
+  building_age_years?: number | null;
   geometry: any;
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
@@ -85,6 +92,15 @@ function priceManPyeong(perSqm: number | null | undefined): string {
   if (!perSqm || perSqm <= 0) return "-";
   return `${Math.round((perSqm * 3.305785) / 1e4).toLocaleString()}만원/평`;
 }
+const AGE_RAMP = ["#7dd3fc", "#34d399", "#facc15", "#fb923c", "#ef4444"];
+function ageColor(age: number | null | undefined): string {
+  if (age == null || age < 0) return "#94a3b8";
+  if (age < 10) return AGE_RAMP[0];
+  if (age < 20) return AGE_RAMP[1];
+  if (age < 30) return AGE_RAMP[2];
+  if (age < 40) return AGE_RAMP[3];
+  return AGE_RAMP[4];
+}
 
 export function ParcelBoundaryMap({
   parcels,
@@ -122,7 +138,7 @@ export function ParcelBoundaryMap({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   // P4: 구획도 색상 모드 — 용도지역(기본) / 공시지가 코로플레스.
-  const [colorMode, setColorMode] = useState<"zone" | "price">("zone");
+  const [colorMode, setColorMode] = useState<"zone" | "price" | "age">("zone");
   // 공시지가 색 정규화용 min/max(0 제외). 데이터 변경 시 재계산.
   const priceRange = useMemo(() => {
     const ps = (data?.features ?? [])
@@ -131,6 +147,7 @@ export function ParcelBoundaryMap({
     return ps.length ? { min: Math.min(...ps), max: Math.max(...ps) } : { min: 0, max: 0 };
   }, [data]);
   const hasPrice = priceRange.max > 0;
+  const hasAge = (data?.features ?? []).some((f) => typeof f.building_age_years === "number");
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const polysRef = useRef<any[]>([]);
@@ -216,10 +233,12 @@ export function ParcelBoundaryMap({
         if (!f.geometry) return;
         const zoneDisp = effZone(f, i);
         const sc = statusColors?.[f.address || ""];
-        // P4: 공시지가 모드면 코로플레스 색(상태강조색 sc는 항상 우선).
+        // 상태강조색(sc) 우선, 그 다음 선택 색상 모드(용도지역/공시지가/노후도).
         const color = sc || (colorMode === "price"
           ? priceColor(f.official_price_per_sqm, priceRange.min, priceRange.max)
-          : zoneColor(zoneDisp, i));
+          : colorMode === "age"
+            ? ageColor(f.building_age_years)
+            : zoneColor(zoneDisp, i));
         const isHi = !!highlight && f.address === highlight;
         const z2 = f.zone_type_2 ? ` / ${f.zone_type_2}` : "";
         const stat = statusLabels?.[f.address || ""];
@@ -229,6 +248,9 @@ export function ParcelBoundaryMap({
           `<br/>용도지역: ${zoneDisp || "-"}${z2}<br/>` +
           `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})` +
           (f.official_price_per_sqm ? `<br/>공시지가: ${priceManPyeong(f.official_price_per_sqm)} (${f.official_price_per_sqm.toLocaleString()}원/㎡)` : "") +
+          (f.building_age_years != null ? `<br/>노후도: ${f.building_age_years}년${f.built_year ? ` (${f.built_year}년)` : ""}` : "") +
+          (f.terrain ? `<br/>지형: ${f.terrain}` : "") +
+          (f.jimok ? `<br/>지목: ${f.jimok}` : "") +
           `</div>`;
         geoJsonToKakaoRings(kakao, f.geometry).forEach((path) => {
           const poly = new kakao.maps.Polygon({
@@ -374,6 +396,11 @@ export function ParcelBoundaryMap({
               className={`px-3 py-1 text-[11px] font-bold transition-colors disabled:opacity-40 ${colorMode === "price" ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
               공시지가
             </button>
+            <button type="button" onClick={() => hasAge && setColorMode("age")} disabled={!hasAge}
+              title={hasAge ? "" : "건축물대장 사용승인일 데이터 없음"}
+              className={`px-3 py-1 text-[11px] font-bold transition-colors disabled:opacity-40 ${colorMode === "age" ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
+              노후도
+            </button>
           </div>
           {colorMode === "price" && hasPrice && (
             <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-hint)]">
@@ -381,6 +408,14 @@ export function ParcelBoundaryMap({
               {PRICE_RAMP.map((c) => <span key={c} className="inline-block h-2.5 w-4" style={{ backgroundColor: c }} />)}
               <span className="text-[var(--text-secondary)]">높음</span>
               <span className="ml-1">{priceManPyeong(priceRange.min)} ~ {priceManPyeong(priceRange.max)}</span>
+            </span>
+          )}
+          {colorMode === "age" && hasAge && (
+            <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-hint)]">
+              <span className="text-[var(--text-secondary)]">신축</span>
+              {AGE_RAMP.map((c) => <span key={c} className="inline-block h-2.5 w-4" style={{ backgroundColor: c }} />)}
+              <span className="text-[var(--text-secondary)]">40년+</span>
+              <span className="ml-1">건축물대장 사용승인일 기준</span>
             </span>
           )}
         </div>
@@ -404,6 +439,8 @@ export function ParcelBoundaryMap({
               <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: zoneColor(effZone(f, i), i) }} />
               <span className="font-semibold text-[var(--text-secondary)]">{i + 1}. {effZone(f, i) || "용도미상"}{f.zone_type_2 ? `·${f.zone_type_2}` : ""}</span>
               <span className="text-[var(--text-hint)]">{Math.round(f.area_sqm).toLocaleString()}㎡</span>
+              {f.building_age_years != null && <span className="text-[var(--text-hint)]">노후 {f.building_age_years}년</span>}
+              {f.terrain && <span className="text-[var(--text-hint)]">지형 {f.terrain}</span>}
             </span>
           ))}
         </div>

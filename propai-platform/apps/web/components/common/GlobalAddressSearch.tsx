@@ -14,7 +14,7 @@
  * - Progressive Disclosure (Jakob Nielsen, 1995)
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
 import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Layers3, Map as MapIcon, MapPin, Search } from "lucide-react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -23,12 +23,24 @@ import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
 import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
+import type { ParcelBoundaryMap as ParcelBoundaryMapComponent } from "@/components/map/ParcelBoundaryMap";
+import type { NearbyTransactionsMap as NearbyTransactionsMapComponent } from "@/components/map/NearbyTransactionsMap";
 
 // 지도 클릭 필지 선택 컴포넌트 — SSR 없이 동적 로드(Leaflet은 window 필요)
 const ParcelPickerMapDynamic = dynamicMap(
   () => import("@/components/map/ParcelPickerMap"),
   { pick: "ParcelPickerMap", height: 360, loadingMessage: "필지 선택 지도 로딩…" },
 );
+const ParcelBoundaryMapDynamic = dynamicMap<ComponentProps<typeof ParcelBoundaryMapComponent>>(
+  () => import("@/components/map/ParcelBoundaryMap"),
+  { pick: "ParcelBoundaryMap", height: 500, loadingMessage: "지적도·용도지역 지도 로딩…" },
+);
+const NearbyTransactionsMapDynamic = dynamicMap<ComponentProps<typeof NearbyTransactionsMapComponent>>(
+  () => import("@/components/map/NearbyTransactionsMap"),
+  { pick: "NearbyTransactionsMap", height: 500, loadingMessage: "실거래·분양 지도 로딩…" },
+);
+
+type SatongMapMode = "cadastre" | "select" | "market";
 
 // 행 불변 식별자 — 객체 spread({...a})로 보존되므로 참조 교체에 영향받지 않는 안정 매칭 키.
 let _uidSeq = 0;
@@ -169,6 +181,7 @@ export function GlobalAddressSearch({
   // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   const [mapFocus, setMapFocus] = useState<{ lat: number; lon: number; label?: string } | null>(null);
+  const [mapMode, setMapMode] = useState<SatongMapMode>("select");
   // 수동 재보강 진행중인 필지 uid 집합 — 버튼 '조회중…' 표시 + 중복클릭 가드(이중요청 방지).
   const [rerunningUids, setRerunningUids] = useState<Set<string>>(new Set());
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
@@ -217,6 +230,12 @@ export function GlobalAddressSearch({
     const regions = new Set(parcelRows.map((r) => r.label.split(" ").slice(0, 2).join(" ")).filter(Boolean));
     return { n, withAreaCnt: withArea.length, needFixCnt: n - withArea.length, totalSqm, regionCnt: regions.size };
   }, [parcelRows]);
+
+  const mapParcelLabels = useMemo(() =>
+    parcelRows
+      .map((row) => row.label)
+      .filter((label) => label && label !== "(주소 미상)"),
+  [parcelRows]);
 
   // ★표시용 '대표' 필지 — enrichParcels의 SSOT 기록과 동일한 개발가능성 우선 정렬을 미러링한다
   //   (입력 순서 valid[0] 아님). 부지분석/하류는 통합값을 쓰고, 대표는 '표시용 폴백'임을 명확히
@@ -742,6 +761,7 @@ export function GlobalAddressSearch({
     }
 
     setAddresses(newAddresses);
+    setMapMode("cadastre");
     setIsSearching(false);
 
     // ProjectContextStore에 자동 저장 (Single Source of Truth)
@@ -767,6 +787,7 @@ export function GlobalAddressSearch({
   const handleRemove = useCallback((index: number) => {
     const newAddresses = addresses.filter((_, i) => i !== index);
     setAddresses(newAddresses);
+    if (newAddresses.length === 0) setMapMode("select");
 
     // 첫 번째 주소가 변경되면 store 업데이트 (partial merge)
     // WP-D: writeToContext=false면 store 기록 생략(콜백 전용 모드).
@@ -896,6 +917,7 @@ export function GlobalAddressSearch({
     }
 
     setAddresses(merged);
+    setMapMode("cadastre");
 
     // 대표 필지(첫 번째)로 store·종합분석 갱신(기존 handleAddressSelect 동작 동일)
     const primary = merged[0];
@@ -1001,6 +1023,7 @@ export function GlobalAddressSearch({
         ? uniqEntries.slice(0, 1)
         : [...uniqEntries, ...addresses.filter((a) => !uniqEntries.some((e) => e.fullAddress === a.fullAddress))];
       setAddresses(merged);
+      setMapMode("cadastre");
 
       // ★검색 경로(handleAddressSelect)와 동일하게 대표 필지로 store 갱신 + 종합분석 재실행.
       //   (이게 누락돼 엑셀 업로드 시 이전 검색 주소의 분석이 그대로 표시되던 버그를 근본수정.)
@@ -1413,15 +1436,63 @@ export function GlobalAddressSearch({
               </div>
             </aside>
             <div className="min-w-0 bg-[var(--surface-secondary)] p-3">
-              <MapShell height={500} label="필지 선택 지도" loadingMessage="필지 선택 지도 로딩…">
-                <ParcelPickerMapDynamic
-                  onPick={handleMapPick}
-                  onPickMany={handleMapPickMany}
-                  focusTarget={mapFocus}
-                  autoPreviewFocus={!!mapFocus}
-                  height={500}
-                />
-              </MapShell>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 py-2">
+                <div>
+                  <p className="text-[12px] font-black text-[var(--text-primary)]">사통팔땅 멀티지도</p>
+                  <p className="text-[10.5px] font-semibold text-[var(--text-hint)]">지적·노후도·실거래·분양·주변선택을 한 작업면에서 전환합니다.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([
+                    ["cadastre", "지적·노후도"],
+                    ["market", "실거래·분양"],
+                    ["select", "주변 필지 선택"],
+                  ] as const).map(([mode, label]) => {
+                    const disabledMode = mode !== "select" && mapParcelLabels.length === 0;
+                    const active = mapMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={disabledMode}
+                        onClick={() => setMapMode(mode)}
+                        className={`rounded-full px-3 py-1.5 text-[11px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                          active
+                            ? "bg-[var(--saas-ink)] text-white"
+                            : "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {mapMode === "cadastre" && mapParcelLabels.length > 0 ? (
+                <MapShell height={500} label="지적도·노후도 지도를 표시할 수 없습니다" loadingMessage="지적도·노후도 지도 로딩…">
+                  <ParcelBoundaryMapDynamic
+                    parcels={mapParcelLabels}
+                    primaryZone={displayAnalysis?.zoneCode ?? null}
+                    defaultUseDistrict
+                  />
+                </MapShell>
+              ) : mapMode === "market" && mapParcelLabels.length > 0 ? (
+                <MapShell height={500} label="실거래·분양 지도를 표시할 수 없습니다" loadingMessage="실거래·분양 지도 로딩…">
+                  <NearbyTransactionsMapDynamic
+                    address={displayAddresses[0]?.fullAddress || displayAddresses[0]?.jibunAddress || mapParcelLabels[0]}
+                    pnu={displayAddresses[0]?.pnu}
+                  />
+                </MapShell>
+              ) : (
+                <MapShell height={500} label="필지 선택 지도를 표시할 수 없습니다" loadingMessage="필지 선택 지도 로딩…">
+                  <ParcelPickerMapDynamic
+                    onPick={handleMapPick}
+                    onPickMany={handleMapPickMany}
+                    focusTarget={mapFocus}
+                    autoPreviewFocus={!!mapFocus}
+                    height={500}
+                  />
+                </MapShell>
+              )}
             </div>
           </div>
         </div>

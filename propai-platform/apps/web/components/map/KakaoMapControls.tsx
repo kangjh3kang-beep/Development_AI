@@ -13,8 +13,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toggleUseDistrict } from "@/lib/kakao-map";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 type MapType = "ROADMAP" | "SKYVIEW" | "HYBRID";
 
 const PYEONG = 3.305785;
@@ -59,6 +57,9 @@ export function KakaoMapControls({
 }) {
   const [mapType, setMapType] = useState<MapType>("ROADMAP");
   const [district, setDistrict] = useState(!!initialDistrict);
+  const [terrain, setTerrain] = useState(false);
+  const [traffic, setTraffic] = useState(false);
+  const [roadviewLine, setRoadviewLine] = useState(false);
   const [measure, setMeasure] = useState<null | "distance" | "area">(null);
   const [measureText, setMeasureText] = useState("");
   const [rvOn, setRvOn] = useState(false);
@@ -90,6 +91,21 @@ export function KakaoMapControls({
     toggleUseDistrict((window as any).kakao, mapRef.current, district);
   }, [district, ready, mapRef]);
 
+  // ── 지형도·교통·로드뷰 도로 오버레이 ──
+  useEffect(() => {
+    const kakao = (window as any).kakao;
+    if (!ready || !mapRef.current || !kakao?.maps?.MapTypeId) return;
+    const apply = (id: any, on: boolean) => {
+      try {
+        if (on) mapRef.current.addOverlayMapTypeId(id);
+        else mapRef.current.removeOverlayMapTypeId(id);
+      } catch { /* noop */ }
+    };
+    apply(kakao.maps.MapTypeId.TERRAIN, terrain);
+    apply(kakao.maps.MapTypeId.TRAFFIC, traffic);
+    apply(kakao.maps.MapTypeId.ROADVIEW, roadviewLine);
+  }, [terrain, traffic, roadviewLine, ready, mapRef]);
+
   // ── 거리·면적 측정 ──
   function clearMeasure() {
     const kakao = (window as any).kakao;
@@ -109,6 +125,7 @@ export function KakaoMapControls({
     const kakao = (window as any).kakao;
     if (!ready || !mapRef.current || !kakao) return;
     const map = mapRef.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     clearMeasure();
     if (!measure) {
       try { map.setCursor(""); map.setDoubleClickZoom(true); } catch { /* noop */ }
@@ -143,7 +160,6 @@ export function KakaoMapControls({
     };
     clickLsnrRef.current = kakao.maps.event.addListener(map, "click", onClick);
     return () => { try { kakao.maps.event.removeListener(clickLsnrRef.current); } catch { /* noop */ } };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measure, ready, mapRef]);
 
   // ── 로드뷰 + 좌하단 위치 미니맵(PiP) ──
@@ -169,7 +185,6 @@ export function KakaoMapControls({
       new kakao.maps.RoadviewClient().getNearestPanoId(center, 100, (panoId: any) => {
         if (!panoId || !rv) {
           setRvOn(false);
-          // eslint-disable-next-line no-alert
           alert("이 위치 주변의 로드뷰가 없습니다.");
           return;
         }
@@ -196,7 +211,10 @@ export function KakaoMapControls({
           }));
         }
       });
-    } catch { setRvOn(false); }
+    } catch {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRvOn(false);
+    }
 
     return () => {
       lsnrs.forEach((l) => { try { kakao.maps.event.removeListener(l); } catch { /* noop */ } });
@@ -227,6 +245,22 @@ export function KakaoMapControls({
           <button type="button" onClick={() => setDistrict((v) => !v)} className={`${txtBtn(district)} rounded-md border border-black/10 shadow-sm`}>
             지적편집도
           </button>
+        </div>
+        <div className="flex items-center gap-1">
+          {([
+            ["terrain", "지형도", terrain, setTerrain],
+            ["traffic", "교통", traffic, setTraffic],
+            ["roadviewLine", "로드뷰도로", roadviewLine, setRoadviewLine],
+          ] as const).map(([key, label, active, setter]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setter((v) => !v)}
+              className={`${txtBtn(active)} rounded-md border border-black/10 shadow-sm`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* 세로 아이콘 메뉴: 풀스크린·로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
