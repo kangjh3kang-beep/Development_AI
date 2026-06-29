@@ -21,6 +21,14 @@ except ImportError:  # pragma: no cover
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
 
+OPERATIONAL_QUEUES = [
+    "parcel_batch",
+    "celery",
+    "rates",
+    "auction",
+    "growth",
+]
+
 TASK_MODULES = [
     "app.tasks.rate_tasks",
     "app.tasks.cost_tasks",

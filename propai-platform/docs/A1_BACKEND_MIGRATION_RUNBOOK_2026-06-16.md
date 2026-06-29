@@ -85,7 +85,7 @@
    - prod는 alembic 미관리 → 신규 마이그레이션은 raw SQL/asyncpg로(메모리 교훈). 031까지 이미 적용된 스키마가 덤프에 포함됨.
 6. **Caddy**: 현 Caddyfile 복제(api.4t8t.net → 백엔드 8000/8001 블루그린, **포트 80** 기준 — 메모리: Micro 라이브호출은 Caddy 포트80). 무중단 reload 구조 유지.
 7. **deploy.sh 이식**: 현 Micro의 `~/deploy.sh`(블루그린: 활성포트 토글·health 대기·Caddy graceful reload·구앱 제거) 그대로 A1에 배치.
-8. **Celery worker/Flower 재기동**: API 이미지 빌드/전환 후 `bash scripts/a1-backend-workers.sh`를 실행한다. Backend A1은 systemd가 worker/Flower 컨테이너를 소유하므로 이 스크립트로 unit 파일까지 갱신한다. API 이미지 기본 `/health` healthcheck는 worker에 재사용하지 않고, Celery registry에 `app.tasks.parcel_batch_task.run_batch` 등 필수 업무 태스크가 등록됐는지 직접 확인한다.
+8. **Celery worker/Flower/Beat 재기동**: API 이미지 빌드/전환 후 `bash scripts/a1-backend-workers.sh`를 실행한다. Backend A1은 systemd가 worker/Flower/Beat 컨테이너를 소유하므로 이 스크립트로 unit 파일까지 갱신한다. API 이미지 기본 `/health` healthcheck는 worker에 재사용하지 않고, Celery registry에 `app.tasks.parcel_batch_task.run_batch` 등 필수 업무 태스크가 등록됐는지 직접 확인한다. worker는 `parcel_batch,celery,rates,auction,growth` 큐를 소비하고, Beat schedule 파일은 `/var/lib/propai/celery/celerybeat-schedule`에 영속화한다.
 
 ---
 
@@ -110,13 +110,15 @@
 - [ ] **DATABASE_URL 특수문자(%21)** 보존 — alembic CLI 회피(raw SQL 유지).
 - [ ] **Caddy 포트 80** 기준 라이브호출.
 - [ ] `/health`는 `postgres`·`redis`·`qdrant` 모두 `healthy`여야 한다. Redis는 host gateway `172.17.0.1:6379` 기준으로 확인하고, degraded를 정상 범위로 취급하지 않는다.
-- [ ] Celery worker/Flower는 `scripts/a1-backend-workers.sh`로 재기동한다. Docker status의 healthy만 보지 말고 `celery inspect registered`에서 업무 태스크가 보이는지 확인한다.
+- [ ] Celery worker/Flower/Beat는 `scripts/a1-backend-workers.sh`로 재기동한다. Docker status의 healthy만 보지 말고 `celery inspect registered`와 `celery inspect active_queues`에서 업무 태스크와 `rates`·`auction`·`growth` 큐가 보이는지 확인한다.
 - [ ] **realtx(국토부 실거래) 502는 이 이관으로 안 고쳐짐** — data.go.kr 백엔드 장애(별개). 한국 리전 유지로 공공데이터 접근성만 보존.
 
 ## 7. 검증 항목 (컷오버 전/후 동일 수행)
 
 - `GET https://api.4t8t.net/health` → status 200, postgres/redis/qdrant healthy.
 - `docker exec propai-celery-worker celery -A app.tasks.celery_app:app inspect registered` → `app.tasks.parcel_batch_task.run_batch`, `app.tasks.auction_sync_task.sync_onbid_auctions`, `app.tasks.growth_tasks.analyze_growth` 등록.
+- `docker exec propai-celery-worker celery -A app.tasks.celery_app:app inspect active_queues` → `parcel_batch`, `celery`, `rates`, `auction`, `growth` 큐 활성.
+- `systemctl is-active propai-celery-worker propai-celery-flower propai-celery-beat` → 모두 active.
 - 로그인(`/api/v1/auth/login`, admin@4t8t.net) → access_token 발급.
 - `GET /api/v1/auction/ranking?by=views` → 200 + items(ONBID 한국IP 접근 확인).
 - `GET /api/v1/analysis-ledger/verify-all` → verified:true(DB 이관 무결성).

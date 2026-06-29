@@ -3,7 +3,12 @@
 celery 패키지 없이도 태스크 함수 자체는 실행 가능해야 한다.
 """
 
-from app.tasks.celery_app import BEAT_SCHEDULE_NAMES, TASK_MODULES, TASK_NAMES
+from app.tasks.celery_app import (
+    BEAT_SCHEDULE_NAMES,
+    OPERATIONAL_QUEUES,
+    TASK_MODULES,
+    TASK_NAMES,
+)
 
 
 class TestCeleryAppMeta:
@@ -73,6 +78,15 @@ class TestCeleryAppMeta:
             "app.tasks.specialist_tasks",
         }
         assert len(TASK_MODULES) == len(set(TASK_MODULES))
+
+    def test_operational_queues_cover_beat_routes(self):
+        assert OPERATIONAL_QUEUES == [
+            "parcel_batch",
+            "celery",
+            "rates",
+            "auction",
+            "growth",
+        ]
 
 
 class TestRateTasks:

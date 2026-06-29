@@ -333,3 +333,56 @@
 - Backend A1 worker/Flower 재기동 완료: 완료 - systemd unit active, Docker status running
 - `celery inspect registered`에서 필수 업무 태스크 확인: 완료
 - 라이브 `https://api.4t8t.net/health` healthy 유지: 완료
+
+## Stage 05. Celery Beat 및 scheduled queue 운영 배선
+
+- 기록 시각: 2026-06-29 13:35:00 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `10d6619e docs: record stage 04 celery deploy evidence`
+- 범위: `rates`/`auction`/`growth` 큐 소비 확대, Celery Beat systemd unit 추가, Beat schedule 파일 영속화, active queue/Beat smoke 검증
+- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 원인 분석
+
+- Stage 04에서 worker registry는 복구됐지만 worker가 `parcel_batch,celery` 큐만 소비했다.
+- `celery_app.py`의 Beat schedule은 `rates`, `auction`, `growth` 큐로 작업을 발행하도록 되어 있어, Beat를 켜도 기존 worker 구성으로는 scheduled task가 소비되지 않는다.
+- Backend A1에는 `propai-celery-beat.service`가 없었다. 즉 스케줄러 정합성 항목이 여전히 미구현 상태였다.
+
+### 구현 내용
+
+- `celery_app.py`에 `OPERATIONAL_QUEUES`를 추가해 운영 큐 계약을 코드 메타데이터로 고정했다.
+- `a1-backend-workers.sh`의 기본 worker 큐를 `parcel_batch,celery,rates,auction,growth`로 확장했다.
+- `a1-backend-workers.sh`가 `propai-celery-beat.service` systemd unit까지 설치/재시작하도록 확장했다.
+- Beat schedule 파일을 `/var/lib/propai/celery/celerybeat-schedule`에 영속화하고, 컨테이너에 같은 경로로 마운트한다.
+- 배포 스크립트 검증을 registry 확인에서 active queue 확인, Flower smoke, Beat log smoke까지 확장했다.
+- A1 backend runbook에 worker/Flower/Beat 재기동 및 active queue 검증 절차를 추가했다.
+
+### 변경 파일
+
+- `apps/api/app/tasks/celery_app.py`
+- `apps/api/tests/test_celery_tasks.py`
+- `scripts/a1-backend-workers.sh`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-29.md`
+- `docs/A1_BACKEND_MIGRATION_RUNBOOK_2026-06-16.md`
+
+### 검증 결과
+
+- `python3 -m py_compile propai-platform/apps/api/app/tasks/celery_app.py propai-platform/apps/api/tests/test_celery_tasks.py`: 통과
+- `bash -n propai-platform/scripts/a1-backend-workers.sh`: 통과
+- `git diff --check`: 통과
+- `python3 -m pytest propai-platform/apps/api/tests/test_celery_tasks.py -q`: 10 passed
+- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/systemd/queue 검증으로 대체한다.
+
+### 잔여 리스크
+
+- `flush-growth-events`는 5초 주기로 동작한다. 현재 코드 주석상 worker 프로세스 로컬 큐는 API 큐를 보지 못해 실질 적재는 제한적이며, Redis 공유 큐 전환은 별도 단계에서 다룬다.
+- `auction` 큐는 daily 04:00에 외부 공공/법원 데이터를 호출한다. 초기 24시간 운영 로그에서 호출량과 실패율을 확인해야 한다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 진행 예정
+- Backend A1 API 이미지 빌드 완료: 진행 예정
+- Backend A1 worker/Flower/Beat systemd active 확인: 진행 예정
+- `celery inspect active_queues`에서 `parcel_batch`, `celery`, `rates`, `auction`, `growth` 확인: 진행 예정
+- 라이브 `https://api.4t8t.net/health` healthy 유지: 진행 예정

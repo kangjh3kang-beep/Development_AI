@@ -8,9 +8,13 @@ DOCKER_BIN="${DOCKER_BIN:-docker}"
 CELERY_APP="${CELERY_APP:-app.tasks.celery_app:app}"
 WORKER_NAME="${CELERY_WORKER_NAME:-propai-celery-worker}"
 FLOWER_NAME="${CELERY_FLOWER_NAME:-propai-celery-flower}"
-QUEUES="${CELERY_WORKER_QUEUES:-parcel_batch,celery}"
+BEAT_NAME="${CELERY_BEAT_NAME:-propai-celery-beat}"
+QUEUES="${CELERY_WORKER_QUEUES:-parcel_batch,celery,rates,auction,growth}"
 CONCURRENCY="${CELERY_WORKER_CONCURRENCY:-5}"
 FLOWER_PORT="${CELERY_FLOWER_PORT:-5555}"
+BEAT_LOGLEVEL="${CELERY_BEAT_LOGLEVEL:-info}"
+BEAT_SCHEDULE_DIR="${CELERY_BEAT_SCHEDULE_DIR:-/var/lib/propai/celery}"
+BEAT_SCHEDULE_FILE="${CELERY_BEAT_SCHEDULE_FILE:-$BEAT_SCHEDULE_DIR/celerybeat-schedule}"
 ENV_FILE="$REPO_DIR/.env"
 
 REQUIRED_TASKS=(
@@ -18,6 +22,14 @@ REQUIRED_TASKS=(
   "app.tasks.rate_tasks.check_legal_rates"
   "app.tasks.auction_sync_task.sync_onbid_auctions"
   "app.tasks.growth_tasks.analyze_growth"
+)
+
+REQUIRED_QUEUES=(
+  "parcel_batch"
+  "celery"
+  "rates"
+  "auction"
+  "growth"
 )
 
 cd "$REPO_DIR"
@@ -28,6 +40,15 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null
+
+prepare_beat_state() {
+  if command -v sudo >/dev/null; then
+    sudo mkdir -p "$BEAT_SCHEDULE_DIR"
+    sudo chown -R 1001:1001 "$BEAT_SCHEDULE_DIR"
+  else
+    mkdir -p "$BEAT_SCHEDULE_DIR"
+  fi
+}
 
 wait_for_running() {
   local name="$1"
@@ -40,7 +61,7 @@ wait_for_running() {
     fi
     sleep 2
   done
-  echo "ERROR: $name did not become healthy" >&2
+  echo "ERROR: $name did not become running" >&2
   "$DOCKER_BIN" logs --tail 120 "$name" 2>&1 || true
   exit 1
 }
@@ -51,7 +72,7 @@ install_systemd_units() {
 
   cat >/tmp/propai-celery-worker.service <<UNIT
 [Unit]
-Description=PropAI Celery Worker (Parcel Batch)
+Description=PropAI Celery Worker (Operational Queues)
 After=docker.service
 Requires=docker.service
 
@@ -83,12 +104,31 @@ ExecStop=$docker_path stop -t 10 $FLOWER_NAME
 WantedBy=multi-user.target
 UNIT
 
+  cat >/tmp/propai-celery-beat.service <<UNIT
+[Unit]
+Description=PropAI Celery Beat Scheduler
+After=docker.service propai-celery-worker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-$docker_path rm -f $BEAT_NAME
+ExecStart=$docker_path run --name $BEAT_NAME --rm --network host --env-file $ENV_FILE --no-healthcheck -v $BEAT_SCHEDULE_DIR:$BEAT_SCHEDULE_DIR $IMAGE celery -A $CELERY_APP beat --loglevel=$BEAT_LOGLEVEL --schedule=$BEAT_SCHEDULE_FILE
+ExecStop=$docker_path stop -t 10 $BEAT_NAME
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
   sudo install -m 0644 /tmp/propai-celery-worker.service /etc/systemd/system/propai-celery-worker.service
   sudo install -m 0644 /tmp/propai-celery-flower.service /etc/systemd/system/propai-celery-flower.service
+  sudo install -m 0644 /tmp/propai-celery-beat.service /etc/systemd/system/propai-celery-beat.service
   sudo systemctl daemon-reload
-  sudo systemctl enable propai-celery-worker.service propai-celery-flower.service >/dev/null
+  sudo systemctl enable propai-celery-worker.service propai-celery-flower.service propai-celery-beat.service >/dev/null
   sudo systemctl restart propai-celery-worker.service
   sudo systemctl restart propai-celery-flower.service
+  sudo systemctl restart propai-celery-beat.service
 }
 
 restart_direct_containers() {
@@ -113,6 +153,18 @@ restart_direct_containers() {
     --no-healthcheck \
     "$IMAGE" \
     celery -A "$CELERY_APP" flower --url_prefix=flower --port="$FLOWER_PORT"
+
+  echo "== Restart Celery Beat =="
+  "$DOCKER_BIN" rm -f "$BEAT_NAME" >/dev/null 2>&1 || true
+  "$DOCKER_BIN" run -d \
+    --name "$BEAT_NAME" \
+    --restart always \
+    --network host \
+    --env-file "$ENV_FILE" \
+    --no-healthcheck \
+    -v "$BEAT_SCHEDULE_DIR:$BEAT_SCHEDULE_DIR" \
+    "$IMAGE" \
+    celery -A "$CELERY_APP" beat --loglevel="$BEAT_LOGLEVEL" --schedule="$BEAT_SCHEDULE_FILE"
 }
 
 verify_registered_tasks() {
@@ -132,7 +184,30 @@ verify_registered_tasks() {
   rm -f "$tmp"
 }
 
-if command -v systemctl >/dev/null && systemctl list-unit-files propai-celery-worker.service >/dev/null 2>&1; then
+verify_active_queues() {
+  local tmp
+  tmp="$(mktemp)"
+  "$DOCKER_BIN" exec "$WORKER_NAME" \
+    celery -A "$CELERY_APP" inspect active_queues --timeout=10 >"$tmp"
+  for queue in "${REQUIRED_QUEUES[@]}"; do
+    if ! grep -Fq "'name': '$queue'" "$tmp"; then
+      echo "ERROR: required Celery queue is not active: $queue" >&2
+      cat "$tmp" >&2
+      rm -f "$tmp"
+      exit 1
+    fi
+  done
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
+verify_beat() {
+  "$DOCKER_BIN" logs --tail 80 "$BEAT_NAME" 2>&1 | grep -Eq "beat: Starting|Scheduler"
+}
+
+prepare_beat_state
+
+if command -v systemctl >/dev/null && systemctl show docker.service >/dev/null 2>&1; then
   echo "== Install and restart systemd Celery units =="
   install_systemd_units
 else
@@ -141,11 +216,18 @@ fi
 
 wait_for_running "$WORKER_NAME"
 wait_for_running "$FLOWER_NAME"
+wait_for_running "$BEAT_NAME"
 
 echo "== Verify registered tasks =="
 verify_registered_tasks
 
+echo "== Verify active queues =="
+verify_active_queues
+
 echo "== Verify Flower =="
 curl -fsS "http://localhost:$FLOWER_PORT/flower/" >/dev/null
 
-echo "DONE worker=$WORKER_NAME flower=$FLOWER_NAME image=$IMAGE app=$CELERY_APP queues=$QUEUES"
+echo "== Verify Beat =="
+verify_beat
+
+echo "DONE worker=$WORKER_NAME flower=$FLOWER_NAME beat=$BEAT_NAME image=$IMAGE app=$CELERY_APP queues=$QUEUES"
