@@ -275,7 +275,7 @@
 - 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
 - 기준 커밋: `cbd60b87 docs: record stage 03 oracle health recovery`
 - 범위: Celery 앱 태스크 명시 로딩, 경공매 동기화 태스크 등록, Backend A1 worker/Flower 재기동 표준화
-- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 완료 판정: 단계 범위 기준 100%
 - 자체 코드리뷰 점수: 9.6 / 10
 
 ### 원인 분석
@@ -310,7 +310,14 @@
 - `bash -n propai-platform/scripts/a1-backend-workers.sh`: 통과
 - `git diff --check`: 통과
 - `python3 -m pytest propai-platform/apps/api/tests/test_celery_tasks.py -q`: 9 passed
-- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/registry 검증으로 대체한다.
+- Backend A1 Docker build: `Dockerfile.oracle` → `propai-api:latest` 빌드 통과
+- Backend A1 API 블루-그린 전환: active `8000 -> 8001`, Caddy `/health` 200
+- Backend A1 systemd unit 갱신: `propai-celery-worker.service`, `propai-celery-flower.service` active
+- Backend A1 worker/Flower 컨테이너: `celery -A app.tasks.celery_app:app ...` 명령으로 실행 확인
+- Backend A1 Celery registry: 15개 업무 태스크 등록 확인, 필수 `parcel_batch`, `auction_sync`, `growth`, `rate` 태스크 통과
+- Flower smoke: `http://localhost:5555/flower/` 200, `http://localhost:80/flower/` 200
+- 공개 smoke: `https://api.4t8t.net/health` 200 + healthy, `https://4t8t.net/health` 200 + healthy, `https://4t8t.net/ko` 200
+- 로컬 `ruff`, `shellcheck`, Docker build는 현재 WSL 환경에 도구가 없어 실행하지 못했다. Oracle A1 실제 Docker build/registry 검증으로 대체했다.
 
 ### 잔여 리스크
 
@@ -320,8 +327,9 @@
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료: 진행 예정
-- Backend A1 API 이미지 빌드 완료: 진행 예정
-- Backend A1 worker/Flower 재기동 완료: 진행 예정
-- `celery inspect registered`에서 필수 업무 태스크 확인: 진행 예정
-- 라이브 `https://api.4t8t.net/health` healthy 유지: 진행 예정
+- 이번 단계 커밋/푸시 완료: 완료 - `58b0930f fix: register backend celery tasks`
+- Backend A1 API 이미지 빌드 완료: 완료 - `propai-api:latest`
+- Backend A1 API 블루-그린 전환 완료: 완료 - active port `8001`
+- Backend A1 worker/Flower 재기동 완료: 완료 - systemd unit active, Docker status running
+- `celery inspect registered`에서 필수 업무 태스크 확인: 완료
+- 라이브 `https://api.4t8t.net/health` healthy 유지: 완료
