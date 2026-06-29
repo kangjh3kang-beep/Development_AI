@@ -60,3 +60,25 @@ curl -fsSL "${ORACLE_WEB_URL%/}/ko/analysis" >/tmp/propai-live-analysis.html
 - Oracle `safe-deploy.sh` completes with `DONE web=200 api=200`
 - Public smoke checks pass for `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis`
 - Deployment status and smoke evidence are recorded in the implementation log
+
+## Stage 01 Direct Deploy Evidence
+
+- SSH key used: `~/.oci.key`
+- Front server: `ubuntu@158.179.174.207`
+- Backend server access checked: `ubuntu@168.110.125.89`
+- Deploy target: `web`
+- Deploy ref: `codex/dashboard-ia-ui-20260629`
+- Deployed commit: `bd22b7a8 docs: use 4t8t live smoke urls`
+- Deploy status: `DONE web=200 api=200 @ bd22b7a8 docs: use 4t8t live smoke urls 02:47:12`
+- Server disk before cleanup: 99%
+- Server disk after cleanup/deploy: 54%
+- Internal smoke:
+  - `http://localhost:80/ko` 200
+  - `http://localhost:80/ko/analysis` 200
+  - `http://localhost:80/health` 200
+- Public smoke:
+  - `https://api.4t8t.net/health` 200
+  - `https://4t8t.net/ko` 200
+  - `https://4t8t.net/ko/analysis` 200
+  - `https://4t8t.net/health` 200
+- Note: health body currently reports `status=degraded` because `redis=unhealthy`; this does not block HTTP smoke, but remains an operations follow-up.

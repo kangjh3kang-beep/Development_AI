@@ -114,9 +114,23 @@
 - `4t8t.net` smoke 확인 결과: `https://4t8t.net/ko` 200, `https://4t8t.net/ko/analysis` 200, `https://api.4t8t.net/health` 200.
 - 참고: `https://4t8t.net/health`와 `https://www.4t8t.net/health`는 404다. 프론트 공개 도메인의 `/health`가 아니라 백엔드 공개 도메인 `api.4t8t.net/health`를 라이브 헬스 기준으로 사용해야 한다.
 - `https://api.4t8t.net/api/v1/system/health/full`은 401로 응답했다. 인증 필요 endpoint로 보이며 공개 smoke 기준으로 사용하지 않는다.
+- Oracle SSH 키 확인: 사용자가 제공한 `ssh-rsa` 공개키 지문과 로컬 `~/.oci.key` 개인키 지문이 일치했다.
+- Oracle 서버 접속 확인:
+  - 프론트 A1: `ubuntu@158.179.174.207`, hostname `4t8t`, repo path `/home/ubuntu/Development_AI`
+  - 백엔드 A1: `ubuntu@168.110.125.89`, hostname `4t8tpropai-backend-a1`, repo path `/home/ubuntu/Development_AI`
+- 프론트 A1 서버 디스크가 배포 전 99% 사용 중이라 `docker image prune -f`로 dangling 이미지를 정리했고, 사용률을 약 54%로 낮춘 뒤 배포를 재시도했다.
+- Oracle 직접 배포 실행: 프론트 A1에서 `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629` 실행
+- Oracle 직접 배포 결과: `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ bd22b7a8 docs: use 4t8t live smoke urls 02:47:12`
+- 배포 후 서버 상태:
+  - Git HEAD: `bd22b7a8 docs: use 4t8t live smoke urls`
+  - 컨테이너: `propai-platform_web_1 propai-web:oracle`, `propai-platform_api_1 propai-api:oracle`, `propai-platform_nginx_1 nginx:alpine`, `propai-platform_qdrant_1 qdrant/qdrant:v1.18.1`
+  - 서버 내부 smoke: `http://localhost:80/ko` 200, `http://localhost:80/ko/analysis` 200, `http://localhost:80/health` 200
+  - 공개 smoke: `https://4t8t.net/ko` 200, `https://4t8t.net/ko/analysis` 200, `https://4t8t.net/health` 200, `https://api.4t8t.net/health` 200
+  - 헬스 응답은 `status=degraded`이며 `redis=unhealthy`가 포함된다. HTTP 200 smoke는 통과했지만 운영 종속성 상태는 후속 점검 대상이다.
 
 ### 다음 단계 진입 조건
 
-- 이번 단계 커밋/푸시 완료
-- Oracle Cloud 배포 workflow dispatch 또는 Oracle 서버 내 `safe-deploy.sh both <ref>` 완료
-- 라이브 URL에서 `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis` smoke 통과
+- 이번 단계 커밋/푸시 완료: 완료
+- Oracle Cloud 배포: 완료 - 프론트 A1 직접 SSH 배포로 `web` target 반영
+- 라이브 URL smoke: 완료 - `https://api.4t8t.net/health`, `https://4t8t.net/ko`, `https://4t8t.net/ko/analysis`, `https://4t8t.net/health` 200
+- 후속 운영 과제: GitHub Actions 기반 자동 Oracle 배포를 위해 `ORACLE_SSH_HOST`, `ORACLE_SSH_KEY` 등 시크릿 등록 필요
