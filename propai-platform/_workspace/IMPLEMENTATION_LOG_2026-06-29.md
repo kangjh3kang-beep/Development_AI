@@ -200,3 +200,61 @@
   - 서버 내부 smoke: `/ko/design-audit` 200, `/ko/deliberation-review` 200, `/ko/bim-studio` 200, `/ko/meeting-rooms` 200, `/health` 200
   - 공개 smoke: `https://4t8t.net/ko/design-audit` 200, `https://4t8t.net/ko/deliberation-review` 200, `https://4t8t.net/ko/bim-studio` 200, `https://4t8t.net/ko/meeting-rooms` 200, `https://4t8t.net/health` 200, `https://api.4t8t.net/health` 200
   - 서버 디스크: `/dev/sda1` 193G 중 107G 사용, 56%
+
+## Stage 03. Oracle API 운영 종속성 Redis/Qdrant 배선 복구
+
+- 기록 시각: 2026-06-29 12:26:50 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `84773fcf docs: record stage 02 oracle deploy evidence`
+- 범위: Oracle Compose 운영 종속성, `safe-deploy.sh` dependency 기동 순서, 라이브 `/health` body 정상화
+- 완료 판정: 배포 전 검증 기준 95% 이상, 라이브 검증 후 최종 판정
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 원인 분석
+
+- 프론트 A1의 `4t8t.net/health`는 HTTP 200이지만 body가 `status=degraded`였다.
+- API 컨테이너 환경은 `REDIS_URL=redis://localhost:6379/0`, `QDRANT_URL=http://localhost:6333` 계열로 되어 있었다.
+- 컨테이너 내부 `localhost`는 API 컨테이너 자신을 가리키므로, 별도 Redis/Qdrant 컨테이너를 볼 수 없다.
+- 프론트 A1 Compose 구성에는 Redis 서비스가 없었고, Qdrant도 host-local 주소에 의존했다.
+- 따라서 `/health`의 Redis/Qdrant degraded는 애플리케이션 코드 문제가 아니라 운영 종속성 배선 누락이다.
+
+### 구현 내용
+
+- `docker-compose.yml`에 `redis:7-alpine` 서비스를 추가하고 `redis_data` 볼륨을 정의했다.
+- API 환경 변수를 Compose 서비스명 기준으로 고정했다.
+  - `REDIS_URL=redis://redis:6379/0`
+  - `REDIS_CACHE_URL=redis://redis:6379/1`
+  - `CELERY_BROKER_URL=redis://redis:6379/2`
+  - `CELERY_RESULT_BACKEND=redis://redis:6379/3`
+  - `QDRANT_URL=http://qdrant:6333`
+  - `QDRANT_HOST=qdrant`
+  - `QDRANT_PORT=6333`
+- API `depends_on`에 `redis`, `qdrant`를 명시해 재생성 순서를 안정화했다.
+- `safe-deploy.sh`에 API 배포 전 dependency 서비스를 먼저 기동하는 `ensure_dependency_services`를 추가했다.
+- nginx reload 전 네트워크 보장 대상에 `redis`, `qdrant`를 포함해 서비스 alias 유실을 방지했다.
+
+### 변경 파일
+
+- `docker-compose.yml`
+- `scripts/safe-deploy.sh`
+
+### 검증 결과
+
+- `bash -n propai-platform/scripts/safe-deploy.sh`: 통과
+- `docker-compose.yml` YAML 구조/필수 서비스/필수 환경 변수 파싱 검증: 통과
+- `git diff --check`: 통과
+- `npm run type-check`: 통과
+- `npm run test:run -- 'app/[locale]/(dashboard)/__tests__/dashboard-route-shells.test.tsx' 'components/layout/nav-config.test.ts' 'lib/navigation/route-registry.test.ts'`: 3 files / 19 tests 통과
+- `pnpm exec eslint . --quiet --no-cache`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+
+### 잔여 리스크
+
+- 로컬 WSL에는 Docker Desktop 연동이 꺼져 있어 `docker compose config`는 로컬에서 실행하지 못했다. Oracle 서버에서 배포 직전 실제 Compose config로 재검증한다.
+- `api.4t8t.net`은 백엔드 A1의 별도 Caddy/컨테이너 구성으로 보이며, 프론트 A1의 `safe-deploy.sh`를 그대로 적용하면 중복 컨테이너를 만들 수 있다. 프론트 A1 health 정상화 후 백엔드 A1은 별도 runbook을 확인해 별도 단계로 다룬다.
+
+### 다음 단계 진입 조건
+
+- 이번 단계 커밋/푸시 완료: 진행 예정
+- Oracle Cloud 프론트 A1 API 배포 완료: 진행 예정
+- 라이브 `https://4t8t.net/health` body에서 `status=healthy`, `redis=healthy`, `qdrant=healthy` 확인: 진행 예정

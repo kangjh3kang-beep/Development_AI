@@ -34,12 +34,33 @@ services:
       # 이중 임포트 루트(app.* / apps.api.*) 해소 — A1 코로케이션 크래시(No module named 'app') 방지.
       # Micro(.env)와 동일값을 compose에 박아 호스트 .env 의존 없이 재현 보장.
       - PYTHONPATH=/app:/app/apps/api
+      # 컨테이너 내부 localhost는 API 자신을 가리킨다. Compose 서비스명으로 고정해 health와 캐시가
+      # 실제 Redis/Qdrant 컨테이너를 보도록 한다.
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/3
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
     volumes:
       - ./uploads:/app/uploads
     networks:
       - propai-network
     depends_on:
+      - redis
       - qdrant
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - propai-network
 
   qdrant:
     image: qdrant/qdrant:v1.18.1
@@ -67,3 +88,6 @@ services:
 networks:
   propai-network:
     driver: bridge
+
+volumes:
+  redis_data:

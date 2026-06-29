@@ -117,6 +117,12 @@ ensure_network() {
     log "[$svc] 네트워크 강제 연결 → $net"
   fi
 }
+ensure_dependency_services() {
+  # 새 API가 Redis/Qdrant를 실제로 보도록 dependency 서비스를 먼저 보장한다.
+  # 이미 떠 있으면 no-op, 없으면 image pull 후 생성한다.
+  status "DEPENDENCIES"
+  compose up -d --no-build redis qdrant >>"$LOG" 2>&1 || { status "FAIL deps"; return 1; }
+}
 wait_running() {
   local cname t=0
   cname=$(container_name "$1")
@@ -155,6 +161,9 @@ recreate_one() {
   log "[$svc] 재생성 OK"
 }
 case "$TARGET" in
+  api|both) ensure_dependency_services || exit 1 ;;
+esac
+case "$TARGET" in
   web)  recreate_one web  || exit 1 ;;
   api)  recreate_one api  || exit 1 ;;
   both) recreate_one api  || exit 1; recreate_one web || exit 1 ;;
@@ -162,7 +171,7 @@ esac
 
 # ── 5) 네트워크 전수 보장 + nginx 재시작(새 IP 재인식) ──
 status "NGINX-RELOAD"
-for s in api web; do ensure_network "$s"; done
+for s in redis qdrant api web; do ensure_network "$s"; done
 docker restart "$(container_name nginx)" >>"$LOG" 2>&1
 sleep 8
 
