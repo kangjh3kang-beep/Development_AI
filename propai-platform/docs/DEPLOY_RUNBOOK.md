@@ -2,6 +2,13 @@
 
 작성: 2026-06-09 · 대상: A1 오리진(158.179.174.207, Docker Compose v1 + cloudflared)
 
+## -1. 배포 대상 SSOT (반복 실수 방지)
+
+- **프론트/UI 배포 대상**: `ubuntu@158.179.174.207`, key `~/.oci.key`, hostname `4t8t`, repo `/home/ubuntu/Development_AI`.
+- **백엔드/API 대상**: `ubuntu@168.110.125.89`, hostname `4t8tpropai-backend-a1`.
+- `4t8t.net/ko`, `/ko/precheck`, `/ko/design-studio` 같은 화면 변경은 프론트 A1에서 `web` target으로 배포한다.
+- 프론트 화면 변경 확인에 `168.110.125.89`를 사용하지 않는다. 이 호스트의 SSH 실패를 프론트 배포 차단으로 해석하지 않는다.
+
 ## 0. 배포 단일 소유 원칙 (★가장 중요)
 **A1 배포는 한 세션만 전담한다.** 두 클로드/제미나이 창이 동시에 `git pull + docker system prune -af + build` 를 돌리면 서로의 빌드 레이어를 prune이 날려 **반드시 실패**한다(이번 세션 다발 장애의 1순위 원인). 다른 창은 **코드 작업 + 커밋/푸시만**. 배포자는 `scripts/safe-deploy.sh`의 락으로 동시실행을 한 번 더 차단한다.
 

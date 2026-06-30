@@ -39,24 +39,30 @@
 
 - GitHub push 완료:
   - `codex/dashboard-ia-ui-20260629`
-  - 최신 커밋: `3b391a73`
+  - 최신 커밋: `5aed72b9`
 - 운영 URL 응답:
   - `https://4t8t.net/ko`: `200`
   - `https://4t8t.net/ko/precheck`: `200`
   - `https://4t8t.net/ko/design-studio`: `200`
   - `https://4t8t.net/health`: `200`
-- Oracle SSH 배포 차단:
-  - `ubuntu@168.110.125.89: Permission denied (publickey)`
-  - 원격 서버의 `safe-deploy.sh` 실행은 SSH 공개키 승인 후 가능
+- 배포 대상 정정:
+  - 프론트 UI 배포 대상은 `ubuntu@158.179.174.207` (`~/.oci.key`, hostname `4t8t`)이다.
+  - `ubuntu@168.110.125.89`는 백엔드/API A1이며, 프론트 지도시스템 배포 확인 대상이 아니다.
+  - 이전의 `168.110.125.89 Permission denied (publickey)` 판단은 프론트 배포 경로 오인으로 기록 정정한다.
+- 2026-06-30 20:35 KST:
+  - 프론트 A1 접속 확인: `FRONT_A1_SSH_OK`, hostname `4t8t`
+  - 프론트 배포 시작: `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629`
+  - 배포 시작 상태: `BUILD web @ 5aed72b9 docs: record satong map and legal engine validation`
 
 ## 다음 배포 명령
 
-Oracle 서버에 접속 가능한 터미널에서 실행:
+프론트 Oracle A1에 접속 가능한 터미널에서 실행:
 
 ```bash
+ssh -i ~/.oci.key ubuntu@158.179.174.207
 cd ~/Development_AI
 VERIFY_BASE_URL=http://localhost:80 \
-  bash propai-platform/scripts/safe-deploy.sh both codex/dashboard-ia-ui-20260629
+  bash /tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629
 ```
 
 배포 후 상태 확인:

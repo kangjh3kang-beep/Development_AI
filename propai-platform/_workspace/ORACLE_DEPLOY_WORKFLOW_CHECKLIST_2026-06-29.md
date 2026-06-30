@@ -26,6 +26,37 @@ Use GitHub Actions workflow:
 
 ## Oracle Server Direct Run
 
+### Frontend A1 - web UI deploy target
+
+Use this target for `4t8t.net` 화면/UI changes:
+
+```bash
+ssh -i ~/.oci.key ubuntu@158.179.174.207
+cd ~/Development_AI
+setsid bash /tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629 \
+  </dev/null >/dev/null 2>&1 &
+watch -n5 cat /tmp/deploy_status.txt
+```
+
+Confirmed:
+
+- SSH: `ubuntu@158.179.174.207`
+- Key: `~/.oci.key`
+- Hostname: `4t8t`
+- Repo: `/home/ubuntu/Development_AI`
+- Script: `/tmp/codex-safe-deploy.sh` or `propai-platform/scripts/safe-deploy.sh`
+
+### Backend A1 - API target, not frontend deploy target
+
+Do not use `168.110.125.89` when verifying whether frontend UI changes were deployed.
+That host is the backend/API A1. A publickey failure there does not mean `4t8t.net`
+frontend deployment is blocked.
+
+- Backend SSH host: `ubuntu@168.110.125.89`
+- Hostname from prior records: `4t8tpropai-backend-a1`
+
+### Generic direct run on the target host
+
 When running directly on Oracle:
 
 ```bash
