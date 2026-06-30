@@ -83,3 +83,17 @@ tail -120 /tmp/deploy.log
 curl -I http://localhost:80/ko
 curl -I http://localhost:80/health
 ```
+
+## 2026-06-30 21:20 KST 지도 레이어 미작동 원인 확인
+
+- 상세 보고서: `_workspace/SATONG_MAP_LAYER_ROOT_CAUSE_2026-06-30.md`
+- 결론:
+  - `/ko/precheck`의 레이어 버튼은 `enabledLayers`/`activeLayerId` 상태와 설명 팝업만 변경한다.
+  - 실제 지도 렌더러인 `ParcelPickerMap`에는 레이어 상태가 props로 전달되지 않는다.
+  - `ParcelPickerMap`은 Leaflet + OSM 기본 타일과 `/zoning/parcel-at-point` 클릭 조회만 수행한다.
+  - 실제 지적도·용도지역·공시지가·노후도 기능은 `ParcelBoundaryMap`, 실거래·분양 기능은 `NearbyTransactionsMap`, 지형·교통·로드뷰·측정 기능은 `KakaoMapControls`에 분산되어 있고 신규 사통팔땅 지도 OS에 통합되지 않았다.
+- 근본 원인:
+  - “통합 지도 UI”와 “실제 GIS/시장/로드뷰 레이어 엔진” 사이의 기능 계약 및 데이터 배선 부재.
+- 다음 구현 원칙:
+  - `SatongUnifiedMap` + `MapLayerRegistry`를 만들고 레이어 버튼 클릭이 실제 지도 인스턴스의 타일, 폴리곤, 마커, 오버레이 변화로 이어지게 한다.
+  - 기능 소스가 없는 레이어는 활성처럼 표시하지 않고 disabled/needs-data 상태로 명확히 구분한다.
