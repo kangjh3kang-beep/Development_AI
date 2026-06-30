@@ -955,12 +955,38 @@ export const useProjectContextStore = create<ProjectContextState>()(
         // projectId가 동일하면 cross-module 데이터를 리셋하지 않는다(회귀 방지).
         // name/status만 원자 갱신하고, address가 주어졌고 아직 없으면 보조 시드.
         if (prev.projectId === id) {
+          const polluted =
+            !!address &&
+            !!prev.siteAnalysis?.address &&
+            addressTokenMismatch(address, prev.siteAnalysis.address);
           const patch: Partial<ProjectContextState> = {
             projectId: id,
             projectName: name,
             projectStatus: status,
           };
-          if (address && !prev.siteAnalysis?.address) {
+          if (polluted) {
+            const updatedAt = { ...prev.updatedAt };
+            delete updatedAt.siteAnalysis;
+            delete updatedAt.design;
+            delete updatedAt.decisionBrief;
+            const manualFields = { ...(prev.manualFields ?? {}) };
+            delete manualFields.siteAnalysis;
+            delete manualFields.design;
+            patch.siteAnalysis = {
+              estimatedValue: null,
+              landAreaSqm: null,
+              zoneCode: null,
+              pnu: null,
+              address,
+            } as SiteAnalysisData;
+            patch.designData = null;
+            patch.decisionBrief = null;
+            patch.completedStages = (prev.completedStages ?? []).filter(
+              (st) => st !== "site-analysis" && st !== "design",
+            );
+            patch.updatedAt = updatedAt;
+            patch.manualFields = manualFields;
+          } else if (address && !prev.siteAnalysis?.address) {
             patch.siteAnalysis = {
               ...(prev.siteAnalysis ?? {
                 estimatedValue: null,
