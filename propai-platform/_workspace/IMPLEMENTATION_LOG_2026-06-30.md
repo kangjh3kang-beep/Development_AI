@@ -160,3 +160,20 @@
   - `/ko/design-studio`: HTTP 200, 프로젝트 미선택 empty state 정상
   - `/ko/projects/demo/design`: HTTP 200, 프로젝트 상세 설계 화면 정상 렌더
   - 로컬 API 미기동으로 `ERR_CONNECTION_REFUSED`가 발생해 프로젝트 컨텍스트 기반 CAD/BIM 패널 실마운트 검증은 라이브 배포 후 수행 예정
+- 구현 커밋/푸시 완료:
+  - `d9d5f06f feat: add cad command workspace`
+  - `056e2c09 refactor: simplify design workspace flow`
+- Oracle safe deploy 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 056e2c09 refactor: simplify design workspace flow 00:27:43`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/design-studio`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+  - `https://api.4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+- 라이브 반영 확인:
+  - `/ko/design-studio` SSR HTML: `통합 작업면` 1건, `3단계` 0건
+  - 새 브라우저 세션은 인증 쿠키가 없어 `/ko/login?next=%2Fko%2Fdesign-studio`로 정상 리다이렉트됨
+  - 라이브 스크린샷: `/tmp/propai-live-design-studio-stage16.png`
