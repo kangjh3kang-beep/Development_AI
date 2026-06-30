@@ -11,8 +11,15 @@ import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialist
 import type { DecisionSpecialist } from "@/components/projects/decision-brief-types";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
+import type { ParcelRow } from "@/lib/parcel-rows";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
+import {
+  readSatongMapSelection,
+  satongSelectionAddresses,
+  satongSelectionToParcelRows,
+  selectionToSiteAnalysisPatch,
+} from "@/components/precheck/satong-map-selection";
 
 /* ── Helpers ── */
 
@@ -143,19 +150,21 @@ interface ProviderInfo {
 type AnalysisResult = Record<string, any>;
 
 export function ComprehensiveAnalysisPanel() {
-  const ctxStore = useProjectContextStore();
-  const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
+  const initialAddress = useProjectContextStore((state) => state.siteAnalysis?.address ?? "");
+  const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
+  const [address, setAddress] = useState(initialAddress);
   // 다필지: 검색·엑셀로 등록된 전 필지 주소(2필지↑ 시 통합 개발방식 분석 노출)
   const [parcels, setParcels] = useState<string[]>([]);
   // ★다필지 통합분석용 필지 상세(면적·용도지역·실효한도) — 백엔드 통합집계 전송 페이로드.
   //   AddressEntry가 보유한 areaSqm/zoneCode/farPct/bcrPct를 백엔드 집계 입력키로 매핑한다.
-  const [parcelRows, setParcelRows] = useState<Record<string, unknown>[]>([]);
+  const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectionNotice, setSelectionNotice] = useState("");
 
   useEffect(() => {
     apiClient.get<{ providers: ProviderInfo[] }>("/analysis/llm-providers")
@@ -168,6 +177,24 @@ export function ComprehensiveAnalysisPanel() {
       })
       .catch(() => {}); // 실패 시 기본값 유지
   }, []);
+
+  useEffect(() => {
+    const stored = readSatongMapSelection();
+    if (!stored?.parcels.length) return;
+
+    const nextAddresses = satongSelectionAddresses(stored.parcels);
+    const nextRows = satongSelectionToParcelRows(stored.parcels);
+    const patch = selectionToSiteAnalysisPatch(stored.parcels);
+    if (nextAddresses.length > 0) {
+      setAddress(nextAddresses[0]);
+      setParcels(nextAddresses);
+      setParcelRows(nextRows);
+      setSelectionNotice(
+        `지도에서 선택한 ${stored.parcels.length}필지를 부지분석 입력으로 반영했습니다.`,
+      );
+    }
+    if (patch) updateSiteAnalysis(patch, { source: "user" });
+  }, [updateSiteAnalysis]);
 
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
@@ -206,6 +233,11 @@ export function ComprehensiveAnalysisPanel() {
       <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-strong)] p-6">
         <h2 className="text-xl font-black text-[var(--text-primary)] mb-1">종합 부지분석 보고서</h2>
         <p className="text-xs text-[var(--text-secondary)] mb-4">주소를 입력하면 7개 카테고리 자동 분석 보고서를 생성합니다</p>
+        {selectionNotice && (
+          <p className="mb-3 rounded-xl border border-lime-400/40 bg-lime-400/10 px-3 py-2 text-xs font-bold text-lime-700">
+            {selectionNotice}
+          </p>
+        )}
         <div className="flex gap-3 items-end">
           <div className="flex-1">
             <GlobalAddressSearch

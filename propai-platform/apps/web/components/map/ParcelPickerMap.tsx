@@ -86,6 +86,41 @@ function loadLeaflet(): Promise<void> {
   return leafletLoading;
 }
 
+function addOpenStreetMapFallback(L: any, map: any): void {
+  const fallback = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors",
+    maxZoom: 19,
+    crossOrigin: true,
+  }).addTo(map);
+  L.control.attribution({ prefix: false, position: "bottomright" })
+    .addTo(map)
+    .addAttribution("임시 기본도 · © OpenStreetMap contributors");
+  fallback.bringToBack?.();
+}
+
+function addOfficialBaseMap(L: any, map: any): void {
+  let fellBack = false;
+  const vworld = L.tileLayer(
+    "/api/vworld/wmts/Base/{z}/{y}/{x}.png",
+    {
+      attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
+      maxZoom: 19,
+      crossOrigin: true,
+    },
+  ).addTo(map);
+
+  L.control.attribution({ prefix: false, position: "bottomright" })
+    .addTo(map)
+    .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
+
+  vworld.on("tileerror", () => {
+    if (fellBack) return;
+    fellBack = true;
+    try { map.removeLayer(vworld); } catch { /* noop */ }
+    addOpenStreetMapFallback(L, map);
+  });
+}
+
 /**
  * GeoJSON Polygon/MultiPolygon 좌표([lng, lat])를
  * Leaflet 좌표([lat, lng]) 배열의 배열로 변환한다.
@@ -383,12 +418,9 @@ export function ParcelPickerMap({
           center: [37.5665, 126.978],
           zoom: 12,
           scrollWheelZoom: true,
+          attributionControl: false,
         });
-        // OSM 타일 (카카오 키 없이 전 세계 사용 가능)
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap",
-          maxZoom: 19,
-        }).addTo(map);
+        addOfficialBaseMap(L, map);
         mapRef.current = map;
         const focus = focusTargetRef.current;
         if (focus) {
@@ -471,8 +503,8 @@ export function ParcelPickerMap({
       <div ref={fs.wrapperRef} className={fs.wrapperClass("relative")}>
         <div
           ref={mapEl}
-          className={fs.mapClass("w-full overflow-hidden rounded-lg border border-[var(--line)]")}
-          style={{ height }}
+          className="w-full overflow-hidden rounded-lg border border-[var(--line)]"
+          style={{ height: fs.isFull ? "100%" : height }}
         />
 
         {/* 풀스크린 버튼 */}

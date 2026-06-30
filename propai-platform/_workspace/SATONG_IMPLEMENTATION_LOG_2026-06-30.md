@@ -97,3 +97,31 @@ curl -I http://localhost:80/health
 - 다음 구현 원칙:
   - `SatongUnifiedMap` + `MapLayerRegistry`를 만들고 레이어 버튼 클릭이 실제 지도 인스턴스의 타일, 폴리곤, 마커, 오버레이 변화로 이어지게 한다.
   - 기능 소스가 없는 레이어는 활성처럼 표시하지 않고 disabled/needs-data 상태로 명확히 구분한다.
+
+## 2026-06-30 22:55 KST 다필지 전환·풀스크린·VWorld 기본지도 보강
+
+- 원인:
+  - `SatongMapShell`의 산출물 버튼이 `/${locale}/precheck?legacy=1`로 배선되어 다필지 선택 후 예전 PreCheck 화면으로 되돌아갔다.
+  - 새 지도 선택값은 `satong_map_selection`에 직접 저장됐지만, `PreCheckWorkspace`와 `ComprehensiveAnalysisPanel`이 이를 읽지 않아 “등록된 필지 없음”으로 보였다.
+  - 풀스크린 토글 때 React가 지도 div의 `className`을 다시 쓰면서 Leaflet이 붙인 `.leaflet-container` 클래스를 지워 지도 복구 실패/블랙아웃이 발생했다.
+  - 기본 타일이 OSM으로 고정되어 한국 개발사업 플랫폼의 기본 원천으로 부적합했다.
+- 구현:
+  - `components/precheck/satong-map-selection.ts` 추가: 다필지 선택 저장, 복원, 프로젝트 컨텍스트 패치, 분석용 `ParcelRow` 변환을 단일화.
+  - `SatongMapShell`: “종합 부지분석” 산출물 버튼을 `/analysis`로 배선하고, 선택 필지를 프로젝트 컨텍스트와 세션 저장소에 동시에 기록.
+  - `ComprehensiveAnalysisPanel`: 지도에서 선택한 다필지를 자동 복원해 분석 입력/다필지 행/프로젝트 컨텍스트에 반영.
+  - `PreCheckWorkspace`: 사용자가 직접 `?legacy=1`로 들어와도 선택 필지를 복원하는 방어막 추가.
+  - `useMapFullscreen`: Leaflet/Kakao 지도 크기 재계산을 다중 프레임으로 보강하고 풀스크린 wrapper를 `h-screen/w-screen` 기반으로 수정.
+  - `ParcelPickerMap`: 지도 div class를 풀스크린 상태에서 변경하지 않도록 고정해 Leaflet 내부 클래스 손실 차단.
+  - `/api/vworld/wmts/[layer]/[z]/[y]/[x]`: 서버의 `VWORLD_API_KEY` 또는 `NEXT_PUBLIC_VWORLD_API_KEY`를 사용해 VWorld WMTS 타일을 프록시하는 라우트 추가.
+  - `ParcelPickerMap` 기본 베이스맵을 `/api/vworld/wmts/Base/{z}/{y}/{x}.png`로 변경. 키 누락/장애 시에만 OSM 임시 폴백.
+- 적대적 브라우저 검증:
+  - `/ko/precheck`에서 세션 다필지 2건 주입 후 지도 로드 확인.
+  - 풀스크린 전: Leaflet container `902x720`, 타일 16개, `legacy=1` 미포함.
+  - 풀스크린 중: Leaflet container `1408x968`, 타일 30개, `.leaflet-container` 유지.
+  - 풀스크린 해제 후: Leaflet container `902x720`, 타일 16개, `.leaflet-container` 유지.
+  - “종합 부지분석” 클릭 후 `/ko/analysis` 이동, `legacy=1` 미포함, “지도에서 선택한 2필지” 반영 안내 확인.
+- 검증:
+  - `pnpm --filter @propai/web lint`: 0 errors, 기존 warning 유지.
+  - `pnpm --filter @propai/web type-check`: 통과.
+  - `pnpm --filter @propai/web test:run`: 87 files / 688 tests 통과.
+  - `pnpm --filter @propai/web build`: 통과, `/api/vworld/wmts/[layer]/[z]/[y]/[x]` 라우트 빌드 포함.

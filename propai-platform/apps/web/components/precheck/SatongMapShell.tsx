@@ -37,6 +37,12 @@ import {
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  readSatongMapSelection,
+  selectionToSiteAnalysisPatch,
+  writeSatongMapSelection,
+  type SatongSelectionParcel,
+} from "./satong-map-selection";
 
 type ParcelPickerMapProps = {
   onPickMany?: (parcels: ParcelAtPointResult[]) => void;
@@ -106,18 +112,7 @@ type ParseParcelsResponse = {
   error?: string | null;
 };
 
-type SatongParcel = {
-  id: string;
-  address: string;
-  pnu?: string | null;
-  lat?: number | null;
-  lon?: number | null;
-  areaSqm?: number | null;
-  zoneType?: string | null;
-  jimok?: string | null;
-  officialPricePerSqm?: number | null;
-  source: "search" | "excel" | "map";
-};
+type SatongParcel = SatongSelectionParcel;
 
 type LayerStatus = "active" | "ready" | "needs-source";
 
@@ -346,18 +341,7 @@ function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
 }
 
 function saveSelectionForOutputs(parcels: SatongParcel[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(
-      "satong_map_selection",
-      JSON.stringify({
-        savedAt: new Date().toISOString(),
-        parcels,
-      }),
-    );
-  } catch {
-    // sessionStorage 차단 환경에서는 전역 프로젝트 컨텍스트만 사용한다.
-  }
+  writeSatongMapSelection(parcels);
 }
 
 export function SatongMapShell({ locale }: { locale: string }) {
@@ -396,10 +380,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const outputActions: OutputAction[] = useMemo(
     () => [
       {
-        id: "precheck",
-        label: "후보지 진단서",
-        description: "입지·규제·대지면적",
-        href: `/${locale}/precheck?legacy=1`,
+        id: "analysis",
+        label: "종합 부지분석",
+        description: "다필지·규제·입지",
+        href: `/${locale}/analysis`,
         icon: MapPin,
         tone: "border-lime-200 bg-lime-50 text-lime-950",
       },
@@ -433,40 +417,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
   const commitParcelsToContext = useCallback(
     (parcels: SatongParcel[]) => {
-      if (parcels.length === 0) return;
-      const first = parcels[0];
-      const totalArea = parcels.reduce((sum, parcel) => sum + (parcel.areaSqm ?? 0), 0);
-      const effectiveArea =
-        totalArea > 0 ? totalArea : first.areaSqm != null && first.areaSqm > 0 ? first.areaSqm : null;
-      const zoneSet = new Set(parcels.map((parcel) => parcel.zoneType).filter(Boolean));
-      updateSiteAnalysis(
-        {
-          address: first.address,
-          pnu: first.pnu ?? null,
-          coordinates:
-            first.lat != null && first.lon != null
-              ? { lat: first.lat, lon: first.lon }
-              : null,
-          zoneCode: first.zoneType ?? null,
-          dominantZoneCode: first.zoneType ?? null,
-          zoneMixed: zoneSet.size > 1,
-          landAreaSqm: effectiveArea,
-          landAreaSqmTotal: effectiveArea,
-          repLandAreaSqm: first.areaSqm ?? null,
-          parcelCount: parcels.length,
-          parcels: parcels.map((parcel) => ({
-            pnu: parcel.pnu || parcel.id,
-            address: parcel.address,
-            areaSqm: parcel.areaSqm ?? 0,
-            landCategory: parcel.jimok || "미확인",
-            ownerType: "미확인",
-            zoneCode: parcel.zoneType ?? null,
-          })),
-          dataSource: "satong-map-shell",
-          fetchedAt: new Date().toISOString(),
-        },
-        { source: "user" },
-      );
+      const patch = selectionToSiteAnalysisPatch(parcels);
+      if (!patch) return;
+      updateSiteAnalysis(patch, { source: "user" });
     },
     [updateSiteAnalysis],
   );
@@ -647,10 +600,22 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const handleOutputClick = useCallback(
     (action: OutputAction) => {
       saveSelectionForOutputs(selectedParcels);
+      commitParcelsToContext(selectedParcels);
       router.push(action.href);
     },
-    [router, selectedParcels],
+    [commitParcelsToContext, router, selectedParcels],
   );
+
+  useEffect(() => {
+    const stored = readSatongMapSelection();
+    if (!stored?.parcels.length) return;
+    setSelectedParcels(stored.parcels);
+    commitParcelsToContext(stored.parcels);
+    const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
+    if (focused?.lat != null && focused.lon != null) {
+      setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+    }
+  }, [commitParcelsToContext]);
 
   useEffect(() => {
     const trimmed = query.trim();

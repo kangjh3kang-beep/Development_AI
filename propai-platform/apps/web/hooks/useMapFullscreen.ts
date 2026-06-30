@@ -55,7 +55,7 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
     // 카카오는 relayout 후 중심이 틀어질 수 있어 미리 중심을 잡아둔다.
     const center = map.relayout ? map.getCenter?.() : undefined;
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
+    const relayout = () => {
       try {
         if (map.relayout) {
           // 카카오맵: 재배치 후 중심 보정
@@ -63,12 +63,24 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
           if (center) map.setCenter(center);
         } else if (map.invalidateSize) {
           // Leaflet: 컨테이너 크기 재인식(중심은 자동 유지)
-          map.invalidateSize();
+          map.invalidateSize({ pan: false, debounceMoveend: false });
+          map.eachLayer?.((layer: { redraw?: () => void }) => {
+            try { layer.redraw?.(); } catch { /* noop */ }
+          });
         }
       } catch {
         /* noop */
       }
-    }, 80);
+    };
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        relayout();
+        window.requestAnimationFrame(relayout);
+      });
+    }
+    timerRef.current = setTimeout(relayout, 80);
+    window.setTimeout(relayout, 260);
+    window.setTimeout(relayout, 640);
   }, [mapRef]);
 
   // 언마운트 시 예약된 relayout 타이머 정리.
@@ -129,16 +141,16 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
   const wrapperClass = useCallback(
     (base = "") => {
       // 네이티브 풀스크린: 브라우저가 요소를 뷰포트 전체로 만들므로 채움(h/w-full)+배경+flex만.
-      if (nativeFs) return `${base} h-full w-full m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex flex-col`;
+      if (nativeFs) return `${base} h-screen w-screen m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
       // CSS 폴백 오버레이.
-      if (isFull) return `${base} fixed inset-0 z-[100] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4`;
+      if (isFull) return `${base} fixed inset-0 z-[100] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
       return base;
     },
     [isFull, nativeFs],
   );
 
   const mapClass = useCallback(
-    (base = "") => (isFull || nativeFs ? `${base} !h-full flex-1` : base),
+    (base = "") => (isFull || nativeFs ? `${base} !h-full min-h-0 flex-1` : base),
     [isFull, nativeFs],
   );
 
