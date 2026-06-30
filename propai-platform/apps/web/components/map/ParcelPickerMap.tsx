@@ -58,6 +58,8 @@ interface ParcelPickerMapProps {
   autoPreviewFocus?: boolean;
   /** 지도 높이(px), 기본 360 */
   height?: number;
+  /** 통합 지도 화면에서 외곽 설명/배경을 줄이는 표시 모드 */
+  chrome?: "default" | "immersive";
 }
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
@@ -113,7 +115,14 @@ function toP(sqm: number): string {
   return (sqm / 3.305785).toFixed(1);
 }
 
-export function ParcelPickerMap({ onPick, onPickMany, focusTarget, autoPreviewFocus = false, height = 360 }: ParcelPickerMapProps) {
+export function ParcelPickerMap({
+  onPick,
+  onPickMany,
+  focusTarget,
+  autoPreviewFocus = false,
+  height = 360,
+  chrome = "default",
+}: ParcelPickerMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const fs = useMapFullscreen(mapRef);
@@ -428,13 +437,21 @@ export function ParcelPickerMap({ onPick, onPickMany, focusTarget, autoPreviewFo
     : false;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
+    <div
+      className={
+        chrome === "immersive"
+          ? "flex flex-col gap-2"
+          : "flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3"
+      }
+    >
       {/* 안내 메시지 */}
-      <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
-        지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
-        {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
-        <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
-      </p>
+      {chrome === "default" && (
+        <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
+          지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
+          {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
+          <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
+        </p>
+      )}
 
       {/* 상태 메시지 — 로딩/오류/미발견 표시 */}
       {status === "loading" && (
