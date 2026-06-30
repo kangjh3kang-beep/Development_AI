@@ -526,3 +526,362 @@ Leaflet은 렌더링 라이브러리로 사용할 수 있지만, 사용자에게
 4. 실패/미확인 항목 0건 증명
 5. 라이브 검증 체크리스트
 
+## 13. 2차 계획 레드팀 감사: 계획 자체의 취약점
+
+이 섹션은 앞선 계획을 다시 공격 대상으로 삼아 작성했다.
+목표는 "무엇을 만들지"가 아니라 "이 계획대로 해도 100%에 실패할 수 있는 이유"를 제거하는 것이다.
+
+### 13.1 계획 취약점 P0
+
+#### Plan-P0-1. 공식 원천을 나열했지만 API별 획득 가능성 게이트가 부족하다
+
+위험:
+
+- VWorld, 토지이음, 국가법령정보, 산림청, 공공데이터는 각각 인증키, 도메인 제한, 다운로드 방식, 좌표계, 이용약관, 실시간 API 여부가 다르다.
+- "연동한다"는 문장만으로는 구현 가능성과 운영 안정성이 검증되지 않는다.
+- 토지이음처럼 화면 열람 중심인 원천은 API/크롤링/링크아웃/수동확인 중 어떤 방식이 합법·안정적인지 별도 결정이 필요하다.
+
+보강:
+
+1. 원천마다 `ConnectorReadiness`를 만든다.
+   - `available_api`
+   - `credential_required`
+   - `domain_required`
+   - `rate_limit_known`
+   - `license_checked`
+   - `geometry_supported`
+   - `fallback_policy`
+2. 원천 사용 전 `source_contract_test`를 통과해야 한다.
+3. API가 없거나 약관상 자동수집이 부적절하면 `manual_verification_required`로 분기한다.
+4. 지도에는 "공식 원천 확인 링크"와 "자동수집 불가/수동확인" 상태를 명확히 표시한다.
+
+100% 게이트:
+
+- 각 원천은 `ready`, `limited`, `manual_only`, `unavailable` 중 하나로 분류된다.
+- `limited/manual_only/unavailable` 원천은 PASS 산출에 직접 사용되지 않는다.
+
+#### Plan-P0-2. 법규 목록 생성 에이전트가 누락을 만들 수 있다
+
+위험:
+
+- LLM 기반 후보 생성은 특이사례를 누락할 수 있다.
+- "관련법규 리스트 생성" 자체가 틀리면 이후 결정론 엔진이 아무리 정확해도 누락 법규를 검토하지 못한다.
+
+보강:
+
+1. `LawScopeAgent`를 단독 LLM이 아니라 4중 앙상블로 구성한다.
+   - deterministic trigger: 지목, 용도지역, 용도지구, 면적, 도로, 산지/농지/하천 등 코드 기반 트리거
+   - official relation graph: 국가법령정보 관련법령/위임관계/자치법규 연계 API
+   - spatial trigger: VWorld/토지이음/산림/DEM 공간 레이어 교차
+   - LLM adversarial expansion: "누락될 수 있는 특이 법규" 탐색
+2. 최종 scope는 네 경로의 합집합으로 만들고, 제거는 사람이 읽을 수 있는 비적용 사유가 있을 때만 허용한다.
+3. `ScopeCoverageTest`를 만든다.
+   - 산지
+   - 농지
+   - 개발제한구역
+   - 문화재
+   - 군사시설
+   - 상수원
+   - 하천
+   - 도시계획시설
+   - 지구단위계획
+   - 도로 접도
+   - 급경사/고저차
+   - 학교/공원/공공시설 저촉
+
+100% 게이트:
+
+- 필지당 `scope_generation_paths >= 3`.
+- critical domain 누락 시 자동 PASS 금지.
+- LLM이 만든 법규는 공식 원천 ID와 매칭되지 않으면 후보 상태로만 남긴다.
+
+#### Plan-P0-3. "법령엔진"과 "설계엔진"의 경계가 아직 모호하다
+
+위험:
+
+- 설계엔진이 편의를 위해 기본값을 넣으면 법령엔진의 fail-closed 원칙을 우회할 수 있다.
+- CAD/design_spec, persona, feasibility, scenario 경로에 오래된 한도표가 남아 있으면 사용자에게 다른 숫자가 보인다.
+
+보강:
+
+1. `LegalVerdictEnvelope` 없이는 설계엔진이 확정 산출을 만들 수 없게 한다.
+2. 설계엔진 입력은 다음 중 하나만 허용한다.
+   - `PASS` verdict: 확정안 생성 가능
+   - `NEEDS_VERIFICATION` verdict: 예비안만 가능
+   - `UNKNOWN/FAIL`: 확정/예비 산출 모두 제한 또는 보완안만 가능
+3. 설계엔진 내부 기본값은 `assumption_registry`에 등록하고 UI에 "가정"으로 노출한다.
+4. 설계 산출물의 모든 숫자는 `legal_verdict_id`와 `evidence_ledger_id`를 참조한다.
+
+100% 게이트:
+
+- `design-studio`에서 stale/unknown 필지로 확정 CAD 다운로드 불가.
+- 설계 기본값이 법규 수치처럼 표시되는 UI 0건.
+
+#### Plan-P0-4. 검증 환경 복구가 선행 단계로 더 강하게 잠겨야 한다
+
+위험:
+
+- 현재 로컬 쉘에서 `fastapi`, `sqlalchemy`가 누락되어 백엔드 테스트 수집이 실패한다.
+- 테스트가 실행되지 않는 상태에서 계획/구현 완료를 선언하면 false assurance가 된다.
+
+보강:
+
+1. Phase 0을 "권장"이 아니라 모든 구현의 선행 차단 게이트로 승격한다.
+2. `scripts/redteam-verify.sh`는 의존성 검사 실패 시 즉시 non-zero 종료한다.
+3. 백엔드 검증은 최소 두 경로를 제공한다.
+   - local venv/uv/pip 경로
+   - Docker/CI 경로
+4. `pytest collection` 자체를 독립 게이트로 둔다.
+
+100% 게이트:
+
+- 테스트 미실행/수집 실패 상태에서는 어떤 Phase도 완료 처리하지 않는다.
+
+### 13.2 계획 취약점 P1
+
+#### Plan-P1-1. 데이터 품질 등급이 더 세밀해야 한다
+
+기존 `confidence`만으로는 부족하다.
+
+보강 데이터 품질 모델:
+
+| 필드 | 의미 |
+|---|---|
+| `source_authority` | official, public_open_data, partner, user_upload, inferred |
+| `collection_mode` | api, file_download, manual_link, user_input, derived |
+| `freshness` | current, stale, unknown |
+| `spatial_precision` | parcel, building, road_segment, grid, centroid, unknown |
+| `legal_effect` | binding, advisory, reference, unknown |
+| `verification_state` | verified, cross_checked, single_source, disputed, failed |
+| `blocking_level` | none, warn, block_preliminary, block_final |
+
+100% 게이트:
+
+- `legal_effect=unknown`인 데이터는 확정 법규판정에 사용 금지.
+- `spatial_precision=centroid/grid`인 경사·산지·도로 데이터는 인허가 확정값으로 사용 금지.
+
+#### Plan-P1-2. 지도 레이어의 "보이는 것"과 "계산되는 것" 분리가 필요하다
+
+위험:
+
+- WMS 이미지는 눈에는 보이지만 계산 가능한 geometry가 없을 수 있다.
+- WFS/GeoJSON 없이 이미지 레이어만 켜면 사용자에게 분석이 된 것처럼 보이지만 실제 계산은 불가능하다.
+
+보강:
+
+1. 각 레이어를 `visual`, `queryable`, `computable`로 분류한다.
+2. 필지 분석에 쓰는 레이어는 `computable=true`여야 한다.
+3. WMS-only 레이어는 UI에 "시각 참고"로 표기한다.
+4. 지도 클릭 시 어떤 computable layer가 실제 판정에 들어갔는지 EvidenceLedger에 기록한다.
+
+100% 게이트:
+
+- 시각 레이어만 켠 상태에서 법규/사업성 확정 산출 금지.
+- 사용자가 본 레이어와 엔진이 사용한 데이터가 다르면 불일치 경고 표시.
+
+#### Plan-P1-3. 다필지 병합의 법적 단위와 사업 단위가 분리되어야 한다
+
+위험:
+
+- 다필지 합산 면적은 사업성 계산에는 맞을 수 있지만, 법규는 필지별/대지단위/합필 가능성에 따라 달라진다.
+- 혼합 용도지역을 단순 면적가중하면 특정 행위제한이나 도로 접도 조건을 놓칠 수 있다.
+
+보강:
+
+1. `ParcelGroup`에 세 단위를 둔다.
+   - selected parcels
+   - legal lots
+   - development site candidate
+2. 합필 가능성, 도로, 소유권, 지목, 용도지역 경계를 별도 판정한다.
+3. 면적가중 수치와 필지별 blocking rule을 병렬 실행한다.
+
+100% 게이트:
+
+- 혼합 용도지역 다필지는 "면적가중 결과"와 "가장 엄격한 필지별 제한"을 함께 표시한다.
+
+#### Plan-P1-4. "특이사례" 회귀 데이터셋이 필요하다
+
+보강:
+
+- `/tests/fixtures/redteam_parcels/`를 만든다.
+- 실제 주소를 저장하기 어려우면 PNU/법규조건을 비식별화한 fixture를 둔다.
+- 최소 30개 케이스:
+  - 자연녹지
+  - 계획관리
+  - 보전관리
+  - 농림
+  - 자연환경보전
+  - 개발제한구역
+  - 보전산지
+  - 준보전산지
+  - 농업진흥지역
+  - 문화재보호구역
+  - 하천구역
+  - 상수원보호구역
+  - 군사시설보호
+  - 지구단위계획
+  - 도시계획시설 도로/공원/학교
+  - 맹지
+  - 접도 미달
+  - 고저차 과다
+  - 혼합용도지역
+  - 다필지 면적 불일치
+  - 공시지가 없음
+  - 실거래 없음
+  - 노후도 데이터 없음
+  - 조례 API 실패
+  - 조례 파싱 실패
+  - VWorld 타일 실패
+  - WFS geometry 실패
+  - sessionStorage 차단
+  - fullscreen 회귀
+  - stale siteAnalysis
+
+100% 게이트:
+
+- redteam fixture 30개가 CI에서 매번 실행된다.
+
+## 14. 100% 완성도 점수체계 v2
+
+기존의 주관적 완성도 점수 대신, 제품 게이트를 가중치로 계산한다.
+
+| 영역 | 가중치 | 100% 조건 |
+|---|---:|---|
+| 검증환경 | 10 | 백엔드/프론트/브라우저 테스트 재현 가능 |
+| 공식원천 커넥터 | 15 | 원천별 readiness와 계약 테스트 통과 |
+| 법령 SSOT | 15 | 중복 판정표 제거, fail-open 0건 |
+| 조례/계획/특수조건 | 15 | blocking_unknown 체계와 특이 fixture 통과 |
+| 지도 통합 | 15 | VWorld 기본, 레이어 query/compute 분리, fullscreen 안정 |
+| 필지 핸드오프 | 10 | 다필지/삭제/스토리지/stale 무결성 통과 |
+| 설계·CAD 파이프라인 | 10 | LegalVerdictEnvelope 기반 산출 차단/허용 |
+| 증거 원장/반증 루프 | 10 | EvidenceLedger와 counter-check 전 산출물 연결 |
+
+최종 판정:
+
+- 100점: 배포 후보.
+- 95~99점: 내부 QA 후보. P0은 없어야 하며 P1은 사용자 오판을 만들지 않아야 한다.
+- 90~94점: 기능 검증 중. 통합자 배포 요청 금지.
+- 90점 미만: 구현 미완료.
+
+주의:
+
+- P0가 1개라도 있으면 점수와 무관하게 100% 불가.
+- 테스트 수집 실패가 있으면 최고점은 70점으로 제한.
+- 공식 원천 readiness 미확정이면 최고점은 85점으로 제한.
+
+## 15. 반복검증 루프 v2
+
+각 Phase는 아래 루프를 통과해야 완료된다.
+
+1. `Plan Attack`
+   - 이 단계의 계획 자체가 실패할 수 있는 이유를 5개 이상 적는다.
+2. `Implementation`
+   - 목업 없는 실제 코드/커넥터/테스트 구현.
+3. `Static Scan`
+   - 금지 패턴, 중복 표, fail-open, mock fallback, stale bypass 검색.
+4. `Unit Contract`
+   - 입력/출력 스키마, 상태, evidence 계약 검증.
+5. `Adversarial Fixture`
+   - redteam fixture 실행.
+6. `Integration Flow`
+   - 지도 -> 필지 -> 법규 -> 설계 -> 산출물 핸드오프 검증.
+7. `Browser E2E`
+   - 전체화면, 레이어, 검색, 엑셀, 다필지, 산출 이동, stale 차단 검증.
+8. `Evidence Audit`
+   - 모든 산출물이 evidence ledger를 참조하는지 검사.
+9. `Regression Lock`
+   - 이번에 발견한 결함을 테스트로 고정.
+10. `Completion Decision`
+    - P0/P1/점수/미검증 항목 보고 후 다음 Phase 이동.
+
+## 16. 구현 우선순위 v2
+
+### Step A. 차단 게이트부터 구현
+
+1. 백엔드 의존성/테스트 수집 복구.
+2. `ComplianceStatus` 도입.
+3. fail-open 반환 제거.
+4. 미등록 용도지역 PASS 제거.
+5. 조례 statutory-only 확정 산출 차단.
+
+성공 기준:
+
+- 사용자가 틀린 적합 판정을 볼 수 있는 경로 0건.
+
+### Step B. 단일 판정 경로 완성
+
+1. `LegalVerdictEnvelope` 추가.
+2. `EvidenceLedger` 최소 스키마 추가.
+3. 모든 산출 API가 verdict/evidence를 참조.
+4. 중복 한도표 직접 참조 제거.
+
+성공 기준:
+
+- 같은 필지·같은 조건이면 모든 화면이 같은 법규 수치를 표시.
+
+### Step C. 지도와 필지 입력 무결성
+
+1. VWorld 기본 지도와 공식 오류 처리.
+2. 레이어별 visual/queryable/computable 계약.
+3. 필지 선택/삭제/다필지/엑셀/context/storage 테스트.
+4. fullscreen 블랙아웃 회귀 테스트.
+
+성공 기준:
+
+- 지도에서 본 것과 산출물에 쓰인 데이터가 일치.
+
+### Step D. 특수조건과 조례 확장
+
+1. `LawScopeInventory`.
+2. 산지/임목/경사/농지/도시계획/지구단위/문화재/상수원/군사/하천 트리거.
+3. 공식 원천 미확보 항목 blocking_unknown.
+4. counter evidence loop.
+
+성공 기준:
+
+- 특이사례 fixture가 PASS/FAIL/NEEDS_VERIFICATION을 정직하게 반환.
+
+### Step E. 설계·CAD 통합
+
+1. 설계 스튜디오 stale 차단.
+2. 1~3순위 건축물 추천.
+3. 1~3순위 건축개요 자동 생성.
+4. CAD/BIM 도면 편집과 텍스트/음성 명령 재연결.
+5. 확정/예비안 구분.
+
+성공 기준:
+
+- 법규 상태가 바뀌면 추천안, 건축개요, 도면 산출 권한이 즉시 바뀐다.
+
+## 17. 추가 누락 방지 체크리스트
+
+구현 전 매번 확인:
+
+- [ ] 이 기능은 공식 원천 또는 사용자 입력 중 무엇을 근거로 하는가?
+- [ ] 원천 실패 시 PASS가 되는 경로가 없는가?
+- [ ] 수치가 법정상한, 조례 실효, 지구단위 상한, 가정값 중 무엇인지 구분되는가?
+- [ ] 지도에 보이는 레이어와 계산에 쓰이는 데이터가 일치하는가?
+- [ ] LLM이 만든 문장이 결정론 룰 결과를 덮어쓰지 않는가?
+- [ ] 다필지에서 필지별 제한과 사업지 합산 제한을 분리했는가?
+- [ ] 산지/농지/문화재/군사/상수원/하천/재해/도시계획시설 스캔이 실행됐는가?
+- [ ] 조례 미확정 상태에서 확정 도면·확정 사업성·확정 인허가 판정을 차단했는가?
+- [ ] 사용자가 "왜 이런 결론인지" 증거 원장에서 확인할 수 있는가?
+- [ ] 이 결론을 뒤집을 수 있는 반증 질문을 실행했는가?
+- [ ] 이번 결함이 회귀 테스트로 고정됐는가?
+
+## 18. 2차 레드팀 결론
+
+보강 후에도 100%는 문서 선언으로 달성되지 않는다.
+다만 이 v2 계획은 기존 계획의 가장 큰 허점을 보완한다.
+
+핵심 강화점:
+
+1. 공식 원천을 단순 나열하지 않고 readiness/계약 테스트로 잠갔다.
+2. 법규 목록 생성 에이전트의 LLM 누락 위험을 4중 합집합 구조로 낮췄다.
+3. 법령엔진과 설계엔진 사이에 `LegalVerdictEnvelope` 차단막을 세웠다.
+4. 지도 레이어를 visual/queryable/computable로 분리해 "보이는 지도"와 "계산 가능한 지도"의 혼동을 제거했다.
+5. 다필지의 사업 단위와 법적 단위를 분리했다.
+6. redteam fixture 30개와 반복검증 루프를 100% 게이트로 승격했다.
+
+최종 구현은 반드시 Step A부터 진행해야 한다.
+지도 UI나 설계 UI를 먼저 고도화하면 사용성은 좋아져도 법규 무결성은 여전히 100%가 될 수 없다.
