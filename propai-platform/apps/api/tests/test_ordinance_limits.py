@@ -202,6 +202,47 @@ class TestAutoDesignOrdinance:
         # 법정상한 적용(조례 미반영)
         assert body["summary"]["basis"]["applied_limits"]["ordinance_far_percent"] is None
 
+    def test_direct_effective_limits_apply_for_korean_zone(self):
+        """부지분석 실효 한도는 한글 용도지역에서도 기본 2R 폴백 없이 직접 적용된다."""
+        r = client.post("/api/v1/drawing/auto-design", json={
+            **_BASE,
+            "site_area_sqm": 12079,
+            "zone_code": "자연녹지지역",
+            "target_far_percent": 100,
+            "target_bcr_percent": 20,
+            "effective_far_pct": 80,
+            "effective_bcr_pct": 20,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        lim = body["summary"]["basis"]["applied_limits"]
+        assert body["legal_limits"]["max_far_percent"] == 100
+        assert lim["max_far_percent"] == 80
+        assert lim["max_bcr_percent"] == 20
+        assert lim["ordinance_far_percent"] == 80
+        assert body["summary"]["far_percent"] <= 80 + 0.5
+
+    def test_design_alternatives_receive_direct_effective_limits(self):
+        """Top3 대안도 부지분석 실효 한도를 전 대안에 전파한다."""
+        r = client.post("/api/v1/drawing/design-alternatives", json={
+            **_BASE,
+            "site_area_sqm": 12079,
+            "zone_code": "자연녹지지역",
+            "target_far_percent": 100,
+            "target_bcr_percent": 20,
+            "effective_far_pct": 80,
+            "effective_bcr_pct": 20,
+            "count": 3,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["alternatives"]) == 3
+        for alt in body["alternatives"]:
+            lim = alt["summary"]["basis"]["applied_limits"]
+            assert lim["max_far_percent"] == 80
+            assert lim["max_bcr_percent"] == 20
+            assert alt["summary"]["far_percent"] <= 80 + 0.5
+
 
 class TestOrdinanceZoneMapping:
     """zone_code → OrdinanceService 한글 zone_type 매핑."""
@@ -211,4 +252,27 @@ class TestOrdinanceZoneMapping:
         assert _zone_type_for_ordinance("2R") == "제2종일반주거지역"
         assert _zone_type_for_ordinance("GC") == "일반상업지역"
         assert _zone_type_for_ordinance("QR") == "준주거지역"
+        assert _zone_type_for_ordinance("자연녹지지역") == "자연녹지지역"
+        assert _zone_type_for_ordinance("계획관리") == "계획관리지역"
         assert _zone_type_for_ordinance("ZZZ") is None  # 미지정 코드는 None(가짜 매핑 금지)
+
+    async def test_korean_zone_type_flows_to_ordinance_lookup(self, monkeypatch):
+        """한글 용도지역명 입력도 조례 조회 경로에서 누락되지 않는다."""
+        from apps.api.routers import drawing
+        from app.services.land_intelligence import ordinance_service
+
+        seen: dict[str, str] = {}
+
+        async def _fake(self, address, zone_type):  # noqa: ANN001
+            seen["zone_type"] = zone_type
+            return {"effective_bcr": 20.0, "effective_far": 100.0, "source": "지자체 조례"}
+
+        monkeypatch.setattr(ordinance_service.OrdinanceService, "get_ordinance_limits", _fake)
+        out = await drawing._ordinance_limits(
+            True, address="용인시 수지구 신봉동", zone_code="자연녹지지역",
+        )
+        assert seen["zone_type"] == "자연녹지지역"
+        assert out["note"] in {
+            "지자체 조례 실효 한도 적용(법정 이하)",
+            "해당 지자체 조례가 법정상한을 더 제약하지 않음 — 법정상한 적용",
+        }

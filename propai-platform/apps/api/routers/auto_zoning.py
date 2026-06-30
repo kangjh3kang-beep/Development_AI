@@ -662,6 +662,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     반환: {features:[{pnu, address, area_sqm, zone_type, zone_type_2, geometry}],
            center:{lat,lon}, total_area_sqm}
     """
+    from datetime import datetime
+
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
     from apps.api.app.services.external_api.vworld_service import VWorldService
 
     # 입력 정규화: parcels 배열 우선, 없으면 단일(address/pnu)
@@ -672,6 +675,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         return {"features": [], "center": None, "total_area_sqm": 0}
 
     vworld = VWorldService()
+    building_registry = BuildingRegistryService()
+    current_year = datetime.now().year
+    enable_building_age = len(items) <= 40
 
     async def _resolve_one(it: dict) -> dict | None:
         """단일 필지의 경계·면적·용도지역을 조회해 feature dict를 만든다.
@@ -731,6 +737,8 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             li_area = float((li_res.get("properties") or {}).get("area") or 0)
         official_price_per_sqm = None
         jimok = land_use_situation = terrain = None
+        building_name = main_purpose = use_approval_date = None
+        built_year = building_age_years = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
@@ -743,6 +751,21 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             jimok = lc_res.get("land_category") or None             # 지목(대/전/답…)
             land_use_situation = lc_res.get("land_use_situation") or None  # 이용상황
             terrain = lc_res.get("terrain_form") or lc_res.get("terrain_height") or None  # 형상·지세
+        # 건축물 노후도: 건축물대장 표제부 사용승인일 기반. 키/무자료/대량은 None(가짜 생성 금지).
+        if enable_building_age:
+            try:
+                bldg = await building_registry.get_title_by_pnu(pnu)
+                if isinstance(bldg, dict):
+                    building_name = bldg.get("building_name") or None
+                    main_purpose = bldg.get("main_purpose") or None
+                    use_approval_date = str(bldg.get("use_approval_date") or "").strip() or None
+                    year_str = (use_approval_date or "")[:4]
+                    if year_str.isdigit():
+                        built_year = int(year_str)
+                        if 1800 <= built_year <= current_year:
+                            building_age_years = current_year - built_year
+            except Exception:  # noqa: BLE001
+                pass
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -787,6 +810,11 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "jimok": jimok,                          # 지목(다필지 종합분석)
             "land_use_situation": land_use_situation,  # 이용상황
             "terrain": terrain,                      # 형상·지세
+            "building_name": building_name,
+            "main_purpose": main_purpose,
+            "use_approval_date": use_approval_date,
+            "built_year": built_year,
+            "building_age_years": building_age_years,
             "geometry": geometry,
         }
 

@@ -6,15 +6,35 @@
 
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
+import {
+  DesignCenterEmptyState,
+  DesignCenterPageFrame,
+} from "@/components/design-center/DesignCenterPageFrame";
 import { DesignWorkspace } from "@/components/design/DesignWorkspace";
 import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
+import { defaultLocale, isValidLocale } from "@/i18n/config";
+import { useParams } from "next/navigation";
 
 export default function DesignStudioPage() {
   const projectId = useProjectContextStore((s) => s.projectId);
+  const params = useParams() as { locale?: string };
+  const locale = isValidLocale(params.locale || "") ? params.locale! : defaultLocale;
+
   return (
-    // 외곽 gap만 유지(p-1 제거) — 셸이 풀하이트 grid로 화면을 채우도록 함. ProjectSwitcher는 상단 고정.
-    <div className="flex flex-col gap-4">
-      <ProjectSwitcher />
+    <DesignCenterPageFrame
+      locale={locale}
+      activeId="design-studio"
+      title="AI 설계도면(CAD)"
+      description="부지 조건과 법규 검토를 기준으로 설계안 생성, CAD 도면, BIM 편집실을 한 흐름으로 연결합니다."
+      status="live"
+      statusLabel={projectId ? "프로젝트 연결" : "프로젝트 선택 필요"}
+      actions={<ProjectSwitcher />}
+      metrics={[
+        { label: "워크플로우", value: "통합 작업면", description: "조건 · 추천안 · 도면" },
+        { label: "주요 산출", value: "건축개요 Top-N", description: "도면·매스·근거" },
+        { label: "연동", value: projectId ? "활성" : "대기", description: "프로젝트 컨텍스트" },
+      ]}
+    >
       {/* 2차-B: design-studio 직접 진입 시에도 designData/siteAnalysis를 백엔드 스냅샷에서 복원한다.
           이 라우트는 projects/[id] 트리 밖이라 layout의 ProjectContextBinder가 마운트되지 않아,
           store에 projectId만 있고 designData가 null이면 CAD/BIM 패널이 "먼저 설계 생성" 게이트에
@@ -22,20 +42,16 @@ export default function DesignStudioPage() {
           (같은 projectId 재바인딩은 리셋하지 않으므로 무회귀). */}
       {projectId && <ProjectContextBinder projectId={projectId} />}
       {projectId ? (
-        // 단계별 워크스페이스 셸 — 부지·법규 → 설계생성·도면 → CAD·BIM 순차 진행.
-        //  한 페이지 세로 나열(정보 과부하)을 단계 분리로 해소하고, 무거운 CAD/BIM은 lazy 마운트.
+        // 통합 워크스페이스 셸 — 조건 확인 → 추천안 만들기 → 도면 편집을 한 화면 흐름으로 전환.
+        // 무거운 CAD/BIM은 사용자가 열 때 lazy 마운트해 성능을 보존한다.
         <DesignWorkspace projectId={projectId} />
       ) : (
-        <div className="cc-panel cc-bracketed p-10 text-center">
-          <i className="cc-bracket cc-bracket--tl" />
-          <i className="cc-bracket cc-bracket--tr" />
-          <i className="cc-bracket cc-bracket--bl" />
-          <i className="cc-bracket cc-bracket--br" />
-          <div className="cc-grid-bg opacity-40" />
-          <span className="relative z-10 cc-label text-[var(--text-tertiary)]">NO PROJECT LOADED</span>
-          <p className="relative z-10 mt-2 text-sm text-[var(--text-secondary)]">위에서 프로젝트를 선택하면 AI 자동설계가 시작됩니다. (부지분석 데이터가 자동 반영됩니다)</p>
-        </div>
+        <DesignCenterEmptyState
+          title="프로젝트를 선택하면 AI 자동설계가 시작됩니다."
+          description="상단 프로젝트 선택기에서 대상 프로젝트를 고르면 부지분석 스냅샷이 복원되고 설계 생성·도면·BIM 편집 흐름이 열립니다."
+          actionHref={`/${locale}/projects`}
+        />
       )}
-    </div>
+    </DesignCenterPageFrame>
   );
 }

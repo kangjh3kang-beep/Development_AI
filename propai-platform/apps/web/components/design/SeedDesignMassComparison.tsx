@@ -49,16 +49,19 @@ type SeedDesignResponse = {
   legal_max_mass: MassResult | null;
   regional_typical_mass: MassResult | null;
   mass_reference: MassReference | null;
+  applied_limit_source?: "site_analysis_effective_limits" | "engine_zone_defaults" | string;
   note?: string | null;
 };
 
 type Props = {
   address: string;
   landAreaSqm: number;
-  /** 한글 용도지역명 또는 코드 — zoningToCode로 엔진 코드 변환 */
+  /** 한글 용도지역명 또는 코드 — zoningToCode로 엔진 키 변환 */
   zoning: string;
   buildingUse: string;
   floorHeightM?: number;
+  effectiveFarPct?: number | null;
+  effectiveBcrPct?: number | null;
   /** 다른 주소의 잔류 분석 등으로 비활성화해야 할 때 */
   disabled?: boolean;
 };
@@ -185,6 +188,8 @@ export function SeedDesignMassComparison({
   zoning,
   buildingUse,
   floorHeightM,
+  effectiveFarPct,
+  effectiveBcrPct,
   disabled,
 }: Props) {
   const [loading, setLoading] = useState(false);
@@ -193,7 +198,7 @@ export function SeedDesignMassComparison({
 
   const zoneCode = useMemo(() => zoningToCode(zoning), [zoning]);
   const canFetch = !disabled && !!address && landAreaSqm > 0;
-  // 미지원 용도지역(엔진코드 부재) → 백엔드가 기본(2R) 기준으로 추정함을 정직 고지.
+  // 미지원/미인식 용도지역 → 백엔드가 기본값 기준으로 추정함을 정직 고지.
   const zoneFallback = !zoneCode && !!zoning;
 
   // 부지(주소/용도지역/면적) 전환 시 이전 결과를 비워 stale 표시 방지(다른 주소의 매스 잔류 차단).
@@ -212,9 +217,11 @@ export function SeedDesignMassComparison({
         land_area_sqm: landAreaSqm,
         building_use: buildingUse,
       };
-      // 한글→코드 변환 성공 시에만 전달(실패 시 백엔드 기본값에 위임 — 잘못된 한글 주입 방지).
+      // 한글→엔진 키 변환 성공 시에만 전달(실패 시 백엔드 기본값에 위임 — 잘못된 한글 주입 방지).
       if (zoneCode) body.zone_code = zoneCode;
       if (floorHeightM && floorHeightM > 0) body.floor_height_m = floorHeightM;
+      if (effectiveFarPct && effectiveFarPct > 0) body.effective_far_pct = effectiveFarPct;
+      if (effectiveBcrPct && effectiveBcrPct > 0) body.effective_bcr_pct = effectiveBcrPct;
       const res = await apiClient.post<SeedDesignResponse>("/mass-templates/seed-design", { body });
       setData(res);
     } catch (e) {
@@ -225,6 +232,7 @@ export function SeedDesignMassComparison({
   }
 
   const ref = data?.mass_reference ?? null;
+  const usesEffectiveLimits = data?.applied_limit_source === "site_analysis_effective_limits";
 
   return (
     <motion.div
@@ -262,7 +270,7 @@ export function SeedDesignMassComparison({
         </p>
       )}
 
-      {/* 미지원 용도지역 정직 고지(M1) — 엔진 코드가 없어 기본(제2종 일반주거) 기준으로 추정됨. */}
+      {/* 미지원 용도지역 정직 고지(M1) — 엔진 키가 없어 기본(제2종 일반주거) 기준으로 추정됨. */}
       {zoneFallback && (
         <p className="mb-3 inline-flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-500">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -281,8 +289,8 @@ export function SeedDesignMassComparison({
         <div className="space-y-4">
           <div className="flex flex-col gap-4 sm:flex-row">
             <MassCard
-              title="법정 최대"
-              badge="법정 한도까지(정북일조 단계후퇴)"
+              title="적용 한도 최대"
+              badge={usesEffectiveLimits ? "조례·계획 실효 한도 반영" : "법정/엔진 한도 기준"}
               icon={<Landmark className="size-4" aria-hidden />}
               accent="#34d399"
               mass={data.legal_max_mass}

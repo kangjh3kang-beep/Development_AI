@@ -1,51 +1,54 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import DashboardPage from "../page";
 
-// 대시보드 홈은 현재 사전(getDictionary) 없이 한국어 정적 카피를 직접 렌더하며,
-// 진행단계/KPI/프로젝트 데이터는 클라이언트 로더(useEffect+apiClient)가 비동기로 채운다.
-// 따라서 이 테스트는 서버 컴포넌트가 동기적으로 확정 렌더하는 핵심 진입 동선
-// (히어로 카피 + 실제 내비게이션 목적지)을 검증한다.
+vi.mock("@/components/onboarding/OnboardingWizard", () => ({
+  OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
+}));
+
+vi.mock("@/components/dashboard/DashboardProjectLoader", () => ({
+  DashboardProjectLoader: ({ locale }: { locale: string }) => (
+    <div data-testid="dashboard-project-loader">{locale}</div>
+  ),
+}));
+
+vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
+  PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
+}));
+
 describe("Dashboard home navigation", () => {
-  it("renders the hero entry links and real overview navigation destinations", async () => {
+  it("renders the result-generation control room entry links", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    // 히어로 헤드라인/서브카피 — 사용자가 처음 보는 핵심 가치제안.
+    expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", {
-        name: "개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.",
-      }),
+      screen.getByRole("heading", { name: "필요한 결과물을 고르면 입력부터 보고서까지 이어집니다" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("부동산 개발 분석")).toBeInTheDocument();
 
-    // 핵심 행동(accent) — 프로젝트 생성 진입 동선이 /en/projects/new 로 연결된다.
-    // "프로젝트 생성" 라벨은 히어로 + 빈상태 로더에 중복 등장하므로 href로 식별한다.
-    const allLinks = screen.getAllByRole("link");
-    const newProjectLinks = allLinks.filter(
-      (link) => link.getAttribute("href") === "/en/projects/new",
-    );
-    expect(newProjectLinks.length).toBeGreaterThan(0);
-
-    // 이용 가이드 진입 동선.
-    expect(allLinks.some((link) => link.getAttribute("href") === "/en/guide")).toBe(true);
+    expect(screen.getByRole("link", { name: /후보지 진단서 만들기/ })).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByRole("link", { name: "프로젝트 불러오기" })).toHaveAttribute("href", "/en/projects");
+    expect(screen.getByRole("link", { name: /전체 흐름 보기/ })).toHaveAttribute("href", "/en/guide");
   });
 
-  it("renders the active pipeline section and real card destinations", async () => {
+  it("wires creation products to their source workflows", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    // 활성 진행 단계 섹션 헤더(실시간 모니터링 진입점).
-    expect(screen.getByText("활성 진행 단계")).toBeInTheDocument();
+    expect(screen.getByText("무엇을 만들까요?")).toBeInTheDocument();
+    expect(screen.getByText("최종 산출물을 기준으로 선택합니다.")).toBeInTheDocument();
+    expect(screen.queryByText("기능명이 아니라 최종 산출물을 기준으로 선택합니다.")).not.toBeInTheDocument();
+    expect(screen.getAllByText("입력").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("결과").length).toBeGreaterThan(1);
 
-    // 섹션 우상단 "전체 보기" → 프로젝트 목록(/en/projects).
-    expect(screen.getByRole("link", { name: "전체 보기" })).toHaveAttribute(
-      "href",
-      "/en/projects",
-    );
-
-    // 사이드바 규제 동향 → 규제 분석(/en/regulations) 진입.
-    expect(screen.getByRole("link", { name: "규제 분석 열기 →" })).toHaveAttribute(
-      "href",
-      "/en/regulations",
-    );
+    expect(screen.getByText("후보지 진단서").closest("a")).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByText("사업성 검토서").closest("a")).toHaveAttribute("href", "/en/analytics/investment");
+    expect(screen.getByText("시장·분양 리포트").closest("a")).toHaveAttribute("href", "/en/market-insights");
+    expect(screen.getByText("인허가 체크리스트").closest("a")).toHaveAttribute("href", "/en/permits");
+    expect(screen.getByText("AI 설계 검토서").closest("a")).toHaveAttribute("href", "/en/design-audit");
+    expect(screen.queryByText("투자 의사결정 브리프")).not.toBeInTheDocument();
+    expect(screen.getByText("건축개요·CAD 계획도면").closest("a")).toHaveAttribute("href", "/en/design-studio");
+    expect(
+      screen.getByText("토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-project-loader")).toHaveTextContent("en");
   });
 });

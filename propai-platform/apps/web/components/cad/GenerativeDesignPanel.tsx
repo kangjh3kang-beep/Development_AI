@@ -7,6 +7,8 @@ import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/compo
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { getZoningList, zoningToCode } from "@/lib/kr-building-regulations";
+import { resolveBcrPct, resolveDominantZone, resolveFarPct } from "@/lib/zoning-ssot";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
 import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
 import {
@@ -40,15 +42,10 @@ import type {
  * (SSOT가 유일 출처 — 구세대 Konva 캔버스 스토어로 가던 죽은 경로는 제거됨)
  */
 
-const ZONE_OPTIONS = [
-  { code: "1R", label: "제1종일반주거" },
-  { code: "2R", label: "제2종일반주거" },
-  { code: "3R", label: "제3종일반주거" },
-  { code: "QR", label: "준주거" },
-  { code: "GC", label: "일반상업" },
-  { code: "NC", label: "근린상업" },
-  { code: "QI", label: "준공업" },
-];
+const ZONE_OPTIONS = getZoningList().map((z) => ({
+  code: zoningToCode(z.key) ?? z.key,
+  label: z.name,
+}));
 
 const UNIT_TYPE_OPTIONS = ["29A", "39A", "59A", "74A", "84A", "114A"];
 
@@ -322,21 +319,6 @@ function describeApiError(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-/** 컨텍스트 용도지역명(한글) → 로컬 엔진 단축코드(SSOT 우선 읽기). */
-function mapZoneToCode(zone?: string | null): string | null {
-  const s = (zone || "").toString();
-  if (!s) return null;
-  if (/제1종일반주거/.test(s)) return "1R";
-  if (/제2종일반주거/.test(s)) return "2R";
-  if (/제3종일반주거/.test(s)) return "3R";
-  if (/준주거/.test(s)) return "QR";
-  if (/일반상업/.test(s)) return "GC";
-  if (/근린상업/.test(s)) return "NC";
-  if (/준공업/.test(s)) return "QI";
-  if (/^(1R|2R|3R|GC|NC|QI|QR)$/.test(s)) return s;
-  return null;
-}
-
 const PRIORITY_OPTIONS: DesignIntent["priority"][] = ["yield", "balanced", "livability"];
 
 /**
@@ -365,7 +347,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   const ctxArea = effectiveLandAreaSqm(siteAnalysis);
-  const ctxZone = mapZoneToCode(siteAnalysis?.zoneCode);
+  const ctxZone = zoningToCode(resolveDominantZone(siteAnalysis) ?? siteAnalysis?.zoneCode);
+  const ctxEffectiveFarPct = resolveFarPct(siteAnalysis);
+  const ctxEffectiveBcrPct = resolveBcrPct(siteAnalysis);
   const ctxAddress = siteAnalysis?.address ?? null;  // §4-B 조례 조회용 대지 주소
 
   // ── 부지 컨텍스트 기반 폼 상태 ──
@@ -405,6 +389,17 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     }
   }, [ctxArea, ctxZone, editedArea, editedZone]);
 
+  const effectiveLimitBody = useMemo(() => {
+    const body: Record<string, number> = {};
+    if (ctxEffectiveFarPct != null && ctxEffectiveFarPct > 0) {
+      body.effective_far_pct = ctxEffectiveFarPct;
+    }
+    if (ctxEffectiveBcrPct != null && ctxEffectiveBcrPct > 0) {
+      body.effective_bcr_pct = ctxEffectiveBcrPct;
+    }
+    return body;
+  }, [ctxEffectiveFarPct, ctxEffectiveBcrPct]);
+
   // ── 자연어 파싱 ──
   const [intentText, setIntentText] = useState("");
   const [intent, setIntent] = useState<DesignIntent | null>(null);
@@ -413,6 +408,26 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   // ── 법정 한도(슬라이더 하드캡) ──
   const [limits, setLimits] = useState<LegalLimitsResponse | null>(null);
+  const bcrSliderMax = Math.min(
+    limits?.max_bcr_percent ?? 60,
+    ctxEffectiveBcrPct != null && ctxEffectiveBcrPct > 0 ? ctxEffectiveBcrPct : Number.POSITIVE_INFINITY,
+  );
+  const farSliderMax = Math.min(
+    limits?.max_far_percent ?? 250,
+    ctxEffectiveFarPct != null && ctxEffectiveFarPct > 0 ? ctxEffectiveFarPct : Number.POSITIVE_INFINITY,
+  );
+  const bcrCapLabel =
+    limits && ctxEffectiveBcrPct != null && ctxEffectiveBcrPct > 0 && ctxEffectiveBcrPct < limits.max_bcr_percent
+      ? `실효 건폐율 ≤${ctxEffectiveBcrPct}%`
+      : limits
+        ? `법정 건폐율 ≤${limits.max_bcr_percent}%`
+        : undefined;
+  const farCapLabel =
+    limits && ctxEffectiveFarPct != null && ctxEffectiveFarPct > 0 && ctxEffectiveFarPct < limits.max_far_percent
+      ? `실효 용적률 ≤${ctxEffectiveFarPct}%`
+      : limits
+        ? `법정 용적률 ≤${limits.max_far_percent}%`
+        : undefined;
 
   // ── 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) ──
   const [evaluation, setEvaluation] = useState<DesignEval | null>(null);
@@ -456,6 +471,11 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     };
   }, [zoneCode]);
 
+  useEffect(() => {
+    setBcr((v) => Math.min(v, bcrSliderMax));
+    setFar((v) => Math.min(v, farSliderMax));
+  }, [bcrSliderMax, farSliderMax]);
+
   const toggleUnitType = useCallback((type: string) => {
     setUnitTypes((prev) =>
       prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
@@ -476,6 +496,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           building_use: intent?.building_use ?? "공동주택",
           target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
           priority: "balanced",
+          ...effectiveLimitBody,
         },
       });
       setEvaluation(data);
@@ -493,7 +514,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } catch {
       /* 사례 없음/미설정 — 무시 */
     }
-  }, [siteArea, zoneCode, intent, unitTypes]);
+  }, [siteArea, zoneCode, intent, unitTypes, effectiveLimitBody]);
 
   // ── 자연어/음성 설계 편집(P6) — 현재 설계를 말로 수정 → 커널 재생성 → 2D/3D/BIM/QTO 전파 ──
   const [editText, setEditText] = useState("");
@@ -570,6 +591,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           building_use: intent?.building_use ?? "공동주택",
           target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
           priority: "balanced",
+          target_bcr_percent: bcr,
+          target_far_percent: far,
+          ...effectiveLimitBody,
         },
       });
       if (data.design_payload && data.summary) {
@@ -584,7 +608,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setEditing(false);
     }
-  }, [editText, siteArea, zoneCode, intent, unitTypes, applyDesign]);
+  }, [editText, siteArea, zoneCode, intent, unitTypes, bcr, far, effectiveLimitBody, applyDesign]);
 
   // 4) 단일 자동설계
   const handleSingle = useCallback(async () => {
@@ -602,6 +626,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           // 법규 슬라이더 의도값 — W-A 백엔드가 목표 BCR/FAR·우선순위로 수용(구버전은 무시).
           target_bcr_percent: bcr,
           target_far_percent: far,
+          ...effectiveLimitBody,
           priority,
           // §4-A③: 매스 형상(null=자동) — 백엔드가 형상별 결정론 매스로 재산출(구버전은 무시).
           massing_kind: massingKind,
@@ -620,7 +645,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences, useOrdinance, ctxAddress, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, effectiveLimitBody, priority, massingKind, useReferences, useOrdinance, ctxAddress, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -640,6 +665,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             // 법규 슬라이더 의도값 — W-A 백엔드가 목표 BCR/FAR·우선순위로 수용(구버전은 무시).
             target_bcr_percent: bcr,
             target_far_percent: far,
+            ...effectiveLimitBody,
             priority,
             // §4-A③: A 대안이 선택 형상을 따름(B=타워·C=ㄱ자 고정 다양화, 구버전은 무시).
             massing_kind: massingKind,
@@ -672,7 +698,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences, useOrdinance, ctxAddress]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, effectiveLimitBody, priority, massingKind, useReferences, useOrdinance, ctxAddress]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -889,7 +915,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             <h4 className="mb-1 text-sm font-black text-[var(--text-primary)]">법규 슬라이더</h4>
             <p className="mb-4 text-[11px] font-bold text-[var(--text-hint)]">
               {limits
-                ? `${zoneCode} 법정 한도 안에서만 조절됩니다`
+                ? `${zoneCode} 법정·실효 한도 안에서만 조절됩니다`
                 : "법정 한도를 불러오는 중…"}
             </p>
             <div className="flex flex-col gap-4">
@@ -898,20 +924,20 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 unit="%"
                 value={bcr}
                 min={10}
-                max={limits?.max_bcr_percent ?? 60}
+                max={bcrSliderMax}
                 step={1}
                 onChange={setBcr}
-                capLabel={limits ? `법정 건폐율 ≤${limits.max_bcr_percent}%` : undefined}
+                capLabel={bcrCapLabel}
               />
               <LegalSlider
                 label="용적률"
                 unit="%"
                 value={far}
                 min={50}
-                max={limits?.max_far_percent ?? 250}
+                max={farSliderMax}
                 step={10}
                 onChange={setFar}
-                capLabel={limits ? `법정 용적률 ≤${limits.max_far_percent}%` : undefined}
+                capLabel={farCapLabel}
               />
               <LegalSlider
                 label="목표 세대수"

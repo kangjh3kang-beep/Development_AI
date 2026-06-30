@@ -53,14 +53,72 @@ ZONE_LIMITS: dict[str, LegalLimits] = {
     "QI": LegalLimits(0.60, 4.00, 0.0, 1.0, 0.0),  # 준공업
     # W-A 교정: 준주거 건폐율 70% 이하(국토계획법 시행령 84조). 기존 0.60은 오기재.
     "QR": LegalLimits(0.70, 5.00, 0.0, 1.0, 0.0),  # 준주거
+    # ── 표준 한글 용도지역 21종(국토계획법 시행령 §84/§85 상한 기반) ──
+    # 기존 영문 축약코드(1R/2R/3R/GC/NC/QI/QR)는 하위호환을 위해 유지하고,
+    # 프론트/부지분석이 넘기는 정식 한글명은 여기서 직접 처리한다. 녹지지역의 4층 제한은
+    # 설계엔진의 height cap으로 근사(층고 3m 기준 12m)해 자연녹지 8~13층 같은 오산을 막는다.
+    "제1종전용주거지역": LegalLimits(0.50, 1.00, 10.0, 3.0, 4.0),
+    "제2종전용주거지역": LegalLimits(0.50, 1.50, 12.0, 2.0, 4.0),
+    "제1종일반주거지역": LegalLimits(0.60, 2.00, 20.0, 1.5, 4.0),
+    "제2종일반주거지역": LegalLimits(0.60, 2.00, 35.0, 1.0, 2.0),
+    "제3종일반주거지역": LegalLimits(0.50, 3.00, 50.0, 1.0, 2.0),
+    "준주거지역": LegalLimits(0.70, 5.00, 0.0, 1.0, 0.0),
+    "중심상업지역": LegalLimits(0.90, 15.00, 0.0, 0.0, 0.0),
+    "일반상업지역": LegalLimits(0.80, 13.00, 0.0, 0.0, 0.0),
+    "근린상업지역": LegalLimits(0.70, 9.00, 0.0, 0.5, 0.0),
+    "유통상업지역": LegalLimits(0.80, 11.00, 0.0, 0.5, 0.0),
+    "전용공업지역": LegalLimits(0.70, 3.00, 0.0, 1.0, 0.0),
+    "일반공업지역": LegalLimits(0.70, 3.50, 0.0, 1.0, 0.0),
+    "준공업지역": LegalLimits(0.70, 4.00, 0.0, 1.0, 0.0),
+    "보전녹지지역": LegalLimits(0.20, 0.80, 12.0, 1.0, 0.0),
+    "생산녹지지역": LegalLimits(0.20, 1.00, 12.0, 1.0, 0.0),
+    "자연녹지지역": LegalLimits(0.20, 1.00, 12.0, 1.0, 0.0),
+    "보전관리지역": LegalLimits(0.20, 0.80, 0.0, 1.0, 0.0),
+    "생산관리지역": LegalLimits(0.20, 0.80, 0.0, 1.0, 0.0),
+    "계획관리지역": LegalLimits(0.40, 1.00, 0.0, 1.0, 0.0),
+    "농림지역": LegalLimits(0.20, 0.80, 0.0, 1.0, 0.0),
+    "자연환경보전지역": LegalLimits(0.20, 0.80, 0.0, 1.0, 0.0),
 }
 
 _DEFAULT_LIMITS = LegalLimits(0.60, 2.50, 35.0, 1.0, 2.0)
 
 # 건축법 61조(일조 등의 확보를 위한 건축물의 높이 제한)은 전용·일반주거지역에만 적용.
-# 본 엔진 코드 체계에서 1R/2R/3R(일반주거)만 해당 — 준주거(QR)·상업(GC/NC)·공업(QI)은
-# 정북일조 사선제한 적용 대상이 아니다(W-A ① 교정).
-SUNLIGHT_ZONES: frozenset[str] = frozenset({"1R", "2R", "3R"})
+# 준주거(QR)·상업(GC/NC)·공업(QI)·녹지/관리 등은 정북일조 사선제한 적용 대상이 아니다(W-A ① 교정).
+SUNLIGHT_ZONES: frozenset[str] = frozenset({"1R", "2R", "3R", "제1종전용주거지역", "제2종전용주거지역"})
+
+_ZONE_ALIASES: dict[str, str] = {
+    "제1종일반주거지역": "1R",
+    "제2종일반주거지역": "2R",
+    "제3종일반주거지역": "3R",
+    "준주거지역": "QR",
+    "일반상업지역": "GC",
+    "근린상업지역": "NC",
+    "준공업지역": "QI",
+}
+
+
+def normalize_design_zone_key(zone_code: str | None) -> str:
+    """설계엔진 zone 입력을 ZONE_LIMITS 키로 정규화한다.
+
+    - 기존 축약코드(2R/GC 등)는 그대로 사용한다.
+    - 정식 한글명은 기존 축약코드가 있으면 그쪽으로 연결해 하위호환 수치를 보존한다.
+    - 축약코드가 없는 표준 용도지역(자연녹지·관리지역 등)은 한글 키 자체를 사용한다.
+    - 미인식 값은 원문 정규화 문자열을 반환해 get_legal_limits가 정직 경고를 낼 수 있게 한다.
+    """
+    cleaned = str(zone_code or "").replace(" ", "").strip()
+    if not cleaned:
+        return ""
+    if cleaned in ZONE_LIMITS:
+        return _ZONE_ALIASES.get(cleaned, cleaned)
+    for label, key in _ZONE_ALIASES.items():
+        stem = label.removesuffix("지역")
+        if cleaned == stem or label in cleaned or stem in cleaned:
+            return key
+    for key in ZONE_LIMITS:
+        stem = key.removesuffix("지역")
+        if cleaned == stem or key in cleaned or stem in cleaned:
+            return key
+    return cleaned
 
 
 # ── 건축물 용도별 상수 ──
@@ -275,10 +333,11 @@ class AutoDesignEngineService:
         ⚠️ 출력 키 statutory_max_*_percent는 본 기본값을 담으며(역사적 명명) 국가 상한과 다를 수 있다(제품 후속:
         명칭 정정·국가상한 default 채택 여부 검토). 출처(limits_source)를 정직 표기한다.
         """
-        limits = ZONE_LIMITS.get(zone_code)
+        zone_key = normalize_design_zone_key(zone_code)
+        limits = ZONE_LIMITS.get(zone_key)
         is_known = limits is not None
         if not is_known:
-            logger.warning("알 수 없는 용도지역 코드, 기본값 사용", zone_code=zone_code)
+            logger.warning("알 수 없는 용도지역 코드, 기본값 사용", zone_code=zone_code, normalized_zone_key=zone_key)
             limits = _DEFAULT_LIMITS
         return {
             "max_bcr_percent": round(limits.building_coverage_ratio * 100, 2),
@@ -288,6 +347,8 @@ class AutoDesignEngineService:
             "sunlight_hours": limits.sunlight_hours,
             # 정직 출처 표기 — 조례 미반영 법정상한, 미지정 코드는 기본값 폴백
             "limits_source": "statutory_default" if is_known else "fallback_default",
+            "zone_key": zone_key if is_known else None,
+            "input_zone_code": zone_code,
             "ordinance_applied": False,
             "warnings": ([] if is_known else [f"미지정 용도지역 코드 '{zone_code}' — 기본값 적용"]) + [
                 "지자체 조례·지구단위계획 가감 미반영(법정 상한 기준). 조례 실효 한도는 v2 수지엔진 참조.",
@@ -579,7 +640,8 @@ class AutoDesignEngineService:
         fh = site_input.floor_height_m
         north_step_profile: list[dict[str, float]] | None = None
         # W-A ①: 정북일조(건축법 61조)는 전용·일반주거지역만 적용 — QR/상업/공업 스킵
-        sunlight_zone = site_input.zone_code in SUNLIGHT_ZONES
+        design_zone_key = normalize_design_zone_key(site_input.zone_code)
+        sunlight_zone = design_zone_key in SUNLIGHT_ZONES
         max_height_by_sunlight: float | None = None
         binding_constraint = "far"
 

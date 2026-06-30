@@ -27,6 +27,7 @@ import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { BulkParcelBatchPanel } from "@/components/common/BulkParcelBatchPanel";
 import { PreCheckInstantPanel } from "./PreCheckInstantPanel";
+import { readSatongMapSelection, satongSelectionAddresses } from "./satong-map-selection";
 import type {
   InstantPreCheckRequest,
   InstantPreCheckResponse,
@@ -75,6 +76,20 @@ export function PreCheckWorkspace() {
   useEffect(() => {
     areaSourceRef.current = areaSource;
   }, [areaSource]);
+
+  useEffect(() => {
+    const stored = readSatongMapSelection();
+    if (!stored?.parcels.length) return;
+    const nextAddresses = satongSelectionAddresses(stored.parcels);
+    if (nextAddresses.length === 0) return;
+    setAddress(nextAddresses[0]);
+    setParcels(nextAddresses);
+    const totalArea = stored.parcels.reduce((sum, parcel) => sum + (parcel.areaSqm ?? 0), 0);
+    if (totalArea > 0 && areaSourceRef.current !== "user") {
+      setAreaSqm(totalArea);
+      setAreaSource("auto");
+    }
+  }, []);
 
   /** 주소검색 선택 → 주소·면적 자동입력 (사용자 수동값은 덮지 않음) */
   function handleAddressChange(entries: AddressEntry[]) {

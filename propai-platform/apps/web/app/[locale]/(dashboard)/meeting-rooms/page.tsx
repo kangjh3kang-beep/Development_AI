@@ -1,6 +1,6 @@
 import { isValidLocale } from "@/i18n/config";
 import { MeetingRoomsListClient } from "@/components/collaboration/MeetingRoomsListClient";
-import { VisionBanner } from "@/components/common/VisionBanner";
+import { DesignCenterPageFrame } from "@/components/design-center/DesignCenterPageFrame";
 
 type Props = {
   params: Promise<{ locale: string }>;
@@ -13,16 +13,20 @@ export default async function MeetingRoomsPage({ params }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-8 min-h-screen pb-20">
-      <VisionBanner variant="meeting" />
-      <div>
-        <h1 className="text-2xl font-black text-[var(--text-primary)]">프로젝트 회의방</h1>
-        <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">
-          프로젝트를 선택해 회의방에 입장합니다 — 팀·협력업체 협업, 외부 협력업체(교통·환경·토목 등) 심의
-          초대를 관리합니다. 자료교환·화상회의·심의 검증은 후속 단계에서 확장됩니다.
-        </p>
-      </div>
+    <DesignCenterPageFrame
+      locale={locale}
+      activeId="meeting-rooms"
+      title="프로젝트 회의방"
+      description="프로젝트별 회의방에서 팀·협력업체 협업과 심의 검증 초대를 한 곳에서 관리합니다."
+      status="ready"
+      statusLabel="협업 허브"
+      metrics={[
+        { label: "범위", value: "프로젝트별", description: "회의방 입장" },
+        { label: "협력자", value: "외부 초대", description: "교통 · 환경 · 토목" },
+        { label: "확장", value: "자료·화상", description: "후속 단계" },
+      ]}
+    >
       <MeetingRoomsListClient locale={locale} />
-    </div>
+    </DesignCenterPageFrame>
   );
 }

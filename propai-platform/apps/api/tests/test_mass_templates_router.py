@@ -252,8 +252,15 @@ def test_seed_design_with_mass_reference(monkeypatch):
     calls = []
 
     def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
-                      target_far=None, target_bcr=None, target_floors=None, daylight_step=True):
-        calls.append({"target_far": target_far, "target_bcr": target_bcr, "target_floors": target_floors})
+                      target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      target_floors=None, daylight_step=True):
+        calls.append({
+            "target_far": target_far,
+            "target_bcr": target_bcr,
+            "ordinance_far": ordinance_far,
+            "ordinance_bcr": ordinance_bcr,
+            "target_floors": target_floors,
+        })
         return {"num_floors": target_floors or (5 if target_far else 30),
                 "far_pct": target_far or 250.0, "bcr_pct": target_bcr or 50.0}
 
@@ -281,6 +288,43 @@ def test_seed_design_with_mass_reference(monkeypatch):
     assert calls[1]["target_far"] == 89.2 and calls[1]["target_bcr"] == 16.8
     assert calls[1]["target_floors"] == 5   # ★실측 median_floors(5.0)→round→target_floors 시드 전달
     assert body["regional_typical_mass"]["num_floors"] == 5
+
+
+def test_seed_design_applies_effective_ordinance_limits(monkeypatch):
+    """부지분석 SSOT 실효 한도(조례·계획 반영)가 seed-design 매스 계산에 전달된다."""
+    calls = []
+
+    def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
+                      target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      target_floors=None, daylight_step=True):
+        calls.append({
+            "target_far": target_far,
+            "target_bcr": target_bcr,
+            "ordinance_far": ordinance_far,
+            "ordinance_bcr": ordinance_bcr,
+        })
+        return {"num_floors": 4, "far_pct": ordinance_far or 100.0, "bcr_pct": ordinance_bcr or 20.0}
+
+    monkeypatch.setattr(mt, "_compute_mass", _stub_compute)
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return {"region": region, "building_type": "공동주택", "sample_count": 12,
+                "median_bcr_pct": 18.0, "median_far_pct": 70.0, "median_floors": 4.0,
+                "source": "mass_backbone(building_registry)"}
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "서울특별시 강남구 역삼동 1", "land_area_sqm": 1000,
+                          "zone_code": "자연녹지지역", "building_use": "공동주택",
+                          "effective_far_pct": 50, "effective_bcr_pct": 20})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["applied_limit_source"] == "site_analysis_effective_limits"
+    assert calls[0]["ordinance_far"] == 50 and calls[0]["ordinance_bcr"] == 20
+    assert calls[1]["ordinance_far"] == 50 and calls[1]["ordinance_bcr"] == 20
 
 
 def test_seed_design_no_mass_reference_graceful(monkeypatch):

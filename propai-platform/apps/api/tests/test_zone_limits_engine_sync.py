@@ -95,6 +95,33 @@ def test_auto_design_defaults_within_national_ceiling():
     assert not violations, "auto_design 설계 기본값이 국가 시행령 상한 초과(위법 설계 위험):\n" + "\n".join(violations)
 
 
+def test_auto_design_covers_standard_korean_zone_labels():
+    """auto_design 설계엔진이 표준 한글 용도지역 21종 입력을 직접 인식한다.
+
+    1R/2R 같은 하위호환 축약코드가 있는 지역은 축약코드로 정규화해도 허용한다. 다만 자연녹지·관리지역처럼
+    축약코드가 없는 표준 지역은 한글 라벨 자체로 처리되어 기본(2R) 폴백 경고가 뜨면 안 된다.
+    """
+    from app.services.cad.auto_design_engine import ZONE_LIMITS as DESIGN, normalize_design_zone_key
+
+    fix = _fixture_zones()
+    missing = []
+    violations = []
+    for zone, e in fix.items():
+        key = normalize_design_zone_key(zone)
+        d = DESIGN.get(key)
+        if d is None:
+            missing.append(f"{zone}->{key}")
+            continue
+        bcr_pct = round(d.building_coverage_ratio * 100, 2)
+        far_pct = round(d.floor_area_ratio * 100, 2)
+        if bcr_pct > e.get("bcr_pct", 0):
+            violations.append(f"{zone}.bcr {bcr_pct} > 국가상한 {e.get('bcr_pct')}")
+        if far_pct > e.get("far_pct", 0):
+            violations.append(f"{zone}.far {far_pct} > 국가상한 {e.get('far_pct')}")
+    assert not missing, "auto_design 표준 한글 용도지역 미인식:\n" + "\n".join(missing)
+    assert not violations, "auto_design 표준 한글 용도지역 한도 초과:\n" + "\n".join(violations)
+
+
 def test_fixture_matches_live_engine_data():
     """(2단) 엔진 워크트리가 있으면 커밋 fixture가 실 national_zone_limits.json과 비트 일치 — fixture stale 시 RED
     (재생성 강제). 엔진 미체크아웃 시 명시 skip(무음 green 금지)."""

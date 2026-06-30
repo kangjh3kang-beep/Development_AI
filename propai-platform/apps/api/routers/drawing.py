@@ -137,6 +137,18 @@ class DesignAlternativesRequest(BaseModel):
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
+    effective_far_pct: Optional[float] = Field(
+        None, gt=0, description="부지분석/통합분석 실효 용적률(%) — min(법정, 실효, 목표) 적용",
+    )
+    effective_bcr_pct: Optional[float] = Field(
+        None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%) — min(법정, 실효, 목표) 적용",
+    )
+    ordinance_far_percent: Optional[float] = Field(
+        None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
+    )
+    ordinance_bcr_percent: Optional[float] = Field(
+        None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
+    )
     # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
     # A 대안이 이 값을 따르고(B=tower·C=lshape는 다양화 고정), 미정의 값은 엔진이 auto로 폴백.
     massing_kind: Optional[str] = Field(
@@ -179,6 +191,18 @@ class AutoDesignRequest(BaseModel):
     )
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    effective_far_pct: Optional[float] = Field(
+        None, gt=0, description="부지분석/통합분석 실효 용적률(%) — min(법정, 실효, 목표) 적용",
+    )
+    effective_bcr_pct: Optional[float] = Field(
+        None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%) — min(법정, 실효, 목표) 적용",
+    )
+    ordinance_far_percent: Optional[float] = Field(
+        None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
+    )
+    ordinance_bcr_percent: Optional[float] = Field(
+        None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
     )
     # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트로 매스 재산출, 미정의 값은 엔진이 auto로 폴백.
@@ -250,6 +274,23 @@ def _clamped_targets(
     return far, bcr
 
 
+def _direct_effective_limits(
+    *,
+    effective_far_pct: Optional[float] = None,
+    effective_bcr_pct: Optional[float] = None,
+    ordinance_far_percent: Optional[float] = None,
+    ordinance_bcr_percent: Optional[float] = None,
+) -> tuple[Optional[float], Optional[float]]:
+    """요청에 직접 포함된 실효/조례 한도를 SiteInput ordinance_*로 변환한다.
+
+    설계 커널은 이미 min(법정, ordinance_*, target_*)를 적용한다. 따라서 부지분석 SSOT의
+    실효 한도는 같은 경로에 태워 법정 초과 상향 없이 제약으로만 반영한다.
+    """
+    far = effective_far_pct if effective_far_pct and effective_far_pct > 0 else ordinance_far_percent
+    bcr = effective_bcr_pct if effective_bcr_pct and effective_bcr_pct > 0 else ordinance_bcr_percent
+    return far, bcr
+
+
 async def _reference_hint(
     use_references: bool,
     *,
@@ -293,8 +334,17 @@ def _reference_response_block(ref_result: Optional[dict]) -> Optional[dict]:
 def _zone_type_for_ordinance(zone_code: str) -> Optional[str]:
     """엔진 용도지역 코드(2R 등) → OrdinanceService 한글 zone_type(제2종일반주거지역).
 
-    design_spec.ZONE_LABELS(코드→한글) + '지역' 접미사. 미지정 코드는 None(가짜 매핑 금지).
+    한글 용도지역명이 이미 들어오면 그대로 표준명으로 정규화한다. 미지정 코드는
+    None(가짜 매핑 금지).
     """
+    try:
+        from app.services.zoning.legal_zone_limits import normalize_zone_name
+
+        normalized = normalize_zone_name(zone_code)
+        if normalized:
+            return normalized
+    except ImportError:
+        pass
     try:
         from app.services.cad.design_spec import ZONE_LABELS
     except ImportError:
@@ -366,9 +416,36 @@ def _apply_ordinance(site_input, ord_result: Optional[dict]) -> None:
     if not ord_result:
         return
     if ord_result.get("ordinance_bcr_percent"):
-        site_input.ordinance_bcr_percent = ord_result["ordinance_bcr_percent"]
+        existing = getattr(site_input, "ordinance_bcr_percent", None)
+        incoming = ord_result["ordinance_bcr_percent"]
+        site_input.ordinance_bcr_percent = min(existing, incoming) if existing else incoming
     if ord_result.get("ordinance_far_percent"):
-        site_input.ordinance_far_percent = ord_result["ordinance_far_percent"]
+        existing = getattr(site_input, "ordinance_far_percent", None)
+        incoming = ord_result["ordinance_far_percent"]
+        site_input.ordinance_far_percent = min(existing, incoming) if existing else incoming
+
+
+def _apply_direct_effective_limits(
+    site_input,
+    *,
+    effective_far_pct: Optional[float] = None,
+    effective_bcr_pct: Optional[float] = None,
+    ordinance_far_percent: Optional[float] = None,
+    ordinance_bcr_percent: Optional[float] = None,
+) -> None:
+    """부지분석에서 이미 확보한 실효 한도를 조례 조회 없이 설계 커널에 직접 주입한다."""
+    far, bcr = _direct_effective_limits(
+        effective_far_pct=effective_far_pct,
+        effective_bcr_pct=effective_bcr_pct,
+        ordinance_far_percent=ordinance_far_percent,
+        ordinance_bcr_percent=ordinance_bcr_percent,
+    )
+    if far is not None and far > 0:
+        existing = getattr(site_input, "ordinance_far_percent", None)
+        site_input.ordinance_far_percent = min(existing, far) if existing else far
+    if bcr is not None and bcr > 0:
+        existing = getattr(site_input, "ordinance_bcr_percent", None)
+        site_input.ordinance_bcr_percent = min(existing, bcr) if existing else bcr
 
 
 # ── 엔드포인트 ──
@@ -463,7 +540,7 @@ async def export_dxf(req: ExportDxfRequest):
                 unit_width_m=req.unit_width_m,
                 corridor_width_m=req.corridor_width_m,
             )
-    except ImportError as e:
+    except ImportError:
         raise HTTPException(status_code=501, detail="DXF 내보내기 기능을 사용할 수 없습니다 (ezdxf 미설치)")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"설계 데이터 오류: {e}")
@@ -722,6 +799,13 @@ async def design_alternatives(req: DesignAlternativesRequest):
         target_bcr_percent=target_bcr,
         massing_kind=req.massing_kind,  # §4-A①: A 대안이 따름(B=tower·C=lshape 고정 다양화)
     )
+    _apply_direct_effective_limits(
+        site_input,
+        effective_far_pct=req.effective_far_pct,
+        effective_bcr_pct=req.effective_bcr_pct,
+        ordinance_far_percent=req.ordinance_far_percent,
+        ordinance_bcr_percent=req.ordinance_bcr_percent,
+    )
     # §4-B: 참조 비례는 대안 A(입력 형상)만 적용 — B(tower)·C(lshape)는 명시 형상이 우선.
     ref_result = await _reference_hint(
         req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
@@ -799,6 +883,13 @@ async def auto_design(req: AutoDesignRequest):
         target_bcr_percent=target_bcr,
         massing_kind=req.massing_kind,  # §4-A①: 형상별 결정론 매스 변형(None=auto, 하위호환)
     )
+    _apply_direct_effective_limits(
+        site_input,
+        effective_far_pct=req.effective_far_pct,
+        effective_bcr_pct=req.effective_bcr_pct,
+        ordinance_far_percent=req.ordinance_far_percent,
+        ordinance_bcr_percent=req.ordinance_bcr_percent,
+    )
     # §4-B: use_references=True면 유사 사례 기하 종횡비를 매스에 주입(명시 형상이 우선).
     ref_result = await _reference_hint(
         req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
@@ -840,6 +931,24 @@ class DesignOperateRequest(BaseModel):
     target_unit_types: list[str] = Field(default=["84A"])
     corridor_width_m: Optional[float] = Field(None)
     priority: str = Field("balanced")
+    target_far_percent: Optional[float] = Field(
+        None, gt=0, description="목표 용적률(%) — 법정/실효 한도와 함께 min 적용",
+    )
+    target_bcr_percent: Optional[float] = Field(
+        None, gt=0, le=100, description="목표 건폐율(%) — 법정/실효 한도와 함께 min 적용",
+    )
+    effective_far_pct: Optional[float] = Field(
+        None, gt=0, description="부지분석/통합분석 실효 용적률(%)",
+    )
+    effective_bcr_pct: Optional[float] = Field(
+        None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%)",
+    )
+    ordinance_far_percent: Optional[float] = Field(
+        None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
+    )
+    ordinance_bcr_percent: Optional[float] = Field(
+        None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
+    )
     setback_m: dict[str, float] = Field(
         default={"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
     )
@@ -865,6 +974,12 @@ async def design_operate(req: DesignOperateRequest):
         target_unit_types=req.target_unit_types or ["84A"],
         corridor_width_m=req.corridor_width_m,
         priority=req.priority,
+        target_far_percent=req.target_far_percent,
+        target_bcr_percent=req.target_bcr_percent,
+        effective_far_percent=req.effective_far_pct,
+        effective_bcr_percent=req.effective_bcr_pct,
+        ordinance_far_percent=req.ordinance_far_percent,
+        ordinance_bcr_percent=req.ordinance_bcr_percent,
         setback_m=Setback(
             north=sb.get("north", 3.0), south=sb.get("south", 2.0),
             east=sb.get("east", 1.5), west=sb.get("west", 1.5),

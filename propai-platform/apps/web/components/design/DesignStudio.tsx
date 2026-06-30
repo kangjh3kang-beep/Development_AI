@@ -11,7 +11,7 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
 import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
-import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
+import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
@@ -34,6 +34,8 @@ const EASY: Record<string, string> = {
   매싱: "건물 덩어리의 배치 모양(판상형=일자, 타워형=고층 1동 등).",
   일조: "겨울에도 햇빛이 드는지(정북일조)·그림자 길이. 인접 대지·민원과 직결.",
 };
+
+const ZONING_OPTIONS = getZoningList();
 
 type DesignResult = {
   buildingCoverage?: { value: number; max: number; unit: string };
@@ -553,7 +555,19 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         { name: "ㄱ자형", description: `${recFloors}층, 소음차폐 배치`, efficiency: 75, geom: buildMassingGeom("lshape", footprintFor(recFloors), siteSide, recFloors) },
       ],
     };
-  }, [form.landArea, form.floorHeight, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteAnalysis?.effectiveBcrPct, siteMatch]);
+  }, [
+    form.landArea,
+    form.floorHeight,
+    effectiveZoning,
+    form.buildingUse,
+    siteAnalysis?.integratedFarEffPct,
+    siteAnalysis?.integratedBcrEffPct,
+    siteAnalysis?.effectiveFarPct,
+    siteAnalysis?.effectiveBcrPct,
+    siteAnalysis?.nationalFarPct,
+    siteAnalysis?.nationalBcrPct,
+    siteMatch,
+  ]);
 
   const handleAIAnalyze = () => {
     mutate({ domain: "design", context: { landArea: `${form.landArea}㎡`, zoningDistrict: form.zoning, buildingUse: form.buildingUse, projectId } });
@@ -650,6 +664,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
+  const seedEffectiveFarPct =
+    siteMatch !== "mismatch"
+      ? (siteAnalysis?.integratedFarEffPct ?? siteAnalysis?.effectiveFarPct ?? siteAnalysis?.ordinance?.effectiveFar ?? null)
+      : null;
+  const seedEffectiveBcrPct =
+    siteMatch !== "mismatch"
+      ? (siteAnalysis?.integratedBcrEffPct ?? siteAnalysis?.effectiveBcrPct ?? siteAnalysis?.ordinance?.effectiveBcr ?? null)
+      : null;
 
   // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.
   // BIM(ProjectBimWorkspaceClient)이 designData.totalGfaSqm을 쓰도록 하여
@@ -739,7 +761,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       <label className="cc-label mb-2 block whitespace-nowrap">용도지역</label>
       <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setUserEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
         className="w-full min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
-        {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
+        {ZONING_OPTIONS.map((z) => <option key={z.key} value={z.key}>{z.name}</option>)}
       </select>
     </div>
   );
@@ -921,6 +943,8 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           zoning={effectiveZoning}
           buildingUse={form.buildingUse}
           floorHeightM={Number(form.floorHeight) || 3}
+          effectiveFarPct={seedEffectiveFarPct}
+          effectiveBcrPct={seedEffectiveBcrPct}
           disabled={siteMatch === "mismatch"}
         />
       )}

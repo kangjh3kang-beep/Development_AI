@@ -9,6 +9,10 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
+import {
+  DesignCenterEmptyState,
+  DesignCenterPageFrame,
+} from "@/components/design-center/DesignCenterPageFrame";
 import { QtoBreakdown } from "@/components/cost/QtoBreakdown";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -35,19 +39,20 @@ export default function BimStudioPage() {
   const loc: Locale = isValidLocale(locale || "") ? (locale as Locale) : "ko";
 
   return (
-    <div className="grid gap-6 p-1">
-      <div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="cc-meta">BIM · QTO STUDIO</span>
-          <span className="cc-chip-data">5D · IFC4</span>
-          <span className="cc-live"><i />LIVE</span>
-        </div>
-        <h1 className="mt-2 text-2xl font-black text-[var(--text-primary)]">BIM · 적산</h1>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          3D BIM 모델 + 물량산출(QTO) 기반 5D 적산 — 모델에서 추출한 물량을 공사비 산정에 직접 연결합니다.
-        </p>
-      </div>
-      <ProjectSwitcher />
+    <DesignCenterPageFrame
+      locale={loc}
+      activeId="bim-studio"
+      title="3D 모델·공사물량"
+      description="3D BIM 모델과 물량산출(QTO)을 5D 적산으로 연결해 설계 결과를 공사비 판단까지 이어갑니다."
+      status="live"
+      statusLabel={projectId ? "모델 작업 가능" : "프로젝트 선택 필요"}
+      actions={<ProjectSwitcher />}
+      metrics={[
+        { label: "모델", value: "IFC4", description: "3D BIM viewer" },
+        { label: "적산", value: "QTO · 5D", description: "부위별 물량" },
+        { label: "연동", value: projectId ? "활성" : "대기", description: "프로젝트 컨텍스트" },
+      ]}
+    >
       {projectId ? (
         <div className="grid grid-cols-1 gap-6 min-w-0">
           <ProjectBimWorkspaceClient locale={loc} projectId={projectId} />
@@ -71,16 +76,12 @@ export default function BimStudioPage() {
           </section>
         </div>
       ) : (
-        <div className="cc-panel cc-bracketed p-10 text-center">
-          <i className="cc-bracket cc-bracket--tl" />
-          <i className="cc-bracket cc-bracket--tr" />
-          <i className="cc-bracket cc-bracket--bl" />
-          <i className="cc-bracket cc-bracket--br" />
-          <div className="cc-grid-bg opacity-40" />
-          <span className="relative z-10 cc-label text-[var(--text-tertiary)]">NO PROJECT LOADED</span>
-          <p className="relative z-10 mt-2 text-sm text-[var(--text-secondary)]">위에서 프로젝트를 선택하면 BIM 모델과 적산이 로드됩니다.</p>
-        </div>
+        <DesignCenterEmptyState
+          title="프로젝트를 선택하면 BIM 모델과 적산이 로드됩니다."
+          description="상단 프로젝트 선택기에서 대상 프로젝트를 고르면 3D 뷰어, QTO, 공사비 리스크 패널이 같은 화면에서 열립니다."
+          actionHref={`/${loc}/projects`}
+        />
       )}
-    </div>
+    </DesignCenterPageFrame>
   );
 }

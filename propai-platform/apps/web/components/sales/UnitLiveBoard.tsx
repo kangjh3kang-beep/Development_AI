@@ -86,7 +86,7 @@ type Toast = { tone: "ok" | "warn" | "err"; text: string };
 const COLOR: Record<string, string> = {
   AVAILABLE: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25",
   HOLD: "bg-amber-500/15 border-amber-500/40 text-amber-300",
-  HOLD_ME: "bg-[var(--accent-strong)]/25 border-[var(--accent-strong)] text-[var(--text-primary)] ring-2 ring-[var(--accent-strong)]",
+  HOLD_ME: "bg-[var(--accent-strong)] border-[var(--accent-strong)] text-white ring-2 ring-[var(--accent-strong)]",
   CONTRACTED: "bg-rose-500/15 border-rose-500/40 text-rose-300",
 };
 const LABELS: Record<string, string> = {

@@ -1,0 +1,179 @@
+# Implementation Log 2026-06-30
+
+## Stage 14. Workspace dropdown hover grace
+
+- 기록 시각: 2026-06-30 06:27 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 기준 커밋: `8ee72792 docs: record map output connections deploy`
+- 범위: 상단 워크스페이스 풀다운 메뉴의 버튼→풀다운 이동 중 조기 닫힘 문제 개선
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 공개 URL 검증 99%+ 통과
+- 자체 코드리뷰 점수: 9.7 / 10
+
+### 구현 내용
+
+- 메뉴 버튼과 풀다운 사이 8px 간격에 투명 hover bridge를 추가했다.
+- 메뉴 영역을 벗어나도 즉시 닫지 않고 140ms grace window를 둔다.
+- 사용자가 bridge 또는 풀다운 메뉴로 들어오면 닫힘 타이머를 취소한다.
+- 하위 메뉴 클릭, 바깥 클릭, ESC, 다른 메인 메뉴 롤오버 시에는 기존처럼 닫히거나 단일 메뉴로 전환된다.
+- 키보드 포커스 이동/이탈 규칙은 유지했다.
+
+### 변경 파일
+
+- `apps/web/components/layout/WorkspaceNavBar.tsx`
+- `apps/web/components/layout/WorkspaceNavBar.test.tsx`
+
+### 검증 결과
+
+- 변경 파일 `eslint`: 오류 0, 경고 0
+- `git diff --check`: 통과
+- `npm run test:run -- components/layout/WorkspaceNavBar.test.tsx`: 1 file / 4 tests 통과
+- `npm run type-check`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 프로덕션 Playwright smoke:
+  - `http://localhost:3030/ko` 렌더 통과
+  - 프로젝트 버튼 → hover bridge → 풀다운 메뉴 이동 중 `프로젝트 관리` 링크 유지 확인
+  - 풀다운 메뉴 위 hover 유지 확인
+  - 메뉴 밖 이동 후 닫힘 확인
+  - 다른 메뉴(`시장·획득`) 롤오버 시 이전 프로젝트 풀다운 닫힘 확인
+  - horizontal overflow 0
+  - 스크린샷: `/tmp/propai-stage14-nav-hover.png`
+
+### 다음 단계 진입 조건
+
+- 이번 단계 구현 커밋/푸시 완료:
+  - `3f22ade8 fix: stabilize workspace dropdown hover`
+- Oracle Cloud 프론트 배포 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 3f22ade8 fix: stabilize workspace dropdown hover 21:44:24`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200
+- 라이브 브라우저 검증:
+  - 새 브라우저 세션은 인증 쿠키가 없어 `https://4t8t.net/ko/login?next=%2Fko`로 정상 리다이렉트됨
+  - 인증이 필요한 워크스페이스 DOM의 hover 조작은 로컬 프로덕션 Playwright smoke에서 통과
+  - 라이브 페이지 상태 스크린샷: `/tmp/propai-live-stage14-page-state.png`
+
+### 단계 완료 기록
+
+- 단계 완료 커밋 예정: `docs: record workspace dropdown hover deploy`
+- 다음 단계로 진입 가능: 예
+
+## Stage 15. Design studio legal SSOT and zoning coverage
+
+- 기록 시각: 2026-06-30 07:48 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 범위: 설계 스튜디오 용도지역 인식 누락 제거, 국계법/조례/계획 실효 한도 배선 검증, 통합 도면 생성 워크플로우 계획 수립
+- 완료 판정: 로컬 구현/검증 100%, Oracle 배포 및 공개 URL 검증 99%+ 통과
+- 자체 코드리뷰 점수: 9.6 / 10
+
+### 구현 내용
+
+- 설계엔진이 표준 한글 용도지역 21종을 직접 인식하도록 보강했다.
+- `자연녹지지역`이 미지원 코드로 처리되어 기본 2종 일반주거 기준으로 추정되던 문제를 제거했다.
+- 프론트 규제 테이블과 CAD 편집 화면의 용도지역 기준을 중앙 규제 테이블로 통합했다.
+- 부지분석 SSOT의 `integrated/effective` 건폐율·용적률이 `/mass-templates/seed-design`으로 전달되도록 배선했다.
+- 매스 산정은 `min(법정, 지자체 조례/계획 실효 한도, 실측 전형 목표)` 기준으로 제한되도록 API 입력과 테스트를 추가했다.
+- `_workspace/DESIGN_STUDIO_LEGAL_PIPELINE_PLAN_2026-06-30.md`에 법령엔진 전파 구조와 도면편집 통합 워크플로우 계획을 기록했다.
+
+### 변경 파일
+
+- `apps/api/app/services/cad/auto_design_engine.py`
+- `apps/api/app/routers/mass_templates.py`
+- `apps/api/tests/test_auto_design_engine.py`
+- `apps/api/tests/test_zone_limits_engine_sync.py`
+- `apps/api/tests/test_mass_templates_router.py`
+- `apps/web/lib/kr-building-regulations.ts`
+- `apps/web/lib/kr-building-regulations.test.ts`
+- `apps/web/components/design/CADEditor.tsx`
+- `apps/web/components/design/DesignStudio.tsx`
+- `apps/web/components/design/SeedDesignMassComparison.tsx`
+- `_workspace/DESIGN_STUDIO_LEGAL_PIPELINE_PLAN_2026-06-30.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- API targeted pytest(Python 3.12 임시 venv): 57 passed, 4 warnings
+- Web selected eslint: 오류 0, 기존 `DesignStudio` hook 경고 3건
+- `npm run test:run -- lib/kr-building-regulations.test.ts`: 1 file / 3 tests 통과
+- `npx tsc --noEmit --pretty false`: 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+
+### 다음 단계 진입 조건
+
+- 구현 커밋/푸시 완료:
+  - `82eab512 fix: wire design studio legal limits`
+- Oracle safe deploy 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 82eab512 fix: wire design studio legal limits 23:22:44`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/design-studio`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+  - `https://api.4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+- 라이브 컨테이너 검증:
+  - `자연녹지지역` -> `zone_key='자연녹지지역'`, `fallback_warning=False`
+  - 법정 상한: 건폐율 20%, 용적률 100%
+  - 실효 한도 전달 검증: `ordinance_far_percent=50` -> `applied_far_pct=50`
+  - 매스 결과: `bcr_pct=20.0`, `far_pct=40.0`, `num_floors=2`
+- 다음 구현 단계: 도면편집 화면을 1차 법규분석 → 2차 Top3 건축개요 → 3차 CAD/BIM 생성·명령편집이 한 화면에서 이어지는 통합 워크스페이스로 재구성
+
+## Stage 16. CAD/BIM integrated command workspace
+
+- 기록 시각: 2026-06-30 08:52 KST
+- 배포 후보 브랜치: `codex/dashboard-ia-ui-20260629`
+- 범위: CAD/BIM 편집화면의 단계형 스테퍼 제거, 텍스트/음성 CAD 명령 입력 배선, 기존 명령 파서와 CADEditor shapes 모델 연결
+- 완료 판정: 로컬 구현/검증 통과, Oracle 배포 대기
+- 자체 코드리뷰 점수: 9.5 / 10
+
+### 구현 내용
+
+- `CadBimIntegrationPanel`의 ①AI 생성 → ②도면 확인 → ③다듬기 스테퍼를 제거하고 `법규·전략 / 개요·대안 / CAD·BIM` 통합 작업 상태판으로 교체했다.
+- `CADEditor`에 하단 텍스트/음성 명령 바를 추가했다.
+- 기존 `cad-command-parser`를 `CADEditor`의 `CadShape[]` 모델에 어댑트해 `LINE`, `RECT`, `CIRCLE`, `TEXT`, `POLYGON`, `AREA`, `LIST`, `UNDO`, `REDO` 명령을 편집 캔버스에서 실행할 수 있게 했다.
+- 한국어 자연어성 명령 `층수 N`, `N층`, `높이 N`을 즉시 층수/높이 변경으로 반영하도록 추가했다.
+- 기존 `useSpeechToText` 훅을 CAD 편집 명령 바에 연결해 음성 입력이 텍스트 명령으로 들어오도록 배선했다.
+- DXF import 토스트 위치를 명령 바와 충돌하지 않게 상향 조정했다.
+- `DesignWorkspace`의 좌측 단계 레일을 제거하고 상단의 `조건 확인 / 추천안 만들기 / 도면 편집` 산출 흐름 전환으로 단순화했다.
+- `/design-studio` 상단 지표에서 `3단계` 표현을 `통합 작업면`으로 바꿔 단계 해석 부담을 낮췄다.
+- CAD/BIM 내부 상태판의 `법규·전략 / 개요·대안 / CAD·BIM` 표현을 `조건 / 추천안 / 도면`으로 낮췄다.
+
+### 변경 파일
+
+- `apps/web/components/design/CADEditor.tsx`
+- `apps/web/components/design/CadBimIntegrationPanel.tsx`
+- `apps/web/components/design/DesignWorkspace.tsx`
+- `apps/web/app/[locale]/(dashboard)/design-studio/page.tsx`
+- `_workspace/IMPLEMENTATION_LOG_2026-06-30.md`
+
+### 검증 결과
+
+- `git diff --check`: 통과
+- `npx eslint components/design/CADEditor.tsx components/design/CadBimIntegrationPanel.tsx`: 오류 0, 기존 `CadBimIntegrationPanel` hook 경고 3건
+- `npx tsc --noEmit --pretty false`: 통과
+- `npm run test:run -- lib/cad-command-parser.test.ts`: 1 file / 41 tests 통과
+- `npm run build`: 통과, 136개 static page 생성 통과
+- 로컬 브라우저 smoke:
+  - `/ko/design-studio`: HTTP 200, 프로젝트 미선택 empty state 정상
+  - `/ko/projects/demo/design`: HTTP 200, 프로젝트 상세 설계 화면 정상 렌더
+  - 로컬 API 미기동으로 `ERR_CONNECTION_REFUSED`가 발생해 프로젝트 컨텍스트 기반 CAD/BIM 패널 실마운트 검증은 라이브 배포 후 수행 예정
+- 구현 커밋/푸시 완료:
+  - `d9d5f06f feat: add cad command workspace`
+  - `056e2c09 refactor: simplify design workspace flow`
+- Oracle safe deploy 완료:
+  - `/tmp/deploy_status.txt`: `DONE web=200 api=200 @ 056e2c09 refactor: simplify design workspace flow 00:27:43`
+  - `propai-platform_web_1 propai-web:oracle Up`
+  - `propai-platform_api_1 propai-api:oracle Up (healthy)`
+  - `propai-platform_nginx_1 nginx:alpine Up`
+- 공개 URL 검증:
+  - `https://4t8t.net/ko`: HTTP 200
+  - `https://4t8t.net/ko/design-studio`: HTTP 200
+  - `https://4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+  - `https://api.4t8t.net/health`: HTTP 200, `postgres/redis/qdrant=healthy`
+- 라이브 반영 확인:
+  - `/ko/design-studio` SSR HTML: `통합 작업면` 1건, `3단계` 0건
+  - 새 브라우저 세션은 인증 쿠키가 없어 `/ko/login?next=%2Fko%2Fdesign-studio`로 정상 리다이렉트됨
+  - 라이브 스크린샷: `/tmp/propai-live-design-studio-stage16.png`

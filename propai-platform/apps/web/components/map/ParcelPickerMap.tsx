@@ -20,7 +20,6 @@ import { AlertTriangle, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
     L: any;
@@ -53,8 +52,14 @@ interface ParcelPickerMapProps {
   onPick?: (parcel: ParcelAtPointResult) => void;
   /** 다중 필지 선택 완료 콜백 — 완료 버튼 클릭 시 staged 배열 전달 */
   onPickMany?: (parcels: ParcelAtPointResult[]) => void;
+  /** 검색으로 확정한 필지 주변을 바로 고를 수 있도록 지도 중심 이동 */
+  focusTarget?: { lat: number; lon: number; label?: string } | null;
+  /** 검색된 필지를 지도에 자동으로 선택 표시 */
+  autoPreviewFocus?: boolean;
   /** 지도 높이(px), 기본 360 */
   height?: number;
+  /** 통합 지도 화면에서 외곽 설명/배경을 줄이는 표시 모드 */
+  chrome?: "default" | "immersive";
 }
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
@@ -79,6 +84,41 @@ function loadLeaflet(): Promise<void> {
     document.head.appendChild(script);
   });
   return leafletLoading;
+}
+
+function addOpenStreetMapFallback(L: any, map: any): void {
+  const fallback = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors",
+    maxZoom: 19,
+    crossOrigin: true,
+  }).addTo(map);
+  L.control.attribution({ prefix: false, position: "bottomright" })
+    .addTo(map)
+    .addAttribution("임시 기본도 · © OpenStreetMap contributors");
+  fallback.bringToBack?.();
+}
+
+function addOfficialBaseMap(L: any, map: any): void {
+  let fellBack = false;
+  const vworld = L.tileLayer(
+    "/tiles/vworld/wmts/Base/{z}/{y}/{x}.png",
+    {
+      attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
+      maxZoom: 19,
+      crossOrigin: true,
+    },
+  ).addTo(map);
+
+  L.control.attribution({ prefix: false, position: "bottomright" })
+    .addTo(map)
+    .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
+
+  vworld.on("tileerror", () => {
+    if (fellBack) return;
+    fellBack = true;
+    try { map.removeLayer(vworld); } catch { /* noop */ }
+    addOpenStreetMapFallback(L, map);
+  });
 }
 
 /**
@@ -110,7 +150,14 @@ function toP(sqm: number): string {
   return (sqm / 3.305785).toFixed(1);
 }
 
-export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPickerMapProps) {
+export function ParcelPickerMap({
+  onPick,
+  onPickMany,
+  focusTarget,
+  autoPreviewFocus = false,
+  height = 360,
+  chrome = "default",
+}: ParcelPickerMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const fs = useMapFullscreen(mapRef);
@@ -134,12 +181,20 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
   onPickRef.current = onPick;
   const onPickManyRef = useRef(onPickMany);
   onPickManyRef.current = onPickMany;
+  const focusTargetRef = useRef(focusTarget);
+  const focusLat = focusTarget?.lat ?? null;
+  const focusLon = focusTarget?.lon ?? null;
   // staged를 ref로도 보관 — queryParcel이 staged를 의존하지 않게 해 지도 재생성(폴리곤 소실)을 막는다.
   const stagedRef = useRef<ParcelAtPointResult[]>([]);
   stagedRef.current = staged;
 
   // 연타 응답 경합 가드: 마지막 클릭만 반영(stale 필지 폐기)
   const querySeqRef = useRef(0);
+  const lastAutoFocusKeyRef = useRef("");
+
+  useEffect(() => {
+    focusTargetRef.current = focusTarget;
+  }, [focusTarget]);
 
   /** pending 레이어(임시 마커·폴리곤) 지도에서 제거 */
   const clearPendingLayer = useCallback(() => {
@@ -199,7 +254,7 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
   }, []);
 
   /** 클릭한 좌표로 필지를 조회하고 결과를 pending 상태로 둔다 */
-  const queryParcel = useCallback(async (lat: number, lon: number) => {
+  const queryParcel = useCallback(async (lat: number, lon: number, opts: { autoStage?: boolean } = {}) => {
     const seq = ++querySeqRef.current;
     setStatus("loading");
     setStatusMsg("필지 조회 중…");
@@ -254,6 +309,22 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
     // lat/lon 정보 보완(확인 카드·staged 레이어에서 좌표 재사용)
     result.lat = lat;
     result.lon = lon;
+
+    if (opts.autoStage) {
+      if (!alreadyStaged) {
+        setStaged((prev) => {
+          if (result.pnu && prev.some((s) => s.pnu === result.pnu)) return prev;
+          return [...prev, result];
+        });
+        addStagedLayer(result);
+      }
+      clearPendingLayer();
+      setPending(null);
+      setStatus("idle");
+      setStatusMsg("");
+      return;
+    }
+
     setPending(result);
 
     // 임시 pending 레이어 표시(파란 폴리곤 + 마커)
@@ -281,7 +352,7 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
     if (onPickRef.current && !onPickManyRef.current) {
       onPickRef.current(result);
     }
-  }, [clearPendingLayer]);
+  }, [addStagedLayer, clearPendingLayer]);
 
   /** [＋추가] 버튼: pending 필지를 staged에 넣고 녹색 폴리곤으로 고정 */
   const handleConfirmAdd = useCallback(() => {
@@ -347,13 +418,14 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
           center: [37.5665, 126.978],
           zoom: 12,
           scrollWheelZoom: true,
+          attributionControl: false,
         });
-        // OSM 타일 (카카오 키 없이 전 세계 사용 가능)
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap",
-          maxZoom: 19,
-        }).addTo(map);
+        addOfficialBaseMap(L, map);
         mapRef.current = map;
+        const focus = focusTargetRef.current;
+        if (focus) {
+          map.setView([focus.lat, focus.lon], 17);
+        }
 
         // 지도 클릭 → 필지 조회
         map.on("click", (e: any) => {
@@ -377,6 +449,17 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
     };
   }, [queryParcel]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || focusLat == null || focusLon == null) return;
+    map.setView([focusLat, focusLon], 17, { animate: true });
+    if (!autoPreviewFocus) return;
+    const key = `${focusLat.toFixed(7)},${focusLon.toFixed(7)}`;
+    if (lastAutoFocusKeyRef.current === key) return;
+    lastAutoFocusKeyRef.current = key;
+    void queryParcel(focusLat, focusLon, { autoStage: true });
+  }, [autoPreviewFocus, focusLat, focusLon, queryParcel]);
+
   // staged 합산 면적 계산
   const totalAreaSqm = staged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
 
@@ -386,12 +469,21 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
     : false;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
+    <div
+      className={
+        chrome === "immersive"
+          ? "flex flex-col gap-2"
+          : "flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3"
+      }
+    >
       {/* 안내 메시지 */}
-      <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
-        지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
-        <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
-      </p>
+      {chrome === "default" && (
+        <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
+          지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
+          {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
+          <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
+        </p>
+      )}
 
       {/* 상태 메시지 — 로딩/오류/미발견 표시 */}
       {status === "loading" && (
@@ -411,8 +503,8 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
       <div ref={fs.wrapperRef} className={fs.wrapperClass("relative")}>
         <div
           ref={mapEl}
-          className={fs.mapClass("w-full overflow-hidden rounded-lg border border-[var(--line)]")}
-          style={{ height }}
+          className="w-full overflow-hidden rounded-lg border border-[var(--line)]"
+          style={{ height: fs.isFull ? "100%" : height }}
         />
 
         {/* 풀스크린 버튼 */}

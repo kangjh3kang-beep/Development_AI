@@ -1,15 +1,22 @@
 import Link from "next/link";
-import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
-import { HeroMapViz } from "@/components/dashboard/HeroMapViz";
-import { DashboardEsgScore } from "@/components/dashboard/DashboardEsgScore";
-import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
+import {
+  ArrowRight,
+  BarChart3,
+  Building2,
+  Clock,
+  ClipboardList,
+  DraftingCompass,
+  Layers3,
+  MapPin,
+  Search,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
-import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
-import { PalatriaBanner } from "@/components/dashboard/PalatriaBanner";
-import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
 import { isValidLocale } from "@/i18n/config";
+import { PRIMARY_ROUTE_REGISTRY } from "@/lib/navigation/route-registry";
 
 type DashboardPageProps = {
   params: Promise<{
@@ -17,29 +24,112 @@ type DashboardPageProps = {
   }>;
 };
 
-/**
- * 전용 용어 해설 컴포넌트
- * 용어 위에 마우스를 올리면 정의가 표시됩니다.
- */
-function Term({ children, definition }: { children: React.ReactNode; definition: string }) {
-  return (
-    <span 
-      className="cursor-help border-b border-dotted border-[var(--text-tertiary)] transition-colors hover:text-[var(--accent)] hover:border-[var(--accent)]"
-      title={definition}
-    >
-      {children}
-    </span>
-  );
+type CreationProduct = {
+  title: string;
+  routeId: string;
+  icon: LucideIcon;
+  intent: string;
+  inputs: string;
+  result: string;
+  time: string;
+  tone: "lime" | "sky" | "coral" | "ivory";
+};
+
+const creationProducts: CreationProduct[] = [
+  {
+    title: "후보지 진단서",
+    routeId: "precheck",
+    icon: MapPin,
+    intent: "주소만 넣고 사업 가능성을 먼저 판정합니다.",
+    inputs: "주소, 용도지역, 대지면적",
+    result: "규제 요약, 개발 가능성, 다음 액션",
+    time: "약 90초",
+    tone: "lime",
+  },
+  {
+    title: "사업성 검토서",
+    routeId: "investment",
+    icon: BarChart3,
+    intent: "매입가와 연면적 기준으로 수익성을 계산합니다.",
+    inputs: "토지비, 공사비, 분양가",
+    result: "ROI, 현금흐름, 민감도",
+    time: "약 3분",
+    tone: "sky",
+  },
+  {
+    title: "시장·분양 리포트",
+    routeId: "market-insights",
+    icon: Search,
+    intent: "주변 시세와 수요 신호를 한 번에 정리합니다.",
+    inputs: "사업지, 상품유형, 비교권역",
+    result: "시세 범위, 경쟁 단지, 분양 전략",
+    time: "약 2분",
+    tone: "ivory",
+  },
+  {
+    title: "인허가 체크리스트",
+    routeId: "permits",
+    icon: ShieldCheck,
+    intent: "인허가 리스크와 확인 순서를 빠르게 좁힙니다.",
+    inputs: "용도, 규모, 법정 조건",
+    result: "허가 가능성, 보완 항목, 담당 액션",
+    time: "약 2분",
+    tone: "coral",
+  },
+  {
+    title: "AI 설계 검토서",
+    routeId: "design-audit",
+    icon: Layers3,
+    intent: "설계안의 면적, 동선, 심의 리스크를 검토합니다.",
+    inputs: "도면, 매스, 설계 조건",
+    result: "검토 의견, 개선안, 심의 포인트",
+    time: "약 4분",
+    tone: "sky",
+  },
+  {
+    title: "건축개요·CAD 계획도면",
+    routeId: "design-studio",
+    icon: DraftingCompass,
+    intent: "토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다.",
+    inputs: "주소, 용도지역, 법규 조건",
+    result: "건축개요, CAD 계획도면, 법규 적합성",
+    time: "약 4분",
+    tone: "lime",
+  },
+] as const;
+
+const workflowSteps = [
+  { label: "입력", body: "주소·도면·사업조건 중 하나만 선택" },
+  { label: "생성", body: "진단서·검토서·리포트 자동 작성" },
+  { label: "검토", body: "리스크와 보완 액션을 한 화면에서 확인" },
+  { label: "공유", body: "프로젝트에 저장하고 보고자료로 전환" },
+] as const;
+
+const intelligenceSignals = [
+  { label: "입지", value: "후보지 진단", body: "주소 입력 후 규제·시세·접근성 확인" },
+  { label: "수익성", value: "사업성 검토", body: "비용·분양가·ROI를 같은 흐름에서 계산" },
+  { label: "리스크", value: "인허가·설계", body: "보완 항목을 체크리스트로 전환" },
+] as const;
+
+function hrefFor(locale: string, routeId: string): string {
+  const route = PRIMARY_ROUTE_REGISTRY.find((item) => item.id === routeId);
+  if (!route?.path || route.path === "/") return `/${locale}`;
+  return `/${locale}${route.path}`;
 }
 
-const TERM_DEFINITIONS = {
-  ROI: "투자자본수익률 (Return on Investment): 투자액 대비 순이익 비율",
-  NPV: "순현재가치 (Net Present Value): 미래 현금흐름의 현재가치 합계",
-  LCA: "전과정평가 (Life Cycle Assessment): 기획부터 폐기까지의 환경 영향 분석",
-  LCC: "생애주기비용 (Life Cycle Cost): 건축물 수명 주기 동안의 총 비용",
-  ESG: "환경(E), 사회(S), 지배구조(G): 기업의 지속가능성 평가지표",
-  "G-SEED": "녹색건축인증제도: 건축물의 친환경성을 등급으로 인증하는 제도",
-};
+function productToneClass(tone: CreationProduct["tone"]): string {
+  if (tone === "lime") return "border-[var(--saas-lime-line)] bg-[var(--saas-lime-soft)] text-[var(--saas-lime-text)]";
+  if (tone === "sky") return "border-[var(--saas-sky-line)] bg-[var(--saas-sky-soft)] text-[var(--saas-sky-text)]";
+  if (tone === "coral") return "border-[var(--saas-coral-line)] bg-[var(--saas-coral-soft)] text-[var(--saas-coral-text)]";
+  return "border-[var(--saas-ivory)] bg-[var(--saas-ivory-soft)] text-[var(--saas-ivory-text)]";
+}
+
+function productAccentClass(tone: CreationProduct["tone"]): string {
+  if (tone === "lime") return "bg-[var(--saas-lime)]";
+  if (tone === "sky") return "bg-[var(--saas-sky)]";
+  if (tone === "coral") return "bg-[var(--saas-coral)]";
+  return "bg-[var(--saas-ivory)]";
+}
 
 export default async function DashboardPage({ params }: DashboardPageProps) {
   const { locale } = await params;
@@ -49,202 +139,199 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-16 sm:gap-7">
-      {/* ── 시작 안내 위자드 (최초 방문 시에만 표시) ── */}
+    <div className="flex flex-col gap-6 pb-12">
       <OnboardingWizard />
 
-      {/* ── 히어로 섹션: 절제된 커맨드 센터(장식 제거·여백이 디자인) ── */}
-      <section className="db-hero p-8 sm:p-12 lg:p-16">
-        {/* 미묘한 깊이감을 위한 정밀 그리드만 유지(컬러 글로우는 제거) */}
-        <HeroGridBackground />
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="relative min-w-0 overflow-hidden rounded-lg border border-[var(--saas-lime-hero-line)] bg-[var(--saas-ink)] p-5 text-white shadow-[0_24px_70px_var(--saas-ink-shadow)] sm:p-6">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 opacity-55"
+            style={{
+              background:
+                "linear-gradient(115deg, var(--saas-hero-sheen), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.05), transparent)",
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 opacity-25"
+            style={{
+              backgroundImage:
+                "linear-gradient(135deg, var(--saas-hero-grid-lime) 1px, transparent 1px), linear-gradient(45deg, var(--saas-hero-grid-sky) 1px, transparent 1px)",
+              backgroundSize: "72px 72px, 96px 96px",
+            }}
+          />
+          <div className="relative">
+            <span className="text-sm font-bold text-[var(--saas-lime)]">Intelligence Control Room</span>
+            <div className="mt-3 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+              <div className="min-w-0">
+                <h1 className="max-w-3xl text-2xl font-black leading-tight text-white sm:text-4xl">
+                  필요한 결과물을 고르면 입력부터 보고서까지 이어집니다
+                </h1>
+                <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-white/70">
+                  기능을 찾는 시간을 줄이고 후보지, 사업성, 시장, 인허가, 설계 검토를 산출물 중심으로 시작합니다.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={hrefFor(locale, "precheck")}
+                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--saas-lime)] px-4 text-sm font-black text-[var(--saas-ink)] shadow-[0_12px_28px_var(--saas-lime-shadow)] transition-opacity hover:opacity-90"
+                >
+                  후보지 진단서 만들기
+                  <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                </Link>
+                <Link
+                  href={hrefFor(locale, "projects")}
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 text-sm font-bold text-white backdrop-blur transition-colors hover:bg-white/15"
+                >
+                  프로젝트 불러오기
+                </Link>
+              </div>
+            </div>
 
-        {/* 배경: 'AI가 지도를 분석하는' 비주얼(실제 지도처럼 보이는 SVG 도로·필지·핀 + 펄스·스캔).
-            화면 전체에 깔리되 좌우 가장자리는 페이드(텍스트 가독성 유지). */}
-        <HeroMapViz />
+          <div className="mt-6 grid gap-2 md:grid-cols-4">
+            {workflowSteps.map((step, index) => (
+              <div key={step.label} className="rounded-lg border border-white/15 bg-white/10 p-3 backdrop-blur">
+                <span className="text-[11px] font-black text-[var(--saas-lime)]">
+                  {String(index + 1).padStart(2, "0")} {step.label}
+                </span>
+                <p className="mt-2 text-xs font-semibold leading-5 text-white/70">{step.body}</p>
+              </div>
+            ))}
+          </div>
 
-        <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
-          <div className="max-w-3xl space-y-6">
-            {/* eyebrow: 자사 슬로건 대신 차분한 분야 라벨로 축소(C2) */}
-            <span className="db-eyebrow db-eyebrow--ko">
-              <i />
-              부동산 개발 분석
+          <div className="mt-5 rounded-lg border border-white/15 bg-white/10 p-3 backdrop-blur">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-bold text-white/60">생성 경로</span>
+              <span className="rounded-lg bg-[var(--saas-sky)] px-2 py-1 text-[11px] font-black text-[var(--saas-ink)]">3분 내 초안</span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              {["부지 입력", "AI 분석", "보고서 저장"].map((label) => (
+                <div key={label} className="rounded-lg bg-black/25 px-3 py-2 text-sm font-bold text-white">
+                  {label}
+                </div>
+              ))}
+            </div>
+          </div>
+          </div>
+        </div>
+
+        <aside className="rounded-lg border border-[var(--saas-ink-line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-sm)]">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--saas-lime)] text-[var(--saas-ink)]">
+              <Building2 aria-hidden="true" className="h-5 w-5" />
             </span>
+            <div>
+              <span className="db-panel-label">추천 시작점</span>
+              <h2 className="text-lg font-black text-[var(--text-primary)]">부지 검토부터 시작</h2>
+            </div>
+          </div>
+          <p className="mt-4 text-sm font-medium leading-6 text-[var(--text-secondary)]">
+            주소를 입력하면 후보지 진단서가 생성되고, 같은 데이터가 사업성·시장·인허가 검토로 이어집니다.
+          </p>
+          <div className="mt-4 space-y-2">
+            {intelligenceSignals.map((signal) => (
+              <div key={signal.label} className="rounded-lg border border-[var(--saas-ink-line)] bg-[var(--saas-panel-wash)] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-[var(--text-tertiary)]">{signal.label}</span>
+                  <span className="text-xs font-black text-[var(--text-primary)]">{signal.value}</span>
+                </div>
+                <p className="mt-1 text-xs font-medium leading-5 text-[var(--text-secondary)]">{signal.body}</p>
+              </div>
+            ))}
+          </div>
+        </aside>
+      </section>
 
-            {/* C1: 히어로 중앙 대형 로고/태그라인 제거 → 가치제안 한 줄 헤드라인만.
-                로고는 사이드바 1곳에만 남긴다. */}
-            <h1 className="db-hero__headline text-[var(--text-primary)]">
-              개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.
-            </h1>
-
-            <p className="max-w-xl text-lg leading-relaxed text-[var(--text-secondary)] sm:text-xl">
-              전국 필지 데이터와 AI 분석 엔진으로 개발 전 과정을 한 흐름에서 검증합니다.
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <span className="db-panel-label">생성 허브</span>
+            <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">무엇을 만들까요?</h2>
+            <p className="mt-1 text-sm font-medium text-[var(--text-secondary)]">
+              최종 산출물을 기준으로 선택합니다.
             </p>
           </div>
+          <Link
+            href={`/${locale}/guide`}
+            className="inline-flex h-10 items-center gap-2 self-start rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)] md:self-auto"
+          >
+            전체 흐름 보기
+            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
+        </div>
 
-          <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
-            {/* 강조(accent)는 핵심 행동 단 1곳에만 — 프로젝트 생성 */}
-            <Link
-              href={`/${locale}/projects/new`}
-              prefetch={true}
-              className="group/btn flex h-14 items-center justify-center gap-3 rounded-2xl bg-[var(--accent-strong)] px-8 text-base font-semibold text-white transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
-            >
-              <span>프로젝트 생성</span>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-200 group-hover/btn:translate-x-0.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-            </Link>
-            <Link
-              href={`/${locale}/guide`}
-              className="flex h-14 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-8 text-base font-semibold text-[var(--text-primary)] transition-colors duration-200 hover:border-[var(--line-strong)]"
-            >
-              이용 가이드
+        <div className="grid gap-3 lg:grid-cols-3">
+          {creationProducts.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.title}
+                href={hrefFor(locale, item.routeId)}
+                className="group min-w-0 overflow-hidden rounded-lg border border-[var(--saas-ink-line)] bg-[var(--surface-secondary)] shadow-[var(--shadow-sm)] transition hover:-translate-y-0.5 hover:border-[var(--saas-ink-line-strong)] hover:shadow-[var(--shadow-md)]"
+              >
+                <div className={`h-1.5 ${productAccentClass(item.tone)}`} />
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${productToneClass(item.tone)}`}>
+                      <Icon aria-hidden="true" className="h-5 w-5" />
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--surface-soft)] px-2 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">
+                      <Clock aria-hidden="true" className="h-3.5 w-3.5" />
+                      {item.time}
+                    </span>
+                  </div>
+                  <h3 className="mt-4 text-base font-black text-[var(--text-primary)]">{item.title}</h3>
+                  <p className="mt-2 min-h-10 text-sm font-medium leading-5 text-[var(--text-secondary)]">{item.intent}</p>
+                  <dl className="mt-4 space-y-2 text-xs">
+                    <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
+                      <dt className="font-bold text-[var(--text-tertiary)]">입력</dt>
+                      <dd className="font-semibold text-[var(--text-primary)]">{item.inputs}</dd>
+                    </div>
+                    <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
+                      <dt className="font-bold text-[var(--text-tertiary)]">결과</dt>
+                      <dd className="font-semibold text-[var(--text-primary)]">{item.result}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-4 inline-flex items-center gap-2 text-sm font-black text-[var(--accent-strong)]">
+                    만들기
+                    <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="db-panel-label">진행 프로젝트</span>
+              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">현재 남은 의사결정</h2>
+            </div>
+            <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
+              전체 보기
             </Link>
           </div>
+          <DashboardProjectLoader locale={locale} />
+        </div>
+
+        <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <span className="db-panel-label">자동 분석</span>
+              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">산출물 생성 엔진</h2>
+            </div>
+            <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-2 py-1 text-xs font-bold text-[var(--data-accent)]">
+              <ClipboardList aria-hidden="true" className="h-3.5 w-3.5" />
+              준비됨
+            </span>
+          </div>
+          <PipelinePanelClient />
         </div>
       </section>
-
-      {/* ── 기능 요약: 떠다니는 카드 대신 헤어라인으로 칸을 나눈 한 줄(절제) ── */}
-      <section className="relative z-10">
-        <div className="db-feature-row">
-          {[
-            {
-              title: "전국 데이터 연결",
-              desc: "공간정보 통합",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m7.5 16.5 4.5-9"/><path d="m16.5 16.5-4.5-9"/><path d="M5 19h14"/></svg>
-            },
-            {
-              title: "AI 분석·예측",
-              desc: "최적 개발안 도출",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6 2v2"/><path d="M6 20v2"/><path d="M18 2v2"/><path d="M18 20v2"/><path d="M2 6h2"/><path d="M2 18h2"/><path d="M20 6h2"/><path d="M20 18h2"/></svg>
-            },
-            {
-              title: "개발계획 자동수립",
-              desc: "시간·비용 절감",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
-            },
-            {
-              title: "수익성 분석",
-              desc: "사업성 극대화",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/><path d="M12 14v4"/><path d="M16 10v8"/></svg>
-            },
-            {
-              title: "미래가치 창출",
-              desc: "지속가능한 개발",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
-            }
-          ].map((item, idx) => (
-            <div key={idx} className="db-feature-cell">
-              {item.icon}
-              <div className="min-w-0">
-                <p className="db-feature-title truncate">{item.title}</p>
-                <p className="db-feature-desc truncate">{item.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── 스카이게러지 팔라트리아 배너(분양광고 배너 위) ── */}
-      <PalatriaBanner />
-
-      {/* ── 사통팔땅 홍보 배너 ── */}
-      <PromoBanner />
-
-      {/* ── 자동 분석 진행 단계 ── */}
-      <PipelinePanelClient />
-
-      {/* ── 마케팅 홍보 벤토(Bento) 패널 ── */}
-      <MarketingPanels />
-
-      {/* ── KPI 그리드: 실시간 API 연동 (fallback 포함) ── */}
-      <DashboardKpiLoader />
-
-      {/* ── 대시보드 콘텐츠 레이아웃 ── */}
-      <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
-
-        {/* 메인 콘텐츠: 진행 단계 모니터링 */}
-        <div className="space-y-6">
-           <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                 <h2 className="db-section-title">활성 진행 단계</h2>
-                 {/* 실시간 표시 — 네온 시안 대신 파랑 펄스 도트(C2) */}
-                 <span className="db-live"><i />실시간</span>
-              </div>
-              <Link href={`/${locale}/projects`} className="db-eyebrow db-eyebrow--ko text-[var(--accent-strong)] hover:opacity-80 transition-opacity">전체 보기</Link>
-           </div>
-
-           <DashboardProjectLoader locale={locale} />
-
-           {/* ── 포트폴리오 커맨드 맵 — 그리드 + 레이더 모티프 ──
-               실데이터(좌표/자산 시각화) 연동 전이므로 가짜 자산점을 찍지 않고
-               "데이터 연결 대기" 정직 빈상태로 둔다(무목업 원칙). */}
-            {/* 포트폴리오 공간 맵 — 게임 HUD 톤(네온 시안/레이더/모노 영문) 폐기.
-                차분한 단일 파랑 + 한국어 라벨로 통일(C2). */}
-            <div className="relative h-[300px] w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
-               <div className="cc-grid-bg cc-grid-bg--radial opacity-50" />
-
-               {/* 패널 헤더 — 한국어 라벨(좌)/상태(우) */}
-               <div className="absolute left-5 top-4 z-10">
-                  <span className="db-panel-label">포트폴리오 공간 맵</span>
-               </div>
-               <div className="absolute right-5 top-4 z-10">
-                  <span className="db-status-chip">연결 대기</span>
-               </div>
-
-               <div className="absolute inset-0 flex items-center justify-center">
-                  {/* 동심원(파랑 헤어라인) + 정직한 빈상태 */}
-                  <div className="relative flex h-40 w-40 items-center justify-center">
-                     <div className="absolute inset-0 rounded-full border border-[var(--line-strong)] opacity-50" />
-                     <div className="absolute inset-6 rounded-full border border-[var(--line-strong)] opacity-35" />
-                     <div className="absolute inset-12 rounded-full border border-[var(--line-strong)] opacity-25" />
-                     <div className="relative z-10 flex flex-col items-center gap-2 text-center">
-                        <span className="text-2xl text-[var(--accent-strong)]">⌖</span>
-                        <div>
-                           <p className="text-[13px] font-semibold text-[var(--text-secondary)]">포트폴리오 맵</p>
-                           <p className="mt-1 text-[11px] font-medium text-[var(--text-tertiary)]">데이터 연결 대기</p>
-                        </div>
-                     </div>
-                  </div>
-               </div>
-            </div>
-        </div>
-
-        {/* 사이드바 위젯: 시스템 상태 & 규제 */}
-        <div className="space-y-6">
-           <div className="cc-panel space-y-6 p-6">
-              <div>
-                 <div className="flex items-center justify-between mb-5">
-                    <h4 className="db-panel-label">규제 동향</h4>
-                    <span className="db-panel-meta">실시간 모니터</span>
-                 </div>
-                 {/* 규제 동향 실데이터 소스 미연동 → 가짜 항목 대신 정직한 빈상태(무목업) */}
-                 <div className="relative flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-5 py-8 text-center overflow-hidden">
-                    <div className="cc-grid-bg opacity-30" />
-                    <span className="relative z-10 text-xl text-[var(--text-tertiary)]">—</span>
-                    <p className="relative z-10 text-[13px] font-bold text-[var(--text-primary)]">규제 동향 피드 연동 예정</p>
-                    <p className="relative z-10 text-[11px] font-medium text-[var(--text-tertiary)] leading-relaxed">
-                       실시간 법령·조례 변경 모니터링을 연결하면<br/>여기에 최신 개정 동향이 표시됩니다.
-                    </p>
-                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--accent-strong)] hover:opacity-80 transition-opacity">규제 분석 열기 →</Link>
-                 </div>
-              </div>
-
-              {/* ESG 통합 점수 — 실데이터(/analytics/esg) 로더 */}
-              <DashboardEsgScore />
-           </div>
-
-           {/* 사용자 시작 안내 카드 */}
-           <div className="db-card gap-5 p-7">
-              <span className="db-eyebrow db-eyebrow--ko">시작 안내</span>
-              <h4 className="db-card__title text-lg">전문 가이드가<br/>필요하신가요?</h4>
-              <p className="db-card__desc">
-                 사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
-              </p>
-              <Link href={`/${locale}/guide`} className="inline-flex h-12 w-fit items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-7 text-[13px] font-semibold text-[var(--text-primary)] transition-colors duration-200 hover:border-[var(--line-strong)]">
-                 시작 안내 보기
-              </Link>
-           </div>
-        </div>
-
-      </div>
     </div>
   );
 }
