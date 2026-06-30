@@ -125,3 +125,22 @@ curl -I http://localhost:80/health
   - `pnpm --filter @propai/web type-check`: 통과.
   - `pnpm --filter @propai/web test:run`: 87 files / 688 tests 통과.
   - `pnpm --filter @propai/web build`: 통과, `/api/vworld/wmts/[layer]/[z]/[y]/[x]` 라우트 빌드 포함.
+
+## 2026-06-30 23:08 KST VWorld 운영 경로 충돌 보강
+
+- 운영 검증에서 `https://4t8t.net/api/vworld/wmts/...`가 백엔드 `/api` 프록시로 먼저 전달되어 Next.js 라우트에 도달하지 못하고 `404`를 반환하는 것을 확인했다.
+- 근본 원인:
+  - 운영 Nginx 배선상 `/api/*`는 백엔드 API 소유 경로다.
+  - 프론트 전용 지도 타일 프록시는 `/api` 아래에 두면 라이브에서 백엔드와 충돌한다.
+- 구현:
+  - VWorld WMTS 프록시 로직을 `apps/web/lib/vworld-wmts-proxy.ts`로 분리했다.
+  - 기존 `/api/vworld/wmts/...` 라우트는 개발/직접 실행 호환용으로 유지했다.
+  - 운영 프론트 전용 경로 `/tiles/vworld/wmts/[layer]/[z]/[y]/[x]`를 추가했다.
+  - `ParcelPickerMap` 기본 타일 URL을 `/tiles/vworld/wmts/Base/{z}/{y}/{x}.png`로 변경했다.
+- 재발 방지:
+  - 프론트 전용 이미지/지도 타일 프록시는 운영에서 백엔드가 소유한 `/api` 네임스페이스를 사용하지 않는다.
+- 검증:
+  - `pnpm --filter @propai/web lint`: 0 errors, 기존 warning 유지.
+  - `pnpm --filter @propai/web exec tsc --noEmit --pretty false`: 통과.
+  - `pnpm --filter @propai/web test:run components/precheck/satong-map-selection.test.ts`: 3 tests 통과.
+  - `pnpm --filter @propai/web build`: 통과, `/tiles/vworld/wmts/[layer]/[z]/[y]/[x]` 라우트 빌드 포함.

@@ -101,7 +101,7 @@ function addOpenStreetMapFallback(L: any, map: any): void {
 function addOfficialBaseMap(L: any, map: any): void {
   let fellBack = false;
   const vworld = L.tileLayer(
-    "/api/vworld/wmts/Base/{z}/{y}/{x}.png",
+    "/tiles/vworld/wmts/Base/{z}/{y}/{x}.png",
     {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
