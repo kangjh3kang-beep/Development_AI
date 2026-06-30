@@ -33,7 +33,7 @@ import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
-import { shouldSendParcels } from "@/lib/parcel-rows";
+import { entriesToParcelRows, parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -247,6 +247,11 @@ export function MarketInsightsWorkspaceClient() {
   // 다필지 SSOT: 피커가 올린 전체 필지(면적·용도·용적/건폐·pnu) 후보 → 실행 시 runEntries로 확정.
   const [entries, setEntries] = useState<AddressEntry[]>([]);
   const [runEntries, setRunEntries] = useState<AddressEntry[]>([]);
+  // store 폴백 다필지(인테이크/프로젝트가 store에 쓴 것)도 실행 시점에 스냅샷으로 고정 — 피커와 동일하게
+  //   '미리보기=다운로드' 불변식이 이후 store 변경(다탭 등)에 흔들리지 않게 한다.
+  const [runStoreParcels, setRunStoreParcels] = useState<
+    Array<{ address?: string; areaSqm?: number | null; zoneCode?: string | null }>
+  >([]);
   // 일괄분석(P2): 「분석 시작」 클릭 시 지도뿐 아니라 시장보고서까지 한 번에 생성하기 위한 대기 플래그.
   const [pendingReport, setPendingReport] = useState(false);
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
@@ -287,25 +292,24 @@ export function MarketInsightsWorkspaceClient() {
   const mapPnu = runEntries.length > 0
     ? ((repEntry?.pnu as string) || "")
     : ((siteAnalysis?.pnu as string) || "");
-  // 등록된 전 필지 주소(구획도 통합 경계용). 비면 대표주소 단독.
+  // 등록된 전 필지 주소(구획도 통합 경계용). 피커(자체 검색)가 비면 인테이크/프로젝트가 store에
+  //   쓴 다필지(siteAnalysis.parcels)로 폴백 — '지도 기반 필지 입력' 등 외부 경로 다필지도 반영. 비면 대표주소 단독.
   const runParcelAddrs = useMemo(
-    () => runEntries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean),
-    [runEntries],
+    () => (runEntries.length > 0
+      ? runEntries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      : runStoreParcels.map((p) => p.address ?? "")
+    ).filter(Boolean),
+    [runEntries, runStoreParcels],
   );
   // 백엔드 통합집계 입력행(면적가중) — comprehensive_analysis 계약과 동일 키. 면적>0만.
+  //   ★피커(자체 검색)로 올렸으면 그 entries, 아니면 store(siteAnalysis.parcels)로 폴백한다.
+  //   인테이크('지도 기반 필지 입력')·프로젝트는 다필지를 store에 쓰므로, 이 폴백이 없으면 보고서·
+  //   feasibility가 대표 1필지로 산출되던 갭(라이브 확인)을 해소한다(다른 소비처와 동일 store 폴백 패턴).
   const runParcelRows = useMemo(
-    () => runEntries
-      .filter((e) => (e.areaSqm ?? 0) > 0)
-      .map((e) => ({
-        address: e.jibunAddress || e.fullAddress || e.roadAddress,
-        area_sqm: e.areaSqm,
-        zone_type: e.zoneCode ?? null,
-        farPct: e.farPct ?? null,        // 실효(조례 반영)
-        bcrPct: e.bcrPct ?? null,
-        farLegalPct: e.farLegalPct ?? null,  // 법정상한(보조)
-        bcrLegalPct: e.bcrLegalPct ?? null,
-      })),
-    [runEntries],
+    () => (runEntries.length > 0
+      ? entriesToParcelRows(runEntries)
+      : parcelDataToRows(runStoreParcels)),
+    [runEntries, runStoreParcels],
   );
   // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
   const mapBcode = mapPnu.slice(0, 10);
@@ -420,13 +424,15 @@ export function MarketInsightsWorkspaceClient() {
     setRunAddress(inputAddress);
     // SSOT 확정: 실행 시점의 피커 다필지를 분석 대상으로 고정(지도·구획도·보고서가 동일 필지를 본다).
     setRunEntries(entries);
+    // 피커가 비면 store(인테이크/프로젝트) 다필지를 실행 시점 스냅샷으로 고정(폴백도 동일 불변식).
+    setRunStoreParcels(entries.length > 0 ? [] : (siteAnalysis?.parcels ?? []));
     // P2 일괄분석: 지도와 함께 시장보고서까지 한 번에 생성(아래 effect가 address 확정 후 트리거).
     setPendingReport(true);
     // 실행 후 잔액 갱신(차감 반영) — 약간 지연 후 재조회.
     setTimeout(() => {
       apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
     }, 1500);
-  }, [inputAddress, entries]);
+  }, [inputAddress, entries, siteAnalysis?.parcels]);
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
