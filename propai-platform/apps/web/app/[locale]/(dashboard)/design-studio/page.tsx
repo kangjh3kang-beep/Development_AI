@@ -30,8 +30,8 @@ export default function DesignStudioPage() {
       statusLabel={projectId ? "프로젝트 연결" : "프로젝트 선택 필요"}
       actions={<ProjectSwitcher />}
       metrics={[
-        { label: "워크플로우", value: "3단계", description: "부지 · 생성 · CAD/BIM" },
-        { label: "주요 산출", value: "설계안 Top-N", description: "도면·매스·근거" },
+        { label: "워크플로우", value: "통합 작업면", description: "조건 · 추천안 · 도면" },
+        { label: "주요 산출", value: "건축개요 Top-N", description: "도면·매스·근거" },
         { label: "연동", value: projectId ? "활성" : "대기", description: "프로젝트 컨텍스트" },
       ]}
     >
@@ -42,8 +42,8 @@ export default function DesignStudioPage() {
           (같은 projectId 재바인딩은 리셋하지 않으므로 무회귀). */}
       {projectId && <ProjectContextBinder projectId={projectId} />}
       {projectId ? (
-        // 단계별 워크스페이스 셸 — 부지·법규 → 설계생성·도면 → CAD·BIM 순차 진행.
-        //  한 페이지 세로 나열(정보 과부하)을 단계 분리로 해소하고, 무거운 CAD/BIM은 lazy 마운트.
+        // 통합 워크스페이스 셸 — 조건 확인 → 추천안 만들기 → 도면 편집을 한 화면 흐름으로 전환.
+        // 무거운 CAD/BIM은 사용자가 열 때 lazy 마운트해 성능을 보존한다.
         <DesignWorkspace projectId={projectId} />
       ) : (
         <DesignCenterEmptyState

@@ -1634,7 +1634,7 @@ export default function CADEditor({
                 setCommandResult(null);
               }
             }}
-            placeholder="LINE 10,10 30,10 · RECT 10,10 20 12 · 층수 5"
+            placeholder="층수 5 · 높이 18 · 선 10,10 30,10 · 사각형 10,10 20 12"
             aria-label="CAD 명령 입력"
             className="min-w-0 flex-1 bg-transparent text-[12px] font-bold text-white outline-none placeholder:text-white/30"
           />

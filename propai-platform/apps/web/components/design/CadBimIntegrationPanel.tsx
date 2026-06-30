@@ -1408,7 +1408,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
   const designWorkbenchItems = [
     {
-      label: "법규·전략",
+      label: "조건",
       value:
         compliance.bcrLimit != null || compliance.farLimit != null
           ? "법정·조례 한도 연결"
@@ -1418,12 +1418,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       active: hasDesignBasis,
     },
     {
-      label: "개요·대안",
+      label: "추천안",
       value: spec ? `${spec.building_use ?? "건축개요"} · ${spec.floor_count}F` : "Top-N 생성 대기",
       active: !!spec,
     },
     {
-      label: "CAD·BIM",
+      label: "도면",
       value: editMode
         ? "명령 편집 중"
         : drawingCodes.length > 0
@@ -1521,7 +1521,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
       <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
 
-      {/* ── 통합 작업 상태: 법규·개요·CAD/BIM을 한 화면의 동시 상태로 표시 ── */}
+      {/* ── 통합 작업 상태: 조건·추천안·도면을 한 화면의 동시 상태로 표시 ── */}
       <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-2 -mt-4 md:grid-cols-3">
         {designWorkbenchItems.map((item) => (
           <div

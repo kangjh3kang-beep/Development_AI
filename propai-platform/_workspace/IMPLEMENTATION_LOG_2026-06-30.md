@@ -137,11 +137,16 @@
 - 한국어 자연어성 명령 `층수 N`, `N층`, `높이 N`을 즉시 층수/높이 변경으로 반영하도록 추가했다.
 - 기존 `useSpeechToText` 훅을 CAD 편집 명령 바에 연결해 음성 입력이 텍스트 명령으로 들어오도록 배선했다.
 - DXF import 토스트 위치를 명령 바와 충돌하지 않게 상향 조정했다.
+- `DesignWorkspace`의 좌측 단계 레일을 제거하고 상단의 `조건 확인 / 추천안 만들기 / 도면 편집` 산출 흐름 전환으로 단순화했다.
+- `/design-studio` 상단 지표에서 `3단계` 표현을 `통합 작업면`으로 바꿔 단계 해석 부담을 낮췄다.
+- CAD/BIM 내부 상태판의 `법규·전략 / 개요·대안 / CAD·BIM` 표현을 `조건 / 추천안 / 도면`으로 낮췄다.
 
 ### 변경 파일
 
 - `apps/web/components/design/CADEditor.tsx`
 - `apps/web/components/design/CadBimIntegrationPanel.tsx`
+- `apps/web/components/design/DesignWorkspace.tsx`
+- `apps/web/app/[locale]/(dashboard)/design-studio/page.tsx`
 - `_workspace/IMPLEMENTATION_LOG_2026-06-30.md`
 
 ### 검증 결과
