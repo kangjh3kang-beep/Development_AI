@@ -13,13 +13,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from .auto_design_engine import (
     CORRIDOR_WIDTHS,
-    UNIT_TYPES,
     ZONE_LIMITS,
     LegalLimits,
     SiteInput,
@@ -79,6 +78,15 @@ class DesignSpec(BaseModel):
     priority: str = "balanced"
     target_units: int | None = Field(default=None, ge=1)
     target_margin_pct: float | None = None
+    target_far_percent: float | None = Field(default=None, gt=0)
+    target_bcr_percent: float | None = Field(default=None, gt=0, le=100)
+    # 부지분석 SSOT에서 전달되는 실효 한도. 값이 있으면 설계 커널의 ordinance_* 입력으로
+    # 전달해 min(법정, 실효, 목표) 경로를 타게 한다. 이름은 effective로 보존해 호출부가
+    # 조례·계획상한·통합 다필지 값을 구분해 보관할 수 있게 한다.
+    effective_far_percent: float | None = Field(default=None, gt=0)
+    effective_bcr_percent: float | None = Field(default=None, gt=0, le=100)
+    ordinance_far_percent: float | None = Field(default=None, gt=0)
+    ordinance_bcr_percent: float | None = Field(default=None, gt=0, le=100)
     # R3-1: 단위세대 평면 문법(옵셔널·additive) — None이면 기존 동작 완전 불변
     unit_grammar: UnitGrammar | None = None
     # 매스 형상(옵셔널·additive): slab/tower/lshape/court. None=자동(대지비율).
@@ -94,6 +102,10 @@ class DesignSpec(BaseModel):
             target_unit_types=self.target_unit_types or ["84A"],
             floor_height_m=self.floor_height_m,
             setback_m={"north": sb.north, "south": sb.south, "east": sb.east, "west": sb.west},
+            target_far_percent=self.target_far_percent,
+            target_bcr_percent=self.target_bcr_percent,
+            ordinance_far_percent=self.effective_far_percent or self.ordinance_far_percent,
+            ordinance_bcr_percent=self.effective_bcr_percent or self.ordinance_bcr_percent,
             massing_kind=self.massing_kind,
         )
 

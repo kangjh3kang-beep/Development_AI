@@ -236,6 +236,21 @@ class TestDesignSpecGrammar:
         si = spec.to_site_input()
         assert si.site_area_sqm == 500.0  # 커널 입력 변환 무영향
 
+    def test_to_site_input_propagates_effective_limits(self):
+        """부지분석 실효 한도는 도면 커널 입력까지 끊기지 않고 전달된다."""
+        spec = DesignSpec(
+            site_area_sqm=12079.0,
+            zone_code="자연녹지지역",
+            effective_far_percent=80.0,
+            effective_bcr_percent=20.0,
+            target_far_percent=75.0,
+        )
+        si = spec.to_site_input()
+        assert si.zone_code == "자연녹지지역"
+        assert si.ordinance_far_percent == 80.0
+        assert si.ordinance_bcr_percent == 20.0
+        assert si.target_far_percent == 75.0
+
     def test_valid_grammar_no_violation(self):
         spec = DesignSpec(
             site_area_sqm=500.0,
