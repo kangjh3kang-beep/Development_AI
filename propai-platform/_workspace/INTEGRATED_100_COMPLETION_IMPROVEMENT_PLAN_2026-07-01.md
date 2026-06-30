@@ -885,3 +885,352 @@ Leaflet은 렌더링 라이브러리로 사용할 수 있지만, 사용자에게
 
 최종 구현은 반드시 Step A부터 진행해야 한다.
 지도 UI나 설계 UI를 먼저 고도화하면 사용성은 좋아져도 법규 무결성은 여전히 100%가 될 수 없다.
+
+## 19. 3차 계획 레드팀 감사: 실행·운영·증거 공백
+
+3차 감사는 v2 계획 자체가 실제 구현 단계에서 다시 실패할 수 있는 지점을 대상으로 했다.
+핵심 질문은 다음이다.
+
+- 계획의 각 P0가 어느 코드, 어느 테스트, 어느 산출물에서 닫혔는가?
+- 공식 원천이 끊기면 사용자는 무엇을 보게 되는가?
+- 목업·fallback·가정값이 제품 판정으로 섞일 가능성은 없는가?
+- 통합자에게 넘길 때 "믿어도 되는 증거 묶음"이 자동으로 남는가?
+- 운영 중 법령/조례/지도 API/데이터가 바뀌면 기존 산출물이 stale 처리되는가?
+
+### 19.1 Plan-P0-5. 추적성 매트릭스 부재
+
+위험:
+
+- P0를 문서에는 적었지만 어떤 커밋·테스트·API·화면에서 해소됐는지 추적하지 못하면 반복 검증이 사람 기억에 의존한다.
+- 구현 완료 후에도 "이 P0가 정말 닫혔는가"를 통합자가 다시 조사해야 한다.
+
+보강:
+
+`CompletionTraceabilityMatrix`를 필수 산출물로 추가한다.
+
+| 필드 | 설명 |
+|---|---|
+| `finding_id` | 예: P0-1, Plan-P0-5 |
+| `risk` | 사용자 오판, 법규 누락, 산출 오류, 배포 차단 등 |
+| `owner_module` | api, web, map, design, legal, ci |
+| `code_paths` | 수정 대상 파일 |
+| `tests` | 회귀 테스트 파일/명령 |
+| `evidence_artifact` | 결과 JSON, screenshot, report path |
+| `status` | open, in_progress, fixed, verified, blocked |
+| `verified_by` | unit, e2e, redteam, integration, manual_review |
+| `regression_lock` | 같은 결함 재발 시 실패하는 테스트 |
+
+100% 게이트:
+
+- 모든 P0/P1은 traceability matrix에 행이 있어야 한다.
+- `status=verified`가 아닌 P0가 있으면 완료 판정 금지.
+- 테스트 없는 P0 수정은 완료 판정 금지.
+
+### 19.2 Plan-P0-6. 목업·fallback 경로가 제품 경로에 섞일 수 있다
+
+현재 스캔에서 확인된 위험 유형:
+
+- `apps/web/components/map/*` 일부가 `@/mocks/module-data` 타입 또는 목업 데이터 구조를 참조한다.
+- `ParcelPickerMap`은 VWorld 타일 오류 시 OpenStreetMap fallback을 추가한다.
+- `CadBimIntegrationPanel`에는 fallback spec 경로가 있다.
+- 일부 통합 테스트는 dummy key 실패 시 mock fallback을 성공으로 본다.
+
+위험:
+
+- 목업은 테스트와 설계 보조에는 유용하지만, 사용자가 보는 법규/지도/설계 산출에서 실제 데이터처럼 섞이면 무결성이 무너진다.
+- fallback이 "비권위 데이터"로 표시되지 않으면 사용자는 공식 원천 결과로 오해한다.
+
+보강:
+
+1. `NoMockProductionGate`를 추가한다.
+2. 제품 런타임에서 허용되는 fallback은 세 종류만 둔다.
+   - `display_unavailable`: 데이터를 표시하지 않고 재시도/수동확인 안내
+   - `non_authoritative_preview`: 예비 미리보기, 확정 산출 차단
+   - `test_only_mock`: 테스트 빌드에서만 허용
+3. `useMock=false`만으로는 부족하다. 응답 envelope에 `data_authority`를 넣어야 한다.
+4. OSM fallback은 공식 지도 대체가 아니라 "배경지도 임시 미리보기"로만 허용하고 법규/필지 계산에는 사용 금지한다.
+5. 설계 fallback spec은 `assumption_registry`에 등록하고 확정 CAD 산출을 막는다.
+
+100% 게이트:
+
+- production build에서 mock import가 판정/산출 경로에 포함되면 실패.
+- fallback 데이터로 PASS, 확정 도면, 확정 사업성, 확정 인허가가 생성되면 실패.
+- fallback UI는 항상 "비권위/예비/확인 필요"를 표시한다.
+
+### 19.3 Plan-P0-7. 공식 공간정보의 법적 효력 오해 가능성
+
+공식 공간정보도 모두 같은 법적 효력을 갖지 않는다.
+예를 들어 산지정보시스템은 산지구분도 면적이 GIS 공간분석상 참고 면적이며 지적공부상 면적과 다를 수 있음을 안내한다.
+따라서 지도·공간 데이터는 정본 확인의 트리거이지, 모든 경우에 인허가 확정값이 아니다.
+
+보강:
+
+1. `legal_effect`를 필수 필드로 만든다.
+   - `binding_record`
+   - `official_reference`
+   - `spatial_reference`
+   - `derived_estimate`
+   - `user_assertion`
+2. 면적, 경사, 산지, 임상, 도로 폭은 정밀도와 법적 효력을 분리 표시한다.
+3. 확정 인허가 판단에는 `binding_record` 또는 `official_reference + cross_checked`만 사용한다.
+4. `spatial_reference`는 산출 차단까지는 아니어도 `requires_survey` 또는 `requires_official_document`를 만든다.
+
+100% 게이트:
+
+- GIS 면적/경사/산지 분석값이 지적공부·측량·허가도서 확정값처럼 표시되면 실패.
+- 공식 공간정보와 지적공부/조례/고시가 충돌하면 `disputed` 상태로 차단.
+
+### 19.4 Plan-P0-8. 운영 관측성과 stale 전파 계획 부족
+
+위험:
+
+- 법령, 조례, 지구단위계획, VWorld 레이어, 산림 데이터가 바뀌어도 기존 프로젝트 산출물이 stale 처리되지 않으면 과거 판정이 계속 살아남는다.
+- API 장애가 늘어나도 사용자는 단순 오류 또는 빈 화면으로만 본다.
+
+보강:
+
+1. `SourceHealthMonitor`를 추가한다.
+   - 원천별 성공률
+   - 응답시간
+   - 최근 실패 원인
+   - 인증키/쿼터 상태
+2. `EvidenceInvalidationPolicy`를 추가한다.
+   - 법령/조례 시행일 변경
+   - 지도 레이어 버전 변경
+   - PNU/geometry 변경
+   - 사용자가 필지 목록 변경
+   - 설계 기준 변경
+3. stale 전파 대상:
+   - siteAnalysis
+   - compliance
+   - permit
+   - designTopN
+   - cad/bim
+   - feasibility
+   - decisionBrief
+
+100% 게이트:
+
+- 원천 변경 또는 필지 변경 후 하류 산출물이 자동 stale 처리된다.
+- stale 산출물을 사용자가 확정 산출물로 다운로드할 수 없다.
+
+### 19.5 Plan-P0-9. DB 마이그레이션·롤백·데이터 보존 계획 부족
+
+위험:
+
+- EvidenceLedger, LegalVerdictEnvelope, SourceReadiness 같은 핵심 스키마를 추가하면 기존 프로젝트 데이터 마이그레이션이 필요하다.
+- 마이그레이션 실패 시 기존 프로젝트가 깨지거나 오래된 산출물이 새 엔진 기준으로 오해될 수 있다.
+
+보강:
+
+1. DB migration plan을 Phase 0에 포함한다.
+2. 기존 프로젝트는 `legacy_unverified` 상태로 마이그레이션한다.
+3. 기존 산출물은 새 evidence가 없으면 확정 배지를 제거한다.
+4. rollback 시에도 기존 데이터가 손상되지 않도록 additive schema 우선 적용한다.
+
+100% 게이트:
+
+- 마이그레이션 전/후 프로젝트 로드 테스트 통과.
+- evidence 없는 legacy 결과는 확정 상태로 표시되지 않는다.
+
+### 19.6 Plan-P1-5. 보안·개인정보·키 관리 게이트 부족
+
+위험:
+
+- 주소, PNU, 소유/거래, 사업성, 설계 데이터는 민감할 수 있다.
+- 공공 API 키와 지도 키가 클라이언트에 과도하게 노출되면 운영 리스크가 생긴다.
+
+보강:
+
+1. API 키는 서버 프록시 또는 도메인 제한 공개키 정책으로 분리한다.
+2. 프로젝트별 evidence ledger 접근은 tenant/project 권한으로 제한한다.
+3. redteam fixture는 실제 주소를 비식별화하거나 공개 샘플만 사용한다.
+4. 로그에는 전체 주소/토큰/API 키/개인정보를 남기지 않는다.
+
+100% 게이트:
+
+- 브라우저 번들에 비공개 API 키 포함 0건.
+- 로그에 토큰/키/민감주소 원문 출력 0건.
+
+### 19.7 Plan-P1-6. 성능·비용·가용성 기준 부족
+
+위험:
+
+- 공식 원천을 모두 조회하면 분석 시간이 길어지고 API 비용/쿼터를 초과할 수 있다.
+- 사용자는 100% 분석이 느려도 진행 상태와 원인을 알아야 한다.
+
+보강:
+
+1. `AnalysisRunBudget`을 둔다.
+   - fast path: 필수 원천만, 30~60초
+   - deep path: 특수조건 포함, 수분 가능
+   - manual path: 자동확인 불가 원천
+2. 원천별 캐시는 evidence hash 기반으로 재사용한다.
+3. 진행 상태는 "수집/조례/특수조건/반증/산출" 단계로 보여준다.
+
+100% 게이트:
+
+- 장시간 분석 중 빈 화면 금지.
+- 쿼터 초과 시 `NEEDS_VERIFICATION`으로 정직 반환.
+
+## 20. Completion Evidence Pack
+
+통합자에게 넘길 때는 말로 "완료"가 아니라 증거 묶음을 제공한다.
+
+필수 파일:
+
+1. `redteam-summary.json`
+   - P0/P1 개수, 점수, 실패 시나리오, 검증 명령, 커밋 SHA
+2. `traceability-matrix.json`
+   - finding -> code -> test -> evidence 연결
+3. `source-readiness.json`
+   - 공식 원천별 readiness/권한/쿼터/fallback 정책
+4. `redteam-fixture-results.json`
+   - 30개 이상 특이사례 결과
+5. `browser-e2e-report/`
+   - 지도 레이어, fullscreen, 필지 선택, 설계 산출 차단 스크린샷
+6. `legal-drift-scan.txt`
+   - 중복 한도표, fail-open, mock production import 스캔 결과
+7. `backend-test-report.txt`
+   - pytest collection, 핵심 API 테스트 결과
+8. `frontend-test-report.txt`
+   - vitest, lint, build, Playwright 결과
+
+100% 게이트:
+
+- Evidence Pack이 없으면 통합자 배포 요청 금지.
+- Evidence Pack 내부에 `blocked`, `unknown`, `not_run` P0가 있으면 배포 요청 금지.
+
+## 21. 100% 완성도 점수체계 v3
+
+v2 점수체계를 더 엄격하게 수정한다.
+
+| 영역 | 가중치 | 100% 조건 |
+|---|---:|---|
+| 검증환경/CI 재현성 | 10 | 로컬·CI·컨테이너 중 2개 이상에서 수집/테스트 성공 |
+| 공식원천 readiness | 10 | 모든 1차 원천 ready/limited/manual_only 분류, 권한 확인 |
+| 법령/조례 SSOT | 15 | 중복 판정표 제거, statutory-only 차단, 조례 상태 분리 |
+| 법규 scope/반증 | 15 | LawScopeInventory 4중 생성, counter-check, critical 누락 0 |
+| 특수조건/공간정밀도 | 10 | 산지·농지·경사·임목·도시계획·지구단위 blocking rules |
+| 지도 통합/레이어 계약 | 10 | VWorld 기본, visual/queryable/computable 분리, OSM 제품판정 배제 |
+| 필지 핸드오프/상태관리 | 8 | 다필지/삭제/sessionStorage 차단/stale 전파 통과 |
+| 설계·CAD 산출 차단 | 8 | LegalVerdictEnvelope 없으면 확정 산출 불가 |
+| 무목업·fallback 통제 | 6 | production mock/fallback 판정 경로 0건 |
+| 보안·운영·Evidence Pack | 8 | 키/로그/권한/관측성/traceability/evidence pack 완비 |
+
+절대 차단 조건:
+
+- P0 1건 이상
+- 백엔드 테스트 수집 실패
+- fail-open 1건 이상
+- 확정 산출물에 evidence ledger 없음
+- production 판정 경로 mock/fallback 사용
+- 공식 원천 readiness 미분류
+- 통합자 Evidence Pack 누락
+
+## 22. 3차 반복검증 시나리오 추가
+
+기존 R1~R20에 다음 시나리오를 추가한다.
+
+| 번호 | 시나리오 | 기대 결과 |
+|---|---|---|
+| R21 | production build에 `@/mocks/module-data`가 판정 경로로 포함 | 빌드/스캔 실패 |
+| R22 | VWorld tile 실패 후 OSM fallback 표시 | 법규/필지 계산에는 미사용, 비권위 표시 |
+| R23 | 산지 GIS 면적과 지적공부 면적 불일치 | disputed 또는 requires_official_document |
+| R24 | 법령 시행일 변경 후 기존 프로젝트 열람 | 하류 산출 stale |
+| R25 | 조례 캐시와 법제처 원문 충돌 | disputed, 확정 산출 차단 |
+| R26 | EvidenceLedger 없는 legacy 프로젝트 | legacy_unverified 배지, 확정 다운로드 차단 |
+| R27 | API 키 누락/쿼터 초과 | UNKNOWN/NEEDS_VERIFICATION, PASS 금지 |
+| R28 | 긴 분석 실행 중 일부 원천 지연 | 단계별 진행상태, timeout 원천만 미확인 처리 |
+| R29 | LLM이 공식 원천과 다른 법규 제안 | 후보로만 보관, 공식 ID 없으면 판정 제외 |
+| R30 | 다필지 합필 불가 조건 | 사업지 통합안과 필지별 법규 제한 분리 표시 |
+| R31 | 지도 레이어는 보이나 WFS geometry 없음 | visual-only 경고, computable 분석 금지 |
+| R32 | stale siteAnalysis로 CAD 편집 진입 | 편집은 가능해도 확정 산출/내보내기 차단 |
+
+## 23. 구현 순서 v3
+
+### Gate 0. 증거 기반 작업체계
+
+1. `scripts/redteam-verify.sh` 작성.
+2. `CompletionTraceabilityMatrix` 템플릿 작성.
+3. `NoMockProductionGate` 스캔 작성.
+4. pytest collection 복구.
+5. Evidence Pack 출력 위치 고정.
+
+완료 조건:
+
+- 문서, 테스트, 스캔, 산출물 경로가 먼저 존재한다.
+
+### Gate 1. 사용자 오판 가능성 제거
+
+1. fail-open 제거.
+2. 미등록 용도지역 PASS 제거.
+3. statutory-only 확정 산출 차단.
+4. fallback/mock 확정 산출 차단.
+
+완료 조건:
+
+- 틀린 "적합/확정"을 보여주는 경로 0건.
+
+### Gate 2. 진실원천 통합
+
+1. LegalZoneLimitsRegistry 통합.
+2. OrdinanceResolution 상태화.
+3. SourceReadiness/OfficialDataEnvelope 도입.
+4. EvidenceLedger 최소 구현.
+
+완료 조건:
+
+- 모든 산출 수치가 evidence를 가진다.
+
+### Gate 3. 지도 기반 통합 시스템
+
+1. VWorld 기본 지도 고정.
+2. 레이어 계약화.
+3. 컴퓨터블 레이어만 분석 투입.
+4. fullscreen/레이어/필지 선택 E2E.
+
+완료 조건:
+
+- 지도 화면에서 본 데이터와 산출 근거가 일치한다.
+
+### Gate 4. 법규 scope와 특수조건
+
+1. LawScopeAgent 4중 생성.
+2. 산지/농지/경사/임목/도시계획/지구단위/문화재/하천/상수원/군사 스캔.
+3. CounterEvidenceLoop.
+4. redteam fixtures 30+.
+
+완료 조건:
+
+- critical 누락 0건.
+
+### Gate 5. 설계·CAD 확정 산출
+
+1. LegalVerdictEnvelope 기반 설계 산출.
+2. 1~3순위 건축물/건축개요 추천.
+3. CAD/BIM 도면과 텍스트/음성 명령 통합.
+4. 확정/예비/보완안 출력 분리.
+
+완료 조건:
+
+- 미확인 법규가 있으면 확정 설계안이 나오지 않는다.
+
+## 24. 3차 레드팀 결론
+
+v3 보강 후에도 100% 완성은 구현과 검증을 통해서만 달성된다.
+다만 이번 보강으로 "좋은 계획"에서 "검증 가능한 실행계획"으로 한 단계 더 잠겼다.
+
+추가로 찾아낸 부족한 부분:
+
+1. P0/P1 해소 추적 매트릭스가 없었다.
+2. 목업·fallback 제품 유입 방지 게이트가 부족했다.
+3. 공식 공간정보의 법적 효력 등급이 부족했다.
+4. 운영 중 원천 변경/stale 전파 계획이 부족했다.
+5. DB 마이그레이션·legacy 결과 처리 계획이 부족했다.
+6. 보안·키·로그·권한 계획이 부족했다.
+7. 성능·쿼터·장시간 분석 UX가 부족했다.
+8. 통합자에게 넘길 Evidence Pack 정의가 부족했다.
+
+따라서 다음 실제 구현은 반드시 `Gate 0`부터 시작해야 한다.
+Gate 0 없이 기능 구현을 시작하면 테스트 미실행, 목업 혼입, 증거 누락이 반복될 가능성이 높다.
