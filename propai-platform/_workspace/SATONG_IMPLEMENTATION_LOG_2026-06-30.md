@@ -53,6 +53,16 @@
   - 프론트 A1 접속 확인: `FRONT_A1_SSH_OK`, hostname `4t8t`
   - 프론트 배포 시작: `/tmp/codex-safe-deploy.sh web codex/dashboard-ia-ui-20260629`
   - 배포 시작 상태: `BUILD web @ 5aed72b9 docs: record satong map and legal engine validation`
+- 2026-06-30 20:52 KST:
+  - 프론트 A1 배포 완료: `/tmp/deploy_status.txt` = `DONE web=200 api=200 @ 5aed72b9 docs: record satong map and legal engine validation 11:52:30`
+  - 라이브 smoke:
+    - `https://4t8t.net/ko/precheck`: HTTP `200`
+    - `https://4t8t.net/ko/design-studio`: HTTP `200`
+    - `https://4t8t.net/health`: HTTP `200`, `postgres/redis/qdrant=healthy`
+  - 라이브 HTML 확인:
+    - `/ko/precheck`에서 `지도 위에서 입력부터 산출물 생성까지 이어갑니다`, `통합 필지 입력`, `사통팔땅 멀티지도` 문자열 확인
+    - `/ko/design-studio`에서 `AI 설계도면(CAD)`, `프로젝트를 선택하면 AI 자동설계` 문자열 확인
+  - 비로그인 Playwright 브라우저는 인증 정책에 따라 로그인 화면으로 리다이렉트됨. 로그인 세션에서 지도 작업면을 확인해야 한다.
 
 ## 다음 배포 명령
 
