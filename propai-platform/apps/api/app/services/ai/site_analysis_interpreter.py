@@ -155,14 +155,24 @@ class SiteAnalysisInterpreter(BaseInterpreter):
     system_prompt = SYSTEM_PROMPT
 
 
-    async def generate_interpretation(self, analysis_data: dict, *, prior_context: str | None = None) -> dict[str, str]:
+    async def generate_interpretation(
+        self,
+        analysis_data: dict,
+        *,
+        evidence_text: str | None = None,
+        prior_context: str | None = None,
+    ) -> dict[str, str]:
         """7개 섹션 각각에 대한 해석 텍스트를 생성.
 
         Args:
-            analysis_data: ComprehensiveAnalysisService.analyze()의 반환값
+            analysis_data: ComprehensiveAnalysisService.analyze()의 반환값(또는 동일 스키마).
+            evidence_text: 호출처(서비스/라우터)가 async로 조립한 사람이 읽는 근거 문자열
+                (MOLIT 실거래·법규 RAG·공시지가·조례 출처 등). BaseInterpreter._invoke가
+                프롬프트 '추가 근거 자료' 섹션에 부착하고 캐시키에 반영한다(CR-3). 없으면 None.
+            prior_context: 원장 직전심사 근거블록(있으면). 없으면 None(graceful).
 
         Returns:
-            10개 키를 가진 dict — 각 값은 전문가 해석 문자열.
+            12개 키를 가진 dict — 각 값은 전문가 해석 문자열.
             LLM 호출 실패 시 빈 dict가 아니라 None을 반환하여
             호출자가 폴백 처리할 수 있게 한다.
         """
@@ -185,7 +195,7 @@ class SiteAnalysisInterpreter(BaseInterpreter):
 
         return await self._invoke(
             user_prompt, cache_data=compact, evidence_data=analysis_data,
-            prior_context=prior_context,
+            evidence_text=evidence_text, prior_context=prior_context,
         )
 
     @staticmethod
