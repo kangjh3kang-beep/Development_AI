@@ -30,6 +30,40 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ──────────────────────────────────────────────────────────────────────
+# ★공용 퍼센트 파서 (전역 단일 진실원천) — 조례 본문의 건폐율/용적률 값을 뽑는다.
+#   버그(라이브 재현): 기존 `(\d{1,4})퍼센트`는 천 단위 구분자를 못 읽어
+#   '1,300퍼센트' → 300, '1 300퍼센트' → 300 으로 잘렸다(상업·준주거 고밀 용적률
+#   1000%↑가 300~500%로 과소파싱 → 개발규모 심각 과소보고). 이 헬퍼로 모든
+#   퍼센트 추출을 일원화해, 한 곳을 고치면 조례 파서 전역이 따라오게 한다.
+#   (CLAUDE.md 버그수정 정책: 국소패치 금지, 공용화 추출.)
+# ──────────────────────────────────────────────────────────────────────
+#   패턴 설명(리뷰어 라이브검증):
+#     · `\d{1,3}(?:[,\s]\d{3})+` = '1,300' / '1 300' / '1,234,567'(쉼표·공백 3자리 묶음)
+#     · `\d{1,4}`               = '250' / '60' 같은 구분자 없는 평문 값(폴백)
+#   추출 후 쉼표·공백을 제거해 정수로 변환한다.
+_KR_PCT_RE = re.compile(
+    r"(?:이하\s*)?(\d{1,3}(?:[,\s]\d{3})+|\d{1,4})\s*(?:퍼센트|%|프로)"
+)
+
+
+def _parse_kr_percent(text: str) -> int | None:
+    """한국어 조례 퍼센트 표기(천 단위 구분자 허용)를 정수로 파싱한다.
+
+    - '1,300퍼센트' → 1300, '1 300퍼센트' → 1300, '1,500 % 이하' → 1500
+    - '250퍼센트' → 250, '60프로' → 60, '200%' → 200
+    - 매칭 없으면 None(값 날조 금지 — 호출부가 정직 폴백).
+    순수함수(외부 IO 없음)라 단위 테스트가 쉽다.
+    """
+    if not text:
+        return None
+    m = _KR_PCT_RE.search(text)
+    if not m:
+        return None
+    # 천 단위 구분자(쉼표·공백)를 제거하고 정수화.
+    return int(m.group(1).replace(",", "").replace(" ", ""))
+
+
 def resolve_ordinance_region(address: str | None) -> str | None:
     """주소 → '도시계획조례 정본 레벨' 행정구역명(전 분석 공용 SSOT).
 
@@ -335,8 +369,25 @@ class OrdinanceService:
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
             result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
-            _attach_provenance(result, confidence=0.95, recheck=False,
-                               disclaimer="법제처 자치법규 실시간 조회값(도시계획조례 본문).")
+            # ★파서의 정직 신호(parse_confidence/missing_sections/caveat)를 provenance에 반영한다.
+            #   깔끔히 파싱되면 0.95 유지, 느슨한 매칭이면 파서 신뢰도로 하향해 '확정'으로
+            #   호도하지 않는다(낮으면 recheck 권장). 소비자가 안 읽어도 무해한 additive 필드.
+            parse_conf = api_result.get("parse_confidence")
+            missing = api_result.get("missing_sections") or []
+            caveat = api_result.get("caveat")
+            loose_parse = (parse_conf is not None and parse_conf < 0.6)
+            prov_conf = 0.95 if not loose_parse else min(0.95, 0.5 + (parse_conf or 0.0) * 0.5)
+            disclaimer = "법제처 자치법규 실시간 조회값(도시계획조례 본문)."
+            if caveat:
+                disclaimer += f" {caveat}"
+            elif loose_parse:
+                disclaimer += " (파싱 신뢰도 낮음 — 조례 원문 재확인 권장)"
+            _attach_provenance(result, confidence=prov_conf, recheck=loose_parse,
+                               disclaimer=disclaimer)
+            # provenance에 파서 세부 신호를 additive로 노출(정직 표기·디버깅용).
+            result["provenance"]["parse_confidence"] = parse_conf
+            result["provenance"]["missing_sections"] = missing
+            result["provenance"]["evidence_span"] = api_result.get("evidence_span")
             await _save_resolution(result, sigungu, zone_type)
             return result
 
@@ -442,48 +493,75 @@ class OrdinanceService:
     def _parse_bcr_far_from_text(
         self, xml_text: str, zone_type: str, region_name: str
     ) -> dict[str, Any] | None:
-        """조례 본문에서 용도지역별 건폐율/용적률 값을 추출.
+        """조례 본문에서 요청된 용도지역의 건폐율/용적률 값을 추출.
 
-        파싱 전략 (실증 검증 완료):
-        1. CDATA 블록을 추출하여 전체 텍스트 구성
-        2. "용도지역안에서의 건폐율" / "용도지역안에서의 용적률" 조문 위치 탐색
-        3. "{용도지역} : {숫자}퍼센트" 패턴으로 전체 테이블 파싱
-        4. 요청된 zone_type에 해당하는 값 반환
+        ★반환 계약(호출부 _fetch_from_moleg_api → get_ordinance_limits가 소비)은 그대로 유지한다:
+            {"bcr": int|None, "far": int|None, "ordinance_name": str, "last_updated": str|None}
+        여기에 '정직 신호' 키를 **추가로만**(additive) 얹는다 — 기존 소비자는 bcr/far/이름/시행일만
+        읽으므로 아래 키가 늘어도 무해하다:
+            "parse_confidence": 0~1(테이블·조문 깔끔히 매칭=높음, 느슨한 매칭/폴백=낮음)
+            "missing_sections": 못 찾은 항목 목록(예: ["건폐율", "용적률", "요청 용도지역"])
+            "caveat": 값이 단서/경과조치(다만 …) 맥락이면 그 주의문(없으면 None)
+            "evidence_span": 값을 뽑아낸 원문 근거 스니펫(용도별 provenance용)
+
+        내부적으로는 구조화 파서(_extract_zone_limits_structured)가 조례 본문 전체를
+        {용도지역: {"bcr":pct, "far":pct, ...}} 형태로 파싱하고, 여기서 요청 zone_type만 골라낸다.
         """
-        # CDATA 블록 추출하여 전체 텍스트 구성
-        chunks = re.findall(r"CDATA\[(.*?)\]", xml_text, re.DOTALL)
+        # CDATA 블록 추출하여 전체 텍스트 구성(구조화 파서에 원문 그대로 넘긴다).
+        # ★CDATA 종결자는 ']]>'다. 기존 `CDATA\[(.*?)\]`는 첫 ']'에서 끊겨(비탐욕),
+        #   '[별표 1]' 같이 본문에 ']'가 있으면 표가 잘려나갔다(별표 파싱 실패의 근본원인).
+        #   여기서는 ']]>' 종결까지를 CDATA 본문으로 정확히 잡되, 종결자가 없는 변형 XML도
+        #   폴백으로 흡수한다.
+        chunks = re.findall(r"CDATA\[(.*?)\]\]>", xml_text, re.DOTALL)
+        if not chunks:
+            # 폴백(종결자 표기변형): 단일 ']'까지라도 잡아 최소한의 본문을 확보.
+            chunks = re.findall(r"CDATA\[(.*?)\]", xml_text, re.DOTALL)
         full_text = " ".join(chunks)
 
-        if not full_text:
+        if not full_text.strip():
             return None
 
-        bcr = None
-        far = None
+        # 1) 조례 본문 전체를 구조화 파싱(용도지역별 건폐율/용적률 표).
+        structured = self._extract_zone_limits_structured(full_text)
+        zones: dict[str, dict[str, Any]] = structured["zones"]
 
-        # 건폐율 조문 파싱
-        bcr_idx = full_text.find("용도지역안에서의 건폐율")
-        if bcr_idx >= 0:
-            bcr_section = full_text[bcr_idx:bcr_idx + 1000]
-            items = re.findall(r"(\S+지역)\s*:\s*(\d+)퍼센트", bcr_section)
-            for zone_name, pct_str in items:
-                if zone_type in zone_name or zone_name in zone_type:
-                    bcr = int(pct_str)
-                    break
+        # 2) 요청 용도지역에 해당하는 값을 관대 매칭으로 선택(표기변형·세분 허용).
+        matched_key = self._match_requested_zone(zone_type, zones)
+        entry = zones.get(matched_key) if matched_key else None
 
-        # 용적률 조문 파싱
-        far_idx = full_text.find("용도지역안에서의 용적률")
-        if far_idx >= 0:
-            far_section = full_text[far_idx:far_idx + 1500]
-            items = re.findall(r"(\S+지역)\s*:\s*(\d+)퍼센트", far_section)
-            for zone_name, pct_str in items:
-                if zone_type in zone_name or zone_name in zone_type:
-                    far = int(pct_str)
-                    break
+        bcr = entry.get("bcr") if entry else None
+        far = entry.get("far") if entry else None
+
+        # 3) '정직 신호' 집계 — 무엇을 못 찾았는지, 신뢰도는 얼마인지.
+        missing_sections: list[str] = []
+        if not structured["found_bcr_section"]:
+            missing_sections.append("건폐율")
+        if not structured["found_far_section"]:
+            missing_sections.append("용적률")
+        if entry is None or (bcr is None and far is None):
+            # 조례에 값이 있어도 '요청 용도지역'이 표에 없으면 절대 만들어내지 않는다.
+            missing_sections.append("요청 용도지역")
 
         if bcr is None and far is None:
+            # 요청 용도지역 값을 전혀 못 찾음 → None 반환(호출부는 정적캐시→법정상한으로 폴백).
+            # ★날조 금지: 여기서 값을 채우지 않는다(정직 폴백이 기존 올바른 동작).
             return None
 
-        # 조례명/시행일 추출
+        # 신뢰도: 조문 헤더를 정식으로 찾고(용도지역 안에서의 …) 표에서 명시 매칭했으면 높게,
+        #         느슨한 폴백 매칭에 기댔으면 낮게. 단서/경과조치 맥락이면 더 감점.
+        #         ★고밀 용도지역(상업·준주거)이 FAR<500이면 절단/오독 강한 신호 → 감점.
+        parse_confidence = self._compute_parse_confidence(structured, entry, matched_key)
+        caveat = entry.get("caveat") if entry else None
+        # ★FIX2 방어: 고밀 존(상업·준주거) FAR<500이면 천 단위 절단 의심을 caveat로 명시
+        #   (신뢰도는 이미 _compute_parse_confidence에서 강등됨 → recheck 자동 권장).
+        if self._is_high_density_undershoot(matched_key, far):
+            trunc_note = (
+                "고밀 용도지역(상업·준주거)인데 용적률이 500% 미만으로 파싱됨 — "
+                "천 단위(예: 1,300%) 절단 파싱 오류 의심(원문 재확인 권장)."
+            )
+            caveat = f"{caveat} {trunc_note}".strip() if caveat else trunc_note
+
+        # 조례명/시행일 추출(기존과 동일).
         ordin_name_match = re.search(r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text)
         date_match = re.search(r"<시행일자>(\d{8})</시행일자>", xml_text)
 
@@ -492,7 +570,280 @@ class OrdinanceService:
             "far": far,
             "ordinance_name": ordin_name_match.group(1) if ordin_name_match else f"{region_name} 도시계획 조례",
             "last_updated": f"{date_match.group(1)[:4]}-{date_match.group(1)[4:6]}-{date_match.group(1)[6:]}" if date_match else None,
+            # ── 추가(additive) 정직 신호 — 기존 소비자는 무시해도 무해 ──
+            "parse_confidence": parse_confidence,
+            "missing_sections": missing_sections,
+            "caveat": caveat,
+            "evidence_span": entry.get("evidence_span") if entry else None,
         }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 구조화 파서 헬퍼들 (P1-1 강화) — 정규식 남발을 줄이고, 조례 표기변형을
+    # 관대하게 흡수한다. 각 헬퍼는 순수함수(외부 IO 없음)라 테스트가 쉽다.
+    # ──────────────────────────────────────────────────────────────────────
+
+    # 국토계획법상 21개 용도지역 표준명(세분 접미사 제거 후 최종 정규화용).
+    _CANONICAL_ZONES: tuple[str, ...] = (
+        "제1종전용주거지역", "제2종전용주거지역",
+        "제1종일반주거지역", "제2종일반주거지역", "제3종일반주거지역",
+        "준주거지역",
+        "중심상업지역", "일반상업지역", "근린상업지역", "유통상업지역",
+        "전용공업지역", "일반공업지역", "준공업지역",
+        "보전녹지지역", "생산녹지지역", "자연녹지지역",
+        "보전관리지역", "생산관리지역", "계획관리지역",
+        "농림지역", "자연환경보전지역",
+    )
+
+    @staticmethod
+    def _normalize_ws(text_in: str) -> str:
+        """공백 정규화 — 연속 공백/개행/탭을 단일 공백으로 접는다.
+
+        '용도지역  안에서의   건폐율' 같은 띄어쓰기 변형을 흡수하기 위한 전처리.
+        """
+        return re.sub(r"\s+", " ", text_in or "").strip()
+
+    def _locate_section(self, full_text: str, kind: str) -> tuple[str | None, bool]:
+        """'용도지역 안에서의 건폐율/용적률' 조문(또는 참조된 별표) 본문을 찾아 반환.
+
+        - kind: "건폐율" 또는 "용적률".
+        - 띄어쓰기 변형 허용: '용도지역안에서의' / '용도지역 안에서의' 모두 매칭.
+        - "별표 N과 같다" 형태면 해당 별표 블록을 찾아 그 본문을 반환(표가 별표에 있는 조례 대응).
+        Returns: (섹션본문|None, is_full_header)
+          is_full_header=True → 정식 헤더('용도지역 안에서의 …')로 찾음(신뢰도 높음).
+          False → 헤더 없이 단어(건폐율/용적률)만으로 폴백(신뢰도 낮게 취급).
+        """
+        norm = self._normalize_ws(full_text)
+        # 반대 항목(건폐율↔용적률) — 이 헤더가 다시 나오면 현재 섹션의 끝이다(값 오염 방지).
+        other = "용적률" if kind == "건폐율" else "건폐율"
+
+        # 헤더 매칭: '용도지역' + (선택)공백 + '안에서의' + … + 건폐율/용적률.
+        # (사이에 '의 최대한도' 같은 수식어가 끼어도 되도록 헤더~kind 사이를 관대하게 허용)
+        header_re = r"용도지역\s*안에서의\s*(?:[^.]{0,20}?)?" + kind
+        header = re.search(header_re, norm)
+        is_full_header = header is not None
+        if not header:
+            # 헤더가 없더라도 '건폐율은/용적률은 … 별표'식 직접 언급을 폴백 탐색(느슨).
+            header = re.search(kind, norm)
+            if not header:
+                return None, False
+
+        start = header.start()
+        tail = norm[header.end():]
+
+        # ★별표 참조 우선 처리: "별표 N과 같다/따른다/의한다" → 표가 별표에 실려 있다.
+        #   (경계 truncation보다 먼저 판정해야 참조 문구 자체를 잘라버리지 않는다.)
+        ref_area = tail[:120]  # 헤더 직후 근접 영역에서만 참조를 인정(오검출 방지).
+        ref = re.search(r"별표\s*(\d+)\s*(?:의\s*\d+)?", ref_area)
+        if ref and ("같다" in ref_area or "따른" in ref_area or "의한" in ref_area):
+            byeolpyo = self._locate_byeolpyo(norm, ref.group(1))
+            if byeolpyo:
+                # 별표에서 뽑되, 정식 조문에서 참조했으니 is_full_header는 그대로 반영.
+                return byeolpyo, is_full_header
+
+        # ★섹션 끝 경계: 헤더 이후에서 '반대 항목의 정식 헤더'가 다시 나오거나, 별표 '정의'
+        #   블록([별표 N] — 대괄호로 시작)이 나오면 그 앞에서 끊는다(값이 뒤섞이는 것 방지).
+        #   단순 '별표 N과 같다' 참조 문구(대괄호 없음)로는 끊지 않는다.
+        other_hdr = re.search(r"용도지역\s*안에서의\s*(?:[^.]{0,20}?)?" + other, tail)
+        byeolpyo_def = re.search(r"\[\s*별표\s*\d+", tail)
+        # 폴백(헤더 없음)일 때는 값 오염을 줄이려 반대 단어도 경계로 인정.
+        loose_other = re.search(other, tail) if not is_full_header else None
+        bounds = [b.start() for b in (other_hdr, byeolpyo_def, loose_other) if b]
+        window = min(bounds) if bounds else 2500
+        section = norm[start:header.end() + window]
+        return section, is_full_header
+
+    def _locate_byeolpyo(self, norm_text: str, number: str) -> str | None:
+        """'별표 N' 정의 블록을 본문에서 찾아 반환(표 값이 별표에 실린 조례 대응).
+
+        ★핵심: '별표 N과 같다' 같은 참조 문구가 아니라 표가 실린 '정의' 블록을 잡아야 한다.
+          - 우선 대괄호 정의('[별표 N]')를 찾는다.
+          - 없으면 마지막 '별표 N' 등장을 정의로 본다(참조는 앞, 정의는 뒤에 오는 관행).
+        """
+        num = re.escape(number)
+        # 1) 대괄호 정의 '[별표 N]' 우선.
+        m = re.search(r"\[\s*별표\s*" + num + r"(?!\d)\s*\]?", norm_text)
+        if not m:
+            # 2) 폴백: '별표 N'의 '마지막' 등장(참조 뒤에 오는 정의로 간주).
+            matches = list(re.finditer(r"별표\s*" + num + r"(?!\d)", norm_text))
+            if not matches:
+                return None
+            m = matches[-1]
+        start = m.start()
+        # 별표 시작 이후 넉넉히(다음 별표 전까지, 최대 3000자).
+        after = start + len(m.group(0))
+        tail = norm_text[after:]
+        nxt = re.search(r"\[?\s*별표\s*\d+", tail)
+        end = (after + nxt.start()) if nxt else min(len(norm_text), start + 3000)
+        return norm_text[start:end]
+
+    def _extract_pct_near(self, fragment: str) -> tuple[int | None, bool]:
+        """조각 텍스트에서 첫 퍼센트 값을 뽑는다.
+
+        ★값 추출은 공용 헬퍼 `_parse_kr_percent`(천 단위 구분자 허용)로 일원화한다.
+          (기존 `(\\d{1,4})퍼센트`는 '1,300퍼센트'를 300으로 잘라 상업·준주거 고밀
+           용적률을 과소파싱했다 — 라이브 재현된 버그. 전역 단일 파서로 통일.)
+
+        Returns: (값 또는 None, 단서맥락여부)
+          단서맥락여부=True면 '다만/경과조치' 같은 예외문 안의 값일 수 있으니 신뢰도 감점.
+        """
+        m = _KR_PCT_RE.search(fragment)
+        if not m:
+            return None, False
+        val = _parse_kr_percent(m.group(0))
+        # 값 앞 40자에 단서/경과 키워드가 있으면 예외값일 수 있음.
+        pre = fragment[max(0, m.start() - 40):m.start()]
+        caveat_ctx = any(k in pre for k in ("다만", "경과조치", "종전", "적용하지"))
+        return val, caveat_ctx
+
+    def _extract_zone_limits_structured(self, full_text: str) -> dict[str, Any]:
+        """조례 본문 전체를 {용도지역: {"bcr":pct,"far":pct,"caveat":..,"evidence_span":..}} 로 파싱.
+
+        - 건폐율 조문/별표에서 용도지역별 값 → bcr
+        - 용적률 조문/별표에서 용도지역별 값 → far
+        - 표기변형·세분(제2종일반주거지역(7층 이하))을 관대하게 흡수.
+        반환에 found_bcr_section/found_far_section(조문 발견 여부)도 담아 신뢰도 산출에 쓴다.
+        """
+        zones: dict[str, dict[str, Any]] = {}
+
+        bcr_section, bcr_full = self._locate_section(full_text, "건폐율")
+        far_section, far_full = self._locate_section(full_text, "용적률")
+
+        for kind, section in (("bcr", bcr_section), ("far", far_section)):
+            if not section:
+                continue
+            for zone_name, frag, caveat_hdr in self._iter_zone_fragments(section):
+                val, caveat_ctx = self._extract_pct_near(frag)
+                if val is None:
+                    continue
+                slot = zones.setdefault(zone_name, {})
+                slot[kind] = val
+                # 근거 스니펫(용도별) — 처음 잡힌 것을 대표로.
+                slot.setdefault("evidence_span", self._normalize_ws(frag)[:120])
+                if caveat_ctx or caveat_hdr:
+                    slot["caveat"] = "단서·경과조치 맥락에서 추출된 값일 수 있음(원문 재확인 권장)."
+
+        return {
+            "zones": zones,
+            "found_bcr_section": bcr_section is not None,
+            "found_far_section": far_section is not None,
+            # 정식 헤더('용도지역 안에서의 …')로 찾았는지 — 신뢰도 산출에 활용.
+            "bcr_full_header": bcr_full,
+            "far_full_header": far_full,
+        }
+
+    def _iter_zone_fragments(self, section: str):
+        """조문/별표 구간을 용도지역 단위 조각으로 쪼개 (용도지역명, 값조각, 단서헤더) 산출.
+
+        전략: 표준 용도지역명(세분 접미사 '(7층 이하)' 포함 가능)을 앵커로 스캔하고,
+        각 앵커부터 다음 앵커 직전까지를 '그 용도지역의 값 조각'으로 본다.
+        이렇게 하면 'OO지역 : 200퍼센트' 뿐 아니라 표/줄바꿈/공백 변형에서도 값을 잡는다.
+        """
+        # 앵커: 표준 용도지역명 + (선택) 세분 괄호. 긴 이름 우선(제2종일반주거지역 > 주거지역).
+        alt = "|".join(re.escape(z) for z in sorted(self._CANONICAL_ZONES, key=len, reverse=True))
+        anchor_re = re.compile(r"(" + alt + r")\s*(\([^)]*?층[^)]*?\))?")
+
+        hits = list(anchor_re.finditer(section))
+        for i, m in enumerate(hits):
+            base = m.group(1)
+            qualifier = m.group(2) or ""
+            # 세분 접미사(예: '(7층 이하)')가 있으면 표준화해 붙인다.
+            if qualifier:
+                # 공백 제거해 '제2종일반주거지역(7층이하)' 형태로(캐시 키 표기와 정합).
+                zone_name = base + re.sub(r"\s+", "", qualifier)
+            else:
+                zone_name = base
+            start = m.end()
+            end = hits[i + 1].start() if i + 1 < len(hits) else min(len(section), start + 120)
+            frag = section[start:end]
+            # 값 조각 앞 20자에 단서 키워드가 있으면 헤더 단서로 표시.
+            head_ctx = section[max(0, m.start() - 20):m.start()]
+            caveat_hdr = any(k in head_ctx for k in ("다만", "경과조치"))
+            yield zone_name, frag, caveat_hdr
+
+    def _match_requested_zone(
+        self, zone_type: str, zones: dict[str, dict[str, Any]]
+    ) -> str | None:
+        """요청 용도지역명을 파싱된 표 키와 관대 매칭(표기변형·세분 허용).
+
+        우선순위: 정확 일치 > 세분 무시 일치 > 부분 일치(짧은 조각 오매칭 방지 위해 길이 최소 4).
+        """
+        if not zone_type:
+            return None
+        req = re.sub(r"\s+", "", zone_type)
+
+        # 1) 정확 일치
+        if req in zones:
+            return req
+        # 2) 세분 접미사를 뗀 기본명 일치(요청이 기본명이고 표에 세분만 있으면 기본 우선).
+        req_base = re.sub(r"\([^)]*\)", "", req)
+        for k in zones:
+            if re.sub(r"\([^)]*\)", "", k) == req_base and "(" not in req:
+                return k
+        # 3) 부분 일치(양방향) — 너무 짧은 조각은 배제해 '주거'류 광의 오매칭 차단.
+        if len(req_base) >= 4:
+            candidates = [
+                k for k in zones
+                if req_base in re.sub(r"\([^)]*\)", "", k) or re.sub(r"\([^)]*\)", "", k) in req_base
+            ]
+            if candidates:
+                # 가장 구체적(긴) 키 우선.
+                return sorted(candidates, key=len, reverse=True)[0]
+        return None
+
+    # ★고밀 용도지역명(상업 계열 + 준주거) — 이들이 FAR<500이면 절단/오독 강한 신호.
+    #   상업·준주거는 조례 용적률이 통상 400~1500%로, sub-500 값은 '1,300→300'식
+    #   천 단위 절단 파싱 오류의 대표 증상이다(방어 게이트에 사용).
+    _HIGH_DENSITY_ZONES: tuple[str, ...] = (
+        "중심상업지역", "일반상업지역", "근린상업지역", "유통상업지역", "준주거지역",
+    )
+    _HIGH_DENSITY_MIN_FAR: int = 500  # 이 미만이면 고밀 존에서 절단 의심.
+
+    @classmethod
+    def _is_high_density_undershoot(
+        cls, matched_key: str | None, far: int | None
+    ) -> bool:
+        """고밀 용도지역(상업·준주거)이 FAR<500으로 파싱됐는지(절단 의심) 판정."""
+        if matched_key is None or far is None:
+            return False
+        # 세분 접미사('(7층 이하)' 등)를 떼고 기본명으로 비교.
+        base = re.sub(r"\([^)]*\)", "", matched_key)
+        if not any(z in base for z in cls._HIGH_DENSITY_ZONES):
+            return False
+        return far < cls._HIGH_DENSITY_MIN_FAR
+
+    @classmethod
+    def _compute_parse_confidence(
+        cls,
+        structured: dict[str, Any],
+        entry: dict[str, Any] | None,
+        matched_key: str | None = None,
+    ) -> float:
+        """파싱 신뢰도 산출(0~1). 정식헤더·조문 발견·양쪽 값 확보·단서부재일수록 높다."""
+        if entry is None:
+            return 0.0
+        conf = 0.5  # 기본(값은 찾았으나 정황 불충분)
+        if structured.get("found_bcr_section"):
+            conf += 0.15
+        if structured.get("found_far_section"):
+            conf += 0.15
+        # 건폐율·용적률 둘 다 확보되면 표가 온전히 읽힌 신호.
+        if entry.get("bcr") is not None and entry.get("far") is not None:
+            conf += 0.15
+        # ★정식 헤더('용도지역 안에서의 …') 없이 단어 폴백으로만 잡았으면 크게 감점
+        #   (표 위치가 불확실 → 값 오독 위험). 값이 있는 쪽의 헤더 신뢰만 반영.
+        bcr_loose = entry.get("bcr") is not None and not structured.get("bcr_full_header")
+        far_loose = entry.get("far") is not None and not structured.get("far_full_header")
+        if bcr_loose or far_loose:
+            conf -= 0.35
+        # 단서/경과조치 맥락이면 감점(예외값 오독 위험).
+        if entry.get("caveat"):
+            conf -= 0.25
+        # ★방어 게이트(FIX2): 상업·준주거 고밀 존이 FAR<500이면 천 단위 절단 의심.
+        #   설사 정식 헤더로 깔끔히 매칭됐어도(0.95) 이 값은 신뢰할 수 없으니 강등해
+        #   recheck_recommended가 켜지도록 한다(거짓 확신 방지).
+        if cls._is_high_density_undershoot(matched_key, entry.get("far")):
+            conf = min(conf, 0.55) - 0.15
+        return round(max(0.0, min(1.0, conf)), 2)
 
     def _lookup_cache(
         self, sido: str, sigungu: str | None, zone_type: str
