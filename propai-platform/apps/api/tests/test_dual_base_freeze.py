@@ -16,6 +16,7 @@ census 는 pkgutil 로 app/models 전 서브모듈을 명시 로드해 산출한
 """
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
 import pkgutil
@@ -35,10 +36,9 @@ import app.models as _legacy_pkg  # noqa: E402
 # 전 서브모듈 명시 로드(완전 census). 깨진 모듈(예: feasibility — 존재하지 않는
 # app.models.base 를 import하는 사장 코드)은 건너뛴다(테이블 등록 자체가 불가능한 모듈).
 for _m in pkgutil.iter_modules(_legacy_pkg.__path__):
-    try:
+    # 깨진 사장 모듈은 어차피 테이블 등록이 불가능해 census 대상이 아님 — 건너뜀.
+    with contextlib.suppress(Exception):
         importlib.import_module(f"app.models.{_m.name}")
-    except Exception:  # noqa: BLE001 — 깨진 사장 모듈은 census 대상 아님
-        pass
 
 from app.core.database import Base as LegacyBase  # noqa: E402
 from apps.api.database.models import Base as CanonicalBase  # noqa: E402
