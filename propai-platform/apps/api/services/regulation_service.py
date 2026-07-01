@@ -235,12 +235,16 @@ class RegulationService:
             return result
         except Exception as e:
             logger.error("LLM 분석 실패", error=str(e))
+            # ★fail-open 제거: 자동 분석이 실패했는데 '적합(True)'으로 반환하면
+            # 검토되지 않은 결과가 '법규 적합'으로 흘러간다(fail-open). is_compliant는
+            # NOT NULL(bool) 컬럼이라 None을 쓸 수 없으므로 fail-closed(False=적합 아님)로
+            # 안전하게 반환하고, 신뢰도를 최저로 낮춰 '미확인'임을 명시한다.
             return {
-                "is_compliant": True,
-                "confidence": 0.3,
+                "is_compliant": False,
+                "confidence": 0.0,
                 "violations": [],
-                "recommendations": ["자동 분석 실패 — 수동 검토 필요"],
-                "summary": "자동 분석을 수행할 수 없습니다.",
+                "recommendations": ["자동 분석 실패 — 미확인, 적합 아님(수동 검토 필요)"],
+                "summary": "자동 분석 실패 — 미확인, 적합 아님(수동 검토 필요).",
             }
 
     async def check_regulation(
@@ -270,7 +274,9 @@ class RegulationService:
             tenant_id=tenant_id,
             project_id=project_id,
             regulation_type=regulation_type,
-            is_compliant=analysis.get("is_compliant", True),
+            # ★fail-open 제거: 분석 결과에 is_compliant 키가 없으면 '적합(True)'이 아니라
+            # fail-closed(False=적합 아님)로 기본 처리한다(미확인을 적합으로 단정 금지).
+            is_compliant=analysis.get("is_compliant", False),
             confidence_score=analysis.get("confidence", 0.5),
             violations=analysis.get("violations", []),
             recommendations=analysis.get("recommendations", []),
