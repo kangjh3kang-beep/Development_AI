@@ -60,9 +60,13 @@ async def ws_orchestrate(websocket: WebSocket, project_id: UUID) -> None:
     """
     import asyncio
 
-    from apps.api.rate_limit import ws_analyze_limiter
+    from apps.api.rate_limit import ws_analyze_limiter, ws_client_ip
 
-    client_ip = websocket.client.host if websocket.client else "unknown"
+    # 리버스프록시 배포에선 WS_TRUST_XFF=true 로 X-Forwarded-For 첫 홉 사용(미설정=직결 IP,
+    # 스푸핑 방어 기본값 — ws_client_ip docstring 참조).
+    client_ip = ws_client_ip(
+        websocket.headers.get("x-forwarded-for"),
+        websocket.client.host if websocket.client else None)
     if not ws_analyze_limiter.try_connect(client_ip):
         # accept 전 거부 — 핸드셰이크 단계에서 차단(자원 미소모).
         await websocket.close(code=4429)

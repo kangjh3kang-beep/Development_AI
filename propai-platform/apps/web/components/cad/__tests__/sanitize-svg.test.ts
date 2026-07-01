@@ -54,6 +54,23 @@ describe("sanitizeSvgMarkup (DOMPurify)", () => {
     expect(out).not.toMatch(/javascript:/i);
   });
 
+  it("a·use 요소 자체를 제거한다(정적 썸네일에 상호작용/외부참조 불허)", () => {
+    const out = sanitizeSvgMarkup('<svg><a><rect/></a><use href="#x"/><circle/></svg>');
+    expect(out).not.toBeNull();
+    expect(out).not.toMatch(/<\s*a[\s>]/i);
+    expect(out).not.toMatch(/<\s*use\b/i);
+    expect(out).toContain("<circle");
+  });
+
+  it("SMIL(set/animate) 속성조작 벡터를 제거한다", () => {
+    const out = sanitizeSvgMarkup(
+      '<svg><set attributeName="href" to="javascript:alert(1)"/>' +
+      '<animate attributeName="href" values="javascript:alert(2)"/><rect/></svg>');
+    expect(out).not.toBeNull();
+    expect(out).not.toMatch(/<\s*(set|animate)\b/i);
+    expect(out).not.toMatch(/javascript:/i);
+  });
+
   it("비SVG 입력은 null", () => {
     expect(sanitizeSvgMarkup("<div>hi</div>")).toBeNull();
     expect(sanitizeSvgMarkup("plain text")).toBeNull();

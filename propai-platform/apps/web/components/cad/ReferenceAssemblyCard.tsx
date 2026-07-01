@@ -54,7 +54,12 @@ export function sanitizeSvgMarkup(raw: string | null | undefined): string | null
   const cleaned = DOMPurify.sanitize(trimmed, {
     USE_PROFILES: { svg: true, svgFilters: true },
     // svg 프로파일이 이미 script 등을 배제하나, 위험 컨테이너는 명시적으로 재금지(심층 방어).
-    FORBID_TAGS: ["script", "foreignObject", "iframe", "object", "embed", "style"],
+    // 정적 썸네일에 불필요한 상호작용 요소도 전부 금지: a(링크)·use(외부참조)·
+    // SMIL 애니메이션(set/animate* — attributeName=href 류 속성조작 벡터).
+    FORBID_TAGS: [
+      "script", "foreignObject", "iframe", "object", "embed", "style",
+      "a", "use", "set", "animate", "animateTransform", "animateMotion",
+    ],
     FORBID_ATTR: ["href", "xlink:href"], // 썸네일 SVG 에 링크 불필요 — javascript:/외부참조 원천 차단
   });
   const result = cleaned.trim();

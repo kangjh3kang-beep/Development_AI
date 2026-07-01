@@ -91,3 +91,24 @@ class WsRateLimiter:
 
 # /analyze/ws 공용 인스턴스(단일 워커 프로세스 상태)
 ws_analyze_limiter = WsRateLimiter()
+
+
+def ws_client_ip(xff_header: str | None, fallback_host: str | None,
+                 trust_xff: bool | None = None) -> str:
+    """WS 클라이언트 IP 판별(P2-14) — 리버스프록시 배포 대응.
+
+    기본은 직결 소켓 IP(fallback_host). 신뢰 프록시(nginx 등이 X-Forwarded-For 를
+    '덮어쓰는' 구성) 뒤 배포에서만 WS_TRUST_XFF=true 환경변수로 XFF 첫 홉을 쓴다.
+    ★기본 미신뢰인 이유: 직결 노출 서버에서 XFF 를 무조건 믿으면 공격자가 헤더를
+    임의 변경해 IP당 상한을 회피(스푸핑)한다 — 신뢰는 배포 구성의 명시적 선언으로만.
+    (프록시 뒤에서 미신뢰로 두면 전 클라이언트가 프록시 IP 버킷을 공유해 과차단될 수
+    있으니, 오라클 nginx 프런트 배포에선 WS_TRUST_XFF=true 를 함께 설정할 것.)
+    """
+    import os as _os
+    if trust_xff is None:
+        trust_xff = (_os.getenv("WS_TRUST_XFF", "").strip().lower() in ("1", "true", "yes"))
+    if trust_xff and xff_header:
+        first = xff_header.split(",")[0].strip()
+        if first:
+            return first
+    return fallback_host or "unknown"
