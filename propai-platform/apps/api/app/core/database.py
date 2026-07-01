@@ -34,7 +34,13 @@ AsyncSessionLocal = async_sessionmaker(
 async_session_factory = AsyncSessionLocal
 
 class Base(DeclarativeBase):
-    pass
+    """⚠️레거시 Base — 동결(P1-7). 새 모델은 canonical(apps/api/database/models Base)로.
+
+    실사용 alembic(alembic.ini → database/migrations)은 canonical metadata 만 보므로
+    여기 얹힌 모델(app/models/*)은 autogenerate 비추적이며, 일부는 실스키마와 어긋난
+    스테일 정의(users/projects/api_keys 이중 정의)다. 동결은 tests/test_dual_base_freeze.py
+    가 CI 로 강제한다. 전면 통합(스테일 정리 포함)은 별도 트랙.
+    """
 
 async def get_db():
     async with AsyncSessionLocal() as session:
