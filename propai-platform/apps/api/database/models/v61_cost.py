@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -43,16 +43,16 @@ class CostWorkType(Base, TenantMixin):
     __tablename__ = "cost_work_types"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True,
     )
     work_code: Mapped[str] = mapped_column(String(20), nullable=False)
     work_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    parent_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    parent_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     work_level: Mapped[int] = mapped_column(Integer, default=1)
     work_category: Mapped[str] = mapped_column(String(50), nullable=False, comment="건축/기계/전기/조경/토목")
-    work_division: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    unit: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    work_division: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_subtotal: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -71,7 +71,7 @@ class MaterialUnitPrice(Base, TenantMixin):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     material_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     material_name: Mapped[str] = mapped_column(String(300), nullable=False)
-    spec: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    spec: Mapped[str | None] = mapped_column(String(300), nullable=True)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
     material_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, comment="재료비 단가")
     labor_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, comment="노무비 단가")
@@ -79,8 +79,8 @@ class MaterialUnitPrice(Base, TenantMixin):
     price_basis_year: Mapped[int] = mapped_column(Integer, default=2026)
     price_source: Mapped[str] = mapped_column(String(100), default="표준품셈2025")
     region: Mapped[str] = mapped_column(String(50), default="경기도")
-    valid_from: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
-    valid_to: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    valid_to: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
@@ -99,15 +99,15 @@ class BimQuantity(Base, TenantMixin, TimestampMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True,
     )
-    ifc_global_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
-    ifc_object_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    ifc_object_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
-    work_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    floor_level: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    zone: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ifc_global_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    ifc_object_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ifc_object_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    work_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    floor_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    zone: Mapped[str | None] = mapped_column(String(100), nullable=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
-    unit: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    quantity_formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    quantity_formula: Mapped[str | None] = mapped_column(Text, nullable=True)
     extraction_method: Mapped[str] = mapped_column(String(50), default="AI_AUTO")
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -143,7 +143,7 @@ class CostCalculationSheet(Base, TenantMixin):
     vat_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, comment="부가가치세 10%")
     total_project_cost: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
     applied_rates_snapshot: Mapped[Any] = mapped_column(JSON, default={})
-    rates_applied_date: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
+    rates_applied_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     calc_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -162,15 +162,15 @@ class ProgressBilling(Base, TenantMixin):
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False,
     )
     billing_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    period_from: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
-    period_to: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
+    period_from: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    period_to: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     work_entries: Mapped[Any] = mapped_column(JSON, default=[])
     planned_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
     earned_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
     actual_cost: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
-    evm_spi: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="SPI = EV/PV")
-    evm_cpi: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="CPI = EV/AC")
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evm_spi: Mapped[float | None] = mapped_column(Float, nullable=True, comment="SPI = EV/PV")
+    evm_cpi: Mapped[float | None] = mapped_column(Float, nullable=True, comment="CPI = EV/AC")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -188,10 +188,10 @@ class LegalRateHistory(Base, TenantMixin):
     rate_category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     rate_value: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
     effective_from: Mapped[datetime] = mapped_column(Date, nullable=False)
-    effective_to: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
-    gov_notice_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    gov_notice_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    source_api: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    effective_to: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    gov_notice_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    gov_notice_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_api: Mapped[str | None] = mapped_column(String(200), nullable=True)
     applied_to: Mapped[int] = mapped_column(Integer, default=0, comment="적용 프로젝트 수")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
@@ -209,10 +209,10 @@ class StandardPriceUpdate(Base, TenantMixin):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     price_period: Mapped[str] = mapped_column(String(20), nullable=False, comment="2026H1, 2026H2 등")
     update_type: Mapped[str] = mapped_column(String(30), nullable=False, comment="품셈/시장단가")
-    gov_notice_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    effective_from: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
+    gov_notice_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    effective_from: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     price_count: Mapped[int] = mapped_column(Integer, default=0)
-    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,

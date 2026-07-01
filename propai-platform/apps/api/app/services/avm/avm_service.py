@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import structlog
 
 # heavy deps — lazy import (테스트 환경에서 미설치 허용)
@@ -182,7 +183,7 @@ class AVMService:
         _mlflow = _ensure_mlflow()
         with _mlflow.start_run():
             self.model.fit(X_train, y_train, eval_set=[(X_train, y_train)], verbose=False)
-            from sklearn.metrics import r2_score, mean_absolute_error
+            from sklearn.metrics import mean_absolute_error, r2_score
             y_pred = self.model.predict(X_train)
             r2 = r2_score(y_train, y_pred)
             mae = mean_absolute_error(y_train, y_pred)

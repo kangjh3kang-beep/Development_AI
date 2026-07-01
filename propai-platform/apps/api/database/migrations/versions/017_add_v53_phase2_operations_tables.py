@@ -8,8 +8,9 @@ Create Date: 2026-03-25
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "017_v53_phase2_operations"
 down_revision: str | None = "016_v53_cost_intelligence"

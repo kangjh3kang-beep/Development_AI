@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -23,7 +22,7 @@ class RecordingOut(BaseModel):
     project_id: str
     room: str
     status: str  # recording/completed/failed
-    egress_id: Optional[str] = None
-    s3_key: Optional[str] = None
-    started_at: Optional[datetime] = None
-    ended_at: Optional[datetime] = None
+    egress_id: str | None = None
+    s3_key: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None

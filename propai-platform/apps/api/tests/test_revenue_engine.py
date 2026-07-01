@@ -1,13 +1,11 @@
 """수입 엔진 테스트 — 일반분양/조합원/임대/부대수입 + 총합 검증."""
 
-import pytest
 from app.services.feasibility.revenue_engine import (
-    calculate_sale_revenue,
-    calculate_union_revenue,
-    calculate_rental_revenue,
     calculate_ancillary_revenue,
+    calculate_rental_revenue,
+    calculate_sale_revenue,
     calculate_total_revenue,
-    PYEONG_TO_SQM,
+    calculate_union_revenue,
 )
 
 

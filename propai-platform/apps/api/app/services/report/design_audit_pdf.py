@@ -137,13 +137,13 @@ def _metrics(audit: dict[str, Any], efficiency_findings: list[dict[str, Any]]) -
 
 def build_design_audit_pdf(audit: dict[str, Any]) -> bytes:
     """설계심사(audit dict) → 리포트 PDF(bytes). audit=design_audits 행(dict) 형태."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))

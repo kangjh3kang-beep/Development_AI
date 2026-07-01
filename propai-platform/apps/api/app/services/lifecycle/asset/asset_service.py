@@ -1,5 +1,4 @@
 """자산 평가 서비스."""
-from typing import Dict, List
 
 
 class AssetService:

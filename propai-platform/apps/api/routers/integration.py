@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends

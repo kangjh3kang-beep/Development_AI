@@ -11,7 +11,7 @@ from typing import Any
 
 try:
     import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 except ImportError:
     openpyxl = None  # type: ignore[assignment]
 

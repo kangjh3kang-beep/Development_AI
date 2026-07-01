@@ -9,8 +9,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from pydantic import BaseModel
 from packages.schemas.models import InvestorReportRequest, InvestorReportResponse, InvestorReportVariantResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -35,8 +35,8 @@ async def generate_report_pdf(
 ) -> Response:
     """프로젝트의 최신 통합 분석(원장)으로 PDF 생성. 분석 이력이 없으면 안내."""
     from app.services.ledger import analysis_ledger_service as ledger
-    from app.services.report.pipeline_report_service import PipelineReportService
     from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
+    from app.services.report.pipeline_report_service import PipelineReportService
 
     tid = str(getattr(current, "tenant_id", "") or "") or None
     latest = await ledger.get_latest(analysis_type="pipeline", tenant_id=tid, project_id=req.project_id)

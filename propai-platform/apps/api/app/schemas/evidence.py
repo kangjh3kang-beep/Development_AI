@@ -11,7 +11,7 @@ provenance·trust 4필드가 모두 additive(기본 빈배열/None)로 따라온
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -28,4 +28,4 @@ class BaseEvidenceResponse(BaseModel):
     evidence: list[dict[str, Any]] = []
     legal_refs: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
-    trust: Optional[dict[str, Any]] = None
+    trust: dict[str, Any] | None = None

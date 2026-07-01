@@ -20,7 +20,7 @@ import logging
 import os
 import re
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ def record_event(event_type: str, props: dict[str, Any] | None = None) -> None:
         row = {k: props.get(k) for k in _EVENT_COLS}
         row["event_type"] = event_type
         if row.get("created_at") is None:
-            row["created_at"] = datetime.now(timezone.utc)
+            row["created_at"] = datetime.now(UTC)
         _QUEUE.append(row)
     except Exception as e:  # noqa: BLE001 — 수집은 절대 호출경로를 깨뜨리면 안 됨.
         logger.debug("growth record_event 무시: %s", str(e)[:120])

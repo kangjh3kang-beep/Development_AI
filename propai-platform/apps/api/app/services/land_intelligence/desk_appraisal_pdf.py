@@ -7,7 +7,6 @@ from typing import Any
 
 from app.services.common.pdf_escape import esc as _esc
 
-
 # avm_interpreter 섹션 키 → 한글 라벨(통합보고서 'AI 상세 해석'과 동일 톤).
 _AVM_SECTION_LABELS: dict[str, str] = {
     "valuation_narrative": "추정 근거·신뢰도",
@@ -24,13 +23,13 @@ def build_desk_appraisal_pdf(
     """desk_appraisal 결과 dict → 탁상감정서 PDF(bytes).
 
     ai_sections={section:text} 제공 시 'AI 상세 해석' 섹션을 추가(avm_interpreter 산출)."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))

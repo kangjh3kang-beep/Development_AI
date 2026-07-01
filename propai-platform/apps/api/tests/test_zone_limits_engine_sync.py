@@ -101,7 +101,8 @@ def test_auto_design_covers_standard_korean_zone_labels():
     1R/2R 같은 하위호환 축약코드가 있는 지역은 축약코드로 정규화해도 허용한다. 다만 자연녹지·관리지역처럼
     축약코드가 없는 표준 지역은 한글 라벨 자체로 처리되어 기본(2R) 폴백 경고가 뜨면 안 된다.
     """
-    from app.services.cad.auto_design_engine import ZONE_LIMITS as DESIGN, normalize_design_zone_key
+    from app.services.cad.auto_design_engine import ZONE_LIMITS as DESIGN
+    from app.services.cad.auto_design_engine import normalize_design_zone_key
 
     fix = _fixture_zones()
     missing = []

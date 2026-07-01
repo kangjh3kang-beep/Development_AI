@@ -7,12 +7,12 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models.feasibility_vcs import FeasibilityCommit, FeasibilityBranch, FeasibilityTag
+from database.models.feasibility_vcs import FeasibilityBranch, FeasibilityCommit, FeasibilityTag
 
 
 def compute_sha(data: dict[str, Any]) -> str:

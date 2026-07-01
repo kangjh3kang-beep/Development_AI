@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from app.services.auction.onbid_client import OnbidClient  # noqa: E402
 
-
 # ── 픽스처: getPbancList2 실응답 형태(resultType=json) ──
 # header.resultCode "00", body.items.item[] (단건이면 dict).
 SAMPLE_LIST_JSON = """

@@ -1,5 +1,3 @@
-from typing import Dict
-import numpy as np
 import structlog
 
 logger = structlog.get_logger()

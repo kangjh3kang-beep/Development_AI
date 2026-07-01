@@ -1,9 +1,10 @@
 """AVM 서비스 테스트 (XGBoost + IDW 앙상블)."""
 
-import sys
 import os
+import sys
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

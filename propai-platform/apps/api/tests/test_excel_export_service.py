@@ -2,7 +2,6 @@
 
 from app.services.export.excel_export_service import ExcelExportService
 
-
 SAMPLE_FEASIBILITY = {
     "development_type": "공동주택",
     "module_name": "M01_공동주택",

@@ -6,7 +6,7 @@ NPV/IRR 분포, VaR, Expected Shortfall 등 리스크 지표를 저장한다.
 
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

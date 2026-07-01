@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -106,7 +106,7 @@ def normalize_kind(raw: Any) -> str:
     return "etc"
 
 
-def _parse_dt(raw: Any) -> Optional[str]:
+def _parse_dt(raw: Any) -> str | None:
     """온비드 날짜 문자열을 ISO8601(naive)로 변환한다(실패 시 None).
 
     입찰기간/개찰일시는 yyyyMMddHHmm, 공고일은 yyyyMMdd 형태가 확정.
@@ -124,7 +124,7 @@ def _parse_dt(raw: Any) -> Optional[str]:
     return None
 
 
-def _parse_amount(raw: Any) -> Optional[int]:
+def _parse_amount(raw: Any) -> int | None:
     """금액 문자열을 정수(원)로 파싱한다.
 
     "비공개"·빈값·숫자 없음 → None(가짜 금지). "1,200,000원" 등 통화/콤마 제거.
@@ -144,7 +144,7 @@ def _parse_amount(raw: Any) -> Optional[int]:
     return v if v > 0 else None
 
 
-def _parse_int(raw: Any) -> Optional[int]:
+def _parse_int(raw: Any) -> int | None:
     """정수 파싱(유찰횟수·회차·입찰자수 등). 숫자 없으면 None."""
     if raw is None:
         return None
@@ -160,7 +160,7 @@ def _parse_int(raw: Any) -> Optional[int]:
     return -int(digits) if neg else int(digits)
 
 
-def _parse_rate(raw: Any) -> Optional[float]:
+def _parse_rate(raw: Any) -> float | None:
     """낙찰가율/할인율 등 퍼센트 실수 파싱. 숫자 없으면 None."""
     if raw is None:
         return None
@@ -203,10 +203,10 @@ class OnbidClient:
     + reason 을 반환한다.
     """
 
-    def __init__(self, service_key: Optional[str], timeout: float = 20.0):
+    def __init__(self, service_key: str | None, timeout: float = 20.0):
         self._service_key = service_key or ""
         self._timeout = timeout
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def has_key(self) -> bool:
@@ -254,8 +254,8 @@ class OnbidClient:
     async def fetch_items(
         self,
         *,
-        region: Optional[str] = None,
-        kind: Optional[str] = None,
+        region: str | None = None,
+        kind: str | None = None,
         page: int = 1,
         rows: int = 50,
     ) -> dict[str, Any]:
@@ -374,7 +374,7 @@ class OnbidClient:
     # ──────────────────────────────────────────
 
     async def fetch_bid_result_list(
-        self, *, filters: Optional[dict[str, Any]] = None, page: int = 1, rows: int = 50,
+        self, *, filters: dict[str, Any] | None = None, page: int = 1, rows: int = 50,
     ) -> dict[str, Any]:
         """물건 입찰결과목록을 getCltrBidRsltList2로 실 API 조회한다(resultType=json).
 
@@ -706,7 +706,7 @@ class OnbidClient:
                     "reason": f"온비드 상세 호출 실패: {str(e)[:120]}"}
 
     @staticmethod
-    def _extract_items(text: str) -> tuple[list[dict[str, Any]], Optional[str]]:
+    def _extract_items(text: str) -> tuple[list[dict[str, Any]], str | None]:
         """온비드 JSON/XML 응답에서 item 리스트를 추출한다(방어적).
 
         반환: (items, error_reason). resultCode != "00" 이면 error_reason 채움.
@@ -758,7 +758,7 @@ class OnbidClient:
         return out, None
 
     @staticmethod
-    def _normalize(it: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _normalize(it: dict[str, Any]) -> dict[str, Any] | None:
         """온비드 공고(getPbancList2 item)를 내부 auction_items 스키마로 정규화한다.
 
         ★취소공고(pbancKindNm 에 "취소" 포함)는 None 반환(필터링).
@@ -803,7 +803,7 @@ class OnbidClient:
         }
 
     @staticmethod
-    def _normalize_ranking(it: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _normalize_ranking(it: dict[str, Any]) -> dict[str, Any] | None:
         """온비드 순위(getInqRnkClg/getItrsCltrRnkClg item)를 내부 스키마로 정규화.
 
         ★실데이터 채움: 감정가(apslEvlAmt)·순위(sn)·할인율(feeRate)·상태(pbctStatNm)·
@@ -861,7 +861,7 @@ class OnbidClient:
         }
 
     @staticmethod
-    def _normalize_bid_result(it: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _normalize_bid_result(it: dict[str, Any]) -> dict[str, Any] | None:
         """온비드 입찰결과목록(getCltrBidRsltList2 item)을 내부 스키마로 정규화.
 
         ★실데이터 채움: 유찰횟수(usbdNft)·감정가(apslEvlAmt)·최저입찰가(lowstBidPrc)·

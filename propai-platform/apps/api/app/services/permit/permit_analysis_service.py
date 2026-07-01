@@ -337,9 +337,10 @@ class PermitAnalysisService:
 
     async def _llm_analyze(self, address: str, site: dict, ordinance: str) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=70, max_tokens=4000)
             user = _USER_TMPL.format(
@@ -401,9 +402,10 @@ class PermitAnalysisService:
             for i, p in enumerate(parcels)
         )
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=70, max_tokens=2500)
             user = _MULTI_TMPL.format(

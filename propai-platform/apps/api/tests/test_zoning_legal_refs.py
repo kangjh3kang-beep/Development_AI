@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 from apps.api.routers.auto_zoning import (  # noqa: E402
     _attach_trust_blocks,
     _build_evidence,
@@ -24,7 +25,6 @@ from apps.api.routers.auto_zoning import (  # noqa: E402
     _build_legal_refs,
     _extract_sigungu,
 )
-from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 
 
 def _analyze_result_with_pnu() -> dict:

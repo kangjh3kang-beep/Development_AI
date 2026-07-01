@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.zoning.far_incentive_calculator import (
-    calculate as calc_donation_incentive,
+    ALPHA_COEFFICIENTS,
     NATIONAL_FAR_LIMITS,
     ZONE_CATEGORY_MAP,
-    ALPHA_COEFFICIENTS,
+)
+from app.services.zoning.far_incentive_calculator import (
+    calculate as calc_donation_incentive,
 )
 
 # ── 친환경 인증 인센티브 (녹색건축물법, 건축법 시행령 §6의2) ──

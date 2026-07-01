@@ -1,8 +1,7 @@
 """생애주기 최적화 테스트 (ISO 15686-1)."""
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

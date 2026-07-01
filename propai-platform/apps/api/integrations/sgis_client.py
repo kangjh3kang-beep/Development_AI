@@ -4,9 +4,9 @@ from typing import Any
 
 import structlog
 
-from apps.api.integrations.base_client import BaseAPIClient
 from apps.api.app.core.config import settings as sgis_settings
 from apps.api.app.services.market.market_models import MigrationData, PopulationData
+from apps.api.integrations.base_client import BaseAPIClient
 
 logger = structlog.get_logger(__name__)
 
@@ -47,12 +47,12 @@ class SgisClient(BaseAPIClient):
         """
         if not self._sgis_key():
             return None
-            
+
         cache_key = "sgis:access_token"
         cached_token = await self._get_cached(cache_key)
         if cached_token:
             return str(cached_token)
-            
+
         async with self._auth_lock:
             # 락 획득 후 캐시 다시 확인 (다른 태스크가 이미 갱신했을 수 있음)
             cached_token = await self._get_cached(cache_key)
@@ -63,7 +63,7 @@ class SgisClient(BaseAPIClient):
                 client = await self._get_client()
                 resp = await asyncio.wait_for(
                     client.request(
-                        "GET", 
+                        "GET",
                         "/OpenAPI3/auth/authentication.json",
                         params={
                             "consumer_key": self._sgis_key(),
@@ -74,7 +74,7 @@ class SgisClient(BaseAPIClient):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                
+
                 if data.get("errCd") == 0:
                     token = data.get("result", {}).get("accessToken")
                     if token:
@@ -91,7 +91,7 @@ class SgisClient(BaseAPIClient):
             token = await self.get_access_token()
             if not token:
                 return fallback_func(*fallback_args)
-            
+
             try:
                 client = await self._get_client()
                 # 하드타임아웃 — 통계청 지연이 보고서 전체를 막지 않도록(정직 폴백 전환).
@@ -100,7 +100,7 @@ class SgisClient(BaseAPIClient):
                     timeout=5.0)
                 resp.raise_for_status()
                 data = resp.json()
-                
+
                 err_cd = str(data.get("errCd", "0"))
                 if err_cd == "0":
                     return data
@@ -113,7 +113,7 @@ class SgisClient(BaseAPIClient):
             except Exception as e:
                 logger.warning("SGIS API Request failed", err=str(e))
                 return fallback_func(*fallback_args)
-                
+
         return fallback_func(*fallback_args)
 
     async def get_migration_stats(

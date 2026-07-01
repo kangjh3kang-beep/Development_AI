@@ -15,12 +15,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.regional_tax_data import (
-    get_metro_transport_charge,
     SCHOOL_SITE_CHARGE_RATE,
     SCHOOL_SITE_MIN_HOUSEHOLDS,
-    get_utility_charge,
-    WATER_SUPPLY_CHARGES_WON,
     SEWAGE_CHARGES_WON,
+    WATER_SUPPLY_CHARGES_WON,
+    get_metro_transport_charge,
+    get_utility_charge,
 )
 
 

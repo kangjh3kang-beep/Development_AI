@@ -9,10 +9,11 @@ from logging.config import fileConfig
 from pathlib import Path
 from typing import Any
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.sql import text
+
+from alembic import context
 
 # 루트 폴더(propai-platform)를 sys.path에 추가하여 apps 모듈 임포트 가능하게 함
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))

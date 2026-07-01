@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.database import get_db
-from app.routers.v2_livekit import router, _require_member
+from app.routers.v2_livekit import _require_member, router
 from app.services.auth.auth_service import get_current_user
 from app.services.livekit import livekit_service
 

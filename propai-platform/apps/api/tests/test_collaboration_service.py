@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.services.collaboration.collaboration_service import (
+    DEFAULT_INVITE_TTL_DAYS,
+    accept_invite_result,
     build_invite_fields,
     member_allows,
-    accept_invite_result,
-    DEFAULT_INVITE_TTL_DAYS,
 )
 
 NOW = datetime(2026, 6, 14, 12, 0, 0)

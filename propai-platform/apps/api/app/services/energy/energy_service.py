@@ -1,6 +1,5 @@
 """건물 에너지 시뮬레이션 서비스."""
 
-from typing import Dict, List
 
 
 class EnergyService:

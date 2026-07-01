@@ -1,15 +1,16 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from app.models.auth import User
+from app.services.auth.auth_service import get_current_user
+from app.services.digital_twin.realtime_optimizer import RealtimeTwinOptimizer
+from app.services.disaster_risk.disaster_risk_service import DisasterRiskService
 from app.services.lifecycle.construction.construction_start_service import ConstructionStartService
 from app.services.lifecycle.construction.supervision_service import SupervisionService
 from app.services.lifecycle.risk.risk_service import RiskService
-from app.services.smart_city.smart_city_service import SmartCityService
 from app.services.lifecycle_opt.lifecycle_optimizer import LifecycleOptimizer
-from app.services.digital_twin.realtime_optimizer import RealtimeTwinOptimizer
-from app.services.disaster_risk.disaster_risk_service import DisasterRiskService
 from app.services.procurement_opt.procurement_optimizer import ProcurementOptimizer
-from app.services.auth.auth_service import get_current_user
-from app.models.auth import User
+from app.services.smart_city.smart_city_service import SmartCityService
 
 router = APIRouter(prefix="/api/v1/lifecycle", tags=["전주기 관리"])
 construction_service = ConstructionStartService()

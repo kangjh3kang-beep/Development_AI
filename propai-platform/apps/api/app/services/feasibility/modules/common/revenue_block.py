@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.feasibility.revenue_engine import (
-    calculate_sale_revenue,
-    calculate_union_revenue,
-    calculate_rental_revenue,
-    calculate_ancillary_revenue,
-    calculate_total_revenue,
-)
 from app.services.feasibility.modules.base_module import ModuleInput
+from app.services.feasibility.revenue_engine import (
+    calculate_ancillary_revenue,
+    calculate_rental_revenue,
+    calculate_sale_revenue,
+    calculate_total_revenue,
+    calculate_union_revenue,
+)
 
 
 def compute_revenue(inp: ModuleInput) -> dict[str, Any]:

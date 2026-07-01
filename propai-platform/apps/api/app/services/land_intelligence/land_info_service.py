@@ -16,10 +16,10 @@ import time
 from datetime import datetime
 from typing import Any
 
-from ..external_api.vworld_service import VWorldService
-from ..external_api.molit_service import MOLITService
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
+from ..external_api.molit_service import MOLITService
+from ..external_api.vworld_service import VWorldService
 from ..zoning.auto_zoning_service import ZONE_INFERENCE_WARNING, AutoZoningService
 from .ordinance_service import OrdinanceService
 
@@ -495,7 +495,9 @@ class LandInfoService:
                 #   road_side(land_characteristics)·sigungu 기반 결정론 산출(무목업·근거기반).
                 try:
                     from app.services.legal.tojieum_supplement import (
-                        assess_road_conditions, building_line_setback, gosi_info,
+                        assess_road_conditions,
+                        building_line_setback,
+                        gosi_info,
                     )
                     _lc = result.get("land_characteristics") or {}
                     _road_side = _lc.get("road_side") or (result.get("land_register") or {}).get("road_side")
@@ -1044,6 +1046,7 @@ class LandInfoService:
         - type=place 검색 시 category는 선택 사항 (지정하면 결과 제한)
         """
         import httpx
+
         from app.core.config import settings
 
         infra: dict[str, Any] = {

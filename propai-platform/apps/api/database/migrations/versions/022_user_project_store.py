@@ -7,9 +7,10 @@ Create Date: 2026-06-03
 프론트 localStorage 상태(프로젝트 목록+분석 스냅샷)를 사용자 계정에 JSON으로
 보관해 기기 무관 동기화를 지원한다. 단순 KV(user_id PK + jsonb).
 """
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "022_user_project_store"
 down_revision = "021_g2b_bid_analysis"

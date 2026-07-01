@@ -1,5 +1,4 @@
 """분양/주택 관리 서비스."""
-from typing import Dict, List
 
 
 class HousingService:

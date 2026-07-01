@@ -88,6 +88,7 @@ async def test_pnu_chain_with_mixed_address_is_single_chain(tnt):
 async def test_duplicate_version_detected(tnt, ledger_db):
     """동시 append 경쟁조건 사후탐지 — 같은 version 2행이면 duplicate_version 보고."""
     from sqlalchemy import text
+
     from app.services.ledger import analysis_ledger_service as ledger
 
     await ledger.append_analysis(

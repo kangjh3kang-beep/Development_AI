@@ -1,5 +1,5 @@
-from typing import Dict, List
 from datetime import datetime
+
 import structlog
 
 logger = structlog.get_logger()

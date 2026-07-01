@@ -421,8 +421,8 @@ class DecisionBriefService:
                 return {"domain": "deliberation", "status": "unavailable",
                         "reason": f"input_unmapped({pv})"}
 
-            from apps.api.app.routers.deliberation import _engine_post_analyze
             from app.services.deliberation.shadow_integration import engine_overall_verdict
+            from apps.api.app.routers.deliberation import _engine_post_analyze
             from apps.api.integrations.base_client import CircuitBreaker
 
             if DecisionBriefService._deliberation_breaker is None:
@@ -449,7 +449,7 @@ class DecisionBriefService:
                 "findings": result.get("findings") or [],
                 "engine_reason": reason,
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"domain": "deliberation", "status": "unavailable", "reason": "engine_timeout"}
         except Exception as e:  # noqa: BLE001 — 심의엔진 위임 실패는 브리프 무손상(정직 강등)
             logger.warning("deliberation 엔진 위임 스킵(graceful)", error=str(e)[:200])

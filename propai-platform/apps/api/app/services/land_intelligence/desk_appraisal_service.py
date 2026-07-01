@@ -147,6 +147,7 @@ async def desk_appraisal(
     if op is None or not area or pnu:
         try:
             import asyncio as _asyncio
+
             from app.services.external_api.vworld_service import VWorldService
             vw = VWorldService()
             if not pnu and address:

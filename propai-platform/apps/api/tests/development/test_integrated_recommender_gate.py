@@ -5,8 +5,8 @@ special_districts)를 detect_multi_parcel/detect_special_parcel이 정확히 읽
 BLOCKED로 게이트하는지 검증한다(키 불일치 시 게이트가 None을 내며 할루시네이션이 새어나감).
 """
 from app.services.zoning.special_parcel import (
-    detect_special_parcel,
     detect_multi_parcel,
+    detect_special_parcel,
     gate_decision,
 )
 

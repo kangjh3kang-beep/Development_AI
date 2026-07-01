@@ -18,7 +18,6 @@ from apps.api.services.regulation_service import (
     RegulationService,
 )
 
-
 # ──────────────────────────────────────────────
 # 내장 법규 DB 구조 검증
 # ──────────────────────────────────────────────

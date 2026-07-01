@@ -2,15 +2,23 @@
 
 import uuid
 from datetime import datetime
+
+from app.models.base import AuditMixin, SoftDeleteMixin
 from sqlalchemy import (
-    Column, String, Float, Integer, Boolean, DateTime, Text,
-    ForeignKey, JSON, Numeric, Index, Enum as SAEnum,
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
-from app.core.database import Base
-from app.models.base import SoftDeleteMixin, AuditMixin
 
+from app.core.database import Base
 
 # ── 수지분석 프로젝트 ──
 

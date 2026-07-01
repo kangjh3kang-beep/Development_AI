@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.services.growth import healing_rules
@@ -314,7 +314,7 @@ async def _ab_stats(db, w_hours: int = 24) -> dict[str, dict[str, dict[str, Any]
     from sqlalchemy import text
 
     out: dict[str, dict[str, dict[str, Any]]] = {}
-    since = datetime.now(timezone.utc) - timedelta(hours=w_hours)
+    since = datetime.now(UTC) - timedelta(hours=w_hours)
 
     def _ver_slot(svc: str, ver: str) -> dict[str, Any]:
         return out.setdefault(svc, {}).setdefault(
@@ -395,7 +395,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
     """
     from sqlalchemy import text
 
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     summary: dict[str, Any] = {"candidates": 0, "applied": 0, "blocked": 0, "actions": []}
 
     candidates: list[dict[str, Any]] = []

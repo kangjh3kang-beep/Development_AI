@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 import numpy as np
@@ -87,7 +87,7 @@ def _polygon_area_sqm(ring: list[tuple[float, float]]) -> float:
     return abs(area2) / 2.0
 
 
-async def _fetch_dem(points: list[tuple[float, float]]) -> Optional[list[float | None]]:
+async def _fetch_dem(points: list[tuple[float, float]]) -> list[float | None] | None:
     """OpenTopoData SRTM30m 일괄질의. points=[(lat,lon),...] → [elev_m|None,...].
 
     100점/req 제한 → 분할. asyncio.wait_for 가드. 전부 실패시 None.
@@ -322,7 +322,7 @@ def _confidence(area_sqm: float | None, valid_pts: int, total_pts: int) -> tuple
 
 async def _resolve_location(
     address: str | None, pnu: str | None
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """주소/PNU → {lat, lon, pnu, address, geometry|None}."""
     from app.services.external_api.vworld_service import VWorldService
 
@@ -379,7 +379,7 @@ async def build_terrain_mesh(
     lon: float,
     half_m: float = 150.0,
     n: int = 21,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """중심(lat,lon) 기준 ±half_m 정사각 영역의 DEM 격자 → ENU 삼각 메시.
 
     가상준공 3D 디지털트윈의 지면(terrain) 재료. 기존 SRTM 30m DEM 질의(_fetch_dem)와

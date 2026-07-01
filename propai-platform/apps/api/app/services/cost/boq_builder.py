@@ -10,7 +10,7 @@ D4(시장가 3중비교): 각 항목에 standard / market(KCCI 변동모델) / a
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 UTC = UTC
@@ -44,7 +44,8 @@ def _kcci_market_unit(key: str) -> float | None:
         return None
     try:
         from apps.api.services.kcci_material_price_service import (  # noqa: PLC0415
-            KCCIMaterialPriceService, _MATERIAL_LIBRARY,
+            _MATERIAL_LIBRARY,
+            KCCIMaterialPriceService,
         )
         if code not in _MATERIAL_LIBRARY:
             return None

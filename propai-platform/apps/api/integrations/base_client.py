@@ -11,6 +11,7 @@
 """
 
 import time
+
 try:
     from enum import StrEnum
 except ImportError:
@@ -119,8 +120,8 @@ async def _read_relax_multipliers(service_name: str) -> dict[str, float]:
     timeout_mult = 1.0
     rate_mult = 1.0
     try:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as _s:
             val = await schema_guard.get_setting(_s, f"relax.{service_name}")

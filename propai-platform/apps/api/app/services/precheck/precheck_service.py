@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Any, Optional
+from typing import Any
 
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
@@ -49,7 +49,7 @@ def _normalize_zone(zone_type: str) -> str:
     return key
 
 
-async def _legal_limits(zone_type: Optional[str], address: Optional[str] = None) -> dict[str, Any]:
+async def _legal_limits(zone_type: str | None, address: str | None = None) -> dict[str, Any]:
     """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조) + 조례 실효값(가산).
 
     기존 반환 키(bcr_pct/far_pct/height_m/source)는 전부 보존한다(_area_checks·프론트 무영향).
@@ -134,7 +134,7 @@ async def _legal_limits(zone_type: Optional[str], address: Optional[str] = None)
     return legal
 
 
-def _extract_sigungu_from_address(address: Optional[str]) -> Optional[str]:
+def _extract_sigungu_from_address(address: str | None) -> str | None:
     """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용).
 
     특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구 토큰을 반환한다. 모든 후보를
@@ -165,10 +165,10 @@ def _prov(value, source: str, method: str, confidence: str, **extra) -> dict:
 
 def _build_inputs(
     *,
-    zone_type: Optional[str],
-    resolved_pnu: Optional[str],
-    resolved_area: Optional[float],
-    official_price: Optional[float] = None,
+    zone_type: str | None,
+    resolved_pnu: str | None,
+    resolved_area: float | None,
+    official_price: float | None = None,
 ) -> dict[str, Any]:
     """필드별 provenance(zone_type/area_sqm/official_price/pnu) — auto_zoning과 동일 패턴.
 
@@ -297,7 +297,7 @@ def _build_data_quality(
         }
 
 
-def _fmt_pct(v) -> Optional[str]:
+def _fmt_pct(v) -> str | None:
     """퍼센트 표기 — 250 → '250%'. None/빈값 → None."""
     if v is None:
         return None
@@ -313,8 +313,8 @@ def _build_evidence(
     legal: dict[str, Any],
     area_checks: list[dict[str, str]],
     legal_refs: list[dict],
-    area_sqm: Optional[float],
-    feasibility_band: Optional[dict] = None,
+    area_sqm: float | None,
+    feasibility_band: dict | None = None,
 ) -> list[dict]:
     """한도·면적 산출 트레이스(EvidencePanel 소비 구조).
 
@@ -405,7 +405,7 @@ def _build_evidence(
     return evidence
 
 
-def _area_checks(area_sqm: Optional[float], legal: dict[str, Any]) -> list[dict[str, str]]:
+def _area_checks(area_sqm: float | None, legal: dict[str, Any]) -> list[dict[str, str]]:
     """면적 기반 건폐율/용적률 개략 검토 체크.
 
     면적이 있으면 법정한도 존재 여부로 정보성 pass, 없으면 warn("면적 미입력").
@@ -496,8 +496,8 @@ def _build_method(code: str, zone_type: str, permitted_codes: list[str],
 
 async def run_instant_precheck(
     address: str,
-    pnu: Optional[str] = None,
-    area_sqm: Optional[float] = None,
+    pnu: str | None = None,
+    area_sqm: float | None = None,
     use_llm: bool = False,
 ) -> dict[str, Any]:
     """즉시 룰체크(계약 A). 90초 SLA — 외부 호출 1회(+선택 LLM 1회)."""
@@ -505,14 +505,14 @@ async def run_instant_precheck(
     sources: list[str] = ["permit_validator", "ZONE_LIMITS(국토계획법 제78조)"]
 
     # ── 1) 주소→용도지역·면적(외부 1회, wait_for 가드) ──
-    zone_type: Optional[str] = None
+    zone_type: str | None = None
     resolved_pnu = pnu
     resolved_area = area_sqm
     # 특이부지 감지 입력(지목·구역) — analyze_by_address가 함께 채워주므로 재호출 0건.
-    land_category: Optional[str] = None
+    land_category: str | None = None
     special_districts: list = []
     # 공시지가(개별공시지가, 원/㎡) — 수지 밴드의 토지비 산정 근거. 없으면 밴드는 생략(과대 ROI 방지).
-    official_price: Optional[float] = None
+    official_price: float | None = None
     try:
         zoning = await asyncio.wait_for(
             AutoZoningService().analyze_by_address(address), timeout=_ZONING_TIMEOUT
@@ -667,8 +667,8 @@ async def run_instant_precheck(
 
 async def _llm_one_liner(
     address: str, zone_type: str, legal: dict[str, Any],
-    n_pass: int, n_warn: int, n_fail: int, best_name: Optional[str],
-) -> Optional[str]:
+    n_pass: int, n_warn: int, n_fail: int, best_name: str | None,
+) -> str | None:
     """summary.llm_note 1줄만 생성(wait_for 25s, 실패시 None)."""
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -718,8 +718,8 @@ def _build_band_module_input(
     zone_type: str,
     legal: dict[str, Any],
     area_sqm: float,
-    address: Optional[str],
-    official_price_per_sqm: Optional[float],
+    address: str | None,
+    official_price_per_sqm: float | None,
 ):
     """best 후보 → ModuleInput 구성(auto_recommend_top3 헬퍼 재사용, 새 산식 0).
 
@@ -761,14 +761,14 @@ def _build_band_module_input(
 
 def _build_feasibility_band(
     *,
-    best_code: Optional[str],
-    zone_type: Optional[str],
+    best_code: str | None,
+    zone_type: str | None,
     legal: dict[str, Any],
-    area_sqm: Optional[float],
-    address: Optional[str],
-    official_price_per_sqm: Optional[float] = None,
+    area_sqm: float | None,
+    address: str | None,
+    official_price_per_sqm: float | None = None,
     quantitative_reliable: bool = True,
-) -> Optional[dict]:
+) -> dict | None:
     """최저/기본/최대 3시나리오 밴드 — 검증된 수지엔진 호출만(새 계산로직 금지).
 
     best 후보 1건에 대해 분양가(±15%)·공사비(∓)·분양률(0.85~1.0)을 흔들어
@@ -895,8 +895,8 @@ _LOW_DENSITY = {
 
 
 async def run_zoning_signals(
-    address: Optional[str] = None,
-    pnu: Optional[str] = None,
+    address: str | None = None,
+    pnu: str | None = None,
     radius_m: int = 300,
 ) -> dict[str, Any]:
     """주변 기회필지 시그널(계약 B). 주변 필지 0이면 signals=[] + note."""
@@ -906,7 +906,7 @@ async def run_zoning_signals(
     sources: list[str] = ["auto_zoning_service", "vworld(연속지적도)"]
 
     # ── 1) 대상 필지(좌표·용도지역) ──
-    target_zone: Optional[str] = None
+    target_zone: str | None = None
     target_pnu = pnu
     lat = lon = None
     if address:
@@ -1007,7 +1007,7 @@ async def run_zoning_signals(
 
 
 def _derive_signals(
-    target_zone: str, nearby: list[dict], contiguous: Optional[bool],
+    target_zone: str, nearby: list[dict], contiguous: bool | None,
 ) -> list[dict[str, Any]]:
     """규칙기반 기회 시그널 산정.
 

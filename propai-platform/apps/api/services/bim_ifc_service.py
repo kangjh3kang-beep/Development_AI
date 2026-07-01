@@ -137,7 +137,6 @@ class BIMIFCService:
             return 0
 
         from app.services.cost.ifc_work_map import map_ifc_to_work_codes
-
         from apps.api.database.models.v61_cost import BimQuantity
 
         rows: list[BimQuantity] = []

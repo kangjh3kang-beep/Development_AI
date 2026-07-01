@@ -1,9 +1,9 @@
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.services.ledger import analysis_ledger_service as ledger
+
 from ..services.report.bank_ready_report_service import BankReadyReportService
 
 router = APIRouter(prefix="/bank-report", tags=["은행제출용 보고서"])
@@ -22,12 +22,12 @@ _LEDGER_TYPE_TO_KEY: dict[str, str] = {
 
 class BankReportRequest(BaseModel):
     project_data: dict  # All project context data
-    selected_sections: Optional[list] = None
+    selected_sections: list | None = None
     template: str = "bank"  # "bank" | "internal"
     # 원장 단일출처 우선용 식별자(선택). 제공되고 원장에 적재분이 있으면 권위소스로 사용.
-    pnu: Optional[str] = None
-    address: Optional[str] = None
-    project_id: Optional[str] = None
+    pnu: str | None = None
+    address: str | None = None
+    project_id: str | None = None
 
 
 async def _resolve_tenant_id() -> str | None:
@@ -38,6 +38,7 @@ async def _resolve_tenant_id() -> str | None:
         if not uid:
             return None
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             row = (await db.execute(

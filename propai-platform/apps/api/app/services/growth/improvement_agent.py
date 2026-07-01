@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -244,7 +244,7 @@ async def generate_proposals(db, *, max_proposals: int = MAX_PROPOSALS_PER_RUN,
     """
     from sqlalchemy import text
 
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     summary: dict[str, Any] = {"candidates": 0, "proposed": 0, "artifacts": []}
 
     try:
@@ -464,7 +464,7 @@ async def generate_prompt_candidates(
     반환: {"targets","registered","artifacts":[{service,label,insight_id}]}.
     best-effort.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     summary: dict[str, Any] = {"targets": [], "registered": 0, "artifacts": []}
 
     try:

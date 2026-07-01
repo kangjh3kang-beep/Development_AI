@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
-from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from app.core.billing_deps import enforce_llm_quota
+from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
+from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1009,6 +1009,7 @@ async def parcel_boundaries_export(req: ParcelExportRequest):
     """
     from fastapi import HTTPException
     from fastapi.responses import JSONResponse, Response
+
     from app.services.land_intelligence.parcel_boundary_export import export_geojson, export_png
 
     base = ParcelBoundariesRequest(parcels=req.parcels, address=req.address, pnu=req.pnu)
@@ -1190,9 +1191,9 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
     calc_effective_far는 순수 동기 함수(이벤트루프 미접촉)라 async 핸들러에서 await 없이 안전.
     OrdinanceService.get_ordinance_limits만 async → await. 무목업: 실패는 법정값 폴백(정직).
     """
-    from apps.api.app.services.zoning.special_parcel import detect_special_parcel
     from apps.api.app.services.land_intelligence.far_tier_service import calc_effective_far
     from apps.api.app.services.land_intelligence.ordinance_service import OrdinanceService
+    from apps.api.app.services.zoning.special_parcel import detect_special_parcel
 
     # ── 조례(실효 용적률/건폐율) 조회는 시·군·구별로 1회만(필지마다 외부콜 금지).
     #    같은 (지역 키, 용도지역) 조합은 캐시 재사용해 대량 다필지에서도 외부콜을 최소화한다.
@@ -1354,8 +1355,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
     무목업: 미확보·degrade는 null + warnings(가짜값 금지). 무과금: use_llm 기본 false.
     """
     from app.services.zoning.special_parcel import (
-        detect_multi_parcel,
         _aggregate_integrated_zoning,
+        detect_multi_parcel,
         gate_decision,
     )
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
@@ -1700,9 +1701,10 @@ async def land_report(req: LandReportRequest):
     무목업: 무자료는 보고서에 '-'/'보완필요'로 정직 표기.
     """
     from fastapi.responses import StreamingResponse as _SR
-    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+
     from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
     from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
 
     items = (req.parcels or [])[:120]
     if not items:

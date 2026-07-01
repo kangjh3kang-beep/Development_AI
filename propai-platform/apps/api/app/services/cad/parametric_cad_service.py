@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import ezdxf
@@ -206,7 +206,7 @@ def _write_dxf(doc: ezdxf.document.Drawing) -> bytes:
 _DEFAULT_SETBACK: dict[str, float] = {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
 
 
-def _normalize_setback(setback_m: Optional[dict[str, float] | float]) -> dict[str, float]:
+def _normalize_setback(setback_m: dict[str, float] | float | None) -> dict[str, float]:
     """세트백 입력을 방위별 dict로 정규화한다.
 
     - None → 기본 세트백(_DEFAULT_SETBACK).
@@ -785,7 +785,7 @@ class ParametricCADService:
         site_depth_m: float,
         building_width_m: float,
         building_depth_m: float,
-        setback_m: Optional[dict[str, float] | float] = None,
+        setback_m: dict[str, float] | float | None = None,
         parking_count: int = 0,
         parking_type: str = "자주식",
         landscape_ratio: float = 0.15,
@@ -958,9 +958,9 @@ class ParametricCADService:
     def create_dxf_from_edited_points(
         self,
         points: list[dict[str, Any]],
-        surfaces: Optional[list[dict[str, Any]]] = None,
+        surfaces: list[dict[str, Any]] | None = None,
         scale_px_per_m: float = 10.0,
-        shapes: Optional[list[dict[str, Any]]] = None,
+        shapes: list[dict[str, Any]] | None = None,
     ) -> bytes:
         """CADEditor 편집 좌표(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
 

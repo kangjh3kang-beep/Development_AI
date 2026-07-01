@@ -47,6 +47,7 @@ def _cache_key(address: str | None, pnu: str | None, realty_type: str | None,
 async def _db_cache_get(key: str) -> dict[str, Any] | None:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await db.execute(text(_ANALYZE_DDL)); await db.commit()
@@ -63,7 +64,9 @@ async def _db_cache_get(key: str) -> dict[str, Any] | None:
 async def _db_cache_put(key: str, result: dict[str, Any]) -> None:
     try:
         import json as _json
+
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await db.execute(text(_ANALYZE_DDL))
@@ -391,9 +394,10 @@ class RegistryAnalysisService:
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
         raw = ""  # 파싱 실패 시 진단용(except에서 raw_head 로깅) — 잘린 JSON 등 근본추적.
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             addr_line = f"## 대상 부동산\n- 주소: {address}\n" if address else ""
             user = _TMPL.format(addr_line=addr_line, registry=registry)

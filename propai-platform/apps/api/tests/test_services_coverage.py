@@ -5,12 +5,12 @@
 """
 
 import os
-import re
 import sys
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
+
 UTC = UTC
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -428,7 +428,7 @@ class TestCircuitBreaker:
         assert cb.state == CircuitState.CLOSED
 
     def test_HALF_OPEN_최대_호출_제한(self):
-        from apps.api.integrations.base_client import CircuitBreaker, CircuitState
+        from apps.api.integrations.base_client import CircuitBreaker
 
         cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.01, half_open_max=1)
         cb.record_failure()
@@ -466,9 +466,9 @@ class TestBaseAPIClient:
 class TestBlockchainServiceInit:
     def test_모듈_상수(self):
         from apps.api.services.blockchain_service import (
-            AMOY_CHAIN_ID,
             _ONCHAIN_STATUS_MAP,
             _ONCHAIN_STATUS_NAMES,
+            AMOY_CHAIN_ID,
         )
 
         assert AMOY_CHAIN_ID == 80002

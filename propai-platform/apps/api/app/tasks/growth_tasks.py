@@ -36,8 +36,8 @@ def _get_celery_app():
 
 async def _flush_async(limit: int = 500) -> int:
     """새 AsyncSession 으로 큐를 platform_events 에 배치 INSERT 한다."""
-    from apps.api.database.session import AsyncSessionLocal
     from app.services.growth import capture_service
+    from apps.api.database.session import AsyncSessionLocal
 
     total = 0
     async with AsyncSessionLocal() as session:
@@ -81,8 +81,8 @@ def flush_growth_events() -> dict:
 
 async def _analyze_async(window_hours: int = 1) -> int:
     """직전 window_hours 시간을 분석해 platform_insights 를 생성한다."""
-    from apps.api.database.session import AsyncSessionLocal
     from app.services.growth import analyzer
+    from apps.api.database.session import AsyncSessionLocal
 
     w0, w1 = analyzer.default_window(hours=window_hours)
     async with AsyncSessionLocal() as session:
@@ -123,8 +123,8 @@ def analyze_growth(window_hours: int = 1) -> dict:
 
 async def _heal_async() -> dict:
     """1회 heal 평가 사이클을 새 AsyncSession 으로 구동한다."""
-    from apps.api.database.session import AsyncSessionLocal
     from app.services.growth import healing_rules
+    from apps.api.database.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
         return await healing_rules.evaluate(session)
@@ -166,8 +166,8 @@ def evaluate_healing() -> dict:
 
 async def _correct_async() -> dict:
     """1회 L1 자가수정 평가 사이클을 새 AsyncSession 으로 구동한다."""
-    from apps.api.database.session import AsyncSessionLocal
     from app.services.growth import feature_flags
+    from apps.api.database.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
         return await feature_flags.evaluate(session)
@@ -206,8 +206,8 @@ def evaluate_correction() -> dict:
 
 async def _improve_async() -> dict:
     """1회 L2 제안 생성 + PR봇 처리를 새 AsyncSession 으로 구동한다."""
-    from apps.api.database.session import AsyncSessionLocal
     from app.services.growth import improvement_agent
+    from apps.api.database.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
         gen = await improvement_agent.generate_proposals(session)

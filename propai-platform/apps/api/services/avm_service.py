@@ -12,7 +12,7 @@ XGBoost 기반 부동산 시세 추정.
 """
 
 import math
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 

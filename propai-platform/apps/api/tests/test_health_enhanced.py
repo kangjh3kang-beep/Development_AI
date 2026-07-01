@@ -2,6 +2,7 @@
 
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -54,7 +55,7 @@ class TestHealthCheckService:
 
     @pytest.mark.asyncio
     async def test_custom_check_registration(self):
-        from app.core.health import HealthCheckService, ComponentHealth, ComponentStatus
+        from app.core.health import ComponentHealth, ComponentStatus, HealthCheckService
         svc = HealthCheckService()
         async def custom_check():
             return ComponentHealth(name="custom", status=ComponentStatus.HEALTHY, message="OK")
@@ -187,8 +188,9 @@ class TestStructuredLogger:
         assert entry["duration_ms"] == 15.5
 
     def test_to_json(self):
-        from app.core.structured_logging import StructuredLogger
         import json
+
+        from app.core.structured_logging import StructuredLogger
         logger = StructuredLogger()
         entry = logger.info("JSON 테스트")
         json_str = logger.to_json(entry)

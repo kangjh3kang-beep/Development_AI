@@ -461,9 +461,10 @@ class RegulationAnalysisService:
         limits: dict, districts: list[dict],
     ) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             bcr = limits["bcr"]; far = limits["far"]
             user = _USER_TMPL.format(

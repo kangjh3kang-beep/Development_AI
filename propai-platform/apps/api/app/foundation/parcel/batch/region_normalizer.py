@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from app.foundation.parcel.contracts.batch import BatchInput
 
@@ -25,8 +25,8 @@ class NormalizeResult:
         self,
         pnus: list[str],
         degraded: bool = False,
-        reason: Optional[str] = None,
-        geo: Optional[dict] = None,
+        reason: str | None = None,
+        geo: dict | None = None,
     ) -> None:
         # geo: 지도 미리보기용 해석 좌표 — {center:{lat,lon}, bbox:[minlon,minlat,maxlon,maxlat], radius_m}
         self.geo = geo

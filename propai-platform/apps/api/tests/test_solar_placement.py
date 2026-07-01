@@ -2,13 +2,12 @@
 
 사용자 요청: 토지모양·건물배치·방향·층별높이에 따른 일조 영향도 정밀분석 → 다각도 최적안.
 """
-import math
 
 from app.services.site_score.solar_placement_service import (
-    sun_position,
+    analyze_solar_placement,
     orientation_daylight,
     orientation_scores,
-    analyze_solar_placement,
+    sun_position,
 )
 
 

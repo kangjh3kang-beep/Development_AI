@@ -38,13 +38,13 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
             official_price_per_sqm,parcel_case,building,status,reason}],
             units_by_parcel:{jibun:{plat_area_sqm,unit_count,units:[...],reliable}}}
     """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
@@ -181,7 +181,7 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
                     el.append(Paragraph(f"※ 전체 {len(units)}세대 중 40세대 표기(전체는 토지조서 참조).", small))
                 val = u.get("validation") or {}
                 el.append(Paragraph(
-                    f"검증: Σ세대 대지지분 = 대지면적 비례배분"
+                    "검증: Σ세대 대지지분 = 대지면적 비례배분"
                     + ("(세대 누락 없음·신뢰)" if val.get("reliable") else "(일부 세대 전유부 누락 가능 — 등기부 확인 권장)"), small))
             el.append(Spacer(1, 3))
 

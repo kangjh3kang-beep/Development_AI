@@ -1,5 +1,4 @@
 """매각/분양 서비스."""
-from typing import Dict, List
 
 
 class SalesService:

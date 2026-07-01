@@ -4,9 +4,10 @@ Git 방식의 SHA1 기반 커밋 체인을 PostgreSQL에 영구 저장.
 """
 
 import uuid
-from sqlalchemy import String, Boolean, Text, Index, UniqueConstraint, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from sqlalchemy import Boolean, Index, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TenantMixin, TimestampMixin
 

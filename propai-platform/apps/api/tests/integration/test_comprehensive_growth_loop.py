@@ -7,6 +7,7 @@ pytestmark = pytest.mark.asyncio
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory, engine
         await engine.dispose()  # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프에 재바인딩)
         async with async_session_factory() as db:
@@ -29,8 +30,8 @@ def _fake_base():
 async def test_second_analysis_reads_prior_and_writes_new_version(monkeypatch):
     if not await _db_available():
         pytest.skip("DB 미가용 — Postgres 기동 후 실행(skip≠검증, Task8 게이트)")
-    from app.services.ledger import analysis_ledger_service as ledger
     from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
+    from app.services.ledger import analysis_ledger_service as ledger
 
     addr = "의정부동 224-phase1"
     tid = "t-phase1-comp"

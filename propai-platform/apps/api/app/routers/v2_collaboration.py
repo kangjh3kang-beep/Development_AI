@@ -16,11 +16,6 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.services.storage_service import (
-    StorageError,
-    download_collab_document,
-    upload_collab_document,
-)
 from app.api.deps_collaboration import require_project_member
 from app.core.database import get_db
 from app.models.collaboration import PROJECT_ROLES, REVIEW_CATEGORIES
@@ -45,13 +40,18 @@ from app.services.collaboration.collaboration_rules import (
     normalize_document_category,
     normalize_purpose,
 )
+from app.services.collaboration.collaboration_service import (
+    accept_invite_result,
+    build_invite_fields,
+)
 from app.services.collaboration.document_audit_service import (
     parse_design_shapes,
     run_design_document_audit,
 )
-from app.services.collaboration.collaboration_service import (
-    accept_invite_result,
-    build_invite_fields,
+from apps.api.services.storage_service import (
+    StorageError,
+    download_collab_document,
+    upload_collab_document,
 )
 
 logger = structlog.get_logger(__name__)

@@ -116,9 +116,10 @@ class LegalDiscoveryService:
 
     async def _llm_search(self, context: dict[str, Any]) -> list[dict[str, Any]]:
         try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
             from app.services.ai.base_interpreter import GROUNDING_RULE, record_llm_response_billing
             from app.services.ai.llm_provider import get_llm
-            from langchain_core.messages import HumanMessage, SystemMessage
 
             ctx = json.dumps(context, ensure_ascii=False, indent=2)
             llm = get_llm(timeout=60, max_tokens=2000)

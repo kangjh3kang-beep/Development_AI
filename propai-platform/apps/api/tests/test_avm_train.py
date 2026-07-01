@@ -11,17 +11,13 @@ import math
 import os
 import sys
 import types
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-
-from apps.api.ml.avm import train as avm_train
-from apps.api.services import avm_service as avm_service_module
-from apps.api.services.avm_service import AVMService
 
 from app.services.feasibility import (
     market_revaluation_service as mrs_module,
@@ -30,6 +26,9 @@ from app.services.feasibility import regional_pricing as regional_pricing_module
 from app.services.feasibility.market_revaluation_service import (
     MarketRevaluationService,
 )
+from apps.api.ml.avm import train as avm_train
+from apps.api.services import avm_service as avm_service_module
+from apps.api.services.avm_service import AVMService
 
 UTC = UTC
 

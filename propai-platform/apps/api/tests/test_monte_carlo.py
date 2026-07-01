@@ -1,8 +1,7 @@
 """Monte Carlo NPV/IRR 시뮬레이션 테스트."""
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

@@ -12,7 +12,8 @@
 반환 단위: 만원 (10k won).
 아래 상수는 모두 개략 추정용 가정값이며, 정밀값이 아니다(근거는 각 주석 참조).
 """
-from typing import Any, Dict
+from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)

@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import secrets
 import time
-from typing import Optional
 
 
 class CSRFProtection:
@@ -54,8 +53,8 @@ class CSRFProtection:
 
         return True
 
-    def validate_double_submit(self, cookie_token: Optional[str],
-                                header_token: Optional[str]) -> bool:
+    def validate_double_submit(self, cookie_token: str | None,
+                                header_token: str | None) -> bool:
         """Double Submit Cookie 검증.
 
         쿠키와 헤더의 토큰이 일치하고 유효해야 통과.

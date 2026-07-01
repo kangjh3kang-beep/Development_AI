@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +46,13 @@ def _norm_header(h: Any) -> str:
     return re.sub(r"[\s\-_/().·]", "", s)
 
 
-def detect_columns(headers: list[Any]) -> dict[str, Optional[str]]:
+def detect_columns(headers: list[Any]) -> dict[str, str | None]:
     """헤더 리스트에서 pnu/address/label 컬럼명을 자동감지한다.
 
     반환: {"pnu": <원본헤더|None>, "address": <원본헤더|None>, "label": <원본헤더|None>}.
     동일 후보가 여럿이면 먼저 나온 컬럼을 채택한다.
     """
-    found: dict[str, Optional[str]] = {"pnu": None, "address": None, "label": None}
+    found: dict[str, str | None] = {"pnu": None, "address": None, "label": None}
     for h in headers:
         norm = _norm_header(h)
         if not norm:

@@ -6,6 +6,7 @@ numpy 미설치 환경 대비 순수 Python 폴백 지원.
 """
 
 from __future__ import annotations
+
 import math
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING

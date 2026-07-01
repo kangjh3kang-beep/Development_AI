@@ -6,9 +6,9 @@ mock 의존성으로 포괄 테스트한다.
 """
 
 import os
-import re
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4

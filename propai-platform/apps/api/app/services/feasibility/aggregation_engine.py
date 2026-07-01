@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # 등급 기준 (수익률 %)
 GRADE_THRESHOLDS: list[tuple[float, str]] = [
     (20.0, "A"),   # 20% 이상

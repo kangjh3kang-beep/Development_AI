@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ async def list_comments_for_document(db: AsyncSession, document_id: uuid.UUID) -
     return list(rows.scalars().all())
 
 
-async def get_comment(db: AsyncSession, comment_id: uuid.UUID) -> Optional[ReviewComment]:
+async def get_comment(db: AsyncSession, comment_id: uuid.UUID) -> ReviewComment | None:
     rows = await db.execute(select(ReviewComment).where(ReviewComment.id == comment_id))
     return rows.scalar_one_or_none()
 

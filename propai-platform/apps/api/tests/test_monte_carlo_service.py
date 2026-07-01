@@ -14,7 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.monte_carlo_service import MonteCarloService
 
-
 # ── 공통 테스트 파라미터 ──
 
 _BASE_PARAMS = {

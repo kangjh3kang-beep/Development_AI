@@ -4,9 +4,8 @@
 경로·메서드 기반 정책을 정의하고, FastAPI 의존성으로 주입한다.
 """
 
-from enum import Enum
-from typing import Optional
 import fnmatch
+from enum import Enum
 
 
 class Role(str, Enum):
@@ -62,7 +61,7 @@ ROLE_POLICIES: dict[Role, dict[str, set[str]]] = {
 class RBACEngine:
     """역할기반 접근제어 엔진."""
 
-    def __init__(self, policies: Optional[dict] = None):
+    def __init__(self, policies: dict | None = None):
         self._policies = policies or ROLE_POLICIES
 
     def check_permission(self, role: Role, path: str, method: str) -> bool:

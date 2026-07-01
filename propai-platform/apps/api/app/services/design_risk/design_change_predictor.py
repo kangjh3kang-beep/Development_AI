@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 # 법정 한도·주차 기준 재사용(룰 단일 출처).
 from app.services.permit.building_code_rules import (
@@ -78,7 +78,7 @@ def _mk_risk(
     *,
     current: Any = None,
     limit: Any = None,
-    est_impact: Optional[str] = None,
+    est_impact: str | None = None,
 ) -> dict[str, Any]:
     return {
         "category": category,
@@ -366,8 +366,8 @@ class DesignChangePredictor:
     # ── 주차 산정(building_code_rules 기준 재사용) ─────────────────────
     @staticmethod
     def _required_parking(
-        building_type: str, units: Optional[float], gfa: Optional[float]
-    ) -> Optional[int]:
+        building_type: str, units: float | None, gfa: float | None
+    ) -> int | None:
         req = PARKING_REQUIREMENTS.get(building_type)
         if req is None:
             # 미등록 용도: 주거형이면 아파트 기준 폴백, 아니면 산정 불가.

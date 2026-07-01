@@ -6,10 +6,10 @@ B03: Race Condition 제어 (동시 다발 PDF 생성 시 I/O 병목 방어).
 """
 
 from __future__ import annotations
+
 import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 import structlog
 

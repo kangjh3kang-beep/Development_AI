@@ -8,7 +8,6 @@ API 키 부재·호출 실패 시 템플릿 분석으로 폴백하고 `analysis_
 import json
 import logging
 import re
-from typing import Optional
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -27,7 +26,7 @@ class ConversationalMarketAI:
         "비교_분석": "2개 이상 지역의 시장 데이터를 비교합니다.",
     }
 
-    async def analyze(self, query: str, context: Optional[dict] = None) -> dict:
+    async def analyze(self, query: str, context: dict | None = None) -> dict:
         """자연어 질문을 분석하여 적절한 데이터를 조회하고 답변을 생성."""
 
         # Step 1: Parse intent from query
@@ -78,7 +77,7 @@ class ConversationalMarketAI:
         else:
             return {"tool": "실거래가_조회", "type": "transactions"}
 
-    def _extract_params(self, query: str, context: Optional[dict]) -> dict:
+    def _extract_params(self, query: str, context: dict | None) -> dict:
         """질문에서 지역, 기간, 면적 등 파라미터를 추출."""
         params: dict = {}
 
@@ -185,7 +184,7 @@ class ConversationalMarketAI:
 
     async def _generate_llm_analysis(
         self, query: str, intent: dict, data: dict, params: dict
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """LLM으로 MOLIT 실거래 데이터 근거 한정 분석을 생성.
 
         API 키 부재(get_llm ValueError)·호출 실패·JSON 파싱 실패 시 None을
@@ -193,8 +192,9 @@ class ConversationalMarketAI:
         반환 dict 키는 템플릿 분석과 동일(summary/details/chart_data/recommendations).
         """
         try:
-            from app.services.ai.llm_provider import get_llm
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=30, max_tokens=1200)
         except Exception as e:

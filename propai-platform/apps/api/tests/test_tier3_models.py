@@ -15,7 +15,6 @@ from apps.api.database.models.design_version import DesignVersion
 from apps.api.database.models.financing_structure import FinancingStructure
 from apps.api.database.models.quantity_takeoff import QuantityTakeoff
 
-
 ALL_MODELS = [DesignVersion, FinancingStructure, QuantityTakeoff]
 
 

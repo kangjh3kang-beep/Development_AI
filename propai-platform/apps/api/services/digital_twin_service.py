@@ -14,7 +14,8 @@ sklearn IsolationForest 기반 IoT 센서 이상 감지.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from typing import TYPE_CHECKING
 from uuid import UUID

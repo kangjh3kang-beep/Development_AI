@@ -65,9 +65,10 @@ def export_png(result: dict[str, Any]) -> bytes:
     """
     import matplotlib
     matplotlib.use("Agg")
+    from io import BytesIO
+
     import matplotlib.pyplot as plt
     from shapely.geometry import shape
-    from io import BytesIO
 
     fig, ax = plt.subplots(figsize=(8, 8))
     for i, f in enumerate(result.get("features") or []):

@@ -12,6 +12,7 @@ pytestmark = pytest.mark.asyncio
 async def _db() -> bool:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory, engine
         await engine.dispose()  # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프 재바인딩)
         async with async_session_factory() as db:
@@ -23,6 +24,7 @@ async def _db() -> bool:
 
 async def _cleanup(tid: str) -> None:
     from sqlalchemy import text
+
     from app.core.database import async_session_factory
     async with async_session_factory() as db:
         await db.execute(text("DELETE FROM analysis_lineage WHERE tenant_id = :t"), {"t": tid})
@@ -33,9 +35,9 @@ async def _cleanup(tid: str) -> None:
 async def test_record_specialist_result_writes_findings_and_lineage():
     if not await _db():
         pytest.skip("DB 미가용 — Postgres 기동 후 실행")
-    from app.services.ledger.ledger_adapters import record_specialist_result
     from app.services.ledger import analysis_ledger_service as ledger
     from app.services.ledger import lineage
+    from app.services.ledger.ledger_adapters import record_specialist_result
 
     tid, pnu = f"t-p3-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
     try:
@@ -62,9 +64,9 @@ async def test_w4_closed_specialist_dispatch_cites_ledger_with_lineage():
     # T5: coordinator.dispatch → SpecialistAgent → 계층1 도구 → 원장 cite(+lineage+contradiction). W4 닫힘.
     if not await _db():
         pytest.skip("DB 미가용 — Postgres 기동 후 실행")
-    from apps.api.core.coordinator import AgentCoordinator
     from app.services.ledger import analysis_ledger_service as ledger
     from app.services.ledger import lineage
+    from apps.api.core.coordinator import AgentCoordinator
 
     tid, pnu = f"t-p3e2e-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
     coord = AgentCoordinator()
@@ -91,9 +93,9 @@ async def test_multi_domain_dispatch_all_cite_ledger():
     # Phase 3.2: permit·zoning·far 3도메인 모두 coordinator 디스패치로 원장 cite + far 2회차 모순/lineage.
     if not await _db():
         pytest.skip("DB 미가용 — Postgres 기동 후 실행")
-    from apps.api.core.coordinator import AgentCoordinator
     from app.services.ledger import analysis_ledger_service as ledger
     from app.services.ledger import lineage
+    from apps.api.core.coordinator import AgentCoordinator
 
     tid, pnu = f"t-p32-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
     coord = AgentCoordinator()

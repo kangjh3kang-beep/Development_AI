@@ -15,7 +15,6 @@ from typing import Any
 
 from app.services.ledger import analysis_ledger_service as ledger
 
-
 # ── 순수 매퍼(무DB·결정적) ──
 
 def design_audit_to_ledger(result: dict[str, Any], *, audit_id: str | None = None) -> dict[str, Any]:

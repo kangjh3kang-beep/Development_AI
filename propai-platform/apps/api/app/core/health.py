@@ -7,7 +7,6 @@ DB, Redis, 외부 API 등 각 구성요소의 상태를 개별 점검하여
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class ComponentStatus(str, Enum):
@@ -121,7 +120,7 @@ class HealthCheckService:
             "component_count": len(results),
         }
 
-    async def check_component(self, name: str) -> Optional[dict]:
+    async def check_component(self, name: str) -> dict | None:
         """단일 구성요소 점검."""
         check_fn = self._checks.get(name)
         if check_fn is None:

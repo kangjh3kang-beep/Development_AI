@@ -14,10 +14,10 @@ from typing import Any
 
 from app.services.tax.regional_tax_data import (
     CAPITAL_GAINS_BRACKETS,
-    LTDC_RATES_RESIDENTIAL,
-    LTDC_MAX_RESIDENTIAL,
-    LTDC_MAX_NON_RESIDENTIAL,
     CORP_ADDON_RATE_RESIDENTIAL,
+    LTDC_MAX_NON_RESIDENTIAL,
+    LTDC_MAX_RESIDENTIAL,
+    LTDC_RATES_RESIDENTIAL,
 )
 
 
@@ -200,9 +200,9 @@ def calculate_d06_comprehensive_property_tax(
      누진 1/2/3% → 공제 이하 토지는 0원으로 정확.)
     """
     from app.services.tax.regional_tax_data import (
-        calc_land_comprehensive_property_tax,
         LAND_COMPREHENSIVE_DEDUCTION_WON,
         LAND_FAIR_MARKET_RATIO,
+        calc_land_comprehensive_property_tax,
     )
 
     r = calc_land_comprehensive_property_tax(

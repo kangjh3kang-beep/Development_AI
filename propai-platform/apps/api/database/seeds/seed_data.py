@@ -6,7 +6,8 @@ python -m apps.api.database.seeds.seed_data 로 실행.
 import asyncio
 import hashlib
 import uuid
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
+
 UTC = UTC
 
 from sqlalchemy import text

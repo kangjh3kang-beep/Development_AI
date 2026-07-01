@@ -6,7 +6,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from apps.api.config import get_settings
 
@@ -117,15 +116,15 @@ class GresbScoringService:
     def calculate_score(
         self,
         building_type: str = "apartment",
-        energy_kwh_per_sqm: Optional[float] = None,
-        ghg_kg_per_sqm: Optional[float] = None,
-        water_l_per_sqm: Optional[float] = None,
+        energy_kwh_per_sqm: float | None = None,
+        ghg_kg_per_sqm: float | None = None,
+        water_l_per_sqm: float | None = None,
         has_esg_policy: bool = False,
         has_green_cert: bool = False,
         green_cert_level: str = "none",
         waste_recycling_pct: float = 0.0,
         renewable_energy_pct: float = 0.0,
-        lca_total_carbon_kg: Optional[float] = None,
+        lca_total_carbon_kg: float | None = None,
         floor_area_sqm: float = 1000,
     ) -> dict:
         benchmark = BENCHMARKS.get(building_type, BENCHMARKS["apartment"])

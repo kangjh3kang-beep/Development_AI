@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
-from pydantic import BaseModel, Field
+from typing import Any
 
+from pydantic import BaseModel, Field
 
 # ── 요청 ──
 
@@ -45,10 +45,10 @@ class MonteCarloRequest(BaseModel):
         ..., description="[{name, mean, std, distribution?}]"
     )
     n_simulations: int = Field(default=10_000, ge=100, le=100_000)
-    seed: Optional[int] = 42
+    seed: int | None = 42
     # base 제공 시 변수 합산(simple_npv) 대신 실수지(FeasibilityServiceV2.calculate)
     # 섭동으로 net_profit_won 분포를 산출한다. 미제공 시 기존 동작 그대로(하위호환).
-    base: Optional[FeasibilityCalculateRequest] = None
+    base: FeasibilityCalculateRequest | None = None
 
 
 class OptimizationRequest(BaseModel):
@@ -71,7 +71,7 @@ class SensitivityScenarioSpec(BaseModel):
 class SensitivityRequest(BaseModel):
     """민감도 분석(토네이도) 요청 — 실수지 base 입력 기반."""
     base: FeasibilityCalculateRequest
-    scenarios: Optional[list[SensitivityScenarioSpec]] = None
+    scenarios: list[SensitivityScenarioSpec] | None = None
 
 
 class TaxCalculateAllRequest(BaseModel):
@@ -166,7 +166,7 @@ class MonteCarloResponse(BaseModel):
     # ── 실수지 모드 메타(additive — 기본값은 기존 변수합 동작 의미 유지) ──
     target_metric: str = "variable_sum"   # base 제공 시 "net_profit_won"
     calc_source: str = "simple_npv"       # base 제공 시 "feasibility_v2"
-    note: Optional[str] = None            # 횟수 상한 등 적용 제약 정직 고지
+    note: str | None = None            # 횟수 상한 등 적용 제약 정직 고지
 
 
 class SensitivityResponse(BaseModel):

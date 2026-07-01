@@ -8,20 +8,19 @@
 불충분 → 본 SP2는 멤버십 DB조회 기반 app-level 강제를 1차로 둔다(후속 단위).
 """
 
-import uuid
 from datetime import datetime, timedelta
 
 from app.models.collaboration import (
-    ProjectMember,
-    CollaboratorInvite,
     PROJECT_ROLES,
     REVIEW_CATEGORIES,
+    CollaboratorInvite,
+    ProjectMember,
 )
 from app.services.collaboration.collaboration_rules import (
-    is_invite_expired,
-    is_invite_acceptable,
-    validate_project_role,
     filter_scope_categories,
+    is_invite_acceptable,
+    is_invite_expired,
+    validate_project_role,
 )
 
 

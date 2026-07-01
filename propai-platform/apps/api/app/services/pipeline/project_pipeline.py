@@ -241,11 +241,11 @@ class ProjectPipeline:
 
         jobs: list[tuple[str, Any]] = []
         try:
-            from app.services.ai.design_interpreter import DesignInterpreter
             from app.services.ai.cost_interpreter import CostInterpreter
+            from app.services.ai.design_interpreter import DesignInterpreter
+            from app.services.ai.esg_interpreter import EsgInterpreter
             from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
             from app.services.ai.tax_interpreter import TaxInterpreter
-            from app.services.ai.esg_interpreter import EsgInterpreter
 
             specs = [
                 ("design", DesignInterpreter),
@@ -544,8 +544,8 @@ class ProjectPipeline:
     async def _run_site_analysis(self, state: PipelineState, opts: dict):
         """STEP 1: 부지분석 — 프론트에서 전달한 데이터 우선, 없으면 외부 API 호출."""
         # ── 고도화 서비스 임포트 ──
-        from app.services.zoning import far_incentive_calculator as fic
         from app.services.zoning import development_type_analyzer as dta
+        from app.services.zoning import far_incentive_calculator as fic
 
         # 프론트에서 site_data가 전달되었는지 확인
         pre_collected = opts.get("site_data")
@@ -977,6 +977,7 @@ class ProjectPipeline:
         if existing_pnu and len(existing_pnu) >= 19:
             try:
                 import httpx
+
                 from app.core.config import settings
 
                 params = {
@@ -1299,8 +1300,9 @@ class ProjectPipeline:
             return
 
         try:
-            from app.core.database import async_session_factory
             from sqlalchemy import update
+
+            from app.core.database import async_session_factory
 
             async with async_session_factory() as session:
                 # 건물 유형 자동 판정 (설계 단계 전이므로 간이 판정)
@@ -1396,12 +1398,12 @@ class ProjectPipeline:
 
         if building_type in _RESIDENTIAL_TYPES and sellable_area > 0:
             try:
+                from app.services.feasibility.regional_pricing import (
+                    get_regional_base_price_man_won,
+                )
                 from app.services.feasibility.unit_mix_optimizer import (
                     UnitMixInput,
                     UnitMixOptimizer,
-                )
-                from app.services.feasibility.regional_pricing import (
-                    get_regional_base_price_man_won,
                 )
 
                 # 평형별 분양가 = 지역 기준시세(단일 출처) × 평형 프리미엄 (만원/평)
@@ -2192,9 +2194,9 @@ class ProjectPipeline:
         # ── 1. 자재별 Embodied Carbon 상세 계산 (carbon_material_db 연동) ──
         try:
             from app.services.esg.carbon_material_db import (
+                calculate_low_carbon_scenario,
                 calculate_material_carbon,
                 calculate_operational_carbon,
-                calculate_low_carbon_scenario,
                 predict_gseed_grade,
             )
 

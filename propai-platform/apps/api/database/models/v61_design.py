@@ -13,14 +13,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -51,9 +50,9 @@ class DesignStage(Base, TenantMixin):
     stage_name: Mapped[str] = mapped_column(String(50), nullable=False)
     stage_status: Mapped[str] = mapped_column(String(30), default="pending", comment="pending/active/completed")
     completion_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    permit_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment="인허가 접수번호")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    permit_ref: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="인허가 접수번호")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -75,20 +74,20 @@ class Drawing(Base, TenantMixin, TimestampMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False,
     )
-    stage_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("design_stages.id"), nullable=True)
+    stage_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("design_stages.id"), nullable=True)
     drawing_code: Mapped[str] = mapped_column(String(20), nullable=False, comment="B-01, B-02-STD 등")
     drawing_type: Mapped[str] = mapped_column(String(50), nullable=False, comment="배치도/평면도/입면도 등")
-    drawing_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    floor_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, comment="B3/B1/1F/기준층/RF")
-    direction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, comment="E/W/S/N")
+    drawing_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    floor_level: Mapped[str | None] = mapped_column(String(20), nullable=True, comment="B3/B1/1F/기준층/RF")
+    direction: Mapped[str | None] = mapped_column(String(10), nullable=True, comment="E/W/S/N")
     scale: Mapped[str] = mapped_column(String(20), default="1:200")
     vector_data: Mapped[Any] = mapped_column(JSON, default={})
-    svg_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    dxf_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    svg_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dxf_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_generated: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_model: Mapped[str] = mapped_column(String(50), default="PropAI-v61")
     generation_params: Mapped[Any] = mapped_column(JSON, default={})
-    compliance_ok: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    compliance_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     compliance_issues: Mapped[Any] = mapped_column(JSON, default=[])
     version: Mapped[int] = mapped_column(Integer, default=1)
     is_latest: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -128,13 +127,13 @@ class DrawingEditHistory(Base, TenantMixin):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     drawing_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("drawings.id"), nullable=False)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     edit_type: Mapped[str] = mapped_column(String(50), nullable=False, comment="ADD/MODIFY/DELETE/MOVE")
-    element_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, comment="LINE/POLYLINE/TEXT/HATCH")
-    layer_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    before_data: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
-    after_data: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
-    edit_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    element_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="LINE/POLYLINE/TEXT/HATCH")
+    layer_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    before_data: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    after_data: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    edit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -155,13 +154,13 @@ class PermitDocumentSet(Base, TenantMixin):
     doc_code: Mapped[str] = mapped_column(String(20), nullable=False, comment="A-01, B-01-STD 등")
     doc_category: Mapped[str] = mapped_column(String(10), nullable=False, comment="A/B/C/D/E/F/G")
     doc_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    drawing_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("drawings.id"), nullable=True)
+    drawing_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("drawings.id"), nullable=True)
     is_required: Mapped[bool] = mapped_column(Boolean, default=True)
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
-    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    submission_date: Mapped[Optional[datetime]] = mapped_column(Date, nullable=True)
-    review_result: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    review_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submission_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    review_result: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -184,22 +183,22 @@ class DesignAlternative(Base, TenantMixin):
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False,
     )
     alt_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    alt_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    floor_area_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True, comment="용적률 %")
-    building_coverage: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True, comment="건폐율 %")
-    total_floor_area: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
-    sellable_area: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
-    estimated_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2), nullable=True)
-    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2), nullable=True)
-    profit_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
-    ai_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
-    legal_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
-    profit_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
-    design_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
-    esg_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
+    alt_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    floor_area_ratio: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True, comment="용적률 %")
+    building_coverage: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True, comment="건폐율 %")
+    total_floor_area: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    sellable_area: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    estimated_revenue: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    profit_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    ai_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    legal_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    profit_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    design_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    esg_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
-    selection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    mc_win_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 1), nullable=True, comment="몬테카를로 승률 %")
+    selection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mc_win_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True, comment="몬테카를로 승률 %")
     drawings: Mapped[Any] = mapped_column(JSON, default=[])
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,

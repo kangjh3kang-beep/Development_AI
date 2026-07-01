@@ -1,7 +1,8 @@
 """Notification endpoints."""
 
 import secrets
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 
 from fastapi import APIRouter, Depends, status

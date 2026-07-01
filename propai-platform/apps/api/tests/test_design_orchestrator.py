@@ -528,8 +528,8 @@ def test_generate_no_zone_name_permit_unknown(monkeypatch):
 # ── D-C: 생성→평가 폐루프(시니어 architect 평면 성립성) ──
 
 def test_attach_senior_review_block_downgrades_to_fail():
-    from app.services.design_ingest.orchestrator import _attach_senior_review
     from app.services.design_ingest.composition import SiteContext
+    from app.services.design_ingest.orchestrator import _attach_senior_review
     site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
                        far_source="ordinance", building_use_kr="공동주택")
     # 전용률 110%(>100%) → BLOCK → verdict fail로 강등
@@ -543,8 +543,8 @@ def test_attach_senior_review_block_downgrades_to_fail():
 
 
 def test_attach_senior_review_warn_downgrades_pass_to_conditional():
-    from app.services.design_ingest.orchestrator import _attach_senior_review
     from app.services.design_ingest.composition import SiteContext
+    from app.services.design_ingest.orchestrator import _attach_senior_review
     site = SiteContext(area_sqm=1000.0, zone_code="2R", legal_bcr_pct=60.0, legal_far_pct=200.0,
                        far_source="ordinance", building_use_kr="공동주택")
     # 전용률 65%(<70%) → WARN(없으면 PASS) → pass면 conditional로 강등
@@ -557,8 +557,8 @@ def test_attach_senior_review_warn_downgrades_pass_to_conditional():
 
 
 def test_attach_senior_review_noop_when_no_inputs():
-    from app.services.design_ingest.orchestrator import _attach_senior_review
     from app.services.design_ingest.composition import SiteContext
+    from app.services.design_ingest.orchestrator import _attach_senior_review
     site = SiteContext(area_sqm=1000.0, zone_code="2R", far_source="unknown")  # 한도 미상→footprint None
     cand = {}  # 평가 입력 없음
     verdict = {"verdict": "pass", "notes": []}

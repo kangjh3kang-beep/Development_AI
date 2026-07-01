@@ -36,13 +36,13 @@ _STAGE_LABEL = {
 def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any] | None = None) -> bytes:
     """통합 분석 보고서(dict) → PDF(bytes). report=PipelineReport.model_dump() 형태.
     narratives={stage:{section:text}} 제공 시 'AI 상세 해석' 섹션 추가."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))

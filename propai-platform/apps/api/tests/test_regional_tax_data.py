@@ -1,23 +1,22 @@
 """지역세금 데이터 테스트 — 취득세 매트릭스 + 광역교통부담금 계층조회."""
 
 import pytest
+
 from app.services.tax.regional_tax_data import (
-    ACQUISITION_TAX_MATRIX,
-    get_acquisition_tax_rates,
-    get_metro_transport_charge,
-    get_utility_charge,
-    WATER_SUPPLY_CHARGES_WON,
-    SEWAGE_CHARGES_WON,
+    CAPITAL_GAINS_BRACKETS,
     DEVELOPMENT_CHARGE_RATES,
     FARMLAND_CONVERSION_RATE,
     FOREST_CONVERSION_RATES,
-    SCHOOL_SITE_CHARGE_RATE,
     HUG_GUARANTEE_RATES,
-    VAT_RATE,
-    CAPITAL_GAINS_BRACKETS,
     LTDC_RATES_RESIDENTIAL,
+    SCHOOL_SITE_CHARGE_RATE,
+    SEWAGE_CHARGES_WON,
+    VAT_RATE,
+    WATER_SUPPLY_CHARGES_WON,
+    get_acquisition_tax_rates,
+    get_metro_transport_charge,
+    get_utility_charge,
 )
-
 
 # ── 취득세 매트릭스 ──
 

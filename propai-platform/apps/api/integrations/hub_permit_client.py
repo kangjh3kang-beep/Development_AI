@@ -18,7 +18,7 @@ class HubPermitClient(BaseAPIClient):
 
     service_name = "hub_permit"
     base_url = "https://apis.data.go.kr"
-    
+
     # 공공데이터포털 건축HUB 주택인허가 기본 경로
     _HUB_PERMIT_PATH = "/1613000/HsPmsHubService"
 
@@ -68,7 +68,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpBasisOulnInfo",
             params,
@@ -85,7 +85,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpDongOulnInfo",
             params,
@@ -102,7 +102,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpFlrOulnInfo",
             params,
@@ -110,7 +110,7 @@ class HubPermitClient(BaseAPIClient):
         )
 
     # --- 상세 정보 조회 추가 ---
-    
+
     async def get_ho_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_주택인허가 호별개요 조회 (상세)."""
         params = {"sigunguCd": sigungu_cd}
@@ -153,7 +153,7 @@ class ArchPermitClient(BaseAPIClient):
 
     service_name = "arch_permit"
     base_url = "https://apis.data.go.kr"
-    
+
     # 공공데이터포털 건축HUB 건축인허가 기본 경로
     _ARCH_PERMIT_PATH = "/1613000/ArchPmsHubService"
 
@@ -190,7 +190,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApBasisOulnInfo",
             params,
@@ -207,7 +207,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApDongOulnInfo",
             params,
@@ -224,7 +224,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApFlrOulnInfo",
             params,

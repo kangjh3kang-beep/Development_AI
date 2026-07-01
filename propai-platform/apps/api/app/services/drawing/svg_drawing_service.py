@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional
 
 try:
     import svgwrite
@@ -359,8 +358,8 @@ class SVGDrawingService:
         building_depth_m: float,
         setback_m: float = 3.0,
         *,
-        findings: Optional[list[dict]] = None,
-        verdict: Optional[str] = None,
+        findings: list[dict] | None = None,
+        verdict: str | None = None,
     ) -> str:
         """배치도에 설계심사(8엔진) findings를 결정론으로 주석화한다(audit↔drawing 연결).
 
@@ -378,7 +377,7 @@ class SVGDrawingService:
         # 판정 가능한 finding만 색·범례에 반영(skipped/info 제외 — 가짜 적합/부적합 금지).
         judged = [f for f in items if str(f.get("status")) in ("pass", "warning", "fail")]
         if any(f.get("status") == "fail" for f in judged):
-            worst: Optional[str] = "fail"
+            worst: str | None = "fail"
         elif any(f.get("status") == "warning" for f in judged):
             worst = "warning"
         elif judged:
@@ -562,7 +561,7 @@ class SVGDrawingService:
         core_depth_m: float = 6.0,
         units: list[dict] | None = None,
         *,
-        findings: Optional[list[dict]] = None,
+        findings: list[dict] | None = None,
     ) -> str:
         """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
 
@@ -1188,12 +1187,12 @@ class SVGDrawingService:
     def generate_unit_plan_rooms(
         self,
         rooms: list[dict],
-        body_width_m: Optional[float] = None,
-        body_depth_m: Optional[float] = None,
+        body_width_m: float | None = None,
+        body_depth_m: float | None = None,
         *,
         unit_type: str = "",
         area_sqm: float = 0.0,
-        balconies: Optional[list[dict]] = None,
+        balconies: list[dict] | None = None,
         boundaries: list[dict] | None = None,
         openings: list[dict] | None = None,
         project_name: str = "PropAI",

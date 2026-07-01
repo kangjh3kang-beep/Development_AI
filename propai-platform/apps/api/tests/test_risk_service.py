@@ -1,7 +1,8 @@
 """리스크 등급화 테스트 (ISO 31000)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

@@ -15,9 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.regional_tax_data import (
+    HUG_GUARANTEE_RATES,
     VAT_EXEMPT_AREA_SQM,
     VAT_RATE,
-    HUG_GUARANTEE_RATES,
 )
 
 

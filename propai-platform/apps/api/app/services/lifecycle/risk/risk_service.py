@@ -1,4 +1,3 @@
-from typing import Dict, List
 import structlog
 
 logger = structlog.get_logger()

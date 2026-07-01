@@ -5,11 +5,11 @@ bim_ifc analyze_ifc, 추가 라우터 엔드포인트를 커버한다.
 """
 
 import os
-import random
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -211,25 +211,23 @@ class TestJeonseRiskAsync:
             "avg_jeonse_price": 300_000_000,
             "jeonse_ratio": 0.60,
             "transaction_count": 20,
-        }):
-            with patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
-                "risk_summary": "안전",
-                "recommendations": ["보증보험 가입 권장"],
-            }):
-                with patch.object(svc, "_check_mortgage_priority", new_callable=AsyncMock, return_value=[]):
-                    try:
-                        result = await svc.analyze(
-                            project_id=TEST_PROJECT_ID,
-                            tenant_id=TEST_TENANT_ID,
-                            address="서울 강남구",
-                            jeonse_price=300_000_000,
-                            sale_price=500_000_000,
-                            lawd_cd="11680",
-                            registry_number="1234-2025-000001",
-                        )
-                        assert result is not None
-                    except Exception:
-                        pass
+        }), patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
+            "risk_summary": "안전",
+            "recommendations": ["보증보험 가입 권장"],
+        }), patch.object(svc, "_check_mortgage_priority", new_callable=AsyncMock, return_value=[]):
+            try:
+                result = await svc.analyze(
+                    project_id=TEST_PROJECT_ID,
+                    tenant_id=TEST_TENANT_ID,
+                    address="서울 강남구",
+                    jeonse_price=300_000_000,
+                    sale_price=500_000_000,
+                    lawd_cd="11680",
+                    registry_number="1234-2025-000001",
+                )
+                assert result is not None
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_analyze_no_registry(self):
@@ -244,21 +242,20 @@ class TestJeonseRiskAsync:
             "avg_jeonse_price": 300_000_000,
             "jeonse_ratio": 0.60,
             "transaction_count": 20,
+        }), patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
+            "risk_summary": "안전",
         }):
-            with patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
-                "risk_summary": "안전",
-            }):
-                try:
-                    result = await svc.analyze(
-                        project_id=TEST_PROJECT_ID,
-                        tenant_id=TEST_TENANT_ID,
-                        address="서울 강남구",
-                        jeonse_price=300_000_000,
-                        sale_price=500_000_000,
-                    )
-                    assert result is not None
-                except Exception:
-                    pass
+            try:
+                result = await svc.analyze(
+                    project_id=TEST_PROJECT_ID,
+                    tenant_id=TEST_TENANT_ID,
+                    address="서울 강남구",
+                    jeonse_price=300_000_000,
+                    sale_price=500_000_000,
+                )
+                assert result is not None
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_analyze_high_ratio(self):
@@ -273,26 +270,24 @@ class TestJeonseRiskAsync:
             "avg_jeonse_price": 450_000_000,
             "jeonse_ratio": 0.90,
             "transaction_count": 5,
-        }):
-            with patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
-                "risk_summary": "위험",
-                "recommendations": ["즉시 보증보험 가입"],
-            }):
-                with patch.object(svc, "_check_mortgage_priority", new_callable=AsyncMock, return_value=[
-                    {"type": "mortgage", "impact": "HIGH", "amount": 300_000_000},
-                ]):
-                    try:
-                        result = await svc.analyze(
-                            project_id=TEST_PROJECT_ID,
-                            tenant_id=TEST_TENANT_ID,
-                            address="서울 빌라",
-                            jeonse_price=450_000_000,
-                            sale_price=500_000_000,
-                            registry_number="5678-2025-000002",
-                        )
-                        assert result is not None
-                    except Exception:
-                        pass
+        }), patch.object(svc, "_analyze_risk", new_callable=AsyncMock, return_value={
+            "risk_summary": "위험",
+            "recommendations": ["즉시 보증보험 가입"],
+        }), patch.object(svc, "_check_mortgage_priority", new_callable=AsyncMock, return_value=[
+            {"type": "mortgage", "impact": "HIGH", "amount": 300_000_000},
+        ]):
+            try:
+                result = await svc.analyze(
+                    project_id=TEST_PROJECT_ID,
+                    tenant_id=TEST_TENANT_ID,
+                    address="서울 빌라",
+                    jeonse_price=450_000_000,
+                    sale_price=500_000_000,
+                    registry_number="5678-2025-000002",
+                )
+                assert result is not None
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════════

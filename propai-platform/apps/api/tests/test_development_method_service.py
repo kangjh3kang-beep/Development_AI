@@ -19,7 +19,6 @@ from apps.api.services.development_method_service import (
     SiteProfile,
 )
 
-
 # ── 공통 테스트 프로파일 ──
 
 

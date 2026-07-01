@@ -5,8 +5,9 @@ scipy.optimize.minimize 기반 수익률 최대화.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -36,8 +37,8 @@ def optimize_slsqp(
         {'optimal_vars', 'optimal_value', 'iterations', 'success', 'method'}
     """
     try:
-        from scipy.optimize import minimize as scipy_minimize
         import numpy as np
+        from scipy.optimize import minimize as scipy_minimize
 
         var_names = list(variables.keys())
         x0 = np.array([variables[v][0] for v in var_names])

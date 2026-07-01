@@ -35,6 +35,7 @@ def test_load_model_graceful_none():
 async def _db() -> bool:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory, engine
         await engine.dispose()
         async with async_session_factory() as db:
@@ -46,6 +47,7 @@ async def _db() -> bool:
 
 async def _cleanup(tid: str) -> None:
     from sqlalchemy import text
+
     from app.core.database import async_session_factory
     async with async_session_factory() as db:
         await db.execute(text("DELETE FROM analysis_lineage WHERE tenant_id=:t"), {"t": tid})
