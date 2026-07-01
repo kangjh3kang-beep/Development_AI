@@ -185,11 +185,24 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
         if _dom and _dom != "mixed_review_required":
             zone = str(_dom).strip()  # 통합 우세용도로 한도 매칭
 
-    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
+    # ★fail-open 제거: 로컬표 서브스트링 매칭('농림축산…'→'농림', '준주거 검토용지'→'준주거')이
+    # 아니라 공용 SSOT resolve_zone_limits(fail-closed 계약)로 한도를 조회한다.
+    # 확정 매칭(matched=True)이고 확정 한도(max_*_pct)가 있을 때만 '적합' 판정을 낸다.
+    from app.services.zoning.zone_limit_contract import resolve_zone_limits
+
+    resolution = resolve_zone_limits(zone)
+    matched = bool(
+        resolution.matched
+        and resolution.max_bcr_pct is not None
+        and resolution.max_far_pct is not None
+    )
+    # 높이 상한: SSOT는 별도로 두지 않음(기존 로컬표도 전부 0=별도규정). 0=별도규정으로 처리.
+    bcr_lim = resolution.max_bcr_pct or 0.0
+    far_lim = resolution.max_far_pct or 0.0
+    h_lim = 0.0
     checks: list[dict[str, Any]] = []
 
     if matched:
-        bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
         # 가능 규모 산정
         max_build_area = area * bcr_lim / 100 if area else 0
         max_gfa = area * far_lim / 100 if area else 0
@@ -224,7 +237,7 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
                 ),
                 "regulation_ref": "국토계획법 시행령",
             })
-        zone_name: str | None = matched
+        zone_name: str | None = resolution.zone_type
     else:
         zone_name = None
         checks.append({
@@ -248,7 +261,7 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
         try:
             from app.services.ai.permit_interpreter import PermitInterpreter
 
-            bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
+            # 한도값은 위 SSOT resolution에서 이미 확정(bcr_lim/far_lim/h_lim) — 로컬표 재조회 금지.
             evidence = (
                 f"- 용도지역 법정 한도({zone_name}, 국토계획법 시행령): "
                 f"건폐율 상한 {bcr_lim}%, 용적률 상한 {far_lim}%, 최고높이 {h_lim}m. "
@@ -500,19 +513,9 @@ async def auto_correct(
 
 
 # ── 주소·용도지역 기반 법규 검토(파이프라인 법규 단계 전용) ──
-# CAD design 기반 /check 와 분리. 부지분석의 용도지역(zone_code)을 받아 법정 상한(국토계획법
-# 시행령 일반값, 조례 별도 확인)과 계획값을 대조한다. 법정수치는 참고용·운영 조정 가능.
-_LEGAL_LIMITS_PCT: dict[str, tuple[float, float, float]] = {
-    # 용도지역 키(부분일치): (건폐율% 상한, 용적률% 상한, 높이m 상한 0=별도규정)
-    "제1종전용주거": (50, 100, 0), "제2종전용주거": (50, 150, 0),
-    "제1종일반주거": (60, 200, 0), "제2종일반주거": (60, 250, 0), "제3종일반주거": (50, 300, 0),
-    "준주거": (70, 500, 0),
-    "중심상업": (90, 1500, 0), "일반상업": (80, 1300, 0), "근린상업": (70, 900, 0), "유통상업": (80, 1100, 0),
-    "전용공업": (70, 300, 0), "일반공업": (70, 350, 0), "준공업": (70, 400, 0),
-    "보전녹지": (20, 80, 0), "생산녹지": (20, 100, 0), "자연녹지": (20, 100, 0),
-    "계획관리": (40, 100, 0), "생산관리": (20, 80, 0), "보전관리": (20, 80, 0),
-    "농림": (20, 80, 0), "자연환경보전": (20, 80, 0),
-}
+# ★로컬 한도표(_LEGAL_LIMITS_PCT) 제거: 서브스트링 부분일치('농림축산…'→'농림',
+# '준주거 검토용지'→'준주거')로 거짓 확정하는 fail-open 버그가 있었다. 용도지역 한도는
+# 공용 SSOT resolve_zone_limits(zone_limit_contract, fail-closed 계약)로 일원화한다.
 
 
 class LegalCheckRequest(BaseModel):
@@ -539,6 +542,9 @@ class LegalCheckResponse(BaseModel):
     height_planned_m: float = 0
     height_pass: bool = True
     overall_pass: bool = True
+    # 판정 상태(가산 필드): "pass"(적합) / "fail"(부적합) / "needs_verification"(미확인).
+    # ★fail-open 제거 핵심: 용도지역 미확인은 적합/부적합이 아니라 'needs_verification'으로 정직 표기.
+    overall_status: str = "pass"
     remarks: str | None = None
 
 
@@ -616,20 +622,24 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
     # ZONE_DEFAULTS 키와 부분일치하는 용도지역명(엔진의 건축선후퇴/일조권 분기에 사용).
     matched_zone = next((name for name in ZONE_DEFAULTS if name in zone), None)
 
-    # 법정 한도 보완: 미입력 시 zone_code 기반 _LEGAL_LIMITS_PCT(부분일치)로 채움(graceful).
+    # 법정 한도 보완: 미입력 시 zone_code 기반 공용 SSOT resolve_zone_limits(fail-closed)로 채움.
+    # ★로컬표 서브스트링 매칭 제거 — 확정 매칭(matched=True)일 때만 확정 한도를 채운다.
+    #   미매칭이면 None으로 남겨 아래 엔진 기본값(60/200/0)의 graceful 폴백에 맡긴다(거짓 확정 금지).
     max_bcr = req.max_bcr
     max_far = req.max_far
     max_height = req.max_height_m
     if max_bcr is None or max_far is None or max_height is None:
-        limit_key = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
-        if limit_key:
-            bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[limit_key]
+        from app.services.zoning.zone_limit_contract import resolve_zone_limits
+
+        resolution = resolve_zone_limits(zone)
+        if resolution.matched:
             if max_bcr is None:
-                max_bcr = bcr_lim
+                max_bcr = resolution.max_bcr_pct
             if max_far is None:
-                max_far = far_lim
+                max_far = resolution.max_far_pct
+            # SSOT는 높이 상한을 두지 않음(별도규정) → 0.0(기존 로컬표 높이도 전부 0).
             if max_height is None:
-                max_height = h_lim
+                max_height = 0.0
 
     site_params: dict[str, Any] = {
         "land_area_sqm": req.land_area_sqm,
@@ -703,17 +713,39 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
 
 @router.post("/legal-check", response_model=LegalCheckResponse)
 async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
-    """부지분석 용도지역 기반 건축 법규(건폐율/용적률/높이) 적합성 검토."""
+    """부지분석 용도지역 기반 건축 법규(건폐율/용적률/높이) 적합성 검토.
+
+    ★fail-open 제거: 용도지역 한도 조회를 (과거의 로컬 서브스트링 한도표가 아닌) 공용 SSOT
+    resolve_zone_limits(fail-closed 계약)로 일원화한다. 미등록/미인식 용도지역은
+    '적합'(overall_pass=True)으로 절대 반환하지 않고 'needs_verification'(미확인)으로
+    정직하게 반환한다. 이 계약은 서브스트링 오매칭('' in k 등)도 구조적으로 차단한다.
+    """
+    # 공용 fail-closed 계약(SSOT). 로컬 임포트로 라우터 상단 의존성 최소화(rule_check 패턴 동일).
+    from app.services.zoning.zone_limit_contract import resolve_zone_limits
+
     zone = (req.zone_code or "").strip()
-    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
-    if not matched:
+    resolution = resolve_zone_limits(req.zone_code)
+
+    # ── 미확인(fail-closed): 용도지역이 확정 매칭되지 않음 → 확정 한도(max_*_pct)가 None ──
+    # ★절대 overall_pass=True 금지. 적합/부적합이 아닌 '미확인'으로 정직 표기.
+    if not resolution.matched or resolution.max_bcr_pct is None or resolution.max_far_pct is None:
         return LegalCheckResponse(
             address=req.address, zone_code=req.zone_code,
-            bcr_planned=req.planned_bcr, far_planned=req.planned_far, height_planned_m=req.planned_height_m,
-            overall_pass=True,
-            remarks=f"용도지역('{zone or '미상'}') 법정 상한 미등록 — 조례·실제 한도 수동 확인 필요.",
+            bcr_planned=req.planned_bcr, far_planned=req.planned_far,
+            height_planned_m=req.planned_height_m,
+            overall_pass=False,
+            overall_status="needs_verification",
+            remarks=(
+                f"용도지역('{zone or '미상'}') 법정 한도 미확인 — "
+                "확정 판정 불가(조례·실제 한도 확인 필요)."
+            ),
         )
-    bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
+
+    # ── 확정 매칭: SSOT 한도값 사용(로컬표 드리프트 제거) ──
+    bcr_lim = resolution.max_bcr_pct
+    far_lim = resolution.max_far_pct
+    # 높이: SSOT는 높이 상한을 두지 않음(기존 로컬표도 전부 0=별도규정). 별도규정으로 통과 처리.
+    h_lim = 0.0
     bcr_pass = req.planned_bcr <= bcr_lim if req.planned_bcr > 0 else True
     far_pass = req.planned_far <= far_lim if req.planned_far > 0 else True
     height_pass = True if h_lim == 0 else (req.planned_height_m <= h_lim)
@@ -725,12 +757,18 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
         notes.append(f"용적률 {req.planned_far}% > 상한 {far_lim}%")
     if not height_pass:
         notes.append(f"높이 {req.planned_height_m}m > 상한 {h_lim}m")
-    return LegalCheckResponse(
-        address=req.address, zone_code=req.zone_code, zone_name=matched,
+
+    resp = LegalCheckResponse(
+        address=req.address, zone_code=req.zone_code, zone_name=resolution.zone_type,
         bcr_limit=bcr_lim, bcr_planned=req.planned_bcr, bcr_pass=bcr_pass,
         far_limit=far_lim, far_planned=req.planned_far, far_pass=far_pass,
         height_limit_m=h_lim, height_planned_m=req.planned_height_m, height_pass=height_pass,
         overall_pass=overall,
+        overall_status="pass" if overall else "fail",
         remarks=("적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)),
     )
+    # 법령 근거키(가산·옵셔널) — 확정 매칭 시 근거 조문키 부착(응답은 extra="allow").
+    if resolution.legal_ref_keys:
+        resp.legal_ref_keys = list(resolution.legal_ref_keys)
+    return resp
 

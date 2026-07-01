@@ -41,6 +41,8 @@ type ComplianceCheckResponse = {
   height_planned_m: number;
   height_pass: boolean;
   overall_pass: boolean;
+  // 백엔드가 미확인 용도지역 등에서 반환하는 상태 문자열 ("needs_verification" 등)
+  overall_status?: string;
   remarks?: string;
   ai_analysis?: string;
 };
@@ -100,6 +102,8 @@ type Labels = {
   plannedLabel: string;
   passLabel: string;
   failLabel: string;
+  // needs_verification 상태 전용 레이블 (미확인·확인필요)
+  verifyLabel: string;
   overallLabel: string;
   regulationTitle: string;
   ruleCheckTitle: string;
@@ -154,6 +158,7 @@ const KO_LABELS: Labels = {
   plannedLabel: "계획",
   passLabel: "적합",
   failLabel: "부적합",
+  verifyLabel: "미확인 · 확인 필요",
   overallLabel: "종합 판정",
   regulationTitle: "규제 체크리스트",
   ruleCheckTitle: "규제 체크리스트 (건축법 항목별)",
@@ -214,6 +219,7 @@ const EN_LABELS: Labels = {
   plannedLabel: "Planned",
   passLabel: "Pass",
   failLabel: "Fail",
+  verifyLabel: "Needs verification",
   overallLabel: "Overall result",
   regulationTitle: "Regulation checklist",
   ruleCheckTitle: "Regulation checklist (Building Act items)",
@@ -1077,14 +1083,29 @@ export function ProjectLegalWorkspaceClient({
                   />
                 </div>
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <MetricTile
-                    label={labels.overallLabel}
-                    value={
-                      complianceResult.overall_pass
-                        ? labels.passLabel
-                        : labels.failLabel
-                    }
-                  />
+                  {/* 3-state 종합 판정: needs_verification → 중립(미확인), pass/fail → 기존 */}
+                  {complianceResult.overall_status === "needs_verification" ? (
+                    <>
+                      <MetricTile
+                        label={labels.overallLabel}
+                        value={labels.verifyLabel}
+                      />
+                      {complianceResult.remarks && (
+                        <p className="mt-2 text-xs leading-6 text-[var(--text-secondary)]">
+                          {complianceResult.remarks}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <MetricTile
+                      label={labels.overallLabel}
+                      value={
+                        complianceResult.overall_pass
+                          ? labels.passLabel
+                          : labels.failLabel
+                      }
+                    />
+                  )}
                 </div>
                 {complianceResult.ai_analysis ? (
                   <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
