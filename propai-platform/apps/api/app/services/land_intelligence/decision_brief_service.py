@@ -312,22 +312,66 @@ class DecisionBriefService:
                 # 용도지역 없으면 결정론 도메인 입력 불가 — 가짜 디스패치 대신 정직 스킵.
                 return []
             dev_type = self._pick_dev_type(permit_raw)
+            # ★pnu 전파: 원장 체인은 pnu 우선 키이므로, comprehensive(pnu 키 기록)와 동일 체인에 묶여
+            #   prior 모순탐지가 단절되지 않도록 site_raw의 pnu를 함께 넘긴다(없으면 None=address 키 폴백).
+            pnu = site_raw.get("pnu") or reg_raw.get("pnu")
             # ★DRY: comprehensive와 동일한 SSOT 헬퍼(run_specialist_domains) 단일경유로 디스패치한다
             #   (인라인 중복 제거 — 한 곳 고치면 양 소비처 반영). 헬퍼는 도구 available=False(엔진
             #   미설정 등) 정직강등까지 포함해 인라인본보다 견고하다.
             from app.services.agents.specialist_dispatch import run_specialist_domains
 
+            domains: dict[str, dict[str, Any]] = {
+                "zoning": {"zone_type": zone},
+                "permit": {"zone_type": zone, "dev_type": dev_type},
+            }
+            if use_llm:
+                # ── ★설계(registry 설계 도메인) 엔진-입력 보강 — 매스 용량검증(capacity) 활성화 ──
+                #   ★엔진 계약 확인(비용/지연 절감·중복 제거): capacity(계획 GFA vs 법정 최대 연면적)는
+                #   오직 /design/process(run_design_process → capacity_envelope)만 산출한다. /permit/process
+                #   (심의 도메인)는 run_process 로 capacity 를 부착하지 않으며(용량 미산출), 그 '심의' 자체는
+                #   아래 _run_deliberation_engine(/api/v1/analyze)의 verdict 산출과 같은 부지를 이중 심의하는
+                #   중복이다. 따라서 심의 도메인(/permit/process) 디스패치는 제거하고(중복·무용), 용량은 설계
+                #   도메인 1콜로만 얻는다 → 엔진 호출 net ≤ 2(verdict 1 + capacity 1). 3중 디스패치(회귀) 제거.
+                #   Stage1 가용 컨텍스트(용도지역·대지면적·계획 연면적·개발방식)를 엔진 입력으로 정규화 공급하면
+                #   legal_precheck(법정 용적/건폐 한도+근거)+massing 용량검증이 실수치 산출된다. 상세 도면
+                #   (rules/elements) 부재분은 엔진이 HELD/NEEDS_INPUT로 정직 표면화(가짜 생성 0).
+                # GFA는 부지 supply_areas 우선·(면적×실효용적률) 폴백(_map_permit_response의 capacity 비교 입력).
+                eff = site_raw.get("effective_far") or {}
+                far = eff.get("effective_far_pct")
+                area = site_raw.get("land_area_sqm")
+                gfa = (self._pick_supply_gfa(site_raw.get("supply_areas"), far, area)
+                       or self._gfa_from_area_far(area, far))
+                # ★pnu는 19자리 ASCII 정규형만 전송(전각/유니코드 숫자 포함 비규격은 엔진 ASCII 패턴 422 →
+                #   빈값 전송으로 address 지오코딩 폴백, 무음 실패 방지).
+                _pnu_s = str(pnu) if pnu else ""
+                _pnu19 = _pnu_s if (_pnu_s.isascii() and _pnu_s.isdigit() and len(_pnu_s) == 19) else ""
+                _design_input: dict[str, Any] = {"pnu": _pnu19, "address": address, "use_zone": zone}
+                if dev_type:
+                    _design_input["dev_type"] = dev_type
+                # 대지면적 → plot_area 산정입력(calc_targets) — 용량검증·용적/건폐 비율의 분모(부재 시 엔진 '미상').
+                #   ★calc_targets 는 도메인마다 새로 만든다(리스트 공유 aliasing 금지 — 여기선 설계 단일이지만
+                #   향후 도메인 추가 시 shallow copy 공유로 인한 상호오염을 원천 차단).
+                if isinstance(area, (int, float)) and not isinstance(area, bool) and area > 0:
+                    _design_input["calc_targets"] = [
+                        {"target": "plot_area", "payload": {"parcel_area": float(area)}}]
+                # 설계는 계획 GFA를 provided로 공급 → massing 용량검증(제안 GFA ≤ 최대 연면적 = 대지×용적률)
+                #   수행. program=기획정보(용도·규모) 가용 표시(기획 단계 완결성). 상세 매스/배치/평면은 도면 확보 후.
+                _design_provided: dict[str, Any] = {"program": True}
+                if gfa:
+                    _design_provided["proposed_gfa"] = float(gfa)
+                _design_input["provided"] = _design_provided
+                domains["설계"] = _design_input
+
             out: list[dict[str, Any]] = await run_specialist_domains(
-                {
-                    "zoning": {"zone_type": zone},
-                    "permit": {"zone_type": zone, "dev_type": dev_type},
-                },
-                tenant_id=tenant_id, project_id=project_id, address=address,
+                domains,
+                tenant_id=tenant_id, project_id=project_id, address=address, pnu=pnu,
             )
 
-            # ── ★심의엔진 활성화(opt-in·use_llm 게이트) — 외부 엔진 위임·타임아웃·정직강등 ──
-            #   use_llm=True 일 때만 외부 심의엔진에 위임한다(지연·과금·네트워크). 엔진 미설정·타임아웃·
-            #   거절은 조용히 누락하지 않고 status='unavailable'+reason 으로 표면화한다(반쪽출하 금지).
+            # ── ★심의엔진 verdict 활성화(opt-in·use_llm 게이트) — 외부 엔진 위임·타임아웃·정직강등 ──
+            #   use_llm=True 일 때만 외부 심의엔진(/api/v1/analyze)에 위임해 대표 verdict 를 가져온다.
+            #   이 verdict 경로가 부지 '심의'를 담당하므로, 위 설계 도메인(/design/process·용량)과 함께
+            #   엔진 콜은 정확히 2회다(verdict 1 + capacity 1). /permit/process 이중 심의는 배선하지 않는다.
+            #   엔진 미설정·타임아웃·거절은 조용히 누락하지 않고 status='unavailable'+reason 으로 표면화한다.
             if use_llm:
                 out.append(await self._run_deliberation_engine(site_raw, tenant_id))
             return out
