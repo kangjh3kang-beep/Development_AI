@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -33,7 +34,7 @@ def test_refresh_pipeline_script_exposes_required_cli_options() -> None:
 def test_refresh_pipeline_supports_dry_run_onboarding() -> None:
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(_REAL_SAMPLES),
@@ -65,7 +66,7 @@ def test_refresh_pipeline_move_mode_clears_incoming(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(incoming),
@@ -108,7 +109,7 @@ def test_refresh_pipeline_fails_when_move_mode_does_not_clear_incoming(tmp_path:
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(workspace),

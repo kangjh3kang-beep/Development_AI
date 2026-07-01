@@ -120,15 +120,29 @@ class TestSimplePriceEstimate:
     """_simple_price_estimate 3단계 폴백 검증."""
 
     def test_comparables_first_priority(self) -> None:
-        """1순위: 비교 사례 평균가격."""
+        """1순위: 비교 사례 ㎡단가 중앙값 × 대상 면적(단위 정합).
+
+        (구계약이던 '총액 평균 반환'은 면적이 다른 비교사례를 섞어 ㎡단가를 왜곡해
+        모듈에서 의도적으로 폐기됨 — price+area 쌍이 있어야 1순위로 쓴다.)
+        """
+        comparables = [
+            {"price_10k_won": 30000, "area_m2": 100.0},  # 3,000,000원/㎡
+            {"price_10k_won": 40000, "area_m2": 80.0},   # 5,000,000원/㎡
+        ]
+        features: dict[str, float] = {"land_official_price": 1_000_000}
+        result = AVMService._simple_price_estimate(84.0, comparables, features)
+        # ㎡단가 중앙값(짝수개→상위 중앙값) 5,000,000 × 84㎡ = 4.2억원 (공시지가 미개입)
+        assert result == 5_000_000 * 84.0
+
+    def test_comparables_without_area_fall_through(self) -> None:
+        """면적 없는 비교사례는 ㎡단가 산출 불가 → 정직하게 2순위(공시지가)로 폴백(무날조)."""
         comparables = [
             {"price_10k_won": 30000},
             {"price_10k_won": 40000},
         ]
         features: dict[str, float] = {"land_official_price": 1_000_000}
         result = AVMService._simple_price_estimate(84.0, comparables, features)
-        # 평균 35,000만원 = 3.5억원
-        assert result == 35000 * 10_000
+        assert result == 1_000_000 * 84.0 * 1.5
 
     def test_official_price_second_priority(self) -> None:
         """2순위: 공시지가 × 면적 × 1.5."""

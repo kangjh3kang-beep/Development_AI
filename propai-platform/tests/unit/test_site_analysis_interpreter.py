@@ -284,16 +284,16 @@ class TestComprehensiveServiceIntegration:
         }
         svc.land_info.collect_comprehensive = AsyncMock(return_value=mock_base)
 
-        # SiteAnalysisInterpreter를 실패하도록 mock
+        # SiteAnalysisInterpreter를 실패하도록 mock.
+        # ★서비스는 analyze() 안에서 로컬 import(from app.services.ai.site_analysis_interpreter
+        #   import ...)하므로 patch 대상은 '원 모듈' 경로여야 한다(서비스 모듈 속성이 아님 —
+        #   구 patch 경로는 AttributeError로 테스트 자체가 깨졌음).
         with patch(
-            "app.services.land_intelligence.comprehensive_analysis_service.SiteAnalysisInterpreter",
+            "app.services.ai.site_analysis_interpreter.SiteAnalysisInterpreter",
             side_effect=Exception("API 키 없음"),
         ):
-            # 에러가 발생해도 import 단계에서 잡히므로 다른 방법 필요
-            pass
+            result = await svc.analyze("경기도 의정부시 의정부동 123-4")
 
-        # 실제로는 import가 성공하고 generate_interpretation에서 실패하는 케이스
-        result = await svc.analyze("경기도 의정부시 의정부동 123-4")
-
-        # ai_interpretation이 존재해야 함 (None 또는 dict)
+        # 인터프리터 실패는 analyze를 중단시키지 않고 ai_interpretation=None으로 정직 강등된다.
         assert "ai_interpretation" in result
+        assert result["ai_interpretation"] is None

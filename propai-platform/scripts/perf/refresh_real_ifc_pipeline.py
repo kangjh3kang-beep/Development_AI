@@ -89,7 +89,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _run_onboarding(args: argparse.Namespace) -> None:
     cmd = [
-        "python",
+        sys.executable,
         "scripts/perf/onboard_real_ifc_fixtures.py",
         "--incoming",
         str(args.incoming),
@@ -130,7 +130,7 @@ def _run_incoming_validation(args: argparse.Namespace) -> None:
         min_ifc_files = max(1, int(args.require_real_ifc_min))
 
     cmd = [
-        "python",
+        sys.executable,
         "scripts/perf/validate_real_ifc_incoming.py",
         "--incoming",
         str(args.incoming),
@@ -155,7 +155,7 @@ def _run_incoming_validation(args: argparse.Namespace) -> None:
 
 def _run_benchmark(args: argparse.Namespace) -> None:
     cmd = [
-        "python",
+        sys.executable,
         "scripts/perf/run_stage3_benchmarks.py",
         "--attempts",
         str(args.attempts),
