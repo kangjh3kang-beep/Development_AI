@@ -7,17 +7,12 @@
  * 필지 경계 폴리곤을 카카오맵 위에 그리고, 용도지역별 색상·면적 라벨을 표시.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, BarChart3, HelpCircle, Info, Lightbulb, Link2, Map, Scissors } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
-import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
-import { KakaoMapControls } from "@/components/map/KakaoMapControls";
-import { useMapFullscreen } from "@/hooks/useMapFullscreen";
-
-declare global {
-  interface Window { kakao: any }
-}
+import { SatongMultiMap } from "@/components/map/SatongMultiMap";
+import type { SatongMapFeature, SatongMapLayerState } from "@/lib/satong-map-layers";
 
 type Feature = {
   pnu: string;
@@ -79,28 +74,12 @@ function zoneColor(zone: string | null, i: number): string {
 function pyeong(sqm: number): string {
   return sqm ? `${Math.round(sqm / 3.305785).toLocaleString()}평` : "-";
 }
-// P4 공시지가 코로플레스: 데이터 min~max 대비 5단계 색(연한 청 → 진한 적). 무자료=회색.
 const PRICE_RAMP = ["#bae6fd", "#7dd3fc", "#38bdf8", "#fb923c", "#ef4444"];
-function priceColor(price: number | null | undefined, min: number, max: number): string {
-  if (!price || price <= 0) return "#94a3b8";       // 공시지가 무자료=회색(가짜 금지)
-  if (max <= min) return PRICE_RAMP[2];
-  const t = (price - min) / (max - min);            // 0~1 정규화
-  return PRICE_RAMP[Math.min(PRICE_RAMP.length - 1, Math.max(0, Math.floor(t * PRICE_RAMP.length)))];
-}
-// 공시지가 만원/평 표기(원/㎡ → 만원/평).
 function priceManPyeong(perSqm: number | null | undefined): string {
   if (!perSqm || perSqm <= 0) return "-";
   return `${Math.round((perSqm * 3.305785) / 1e4).toLocaleString()}만원/평`;
 }
 const AGE_RAMP = ["#7dd3fc", "#34d399", "#facc15", "#fb923c", "#ef4444"];
-function ageColor(age: number | null | undefined): string {
-  if (age == null || age < 0) return "#94a3b8";
-  if (age < 10) return AGE_RAMP[0];
-  if (age < 20) return AGE_RAMP[1];
-  if (age < 30) return AGE_RAMP[2];
-  if (age < 40) return AGE_RAMP[3];
-  return AGE_RAMP[4];
-}
 
 export function ParcelBoundaryMap({
   parcels,
@@ -148,12 +127,43 @@ export function ParcelBoundaryMap({
   }, [data]);
   const hasPrice = priceRange.max > 0;
   const hasAge = (data?.features ?? []).some((f) => typeof f.building_age_years === "number");
-  const mapEl = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const polysRef = useRef<any[]>([]);
-  const infoRef = useRef<any>(null);
-  const [mapReady, setMapReady] = useState(false); // 카카오맵 생성 완료 → 툴바 활성
-  const fs = useMapFullscreen(mapRef);
+  const boundaryMapFeatures = useMemo<SatongMapFeature[]>(
+    () =>
+      (data?.features ?? []).map((f, i) => ({
+        id: f.pnu || f.address || `boundary-${i}`,
+        pnu: f.pnu,
+        address: f.address || f.pnu || `필지 ${i + 1}`,
+        areaSqm: f.area_sqm ?? null,
+        zoneType: effZone(f, i),
+        zoneType2: f.zone_type_2 ?? null,
+        jimok: f.jimok ?? null,
+        officialPricePerSqm: f.official_price_per_sqm ?? null,
+        builtYear: f.built_year ?? null,
+        buildingAgeYears: f.building_age_years ?? null,
+        geometry: f.geometry,
+        source: "boundary",
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, primaryZoneLabel, primaryAddr],
+  );
+  const boundaryLayerState = useMemo<SatongMapLayerState>(() => {
+    const controlsByLayer: SatongMapLayerState["controlsByLayer"] = {
+      cadastre: ["parcel-boundary", "selected-parcel"],
+      zoning: ["land-use"],
+      "official-price": ["unit-price"],
+      age: ["building-age"],
+      terrain: ["hybrid"],
+    };
+    const enabledLayerIds: SatongMapLayerState["enabledLayerIds"] =
+      colorMode === "price"
+        ? ["cadastre", "official-price", "terrain"]
+        : colorMode === "age"
+          ? ["cadastre", "age", "terrain"]
+          : defaultUseDistrict === false
+            ? ["cadastre", "terrain"]
+            : ["cadastre", "zoning", "terrain"];
+    return { enabledLayerIds, controlsByLayer };
+  }, [colorMode, defaultUseDistrict]);
 
   // 데이터 조회
   useEffect(() => {
@@ -185,125 +195,6 @@ export function ParcelBoundaryMap({
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
-
-  // 지도 렌더
-  useEffect(() => {
-    if (!data || !data.features?.length || !mapEl.current) return;
-    let alive = true;
-    void loadKakaoMap().then(() => {
-      if (!alive || !mapEl.current) return;
-      const kakao = window.kakao;
-      if (!mapRef.current) {
-        mapRef.current = new kakao.maps.Map(mapEl.current, {
-          center: new kakao.maps.LatLng(37.5665, 126.978), level: 3,
-          // 위성+라벨(하이브리드) 기본 — 항공사진과 지적좌표 정합이 좋아 '도로에서 뜨는' 착시↓
-          mapTypeId: kakao.maps.MapTypeId.HYBRID,
-        });
-      }
-      const map = mapRef.current;
-      setMapReady(true);
-      // 이전 폴리곤/정보창 정리
-      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
-      polysRef.current = [];
-      try { infoRef.current?.close(); } catch { /* noop */ }
-
-      const bounds = new kakao.maps.LatLngBounds();
-      let hasPt = false;
-      let hiBounds: any = null;
-
-      // ── A+D: 주변 필지·도로(정밀 벡터 지적도) — 선택 필지 아래에 깔아 "빈 공간=도로/인접지"를 명확히 ──
-      (data.neighbors ?? []).forEach((nb) => {
-        if (!nb.geometry) return;
-        geoJsonToKakaoRings(kakao, nb.geometry).forEach((path) => {
-          const poly = new kakao.maps.Polygon({
-            path,
-            strokeWeight: 1,
-            strokeColor: nb.is_road ? "#b08746" : "#94a3b8",
-            strokeOpacity: nb.is_road ? 0.8 : 0.55,
-            fillColor: nb.is_road ? "#e7d3a8" : "#cbd5e1",
-            fillOpacity: nb.is_road ? 0.3 : 0.06,
-            zIndex: 1,
-          });
-          poly.setMap(map);
-          polysRef.current.push(poly);
-        });
-      });
-
-      (data.features ?? []).forEach((f, i) => {
-        if (!f.geometry) return;
-        const zoneDisp = effZone(f, i);
-        const sc = statusColors?.[f.address || ""];
-        // 상태강조색(sc) 우선, 그 다음 선택 색상 모드(용도지역/공시지가/노후도).
-        const color = sc || (colorMode === "price"
-          ? priceColor(f.official_price_per_sqm, priceRange.min, priceRange.max)
-          : colorMode === "age"
-            ? ageColor(f.building_age_years)
-            : zoneColor(zoneDisp, i));
-        const isHi = !!highlight && f.address === highlight;
-        const z2 = f.zone_type_2 ? ` / ${f.zone_type_2}` : "";
-        const stat = statusLabels?.[f.address || ""];
-        const html =
-          `<div style="padding:6px 10px;font-size:12px;min-width:160px;">` +
-          `<b>${i + 1}. ${f.address || f.pnu}</b>` + (stat ? ` <span style="color:#0e7490">[${stat}]</span>` : "") +
-          `<br/>용도지역: ${zoneDisp || "-"}${z2}<br/>` +
-          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})` +
-          (f.official_price_per_sqm ? `<br/>공시지가: ${priceManPyeong(f.official_price_per_sqm)} (${f.official_price_per_sqm.toLocaleString()}원/㎡)` : "") +
-          (f.building_age_years != null ? `<br/>노후도: ${f.building_age_years}년${f.built_year ? ` (${f.built_year}년)` : ""}` : "") +
-          (f.terrain ? `<br/>지형: ${f.terrain}` : "") +
-          (f.jimok ? `<br/>지목: ${f.jimok}` : "") +
-          `</div>`;
-        geoJsonToKakaoRings(kakao, f.geometry).forEach((path) => {
-          const poly = new kakao.maps.Polygon({
-            path, strokeWeight: isHi ? 4 : 2, strokeColor: isHi ? "#ef4444" : color,
-            strokeOpacity: 0.9, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28,
-            zIndex: 3,
-          });
-          poly.setMap(map);
-          polysRef.current.push(poly);
-          kakao.maps.event.addListener(poly, "click", (e: any) => {
-            try { infoRef.current?.close(); } catch { /* noop */ }
-            const iw = new kakao.maps.InfoWindow({ position: e.latLng, content: html, removable: true });
-            iw.open(map);
-            infoRef.current = iw;
-            if (onParcelClick) onParcelClick(f.address || "");
-          });
-          path.forEach((ll: any) => { bounds.extend(ll); hasPt = true; });
-          if (isHi) {
-            hiBounds = hiBounds || new kakao.maps.LatLngBounds();
-            path.forEach((ll: any) => hiBounds.extend(ll));
-          }
-        });
-      });
-      // ── B: 통합개발 외곽선(슬리버 없는 union 단일 경계) — 굵은 청색 점선 ──
-      if (data.parcel_count >= 2 && data.merged_geometry) {
-        geoJsonToKakaoRings(kakao, data.merged_geometry).forEach((path) => {
-          const poly = new kakao.maps.Polygon({
-            path, strokeWeight: 3, strokeColor: "#0ea5e9", strokeOpacity: 0.95,
-            strokeStyle: "dash", fillColor: "#0ea5e9", fillOpacity: 0.04, zIndex: 5,
-          });
-          poly.setMap(map);
-          polysRef.current.push(poly);
-        });
-      }
-
-      const applyBounds = () => {
-        try {
-          if (hiBounds) map.setBounds(hiBounds, 60, 60, 60, 60);
-          else if (hasPt) map.setBounds(bounds, 30, 30, 30, 30);
-          else if (data.center) map.setCenter(new kakao.maps.LatLng(data.center.lat, data.center.lon));
-        } catch { /* noop */ }
-      };
-      applyBounds();
-      setTimeout(() => { if (alive) { try { map.relayout(); } catch { /* noop */ } applyBounds(); } }, 60);
-    });
-    return () => {
-      alive = false;
-      try { infoRef.current?.close(); } catch { /* noop */ }
-      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
-      polysRef.current = [];
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, highlight, primaryZone, colorMode, priceRange.min, priceRange.max, JSON.stringify(statusColors)]);
 
   if (!list.length) return null;
 
@@ -420,9 +311,19 @@ export function ParcelBoundaryMap({
           )}
         </div>
       )}
-      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
-        <div ref={mapEl} className={fs.mapClass("h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
-        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} initialDistrict={defaultUseDistrict} />
+      <div className="relative">
+        <SatongMultiMap
+          readOnly
+          height={340}
+          chrome="immersive"
+          selectedParcels={boundaryMapFeatures}
+          layerState={boundaryLayerState}
+          focusTarget={data?.center ? { lat: data.center.lat, lon: data.center.lon, label: list[0] } : null}
+          onFeatureClick={(feature) => onParcelClick?.(feature.address)}
+          featureStatusColors={statusColors}
+          featureStatusLabels={statusLabels}
+          highlightFeatureAddress={highlight}
+        />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
