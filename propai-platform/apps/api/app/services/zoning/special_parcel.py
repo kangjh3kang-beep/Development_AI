@@ -8,18 +8,23 @@
 결정적·정직하며, 추가(additive)로 기존 응답을 손상하지 않는다.
 
 developability(개발가능성 게이트):
-  POSSIBLE     일반 개발 가능(특이 없음)
-  CAUTION      가능하나 사전확인 필요(경미)
-  CONDITIONAL  조건부 — 인허가/전용/협의 등 선행절차 통과 시 가능
-  PRECONDITION 선행 도시계획 변경/시설폐지 등 중대한 선행절차 필수
-  BLOCKED      원칙적으로 일반 개발 불가
+  POSSIBLE              일반 개발 가능(특이 없음)
+  CAUTION               가능하나 사전확인 필요(경미)
+  CONDITIONAL           조건부 — 인허가/전용/협의 등 선행절차 통과 시 가능
+  NEEDS_OFFICIAL_SURVEY 공식 산림데이터(산지구분·경사도·입목축적) 미확보 — 확정 판단 불가,
+                        참고용 예비안만 산출(확정 설계 차단). CONDITIONAL과 같은 잠정 등급.
+  PRECONDITION          선행 도시계획 변경/시설폐지 등 중대한 선행절차 필수
+  BLOCKED               원칙적으로 일반 개발 불가
 """
 from __future__ import annotations
 
 from typing import Any
 
 # 심각도 순위(높을수록 제약 큼) — 여러 특이요인 중 최댓값을 부지 종합 게이트로 채택.
-_RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "PRECONDITION": 3, "BLOCKED": 4}
+#   NEEDS_OFFICIAL_SURVEY = CONDITIONAL과 같은 '잠정' 등급(값 2). 공식 산림데이터 미확보로
+#   확정 설계는 막되(참고안만), CONDITIONAL과 동일 심각도로 취급한다(기존 값 불변).
+_RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
+         "PRECONDITION": 3, "BLOCKED": 4}
 
 
 def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
@@ -53,7 +58,10 @@ GATE_BLOCK_RESOLVABLE = {"NO"}
 # 잠정(조건부) 강등 — 선행 도시계획변경/시설폐지(PRECONDITION) 또는 인허가·협의·전용(CONDITIONAL),
 #   혹은 해결가능성이 조건부(CONDITIONAL)인 경우. 후보는 산출하되 '확정 아님·선행절차 전제 잠정치'로
 #   강등하고, 비현실 확신 % 표시를 억제한다(도로 단독 PRECONDITION → 타운하우스88% 할루시네이션 차단).
-GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL"}
+# NEEDS_OFFICIAL_SURVEY(임야/산지 공식 산림데이터 미확보)도 잠정으로 분류한다 —
+#   gate_decision()이 "TENTATIVE"를 반환해 소비처가 '참고안(확정 아님)'으로 안전하게 다룬다.
+#   (확정 % / 확정 설계 없음 — 공식 산림조사서·경사도조사 확보 전까지 예비안만.)
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY"}
 GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
 
 
@@ -82,6 +90,10 @@ def tentative_marker(developability: str | None, resolvable: str | None, severit
     label = (severity_label or "").strip()
     if dev == "PRECONDITION":
         head = "선행 도시계획변경·시설폐지 등 중대한 선행절차 통과를 전제로 한 잠정치입니다(확정 아님)."
+    elif dev == "NEEDS_OFFICIAL_SURVEY":
+        # 임야/산지 — 공식 산림데이터(산림청 조사) 미확보. 확정 설계 불가, 참고용 예비안만.
+        head = ("공식 산림데이터(산지구분·보전산지 여부·평균경사도·입목축적) 미확보 — 산지전용 확정 판단 "
+                "불가, 참고용 예비안입니다(확정 아님). 산림조사서·평균경사도조사서 등 공식 조사가 필요합니다.")
     elif dev == "CONDITIONAL" or res == "CONDITIONAL":
         # CONDITIONAL(인허가·전용·협의) 또는 해결가능성 조건부(예: 맹지·진입로 확보) — 동일하게 조건부 잠정.
         head = "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님)."
@@ -184,13 +196,45 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "permit_prerequisites": ["농지전용허가/협의", "농지보전부담금 산정"],
         }
     if "임야" in c or "산림" in c:  # ★'산' 접두 매칭 제거 — 지목 "산업용지"(공업)를 임야로 오탐하던 버그.
+        # ★임야(산지)는 산림청 공식 조사데이터(산지구분·평균경사도·입목축적 등)가 있어야만
+        #   산지전용 확정 판단이 가능하다(레드팀 P1-2: 임목본수도·경사도는 인허가급 데이터 아님).
+        #   그 데이터가 아직 배선되지 않았으므로(E3 커넥터에서 채울 예정), 확정 설계를 막고
+        #   참고용 예비안만 허용하는 NEEDS_OFFICIAL_SURVEY 게이트를 건다(정직-실패 게이트).
         return {
-            "category": "임야(산지)", "developability": "CONDITIONAL",
-            "implications": ["지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
-                             "대체산림자원조성비가 부과됩니다."],
+            "category": "임야(산지)", "developability": "NEEDS_OFFICIAL_SURVEY",
+            # 공식 산림데이터가 채워질 자리(현재는 전부 미상=None) — E3 커넥터가 실측값을 주입한다.
+            #   전부 None인 동안은 아래 항목을 '실제 판정'이 아닌 '공식조사 필요'로만 고지한다(무날조).
+            "forest_facts": {
+                "보전산지_여부": None,          # 보전산지(임업용/공익용) 포함 여부 — 포함 시 전용 강한 제약
+                "산지구분": None,              # 보전산지/준보전산지 구분
+                "평균경사도_pct": None,         # 평균경사도(%) — 25도/30도 등 지자체 조례 기준 대비
+                "표고비율_pct": None,          # 표고(고도) 기준 대비 비율
+                "입목축적_per_ha": None,        # ha당 입목축적(㎥/ha)
+                "관할평균_입목축적_per_ha": None,  # 관할 시군구 평균 입목축적(비교 기준)
+                "임상": None,                 # 임상(침엽수/활엽수/혼효림 등)
+                "official_data_source": None,  # 공식 데이터 출처(산림청 등) — 확보 시 기재
+            },
+            # 확정 판단에 필요한 공식 조사가 미확보라 확정 설계를 막는 신호(소비처/게이트가 참고안으로 강등).
+            "official_survey_required": True,
+            "blocking_unknown": True,
+            "implications": [
+                "지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
+                "★확정 판단에는 산림청 공식 조사데이터가 필요합니다(현재 미확보 — 아래 항목은 공식조사로 산정해야 하며 아직 계산되지 않았습니다):",
+                "  · 평균경사도 — 지자체 조례상 산지전용 허용 기준(통상 평균경사도 25도 또는 30도 이하)에 부합하는지 공식 평균경사도조사서로 확인해야 합니다.",
+                "  · 입목축적 — ha당 입목축적이 관할 시군구 평균 대비 일정 배수(예: 150% 이하) 이내인지 산림조사서로 확인해야 합니다.",
+                "  · 보전산지 포함 여부 — 보전산지(임업용·공익용)가 포함되면 전용이 크게 제한되므로 산지구분 확인이 선행됩니다.",
+                "  · 660㎡ 미만 등 소규모 예외 해당 여부도 공식 자료로 판정해야 합니다.",
+                "이 항목들은 아직 실제로 계산되지 않았으며, 공식 산림조사 확보 전까지는 참고용 예비안만 제시합니다(확정 아님).",
+                "대체산림자원조성비가 부과됩니다.",
+            ],
             "legal_basis": ["산지관리법 제14조(산지전용허가)", "대체산림자원조성비"],
             "legal_ref_keys": ["forest_conversion"],
-            "permit_prerequisites": ["산지전용허가", "경사도/표고/입목축적 검토"],
+            "permit_prerequisites": [
+                "산지전용허가",
+                "경사도/표고/입목축적 검토",
+                "산림조사서·평균경사도조사서 작성(산림기술사 등 자격)",
+                "대체산림자원조성비 산정",
+            ],
         }
     return None
 
@@ -461,6 +505,7 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
         "BLOCKED": "원칙적 개발 불가",
         "PRECONDITION": "중대한 선행절차 필수(도시계획시설 폐지·용도변경 등)",
         "CONDITIONAL": "조건부 가능(인허가·전용·협의 선행)",
+        "NEEDS_OFFICIAL_SURVEY": "공식 산림조사 필요(참고안 — 확정 아님)",
         "CAUTION": "사전확인 필요", "POSSIBLE": "개발 가능",
     }.get(gate, gate)
 
@@ -474,21 +519,30 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
 
     # 고지 정합: 해결불가(NO)면 게이트와 무관하게 '불가'로 단일화한다(caveat=게이트 기준,
     #   honest=resolvable 기준이라 BLOCKED↔CONDITIONAL에서 메시지가 엇갈리던 모순 제거).
+    # ★전역전파방지(SSOT): caveat/honest 분기를 개발가능성 값의 하드코딩 튜플이 아니라
+    #   gate_decision()/GATE_TENTATIVE_DEVELOPABILITY 멤버십으로 판정한다. 이렇게 하면
+    #   NEEDS_OFFICIAL_SURVEY 등 새 잠정 등급이 자동으로 '확정 아님' 정직 문구를 받아,
+    #   임야(gate=NEEDS_OFFICIAL_SURVEY, resolvable=YES)가 "개발 가능"으로 오고지되지 않는다.
+    decision = gate_decision(gate, resolvable_overall)
     if resolvable_overall == "NO":
         caveat = (
             f"개발가능성: {label}. 통상적 절차로 해결 불가능한 제약이 포함되어 현 상태로는 일반 "
             "분양개발이 불가합니다. 개발규모를 단정해 제시하지 않습니다."
         )
-    elif gate in ("PRECONDITION", "BLOCKED", "CONDITIONAL"):
-        caveat = (
-            "이 부지는 특이 토지특성으로 인해 용도지역상 법정 최대 연면적/용적률이 그대로 실현되지 "
-            f"않을 수 있습니다. 개발가능성: {label}. 선행절차 통과 여부에 따라 실제 개발규모가 결정됩니다."
-        )
+    elif decision == "TENTATIVE":
+        # PRECONDITION/CONDITIONAL/NEEDS_OFFICIAL_SURVEY 등 잠정 등급 — tentative_marker가
+        #   각 등급에 맞는 '확정 아님' 사유(산림조사 필요 등)를 반환하므로 그대로 사용한다.
+        caveat = tentative_marker(gate, resolvable_overall, label)
     else:
         caveat = "사전확인 사항이 있으나 일반 개발은 가능합니다."
     if resolvable_overall == "NO":
         honest = ("⚠ 정직 고지: 이 부지에는 통상적 절차로 해결 불가능한 제약(예: 개발제한구역·공공기반시설 용지)이 "
                   "포함되어 있어, 현 상태로는 일반 분양개발이 불가합니다. 무리한 개발규모 산정은 제시하지 않습니다.")
+    elif gate in GATE_TENTATIVE_DEVELOPABILITY:
+        # ★developability 우선: 개발가능성 게이트가 잠정(NEEDS_OFFICIAL_SURVEY 포함)이면
+        #   resolvable이 YES여도 '확정 아님·참고안·공식조사 필요'로 정직 고지한다(임야가
+        #   resolvable=YES라 "표준 절차로 해결 가능"으로 새던 회귀 차단).
+        honest = tentative_marker(gate, resolvable_overall, label)
     elif resolvable_overall == "CONDITIONAL":
         honest = ("이 부지는 인허가·협의·도시계획 변경 등 선행절차 통과를 조건으로만 개발이 가능합니다. "
                   "선행절차 결과가 확정되기 전의 개발규모는 '잠재치'이며 확정치가 아닙니다.")
@@ -831,6 +885,13 @@ def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
                  "category": x["special"]["factors"][0]["category"] if x["special"]["factors"] else None}
                 for x in specials if x["special"]["resolvable"] == "NO"]
 
+    # ★전역전파방지(SSOT): 다필지 disclosure도 resolvable만이 아니라 개발가능성 게이트로 판정한다.
+    #   임야 필지(resolvable=YES)가 다필지 세트에 섞여 있어도 사업 게이트가 잠정(NEEDS_OFFICIAL_SURVEY
+    #   포함)이면 "표준 절차로 해결 가능"으로 새지 않고 '확정 아님·참고안' 정직 고지를 준다.
+    survey_parcels = [
+        x for x in specials
+        if x["special"]["developability"] == "NEEDS_OFFICIAL_SURVEY"
+    ]
     if resolvable == "NO":
         disclosure = (f"⚠ 정직 고지: {len(blocking)}개 필지에 통상 절차로 해결 불가능한 제약이 있어 현 사업구역 전체의 "
                       "일반 개발이 불가합니다. 해당 필지를 제외(사업구역 재획정)하거나 대체부지를 확보해야 하며, "
@@ -840,6 +901,14 @@ def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
         disclosure = ("이 사업은 일부 필지의 인허가·도시계획 변경·전용·협의 등 선행절차 통과를 조건으로만 개발이 가능합니다. "
                       "선행절차 확정 전 개발규모는 '잠재치'이며, 미통과 시 해당 필지 제외가 필요합니다.")
         recommendation = "선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 잔여 개발규모를 병기하십시오."
+    elif gate in GATE_TENTATIVE_DEVELOPABILITY or survey_parcels:
+        # resolvable=YES여도 사업 게이트가 잠정(임야 공식조사 필요 등)이면 tentative_marker로 정직 강등.
+        disclosure = tentative_marker(gate, resolvable)
+        if survey_parcels:
+            recommendation = (f"임야(산지) {len(survey_parcels)}개 필지는 산림조사서·평균경사도조사서 등 공식 산림데이터를 "
+                              "확보한 뒤 산지전용 가능규모를 확정하십시오(현 규모는 참고용 예비안).")
+        else:
+            recommendation = "선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 잔여 개발규모를 병기하십시오."
     else:
         disclosure = "특이 필지가 있으나 표준 인허가 절차(전용·협의 등)로 해결 가능합니다."
         recommendation = "전용비용·부담금을 사업수지에 반영하여 진행하십시오."

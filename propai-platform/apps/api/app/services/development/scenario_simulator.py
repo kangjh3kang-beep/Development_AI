@@ -330,8 +330,15 @@ class DevelopmentScenarioSimulator:
         }
         # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
         #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
-        if special_gate and special_gate.get("developability") in (
-            "CONDITIONAL", "PRECONDITION", "CAUTION"
+        # ★전역전파방지(SSOT): 하드코딩 튜플 대신 GATE_TENTATIVE_DEVELOPABILITY 멤버십으로 판정한다.
+        #   이렇게 하면 NEEDS_OFFICIAL_SURVEY(임야 공식 산림조사 필요) 등 새 잠정 등급이 자동으로
+        #   최상위 honest_disclosure를 받아, 임야 부지가 정직 고지 없이 시나리오만 노출되던 결함을 막는다.
+        #   (CAUTION은 GATE_TENTATIVE에 없으므로 명시적으로 포함한다.)
+        from app.services.zoning.special_parcel import GATE_TENTATIVE_DEVELOPABILITY
+
+        if special_gate and (
+            special_gate.get("developability") in GATE_TENTATIVE_DEVELOPABILITY
+            or special_gate.get("developability") == "CAUTION"
         ):
             result["special_parcel_gate"] = special_gate
             result["honest_disclosure"] = special_gate.get("honest_disclosure") or (
