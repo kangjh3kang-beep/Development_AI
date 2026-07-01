@@ -55,3 +55,30 @@ class TestMasterKey:
         assert ss._decrypt(tok) is None         # 현재 키로는 복호화 실패(불일치 재현)
         old = Fernet(ss._fernet_key_from_material("appkey-X"))
         assert old.decrypt(tok.encode()).decode() == "payload"  # 옛 재질로 복구 가능
+
+
+class TestProductionGuard:
+    """P1-4: production에서 하드코딩 폴백 마스터키 기동 차단(fail-fast) 검증."""
+
+    def test_prod_하드코딩폴백_기동차단(self):
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard(app_env="production")
+
+    def test_prod_SECRET_STORE_KEY_정상기동(self, monkeypatch):
+        monkeypatch.setenv("SECRET_STORE_KEY", "fixed-master-key")
+        st = ss.enforce_master_key_guard(app_env="production")
+        assert st["source"] == "SECRET_STORE_KEY" and st["stable"] is True
+
+    def test_prod_APP_SECRET_KEY_파생은_기동허용_unstable경고(self, monkeypatch):
+        # 파생 키는 로테이션 위험(unstable)이나 폴백은 아님 — 기동은 허용(경고만).
+        monkeypatch.setenv("APP_SECRET_KEY", "env-app-secret-key-40chars-xxxxxxxxxxxxx")
+        st = ss.enforce_master_key_guard(app_env="production")
+        assert st["source"] == "APP_SECRET_KEY" and st["stable"] is False
+
+    def test_dev_하드코딩폴백_경고만(self):
+        st = ss.enforce_master_key_guard(app_env="development")
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_test환경도_기동허용(self):
+        st = ss.enforce_master_key_guard(app_env="test")
+        assert st["source"] == "hardcoded-fallback"
