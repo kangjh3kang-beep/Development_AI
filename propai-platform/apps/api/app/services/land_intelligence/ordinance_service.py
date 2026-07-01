@@ -92,6 +92,11 @@ async def _load_stored(sigungu: str | None, zone_type: str) -> dict | None:
                 {"s": sigungu, "z": zone_type})).first()
             if row:
                 payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                # ★레거시 statutory(법정상한) 저장행 무시: 이 수정 이전 코드가 남긴 미확정값
+                #   (source="법정상한")은 cross-tenant 오염원이므로 재사용하지 않는다. None 을
+                #   반환해 조회 파이프라인(법제처API→정적캐시→법정상한)이 다시 실행되도록 한다.
+                if payload.get("source") == "법정상한":
+                    return None
                 prov = payload.setdefault("provenance", {})
                 prov["reused"] = True  # 저장본 재사용 표시
                 prov["stored_fetched_at"] = str(row[1])
@@ -360,7 +365,11 @@ class OrdinanceService:
         result["source"] = "법정상한"
         _attach_provenance(result, confidence=0.60, recheck=True,
                            disclaimer="해당 지자체 조례 미보유 — 법정상한 적용. 실제 조례 확인 필요.")
-        await _save_resolution(result, sigungu, zone_type)
+        # ★저장 금지(cross-tenant 오염 방지): statutory(법정상한)는 '조례 미확보'를 뜻하는
+        #   미확정값이다. 이를 전역 캐시(sigungu, zone_type)에 저장하면 같은 시군구의 다른
+        #   테넌트/프로젝트가 이 미확정값을 재사용(cross-tenant 오염)하게 되어, 실제 조례가
+        #   법정상한보다 낮은 경우 과대허용값이 전파된다. 따라서 저장하지 않고 statutory 결과는
+        #   현재 요청에만 transient 로 반환한다(Tier-1 법제처API·Tier-2 정적캐시=확정값이라 저장 유지).
         return result
 
     async def _fetch_from_moleg_api(
