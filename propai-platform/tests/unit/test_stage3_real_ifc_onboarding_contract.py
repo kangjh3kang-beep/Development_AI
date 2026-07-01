@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -25,7 +26,7 @@ def test_onboarding_script_exposes_required_cli_options() -> None:
 
 def test_onboarding_script_dry_run_outputs_manifest_payload() -> None:
     result = subprocess.run(
-        ["python", str(_SCRIPT), "--incoming", str(_REAL_SAMPLES), "--dry-run"],
+        [sys.executable, str(_SCRIPT), "--incoming", str(_REAL_SAMPLES), "--dry-run"],
         cwd=_BASE,
         capture_output=True,
         text=True,
@@ -57,7 +58,7 @@ def test_onboarding_script_writes_scrub_summary_when_enabled(tmp_path: Path) -> 
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(_REAL_SAMPLES),
@@ -99,7 +100,7 @@ def test_onboarding_script_disables_scrub_when_option_off(tmp_path: Path) -> Non
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(_REAL_SAMPLES),

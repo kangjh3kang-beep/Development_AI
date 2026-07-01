@@ -1,5 +1,6 @@
 """Phase E live module regression tests for compliance, leases, and ESG."""
 
+import re
 from pathlib import Path
 
 from apps.api.auth.rbac import check_permission
@@ -53,7 +54,11 @@ class TestPhaseELiveRouters:
         assert '@router.post("/analyze"' in _LEASES_SOURCE
 
     def test_esg_endpoint_exists(self) -> None:
-        assert '@router.post("/assessment"' in _ESG_SOURCE
+        # esg.py는 데코레이터가 멀티라인(@router.post(\n "/assessment", ...))이라
+        # 단일라인 문자열 매칭이 깨졌었다 → 공백/개행 허용 regex로 'POST /assessment 선언'을 검증.
+        # (라우터 실객체 introspection은 esg.py의 `from app...` import가 이 스위트의
+        #  import 컨텍스트(레포 루트, `apps.*`만 가용)에서 불가라 소스 매칭이 이 파일의 표준 패턴.)
+        assert re.search(r'@router\.post\(\s*"/assessment"', _ESG_SOURCE)
 
 
 class TestPhaseELiveServices:

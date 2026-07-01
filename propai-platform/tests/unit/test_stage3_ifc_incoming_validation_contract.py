@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -27,7 +28,7 @@ def test_incoming_validator_script_exposes_required_cli_options() -> None:
 def test_incoming_validator_dry_run_passes_on_real_samples() -> None:
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(_REAL_SAMPLES),
@@ -53,7 +54,7 @@ def test_incoming_validator_dry_run_passes_on_real_samples() -> None:
 def test_incoming_validator_fails_when_min_file_requirement_not_met(tmp_path: Path) -> None:
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(tmp_path),
@@ -81,7 +82,7 @@ def test_incoming_validator_fails_on_duplicate_hash_by_default(tmp_path: Path) -
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(tmp_path),
@@ -110,7 +111,7 @@ def test_incoming_validator_allows_duplicate_hash_when_disabled(tmp_path: Path) 
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(tmp_path),
@@ -139,7 +140,7 @@ def test_incoming_validator_fails_when_file_size_exceeds_limit(tmp_path: Path) -
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(_SCRIPT),
             "--incoming",
             str(tmp_path),

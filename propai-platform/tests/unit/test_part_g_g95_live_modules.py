@@ -77,7 +77,10 @@ class TestG95RoutersAndRbac:
 
     def test_g95_permissions(self) -> None:
         assert check_permission("manager", "chatbot", "write") is True
-        assert check_permission("viewer", "chatbot", "read") is False
+        # 감사 보강(2026-06, rbac.py 정책 주석): 구독자(viewer)가 분석·생성 기능을 쓰도록
+        # chatbot read/write 의도적 부여 — 관리자 전용(사용자관리 등)만 금지 유지.
+        assert check_permission("viewer", "chatbot", "read") is True
+        assert check_permission("viewer", "users", "write") is False  # 관리자 전용은 여전히 거부
         assert check_permission("viewer", "auction", "read") is True
         assert check_permission("analyst", "auction", "write") is True
         assert check_permission("manager", "contractors", "write") is True
