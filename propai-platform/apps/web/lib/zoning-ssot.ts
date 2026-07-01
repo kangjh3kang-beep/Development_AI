@@ -352,6 +352,8 @@ export const DEVELOPABILITY_LABEL: Record<string, string> = {
   POSSIBLE: "개발 가능",
   CAUTION: "사전확인 필요",
   CONDITIONAL: "조건부 가능",
+  // 임야/산지 — 공식 산림데이터 미확보로 확정 판단 불가(참고용 예비안만). 원 enum 노출 금지.
+  NEEDS_OFFICIAL_SURVEY: "공식 산림조사 필요(참고안 — 확정 아님)",
   PRECONDITION: "선행절차 필요",
   RESTRICTED: "제한적",
   BLOCKED: "개발 불가",

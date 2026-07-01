@@ -19,6 +19,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
@@ -268,13 +269,8 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
   // 특이부지(학교용지·GB·맹지 등) — 있을 때만 정직고지 섹션 노출.
   const sp = site?.specialParcel ?? null;
   const showSpecial = !!(sp && sp.isSpecial);
-  const developabilityLabel: Record<string, string> = {
-    POSSIBLE: "개발 가능",
-    CONDITIONAL: "조건부 가능",
-    PRECONDITION: "선결조건 필요",
-    RESTRICTED: "제한적",
-    BLOCKED: "개발 불가",
-  };
+  // 개발가능성 라벨은 zoning-ssot.ts 공용 DEVELOPABILITY_LABEL 사용(중복 맵 제거 — NEEDS_OFFICIAL_SURVEY
+  //   등 새 등급이 한 곳에서 자동 전파돼, 사용자에게 원 enum이 노출되지 않는다).
   const resolvableLabel: Record<string, string> = {
     YES: "해결 가능",
     CONDITIONAL: "조건부 해결",
@@ -471,7 +467,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
           <Section title={`${nextNo()}. 특이부지 검토(정직고지)`} dataSource={site?.dataSource} fetchedAt={site?.fetchedAt}>
             <DataField
               label="개발 가능성"
-              value={sp.developability ? (developabilityLabel[sp.developability] ?? sp.developability) : null}
+              value={sp.developability ? (DEVELOPABILITY_LABEL[sp.developability] ?? sp.developability) : null}
               accent
             />
             <DataField
