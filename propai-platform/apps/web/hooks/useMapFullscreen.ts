@@ -37,7 +37,21 @@ export type MapFullscreen = {
   mapClass: (base?: string) => string;
 };
 
-export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
+export type MapFullscreenOptions = {
+  /** Native fullscreen can detach Leaflet DOM in some embedded surfaces. Use "css" to keep the map in-place. */
+  mode?: "native" | "css";
+};
+
+const POSITION_CLASS_NAMES = new Set(["static", "fixed", "absolute", "relative", "sticky"]);
+
+function withoutPositionClass(base: string): string {
+  return base
+    .split(/\s+/)
+    .filter((className) => className && !POSITION_CLASS_NAMES.has(className))
+    .join(" ");
+}
+
+export function useMapFullscreen(mapRef: { current: any }, options: MapFullscreenOptions = {}): MapFullscreen {
   const [isFull, setIsFull] = useState(false);
   // nativeFs=true면 브라우저 네이티브 Fullscreen API로 전체화면(상위 transform/backdrop-filter가
   // position:fixed를 클리핑하는 버그를 원천 회피 — 진짜 뷰포트 전체). 실패 시 CSS 오버레이 폴백.
@@ -90,14 +104,14 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
   const enter = useCallback(() => {
     const el = wrapperRef.current;
     const req = el && (el.requestFullscreen || (el as any).webkitRequestFullscreen);
-    if (el && req) {
+    if (options.mode !== "css" && el && req) {
       Promise.resolve(req.call(el)).then(() => setNativeFs(true)).catch(() => {
         setNativeFs(false); setIsFull(true); relayoutSoon();
       });
     } else {
       setNativeFs(false); setIsFull(true); relayoutSoon();
     }
-  }, [relayoutSoon]);
+  }, [options.mode, relayoutSoon]);
 
   const exit = useCallback(() => {
     if (document.fullscreenElement) {
@@ -140,10 +154,11 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
 
   const wrapperClass = useCallback(
     (base = "") => {
+      const stableBase = withoutPositionClass(base);
       // 네이티브 풀스크린: 브라우저가 요소를 뷰포트 전체로 만들므로 채움(h/w-full)+배경+flex만.
-      if (nativeFs) return `${base} h-screen w-screen m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
+      if (nativeFs) return `${stableBase} h-screen w-screen m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
       // CSS 폴백 오버레이.
-      if (isFull) return `${base} fixed inset-0 z-[100] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
+      if (isFull) return `${stableBase} fixed inset-0 z-[9990] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
       return base;
     },
     [isFull, nativeFs],

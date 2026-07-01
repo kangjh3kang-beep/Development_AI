@@ -11,13 +11,27 @@
  *   5. 단일 선택용 onPick(하위호환)도 그대로 지원한다.
  *
  * SSR 안전: dynamicMap(ssr:false)로 감싸서 사용해야 한다(이 파일을 직접 import 금지).
- * 지도 엔진: Leaflet + OSM (CDN 동적 로드, 새 npm 의존성 없음).
+ * 지도 엔진: Leaflet + VWorld WMTS 프록시 (CDN 동적 로드, 새 npm 의존성 없음).
  * 좌표 주의: Leaflet은 [lat, lng] 순, GeoJSON은 [lng, lat] 순이라 변환이 필요하다.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import {
+  ageColor,
+  hasSatongLayer,
+  hasSatongLayerControl,
+  mergeSatongMapFeatures,
+  priceColor,
+  priceManPyeong,
+  resolveVWorldBaseLayer,
+  satongMapFeatureKey,
+  type SatongMapFeature,
+  type SatongMapLayerState,
+  type VWorldBaseLayer,
+  zoneColor,
+} from "@/lib/satong-map-layers";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 declare global {
@@ -40,6 +54,9 @@ export interface ParcelAtPointResult {
   jimok?: string | null;
   bcr_pct?: number | null;
   far_pct?: number | null;
+  official_price_per_sqm?: number | null;
+  built_year?: number | null;
+  building_age_years?: number | null;
   /** GeoJSON Polygon/MultiPolygon — 필지 경계 */
   geometry?: any;
   lat?: number;
@@ -60,7 +77,29 @@ interface ParcelPickerMapProps {
   height?: number;
   /** 통합 지도 화면에서 외곽 설명/배경을 줄이는 표시 모드 */
   chrome?: "default" | "immersive";
+  /** 통합 필지 입력 패널에서 확정된 실제 선택 필지. geometry가 없으면 boundary API로 보강한다. */
+  selectedParcels?: SatongMapFeature[];
+  /** 오른쪽 사통팔땅 레이어 탭에서 넘어온 지도 반영 상태. */
+  layerState?: SatongMapLayerState;
 }
+
+type BoundaryFeature = {
+  pnu: string;
+  address: string;
+  area_sqm?: number | null;
+  zone_type?: string | null;
+  zone_type_2?: string | null;
+  jimok?: string | null;
+  official_price_per_sqm?: number | null;
+  built_year?: number | null;
+  building_age_years?: number | null;
+  geometry?: any;
+};
+
+type BoundaryResponse = {
+  features?: BoundaryFeature[];
+  center?: { lat: number; lon: number } | null;
+};
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
 let leafletLoading: Promise<void> | null = null;
@@ -86,39 +125,22 @@ function loadLeaflet(): Promise<void> {
   return leafletLoading;
 }
 
-function addOpenStreetMapFallback(L: any, map: any): void {
-  const fallback = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors",
-    maxZoom: 19,
-    crossOrigin: true,
-  }).addTo(map);
-  L.control.attribution({ prefix: false, position: "bottomright" })
-    .addTo(map)
-    .addAttribution("임시 기본도 · © OpenStreetMap contributors");
-  fallback.bringToBack?.();
-}
-
-function addOfficialBaseMap(L: any, map: any): void {
-  let fellBack = false;
+function createOfficialBaseMapLayer(
+  L: any,
+  baseLayer: VWorldBaseLayer,
+  onTileState: (state: "ready" | "error") => void,
+): any {
   const vworld = L.tileLayer(
-    "/tiles/vworld/wmts/Base/{z}/{y}/{x}.png",
+    `/tiles/vworld/wmts/${baseLayer}/{z}/{y}/{x}.png`,
     {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
       crossOrigin: true,
     },
-  ).addTo(map);
-
-  L.control.attribution({ prefix: false, position: "bottomright" })
-    .addTo(map)
-    .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
-
-  vworld.on("tileerror", () => {
-    if (fellBack) return;
-    fellBack = true;
-    try { map.removeLayer(vworld); } catch { /* noop */ }
-    addOpenStreetMapFallback(L, map);
-  });
+  );
+  vworld.on("tileload", () => onTileState("ready"));
+  vworld.on("tileerror", () => onTileState("error"));
+  return vworld;
 }
 
 /**
@@ -150,6 +172,64 @@ function toP(sqm: number): string {
   return (sqm / 3.305785).toFixed(1);
 }
 
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
+  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  return {
+    id: parcel.pnu || address,
+    pnu: parcel.pnu ?? null,
+    address,
+    lat: parcel.lat ?? null,
+    lon: parcel.lon ?? null,
+    areaSqm: parcel.area_sqm ?? null,
+    zoneType: parcel.zone_type ?? null,
+    jimok: parcel.jimok ?? null,
+    officialPricePerSqm: parcel.official_price_per_sqm ?? null,
+    builtYear: parcel.built_year ?? null,
+    buildingAgeYears: parcel.building_age_years ?? null,
+    geometry: parcel.geometry,
+    source: "map",
+  };
+}
+
+function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
+  return {
+    id: feature.pnu || feature.address,
+    pnu: feature.pnu ?? null,
+    address: feature.address || feature.pnu || "필지",
+    areaSqm: feature.area_sqm ?? null,
+    zoneType: feature.zone_type ?? null,
+    zoneType2: feature.zone_type_2 ?? null,
+    jimok: feature.jimok ?? null,
+    officialPricePerSqm: feature.official_price_per_sqm ?? null,
+    builtYear: feature.built_year ?? null,
+    buildingAgeYears: feature.building_age_years ?? null,
+    geometry: feature.geometry,
+    source: "boundary",
+  };
+}
+
+function featurePopupHtml(feature: SatongMapFeature): string {
+  return [
+    `<div style="padding:8px 10px;font-size:12px;line-height:1.55;min-width:180px;">`,
+    `<b>${escapeHtml(feature.address || feature.pnu || "필지")}</b>`,
+    feature.zoneType ? `<br/>용도지역: ${escapeHtml(feature.zoneType)}${feature.zoneType2 ? ` / ${escapeHtml(feature.zoneType2)}` : ""}` : "",
+    feature.areaSqm ? `<br/>면적: ${Math.round(feature.areaSqm).toLocaleString()}㎡ (${toP(feature.areaSqm)}평)` : "",
+    feature.jimok ? `<br/>지목: ${escapeHtml(feature.jimok)}` : "",
+    feature.officialPricePerSqm ? `<br/>공시지가: ${escapeHtml(priceManPyeong(feature.officialPricePerSqm))}` : "",
+    feature.buildingAgeYears != null ? `<br/>노후도: ${feature.buildingAgeYears}년${feature.builtYear ? ` (${feature.builtYear}년)` : ""}` : "",
+    `</div>`,
+  ].join("");
+}
+
 export function ParcelPickerMap({
   onPick,
   onPickMany,
@@ -157,10 +237,25 @@ export function ParcelPickerMap({
   autoPreviewFocus = false,
   height = 360,
   chrome = "default",
+  selectedParcels = [],
+  layerState,
 }: ParcelPickerMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
-  const fs = useMapFullscreen(mapRef);
+  const {
+    isFull: isMapFullscreen,
+    toggle: toggleMapFullscreen,
+    wrapperClass,
+    wrapperRef,
+  } = useMapFullscreen(mapRef, { mode: "css" });
+  const [mapReady, setMapReady] = useState(false);
+  const baseLayerRef = useRef<any>(null);
+  const overlayLayerRef = useRef<any>(null);
+  const lastFitKeyRef = useRef("");
+  const [tileStatus, setTileStatus] = useState<"idle" | "ready" | "error">("idle");
+  const [boundaryStatus, setBoundaryStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
+  const [overlayNote, setOverlayNote] = useState("");
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -178,23 +273,98 @@ export function ParcelPickerMap({
 
   // 콜백 ref — useEffect 클로저에서 최신 onPick/onPickMany를 참조하기 위함
   const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
   const onPickManyRef = useRef(onPickMany);
-  onPickManyRef.current = onPickMany;
   const focusTargetRef = useRef(focusTarget);
   const focusLat = focusTarget?.lat ?? null;
   const focusLon = focusTarget?.lon ?? null;
   // staged를 ref로도 보관 — queryParcel이 staged를 의존하지 않게 해 지도 재생성(폴리곤 소실)을 막는다.
   const stagedRef = useRef<ParcelAtPointResult[]>([]);
-  stagedRef.current = staged;
 
   // 연타 응답 경합 가드: 마지막 클릭만 반영(stale 필지 폐기)
   const querySeqRef = useRef(0);
   const lastAutoFocusKeyRef = useRef("");
+  const selectedParcelKey = useMemo(
+    () =>
+      selectedParcels
+        .map((parcel) => parcel.pnu || parcel.address || parcel.id)
+        .filter(Boolean)
+        .join("||"),
+    [selectedParcels],
+  );
+  const baseLayerMode = useMemo(() => resolveVWorldBaseLayer(layerState), [layerState]);
+  const overlayFeatures = useMemo(
+    () => mergeSatongMapFeatures([
+      ...boundaryFeatures,
+      ...staged.map(pointResultToFeature),
+      ...(pending?.found ? [pointResultToFeature(pending)] : []),
+    ]),
+    [boundaryFeatures, pending, staged],
+  );
+  const priceRange = useMemo(() => {
+    const prices = overlayFeatures
+      .map((feature) => feature.officialPricePerSqm ?? 0)
+      .filter((price) => price > 0);
+    return prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : { min: 0, max: 0 };
+  }, [overlayFeatures]);
+
+  useEffect(() => {
+    onPickRef.current = onPick;
+  }, [onPick]);
+
+  useEffect(() => {
+    onPickManyRef.current = onPickMany;
+  }, [onPickMany]);
+
+  useEffect(() => {
+    stagedRef.current = staged;
+  }, [staged]);
 
   useEffect(() => {
     focusTargetRef.current = focusTarget;
   }, [focusTarget]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- VWorld boundary fetch status is synchronized from an external API effect. */
+  useEffect(() => {
+    if (!selectedParcels.length) {
+      setBoundaryFeatures([]);
+      setBoundaryStatus("idle");
+      return;
+    }
+    const hasAllGeometry = selectedParcels.every((parcel) => !!parcel.geometry);
+    if (hasAllGeometry) {
+      setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
+      setBoundaryStatus("ready");
+      return;
+    }
+    let alive = true;
+    setBoundaryStatus("loading");
+    apiClient
+      .post<BoundaryResponse>("/zoning/parcel-boundaries", {
+        body: {
+          parcels: selectedParcels.map((parcel) => ({
+            pnu: parcel.pnu,
+            address: parcel.address,
+          })),
+        },
+        useMock: false,
+        timeoutMs: 45000,
+      })
+      .then((response) => {
+        if (!alive) return;
+        const fromBoundary = (response.features ?? []).map(boundaryFeatureToMapFeature);
+        setBoundaryFeatures(mergeSatongMapFeatures([...selectedParcels, ...fromBoundary]));
+        setBoundaryStatus("ready");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
+        setBoundaryStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedParcelKey, selectedParcels]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /** pending 레이어(임시 마커·폴리곤) 지도에서 제거 */
   const clearPendingLayer = useCallback(() => {
@@ -409,6 +579,7 @@ export function ParcelPickerMap({
   // Leaflet 지도 초기화 (컴포넌트 마운트 시 1회)
   useEffect(() => {
     let alive = true;
+    const stagedLayers = stagedLayersRef.current;
     loadLeaflet()
       .then(() => {
         if (!alive || !mapEl.current || mapRef.current) return;
@@ -420,8 +591,11 @@ export function ParcelPickerMap({
           scrollWheelZoom: true,
           attributionControl: false,
         });
-        addOfficialBaseMap(L, map);
+        L.control.attribution({ prefix: false, position: "bottomright" })
+          .addTo(map)
+          .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
         mapRef.current = map;
+        setMapReady(true);
         const focus = focusTargetRef.current;
         if (focus) {
           map.setView([focus.lat, focus.lon], 17);
@@ -443,11 +617,154 @@ export function ParcelPickerMap({
         try { mapRef.current.remove(); } catch { /* noop */ }
         mapRef.current = null;
       }
+      baseLayerRef.current = null;
+      overlayLayerRef.current = null;
+      setMapReady(false);
       // staged 레이어 맵도 초기화(지도가 사라지면 참조 불필요)
-      stagedLayersRef.current.clear();
+      stagedLayers.clear();
       leafletLoading = null; // 다음 마운트에서 재로딩 가능하도록 초기화
     };
   }, [queryParcel]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Tile loading status comes from Leaflet/VWorld tile lifecycle. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (baseLayerRef.current) {
+      try { map.removeLayer(baseLayerRef.current); } catch { /* noop */ }
+      baseLayerRef.current = null;
+    }
+    setTileStatus("idle");
+    const layer = createOfficialBaseMapLayer(L, baseLayerMode, setTileStatus).addTo(map);
+    layer.bringToBack?.();
+    baseLayerRef.current = layer;
+    return () => {
+      try { map.removeLayer(layer); } catch { /* noop */ }
+      if (baseLayerRef.current === layer) baseLayerRef.current = null;
+    };
+  }, [baseLayerMode, mapReady]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (overlayLayerRef.current) {
+      try { overlayLayerRef.current.remove(); } catch { /* noop */ }
+      overlayLayerRef.current = null;
+    }
+
+    const showCadastre = hasSatongLayer(layerState, "cadastre");
+    const showZoning = hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use");
+    const showPrice = hasSatongLayer(layerState, "official-price") && hasSatongLayerControl(layerState, "official-price", "unit-price");
+    const showAge = hasSatongLayer(layerState, "age") && hasSatongLayerControl(layerState, "age", "building-age");
+    const needsOverlay = showCadastre || showZoning || showPrice || showAge;
+
+    if (!needsOverlay || overlayFeatures.length === 0) {
+      setOverlayNote("");
+      return;
+    }
+
+    const group = L.layerGroup().addTo(map);
+    overlayLayerRef.current = group;
+    const bounds = L.latLngBounds([]);
+    let cadastreCount = 0;
+    let zoningCount = 0;
+    let priceCount = 0;
+    let ageCount = 0;
+    let markerCount = 0;
+
+    overlayFeatures.forEach((feature, index) => {
+      const rings = geoJsonToLeafletRings(feature.geometry);
+      const hasGeometry = rings.length > 0;
+      const popup = featurePopupHtml(feature);
+
+	    const drawPolygon = (style: Record<string, unknown>) => {
+	      if (!hasGeometry) return;
+	      const polygon = L.polygon(rings, style).bindPopup(popup, { maxWidth: 280 }).addTo(group);
+	      try { bounds.extend(polygon.getBounds()); } catch { /* noop */ }
+	    };
+
+	    if (showCadastre && hasGeometry) {
+	      cadastreCount += 1;
+	      drawPolygon({
+          color: "#14532d",
+          weight: 2,
+          fillColor: "#22c55e",
+          fillOpacity: showZoning || showPrice || showAge ? 0.08 : 0.18,
+          dashArray: feature.source === "boundary" ? undefined : "4 4",
+        });
+      }
+
+      if (showZoning && hasGeometry && feature.zoneType) {
+        zoningCount += 1;
+        const color = zoneColor(feature.zoneType, index);
+        drawPolygon({
+          color,
+          weight: 2.5,
+          fillColor: color,
+          fillOpacity: 0.34,
+        });
+      }
+
+      if (showPrice && hasGeometry && feature.officialPricePerSqm) {
+        priceCount += 1;
+        const color = priceColor(feature.officialPricePerSqm, priceRange.min, priceRange.max);
+        drawPolygon({
+          color,
+          weight: 2.5,
+          fillColor: color,
+          fillOpacity: 0.42,
+        });
+      }
+
+      if (showAge && hasGeometry && feature.buildingAgeYears != null) {
+        ageCount += 1;
+        const color = ageColor(feature.buildingAgeYears);
+        drawPolygon({
+          color,
+          weight: 2.5,
+          fillColor: color,
+          fillOpacity: 0.38,
+        });
+      }
+
+      if (!hasGeometry && feature.lat != null && feature.lon != null) {
+        markerCount += 1;
+        L.circleMarker([feature.lat, feature.lon], {
+          radius: 8,
+          color: "#1d4ed8",
+          weight: 2,
+          fillColor: "#bfdbfe",
+          fillOpacity: 0.95,
+        }).bindPopup(popup, { maxWidth: 280 }).addTo(group);
+        bounds.extend([feature.lat, feature.lon]);
+      }
+    });
+
+	    const notes: string[] = [];
+	    if (cadastreCount) notes.push(`지적 ${cadastreCount}건`);
+    if (showZoning) notes.push(zoningCount ? `용도지역 ${zoningCount}건` : "용도지역 무자료");
+    if (showPrice) notes.push(priceCount ? `공시지가 ${priceCount}건` : "공시지가 무자료");
+    if (showAge) notes.push(ageCount ? `노후도 ${ageCount}건` : "노후도 무자료");
+    if (markerCount) notes.push(`좌표 ${markerCount}건`);
+    setOverlayNote(notes.join(" · "));
+
+    const fitKey = overlayFeatures.map(satongMapFeatureKey).join("||");
+    if (fitKey && fitKey !== lastFitKeyRef.current && bounds.isValid()) {
+      lastFitKeyRef.current = fitKey;
+      try { map.fitBounds(bounds, { padding: [36, 36], maxZoom: 17 }); } catch { /* noop */ }
+    }
+
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (overlayLayerRef.current === group) overlayLayerRef.current = null;
+	    };
+	  }, [layerState, mapReady, overlayFeatures, priceRange.max, priceRange.min]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     const map = mapRef.current;
@@ -457,6 +774,7 @@ export function ParcelPickerMap({
     const key = `${focusLat.toFixed(7)},${focusLon.toFixed(7)}`;
     if (lastAutoFocusKeyRef.current === key) return;
     lastAutoFocusKeyRef.current = key;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Auto-preview intentionally queries parcel data after focusing the imperative map.
     void queryParcel(focusLat, focusLon, { autoStage: true });
   }, [autoPreviewFocus, focusLat, focusLon, queryParcel]);
 
@@ -500,22 +818,26 @@ export function ParcelPickerMap({
       )}
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
-      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative")}>
+      <div ref={wrapperRef} className={wrapperClass("relative")}>
         <div
           ref={mapEl}
           className="w-full overflow-hidden rounded-lg border border-[var(--line)]"
-          style={{ height: fs.isFull ? "100%" : height }}
+          style={{
+            flex: isMapFullscreen ? "1 1 auto" : undefined,
+            height: isMapFullscreen ? "100%" : height,
+            minHeight: isMapFullscreen ? 0 : undefined,
+          }}
         />
 
         {/* 풀스크린 버튼 */}
         <button
           type="button"
-          onClick={fs.toggle}
-          title={fs.isFull ? "전체화면 종료" : "전체화면"}
+          onClick={toggleMapFullscreen}
+          title={isMapFullscreen ? "전체화면 종료" : "전체화면"}
           className="absolute right-2 top-2 z-[400] rounded-lg border border-[var(--line-strong)] bg-[var(--surface)]/90 p-1.5 text-[var(--text-secondary)] shadow hover:bg-[var(--surface-muted)] transition-colors"
           aria-label="전체화면"
         >
-          {fs.isFull ? (
+          {isMapFullscreen ? (
             // 전체화면 종료 아이콘
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
           ) : (
@@ -523,6 +845,31 @@ export function ParcelPickerMap({
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
           )}
         </button>
+
+        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote) && (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-[410] max-w-[calc(100%-96px)] space-y-1">
+            {overlayNote && (
+              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                {overlayNote}
+              </span>
+            )}
+            {boundaryStatus === "loading" && (
+              <span className="inline-flex rounded-full bg-blue-50/95 px-3 py-1.5 text-[11px] font-black text-blue-700 shadow">
+                VWorld 필지 경계 보강 중
+              </span>
+            )}
+            {boundaryStatus === "error" && (
+              <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                일부 필지 경계 보강 실패 · 확보된 실데이터만 표시
+              </span>
+            )}
+            {tileStatus === "error" && (
+              <span className="inline-flex rounded-full bg-rose-50/95 px-3 py-1.5 text-[11px] font-black text-rose-700 shadow">
+                VWorld 기본지도 타일 연결 실패
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 초기 안내 오버레이(아직 클릭 전) */}
         {status === "idle" && staged.length === 0 && (
