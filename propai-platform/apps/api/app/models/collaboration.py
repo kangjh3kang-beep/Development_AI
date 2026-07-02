@@ -11,7 +11,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
-from app.core.database import Base
+from apps.api.database.models.base import Base
 
 # 프로젝트 스코프 역할(조직 RBAC Role과 직교 — 프로젝트 단위 권한). owner·내부역할·외부 게스트.
 PROJECT_ROLES = (

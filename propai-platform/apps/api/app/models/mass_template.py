@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Column, DateTime, Float, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-from app.core.database import Base
+from apps.api.database.models.base import Base
 
 
 class MassTemplate(Base):

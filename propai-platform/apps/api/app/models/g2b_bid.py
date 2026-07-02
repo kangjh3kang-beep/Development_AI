@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSON, UUID
 
-from app.core.database import Base
+from apps.api.database.models.base import Base
 
 
 class G2BBid(Base):
