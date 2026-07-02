@@ -74,9 +74,11 @@ TYPICAL_FAR: dict[str, float] = {
 }
 
 # ── 개발방식별 분양가 보정계수 ──
+# 주의: 다른 계수 테이블(EXCLUSIVE_AREA_RATIO 등)과 동일하게 M01~M15 전수 유지.
 SALE_PRICE_MULTIPLIER: dict[str, float] = {
-    "M01": 1.0, "M02": 1.0, "M04": 0.95, "M06": 1.0,
-    "M07": 1.1, "M08": 0.8, "M09": 0.65,
+    "M01": 1.0, "M02": 1.0, "M03": 1.0, "M04": 0.95,
+    "M05": 0.7,  # 임대협동조합: 저가 임대 성격 반영
+    "M06": 1.0, "M07": 1.1, "M08": 0.8, "M09": 0.65,
     "M10": 1.1, "M11": 0.75, "M12": 1.05, "M13": 0.7,
     "M14": 0.85, "M15": 1.0,
 }
@@ -1164,6 +1166,12 @@ class ComprehensiveAnalysisService:
 
         results = []
         for dev_type in permitted:
+            if dev_type not in SALE_PRICE_MULTIPLIER:
+                # 침묵 폴백 금지: 미등록 개발유형은 감지 가능하도록 경고 후 1.0 적용
+                logger.warning(
+                    "분양가 보정계수 미등록 개발유형 — 기본값 1.0 폴백",
+                    dev_type=dev_type,
+                )
             multiplier = SALE_PRICE_MULTIPLIER.get(dev_type, 1.0)
             price_man = int(base_price * multiplier)
             results.append({
