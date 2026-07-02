@@ -70,7 +70,152 @@ _NO_SLOPE_XML = """
 _IMPLAUSIBLE_SLOPE_XML = _DEV_SLOPE_XML.replace("20도", "90도")
 
 
+# (g) ★구·지역별 상이 — 실제 용인시 조례 형태('경사도'와 값 사이에 지역명이 개입).
+#     종전 정규식('경사도\s*조사\s*N도')은 이 형태를 전량 놓쳤다(라이브 재현).
+_DISTRICT_SLOPE_XML = """
+<자치법규명><![CDATA[용인시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 2. 평균경사도의 경우 처인구 지역은 20도 이하인 토지, 기흥구 지역은 17.5도 이하인 토지, 수지구 지역은 17.5도 이하인 토지로 할 것.
+]]></조문내용>
+"""
+
+
+# ── _parse_ordin_id (본문조회 ID 필드) ──
+
+
+def test_parse_ordin_id_uses_jachi_id(service):
+    """★자치법규 본문조회 ID는 <자치법규ID>(법령용 <법령일련번호> 아님) — 라이브 재현 버그수정."""
+    xml = (
+        "<law><자치법규일련번호>2102461</자치법규일련번호>"
+        "<자치법규ID>2152625</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "용인시") == "2152625"
+
+
+def test_parse_ordin_id_falls_back_and_none(service):
+    # 자치법규ID 없으면 일련번호 폴백, 둘 다 없으면 None(무날조).
+    assert service._parse_ordin_id("<law><자치법규일련번호>777</자치법규일련번호></law>", "x") == "777"
+    assert service._parse_ordin_id("<law><기타>1</기타></law>", "x") is None
+
+
 # ── 순수 파서 (_parse_slope_criteria_from_text) ──
+
+
+def test_district_specific_slope_picks_strictest(service):
+    """★'경사도'와 값 사이 지역명 개입 형태 추출(종전 정규식 갭) + 구별 상이 → 안전측 최소 채택."""
+    r = service._parse_slope_criteria_from_text(_DISTRICT_SLOPE_XML, "용인시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)  # 최소=최엄격(안전측·무날조)
+    assert r["all_values_deg"] == [17.5, 20.0]
+    assert "상이" in (r.get("caveat") or "")  # 구별 변동 정직 고지
+    assert "경사도" in r["evidence_span"]
+
+
+# (h) ★리뷰 회귀재현: 같은 조문에 개발행위 경사도(25도)+진입도로 종단경사(12도) 나열 →
+#     무관한 도로종단 12도를 삼키면 안 됨(안전측 최소가 오히려 낮은 스퓨리어스 값 선호).
+_ROAD_MIXED_SAME_CLAUSE_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도가 25도 미만인 토지로서, 진입도로의 종단경사도는 12도 이하로 계획하여야 한다.
+]]></조문내용>
+"""
+
+# (i) 기준온도 등 무관 '도' 값이 앵커 뒤에 나열되어도 삼키지 않는다.
+_TEMP_MIXED_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도 산정 시 기준온도 20도, 실제 경사도는 30도 이하인 토지로 한다.
+]]></조문내용>
+"""
+
+
+def test_road_longitudinal_slope_not_swallowed(service):
+    """★리뷰 must-fix: 진입도로 종단경사(12도)를 개발행위 경사도(25도)로 오채택 금지."""
+    r = service._parse_slope_criteria_from_text(_ROAD_MIXED_SAME_CLAUSE_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(25.0)  # 12.0(도로종단) 아님
+    assert 12.0 not in r["all_values_deg"]
+
+
+def test_unrelated_temperature_deg_not_swallowed(service):
+    """★기준온도 20도를 경사도로 오채택 금지 → 실제 경사도 30도."""
+    r = service._parse_slope_criteria_from_text(_TEMP_MIXED_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(30.0)
+
+
+def test_parse_ordin_id_prefers_ordinance_over_rule(service):
+    """★목록에 시행규칙이 먼저 와도 '도시계획 조례' 항목의 자치법규ID를 선택(규칙 배제)."""
+    xml = (
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례 시행규칙]]></자치법규명>"
+        "<자치법규ID>111</자치법규ID></law>"
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>222</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "테스트시") == "222"
+
+
+_HEIGHT_WORD_DISTRICT_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도는 처인구 지역은 20도 이하, 건축물 높이 제한구역인 기흥구 지역은 17.5도 이하로 할 것.
+]]></조문내용>
+"""
+
+_ELEVATION_WORD_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도가 표고 100미터 이하 구간에서 20도 미만인 토지로 한다.
+]]></조문내용>
+"""
+
+
+def test_height_word_does_not_over_truncate_district(service):
+    """★should-fix: '높이'(미터 단위)가 구별 나열 사이에 끼어도 절단 금지 → 17.5(더 엄격) 유지."""
+    r = service._parse_slope_criteria_from_text(_HEIGHT_WORD_DISTRICT_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)  # 20(덜 안전)으로 조용히 강등되면 안 됨
+    assert r["all_values_deg"] == [17.5, 20.0]
+
+
+def test_elevation_word_does_not_truncate(service):
+    """★should-fix: '표고'(미터)가 개발행위 경사도 문맥에 병행돼도 20도 정상 추출."""
+    r = service._parse_slope_criteria_from_text(_ELEVATION_WORD_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(20.0)
+
+
+def test_parse_ordin_id_prefers_matching_region(service):
+    """★should-fix: region_name과 일치하는 '도시계획 조례'를 우선(인접 동명이역 오조회 차단)."""
+    xml = (
+        "<law><자치법규명><![CDATA[다른시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>999</자치법규ID></law>"
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>222</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "테스트시") == "222"
+
+
+async def test_resolve_propagates_all_values(service, monkeypatch):
+    """resolve_slope_criteria 결과에 all_values_deg가 전달된다(소비자 표기용)."""
+    from app.services.land_intelligence import ordinance_service as _os
+
+    async def _fetch(self, region_name):  # noqa: ANN001
+        return _DISTRICT_SLOPE_XML
+
+    async def _load(sigungu, zone_type):  # noqa: ANN001
+        return None
+
+    async def _save(result, sigungu, zone_type):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(OrdinanceService, "_fetch_ordinance_xml", _fetch)
+    monkeypatch.setattr(_os, "_load_stored", _load)
+    monkeypatch.setattr(_os, "_save_resolution", _save)
+    r = await service.resolve_slope_criteria("용인시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)
+    assert r["all_values_deg"] == [17.5, 20.0]
 
 
 def test_dev_context_slope_extracted(service):

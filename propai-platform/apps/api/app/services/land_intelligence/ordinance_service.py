@@ -479,16 +479,64 @@ class OrdinanceService:
             return None
 
     def _parse_ordin_id(self, xml_text: str, region_name: str) -> str | None:
-        """XML 응답에서 도시계획조례 일련번호를 추출."""
-        # 간이 XML 파싱 (lxml 의존 없이)
-        pattern = r"<법령일련번호>(\d+)</법령일련번호>"
-        matches = re.findall(pattern, xml_text)
-        if matches:
-            return matches[0]
-        # 영문 키 시도
-        pattern2 = r"<ordinSeq>(\d+)</ordinSeq>"
-        matches2 = re.findall(pattern2, xml_text)
-        return matches2[0] if matches2 else None
+        """자치법규 목록조회 응답에서 '본문조회(lawService.do)의 ID' 값을 추출한다.
+
+        ★버그수정(라이브 그라운드 트루스): 법제처 자치법규(target=ordin) API의 목록 응답은
+        본문조회 ID로 ``<자치법규ID>`` 를 요구한다(라이브 확인: 자치법규ID로 본문 64KB 수신,
+        <자치법규일련번호>·<법령일련번호>로는 "일치하는 자치법규가 없습니다"). 종전 코드는
+        법령(target=law) API용 필드 ``<법령일련번호>`` 만 찾아 자치법규 응답에서 항상 None →
+        조례 본문을 한 번도 못 가져오던 결함(조례 경사도 전량 폴백·FAR/BCR 라이브조회 무력화의
+        진원). 아래 순서로 시도하되 본문조회에 유효한 <자치법규ID>를 최우선한다.
+        """
+        # 본문조회 ID 후보(자치법규ID 우선)의 (위치, 값) 목록 — 하나의 필드종류로 통일해 수집.
+        id_hits: list[tuple[int, str]] = []
+        for pattern in (
+            r"<자치법규ID>(\d+)</자치법규ID>",          # ★본문조회 ID(유효) — 최우선
+            r"<자치법규일련번호>(\d+)</자치법규일련번호>",  # MST(일부 API 버전 호환)
+            r"<법령일련번호>(\d+)</법령일련번호>",        # 법령 API 폴백(하위호환)
+            r"<ordinSeq>(\d+)</ordinSeq>",                # 영문 키 폴백
+        ):
+            hits = [(m.start(), m.group(1)) for m in re.finditer(pattern, xml_text)]
+            if hits:
+                id_hits = hits
+                break
+        if not id_hits:
+            return None
+        # ★목록에 여러 자치법규(도시계획 조례·시행규칙·기타 조례)가 섞여 있으므로, 첫 ID를
+        #   무조건 쓰지 않고 '도시계획 조례'(시행규칙 아님) 항목의 ID를 우선한다. 각 <자치법규명>
+        #   뒤 '가장 가까운 ID'가 그 항목의 ID다(항목 순서: 명 → … → ID).
+        names = [
+            (m.start(), (m.group(1) or "").strip())
+            for m in re.finditer(
+                r"<자치법규명>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</자치법규명>",
+                xml_text, re.DOTALL,
+            )
+        ]
+
+        def _id_after(pos: int) -> str | None:
+            # 항목 순서 가정: <자치법규명> … <자치법규ID>(명 뒤 가장 가까운 ID = 그 항목의 ID).
+            after = [v for p, v in id_hits if p > pos]
+            return after[0] if after else None
+
+        def _is_city_plan_ordinance(name: str) -> bool:
+            return "도시계획" in name and "조례" in name and "규칙" not in name
+
+        region = (region_name or "").strip()
+        # ① region_name까지 일치하는 '도시계획 조례'를 최우선(인접 동명이역 오조회 차단).
+        if region:
+            for npos, name in names:
+                if region in name and _is_city_plan_ordinance(name):
+                    oid = _id_after(npos)
+                    if oid:
+                        return oid
+        # ② region 불명/미일치 시 '도시계획 조례'(시행규칙 아님)만으로 선택.
+        for npos, name in names:
+            if _is_city_plan_ordinance(name):
+                oid = _id_after(npos)
+                if oid:
+                    return oid
+        # ③ 폴백 — 특정 못하면 첫 ID(하위호환).
+        return id_hits[0][1]
 
     def _parse_bcr_far_from_text(
         self, xml_text: str, zone_type: str, region_name: str
@@ -868,11 +916,25 @@ class OrdinanceService:
     #   에서 항 번호를 거쳐 값까지의 통상 거리를 흡수하되, 무관 조문까지 넘보지 않게 제한.
     _SLOPE_CONTEXT_WINDOW: int = 400
 
-    # '경사도 N도' 추출 — '평균경사도가 20도 미만' / '경사도는 17.5도 이하' 등 통용
-    #   표현을 흡수한다. 정수부 1~2자리(경사도는 물리적으로 0~90도 — 3자리 배제).
-    _SLOPE_DEG_RE = re.compile(
-        r"경사도\s*(?:가|는|이|를)?\s*(\d{1,2}(?:\.\d+)?)\s*도"
-    )
+    # '경사도' 앵커 뒤에서 'N도' 값을 찾는다. 종전 정규식은 '경사도\s*조사\s*N도'로
+    #   붙어있는 표현만 잡아, 실제 조례의 '평균경사도의 경우 처인구 지역은 20도 이하'처럼
+    #   '경사도'와 'N도' 사이에 지역명 등 텍스트가 끼면 전량 놓쳤다(라이브: 용인시 조례에
+    #   경사도 20/17.5도가 명백히 있는데 None). → 앵커('경사도') 뒤 POST_WINDOW 안의 'N도'
+    #   값들을 모두 수집하도록 분리한다(구·지역별 다중값 흡수).
+    _SLOPE_VALUE_RE = re.compile(r"(\d{1,2}(?:\.\d+)?)\s*도")
+    # '경사도' 뒤 값 탐색창(문자 수) — '처인구 지역은 20도, 기흥구 지역은 17.5도'처럼
+    #   구별 값 나열을 흡수하되 무관 조문까지 넘보지 않게 제한.
+    _SLOPE_POST_WINDOW: int = 90
+    # ★오탐 방어: 앵커('경사도')가 개발행위 '평균경사도'가 아니라 도로 종단경사·구조물 경사인
+    #   경우(예: '종단경사도','도로의 경사도') 그 앵커는 건너뛴다(직전 6자 수식어 검사).
+    _SLOPE_ANCHOR_BAD_PREFIX: tuple[str, ...] = ("종단", "도로", "진입", "옹벽", "구조물")
+    # ★오탐 방어: 앵커 뒤 값 탐색 중 '다른 각도(度) 측정 주체'를 도입하는 명사가 나오면 그
+    #   지점에서 탐색창을 절단한다 — 뒤따르는 'N도'는 경사도 기준이 아니라 도로종단경사·기준온도·
+    #   방위 등 무관 각도값이므로 삼키지 않는다(라이브 회귀 재현: 진입도로 종단경사 12도를 25도
+    #   기준으로 오채택하던 것 차단). ★'도(度)' 단위를 만드는 명사만 넣는다 — 표고·높이·폭은
+    #   미터(m) 단위라 'N도'를 만들지 않으면서 구별 나열('…높이 제한구역인 기흥구 17.5도') 사이에
+    #   끼면 정당한 값을 과잉절단하므로 제외한다. 구·지역 나열은 절단어가 아니라 다중값 보존.
+    _SLOPE_SUBJECT_BREAK: tuple[str, ...] = ("도로", "종단", "진입", "온도", "방위")
     # 상식 범위 방어: 개발행위 기준 경사도는 통상 10~30도(별표4 국가기준 25도).
     #   45도 초과는 오독(각도 외 수치 혼입) 가능성이 높아 채택하지 않는다(None 폴백).
     _SLOPE_MAX_PLAUSIBLE_DEG: float = 45.0
@@ -895,40 +957,70 @@ class OrdinanceService:
         if not full_text:
             return None
 
-        for m in self._SLOPE_DEG_RE.finditer(full_text):
-            pre = full_text[max(0, m.start() - self._SLOPE_CONTEXT_WINDOW):m.start()]
-            if not any(k in pre for k in self._SLOPE_DEV_CONTEXT_KEYWORDS):
-                continue  # 개발행위 문맥 아님 → 오탐 배제
-            try:
-                slope_deg = float(m.group(1))
-            except ValueError:  # pragma: no cover — \d 매치라 사실상 불가
+        # '경사도' 앵커마다: (a)앵커가 도로종단·구조물 경사면 배제 (b)개발행위 문맥이어야 채택
+        #   (c)뒤 탐색창을 '다른 측정주체' 명사에서 절단한 뒤 그 안의 'N도'만 수집.
+        #   구·지역별 상이(예: 처인구 20도/기흥구 17.5도)는 절단어가 아니므로 다중값 보존.
+        found: list[tuple[float, int]] = []  # (경사도값, 앵커위치)
+        for am in re.finditer("경사도", full_text):
+            # (a) 앵커 배제 — '종단경사도'·'도로 경사도' 등은 개발행위 평균경사도가 아니다.
+            prefix = full_text[max(0, am.start() - 6):am.start()]
+            if any(k in prefix for k in self._SLOPE_ANCHOR_BAD_PREFIX):
                 continue
-            if not (0.0 < slope_deg <= self._SLOPE_MAX_PLAUSIBLE_DEG):
-                continue  # 상식 범위 밖 → 오독 의심, 불확실 값 채택 금지
-            # 단서/경과조치 맥락 감지(기존 파서와 동일 키워드 규약).
-            near = full_text[max(0, m.start() - 40):m.start()]
-            caveat = (
-                "단서·경과조치 맥락에서 추출된 값일 수 있음(원문 재확인 권장)."
-                if any(k in near for k in ("다만", "경과조치", "종전", "적용하지"))
-                else None
+            # (b) 개발행위 문맥(앞 400자) 아니면 배제(주차장·도로 조항 등).
+            pre = full_text[max(0, am.start() - self._SLOPE_CONTEXT_WINDOW):am.start()]
+            if not any(k in pre for k in self._SLOPE_DEV_CONTEXT_KEYWORDS):
+                continue
+            # (c) 탐색창을 '다른 측정주체' 명사에서 절단(앵커 자신 '경사도' 3자 이후부터 탐색).
+            post = full_text[am.start():am.start() + self._SLOPE_POST_WINDOW]
+            cut = len(post)
+            for br in self._SLOPE_SUBJECT_BREAK:
+                i = post.find(br, 3)
+                if i != -1:
+                    cut = min(cut, i)
+            post = post[:cut]
+            for vm in self._SLOPE_VALUE_RE.finditer(post):
+                try:
+                    v = float(vm.group(1))
+                except ValueError:  # pragma: no cover — \d 매치라 사실상 불가
+                    continue
+                if 0.0 < v <= self._SLOPE_MAX_PLAUSIBLE_DEG:
+                    found.append((v, am.start()))
+
+        if not found:
+            return None
+
+        # 구·지역별 상이 가능 → 안전측(가장 엄격한 최소값)을 채택하고, 변동은 caveat로 정직 고지.
+        #   sigungu 레벨 조회라 자치구를 특정할 수 없으므로 최소값이 안전(무날조: 값 지어내지 않음).
+        distinct = sorted({v for v, _ in found})
+        chosen = distinct[0]
+        anchor = min(pos for v, pos in found if v == chosen)
+
+        near = full_text[max(0, anchor - 40):anchor + 20]
+        caveats: list[str] = []
+        if len(distinct) > 1:
+            caveats.append(
+                "구·지역별로 경사도 기준이 상이("
+                + "/".join(f"{v:g}도" for v in distinct)
+                + f") — 안전측 최소값 {chosen:g}도 적용(해당 구 조례 재확인 권장)"
             )
-            # 근거 스니펫(설명가능성 기본): 값 주변 원문을 동반한다.
-            span_start = max(0, m.start() - 60)
-            evidence = full_text[span_start:min(len(full_text), m.end() + 60)]
-            ordin_name_match = re.search(
-                r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text
-            )
-            return {
-                "slope_deg": slope_deg,
-                "ordinance_name": (
-                    ordin_name_match.group(1)
-                    if ordin_name_match
-                    else f"{region_name} 도시계획 조례"
-                ),
-                "evidence_span": evidence.strip(),
-                "caveat": caveat,
-            }
-        return None
+        if any(k in near for k in ("다만", "경과조치", "종전", "적용하지")):
+            caveats.append("단서·경과조치 맥락에서 추출된 값일 수 있음(원문 재확인 권장)")
+        caveat = " / ".join(caveats) if caveats else None
+
+        # 근거 스니펫(설명가능성 기본): 앵커 주변 원문을 동반한다.
+        evidence = full_text[max(0, anchor - 40):min(len(full_text), anchor + self._SLOPE_POST_WINDOW)]
+        ordin_name_match = re.search(r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text)
+        return {
+            "slope_deg": chosen,
+            "all_values_deg": distinct,
+            "ordinance_name": (
+                ordin_name_match.group(1)
+                if ordin_name_match
+                else f"{region_name} 도시계획 조례"
+            ),
+            "evidence_span": evidence.strip(),
+            "caveat": caveat,
+        }
 
     async def _fetch_ordinance_xml(self, region_name: str) -> str | None:
         """법제처 자치법규 API에서 '{region_name} 도시계획 조례' 본문 XML을 가져온다.
@@ -1014,6 +1106,8 @@ class OrdinanceService:
 
         result: dict[str, Any] = {
             "slope_deg": parsed["slope_deg"],
+            # 구·지역별 다중값(있으면) — 소비자(예비판정)가 안전측 최소 채택을 이해·표기하도록 전달.
+            "all_values_deg": parsed.get("all_values_deg"),
             "unit": "도",
             "ordinance_name": parsed["ordinance_name"],
             "verified": "api_parsed",
