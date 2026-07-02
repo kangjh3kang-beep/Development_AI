@@ -14,6 +14,7 @@ import pytest
 from app.services.legal.legal_reference_registry import (
     LAW_GO_KR_BASE,
     LEGAL_REFERENCES,
+    build_admrule_url,
     build_law_url,
     build_ordinance_url,
     get_legal_ref,
@@ -81,12 +82,15 @@ class TestRequiredKeysPresent:
 
 class TestUrlFormat:
     def test_law_urls_use_korean_address_scheme(self):
-        """조례를 제외한 모든 법령 키 URL은 /법령/ 한글주소(인코딩) 형식."""
+        """조례·행정규칙을 제외한 모든 법령 키 URL은 /법령/ 한글주소(인코딩) 형식."""
         prefix = f"{LAW_GO_KR_BASE}/{quote('법령')}/"
+        admrule_prefix = f"{LAW_GO_KR_BASE}/{quote('행정규칙')}/"
         for key, ref in LEGAL_REFERENCES.items():
             if key.startswith("ordinance_"):
                 continue  # 조례는 동적(빈 url) — 별도 검증
             url = ref["url"]
+            if url.startswith(admrule_prefix):
+                continue  # 행정규칙(고시) 카테고리 — TestSlopeForestExpansion에서 별도 검증
             assert url.startswith(prefix), f"{key} URL이 /법령/ 형식 아님: {url}"
 
     def test_article_segment_is_korean_ordinal(self):
@@ -211,7 +215,7 @@ class TestGetLegalRef:
 class TestEncodingRoundTrip:
     def test_percent_encoding_roundtrip_all_keys(self):
         """모든 키 URL은 UTF-8 percent-encoding ↔ 원문 한글 라운드트립."""
-        for key, ref in LEGAL_REFERENCES.items():
+        for _key, ref in LEGAL_REFERENCES.items():
             url = ref["url"]
             if not url:
                 continue
@@ -360,3 +364,102 @@ class TestInjectUrls:
             assert LEGAL_REFERENCES["parking_min"]["url"].endswith("제19조-NEW")
         finally:
             LEGAL_REFERENCES["parking_min"]["url"] = original
+
+
+# ── 특이토지(경사도·임목축적) 심층 법규검토 T4·T5 신규 키(2026-07-02 계획) ──
+# 조문 확정 키(무날조 — 근거 확실 항목만 조문 딥링크, 그 외는 루트 폴백).
+SLOPE_FOREST_ARTICLE_CASES = {
+    # T4 — 농지·산지 전용 부담금/신고/구분 + 허가기준(별표 위임 조문)
+    "farmland_preservation_charge": ("농지법", "제38조"),
+    "farmland_conversion_report":   ("농지법", "제35조"),
+    "forest_land_classification":   ("산지관리법", "제4조"),
+    "forest_replacement_charge":    ("산지관리법", "제19조"),  # ★계획서: 제47조 주장은 오류, 제19조가 정본
+    "forest_permit_criteria":       ("산지관리법 시행령", "제20조"),
+    "dev_permit_criteria":          ("국토의 계획 및 이용에 관한 법률 시행령", "제56조"),
+    # T5 — 생태·자연도(조문 확실)
+    "eco_nature_map":               ("자연환경보전법", "제34조"),
+}
+
+# T5 — 조문 불확신 → 법령 루트 폴백(할루시네이션 조문 금지).
+SLOPE_FOREST_ROOT_CASES = {
+    "steep_slope_disaster": "급경사지 재해예방에 관한 법률",
+    "accessibility_facility_standards":
+        "장애인·노인·임산부 등의 편의증진 보장에 관한 법률 시행령",
+}
+
+
+class TestSlopeForestExpansion:
+    """T4·T5(경사도·임목축적 심층 법규검토): 신규 키 존재·조문 대조·URL 형식·회귀 불변."""
+
+    @pytest.mark.parametrize("key", sorted(SLOPE_FOREST_ARTICLE_CASES))
+    def test_article_keys_exist_and_match(self, key):
+        """조문 확정 신규 키 — 법령명·조문·딥링크(디코드 동치) 대조."""
+        law, article = SLOPE_FOREST_ARTICLE_CASES[key]
+        ref = get_legal_ref(key)
+        assert ref is not None, f"신규 키 누락: {key}"
+        assert ref["law_name"] == law
+        assert ref["article"] == article
+        assert isinstance(ref["title"], str) and ref["title"]
+        decoded = unquote(ref["url"])
+        name_nospace = law.replace(" ", "")
+        assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}/{article}"
+
+    @pytest.mark.parametrize("key", sorted(SLOPE_FOREST_ROOT_CASES))
+    def test_root_fallback_keys(self, key):
+        """조문 불확신 신규 키 — 법령 루트 폴백(조문 세그먼트 없음)."""
+        law = SLOPE_FOREST_ROOT_CASES[key]
+        ref = get_legal_ref(key)
+        assert ref is not None, f"신규 키 누락: {key}"
+        assert ref["law_name"] == law
+        assert ref["article"] == ""
+        decoded = unquote(ref["url"])
+        name_nospace = law.replace(" ", "").replace("·", "")
+        assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}"
+
+    def test_beec_admrule_record(self):
+        """BEEC 고시 — 행정규칙 카테고리(/행정규칙/), 기존 build_admrule_url 빌더 활용."""
+        admrule_name = "건축물 에너지효율등급 및 제로에너지건축물 인증 기준"
+        ref = get_legal_ref("beec_certification_criteria")
+        assert ref is not None
+        assert ref["law_name"] == admrule_name
+        assert ref["article"] == ""  # 고시는 조문 딥링크 미지원 — 루트만
+        assert ref["url"] == build_admrule_url(admrule_name)
+        assert unquote(ref["url"]) == (
+            f"{LAW_GO_KR_BASE}/행정규칙/건축물에너지효율등급및제로에너지건축물인증기준"
+        )
+
+    def test_heritage_survey_alias_resolves_to_current_law(self):
+        """매장문화재법(구명) 항목 — 현행 명칭 '매장유산법' 정본키(buried_heritage) 별칭 해소.
+
+        구법명 '매장문화재 보호 및 조사에 관한 법률'은 개정으로 '매장유산 보호 및 조사에
+        관한 법률'로 변경 — 구명 신규 등록은 사문 링크(무날조 위반)라 별칭으로 정본 재사용.
+        """
+        assert get_legal_ref("heritage_surface_survey") is not None
+        assert get_legal_ref("heritage_surface_survey") == get_legal_ref("buried_heritage")
+        refs = get_legal_refs(["heritage_surface_survey"])
+        assert refs[0]["key"] == "buried_heritage"
+        assert refs[0]["law_name"] == "매장유산 보호 및 조사에 관한 법률"
+
+    def test_all_new_keys_url_status_verified(self):
+        """신규 키 전부 law.go.kr 신뢰호스트 URL 보유 → url_status 'verified'."""
+        keys = (
+            list(SLOPE_FOREST_ARTICLE_CASES)
+            + list(SLOPE_FOREST_ROOT_CASES)
+            + ["beec_certification_criteria", "heritage_surface_survey"]
+        )
+        refs = get_legal_refs(keys)
+        assert len(refs) == len(keys)
+        for rec in refs:
+            assert rec["url_status"] == "verified", rec["key"]
+            assert rec["url"].startswith(f"{LAW_GO_KR_BASE}/"), rec["key"]
+
+    def test_existing_farmland_forest_keys_unchanged(self):
+        """회귀: 기존 농지/산지 전용허가 키 불변(additive 원칙)."""
+        farm = get_legal_ref("farmland_conversion")
+        assert farm["law_name"] == "농지법" and farm["article"] == "제34조"
+        forest = get_legal_ref("forest_conversion")
+        assert forest["law_name"] == "산지관리법" and forest["article"] == "제14조"
+        # 개발행위허가 본법 키(제56조·제58조)도 불변 — 신규 dev_permit_criteria는 시행령 별도키.
+        act = get_legal_ref("dev_act_permit")
+        assert act["law_name"] == "국토의 계획 및 이용에 관한 법률"
+        assert act["article"] == "제56조"

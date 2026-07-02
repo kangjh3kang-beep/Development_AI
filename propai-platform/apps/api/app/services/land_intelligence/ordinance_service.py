@@ -845,6 +845,191 @@ class OrdinanceService:
             conf = min(conf, 0.55) - 0.15
         return round(max(0.0, min(1.0, conf)), 2)
 
+    # ──────────────────────────────────────────────────────────────────────
+    # T2. 개발행위허가 경사도 기준 파서 (LEGAL_ENGINE_SLOPE_FOREST_PLAN 2026-07-02)
+    #   시군구별 개발행위허가 경사도 기준(17.5도/20도/25도 상이)을 도시계획조례
+    #   본문에서 추출한다. ★원칙(비협상): 정적 시드값 절대 금지(무날조 — 값 검증
+    #   불가), 실패는 None(호출부가 "해당 지자체 조례 직접 확인 필요" 캐비앳 부착).
+    #   기존 BCR/FAR 파이프라인(_fetch_from_moleg_api·_parse_bcr_far_from_text)은
+    #   무수정 — 아래는 전부 additive 추가다.
+    # ──────────────────────────────────────────────────────────────────────
+
+    # persist 키(zone_type 슬롯) — 실제 용도지역명과 절대 충돌하지 않는 전용 키.
+    #   기존 ordinance_resolutions(PK: sigungu, zone_type) 테이블을 그대로 재사용해
+    #   '분석 1회 → 저장 → 재사용, 재분석 시에만 갱신' 플랫폼 원칙을 동일 적용한다.
+    _SLOPE_PERSIST_KEY: str = "__개발행위허가_경사도__"
+
+    # 개발행위 문맥 키워드 — 이 문맥 안의 '경사도 N도'만 채택(오탐 방어).
+    #   주차장 진입로·도로 종단 경사도 등 무관 조항의 값을 잡지 않기 위한 게이트.
+    _SLOPE_DEV_CONTEXT_KEYWORDS: tuple[str, ...] = (
+        "개발행위", "형질변경", "토지의 형질",
+    )
+    # 문맥 탐색 창(경사도 매치 앞쪽 문자 수) — 조문 헤더 '제N조(개발행위허가의 기준)'
+    #   에서 항 번호를 거쳐 값까지의 통상 거리를 흡수하되, 무관 조문까지 넘보지 않게 제한.
+    _SLOPE_CONTEXT_WINDOW: int = 400
+
+    # '경사도 N도' 추출 — '평균경사도가 20도 미만' / '경사도는 17.5도 이하' 등 통용
+    #   표현을 흡수한다. 정수부 1~2자리(경사도는 물리적으로 0~90도 — 3자리 배제).
+    _SLOPE_DEG_RE = re.compile(
+        r"경사도\s*(?:가|는|이|를)?\s*(\d{1,2}(?:\.\d+)?)\s*도"
+    )
+    # 상식 범위 방어: 개발행위 기준 경사도는 통상 10~30도(별표4 국가기준 25도).
+    #   45도 초과는 오독(각도 외 수치 혼입) 가능성이 높아 채택하지 않는다(None 폴백).
+    _SLOPE_MAX_PLAUSIBLE_DEG: float = 45.0
+
+    def _parse_slope_criteria_from_text(
+        self, xml_text: str, region_name: str
+    ) -> dict[str, Any] | None:
+        """조례 본문에서 '개발행위 문맥의 경사도 N도' 기준을 추출한다(순수함수).
+
+        반환: {"slope_deg": float, "ordinance_name": str, "evidence_span": str,
+               "caveat": str|None} 또는 None(추출 실패 — 값 날조 금지).
+        오탐 방어: 매치 앞 _SLOPE_CONTEXT_WINDOW 자 안에 개발행위 키워드가 있어야
+        채택. 무관 조항(주차장·도로 경사도)은 문맥 미충족으로 배제된다.
+        """
+        # CDATA 추출은 기존 BCR/FAR 파서와 동일 규약(']]>' 정확 종결 + 변형 폴백).
+        chunks = re.findall(r"CDATA\[(.*?)\]\]>", xml_text or "", re.DOTALL)
+        if not chunks:
+            chunks = re.findall(r"CDATA\[(.*?)\]", xml_text or "", re.DOTALL)
+        full_text = self._normalize_ws(" ".join(chunks))
+        if not full_text:
+            return None
+
+        for m in self._SLOPE_DEG_RE.finditer(full_text):
+            pre = full_text[max(0, m.start() - self._SLOPE_CONTEXT_WINDOW):m.start()]
+            if not any(k in pre for k in self._SLOPE_DEV_CONTEXT_KEYWORDS):
+                continue  # 개발행위 문맥 아님 → 오탐 배제
+            try:
+                slope_deg = float(m.group(1))
+            except ValueError:  # pragma: no cover — \d 매치라 사실상 불가
+                continue
+            if not (0.0 < slope_deg <= self._SLOPE_MAX_PLAUSIBLE_DEG):
+                continue  # 상식 범위 밖 → 오독 의심, 불확실 값 채택 금지
+            # 단서/경과조치 맥락 감지(기존 파서와 동일 키워드 규약).
+            near = full_text[max(0, m.start() - 40):m.start()]
+            caveat = (
+                "단서·경과조치 맥락에서 추출된 값일 수 있음(원문 재확인 권장)."
+                if any(k in near for k in ("다만", "경과조치", "종전", "적용하지"))
+                else None
+            )
+            # 근거 스니펫(설명가능성 기본): 값 주변 원문을 동반한다.
+            span_start = max(0, m.start() - 60)
+            evidence = full_text[span_start:min(len(full_text), m.end() + 60)]
+            ordin_name_match = re.search(
+                r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text
+            )
+            return {
+                "slope_deg": slope_deg,
+                "ordinance_name": (
+                    ordin_name_match.group(1)
+                    if ordin_name_match
+                    else f"{region_name} 도시계획 조례"
+                ),
+                "evidence_span": evidence.strip(),
+                "caveat": caveat,
+            }
+        return None
+
+    async def _fetch_ordinance_xml(self, region_name: str) -> str | None:
+        """법제처 자치법규 API에서 '{region_name} 도시계획 조례' 본문 XML을 가져온다.
+
+        기존 _fetch_from_moleg_api 와 동일한 2단 호출(목록 검색 → 본문 조회) 규약.
+        API 키 미설정·조회 실패는 None(호출부가 정직 폴백).
+        """
+        api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
+        if not api_key:
+            return None
+
+        search_name = f"{region_name} 도시계획 조례"
+        try:
+            headers = {"User-Agent": "PropAI/1.0 (https://4t8t.net)"}
+            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+                resp = await client.get(
+                    MOLEG_ORDIN_LIST_URL,
+                    params={
+                        "OC": api_key,
+                        "target": "ordin",
+                        "type": "XML",
+                        "query": search_name,
+                        "display": "5",
+                        "sort": "date",
+                    },
+                )
+                resp.raise_for_status()
+                ordin_id = self._parse_ordin_id(resp.text, region_name)
+            if not ordin_id:
+                return None
+            async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+                resp = await client.get(
+                    MOLEG_ORDIN_TEXT_URL,
+                    params={
+                        "OC": api_key,
+                        "target": "ordin",
+                        "type": "XML",
+                        "ID": ordin_id,
+                    },
+                )
+                resp.raise_for_status()
+                return resp.text
+        except Exception as e:  # noqa: BLE001 — 외부 API 실패는 정직 폴백(None)
+            logger.warning("법제처 API 조례 본문 조회 실패: %s (%s)", region_name, str(e))
+            return None
+
+    async def resolve_slope_criteria(
+        self, sigungu: str | None, force_refresh: bool = False
+    ) -> dict[str, Any] | None:
+        """시군구 도시계획조례의 개발행위허가 경사도 기준을 조회한다(T2).
+
+        파이프라인(기존 조례 해석과 동일 패턴):
+        0. 저장본 재사용(force_refresh=False & 존재 시 — 자동 재조사 금지)
+        1. 법제처 API 실시간 조회 → 개발행위 문맥 '경사도 N도' 추출
+        → 성공 시 persist. ★실패는 None — 정적 시드 폴백 절대 금지(무날조).
+          호출부(T1 예비판정)는 None 이면 국가기준(산지관리법 별표4, 25도)으로
+          폴백하고 "해당 지자체 조례 직접 확인 필요" 캐비앳을 부착한다.
+
+        성공 계약: {"slope_deg": float, "ordinance_name": str,
+                    "verified": "api_parsed", ...(근거·캐비앳 additive)}
+        sigungu 는 조례 정본 레벨 명칭(resolve_ordinance_region 산출)을 권장.
+        """
+        if not sigungu:
+            return None
+
+        # 0차: 저장본 재사용(사용자 재분석 시에만 갱신 — 기존 persist 규약 동일).
+        if not force_refresh:
+            stored = await _load_stored(sigungu, self._SLOPE_PERSIST_KEY)
+            if stored and stored.get("slope_deg") is not None:
+                return stored
+
+        # 1차: 법제처 API 실시간 조회 → 파싱.
+        xml_text = await self._fetch_ordinance_xml(sigungu)
+        if not xml_text:
+            return None
+        parsed = self._parse_slope_criteria_from_text(xml_text, sigungu)
+        if not parsed:
+            # 본문은 확보했으나 개발행위 경사도 기준을 못 찾음 → 정직 None.
+            logger.info(
+                "조례 경사도 기준 미발견 — 폴백(None): sigungu=%s", sigungu
+            )
+            return None
+
+        result: dict[str, Any] = {
+            "slope_deg": parsed["slope_deg"],
+            "unit": "도",
+            "ordinance_name": parsed["ordinance_name"],
+            "verified": "api_parsed",
+            "sigungu": sigungu,
+            "source": "법제처API",
+            "legal_basis": (
+                f"{parsed['ordinance_name']}(개발행위허가 기준) 및 "
+                "국토의 계획 및 이용에 관한 법률 시행령 제56조 별표1의2"
+            ),
+            "evidence_span": parsed.get("evidence_span"),
+            "caveat": parsed.get("caveat"),
+        }
+        # 성공값만 persist(실패·미확정은 저장하지 않음 — cross-tenant 오염 방지 규약 동일).
+        await _save_resolution(result, sigungu, self._SLOPE_PERSIST_KEY)
+        return result
+
     def _lookup_cache(
         self, sido: str, sigungu: str | None, zone_type: str
     ) -> dict[str, float] | None:
