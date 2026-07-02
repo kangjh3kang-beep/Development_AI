@@ -11,6 +11,7 @@ import {
   DesignCenterPageFrame,
 } from "@/components/design-center/DesignCenterPageFrame";
 import { DesignWorkspace } from "@/components/design/DesignWorkspace";
+import { ContextHeader } from "@/components/common/ContextHeader";
 import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
 import { defaultLocale, isValidLocale } from "@/i18n/config";
 import { useParams } from "next/navigation";
@@ -35,6 +36,8 @@ export default function DesignStudioPage() {
         { label: "연동", value: projectId ? "활성" : "대기", description: "프로젝트 컨텍스트" },
       ]}
     >
+      {/* 생성허브 공용 대상 컨텍스트 헤더(additive) — 어느 프로젝트·토지 대상 설계인지 상시 표시. */}
+      <ContextHeader className="mb-4" />
       {/* 2차-B: design-studio 직접 진입 시에도 designData/siteAnalysis를 백엔드 스냅샷에서 복원한다.
           이 라우트는 projects/[id] 트리 밖이라 layout의 ProjectContextBinder가 마운트되지 않아,
           store에 projectId만 있고 designData가 null이면 CAD/BIM 패널이 "먼저 설계 생성" 게이트에

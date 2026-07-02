@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { InvestmentFeasibilityClient } from "@/components/analytics/InvestmentFeasibilityClient";
 import { CashflowDcfPanel } from "@/components/analytics/CashflowDcfPanel";
 import { InvestmentAnalyticsWorkspaceClient } from "@/components/analytics/InvestmentAnalyticsWorkspaceClient";
+import { ContextHeader } from "@/components/common/ContextHeader";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -14,6 +15,8 @@ export default function InvestmentPage() {
 
   return (
     <div className="space-y-10">
+      {/* 생성허브 공용 대상 컨텍스트 헤더(additive) — 어느 프로젝트·토지 대상 사업성분석인지 상시 표시. */}
+      <ContextHeader />
       <div>
         <div className="flex items-center gap-3 mb-2">
           <span className="cc-meta">INVESTMENT · FEASIBILITY CONSOLE</span>

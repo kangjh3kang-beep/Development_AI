@@ -1,0 +1,128 @@
+import { describe, it, expect } from "vitest";
+import {
+  deriveContextHeaderData,
+  zoneDisplayLabel,
+  type ContextHeaderInput,
+} from "./context-header";
+import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+
+// 검증과 무관한 필수 필드는 부분 객체로 구성(site-area.test.ts 패턴과 동일).
+function sa(partial: Partial<SiteAnalysisData>): SiteAnalysisData {
+  return partial as SiteAnalysisData;
+}
+function ctx(partial: Partial<ContextHeaderInput>): ContextHeaderInput {
+  return {
+    projectId: null,
+    projectName: "",
+    siteAnalysis: null,
+    ...partial,
+  };
+}
+
+describe("deriveContextHeaderData — 대상 컨텍스트 파생(무목업)", () => {
+  it("컨텍스트 전무: hasContext=false, 모든 값 null(대상 미선택 정직 안내)", () => {
+    const d = deriveContextHeaderData(ctx({}));
+    expect(d.hasContext).toBe(false);
+    expect(d.projectName).toBeNull();
+    expect(d.address).toBeNull();
+    expect(d.pnu).toBeNull();
+    expect(d.zoneLabel).toBeNull();
+    expect(d.landAreaSqm).toBeNull();
+    expect(d.isMultiParcel).toBe(false);
+  });
+
+  it("프로젝트만 선택(projectId): hasContext=true", () => {
+    const d = deriveContextHeaderData(ctx({ projectId: "p1", projectName: "역삼 개발" }));
+    expect(d.hasContext).toBe(true);
+    expect(d.projectName).toBe("역삼 개발");
+  });
+
+  it("주소만 확보(프로젝트 미선택): hasContext=true", () => {
+    const d = deriveContextHeaderData(
+      ctx({ siteAnalysis: sa({ address: "서울 강남구 역삼동 737" }) }),
+    );
+    expect(d.hasContext).toBe(true);
+    expect(d.address).toBe("서울 강남구 역삼동 737");
+  });
+
+  it("단일필지: landAreaSqm 그대로, isMultiParcel=false", () => {
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({
+          address: "A",
+          pnu: "1168010100107370000",
+          landAreaSqm: 540,
+          parcelCount: 1,
+        }),
+      }),
+    );
+    expect(d.landAreaSqm).toBe(540);
+    expect(d.isMultiParcel).toBe(false);
+    expect(d.parcelCount).toBe(1);
+    expect(d.pnu).toBe("1168010100107370000");
+  });
+
+  it("다필지: 통합면적(landAreaSqmTotal) 우선 + isMultiParcel=true + parcelCount 유지", () => {
+    // 대표 236㎡이지만 통합 779㎡·2필지면 통합면적을 우선 표시해야 한다(경합 면역).
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({
+          address: "상도동",
+          landAreaSqm: 236,
+          landAreaSqmTotal: 779,
+          parcelCount: 2,
+        }),
+      }),
+    );
+    expect(d.landAreaSqm).toBe(779);
+    expect(d.isMultiParcel).toBe(true);
+    expect(d.parcelCount).toBe(2);
+  });
+
+  it("용도지역 정규화: 통합 dominantZoneCode 우선 + 표시 라벨 정규화", () => {
+    // dominantZoneCode="2R"(다필지 우세) → "제2종일반주거지역"으로 정규화 표시.
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({
+          address: "A",
+          zoneCode: "자연녹지지역",
+          dominantZoneCode: "2R",
+          landAreaSqmTotal: 779,
+          parcelCount: 2,
+        }),
+      }),
+    );
+    // 통합 우세 용도(dominant)가 대표필지 단일 zoneCode를 이긴다.
+    expect(d.zoneLabel).toBe("제2종일반주거지역");
+  });
+
+  it("용도지역: 통합값 없으면 단일 zoneCode로 폴백해 정규화", () => {
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A", zoneCode: "제3종일반주거지역" }),
+      }),
+    );
+    expect(d.zoneLabel).toBe("제3종일반주거지역");
+  });
+});
+
+describe("zoneDisplayLabel — 용도지역 표시 라벨", () => {
+  it("코드/변형을 정식 한글 라벨로 정규화", () => {
+    expect(zoneDisplayLabel("2R")).toBe("제2종일반주거지역");
+    expect(zoneDisplayLabel("일반상업")).toBe("일반상업지역");
+  });
+
+  it("정규화 실패 시 원문 그대로 표시(미상 코드를 버리지 않음·정직)", () => {
+    expect(zoneDisplayLabel("미상코드XYZ")).toBe("미상코드XYZ");
+  });
+
+  it("미확보(빈값/null): null", () => {
+    expect(zoneDisplayLabel(null)).toBeNull();
+    expect(zoneDisplayLabel("")).toBeNull();
+    expect(zoneDisplayLabel("   ")).toBeNull();
+  });
+});
