@@ -82,3 +82,33 @@ class TestWsClientIp:
         assert ws_client_ip("9.9.9.9", "1.2.3.4") == "9.9.9.9"
         monkeypatch.delenv("WS_TRUST_XFF")
         assert ws_client_ip("9.9.9.9", "1.2.3.4") == "1.2.3.4"
+
+
+def test_키_무한증가_방지_정상경로_즉시정리():
+    """connect→release 정상 경로는 동시연결 0으로 떨어질 때 키를 즉시 정리(누수 방지)."""
+    rl = WsRateLimiter(max_concurrent_per_ip=4, attempts_per_minute=1000)
+    for i in range(500):
+        ip = f"10.0.{i // 256}.{i % 256}"
+        assert rl.try_connect(ip) is True
+        rl.release(ip)
+    # 동시연결이 모두 해제됐으므로 concurrent 키는 남지 않아야 한다.
+    assert len(rl._concurrent) == 0
+
+
+def test_키_무한증가_방지_만료키_sweep():
+    """윈도 경과로 만료된 attempts 키는 상한 초과 시 sweep 으로 제거된다(역DoS 방지)."""
+    clock = [0.0]
+    rl = WsRateLimiter(sweep_threshold=100, window_sec=60.0, now=lambda: clock[0])
+    for i in range(500):
+        ip = f"10.0.{i // 256}.{i % 256}"
+        rl.try_connect(ip)
+        rl.release(ip)
+    before = len(rl._attempts)
+    assert before > 100                       # 최근 윈도라 유지(정당)
+    clock[0] += 120.0                          # 윈도(60s) 초과 → 전 타임스탬프 만료
+    for i in range(150):                       # 새 활동이 _maybe_sweep 발동
+        rl.try_connect(f"9.9.{i}.1")
+        rl.release(f"9.9.{i}.1")
+    # 만료된 옛 키는 제거되고, 최근 150개 윈도만 남아야 한다(무한증가 없음).
+    assert len(rl._attempts) < before
+    assert len(rl._attempts) <= 200

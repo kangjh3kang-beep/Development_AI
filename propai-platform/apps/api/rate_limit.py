@@ -49,11 +49,15 @@ class WsRateLimiter:
 
     def __init__(self, *, max_concurrent_per_ip: int = 4, attempts_per_minute: int = 10,
                  runs_per_minute_per_tenant: int = 5, window_sec: float = 60.0,
-                 now=_time.monotonic) -> None:
+                 sweep_threshold: int = 4096, now=_time.monotonic) -> None:
         self._max_concurrent = max_concurrent_per_ip
         self._max_attempts = attempts_per_minute
         self._max_runs = runs_per_minute_per_tenant
         self._window = window_sec
+        # ★키 무한증가 방지 상한: 추적 키(IP+테넌트)가 이 수를 넘으면 만료·빈 키를 sweep.
+        #  고유 IP 대량 유입(또는 소켓레벨 위조)으로 dict 키가 영구 잔존→단일워커 OOM 되는
+        #  'DoS 방지기의 역 DoS' 벡터를 막는다. 정상 경로는 release()가 즉시 정리한다.
+        self._sweep_threshold = sweep_threshold
         self._now = now
         self._concurrent: dict[str, int] = _defaultdict(int)
         self._attempts: dict[str, _deque] = _defaultdict(_deque)
@@ -63,24 +67,59 @@ class WsRateLimiter:
         while dq and dq[0] <= cutoff:
             dq.popleft()
 
+    def _sweep(self) -> None:
+        """만료·빈 키 제거(메모리 무한증가 방지). 키 수가 상한 초과 시에만 수행(비용 억제)."""
+        cutoff = self._now() - self._window
+        for ip in list(self._attempts.keys()):
+            dq = self._attempts.get(ip)
+            if dq is not None:
+                self._prune(dq, cutoff)
+            if (not dq) and self._concurrent.get(ip, 0) == 0:
+                self._attempts.pop(ip, None)
+                self._concurrent.pop(ip, None)
+        for tid in list(self._runs.keys()):
+            dq = self._runs.get(tid)
+            if dq is not None:
+                self._prune(dq, cutoff)
+            if not dq:
+                self._runs.pop(tid, None)
+
+    def _maybe_sweep(self) -> None:
+        if (len(self._attempts) + len(self._runs)) > self._sweep_threshold:
+            self._sweep()
+
     def try_connect(self, ip: str) -> bool:
         now = self._now()
+        self._maybe_sweep()
         dq = self._attempts[ip]
         self._prune(dq, now - self._window)
         if len(dq) >= self._max_attempts:
             return False
         if self._concurrent[ip] >= self._max_concurrent:
+            # 거부: 방금 defaultdict 접근으로 생긴 빈 키가 남지 않게 정리(누수 방지).
+            if not dq:
+                self._attempts.pop(ip, None)
+                if self._concurrent.get(ip, 0) == 0:
+                    self._concurrent.pop(ip, None)
             return False
         dq.append(now)
         self._concurrent[ip] += 1
         return True
 
     def release(self, ip: str) -> None:
-        if self._concurrent.get(ip, 0) > 0:
-            self._concurrent[ip] -= 1
+        c = self._concurrent.get(ip, 0)
+        if c > 0:
+            self._concurrent[ip] = c - 1
+        # 동시연결이 0으로 떨어지면 키를 정리한다(빈 attempts 윈도도 함께).
+        if self._concurrent.get(ip, 0) == 0:
+            self._concurrent.pop(ip, None)
+            dq = self._attempts.get(ip)
+            if dq is not None and not dq:
+                self._attempts.pop(ip, None)
 
     def try_run(self, tenant_id: str) -> bool:
         now = self._now()
+        self._maybe_sweep()
         dq = self._runs[tenant_id]
         self._prune(dq, now - self._window)
         if len(dq) >= self._max_runs:
