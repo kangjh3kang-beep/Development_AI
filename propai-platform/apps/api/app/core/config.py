@@ -2,11 +2,17 @@ import secrets
 import warnings
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    APP_ENV: str = "development"
+    # 환경 판별 정합(3단계-a): 자매 Settings(apps/api/config.py `environment`)와 동일하게
+    # ENVIRONMENT → APP_ENV 우선순위로 해석한다 — 한쪽 var 만 설정한 배포에서 두 클래스가
+    # 다른 환경으로 갈라져 프로덕션 가드(P1-4)·시크릿 검증이 우회되던 드리프트 차단.
+    # 계약 테스트: tests/test_settings_env_consistency.py. 단일 클래스 전면 통합은 별도 트랙.
+    APP_ENV: str = Field(default="development",
+                         validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"))
     APP_SECRET_KEY: str = ""
     APP_DEBUG: bool = True
     APP_HOST: str = "0.0.0.0"

@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from geoalchemy2 import Geometry
-from app.core.database import Base
+from apps.api.database.models.base import Base
 
 class SmartCityData(Base):
     __tablename__ = "smart_city_data"

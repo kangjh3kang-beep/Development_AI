@@ -6,6 +6,10 @@
 교차 이중정의 19건(스테일 정의 포함: 예 auth.User=organization_id vs 실스키마 tenant_id) —
 '일괄 통합'은 중복 테이블 충돌·파괴적 autogenerate diff 위험(별도 정리 트랙 필요).
 
+Wave-1(refactor/config-base-unify, 2026-07-02): dual 테이블을 정의하지 않는 9개 파일
+(collaboration/esg/g2b_bid/livekit/mass_template/memory/parcel_batch/tax_regional/v58_extensions)을
+canonical Base 로 이동 — 레거시 census 71 → 36테이블(교차 이중정의 19건은 불변).
+
 본 테스트는 그때까지의 봉쇄 게이트다:
  1) 레거시 Base 테이블 집합 동결 — 새 모델을 레거시에 추가하면 실패(신규는 canonical 로).
  2) 교차 이중정의 동결 — 새로운 테이블명 중복이 생기면 실패(가짜/파괴적 diff 예방).
@@ -25,53 +29,81 @@ from pathlib import Path
 
 _API_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = _API_DIR.parents[1]
-for p in (str(_REPO_ROOT), str(_API_DIR)):
+for p in (str(_API_DIR), str(_REPO_ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
-
 os.environ.setdefault("INTERP_REDIS_CACHE", "0")
 
-import app.models as _legacy_pkg  # noqa: E402
+import app.models as _legacy_pkg
 
-# 전 서브모듈 명시 로드(완전 census). 깨진 모듈(예: feasibility — 존재하지 않는
-# app.models.base 를 import하는 사장 코드)은 건너뛴다(테이블 등록 자체가 불가능한 모듈).
 for _m in pkgutil.iter_modules(_legacy_pkg.__path__):
-    # 깨진 사장 모듈은 어차피 테이블 등록이 불가능해 census 대상이 아님 — 건너뜀.
     with contextlib.suppress(Exception):
         importlib.import_module(f"app.models.{_m.name}")
 
-from app.core.database import Base as LegacyBase  # noqa: E402
-from apps.api.database.models import Base as CanonicalBase  # noqa: E402
+from app.core.database import Base as LegacyBase
+from apps.api.database.models import Base as CanonicalBase
 
-# ── 동결 스냅샷(2026-07-02 전 서브모듈 census) — 갱신은 '의도적 정리 트랙'에서만 ──
+# 레거시 Base 에 남은 테이블 동결 집합(Wave-1 이동 후 36테이블).
 LEGACY_ALLOWED = frozenset({
-    "adjusted_areas", "agent_memories", "ai_recommendations", "api_keys", "audit_logs",
-    "batch_aggregate", "batch_item_result", "bim_quantities", "collaborator_invites",
-    "cost_calculation_sheets", "cost_work_types", "design_alternatives",
-    "design_review_results", "design_stages", "development_type_tax_mappings",
-    "digital_twin_realtime", "drawing_edit_histories", "drawing_layers", "drawings",
-    "epd_material_carbon", "feasibility_branches", "feasibility_commits",
-    "feasibility_diffs", "feasibility_rollbacks", "feasibility_shares", "feasibility_tags",
-    "g2b_award_stats", "g2b_bid_analyses", "g2b_bids", "land_compensation_estimates",
-    "land_parcels", "land_use_zones", "law_change_alerts", "law_changes",
-    "lca_assessments", "lcc_analyses", "legal_rate_histories", "lifecycle_optimization",
-    "livekit_recordings", "mass_templates", "material_unit_prices",
-    "natural_disaster_risk", "optimization_results", "optimization_runs",
-    "organizations", "parcel_batch_job", "parcel_groups", "permissions",
-    "permit_document_sets", "portfolio_optimization", "procurement_optimization",
-    "progress_billings", "project_documents", "project_members", "projects",
-    "public_insight_reports", "region_tax_rates", "regions", "regulation_change_log",
-    "review_comments", "role_permissions", "roles", "site_analysis_reports",
-    "smart_city_data", "standard_price_updates", "tax_calculation_results", "tax_codes",
-    "tax_exemptions", "user_roles", "users", "zeb_certifications",
+    "ai_recommendations",
+    "api_keys",
+    "audit_logs",
+    "bim_quantities",
+    "cost_calculation_sheets",
+    "cost_work_types",
+    "design_alternatives",
+    "design_stages",
+    "drawing_edit_histories",
+    "drawing_layers",
+    "drawings",
+    "feasibility_branches",
+    "feasibility_commits",
+    "feasibility_diffs",
+    "feasibility_rollbacks",
+    "feasibility_shares",
+    "feasibility_tags",
+    "land_compensation_estimates",
+    "land_parcels",
+    "land_use_zones",
+    "legal_rate_histories",
+    "material_unit_prices",
+    "optimization_results",
+    "optimization_runs",
+    "organizations",
+    "parcel_groups",
+    "permissions",
+    "permit_document_sets",
+    "progress_billings",
+    "projects",
+    "role_permissions",
+    "roles",
+    "site_analysis_reports",
+    "standard_price_updates",
+    "user_roles",
+    "users",
 })
-# 레거시↔canonical 같은 테이블명 이중 정의(기존 부채 19건 — 스테일 diff 위험 목록).
+
+# 레거시↔canonical 교차 이중정의(19건, Wave-1 이후에도 불변이어야 한다).
 KNOWN_CROSS_DUPLICATES = frozenset({
-    "api_keys", "bim_quantities", "cost_calculation_sheets", "cost_work_types",
-    "design_alternatives", "design_stages", "drawing_edit_histories", "drawing_layers",
-    "drawings", "feasibility_branches", "feasibility_commits", "feasibility_tags",
-    "legal_rate_histories", "material_unit_prices", "permit_document_sets",
-    "progress_billings", "projects", "standard_price_updates", "users",
+    "api_keys",
+    "bim_quantities",
+    "cost_calculation_sheets",
+    "cost_work_types",
+    "design_alternatives",
+    "design_stages",
+    "drawing_edit_histories",
+    "drawing_layers",
+    "drawings",
+    "feasibility_branches",
+    "feasibility_commits",
+    "feasibility_tags",
+    "legal_rate_histories",
+    "material_unit_prices",
+    "permit_document_sets",
+    "progress_billings",
+    "projects",
+    "standard_price_updates",
+    "users",
 })
 
 
@@ -79,8 +111,9 @@ def test_legacy_base_frozen_no_new_models():
     current = frozenset(LegacyBase.metadata.tables)
     new = current - LEGACY_ALLOWED
     assert not new, (
-        f"레거시 Base(app/core/database)에 새 모델 추가 금지 — canonical"
-        f"(apps/api/database/models) Base 를 사용하라(alembic 추적 대상). 신규: {sorted(new)}"
+        "레거시 Base(app/core/database)에 새 모델 추가 금지 — "
+        "canonical(apps/api/database/models) Base 를 사용하라(alembic 추적 대상). "
+        f"신규: {sorted(new)}"
     )
 
 
@@ -88,7 +121,8 @@ def test_no_new_cross_base_duplicate_tables():
     dup = frozenset(LegacyBase.metadata.tables) & frozenset(CanonicalBase.metadata.tables)
     new_dup = dup - KNOWN_CROSS_DUPLICATES
     assert not new_dup, (
-        f"레거시↔canonical 에 같은 테이블명 이중 정의 신규 발생 — 스테일 diff/충돌 위험: {sorted(new_dup)}"
+        "레거시↔canonical 에 같은 테이블명 이중 정의 신규 발생 — "
+        f"스테일 diff/충돌 위험: {sorted(new_dup)}"
     )
 
 
