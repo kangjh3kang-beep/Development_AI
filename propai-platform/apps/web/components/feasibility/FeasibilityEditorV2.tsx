@@ -71,7 +71,10 @@ export function FeasibilityEditorV2({ projectId }: Props) {
       // 투자수익성(ROI 뷰, analytics/investment) 정합용 — A를 단일 진실원으로.
       roiPct: result.roi_pct ?? null,
       npvWon: result.npv_won ?? null,
-      equityWon: input.equity_won ?? null,
+      // 자기자본: 사용자가 실제로 양수 절대액을 입력했을 때만 명시값으로 환류(그 값 우선).
+      //  미입력(기본 0)이면 undefined로 두어 store가 총사업비×자기자본비율(기본 10%)로 자동 산출한다
+      //  (0원 표시 방지·수동입력 없이도 자기자본 채워짐).
+      equityWon: (input.equity_won ?? 0) > 0 ? input.equity_won : undefined,
     });
     setCostAtCalc(costData?.totalConstructionCostWon ?? null);
     // costData는 의도적으로 제외(결과 변경 시에만 stamp, 무한루프 방지).

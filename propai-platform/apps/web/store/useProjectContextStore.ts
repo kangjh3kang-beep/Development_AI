@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveEquityWon, DEFAULT_EQUITY_RATIO_PCT } from "@/lib/finance/leverage";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
 import type { DesignCompliance } from "@/lib/design-contract";
 
@@ -207,7 +208,12 @@ interface FeasibilityData {
   profitRatePct: number | null;
   grade: string | null;
   // 투자수익성(ROI 뷰) 정합용 — 옵셔널·하위호환. reader 무영향, persist round-trip 보존.
+  // equityWon: 자기자본 절대액(원). 사용자/에디터 직접입력 우선, 없으면 총사업비×equityRatioPct 자동산출.
   equityWon?: number | null;
+  // ★SSOT: 자기자본 비율(%) — 투자수익성 요약과 DCF 패널이 공유하는 단일 슬롯(기본 10%).
+  //   DCF에서 사용자가 바꾸면 요약도 즉시 반영되고, 총사업비가 나오면 equityWon이 자동 채워진다.
+  //   optional·하위호환(구 스냅샷=undefined → updateFeasibilityData가 기본 10% 폴백).
+  equityRatioPct?: number | null;
   roiPct?: number | null;
   npvWon?: number | null;
   // (Phase C-1) 추천 개발방식 코드(M01~M15) — 상류 추천 노드가 산출한 최상위 추천 유형.
@@ -472,6 +478,11 @@ export interface ProjectContextState {
   //  함정을 피하기 위함. 다른 수지 슬롯(매출·원가·ROI·developmentType)은 일절 건드리지 않는다(merge 보존).
   //  null/비양수면 no-op(무목업: 실거래 자료 없으면 미환류 → 백엔드 기본 동작).
   setSalesPricePerPyeong: (won: number | null) => void;
+  // ★자기자본 비율(%) SSOT 세터 — 투자수익성 요약·DCF 패널이 공유하는 단일 슬롯을 갱신한다.
+  //  비율이 바뀌면 총사업비×비율로 equityWon을 자동 재산출(자동값·수동 아님)해 두 화면을 즉시 동기화한다.
+  //  setSalesPricePerPyeong과 동일하게 updatedAt.feasibility는 stamp하지 않는다(자본구조 가정 변경이
+  //  매출·원가 계산을 stale로 오염시키지 않도록). null/비양수면 no-op.
+  setEquityRatioPct: (pct: number | null) => void;
   // full replace. meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
@@ -1234,20 +1245,42 @@ export const useProjectContextStore = create<ProjectContextState>()(
       },
 
       updateFeasibilityData: (data) => {
-        set((state) =>
-          withSnap(state, {
-            // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
-            feasibilityData: {
-              totalCostWon: null,
-              totalRevenueWon: null,
-              profitRatePct: null,
-              grade: null,
-              ...(state.feasibilityData ?? {}),
-              ...data,
-            } as FeasibilityData,
+        set((state) => {
+          // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
+          const merged = {
+            totalCostWon: null,
+            totalRevenueWon: null,
+            profitRatePct: null,
+            grade: null,
+            ...(state.feasibilityData ?? {}),
+            ...data,
+          } as FeasibilityData;
+          // ★자기자본 자동 환류(공용 규칙, resolveEquityWon 단일 계약):
+          //   총사업비가 나오면 자기자본이 없어도 equityRatioPct(기본 10%)로 자동 산출해 채운다
+          //   (0원 표시 방지). 자기자본 절대액이 명시 입력(양수)돼 있으면 그 값을 보존한다.
+          //   비율 슬롯이 비어 있으면(구 스냅샷) 기본 10%로 정규화해 SSOT를 확정한다.
+          const ratio =
+            merged.equityRatioPct != null && merged.equityRatioPct > 0
+              ? merged.equityRatioPct
+              : DEFAULT_EQUITY_RATIO_PCT;
+          merged.equityRatioPct = ratio;
+          // 자기자본 절대액: 명시된 양수 입력은 우선, 그 외(null/undefined/0)엔 비율로 자동산출.
+          const explicitEquity =
+            typeof merged.equityWon === "number" && merged.equityWon > 0
+              ? merged.equityWon
+              : null;
+          merged.equityWon =
+            explicitEquity ??
+            resolveEquityWon({
+              equityWon: null,
+              totalCostWon: merged.totalCostWon,
+              equityRatioPct: ratio,
+            });
+          return withSnap(state, {
+            feasibilityData: merged,
             updatedAt: stampedAt(state, "feasibility"),
-          }),
-        );
+          });
+        });
       },
 
       // (Phase C-1) 추천 개발방식 코드만 부분패치 — updatedAt 미변경(staleness 오염 회피).
@@ -1296,6 +1329,38 @@ export const useProjectContextStore = create<ProjectContextState>()(
               salePricePerPyeongWon: price,
             } as FeasibilityData,
             // ★updatedAt 미변경 — feasibility staleness를 stamp하지 않는다(함정 회피).
+          });
+        });
+      },
+
+      // ★자기자본 비율(%) SSOT 세터 — 비율 갱신 + 총사업비×비율로 equityWon 자동 재산출.
+      setEquityRatioPct: (pct) => {
+        const ratio =
+          typeof pct === "number" && Number.isFinite(pct) && pct > 0 ? pct : null;
+        if (ratio == null) return;
+        set((state) => {
+          // 값이 같으면 no-op(불필요한 스냅샷 갱신 방지).
+          if (state.feasibilityData?.equityRatioPct === ratio) return {};
+          const totalCostWon = state.feasibilityData?.totalCostWon ?? null;
+          // 비율 기반 자동 재산출 — 명시 자기자본이 있어도 비율 세터는 자동값으로 덮는다
+          //  (DCF에서 사용자가 비율을 바꾸면 요약도 그 비율로 즉시 반영). 총사업비 없으면 null.
+          const equityWon = resolveEquityWon({
+            equityWon: null,
+            totalCostWon,
+            equityRatioPct: ratio,
+          });
+          return withSnap(state, {
+            // merge: 비율·자기자본만 덮고 매출·원가·ROI 등 기존 슬롯은 보존.
+            feasibilityData: {
+              totalCostWon: null,
+              totalRevenueWon: null,
+              profitRatePct: null,
+              grade: null,
+              ...(state.feasibilityData ?? {}),
+              equityRatioPct: ratio,
+              equityWon,
+            } as FeasibilityData,
+            // ★updatedAt 미변경 — 자본구조 가정 변경이 매출·원가 staleness를 오염시키지 않도록.
           });
         });
       },
