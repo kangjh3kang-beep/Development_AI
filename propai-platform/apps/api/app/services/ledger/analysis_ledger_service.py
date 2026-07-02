@@ -84,12 +84,35 @@ def _chain_where(pnu: str | None, address_norm: str, project_id: str | None) -> 
     return key_sql, params
 
 
+def _chain_lock_key(tenant_id: str | None, pnu: str | None, address_norm: str,
+                    project_id: str | None, analysis_type: str) -> str:
+    """append 직렬화용 advisory lock 키 — _chain_where 와 동일한 체인 식별 의미.
+
+    (pnu 우선 → 없으면 정규화 주소 → 둘 다 없으면 null 체인) + tenant/project/analysis_type.
+    같은 논리 체인의 동시 append 가 같은 키로 잠기도록 식별 규칙을 1:1 로 미러링한다(P1-5).
+    """
+    ident = f"p:{pnu}" if pnu else (f"a:{address_norm}" if address_norm else "n:")
+    return f"{tenant_id or ''}|{ident}|{project_id or ''}|{analysis_type}"
+
+
 async def _ensure(db) -> None:
     from sqlalchemy import text
+    # fast-path: 테이블이 이미 있으면 DDL 재실행 생략 — 매 호출 'CREATE ... IF NOT EXISTS'가
+    # 잡던 카탈로그/DDL 락이 동시 append 트랜잭션 간 교착(deadlock)을 유발하던 것을 차단(P1-5).
+    exists = (await db.execute(text(
+        "SELECT to_regclass('analysis_ledger') IS NOT NULL "
+        "AND to_regclass('analysis_ledger_quota') IS NOT NULL"))).scalar()
+    if exists:
+        return
+    # 최초 생성 경로: 전역 advisory lock 으로 동시 생성 경합 직렬화(double-checked locking).
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('analysis_ledger_ddl')::bigint)"))
     await db.execute(text(_DDL))
     await db.execute(text(_QUOTA_DDL))
     for ix in _IDX:
         await db.execute(text(ix))
+    # ★UNIQUE 백스톱 인덱스(uq_ledger_chain_version)는 여기(lazy-DDL)가 아니라
+    #   마이그레이션 034 에서만 생성한다 — 선정리(중복 재번호) 없이 생성 시도가 실패하면
+    #   _ensure 가 매 append 를 침묵 불능으로 만들기 때문(034 docstring 참조).
 
 
 async def _count_entries(db, tenant_id: str | None) -> int:
@@ -207,6 +230,12 @@ async def append_analysis(
 
         async with async_session_factory() as db:
             await _ensure(db)
+            # P1-5: 같은 체인의 동시 append 직렬화 — '최신 version 조회 → +1 INSERT' 레이스로
+            # 중복 version(포크된 prev_hash)이 생기는 것을 트랜잭션 advisory lock 으로 차단.
+            # (커밋/롤백 시 자동 해제. 백스톱 UNIQUE 인덱스는 마이그레이션 034.)
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),
+                {"lk": _chain_lock_key(tenant_id, pnu, address_norm, project_id, analysis_type)})
             key_sql, params = _chain_where(pnu, address_norm, project_id)
             params.update({"atype": analysis_type, "tid": tenant_id})
             tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"

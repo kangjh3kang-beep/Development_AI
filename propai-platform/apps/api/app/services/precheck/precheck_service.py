@@ -84,7 +84,7 @@ async def _legal_limits(zone_type: Optional[str], address: Optional[str] = None)
     legal["ordinance_confirmed"] = False
     legal["applied_bcr_pct"] = legal["bcr_pct"]
     legal["applied_far_pct"] = legal["far_pct"]
-    legal["far_source"] = "법정범위 상한(조례·도시군관리계획 확인 필요)"
+    legal["far_source"] = "법정상한 적용(조례 확인 필요)"
 
     regulation_payload: Any = None
     if address:

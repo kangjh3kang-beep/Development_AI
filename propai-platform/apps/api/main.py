@@ -287,10 +287,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # DB 풀 크기 메트릭 설정
     DB_POOL_SIZE.set(settings.db_pool_size)
 
+    # P1-4 배포 가드: production에서 시크릿 마스터키가 하드코딩 폴백이면 fail-fast(침묵 오염 차단).
+    # ★의도적으로 try 밖 — 이 RuntimeError는 삼키면 안 되는 기동 차단 신호다(dev/test는 경고만).
+    from app.services.secrets import secret_store
+    secret_store.enforce_master_key_guard()
+
     # 관리자 화면에서 입력한 연동 API 키(platform_secrets)를 os.environ에 오버레이
     try:
         from apps.api.database.session import AsyncSessionLocal
-        from app.services.secrets import secret_store
         async with AsyncSessionLocal() as _s:
             await secret_store.load_into_env(_s)
     except Exception:

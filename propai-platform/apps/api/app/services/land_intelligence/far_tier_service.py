@@ -115,6 +115,26 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         # 근거 키워드는 있으나 정량 완화율·조례·계획 미제시 → 법정값 유지(가능성만 안내).
         far_basis = "완화근거 명시(정량 완화율 미제시 — 별도 검토 필요)"
 
+    # ★provenance 정직성: 조례 미확정(법정상한 폴백)이고 계획상한·완화근거도 없으면
+    #   far_basis를 '법정상한 적용(조례 미확인)'으로 정직 표기한다(false-confirmed 방지).
+    #   ordinance_service 3차 폴백(source='법정상한', recheck_recommended=True)을 신호로 인식.
+    #   ★recheck_recommended는 ordinance_service._attach_provenance가 최상위가 아닌
+    #   ordinance["provenance"]["recheck_recommended"]에 싣는다(top-level 읽기는 항상 falsy
+    #   dead-branch였음) — provenance 하위를 우선 읽고, 구버전 호출부 호환을 위해 top-level도
+    #   폴백으로 허용한다.
+    _ord_src = str(ordinance.get("source") or "")
+    _ord_provenance = ordinance.get("provenance") if isinstance(ordinance.get("provenance"), dict) else {}
+    _ord_recheck = bool(_ord_provenance.get("recheck_recommended")) or bool(
+        ordinance.get("recheck_recommended")
+    )
+    if (
+        not ordinance_confirmed
+        and plan_far_ceiling is None
+        and not basis_present
+        and ("법정상한" in _ord_src or _ord_recheck)
+    ):
+        far_basis = "법정상한 적용(조례 미확인)"
+
     # ── far_basis 상세 메타: 산정 계층·데이터출처를 그라운딩/검증기가 활용하도록 동봉.
     far_basis_detail: dict[str, Any] = {
         "법정범위": {

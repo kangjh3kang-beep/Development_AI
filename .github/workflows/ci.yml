@@ -43,6 +43,12 @@ jobs:
         working-directory: propai-platform/apps/api
         run: python -m pytest tests/ -q --no-header
 
+      # 루트 계약 스위트(propai-platform/tests) — 과거 CI 밖에서 17실패가 방치됐던
+      # 갭을 게이트로 편입(931+ tests, 무DB). apps/api 스위트와 별개 커버리지.
+      - name: Run root contract suite (propai-platform/tests)
+        working-directory: propai-platform
+        run: python -m pytest tests/ -q --no-header
+
   frontend-checks:
     name: Frontend (type-check + lint + test)
     runs-on: ubuntu-latest

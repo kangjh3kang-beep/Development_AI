@@ -13,6 +13,7 @@
 
 import { useEffect } from "react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -108,13 +109,12 @@ export function ProjectAddressInput({
   };
 
   const handleAddressChange = (entries: AddressEntry[]) => {
-    const primary = entries.length > 0
-      ? (entries[0].jibunAddress || entries[0].fullAddress || entries[0].roadAddress)
-      : "";
+    // ★대표 주소는 공용 정규화로 — jibunAddress 가 법정동 빠진 바레 번지면 fullAddress 우선(지오코딩 성공률↑).
+    const primary = entries.length > 0 ? preferredEntryAddress(entries[0]) : "";
     onChange(primary);
     // 다필지: 등록된 전 필지 주소 배열을 호스트로 전달(호스트가 쓰면 활용).
     const all = entries
-      .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      .map((e) => preferredEntryAddress(e))
       .filter(Boolean);
     onParcelsChange?.(all);
     // 상세판: 면적·용도지역·용적/건폐 포함 전체 entries를 호스트로 전달(SSOT 단일화용).

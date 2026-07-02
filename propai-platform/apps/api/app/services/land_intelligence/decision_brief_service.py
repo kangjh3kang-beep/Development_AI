@@ -936,9 +936,13 @@ class DecisionBriefService:
             if "DEPLOY_PENDING" in fields_set:
                 # 운영자가 .env/환경변수로 명시 설정 → 그 값 우선(자동 추론 무시).
                 return bool(getattr(settings, "DEPLOY_PENDING", True))
-            # 명시 안 됐으면 APP_ENV 로 추론 — production = 라이브 → False.
-            app_env = str(getattr(settings, "APP_ENV", "") or "").strip().lower()
-            if app_env == "production":
+            # 명시 안 됐으면 환경으로 추론 — 프로덕션(라이브)이면 False.
+            # ★공용 SSOT(app.core.env.is_production)로 판별(전역 전파방지·정합화) — 배포 관례상
+            #   ENVIRONMENT=production 만 설정되고 APP_ENV 가 development 로 남아도 라이브로
+            #   올바로 인식한다(과거엔 APP_ENV=='production' 만 봐서 라이브를 배포전으로 과소표기).
+            #   fail-safe 방향 유지: 프로덕션 아니면 기본값(보수적 True)으로 남는다.
+            from app.core.env import is_production
+            if is_production(str(getattr(settings, "APP_ENV", "") or "")):
                 return False
             return bool(getattr(settings, "DEPLOY_PENDING", True))
         except Exception:  # noqa: BLE001 — 설정 로딩 실패는 보수적으로 deploy_pending=True

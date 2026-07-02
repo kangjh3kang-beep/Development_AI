@@ -190,8 +190,13 @@ def _validate_secret(name: str, value: str) -> None:
 @lru_cache
 def get_settings() -> Settings:
     s = Settings()
-    # 프로덕션 환경에서 빈/약한 비밀키 사용 차단
-    if s.APP_ENV != "development" and s.APP_ENV != "test":
+    # 프로덕션 환경에서 빈/약한 비밀키 사용 차단.
+    # ★공용 SSOT(app.core.env.is_production)로 판별 — 배포 관례상 ENVIRONMENT=production 만
+    #   설정되고 APP_ENV 는 development 로 남아도 프로덕션으로 올바로 인식(fail-secure).
+    #   ★재귀회피: is_production 은 app/core/config.get_settings 를 부르지 않고, 여기서
+    #   넘긴 s.APP_ENV 를 힌트로 병합한다(함수 내부 지연 import 로 순환 import 도 회피).
+    from app.core.env import is_production
+    if is_production(s.APP_ENV):
         _validate_secret("APP_SECRET_KEY", s.APP_SECRET_KEY)
         _validate_secret("JWT_SECRET_KEY", s.JWT_SECRET_KEY)
     # 개발 환경에서 빈 키 자동 생성 + 경고

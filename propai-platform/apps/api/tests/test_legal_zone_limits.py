@@ -317,6 +317,143 @@ def test_far_basis_detail_ordinance_confirmed():
     assert sec["far_basis_detail"]["조례값"]["far_pct"] == 80
 
 
+# ── provenance 정직성: 법정상한 폴백을 조례 확정으로 오표기 금지(용인 자연녹지 회귀) ──
+def test_applicable_limits_statutory_fallback_not_confirmed():
+    # ★핵심 회귀: ordinance_service 3차 폴백(source='법정상한', ordinance_far=None,
+    #   effective_far=법정 100)을 조례값으로 오인 채택하지 않는다.
+    #   → ordinance_confirmed=False, effective_far=100 표시는 유지, far_source 정직.
+    reg = {
+        "local_ordinance": {
+            "ordinance_far": None,
+            "ordinance_bcr": None,
+            "effective_far": 100,
+            "effective_bcr": 20,
+            "source": "법정상한",
+        }
+    }
+    a = applicable_limits_for("자연녹지지역", regulation_payload=reg)
+    assert a["ordinance_confirmed"] is False
+    assert a.get("ordinance_far_pct") is None  # 조례값으로 승격 금지
+    assert a["applied_far_pct"] == 100  # 수치는 법정상한 유지
+    assert "법정상한" in a["far_source"]
+
+
+def test_extract_ordinance_far_ignores_effective_only_without_source():
+    # effective_far만 있고 조례 출처(조례/법제처/ELIS)·명시적 ordinance_far가 없으면 미채택.
+    from app.services.zoning.legal_zone_limits import _extract_ordinance_far
+    r = _extract_ordinance_far(
+        {"local_ordinance": {"effective_far": 100, "source": "법정상한"}}
+    )
+    assert r["ord_far"] is None
+
+
+def test_extract_ordinance_far_zone_limits_effective_only_not_confirmed():
+    # zone_limits 형태: effective_far_pct만으론 조례 확정 아님(명시 ordinance_far_pct 필요).
+    from app.services.zoning.legal_zone_limits import _extract_ordinance_far
+    r = _extract_ordinance_far({"zone_limits": {"effective_far_pct": 100}})
+    assert r["ord_far"] is None
+
+
+def test_calc_effective_far_statutory_fallback_marks_recheck():
+    # 법정상한 폴백(용인) → ordinance_confirmed=False·조례확인필요=True, effective 100 유지.
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+    base = {
+        "zone_type": "자연녹지지역",
+        "zone_limits": {},
+        "local_ordinance": {
+            "ordinance_far": None,
+            "ordinance_bcr": None,
+            "effective_far": 100,
+            "effective_bcr": 20,
+            "source": "법정상한",
+            "recheck_recommended": True,
+        },
+    }
+    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    assert sec["ordinance_confirmed"] is False
+    assert sec["effective_far_pct"] == 100  # 수치 유지
+    assert sec["far_basis_detail"]["조례확인필요"] is True
+    assert "법정상한" in sec["far_basis"]
+
+
+def test_calc_effective_far_real_ordinance_stays_confirmed():
+    # ★과다강등 금지: 서울 자연녹지 실제 조례(far=50, 정적캐시) → confirmed=True·effective 50.
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+    base = {
+        "zone_type": "자연녹지지역",
+        "zone_limits": {},
+        "local_ordinance": {
+            "ordinance_far": 50,
+            "ordinance_bcr": 20,
+            "effective_far": 50,
+            "effective_bcr": 20,
+            "source": "지자체 조례(정적캐시)",
+        },
+    }
+    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    assert sec["ordinance_confirmed"] is True
+    assert sec["effective_far_pct"] == 50
+    assert sec["far_basis_detail"]["조례확인필요"] is False
+
+
+# ── 전역스윕(리뷰 should_fix#1): path-3(limits.far/bcr trio) 동일 버그클래스 회귀 ──
+def test_extract_ordinance_far_limits_trio_fallback_not_confirmed():
+    # RegulationAnalysisService._limits.trio 생산 페이로드: ordinance 부재 시
+    # effective = ordinance(None) or legal 로 법정값이 effective에 채워짐(용인과 동일 클래스).
+    # → 명시적 ordinance 없으면 조례값으로 오인 채택 금지.
+    from app.services.zoning.legal_zone_limits import _extract_ordinance_far
+    r = _extract_ordinance_far({"limits": {"far": {"legal": 100, "ordinance": None, "effective": 100}}})
+    assert r["ord_far"] is None
+
+
+def test_applicable_limits_limits_trio_fallback_not_confirmed():
+    payload = {"limits": {"far": {"legal": 100, "ordinance": None, "effective": 100}}}
+    a = applicable_limits_for("자연녹지지역", regulation_payload=payload)
+    assert a["ordinance_confirmed"] is False
+    assert a.get("ordinance_far_pct") is None
+    assert a["applied_far_pct"] == 100  # 수치는 법정상한 유지
+    assert "법정상한" in a["far_source"]
+
+
+def test_applicable_limits_limits_trio_explicit_ordinance_confirmed():
+    # ★과다강등 금지: 명시적 ordinance 값이 있으면(실조례) 여전히 confirmed=True.
+    payload = {"limits": {"far": {"legal": 100, "ordinance": 50, "effective": 50}}}
+    a = applicable_limits_for("자연녹지지역", regulation_payload=payload)
+    assert a["ordinance_confirmed"] is True
+    assert a["applied_far_pct"] == 50
+    assert a["ordinance_far_pct"] == 50
+
+
+def test_design_audit_orchestrator_limits_trio_fallback_honest():
+    # design_audit_orchestrator가 applicable_limits_for를 직접 소비하는 2차 표면 —
+    # limits.far trio 폴백(조례 미확정)이 여기서도 false-confirm 없이 정직 전파되는지 확인.
+    payload = {"limits": {"far": {"legal": 100, "ordinance": None, "effective": 100}}}
+    a = applicable_limits_for("자연녹지지역", regulation_payload=payload)
+    assert a["ordinance_confirmed"] is False
+
+
+def test_far_tier_recheck_recommended_from_provenance_subdict():
+    # 리뷰 should_fix#2: recheck_recommended는 ordinance["provenance"] 하위에 실린다
+    # (top-level 읽기는 dead-branch였음). far_basis가 실제로 정직 라벨로 전환되는지 확인.
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+    base = {
+        "zone_type": "자연녹지지역",
+        "zone_limits": {},
+        "local_ordinance": {
+            "ordinance_far": None,
+            "ordinance_bcr": None,
+            "effective_far": 100,
+            "effective_bcr": 20,
+            "source": "법정상한",
+            "provenance": {"recheck_recommended": True, "confidence": 0.60},
+        },
+    }
+    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    assert sec["ordinance_confirmed"] is False
+    assert "법정상한" in sec["far_basis"]
+    assert sec["far_basis_detail"]["조례확인필요"] is True
+
+
 # ════════════════════════════════════════════════════════════════════
 # 종상향/종변경 잠재력(upzoning) — 현행/잠재 2계층 분리 검증
 # ════════════════════════════════════════════════════════════════════

@@ -10,6 +10,23 @@
  */
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
 
+/**
+ * 필지 대표 주소 정규화(공용) — 지오코딩 성공률↑.
+ *
+ * jibunAddress 가 법정동 빠진 바레 번지("56-1"·"211-443", 엑셀 소재지·지번 분리 양식)일 때
+ * fullAddress("용인시 수지구 신봉동 56-1")가 그 번지를 포함하고 더 길면 fullAddress 를 쓴다.
+ * (검색분 도로명 fullAddress 는 지번을 포함하지 않으므로 이 경우 jibunAddress 유지.)
+ * ★기존 `jibunAddress || fullAddress || roadAddress` 산재 로직을 대체하는 단일 규칙.
+ */
+export function preferredEntryAddress(
+  e: { jibunAddress?: string | null; fullAddress?: string | null; roadAddress?: string | null },
+): string {
+  const jb = (e.jibunAddress || "").trim();
+  const full = (e.fullAddress || "").trim();
+  if (full && jb && full.includes(jb) && full.length > jb.length) return full;
+  return jb || full || (e.roadAddress || "").trim();
+}
+
 export interface ParcelRow {
   address: string;
   area_sqm?: number | null;
@@ -25,7 +42,7 @@ export function entriesToParcelRows(entries: AddressEntry[]): ParcelRow[] {
   return entries
     .filter((e) => (e.areaSqm ?? 0) > 0)
     .map((e) => ({
-      address: e.jibunAddress || e.fullAddress || e.roadAddress,
+      address: preferredEntryAddress(e),
       area_sqm: e.areaSqm,
       zone_type: e.zoneCode ?? null,
       farPct: e.farPct ?? null, // 실효(조례 반영)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import DOMPurify from "dompurify";
 import { AlertTriangle } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import type {
@@ -38,28 +39,36 @@ type ReferenceAssemblyCardProps = {
 };
 
 /**
- * 인라인 SVG 정화 가드 — script/foreignObject/iframe/object/embed 태그,
- * on* 이벤트 핸들러, javascript: 링크를 제거한다. 비SVG 입력이거나 정화 후에도
- * 위험 마크업이 남으면 null(미렌더 — 안전 우선).
+ * 인라인 SVG 정화 가드 — DOMPurify(파서 기반)로 SVG 프로파일만 허용한다(P2-8).
+ *
+ * (이전: 자체 regex 치환 — 파서가 아니라 중첩/인코딩 변형(예: <scr<script>ipt>,
+ * 엔티티 우회)에 취약했다.) 비SVG 입력·SSR(window 부재)·정화 후에도 위험 마크업이
+ * 잔존하면 null(미렌더 — 가짜 안전 보장 금지). 잔존 검사는 심층 방어로 유지.
  */
 export function sanitizeSvgMarkup(raw: string | null | undefined): string | null {
   if (!raw || typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (!/^<svg[\s>]/i.test(trimmed)) return null;
-  const cleaned = trimmed
-    .replace(/<script[\s\S]*?<\/script\s*>/gi, "")
-    .replace(/<script[^>]*\/?>/gi, "")
-    .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, "")
-    .replace(/<(iframe|object|embed)[\s\S]*?<\/\1\s*>/gi, "")
-    .replace(/<(iframe|object|embed)[^>]*\/?>/gi, "")
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
-    .replace(/(href|xlink:href)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, "");
-  // 정화 후 잔존 검사 — 남아 있으면 렌더 포기(가짜 안전 보장 금지)
-  if (/<\s*(script|iframe|object|embed|foreignobject)\b/i.test(cleaned)) return null;
-  if (/javascript:/i.test(cleaned)) return null;
-  return cleaned;
+  // DOMPurify 는 DOM 이 필요하다 — SSR 에선 정직하게 미렌더(클라이언트에서 정화 렌더).
+  if (typeof window === "undefined") return null;
+  const cleaned = DOMPurify.sanitize(trimmed, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    // svg 프로파일이 이미 script 등을 배제하나, 위험 컨테이너는 명시적으로 재금지(심층 방어).
+    // 정적 썸네일에 불필요한 상호작용 요소도 전부 금지: a(링크)·use(외부참조)·
+    // SMIL 애니메이션(set/animate* — attributeName=href 류 속성조작 벡터).
+    FORBID_TAGS: [
+      "script", "foreignObject", "iframe", "object", "embed", "style",
+      "a", "use", "set", "animate", "animateTransform", "animateMotion",
+    ],
+    FORBID_ATTR: ["href", "xlink:href"], // 썸네일 SVG 에 링크 불필요 — javascript:/외부참조 원천 차단
+  });
+  const result = cleaned.trim();
+  // 정화가 SVG 골격 자체를 바꿨거나 위험 마크업이 잔존하면 렌더 포기(안전 우선).
+  if (!/^<svg[\s>]/i.test(result)) return null;
+  if (/<\s*(script|iframe|object|embed|foreignobject)\b/i.test(result)) return null;
+  if (/javascript:/i.test(result)) return null;
+  if (/\son\w+\s*=/i.test(result)) return null;
+  return result;
 }
 
 /** 문자열/{message} 혼합 배열 → 사람이 읽는 메시지 목록(형태 불명 항목 제외). */

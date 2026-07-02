@@ -49,6 +49,12 @@ _BUILD_CACHE_TTL = 1800.0  # 30분
 _BUILD_CACHE_MAX = 128     # 메모리 상한(초과 시 가장 오래된 항목부터 제거)
 # VWorld 지오코딩(서버에 키 설정·운영중). 지번주소=PARCEL, 도로명=ROAD.
 _VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
+# 지오코딩 캐시 TTL(초):
+#   - 성공(좌표 확보): 7일 — 좌표는 사실상 불변이라 길게 캐시해 재조회 비용 절감.
+#   - 실패/미해결(빈 결과): 5분 — ★일시적 VWorld 무응답·키 누락을 7일간 "빈 좌표"로 고착시키면
+#     복구 후에도 지도가 계속 서울 폴백에 갇힌다. 짧게만 캐시해 곧 재시도되게 한다.
+_GEOCODE_CACHE_TTL_OK = 604800  # 7일
+_GEOCODE_CACHE_TTL_MISS = 300   # 5분
 
 
 class NearbyMapService:
@@ -67,12 +73,24 @@ class NearbyMapService:
         months: int = 3,
         radius_m: int = 1000,
         sigungu_hint: str = "",
+        center_hint: dict[str, float] | None = None,
     ) -> dict[str, Any]:
+        # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
+        #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
+        #   선택 필지 위치로 이동한다(백엔드 지오코딩 실패와 무관하게 서울 폴백 제거).
+        hint_lat = (center_hint or {}).get("lat")
+        hint_lon = (center_hint or {}).get("lon")
+        has_hint = bool(hint_lat and hint_lon)
+
         # 0) 결과 캐시 조회 — 동일 조건 재조회는 즉시 반환(수 초 → 수 ms)
         cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m)
         hit = _BUILD_CACHE.get(cache_key)
         if hit and (time.monotonic() - hit[0]) < _BUILD_CACHE_TTL:
-            return hit[1]
+            cached = hit[1]
+            # 캐시된 결과에 center가 비어 있고(과거 지오코딩 실패분) 지금은 힌트가 있으면 보강.
+            if has_hint and not (cached.get("center") or {}).get("lat"):
+                cached = {**cached, "center": {"lat": hint_lat, "lon": hint_lon, "address": address}}
+            return cached
 
         ym_list = self._recent_months(months)
 
@@ -103,7 +121,11 @@ class NearbyMapService:
         coords = await self._geocode_many(sorted(queries))
 
         # 4) 좌표 주입 + 미해결 그룹 제거 + 정리
+        # 중심좌표: (1) 이미 지오코딩된 주소 좌표 → (2) 주소 재지오코딩 → (3) 라우터 힌트.
+        #   ★(3) 힌트가 있으면 자체 지오코딩이 실패해도 center가 null로 남지 않는다(서울 폴백 방지).
         center = coords.get(address.strip()) or await self._geocode_one(address.strip())
+        if not center and has_hint:
+            center = {"lat": hint_lat, "lon": hint_lon, "address": address}
         for cat in categories.values():
             resolved = []
             for grp in cat["groups"]:
@@ -355,7 +377,9 @@ class NearbyMapService:
                 await client.aclose()
         if r is not None:
             try:
-                await r.setex(cache_key, 604800, json.dumps(coord or {}))
+                # ★성공은 7일, 실패/미해결은 5분만 캐시 — 일시 실패가 장기 고착되지 않게 한다.
+                ttl = _GEOCODE_CACHE_TTL_OK if coord else _GEOCODE_CACHE_TTL_MISS
+                await r.setex(cache_key, ttl, json.dumps(coord or {}))
                 await r.aclose()
             except Exception:
                 pass

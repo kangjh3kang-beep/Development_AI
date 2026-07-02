@@ -48,8 +48,14 @@ _FALLBACK_WARNED = False
 
 
 def _is_production() -> bool:
-    """dev/test 가 아닌 환경이면 프로덕션으로 본다(config.APP_ENV 기준과 동일 판정)."""
-    return (os.getenv("APP_ENV") or "development").lower() not in ("development", "test")
+    """dev/test 가 아닌 환경이면 프로덕션으로 본다.
+
+    ★공용 SSOT(app.core.env.is_production)로 일원화(전역 전파방지) — 국소 os.getenv('APP_ENV')
+    복제를 제거한다. 배포 관례상 ENVIRONMENT=production 만 설정되고 APP_ENV 가 development 로
+    남아도 프로덕션으로 올바로 판정한다(과거엔 APP_ENV 만 봐서 폴백키 우회 가능성이 있었다).
+    """
+    from app.core.env import is_production
+    return is_production()
 
 
 def _key() -> bytes:

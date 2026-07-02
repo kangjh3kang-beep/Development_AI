@@ -55,3 +55,75 @@ class TestMasterKey:
         assert ss._decrypt(tok) is None         # 현재 키로는 복호화 실패(불일치 재현)
         old = Fernet(ss._fernet_key_from_material("appkey-X"))
         assert old.decrypt(tok.encode()).decode() == "payload"  # 옛 재질로 복구 가능
+
+
+class TestProductionGuard:
+    """P1-4: production에서 하드코딩 폴백 마스터키 기동 차단(fail-fast) 검증."""
+
+    def test_prod_하드코딩폴백_기동차단(self):
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard(app_env="production")
+
+    def test_prod_SECRET_STORE_KEY_정상기동(self, monkeypatch):
+        monkeypatch.setenv("SECRET_STORE_KEY", "fixed-master-key")
+        st = ss.enforce_master_key_guard(app_env="production")
+        assert st["source"] == "SECRET_STORE_KEY" and st["stable"] is True
+
+    def test_prod_APP_SECRET_KEY_파생은_기동허용_unstable경고(self, monkeypatch):
+        # 파생 키는 로테이션 위험(unstable)이나 폴백은 아님 — 기동은 허용(경고만).
+        monkeypatch.setenv("APP_SECRET_KEY", "env-app-secret-key-40chars-xxxxxxxxxxxxx")
+        st = ss.enforce_master_key_guard(app_env="production")
+        assert st["source"] == "APP_SECRET_KEY" and st["stable"] is False
+
+    def test_dev_하드코딩폴백_경고만(self):
+        st = ss.enforce_master_key_guard(app_env="development")
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_test환경도_기동허용(self):
+        st = ss.enforce_master_key_guard(app_env="test")
+        assert st["source"] == "hardcoded-fallback"
+
+
+class TestEnvDetectionGuard:
+    """P1-4 보강(M1): app_env 미지정 시 '런타임 실제 설정 소스'로 프로덕션을 판별.
+
+    회귀 대상 버그: 가드가 app/core/config.APP_ENV 만 보던 탓에, 배포 관례상
+    ENVIRONMENT=production 만 설정되고 APP_ENV=development 로 남으면 프로덕션에서
+    하드코딩 폴백 마스터키로 조용히 기동(가드 우회)했다. 이제 os.environ 원시
+    ENVIRONMENT/APP_ENV 를 직접 수집해 '하나라도 dev/test 가 아니면 차단'한다.
+    """
+
+    def test_M1_우회핵심_ENVIRONMENT프로덕션_APP_ENV개발_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("APP_ENV", "development")
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()  # app_env 미지정 → 감지 경로
+
+    def test_ENVIRONMENT프로덕션_단독_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.delenv("APP_ENV", raising=False)
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()
+
+    def test_ENVIRONMENT스테이징_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "staging")
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()
+
+    def test_순수개발_폴백키_기동허용_오탐없음(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        monkeypatch.setenv("APP_ENV", "development")
+        st = ss.enforce_master_key_guard()  # 차단 없어야
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_test환경_감지경로_기동허용(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "test")
+        monkeypatch.setenv("APP_ENV", "test")
+        st = ss.enforce_master_key_guard()
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_프로덕션이라도_실키있으면_기동허용(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("SECRET_STORE_KEY", "fixed-master-key")
+        st = ss.enforce_master_key_guard()
+        assert st["source"] == "SECRET_STORE_KEY" and st["stable"] is True

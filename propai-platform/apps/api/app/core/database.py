@@ -3,10 +3,13 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
+from app.core.env import is_debug
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.APP_DEBUG,
+    # ★SQL echo 는 공용 SSOT(app.core.env.is_debug)로 결정 — 프로덕션에서는 무조건 off 라
+    #   SQL·바인드 파라미터 로그 유출을 원천 차단한다. 개발에서만 APP_DEBUG/DEBUG 플래그를 따른다.
+    echo=is_debug(),
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,
@@ -34,7 +37,14 @@ AsyncSessionLocal = async_sessionmaker(
 async_session_factory = AsyncSessionLocal
 
 class Base(DeclarativeBase):
-    pass
+    """⚠️레거시 Base — 동결(P1-7). 새 모델은 canonical(apps/api/database/models Base)로.
+
+    실사용 alembic(alembic.ini → database/migrations)은 canonical metadata 만 보므로
+    여기 얹힌 모델(app/models/* 71테이블)은 autogenerate 비추적이며, canonical 과 같은
+    테이블명 이중 정의가 19건(스테일 포함: 예 auth.User organization_id vs 실스키마
+    tenant_id)이다. 동결은 tests/test_dual_base_freeze.py 가 CI 로 강제한다.
+    전면 통합(스테일 정리 포함)은 별도 트랙.
+    """
 
 async def get_db():
     async with AsyncSessionLocal() as session:

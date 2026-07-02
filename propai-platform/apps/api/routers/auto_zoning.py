@@ -1111,15 +1111,24 @@ async def nearby_transactions_map(req: NearbyMapRequest):
     if not pnu and req.bcode and req.jibun_address:
         pnu = _build_pnu_from_bcode(req.bcode, req.jibun_address)
     lawd_cd = (pnu or "")[:5] if pnu else (req.bcode or "")[:5]
+    # 지도 중심 힌트: 아래 지오코딩(주소→좌표)에서 확보한 좌표를 보관해 서비스에 넘긴다.
+    #   ★서비스 내부의 주소 재지오코딩이 일시 실패해도 이 힌트로 center를 채워, 지도가
+    #    선택 필지 위치로 이동한다(백엔드 지오코딩 실패 시 서울 폴백 고착 제거).
+    center_hint: dict[str, float] | None = None
     # ★프론트가 pnu/bcode를 못 넘기는 경우(스토어 미보유·약식검색 등)에도 빈 결과가
     #  나오지 않도록, 주소를 VWORLD 지오코딩해 PNU→LAWD_CD를 직접 구한다
     #  (parcel-boundaries와 동일 폴백). 이게 없어 강남이어도 거래 0건으로 보였음.
+    #  그리고 이때 얻은 좌표를 center_hint로 보관해, 서비스 내부 재지오코딩이 실패해도
+    #  center가 서울로 폴백되지 않게 한다(pnu 이미 확보돼 이 블록을 건너뛴 경우는 프론트가
+    #  parcel-boundaries geometry center로 폴백 — 이중 안전망).
     if (not lawd_cd or len(lawd_cd) < 5) and req.address:
         try:
             from apps.api.app.services.external_api.vworld_service import VWorldService
             vworld = VWorldService()
             geo = await vworld.geocode_address(req.address)
             cand_pnu = (geo or {}).get("pnu")
+            if geo and geo.get("lat") and geo.get("lon"):
+                center_hint = {"lat": float(geo["lat"]), "lon": float(geo["lon"])}
             # 지번 PARCEL 미발견(역삼동 13 등)이라도 좌표는 나오므로, 좌표로 필지를
             # 직접 조회(point→parcel)해 pnu를 얻는다. parcel-boundaries와 동일 2차 폴백.
             if not cand_pnu and geo and geo.get("lat") and geo.get("lon"):
@@ -1142,6 +1151,7 @@ async def nearby_transactions_map(req: NearbyMapRequest):
     return await service.build(
         address=req.address, lawd_cd=lawd_cd,
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
+        center_hint=center_hint,
     )
 
 

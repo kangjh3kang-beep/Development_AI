@@ -239,6 +239,44 @@ def master_key_status() -> dict[str, Any]:
             "warning": "SECRET_STORE_KEY·APP_SECRET_KEY 미설정 — 하드코딩 폴백 사용(운영 부적합)."}
 
 
+def enforce_master_key_guard(app_env: str | None = None) -> dict[str, Any]:
+    """P1-4 배포 가드: production에서 하드코딩 폴백 마스터키로는 기동을 금지(fail-fast).
+
+    _fernet()은 os.environ만 읽는다 — pydantic-settings가 .env 파일을 자체 로드해도
+    os.environ에는 반영되지 않으므로, config의 시크릿 검증을 통과하고도 암호화는 하드코딩
+    폴백('propai-secret-store-fallback')으로 이뤄질 수 있다(코드만 알면 복호화 가능한 침묵 오염).
+    production(=development/test 외, config.py get_settings 판별과 동일 기준)에서 폴백이면
+    RuntimeError로 기동을 차단하고 조치 방법을 안내한다.
+
+    파생 규칙 자체는 불변 — 기존 폴백/파생 키로 암호화된 DB 시크릿의 복호화 호환을 깨지
+    않는다(재키잉은 reencrypt_all 운영 액션). dev/test·파생 키(unstable)는 경고만.
+    반환: master_key_status() dict(관측용).
+    """
+    status = master_key_status()
+    # ★fail-secure 프로덕션 판별을 공용 SSOT(app.core.env.is_production)로 일원화(전역 전파방지).
+    # 과거엔 여기서 os.environ 원시값 + 두 Settings 를 인라인 병합했는데, 같은 판정을
+    # config/sales_crypto/database 등 여러 게이트가 제각기 복제해 드리프트 위험이 있었다.
+    # 이제 단일 함수가 '가능한 소스를 모아 하나라도 dev/test 가 아니면 프로덕션'(안전측 차단)을
+    # 담당한다. app_env 를 명시로 넘기면(호출자 의도 최우선) 그 값으로 판정한다(행동 불변).
+    if app_env is None:
+        from app.core.env import is_production
+        is_prod = is_production()
+    else:
+        is_prod = app_env not in ("development", "test")
+    if status["source"] == "hardcoded-fallback":
+        msg = ("시크릿 스토어 마스터키가 하드코딩 폴백입니다 — SECRET_STORE_KEY(권장) 또는 "
+               "APP_SECRET_KEY를 '실제 환경변수'(export/systemd Environment)로 설정하세요. "
+               ".env 파일만으로는 os.environ에 반영되지 않습니다. 기존 폴백으로 암호화된 "
+               "시크릿은 reencrypt_all로 이전할 수 있습니다.")
+        if is_prod:
+            raise RuntimeError(f"[secret_store] {msg}")
+        logger.warning("secret_store 마스터키 하드코딩 폴백(개발 허용)", detail=msg)
+    elif not status.get("stable", False):
+        logger.warning("secret_store 마스터키 unstable(파생) — 로테이션 시 복호화 파손 위험",
+                       source=status.get("source"))
+    return status
+
+
 def _fernet():
     from cryptography.fernet import Fernet
 

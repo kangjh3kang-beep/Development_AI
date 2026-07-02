@@ -72,6 +72,17 @@ const nextConfig = {
           { key: "X-DNS-Prefetch-Control", value: "on" },
         ],
       },
+      // ★HTML(페이지) 캐시 단축 — SSG 페이지에 Next 기본 s-maxage=31536000(1년)이 붙어,
+      //   중간/CDN 캐시가 구 HTML(→배포로 소멸된 구 해시 자산 참조)을 오래 서빙하면
+      //   '백지 대시보드' 사고가 재발한다. 콘텐츠해시 자산(_next/*)은 immutable 유지가 옳으니
+      //   제외하고, HTML 라우트만 5분 공유캐시+하루 SWR 로 제한(신선한 배포가 5분 내 전파).
+      //   sw.js 는 위의 전용 no-cache 규칙이 최종 적용되도록 제외(중복 매치 시 뒤 규칙이 덮음).
+      {
+        source: "/((?!_next/|api/|sw\\.js).*)",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=0, s-maxage=300, stale-while-revalidate=86400" },
+        ],
+      },
     ];
   },
 };

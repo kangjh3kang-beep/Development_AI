@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { DEFAULT_EQUITY_RATIO_PCT } from "@/lib/finance/leverage";
 
 type Row = { month: number; phase: string; inflow: number; outflow: number; net: number; cumulative: number };
 type Summary = {
@@ -38,6 +39,7 @@ export function CashflowDcfPanel() {
   const cost = useProjectContextStore((s) => s.costData);
   const feas = useProjectContextStore((s) => s.feasibilityData);
   const site = useProjectContextStore((s) => s.siteAnalysis);
+  const setEquityRatioPct = useProjectContextStore((s) => s.setEquityRatioPct);
 
   // 기본값(억원). 컨텍스트 → 폴백.
   const [landEok, setLandEok] = useState<number>(() => Math.round(((site?.estimatedValue ?? 0) / 1e8) * 10) / 10 || 100);
@@ -45,7 +47,10 @@ export function CashflowDcfPanel() {
   const [revEok, setRevEok] = useState<number>(() => Math.round(((feas?.totalRevenueWon ?? 0) / 1e8) * 10) / 10 || 400);
   const [conMonths, setConMonths] = useState(24);
   const [saleStart, setSaleStart] = useState(6);
-  const [equityPct, setEquityPct] = useState(30);
+  // ★자기자본(%)는 로컬 useState가 아니라 SSOT(feasibilityData.equityRatioPct)를 읽/쓴다 —
+  //  투자수익성 요약 카드와 동일 슬롯을 공유해 여기서 바꾸면 요약도 즉시 반영된다(기본 10%).
+  const equityPct = feas?.equityRatioPct ?? DEFAULT_EQUITY_RATIO_PCT;
+  const setEquityPct = (n: number) => setEquityRatioPct(n);
   const [discPct, setDiscPct] = useState(6);
 
   const [result, setResult] = useState<CashflowResult | null>(null);
