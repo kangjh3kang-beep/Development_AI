@@ -70,7 +70,45 @@ _NO_SLOPE_XML = """
 _IMPLAUSIBLE_SLOPE_XML = _DEV_SLOPE_XML.replace("20도", "90도")
 
 
+# (g) ★구·지역별 상이 — 실제 용인시 조례 형태('경사도'와 값 사이에 지역명이 개입).
+#     종전 정규식('경사도\s*조사\s*N도')은 이 형태를 전량 놓쳤다(라이브 재현).
+_DISTRICT_SLOPE_XML = """
+<자치법규명><![CDATA[용인시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 2. 평균경사도의 경우 처인구 지역은 20도 이하인 토지, 기흥구 지역은 17.5도 이하인 토지, 수지구 지역은 17.5도 이하인 토지로 할 것.
+]]></조문내용>
+"""
+
+
+# ── _parse_ordin_id (본문조회 ID 필드) ──
+
+
+def test_parse_ordin_id_uses_jachi_id(service):
+    """★자치법규 본문조회 ID는 <자치법규ID>(법령용 <법령일련번호> 아님) — 라이브 재현 버그수정."""
+    xml = (
+        "<law><자치법규일련번호>2102461</자치법규일련번호>"
+        "<자치법규ID>2152625</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "용인시") == "2152625"
+
+
+def test_parse_ordin_id_falls_back_and_none(service):
+    # 자치법규ID 없으면 일련번호 폴백, 둘 다 없으면 None(무날조).
+    assert service._parse_ordin_id("<law><자치법규일련번호>777</자치법규일련번호></law>", "x") == "777"
+    assert service._parse_ordin_id("<law><기타>1</기타></law>", "x") is None
+
+
 # ── 순수 파서 (_parse_slope_criteria_from_text) ──
+
+
+def test_district_specific_slope_picks_strictest(service):
+    """★'경사도'와 값 사이 지역명 개입 형태 추출(종전 정규식 갭) + 구별 상이 → 안전측 최소 채택."""
+    r = service._parse_slope_criteria_from_text(_DISTRICT_SLOPE_XML, "용인시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)  # 최소=최엄격(안전측·무날조)
+    assert r["all_values_deg"] == [17.5, 20.0]
+    assert "상이" in (r.get("caveat") or "")  # 구별 변동 정직 고지
+    assert "경사도" in r["evidence_span"]
 
 
 def test_dev_context_slope_extracted(service):
