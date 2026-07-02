@@ -110,6 +110,33 @@ export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): 
   return "Base";
 }
 
+/** 지도 중심 후보(백엔드 payload.center 또는 프론트 폴백 좌표원) */
+export type MapCoord = { lat?: number | null; lon?: number | null; address?: string } | null | undefined;
+
+/**
+ * 유효한 지도 focusTarget 을 단일 규칙으로 해석한다.
+ *
+ * ★서울 폴백(하드코딩 초기 center) 방지의 공용 계약:
+ *   백엔드 payload.center 가 null(지오코딩 실패)이어도, 프론트가 이미 보유한
+ *   좌표원(선택 필지 좌표·구획도 center 등)을 순서대로 시도해 지도를 선택 위치로 이동시킨다.
+ *   후보를 모두 소진하면 null 을 돌려 "위치 확인 불가"로 정직하게 남긴다(가짜 좌표 날조 금지).
+ *
+ * candidates: 우선순위 순 좌표 후보 배열(앞이 우선). 각 후보는 {lat,lon,address?} 또는 null.
+ * 반환: 첫 유효 좌표를 { lat, lon, label } 로. 없으면 null.
+ */
+export function resolveMapCenter(
+  ...candidates: MapCoord[]
+): { lat: number; lon: number; label?: string } | null {
+  for (const c of candidates) {
+    const lat = c?.lat;
+    const lon = c?.lon;
+    if (typeof lat === "number" && Number.isFinite(lat) && typeof lon === "number" && Number.isFinite(lon)) {
+      return { lat, lon, label: c?.address };
+    }
+  }
+  return null;
+}
+
 export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapFeature[] {
   const byKey = new Map<string, SatongMapFeature>();
   features.forEach((feature) => {

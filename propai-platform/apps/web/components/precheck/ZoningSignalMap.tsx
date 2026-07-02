@@ -9,7 +9,7 @@
 import { useMemo } from "react";
 
 import { SatongMultiMap } from "@/components/map/SatongMultiMap";
-import type { SatongMapFeature, SatongMapLayerState } from "@/lib/satong-map-layers";
+import { resolveMapCenter, type SatongMapFeature, type SatongMapLayerState } from "@/lib/satong-map-layers";
 import type { ZoningSignal } from "./types";
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -97,7 +97,11 @@ export function ZoningSignalMap({
         height={360}
         selectedParcels={mapFeatures}
         layerState={layerState}
-        focusTarget={centerHint ? { lat: centerHint.lat, lon: centerHint.lon, label: "조닝 시그널 중심" } : null}
+        focusTarget={(() => {
+          // 공용 좌표 해석 — 유한한 좌표만 focusTarget 로(NaN/null 은 이동 스킵, 서울 폴백 X).
+          const c = resolveMapCenter(centerHint);
+          return c ? { lat: c.lat, lon: c.lon, label: "조닝 시그널 중심" } : null;
+        })()}
         featureStatusColors={statusColors}
         featureStatusLabels={statusLabels}
       />

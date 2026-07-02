@@ -20,6 +20,7 @@ import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/Kak
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
 import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
@@ -195,15 +196,9 @@ export function GlobalAddressSearch({
   // 대량(수백 필지) 가독성: 요약 헤더 + 스크롤 컴팩트 리스트로 일목요연하게.
   const parcelRows = useMemo(() =>
     displayAddresses.map((a) => {
-      // 라벨 = 법정동(소재지)+지번이 모두 보이게. 엑셀(소재지·지번 분리 양식)은 jibunAddress가
-      //   번지만("211-443")이라 법정동이 빠진다 → fullAddress가 그 번지를 포함하고 더 길면
-      //   fullAddress("서울특별시 동작구 상도동 211-443")를 쓴다. 검색분(도로명 fullAddress)은
-      //   지번을 포함하지 않으므로 jibunAddress(지번) 유지.
-      const jb = (a.jibunAddress || "").trim();
-      const full = (a.fullAddress || "").trim();
-      const label = (full && jb && full.includes(jb) && full.length > jb.length)
-        ? full
-        : (jb || full);
+      // 라벨 = 법정동(소재지)+지번이 모두 보이게. 공용 정규화(preferredEntryAddress)로 단일화 —
+      //   엑셀(소재지·지번 분리 양식) jibunAddress가 번지만("211-443")이면 fullAddress를 쓴다.
+      const label = preferredEntryAddress(a);
       return {
         label: label || "(주소 미상)",
         areaSqm: a.areaSqm ?? null,
