@@ -87,10 +87,19 @@ export function UtilizationMaximizerCard() {
           현실최적 채택 시 기준 대비 +{realisticGainPct}% 상향
         </p>
       )}
-      {/* U2: 법정상한 캡 고지(오도방지) — 단순가산치가 법정상한에 걸려 캡됐음을 정직 표기 */}
+      {/* U2: 법정상한 캡 고지(오도방지) — should_fix#2: utilizationToEvidence와 동일 문구로 통일
+          ("단순가산 X% → 법정상한 Y%로 캡") — 이전 "…미반영 이론치 아님" 표현은 150%가 바로 그
+          이론치인데 '아님'으로 읽혀 자기모순이었다(적대적 리뷰 확정). */}
       {result.isCapped && result.legalCapFar != null && (
         <p className="mt-2 rounded-lg border border-[color-mix(in_srgb,var(--status-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] px-3 py-1.5 text-[10px] font-bold text-[var(--status-warning)]">
-          ⚠ 이론상 상한은 법정상한 {result.legalCapFar}%로 캡됨(단순가산 {result.theoreticalUncappedFar}% → 중복적용·법정상한 미반영 이론치 아님)
+          ⚠ 단순가산 {result.theoreticalUncappedFar}% → 법정상한 {result.legalCapFar}%로 캡됨(중복적용 한도 미반영 이론치 아닌, 캡 적용 후 값)
+        </p>
+      )}
+      {/* should_fix#3: 법정상한 미상이라 캡을 아예 못 건 상태 정직 고지(수치 조작 없이 고지만).
+          백엔드는 미상 시 250 폴백캡을 걸지만(방향 상이), 프론트는 없는 상한을 지어내지 않는다(무목업). */}
+      {result.capUnknown && (
+        <p className="mt-2 rounded-lg border border-dashed border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1.5 text-[10px] font-bold text-[var(--text-hint)]">
+          ⓘ 법정상한 미확인 — 캡 미적용(용도지역 법정상한을 특정할 수 없어 이론상 상한·현실최적에 상한을 걸지 못했습니다)
         </p>
       )}
       {/* F5: 층수 바인딩 지역(녹지 등) 고지 — 인센티브 실현에 층수완화 선행 필요 */}

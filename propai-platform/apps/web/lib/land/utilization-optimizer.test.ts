@@ -146,6 +146,63 @@ describe("optimizeUtilization — F2 법정상한 캡(자연녹지 150→100)", 
   });
 });
 
+describe("optimizeUtilization — finding D(적대적 리뷰 확정) 다필지 과잉캡→음수 gain 가드", () => {
+  // 재현: 다필지 통합에서 baseFar=integratedFarEffPct(면적가중 통합실효 250)인데
+  //   dominantZoneCode가 자연녹지(zone맵 cap=100)면, 캡이 legalCapFar(100)로 baseFar(250)를
+  //   강제 하향시켜 realisticGainPct가 음수(-60)가 됐다(F2 과대표시 차단과 정반대인 과소표시).
+  //   ★nationalFarPct는 다필지에서 guardMultiParcelRich가 제거하므로 site()에 미설정 —
+  //   integratedFarEffPct(통합실효)만으로 baseFar를 확정하는 게 다필지의 실제 SSOT 계약.
+  const r = optimizeUtilization(
+    site({
+      zoneCode: null,
+      dominantZoneCode: "자연녹지지역",
+      integratedFarEffPct: 250,
+    }),
+  )!;
+
+  it("baseFar=통합실효 250(법정상한 아님)", () => {
+    expect(r.baseFar).toBe(250);
+  });
+
+  it("★finding D 해소: 캡이 baseFar(250) 아래로 내리지 않는다 — realistic/theoMax ≥ 250", () => {
+    expect(r.realisticOptimalFar).toBeGreaterThanOrEqual(250);
+    expect(r.theoreticalMaxFar).toBeGreaterThanOrEqual(250);
+  });
+
+  it("★finding D 해소: realisticGainPct가 음수가 아니다(과소표시 소멸)", () => {
+    expect(r.realisticGainPct).not.toBeNull();
+    expect(r.realisticGainPct as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it("무회귀: 단일필지 자연녹지(base=100=legalCapFar)는 종전대로 100 유지", () => {
+    const single = optimizeUtilization(
+      site({ zoneCode: "자연녹지지역", nationalFarPct: 100 }),
+    )!;
+    expect(single.baseFar).toBe(100);
+    expect(single.realisticOptimalFar).toBe(100);
+    expect(single.theoreticalMaxFar).toBe(100);
+    expect(single.realisticGainPct).toBe(0);
+  });
+});
+
+describe("optimizeUtilization — should_fix#3 capUnknown(미상 용도지역 캡 방향 고지)", () => {
+  it("법정상한 특정 불가(미상 용도지역·nationalFarPct 없음)면 capUnknown=true + isCapped=false(수치 미조작)", () => {
+    const r = optimizeUtilization(
+      site({ zoneCode: "알수없는지역", effectiveFarPct: 120 }),
+    )!;
+    expect(r.legalCapFar).toBeNull();
+    expect(r.capUnknown).toBe(true);
+    expect(r.isCapped).toBe(false);
+  });
+
+  it("법정상한 확보 시 capUnknown=false", () => {
+    const r = optimizeUtilization(
+      site({ zoneCode: "자연녹지지역", nationalFarPct: 100 }),
+    )!;
+    expect(r.capUnknown).toBe(false);
+  });
+});
+
 describe("optimizeUtilization — F5 층수 바인딩 강등(녹지)", () => {
   const r = optimizeUtilization(
     site({ zoneCode: "자연녹지지역", nationalFarPct: 100 }),

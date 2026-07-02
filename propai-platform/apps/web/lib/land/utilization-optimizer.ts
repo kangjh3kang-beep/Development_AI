@@ -77,6 +77,14 @@ export interface UtilizationResult {
   theoreticalUncappedFar: number | null;
   /** 이론최대가 법정상한에 걸려 캡됐는가(오도방지 신호). */
   isCapped: boolean;
+  /**
+   * 용도지역 법정상한 미상이라 캡을 아예 적용하지 못했는가(should_fix #3).
+   * ★백엔드는 미상 용도지역에 250 폴백캡을 걸지만(cap_far = NATIONAL_FAR_LIMITS.get(zone, 250)),
+   *   프론트는 "없는 상한을 지어내지 않는다"(무목업) 원칙상 폴백캡을 걸지 않고 null(캡 미적용)로
+   *   둔다. 방향이 다르므로(백엔드=보수적 캡, 프론트=캡 없음) 소비처가 "법정상한 미확인 — 캡
+   *   미적용" 배지로 정직 고지하도록 이 신호를 내보낸다(수치 조작 없이 고지만).
+   */
+  capUnknown: boolean;
   // ── F5: 층수 바인딩(녹지 등 max_floors 실질 바인딩) 정직 고지 ──
   /** 층수 바인딩 용도지역(녹지·관리·농림)이라 인센티브 실현에 층수완화 선행이 필요. */
   floorBound: boolean;
@@ -249,7 +257,16 @@ export function optimizeUtilization(
 
   // F2 법정상한 캡 — 완화 합산의 상한(백엔드 cap_far와 정합). nationalFarPct(SSOT 실값) 우선,
   //   없으면 용도지역 법정상한 맵(nationalFarLimitForZone). 둘 다 미상이면 null(캡 미적용·정직).
+  //
+  // ★finding D(적대적 리뷰 확정·재현): 다필지 통합에서 baseFar=integratedFarEffPct(예 면적가중
+  //   통합실효 250)인데 dominantZoneCode가 자연녹지(zone맵 cap=100)면, legalCapFar=100이 이미
+  //   확정된 baseFar(250)보다 낮아 캡이 통합실효를 강제 하향(250→100, realisticGainPct=-60 음수)
+  //   시킨다. 이는 이번 수정(F2 과대표시 차단)과 정반대인 과소표시 버그다. 캡은 "이미 도달한
+  //   baseFar 아래로 내리지 않는다"(그 미만은 이미 실현된 값이라 캡 대상이 아님) — 캡의 목적은
+  //   base+incentive의 "증분"이 법정상한을 넘는지 판정하는 것이지, base 자체를 재판정하는 게
+  //   아니다. legalCapFar가 null(용도지역 미상)이면 effectiveCapFar도 null(캡 미적용 유지).
   const legalCapFar = legalFar ?? nationalFarLimitForZone(zoneCode);
+  const effectiveCapFar = legalCapFar != null ? Math.max(legalCapFar, baseFar) : null;
 
   // F5 층수 바인딩 — 녹지 등은 건폐×층수가 실질 바인딩이라 인센티브 실현에 층수완화 선행 필요.
   const floorBound = isFloorBoundZone(zoneCode);
@@ -357,11 +374,17 @@ export function optimizeUtilization(
   // F2 법정상한 캡 — 백엔드 far_optimization_simulator의 min(base+incentive, cap_far)와 정합.
   //   legalCapFar가 null(용도지역 미상)이면 캡 미적용(원값 유지·정직). ★캡은 baseFar가 이미
   //   법정상한(legalFar)일 때 실질적으로 인센티브 합산분을 상한으로 되돌린다(자연녹지 150→100).
-  const cappedTheo = capFarToLegal(theoMaxRaw, legalCapFar);
-  const cappedRealistic = capFarToLegal(realisticRaw, legalCapFar);
+  //   ★finding D 수정: 캡 적용은 effectiveCapFar(=max(legalCapFar, baseFar))를 사용 — 다필지
+  //   통합실효(baseFar)가 zone맵 캡보다 이미 높으면(예 250>100) 캡이 baseFar 아래로 내리지 않는다.
+  const cappedTheo = capFarToLegal(theoMaxRaw, effectiveCapFar);
+  const cappedRealistic = capFarToLegal(realisticRaw, effectiveCapFar);
   const theoMax = cappedTheo.value;
   const realistic = cappedRealistic.value;
   const isCapped = cappedTheo.isCapped || cappedRealistic.isCapped;
+  // should_fix #3: 법정상한 자체를 못 구해(legalCapFar null) 캡을 아예 못 건 상태 — 백엔드는 이
+  //   경우 250 폴백캡을 걸지만(방향 상이), 프론트는 없는 상한을 지어내지 않는다(무목업). 수치는
+  //   그대로 두되 소비처가 "법정상한 미확인 — 캡 미적용" 배지로 정직 고지하도록 신호만 낸다.
+  const capUnknown = legalCapFar == null;
 
   const donationMinimized = !incentives.some(
     (i) => i.included && i.donationRequired,
@@ -385,6 +408,7 @@ export function optimizeUtilization(
     legalCapFar,
     theoreticalUncappedFar: theoMaxRaw,
     isCapped,
+    capUnknown,
     floorBound,
     honestNote,
   };
