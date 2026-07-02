@@ -254,8 +254,32 @@ def enforce_master_key_guard(app_env: str | None = None) -> dict[str, Any]:
     """
     status = master_key_status()
     if app_env is None:
-        from app.core.config import get_settings
-        app_env = get_settings().APP_ENV
+        # ★fail-secure: 프로덕션 판별을 '런타임이 실제 쓰는' 설정 소스와 정합화한다.
+        # main.py 는 apps.api.config(get_settings().environment=ENVIRONMENT)로 기동하는데,
+        # 배포 관례상 ENVIRONMENT=production 만 설정되고 APP_ENV 는 .env 의 development 로 고정될 수
+        # 있다(app/core/config 는 ENVIRONMENT 를 별칭으로 안 봄). 한쪽만 보면 프로덕션에서 폴백 키로
+        # 조용히 기동(가드 우회)한다. 따라서 가능한 모든 소스를 수집해 '하나라도 dev/test 가 아니면
+        # 프로덕션으로 간주'(안전측 차단)한다.
+        # 우선순위: os.environ 의 원시 ENVIRONMENT/APP_ENV(Settings 생성 실패와 무관하게 항상 읽힘)
+        # → 그 다음 두 Settings 객체(.env 병합값). 어느 소스든 하나라도 prod 계열이면 차단.
+        envs: set[str] = set()
+        for raw in (os.getenv("ENVIRONMENT"), os.getenv("APP_ENV")):
+            if raw:
+                envs.add(raw.strip().lower())
+        try:
+            from apps.api.config import get_settings as _root_settings
+            envs.add((_root_settings().environment or "").strip().lower())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from app.core.config import get_settings as _core_settings
+            envs.add((_core_settings().APP_ENV or "").strip().lower())
+        except Exception:  # noqa: BLE001
+            pass
+        envs.discard("")
+        # 수집값이 있고 전부 {development,test} 부분집합일 때만 개발로 취급, 그 외(불명 포함)는 production.
+        is_dev = bool(envs) and envs <= {"development", "test"}
+        app_env = "development" if is_dev else "production"
     if status["source"] == "hardcoded-fallback":
         msg = ("시크릿 스토어 마스터키가 하드코딩 폴백입니다 — SECRET_STORE_KEY(권장) 또는 "
                "APP_SECRET_KEY를 '실제 환경변수'(export/systemd Environment)로 설정하세요. "

@@ -82,3 +82,48 @@ class TestProductionGuard:
     def test_test환경도_기동허용(self):
         st = ss.enforce_master_key_guard(app_env="test")
         assert st["source"] == "hardcoded-fallback"
+
+
+class TestEnvDetectionGuard:
+    """P1-4 보강(M1): app_env 미지정 시 '런타임 실제 설정 소스'로 프로덕션을 판별.
+
+    회귀 대상 버그: 가드가 app/core/config.APP_ENV 만 보던 탓에, 배포 관례상
+    ENVIRONMENT=production 만 설정되고 APP_ENV=development 로 남으면 프로덕션에서
+    하드코딩 폴백 마스터키로 조용히 기동(가드 우회)했다. 이제 os.environ 원시
+    ENVIRONMENT/APP_ENV 를 직접 수집해 '하나라도 dev/test 가 아니면 차단'한다.
+    """
+
+    def test_M1_우회핵심_ENVIRONMENT프로덕션_APP_ENV개발_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("APP_ENV", "development")
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()  # app_env 미지정 → 감지 경로
+
+    def test_ENVIRONMENT프로덕션_단독_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.delenv("APP_ENV", raising=False)
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()
+
+    def test_ENVIRONMENT스테이징_폴백키_차단(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "staging")
+        with pytest.raises(RuntimeError):
+            ss.enforce_master_key_guard()
+
+    def test_순수개발_폴백키_기동허용_오탐없음(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        monkeypatch.setenv("APP_ENV", "development")
+        st = ss.enforce_master_key_guard()  # 차단 없어야
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_test환경_감지경로_기동허용(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "test")
+        monkeypatch.setenv("APP_ENV", "test")
+        st = ss.enforce_master_key_guard()
+        assert st["source"] == "hardcoded-fallback"
+
+    def test_프로덕션이라도_실키있으면_기동허용(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("SECRET_STORE_KEY", "fixed-master-key")
+        st = ss.enforce_master_key_guard()
+        assert st["source"] == "SECRET_STORE_KEY" and st["stable"] is True
