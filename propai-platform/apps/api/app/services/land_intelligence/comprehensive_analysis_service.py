@@ -225,6 +225,100 @@ def _build_site_evidence_block(result: dict) -> dict[str, Any]:
             return {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
 
 
+# ── T1-4(경사도 고아 데이터 배선) — terrain 분석 → detect_special_parcel 계약 ──
+#   docs/LEGAL_ENGINE_SLOPE_FOREST_PLAN_2026-07-02.md T1: terrain_service가 SRTM 30m
+#   DEM으로 실산출하는 mean_pct/max_pct가 특이부지 게이트에 미배선(고아 데이터)이던 것을
+#   종합분석 경로에서 배선한다. 계약(E-gate 합의):
+#   terrain_facts = {"평균경사도_pct": float, "최대경사도_pct": float, "source": str}
+#   원칙: 데이터 없으면 None=현행 완전 동일(additive) · developability 완화 금지(전달만).
+_TERRAIN_FACTS_SOURCE = "SRTM30_DEM"
+_TERRAIN_FETCH_TIMEOUT_S = 15.0
+
+
+def _is_forest_slope_candidate(sp_input: dict | None) -> bool:
+    """경사도 심층검토 후보 여부 — 임야 지목 또는 산지 구역만(불필요 DEM 호출 차단).
+
+    detect_special_parcel의 산지 게이트(경사도 forest_facts)가 소비하는 입력만 대상.
+    비후보는 terrain 조회 자체를 생략해 현행 동작·지연을 100% 보존한다(additive).
+    """
+    if not isinstance(sp_input, dict):
+        return False
+    if "임야" in str(sp_input.get("land_category") or ""):
+        return True
+    districts = sp_input.get("special_districts") or []
+    if isinstance(districts, (list, tuple)):
+        return any("산지" in str(d) for d in districts)
+    return False
+
+
+def _terrain_facts_from_result(terrain_result: dict | None) -> dict[str, Any] | None:
+    """terrain_service.analyze_terrain 결과 → terrain_facts 계약 dict.
+
+    ok:false·slope 결손·비수치는 None(무날조 — 불확실 데이터는 전달하지 않는다).
+    source는 SRTM 30m DEM 근사임을 명기(공식 평균경사도조사서 아님 — 한계는
+    special_parcel 쪽 정확도한계 고지가 담당).
+    """
+    if not isinstance(terrain_result, dict) or not terrain_result.get("ok"):
+        return None
+    slope = terrain_result.get("slope")
+    if not isinstance(slope, dict):
+        return None
+    mean_pct = slope.get("mean_pct")
+    max_pct = slope.get("max_pct")
+    if not isinstance(mean_pct, (int, float)) or not isinstance(max_pct, (int, float)):
+        return None
+    return {
+        "평균경사도_pct": float(mean_pct),
+        "최대경사도_pct": float(max_pct),
+        "source": _TERRAIN_FACTS_SOURCE,
+    }
+
+
+async def _fetch_terrain_facts(
+    address: str | None, pnu: str | None, sp_input: dict | None
+) -> dict[str, Any] | None:
+    """후보 필지에 한해 DEM 경사도(terrain_service)를 조회해 terrain_facts 산출.
+
+    비후보·실패·타임아웃은 전부 None(graceful) — 특이부지 감지의 현행 경로 무손상.
+    """
+    if not _is_forest_slope_candidate(sp_input):
+        return None
+    try:
+        from app.services.terrain import terrain_service as _ts
+
+        terrain = await asyncio.wait_for(
+            _ts.analyze_terrain(address, pnu, None, None),
+            timeout=_TERRAIN_FETCH_TIMEOUT_S,
+        )
+        return _terrain_facts_from_result(terrain)
+    except Exception:  # noqa: BLE001 — 경사도 조회 실패는 무손상(None=현행 동일)
+        return None
+
+
+def _detect_special_parcel_compat(
+    sp_input: dict, terrain_facts: dict[str, Any] | None
+) -> dict | None:
+    """detect_special_parcel 호환 호출 — terrain_facts는 지원 시그니처에만 전달.
+
+    W1/W2 병렬 착지 안전장치: special_parcel.py(E-gate 소유)에 terrain_facts 인자가
+    아직 없으면 현행 시그니처로 호출한다(기존 호출부 무수정 호환 원칙). 배선은 전달만
+    하며 developability 판정에는 일절 개입하지 않는다(정직 게이트 보존).
+    """
+    import inspect
+
+    from app.services.zoning import special_parcel as _sp_mod
+
+    detect = _sp_mod.detect_special_parcel
+    if terrain_facts is not None:
+        try:
+            params = inspect.signature(detect).parameters
+        except (TypeError, ValueError):  # 시그니처 미해석 — 현행 호출 폴백
+            params = {}
+        if "terrain_facts" in params:
+            return detect(sp_input, terrain_facts=terrain_facts)
+    return detect(sp_input)
+
+
 class ComprehensiveAnalysisService:
     """주소 입력만으로 7개 분석 카테고리를 자동 수행."""
 
@@ -384,8 +478,6 @@ class ComprehensiveAnalysisService:
         #   site_analysis_interpreter가 특이제약을 인지 못하고 '최대 연면적 가능'류를 독자
         #   서술하는 할루시네이션 위험. 여기서 감지해 result에 부착하면 인터프리터가 그라운딩한다.
         try:
-            from app.services.zoning.special_parcel import detect_special_parcel
-
             _lr = base.get("land_register") if isinstance(base.get("land_register"), dict) else {}
             _sp_input = {
                 "zone_type": zone_type,
@@ -396,7 +488,13 @@ class ComprehensiveAnalysisService:
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr.get("road_width_m"),
             }
-            special = detect_special_parcel(_sp_input)
+            # T1-4 실배선 — 임야/산지 후보만 DEM 경사도(terrain_service)를 조회해
+            # detect_special_parcel에 전달(계약: 평균경사도_pct·최대경사도_pct·source).
+            # 조회 실패·비후보는 None=현행 완전 동일. 게이트 판정은 E-gate 소유(전달만).
+            _terrain_facts = await _fetch_terrain_facts(
+                base.get("address") or address, _pnu, _sp_input
+            )
+            special = _detect_special_parcel_compat(_sp_input, _terrain_facts)
             if special:
                 result["special_parcel"] = special
                 _warns = result.get("warnings")

@@ -142,3 +142,209 @@ def test_scenario_gate_membership_surfaces_forest_disclosure():
     )
     # 노출되는 disclosure가 정직-실패 문구인지.
     assert any(mk in sg["honest_disclosure"] for mk in _HONEST_SURVEY_MARKERS)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# T1(경사도 고아 데이터 배선)·T3(임목축적 150% 비교)·T4(부담금 고지) — E-gate 배선 검증.
+#   ★비협상 원칙: 어떤 관측데이터(DEM·산림청 커넥터)가 주입돼도 developability
+#   (NEEDS_OFFICIAL_SURVEY)·official_survey_required는 절대 완화되지 않는다(예비판정 필드만 가산).
+# ──────────────────────────────────────────────────────────────────────────
+import math  # noqa: E402
+
+_FOREST_INPUT = {"land_category": "임야", "zone_type": "계획관리지역"}
+
+
+def _deg_to_pct(deg: float) -> float:
+    return math.tan(math.radians(deg)) * 100.0
+
+
+def _forest_factor(r: dict) -> dict:
+    return next(f for f in r["factors"] if isinstance(f.get("forest_facts"), dict))
+
+
+class TestTerrainSlopeWiring:
+    """T1 — SRTM DEM terrain_facts 주입 + 예비판정(조례값 우선, 없으면 별표4 25도)."""
+
+    def test_no_terrain_identical_to_current(self):
+        """terrain/forest 미제공 → 현행과 완전 동일(회귀 0). 예비판정 필드도 미부착."""
+        plain = detect_special_parcel(dict(_FOREST_INPUT))
+        kw = detect_special_parcel(dict(_FOREST_INPUT), terrain_facts=None,
+                                   forest_data=None, slope_criteria=None)
+        assert plain == kw
+        assert "forest_preliminary_assessment" not in plain
+        f = _forest_factor(plain)
+        assert "preliminary_assessment" not in f
+        # forest_facts 정량 필드는 여전히 전부 미상(None) — 무날조.
+        assert all(f["forest_facts"][k] is None for k in (
+            "평균경사도_pct", "입목축적_per_ha", "관할평균_입목축적_per_ha", "산지구분"))
+
+    def test_dem_18deg_default_criteria_preliminary_fit(self):
+        """DEM 18°(≈32.5%) vs 국가기준 25°(tan25°≈46.6%) → '예비 적합 가능성'."""
+        dem = round(_deg_to_pct(18.0), 2)
+        r = detect_special_parcel(dict(_FOREST_INPUT), terrain_facts={
+            "평균경사도_pct": dem, "최대경사도_pct": 55.0, "source": "SRTM30_DEM"})
+        f = _forest_factor(r)
+        # forest_facts에 값 주입 + source/정확도한계 명기(설명가능성).
+        assert f["forest_facts"]["평균경사도_pct"] == dem
+        assert f["forest_facts"]["경사도_source"] == "SRTM30_DEM"
+        assert "공식 평균경사도조사서 아님" in f["forest_facts"]["경사도_정확도한계"]
+        slope = f["preliminary_assessment"]["slope"]
+        assert "예비 적합" in slope["judgment"]
+        assert slope["criteria_deg"] == 25.0
+        assert abs(slope["criteria_pct"] - _deg_to_pct(25.0)) < 0.1  # tan(25°)≈46.6%
+        assert "별표4" in slope["criteria_source"]
+        # %↔도 변환 명시(tan) + 산식 동반(설명가능성).
+        assert "tan" in slope["formula"]
+        assert any("조례" in c for c in slope["caveats"])  # 지자체 조례 별도 확인
+        assert any("공식 평균경사도조사서 아님" in lim for lim in slope["limitations"])
+        assert slope["legal_ref_keys"] == ["forest_permit_criteria"]
+
+    def test_dem_boundary_band_requires_official_survey(self):
+        """기준×0.8 < DEM ≤ 기준 → '경계 — 공식조사 필수'."""
+        r = detect_special_parcel(dict(_FOREST_INPUT),
+                                  terrain_facts={"평균경사도_pct": 40.0, "source": "SRTM30_DEM"})
+        slope = _forest_factor(r)["preliminary_assessment"]["slope"]
+        assert "경계" in slope["judgment"] and "공식조사" in slope["judgment"]
+
+    def test_dem_35deg_preliminary_exceed(self):
+        """DEM 35°(≈70.0%) > 기준 46.6% → '예비 초과'(대체부지 검토 권고)."""
+        r = detect_special_parcel(dict(_FOREST_INPUT), terrain_facts={
+            "평균경사도_pct": round(_deg_to_pct(35.0), 2), "source": "SRTM30_DEM"})
+        slope = _forest_factor(r)["preliminary_assessment"]["slope"]
+        assert "예비 초과" in slope["judgment"] and "대체부지" in slope["judgment"]
+
+    def test_ordinance_slope_criteria_takes_precedence(self):
+        """조례값(T2 resolve_slope_criteria 계약) 제공 시 국가기준 25° 대신 조례 기준 적용."""
+        dem = round(_deg_to_pct(18.0), 2)  # 32.49% — 조례 17.5°(31.53%)는 초과, 25°면 적합.
+        r = detect_special_parcel(
+            dict(_FOREST_INPUT),
+            terrain_facts={"평균경사도_pct": dem, "source": "SRTM30_DEM"},
+            slope_criteria={"slope_deg": 17.5, "ordinance_name": "OO군 도시계획조례",
+                            "verified": "api_parsed"})
+        slope = _forest_factor(r)["preliminary_assessment"]["slope"]
+        assert slope["criteria_deg"] == 17.5
+        assert "OO군 도시계획조례" in slope["criteria_source"]
+        assert "예비 초과" in slope["judgment"]
+
+    def test_terrain_on_non_forest_parcel_is_noop(self):
+        """임야가 아닌 특이부지에 terrain_facts를 줘도 아무 변화 없음(과주입 방지)."""
+        base = {"land_category": "학교용지", "zone_type": "일반상업지역"}
+        plain = detect_special_parcel(dict(base))
+        with_terrain = detect_special_parcel(dict(base), terrain_facts={
+            "평균경사도_pct": 70.0, "source": "SRTM30_DEM"})
+        assert plain == with_terrain
+
+
+class TestForestStockingWiring:
+    """T3 — 산림청 커넥터 forest_data 주입 + 별표4 150% 비교(둘 다 확보 시에만)."""
+
+    _DATA = {"입목축적_per_ha": 120.0, "관할평균_입목축적_per_ha": 100.0,
+             "산지구분": "준보전산지", "source": "data.forest.go.kr"}
+
+    def test_stocking_120pct_preliminary_fit(self):
+        r = detect_special_parcel(dict(_FOREST_INPUT), forest_data=dict(self._DATA))
+        f = _forest_factor(r)
+        # forest_facts 주입(설명가능성 — 출처 동반).
+        assert f["forest_facts"]["입목축적_per_ha"] == 120.0
+        assert f["forest_facts"]["관할평균_입목축적_per_ha"] == 100.0
+        assert f["forest_facts"]["산지구분"] == "준보전산지"
+        assert f["forest_facts"]["official_data_source"] == "data.forest.go.kr"
+        st = f["preliminary_assessment"]["stocking"]
+        assert st["입목축적_비율_pct"] == 120.0
+        assert "예비 적합" in st["judgment"]
+        assert any("산지관리법 시행령" in b and "별표4" in b for b in st["legal_basis"])
+        assert st["legal_ref_keys"] == ["forest_permit_criteria"]
+
+    def test_stocking_160pct_preliminary_exceed(self):
+        data = dict(self._DATA, 입목축적_per_ha=160.0)
+        r = detect_special_parcel(dict(_FOREST_INPUT), forest_data=data)
+        st = _forest_factor(r)["preliminary_assessment"]["stocking"]
+        assert st["입목축적_비율_pct"] == 160.0
+        assert "예비 초과" in st["judgment"]
+
+    def test_stocking_skipped_when_average_missing(self):
+        """관할평균 미확보 → 비교 skip + 사유(비율 날조 금지)."""
+        data = {"입목축적_per_ha": 120.0, "관할평균_입목축적_per_ha": None,
+                "산지구분": None, "source": "data.forest.go.kr"}
+        r = detect_special_parcel(dict(_FOREST_INPUT), forest_data=data)
+        pa = _forest_factor(r)["preliminary_assessment"]
+        assert pa["stocking"] is None
+        assert "관할평균" in pa["stocking_skip_reason"]
+
+
+class TestGatePreservationInvariant:
+    """★비협상 — 어떤 관측데이터 조합에서도 developability·게이트 등급 절대 불변."""
+
+    def test_developability_never_relaxed_by_observations(self):
+        plain = detect_special_parcel(dict(_FOREST_INPUT))
+        combos = [
+            {"terrain_facts": {"평균경사도_pct": 5.0, "source": "SRTM30_DEM"}},   # 매우 완만해도
+            {"terrain_facts": {"평균경사도_pct": 70.0, "source": "SRTM30_DEM"}},  # 급경사여도
+            {"forest_data": {"입목축적_per_ha": 50.0, "관할평균_입목축적_per_ha": 100.0,
+                             "산지구분": "준보전산지", "source": "x"}},
+            {"terrain_facts": {"평균경사도_pct": 10.0, "source": "SRTM30_DEM"},
+             "forest_data": {"입목축적_per_ha": 80.0, "관할평균_입목축적_per_ha": 100.0,
+                             "산지구분": "준보전산지", "source": "x"}},
+        ]
+        for kw in combos:
+            r = detect_special_parcel(dict(_FOREST_INPUT), **kw)
+            assert r["developability"] == "NEEDS_OFFICIAL_SURVEY", kw
+            assert r["severity_label"] == plain["severity_label"]
+            assert r["resolvable"] == plain["resolvable"]
+            f = _forest_factor(r)
+            assert f["developability"] == "NEEDS_OFFICIAL_SURVEY"
+            assert f["official_survey_required"] is True
+            assert f["blocking_unknown"] is True
+            assert gate_decision(r["developability"], r["resolvable"]) == "TENTATIVE"
+            # 예비판정 disclaimer가 '확정 아님'을 명시.
+            assert "확정" in f["preliminary_assessment"]["disclaimer"]
+
+    def test_rank_table_unchanged_by_wiring(self):
+        assert _RANK == {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2,
+                         "NEEDS_OFFICIAL_SURVEY": 2, "PRECONDITION": 3, "BLOCKED": 4}
+
+
+class TestConversionChargeDisclosure:
+    """T4 — 농지/임야 게이트에 부담금 존재 고지 + verified legal_ref 연결(C·A 산출 소비)."""
+
+    def test_farmland_charge_notice_and_refs(self):
+        r = detect_special_parcel({"land_category": "전", "zone_type": "계획관리지역"})
+        f = next(x for x in r["factors"] if x["category"].startswith("농지"))
+        cn = f["charge_notice"]
+        assert cn["charge_name"] == "농지보전부담금"
+        assert "farmland_preservation_charge" in f["legal_ref_keys"]
+        verified = {x["key"] for x in f["legal_refs"] if x["url_status"] == "verified"}
+        assert "farmland_preservation_charge" in verified
+        assert "farmland_conversion" in verified  # 기존 키 보존(가산만)
+        assert "농지보전부담금" in r["honest_disclosure"]
+        # 공시지가 미제공 → 추정액 미산출(무날조) + 사유.
+        assert cn["estimate"] is None and cn["estimate_note"]
+
+    def test_forest_charge_notice_and_refs(self):
+        r = detect_special_parcel(dict(_FOREST_INPUT))
+        f = _forest_factor(r)
+        cn = f["charge_notice"]
+        assert cn["charge_name"] == "대체산림자원조성비"
+        assert "forest_replacement_charge" in f["legal_ref_keys"]
+        verified = {x["key"] for x in f["legal_refs"] if x["url_status"] == "verified"}
+        assert "forest_replacement_charge" in verified
+        assert "forest_conversion" in verified  # 기존 키 보존
+        assert "대체산림자원조성비" in r["honest_disclosure"]
+        assert cn["estimate"] is None  # 고시 단가·공시지가 미주입 — 무날조
+
+    def test_farmland_charge_estimate_via_bridge(self):
+        """공시지가·면적 확보 시 C(land_conversion_charges) 브리지로 추정액 산출(10만원/㎡×1000㎡→3,000만원)."""
+        r = detect_special_parcel({"land_category": "전", "zone_type": "제2종일반주거지역",
+                                   "area_sqm": 1000, "official_land_price_per_m2": 100000})
+        f = next(x for x in r["factors"] if x["category"].startswith("농지"))
+        est = f["charge_notice"]["estimate"]
+        assert est is not None
+        assert est["amount_won"] == 30_000_000
+        assert est["confidence"] == "estimated"
+
+    def test_charge_disclosure_keeps_existing_honest_markers(self):
+        """부담금 고지 가산 후에도 기존 정직-실패 문구(산림조사서·확정아님)는 보존."""
+        r = detect_special_parcel(dict(_FOREST_INPUT))
+        honest = r["honest_disclosure"]
+        assert "산림조사서" in honest and "공식 산림데이터" in honest
+        assert "가능합니다" not in honest

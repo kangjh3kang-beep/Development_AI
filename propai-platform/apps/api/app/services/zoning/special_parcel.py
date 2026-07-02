@@ -18,6 +18,7 @@ developability(개발가능성 게이트):
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 # 심각도 순위(높을수록 제약 큼) — 여러 특이요인 중 최댓값을 부지 종합 게이트로 채택.
@@ -524,11 +525,270 @@ def _zone_category_mismatch(land_category: str, zone_type: str) -> str | None:
     return None
 
 
-def detect_special_parcel(result: dict) -> dict[str, Any] | None:
+# ──────────────────────────────────────────────────────────────────────────
+# T1/T3 — 임야(산지) 관측데이터 배선 + 예비판정(preliminary assessment).
+#   SRTM 30m DEM 경사도(terrain_facts)·산림청 커넥터(forest_data)를 forest_facts에 주입하고,
+#   산지관리법 시행령 별표4 기준(경사도 25도·관할평균 입목축적 150%) 대비 '예비판정'만 가산한다.
+#   ★비협상(정직 게이트 보존): developability(NEEDS_OFFICIAL_SURVEY)·official_survey_required·
+#   blocking_unknown은 어떤 관측값에서도 절대 완화·변경하지 않는다 — DEM은 공식 평균경사도조사서가
+#   아니고 API 조회값은 공식 산림조사서가 아니므로, 확정판정은 여전히 공식조사 확보 후에만 가능하다.
+# ──────────────────────────────────────────────────────────────────────────
+
+# 산지관리법 시행령 제20조 별표4 — 산지전용허가기준의 국가기준(지자체 조례로 강화 가능):
+#   평균경사도 25도 이하, ha당 입목축적이 관할 시군구 평균의 150% 이하.
+_FOREST_SLOPE_DEFAULT_DEG = 25.0
+_FOREST_STOCK_LIMIT_PCT = 150.0
+_DEM_ACCURACY_CAVEAT = "30m DEM 근사 — 공식 평균경사도조사서 아님"
+
+# 예비판정 라벨(계획서 T1 §3) — 기준×0.8 이하 / 기준 이하 / 기준 초과.
+_PRELIM_FIT = "예비 적합 가능성"
+_PRELIM_BORDER = "경계 — 공식조사 필수"
+_PRELIM_EXCEED = "예비 초과 — 부적합 가능성 높음(대체부지 검토 권고)"
+
+
+def _deg_to_pct(deg: float) -> float:
+    """경사 도(°) → 퍼센트(%) 변환 — pct = tan(deg)×100 (예: tan(25°)≈46.6%)."""
+    return math.tan(math.radians(deg)) * 100.0
+
+
+def _pct_to_deg(pct: float) -> float:
+    """경사 퍼센트(%) → 도(°) 변환 — deg = atan(pct/100)."""
+    return math.degrees(math.atan(pct / 100.0))
+
+
+def _slope_preliminary(dem_pct: float, slope_criteria: dict | None, source: str) -> dict[str, Any]:
+    """DEM 평균경사도(%) vs 기준(조례 우선, 없으면 별표4 25°)의 예비판정(확정 아님).
+
+    slope_criteria는 ordinance_service.resolve_slope_criteria(T2)의 성공 계약
+    {"slope_deg": float, "ordinance_name": str, "verified": "api_parsed"} — None이면
+    국가기준 25°로 폴백하고 "지자체 조례 별도 확인" 캐비앳을 부착한다(무날조).
+    """
+    caveats: list[str] = []
+    ord_deg = _num((slope_criteria or {}).get("slope_deg"))
+    if ord_deg is not None and ord_deg > 0:
+        criteria_deg = float(ord_deg)
+        ord_name = str(slope_criteria.get("ordinance_name") or "지자체 도시계획조례")
+        criteria_source = (f"지자체 조례 기준 — {ord_name}"
+                           f"(개발행위허가 경사도, verified={slope_criteria.get('verified')})")
+    else:
+        criteria_deg = _FOREST_SLOPE_DEFAULT_DEG
+        criteria_source = "산지관리법 시행령 제20조 별표4 — 국가기준 평균경사도 25도 이하"
+        caveats.append("지자체 조례가 더 엄격한 기준(예: 17.5도/20도)을 둘 수 있음 — 해당 지자체 조례 별도 확인 필요")
+    criteria_pct = round(_deg_to_pct(criteria_deg), 2)
+    dem_deg = round(_pct_to_deg(dem_pct), 2)
+    if dem_pct <= criteria_pct * 0.8:
+        judgment = _PRELIM_FIT
+    elif dem_pct <= criteria_pct:
+        judgment = _PRELIM_BORDER
+    else:
+        judgment = _PRELIM_EXCEED
+    return {
+        "judgment": judgment,
+        "value_pct": dem_pct,
+        "value_deg": dem_deg,
+        "criteria_deg": criteria_deg,
+        "criteria_pct": criteria_pct,
+        "criteria_source": criteria_source,
+        "formula": (
+            f"%↔도 변환: pct = tan(도)×100 — 기준 {criteria_deg}° = tan({criteria_deg}°)×100 ≈ {criteria_pct}%. "
+            f"판정: DEM {dem_pct}%(≈{dem_deg}°)를 기준×0.8({round(criteria_pct * 0.8, 2)}%)"
+            f"·기준({criteria_pct}%)과 비교"
+        ),
+        "legal_basis": ["산지관리법 시행령 제20조(산지전용허가의 기준 등)·별표4"],
+        "legal_ref_keys": ["forest_permit_criteria"],
+        "source": source,
+        "caveats": caveats,
+        "limitations": [
+            f"{_DEM_ACCURACY_CAVEAT}(확정판정 불가 — 공식조사로만 확정)",
+            "예비판정은 참고용이며 developability(NEEDS_OFFICIAL_SURVEY)를 변경하지 않음",
+        ],
+    }
+
+
+def _stocking_preliminary(stock: float, district_avg: float, source: str | None) -> dict[str, Any]:
+    """ha당 입목축적 vs 관할 시군구 평균의 150% 비교(별표4) 예비판정(확정 아님)."""
+    ratio = round(stock / district_avg * 100.0, 1)
+    judgment = _PRELIM_FIT if ratio <= _FOREST_STOCK_LIMIT_PCT else _PRELIM_EXCEED
+    return {
+        "judgment": judgment,
+        "입목축적_비율_pct": ratio,
+        "criteria": f"관할 시군구 평균 입목축적의 {_FOREST_STOCK_LIMIT_PCT:.0f}% 이하",
+        "formula": f"비율 = 필지 입목축적({stock}㎥/ha) ÷ 관할평균({district_avg}㎥/ha) × 100 = {ratio}%",
+        "legal_basis": ["산지관리법 시행령 제20조 별표4(산지전용허가기준 — 임목축적)"],
+        "legal_ref_keys": ["forest_permit_criteria"],
+        "source": source,
+        "limitations": [
+            "API 조회값 — 공식 산림조사서 아님(확정판정 불가)",
+            "예비판정은 참고용이며 developability(NEEDS_OFFICIAL_SURVEY)를 변경하지 않음",
+        ],
+    }
+
+
+def _inject_forest_observations(
+    factor: dict[str, Any],
+    terrain_facts: dict | None,
+    forest_data: dict | None,
+    slope_criteria: dict | None,
+) -> dict[str, Any] | None:
+    """임야 요인의 forest_facts에 관측데이터(T1 DEM·T3 산림청 커넥터)를 주입하고 예비판정을 가산.
+
+    ★게이트 불변: developability/official_survey_required/blocking_unknown은 여기서 절대 건드리지
+    않는다(예비판정 필드 가산만). 값 미확보 항목은 skip+사유(무날조 — 비율·판정 날조 금지).
+    """
+    facts = factor.get("forest_facts")
+    if not isinstance(facts, dict):
+        return None
+
+    pa: dict[str, Any] = {"slope": None, "stocking": None}
+
+    # ── T1: DEM 평균경사도 주입 + 예비판정(조례 우선 → 별표4 25°) ──
+    dem_pct = _num((terrain_facts or {}).get("평균경사도_pct"))
+    if dem_pct is not None:
+        src = str((terrain_facts or {}).get("source") or "SRTM30_DEM")
+        facts["평균경사도_pct"] = dem_pct
+        facts["경사도_source"] = src
+        facts["경사도_정확도한계"] = _DEM_ACCURACY_CAVEAT
+        pa["slope"] = _slope_preliminary(dem_pct, slope_criteria, src)
+    else:
+        pa["slope_skip_reason"] = "평균경사도(DEM terrain_facts) 미확보 — 경사도 예비판정 생략(무날조)"
+
+    # ── T3: 산림청 커넥터 값 주입 + 별표4 150% 비교(두 값 모두 확보 시에만) ──
+    if forest_data:
+        stock = _num(forest_data.get("입목축적_per_ha"))
+        district_avg = _num(forest_data.get("관할평균_입목축적_per_ha"))
+        forest_class = forest_data.get("산지구분")
+        src = forest_data.get("source")
+        injected = False
+        if stock is not None:
+            facts["입목축적_per_ha"] = stock
+            injected = True
+        if district_avg is not None:
+            facts["관할평균_입목축적_per_ha"] = district_avg
+            injected = True
+        if forest_class not in (None, ""):
+            facts["산지구분"] = str(forest_class)
+            injected = True
+        if injected and src:
+            facts["official_data_source"] = str(src)
+        if stock is not None and district_avg is not None and district_avg > 0:
+            pa["stocking"] = _stocking_preliminary(stock, district_avg, str(src) if src else None)
+        else:
+            missing = []
+            if stock is None:
+                missing.append("필지 입목축적")
+            if district_avg is None or (district_avg is not None and district_avg <= 0):
+                missing.append("관할평균 입목축적")
+            pa["stocking_skip_reason"] = (
+                "·".join(missing) + " 미확보 — 별표4 150% 비교 생략(무날조, 비율 날조 금지)"
+            )
+    else:
+        pa["stocking_skip_reason"] = "산림청 데이터(forest_data) 미확보 — 별표4 150% 비교 생략(무날조)"
+
+    pa["disclaimer"] = (
+        "예비판정(참고용) — 확정 아님. DEM·API 조회값은 공식 평균경사도조사서·산림조사서가 아니므로 "
+        "developability(NEEDS_OFFICIAL_SURVEY)는 변경되지 않으며, 확정판정은 공식조사 확보 후에만 가능합니다."
+    )
+    factor["preliminary_assessment"] = pa
+    return pa
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# T4 — 농지/임야 전용 부담금 존재 고지 + verified legal_ref 연결.
+#   산식·법령은 land_conversion_charges(C 브리지)·legal_reference_registry(A)를 소비한다.
+#   공시지가·면적이 확보된 경우에만 추정액을 산출(무날조 — 미확보 시 산식 고지만).
+# ──────────────────────────────────────────────────────────────────────────
+
+# result에서 개별공시지가(원/㎡)·면적(㎡)을 찾는 후보 키(호출부별 명칭 편차 흡수 — 없으면 None).
+_PRICE_KEYS = ("official_land_price_per_m2", "official_land_price", "개별공시지가_원_per_m2", "개별공시지가")
+_AREA_KEYS = ("area_sqm", "land_area_sqm", "total_area_sqm", "area")
+
+
+def _first_num(result: dict, keys: tuple[str, ...]) -> float | None:
+    for k in keys:
+        v = _num(result.get(k))
+        if v is not None and v > 0:
+            return v
+    return None
+
+
+def _augment_charge_disclosures(factors: list[dict[str, Any]], result: dict) -> list[str]:
+    """농지/임야 요인에 charge_notice(부담금 존재 고지)를 가산하고 honest_disclosure용 문장을 반환.
+
+    legal_ref_keys는 기존 키 보존 + 가산(중복 없이) — 이후 _factor_legal_refs가 verified 링크로
+    직렬화한다. 추정액은 C 브리지(land_conversion_charges) 산식으로만 산출(무날조).
+    """
+    sentences: list[str] = []
+    price = _first_num(result, _PRICE_KEYS)
+    area = _first_num(result, _AREA_KEYS)
+
+    def _extend_keys(f: dict, keys: list[str]) -> None:
+        existing = list(f.get("legal_ref_keys") or [])
+        f["legal_ref_keys"] = existing + [k for k in keys if k not in existing]
+
+    for f in factors:
+        cat = str(f.get("category") or "")
+        if cat.startswith("농지"):
+            estimate = None
+            estimate_note = "개별공시지가·전용면적 미확보 — 추정액 미산출(산식만 고지, 무날조)"
+            if price is not None and area is not None:
+                try:
+                    from app.services.feasibility.land_conversion_charges import (
+                        calc_farmland_preservation_charge,
+                    )
+
+                    estimate = calc_farmland_preservation_charge(
+                        official_land_price_per_m2=price, conversion_area_m2=area)
+                    estimate_note = "개별공시지가×30%(㎡당 상한 5만원)×전용면적 — 감면 미반영 추정치(확정 부과액 아님)"
+                except Exception:  # noqa: BLE001 — 브리지 실패는 고지만 유지(게이트 무영향).
+                    estimate = None
+            f["charge_notice"] = {
+                "charge_name": "농지보전부담금",
+                "notice": ("농지전용허가·협의 시 농지보전부담금이 부과됩니다"
+                           "(농지법 제38조 — 개별공시지가×30%, ㎡당 상한 50,000원)."),
+                "formula": "농지보전부담금 = 개별공시지가 × 30% (㎡당 상한 50,000원) × 전용면적",
+                "legal_ref_keys": ["farmland_preservation_charge"],
+                "estimate": estimate,
+                "estimate_note": estimate_note,
+            }
+            _extend_keys(f, ["farmland_preservation_charge", "farmland_conversion_report"])
+            sentences.append("참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.")
+        elif cat.startswith("임야"):
+            f["charge_notice"] = {
+                "charge_name": "대체산림자원조성비",
+                "notice": ("산지전용허가 시 대체산림자원조성비가 부과됩니다"
+                           "(산지관리법 제19조 — (연도별 고시 단가 + 개별공시지가×1%) × 전용면적)."),
+                "formula": "대체산림자원조성비 = (연도별 고시 단가[원/㎡] + 개별공시지가 × 1%) × 전용면적",
+                "legal_ref_keys": ["forest_replacement_charge"],
+                # 연도별 고시 단가(산림청 고시)는 명시 주입 전용(무날조) — 미주입이므로 추정액 없음.
+                "estimate": None,
+                "estimate_note": ("연도별 고시 단가(산림청 '대체산림자원조성비 부과기준' 고시) 미주입 — "
+                                  "추정액 미산출(산식만 고지, 무날조)"),
+            }
+            _extend_keys(f, ["forest_replacement_charge", "forest_land_classification"])
+            sentences.append("참고: 산지전용 시 대체산림자원조성비(산지관리법 제19조)가 부과됩니다.")
+    return sentences
+
+
+def detect_special_parcel(
+    result: dict,
+    *,
+    terrain_facts: dict | None = None,
+    forest_data: dict | None = None,
+    slope_criteria: dict | None = None,
+) -> dict[str, Any] | None:
     """부지분석 결과(result)에서 특이부지 요인을 종합 판정. 특이 없으면 None.
 
     반환: {is_special, developability(종합 게이트), severity_label, factors[...],
            warnings[...], development_caveat} — 모두 추가(additive) 필드.
+
+    additive 옵션 인자(기본 None=현행 동작 100% 보존 — 기존 호출부 무수정 호환):
+      terrain_facts   {"평균경사도_pct": float, "최대경사도_pct": float, "source": "SRTM30_DEM"}
+                      — terrain_service DEM 산출(T1). 임야 요인 forest_facts에 주입+예비판정.
+      forest_data     get_forest_facts(pnu) 계약(T3) — {"입목축적_per_ha", "관할평균_입목축적_per_ha",
+                      "산지구분", "source"}. 두 값 확보 시에만 별표4 150% 비교.
+      slope_criteria  resolve_slope_criteria(sigungu) 계약(T2) — {"slope_deg", "ordinance_name",
+                      "verified"}. 경사도 예비판정 기준으로 조례값 우선 사용(없으면 별표4 25°).
+    ★관측데이터가 주입돼도 developability(NEEDS_OFFICIAL_SURVEY)는 절대 완화되지 않는다(예비판정만).
     """
     land_category = str(result.get("land_category") or "")
     zone_type = str(result.get("zone_type") or "")
@@ -555,6 +815,18 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
 
     if not factors:
         return None  # 일상적 개발부지 — 특이 없음(정직)
+
+    # ── T1/T3: 관측데이터(DEM·산림청 커넥터) 주입 + 예비판정 — 임야 요인에만, 제공 시에만
+    #    (미제공이면 현행과 바이트 단위 동일 — 회귀 0). ★게이트(developability)는 절대 불변. ──
+    forest_pa: dict[str, Any] | None = None
+    if terrain_facts or forest_data:
+        for f in factors:
+            if isinstance(f.get("forest_facts"), dict):
+                forest_pa = _inject_forest_observations(f, terrain_facts, forest_data, slope_criteria)
+                break
+
+    # ── T4: 농지/임야 전용 부담금 존재 고지 + legal_ref 가산(직렬화 前에 키 확장) ──
+    charge_sentences = _augment_charge_disclosures(factors, result)
 
     # 각 요인에 대안·해결방안·해결가능성(resolvable)을 부착.
     for f in factors:
@@ -613,7 +885,11 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
     else:
         honest = "표준 인허가 절차로 해결 가능한 특이사항입니다."
 
-    return {
+    # T4: 농지/임야는 전용 부담금 존재를 honest_disclosure에 명시 고지(가산 — 기존 문구 보존).
+    if charge_sentences:
+        honest = honest + " " + " ".join(charge_sentences)
+
+    out: dict[str, Any] = {
         "is_special": True,
         "developability": gate,
         "severity_label": label,
@@ -625,6 +901,10 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
         "honest_disclosure": honest,
         "note": "특이부지 감지(규칙기반). 실제 개발가능 여부·선행절차는 토지이용계획확인원·도시계획 결정도 열람으로 확정하십시오.",
     }
+    # T1/T3 예비판정(참고용)이 산출된 경우에만 최상위에도 노출(additive — 미제공 시 키 자체 없음).
+    if forest_pa is not None:
+        out["forest_preliminary_assessment"] = forest_pa
+    return out
 
 
 # 해결가능성 순위(낮을수록 어려움) — 다필지/종합 판정에 사용.
