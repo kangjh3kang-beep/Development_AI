@@ -314,13 +314,26 @@ class MarketReportService:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             llm = get_llm(timeout=40, max_tokens=1500)
-            sys = ("당신은 부동산 개발 및 시장분석 전문가다. 제공된 실거래·시세·입지 데이터와 인구 이동, 연령대, 평균 소득 데이터를 종합하여 "
+            # 근거 그라운딩: 대상지 주소 기반 지역 시세 벤치마크를 근거로 주입한다.
+            # 전용 인터프리터(MarketInterpreter)와 동일 근거원인 BaseInterpreter._regional_benchmark
+            # (정적·sync·키불필요·결정적 로컬 테이블 — 블로킹 I/O 없음)를 재사용해, 인라인 경로도
+            # 전용 경로와 같은 근거를 보게 한다. 실패는 내러티브 무손상(best-effort).
+            benchmark = None
+            try:
+                from app.services.ai.base_interpreter import BaseInterpreter
+                benchmark = BaseInterpreter._regional_benchmark(address=str(ctx.get("address", "")))
+            except Exception:  # noqa: BLE001 — 벤치마크 조회 실패는 내러티브 무손상
+                benchmark = None
+            sys = ("당신은 감정평가사·분양대행 실무 관점을 겸비한 부동산 개발·시장분석 전문가다. 제공된 실거래·시세·입지 데이터와 인구 이동, 연령대, 평균 소득 데이터를 종합하여 "
                    "한국어 JSON으로 답하라. 키: summary(시장요약 3~4문장), opportunities(기회 2~3개 배열), "
                    "risks(리스크 2~3개 배열), price_trend(가격동향 2문장), target_persona(추천 분양 타겟 고객층 2문장). "
                    "★모든 거래시세·분양가는 반드시 평당가(만원/평) 기준으로 서술하라. 총액(억원)이 아닌 "
                    "평당 단가를 사용한다. 예: '아파트 평당 약 1,800만원'. 데이터 단위는 만원/평이다. "
-                   "★target_persona에는 유입 인구의 주 연령대, 거시적 평균 소득을 고려해 가장 분양 가능성이 높은 고객의 직업군/가구형태/특화설계 제안을 포함하라.")
+                   "★target_persona에는 유입 인구의 주 연령대, 거시적 평균 소득을 고려해 가장 분양 가능성이 높은 고객의 직업군/가구형태/특화설계 제안을 포함하라. "
+                   "★'지역 시세 벤치마크(참고 근거)'가 제공되면 데이터 적정성 판단에 참고하되, 그 값을 '지역 평균 분양가' 같은 확정 사실로 단정하지 말고 부득이 언급 시 '참고 추정'임을 명시하라. 수집 데이터가 없는 항목은 단정하지 말라(무근거 추정 금지).")
             usr = f"## 시장 데이터\n{json.dumps(ctx, ensure_ascii=False)[:4000]}"
+            if benchmark:
+                usr += f"\n\n## 지역 시세 벤치마크(참고 근거)\n{benchmark}"
             resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=usr)])
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
