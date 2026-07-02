@@ -155,6 +155,47 @@ def test_parse_ordin_id_prefers_ordinance_over_rule(service):
     assert service._parse_ordin_id(xml, "테스트시") == "222"
 
 
+_HEIGHT_WORD_DISTRICT_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도는 처인구 지역은 20도 이하, 건축물 높이 제한구역인 기흥구 지역은 17.5도 이하로 할 것.
+]]></조문내용>
+"""
+
+_ELEVATION_WORD_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도가 표고 100미터 이하 구간에서 20도 미만인 토지로 한다.
+]]></조문내용>
+"""
+
+
+def test_height_word_does_not_over_truncate_district(service):
+    """★should-fix: '높이'(미터 단위)가 구별 나열 사이에 끼어도 절단 금지 → 17.5(더 엄격) 유지."""
+    r = service._parse_slope_criteria_from_text(_HEIGHT_WORD_DISTRICT_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)  # 20(덜 안전)으로 조용히 강등되면 안 됨
+    assert r["all_values_deg"] == [17.5, 20.0]
+
+
+def test_elevation_word_does_not_truncate(service):
+    """★should-fix: '표고'(미터)가 개발행위 경사도 문맥에 병행돼도 20도 정상 추출."""
+    r = service._parse_slope_criteria_from_text(_ELEVATION_WORD_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(20.0)
+
+
+def test_parse_ordin_id_prefers_matching_region(service):
+    """★should-fix: region_name과 일치하는 '도시계획 조례'를 우선(인접 동명이역 오조회 차단)."""
+    xml = (
+        "<law><자치법규명><![CDATA[다른시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>999</자치법규ID></law>"
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>222</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "테스트시") == "222"
+
+
 async def test_resolve_propagates_all_values(service, monkeypatch):
     """resolve_slope_criteria 결과에 all_values_deg가 전달된다(소비자 표기용)."""
     from app.services.land_intelligence import ordinance_service as _os

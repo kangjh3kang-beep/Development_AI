@@ -514,15 +514,28 @@ class OrdinanceService:
         ]
 
         def _id_after(pos: int) -> str | None:
+            # 항목 순서 가정: <자치법규명> … <자치법규ID>(명 뒤 가장 가까운 ID = 그 항목의 ID).
             after = [v for p, v in id_hits if p > pos]
             return after[0] if after else None
 
+        def _is_city_plan_ordinance(name: str) -> bool:
+            return "도시계획" in name and "조례" in name and "규칙" not in name
+
+        region = (region_name or "").strip()
+        # ① region_name까지 일치하는 '도시계획 조례'를 최우선(인접 동명이역 오조회 차단).
+        if region:
+            for npos, name in names:
+                if region in name and _is_city_plan_ordinance(name):
+                    oid = _id_after(npos)
+                    if oid:
+                        return oid
+        # ② region 불명/미일치 시 '도시계획 조례'(시행규칙 아님)만으로 선택.
         for npos, name in names:
-            if "도시계획" in name and "조례" in name and "규칙" not in name:
+            if _is_city_plan_ordinance(name):
                 oid = _id_after(npos)
                 if oid:
                     return oid
-        # 폴백 — '도시계획 조례' 항목을 특정 못하면 첫 ID(하위호환).
+        # ③ 폴백 — 특정 못하면 첫 ID(하위호환).
         return id_hits[0][1]
 
     def _parse_bcr_far_from_text(
@@ -915,11 +928,13 @@ class OrdinanceService:
     # ★오탐 방어: 앵커('경사도')가 개발행위 '평균경사도'가 아니라 도로 종단경사·구조물 경사인
     #   경우(예: '종단경사도','도로의 경사도') 그 앵커는 건너뛴다(직전 6자 수식어 검사).
     _SLOPE_ANCHOR_BAD_PREFIX: tuple[str, ...] = ("종단", "도로", "진입", "옹벽", "구조물")
-    # ★오탐 방어: 앵커 뒤 값 탐색 중 '다른 측정 주체'를 도입하는 명사가 나오면 그 지점에서
-    #   탐색창을 절단한다 — 뒤따르는 'N도'는 경사도 기준이 아니라 도로종단경사·기준온도·방위
-    #   등 무관 값이므로 삼키지 않는다(라이브 회귀 재현: 진입도로 종단경사 12도를 25도 기준으로
-    #   오채택하던 것 차단). 구·지역 나열('…지역은','의 경우')은 절단어가 아니므로 다중값 보존.
-    _SLOPE_SUBJECT_BREAK: tuple[str, ...] = ("도로", "종단", "진입", "온도", "방위", "표고", "높이", "폭")
+    # ★오탐 방어: 앵커 뒤 값 탐색 중 '다른 각도(度) 측정 주체'를 도입하는 명사가 나오면 그
+    #   지점에서 탐색창을 절단한다 — 뒤따르는 'N도'는 경사도 기준이 아니라 도로종단경사·기준온도·
+    #   방위 등 무관 각도값이므로 삼키지 않는다(라이브 회귀 재현: 진입도로 종단경사 12도를 25도
+    #   기준으로 오채택하던 것 차단). ★'도(度)' 단위를 만드는 명사만 넣는다 — 표고·높이·폭은
+    #   미터(m) 단위라 'N도'를 만들지 않으면서 구별 나열('…높이 제한구역인 기흥구 17.5도') 사이에
+    #   끼면 정당한 값을 과잉절단하므로 제외한다. 구·지역 나열은 절단어가 아니라 다중값 보존.
+    _SLOPE_SUBJECT_BREAK: tuple[str, ...] = ("도로", "종단", "진입", "온도", "방위")
     # 상식 범위 방어: 개발행위 기준 경사도는 통상 10~30도(별표4 국가기준 25도).
     #   45도 초과는 오독(각도 외 수치 혼입) 가능성이 높아 채택하지 않는다(None 폴백).
     _SLOPE_MAX_PLAUSIBLE_DEG: float = 45.0
