@@ -1,5 +1,6 @@
 import { DesignAuditWorkspace } from "@/components/design-audit/DesignAuditWorkspace";
 import { DesignCenterPageFrame } from "@/components/design-center/DesignCenterPageFrame";
+import { ContextHeader } from "@/components/common/ContextHeader";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 /** 설계안 AI 심사(DA-7) — 4단 스테퍼(부지→개요→도면→실행) 페이지. */
@@ -20,6 +21,8 @@ export default async function DesignAuditPage({ params }: { params: Promise<{ lo
         { label: "결과", value: "심사 보고서", description: "법규·인허가 리스크" },
       ]}
     >
+      {/* 생성허브 공용 대상 컨텍스트 헤더(additive) — 어느 프로젝트·토지 대상 심사인지 상시 표시. */}
+      <ContextHeader className="mb-4" />
       <DesignAuditWorkspace locale={locale as Locale} showHeader={false} />
     </DesignCenterPageFrame>
   );

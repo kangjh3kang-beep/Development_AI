@@ -30,6 +30,8 @@ const PopulationDensityMap = dynamicMap<React.ComponentProps<typeof PopulationDe
   { pick: "PopulationDensityMap", height: 360, loadingMessage: "인구밀도 지도 로딩…" },
 );
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { ContextHeader } from "@/components/common/ContextHeader";
+import { deriveMarketPipelineSteps } from "@/lib/context-header";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
@@ -504,6 +506,13 @@ export function MarketInsightsWorkspaceClient() {
 
   return (
     <section className="grid grid-cols-1 gap-6 min-w-0">
+
+      {/* 생성허브 공용 대상 컨텍스트 헤더(additive) — 어느 프로젝트·토지 대상 시장분석인지 상시
+          표시 + 이 산출물의 실제 분석 3단계(수집=실거래 데이터, 검증=정직 idle 고정(교차검증
+          트레이스 미보유), 전문가=LLM 시장해설 narrative). */}
+      <ContextHeader
+        pipeline={deriveMarketPipelineSteps({ genState, report, useLlm })}
+      />
 
       {/* ── ZONE A: 설정→실행 ─────────────────────────────────────────── */}
       {/* 헤더 */}
