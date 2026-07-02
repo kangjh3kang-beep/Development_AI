@@ -111,6 +111,72 @@ def test_district_specific_slope_picks_strictest(service):
     assert "경사도" in r["evidence_span"]
 
 
+# (h) ★리뷰 회귀재현: 같은 조문에 개발행위 경사도(25도)+진입도로 종단경사(12도) 나열 →
+#     무관한 도로종단 12도를 삼키면 안 됨(안전측 최소가 오히려 낮은 스퓨리어스 값 선호).
+_ROAD_MIXED_SAME_CLAUSE_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도가 25도 미만인 토지로서, 진입도로의 종단경사도는 12도 이하로 계획하여야 한다.
+]]></조문내용>
+"""
+
+# (i) 기준온도 등 무관 '도' 값이 앵커 뒤에 나열되어도 삼키지 않는다.
+_TEMP_MIXED_XML = """
+<자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>
+<조문내용><![CDATA[
+제20조(개발행위허가의 기준) 평균경사도 산정 시 기준온도 20도, 실제 경사도는 30도 이하인 토지로 한다.
+]]></조문내용>
+"""
+
+
+def test_road_longitudinal_slope_not_swallowed(service):
+    """★리뷰 must-fix: 진입도로 종단경사(12도)를 개발행위 경사도(25도)로 오채택 금지."""
+    r = service._parse_slope_criteria_from_text(_ROAD_MIXED_SAME_CLAUSE_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(25.0)  # 12.0(도로종단) 아님
+    assert 12.0 not in r["all_values_deg"]
+
+
+def test_unrelated_temperature_deg_not_swallowed(service):
+    """★기준온도 20도를 경사도로 오채택 금지 → 실제 경사도 30도."""
+    r = service._parse_slope_criteria_from_text(_TEMP_MIXED_XML, "테스트시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(30.0)
+
+
+def test_parse_ordin_id_prefers_ordinance_over_rule(service):
+    """★목록에 시행규칙이 먼저 와도 '도시계획 조례' 항목의 자치법규ID를 선택(규칙 배제)."""
+    xml = (
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례 시행규칙]]></자치법규명>"
+        "<자치법규ID>111</자치법규ID></law>"
+        "<law><자치법규명><![CDATA[테스트시 도시계획 조례]]></자치법규명>"
+        "<자치법규ID>222</자치법규ID></law>"
+    )
+    assert service._parse_ordin_id(xml, "테스트시") == "222"
+
+
+async def test_resolve_propagates_all_values(service, monkeypatch):
+    """resolve_slope_criteria 결과에 all_values_deg가 전달된다(소비자 표기용)."""
+    from app.services.land_intelligence import ordinance_service as _os
+
+    async def _fetch(self, region_name):  # noqa: ANN001
+        return _DISTRICT_SLOPE_XML
+
+    async def _load(sigungu, zone_type):  # noqa: ANN001
+        return None
+
+    async def _save(result, sigungu, zone_type):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(OrdinanceService, "_fetch_ordinance_xml", _fetch)
+    monkeypatch.setattr(_os, "_load_stored", _load)
+    monkeypatch.setattr(_os, "_save_resolution", _save)
+    r = await service.resolve_slope_criteria("용인시")
+    assert r is not None
+    assert r["slope_deg"] == pytest.approx(17.5)
+    assert r["all_values_deg"] == [17.5, 20.0]
+
+
 def test_dev_context_slope_extracted(service):
     """개발행위허가 조문의 '평균경사도가 20도 미만' → 20.0 추출."""
     r = service._parse_slope_criteria_from_text(_DEV_SLOPE_XML, "테스트시")

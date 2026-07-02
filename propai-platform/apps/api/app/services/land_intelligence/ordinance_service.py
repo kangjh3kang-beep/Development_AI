@@ -488,16 +488,42 @@ class OrdinanceService:
         조례 본문을 한 번도 못 가져오던 결함(조례 경사도 전량 폴백·FAR/BCR 라이브조회 무력화의
         진원). 아래 순서로 시도하되 본문조회에 유효한 <자치법규ID>를 최우선한다.
         """
+        # 본문조회 ID 후보(자치법규ID 우선)의 (위치, 값) 목록 — 하나의 필드종류로 통일해 수집.
+        id_hits: list[tuple[int, str]] = []
         for pattern in (
             r"<자치법규ID>(\d+)</자치법규ID>",          # ★본문조회 ID(유효) — 최우선
             r"<자치법규일련번호>(\d+)</자치법규일련번호>",  # MST(일부 API 버전 호환)
             r"<법령일련번호>(\d+)</법령일련번호>",        # 법령 API 폴백(하위호환)
             r"<ordinSeq>(\d+)</ordinSeq>",                # 영문 키 폴백
         ):
-            matches = re.findall(pattern, xml_text)
-            if matches:
-                return matches[0]
-        return None
+            hits = [(m.start(), m.group(1)) for m in re.finditer(pattern, xml_text)]
+            if hits:
+                id_hits = hits
+                break
+        if not id_hits:
+            return None
+        # ★목록에 여러 자치법규(도시계획 조례·시행규칙·기타 조례)가 섞여 있으므로, 첫 ID를
+        #   무조건 쓰지 않고 '도시계획 조례'(시행규칙 아님) 항목의 ID를 우선한다. 각 <자치법규명>
+        #   뒤 '가장 가까운 ID'가 그 항목의 ID다(항목 순서: 명 → … → ID).
+        names = [
+            (m.start(), (m.group(1) or "").strip())
+            for m in re.finditer(
+                r"<자치법규명>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</자치법규명>",
+                xml_text, re.DOTALL,
+            )
+        ]
+
+        def _id_after(pos: int) -> str | None:
+            after = [v for p, v in id_hits if p > pos]
+            return after[0] if after else None
+
+        for npos, name in names:
+            if "도시계획" in name and "조례" in name and "규칙" not in name:
+                oid = _id_after(npos)
+                if oid:
+                    return oid
+        # 폴백 — '도시계획 조례' 항목을 특정 못하면 첫 ID(하위호환).
+        return id_hits[0][1]
 
     def _parse_bcr_far_from_text(
         self, xml_text: str, zone_type: str, region_name: str
@@ -886,6 +912,14 @@ class OrdinanceService:
     # '경사도' 뒤 값 탐색창(문자 수) — '처인구 지역은 20도, 기흥구 지역은 17.5도'처럼
     #   구별 값 나열을 흡수하되 무관 조문까지 넘보지 않게 제한.
     _SLOPE_POST_WINDOW: int = 90
+    # ★오탐 방어: 앵커('경사도')가 개발행위 '평균경사도'가 아니라 도로 종단경사·구조물 경사인
+    #   경우(예: '종단경사도','도로의 경사도') 그 앵커는 건너뛴다(직전 6자 수식어 검사).
+    _SLOPE_ANCHOR_BAD_PREFIX: tuple[str, ...] = ("종단", "도로", "진입", "옹벽", "구조물")
+    # ★오탐 방어: 앵커 뒤 값 탐색 중 '다른 측정 주체'를 도입하는 명사가 나오면 그 지점에서
+    #   탐색창을 절단한다 — 뒤따르는 'N도'는 경사도 기준이 아니라 도로종단경사·기준온도·방위
+    #   등 무관 값이므로 삼키지 않는다(라이브 회귀 재현: 진입도로 종단경사 12도를 25도 기준으로
+    #   오채택하던 것 차단). 구·지역 나열('…지역은','의 경우')은 절단어가 아니므로 다중값 보존.
+    _SLOPE_SUBJECT_BREAK: tuple[str, ...] = ("도로", "종단", "진입", "온도", "방위", "표고", "높이", "폭")
     # 상식 범위 방어: 개발행위 기준 경사도는 통상 10~30도(별표4 국가기준 25도).
     #   45도 초과는 오독(각도 외 수치 혼입) 가능성이 높아 채택하지 않는다(None 폴백).
     _SLOPE_MAX_PLAUSIBLE_DEG: float = 45.0
@@ -908,14 +942,27 @@ class OrdinanceService:
         if not full_text:
             return None
 
-        # '경사도' 앵커마다: (a)개발행위 문맥이면 (b)뒤 POST_WINDOW 안의 'N도' 값을 모두 수집.
-        #   구·지역별로 값이 다를 수 있어(예: 처인구 20도/기흥구 17.5도) 여러 값을 모은다.
+        # '경사도' 앵커마다: (a)앵커가 도로종단·구조물 경사면 배제 (b)개발행위 문맥이어야 채택
+        #   (c)뒤 탐색창을 '다른 측정주체' 명사에서 절단한 뒤 그 안의 'N도'만 수집.
+        #   구·지역별 상이(예: 처인구 20도/기흥구 17.5도)는 절단어가 아니므로 다중값 보존.
         found: list[tuple[float, int]] = []  # (경사도값, 앵커위치)
         for am in re.finditer("경사도", full_text):
+            # (a) 앵커 배제 — '종단경사도'·'도로 경사도' 등은 개발행위 평균경사도가 아니다.
+            prefix = full_text[max(0, am.start() - 6):am.start()]
+            if any(k in prefix for k in self._SLOPE_ANCHOR_BAD_PREFIX):
+                continue
+            # (b) 개발행위 문맥(앞 400자) 아니면 배제(주차장·도로 조항 등).
             pre = full_text[max(0, am.start() - self._SLOPE_CONTEXT_WINDOW):am.start()]
             if not any(k in pre for k in self._SLOPE_DEV_CONTEXT_KEYWORDS):
-                continue  # 개발행위 문맥 아님 → 오탐 배제(주차장·도로 경사도 등)
+                continue
+            # (c) 탐색창을 '다른 측정주체' 명사에서 절단(앵커 자신 '경사도' 3자 이후부터 탐색).
             post = full_text[am.start():am.start() + self._SLOPE_POST_WINDOW]
+            cut = len(post)
+            for br in self._SLOPE_SUBJECT_BREAK:
+                i = post.find(br, 3)
+                if i != -1:
+                    cut = min(cut, i)
+            post = post[:cut]
             for vm in self._SLOPE_VALUE_RE.finditer(post):
                 try:
                     v = float(vm.group(1))
@@ -1044,6 +1091,8 @@ class OrdinanceService:
 
         result: dict[str, Any] = {
             "slope_deg": parsed["slope_deg"],
+            # 구·지역별 다중값(있으면) — 소비자(예비판정)가 안전측 최소 채택을 이해·표기하도록 전달.
+            "all_values_deg": parsed.get("all_values_deg"),
             "unit": "도",
             "ordinance_name": parsed["ordinance_name"],
             "verified": "api_parsed",
