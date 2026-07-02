@@ -35,7 +35,13 @@ import {
 } from "react";
 
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
-import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
+import type { ParcelAtPointResult, SatongMultiMapProps } from "@/components/map/SatongMultiMap";
+import {
+  isRenderableSatongMapLayer,
+  type SatongMapFeature,
+  type SatongMapLayerId,
+  type SatongMapLayerState,
+} from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
   readSatongMapSelection,
@@ -44,18 +50,10 @@ import {
   type SatongSelectionParcel,
 } from "./satong-map-selection";
 
-type ParcelPickerMapProps = {
-  onPickMany?: (parcels: ParcelAtPointResult[]) => void;
-  focusTarget?: { lat: number; lon: number; label?: string } | null;
-  autoPreviewFocus?: boolean;
-  height?: number;
-  chrome?: "default" | "immersive";
-};
-
-const ParcelPickerMap = dynamic<ParcelPickerMapProps>(
+const SatongMultiMap = dynamic<SatongMultiMapProps>(
   () =>
-    import("@/components/map/ParcelPickerMap").then(
-      (mod) => mod.ParcelPickerMap as ComponentType<ParcelPickerMapProps>,
+    import("@/components/map/SatongMultiMap").then(
+      (mod) => mod.SatongMultiMap as ComponentType<SatongMultiMapProps>,
     ),
   {
     ssr: false,
@@ -117,7 +115,7 @@ type SatongParcel = SatongSelectionParcel;
 type LayerStatus = "active" | "ready" | "needs-source";
 
 type SatongLayer = {
-  id: string;
+  id: SatongMapLayerId;
   label: string;
   shortLabel: string;
   description: string;
@@ -125,7 +123,14 @@ type SatongLayer = {
   status: LayerStatus;
   tone: string;
   source: string;
-  controls: string[];
+  controls: SatongLayerControl[];
+};
+
+type SatongLayerControl = {
+  id: string;
+  label: string;
+  mapEffect: boolean;
+  description?: string;
 };
 
 type OutputAction = {
@@ -147,7 +152,11 @@ const LAYERS: SatongLayer[] = [
     status: "active",
     tone: "bg-lime-100 text-lime-950 border-lime-200",
     source: "필지 클릭 API + 지적 경계",
-    controls: ["필지 경계", "선택 필지", "주변 필지"],
+    controls: [
+      { id: "boundary", label: "필지 경계", mapEffect: true },
+      { id: "selected", label: "선택 필지", mapEffect: true },
+      { id: "neighbors", label: "주변 필지", mapEffect: false, description: "주변 필지 벡터 API 연결 후 활성화" },
+    ],
   },
   {
     id: "zoning",
@@ -158,7 +167,11 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-sky-100 text-sky-950 border-sky-200",
     source: "토지이음/공간정보 연동 필요",
-    controls: ["용도지역", "지구단위", "개발행위 제한"],
+    controls: [
+      { id: "land-use", label: "용도지역", mapEffect: true },
+      { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
+      { id: "development-limit", label: "개발행위 제한", mapEffect: false, description: "개발행위허가 제한구역 원천 연결 후 활성화" },
+    ],
   },
   {
     id: "official-price",
@@ -169,7 +182,11 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-emerald-100 text-emerald-950 border-emerald-200",
     source: "공시가격 API 연동 필요",
-    controls: ["연도", "㎡당 단가", "변동률"],
+    controls: [
+      { id: "unit-price", label: "㎡당 단가", mapEffect: true },
+      { id: "year", label: "연도", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
+      { id: "change-rate", label: "변동률", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
+    ],
   },
   {
     id: "age",
@@ -180,7 +197,12 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-rose-100 text-rose-950 border-rose-200",
     source: "건축물대장/세움터 연동 필요",
-    controls: ["건축연도", "구조", "층수", "주용도"],
+    controls: [
+      { id: "building-age", label: "건축연도", mapEffect: true },
+      { id: "structure", label: "구조", mapEffect: false, description: "건축물대장 구조 필드 연결 후 활성화" },
+      { id: "floors", label: "층수", mapEffect: false, description: "건축물대장 층수 필드 연결 후 활성화" },
+      { id: "purpose", label: "주용도", mapEffect: false, description: "건축물대장 주용도 필드 연결 후 활성화" },
+    ],
   },
   {
     id: "transactions",
@@ -191,7 +213,12 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-blue-100 text-blue-950 border-blue-200",
     source: "국토부 실거래/매물 DB 연동 필요",
-    controls: ["거래연도", "거래유형", "총액", "면적당 단가"],
+    controls: [
+      { id: "deal-year", label: "거래연도", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
+      { id: "deal-type", label: "거래유형", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
+      { id: "total-price", label: "총액", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
+      { id: "unit-price", label: "면적당 단가", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
+    ],
   },
   {
     id: "presale",
@@ -202,7 +229,11 @@ const LAYERS: SatongLayer[] = [
     status: "needs-source",
     tone: "bg-violet-100 text-violet-950 border-violet-200",
     source: "청약홈/민간 분양자료 수집 필요",
-    controls: ["공급유형", "분양가", "입주시기"],
+    controls: [
+      { id: "supply-type", label: "공급유형", mapEffect: false },
+      { id: "presale-price", label: "분양가", mapEffect: false },
+      { id: "move-in", label: "입주시기", mapEffect: false },
+    ],
   },
   {
     id: "auction",
@@ -213,7 +244,12 @@ const LAYERS: SatongLayer[] = [
     status: "needs-source",
     tone: "bg-amber-100 text-amber-950 border-amber-200",
     source: "온비드/법원경매 연동 필요",
-    controls: ["감정가", "최저가", "입찰일", "낙찰률"],
+    controls: [
+      { id: "appraisal", label: "감정가", mapEffect: false },
+      { id: "minimum-bid", label: "최저가", mapEffect: false },
+      { id: "bid-date", label: "입찰일", mapEffect: false },
+      { id: "bid-rate", label: "낙찰률", mapEffect: false },
+    ],
   },
   {
     id: "poi",
@@ -224,7 +260,13 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-cyan-100 text-cyan-950 border-cyan-200",
     source: "카카오/공공데이터 POI 연동 필요",
-    controls: ["역", "학교", "상권", "공원", "병원"],
+    controls: [
+      { id: "station", label: "역", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "school", label: "학교", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "commerce", label: "상권", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "park", label: "공원", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "hospital", label: "병원", mapEffect: false, description: "POI API 연결 후 활성화" },
+    ],
   },
   {
     id: "terrain",
@@ -235,7 +277,12 @@ const LAYERS: SatongLayer[] = [
     status: "ready",
     tone: "bg-stone-100 text-stone-950 border-stone-200",
     source: "VWorld/국토정보 플랫폼 연동 필요",
-    controls: ["지형", "위성", "항공뷰", "표고"],
+    controls: [
+      { id: "base", label: "기본지도", mapEffect: true },
+      { id: "satellite", label: "위성", mapEffect: true },
+      { id: "hybrid", label: "항공뷰", mapEffect: true },
+      { id: "elevation", label: "표고", mapEffect: false, description: "표고/경사도 격자 원천 연결 후 활성화" },
+    ],
   },
   {
     id: "roadview",
@@ -246,7 +293,12 @@ const LAYERS: SatongLayer[] = [
     status: "needs-source",
     tone: "bg-slate-100 text-slate-950 border-slate-200",
     source: "카카오 로드뷰 SDK 연동 필요",
-    controls: ["로드뷰", "접도", "차량 진입", "보행 접근"],
+    controls: [
+      { id: "roadview", label: "로드뷰", mapEffect: false },
+      { id: "frontage", label: "접도", mapEffect: false },
+      { id: "vehicle-access", label: "차량 진입", mapEffect: false },
+      { id: "pedestrian-access", label: "보행 접근", mapEffect: false },
+    ],
   },
 ];
 
@@ -289,6 +341,16 @@ function statusClass(status: LayerStatus): string {
   if (status === "active") return "bg-emerald-100 text-emerald-700";
   if (status === "ready") return "bg-blue-100 text-blue-700";
   return "bg-amber-100 text-amber-700";
+}
+
+function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
+  return {
+    cadastre: ["boundary", "selected"],
+    zoning: ["land-use"],
+    "official-price": ["unit-price"],
+    age: ["building-age"],
+    terrain: ["base"],
+  };
 }
 
 function parseGeocodeToParcel(
@@ -336,6 +398,10 @@ function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
     areaSqm: parcel.area_sqm ?? null,
     zoneType: parcel.zone_type ?? null,
     jimok: parcel.jimok ?? null,
+    officialPricePerSqm: parcel.official_price_per_sqm ?? null,
+    builtYear: parcel.built_year ?? null,
+    buildingAgeYears: parcel.building_age_years ?? null,
+    geometry: parcel.geometry,
     source: "map",
   };
 }
@@ -355,8 +421,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
   const [focusTarget, setFocusTarget] = useState<{ lat: number; lon: number; label?: string } | null>(null);
-  const [enabledLayers, setEnabledLayers] = useState<Set<string>>(() => new Set(["cadastre"]));
-  const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
+  const [enabledLayers, setEnabledLayers] = useState<Set<SatongMapLayerId>>(() => new Set(["cadastre"]));
+  const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
+  const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -375,6 +442,34 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const activeLayers = useMemo(
     () => LAYERS.filter((layer) => enabledLayers.has(layer.id)),
     [enabledLayers],
+  );
+
+  const selectedMapFeatures = useMemo<SatongMapFeature[]>(
+    () =>
+      selectedParcels.map((parcel) => ({
+        id: parcel.id,
+        address: parcel.address,
+        pnu: parcel.pnu,
+        lat: parcel.lat,
+        lon: parcel.lon,
+        areaSqm: parcel.areaSqm,
+        zoneType: parcel.zoneType,
+        jimok: parcel.jimok,
+        officialPricePerSqm: parcel.officialPricePerSqm,
+        builtYear: parcel.builtYear,
+        buildingAgeYears: parcel.buildingAgeYears,
+        geometry: parcel.geometry,
+        source: parcel.source,
+      })),
+    [selectedParcels],
+  );
+
+  const mapLayerState = useMemo<SatongMapLayerState>(
+    () => ({
+      enabledLayerIds: Array.from(enabledLayers),
+      controlsByLayer: layerControls,
+    }),
+    [enabledLayers, layerControls],
   );
 
   const outputActions: OutputAction[] = useMemo(
@@ -577,7 +672,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
     window.location.href = `${apiV1BaseUrl()}/zoning/land-schedule-template`;
   }, []);
 
-  const handleLayerClick = useCallback((layerId: string) => {
+  const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
+    if (!isRenderableSatongMapLayer(layerId)) {
+      setActiveLayerId((current) => (current === layerId ? null : layerId));
+      return;
+    }
     setEnabledLayers((prev) => {
       const next = new Set(prev);
       if (next.has(layerId)) {
@@ -588,6 +687,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
       return next;
     });
     setActiveLayerId((current) => (current === layerId ? null : layerId));
+  }, []);
+
+  const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
+    if (!control.mapEffect) return;
+    setEnabledLayers((prev) => {
+      const next = new Set(prev);
+      next.add(layerId);
+      return next;
+    });
+    setLayerControls((prev) => {
+      const current = new Set(prev[layerId] ?? []);
+      if (layerId === "terrain") {
+        ["base", "satellite", "hybrid", "aerial", "gray"].forEach((id) => current.delete(id));
+        current.add(control.id);
+      } else if (current.has(control.id)) {
+        current.delete(control.id);
+      } else {
+        current.add(control.id);
+      }
+      return {
+        ...prev,
+        [layerId]: Array.from(current),
+      };
+    });
   }, []);
 
   const handleMapPickMany = useCallback(
@@ -889,17 +1012,28 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
         <section className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-3 shadow-sm md:p-4">
           <div className="relative min-h-[720px] overflow-hidden rounded-[24px] border border-slate-200 bg-slate-100">
-            <div className="pointer-events-none absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-[#0b120d]/90 px-3 py-2 text-xs font-black text-white shadow-xl">
+            <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={(event) => event.stopPropagation()}
+                className="rounded-full bg-[#0b120d]/90 px-3 py-2 text-xs font-black text-white shadow-xl"
+                aria-label="사통팔땅 멀티지도"
+              >
                 사통팔땅 멀티지도
-              </span>
+              </button>
               {activeLayers.slice(0, 4).map((layer) => (
-                <span
+                <button
                   key={layer.id}
-                  className="rounded-full bg-white/90 px-3 py-2 text-xs font-black text-slate-800 shadow"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleLayerClick(layer.id);
+                  }}
+                  className="rounded-full bg-white/90 px-3 py-2 text-xs font-black text-slate-800 shadow transition hover:bg-white"
+                  aria-label={`${layer.label} 레이어 전환`}
                 >
                   {layer.label}
-                </span>
+                </button>
               ))}
               {activeLayers.length > 4 && (
                 <span className="rounded-full bg-white/90 px-3 py-2 text-xs font-black text-slate-800 shadow">
@@ -909,12 +1043,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
             </div>
 
             <div className="p-2">
-              <ParcelPickerMap
+              <SatongMultiMap
                 onPickMany={handleMapPickMany}
                 focusTarget={focusTarget}
                 autoPreviewFocus
                 height={720}
                 chrome="immersive"
+                selectedParcels={selectedMapFeatures}
+                layerState={mapLayerState}
               />
             </div>
 
@@ -985,17 +1121,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {activeLayer.controls.map((control) => (
                     <button
-                      key={control}
+                      key={control.id}
                       type="button"
-                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                      disabled={!control.mapEffect}
+                      onClick={() => handleLayerControlClick(activeLayer.id, control)}
+                      title={control.mapEffect ? `${control.label} 지도 반영` : control.description || "공식 데이터 소스 연결 후 활성화"}
+                      className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
+                        layerControls[activeLayer.id]?.includes(control.id)
+                          ? "border-blue-300 bg-blue-600 text-white"
+                          : control.mapEffect
+                            ? "border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                            : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                      }`}
                     >
-                      {control}
+                      {control.label}
                     </button>
                   ))}
                 </div>
-                {activeLayer.status !== "active" && (
+                {!isRenderableSatongMapLayer(activeLayer.id) ? (
                   <div className="mt-4 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
-                    실데이터 연결 전까지 이 레이어는 설정 구조와 산출물 연결 상태만 표시합니다.
+                    이 레이어는 아직 공식 데이터 소스와 지도 렌더러가 연결되지 않아 지도에 표시하지 않습니다.
+                  </div>
+                ) : activeLayer.status !== "active" && (
+                  <div className="mt-4 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+                    선택 필지의 실제 속성 데이터가 확보된 범위에서만 지도에 반영됩니다. 무자료 필지는 추정 표시하지 않습니다.
                   </div>
                 )}
               </div>

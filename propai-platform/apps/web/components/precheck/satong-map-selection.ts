@@ -15,6 +15,9 @@ export type SatongSelectionParcel = {
   zoneType?: string | null;
   jimok?: string | null;
   officialPricePerSqm?: number | null;
+  builtYear?: number | null;
+  buildingAgeYears?: number | null;
+  geometry?: unknown;
   source: "search" | "excel" | "map";
 };
 
