@@ -118,8 +118,15 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     # ★provenance 정직성: 조례 미확정(법정상한 폴백)이고 계획상한·완화근거도 없으면
     #   far_basis를 '법정상한 적용(조례 미확인)'으로 정직 표기한다(false-confirmed 방지).
     #   ordinance_service 3차 폴백(source='법정상한', recheck_recommended=True)을 신호로 인식.
+    #   ★recheck_recommended는 ordinance_service._attach_provenance가 최상위가 아닌
+    #   ordinance["provenance"]["recheck_recommended"]에 싣는다(top-level 읽기는 항상 falsy
+    #   dead-branch였음) — provenance 하위를 우선 읽고, 구버전 호출부 호환을 위해 top-level도
+    #   폴백으로 허용한다.
     _ord_src = str(ordinance.get("source") or "")
-    _ord_recheck = bool(ordinance.get("recheck_recommended"))
+    _ord_provenance = ordinance.get("provenance") if isinstance(ordinance.get("provenance"), dict) else {}
+    _ord_recheck = bool(_ord_provenance.get("recheck_recommended")) or bool(
+        ordinance.get("recheck_recommended")
+    )
     if (
         not ordinance_confirmed
         and plan_far_ceiling is None

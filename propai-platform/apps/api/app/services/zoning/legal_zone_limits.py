@@ -246,17 +246,16 @@ def _extract_ordinance_far(regulation_payload: Any) -> dict[str, Any]:
             out["source"] = "지자체 조례"
             return out
 
-    # 3) RegulationAnalysisService.limits 형태: {"far": {"ordinance": ..., "effective": ...}}
+    # 3) RegulationAnalysisService.limits 형태: {"far": {"legal": ..., "ordinance": ..., "effective": ...}}
+    #    ★가드(step1과 동일 계약): trio 생산자(_limits.trio)가 ordinance 미보유 시
+    #    effective = ordinance or legal 로 법정값을 effective에 채워넣으므로(용인과 동일 버그
+    #    클래스), 명시적 ordinance 키가 있을 때만 조례값으로 채택한다. effective 단독 금지.
     limits = regulation_payload.get("limits")
     if isinstance(limits, dict):
         f = limits.get("far") or {}
         b = limits.get("bcr") or {}
-        far = (f.get("ordinance") if isinstance(f, dict) else None) or (
-            f.get("effective") if isinstance(f, dict) else None
-        )
-        bcr = (b.get("ordinance") if isinstance(b, dict) else None) or (
-            b.get("effective") if isinstance(b, dict) else None
-        )
+        far = f.get("ordinance") if isinstance(f, dict) else None
+        bcr = b.get("ordinance") if isinstance(b, dict) else None
         if far or bcr:
             out["ord_far"] = float(far) if far else None
             out["ord_bcr"] = float(bcr) if bcr else None
