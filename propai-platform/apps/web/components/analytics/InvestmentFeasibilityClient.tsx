@@ -20,6 +20,7 @@ import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
 import { findDecisionPart } from "@/components/projects/decision-brief-types";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { deriveLeverage } from "@/lib/finance/leverage";
 import { isValidLocale } from "@/i18n/config";
 
 function fmtKrw(won: number | null | undefined): string {
@@ -52,22 +53,29 @@ export function InvestmentFeasibilityClient() {
   );
 
   // 파생 지표: 순이익·자기자본수익률(ROE)·타인자본·실효 LTV.
+  //  ★공용 계약(deriveLeverage) 단일 규칙으로 계산 — DCF·시니어금융·은행보고서와 동일.
+  //   자기자본은 SSOT(equityWon: 입력우선/총사업비×비율 자동산출)를 그대로 소비한다.
   const derived = useMemo(() => {
     if (!feasibilityData) return null;
     const revenue = feasibilityData.totalRevenueWon ?? null;
     const cost = feasibilityData.totalCostWon ?? null;
     const netProfit =
       revenue != null && cost != null ? revenue - cost : null;
-    const equity = feasibilityData.equityWon ?? null;
-    const debt =
-      cost != null && equity != null ? Math.max(0, cost - equity) : null;
-    const roe =
-      netProfit != null && equity != null && equity > 0
-        ? (netProfit / equity) * 100
-        : null;
-    const ltv =
-      cost != null && cost > 0 && debt != null ? (debt / cost) * 100 : null;
-    return { revenue, cost, netProfit, equity, debt, roe, ltv };
+    const lev = deriveLeverage({
+      netProfitWon: netProfit,
+      totalCostWon: cost,
+      equityWon: feasibilityData.equityWon ?? null,
+      equityRatioPct: feasibilityData.equityRatioPct ?? null,
+    });
+    return {
+      revenue,
+      cost,
+      netProfit,
+      equity: lev.equityWon,
+      debt: lev.debtWon,
+      roe: lev.roePct,
+      ltv: lev.ltvPct,
+    };
   }, [feasibilityData]);
 
   const feasibilityHref = projectId
