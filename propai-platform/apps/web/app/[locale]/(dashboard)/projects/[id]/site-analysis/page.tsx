@@ -149,10 +149,34 @@ type UpzoningData = {
   disclaimer?: string;
 } | null;
 
+// 허용 건축물(별표 SSOT) — comprehensive_analysis가 development_type_analyzer(별표2~20)를 소비해 가산.
+//   자연녹지=별표17 5종(단독주택·제1종근생·종교·교육·수련) 등 비주거·비상업 용도지역도 상세를 얻는다.
+//   전부 옵셔널(구버전 백엔드 부재 시 미표시·무목업).
+type AllowedBuildingType = {
+  type_name?: string | null;
+  type_code?: string | null;
+  conditions?: string | null;
+  recommended?: boolean | null;
+  max_gfa_sqm?: number | null;
+  remarks?: string | null;
+  legal_basis?: string | null;
+};
+type RestrictedBuildingType = { type_name?: string | null; reason?: string | null };
+type AllowedBuildings = {
+  zone_type?: string | null;
+  source?: string | null;
+  allowed_types?: AllowedBuildingType[] | null;
+  restricted_types?: RestrictedBuildingType[] | null;
+  recommended_type?: string | null;
+  recommendation_reason?: string | null;
+  legal_basis?: string | null;
+} | null;
+
 type L3SiteData = {
   nearby_transactions?: { apt?: NearbyTransactionSummary; land?: NearbyTransactionSummary } | null;
   infrastructure?: InfrastructureData | null;
   building_detail?: BuildingDetail | null;
+  allowed_buildings?: AllowedBuildings;
   // 실효용적률 계층 / 종상향 / 분묘 (백엔드 종합응답에 포함 시 자동 노출, 없으면 정직 미표시)
   effective_far?: EffectiveFarData | null;
   zone_limits?: Record<string, unknown> | null;
@@ -189,6 +213,7 @@ function L3EnhancedCards({
   const tx = l3Data?.nearby_transactions;
   const infra = l3Data?.infrastructure;
   const bldg = l3Data?.building_detail;
+  const allowedBuildings = l3Data?.allowed_buildings ?? null;
   const effFar = l3Data?.effective_far;
   const zoneLimits = l3Data?.zone_limits;
   const upzoning = l3Data?.upzoning;
@@ -201,8 +226,12 @@ function L3EnhancedCards({
   const hasFarTier = Boolean(effFar?.far_basis_detail || effFar?.effective_far_pct != null || zoneLimits);
   const hasUpzoning = upScenarios.length > 0 || Boolean(upInterp) || Boolean(potentialRange);
   const hasGraveInfo = grave != null && grave.available === false;
+  // 허용 건축물 카드 노출 조건: 별표 SSOT에서 허용유형이 하나라도 있을 때만(무목업·빈 카드 금지).
+  const allowedTypes = (allowedBuildings?.allowed_types ?? []).filter((t) => t && (t.type_name ?? "").trim());
+  const restrictedTypes = (allowedBuildings?.restricted_types ?? []).filter((t) => t && (t.type_name ?? "").trim());
+  const hasAllowedBuildings = allowedTypes.length > 0;
 
-  const hasAnyData = tx || infra || bldg || hasFarTier || hasUpzoning || hasGraveInfo;
+  const hasAnyData = tx || infra || bldg || hasFarTier || hasUpzoning || hasGraveInfo || hasAllowedBuildings;
   if (!hasAnyData) return null;
 
   // 헬퍼: 용적률 퍼센트 안전 포맷
@@ -374,6 +403,80 @@ function L3EnhancedCards({
           )}
           {upScenarios.length === 0 && upzoning?.summary && (
             <p className="text-xs text-[var(--text-hint)] italic mt-2">{upzoning.summary}</p>
+          )}
+        </div>
+      )}
+
+      {/* ②-b 현행 허용건축물(용도지역 별표) — 국토계획법 시행령 별표2~20 SSOT.
+          M코드(permit_validator) 표시와 별개로 "이 용도지역에 무엇을 지을 수 있나"의 별표 상세를 보강한다.
+          자연녹지=별표17 5종 등 비주거·비상업 용도지역 허용건축물이 화면에 나오게 한다(무목업: 없으면 미표시). */}
+      {hasAllowedBuildings && (
+        <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/10 text-teal-400">
+              <Icons.Database width={20} height={20} />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-black text-[var(--text-primary)]">현행 허용건축물 (용도지역 별표)</h4>
+              <p className="text-[9px] font-bold text-teal-400 uppercase tracking-widest">
+                {allowedBuildings?.source || "국토계획법 시행령 별표2~20"}
+              </p>
+            </div>
+            {allowedBuildings?.recommended_type && (
+              <span className="shrink-0 rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-[var(--accent-strong)]">
+                추천 {allowedBuildings.recommended_type}
+              </span>
+            )}
+          </div>
+
+          {/* 허용 유형 칩 그리드 — 추천 유형은 accent 강조, 나머지는 중립 칩. */}
+          <div className="flex flex-wrap gap-2">
+            {allowedTypes.map((t, i) => (
+              <span
+                key={`allowed-${t.type_code ?? i}`}
+                title={[t.conditions, t.remarks, t.legal_basis].filter(Boolean).join(" · ") || undefined}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-bold ${
+                  t.recommended
+                    ? "border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                    : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-primary)]"
+                }`}
+              >
+                {t.type_name}
+                {t.conditions ? (
+                  <span className="text-[9px] font-medium text-[var(--text-hint)]">{t.conditions}</span>
+                ) : null}
+              </span>
+            ))}
+          </div>
+
+          {/* 추천 사유(있을 때만) */}
+          {allowedBuildings?.recommendation_reason && (
+            <p className="mt-3 text-[10px] leading-relaxed text-[var(--text-secondary)]">
+              {allowedBuildings.recommendation_reason}
+            </p>
+          )}
+
+          {/* 제한 유형(있을 때만) — 지을 수 없는 유형을 정직 표기. */}
+          {restrictedTypes.length > 0 && (
+            <div className="mt-3 border-t border-[var(--line)] pt-3">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1.5">제한 유형</p>
+              <div className="flex flex-wrap gap-1.5">
+                {restrictedTypes.map((t, i) => (
+                  <span
+                    key={`restricted-${i}`}
+                    title={t.reason || undefined}
+                    className="inline-flex items-center rounded-lg border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_8%,transparent)] px-2.5 py-1 text-[10px] font-semibold text-[var(--status-error)]"
+                  >
+                    {t.type_name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 법령 근거(별표) — 텍스트 표기(별표는 조문 딥링크 대신 별표 명칭 명시). */}
+          {allowedBuildings?.legal_basis && (
+            <p className="mt-3 text-[9px] text-[var(--text-hint)]">근거: {allowedBuildings.legal_basis}</p>
           )}
         </div>
       )}
@@ -696,6 +799,7 @@ export default function SiteAnalysisPage() {
           nearby_transactions?: L3SiteData["nearby_transactions"];
           infrastructure?: L3SiteData["infrastructure"];
           building_detail?: L3SiteData["building_detail"];
+          allowed_buildings?: L3SiteData["allowed_buildings"];
           effective_far?: L3SiteData["effective_far"];
           zone_limits?: L3SiteData["zone_limits"];
           upzoning?: L3SiteData["upzoning"];
@@ -711,6 +815,7 @@ export default function SiteAnalysisPage() {
           nearby_transactions: landResult.nearby_transactions ?? null,
           infrastructure: landResult.infrastructure ?? null,
           building_detail: landResult.building_detail ?? null,
+          allowed_buildings: landResult.allowed_buildings ?? null,
           effective_far: landResult.effective_far ?? null,
           zone_limits: landResult.zone_limits ?? null,
           upzoning: landResult.upzoning ?? null,

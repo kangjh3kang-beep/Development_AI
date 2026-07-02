@@ -5,6 +5,8 @@ import {
   guardMultiParcelRich,
   nationalFarLimitForZone,
   capFarToLegal,
+  specialFactorLabels,
+  preconditionFactors,
 } from "@/lib/zoning-ssot";
 
 describe("nationalFarLimitForZone — 용도지역 법정상한(%) 공용 맵(백엔드 정합)", () => {
@@ -85,6 +87,65 @@ describe("normalizeUpzoningScenarios", () => {
     ]);
     expect(out).not.toBeNull();
     expect(out![0].expectedFarHighPct).toBeNull();
+  });
+});
+
+describe("specialFactorLabels — dict/string 혼재 factor 라벨 추출(전역 오렌더 차단)", () => {
+  it("dict factor는 category를 추출한다([object Object] 오렌더 방지)", () => {
+    const out = specialFactorLabels([
+      { category: "개발행위허가 선행/병행(도시지역 녹지)", developability: "CONDITIONAL" },
+    ]);
+    expect(out).toEqual(["개발행위허가 선행/병행(도시지역 녹지)"]);
+    // join해도 [object Object]가 아니라 category 문자열이 나온다.
+    expect(out.join(" · ")).toBe("개발행위허가 선행/병행(도시지역 녹지)");
+  });
+
+  it("문자열 factor는 그대로(trim) 통과한다", () => {
+    expect(specialFactorLabels(["임야(산지전용)", "  맹지  "])).toEqual([
+      "임야(산지전용)",
+      "맹지",
+    ]);
+  });
+
+  it("dict+string 혼재 + label/name 폴백 추출", () => {
+    const out = specialFactorLabels([
+      "농지전용",
+      { category: "학교용지" },
+      { label: "GB" },
+      { name: "문화재보호구역" },
+    ]);
+    expect(out).toEqual(["농지전용", "학교용지", "GB", "문화재보호구역"]);
+  });
+
+  it("빈 라벨·비배열은 제외/빈 배열(무목업)", () => {
+    expect(specialFactorLabels([{ category: "" }, {}, null, undefined])).toEqual([]);
+    expect(specialFactorLabels(null)).toEqual([]);
+    expect(specialFactorLabels(undefined)).toEqual([]);
+  });
+});
+
+describe("preconditionFactors — 개발행위허가 선행요건 상세 factor 선별", () => {
+  it("CONDITIONAL/PRECONDITION + implications 있는 dict만 반환", () => {
+    const devAct = {
+      category: "개발행위허가 선행/병행(도시지역 녹지)",
+      developability: "CONDITIONAL",
+      implications: ["자연녹지지역은 밀도한도 충족만으로 개발 확정 아님…", "개발행위허가는 §58 기준…"],
+      legal_basis: ["국토계획법 제56조", "국토계획법 제58조"],
+    };
+    const out = preconditionFactors([
+      "임야(산지전용)", // 문자열 → 제외
+      { category: "맹지", developability: "CONDITIONAL" }, // implications 없음 → 제외
+      { category: "일반부지", developability: "POSSIBLE", implications: ["x"] }, // 게이트 아님 → 제외
+      devAct,
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("개발행위허가 선행/병행(도시지역 녹지)");
+    expect(out[0].implications).toHaveLength(2);
+  });
+
+  it("비배열·상세 없음은 빈 배열(카드 미표시 신호)", () => {
+    expect(preconditionFactors(null)).toEqual([]);
+    expect(preconditionFactors([{ category: "x", developability: "CONDITIONAL" }])).toEqual([]);
   });
 });
 

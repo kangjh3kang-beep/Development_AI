@@ -8,7 +8,14 @@ import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import {
+  DEVELOPABILITY_LABEL,
+  resolveFarPct,
+  resolveBcrPct,
+  specialFactorLabels,
+  preconditionFactors,
+  type SpecialFactorRich,
+} from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
@@ -64,15 +71,9 @@ type ZoningAnalysisResponse = {
     developability?: string | null;
     resolvable?: string | null;
     severity_label?: string | null;
-    factors?: Array<
-      | {
-          category?: string | null;
-          legal_basis?: string[] | null;
-          // verified law.go.kr 딥링크(레지스트리 출력) — 클릭 가능 법령 링크.
-          legal_refs?: BackendLegalRef[] | null;
-        }
-      | string
-    > | null;
+    // ★factor는 문자열 또는 rich dict(category·developability·implications[]·legal_basis[]·legal_refs[]).
+    //   개발행위허가 게이트(§56/§58) implications 상세 렌더를 위해 SpecialFactorRich로 받는다.
+    factors?: Array<SpecialFactorRich | string> | null;
     honest_disclosure?: string | null;
   } | null;
 };
@@ -845,9 +846,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const specialParcel = useMemo(() => {
     const api = zoningData?.special_parcel;
     if (api?.is_special === true) {
-      const factors = (api.factors ?? [])
-        .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
-        .filter((t) => t.length > 0);
+      // ★공용 specialFactorLabels로 category 추출(dict factor "[object Object]" 오렌더 방지·전역 일관).
+      const factors = specialFactorLabels(api.factors);
+      // 개발행위허가 등 선행요건 상세(implications+§56/§58)를 가진 factor만 별도 상세 렌더.
+      const precondFactors = preconditionFactors(api.factors);
       // verified 법령링크(요인별 legal_refs 병합·중복 제거) — 죽은 링크 금지(verified만).
       const seen = new Set<string>();
       const legalRefs: BackendLegalRef[] = [];
@@ -865,6 +867,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       return {
         developability: api.developability ?? api.severity_label ?? null,
         factors,
+        precondFactors,
         honest: api.honest_disclosure ?? null,
         legalRefs,
       };
@@ -872,7 +875,13 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     // store 폴백(mapZoningRich가 기록): isSpecial true일 때만. (store엔 legal_refs 미보존 → 빈 링크)
     const st = siteAnalysis?.specialParcel;
     if (st?.isSpecial) {
-      return { developability: st.developability, factors: st.factors ?? [], honest: st.honest, legalRefs: [] as BackendLegalRef[] };
+      return {
+        developability: st.developability,
+        factors: st.factors ?? [],
+        precondFactors: [] as SpecialFactorRich[],
+        honest: st.honest,
+        legalRefs: [] as BackendLegalRef[],
+      };
     }
     return null;
   }, [zoningData?.special_parcel, siteAnalysis?.specialParcel]);
@@ -1244,6 +1253,29 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       {specialParcel.honest}
                     </p>
                   )}
+                  {/* 개발행위허가 선행요건 상세 — CONDITIONAL/PRECONDITION factor의 implications(상세 문구).
+                      도시지역 내 녹지 등은 밀도한도(용적/건폐) 충족만으로 개발 확정이 아니라 개발행위허가
+                      (§56)·형질변경이 선행/병행돼야 함을 화면에 노출한다(category만이 아닌 상세·정직 고지). */}
+                  {specialParcel.precondFactors.map((f, fi) => {
+                    const impl = (f.implications ?? []).filter(
+                      (s) => typeof s === "string" && s.trim().length > 0,
+                    );
+                    if (impl.length === 0) return null;
+                    return (
+                      <div key={`precond-${fi}`} className="mt-2">
+                        <p className="text-[9px] font-black text-[var(--status-warning)] uppercase tracking-widest mb-1">
+                          {(f.category ?? "개발행위허가 선행요건").toString().trim()} · 선행요건 상세
+                        </p>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {impl.map((s, si) => (
+                            <li key={`impl-${si}`} className="text-[10px] leading-5 text-[var(--text-secondary)]">
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
                   {/* 근거법령 — verified면 클릭 가능한 law.go.kr 딥링크 칩(미verified는 미표시·죽은 링크 금지) */}
                   {specialParcel.legalRefs.length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">

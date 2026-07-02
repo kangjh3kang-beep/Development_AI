@@ -29,7 +29,7 @@ import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct, specialFactorLabels } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 
 type MethodResult = {
@@ -156,9 +156,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   // factors는 객체({category}) 또는 문자열 혼재 → 표시 라벨 배열로 정규화. 모두 null 가드.
   const sp = site?.special_parcel ?? null;
   const isSpecialParcel = sp?.is_special === true;
-  const spFactors = (sp?.factors ?? [])
-    .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
-    .filter((t) => t.length > 0);
+  // ★공용 specialFactorLabels로 category 추출(dict factor "[object Object]" 오렌더 방지·전역 일관).
+  const spFactors = specialFactorLabels(sp?.factors);
   const spDevelopabilityLabel =
     (sp?.developability && DEVELOPABILITY_LABEL[sp.developability]) ||
     (typeof sp?.severity_label === "string" ? sp.severity_label : null);
