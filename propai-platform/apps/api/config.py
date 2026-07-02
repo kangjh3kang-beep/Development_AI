@@ -25,7 +25,14 @@ class Settings(BaseSettings):
     app_name: str = "PropAI"
     app_version: str = "62.0.0"
     debug: bool = False
-    environment: str = Field(default="development", description="development | staging | production")
+    # 환경 판별 정합(3단계-a): 자매 Settings(app/core/config.py `APP_ENV`)와 동일하게
+    # ENVIRONMENT → APP_ENV 우선순위 — 어느 var 를 설정해도 두 클래스가 같은 환경으로 판별.
+    # 계약 테스트: tests/test_settings_env_consistency.py.
+    environment: str = Field(
+        default="development",
+        description="development | staging | production",
+        validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"),
+    )
 
     # ── 심의분석 엔진(별도 서비스) 연동: BFF가 서버사이드로 호출 ──
     # 빈 URL = 미연결 → /deliberation/* 는 degrade(engine_unreachable). 토큰은 엔진 .env.secrets와 동일값(수기 동기화).
@@ -247,7 +254,8 @@ class Settings(BaseSettings):
         """프로덕션 환경에서 기본 JWT 시크릿 사용 시 시작 차단."""
         import os
         if value == "complex_jwt_secret_key_change_in_prod":
-            env = os.getenv("ENVIRONMENT", "development").lower()
+            # 환경 판별 정합: ENVIRONMENT → APP_ENV(클래스 필드와 동일 우선순위)
+            env = (os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development").lower()
             if env in {"production", "staging"}:
                 raise ValueError(
                     "JWT_SECRET이 기본값입니다. 프로덕션/스테이징 환경에서는 반드시 고유한 시크릿을 설정하세요. "
