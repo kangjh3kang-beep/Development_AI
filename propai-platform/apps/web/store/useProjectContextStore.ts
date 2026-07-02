@@ -214,6 +214,12 @@ interface FeasibilityData {
   //   DCF에서 사용자가 바꾸면 요약도 즉시 반영되고, 총사업비가 나오면 equityWon이 자동 채워진다.
   //   optional·하위호환(구 스냅샷=undefined → updateFeasibilityData가 기본 10% 폴백).
   equityRatioPct?: number | null;
+  // ★수동입력 플래그 — true는 "사용자가 자기자본 절대액을 직접 입력했다"는 뜻일 때만 세팅한다
+  //  (FeasibilityEditorV2 양수 환류·ModuleInputForm 자기자본 입력). 자동파생(ratio×cost)이나
+  //  DCF 비율 변경은 manual이 아니다(false/미설정). updateFeasibilityData는 이 플래그로만
+  //  "보존 vs 재파생"을 가른다 — 옛 equityWon 값의 양수 여부로 판단하면 자동파생값이 다음
+  //  cost 변경 때도 옛 cost에 앵커돼 실효비율이 침묵 이탈한다(재실행 경로 회귀).
+  equityIsManual?: boolean;
   roiPct?: number | null;
   npvWon?: number | null;
   // (Phase C-1) 추천 개발방식 코드(M01~M15) — 상류 추천 노드가 산출한 최상위 추천 유형.
@@ -1257,16 +1263,20 @@ export const useProjectContextStore = create<ProjectContextState>()(
           } as FeasibilityData;
           // ★자기자본 자동 환류(공용 규칙, resolveEquityWon 단일 계약):
           //   총사업비가 나오면 자기자본이 없어도 equityRatioPct(기본 10%)로 자동 산출해 채운다
-          //   (0원 표시 방지). 자기자본 절대액이 명시 입력(양수)돼 있으면 그 값을 보존한다.
+          //   (0원 표시 방지). 자기자본 절대액이 "사용자 직접입력"(equityIsManual=true)일 때만 보존한다.
           //   비율 슬롯이 비어 있으면(구 스냅샷) 기본 10%로 정규화해 SSOT를 확정한다.
+          //   ★양수값 존재만으로 "명시 입력"을 판단하면 안 된다 — 그 양수값이 직전 자동파생값일 수
+          //   있어, 재실행 경로(부분 writer가 equityWon 키를 omit)에서 cost가 바뀌어도 옛 cost에
+          //   앵커된 자기자본이 그대로 보존되며 실효비율이 침묵 이탈한다(적대적 리뷰 재현 [A]).
+          //   그래서 "보존 vs 재파생"은 오직 equityIsManual 플래그로만 가른다.
           const ratio =
             merged.equityRatioPct != null && merged.equityRatioPct > 0
               ? merged.equityRatioPct
               : DEFAULT_EQUITY_RATIO_PCT;
           merged.equityRatioPct = ratio;
-          // 자기자본 절대액: 명시된 양수 입력은 우선, 그 외(null/undefined/0)엔 비율로 자동산출.
+          const isManual = merged.equityIsManual === true;
           const explicitEquity =
-            typeof merged.equityWon === "number" && merged.equityWon > 0
+            isManual && typeof merged.equityWon === "number" && merged.equityWon > 0
               ? merged.equityWon
               : null;
           merged.equityWon =
@@ -1359,6 +1369,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
               ...(state.feasibilityData ?? {}),
               equityRatioPct: ratio,
               equityWon,
+              // ★비율 변경은 "수동 절대액 입력"을 대체하는 새 자동파생 기준이 된다 — equityIsManual을
+              //  false로 되돌려, 이후 cost가 바뀌면 이 새 비율로 계속 재산출되게 한다(앵커링 방지).
+              equityIsManual: false,
             } as FeasibilityData,
             // ★updatedAt 미변경 — 자본구조 가정 변경이 매출·원가 staleness를 오염시키지 않도록.
           });
