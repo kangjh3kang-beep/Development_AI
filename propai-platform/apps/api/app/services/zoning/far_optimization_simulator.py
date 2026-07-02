@@ -126,8 +126,14 @@ DEFAULT_SCENARIOS = [
     ScenarioInput("G-SEED 최우수 + 에너지 1등급", gseed_grade="1등급(최우수)", energy_grade="1등급"),
     ScenarioInput("공개공지 10%", open_space_ratio=0.10),
     ScenarioInput("기부체납 15% + 에너지 1등급", donation_pct=15, energy_grade="1등급"),
-    ScenarioInput("기부체납 15% + G-SEED 최우수 + 에너지 1++", donation_pct=15, gseed_grade="1등급(최우수)", energy_grade="1++등급"),
-    ScenarioInput("기부체납 20% + 친환경 + 공개공지", donation_pct=20, gseed_grade="1등급(최우수)", energy_grade="1++등급", open_space_ratio=0.10),
+    ScenarioInput(
+        "기부체납 15% + G-SEED 최우수 + 에너지 1++",
+        donation_pct=15, gseed_grade="1등급(최우수)", energy_grade="1++등급",
+    ),
+    ScenarioInput(
+        "기부체납 20% + 친환경 + 공개공지",
+        donation_pct=20, gseed_grade="1등급(최우수)", energy_grade="1++등급", open_space_ratio=0.10,
+    ),
 ]
 
 
@@ -142,7 +148,7 @@ def simulate_far_scenarios(
     cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
     base_far = ordinance_far
     category = ZONE_CATEGORY_MAP.get(zone_type, "주거")
-    alpha = ALPHA_COEFFICIENTS.get(category, 1.0)
+    _alpha = ALPHA_COEFFICIENTS.get(category, 1.0)  # 현재 미사용(향후 인센티브 계수 적용 예정) — 계약 유지용
 
     # 용도용적제 적용 가능한 지역이면 용도별 시나리오 추가
     scenarios = list(DEFAULT_SCENARIOS)
@@ -193,13 +199,23 @@ def simulate_far_scenarios(
 
         incentive_items = []
         if donation_bonus > 0:
-            incentive_items.append({"source": "기부체납", "bonus": round(donation_bonus, 1), "detail": f"비율 {sc.donation_pct}%"})
+            incentive_items.append(
+                {"source": "기부체납", "bonus": round(donation_bonus, 1), "detail": f"비율 {sc.donation_pct}%"}
+            )
         if green_bonus > 0:
-            incentive_items.append({"source": "친환경인증", "bonus": round(green_bonus, 1), "detail": f"G-SEED {sc.gseed_grade or '-'}, 에너지 {sc.energy_grade or '-'}"})
+            incentive_items.append({
+                "source": "친환경인증",
+                "bonus": round(green_bonus, 1),
+                "detail": f"G-SEED {sc.gseed_grade or '-'}, 에너지 {sc.energy_grade or '-'}",
+            })
         if open_bonus > 0:
-            incentive_items.append({"source": "공개공지", "bonus": round(open_bonus, 1), "detail": f"비율 {sc.open_space_ratio*100:.0f}%"})
+            incentive_items.append(
+                {"source": "공개공지", "bonus": round(open_bonus, 1), "detail": f"비율 {sc.open_space_ratio*100:.0f}%"}
+            )
         if use_far_result and use_far_result.get("applicable"):
-            incentive_items.append({"source": "용도용적제", "bonus": 0, "detail": f"가중평균 {use_far_result['weighted_far']}%"})
+            incentive_items.append(
+                {"source": "용도용적제", "bonus": 0, "detail": f"가중평균 {use_far_result['weighted_far']}%"}
+            )
 
         gfa_increase = land_area_sqm * (achieved - base_far) / 100 if land_area_sqm > 0 else 0
 
@@ -229,6 +245,8 @@ def simulate_far_scenarios(
         "max_achievable_far": max_far_scenario["achieved_far"],
         "scenarios": results,
         "recommended_scenario": recommended["scenario_name"],
-        "recommended_reason": f"기부체납 {recommended['donation_pct']}% 이하에서 최대 {recommended['achieved_far']}% 달성",
+        "recommended_reason": (
+            f"기부체납 {recommended['donation_pct']}% 이하에서 최대 {recommended['achieved_far']}% 달성"
+        ),
         "use_based_far_applicable": zone_type in USE_BASED_FAR,
     }

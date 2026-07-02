@@ -1,14 +1,14 @@
 """Deterministic chatbot session service for G95."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.phase_g_chatbot import ChatbotMessage, ChatbotSession
+
+UTC = UTC  # 하위호환 재노출(모듈 속성 유지) — 임포트 사이에 있어 E402 유발하던 것을 하단 이동
 
 _DOMAIN_ACTIONS = {
     "investment": [

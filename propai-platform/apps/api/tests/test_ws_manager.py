@@ -42,14 +42,14 @@ async def test_broadcast_drops_dead_connections():
 
 
 async def test_broadcast_risk_alert_routes_channels():
-    from app.services.realtime import ws_manager as W
+    from app.services.realtime import ws_manager
     risk_ws, proj_ws = _FakeWS(), _FakeWS()
-    await W.manager.connect("risk-alerts", risk_ws)
-    await W.manager.connect("project:PRJ-1", proj_ws)
+    await ws_manager.manager.connect("risk-alerts", risk_ws)
+    await ws_manager.manager.connect("project:PRJ-1", proj_ws)
     try:
-        sent = await W.broadcast_risk_alert({"project_id": "PRJ-1", "risk_level": "high"})
+        sent = await ws_manager.broadcast_risk_alert({"project_id": "PRJ-1", "risk_level": "high"})
         assert sent == 2
         assert risk_ws.sent[0]["type"] == "risk_alert" and proj_ws.sent[0]["risk_level"] == "high"
     finally:
-        W.manager.disconnect("risk-alerts", risk_ws)
-        W.manager.disconnect("project:PRJ-1", proj_ws)
+        ws_manager.manager.disconnect("risk-alerts", risk_ws)
+        ws_manager.manager.disconnect("project:PRJ-1", proj_ws)

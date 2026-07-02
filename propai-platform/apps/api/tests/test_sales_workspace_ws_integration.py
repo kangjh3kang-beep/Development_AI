@@ -362,7 +362,9 @@ def test_social_ws_connection_throttle_delivers_4429(test_client, social_routes,
         with test_client.websocket_connect(f"/api/v1/social/ws?token={tok}") as ws:
             assert ws.receive_json()["type"] == "READY"
     # 21번째 연결은 throttle 초과 → 4429 로 거부(handshake 성립 못 하거나 첫 수신서 4429).
-    with pytest.raises(WebSocketDisconnect) as ei:
-        with test_client.websocket_connect(f"/api/v1/social/ws?token={tok}") as ws:
-            ws.receive_text()
+    with (
+        pytest.raises(WebSocketDisconnect) as ei,
+        test_client.websocket_connect(f"/api/v1/social/ws?token={tok}") as ws,
+    ):
+        ws.receive_text()
     assert ei.value.code == 4429

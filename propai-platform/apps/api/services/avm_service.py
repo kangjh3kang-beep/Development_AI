@@ -673,7 +673,10 @@ class AVMService:
                 raise ZeroDivisionError(f"actuals[{i}]가 0이므로 MAPE를 계산할 수 없습니다.")
 
         n = len(predictions)
-        mape = sum(abs(actual - pred) / abs(actual) for pred, actual in zip(predictions, actuals)) / n * 100
+        mape = sum(
+            abs(actual - pred) / abs(actual)
+            for pred, actual in zip(predictions, actuals, strict=False)
+        ) / n * 100
         threshold = 5.0
 
         return {

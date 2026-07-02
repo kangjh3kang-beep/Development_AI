@@ -68,10 +68,7 @@ def detect_numeric_deltas(
         pv, cv = float(prior_numbers[key]), float(current_numbers[key])
         delta = cv - pv
         denom = abs(pv)
-        if denom > 1e-9:
-            rel = abs(delta) / denom
-        else:
-            rel = 0.0 if abs(delta) <= 1e-9 else float("inf")
+        rel = abs(delta) / denom if denom > 1e-09 else 0.0 if abs(delta) <= 1e-09 else float("inf")
         key_abs = abs_thresholds.get(key)
         flagged = (key_abs is not None and abs(delta) >= key_abs) or rel >= rel_threshold
         if not flagged:

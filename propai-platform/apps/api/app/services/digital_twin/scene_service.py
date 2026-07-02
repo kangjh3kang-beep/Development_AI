@@ -228,7 +228,7 @@ async def _enrich_neighbor_heights(neighbors: list[dict[str, Any]]) -> None:
         return
 
     enriched = 0
-    for n, title in zip(targets, results):
+    for n, title in zip(targets, results, strict=False):
         if not isinstance(title, dict):
             continue
         gf = int(title.get("ground_floors") or 0)

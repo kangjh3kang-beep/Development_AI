@@ -22,6 +22,7 @@ best-effort: 어떤 예외도 heal 태스크를 죽이지 않는다.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -248,10 +249,8 @@ async def _escalate(db, action_type: str, trigger_key: str) -> None:
         await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("heal 에스컬레이션 실패: %s", str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:

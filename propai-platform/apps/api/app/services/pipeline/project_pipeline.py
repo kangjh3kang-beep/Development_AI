@@ -262,7 +262,7 @@ class ProjectPipeline:
             if not jobs:
                 return
             results = await asyncio.gather(*[c for _, c in jobs], return_exceptions=True)
-            for (key, _), res in zip(jobs, results):
+            for (key, _), res in zip(jobs, results, strict=False):
                 if isinstance(res, dict) and res:
                     state.stages[key].data["ai_interpretation"] = res
         except Exception as e:  # noqa: BLE001
@@ -748,13 +748,16 @@ class ProjectPipeline:
                     "official_price_per_sqm": float(official_land_price),
                     "nearby_transactions": pre_collected.get("nearby_transactions"),
                 },
-                "building": pre_collected.get("building_info") or comprehensive.get("building_detail") or comprehensive.get("building_info"),
-                "building_lookup_status": comprehensive.get("building_lookup_status") or pre_collected.get("building_lookup_status"),
+                "building": (pre_collected.get("building_info") or comprehensive.get("building_detail")
+                             or comprehensive.get("building_info")),
+                "building_lookup_status": (comprehensive.get("building_lookup_status")
+                                           or pre_collected.get("building_lookup_status")),
                 "infrastructure": pre_collected.get("infrastructure") or comprehensive.get("infrastructure"),
                 "coordinates": pre_collected.get("coordinates") or comprehensive.get("coordinates"),
                 "regulations": {
                     "land_use_plan": pre_collected.get("land_use_plan") or comprehensive.get("land_use_plan"),
-                    "special_districts": pre_collected.get("special_districts") or comprehensive.get("special_districts", []),
+                    "special_districts": (pre_collected.get("special_districts")
+                                          or comprehensive.get("special_districts", [])),
                     "warnings": pre_collected.get("warnings") or comprehensive.get("warnings", []),
                 },
                 # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)
@@ -996,7 +999,8 @@ class ProjectPipeline:
                     resp = await client.get("https://api.vworld.kr/req/data", params=params)
                     if resp.status_code == 200:
                         data = resp.json()
-                        features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
+                        features = (data.get("response", {}).get("result", {})
+                                    .get("featureCollection", {}).get("features", []))
                         if features:
                             props = features[0].get("properties", {})
                             geom = features[0].get("geometry")
@@ -1984,7 +1988,8 @@ class ProjectPipeline:
                 mc_revenue = vars_dict["sale_price"] * sellable_pyeong
                 c = vars_dict["construction_cost"]
                 r = vars_dict["interest_rate"]
-                # 결정론 라인아이템과 동일 구조(설계감리5%+인허가3%+예비5%=공사 13%, 분양경비4%, 일반관리3%, 제세4.6%, 금융)
+                # 결정론 라인아이템과 동일 구조
+                # (설계감리5%+인허가3%+예비5%=공사 13%, 분양경비4%, 일반관리3%, 제세4.6%, 금융)
                 mc_soft = c * 0.13 + mc_revenue * 0.04 + (land_cost + c) * 0.03
                 mc_finance = (land_cost + c) * 0.5 * r * (proj_months / 12.0)
                 mc_levies = land_cost * 0.046

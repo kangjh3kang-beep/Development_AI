@@ -103,10 +103,7 @@ def estimate_win_price(
         )
 
     # 신뢰도: 종류·지역 계수가 표준적이고 유찰이 과도하지 않으면 medium, 그 외 low.
-    if region_sido in REGION_ADJ and kind in BASE_WIN_RATE and fail_count <= 3:
-        confidence = "medium"
-    else:
-        confidence = "low"
+    confidence = "medium" if region_sido in REGION_ADJ and kind in BASE_WIN_RATE and fail_count <= 3 else "low"
 
     return {
         "est_win_low": low,

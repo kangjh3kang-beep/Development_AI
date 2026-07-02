@@ -132,7 +132,8 @@ async def fetch_recent_monthly_rows(statbl: str, months: int = 24) -> list[dict[
     for _ in range(max(1, months) + 3):   # 공표 지연 고려 여유 +3개월
         m -= 1
         if m == 0:
-            y -= 1; m = 12
+            y -= 1
+            m = 12
         ym.append(f"{y}{m:02d}")
     cache_key = f"{statbl}|{ym[0]}|{months}"
     hit = _LANDPRICE_CACHE.get(cache_key)

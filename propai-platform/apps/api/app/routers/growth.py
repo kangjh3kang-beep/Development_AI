@@ -10,6 +10,7 @@ POST /api/v1/growth/events
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 
 import structlog
@@ -510,10 +511,8 @@ async def submit_feedback(
         })).fetchone()
         await db.commit()
     except Exception as e:  # noqa: BLE001
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         logger.warning("ai_feedback INSERT 실패", err=str(e)[:160])
         raise HTTPException(status_code=500, detail="피드백 저장에 실패했습니다.") from e
 

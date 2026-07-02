@@ -85,7 +85,9 @@ class SgisClient(BaseAPIClient):
                 logger.warning("SGIS token fetch failed", error=str(e))
                 return None
 
-    async def _fetch_with_auth_retry(self, path: str, params: dict, fallback_func: Any, *fallback_args: Any) -> dict[str, Any]:
+    async def _fetch_with_auth_retry(
+        self, path: str, params: dict, fallback_func: Any, *fallback_args: Any
+    ) -> dict[str, Any]:
         """토큰 만료(-401) 시 재발급 후 1회 재시도하는 래퍼."""
         for attempt in range(2):
             token = await self.get_access_token()

@@ -36,10 +36,13 @@ _BASE = "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1"
 # 분양 유형별 엔드포인트(상세/주택형). 순서=메뉴 표기 순서.
 PRESALE_TYPES: list[dict[str, str]] = [
     {"key": "apt", "label": "APT", "detail": "getAPTLttotPblancDetail", "model": "getAPTLttotPblancMdl"},
-    {"key": "officetel", "label": "오피스텔·생숙", "detail": "getUrbtyOfctlLttotPblancDetail", "model": "getUrbtyOfctlLttotPblancMdl"},
-    {"key": "remndr", "label": "APT 잔여세대", "detail": "getRemndrLttotPblancDetail", "model": "getRemndrLttotPblancMdl"},
+    {"key": "officetel", "label": "오피스텔·생숙", "detail": "getUrbtyOfctlLttotPblancDetail",
+     "model": "getUrbtyOfctlLttotPblancMdl"},
+    {"key": "remndr", "label": "APT 잔여세대", "detail": "getRemndrLttotPblancDetail",
+     "model": "getRemndrLttotPblancMdl"},
     {"key": "opt", "label": "임의공급", "detail": "getOPTLttotPblancDetail", "model": "getOPTLttotPblancMdl"},
-    {"key": "pblrent", "label": "공공지원 민간임대", "detail": "getPblPvtRentLttotPblancDetail", "model": "getPblPvtRentLttotPblancMdl"},
+    {"key": "pblrent", "label": "공공지원 민간임대", "detail": "getPblPvtRentLttotPblancDetail",
+     "model": "getPblPvtRentLttotPblancMdl"},
 ]
 _TYPE_BY_KEY = {t["key"]: t for t in PRESALE_TYPES}
 

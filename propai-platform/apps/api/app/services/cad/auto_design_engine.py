@@ -1007,7 +1007,6 @@ class AutoDesignEngineService:
             })
 
         # 복도 (중앙 수평선)
-        corr_w = core_layout["corridor_width_m"]
         corr_y = oy + (bd * scale) / 2
         p_cl = {"id": "pt-corr-l", "x": ox, "y": corr_y}
         p_cr = {"id": "pt-corr-r", "x": ox + bw * scale, "y": corr_y}
@@ -1131,7 +1130,10 @@ class AutoDesignEngineService:
             mass["total_floor_area_sqm"] = round(fp * mass["num_floors"], 2)
             mass["building_height_m"] = round(mass["num_floors"] * site_input.floor_height_m, 2)
             mass["bcr_pct"] = round(fp / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
-            mass["far_pct"] = round(mass["total_floor_area_sqm"] / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
+            mass["far_pct"] = (
+                round(mass["total_floor_area_sqm"] / site_input.site_area_sqm * 100, 2)
+                if site_input.site_area_sqm > 0 else 0
+            )
 
         # 2-b. 정북일조 단계후퇴: 보정 루프가 box 연면적으로 덮어쓰므로 여기서 재산출(층수/치수 반영)
         if mass.get("daylight_step"):
@@ -1147,7 +1149,10 @@ class AutoDesignEngineService:
             mass["north_step_profile"] = profile
             mass["total_floor_area_sqm"] = stepped_area
             mass["building_height_m"] = round(n * site_input.floor_height_m, 2)
-            mass["far_pct"] = round(stepped_area / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
+            mass["far_pct"] = (
+                round(stepped_area / site_input.site_area_sqm * 100, 2)
+                if site_input.site_area_sqm > 0 else 0
+            )
             # 재산출된 층수 기준으로 바인딩 제약 재판정(W-A ④)
             max_floors_by_height = (
                 int(max_h / site_input.floor_height_m) if max_h > 0 else 100

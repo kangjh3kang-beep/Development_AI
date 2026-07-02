@@ -27,7 +27,8 @@ class SalesSite(Base, PKMixin, TimestampMixin, SoftDeleteMixin, CreatedByMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False)
     site_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
     site_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    development_type: Mapped[str] = mapped_column(String(30), nullable=False)  # APT/OFFICETEL/KNOWLEDGE_CENTER/HOTEL/RETAIL
+    # APT/OFFICETEL/KNOWLEDGE_CENTER/HOTEL/RETAIL
+    development_type: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), server_default="PREP")
     phase: Mapped[str | None] = mapped_column(String(20), nullable=True)
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

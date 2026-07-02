@@ -2,15 +2,12 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Generic, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-M = TypeVar("M")
 
-
-class CRUDBase(Generic[M]):
+class CRUDBase[M]:
     def __init__(self, model: type[M]):
         self.model = model
 

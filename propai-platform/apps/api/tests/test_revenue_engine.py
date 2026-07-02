@@ -121,9 +121,9 @@ class TestTotalRevenue:
             ancillary_revenue=ancillary,
         )
 
-        total_억 = total["total_revenue_won"] / 100_000_000
+        total_eok = total["total_revenue_won"] / 100_000_000
         # 합리적 범위: 10,000억~13,000억
-        assert 10_000 < total_억 < 13_000, f"총수입 {total_억:.0f}억 — 범위 벗어남"
+        assert 10_000 < total_eok < 13_000, f"총수입 {total_eok:.0f}억 — 범위 벗어남"
 
     def test_all_none(self):
         total = calculate_total_revenue()

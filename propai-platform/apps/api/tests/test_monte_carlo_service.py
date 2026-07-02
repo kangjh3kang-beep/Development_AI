@@ -223,7 +223,7 @@ class TestSeedReproducibility:
         results_b = MonteCarloService._run_simulation(
             **_BASE_PARAMS, n=100, seed=12345
         )
-        for (npv_a, irr_a), (npv_b, irr_b) in zip(results_a, results_b):
+        for (npv_a, irr_a), (npv_b, irr_b) in zip(results_a, results_b, strict=False):
             assert npv_a == pytest.approx(npv_b, rel=1e-10)
             assert irr_a == pytest.approx(irr_b, rel=1e-10)
 

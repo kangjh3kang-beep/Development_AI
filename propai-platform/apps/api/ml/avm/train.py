@@ -223,7 +223,7 @@ def build_training_frame(rows: list[dict[str, Any]]) -> tuple[Any, Any]:
         feats.append(feat)
         targets.append(price_10k * 10_000.0)  # 만원 → 원
 
-    X = pd.DataFrame(feats, columns=FEATURE_COLUMNS)
+    X = pd.DataFrame(feats, columns=FEATURE_COLUMNS)  # noqa: N806 — ML 관례(피처 행렬)
     y = pd.Series(targets, name="price_won")
     return X, y
 
@@ -242,7 +242,7 @@ def compute_mape(predictions: Iterable[float], actuals: Iterable[float]) -> floa
 # ── 4) 학습 ──
 
 def train_xgboost(
-    X: Any,
+    X: Any,  # noqa: N803 — ML 관례(피처 행렬)
     y: Any,
     *,
     seed: int = RANDOM_SEED,
@@ -259,7 +259,7 @@ def train_xgboost(
     from sklearn.model_selection import train_test_split
     from xgboost import XGBRegressor
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, y_test = train_test_split(  # noqa: N806 — ML 관례(피처 행렬)
         X, y, test_size=holdout_ratio, random_state=seed,
     )
     model = XGBRegressor(
@@ -394,7 +394,7 @@ async def run_training(
         print(f"[AVM-TRAIN] {reason}")  # noqa: T201
         return {"registered": False, "passed": False, "rows": len(rows), "reason": reason}
 
-    X, y = build_training_frame(rows)
+    X, y = build_training_frame(rows)  # noqa: N806 — ML 관례(피처 행렬)
     model, mape_pct, n_train, n_holdout = train_xgboost(X, y)
     summary: dict[str, Any] = {
         "rows": len(rows),

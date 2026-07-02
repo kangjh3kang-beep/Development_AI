@@ -17,8 +17,10 @@ def test_crossvalidate_classifies_registered_vs_unregistered(monkeypatch):
     # 정본에 실제 등재된 법령 1건(건축법) 채취.
     reg_law = reg.LEGAL_REFERENCES[next(iter(reg.LEGAL_REFERENCES))]
     mock = [
-        {"law": reg_law["law_name"], "article": reg_law["article"], "reason": "등재", "importance": "core", "confidence": 0.95},
-        {"law": "가상의진짜아닌법률", "article": "제3조", "reason": "미등재", "importance": "related", "confidence": 0.4},
+        {"law": reg_law["law_name"], "article": reg_law["article"], "reason": "등재",
+         "importance": "core", "confidence": 0.95},
+        {"law": "가상의진짜아닌법률", "article": "제3조", "reason": "미등재",
+         "importance": "related", "confidence": 0.4},
         {"law": "", "article": "제1조", "reason": "법령명없음", "importance": "core", "confidence": 0.9},  # drop
     ]
 
@@ -50,8 +52,10 @@ def test_gosi_and_ordinance_category_routing(monkeypatch):
     """고시/조례 카테고리 → 카테고리별 검증링크(행정규칙/자치법규) + 지역고시 동반."""
     svc = LegalDiscoveryService()
     mock = [
-        {"law": "분양가상한제 적용주택의 분양가격 산정 등에 관한 규칙", "category": "고시", "reason": "분양가", "importance": "core", "confidence": 0.8},
-        {"law": "서울특별시 도시계획 조례", "category": "조례", "reason": "조례한도", "importance": "related", "confidence": 0.7},
+        {"law": "분양가상한제 적용주택의 분양가격 산정 등에 관한 규칙", "category": "고시",
+         "reason": "분양가", "importance": "core", "confidence": 0.8},
+        {"law": "서울특별시 도시계획 조례", "category": "조례",
+         "reason": "조례한도", "importance": "related", "confidence": 0.7},
     ]
     async def fake(_c): return mock
     monkeypatch.setattr(svc, "_llm_search", fake)

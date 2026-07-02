@@ -197,7 +197,7 @@ class TestCreateReservation:
         start = datetime(2025, 6, 1, 10, 0, tzinfo=KST)
         end = datetime(2025, 6, 1, 12, 0, tzinfo=KST)
 
-        reservation = await svc.create_reservation(
+        _reservation = await svc.create_reservation(
             tenant_id=TEST_TENANT_ID,
             project_id=TEST_PROJECT_ID,
             facility_name="회의실 A",

@@ -67,7 +67,9 @@ async def my_teams(current: CurrentUser = Depends(get_current_user), db: AsyncSe
 
 
 @router.post("/create")
-async def create_team(req: CreateTeamReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_team(
+    req: CreateTeamReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     """팀 생성(다중 가능) — 유료 구독자만. 팀별 전용 테넌트 생성."""
     tier = await _user_tier(db, current.user_id)
     if not is_metered_tier(tier):
@@ -77,14 +79,18 @@ async def create_team(req: CreateTeamReq, current: CurrentUser = Depends(get_cur
 
 
 @router.delete("/{team_id}")
-async def delete_team(team_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_team(
+    team_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     """팀 삭제(팀장만) — 멤버 개인 테넌트 복원 후 제거."""
     team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.delete_team(db, team, current.user_id)
 
 
 @router.post("/{team_id}/invite")
-async def invite(team_id: str, req: InviteReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def invite(
+    team_id: str, req: InviteReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     """팀장이 ID(이메일)로 초대 → 멤버 동의(accept) 대기."""
     team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.invite_member(db, team, str(req.email))
@@ -108,24 +114,32 @@ async def decline(team_id: str, current: CurrentUser = Depends(get_current_user)
 
 
 @router.post("/{team_id}/members/{user_id}/approve")
-async def approve(team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def approve(
+    team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.approve_member(db, team, user_id, current.user_id)
 
 
 @router.delete("/{team_id}/members/{user_id}")
-async def remove(team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def remove(
+    team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.remove_member(db, team, user_id)
 
 
 @router.put("/{team_id}/members/limit")
-async def set_limit(team_id: str, req: LimitReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def set_limit(
+    team_id: str, req: LimitReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.set_member_limit(db, team_id, req.user_id, req.limit_krw)
 
 
 @router.get("/{team_id}/usage")
-async def usage(team_id: str, days: int = 30, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def usage(
+    team_id: str, days: int = 30, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     await _owner_team_or_403(db, team_id, current.user_id)
     return {"members": await team_service.member_usage(db, team_id, days)}

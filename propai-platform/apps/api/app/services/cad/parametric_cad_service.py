@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import math
 from typing import Any
@@ -152,13 +153,12 @@ def _add_slab_rebar(msp: Modelspace, building_width_m: float, slab_top_y: float,
     msp.add_line((cover, top_y), (building_width_m - cover, top_y), dxfattribs={"layer": "REBAR"})
     msp.add_line((cover, bot_y), (building_width_m - cover, bot_y), dxfattribs={"layer": "REBAR"})
     # 정직 표기 — 도면에 표준배근(구조계산 미연동)임을 명시(DXF TEXT, REBAR 레이어).
-    try:
+    # 일부 ezdxf 버전 텍스트 배치 차이는 무시(배근 자체는 유지)
+    with contextlib.suppress(Exception):
         msp.add_text(
             "표준배근(구조계산 미연동)",
             dxfattribs={"layer": "REBAR", "height": 0.12},
         ).set_placement((cover, slab_top_y + 0.05))
-    except Exception:  # noqa: BLE001 — 일부 ezdxf 버전 텍스트 배치 차이는 무시(배근 자체는 유지)
-        pass
 
 
 def _draw_door(msp: Modelspace, x: float, y: float,

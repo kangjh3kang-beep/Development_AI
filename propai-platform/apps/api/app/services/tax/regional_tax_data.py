@@ -193,11 +193,8 @@ def get_acquisition_tax_rates(
     key_count = min(house_count, 3)
     key = (land_category, key_count, is_adjusted_area)
 
-    if key not in matrix:
-        # 폴백: 대지 비주택
-        rates = matrix[("land", 0, False)]
-    else:
-        rates = matrix[key]
+    # 미등재 키는 대지 비주택으로 폴백.
+    rates = matrix[("land", 0, False)] if key not in matrix else matrix[key]
 
     base, surcharge, edu, rural = rates
 
@@ -417,7 +414,8 @@ def _land_brackets_from_value(value: dict[str, Any]) -> list[tuple[float, float,
 _LAND_COMPREHENSIVE_CURRENT = get_rule("land_comprehensive_tax")["value"]
 
 # 별칭(하위호환): 현행 최신본.
-LAND_COMPREHENSIVE_DEDUCTION_WON = int(_LAND_COMPREHENSIVE_CURRENT["deduction_won"])  # 종합합산 토지 공제(공시가격 기준)
+# 종합합산 토지 공제(공시가격 기준)
+LAND_COMPREHENSIVE_DEDUCTION_WON = int(_LAND_COMPREHENSIVE_CURRENT["deduction_won"])
 LAND_FAIR_MARKET_RATIO = float(_LAND_COMPREHENSIVE_CURRENT["fair_market_ratio"])      # 토지 공정시장가액비율(현행)
 # (과세표준 한도, 세율, 누진공제) — 종합합산토지
 LAND_COMPREHENSIVE_TAX_BRACKETS: list[tuple[float, float, int]] = (

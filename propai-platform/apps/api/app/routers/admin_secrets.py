@@ -211,7 +211,7 @@ async def set_secret(
             label=req.label, group=req.group, secret=req.secret,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     # 감사기록(누가·언제·어떤키 변경) — 값은 절대 기록하지 않음.
     await audit_admin_action(
         actor_id=str(current.user_id), actor_role=current.role,
@@ -234,7 +234,7 @@ async def add_secret(
             label=req.label, group=req.group, secret=req.secret,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     await audit_admin_action(
         actor_id=str(current.user_id), actor_role=current.role,
         action="secret.add", target=req.name.strip(),
@@ -253,7 +253,7 @@ async def delete_secret(
     try:
         await secret_store.delete_secret(db, name)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     await audit_admin_action(
         actor_id=str(current.user_id), actor_role=current.role,
         action="secret.delete", target=name,
@@ -284,7 +284,7 @@ async def restore_secret_backup(
     try:
         await secret_store.restore_secret(db, backup_id, str(current.user_id))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     await audit_admin_action(
         actor_id=str(current.user_id), actor_role=current.role,
         action="secret.restore", target=backup_id,

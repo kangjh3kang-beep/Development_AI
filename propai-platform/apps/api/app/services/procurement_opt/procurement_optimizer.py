@@ -33,13 +33,10 @@ class ProcurementOptimizer:
         ppi_trend = (current_ppi - base_ppi) / base_ppi
         if ppi_trend > 0.1:
             recommendation = "즉시 발주 권장 (가격 상승 추세)"
-            optimal_months = 0
         elif ppi_trend < -0.05:
             recommendation = f"{forecast_months}개월 후 발주 권장"
-            optimal_months = forecast_months
         else:
             recommendation = "정기 발주 유지"
-            optimal_months = 3
         return {
             "material_name": material_name, "current_ppi": current_ppi,
             "base_ppi_2020": base_ppi,

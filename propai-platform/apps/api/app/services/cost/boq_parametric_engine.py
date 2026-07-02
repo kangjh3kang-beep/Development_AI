@@ -238,9 +238,17 @@ def generate_draft(
     gfa = float(gfa)
 
     households = params.get("households")
-    households = float(households) if isinstance(households, (int, float)) and not isinstance(households, bool) and households > 0 else None
+    households = (
+        float(households)
+        if isinstance(households, (int, float)) and not isinstance(households, bool) and households > 0
+        else None
+    )
     landscape = params.get("landscape_area_sqm")
-    landscape = float(landscape) if isinstance(landscape, (int, float)) and not isinstance(landscape, bool) and landscape > 0 else None
+    landscape = (
+        float(landscape)
+        if isinstance(landscape, (int, float)) and not isinstance(landscape, bool) and landscape > 0
+        else None
+    )
     site = params.get("site_area_sqm")
     site = float(site) if isinstance(site, (int, float)) and not isinstance(site, bool) and site > 0 else None
 

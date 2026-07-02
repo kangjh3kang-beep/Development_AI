@@ -418,7 +418,7 @@ async def check_compliance(
             try:
                 from apps.api.services.building_compliance_service import ZONE_LIMITS
 
-                _ZONE_NAME_TO_CODE = {
+                zone_name_to_code = {
                     "제1종일반주거": "1R",
                     "제2종일반주거": "2R",
                     "제3종일반주거": "3R",
@@ -428,7 +428,7 @@ async def check_compliance(
                     "준주거": "QR",
                 }
                 code = zone_type if zone_type in ZONE_LIMITS else next(
-                    (c for name, c in _ZONE_NAME_TO_CODE.items() if name in zone_type),
+                    (c for name, c in zone_name_to_code.items() if name in zone_type),
                     None,
                 )
                 lim = ZONE_LIMITS.get(code) if code else None

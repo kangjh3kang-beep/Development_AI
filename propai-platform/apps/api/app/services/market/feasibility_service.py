@@ -153,7 +153,8 @@ class FeasibilityService:
                     "saleable_area_ratio": SALEABLE_AREA_RATIO,
                     "npv_discount_rate": NPV_DISCOUNT_RATE,
                     "npv_dev_period_years": NPV_DEV_PERIOD_YEARS,
-                    "note": "보고서용 개략 추정값(참고용). NPV는 할인율 8%·개발 3년 단순가정. 정밀 수지·세후 IRR은 FeasibilityServiceV2 사용.",
+                    "note": "보고서용 개략 추정값(참고용). NPV는 할인율 8%·개발 3년 단순가정. "
+                            "정밀 수지·세후 IRR은 FeasibilityServiceV2 사용.",
                 }
             }
         except Exception as e:

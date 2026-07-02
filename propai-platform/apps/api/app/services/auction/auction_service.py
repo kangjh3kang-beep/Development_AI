@@ -580,7 +580,10 @@ class AuctionStep1Service:
 
         if info is None:
             # ONBID 입찰정보 무자료여도 getRlstDtlInf2(사진·이용현황·면적)·NED 보강분이 있으면 제공.
-            has_rlst = bool(rlst_extra and (rlst_extra.get("image_url") or rlst_extra.get("land_area") or rlst_extra.get("usage_status")))
+            has_rlst = bool(
+                rlst_extra
+                and (rlst_extra.get("image_url") or rlst_extra.get("land_area") or rlst_extra.get("usage_status"))
+            )
             has_land = bool(land_extra and (land_extra.get("area_sqm") or land_extra.get("zone_type")))
             if has_rlst or has_land:
                 item = {
@@ -591,8 +594,14 @@ class AuctionStep1Service:
                     "bld_area": rlst_extra.get("bld_area") if rlst_extra else None,
                     "zone_type": (land_extra.get("zone_type") if land_extra else None) or None,
                     "land_category": (land_extra.get("land_category") if land_extra else None) or None,
-                    "official_price_per_sqm": (land_extra.get("official_price_per_sqm") if land_extra else None) or None,
-                    "land_area_source": "토지대장(NED)" if (land_extra and not (rlst_extra and rlst_extra.get("land_area"))) else None,
+                    "official_price_per_sqm": (
+                        (land_extra.get("official_price_per_sqm") if land_extra else None) or None
+                    ),
+                    "land_area_source": (
+                        "토지대장(NED)"
+                        if (land_extra and not (rlst_extra and rlst_extra.get("land_area")))
+                        else None
+                    ),
                     "fail_count": rlst_extra.get("fail_count") if rlst_extra else None,
                     "appraisal_price": None,
                     "min_bid_price": None,
@@ -1165,7 +1174,8 @@ class AuctionStep1Service:
             tgt_addr = tgt.get("address")
             for it in items:
                 hit = False
-                if tgt_pnu and it.get("pnu") and str(it["pnu"]) == str(tgt_pnu) or tgt_addr and address_matches(tgt_addr, it.get("address")):
+                if (tgt_pnu and it.get("pnu") and str(it["pnu"]) == str(tgt_pnu)
+                        or tgt_addr and address_matches(tgt_addr, it.get("address"))):
                     hit = True
                 if hit:
                     key = (src, int(it["id"]))
@@ -1181,19 +1191,23 @@ class AuctionStep1Service:
             geocoded = 0
             for it in items:
                 lat, lng = it.get("lat"), it.get("lng")
-                if (lat is None or lng is None) and it.get("geocode_status") != "failed":
-                    # 폴리곤 매칭 대상만(=region이 있을 때만) 지오코딩, 상한 적용.
-                    if geocoded < max_geocode and it.get("address"):
-                        if vworld is None:
-                            from app.services.external_api.vworld_service import VWorldService
-                            vworld = VWorldService()
-                        coords = await self._geocode_item(
-                            item_id=int(it["id"]), address=str(it["address"]),
-                            vworld=vworld,
-                        )
-                        geocoded += 1
-                        if coords:
-                            lat, lng = coords
+                # 폴리곤 매칭 대상만(=region이 있을 때만) 지오코딩, 상한 적용.
+                if (
+                    (lat is None or lng is None)
+                    and it.get("geocode_status") != "failed"
+                    and geocoded < max_geocode
+                    and it.get("address")
+                ):
+                    if vworld is None:
+                        from app.services.external_api.vworld_service import VWorldService
+                        vworld = VWorldService()
+                    coords = await self._geocode_item(
+                        item_id=int(it["id"]), address=str(it["address"]),
+                        vworld=vworld,
+                    )
+                    geocoded += 1
+                    if coords:
+                        lat, lng = coords
                 if lat is None or lng is None:
                     continue
                 for tgt in region_targets:

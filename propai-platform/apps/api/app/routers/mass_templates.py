@@ -182,8 +182,12 @@ class SeedDesignRequest(BaseModel):
     zone_code: str = Field("2R", description="용도지역 코드")
     building_use: str = Field("공동주택", description="건축용도(매스 종류 매핑)")
     floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
-    effective_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)")
-    effective_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)")
+    effective_far_pct: float | None = Field(
+        None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)"
+    )
+    effective_bcr_pct: float | None = Field(
+        None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)"
+    )
 
 
 def _compute_mass(

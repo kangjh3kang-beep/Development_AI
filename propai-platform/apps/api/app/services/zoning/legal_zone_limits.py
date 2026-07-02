@@ -104,10 +104,7 @@ def _has_relaxation_basis(payload: Any) -> bool:
                 if isinstance(v, str) and not v.strip():
                     continue
                 return True
-        for v in payload.values():
-            if _has_relaxation_basis(v):
-                return True
-        return False
+        return any(_has_relaxation_basis(v) for v in payload.values())
     if isinstance(payload, list):
         return any(_has_relaxation_basis(v) for v in payload)
     if isinstance(payload, str):
@@ -679,9 +676,9 @@ def mixed_zone_limits(zones: list[dict[str, Any]]) -> dict[str, Any]:
     legal_keys = ["mixed_zone_rule", "mixed_zone_rule_dec", "bcr_law", "far_law"]
     per_zone = []
     for zt, a in uniq:
-        L = legal_limits_for(zt) or {}
+        lim = legal_limits_for(zt) or {}
         per_zone.append({"zone_type": zt, "area_sqm": a,
-                         "max_bcr_pct": L.get("max_bcr_pct"), "max_far_pct": L.get("max_far_pct")})
+                         "max_bcr_pct": lim.get("max_bcr_pct"), "max_far_pct": lim.get("max_far_pct")})
 
     has_area = all(a for _, a in uniq)
     if not has_area:
@@ -699,11 +696,11 @@ def mixed_zone_limits(zones: list[dict[str, Any]]) -> dict[str, Any]:
 
     # 330㎡ 이하 작은 부분 흡수(시행령 제94조) — 2개 용도지역에서만 단순 적용.
     if len(uniq) == 2 and float(smallest_a) <= 330.0:
-        L = legal_limits_for(largest_zt) or {}
+        lim = legal_limits_for(largest_zt) or {}
         return {
             "is_mixed": True, "per_zone": per_zone, "total_area_sqm": round(total, 1),
             "absorbed": smallest_zt, "dominant_zone": largest_zt,
-            "blended_bcr_pct": L.get("max_bcr_pct"), "blended_far_pct": L.get("max_far_pct"),
+            "blended_bcr_pct": lim.get("max_bcr_pct"), "blended_far_pct": lim.get("max_far_pct"),
             "rule": "330㎡이하 흡수", "legal_ref_keys": legal_keys,
             "note": (f"작은 부분({smallest_zt} {round(float(smallest_a))}㎡ ≤ 330㎡)은 {largest_zt}에 "
                      "포함 적용(국토계획법 시행령 제94조). 건폐율/용적률은 큰 용도지역 기준."),

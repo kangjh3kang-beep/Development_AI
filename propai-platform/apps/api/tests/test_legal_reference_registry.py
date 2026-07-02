@@ -211,7 +211,7 @@ class TestGetLegalRef:
 class TestEncodingRoundTrip:
     def test_percent_encoding_roundtrip_all_keys(self):
         """모든 키 URL은 UTF-8 percent-encoding ↔ 원문 한글 라운드트립."""
-        for key, ref in LEGAL_REFERENCES.items():
+        for _key, ref in LEGAL_REFERENCES.items():
             url = ref["url"]
             if not url:
                 continue

@@ -21,4 +21,5 @@ class TestReferenceImage:
     def test_is_active_default(self):
         assert ReferenceImage.__table__.columns["is_active"].default.arg is True
 
-if __name__ == "__main__": pytest.main([__file__, "-v", "--tb=short"])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

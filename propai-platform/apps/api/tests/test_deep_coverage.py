@@ -5,6 +5,7 @@ jeonse_risk analyze, avm _adjust_env_scores,
 domain_agents, webrtc, routers 핸들러 내부 경로를 커버한다.
 """
 
+import contextlib
 import os
 import sys
 from datetime import UTC, datetime
@@ -549,8 +550,9 @@ class TestUnderwritingServiceAsync:
 
         svc = UnderwritingService(db=mock_db)
         if hasattr(svc, "analyze"):
-            try:
-                result = await svc.analyze(
+            # 외부 의존성 실패 허용
+            with contextlib.suppress(Exception):
+                await svc.analyze(
                     tenant_id=TEST_TENANT_ID,
                     project_id=TEST_PROJECT_ID,
                     property_type="apartment",
@@ -559,8 +561,6 @@ class TestUnderwritingServiceAsync:
                     ltv_ratio=0.6,
                     dscr=1.5,
                 )
-            except Exception:
-                pass  # 외부 의존성 실패 허용
 
 
 # ═══════════════════════════════════════════

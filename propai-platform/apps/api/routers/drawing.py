@@ -539,13 +539,13 @@ async def export_dxf(req: ExportDxfRequest):
                 unit_width_m=req.unit_width_m,
                 corridor_width_m=req.corridor_width_m,
             )
-    except ImportError:
-        raise HTTPException(status_code=501, detail="DXF 내보내기 기능을 사용할 수 없습니다 (ezdxf 미설치)")
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail="DXF 내보내기 기능을 사용할 수 없습니다 (ezdxf 미설치)") from e
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"설계 데이터 오류: {e}")
+        raise HTTPException(status_code=400, detail=f"설계 데이터 오류: {e}") from e
     except Exception as e:
         logger.error("DXF 생성 중 오류: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="도면 생성 중 오류가 발생했습니다")
+        raise HTTPException(status_code=500, detail="도면 생성 중 오류가 발생했습니다") from e
 
     return Response(
         content=dxf_bytes,

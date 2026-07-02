@@ -1,8 +1,6 @@
 """AI cost dashboard and budget persistence service."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
 from uuid import UUID
 
 from packages.schemas.models import AICostBreakdownItem

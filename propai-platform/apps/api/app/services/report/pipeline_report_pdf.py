@@ -57,7 +57,8 @@ def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any]
     small = ParagraphStyle("s", parent=ss["Normal"], fontName=font, fontSize=8, textColor=colors.grey, leading=11)
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm)
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm)
     el: list[Any] = []
 
     el.append(Paragraph("프로젝트 통합 분석 보고서", title))
@@ -79,7 +80,8 @@ def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any]
             ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
             ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         el.append(t)
 
@@ -100,7 +102,8 @@ def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any]
                 ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
                 ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
                 ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ]))
             el.append(t)
         else:
@@ -127,7 +130,8 @@ def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any]
                 continue
             # stg 폴백(매핑에 없는 단계 id)도 동적이라 esc.
             el.append(Paragraph(_esc(_STAGE_LABEL.get(stg, stg)), ParagraphStyle(
-                "sub", parent=body, fontName=font, fontSize=10, spaceBefore=6, spaceAfter=2, textColor=colors.HexColor("#1f2937"))))
+                "sub", parent=body, fontName=font, fontSize=10, spaceBefore=6, spaceAfter=2,
+                textColor=colors.HexColor("#1f2937"))))
             for k, v in secs.items():
                 if isinstance(v, str) and v.strip():
                     # <b> 는 의도적 강조 마크업이라 보존하고, 그 안의 동적 k·v 만 esc(혼합 안전).

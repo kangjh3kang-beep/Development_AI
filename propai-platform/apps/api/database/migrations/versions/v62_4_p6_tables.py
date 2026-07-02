@@ -34,7 +34,9 @@ def upgrade() -> None:
     Base.metadata.create_all(bind=bind, tables=_tables(), checkfirst=True)
     op.execute("CREATE INDEX IF NOT EXISTS idx_realtx_contract ON sales_realtx_reports (site_id, contract_ext_id);")
     op.execute("CREATE INDEX IF NOT EXISTS idx_resale_restr ON sales_resale_restrictions (site_id, unit_id);")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_comm_sched_split ON sales_commission_payout_schedule (split_id, status);")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_comm_sched_split ON sales_commission_payout_schedule (split_id, status);"
+    )
     # 수수료 지급은 claim 승인 또는 마일스톤 스케줄(claim 없음) 2소스 → claim_id nullable
     op.execute("ALTER TABLE sales_commission_payouts ALTER COLUMN claim_id DROP NOT NULL;")
 

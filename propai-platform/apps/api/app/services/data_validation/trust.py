@@ -83,7 +83,8 @@ def cross_validate(
         cands.append(s)
 
     if not cands:
-        return TrustResult(None, 0.0, "fail", warnings=["유효한 출처 값이 없습니다(범위·양수 실패)."], excluded=excluded)
+        return TrustResult(
+            None, 0.0, "fail", warnings=["유효한 출처 값이 없습니다(범위·양수 실패)."], excluded=excluded)
 
     # 2) 기준값(anchor 우선)
     anchor_sig = next((s for s in cands if s.name == anchor), None) if anchor else None

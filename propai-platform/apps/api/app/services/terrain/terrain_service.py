@@ -251,8 +251,7 @@ def _compute_cross_section(
     m_per_deg_lat = 111_320.0
     m_per_deg_lon = 111_320.0 * math.cos(math.radians(center_lat))
 
-    pts: list[tuple[float, float]] = []  # (lat, lon, dist) 샘플
-    sample_meta = []
+    sample_meta = []  # (dist, lat, lon) 샘플
     for i in range(n_samples):
         d = -half + (diag_m * i / (n_samples - 1))  # -half..+half
         dlat = (north_u * d) / m_per_deg_lat
@@ -440,8 +439,12 @@ async def build_terrain_mesh(
     bl = tl + n
     br = bl + 1
     tri = np.empty((tl.size * 6,), dtype=np.int64)
-    tri[0::6] = tl; tri[1::6] = bl; tri[2::6] = tr
-    tri[3::6] = tr; tri[4::6] = bl; tri[5::6] = br
+    tri[0::6] = tl
+    tri[1::6] = bl
+    tri[2::6] = tr
+    tri[3::6] = tr
+    tri[4::6] = bl
+    tri[5::6] = br
     indices = tri.tolist()
 
     relief = float(np.max(grid) - np.min(grid))
@@ -496,8 +499,10 @@ async def analyze_terrain(
         if span_lat < DEM_RESOLUTION_M or span_lon < DEM_RESOLUTION_M:
             pad_lat = (DEM_RESOLUTION_M / 2) / 111_320.0
             pad_lon = (DEM_RESOLUTION_M / 2) / (111_320.0 * math.cos(math.radians(lat)))
-            min_lat -= pad_lat; max_lat += pad_lat
-            min_lon -= pad_lon; max_lon += pad_lon
+            min_lat -= pad_lat
+            max_lat += pad_lat
+            min_lon -= pad_lon
+            max_lon += pad_lon
     else:
         area_sqm = None
         half_deg_lat = 50.0 / 111_320.0

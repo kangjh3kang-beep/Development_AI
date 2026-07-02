@@ -227,7 +227,9 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
 
     # UUID 우선 시도, 실패 시 site_code 로 조회
     try:
-        site = (await db.execute(select(SalesSite).where(SalesSite.id == uuid.UUID(str(site_code))))).scalar_one_or_none()
+        site = (await db.execute(
+            select(SalesSite).where(SalesSite.id == uuid.UUID(str(site_code)))
+        )).scalar_one_or_none()
     except (ValueError, TypeError):
         site = None
     if site is None:

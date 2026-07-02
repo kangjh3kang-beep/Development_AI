@@ -10,6 +10,7 @@
 - 공통 오류 래핑
 """
 
+import contextlib
 import time
 
 try:
@@ -17,7 +18,7 @@ try:
 except ImportError:
     # Python 3.10 호환성 백포트
     from enum import Enum
-    class StrEnum(str, Enum):
+    class StrEnum(str, Enum):  # noqa: UP042 — Python 3.10 호환 백포트(표준 StrEnum 부재 시 폴백)
         pass
 from typing import Any
 
@@ -143,10 +144,8 @@ async def _read_relax_multipliers(service_name: str) -> dict[str, float]:
               "rate_limit_multiplier": _clamp_relax_mult(rate_mult)}
 
     # 2) 캐시 저장(best-effort). 저장 실패해도 결과 반환에는 영향 없음.
-    try:
+    with contextlib.suppress(Exception):
         _relax_cache[service_name] = (result, time.monotonic() + _RELAX_CACHE_TTL)
-    except Exception:  # noqa: BLE001
-        pass
 
     return result
 

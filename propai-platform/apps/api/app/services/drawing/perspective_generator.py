@@ -34,7 +34,7 @@ class PerspectiveGenerator:
         bd = params.get("building_d", 20.0)
         fc = params.get("floor_count", 5)
         fh = params.get("floor_height", 3.0)
-        bf = params.get("basement_floors", 1)
+        _bf = params.get("basement_floors", 1)  # 현재 투시도에는 미반영(파라미터 계약 유지)
         mat = params.get("facade_material", "concrete")
         name = params.get("project_name", "PropAI")
 
@@ -60,7 +60,7 @@ class PerspectiveGenerator:
         p0 = _iso(0, 0, 0, cx, cy, sc)
         p1 = _iso(bw, 0, 0, cx, cy, sc)
         p2 = _iso(bw, bd, 0, cx, cy, sc)
-        p3 = _iso(0, bd, 0, cx, cy, sc)
+        _p3 = _iso(0, bd, 0, cx, cy, sc)  # 후면 꼭짓점(현재 3면 렌더에는 미사용, 좌표 대칭 문서화)
         # 상단 4꼭짓점
         t0 = _iso(0, 0, total_h, cx, cy, sc)
         t1 = _iso(bw, 0, total_h, cx, cy, sc)

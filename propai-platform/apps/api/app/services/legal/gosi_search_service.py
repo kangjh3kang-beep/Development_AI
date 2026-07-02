@@ -142,7 +142,8 @@ class GosiSearchService:
             matches.append({**item, "excerpts": _excerpts(body.get("text", ""), query), "has_text": body.get("found")})
         return {
             "available": True, "query": query, "matches": matches,
-            "note": "법제처 행정규칙(고시) 본문 검색(파일 다운로드 없이). 지역 도시관리계획 결정고시는 토지이음 고시정보 또는 extract_attachment_text로 부지 트리거 시 1건씩 추출.",
+            "note": "법제처 행정규칙(고시) 본문 검색(파일 다운로드 없이). 지역 도시관리계획 결정고시는 "
+                    "토지이음 고시정보 또는 extract_attachment_text로 부지 트리거 시 1건씩 추출.",
         }
 
     @staticmethod

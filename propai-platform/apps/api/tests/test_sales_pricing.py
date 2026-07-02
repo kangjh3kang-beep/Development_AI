@@ -592,7 +592,8 @@ class TestSolveBaseForTarget:
             return {"total_revenue_10k": 10_000, "total_revenue_won": 100_009_000, "units_priced": 1}
 
         monkeypatch.setattr(engine, "project_revenue", _rev_won)
-        tid = uuid_mod.uuid4(); uid = uuid_mod.uuid4()
+        tid = uuid_mod.uuid4()
+        uid = uuid_mod.uuid4()
         tb = _TBase(tid, supply=100, round_factor=1)
         db = _SolveDB(weights=[], base_rows=[tb], types=[tb],
                       units=[_UnitRow(uid, tid)], price_tables=[])

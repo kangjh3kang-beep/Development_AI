@@ -236,7 +236,8 @@ class CostEscalationEngine:
         ppi_source = "ecos-live-ready" if self.settings.ecos_api_key else "ecos-simulated"
         summary = (
             f"{project.name} cost projection escalates from {base_construction_cost_krw:,.0f} KRW "
-            f"to {adjusted_cost_krw:,.0f} KRW by {target_year}, including {contingency_amount_krw:,.0f} KRW contingency."
+            f"to {adjusted_cost_krw:,.0f} KRW by {target_year}, "
+            f"including {contingency_amount_krw:,.0f} KRW contingency."
         )
 
         snapshot = CostEscalationSnapshot(

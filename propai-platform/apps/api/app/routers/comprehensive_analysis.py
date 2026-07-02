@@ -22,7 +22,8 @@ class ComprehensiveAnalysisRequest(BaseModel):
         None, description="LLM 프로바이더 (anthropic/openai/google). 미지정 시 기본값 사용."
     )
     llm_model: str | None = Field(
-        None, description="LLM 모델 ID (예: claude-sonnet-4-20250514, gpt-4o-mini). 미지정 시 프로바이더 기본 모델 사용."
+        None, description="LLM 모델 ID (예: claude-sonnet-4-20250514, gpt-4o-mini). "
+        "미지정 시 프로바이더 기본 모델 사용."
     )
     project_id: str | None = Field(
         None, description="프로젝트 ID(원장 성장루프 체인 스코프). 미지정 시 주소/PNU 기반 체인."

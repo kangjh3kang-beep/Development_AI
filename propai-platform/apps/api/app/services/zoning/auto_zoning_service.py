@@ -29,7 +29,8 @@ _MOUNTAIN_LOT_RE = re.compile(r"산\s?\d")
 #    있는 건축물은 원칙적으로 4층 이하. 녹지가 아닌 지역은 층수 SSOT 제한이 없어 None.
 #    이 값이 1곳(solar_envelope)에만 고립되어 '높이 제한없음'으로 표시되던 버그의 SSOT 정본.
 ZONE_LIMITS = {
-    "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height_m": 10, "max_floors": None},  # 시행령 84조 상한 50%
+    # 시행령 84조 상한 50%
+    "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height_m": 10, "max_floors": None},
     "제2종전용주거지역": {"max_bcr": 50, "max_far": 150, "max_height_m": 12, "max_floors": None},
     "제1종일반주거지역": {"max_bcr": 60, "max_far": 200, "max_height_m": None, "max_floors": None},
     "제2종일반주거지역": {"max_bcr": 60, "max_far": 250, "max_height_m": None, "max_floors": None},

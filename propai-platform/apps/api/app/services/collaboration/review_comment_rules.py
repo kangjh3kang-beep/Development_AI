@@ -1,6 +1,8 @@
 """SP6 회의방 의견교환 순수 규칙 — 본문검증·앵커/해결 루트제약·부모검증·삭제본문 은닉(결정론·부작용 0).
 
-라우터가 본 규칙으로 입력을 검증한다. 규칙 함수는 True/False(또는 ValueError)만 반환하며 실제 거부(HTTP 4xx)는 라우터가 수행한다. anchor·resolved는 루트(parent_id=None) 전용. 본문은 trim 후
+라우터가 본 규칙으로 입력을 검증한다. 규칙 함수는 True/False(또는 ValueError)만 반환하며 \
+실제 거부(HTTP 4xx)는 라우터가 수행한다. \
+anchor·resolved는 루트(parent_id=None) 전용. 본문은 trim 후
 비어있지 않고 최대 길이 이내. 삭제(soft) 댓글의 본문은 응답에서 가린다(트리 보존·정직 표기).
 """
 

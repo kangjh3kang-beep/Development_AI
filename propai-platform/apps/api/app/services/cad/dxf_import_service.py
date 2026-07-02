@@ -23,6 +23,8 @@ except ImportError:
     ezdxf = None  # type: ignore[assignment]
     _ezdxf_recover = None  # type: ignore[assignment]
 
+import contextlib
+
 import structlog
 
 logger = structlog.get_logger()
@@ -73,10 +75,8 @@ def _read_document(dxf_bytes: bytes) -> Any:
                 ) from rec_err
     finally:
         if tmp_path:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _extract_raw_entities(

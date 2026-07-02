@@ -5,8 +5,6 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-UTC = UTC
-
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from packages.schemas.models import KDXOverviewResponse
 from pydantic import BaseModel

@@ -273,7 +273,7 @@ class ConversationalMarketAI:
             }
 
         avg = stats.get("avg_price_10k", 0)
-        avg_억 = round(avg / 10000, 1) if avg > 10000 else f"{avg}만"
+        avg_억 = round(avg / 10000, 1) if avg > 10000 else f"{avg}만"  # noqa: N806 — 한글 단위('억') 식별자 오탐
 
         summary = f"{region} 지역 최근 {months}개월간 총 {count}건 거래. "
         summary += (

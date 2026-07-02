@@ -111,8 +111,10 @@ async def esg_analytics(
         "overall_score": 78.5,
         "gresb_rating": "4-Star",
         "metrics": [
-            {"id": "e1", "label": "탄소 배출량 (Scope 1)", "value": 120, "unit": "tCO2e", "target": 100, "trend": "down"},
-            {"id": "e2", "label": "탄소 배출량 (Scope 2)", "value": 280, "unit": "tCO2e", "target": 250, "trend": "down"},
+            {"id": "e1", "label": "탄소 배출량 (Scope 1)", "value": 120, "unit": "tCO2e",
+             "target": 100, "trend": "down"},
+            {"id": "e2", "label": "탄소 배출량 (Scope 2)", "value": 280, "unit": "tCO2e",
+             "target": 250, "trend": "down"},
             {"id": "e3", "label": "에너지 자립률", "value": 34, "unit": "%", "target": 40, "trend": "up"},
             {"id": "e4", "label": "재생에너지 비율", "value": 22, "unit": "%", "target": 30, "trend": "up"},
             {"id": "s1", "label": "안전사고율 (LTIR)", "value": 0.8, "unit": "", "target": 0.5, "trend": "down"},

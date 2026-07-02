@@ -1,9 +1,6 @@
 """AI 스마트 주차 관리 라우터 (G119)."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status

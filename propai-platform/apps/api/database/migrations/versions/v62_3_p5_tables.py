@@ -36,7 +36,10 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS idx_pay_contract ON sales_payments (site_id, contract_ext_id);")
     op.execute("CREATE INDEX IF NOT EXISTS idx_va_enc ON sales_virtual_accounts (site_id, va_number_enc);")
     op.execute("CREATE INDEX IF NOT EXISTS idx_sub_app_ann ON sales_subscription_applications (announcement_id);")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_sub_reserve ON sales_subscription_reserve_queue (site_id, unit_type_id, reserve_no);")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sub_reserve "
+        "ON sales_subscription_reserve_queue (site_id, unit_type_id, reserve_no);"
+    )
 
 
 def downgrade() -> None:

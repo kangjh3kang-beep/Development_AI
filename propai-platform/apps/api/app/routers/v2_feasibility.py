@@ -431,7 +431,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             legal_refs=legal_refs,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @router.post(
@@ -670,7 +670,7 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     try:
         output = _service.calculate(inp)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     # ── 10) 신뢰도 판정(추정 데이터 비중) ──
     confidence = "보통" if confidence_penalty <= 1 else "낮음"
@@ -768,7 +768,7 @@ async def run_monte_carlo_sim(req: MonteCarloRequest):
     try:
         perturb_fn, _base_out, _base_values = _make_base_perturb_fn(req.base)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     def real_profit_fn(vals: dict[str, float]) -> float:
         return float(perturb_fn(vals).net_profit_won)
@@ -826,7 +826,7 @@ async def run_sensitivity(req: SensitivityRequest):
     try:
         perturb_fn, _base_out, base_values = _make_base_perturb_fn(req.base)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     def sensitivity_fn(vals: dict[str, float]) -> dict[str, Any]:
         out = perturb_fn(vals)
@@ -1034,7 +1034,7 @@ async def export_feasibility_excel(req: FeasibilityCalculateRequest):
             },
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 # ------------------------------------------------------------------
@@ -1168,7 +1168,7 @@ async def cashflow(req: CashflowRequest):
     try:
         return _build_cashflow(req)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail=f"현금흐름 산정 실패: {str(e)[:160]}")
+        raise HTTPException(status_code=422, detail=f"현금흐름 산정 실패: {str(e)[:160]}") from e
 
 
 # ── 개발금융(PF·브릿지·이자·LTV·DSCR) ────────────────────────────
@@ -1273,11 +1273,11 @@ async def development_finance(req: DevelopmentFinanceRequest):
     try:
         return _build_development_finance(req)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=422, detail=f"개발금융 산정 실패: {str(e)[:160]}"
-        )
+        ) from e
 
 
 @router.post("/cashflow/excel")
@@ -1353,4 +1353,4 @@ async def cashflow_excel(req: CashflowRequest):
             headers={"Content-Disposition": "attachment; filename=propai_cashflow_dcf.xlsx"},
         )
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail=f"엑셀 생성 실패: {str(e)[:160]}")
+        raise HTTPException(status_code=422, detail=f"엑셀 생성 실패: {str(e)[:160]}") from e

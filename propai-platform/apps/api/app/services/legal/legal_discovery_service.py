@@ -33,7 +33,8 @@ _SYSTEM = (
     '[{"law":"정확한 정식명칭","article":"제N조","category":"법령|조례|고시","reason":"적용 이유(한국어 1문장)",'
     '"importance":"core|related","confidence":0.0~1.0}]'
 )
-_TMPL = "## 부지/개발 맥락\n{context}\n\n위 맥락에 적용되는 핵심(core)·관련(related) 법령을 중요도순으로 최대 15개. JSON 배열만 출력."
+_TMPL = ("## 부지/개발 맥락\n{context}\n\n"
+         "위 맥락에 적용되는 핵심(core)·관련(related) 법령을 중요도순으로 최대 15개. JSON 배열만 출력.")
 
 
 class LegalDiscoveryService:

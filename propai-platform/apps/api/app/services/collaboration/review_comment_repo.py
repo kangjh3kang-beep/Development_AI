@@ -16,7 +16,8 @@ from app.models.collaboration import ReviewComment
 
 
 async def list_comments_for_document(db: AsyncSession, document_id: uuid.UUID) -> list[ReviewComment]:
-    """문서의 전체 댓글(soft 삭제 포함, created_at 오름차순). body 은닉은 직렬화 계층, 트리 조립·잎 가시성은 클라이언트."""
+    """문서의 전체 댓글(soft 삭제 포함, created_at 오름차순). body 은닉은 직렬화 계층, \
+트리 조립·잎 가시성은 클라이언트."""
     rows = await db.execute(
         select(ReviewComment)
         .where(ReviewComment.document_id == document_id)

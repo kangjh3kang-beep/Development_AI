@@ -130,7 +130,10 @@ def detect_anomalies(
             anomalies.append({
                 "level": "high" if dev > UNIT_PRICE_DEVIATION_PCT * 2 else "warn",
                 "type": "unit_price_overclaim",
-                "detail": f"{rnd}회차 '{wt or '항목'}' 청구단가가 {ref_src} 대비 {dev:.1f}% 초과(임계 +{UNIT_PRICE_DEVIATION_PCT:.0f}%).",
+                "detail": (
+                    f"{rnd}회차 '{wt or '항목'}' 청구단가가 {ref_src} 대비 "
+                    f"{dev:.1f}% 초과(임계 +{UNIT_PRICE_DEVIATION_PCT:.0f}%)."
+                ),
                 "evidence": {"round": rnd, "work_type": wt, "claimed_unit_price": up,
                              "reference_unit_price": ref, "reference_source": ref_src,
                              "deviation_pct": round(dev, 1)},
@@ -176,7 +179,10 @@ def detect_anomalies(
                 anomalies.append({
                     "level": "warn",
                     "type": "claim_surge",
-                    "detail": f"{int(c.get('round', 0))}회차 청구가 전회比 {surge:.0f}% 급증(임계 +{CLAIM_SURGE_PCT:.0f}%).",
+                    "detail": (
+                        f"{int(c.get('round', 0))}회차 청구가 전회比 "
+                        f"{surge:.0f}% 급증(임계 +{CLAIM_SURGE_PCT:.0f}%)."
+                    ),
                     "evidence": {"round": int(c.get("round", 0)),
                                  "prev_claimed": round(prev_amt, 2), "claimed": round(amt, 2),
                                  "surge_pct": round(surge, 1)},

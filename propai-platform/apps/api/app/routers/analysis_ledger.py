@@ -133,7 +133,9 @@ class SetQuotaRequest(BaseModel):
 
 
 @router.post("/admin/set-quota", summary="관리자: 테넌트 용량 한도 상향/조정")
-async def admin_set_quota(req: SetQuotaRequest, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def admin_set_quota(
+    req: SetQuotaRequest, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
     await _require_admin(current, db)
     result = await ledger.set_quota(req.tenant_id, req.max_entries)
     from app.core.audit import audit_admin_action

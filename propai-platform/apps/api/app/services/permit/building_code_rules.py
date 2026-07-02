@@ -17,16 +17,8 @@ RASE 방법론 기반: 각 법규 조항을 Requirement/Applicability/Selection/
 from __future__ import annotations
 
 import math
-import sys
+from enum import StrEnum
 from typing import Any
-
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:  # Python 3.10 호환성 백포트(코드베이스 공통 패턴) — 프로덕션 3.12엔 무영향.
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        pass
 
 from pydantic import BaseModel
 
@@ -291,7 +283,8 @@ class BuildingCodeRuleEngine:
             message=(
                 f"주차 적합 ({actual_parking}대 ≥ 법정 하한 {lower_spaces}대 · 권장 상한 {upper_spaces}대 이내 권장)"
                 if status == ComplianceStatus.PASS
-                else f"주차 부족 ({actual_parking}대 < 법정 하한 {lower_spaces}대) — {lower_spaces - actual_parking}대 추가 필요"
+                else (f"주차 부족 ({actual_parking}대 < 법정 하한 {lower_spaces}대)"
+                      f" — {lower_spaces - actual_parking}대 추가 필요")
             ),
         )
 
@@ -330,7 +323,8 @@ class BuildingCodeRuleEngine:
                 status=ComplianceStatus.WARNING,
                 required_value=f"북측 이격 {required_distance:.1f}m 이상 필요",
                 actual_value="북측 경계거리 미입력",
-                message=f"건물높이 {building_height:.1f}m → 정북방향 최소 {required_distance:.1f}m 이격 필요 (확인 필요)",
+                message=(f"건물높이 {building_height:.1f}m → 정북방향 최소 {required_distance:.1f}m"
+                         " 이격 필요 (확인 필요)"),
             )
 
         required_distance = required_north_setback_m(building_height)
@@ -363,7 +357,6 @@ class BuildingCodeRuleEngine:
         if floor_area <= 0 and total_gfa > 0 and floor_count > 0:
             floor_area = total_gfa / floor_count
 
-        issues: list[str] = []
         requirements: list[str] = []
 
         # 직통계단

@@ -210,7 +210,8 @@ async def predict_design_change(req: PredictRequest) -> dict[str, Any]:
         # 리스크 집계(실제 산출한 건수만)
         ev_items.append({
             "label": "예측 리스크 집계",
-            "value": f"고위험 {summary.get('high', 0)} / 주의 {summary.get('warn', 0)} / 참고 {summary.get('info', 0)}건",
+            "value": f"고위험 {summary.get('high', 0)} / 주의 {summary.get('warn', 0)} / "
+                     f"참고 {summary.get('info', 0)}건",
             "basis": "설계 파라미터 vs 법정한도·필수요소·정량정합 룰 평가(결정적)",
         })
         # 주차/피난 관련 리스크가 실제로 잡혔으면 해당 법령 키 부착

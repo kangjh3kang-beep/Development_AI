@@ -21,11 +21,13 @@ class MonteCarloService:
             rev_std = d.get("revenue_std", 0)
             if rev_std and expected_revenue_krw > 0:
                 revenue_uncertainty = rev_std / expected_revenue_krw
-            construction_period_months = d.get("project_years", 3) * 12 if d.get("project_years") else construction_period_months
+            construction_period_months = (
+                d.get("project_years", 3) * 12 if d.get("project_years") else construction_period_months
+            )
         if iterations > 0:
             n_simulations = iterations
         np.random.seed(self._seed)
-        T = construction_period_months / 12
+        T = construction_period_months / 12  # noqa: N806 — 할인기간 T(재무수학 관례 기호)
         npv_results, irr_results = [], []
         for _ in range(n_simulations):
             r = max(0.01, np.random.normal(discount_rate_mean, discount_rate_std))
@@ -75,7 +77,7 @@ class MonteCarloService:
         (이전 구현은 변수와 무관하게 base_npv×(1±20%)를 반환해 sensitivity가
         항상 1.0이었음 — 변수별 영향도를 구분하지 못하는 무의미한 출력.)
         """
-        T = period_months / 12
+        T = period_months / 12  # noqa: N806 — 할인기간 T(재무수학 관례 기호)
 
         def _npv(cost: float, revenue: float, r: float) -> float:
             return -cost + revenue / ((1 + r) ** T)

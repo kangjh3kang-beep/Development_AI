@@ -28,7 +28,8 @@ class _Model:
 
 class TestAvmCrossValidate:
     def test_정상모델_가중유지(self):
-        svc = AVMService(); svc.model = _Model(1010.0)
+        svc = AVMService()
+        svc.model = _Model(1010.0)
         r = svc.estimate_value(_FEATS, _COMPS, 37.3, 127.0)
         cv = r["cross_validation"]
         assert cv and cv["verdict"] in ("pass", "warn")
@@ -36,7 +37,8 @@ class TestAvmCrossValidate:
         assert 990 <= r["estimated_value_per_sqm"] <= 1020
 
     def test_오염모델_배제_지역폴백(self):
-        svc = AVMService(); svc.model = _Model(3000.0)   # 강남 폴백류 3배 이탈
+        svc = AVMService()
+        svc.model = _Model(3000.0)  # 강남 폴백류 3배 이탈
         r = svc.estimate_value(_FEATS, _COMPS, 37.3, 127.0)
         cv = r["cross_validation"]
         assert any(e["name"] == "ml_model" for e in cv["excluded_outliers"])
@@ -47,7 +49,8 @@ class TestAvmCrossValidate:
         # 모델(ml) 미적재(폴백) 시에도 신뢰루프는 상시 활성: IDW(지역 거리가중) 앵커와
         # 비교사례 중앙값(거리무관·이상치강건)을 2번째 독립신호로 교차검증한다.
         # ml_model 신호는 없고, 정상 비교사례라 이상치 배제 없이 IDW 앵커 부근으로 수렴한다.
-        svc = AVMService(); svc.model = None
+        svc = AVMService()
+        svc.model = None
         r = svc.estimate_value(_FEATS, _COMPS, 37.3, 127.0)
         cv = r["cross_validation"]
         assert cv is not None

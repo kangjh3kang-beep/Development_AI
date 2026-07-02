@@ -48,10 +48,7 @@ class CSRFProtection:
             created = int(timestamp_str)
         except ValueError:
             return False
-        if time.time() - created > self.MAX_AGE_SEC:
-            return False
-
-        return True
+        return not time.time() - created > self.MAX_AGE_SEC
 
     def validate_double_submit(self, cookie_token: str | None,
                                 header_token: str | None) -> bool:

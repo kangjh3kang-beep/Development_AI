@@ -117,15 +117,11 @@ def _ordinance_applied(result: dict) -> bool:
     조례 적용으로 보지 않는다.
     """
     zl = result.get("zone_limits")
-    if isinstance(zl, dict):
-        if zl.get("ordinance_far_pct") or zl.get("ordinance_bcr_pct"):
-            return True
+    if isinstance(zl, dict) and (zl.get("ordinance_far_pct") or zl.get("ordinance_bcr_pct")):
+        return True
     lo = result.get("local_ordinance")
-    if isinstance(lo, dict):
-        # raw 조례값이 실제로 조회된 경우에만(법정상한 폴백은 제외).
-        if lo.get("ordinance_far") or lo.get("ordinance_bcr"):
-            return True
-    return False
+    # raw 조례값이 실제로 조회된 경우에만(법정상한 폴백은 제외).
+    return bool(isinstance(lo, dict) and (lo.get("ordinance_far") or lo.get("ordinance_bcr")))
 
 
 def _build_legal_refs(result: dict) -> list[dict]:
@@ -430,8 +426,15 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
         # ★다필지 통합 컨텍스트: parcel_count>1 + 통합면적이 오면 인터프리터가 대표번지가 아니라
         #   '통합 N필지' 기준으로 종합 판단하게 land_area_sqm을 통합값으로 대체하고 메타를 주입한다.
         #   (미전달 시 단일/대표 동작 무회귀 — 통합분석 미구현 근본해소.)
-        _is_multi = bool(req.parcel_count and req.parcel_count > 1 and req.integrated_area_sqm and req.integrated_area_sqm > 0)
-        _interp_area = float(req.integrated_area_sqm) if (_is_multi and req.integrated_area_sqm is not None) else result.get("land_area_sqm")
+        _is_multi = bool(
+            req.parcel_count and req.parcel_count > 1
+            and req.integrated_area_sqm and req.integrated_area_sqm > 0
+        )
+        _interp_area = (
+            float(req.integrated_area_sqm)
+            if (_is_multi and req.integrated_area_sqm is not None)
+            else result.get("land_area_sqm")
+        )
 
         interp_input = {
             "address": result.get("address"),
@@ -463,7 +466,8 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
                 "blended_far_pct": req.integrated_far_pct,
                 "blended_bcr_pct": req.integrated_bcr_pct,
                 "note": f"이 분석은 대표 1필지가 아니라 통합 {req.parcel_count}필지(합계 "
-                        f"{round(float(_interp_area or 0)):,}㎡) 기준입니다. 대지면적·개발규모는 통합값으로 판단하세요.",
+                        f"{round(float(_interp_area or 0)):,}㎡) 기준입니다. "
+                        f"대지면적·개발규모는 통합값으로 판단하세요.",
             } if _is_multi else None),
         }
         # 화면 경로에서도 계층/종상향을 캡처하도록 응답에 동봉(프론트 옵셔널 렌더).
@@ -572,7 +576,8 @@ async def geocode_query(req: GeocodeRequest):
     geo = await vworld.geocode_address(q)
     if not geo or not geo.get("lat"):
         return {"found": False, "query": q,
-                "reason": "VWorld에서도 해당 주소/지번을 찾지 못했습니다. 지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요."}
+                "reason": ("VWorld에서도 해당 주소/지번을 찾지 못했습니다. "
+                           "지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요.")}
     pnu = geo.get("pnu")
     bcode = (pnu[:10] if pnu and len(pnu) >= 10 else None)
     return {
@@ -919,7 +924,8 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         asum = sum(a for _p, a in priced if a)
         notes: list[str] = []
         if len(zone_set) > 1:
-            notes.append(f"용도지역 상이({'·'.join(zone_set)}) — 필지별 건폐율·용적률 한도 차이, 통합 시 가중·분리 검토")
+            notes.append(f"용도지역 상이({'·'.join(zone_set)}) — "
+                         f"필지별 건폐율·용적률 한도 차이, 통합 시 가중·분리 검토")
         if len(jimok_set) > 1:
             notes.append(f"지목 상이({'·'.join(jimok_set)}) — 형질변경·지목변경 필요 가능")
         if adjacency.get("contiguous") is False:
@@ -946,10 +952,12 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         else:
             if total_area >= 10000:
                 methods += ["지구단위계획", "도시개발사업"]
-                recommendation = f"총 {round(total_area/3.305785):,}평(대규모) — 지구단위계획/도시개발사업으로 통합개발 권장."
+                recommendation = (f"총 {round(total_area/3.305785):,}평(대규모) — "
+                                  f"지구단위계획/도시개발사업으로 통합개발 권장.")
             elif total_area >= 1000:
                 methods += ["가로주택정비사업", "소규모재건축", "지구단위계획"]
-                recommendation = f"총 {round(total_area/3.305785):,}평(중소규모) — 가로주택정비·소규모정비 또는 지구단위 검토."
+                recommendation = (f"총 {round(total_area/3.305785):,}평(중소규모) — "
+                                  f"가로주택정비·소규모정비 또는 지구단위 검토.")
             else:
                 methods.append("일반 건축(소규모)")
                 recommendation = f"총 {round(total_area/3.305785):,}평(소규모) — 일반 건축허가로 단독·통합 개발."
@@ -1373,7 +1381,7 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
     enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
     # 입력에서 사용자가 직접 준 zone_type/land_category/area_sqm/geometry override를 병합(정직 우선).
     #   enrich가 채운 값이 없거나 입력값이 명시되면 입력을 채택(가짜 생성 아님 — 사용자 제공 실값).
-    for src, p in zip(items, enriched):
+    for src, p in zip(items, enriched, strict=False):
         if src.get("zone_type") and not p.get("zone_type"):
             p["zone_type"] = src["zone_type"]
         # land_category: enrich는 jimok 키로 채운다 → detect_*가 읽는 land_category로 정렬.
@@ -1700,7 +1708,7 @@ async def land_report(req: LandReportRequest):
     필지별 토지정보(/parcels-info 로직 재사용)+집합건물 세대 대지지분(land-share)을 모아 PDF 생성.
     무목업: 무자료는 보고서에 '-'/'보완필요'로 정직 표기.
     """
-    from fastapi.responses import StreamingResponse as _SR
+    from fastapi.responses import StreamingResponse
 
     from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
     from apps.api.app.services.land_intelligence.land_share_service import LandShareService
@@ -1743,12 +1751,15 @@ async def land_report(req: LandReportRequest):
                 logger.warning("보고서 대지지분 조회 실패: %s (%s)", jb, str(e))
 
     try:
-        pdf = build_land_analysis_report({"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by})
+        pdf = build_land_analysis_report(
+            {"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by}
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("토지분석보고서 생성 실패: %s", str(e))
         return {"error": "보고서 생성에 실패했습니다."}
-    return _SR(iter([pdf]), media_type="application/pdf",
-               headers={"Content-Disposition": 'attachment; filename="land_analysis_report.pdf"'})
+    return StreamingResponse(
+        iter([pdf]), media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="land_analysis_report.pdf"'})
 
 
 @router.post("/parse-parcels")

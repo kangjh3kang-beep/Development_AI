@@ -55,7 +55,9 @@ _REPLACEMENT_COST = {
 _RESIDUAL_FLOOR = 0.2  # 잔가율 하한(잔존가치 20%)
 
 
-def _building_value(gfa: float | None, structure: str | None, year_built: int | None, now_year: int) -> dict[str, Any] | None:
+def _building_value(
+    gfa: float | None, structure: str | None, year_built: int | None, now_year: int
+) -> dict[str, Any] | None:
     """원가법 건물가치 = 재조달원가 × 연면적 × 잔가율(1 − 경과/내용연수, 하한 20%)."""
     if not gfa or gfa <= 0:
         return None
@@ -74,7 +76,10 @@ def _building_value(gfa: float | None, structure: str | None, year_built: int | 
         "structure": matched, "useful_life_yrs": life,
         "age_yrs": age, "residual_ratio": round(residual, 3),
         "building_value_won": value,
-        "rationale": f"재조달원가 {rc:,}원/㎡ × 연면적 {gfa:,.0f}㎡ × 잔가율 {residual:.2f}(경과 {age}년/내용 {life}년) = {value:,}원",
+        "rationale": (
+            f"재조달원가 {rc:,}원/㎡ × 연면적 {gfa:,.0f}㎡ × 잔가율 {residual:.2f}"
+            f"(경과 {age}년/내용 {life}년) = {value:,}원"
+        ),
     }
 
 
@@ -102,7 +107,11 @@ def _income_value(
         "deposit_conv_rate": round(conv, 4), "deposit_conv_source": conv_source,
         "vacancy_rate": vacancy_rate, "opex_ratio": opex_ratio,
         "income_value_won": value,
-        "rationale": f"NOI {int(noi):,}원(월임대 {int(monthly_rent_won):,}×12, 보증금 전환율 {conv*100:.1f}%[{conv_source}], 공실 {vacancy_rate*100:.0f}%·경비 {opex_ratio*100:.0f}% 차감) ÷ 자본환원율 {cap*100:.1f}%[{cap_source}] = {value:,}원",
+        "rationale": (
+            f"NOI {int(noi):,}원(월임대 {int(monthly_rent_won):,}×12, 보증금 전환율 {conv*100:.1f}%[{conv_source}], "
+            f"공실 {vacancy_rate*100:.0f}%·경비 {opex_ratio*100:.0f}% 차감) "
+            f"÷ 자본환원율 {cap*100:.1f}%[{cap_source}] = {value:,}원"
+        ),
     }
 
 
@@ -260,7 +269,10 @@ async def desk_appraisal(
             "개별요인_접도": road_f, "개별요인_면적": area_fac, "개별요인_형상": shape_f,
             "그밖의요인": other_factor,
         },
-        "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})",
+        "rationale": (
+            f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) "
+            f"× 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})"
+        ),
     }
 
     # ── 2) 거래사례비교법 ──
@@ -272,7 +284,10 @@ async def desk_appraisal(
             "method": "실거래 비교 추정",
             "unit_price": cmp_unit_price,
             "comparable_avg_per_sqm": int(comparable_avg_per_sqm),
-            "rationale": f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ × 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}",
+            "rationale": (
+                f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ "
+                f"× 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}"
+            ),
         }
 
     # ── 3) 다법인 교차검증 모사(5개 법인: 그밖의요인 ±5%·거래사례 가중 ±10% 변동) ──
@@ -354,7 +369,9 @@ async def desk_appraisal(
             ev_items.append({
                 "label": "채택 총액",
                 "value": f"{appraised_total:,}원",
-                "basis": f"채택 단가 {appraised_unit:,}원/㎡ × 면적 {round(area_f or 0, 1):,}㎡ (참고용 추정, 수정 가능)",
+                "basis": (
+                    f"채택 단가 {appraised_unit:,}원/㎡ × 면적 {round(area_f or 0, 1):,}㎡ (참고용 추정, 수정 가능)"
+                ),
             })
         if method_cmp:
             ev_items.append({
@@ -365,7 +382,10 @@ async def desk_appraisal(
         ev_items.append({
             "label": "교차검증 신뢰도",
             "value": confidence,
-            "basis": f"복수 시나리오(보정계수·실거래 가중 분포) 교차검증 CV {cross_check['cv_pct']}% → 신뢰도 = 1 − CV×3(하한 0.4)",
+            "basis": (
+                f"복수 시나리오(보정계수·실거래 가중 분포) 교차검증 CV {cross_check['cv_pct']}% "
+                "→ 신뢰도 = 1 − CV×3(하한 0.4)"
+            ),
         })
         if building:
             ev_items.append({

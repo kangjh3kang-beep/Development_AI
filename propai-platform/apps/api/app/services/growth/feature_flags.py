@@ -30,6 +30,7 @@ best-effort: 어떤 예외도 호출경로(L1 태스크)를 죽이지 않는다.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -185,10 +186,8 @@ async def _emit_l1_event(db, action_id: str, action_type: str, trigger_key: str,
         await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("L1 이벤트 기록 실패(%s): %s", action_type, str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def _audit(action_type: str, action_id: str, detail: dict[str, Any]) -> None:

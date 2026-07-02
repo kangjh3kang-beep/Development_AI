@@ -8,7 +8,7 @@ class PostGISHelper:
     @staticmethod
     def st_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """두 좌표 간 거리(km) — Haversine."""
-        R = 6371
+        R = 6371  # noqa: N806 — 지구 반지름(하버사인 수학 관례 대문자)
         dlat = math.radians(lat2 - lat1)
         dlon = math.radians(lon2 - lon1)
         a = (

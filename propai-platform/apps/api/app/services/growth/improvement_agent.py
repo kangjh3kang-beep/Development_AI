@@ -19,6 +19,7 @@ best-effort: 어떤 예외도 호출경로(배치)를 죽이지 않는다.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -213,10 +214,8 @@ async def _store_proposal(db, insight_id: str | None, proposal: dict[str, Any]) 
         new_id = str(row[0]) if row else None
     except Exception as e:  # noqa: BLE001
         logger.warning("L2 제안 저장 실패: %s", str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return None
 
     # 감사: 제안 생성도 growth_engine 조치로 기록.
@@ -430,10 +429,8 @@ async def _store_prompt_candidate(db, service: str, label: str,
         new_id = str(row[0]) if row else None
     except Exception as e:  # noqa: BLE001
         logger.warning("프롬프트후보 저장 실패: %s", str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return None
 
     try:

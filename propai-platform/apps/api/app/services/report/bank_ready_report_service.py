@@ -39,7 +39,8 @@ class BankReadyReportService:
                 "template": template,
                 "generated_at": datetime.now().isoformat(),
                 "generated_by": "PropAI v30.0",
-                "legal_disclaimer": "본 보고서는 AI 기반 자동 분석 결과이며, 최종 투자 의사결정 시 전문가 검토를 권장합니다.",
+                "legal_disclaimer": ("본 보고서는 AI 기반 자동 분석 결과이며,"
+                                     " 최종 투자 의사결정 시 전문가 검토를 권장합니다."),
                 "data_basis_date": datetime.now().strftime("%Y-%m-%d"),
             },
             "sections": [],
@@ -120,9 +121,13 @@ class BankReadyReportService:
             "title": "3. 법규검토",
             "has_data": bool(compliance.get("bcr_compliant") is not None),
             "content": {
-                "bcr_check": {"compliant": compliance.get("bcr_compliant"), "planned": compliance.get("planned_bcr"), "limit": compliance.get("max_bcr")},
-                "far_check": {"compliant": compliance.get("far_compliant"), "planned": compliance.get("planned_far"), "limit": compliance.get("max_far")},
-                "height_check": {"compliant": compliance.get("height_compliant"), "planned": compliance.get("planned_height"), "limit": compliance.get("max_height")},
+                "bcr_check": {"compliant": compliance.get("bcr_compliant"),
+                              "planned": compliance.get("planned_bcr"), "limit": compliance.get("max_bcr")},
+                "far_check": {"compliant": compliance.get("far_compliant"),
+                              "planned": compliance.get("planned_far"), "limit": compliance.get("max_far")},
+                "height_check": {"compliant": compliance.get("height_compliant"),
+                                 "planned": compliance.get("planned_height"),
+                                 "limit": compliance.get("max_height")},
                 "violations": compliance.get("violations", []),
                 "special_districts": compliance.get("special_districts", []),
             },
@@ -207,7 +212,8 @@ class BankReadyReportService:
                 "npv_p95": mc.get("p95"),
                 "probability_positive": mc.get("probability_positive"),
                 "convergence": mc.get("convergence_ratio"),
-                "risk_grade": "낮음" if (mc.get("probability_positive", 0) or 0) > 0.8 else "중간" if (mc.get("probability_positive", 0) or 0) > 0.5 else "높음",
+                "risk_grade": ("낮음" if (mc.get("probability_positive", 0) or 0) > 0.8
+                               else "중간" if (mc.get("probability_positive", 0) or 0) > 0.5 else "높음"),
             },
         }
 

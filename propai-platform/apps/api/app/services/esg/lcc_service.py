@@ -28,7 +28,8 @@ class LCCService:
             if t in [15, 25, 35, 45]:
                 replacement = construction_cost_krw * 0.05
                 pv_replacement += replacement * df
-            yearly_cashflow[t] = {"maintenance": annual_maintenance_krw, "energy": annual_energy_krw, "pv_factor": round(df, 6)}
+            yearly_cashflow[t] = {"maintenance": annual_maintenance_krw,
+                                  "energy": annual_energy_krw, "pv_factor": round(df, 6)}
         total_lcc = construction_cost_krw + pv_maintenance + pv_energy + pv_replacement
         return {
             "construction_cost_krw": int(construction_cost_krw),

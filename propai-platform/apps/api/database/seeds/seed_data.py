@@ -8,10 +8,10 @@ import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-UTC = UTC
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+UTC = UTC
 
 # 고정 UUID (재실행 시 idempotent)
 TENANT_ID = uuid.UUID("10000000-0000-0000-0000-000000000001")

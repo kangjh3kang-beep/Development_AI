@@ -466,7 +466,8 @@ class RegulationAnalysisService:
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
 
-            bcr = limits["bcr"]; far = limits["far"]
+            bcr = limits["bcr"]
+            far = limits["far"]
             user = _USER_TMPL.format(
                 address=address,
                 zone_type=zone or "미상",
@@ -495,7 +496,8 @@ class RegulationAnalysisService:
             logger.warning("규제 LLM 해석 실패, 폴백", err=str(e)[:100])
             return {
                 "generated": False,
-                "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
+                "summary": (f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. "
+                            "AI 통합 해석은 일시적으로 제공되지 않습니다."),
                 "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
                 "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
                 "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],

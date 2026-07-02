@@ -401,12 +401,14 @@ class TestMolitBuildingPermit:
         mock_http.request = AsyncMock(return_value=mock_response)
         mock_http.is_closed = False
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-                with patch.object(client, "_set_cache", new_callable=AsyncMock):
-                    result = await client.get_building_permit("11680")
-                    assert len(result) == 1
-                    assert result[0]["building_name"] == "테스트빌딩"
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            patch.object(client, "_set_cache", new_callable=AsyncMock),
+        ):
+            result = await client.get_building_permit("11680")
+            assert len(result) == 1
+            assert result[0]["building_name"] == "테스트빌딩"
 
     @pytest.mark.asyncio
     async def test_xml_응답(self):
@@ -431,11 +433,13 @@ class TestMolitBuildingPermit:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=mock_response)
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-                with patch.object(client, "_set_cache", new_callable=AsyncMock):
-                    result = await client.get_building_permit("11680")
-                    assert isinstance(result, list)
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            patch.object(client, "_set_cache", new_callable=AsyncMock),
+        ):
+            result = await client.get_building_permit("11680")
+            assert isinstance(result, list)
 
     @pytest.mark.asyncio
     async def test_캐시_히트(self):
@@ -592,12 +596,14 @@ class TestBaseClientRequestFull:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=mock_response)
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-                with patch.object(client, "_set_cache", new_callable=AsyncMock):
-                    result = await client._request("GET", "/api/test", cache_key="test_key")
-                    assert result == {"result": "ok"}
-                    mock_cb.record_success.assert_called_once()
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            patch.object(client, "_set_cache", new_callable=AsyncMock),
+        ):
+            result = await client._request("GET", "/api/test", cache_key="test_key")
+            assert result == {"result": "ok"}
+            mock_cb.record_success.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_실패_경로_circuit_open(self):
@@ -618,11 +624,13 @@ class TestBaseClientRequestFull:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(side_effect=Exception("connection refused"))
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-                with patch.object(client, "_alert_ops", new_callable=AsyncMock):
-                    with pytest.raises(ExternalServiceError):
-                        await client._request("GET", "/api/fail")
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            patch.object(client, "_alert_ops", new_callable=AsyncMock),
+            pytest.raises(ExternalServiceError),
+        ):
+            await client._request("GET", "/api/fail")
 
     @pytest.mark.asyncio
     async def test_circuit_open_캐시폴백_없음(self):
@@ -636,9 +644,11 @@ class TestBaseClientRequestFull:
         mock_cb.can_execute.return_value = False
         client.circuit_breaker = mock_cb
 
-        with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-            with pytest.raises(ExternalServiceError):
-                await client._request("GET", "/api/test", cache_key="no_cache")
+        with (
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            pytest.raises(ExternalServiceError),
+        ):
+            await client._request("GET", "/api/test", cache_key="no_cache")
 
 
 class TestBaseClientAlertOps:

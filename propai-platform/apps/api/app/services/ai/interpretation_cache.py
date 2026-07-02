@@ -33,7 +33,8 @@ async def get_cached(key: str) -> dict[str, Any] | None:
 
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
-            await db.execute(text(_DDL)); await db.commit()
+            await db.execute(text(_DDL))
+            await db.commit()
             row = (await db.execute(text(
                 "SELECT sections, extract(epoch from created_at) AS ts "
                 "FROM interpretation_cache WHERE key = :k"), {"k": key})).first()

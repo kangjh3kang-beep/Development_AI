@@ -166,7 +166,8 @@ class AihubSeedService:
                 "samples": samples,
                 "downloaded_files": tree,
                 "download_log": out[-2000:] if total == 0 else None,
-                "note": "aihubshell로 다운로드·압축해제한 도면을 design_drawings(Qdrant)에 시드 인제스트. 도면 확장자만(라벨 JSON 제외).",
+                "note": "aihubshell로 다운로드·압축해제한 도면을 design_drawings(Qdrant)에 "
+                        "시드 인제스트. 도면 확장자만(라벨 JSON 제외).",
             }
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

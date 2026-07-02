@@ -234,11 +234,11 @@ def calculate_weighted_average_rate(
     Returns:
         가중평균금리 (소수점)
     """
-    total_principal = sum(l["principal_won"] for l in loans)
+    total_principal = sum(loan["principal_won"] for loan in loans)
     if total_principal == 0:
         return 0.0
 
-    weighted_sum = sum(l["principal_won"] * l["rate"] for l in loans)
+    weighted_sum = sum(loan["principal_won"] * loan["rate"] for loan in loans)
     return round(weighted_sum / total_principal, 6)
 
 

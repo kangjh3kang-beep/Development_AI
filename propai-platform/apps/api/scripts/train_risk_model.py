@@ -28,7 +28,7 @@ async def build_dataset(*, tenant_id: str, limit: int = 10000):
         "feature는 risk_predictor.extract_features 재사용.")
 
 
-def train_and_save(X, y, *, out_path: str) -> str:
+def train_and_save(X, y, *, out_path: str) -> str:  # noqa: N803 (X=ML 특징행렬 표준 표기)
     """XGBoost 분류기 학습 후 out_path 저장. xgboost 미설치 시 명확 종료."""
     try:
         import xgboost as xgb

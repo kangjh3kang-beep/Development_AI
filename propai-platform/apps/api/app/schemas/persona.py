@@ -29,11 +29,14 @@ class PersonaAnalyzeRequest(BaseModel):
     # 미확보 시 runner 가 정직 고지(폴백/추정/partial) — 가짜값 금지(무목업).
     total_gfa_sqm: float | None = Field(default=None, description="연면적(㎡) — 시공 공사비 견적 입력")
     land_area_sqm: float | None = Field(default=None, description="대지면적(㎡) — 설계 매스/유닛믹스 입력")
-    zone_code: str | None = Field(default=None, description="용도지역 코드(1R/2R/3R/GC/NC/QI/QR) — 설계 매스·법규한도 비교")
+    zone_code: str | None = Field(
+        default=None, description="용도지역 코드(1R/2R/3R/GC/NC/QI/QR) — 설계 매스·법규한도 비교"
+    )
     building_type: str | None = Field(default=None, description="건물유형(apartment 등) — 시공 평단가 분기")
     # R11 핸드오프 — 다른 페르소나 PersonaReport dict 묶음(선택). 디벨로퍼 종합이 소비.
     report_contracts: dict[str, Any] | None = Field(
-        default=None, description="페르소나간 핸드오프 reportContract({persona_key: PersonaReport}) — 디벨로퍼 종합 소비",
+        default=None,
+        description="페르소나간 핸드오프 reportContract({persona_key: PersonaReport}) — 디벨로퍼 종합 소비",
     )
     use_llm: bool = Field(default=False, description="LLM 내러티브·전문가패널 포함 여부(기본 false=무과금)")
 

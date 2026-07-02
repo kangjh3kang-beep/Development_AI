@@ -81,8 +81,8 @@ async def refresh(req: RefreshRequest):
             access_token=create_access_token({"sub": sub}),
             refresh_token=create_refresh_token({"sub": sub}),
         )
-    except JWTError:
-        raise HTTPException(status_code=401, detail="토큰 검증 실패")
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail="토큰 검증 실패") from e
 
 # 관리자군 role(관리자 시크릿/설정 메뉴 노출 기준 — admin_secrets._ADMIN_ROLES와 동기화)
 _ADMIN_ROLES = {"admin", "manager", "superadmin", "super_admin", "owner", "총괄관리자", "platform_admin"}

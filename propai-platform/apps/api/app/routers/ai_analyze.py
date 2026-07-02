@@ -39,4 +39,4 @@ async def ai_llm(req: LLMRequest, current_user=Depends(get_current_user)) -> dic
             )
         return {"text": str(text)}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"AI 호출 실패: {str(e)[:200]}")
+        raise HTTPException(502, f"AI 호출 실패: {str(e)[:200]}") from e

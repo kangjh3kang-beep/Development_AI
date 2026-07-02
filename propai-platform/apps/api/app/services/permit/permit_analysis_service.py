@@ -288,7 +288,7 @@ class PermitAnalysisService:
             *[self._enrich_site(a, {}) for a in addresses[1:]], return_exceptions=True
         )
         site_list = [primary_site, *[(s if isinstance(s, dict) else {}) for s in sites]]
-        for addr, s in zip(addresses, site_list):
+        for addr, s in zip(addresses, site_list, strict=False):
             area = s.get("land_area_sqm")
             far = s.get("max_far")
             enriched.append({
@@ -350,7 +350,11 @@ class PermitAnalysisService:
                 max_far=site.get("max_far") or "-",
                 land_area_sqm=site.get("land_area_sqm") or "-",
                 ordinance=ordinance,
-                special=", ".join(site.get("special_districts") or []) if isinstance(site.get("special_districts"), list) else (site.get("special_districts") or "-"),
+                special=(
+                    ", ".join(site.get("special_districts") or [])
+                    if isinstance(site.get("special_districts"), list)
+                    else (site.get("special_districts") or "-")
+                ),
                 special_parcel=self._special_parcel_grounding(site.get("special_parcel")),
                 methods=", ".join(DEV_METHODS),
             )
@@ -398,7 +402,8 @@ class PermitAnalysisService:
         """다필지 통합 개발 최적·최고 용적률 LLM 산정. 실패 시 가중평균 기반 폴백."""
         parcel_lines = "\n".join(
             f"- {i + 1}) {p['address']} | 용도지역 {p.get('zone_type') or '미상'} | "
-            f"용적률한도 {p.get('max_far') or '-'}% | 면적 {round(p['land_area_sqm']) if p.get('land_area_sqm') else '-'}㎡"
+            f"용적률한도 {p.get('max_far') or '-'}% | "
+            f"면적 {round(p['land_area_sqm']) if p.get('land_area_sqm') else '-'}㎡"
             for i, p in enumerate(parcels)
         )
         try:

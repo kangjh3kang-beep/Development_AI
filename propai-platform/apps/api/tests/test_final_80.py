@@ -4,6 +4,7 @@ tax_ai 순수 함수, jeonse_risk async, base_client, vworld_client,
 bim_ifc analyze_ifc, 추가 라우터 엔드포인트를 커버한다.
 """
 
+import contextlib
 import os
 import sys
 from datetime import UTC, datetime
@@ -320,10 +321,10 @@ class TestBaseAPIClient:
                 client._client = None
                 client.settings = MagicMock()
 
-                with patch("apps.api.integrations.base_client.httpx.AsyncClient") as MockHttp:
+                with patch("apps.api.integrations.base_client.httpx.AsyncClient") as mock_http_cls:
                     mock_http = AsyncMock()
                     mock_http.is_closed = False
-                    MockHttp.return_value = mock_http
+                    mock_http_cls.return_value = mock_http
                     result = await client._get_client()
                     assert result is not None
         except Exception:
@@ -495,10 +496,10 @@ class TestBIMIFCServiceAnalyze:
             )
             svc = BIMIFCService(db=mock_db)
 
-        # _download_ifc → 임시 파일 경로 반환
-        with patch.object(svc, "_download_ifc", new_callable=AsyncMock, return_value="/tmp/test.ifc"):
-            # _parse_ifc → 파싱 결과 반환
-            with patch.object(svc, "_parse_ifc", return_value={
+        # _download_ifc → 임시 파일 경로 반환 / _parse_ifc → 파싱 결과 반환
+        with (
+            patch.object(svc, "_download_ifc", new_callable=AsyncMock, return_value="/tmp/test.ifc"),
+            patch.object(svc, "_parse_ifc", return_value={
                 "elements": [
                     {"type": "IfcWall", "volume": 50.0, "area": 200.0},
                     {"type": "IfcSlab", "volume": 100.0, "area": 500.0},
@@ -507,17 +508,18 @@ class TestBIMIFCServiceAnalyze:
                 "total_volume": 160.0,
                 "total_area": 740.0,
                 "element_count": 3,
-            }):
-                with patch("os.unlink"):
-                    try:
-                        result = await svc.analyze_ifc(
-                            project_id=TEST_PROJECT_ID,
-                            tenant_id=TEST_TENANT_ID,
-                            file_url="minio://bucket/test.ifc",
-                        )
-                        assert result is not None
-                    except Exception:
-                        pass
+            }),
+            patch("os.unlink"),
+        ):
+            try:
+                result = await svc.analyze_ifc(
+                    project_id=TEST_PROJECT_ID,
+                    tenant_id=TEST_TENANT_ID,
+                    file_url="minio://bucket/test.ifc",
+                )
+                assert result is not None
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_generate_ifc_from_design(self):
@@ -785,11 +787,8 @@ class TestPredictiveMaintenanceService:
     def test_calc_std_empty(self):
         from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
         svc = PredictiveMaintenanceService()
-        try:
-            result = svc._calc_std([])
-            assert result == 0 or True
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            svc._calc_std([])
 
 
 class TestVersioning:
@@ -818,22 +817,24 @@ class TestFloorPlanMorePaths:
         svc.db = mock_db
         svc.settings = MagicMock()
 
-        with patch.object(svc, "_build_prompt", return_value="test prompt"):
-            with patch.object(svc, "_generate_image", new_callable=AsyncMock, return_value="https://img.com/1.png"):
-                with patch.object(svc, "_upload_to_minio", new_callable=AsyncMock, return_value="minio://bucket/1.png"):
-                    with patch.object(svc, "_validate_with_claude_vision", new_callable=AsyncMock, return_value={
-                        "match": True, "detected_rooms": 3,
-                    }):
-                        try:
-                            result = await svc.generate(
-                                project_id=TEST_PROJECT_ID,
-                                tenant_id=TEST_TENANT_ID,
-                                area_sqm=84.0,
-                                room_count=3,
-                            )
-                            assert result is not None
-                        except Exception:
-                            pass
+        with (
+            patch.object(svc, "_build_prompt", return_value="test prompt"),
+            patch.object(svc, "_generate_image", new_callable=AsyncMock, return_value="https://img.com/1.png"),
+            patch.object(svc, "_upload_to_minio", new_callable=AsyncMock, return_value="minio://bucket/1.png"),
+            patch.object(svc, "_validate_with_claude_vision", new_callable=AsyncMock, return_value={
+                "match": True, "detected_rooms": 3,
+            }),
+        ):
+            try:
+                result = await svc.generate(
+                    project_id=TEST_PROJECT_ID,
+                    tenant_id=TEST_TENANT_ID,
+                    area_sqm=84.0,
+                    room_count=3,
+                )
+                assert result is not None
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_generate_fallback_chain(self):
@@ -845,17 +846,22 @@ class TestFloorPlanMorePaths:
         svc.db = mock_db
         svc.settings = MagicMock()
 
-        with patch.object(svc, "_build_prompt", return_value="test prompt"):
-            with patch.object(svc, "_generate_image", new_callable=AsyncMock, side_effect=Exception("SDXL fail")):
-                with patch.object(svc, "_generate_image_dalle3_fallback", new_callable=AsyncMock, return_value="https://dall-e.com/1.png"):
-                    with patch.object(svc, "_upload_to_minio", new_callable=AsyncMock, return_value="minio://1.png"):
-                        with patch.object(svc, "_validate_with_claude_vision", new_callable=AsyncMock, return_value={"match": True}):
-                            try:
-                                result = await svc.generate(
-                                    project_id=TEST_PROJECT_ID,
-                                    tenant_id=TEST_TENANT_ID,
-                                    area_sqm=84.0,
-                                    room_count=3,
-                                )
-                            except Exception:
-                                pass  # 내부 로직 차이
+        with (
+            patch.object(svc, "_build_prompt", return_value="test prompt"),
+            patch.object(svc, "_generate_image", new_callable=AsyncMock, side_effect=Exception("SDXL fail")),
+            patch.object(
+                svc, "_generate_image_dalle3_fallback", new_callable=AsyncMock,
+                return_value="https://dall-e.com/1.png",
+            ),
+            patch.object(svc, "_upload_to_minio", new_callable=AsyncMock, return_value="minio://1.png"),
+            patch.object(
+                svc, "_validate_with_claude_vision", new_callable=AsyncMock, return_value={"match": True},
+            ),
+            contextlib.suppress(Exception),  # 내부 로직 차이
+        ):
+            await svc.generate(
+                project_id=TEST_PROJECT_ID,
+                tenant_id=TEST_TENANT_ID,
+                area_sqm=84.0,
+                room_count=3,
+            )

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -171,10 +172,8 @@ def _atomic_write(target: str, lines: list[str]) -> None:
     finally:
         os.close(fd)
     os.replace(tmp, target)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(target, 0o600)
-    except OSError:
-        pass
 
 
 def main() -> int:
@@ -223,11 +222,17 @@ def main() -> int:
     _atomic_write(args.target, lines)
 
     print(f"내보내기 완료 → {args.target}")
-    print(f"  베이스라인 .env: {len(read_files)}개 읽음 | DB 오버레이: {db_applied}개 | 기록된 키: {written}/{len(allow)}")
+    print(
+        f"  베이스라인 .env: {len(read_files)}개 읽음 | DB 오버레이: {db_applied}개"
+        f" | 기록된 키: {written}/{len(allow)}"
+    )
     for path in read_files:
         print(f"    · {path}")
     for name, state, masked, src in summary:
-        print(f"  - {name}: {state}{(' ' + masked) if masked else ''}  [출처={src}, len={len((os.environ.get(name) or '').strip())}]")
+        print(
+            f"  - {name}: {state}{(' ' + masked) if masked else ''}"
+            f"  [출처={src}, len={len((os.environ.get(name) or '').strip())}]"
+        )
     return 0
 
 

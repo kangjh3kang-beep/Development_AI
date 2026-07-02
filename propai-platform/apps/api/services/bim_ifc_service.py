@@ -10,6 +10,7 @@ ifcopenshell 기반 IFC 파일 분석.
 4. Three.js용 geometry JSON 변환 (Codex 연동)
 """
 
+import contextlib
 from pathlib import Path
 from uuid import UUID
 
@@ -414,10 +415,8 @@ class BIMIFCService:
                 error=str(exc),
             )
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
 
         # DB 저장
         design = Design(

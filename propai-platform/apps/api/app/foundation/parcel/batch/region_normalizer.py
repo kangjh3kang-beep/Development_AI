@@ -150,7 +150,8 @@ async def normalize(inp: BatchInput, vworld: Any = None) -> NormalizeResult:
         if not pnus:
             return NormalizeResult(
                 pnus=[], degraded=True, geo=geo,
-                reason=f"'{inp.center_address}' 반경 {radius}m 내 필지를 찾지 못했습니다(외부 데이터 미가용 또는 빈 영역).",
+                reason=f"'{inp.center_address}' 반경 {radius}m 내 필지를 찾지 못했습니다"
+                       "(외부 데이터 미가용 또는 빈 영역).",
             )
         return NormalizeResult(pnus=pnus, geo=geo)
 

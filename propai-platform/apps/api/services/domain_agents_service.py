@@ -1,8 +1,6 @@
 """Domain agent analysis service for Part F."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
 from uuid import UUID
 
 import structlog

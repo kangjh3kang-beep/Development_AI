@@ -9,7 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 # 지역 시세보정계수는 comprehensive_analysis_service의 검증된 맵을 재사용(인스턴스화 없이).
-from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService as _CAS
+from app.services.land_intelligence.comprehensive_analysis_service import (
+    ComprehensiveAnalysisService as _CAS,  # noqa: N814 — 클래스 축약 별칭(소문자화 시 클래스임이 가려짐)
+)
 
 
 def _market_multiplier(address: str) -> tuple[float, str]:

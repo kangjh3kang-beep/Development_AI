@@ -36,7 +36,7 @@ class OperationsService:
 
     def generate_operations_report(self, project_id: str, logs: list[dict]) -> dict:
         costs = self.calculate_operating_costs(logs)
-        incidents = sum(1 for l in logs if l.get("log_type") == "incident")
+        incidents = sum(1 for log in logs if log.get("log_type") == "incident")
         return {
             "project_id": project_id, "report_type": "operations",
             "period": "monthly", "costs": costs, "incident_count": incidents,

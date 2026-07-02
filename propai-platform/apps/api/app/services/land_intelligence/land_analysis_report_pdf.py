@@ -182,7 +182,8 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
                 val = u.get("validation") or {}
                 el.append(Paragraph(
                     "검증: Σ세대 대지지분 = 대지면적 비례배분"
-                    + ("(세대 누락 없음·신뢰)" if val.get("reliable") else "(일부 세대 전유부 누락 가능 — 등기부 확인 권장)"), small))
+                    + ("(세대 누락 없음·신뢰)" if val.get("reliable")
+                       else "(일부 세대 전유부 누락 가능 — 등기부 확인 권장)"), small))
             el.append(Spacer(1, 3))
 
     # 종합 의견 — §5(대지지분)이 없으면 5번, 있으면 6번으로 연속 번호 유지.
@@ -198,10 +199,14 @@ def build_land_analysis_report(data: dict[str, Any]) -> bytes:
     )
     el.append(Paragraph(opinion, body))
     el.append(Spacer(1, 8))
-    el.append(Paragraph("※ 본 보고서는 공공데이터 기반 참고자료로 감정평가·법적 효력이 없습니다. © PropAI 사통팔땅", small))
+    el.append(Paragraph(
+        "※ 본 보고서는 공공데이터 기반 참고자료로 감정평가·법적 효력이 없습니다. © PropAI 사통팔땅", small))
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm, leftMargin=15 * mm, rightMargin=15 * mm)
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+    )
     doc.build(el)
     buf.seek(0)
     return buf.getvalue()

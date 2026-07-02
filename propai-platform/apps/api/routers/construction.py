@@ -78,7 +78,8 @@ async def estimate_zeb_energy(
 
         items = [
             {"label": "연간 에너지요구량(kWh)", "value": result.get("annual_energy_demand_kwh"),
-             "basis": "열관류율(U값)×외피면적×난방도일(HDD2800)/냉방도일(CDD800) + 조명·환기·급탕(EnergyPlus 간소모델)"},
+             "basis": ("열관류율(U값)×외피면적×난방도일(HDD2800)/냉방도일(CDD800)"
+                       " + 조명·환기·급탕(EnergyPlus 간소모델)")},
             {"label": "연간 재생에너지(kWh)", "value": result.get("annual_renewable_generation_kwh"),
              "basis": "지붕 60%×PV효율 20%×서울 일사량 3.5kWh/㎡·일×365"},
             {"label": "에너지 자립률(%)", "value": result.get("energy_independence_rate"),

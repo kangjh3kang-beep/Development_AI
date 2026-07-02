@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Iterable
 from typing import Any
@@ -91,10 +92,8 @@ def build_provenance(
             # 신선도(마지막 갱신이 있을 때만 — 미갱신은 status에 last_updated=None로 이미 정직 표기).
             if status.last_updated is not None:
                 data_type = _SOURCE_FRESHNESS_TYPE.get(name, "transaction")
-                try:
+                with contextlib.suppress(Exception):
                     entry["freshness"] = FreshnessChecker.check(data_type, status.last_updated)
-                except Exception:  # noqa: BLE001
-                    pass
             out.append(entry)
         return out
     except Exception as e:  # noqa: BLE001

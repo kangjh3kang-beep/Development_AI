@@ -1,8 +1,6 @@
 """Predictive maintenance service for G88."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +10,8 @@ from apps.api.database.models.phase_f_maintenance import (
     PredictiveMaintenanceAlert,
     WorkOrder,
 )
+
+UTC = UTC  # 재노출(모듈 속성 유지) — import 미사용 경고 회피용 기존 패턴 보존
 
 
 class MaintenanceService:

@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-
-UTC = UTC
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -209,7 +207,7 @@ class DigitalTwinService:
         # 단순 선형회귀: energy = a + b * temp
         sum_x = sum(outdoor_temps)
         sum_y = sum(energy_readings)
-        sum_xy = sum(x * y for x, y in zip(outdoor_temps, energy_readings))
+        sum_xy = sum(x * y for x, y in zip(outdoor_temps, energy_readings, strict=False))
         sum_x2 = sum(x * x for x in outdoor_temps)
 
         denominator = n * sum_x2 - sum_x * sum_x

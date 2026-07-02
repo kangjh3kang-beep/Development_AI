@@ -3,8 +3,6 @@
 from collections import Counter
 from datetime import UTC, datetime
 
-UTC = UTC
-
 from fastapi import APIRouter, Depends
 from packages.schemas.models import (
     DashboardActivityItem,

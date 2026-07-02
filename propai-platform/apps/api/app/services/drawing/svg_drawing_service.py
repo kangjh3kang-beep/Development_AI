@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re as _re
 
 try:
     import svgwrite
@@ -11,7 +12,8 @@ import structlog
 logger = structlog.get_logger()
 
 # ── 상수 ──
-SVG_PLACEHOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text x="10" y="30" font-size="8">svgwrite 미설치</text></svg>'
+SVG_PLACEHOLDER = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">'
+                   '<text x="10" y="30" font-size="8">svgwrite 미설치</text></svg>')
 SCALE_PX_PER_M = 8  # 1m = 8px (상세 도면 기본 스케일)
 WALL_PX = 1.6  # 벽체 두께 (200mm × 8px/m)
 MARGIN = 60  # 여백 (px)
@@ -82,9 +84,6 @@ def _finding_label(finding: dict) -> str:
 def _s(m: float) -> float:
     """미터 → 픽셀 변환."""
     return m * SCALE_PX_PER_M
-
-
-import re as _re
 
 
 def _make_responsive(svg: str) -> str:
@@ -776,8 +775,8 @@ class SVGDrawingService:
         if svgwrite is None:
             return SVG_PLACEHOLDER
 
-        PXM = 36.0            # 1m = 36px (1:100 화면 가독 스케일)
-        EXT = 0.20           # 외벽 200mm
+        PXM = 36.0            # noqa: N806 — 도면 스케일 상수 관례. 1m = 36px (1:100 화면 가독 스케일)
+        EXT = 0.20           # noqa: N806 — 기하 관례. 외벽 200mm
         big = area_sqm >= 72.0
 
         # ── 전용면적에 맞춰 본체 치수 추정(판상형 전면 8.4m 기준) ──
@@ -830,7 +829,7 @@ class SVGDrawingService:
         rooms.append({"name": "복도", "x": 0.0, "y": n_h, "w": body_w, "h": c_h, "hall": True})
 
         # ── 캔버스/여백 ──
-        MX, MTOP, MBOT, MR = 78.0, 64.0, 128.0, 40.0
+        MX, MTOP, MBOT, MR = 78.0, 64.0, 128.0, 40.0  # noqa: N806 — 여백 기하 관례
         cw_px = body_w * PXM + MX + MR
         ch_px = (body_d + bal_h) * PXM + MTOP + MBOT
         dwg = svgwrite.Drawing(size=(f"{cw_px:.0f}px", f"{ch_px:.0f}px"))
@@ -851,7 +850,7 @@ class SVGDrawingService:
         g.add(dwg.rect(insert=(0, 0), size=(px(body_w), px(body_d)), fill="#1a1a1a"))
 
         # 3) 각 실 = 흰 면(내벽 두께만큼 inset → 사이 어두운 띠가 칸막이벽 poché)
-        P = 0.07  # 칸막이 절반(→ 실간벽 ~140mm)
+        P = 0.07  # noqa: N806 — 기하 관례. 칸막이 절반(→ 실간벽 ~140mm)
         for r in rooms:
             fill = "#f0f2f4" if r.get("hall") else "#fafafa"
             g.add(dwg.rect(
@@ -868,7 +867,9 @@ class SVGDrawingService:
 
         # 5) 개구부(문) 흰색 절단 + 문짝 + 90° 스윙호
         for dd in doors:
-            cx = dd["cx"]; y = dd["y"]; dw = dd["w"]
+            cx = dd["cx"]
+            y = dd["y"]
+            dw = dd["w"]
             x0 = cx - dw / 2
             # 벽 절단(가로벽: y 중심으로 ±0.13)
             g.add(dwg.rect(insert=(px(x0), px(y - 0.13)), size=(px(dw), px(0.26)), fill="#ffffff"))
@@ -887,11 +888,10 @@ class SVGDrawingService:
 
         # 6) 창호(외벽 3선) — 흰 절단 후 평행 3선
         for wd in windows:
-            wx = wd["x"]; ww = wd["w"]; wall = wd["wall"]
-            if wall == "s":
-                wy = body_d - EXT
-            else:
-                wy = 0.0
+            wx = wd["x"]
+            ww = wd["w"]
+            wall = wd["wall"]
+            wy = body_d - EXT if wall == "s" else 0.0
             g.add(dwg.rect(insert=(px(wx), px(wy)), size=(px(ww), px(EXT)), fill="#ffffff"))
             for k in range(3):
                 yy = wy + EXT * (0.25 + 0.25 * k)
@@ -899,13 +899,14 @@ class SVGDrawingService:
                                stroke="#5a7fa6", stroke_width=0.8))
 
         # 6.5) 위생기구·가구(옅은 선) — 실명 라벨 아래 레이어로 깔아 도면 현실감↑
-        FS = "#9aa4b2"  # 가구/기구 선색(옅은 회청)
+        FS = "#9aa4b2"  # noqa: N806 — 도면 팔레트 상수 관례. 가구/기구 선색(옅은 회청)
 
         def fr_rect(rx_: float, ry_: float, rw_: float, rh_: float, rad: float = 0.0, fill: str = "none") -> None:
             kw = dict(insert=(px(rx_), px(ry_)), size=(px(max(0.05, rw_)), px(max(0.05, rh_))),
                       fill=fill, stroke=FS, stroke_width=0.7)
             if rad > 0:
-                kw["rx"] = px(rad); kw["ry"] = px(rad)
+                kw["rx"] = px(rad)
+                kw["ry"] = px(rad)
             g.add(dwg.rect(**kw))
 
         def fr_circle(cx_: float, cy_: float, rr: float) -> None:
@@ -917,12 +918,17 @@ class SVGDrawingService:
         for r in rooms:
             if r.get("hall"):
                 continue
-            nm = r["name"]; rx0 = r["x"]; ry0 = r["y"]; rw0 = r["w"]; rh0 = r["h"]
+            nm = r["name"]
+            rx0 = r["x"]
+            ry0 = r["y"]
+            rw0 = r["w"]
+            rh0 = r["h"]
             mg = 0.28  # 벽 여백
             south = ry0 >= s_y
             if nm == "거실":
                 # 소파(복도측) + 등받이 + 좌식테이블 + TV(창측 벽)
-                sw_ = min(rw0 - 2 * mg, 2.6); sx_ = rx0 + (rw0 - sw_) / 2
+                sw_ = min(rw0 - 2 * mg, 2.6)
+                sx_ = rx0 + (rw0 - sw_) / 2
                 sy_ = ry0 + mg if south else ry0 + rh0 - mg - 0.85
                 fr_rect(sx_, sy_, sw_, 0.85, rad=0.08)
                 fr_line(sx_, sy_ + (0.2 if south else 0.65), sx_ + sw_, sy_ + (0.2 if south else 0.65))
@@ -930,7 +936,8 @@ class SVGDrawingService:
                 tvy = ry0 + rh0 - mg - 0.12 if south else ry0 + mg
                 fr_rect(rx0 + (rw0 - 1.6) / 2, tvy, 1.6, 0.12)  # TV
             elif nm == "안방":
-                bw_ = min(rw0 - 2 * mg, 1.6); bx_ = rx0 + (rw0 - bw_) / 2
+                bw_ = min(rw0 - 2 * mg, 1.6)
+                bx_ = rx0 + (rw0 - bw_) / 2
                 by_ = ry0 + mg if south else ry0 + rh0 - mg - 2.0
                 fr_rect(bx_, by_, bw_, 2.0, rad=0.05)  # 더블침대
                 ply = by_ if south else by_ + 2.0 - 0.32
@@ -938,7 +945,8 @@ class SVGDrawingService:
                 fr_rect(bx_ + bw_ * 0.5, ply, bw_ * 0.46, 0.32)  # 베개2
                 fr_rect(rx0 + mg, ry0 + rh0 - mg - 0.55, 1.2, 0.55)  # 옷장
             elif nm.startswith("침실"):
-                bw_ = min(rw0 - 2 * mg, 1.1); bx_ = rx0 + mg
+                bw_ = min(rw0 - 2 * mg, 1.1)
+                bx_ = rx0 + mg
                 by_ = ry0 + mg if south else ry0 + rh0 - mg - 2.0
                 fr_rect(bx_, by_, bw_, 2.0, rad=0.05)  # 싱글침대
                 fr_rect(bx_, by_ if south else by_ + 1.7, bw_, 0.3)  # 베개
@@ -950,7 +958,8 @@ class SVGDrawingService:
                 for ii in range(2):
                     for jj in range(2):
                         fr_circle(rx0 + mg + 1.35 + ii * 0.3, cyc + 0.18 + jj * 0.26, 0.1)  # 레인지 4구
-                tx_ = rx0 + (rw0 - 1.0) / 2; ty_ = ry0 + rh0 / 2
+                tx_ = rx0 + (rw0 - 1.0) / 2
+                ty_ = ry0 + rh0 / 2
                 fr_rect(tx_, ty_, 1.0, 0.7, rad=0.05)  # 식탁
                 for cxs in (tx_ - 0.22, tx_ + 1.0 + 0.02):
                     fr_rect(cxs, ty_ + 0.18, 0.2, 0.34, rad=0.03)  # 의자
@@ -1008,7 +1017,7 @@ class SVGDrawingService:
 
         # 남측 실폭 체인
         cxacc = 0.0
-        for name, frac in south_cols:
+        for _name, frac in south_cols:
             cwid = round(body_w * frac, 2)
             dim_h(cxacc, cxacc + cwid, 22, f"{int(cwid * 1000)}")
             cxacc = round(cxacc + cwid, 2)
@@ -1226,10 +1235,10 @@ class SVGDrawingService:
         bal = list(balconies or [])
         bal_h = max((float(b.get("h") or 0.0) for b in bal), default=0.0)
 
-        PXM = 36.0   # 1m = 36px (1:100 화면 가독 스케일 — 기존 unit plan과 동일)
-        EXT = 0.20   # 외벽 200mm
-        P = 0.07     # 칸막이 절반(실간벽 ~140mm)
-        MX, MTOP, MBOT, MR = 78.0, 56.0, 118.0, 40.0
+        PXM = 36.0   # noqa: N806 — 도면 스케일 상수 관례. 1m = 36px (1:100 화면 가독 스케일 — 기존 unit plan과 동일)
+        EXT = 0.20   # noqa: N806 — 기하 관례. 외벽 200mm
+        P = 0.07     # noqa: N806 — 기하 관례. 칸막이 절반(실간벽 ~140mm)
+        MX, MTOP, MBOT, MR = 78.0, 56.0, 118.0, 40.0  # noqa: N806 — 여백 기하 관례
         cw_px = bw_m * PXM + MX + MR
         ch_px = (bd_m + bal_h) * PXM + MTOP + MBOT
 
@@ -1630,7 +1639,8 @@ class SVGDrawingService:
         ly = bd + 16
         for label, color in (("■ 조명", "#f0a500"), ("⊠ 디퓨저", "#0984e3"),
                              ("⊙ 스프링클러", "#d63031")):
-            g.add(dwg.text(label, insert=(0 if "조명" in label else (bw * 0.34 if "디퓨저" in label else bw * 0.68), ly),
+            lx = 0 if "조명" in label else (bw * 0.34 if "디퓨저" in label else bw * 0.68)
+            g.add(dwg.text(label, insert=(lx, ly),
                            font_size="9px", font_family=FONT, fill=color))
         # 정직 표기 — 렌더 출력에 명시(MEP와 동일). 비전문가가 엔지니어링 산정으로 오인하지 않도록.
         g.add(dwg.text("※ 표준 격자 배치(개략) — 조도·풍량 산정 미연동(표기용)",
@@ -1674,7 +1684,7 @@ class SVGDrawingService:
         g.add(dwg.text("배기 덕트", insert=(6, mid_y + 16), font_size="8px",
                        font_family=FONT, fill="#636e72", font_weight="bold"))
         # 급수/오수 배관(수직 간선) — 코어 위치 가정(중앙) + 양측
-        for px, label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
+        for px, _label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
             g.add(dwg.line(start=(px, 0), end=(px, bd), stroke=color, stroke_width=1.5,
                            stroke_dasharray="2,2"))
         g.add(dwg.text("급수 배관", insert=(bw * 0.5 - 30, 14), font_size="8px",

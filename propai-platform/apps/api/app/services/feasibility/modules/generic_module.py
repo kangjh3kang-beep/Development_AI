@@ -66,11 +66,13 @@ class GenericModule(BaseModule):
             pf_amt = base_cost * 0.70  # 표준 LTV 70%
             est_finance = round(pf_amt * 0.055 * (months / 12.0))  # PF 이자 5.5%, 사업기간 비례
             finance = {**finance, "total_finance_cost_won": est_finance, "auto_estimated": True,
-                       "estimate_basis": f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월 자동추정(미입력)"}
+                       "estimate_basis": (f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)"
+                                          f"×5.5%×{months:.0f}개월 자동추정(미입력)")}
         if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:
             est_other = round(base_cost * 0.07)  # 설계·감리·분양대행·금융수수료·예비비 통칭 7%
             other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
-                     "estimate_basis": f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% 자동추정(설계·감리·분양대행·예비비 통칭, 미입력)"}
+                     "estimate_basis": (f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% "
+                                        "자동추정(설계·감리·분양대행·예비비 통칭, 미입력)")}
 
         taxes = compute_taxes(inp, revenue["total_revenue_won"])
 

@@ -12,13 +12,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class ItemStatus(str, Enum):
+class ItemStatus(StrEnum):
     """필지 한 건의 해석 상태."""
 
     CONFIRMED = "confirmed"      # PNU·면적 등 핵심 정보 확정
@@ -27,14 +27,14 @@ class ItemStatus(str, Enum):
     ERROR = "error"             # 처리 중 예외
 
 
-class Completeness(str, Enum):
+class Completeness(StrEnum):
     """배치 전체의 완결성. COMPLETE 이전에는 최종 분석을 하면 안 된다(INV-M4)."""
 
     PARTIAL = "partial"
     COMPLETE = "complete"
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     """배치 잡의 상태기계."""
 
     QUEUED = "queued"

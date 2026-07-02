@@ -546,7 +546,8 @@ async def run_instant_precheck(
     if not resolved_pnu:
         return {
             "ok": False,
-            "message": "입력하신 주소를 실제 필지(PNU)로 확인하지 못했습니다. 정확한 지번 주소를 입력하거나 PNU를 함께 제공해 주세요. (필지 미확인 상태에서는 정량 진단을 제공하지 않습니다.)",
+            "message": "입력하신 주소를 실제 필지(PNU)로 확인하지 못했습니다. 정확한 지번 주소를 입력하거나 "
+                       "PNU를 함께 제공해 주세요. (필지 미확인 상태에서는 정량 진단을 제공하지 않습니다.)",
             "address": address,
             "pnu": None,
             "elapsed_ms": int((time.perf_counter() - t0) * 1000),

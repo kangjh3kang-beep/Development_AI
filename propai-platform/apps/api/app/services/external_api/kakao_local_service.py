@@ -181,7 +181,7 @@ class KakaoLocalService:
                 r = await self.category_search(lat, lon, code, radius)
             return code, label, r
 
-        results = await asyncio.gather(*[_one(c, l) for c, l in cats], return_exceptions=True)
+        results = await asyncio.gather(*[_one(code, label) for code, label in cats], return_exceptions=True)
         out: dict[str, Any] = {}
         for res in results:
             # return_exceptions=True는 CancelledError 등 BaseException도 반환할 수 있어 Exception보다 넓게 가드.
@@ -218,7 +218,7 @@ class KakaoLocalService:
         flat = [(gi, q) for gi, (_c, _l, kws) in enumerate(grps) for q in kws]
         results = await asyncio.gather(*[_kw(q) for _gi, q in flat], return_exceptions=True)
         by_group: dict[int, list[Any]] = {}
-        for (gi, _q), r in zip(flat, results):
+        for (gi, _q), r in zip(flat, results, strict=False):
             by_group.setdefault(gi, []).append(r)
 
         out: dict[str, Any] = {}

@@ -114,8 +114,10 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "developability": "PRECONDITION",
             "implications": [
                 "지목이 학교용지로, 「도시·군계획시설(학교)」로 결정된 부지일 가능성이 높습니다.",
-                "도시계획시설로 결정돼 있으면 학교 외 용도의 일반 건축이 불가하며, 분양개발을 위해서는 도시계획시설(학교) 폐지(실효) 또는 도시·군관리계획 변경이 선행되어야 합니다.",
-                "공립이면 교육청(교육지원청) 협의·용도폐지, 사립이면 학교법인의 기본재산 처분(관할청 허가)·수익용 재산 전환 등 별도 절차가 수반됩니다.",
+                "도시계획시설로 결정돼 있으면 학교 외 용도의 일반 건축이 불가하며, 분양개발을 위해서는 "
+                "도시계획시설(학교) 폐지(실효) 또는 도시·군관리계획 변경이 선행되어야 합니다.",
+                "공립이면 교육청(교육지원청) 협의·용도폐지, 사립이면 학교법인의 기본재산 처분(관할청 허가)"
+                "·수익용 재산 전환 등 별도 절차가 수반됩니다.",
             ],
             "legal_basis": [
                 "국토의 계획 및 이용에 관한 법률 제30조(도시·군관리계획의 결정)·제43조(도시·군계획시설)",
@@ -146,8 +148,11 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "category": "공공·기반시설 용지(도로)", "developability": "PRECONDITION",
             "implications": [
                 "지목이 도로로 공공용지/기반시설에 해당해 현 상태로는 일반 분양개발이 어렵습니다(단정적 불가 아님).",
-                "폐도(도로 폐지)로 개발이 가능해지는 경우가 있습니다 — 도시계획시설(도로) 폐지·변경(지구단위계획/도시관리계획), 이해관계인·주민 의견청취·동의, 대체도로 확보가 선행되어야 합니다.",
-                "폐도 가능 여부는 도로 기능(간선/국지/현황)·연결성·대체도로·통행영향·주민동의·계획 정합성에 따라 달라집니다(현황 필수도로·간선도로는 폐도 곤란).",
+                "폐도(도로 폐지)로 개발이 가능해지는 경우가 있습니다 — 도시계획시설(도로) "
+                "폐지·변경(지구단위계획/도시관리계획), "
+                "이해관계인·주민 의견청취·동의, 대체도로 확보가 선행되어야 합니다.",
+                "폐도 가능 여부는 도로 기능(간선/국지/현황)·연결성·대체도로·통행영향·주민동의·계획 정합성에 따라 "
+                "달라집니다(현황 필수도로·간선도로는 폐도 곤란).",
                 "국공유 도로는 용도폐지 후 매각/양여(국유재산법·공유재산법)가 선행됩니다.",
             ],
             "legal_basis": [
@@ -174,7 +179,8 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
     if "공원" in c or "유원지" in c or "체육" in c:
         return {
             "category": f"도시계획시설({c})", "developability": "PRECONDITION",
-            "implications": [f"지목이 {c}(으)로 도시계획시설일 가능성이 높아, 시설폐지/변경 선행 없이는 일반 개발이 불가합니다."],
+            "implications": [f"지목이 {c}(으)로 도시계획시설일 가능성이 높아, "
+                             "시설폐지/변경 선행 없이는 일반 개발이 불가합니다."],
             "legal_basis": ["국토계획법 제43조(도시·군계획시설)"],
             "permit_prerequisites": ["도시계획시설 결정·실효 여부 확인", "도시·군관리계획 변경 절차"],
         }
@@ -189,7 +195,8 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
         # 단, '대' 등과의 혼동 방지를 위해 정확 매칭은 호출부에서 1글자 지목도 처리.
         return {
             "category": f"농지({c})", "developability": "CONDITIONAL",
-            "implications": [f"지목이 {c}(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과).",
+            "implications": [f"지목이 {c}(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 "
+                             "필요합니다(농지보전부담금 부과).",
                              "도시지역(상업·주거)이라도 농지전용 협의/신고 대상일 수 있습니다."],
             "legal_basis": ["농지법 제34조(농지전용허가)·제38조(농지보전부담금)"],
             "legal_ref_keys": ["farmland_conversion"],
@@ -219,12 +226,17 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "blocking_unknown": True,
             "implications": [
                 "지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
-                "★확정 판단에는 산림청 공식 조사데이터가 필요합니다(현재 미확보 — 아래 항목은 공식조사로 산정해야 하며 아직 계산되지 않았습니다):",
-                "  · 평균경사도 — 지자체 조례상 산지전용 허용 기준(통상 평균경사도 25도 또는 30도 이하)에 부합하는지 공식 평균경사도조사서로 확인해야 합니다.",
-                "  · 입목축적 — ha당 입목축적이 관할 시군구 평균 대비 일정 배수(예: 150% 이하) 이내인지 산림조사서로 확인해야 합니다.",
-                "  · 보전산지 포함 여부 — 보전산지(임업용·공익용)가 포함되면 전용이 크게 제한되므로 산지구분 확인이 선행됩니다.",
+                "★확정 판단에는 산림청 공식 조사데이터가 필요합니다(현재 미확보 — 아래 항목은 공식조사로 "
+                "산정해야 하며 아직 계산되지 않았습니다):",
+                "  · 평균경사도 — 지자체 조례상 산지전용 허용 기준(통상 평균경사도 25도 또는 30도 이하)에 "
+                "부합하는지 공식 평균경사도조사서로 확인해야 합니다.",
+                "  · 입목축적 — ha당 입목축적이 관할 시군구 평균 대비 일정 배수(예: 150% 이하) 이내인지 "
+                "산림조사서로 확인해야 합니다.",
+                "  · 보전산지 포함 여부 — 보전산지(임업용·공익용)가 포함되면 전용이 크게 제한되므로 "
+                "산지구분 확인이 선행됩니다.",
                 "  · 660㎡ 미만 등 소규모 예외 해당 여부도 공식 자료로 판정해야 합니다.",
-                "이 항목들은 아직 실제로 계산되지 않았으며, 공식 산림조사 확보 전까지는 참고용 예비안만 제시합니다(확정 아님).",
+                "이 항목들은 아직 실제로 계산되지 않았으며, 공식 산림조사 확보 전까지는 참고용 예비안만 "
+                "제시합니다(확정 아님).",
                 "대체산림자원조성비가 부과됩니다.",
             ],
             "legal_basis": ["산지관리법 제14조(산지전용허가)", "대체산림자원조성비"],
@@ -249,7 +261,8 @@ def _rules_by_districts(special_districts: list, zone_type: str) -> list[dict[st
             "legal_basis": ["개발제한구역의 지정 및 관리에 관한 특별조치법"],
             "legal_ref_keys": ["greenbelt"],
             "permit_prerequisites": ["GB 해제 또는 예외 허가대상 여부 확인"]}),
-        (("문화재", "역사문화환경"), {"category": "문화재보호구역/역사문화환경 보존지역", "developability": "CONDITIONAL",
+        (("문화재", "역사문화환경"), {"category": "문화재보호구역/역사문화환경 보존지역",
+            "developability": "CONDITIONAL",
             "implications": ["문화재 인근으로 현상변경 허가 및 매장문화재 지표·발굴조사가 필요할 수 있습니다."],
             "legal_basis": ["문화유산의 보존 및 활용에 관한 법률", "매장유산 보호 및 조사에 관한 법률"],
             "legal_ref_keys": ["cultural_heritage", "buried_heritage"],
@@ -280,7 +293,8 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
     if rc is False or (isinstance(rw, (int, float)) and rw == 0):
         return {
             "category": "맹지(도로 미접)", "developability": "CONDITIONAL",
-            "implications": ["도로에 접하지 않는 맹지로, 건축법상 접도의무(4m 이상 도로에 2m 이상 접함) 미충족 시 건축허가가 불가합니다.",
+            "implications": ["도로에 접하지 않는 맹지로, 건축법상 접도의무(4m 이상 도로에 2m 이상 접함) "
+                             "미충족 시 건축허가가 불가합니다.",
                              "진입로(사도/지역권) 확보가 선행되어야 합니다."],
             "legal_basis": ["건축법 제44조(대지와 도로의 관계)"],
             "permit_prerequisites": ["진입도로 확보(사도 개설·지역권 설정)", "현황도로 인정 여부 확인"],
@@ -356,9 +370,11 @@ def _rule_by_road_law(result: dict) -> dict[str, Any] | None:
         return None
     impl = []
     if has_abutting_zone:
-        impl.append("접도구역(도로 경계선에서 일정거리)에 해당해 건축물 신축·증축 등에 도로관리청 협의·허가가 필요합니다.")
+        impl.append("접도구역(도로 경계선에서 일정거리)에 해당해 건축물 신축·증축 등에 "
+                    "도로관리청 협의·허가가 필요합니다.")
     if near_managed_road:
-        impl.append("도로법상 도로(국도·지방도 등)에 진출입로를 설치하려면 도로 연결허가(연결로 구조·간격 기준)가 선행됩니다.")
+        impl.append("도로법상 도로(국도·지방도 등)에 진출입로를 설치하려면 도로 연결허가"
+                    "(연결로 구조·간격 기준)가 선행됩니다.")
     return {
         "category": "도로법 접도구역·연결허가 대상",
         "developability": "CONDITIONAL",
@@ -426,7 +442,7 @@ def _rule_by_small_eia(result: dict) -> dict[str, Any] | None:
     # ★면적이 확보(>0)되고 임계를 충족할 때만 게이트한다. 면적 미상이면 None(게이트 안 함=일상부지 보존).
     #   다른 _rule_by_* 게이트의 '면적/규모 미상 시 None' 패턴과 일관 — 면적 미상 필지를 거짓 환경평가
     #   경고로 강등하던 무회귀 위반(계획관리·녹지 일상필지 오탐)을 제거한다.
-    THRESH_SQM = 5_000.0
+    THRESH_SQM = 5_000.0  # noqa: N806 — 함수 내 상수(임계값) 표기 관례
     if area is None or area < THRESH_SQM:
         return None
     size_note = f"사업면적 {area:,.0f}㎡"
@@ -461,7 +477,8 @@ def _zone_category_mismatch(land_category: str, zone_type: str) -> str | None:
     """지목과 용도지역의 비일상 조합 주석(예: 학교용지가 일반상업지역)."""
     c, z = (land_category or ""), (zone_type or "")
     if "학교" in c and "상업" in z:
-        return f"지목({c})과 용도지역({z})의 조합이 이례적입니다 — 상업지역 내 학교부지로, 용도지역상 한도(고용적률)는 학교 폐지·용도변경을 전제로만 실현됩니다."
+        return (f"지목({c})과 용도지역({z})의 조합이 이례적입니다 — 상업지역 내 학교부지로, "
+                "용도지역상 한도(고용적률)는 학교 폐지·용도변경을 전제로만 실현됩니다.")
     return None
 
 
@@ -559,7 +576,8 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
         "warnings": warnings,
         "development_caveat": caveat,
         "honest_disclosure": honest,
-        "note": "특이부지 감지(규칙기반). 실제 개발가능 여부·선행절차는 토지이용계획확인원·도시계획 결정도 열람으로 확정하십시오.",
+        "note": ("특이부지 감지(규칙기반). 실제 개발가능 여부·선행절차는 "
+                 "토지이용계획확인원·도시계획 결정도 열람으로 확정하십시오."),
     }
 
 
@@ -574,11 +592,13 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
         return {"resolvable": "CONDITIONAL",
                 "resolution_paths": ["도시계획시설 폐지/변경(도시·군관리계획 변경 입안·결정)",
                                      "교육청 협의(공립)·학교법인 처분허가(사립)", "장기미집행 도시계획시설 실효 활용"],
-                "alternatives": ["시설 존치 전제 시 해당 필지를 사업구역에서 제외", "용도변경 후 단계적 개발", "공공기여형 사업방식(기부채납 연계) 검토"]}
+                "alternatives": ["시설 존치 전제 시 해당 필지를 사업구역에서 제외", "용도변경 후 단계적 개발",
+                                 "공공기여형 사업방식(기부채납 연계) 검토"]}
     if "개발제한구역" in c or "GB" in c:
         return {"resolvable": "NO",
                 "resolution_paths": ["GB 해제는 국가·광역 도시계획 차원으로 개별 사업자가 해결 불가"],
-                "alternatives": ["예외적 허가행위(GB 내 허용용도)만 검토", "해당 필지 제외·사업구역 재획정", "GB 경계 외 대체부지"]}
+                "alternatives": ["예외적 허가행위(GB 내 허용용도)만 검토", "해당 필지 제외·사업구역 재획정",
+                                 "GB 경계 외 대체부지"]}
     # ★도로법(접도구역·연결허가)은 도로 지목(도시계획시설 도로 폐도)과 다른 해결경로를 가지므로,
     #   '도로' 부분문자열이 이 신규 규제요인을 가로채지 않도록 먼저 제외한다(아래 전용 분기로 위임).
     #   (category에 "도로법/접도구역/연결허가"가 들어가면 도시계획시설 도로 폐도 분기로 새지 않는다.)
@@ -631,7 +651,8 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
     if "도로법" in c or "접도구역" in c or "연결허가" in c:
         return {"resolvable": "CONDITIONAL",
                 "resolution_paths": ["도로관리청 접도구역 협의·건축제한 확인", "도로 연결(진출입로) 허가 취득"],
-                "alternatives": ["접도구역 회피 배치(이격거리 확보)", "대체 진출입 동선 확보", "허가비용·구조기준 설계 반영"]}
+                "alternatives": ["접도구역 회피 배치(이격거리 확보)", "대체 진출입 동선 확보",
+                                 "허가비용·구조기준 설계 반영"]}
     if "하수도" in c or "원인자부담" in c or "개인하수처리" in c:
         return {"resolvable": "YES",
                 "resolution_paths": ["원인자부담금 산정·납부", "하수처리구역 외는 개인하수처리시설 설치·신고"],
@@ -893,22 +914,27 @@ def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
         if x["special"]["developability"] == "NEEDS_OFFICIAL_SURVEY"
     ]
     if resolvable == "NO":
-        disclosure = (f"⚠ 정직 고지: {len(blocking)}개 필지에 통상 절차로 해결 불가능한 제약이 있어 현 사업구역 전체의 "
+        disclosure = (f"⚠ 정직 고지: {len(blocking)}개 필지에 통상 절차로 해결 불가능한 제약이 있어 "
+                      "현 사업구역 전체의 "
                       "일반 개발이 불가합니다. 해당 필지를 제외(사업구역 재획정)하거나 대체부지를 확보해야 하며, "
                       "전체 부지 기준의 개발규모(연면적/세대수)는 제시하지 않습니다.")
         recommendation = "차단필지 제외 후 잔여 필지로 재산정하거나, 사업 자체의 타당성을 재검토하십시오."
     elif resolvable == "CONDITIONAL":
-        disclosure = ("이 사업은 일부 필지의 인허가·도시계획 변경·전용·협의 등 선행절차 통과를 조건으로만 개발이 가능합니다. "
+        disclosure = ("이 사업은 일부 필지의 인허가·도시계획 변경·전용·협의 등 선행절차 통과를 조건으로만 "
+                      "개발이 가능합니다. "
                       "선행절차 확정 전 개발규모는 '잠재치'이며, 미통과 시 해당 필지 제외가 필요합니다.")
-        recommendation = "선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 잔여 개발규모를 병기하십시오."
+        recommendation = ("선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 "
+                          "잔여 개발규모를 병기하십시오.")
     elif gate in GATE_TENTATIVE_DEVELOPABILITY or survey_parcels:
         # resolvable=YES여도 사업 게이트가 잠정(임야 공식조사 필요 등)이면 tentative_marker로 정직 강등.
         disclosure = tentative_marker(gate, resolvable)
         if survey_parcels:
-            recommendation = (f"임야(산지) {len(survey_parcels)}개 필지는 산림조사서·평균경사도조사서 등 공식 산림데이터를 "
+            recommendation = (f"임야(산지) {len(survey_parcels)}개 필지는 산림조사서·평균경사도조사서 등 "
+                              "공식 산림데이터를 "
                               "확보한 뒤 산지전용 가능규모를 확정하십시오(현 규모는 참고용 예비안).")
         else:
-            recommendation = "선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 잔여 개발규모를 병기하십시오."
+            recommendation = ("선행절차별 인허가 로드맵을 수립하고, 통과 실패 시나리오(필지 제외)의 "
+                              "잔여 개발규모를 병기하십시오.")
     else:
         disclosure = "특이 필지가 있으나 표준 인허가 절차(전용·협의 등)로 해결 가능합니다."
         recommendation = "전용비용·부담금을 사업수지에 반영하여 진행하십시오."

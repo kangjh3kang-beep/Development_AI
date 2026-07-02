@@ -36,7 +36,7 @@ def _band(value: float, points: list[tuple[float, float]]) -> float:
         return points[0][1]
     if value >= points[-1][0]:
         return points[-1][1]
-    for (t0, s0), (t1, s1) in zip(points, points[1:]):
+    for (t0, s0), (t1, s1) in zip(points, points[1:], strict=False):
         if t0 <= value <= t1:
             if t1 == t0:
                 return s1
@@ -67,7 +67,8 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
     """부지 컨텍스트(또는 분석결과)에서 입지 점수·설명을 산출한다."""
     rb = region_baseline or {}
 
-    infra = context.get("infrastructure") if isinstance(context, dict) and isinstance(context.get("infrastructure"), dict) else {}
+    infra = (context.get("infrastructure")
+             if isinstance(context, dict) and isinstance(context.get("infrastructure"), dict) else {})
 
     # 교통: nearest_subway.distance_m 우선, 폴백 subway_distance_m 깊이탐색
     nsub = infra.get("nearest_subway") if isinstance(infra.get("nearest_subway"), dict) else None

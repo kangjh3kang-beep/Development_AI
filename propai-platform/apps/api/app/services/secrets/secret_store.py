@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import os
 import re
@@ -95,7 +96,8 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
     {"name": "REPLICATE_API_TOKEN", "label": "Replicate API 토큰(AI 포토리얼 렌더)", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://replicate.com/account/api-tokens",
-     "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. 미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},
+     "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. "
+             "미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},
     # 인증·소셜 로그인(카카오 등) — 변경 시 백엔드 재시작 후 반영(pydantic Settings 캐시).
     {"name": "KAKAO_REST_API_KEY", "label": "카카오 REST API 키(로그인 client_id)", "group": "인증·소셜",
      "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com"},
@@ -133,7 +135,8 @@ CATALOG: list[dict[str, Any]] = [
     # (암호화 시크릿DB 저장·관리자 게이팅). DB비번/연결URL 등 더 위험한 키는 계속 DENYLIST 유지.
     {"name": "SUPABASE_SERVICE_SECRET_KEY", "label": "Supabase Secret 키(service_role)", "group": "스토리지·기타",
      "secret": True, "kind": "text", "guide_url": "https://supabase.com/dashboard",
-     "desc": "Supabase 대시보드 > Project Settings > API > 'Secret key'(=구 service_role) 값. 서버 업로드 전용·비공개. (구 이름 SUPABASE_SERVICE_ROLE_KEY 로 등록해도 동작)"},
+     "desc": "Supabase 대시보드 > Project Settings > API > 'Secret key'(=구 service_role) 값. "
+             "서버 업로드 전용·비공개. (구 이름 SUPABASE_SERVICE_ROLE_KEY 로 등록해도 동작)"},
     {"name": "PUBLIC_API_BASE", "label": "공개 API 베이스 URL(프록시 절대화)", "group": "스토리지·기타",
      "secret": False, "kind": "text"},
 ]
@@ -193,10 +196,8 @@ _BASELINE_CAPTURED = False
 async def _ensure_table(db: AsyncSession) -> None:
     await db.execute(text(_DDL))
     for a in _ALTERS:
-        try:
+        with contextlib.suppress(Exception):  # 권한/구버전 PG 폴백
             await db.execute(text(a))
-        except Exception:  # noqa: BLE001 — 권한/구버전 PG 폴백
-            pass
     # 백업 이력 테이블도 같은 흐름에서 멱등 생성(앱 부팅·최초 호출 시).
     try:
         await db.execute(text(_DDL_BACKUP))

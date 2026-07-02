@@ -129,9 +129,16 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 "app/api/endpoints/**/*.py" = ["B008"]
 "apps/api/app/services/auth/*.py" = ["B008"]
 "app/services/auth/*.py" = ["B008"]
-# 테스트: 한국어 함수명(N802) + sys.path.insert 임포트 순서(E402)
-"**/tests/*.py" = ["N802", "E402"]
-"**/tests/**/*.py" = ["N802", "E402"]
+# FastAPI DI 모듈(crud_router·deps_*)과 core DI 의존성도 동일 표준 패턴
+"apps/api/app/api/*.py" = ["B008"]
+"app/api/*.py" = ["B008"]
+"apps/api/app/core/billing_deps.py" = ["B008"]
+"app/core/billing_deps.py" = ["B008"]
+"apps/api/app/core/rbac.py" = ["B008"]
+"app/core/rbac.py" = ["B008"]
+# 테스트: 한국어 함수명(N802) + sys.path.insert 임포트 순서(E402) + FastAPI Depends 픽스처(B008)
+"**/tests/*.py" = ["N802", "E402", "B008"]
+"**/tests/**/*.py" = ["N802", "E402", "B008"]
 
 [tool.mypy]
 python_version = "3.12"

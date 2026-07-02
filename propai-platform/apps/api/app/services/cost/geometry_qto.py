@@ -41,11 +41,11 @@ def geometry_takeoff(
     structure_type: str = "RC",
 ) -> dict[str, Any]:
     """매스 치수 → 구조부재 물량(콘크리트/철근/거푸집)과 항목별 금액."""
-    W = max(1.0, float(width_m))
-    D = max(1.0, float(depth_m))
-    Na = max(1, int(floors_above))
-    Nb = max(0, int(floors_below))
-    H = max(2.4, float(floor_height_m))
+    W = max(1.0, float(width_m))  # noqa: N806 — 기하 관례(폭)
+    D = max(1.0, float(depth_m))  # noqa: N806 — 기하 관례(깊이)
+    Na = max(1, int(floors_above))  # noqa: N806 — 기하 관례(지상층수)
+    Nb = max(0, int(floors_below))  # noqa: N806 — 기하 관례(지하층수)
+    H = max(2.4, float(floor_height_m))  # noqa: N806 — 기하 관례(층고)
     floors = Na + Nb
 
     footprint = W * D

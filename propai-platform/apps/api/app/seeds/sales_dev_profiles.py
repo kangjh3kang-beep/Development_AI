@@ -38,5 +38,6 @@ DEV_TYPE_DEFAULTS = {
 # 분양가 구성 기본 항목: 토지비(LAND)/건축비(BUILD). CUSTOM(업무대행비)은 운영자 추가.
 COMPOSITION_DEFAULTS = [
     {"component_type": "LAND", "label": "토지비(택지비)", "basis": "RATE", "value": 0, "vat_applicable": False},
-    {"component_type": "BUILD", "label": "건축비(기본형건축비+가산비)", "basis": "RATE", "value": 0, "vat_applicable": True},
+    {"component_type": "BUILD", "label": "건축비(기본형건축비+가산비)", "basis": "RATE",
+     "value": 0, "vat_applicable": True},
 ]

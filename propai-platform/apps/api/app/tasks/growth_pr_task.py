@@ -24,6 +24,7 @@ best-effort: 어떤 예외도 워커를 죽이지 않는다.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import subprocess
@@ -93,10 +94,8 @@ async def _mark_pr_status(db, proposal_id: str, status: str,
         await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("pr_status 갱신 실패(%s): %s", proposal_id, str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def _process_proposals(db, *, limit: int = 5) -> dict[str, Any]:

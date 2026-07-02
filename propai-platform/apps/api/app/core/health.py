@@ -6,10 +6,10 @@ DB, Redis, 외부 API 등 각 구성요소의 상태를 개별 점검하여
 
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class ComponentStatus(str, Enum):
+class ComponentStatus(StrEnum):
     """구성요소 상태."""
     HEALTHY = "healthy"
     DEGRADED = "degraded"

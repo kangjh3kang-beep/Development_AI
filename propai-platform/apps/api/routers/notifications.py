@@ -3,8 +3,6 @@
 import secrets
 from datetime import UTC, datetime
 
-UTC = UTC
-
 from fastapi import APIRouter, Depends, status
 from packages.schemas.models import AlimTalkRequest, NotificationResponse
 from sqlalchemy.ext.asyncio import AsyncSession

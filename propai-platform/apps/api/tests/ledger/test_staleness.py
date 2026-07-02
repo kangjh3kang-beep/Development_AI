@@ -3,17 +3,17 @@ import uuid
 
 import pytest
 
-from app.services.ledger import staleness as S
+from app.services.ledger import staleness
 
 pytestmark = pytest.mark.asyncio
 
 
 def test_recommend_pure_logic():
     # 순수 임계 로직(무 DB): stale 또는 changed면 재분석 권장
-    assert S._recommend(age_days=120, max_age_days=90, changed=False)["recommend_reanalysis"] is True
-    assert S._recommend(age_days=10, max_age_days=90, changed=False)["recommend_reanalysis"] is False
-    assert S._recommend(age_days=10, max_age_days=90, changed=True)["recommend_reanalysis"] is True
-    r = S._recommend(age_days=200, max_age_days=90, changed=True)
+    assert staleness._recommend(age_days=120, max_age_days=90, changed=False)["recommend_reanalysis"] is True
+    assert staleness._recommend(age_days=10, max_age_days=90, changed=False)["recommend_reanalysis"] is False
+    assert staleness._recommend(age_days=10, max_age_days=90, changed=True)["recommend_reanalysis"] is True
+    r = staleness._recommend(age_days=200, max_age_days=90, changed=True)
     assert r["stale"] is True and r["changed"] is True
     assert "stale" in r["reasons"] and "changed" in r["reasons"]
 
@@ -44,7 +44,7 @@ async def test_no_prior_returns_no_reanalysis():
     if not await _db():
         pytest.skip("DB 미가용")
     tid, pnu = f"t-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
-    r = await S.check_staleness(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
+    r = await staleness.check_staleness(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
     assert r["recommend_reanalysis"] is False and r["reason"] == "no_prior"
 
 
@@ -56,7 +56,7 @@ async def test_fresh_prior_with_change_recommends_reanalysis():
     try:
         await ledger.append_analysis(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
                                      payload={"effective_far": 200.0, "verdict": "적합"})
-        r = await S.check_staleness(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
+        r = await staleness.check_staleness(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
                                     current={"effective_far": 260.0, "verdict": "부적합"}, max_age_days=90)
         assert r["stale"] is False                  # 방금 적재(age≈0)
         assert r["changed"] is True                 # far 30%↑ + verdict flip
@@ -75,7 +75,7 @@ async def test_history_trend_counts_versions():
         for far in (100.0, 150.0, 220.0):
             await ledger.append_analysis(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
                                          payload={"effective_far": far})
-        rep = await S.staleness_report(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
+        rep = await staleness.staleness_report(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
         assert rep["versions"] == 3 and rep["latest_version"] == 3
     finally:
         await _cleanup(tid)

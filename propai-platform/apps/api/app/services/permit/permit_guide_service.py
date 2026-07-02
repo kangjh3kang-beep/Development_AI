@@ -41,8 +41,10 @@ def get_permit_guide(facility_type: str = "단독주택", *, sigungu: str | None
     stage1_keys = ["building_pre_decision", "building_permit", "building_report", "use_change"]
     stage1_docs = ["건축·대수선·용도변경 (변경)허가신청서", "건축·대수선·용도변경 (변경)신고서", "사전결정 신청서"]
     if is_housing:
-        stage1_proc.append({"name": "주택건설(대지조성)사업계획 승인",
-                            "desc": "일정 규모 이상(단독 30호·공동 30세대 등)은 주택법에 따라 사업계획승인을 받습니다."})
+        stage1_proc.append({
+            "name": "주택건설(대지조성)사업계획 승인",
+            "desc": "일정 규모 이상(단독 30호·공동 30세대 등)은 주택법에 따라 사업계획승인을 받습니다.",
+        })
         stage1_keys.append("housing_approval")
         stage1_docs.append("[별지 제15호서식] 사업계획 (승인·변경승인) 신청서")
 
@@ -59,8 +61,10 @@ def get_permit_guide(facility_type: str = "단독주택", *, sigungu: str | None
 
     # ── ③ 사용·등록·신고 단계 ──
     stage3_proc = [
-        {"name": "사용승인(검사)", "desc": "공사 완료 후 감리완료보고서·공사완료도서 등을 첨부해 사용승인을 신청합니다."},
-        {"name": "분양신고", "desc": "분양하려는 경우 분양신고서에 구비서류를 첨부해 허가권자에게 제출합니다(분양 대상 시)."},
+        {"name": "사용승인(검사)",
+         "desc": "공사 완료 후 감리완료보고서·공사완료도서 등을 첨부해 사용승인을 신청합니다."},
+        {"name": "분양신고",
+         "desc": "분양하려는 경우 분양신고서에 구비서류를 첨부해 허가권자에게 제출합니다(분양 대상 시)."},
     ]
     stage3_keys = ["use_permission", "building_sales_filing"]
     stage3_docs = ["사용검사(임시사용승인)신청서", "분양신고서"]

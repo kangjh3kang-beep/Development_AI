@@ -514,19 +514,25 @@ async def update_post(post_id: uuid.UUID, body: PostUpdate, db: AsyncSession = D
         raise HTTPException(403, "작성자 본인만 수정할 수 있습니다")
     sets, params = [], {"id": str(post_id)}
     if body.title is not None:
-        sets.append("title = :tt"); params["tt"] = body.title
+        sets.append("title = :tt")
+        params["tt"] = body.title
     if body.body is not None:
-        sets.append("body = :bd"); params["bd"] = body.body
+        sets.append("body = :bd")
+        params["bd"] = body.body
     if body.region is not None:
-        sets.append("region = :rg"); params["rg"] = body.region
+        sets.append("region = :rg")
+        params["rg"] = body.region
     if body.specialty is not None:
-        sets.append("specialty = :sp"); params["sp"] = list(body.specialty)
+        sets.append("specialty = :sp")
+        params["sp"] = list(body.specialty)
     if body.contact_method is not None:
-        sets.append("contact_method = :cm"); params["cm"] = body.contact_method
+        sets.append("contact_method = :cm")
+        params["cm"] = body.contact_method
     if body.status is not None:
         if body.status not in {"open", "closed"}:
             raise HTTPException(400, "status 는 open|closed 여야 합니다")
-        sets.append("status = :st"); params["st"] = body.status
+        sets.append("status = :st")
+        params["st"] = body.status
     if not sets:
         raise HTTPException(400, "수정할 항목이 없습니다")
     sets.append("updated_at = now()")

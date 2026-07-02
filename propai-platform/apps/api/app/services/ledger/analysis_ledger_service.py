@@ -130,6 +130,7 @@ async def set_quota(tenant_id: str, max_entries: int) -> dict[str, Any]:
     """관리자: 테넌트 용량 한도 상향/조정(override)."""
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -152,6 +153,7 @@ async def delete_chain(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -170,6 +172,7 @@ async def prune_old_versions(tenant_id: str | None, keep_per_chain: int = 5) -> 
     """체인별 최신 N개만 남기고 옛 버전 삭제 — 용량 확보(최신·계보 유지)."""
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -203,6 +206,7 @@ async def append_analysis(
     chash = _content_hash(payload)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
 
         async with async_session_factory() as db:
@@ -225,13 +229,15 @@ async def append_analysis(
             quota = await _quota(db, tenant_id)
             if used >= quota:
                 return {"ok": False, "quota_exceeded": True, "used": used, "quota": quota,
-                        "message": f"저장 용량 한도({quota}건) 초과 — 오래된 분석을 삭제하거나 관리자에게 용량 상향을 요청하세요."}
+                        "message": (f"저장 용량 한도({quota}건) 초과 — "
+                                    "오래된 분석을 삭제하거나 관리자에게 용량 상향을 요청하세요.")}
 
             version = (int(prev[0]) + 1) if prev else 1
             prev_hash = prev[1] if prev else None
             await db.execute(text(
                 "INSERT INTO analysis_ledger"
-                "(tenant_id, pnu, address_norm, project_id, analysis_type, version, payload, content_hash, prev_hash, source, created_by)"
+                "(tenant_id, pnu, address_norm, project_id, analysis_type, version, "
+                "payload, content_hash, prev_hash, source, created_by)"
                 " VALUES (:tid,:pnu,:addr,:pid,:atype,:ver,CAST(:pl AS jsonb),:ch,:ph,:src,:cb)"),
                 {"tid": tenant_id, "pnu": pnu, "addr": address_norm or None, "pid": project_id,
                  "atype": analysis_type, "ver": version, "pl": _canonical(payload),
@@ -252,6 +258,7 @@ async def get_latest(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -289,6 +296,7 @@ async def get_history(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -314,6 +322,7 @@ async def verify_chain(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -356,6 +365,7 @@ async def verify_all_chains(
     """
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
 
         async with async_session_factory() as db:

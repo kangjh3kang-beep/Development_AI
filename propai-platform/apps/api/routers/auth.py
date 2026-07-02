@@ -135,9 +135,9 @@ async def login(
     try:
         result = await db.execute(select(User).where(User.email == body.email))
         user = result.scalar_one_or_none()
-    except Exception:
+    except Exception as e:
         logger.exception("로그인 DB 조회 실패")
-        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.") from e
 
     if user is None:
         raise HTTPException(status_code=401, detail="등록되지 않은 이메일입니다.")
@@ -147,9 +147,9 @@ async def login(
             raise HTTPException(status_code=401, detail="비밀번호가 일치하지 않습니다.")
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception("로그인 비밀번호 검증 실패")
-        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.") from e
 
     if not user.is_active:
         raise HTTPException(
@@ -397,9 +397,10 @@ async def kakao_login_url(
     #  재시작 전까지 반영 안 됨 → os.environ을 라이브로 우선 읽어 '재배포 불필요'를 보장한다.
     client_id = (os.environ.get("KAKAO_REST_API_KEY") or settings.kakao_client_id or "").strip()
     # 플레이스홀더(your-kakao-key 등)도 '미설정'으로 취급(깨진 인가URL 생성·카카오 거부 방지).
-    _PLACEHOLDERS = {"your-kakao-key", "your-kakao-rest-api-key", "changeme", "dummy"}
-    if not client_id or client_id.lower() in _PLACEHOLDERS:
-        raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY) — 관리자 키 설정이 필요합니다.")
+    _placeholders = {"your-kakao-key", "your-kakao-rest-api-key", "changeme", "dummy"}
+    if not client_id or client_id.lower() in _placeholders:
+        raise HTTPException(status_code=503,
+                            detail="카카오 로그인 미설정(KAKAO_REST_API_KEY) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or os.environ.get("KAKAO_REDIRECT_URI") or settings.kakao_redirect_uri
     params = {
         "client_id": client_id,
@@ -469,7 +470,8 @@ async def google_login_url(
     # ★os.environ 라이브 우선(관리자 키화면 즉시 반영) → settings 폴백.
     client_id = (os.environ.get("GOOGLE_CLIENT_ID") or settings.google_client_id or "").strip()
     if not client_id or client_id.lower() in _OAUTH_PLACEHOLDERS:
-        raise HTTPException(status_code=503, detail="구글 로그인 미설정(GOOGLE_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
+        raise HTTPException(status_code=503,
+                            detail="구글 로그인 미설정(GOOGLE_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or os.environ.get("GOOGLE_REDIRECT_URI") or settings.google_redirect_uri
     params = {
         "client_id": client_id,
@@ -535,7 +537,8 @@ async def naver_login_url(
     # ★os.environ 라이브 우선(관리자 키화면 즉시 반영) → settings 폴백.
     client_id = (os.environ.get("NAVER_CLIENT_ID") or settings.naver_client_id or "").strip()
     if not client_id or client_id.lower() in _OAUTH_PLACEHOLDERS:
-        raise HTTPException(status_code=503, detail="네이버 로그인 미설정(NAVER_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
+        raise HTTPException(status_code=503,
+                            detail="네이버 로그인 미설정(NAVER_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or os.environ.get("NAVER_REDIRECT_URI") or settings.naver_redirect_uri
     state = _secrets.token_urlsafe(16)
     params = {

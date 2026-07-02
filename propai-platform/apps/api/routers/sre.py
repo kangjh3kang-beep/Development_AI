@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-UTC = UTC
-
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel

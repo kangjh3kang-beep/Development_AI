@@ -47,7 +47,10 @@ class TestBuiltinRegulationDB:
 
     def test_모든_용도지역_필수_필드(self):
         """모든 용도지역에 필수 필드가 존재해야 한다."""
-        required_fields = {"max_bcr", "max_far", "max_height_m", "allowed_uses", "prohibited_uses", "description", "legal_basis"}
+        required_fields = {
+            "max_bcr", "max_far", "max_height_m", "allowed_uses",
+            "prohibited_uses", "description", "legal_basis",
+        }
         for zone_name, data in BUILTIN_REGULATION_DB.items():
             for field in required_fields:
                 assert field in data, f"{zone_name}에 '{field}' 필드 누락"

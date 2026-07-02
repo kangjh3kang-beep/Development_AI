@@ -316,10 +316,6 @@ class TestCashflowEquityExclusion:
 
     def test_revenue_conservation(self, result):
         """월별 분양수입 + 잔금 = 총분양수입 (이중계상 없음, H-4 회귀)."""
-        rev_rows = [
-            r["inflow"] for r in result["rows"]
-            if r["items"] != "-" and ("분양수입" in r["items"] or "잔금" in r["items"])
-        ]
         # 분양수입 행에는 대출 유입이 섞일 수 있으므로 단순합 대신 상한·하한 검증
         s = result["summary"]
         # 유입 총계 = equity + bridge + PF + 분양수입(전액) — 분양수입 보존 확인
@@ -391,7 +387,7 @@ class TestAfterTaxIRRIntegration:
         )
         delta = {
             b["month"]: t["outflow"] - b["outflow"]
-            for t, b in zip(taxed["rows"], base["rows"])
+            for t, b in zip(taxed["rows"], base["rows"], strict=False)
         }
         # A(취득) → month 0
         assert delta[0] == pytest.approx(460_000_000, abs=1)
@@ -415,7 +411,7 @@ class TestAfterTaxIRRIntegration:
         assert taxed["summary"]["total_tax_won"] == 100_000_000
         delta = {
             b["month"]: t["outflow"] - b["outflow"]
-            for t, b in zip(taxed["rows"], base["rows"])
+            for t, b in zip(taxed["rows"], base["rows"], strict=False)
         }
         assert delta[12] == pytest.approx(50_000_000, abs=1)   # 보유 1년차
         assert delta[18] == pytest.approx(50_000_000, abs=1)   # 2년차(24개월) → 말월(18) 클램프

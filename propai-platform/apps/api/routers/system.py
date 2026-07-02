@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 
-UTC = UTC
-
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends
 from packages.schemas.models import SystemHealthResponse, SystemVersionResponse

@@ -72,7 +72,7 @@ def building_line_setback(road_side: str | None) -> dict[str, Any]:
     소요너비 4m 도로 기준: 도로폭 w<4m이면 중심선에서 2m 선을 건축선으로(=각 측 (4-w)/2 후퇴).
     """
     width, label = _road_width(road_side)
-    REQ = 4.0
+    REQ = 4.0  # noqa: N806 — 법정 소요너비(도로 4m) 상수 표기 관례
     if width is None:
         return {"setback_m": None, "label": label,
                 "note": "도로폭 미상 — 건축선 후퇴 산정 불가(현장 확인). 맹지면 도로 확보 선행.",

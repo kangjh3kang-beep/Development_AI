@@ -1,6 +1,6 @@
 """시장조사 및 타겟 분석을 위한 표준화된 데이터 모델 (DemographicProfile).
 
-1단계(공공데이터: SGIS, KOSIS)와 2단계(민간데이터: K-Atlas)의 데이터를 
+1단계(공공데이터: SGIS, KOSIS)와 2단계(민간데이터: K-Atlas)의 데이터를
 모두 수용할 수 있도록 설계된 어댑터(Adapter) 패턴의 핵심 Pydantic 스키마입니다.
 추후 2단계에서 유료 데이터 연동 시 이 스키마의 optional 필드들이 채워집니다.
 """
@@ -16,7 +16,8 @@ class MigrationData(BaseModel):
     total_outflow: int = Field(0, description="총 전출 인구")
     net_migration: int = Field(0, description="순이동 인구")
     top_inflow_regions: list[dict] = Field(default_factory=list, description="주요 전입 출발지 Top 3")
-    # 데이터 출처 플래그: 'live'(실데이터) | 'fallback'(합성·대체값) | 'mock'(개발용) | 'unavailable'(데이터 없음·정직표기)
+    # 데이터 출처 플래그: 'live'(실데이터) | 'fallback'(합성·대체값) | 'mock'(개발용)
+    #   | 'unavailable'(데이터 없음·정직표기)
     # 옵셔널·하위호환: 기존 응답을 깨지 않으면서 실데이터/가짜값을 구분하기 위한 가산 필드.
     data_source: str | None = Field(None, description="데이터 출처 구분 플래그")
 
@@ -49,34 +50,35 @@ class MacroIncomeData(BaseModel):
 
 class MicroFinancialData(BaseModel):
     """초정밀 금융/소비/소유 지표 (2단계 K-Atlas API 연동 시 활성화)"""
+    # ※ 필드명은 외부 K-Atlas API 응답 키와 1:1 매핑(리네임 시 계약 파손) → noqa: N815 유지.
     # 기본 정보
-    gisId: str | None = Field(None, description="지리정보 ID (블록/행정동)")
-    cntCust: int | None = Field(None, description="인구수")
-    avgAge: float | None = Field(None, description="평균 연령")
+    gisId: str | None = Field(None, description="지리정보 ID (블록/행정동)")  # noqa: N815 — 외부 API 키
+    cntCust: int | None = Field(None, description="인구수")  # noqa: N815 — 외부 API 키
+    avgAge: float | None = Field(None, description="평균 연령")  # noqa: N815 — 외부 API 키
 
     # 소득 지표
-    avgInc: float | None = Field(None, description="평균 월소득(만원)")
-    medianInc: int | None = Field(None, description="중위 월소득(만원)")
-    cntCustInc20b: int | None = Field(None, description="월 소득 200만원 이하 대상자 수")
-    cntCustInc80b: int | None = Field(None, description="월 소득 800만원 이상 대상자 수")
+    avgInc: float | None = Field(None, description="평균 월소득(만원)")  # noqa: N815 — 외부 API 키
+    medianInc: int | None = Field(None, description="중위 월소득(만원)")  # noqa: N815 — 외부 API 키
+    cntCustInc20b: int | None = Field(None, description="월 소득 200만원 이하 대상자 수")  # noqa: N815 — 외부 API 키
+    cntCustInc80b: int | None = Field(None, description="월 소득 800만원 이상 대상자 수")  # noqa: N815 — 외부 API 키
 
     # 직업 분포
-    cntCustEmp: int | None = Field(None, description="급여소득자 수")
-    cntCustSoho: int | None = Field(None, description="자영업자 수")
-    cntCustExpt: int | None = Field(None, description="전문직 종사자 수")
+    cntCustEmp: int | None = Field(None, description="급여소득자 수")  # noqa: N815 — 외부 API 키
+    cntCustSoho: int | None = Field(None, description="자영업자 수")  # noqa: N815 — 외부 API 키
+    cntCustExpt: int | None = Field(None, description="전문직 종사자 수")  # noqa: N815 — 외부 API 키
 
     # 여력 및 부채 (대출/카드)
-    sumLoanAmt: int | None = Field(None, description="대출잔액 합계(원)")
-    sumLoanHLoanAmt: int | None = Field(None, description="주택담보대출 잔액 합계(원)")
-    sumCardAvgAmt3m: int | None = Field(None, description="3개월 평균 카드소비금액 합계(원)")
-    avrCreditscore: float | None = Field(None, description="평균 신용평점")
-    cntCustDlq30d: int | None = Field(None, description="30일 미만 연체 보유자 수")
+    sumLoanAmt: int | None = Field(None, description="대출잔액 합계(원)")  # noqa: N815 — 외부 API 키
+    sumLoanHLoanAmt: int | None = Field(None, description="주택담보대출 잔액 합계(원)")  # noqa: N815 — 외부 API 키
+    sumCardAvgAmt3m: int | None = Field(None, description="3개월 평균 카드소비금액 합계(원)")  # noqa: N815 — 외부 API 키
+    avrCreditscore: float | None = Field(None, description="평균 신용평점")  # noqa: N815 — 외부 API 키
+    cntCustDlq30d: int | None = Field(None, description="30일 미만 연체 보유자 수")  # noqa: N815 — 외부 API 키
 
     # 실거주 및 소유 형태
-    cntCustMyHomeLive: int | None = Field(None, description="자가거주자 수")
-    cntCustLess: int | None = Field(None, description="전세 및 월세 거주자 수")
-    cntCustHOwn: int | None = Field(None, description="주택보유자 수")
-    avgHOwnHold: int | None = Field(None, description="평균 주택보유 건수")
+    cntCustMyHomeLive: int | None = Field(None, description="자가거주자 수")  # noqa: N815 — 외부 API 키
+    cntCustLess: int | None = Field(None, description="전세 및 월세 거주자 수")  # noqa: N815 — 외부 API 키
+    cntCustHOwn: int | None = Field(None, description="주택보유자 수")  # noqa: N815 — 외부 API 키
+    avgHOwnHold: int | None = Field(None, description="평균 주택보유 건수")  # noqa: N815 — 외부 API 키
 
 class DemographicProfile(BaseModel):
     """통합 인구/소득 프로파일. 백엔드 파이프라인의 최종 산출물"""
@@ -90,9 +92,12 @@ class DemographicProfile(BaseModel):
         json_schema_extra = {
             "example": {
                 "source_phase": 1,
-                "migration": {"target_adm_cd": "11680", "year": "2026", "total_inflow": 12500, "total_outflow": 11200, "net_migration": 1300, "top_inflow_regions": []},
-                "population": {"target_adm_cd": "11680", "year": "2026", "total_population": 45000, "age_distribution": {}, "household_types": {}},
-                "macro_income": {"sigungu_cd": "11680", "year": "2026", "avg_income_10k": 4620, "median_income_10k": 3800, "income_bracket_ratio": {}},
+                "migration": {"target_adm_cd": "11680", "year": "2026", "total_inflow": 12500,
+                              "total_outflow": 11200, "net_migration": 1300, "top_inflow_regions": []},
+                "population": {"target_adm_cd": "11680", "year": "2026", "total_population": 45000,
+                               "age_distribution": {}, "household_types": {}},
+                "macro_income": {"sigungu_cd": "11680", "year": "2026", "avg_income_10k": 4620,
+                                 "median_income_10k": 3800, "income_bracket_ratio": {}},
                 "micro_finance": None
             }
         }

@@ -9,7 +9,8 @@ ZONE_PERMIT_MATRIX = {
     "제1종일반주거지역": ["M10", "M11", "M12", "M13"],  # + 도시형생활주택
     "제2종일반주거지역": ["M01", "M02", "M04", "M06", "M10", "M11", "M12", "M13"],  # 공동주택 가능
     "제3종일반주거지역": ["M01", "M02", "M04", "M06", "M07", "M08", "M10", "M11", "M12", "M13"],  # + 주상복합/오피스텔
-    "준주거지역": ["M01", "M02", "M04", "M05", "M06", "M07", "M08", "M09", "M10", "M11", "M12", "M13", "M14", "M15"],  # 대부분 가능
+    "준주거지역": ["M01", "M02", "M04", "M05", "M06", "M07", "M08", "M09",
+                   "M10", "M11", "M12", "M13", "M14", "M15"],  # 대부분 가능
     "중심상업지역": ["M05", "M06", "M07", "M08", "M09", "M14", "M15"],  # 상업용 위주
     "일반상업지역": ["M05", "M06", "M07", "M08", "M09", "M13", "M14", "M15"],
     "근린상업지역": ["M05", "M06", "M07", "M08", "M09", "M13"],
@@ -82,5 +83,6 @@ def check_permit_feasibility(dev_type: str, zone_type: str) -> dict:
         "is_permitted": is_permitted,
         "permit_complexity": complexity,
         "complexity_label": ["", "매우쉬움", "쉬움", "보통", "어려움", "매우어려움"][complexity],
-        "reason": f"{zone_type}에서 {DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)} 개발 {'가능' if is_permitted else '불가'}",
+        "reason": (f"{zone_type}에서 {DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)} "
+                   f"개발 {'가능' if is_permitted else '불가'}"),
     }

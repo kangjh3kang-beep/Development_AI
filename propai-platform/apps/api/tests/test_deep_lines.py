@@ -232,16 +232,18 @@ class TestOrchestratorStepParcel:
         })
         mock_vworld.close = AsyncMock()
 
-        with patch("apps.api.integrations.vworld_client.VWorldClient", return_value=mock_vworld):
-            with patch.object(orch, "_fetch_project_info", new_callable=AsyncMock, return_value={
+        with (
+            patch("apps.api.integrations.vworld_client.VWorldClient", return_value=mock_vworld),
+            patch.object(orch, "_fetch_project_info", new_callable=AsyncMock, return_value={
                 "project_id": str(TEST_PROJECT_ID),
                 "pnu": "1168010100",
                 "address": "서울 강남구 역삼동",
                 "total_area_sqm": 500.0,
-            }):
-                result = await orch._step_parcel_analysis(state)
-                assert result["status"] == "analyzed"
-                assert result["pnu"] == "1168010100"
+            }),
+        ):
+            result = await orch._step_parcel_analysis(state)
+            assert result["status"] == "analyzed"
+            assert result["pnu"] == "1168010100"
 
 
 # ═══════════════════════════════════════════════
@@ -389,12 +391,14 @@ class TestOrchestratorStepFeasibility:
         mock_jeonse = AsyncMock()
         mock_jeonse.analyze = AsyncMock(return_value=mock_jeonse_result)
 
-        with patch("apps.api.services.tax_ai_service.TaxAIService", return_value=mock_tax):
-            with patch("apps.api.services.jeonse_risk_service.JeonseRiskService", return_value=mock_jeonse):
-                result = await orch._step_feasibility(state)
-                assert result["status"] == "analyzed"
-                assert result["npv"] != 0
-                assert result["jeonse_risk_level"] == "LOW"
+        with (
+            patch("apps.api.services.tax_ai_service.TaxAIService", return_value=mock_tax),
+            patch("apps.api.services.jeonse_risk_service.JeonseRiskService", return_value=mock_jeonse),
+        ):
+            result = await orch._step_feasibility(state)
+            assert result["status"] == "analyzed"
+            assert result["npv"] != 0
+            assert result["jeonse_risk_level"] == "LOW"
 
 
 # ═══════════════════════════════════════════════
@@ -466,14 +470,16 @@ class TestBaseAPIClientRequest:
         mock_http.request = AsyncMock(return_value=mock_response)
         mock_http.is_closed = False
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None):
-                with patch.object(client, "_set_cache", new_callable=AsyncMock):
-                    try:
-                        result = await client._request("GET", "/test")
-                        assert result == {"data": "test"}
-                    except Exception:
-                        pass
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "_get_cached", new_callable=AsyncMock, return_value=None),
+            patch.object(client, "_set_cache", new_callable=AsyncMock),
+        ):
+            try:
+                result = await client._request("GET", "/test")
+                assert result == {"data": "test"}
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_request_circuit_open(self):
@@ -623,15 +629,17 @@ class TestMolitClientMethods:
         mock_http.request = AsyncMock(return_value=mock_response)
         mock_http.is_closed = False
 
-        with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http):
-            with patch.object(client, "circuit_breaker") as mock_cb:
-                mock_cb.can_execute.return_value = True
-                mock_cb.record_success = MagicMock()
-                try:
-                    result = await client.get_building_permit("11680")
-                    assert isinstance(result, list)
-                except Exception:
-                    pass
+        with (
+            patch.object(client, "_get_client", new_callable=AsyncMock, return_value=mock_http),
+            patch.object(client, "circuit_breaker") as mock_cb,
+        ):
+            mock_cb.can_execute.return_value = True
+            mock_cb.record_success = MagicMock()
+            try:
+                result = await client.get_building_permit("11680")
+                assert isinstance(result, list)
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════════

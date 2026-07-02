@@ -152,7 +152,9 @@ async def _analyze_with_vision(self, image_url: str) -> dict:
                 "role": "user",
                 "content": [
                     {"type": "image", "source": {"type": "url", "url": image_url}},
-                    {"type": "text", "text": "이 건축물 이미지를 분석하세요. 건축 스타일, 외관 재료, 주요 색상, 추정 층수를 한국어로 설명하세요."},
+                    {"type": "text",
+                     "text": ("이 건축물 이미지를 분석하세요. "
+                              "건축 스타일, 외관 재료, 주요 색상, 추정 층수를 한국어로 설명하세요.")},
                 ],
             }],
         )

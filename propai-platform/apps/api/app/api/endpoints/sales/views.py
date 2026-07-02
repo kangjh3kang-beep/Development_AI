@@ -133,12 +133,15 @@ async def integrity_check(db: AsyncSession = Depends(get_db), ctx: SalesCtx = De
             SalesCommissionDistribution.master_id == master.id))).scalars())
         rate_sum = sum(float(d.value or 0) for d in dists if d.basis == "RATE")
         fixed_sum = sum(float(d.value or 0) for d in dists if d.basis == "FIXED")
-        over = False; note = ""
+        over = False
+        note = ""
         if rate_sum > 1.0:
-            over = True; note = f"배분 비율 합 {rate_sum * 100:.0f}% > 100%"
+            over = True
+            note = f"배분 비율 합 {rate_sum * 100:.0f}% > 100%"
         total = float(master.fixed_amount or master.pool_total or 0) if master.basis != "RATE_OF_PRICE" else 0
         if total and fixed_sum > total:
-            over = True; note = (note + " · " if note else "") + f"정액 배분 {fixed_sum:,.0f} > 총액 {total:,.0f}"
+            over = True
+            note = (note + " · " if note else "") + f"정액 배분 {fixed_sum:,.0f} > 총액 {total:,.0f}"
         if over:
             findings.append({"key": "comm_over", "severity": "high", "count": 1,
                              "title": "수수료 배분 초과(Σ>총액)", "detail": note})
@@ -195,23 +198,30 @@ async def crm_grade_suggestions(db: AsyncSession = Depends(get_db), ctx: SalesCt
             SalesCustomerConsent.customer_id == c.id, SalesCustomerConsent.consent_type == "MARKETING",
             SalesCustomerConsent.agreed.is_(True)))).scalar() or 0
 
-        score = 0; reasons = []
+        score = 0
+        reasons = []
         n = len(consults)
         if n:
-            score += min(n * 20, 40); reasons.append(f"상담 {n}회")
+            score += min(n * 20, 40)
+            reasons.append(f"상담 {n}회")
         if call_sec:
-            score += 15; reasons.append(f"통화 {int(call_sec)//60}분")
+            score += 15
+            reasons.append(f"통화 {int(call_sec)//60}분")
         if mkt:
-            score += 15; reasons.append("마케팅 수신동의")
+            score += 15
+            reasons.append("마케팅 수신동의")
         last = max((x.consulted_at for x in consults if x.consulted_at), default=None)
         if last:
             days = (now - (last if last.tzinfo else last.replace(tzinfo=UTC))).days
             if days <= 7:
-                score += 20; reasons.append("최근 7일 내 상담")
+                score += 20
+                reasons.append("최근 7일 내 상담")
             elif days <= 30:
-                score += 10; reasons.append("최근 30일 내 상담")
+                score += 10
+                reasons.append("최근 30일 내 상담")
         if c.first_visit_at:
-            score += 10; reasons.append("방문 이력")
+            score += 10
+            reasons.append("방문 이력")
 
         grade = "A" if score >= 60 else "B" if score >= 30 else "C"
         next_action = next((x.next_action for x in consults if x.next_action), None) or (

@@ -386,7 +386,8 @@ class MolitClient(BaseAPIClient):
             items = self._extract_items(data)
             result: list[dict[str, Any]] = []
             for item in items:
-                def g(en: str, ko: str, default: Any = "") -> Any:
+                # item=item 기본인자 바인딩 — 루프 변수 늦은 바인딩 방지(B023), 동작 동일(동일 반복 내 호출).
+                def g(en: str, ko: str, default: Any = "", *, item: dict = item) -> Any:
                     v = item.get(en)
                     return v if v not in (None, "") else item.get(ko, default)
 
@@ -447,7 +448,8 @@ class MolitClient(BaseAPIClient):
             items = self._extract_items(data)
             result: list[dict[str, Any]] = []
             for item in items:
-                def g(en: str, ko: str, default: Any = "") -> Any:
+                # item=item 기본인자 바인딩 — 루프 변수 늦은 바인딩 방지(B023), 동작 동일(동일 반복 내 호출).
+                def g(en: str, ko: str, default: Any = "", *, item: dict = item) -> Any:
                     v = item.get(en)
                     return v if v not in (None, "") else item.get(ko, default)
 

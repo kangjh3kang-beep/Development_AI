@@ -1,11 +1,9 @@
 """Deterministic contract generation service for v53 smart contracts."""
 
-from datetime import UTC, datetime
-
-UTC = UTC
 import secrets
 import uuid
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select

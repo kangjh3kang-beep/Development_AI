@@ -370,7 +370,8 @@ def _layout_guidance(best: dict[str, Any] | None) -> list[str]:
     d = best.get("daylight") or {}
     g.append(
         f"권장 배치: {best['kind']} {best['buildings']}개동·약 {best['floors']}층"
-        f"(동지 직사광 {d.get('direct_sun_hours')}h, 일조권 {'충족' if d.get('meets_sunlight') else '미흡(향·간격 조정 필요)'})."
+        f"(동지 직사광 {d.get('direct_sun_hours')}h, "
+        f"일조권 {'충족' if d.get('meets_sunlight') else '미흡(향·간격 조정 필요)'})."
     )
     if best.get("yield_pct", 0) < 95:
         g.append(
@@ -424,7 +425,7 @@ def _principal_angle(poly) -> float:
         xs, ys = mrr.exterior.coords.xy
         # 첫 변 벡터의 각도(장변 근사).
         edges = []
-        pts = list(zip(xs, ys))
+        pts = list(zip(xs, ys, strict=False))
         for i in range(len(pts) - 1):
             dx = pts[i + 1][0] - pts[i][0]
             dy = pts[i + 1][1] - pts[i][1]

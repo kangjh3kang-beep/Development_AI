@@ -242,7 +242,9 @@ def _summarize_scene(scene: dict, context: dict | None) -> tuple[dict, list[str]
         used.append("neighbors")
 
     building = scene.get("building")
-    summary["has_building_mass"] = bool(building and (building.get("glb_url") if isinstance(building, dict) else building))
+    summary["has_building_mass"] = bool(
+        building and (building.get("glb_url") if isinstance(building, dict) else building)
+    )
     used.append("building_mass")
 
     # 필지면적·용도지역은 씬에 직접 없으면 컨텍스트에서 보강.

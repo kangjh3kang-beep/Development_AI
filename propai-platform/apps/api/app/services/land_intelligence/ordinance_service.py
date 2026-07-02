@@ -116,7 +116,8 @@ async def _save_resolution(result: dict, sigungu: str | None, zone_type: str) ->
             await db.execute(text(
                 "INSERT INTO ordinance_resolutions (sigungu, zone_type, payload, source, fetched_at) "
                 "VALUES (:s,:z,CAST(:p AS jsonb),:src, now()) "
-                "ON CONFLICT (sigungu, zone_type) DO UPDATE SET payload=CAST(:p AS jsonb), source=:src, fetched_at=now()"),
+                "ON CONFLICT (sigungu, zone_type) DO UPDATE SET payload=CAST(:p AS jsonb), "
+                "source=:src, fetched_at=now()"),
                 {"s": sigungu, "z": zone_type, "p": json.dumps(result, ensure_ascii=False, default=str),
                  "src": result.get("source")})
             await db.commit()
@@ -248,9 +249,17 @@ ORDINANCE_CACHE: dict[str, dict[str, dict[str, float]]] = {
         "제3종일반주거지역": {"bcr": 50, "far": 300},
     },
     # ── 인천광역시 ──
-    "인천광역시": {"제2종일반주거지역": {"bcr": 60, "far": 250}, "제3종일반주거지역": {"bcr": 50, "far": 300}, "준주거지역": {"bcr": 60, "far": 400}},
+    "인천광역시": {
+        "제2종일반주거지역": {"bcr": 60, "far": 250},
+        "제3종일반주거지역": {"bcr": 50, "far": 300},
+        "준주거지역": {"bcr": 60, "far": 400},
+    },
     # ── 부산광역시 ──
-    "부산광역시": {"제2종일반주거지역": {"bcr": 60, "far": 250}, "제3종일반주거지역": {"bcr": 50, "far": 300}, "일반상업지역": {"bcr": 80, "far": 1000}},
+    "부산광역시": {
+        "제2종일반주거지역": {"bcr": 60, "far": 250},
+        "제3종일반주거지역": {"bcr": 50, "far": 300},
+        "일반상업지역": {"bcr": 80, "far": 1000},
+    },
     # ── 대구광역시 ──
     "대구광역시": {"제2종일반주거지역": {"bcr": 60, "far": 250}, "제3종일반주거지역": {"bcr": 50, "far": 300}},
     # ── 대전광역시 ──
@@ -351,8 +360,10 @@ class OrdinanceService:
             result["effective_far"] = min(national_far, c_far)
             result["source"] = "지자체 조례(정적캐시)"
             result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
-            _attach_provenance(result, confidence=0.80, recheck=True,
-                               disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.")
+            _attach_provenance(
+                result, confidence=0.80, recheck=True,
+                disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.",
+            )
             await _save_resolution(result, sigungu, zone_type)
             return result
 
@@ -491,7 +502,11 @@ class OrdinanceService:
             "bcr": bcr,
             "far": far,
             "ordinance_name": ordin_name_match.group(1) if ordin_name_match else f"{region_name} 도시계획 조례",
-            "last_updated": f"{date_match.group(1)[:4]}-{date_match.group(1)[4:6]}-{date_match.group(1)[6:]}" if date_match else None,
+            "last_updated": (
+                f"{date_match.group(1)[:4]}-{date_match.group(1)[4:6]}-{date_match.group(1)[6:]}"
+                if date_match
+                else None
+            ),
         }
 
     def _lookup_cache(
@@ -511,13 +526,13 @@ class OrdinanceService:
     def _extract_region(self, address: str) -> dict[str, str | None]:
         """주소에서 시도/시군구를 추출."""
         # 광역시/특별시/도
-        SIDO_LIST = [
+        SIDO_LIST = [  # noqa: N806 — 지역 정적 상수(상수 표기 관례)
             "서울특별시", "부산광역시", "대구광역시", "인천광역시",
             "광주광역시", "대전광역시", "울산광역시", "세종특별자치시",
             "경기도", "강원도", "충청북도", "충청남도",
             "전라북도", "전라남도", "경상북도", "경상남도", "제주특별자치도",
         ]
-        SIDO_SHORT = {
+        SIDO_SHORT = {  # noqa: N806 — 지역 정적 상수(상수 표기 관례)
             "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시",
             "인천": "인천광역시", "광주": "광주광역시", "대전": "대전광역시",
             "울산": "울산광역시", "세종": "세종특별자치시", "경기": "경기도",
@@ -539,7 +554,10 @@ class OrdinanceService:
 
         # 시군구 추출 (시/군/구 패턴)
         sigungu = None
-        sigungu_match = re.search(r"(?:서울|부산|대구|인천|광주|대전|울산|경기|강원|충[북남]|전[북남]|경[북남]|제주)\S*\s+(\S+[시군구])", address)
+        sigungu_match = re.search(
+            r"(?:서울|부산|대구|인천|광주|대전|울산|경기|강원|충[북남]|전[북남]|경[북남]|제주)\S*\s+(\S+[시군구])",
+            address,
+        )
         if sigungu_match:
             sigungu = sigungu_match.group(1)
         else:

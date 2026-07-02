@@ -96,7 +96,7 @@ def orientation_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] 
         pts = [((x - minx) * m_per_deg_lon, (y - miny) * m_per_deg_lat) for x, y in coords]
         best_len = -1.0
         best_dx = best_dy = 0.0
-        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:], strict=False):
             dx, dy = x1 - x0, y1 - y0
             seg = math.hypot(dx, dy)
             if seg > best_len:
@@ -159,7 +159,8 @@ ALLOWED_USES_BY_ZONE: dict[str, list[str]] = {
     # 준주거 — 주거+상업 혼합.
     "준주거지역": ["공동주택", "오피스텔", "제1종근린생활시설", "제2종근린생활시설", "판매시설", "업무시설"],
     # 상업 — 상가·업무·주상복합 중심.
-    "일반상업지역": ["공동주택", "오피스텔", "판매시설", "업무시설", "숙박시설", "제1종근린생활시설", "제2종근린생활시설"],
+    "일반상업지역": ["공동주택", "오피스텔", "판매시설", "업무시설", "숙박시설",
+                     "제1종근린생활시설", "제2종근린생활시설"],
     "근린상업지역": ["공동주택", "오피스텔", "판매시설", "업무시설", "제1종근린생활시설", "제2종근린생활시설"],
     # 공업 — 공장·물류·지원시설(주거는 제한적).
     "준공업지역": ["공장", "물류시설", "지식산업센터", "제1종근린생활시설", "제2종근린생활시설", "업무시설"],

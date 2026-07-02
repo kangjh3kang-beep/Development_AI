@@ -30,7 +30,10 @@ cost_calc = OriginCostCalculator()
 bim_service = BIMService()
 
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
-_STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
+_STRUCT_FACTOR = {
+    "RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15,
+    "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85,
+}
 
 # ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
 # ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
@@ -82,7 +85,10 @@ def _overview_evidence(
         {
             "label": "기준단가(구조계수 적용)",
             "value": f"{unit:,}원/㎡",
-            "basis": f"건축개요 기반 표준단가(2026 기준) × 구조계수({structure_type}={_STRUCT_FACTOR.get(structure_type, 1.0)})",
+            "basis": (
+                f"건축개요 기반 표준단가(2026 기준) × "
+                f"구조계수({structure_type}={_STRUCT_FACTOR.get(structure_type, 1.0)})"
+            ),
         },
         {
             "label": "지상 공사비",
@@ -156,7 +162,7 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         DEFAULT_DIRECT_COST_PER_SQM,
         calculate_indirect_cost,
     )
-    PY = 3.305785
+    PY = 3.305785  # noqa: N806 — 평(坪) 환산 도메인 상수
     base_unit = req.unit_cost_per_sqm or DEFAULT_DIRECT_COST_PER_SQM.get(
         req.building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"])
     unit = base_unit * _STRUCT_FACTOR.get(req.structure_type, 1.0)
@@ -166,8 +172,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     # 0.4 cap 에 걸려 지하가 총GFA의 40%(지상의 67%)가 되는 물리적 비현실 → 층수비례로 교정.
     _fa = max(1, int(req.floor_count_above))
     _fb = max(0, int(req.floor_count_below))
-    _BK = 1.2  # 지하 바닥판 확장계수
-    gfa_below = (gfa * (_fb * _BK) / (_fa + _fb * _BK)) if _fb > 0 else 0.0
+    _bk = 1.2  # 지하 바닥판 확장계수
+    gfa_below = (gfa * (_fb * _bk) / (_fa + _fb * _bk)) if _fb > 0 else 0.0
     gfa_above = max(0.0, gfa - gfa_below)
 
     def scenario(factor: float) -> dict[str, Any]:
@@ -194,19 +200,19 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     # ── 기하(geometry) 기반 정밀 적산 — 설계 매스 실치수 우선, 없으면 연면적·층수로 역산 ──
     from app.services.cost.geometry_qto import derive_dims_from_gfa, geometry_takeoff
     qto_source = "derived"
-    W, Dd, Hh = req.building_width_m, req.building_depth_m, req.floor_height_m
+    W, Dd, Hh = req.building_width_m, req.building_depth_m, req.floor_height_m  # noqa: N806 — 기하 관례(폭·깊이·층고)
     nf_above = req.floor_count_above
     if req.project_id:
         m = await _resolve_design_mass(db, req.project_id)
         if m and m.get("building_width_m") and m.get("building_depth_m"):
-            W, Dd = float(m["building_width_m"]), float(m["building_depth_m"])
+            W, Dd = float(m["building_width_m"]), float(m["building_depth_m"])  # noqa: N806 — 기하 관례
             if m.get("num_floors"):
                 nf_above = int(m["num_floors"])
             if m.get("floor_height_m"):
-                Hh = float(m["floor_height_m"])
+                Hh = float(m["floor_height_m"])  # noqa: N806 — 기하 관례
             qto_source = "bim"
     if not (W and Dd):
-        W, Dd = derive_dims_from_gfa(gfa_above, nf_above)
+        W, Dd = derive_dims_from_gfa(gfa_above, nf_above)  # noqa: N806 — 기하 관례
     geometry = geometry_takeoff(
         width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
         floor_height_m=Hh, structure_type=req.structure_type,
@@ -233,10 +239,10 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         ):
             unit_price_source = "db"
 
-        _BT_KR = {"apartment": "공동주택", "officetel": "오피스텔", "office": "근린생활시설",
+        _bt_kr = {"apartment": "공동주택", "officetel": "오피스텔", "office": "근린생활시설",
                   "townhouse": "다세대주택", "single_house": "다세대주택", "warehouse": "근린생활시설"}
         raw = StandardQuantityEstimator().estimate(
-            building_type=_BT_KR.get(req.building_type, "공동주택"),
+            building_type=_bt_kr.get(req.building_type, "공동주택"),
             total_gfa_sqm=gfa, floor_count_above=req.floor_count_above,
             floor_count_below=req.floor_count_below, structure_type=req.structure_type,
             prices=unit_prices,
@@ -288,7 +294,10 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "qto_source": qto_source,
         # 항목 단가 출처 요약 — DB 단가 1건 이상 반영 시 "db", 전부 하드코딩 fallback이면 "fallback".
         "unit_price_source": unit_price_source,
-        "note": "건축개요 기반 표준 추정(지상/지하/조경/간접) + 기하(geometry) 정밀 적산. 설계 매스(BIM) 있으면 실치수로 자동 정밀화.",
+        "note": (
+            "건축개요 기반 표준 추정(지상/지하/조경/간접) + 기하(geometry) 정밀 적산. "
+            "설계 매스(BIM) 있으면 실치수로 자동 정밀화."
+        ),
         # 산출 근거·신선도(evidence/legal_refs/provenance) — additive, 기존 키 무손상.
         "evidence": ev_block["evidence"],
         "legal_refs": ev_block["legal_refs"],
@@ -918,7 +927,10 @@ async def get_unit_prices() -> dict[str, Any]:
         })
     return {
         "ok": True, "items": items,
-        "note": "standard=표준품셈/단가DB, market=KCCI 변동모델, actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장.",
+        "note": (
+            "standard=표준품셈/단가DB, market=KCCI 변동모델, actual=실적 데이터 없음. "
+            "참고용·전문 적산사 검토 권장."
+        ),
     }
 
 

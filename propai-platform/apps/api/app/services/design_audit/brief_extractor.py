@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from typing import Any
@@ -91,10 +92,8 @@ def extract_text_from_pdf(source: bytes | bytearray | str) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 — 개별 페이지 실패는 건너뜀
                 continue
     finally:
-        try:
+        with contextlib.suppress(Exception):
             doc.close()
-        except Exception:  # noqa: BLE001
-            pass
 
     text = "\n".join(pages).strip()
     note = None

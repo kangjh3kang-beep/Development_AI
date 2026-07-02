@@ -11,14 +11,14 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime
-
-UTC = UTC
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
 
 from apps.api.database.models.parking_record import ParkingRecord
+
+UTC = UTC  # 하위호환 재노출(모듈 속성 유지) — 임포트 사이에 있어 E402 유발하던 것을 하단 이동
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

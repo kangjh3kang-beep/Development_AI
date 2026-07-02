@@ -93,7 +93,10 @@ async def map_from_design(db: AsyncSession, site_id: uuid.UUID, source_ref: str 
     num_floors = int(mass.get("num_floors") or floor_count or 0)
     building_count = int(dj.get("building_count") or mass.get("building_count") or 1)
     # 세대 평형 배분: design_data_json.unit_layout/units 또는 mass 하위
-    layout = dj.get("unit_layout") or dj.get("units") or (dj.get("unit_layout") if isinstance(dj.get("unit_layout"), list) else None)
+    layout = (
+        dj.get("unit_layout") or dj.get("units")
+        or (dj.get("unit_layout") if isinstance(dj.get("unit_layout"), list) else None)
+    )
     units_spec = layout if isinstance(layout, list) else (layout.get("units") if isinstance(layout, dict) else None)
 
     # 층당 (type,count) 시퀀스 구성

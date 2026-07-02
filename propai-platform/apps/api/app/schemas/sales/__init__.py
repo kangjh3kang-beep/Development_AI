@@ -11,7 +11,7 @@ import sys
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, create_model
 
@@ -47,13 +47,13 @@ def _build(model):
         cname = col.name
         pt = _pytype(col)
         if cname not in _SENSITIVE:
-            read_fields[cname] = (Optional[pt], None)
+            read_fields[cname] = (pt | None, None)
         if cname in _AUTO:
             continue
-        update_fields[cname] = (Optional[pt], None)
+        update_fields[cname] = (pt | None, None)
         has_default = col.default is not None or col.server_default is not None
         required = (not col.nullable) and (not has_default) and cname != "site_id" and not col.primary_key
-        create_fields[cname] = (pt, ...) if required else (Optional[pt], None)
+        create_fields[cname] = (pt, ...) if required else (pt | None, None)
 
     create_m = create_model(f"{name}Create", __base__=BaseModel, **create_fields)
     update_m = create_model(f"{name}Update", __base__=BaseModel, **update_fields)

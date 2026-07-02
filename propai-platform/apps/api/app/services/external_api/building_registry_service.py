@@ -24,7 +24,9 @@ class BuildingRegistryService:
     # 마지막 조회 상태(no_key/unauthorized/error/no_data/ok). 상위 서비스가 "나대지 단정" 판단에 사용.
     last_status: str = "unknown"
 
-    async def get_building_info(self, sigungu_cd: str, bjdong_cd: str, bun: str = "", ji: str = "") -> dict[str, Any] | None:
+    async def get_building_info(
+        self, sigungu_cd: str, bjdong_cd: str, bun: str = "", ji: str = "",
+    ) -> dict[str, Any] | None:
         """시군구코드+법정동코드로 건축물대장 기본개요를 조회.
 
         Args:
@@ -215,7 +217,9 @@ class BuildingRegistryService:
             "getBrRecapTitleInfo", sigungu_cd, bjdong_cd, max_rows=max_rows, max_pages=max_pages,
         )
 
-    async def get_exclusive_units_by_pnu(self, pnu: str, page_size: int = 1000, max_pages: int = 30) -> list[dict[str, Any]] | None:
+    async def get_exclusive_units_by_pnu(
+        self, pnu: str, page_size: int = 1000, max_pages: int = 30,
+    ) -> list[dict[str, Any]] | None:
         """PNU 기반 집합건축물 전유공용면적(getBrExposPubuseAreaInfo) → 호별 전유면적 집계.
 
         공동주택/집합상가는 한 단지에 전유+공용 행이 수만 건(예: 1,584세대=10,494행)이라
@@ -268,7 +272,10 @@ class BuildingRegistryService:
                         dong = str(r.get("dongNm", "") or "").strip()
                         ho = str(r.get("hoNm", "") or "").strip()
                         key = (dong, ho)
-                        cur = agg.setdefault(key, {"dong": dong, "ho": ho, "exclusive_area_sqm": 0.0, "purpose": str(r.get("mainPurpsCdNm", "") or "")})
+                        cur = agg.setdefault(key, {
+                            "dong": dong, "ho": ho, "exclusive_area_sqm": 0.0,
+                            "purpose": str(r.get("mainPurpsCdNm", "") or ""),
+                        })
                         cur["exclusive_area_sqm"] += _f(r, "area")
                     # totalCount까지 다 모았으면 종료(불필요한 호출 방지).
                     if total_count and collected >= total_count:

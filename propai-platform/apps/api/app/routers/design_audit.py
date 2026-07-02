@@ -612,9 +612,8 @@ async def run_design_audit_upload(
 
         data = await ifc_file.read()
         if data:
-            tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)
-            tmp.write(data)
-            tmp.close()
+            with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as tmp:
+                tmp.write(data)
             ifc_file_url = tmp.name
 
     # payload 직접 입력(geometry/rooms) — DXF 산출보다 우선(덮어쓰기 금지)

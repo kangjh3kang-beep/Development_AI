@@ -12,8 +12,6 @@
 
 import asyncio
 from datetime import UTC, datetime
-
-UTC = UTC
 from typing import Any
 from uuid import UUID
 

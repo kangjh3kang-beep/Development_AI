@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-
-UTC = UTC
 from uuid import UUID
 
 import structlog

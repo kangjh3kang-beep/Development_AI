@@ -205,12 +205,11 @@ class CashflowGenerator:
                     revenue_received += remaining_rev
                     items.append("잔금 수령")
 
-            if month == construction_end + 2:
-                # PF 잔액 상환
-                if outstanding_pf > 0:
-                    outflow += outstanding_pf
-                    items.append("PF 잔액 상환")
-                    outstanding_pf = 0
+            # PF 잔액 상환
+            if month == construction_end + 2 and outstanding_pf > 0:
+                outflow += outstanding_pf
+                items.append("PF 잔액 상환")
+                outstanding_pf = 0
 
             # ── R1: 세금 유출 주입 (tax_schedule 시점 매핑 — 미지정 시 항상 0) ──
             month_tax = tax_by_month[month]

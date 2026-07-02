@@ -145,13 +145,17 @@ async def check_interest(db: AsyncSession, interest: dict, svc: PresaleService |
         prev = seen.get(key)
 
         async def _upsert(closing_notified: bool | None = None) -> None:
-            cn = closing_notified if closing_notified is not None else (prev or {}).get("closing_notified", False)
+            cn = (
+                closing_notified if closing_notified is not None
+                else (prev or {}).get("closing_notified", False)  # noqa: B023 — 동일 반복 내 즉시 호출(늦은 바인딩 없음)
+            )
             await db.execute(
-                text("INSERT INTO presale_seen(interest_id, user_id, pblanc_key, last_status, closing_notified, last_checked_at) "
+                text("INSERT INTO presale_seen(interest_id, user_id, pblanc_key, "
+                     "last_status, closing_notified, last_checked_at) "
                      "VALUES (:i,:u,:k,:s,:c, now()) "
                      "ON CONFLICT (interest_id, pblanc_key) DO UPDATE SET last_status=:s, "
                      "closing_notified=:c, last_checked_at=now()"),
-                {"i": iid, "u": str(user_id), "k": key, "s": status, "c": cn},
+                {"i": iid, "u": str(user_id), "k": key, "s": status, "c": cn},  # noqa: B023 — 동일 반복 내 즉시 호출
             )
 
         if not baseline_done:

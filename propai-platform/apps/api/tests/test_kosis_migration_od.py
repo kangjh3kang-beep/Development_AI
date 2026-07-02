@@ -35,7 +35,8 @@ class TestMigration:
         assert r["total_inflow"] == 0 and r["top_inflow_regions"] == []
 
     def test_시군구명_없으면_unavailable(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
 
         async def fake_fetch(sigungu_cd, year, tbl_id=None):
             return [{"C1_NM": "강남구", "ITM_NM": "총전입", "DT": "80696"}]
@@ -44,7 +45,8 @@ class TestMigration:
         assert r["data_source"] == "unavailable"
 
     def test_대상시군구_총전입전출순이동_live(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
         rows = [
             {"C1_NM": "전국", "ITM_NM": "총전입", "DT": "6117784"},
             {"C1_NM": "강남구", "ITM_NM": "총전입", "DT": "80696", "PRD_DE": "2025"},
@@ -65,7 +67,8 @@ class TestMigration:
         assert r["year"] == "2025"
 
     def test_행없음_fallback(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
 
         async def fake_fetch(sigungu_cd, year, tbl_id=None):
             return [{"C1_NM": "서초구", "ITM_NM": "총전입", "DT": "70000"}]
@@ -74,7 +77,8 @@ class TestMigration:
         assert r["data_source"] == "fallback"
 
     def test_빈응답_unavailable(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
 
         async def fake_fetch(sigungu_cd, year, tbl_id=None):
             return {"err": "30", "errMsg": "데이터가 존재하지 않습니다."}
@@ -85,7 +89,8 @@ class TestMigration:
 
 class TestIncome:
     def test_대상시군구_평균소득_live(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
         # 총급여 금액 20,320,151백만원 / 인원 238,504명 → 8,520만원/인
         rows = [
             {"C1_NM": "강남구", "C2_NM": "과세대상근로소득(총급여)", "ITM_NM": "금액",
@@ -104,7 +109,8 @@ class TestIncome:
         assert "note" in r
 
     def test_이름없음_fallback(self, monkeypatch):
-        k = KosisClient(); _with_key(monkeypatch, k)
+        k = KosisClient()
+        _with_key(monkeypatch, k)
 
         async def fake_fetch(sigungu_cd, year, tbl_id=None):
             return [{"C1_NM": "강남구", "C2_NM": "과세대상근로소득(총급여)", "ITM_NM": "금액", "DT": "1"}]

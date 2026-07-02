@@ -3,13 +3,13 @@ import uuid
 
 import pytest
 
-from app.services.ledger import risk_monitor as R
+from app.services.ledger import risk_monitor
 
 pytestmark = pytest.mark.asyncio
 
 
 def test_classify_risks_pure_detects_all():
-    risks = R.classify_risks(
+    risks = risk_monitor.classify_risks(
         latest={"verdict": "부적합", "findings_brief": [{"check_id": "X", "status": "fail"}]},
         contradictions={"max_severity": "high", "counts": {"high": 2}},
         age_days=200, max_age_days=90)
@@ -19,7 +19,7 @@ def test_classify_risks_pure_detects_all():
 
 
 def test_classify_risks_clean_is_empty():
-    risks = R.classify_risks(
+    risks = risk_monitor.classify_risks(
         latest={"verdict": "적합", "findings_brief": [{"check_id": "X", "status": "pass"}]},
         contradictions={"max_severity": None, "counts": {}}, age_days=1, max_age_days=90)
     assert risks == []
@@ -61,7 +61,7 @@ async def test_evaluate_chain_risk_detects_contradiction_and_status():
         await record_specialist_result(analysis_type=at, tenant_id=tid, pnu=pnu, source="t",
             payload={"kind": "domain_agent", "verdict": "부적합", "summary": {"far": 260.0},
                      "findings_brief": [{"check_id": "X", "status": "fail", "current": 260.0, "limit": 250.0}]})
-        ev = await R.evaluate_chain_risk(analysis_type=at, tenant_id=tid, pnu=pnu)
+        ev = await risk_monitor.evaluate_chain_risk(analysis_type=at, tenant_id=tid, pnu=pnu)
         types = {r["type"] for r in ev["risks"]}
         assert "contradiction_high" in types and "status_fail" in types
         assert ev["risk_level"] == "high"
@@ -82,7 +82,7 @@ async def test_scan_project_risks_aggregates():
             await record_specialist_result(analysis_type=at, tenant_id=tid, project_id=pid, source="t",
                 payload={"kind": "domain_agent", "verdict": "부적합",
                          "findings_brief": [{"check_id": "X", "status": "fail", "current": 300.0, "limit": 250.0}]})
-        scan = await R.scan_project_risks(tenant_id=tid, project_id=pid)
+        scan = await risk_monitor.scan_project_risks(tenant_id=tid, project_id=pid)
         assert scan["chains_at_risk"] == 2 and scan["risk_level"] == "high"
     finally:
         await _cleanup(tid)
@@ -91,37 +91,37 @@ async def test_scan_project_risks_aggregates():
 # ── Phase 4.2 #1·#2: append 훅(이벤트 구동) + 알림 채널 ──
 
 async def test_dispatch_risk_alert_notifies_high_only():
-    R.clear_notifiers()
+    risk_monitor.clear_notifiers()
     captured: list = []
-    R.register_notifier(lambda alert: captured.append(alert))
+    risk_monitor.register_notifier(lambda alert: captured.append(alert))
     try:
-        hi = await R.dispatch_risk_alert(project_id="P", analysis_type="x",
+        hi = await risk_monitor.dispatch_risk_alert(project_id="P", analysis_type="x",
             risk={"risk_level": "high", "risks": [{"type": "status_fail"}]})
         assert hi["dispatched"] == 1 and len(captured) == 1
-        lo = await R.dispatch_risk_alert(project_id="P", analysis_type="x",
+        lo = await risk_monitor.dispatch_risk_alert(project_id="P", analysis_type="x",
             risk={"risk_level": "none", "risks": []})
         assert lo.get("skipped") is True and len(captured) == 1   # low/none은 미발송(정직)
     finally:
-        R.clear_notifiers()
+        risk_monitor.clear_notifiers()
 
 
 async def test_on_analysis_appended_evaluates_and_notifies():
     if not await _db():
         pytest.skip("DB 미가용")
     from app.services.ledger.ledger_adapters import record_specialist_result
-    R.clear_notifiers()
+    risk_monitor.clear_notifiers()
     captured: list = []
-    R.register_notifier(lambda a: captured.append(a))
+    risk_monitor.register_notifier(lambda a: captured.append(a))
     at, tid, pnu = "domain_agent_hook", f"t-rm-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
     try:
         await record_specialist_result(analysis_type=at, tenant_id=tid, pnu=pnu, source="t",
             payload={"kind": "domain_agent", "verdict": "부적합",
                      "findings_brief": [{"check_id": "X", "status": "fail", "current": 300.0, "limit": 250.0}]})
-        ev = await R.on_analysis_appended(analysis_type=at, tenant_id=tid, pnu=pnu)
+        ev = await risk_monitor.on_analysis_appended(analysis_type=at, tenant_id=tid, pnu=pnu)
         assert ev["risk_level"] == "high" and ev["notify"]["dispatched"] >= 1
         assert captured  # 고위험 → 알림 발송
     finally:
-        R.clear_notifiers()
+        risk_monitor.clear_notifiers()
         await _cleanup(tid)
 
 

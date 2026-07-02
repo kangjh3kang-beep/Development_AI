@@ -205,7 +205,7 @@ class TestVCSEndpoints:
             "snapshot": {"revenue": 100, "cost": 80},
         })
         assert resp.status_code == 200
-        sha = resp.json()["sha"]
+        _sha = resp.json()["sha"]  # 응답 계약(sha 존재) 확인용
 
         resp = client.get(f"/api/v2/feasibility/repos/{pid}/log")
         assert resp.status_code == 200

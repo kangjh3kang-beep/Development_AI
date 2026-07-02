@@ -84,7 +84,7 @@ def normalize_sigungu_cd(region_cd: str | None) -> str:
         return ""
     # PublicDataReader 가 있으면 시군구 코드 유효성 보강(없으면 폴백). 이름매칭 금지.
     try:
-        import PublicDataReader as pdr  # type: ignore
+        import PublicDataReader as pdr  # type: ignore  # noqa: N813 (pdr=커뮤니티 표준 별칭)
 
         sgg5 = digits[:5]
         # 코드표가 로드되면 그대로 사용(검증 목적). 실패해도 앞5자리 폴백.

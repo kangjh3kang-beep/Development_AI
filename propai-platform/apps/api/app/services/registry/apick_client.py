@@ -139,7 +139,8 @@ async def fetch_registry(
         registry_text = _xlsx_to_text(xlsx) if xlsx else ""
         pdf_b64 = base64.b64encode(pdf).decode() if pdf else None
         if not registry_text and not pdf_b64:
-            return {**item, "status": "provider_error", "message": "apick 다운로드 결과가 비어 있습니다.", "ic_id": ic_id}
+            return {**item, "status": "provider_error",
+                    "message": "apick 다운로드 결과가 비어 있습니다.", "ic_id": ic_id}
 
         return {
             **item, "status": "ok", "origin": "apick", "ic_id": ic_id,

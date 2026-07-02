@@ -104,7 +104,6 @@ class TestAutoDesignAlternatives:
 
     def test_alternatives_differ(self, engine: AutoDesignEngineService, default_input: SiteInput):
         results = engine.generate_alternatives(default_input, count=3)
-        units = [r.summary["total_units"] for r in results]
         # 적어도 두 대안이 다르거나, 모두 동일한 건 극소 대지 시 가능
         assert len(results) == 3
 

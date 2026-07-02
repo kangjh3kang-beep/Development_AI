@@ -56,7 +56,7 @@ class FeasibilityVCSDB:
             select(FeasibilityBranch).where(
                 FeasibilityBranch.project_id == self.project_id,
                 FeasibilityBranch.tenant_id == self.tenant_id,
-                FeasibilityBranch.is_default == True,
+                FeasibilityBranch.is_default == True,  # noqa: E712 — SQLAlchemy 컬럼 비교식(파이썬 truth check 아님, SQL 동일성 보존)
             )
         )
         branch = result.scalar_one_or_none()
@@ -100,7 +100,8 @@ class FeasibilityVCSDB:
             "parent_sha": commit_record.parent_sha,
             "message": message,
             "author": author,
-            "timestamp": commit_record.created_at.isoformat() if commit_record.created_at else datetime.utcnow().isoformat(),
+            "timestamp": (commit_record.created_at.isoformat() if commit_record.created_at
+                          else datetime.utcnow().isoformat()),
         }
 
     async def log(self, max_count: int = 50) -> list[dict]:

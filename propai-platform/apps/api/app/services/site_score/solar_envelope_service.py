@@ -98,7 +98,7 @@ def shadow_analysis(height_m: float, latitude: float = 37.5) -> dict[str, Any]:
         if alt <= 0.5:
             out[label] = {"solar_altitude_deg": round(alt, 1), "shadow_len_m": None}
         else:
-            L = height_m / math.tan(math.radians(alt))
+            L = height_m / math.tan(math.radians(alt))  # noqa: N806 — 그림자 길이 L(기하 관례)
             out[label] = {"solar_altitude_deg": round(alt, 1), "shadow_len_m": round(L, 1)}
     noon_alt = out["정오"]["solar_altitude_deg"]
     max_shadow = max((v["shadow_len_m"] or 0) for v in out.values())
@@ -245,10 +245,10 @@ def compute_buildable_envelope(
     # 대지 치수: 미입력 시 정사각형 가정(정북=깊이 D)
     if not land_width_m or not land_depth_m:
         side = math.sqrt(land_area_sqm)
-        W = land_width_m or side
-        D = land_depth_m or side
+        W = land_width_m or side  # noqa: N806 — 대지 폭 W(기하 관례)
+        D = land_depth_m or side  # noqa: N806 — 대지 깊이 D(기하 관례)
     else:
-        W, D = land_width_m, land_depth_m
+        W, D = land_width_m, land_depth_m  # noqa: N806 — 기하 관례(W=폭, D=깊이)
 
     far_gfa = land_area_sqm * far               # 용적률 허용 연면적
     bcr_footprint = land_area_sqm * bcr          # 건폐율 허용 1층 바닥면적
@@ -336,18 +336,15 @@ def compute_buildable_envelope(
         }
 
     # ── 정북일조 스트립 적분 ──
-    usable_W = max(0.0, W - 2 * side_setback_m)
+    usable_W = max(0.0, W - 2 * side_setback_m)  # noqa: N806 — 기하 관례(W=폭)
     strips = 200
     dz = D / strips
     envelope_volume = 0.0
     max_h = 0.0
     for i in range(strips):
         d = (i + 0.5) * dz  # 정북 경계로부터 거리
-        if d < 1.5:
-            h = 0.0
-        else:
-            # 10m 초과는 H/2 이격 → H ≤ 2d (보수적). 10m 이하는 1.5m 이격으로 허용(공용 산식).
-            h = max_height_for_north_distance_m(d)
+        # 10m 초과는 H/2 이격 → H ≤ 2d (보수적). 10m 이하는 1.5m 이격으로 허용(공용 산식).
+        h = 0.0 if d < 1.5 else max_height_for_north_distance_m(d)
         max_h = max(max_h, h)
         envelope_volume += usable_W * dz * h
 
@@ -430,7 +427,11 @@ def compute_buildable_envelope(
             f"공동주택 다동 배치 시 동간 채광거리 {min_spacing_080}m(0.8H) 확보 필요. "
             "도로사선제한은 2015년 폐지(가로구역별 최고높이로 대체)되어 미적용. "
             "직사각형 대지 근사(v1)."
-            + (f" 일조로 용적률 대비 약 {round(loss,1)}% 건축면적 손실." if binding == "정북일조" else " 용적률이 한도(일조 여유).")
+            + (
+                f" 일조로 용적률 대비 약 {round(loss,1)}% 건축면적 손실."
+                if binding == "정북일조"
+                else " 용적률이 한도(일조 여유)."
+            )
         ),
         "approximation": "rectangular-lot-strip-integration",
         "assumptions": [

@@ -81,7 +81,9 @@ async def expire_holds(db: AsyncSession, site_id, now: datetime | None = None) -
         SalesUnitHold.site_id == site_id, SalesUnitHold.expires_at < now))).scalars())
     n = 0
     for h in holds:
-        u = (await db.execute(select(SalesUnitInventory).where(SalesUnitInventory.id == h.unit_id))).scalar_one_or_none()
+        u = (
+            await db.execute(select(SalesUnitInventory).where(SalesUnitInventory.id == h.unit_id))
+        ).scalar_one_or_none()
         if u and u.status == "HOLD":
             u.status = "AVAILABLE"
             n += 1

@@ -195,7 +195,8 @@ class FloorTypeGenerator:
             pk_per_floor = int(pk_area / area_per_slot)
             pk_per_floor = min(pk_per_floor, parking_count)
 
-        rooms.append(RoomSpec("주차장", building_width_m, pk_area / building_width_m if building_width_m else 0, pk_area))
+        rooms.append(RoomSpec(
+            "주차장", building_width_m, pk_area / building_width_m if building_width_m else 0, pk_area))
 
         label = f"B{abs(floor_number)}F"
         return FloorPlan(
@@ -231,10 +232,12 @@ class FloorTypeGenerator:
         if first_floor_use == "piloti":
             # 필로티: 주차+로비
             lobby_area = min(gross * 0.15, 50.0)
-            rooms.append(RoomSpec("로비/관리실", min(10, building_width_m * 0.3), lobby_area / min(10, building_width_m * 0.3)))
+            rooms.append(RoomSpec(
+                "로비/관리실", min(10, building_width_m * 0.3), lobby_area / min(10, building_width_m * 0.3)))
             rooms.append(RoomSpec("MDF/통신실", 3.0, 2.0))
             pk_area = gross - lobby_area - 6.0
-            rooms.append(RoomSpec("필로티 주차", building_width_m, pk_area / building_width_m if building_width_m else 0, pk_area))
+            rooms.append(RoomSpec(
+                "필로티 주차", building_width_m, pk_area / building_width_m if building_width_m else 0, pk_area))
             floor_type = "piloti"
             desc = "필로티 (주차+로비)"
             unit_count = 0
@@ -298,7 +301,6 @@ class FloorTypeGenerator:
         # 코어 면적
         core_w = 4.0
         core_d = 6.0
-        core_area = core_count * core_w * core_d
 
         # 가용 세대 면적 (양쪽)
         inner_w = building_width_m - 2 * wt

@@ -90,7 +90,7 @@ def estimate_road_width_m(road_side: str | None) -> float | None:
 def _haversine_m_pure(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """두 경위도 좌표 간 거리(m). 모듈 레벨 순수함수."""
     import math
-    R = 6_371_000
+    R = 6_371_000  # noqa: N806 — 지구 반지름(m), 기하 관례
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lam = math.radians(lon2 - lon1)
@@ -971,7 +971,10 @@ class LandInfoService:
                                 item.get("거래금액", item.get("price_10k_won", "0"))
                             ).replace(",", "").strip(),
                             "area_sqm": item.get("전용면적", item.get("area_m2", "")),
-                            "deal_date": item.get("deal_date") or f"{item.get('년', '')}.{item.get('월', '')}.{item.get('일', '')}",
+                            "deal_date": (
+                                item.get("deal_date")
+                                or f"{item.get('년', '')}.{item.get('월', '')}.{item.get('일', '')}"
+                            ),
                             # 토지는 건물명/층이 없음 → 지목(또는 용도지역)을 표시명으로 사용
                             "name": (
                                 item.get("아파트", item.get("building_name", ""))
@@ -1281,7 +1284,7 @@ class LandInfoService:
     def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """두 좌표 간 거리(m) 계산 (Haversine 공식)."""
         import math
-        R = 6_371_000  # 지구 반지름 (m)
+        R = 6_371_000  # noqa: N806 — 지구 반지름(m), 기하 관례
         phi1 = math.radians(lat1)
         phi2 = math.radians(lat2)
         d_phi = math.radians(lat2 - lat1)

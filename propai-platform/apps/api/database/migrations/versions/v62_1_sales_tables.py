@@ -60,7 +60,9 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS idx_unit_status_log_ts ON sales_unit_status_log (site_id, ts DESC);")
     op.execute("CREATE INDEX IF NOT EXISTS idx_mh_visit_stats_ts ON mh_visit_stats (site_id, ts DESC);")
     # 아웃박스 미발행분 조회 가속(동기 투영 폴링/배치)
-    op.execute("CREATE INDEX IF NOT EXISTS idx_outbox_pending ON sales_harness_outbox (status) WHERE status = 'PENDING';")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_outbox_pending ON sales_harness_outbox (status) WHERE status = 'PENDING';"
+    )
 
 
 def downgrade() -> None:

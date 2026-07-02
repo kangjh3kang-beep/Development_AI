@@ -21,14 +21,22 @@ class RE100Service:
         if not yearly_data:
             return {"progress": [], "trend": "unknown", "latest_pct": 0}
         latest = yearly_data[-1].get("renewable_pct", 0)
-        trend = "증가" if len(yearly_data) > 1 and yearly_data[-1].get("renewable_pct", 0) > yearly_data[0].get("renewable_pct", 0) else "안정"
+        trend = (
+            "증가"
+            if len(yearly_data) > 1
+            and yearly_data[-1].get("renewable_pct", 0) > yearly_data[0].get("renewable_pct", 0)
+            else "안정"
+        )
         return {"progress": yearly_data, "trend": trend, "latest_pct": latest}
 
     def recommend_sources(self, gap_kwh: float, budget: float | None = None) -> list[dict]:
         sources = [
-            {"source": "solar", "name": "태양광", "annual_cost_krw": int(gap_kwh * 80), "reliability": 0.85, "feasible": True},
-            {"source": "wind", "name": "풍력", "annual_cost_krw": int(gap_kwh * 60), "reliability": 0.75, "feasible": True},
-            {"source": "ppa", "name": "PPA 계약", "annual_cost_krw": int(gap_kwh * 100), "reliability": 0.95, "feasible": True},
+            {"source": "solar", "name": "태양광", "annual_cost_krw": int(gap_kwh * 80),
+             "reliability": 0.85, "feasible": True},
+            {"source": "wind", "name": "풍력", "annual_cost_krw": int(gap_kwh * 60),
+             "reliability": 0.75, "feasible": True},
+            {"source": "ppa", "name": "PPA 계약", "annual_cost_krw": int(gap_kwh * 100),
+             "reliability": 0.95, "feasible": True},
         ]
         if budget:
             sources = [s for s in sources if s["annual_cost_krw"] <= budget]

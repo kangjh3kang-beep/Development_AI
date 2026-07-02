@@ -15,6 +15,7 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
+import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,8 +23,6 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = structlog.get_logger(__name__)
 
 from app.core.billing import (
     TIER_BILLING,
@@ -47,6 +46,8 @@ from app.core.billing import (
     tier_included_budget_krw,
     tier_multiplier,
 )
+
+logger = structlog.get_logger(__name__)
 
 _SEL = text(
     "SELECT tier, COALESCE(llm_billed_krw,0), COALESCE(billing_budget_krw,0), billing_cycle_start, "
@@ -96,10 +97,8 @@ async def ensure_schema(db: AsyncSession, force: bool = False) -> None:
         await db.commit()
         _SCHEMA_READY = True
     except Exception:  # noqa: BLE001
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def _row(db: AsyncSession, user_id: Any):
@@ -247,7 +246,8 @@ async def record_usage_usd(
     if not is_metered_tier(tier):
         return None
     billed_before = float(row[1])
-    monthly_base = float(row[3])  # ensure_cycle 반환순서: (tier,billed,budget,base,topup); topup(row[4])은 아래 원자 UPDATE에서 직접 차감
+    # ensure_cycle 반환순서: (tier,billed,budget,base,topup); topup(row[4])은 아래 원자 UPDATE에서 직접 차감
+    monthly_base = float(row[3])
     rate = await get_usd_krw_rate()
     add = billed_krw(real_cost_usd, tier, rate)
 

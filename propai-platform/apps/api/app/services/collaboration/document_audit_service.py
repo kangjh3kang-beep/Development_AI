@@ -94,19 +94,19 @@ async def run_design_document_audit(
         geometry, rooms = (convert_dxf or _convert_dxf)(data)
         result = await orch.run(db, geometry=geometry, rooms=rooms)
     else:  # ifc — 임시파일 경로로 전달 후 예외에도 반드시 정리(디스크 누수 방지)
+        import contextlib
         import os
         import tempfile
 
-        tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)
+        # noqa 사유: delete=False 임시파일 — 경로를 close 후 orch.run에 넘겨야 하므로 with 부적합.
+        tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)  # noqa: SIM115
         try:
             tmp.write(data)
             tmp.close()
             result = await orch.run(db, ifc_file_url=tmp.name)
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp.name)
-            except OSError:
-                pass
 
     # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
     try:

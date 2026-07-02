@@ -160,7 +160,8 @@ def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, An
         if d.get(target) in (None, "") :
             for s in sources:
                 if d.get(s) not in (None, ""):
-                    d[target] = d[s]; return
+                    d[target] = d[s]
+                    return
 
     if stage == "design":
         setdefault_from("total_floor_area_sqm", "total_gfa_sqm")
@@ -188,7 +189,8 @@ def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, An
     elif stage == "esg":
         # esg_interpreter는 carbon_emissions 중첩을 기대 — 가용 탄소값으로 구성.
         if not isinstance(d.get("carbon_emissions"), dict):
-            emb = d.get("embodied_carbon_kg"); op = d.get("operational_carbon_kg")
+            emb = d.get("embodied_carbon_kg")
+            op = d.get("operational_carbon_kg")
             per = d.get("total_carbon_per_sqm")
             if any(v is not None for v in (emb, op, per)):
                 tot = ((emb or 0) + (op or 0)) / 1000 or None
@@ -297,7 +299,11 @@ async def _interpret_stage(
         if use_verification_retry:
             retry_result = await _verify_and_maybe_retry(stage, data, interp, sections)
             sections = retry_result["sections"]
-            extra = {k: retry_result[k] for k in ("verification", "regenerated", "verification_warning") if k in retry_result}
+            extra = {
+                k: retry_result[k]
+                for k in ("verification", "regenerated", "verification_warning")
+                if k in retry_result
+            }
         else:
             extra = {}
 
@@ -382,7 +388,7 @@ async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float 
     try:
         results = await asyncio.wait_for(
             asyncio.gather(*[j for _, j in jobs], return_exceptions=True), timeout=timeout)
-        for (stg, _), r in zip(jobs, results):
+        for (stg, _), r in zip(jobs, results, strict=False):
             if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
                 out[stg] = r["sections"]
     except TimeoutError:

@@ -38,7 +38,7 @@ def sun_position(hour_angle_deg: float, lat_deg: float, decl_deg: float = _WINTE
       sin(alt) = sinφ·sinδ + cosφ·cosδ·cos(H)
       azimuth(정남기준) = atan2( sin(H), cos(H)·sinφ − tanδ·cosφ )
     """
-    H = math.radians(hour_angle_deg)
+    H = math.radians(hour_angle_deg)  # noqa: N806 — 시간각 H(천문 표기 관례)
     phi = math.radians(lat_deg)
     decl = math.radians(decl_deg)
     sin_alt = math.sin(phi) * math.sin(decl) + math.cos(phi) * math.cos(decl) * math.cos(H)
@@ -153,8 +153,8 @@ def placement_options(
     각 대안은 같은 용적률 한도(far_gfa) 안에서 배치 형상만 다르다. 일조(남향세대·평균 일조시간)와
     밀도/효율의 트레이드오프를 정량화한다.
     """
-    W = max(1.0, land_width_m)
-    D = max(1.0, land_depth_m)
+    W = max(1.0, land_width_m)  # noqa: N806 — 대지 폭 W(기하 관례)
+    D = max(1.0, land_depth_m)  # noqa: N806 — 대지 깊이 D(기하 관례)
     total_units = max(1, round(far_gfa_sqm / _GFA_PER_UNIT_SQM))
     south = orientation_daylight(0.0, lat_deg)["direct_sun_hours"]
     east = orientation_daylight(-90.0, lat_deg)["direct_sun_hours"]
@@ -249,10 +249,10 @@ def analyze_solar_placement(
     # 대지 치수(미입력 시 정사각 근사) — 배치 계산용.
     if not land_width_m or not land_depth_m:
         side = math.sqrt(land_area_sqm)
-        W = land_width_m or side
-        D = land_depth_m or side
+        W = land_width_m or side  # noqa: N806 — 대지 폭 W(기하 관례)
+        D = land_depth_m or side  # noqa: N806 — 대지 깊이 D(기하 관례)
     else:
-        W, D = land_width_m, land_depth_m
+        W, D = land_width_m, land_depth_m  # noqa: N806 — 기하 관례(W=폭, D=깊이)
 
     realistic_floors = int(env.get("max_floors") or 1)
     realistic_height = float(env.get("max_height_m") or (realistic_floors * max(2.4, floor_height_m)))

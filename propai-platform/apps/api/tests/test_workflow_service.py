@@ -93,7 +93,7 @@ class TestAdvanceStage:
         db.scalar = AsyncMock(return_value=wf)
         db.refresh = AsyncMock()
         svc = WorkflowService(db)
-        result = await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
+        await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
         assert wf.stage_index == 1
         assert wf.current_stage == "B"
 
@@ -105,7 +105,7 @@ class TestAdvanceStage:
         db.scalar = AsyncMock(return_value=wf)
         db.refresh = AsyncMock()
         svc = WorkflowService(db)
-        result = await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
+        await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
         assert wf.status == "completed"
 
     @patch("apps.api.services.workflow_service.get_settings")
@@ -143,4 +143,5 @@ class TestSetStatus:
         assert wf.completed_at is not None
 
 
-if __name__ == "__main__": pytest.main([__file__, "-v", "--tb=short"])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

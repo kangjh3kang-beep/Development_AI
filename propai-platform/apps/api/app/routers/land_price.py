@@ -157,9 +157,14 @@ async def rone_status(keyword: str = "지가변동"):
             out["sample_row"] = rows[0]
             out["message"] = "R-ONE 실데이터 연동 정상 — 시점수정이 실데이터로 동작합니다."
         else:
-            out["message"] = "STATBL_ID로 데이터를 가져오지 못했습니다. 통계표 후보(statbl_candidates)에서 올바른 ID를 확인하세요."
+            out["message"] = (
+                "STATBL_ID로 데이터를 가져오지 못했습니다. 통계표 후보(statbl_candidates)에서 올바른 ID를 확인하세요."
+            )
     else:
-        out["message"] = "인증키는 정상입니다. 아래 statbl_candidates에서 '지가변동률' STATBL_ID를 RONE_LANDPRICE_STATBL_ID에 입력하세요."
+        out["message"] = (
+            "인증키는 정상입니다. 아래 statbl_candidates에서 '지가변동률' STATBL_ID를 "
+            "RONE_LANDPRICE_STATBL_ID에 입력하세요."
+        )
     return out
 
 

@@ -1,9 +1,6 @@
 """공사현장 AI 안전관리 라우터 (G116)."""
 
 from datetime import UTC, datetime
-
-UTC = UTC
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, UploadFile

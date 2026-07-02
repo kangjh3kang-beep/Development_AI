@@ -21,6 +21,7 @@ REQUIRED = [
 
 def test_architecture_doc_exists_and_covers_layers():
     assert os.path.exists(DOC), f"아키텍처 문서 부재: {DOC}"
-    text = open(DOC, encoding="utf-8").read()
+    with open(DOC, encoding="utf-8") as f:
+        text = f.read()
     missing = [s for s in REQUIRED if s not in text]
     assert not missing, f"필수 섹션/규칙 누락: {missing}"

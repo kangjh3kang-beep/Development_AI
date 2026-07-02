@@ -118,20 +118,18 @@ class DevelopmentMethodService:
             if profile.zoning_type in ("일반상업지역", "근린상업지역"):
                 if method in ("도시개발", "합동개발"):
                     scores[0] += 1
-            elif profile.zoning_type in ("준공업지역",):
-                if method == "도시정비":
-                    scores[0] += 2
+            elif profile.zoning_type in ("준공업지역",) and method == "도시정비":
+                scores[0] += 2
 
             # ── 기존 건물이 있으면 리모델링 보너스 ──
-            if profile.building_age_years and profile.building_age_years > 20:
-                if method == "리모델링":
-                    scores[0] += 2
-                    scores[1] += 1
+            if (profile.building_age_years and profile.building_age_years > 20
+                    and method == "리모델링"):
+                scores[0] += 2
+                scores[1] += 1
 
             # ── 소유자 많으면 도시정비 인허가 어려움 ──
-            if profile.num_owners > 100:
-                if method == "도시정비":
-                    scores[3] -= 3
+            if profile.num_owners > 100 and method == "도시정비":
+                scores[3] -= 3
 
             # ── 클램프 (1~10) ──
             adjusted[method] = [max(1, min(10, s)) for s in scores]
@@ -152,7 +150,7 @@ class DevelopmentMethodService:
         """
         result: dict[str, float] = {}
         for method, scores in adjusted_scores.items():
-            weighted = sum(s * w for s, w in zip(scores, AHP_WEIGHTS))
+            weighted = sum(s * w for s, w in zip(scores, AHP_WEIGHTS, strict=False))
             result[method] = round(weighted, 4)
         return result
 

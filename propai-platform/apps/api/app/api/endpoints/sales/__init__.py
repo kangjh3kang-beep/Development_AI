@@ -6,7 +6,7 @@ main 에서 sales_router 를 prefix="/api/v1/sales" 로 포함한다.
 
 from fastapi import APIRouter
 
-import app.schemas.sales as S
+import app.schemas.sales as S  # noqa: N812 — 스키마 모듈 축약 별칭(파일 전반 관례)
 from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.commission_agreement import commission_agreement_router

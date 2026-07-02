@@ -182,7 +182,8 @@ class IntegratedRecommender:
                if has_upzoning else "")
             + ("" if land_price_reliable
                else "공시지가 미확보 필지가 있어 순이익·NPV 절대값은 참고용입니다(랭킹은 유효). ")
-            + (f"지목 미확보 {land_cat_missing}필지 — 지목 기반 특이부지 판정이 생략됐을 수 있어 별도 확인이 필요합니다. "
+            + (f"지목 미확보 {land_cat_missing}필지 — "
+               "지목 기반 특이부지 판정이 생략됐을 수 있어 별도 확인이 필요합니다. "
                if land_cat_missing else "")
             + (gate.get("honest_disclosure") or "")
         ).strip()
@@ -360,11 +361,11 @@ class IntegratedRecommender:
 
         # 가능성 '하'·근거없는 경로 제외 후, 가능성 높은 순(상>중)으로 정렬 — 동일 목표지역·유형
         #   중복 시 최상 가능성 경로만 남기기 위함(여러 경로가 같은 목표지역을 가리켜 후보 폭증·중복 방지).
-        _FEAS_RANK = {"상": 0, "중": 1}
-        _FEAS_DISCOUNT = {"상": 0.85, "중": 0.65}  # 조건부 할인(고시·심의 전제) — 확정 현행 부당 압도 방지.
+        _feas_rank = {"상": 0, "중": 1}
+        _feas_discount = {"상": 0.85, "중": 0.65}  # 조건부 할인(고시·심의 전제) — 확정 현행 부당 압도 방지.
         scenarios = sorted(
             [s for s in ((upzoning or {}).get("scenarios") or []) if s.get("feasibility") in ("상", "중")],
-            key=lambda s: _FEAS_RANK.get(s.get("feasibility"), 9),
+            key=lambda s: _feas_rank.get(s.get("feasibility"), 9),
         )
         candidates: list[dict[str, Any]] = []
         seen: set[tuple] = set()  # (목표지역, 개발유형, 반올림 용적률) 중복 후보 제거
@@ -375,7 +376,7 @@ class IntegratedRecommender:
                 continue
             path = sc.get("path") or sc.get("path_key") or "종상향"
             feas = sc.get("feasibility")
-            disc = _FEAS_DISCOUNT.get(feas, 0.6)
+            disc = _feas_discount.get(feas, 0.6)
             # 종상향 후 허용 개발유형은 목표 용도지역 기준으로 재산정(허용유형 변동 반영).
             permitted_up = get_permitted_types(target_zone)
             for dev_type in permitted_up:

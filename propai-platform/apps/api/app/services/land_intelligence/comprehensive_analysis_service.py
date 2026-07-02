@@ -979,7 +979,6 @@ class ComprehensiveAnalysisService:
     async def _analyze_location(self, base: dict) -> dict[str, Any]:
         infra = base.get("infrastructure") or {}
         coords = base.get("coordinates") or {}
-        address = base.get("address", "")
 
         subway = infra.get("nearest_subway")
         schools = infra.get("schools", [])

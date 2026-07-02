@@ -26,7 +26,8 @@ PYEONG_SQM = 3.305785
 # basis=근거 법령. (실제 적용은 소유관계·동의현황·보유기간 등 현장확인 필요)
 MAGDO_RULES: dict[str, dict[str, Any]] = {
     "재개발·재건축(정비사업)": {
-        "consent_required": "조합설립: 토지등소유자 3/4 이상 + 토지면적 1/2 이상(재건축은 각 동 과반·전체 3/4·면적 3/4)",
+        "consent_required": ("조합설립: 토지등소유자 3/4 이상 + 토지면적 1/2 이상"
+                             "(재건축은 각 동 과반·전체 3/4·면적 3/4)"),
         "consent_pct": 75,
         "basis": "도시 및 주거환경정비법 제64조(매도청구)",
         "note": "조합설립 동의 후 미동의 조합원·토지등소유자에게 매도청구",
@@ -434,7 +435,8 @@ class DevelopmentScenarioSimulator:
                 far = far_legal
                 if zone_type:
                     # ★조례 실효 반영 — local_ordinance가 비면 calc_effective_far가 법정값을 반환하므로,
-                    #   OrdinanceService로 조례 한도를 조회해 주입(permits/parcels-info와 동일 — 서울 제1종 150 등 실효).
+                    #   OrdinanceService로 조례 한도를 조회해 주입
+                    #   (permits/parcels-info와 동일 — 서울 제1종 150 등 실효).
                     try:
                         ordinance = await _ord_svc.get_ordinance_limits(a, zone_type)
                     except Exception:  # noqa: BLE001 — 조례 조회 실패는 법정 폴백(정직)
@@ -551,7 +553,7 @@ class DevelopmentScenarioSimulator:
             if len(idx) < 2:
                 return {"contiguous": None, "components": None, "checked": len(idx),
                         "note": "필지 형상 데이터 부족 — 인접성 확인 불가(현장 확인 필요)"}
-            TOL_DEG = 0.00006  # 약 6m(공유경계 정밀오차·세도로 허용)
+            TOL_DEG = 0.00006  # noqa: N806 — 함수 내 상수 관례. 약 6m(공유경계 정밀오차·세도로 허용)
             n = len(idx)
             parent = list(range(n))
 
@@ -835,17 +837,18 @@ class DevelopmentScenarioSimulator:
             parts = []
             if block_ratio is not None:
                 meets = " · 2/3 충족" if blk.get("meets_2_3") else " · 2/3 미달"
-                parts.append(f"블록 노후도 {int(block_ratio * 100)}%(반경{blk.get('radius_m', 100)}m·{blk.get('buildings_found')}동{meets})")
+                parts.append(f"블록 노후도 {int(block_ratio * 100)}%"
+                             f"(반경{blk.get('radius_m', 100)}m·{blk.get('buildings_found')}동{meets})")
             elif parcel_ratio is not None:
                 parts.append(f"필지 노후도 {int(parcel_ratio * 100)}%")
             if units:
                 parts.append(f"세대수 {units}")
             return (" · 실데이터: " + ", ".join(parts)) if parts else ""
 
-        S: list[dict] = []
+        scheme_rows: list[dict] = []
 
         # 통합개발(합필/일단지)이 필요한 정책은 다필지 비인접 시 불가
-        INTEGRATION_SCHEMES = {
+        INTEGRATION_SCHEMES = {  # noqa: N806 — 함수 내 상수 관례
             "지구단위계획 연계", "도시개발사업(도시개발법)", "가로주택정비사업",
             "모아주택/모아타운", "재개발·재건축(정비사업)", "역세권 활성화사업",
             "역세권 장기전세주택(시프트)", "도심복합개발사업",
@@ -854,11 +857,11 @@ class DevelopmentScenarioSimulator:
         }
         # ★단일 소규모 필지가 '단독'으로 추진 가능한 방식(나머지는 인접 통합/구역 편입/기존
         #   건축물·세대수 요건이 있어 단독 검토대상이 못 됨). 단순건축만 자립 가능.
-        SELF_STANDING_SCHEMES = {"단순 건축"}
+        SELF_STANDING_SCHEMES = {"단순 건축"}  # noqa: N806 — 함수 내 상수 관례
         # 단일 필지가 통합·정비·지구단위·역세권형 사업의 '단독' 검토대상이 되는 현실 하한(약 300평).
         #   이 미만의 '단일' 필지는 가로구역/블록/구역을 단독으로 구성할 수 없어 단독 추진 불가
         #   (인접 필지 통합 또는 기존 지구단위/정비구역 편입 시에만 가능).
-        SINGLE_SMALL_MAX_SQM = 1000.0
+        SINGLE_SMALL_MAX_SQM = 1000.0  # noqa: N806 — 함수 내 상수 관례
         single_small = (not multi) and 0 < area < SINGLE_SMALL_MAX_SQM
         _pyeong = round(area / 3.3058) if area else 0
 
@@ -878,7 +881,7 @@ class DevelopmentScenarioSimulator:
                          "지구단위·역세권형 사업의 검토대상이 될 수 없습니다 — 인접 필지 통합(합필/"
                          "일단지) 또는 기존 지구단위계획구역·정비구역 편입 시에만 가능. "
                          "현 단계 현실적 추진방안: 단순 건축(현 용도지역 한도 내).")
-            S.append({"scheme": scheme, "applicable": applicable,
+            scheme_rows.append({"scheme": scheme, "applicable": applicable,
                       "est_far": round(est_far) if est_far else None,
                       "contribution_pct": contrib, "requirements": requirements,
                       "pros": pros, "cons": cons, "notes": notes,
@@ -937,7 +940,8 @@ class DevelopmentScenarioSimulator:
                 ["관리지역 지정 필요", "주민 합의"],
                 ("다세대·연립 밀집지 블록 통합개발 — 모아타운 지정 여부 확인"
                  if seoul else
-                 f"⚠ '모아주택/모아타운'은 서울시 브랜드 — {region or '해당 지역'}은 동일 근거(빈집·소규모주택정비특례법)의 "
+                 f"⚠ '모아주택/모아타운'은 서울시 브랜드 — {region or '해당 지역'}은 "
+                 "동일 근거(빈집·소규모주택정비특례법)의 "
                  "'소규모주택정비 관리지역'으로 추진 가능(명칭·세부기준은 해당 시·도 조례 확인)") + reno_note())
         else:
             add("모아주택/모아타운", "불가", None, None,
@@ -946,7 +950,8 @@ class DevelopmentScenarioSimulator:
         # 6) 역세권 활성화사업 / 역세권 장기전세주택 — ★서울시 조례 고유 제도
         if station and seoul:
             add("역세권 활성화사업", "조건부", (far or 0) * 1.5 if not com else (far or 0) * 1.2, 50,
-                ["역 승강장 350m 이내", "용도지역 상향(일반→준주거/상업)", "증가용적 50% 공공기여", "★서울시 조례 적용지역"],
+                ["역 승강장 350m 이내", "용도지역 상향(일반→준주거/상업)", "증가용적 50% 공공기여",
+                 "★서울시 조례 적용지역"],
                 ["용도지역 종상향으로 용적 대폭 상향", "복합개발 허용"],
                 ["증가용적의 50% 공공기여(임대·생활SOC)", "심의 절차"],
                 "역세권 입지 — 용도상향+공공기여로 고밀복합(서울시 역세권 활성화사업 운영기준)")
@@ -962,7 +967,8 @@ class DevelopmentScenarioSimulator:
                 ["서울특별시 조례(역세권 활성화사업 운영기준) 적용지역 필요"], [],
                 [f"{region or '해당 지역'}은 서울시 역세권 활성화사업 미적용"],
                 f"⚠ 역세권 활성화사업은 서울시 고유 제도 — {region or '해당 지자체'}는 미적용. "
-                "대체: 지구단위계획(역세권 용적 완화)·입지규제최소구역·도심복합개발사업 또는 해당 시·도 역세권 관련 조례 확인")
+                "대체: 지구단위계획(역세권 용적 완화)·입지규제최소구역·도심복합개발사업 "
+                "또는 해당 시·도 역세권 관련 조례 확인")
             add("역세권 장기전세주택(시프트)", "불가", None, None,
                 ["서울특별시(SH) 운영지역 필요"], [], ["서울시 고유 제도(시프트)"],
                 f"⚠ 장기전세(시프트)는 서울시(SH) 고유 — {region or '해당 지역'} 미적용. "
@@ -1008,7 +1014,8 @@ class DevelopmentScenarioSimulator:
         # 9) 자율주택정비사업 (빈집 및 소규모주택 정비 특례법)
         if res and 0 < area < 2000:
             add("자율주택정비사업", "조건부", (far or 0) * 1.1, 0,
-                ["단독 10호 미만 또는 공동 20세대 미만(합 20 미만)", "노후·불량 2/3 이상", "주민합의체 구성", "비-정비예정구역"],
+                ["단독 10호 미만 또는 공동 20세대 미만(합 20 미만)", "노후·불량 2/3 이상",
+                 "주민합의체 구성", "비-정비예정구역"],
                 ["주민합의체 자율시행·신속", "기금융자·기반시설 지원"],
                 ["소규모 한정", "전원 합의 부담"],
                 "노후 단독·다세대 소규모 자율정비" + reno_note())
@@ -1071,8 +1078,10 @@ class DevelopmentScenarioSimulator:
             add("역세권 청년안심주택", "조건부", (far or 0) * 1.2, 20,
                 ["역세권·간선도로변", "해당 시·도 청년·임대주택 조례", "청년·신혼 임대"],
                 ["청년임대 기금·세제 지원(전국 공통)"],
-                [f"'역세권 청년안심주택'은 서울시 명칭 — {region or '해당 지역'}은 유사 청년·임대 제도로 추진", "조례·요건 상이"],
-                f"⚠ 서울시 고유 명칭 — {region or '해당 지역'}은 행복주택·청년매입임대·시도별 청년주택 조례 등 유사제도 확인 필요")
+                [f"'역세권 청년안심주택'은 서울시 명칭 — {region or '해당 지역'}은 유사 청년·임대 제도로 추진",
+                 "조례·요건 상이"],
+                f"⚠ 서울시 고유 명칭 — {region or '해당 지역'}은 "
+                "행복주택·청년매입임대·시도별 청년주택 조례 등 유사제도 확인 필요")
         else:
             add("역세권 청년안심주택", "불가", None, None,
                 ["역세권·주거 필요"], [], ["미해당"], "")
@@ -1131,7 +1140,8 @@ class DevelopmentScenarioSimulator:
         # 20) 대지조성사업 (주택법 §15 대지조성 / 택지개발 — 주택건설용 대지 조성·분양)
         if area >= 10000 or (not res and not com):
             add("대지조성사업", "조건부", far or None, 10,
-                ["주택건설용 대지 조성(주택법) 또는 택지개발", "기반시설(도로·상하수) 조성", "녹지·관리·비도시는 형질변경/전용 인허가"],
+                ["주택건설용 대지 조성(주택법) 또는 택지개발", "기반시설(도로·상하수) 조성",
+                 "녹지·관리·비도시는 형질변경/전용 인허가"],
                 ["택지 조성 후 단독·단지 용지 분양", "대규모 부지 정형화·단계 개발"],
                 ["형질변경·전용 인허가", "기반시설 조성 비용"],
                 "대규모 부지·녹지/관리지역 — 대지조성 후 단독·전원·단지 용지 공급")
@@ -1141,12 +1151,12 @@ class DevelopmentScenarioSimulator:
 
         # 각 방식에 건축 가능 분류(아파트/호텔/상가/지산/빌라/콘도/전원주택 등) 부착.
         _zone = c.get("primary_zone")
-        for _s in S:
+        for _s in scheme_rows:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
             # 시나리오↔규범 일치(가산) — 각 사업방식의 근거법령 verified 딥링크 부착(소비처 옵셔널).
             _s["legal_refs"] = _scheme_legal_refs(_s.get("scheme", ""))
 
-        return S
+        return scheme_rows
 
     # ── 주소 → 시·도(지역) 판정. 서울시 조례 고유 방식의 지역 적용가능성 판정에 사용 ──
     @staticmethod
@@ -1170,7 +1180,8 @@ class DevelopmentScenarioSimulator:
         z = zone or ""
         # 1) 용도지역 기준 기본 건축 가능 분류.
         if any(k in z for k in ("중심상업", "일반상업", "근린상업", "유통상업")):
-            base = ["상가(근린생활)", "오피스(업무시설)", "오피스텔", "주상복합 아파트", "호텔/생활숙박", "지식산업센터"]
+            base = ["상가(근린생활)", "오피스(업무시설)", "오피스텔", "주상복합 아파트", "호텔/생활숙박",
+                    "지식산업센터"]
         elif "준주거" in z:
             base = ["주상복합 아파트", "아파트", "오피스텔", "상가", "근린생활"]
         elif "준공업" in z:
@@ -1187,7 +1198,8 @@ class DevelopmentScenarioSimulator:
             base = ["용도지역 확인 필요"]
         # 2) 개발방식 보정(방식 특성상 유리한 분류로 좁힘/추가).
         if "역세권" in scheme or "도심복합" in scheme:
-            return ["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"] + (["청년·신혼 임대주택"] if "청년" in scheme else [])
+            return (["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"]
+                    + (["청년·신혼 임대주택"] if "청년" in scheme else []))
         if any(k in scheme for k in ("가로주택", "모아", "자율주택", "소규모재건축", "주거환경")):
             return ["저층 아파트", "연립/다세대(빌라)", "단독주택"]
         if "대지조성" in scheme:

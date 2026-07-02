@@ -192,7 +192,8 @@ async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> 
         yms.append(f"{y:04d}{mo:02d}")
         mo -= 1
         if mo == 0:
-            mo = 12; y -= 1
+            mo = 12
+            y -= 1
     dong_pp: list[float] = []
     sigu_pp: list[float] = []
     for ym in yms:
@@ -256,7 +257,10 @@ async def _nearby_presale_reference(sigungu5: str) -> dict[str, Any]:
             "available": True, "area": area, "count": listing.get("count"),
             "samples": samples,
             "price_range_man": ([round(min(prices)), round(max(prices))] if prices else None),
-            "note": "청약홈 주변 분양가는 '참고·교차검증'입니다 — 적정분양가 산정은 주변 실거래 앵커 기준(주변 분양가 과대표시 방지).",
+            "note": (
+                "청약홈 주변 분양가는 '참고·교차검증'입니다 — "
+                "적정분양가 산정은 주변 실거래 앵커 기준(주변 분양가 과대표시 방지)."
+            ),
         }
     except Exception:  # noqa: BLE001 — 청약홈 실패는 적정분양가 결과 무손상(참고 누락만).
         return {"available": False, "area": area, "note": "청약홈 조회 실패"}
@@ -383,7 +387,10 @@ async def suggest_base_price(
         _ev_list.append({
             "label": "주변 분양가(청약홈) 참고",
             "value": f"{pr[0]:,}~{pr[1]:,}만원",
-            "basis": "청약홈 인근 분양 단지 분양가 — 거래사례비교 '참고'(산정 앵커는 주변 실거래, 주변 분양가 과대표시 방지)",
+            "basis": (
+                "청약홈 인근 분양 단지 분양가 — "
+                "거래사례비교 '참고'(산정 앵커는 주변 실거래, 주변 분양가 과대표시 방지)"
+            ),
         })
 
     return {

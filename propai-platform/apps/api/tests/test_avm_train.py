@@ -203,7 +203,7 @@ class TestBuildTrainingFrame:
 
     def test_fixed_values(self):
         pd = pytest.importorskip("pandas")  # noqa: F841
-        X, y = avm_train.build_training_frame(self.ROWS)
+        X, y = avm_train.build_training_frame(self.ROWS)  # noqa: N806 — ML 관례(설계행렬 X)
 
         assert list(X.columns) == avm_train.FEATURE_COLUMNS
         assert len(X) == 3  # 가격 0 행 제외
@@ -260,7 +260,7 @@ class TestTrainXgboostSmoke:
                 "floor": (i % 20) + 1,
                 "build_year": 2000 + (i % 25),
             })
-        X, y = avm_train.build_training_frame(rows)
+        X, y = avm_train.build_training_frame(rows)  # noqa: N806 — ML 관례(설계행렬 X)
         model, mape_pct, n_train, n_holdout = avm_train.train_xgboost(
             X, y, n_estimators=50,
         )

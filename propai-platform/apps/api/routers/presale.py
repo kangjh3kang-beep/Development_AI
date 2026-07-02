@@ -97,7 +97,8 @@ async def list_interests(current: CurrentUser = Depends(get_current_user), db: A
 
 
 @router.post("/interests")
-async def add_interest(req: InterestReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def add_interest(req: InterestReq, current: CurrentUser = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
     res = await monitor.add_interest(db, current.user_id, req.label, req.area, req.sigungu,
                                      req.keyword, req.min_households)
     # 등록 직후 베이스라인 1회 즉시 수행(현재 매칭 건수 요약 알림).
@@ -112,7 +113,8 @@ async def add_interest(req: InterestReq, current: CurrentUser = Depends(get_curr
 
 
 @router.delete("/interests/{interest_id}")
-async def remove_interest(interest_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def remove_interest(interest_id: str, current: CurrentUser = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
     return await monitor.remove_interest(db, current.user_id, interest_id)
 
 
@@ -140,7 +142,8 @@ async def monitor_summary(current: CurrentUser = Depends(get_current_user), db: 
 
 
 @router.get("/monitor/feed")
-async def monitor_feed(unread_only: bool = False, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def monitor_feed(unread_only: bool = False, current: CurrentUser = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
     """분류된 모니터링 알림 피드(category=presale)."""
     rows = await notif.list_inapp(db, current.user_id, unread_only=unread_only, limit=80)
     return {"items": [r for r in rows if r["category"] == "presale"]}
@@ -151,7 +154,8 @@ class ReadReq(BaseModel):
 
 
 @router.post("/monitor/read")
-async def monitor_read(req: ReadReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def monitor_read(req: ReadReq, current: CurrentUser = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
     return await notif.mark_read(db, current.user_id, req.ids)
 
 
@@ -169,7 +173,8 @@ async def get_prefs(current: CurrentUser = Depends(get_current_user), db: AsyncS
 
 
 @router.put("/notify/prefs")
-async def set_prefs(req: PrefsReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def set_prefs(req: PrefsReq, current: CurrentUser = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
     return await notif.set_prefs(db, current.user_id, req.phone, req.sms_enabled,
                                  req.kakao_enabled, req.inapp_enabled)
 

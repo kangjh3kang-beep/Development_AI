@@ -5,6 +5,7 @@ parking validate, safety sanitize, webhook sign, avm static,
 floor_plan prompt, 라우터 엔드포인트 등을 커버한다.
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -150,12 +151,12 @@ class TestKakaoHandler:
             "refresh_token": "rt_456",
         }
 
-        with patch("apps.api.auth.kakao_handler.httpx.AsyncClient") as MockClient:
+        with patch("apps.api.auth.kakao_handler.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await exchange_code_for_token(
                 code="test_code",
@@ -179,12 +180,12 @@ class TestKakaoHandler:
             },
         }
 
-        with patch("apps.api.auth.kakao_handler.httpx.AsyncClient") as MockClient:
+        with patch("apps.api.auth.kakao_handler.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await fetch_kakao_user_info("at_123")
             assert result["id"] == 12345
@@ -360,11 +361,11 @@ class TestJeonseRiskStatic:
             "transaction_count": 10,
         }):
             try:
-                with patch("apps.api.services.jeonse_risk_service.MolitClient") as MockMolit:
+                with patch("apps.api.services.jeonse_risk_service.MolitClient") as mock_molit_cls:
                     mock_client = AsyncMock()
                     mock_client.get_apartment_trades = AsyncMock(return_value={"items": []})
                     mock_client.get_apartment_rent = AsyncMock(return_value={"items": []})
-                    MockMolit.return_value = mock_client
+                    mock_molit_cls.return_value = mock_client
                     data = await svc._fetch_market_data("서울 강남구", "11680")
                     assert isinstance(data, dict)
             except Exception:
@@ -610,18 +611,18 @@ class TestParkingValidation:
                 MagicMock(),  # _preprocess_plate_image
                 "12가3456",   # _run_ocr
             ])
-            with patch("apps.api.services.parking_service.validate_plate_number", return_value="12가3456"):
-                try:
-                    result = await svc.recognize_plate(
-                        tenant_id=TEST_TENANT_ID,
-                        project_id=TEST_PROJECT_ID,
-                        camera_id="cam_01",
-                        image_bytes=b"\x89PNG\r\n",
-                        zone="A",
-                        event_type="entry",
-                    )
-                except Exception:
-                    pass  # asyncio.to_thread 내부 구현 차이
+            with (
+                patch("apps.api.services.parking_service.validate_plate_number", return_value="12가3456"),
+                contextlib.suppress(Exception),  # asyncio.to_thread 내부 구현 차이
+            ):
+                await svc.recognize_plate(
+                    tenant_id=TEST_TENANT_ID,
+                    project_id=TEST_PROJECT_ID,
+                    camera_id="cam_01",
+                    image_bytes=b"\x89PNG\r\n",
+                    zone="A",
+                    event_type="entry",
+                )
 
 
 # ═══════════════════════════════════════════════
@@ -760,12 +761,12 @@ class TestWebhookServiceExtended:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        with patch("apps.api.services.webhook_service.httpx.AsyncClient") as MockClient:
+        with patch("apps.api.services.webhook_service.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             try:
                 delivery = await svc._send_with_retry(
@@ -1158,8 +1159,7 @@ class TestBaseClientExtended:
                 client._base_url = "https://test.com"
                 client._timeout = 30
                 client._headers = {}
-                c = await client._get_client()
-                assert c is not None or True
+                await client._get_client()
         except Exception:
             pass
 
@@ -1220,11 +1220,8 @@ class TestAICostsServiceExtended:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         svc = AICostsService(db=mock_db)
-        try:
-            result = await svc.get_dashboard(tenant_id=TEST_TENANT_ID)
-            assert result is not None or True
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            await svc.get_dashboard(tenant_id=TEST_TENANT_ID)
 
 
 class TestPortalsServiceExtended:

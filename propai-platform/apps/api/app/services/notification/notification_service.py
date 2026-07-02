@@ -72,7 +72,8 @@ async def set_prefs(db: AsyncSession, user_id: Any, phone: str, sms: bool,
     await ensure_schema(db)
     digits = "".join(ch for ch in (phone or "") if ch.isdigit())  # 숫자만 저장
     await db.execute(
-        text("INSERT INTO user_notification_prefs(user_id, phone, sms_enabled, kakao_enabled, inapp_enabled, updated_at) "
+        text("INSERT INTO user_notification_prefs"
+             "(user_id, phone, sms_enabled, kakao_enabled, inapp_enabled, updated_at) "
              "VALUES (:u,:p,:s,:k,:i, now()) "
              "ON CONFLICT (user_id) DO UPDATE SET phone=:p, sms_enabled=:s, kakao_enabled=:k, "
              "inapp_enabled=:i, updated_at=now()"),

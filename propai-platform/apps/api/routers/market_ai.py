@@ -34,9 +34,11 @@ async def ask_market(
                 items.append({"label": "평균 거래가(만원)", "value": stats.get("avg_price_10k"),
                               "basis": "조회 실거래 전수 평균(거래사례비교)"})
             if stats.get("min_price_10k") is not None:
-                items.append({"label": "최저 거래가(만원)", "value": stats.get("min_price_10k"), "basis": "조회 실거래 최저"})
+                items.append({"label": "최저 거래가(만원)", "value": stats.get("min_price_10k"),
+                              "basis": "조회 실거래 최저"})
             if stats.get("max_price_10k") is not None:
-                items.append({"label": "최고 거래가(만원)", "value": stats.get("max_price_10k"), "basis": "조회 실거래 최고"})
+                items.append({"label": "최고 거래가(만원)", "value": stats.get("max_price_10k"),
+                              "basis": "조회 실거래 최고"})
             if items:
                 result["evidence"] = build_evidence_block(
                     items=items, legal_ref_keys=["realtx_report"],

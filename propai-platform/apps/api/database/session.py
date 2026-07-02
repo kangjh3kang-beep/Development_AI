@@ -4,6 +4,7 @@ SQLAlchemy async 엔진 + asyncpg 기반.
 멀티테넌트 RLS를 위해 세션마다 app.current_tenant를 설정한다.
 """
 
+import uuid as _uuid
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
@@ -20,8 +21,6 @@ from apps.api.config import get_settings
 settings = get_settings()
 
 # Supabase PGBouncer 호환: prepared statements 완전 비활성화
-import uuid as _uuid
-
 _connect_args: dict = {
     "statement_cache_size": 0,
     "prepared_statement_cache_size": 0,

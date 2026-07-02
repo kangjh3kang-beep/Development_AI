@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import structlog
@@ -147,15 +148,13 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     }
 
     incentive: dict[str, Any] = {}
-    try:
+    with contextlib.suppress(Exception):
         incentive = calc_far_incentive(
             zone_type=zone_type,
             ordinance_far=effective_far,
             donation_ratio_pct=0.0,
             national_far=national_far,
         )
-    except Exception:
-        pass
 
     # 분석 주석 생성 — 전문적 부동산 용어, 자연스러운 한국어
     source = ordinance.get("source", "법정상한")

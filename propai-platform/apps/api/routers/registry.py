@@ -7,14 +7,14 @@ import time
 import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.registry.registry_service import RegistryService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/registry", tags=["부동산 등기부"])
 
@@ -299,7 +299,7 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
     ws["A1"].font = Font(size=14, bold=True)
 
     # 대지지분(평)·세대면적: 집합건물(공동주택·다세대·집합상가) 세대행에서 채워진다.
-    PY = 3.305785  # 1평 = 3.305785㎡
+    PY = 3.305785  # noqa: N806 — 평 환산 상수(도메인 표기 관례), 1평 = 3.305785㎡
     headers = ["번호", "지번/동·호", "소유자", "대지권비율/지분", "대지지분(㎡)", "대지지분(평)",
                "세대전유면적(㎡)", "소유구분",
                "매입예정가(원)", "매입가(원)", "계약확정", "토지사용동의", "지구단위동의"]
@@ -414,7 +414,7 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
         rd = {headers[i]: (cells[i] if i < len(cells) else "") for i in range(len(headers))}
 
         def pick(*keys: str, exclude: tuple[str, ...] = ()) -> str:
-            for k, v in rd.items():
+            for k, v in rd.items():  # noqa: B023 — pick는 같은 루프 반복 내에서만 호출(지연 호출 없음)
                 if any(key in k for key in keys) and not any(e in k for e in exclude):
                     return v
             return ""

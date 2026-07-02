@@ -14,6 +14,7 @@ Celery 태스크(또는 인프로세스 폴백)가 flush_batch() 로 배치 INSE
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import logging
@@ -204,8 +205,6 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
         return len(params)
     except Exception as e:  # noqa: BLE001
         logger.warning("growth flush_batch 실패(%d건 유실): %s", len(params), str(e)[:160])
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return 0

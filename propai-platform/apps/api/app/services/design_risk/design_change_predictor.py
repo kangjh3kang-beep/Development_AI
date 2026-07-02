@@ -216,7 +216,8 @@ class DesignChangePredictor:
                     f"{short}대 추가 확보(기계식·필로티·지하 1개층 추가) 또는 세대수·연면적을 "
                     f"법정주차 충족 수준으로 조정하세요. 착공 전 조정이 비용 최소.",
                     current=f"{parking}대", limit=f"최소 {required_parking}대",
-                    est_impact=f"미해소 시 세대 축소 또는 주차층 추가 → 설계변경비 +{_DESIGN_CHG_TYPICAL_PCT}~{_DESIGN_CHG_MAX_PCT}%",
+                    est_impact="미해소 시 세대 축소 또는 주차층 추가 → "
+                    f"설계변경비 +{_DESIGN_CHG_TYPICAL_PCT}~{_DESIGN_CHG_MAX_PCT}%",
                 ))
 
         # (b) 피난계단(직통계단 2개소) — 5층 이상 또는 층당 200㎡ 초과

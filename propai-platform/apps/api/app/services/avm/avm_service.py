@@ -101,11 +101,11 @@ class AVMService:
             weights.append(w)
             prices.append(comp["price_per_sqm"])
         w_sum = sum(weights)
-        return sum(w * p for w, p in zip(weights, prices)) / w_sum
+        return sum(w * p for w, p in zip(weights, prices, strict=False)) / w_sum
 
     def _haversine(self, lat1, lon1, lat2, lon2) -> float:
         """Haversine 공식 거리 (km)"""
-        R = 6371.0
+        R = 6371.0  # noqa: N806 — 지구 반경 수학 관례
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
         dphi = math.radians(lat2 - lat1)
         dlambda = math.radians(lon2 - lon1)
@@ -138,7 +138,8 @@ class AVMService:
         _cprices = [c.get("price_per_sqm") for c in comparables if c.get("price_per_sqm")]
         _signals = [Signal("idw_local", float(idw_price), sample_size=len(comparables), source="live", weight=1.2)]
         if model_used:
-            _signals.append(Signal("ml_model", float(ml_price), sample_size=len(comparables), source="live", weight=1.0))
+            _signals.append(
+                Signal("ml_model", float(ml_price), sample_size=len(comparables), source="live", weight=1.0))
         elif len(_cprices) >= 3:
             _median = float(sorted(_cprices)[len(_cprices) // 2])
             _signals.append(Signal("comparable_median", _median, sample_size=len(_cprices), source="live", weight=1.0))
@@ -175,10 +176,13 @@ class AVMService:
                 if margin is not None else None
             ),
             "cross_validation": cross.to_dict() if cross is not None else None,
-            "method_note": "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. 앙상블은 모델↔지역 실거래 교차검증(이상치 모델 배제). 학습 R²는 train_model 시에만 산출.",
+            "method_note": (
+                "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. "
+                "앙상블은 모델↔지역 실거래 교차검증(이상치 모델 배제). 학습 R²는 train_model 시에만 산출."
+            ),
         }
 
-    def train_model(self, X_train: Any, y_train: Any) -> dict:
+    def train_model(self, X_train: Any, y_train: Any) -> dict:  # noqa: N803 — sklearn X 표기 관례(공개 API 시그니처 보존)
         """XGBoost 모델 학습 + MLflow 추적"""
         _mlflow = _ensure_mlflow()
         with _mlflow.start_run():

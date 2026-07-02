@@ -42,11 +42,20 @@ class ZEBService:
         u_window = current_data.get("u_window", 1.5)
         ach = current_data.get("airtightness_ach", 3.0)
         if u_wall > 0.15:
-            improvements.append({"item": "외벽 단열", "current_u": u_wall, "target_u": 0.15, "saving_pct": round((1 - 0.15 / u_wall) * 30, 1)})
+            improvements.append({
+                "item": "외벽 단열", "current_u": u_wall, "target_u": 0.15,
+                "saving_pct": round((1 - 0.15 / u_wall) * 30, 1),
+            })
         if u_window > 0.9:
-            improvements.append({"item": "창호 교체", "current_u": u_window, "target_u": 0.9, "saving_pct": round((1 - 0.9 / u_window) * 25, 1)})
+            improvements.append({
+                "item": "창호 교체", "current_u": u_window, "target_u": 0.9,
+                "saving_pct": round((1 - 0.9 / u_window) * 25, 1),
+            })
         if ach > 1.0:
-            improvements.append({"item": "기밀성 강화", "current": ach, "target": 1.0, "saving_pct": round((1 - 1.0 / ach) * 15, 1)})
+            improvements.append({
+                "item": "기밀성 강화", "current": ach, "target": 1.0,
+                "saving_pct": round((1 - 1.0 / ach) * 15, 1),
+            })
         return improvements
 
     def forecast_certification(self, current_grade: int, improvements: list[dict]) -> dict:

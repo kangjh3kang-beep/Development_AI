@@ -125,8 +125,12 @@ def _check_parking(dev_type: str, unit_count: int, total_gfa: float, land_area: 
     if underground_capacity >= required:
         return ConditionCheck("주차", "pass", f"필요 {required}대, 지하주차 약 {underground_capacity}대 확보 가능")
     if underground_capacity >= required * 0.7:
-        return ConditionCheck("주차", "conditional", f"필요 {required}대, 지하주차 약 {underground_capacity}대 — 기계식주차 병행 검토")
-    return ConditionCheck("주차", "conditional", f"필요 {required}대 > 지하추정 {underground_capacity}대 — 주차 확보 방안 필요")
+        return ConditionCheck(
+            "주차", "conditional",
+            f"필요 {required}대, 지하주차 약 {underground_capacity}대 — 기계식주차 병행 검토")
+    return ConditionCheck(
+        "주차", "conditional",
+        f"필요 {required}대 > 지하추정 {underground_capacity}대 — 주차 확보 방안 필요")
 
 def _check_daylighting(dev_type: str, zone_type: str, floor_count: int, building_area: float) -> ConditionCheck:
     if zone_type not in RESIDENTIAL_ZONES:
@@ -194,8 +198,7 @@ def _check_special_conditions(dev_type: str, zone_type: str, land_area: float, t
         if not cond or bldg_type_name not in name:
             continue
 
-        if m := re.search(r"(\d+)층\s*이하", cond):
-            max_f = int(m.group(1))
+        if re.search(r"(\d+)층\s*이하", cond):
             issues.append(f"{name}: {cond}")
         if "바닥면적" in cond and (m := re.search(r"([\d,]+)㎡", cond)):
             limit = int(m.group(1).replace(",", ""))

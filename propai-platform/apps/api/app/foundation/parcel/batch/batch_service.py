@@ -65,7 +65,8 @@ def _area_outliers(items: list[BatchItemResult]) -> list[dict[str, Any]]:
         if top_cnt >= max(3, int(len(areas) * 0.6)):
             uniform.append({
                 "kind": "uniform_area", "area_sqm": top_val, "count": top_cnt, "total": len(areas),
-                "reason": f"{len(areas)}필지 중 {top_cnt}필지가 동일 면적({top_val}㎡) — 오매칭/중복 정황, 주소 정밀화 권고",
+                "reason": f"{len(areas)}필지 중 {top_cnt}필지가 동일 면적({top_val}㎡) — "
+                          "오매칭/중복 정황, 주소 정밀화 권고",
             })
     if len(areas) < 5:
         return uniform

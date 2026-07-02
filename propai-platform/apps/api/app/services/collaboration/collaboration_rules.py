@@ -104,9 +104,8 @@ def is_blocked_upload(data: bytes, filename: str) -> bool:
         return True
     if head in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe"):
         return True  # Mach-O / fat binary / java class
-    if (data or b"")[:2] == b"#!":  # shell/script shebang
-        return True
-    return False
+    # shell/script shebang
+    return (data or b"")[:2] == b"#!"
 
 
 def document_in_scope(project_role: str, member_scope, doc_category) -> bool:

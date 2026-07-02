@@ -71,8 +71,10 @@ class PublicDataRegistry:
             ("court_registry", "api", "daily"),           # 등기정보
             ("kepco_energy", "api", "monthly"),           # 전력사용량
             ("molit_building_register", "api", "daily"),  # 건축HUB 건축물대장(표제부·세대/동/호·멸실/미준공)
-            ("hub_permit", "api", "daily"),               # 건축HUB 주택인허가(HsPmsHubService, HUB_PERMIT_API_KEY→MOLIT 폴백)
-            ("arch_permit", "api", "daily"),              # 건축HUB 건축인허가(ArchPmsHubService, HUB_PERMIT_API_KEY→MOLIT 폴백)
+            # 건축HUB 주택인허가(HsPmsHubService, HUB_PERMIT_API_KEY→MOLIT 폴백)
+            ("hub_permit", "api", "daily"),
+            # 건축HUB 건축인허가(ArchPmsHubService, HUB_PERMIT_API_KEY→MOLIT 폴백)
+            ("arch_permit", "api", "daily"),
 
             # 하드코딩 (수동 갱신 — 위험!)
             ("tax_acquisition_rates", "hardcoded", "yearly"),   # 취득세율

@@ -305,7 +305,9 @@ async def get_drawing_svg(
     project_name: str = Query("PropAI"),
     building_use: str = Query("공동주택"),
     unit_types: str | None = Query(None, description="쉼표구분 평형(예: 59A,84A)"),
-    mix: str | None = Query(None, description="세대믹스 명시(P4 슬라이더): 'type:area:total' 쉼표구분(예: 59A:59:20,84A:84:20)"),
+    mix: str | None = Query(
+        None, description="세대믹스 명시(P4 슬라이더): 'type:area:total' 쉼표구분(예: 59A:59:20,84A:84:20)"
+    ),
 ):
     """특정 도면의 SVG를 반환한다.
 
@@ -727,8 +729,8 @@ async def export_edited_dxf(
 
     try:
         pid = _uuid.UUID(project_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=404, detail="저장된 편집본 없음(UUID 아님)")
+    except (ValueError, AttributeError) as err:
+        raise HTTPException(status_code=404, detail="저장된 편집본 없음(UUID 아님)") from err
 
     row = (await db.execute(
         text("""

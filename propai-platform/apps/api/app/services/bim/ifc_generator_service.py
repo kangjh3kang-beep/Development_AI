@@ -124,7 +124,7 @@ class IfcGeneratorService:
 
             # 외벽 4면(각 면을 얇은 박스로 압출) — 슬래브 위 floor_height만큼
             walls = self._make_perimeter_walls(model, body, bw, bd, fh, wall_thickness_m)
-            for wi, (wall_solid, name) in enumerate(walls):
+            for _wi, (wall_solid, name) in enumerate(walls):
                 wall = run("root.create_entity", model, ifc_class="IfcWall", name=f"{i + 1}F-Wall-{name}")
                 run("geometry.assign_representation", model, product=wall, representation=wall_solid)
                 self._place_z(model, wall, elev + slab_thickness_m)
@@ -158,7 +158,10 @@ class IfcGeneratorService:
                         (cx + cs - cwt, cy, cwt, cs),         # 우
                     ]
                     for wpi, (wx, wy, ww, wd) in enumerate(core_walls):
-                        cwl = run("root.create_entity", model, ifc_class="IfcColumn", name=f"{i + 1}F-CoreWall-{ci + 1}-{wpi}")
+                        cwl = run(
+                            "root.create_entity", model, ifc_class="IfcColumn",
+                            name=f"{i + 1}F-CoreWall-{ci + 1}-{wpi}",
+                        )
                         cwl_solid = self._extrude_rect(model, body, wx, wy, ww, wd, fh)
                         run("geometry.assign_representation", model, product=cwl, representation=cwl_solid)
                         self._place_z(model, cwl, elev + slab_thickness_m)
@@ -174,10 +177,15 @@ class IfcGeneratorService:
                     half_w = (cs - 2 * inset) / 2
                     for sp in range(2):
                         sx = cx + inset + sp * half_w
-                        stair = run("root.create_entity", model, ifc_class="IfcStair", name=f"{i + 1}F-Stair-{ci + 1}-{sp}")
+                        stair = run(
+                            "root.create_entity", model, ifc_class="IfcStair",
+                            name=f"{i + 1}F-Stair-{ci + 1}-{sp}",
+                        )
                         # 계단참: 층 중간 높이의 얇은 슬래브(경사 대용 — glTF에서 단 표현)
                         st_z = sp * (fh / 2)
-                        stair_solid = self._extrude_rect(model, body, sx, cy + inset, half_w - 0.05, cs - 2 * inset, 0.15)
+                        stair_solid = self._extrude_rect(
+                            model, body, sx, cy + inset, half_w - 0.05, cs - 2 * inset, 0.15,
+                        )
                         run("geometry.assign_representation", model, product=stair, representation=stair_solid)
                         self._place_z(model, stair, elev + slab_thickness_m + st_z)
                         run("spatial.assign_container", model, products=[stair], relating_structure=storey)
@@ -215,7 +223,10 @@ class IfcGeneratorService:
                     for wj in range(windows_per_side):
                         wx = step * (wj + 1) - win_w / 2
                         wx = max(wall_thickness_m, min(wx, bw - win_w - wall_thickness_m))
-                        win = run("root.create_entity", model, ifc_class="IfcWindow", name=f"{i + 1}F-Win-{side}{wj + 1}")
+                        win = run(
+                            "root.create_entity", model, ifc_class="IfcWindow",
+                            name=f"{i + 1}F-Win-{side}{wj + 1}",
+                        )
                         win_solid = self._extrude_rect(model, body, wx, side_y, win_w, wall_thickness_m, win_h)
                         run("geometry.assign_representation", model, product=win, representation=win_solid)
                         self._place_z(model, win, elev + slab_thickness_m + sill)
@@ -230,7 +241,7 @@ class IfcGeneratorService:
             # 세대 분할 내벽 + 발코니 + 현관문: 복도 기준 전면/배면 zone에 세대를 배치.
             # unit_sequence가 있으면 평형별 가변 폭(면적/zone깊이), 없으면 unit_width 균등.
             # 1층 제외(상가/로비).
-            if (unit_width_m and unit_width_m > 0) or unit_sequence:
+            if (unit_width_m and unit_width_m > 0) or unit_sequence:  # noqa: SIM102 — 대블록 재들여쓰기 회피(동작 보존)
                 if i > 0:
                     pwt = 0.15  # 세대 칸막이 두께
                     inner_w = bw - 2 * wall_thickness_m
@@ -242,7 +253,7 @@ class IfcGeneratorService:
                         ("F", wall_thickness_m, max(wall_thickness_m, corr_y0)),
                         ("B", min(bd - wall_thickness_m, corr_y1), bd - wall_thickness_m),
                     ]
-                    for zi, (face, zy0, zy1) in enumerate(zones):
+                    for _zi, (face, zy0, zy1) in enumerate(zones):
                         zd = zy1 - zy0
                         if zd <= 0.3:
                             continue
@@ -252,8 +263,13 @@ class IfcGeneratorService:
                         for ui, uw in enumerate(widths):
                             # 세대 사이 칸막이(첫 세대 앞은 외벽이라 생략)
                             if ui > 0:
-                                part = run("root.create_entity", model, ifc_class="IfcWallStandardCase", name=f"{i + 1}F-Part-{face}-{ui}")
-                                part_solid = self._extrude_rect(model, body, cursor - pwt / 2, zy0, pwt, zd, fh - slab_thickness_m)
+                                part = run(
+                                    "root.create_entity", model, ifc_class="IfcWallStandardCase",
+                                    name=f"{i + 1}F-Part-{face}-{ui}",
+                                )
+                                part_solid = self._extrude_rect(
+                                    model, body, cursor - pwt / 2, zy0, pwt, zd, fh - slab_thickness_m,
+                                )
                                 run("geometry.assign_representation", model, product=part, representation=part_solid)
                                 self._place_z(model, part, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[part], relating_structure=storey)
@@ -270,8 +286,13 @@ class IfcGeneratorService:
                             # 발코니: 전면 세대 외부(외벽 밖 1.5m 캔틸레버 슬래브)
                             if balconies and face == "F":
                                 bal_d = 1.5
-                                bal = run("root.create_entity", model, ifc_class="IfcSlab", name=f"{i + 1}F-Balcony-{ui}")
-                                bal_solid = self._extrude_rect(model, body, cursor + 0.3, -bal_d, max(0.5, uw - 0.6), bal_d, 0.12)
+                                bal = run(
+                                    "root.create_entity", model, ifc_class="IfcSlab",
+                                    name=f"{i + 1}F-Balcony-{ui}",
+                                )
+                                bal_solid = self._extrude_rect(
+                                    model, body, cursor + 0.3, -bal_d, max(0.5, uw - 0.6), bal_d, 0.12,
+                                )
                                 run("geometry.assign_representation", model, product=bal, representation=bal_solid)
                                 self._place_z(model, bal, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[bal], relating_structure=storey)
@@ -287,8 +308,13 @@ class IfcGeneratorService:
                                 door_w, door_h = 0.9, 2.1
                                 door_y = zy1 if face == "F" else zy0 - wall_thickness_m
                                 dx = cursor + uw / 2 - door_w / 2
-                                door = run("root.create_entity", model, ifc_class="IfcDoor", name=f"{i + 1}F-Door-{face}-{ui}")
-                                door_solid = self._extrude_rect(model, body, dx, door_y, door_w, wall_thickness_m, door_h)
+                                door = run(
+                                    "root.create_entity", model, ifc_class="IfcDoor",
+                                    name=f"{i + 1}F-Door-{face}-{ui}",
+                                )
+                                door_solid = self._extrude_rect(
+                                    model, body, dx, door_y, door_w, wall_thickness_m, door_h,
+                                )
                                 run("geometry.assign_representation", model, product=door, representation=door_solid)
                                 self._place_z(model, door, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[door], relating_structure=storey)

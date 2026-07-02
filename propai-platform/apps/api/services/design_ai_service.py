@@ -15,6 +15,7 @@ from uuid import UUID
 
 import structlog
 from packages.schemas.events import StreamingReportEvent
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.config import get_settings
@@ -161,9 +162,6 @@ class DesignAIService:
             return "설계 보고서를 생성할 수 없습니다. 전문가 검토를 권장합니다."
 
 
-from pydantic import BaseModel, Field
-
-
 class DesignInput(BaseModel):
     """설계 AI 입력 스키마."""
     project_id: "UUID"
@@ -216,7 +214,8 @@ async def _analyze_design_image(self, image_url_or_base64: str) -> dict:
                 "role": "user",
                 "content": [
                     {"type": "image", "source": image_content},
-                    {"type": "text", "text": "이 건축 설계 이미지를 분석하세요. 건축 스타일, 재료, 공간 배치, 특이사항을 한국어로 설명하세요."},
+                    {"type": "text", "text": ("이 건축 설계 이미지를 분석하세요. "
+                                              "건축 스타일, 재료, 공간 배치, 특이사항을 한국어로 설명하세요.")},
                 ],
             }],
         )

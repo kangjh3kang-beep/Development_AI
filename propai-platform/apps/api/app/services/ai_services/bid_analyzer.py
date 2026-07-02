@@ -330,14 +330,14 @@ def _classify_from_notice(notice_nm: str) -> dict:
     # 1) 건물 신축/증축형: 면적·층수가 의미 있어 GFA 역산·QTO 적용 대상.
     # 2) 토목·설비·단종형(사면정비·배수로·농로·포장·승강기설치·전기/소방공사 등):
     #    "건물"이 아니므로 GFA 역산이 무의미 → "비건물"로 분류해 QTO 미적용.
-    _NON_BUILDING = re.search(
+    non_building = re.search(
         r"사면|비탈면|옹벽|배수로?|수로|농로|포장|도로|교량|상하수도|관로|"
         r"준설|하천|정비사업|사방|수리시설|저수지|제방|법면|굴착|토공|"
         r"승강기|엘리베이터|에스컬레이터|전기공사|소방공사|통신공사|"
         r"기계설비|냉난방|조경공사|식재|살수|방수공사|도장공사",
         text,
     )
-    _BUILDING = re.search(
+    building = re.search(
         r"신축|증축|개축|대수선|건립|신설.*(청사|센터|관|동)|건축공사", text
     )
     if re.search(r"아파트|APT", text, re.I):
@@ -348,9 +348,9 @@ def _classify_from_notice(notice_nm: str) -> dict:
         btype = "다세대주택"
     elif re.search(r"근린생활|근생|상가|판매시설|청사|관사|업무시설|사옥", text):
         btype = "근린생활시설"
-    elif _NON_BUILDING and not _BUILDING:
+    elif non_building and not building:
         btype = "비건물"  # 토목·설비·단종공사 → GFA역산/QTO 미적용
-    elif _BUILDING:
+    elif building:
         btype = "공동주택"  # 건물 신축이 명시된 일반 건물
     else:
         btype = "비건물"  # 건물 키워드가 전혀 없으면 보수적으로 비건물 처리

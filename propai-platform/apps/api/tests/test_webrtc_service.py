@@ -110,7 +110,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_세션_생성_성공(self, svc, mock_db):
         """세션 생성 시 DB에 추가되고 커밋된다."""
-        session = await svc.create_session(
+        await svc.create_session(
             tenant_id=TEST_TENANT_ID,
             project_id=TEST_PROJECT_ID,
             user_id=TEST_USER_ID,
@@ -123,7 +123,7 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_세션_생성_필드_검증(self, svc, mock_db):
         """생성된 세션의 필드 값이 올바른지 확인한다."""
-        session = await svc.create_session(
+        await svc.create_session(
             tenant_id=TEST_TENANT_ID,
             project_id=TEST_PROJECT_ID,
             user_id=TEST_USER_ID,

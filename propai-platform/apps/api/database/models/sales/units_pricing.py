@@ -38,7 +38,8 @@ class SalesUnitInventory(Base, PKMixin, SiteMixin, SoftDeleteMixin):
     floor: Mapped[int | None] = mapped_column(Integer)
     line: Mapped[str | None] = mapped_column(String(10))
     aspect: Mapped[str | None] = mapped_column(String(10))
-    status: Mapped[str] = mapped_column(String(20), server_default="AVAILABLE")  # AVAILABLE/HOLD/APPLIED/CONTRACTED/CANCELLED
+    # AVAILABLE/HOLD/APPLIED/CONTRACTED/CANCELLED
+    status: Mapped[str] = mapped_column(String(20), server_default="AVAILABLE")
     hold_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     contract_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     round_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

@@ -358,10 +358,9 @@ async def _transition(db: AsyncSession, friendship_id: str, me: str, new_status:
     addr = str(f["addressee_user_id"])
     if me not in (req, addr):
         raise HTTPException(status_code=403, detail="권한이 없습니다")
-    if new_status == "accepted":
-        # 수신자만 수락 가능, pending 상태에서만
-        if me != addr or f["status"] != "pending":
-            raise HTTPException(status_code=400, detail="수락할 수 없는 요청 상태")
+    # 수신자만 수락 가능, pending 상태에서만
+    if new_status == "accepted" and (me != addr or f["status"] != "pending"):
+        raise HTTPException(status_code=400, detail="수락할 수 없는 요청 상태")
     await db.execute(text(
         "UPDATE friendships SET status = :s, updated_at = now() WHERE id = :id"
     ), {"s": new_status, "id": friendship_id})

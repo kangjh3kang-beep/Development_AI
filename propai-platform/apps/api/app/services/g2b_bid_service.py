@@ -226,16 +226,14 @@ def _is_relevant_bid(title: str, org_name: str = "") -> bool:
         if kw in title:
             return True
     # 2) 시설명 + 건설행위 동반 시 인정
-    if any(f in title for f in FACILITY_KEYWORDS):
-        if any(act in title for act in ("공사", "신축", "증축", "개축", "건립",
-                                        "건설", "설계", "리모델링", "보수", "시공",
-                                        "개보수", "보강", "조성")):
-            return True
+    if any(f in title for f in FACILITY_KEYWORDS) and any(
+        act in title for act in ("공사", "신축", "증축", "개축", "건립",
+                                 "건설", "설계", "리모델링", "보수", "시공",
+                                 "개보수", "보강", "조성")
+    ):
+        return True
     # 3) 발주기관이 부동산개발 전문기관(LH·도시공사 등)
-    for kw in INCLUDE_ORG_KEYWORDS:
-        if kw in org_name:
-            return True
-    return False
+    return any(kw in org_name for kw in INCLUDE_ORG_KEYWORDS)
 
 
 def _parse_g2b_datetime(raw: Any) -> datetime | None:

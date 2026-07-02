@@ -9,6 +9,7 @@
 비구독(free/guest)은 무료횟수 소진 후 과금 시 ×1.5(+50%). 상위 등급일수록 추가 단가가 저렴.
 """
 
+import contextlib
 import time
 from typing import Any
 
@@ -26,9 +27,18 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "tiers": {
         # base_quota_krw=월 기본 포함 사용량(원), overage_margin_pct=초과분 원가 마진율(%).
         # multiplier는 하위호환(overage_margin_pct 우선).
-        "power": {"fee_krw": 24500, "multiplier": 1.5, "overage_margin_pct": 50, "base_quota_krw": 12250, "label": "파워"},
-        "superpower": {"fee_krw": 49900, "multiplier": 1.4, "overage_margin_pct": 40, "base_quota_krw": 24950, "label": "슈퍼파워"},
-        "master": {"fee_krw": 99000, "multiplier": 1.3, "overage_margin_pct": 30, "base_quota_krw": 49500, "label": "마스터"},
+        "power": {
+            "fee_krw": 24500, "multiplier": 1.5, "overage_margin_pct": 50,
+            "base_quota_krw": 12250, "label": "파워",
+        },
+        "superpower": {
+            "fee_krw": 49900, "multiplier": 1.4, "overage_margin_pct": 40,
+            "base_quota_krw": 24950, "label": "슈퍼파워",
+        },
+        "master": {
+            "fee_krw": 99000, "multiplier": 1.3, "overage_margin_pct": 30,
+            "base_quota_krw": 49500, "label": "마스터",
+        },
     },
     "service_fees": {
         "project_create": 2000,           # 프로젝트 생성 건당
@@ -88,10 +98,8 @@ def apply_config(override: dict[str, Any]) -> None:
     if not isinstance(override, dict):
         return
     if "budget_ratio" in override:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             _CONFIG["budget_ratio"] = float(override["budget_ratio"])
-        except (ValueError, TypeError):
-            pass
     for tier, vals in (override.get("tiers") or {}).items():
         if not isinstance(vals, dict):
             continue
@@ -122,10 +130,8 @@ def apply_config(override: dict[str, Any]) -> None:
     # 숫자로 변환 가능할 때만, 음수는 0으로 방지(허위 마이너스 차감 차단).
     am = _CONFIG["service_fees"].setdefault("analysis_modules", {})
     for k, v in (sf.get("analysis_modules") or {}).items():
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             am[k] = max(0.0, float(v))
-        except (ValueError, TypeError):
-            pass
     ft = override.get("free_tier") or {}
     for sub in ("analysis_fee", "analysis_quota"):
         for t, v in (ft.get(sub) or {}).items():

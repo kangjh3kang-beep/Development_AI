@@ -136,9 +136,11 @@ def calculate_indirect_cost(
     """
     ratios = {
         "design_fee": design_fee_ratio if design_fee_ratio is not None else DEFAULT_INDIRECT_RATIOS["design_fee"],
-        "supervision_fee": supervision_fee_ratio if supervision_fee_ratio is not None else DEFAULT_INDIRECT_RATIOS["supervision_fee"],
+        "supervision_fee": (supervision_fee_ratio if supervision_fee_ratio is not None
+                            else DEFAULT_INDIRECT_RATIOS["supervision_fee"]),
         "contingency": contingency_ratio if contingency_ratio is not None else DEFAULT_INDIRECT_RATIOS["contingency"],
-        "general_expense": general_expense_ratio if general_expense_ratio is not None else DEFAULT_INDIRECT_RATIOS["general_expense"],
+        "general_expense": (general_expense_ratio if general_expense_ratio is not None
+                            else DEFAULT_INDIRECT_RATIOS["general_expense"]),
     }
 
     items = {}

@@ -34,10 +34,11 @@ async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) 
             resp = await client.get(url, params=params)
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
                 ra = resp.headers.get("Retry-After")
-                if ra and ra.replace(".", "", 1).isdigit():
-                    delay = float(ra)
-                else:
-                    delay = (2 ** attempt) + random.uniform(0, 0.3)
+                delay = (
+                    float(ra)
+                    if ra and ra.replace(".", "", 1).isdigit()
+                    else (2 ** attempt) + random.uniform(0, 0.3)
+                )
                 logger.warning("VWORLD 재시도", status=resp.status_code, attempt=attempt, delay=round(delay, 2))
                 await asyncio.sleep(min(delay, 5.0))
                 continue
@@ -455,10 +456,9 @@ class VWorldService:
         rail_exclude = ("지역", "지구", "공원", "녹지", "광장", "주차장", "학교", "도로")
 
         def _is_rail(blob: str) -> bool:
-            if any(x in blob for x in rail_exclude):
-                # 단, '○○역'(역명)이 명시되고 제외어가 우연히 섞인 경우는 철도용어 우선.
-                if not any(kw in blob for kw in rail_kw):
-                    return False
+            # 단, '○○역'(역명)이 명시되고 제외어가 우연히 섞인 경우는 철도용어 우선.
+            if any(x in blob for x in rail_exclude) and not any(kw in blob for kw in rail_kw):
+                return False
             if any(kw in blob for kw in rail_kw):
                 return True
             # 역명(…역) 패턴 — '지역/역사공원/역세권' 등은 위 제외어로 이미 걸러짐.
@@ -572,7 +572,7 @@ class VWorldService:
     @staticmethod
     def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """두 경위도 좌표 간 거리(m) — 입지~시설 거리 산출용."""
-        R = 6_371_000
+        R = 6_371_000  # noqa: N806 — 지구 반경(하버사인 수학 관례 기호)
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
         d_phi = math.radians(lat2 - lat1)
         d_lam = math.radians(lon2 - lon1)

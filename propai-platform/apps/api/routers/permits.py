@@ -509,7 +509,8 @@ async def ai_permit_analysis(
                 "daylight_height", "ordinance_bcr", "ordinance_far",
             ],
             sigungu=sg,
-            # provenance 출처는 레지스트리 등록명만(미등록명은 registered:false 무의미). VWorld 토지특성=vworld_land_info.
+            # provenance 출처는 레지스트리 등록명만(미등록명은 registered:false 무의미).
+            # VWorld 토지특성=vworld_land_info.
             sources=["vworld_land_info"],
         )
         for _k in ("evidence", "legal_refs", "provenance"):

@@ -14,6 +14,8 @@ main.py 배선은 통합자가 한다(여기서는 router 만 export).
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.foundation.parcel.batch.batch_service import BatchService
@@ -35,10 +37,9 @@ def _service() -> BatchService:
 
 async def _run_inprocess(job_id: str) -> None:
     """인프로세스 백그라운드 실행(워커 미가동 폴백)."""
-    try:
+    # 백그라운드 실패는 폴링 상태로 노출됨
+    with contextlib.suppress(Exception):
         await _service().run(job_id)
-    except Exception:  # noqa: BLE001 - 백그라운드 실패는 폴링 상태로 노출됨
-        pass
 
 
 def _enqueue_celery(job_id: str) -> bool:
@@ -88,8 +89,8 @@ async def poll_batch(job_id: str, page: int = 1, size: int = 500) -> BatchResult
     service = _service()
     try:
         return await service.result(job_id, page=page, size=size)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="배치 잡을 찾을 수 없습니다.")
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail="배치 잡을 찾을 수 없습니다.") from err
 
 
 @router.post("/{job_id}/cancel")
@@ -98,6 +99,6 @@ async def cancel_batch(job_id: str) -> dict:
     service = _service()
     try:
         job = await service.cancel(job_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="배치 잡을 찾을 수 없습니다.")
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail="배치 잡을 찾을 수 없습니다.") from err
     return {"job_id": job.id, "state": job.state.value}

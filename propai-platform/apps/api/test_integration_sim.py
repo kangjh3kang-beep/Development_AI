@@ -22,14 +22,14 @@ _PROJECT_ROOT = os.path.dirname(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from apps.api.app.core.config import settings
-from apps.api.app.services.market.market_models import (
+from apps.api.app.core.config import settings  # noqa: E402 — sys.path 설정 후 의도적 임포트
+from apps.api.app.services.market.market_models import (  # noqa: E402 — sys.path 설정 후 의도적 임포트
     MacroIncomeData,
     MigrationData,
     PopulationData,
 )
-from apps.api.integrations.kosis_client import KosisClient
-from apps.api.integrations.sgis_client import SgisClient
+from apps.api.integrations.kosis_client import KosisClient  # noqa: E402 — sys.path 설정 후 의도적 임포트
+from apps.api.integrations.sgis_client import SgisClient  # noqa: E402 — sys.path 설정 후 의도적 임포트
 
 _results: list[tuple[str, bool, str]] = []
 

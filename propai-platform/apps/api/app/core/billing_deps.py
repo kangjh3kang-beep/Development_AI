@@ -4,6 +4,8 @@
 미들웨어가 주입한 요청 컨텍스트의 user_id를 사용한다.
 """
 
+import contextlib
+
 from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,10 +25,8 @@ async def enforce_llm_quota(db: AsyncSession = Depends(get_db)) -> None:
     if blocked:
         # 팀 멤버 한도 초과면 팀장에게 상향 요청, 구독 한도 초과면 추가결제 안내.
         team_over = False
-        try:
+        with contextlib.suppress(Exception):
             team_over = await billing_service.team_limit_exceeded(db, uid)
-        except Exception:  # noqa: BLE001
-            pass
         detail = (
             "팀 사용 한도를 초과했습니다. 팀장에게 한도 상향을 요청하세요."
             if team_over

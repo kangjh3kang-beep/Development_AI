@@ -74,7 +74,8 @@ PATHS = {
     "역세권활성화": {
         "label": "역세권 활성화사업(용도상향)",
         "legal_basis": "국토계획법(용도지역 변경) · 서울시 등 역세권 활성화사업 운영기준",
-        # 국토계획법(용도지역 변경)만 verified 딥링크. 서울시 운영기준은 자치 운영지침(law.go.kr 딥링크 없음)→텍스트 유지.
+        # 국토계획법(용도지역 변경)만 verified 딥링크.
+        # 서울시 운영기준은 자치 운영지침(law.go.kr 딥링크 없음)→텍스트 유지.
         "legal_ref_keys": ["far_law"],
         "timeline_est": "3~6년(사업계획·심의)",
         "requires_station": True,
@@ -443,13 +444,16 @@ class UpzoningPotentialAnalyzer:
         ]
         if far_range:
             parts.append(
-                f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
+                f"가능성 상/중 경로 기준 예상 용적률 상한은 "
+                f"약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
             )
         parts.append(
             f"가장 유력한 경로는 '{top['path']}'(목표 {top['target_zone']}, 가능성 {top['feasibility']})입니다."
         )
         if blockers:
-            parts.append(f"단, 규제구역({', '.join(blockers)})으로 종상향이 제약될 수 있어 해제·완화 검토가 선행되어야 합니다.")
+            parts.append(
+                f"단, 규제구역({', '.join(blockers)})으로 종상향이 제약될 수 있어 "
+                "해제·완화 검토가 선행되어야 합니다.")
         parts.append("모든 수치는 도시계획 결정·인허가를 전제로 한 예상치이며, 현행 실효 용적률과 구분됩니다.")
         return " ".join(parts)
 

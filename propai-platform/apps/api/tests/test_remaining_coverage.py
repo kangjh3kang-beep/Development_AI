@@ -7,6 +7,7 @@ chatbot, predictive_maintenance, webrtc router 핸들러 등
 남은 서비스/라우터의 커버리지를 확보한다.
 """
 
+import contextlib
 import os
 import sys
 from datetime import UTC, datetime
@@ -443,10 +444,12 @@ class TestRegulationService:
         svc = RegulationService(db=mock_db)
         # _fetch_regulation을 mock
         if hasattr(svc, "analyze"):
-            with patch.object(svc, "_fetch_regulation" if hasattr(svc, "_fetch_regulation") else "analyze",
-                            return_value={}):
-                try:
-                    result = await svc.analyze(
+            with (
+                patch.object(svc, "_fetch_regulation" if hasattr(svc, "_fetch_regulation") else "analyze",
+                             return_value={}),
+                contextlib.suppress(Exception),  # 외부 API 실패 허용
+            ):
+                await svc.analyze(
                         project_id=TEST_PROJECT_ID,
                         tenant_id=TEST_TENANT_ID,
                         address="서울 강남구",
@@ -457,8 +460,6 @@ class TestRegulationService:
                         floors_below=2,
                         building_height_m=35,
                     )
-                except Exception:
-                    pass  # 외부 API 실패 허용
 
 
 # ═══════════════════════════════════════════
@@ -541,17 +542,17 @@ class TestMarketingServiceAsync:
 
         svc = MarketingService(db=mock_db)
         if hasattr(svc, "generate"):
-            with patch.object(svc, "_generate_content" if hasattr(svc, "_generate_content") else "generate",
-                            return_value="마케팅 콘텐츠"):
-                try:
-                    result = await svc.generate(
+            with (
+                patch.object(svc, "_generate_content" if hasattr(svc, "_generate_content") else "generate",
+                             return_value="마케팅 콘텐츠"),
+                contextlib.suppress(Exception),
+            ):
+                await svc.generate(
                         tenant_id=TEST_TENANT_ID,
                         project_id=TEST_PROJECT_ID,
                         target_audience="투자자",
                         content_type="brochure",
                     )
-                except Exception:
-                    pass
 
 
 # ═══════════════════════════════════════════

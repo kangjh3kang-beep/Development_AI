@@ -50,7 +50,8 @@ async def _db_cache_get(key: str) -> dict[str, Any] | None:
 
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
-            await db.execute(text(_ANALYZE_DDL)); await db.commit()
+            await db.execute(text(_ANALYZE_DDL))
+            await db.commit()
             row = (await db.execute(
                 text("SELECT result, extract(epoch from created_at) AS ts "
                      "FROM registry_analysis_cache WHERE key = :k"), {"k": key})).first()
@@ -111,7 +112,8 @@ _SYSTEM = """\
 원칙: 등기 내용에 있는 사실만 사용, 없으면 '기재 없음'. 추측·과장 금지. 법률자문이 아닌
 참고용 분석임을 전제. 반드시 JSON만 출력."""
 
-_TMPL = """\
+_TMPL = (
+    """\
 아래 부동산등기부등본 내용을 법무사·변호사 관점에서 분석해 JSON으로만 답하세요.
 {addr_line}
 ## 등기부 내용
@@ -123,7 +125,9 @@ _TMPL = """\
     "current_owner": "현재 소유자(공동소유면 전원)",
     "share": "보유 지분(예: 단독, 1/2 등)",
     "ownership_form": "단독소유|공동소유 (소유자 수 기준)",
-    "owners": [{{"name": "소유자명", "share": "지분(예: 1/2, 1388분의 1387.08, 99.934%)", "acquisition_date": "취득일", "acquisition_cause": "취득원인", "acquisition_price": "거래가액(있으면)"}}],
+"""
+    '    "owners": [{{"name": "소유자명", "share": "지분(예: 1/2, 1388분의 1387.08, 99.934%)", "acquisition_date": "취득일", "acquisition_cause": "취득원인", "acquisition_price": "거래가액(있으면)"}}],\n'  # noqa: E501 — LLM 프롬프트 스키마 원문 한 줄(문자열 내용 불변 유지)
+    """\
     "acquisition_date": "소유권 취득일(등기원인일/접수일)",
     "acquisition_cause": "취득 원인(매매·상속·증여 등)",
     "acquisition_price": "거래가액(매매시, 기재 있으면)",
@@ -134,7 +138,9 @@ _TMPL = """\
   "mortgage": [{{"max_claim": "채권최고액", "mortgagee": "근저당권자", "date": "설정일"}}],
   "other_rights": ["전세권·지상권·임차권 등 기타 권리(있으면)"],
   "baseline_right": "말소기준권리(최선순위 (근)저당·압류·가압류·담보가등기·경매개시 등) — 없으면 '해당 없음'",
-  "acquired_extinguished": "인수/소멸 권리 요약(말소기준권리 기준 후순위 소멸·선순위/대항력 인수, 1~3문장) — 판단불가면 '기재 없음'",
+"""
+    '  "acquired_extinguished": "인수/소멸 권리 요약(말소기준권리 기준 후순위 소멸·선순위/대항력 인수, 1~3문장) — 판단불가면 \'기재 없음\'",\n'  # noqa: E501 — LLM 프롬프트 스키마 원문 한 줄(문자열 내용 불변 유지)
+    """\
   "right_to_demand_sale": {{"possible": "가능|조건부|불가|판단보류", "reason": "근거(소유구조·권리관계 관점)"}},
   "rights_analysis": "권리관계 종합 분석(말소기준권리·인수/소멸·대항력 포함, 3~5문장)",
   "risks": ["거래·개발상 권리 리스크 1~4개"],
@@ -142,6 +148,7 @@ _TMPL = """\
   "summary": "한줄 요약"
 }}
 """
+)
 
 
 def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:

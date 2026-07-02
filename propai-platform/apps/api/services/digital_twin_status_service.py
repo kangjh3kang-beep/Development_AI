@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-
-UTC = UTC
 from uuid import UUID
 
 from sqlalchemy import select

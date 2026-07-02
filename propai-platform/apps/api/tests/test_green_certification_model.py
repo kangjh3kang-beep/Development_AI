@@ -21,4 +21,5 @@ class TestGreenCertification:
     def test_timestamp_cols(self):
         assert {"created_at","updated_at"}.issubset(_cols(GreenCertification))
 
-if __name__ == "__main__": pytest.main([__file__, "-v", "--tb=short"])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])
