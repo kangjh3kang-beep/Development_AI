@@ -41,6 +41,8 @@ type IntegratedSummary = {
     blended_bcr_eff_pct?: number | null;
     blended_far_eff_pct?: number | null;
     integrated_gfa_sqm?: number | null;
+    // 서버 _aggregate_integrated_zoning의 면적가중 통합면적(㎡) — 통합면적 SSOT 권위출처(F4).
+    total_area_sqm?: number | null;
   } | null;
 };
 
@@ -77,12 +79,18 @@ function persistIntegratedToSsot(res: IntegratedSummary | null | undefined): voi
   const far = res.integrated?.blended_far_eff_pct;
   const bcr = res.integrated?.blended_bcr_eff_pct;
   const zone = res.dominant_zone;
+  // ★통합면적 서버권위(F4): 서버 _aggregate_integrated_zoning의 면적가중 total_area_sqm을
+  //   landAreaSqmTotal로 기록해 통합면적을 SSOT 단일 권위출처로 일원화한다. 그동안 landAreaSqmTotal은
+  //   필지선택 시점 프론트합(GlobalAddressSearch)에만 의존해, 서버 통합집계와 이중출처였다. 이제
+  //   effectiveLandAreaSqm/isParcelSetConsistent가 읽는 통합면적이 서버 집계와 일치한다(무날조: 양수만).
+  const area = res.integrated?.total_area_sqm;
   const finiteOrNull = (v: number | null | undefined): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
   const farV = finiteOrNull(far);
   const bcrV = finiteOrNull(bcr);
   const zoneV = typeof zone === "string" && zone.trim() ? zone.trim() : null;
-  if (farV == null && bcrV == null && zoneV == null) return;
+  const areaV = (() => { const a = finiteOrNull(area); return a != null && a > 0 ? a : null; })();
+  if (farV == null && bcrV == null && zoneV == null && areaV == null) return;
 
   const store = useProjectContextStore.getState();
   const cur = store.siteAnalysis;
@@ -90,6 +98,7 @@ function persistIntegratedToSsot(res: IntegratedSummary | null | undefined): voi
   if (farV != null && cur?.integratedFarEffPct !== farV) patch.integratedFarEffPct = farV;
   if (bcrV != null && cur?.integratedBcrEffPct !== bcrV) patch.integratedBcrEffPct = bcrV;
   if (zoneV != null && cur?.dominantZoneCode !== zoneV) patch.dominantZoneCode = zoneV;
+  if (areaV != null && cur?.landAreaSqmTotal !== areaV) patch.landAreaSqmTotal = areaV;
   if (Object.keys(patch).length === 0) return; // 이미 동일 → no-op(멱등)
   store.updateSiteAnalysis(patch);
 }
