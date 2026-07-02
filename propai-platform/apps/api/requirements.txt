@@ -57,7 +57,9 @@ gdal>=3.6,<3.12
 folium==0.18.0
 ezdxf==1.3.4
 svgwrite==1.4.3
-ifcopenshell==0.8.0
+# ★prod(Oracle Dockerfile.oracle→requirements.oracle.txt)가 0.8.4로 동작 중이므로 여기도 0.8.4로 통일.
+#   (과거 0.8.0↔0.8.4 불일치 = 로컬/railway와 prod가 다른 ifcopenshell 버전 → 개발-prod 패리티 붕괴·회귀 은폐. C2R P0 치명3)
+ifcopenshell==0.8.4
 pygltflib==1.16.5  # IFC4→glTF(.glb) 변환(3D BIM 뷰어). 순수파이썬 경량.
 
 # Image / CV
