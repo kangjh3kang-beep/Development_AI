@@ -60,6 +60,26 @@ def test_polygon_interior_mask_triangle_shape_and_exclusion():
     assert 40 <= int(mask.sum()) <= 78
 
 
+def test_polygon_interior_mask_axis_not_transposed():
+    """비대칭(수평 밴드) 폴리곤으로 lat/lon(row/col) 전치 회귀를 방어.
+
+    대칭 삼각형은 축을 뒤바꿔도 결과가 불변이라 전치 버그를 못 잡는다. lat∈[0,3]로
+    좁은 수평 밴드를 쓰면 mask[r,c]↔(lat_axis[r],lon_axis[c]) 매핑이 어긋나는 순간
+    선택 row 집합이 달라져 실패한다.
+    """
+    lat_axis = np.linspace(0.0, 10.0, 11)
+    lon_axis = np.linspace(0.0, 10.0, 11)
+    # (lon,lat) ring: lon 전폭[0,10] × lat 하단밴드[0,3]
+    ring = [(0.0, 0.0), (10.0, 0.0), (10.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
+    mask = ts._polygon_interior_mask(lat_axis, lon_axis, ring)
+    assert mask is not None
+    # (lat=0, lon=9) 내부 / (lat=9, lon=0) 밖 — 전치되면 정반대가 되어 실패
+    assert mask[0, 9] and not mask[9, 0]
+    # 선택된 row(=lat idx)는 밴드 [0,3]에 정확히 대응(전 col 포함)
+    selected_rows = sorted({r for r in range(11) for c in range(11) if mask[r, c]})
+    assert selected_rows == [0, 1, 2, 3]
+
+
 def test_polygon_interior_mask_none_for_degenerate():
     lat_axis = np.linspace(0.0, 10.0, 11)
     lon_axis = np.linspace(0.0, 10.0, 11)
@@ -152,3 +172,13 @@ def test_confidence_penalizes_sparse_interior():
     assert poor[0] < good[0]                 # 신뢰도 하락
     assert "bbox 근사" in poor[1]
     assert "이웃 지형 제외" in good[1]
+
+
+def test_confidence_mild_penalty_for_few_clipped_points():
+    """clip 적용됐어도 내부 표본이 적으면(<10) 완만 감점 + 노이즈 경고(정직)."""
+    area = 5000.0
+    many = ts._confidence(area, 121, 121, slope_clip={"clip_applied": True, "interior_pts": 60})
+    few = ts._confidence(area, 121, 121, slope_clip={"clip_applied": True, "interior_pts": 6})
+    assert few[0] < many[0]              # 표본 적으면 신뢰도 완만 하락
+    assert "노이즈 가능" in few[1]
+    assert "노이즈 가능" not in many[1]

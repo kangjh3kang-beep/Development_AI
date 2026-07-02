@@ -126,6 +126,11 @@ def _polygon_interior_mask(
     """격자점(row=lat, col=lon)이 필지 폴리곤 내부인지 bool 마스크. 경계점 포함.
 
     ring이 유효하지 않으면 None(호출측은 클립 미적용=현행 bbox 동작 유지).
+
+    경계 규칙: shapely 경로는 covers(경계=내부)로 판정한다. ray-casting 폴백은
+    변 위 점(경계) 판정이 규칙상 미세 상이할 수 있으나, 프로드 venv는 shapely 2.0.6
+    단일경로이고 실좌표(float) 격자점이 폴리곤 변에 정확히 얹힐 확률은 0에 수렴하므로
+    실사용 발산은 무시가능(폴백은 shapely 미설치 환경 안전망).
     """
     if not ring or len(ring) < 3:
         return None
@@ -437,7 +442,15 @@ def _confidence(
     if isinstance(slope_clip, dict) and area_sqm is not None:
         interior = slope_clip.get("interior_pts")
         if slope_clip.get("clip_applied"):
-            notes.append(f"평균경사도는 필지 폴리곤 내부 격자점 {interior}개만 집계(이웃 지형 제외).")
+            # 클립은 걸렸으나 내부 표본이 적으면(4~9점) 평균경사가 노이즈에 취약 → 완만 감점+경고.
+            if isinstance(interior, int) and interior < 10:
+                base *= 0.85
+                notes.append(
+                    f"평균경사도는 필지 폴리곤 내부 격자점 {interior}개만 집계(이웃 지형 제외) — "
+                    f"표본이 적어 노이즈 가능."
+                )
+            else:
+                notes.append(f"평균경사도는 필지 폴리곤 내부 격자점 {interior}개만 집계(이웃 지형 제외).")
         elif interior is not None:
             base *= 0.7
             notes.append(
