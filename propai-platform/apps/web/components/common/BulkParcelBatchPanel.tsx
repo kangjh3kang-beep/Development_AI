@@ -15,6 +15,10 @@ import dynamic from "next/dynamic";
 import { AlertTriangle, CheckCircle2, Clock, Map, Puzzle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import {
+  MultiParcelAttributeMatrix,
+  resolveMultiParcelReport,
+} from "@/components/projects/MultiParcelAttributeMatrix";
 
 // 구역 미리보기 지도 — SSR 비활성(Kakao SDK는 클라이언트 전용).
 const BatchRegionMap = dynamic(
@@ -25,7 +29,12 @@ const BatchRegionMap = dynamic(
 type ItemStatus = "confirmed" | "ambiguous" | "not_found" | "error";
 type BatchItem = { pnu: string; status: ItemStatus; address?: string | null; area_sqm?: number | null; reason?: string | null };
 type Counts = { total: number; confirmed: number; ambiguous: number; not_found: number; error: number };
-type Aggregate = { held: boolean; union_boundary?: unknown; total_area_sqm?: number | null; jurisdiction_flags?: Record<string, unknown> | null };
+type Aggregate = {
+  held: boolean; union_boundary?: unknown; total_area_sqm?: number | null;
+  jurisdiction_flags?: Record<string, unknown> | null;
+  // S6 다필지 속성 계약(D 웨이브 병렬 — 부재 시 미표시, resolver 호환 수집)
+  multi_parcel_report?: Record<string, unknown> | null;
+};
 type BatchResult = {
   job_id: string;
   state: string;
@@ -33,6 +42,7 @@ type BatchResult = {
   counts: Counts;
   items: BatchItem[];
   aggregate?: Aggregate | null;
+  multi_parcel_report?: Record<string, unknown> | null;
   pending?: string[];
   outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
   fee_per_unit_krw?: number;
@@ -119,6 +129,8 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
   const c = result?.counts;
   const total = c?.total || 0;
   const pct = (n: number) => (total > 0 ? `${(n / total) * 100}%` : "0%");
+  // S6 다필지 속성 보고(usable 3계층·검증·시니어·§84) — 계약 데이터 실재 시에만(부재 시 미표시).
+  const mpReport = result ? resolveMultiParcelReport(result) : null;
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
@@ -231,6 +243,9 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
               <p className="text-[var(--text-secondary)]">집계 대기 중</p>
             )}
           </div>
+
+          {/* S6 다필지 속성 매트릭스·usable 3계층·검증·시니어·§84 — 계약 데이터 실재 시에만(무날조) */}
+          {mpReport && <MultiParcelAttributeMatrix report={mpReport} />}
 
           {/* 구역 미리보기 지도 — 분석한 구역(중심+반경/bbox) 시각화 */}
           {result.region_geo?.center?.lat ? (
