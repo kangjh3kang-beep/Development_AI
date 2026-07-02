@@ -194,3 +194,64 @@ async def test_tier2_static_cache_is_persisted(service, save_spy, no_stored, mon
     # ★확정 소스는 저장 유지
     assert len(save_spy) == 1, f"확정 캐시가 저장되지 않음: {save_spy}"
     assert save_spy[0]["source"] == "지자체 조례(정적캐시)"
+
+
+# ── (d) persist 키 = 조례 정본 관할(jurisdiction SSOT) — 자치구 키 분산·캐시미스 금지 ──
+#    특별시/광역시 자치구(동작구 등)는 조례 제정권이 없어 해석 payload 는 시 본청 조례
+#    ('서울특별시 도시계획 조례')다. 저장/조회 키가 자치구(sigungu)면 같은 서울시 조례가
+#    자치구별로 분산 저장되고, 다른 자치구 분석 때 캐시미스 → 동일 조례 중복 재조회가 발생한다.
+
+
+@pytest.fixture()
+def mem_store(monkeypatch):
+    """(키, zone_type) 인메모리 저장 — production 코드가 넘기는 키를 그대로 사용해 저장/조회."""
+    store: dict[tuple, dict] = {}
+
+    async def _load(key, zone_type):  # noqa: ANN001
+        return store.get((key, zone_type))
+
+    async def _save(result, key, zone_type):  # noqa: ANN001
+        store[(key, zone_type)] = dict(result)
+
+    monkeypatch.setattr(ordinance_service, "_load_stored", _load)
+    monkeypatch.setattr(ordinance_service, "_save_resolution", _save)
+    return store
+
+
+async def test_persist_key_is_jurisdiction_for_metro_district(service, save_spy, no_stored, monkeypatch):
+    """서울 자치구 분석 → 저장 키는 조례 정본 관할 '서울특별시'(자치구 '동작구' 아님)."""
+
+    async def _api_hit(self, sido, sigungu, zone_type, *, jurisdiction=None):  # noqa: ANN001
+        return {"bcr": 60.0, "far": 200.0,
+                "ordinance_name": f"{jurisdiction} 도시계획 조례", "last_updated": "2026-01-01"}
+
+    monkeypatch.setattr(OrdinanceService, "_fetch_from_moleg_api", _api_hit)
+
+    result = await service.get_ordinance_limits("서울특별시 동작구 상도동 100", "제2종일반주거지역")
+
+    assert result["source"] == "법제처API"
+    assert len(save_spy) == 1
+    assert save_spy[0]["sigungu"] == "서울특별시", (
+        f"저장 키가 조례 정본 관할이 아님(키 분산·캐시미스 원인): {save_spy[0]['sigungu']}"
+    )
+
+
+async def test_stored_resolution_shared_across_districts_no_refetch(service, mem_store, monkeypatch):
+    """동작구 분석 저장본을 강남구 분석이 재사용 — 같은 서울시 조례를 중복 재조회하지 않는다."""
+    fetch_calls: list[str | None] = []
+
+    async def _api_hit(self, sido, sigungu, zone_type, *, jurisdiction=None):  # noqa: ANN001
+        fetch_calls.append(jurisdiction)
+        return {"bcr": 60.0, "far": 200.0,
+                "ordinance_name": "서울특별시 도시계획 조례", "last_updated": "2026-01-01"}
+
+    monkeypatch.setattr(OrdinanceService, "_fetch_from_moleg_api", _api_hit)
+
+    r1 = await service.get_ordinance_limits("서울특별시 동작구 상도동", "제2종일반주거지역")
+    r2 = await service.get_ordinance_limits("서울특별시 강남구 역삼동", "제2종일반주거지역")
+
+    assert len(fetch_calls) == 1, (
+        f"같은 관할(서울특별시) 조례를 중복 재조회(저장/조회 키 불일치): {fetch_calls}"
+    )
+    assert r2["effective_far"] == r1["effective_far"]
+    assert r2["source"] == r1["source"]  # 저장본 재사용(법제처API 해석 그대로)
