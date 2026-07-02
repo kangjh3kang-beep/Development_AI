@@ -22,6 +22,10 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import {
+  MultiParcelAttributeMatrix,
+  resolveMultiParcelReport,
+} from "@/components/projects/MultiParcelAttributeMatrix";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
@@ -61,6 +65,13 @@ type IntegratedResp = {
   scenario?: Scenario | null;
   per_parcel?: PerParcel[];
   warnings?: string[];
+  // ── S6 다필지 속성 계약(D 웨이브 병렬 — 위치·형상 유동, resolver가 호환 수집·부재 시 미표시) ──
+  multi_parcel_report?: Record<string, unknown> | null;
+  usable_area?: Record<string, unknown> | null;
+  area_verification?: Record<string, unknown> | null;
+  senior_review?: Record<string, unknown>[] | null;
+  zone_straddle_ruling?: Record<string, unknown> | null;
+  exclusion_scenario?: Record<string, unknown> | null;
 };
 
 const num = (v: number | null | undefined, suffix = ""): string =>
@@ -175,6 +186,11 @@ export default function MultiParcelPage() {
   const dev = devLabel(data?.developability);
   const scn = data?.scenario ?? null;
   const scnL = scnLabel(scn?.status);
+  // S6 다필지 속성 보고(usable 3계층·검증·시니어·§84·what-if) — 계약 데이터 실재 시에만.
+  // per_parcel(실데이터)만 있어도 필지×판정 매트릭스는 표시 가능(추정 아님 — 실 게이트 값).
+  const mpReport = data
+    ? (resolveMultiParcelReport(data) ?? ((data.per_parcel?.length ?? 0) > 0 ? {} : null))
+    : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -308,6 +324,11 @@ export default function MultiParcelPage() {
                   )}
                 </div>
               </section>
+
+              {/* 2.5) S6 다필지 속성 매트릭스·usable 3계층·검증·시니어·§84·what-if — 데이터 부재 섹션은 미표시(무날조) */}
+              {mpReport && (
+                <MultiParcelAttributeMatrix report={mpReport} perParcel={data.per_parcel} />
+              )}
 
               {/* 3) 통합 시나리오 */}
               <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">

@@ -326,45 +326,51 @@ async def _resolve_location(
     """주소/PNU → {lat, lon, pnu, address, geometry|None}."""
     from app.services.external_api.vworld_service import VWorldService
 
-    svc = VWorldService()
-    lat = lon = None
-    resolved_pnu = pnu
-    resolved_addr = address or ""
-    geometry = None
+    # 정직게이트 계약: VWorld 어떤 실패(타임아웃/500/malformed)에도 raise 하지 않고
+    # None 반환 → analyze_terrain이 항상 dict(ok:false)로 응답(호출측 dict 전제 보존).
+    try:
+        svc = VWorldService()
+        lat = lon = None
+        resolved_pnu = pnu
+        resolved_addr = address or ""
+        geometry = None
 
-    # 1) PNU 우선: 필지 폴리곤 직접 취득
-    if pnu:
-        parcel = await svc.get_parcel_by_pnu(pnu)
-        if parcel:
-            geometry = parcel.get("geometry")
-            ring = _ring_coords(geometry)
-            if ring:
-                lons = [c[0] for c in ring]
-                lats = [c[1] for c in ring]
-                lon = sum(lons) / len(lons)
-                lat = sum(lats) / len(lats)
-            props = parcel.get("properties", {})
-            resolved_addr = props.get("addr", "") or resolved_addr
+        # 1) PNU 우선: 필지 폴리곤 직접 취득
+        if pnu:
+            parcel = await svc.get_parcel_by_pnu(pnu)
+            if parcel:
+                geometry = parcel.get("geometry")
+                ring = _ring_coords(geometry)
+                if ring:
+                    lons = [c[0] for c in ring]
+                    lats = [c[1] for c in ring]
+                    lon = sum(lons) / len(lons)
+                    lat = sum(lats) / len(lats)
+                props = parcel.get("properties", {})
+                resolved_addr = props.get("addr", "") or resolved_addr
 
-    # 2) 주소 지오코딩 (좌표/PNU 미확보 보완)
-    if (lat is None or lon is None) and address:
-        geo = await svc.geocode_address(address)
-        if geo:
-            lat, lon = geo["lat"], geo["lon"]
-            resolved_pnu = resolved_pnu or geo.get("pnu")
-            # PNU 확보되면 폴리곤 재시도
-            if resolved_pnu and geometry is None:
-                parcel = await svc.get_parcel_by_pnu(resolved_pnu)
-                if parcel:
-                    geometry = parcel.get("geometry")
+        # 2) 주소 지오코딩 (좌표/PNU 미확보 보완)
+        if (lat is None or lon is None) and address:
+            geo = await svc.geocode_address(address)
+            if geo:
+                lat, lon = geo["lat"], geo["lon"]
+                resolved_pnu = resolved_pnu or geo.get("pnu")
+                # PNU 확보되면 폴리곤 재시도
+                if resolved_pnu and geometry is None:
+                    parcel = await svc.get_parcel_by_pnu(resolved_pnu)
+                    if parcel:
+                        geometry = parcel.get("geometry")
 
-    # 3) 좌표만 있고 폴리곤 없으면 점→필지 폴백
-    if lat is not None and lon is not None and geometry is None:
-        pf = await svc.get_parcel_by_point(lat, lon)
-        if pf:
-            geometry = pf.get("geometry")
-            resolved_pnu = resolved_pnu or pf.get("pnu")
-            resolved_addr = resolved_addr or pf.get("address", "")
+        # 3) 좌표만 있고 폴리곤 없으면 점→필지 폴백
+        if lat is not None and lon is not None and geometry is None:
+            pf = await svc.get_parcel_by_point(lat, lon)
+            if pf:
+                geometry = pf.get("geometry")
+                resolved_pnu = resolved_pnu or pf.get("pnu")
+                resolved_addr = resolved_addr or pf.get("address", "")
+    except Exception as e:  # noqa: BLE001 — 외부 API 장애를 좌표 미확정(None)으로 강등
+        logger.warning("VWorld 위치확인 실패 — 좌표 미확정 처리: %s", str(e)[:300])
+        return None
 
     if lat is None or lon is None:
         return None
