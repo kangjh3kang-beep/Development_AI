@@ -39,6 +39,18 @@ def _collect(extra: tuple[str, ...] = ()) -> set[str]:
         vals.add((_root().environment or "").strip().lower())
     except Exception:  # noqa: BLE001 — 루트 config 로딩 실패는 무시(원시값만으로 판정)
         pass
+    # app/core/config 의 APP_ENV 도 병합한다(M1 4소스 계약 복원). 이 소스는 CWD .env 파일을
+    # 직접 로드하므로, ENVIRONMENT 를 실 env var 로 안 넣고 .env 에 APP_ENV=production 만 둔
+    # 좁은 구성에서도 프로덕션을 놓치지 않는다(secret_store 마스터키 폴백 fail-open 방지).
+    # ★재귀 안전: get_settings() 를 호출하지 않고 '이미 생성된' 모듈레벨 settings 객체만 읽는다.
+    #   config.py 부팅 중(settings 미생성)이면 None → 건너뜀(순환·재귀 없음).
+    try:
+        import app.core.config as _cc
+        v = getattr(getattr(_cc, "settings", None), "APP_ENV", None)
+        if v:
+            vals.add(str(v).strip().lower())
+    except Exception:  # noqa: BLE001 — 부팅 중/로딩 실패는 무시
+        pass
     vals.discard("")
     return vals
 

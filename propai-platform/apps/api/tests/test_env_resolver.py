@@ -166,3 +166,43 @@ class TestDatabaseEcho:
         monkeypatch.setenv("APP_ENV", "development")
         monkeypatch.setenv("APP_DEBUG", "true")
         assert env.is_debug() is True
+
+
+# ─────────── app/core/config.APP_ENV 소스 복원(M1 4소스 계약, S1 보완) ───────────
+
+class TestCoreConfigSource:
+    """.env-only APP_ENV=production 구성(os.environ 미노출)에서도 프로덕션 인식.
+
+    S1 회귀: env._collect 가 app/core/config 의 settings.APP_ENV 를 병합해야
+    secret_store 마스터키 폴백 fail-open 을 막는다(M1 원본은 이 4번째 소스를 봤음).
+    실제 .env 파일 로드 대신, 모듈레벨 settings 객체를 monkeypatch 해 소스 병합만 검증한다.
+    """
+
+    def test_core_config_settings_APP_ENV_프로덕션_병합(self, monkeypatch):
+        # ENVIRONMENT/APP_ENV os.environ 미설정 + 루트 config=development(기본) 이지만,
+        # app.core.config.settings.APP_ENV='production'(=.env-only 상황) → 프로덕션으로 인식.
+        import app.core.config as _cc
+
+        class _FakeSettings:
+            APP_ENV = "production"
+
+        monkeypatch.setattr(_cc, "settings", _FakeSettings(), raising=False)
+        assert env.is_production() is True
+
+    def test_core_config_settings_개발이면_오탐없음(self, monkeypatch):
+        import app.core.config as _cc
+
+        class _FakeSettings:
+            APP_ENV = "development"
+
+        monkeypatch.setattr(_cc, "settings", _FakeSettings(), raising=False)
+        # 모든 소스가 development → 개발(과차단 없음).
+        assert env.is_production() is False
+
+    def test_settings_미생성이면_건너뜀_재귀없음(self, monkeypatch):
+        # 부팅 중처럼 settings 속성이 없어도 예외 없이 원시값만으로 판정(순환·재귀 없음).
+        import app.core.config as _cc
+
+        monkeypatch.setattr(_cc, "settings", None, raising=False)
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        assert env.is_production() is True
