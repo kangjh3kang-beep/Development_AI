@@ -14,10 +14,13 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends
+from packages.schemas.run_state import RunStateEnum
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
 from app.core.config import settings
+from app.core.database import get_db
 from app.services.auth.auth_service import get_current_user
 
 logger = structlog.get_logger(__name__)
@@ -95,3 +98,36 @@ async def render_from_brief(
         return result
 
     return await render_image(req.brief, provider=req.provider, settings=req.settings)
+
+
+@router.post("/ping")
+async def c2r_ping(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """C2R 추적 인프라 라이브 헬스 — run_execution 왕복(생성→조회)으로 배선 동작을 증명.
+
+    인증 필요(DB write). 진단용 run(track='__ping__')을 1건 생성·재조회해 추적 3종
+    (RunStateEnum · run_execution 테이블 · 멱등키 저장소)이 실제로 동작함을 확인한다.
+    무목업: 실 DB 왕복만 한다(가짜 응답 없음). alembic 부팅 미강제 대비 ensure_schema 선행.
+    """
+    from app.services.c2r.run_store import create_run, ensure_schema, get_run
+
+    await ensure_schema(db)
+    # 고정 멱등키 — ping 이 run_execution 을 무한 누적하지 않고 단일 진단 row 를 재사용한다
+    # (멱등 경로까지 함께 라이브검증). 최초 1건 생성 후 이후 요청은 같은 row 를 반환.
+    run = await create_run(
+        db,
+        track="__ping__",
+        s_phase="S0",
+        state=RunStateEnum.DRAFT.value,
+        idempotency_key="__c2r_ping__",
+    )
+    fetched = await get_run(db, run.run_id)
+    return {
+        "status": "ok",
+        "run_id": run.run_id,
+        "state": (fetched.state if fetched else None),
+        "roundtrip": fetched is not None,
+        "tracking": "run_execution",
+    }
