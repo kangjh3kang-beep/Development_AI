@@ -1,6 +1,9 @@
-// v376: 대시보드 백지 사고 자가치유 — 버전 범프로 구 캐시(구 앱셸/자산) 일괄 삭제 +
-//        SWR '무캐시+네트워크실패 → undefined 응답' 버그 수정(요청 침묵사 → 정직한 오류로).
-const CACHE_NAME = "propai-v376-dashboard-selfheal";
+// v377: ★링크 클릭 이동 불가(플랫폼 전역) 근본수정 — RSC(Next App Router 클라 네비게이션
+//        데이터)를 stale-while-revalidate 로 캐시해, 옛 빌드의 RSC(죽은 청크해시 참조)를
+//        Link 클릭 시 반환 → 클라 네비게이션 침묵 실패하던 근본원인. RSC 는 콘텐츠해시가
+//        없어(같은 라우트 URL·빌드마다 다른 내용) 절대 캐시하면 안 되므로 network-only 분기.
+//        버전 범프로 v376 캐시(오염된 stale RSC 포함) 일괄 삭제.
+const CACHE_NAME = "propai-v377-rsc-navfix";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
@@ -117,6 +120,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // ★RSC(React Server Component) — Next.js App Router 의 클라이언트 네비게이션(Link 클릭·
+  //   prefetch)이 라우트 URL 로 보내는 데이터 요청. mode 가 'navigate' 가 아니라 아래 자산
+  //   catch-all(staleWhileRevalidate)로 빠져 '옛 빌드의 RSC'가 캐시에서 반환되면, 그 RSC 가
+  //   참조하는 청크 해시가 새 배포로 사라져 클라 네비게이션이 침묵 실패(=링크 클릭해도 이동
+  //   안 함)한다. RSC 는 콘텐츠해시가 없는 '빌드별' 페이로드이므로 절대 캐시/stale 금지 →
+  //   항상 네트워크(network-only). 헤더(RSC/Next-Router-*)·?_rsc·Accept 로 판별.
+  if (isRscRequest(request, url)) {
+    event.respondWith(networkOnlyNoStore(request));
+    return;
+  }
+
   if (url.pathname.startsWith("/api/")) {
     // 민감 API(인증/현장/머니패스)는 캐시 금지 + stale 폴백 금지(정직한 오프라인 503).
     if (isNoStoreApi(url.pathname)) {
@@ -146,6 +160,37 @@ function safePut(request, response) {
     caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
   } catch {
     /* clone/put 실패는 무해하게 무시 */
+  }
+}
+
+// RSC 요청 판별 — Next.js App Router 는 클라 네비게이션/prefetch 시 라우트 URL 로 RSC
+// 페이로드를 요청한다. 버전별로 시그니처가 조금씩 다르므로 여러 신호를 OR 로 넓게 잡는다:
+//  - 헤더 RSC:1, Next-Router-Prefetch:1, Next-Router-State-Tree(존재)
+//  - 쿼리 ?_rsc=...
+//  - Accept 에 text/x-component
+// (false-negative 는 stale 위험 잔존, false-positive 는 단지 네트워크 강제라 안전측 = 넓게)
+function isRscRequest(request, url) {
+  try {
+    const h = request.headers;
+    if (h.get("RSC") === "1") return true;
+    if (h.get("Next-Router-Prefetch") === "1") return true;
+    if (h.get("Next-Router-State-Tree")) return true;
+    if (url.searchParams.has("_rsc")) return true;
+    const accept = h.get("Accept") || "";
+    if (accept.includes("text/x-component")) return true;
+  } catch {
+    /* 헤더 접근 실패는 무해 — 캐시 안 하는 방향이 안전 */
+  }
+  return false;
+}
+
+// network-only(무캐시) — RSC 등 '빌드별' 동적 페이로드용. 캐시에 넣지도, 캐시에서
+// 꺼내지도 않는다. 실패 시 정직한 네트워크 오류(라우터가 하드네비 폴백/재시도).
+async function networkOnlyNoStore(request) {
+  try {
+    return await fetch(request);
+  } catch {
+    return Response.error();
   }
 }
 
