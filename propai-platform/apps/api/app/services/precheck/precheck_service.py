@@ -610,15 +610,6 @@ async def run_instant_precheck(
         summary["special_parcel_warning"] = special_parcel.get("honest_disclosure")
         summary["developability"] = gate
 
-    # ── 4) 선택적 LLM 1줄 요약(과설계 금지) ──
-    if use_llm:
-        summary["llm_note"] = await _llm_one_liner(
-            address, zone_type, legal, n_pass, n_warn, n_fail,
-            DEVELOPMENT_TYPE_NAMES.get(best, best) if best else None,
-        )
-        if summary["llm_note"]:
-            sources.append("llm(anthropic)")
-
     # ── 5) 신뢰 레이어(additive) — inputs/data_quality/legal_refs/evidence/feasibility_band ──
     # 전부 가산 필드. 조립 실패해도 기존 응답은 무손상(graceful).
     inputs = _build_inputs(
@@ -643,6 +634,53 @@ async def run_instant_precheck(
         area_sqm=resolved_area, feasibility_band=feasibility_band,
     )
 
+    # ── 6) 선택적 LLM 해석(과설계 금지·전부 가산) — dead-path 복구(CR-1) ──
+    # 기존엔 use_llm 시 _llm_one_liner 80자 한 줄만 나왔다. 우량 전용 인터프리터
+    # SiteAnalysisInterpreter를 공용 컨텍스트 빌더(build_interpreter_context)로 배선해
+    # 실효한도·공시지가·근거·법령링크·특이부지를 그라운딩한 다변량 해석을 ai_interpretation로
+    # 가산한다. 기존 키(summary.llm_note 포함)는 전부 불변. 인터프리터 None/실패 시 graceful.
+    ai_interpretation: Optional[dict] = None
+    if use_llm:
+        try:
+            from app.services.ai.interpreter_context import build_interpreter_context
+            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+
+            collected = {
+                "address": address,
+                "zone_type": zone_type,
+                "area_sqm": resolved_area,
+                "legal": legal,
+                "official_price": official_price,
+                "evidence": evidence,
+                "legal_refs": legal_refs,
+                "sources": sources,
+                "special_parcel": special_parcel,
+            }
+            ctx = build_interpreter_context(collected)
+            ai_interpretation = await SiteAnalysisInterpreter().generate_interpretation(
+                ctx["analysis_data"],
+                evidence_text=ctx["evidence_text"],
+                prior_context=ctx["prior_context"],
+            )
+            # 인터프리터가 빈 dict(호출 실패)면 None으로 정규화(graceful).
+            if not ai_interpretation:
+                ai_interpretation = None
+        except Exception:  # noqa: BLE001 — 어떤 실패도 기존 응답 무손상(정직 폴백).
+            ai_interpretation = None
+
+        # summary.llm_note 파생: 인터프리터 성공 시 overall_summary에서 1줄 파생,
+        # 실패 시 기존 규칙 폴백(_llm_one_liner 80자) — 무목업·정직.
+        if ai_interpretation and ai_interpretation.get("overall_summary"):
+            summary["llm_note"] = str(ai_interpretation["overall_summary"])[:200]
+            sources.append("llm(site_analysis_interpreter)")
+        else:
+            summary["llm_note"] = await _llm_one_liner(
+                address, zone_type, legal, n_pass, n_warn, n_fail,
+                DEVELOPMENT_TYPE_NAMES.get(best, best) if best else None,
+            )
+            if summary["llm_note"]:
+                sources.append("llm(anthropic)")
+
     return {
         "ok": True,
         "address": address,
@@ -662,6 +700,8 @@ async def run_instant_precheck(
         "feasibility_band": feasibility_band,
         # 특이부지 게이트(가산) — None이면 일상부지(특이 없음). 정직 고지.
         "special_parcel": special_parcel,
+        # 선택적 LLM 다변량 해석(가산) — use_llm=False면 None(기본). 인터프리터 실패도 None.
+        "ai_interpretation": ai_interpretation,
     }
 
 
