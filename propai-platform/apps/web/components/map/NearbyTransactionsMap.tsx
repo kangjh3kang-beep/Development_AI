@@ -12,6 +12,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/SatongMultiMap";
 import { apiClient } from "@/lib/api-client";
+import { resolveMapCenter } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 type Deal = {
@@ -113,6 +114,10 @@ export function NearbyTransactionsMap({
   const [payload, setPayload] = useState<NearbyMapPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // 백엔드 payload.center 가 null(지오코딩 실패)일 때 쓸 프론트 폴백 좌표.
+  //   선택 필지의 pnu/주소를 구획도(parcel-boundaries) center 로 해석 — MOLIT 지오코딩과
+  //   독립적인 경로라, 실거래 지오코딩이 실패해도 지도는 선택 위치로 이동한다(서울 폴백 제거).
+  const [fallbackCenter, setFallbackCenter] = useState<{ lat: number; lon: number; address?: string } | null>(null);
   const [kind, setKind] = useState<"trade" | "rent">("trade");
   const [type, setType] = useState("apt");
   const [showPresale, setShowPresale] = useState(false);
@@ -153,13 +158,16 @@ export function NearbyTransactionsMap({
   }, [fetchData]);
 
   const fetchPresale = useCallback(async () => {
-    if (!payload?.center?.lat || !payload.center.lon) return;
+    // 분양 중심좌표: 백엔드 center 우선, 없으면 폴백 center(선택 필지) 사용.
+    const cLat = payload?.center?.lat ?? fallbackCenter?.lat ?? null;
+    const cLon = payload?.center?.lon ?? fallbackCenter?.lon ?? null;
+    if (!payload || cLat == null || cLon == null) return;
     setPresaleLoading(true);
     try {
       const res = await apiClient.post<{ available: boolean; items: PresaleItem[] }>("/presale/nearby", {
         body: {
-          lat: payload.center.lat,
-          lon: payload.center.lon,
+          lat: cLat,
+          lon: cLon,
           lawd_cd: payload.lawd_cd,
           radius_m: 3000,
           months_back: 12,
@@ -173,11 +181,51 @@ export function NearbyTransactionsMap({
     } finally {
       setPresaleLoading(false);
     }
-  }, [payload?.center?.lat, payload?.center?.lon, payload?.lawd_cd]);
+  }, [payload, fallbackCenter?.lat, fallbackCenter?.lon]);
 
   useEffect(() => {
     if (showPresale && presale === null) void fetchPresale();
   }, [fetchPresale, presale, showPresale]);
+
+  // ── 좌표 폴백: payload.center 가 비면 선택 필지(pnu/주소)로 center 해석 ──
+  //   parcel-boundaries 는 VWorld 지적도 geometry 로 center 를 계산하므로, 실거래 지오코딩
+  //   실패와 무관하게 선택 위치를 얻는다. 주소·pnu 가 바뀌면 폴백은 초기화.
+  const backendCenterOk = !!(payload?.center?.lat && payload?.center?.lon);
+  useEffect(() => {
+    setFallbackCenter(null);
+  }, [address, pnu]);
+  useEffect(() => {
+    // payload 가 왔는데 center 가 유효하면 폴백 불필요.
+    if (!payload || backendCenterOk) return;
+    if (!pnu && !address) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await apiClient.post<{ center: { lat: number; lon: number } | null }>(
+          "/zoning/parcel-boundaries",
+          {
+            body: { parcels: [{ pnu: pnu || undefined, address: address || undefined }] },
+            useMock: false,
+            timeoutMs: 45000,
+          },
+        );
+        if (alive && res?.center?.lat && res.center.lon) {
+          setFallbackCenter({ lat: res.center.lat, lon: res.center.lon, address });
+        }
+      } catch {
+        // 폴백 실패는 무시 — 지도는 "위치 확인 불가"로 남는다(가짜 좌표 금지).
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [address, backendCenterOk, payload, pnu]);
+
+  // 지도 중심 focusTarget — 백엔드 center 우선, 없으면 프론트 폴백. 둘 다 없으면 null(서울 폴백 X).
+  const focusTarget = useMemo(
+    () => resolveMapCenter(payload?.center, fallbackCenter),
+    [payload?.center, fallbackCenter],
+  );
 
   const activeCategory = useMemo(
     () => payload?.categories?.[`${type}_${kind}`],
@@ -193,6 +241,16 @@ export function NearbyTransactionsMap({
     }),
     [kind, presale, showPresale, type],
   );
+  // 지도로 넘길 payload — 백엔드 center 가 비면 폴백 center 를 채워, 중심 마커·반경원도
+  //   선택 위치에 렌더된다(SatongMultiMap 계약 불변: null 이던 center 만 보강).
+  const mapPayload = useMemo<NearbyMapPayload | null>(() => {
+    if (!payload) return null;
+    if (backendCenterOk || !focusTarget) return payload;
+    return {
+      ...payload,
+      center: { lat: focusTarget.lat, lon: focusTarget.lon, address: payload.center?.address || address },
+    };
+  }, [payload, backendCenterOk, focusTarget, address]);
 
   if (!address) return null;
 
@@ -284,9 +342,9 @@ export function NearbyTransactionsMap({
           readOnly
           chrome="immersive"
           height={440}
-          marketPayload={payload}
+          marketPayload={mapPayload}
           marketLayer={marketLayer}
-          focusTarget={payload?.center?.lat && payload.center.lon ? { lat: payload.center.lat, lon: payload.center.lon, label: payload.center.address || address } : null}
+          focusTarget={focusTarget}
         />
 
         {(loading || presaleLoading) && (

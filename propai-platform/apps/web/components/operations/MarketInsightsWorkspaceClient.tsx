@@ -33,7 +33,7 @@ import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
-import { entriesToParcelRows, parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
+import { entriesToParcelRows, parcelDataToRows, preferredEntryAddress, shouldSendParcels } from "@/lib/parcel-rows";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -276,9 +276,7 @@ export function MarketInsightsWorkspaceClient() {
 
   // 입력 후보 주소(실행 전): 검색 → 피커가 올린 대표필지 → 활성 프로젝트 주소(폴백).
   //   ★stale store 주소가 업로드 필지를 덮어쓰지 않도록, 피커 entries 대표를 store보다 우선.
-  const repAddrFromEntries = entries[0]
-    ? (entries[0].jibunAddress || entries[0].fullAddress || entries[0].roadAddress)
-    : "";
+  const repAddrFromEntries = entries[0] ? preferredEntryAddress(entries[0]) : "";
   const inputAddress = searchAddr || repAddrFromEntries || siteAnalysis?.address || "";
   // 실제 분석 대상 주소 — 버튼 클릭으로 확정된 값만 지도/산출에 전달.
   const address = runAddress;
@@ -296,7 +294,7 @@ export function MarketInsightsWorkspaceClient() {
   //   쓴 다필지(siteAnalysis.parcels)로 폴백 — '지도 기반 필지 입력' 등 외부 경로 다필지도 반영. 비면 대표주소 단독.
   const runParcelAddrs = useMemo(
     () => (runEntries.length > 0
-      ? runEntries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      ? runEntries.map((e) => preferredEntryAddress(e))
       : runStoreParcels.map((p) => p.address ?? "")
     ).filter(Boolean),
     [runEntries, runStoreParcels],
