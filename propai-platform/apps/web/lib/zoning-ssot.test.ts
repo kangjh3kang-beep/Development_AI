@@ -1,5 +1,46 @@
 import { describe, it, expect } from "vitest";
-import { mapZoningRich, normalizeUpzoningScenarios, guardMultiParcelRich } from "@/lib/zoning-ssot";
+import {
+  mapZoningRich,
+  normalizeUpzoningScenarios,
+  guardMultiParcelRich,
+  nationalFarLimitForZone,
+  capFarToLegal,
+} from "@/lib/zoning-ssot";
+
+describe("nationalFarLimitForZone — 용도지역 법정상한(%) 공용 맵(백엔드 정합)", () => {
+  it("정확 매칭(자연녹지=100·제2종일반주거=250·일반상업=1300)", () => {
+    expect(nationalFarLimitForZone("자연녹지지역")).toBe(100);
+    expect(nationalFarLimitForZone("제2종일반주거지역")).toBe(250);
+    expect(nationalFarLimitForZone("일반상업지역")).toBe(1300);
+  });
+
+  it("부분 포함 매칭(층수·부기 접미 있어도 매칭)", () => {
+    expect(nationalFarLimitForZone("제2종일반주거지역(7층이하)")).toBe(250);
+  });
+
+  it("미상 용도지역·빈값은 null(0/임의값 금지)", () => {
+    expect(nationalFarLimitForZone("알수없는지역")).toBeNull();
+    expect(nationalFarLimitForZone(null)).toBeNull();
+    expect(nationalFarLimitForZone(undefined)).toBeNull();
+    expect(nationalFarLimitForZone("")).toBeNull();
+  });
+});
+
+describe("capFarToLegal — 법정상한 캡(백엔드 min(base+incentive, cap_far) 정합)", () => {
+  it("상한 초과면 캡 + isCapped=true(자연녹지 150→100)", () => {
+    expect(capFarToLegal(150, 100)).toEqual({ value: 100, isCapped: true });
+  });
+
+  it("상한 이하면 원값 유지 + isCapped=false", () => {
+    expect(capFarToLegal(90, 100)).toEqual({ value: 90, isCapped: false });
+    expect(capFarToLegal(100, 100)).toEqual({ value: 100, isCapped: false });
+  });
+
+  it("상한 미상(null/undefined)이면 캡 미적용(없는 상한 지어내지 않음)", () => {
+    expect(capFarToLegal(999, null)).toEqual({ value: 999, isCapped: false });
+    expect(capFarToLegal(999, undefined)).toEqual({ value: 999, isCapped: false });
+  });
+});
 
 describe("normalizeUpzoningScenarios", () => {
   it("배열이 아니면 null", () => {

@@ -346,6 +346,76 @@ export function resolveDominantZone(site: ResolvableSite): string | null {
   return str(site.dominantZoneCode) ?? str(site.zoneCode);
 }
 
+/* ── 용도지역 법정상한 용적률(%) 공용 맵 + FAR 캡 헬퍼(공용화·백엔드 정합) ──
+ *
+ * 배경(F2 정직성 버그): 프론트 활용성 극대화(utilization-optimizer)·land_report·decision_brief 등이
+ *   인센티브 완화를 base+Σbonus로 단순가산하면서 **법정상한(national_far) 캡을 걸지 않아**,
+ *   자연녹지(법정 100%) 필지에 150%/135% 같은 캡 없는 과대 용적률을 강조했다(오도). 백엔드
+ *   far_optimization_simulator는 `min(base+incentive, cap_far)`로 이미 캡을 건다(cap_far=national_far).
+ *   이 맵·헬퍼로 프론트 소비처가 같은 법정상한을 읽고 캡을 걸어(공용화·한 곳 고치면 전역 정합),
+ *   백엔드와 수치 정합을 이룬다.
+ *
+ * 값 출처: far_incentive_calculator.NATIONAL_FAR_LIMITS(국토계획법 시행령 별표 상한)와 동일 유지.
+ *   ★불변식: 백엔드 NATIONAL_FAR_LIMITS 갱신 시 이 맵도 함께 갱신(정합).
+ */
+export const NATIONAL_FAR_LIMITS_PCT: Record<string, number> = {
+  제1종전용주거지역: 100,
+  제2종전용주거지역: 150,
+  제1종일반주거지역: 200,
+  제2종일반주거지역: 250,
+  제3종일반주거지역: 300,
+  준주거지역: 500,
+  중심상업지역: 1500,
+  일반상업지역: 1300,
+  근린상업지역: 900,
+  유통상업지역: 1100,
+  전용공업지역: 300,
+  일반공업지역: 350,
+  준공업지역: 400,
+  보전녹지지역: 80,
+  생산녹지지역: 100,
+  자연녹지지역: 100,
+  보전관리지역: 80,
+  생산관리지역: 80,
+  계획관리지역: 100,
+  농림지역: 80,
+  자연환경보전지역: 80,
+  역세권개발구역: 700,
+  도시재생활성화구역: 500,
+};
+
+/**
+ * 용도지역명(코드/한글) → 법정상한 용적률(%). 미상이면 null(0/임의값 금지).
+ *
+ * 정확 매칭 우선, 없으면 부분 포함 매칭(예: "제2종일반주거지역(7층이하)" → 제2종일반주거지역).
+ * 순수 함수. 무목업: 매칭 실패 시 null(캡 미적용 신호).
+ */
+export function nationalFarLimitForZone(zoneCode: string | null | undefined): number | null {
+  const z = str(zoneCode);
+  if (!z) return null;
+  const exact = NATIONAL_FAR_LIMITS_PCT[z];
+  if (typeof exact === "number") return exact;
+  for (const [name, limit] of Object.entries(NATIONAL_FAR_LIMITS_PCT)) {
+    if (z.includes(name)) return limit;
+  }
+  return null;
+}
+
+/**
+ * FAR 값에 법정상한 캡 적용(백엔드 min(base+incentive, cap_far)와 정합).
+ *
+ * legalCap이 null(미상)이면 캡 미적용(원값 유지) — 없는 상한을 지어내지 않는다(무목업).
+ * 순수 함수. 반환: 캡 적용 후 값 + 캡 여부(isCapped).
+ */
+export function capFarToLegal(
+  far: number,
+  legalCap: number | null | undefined,
+): { value: number; isCapped: boolean } {
+  const cap = num(legalCap);
+  if (cap == null || far <= cap) return { value: far, isCapped: false };
+  return { value: cap, isCapped: true };
+}
+
 // 개발가능성 영문 게이트 → 한국어 라벨 공용 맵.
 // AutoZoningBadge, LandIntelligencePanel, SiteInitiator 등 여러 곳에서 공유.
 export const DEVELOPABILITY_LABEL: Record<string, string> = {
