@@ -1211,7 +1211,170 @@ def _zone_family(zone_type: str | None) -> str | None:
     return None
 
 
-def _aggregate_integrated_zoning(enriched: list[dict]) -> dict[str, Any]:
+# ──────────────────────────────────────────────────────────────────────────
+# S3-A — 국계법 제84조 걸침(혼재) 규정(zone_straddle_ruling).
+#
+# ★조문 인용(무날조 — 2026-07-03 법제처 국가법령정보센터 검색결과·casenote 원문 대조 확인.
+#   확신도: 내용 구조·수치(330/660㎡)·적용방식은 '상(확인됨)', 아래 문구 중 따옴표 부분은
+#   원문 그대로, 그 외는 확인된 요지):
+#
+# 국토의 계획 및 이용에 관한 법률 제84조(둘 이상의 용도지역·용도지구·용도구역에 걸치는
+# 대지에 대한 적용 기준)
+#   ① "하나의 대지가 둘 이상의 용도지역·용도지구 또는 용도구역에 걸치는 경우로서 각
+#      용도지역등에 걸치는 부분 중 가장 작은 부분의 규모가 대통령령으로 정하는 규모 이하인
+#      경우에는 전체 대지의 건폐율 및 용적률은 각 부분이 전체 대지 면적에서 차지하는 비율을
+#      고려하여 각 용도지역등별 건폐율 및 용적률을 가중평균한 값을 적용" 하고, 그 밖의 건축
+#      제한 등에 관한 사항은 그 대지 중 가장 넓은 면적이 속하는 용도지역등에 관한 규정을
+#      적용한다(요지). 다만 건축물이 고도지구에 걸쳐 있는 경우에는 그 건축물 및 대지 전부에
+#      고도지구 규정을 적용한다(단서 요지).
+#   ② "하나의 건축물이 방화지구와 그 밖의 용도지역·용도지구 또는 용도구역에 걸쳐 있는
+#      경우에는" 그 전부에 방화지구 규정을 적용하되, 방화벽으로 구획되는 경우 예외(요지).
+#   ③ 하나의 대지가 녹지지역과 그 밖의 용도지역등에 걸쳐 있는 경우(가장 작은 부분이
+#      녹지지역으로서 제1항의 대통령령으로 정하는 규모 이하인 경우는 제외)에는 각각의
+#      용도지역등의 건축물 및 토지에 관한 규정을 적용한다(요지).
+#
+# 같은 법 시행령 제94조(2 이상의 용도지역에 걸치는 토지에 대한 적용기준 — 확인됨):
+#   법 제84조 제1항의 "대통령령으로 정하는 규모"는 330제곱미터. 다만 "도로변에 띠 모양으로
+#   지정된 상업지역에 걸쳐 있는 토지의 경우에는 660제곱미터".
+#
+# 구현 범위(정직 고지): ①·③(건폐율·용적률·그 밖의 규정, 녹지 걸침)만 판정한다.
+# ① 단서(고도지구)·②(방화지구)는 용도지구 걸침 데이터가 배선되지 않아 미평가 —
+# honest_notes 로 관할 확인을 고지한다(임의 판정 금지). 660㎡ 단서의 '도로변 띠 모양
+# 상업지역' 여부는 데이터로 자동판별 불가 → 옵션 플래그 주입 전용(기본 330㎡, 보수측).
+# 레지스트리 근거 키: mixed_zone_rule(법 §84)·mixed_zone_rule_dec(령 §94) — 기존 키 재사용.
+# ──────────────────────────────────────────────────────────────────────────
+
+STRADDLE_THRESHOLD_SQM = 330.0                       # 령 §94 본문
+STRADDLE_THRESHOLD_ROADSIDE_COMMERCIAL_SQM = 660.0   # 령 §94 단서(도로변 띠 모양 상업지역)
+STRADDLE_RULE_WEIGHTED_AVERAGE = "가중평균+과반"        # §84① — 건폐·용적 가중평균 + 그 밖은 최광부분
+STRADDLE_RULE_EACH_PART = "부분별각각"                  # 초과형·§84③ 녹지 걸침 — 부분별 각각 적용
+
+
+def _zone_straddle_ruling(
+    zone_area: dict[str, float],
+    *,
+    roadside_strip_commercial: bool = False,
+) -> dict[str, Any]:
+    """§84 걸침 판정(순수함수) — zone별 면적 맵에서 적용규정을 도출한다.
+
+    반환: {straddle, applied_rule, threshold_sqm, threshold_basis, roadside_strip_commercial,
+           smallest_part, largest_part, green_zone_rule_applied, per_zone_breakdown,
+           bcr_far_treatment, other_regulations_treatment, legal_refs, rationale, honest_notes}.
+    ★기존 blended_*_pct 계산에는 일절 관여하지 않는다(additive 판정 전용).
+    """
+    threshold = (STRADDLE_THRESHOLD_ROADSIDE_COMMERCIAL_SQM if roadside_strip_commercial
+                 else STRADDLE_THRESHOLD_SQM)
+    threshold_basis = ("국토계획법 시행령 제94조 — 330㎡"
+                       "(도로변에 띠 모양으로 지정된 상업지역에 걸쳐 있는 토지는 660㎡)")
+    real = sorted(
+        ((z, a) for z, a in (zone_area or {}).items() if z != "미상" and a > 0),
+        key=lambda kv: kv[1], reverse=True,
+    )
+    total = sum(a for _z, a in real)
+    breakdown = [{"zone": z, "area_sqm": round(a, 2),
+                  "share_pct": round(a / total * 100, 1) if total else None}
+                 for z, a in real]
+    legal_refs = _factor_legal_refs(["mixed_zone_rule", "mixed_zone_rule_dec"])
+    honest_notes: list[str] = [
+        "§84① 단서(고도지구)·②(방화지구) 걸침은 용도지구 데이터 미배선으로 판정하지 않았습니다 "
+        "— 고도지구·방화지구 해당 여부는 관할(토지이용계획확인서)에서 별도 확인이 필요합니다.",
+        "다필지 세트에 대한 §84 적용은 필지들을 '하나의 대지'(합필·일단의 대지)로 보는 전제의 "
+        "판정입니다 — 합필(토지합병)·일단의 토지 인정 여부는 관할 확인이 필요합니다.",
+    ]
+    if not roadside_strip_commercial:
+        honest_notes.append(
+            "'도로변에 띠 모양으로 지정된 상업지역'(령 §94 단서, 660㎡) 해당 여부는 자동판별이 "
+            "불가하여 기본 임계 330㎡를 보수 적용했습니다(해당 시 옵션 주입으로 660㎡ 적용).")
+    unknown_area = (zone_area or {}).get("미상")
+    if unknown_area:
+        honest_notes.append("용도지역 미상 면적이 있어 걸침 판정에서 제외했습니다(공부 확보 후 재판정 필요).")
+
+    base = {
+        "threshold_sqm": threshold,
+        "threshold_basis": threshold_basis,
+        "roadside_strip_commercial": bool(roadside_strip_commercial),
+        "per_zone_breakdown": breakdown,
+        "legal_refs": legal_refs,
+        "green_zone_rule_applied": False,
+        "blended_metrics_note": (
+            "'blended_*_pct'(면적가중 건폐·용적)는 §84① 가중평균 산식에 해당하는 값입니다 — "
+            "'가중평균+과반' 적용 시 법적 적용치, '부분별각각' 적용 시 참고치."),
+    }
+
+    if len(real) < 2:
+        return {
+            **base,
+            "straddle": False,
+            "applied_rule": None,
+            "smallest_part": None,
+            "largest_part": ({"zone": real[0][0], "area_sqm": round(real[0][1], 2)}
+                             if real else None),
+            "bcr_far_treatment": "단일 용도지역 — 해당 용도지역 한도 그대로 적용(§84 미적용)",
+            "other_regulations_treatment": "단일 용도지역 규정 적용",
+            "rationale": "유효(면적 확보) 용도지역이 1개 이하 — §84 걸침 규정 미적용.",
+            "honest_notes": honest_notes,
+        }
+
+    smallest_zone, smallest_area = real[-1]
+    largest_zone, largest_area = real[0]
+    greens = {z for z, _a in real if _zone_family(z) == "녹지"}
+    has_green_mix = bool(greens) and len(greens) < len(real)
+
+    if len(real) > 2:
+        honest_notes.append(
+            "셋 이상의 용도지역 걸침 — §84 적용은 부분 조합별 정밀 검토가 필요할 수 있어 "
+            "가장 작은 부분 기준의 보수 판정입니다(관할 확인 권고).")
+
+    green_rule_applied = False
+    if has_green_mix and not (smallest_zone in greens and smallest_area <= threshold):
+        # §84③ — 녹지지역 걸침은 각각 적용(가장 작은 부분이 녹지이고 임계 이하인 경우만 ①로).
+        applied_rule = STRADDLE_RULE_EACH_PART
+        green_rule_applied = True
+        rationale = (
+            f"녹지지역({'·'.join(sorted(greens))})과 그 밖의 용도지역에 걸치는 대지 — §84③에 따라 "
+            "각각의 용도지역 규정을 부분별로 적용합니다(가장 작은 부분이 녹지지역으로서 임계 이하인 "
+            f"경우가 아님: 가장 작은 부분={smallest_zone} {smallest_area:,.0f}㎡).")
+    elif smallest_area <= threshold:
+        applied_rule = STRADDLE_RULE_WEIGHTED_AVERAGE
+        rationale = (
+            f"가장 작은 부분({smallest_zone} {smallest_area:,.0f}㎡)이 임계 {threshold:,.0f}㎡ 이하 — "
+            "§84①에 따라 전체 대지의 건폐율·용적률은 면적비율 가중평균을 적용하고, 그 밖의 건축 제한 "
+            f"등은 가장 넓은 부분({largest_zone})의 규정을 적용합니다.")
+        if has_green_mix:
+            rationale += " (가장 작은 부분이 녹지지역으로서 임계 이하 — §84③ 괄호 예외로 ① 적용.)"
+    else:
+        applied_rule = STRADDLE_RULE_EACH_PART
+        rationale = (
+            f"가장 작은 부분({smallest_zone} {smallest_area:,.0f}㎡)이 임계 {threshold:,.0f}㎡ 초과 — "
+            "§84① 요건 불충족으로 각 부분별로 해당 용도지역 규정을 각각 적용합니다(사실상 분리 검토).")
+
+    if applied_rule == STRADDLE_RULE_EACH_PART:
+        honest_notes.append(
+            "부분별각각 적용 — 면적가중(blended) 건폐·용적 지표는 법적 적용치가 아닌 참고치입니다. "
+            "부분별 개별 성립성(각 부분 한도·건축제한)을 확인하십시오.")
+        bcr_far_treatment = "각 부분별 해당 용도지역의 건폐율·용적률을 각각 적용(통합 가중평균 아님)"
+        other_treatment = "각 부분별 해당 용도지역 규정을 각각 적용"
+    else:
+        bcr_far_treatment = "전체 대지에 대해 용도지역별 건폐율·용적률의 면적비율 가중평균 적용(§84①)"
+        other_treatment = f"그 밖의 건축 제한 등은 가장 넓은 부분({largest_zone})의 규정 적용(§84①)"
+
+    return {
+        **base,
+        "straddle": True,
+        "applied_rule": applied_rule,
+        "smallest_part": {"zone": smallest_zone, "area_sqm": round(smallest_area, 2)},
+        "largest_part": {"zone": largest_zone, "area_sqm": round(largest_area, 2)},
+        "green_zone_rule_applied": green_rule_applied,
+        "bcr_far_treatment": bcr_far_treatment,
+        "other_regulations_treatment": other_treatment,
+        "rationale": rationale,
+        "honest_notes": honest_notes,
+    }
+
+
+def _aggregate_integrated_zoning(
+    enriched: list[dict], *, roadside_strip_commercial: bool = False,
+) -> dict[str, Any]:
     """다필지 통합 용도지역·실효/법정 한도·통합 GFA를 면적가중으로 집계(순수함수·외부콜 0).
 
     입력(enriched): 각 필지 dict는 `_enrich_effective_and_special`가 in-place로 부착한
@@ -1230,8 +1393,12 @@ def _aggregate_integrated_zoning(enriched: list[dict]) -> dict[str, Any]:
 
     반환: {parcel_count, zone_mix[...], dominant_zone, dominant_basis, blended_far_eff_pct,
            blended_bcr_eff_pct, blended_far_legal_pct, blended_bcr_legal_pct, total_area_sqm,
-           integrated_gfa_sqm, integrated_footprint_sqm, gfa_basis, far_basis_note, warnings}.
+           integrated_gfa_sqm, integrated_footprint_sqm, gfa_basis, far_basis_note, warnings,
+           zone_straddle_ruling(S3-A additive — §84 걸침 적용규정 판정)}.
     미확보·산출불가 항목은 null(무목업) + warnings에 정직 기재.
+    ★additive: roadside_strip_commercial(령 §94 단서 660㎡ 임계, 기본 False=330㎡)와
+      zone_straddle_ruling 키만 추가 — 기존 키·산식은 전부 불변(blended_*는 §84① 가중평균
+      산식에 해당하며, '부분별각각' 판정 시 참고치임을 ruling이 라벨로 정확화한다).
     """
     parcels = list(enriched or [])
     warnings: list[str] = []
@@ -1393,14 +1560,111 @@ def _aggregate_integrated_zoning(enriched: list[dict]) -> dict[str, Any]:
         "gfa_basis": "per_parcel_effective_sum",
         "far_basis_note": far_basis_note,
         "warnings": warnings,
+        # S3-A additive — §84 걸침(혼재) 적용규정 판정(기존 키·산식 불변, 판정 전용).
+        "zone_straddle_ruling": _zone_straddle_ruling(
+            zone_area, roadside_strip_commercial=roadside_strip_commercial),
     }
 
 
-def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
+def _multi_parcel_addons(
+    parcels: list[dict],
+    per: list[dict[str, Any]],
+    blocking: list[dict[str, Any]],
+    refresh_fn,
+    roadside_strip_commercial: bool,
+) -> dict[str, Any]:
+    """W1 합류(S3-B/C·S4·S5) — detect_multi_parcel 반환에 additive 로 붙는 키들을 조립한다.
+
+    usable_area(3계층)·area_verification(면적 3원 교차검증)·zone_straddle_ruling(§84)·
+    senior_review(합필 정량평가)·exclusion_scenario(차단 전부 제외 what-if — 제외 후 통합한도는
+    remaining 으로 _aggregate_integrated_zoning 재실행). 전부 순수·결정론(refresh_fn 주입 시에만
+    재보강 콜백 실행). 기존 detect_multi_parcel 키에는 일절 관여하지 않는다.
+    """
+    # 순환 임포트 방지(usable_area 모듈 docstring 계약)·지연 로딩 — 함수 내 임포트.
+    from app.services.land_intelligence.parcel_verification import verify_parcel_areas
+    from app.services.senior_agents.evaluators.land_assembly import evaluate_land_assembly
+    from app.services.zoning.usable_area import compute_usable_area, simulate_exclusion
+
+    items = list(parcels or [])
+
+    # ── S3-B: 실사용가능용지 3계층(per_parcel 은 area_sqm·special 을 이미 가짐) ──
+    usable = compute_usable_area(per)
+
+    # ── S4: 면적 3원 교차검증(원본 parcel dict 기준 — geometry·입력면적 신호 포함) ──
+    verification = verify_parcel_areas(items, refresh_fn)
+
+    # ── S3-A: §84 걸침 판정(zone별 면적 맵 — _AREA_KEYS 관례로 면적 탐색) ──
+    zone_area: dict[str, float] = {}
+    for p in items:
+        z = (p.get("zone_type") or "").strip() or "미상"
+        a = _first_num(p, _AREA_KEYS) or 0.0
+        zone_area[z] = zone_area.get(z, 0.0) + a
+    ruling = _zone_straddle_ruling(zone_area, roadside_strip_commercial=roadside_strip_commercial)
+
+    # ── S5: 시니어 정량평가 입력 — blocked_sqm 은 게이트(BLOCKED/NO) 사유 제외분만
+    #   (도로·구거 등 지목 제외분과 구분 — 평가기의 보수 대체 폴백을 쓰지 않고 정밀값 주입). ──
+    blocked_sqm = 0.0
+    for e in usable.get("excluded_parcels") or []:
+        codes = {r.get("code") for r in e.get("reasons") or []}
+        if codes & {"developability_blocked", "resolvable_no"} and e.get("area_sqm") is not None:
+            blocked_sqm += e["area_sqm"]
+    senior_evals = evaluate_land_assembly({
+        "gross_sqm": usable["gross_sqm"],
+        "usable_confirmed_sqm": usable["usable_confirmed_sqm"],
+        "usable_conditional_sqm": usable["usable_conditional_sqm"],
+        "excluded_sqm": usable["excluded_sqm"],
+        "blocked_sqm": round(blocked_sqm, 2),
+        "unverified_parcel_count": verification["discrepancy_count"],
+        "zone_straddle": ruling["straddle"],
+        "straddle_applied_rule": ruling["applied_rule"],
+    })
+    senior_review = [ev.to_dict() for ev in senior_evals]
+
+    # ── S3-C: 추천 제외 시나리오(차단 전부 제외안) — 차단필지 있을 때만 1건 동반 ──
+    scenario: dict[str, Any] | None = None
+    if blocking:
+        pnus = [str(b["pnu"]) for b in blocking if b.get("pnu")]
+        sim = simulate_exclusion(items, pnus)
+        remaining = sim["remaining_parcels"]
+        # 원본 dict 리스트(내부 _far_eff 등 포함)는 응답에 싣지 않는다 — 비대·내부키 누출 방지.
+        scenario = {k: v for k, v in sim.items() if k != "remaining_parcels"}
+        scenario["scenario"] = "차단(해결불가) 필지 전부 제외안 — 추천 what-if"
+        scenario["integrated_zoning_after_exclusion"] = _aggregate_integrated_zoning(
+            remaining, roadside_strip_commercial=roadside_strip_commercial)
+        unmatched = len(blocking) - len(pnus)
+        if unmatched:
+            scenario["note_unmatched"] = (
+                f"차단필지 {unmatched}건은 pnu 미확보로 제외안에서 식별하지 못했습니다"
+                "(공부 pnu 확보 후 재산정 필요).")
+
+    return {
+        "usable_area": usable,
+        "area_verification": verification,
+        "zone_straddle_ruling": ruling,
+        "senior_review": senior_review,
+        "exclusion_scenario": scenario,
+    }
+
+
+def detect_multi_parcel(
+    parcels: list[dict],
+    *,
+    refresh_fn=None,
+    roadside_strip_commercial: bool = False,
+) -> dict[str, Any]:
     """다필지 종합 특이부지 판정 — 한 필지의 특이성이 사업 전체를 제약할 수 있으므로,
     필지별 감지 후 가장 제약 큰 게이트로 사업 전체를 판정하고, 차단필지·대안을 도출한다.
 
     parcels: 각 원소는 부지분석 result dict(또는 최소 land_category/zone_type/pnu 포함).
+
+    additive(계획서 S3~S5 합류 — 기존 반환 키 전부 불변):
+      per_parcel[].area_sqm — 공부 면적(_AREA_KEYS 관례, 미확보 None).
+      usable_area           — 실사용가능용지 3계층(compute_usable_area).
+      area_verification     — 면적 3원 교차검증(verify_parcel_areas; refresh_fn 주입 시
+                              괴리 필지 1회 재보강 — 자동 보정 없음·원본 불변).
+      zone_straddle_ruling  — §84 걸침 적용규정 판정.
+      senior_review         — 합필 정량평가(evaluate_land_assembly → to_dict 리스트).
+      exclusion_scenario    — 차단필지 전부 제외 what-if(제외 후 통합한도 재산정 동반) | None.
     """
     per: list[dict[str, Any]] = []
     for i, p in enumerate(parcels or []):
@@ -1408,15 +1672,18 @@ def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
         per.append({
             "index": i, "pnu": p.get("pnu"), "address": p.get("address"),
             "land_category": p.get("land_category"),
+            "area_sqm": _first_num(p, _AREA_KEYS),  # additive — usable 3계층·matrix 재료
             "special": sp,  # None 이면 일상필지
         })
 
     specials = [x for x in per if x["special"]]
     if not specials:
-        return {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
-                "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
-                "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
-                "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
+        out = {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
+               "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
+               "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
+               "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
+        out.update(_multi_parcel_addons(parcels, per, [], refresh_fn, roadside_strip_commercial))
+        return out
 
     # 사업 전체 게이트 = 가장 제약 큰 필지.
     gate = max(specials, key=lambda x: _RANK.get(x["special"]["developability"], 0))["special"]["developability"]
@@ -1455,11 +1722,171 @@ def detect_multi_parcel(parcels: list[dict]) -> dict[str, Any]:
         disclosure = "특이 필지가 있으나 표준 인허가 절차(전용·협의 등)로 해결 가능합니다."
         recommendation = "전용비용·부담금을 사업수지에 반영하여 진행하십시오."
 
-    return {
+    out = {
         "parcel_count": len(per), "special_count": len(specials),
         "developability": gate, "resolvable": resolvable,
         "blocking_parcels": blocking, "per_parcel": per,
         "honest_disclosure": disclosure, "recommendation": recommendation,
         "note": "다필지 종합 — 가장 제약 큰 필지가 사업 전체를 좌우(연결개발 전제). 비인접/제외 시 잔여로 재산정.",
+    }
+    out.update(_multi_parcel_addons(parcels, per, blocking, refresh_fn, roadside_strip_commercial))
+    return out
+
+
+# 시니어 판정 심각도(worst 집계용) — evaluators/base 의 PASS/WARN/BLOCK 서열과 동일 계약.
+_SENIOR_SEVERITY = {"PASS": 0, "WARN": 1, "BLOCK": 2}
+
+
+def build_multi_parcel_report(
+    parcels: list[dict],
+    *,
+    refresh_fn=None,
+    roadside_strip_commercial: bool = False,
+) -> dict[str, Any]:
+    """다필지 통합분석 최종 보고(S5 계약) — 순수 조립(결정론, refresh_fn 주입 시에만 콜백).
+
+    반환:
+      report_type            "multi_parcel_report"
+      parcel_count           필지 수
+      matrix                 필지×속성×판정 행렬 — [{index, pnu, address, land_category,
+                             zone_type, area_sqm, developability, resolvable, gate(BLOCK/
+                             TENTATIVE/PASS), usable_tier(confirmed|conditional|excluded),
+                             verification_status(consistent|discrepancy|insufficient),
+                             factor_categories[]}]
+      usable_area            실사용가능용지 3계층(compute_usable_area 결과 그대로)
+      zone_straddle_ruling   §84 걸침 적용규정 판정(근거 legal_refs·honest_notes 동반)
+      integrated_zoning      _aggregate_integrated_zoning(전 필지) — 통합 한도·혼재 경고
+      charges                {per_parcel[{index,pnu,charge_name,amount_won,estimate_note,
+                             formula,legal_ref_keys}], total_estimated_won(전부 미산출이면
+                             None — 0 날조 금지), estimated: True, unestimated_count,
+                             basis, honest_note} — 필지별 charge_notice 합산(추정)
+      verification           면적 3원 교차검증(verify_parcel_areas 결과 그대로)
+      senior_review          합필 정량평가 to_dict 리스트(근거·임계 동반)
+      senior_verdict         시니어 최악 판정(PASS|WARN|BLOCK) | None(평가 없음)
+      exclusion_scenario     차단필지 전부 제외 what-if(제외 후 통합한도 재산정) | None
+      developability/resolvable/blocking_parcels/honest_disclosure/recommendation
+                             detect_multi_parcel 종합 게이트 미러(SSOT 동일값)
+      honest_limitations     정직 한계 고지 목록(중복 제거)
+      basis                  조립 근거 설명
+    ★모든 수치는 하위 산출물의 근거(법령 ref·산식·한계)를 그대로 동반한다(설명가능성 기본화).
+    """
+    items = list(parcels or [])
+    detection = detect_multi_parcel(
+        items, refresh_fn=refresh_fn, roadside_strip_commercial=roadside_strip_commercial)
+    integrated = _aggregate_integrated_zoning(
+        items, roadside_strip_commercial=roadside_strip_commercial)
+    usable = detection["usable_area"]
+    verification = detection["area_verification"]
+    ruling = detection["zone_straddle_ruling"]
+
+    # ── matrix: 필지×속성×판정 ──
+    tier_by_index: dict[Any, str] = {}
+    for tier, entries in (("confirmed", usable.get("confirmed_parcels")),
+                          ("conditional", usable.get("conditional_parcels")),
+                          ("excluded", usable.get("excluded_parcels"))):
+        for e in entries or []:
+            tier_by_index[e.get("index")] = tier
+    ver_by_index = {e.get("index"): e.get("status")
+                    for e in verification.get("per_parcel") or []}
+    matrix: list[dict[str, Any]] = []
+    for x in detection["per_parcel"]:
+        i = x.get("index")
+        src = items[i] if isinstance(i, int) and 0 <= i < len(items) else {}
+        sp = x.get("special") if isinstance(x.get("special"), dict) else {}
+        dev = sp.get("developability") or "POSSIBLE"
+        res = sp.get("resolvable") or "YES"
+        matrix.append({
+            "index": i, "pnu": x.get("pnu"), "address": x.get("address"),
+            "land_category": x.get("land_category"),
+            "zone_type": src.get("zone_type"),
+            "area_sqm": x.get("area_sqm"),
+            "developability": dev, "resolvable": res,
+            "gate": gate_decision(dev, res),
+            "usable_tier": tier_by_index.get(i),
+            "verification_status": ver_by_index.get(i),
+            "factor_categories": [f.get("category") for f in sp.get("factors") or []
+                                  if f.get("category")],
+        })
+
+    # ── charges 통합 합산: 필지별 charge_notice(추정) 합 — 미산출은 합산 제외+명세(무날조) ──
+    charge_rows: list[dict[str, Any]] = []
+    total = 0.0
+    has_estimate = False
+    unestimated = 0
+    for x in detection["per_parcel"]:
+        sp = x.get("special") if isinstance(x.get("special"), dict) else {}
+        for f in sp.get("factors") or []:
+            cn = f.get("charge_notice")
+            if not cn:
+                continue
+            amount = ((cn.get("estimate") or {}).get("amount_won")
+                      if isinstance(cn.get("estimate"), dict) else None)
+            charge_rows.append({
+                "index": x.get("index"), "pnu": x.get("pnu"),
+                "charge_name": cn.get("charge_name"),
+                "amount_won": amount,
+                "estimate_note": cn.get("estimate_note"),
+                "formula": cn.get("formula"),
+                "legal_ref_keys": cn.get("legal_ref_keys"),
+            })
+            if amount is not None:
+                total += amount
+                has_estimate = True
+            else:
+                unestimated += 1
+    charges = {
+        "per_parcel": charge_rows,
+        "total_estimated_won": round(total, 2) if has_estimate else None,
+        "estimated": True,
+        "unestimated_count": unestimated,
+        "basis": ("필지별 charge_notice(농지보전부담금·대체산림자원조성비 등) 추정액 합산 — "
+                  "개별 산식·법령 근거는 각 행의 formula·legal_ref_keys 참조"),
+        "honest_note": ("합산액은 감면·부과시점 미반영 추정치로 확정 부과액 아님. 추정액 미산출 "
+                        "항목(unestimated_count)은 합산에서 제외되어 실제 총 부담금은 이보다 "
+                        "클 수 있습니다(관할청 산정으로 확정)."),
+    }
+
+    # ── senior 최악 판정 ──
+    senior_review = detection["senior_review"]
+    senior_verdict = (max((str(e.get("verdict")) for e in senior_review),
+                          key=lambda v: _SENIOR_SEVERITY.get(v, 0))
+                      if senior_review else None)
+
+    # ── honest_limitations(중복 제거·순서 보존) ──
+    limitations: list[str] = [
+        "다필지 통합 지표는 대상 필지들을 하나의 사업부지(합필·일단의 대지)로 연결개발하는 "
+        "전제의 산출입니다 — 합필(토지합병)·일단의 토지 인정 여부는 관할 확인이 필요합니다.",
+    ]
+    limitations.extend(usable.get("honest_notes") or [])
+    limitations.extend(ruling.get("honest_notes") or [])
+    policy_note = ((verification.get("policy") or {}).get("note") or "").strip()
+    if policy_note:
+        limitations.append(f"면적 3원 교차검증: {policy_note}")
+    if charge_rows:
+        limitations.append(charges["honest_note"])
+    seen: set[str] = set()
+    honest_limitations = [s for s in limitations if not (s in seen or seen.add(s))]
+
+    return {
+        "report_type": "multi_parcel_report",
+        "parcel_count": detection["parcel_count"],
+        "matrix": matrix,
+        "usable_area": usable,
+        "zone_straddle_ruling": ruling,
+        "integrated_zoning": integrated,
+        "charges": charges,
+        "verification": verification,
+        "senior_review": senior_review,
+        "senior_verdict": senior_verdict,
+        "exclusion_scenario": detection["exclusion_scenario"],
+        "developability": detection["developability"],
+        "resolvable": detection["resolvable"],
+        "blocking_parcels": detection["blocking_parcels"],
+        "honest_disclosure": detection["honest_disclosure"],
+        "recommendation": detection.get("recommendation"),
+        "honest_limitations": honest_limitations,
+        "basis": ("특이부지 감지 SSOT(detect_multi_parcel) + 실사용가능용지 3계층(usable_area) + "
+                  "국토계획법 §84 걸침 판정 + 면적 3원 교차검증(parcel_verification) + 합필 시니어 "
+                  "정량평가(land_assembly)를 결정론으로 조립 — 모든 수치에 근거·법령·한계 동반."),
     }
 
