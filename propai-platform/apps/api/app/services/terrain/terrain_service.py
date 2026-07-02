@@ -87,6 +87,76 @@ def _polygon_area_sqm(ring: list[tuple[float, float]]) -> float:
     return abs(area2) / 2.0
 
 
+# ── 폴리곤 내부 클립(★핵심 정확도 보정) ──
+# 경사도·토공 격자는 필지 외접 사각형(bbox)에 깔린다. 비정형(삼각형·L자·사다리꼴) 필지는
+# bbox 모서리에 "이웃 필지 지형"이 들어와 평균경사도·토공량을 오염시킨다. 아래 헬퍼로
+# 격자점 중 "필지 폴리곤 내부 점"만 골라(마스킹) 집계 대상으로 삼는다.
+# shapely 있으면 covers(경계 포함)로 정밀 판정, 없으면 ray-casting 순수함수로 폴백.
+_MIN_INTERIOR_PTS = 4  # 폴리곤 내부 격자점이 이보다 적으면 클립 미적용(bbox 근사·신뢰도↓)
+
+
+def _ray_cast_inside(lon: float, lat: float, ring: list[tuple[float, float]]) -> bool:
+    """순수 ray-casting 내부판정. ring=[(lon,lat),...](닫힘/열림 무관).
+
+    점에서 수평 반직선을 쏴 폴리곤 변과의 교차 횟수가 홀수면 내부.
+    shapely 미설치 환경을 위한 무의존 폴백(외부 라이브러리 없이 동작).
+    """
+    n = len(ring)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+        # 변 (i,j)가 점의 위도(lat)를 가로지르는가 + 교차 x가 점의 우측인가
+        if (yi > lat) != (yj > lat):
+            denom = (yj - yi)
+            if denom != 0.0:
+                x_cross = xi + (lat - yi) / denom * (xj - xi)
+                if lon < x_cross:
+                    inside = not inside
+        j = i
+    return inside
+
+
+def _polygon_interior_mask(
+    lat_axis: np.ndarray, lon_axis: np.ndarray, ring: list[tuple[float, float]]
+) -> np.ndarray | None:
+    """격자점(row=lat, col=lon)이 필지 폴리곤 내부인지 bool 마스크. 경계점 포함.
+
+    ring이 유효하지 않으면 None(호출측은 클립 미적용=현행 bbox 동작 유지).
+    """
+    if not ring or len(ring) < 3:
+        return None
+    n_r, n_c = int(lat_axis.size), int(lon_axis.size)
+    mask = np.zeros((n_r, n_c), dtype=bool)
+
+    # 1) shapely 우선(정밀·경계 일관). 지연 import — 미설치 환경 가드(코드베이스 관행).
+    poly = None
+    try:
+        from shapely.geometry import Point as _Pt, Polygon as _Poly
+
+        poly = _Poly(ring)
+        if not poly.is_valid:
+            poly = poly.buffer(0)  # self-touching/자가교차 복구
+    except Exception:  # noqa: BLE001 — shapely 부재/불량 폴리곤 → ray-casting 폴백
+        poly = None
+
+    for r in range(n_r):
+        la = float(lat_axis[r])
+        for c in range(n_c):
+            lo = float(lon_axis[c])
+            if poly is not None:
+                try:
+                    mask[r, c] = bool(poly.covers(_Pt(lo, la)))  # covers=경계 포함
+                except Exception:  # noqa: BLE001
+                    mask[r, c] = _ray_cast_inside(lo, la, ring)
+            else:
+                mask[r, c] = _ray_cast_inside(lo, la, ring)
+    return mask
+
+
 async def _fetch_dem(points: list[tuple[float, float]]) -> Optional[list[float | None]]:
     """OpenTopoData SRTM30m 일괄질의. points=[(lat,lon),...] → [elev_m|None,...].
 
@@ -141,53 +211,93 @@ def _aspect_to_compass(deg: float) -> str:
 
 
 def _compute_slope(
-    grid: np.ndarray, dx_m: float, dy_m: float
+    grid: np.ndarray, dx_m: float, dy_m: float,
+    interior_mask: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """격자 표고(grid[row=lat, col=lon]) → 경사율(%)·aspect.
 
     중앙차분으로 dz/dx, dz/dy 산출. slope_pct = sqrt(gx²+gy²)*100.
     aspect: 내리막 방향(downhill) 방위각(deg, 북=0, 시계방향).
+
+    interior_mask: 필지 폴리곤 내부 격자점 bool 마스크(있으면). 기울기(gradient)는
+    이웃점이 필요하므로 전체 격자에서 계산하되, 평균/최대/향은 "폴리곤 내부 점"만
+    집계해 이웃 필지 지형 혼입을 차단한다. 내부 점이 너무 적으면 bbox 전체로 폴백.
     """
     # np.gradient: axis0=row(북→남 진행), axis1=col(서→동 진행)
     gz_dy, gz_dx = np.gradient(grid, dy_m, dx_m)
     # grid row 0 = 최북단. lat 증가방향이 row 감소이므로 북향 기울기 부호 보정.
     slope_ratio = np.sqrt(gz_dx ** 2 + gz_dy ** 2)
     slope_pct = slope_ratio * 100.0
-    valid = slope_pct[np.isfinite(slope_pct)]
+    finite = np.isfinite(slope_pct)
+
+    # 폴리곤 내부 클립: bbox 격자점 중 필지 내부 점만 평균·최대·향에 반영.
+    clip_applied = False
+    interior_pts: int | None = None
+    sel = finite
+    if interior_mask is not None and interior_mask.shape == slope_pct.shape:
+        inside = finite & interior_mask
+        interior_pts = int(np.sum(inside))
+        if interior_pts >= _MIN_INTERIOR_PTS:
+            sel = inside
+            clip_applied = True
+        # 내부 점 부족(비정형 소필지 등) → bbox 전체로 폴백(신뢰도는 호출측에서 하향)
+
+    valid = slope_pct[sel]
     if valid.size == 0:
-        return {"mean_pct": 0.0, "max_pct": 0.0, "aspect_deg": None, "class": "평지", "detail": "표고 분해 불가"}
+        return {
+            "mean_pct": 0.0, "max_pct": 0.0, "aspect_deg": None,
+            "class": "평지", "detail": "표고 분해 불가",
+            "clip_applied": False, "interior_pts": interior_pts,
+            "grid_pts": int(np.sum(finite)),
+        }
     mean_pct = float(np.mean(valid))
     max_pct = float(np.max(valid))
     # aspect(내리막): -gradient 방향. gz_dx=동향증분, gz_dy=row증분(북→남)
     # 동쪽성분 = -gz_dx, 북쪽성분 = +gz_dy (row 증가=남쪽이므로 북향=+gz_dy)
-    east = -float(np.mean(gz_dx))
-    north = float(np.mean(gz_dy))
+    # 선택 셀(sel)만 평균 — NaN 배제 + 폴리곤 내부 일관.
+    east = -float(np.mean(gz_dx[sel]))
+    north = float(np.mean(gz_dy[sel]))
     if abs(east) < 1e-9 and abs(north) < 1e-9:
         aspect_deg = None
     else:
         aspect_deg = (math.degrees(math.atan2(east, north)) + 360) % 360
     cls = _slope_class(mean_pct)
+    clip_note = f" (필지 폴리곤 내부 {interior_pts}점 기준·이웃 지형 제외)" if clip_applied else ""
     if aspect_deg is not None:
         detail = (
             f"평균경사 {mean_pct:.1f}% / 최대 {max_pct:.1f}% — {cls}. "
-            f"주 사면 향: {_aspect_to_compass(aspect_deg)}({aspect_deg:.0f}°)."
+            f"주 사면 향: {_aspect_to_compass(aspect_deg)}({aspect_deg:.0f}°).{clip_note}"
         )
     else:
-        detail = f"평균경사 {mean_pct:.1f}% / 최대 {max_pct:.1f}% — {cls}. 사면 향 불명확(평탄)."
+        detail = f"평균경사 {mean_pct:.1f}% / 최대 {max_pct:.1f}% — {cls}. 사면 향 불명확(평탄).{clip_note}"
     return {
         "mean_pct": round(mean_pct, 2),
         "max_pct": round(max_pct, 2),
         "aspect_deg": round(aspect_deg, 1) if aspect_deg is not None else None,
         "class": cls,
         "detail": detail,
+        "clip_applied": clip_applied,
+        "interior_pts": interior_pts,
+        "grid_pts": int(np.sum(finite)),
     }
 
 
 def _compute_earthwork(
-    grid: np.ndarray, cell_area_sqm: float, target_level_m: float | None
+    grid: np.ndarray, cell_area_sqm: float, target_level_m: float | None,
+    interior_mask: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """base_level 기준 셀별 (elev-base)*셀면적 → 절토(+)/성토(-)."""
-    valid = grid[np.isfinite(grid)]
+    """base_level 기준 셀별 (elev-base)*셀면적 → 절토(+)/성토(-).
+
+    interior_mask: 필지 폴리곤 내부 셀만 집계(경사도와 동일한 bbox 결함 차단 —
+    비정형 필지는 이웃 지형의 절/성토가 물량에 섞인다). 내부 셀이 너무 적으면 bbox 폴백.
+    """
+    finite = np.isfinite(grid)
+    sel = finite
+    if interior_mask is not None and interior_mask.shape == grid.shape:
+        inside = finite & interior_mask
+        if int(np.sum(inside)) >= _MIN_INTERIOR_PTS:
+            sel = inside  # 폴리곤 내부 셀만 base·절/성토 산정
+    valid = grid[sel]
     if valid.size == 0:
         return {
             "base_level_m": 0.0, "cut_volume_m3": 0.0, "fill_volume_m3": 0.0,
@@ -195,7 +305,7 @@ def _compute_earthwork(
         }
     base = float(target_level_m) if target_level_m is not None else float(np.mean(valid))
     diff = grid - base  # >0: 계획고보다 높음 → 깎아야 함(절토)
-    diff = np.where(np.isfinite(diff), diff, 0.0)
+    diff = np.where(sel, diff, 0.0)  # 폴리곤 내부(=sel) 셀만 물량 합산, 그 외 0
     cut = float(np.sum(np.where(diff > 0, diff, 0.0)) * cell_area_sqm)   # 절토량
     fill = float(np.sum(np.where(diff < 0, -diff, 0.0)) * cell_area_sqm)  # 성토량
     net = cut - fill  # >0: 잔토(절토우세), <0: 부족토(성토우세)
@@ -291,8 +401,15 @@ def _compute_cross_section(
     }
 
 
-def _confidence(area_sqm: float | None, valid_pts: int, total_pts: int) -> tuple[float, str]:
-    """필지면적 대비 DEM 해상도 + 유효표고 비율로 신뢰도 산정."""
+def _confidence(
+    area_sqm: float | None, valid_pts: int, total_pts: int,
+    slope_clip: dict | None = None,
+) -> tuple[float, str]:
+    """필지면적 대비 DEM 해상도 + 유효표고 비율 + 폴리곤 클립 여부로 신뢰도 산정.
+
+    slope_clip: _compute_slope가 돌려준 {clip_applied, interior_pts} — 폴리곤 있으나
+    내부 격자점이 적어 클립을 못 걸면(bbox 근사) 신뢰도를 낮추고 사유를 note한다.
+    """
     notes = ["참고용(EXPERIMENTAL): SRTM 30m 광역 표고 기반 — 정밀 측량/검증된 토목설계가 아님."]
     base = 0.6
     if total_pts > 0:
@@ -316,6 +433,16 @@ def _confidence(area_sqm: float | None, valid_pts: int, total_pts: int) -> tuple
     else:
         base *= 0.8
         notes.append("필지 폴리곤 미확보 — bbox 근사 격자로 분석(면적 null).")
+    # 폴리곤 클립 반영: 내부 점만으로 산정하면 정확도↑, 내부 점 부족 폴백은 정확도↓.
+    if isinstance(slope_clip, dict) and area_sqm is not None:
+        interior = slope_clip.get("interior_pts")
+        if slope_clip.get("clip_applied"):
+            notes.append(f"평균경사도는 필지 폴리곤 내부 격자점 {interior}개만 집계(이웃 지형 제외).")
+        elif interior is not None:
+            base *= 0.7
+            notes.append(
+                f"필지 폴리곤 내부 격자점이 {interior}개로 적어 bbox 근사로 평균경사 산정(정밀도 낮음)."
+            )
     conf = max(0.05, min(0.9, base))
     return round(conf, 2), " ".join(notes)
 
@@ -537,17 +664,22 @@ async def analyze_terrain(
     dx_m = _haversine_m(lat, min_lon, lat, max_lon) / (GRID_N - 1)
     dy_m = _haversine_m(min_lat, lon, max_lat, lon) / (GRID_N - 1)
 
+    # 폴리곤 내부 클립 마스크: 격자는 필지 bbox에 깔려 있으므로, 비정형 필지의 경사도·
+    # 토공 평균에서 이웃 필지 지형이 섞이지 않도록 "필지 폴리곤 내부 격자점"만 마스킹한다.
+    # ring 없으면(좌표 중심 bbox 폴백) None → 현행 bbox 동작 유지.
+    interior_mask = _polygon_interior_mask(lat_axis, lon_axis, ring) if ring else None
+
     # 경사도 baseline: 격자 간격이 DEM 해상도보다 촘촘하면 sub-resolution 표고차(정수 m
     # 양자화)로 경사가 비현실적으로 과대해진다. 수평 baseline을 DEM 해상도 이상으로 클램프.
     slope_dx = max(dx_m, DEM_RESOLUTION_M)
     slope_dy = max(dy_m, DEM_RESOLUTION_M)
-    slope = _compute_slope(grid, slope_dx, slope_dy)
+    slope = _compute_slope(grid, slope_dx, slope_dy, interior_mask=interior_mask)
     cell_area = (dx_m * dy_m) if (dx_m > 0 and dy_m > 0) else DEM_CELL_AREA_SQM
-    earthwork = _compute_earthwork(grid, cell_area, target_level_m)
+    earthwork = _compute_earthwork(grid, cell_area, target_level_m, interior_mask=interior_mask)
     cross_section = _compute_cross_section(
         grid, lat_axis, lon_axis, lat, lon, section_bearing_deg, slope.get("aspect_deg")
     )
-    confidence, note = _confidence(area_sqm, valid_pts, total_pts)
+    confidence, note = _confidence(area_sqm, valid_pts, total_pts, slope_clip=slope)
 
     return {
         "ok": True,
