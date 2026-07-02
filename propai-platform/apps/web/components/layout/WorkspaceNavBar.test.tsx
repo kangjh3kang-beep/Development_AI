@@ -7,10 +7,12 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/en/market-insights",
 }));
 
-vi.mock("@/lib/use-is-admin", () => ({
-  fetchAuthMeRole: vi.fn(() => new Promise<string>(() => {})),
-  fetchIsAdmin: vi.fn(() => new Promise<boolean>(() => {})),
+// 역할 판별 mock — 테스트별 제어(기본: 미해결 promise = 비관리자 pending 상태 유지).
+const roleMocks = vi.hoisted(() => ({
+  fetchAuthMeRole: vi.fn<() => Promise<string>>(() => new Promise<string>(() => {})),
+  fetchIsAdmin: vi.fn<() => Promise<boolean>>(() => new Promise<boolean>(() => {})),
 }));
+vi.mock("@/lib/use-is-admin", () => roleMocks);
 
 describe("WorkspaceNavBar", () => {
   it("renders compact workspace sections with priority links", () => {
@@ -112,6 +114,25 @@ describe("WorkspaceNavBar", () => {
       expect(within(nav).queryByRole("link", { name: "프로젝트 관리" })).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("관리자 로그인 시 역할 게이트 섹션(운영 센터·관리)까지 전부 노출된다 — 절단 회귀 방지", async () => {
+    // 근본원인 회귀 테스트: 과거 slice(0,5)가 관리자에게 6번째가 되는 '관리' 섹션을 잘라
+    // 관리자 메뉴가 사라졌다. 역할 판별이 완료되면 게이트 통과 섹션은 하나도 잘리지 않아야 한다.
+    roleMocks.fetchIsAdmin.mockResolvedValueOnce(true);
+    roleMocks.fetchAuthMeRole.mockResolvedValueOnce("admin");
+
+    render(<WorkspaceNavBar sections={buildPrimaryNav("en")} />);
+    // fetchIsAdmin/fetchAuthMeRole promise 해소 → isAdmin 상태 반영까지 플러시
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+    // 일반 4섹션 + 역할 게이트 2섹션(운영 센터=assetOps, 관리=admin) 전부 존재
+    for (const title of ["관제", "프로젝트", "시장·획득", "설계 센터", "운영 센터", "관리"]) {
+      expect(within(nav).getByText(title)).toBeInTheDocument();
     }
   });
 });

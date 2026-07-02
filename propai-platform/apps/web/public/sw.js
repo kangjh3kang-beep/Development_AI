@@ -1,4 +1,6 @@
-const CACHE_NAME = "propai-v375-market-layout";
+// v376: 대시보드 백지 사고 자가치유 — 버전 범프로 구 캐시(구 앱셸/자산) 일괄 삭제 +
+//        SWR '무캐시+네트워크실패 → undefined 응답' 버그 수정(요청 침묵사 → 정직한 오류로).
+const CACHE_NAME = "propai-v376-dashboard-selfheal";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
@@ -149,9 +151,10 @@ function safePut(request, response) {
 
 async function navigationNetworkFirst(request) {
   try {
-    const response = await fetch(request);
-    safePut(request, response);
-    return response;
+    // ★HTML 은 캐시에 저장하지 않는다 — 오프라인 폴백은 OFFLINE_URL 만 쓰므로 페이지 HTML
+    //   put 은 사용처 없는 스테일 셸 축적이었다(배포 후 죽은 청크를 참조하는 구 HTML 이
+    //   Cache Storage 에 남아, 향후 매칭 로직 변화 시 백지 사고의 원료가 됨). 항상 네트워크.
+    return await fetch(request);
   } catch {
     return (await caches.match(OFFLINE_URL)) || Response.error();
   }
@@ -228,7 +231,11 @@ async function staleWhileRevalidate(request) {
       safePut(request, response);
       return response;
     })
-    .catch(() => cached);
+    // ★버그픽스: 캐시가 없는 상태에서 네트워크까지 실패하면 이전 코드는 undefined 를
+    //   반환해 respondWith(undefined) 로 요청이 '침묵사'했다(CSS/JS 로드 실패가 원인
+    //   불명 백지로 위장). 캐시가 있으면 그것을, 없으면 정직한 네트워크 오류를 반환해
+    //   브라우저가 실패를 정상 보고(재시도/개발자도구 관측 가능)하게 한다.
+    .catch(() => cached || Response.error());
 
   return cached || fetchPromise;
 }

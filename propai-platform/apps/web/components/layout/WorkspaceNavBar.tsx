@@ -128,8 +128,12 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
       aria-label="Workspace navigation"
       className="hidden rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] px-3 py-2 shadow-[var(--shadow-sm)] lg:block"
     >
-      <div className="flex items-center gap-1">
-        {visibleSections.slice(0, 5).map((section) => {
+      <div className="flex flex-wrap items-center gap-1">
+        {/* ★절단(slice) 금지: 과거 slice(0,5)가 '비관리자 5섹션' 시절 상수라, 역할 게이트
+            (operations-center·admin) 통과로 6섹션이 되는 관리자에게서 마지막 '관리' 섹션을
+            잘라내 관리자 메뉴가 사라지던 근본원인. 역할 필터를 통과한 섹션은 전부 렌더한다
+            (제목이 짧아 lg 이상 한 줄 수용, 초과 시 flex-wrap 줄바꿈). */}
+        {visibleSections.map((section) => {
           const links = flattenLinks(section.items).slice(0, 3);
           const active = activeSections.has(section.id);
           const open = openSectionId === section.id;
