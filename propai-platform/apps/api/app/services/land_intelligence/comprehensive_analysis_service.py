@@ -295,28 +295,96 @@ async def _fetch_terrain_facts(
         return None
 
 
-def _detect_special_parcel_compat(
-    sp_input: dict, terrain_facts: dict[str, Any] | None
-) -> dict | None:
-    """detect_special_parcel 호환 호출 — terrain_facts는 지원 시그니처에만 전달.
+# ── T2/T3(고아 함수 배선) — 조례 경사도 기준·산림청 임목축적을 종합분석 경로에 실연결 ──
+#   #162가 resolve_slope_criteria(T2)·get_forest_facts(T3)를 만들었으나 프로덕션 호출처가
+#   0건(dead-path)이었다. detect_special_parcel은 이미 slope_criteria/forest_data 인자를
+#   받아 임야 요인 forest_facts에 예비판정을 가산하도록 완성돼 있으므로, 여기서 두 함수를
+#   호출해 전달만 하면 응답의 special_parcel.forest_preliminary_assessment 로 흐른다.
+#   ★게이트(developability=NEEDS_OFFICIAL_SURVEY) 불변 — 예비판정(참고용)만 채워진다.
+_FOREST_FETCH_TIMEOUT_S = 12.0
+_SLOPE_CRITERIA_TIMEOUT_S = 12.0
 
-    W1/W2 병렬 착지 안전장치: special_parcel.py(E-gate 소유)에 terrain_facts 인자가
-    아직 없으면 현행 시그니처로 호출한다(기존 호출부 무수정 호환 원칙). 배선은 전달만
-    하며 developability 판정에는 일절 개입하지 않는다(정직 게이트 보존).
+
+async def _fetch_forest_data(
+    pnu: str | None, sp_input: dict | None
+) -> dict[str, Any] | None:
+    """후보 필지(임야/산지)에 한해 산림청 임목축적(get_forest_facts)을 조회 — 별표4 150% 비교 재료.
+
+    get_forest_facts는 동기(httpx.Client)이므로 이벤트루프 블로킹 방지를 위해 스레드로
+    실행한다. env(FOREST_API_KEY/FOREST_API_BASE) 미설정 시 커넥터가 네트워크 시도 없이
+    즉시 None을 반환(무날조 정직 게이트)하므로, 배선해도 키 프로비저닝 전엔 예비판정이
+    '데이터 미확보'로 정직 표기된다. 비후보·실패·타임아웃은 전부 None(graceful).
+    """
+    if not _is_forest_slope_candidate(sp_input):
+        return None
+    pnu_clean = (pnu or "").strip()
+    if not pnu_clean:
+        return None
+    try:
+        from app.integrations.forest_service_client import get_forest_facts
+
+        return await asyncio.wait_for(
+            asyncio.to_thread(get_forest_facts, pnu_clean),
+            timeout=_FOREST_FETCH_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — 임목축적 조회 실패는 무손상(None=현행 동일)
+        return None
+
+
+async def _fetch_slope_criteria(
+    address: str | None, sp_input: dict | None
+) -> dict[str, Any] | None:
+    """후보 필지(임야/산지)에 한해 조례 경사도 기준(resolve_slope_criteria)을 조회 — 경사도 예비판정 기준.
+
+    법제처 자치법규 API(MOLEG_API_KEY 기설정 — 조례 FAR/BCR 조회에 이미 라이브 사용)로
+    개발행위허가 경사도 기준을 실조회한다. 실패·미검출은 None → special_parcel이 국가기준
+    별표4 25°로 폴백(무날조: 조례값 날조 금지). 비후보·타임아웃도 None(graceful).
+    """
+    if not _is_forest_slope_candidate(sp_input):
+        return None
+    sigungu = _extract_sigungu_from_address(address)
+    if not sigungu:
+        return None
+    try:
+        from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+        return await asyncio.wait_for(
+            OrdinanceService().resolve_slope_criteria(sigungu),
+            timeout=_SLOPE_CRITERIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — 조례 경사도 조회 실패는 무손상(국가기준 폴백)
+        return None
+
+
+def _detect_special_parcel_compat(
+    sp_input: dict,
+    terrain_facts: dict[str, Any] | None,
+    forest_data: dict[str, Any] | None = None,
+    slope_criteria: dict[str, Any] | None = None,
+) -> dict | None:
+    """detect_special_parcel 호환 호출 — 관측데이터(terrain/forest/slope)는 지원 시그니처에만 전달.
+
+    W1/W2 병렬 착지 안전장치: special_parcel.py(E-gate 소유)에 각 인자가 아직 없으면
+    있는 인자만 골라 전달한다(기존 호출부 무수정 호환 원칙). 배선은 전달만 하며
+    developability 판정에는 일절 개입하지 않는다(정직 게이트 보존).
     """
     import inspect
 
     from app.services.zoning import special_parcel as _sp_mod
 
     detect = _sp_mod.detect_special_parcel
-    if terrain_facts is not None:
-        try:
-            params = inspect.signature(detect).parameters
-        except (TypeError, ValueError):  # 시그니처 미해석 — 현행 호출 폴백
-            params = {}
-        if "terrain_facts" in params:
-            return detect(sp_input, terrain_facts=terrain_facts)
-    return detect(sp_input)
+    try:
+        params = inspect.signature(detect).parameters
+    except (TypeError, ValueError):  # 시그니처 미해석 — 현행 호출 폴백
+        params = {}
+    kwargs: dict[str, Any] = {}
+    if terrain_facts is not None and "terrain_facts" in params:
+        kwargs["terrain_facts"] = terrain_facts
+    if forest_data is not None and "forest_data" in params:
+        kwargs["forest_data"] = forest_data
+    if slope_criteria is not None and "slope_criteria" in params:
+        kwargs["slope_criteria"] = slope_criteria
+    return detect(sp_input, **kwargs)
 
 
 class ComprehensiveAnalysisService:
@@ -488,13 +556,19 @@ class ComprehensiveAnalysisService:
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr.get("road_width_m"),
             }
-            # T1-4 실배선 — 임야/산지 후보만 DEM 경사도(terrain_service)를 조회해
-            # detect_special_parcel에 전달(계약: 평균경사도_pct·최대경사도_pct·source).
-            # 조회 실패·비후보는 None=현행 완전 동일. 게이트 판정은 E-gate 소유(전달만).
-            _terrain_facts = await _fetch_terrain_facts(
-                base.get("address") or address, _pnu, _sp_input
+            # T1/T2/T3 실배선 — 임야/산지 후보만 관측데이터 3종을 병렬 조회해 전달:
+            #   terrain_facts(DEM 경사도)·slope_criteria(조례 경사도 기준)·forest_data(산림청 임목축적).
+            #   각 헬퍼가 실패·비후보·미프로비저닝을 자체 None 처리(무날조 정직 게이트) → gather는
+            #   예외 없이 완주. 미확보는 각각 None=현행 완전 동일. 게이트 판정은 E-gate 소유(전달만).
+            _addr = base.get("address") or address
+            _terrain_facts, _slope_criteria, _forest_data = await asyncio.gather(
+                _fetch_terrain_facts(_addr, _pnu, _sp_input),
+                _fetch_slope_criteria(_addr, _sp_input),
+                _fetch_forest_data(_pnu, _sp_input),
             )
-            special = _detect_special_parcel_compat(_sp_input, _terrain_facts)
+            special = _detect_special_parcel_compat(
+                _sp_input, _terrain_facts, _forest_data, _slope_criteria
+            )
             if special:
                 result["special_parcel"] = special
                 _warns = result.get("warnings")
