@@ -170,12 +170,37 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
     }
 
 
+# ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
+#   폴백을 뜻하므로 여기 포함하지 않는다(effective_far가 법정값과 같아도 조례값이 아님).
+_CONFIRMED_ORDINANCE_SOURCE_HINTS: tuple[str, ...] = ("조례", "법제처", "ELIS", "elis")
+
+
+def _is_confirmed_ordinance_source(source: Any) -> bool:
+    """source 문자열이 '실제 조례 취득' 출처인지 판정.
+
+    '법정상한'(류)이면 조례 미보유 폴백이므로 False. '조례'/'법제처'/'ELIS'가 포함되면 True.
+    None/빈 문자열은 판정 불가로 False(호출부가 명시적 ordinance_far 유무로 별도 인정).
+    """
+    if not source or not isinstance(source, str):
+        return False
+    if "법정상한" in source:
+        return False
+    return any(h in source for h in _CONFIRMED_ORDINANCE_SOURCE_HINTS)
+
+
 def _extract_ordinance_far(regulation_payload: Any) -> dict[str, Any]:
     """규제분석/조례 페이로드에서 해당 용도지역의 조례 적용 건폐율/용적률을 추출.
 
     OrdinanceService(land_info_service의 local_ordinance)·RegulationAnalysisService(limits.far/bcr)
     가 산출한 구체값을 '적용 법정값'으로 인식한다. 다양한 키 형태를 관대하게 수용하며,
     중첩 dict/list에서도 조례 컨테이너(local_ordinance/zone_limits/limits)를 깊이탐색한다.
+
+    ★provenance 정직성: effective_far가 법정상한과 같더라도 '실제 조례를 취득한 경우'에만
+    조례값으로 채택한다. 판정 기준(둘 중 하나):
+      (a) source가 확정 조례 출처('조례'/'법제처'/'ELIS', 단 '법정상한' 제외), 또는
+      (b) 명시적 ordinance_far/ordinance_bcr 키 존재(effective_far는 조례 신호가 아님).
+    이를 만족하지 못하면(예: 용인 자연녹지 법정상한 폴백) ord_far=None을 반환해 하류에서
+    ordinance_confirmed=False(조례 확인 필요)로 정직하게 마감되게 한다.
 
     Returns: {"ord_far": float|None, "ord_bcr": float|None, "source": str|None}.
     """
@@ -192,38 +217,45 @@ def _extract_ordinance_far(regulation_payload: Any) -> dict[str, Any]:
         return out
 
     # 1) land_info 형태: local_ordinance.{effective_far, ordinance_far}
+    #    ★가드: effective_far는 법정상한 폴백에서도 실려오므로(용인 자연녹지=None조례+100),
+    #    '실제 조례 취득 신호'가 있을 때만 조례값으로 채택한다.
     lo = regulation_payload.get("local_ordinance")
     if isinstance(lo, dict):
-        far = lo.get("effective_far") or lo.get("ordinance_far")
-        bcr = lo.get("effective_bcr") or lo.get("ordinance_bcr")
-        if far or bcr:
-            out["ord_far"] = float(far) if far else None
-            out["ord_bcr"] = float(bcr) if bcr else None
-            out["source"] = lo.get("source") or "지자체 조례"
-            return out
+        explicit_far = lo.get("ordinance_far")
+        explicit_bcr = lo.get("ordinance_bcr")
+        confirmed_src = _is_confirmed_ordinance_source(lo.get("source"))
+        # 조례 신호: 명시적 ordinance_* 또는 확정 조례 출처. 없으면 effective_*는 무시.
+        if explicit_far or explicit_bcr or confirmed_src:
+            far = explicit_far or lo.get("effective_far")
+            bcr = explicit_bcr or lo.get("effective_bcr")
+            if far or bcr:
+                out["ord_far"] = float(far) if far else None
+                out["ord_bcr"] = float(bcr) if bcr else None
+                out["source"] = lo.get("source") or "지자체 조례"
+                return out
 
     # 2) zone_limits 형태: ordinance_far_pct / effective_far_pct
+    #    ★가드: 명시적 ordinance_*_pct가 있을 때만 confirmed. effective_*_pct만으론 조례 아님.
     zl = regulation_payload.get("zone_limits")
     if isinstance(zl, dict):
-        far = zl.get("ordinance_far_pct") or zl.get("effective_far_pct")
-        bcr = zl.get("ordinance_bcr_pct") or zl.get("effective_bcr_pct")
-        if far or bcr:
-            out["ord_far"] = float(far) if far else None
-            out["ord_bcr"] = float(bcr) if bcr else None
+        explicit_far = zl.get("ordinance_far_pct")
+        explicit_bcr = zl.get("ordinance_bcr_pct")
+        if explicit_far or explicit_bcr:
+            out["ord_far"] = float(explicit_far) if explicit_far else None
+            out["ord_bcr"] = float(explicit_bcr) if explicit_bcr else None
             out["source"] = "지자체 조례"
             return out
 
-    # 3) RegulationAnalysisService.limits 형태: {"far": {"ordinance": ..., "effective": ...}}
+    # 3) RegulationAnalysisService.limits 형태: {"far": {"legal": ..., "ordinance": ..., "effective": ...}}
+    #    ★가드(step1과 동일 계약): trio 생산자(_limits.trio)가 ordinance 미보유 시
+    #    effective = ordinance or legal 로 법정값을 effective에 채워넣으므로(용인과 동일 버그
+    #    클래스), 명시적 ordinance 키가 있을 때만 조례값으로 채택한다. effective 단독 금지.
     limits = regulation_payload.get("limits")
     if isinstance(limits, dict):
         f = limits.get("far") or {}
         b = limits.get("bcr") or {}
-        far = (f.get("ordinance") if isinstance(f, dict) else None) or (
-            f.get("effective") if isinstance(f, dict) else None
-        )
-        bcr = (b.get("ordinance") if isinstance(b, dict) else None) or (
-            b.get("effective") if isinstance(b, dict) else None
-        )
+        far = f.get("ordinance") if isinstance(f, dict) else None
+        bcr = b.get("ordinance") if isinstance(b, dict) else None
         if far or bcr:
             out["ord_far"] = float(far) if far else None
             out["ord_bcr"] = float(bcr) if bcr else None
@@ -338,13 +370,17 @@ def applicable_limits_for(
         "ordinance_confirmed": False,
     }
 
-    # 기준값(적용 상한): 기본은 법정범위 max.
+    # 기준값(적용 상한): 기본은 법정범위 max. ★조례·계획 미확인이면 정직하게 '법정상한 적용
+    #   (조례 확인 필요)'로 표기(false-confirmed 방지).
     applied_far = float(legal_max_far) if legal_max_far is not None else None
     applied_bcr = float(legal_max_bcr) if legal_max_bcr is not None else None
-    far_source = "법정범위 상한(조례·도시군관리계획 확인 필요)"
+    far_source = "법정상한 적용(조례 확인 필요)"
 
-    # 2) 조례 적용값.
-    if ord_info["ord_far"] is not None:
+    # 2) 조례 적용값. ★source 존중: _extract_ordinance_far가 조례 신호가 있을 때만 ord_far를
+    #    채우지만, 방어적으로 '법정상한' 출처는 confirmed로 승격하지 않는다(중복 게이트).
+    ord_src = ord_info["source"]
+    ord_source_is_fallback = isinstance(ord_src, str) and "법정상한" in ord_src
+    if ord_info["ord_far"] is not None and not ord_source_is_fallback:
         result["ordinance_far_pct"] = ord_info["ord_far"]
         # 조례는 법정범위 내로 클램프(조례가 법정상한을 넘어설 수 없음).
         if legal_max_far is not None:
@@ -354,7 +390,7 @@ def applicable_limits_for(
         result["ordinance_confirmed"] = True
         far_source = f"지자체 도시계획조례 적용값({ord_info['source'] or '조례'})"
         sources.append(ord_info["source"] or "지자체 조례")
-    if ord_info["ord_bcr"] is not None:
+    if ord_info["ord_bcr"] is not None and not ord_source_is_fallback:
         result["ordinance_bcr_pct"] = ord_info["ord_bcr"]
         if legal_max_bcr is not None:
             applied_bcr = min(ord_info["ord_bcr"], float(legal_max_bcr))
