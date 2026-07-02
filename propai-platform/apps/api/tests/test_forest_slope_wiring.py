@@ -49,13 +49,19 @@ async def test_fetch_forest_data_for_candidate(monkeypatch):
 
 
 async def test_fetch_forest_data_skips_non_candidate(monkeypatch):
-    def _fake_facts(pnu: str):  # noqa: ANN202
-        raise AssertionError("비후보 필지에서 임목축적 조회가 발생하면 안 된다")
+    # ★raise가 아니라 호출추적으로 검증 — SUT의 broad except가 AssertionError를 삼켜
+    #   후보게이트가 깨져도 raise 방식은 false-secure(항상 통과)이기 때문.
+    calls: list[str] = []
+
+    def _tracker(pnu: str) -> dict[str, Any]:
+        calls.append(pnu)
+        return {"입목축적_per_ha": 1.0}
 
     import app.integrations.forest_service_client as fsc
 
-    monkeypatch.setattr(fsc, "get_forest_facts", _fake_facts)
+    monkeypatch.setattr(fsc, "get_forest_facts", _tracker)
     assert await _fetch_forest_data("1168010100100010000", _ORDINARY_INPUT) is None
+    assert calls == []  # 비후보 → 조회 자체가 일어나지 않아야 한다
 
 
 async def test_fetch_forest_data_none_pnu():
@@ -104,15 +110,20 @@ async def test_fetch_slope_criteria_for_candidate(monkeypatch):
 
 
 async def test_fetch_slope_criteria_skips_non_candidate(monkeypatch):
+    # ★raise가 아니라 호출추적으로 검증(broad except가 AssertionError를 삼키는 false-secure 방지).
     import app.services.land_intelligence.ordinance_service as os_mod
 
-    class _Boom:
-        async def resolve_slope_criteria(self, *a, **k):  # noqa: ANN002, ANN003
-            raise AssertionError("비후보에서 조례 경사도 조회가 발생하면 안 된다")
+    calls: list[str] = []
 
-    monkeypatch.setattr(os_mod, "OrdinanceService", _Boom)
+    class _Tracker:
+        async def resolve_slope_criteria(self, sigungu, force_refresh: bool = False):  # noqa: ANN001
+            calls.append(sigungu)
+            return {"slope_deg": 20.0}
+
+    monkeypatch.setattr(os_mod, "OrdinanceService", _Tracker)
     monkeypatch.setattr(os_mod, "resolve_ordinance_region", lambda addr: "서울특별시")
     assert await _fetch_slope_criteria("서울 강남구 역삼동 1", _ORDINARY_INPUT) is None
+    assert calls == []  # 비후보 → 조례 조회 자체가 일어나지 않아야 한다
 
 
 async def test_fetch_slope_criteria_none_when_no_sigungu(monkeypatch):
@@ -207,6 +218,56 @@ def test_real_detect_populates_forest_preliminary_assessment():
     assert pa["stocking"] is not None
     assert pa["stocking"]["입목축적_비율_pct"] == 180.0
     assert "초과" in pa["stocking"]["judgment"]
+
+
+async def test_analyze_wires_forest_assessment_into_response(monkeypatch):
+    """★관통(글루) 통합: analyze()가 3종 조회→compat→result['special_parcel']까지 흘려
+    forest_preliminary_assessment가 실제 응답에 실리는지 검증(화면 도달 증명).
+
+    무거운 외부 섹션(실거래·입지·원장 prior)은 mock — 검증 대상은 배선 글루뿐.
+    """
+    from app.services.land_intelligence import comprehensive_analysis_service as mod
+
+    service = mod.ComprehensiveAnalysisService()
+
+    async def _fake_base(address):  # noqa: ANN001
+        return {
+            "address": address,
+            "pnu": "4211010100100010000",
+            "zone_type": "자연녹지지역",
+            "land_register": {"area_sqm": 1000.0, "land_category": "임야"},
+            "special_districts": [],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(service.land_info, "collect_comprehensive", _fake_base)
+    # 3종 조회를 canned 값으로 대체(외부 API 없이 배선 글루만 검증).
+    monkeypatch.setattr(mod, "_fetch_terrain_facts",
+                        lambda *a, **k: _async({"평균경사도_pct": 22.0, "최대경사도_pct": 35.0, "source": "SRTM30_DEM"}))
+    monkeypatch.setattr(mod, "_fetch_slope_criteria",
+                        lambda *a, **k: _async({"slope_deg": 20.0, "ordinance_name": "용인시 조례", "verified": "api_parsed"}))
+    monkeypatch.setattr(mod, "_fetch_forest_data",
+                        lambda *a, **k: _async({"입목축적_per_ha": 180.0, "관할평균_입목축적_per_ha": 100.0, "산지구분": "준보전산지", "source": "forest.go.kr"}))
+    # 무거운 외부 섹션·원장 prior 무력화(배선과 무관).
+    monkeypatch.setattr(service, "_research_transactions", lambda base: _async({}))
+    monkeypatch.setattr(service, "_analyze_location", lambda base: _async({}))
+    import app.services.ledger.prior_context as pc
+    monkeypatch.setattr(pc, "load_prior", lambda **k: _async(None))
+
+    result = await service.analyze("경기도 용인시 처인구 산 1", with_senior=False)
+
+    sp = result.get("special_parcel")
+    assert isinstance(sp, dict)
+    assert sp["developability"] == "NEEDS_OFFICIAL_SURVEY"  # 게이트 불변
+    pa = sp.get("forest_preliminary_assessment")
+    assert isinstance(pa, dict)
+    assert pa["slope"]["criteria_deg"] == 20.0  # 조례 경사도 적용(화면 도달)
+    assert pa["stocking"]["입목축적_비율_pct"] == 180.0  # 임목축적 150% 비교(화면 도달)
+
+
+async def _async(value):
+    """monkeypatch용 코루틴 팩토리 — 호출 시 즉시 value를 반환하는 코루틴."""
+    return value
 
 
 def test_real_detect_slope_falls_back_to_national_when_no_ordinance():

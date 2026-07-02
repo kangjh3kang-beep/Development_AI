@@ -291,7 +291,9 @@ async def _fetch_terrain_facts(
             timeout=_TERRAIN_FETCH_TIMEOUT_S,
         )
         return _terrain_facts_from_result(terrain)
-    except Exception:  # noqa: BLE001 — 경사도 조회 실패는 무손상(None=현행 동일)
+    except Exception as exc:  # noqa: BLE001 — 경사도 조회 실패는 무손상(None=현행 동일)
+        # 조용한 강등 방지(기록·공유 원칙): 실패 사유를 debug로 남긴다(게이트엔 무영향).
+        logger.debug("terrain_facts 조회 실패(무손상 폴백)", pnu=pnu, error=str(exc))
         return None
 
 
@@ -327,7 +329,9 @@ async def _fetch_forest_data(
             asyncio.to_thread(get_forest_facts, pnu_clean),
             timeout=_FOREST_FETCH_TIMEOUT_S,
         )
-    except Exception:  # noqa: BLE001 — 임목축적 조회 실패는 무손상(None=현행 동일)
+    except Exception as exc:  # noqa: BLE001 — 임목축적 조회 실패는 무손상(None=현행 동일)
+        # 조용한 강등 방지: 조회 실패를 debug로 남긴다(예비판정은 정직 '미확보'로 표기됨).
+        logger.debug("forest_data(임목축적) 조회 실패(무손상 폴백)", pnu=pnu_clean, error=str(exc))
         return None
 
 
@@ -352,7 +356,9 @@ async def _fetch_slope_criteria(
             OrdinanceService().resolve_slope_criteria(sigungu),
             timeout=_SLOPE_CRITERIA_TIMEOUT_S,
         )
-    except Exception:  # noqa: BLE001 — 조례 경사도 조회 실패는 무손상(국가기준 폴백)
+    except Exception as exc:  # noqa: BLE001 — 조례 경사도 조회 실패는 무손상(국가기준 폴백)
+        # 조용한 강등 방지: 실패 시 국가기준 별표4 25°로 폴백되므로 사유를 debug로 남긴다.
+        logger.debug("slope_criteria(조례 경사도) 조회 실패(국가기준 폴백)", sigungu=sigungu, error=str(exc))
         return None
 
 
@@ -561,10 +567,16 @@ class ComprehensiveAnalysisService:
             #   각 헬퍼가 실패·비후보·미프로비저닝을 자체 None 처리(무날조 정직 게이트) → gather는
             #   예외 없이 완주. 미확보는 각각 None=현행 완전 동일. 게이트 판정은 E-gate 소유(전달만).
             _addr = base.get("address") or address
-            _terrain_facts, _slope_criteria, _forest_data = await asyncio.gather(
+            # return_exceptions=True(사내 패턴 정합) — 헬퍼는 자체가드로 None을 주지만, 만약의
+            # 예외도 분석 전체를 끊지 않도록 개별 결과를 None으로 치환한다(무손상 하드닝).
+            _facts = await asyncio.gather(
                 _fetch_terrain_facts(_addr, _pnu, _sp_input),
                 _fetch_slope_criteria(_addr, _sp_input),
                 _fetch_forest_data(_pnu, _sp_input),
+                return_exceptions=True,
+            )
+            _terrain_facts, _slope_criteria, _forest_data = (
+                r if not isinstance(r, BaseException) else None for r in _facts
             )
             special = _detect_special_parcel_compat(
                 _sp_input, _terrain_facts, _forest_data, _slope_criteria
