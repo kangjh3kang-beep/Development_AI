@@ -33,6 +33,9 @@ describe("optimizeUtilization — 게이트", () => {
 });
 
 describe("optimizeUtilization — 현실최적(기부채납 최소화)", () => {
+  // ★F2 캡: base가 이미 법정상한(nationalFarPct=250)일 때 인센티브 합산은 법정상한 250으로 캡된다
+  //   (백엔드 min(base+incentive, cap_far) 정합). 캡 여지를 보이기 위해 종상향 신호로 잠재상한을 올린 케이스는
+  //   별도 describe에서 검증. 여기선 채택/제외 판정과 캡 동작을 함께 확인한다.
   const r = optimizeUtilization(
     site({ zoneCode: "제2종일반주거지역", nationalFarPct: 250, effectiveFarPct: 200 }),
   )!;
@@ -58,16 +61,18 @@ describe("optimizeUtilization — 현실최적(기부채납 최소화)", () => {
     expect(r.donationMinimized).toBe(true);
   });
 
-  it("현실최적 용적률 = base + 채택 완화 합(무날조 정수)", () => {
-    // base 250 + 공개공지 20%(50) + 녹색 15%(38) + 장수명 15%(38) = 376
-    // 장수명주택: 주택건설기준 등에 관한 규정 제65조의2(100분의 115) → +15%(250×0.15=37.5→38)
-    expect(r.realisticOptimalFar).toBe(376);
+  it("★F2 캡: base=법정상한(250)이면 채택 완화 합산이 법정상한 250으로 캡된다(오도방지)", () => {
+    // 단순가산이면 base 250 + 공개공지 50 + 녹색 38 + 장수명 38 = 376이지만,
+    // 법정상한 250 캡 적용 → realisticOptimalFar=250(백엔드 min(base+incentive, cap_far) 정합).
+    expect(r.legalCapFar).toBe(250);
+    expect(r.realisticOptimalFar).toBe(250);
   });
 
-  it("이론최대 용적률 ≥ 현실최적(제외 방안까지 합산)", () => {
-    expect(r.theoreticalMaxFar).toBeGreaterThan(r.realisticOptimalFar!);
-    // 이론최대는 지능형건축(15%,38)도 합산 → 376 + 38 = 414
-    expect(r.theoreticalMaxFar).toBe(414);
+  it("★F2 캡: 이론최대도 법정상한 250으로 캡 + isCapped=true + 캡 전 단순가산치 보존", () => {
+    expect(r.theoreticalMaxFar).toBe(250);
+    expect(r.isCapped).toBe(true);
+    // 캡 전 단순가산(uncapped)은 근거·오도방지 배지용으로 보존(250 초과).
+    expect(r.theoreticalUncappedFar).toBeGreaterThan(250);
   });
 
   it("현재 실효 용적률(effective)을 별도 보존", () => {
@@ -118,16 +123,74 @@ describe("optimizeUtilization — 결정론·정직", () => {
   });
 });
 
+describe("optimizeUtilization — F2 법정상한 캡(자연녹지 150→100)", () => {
+  // ★사용자 지적 라이브 시나리오: 자연녹지 법정 100% 필지 + 인센티브 → 캡 없이 150% 강조가 오도.
+  const r = optimizeUtilization(
+    site({ zoneCode: "자연녹지지역", nationalFarPct: 100, effectiveFarPct: 100 }),
+  )!;
+
+  it("법정상한 캡=100(용도지역 법정상한)", () => {
+    expect(r.legalCapFar).toBe(100);
+  });
+
+  it("이론최대·현실최적이 법정상한 100으로 캡(150 아님) + isCapped=true", () => {
+    expect(r.theoreticalMaxFar).toBe(100);
+    expect(r.realisticOptimalFar).toBe(100);
+    expect(r.isCapped).toBe(true);
+    // 캡 전 단순가산치는 100 초과(공개공지 등 완화 합산) — 보존.
+    expect(r.theoreticalUncappedFar).toBeGreaterThan(100);
+  });
+
+  it("캡됐으므로 현실최적 상향률은 0%(base 대비 순증 없음·정직)", () => {
+    expect(r.realisticGainPct).toBe(0);
+  });
+});
+
+describe("optimizeUtilization — F5 층수 바인딩 강등(녹지)", () => {
+  const r = optimizeUtilization(
+    site({ zoneCode: "자연녹지지역", nationalFarPct: 100 }),
+  )!;
+
+  it("floorBound=true(녹지)이고 honestNote에 층수완화 선행 고지 포함", () => {
+    expect(r.floorBound).toBe(true);
+    expect(r.honestNote).toContain("층수완화");
+  });
+
+  it("적용 가능·완화량 있는 인센티브(공개공지 등)는 가능성 한 단계 강등 + 층수 caveat", () => {
+    const openSpace = r.incentives.find((i) => i.category === "공개공지")!;
+    // 원래 '상' → 층수바인딩 강등 → '중'
+    expect(openSpace.feasibility).toBe("중");
+    expect(openSpace.reason).toContain("층수완화");
+  });
+
+  it("비바인딩 용도지역(주거)은 강등 없음(무회귀)", () => {
+    const r2 = optimizeUtilization(
+      site({ zoneCode: "제3종일반주거지역", nationalFarPct: 300 }),
+    )!;
+    expect(r2.floorBound).toBe(false);
+    const openSpace2 = r2.incentives.find((i) => i.category === "공개공지")!;
+    expect(openSpace2.feasibility).toBe("상");
+  });
+});
+
 describe("utilizationToEvidence", () => {
   it("null이면 빈 배열", () => {
     expect(utilizationToEvidence(null)).toEqual([]);
   });
 
-  it("FAR 지표(법정/이론최대/현실최적)를 EvidenceItem으로 변환", () => {
+  it("FAR 지표(법정/이론상 상한/현실최적)를 EvidenceItem으로 변환", () => {
     const r = optimizeUtilization(site({ zoneCode: "제2종일반주거지역", nationalFarPct: 250 }));
     const items = utilizationToEvidence(r);
     const optimal = items.find((it) => it.label.includes("현실최적"));
     expect(optimal).toBeDefined();
     expect(optimal!.basis).toBeTruthy();
+  });
+
+  it("U2: 이론상 상한 라벨 사용 + 캡 시 근거에 법정상한 캡 명시", () => {
+    const r = optimizeUtilization(site({ zoneCode: "자연녹지지역", nationalFarPct: 100 }));
+    const items = utilizationToEvidence(r);
+    const theo = items.find((it) => it.label.includes("이론상 상한"));
+    expect(theo).toBeDefined();
+    expect(theo!.basis).toContain("법정상한");
   });
 });

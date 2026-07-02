@@ -13,7 +13,12 @@
 
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { EvidenceItem } from "@/components/common/EvidencePanel";
-import { resolveFarPct } from "@/lib/zoning-ssot";
+import {
+  resolveFarPct,
+  resolveDominantZone,
+  nationalFarLimitForZone,
+  capFarToLegal,
+} from "@/lib/zoning-ssot";
 
 export type UtilFeasibility = "상" | "중" | "하" | "미확인";
 
@@ -55,9 +60,9 @@ export interface UtilizationResult {
   legalFar: number | null;
   /** 현재 실효 용적률(%). */
   currentEffectiveFar: number | null;
-  /** 이론최대 용적률(적용 가능 전 방안 합산). */
+  /** 이론최대 용적률(적용 가능 전 방안 합산 — 법정상한 캡 적용 후). */
   theoreticalMaxFar: number | null;
-  /** 현실최적 용적률(채택 조합 합산). */
+  /** 현실최적 용적률(채택 조합 합산 — 법정상한 캡 적용 후). */
   realisticOptimalFar: number | null;
   /** 현실최적 상승률(%, (현실최적-base)/base). */
   realisticGainPct: number | null;
@@ -65,7 +70,17 @@ export interface UtilizationResult {
   incentives: IncentiveOutcome[];
   /** 현실최적이 기부채납 동반 방안을 포함하지 않음. */
   donationMinimized: boolean;
-  /** 한계 정직 고지(조례·심의·중복적용 한도). */
+  // ── F2: 법정상한 캡(백엔드 far_optimization_simulator min(base+incentive, cap_far)와 정합) ──
+  /** 캡 기준 법정상한 용적률(%). 용도지역 미상이면 null(캡 미적용). */
+  legalCapFar: number | null;
+  /** 단순가산 합(캡 적용 전 이론치) — 캡 근거·오도방지 배지용. */
+  theoreticalUncappedFar: number | null;
+  /** 이론최대가 법정상한에 걸려 캡됐는가(오도방지 신호). */
+  isCapped: boolean;
+  // ── F5: 층수 바인딩(녹지 등 max_floors 실질 바인딩) 정직 고지 ──
+  /** 층수 바인딩 용도지역(녹지·관리·농림)이라 인센티브 실현에 층수완화 선행이 필요. */
+  floorBound: boolean;
+  /** 한계 정직 고지(조례·심의·중복적용 한도 + 층수 바인딩). */
   honestNote: string;
 }
 
@@ -83,6 +98,24 @@ function toFeasibility(v: unknown): UtilFeasibility | null {
 /** 주거계열(준주거 포함) 용도지역 여부 — 장수명주택·역세권·임대 적용성 판정. */
 function isResidential(zoneCode: string | null): boolean {
   return !!zoneCode && zoneCode.includes("주거");
+}
+
+/**
+ * 층수 바인딩 용도지역 여부 — 녹지·관리·농림·자연환경보전 등.
+ *
+ * F5 배경: 자연녹지는 법정 용적률 100%지만 건폐율 20%에 층수상한(예 4층)이 실질 바인딩이라
+ *   건폐20%×4층=실현 80%로, 법정 100%(5층 필요)조차 층수완화 없이는 도달 못 한다. 이런 지역은
+ *   인센티브 완화(추가 용적률)를 실현하려면 도시·군계획/심의로 층수완화가 선행돼야 하므로,
+ *   해당 시나리오 가능성을 보수적으로 강등하고 honestNote를 붙인다(오도방지).
+ */
+function isFloorBoundZone(zoneCode: string | null): boolean {
+  if (!zoneCode) return false;
+  return (
+    zoneCode.includes("녹지") ||
+    zoneCode.includes("관리지역") ||
+    zoneCode.includes("농림") ||
+    zoneCode.includes("자연환경보전")
+  );
 }
 
 /** 인센티브 카탈로그(법령 완화 상한 — citable). 동적 평가(가능성·완화량)는 optimizeUtilization에서. */
@@ -186,6 +219,12 @@ const HONEST_NOTE =
   "완화율은 법정 상한 기준이며 실제 적용은 지자체 조례·건축심의·중복적용 한도에 따라 달라질 수 있습니다. " +
   "역세권·지구단위 등 요건은 부지분석·조례 연동 후 정밀화됩니다.";
 
+// F5: 층수 바인딩 지역(녹지 등) — 인센티브 실현에 층수완화 선행 필요 정직 고지.
+const FLOOR_BOUND_NOTE =
+  "이 용도지역은 건폐율·층수상한이 실질 바인딩(예: 건폐 20%×허용층수)이라, 법정 용적률·인센티브 완화를 " +
+  "실현하려면 도시·군관리계획·건축심의를 통한 층수완화가 선행돼야 합니다. 층수완화 없이는 표기된 완화 용적률이 " +
+  "실현되지 않을 수 있어, 관련 인센티브 가능성을 보수적으로 강등했습니다.";
+
 /**
  * SSOT siteAnalysis → 활용성 극대화(이론최대 vs 현실최적) 파생.
  * 기준 용적률(법정상한 우선, 없으면 실효)이 전혀 없으면 null(산정 불가).
@@ -205,7 +244,16 @@ export function optimizeUtilization(
   const baseFar = legalFar ?? currentEffectiveFar;
   if (baseFar == null) return null;
 
-  const zoneCode = (site.zoneCode ?? "").trim() || null;
+  // ★SSOT 읽기 통일: 대표(우세) 용도지역(통합 dominant > 단일 zoneCode)으로 적용성·캡·층수바인딩 판정.
+  const zoneCode = resolveDominantZone(site);
+
+  // F2 법정상한 캡 — 완화 합산의 상한(백엔드 cap_far와 정합). nationalFarPct(SSOT 실값) 우선,
+  //   없으면 용도지역 법정상한 맵(nationalFarLimitForZone). 둘 다 미상이면 null(캡 미적용·정직).
+  const legalCapFar = legalFar ?? nationalFarLimitForZone(zoneCode);
+
+  // F5 층수 바인딩 — 녹지 등은 건폐×층수가 실질 바인딩이라 인센티브 실현에 층수완화 선행 필요.
+  const floorBound = isFloorBoundZone(zoneCode);
+
   const upHigh = num(site.upzoningPotentialFarHigh);
   const upTop = toFeasibility(site.upzoningFeasibilityTop);
 
@@ -245,6 +293,15 @@ export function optimizeUtilization(
       bonusFarPoints = null;
     }
 
+    // F5 층수 바인딩 강등 — 녹지 등에서 완화량이 실제 있는(적용 가능) 방안은 층수완화 선행이 필요하므로
+    //   가능성을 한 단계 강등(상→중, 중→하)한다. 실현엔 층수완화가 선행돼야 함을 reason에 caveat로 명시.
+    let floorCaveat = "";
+    if (floorBound && applicable && bonusFarPoints != null) {
+      if (feasibility === "상") feasibility = "중";
+      else if (feasibility === "중") feasibility = "하";
+      floorCaveat = " · 실현에 층수완화 선행 필요(녹지 등 건폐·층수 바인딩)";
+    }
+
     // 현실최적 채택 판정(기부채납 최소화·가능성 가중).
     let included: boolean;
     let reason: string;
@@ -268,6 +325,7 @@ export function optimizeUtilization(
         reason = `가능성 ${feasibility}(비용·심의 부담) — 현실최적 제외`;
       }
     }
+    reason += floorCaveat;
 
     return {
       key: rule.key,
@@ -285,22 +343,35 @@ export function optimizeUtilization(
 
   // 합산(수치 산정된 완화만). 이론최대=적용 가능 전부, 현실최적=채택분.
   // bonusFarPoints는 적용 불가 시 null로 정규화돼 있어, null 여부만 보면 된다(견고).
-  const theoMax =
+  const theoMaxRaw =
     baseFar +
     incentives
       .filter((i) => i.bonusFarPoints != null)
       .reduce((s, i) => s + (i.bonusFarPoints ?? 0), 0);
-  const realistic =
+  const realisticRaw =
     baseFar +
     incentives
       .filter((i) => i.included && i.bonusFarPoints != null)
       .reduce((s, i) => s + (i.bonusFarPoints ?? 0), 0);
+
+  // F2 법정상한 캡 — 백엔드 far_optimization_simulator의 min(base+incentive, cap_far)와 정합.
+  //   legalCapFar가 null(용도지역 미상)이면 캡 미적용(원값 유지·정직). ★캡은 baseFar가 이미
+  //   법정상한(legalFar)일 때 실질적으로 인센티브 합산분을 상한으로 되돌린다(자연녹지 150→100).
+  const cappedTheo = capFarToLegal(theoMaxRaw, legalCapFar);
+  const cappedRealistic = capFarToLegal(realisticRaw, legalCapFar);
+  const theoMax = cappedTheo.value;
+  const realistic = cappedRealistic.value;
+  const isCapped = cappedTheo.isCapped || cappedRealistic.isCapped;
 
   const donationMinimized = !incentives.some(
     (i) => i.included && i.donationRequired,
   );
   const realisticGainPct =
     baseFar > 0 ? Math.round(((realistic - baseFar) / baseFar) * 100) : null;
+
+  const honestNote = floorBound
+    ? `${HONEST_NOTE} ${FLOOR_BOUND_NOTE}`
+    : HONEST_NOTE;
 
   return {
     baseFar,
@@ -311,7 +382,11 @@ export function optimizeUtilization(
     realisticGainPct,
     incentives,
     donationMinimized,
-    honestNote: HONEST_NOTE,
+    legalCapFar,
+    theoreticalUncappedFar: theoMaxRaw,
+    isCapped,
+    floorBound,
+    honestNote,
   };
 }
 
@@ -347,11 +422,20 @@ export function utilizationToEvidence(
     });
   }
   if (result.theoreticalMaxFar != null) {
+    // U2: "이론상 상한"으로 명확화 — 완화방안 중복적용·법정상한 관계를 근거에 명시(오도방지).
+    //   isCapped면 법정상한에 걸려 단순가산치가 캡됐음을 밝힌다(캡 전 uncapped도 함께 고지).
+    const cappedBasis =
+      result.isCapped && result.legalCapFar != null
+        ? `적용 가능 완화방안 단순합산(중복적용 한도 미반영). 단순가산 ${result.theoreticalUncappedFar}% → 법정상한 ${result.legalCapFar}%로 캡`
+        : "적용 가능 완화방안 단순합산(중복적용 한도 미반영·이론치)";
     out.push({
-      label: "이론최대 용적률",
+      label: "이론상 상한 용적률",
       value: `${result.theoreticalMaxFar}%`,
-      basis: "적용 가능 전 완화방안 합산(중복적용 한도 미반영)",
-      legalRef: null,
+      basis: cappedBasis,
+      legalRef:
+        result.isCapped && result.legalCapFar != null
+          ? { lawName: "국토의 계획 및 이용에 관한 법률 제78조(용적률)" }
+          : null,
     });
   }
   return out;

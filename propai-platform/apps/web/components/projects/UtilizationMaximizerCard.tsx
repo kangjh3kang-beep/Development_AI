@@ -75,16 +75,28 @@ export function UtilizationMaximizerCard() {
         )}
       </div>
 
-      {/* 용적률 비교: 현재 실효 → 법정상한 → 현실최적 → 이론최대 */}
+      {/* 용적률 비교: 현재 실효 → 법정상한 → 현실최적 → 이론상 상한 */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <FarTile label="현재 실효" value={pct(result.currentEffectiveFar)} />
-        <FarTile label="법정상한" value={pct(result.legalFar)} />
+        <FarTile label="법정상한" value={pct(result.legalFar ?? result.legalCapFar)} />
         <FarTile label="현실최적(추천)" value={pct(result.realisticOptimalFar)} accent />
-        <FarTile label="이론최대" value={pct(result.theoreticalMaxFar)} />
+        <FarTile label="이론상 상한" value={pct(result.theoreticalMaxFar)} />
       </div>
       {realisticGainPct != null && realisticGainPct > 0 && (
         <p className="mt-2 text-[11px] font-bold text-[var(--accent-strong)]">
           현실최적 채택 시 기준 대비 +{realisticGainPct}% 상향
+        </p>
+      )}
+      {/* U2: 법정상한 캡 고지(오도방지) — 단순가산치가 법정상한에 걸려 캡됐음을 정직 표기 */}
+      {result.isCapped && result.legalCapFar != null && (
+        <p className="mt-2 rounded-lg border border-[color-mix(in_srgb,var(--status-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] px-3 py-1.5 text-[10px] font-bold text-[var(--status-warning)]">
+          ⚠ 이론상 상한은 법정상한 {result.legalCapFar}%로 캡됨(단순가산 {result.theoreticalUncappedFar}% → 중복적용·법정상한 미반영 이론치 아님)
+        </p>
+      )}
+      {/* F5: 층수 바인딩 지역(녹지 등) 고지 — 인센티브 실현에 층수완화 선행 필요 */}
+      {result.floorBound && (
+        <p className="mt-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--status-warning)_30%,transparent)] bg-[var(--surface-soft)] px-3 py-1.5 text-[10px] font-bold text-[var(--text-secondary)]">
+          층수 바인딩 지역(녹지·관리 등): 건폐·층수상한이 실질 바인딩이라 완화 용적률 실현에 층수완화(도시·군계획·심의)가 선행돼야 합니다.
         </p>
       )}
 

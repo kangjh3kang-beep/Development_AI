@@ -11,6 +11,7 @@ import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePan
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { LandProfileCard } from "@/components/projects/LandProfileCard";
 import { UtilizationMaximizerCard } from "@/components/projects/UtilizationMaximizerCard";
+import { UpzoningScenarioList } from "@/components/projects/UpzoningScenarioList";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -24,7 +25,6 @@ import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjec
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
 import { mapZoningRich, normalizeUpzoningScenarios, guardMultiParcelRich } from "@/lib/zoning-ssot";
-import { LegalRefChip } from "@/components/common/LegalRefChip";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
@@ -173,47 +173,7 @@ function formatPriceKr(amount10k: number | null | undefined): string {
   return `${amount10k.toLocaleString()}만`;
 }
 
-/**
- * 종상향 시나리오 근거법령 렌더 — verified 법령은 LegalRefChip(law.go.kr 딥링크 클릭),
- * 미verified(지자체 운영기준 등)는 legal_basis 텍스트로 정직 표기(죽은 링크 금지).
- *
- * 정직성: legal_refs 중 url_status==='verified' 항목만 칩으로(클릭). verified가 하나도 없으면
- * 기존처럼 "근거법령: {legal_basis}" 텍스트만(절대 가짜 링크 생성 안 함).
- */
-function UpzoningLegalRefs({
-  legalRefs,
-  legalBasis,
-}: {
-  legalRefs?: BackendLegalRef[] | null;
-  legalBasis?: string | null;
-}) {
-  const verified = (legalRefs || []).filter(
-    (r) => r && (r.url_status || "").trim() === "verified" && (r.url || "").trim(),
-  );
-  if (verified.length === 0) {
-    // verified 링크 없음 → 텍스트 폴백(기존 동작 보존·죽은 링크 금지).
-    if (!legalBasis) return null;
-    return (
-      <div className="mt-2 text-[9px] text-[var(--text-hint)]">
-        근거법령: {legalBasis}
-      </div>
-    );
-  }
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      <span className="text-[9px] font-bold text-[var(--text-hint)]">근거법령:</span>
-      {verified.map((r, i) => (
-        <LegalRefChip
-          key={`${r.key || r.law_name || "ref"}-${i}`}
-          lawName={r.law_name || ""}
-          article={r.article}
-          title={r.title}
-          url={r.url}
-        />
-      ))}
-    </div>
-  );
-}
+// 종상향 시나리오 근거법령 렌더(verified 딥링크·죽은 링크 금지)는 공용 UpzoningScenarioList로 이관.
 
 // ── L3 Enhanced Cards Component ──
 function L3EnhancedCards({
@@ -271,12 +231,6 @@ function L3EnhancedCards({
       ? [zoneLimits["ordinance_legal_basis"] as string]
       : null);
   const ordinanceNeedCheck = fbd?.조례확인필요 ?? !ordinanceConfirmed;
-  // 가능성 등급 → 의미색(상=success/중=warning/하=muted)
-  const feasibilityStyle = (f?: string): string => {
-    if (f === "상") return "sa-chip--success";
-    if (f === "중") return "sa-chip--warning";
-    return "bg-[var(--surface-muted)] text-[var(--text-hint)] border-[var(--line)]";
-  };
 
   return (
     <motion.div
@@ -402,49 +356,10 @@ function L3EnhancedCards({
             </div>
           </div>
 
-          {/* 시나리오 리스트 */}
+          {/* 시나리오 리스트 — U1: 저실현(하·미확인) 강등·접기 규약 내장 공용 컴포넌트로 렌더.
+              전량 저실현이면 기본 접힘 요약, 상/중 혼재면 "하"만 별도 접힘그룹(단발 국소패치 금지·전역 일관). */}
           {upScenarios.length > 0 && (
-            <div className="space-y-2">
-              {upScenarios.map((sc, i) => (
-                <div key={i} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex-1">
-                      <p className="text-xs font-black text-[var(--text-primary)]">{sc.path || "잠재 경로"}</p>
-                      {sc.target_zone && (
-                        <p className="text-[10px] font-bold text-purple-400 mt-0.5">→ {sc.target_zone}</p>
-                      )}
-                    </div>
-                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-black ${feasibilityStyle(sc.feasibility)}`}>
-                      가능성 {sc.feasibility || "—"}
-                    </span>
-                  </div>
-                  {(sc.expected_far_pct_low != null || sc.expected_far_pct_high != null) && (
-                    <p className="text-[11px] font-bold text-[var(--text-secondary)] mb-1">
-                      예상 용적률 {sc.expected_far_pct_low != null ? pct(sc.expected_far_pct_low) : ""}{sc.expected_far_pct_high != null ? ` ~ ${pct(sc.expected_far_pct_high)}` : ""}
-                      {sc.expected_far_source ? ` (${sc.expected_far_source})` : ""}
-                    </p>
-                  )}
-                  {sc.feasibility_reason && (
-                    <p className="text-[10px] text-[var(--text-hint)] mb-1">사유: {sc.feasibility_reason}</p>
-                  )}
-                  {sc.conditions && sc.conditions?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {(sc.conditions ?? []).map((c, ci) => (
-                        <span key={ci} className="rounded-md bg-[var(--surface-strong)] border border-[var(--line)] px-2 py-0.5 text-[9px] font-bold text-[var(--text-secondary)]">{c}</span>
-                      ))}
-                    </div>
-                  )}
-                  {/* 근거법령 — verified면 클릭 가능한 law.go.kr 딥링크 칩, 미verified는 텍스트(죽은 링크 금지) */}
-                  <UpzoningLegalRefs legalRefs={sc.legal_refs} legalBasis={sc.legal_basis} />
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[9px] text-[var(--text-hint)]">
-                    {sc.timeline_est && <span>예상 기간: {sc.timeline_est}</span>}
-                  </div>
-                  {sc.caveats && sc.caveats?.length > 0 && (
-                    <p className="mt-1.5 text-[9px] text-amber-400/80 italic">전제: {sc.caveats.join(" / ")}</p>
-                  )}
-                </div>
-              ))}
-            </div>
+            <UpzoningScenarioList scenarios={upScenarios} />
           )}
 
           {/* LLM 해석 */}
