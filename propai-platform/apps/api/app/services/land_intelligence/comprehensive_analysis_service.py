@@ -405,6 +405,33 @@ class ComprehensiveAnalysisService:
         except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
             pass
 
+        # ── 허용 건축물(별표 SSOT) 화면 배선 — 국토계획법 시행령 별표2~20 ──
+        #   감사 적발(커버리지 갭): 화면은 permit_validator(M코드)만 소비해, 자연녹지 등
+        #   비주거·비상업 용도지역에서 별표(예: 자연녹지 별표17: 단독주택·제1종근생·종교·교육·수련)
+        #   허용건축물 상세가 화면에 안 나왔다. development_type_analyzer(별표 단일SSOT)를 소비해
+        #   allowed_buildings를 가산한다(additive·무회귀 — 실패는 기존 분석 무손상).
+        #   ★전역: 녹지·관리 등 모든 용도지역이 별표 허용건축물을 얻는다(M코드만이면 상세 누락).
+        try:
+            from app.services.zoning import development_type_analyzer
+
+            _dev_types = development_type_analyzer.analyze(
+                zone_type=zone_type,
+                land_area_sqm=land_area,
+                effective_far_pct=effective_far,
+                effective_bcr_pct=effective_bcr,
+            )
+            result["allowed_buildings"] = {
+                "zone_type": zone_type,
+                "source": "국토계획법 시행령 별표2~20(허용 건축물)",
+                "allowed_types": _dev_types.get("allowed_types", []),
+                "restricted_types": _dev_types.get("restricted_types", []),
+                "recommended_type": _dev_types.get("recommended_type"),
+                "recommendation_reason": _dev_types.get("recommendation_reason"),
+                "legal_basis": _dev_types.get("legal_basis"),
+            }
+        except Exception:  # noqa: BLE001 — 허용 건축물 배선 실패는 무손상(기존 분석 유지)
+            pass
+
         # ── 전역정책 Phase0: 근거·법령링크·신선도 공용 블록(additive, graceful) ──
         # 용적률/건폐율 법정·조례·실효 한도를 근거 트레이스 + 레지스트리 법령링크로 부착해
         # "용적률 200%가 왜 나왔나"에 법령 원문까지 답한다(EvidencePanel 소비). AI 해석 전에

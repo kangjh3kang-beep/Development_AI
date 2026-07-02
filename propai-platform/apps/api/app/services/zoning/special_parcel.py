@@ -239,6 +239,65 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
     return None
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# 개발행위허가 게이트(국토계획법 §56~58) — 도시지역 내 녹지(자연·생산·보전녹지)는
+#   밀도한도(건폐/용적)만으로 '개발가능'을 단정할 수 없다. 건축 前 개발행위허가
+#   (규모·경사도·연접개발·도로/배수 기준)와 토지형질변경이 선행/병행돼야 한다(감사 커버리지 갭:
+#   전 repo에 §56 개발행위허가 판정 0건 → 107㎡ 자연녹지가 선행관문 안내 없이 '개발가능'으로 표기).
+#   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트).
+#   지목·면적 무관, zone_type이 녹지계열이면 발동. 보전녹지는 원칙적 제한(PRECONDITION)으로 차등.
+# ──────────────────────────────────────────────────────────────────────────
+def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
+    """개발행위허가(국토계획법 §56) 선행/병행 게이트 — 도시지역 내 녹지계열에서 발동.
+
+    자연녹지·생산녹지 → CONDITIONAL(개발행위허가·형질변경 통과 조건부 가능),
+    보전녹지 → PRECONDITION(개발 원칙적 제한 — 더 강한 선행절차 전제).
+    녹지계열이 아니면 None(주거·상업·공업 등 일상 도시지역은 게이트 안 함 — 과탐 방지).
+    """
+    zone = str(result.get("zone_type") or "")
+    if _zone_family(zone) != "녹지":
+        return None
+    # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+    z = zone.replace(" ", "")
+    if "보전녹지" in z:
+        developability = "PRECONDITION"
+        head = (
+            "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
+            "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+        )
+    else:
+        developability = "CONDITIONAL"
+        kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
+        head = (
+            f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+            "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+        )
+    return {
+        "category": "개발행위허가 선행/병행(도시지역 녹지)",
+        "developability": developability,
+        "implications": [
+            head,
+            "개발행위허가는 개발규모(면적 상한)·경사도·연접개발(누적 개발면적)·도로/배수 등 "
+            "기반시설 기준(국토계획법 §58 개발행위허가기준)을 충족해야 허가됩니다.",
+            "토지형질변경(절토·성토·정지·포장)이 수반되면 함께 허가받아야 합니다.",
+            "★개발가능 여부·규모는 개발행위허가 판정을 전제로 한 값입니다(밀도한도만으로 단정하지 않습니다).",
+        ],
+        "legal_basis": [
+            "국토의 계획 및 이용에 관한 법률 제56조(개발행위의 허가)",
+            "국토의 계획 및 이용에 관한 법률 제58조(개발행위허가의 기준)",
+        ],
+        "legal_ref_keys": ["dev_act_permit", "dev_act_criteria", "land_form_change"],
+        "permit_prerequisites": [
+            "개발행위허가(국토계획법 §56)·토지형질변경 병행 필요",
+            "개발행위허가기준(§58) 충족 확인 — 규모 상한·평균경사도·연접개발·도로/배수 기반시설",
+        ],
+        "caveat": (
+            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
+        ),
+    }
+
+
 def _rules_by_districts(special_districts: list, zone_type: str) -> list[dict[str, Any]]:
     """용도지구/구역(special_districts)·용도지역 기반 특이 판정(복수 가능)."""
     out: list[dict[str, Any]] = []
@@ -483,6 +542,11 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
     fr = _rule_by_road(result)
     if fr:
         factors.append(fr)
+    # 개발행위허가 게이트(도시지역 녹지) — 지목·면적 무관, zone_type이 녹지계열이면 발동.
+    #   자연/생산녹지=CONDITIONAL, 보전녹지=PRECONDITION(원칙적 제한). 그 외 zone은 None(과탐 방지).
+    fdev = _rule_by_dev_act_permit(result)
+    if fdev:
+        factors.append(fdev)
     # 규모·입지 임계 기반 선행절차 규제(소방 PBD·도로법 접도/연결·하수도 원인자부담·소규모 환경영향평가).
     #   기존 지목/구역/접도 요인과 동일 구조로 가산(임계 미만/미상이면 아무것도 추가 안 함).
     factors.extend(_rules_by_regulation_thresholds(result))
@@ -623,6 +687,22 @@ def _resolution_for(category: str, developability: str) -> dict[str, Any]:
     if "종교" in c:
         return {"resolvable": "CONDITIONAL", "resolution_paths": ["용도변경 검토", "종교법인 기본재산 처분 절차"],
                 "alternatives": ["존치 전제 부분개발", "해당 필지 제외"]}
+    # ── 개발행위허가(도시지역 녹지) — 개발행위허가·형질변경으로 해결(보전녹지는 조건부·좁음) ──
+    if "개발행위허가" in c:
+        # 보전녹지(PRECONDITION)는 원칙적 제한이라 CONDITIONAL(조건부·통상 어려움)로,
+        #   자연/생산녹지(CONDITIONAL)는 개발행위허가 통과로 해결 가능(전용·부담금형 YES).
+        cond = developability == "PRECONDITION"
+        return {"resolvable": "CONDITIONAL" if cond else "YES",
+                "resolution_paths": [
+                    "개발행위허가(국토계획법 §56) 신청·취득(규모·경사도·연접·기반시설 기준 충족)",
+                    "토지형질변경 병행 허가(절토·성토·정지·포장)",
+                    "개발행위허가기준(§58) 충족 — 도로/배수 등 기반시설 확보",
+                ],
+                "alternatives": [
+                    "허용 규모·경사도 이내로 개발계획 조정(부분개발)",
+                    "개발행위허가 비용·기반시설 부담을 사업수지에 반영",
+                ] + (["보전녹지는 개발이 원칙 제한 — 허용용도(별표15) 중심 계획 또는 구역 외 대체부지 검토"]
+                     if cond else [])}
     # ── 규모·입지 임계 기반 선행절차 규제(소방·도로법·하수도·환경영향평가) — 표준 절차로 해결 가능 ──
     if "성능위주설계" in c or "PBD" in c or "소방" in c:
         return {"resolvable": "YES",
