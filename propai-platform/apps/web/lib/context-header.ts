@@ -16,10 +16,14 @@
 // ★무목업: 컨텍스트가 없으면 값은 null(가짜 생성 금지). 소비 컴포넌트가 "대상 미선택"으로
 //   정직하게 안내한다.
 
-import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+import type {
+  SiteAnalysisData,
+  ProjectContextState,
+} from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveDominantZone } from "@/lib/zoning-ssot";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
+import type { PipelineStep } from "@/components/common/AnalysisPipelineStepbar";
 
 /** ContextHeader가 읽는 프로젝트 컨텍스트 입력(스토어 필드의 부분 집합). */
 export interface ContextHeaderInput {
@@ -95,4 +99,150 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
     parcelCount,
     isMultiParcel,
   };
+}
+
+/**
+ * 후보지진단(precheck) 등 부지분석 SSOT 기반 산출물의 분석 3단계 파생(순수 함수·무목업).
+ *
+ * ★정직 원칙: 각 단계는 store에 실제로 적재된 필드로만 판정한다(추측/날조 금지).
+ *   - 수집(collect): 주소+유효면적 확보(hasSiteData와 동형 판정) → done, 부분 확보(주소만) →
+ *     running(수집 진행 중으로 정직 표기), 전무 → idle.
+ *   - 검증(verify): 근거 트레이스(evidence) 또는 법령 원문 링크(legalRefs)가 store에 적재됨
+ *     (build_evidence_block 산출) → done, 미적재 → idle(검증 미실행을 done으로 위장하지 않음).
+ *   - 전문가 LLM(expert): 특이부지 게이트(specialParcel) 또는 종상향 시나리오(upzoningScenarios)
+ *     — 둘 다 LLM/규칙엔진 해석 산출물 — 존재 시 done, 미확보 시 idle.
+ *
+ * siteAnalysis가 아예 없으면 3단계 전부 idle(수집 전 상태 — 정직).
+ */
+export function deriveSitePipelineSteps(
+  sa: SiteAnalysisData | null | undefined,
+): PipelineStep[] {
+  if (!sa) {
+    return [
+      { id: "collect", status: "idle" },
+      { id: "verify", status: "idle" },
+      { id: "expert", status: "idle" },
+    ];
+  }
+
+  const hasArea = typeof effectiveLandAreaSqm(sa) === "number" && (effectiveLandAreaSqm(sa) ?? 0) > 0;
+  const hasAddress = !!str(sa.address);
+  const collectStatus: PipelineStep["status"] = hasAddress && hasArea
+    ? "done"
+    : hasAddress
+      ? "running"
+      : "idle";
+
+  const hasEvidence = (sa.evidence?.length ?? 0) > 0 || (sa.legalRefs?.length ?? 0) > 0;
+
+  const hasExpertOutput = !!sa.specialParcel || (sa.upzoningScenarios?.length ?? 0) > 0;
+
+  return [
+    {
+      id: "collect",
+      status: collectStatus,
+      sourceLabel: hasAddress ? "부지분석(주소·면적·용도지역)" : null,
+    },
+    {
+      id: "verify",
+      status: hasEvidence ? "done" : "idle",
+      sourceLabel: hasEvidence ? "근거 트레이스·법령 원문 교차검증" : null,
+    },
+    {
+      id: "expert",
+      status: hasExpertOutput ? "done" : "idle",
+      sourceLabel: hasExpertOutput ? "특이부지 게이트·종상향 해석" : null,
+    },
+  ];
+}
+
+/**
+ * 사업성검토(투자수익성) SSOT 기반 산출물의 분석 3단계 파생(순수 함수·무목업).
+ *
+ * ★정직 원칙: FeasibilityData에는 교차검증 트레이스 필드가 없다(store에 verify 전용 필드 부재
+ *   확인 완료) — 있는 것처럼 위장하지 않고 verify는 항상 idle(미상)로 정직 표기한다. 억지로
+ *   done을 만들지 않는 것이 "정직하게 idle" 원칙이다.
+ *   - 수집(collect): 매출/원가(totalRevenueWon·totalCostWon) 확보 → done, 둘 중 하나만 → running,
+ *     전무 → idle.
+ *   - 검증(verify): 항상 idle(교차검증 트레이스 미보유 — 날조 금지).
+ *   - 전문가 LLM(expert): grade(등급 산출) 확보 → done, 미확보 → idle.
+ */
+export function deriveFeasibilityPipelineSteps(
+  fd: ProjectContextState["feasibilityData"] | null | undefined,
+): PipelineStep[] {
+  if (!fd) {
+    return [
+      { id: "collect", status: "idle" },
+      { id: "verify", status: "idle" },
+      { id: "expert", status: "idle" },
+    ];
+  }
+
+  const hasRevenue = typeof fd.totalRevenueWon === "number" && fd.totalRevenueWon > 0;
+  const hasCost = typeof fd.totalCostWon === "number" && fd.totalCostWon > 0;
+  const collectStatus: PipelineStep["status"] = hasRevenue && hasCost
+    ? "done"
+    : hasRevenue || hasCost
+      ? "running"
+      : "idle";
+
+  const hasGrade = !!str(fd.grade);
+
+  return [
+    {
+      id: "collect",
+      status: collectStatus,
+      sourceLabel: collectStatus !== "idle" ? "수지 매출·원가(사업성 계산)" : null,
+    },
+    {
+      // 교차검증 트레이스가 FeasibilityData에 없어 정직하게 idle 고정(날조 금지).
+      id: "verify",
+      status: "idle",
+    },
+    {
+      id: "expert",
+      status: hasGrade ? "done" : "idle",
+      sourceLabel: hasGrade ? `사업성 등급 산출(${fd.grade})` : null,
+    },
+  ];
+}
+
+/**
+ * 시장분양리포트(MarketInsightsWorkspaceClient) 컴포넌트 로컬 상태 기반 분석 3단계 파생(순수 함수·무목업).
+ *
+ * ★이 산출물의 진행 상태는 useProjectContextStore가 아니라 컴포넌트 로컬 state(report·genState·
+ *   useLlm)에 있다 — 페이지 셸(서버 컴포넌트)까지 억지로 threading하지 않고, 실제 상태를 쥔
+ *   컴포넌트 내부에서 이 함수를 직접 호출해 ContextHeader에 pipeline prop으로 넘긴다.
+ * ★정직 원칙: 교차검증 트레이스 필드가 이 컴포넌트 응답에 없어 verify는 항상 idle 고정(날조 금지).
+ *   - 수집(collect): 생성 중(genState==="report") → running, report 확보 → done, 전무 → idle.
+ *   - 검증(verify): 항상 idle(교차검증 트레이스 미보유).
+ *   - 전문가 LLM(expert): useLlm 켜짐 + report.narrative 확보 → done, useLlm 꺼짐(규칙 기반만) →
+ *     idle(정직 — LLM 미실행을 done으로 위장하지 않음), report 없으면 idle.
+ */
+export function deriveMarketPipelineSteps(params: {
+  genState: string;
+  report: { narrative?: unknown } | null | undefined;
+  useLlm: boolean;
+}): PipelineStep[] {
+  const { genState, report, useLlm } = params;
+  const collectStatus: PipelineStep["status"] =
+    genState === "report" ? "running" : report ? "done" : "idle";
+
+  const hasNarrative = !!report && report.narrative != null;
+  const expertStatus: PipelineStep["status"] = hasNarrative && useLlm ? "done" : "idle";
+
+  return [
+    {
+      id: "collect",
+      status: collectStatus,
+      sourceLabel: collectStatus !== "idle" ? "실거래·시세 데이터(VWorld·MOLIT)" : null,
+    },
+    { id: "verify", status: "idle" },
+    {
+      id: "expert",
+      status: expertStatus,
+      sourceLabel: expertStatus === "done" ? "전문가 LLM 시장해설(narrative)" : null,
+      honestBadge: hasNarrative && !useLlm ? "규칙 기반(LLM 미실행)" : null,
+    },
+  ];
 }

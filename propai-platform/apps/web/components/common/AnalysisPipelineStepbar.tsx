@@ -11,7 +11,8 @@
  * ★ProjectLifecyclePipeline(10단계 라이프사이클)과 별개 — 이건 "한 산출물의 분석 3단계"다.
  * ★props-driven: 각 단계 상태(대기/진행/완료/실패)와 데이터원 라벨을 호출측이 주입한다(무목업:
  *   실제 상태만 전달, 추정/시장표준 데이터를 쓰면 "추정·시장표준" 정직배지 슬롯으로 명시).
- * ★디자인 토큰만 사용(--accent-strong 등).
+ * ★디자인 토큰만 사용(--accent-strong·--status-error·--status-warning 등 — globals.css 기존
+ *   시맨틱 상태색 재사용, 신규 토큰 발명 금지).
  */
 
 /** 단계 상태 — 대기/진행/완료/실패. */
@@ -59,9 +60,9 @@ function stepVisual(status: PipelineStepStatus): {
       };
     case "failed":
       return {
-        ring: "border-[var(--danger,#dc2626)]/40 bg-[var(--surface-secondary)]",
-        text: "text-[var(--danger,#dc2626)]",
-        dot: "bg-[var(--danger,#dc2626)]",
+        ring: "border-[var(--status-error)]/40 bg-[var(--surface-secondary)]",
+        text: "text-[var(--status-error)]",
+        dot: "bg-[var(--status-error)]",
       };
     case "idle":
     default:
@@ -98,7 +99,7 @@ function StepNode({ step, index }: { step: PipelineStep; index: number }) {
           </span>
         )}
         {step.honestBadge && (
-          <span className="mt-0.5 inline-block rounded-full border border-[var(--warning,#d97706)]/40 bg-[var(--warning,#d97706)]/10 px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--warning,#d97706)]">
+          <span className="mt-0.5 inline-block rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--status-warning)]">
             {step.honestBadge}
           </span>
         )}

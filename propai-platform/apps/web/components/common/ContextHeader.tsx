@@ -15,15 +15,29 @@
  * ★무목업: 컨텍스트가 없으면 "대상 미선택"으로 정직 안내(가짜 값 표시 금지).
  * ★디자인 토큰만 사용(--accent-strong·--surface-secondary·--line 등). 컴팩트 바 형태.
  * ★근거 툴팁: 용도지역·면적 근거를 EvidencePanel(LegalRefChip 재사용)로 접이식 노출(있을 때만).
+ *
+ * ★옵셔널 pipeline prop: 각 산출물 페이지가 자신이 아는 실제 분석 상태(수집/검증/전문가 LLM)를
+ *   PipelineStep[]로 넘기면 AnalysisPipelineStepbar를 헤더 하단에 함께 렌더한다(계약보존 —
+ *   미전달 시 기존 헤더만 그대로, 회귀 없음). 상태를 모르는 페이지는 생략(정직: idle 날조 금지 —
+ *   호출측이 모르면 아예 prop을 넘기지 않는다).
+ * ★sitePipeline=true 단축 옵션: 부지분석(siteAnalysis) SSOT만으로 판정 가능한 산출물(예:
+ *   후보지진단)은 원시 상태를 페이지가 다시 조회할 필요 없이 이 플래그만 켜면
+ *   deriveSitePipelineSteps(이미 읽고 있는 siteAnalysis 재사용)로 자동 파생한다. 명시적
+ *   pipeline prop이 함께 오면 그쪽이 우선(호출측이 더 정확한 상태를 안다고 간주).
  */
 
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
   deriveContextHeaderData,
+  deriveSitePipelineSteps,
   type ContextHeaderData,
 } from "@/lib/context-header";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import {
+  AnalysisPipelineStepbar,
+  type PipelineStep,
+} from "@/components/common/AnalysisPipelineStepbar";
 
 /** ㎡ → 표시 문자열(정수 반올림 + 천단위 콤마). 미확보면 null. */
 function areaText(sqm: number | null): string | null {
@@ -92,7 +106,21 @@ function buildEvidenceItems(
   return items;
 }
 
-export function ContextHeader({ className = "" }: { className?: string }) {
+export function ContextHeader({
+  className = "",
+  pipeline,
+  pipelineTitle,
+  sitePipeline = false,
+}: {
+  className?: string;
+  /** 이 산출물의 실제 분석 3단계 상태(수집/검증/전문가 LLM). 미전달 시 스텝바 미표시(무회귀). */
+  pipeline?: PipelineStep[];
+  /** 스텝바 제목(미전달 시 AnalysisPipelineStepbar 기본값 "분석 파이프라인" 사용). */
+  pipelineTitle?: string;
+  /** true면 siteAnalysis SSOT에서 3단계를 자동 파생(deriveSitePipelineSteps). pipeline이 함께
+   *  오면 pipeline이 우선. 기본 false(무회귀 — 명시적으로 켠 페이지만 자동 파생). */
+  sitePipeline?: boolean;
+}) {
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -104,6 +132,10 @@ export function ContextHeader({ className = "" }: { className?: string }) {
       ? siteAnalysis.farBasis.trim()
       : null;
   const evidenceItems = buildEvidenceItems(data, farBasis);
+  // 명시적 pipeline이 우선(호출측이 더 정확한 상태를 안다고 간주), 없으면 sitePipeline 플래그일 때만
+  // siteAnalysis SSOT에서 자동 파생(무회귀: 기본 false — 켜지 않은 페이지는 기존 동작 그대로).
+  const effectivePipeline =
+    pipeline ?? (sitePipeline ? deriveSitePipelineSteps(siteAnalysis) : undefined);
 
   // 컨텍스트 미선택 — 정직 안내(무목업). 프로젝트도 주소도 없으면 "대상 미선택".
   if (!data.hasContext) {
@@ -181,6 +213,14 @@ export function ContextHeader({ className = "" }: { className?: string }) {
       {showEvidence && evidenceItems.length > 0 && (
         <div className="mt-2">
           <EvidencePanel title="대상 컨텍스트 근거" items={evidenceItems} defaultOpen />
+        </div>
+      )}
+
+      {/* 분석 파이프라인 3단계(옵셔널) — 호출측이 실제 상태를 아는 경우(pipeline) 또는
+          sitePipeline=true(siteAnalysis SSOT 자동 파생)일 때만 렌더(무목업). */}
+      {effectivePipeline && effectivePipeline.length > 0 && (
+        <div className="mt-2">
+          <AnalysisPipelineStepbar steps={effectivePipeline} title={pipelineTitle} />
         </div>
       )}
     </div>

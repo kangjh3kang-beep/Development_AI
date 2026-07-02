@@ -2,9 +2,18 @@ import { describe, it, expect } from "vitest";
 import {
   deriveContextHeaderData,
   zoneDisplayLabel,
+  deriveSitePipelineSteps,
+  deriveFeasibilityPipelineSteps,
+  deriveMarketPipelineSteps,
   type ContextHeaderInput,
 } from "./context-header";
-import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+import type { SiteAnalysisData, ProjectContextState } from "@/store/useProjectContextStore";
+
+function fd(
+  partial: Partial<NonNullable<ProjectContextState["feasibilityData"]>>,
+): NonNullable<ProjectContextState["feasibilityData"]> {
+  return partial as NonNullable<ProjectContextState["feasibilityData"]>;
+}
 
 // 검증과 무관한 필수 필드는 부분 객체로 구성(site-area.test.ts 패턴과 동일).
 function sa(partial: Partial<SiteAnalysisData>): SiteAnalysisData {
@@ -124,5 +133,134 @@ describe("zoneDisplayLabel — 용도지역 표시 라벨", () => {
     expect(zoneDisplayLabel(null)).toBeNull();
     expect(zoneDisplayLabel("")).toBeNull();
     expect(zoneDisplayLabel("   ")).toBeNull();
+  });
+});
+
+describe("deriveSitePipelineSteps — 후보지진단 분석 3단계 파생(무목업)", () => {
+  it("siteAnalysis 없음: 3단계 전부 idle", () => {
+    const steps = deriveSitePipelineSteps(null);
+    expect(steps.map((s) => s.status)).toEqual(["idle", "idle", "idle"]);
+  });
+
+  it("주소만 확보(면적 미확보): collect=running(부분 수집 정직 표기)", () => {
+    const steps = deriveSitePipelineSteps(sa({ address: "A" }));
+    expect(steps[0].status).toBe("running");
+    expect(steps[1].status).toBe("idle");
+    expect(steps[2].status).toBe("idle");
+  });
+
+  it("주소+면적 확보: collect=done, verify/expert는 근거·해석 없으면 idle", () => {
+    const steps = deriveSitePipelineSteps(sa({ address: "A", landAreaSqm: 500 }));
+    expect(steps[0].status).toBe("done");
+    expect(steps[1].status).toBe("idle");
+    expect(steps[2].status).toBe("idle");
+  });
+
+  it("evidence 확보: verify=done", () => {
+    const steps = deriveSitePipelineSteps(
+      sa({ address: "A", landAreaSqm: 500, evidence: [{ claim: "far" }] }),
+    );
+    expect(steps[1].status).toBe("done");
+  });
+
+  it("legalRefs만 있어도 verify=done", () => {
+    const steps = deriveSitePipelineSteps(
+      sa({ address: "A", landAreaSqm: 500, legalRefs: [{ law: "건축법" }] }),
+    );
+    expect(steps[1].status).toBe("done");
+  });
+
+  it("specialParcel 확보: expert=done", () => {
+    const steps = deriveSitePipelineSteps(
+      sa({
+        address: "A",
+        landAreaSqm: 500,
+        specialParcel: { isSpecial: true, developability: "POSSIBLE", resolvable: "YES", factors: [], honest: null },
+      }),
+    );
+    expect(steps[2].status).toBe("done");
+  });
+
+  it("upzoningScenarios 확보: expert=done", () => {
+    const steps = deriveSitePipelineSteps(
+      sa({
+        address: "A",
+        landAreaSqm: 500,
+        upzoningScenarios: [{ path: "준주거→일반상업", targetZone: null, feasibility: "중", expectedFarLowPct: null, expectedFarHighPct: null, legalBasis: null, rationale: null }],
+      }),
+    );
+    expect(steps[2].status).toBe("done");
+  });
+});
+
+describe("deriveFeasibilityPipelineSteps — 사업성검토 분석 3단계 파생(무목업)", () => {
+  it("feasibilityData 없음: 3단계 전부 idle", () => {
+    const steps = deriveFeasibilityPipelineSteps(null);
+    expect(steps.map((s) => s.status)).toEqual(["idle", "idle", "idle"]);
+  });
+
+  it("매출만 확보(원가 미확보): collect=running", () => {
+    const steps = deriveFeasibilityPipelineSteps(fd({ totalRevenueWon: 1000, totalCostWon: null }));
+    expect(steps[0].status).toBe("running");
+  });
+
+  it("매출+원가 확보: collect=done", () => {
+    const steps = deriveFeasibilityPipelineSteps(fd({ totalRevenueWon: 1000, totalCostWon: 800 }));
+    expect(steps[0].status).toBe("done");
+  });
+
+  it("verify는 교차검증 트레이스 미보유로 항상 idle(날조 금지)", () => {
+    const steps = deriveFeasibilityPipelineSteps(
+      fd({ totalRevenueWon: 1000, totalCostWon: 800, grade: "A" }),
+    );
+    expect(steps[1].status).toBe("idle");
+  });
+
+  it("grade 확보: expert=done", () => {
+    const steps = deriveFeasibilityPipelineSteps(fd({ grade: "A" }));
+    expect(steps[2].status).toBe("done");
+  });
+
+  it("grade 미확보: expert=idle", () => {
+    const steps = deriveFeasibilityPipelineSteps(fd({ totalRevenueWon: 1000, totalCostWon: 800 }));
+    expect(steps[2].status).toBe("idle");
+  });
+});
+
+describe("deriveMarketPipelineSteps — 시장분양리포트 분석 3단계 파생(무목업)", () => {
+  it("보고서 생성 전: collect=idle", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: null, useLlm: true });
+    expect(steps[0].status).toBe("idle");
+  });
+
+  it("생성 중(genState=report): collect=running", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "report", report: null, useLlm: true });
+    expect(steps[0].status).toBe("running");
+  });
+
+  it("report 확보: collect=done", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: { narrative: null }, useLlm: true });
+    expect(steps[0].status).toBe("done");
+  });
+
+  it("verify는 교차검증 트레이스 미보유로 항상 idle(날조 금지)", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: { narrative: { summary: "x" } }, useLlm: true });
+    expect(steps[1].status).toBe("idle");
+  });
+
+  it("narrative 확보 + useLlm true: expert=done", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: { narrative: { summary: "x" } }, useLlm: true });
+    expect(steps[2].status).toBe("done");
+  });
+
+  it("narrative 확보했지만 useLlm false: expert=idle + 정직배지(규칙 기반)", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: { narrative: { summary: "x" } }, useLlm: false });
+    expect(steps[2].status).toBe("idle");
+    expect(steps[2].honestBadge).toBe("규칙 기반(LLM 미실행)");
+  });
+
+  it("narrative 미확보: expert=idle", () => {
+    const steps = deriveMarketPipelineSteps({ genState: "", report: { narrative: null }, useLlm: true });
+    expect(steps[2].status).toBe("idle");
   });
 });
