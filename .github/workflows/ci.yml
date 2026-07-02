@@ -39,6 +39,11 @@ jobs:
           pip install "gdal==$(gdal-config --version)"
           pip install -r apps/api/requirements.txt
 
+      # 린트 게이트(2026-07-02 ruff 부채 2072→0 달성 후 승격): 빠른 실패 위해 테스트 전 실행.
+      - name: Ruff lint (apps/api)
+        working-directory: propai-platform/apps/api
+        run: python -m ruff check .
+
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
         run: python -m pytest tests/ -q --no-header
@@ -63,15 +68,14 @@ jobs:
         run: pnpm install
         working-directory: propai-platform
 
+      # 게이트 승격(2026-07-02): tsc 0·eslint 에러 0 달성 — 비차단(continue-on-error) 제거.
       - name: Type check
         run: pnpm type-check
         working-directory: propai-platform/apps/web
-        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
 
       - name: Lint
         run: pnpm lint
         working-directory: propai-platform/apps/web
-        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
 
       - name: Unit tests
         run: pnpm test:run
