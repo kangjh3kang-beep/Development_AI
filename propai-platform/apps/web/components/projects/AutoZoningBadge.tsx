@@ -6,7 +6,15 @@ import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
-import { mapZoningRich, mapUpzoning, guardMultiParcelRich, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import {
+  mapZoningRich,
+  mapUpzoning,
+  guardMultiParcelRich,
+  DEVELOPABILITY_LABEL,
+  specialFactorLabels,
+  preconditionFactors,
+  type SpecialFactorRich,
+} from "@/lib/zoning-ssot";
 
 /* ── Response type ── */
 
@@ -38,7 +46,9 @@ type SpecialParcel = {
   developability?: string | null;     // POSSIBLE|CONDITIONAL|PRECONDITION|RESTRICTED|BLOCKED
   resolvable?: string | null;         // YES|CONDITIONAL|NO
   severity_label?: string | null;
-  factors?: Array<{ category?: string | null } | string> | null;
+  // ★factor는 문자열 또는 dict({category, developability, implications[], legal_basis[], legal_refs[]}).
+  //   개발행위허가 게이트(§56/§58) 상세 렌더를 위해 rich dict 형태(SpecialFactorRich)로 받는다.
+  factors?: Array<SpecialFactorRich | string> | null;
   honest_disclosure?: string | null;
 };
 
@@ -271,11 +281,10 @@ export function AutoZoningBadge({ address }: { address: string }) {
   // 특이부지 게이트 — is_special일 때만 배지/경고 렌더(없으면 미표시, 가짜 금지).
   const sp = result.special_parcel ?? null;
   const isSpecial = sp?.is_special === true;
-  const spFactors = (sp?.factors ?? [])
-    .map((f) =>
-      typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim(),
-    )
-    .filter((t) => t.length > 0);
+  // ★공용 specialFactorLabels로 category 추출(dict factor "[object Object]" 오렌더 방지·전역 일관).
+  const spFactors = specialFactorLabels(sp?.factors);
+  // 개발행위허가 등 "선행요건" 상세(implications+§56/§58 법령)를 가진 factor만 별도 섹션으로.
+  const precondFactors = preconditionFactors(sp?.factors);
   // developability(영문 게이트) → 한국어 라벨. 미지/누락 시 severity_label 폴백, 그것도 없으면 미표기.
   // DEVELOPABILITY_LABEL은 zoning-ssot.ts 공용 상수 사용.
   const developabilityLabel =
@@ -385,6 +394,13 @@ export function AutoZoningBadge({ address }: { address: string }) {
               {sp.honest_disclosure}
             </p>
           )}
+
+          {/* 개발행위허가 선행요건 상세 — CONDITIONAL/PRECONDITION factor의 implications(상세 문구)와
+              legal_basis(§56/§58)를 접이식 섹션으로 노출한다. category만이 아니라 "밀도한도 충족만으로
+              개발 확정 아님·개발행위허가 판정 전제" 캐비엇이 화면에 보이게 한다(정직 고지·무목업). */}
+          {precondFactors.map((f, i) => (
+            <DevActPermitDetail key={`precond-${i}`} factor={f} />
+          ))}
         </div>
       )}
 
@@ -444,5 +460,85 @@ function MetricChip({
         <span className="text-[10px] text-[var(--text-hint)]">{sub}</span>
       )}
     </span>
+  );
+}
+
+/* ── DevActPermitDetail ── 개발행위허가 선행요건 상세(접이식)
+ *
+ * 도시지역 내 녹지(자연·생산·보전녹지) 등 CONDITIONAL/PRECONDITION factor의 상세 문구(implications)와
+ * 법령 근거(§56 개발행위허가·§58 허가기준)를 렌더한다. category만 배지로 보이던 것을 보강해,
+ * "밀도한도(용적100/건폐20) 충족만으로 개발 확정 아님 — 개발행위허가 판정 전제" 캐비엇을 노출한다.
+ * 법령 딥링크는 백엔드 legal_refs(verified url)만 사용(프론트 조립 금지·죽은 링크 금지). 무목업.
+ */
+function DevActPermitDetail({ factor }: { factor: SpecialFactorRich }) {
+  const [open, setOpen] = useState(false);
+  const implications = (factor.implications ?? []).filter(
+    (s) => typeof s === "string" && s.trim().length > 0,
+  );
+  if (implications.length === 0) return null;
+  // verified 딥링크만(url_status='verified' && url 존재). 없으면 legal_basis 텍스트 칩으로 폴백.
+  const verifiedRefs = (factor.legal_refs ?? []).filter(
+    (r) =>
+      r &&
+      (r.url_status || "").trim() === "verified" &&
+      (r.url || "").trim().length > 0 &&
+      (r.law_name || "").trim().length > 0,
+  );
+  const legalBasisText = (factor.legal_basis ?? []).filter(
+    (s) => typeof s === "string" && s.trim().length > 0,
+  );
+  const title = (factor.category ?? "개발행위허가 선행요건").toString().trim();
+
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--status-warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_6%,transparent)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <span className="text-[11px] font-bold text-[var(--status-warning)]">
+          {title} · 선행요건 상세
+        </span>
+        <span className="text-[10px] text-[var(--text-hint)]" aria-hidden>
+          {open ? "접기 ▲" : "펼치기 ▼"}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-2 px-3 pb-3">
+          <ul className="list-disc space-y-1 pl-4">
+            {implications.map((s, i) => (
+              <li
+                key={`impl-${i}`}
+                className="text-[10px] leading-5 text-[var(--text-secondary)]"
+              >
+                {s}
+              </li>
+            ))}
+          </ul>
+          {/* 법령 근거 — verified 딥링크 칩(우선) 또는 legal_basis 텍스트 칩(url 없으면 텍스트 폴백). */}
+          {(verifiedRefs.length > 0 || legalBasisText.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[9px] font-bold text-[var(--text-hint)]">
+                근거법령:
+              </span>
+              {verifiedRefs.length > 0
+                ? verifiedRefs.map((r, i) => (
+                    <LegalRefChip
+                      key={`ref-${r.key ?? i}`}
+                      lawName={r.law_name ?? ""}
+                      article={r.article}
+                      title={r.title}
+                      url={r.url}
+                    />
+                  ))
+                : legalBasisText.map((s, i) => (
+                    <LegalRefChip key={`basis-${i}`} lawName={s} />
+                  ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

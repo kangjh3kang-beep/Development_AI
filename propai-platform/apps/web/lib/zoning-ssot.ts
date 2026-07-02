@@ -134,19 +134,10 @@ export function normalizeUpzoningScenarios(
 }
 
 // factors[]를 라벨 문자열 배열로 정규화(객체면 category > label > name 추출, 문자열이면 그대로).
+//   공용 specialFactorLabels로 위임(단일 진실원천 — 파일 아래 정의). mapZoningRich가 store에
+//   저장하는 factors:string[]와 화면 소비처가 동일 추출 규칙을 공유하게 한다(국소패치 금지).
 function normalizeFactors(factors: SpecialFactor[] | null | undefined): string[] {
-  if (!Array.isArray(factors)) return [];
-  const out: string[] = [];
-  for (const f of factors) {
-    if (typeof f === "string") {
-      const t = f.trim();
-      if (t) out.push(t);
-    } else if (f && typeof f === "object") {
-      const label = (f.category ?? f.label ?? f.name ?? "").toString().trim();
-      if (label) out.push(label);
-    }
-  }
-  return out;
+  return specialFactorLabels(factors);
 }
 
 // scenarios 중 가능성 최상('상'>'중'>'하') 등급. 없으면 undefined.
@@ -414,6 +405,86 @@ export function capFarToLegal(
   const cap = num(legalCap);
   if (cap == null || far <= cap) return { value: far, isCapped: false };
   return { value: cap, isCapped: true };
+}
+
+/* ── 특이부지 factor 라벨 추출 공용 헬퍼(dict/string 혼재 방어) ──
+ *
+ * 배경(전역 오렌더 버그): 백엔드 special_parcel.factors는 **dict 리스트**
+ *   ([{category, developability, implications[], legal_basis[], legal_refs[], ...}])로 산출되는데,
+ *   프론트 일부 소비처가 `factors.join(" · ")`처럼 배열을 그대로 문자열화하면 dict 항목이
+ *   "[object Object]"로 오렌더된다(예: 개발행위허가 게이트 factor). 여러 컴포넌트
+ *   (AutoZoningBadge·LandIntelligencePanel·SiteInitiator·PermitAiWorkspaceClient)가 동일한 인라인
+ *   `typeof f === "string" ? f : f?.category` 로직을 중복 보유했다. 이 헬퍼로 한 곳을 고치면
+ *   전역이 따라오게 공용화한다(국소패치 금지). 순수 함수·무목업(빈 라벨은 제외).
+ */
+export type SpecialFactorRich = {
+  category?: string | null;
+  label?: string | null;
+  name?: string | null;
+  developability?: string | null;
+  // 개발행위허가 등 게이트 factor의 상세 문구·법령 근거(백엔드 dict factor에 동봉).
+  implications?: string[] | null;
+  legal_basis?: string[] | null;
+  caveat?: string | null;
+  permit_prerequisites?: string[] | null;
+  // verified law.go.kr 딥링크(레지스트리 직렬화) — url_status='verified'만 링크(그 외 텍스트 폴백).
+  legal_refs?: Array<{
+    key?: string | null;
+    law_name?: string | null;
+    article?: string | null;
+    title?: string | null;
+    url?: string | null;
+    url_status?: string | null;
+  }> | null;
+};
+
+// 느슨한 입력 타입(문자열 또는 dict factor). 외부 API 응답을 그대로 받아 안전 추출.
+type LooseFactor = string | SpecialFactorRich | null | undefined;
+
+/**
+ * factors[] → 표시 라벨(category) 문자열 배열. 문자열이면 그대로, dict면 category>label>name 추출.
+ * 빈 라벨은 제외(무목업). 배열이 아니면 빈 배열. AutoZoningBadge:274 등 인라인 로직의 단일 진실원천.
+ */
+export function specialFactorLabels(factors: LooseFactor[] | null | undefined): string[] {
+  if (!Array.isArray(factors)) return [];
+  const out: string[] = [];
+  for (const f of factors) {
+    if (typeof f === "string") {
+      const t = f.trim();
+      if (t) out.push(t);
+    } else if (f && typeof f === "object") {
+      const label = (f.category ?? f.label ?? f.name ?? "").toString().trim();
+      if (label) out.push(label);
+    }
+  }
+  return out;
+}
+
+// 개발행위허가 게이트 등 "선행절차 필요" 등급 — 밀도한도만으로 개발 확정이 아닌 factor.
+const PRECONDITION_DEVELOPABILITY = new Set(["CONDITIONAL", "PRECONDITION"]);
+
+/**
+ * factors[] 중 상세(implications/legal_basis)를 가진 dict factor만 추린다(개발행위허가 선행요건 렌더용).
+ *
+ * developability=CONDITIONAL/PRECONDITION 이면서 implications가 있는 factor를 반환(문자열 factor·상세
+ * 없는 dict는 제외 — 렌더할 상세가 없으므로). 순수 함수. 무목업: 상세 없으면 빈 배열(카드 미표시 신호).
+ */
+export function preconditionFactors(
+  factors: LooseFactor[] | null | undefined,
+): SpecialFactorRich[] {
+  if (!Array.isArray(factors)) return [];
+  const out: SpecialFactorRich[] = [];
+  for (const f of factors) {
+    if (!f || typeof f !== "object") continue;
+    const impl = Array.isArray(f.implications)
+      ? f.implications.filter((s) => typeof s === "string" && s.trim())
+      : [];
+    const dev = typeof f.developability === "string" ? f.developability : "";
+    if (impl.length > 0 && PRECONDITION_DEVELOPABILITY.has(dev)) {
+      out.push(f);
+    }
+  }
+  return out;
 }
 
 // 개발가능성 영문 게이트 → 한국어 라벨 공용 맵.

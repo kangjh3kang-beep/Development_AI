@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
-import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -76,9 +76,8 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
         if (!cancelled) {
           const ef = res.effective_far ?? null;
           const sp = res.special_parcel ?? null;
-          const factors = (sp?.factors ?? [])
-            .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
-            .filter((t) => t.length > 0);
+          // ★공용 specialFactorLabels로 category 추출(dict factor "[object Object]" 오렌더 방지·전역 일관).
+          const factors = specialFactorLabels(sp?.factors);
           setZoningPreview({
             zoneType: res.zone_type,
             effBcr: typeof ef?.effective_bcr_pct === "number" ? ef.effective_bcr_pct : null,

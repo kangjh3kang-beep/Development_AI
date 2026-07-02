@@ -19,7 +19,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
+import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
@@ -476,7 +476,12 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             />
             <DataField
               label="특이 요인"
-              value={sp.factors?.length ? sp.factors.join(" · ") : null}
+              value={(() => {
+                // ★factors는 백엔드에서 dict 리스트로도 올 수 있어(개발행위허가 게이트 등),
+                //   join 직접호출 시 "[object Object]" 오렌더. 공용 specialFactorLabels로 category 추출.
+                const labels = specialFactorLabels(sp.factors);
+                return labels.length ? labels.join(" · ") : null;
+              })()}
             />
             <DataField label="정직고지" value={sp.honest} />
           </Section>
