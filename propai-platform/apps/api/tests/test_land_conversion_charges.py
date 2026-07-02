@@ -2,7 +2,7 @@
 
 계획서: docs/LEGAL_ENGINE_SLOPE_FOREST_PLAN_2026-07-02.md §T4
 - 농지보전부담금 = 개별공시지가 × 30% (㎡당 상한 50,000원) × 전용면적, confidence="estimated"
-- 대체산림자원조성비 = (고시 단가 + 공시지가×1%) × 면적, 고시 단가는 하드코딩 금지 —
+- 대체산림자원조성비 = (고시 단가 + 공시지가×0.1%) × 면적, 고시 단가는 하드코딩 금지 —
   ForestChargeRates 명시 주입 없으면 amount=None + 산식 설명(무날조)
 - 모든 반환에 formula/basis/legal_ref_key/confidence/limitations 동반(설명가능성)
 """
@@ -70,6 +70,28 @@ class TestFarmlandPreservationCharge:
         )
         assert r["amount_won"] == 0
 
+    def test_promotion_zone_branch(self):
+        """★진흥지역 구분 분기: 내 30%·밖 20%·미확인 30%(안전측)+정직 고지."""
+        # 진흥지역 내 → 30%
+        r_in = calc_farmland_preservation_charge(
+            official_land_price_per_m2=100_000, conversion_area_m2=100,
+            in_agricultural_promotion_zone=True,
+        )
+        assert r_in["rate_pct"] == 30 and r_in["per_m2_won"] == 30_000
+        # 진흥지역 밖 → 20%(단일 30% 적용 시 과다산정되던 것 정정)
+        r_out = calc_farmland_preservation_charge(
+            official_land_price_per_m2=100_000, conversion_area_m2=100,
+            in_agricultural_promotion_zone=False,
+        )
+        assert r_out["rate_pct"] == 20 and r_out["per_m2_won"] == 20_000
+        assert "20%" in r_out["formula"]
+        # 미확인 → 안전측 30% + 정직 고지(밖이면 20% 재산정)
+        r_unk = calc_farmland_preservation_charge(
+            official_land_price_per_m2=100_000, conversion_area_m2=100,
+        )
+        assert r_unk["rate_pct"] == 30
+        assert any("미확인" in lim or "20%" in lim for lim in r_unk["limitations"])
+
     @pytest.mark.parametrize(
         "price,area", [(-1, 100), (100_000, -5)],
     )
@@ -106,15 +128,19 @@ class TestForestReplacementCharge:
         assert r["legal_ref_key"] == "forest_replacement_charge"
 
     def test_with_rates_junbojeon(self):
-        """(단가 8,090 + 공시지가 100,000×1%) × 1,000㎡ = 9,090,000원."""
+        """(단가 8,090 + 공시지가 100,000×0.1%) × 1,000㎡ = 8,190,000원.
+
+        ★공시지가 반영비율 0.1%(1000분의1) — 2024.7.1 개정(구 1%→0.1%).
+        100,000×0.001=100 → 8,090+100=8,190 → ×1,000=8,190,000.
+        """
         r = calc_forest_replacement_charge(
             official_land_price_per_m2=100_000,
             conversion_area_m2=1_000,
             forest_type="준보전산지",
             rates=self.RATES,
         )
-        assert r["amount_won"] == pytest.approx(9_090_000)
-        assert r["per_m2_won"] == pytest.approx(9_090)
+        assert r["amount_won"] == pytest.approx(8_190_000)
+        assert r["per_m2_won"] == pytest.approx(8_190)
         assert r["confidence"] == "estimated"
         assert r["rates_year"] == 2026
 
@@ -125,8 +151,8 @@ class TestForestReplacementCharge:
             forest_type="보전산지",
             rates=self.RATES,
         )
-        # (10,510 + 500) × 200 = 2,202,000
-        assert r["amount_won"] == pytest.approx(2_202_000)
+        # (10,510 + 50,000×0.1%=50) × 200 = 2,112,000 (0.1%=1000분의1, 2024.7.1 개정)
+        assert r["amount_won"] == pytest.approx(2_112_000)
 
     def test_with_rates_restricted(self):
         r = calc_forest_replacement_charge(
@@ -155,7 +181,7 @@ class TestForestReplacementCharge:
         )
         assert set(r.keys()) >= EXPLAINABILITY_KEYS
         assert "산지관리법" in r["basis"]
-        assert "1%" in r["formula"]
+        assert "0.1%" in r["formula"]  # ★2024.7.1 개정 1000분의1(0.1%), 구법 1% 아님
         # 감면·가산 상한 등 고시 세부기준 미반영 한계 정직 고지
         assert len(r["limitations"]) >= 1
 
