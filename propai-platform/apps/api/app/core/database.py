@@ -3,10 +3,13 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
+from app.core.env import is_debug
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.APP_DEBUG,
+    # ★SQL echo 는 공용 SSOT(app.core.env.is_debug)로 결정 — 프로덕션에서는 무조건 off 라
+    #   SQL·바인드 파라미터 로그 유출을 원천 차단한다. 개발에서만 APP_DEBUG/DEBUG 플래그를 따른다.
+    echo=is_debug(),
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,
