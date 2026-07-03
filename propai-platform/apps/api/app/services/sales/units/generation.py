@@ -10,10 +10,13 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.models.sales.units_pricing import (
-    SalesUnitBlock, SalesUnitGeneration, SalesUnitInventory, SalesUnitType,
-)
 from app.services.sales.harness.outbox import emit_outbox
+from apps.api.database.models.sales.units_pricing import (
+    SalesUnitBlock,
+    SalesUnitGeneration,
+    SalesUnitInventory,
+    SalesUnitType,
+)
 
 
 def _pick_type(b: dict, u: int) -> str:
@@ -102,7 +105,7 @@ async def map_from_design(db: AsyncSession, site_id: uuid.UUID, source_ref: str 
             seq.extend([t] * max(1, cpf))
     if not seq:
         # 폴백: 기준층 순면적/84㎡ 추정
-        per_floor = max(1, int((total_area / max(1, num_floors) / 84))) if (total_area and num_floors) else 4
+        per_floor = max(1, int(total_area / max(1, num_floors) / 84)) if (total_area and num_floors) else 4
         seq = ["84A"] * per_floor
     if not num_floors:
         return []

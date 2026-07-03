@@ -1,7 +1,6 @@
 """AI 사용량 추적기."""
 from collections import defaultdict
-from datetime import datetime, timezone, UTC
-
+from datetime import UTC, datetime
 
 MODEL_COSTS = {
     "gpt-4o": {"input": 5.0, "output": 15.0},

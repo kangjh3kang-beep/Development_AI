@@ -1,5 +1,4 @@
 """분양/주택 관리 서비스."""
-from typing import Dict, List
 
 
 class HousingService:
@@ -9,7 +8,7 @@ class HousingService:
         units = []
         seq = 1
         for unit_type, count in type_counts.items():
-            for i in range(count):
+            for _i in range(count):
                 units.append({
                     "unit_id": f"UNIT-{seq:04d}",
                     "project_id": project_id,

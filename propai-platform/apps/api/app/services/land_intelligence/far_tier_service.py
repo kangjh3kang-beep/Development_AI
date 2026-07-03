@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import structlog
@@ -74,8 +75,8 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     #    완화근거/완화율이 있을 때만 상향을 반영한다(근거 없으면 법정값 유지).
     #    interpreter·검증기가 활용하도록 basis 메타를 동봉한다.
     from app.services.zoning.legal_zone_limits import (
-        _has_relaxation_basis,
         SANITY_MULTIPLIER,
+        _has_relaxation_basis,
     )
     relaxation_ratio = (
         ordinance.get("relaxation_ratio_pct")
@@ -167,15 +168,13 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     }
 
     incentive: dict[str, Any] = {}
-    try:
+    with contextlib.suppress(Exception):
         incentive = calc_far_incentive(
             zone_type=zone_type,
             ordinance_far=effective_far,
             donation_ratio_pct=0.0,
             national_far=national_far,
         )
-    except Exception:
-        pass
 
     # 분석 주석 생성 — 전문적 부동산 용어, 자연스러운 한국어
     source = ordinance.get("source", "법정상한")

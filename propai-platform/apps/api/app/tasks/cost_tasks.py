@@ -32,7 +32,7 @@ def recalculate_project_cost(project_id: str) -> dict:
 
     logger.info("프로젝트 공사비 재계산 시작: %s", project_id)
 
-    calculator = OriginCostCalculator()
+    OriginCostCalculator()
 
     # 실제 구현: DB에서 BimQuantity + MaterialUnitPrice 조회 후 CostItem 구성
     # 여기서는 스텁 응답 반환

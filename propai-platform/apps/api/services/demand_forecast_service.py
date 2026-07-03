@@ -7,12 +7,12 @@ B02: Redis Connection Pool 고갈 방어 최적화 포함.
 """
 
 from __future__ import annotations
+
 import math
 from typing import TYPE_CHECKING
-from uuid import UUID
 
-import structlog
 import redis.asyncio as redis
+import structlog
 
 from apps.api.config import get_settings
 

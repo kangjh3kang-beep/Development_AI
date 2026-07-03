@@ -306,7 +306,7 @@ class DesignAuditOrchestrator:
         findings: list[dict[str, Any]] = []
         engines_status: dict[str, str] = {}
         sections: dict[str, Any] = {}
-        for name, result in zip(ENGINE_NAMES, results):
+        for name, result in zip(ENGINE_NAMES, results, strict=False):
             if isinstance(result, BaseException):
                 engines_status[name] = "failed"
                 logger.warning("설계심사 엔진 실패 — skipped 처리", engine=name, error=str(result)[:160])

@@ -1,8 +1,7 @@
 """생애주기 최적화 테스트 (ISO 15686-1)."""
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -23,7 +22,7 @@ class TestReplacementSchedule:
     def test_replacement_years_within_lifespan(self):
         """교체 연도가 건물 수명 내."""
         result = self.svc.optimize_replacement_schedule(50_000_000_000, 50)
-        for comp, info in result["replacement_schedule"].items():
+        for _comp, info in result["replacement_schedule"].items():
             for year in info["replacement_years"]:
                 assert 0 < year < 50
 

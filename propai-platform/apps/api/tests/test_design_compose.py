@@ -585,7 +585,7 @@ def test_site_context_height_caps_floors():
 # ── D-A: 동간거리(0.8H)·1동 길이≤80m 게이트 ──
 
 def test_dong_gap_uses_080h_with_min_floor():
-    from app.services.design_ingest.composition import _dong_gap_m, _DONG_GAP_MIN_M
+    from app.services.design_ingest.composition import _DONG_GAP_MIN_M, _dong_gap_m
     # 높이 미상 → 하한 6m(정직 폴백)
     assert _dong_gap_m(None) == _DONG_GAP_MIN_M
     assert _dong_gap_m(0) == _DONG_GAP_MIN_M

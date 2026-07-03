@@ -36,7 +36,7 @@ class TestIFCWorkMap:
         assert codes == []
 
     def test_all_values_are_tuples(self):
-        for ifc_type, mappings in IFC_WORK_MAP.items():
+        for _ifc_type, mappings in IFC_WORK_MAP.items():
             for item in mappings:
                 assert isinstance(item, tuple)
                 assert len(item) == 2

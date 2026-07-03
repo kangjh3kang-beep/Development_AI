@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Optional
+
 import structlog
 
 logger = structlog.get_logger()
@@ -93,7 +93,7 @@ class DesignReviewService:
     # 표본 부족·통계 미존재 시 통계 비표기(정직) — 가짜 수치 생성 금지.
     MIN_SAMPLE_FOR_STATS = 5
 
-    def compare_with_nearby_cases(self, design_params: dict, case_summary: Optional[dict]) -> dict:
+    def compare_with_nearby_cases(self, design_params: dict, case_summary: dict | None) -> dict:
         """설계 FAR/BCR을 인근 인허가 사례 분위(p25/p50/p75)와 비교(additive·결정론 산술, LLM 0).
 
         - case_summary는 호출자가 PermitCaseService.summarize 출력을 주입한다
@@ -160,7 +160,7 @@ class DesignReviewService:
         }
 
     @staticmethod
-    def _to_number(value) -> Optional[float]:
+    def _to_number(value) -> float | None:
         """유한 실수만 통과(bool·NaN·inf·비수치 → None) — 가짜 수치 금지."""
         if isinstance(value, bool):
             return None
@@ -171,13 +171,13 @@ class DesignReviewService:
         return f if math.isfinite(f) else None
 
     @classmethod
-    def _extract_percentiles(cls, case_summary: dict, metric: str) -> dict[str, Optional[float]]:
+    def _extract_percentiles(cls, case_summary: dict, metric: str) -> dict[str, float | None]:
         """case_summary에서 metric(far|bcr)의 p25/p50/p75 추출 — 표기 변형 graceful 수용.
 
         우선순위: "{metric}_stats" 중첩 → "{metric}" 중첩 → 평면 "{metric}_p25" 등.
         미존재·비수치는 None(이후 band="insufficient_sample"로 정직 처리).
         """
-        out: dict[str, Optional[float]] = {"p25": None, "p50": None, "p75": None}
+        out: dict[str, float | None] = {"p25": None, "p50": None, "p75": None}
         for container_key in (f"{metric}_stats", metric):
             block = case_summary.get(container_key)
             if isinstance(block, dict):
@@ -190,7 +190,7 @@ class DesignReviewService:
         return out
 
     @staticmethod
-    def _position_band(value: Optional[float], stats: dict[str, Optional[float]]) -> str:
+    def _position_band(value: float | None, stats: dict[str, float | None]) -> str:
         """분위 대비 위치 밴드(결정론). 값·분위 결손 시 insufficient_sample(정직)."""
         p25, p50, p75 = stats.get("p25"), stats.get("p50"), stats.get("p75")
         if value is None or p25 is None or p50 is None or p75 is None:

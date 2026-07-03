@@ -12,12 +12,10 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.carbon_calculation_service import (
-    CARBON_GRADE_THRESHOLDS,
     ECOINVENT_GWP_DB,
     LOW_CARBON_ALTERNATIVES,
     CarbonCalculationService,
 )
-
 
 # ──────────────────────────────────────────────
 # T3-1: Ecoinvent GWP DB 검증

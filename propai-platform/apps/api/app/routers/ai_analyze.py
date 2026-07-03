@@ -22,8 +22,9 @@ class LLMRequest(BaseModel):
 async def ai_llm(req: LLMRequest, current_user=Depends(get_current_user)) -> dict:
     """공통 LLM 키로 1회 호출(system+prompt → text)."""
     try:
-        from app.services.ai.llm_provider import get_llm
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.services.ai.llm_provider import get_llm
 
         llm = get_llm(max_tokens=req.max_tokens or 2000, timeout=60)
         msgs = []

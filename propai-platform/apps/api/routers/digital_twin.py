@@ -5,16 +5,17 @@
 표고=SRTM 30m·주변건물=footprint 추정·매스=AI 절차생성(실측/인허가도면 아님) — badges에 명시.
 """
 
+from datetime import UTC
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
 from packages.schemas.models import (
     AssetIntelligenceRequest,
     AssetIntelligenceResponse,
     DigitalTwinStatusRequest,
     DigitalTwinStatusResponse,
 )
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser
@@ -22,7 +23,6 @@ from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
 from apps.api.services.asset_intelligence_service import AssetIntelligenceService
 from apps.api.services.digital_twin_status_service import DigitalTwinStatusService
-from datetime import UTC
 
 router = APIRouter()
 
@@ -118,7 +118,7 @@ async def get_digital_twin_anomalies(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """최근 30일 디지털트윈 이상탐지 시계열 + 요약(프론트 DigitalTwinDashboardData 형태)."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from sqlalchemy import select
 

@@ -25,9 +25,8 @@ Create Date: 2026-06-19
   이미 병합돼 있어 헤드가 아니다). 본 033 이 032 를 단일 부모로 받아 헤드를 1개로 유지한다.
 """
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "033_sales_commission_tax_pref"
 down_revision = "032_sales_admin_accounting"

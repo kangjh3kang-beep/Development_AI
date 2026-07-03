@@ -13,7 +13,6 @@ import numpy as np
 
 from app.services.terrain import terrain_service as ts
 
-
 # ── 순수 ray-casting 내부판정(shapely 미설치 폴백) ──
 
 

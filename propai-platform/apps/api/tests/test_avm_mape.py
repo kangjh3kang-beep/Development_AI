@@ -3,7 +3,6 @@
 validate_mape, _apply_regional_weight, _fetch_with_retry 메서드를 검증한다.
 """
 
-import asyncio
 import os
 import sys
 
@@ -12,7 +11,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.avm_service import AVMService
-
 
 # ── validate_mape 테스트 ──
 

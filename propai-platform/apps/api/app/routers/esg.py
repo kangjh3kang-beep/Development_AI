@@ -1,11 +1,12 @@
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import List, Dict, Union
+
+from app.models.auth import User
+from app.services.auth.auth_service import get_current_user
+from app.services.esg.epd_carbon_service import EPDCarbonService
 from app.services.esg.lca_service import LCAService
 from app.services.esg.lcc_service import LCCService
-from app.services.esg.epd_carbon_service import EPDCarbonService
-from app.services.auth.auth_service import get_current_user
-from app.models.auth import User
 
 router = APIRouter(prefix="/api/v1/esg", tags=["ESG"])
 lca_service = LCAService()

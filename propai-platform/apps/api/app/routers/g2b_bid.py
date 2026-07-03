@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -98,16 +97,16 @@ async def sync_g2b(
 
 @router.get("/bids", response_model=G2BBidListResponse, summary="입찰 공고 목록 조회")
 async def list_bids(
-    keyword: Optional[str] = Query(None, description="공고명 검색"),
-    bid_type: Optional[str] = Query(None, description="업무구분(공사/용역/물품)"),
-    region_sido: Optional[str] = Query(None, description="시/도"),
-    region_sigungu: Optional[str] = Query(None, description="시/군/구"),
-    status_filter: Optional[str] = Query(None, alias="status", description="상태"),
-    category_tag: Optional[str] = Query(None, description="AI 분류 태그"),
-    min_price: Optional[int] = Query(None, description="최소 추정가격"),
-    max_price: Optional[int] = Query(None, description="최대 추정가격"),
-    org_type: Optional[str] = Query(None, description="기관유형"),
-    closing_days: Optional[int] = Query(None, ge=1, le=90, description="마감 N일 이내(7=마감임박)"),
+    keyword: str | None = Query(None, description="공고명 검색"),
+    bid_type: str | None = Query(None, description="업무구분(공사/용역/물품)"),
+    region_sido: str | None = Query(None, description="시/도"),
+    region_sigungu: str | None = Query(None, description="시/군/구"),
+    status_filter: str | None = Query(None, alias="status", description="상태"),
+    category_tag: str | None = Query(None, description="AI 분류 태그"),
+    min_price: int | None = Query(None, description="최소 추정가격"),
+    max_price: int | None = Query(None, description="최대 추정가격"),
+    org_type: str | None = Query(None, description="기관유형"),
+    closing_days: int | None = Query(None, ge=1, le=90, description="마감 N일 이내(7=마감임박)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     service: G2BBidService = Depends(_get_service),
@@ -248,7 +247,7 @@ async def analyze_bid_feasibility(
 
 @router.get("/analyses", response_model=G2BAnalysisHistoryResponse, summary="입찰 분석 히스토리 목록")
 async def list_analyses(
-    bid_id: Optional[UUID] = Query(None, description="특정 공고의 분석만"),
+    bid_id: UUID | None = Query(None, description="특정 공고의 분석만"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     service: G2BBidService = Depends(_get_service),
@@ -281,8 +280,8 @@ async def delete_analysis(analysis_id: UUID, service: G2BBidService = Depends(_g
 
 @router.get("/awards/stats", response_model=G2BAwardStatsResponse, summary="낙찰가율 통계")
 async def get_award_stats(
-    bid_type: Optional[str] = Query(None, description="업무구분"),
-    region_sido: Optional[str] = Query(None, description="시/도"),
+    bid_type: str | None = Query(None, description="업무구분"),
+    region_sido: str | None = Query(None, description="시/도"),
     service: G2BBidService = Depends(_get_service),
 ):
     """지역별/공종별 낙찰가율 통계를 조회한다."""
@@ -296,7 +295,7 @@ from pydantic import BaseModel as _BaseModel  # noqa: E402
 class EstimateSimRequest(_BaseModel):
     base_price: float                 # 기초금액(원)
     bid_type: str = "공사"
-    region_sido: Optional[str] = None  # 주면 해당 지역 실적으로 보정
+    region_sido: str | None = None  # 주면 해당 지역 실적으로 보정
     variation: float | None = None    # 복수예비가 변동폭(소수, 예 0.02)
     floor_rate: float | None = None   # 낙찰하한율(소수, 예 0.87745)
     target_win_prob: float = 0.85

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 import app.services.collaboration.collaboration_repo as repo
 from app.core.database import get_db
-from app.routers.v2_collaboration import router, _require_admin, _require_member
+from app.routers.v2_collaboration import _require_admin, _require_member, router
 from app.services.auth.auth_service import get_current_user
 
 OID = uuid.uuid4()

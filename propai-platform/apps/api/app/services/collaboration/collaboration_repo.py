@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,14 +30,14 @@ async def insert_invite(db: AsyncSession, fields: dict[str, Any]) -> Collaborato
     return inv
 
 
-async def get_invite_by_token(db: AsyncSession, token: str) -> Optional[CollaboratorInvite]:
+async def get_invite_by_token(db: AsyncSession, token: str) -> CollaboratorInvite | None:
     rows = await db.execute(
         select(CollaboratorInvite).where(CollaboratorInvite.invite_token == token)
     )
     return rows.scalar_one_or_none()
 
 
-async def get_invite_by_id(db: AsyncSession, invite_id: uuid.UUID) -> Optional[CollaboratorInvite]:
+async def get_invite_by_id(db: AsyncSession, invite_id: uuid.UUID) -> CollaboratorInvite | None:
     rows = await db.execute(
         select(CollaboratorInvite).where(CollaboratorInvite.id == invite_id)
     )
@@ -105,7 +105,7 @@ async def list_documents(db: AsyncSession, project_id: uuid.UUID) -> list[Projec
     return list(rows.scalars().all())
 
 
-async def get_document(db: AsyncSession, doc_id: uuid.UUID) -> Optional[ProjectDocument]:
+async def get_document(db: AsyncSession, doc_id: uuid.UUID) -> ProjectDocument | None:
     rows = await db.execute(
         select(ProjectDocument).where(ProjectDocument.id == doc_id)
     )
@@ -119,7 +119,7 @@ async def soft_delete_document(db: AsyncSession, doc: ProjectDocument) -> None:
 
 
 async def update_document_audit(
-    db: AsyncSession, doc: ProjectDocument, audit_status: str, audit_summary: Optional[dict]
+    db: AsyncSession, doc: ProjectDocument, audit_status: str, audit_summary: dict | None
 ) -> ProjectDocument:
     """8엔진 투입 결과 기록(SP3-4) — design 문서의 audit_status/summary 갱신."""
     doc.audit_status = audit_status

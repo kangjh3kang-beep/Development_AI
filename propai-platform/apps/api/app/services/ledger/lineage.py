@@ -52,6 +52,7 @@ async def record_edge(
         return {"ok": False, "skipped": True, "message": "self-edge 금지"}
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -78,6 +79,7 @@ async def get_parents(*, child_hash: str, tenant_id: str | None = None) -> list[
     """직계 부모(파생 원천) 엣지 목록."""
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)

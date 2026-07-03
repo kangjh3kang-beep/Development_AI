@@ -5,8 +5,9 @@ numpy 벡터화 연산으로 고속 처리.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass

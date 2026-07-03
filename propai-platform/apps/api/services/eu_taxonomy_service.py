@@ -14,8 +14,7 @@ EU 택소노미 기술 심사 기준(TSC)에 따라 건축물의
 DNSH (Do No Significant Harm) 원칙 + Minimum Social Safeguards
 """
 
-from dataclasses import dataclass, field
-from uuid import UUID
+from dataclasses import dataclass
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession

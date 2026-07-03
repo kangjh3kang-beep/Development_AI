@@ -1,14 +1,15 @@
 """공사단계 세금 엔진 테스트 — B01~B08."""
 
 import pytest
+
 from app.services.tax.utility_stage_engine import (
+    calculate_all_utility_stage,
     calculate_b01_metro_transport,
     calculate_b02_school_site,
     calculate_b03_water_supply,
     calculate_b04_sewage,
     calculate_b05_electricity,
     calculate_b08_fire,
-    calculate_all_utility_stage,
 )
 
 

@@ -8,8 +8,8 @@ Create Date: 2026-06-02
 app/models/g2b_bid.py(G2BBidAnalysis)의 컬럼/인덱스와 1:1 동일.
 (G2B 모델은 app.core.database.Base 레지스트리라 수동 작성.)
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "021_g2b_bid_analysis"

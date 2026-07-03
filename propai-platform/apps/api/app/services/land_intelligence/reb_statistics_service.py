@@ -53,7 +53,8 @@ async def housing_time_adjust(address: str = "") -> dict[str, Any] | None:
         return None
     try:
         from app.services.external_api.reb_client import (
-            fetch_statbl_rows, cumulative_factor_from_rows,
+            cumulative_factor_from_rows,
+            fetch_statbl_rows,
         )
         rows = await fetch_statbl_rows(statbl, "MM", size=480)
         if not rows:
@@ -73,7 +74,8 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
         return None
     try:
         from app.services.external_api.reb_client import (
-            fetch_statbl_rows, latest_value_from_rows,
+            fetch_statbl_rows,
+            latest_value_from_rows,
         )
         rows = await fetch_statbl_rows(statbl, "QQ", size=120)
         if not rows:
@@ -99,7 +101,8 @@ async def jeonse_conversion_rate(address: str = "") -> dict[str, Any] | None:
         return None
     try:
         from app.services.external_api.reb_client import (
-            fetch_statbl_rows, latest_value_from_rows,
+            fetch_statbl_rows,
+            latest_value_from_rows,
         )
         rows = await fetch_statbl_rows(statbl, "MM", size=120)
         if not rows:

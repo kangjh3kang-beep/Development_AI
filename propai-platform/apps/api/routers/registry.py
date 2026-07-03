@@ -469,8 +469,9 @@ async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str
     if not grid.strip():
         return []
     try:
-        from app.services.ai.llm_provider import get_llm
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.services.ai.llm_provider import get_llm
 
         llm = get_llm(timeout=60, max_tokens=4000)
         sys = (

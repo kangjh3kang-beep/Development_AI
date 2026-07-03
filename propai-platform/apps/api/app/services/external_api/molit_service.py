@@ -1,8 +1,8 @@
+
 import httpx
-from typing import List, Dict, Optional
-from app.core.config import settings
 import structlog
 
+from app.core.config import settings
 from apps.api.integrations.molit_client import MolitClient
 
 logger = structlog.get_logger()
@@ -44,7 +44,7 @@ class MOLITService:
         """
         return await self._client.get_transactions(region_code, year_month, prop_type="land")
 
-    async def get_official_land_price(self, pnu_code: str) -> Optional[dict]:
+    async def get_official_land_price(self, pnu_code: str) -> dict | None:
         """표준 공시지가 조회"""
         params = {
             "serviceKey": settings.MOLIT_API_KEY,

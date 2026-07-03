@@ -22,11 +22,11 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.notification import notification_service as notif
+from apps.api.app.services.land_intelligence import presale_monitor_service as monitor
+from apps.api.app.services.land_intelligence.presale_service import AREA_LIST, PresaleService, area_from_lawd
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from apps.api.app.services.land_intelligence.presale_service import PresaleService, AREA_LIST, area_from_lawd
-from apps.api.app.services.land_intelligence import presale_monitor_service as monitor
-from app.services.notification import notification_service as notif
 
 router = APIRouter(prefix="/api/v1/presale", tags=["분양정보"])
 

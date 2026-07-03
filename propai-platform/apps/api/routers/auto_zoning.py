@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
-from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from app.core.billing_deps import enforce_llm_quota
+from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
+from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,9 +117,8 @@ def _ordinance_applied(result: dict) -> bool:
     조례 적용으로 보지 않는다.
     """
     zl = result.get("zone_limits")
-    if isinstance(zl, dict):
-        if zl.get("ordinance_far_pct") or zl.get("ordinance_bcr_pct"):
-            return True
+    if isinstance(zl, dict) and (zl.get("ordinance_far_pct") or zl.get("ordinance_bcr_pct")):
+        return True
     lo = result.get("local_ordinance")
     if isinstance(lo, dict):
         # raw 조례값이 실제로 조회된 경우에만(법정상한 폴백은 제외).
@@ -1009,6 +1008,7 @@ async def parcel_boundaries_export(req: ParcelExportRequest):
     """
     from fastapi import HTTPException
     from fastapi.responses import JSONResponse, Response
+
     from app.services.land_intelligence.parcel_boundary_export import export_geojson, export_png
 
     base = ParcelBoundariesRequest(parcels=req.parcels, address=req.address, pnu=req.pnu)
@@ -1200,9 +1200,9 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
     calc_effective_far는 순수 동기 함수(이벤트루프 미접촉)라 async 핸들러에서 await 없이 안전.
     OrdinanceService.get_ordinance_limits만 async → await. 무목업: 실패는 법정값 폴백(정직).
     """
-    from apps.api.app.services.zoning.special_parcel import detect_special_parcel
     from apps.api.app.services.land_intelligence.far_tier_service import calc_effective_far
     from apps.api.app.services.land_intelligence.ordinance_service import OrdinanceService
+    from apps.api.app.services.zoning.special_parcel import detect_special_parcel
 
     # ── 조례(실효 용적률/건폐율) 조회는 시·군·구별로 1회만(필지마다 외부콜 금지).
     #    같은 (지역 키, 용도지역) 조합은 캐시 재사용해 대량 다필지에서도 외부콜을 최소화한다.
@@ -1364,8 +1364,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
     무목업: 미확보·degrade는 null + warnings(가짜값 금지). 무과금: use_llm 기본 false.
     """
     from app.services.zoning.special_parcel import (
-        detect_multi_parcel,
         _aggregate_integrated_zoning,
+        detect_multi_parcel,
         gate_decision,
     )
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
@@ -1382,7 +1382,7 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
     enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
     # 입력에서 사용자가 직접 준 zone_type/land_category/area_sqm/geometry override를 병합(정직 우선).
     #   enrich가 채운 값이 없거나 입력값이 명시되면 입력을 채택(가짜 생성 아님 — 사용자 제공 실값).
-    for src, p in zip(items, enriched):
+    for src, p in zip(items, enriched, strict=False):
         if src.get("zone_type") and not p.get("zone_type"):
             p["zone_type"] = src["zone_type"]
         # land_category: enrich는 jimok 키로 채운다 → detect_*가 읽는 land_category로 정렬.

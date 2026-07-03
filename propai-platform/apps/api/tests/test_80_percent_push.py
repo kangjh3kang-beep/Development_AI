@@ -5,11 +5,11 @@ parking validate, safety sanitize, webhook sign, avm static,
 floor_plan prompt, 라우터 엔드포인트 등을 커버한다.
 """
 
-import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -612,7 +612,7 @@ class TestParkingValidation:
             ])
             with patch("apps.api.services.parking_service.validate_plate_number", return_value="12가3456"):
                 try:
-                    result = await svc.recognize_plate(
+                    await svc.recognize_plate(
                         tenant_id=TEST_TENANT_ID,
                         project_id=TEST_PROJECT_ID,
                         camera_id="cam_01",
@@ -1158,8 +1158,8 @@ class TestBaseClientExtended:
                 client._base_url = "https://test.com"
                 client._timeout = 30
                 client._headers = {}
-                c = await client._get_client()
-                assert c is not None or True
+                await client._get_client()
+                assert True
         except Exception:
             pass
 
@@ -1221,8 +1221,8 @@ class TestAICostsServiceExtended:
 
         svc = AICostsService(db=mock_db)
         try:
-            result = await svc.get_dashboard(tenant_id=TEST_TENANT_ID)
-            assert result is not None or True
+            await svc.get_dashboard(tenant_id=TEST_TENANT_ID)
+            assert True
         except Exception:
             pass
 

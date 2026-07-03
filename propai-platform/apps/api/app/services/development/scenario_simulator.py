@@ -366,13 +366,13 @@ class DevelopmentScenarioSimulator:
                 ev_items.append({
                     "label": "실효 용적률(현행)",
                     "value": f"{far_effective}%",
-                    "basis": (f"면적가중 블렌디드 실효용적률(현행·조례 반영)"
+                    "basis": ("면적가중 블렌디드 실효용적률(현행·조례 반영)"
                               + (f", 법정상한 {far_legal}%" if far_legal else "")),
                 })
             ev_items.append({
                 "label": "추천 사업방식",
                 "value": recommended.get("scheme"),
-                "basis": (f"적합도(가능>조건부>불가)·예상 용적률 정렬 1위"
+                "basis": ("적합도(가능>조건부>불가)·예상 용적률 정렬 1위"
                           + (f", 예상 용적률 {recommended.get('est_far')}%" if recommended.get("est_far") else "")),
             })
             if applicable:
@@ -404,7 +404,7 @@ class DevelopmentScenarioSimulator:
     async def _collect(self, addrs: list[str], site: dict) -> tuple[list[dict], float | None]:
         import asyncio
 
-        from app.services.zoning.auto_zoning_service import AutoZoningService, ZONE_LIMITS
+        from app.services.zoning.auto_zoning_service import ZONE_LIMITS, AutoZoningService
 
         az = AutoZoningService()
 
@@ -1200,9 +1200,10 @@ class DevelopmentScenarioSimulator:
 
     async def _llm(self, ctx: dict, scenarios: list[dict]) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             sys = ("당신은 부동산개발 사업방식 전문가다. 제공된 부지정보와 규칙기반 후보 시나리오를 "
                    "근거로 가장 합리적인 최적 사업방안을 추천하고 그 이유, 차선책, 주의사항을 제시한다. "

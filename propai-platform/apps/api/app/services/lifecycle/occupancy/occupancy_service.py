@@ -1,5 +1,4 @@
 """입주/임대 관리 서비스."""
-from typing import Dict, List
 
 
 class OccupancyService:

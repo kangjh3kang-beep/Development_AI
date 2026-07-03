@@ -39,6 +39,16 @@ jobs:
           pip install "gdal==$(gdal-config --version)"
           pip install -r apps/api/requirements.txt
 
+      # ★#148 재생성: ruff 게이트 신설(warning·비차단). ruff --fix 자동수정(1719건) + 무해규칙
+      #   ignore(pyproject)로 현재 0 유지. continue-on-error 로 다른 PR 을 막지 않고, 점진적으로
+      #   차단(required)화·ignore 규칙별 해제한다.
+      - name: Ruff (lint · warning gate)
+        working-directory: propai-platform/apps/api
+        run: |
+          pip install ruff
+          python -m ruff check .
+        continue-on-error: true
+
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
         run: python -m pytest tests/ -q --no-header

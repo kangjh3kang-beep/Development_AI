@@ -6,11 +6,17 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from apps.api.app.services.sales.pricing.suggest import (  # noqa: E402
-    _PREMIUM, _TIER_LABEL, _REF_SUPPLY_SQM, _REF_SUPPLY_PYEONG, _REF_EXCLUSIVE_SQM,
-    _CONTRACT_BASIS_TYPES, _JEONYULRYUL, _extract_dong,
-)
 from apps.api.app.services.data_validation.trust import Signal, cross_validate  # noqa: E402
+from apps.api.app.services.sales.pricing.suggest import (  # noqa: E402
+    _CONTRACT_BASIS_TYPES,
+    _JEONYULRYUL,
+    _PREMIUM,
+    _REF_EXCLUSIVE_SQM,
+    _REF_SUPPLY_PYEONG,
+    _REF_SUPPLY_SQM,
+    _TIER_LABEL,
+    _extract_dong,
+)
 
 
 class TestPremiumAndBasis:

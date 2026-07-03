@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import ezdxf
@@ -22,6 +22,8 @@ try:
 except ImportError:
     ezdxf = None  # type: ignore[assignment]
     _ezdxf_recover = None  # type: ignore[assignment]
+
+import contextlib
 
 import structlog
 
@@ -55,7 +57,7 @@ def _read_document(dxf_bytes: bytes) -> Any:
 
     그래도 실패하면 ValueError(정직 — 가짜 문서 생성 금지).
     """
-    tmp_path: Optional[str] = None
+    tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
             tmp.write(dxf_bytes)
@@ -73,10 +75,8 @@ def _read_document(dxf_bytes: bytes) -> Any:
                 ) from rec_err
     finally:
         if tmp_path:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _extract_raw_entities(
@@ -194,9 +194,9 @@ def _shoelace_area_px(points: list[dict[str, float]]) -> float:
     return abs(area2) / 2.0
 
 
-def _main_outline_index(shapes: list[dict[str, Any]]) -> Optional[int]:
+def _main_outline_index(shapes: list[dict[str, Any]]) -> int | None:
     """닫힌 폴리라인 중 신발끈 면적 최대 셰이프의 인덱스(메인 외곽선). 없으면 None."""
-    best_idx: Optional[int] = None
+    best_idx: int | None = None
     best_area = 0.0
     for i, s in enumerate(shapes):
         if s.get("kind") != "polyline" or not s.get("closed"):

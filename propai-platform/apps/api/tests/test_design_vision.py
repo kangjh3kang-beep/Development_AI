@@ -18,7 +18,6 @@ from apps.api.services.design_ai_service import (
     DesignOutput,
 )
 
-
 # ── Pydantic 모델 테스트 ──
 
 

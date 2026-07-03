@@ -12,11 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.eu_taxonomy_service import (
     NZEB_BASELINE_KWH_M2,
-    TSC_GREEN_RATIO_THRESHOLD,
     TSC_PED_THRESHOLD,
-    TSC_RE_THRESHOLD,
-    TSC_WASTE_RECYCLING_THRESHOLD,
-    TSC_WATER_USAGE_THRESHOLD,
     BuildingData,
     EuTaxonomyChecker,
 )

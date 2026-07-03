@@ -2,6 +2,7 @@
 
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -34,8 +35,8 @@ class TestESGIntegrationFlow:
         assert lcc_result["total_lcc_npv_krw"] > sample_project["budget_krw"]
 
     def test_lca_to_epd_flow(self):
-        from app.services.esg.lca.lca_service import LCAService
         from app.services.esg.epd.epd_carbon_service import EPDCarbonService
+        from app.services.esg.lca.lca_service import LCAService
 
         lca = LCAService()
         lca_result = lca.calculate_a1_a3([
@@ -104,9 +105,9 @@ class TestESGIntegrationFlow:
         assert len(improvements) >= 2
 
     def test_full_esg_assessment(self):
+        from app.services.esg.epd.epd_carbon_service import EPDCarbonService
         from app.services.esg.lca.lca_service import LCAService
         from app.services.esg.lcc.lcc_service import LCCService
-        from app.services.esg.epd.epd_carbon_service import EPDCarbonService
         from app.services.esg.re100.re100_service import RE100Service
         from app.services.esg.zeb.zeb_service import ZEBService
 

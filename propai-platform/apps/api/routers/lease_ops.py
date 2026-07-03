@@ -9,15 +9,14 @@
 
 from __future__ import annotations
 
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, Depends
-
+from app.services.lease_ops.lease_ops_service import LeaseOpsService
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
-from app.services.lease_ops.lease_ops_service import LeaseOpsService
 
 router = APIRouter()
 

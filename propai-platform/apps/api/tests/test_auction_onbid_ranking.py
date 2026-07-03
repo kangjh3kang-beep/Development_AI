@@ -29,7 +29,6 @@ from app.services.auction.onbid_client import (  # noqa: E402
 )
 from app.services.auction.win_estimator import estimate_win_price  # noqa: E402
 
-
 # ── 픽스처: getInqRnkClg 실응답 형태(resultType=json) ──
 SAMPLE_RANK_JSON = """
 {

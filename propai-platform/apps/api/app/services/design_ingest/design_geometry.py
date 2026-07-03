@@ -96,7 +96,7 @@ def orientation_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] 
         pts = [((x - minx) * m_per_deg_lon, (y - miny) * m_per_deg_lat) for x, y in coords]
         best_len = -1.0
         best_dx = best_dy = 0.0
-        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:], strict=False):
             dx, dy = x1 - x0, y1 - y0
             seg = math.hypot(dx, dy)
             if seg > best_len:

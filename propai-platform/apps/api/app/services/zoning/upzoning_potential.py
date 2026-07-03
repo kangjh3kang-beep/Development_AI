@@ -20,7 +20,8 @@ projection'에 초점을 둔다. 외부 호출은 하지 않으며(테스트 가
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 

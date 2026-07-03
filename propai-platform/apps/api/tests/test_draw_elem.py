@@ -1,6 +1,6 @@
 """DrawElem 데이터클래스 + LAYERS + UNIT_DIMS 테스트."""
 
-from app.services.drawing.draw_elem import DrawElem, LAYERS, UNIT_DIMS
+from app.services.drawing.draw_elem import LAYERS, UNIT_DIMS, DrawElem
 
 
 class TestDrawElem:

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 
 from apps.api.config import get_settings
 from apps.api.database.models.parcel import Parcel

@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.services.feasibility.modules.base_module import ModuleInput, ModuleOutput
-from app.services.feasibility.modules.module_assembler import get_module, list_modules, ALL_MODULE_CODES
 from app.services.feasibility.aggregation_engine import compare_scenarios
+from app.services.feasibility.modules.base_module import ModuleInput, ModuleOutput
+from app.services.feasibility.modules.module_assembler import get_module, list_modules
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +145,9 @@ class FeasibilityServiceV2:
 
         # Step 2.1: 인허가 가능 유형 필터
         from .permit_validator import (
-            get_permitted_types,
-            check_permit_feasibility,
             DEVELOPMENT_TYPE_NAMES,
+            check_permit_feasibility,
+            get_permitted_types,
         )
         permitted_types = get_permitted_types(zone_type)
 
@@ -163,8 +163,8 @@ class FeasibilityServiceV2:
         #   permits 검증)=OrdinanceService 조회 후 calc_effective_far에 주입해 실효치를 산출한다.
         #   ★local_ordinance:{} 빈값 금지 — 빈값이면 calc_effective_far가 법정값을 반환하므로
         #     반드시 get_ordinance_limits 결과(또는 조회 실패 시 법정 폴백)를 전달한다.
-        from ..land_intelligence.ordinance_service import OrdinanceService
         from ..land_intelligence.far_tier_service import calc_effective_far
+        from ..land_intelligence.ordinance_service import OrdinanceService
         try:
             ordinance = await OrdinanceService().get_ordinance_limits(address, zone_type)
         except Exception:  # noqa: BLE001 — 조회 실패 시 법정 폴백

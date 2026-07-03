@@ -1,7 +1,8 @@
 """LLM 법령탐색 + 정본 교차검증 — 분류(verified_ssot/llm_unverified/drop) 검증."""
 import asyncio
-from app.services.legal.legal_discovery_service import LegalDiscoveryService
+
 from app.services.legal import legal_reference_registry as reg
+from app.services.legal.legal_discovery_service import LegalDiscoveryService
 
 
 def _run(coro):

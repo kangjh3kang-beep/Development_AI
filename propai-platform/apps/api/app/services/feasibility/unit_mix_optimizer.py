@@ -4,7 +4,6 @@
 ArkDesign AI 벤치마크 -- SLSQP 기반 최적화.
 """
 import logging
-from typing import Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -43,9 +42,9 @@ class UnitMixInput:
     min_parking_ratio: float = 1.0    # 세대당 최소 주차대수
     max_parking_spaces: int = 500     # 최대 주차대수
     region: str = "서울"               # 지역 (시세 결정)
-    price_by_type: Optional[dict] = None   # 평형별 분양가 (만원/평, 공급면적 기준)
-    demand_ratio: Optional[dict] = None     # 평형별 수요 비율 (오버라이드)
-    enabled_types: Optional[list] = None    # 허용 평형 (None=전체)
+    price_by_type: dict | None = None   # 평형별 분양가 (만원/평, 공급면적 기준)
+    demand_ratio: dict | None = None     # 평형별 수요 비율 (오버라이드)
+    enabled_types: list | None = None    # 허용 평형 (None=전체)
     efficiency_ratio: float = 0.75    # 전용률 (전용면적/공급면적, 아파트 통상 0.7~0.8)
 
 

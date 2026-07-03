@@ -1,6 +1,8 @@
 """토지이음 보강(건축선·도로조건·고시정보) 검증 — 결정론·근거기반·정직."""
 from app.services.legal.tojieum_supplement import (
-    assess_road_conditions, building_line_setback, gosi_info,
+    assess_road_conditions,
+    building_line_setback,
+    gosi_info,
 )
 
 

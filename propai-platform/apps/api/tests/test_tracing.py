@@ -3,9 +3,7 @@
 init_tracing, instrument_fastapi 가 graceful하게 동작하는지 검증.
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 
 class TestTracingImport:

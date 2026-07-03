@@ -5,9 +5,7 @@
 prometheus_client 라이브러리 없이도 동작한다.
 """
 
-import time
 from collections import defaultdict
-from typing import Optional
 
 
 class PrometheusMetrics:
@@ -43,7 +41,7 @@ class PrometheusMetrics:
         """커스텀 게이지 설정."""
         self._custom_gauges[name] = value
 
-    def get_gauge(self, name: str) -> Optional[float]:
+    def get_gauge(self, name: str) -> float | None:
         """커스텀 게이지 조회."""
         return self._custom_gauges.get(name)
 

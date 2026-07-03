@@ -1,7 +1,6 @@
 """v61 DB 모델 + 시드 데이터 테스트."""
 
-import pytest
-from datetime import datetime, date
+from datetime import date
 
 
 class TestV61DesignModels:
@@ -69,8 +68,12 @@ class TestV61DesignModels:
 
     def test_design_tablenames(self):
         from apps.api.database.models.v61_design import (
-            DesignStage, Drawing, DrawingLayer,
-            DrawingEditHistory, PermitDocumentSet, DesignAlternative,
+            DesignAlternative,
+            DesignStage,
+            Drawing,
+            DrawingEditHistory,
+            DrawingLayer,
+            PermitDocumentSet,
         )
         assert DesignStage.__tablename__ == "design_stages"
         assert Drawing.__tablename__ == "drawings"
@@ -139,8 +142,13 @@ class TestV61CostModels:
 
     def test_cost_tablenames(self):
         from apps.api.database.models.v61_cost import (
-            CostWorkType, MaterialUnitPrice, BimQuantity,
-            CostCalculationSheet, ProgressBilling, LegalRateHistory, StandardPriceUpdate,
+            BimQuantity,
+            CostCalculationSheet,
+            CostWorkType,
+            LegalRateHistory,
+            MaterialUnitPrice,
+            ProgressBilling,
+            StandardPriceUpdate,
         )
         assert CostWorkType.__tablename__ == "cost_work_types"
         assert MaterialUnitPrice.__tablename__ == "material_unit_prices"

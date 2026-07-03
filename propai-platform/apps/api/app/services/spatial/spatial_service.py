@@ -1,6 +1,5 @@
 """공간 쿼리 서비스."""
 import math
-from typing import Dict, List
 
 
 class SpatialService:

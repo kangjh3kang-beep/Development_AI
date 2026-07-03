@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -171,10 +172,8 @@ def _atomic_write(target: str, lines: list[str]) -> None:
     finally:
         os.close(fd)
     os.replace(tmp, target)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(target, 0o600)
-    except OSError:
-        pass
 
 
 def main() -> int:

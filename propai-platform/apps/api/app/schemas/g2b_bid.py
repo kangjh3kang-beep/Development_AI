@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ── 입찰 공고 응답 ──
 
@@ -23,38 +21,38 @@ class G2BBidResponse(BaseModel):
     category_tags: list[str] = []
 
     org_name: str
-    org_type: Optional[str] = None
-    demand_org_name: Optional[str] = None
+    org_type: str | None = None
+    demand_org_name: str | None = None
 
-    estimated_price: Optional[int] = None
-    budget_amount: Optional[int] = None
+    estimated_price: int | None = None
+    budget_amount: int | None = None
 
-    bid_begin_dt: Optional[datetime] = None
-    bid_close_dt: Optional[datetime] = None
-    open_dt: Optional[datetime] = None
-    notice_dt: Optional[datetime] = None
+    bid_begin_dt: datetime | None = None
+    bid_close_dt: datetime | None = None
+    open_dt: datetime | None = None
+    notice_dt: datetime | None = None
 
-    region_sido: Optional[str] = None
-    region_sigungu: Optional[str] = None
-    delivery_place: Optional[str] = None
+    region_sido: str | None = None
+    region_sigungu: str | None = None
+    delivery_place: str | None = None
 
-    bid_method: Optional[str] = None
-    contract_method: Optional[str] = None
-    qualification: Optional[str] = None
+    bid_method: str | None = None
+    contract_method: str | None = None
+    qualification: str | None = None
 
     status: str = "active"
 
-    award_price: Optional[int] = None
-    award_rate: Optional[float] = None
-    award_company: Optional[str] = None
-    award_dt: Optional[datetime] = None
-    bid_count: Optional[int] = None
+    award_price: int | None = None
+    award_rate: float | None = None
+    award_company: str | None = None
+    award_dt: datetime | None = None
+    bid_count: int | None = None
 
-    g2b_url: Optional[str] = None
+    g2b_url: str | None = None
 
-    ai_risk_score: Optional[float] = None
-    ai_recommended_bid_rate: Optional[float] = None
-    ai_analysis_summary: Optional[str] = None
+    ai_risk_score: float | None = None
+    ai_recommended_bid_rate: float | None = None
+    ai_analysis_summary: str | None = None
 
     created_at: datetime
     updated_at: datetime
@@ -92,13 +90,13 @@ class G2BAttachment(BaseModel):
 class G2BContact(BaseModel):
     """발주/수요기관 담당자 연락처."""
 
-    org: Optional[str] = None  # 공고기관명
-    demand_org: Optional[str] = None  # 수요기관명
-    name: Optional[str] = None  # 담당자명
-    tel: Optional[str] = None  # 전화
-    email: Optional[str] = None  # 이메일
-    exec_name: Optional[str] = None  # 집행관명
-    opening_place: Optional[str] = None  # 개찰장소
+    org: str | None = None  # 공고기관명
+    demand_org: str | None = None  # 수요기관명
+    name: str | None = None  # 담당자명
+    tel: str | None = None  # 전화
+    email: str | None = None  # 이메일
+    exec_name: str | None = None  # 집행관명
+    opening_place: str | None = None  # 개찰장소
 
 
 class G2BDetailSections(BaseModel):
@@ -124,18 +122,18 @@ class G2BBidDetailResponse(G2BBidResponse):
 class G2BBidFilter(BaseModel):
     """입찰 공고 검색 필터."""
 
-    keyword: Optional[str] = Field(None, description="공고명 검색 키워드")
-    bid_type: Optional[str] = Field(None, description="업무구분(공사/용역/물품)")
-    region_sido: Optional[str] = Field(None, description="시/도")
-    region_sigungu: Optional[str] = Field(None, description="시/군/구")
-    status: Optional[str] = Field(None, description="상태(active/closed/awarded/failed)")
-    category_tag: Optional[str] = Field(None, description="AI 분류 태그")
-    min_price: Optional[int] = Field(None, description="최소 추정가격")
-    max_price: Optional[int] = Field(None, description="최대 추정가격")
-    org_type: Optional[str] = Field(None, description="기관유형")
-    closing_days: Optional[int] = Field(None, description="마감 N일 이내(예: 7=마감임박)")
-    date_from: Optional[datetime] = Field(None, description="공고일 시작")
-    date_to: Optional[datetime] = Field(None, description="공고일 종료")
+    keyword: str | None = Field(None, description="공고명 검색 키워드")
+    bid_type: str | None = Field(None, description="업무구분(공사/용역/물품)")
+    region_sido: str | None = Field(None, description="시/도")
+    region_sigungu: str | None = Field(None, description="시/군/구")
+    status: str | None = Field(None, description="상태(active/closed/awarded/failed)")
+    category_tag: str | None = Field(None, description="AI 분류 태그")
+    min_price: int | None = Field(None, description="최소 추정가격")
+    max_price: int | None = Field(None, description="최대 추정가격")
+    org_type: str | None = Field(None, description="기관유형")
+    closing_days: int | None = Field(None, description="마감 N일 이내(예: 7=마감임박)")
+    date_from: datetime | None = Field(None, description="공고일 시작")
+    date_to: datetime | None = Field(None, description="공고일 종료")
     page: int = Field(1, ge=1)
     page_size: int = Field(20, ge=1, le=100)
 
@@ -149,12 +147,12 @@ class G2BAwardStatResponse(BaseModel):
 
     stat_period: str
     bid_type: str
-    region_sido: Optional[str] = None
-    avg_award_rate: Optional[float] = None
-    min_award_rate: Optional[float] = None
-    max_award_rate: Optional[float] = None
+    region_sido: str | None = None
+    avg_award_rate: float | None = None
+    min_award_rate: float | None = None
+    max_award_rate: float | None = None
     bid_count: int = 0
-    avg_competition_ratio: Optional[float] = None
+    avg_competition_ratio: float | None = None
 
 
 class G2BAwardStatsResponse(BaseModel):
@@ -175,11 +173,11 @@ class G2BBidAnalyzeRequest(BaseModel):
     cost_volatility_pct: float = Field(10.0, ge=0.0, le=50.0, description="공사비 변동성(%)")
 
     # ── 수동 보정 (정밀 분석 시 자동 추정값을 사용자가 덮어쓰기) ──
-    total_gfa_sqm: Optional[float] = Field(None, ge=0, description="연면적(㎡) 수동 보정")
-    floor_count_above: Optional[int] = Field(None, ge=1, description="지상 층수 수동 보정")
-    floor_count_below: Optional[int] = Field(None, ge=0, description="지하 층수 수동 보정")
-    structure_type: Optional[str] = Field(None, description="구조(RC/SRC/SC/PC/목구조)")
-    building_type_override: Optional[str] = Field(None, description="건물유형 수동 지정")
+    total_gfa_sqm: float | None = Field(None, ge=0, description="연면적(㎡) 수동 보정")
+    floor_count_above: int | None = Field(None, ge=1, description="지상 층수 수동 보정")
+    floor_count_below: int | None = Field(None, ge=0, description="지하 층수 수동 보정")
+    structure_type: str | None = Field(None, description="구조(RC/SRC/SC/PC/목구조)")
+    building_type_override: str | None = Field(None, description="건물유형 수동 지정")
     target_margin_pct: float = Field(5.0, ge=0.0, le=30.0, description="목표 마진율(%)")
 
     # AI(LLM) 해석 (선택)
@@ -208,14 +206,14 @@ class BidSpecEstimate(BaseModel):
 class BidCostBreakdown(BaseModel):
     """QTO 기반 원가 산출 + 원가 몬테카를로."""
 
-    direct_cost: Optional[int] = None
-    total_project_cost: Optional[int] = None
+    direct_cost: int | None = None
+    total_project_cost: int | None = None
     category_totals: dict = Field(default_factory=dict)
-    cost_p10: Optional[int] = None
-    cost_p50: Optional[int] = None
-    cost_p80: Optional[int] = None
-    cost_p90: Optional[int] = None
-    cv: Optional[float] = None
+    cost_p10: int | None = None
+    cost_p50: int | None = None
+    cost_p80: int | None = None
+    cost_p90: int | None = None
+    cv: float | None = None
     risk_contributions: dict = Field(default_factory=dict)
 
 
@@ -231,28 +229,28 @@ class BidQtoItem(BaseModel):
 class BidZoning(BaseModel):
     """입찰 지역 용도지역/법규 한도(근사)."""
 
-    zone_type: Optional[str] = None
-    max_bcr_pct: Optional[float] = None
-    max_far_pct: Optional[float] = None
-    max_height_m: Optional[float] = None
-    pnu: Optional[str] = None
+    zone_type: str | None = None
+    max_bcr_pct: float | None = None
+    max_far_pct: float | None = None
+    max_height_m: float | None = None
+    pnu: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
 class BidPermitCheck(BaseModel):
     """인허가 가능성 + 건축법규 PQ 체크(참고용)."""
 
-    is_permitted: Optional[bool] = None
-    permit_complexity: Optional[int] = None
-    reason: Optional[str] = None
+    is_permitted: bool | None = None
+    permit_complexity: int | None = None
+    reason: str | None = None
     rule_results: list[dict] = Field(default_factory=list)
 
 
 class BidEsg(BaseModel):
     """GRESB ESG 점수(녹색건축 가산 전략)."""
 
-    total_score: Optional[int] = None
-    grade: Optional[str] = None
+    total_score: int | None = None
+    grade: str | None = None
     components: dict = Field(default_factory=dict)
     recommendations: list[str] = Field(default_factory=list)
 
@@ -260,9 +258,9 @@ class BidEsg(BaseModel):
 class BidCashflow(BaseModel):
     """낙찰 후 월별 현금흐름 요약."""
 
-    irr_annual_pct: Optional[float] = None
-    peak_negative_cashflow: Optional[int] = None
-    net_profit: Optional[int] = None
+    irr_annual_pct: float | None = None
+    peak_negative_cashflow: int | None = None
+    net_profit: int | None = None
     phases: dict = Field(default_factory=dict)
 
 
@@ -277,8 +275,8 @@ class BidMarketFeed(BaseModel):
     """지역·공종 낙찰가율 시장동향 피드."""
 
     items: list[G2BAwardStatResponse] = Field(default_factory=list)
-    region_avg: Optional[float] = None
-    region_std: Optional[float] = None
+    region_avg: float | None = None
+    region_std: float | None = None
 
 
 class BidInterpretation(BaseModel):
@@ -296,7 +294,7 @@ class BidInterpretation(BaseModel):
     cost_competitiveness: str = Field(description="원가 경쟁력 — 손익분기 대비 여유, 실행원가 관점")
     recommendation: str = Field(description="종합 권고 — 입찰 참여/조건부/회피 의견과 핵심 근거")
 
-    model_used: Optional[str] = Field(None, description="해석에 사용된 LLM 모델 ID")
+    model_used: str | None = Field(None, description="해석에 사용된 LLM 모델 ID")
     generated: bool = Field(True, description="LLM 생성 성공 여부(폴백 시 False)")
 
 
@@ -305,7 +303,7 @@ class G2BBidAnalyzeResponse(BaseModel):
 
     bid_notice_no: str
     bid_notice_nm: str
-    estimated_price: Optional[int] = None
+    estimated_price: int | None = None
 
     # 적정 투찰가 예측
     recommended_bid_rate_low: float = Field(description="추천 투찰가율 하한(%)")
@@ -313,9 +311,9 @@ class G2BBidAnalyzeResponse(BaseModel):
     recommended_bid_rate_high: float = Field(description="추천 투찰가율 상한(%)")
 
     # 사업성 분석
-    expected_npv: Optional[int] = Field(None, description="예상 NPV(KRW)")
-    expected_roi: Optional[float] = Field(None, description="예상 ROI(%)")
-    profit_probability: Optional[float] = Field(None, description="수익 확률(%)")
+    expected_npv: int | None = Field(None, description="예상 NPV(KRW)")
+    expected_roi: float | None = Field(None, description="예상 ROI(%)")
+    profit_probability: float | None = Field(None, description="수익 확률(%)")
 
     # 리스크 스코어
     risk_score_cost: float = Field(description="공사비 변동 리스크(0~100)")
@@ -324,28 +322,28 @@ class G2BBidAnalyzeResponse(BaseModel):
     risk_score_total: float = Field(description="종합 리스크(0~100)")
 
     # 시장 컨텍스트
-    region_avg_award_rate: Optional[float] = Field(None, description="해당 지역 평균 낙찰가율")
+    region_avg_award_rate: float | None = Field(None, description="해당 지역 평균 낙찰가율")
     similar_bids_count: int = Field(0, description="유사 공종 최근 입찰 건수")
 
     ai_summary: str = Field(description="AI 분석 요약 텍스트")
-    g2b_url: Optional[str] = None
+    g2b_url: str | None = None
 
     # ── 정밀 분석 섹션 (6엔진 연동, /feasibility 응답에서만 채워짐) ──
-    spec: Optional[BidSpecEstimate] = None
-    cost_breakdown: Optional[BidCostBreakdown] = None
-    qto: Optional[list[BidQtoItem]] = None
-    zoning: Optional[BidZoning] = None
-    permit_check: Optional[BidPermitCheck] = None
-    esg: Optional[BidEsg] = None
-    cashflow: Optional[BidCashflow] = None
-    sensitivity: Optional[BidSensitivity] = None
-    market_feed: Optional[BidMarketFeed] = None
-    break_even_bid_rate: Optional[float] = Field(None, description="손익분기 낙찰가율(%)")
-    recommended_bid_price: Optional[int] = Field(None, description="적정 투찰가(KRW)")
+    spec: BidSpecEstimate | None = None
+    cost_breakdown: BidCostBreakdown | None = None
+    qto: list[BidQtoItem] | None = None
+    zoning: BidZoning | None = None
+    permit_check: BidPermitCheck | None = None
+    esg: BidEsg | None = None
+    cashflow: BidCashflow | None = None
+    sensitivity: BidSensitivity | None = None
+    market_feed: BidMarketFeed | None = None
+    break_even_bid_rate: float | None = Field(None, description="손익분기 낙찰가율(%)")
+    recommended_bid_price: int | None = Field(None, description="적정 투찰가(KRW)")
     analysis_warnings: list[str] = Field(default_factory=list)
 
     # ── LLM 자연어 해석 (정밀분석 + include_ai_interpretation=True 시 채워짐) ──
-    ai_interpretation: Optional[BidInterpretation] = None
+    ai_interpretation: BidInterpretation | None = None
 
 
 # ── 대시보드 통계 ──
@@ -357,14 +355,14 @@ class G2BAnalysisHistoryItem(BaseModel):
 
     id: UUID
     bid_id: UUID
-    bid_notice_no: Optional[str] = None
-    bid_notice_nm: Optional[str] = None
+    bid_notice_no: str | None = None
+    bid_notice_nm: str | None = None
     params: dict = Field(default_factory=dict)
-    recommended_bid_rate: Optional[float] = None
-    risk_score: Optional[float] = None
-    expected_roi: Optional[float] = None
-    summary: Optional[str] = None
-    created_at: Optional[datetime] = None
+    recommended_bid_rate: float | None = None
+    risk_score: float | None = None
+    expected_roi: float | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
 
 
 class G2BAnalysisHistoryDetail(G2BAnalysisHistoryItem):
@@ -388,6 +386,6 @@ class G2BDashboardStats(BaseModel):
 
     total_active: int = Field(description="현재 진행 중 공고 수")
     closing_soon: int = Field(description="마감 임박(7일 내) 공고 수")
-    avg_award_rate: Optional[float] = Field(None, description="최근 30일 평균 낙찰가율")
+    avg_award_rate: float | None = Field(None, description="최근 30일 평균 낙찰가율")
     ai_recommended_count: int = Field(description="AI 추천 입찰 건수")
-    total_estimated_value: Optional[int] = Field(None, description="진행 중 공고 총 추정가격")
+    total_estimated_value: int | None = Field(None, description="진행 중 공고 총 추정가격")

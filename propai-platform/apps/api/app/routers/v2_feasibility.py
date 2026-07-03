@@ -12,41 +12,42 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.feasibility_v2 import (
-    FeasibilityCalculateRequest,
-    FeasibilityBaselineRequest,
-    FeasibilityBaselineResponse,
-    FeasibilityMultiRequest,
-    FeasibilityResultResponse,
-    FeasibilityMultiResponse,
-    MonteCarloRequest,
-    MonteCarloResponse,
-    OptimizationRequest,
-    RecommendationResponse,
-    ModuleListResponse,
-    SensitivityRequest,
-    SensitivityResponse,
-    VCSCommitRequest,
-    VCSRollbackRequest,
-)
-from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
-from app.services.feasibility.modules.base_module import ModuleInput
-from app.services.feasibility.monte_carlo_engine import run_monte_carlo, MCVariable
-from app.services.feasibility.ai_optimizer import optimize_slsqp
-from app.services.feasibility.ai_recommendation import diagnose
-from app.services.feasibility.version_control_db import FeasibilityVCSDB
-from app.services.feasibility.sensitivity_engine import (
-    SensitivityScenario,
-    run_sensitivity_analysis,
-)
-from app.core.database import get_db
 from app.core.billing_deps import enforce_llm_quota
-from app.services.auth.auth_service import get_current_user
+from app.core.database import get_db
+
 # 주의(혼선 제거): 아래 current_user의 실제 런타임 타입은 get_current_user가 반환하는
 # apps.api.database.models.user.User(tenant_id 보유)다. 이 app.models.auth.User는
 # stale(organization_id) 모델로 타입 힌트 표기용일 뿐 — current_user.tenant_id 접근은 런타임 정상.
 # (from __future__ import annotations 활성 → 주석/힌트는 런타임 미평가, 동작 무영향.)
 from app.models.auth import User
+from app.schemas.feasibility_v2 import (
+    FeasibilityBaselineRequest,
+    FeasibilityBaselineResponse,
+    FeasibilityCalculateRequest,
+    FeasibilityMultiRequest,
+    FeasibilityMultiResponse,
+    FeasibilityResultResponse,
+    ModuleListResponse,
+    MonteCarloRequest,
+    MonteCarloResponse,
+    OptimizationRequest,
+    RecommendationResponse,
+    SensitivityRequest,
+    SensitivityResponse,
+    VCSCommitRequest,
+    VCSRollbackRequest,
+)
+from app.services.auth.auth_service import get_current_user
+from app.services.feasibility.ai_optimizer import optimize_slsqp
+from app.services.feasibility.ai_recommendation import diagnose
+from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.feasibility.modules.base_module import ModuleInput
+from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
+from app.services.feasibility.sensitivity_engine import (
+    SensitivityScenario,
+    run_sensitivity_analysis,
+)
+from app.services.feasibility.version_control_db import FeasibilityVCSDB
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
@@ -446,12 +447,12 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     응답은 /calculate 와 동일 구조 + baseline 메타필드(is_baseline/confidence/
     sources/assumptions). 추정값은 정직하게 "시장표준/추정" 라벨, 실데이터 우선.
     """
+    from app.services.feasibility.permit_validator import (
+        DEVELOPMENT_TYPE_NAMES,
+        get_permitted_types,
+    )
     from app.services.feasibility.regional_pricing import (
         get_regional_sale_price_per_pyeong,
-    )
-    from app.services.feasibility.permit_validator import (
-        get_permitted_types,
-        DEVELOPMENT_TYPE_NAMES,
     )
 
     # ── 1) 부지 데이터 확보(실데이터 우선) ──
@@ -495,8 +496,8 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     if not zone_limits and zone:
         try:
             from app.services.zoning.auto_zoning_service import (
-                AutoZoningService,
                 ZONE_LIMITS,
+                AutoZoningService,
             )
 
             zone_key = AutoZoningService()._normalize_zone_name(zone)
@@ -1285,8 +1286,9 @@ async def cashflow_excel(req: CashflowRequest):
     try:
         cf = _build_cashflow(req)
         from io import BytesIO
+
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
 
         wb = Workbook()
         ws = wb.active or wb.create_sheet()

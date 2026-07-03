@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.zoning.far_incentive_calculator import (
-    calculate as calc_donation_incentive,
+    ALPHA_COEFFICIENTS,
     NATIONAL_FAR_LIMITS,
     ZONE_CATEGORY_MAP,
-    ALPHA_COEFFICIENTS,
+)
+from app.services.zoning.far_incentive_calculator import (
+    calculate as calc_donation_incentive,
 )
 
 # ── 친환경 인증 인센티브 (녹색건축물법, 건축법 시행령 §6의2) ──
@@ -140,7 +142,7 @@ def simulate_far_scenarios(
     cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
     base_far = ordinance_far
     category = ZONE_CATEGORY_MAP.get(zone_type, "주거")
-    alpha = ALPHA_COEFFICIENTS.get(category, 1.0)
+    ALPHA_COEFFICIENTS.get(category, 1.0)
 
     # 용도용적제 적용 가능한 지역이면 용도별 시나리오 추가
     scenarios = list(DEFAULT_SCENARIOS)

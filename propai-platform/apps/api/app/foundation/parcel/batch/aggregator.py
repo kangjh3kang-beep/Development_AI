@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from app.foundation.parcel.batch.job_state import JobRecord
 from app.foundation.parcel.contracts.batch import BatchAggregate, ItemStatus
@@ -44,8 +44,8 @@ class Aggregator:
         ]
         vw = self._vw()
         merged = await vw.merge_parcels_gis_union(confirmed_pnus)
-        union_boundary: Optional[dict] = None
-        total_area_sqm: Optional[float] = None
+        union_boundary: dict | None = None
+        total_area_sqm: float | None = None
         if merged:
             union_boundary = merged.get("merged_geometry")
             total_area_sqm = merged.get("total_area_sqm")

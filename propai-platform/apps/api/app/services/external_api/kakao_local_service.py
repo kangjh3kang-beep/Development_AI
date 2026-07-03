@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 import structlog
@@ -68,7 +68,7 @@ class KakaoLocalService:
 
     async def category_search(
         self, lat: float, lon: float, code: str, radius: int = 1000, size: int = 15
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """단일 카테고리 반경검색 → {count(전체), nearest_m, items[]}. 키없음/실패=None."""
         key = _rest_key()
         if not key:
@@ -109,7 +109,7 @@ class KakaoLocalService:
 
     async def keyword_search(
         self, lat: float, lon: float, query: str, radius: int = 1000, size: int = 15
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """키워드 반경검색 → {count, nearest_m, items}. 공원 등 카테고리코드 없는 시설용."""
         key = _rest_key()
         if not key:
@@ -140,7 +140,7 @@ class KakaoLocalService:
 
     async def driving_duration_sec(
         self, o_lat: float, o_lon: float, d_lat: float, d_lon: float
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Kakao Mobility 자동차 길찾기 → 실소요(초)·거리(m). 미가용(키/권한)=None(정직).
 
         ※도보 API는 공개 제공되지 않아 자동차 기준. 권한 미부여 시 None 폴백.
@@ -164,7 +164,7 @@ class KakaoLocalService:
 
     async def poi_inventory(
         self, lat: float, lon: float, radius: int = 1000,
-        categories: Optional[list[tuple[str, str]]] = None,
+        categories: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """좌표 반경 POI 인벤토리 — 카테고리별 {label, count, nearest_m, items}.
 
@@ -196,7 +196,7 @@ class KakaoLocalService:
 
     async def keyword_group_inventory(
         self, lat: float, lon: float, radius: int = 1000,
-        groups: Optional[list[tuple[str, str, list[str]]]] = None,
+        groups: list[tuple[str, str, list[str]]] | None = None,
     ) -> dict[str, Any]:
         """키워드 그룹 인벤토리 — 카테고리코드 없는 광역 인프라를 키워드 합산으로 수집.
 
@@ -218,7 +218,7 @@ class KakaoLocalService:
         flat = [(gi, q) for gi, (_c, _l, kws) in enumerate(grps) for q in kws]
         results = await asyncio.gather(*[_kw(q) for _gi, q in flat], return_exceptions=True)
         by_group: dict[int, list[Any]] = {}
-        for (gi, _q), r in zip(flat, results):
+        for (gi, _q), r in zip(flat, results, strict=False):
             by_group.setdefault(gi, []).append(r)
 
         out: dict[str, Any] = {}

@@ -1,6 +1,7 @@
 """Deterministic chatbot session service for G95."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from uuid import UUID
 

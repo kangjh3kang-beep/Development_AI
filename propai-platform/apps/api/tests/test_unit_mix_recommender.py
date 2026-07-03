@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.market.unit_mix_recommender import recommend_unit_mix, BANDS  # noqa: E402
+from app.services.market.unit_mix_recommender import BANDS, recommend_unit_mix  # noqa: E402
 
 
 class TestRecommend:

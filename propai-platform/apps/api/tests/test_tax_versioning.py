@@ -12,18 +12,17 @@ from datetime import date
 
 import pytest
 
+from app.services.tax.integrated_tax_engine import calculate_all_taxes
 from app.services.tax.regional_tax_data import (
     ACQUISITION_TAX_MATRIX,
     CAPITAL_GAINS_BRACKETS,
     LAND_COMPREHENSIVE_DEDUCTION_WON,
-    LAND_FAIR_MARKET_RATIO,
     LAND_COMPREHENSIVE_TAX_BRACKETS,
+    LAND_FAIR_MARKET_RATIO,
     calc_land_comprehensive_property_tax,
     get_acquisition_tax_rates,
     get_rule,
 )
-from app.services.tax.integrated_tax_engine import calculate_all_taxes
-
 
 # ── 1) get_rule 로더 ──
 

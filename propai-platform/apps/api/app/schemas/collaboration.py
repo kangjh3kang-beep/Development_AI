@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +13,10 @@ from pydantic import BaseModel, Field
 class MemberOut(BaseModel):
     id: str
     project_id: str
-    user_id: Optional[str] = None
+    user_id: str | None = None
     project_role: str
     status: str
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
 
 class InviteCreate(BaseModel):
@@ -28,20 +27,20 @@ class InviteCreate(BaseModel):
 
 
 class InviteOut(BaseModel):
-    id: Optional[str] = None
+    id: str | None = None
     project_id: str
     email: str
     project_role: str
     scope_categories: list[str]
     status: str
     expires_at: datetime
-    invite_token: Optional[str] = None  # 생성 직후 1회 노출(공유용). 목록 조회 시 None.
+    invite_token: str | None = None  # 생성 직후 1회 노출(공유용). 목록 조회 시 None.
 
 
 class InviteActionResult(BaseModel):
     ok: bool
     status: str
-    detail: Optional[str] = None
+    detail: str | None = None
 
 
 class DocumentOut(BaseModel):
@@ -49,26 +48,26 @@ class DocumentOut(BaseModel):
 
     id: str
     project_id: str
-    uploaded_by: Optional[str] = None
+    uploaded_by: str | None = None
     original_filename: str
-    content_type: Optional[str] = None
-    size_bytes: Optional[int] = None
-    category: Optional[str] = None  # REVIEW_CATEGORIES 화이트리스트 or null
+    content_type: str | None = None
+    size_bytes: int | None = None
+    category: str | None = None  # REVIEW_CATEGORIES 화이트리스트 or null
     purpose: str = "storage"        # analysis(8엔진) / storage(공유·저장)
     doc_kind: str                   # design(DXF/IFC, 8엔진 대상) / document(표기용)
-    audit_status: Optional[str] = None   # null/pending/completed/skipped/unsupported
-    audit_summary: Optional[dict] = None
+    audit_status: str | None = None   # null/pending/completed/skipped/unsupported
+    audit_summary: dict | None = None
     review_state: str               # requested/acknowledged/addressed(표기용·자동판정 아님)
-    reviewed_by: Optional[str] = None
-    reviewed_at: Optional[datetime] = None
-    file_url: Optional[str] = None
-    created_at: Optional[datetime] = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    file_url: str | None = None
+    created_at: datetime | None = None
 
 
 class DocumentActionResult(BaseModel):
     ok: bool
     status: str
-    detail: Optional[str] = None
+    detail: str | None = None
 
 
 class DocumentReviewUpdate(BaseModel):
@@ -81,16 +80,16 @@ class DocumentShapesOut(BaseModel):
     """저장된 DXF 설계파일의 CAD2.0 셰이프(읽기전용 뷰어용) — 실파싱 결과만(가짜 기하 금지)."""
 
     shapes: list[dict] = Field(default_factory=list)
-    bounds_px: Optional[dict] = None
-    scale_px_per_m: Optional[float] = None
+    bounds_px: dict | None = None
+    scale_px_per_m: float | None = None
 
 
 class ReviewCommentCreate(BaseModel):
     """의견교환 생성 — 루트(parent_id=None) 또는 답변(parent_id). anchor는 루트 전용(서버 강제)."""
 
     body: str = Field(..., min_length=1, max_length=4000)
-    parent_id: Optional[str] = None
-    anchor: Optional[str] = Field(None, max_length=200)
+    parent_id: str | None = None
+    anchor: str | None = Field(None, max_length=200)
 
 
 class ReviewCommentEdit(BaseModel):
@@ -109,19 +108,19 @@ class ReviewCommentOut(BaseModel):
     id: str
     project_id: str
     document_id: str
-    parent_id: Optional[str] = None
-    anchor: Optional[str] = None
-    author_id: Optional[str] = None
-    body: Optional[str] = None
+    parent_id: str | None = None
+    anchor: str | None = None
+    author_id: str | None = None
+    body: str | None = None
     resolved: bool = False
-    resolved_by: Optional[str] = None
-    resolved_at: Optional[datetime] = None
+    resolved_by: str | None = None
+    resolved_at: datetime | None = None
     edited: bool = False
     status: str = "active"
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
 
 class ReviewCommentActionResult(BaseModel):
     ok: bool
     status: str
-    detail: Optional[str] = None
+    detail: str | None = None

@@ -8,8 +8,8 @@ beat_schedule:
 
 from __future__ import annotations
 
-from importlib import import_module
 import os
+from importlib import import_module
 
 try:
     from celery import Celery

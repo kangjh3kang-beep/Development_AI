@@ -2,6 +2,7 @@
 
 import os
 import sys
+
 import pytest
 
 # 프로젝트 루트를 path에 추가 (apps/api + propai-platform root)
@@ -15,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 async def client():
     """FastAPI TestClient (async httpx) — 전체 앱 기반 라우터 테스트에서 사용."""
     import httpx
+
     from apps.api.main import app
 
     async with httpx.AsyncClient(

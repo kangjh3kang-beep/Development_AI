@@ -10,9 +10,9 @@ from datetime import date
 from typing import Any
 
 from app.services.tax.acquisition_stage_engine import calculate_all_acquisition_stage
-from app.services.tax.utility_stage_engine import calculate_all_utility_stage
-from app.services.tax.sale_stage_engine import calculate_all_sale_stage
 from app.services.tax.disposal_stage_engine import calculate_all_disposal_stage
+from app.services.tax.sale_stage_engine import calculate_all_sale_stage
+from app.services.tax.utility_stage_engine import calculate_all_utility_stage
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 신뢰 레이어(additive): 세목 코드 → 법령 근거 레지스트리 키 매핑.

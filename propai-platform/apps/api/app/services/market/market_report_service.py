@@ -310,8 +310,9 @@ class MarketReportService:
     async def _narrative(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """AI 시장 해석(요약·기회·리스크). 실패 시 구조화 폴백."""
         try:
-            from app.services.ai.llm_provider import get_llm
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=40, max_tokens=1500)
             # 근거 그라운딩: 대상지 주소 기반 지역 시세 벤치마크를 근거로 주입한다.
@@ -461,15 +462,21 @@ class MarketReportService:
         stats = await self._category_stats(lawd_cd)
 
         # ── Phase 1: 공공 인구 및 소득 데이터(SGIS, KOSIS) 연동 ──
-        from apps.api.integrations.sgis_client import SgisClient
-        from apps.api.integrations.kosis_client import KosisClient
-        from apps.api.app.services.market.market_models import DemographicProfile, MigrationData, PopulationData, MacroIncomeData
         import asyncio
-        
+
+        from apps.api.app.services.market.market_models import (
+            DemographicProfile,
+            MacroIncomeData,
+            MigrationData,
+            PopulationData,
+        )
+        from apps.api.integrations.kosis_client import KosisClient
+        from apps.api.integrations.sgis_client import SgisClient
+
         sgis = SgisClient()
         kosis = KosisClient()
         cur_year = str(datetime.now().year)
-        
+
         # 병렬로 인구이동, 연령통계, 거시소득 호출 (옵션 선택 여부에 따라 분기)
         demographics: dict[str, Any] | None = None
         if want_pop or want_mig or want_inc:
@@ -553,7 +560,7 @@ class MarketReportService:
             if (v.get("per_pyeong") or {}).get("avg")
         }
         apt_pp = ((stats["trade"].get("아파트") or {}).get("per_pyeong") or {}).get("avg")
-        
+
         # ── Phase 3: 사업 타당성 분석 (Feasibility Engine) ──
         from app.services.market.feasibility_service import FeasibilityService
         land_area = float(basic.get("land_area") or basic.get("area_sqm") or 330.0) # 기본 100평
@@ -718,6 +725,7 @@ class MarketReportService:
         """대상 좌표 중심 OSM 정적 지도 PNG(중심핀 + 반경원). 실패 시 None."""
         try:
             import math
+
             import httpx
             from PIL import Image, ImageDraw
 
@@ -771,11 +779,11 @@ class MarketReportService:
     def to_pdf(self, rep: dict[str, Any]) -> bytes:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
         try:
             pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
@@ -881,8 +889,8 @@ class MarketReportService:
         # 시세 추이 차트(아파트 월별 평당가)
         trend = [t for t in (rep.get("apt_trend") or []) if t.get("avg_per_pyeong") or t.get("avg")]
         if trend:
-            from reportlab.graphics.shapes import Drawing
             from reportlab.graphics.charts.barcharts import VerticalBarChart
+            from reportlab.graphics.shapes import Drawing
 
             story.append(Paragraph("4. 매매 시세 추이 (아파트 월별 평당가, 만원/평)", h2))
             d = Drawing(440, 170)
@@ -1073,10 +1081,9 @@ class MarketReportService:
     # ── PPTX (python-pptx) ──
     def to_pptx(self, rep: dict[str, Any]) -> bytes:
         from pptx import Presentation
-        from pptx.util import Inches, Pt
         from pptx.dml.color import RGBColor
-
         from pptx.enum.shapes import MSO_SHAPE
+        from pptx.util import Inches, Pt
 
         prs = Presentation()
         prs.slide_width = Inches(13.33)

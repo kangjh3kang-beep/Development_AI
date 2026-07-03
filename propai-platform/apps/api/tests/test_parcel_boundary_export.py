@@ -3,7 +3,9 @@
 parcel_boundaries() 결과(features+merged_geometry)를 다운로드 산출물로 변환하는 직렬화/렌더.
 """
 from app.services.land_intelligence.parcel_boundary_export import (
-    export_geojson, export_png, zone_fill,
+    export_geojson,
+    export_png,
+    zone_fill,
 )
 
 # 합성 result(2필지 인접 사각형 + 통합 외곽선) — parcel_boundaries() 반환 형태.

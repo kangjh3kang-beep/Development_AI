@@ -124,7 +124,7 @@ class IfcGeneratorService:
 
             # 외벽 4면(각 면을 얇은 박스로 압출) — 슬래브 위 floor_height만큼
             walls = self._make_perimeter_walls(model, body, bw, bd, fh, wall_thickness_m)
-            for wi, (wall_solid, name) in enumerate(walls):
+            for _wi, (wall_solid, name) in enumerate(walls):
                 wall = run("root.create_entity", model, ifc_class="IfcWall", name=f"{i + 1}F-Wall-{name}")
                 run("geometry.assign_representation", model, product=wall, representation=wall_solid)
                 self._place_z(model, wall, elev + slab_thickness_m)
@@ -242,7 +242,7 @@ class IfcGeneratorService:
                         ("F", wall_thickness_m, max(wall_thickness_m, corr_y0)),
                         ("B", min(bd - wall_thickness_m, corr_y1), bd - wall_thickness_m),
                     ]
-                    for zi, (face, zy0, zy1) in enumerate(zones):
+                    for _zi, (face, zy0, zy1) in enumerate(zones):
                         zd = zy1 - zy0
                         if zd <= 0.3:
                             continue

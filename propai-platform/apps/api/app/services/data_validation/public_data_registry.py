@@ -2,9 +2,9 @@
 공공데이터 레지스트리 — 모든 외부 데이터 소스의 상태를 중앙 관리.
 하드코딩 데이터 사용 시 반드시 이 레지스트리에서 '최신 여부'를 확인한 후 사용.
 """
+import logging
 from datetime import datetime
 from typing import Optional
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +15,8 @@ class DataSourceStatus:
         self.name = name
         self.source_type = source_type  # "api" | "hardcoded" | "db"
         self.update_frequency = update_frequency  # "realtime" | "daily" | "monthly" | "yearly"
-        self.last_updated: Optional[datetime] = None
-        self.last_error: Optional[str] = None
+        self.last_updated: datetime | None = None
+        self.last_error: str | None = None
         self.record_count: int = 0
         self.is_healthy: bool = True
 
@@ -87,7 +87,7 @@ class PublicDataRegistry:
         for name, source_type, frequency in sources:
             self.sources[name] = DataSourceStatus(name, source_type, frequency)
 
-    def get_status(self, name: str) -> Optional[DataSourceStatus]:
+    def get_status(self, name: str) -> DataSourceStatus | None:
         return self.sources.get(name)
 
     def get_all_status(self) -> list[dict]:

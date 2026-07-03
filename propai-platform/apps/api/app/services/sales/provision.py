@@ -6,19 +6,25 @@ Celery 미배포(결정) → async 함수로 제공. API 액션/기존 스케줄
 """
 
 import secrets
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.seeds.sales_dev_profiles import COMPOSITION_DEFAULTS, DEV_TYPE_DEFAULTS
 from apps.api.database.models.sales.commission_mh_harness import (
-    MhDesk, SalesCommissionMaster, SalesHarnessSubscription,
+    MhDesk,
+    SalesCommissionMaster,
+    SalesHarnessSubscription,
 )
 from apps.api.database.models.sales.site_org import SalesSite, SalesSiteConfig, SalesSiteProvisioning
 from apps.api.database.models.sales.units_pricing import (
-    SalesDevTypeProfile, SalesPriceComposition, SalesRound, SalesUnitHold, SalesUnitInventory,
+    SalesDevTypeProfile,
+    SalesPriceComposition,
+    SalesRound,
+    SalesUnitHold,
+    SalesUnitInventory,
 )
-from app.seeds.sales_dev_profiles import COMPOSITION_DEFAULTS, DEV_TYPE_DEFAULTS
 
 DEFAULT_INSTALLMENTS = {"default": [
     {"kind": "DOWN", "ratio": 0.10, "after_days": 0},

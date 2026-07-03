@@ -6,7 +6,6 @@ from typing import Any
 
 from app.services.cost.origin_cost_calculator import RATES_2026
 
-
 # 국민연금 단계 인상 일정 (2026~2033, 매년 +0.5%p → 사업주 부담분)
 PENSION_SCHEDULE: dict[int, float] = {
     2026: 0.04750,

@@ -4,8 +4,8 @@
 자연녹지=건폐20·용적100·★4층 제한. far/bcr만으론 '4층 제한'을 못 잡아 비현실 층수·
 '높이 제한없음' 오표기가 통과하던 것을 check_floors_against_legal 로 적발.
 """
-from app.services.zoning.legal_zone_limits import check_floors_against_legal
 from app.services.verification.range_rules import run_range_checks
+from app.services.zoning.legal_zone_limits import check_floors_against_legal
 
 
 # ── 1) 직접 함수 단위 ──────────────────────────────────────────

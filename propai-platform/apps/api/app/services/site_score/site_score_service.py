@@ -36,7 +36,7 @@ def _band(value: float, points: list[tuple[float, float]]) -> float:
         return points[0][1]
     if value >= points[-1][0]:
         return points[-1][1]
-    for (t0, s0), (t1, s1) in zip(points, points[1:]):
+    for (t0, s0), (t1, s1) in zip(points, points[1:], strict=False):
         if t0 <= value <= t1:
             if t1 == t0:
                 return s1

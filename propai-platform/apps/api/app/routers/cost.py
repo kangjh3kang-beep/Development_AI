@@ -5,19 +5,18 @@ prefix: /api/v1/cost
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.session import get_db
-
 from app.services.auth.auth_service import get_current_user
-from app.services.cost.origin_cost_calculator import OriginCostCalculator, CostItem
-from app.services.cost.cost_monte_carlo import CostMonteCarlo
 from app.services.bim.bim_service import BIMService
+from app.services.cost.cost_monte_carlo import CostMonteCarlo
+from app.services.cost.origin_cost_calculator import OriginCostCalculator
+from apps.api.database.session import get_db
 
 # P0-4 보안: cost 전 라우트 인증 강제(무인증 기성 영속 + 무결성 해시체인 적재 오염 차단).
 # 라우터 레벨 의존성 → 모든 cost 라우트(기성/원가/BOQ/몬테카를로)가 유효 JWT 요구.
@@ -55,11 +54,11 @@ class OverviewCostRequest(BaseModel):
     floor_count_above: int = Field(1, ge=1)
     floor_count_below: int = Field(0, ge=0)
     structure_type: str = "RC"
-    unit_cost_per_sqm: Optional[int] = None  # 직접공사비 단가 override(원/㎡)
+    unit_cost_per_sqm: int | None = None  # 직접공사비 단가 override(원/㎡)
     # 기하(geometry) 정밀 적산용 — 설계 매스 치수(있으면 실치수, 없으면 연면적·층수로 역산)
-    project_id: Optional[str] = None
-    building_width_m: Optional[float] = None
-    building_depth_m: Optional[float] = None
+    project_id: str | None = None
+    building_width_m: float | None = None
+    building_depth_m: float | None = None
     floor_height_m: float = 3.0
 
 
@@ -154,7 +153,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     산정하고, 건설물가 변동을 반영한 최저~최대 예상 공사비 레인지를 반환한다.
     (도면/BIM 완성 프로젝트는 향후 항목별 정밀 적산으로 대체) — 수지·사업성과 동일 개요 사용."""
     from app.services.feasibility.construction_cost_engine import (
-        DEFAULT_DIRECT_COST_PER_SQM, calculate_indirect_cost,
+        DEFAULT_DIRECT_COST_PER_SQM,
+        calculate_indirect_cost,
     )
     PY = 3.305785
     base_unit = req.unit_cost_per_sqm or DEFAULT_DIRECT_COST_PER_SQM.get(
@@ -425,7 +425,7 @@ class CostCalculateRequest(BaseModel):
     """원가계산 요청."""
     items: list[dict[str, Any]] = Field(
         ..., description="공사비 항목 리스트")
-    rates: Optional[dict[str, float]] = Field(
+    rates: dict[str, float] | None = Field(
         None, description="커스텀 법정요율 (None이면 2026 기본)")
 
 
@@ -474,11 +474,11 @@ class CostCalculateResponse(BaseModel):
     total: float = 0.0
 
     # LLM(Claude) 원가 해석 (CostInterpreter, 키 설정 시 채워짐)
-    ai_cost_analysis: Optional[str] = None
-    ai_ve_suggestions: Optional[str] = None
-    ai_material_advice: Optional[str] = None
-    ai_schedule_impact: Optional[str] = None
-    ai_risk_factors: Optional[str] = None
+    ai_cost_analysis: str | None = None
+    ai_ve_suggestions: str | None = None
+    ai_material_advice: str | None = None
+    ai_schedule_impact: str | None = None
+    ai_risk_factors: str | None = None
 
     class Config:
         extra = "allow"
@@ -656,16 +656,16 @@ async def billing_summary(project_id: str):
 class BillingRegisterRequest(BaseModel):
     """회차별 기성 등록(progress_billings 영속)."""
     round: int = Field(..., ge=1, description="기성 회차")
-    work_type: Optional[str] = Field(None, description="공종(표준단가 대조 키)")
+    work_type: str | None = Field(None, description="공종(표준단가 대조 키)")
     contract_amount: float = Field(0, ge=0, description="해당 공종 계약액(원)")
     claimed_amount: float = Field(0, ge=0, description="청구액(원)")
-    claimed_qty: Optional[float] = Field(None, description="청구 물량")
-    unit_price: Optional[float] = Field(None, description="청구 단가(원/단위)")
-    contract_unit_price: Optional[float] = Field(None, description="계약 단가(원/단위, 단가이탈 기준)")
+    claimed_qty: float | None = Field(None, description="청구 물량")
+    unit_price: float | None = Field(None, description="청구 단가(원/단위)")
+    contract_unit_price: float | None = Field(None, description="계약 단가(원/단위, 단가이탈 기준)")
     progress_pct: float = Field(0, ge=0, le=100, description="누적 계획 공정률(%)")
-    period_from: Optional[str] = None
-    period_to: Optional[str] = None
-    contract_total: Optional[float] = Field(None, description="전체 계약총액(없으면 회차 계약액 합)")
+    period_from: str | None = None
+    period_to: str | None = None
+    contract_total: float | None = Field(None, description="전체 계약총액(없으면 회차 계약액 합)")
 
 
 @router.post("/{project_id}/billing", summary="D2 기성 등록(영속+EVM 누적+과다청구 이상탐지+해시체인)")
@@ -690,7 +690,7 @@ async def register_billing_d2(project_id: str, req: BillingRegisterRequest) -> d
 
 
 @router.get("/{project_id}/billing", summary="D2 기성 목록+EVM summary+곡선+이상경고")
-async def get_billing_d2(project_id: str, contract_total: Optional[float] = None) -> dict[str, Any]:
+async def get_billing_d2(project_id: str, contract_total: float | None = None) -> dict[str, Any]:
     """기성 회차 목록 + EVM(PV/EV/AC·SPI/CPI·누적곡선) + 과다청구 이상경고."""
     from app.services.cost import billing_service
 
@@ -699,7 +699,7 @@ async def get_billing_d2(project_id: str, contract_total: Optional[float] = None
 
 
 @router.get("/{project_id}/billing/anomaly", summary="D2 과다청구 이상탐지(단독)")
-async def get_billing_anomaly_d2(project_id: str, contract_total: Optional[float] = None) -> dict[str, Any]:
+async def get_billing_anomaly_d2(project_id: str, contract_total: float | None = None) -> dict[str, Any]:
     """과다청구 이상탐지 단독 조회(단가이탈·누적초과·SPI/CPI·급증)."""
     from app.services.cost import billing_service
 
@@ -735,7 +735,7 @@ class BoqRequest(BaseModel):
     floor_count_above: int = Field(1, ge=1)
     floor_count_below: int = Field(0, ge=0)
     structure_type: str = "RC"
-    tenant_id: Optional[str] = None
+    tenant_id: str | None = None
     persist: bool = True
 
 
@@ -783,7 +783,7 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
         floor_count_above=req.floor_count_above, floor_count_below=req.floor_count_below,
         structure_type=req.structure_type, qto_source="derived",
     )
-    estimate_id: Optional[str] = None
+    estimate_id: str | None = None
     if req.persist:
         saved = await save_estimate(
             project_id=project_id, tenant_id=req.tenant_id,
@@ -799,7 +799,7 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
         )
 
     # D6 AI 해석(BOQ) — 실패해도 결과는 정상 반환(graceful)
-    ai_analysis: Optional[str] = None
+    ai_analysis: str | None = None
     try:
         from app.services.ai.cost_interpreter import CostInterpreter
         calc = boq.get("_calc", {})

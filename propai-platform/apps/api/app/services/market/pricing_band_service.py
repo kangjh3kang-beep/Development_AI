@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 # ── 거래사례비교 가중(분양가가 실거래보다 더 직접적인 비교지표) ──
 W_PRESALE = 0.6   # 주변 신규 분양가 가중
@@ -48,7 +48,7 @@ def _loan_from_payment(annual_payment_10k: float, annual_rate: float, term_years
 
 
 def _affordability(
-    annual_income_10k: Optional[float], income_source: Optional[str],
+    annual_income_10k: float | None, income_source: str | None,
     *, pir: float, ltv: float, dsr: float, stress_rate: float, term_years: int,
 ) -> dict[str, Any]:
     """2차 검증: 타깃 가구 연소득 → 감당 가능한 가격 밴드(보수 PIR ~ 낙관 DSR/LTV)."""
@@ -74,12 +74,12 @@ def _affordability(
 
 def compute_fair_price(
     *,
-    comparable_trade_10k: Optional[float] = None,
-    nearby_presale_10k: Optional[float] = None,
-    annual_income_10k: Optional[float] = None,
-    trade_source: Optional[str] = None,
-    presale_source: Optional[str] = None,
-    income_source: Optional[str] = None,
+    comparable_trade_10k: float | None = None,
+    nearby_presale_10k: float | None = None,
+    annual_income_10k: float | None = None,
+    trade_source: str | None = None,
+    presale_source: str | None = None,
+    income_source: str | None = None,
     pir: float = DEFAULT_PIR,
     ltv: float = DEFAULT_LTV,
     dsr: float = DEFAULT_DSR,

@@ -21,8 +21,8 @@ from app.services.data_validation.evidence_contract import (  # noqa: E402
     build_legal_refs,
     build_provenance,
 )
-from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 from app.services.data_validation.trust import Signal, cross_validate  # noqa: E402
+from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 
 
 class TestEvidenceNormalization:

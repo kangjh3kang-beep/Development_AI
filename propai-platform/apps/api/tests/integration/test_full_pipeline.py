@@ -2,6 +2,7 @@
 
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -65,8 +66,8 @@ class TestProjectLifecyclePipeline:
 
     def test_design_to_cad_flow(self, sample_project):
         """설계 AI -> CAD 파라메트릭 편집 연동."""
-        from app.services.design.cnn_design_service import CNNDesignService
         from app.services.cad.parametric_cad_service import ParametricCADService
+        from app.services.design.cnn_design_service import CNNDesignService
 
         design = CNNDesignService()
         features = design.extract_features(b"fake_image_bytes")
@@ -84,8 +85,8 @@ class TestProjectLifecyclePipeline:
 
     def test_permit_to_construction_flow(self, sample_project):
         """인허가 -> 착공 연동."""
-        from app.services.permit.permit_service import PermitService
         from app.services.lifecycle.construction.construction_start_service import ConstructionStartService
+        from app.services.permit.permit_service import PermitService
 
         permit = PermitService()
         requirements = permit.check_requirements("building")
@@ -200,6 +201,7 @@ class TestProjectLifecyclePipeline:
     async def test_simulate_feasibility_project_not_found(self):
         """simulate-feasibility: 프로젝트 미존재 시 404 정직 응답 (WP-11)."""
         from fastapi import HTTPException
+
         from app.routers import project_dashboard as pd_router
 
         db = _FakeAsyncDb([None])
@@ -294,8 +296,8 @@ class TestProjectLifecyclePipeline:
 
     def test_spatial_to_avm_flow(self, sample_project):
         """공간 쿼리 -> AVM 연동."""
-        from app.services.spatial.spatial_service import SpatialService
         from app.services.avm.avm_service import AVMService
+        from app.services.spatial.spatial_service import SpatialService
 
         spatial = SpatialService()
         lat = sample_project["location"]["latitude"]
@@ -316,26 +318,26 @@ class TestProjectLifecyclePipeline:
     def test_end_to_end_pipeline_completeness(self):
         """전체 파이프라인 서비스 임포트 및 초기화 검증."""
         from app.services.avm.avm_service import AVMService
-        from app.services.legal.alris_service import ALRISService
-        from app.services.design.cnn_design_service import CNNDesignService
+        from app.services.bim.bim_service import BIMService
         from app.services.cad.parametric_cad_service import ParametricCADService
-        from app.services.finance.monte_carlo_service import MonteCarloService
+        from app.services.contract.contract_service import ContractService
+        from app.services.design.cnn_design_service import CNNDesignService
+        from app.services.energy.energy_service import EnergyService
         from app.services.esg.lca.lca_service import LCAService
         from app.services.esg.lcc.lcc_service import LCCService
-        from app.services.bim.bim_service import BIMService
-        from app.services.permit.permit_service import PermitService
-        from app.services.energy.energy_service import EnergyService
-        from app.services.contract.contract_service import ContractService
-        from app.services.planning.feasibility_service import FeasibilityService
-        from app.services.housing.housing_service import HousingService
         from app.services.esg.re100.re100_service import RE100Service
         from app.services.esg.zeb.zeb_service import ZEBService
+        from app.services.finance.monte_carlo_service import MonteCarloService
+        from app.services.housing.housing_service import HousingService
+        from app.services.legal.alris_service import ALRISService
         from app.services.lifecycle.asset.asset_service import AssetService
         from app.services.lifecycle.maintenance.maintenance_service import MaintenanceService
         from app.services.lifecycle.occupancy.occupancy_service import OccupancyService
         from app.services.lifecycle.operations.operations_service import OperationsService
         from app.services.lifecycle.sales.sales_service import SalesService
         from app.services.lifecycle.special.special_project_service import SpecialProjectService
+        from app.services.permit.permit_service import PermitService
+        from app.services.planning.feasibility_service import FeasibilityService
 
         services = [
             AVMService(), ALRISService(), CNNDesignService(), ParametricCADService(),
