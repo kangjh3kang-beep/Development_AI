@@ -1626,6 +1626,9 @@ async def parcel_at_point(req: ParcelAtPointRequest):
 
     지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
     """
+    from datetime import datetime
+
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
     from apps.api.app.services.external_api.vworld_service import VWorldService
     from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
 
@@ -1641,12 +1644,33 @@ async def parcel_at_point(req: ParcelAtPointRequest):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
     area_sqm = zone_type = jimok = None
+    official_price_per_sqm = None
     try:
         lc = await vworld.get_land_characteristics(pnu)
         if isinstance(lc, dict):
             area_sqm = lc.get("area_sqm") or None
             zone_type = lc.get("zone_type") or None
             jimok = lc.get("land_category") or None
+            # 공시지가(개별공시지가, 원/㎡) — 토지특성 응답 재사용(추가 호출 0).
+            #  comprehensive(위 official_price_per_sqm 산출)와 동일 규칙: 0/누락은 None(가짜값 금지).
+            _op = lc.get("official_price_per_sqm")
+            official_price_per_sqm = int(_op) if _op else None
+    except Exception:  # noqa: BLE001
+        pass
+    # 건축물 노후도 — 건축물대장 표제부 사용승인일 기반(comprehensive와 동일 규칙).
+    #  지도 클릭선택으로 채운 필지도 공시지가/노후도 레이어가 렌더되도록 보강.
+    #  키없음/무자료/조회실패는 None(가짜 생성 금지 — 정직 라벨).
+    built_year = building_age_years = None
+    current_year = datetime.now().year
+    try:
+        bldg = await BuildingRegistryService().get_title_by_pnu(pnu)
+        if isinstance(bldg, dict):
+            use_approval_date = str(bldg.get("use_approval_date") or "").strip() or None
+            year_str = (use_approval_date or "")[:4]
+            if year_str.isdigit():
+                built_year = int(year_str)
+                if 1800 <= built_year <= current_year:
+                    building_age_years = current_year - built_year
     except Exception:  # noqa: BLE001
         pass
     bcr = far = None
@@ -1660,6 +1684,8 @@ async def parcel_at_point(req: ParcelAtPointRequest):
         "address": pp.get("address") or "", "jibun": pp.get("address") or "",
         "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
         "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
+        "official_price_per_sqm": official_price_per_sqm,
+        "built_year": built_year, "building_age_years": building_age_years,
         "lat": req.lat, "lon": req.lon,
     }
 

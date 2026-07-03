@@ -198,6 +198,56 @@ function loadLeaflet(): Promise<void> {
   return leafletLoading;
 }
 
+/** buildOverlayNotes 입력 — 오버레이 이펙트에서 집계한 레이어별 표시 상태. */
+export interface OverlayNoteCounts {
+  showCadastre: boolean;
+  cadastreCount: number;
+  showZoning: boolean;
+  zoningCount: number;
+  showPrice: boolean;
+  priceCount: number;
+  showAge: boolean;
+  ageCount: number;
+  markerCount: number;
+}
+
+/**
+ * 오버레이 상태 메모(순수 함수) — 정직 라벨 원칙.
+ * 켜져 있는 레이어는 자료가 0건이어도 반드시 '무자료'로 표기한다
+ * (지적 포함 — 켰는데 아무 표기가 없으면 사용자가 자료 부재를 알 수 없다).
+ */
+export function buildOverlayNotes(counts: OverlayNoteCounts): string {
+  const notes: string[] = [];
+  if (counts.showCadastre) notes.push(counts.cadastreCount ? `지적 ${counts.cadastreCount}건` : "지적 무자료");
+  if (counts.showZoning) notes.push(counts.zoningCount ? `용도지역 ${counts.zoningCount}건` : "용도지역 무자료");
+  if (counts.showPrice) notes.push(counts.priceCount ? `공시지가 ${counts.priceCount}건` : "공시지가 무자료");
+  if (counts.showAge) notes.push(counts.ageCount ? `노후도 ${counts.ageCount}건` : "노후도 무자료");
+  if (counts.markerCount) notes.push(`좌표 ${counts.markerCount}건`);
+  return notes.join(" · ");
+}
+
+/** [MAP-007] 기반 타일 실패 오버레이 내용. null이면 오버레이를 띄우지 않는다. */
+export interface TileFailureNotice {
+  message: string;
+  retryLabel: string;
+}
+
+/**
+ * [MAP-007] 기반 타일 실패 오버레이 판정(순수 함수) — 정직 라벨 원칙.
+ * 타일 실패 시 지도는 회색 배경+초기 줌으로 정지해 '로딩 중'과 구분이 안 되므로,
+ * error 상태를 명시 오버레이(실패 메시지+재시도)로 승격한다.
+ * idle(로딩 전/중)·ready(정상)에서는 null — 로딩을 실패로 위장하지 않는다.
+ */
+export function buildTileFailureNotice(
+  tileStatus: "idle" | "ready" | "error",
+): TileFailureNotice | null {
+  if (tileStatus !== "error") return null;
+  return {
+    message: "기본지도(VWorld) 타일 로드 실패 — 필지·오버레이는 유지되며 배경지도만 미표시입니다.",
+    retryLabel: "재시도",
+  };
+}
+
 function createOfficialBaseMapLayer(
   L: any,
   baseLayer: VWorldBaseLayer,
@@ -406,6 +456,8 @@ export function SatongMultiMap({
   const marketLayerRef = useRef<any>(null);
   const lastFitKeyRef = useRef("");
   const [tileStatus, setTileStatus] = useState<"idle" | "ready" | "error">("idle");
+  // [MAP-007] 타일 재시도 트리거 — 증가 시 기본지도 레이어 이펙트가 레이어를 재생성한다.
+  const [tileRetryNonce, setTileRetryNonce] = useState(0);
   const [boundaryStatus, setBoundaryStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
@@ -799,7 +851,7 @@ export function SatongMultiMap({
       try { map.removeLayer(layer); } catch { /* noop */ }
       if (baseLayerRef.current === layer) baseLayerRef.current = null;
     };
-  }, [baseLayerMode, mapReady]);
+  }, [baseLayerMode, mapReady, tileRetryNonce]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
@@ -910,13 +962,17 @@ export function SatongMultiMap({
       }
     });
 
-	    const notes: string[] = [];
-	    if (cadastreCount) notes.push(`지적 ${cadastreCount}건`);
-    if (showZoning) notes.push(zoningCount ? `용도지역 ${zoningCount}건` : "용도지역 무자료");
-    if (showPrice) notes.push(priceCount ? `공시지가 ${priceCount}건` : "공시지가 무자료");
-    if (showAge) notes.push(ageCount ? `노후도 ${ageCount}건` : "노후도 무자료");
-    if (markerCount) notes.push(`좌표 ${markerCount}건`);
-    setOverlayNote(notes.join(" · "));
+    setOverlayNote(buildOverlayNotes({
+      showCadastre,
+      cadastreCount,
+      showZoning,
+      zoningCount,
+      showPrice,
+      priceCount,
+      showAge,
+      ageCount,
+      markerCount,
+    }));
 
     const fitKey = overlayFeatures.map(satongMapFeatureKey).join("||");
     if (fitKey && fitKey !== lastFitKeyRef.current && bounds.isValid()) {
@@ -952,7 +1008,7 @@ export function SatongMultiMap({
       marketLayerRef.current = null;
     }
 
-    if (!marketPayload?.center?.lat || !marketPayload.center.lon || marketPayload.fetch_failed) {
+    if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) {
       setMarketNote(marketPayload?.fetch_failed ? marketPayload.note || "실거래 공공데이터 조회 실패" : "");
       return;
     }
@@ -1063,6 +1119,9 @@ export function SatongMultiMap({
     ? staged.some((s) => s.pnu === pending.pnu)
     : false;
 
+  // [MAP-007] 기반 타일 실패 오버레이(순수 판정) — error일 때만 메시지+재시도 노출
+  const tileFailureNotice = buildTileFailureNotice(tileStatus);
+
   return (
     <div
       className={
@@ -1123,7 +1182,7 @@ export function SatongMultiMap({
           )}
         </button>
 
-        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote) && (
+        {(boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote) && (
           <div className="pointer-events-none absolute bottom-3 left-3 z-[410] max-w-[calc(100%-96px)] space-y-1">
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
@@ -1145,16 +1204,30 @@ export function SatongMultiMap({
                 일부 필지 경계 보강 실패 · 확보된 실데이터만 표시
               </span>
             )}
-            {tileStatus === "error" && (
-              <span className="inline-flex rounded-full bg-rose-50/95 px-3 py-1.5 text-[11px] font-black text-rose-700 shadow">
-                VWorld 기본지도 타일 연결 실패
+          </div>
+        )}
+
+        {/* [MAP-007] 기반 타일 실패 — 중앙 반투명 오버레이 + 재시도(로딩/실패 구분 명시).
+            pointer-events는 카드에만 허용해 지도 조작·기존 오버레이 확인은 계속 가능하다. */}
+        {tileFailureNotice && (
+          <div className="pointer-events-none absolute inset-0 z-[420] flex items-center justify-center rounded-lg bg-slate-900/40">
+            <div className="pointer-events-auto flex max-w-[calc(100%-48px)] flex-col items-center gap-2 rounded-xl border border-rose-300/70 bg-white/95 px-4 py-3 text-center shadow-lg">
+              <span className="text-[12px] font-bold leading-snug text-rose-700">
+                {tileFailureNotice.message}
               </span>
-            )}
+              <button
+                type="button"
+                onClick={() => setTileRetryNonce((n) => n + 1)}
+                className="rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-rose-700"
+              >
+                {tileFailureNotice.retryLabel}
+              </button>
+            </div>
           </div>
         )}
 
         {/* 초기 안내 오버레이(아직 클릭 전) */}
-        {!readOnly && status === "idle" && staged.length === 0 && overlayFeatures.length === 0 && !marketPayload && (
+        {!readOnly && !tileFailureNotice && status === "idle" && staged.length === 0 && overlayFeatures.length === 0 && !marketPayload && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg">
             <span className="rounded-lg bg-[var(--surface)]/80 px-3 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] shadow">
               지도를 클릭해 필지 선택
