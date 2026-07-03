@@ -14,6 +14,9 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     css: false,
     globals: true,
+    // 파일별 힙 사용량을 로그로 남겨 향후 메모리 이상 테스트를 조기 진단(#174에서 흡수).
+    // 로그 출력만 하므로 테스트 동작·정확성에는 영향이 없다.
+    logHeapUsage: true,
     include: [
       "app/**/*.test.ts",
       "app/**/*.test.tsx",

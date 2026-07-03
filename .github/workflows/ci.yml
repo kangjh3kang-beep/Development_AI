@@ -82,3 +82,6 @@ jobs:
       - name: Unit tests
         run: pnpm test:run
         working-directory: propai-platform/apps/web
+        # ★안전장치(#174에서 흡수): 향후 무한루프/hang 발생 시 45분+ 낭비 없이 조기 실패.
+        #   현 hang 근본(SatongMultiMap 무한 setState 루프)은 이 PR이 제거해 정상 60초 완주.
+        timeout-minutes: 20
