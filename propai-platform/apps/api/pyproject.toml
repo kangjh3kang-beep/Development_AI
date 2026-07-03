@@ -54,6 +54,7 @@ dependencies = [
     "opencv-python-headless>=4.10.0",
     # 문서
     "python-docx>=1.1.0",
+    "python-pptx>=1.0.0",  # 통합 보고서 생성엔진 PPTX 렌더러(그동안 requirements에만 있어 poetry설치 누락 위험 — RISK#2 해소)
     "openpyxl>=3.1.0",
     "fpdf2>=2.8.0",
     # 블록체인
@@ -132,6 +133,9 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 # 테스트: 한국어 함수명(N802) + sys.path.insert 임포트 순서(E402)
 "**/tests/*.py" = ["N802", "E402"]
 "**/tests/**/*.py" = ["N802", "E402"]
+# 통합 보고서 렌더러: tokens→T·pdf_kit→K 는 의도적 짧은 별칭 관례(가독성)
+"app/services/report/render/*.py" = ["N812"]
+"apps/api/app/services/report/render/*.py" = ["N812"]
 
 [tool.mypy]
 python_version = "3.12"
