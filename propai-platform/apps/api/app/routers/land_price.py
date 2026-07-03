@@ -4,9 +4,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from apps.api.rate_limit import limiter
-from app.services.land_intelligence.land_price_estimator import estimate_land_price
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+from app.services.land_intelligence.land_price_estimator import estimate_land_price
+from apps.api.rate_limit import limiter
 
 router = APIRouter(prefix="/api/v1/land-price", tags=["토지 적정가"])
 
@@ -65,7 +65,7 @@ async def land_desk_appraisal(request: Request, req: DeskAppraisalRequest):
 @limiter.limit(_LAND_PRICE_LIMIT)
 async def price_trend(request: Request, address: str = ""):
     """지가변동률 월별·연도별 통계분석(시계열) — 차트/추이 표시용. R-ONE 실데이터."""
-    from app.services.land_intelligence.reb_statistics_service import land_price_trend, _sido_of
+    from app.services.land_intelligence.reb_statistics_service import _sido_of, land_price_trend
     t = await land_price_trend(address)
     if not t:
         return {"ok": False, "message": "R-ONE 지가변동률 통계표(RONE_LANDPRICE_STATBL_ID) 미설정 또는 데이터 없음"}

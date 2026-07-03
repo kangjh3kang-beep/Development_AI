@@ -1,6 +1,7 @@
 """Predictive maintenance service for G88."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from uuid import UUID
 

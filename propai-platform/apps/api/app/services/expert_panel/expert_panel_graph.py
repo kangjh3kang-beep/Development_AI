@@ -95,9 +95,10 @@ def _strip_json(raw: str) -> str:
 
 async def _experts_node(state: PanelState) -> dict[str, Any]:
     """병렬 다각도 전문가 분석."""
-    from app.services.ai.llm_provider import get_llm
-    from app.services.ai.base_interpreter import GROUNDING_RULE
     from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.services.ai.base_interpreter import GROUNDING_RULE
+    from app.services.ai.llm_provider import get_llm
 
     async def one(r: dict) -> dict[str, Any]:
         user = _EXPERT_DEEP_TMPL.format(role=r["role"], lens=r["lens"],
@@ -121,8 +122,9 @@ async def _experts_node(state: PanelState) -> dict[str, Any]:
 
 async def _verify_node(state: PanelState) -> dict[str, Any]:
     """원데이터 대조 — 각 주장의 근거 유무 검증(할루시네이션 게이트)."""
-    from app.services.ai.llm_provider import get_llm
     from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.services.ai.llm_provider import get_llm
 
     experts = state.get("experts") or []
     if not experts:
@@ -145,9 +147,10 @@ async def _verify_node(state: PanelState) -> dict[str, Any]:
 
 async def _synth_node(state: PanelState) -> dict[str, Any]:
     """검증통과(grounded) 의견만으로 통합."""
-    from app.services.ai.llm_provider import get_llm
-    from app.services.ai.base_interpreter import GROUNDING_RULE
     from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.services.ai.base_interpreter import GROUNDING_RULE
+    from app.services.ai.llm_provider import get_llm
 
     experts = state.get("experts") or []
     report = state.get("verification_report") or {}
@@ -192,7 +195,7 @@ _GRAPH = None
 
 
 def _build():
-    from langgraph.graph import StateGraph, END
+    from langgraph.graph import END, StateGraph
     g = StateGraph(PanelState)
     g.add_node("experts", _experts_node)
     g.add_node("verify", _verify_node)

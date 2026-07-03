@@ -11,18 +11,15 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.building_compliance_service import (
+    ZONE_LIMITS,
     BuildingComplianceService,
-    ComplianceViolation,
     DesignData,
-    DesignLine,
     DesignPoint,
     DesignSurface,
     LegalLimits,
     LegalRegulationVerifier,
-    ZONE_LIMITS,
     _calculate_north_setback,
 )
-
 
 # ── 세트백 검증 테스트 ──
 

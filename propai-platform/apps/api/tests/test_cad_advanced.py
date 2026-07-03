@@ -15,7 +15,6 @@ from apps.api.services.cad_auto_correction_service import (
     CadAutoCorrectionService,
 )
 
-
 # ── BuildingModel 신규 필드 테스트 ──
 
 

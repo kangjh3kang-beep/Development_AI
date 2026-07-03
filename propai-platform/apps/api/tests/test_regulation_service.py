@@ -13,6 +13,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from datetime import UTC
+
 from apps.api.services.regulation_service import RegulationService
 
 
@@ -76,7 +78,7 @@ class TestCheckRegulationFailClosed:
 
     @pytest.mark.asyncio
     async def test_is_compliant_키_없으면_False로_저장(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         mock_db = AsyncMock()
 
@@ -84,7 +86,7 @@ class TestCheckRegulationFailClosed:
         # 이때 채워진 뒤에도 is_compliant 값은 check_regulation이 세팅한 값 그대로 남는다.
         async def _fake_refresh(obj):
             obj.id = uuid4()
-            obj.created_at = datetime.now(timezone.utc)
+            obj.created_at = datetime.now(UTC)
 
         mock_db.refresh = AsyncMock(side_effect=_fake_refresh)
 

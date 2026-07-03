@@ -6,10 +6,11 @@ mock 의존성으로 포괄 테스트한다.
 """
 
 import os
-import re
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -652,7 +653,6 @@ class TestWebRTCIceRetry:
         mock_db = AsyncMock()
         call_count = {"n": 0}
 
-        original_flush = mock_db.flush
 
         async def _fail_then_succeed():
             call_count["n"] += 1
@@ -1385,14 +1385,12 @@ class TestWebhookServiceExtended:
 
         svc = WebhookService(db=mock_db)
         if hasattr(svc, "dispatch_event"):
-            try:
+            with contextlib.suppress(TypeError, AttributeError):
                 await svc.dispatch_event(
                     tenant_id=TEST_TENANT_ID,
                     event_type="project.created",
                     payload={"id": str(uuid4())},
                 )
-            except (TypeError, AttributeError):
-                pass
 
     def test_sign_payload(self):
         from apps.api.services.webhook_service import sign_payload

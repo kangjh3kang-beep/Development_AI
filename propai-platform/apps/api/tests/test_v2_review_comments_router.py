@@ -8,19 +8,17 @@ require_project_member(test_collaboration_deps)에서 별도 검증됨 — 본 �
 
 import uuid
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import app.routers.v2_review_comments as cmod
-import app.services.collaboration.review_comment_repo as repo
 import app.services.collaboration.collaboration_repo as doc_repo
+import app.services.collaboration.review_comment_repo as repo
 from app.core.database import get_db
 from app.routers.v2_review_comments import (
-    router,
-    _require_member,
     _require_commenter,
+    _require_member,
     _require_reviewer,
+    router,
 )
 from app.services.auth.auth_service import get_current_user
 

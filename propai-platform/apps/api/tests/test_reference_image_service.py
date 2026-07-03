@@ -12,10 +12,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.reference_image_service import (
-    ImageFeatures,
     ReferenceImageService,
 )
-
 
 # ──────────────────────────────────────────────
 # 기본 특징 추출

@@ -4,7 +4,7 @@
 멤버십 자체(접근 가능 여부)는 라우터 require_project_member가 1차 강제 — 본 규칙은 역할별 권한만.
 """
 
-from app.services.livekit.livekit_rules import room_name, video_grant, can_record
+from app.services.livekit.livekit_rules import can_record, room_name, video_grant
 
 
 class TestRoomName:

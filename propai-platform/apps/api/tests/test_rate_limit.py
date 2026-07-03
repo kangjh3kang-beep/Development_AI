@@ -2,7 +2,6 @@
 
 import os
 import sys
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -77,7 +76,7 @@ class TestRateLimiter:
         assert limiter.check_tenant("tenant-1", "free") is True
 
     def test_tenant_tier_enterprise_high_limit(self):
-        from app.core.rate_limit import RateLimiter, TIER_LIMITS
+        from app.core.rate_limit import TIER_LIMITS, RateLimiter
         limiter = RateLimiter()
         assert TIER_LIMITS["enterprise"] == 999_999
         assert limiter.check_tenant("tenant-2", "enterprise") is True
@@ -91,6 +90,6 @@ class TestRateLimiter:
         assert limiter.check("key-y") is False
 
     def test_get_rate_limiter_singleton(self):
-        from app.core.rate_limit import get_rate_limiter, RateLimiter
+        from app.core.rate_limit import RateLimiter, get_rate_limiter
         limiter = get_rate_limiter()
         assert isinstance(limiter, RateLimiter)

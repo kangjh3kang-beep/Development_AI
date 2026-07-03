@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 
@@ -137,10 +138,8 @@ def _map_analysis_data(collected: dict) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
         if area is not None:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 lp["total_official_value_won"] = round(float(official) * float(area))
-            except (TypeError, ValueError):
-                pass
         out["land_prices"] = lp
 
     # ── 특이부지(special_parcel) — detect_special_parcel 결과를 그대로 통과 ──

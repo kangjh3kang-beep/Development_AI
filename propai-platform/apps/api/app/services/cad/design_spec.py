@@ -18,11 +18,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .auto_design_engine import (
+    _DEFAULT_LIMITS,
     CORRIDOR_WIDTHS,
     ZONE_LIMITS,
     LegalLimits,
     SiteInput,
-    _DEFAULT_LIMITS,
 )
 from .unit_plan_generator import SUPPORTED_BAYS, UNIT_CORE_TYPES
 

@@ -9,9 +9,10 @@ chatbot, predictive_maintenance, webrtc router 핸들러 등
 
 import os
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
-from typing import Any
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -446,7 +447,7 @@ class TestRegulationService:
             with patch.object(svc, "_fetch_regulation" if hasattr(svc, "_fetch_regulation") else "analyze",
                             return_value={}):
                 try:
-                    result = await svc.analyze(
+                    await svc.analyze(
                         project_id=TEST_PROJECT_ID,
                         tenant_id=TEST_TENANT_ID,
                         address="서울 강남구",
@@ -542,16 +543,13 @@ class TestMarketingServiceAsync:
         svc = MarketingService(db=mock_db)
         if hasattr(svc, "generate"):
             with patch.object(svc, "_generate_content" if hasattr(svc, "_generate_content") else "generate",
-                            return_value="마케팅 콘텐츠"):
-                try:
-                    result = await svc.generate(
-                        tenant_id=TEST_TENANT_ID,
-                        project_id=TEST_PROJECT_ID,
-                        target_audience="투자자",
-                        content_type="brochure",
-                    )
-                except Exception:
-                    pass
+                            return_value="마케팅 콘텐츠"), contextlib.suppress(Exception):
+                await svc.generate(
+                    tenant_id=TEST_TENANT_ID,
+                    project_id=TEST_PROJECT_ID,
+                    target_audience="투자자",
+                    content_type="brochure",
+                )
 
 
 # ═══════════════════════════════════════════

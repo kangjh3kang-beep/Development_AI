@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ async def _do_threshold_relax(db, action_id, params, service, severity):
     from app.services.growth import schema_guard
 
     ttl_min = int(params.get("ttl_min") or DEFAULT_RELAX_TTL_MIN)
-    ttl = datetime.now(timezone.utc) + timedelta(minutes=ttl_min)
+    ttl = datetime.now(UTC) + timedelta(minutes=ttl_min)
     setting_key = params.get("setting_key") or (
         f"relax.{service}" if service else "relax.global"
     )
@@ -251,6 +251,7 @@ async def rollback(db, action_id: str, *, actor_id: str | None = None) -> dict[s
     import json
 
     from sqlalchemy import text
+
     from app.services.growth import schema_guard
 
     row = (await db.execute(text(

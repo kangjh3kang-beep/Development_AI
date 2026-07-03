@@ -19,9 +19,8 @@ down_revision 은 Phase 3 platform_settings(v62_6_platform_settings)에 연결.
 schema_guard.ensure_schema 가 부팅 멱등 안전망을 별도 제공(정본은 이 마이그레이션).
 """
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "v62_7_learning_examples"
 down_revision = "v62_6_platform_settings"

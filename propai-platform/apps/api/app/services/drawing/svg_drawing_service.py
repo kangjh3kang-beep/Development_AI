@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional
 
 try:
     import svgwrite
@@ -359,8 +358,8 @@ class SVGDrawingService:
         building_depth_m: float,
         setback_m: float = 3.0,
         *,
-        findings: Optional[list[dict]] = None,
-        verdict: Optional[str] = None,
+        findings: list[dict] | None = None,
+        verdict: str | None = None,
     ) -> str:
         """배치도에 설계심사(8엔진) findings를 결정론으로 주석화한다(audit↔drawing 연결).
 
@@ -378,7 +377,7 @@ class SVGDrawingService:
         # 판정 가능한 finding만 색·범례에 반영(skipped/info 제외 — 가짜 적합/부적합 금지).
         judged = [f for f in items if str(f.get("status")) in ("pass", "warning", "fail")]
         if any(f.get("status") == "fail" for f in judged):
-            worst: Optional[str] = "fail"
+            worst: str | None = "fail"
         elif any(f.get("status") == "warning" for f in judged):
             worst = "warning"
         elif judged:
@@ -562,7 +561,7 @@ class SVGDrawingService:
         core_depth_m: float = 6.0,
         units: list[dict] | None = None,
         *,
-        findings: Optional[list[dict]] = None,
+        findings: list[dict] | None = None,
     ) -> str:
         """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
 
@@ -889,10 +888,7 @@ class SVGDrawingService:
         # 6) 창호(외벽 3선) — 흰 절단 후 평행 3선
         for wd in windows:
             wx = wd["x"]; ww = wd["w"]; wall = wd["wall"]
-            if wall == "s":
-                wy = body_d - EXT
-            else:
-                wy = 0.0
+            wy = body_d - EXT if wall == "s" else 0.0
             g.add(dwg.rect(insert=(px(wx), px(wy)), size=(px(ww), px(EXT)), fill="#ffffff"))
             for k in range(3):
                 yy = wy + EXT * (0.25 + 0.25 * k)
@@ -1188,12 +1184,12 @@ class SVGDrawingService:
     def generate_unit_plan_rooms(
         self,
         rooms: list[dict],
-        body_width_m: Optional[float] = None,
-        body_depth_m: Optional[float] = None,
+        body_width_m: float | None = None,
+        body_depth_m: float | None = None,
         *,
         unit_type: str = "",
         area_sqm: float = 0.0,
-        balconies: Optional[list[dict]] = None,
+        balconies: list[dict] | None = None,
         boundaries: list[dict] | None = None,
         openings: list[dict] | None = None,
         project_name: str = "PropAI",
@@ -1675,7 +1671,7 @@ class SVGDrawingService:
         g.add(dwg.text("배기 덕트", insert=(6, mid_y + 16), font_size="8px",
                        font_family=FONT, fill="#636e72", font_weight="bold"))
         # 급수/오수 배관(수직 간선) — 코어 위치 가정(중앙) + 양측
-        for px, label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
+        for px, _label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
             g.add(dwg.line(start=(px, 0), end=(px, bd), stroke=color, stroke_width=1.5,
                            stroke_dasharray="2,2"))
         g.add(dwg.text("급수 배관", insert=(bw * 0.5 - 30, 14), font_size="8px",

@@ -1,7 +1,6 @@
 """공사비 몬테카를로 시뮬레이션 테스트."""
 
-from app.services.cost.cost_monte_carlo import CostMonteCarlo, RISK
-
+from app.services.cost.cost_monte_carlo import RISK, CostMonteCarlo
 
 SAMPLE_BASE = {
     "direct_material_cost": 5_000_000_000,

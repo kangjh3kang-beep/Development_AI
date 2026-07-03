@@ -4,7 +4,6 @@ import pytest
 
 from app.services.cad.floor_type_generator import (
     BuildingFloorSet,
-    FloorPlan,
     FloorTypeGenerator,
 )
 

@@ -4,11 +4,11 @@ import pytest
 
 from app.services.collaboration.review_comment_rules import (
     MAX_COMMENT_BODY,
-    validate_comment_body,
-    is_root,
     anchor_allowed,
-    resolve_allowed,
+    is_root,
     parent_is_valid,
+    resolve_allowed,
+    validate_comment_body,
     visible_body,
 )
 

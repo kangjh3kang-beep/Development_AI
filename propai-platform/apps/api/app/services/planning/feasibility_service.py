@@ -1,5 +1,4 @@
 """사업 타당성 분석 서비스."""
-from typing import Dict
 
 
 class FeasibilityService:

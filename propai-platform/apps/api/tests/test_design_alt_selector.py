@@ -1,9 +1,10 @@
 """설계 대안 선정기 (MCDM + MC) 테스트."""
 
 from app.services.drawing.design_alternative_selector import (
-    DesignAlternativeSelector, WEIGHTS, _normalize_scores,
+    WEIGHTS,
+    DesignAlternativeSelector,
+    _normalize_scores,
 )
-
 
 SAMPLE_ALTS = [
     {"name": "A: 최적 밸런스", "profit_score": 80, "legal_score": 90,

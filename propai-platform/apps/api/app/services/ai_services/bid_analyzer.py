@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import Optional
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -177,7 +176,7 @@ class BidAnalyzer:
     # ──────────────────────────────────────────
 
     async def _get_region_award_stats(
-        self, bid_type: str, region_sido: Optional[str]
+        self, bid_type: str, region_sido: str | None
     ) -> dict:
         """지역/공종별 과거 낙찰가율 통계를 조회한다."""
         conditions = [G2BBid.award_rate.isnot(None)]
@@ -207,7 +206,7 @@ class BidAnalyzer:
         avg = defaults.get(bid_type, 85.0)
         return {"avg": avg, "min": avg - 10, "max": avg + 5, "std": 5.0}
 
-    async def _count_similar_bids(self, bid_type: str, region_sido: Optional[str]) -> int:
+    async def _count_similar_bids(self, bid_type: str, region_sido: str | None) -> int:
         """최근 90일간 유사 공종의 입찰 건수를 조회한다."""
         ninety_days_ago = datetime.utcnow() - timedelta(days=90)
         conditions = [G2BBid.bid_type == bid_type, G2BBid.notice_dt >= ninety_days_ago]
@@ -235,7 +234,7 @@ class BidAnalyzer:
         avg_award_rate: float,
         cost_volatility: float,
         iterations: int,
-    ) -> tuple[Optional[int], Optional[float], Optional[float]]:
+    ) -> tuple[int | None, float | None, float | None]:
         """간이 Monte Carlo 시뮬레이션으로 예상 NPV/ROI를 산출한다."""
         if estimated_price <= 0:
             return None, None, None
@@ -274,7 +273,7 @@ class BidAnalyzer:
         return float(trust_map.get(org_type, 50))
 
     @staticmethod
-    def _score_competition_risk(similar_count: int, bid_count: Optional[int]) -> float:
+    def _score_competition_risk(similar_count: int, bid_count: int | None) -> float:
         """경쟁 강도를 0~100으로 스코어링한다."""
         if bid_count and bid_count > 0:
             return min(100.0, bid_count * 5.0)
@@ -284,10 +283,10 @@ class BidAnalyzer:
     def _generate_summary(
         bid: G2BBid,
         bid_rate: dict,
-        npv: Optional[int],
-        roi: Optional[float],
+        npv: int | None,
+        roi: float | None,
         risk_total: float,
-        region_avg: Optional[float],
+        region_avg: float | None,
     ) -> str:
         """AI 분석 요약 텍스트를 생성한다."""
         lines = [f"■ 공고: {bid.bid_notice_nm}"]
@@ -480,8 +479,14 @@ class BidFeasibilityIntegrator:
     async def run(self, bid, req, base, warnings: list) -> None:
         """base 응답(G2BBidAnalyzeResponse)에 정밀 섹션을 채운다(in-place)."""
         from app.schemas.g2b_bid import (
-            BidSpecEstimate, BidCostBreakdown, BidQtoItem, BidZoning,
-            BidPermitCheck, BidEsg, BidSensitivity, BidMarketFeed,
+            BidCostBreakdown,
+            BidEsg,
+            BidMarketFeed,
+            BidPermitCheck,
+            BidQtoItem,
+            BidSensitivity,
+            BidSpecEstimate,
+            BidZoning,
             G2BAwardStatResponse,
         )
 
@@ -497,9 +502,9 @@ class BidFeasibilityIntegrator:
         # [1~3] QTO → 원가 → 원가MC
         if is_residential and spec["total_gfa_sqm"] > 0:
             try:
-                from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
-                from app.services.cost.origin_cost_calculator import OriginCostCalculator
                 from app.services.cost.cost_monte_carlo import CostMonteCarlo
+                from app.services.cost.origin_cost_calculator import OriginCostCalculator
+                from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
 
                 items = StandardQuantityEstimator().estimate(
                     building_type=btype,

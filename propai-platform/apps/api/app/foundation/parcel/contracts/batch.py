@@ -11,14 +11,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Optional
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class ItemStatus(str, Enum):
+class ItemStatus(StrEnum):
     """필지 한 건의 해석 상태."""
 
     CONFIRMED = "confirmed"      # PNU·면적 등 핵심 정보 확정
@@ -27,14 +27,14 @@ class ItemStatus(str, Enum):
     ERROR = "error"             # 처리 중 예외
 
 
-class Completeness(str, Enum):
+class Completeness(StrEnum):
     """배치 전체의 완결성. COMPLETE 이전에는 최종 분석을 하면 안 된다(INV-M4)."""
 
     PARTIAL = "partial"
     COMPLETE = "complete"
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     """배치 잡의 상태기계."""
 
     QUEUED = "queued"
@@ -57,16 +57,16 @@ class BatchInput(BaseModel):
     - center_address: 중심 주소(지오코딩) + radius_m 반경 → 사각 영역 필지. (실용 구역 선택)
     """
 
-    pnu_list: Optional[list[str]] = None
-    polygon: Optional[dict[str, Any]] = None
-    bbox: Optional[tuple[float, float, float, float]] = None
-    admin_code: Optional[str] = None
-    district_code: Optional[str] = None
-    center_address: Optional[str] = None
-    radius_m: Optional[int] = None  # center_address 보조(기본 500m) — 단독 모드 아님
+    pnu_list: list[str] | None = None
+    polygon: dict[str, Any] | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    admin_code: str | None = None
+    district_code: str | None = None
+    center_address: str | None = None
+    radius_m: int | None = None  # center_address 보조(기본 500m) — 단독 모드 아님
 
     @model_validator(mode="after")
-    def _exactly_one(self) -> "BatchInput":
+    def _exactly_one(self) -> BatchInput:
         """택1 검증 — 입력 모드 중 정확히 하나만 지정(radius_m은 center_address 보조라 제외)."""
         provided = [
             f for f in ("pnu_list", "polygon", "bbox", "admin_code", "district_code", "center_address")
@@ -104,10 +104,10 @@ class BatchItemResult(BaseModel):
 
     pnu: str
     status: ItemStatus
-    address: Optional[str] = None
-    area_sqm: Optional[float] = None
-    record_ref: Optional[dict[str, Any]] = None   # 원천 레코드/메타 참조
-    reason: Optional[str] = None                   # 미확정/에러 사유(정직 표기)
+    address: str | None = None
+    area_sqm: float | None = None
+    record_ref: dict[str, Any] | None = None   # 원천 레코드/메타 참조
+    reason: str | None = None                   # 미확정/에러 사유(정직 표기)
 
 
 class BatchCounts(BaseModel):
@@ -120,7 +120,7 @@ class BatchCounts(BaseModel):
     error: int = 0
 
     @classmethod
-    def from_items(cls, items: list[BatchItemResult]) -> "BatchCounts":
+    def from_items(cls, items: list[BatchItemResult]) -> BatchCounts:
         """필지 결과 목록에서 카운트를 계산한다."""
         c = cls(total=len(items))
         for it in items:
@@ -142,9 +142,9 @@ class BatchAggregate(BaseModel):
     (부분 집계의 오해를 막기 위한 보류 신호).
     """
 
-    union_boundary: Optional[dict[str, Any]] = None   # GeoJSON
-    total_area_sqm: Optional[float] = None
-    jurisdiction_flags: Optional[dict[str, Any]] = None
+    union_boundary: dict[str, Any] | None = None   # GeoJSON
+    total_area_sqm: float | None = None
+    jurisdiction_flags: dict[str, Any] | None = None
     held: bool = False
 
 
@@ -157,7 +157,7 @@ class ParcelBatchJob(BaseModel):
     region_input: dict[str, Any]
     completeness: Completeness = Completeness.PARTIAL
     counts: BatchCounts = Field(default_factory=BatchCounts)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class BatchResult(BaseModel):
@@ -173,7 +173,7 @@ class BatchResult(BaseModel):
     outliers: list[dict[str, Any]] = Field(default_factory=list)  # 신뢰루프: 면적 이상치 필지(검토 권고)
     fee_per_unit_krw: float = 0.0       # 필지당 단가(관리자 설정·미설정 0=무료)
     estimated_fee_krw: float = 0.0      # 예상 사용료 = 단가 × 확정 필지수(0=무료)
-    region_geo: Optional[dict[str, Any]] = None  # 지도 미리보기용 {center,bbox,radius_m}
+    region_geo: dict[str, Any] | None = None  # 지도 미리보기용 {center,bbox,radius_m}
     page: int = 1
     size: int = 500
     has_next: bool = False

@@ -112,10 +112,7 @@ def _design_height_m(design_params: dict | None) -> tuple[float, int]:
     floors = max(1, floors)
     fh = float(dp.get("floor_height_m") or DEFAULT_FLOOR_HEIGHT_M)
     height = dp.get("height_m")
-    if height:
-        h = float(height)
-    else:
-        h = floors * fh
+    h = float(height) if height else floors * fh
     return round(h, 2), floors
 
 

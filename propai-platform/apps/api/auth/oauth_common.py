@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -26,7 +26,7 @@ from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.user import User
 
 logger = structlog.get_logger(__name__)
-UTC = timezone.utc
+UTC = UTC
 
 # ★신규 소셜가입 기본 role — 일반 이메일 가입(/register)과 동일하게 통일.
 #   /register는 UserRole.ADMIN.value('admin')을 부여하므로 소셜도 동일하게 맞춘다.

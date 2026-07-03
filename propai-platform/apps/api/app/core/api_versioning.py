@@ -3,7 +3,6 @@
 /api/latest → /api/v2 308 Permanent Redirect 를 처리한다.
 """
 
-from typing import Optional
 
 
 class APIVersionRouter:
@@ -15,7 +14,7 @@ class APIVersionRouter:
     LATEST_VERSION = "v2"
     REDIRECT_STATUS = 308  # Permanent Redirect
 
-    def __init__(self, latest_version: Optional[str] = None):
+    def __init__(self, latest_version: str | None = None):
         self._latest = latest_version or self.LATEST_VERSION
         self._version_map: dict[str, str] = {
             "v1": "/api/v1",
@@ -27,7 +26,7 @@ class APIVersionRouter:
     def latest_version(self) -> str:
         return self._latest
 
-    def resolve_path(self, path: str) -> tuple[Optional[str], bool]:
+    def resolve_path(self, path: str) -> tuple[str | None, bool]:
         """경로를 해석하여 (리다이렉트 대상, 리다이렉트 필요 여부)를 반환.
 
         /api/latest/xxx → (/api/v2/xxx, True)

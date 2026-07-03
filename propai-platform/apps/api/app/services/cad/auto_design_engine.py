@@ -1007,7 +1007,7 @@ class AutoDesignEngineService:
             })
 
         # 복도 (중앙 수평선)
-        corr_w = core_layout["corridor_width_m"]
+        core_layout["corridor_width_m"]
         corr_y = oy + (bd * scale) / 2
         p_cl = {"id": "pt-corr-l", "x": ox, "y": corr_y}
         p_cr = {"id": "pt-corr-r", "x": ox + bw * scale, "y": corr_y}

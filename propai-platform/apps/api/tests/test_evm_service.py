@@ -1,7 +1,8 @@
 """EVM 공정 관리 테스트 (PMBOK 7th)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

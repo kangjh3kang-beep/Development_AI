@@ -6,7 +6,8 @@ molit_client 68-254 를 직접 실행하여 커버한다.
 
 import os
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -213,7 +214,7 @@ class TestJeonseRiskMortgage:
 class TestOrchestratorStepParcel:
     @pytest.mark.asyncio
     async def test_step_parcel_analysis(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
@@ -250,8 +251,9 @@ class TestOrchestratorStepParcel:
 class TestOrchestratorStepRegulation:
     @pytest.mark.asyncio
     async def test_step_regulation(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
@@ -283,8 +285,9 @@ class TestOrchestratorStepRegulation:
 class TestOrchestratorStepDesign:
     @pytest.mark.asyncio
     async def test_step_design(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
@@ -319,8 +322,9 @@ class TestOrchestratorStepDesign:
 class TestOrchestratorStepAVM:
     @pytest.mark.asyncio
     async def test_step_avm(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
@@ -356,8 +360,9 @@ class TestOrchestratorStepAVM:
 class TestOrchestratorStepFeasibility:
     @pytest.mark.asyncio
     async def test_step_feasibility(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)
@@ -399,8 +404,9 @@ class TestOrchestratorStepFeasibility:
 class TestOrchestratorStepReport:
     @pytest.mark.asyncio
     async def test_step_report(self):
-        from apps.api.agents.propai_orchestrator import PropAIOrchestrator, OrchestratorState
         from packages.schemas.enums import AgentStepName
+
+        from apps.api.agents.propai_orchestrator import OrchestratorState, PropAIOrchestrator
 
         mock_db = _mock_db()
         orch = PropAIOrchestrator.__new__(PropAIOrchestrator)

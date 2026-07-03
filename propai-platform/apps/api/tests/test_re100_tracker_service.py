@@ -12,9 +12,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.re100_tracker_service import (
     DEFAULT_KTS_PRICE,
-    KR_GRID_EF,
-    PROCUREMENT_COSTS,
-    RE100_TARGETS,
     Re100TrackerService,
 )
 

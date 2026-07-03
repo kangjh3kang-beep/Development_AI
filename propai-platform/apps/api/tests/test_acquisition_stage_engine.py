@@ -1,6 +1,7 @@
 """취득단계 세금 엔진 테스트 — A01~A10."""
 
 import pytest
+
 from app.services.tax.acquisition_stage_engine import (
     calculate_a01_acquisition_tax,
     calculate_a04_stamp_tax,

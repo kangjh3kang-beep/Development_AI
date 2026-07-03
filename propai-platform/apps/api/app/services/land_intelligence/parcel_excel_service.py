@@ -232,8 +232,9 @@ async def _llm_detect_columns(headers: list[str], sample_rows: list[dict]) -> di
     if cache_key in _COL_CACHE:
         return dict(_COL_CACHE[cache_key])
     try:
-        from app.services.ai.llm_provider import get_llm
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.services.ai.llm_provider import get_llm
     except Exception:  # noqa: BLE001
         return {}
     try:

@@ -9,6 +9,7 @@
 비구독(free/guest)은 무료횟수 소진 후 과금 시 ×1.5(+50%). 상위 등급일수록 추가 단가가 저렴.
 """
 
+import contextlib
 import time
 from typing import Any
 
@@ -88,10 +89,8 @@ def apply_config(override: dict[str, Any]) -> None:
     if not isinstance(override, dict):
         return
     if "budget_ratio" in override:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             _CONFIG["budget_ratio"] = float(override["budget_ratio"])
-        except (ValueError, TypeError):
-            pass
     for tier, vals in (override.get("tiers") or {}).items():
         if not isinstance(vals, dict):
             continue
@@ -122,10 +121,8 @@ def apply_config(override: dict[str, Any]) -> None:
     # 숫자로 변환 가능할 때만, 음수는 0으로 방지(허위 마이너스 차감 차단).
     am = _CONFIG["service_fees"].setdefault("analysis_modules", {})
     for k, v in (sf.get("analysis_modules") or {}).items():
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             am[k] = max(0.0, float(v))
-        except (ValueError, TypeError):
-            pass
     ft = override.get("free_tier") or {}
     for sub in ("analysis_fee", "analysis_quota"):
         for t, v in (ft.get(sub) or {}).items():

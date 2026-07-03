@@ -16,8 +16,7 @@
 3. 건폐율 초과 → 건축면적 축소
 """
 
-from dataclasses import dataclass, field
-from uuid import UUID
+from dataclasses import dataclass
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession

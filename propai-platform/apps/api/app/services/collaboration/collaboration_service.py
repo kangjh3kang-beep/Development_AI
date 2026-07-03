@@ -5,8 +5,9 @@ DB CRUD(insert/query)는 라우터 의존성(후속 SP2-3)이 담당하고, 본 
 접근 판정도 member_allows로 분리해 단위검증 가능하게 한다.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any
 
 from app.services.collaboration.collaboration_rules import (
     filter_scope_categories,
@@ -25,7 +26,7 @@ def build_invite_fields(
     project_role: str,
     requested_categories,
     allowed_categories,
-    invited_by: Optional[str],
+    invited_by: str | None,
     now: datetime,
     token_factory: Callable[[], str],
     ttl_days: int = DEFAULT_INVITE_TTL_DAYS,

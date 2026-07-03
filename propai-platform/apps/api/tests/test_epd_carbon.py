@@ -1,12 +1,13 @@
 """EPD 탄소발자국 추적 테스트 (ISO 21930)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.esg.epd_carbon_service import EPDCarbonService, EPD_KOREA_DATABASE
+from app.services.esg.epd_carbon_service import EPD_KOREA_DATABASE, EPDCarbonService
 
 
 class TestEPDDatabase:

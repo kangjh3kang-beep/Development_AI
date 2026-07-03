@@ -1,5 +1,4 @@
 """인허가 서비스."""
-from typing import Dict, List
 
 
 PERMIT_REQUIREMENTS = {

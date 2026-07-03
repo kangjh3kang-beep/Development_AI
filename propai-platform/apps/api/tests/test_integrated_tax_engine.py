@@ -1,6 +1,5 @@
 """통합 세금 엔진 테스트 — 38종 일괄 + 개발유형별 코드."""
 
-import pytest
 from app.services.tax.integrated_tax_engine import (
     calculate_all_taxes,
     get_applicable_tax_codes,

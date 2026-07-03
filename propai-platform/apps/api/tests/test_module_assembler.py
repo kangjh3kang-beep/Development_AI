@@ -1,11 +1,14 @@
 """모듈 조립기 + FeasibilityServiceV2 테스트."""
 
 import pytest
-from app.services.feasibility.modules.base_module import ModuleInput, ModuleOutput, BaseModule
-from app.services.feasibility.modules.module_assembler import (
-    get_module, list_modules, ALL_MODULE_CODES,
-)
+
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.feasibility.modules.base_module import BaseModule, ModuleInput, ModuleOutput
+from app.services.feasibility.modules.module_assembler import (
+    ALL_MODULE_CODES,
+    get_module,
+    list_modules,
+)
 
 
 def _make_input(dev_type: str = "M06", **kwargs) -> ModuleInput:

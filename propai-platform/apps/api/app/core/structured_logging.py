@@ -5,10 +5,8 @@ JSON 포맷으로 request_id, tenant_id를 바인딩하며,
 """
 
 import json
-import time
 import uuid
-from datetime import datetime, timezone, UTC
-from typing import Optional
+from datetime import UTC, datetime
 
 
 class StructuredLogger:
@@ -51,26 +49,26 @@ class StructuredLogger:
         }
         return entry
 
-    def _log(self, level: str, message: str, **extra) -> Optional[dict]:
+    def _log(self, level: str, message: str, **extra) -> dict | None:
         if not self._should_log(level):
             return None
         entry = self._make_entry(level, message, **extra)
         self._entries.append(entry)
         return entry
 
-    def debug(self, message: str, **extra) -> Optional[dict]:
+    def debug(self, message: str, **extra) -> dict | None:
         return self._log("DEBUG", message, **extra)
 
-    def info(self, message: str, **extra) -> Optional[dict]:
+    def info(self, message: str, **extra) -> dict | None:
         return self._log("INFO", message, **extra)
 
-    def warning(self, message: str, **extra) -> Optional[dict]:
+    def warning(self, message: str, **extra) -> dict | None:
         return self._log("WARNING", message, **extra)
 
-    def error(self, message: str, **extra) -> Optional[dict]:
+    def error(self, message: str, **extra) -> dict | None:
         return self._log("ERROR", message, **extra)
 
-    def critical(self, message: str, **extra) -> Optional[dict]:
+    def critical(self, message: str, **extra) -> dict | None:
         return self._log("CRITICAL", message, **extra)
 
     def log_request(self, method: str, path: str, status_code: int,

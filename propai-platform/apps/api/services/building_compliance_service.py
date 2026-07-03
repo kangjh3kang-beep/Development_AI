@@ -232,8 +232,9 @@ class BuildingComplianceService:
         프로젝트에 zone_type, max_bcr, max_far, max_height가 저장되어 있으면
         해당 값을 사용하고, 없으면 용도지역 기본값 → 최종 폴백 순서로 결정한다.
         """
-        from apps.api.database.models.project import Project
         from sqlalchemy import select
+
+        from apps.api.database.models.project import Project
 
         fallback = LegalLimits(
             building_coverage_ratio=0.60,
@@ -290,8 +291,9 @@ class BuildingComplianceService:
 
     async def _get_site_area(self, project_id: str) -> float:
         """프로젝트 DB에서 대지면적을 조회한다. 없으면 500.0m2 폴백."""
-        from apps.api.database.models.project import Project
         from sqlalchemy import select
+
+        from apps.api.database.models.project import Project
 
         try:
             stmt = select(Project.total_area_sqm).where(Project.id == project_id)

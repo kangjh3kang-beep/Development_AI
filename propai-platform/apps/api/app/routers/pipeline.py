@@ -8,18 +8,18 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from app.core.billing_deps import enforce_llm_quota
 from app.services.ledger import analysis_ledger_service as ledger
 from app.services.pipeline.project_pipeline import (
-    ProjectPipeline,
     PipelineStage,
     PipelineStatus,
+    ProjectPipeline,
 )
 from app.services.report.pipeline_report_service import (
     PipelineReport,
     PipelineReportService,
 )
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/api/v2/pipeline", tags=["pipeline"])
 logger = structlog.get_logger(__name__)
@@ -382,7 +382,7 @@ async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float 
     try:
         results = await asyncio.wait_for(
             asyncio.gather(*[j for _, j in jobs], return_exceptions=True), timeout=timeout)
-        for (stg, _), r in zip(jobs, results):
+        for (stg, _), r in zip(jobs, results, strict=False):
             if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
                 out[stg] = r["sections"]
     except TimeoutError:
@@ -418,8 +418,9 @@ async def _autoload_ledger(stage: str, data: dict[str, Any], sections: dict[str,
             from app.core.request_context import get_current_user_id
             uid = get_current_user_id()
             if uid:
-                from app.core.database import async_session_factory
                 from sqlalchemy import text
+
+                from app.core.database import async_session_factory
                 async with async_session_factory() as db:
                     row = (await db.execute(
                         text("SELECT tenant_id FROM public.users WHERE id = :uid"),
@@ -560,6 +561,7 @@ def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
 async def generate_report_pdf(req: ReportPdfRequest):
     """통합 분석 보고서를 PDF로 생성. result가 있으면 그것으로(즉시), 없으면 파이프라인 실행."""
     from fastapi.responses import Response
+
     from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
 
     if req.result:
@@ -618,6 +620,7 @@ async def generate_report_pdf_from_ledger(
     빈 PDF 대신 안내 JSON을 반환한다.
     """
     from fastapi.responses import JSONResponse, Response
+
     from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
 
     if not (req.pnu or req.address or req.project_id):

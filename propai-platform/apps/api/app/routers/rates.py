@@ -5,8 +5,6 @@ prefix: /api/v1/rates
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter
 
 from app.services.cost.legal_rate_service import LegalRateService
@@ -22,7 +20,7 @@ async def get_current_rates():
 
 
 @router.get("/history")
-async def get_rate_history(rate_code: Optional[str] = None):
+async def get_rate_history(rate_code: str | None = None):
     """요율 변경 이력."""
     return rate_service.get_rate_history(rate_code)
 

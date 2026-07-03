@@ -1,9 +1,10 @@
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import List, Dict
-from app.services.avm.avm_service import AVMService
-from app.services.auth.auth_service import get_current_user
+
 from app.models.auth import User
+from app.services.auth.auth_service import get_current_user
+from app.services.avm.avm_service import AVMService
 
 router = APIRouter(prefix="/api/v1/avm", tags=["AVM 시세 산출"])
 avm_service = AVMService()

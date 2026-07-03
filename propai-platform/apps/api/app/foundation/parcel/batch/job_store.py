@@ -14,7 +14,7 @@ import hashlib
 import json
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 from app.foundation.parcel.batch.job_state import JobRecord
 from app.foundation.parcel.contracts.batch import (
@@ -41,7 +41,7 @@ class JobStore(ABC):
     """배치 잡 저장소 인터페이스."""
 
     @abstractmethod
-    async def get(self, job_id: str) -> Optional[JobRecord]:
+    async def get(self, job_id: str) -> JobRecord | None:
         """잡 레코드 조회."""
 
     @abstractmethod
@@ -49,7 +49,7 @@ class JobStore(ABC):
         """잡 레코드 저장(생성/갱신)."""
 
     @abstractmethod
-    async def find_by_idempotency(self, key: str) -> Optional[JobRecord]:
+    async def find_by_idempotency(self, key: str) -> JobRecord | None:
         """멱등키로 기존 잡 조회."""
 
     @abstractmethod
@@ -68,13 +68,13 @@ class InMemoryJobStore(JobStore):
         self._jobs: dict[str, JobRecord] = {}
         self._idem: dict[str, str] = {}   # 멱등키 → job_id
 
-    async def get(self, job_id: str) -> Optional[JobRecord]:
+    async def get(self, job_id: str) -> JobRecord | None:
         return self._jobs.get(job_id)
 
     async def save(self, record: JobRecord) -> None:
         self._jobs[record.job.id] = record
 
-    async def find_by_idempotency(self, key: str) -> Optional[JobRecord]:
+    async def find_by_idempotency(self, key: str) -> JobRecord | None:
         jid = self._idem.get(key)
         return self._jobs.get(jid) if jid else None
 
@@ -107,7 +107,7 @@ class DbJobStore(JobStore):
         self._session_factory = AsyncSessionLocal
         return self._session_factory
 
-    async def get(self, job_id: str) -> Optional[JobRecord]:
+    async def get(self, job_id: str) -> JobRecord | None:
         from sqlalchemy import select
 
         from app.models.parcel_batch import (
@@ -220,7 +220,7 @@ class DbJobStore(JobStore):
             ))
             await session.commit()
 
-    async def find_by_idempotency(self, key: str) -> Optional[JobRecord]:
+    async def find_by_idempotency(self, key: str) -> JobRecord | None:
         from sqlalchemy import select
 
         from app.models.parcel_batch import ParcelBatchJobRow

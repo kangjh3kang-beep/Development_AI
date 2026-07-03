@@ -95,8 +95,8 @@ class TestOrdinanceLimitsAdapter:
 
     async def test_ordinance_below_statutory_applied(self, monkeypatch):
         """조례 실효값이 엔진 법정 미만 → used=True·정규화 주입."""
-        from apps.api.routers import drawing
         from app.services.land_intelligence import ordinance_service
+        from apps.api.routers import drawing
 
         async def _fake(self, address, zone_type):  # noqa: ANN001
             return {"effective_bcr": 50.0, "effective_far": 170.0, "source": "지자체 조례",
@@ -111,8 +111,8 @@ class TestOrdinanceLimitsAdapter:
 
     async def test_ordinance_not_constraining_used_false(self, monkeypatch):
         """조례 실효값이 엔진 법정 이상(NATIONAL 250 ≥ 엔진 200) → 미적용(정직 — 호도 방지)."""
-        from apps.api.routers import drawing
         from app.services.land_intelligence import ordinance_service
+        from apps.api.routers import drawing
 
         async def _fake(self, address, zone_type):  # noqa: ANN001
             return {"effective_bcr": 60.0, "effective_far": 250.0, "source": "지자체 조례",
@@ -125,8 +125,8 @@ class TestOrdinanceLimitsAdapter:
 
     async def test_lookup_exception_honest_no_secret_leak(self, monkeypatch):
         """조회 예외 → 500 아닌 used=False + 일반화 사유(원시 예외·DSN 미노출, 로그에만)."""
-        from apps.api.routers import drawing
         from app.services.land_intelligence import ordinance_service
+        from apps.api.routers import drawing
 
         async def _boom(self, address, zone_type):  # noqa: ANN001
             raise RuntimeError("postgres://secret@host/db connection refused")
@@ -258,8 +258,8 @@ class TestOrdinanceZoneMapping:
 
     async def test_korean_zone_type_flows_to_ordinance_lookup(self, monkeypatch):
         """한글 용도지역명 입력도 조례 조회 경로에서 누락되지 않는다."""
-        from apps.api.routers import drawing
         from app.services.land_intelligence import ordinance_service
+        from apps.api.routers import drawing
 
         seen: dict[str, str] = {}
 

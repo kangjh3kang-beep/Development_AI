@@ -7,7 +7,6 @@ app/services/drawing, app/services/cad 서비스를 활용한다.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -40,9 +39,9 @@ _PRIORITY_UNIT_TYPES: dict[str, list[str]] = {
 # ── 서비스 초기화 (lazy import로 의존성 누락 시 graceful 처리) ──
 
 try:
-    from app.services.drawing.svg_drawing_service import SVGDrawingService
     from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
     from app.services.cad.parametric_cad_service import ParametricCADService
+    from app.services.drawing.svg_drawing_service import SVGDrawingService
 
     svg_service = SVGDrawingService()
     auto_design_engine = AutoDesignEngineService()
@@ -76,7 +75,7 @@ class AnnotatedSitePlanRequest(BaseModel):
     building_depth_m: float = Field(..., gt=0)
     setback_m: float = Field(3.0, ge=0)
     findings: list[dict] = Field(default_factory=list, description="design_audit findings")
-    verdict: Optional[str] = Field(
+    verdict: str | None = Field(
         None, description="종합판정(적합/조건부적합/부적합) — 있으면 범례에 표기",
     )
 
@@ -112,7 +111,7 @@ class ExportIfcRequest(BaseModel):
     floor_height_m: float = Field(3.0, gt=0)
     project_name: str = Field("PropAI Project")
     # 실내 요소(옵셔널) — 있으면 코어/복도/창 압출. 미제공 시 매스 셸만(하위호환).
-    core_positions: Optional[list[dict]] = Field(None, description="코어 중심 [{x,y}]")
+    core_positions: list[dict] | None = Field(None, description="코어 중심 [{x,y}]")
     core_size_m: float = Field(5.0, ge=0)
     corridor_width_m: float = Field(0.0, ge=0)
     windows_per_side: int = Field(0, ge=0)
@@ -131,27 +130,27 @@ class DesignAlternativesRequest(BaseModel):
     count: int = Field(3, ge=1, le=5, description="대안 수")
     daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용")
     # W-A ④: 목표 설계강도(%) — 서버에서 법정 한도로 클램프 후 min(법정, 목표) 적용
-    target_far_percent: Optional[float] = Field(
+    target_far_percent: float | None = Field(
         None, gt=0, description="목표 용적률(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
-    target_bcr_percent: Optional[float] = Field(
+    target_bcr_percent: float | None = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
-    effective_far_pct: Optional[float] = Field(
+    effective_far_pct: float | None = Field(
         None, gt=0, description="부지분석/통합분석 실효 용적률(%) — min(법정, 실효, 목표) 적용",
     )
-    effective_bcr_pct: Optional[float] = Field(
+    effective_bcr_pct: float | None = Field(
         None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%) — min(법정, 실효, 목표) 적용",
     )
-    ordinance_far_percent: Optional[float] = Field(
+    ordinance_far_percent: float | None = Field(
         None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
     )
-    ordinance_bcr_percent: Optional[float] = Field(
+    ordinance_bcr_percent: float | None = Field(
         None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
     )
     # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
     # A 대안이 이 값을 따르고(B=tower·C=lshape는 다양화 고정), 미정의 값은 엔진이 auto로 폴백.
-    massing_kind: Optional[str] = Field(
+    massing_kind: str | None = Field(
         None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
     )
     # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
@@ -164,7 +163,7 @@ class DesignAlternativesRequest(BaseModel):
     use_ordinance: bool = Field(
         False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
     )
-    address: Optional[str] = Field(
+    address: str | None = Field(
         None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
     )
 
@@ -173,7 +172,7 @@ class AutoDesignRequest(BaseModel):
     """단일 AI 자동 설계 생성 요청 (CAD Phase 2)."""
 
     site_area_sqm: float = Field(..., gt=0, description="대지면적 (㎡)")
-    site_shape: Optional[list[dict[str, float]]] = Field(None, description="대지 형상 좌표 [{x,y}]")
+    site_shape: list[dict[str, float]] | None = Field(None, description="대지 형상 좌표 [{x,y}]")
     site_width_m: float = Field(0.0, ge=0, description="대지 폭 (m, 0이면 자동)")
     site_depth_m: float = Field(0.0, ge=0, description="대지 깊이 (m, 0이면 자동)")
     zone_code: str = Field("2R", description="용도지역 코드 (1R/2R/3R/GC/NC/QI/QR)")
@@ -186,27 +185,27 @@ class AutoDesignRequest(BaseModel):
     )
     daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용 — 상부 층 북측 자동 후퇴")
     # W-A ④: 목표 설계강도(%) — 서버에서 법정 한도로 클램프 후 min(법정, 목표) 적용
-    target_far_percent: Optional[float] = Field(
+    target_far_percent: float | None = Field(
         None, gt=0, description="목표 용적률(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
-    target_bcr_percent: Optional[float] = Field(
+    target_bcr_percent: float | None = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
-    effective_far_pct: Optional[float] = Field(
+    effective_far_pct: float | None = Field(
         None, gt=0, description="부지분석/통합분석 실효 용적률(%) — min(법정, 실효, 목표) 적용",
     )
-    effective_bcr_pct: Optional[float] = Field(
+    effective_bcr_pct: float | None = Field(
         None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%) — min(법정, 실효, 목표) 적용",
     )
-    ordinance_far_percent: Optional[float] = Field(
+    ordinance_far_percent: float | None = Field(
         None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
     )
-    ordinance_bcr_percent: Optional[float] = Field(
+    ordinance_bcr_percent: float | None = Field(
         None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
     )
     # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트로 매스 재산출, 미정의 값은 엔진이 auto로 폴백.
-    massing_kind: Optional[str] = Field(
+    massing_kind: str | None = Field(
         None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
     )
     # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
@@ -219,7 +218,7 @@ class AutoDesignRequest(BaseModel):
     use_ordinance: bool = Field(
         False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
     )
-    address: Optional[str] = Field(
+    address: str | None = Field(
         None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
     )
 
@@ -228,8 +227,8 @@ class ParseIntentRequest(BaseModel):
     """자연어 설계 의도 파싱 요청 (CAD Phase 2)."""
 
     text: str = Field(..., description="자연어 설계 의도 (예: '원룸 위주 50세대 수익 최대')")
-    site_area_sqm: Optional[float] = Field(None, gt=0, description="대지면적 (㎡, 선택)")
-    zone_code: Optional[str] = Field(None, description="용도지역 코드 (선택)")
+    site_area_sqm: float | None = Field(None, gt=0, description="대지면적 (㎡, 선택)")
+    zone_code: str | None = Field(None, description="용도지역 코드 (선택)")
 
 
 class CalculateAreaRequest(BaseModel):
@@ -251,9 +250,9 @@ def _check_services() -> None:
 
 def _clamped_targets(
     zone_code: str,
-    target_far_percent: Optional[float],
-    target_bcr_percent: Optional[float],
-) -> tuple[Optional[float], Optional[float]]:
+    target_far_percent: float | None,
+    target_bcr_percent: float | None,
+) -> tuple[float | None, float | None]:
     """목표 FAR/BCR(%)을 해당 용도지역 법정 한도로 클램프한다(W-A ④).
 
     법정 초과 목표는 법정값으로 내려 잡는다(가짜 한도 상향 금지). None은 그대로
@@ -276,11 +275,11 @@ def _clamped_targets(
 
 def _direct_effective_limits(
     *,
-    effective_far_pct: Optional[float] = None,
-    effective_bcr_pct: Optional[float] = None,
-    ordinance_far_percent: Optional[float] = None,
-    ordinance_bcr_percent: Optional[float] = None,
-) -> tuple[Optional[float], Optional[float]]:
+    effective_far_pct: float | None = None,
+    effective_bcr_pct: float | None = None,
+    ordinance_far_percent: float | None = None,
+    ordinance_bcr_percent: float | None = None,
+) -> tuple[float | None, float | None]:
     """요청에 직접 포함된 실효/조례 한도를 SiteInput ordinance_*로 변환한다.
 
     설계 커널은 이미 min(법정, ordinance_*, target_*)를 적용한다. 따라서 부지분석 SSOT의
@@ -298,7 +297,7 @@ async def _reference_hint(
     zone_code: str,
     building_use: str,
     unit_types: list[str],
-) -> Optional[dict]:
+) -> dict | None:
     """§4-B: use_references=True일 때만 자체 DB 세션으로 유사사례 기하 힌트를 도출한다.
 
     반환: None(opt-out — 세션 미개방) 또는 {used, hint, ref, note, candidates}.
@@ -309,8 +308,8 @@ async def _reference_hint(
     if not use_references:
         return None
     try:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.cad import design_reference_service as ref_svc
+        from apps.api.database.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
             return await ref_svc.derive_reference_mass_hint(
@@ -324,14 +323,14 @@ async def _reference_hint(
                 "note": f"참조 라이브러리 조회 실패: {exc}", "candidates": 0}
 
 
-def _reference_response_block(ref_result: Optional[dict]) -> Optional[dict]:
+def _reference_response_block(ref_result: dict | None) -> dict | None:
     """응답용 reference 블록 — 내부 주입용 hint는 제외하고 정직 요약만 노출."""
     if ref_result is None:
         return None
     return {k: v for k, v in ref_result.items() if k != "hint"}
 
 
-def _zone_type_for_ordinance(zone_code: str) -> Optional[str]:
+def _zone_type_for_ordinance(zone_code: str) -> str | None:
     """엔진 용도지역 코드(2R 등) → OrdinanceService 한글 zone_type(제2종일반주거지역).
 
     한글 용도지역명이 이미 들어오면 그대로 표준명으로 정규화한다. 미지정 코드는
@@ -356,9 +355,9 @@ def _zone_type_for_ordinance(zone_code: str) -> Optional[str]:
 async def _ordinance_limits(
     use_ordinance: bool,
     *,
-    address: Optional[str],
+    address: str | None,
     zone_code: str,
-) -> Optional[dict]:
+) -> dict | None:
     """§4-B: use_ordinance=True일 때 지자체 도시계획조례 실효 한도를 조회한다.
 
     OrdinanceService(법제처 API→캐시→법정상한)로 effective_bcr/far를 받아 엔진 SiteInput에
@@ -411,7 +410,7 @@ async def _ordinance_limits(
     }
 
 
-def _apply_ordinance(site_input, ord_result: Optional[dict]) -> None:
+def _apply_ordinance(site_input, ord_result: dict | None) -> None:
     """조례 조회 결과를 SiteInput에 주입(값 있을 때만). 엔진이 min(법정,조례,목표) 적용."""
     if not ord_result:
         return
@@ -428,10 +427,10 @@ def _apply_ordinance(site_input, ord_result: Optional[dict]) -> None:
 def _apply_direct_effective_limits(
     site_input,
     *,
-    effective_far_pct: Optional[float] = None,
-    effective_bcr_pct: Optional[float] = None,
-    ordinance_far_percent: Optional[float] = None,
-    ordinance_bcr_percent: Optional[float] = None,
+    effective_far_pct: float | None = None,
+    effective_bcr_pct: float | None = None,
+    ordinance_far_percent: float | None = None,
+    ordinance_bcr_percent: float | None = None,
 ) -> None:
     """부지분석에서 이미 확보한 실효 한도를 조례 조회 없이 설계 커널에 직접 주입한다."""
     far, bcr = _direct_effective_limits(
@@ -927,26 +926,26 @@ class DesignOperateRequest(BaseModel):
     zone_code: str = Field("2R")
     building_use: str = Field("공동주택")
     floor_height_m: float = Field(3.0, gt=1.5, le=6.0)
-    num_floors: Optional[int] = Field(None, ge=1, le=120)
+    num_floors: int | None = Field(None, ge=1, le=120)
     target_unit_types: list[str] = Field(default=["84A"])
-    corridor_width_m: Optional[float] = Field(None)
+    corridor_width_m: float | None = Field(None)
     priority: str = Field("balanced")
-    target_far_percent: Optional[float] = Field(
+    target_far_percent: float | None = Field(
         None, gt=0, description="목표 용적률(%) — 법정/실효 한도와 함께 min 적용",
     )
-    target_bcr_percent: Optional[float] = Field(
+    target_bcr_percent: float | None = Field(
         None, gt=0, le=100, description="목표 건폐율(%) — 법정/실효 한도와 함께 min 적용",
     )
-    effective_far_pct: Optional[float] = Field(
+    effective_far_pct: float | None = Field(
         None, gt=0, description="부지분석/통합분석 실효 용적률(%)",
     )
-    effective_bcr_pct: Optional[float] = Field(
+    effective_bcr_pct: float | None = Field(
         None, gt=0, le=100, description="부지분석/통합분석 실효 건폐율(%)",
     )
-    ordinance_far_percent: Optional[float] = Field(
+    ordinance_far_percent: float | None = Field(
         None, gt=0, description="조례 실효 용적률(%) — effective_far_pct 미제공 시 적용",
     )
-    ordinance_bcr_percent: Optional[float] = Field(
+    ordinance_bcr_percent: float | None = Field(
         None, gt=0, le=100, description="조례 실효 건폐율(%) — effective_bcr_pct 미제공 시 적용",
     )
     setback_m: dict[str, float] = Field(
@@ -961,8 +960,8 @@ async def design_operate(req: DesignOperateRequest):
     자연어/음성 의도 → DesignSpec 결정론 반영 → 커널 생성 → 법규 근거검증.
     화면 수치는 전부 커널 산출값, violations로 법규 위반을 표면화(할루시네이션 차단).
     """
-    from app.services.cad.design_spec import DesignSpec, Setback
     from app.services.cad.design_operator import DesignOperator
+    from app.services.cad.design_spec import DesignSpec, Setback
 
     sb = req.setback_m or {}
     spec = DesignSpec(

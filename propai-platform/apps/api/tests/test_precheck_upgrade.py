@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 from app.services.precheck.precheck_service import (  # noqa: E402
     _build_data_quality,
     _build_evidence,
@@ -29,7 +30,6 @@ from app.services.precheck.precheck_service import (  # noqa: E402
     _extract_sigungu_from_address,
     _legal_limits,
 )
-from app.services.legal.legal_reference_registry import get_legal_refs  # noqa: E402
 from app.services.zoning.legal_zone_limits import applicable_limits_for  # noqa: E402
 
 

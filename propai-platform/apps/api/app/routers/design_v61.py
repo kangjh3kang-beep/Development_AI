@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -27,7 +27,7 @@ svg_service = SVGDrawingService()
 alt_selector = DesignAlternativeSelector()
 
 
-async def _assert_project_owned(project_id: str, db: AsyncSession, user: Any) -> Optional[str]:
+async def _assert_project_owned(project_id: str, db: AsyncSession, user: Any) -> str | None:
     """project_id의 tenant 소유권을 검사한다(v2_feasibility 인증 패턴 준용).
 
     반환:
@@ -75,8 +75,8 @@ class DrawingSetRequest(BaseModel):
     project_name: str = "PropAI"
     # 기준층 평면도를 실제 평형믹스로 분할하기 위한 입력(미전달 시 generic 균등분할)
     building_use: str = "공동주택"
-    unit_types: Optional[list[str]] = None
-    zone_code: Optional[str] = None
+    unit_types: list[str] | None = None
+    zone_code: str | None = None
     # DXF 내보내기 도면종류 — 평면(floor_plan)/상세(detail)/단면(section)/입면(elevation)/배치(site).
     # 미전달 시 floor_plan(기존 동작 보존 — 하위호환).
     drawing_type: str = "floor_plan"
@@ -86,7 +86,7 @@ class CADSaveRequest(BaseModel):
     """도면 저장 요청. 편집된 CAD 좌표(points/lines/surfaces)를 영속화한다."""
     drawing_code: str = "CAD-EDIT"
     drawing_type: str = "평면도"
-    drawing_name: Optional[str] = None
+    drawing_name: str | None = None
     svg_content: str = ""
     layers: list[dict[str, Any]] = Field(default_factory=list)
     vector_data: dict[str, Any] = Field(default_factory=dict)
@@ -97,13 +97,13 @@ class CADSaveRequest(BaseModel):
     # CAD2.0 셰이프(polygon/rect/polyline/line/circle/label) — 전달 시에만
     # design_data_json에 기록(빈 배열 미기록 → 기존 저장 JSON 불변, 하위호환).
     shapes: list[dict[str, Any]] = Field(default_factory=list)
-    floor_count: Optional[int] = None
-    building_height_m: Optional[float] = None
+    floor_count: int | None = None
+    building_height_m: float | None = None
     # 편집본 매스치수(폴리곤 bbox 역산값) — _load_mass_from_design_version이 GLB/해석에 소비.
     # 미전달 시 None(저장 JSON에 미기록 → 로드 시 합리적 기본값 폴백, 하위호환).
-    building_width_m: Optional[float] = None
-    building_depth_m: Optional[float] = None
-    floor_height_m: Optional[float] = None
+    building_width_m: float | None = None
+    building_depth_m: float | None = None
+    floor_height_m: float | None = None
 
 
 class PhotorealRenderRequest(BaseModel):
@@ -254,7 +254,7 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
     }
 
 
-def _parse_mix_param(mix: Optional[str], floor_count: int) -> Optional[list[dict[str, Any]]]:
+def _parse_mix_param(mix: str | None, floor_count: int) -> list[dict[str, Any]] | None:
     """P4 슬라이더 명시 세대믹스 파싱: 'type:area:total' 쉼표구분 → units 리스트.
 
     예) '59A:59:20,84A:84:20' → [{type,area_sqm,count_per_floor,total_count}, ...]
@@ -304,8 +304,8 @@ async def get_drawing_svg(
     parking_count: int = Query(50, ge=0),
     project_name: str = Query("PropAI"),
     building_use: str = Query("공동주택"),
-    unit_types: Optional[str] = Query(None, description="쉼표구분 평형(예: 59A,84A)"),
-    mix: Optional[str] = Query(None, description="세대믹스 명시(P4 슬라이더): 'type:area:total' 쉼표구분(예: 59A:59:20,84A:84:20)"),
+    unit_types: str | None = Query(None, description="쉼표구분 평형(예: 59A,84A)"),
+    mix: str | None = Query(None, description="세대믹스 명시(P4 슬라이더): 'type:area:total' 쉼표구분(예: 59A:59:20,84A:84:20)"),
 ):
     """특정 도면의 SVG를 반환한다.
 
@@ -371,14 +371,14 @@ class UnitMixSimulateRequest(BaseModel):
     building_use: str = "공동주택"
     efficiency_pct: float = Field(75.0, gt=0, le=100)   # 전용률(연면적 대비 분양가능면적)
     mix: list[UnitMixEntry]
-    land_area_sqm: Optional[float] = None
-    sale_price_per_pyeong_won: Optional[float] = None    # 원/평(F1 시세 전달 권장)
-    official_price_per_sqm: Optional[float] = None        # 공시지가 원/㎡(토지비)
+    land_area_sqm: float | None = None
+    sale_price_per_pyeong_won: float | None = None    # 원/평(F1 시세 전달 권장)
+    official_price_per_sqm: float | None = None        # 공시지가 원/㎡(토지비)
     price_multiplier: float = 1.2                          # 감정가 배율
-    build_cost_per_sqm: Optional[int] = None              # 직접공사비 단가 원/㎡(override)
+    build_cost_per_sqm: int | None = None              # 직접공사비 단가 원/㎡(override)
     # 편집본 건축면적(㎡) — 전달 시 폭×깊이 대신 이 값으로 연면적·전용면적 산정(CAD 편집 정합).
     # 미전달 시 building_width_m×building_depth_m(기존 동작, 하위호환).
-    footprint_sqm: Optional[float] = Field(None, gt=0)
+    footprint_sqm: float | None = Field(None, gt=0)
 
 
 def _use_to_building_type(use: str) -> str:

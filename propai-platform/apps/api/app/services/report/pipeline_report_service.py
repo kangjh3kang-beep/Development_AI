@@ -13,7 +13,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ── 보고서 모델 ──────────────────────────────────────────────
 
 

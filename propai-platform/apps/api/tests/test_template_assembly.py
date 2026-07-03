@@ -26,7 +26,6 @@ from app.services.cad.design_reference_geometry import (
 from app.services.cad.design_spec import DesignSpec
 from app.services.cad.template_assembly_service import assemble_from_reference
 
-
 # ── 공용 픽스처 헬퍼 ──
 
 def _rect_payload(w_px: float, d_px: float, scale: float = 10.0,

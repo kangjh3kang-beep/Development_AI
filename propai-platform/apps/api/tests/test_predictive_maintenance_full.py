@@ -13,14 +13,14 @@ PredictiveMaintenanceService의 모든 공개 메서드를 검증한다.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
 
 from apps.api.services.predictive_maintenance_service import (
-    PredictiveMaintenanceService,
     _EQUIPMENT_PROFILES,
+    PredictiveMaintenanceService,
 )
 
 

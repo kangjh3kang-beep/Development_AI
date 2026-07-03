@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -67,7 +67,7 @@ class G2BClient:
         self._service_key = service_key
         self._timeout = timeout
         self._limiter = G2BRateLimiter()
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -85,8 +85,8 @@ class G2BClient:
     async def fetch_bid_notices(
         self,
         bid_type: str = "공사",
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         page: int = 1,
         num_rows: int = 100,
     ) -> list[dict[str, Any]]:
@@ -131,8 +131,8 @@ class G2BClient:
 
     async def fetch_all_bid_notices(
         self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """공사/용역/물품 모든 업무구분의 입찰 공고를 수집한다."""
         tasks = [
@@ -158,8 +158,8 @@ class G2BClient:
     async def fetch_award_results(
         self,
         bid_type: str = "공사",
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         page: int = 1,
         num_rows: int = 100,
     ) -> list[dict[str, Any]]:
@@ -204,8 +204,8 @@ class G2BClient:
 
     async def fetch_all_award_results(
         self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """공사/용역/물품 모든 업무구분의 낙찰 결과를 수집한다."""
         tasks = [

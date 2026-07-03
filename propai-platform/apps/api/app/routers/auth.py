@@ -1,15 +1,21 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.rbac import require_role, Role
+from app.core.rbac import Role, require_role
+from app.models.auth import Organization, User
 from app.services.auth.auth_service import (
-    hash_password, verify_password, create_access_token, create_refresh_token, get_current_user
+    create_access_token,
+    create_refresh_token,
+    get_current_user,
+    hash_password,
+    verify_password,
 )
-from app.models.auth import User, Organization
-from sqlalchemy import select
-import uuid
 
 require_admin = require_role(Role.ADMIN)
 
@@ -65,7 +71,7 @@ class RefreshRequest(BaseModel):
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(req: RefreshRequest):
     """리프레시 토큰으로 새 액세스 토큰 발급."""
-    from jose import jwt, JWTError
+    from jose import JWTError, jwt
     try:
         payload = jwt.decode(req.refresh_token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         sub = payload.get("sub")

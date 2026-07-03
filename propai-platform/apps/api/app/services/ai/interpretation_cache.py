@@ -30,6 +30,7 @@ def cache_key(stage: str, data: dict[str, Any]) -> str:
 async def get_cached(key: str) -> dict[str, Any] | None:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await db.execute(text(_DDL)); await db.commit()
@@ -46,6 +47,7 @@ async def get_cached(key: str) -> dict[str, Any] | None:
 async def put_cached(key: str, stage: str, sections: dict[str, Any]) -> None:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await db.execute(text(_DDL))

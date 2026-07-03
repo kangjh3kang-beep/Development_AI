@@ -1,6 +1,5 @@
 """PostGIS + TimescaleDB 유틸리티."""
 import math
-from typing import Optional
 
 
 class PostGISHelper:

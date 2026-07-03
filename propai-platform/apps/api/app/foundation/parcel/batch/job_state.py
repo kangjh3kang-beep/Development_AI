@@ -7,7 +7,6 @@ JobStore 가 보관하는 단위. 헤더(ParcelBatchJob) + 필지 결과 목록 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from app.foundation.parcel.contracts.batch import (
     BatchAggregate,
@@ -28,7 +27,7 @@ class JobRecord:
     items: list[BatchItemResult] = field(default_factory=list)   # 처리된 필지 결과
     aggregate: BatchAggregate = field(default_factory=BatchAggregate)
     cancelled: bool = False
-    degrade_reason: Optional[str] = None
+    degrade_reason: str | None = None
 
     def processed_pnus(self) -> set[str]:
         """이미 처리된(결과가 있는) PNU 집합."""

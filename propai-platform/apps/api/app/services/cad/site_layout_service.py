@@ -424,7 +424,7 @@ def _principal_angle(poly) -> float:
         xs, ys = mrr.exterior.coords.xy
         # 첫 변 벡터의 각도(장변 근사).
         edges = []
-        pts = list(zip(xs, ys))
+        pts = list(zip(xs, ys, strict=False))
         for i in range(len(pts) - 1):
             dx = pts[i + 1][0] - pts[i][0]
             dy = pts[i + 1][1] - pts[i][1]

@@ -10,7 +10,7 @@ POST /api/v1/growth/events
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -157,7 +157,7 @@ class InsightAckResult(BaseModel):
     status: str
 
 
-async def _require_admin(request: Request, db: "AsyncSession") -> str:
+async def _require_admin(request: Request, db: AsyncSession) -> str:
     """총괄관리자(tier)만 허용. 통과 시 user_id 반환, 아니면 401/403."""
     user_id, _tenant_id = _extract_identity(request)
     if not user_id:
@@ -560,7 +560,7 @@ async def set_growth_setting(
     db: AsyncSession = Depends(get_db),
 ) -> SettingResult:
     """platform_settings 수동 upsert(관리자 전용) + 감사기록."""
-    from datetime import timedelta, timezone
+    from datetime import timedelta
 
     from app.services.growth import schema_guard
 
@@ -568,7 +568,7 @@ async def set_growth_setting(
 
     ttl_expires_at = None
     if body.ttl_minutes:
-        ttl_expires_at = datetime.now(timezone.utc) + timedelta(minutes=body.ttl_minutes)
+        ttl_expires_at = datetime.now(UTC) + timedelta(minutes=body.ttl_minutes)
 
     ok = await schema_guard.set_setting(
         db, body.key, body.value, scope=body.scope,

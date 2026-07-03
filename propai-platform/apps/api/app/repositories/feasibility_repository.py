@@ -5,23 +5,22 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feasibility import (
-    FeasibilityProject,
-    FeasibilityVersion,
-    FeasibilitySummary,
-    RevenueInput,
-    LandCostInput,
     ConstructionCostInput,
+    FeasibilityProject,
+    FeasibilitySummary,
+    FeasibilityVersion,
     FinanceCostInput,
-    OtherCostInput,
-    TaxCostItem,
+    LandCostInput,
     ModuleConfig,
+    OtherCostInput,
+    RevenueInput,
+    TaxCostItem,
 )
 
 

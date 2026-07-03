@@ -16,9 +16,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from apps.api.services.permit_package_service import (
-    PermitPackageService,
-    _PERMIT_CHECKLISTS,
     _PERMIT_STAGES,
+    PermitPackageService,
 )
 
 

@@ -1,6 +1,5 @@
 """세금 AI 서비스 (양도세/취득세/종부세)."""
 
-from typing import Optional
 
 from app.services.data_validation.calculation_metadata import CalculationMetadata
 

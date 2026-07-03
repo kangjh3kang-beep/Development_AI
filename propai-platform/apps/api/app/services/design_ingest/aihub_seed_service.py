@@ -70,7 +70,7 @@ class AihubSeedService:
             )
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             return proc.returncode or 0, (out or b"").decode("utf-8", "replace")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 124, "시간초과(다운로드 지연 — 더 작은 filekey로 분할 권장)"
         except Exception as e:  # noqa: BLE001
             return 1, f"{type(e).__name__}: {str(e)[:160]}"
@@ -142,7 +142,7 @@ class AihubSeedService:
             for p in sorted(tmp.rglob("*")):
                 if not p.is_file() or p.name == "aihubshell":
                     continue
-                if not p.suffix.lower() in _DRAWING_EXT:
+                if p.suffix.lower() not in _DRAWING_EXT:
                     continue
                 total += 1
                 if ingested >= max_files:

@@ -30,8 +30,8 @@ def _clean_env(monkeypatch):
               "SECRET_STORE_KEY"):
         monkeypatch.delenv(k, raising=False)
     # 루트/코어 config 캐시 초기화(env 변경이 즉시 반영되게).
-    from apps.api.config import get_settings as _root_gs
     from app.core.config import get_settings as _core_gs
+    from apps.api.config import get_settings as _root_gs
     _root_gs.cache_clear()
     _core_gs.cache_clear()
     yield

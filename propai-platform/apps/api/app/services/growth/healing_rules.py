@@ -23,7 +23,7 @@ best-effort: 어떤 예외도 heal 태스크를 죽이지 않는다.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.services.growth import heal_actions
@@ -68,7 +68,7 @@ def _within_cooldown(last_ts: datetime | None, now: datetime, cooldown_min: int)
     if last_ts is None:
         return False
     if last_ts.tzinfo is None:
-        last_ts = last_ts.replace(tzinfo=timezone.utc)
+        last_ts = last_ts.replace(tzinfo=UTC)
     return (now - last_ts) < timedelta(minutes=cooldown_min)
 
 
@@ -260,7 +260,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
     반환: {"candidates", "executed", "blocked", "escalated", "actions": [...]}.
     best-effort: 어떤 예외도 사이클을 죽이지 않는다.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     summary = {"candidates": 0, "executed": 0, "blocked": 0,
                "escalated": 0, "actions": []}
     try:

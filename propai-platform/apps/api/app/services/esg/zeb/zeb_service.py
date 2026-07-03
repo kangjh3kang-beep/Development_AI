@@ -1,6 +1,5 @@
 """ZEB (제로에너지빌딩) 평가 서비스."""
 
-from typing import Dict, List
 
 
 class ZEBService:

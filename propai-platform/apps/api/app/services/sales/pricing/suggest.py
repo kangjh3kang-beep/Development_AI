@@ -10,15 +10,15 @@ from __future__ import annotations
 
 import statistics
 import uuid
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.data_validation.trust import Signal, cross_validate
 from apps.api.database.models.sales.site_org import SalesSite
 from apps.api.integrations.region_codes import pnu_to_bcode
-from app.services.data_validation.trust import Signal, cross_validate
-from datetime import UTC
 
 PYEONG_SQM = 3.305785
 _REF_EXCLUSIVE_SQM = 84.0          # 84타입 전용면적
@@ -180,7 +180,8 @@ def _extract_dong(address: str | None) -> str | None:
 
 async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> dict[str, Any]:
     """MOLIT 실거래 → 전용 평당가(만원). 동/시군구 각각의 중앙값·표본수."""
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from apps.api.integrations.molit_client import MolitClient
     m = MolitClient()
     # 최근 8개월(YYYYMM) 조회 — 표본 확보. MOLIT는 신고지연이 있어 최신월은 적을 수 있어 넉넉히.

@@ -104,10 +104,7 @@ def _has_relaxation_basis(payload: Any) -> bool:
                 if isinstance(v, str) and not v.strip():
                     continue
                 return True
-        for v in payload.values():
-            if _has_relaxation_basis(v):
-                return True
-        return False
+        return any(_has_relaxation_basis(v) for v in payload.values())
     if isinstance(payload, list):
         return any(_has_relaxation_basis(v) for v in payload)
     if isinstance(payload, str):

@@ -1,6 +1,5 @@
 """RE100 재생에너지 추적 서비스."""
 
-from typing import Dict, List, Optional
 
 
 class RE100Service:
@@ -25,7 +24,7 @@ class RE100Service:
         trend = "증가" if len(yearly_data) > 1 and yearly_data[-1].get("renewable_pct", 0) > yearly_data[0].get("renewable_pct", 0) else "안정"
         return {"progress": yearly_data, "trend": trend, "latest_pct": latest}
 
-    def recommend_sources(self, gap_kwh: float, budget: Optional[float] = None) -> list[dict]:
+    def recommend_sources(self, gap_kwh: float, budget: float | None = None) -> list[dict]:
         sources = [
             {"source": "solar", "name": "태양광", "annual_cost_krw": int(gap_kwh * 80), "reliability": 0.85, "feasible": True},
             {"source": "wind", "name": "풍력", "annual_cost_krw": int(gap_kwh * 60), "reliability": 0.75, "feasible": True},

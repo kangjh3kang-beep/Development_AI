@@ -4,9 +4,8 @@ case_summary는 PermitCaseService.summarize 출력을 호출자가 주입하는 
 여기서는 고정 정답값으로 결정론 산술(LLM 0)·정직한 빈결과를 검증한다.
 """
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

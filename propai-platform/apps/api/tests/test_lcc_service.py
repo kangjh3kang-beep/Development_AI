@@ -1,7 +1,8 @@
 """LCC 생애주기비용 분석 테스트 (ISO 15686-5)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

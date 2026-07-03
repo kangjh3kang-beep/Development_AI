@@ -18,8 +18,6 @@ import pytest
 
 from apps.api.services.demand_forecast_service import (
     DemandForecastService,
-    _REGIONAL_BASE_INDEX,
-    _SEASONAL_FACTORS,
     redis_client,
     redis_pool,
 )

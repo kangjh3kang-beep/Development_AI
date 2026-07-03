@@ -1,7 +1,8 @@
 """스마트시티 입지 분석 테스트 (스마트도시법)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

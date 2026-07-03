@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from _fakes import FakeVWorld  # 같은 디렉터리 _fakes 모듈(conftest 가 path 추가)
 
 from app.foundation.parcel.batch.aggregator import Aggregator
 from app.foundation.parcel.batch.batch_service import BatchService
@@ -20,7 +21,6 @@ from app.foundation.parcel.contracts.batch import (
     ItemStatus,
     JobState,
 )
-from _fakes import FakeVWorld  # 같은 디렉터리 _fakes 모듈(conftest 가 path 추가)
 
 
 def _service(fake: FakeVWorld) -> BatchService:
