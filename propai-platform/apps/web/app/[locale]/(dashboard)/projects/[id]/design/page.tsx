@@ -24,6 +24,7 @@ import { Construction } from "lucide-react";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { DesignStudio } from "@/components/design/DesignStudio";
+import { DesignGenPanel } from "@/components/design/DesignGenPanel";
 import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -100,6 +101,15 @@ export default function DesignPage() {
           address={siteAnalysis?.address ?? undefined}
           context={designContext}
         />
+      </motion.div>
+
+      {/* ②-b AI 설계안 생성 — 부지조건→인허가 부합 설계안 Top-N(근거·법령링크). 그동안 미배선 orphan 해소. */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.16 }}
+      >
+        <DesignGenPanel projectId={id} />
       </motion.div>
 
       {/* ③ 설계 스튜디오 — 명시적 "열기" CTA 게이트(WebGL 지연 마운트) */}
