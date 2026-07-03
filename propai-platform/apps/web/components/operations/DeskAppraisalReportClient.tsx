@@ -125,7 +125,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   const [deposit, setDeposit] = useState<number | null>(null);
   const [cap, setCap] = useState<string>("");
   const [res, setRes] = useState<Result | null>(null);
-  const [busy, setBusy] = useState<"" | "run" | "pdf">("");
+  const [busy, setBusy] = useState<"" | "run" | "pdf" | "pptx" | "docx">("");
   const [err, setErr] = useState<string | null>(null);
   const [ranAddr, setRanAddr] = useState("");
   // ★다필지 일괄 추정 결과(필지별 누적) — 단일 res와 별도 보관해 마지막 1건만 남던 부정합 방지.

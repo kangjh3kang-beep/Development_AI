@@ -62,7 +62,7 @@ export function DeskAppraisalModal({
   const [deposit, setDeposit] = useState<string>("");
   const [cap, setCap] = useState<string>("4.5");
   const [res, setRes] = useState<Result | null>(null);
-  const [busy, setBusy] = useState<"" | "run" | "pdf">("");
+  const [busy, setBusy] = useState<"" | "run" | "pdf" | "pptx" | "docx">("");
   const [err, setErr] = useState<string | null>(null);
 
   const body = () => ({
