@@ -9,8 +9,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from pydantic import BaseModel
 from packages.schemas.models import InvestorReportRequest, InvestorReportResponse, InvestorReportVariantResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -25,18 +25,20 @@ router = APIRouter()
 
 class ReportGenerateRequest(BaseModel):
     project_id: str
-    format: str = "pdf"
+    format: str = "pdf"   # pdf | pptx | docx — 통합 보고서 생성엔진이 존중
 
 
-@router.post("/generate", summary="프로젝트 통합 보고서 PDF — 분석 원장 기반(재실행 없음)")
+@router.post("/generate", summary="프로젝트 통합 보고서 — PDF·PPTX·DOCX(분석 원장 기반·재실행 없음)")
 async def generate_report_pdf(
     req: ReportGenerateRequest,
     current: CurrentUser = Depends(get_current_user),
 ) -> Response:
-    """프로젝트의 최신 통합 분석(원장)으로 PDF 생성. 분석 이력이 없으면 안내."""
+    """프로젝트의 최신 통합 분석(원장)으로 보고서 생성. format 으로 PDF/PPTX/DOCX 선택.
+
+    통합 보고서 생성엔진(app.services.report.render): 단일 정본모델(PipelineReport 재사용) →
+    3개 렌더러(같은 데이터·같은 디자인). 신규 엔진 실패 시 라이브 PDF 무회귀를 위해 레거시 PDF 폴백.
+    """
     from app.services.ledger import analysis_ledger_service as ledger
-    from app.services.report.pipeline_report_service import PipelineReportService
-    from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
 
     tid = str(getattr(current, "tenant_id", "") or "") or None
     latest = await ledger.get_latest(analysis_type="pipeline", tenant_id=tid, project_id=req.project_id)
@@ -50,7 +52,7 @@ async def generate_report_pdf(
     stages = result_dict.get("stages")
     if isinstance(stages, list):
         result_dict["stages"] = {s.get("stage"): s for s in stages if isinstance(s, dict) and s.get("stage")}
-    report = PipelineReportService().generate(result_dict)
+
     # AI 상세 해석 포함(캐시 우선, 미스는 생성 — 타임아웃 내 완료분)
     narratives: dict[str, Any] = {}
     try:
@@ -58,9 +60,28 @@ async def generate_report_pdf(
         narratives = await _gather_report_narratives(result_dict)
     except Exception:  # noqa: BLE001
         narratives = {}
-    pdf = build_pipeline_report_pdf(report.model_dump(), narratives=narratives)
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f"attachment; filename=propai_report_{req.project_id}.pdf"})
+
+    fmt = (req.format or "pdf").strip().lower()
+    try:
+        # 통합 보고서 생성엔진: 정본모델 조립 → 포맷 렌더
+        from app.services.report.render import build_report_model_from_pipeline, render_report
+
+        model = build_report_model_from_pipeline(result_dict, narratives)
+        data, media_type, ext = render_report(model, fmt)
+    except Exception:  # noqa: BLE001  # 신규 엔진 실패 시 라이브 PDF 무회귀(레거시 폴백)
+        if fmt != "pdf":
+            raise
+        from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
+        from app.services.report.pipeline_report_service import PipelineReportService
+
+        report = PipelineReportService().generate(result_dict)
+        data = build_pipeline_report_pdf(report.model_dump(), narratives=narratives)
+        media_type, ext = "application/pdf", "pdf"
+
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="propai_report_{req.project_id}.{ext}"'},
+    )
 
 
 @router.get("/stream/{project_id}")

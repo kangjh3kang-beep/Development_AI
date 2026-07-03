@@ -789,8 +789,8 @@ class ComprehensiveAnalysisService:
         try:
             _op = (sec3 or {}).get("official_price_per_sqm")
             if isinstance(_op, (int, float)) and not isinstance(_op, bool) and _op > 0:
-                from app.tasks.specialist_tasks import run_domain_specialists_task
-                run_domain_specialists_task.delay({
+                from app.tasks.specialist_tasks import dispatch_domain_specialists
+                dispatch_domain_specialists({
                     "domains": {"market": {"official_price_per_sqm": _op}},
                     "tenant_id": tenant_id, "project_id": project_id,
                     "pnu": _pnu, "address": address,

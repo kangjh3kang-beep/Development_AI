@@ -73,73 +73,103 @@ async def analyze_persona(
     return await run_persona(key, db, _ctx(req), use_llm=req.use_llm)
 
 
-@router.post("/{key}/analyze/pdf", summary="페르소나 분석 PDF")
+# 페르소나 키 → 다운로드 파일명(확장자 제외)
+_PERSONA_FNAME = {
+    "urban_planner": "urban_permit_review",
+    "developer": "developer_business_plan",
+    "designer": "design_review",
+    "constructor": "construction_cost_estimate",
+    "sales_agent": "sales_pricing_report",
+}
+
+
+async def _render_persona_report(
+    key: str, req: PersonaAnalyzeRequest, report: dict[str, Any], fmt: str,
+) -> tuple[bytes, str, str]:
+    """페르소나 보고서 bytes 생성 → (bytes, MIME, 파일명).
+
+    ★4종(도시/디벨로퍼/시공/설계)=통합 보고서 생성엔진으로 PDF/PPTX/DOCX(같은 데이터·같은 디자인).
+      분양대행(sales_agent)=시장조사보고서 빌더 경로(PDF/PPTX).
+    """
+    from app.services.report.render import build_report_model_from_persona, render_report
+    from app.services.report.render.persona_adapter import SUPPORTED_PERSONAS
+
+    if key in SUPPORTED_PERSONAS:
+        model = build_report_model_from_persona(report, key)
+        data, media_type, ext = render_report(model, fmt)
+        return data, media_type, f"{_PERSONA_FNAME.get(key, key)}.{ext}"
+
+    if key == "sales_agent":
+        address, lawd, pnu = _sales_market_args(req)
+        if (fmt or "pdf").lower() == "pptx":
+            if not (address and lawd):
+                raise HTTPException(status_code=400,
+                                    detail="분양대행 PPTX는 주소와 법정동코드(bcode/pnu)가 필요합니다.")
+            from app.services.market.market_report_service import MarketReportService
+            svc = MarketReportService()
+            rep = await svc.build_report(address, lawd, pnu, use_llm=req.use_llm, options={})
+            return (svc.to_pptx(rep),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "sales_pricing.pptx")
+        pdf = await _sales_pdf(req, report)
+        return pdf, "application/pdf", "sales_pricing_report.pdf"
+
+    raise HTTPException(status_code=400, detail="해당 페르소나는 보고서를 지원하지 않습니다.")
+
+
+@router.post("/{key}/analyze/report", summary="페르소나 분석 보고서(PDF/PPTX/DOCX)")
+async def analyze_persona_report(
+    key: str,
+    req: PersonaAnalyzeRequest,
+    format: str = "pdf",   # pdf | pptx | docx (분양대행은 pdf|pptx)
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """페르소나 실무 분석을 원하는 포맷의 보고서로 다운로드."""
+    if not get_persona(key):
+        raise HTTPException(status_code=404, detail=f"알 수 없는 페르소나: {key}")
+    await _enforce_llm_if_needed(db, req.use_llm)
+    report = await run_persona(key, db, _ctx(req), use_llm=req.use_llm)
+    data, media_type, fname = await _render_persona_report(key, req, report, format)
+    return StreamingResponse(
+        iter([data]), media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.post("/{key}/analyze/pdf", summary="페르소나 분석 PDF(하위호환)")
 async def analyze_persona_pdf(
     key: str,
     req: PersonaAnalyzeRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    spec = get_persona(key)
-    if not spec:
+    if not get_persona(key):
         raise HTTPException(status_code=404, detail=f"알 수 없는 페르소나: {key}")
     await _enforce_llm_if_needed(db, req.use_llm)
     report = await run_persona(key, db, _ctx(req), use_llm=req.use_llm)
-
-    if key == "urban_planner":
-        from app.services.persona import urban_report
-        pdf = urban_report.to_pdf(report)
-        fname = "urban_permit_review.pdf"
-    elif key == "sales_agent":
-        # 분양대행 PDF = 시장조사보고서 빌더 재사용(주소·법정동코드 확보 시).
-        pdf = await _sales_pdf(req, report)
-        fname = "sales_pricing_report.pdf"
-    elif key == "developer":
-        # 디벨로퍼 PDF = 사업계획서(전용 렌더러·urban 패턴 복제).
-        from app.services.persona import developer_report
-        pdf = developer_report.to_pdf(report)
-        fname = "developer_business_plan.pdf"
-    elif key == "designer":
-        from app.services.persona import designer_report
-        pdf = designer_report.to_pdf(report)
-        fname = "design_review.pdf"
-    elif key == "constructor":
-        from app.services.persona import constructor_report
-        pdf = constructor_report.to_pdf(report)
-        fname = "construction_cost_estimate.pdf"
-    else:  # pragma: no cover
-        raise HTTPException(status_code=400, detail="해당 페르소나는 PDF를 지원하지 않습니다.")
-
+    data, media_type, fname = await _render_persona_report(key, req, report, "pdf")
     return StreamingResponse(
-        iter([pdf]), media_type="application/pdf",
+        iter([data]), media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 
-@router.post("/{key}/analyze/pptx", summary="페르소나 분석 PPTX(분양대행)")
+@router.post("/{key}/analyze/pptx", summary="페르소나 분석 PPTX(하위호환)")
 async def analyze_persona_pptx(
     key: str,
     req: PersonaAnalyzeRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if key != "sales_agent":
-        raise HTTPException(status_code=400, detail="PPTX는 분양대행(sales_agent)만 지원합니다.")
     if not get_persona(key):
         raise HTTPException(status_code=404, detail=f"알 수 없는 페르소나: {key}")
     await _enforce_llm_if_needed(db, req.use_llm)
-    address, lawd, pnu = _sales_market_args(req)
-    if not (address and lawd):
-        raise HTTPException(status_code=400,
-                            detail="분양대행 PPTX는 주소와 법정동코드(bcode/pnu)가 필요합니다.")
-    from app.services.market.market_report_service import MarketReportService
-    svc = MarketReportService()
-    rep = await svc.build_report(address, lawd, pnu, use_llm=req.use_llm, options={})
-    pptx = svc.to_pptx(rep)
+    report = await run_persona(key, db, _ctx(req), use_llm=req.use_llm)
+    data, media_type, fname = await _render_persona_report(key, req, report, "pptx")
     return StreamingResponse(
-        iter([pptx]),
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        headers={"Content-Disposition": 'attachment; filename="sales_pricing.pptx"'},
+        iter([data]), media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 

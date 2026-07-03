@@ -95,8 +95,8 @@ class SpecialistAgent:
         try:
             recaller = self._recaller
             if recaller is None:
-                from app.services.memory_hub.memory_service import MemoryHubService
-                recaller = MemoryHubService().recall_experience
+                from app.services.memory_hub.memory_service import get_memory_hub
+                recaller = get_memory_hub().recall_experience
             query_str = f"Domain: {self.domain}, Task: {self.task_type}, Data: {str(data)[:200]}"
             memories = await recaller(query=query_str, domain=self.domain, top_k=2)
             # MemoryRecallResponse → dict(소비처 단순화)

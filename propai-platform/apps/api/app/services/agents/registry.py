@@ -106,8 +106,18 @@ def _build_cost() -> SpecialistAgent:
 
 
 def _build_market() -> SpecialistAgent:
+    # ★G6: market 도메인에 전용 인터프리터 주입 — SpecialistAgent 의 LLM 해석·citation_gate 활성.
+    #   MarketInterpreter 는 prior_context 를 받고(SpecialistAgent 호출 규약과 일치), BaseInterpreter
+    #   가 LLM 키 부재 시 graceful degrade 하므로 키 있으면 실해석, 없으면 무해(과거 interpreter=None
+    #   dead-path 해소). ingest 는 백그라운드(fire_and_forget)라 핫패스 비차단.
+    interpreter = None
+    try:
+        from app.services.ai.market_interpreter import MarketInterpreter
+        interpreter = MarketInterpreter()
+    except Exception:  # noqa: BLE001 — 인터프리터 로드 실패해도 결정론 도구는 동작(graceful)
+        interpreter = None
     return SpecialistAgent(domain="market", task_type="market_analysis",
-                           tool=_market_tool, interpreter=None, panel=_default_panel)
+                           tool=_market_tool, interpreter=interpreter, panel=_default_panel)
 
 
 # ── 심의: 심의분석엔진(deliberation-review) BFF 도메인 — 인·허가/심의 프로세스 ──

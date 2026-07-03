@@ -23,9 +23,14 @@ from __future__ import annotations
 import reportlab.platypus as _platypus
 
 from app.services.design_ingest import design_proposal_pdf
-from app.services.land_intelligence import desk_appraisal_pdf, land_analysis_report_pdf
 from app.services.market.market_report_service import MarketReportService
-from app.services.report import design_audit_pdf, pipeline_report_pdf
+from app.services.report import pipeline_report_pdf
+from app.services.report.render import (
+    build_report_model_from_appraisal,
+    build_report_model_from_design_audit,
+    build_report_model_from_land,
+    render_report,
+)
 from app.services.sales.cert import termination_cert_pdf
 
 # reportlab 이 미이스케이프 시 ValueError 를 던지는 '진짜 크래시' 문자열(bare '&' 아님).
@@ -143,8 +148,9 @@ def _design_audit() -> dict:
 
 
 def test_design_audit_pdf_xml_no_crash_and_escaped():
+    # 통합 보고서 생성엔진 경유(build_design_audit_pdf 이관) — 엔진 pdf_kit._esc 가 Paragraph 이스케이프.
     pdf, para, _cells = _render_and_capture(
-        lambda: design_audit_pdf.build_design_audit_pdf(_design_audit())
+        lambda: render_report(build_report_model_from_design_audit(_design_audit()), "pdf")[0]
     )
     assert _is_pdf(pdf)
     _assert_escaped(para)
@@ -246,8 +252,9 @@ def _land_data() -> dict:
 
 
 def test_land_analysis_report_pdf_xml_no_crash_and_escaped():
+    # 통합 보고서 생성엔진 경유(build_land_analysis_report 이관).
     pdf, para, _cells = _render_and_capture(
-        lambda: land_analysis_report_pdf.build_land_analysis_report(_land_data())
+        lambda: render_report(build_report_model_from_land(_land_data()), "pdf")[0]
     )
     assert _is_pdf(pdf)
     _assert_escaped(para)
@@ -281,13 +288,17 @@ def _appraisal() -> dict:
 
 
 def test_desk_appraisal_pdf_xml_no_crash_and_escaped():
+    # 통합 보고서 생성엔진 경유(build_desk_appraisal_pdf 이관).
     pdf, para, _cells = _render_and_capture(
-        lambda: desk_appraisal_pdf.build_desk_appraisal_pdf(
-            _appraisal(),
-            address=XML_BOMB,
-            ai_sections={"valuation_narrative": "추정 <근거> & x </para>",
-                         "추가<섹션>": "라벨 미정의 <항목> & x"},
-        )
+        lambda: render_report(
+            build_report_model_from_appraisal(
+                _appraisal(),
+                address=XML_BOMB,
+                ai_sections={"valuation_narrative": "추정 <근거> & x </para>",
+                             "추가<섹션>": "라벨 미정의 <항목> & x"},
+            ),
+            "pdf",
+        )[0]
     )
     assert _is_pdf(pdf)
     _assert_escaped(para)

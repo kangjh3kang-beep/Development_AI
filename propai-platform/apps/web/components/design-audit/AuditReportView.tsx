@@ -269,11 +269,12 @@ function CasePositionBlock({
 /* ── PDF 다운로드(blob) — ReportPdfDownload 패턴 준용 ── */
 
 function AuditPdfDownload({ auditId }: { auditId: string }) {
-  const [busy, setBusy] = useState(false);
+  // 통합 보고서 생성엔진: PDF/PPT/Word 중 선택 다운로드(같은 데이터·같은 디자인).
+  const [busy, setBusy] = useState<"pdf" | "pptx" | "docx" | null>(null);
   const [error, setError] = useState("");
 
-  async function download() {
-    setBusy(true);
+  async function download(format: "pdf" | "pptx" | "docx") {
+    setBusy(format);
     setError("");
     try {
       const token =
@@ -281,47 +282,58 @@ function AuditPdfDownload({ auditId }: { auditId: string }) {
           ? window.localStorage.getItem("propai_access_token") ?? ""
           : "";
       const res = await fetch(
-        `${apiV1BaseUrl()}/design-audit/${encodeURIComponent(auditId)}/pdf`,
+        `${apiV1BaseUrl()}/design-audit/${encodeURIComponent(auditId)}/pdf?format=${format}`,
         {
           method: "GET",
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         },
       );
       if (!res.ok) {
-        throw new Error(`PDF 생성에 실패했습니다 (HTTP ${res.status}).`);
+        throw new Error(`보고서 생성에 실패했습니다 (HTTP ${res.status}).`);
       }
       const contentType = res.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
-        // PDF 대신 JSON이 오면 오류 메시지로 정직 표기(빈 파일 다운로드 방지).
+        // 파일 대신 JSON이 오면 오류 메시지로 정직 표기(빈 파일 다운로드 방지).
         const payload = (await res.json()) as { detail?: string; message?: string };
-        throw new Error(payload?.detail || payload?.message || "PDF가 아직 준비되지 않았습니다.");
+        throw new Error(payload?.detail || payload?.message || "보고서가 아직 준비되지 않았습니다.");
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `design-audit-${auditId}.pdf`;
+      anchor.download = `design-audit-${auditId}.${format}`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "PDF 다운로드에 실패했습니다.");
+      setError(e instanceof Error ? e.message : "보고서 다운로드에 실패했습니다.");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
+  const FORMATS = [
+    { key: "pdf", label: "PDF" },
+    { key: "pptx", label: "PPT" },
+    { key: "docx", label: "Word" },
+  ] as const;
+
   return (
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        onClick={() => void download()}
-        disabled={busy}
-        className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50"
-      >
-        {busy ? "PDF 준비 중…" : "PDF 보고서 다운로드 ↓"}
-      </button>
+      <div className="flex items-center gap-1.5">
+        {FORMATS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => void download(f.key)}
+            disabled={busy !== null}
+            className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {busy === f.key ? "준비 중…" : `${f.label} ↓`}
+          </button>
+        ))}
+      </div>
       {error && <span className="text-[11px] font-semibold text-[var(--status-error)]">{error}</span>}
     </div>
   );

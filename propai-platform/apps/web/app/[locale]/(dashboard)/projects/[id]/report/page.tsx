@@ -2,7 +2,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { ProjectReportWorkspaceClient } from "@/components/projects/ProjectReportWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
-import { ReportPdfDownload } from "@/components/projects/ReportPdfDownload";
+import { ReportDownloadMenu } from "@/components/report/ReportDownloadMenu";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -57,7 +57,8 @@ export default async function ReportPage({ params }: ReportPageProps) {
 
       <div className="flex justify-end">
         <div className="w-full max-w-xs">
-          <ReportPdfDownload projectId={id} />
+          {/* 통합 보고서 생성엔진: PDF·PPT·Word 중 선택 다운로드(같은 데이터·같은 디자인) */}
+          <ReportDownloadMenu projectId={id} />
         </div>
       </div>
       <ProjectReportWorkspaceClient locale={locale as Locale} projectId={id} />

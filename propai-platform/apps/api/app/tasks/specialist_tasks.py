@@ -55,6 +55,20 @@ def _run_domain_specialists(payload: dict) -> int:
         return 0
 
 
+def dispatch_domain_specialists(payload: dict) -> None:
+    """도메인 SpecialistAgent 적재를 핫패스 비차단으로 발화(★G2 해소).
+
+    워커 명시 활성(GROWTH_CELERY_WORKER)+celery 가용 시 Celery(.delay), 아니면(기본·워커부재)
+    in-process 백그라운드로 실제 발화. 과거 `.delay()` 는 워커 부재 시 no-op 이라 死였다.
+    """
+    from app.services.agents.growth_dispatch import fire_and_forget, worker_enabled
+
+    if _celery is not None and worker_enabled():
+        run_domain_specialists_task.delay(payload)
+        return
+    fire_and_forget(_run_specialists_async(payload), label="specialists")
+
+
 if _celery is not None:
     run_domain_specialists_task = _celery.task(
         name="tasks.specialists.run_for_analysis")(_run_domain_specialists)

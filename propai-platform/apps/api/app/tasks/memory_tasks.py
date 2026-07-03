@@ -15,7 +15,7 @@ import logging
 
 from app.core.database import async_session_factory
 from app.schemas.memory import MemoryCreate
-from app.services.memory_hub.memory_service import MemoryHubService
+from app.services.memory_hub.memory_service import get_memory_hub
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ async def _ingest_async(memory_data_dict: dict) -> bool:
     except Exception as e:  # noqa: BLE001 — 스키마 불일치는 정직하게 실패 반환
         logger.error("Invalid memory_data format: %s", str(e)[:200])
         return False
-    service = MemoryHubService()
+    service = get_memory_hub()
     async with async_session_factory() as db:
         await service.store_experience(db, memory_data)
     logger.info("Successfully ingested memory (session=%s).", memory_data_dict.get("session_id"))
@@ -56,8 +56,23 @@ def _ingest_experience(memory_data_dict: dict) -> bool:
         return False
 
 
+def dispatch_memory_ingest(memory_data_dict: dict) -> None:
+    """성장 뇌 경험 적재를 핫패스 비차단으로 발화(★G1 해소).
+
+    워커가 명시 활성(GROWTH_CELERY_WORKER)이고 celery 가용이면 Celery(.delay)로 위임하고,
+    아니면(기본·워커부재) in-process 백그라운드로 실제 적재한다. 과거 `.delay()` 는 워커 부재 시
+    no-op 이라 적재가 死였다. 호출부는 이걸 부르기만 하면 된다(dead-path 재발 방지).
+    """
+    from app.services.agents.growth_dispatch import fire_and_forget, worker_enabled
+
+    if _celery is not None and worker_enabled():
+        ingest_experience_task.delay(memory_data_dict)
+        return
+    fire_and_forget(_ingest_async(memory_data_dict), label="memory-ingest")
+
+
 if _celery is not None:
-    # Celery 등록 — .delay() 로 워커에 비동기 위임(원본 계약 유지).
+    # Celery 등록 — .delay() 로 워커에 비동기 위임(원본 계약 유지·워커 배포 시).
     ingest_experience_task = _celery.task(name="tasks.memory.ingest_experience")(_ingest_experience)
 else:
     # Celery 부재(테스트/워커 외 프로세스) — .delay() 가 graceful no-op(이벤트루프 충돌·크래시 회피).

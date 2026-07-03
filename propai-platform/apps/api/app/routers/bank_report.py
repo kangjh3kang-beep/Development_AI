@@ -1,9 +1,9 @@
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.services.ledger import analysis_ledger_service as ledger
+
 from ..services.report.bank_ready_report_service import BankReadyReportService
 
 router = APIRouter(prefix="/bank-report", tags=["은행제출용 보고서"])
@@ -22,12 +22,12 @@ _LEDGER_TYPE_TO_KEY: dict[str, str] = {
 
 class BankReportRequest(BaseModel):
     project_data: dict  # All project context data
-    selected_sections: Optional[list] = None
+    selected_sections: list | None = None
     template: str = "bank"  # "bank" | "internal"
     # 원장 단일출처 우선용 식별자(선택). 제공되고 원장에 적재분이 있으면 권위소스로 사용.
-    pnu: Optional[str] = None
-    address: Optional[str] = None
-    project_id: Optional[str] = None
+    pnu: str | None = None
+    address: str | None = None
+    project_id: str | None = None
 
 
 async def _resolve_tenant_id() -> str | None:
@@ -38,6 +38,7 @@ async def _resolve_tenant_id() -> str | None:
         if not uid:
             return None
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             row = (await db.execute(
@@ -111,6 +112,31 @@ async def generate_bank_report(req: BankReportRequest):
     )
     service = BankReadyReportService()
     return service.generate_report(project_data, req.selected_sections, req.template)
+
+
+@router.post("/generate/report")
+async def generate_bank_report_file(req: BankReportRequest, format: str = "pdf"):
+    """은행제출용 사업성 보고서를 서버에서 PDF/PPTX/DOCX 로 렌더.
+
+    통합 보고서 생성엔진 경유(프론트 window.print HTML 인쇄 대체). 데이터는 /generate 와 동일 경로.
+    """
+    from fastapi.responses import Response
+
+    from app.services.report.render import build_report_model_from_bank, render_report
+
+    tenant_id = await _resolve_tenant_id()
+    project_data = await _merge_ledger_authoritative(
+        req.project_data, tenant_id=tenant_id,
+        pnu=req.pnu, address=req.address, project_id=req.project_id,
+    )
+    service = BankReadyReportService()
+    bank_result = service.generate_report(project_data, req.selected_sections, req.template)
+    model = build_report_model_from_bank(bank_result)
+    data, media_type, ext = render_report(model, format)
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="bank_report.{ext}"'},
+    )
 
 
 @router.get("/sections")

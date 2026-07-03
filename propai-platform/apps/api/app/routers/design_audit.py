@@ -701,18 +701,21 @@ async def get_design_audit(
 @router.get("/{audit_id}/pdf")
 async def get_design_audit_pdf(
     audit_id: str,
+    format: str = "pdf",
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """설계심사 리포트 PDF(S0~S7 + 책임한계·면책) 다운로드 — 본인 소유만."""
+    """설계심사 리포트(S0~S7 + 책임한계·면책) 다운로드(PDF/PPTX/DOCX) — 본인 소유만.
+
+    통합 보고서 생성엔진 경유(format 으로 포맷 선택)."""
     audit = await _load_audit(db, audit_id, user_id=current.user_id)
     if audit is None:
         raise HTTPException(status_code=404, detail="심사 결과를 찾을 수 없습니다.")
-    from app.services.report.design_audit_pdf import build_design_audit_pdf
+    from app.services.report.render import build_report_model_from_design_audit, render_report
 
-    pdf = build_design_audit_pdf(audit)
+    data, media_type, ext = render_report(build_report_model_from_design_audit(audit), format)
     return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=design_audit_{audit_id}.pdf"},
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=design_audit_{audit_id}.{ext}"},
     )

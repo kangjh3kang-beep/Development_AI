@@ -4,6 +4,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { FeasibilityEditorV2 } from "@/components/feasibility/FeasibilityEditorV2";
+import { UnitMixOptimizerPanel } from "@/components/feasibility/UnitMixOptimizerPanel";
 import { TrustBadge } from "@/components/common/TrustBadge";
 
 type Props = {
@@ -47,6 +48,11 @@ export default async function FeasibilityPage({ params }: Props) {
       {/* ② 위젯 */}
       <div className="animate-premium-fade" style={{ animationDelay: "200ms" }}>
         <FeasibilityEditorV2 projectId={id} />
+      </div>
+
+      {/* ②-b 유닛믹스 최적화(SLSQP) — 서버 최적화기로 수익 극대화 평형배분(그동안 미배선 orphan 해소) */}
+      <div className="animate-premium-fade" style={{ animationDelay: "300ms" }}>
+        <UnitMixOptimizerPanel />
       </div>
 
       {/* ③ 다음 단계 CTA */}

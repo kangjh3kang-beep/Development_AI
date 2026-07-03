@@ -7,14 +7,10 @@ expert_panel)는 monkeypatch로 대체해 DB·외부API 없이 파이프라인 �
 
 from __future__ import annotations
 
-from app.services.persona import (
-    cache,
-    constructor_report,
-    designer_report,
-    developer_report,
-)
+from app.services.persona import cache
 from app.services.persona.registry import PERSONA_REGISTRY, get_persona, list_personas
 from app.services.persona.runner import run_persona
+from app.services.report.render import build_report_model_from_persona, render_report
 
 
 class _FakeDB:
@@ -132,7 +128,7 @@ async def test_developer_pdf_renders(monkeypatch):
     _patch_feasibility(monkeypatch, _RECOMMEND_LIVE)
     out = await run_persona("developer", _FakeDB(),
                             {"address": "서울특별시 강남구 역삼동 123"}, use_llm=False)
-    pdf = developer_report.to_pdf(out)
+    pdf, _mime, _ext = render_report(build_report_model_from_persona(out, "developer"), "pdf")
     assert isinstance(pdf, bytes) and pdf[:4] == b"%PDF"
 
 
@@ -306,7 +302,7 @@ async def test_designer_pdf_renders(monkeypatch):
     out = await run_persona("designer", _FakeDB(),
                             {"address": "서울 강남", "land_area_sqm": 1000, "zone_code": "3R"},
                             use_llm=False)
-    pdf = designer_report.to_pdf(out)
+    pdf, _mime, _ext = render_report(build_report_model_from_persona(out, "designer"), "pdf")
     assert isinstance(pdf, bytes) and pdf[:4] == b"%PDF"
 
 
@@ -410,5 +406,5 @@ async def test_constructor_pdf_renders(monkeypatch):
     _patch_cost(monkeypatch)
     out = await run_persona("constructor", _FakeDB(),
                             {"address": "서울 강남", "total_gfa_sqm": 30000}, use_llm=False)
-    pdf = constructor_report.to_pdf(out)
+    pdf, _mime, _ext = render_report(build_report_model_from_persona(out, "constructor"), "pdf")
     assert isinstance(pdf, bytes) and pdf[:4] == b"%PDF"

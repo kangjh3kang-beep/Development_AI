@@ -1,0 +1,843 @@
+[
+ {
+  "name": "BankReadyReportService",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/bank_ready_report_service.py",
+  "entry_router": "POST /api/v1/bank-report/generate (+ GET /api/v1/bank-report/sections) — app/routers/bank_report.py",
+  "content_domain": "bank/feasibility (PF 대출 심사용 통합보고서, Feasibly 벤치마크)",
+  "library": "none (순수 dict 빌더 — 렌더러 없음, 구조화 JSON만)",
+  "output_formats": [
+   "JSON"
+  ],
+  "frontend_surface": "apps/web/components/report/BankReadyReportBuilder.tsx (+ orchestration node-registry)",
+  "wired": true,
+  "canonical_model_fields": [
+   "meta{title,template,generated_at,legal_disclaimer,data_basis_date}",
+   "completeness{total,filled,empty,pct}",
+   "10 섹션 REPORT_SECTIONS: 1.사업개요(project_name,address,pnu,land_area_sqm,zone_type,zone_limits,estimated_value,development_type,total_gfa_sqm,total_households)",
+   "2.시장분석(region,statistics,chart_data,comparables[:10],supply_demand)",
+   "3.법규검토(bcr/far/height check compliant·planned·limit, violations, special_districts)",
+   "4.설계개요(total_gfa,floor_count,building_type,bcr,far,parking)",
+   "5.유닛믹스(total_units,total_revenue_won,gfa_efficiency,units,method)",
+   "6.사업수지(revenue/cost/net_profit/profit_rate/roi/npv/grade/cost_breakdown)",
+   "7.자금조달(equity,bridge_loan,pf_loan,midpay_loan,total_finance_cost,weighted_avg_rate)",
+   "8.리스크(monte_carlo mean/std/p5/p95/probability_positive/convergence + risk_grade 판정)",
+   "9.ESG(embodied/operational carbon, gresb_score/grade/recommendations)",
+   "10.부록(comparables,tax_detail,data_sources,calculation_basis)"
+  ],
+  "duplication_notes": "PipelineReportService와 섹션 택소노미가 사실상 동일(둘 다 10섹션 PF 보고서 모델)=병렬 중복 콘텐츠모델. reportlab 미사용(렌더 안 함)이라 표/폰트 보일러플레이트는 없음. bank_report 라우터가 analysis_ledger 권위병합 로직 보유."
+ },
+ {
+  "name": "PipelineReportService",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/pipeline_report_service.py",
+  "entry_router": "POST /api/v2/pipeline/report (+ /report/pdf, /report/pdf-from-ledger) — app/routers/pipeline.py",
+  "content_domain": "bank/pipeline feasibility (파이프라인 7단계→10섹션)",
+  "library": "pydantic (모델만; 렌더러는 별도 pipeline_report_pdf)",
+  "output_formats": [
+   "JSON (PipelineReport model)"
+  ],
+  "frontend_surface": "apps/web/components/pipeline/PipelineResultDetail.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "report_id,project_address,generated_at",
+   "10 ReportSection: 1.사업개요 2.입지분석 3.건축계획 4.법규검토 5.공사비분석 6.분양/임대계획 7.사업수지분석(cashflow summary/phases) 8.리스크분석(monte_carlo p10/p50/p90/var_95 + sensitivity tornado) 9.세금분석(취득/재산/양도/vat) 10.ESG/탄소(embodied/operational/lifecycle, gresb, gseed, low_carbon)",
+   "executive_summary{address,land_area,building_type,gfa,unit_count,cost,revenue,net_profit,profit_rate,grade,gresb,carbon}",
+   "risk_assessment{risk_grade,risk_label,probability_positive,profit_rate,var_95,recommendation}"
+  ],
+  "duplication_notes": "BankReadyReportService와 거의 동일한 10섹션 PF 보고서 모델을 병렬로 재정의(대표 중복). 둘 다 pipeline stage data 소비. 두 서비스 통합(공용 섹션 스키마) 후보."
+ },
+ {
+  "name": "build_pipeline_report_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/pipeline_report_pdf.py",
+  "entry_router": "POST /api/v2/pipeline/report/pdf, /report/pdf-from-ledger — app/routers/pipeline.py",
+  "content_domain": "bank/pipeline feasibility (통합보고서 PDF)",
+  "library": "reportlab (SimpleDocTemplate·A4·UnicodeCIDFont HYSMyeongJo-Medium→Helvetica 폴백)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/pipeline/PipelineResultDetail.tsx (PDF 다운로드)",
+  "wired": true,
+  "canonical_model_fields": [
+   "표지(project_address·generated_at)",
+   "핵심요약 KV표(executive_summary)",
+   "섹션별 content KV표(10섹션)",
+   "리스크평가 KV표(risk_assessment)",
+   "AI 상세해석(narratives={stage:{section:text}}, ReportInterpreter 산출 주입 시)",
+   "면책 고지"
+  ],
+  "duplication_notes": "★플랫폼 reportlab 보일러플레이트의 정본 원천. font-register try/except + _fmt() + colWidths[45mm,125mm] KV TableStyle(FONTNAME/GRID lightgrey/BACKGROUND whitesmoke 헤더)를 design_audit_pdf(주석에 '패턴 그대로 복제' 명시)·desk_appraisal_pdf·termination_cert_pdf가 복제. _fmt()는 design_audit_pdf에 축자 중복. 공용 reportlab 헬퍼(font+KV표)로 추출 대상."
+ },
+ {
+  "name": "build_design_audit_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/design_audit_pdf.py",
+  "entry_router": "GET /api/v1/design-audit/{audit_id}/pdf — app/routers/design_audit.py",
+  "content_domain": "design (설계심사 리포트 U6/DA-6)",
+  "library": "reportlab (pipeline_report_pdf 폰트패턴 복제)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/app/[locale]/(dashboard)/design-audit/page.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "S0 종합판정·요약(overall KV표)",
+   "S1 비교표본 명세(0건시 '비교사례없음' 정직)",
+   "S2 문제점(비교사례 편차 finding표)",
+   "S3 장점",
+   "S4 적용가능 법규·정책 인센티브(legal_reference_registry 링크 표)",
+   "S5 공학적 문제점 8룰표(+기술사 확인 고정플래그)",
+   "S6 심의 예상쟁점[AI추정](blindspot·citation_gate)",
+   "S7 설계효율 지표",
+   "책임한계·면책 3단락"
+  ],
+  "duplication_notes": "_fmt()가 pipeline_report_pdf에서 축자 복제됨. font-register 블록·KV/finding TableStyle(whitesmoke 헤더) 중복. _group_findings/_finding_table/_kv_table는 자체 고유."
+ },
+ {
+  "name": "MarketReportService",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/market/market_report_service.py",
+  "entry_router": "POST /api/v1/market/report|/report/pdf|/report/pptx|/report/docx — routers/market_report.py; 재사용: POST /api/v1/personas/{key}/analyze/pdf|pptx — routers/personas.py",
+  "content_domain": "market (시장조사보고서: 실거래·시세·인구·소득·수급·적정분양가)",
+  "library": "reportlab(to_pdf) + python-pptx(to_pptx) + python-docx(to_docx) + Pillow(OSM 정적지도) + LLM 내러티브(get_llm)",
+  "output_formats": [
+   "JSON",
+   "PDF",
+   "PPTX",
+   "DOCX",
+   "PNG (static map)"
+  ],
+  "frontend_surface": "orchestration node-registry/node-body-builders + useNodeRunner (시장 노드); persona=PersonaPanel",
+  "wired": true,
+  "canonical_model_fields": [
+   "build_report: trade_table(유형별 건수/총액통계/평균면적/평당가 만원·평)",
+   "rent_table(보증금 통계)",
+   "trend_series(월별 평당가+MoM%)",
+   "demographics(population: age_distribution·household_types·migration net; income: avg/median 10k)",
+   "narrative(summary/opportunities/risks/price_trend/target_persona)",
+   "feasibility_analysis, pricing_band(적정분양가=거래사례비교1차+지불여력PIR/DSR/LTV 2차), unit_mix_recommendation",
+   "raw_data{real_estate,population,income} + analysis",
+   "렌더 섹션(PDF/PPTX/DOCX 동일): 표지·대상지지도·1시장요약·2매매시세·3전월세·4시세추이차트·5인구·6소득·7적정분양가·8기회·9리스크·10가격동향·(DOCX)타겟페르소나·면책"
+  ],
+  "duplication_notes": "★유일한 PPTX·DOCX 생산자. 자체 reportlab font-register + TableStyle(#0e7490 teal 헤더/#cbd5e1 grid/#f1f5f9 rowbg) — 이 teal 헤더 패턴이 land_analysis_report_pdf·urban_report에 복제됨. to_pdf/to_pptx/to_docx 3개 메서드가 같은 rep dict를 각자 재순회 → 파일 내 3중 섹션로직 중복. DISCLAIMER_TEXT 상수·_eok() 자체 보유."
+ },
+ {
+  "name": "build_land_analysis_report",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/land_intelligence/land_analysis_report_pdf.py",
+  "entry_router": "POST /api/v1/zoning/land-report — routers/auto_zoning.py",
+  "content_domain": "land (다필지 토지분석보고서/토지조서)",
+  "library": "reportlab (market to_pdf teal 패턴 복제)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/operations/LandScheduleClient.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "§1 필지요약·유형분류 표(지번/유형/면적㎡·평/용도지역/지목/상태)",
+   "§2 토지정보 집계(총대지면적·용도지역분포·공시지가 추정 토지가액)",
+   "§3 권리관계 안내(등기 필요 정직고지)",
+   "§4 규제·개발가능성(용도지역별 법정 건폐/용적/허용건축·연면적)",
+   "§5 집합건물 세대 대지지분(동/호/전유/대지지분㎡·평, 검증 reliable)",
+   "§6 종합의견 + 면책"
+  ],
+  "duplication_notes": "font-register 블록 중복. tbl() 헬퍼가 #0e7490 헤더+#cbd5e1 grid로 market/urban_report와 동일 스타일. _won/_sqm 포매터는 _fmt 계열 로컬 중복."
+ },
+ {
+  "name": "build_desk_appraisal_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/land_intelligence/desk_appraisal_pdf.py",
+  "entry_router": "POST /api/v1/land-price/desk-appraisal/pdf — app/routers/land_price.py",
+  "content_domain": "appraisal/AVM (예상 탁상감정서 — 정식 감정평가서 아님)",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/operations/DeskAppraisalReportClient.tsx / DeskAppraisalModal.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "1.추정요약(채택단가/총액/신뢰도/신뢰구간)",
+   "1-2.대상물건표시(지목/용도지역/이용상황/지세/공시지가)",
+   "2.산정방법별 추정(method/unit_price/rationale)",
+   "3.복수 시나리오 교차검증(firms/mean/CV)",
+   "4.복합·수익가치(원가법/수익환원법)",
+   "5.시점수정·시장통계근거(R-ONE cap_rate·전월세전환율)",
+   "6.AI 상세해석(avm_interpreter 5섹션: valuation_narrative 등)",
+   "7.면책"
+  ],
+  "duplication_notes": "font-register + 로컬 won() + colWidths[40mm,130mm] whitesmoke KV TableStyle = pipeline/termination과 동일 보일러플레이트. 헤더표는 #1f2937."
+ },
+ {
+  "name": "developer_report.to_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/developer_report.py",
+  "entry_router": "POST /api/v1/personas/developer/analyze/pdf — routers/personas.py",
+  "content_domain": "persona/developer (부동산개발 사업계획서)",
+  "library": "reportlab (urban_report.to_pdf 패턴 복제 R8)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/orchestration/PersonaPanel.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "1.사업타당성 핵심지표(Top1 KPI: 매출/사업비/순이익/ROI/ROE/NPV/등급)",
+   "2.Top3 사업모델 비교",
+   "3.리스크 매트릭스(인허가/시장/자금/공사/시나리오)",
+   "4.수익성지표(NPV·ROE·DSCR note)",
+   "5.Go/No-Go 의사결정",
+   "6.실무 체크리스트 + 정직고지"
+  ],
+  "duplication_notes": "★4개 페르소나 리포트 중 하나 — to_pdf 스켈레톤(font-register·A4 18mm·h1/h2/body/warn·_table 헬퍼 '미확보(정직고지)' 빈행·체크리스트표·honesty_notes 루프)이 constructor/urban/designer와 사실상 동일 클론. accent만 #1d4ed8. _won_to_eok가 constructor_report와 축자 중복. 최대 dedup 기회."
+ },
+ {
+  "name": "constructor_report.to_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/constructor_report.py",
+  "entry_router": "POST /api/v1/personas/constructor/analyze/pdf — routers/personas.py",
+  "content_domain": "persona/constructor (공사비 견적서 개산)",
+  "library": "reportlab (urban_report 패턴 복제 R8)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/orchestration/PersonaPanel.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "1.공사비 견적개요(연면적 총/지상/지하·직접공사비 단가·총공사비·평단가)",
+   "2.공사비 레인지(최저/예상/최대·spread_pct)",
+   "3.QTO 물량 적산(부위별 name/quantity/unit/cost, unit_price_source·qto_source)",
+   "4.실무 체크리스트 + 정직고지"
+  ],
+  "duplication_notes": "developer/urban/designer와 동일 to_pdf 스켈레톤·_table 헬퍼 클론(accent #ea580c). _won_to_eok가 developer_report와 축자 중복."
+ },
+ {
+  "name": "urban_report.to_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/urban_report.py",
+  "entry_router": "POST /api/v1/personas/urban_planner/analyze/pdf — routers/personas.py",
+  "content_domain": "persona/urban (도시계획·인허가 검토서)",
+  "library": "reportlab (market to_pdf 패턴 복제; 4개 페르소나 클론의 '원본')",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/orchestration/PersonaPanel.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "1.용도지역·한도(법정/조례/실효 분리 표, R12)",
+   "2.특이부지 게이트(developability/resolvable/decision + honest_disclosure)",
+   "3.개발방식 비교(AHP 가중점수 순위표)",
+   "4.인센티브(종상향·용적완화)",
+   "5.인허가 로드맵(phase)",
+   "6.실무 체크리스트 + 정직고지",
+   "interpreter_available 미충족 시 warn"
+  ],
+  "duplication_notes": "나머지 3개 페르소나 리포트가 이 파일의 to_pdf/_table을 '패턴 복제(R8)'한 기준 원본. accent #0e7490 teal(market와 동일). 공용 persona PDF 렌더러로 승격 후 섹션 빌더만 주입하는 리팩토링 대상."
+ },
+ {
+  "name": "designer_report.to_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/designer_report.py",
+  "entry_router": "POST /api/v1/personas/designer/analyze/pdf — routers/personas.py",
+  "content_domain": "persona/designer (건축 설계 검토서)",
+  "library": "reportlab (urban_report 패턴 복제 R8)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/orchestration/PersonaPanel.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "1.매스배치(건물폭×깊이/층수/높이/건폐/용적/세대수)",
+   "2.유닛믹스(평형/세대수/비율/분양가 만원·평, 총매출·GFA효율·method)",
+   "3.법규 준수(건폐/용적 실제 vs 법정한도 + violations)",
+   "4.평면효율(GFA효율/전용률/필요주차)",
+   "5.실무 체크리스트 + 정직고지"
+  ],
+  "duplication_notes": "developer/constructor/urban와 동일 to_pdf 스켈레톤·_table 클론(accent #7c3aed). _fmt(v,suffix) 로컬 재정의."
+ },
+ {
+  "name": "ExcelExportService",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/export/excel_export_service.py",
+  "entry_router": "POST /api/v2/feasibility/export-excel (app/routers/v2_feasibility.py) + GET /api/v1/cost/{project_id}/export-excel (app/routers/cost.py)",
+  "content_domain": "feasibility + cost (수지분석 요약 / 원가계산서)",
+  "library": "openpyxl (미설치 시 CSV 폴백)",
+  "output_formats": [
+   "XLSX",
+   "CSV (fallback)"
+  ],
+  "frontend_surface": "apps/web/components/feasibility/FeasibilityWorkspaceClient.tsx (cost 쪽 별도 다운로드 컴포넌트 미확인)",
+  "wired": true,
+  "canonical_model_fields": [
+   "feasibility_to_xlsx: '수지분석 요약' 시트(개발유형/모듈/총수입/총비용/순이익/수익률/ROI/NPV/등급) + '비용 구성' 시트(항목/금액/비율) + '세금 상세' 시트",
+   "cost_sheet_to_xlsx: '원가계산서' 시트(OriginCostCalculator.to_excel_data rows, 2026 법정요율 + 합계행 강조)"
+  ],
+  "duplication_notes": "header_fill 4472C4 + thin_border 스타일이 _feasibility_xlsx·_cost_xlsx에 반복. boq_excel_export와 별개 openpyxl 스타일러(색상·헤더 다름) → 공용 xlsx 스타일 헬퍼 부재(중복)."
+ },
+ {
+  "name": "build_xlsx (BOQ 공내역서)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/cost/boq_excel_export.py",
+  "entry_router": "POST /api/v1/boq-auto/draft/export + /api/v1/boq-auto/draft/priced/export — app/routers/boq_auto.py (또한 boq_parametric_engine 내부 호출)",
+  "content_domain": "cost (실무 공내역서 BOQ)",
+  "library": "openpyxl",
+  "output_formats": [
+   "XLSX"
+  ],
+  "frontend_surface": "apps/web/components/cost/BoqAutoWorkspace.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "공종별 1시트",
+   "13열 2행 헤더(품명/규격/단위/수량/재료비[단가·금액]/노무비[단가·금액]/경비[단가·금액]/합계[단가·금액]/비고)",
+   "섹션행(굵게·음영) + 항목행",
+   "priced=True시 공종 소계행 + 별도 '총계' 시트(공종별 재료/노무/경비/합계 + 총합)",
+   "하단 출처(provenance)·신뢰도·경고 주석(단가 미생성 정직표기)"
+  ],
+  "duplication_notes": "자체 openpyxl 스타일(head_fill D9D9D9·box border) — ExcelExportService(4472C4)와 독립 스타일러 = 2개 병렬 xlsx 스타일 로직 중복. money_fmt·헤더 병합 로직 자체 보유."
+ },
+ {
+  "name": "build_termination_cert_pdf",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/sales/cert/termination_cert_pdf.py",
+  "entry_router": "sales 해촉증명서 PDF 엔드포인트 — apps/api/app/api/endpoints/sales/termination_cert.py (build_termination_cert_pdf 호출, /pdf inline)",
+  "content_domain": "sales/cert (분양대행 전자 해촉증명서, 직인 날인)",
+  "library": "reportlab (desk_appraisal_pdf와 동일 지연 import 패턴 + urllib 직인 이미지 fetch)",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "apps/web/components/sales-app/TerminationCertPanel.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "표제 '해촉증명서' + 증명서번호",
+   "1.인적사항(성명·주민번호 마스킹·근무현장)",
+   "2.근무(위촉)기간",
+   "3.수수료 수령정보·소득(지급총액·원천징수 3.3%·실수령액)",
+   "4.발급법인(법인명/사업자번호/대표자/발급일)",
+   "증명 문구 + 직인 날인행(이미지 or '(인)' 폴백)",
+   "면책 + 무결성 해시(analysis_ledger 해시체인)"
+  ],
+  "duplication_notes": "font-register try/except + 로컬 won() + _kv_table(whitesmoke 헤더·colWidths[45mm,125mm]) = pipeline/desk_appraisal와 동일 KV 보일러플레이트. mask_rrn·직인 fetch는 자체 고유."
+ },
+ {
+  "name": "ReportInterpreter",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/ai/report_interpreter.py",
+  "entry_router": "POST /api/v2/pipeline/report/pdf(narratives 주입) + /api/v2/pipeline/interpret — app/routers/pipeline.py",
+  "content_domain": "pipeline narrative (LLM 은행/투자자용 보고서 내러티브)",
+  "library": "LangChain / LLM (BaseInterpreter 상속) — 파일 포맷 생산자 아님",
+  "output_formats": [
+   "JSON (내러티브 dict)"
+  ],
+  "frontend_surface": "none (pipeline PDF/JSON에 흡수)",
+  "wired": true,
+  "canonical_model_fields": [
+   "6 내러티브 키: executive_summary, site_narrative, financial_narrative, risk_narrative, recommendation_narrative, legal_compliance_narrative",
+   "_extract_compact_data: site_analysis/building_design/financial_analysis/construction_cost/permit_analysis/risk_assessment/legal_review 핵심 수치만 추출→프롬프트"
+  ],
+  "duplication_notes": "파일 렌더러가 아니라 콘텐츠(내러티브) 생성기 — build_pipeline_report_pdf의 'AI 상세해석' 섹션으로 주입. desk_appraisal의 avm_interpreter, market의 _narrative와 유사한 'LLM 해석 주입' 패턴이나 각기 별도 구현(계약 미통일)."
+ },
+ {
+  "name": "은행제출용 사업성 보고서 (BankReadyReportBuilder)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/report/BankReadyReportBuilder.tsx",
+  "entry_router": "POST /bank-report/generate (생성) — PDF는 클라이언트 window.print(서버 미호출)",
+  "content_domain": "bank / integrated feasibility report",
+  "library": "bank_ready_report_service(dict 반환); PDF는 브라우저 window.print(서버측 reportlab 없음)",
+  "output_formats": [
+   "on-screen report",
+   "pdf (browser print)"
+  ],
+  "frontend_surface": "'보고서 생성' 버튼 + 'PDF 다운로드' 버튼(handleDownloadPdf=window.open→print)",
+  "wired": true,
+  "canonical_model_fields": [
+   "10 섹션: 사업개요·시장·법규·설계·평형(unit_mix)·수지·자금·리스크·ESG·부록",
+   "meta{title,template,generated_by,legal_disclaimer,data_basis_date}",
+   "completeness{total,filled,pct}"
+  ],
+  "duplication_notes": "생성은 라이브(bank_report.py:105)이나 PDF는 서버 파일이 아니라 HTML→브라우저 인쇄. PPTX/DOCX 표면 없음. 다필지면 effectiveLandAreaSqm 통합면적 사용."
+ },
+ {
+  "name": "프로젝트 통합 PDF 다운로드 (ReportPdfDownload)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/projects/ReportPdfDownload.tsx",
+  "entry_router": "POST /reports/generate {format:pdf}",
+  "content_domain": "project integrated report (분석 원장 기반)",
+  "library": "reportlab (pipeline_report_pdf via PipelineReportService + ledger)",
+  "output_formats": [
+   "pdf"
+  ],
+  "frontend_surface": "'PDF 보고서 다운로드' 버튼(가짜 진행바 포함) → blob 다운로드",
+  "wired": true,
+  "canonical_model_fields": [
+   "원장(analysis_ledger) 최신 통합분석 → PipelineReport 요약/단계 → reportlab PDF"
+  ],
+  "duplication_notes": "reports.py:31. PipelineResultDetail의 /api/v2/pipeline/report/pdf와 동일 pipeline_report_pdf 라이브러리(엔드포인트 2개로 분기: v1 원장기반 vs v2 result기반)."
+ },
+ {
+  "name": "투자자 보고서 워크스페이스 (ProjectReportWorkspaceClient)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/projects/ProjectReportWorkspaceClient.tsx",
+  "entry_router": "POST /reports/investor/generate",
+  "content_domain": "investor multilingual report",
+  "library": "investor_report_service (LLM 번역; 파일 생성 라이브러리 없음)",
+  "output_formats": [
+   "on-screen text (다국어)"
+  ],
+  "frontend_surface": "'투자자 보고서 생성' 폼 — 다운로드 버튼 없음, 결과는 화면 렌더만",
+  "wired": true,
+  "canonical_model_fields": [
+   "report_type",
+   "generated_sections[]",
+   "variants[]{report_id,target_language,title,quality_score,translated_text}"
+  ],
+  "duplication_notes": "reports.py:102 라이브. 그러나 파일 다운로드 표면이 아님(화면 텍스트 렌더). PDF/PPTX/DOCX 산출 없음."
+ },
+ {
+  "name": "예상시세 추정 보고서 (DeskAppraisalReportClient)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/operations/DeskAppraisalReportClient.tsx",
+  "entry_router": "POST /land-price/desk-appraisal (분석) + POST /land-price/desk-appraisal/pdf (PDF) + POST /api/v2/pipeline/interpret (AI해석)",
+  "content_domain": "land appraisal (AVM 데스크 감정)",
+  "library": "reportlab (desk_appraisal_pdf)",
+  "output_formats": [
+   "on-screen report",
+   "pdf"
+  ],
+  "frontend_surface": "'보고서 PDF 다운로드' 버튼(content-type pdf 검증 후 blob)",
+  "wired": true,
+  "canonical_model_fields": [
+   "평가결론(채택가/신뢰구간/신뢰도)",
+   "대상물건 표시",
+   "4산정방법(공시지가/거래사례/원가/수익환원)",
+   "교차검증(CV%)",
+   "복합·수익가치",
+   "시점수정·R-ONE 통계",
+   "AI해석·면책"
+  ],
+  "duplication_notes": "land_price.py:49/166 라이브. DeskAppraisalModal과 동일 엔드포인트 중복(풀페이지 vs 모달)."
+ },
+ {
+  "name": "토지 예상가치 추정 모달 (DeskAppraisalModal)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/operations/DeskAppraisalModal.tsx",
+  "entry_router": "POST /land-price/desk-appraisal + POST /land-price/desk-appraisal/pdf",
+  "content_domain": "land appraisal (모달 변형)",
+  "library": "reportlab (desk_appraisal_pdf)",
+  "output_formats": [
+   "pdf"
+  ],
+  "frontend_surface": "모달 내 PDF 다운로드 버튼(파일명 토지예상가치추정_{jibun}.pdf)",
+  "wired": true,
+  "canonical_model_fields": [
+   "DeskAppraisalReportClient와 동일 감정 스키마"
+  ],
+  "duplication_notes": "DeskAppraisalReportClient와 완전 동일 엔드포인트·PDF. 감정 PDF가 2개 표면에 중복 구현."
+ },
+ {
+  "name": "수지 내보내기 버튼 (ExcelExportButton)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/feasibility/ExcelExportButton.tsx",
+  "entry_router": "none (클라이언트 JSON.stringify blob)",
+  "content_domain": "feasibility",
+  "library": "none (client-side JSON)",
+  "output_formats": [
+   "json"
+  ],
+  "frontend_surface": "'내보내기' 버튼(FeasibilityEditorV2:303에 마운트=라이브 화면)",
+  "wired": true,
+  "canonical_model_fields": [
+   "summary{grade,revenue,cost,profit,roi,npv}",
+   "cost_breakdown_won",
+   "input",
+   "tax_detail",
+   "monteCarlo",
+   "recommendations"
+  ],
+  "duplication_notes": "라이브 화면에 마운트되어 클릭시 파일 다운로드는 되나, 백엔드 미연동이고 명칭(Excel)과 실제 포맷(.json) 불일치. 진짜 xlsx는 별도 orphan 컴포넌트(FeasibilityWorkspaceClient)에만 존재."
+ },
+ {
+  "name": "설계 스트리밍 리포트 (StreamingReport)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/design/StreamingReport.tsx",
+  "entry_router": "none",
+  "content_domain": "design (mock)",
+  "library": "none",
+  "output_formats": [
+   "on-screen streaming text"
+  ],
+  "frontend_surface": "none — 프레젠테이션 전용(@/mocks/module-data), 다운로드 버튼 없음",
+  "wired": false,
+  "canonical_model_fields": [
+   "ReportSection[]{id,title,content} (목 데이터 타입)"
+  ],
+  "duplication_notes": "non-test 참조 0건(orphan). 목 데이터 기반, 엔드포인트·다운로드 없음."
+ },
+ {
+  "name": "현금흐름 DCF 엑셀 (CashflowDcfPanel)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/analytics/CashflowDcfPanel.tsx",
+  "entry_router": "POST /api/v2/feasibility/cashflow (분석) + POST /api/v2/feasibility/cashflow/excel (다운로드)",
+  "content_domain": "feasibility (DCF 월별 현금흐름)",
+  "library": "openpyxl",
+  "output_formats": [
+   "xlsx"
+  ],
+  "frontend_surface": "엑셀 다운로드 버튼(propai_cashflow_dcf.xlsx)",
+  "wired": true,
+  "canonical_model_fields": [
+   "월별 현금흐름/DCF/NPV/IRR (cashflow result)"
+  ],
+  "duplication_notes": "v2_feasibility.py:1282 라이브."
+ },
+ {
+  "name": "공내역서 자동 적산 엑셀 (BoqAutoWorkspace)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/cost/BoqAutoWorkspace.tsx",
+  "entry_router": "POST /boq-auto/draft/export | POST /boq-auto/draft/priced/export",
+  "content_domain": "cost (BOQ 공내역/적산)",
+  "library": "openpyxl (boq_excel_export)",
+  "output_formats": [
+   "xlsx"
+  ],
+  "frontend_surface": "'엑셀 다운로드' 버튼(boq_{tag}{projectId}.xlsx, content-type 검증)",
+  "wired": true,
+  "canonical_model_fields": [
+   "공종별 항목/수량/단가/금액",
+   "priced 커버리지",
+   "BIM 실측 병합"
+  ],
+  "duplication_notes": "boq_auto.py 라이브. 별도 cost.py GET /{project_id}/export-excel 는 대응 FE 미발견(백엔드 orphan 후보)."
+ },
+ {
+  "name": "설계심사 리포트 PDF (AuditReportView)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/design-audit/AuditReportView.tsx",
+  "entry_router": "GET /api/v1/design-audit/{auditId}/pdf",
+  "content_domain": "design audit (설계심사)",
+  "library": "reportlab (design_audit_pdf)",
+  "output_formats": [
+   "pdf"
+  ],
+  "frontend_surface": "PDF 다운로드 버튼(JSON 반환시 정직 에러표기, design-audit-{id}.pdf)",
+  "wired": true,
+  "canonical_model_fields": [
+   "design_audits 1건 → S0~S7 구조 PDF(항목/현재값/한도/적합여부)"
+  ],
+  "duplication_notes": "design_audit.py:689 라이브."
+ },
+ {
+  "name": "수지 워크스페이스 엑셀 내보내기 (FeasibilityWorkspaceClient) [ORPHAN]",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/feasibility/FeasibilityWorkspaceClient.tsx",
+  "entry_router": "POST /api/v2/feasibility/export-excel (백엔드 라이브)",
+  "content_domain": "feasibility",
+  "library": "openpyxl (xlsx) / csv 폴백",
+  "output_formats": [
+   "xlsx",
+   "csv"
+  ],
+  "frontend_surface": "다운로드 버튼 존재 — 그러나 컴포넌트가 어디에도 마운트되지 않음(non-test 참조 0)",
+  "wired": false,
+  "canonical_model_fields": [
+   "feasibility_report (요약/수지/세금 → xlsx)"
+  ],
+  "duplication_notes": "엔드포인트(v2_feasibility.py:1001)는 라이브지만 컴포넌트가 orphan이라 실화면에서 도달 불가. 실동작 수지화면(FeasibilityEditorV2)은 JSON ExcelExportButton만 노출 → '진짜 xlsx 내보내기' 미배선 갭."
+ },
+ {
+  "name": "토지조서/토지분석보고서 (LandScheduleClient)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/operations/LandScheduleClient.tsx",
+  "entry_router": "POST /registry/land-schedule/excel (xlsx) + POST /zoning/land-report (pdf) + 등기부 a[href=pdf_url]",
+  "content_domain": "land (토지조서·토지분석·등기)",
+  "library": "openpyxl(xlsx) / reportlab(land_analysis_report_pdf)",
+  "output_formats": [
+   "xlsx",
+   "pdf"
+  ],
+  "frontend_surface": "'토지조서 엑셀' + '토지분석보고서 PDF' 다운로드 버튼, 행별 등기부 PDF 링크",
+  "wired": true,
+  "canonical_model_fields": [
+   "다필지 지번/면적/용도지역/공시지가/매입가",
+   "토지분석보고서(zoning land-report)"
+  ],
+  "duplication_notes": "registry.py:286 + auto_zoning.py:1537 라이브. .xlsx,.xls 업로드 input은 별개(토지조서 임포트)."
+ },
+ {
+  "name": "시장조사보고서 PDF/PPT/DOCX (MarketInsightsWorkspaceClient)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/operations/MarketInsightsWorkspaceClient.tsx",
+  "entry_router": "POST /market/report (생성) + POST /market/report/{pdf|pptx|docx} (다운로드)",
+  "content_domain": "market",
+  "library": "reportlab(pdf) / python-pptx(pptx) / python-docx(docx)",
+  "output_formats": [
+   "pdf",
+   "pptx",
+   "docx"
+  ],
+  "frontend_surface": "'PDF 다운로드' + 'PPT 다운로드' + 'DOCX 다운로드' 3버튼(genState pptx/docx/pdf)",
+  "wired": true,
+  "canonical_model_fields": [
+   "시장 요약/실거래/AVM/차트 → build_report dict",
+   "시장조사보고서_{address}.{fmt}"
+  ],
+  "duplication_notes": "market_report.py:47/88/103/119 모두 라이브. 플랫폼에서 PPTX·DOCX 다운로드를 프론트에 실제 노출하는 유일한(DOCX)·주요(PPTX) 표면. enforce_llm_quota 과금게이트."
+ },
+ {
+  "name": "페르소나 분석 PDF/PPTX (PersonaPanel)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/orchestration/PersonaPanel.tsx",
+  "entry_router": "POST /personas/{key}/analyze/pdf + POST /personas/{key}/analyze/pptx",
+  "content_domain": "persona (5대 전문가: 디벨로퍼/도시/설계/시공/분양대행)",
+  "library": "reportlab(pdf) / python-pptx(pptx)",
+  "output_formats": [
+   "pdf",
+   "pptx"
+  ],
+  "frontend_surface": "'PDF 다운로드' 전 페르소나 + 'PPTX 다운로드'(sales_agent=분양대행 한정, pptxSupported 게이트)",
+  "wired": true,
+  "canonical_model_fields": [
+   "PersonaReport(체크리스트/분석) → persona-{key}.{pdf|pptx}"
+  ],
+  "duplication_notes": "personas.py:76/119 라이브. PPTX는 분양대행 페르소나에만 활성(그 외 disabled)."
+ },
+ {
+  "name": "파이프라인 통합보고서 PDF (PipelineResultDetail)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/pipeline/PipelineResultDetail.tsx",
+  "entry_router": "POST /api/v2/pipeline/report/pdf",
+  "content_domain": "pipeline integrated report (통합보고서)",
+  "library": "reportlab (pipeline_report_pdf)",
+  "output_formats": [
+   "pdf"
+  ],
+  "frontend_surface": "'통합보고서 PDF' 다운로드 버튼(이미 계산된 result 전송, 재실행 없음)",
+  "wired": true,
+  "canonical_model_fields": [
+   "result{summary,stages} + project_id → 통합 PDF (부지/법규/설계/수지/세금/ESG 요약)"
+  ],
+  "duplication_notes": "pipeline.py:495 라이브. ReportPdfDownload(/reports/generate, 원장기반 v1)과 동일 pipeline_report_pdf — 통합보고서 PDF 경로 이원화(v1 원장 vs v2 result)."
+ },
+ {
+  "name": "해지/해촉 증명서 다운로드 (TerminationCertPanel)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/sales-app/TerminationCertPanel.tsx",
+  "entry_router": "GET /api/v1/sales/cert/{id}/pdf + GET /cert/{id}/image?fmt=png|jpeg + POST /cert/bulk-pdf",
+  "content_domain": "sales (전자 해촉증명서)",
+  "library": "reportlab(pdf, 한글 CID·직인) / 이미지 변환 / zip(bulk)",
+  "output_formats": [
+   "pdf",
+   "png",
+   "jpeg",
+   "zip"
+  ],
+  "frontend_surface": "증명서 PDF/이미지 다운로드 + 일괄 ZIP(certs.zip) 버튼(X-Site-Code/Token raw fetch)",
+  "wired": true,
+  "canonical_model_fields": [
+   "cert{기간/소득/원천징수/직인} → PDF/이미지",
+   "bulk-pdf → zip"
+  ],
+  "duplication_notes": "termination_cert.py 라이브. JSON 파서 못 쓰는 바이너리라 raw fetch로 인증헤더 직조립."
+ },
+ {
+  "name": "다필지 등기부 일괄 PDF (RegistryBulkButton)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/common/RegistryBulkButton.tsx",
+  "entry_router": "POST /registry/bulk",
+  "content_domain": "registry (등기부등본 일괄 발급)",
+  "library": "외부 provider(apick 등) 발급 — 생성 라이브러리 아님(base64/pdf_url 전달)",
+  "output_formats": [
+   "pdf"
+  ],
+  "frontend_surface": "항목별 'PDF' 버튼(base64→blob 다운로드) 또는 'PDF ↗' 링크(pdf_url)",
+  "wired": true,
+  "canonical_model_fields": [
+   "다필지 등기부 결과[]{address,has_pdf,pdf_base64,pdf_url}"
+  ],
+  "duplication_notes": "registry.py:142 라이브. 자체 생성이 아닌 등기 provider 발급물 전달."
+ },
+ {
+  "name": "CAD/BIM 도면 내보내기 (CadBimIntegrationPanel) [비-보고서]",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/web/components/design/CadBimIntegrationPanel.tsx",
+  "entry_router": "POST /design/{id}/drawings/export-dxf (dxf) + POST /drawing/export-ifc (ifc) + GET /design/{id}/drawings/{code}/svg",
+  "content_domain": "design (CAD/BIM 도면 산출물 — '보고서' 아님)",
+  "library": "ezdxf(dxf) / ifcopenshell(ifc)",
+  "output_formats": [
+   "dxf",
+   "ifc",
+   "svg"
+  ],
+  "frontend_surface": "도면 DXF 내보내기 + IFC 내보내기 + SVG 저장",
+  "wired": true,
+  "canonical_model_fields": [
+   "DesignSpec/도면 → DXF/IFC/SVG"
+  ],
+  "duplication_notes": "design_v61.py:622(dxf) 라이브. IFC는 FE가 /drawing/export-ifc 호출하나 백엔드 실경로는 /{project_id}/bim/export-ifc(design_v61.py:1128)+param-based /drawing/export-ifc — 경로 별칭 확인 필요. 문서가 아닌 도면이라 보고서 범주 밖."
+ },
+ {
+  "name": "시장조사 보고서 (MarketReportService)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/market/market_report_service.py",
+  "entry_router": "POST /api/v1/market/report/{pdf,pptx,docx} (routers/market_report.py, main.py:619); POST /api/v1/personas/sales_agent/analyze/pptx (routers/personas.py, main.py:616)",
+  "content_domain": "market",
+  "library": "reportlab + python-pptx + python-docx",
+  "output_formats": [
+   "PDF",
+   "PPTX",
+   "DOCX"
+  ],
+  "frontend_surface": "components/operations/MarketInsightsWorkspaceClient.tsx (downloadReport fmt pdf/pptx/docx); components/orchestration/PersonaPanel.tsx (PPTX, 분양대행 sales_agent 전용)",
+  "wired": true,
+  "canonical_model_fields": [
+   "address",
+   "lawd_cd",
+   "zone_type",
+   "official_price_per_sqm",
+   "trade",
+   "rent",
+   "apt_trend",
+   "infrastructure",
+   "demographics",
+   "narrative(summary/opportunities/risks/target_persona)",
+   "feasibility_analysis",
+   "pricing_band",
+   "unit_mix_recommendation"
+  ],
+  "duplication_notes": "플랫폼 유일의 PPTX/DOCX 렌더러 보유. to_pptx(L885)=title slide+CategoryChartData/XL_CHART_TYPE 차트+표, to_docx(L1085)=python-docx. 단 두 렌더러가 이 서비스에 종속(시장 rep dict 형태에 커플링)→통합엔진의 유일 재사용 원천이자 추출 대상."
+ },
+ {
+  "name": "설계 감사 보고서 (design_audit_pdf)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/design_audit_pdf.py",
+  "entry_router": "app/routers/design_audit.py (build_design_audit_pdf)",
+  "content_domain": "design",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/design-audit/DesignAuditWorkspace.tsx, AuditReportView.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "audit(findings/annotations/score/brief)"
+  ],
+  "duplication_notes": "PDF-only. SimpleDocTemplate+A4+Table 패턴 공유. PPTX/DOCX 갭."
+ },
+ {
+  "name": "파이프라인 통합 보고서 (pipeline_report_pdf)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/pipeline_report_pdf.py",
+  "entry_router": "app/routers/pipeline.py + routers/reports.py (build_pipeline_report_pdf)",
+  "content_domain": "feasibility/pipeline (라이프사이클 통합)",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/pipeline/PipelineResultDetail.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "report",
+   "narratives"
+  ],
+  "duplication_notes": "PDF-only. reportlab SimpleDocTemplate 패턴복제. PPTX/DOCX 갭."
+ },
+ {
+  "name": "토지분석 보고서 (land_analysis_report_pdf)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/land_intelligence/land_analysis_report_pdf.py",
+  "entry_router": "routers/auto_zoning.py (build_land_analysis_report)",
+  "content_domain": "land",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "none confirmed (auto-zoning 백엔드 엔드포인트만 확인, 프론트 다운로드 미검증)",
+  "wired": true,
+  "canonical_model_fields": [
+   "data(면적·용도지역·공시지가·실거래 기반)"
+  ],
+  "duplication_notes": "PDF-only. reportlab 패턴복제. PPTX/DOCX 갭."
+ },
+ {
+  "name": "데스크 감정평가 보고서 (desk_appraisal_pdf)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/land_intelligence/desk_appraisal_pdf.py",
+  "entry_router": "app/routers/pipeline.py + app/routers/land_price.py (build_desk_appraisal_pdf)",
+  "content_domain": "appraisal/land",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/operations/DeskAppraisalReportClient.tsx, DeskAppraisalModal.tsx",
+  "wired": true,
+  "canonical_model_fields": [
+   "감정가·실효가치·거래사례·비교"
+  ],
+  "duplication_notes": "PDF-only. reportlab 패턴복제. PPTX/DOCX 갭."
+ },
+ {
+  "name": "페르소나: 도시계획 인허가 검토서 (urban_report)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/urban_report.py",
+  "entry_router": "POST /api/v1/personas/urban_planner/analyze/pdf (routers/personas.py, main.py:616)",
+  "content_domain": "persona/urban",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/orchestration/PersonaPanel.tsx (PDF 다운로드)",
+  "wired": true,
+  "canonical_model_fields": [
+   "persona runner report(인허가·규제·특이부지)"
+  ],
+  "duplication_notes": "PDF-only. 파일 자체가 'market_report_service.to_pdf 패턴 복제(R8)' 주석. PPTX/DOCX 갭(sales_agent만 market to_pptx 재사용)."
+ },
+ {
+  "name": "페르소나: 디벨로퍼 사업계획서 (developer_report)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/developer_report.py",
+  "entry_router": "POST /api/v1/personas/developer/analyze/pdf (routers/personas.py, main.py:616)",
+  "content_domain": "persona/developer",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/orchestration/PersonaPanel.tsx (PDF 다운로드)",
+  "wired": true,
+  "canonical_model_fields": [
+   "persona runner report(사업성·수지·Top3)"
+  ],
+  "duplication_notes": "PDF-only. 'urban_report.to_pdf 패턴 복제(R8)' 주석. PPTX/DOCX 갭."
+ },
+ {
+  "name": "페르소나: 설계 검토서 (designer_report)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/designer_report.py",
+  "entry_router": "POST /api/v1/personas/designer/analyze/pdf (routers/personas.py, main.py:616)",
+  "content_domain": "persona/design",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/orchestration/PersonaPanel.tsx (PDF 다운로드)",
+  "wired": true,
+  "canonical_model_fields": [
+   "persona runner report(설계검토·배치·유닛믹스)"
+  ],
+  "duplication_notes": "PDF-only. 'urban_report.to_pdf 패턴 복제(R8)' 주석. PPTX/DOCX 갭."
+ },
+ {
+  "name": "페르소나: 시공 공사비 견적서 (constructor_report)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/persona/constructor_report.py",
+  "entry_router": "POST /api/v1/personas/constructor/analyze/pdf (routers/personas.py, main.py:616)",
+  "content_domain": "persona/construction",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "components/orchestration/PersonaPanel.tsx (PDF 다운로드)",
+  "wired": true,
+  "canonical_model_fields": [
+   "persona runner report(공사비·QTO·물량)"
+  ],
+  "duplication_notes": "PDF-only. 'reportlab SimpleDocTemplate+A4+HYSMyeongJo 패턴' 주석. PPTX/DOCX 갭."
+ },
+ {
+  "name": "분양 해지증명서 (termination_cert_pdf)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/sales/cert/termination_cert_pdf.py",
+  "entry_router": "app/api/endpoints/sales/termination_cert.py (build_termination_cert_pdf)",
+  "content_domain": "sales/legal-cert (분양계약 해지증명서)",
+  "library": "reportlab",
+  "output_formats": [
+   "PDF"
+  ],
+  "frontend_surface": "none confirmed (분양 ERP/현장앱 백엔드 엔드포인트만 확인)",
+  "wired": true,
+  "canonical_model_fields": [
+   "cert(계약·해지사유·직인 스탬프)"
+  ],
+  "duplication_notes": "PDF-only 증명서. reportlab SimpleDocTemplate 패턴. 문서 성격상 DOCX 수요 가능(현재 갭)."
+ },
+ {
+  "name": "은행제출용 통합 보고서 (bank_ready_report_service)",
+  "file": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/apps/api/app/services/report/bank_ready_report_service.py",
+  "entry_router": "POST /api/v1/.../bank-report/generate (app/routers/bank_report.py)",
+  "content_domain": "bank (PF 대출 심사 10섹션)",
+  "library": "none (dict/JSON 빌더 — 렌더러 없음)",
+  "output_formats": [
+   "JSON"
+  ],
+  "frontend_surface": "components/report/BankReadyReportBuilder.tsx (온스크린 렌더, 파일 다운로드 없음)",
+  "wired": true,
+  "canonical_model_fields": [
+   "summary",
+   "market",
+   "legal",
+   "design",
+   "unit_mix",
+   "feasibility",
+   "finance",
+   "risk",
+   "esg",
+   "appendix"
+  ],
+  "duplication_notes": "★최대 갭: generate_report가 구조화 dict(JSON)만 반환, 파일 렌더러 전무. '은행제출용'인데 PDF/PPTX/DOCX 다운로드 파일 자체가 없음. reportlab/pptx/docx 어떤 렌더러도 미배선."
+ }
+]

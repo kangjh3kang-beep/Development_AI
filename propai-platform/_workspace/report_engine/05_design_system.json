@@ -1,0 +1,55 @@
+{
+ "philosophy": "PropAI 보고서 디자인 시스템(PRDS)의 철학은 \"적을수록 신뢰(Less, but trustworthy)\"다. 은행 심사역·투자심의위원 같은 비전문 의사결정자가 1페이지 두괄식 요약으로 Go/No-Go를 판단하고, 모든 수치 옆에 근거·출처·신뢰도가 자동으로 따라붙는 '검증가능한 문서'를 지향한다. Dieter Rams의 '적을수록 좋다'를 데이터잉크 최대화로 번역하여, 장식(그림자·그라디언트·중복 괘선·불필요한 색)을 제거하고 잉크의 대부분을 실제 데이터·근거에 쓴다. 색은 의미(등급·리스크·임계치)에만 쓰고, 브랜드 색(#0e7490 딥틸)은 위계 표시에만 절제해 사용한다. 세 포맷(PDF/PPTX/DOCX)이 같은 토큰·같은 컴포넌트·같은 순서를 공유해 사업 간·포맷 간 비교가능성을 확보하며, 기존 reportlab 자산(K-V표·HYSMyeongJo CID·A4·면책푸터) 위에 얇게 얹어 재구현 없이 확장한다.",
+ "typography": "한글은 PDF=HYSMyeongJo-Medium(CID 명조, 기존 유지·Helvetica 폴백), PPTX/DOCX='맑은 고딕(Malgun Gothic)'을 EastAsian 폰트로 지정(고딕이 표·숫자 가독 우수). 라틴·숫자는 tabular 정렬 위해 Helvetica/Arial 계열 고정. 선택적 임베딩: 나눔고딕/본고딕(Noto Sans KR)을 registerFont로 서버 렌더 시 통일 가능(주의: pptx/docx는 뷰어 로컬폰트 의존→맑은고딕 안전). 타이포 스케일(pt, 행간=leading): 표지 타이틀 24(굵게)/leading 28 · 섹션 디바이더 H1 16/20 · 섹션 H2 13(딥틸·굵게)/16 · 소제목 H3 11(굵게)/14 · 본문 9.5(PDF)~10.5(PPTX·DOCX)/leading 1.45(약 14) · 표 셀 8.5/11 · 표 헤더 8.5(굵게·흰색) · KPI 수치 22~28(tabular·굵게)/1.0 · KPI 라벨 8(muted) · 캡션/출처 7.5(muted)/11 · 면책 7.5/11. 규칙: 굵기는 Bold/Regular 2단계만(HYSMyeongJo는 Medium 단일→굵게는 색·크기로 대체), 대문자·자간 확장 금지(한글 가독 저해), 숫자는 항상 우측정렬·천단위 콤마.",
+ "color_palette": "인쇄안전(무광 CMYK 근사)·저채도 전문 팔레트. [브랜드/위계] Primary 딥틸 #0e7490(표헤더·H2·헤더바, 기존), Primary-dark #155e75(강조테두리), Accent 스카이 #0369a1(근거링크·하이퍼링크). [잉크/중립] Ink #0f172a(본문·제목), Secondary #475569(보조텍스트), Muted #64748b(캡션·출처, 기존 #888888 표준화), Line #cbd5e1(괘선 0.4pt), Zebra #f1f5f9(행교대), Panel #f8fafc(요약/근거박스 배경), White #ffffff. [등급 4-tier=FSC 사업성평가] 양호 #16a34a(fill #dcfce7) · 보통 #0e7490(fill #cffafe) · 유의 #d97706(fill #fef3c7) · 부실우려 #dc2626(fill #fee2e2). [신호등 임계치=LTV·DSCR·분양률] 안전/GO 녹 #16a34a · 주의 황 #d97706 · 위험/NO-GO 적 #dc2626. [보조 도표 계열] 4색 순서: #0e7490 → #64748b → #0369a1 → #94a3b8(부족 시 #155e75, #d97706 추가). 규칙: 색은 의미 전달에만, 음수는 괄호+#dc2626, 순수 검정(#000)·형광색·그라디언트 금지, 색맹 대비 위해 등급/리스크는 색+텍스트라벨(양호/유의…) 병기.",
+ "layout_grid": "기본 A4 세로(210×297mm), 여백 상·하 16mm·좌·우 15mm(기존 SimpleDocTemplate 유지)→본문폭 180mm. 대형표(총사업비·월별 현금흐름·민감도)는 A4 가로 삽입. 개념 그리드=12컬럼(본문폭/12≈15mm), KPI 타일은 3열 또는 4열(각 span 4/3), K-V표는 라벨 55mm+값 125mm(기존 비율). PPTX=16:9(13.33×7.5in), 안전여백 0.6in, 상단 헤더바 1.1in(딥틸)+하단 푸터바 0.4in@y7.1in(기존), 본문 2단(6.0in×2) 또는 KPI 3~4타일. DOCX=A4·여백 2cm, 스타일 기반(Heading1/2/Normal 재정의). [문서 골격 5종] ①표지: 문서유형·사업명·소재지·신청/요청액·문서번호·작성일·'대외비(CONFIDENTIAL)'·승인란(심사역→팀장→심의위) ②목차: 넘버링 계층(1·1.1)·점리더·페이지 ③섹션 디바이더: 섹션번호+제목+딥틸 상단룰 ④본문: H2(딥틸)→표/차트→캡션·출처, 상단 러닝헤더(섹션명)·하단 푸터(page/총page·기밀·문서ID·버전·작성일) ⑤부록: 근거원장·상세표. 두괄식 규칙: 1페이지째에 반드시 ExecSummary/DealSnapshot 박스(결론·등급·핵심KPI 스냅샷) 고정.",
+ "components": [
+  {
+   "name": "CoverPage(표지)",
+   "spec": "딥틸 상단밴드(높이 40mm/1.1in)에 문서유형·사업명(흰색 24pt). 중앙 K-V 메타표(소재지·용도지역·규모·요청액·문서번호·작성일). 우상단 '대외비(CONFIDENTIAL)' 적색 배지. 하단 승인란 3칸(심사역/팀장/심의위 서명·일자). PropAI 로고·워터마크. 데이터잉크: 배경이미지 없이 색밴드+타이포만."
+  },
+  {
+   "name": "TableOfContents(목차)",
+   "spec": "넘버링 계층(1, 1.1) 좌측정렬, 점리더(dot leader)로 우측 페이지번호 연결. H2=딥틸. 3계층 이하만 노출."
+  },
+  {
+   "name": "ExecSummaryBox(심사요약/DealSnapshot)",
+   "spec": "1페이지째 고정. Panel(#f8fafc) 배경+좌측 딥틸 4pt 룰. 상단: 결론 배지(승인/조건부/부결 또는 GO/NoGo)+등급 배지. 중단: 핵심근거 3~5줄 불릿. 하단: KPI 타일 행(LTV·LTC·자기자본비율·사업이익률·분양률·DSCR). 두괄식·비전문자 판독용."
+  },
+  {
+   "name": "KPITile(KPI 타일)",
+   "spec": "3~4열 카드. 상단 라벨(8pt muted)→수치(22~28pt tabular·굵게, tint 아님 잉크색)→하단 단위/기준선 비교(예 'LTV 65% ≤ 70% 기준'). 임계 초과 시 수치색=신호등(녹/황/적). 테두리 0.4pt #cbd5e1, 배경 white. 그림자 금지."
+  },
+  {
+   "name": "KVTable(K-V 2열표)",
+   "spec": "기존 header=False 패턴. 라벨열(55mm·#f1f5f9 배경·굵게)+값열(125mm·우측 숫자정렬). 괘선 0.4pt #cbd5e1. 항목별 근거 각주번호 부착 가능."
+  },
+  {
+   "name": "DataTable(데이터표)",
+   "spec": "기존 tbl() 패턴 표준화. 헤더행=딥틸 배경+흰색 굵게 8.5pt, 본문 8.5pt, 괘선 #cbd5e1 0.4pt, 행교대 ROWBACKGROUNDS[white,#f1f5f9], 숫자 우측정렬·천단위콤마·단위 헤더 명기(백만원/㎡), 합계행 굵게+상단 1pt 룰, 음수=괄호+적색. 캡션+출처 병기."
+  },
+  {
+   "name": "EvidenceBlock(근거블록)",
+   "spec": "evidence 계약{value,basis,source,provenance,legal_link,confidence} 렌더러. 인라인=수치 뒤 각주번호+하단 출처. 상세=Panel 박스에 6필드 K-V. legal_link=스카이 #0369a1 밑줄(하이퍼링크). confidence=신뢰도 배지(high녹/med황/low회). verified만 본문, 미검증은 '추정' 워터라벨."
+  },
+  {
+   "name": "GradeBadge/RiskBadge(등급·리스크 배지)",
+   "spec": "둥근모서리 pill. 등급=FSC 4색(양호#16a34a/보통#0e7490/유의#d97706/부실우려#dc2626) 배경 tint+진한 텍스트+라벨. 리스크 히트맵 셀=발생가능성×영향도 5×5, 셀 배경 녹→황→적 3구간. 색+텍스트 병기(색맹 대비)."
+  },
+  {
+   "name": "ChartFrame(차트 프레임)",
+   "spec": "제목(H3 11pt)+플롯영역+범례(하단·색스와치+라벨)+캡션/출처(7.5pt muted). 축=최소 눈금·회색 0.4pt, 격자선 생략 또는 옅게, 데이터라벨 직접표기(범례 의존 최소), 팔레트=보조 4색계열. 데이터잉크 최대(테두리·배경 없음)."
+  },
+  {
+   "name": "SectionDivider(섹션 디바이더)",
+   "spec": "섹션번호(딥틸 큰숫자)+제목(H1 16pt)+상단 딥틸 룰 0.75pt. 본문 시작 전 위계 리셋."
+  },
+  {
+   "name": "DisclaimerFooter(면책 푸터)",
+   "spec": "기존 ※ 패턴 확장. 모든 페이지 하단: page/총page·문서ID·버전·작성일·'대외비'. 마지막 섹션: 면책 전문(내부심사목적·투자권유아님·추정치 불확실성·자료진실성 비담보·이해상충·비밀유지·무단배포금지)+감정평가 기준일·시장데이터 조회일 스탬프. 7.5pt muted."
+  }
+ ],
+ "chart_system": "dataviz 원칙: 폼(form) 우선—값 비교=Bar, 시계열=Line/S-커브, 부분합→합계=Waterfall, 구성비(≤5범주)=Donut, 변수 영향순위=Tornado(가로 Bar 정렬), 2변수 심각도=Heatmap, 임계치 대비=Gauge/Bullet. 색: 계열 구분은 보조 4색(#0e7490→#64748b→#0369a1→#94a3b8), 의미색(등급/신호등)은 별도, 단일계열은 딥틸 단색(기존 bc.bars[0]=#0e7490 유지). 범례=하단 가로 색스와치+텍스트, 계열 3개 이하면 데이터라벨 직접표기로 범례 생략. 축: y0 기준·최소눈금·회색 0.4pt·격자선 옅게(#e2e8f0)나 생략, 금액 단위 축제목 명기. 데이터잉크 최대화: 3D·그림자·배경색·중복괘선 금지. 표준 차트팩(보고서 공통): 총사업비 파이/도넛, 자금수지 Waterfall, 누적현금흐름 S-커브, 자금조달 Stacked Bar, 민감도 Tornado, 시나리오 그룹Bar, 분양률 계획vs실적 Line, LTV·DSCR Gauge/Bullet(임계 신호등), 리스크 Heatmap. 렌더 범위: reportlab.graphics(VerticalBarChart/Pie/HorizontalLineChart)로 벡터 직렌더 가능, 복잡한 Waterfall/Tornado/Heatmap/Gauge는 matplotlib→PNG(150~200dpi)→Image 임베드(3포맷 공통 폴백). PPTX는 네이티브 add_chart(XL_CHART_TYPE) 또는 동일 PNG. 무자료 차트는 '데이터 없음' 플레이스홀더(가짜 곡선 금지).",
+ "honesty_rules": "전 포맷 공통 정직표기: ①빈값/무자료='—'(em dash) 또는 '확인필요'·'보완필요'(기존 패턴), 절대 가짜값 생성 금지. ②추정/미검증=수치 뒤 '(추정)'·'(가정)' 라벨+옅은 워터라벨, verified만 본문 KPI로 승격. ③공시지가=0/미확보 시 '— (공시지가 미확보)'로 명시하고 토지가액 산정에서 제외(0을 유효값처럼 곱하지 않음). ④데이터 신선도: 모든 시장·감정 수치에 조회일/평가기준일 스탬프 병기, 유효기간 표기. ⑤용적률은 법정과 실효(조례 calc_effective_far) 분리표기, detect_special_parcel 특이부지는 과대낙관 차단 배지. ⑥다필지는 통합면적(effectiveLandAreaSqm) 사용, 단일필지 값이 덮지 않도록. ⑦가정·전제(Assumptions)는 별도 박스로 투명화, 보수적 기준 채택 명기, 정성판단과 정량근거 구분. ⑧면책 전문 필수(투자권유 아님·추정 불확실성·자료 비담보·비밀유지). ⑨reportlab 렌더 시 사용자 문자열 XML escape 필수(& < > 이스케이프, 기존 함정).",
+ "per_format_mapping": "공통 토큰/컴포넌트를 단일 tokens.py(HEX·pt·mm 상수 dict)로 정의하고 3구현이 이를 소비한다. [색] 공통 HEX → reportlab colors.HexColor('#0e7490') / pptx RGBColor(0x0E,0x74,0x90)(hex→RGBColor 헬퍼) / docx RGBColor.from_string('0E7490'); 셀 배경은 docx만 네이티브 미지원→ _shade_cell(cell,'0E7490') XML헬퍼(w:shd val=clear fill=). [폰트] reportlab pdfmetrics.registerFont(UnicodeCIDFont('HYSMyeongJo-Medium'))+ParagraphStyle(fontName=font) / pptx run.font.name='맑은 고딕'+EastAsian XML(rPr>a:ea typeface='맑은 고딕') / docx run.font.name='맑은 고딕'+run._element.rPr.rFonts.set(qn('w:eastAsia'),'맑은 고딕'). [타입스케일] 공통 pt → reportlab ParagraphStyle(fontSize,leading) / pptx run.font.size=Pt(n) / docx run.font.size=Pt(n)+style 재정의. [페이지·여백] 공통 A4·mm → reportlab SimpleDocTemplate(pagesize=A4,topMargin=16*mm...) (기존) / pptx prs.slide_width=Inches(13.33)·slide_height=Inches(7.5) / docx section.page_width=Mm(210)·page_height=Mm(297)·margins=Cm(2). 가로표: reportlab landscape(A4)+doc 분리 or Table 자체폭 / pptx 동일 슬라이드 가로 / docx section.orientation=LANDSCAPE. [DataTable] 공통 스펙 → reportlab Table+TableStyle(BACKGROUND(0,0)(-1,0)#0e7490, TEXTCOLOR white, GRID 0.4 #cbd5e1, ROWBACKGROUNDS[white,#f1f5f9]) (기존 tbl()) / pptx shapes.add_table→헤더행 cell.fill.solid()+fore_color.rgb=accent·run bold white, 본문 for-loop 교대 fill, 테두리 tbl XML / docx add_table(style='Table Grid')→헤더행 _shade_cell+run.bold+white, 교대행 _shade_cell('F1F5F9'), 숫자셀 paragraph.alignment=RIGHT. [KVTable] reportlab header=False Table 라벨55mm/값125mm+라벨열 BACKGROUND #f1f5f9 / pptx 2열 table 라벨열 fill / docx 2열 table 라벨셀 shade. [KPITile] reportlab 중첩 Table 또는 Drawing(Rect+String) 카드 / pptx shapes.add_shape(ROUNDED_RECTANGLE)+text_frame(라벨/수치/기준) / docx 1셀 table+_shade_cell+문단3단(라벨·수치·기준). [Badge/Grade] reportlab Table 1x1 BACKGROUND=tint+TEXTCOLOR=진색+ROUNDEDCORNERS([3,3,3,3]) / pptx ROUNDED_RECTANGLE fill=tint·font=진색 / docx 셀 shade tint+run 색. [EvidenceBlock] 3포맷 공통 evidence dict→렌더 함수, legal_link: reportlab '<a href>'(Paragraph 마크업)·pptx run.hyperlink.address·docx add_hyperlink 헬퍼. [Chart] reportlab.graphics(Drawing+VerticalBarChart/Pie/HorizontalLineChart) 직렌더 or matplotlib PNG→platypus Image(공통) / pptx slide.shapes.add_chart(XL_CHART_TYPE,...) 네이티브 or 동일 PNG add_picture / docx add_picture(PNG)(네이티브 차트 없음→matplotlib PNG 필수). [Footer/Disclaimer] reportlab onPage 콜백 canvas.drawString(page·기밀·문서ID) + 말미 Paragraph(면책, 기존 ※) / pptx 하단 footer 바 shape+textbox(각 슬라이드) / docx section.footer 문단+필드코드(PAGE). [Cover/Divider] reportlab 첫 flowables+PageBreak / pptx 첫 슬라이드·구분 슬라이드 / docx 문단+add_page_break, Heading 스타일. 공통 원칙: 하나의 report_data(SSOT)→3개 빌더가 동일 토큰·동일 섹션순서 소비, reportlab 경로는 기존 코드 위에 tokens/컴포넌트 헬퍼만 추출(재구현 금지)."
+}

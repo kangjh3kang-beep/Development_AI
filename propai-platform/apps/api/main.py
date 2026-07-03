@@ -938,9 +938,11 @@ try:
 except Exception as e:
     logger.warning("app/routers/mass_templates 로드 실패", error=str(e))
 
-# 프론트가 호출하나 미마운트였던 app/routers 4종(자체 prefix 보유, 기존 라우트와 경로
-# 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는
+# 프론트가 호출하나 미마운트였던 app/routers(자체 prefix 보유, 기존 라우트와 경로
+# 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/v2_tax는
 # 표면 확대 방지로 미마운트(필요시 추후). 각각 독립 try로 격리.
+# ★rates 추가(2026-07-03): BimCostDashboard.tsx가 /api/v1/rates/current(법정요율)를 호출하는데
+#   미마운트라 런타임 404였음 — stale 전제 정정(정찰 F1). cost는 위 g2b 블록에서 이미 마운트됨.
 for _mod, _attr, _tag in [
     # avm 제거: /api/v1/avm/estimate는 이미 routers/avm.py(line 349, RBAC avm:read)로 마운트됨.
     # app/routers/avm.py(get_current_user, 권한체크 없음)를 중복 등록하면 경로 충돌 → 재정렬 시
@@ -948,6 +950,7 @@ for _mod, _attr, _tag in [
     ("apps.api.app.routers.external_api", "router", "외부 공공데이터"),
     ("apps.api.app.routers.finance", "router", "재무(몬테카를로)"),
     ("apps.api.app.routers.lifecycle", "router", "프로젝트 라이프사이클"),
+    ("apps.api.app.routers.rates", "router", "v61 법정요율"),
 ]:
     try:
         import importlib as _il

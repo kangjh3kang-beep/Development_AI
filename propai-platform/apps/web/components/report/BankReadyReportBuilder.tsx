@@ -247,6 +247,7 @@ export function BankReadyReportBuilder() {
   const [report, setReport] = useState<BankReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingFmt, setDownloadingFmt] = useState<"pdf" | "pptx" | "docx" | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   // Build project_data payload from store
@@ -403,55 +404,61 @@ export function BankReadyReportBuilder() {
     }
   };
 
-  const handleDownloadPdf = () => {
+  // 통합 보고서 생성엔진: 서버에서 PDF/PPTX/DOCX 렌더(과거 window.print HTML 인쇄 대체).
+  // 같은 데이터·같은 디자인으로 3포맷을 받는다(브라우저 인쇄 품질 편차 제거).
+  const handleDownload = async (format: "pdf" | "pptx" | "docx") => {
     if (!report) return;
-    // Create a printable HTML representation and trigger print dialog
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-
-    // P1-9: 서버 제공 보고서 데이터를 document.write에 주입하기 전 HTML 이스케이프(DOM XSS 차단).
-    const esc = (v: unknown): string =>
-      String(v ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-
-    const sectionsHtml = report.sections
-      .map(
-        (s) => `
-      <div style="page-break-inside:avoid;margin-bottom:24px;">
-        <h2 style="font-size:16px;font-weight:bold;border-bottom:2px solid #1e3a5f;padding-bottom:4px;margin-bottom:12px;">${esc(s.title)}</h2>
-        ${
-          s.has_data
-            ? `<table style="width:100%;border-collapse:collapse;font-size:13px;">
-                ${Object.entries(s.content)
-                  .filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && v.length === 0))
-                  .map(
-                    ([k, v]) =>
-                      `<tr><td style="padding:4px 8px;font-weight:500;color:#555;width:40%;border-bottom:1px solid #eee;">${esc(k)}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</td></tr>`,
-                  )
-                  .join("")}
-               </table>`
-            : `<p style="color:#999;font-style:italic;">데이터 없음</p>`
+    setDownloadingFmt(format);
+    setError(null);
+    try {
+      const { apiBaseUrl } = apiClient.getRuntimeConfig();
+      const baseUrl = apiBaseUrl || "/api/proxy";
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(
+        `${baseUrl}/bank-report/generate/report?format=${format}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            project_data: buildProjectData(),
+            selected_sections: Array.from(selectedSections),
+            template,
+            project_id: projectId || undefined,
+            pnu: siteAnalysis?.pnu || undefined,
+            address: siteAnalysis?.address || undefined,
+          }),
+        },
+      );
+      if (!res.ok) {
+        let detail = `다운로드 실패 (HTTP ${res.status})`;
+        try {
+          const j = (await res.json()) as { detail?: string; message?: string };
+          if (j?.detail || j?.message) detail = (j.detail ?? j.message) as string;
+        } catch {
+          /* 본문 비-JSON */
         }
-      </div>`,
-      )
-      .join("");
-
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>${esc(report.meta.title)}</title>
-      <style>body{font-family:'Noto Sans KR',sans-serif;max-width:800px;margin:40px auto;color:#222;}
-      @media print{body{margin:20px;}}</style></head><body>
-      <h1 style="font-size:22px;text-align:center;color:#1e3a5f;">${esc(report.meta.title)}</h1>
-      <p style="text-align:center;color:#777;font-size:12px;">생성일: ${esc(report.meta.data_basis_date)} | ${esc(report.meta.generated_by)} | 완성도: ${esc(report.completeness.pct)}%</p>
-      <hr style="border:1px solid #1e3a5f;margin:20px 0;"/>
-      ${sectionsHtml}
-      <hr style="border:1px solid #ccc;margin:20px 0;"/>
-      <p style="font-size:11px;color:#999;">${esc(report.meta.legal_disclaimer)}</p>
-      </body></html>`);
-    printWindow.document.close();
-    printWindow.print();
+        throw new Error(detail);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `bank_report.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "다운로드 중 오류가 발생했습니다.");
+    } finally {
+      setDownloadingFmt(null);
+    }
   };
 
   return (
@@ -574,9 +581,25 @@ export function BankReadyReportBuilder() {
                 </div>
                 <div className="flex items-center gap-4">
                   <CompletenessRing pct={report.completeness.pct} />
-                  <Button onClick={handleDownloadPdf} variant="secondary">
-                    PDF 다운로드
-                  </Button>
+                  {/* 통합 보고서 생성엔진: 서버 렌더 3포맷(과거 브라우저 인쇄 대체) */}
+                  <div className="flex items-center gap-1.5">
+                    {(["pdf", "pptx", "docx"] as const).map((fmt) => (
+                      <Button
+                        key={fmt}
+                        onClick={() => handleDownload(fmt)}
+                        variant="secondary"
+                        disabled={downloadingFmt !== null}
+                      >
+                        {downloadingFmt === fmt
+                          ? "생성 중…"
+                          : fmt === "pdf"
+                            ? "PDF"
+                            : fmt === "pptx"
+                              ? "PPT"
+                              : "Word"}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </CardContent>

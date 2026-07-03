@@ -101,24 +101,26 @@ export function DeskAppraisalModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const downloadPdf = async () => {
-    setBusy("pdf"); setErr(null);
+  // 통합 보고서 생성엔진: PDF/PPT/Word 중 선택(같은 데이터·같은 디자인).
+  const downloadReport = async (format: "pdf" | "pptx" | "docx") => {
+    setBusy(format); setErr(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
-      // 화면에 확보된 공시지가·PNU·면적을 넘겨 PDF 재지오코딩 의존 제거(신뢰성)
+      // 화면에 확보된 공시지가·PNU·면적을 넘겨 재지오코딩 의존 제거(신뢰성)
       const pdfBody = {
         ...body(),
         pnu: res?.pnu ?? undefined,
         official_price_per_sqm: official ? Number(official) : (res?.official_price_per_sqm ?? undefined),
         area_sqm: areaSqm ?? res?.area_sqm ?? undefined,
       };
-      const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf`, {
+      const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf?format=${format}`, {
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(pdfBody),
       });
-      if (!r.ok || !(r.headers.get("content-type") || "").includes("pdf")) { setErr("리포트 생성 실패"); return; }
+      // 성공=바이너리. 실패=JSON(공시지가 미확인 등) → 정직 표기.
+      if (!r.ok || (r.headers.get("content-type") || "").includes("json")) { setErr("리포트 생성 실패"); return; }
       const blob = await r.blob(); const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `토지예상가치추정_${jibun}.pdf`;
+      const a = document.createElement("a"); a.href = url; a.download = `토지예상가치추정_${jibun}.${format}`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
   };
@@ -216,7 +218,9 @@ export function DeskAppraisalModal({
               {res.appraised_total_won != null && (
                 <button onClick={() => { onApply(res.complex_total_won ?? res.appraised_total_won!); onClose(); }} className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white">매입예정가에 반영</button>
               )}
-              <button onClick={downloadPdf} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === "pdf" ? "생성 중…" : "리포트 PDF ↓"}</button>
+              {([["pdf", "PDF"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
+                <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === fmt ? `${label} 생성 중…` : `${label} ↓`}</button>
+              ))}
             </div>
           </div>
         )}

@@ -7,8 +7,9 @@ DB·외부API 없이 검증한다.
 
 from __future__ import annotations
 
-from app.services.persona import cache, urban_report
+from app.services.persona import cache
 from app.services.persona.runner import run_persona
+from app.services.report.render import build_report_model_from_persona, render_report
 
 
 class _FakeDB:
@@ -137,7 +138,8 @@ async def test_urban_pdf_renders(monkeypatch):
     _patch_urban(monkeypatch)
     out = await run_persona("urban_planner", _FakeDB(),
                             {"address": "서울특별시 강남구 역삼동 123"}, use_llm=False)
-    pdf = urban_report.to_pdf(out)
+    # 통합 보고서 생성엔진 경유(4 클론 to_pdf 통합) — PDF 렌더 검증
+    pdf, _mime, _ext = render_report(build_report_model_from_persona(out, "urban_planner"), "pdf")
     assert isinstance(pdf, bytes) and pdf[:4] == b"%PDF"
 
 

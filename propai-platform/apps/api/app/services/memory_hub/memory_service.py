@@ -177,3 +177,18 @@ class MemoryHubService:
                 logger.warning("회상 항목 포맷 실패(스킵): %s", str(e)[:160])
 
         return results
+
+
+# ── 싱글톤 팩토리(★정찰 G4 해소) ──────────────────────────────────
+# 과거 store/recall 호출부가 매번 MemoryHubService() 를 새로 만들어 OpenAIEmbeddings 클라이언트를
+# 반복 생성했다. 서비스는 요청별 상태가 없고(db 는 인자로 주입) embeddings/config 만 보유하므로
+# 프로세스 단일 인스턴스를 공유해 클라이언트 재생성을 없앤다(동시요청 안전).
+_singleton: MemoryHubService | None = None
+
+
+def get_memory_hub() -> MemoryHubService:
+    """프로세스 공유 MemoryHubService 를 반환(embeddings 클라이언트 재사용)."""
+    global _singleton
+    if _singleton is None:
+        _singleton = MemoryHubService()
+    return _singleton

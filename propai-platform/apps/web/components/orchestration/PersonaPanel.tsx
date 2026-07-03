@@ -106,7 +106,7 @@ const STATUS_BADGE: Record<string, { label: string; token: string }> = {
 /** 다운로드 idiom(ReportPdfDownload와 동일) — apiClient는 JSON만 반환하므로 blob은 수동 fetch. */
 async function downloadPersonaBlob(
   personaKey: string,
-  kind: "pdf" | "pptx",
+  kind: "pdf" | "pptx" | "docx",
   body: PersonaRequestBody,
 ): Promise<void> {
   const { apiBaseUrl } = apiClient.getRuntimeConfig();
@@ -115,14 +115,18 @@ async function downloadPersonaBlob(
     typeof window !== "undefined"
       ? localStorage.getItem("propai_access_token") ?? ""
       : "";
-  const res = await fetch(`${baseUrl}/personas/${personaKey}/analyze/${kind}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  // 통합 보고서 생성엔진: /analyze/report?format 이 4종을 PDF/PPTX/DOCX 로 렌더(분양대행은 pdf|pptx).
+  const res = await fetch(
+    `${baseUrl}/personas/${personaKey}/analyze/report?format=${kind}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+  );
   if (!res.ok) {
     // 백엔드 400(주소·법정동코드 미확보 등) 메시지를 그대로 표면화(무목업·정직).
     let detail = `다운로드 실패 (HTTP ${res.status})`;
@@ -138,7 +142,7 @@ async function downloadPersonaBlob(
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `persona-${personaKey}.${kind === "pptx" ? "pptx" : "pdf"}`;
+  anchor.download = `persona-${personaKey}.${kind}`;
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
@@ -456,7 +460,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   const [report, setReport] = useState<PersonaReport | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState<"pdf" | "pptx" | null>(null);
+  const [downloading, setDownloading] = useState<"pdf" | "pptx" | "docx" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   // 결과 캐시(로컬 state만 — persist 미접촉). 입력 시그니처가 바뀌면 재실행을 권한다.
   const cacheRef = useRef<Record<string, { report: PersonaReport; sig: string }>>({});
@@ -596,7 +600,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   );
 
   const onDownload = useCallback(
-    async (kind: "pdf" | "pptx") => {
+    async (kind: "pdf" | "pptx" | "docx") => {
       if (!selectedKey) return;
       setDownloadError(null);
       setDownloading(kind);
@@ -611,11 +615,14 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
     [selectedKey, requestBody],
   );
 
-  // PDF/PPTX 게이트(personas.py): 두 PDF 모두 주소+법정동코드 필요. PPTX는 sales_agent만.
+  // 다운로드 게이트(personas.py): 주소+법정동코드 필요.
+  // ★통합 보고서 생성엔진: 4종(도시/디벨로퍼/시공/설계)=PDF/PPTX/DOCX, 분양대행=PDF/PPTX.
+  const ENGINE_PERSONAS = new Set(["urban_planner", "developer", "constructor", "designer"]);
   const hasAddrAndCode = !!requestBody.address && !!requestBody.bcode;
   const pdfDisabled = !hasAddrAndCode || downloading !== null;
-  const pptxSupported = selectedKey === "sales_agent";
-  const pptxDisabled = !pptxSupported || !hasAddrAndCode || downloading !== null;
+  const pptxDisabled = !selectedKey || !hasAddrAndCode || downloading !== null;
+  const docxSupported = !!selectedKey && ENGINE_PERSONAS.has(selectedKey);
+  const docxDisabled = !docxSupported || !hasAddrAndCode || downloading !== null;
 
   const gate =
     report?.artifacts && typeof report.artifacts.gate === "object"
@@ -782,20 +789,25 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
               type="button"
               disabled={pptxDisabled}
               onClick={() => onDownload("pptx")}
-              title={
-                !pptxSupported
-                  ? "PPTX는 분양대행만 지원"
-                  : !hasAddrAndCode
-                    ? "주소·법정동코드 필요"
-                    : undefined
-              }
+              title={!hasAddrAndCode ? "주소·법정동코드 필요" : undefined}
               className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {downloading === "pptx" ? "PPTX 생성 중…" : "PPTX 다운로드"}
             </button>
+            {docxSupported && (
+              <button
+                type="button"
+                disabled={docxDisabled}
+                onClick={() => onDownload("docx")}
+                title={!hasAddrAndCode ? "주소·법정동코드 필요" : undefined}
+                className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloading === "docx" ? "Word 생성 중…" : "Word 다운로드"}
+              </button>
+            )}
             {!hasAddrAndCode && (
               <span className="text-[10px] text-[var(--text-tertiary)]">
-                PDF/PPT는 주소·법정동코드(PNU)가 있어야 생성됩니다.
+                보고서는 주소·법정동코드(PNU)가 있어야 생성됩니다.
               </span>
             )}
           </div>

@@ -1,0 +1,136 @@
+{
+ "wiring_priorities": [
+  {
+   "title": "라우터 수작업 화이트리스트 → 자동 디스커버리 등록 헬퍼 (F1 rates 라이브 404 + F2 v2_tax 死모듈 + F3 구조결함 통합)",
+   "severity": "P0",
+   "fix": "app/routers·routers 두 패키지의 정의된 APIRouter를 순회 등록하는 공용 register_routers(app, opt_out=[...]) 헬퍼 도입. rates(/api/v1/rates/*)를 등록해 BimCostDashboard.tsx:50의 /rates/current 404 즉시 해소(라이브 200 검증). v2_tax는 v1 tax와 중복이므로 opt_out 명시 또는 삭제(死코드). CI에서 '정의됐으나 미마운트' 클래스를 assert로 구조 차단. main.py:843 stale 주석 제거.",
+   "shared_helper": true
+  },
+  {
+   "title": "통합 보고서 생성엔진 미배선 — StreamingReport(O2) mock+미마운트, 은행제출 PDF=window.print, ReportPdfDownload/PipelineResultDetail 이원화",
+   "severity": "P0",
+   "fix": "신설 통합 보고서 엔진(단일 정본모델+3렌더러)로 흡수. StreamingReport를 mocks/module-data→POST /api/v1/reports/generate 실데이터로 배선, 공용 ReportDownloadMenu(포맷 드롭다운)로 window.print·JSON-blob 버튼 대체. v1원장/v2result 이원 PDF 경로를 단일 엔드포인트 내부로 라우팅(하위호환 얇은 래퍼).",
+   "shared_helper": true
+  },
+  {
+   "title": "DigitalTwinInterpreter 라우터 부재 → /digital-twin/interpret 상시 404 (가상준공 AI 해설 死배선)",
+   "severity": "P0",
+   "fix": "digital-twin 라우터 신설(인터프리터 .generate_interpretation() 소비, 5섹션 계약 일치)+main.py 등록. 인터프리터 마운트 패턴을 공용 attach 헬퍼로 표준화(_attach_site_ai 계열 재사용). 라이브 200 검증.",
+   "shared_helper": true
+  },
+  {
+   "title": "Celery .delay() 死축 — SpecialistAgent·MemoryHub 자동적재가 단일컨테이너 prod에서 소비자 0 (성장뇌 write-path 전멸, registry interpreter=None)",
+   "severity": "P0",
+   "fix": "worker/broker 부재 시 인라인 백그라운드 실행으로 폴백하는 공용 dispatch(task, *args) 헬퍼로 comprehensive/panel/specialist 3지점 .delay를 일원화(G1~G3 동시 해소). 핫패스 차단 금지=백그라운드 태스크로만 실행, MemoryHubService+OpenAIEmbeddings 싱글톤화. registry 8팩토리 interpreter=None 주입 수정. agent_memories/Qdrant 자동적재+회상 비공백 라이브 검증.",
+   "shared_helper": true
+  },
+  {
+   "title": "공용 UX 셸 WorkspaceShell(O6) 정의만·미채택 — 상태표기(live/mock/loading/error) 표준 앵커 부재",
+   "severity": "P1",
+   "fix": "전 WorkspaceClient·분석 페이지가 WorkspaceShell을 표준 헤더 골격으로 import하도록 배선해 title/description/status를 공용화(전역 표준 앵커). 메모리 '공용셸 부재'와 정확히 일치.",
+   "shared_helper": true
+  },
+  {
+   "title": "Innovation API-backed 패널 3종 orphan (O3 유닛믹스최적화·O4 대화형시장·O5 종합분석) — '만들어놓고 배선안함'",
+   "severity": "P1",
+   "fix": "feasibility/market/analysis 라우트에 각각 마운트(백엔드 라이브, useProjectContextStore·effectiveLandAreaSqm 사용). WorkspaceShell 골격 위에 배선해 status 표준 준수.",
+   "shared_helper": false
+  },
+  {
+   "title": "세금 UI 클러스터 4종(O7) 전면 死문 — tax 라우트 자체 부재 (v2_tax 백엔드 결정과 커플)",
+   "severity": "P1",
+   "fix": "tax 라우트 신설 후 4종 배선하거나 실사용본 TaxOperationsWorkspaceClient에 흡수+잔재 삭제. F2 v2_tax 등록/삭제 결정과 함께 SSOT 확정.",
+   "shared_helper": true
+  },
+  {
+   "title": "생성허브 GenerativePanel(O1) 미마운트 + setTimeout 목업 — generation 라우트 자체 없음",
+   "severity": "P1",
+   "fix": "generation 라우트 신설 마운트 시 setTimeout 목업을 실 매스/설계 생성 API로 교체. 대체본 확정이면 삭제. 무목업 게이트 준수.",
+   "shared_helper": false
+  },
+  {
+   "title": "레거시 데드코드 정리 — 운영 WorkspaceClient 3종(O8 permits/approvals/safety)·중복본(O9 design/carbon)·UI 프리미티브 5종(O11)",
+   "severity": "P1",
+   "fix": "permits/page.tsx 주석이 대체 명시한 3종은 유니크 로직 diff 후 삭제. 로컬 ui/ 5종은 @propai/ui로 단일화(유니크 로직만 패키지 승격). CI grep으로 삭제셋 참조=0 보장.",
+   "shared_helper": true
+  },
+  {
+   "title": "feasibility 내보내기 명칭/포맷 불일치 — ExcelExportButton이 실제로 JSON blob만 다운로드, 진짜 /export-excel 라우트는 라이브지만 FeasibilityWorkspaceClient orphan",
+   "severity": "P1",
+   "fix": "실동작 수지화면(FeasibilityEditorV2)의 '내보내기'를 통합엔진 xlsx 렌더러 경유 POST /api/v2/feasibility/export-excel(openpyxl) 실호출로 교체. orphan FeasibilityWorkspaceClient 마운트 또는 로직 이관 후 제거.",
+   "shared_helper": true
+  },
+  {
+   "title": "부분 死엔드포인트 트리아지 — F4 admin-sales-rls·F5 lifecycle(evm/eoq/replacement)·F6 esg/lcc중복·F7 design_v61(permit-docs/select-alternative)",
+   "severity": "P2",
+   "fix": "esg/lcc/calculate는 전용 /api/v1/lcc로 일원화(死엔드포인트 제거, SSOT). 나머지는 소비 UI 배선(살아있는 호출부 fetch 헬퍼 재사용) 또는 제거+운영도구 문서화. admin-sales-rls는 관리자 셸에 status/apply/rollback 배선하거나 curl 운영도구로 명시.",
+   "shared_helper": false
+  },
+  {
+   "title": "잔여 데모 자산 트리아지 — 마케팅배너 3종(O12)·데모 대시보드 3종(O13)·미연동 금융위젯 3종(O14)·기타 도메인 9종(O15)",
+   "severity": "P2",
+   "fix": "product 확인 후 mount-or-delete. 모호건은 삭제보다 마운트/문서화 우선(오삭제 방지). 금융위젯은 배선 시 실 API 연동 필수(데모 유지 금지).",
+   "shared_helper": false
+  }
+ ],
+ "report_engine_spec": {
+  "canonical_model": "단일 정본 ReportModel(도메인 무관): (1) ReportMeta{title, subtitle, template_id, project_address, pnu, generated_at, data_basis_date, legal_disclaimer, accent_color, completeness{total,filled,empty,pct}} — bank_ready_report의 meta+completeness 스키마 승격. (2) Section[]{id, title, blocks[]}. (3) Block 판별유니온: KVTableBlock(key-value, whitesmoke/teal KV표), TableBlock(headers+rows: finding표·유닛믹스·QTO), ChartBlock(series: trend_series·tornado·monte_carlo p5/p50/p95), NarrativeBlock(LLM 서술, report/avm/market 인터프리터 산출 통일 주입), EvidenceBlock{value,basis,source,provenance,legal_link,confidence}(메모리 evidence 계약 재사용, verified만), ImageBlock(정적지도 PNG data URI), ChecklistBlock('미확보 정직고지' 빈행 규약 내장), DisclaimerBlock. 도메인 producer는 산식 서비스 결과를 이 모델로 '조립'만 하고 산식 복제 0. bank_ready 10섹션 택소노미와 pipeline 10섹션을 단일 섹션 빌더로 통합(중복 콘텐츠모델 제거).",
+  "renderers": [
+   "PdfRenderer: pipeline_report_pdf.py의 정본 헬퍼(HYSMyeongJo-Medium→Helvetica font-register, _fmt(), KV TableStyle colWidths[45mm,125mm]·GRID lightgrey·whitesmoke 헤더)를 공용 모듈 report_render/pdf_kit로 추출 후 Block 타입별 렌더. accent_color 파라미터화(persona teal/blue/orange/purple, market #0e7490). 8개 PDF 생산자의 복제 보일러플레이트를 이 한 곳으로 수렴.",
+   "PptxRenderer(신설 python-pptx): market_report_service.to_pptx(L885)를 시장 rep 하드코딩→Block 구동으로 일반화. 섹션당 슬라이드, KVTable/Table→table shape, ChartBlock→네이티브 pptx chart(CategoryChartData), ImageBlock→picture. pyproject.toml에 python-pptx==1.0.2 선언 추가(현재 requirements만).",
+   "DocxRenderer(신설 python-docx): market_report_service.to_docx(L1085)를 Block 구동으로 일반화. Section→Heading, KV/Table→docx table, Chart→임베드 이미지 폴백, Narrative→문단. DISCLAIMER_TEXT 공용 상수화.",
+   "XlsxRenderer(선택 스코프, 통합): ExcelExportService(4472C4)·boq_excel_export(D9D9D9)·v2_feasibility 인라인 openpyxl 3중 스타일러를 공용 xlsx 스타일 헬퍼로 수렴."
+  ],
+  "producers_to_migrate": [
+   "BankReadyReportService(★최우선 갭: JSON-only→PDF/PPTX/DOCX 신규 획득, window.print 대체)",
+   "PipelineReportService + build_pipeline_report_pdf(bank_ready와 10섹션 중복 택소노미를 단일 섹션빌더로 통합)",
+   "persona 4종 developer/constructor/urban/designer(★최대 dedup ROI: urban_report.to_pdf 클론 4개를 단일 공용 렌더러+섹션빌더 주입형으로 통합, _won_to_eok/_table 축자중복 제거)",
+   "MarketReportService(PPTX/DOCX 시드 → 정본모델 emit로 리팩토링, 첫 어댑터=회귀 기준선)",
+   "build_land_analysis_report, build_desk_appraisal_pdf, build_design_audit_pdf, termination_cert_pdf(PDF-only→pdf_kit 이관+PPTX/DOCX 획득)",
+   "ExcelExportService + boq_excel_export + v2_feasibility 인라인 openpyxl(xlsx 공용 헬퍼로 통합)"
+  ],
+  "reuse_assets": [
+   "pipeline_report_pdf.py 정본 reportlab 헬퍼(_fmt·HYSMyeongJo font-register·KV TableStyle) — 추출만, 재작성 금지",
+   "market_report_service.py to_pptx(L885)/to_docx(L1085) — 플랫폼 유일 PPTX/DOCX 시드, 일반화만",
+   "bank_ready_report REPORT_SECTIONS 10섹션 스키마(사업개요~부록) — canonical model 시드",
+   "메모리 evidence 계약 {value,basis,source,provenance,legal_link,confidence} — EvidenceBlock 재사용(verified만)",
+   "전 도메인 산식 서비스(OriginCostCalculator·monte_carlo·gresb_scoring·avm·tax·feasibility) — producer가 조립만, 산식 복제 0",
+   "인터프리터 서술(report_interpreter/avm_interpreter/market _narrative) — NarrativeBlock 단일 계약으로 통일",
+   "legal_reference_registry 링크(build_law_url verified만) — EvidenceBlock legal_link"
+  ],
+  "api_surface": "통합 엔드포인트 POST /api/v1/reports/generate?format=pdf|pptx|docx|xlsx|json, body{report_type, project_id|inputs}. report_type(bank|pipeline|market|persona:{key}|land|appraisal|design_audit)→해당 producer가 정본 ReportModel 생성, format→렌더러 디스패치, StreamingResponse+정확 MIME 반환. 기존 도메인별 /report/{pdf,pptx,docx}·/bank-report/generate·/personas/{key}/analyze/{pdf,pptx}는 내부적으로 이 경로를 호출하는 하위호환 얇은 래퍼로 유지. 프론트=공용 useReportDownload 훅 + ReportDownloadMenu(포맷 드롭다운) 컴포넌트가 모든 보고서 표면에서 window.print·JSON-blob 버튼을 대체."
+ },
+ "implementation_phases": [
+  "Phase 0 (P0 라이브 404 저비용 수정): 자동 디스커버리 register_routers 헬퍼 도입→rates 등록(BimCostDashboard 200 검증)·v2_tax opt_out 결정. digital-twin 라우터 신설(인터프리터 5섹션 배선). Celery .delay 공용 dispatch 폴백 헬퍼(3지점, 백그라운드 실행)→SpecialistAgent·MemoryHub 자동적재 라이브 발화. 전부 라이브 그라운드 트루스 검증.",
+  "Phase 1 (PDF 보일러플레이트 공용화, 무행동변경): pipeline_report_pdf 헬퍼를 report_render/pdf_kit로 추출→pipeline/design_audit/desk_appraisal/termination_cert/land_analysis 5종 이관. 이관 전후 골든파일 구조 패리티로 회귀 차단(로컬 _fmt/registerFont 복제 제거, grep count=1).",
+  "Phase 2 (정본모델+PdfRenderer): ReportModel+Block 유니온 정의. bank_ready 10섹션 스키마를 정본으로 승격, pipeline과 단일 섹션빌더 통합. PdfRenderer(Block 구동) 구현. 통합 POST /api/v1/reports/generate?format=pdf 신설, pipeline·bank producer 이관. bank_ready가 서버 PDF 첫 획득(window.print 폐기).",
+  "Phase 3 (PPTX/DOCX 렌더러 신설): market to_pptx/to_docx를 Block 구동으로 일반화한 PptxRenderer·DocxRenderer. MarketReportService를 정본모델 emit로 리팩토링(첫 어댑터=골든파일 회귀 기준선, 유일 라이브 PPTX/DOCX 표면 보호, 피처플래그). python-pptx를 pyproject.toml 선언. bank/pipeline이 PPTX/DOCX 획득(플래그십 갭 종료).",
+  "Phase 4 (persona 통합+프론트 배선): 4개 persona 리포트를 단일 공용 렌더러+섹션빌더 주입형으로 통합(클론 스켈레톤·_won_to_eok 축자중복 제거). 공용 useReportDownload+ReportDownloadMenu 배선, StreamingReport 실데이터 연결, feasibility JSON-blob→실 xlsx 교체, DeskAppraisal 이중표면 단일 훅화.",
+  "Phase 5 (배선 스윕+데드코드 정리): WorkspaceShell 전역 채택(status 표준 앵커), Innovation 패널 3종+세금 클러스터+생성허브 마운트, 레거시 WorkspaceClient·UI 프리미티브·데모 자산 mount-or-delete 트리아지, 부분 死엔드포인트 정리(esg/lcc→/lcc SSOT). CI assert(라우터 커버리지·렌더러 골든파일·orphan grep=0)."
+ ],
+ "acceptance_criteria": [
+  "GET/POST /api/v1/rates/current 이 BimCostDashboard에서 라이브 200(404 아님). CI가 app/routers·routers의 모든 APIRouter가 app.routes에 존재 또는 명시적 opt_out임을 assert(미마운트 클래스 재발 0).",
+  "POST /api/v1/reports/generate?format={pdf,pptx,docx} 가 report_type ∈ {bank,pipeline,market,persona:*,land,appraisal,design_audit}에 대해 정확 MIME의 유효 파일 반환 — 포맷×타입 매트릭스 골든파일 구조 검증 통과.",
+  "BankReadyReport가 서버 PDF+PPTX+DOCX로 다운로드 가능하고 window.print HTML 인쇄 경로 제거됨.",
+  "산식 복제 0: grep으로 report_render/* 및 신규 렌더러에 far/roi/monte_carlo/tax/gresb 재구현 부재, 전부 도메인 서비스 import 확인.",
+  "reportlab font-register+KV TableStyle+_fmt가 정확히 1개 모듈(pdf_kit)에만 존재 — 8개 PDF 생산자의 로컬 복제 grep count=1로 수렴.",
+  "PPTX/DOCX 렌더 로직이 각 정확히 1개 렌더러에만 존재(market to_pptx/to_docx 도메인 하드코딩 제거, Block 구동).",
+  "persona 4종(developer/constructor/urban/designer)이 단일 공용 섹션빌더+정본모델로 산출 — to_pdf 스켈레톤 클론·_won_to_eok 축자중복 제거 확인.",
+  "모든 보고서 표면에 ReportDownloadMenu(포맷 드롭다운) 마운트, feasibility '내보내기'가 실 xlsx(/export-excel openpyxl) 산출(JSON blob 아님), StreamingReport가 실 report API 소비(mock 제거).",
+  "단일컨테이너 prod에서 SpecialistAgent·MemoryHub ingest 자동경로 발화 — agent_memories/Qdrant 자동적재 확인, 회상 비공백 결과 라이브 검증.",
+  "/digital-twin/interpret 가 5섹션 payload로 라이브 200.",
+  "41개 orphan 컴포넌트 트리아지 완료 — 각각 마운트(라이브 import ≥1) 또는 삭제, 삭제셋 참조 grep=0.",
+  "회귀: 기존 라이브 PDF/PPTX/DOCX(market·pipeline·persona·desk-appraisal·design-audit) 산출물이 리팩토링 전 골든파일 대비 구조 패리티 유지."
+ ],
+ "risks": [
+  "콘텐츠모델 통합(bank_ready+pipeline 10섹션) 시 산식/필드 드리프트 회귀 — 두 producer 입력은 보존하고 표현(섹션빌더)만 통합, 골든파일 diff로 방어.",
+  "python-pptx가 pyproject.toml 미선언(requirements/oracle에만 ==1.0.2, 런타임 lazy import로만 동작) — PptxRenderer 사용 확대 전 poetry-only 설치 대비 pyproject 선언 필수.",
+  "market to_pptx/to_docx 일반화가 유일 라이브 PPTX/DOCX 표면을 회귀시킬 위험 — market을 골든파일 패리티+피처플래그 뒤에서 첫 어댑터로 이관.",
+  "자동 디스커버리 라우터 헬퍼가 의도적 제외(agents/cost/v2_tax) 라우터를 오등록해 표면/공격면 확대·prefix 충돌 — 명시적 opt_out 리스트+신규 마운트 경로별 인증 리뷰 필수.",
+  "인프로세스 .delay 폴백이 핫패스(comprehensive/panel/specialist)에 동기 지연 유발 — 반드시 백그라운드 태스크로만 실행, MemoryHub/embeddings 싱글톤화로 호출당 생성 제거.",
+  "차트 3포맷 패리티(reportlab drawing vs 네이티브 pptx chart vs docx 임베드 이미지)는 픽셀 동일 불가 — 포맷별 차트 전략 정의, 픽셀이 아닌 의미(semantic) 패리티 수용.",
+  "범위 현실성: '플랫폼 전역 100%' 비현실 — orphan 삭제는 향후 배선 의도 자산을 오삭제할 위험, 모호건(O12~O15)은 product 확인 전 삭제 금지·mount-or-document 기본.",
+  "레거시 WorkspaceClient(O8) 삭제가 유니크 로직 유실 유발 — 삭제 전 로직 diff, 유니크만 대체본으로 이관.",
+  "NarrativeBlock 통일이 인터프리터 산출에 의존하나 registry interpreter=None으로 prod 서술 상시 공백 — Celery/dispatch 폴백 수정(Phase 0)을 서술 의존 전에 선행 배치."
+ ]
+}

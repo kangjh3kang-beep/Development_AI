@@ -1,0 +1,299 @@
+[
+ {
+  "id": "F1-rates-unregistered",
+  "category": "dead_route",
+  "title": "rates 라우터가 main.py에 미등록 — 라이브 컴포넌트가 호출하나 런타임 404",
+  "evidence": "라우터 정의: apps/api/app/routers/rates.py:14 `router = APIRouter(prefix=\"/api/v1/rates\")` (엔드포인트 3개: :18 GET /current, :24 GET /history, :30 POST /refresh). apps/api/main.py 전역 include_router 114개 중 rates_router 등록 0건 — 유일한 참조는 apps/api/main.py:843 주석 '프론트 호출 없는 agents/cost/rates/v2_tax는 표면 확대 방지로 미마운트'. 그러나 이 전제가 틀렸음: apps/web/components/cost/BimCostDashboard.tsx:50 `const res = await fetch(`${API_BASE}/api/v1/rates/current`)` 가 실제로 /api/v1/rates/current 를 호출 → 라우터 미등록이므로 런타임 404 반환(BIM 원가 대시보드의 법정요율 로드 깨짐). /history·/refresh 는 미등록+미호출 완전 死엔드포인트.",
+  "severity": "P0",
+  "fix_approach": "apps/api/main.py 에 `app.include_router(rates_router)` 추가(자체 prefix=/api/v1/rates 이므로 prefix 인자 불필요). BimCostDashboard 호출과 계약 일치 라이브 검증(200 응답 확인).",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F2-v2tax-unregistered",
+  "category": "dead_route",
+  "title": "v2_tax 라우터 미등록 — /api/v2/tax/* 8개 엔드포인트 전체 도달 불가(死모듈)",
+  "evidence": "라우터 정의: apps/api/app/routers/v2_tax.py:17 `router = APIRouter(prefix=\"/api/v2/tax\")` (엔드포인트 8개: :20 POST /calculate-all, :42 GET /applicable/{development_type}, :52 GET /matrix, :70 GET /regions/{sido_name}, :85 GET /rates, :96 GET /metro-transport, :107 GET /compare, :123 GET /development-types). apps/api/main.py include_router 목록에 v2_tax 등록 0건 — 유일 참조는 main.py:843 미마운트 주석. apps/web 소스(.next/.open-next 빌드산출물 제외) 전역 grep 결과 'v2/tax'·'/tax/calculate-all'·'/tax/matrix'·'/tax/metro-transport'·'/tax/development-types' 모두 0건. 즉 미등록 AND 프론트 호출 0건 → 모듈 전체 死코드(세금계산은 v1 tax 라우터 /api/v1/tax 사용). 미등록 규칙상 P0 후보이나 라이브 호출자가 없어 실파급은 latent이므로 P1.",
+  "severity": "P1",
+  "fix_approach": "실사용 계획이면 main.py 에 include_router 후 프론트 배선, 아니면 v2_tax.py 삭제(死코드 제거). 결정 전 v1 tax 와 기능 중복 여부 확인.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F3-registration-list-shared-helper",
+  "category": "other",
+  "title": "라우터 등록이 수작업 화이트리스트 — '만들어놓고 배선 안 함' 재발 구조",
+  "evidence": "apps/api/main.py 는 114개 include_router 를 손으로 나열하며 app/routers/*.py 중 일부(rates·v2_tax)를 '프론트 호출 없음' 가정으로 의도적 제외(main.py:843-844). 이 가정이 stale 되면(F1처럼 나중에 프론트가 호출 추가) 미배선을 아무도 감지 못함. app/routers/ 디렉토리에 존재하는 모듈 수 대비 등록 여부를 검증하는 단일 소스가 없음.",
+  "severity": "P2",
+  "fix_approach": "app/routers/ 자동 디스커버리 헬퍼(모든 모듈의 router 를 순회 등록 + 명시적 opt-out 리스트) 도입해 '정의됐으나 미마운트' 클래스를 구조적으로 차단. CI 에서 정의된 라우터 전부가 app.routes 에 존재하는지 assert.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F4-admin-sales-rls-orphan",
+  "category": "dead_route",
+  "title": "admin_sales_rls 라우터 — 등록됐으나 프론트 호출 0건(orphan)",
+  "evidence": "라우터 정의: apps/api/app/routers/admin_sales_rls.py:22 `prefix=\"/api/v1/admin/sales-rls\"` (엔드포인트: :39 GET /status, :49 POST /apply, :62 POST /rollback). main.py:731 에 등록됨. 그러나 apps/web 소스 전역 grep 'sales-rls'·'sales_rls' 0건 → 프론트 UI 배선 전무. 분양 RLS(행수준보안) 적용/롤백을 트리거할 관리자 화면이 없어 코드로만 존재.",
+  "severity": "P2",
+  "fix_approach": "관리자 콘솔(예: ApiKeyManagementPanel 인접)에 RLS status/apply/rollback 버튼 배선하거나, curl 전용 운영 도구로 남길 것이면 문서화. 배선 시 admin secrets 패널과 공용 관리자 셸 재사용.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "F5-lifecycle-dead-endpoints",
+  "category": "dead_route",
+  "title": "lifecycle 라우터 — 7개 중 3개 엔드포인트 프론트 미호출",
+  "evidence": "apps/api/app/routers/lifecycle.py (prefix /api/v1/lifecycle, main.py:851 등록). 프론트 호출 확인 결과: construction/checklist(2건)·construction/safety-plan(1)·risk/assessment(1)·disaster-risk/assess(1)는 배선됨. 그러나 :59 POST /supervision/evm, :71 POST /procurement/eoq, :75 GET /lifecycle-opt/replacement-schedule 은 apps/web 소스 grep 0건 → 死엔드포인트. (참고: '/lifecycle/' 총 29건 매치는 대부분 useProjectLifecycle/ProjectLifecyclePipeline 컴포넌트명이며 API 호출 아님.)",
+  "severity": "P2",
+  "fix_approach": "EVM·EOQ·교체주기 결과를 소비할 lifecycle 패널 카드에 배선하거나, 미사용이면 제거. 배선 시 이미 살아있는 checklist/safety-plan 호출부와 동일 fetch 헬퍼 재사용.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "F6-esg-lcc-dead",
+  "category": "dead_route",
+  "title": "esg 라우터의 /lcc/calculate 엔드포인트 미호출(전용 lcc 라우터와 중복)",
+  "evidence": "apps/api/app/routers/esg.py:153 POST /lcc/calculate (prefix /api/v1/esg, main.py:657 등록). 형제 엔드포인트 lca/calculate(3건)·epd/carbon-footprint·epd/low-carbon-alternatives(3건)는 프론트 호출 존재하나, 'esg/lcc'·'/lcc/calculate' grep 0건. 별도 전용 라우터 lcc(/api/v1/lcc, main.py:683)가 라이브로 존재해 esg/lcc/calculate 는 기능 중복 死엔드포인트.",
+  "severity": "P2",
+  "fix_approach": "esg/lcc/calculate 제거하고 전용 /api/v1/lcc 라우터로 일원화(SSOT). 또는 esg 패널이 LCC 필요 시 /lcc 호출로 배선.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "F7-design-v61-dead-endpoints",
+  "category": "dead_route",
+  "title": "design_v61 라우터 — permit-docs·select-alternative 엔드포인트 프론트 미호출",
+  "evidence": "apps/api/app/routers/design_v61.py (prefix /api/v1/design, main.py:819 등록). 대부분 엔드포인트는 배선됨(generate-full-set 3, unit-mix/simulate 3, drawings/save 1, drawings/load 2, bim/generate 9, bim/model.glb 2, export-dxf/edited-dxf/import-dxf/export-ifc 다수, render-photoreal 1). 그러나 :1221 GET /{project_id}/permit-docs 와 :1163 POST /{project_id}/select-alternative 는 apps/web 소스 grep 0건 → 死엔드포인트. (permit-docs 는 PermitDocsResponse 스키마까지 구현됐으나 소비 UI 없음.)",
+  "severity": "P2",
+  "fix_approach": "설계 스튜디오/인허가 화면에 permit-docs(인허가 도서)·select-alternative(대안 확정) 배선하거나 미사용이면 제거. 배선 시 동일 라우터의 살아있는 호출부 fetch 패턴 재사용.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O1",
+  "category": "orphan_component",
+  "title": "생성허브 GenerativePanel 어떤 라우트에도 미마운트 (★생성허브 최우선)",
+  "evidence": "apps/web/components/features/GenerativePanel.tsx:14 `export default function GenerativePanel`. apps/web 전역 import 0건(경로 `['\"]…/GenerativePanel['\"]` grep 0, app/에 generation 라우트 없음, components/features/ 소비처 0). 내부는 setTimeout(L47) 시뮬레이션만 하는 '건축 생성 AI' 챗 허브인데 부모가 없어 화면에 노출 불가.",
+  "severity": "P0",
+  "fix_approach": "생성허브 라우트(app/[locale]/(dashboard)/generation 등)에서 마운트하고 setTimeout 목업을 실제 매스/설계 생성 API로 교체. 대체본이 확정이면 삭제.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O2",
+  "category": "orphan_component",
+  "title": "보고서 뷰 StreamingReport 미배선 + mock 데이터 소비 (★보고서 최우선)",
+  "evidence": "apps/web/components/design/StreamingReport.tsx:15 `export function StreamingReport`. import 0건. 소비 타입이 `@/mocks/module-data`의 ReportSection이라 실데이터도 미배선이고 부모 렌더도 0.",
+  "severity": "P0",
+  "fix_approach": "ProjectReportWorkspaceClient/보고서 페이지에 배선하고 mocks/module-data→실 report API로 교체. 미사용이면 제거.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O3",
+  "category": "orphan_component",
+  "title": "Innovation1 유닛믹스 최적화 패널이 라우트 미배선",
+  "evidence": "apps/web/components/feasibility/UnitMixOptimizerPanel.tsx:73 `export function UnitMixOptimizerPanel`. import 0건. CLAUDE.md 변경이력에 Innovation1(SLSQP 유닛믹스)로 등재된 API-backed 기능(useProjectContextStore·effectiveLandAreaSqm 사용)이 어떤 page.tsx에서도 마운트되지 않음 = 전형적 '만들어놓고 배선안함'.",
+  "severity": "P1",
+  "fix_approach": "사업성/feasibility 페이지에 마운트해 최적화 API를 사용자에게 노출.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O4",
+  "category": "orphan_component",
+  "title": "Innovation2 대화형 시장분석 AI 패널 미배선",
+  "evidence": "apps/web/components/market/ConversationalMarketPanel.tsx:160 `export function ConversationalMarketPanel`. import 0건. Innovation2로 등재된 자연어→실거래→차트 API-backed 패널(intent/chart_data 처리)이 시장 페이지에 미배선.",
+  "severity": "P1",
+  "fix_approach": "시장/market 페이지에 마운트. 다른 시장 컴포넌트와 SSOT 겹치면 단일화 후 배선.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O5",
+  "category": "orphan_component",
+  "title": "종합분석 ComprehensiveAnalysisPanel 미배선",
+  "evidence": "apps/web/components/analysis/ComprehensiveAnalysisPanel.tsx:139 `export function ComprehensiveAnalysisPanel`. import 0건. apiClient+주소검색+시나리오/POI를 묶은 종합분석 UI가 부모 없음.",
+  "severity": "P1",
+  "fix_approach": "분석/대시보드 라우트에 마운트하거나 기존 종합분석 진입점에 통합.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O6",
+  "category": "orphan_component",
+  "title": "공용 UX 셸 WorkspaceShell이 정의만 되고 어디서도 채택 안 됨",
+  "evidence": "apps/web/components/workspace/WorkspaceShell.tsx:43 export. import 0건. title/description/status(live/mock/loading/error) 표준 헤더 셸이 존재하나 어떤 WorkspaceClient/페이지도 사용하지 않음 — 메모리 '공용UX골격/공용셸 부재'와 정확히 일치하는 미채택 자산.",
+  "severity": "P1",
+  "fix_approach": "각 WorkspaceClient·분석 페이지가 이 셸을 표준 골격으로 import하도록 배선해 헤더/상태표기를 공용화(전역 표준 앵커로 활용).",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "O7",
+  "category": "orphan_component",
+  "title": "세금 UI 4종 클러스터 전면 미배선 (세금 라우트 자체 부재)",
+  "evidence": "app/에 tax 라우트 없음 & app/ 어디서도 components/tax/ import 0건. DevTypeTaxMatrix(components/tax/DevTypeTaxMatrix.tsx:19), LawChangeMonitor(components/tax/LawChangeMonitor.tsx:37), RegionTaxSearchPanel(components/tax/RegionTaxSearchPanel.tsx:20), TaxCalculationDashboard(components/tax/TaxCalculationDashboard.tsx:35) 4종 모두 import 0건.",
+  "severity": "P1",
+  "fix_approach": "세금 라우트를 신설해 4종을 배선하거나, analytics/TaxOperationsWorkspaceClient(실사용본)에 흡수 후 잔재 삭제.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "O8",
+  "category": "orphan_component",
+  "title": "레거시 운영 WorkspaceClient 3종 (AI분석본으로 대체·데드코드화)",
+  "evidence": "operations/PermitsWorkspaceClient.tsx:178 — app/[locale]/(dashboard)/permits/page.tsx:16 주석에 '레거시 PermitsWorkspaceClient…제거'로 대체 명시, import 0건. operations/ApprovalsWorkspaceClient.tsx:213 import 0건. operations/SafetyWorkspaceClient.tsx:202 import 0건.",
+  "severity": "P1",
+  "fix_approach": "대체 확정된 3종은 삭제(데드코드 제거). 남길 로직만 각 AI분석 대체본으로 이관.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "O9",
+  "category": "orphan_component",
+  "title": "중복 WorkspaceClient — DesignWorkspaceClient / CarbonEmissionsWorkspaceClient 미배선",
+  "evidence": "design/DesignWorkspaceClient.tsx:37 import 0건(실사용본은 projects/ProjectDesignWorkspaceClient — 테스트도 그쪽만 import). analytics/CarbonEmissionsWorkspaceClient.tsx:120 import 0건.",
+  "severity": "P1",
+  "fix_approach": "중복이면 삭제, 아니면 해당 design/analytics 라우트에 배선.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O10",
+  "category": "orphan_component",
+  "title": "프로젝트 라이프사이클 UI 3종 미배선(모세혈관 파이프라인)",
+  "evidence": "projects/LifecycleNavigator.tsx:27, projects/LifecycleStageViews.tsx:49, projects/ProjectLifecyclePipelineWrapper.tsx:5 — 모두 import 0건. CLAUDE.md의 10단계 ProjectLifecyclePipeline UI 계열이 부모 페이지에 미배선.",
+  "severity": "P1",
+  "fix_approach": "프로젝트 상세/canvas에 배선하거나 대체된 파이프라인으로 확인 후 제거.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O11",
+  "category": "orphan_component",
+  "title": "중복 로컬 UI 프리미티브 5종 — @propai/ui로 대체된 폐기 잔재",
+  "evidence": "ui/Button.tsx:9, ui/Badge.tsx:8, ui/GlassCard.tsx:10, ui/OfflineBanner.tsx:20, ui/AddressSearchWithRadius.tsx:92 — 전부 import 0건. 앱 전역은 `@propai/ui` 패키지의 Button/Card/Input 등을 사용(예: components/*가 상단에서 `import { Button } from \"@propai/ui\"`). 로컬 ui/ 원본은 소비처 0.",
+  "severity": "P2",
+  "fix_approach": "삭제(표준=@propai/ui). 로컬본에만 있는 유니크 로직은 @propai/ui 패키지로 승격 후 제거해 이중 프리미티브 방지.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "O12",
+  "category": "orphan_component",
+  "title": "마케팅/프로모 배너 3종 미배선",
+  "evidence": "dashboard/MarketingPanels.tsx:53, dashboard/PalatriaBanner.tsx:11, dashboard/PromoBanner.tsx:4 — 각 import 0건.",
+  "severity": "P2",
+  "fix_approach": "대시보드 노출 여부 결정 후 배선 또는 제거.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O13",
+  "category": "orphan_component",
+  "title": "레거시 데모 대시보드 3종 미배선",
+  "evidence": "dashboard/ESGDashboard.tsx:41, dashboard/InvestmentDashboard.tsx:37, dashboard/IoTDashboard.tsx:44 — 각 import 0건. 운영 대시보드(analytics WorkspaceClient)로 대체된 데모 잔재로 추정.",
+  "severity": "P2",
+  "fix_approach": "대체본 확인 후 삭제, 유지 시 해당 라우트에 배선.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O14",
+  "category": "orphan_component",
+  "title": "미배선 금융 위젯 3종 (백엔드 미연동 데모)",
+  "evidence": "finance/AVMWidget.tsx:24, finance/JeonseRiskCard.tsx:21, finance/TaxCalculator.tsx:47 — 각 import 0건이며 apiClient/fetch 호출 없음(데모 위젯).",
+  "severity": "P2",
+  "fix_approach": "금융 라우트에 배선하며 실 API 연동, 아니면 제거.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "O15",
+  "category": "orphan_component",
+  "title": "기타 도메인 미배선 컴포넌트 9종 (트리아지 대상)",
+  "evidence": "각 import 0건: agent/AgentTimeline.tsx:32, bim/IFCQuantityTable.tsx:21, blockchain/EscrowCard.tsx:37, drone/DefectHeatmap.tsx:35, dashboard/HeroMapViz.tsx:10, dashboard/kdx/KdxSystemStatus.tsx:5, layout/OperationsRouteHero.tsx:12, tenant/HarnessControlDashboard.tsx:8, sre/SreDashboardClient.tsx:57.",
+  "severity": "P2",
+  "fix_approach": "도메인별로 해당 페이지에 배선할지 삭제할지 트리아지. 페이지 없이 살아있는 SreDashboardClient/HarnessControlDashboard 등은 라우트 신설 또는 제거.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "F1",
+  "category": "dead_interpreter",
+  "title": "DigitalTwinInterpreter 완전 死배선 — 프론트 카드는 존재/호출하나 백엔드 엔드포인트·인스턴스화 0",
+  "evidence": "services/ai/digital_twin_interpreter.py:64 `class DigitalTwinInterpreter`(5섹션 design_rationale·context_fit·view_sunlight·development_implication·marketing_highlight 생성)은 코드베이스 전체에서 인스턴스화 참조 0건(grep 'DigitalTwinInterpreter' non-def=0). 반면 프론트 apps/web/components/digital-twin/DigitalTwinScene.tsx:1140 이 <DigitalTwinAiCard>를 무조건 마운트하고, DigitalTwinAiCard.tsx:78 이 apiClient.post('/digital-twin/interpret',...)로 정확히 그 5섹션을 요구한다. 그러나 백엔드에 /digital-twin/interpret 라우터가 전혀 없음(grep 'digital-twin' prefix/APIRouter/include_router=0; twin 관련 라우터는 routers/lifecycle.py 하나뿐, prefix=/api/v1/lifecycle). 즉 인터프리터도 라우트도 미배선 → 사용자가 '가상준공 AI 해설' 생성 클릭 시 항상 404/실패.",
+  "severity": "P0",
+  "fix_approach": "routers/에 digital-twin 라우터(prefix=/api/v1/digital-twin) 신설 후 POST /interpret 에서 DigitalTwinInterpreter().generate_interpretation(scene+context) 호출·main.py include_router 등록. 구현은 pipeline._interpret_stage(정규화+캐시+검증재시도) 패턴을 공용화해 재사용(신규 로직 재발명 금지). 프론트 응답계약(sections dict)과 일치 확인.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F2",
+  "category": "dead_interpreter",
+  "title": "SpecialistAgent LLM 인터프리터 분기 死 — registry 8개 팩토리 전부 interpreter=None",
+  "evidence": "services/agents/registry.py 의 모든 SpecialistAgent 생성이 interpreter=None(라인 29·64·69·105·110·185·190·232). 반면 services/agents/specialist_agent.py:92-109 는 `if self._interpreter is not None:` 안에서만 generate_interpretation→citation_gate 로 grounded `claims`를 만든다. interpreter가 항상 None이라 이 분기는 프로덕션에서 한 번도 실행되지 않고 claims는 항상 []로 원장 payload(specialist_agent.py:120)·반환결과(:176)·MemoryHub 자동기억(:155 ingest)에 빈 채로 흐른다. 소비처는 tasks/specialist_tasks.py:42 agent.run() → comprehensive_analysis_service.py:455 run_domain_specialists_task.delay 로 실호출되므로(far·zoning·market 도메인) 성장뇌의 '전문가 서술/근거 클레임' 계층이 통째로 미발화.",
+  "severity": "P1",
+  "fix_approach": "registry에 도메인→인터프리터 매핑 공용 팩토리 추가(예: market→MarketInterpreter, cost→CostInterpreter, permit→PermitInterpreter, 설계→DesignInterpreter). far·zoning 등 순수 결정론 도메인은 의도적 None 유지 가능하나, LLM 서술이 필요한 도메인은 인터프리터 주입해 claims 분기 활성화. 단일 매핑 헬퍼로 추출해 한 곳 수정=전역 반영.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F3",
+  "category": "dead_interpreter",
+  "title": "ReportInterpreter — 팩토리에는 배선됐으나 stage='report'를 넘기는 호출부 0",
+  "evidence": "services/ai/report_interpreter.py:72 ReportInterpreter(generate_report_narrative:89)은 routers/pipeline.py:227-229 `_make_interpreter('report')`에서만 참조. 그런데 _interpret_stage 를 stage='report'로 호출하는 곳이 없음: 배치 /generate 의 targets(pipeline.py:366)는 [site_analysis,design,cost,feasibility,tax,esg]로 report 제외, 프론트에서 body {stage:'report'}로 /pipeline/interpret POST하는 코드 0건(DeskAppraisalReportClient는 stage:'appraisal'만), /pipeline/report 엔드포인트도 project_pipeline이 결정론으로 report.data를 만들 뿐 generate_report_narrative 미호출(project_pipeline.py grep=0). → 보고서 LLM 서술이 생성·표시된 적 없음.",
+  "severity": "P2",
+  "fix_approach": "배치 /generate targets 리스트에 'report' 추가하거나 /pipeline/report 흐름에서 _interpret_stage('report', report_data) 호출해 generate_report_narrative 결과를 보고서 섹션에 부착. 기존 _interpret_stage 공용 헬퍼 재사용.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "F4",
+  "category": "dead_interpreter",
+  "title": "PermitInterpreter — 참조 0건 완전 고아 인터프리터(인허가 예외/완화 서술 미배선)",
+  "evidence": "services/ai/permit_interpreter.py:74 PermitInterpreter(generate_interpretation:91, 산출=permit_assessment·exception_analysis·relaxation_options·timeline_estimate·risk_factors·strategy_recommendation)는 코드베이스 전체에서 클래스 정의 라인 외 참조 0건(grep 'PermitInterpreter' non-def=0, 'permit_interpreter' import=0). 프론트에도 exception_analysis/relaxation_options 소비 컴포넌트 없음. 별도 인허가 AI(/permits/ai-analysis)는 다른 경로를 사용해 이 인터프리터는 어떤 화면·엔드포인트와도 연결 안 됨.",
+  "severity": "P2",
+  "fix_approach": "permit_validator(check_permit_feasibility) findings를 입력으로 PermitInterpreter를 인허가 라우터/AutoRecommend 흐름에 배선해 예외조항·완화가능성 서술을 화면에 노출하거나, 재사용 계획이 없으면 死코드로 제거. 배선 시 registry의 permit SpecialistAgent(F2)와 인터프리터 공유 가능.",
+  "shared_helper_candidate": false
+ },
+ {
+  "id": "G1",
+  "category": "growth_loop",
+  "title": "성장뇌 자동 기억저장(ingest_experience_task) — prod 미발화(Celery 소비자·브로커 부재로 큐 유실)",
+  "evidence": "트리거는 specialist_agent.py:169 와 expert_panel_service.py:255 의 `ingest_experience_task.delay(...)`. 태스크는 memory_tasks.py:59-61 에서 celery_app.py 의 Celery `app` 에 등록되는 순수 Celery 태스크다(celery==5.3.6 설치됨 → memory_tasks.py:32 `_celery is not None` → NoopTask 아님, 진짜 `.delay()` 발행). 그러나 실제 배포 토폴로지 어디에도 Celery worker가 없다: 오라클 블루그린 infra/deploy-zero-downtime.sh:14 는 `docker run propai-api` 단일 컨테이너(uvicorn만, Dockerfile.oracle:39 CMD uvicorn --workers 1)이고, scripts/safe-deploy.sh 가 쓰는 루트 docker-compose.yml 서비스는 web/api/qdrant/nginx뿐(worker·redis 없음). infra/docker/docker-compose.prod.yml:50 의 `worker` 는 `python -m apps.worker.main`(arq, celery 아님)이며 apps/worker/main.py 의 WorkerSettings.functions 목록에 memory ingest 태스크가 없다. 판정: 실발화 안 함 — `.delay()` 가 도달 불가 브로커로 발행 시도→예외→호출부 try/except 무음 스킵, 혹은 브로커 가용해도 소비자 0 → agent_memories/Qdrant 자동적재 write-path 전멸. (memory_tasks.py:9 주석도 'deploy-pending' 자인)",
+  "severity": "P1",
+  "fix_approach": "Celery `.delay()` 를 공용 dispatch 헬퍼(예: growth_dispatch.enqueue_or_run)로 감싸, worker/broker 부재 감지 시 main.py 인프로세스 스케줄러처럼 인라인/백그라운드 실행으로 폴백. 최소한 apps.worker.main(arq) WorkerSettings.functions 에 ingest 함수를 등록하거나, docker-compose.yml 에 `celery -A app.tasks.celery_app worker -Q growth,celery` 서비스를 추가해 소비자를 배치. QDRANT_HOST(compose 서비스명 'qdrant')·OPENAI_API_KEY 프로드 주입 확인 병행.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G2",
+  "category": "dead_route",
+  "title": "SpecialistAgent — prod 진입점(run_domain_specialists_task) 미발화로 에이전트 전체가 한 번도 안 뜸",
+  "evidence": "SpecialistAgent.run()(specialist_agent.py:52) 의 유일한 프로덕션 트리거는 comprehensive_analysis_service.py:455 `run_domain_specialists_task.delay(...)`. 이 태스크는 specialist_tasks.py:58-60 에서 Celery 등록. G1과 동일하게 배포 토폴로지에 Celery worker가 없어 큐 소비자 0 → SpecialistAgent 의 recall(2.5)·원장 cite(4)·panel(5)·자동 ingest(6) 전 단계가 prod에서 발화하지 않는다. 인프로세스 폴백 스케줄러(main.py:416 `_growth_scheduler_loop`)는 analyze/heal/correct/learn/improve 만 인라인 await 하고 specialist run 은 포함하지 않음(main.py:440-455). 판정: 실발화 안 함 — 종합분석은 정상 응답하나 specialist 소비처는 dead. (specialist_tasks.py:4 주석이 '소비처 배선' 이라 주장하나 큐만 있고 소비자 미배치).",
+  "severity": "P1",
+  "fix_approach": "G1과 동일 공용 dispatch 헬퍼로 폴백하거나 인프로세스 스케줄러에 편입. 단, run()이 매 분석마다 far/zoning/market 3에이전트를 동기 트리거하므로 인라인 폴백 시 반드시 백그라운드 태스크(asyncio.create_task)로 비차단 유지.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G3",
+  "category": "bottleneck",
+  "title": "`.delay()` 가 매 종합분석·패널 요청마다 도달 불가 브로커로 동기 커넥션 시도 → 핫패스 지연",
+  "evidence": "comprehensive_analysis_service.py:455·expert_panel_service.py:255·specialist_agent.py:169 세 곳 모두 요청 처리 경로에서 Celery `.delay()` 호출. Celery/kombu는 발행 전 브로커 커넥션을 동기 수립하며, 배포 토폴로지에 broker(redis)가 없거나 CELERY_BROKER_URL(apps/api/.env:16 = redis://172.24.192.1:6379/2, 로컬 WSL IP)이 프로드에서 도달 불가면 소켓 타임아웃까지 블록 후 예외 → try/except 흡수. 판정: 실발화(호출은 매 요청 실행됨)이나 결과는 지연만 생산 — 매 comprehensive 분석/expert panel 응답에 수초 잠재 지연 부담.",
+  "severity": "P1",
+  "fix_approach": "공용 dispatch 헬퍼에서 worker/broker 가용성을 프로세스 기동 시 1회 판정해 캐시하고, 불가 시 `.delay()` 자체를 건너뛰어(또는 즉시 no-op 폴백) 핫패스에서 커넥션 시도를 제거. broker_connection_retry_on_startup=False·짧은 socket_timeout 설정도 병행.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G4",
+  "category": "bottleneck",
+  "title": "매 호출 신규 MemoryHubService()+OpenAIEmbeddings 클라이언트 생성(싱글톤 부재)",
+  "evidence": "MemoryHubService.__init__(memory_service.py:25-44)는 인스턴스마다 get_settings() 호출 + OpenAIEmbeddings(memory_service.py:39-40, httpx 클라이언트 내장)를 새로 구성한다. 호출부 specialist_agent.py:81 과 expert_panel_service.py:196 은 매 실행 `MemoryHubService()` 를 새로 생성 → 회상 1회마다 임베딩 클라이언트 신규 생성. Qdrant 클라이언트만 프로세스 싱글톤(qdrant_client.py:17 `_CLIENT`)으로 재사용될 뿐 서비스·임베딩 객체는 재사용 안 됨. 판정: 회상이 실제 발화하는 expert_panel 경로(skip_memory=False)에서 실발화 — 매 호출 오브젝트/클라이언트 churn.",
+  "severity": "P2",
+  "fix_approach": "MemoryHubService 를 lru_cache/모듈 싱글톤으로, OpenAIEmbeddings 를 프로세스 싱글톤으로 승격(qdrant_client.py 의 _CLIENT 패턴 재사용). 공용 get_memory_hub_service() 팩토리로 두 호출부 일원화.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G5",
+  "category": "bottleneck",
+  "title": "회상(recall)이 요청 핫패스에서 임베딩+Qdrant 2회 직렬 네트워크 왕복(각 3초 예산) 차단",
+  "evidence": "expert_panel_service.py:196 은 recall_experience 를 인라인 await(패널 분석 요청 경로). recall_experience(memory_service.py:94)는 embed_query(memory_service.py:107, asyncio.to_thread 로 OpenAI 망 왕복, _RECALL_TIMEOUT_SEC=3.0) 이후 Qdrant search(memory_service.py:130, 재차 3초 예산)를 직렬 수행 → 최악 6초 응답 지연 가산. 게다가 G1으로 저장측이 죽어 agent_memories/Qdrant 가 비어 recall 은 항상 [] 반환하면서도 임베딩 비용·왕복만 소모. 판정: expert_panel 직접호출 경로에서 실발화(specialist_agent.py:81 경로는 dead 태스크 내부라 미발화).",
+  "severity": "P2",
+  "fix_approach": "recall 을 background prefetch 또는 선택적(플래그) 로 전환하고, embed·search 예산을 합산 상한으로 단축. 저장측(G1) 복구 전까지는 저장이 비었으면 recall 자체를 스킵하는 가드(collection empty 캐시) 추가.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G6",
+  "category": "dead_interpreter",
+  "title": "SpecialistAgent 8개 도메인 팩토리 전부 interpreter=None → LLM 해석·citation_gate 영구 dead-path",
+  "evidence": "registry.py 의 _build_permit/_build_zoning/_build_far/_build_cost/_build_market/_build_deliberation/_build_design/_build_redevelopment 8개 모두 `interpreter=None`(grep interpreter=None 카운트=8). specialist_agent.py:92 `if self._interpreter is not None:` 가드로 인해 LLM 해석·citation_gate(specialist_agent.py:94-106)가 어떤 도메인에서도 호출되지 않는다. 즉 G2로 태스크가 살아나더라도 성장뇌는 결정론 도구+원장까지만이고 LLM 서술 단계는 배선 미완. 판정: 구조적 미발화(인터프리터 주입 자체가 없음).",
+  "severity": "P2",
+  "fix_approach": "far/zoning/market 등 신뢰 도메인부터 base_interpreter 계열 인터프리터를 registry 팩토리에 주입. panel(_default_panel)만 있는 cost/market 은 있으나 generate_interpretation 경로는 여전히 None → 인터프리터 어댑터를 도메인별로 배선.",
+  "shared_helper_candidate": true
+ },
+ {
+  "id": "G7",
+  "category": "bottleneck",
+  "title": "store_experience 메모리 1건당 임베딩 1콜+Qdrant upsert 1+DB commit 1(무배치)·태스크마다 asyncio.run 신규 루프",
+  "evidence": "store_experience(memory_service.py:46)는 건당 embed_query(memory_service.py:55)+qdrant.upsert(memory_service.py:67)+db.commit(memory_service.py:87)을 개별 수행(배치 없음). 워커 스레드 진입점 memory_tasks.py:53·specialist_tasks.py:52 는 태스크마다 `asyncio.run()` 로 새 이벤트루프를 만든다. 판정: prod 미발화(G1/G2로 태스크 자체가 안 뜸)이나, worker 배치 시 즉시 활성화되는 잠재 병목 — 다건 ingest 시 N회 직렬 임베딩+커밋, 루프 생성 churn.",
+  "severity": "P2",
+  "fix_approach": "worker 도입 시 embed_documents 배치 임베딩 + 단일 트랜잭션 bulk insert 로 전환, 태스크 진입점을 공용 이벤트루프(또는 arq 네이티브 async 태스크)로 통일해 asyncio.run 반복 제거.",
+  "shared_helper_candidate": true
+ }
+]
