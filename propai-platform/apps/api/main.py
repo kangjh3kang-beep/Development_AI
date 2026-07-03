@@ -359,6 +359,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("분양 모니터링 루프 시작 실패")
 
+    # 한국은행 ECOS 실 기준금리/시장금리 — 백그라운드 프리페치 + 주기 갱신.
+    #   금융비 엔진 get_pf_rate가 동기 소비라 모듈 캐시를 채운다. ★인라인 await 금지: ECOS 지연이
+    #   기동 readiness를 막지 않도록 create_task(콜드 캐시는 이미 하드코딩 폴백이라 안전). 12h 주기로
+    #   재갱신(기준금리 월 단위 → 7일 TTL 만료 전 갱신, 무재배포 장기가동에도 실시간 유지).
+    async def _ecos_refresh_loop() -> None:
+        from app.services.external_api import ecos_service as _ecos
+        while True:
+            try:
+                await _ecos.refresh()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ECOS 실금리 갱신 실패 — 하드코딩 폴백 유지: %s", str(e)[:120])
+            await _asyncio.sleep(12 * 3600)  # 12시간 주기
+
+    try:
+        app.state.ecos_refresh_task = _asyncio.create_task(_ecos_refresh_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("ECOS 갱신 루프 시작 실패 — 폴백 유지")
+
     # #4 수납 — 분양현장 연체이자 일배치(인프로세스 폴백). 미납 회차의 연체이자를 매일 1회
     # '오늘 기준'으로 산정·적재한다(자금이동 없음, 산출만). overdue_calc 가 멱등이라
     # (site_id,installment_id,calc_date) UNIQUE 로 같은 날 재실행해도 행이 중복되지 않는다.
@@ -546,6 +564,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _ect = getattr(app.state, "ecos_refresh_task", None)
+    if _ect is not None:
+        _ect.cancel()
     _ot = getattr(app.state, "overdue_batch_task", None)
     if _ot is not None:
         _ot.cancel()
