@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@propai/ui";
 import { ParcelsLayer } from "@/components/map/ParcelsLayer";
 import type { ParcelShape, ParcelStatus } from "@/mocks/module-data";
 

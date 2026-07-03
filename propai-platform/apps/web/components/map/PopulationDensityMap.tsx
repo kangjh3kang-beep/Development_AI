@@ -47,12 +47,22 @@ export function PopulationDensityMap({ address, bcode }: { address?: string; bco
   const mapRef = useRef<any>(null);
   const polysRef = useRef<any[]>([]);
   const infoRef = useRef<any>(null);
-  const fs = useMapFullscreen(mapRef);
+  // 훅 반환 객체를 통째로 들고 있으면(예: const fs = ...) 객체에 wrapperRef가 섞여 있어
+  // react-hooks/refs가 렌더 중 모든 멤버 접근을 ref 접근으로 추론한다. 구조 분해로
+  // ref(wrapperRef)와 렌더-안전 값(class 빌더·상태·콜백)을 분리한다(SatongMultiMap과 동일 패턴).
+  const {
+    isFull: isMapFullscreen,
+    toggle: toggleMapFullscreen,
+    wrapperRef: fullscreenWrapperRef,
+    wrapperClass: fullscreenWrapperClass,
+    mapClass: fullscreenMapClass,
+  } = useMapFullscreen(mapRef);
   const [data, setData] = useState<DensityResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
   // 데이터 조회(주소/bcode 변경 시).
+  /* eslint-disable react-hooks/set-state-in-effect -- Loading state is shown immediately while the external density API fetch effect runs (SatongMultiMap과 동일 패턴). */
   useEffect(() => {
     if (!address && !bcode) return;
     let alive = true;
@@ -64,6 +74,7 @@ export function PopulationDensityMap({ address, bcode }: { address?: string; bco
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [address, bcode]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // 지도 렌더(폴리곤 코로플레스).
   useEffect(() => {
@@ -140,9 +151,9 @@ export function PopulationDensityMap({ address, bcode }: { address?: string; bco
           </span>
         )}
       </div>
-      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
-        <div ref={mapEl} className={fs.mapClass("h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
-        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
+      <div ref={fullscreenWrapperRef} className={fullscreenWrapperClass("relative flex flex-col")}>
+        <div ref={mapEl} className={fullscreenMapClass("h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={toggleMapFullscreen} isFullscreen={isMapFullscreen} />
         {(loading || unavailable || (data && !data.features?.length)) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/75 text-center text-xs text-[var(--text-hint)]">
             {loading

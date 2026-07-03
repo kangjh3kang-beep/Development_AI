@@ -18,6 +18,10 @@ import {
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
+import {
+  SpecialParcelLegalPrelim,
+  type SpecialParcelFactorLike,
+} from "@/components/projects/SpecialParcelLegalPrelim";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 // ── Icons ──
@@ -72,8 +76,13 @@ type ZoningAnalysisResponse = {
     resolvable?: string | null;
     severity_label?: string | null;
     // ★factor는 문자열 또는 rich dict(category·developability·implications[]·legal_basis[]·legal_refs[]).
-    //   개발행위허가 게이트(§56/§58) implications 상세 렌더를 위해 SpecialFactorRich로 받는다.
-    factors?: Array<SpecialFactorRich | string> | null;
+    //   개발행위허가 게이트(§56/§58) implications 상세 렌더(SpecialFactorRich)와
+    //   법규 예비판정(additive·옵셔널 — 임야/농지 요인에만 백엔드가 주입:
+    //   forest_facts(DEM 경사도·입목축적) / preliminary_assessment(경사도·입목축적
+    //   3단 예비판정 — 확정 아님) / charge_notice(전용 부담금 산식·추정액 고지);
+    //   SpecialParcelFactorLike가 흡수, SpecialParcelLegalPrelim이 소비)을
+    //   모두 지원하도록 교차 타입으로 받는다.
+    factors?: Array<(SpecialFactorRich & SpecialParcelFactorLike) | string> | null;
     honest_disclosure?: string | null;
   } | null;
 };
@@ -870,6 +879,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         precondFactors,
         honest: api.honest_disclosure ?? null,
         legalRefs,
+        // 법규 예비판정/부담금 고지용 원본 factors(객체형) — SpecialParcelLegalPrelim이
+        //   forest_facts·preliminary_assessment·charge_notice를 소비(없으면 섹션 미표시).
+        rawFactors: (api.factors ?? []).filter(
+          (f): f is SpecialParcelFactorLike => !!f && typeof f !== "string",
+        ),
       };
     }
     // store 폴백(mapZoningRich가 기록): isSpecial true일 때만. (store엔 legal_refs 미보존 → 빈 링크)
@@ -881,6 +895,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         precondFactors: [] as SpecialFactorRich[],
         honest: st.honest,
         legalRefs: [] as BackendLegalRef[],
+        // store엔 예비판정 원본 미보존 → 빈 배열(섹션 미표시 — 무날조).
+        rawFactors: [] as SpecialParcelFactorLike[],
       };
     }
     return null;
@@ -1276,6 +1292,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       </div>
                     );
                   })}
+                  {/* 법규 예비판정(경사도·입목축적·부담금) — 백엔드 예비판정/부담금 고지가 있을
+                      때만 표시(additive·무목업). '확정 아님·공식조사 필요' 정직 라벨 동반. */}
+                  <SpecialParcelLegalPrelim factors={specialParcel.rawFactors} />
                   {/* 근거법령 — verified면 클릭 가능한 law.go.kr 딥링크 칩(미verified는 미표시·죽은 링크 금지) */}
                   {specialParcel.legalRefs.length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">

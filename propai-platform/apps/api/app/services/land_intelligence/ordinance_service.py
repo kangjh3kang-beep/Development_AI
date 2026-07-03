@@ -170,28 +170,31 @@ def _attach_provenance(result: dict, confidence: float, recheck: bool, disclaime
     return result
 
 # ── 법정 상한 (국토계획법 시행령) ──
-NATIONAL_LIMITS: dict[str, dict[str, float | None]] = {
-    "제1종전용주거지역": {"bcr": 50, "far": 100, "height": 10},
-    "제2종전용주거지역": {"bcr": 50, "far": 150, "height": 12},
-    "제1종일반주거지역": {"bcr": 60, "far": 200, "height": None},
-    "제2종일반주거지역": {"bcr": 60, "far": 250, "height": None},
-    "제3종일반주거지역": {"bcr": 50, "far": 300, "height": None},
-    "준주거지역": {"bcr": 70, "far": 500, "height": None},
-    "중심상업지역": {"bcr": 90, "far": 1500, "height": None},
-    "일반상업지역": {"bcr": 80, "far": 1300, "height": None},
-    "근린상업지역": {"bcr": 70, "far": 900, "height": None},
-    "유통상업지역": {"bcr": 80, "far": 1100, "height": None},
-    "전용공업지역": {"bcr": 70, "far": 300, "height": None},
-    "일반공업지역": {"bcr": 70, "far": 350, "height": None},
-    "준공업지역": {"bcr": 70, "far": 400, "height": None},
-    "보전녹지지역": {"bcr": 20, "far": 80, "height": None},
-    "생산녹지지역": {"bcr": 20, "far": 100, "height": None},
-    "자연녹지지역": {"bcr": 20, "far": 100, "height": None},
-    "보전관리지역": {"bcr": 20, "far": 80, "height": None},
-    "생산관리지역": {"bcr": 20, "far": 80, "height": None},
-    "계획관리지역": {"bcr": 40, "far": 100, "height": None},
-    "농림지역": {"bcr": 20, "far": 80, "height": None},
-    "자연환경보전지역": {"bcr": 20, "far": 80, "height": None},
+# ★bcr·far만 보유(get_ordinance_limits 소비 계약과 1:1). 높이 제한(전용주거 10m/12m 등)은
+#   app/services/legal/alris_service.py check_compliance(zone_rules.max_height)가 관장한다.
+#   소비되지 않는 키(과거 'height')는 도달 불가 dead data라 여기 두지 않는다(정직게이트).
+NATIONAL_LIMITS: dict[str, dict[str, float]] = {
+    "제1종전용주거지역": {"bcr": 50, "far": 100},
+    "제2종전용주거지역": {"bcr": 50, "far": 150},
+    "제1종일반주거지역": {"bcr": 60, "far": 200},
+    "제2종일반주거지역": {"bcr": 60, "far": 250},
+    "제3종일반주거지역": {"bcr": 50, "far": 300},
+    "준주거지역": {"bcr": 70, "far": 500},
+    "중심상업지역": {"bcr": 90, "far": 1500},
+    "일반상업지역": {"bcr": 80, "far": 1300},
+    "근린상업지역": {"bcr": 70, "far": 900},
+    "유통상업지역": {"bcr": 80, "far": 1100},
+    "전용공업지역": {"bcr": 70, "far": 300},
+    "일반공업지역": {"bcr": 70, "far": 350},
+    "준공업지역": {"bcr": 70, "far": 400},
+    "보전녹지지역": {"bcr": 20, "far": 80},
+    "생산녹지지역": {"bcr": 20, "far": 100},
+    "자연녹지지역": {"bcr": 20, "far": 100},
+    "보전관리지역": {"bcr": 20, "far": 80},
+    "생산관리지역": {"bcr": 20, "far": 80},
+    "계획관리지역": {"bcr": 40, "far": 100},
+    "농림지역": {"bcr": 20, "far": 80},
+    "자연환경보전지역": {"bcr": 20, "far": 80},
 }
 
 # ── 전국 주요 시·군·구 조례 캐시 (API 실패 시 폴백) ──
@@ -330,8 +333,10 @@ class OrdinanceService:
         jurisdiction = resolve_ordinance_region(address) or sigungu or (sido if sido != "미확인" else None)
 
         # 0차: 저장된 분석 재사용(자동 재조사 금지 — 사용자 재분석 시에만 갱신)
+        # ★persist 키 = jurisdiction(조례 정본 관할, 저장 키와 동일 SSOT). 자치구(sigungu)
+        #   키는 같은 시 본청 조례를 자치구별로 분산 저장/캐시미스(중복 재조회)시키므로 금지.
         if not force_refresh:
-            stored = await _load_stored(sigungu, zone_type)
+            stored = await _load_stored(jurisdiction, zone_type)
             if stored:
                 return stored
 
@@ -388,7 +393,7 @@ class OrdinanceService:
             result["provenance"]["parse_confidence"] = parse_conf
             result["provenance"]["missing_sections"] = missing
             result["provenance"]["evidence_span"] = api_result.get("evidence_span")
-            await _save_resolution(result, sigungu, zone_type)
+            await _save_resolution(result, jurisdiction, zone_type)
             return result
 
         # 2차: 정적 캐시 조회 (전국 주요 시군구 조례 데이터)
@@ -404,7 +409,7 @@ class OrdinanceService:
             result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
             _attach_provenance(result, confidence=0.80, recheck=True,
                                disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.")
-            await _save_resolution(result, sigungu, zone_type)
+            await _save_resolution(result, jurisdiction, zone_type)
             return result
 
         # 3차: 법정 상한 그대로 (해당 지자체 조례 데이터 미보유)

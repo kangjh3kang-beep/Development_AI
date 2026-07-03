@@ -142,6 +142,12 @@ type OutputAction = {
   tone: string;
 };
 
+/**
+ * 통합지도 레이어 정의 레지스트리.
+ * 정직 라벨 원칙: 지도에 실데이터가 렌더링되는(mapEffect) 레이어의 source 는
+ * '연동 필요'가 아니라 실제 연동된 원천을 기술해야 한다.
+ * (테스트 검증용으로 export — components/precheck/__tests__/SatongMapShell.layers.test.ts)
+ */
 const LAYERS: SatongLayer[] = [
   {
     id: "cadastre",
@@ -166,7 +172,7 @@ const LAYERS: SatongLayer[] = [
     icon: Landmark,
     status: "ready",
     tone: "bg-sky-100 text-sky-950 border-sky-200",
-    source: "토지이음/공간정보 연동 필요",
+    source: "공간정보(토지특성정보) API 연동",
     controls: [
       { id: "land-use", label: "용도지역", mapEffect: true },
       { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
@@ -181,7 +187,7 @@ const LAYERS: SatongLayer[] = [
     icon: LineChart,
     status: "ready",
     tone: "bg-emerald-100 text-emerald-950 border-emerald-200",
-    source: "공시가격 API 연동 필요",
+    source: "공간정보(VWorld NED) 토지특성 API 연동",
     controls: [
       { id: "unit-price", label: "㎡당 단가", mapEffect: true },
       { id: "year", label: "연도", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
@@ -196,7 +202,7 @@ const LAYERS: SatongLayer[] = [
     icon: Building2,
     status: "ready",
     tone: "bg-rose-100 text-rose-950 border-rose-200",
-    source: "건축물대장/세움터 연동 필요",
+    source: "건축물대장(사용승인일 기반) 연동",
     controls: [
       { id: "building-age", label: "건축연도", mapEffect: true },
       { id: "structure", label: "구조", mapEffect: false, description: "건축물대장 구조 필드 연결 후 활성화" },
@@ -210,7 +216,7 @@ const LAYERS: SatongLayer[] = [
     shortLabel: "시세",
     description: "실거래, 경매 감정가, 주변 유사 사례를 같은 지도에서 비교합니다.",
     icon: Home,
-    status: "ready",
+    status: "needs-source",
     tone: "bg-blue-100 text-blue-950 border-blue-200",
     source: "국토부 실거래/매물 DB 연동 필요",
     controls: [
@@ -257,7 +263,7 @@ const LAYERS: SatongLayer[] = [
     shortLabel: "POI",
     description: "역세권, 학교, 상권, 편의시설을 입지 점수화에 사용합니다.",
     icon: TrainFront,
-    status: "ready",
+    status: "needs-source",
     tone: "bg-cyan-100 text-cyan-950 border-cyan-200",
     source: "카카오/공공데이터 POI 연동 필요",
     controls: [
@@ -276,7 +282,7 @@ const LAYERS: SatongLayer[] = [
     icon: Mountain,
     status: "ready",
     tone: "bg-stone-100 text-stone-950 border-stone-200",
-    source: "VWorld/국토정보 플랫폼 연동 필요",
+    source: "VWorld WMTS 프록시 연동(기본·위성·항공뷰)",
     controls: [
       { id: "base", label: "기본지도", mapEffect: true },
       { id: "satellite", label: "위성", mapEffect: true },
@@ -301,6 +307,8 @@ const LAYERS: SatongLayer[] = [
     ],
   },
 ];
+
+export { LAYERS as SATONG_MAP_SHELL_LAYERS };
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
   search: "검색",

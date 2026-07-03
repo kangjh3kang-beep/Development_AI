@@ -262,6 +262,18 @@ class TestForestStockingWiring:
         assert st["입목축적_비율_pct"] == 160.0
         assert "예비 초과" in st["judgment"]
 
+    def test_stocking_skipped_when_stock_negative(self):
+        """★결함 재현(P1) — 음수 입목축적(-10)은 비율 -10%로 '예비 적합'을 날조하면 안 됨.
+
+        비정상 관측값(음수)은 판정을 생략(skip)하고 사유를 남겨야 한다(무날조·정직게이트).
+        """
+        data = dict(self._DATA, 입목축적_per_ha=-10.0)
+        r = detect_special_parcel(dict(_FOREST_INPUT), forest_data=data)
+        pa = _forest_factor(r)["preliminary_assessment"]
+        assert pa["stocking"] is None, f"음수 stock인데 판정이 생성됨: {pa['stocking']}"
+        assert "음수" in pa["stocking_skip_reason"]
+        assert "생략" in pa["stocking_skip_reason"]
+
     def test_stocking_skipped_when_average_missing(self):
         """관할평균 미확보 → 비교 skip + 사유(비율 날조 금지)."""
         data = {"입목축적_per_ha": 120.0, "관할평균_입목축적_per_ha": None,
