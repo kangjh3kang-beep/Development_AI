@@ -480,27 +480,27 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     } catch { /* noop */ } finally { setBusy(null); }
   }, [rows, projectName]);
 
-  // 토지분석보고서 PDF — 필지(세대행 제외)를 보내 종합보고서 생성·다운로드.
-  const downloadReport = useCallback(async () => {
+  // 토지분석보고서 — 필지(세대행 제외)를 보내 종합보고서 생성·다운로드(PDF/PPT/Word, 통합엔진).
+  const downloadReport = useCallback(async (format: "pdf" | "pptx" | "docx") => {
     const parcels = rows.filter((r) => r.jibun.trim() && !r.unit_label)
       .map((r) => ({ address: r.jibun.trim(), jibun: r.jibun.trim(), pnu: r.pnu || undefined }));
     if (parcels.length === 0) { setNotice({ kind: "warn", text: "보고서를 만들 필지가 없습니다. 먼저 필지를 등록하세요." }); return; }
-    setBusy("report");
+    setBusy(`report-${format}`);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
-      const res = await fetch(`${apiBase()}/zoning/land-report`, {
+      const res = await fetch(`${apiBase()}/zoning/land-report?format=${format}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ project_name: projectName || "토지분석보고서", parcels }),
       });
       const ct = res.headers.get("content-type") || "";
-      if (!res.ok || !ct.includes("pdf")) throw new Error();
+      if (!res.ok || ct.includes("json")) throw new Error();  // 성공=바이너리, 실패=JSON
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `토지분석보고서_${projectName || "프로젝트"}.pdf`; a.click();
+      a.href = url; a.download = `토지분석보고서_${projectName || "프로젝트"}.${format}`; a.click();
       URL.revokeObjectURL(url);
-      setNotice({ kind: "info", text: `토지분석보고서(PDF)를 생성했습니다 — ${parcels.length}필지 종합(필지요약·토지정보·규제/개발가능성·대지지분·종합의견).` });
+      setNotice({ kind: "info", text: `토지분석보고서를 생성했습니다 — ${parcels.length}필지 종합(필지요약·토지정보·규제/개발가능성·대지지분·종합의견).` });
     } catch {
       setNotice({ kind: "warn", text: "토지분석보고서 생성에 실패했습니다. 잠시 후 다시 시도하세요." });
     } finally { setBusy(null); }
@@ -616,11 +616,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                   className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {busy === "excel" ? "생성 중…" : (<span className="inline-flex items-center gap-1.5"><BarChart3 className="size-4" aria-hidden />토지조서 엑셀</span>)}
                 </button>
-                <button onClick={downloadReport} disabled={!!busy || rows.length === 0}
-                  title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) PDF 생성"
-                  className="whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-                  {busy === "report" ? "생성 중…" : (<span className="inline-flex items-center gap-1.5"><FileText className="size-4" aria-hidden />토지분석보고서</span>)}
-                </button>
+                {([["pdf", "토지분석보고서"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
+                  <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={!!busy || rows.length === 0}
+                    title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) 생성"
+                    className="whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+                    {busy === `report-${fmt}` ? `${label} 생성 중…` : (<span className="inline-flex items-center gap-1.5"><FileText className="size-4" aria-hidden />{label}</span>)}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
