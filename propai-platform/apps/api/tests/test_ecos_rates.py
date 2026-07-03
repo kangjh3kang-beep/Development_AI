@@ -91,3 +91,69 @@ async def test_refresh_no_key_graceful(monkeypatch):
     monkeypatch.setattr(ecos, "ecos_key", lambda: "")
     assert await ecos.refresh() is None
     assert ecos._CACHE["rates"] is None  # 미변경
+
+
+# ── 실제 ECOS JSON 파싱(_fetch_latest) — MockTransport로 응답 스텁 ──
+
+
+def _mock_client(handler):
+    import httpx
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def test_fetch_latest_normal(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecos, "ecos_key", lambda: "TESTKEY")
+    payload = {"StatisticSearch": {"row": [
+        {"TIME": "202605", "DATA_VALUE": "2.75", "UNIT_NAME": "연%"},
+        {"TIME": "202606", "DATA_VALUE": "2.5", "UNIT_NAME": "연%"},
+    ]}}
+    async with _mock_client(lambda req: httpx.Response(200, json=payload)) as c:
+        got = await ecos._fetch_latest(c, "722Y001", "0101000", "M", "202401", "202612")
+    assert got == ("202606", 0.025)  # TIME 최대 = 최신
+
+
+async def test_fetch_latest_skips_blank_picks_max_time(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecos, "ecos_key", lambda: "K")
+    payload = {"StatisticSearch": {"row": [
+        {"TIME": "202606", "DATA_VALUE": ""},      # 미공표 공란 → 스킵
+        {"TIME": "202604", "DATA_VALUE": "3.0"},
+        {"TIME": "202605", "DATA_VALUE": "2.75"},  # 순서 무관·유효 최신
+    ]}}
+    async with _mock_client(lambda req: httpx.Response(200, json=payload)) as c:
+        got = await ecos._fetch_latest(c, "722Y001", "0101000", "M", "s", "e")
+    assert got == ("202605", 0.0275)
+
+
+async def test_fetch_latest_error_response(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecos, "ecos_key", lambda: "K")
+    payload = {"RESULT": {"CODE": "INFO-200", "MESSAGE": "해당하는 데이터가 없습니다."}}
+    async with _mock_client(lambda req: httpx.Response(200, json=payload)) as c:
+        assert await ecos._fetch_latest(c, "722Y001", "0101000", "M", "s", "e") is None
+
+
+async def test_fetch_latest_empty_rows(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecos, "ecos_key", lambda: "K")
+    async with _mock_client(lambda req: httpx.Response(200, json={"StatisticSearch": {"row": []}})) as c:
+        assert await ecos._fetch_latest(c, "722Y001", "0101000", "M", "s", "e") is None
+
+
+async def test_refresh_populates_cache(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecos, "_CACHE", {"rates": None, "fetched_at": 0.0})
+    monkeypatch.setattr(ecos, "ecos_key", lambda: "K")
+    base_p = {"StatisticSearch": {"row": [{"TIME": "202606", "DATA_VALUE": "2.5"}]}}
+    mkt_p = {"StatisticSearch": {"row": [{"TIME": "20260701", "DATA_VALUE": "3.1"}]}}
+
+    def handler(req):
+        return httpx.Response(200, json=base_p if "722Y001" in str(req.url) else mkt_p)
+
+    _orig = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **k: _orig(transport=httpx.MockTransport(handler)))
+    r = await ecos.refresh()
+    assert r is not None and r["base_rate"] == 0.025 and r["base_rate_as_of"] == "202606"
+    assert ecos.base_rate() == 0.025  # 캐시 반영
+    assert "market_rates" in r  # 시장금리도 수집

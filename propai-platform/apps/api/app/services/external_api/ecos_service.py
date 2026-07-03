@@ -54,8 +54,10 @@ def ecos_ready() -> bool:
     return bool(ecos_key())
 
 
-def _to_decimal(data_value: str) -> Optional[float]:
-    """ECOS DATA_VALUE(연%, 예 '2.5') → 소수(0.025). 파싱 실패시 None."""
+def _to_decimal(data_value: Any) -> Optional[float]:
+    """ECOS DATA_VALUE(연%, 예 '2.5' 또는 숫자) → 소수(0.025). 공란/비수치/None → None."""
+    if data_value is None:
+        return None
     try:
         v = float(str(data_value).strip())
     except (TypeError, ValueError):
@@ -80,13 +82,19 @@ async def _fetch_latest(
         logger.warning("ECOS 오류응답", stat=stat, msg=str(data.get("RESULT"))[:120])
         return None
     rows = (data.get("StatisticSearch") or {}).get("row", []) if isinstance(data, dict) else []
-    if not rows:
+    # 유효 DATA_VALUE(파싱가능)인 행만 후보로 두고 TIME 최대(=최신 시점) 선택.
+    #   ECOS 정렬 순서에 의존하지 않고(오름/내림 무관), 미공표 시점의 공란 placeholder도 건너뛴다.
+    #   TIME 은 'YYYYMM'/'YYYYMMDD' 고정폭이라 문자열 최대 = 시점 최대.
+    candidates: list[tuple[str, float]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        dec = _to_decimal(r.get("DATA_VALUE"))
+        if dec is not None:
+            candidates.append((str(r.get("TIME", "")), dec))
+    if not candidates:
         return None
-    last = rows[-1]  # ECOS는 시점 오름차순 반환 → 마지막이 최신
-    dec = _to_decimal(last.get("DATA_VALUE"))
-    if dec is None:
-        return None
-    return str(last.get("TIME", "")), dec
+    return max(candidates, key=lambda t: t[0])
 
 
 async def refresh() -> Optional[dict[str, Any]]:
