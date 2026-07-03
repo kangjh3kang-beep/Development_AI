@@ -30,7 +30,11 @@ def _tables():
     import apps.api.database.models.run_execution  # noqa: F401  (Base.metadata 등록)
     from apps.api.database.models.base import Base
 
-    return [t for t in Base.metadata.sorted_tables if t.name in _NEW]
+    # ★sorted_tables 대신 tables dict 직접 접근. sorted_tables 는 전체 metadata 를 위상정렬하며
+    #   모든 FK 를 resolve 하는데, 테스트/부분 import 상태에서 다른 모델의 FK 대상 테이블(예:
+    #   collaborator_invites→organizations)이 metadata 에 없으면 NoReferencedTableError 로 깨진다.
+    #   run_execution 은 FK 가 없어 dict 직접 접근으로 안전하며, create_all/drop_all 동작은 동일.
+    return [Base.metadata.tables[n] for n in _NEW if n in Base.metadata.tables]
 
 
 def upgrade() -> None:
