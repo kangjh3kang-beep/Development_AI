@@ -191,9 +191,9 @@ class ExpertPanelService:
         rag_memories = []
         if not skip_memory:
             try:
-                from app.services.memory_hub.memory_service import MemoryHubService
+                from app.services.memory_hub.memory_service import get_memory_hub
                 query_str = f"Subject: {subject}, Context: {str(context)[:200]}"
-                memories = await MemoryHubService().recall_experience(query=query_str, domain=analysis_type, top_k=2)
+                memories = await get_memory_hub().recall_experience(query=query_str, domain=analysis_type, top_k=2)
                 rag_memories = [
                     {"id": str(m.id), "summary": m.summary, "score": m.score}
                     for m in memories
@@ -233,7 +233,7 @@ class ExpertPanelService:
             try:
                 import uuid
 
-                from app.tasks.memory_tasks import ingest_experience_task
+                from app.tasks.memory_tasks import dispatch_memory_ingest
 
                 memory_summary = f"Expert Panel ({analysis_type}) 다관점 합의 요약:\n"
                 memory_summary += f"- 주제: {subject}\n"
@@ -252,7 +252,7 @@ class ExpertPanelService:
                         "expert_count": len(roster)
                     }
                 }
-                ingest_experience_task.delay(ingest_payload)
+                dispatch_memory_ingest(ingest_payload)
             except Exception as e:
                 logger.warning("expert panel memory auto-ingestion 스킵", err=str(e)[:160])
 
