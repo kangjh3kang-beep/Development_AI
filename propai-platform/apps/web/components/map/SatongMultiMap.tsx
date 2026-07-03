@@ -375,6 +375,11 @@ function presalePopupHtml(item: SatongPresaleItem): string {
   ].join("");
 }
 
+// ★기본값 배열을 매 렌더 새로 만들지 않도록 모듈 상수로 고정한다. selectedParcels prop 을
+//   생략한 소비처(NearbyTransactionsMap 등)에서 기본값 [] 가 매 렌더 새 참조가 되어, 이를
+//   dep 로 쓰는 boundary effect 가 무한 재실행되던 근본(참조 churn)을 차단한다.
+const EMPTY_SELECTED_PARCELS: SatongMapFeature[] = [];
+
 export function SatongMultiMap({
   onPick,
   onPickMany,
@@ -382,7 +387,7 @@ export function SatongMultiMap({
   autoPreviewFocus = false,
   height = 360,
   chrome = "default",
-  selectedParcels = [],
+  selectedParcels = EMPTY_SELECTED_PARCELS,
   layerState,
   readOnly = false,
   marketPayload = null,
@@ -480,8 +485,10 @@ export function SatongMultiMap({
   /* eslint-disable react-hooks/set-state-in-effect -- VWorld boundary fetch status is synchronized from an external API effect. */
   useEffect(() => {
     if (!selectedParcels.length) {
-      setBoundaryFeatures([]);
-      setBoundaryStatus("idle");
+      // ★빈 선택 시 boundaryFeatures/status 를 '변화가 있을 때만' 갱신한다. 매번 새 [] 를
+      //   setState 하면 참조가 바뀌어 불필요 리렌더가 발생한다(무한 업데이트 방지).
+      setBoundaryFeatures((prev) => (prev.length ? [] : prev));
+      setBoundaryStatus((prev) => (prev === "idle" ? prev : "idle"));
       return;
     }
     const hasAllGeometry = selectedParcels.every((parcel) => !!parcel.geometry);
