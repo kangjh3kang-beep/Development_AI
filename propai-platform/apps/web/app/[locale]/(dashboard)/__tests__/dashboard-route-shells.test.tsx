@@ -97,30 +97,6 @@ vi.mock("@/components/auction/AuctionWorkspace", () => ({
   }) => <div data-testid="auction-workspace">{locale}</div>,
 }));
 
-vi.mock("@/components/analytics/TaxOperationsWorkspaceClient", () => ({
-  TaxOperationsWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="tax-workspace">{locale}</div>,
-}));
-
-vi.mock("@/components/analytics/InspectionOperationsWorkspaceClient", () => ({
-  InspectionOperationsWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="inspection-workspace">{locale}</div>,
-}));
-
-vi.mock("@/components/analytics/InvestmentOperationsWorkspaceClient", () => ({
-  InvestmentOperationsWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="investment-workspace">{locale}</div>,
-}));
-
 vi.mock("@/components/analytics/InvestmentAnalyticsWorkspaceClient", () => ({
   InvestmentAnalyticsWorkspaceClient: ({
     locale,
@@ -131,14 +107,6 @@ vi.mock("@/components/analytics/InvestmentAnalyticsWorkspaceClient", () => ({
 
 vi.mock("@/components/analytics/CostEstimationClient", () => ({
   CostEstimationClient: () => <div data-testid="cost-workspace">cost</div>,
-}));
-
-vi.mock("@/components/analytics/EnergyOperationsWorkspaceClient", () => ({
-  EnergyOperationsWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="energy-workspace">{locale}</div>,
 }));
 
 vi.mock("@/components/analytics/ConstructionCostWorkspaceClient", () => ({
