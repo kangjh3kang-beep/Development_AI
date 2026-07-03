@@ -564,6 +564,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _ect = getattr(app.state, "ecos_refresh_task", None)
+    if _ect is not None:
+        _ect.cancel()
     _ot = getattr(app.state, "overdue_batch_task", None)
     if _ot is not None:
         _ot.cancel()
