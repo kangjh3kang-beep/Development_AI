@@ -57,6 +57,7 @@ __all__ = [
     "Series",
     "render_report",
     "build_report_model_from_pipeline",
+    "build_report_model_from_persona",
 ]
 
 
@@ -77,3 +78,12 @@ def build_report_model_from_pipeline(pipeline_result: dict, narratives: dict | N
     from .adapters import build_report_model_from_pipeline as _build
 
     return _build(pipeline_result, narratives)
+
+
+def build_report_model_from_persona(report: dict, key: str) -> ReportModel:
+    """페르소나(도시/디벨로퍼/시공/설계) 분석 결과 → 정본 ReportModel(어댑터).
+
+    4개 클론 *_report.to_pdf 를 통합 — 엔진이 PDF/PPTX/DOCX 를 같은 디자인으로 생성."""
+    from .persona_adapter import build_report_model_from_persona as _build
+
+    return _build(report, key)
