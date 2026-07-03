@@ -337,6 +337,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("LangSmith 초기화 실패 — 추적 없이 시작")
 
+    # 한국은행 ECOS 실 기준금리/시장금리 프리페치(키 있을 때만). load_into_env 이후여야 관리자 키 반영.
+    #   금융비 엔진 get_pf_rate가 동기 소비라 캐시를 여기서 미리 채운다. 실패해도 하드코딩 폴백으로 무중단.
+    try:
+        from app.services.external_api import ecos_service
+        await ecos_service.refresh()
+    except Exception:
+        logger.warning("ECOS 실금리 프리페치 실패 — 하드코딩 폴백 유지")
+
     # 분양·청약 관심지역 모니터링 — 인프로세스 주기 폴링(celery 미배포 환경 대응).
     # 단일 uvicorn 워커에서 1개 루프만 동작. 관심지역/키 없으면 즉시 반환되어 유휴비용 0.
     import asyncio as _asyncio

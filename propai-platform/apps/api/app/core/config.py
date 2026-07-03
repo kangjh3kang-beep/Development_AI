@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     MOLEG_API_KEY: str = ""
     MOLEG_BASE_URL: str = "http://www.law.go.kr/DRF"
 
+    # 한국은행 ECOS(경제통계시스템) — 기준금리·시장금리 실시간(ecos.bok.or.kr, 마이페이지 인증키).
+    #   금융비 엔진의 base_rate(하드코딩)를 실 기준금리로 대체(미설정/실패시 폴백).
+    ECOS_API_KEY: str = ""
+    ECOS_BASE_URL: str = "https://ecos.bok.or.kr/api"
+
     # AI Hub(aihub.or.kr) 데이터 자동 다운로드 — apikey(마이페이지 발급) + 데이터셋 활용신청 승인 전제.
     #   건축 도면 데이터(48,033장) 등을 design_ingest 시드로 자동 다운로드·인제스트.
     AIHUB_API_KEY: str = ""

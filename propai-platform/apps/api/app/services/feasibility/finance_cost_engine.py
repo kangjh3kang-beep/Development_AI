@@ -44,8 +44,18 @@ def calculate_drawdown_interest(principal: int, annual_rate: float, months: int)
     return int(total)
 
 
+# 신용등급별 스프레드(기준금리 위에 얹는 가산금리). 기존 하드코딩 전액금리는
+#   '기준금리 3.0% 가정 + 아래 스프레드'였다(예: A등급 4.8% = 3.0% + 1.8%).
+_PF_GRADE_SPREAD = {"AAA": 0.008, "AA": 0.012, "A": 0.018, "BBB": 0.025, "BB": 0.035}
+# ECOS(한국은행) 실 기준금리를 못 얻을 때의 폴백 전액금리(=기존 동작 그대로 보존, 무날조).
+_PF_FALLBACK_ALLIN = {"AAA": 0.038, "AA": 0.042, "A": 0.048, "BBB": 0.055, "BB": 0.065}
+
+
 def get_pf_rate(credit_grade: str = "A", presale_ratio: float = 0.0) -> float:
     """신용등급 및 분양률 기반 PF 금리 결정.
+
+    금리 = 한국은행 기준금리(ECOS 실시간) + 신용등급 스프레드. ECOS 미설정/실패 시
+    기존 하드코딩 전액금리로 폴백(동작 보존). 실 기준금리 반영으로 금리환경 변화가 수지에 자동 반영된다.
 
     Args:
         credit_grade: 신용등급 ('AAA', 'AA', 'A', 'BBB', 'BB')
@@ -54,13 +64,19 @@ def get_pf_rate(credit_grade: str = "A", presale_ratio: float = 0.0) -> float:
     Returns:
         PF 금리 (소수점)
     """
-    base_rates = {"AAA": 0.038, "AA": 0.042, "A": 0.048, "BBB": 0.055, "BB": 0.065}
-    rate = base_rates.get(credit_grade, 0.055)
+    # ECOS 실 기준금리(소수, 예 0.025) — 캐시 콜드/미설정이면 None → 폴백.
+    from app.services.external_api.ecos_service import base_rate as _ecos_base
+
+    base = _ecos_base()
+    if base is not None:
+        rate = base + _PF_GRADE_SPREAD.get(credit_grade, 0.025)
+    else:
+        rate = _PF_FALLBACK_ALLIN.get(credit_grade, 0.055)
     if presale_ratio >= 0.9:
         rate -= 0.002  # 분양률 90%+ 할인
     elif presale_ratio < 0.7:
         rate += 0.005  # 분양률 70% 미만 가산
-    return rate
+    return round(rate, 6)
 
 
 def calculate_loan_interest(
