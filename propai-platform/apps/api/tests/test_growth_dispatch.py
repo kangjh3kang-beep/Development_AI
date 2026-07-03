@@ -84,3 +84,14 @@ def test_get_memory_hub_is_singleton():
     a = get_memory_hub()
     b = get_memory_hub()
     assert a is b  # ★G4: 프로세스 단일 인스턴스(embeddings 클라이언트 재사용)
+
+
+def test_market_specialist_has_interpreter_wired():
+    """★G6: market 도메인 SpecialistAgent 에 LLM 인터프리터 주입(과거 interpreter=None dead-path 해소).
+
+    결정론 도메인(zoning/far)은 rule-only(interpreter=None)를 의도적으로 유지한다.
+    """
+    from app.services.agents.registry import get_specialist
+
+    assert get_specialist("market")._interpreter is not None
+    assert get_specialist("zoning")._interpreter is None
