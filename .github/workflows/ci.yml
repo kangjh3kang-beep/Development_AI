@@ -82,3 +82,11 @@ jobs:
       - name: Unit tests
         run: pnpm test:run
         working-directory: propai-platform/apps/web
+        timeout-minutes: 20 # OOM 재발 시 40분+ 낭비 방지(실패 로그상 ~45분 태우고 죽었음)
+        env:
+          # ★heap OOM 방지 — vitest(jsdom) V8 힙 상한 상향. ★실측 근거: 기존 실패 CI 로그 2건이
+          #   모두 ~4128MB(Node22·이 러너의 '기본' max-old-space-size)에서 죽었으므로, 기본값보다
+          #   낮은 4096 은 무의미 → 그보다 명확히 큰 6144 로 상향한다(러너 16GB·maxForks 2 → 총
+          #   ~12GB, 여유 확보). vitest.config 의 maxForks 제한·logHeapUsage 와 병행.
+          #   근본(원흉 테스트) 특정은 logHeapUsage 로그로 후속 진단.
+          NODE_OPTIONS: --max-old-space-size=6144
