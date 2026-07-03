@@ -46,7 +46,7 @@ describe("buildPrimaryNav", () => {
     const marketAcquisition = NAV.find((s) => s.id === "market-acquisition")!;
     const marketSales = marketAcquisition.items.find((n) => n.id === "market-sales");
     expect(marketSales?.children?.map((c) => c.href)).toEqual([
-      "/en/market-insights", "/en/sales-info",
+      "/en/market-insights", "/en/market-ai", "/en/sales-info",
     ]);
     const acquisition = marketAcquisition.items.find((n) => n.id === "acquisition");
     expect(acquisition?.children?.map((c) => c.href)).toEqual(["/en/auction", "/en/g2b"]);
