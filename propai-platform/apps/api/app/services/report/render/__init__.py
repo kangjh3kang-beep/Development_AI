@@ -59,6 +59,9 @@ __all__ = [
     "build_report_model_from_pipeline",
     "build_report_model_from_persona",
     "build_report_model_from_bank",
+    "build_report_model_from_land",
+    "build_report_model_from_appraisal",
+    "build_report_model_from_design_audit",
 ]
 
 
@@ -97,3 +100,24 @@ def build_report_model_from_bank(bank_result: dict) -> ReportModel:
     from .adapters import build_report_model_from_bank as _build
 
     return _build(bank_result)
+
+
+def build_report_model_from_land(data: dict) -> ReportModel:
+    """다필지 토지분석보고서(land) → 정본 ReportModel(어댑터). 기존 build_land_analysis_report 이관."""
+    from .land_adapter import build_report_model_from_land as _build
+
+    return _build(data)
+
+
+def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
+    """탁상감정 보고서(appraisal) → 정본 ReportModel(어댑터). 기존 build_desk_appraisal_pdf 이관."""
+    from .appraisal_adapter import build_report_model_from_appraisal as _build
+
+    return _build(data, **kwargs)
+
+
+def build_report_model_from_design_audit(data: dict) -> ReportModel:
+    """설계심사 보고서(design_audit) → 정본 ReportModel(어댑터). 기존 build_design_audit_pdf 이관."""
+    from .design_audit_adapter import build_report_model_from_design_audit as _build
+
+    return _build(data)

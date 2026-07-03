@@ -717,18 +717,20 @@ class TestPdf:
         return audit
 
     def test_builder_returns_pdf_bytes(self):
-        from app.services.report.design_audit_pdf import build_design_audit_pdf
+        # 통합 보고서 생성엔진 경유(build_design_audit_pdf 이관).
+        from app.services.report.render import build_report_model_from_design_audit, render_report
 
-        pdf = build_design_audit_pdf(self._audit_dict())
+        pdf, _mime, _ext = render_report(build_report_model_from_design_audit(self._audit_dict()), "pdf")
         assert isinstance(pdf, (bytes, bytearray))
         assert bytes(pdf[:4]) == b"%PDF"
         assert len(pdf) > 1000
 
     def test_builder_empty_comparables_and_no_blindspot(self):
         """표본 0건('비교 사례 없음' 정직) + blindspot 생략에도 무중단 생성."""
-        from app.services.report.design_audit_pdf import build_design_audit_pdf
+        from app.services.report.render import build_report_model_from_design_audit, render_report
 
-        pdf = build_design_audit_pdf(self._audit_dict(blindspot=None, findings=[]))
+        model = build_report_model_from_design_audit(self._audit_dict(blindspot=None, findings=[]))
+        pdf, _mime, _ext = render_report(model, "pdf")
         assert bytes(pdf[:4]) == b"%PDF"
 
     def test_pdf_endpoint(self):

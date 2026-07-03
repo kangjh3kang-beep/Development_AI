@@ -165,9 +165,9 @@ async def rone_status(keyword: str = "지가변동"):
 
 @router.post("/desk-appraisal/pdf")
 @limiter.limit(_LAND_PRICE_LIMIT)
-async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest):
-    """예상 탁상감정서 PDF 다운로드."""
-    from app.services.land_intelligence.desk_appraisal_pdf import build_desk_appraisal_pdf
+async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest, format: str = "pdf"):
+    """예상 탁상감정서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유."""
+    from app.services.report.render import build_report_model_from_appraisal, render_report
 
     result = await desk_appraisal(
         pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
@@ -192,8 +192,9 @@ async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest):
         except Exception:  # noqa: BLE001 — 타임아웃/해석 실패해도 PDF는 생성
             ai_sections = None
 
-    pdf = build_desk_appraisal_pdf(result, address=req.address, ai_sections=ai_sections)
+    model = build_report_model_from_appraisal(result, address=req.address or "", ai_sections=ai_sections)
+    data, media_type, ext = render_report(model, format)
     return Response(
-        content=pdf, media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=propai_desk_appraisal.pdf"},
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=propai_desk_appraisal.{ext}"},
     )

@@ -1703,16 +1703,17 @@ class LandReportRequest(BaseModel):
 
 
 @router.post("/land-report")
-async def land_report(req: LandReportRequest):
-    """다필지 → 종합 토지분석보고서 PDF(필지요약·토지정보·권리안내·규제/개발가능성·대지지분·종합).
+async def land_report(req: LandReportRequest, format: str = "pdf"):
+    """다필지 → 종합 토지분석보고서(PDF/PPTX/DOCX·필지요약·토지정보·권리안내·규제/개발가능성·대지지분·종합).
 
-    필지별 토지정보(/parcels-info 로직 재사용)+집합건물 세대 대지지분(land-share)을 모아 PDF 생성.
-    무목업: 무자료는 보고서에 '-'/'보완필요'로 정직 표기.
+    필지별 토지정보(/parcels-info 로직 재사용)+집합건물 세대 대지지분(land-share)을 모아 통합 보고서
+    생성엔진으로 렌더(format 으로 포맷 선택). 무목업: 무자료는 '-'/'보완필요'로 정직 표기.
     """
     from fastapi.responses import StreamingResponse as _SR
-    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
-    from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
+
+    from app.services.report.render import build_report_model_from_land, render_report
     from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
 
     items = (req.parcels or [])[:120]
     if not items:
@@ -1751,12 +1752,14 @@ async def land_report(req: LandReportRequest):
                 logger.warning("보고서 대지지분 조회 실패: %s (%s)", jb, str(e))
 
     try:
-        pdf = build_land_analysis_report({"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by})
+        model = build_report_model_from_land(
+            {"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by})
+        data, media_type, ext = render_report(model, format)
     except Exception as e:  # noqa: BLE001
         logger.warning("토지분석보고서 생성 실패: %s", str(e))
         return {"error": "보고서 생성에 실패했습니다."}
-    return _SR(iter([pdf]), media_type="application/pdf",
-               headers={"Content-Disposition": 'attachment; filename="land_analysis_report.pdf"'})
+    return _SR(iter([data]), media_type=media_type,
+               headers={"Content-Disposition": f'attachment; filename="land_analysis_report.{ext}"'})
 
 
 @router.post("/parse-parcels")
