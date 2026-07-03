@@ -113,3 +113,31 @@ def test_no_formula_duplication_in_render_package():
         src = py.read_text(encoding="utf-8")
         for token in forbidden:
             assert token not in src, f"{py.name} 이 도메인 산식 {token} 을 임포트/재구현(산식 복제 금지)"
+
+
+@pytest.mark.parametrize("fmt", ["pdf", "pptx", "docx"])
+def test_bank_adapter_renders_all_formats(fmt):
+    """은행제출용 보고서(bank dict) → 3포맷 렌더 + 미확보 섹션·완성도 정직 표기."""
+    if fmt != "pdf":
+        pytest.importorskip(fmt)
+    from app.services.report.render import build_report_model_from_bank
+
+    bank = {
+        "meta": {"title": "사업성 분석 보고서 — <샘플>", "generated_at": "2026-07-03",
+                 "legal_disclaimer": "AI 기반 자동 분석 결과."},
+        "sections": [
+            {"id": "summary", "title": "1. 사업개요", "has_data": True,
+             "content": {"address": "용인 <샘플> & 처인", "land_area_sqm": 11465, "estimated_value": 0}},
+            {"id": "esg", "title": "9. ESG 분석", "has_data": False, "content": {}},
+        ],
+        "completeness": {"total": 2, "filled": 1, "empty": 1, "pct": 50},
+    }
+    model = build_report_model_from_bank(bank)
+    data, _mime, ext = render_report(model, fmt)
+    assert ext == fmt and len(data) > 500
+    sig = b"%PDF" if fmt == "pdf" else b"PK\x03\x04"
+    assert data[:4] == sig
+    if fmt != "pdf":
+        text = _zip_text(data)
+        assert "11,465" in text  # 통합 대지면적
+        assert "미확보" in text  # ESG 미확보 섹션 정직 표기

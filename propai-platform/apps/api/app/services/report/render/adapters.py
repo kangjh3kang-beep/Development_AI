@@ -171,3 +171,33 @@ def build_report_model_from_pipeline(pipeline_result: dict, narratives: dict | N
         ))
 
     return ReportModel(meta=meta, sections=sections, exec_summary=exec_summary)
+
+
+def build_report_model_from_bank(bank_result: dict) -> ReportModel:
+    """은행제출용 사업성 보고서(BankReadyReportService.generate_report dict) → 정본 ReportModel.
+
+    ★재구현 금지: 기존 서비스가 만든 10섹션 dict(meta/sections/completeness)를 Block 으로 옮겨 담기만.
+      섹션 제목에 이미 번호가 있어(예 '1. 사업개요') section_no 는 비운다(이중 번호 방지).
+    """
+    meta_d = bank_result.get("meta") or {}
+    comp = bank_result.get("completeness") or {}
+    meta = ReportMeta(
+        title=meta_d.get("title") or "사업성 분석 보고서",
+        subtitle="은행 PF 대출 심사 제출용",
+        generated_at=meta_d.get("generated_at") or "",
+        completeness=comp if comp else None,
+        confidential=True,
+    )
+
+    sections: list[Section] = []
+    for sec in bank_result.get("sections") or []:
+        blocks: list[Any] = []
+        rows = _content_to_rows(sec.get("content") or {})
+        if rows:
+            blocks.append(KVTableBlock(rows=rows))
+        # 데이터 미확보 섹션은 정직 고지(빈 섹션 은폐 금지)
+        if not sec.get("has_data"):
+            blocks.append(NarrativeBlock(paragraphs=["※ 이 섹션은 데이터 일부 미확보 상태입니다(정직 고지)."]))
+        sections.append(Section(section_no=None, title=sec.get("title", ""), blocks=blocks))
+
+    return ReportModel(meta=meta, sections=sections, disclaimer=meta_d.get("legal_disclaimer"))

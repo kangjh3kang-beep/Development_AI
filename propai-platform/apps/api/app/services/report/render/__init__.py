@@ -58,6 +58,7 @@ __all__ = [
     "render_report",
     "build_report_model_from_pipeline",
     "build_report_model_from_persona",
+    "build_report_model_from_bank",
 ]
 
 
@@ -87,3 +88,12 @@ def build_report_model_from_persona(report: dict, key: str) -> ReportModel:
     from .persona_adapter import build_report_model_from_persona as _build
 
     return _build(report, key)
+
+
+def build_report_model_from_bank(bank_result: dict) -> ReportModel:
+    """은행제출용 사업성 보고서(BankReadyReportService dict) → 정본 ReportModel(어댑터).
+
+    프론트 window.print(HTML 인쇄)를 서버 PDF/PPTX/DOCX 로 대체."""
+    from .adapters import build_report_model_from_bank as _build
+
+    return _build(bank_result)
