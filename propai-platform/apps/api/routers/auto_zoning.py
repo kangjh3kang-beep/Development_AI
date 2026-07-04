@@ -1694,6 +1694,8 @@ class DevelopmentFacilitiesRequest(BaseModel):
     lat: float
     lon: float
     radius_m: int = 1000
+    # 'rail'(기본, 기존 소비처 동작 보존 — 철도만) | 'all'(전체 도시계획시설 — 지도 개발계획 레이어용)
+    kinds: str = "rail"
 
 
 @router.post("/development-facilities")
@@ -1708,8 +1710,10 @@ async def development_facilities(req: DevelopmentFacilitiesRequest):
     if not (-90 <= req.lat <= 90 and -180 <= req.lon <= 180):
         return {"facilities": [], "note": "좌표 범위 오류 — 위도(-90~90)/경도(-180~180)를 확인하세요."}
     radius_m = max(100, min(5000, req.radius_m or 1000))  # 1회 조회 부담 낮게(과도 반경 제한)
+    kinds = req.kinds if req.kinds in ("rail", "all") else "rail"  # 미지정/오타는 기존 동작(rail)
     try:
-        facilities = await VWorldService().get_planning_facilities(req.lat, req.lon, radius_m=radius_m)
+        facilities = await VWorldService().get_planning_facilities(
+            req.lat, req.lon, radius_m=radius_m, kinds=kinds)
     except Exception as e:  # noqa: BLE001 — 외부 조회 실패는 정직 empty로(가짜 생성 금지).
         logger.warning("주변 도시계획시설 자동수집 실패: %s,%s (%s)", req.lat, req.lon, str(e))
         facilities = []

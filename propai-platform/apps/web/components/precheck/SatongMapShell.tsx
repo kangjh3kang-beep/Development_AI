@@ -37,6 +37,7 @@ import {
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type {
   ParcelAtPointResult,
+  SatongDevelopmentPayload,
   SatongMarketPayload,
   SatongMultiMapProps,
   SatongPoiPayload,
@@ -274,6 +275,19 @@ const LAYERS: SatongLayer[] = [
     ],
   },
   {
+    id: "development",
+    label: "개발계획",
+    shortLabel: "개발",
+    description: "선택 필지 주변(1km)의 도시계획시설(철도·역사 등 계획·결정)을 마커로 표시합니다. 필지를 먼저 선택하세요.",
+    icon: Route,
+    status: "active",
+    tone: "bg-violet-100 text-violet-950 border-violet-200",
+    source: "VWorld 도시계획시설(UPIS 계열)",
+    controls: [
+      { id: "facilities", label: "도시계획시설", mapEffect: true },
+    ],
+  },
+  {
     id: "terrain",
     label: "지형도·항공뷰",
     shortLabel: "지형",
@@ -357,6 +371,7 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     "official-price": ["unit-price"],
     age: ["building-age"],
     poi: ["station", "school", "commerce", "park", "hospital"],
+    development: ["facilities"],
     terrain: ["base"],
   };
 }
@@ -572,6 +587,38 @@ export function SatongMapShell({ locale }: { locale: string }) {
       cancelled = true;
     };
   }, [poiEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
+
+  // ── 개발계획 레이어 배선: 레이어 ON + 선택필지 좌표 있으면 주변 도시계획시설 조회 ──
+  //   /zoning/development-facilities 는 lat/lon 필수(주소 지오코딩 없음) — 좌표 없으면 조회 생략.
+  //   무자료·실패는 빈 facilities + note 정직 전달(무날조). 패턴은 실거래·POI와 동일.
+  const [developmentPayload, setDevelopmentPayload] = useState<SatongDevelopmentPayload | null>(null);
+  const developmentEnabled = enabledLayers.has("development");
+  useEffect(() => {
+    if (!developmentEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setDevelopmentPayload(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<SatongDevelopmentPayload>("/zoning/development-facilities", {
+          // kinds:"all" — 지도 레이어는 전체 도시계획시설(도로·광장·학교·유통 등) 표시.
+          //   (기본 "rail"은 입지 신호용 철도 전용 — 기존 소비처 동작 보존)
+          body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 1000, kinds: "all" },
+          useMock: false,
+          timeoutMs: 60000,
+        });
+        if (!cancelled) setDevelopmentPayload(res);
+      } catch {
+        if (!cancelled) {
+          setDevelopmentPayload({ facilities: [], note: "개발계획(도시계획시설) 조회 실패" });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [developmentEnabled, poiAnchorLat, poiAnchorLon]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1157,6 +1204,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
                 marketLayer={{ kind: "trade", type: "apt" }}
                 poiPayload={poiEnabled ? poiPayload : null}
+                developmentPayload={developmentEnabled ? developmentPayload : null}
               />
             </div>
 
