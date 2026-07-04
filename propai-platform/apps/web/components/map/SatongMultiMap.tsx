@@ -86,6 +86,8 @@ export interface SatongMultiMapProps {
   /** 주변 실거래/분양 등 시장 데이터 마커를 같은 엔진 위에 표시한다. */
   marketPayload?: SatongMarketPayload | null;
   marketLayer?: SatongMarketLayerState;
+  /** 교통·편의 POI(지하철·학교·상권·공원·병원) 마커 — /site-score/poi-infra 응답. */
+  poiPayload?: SatongPoiPayload | null;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -151,6 +153,45 @@ export type SatongMarketPayload = {
   categories?: Record<string, SatongMarketCategory>;
   fetch_failed?: boolean;
   note?: string;
+};
+
+/** /site-score/poi-infra 응답(부분집합) — 카테고리별 POI 항목(좌표 포함). */
+export type SatongPoiItem = {
+  name?: string | null;
+  distance_m?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+};
+export type SatongPoiCategory = {
+  label?: string;
+  count?: number;
+  nearest_m?: number | null;
+  items?: SatongPoiItem[];
+};
+export type SatongPoiPayload = {
+  available?: boolean;
+  reason?: string;
+  coordinates?: { lat?: number | null; lon?: number | null };
+  radius_m?: number;
+  categories?: Record<string, SatongPoiCategory>;
+};
+
+// POI 컨트롤(역·학교·상권·공원·병원) → Kakao Local 카테고리 코드 매핑.
+//   백엔드 poi_inventory 수집 코드(SW8 지하철·SC4 학교·MT1 마트·CS2 편의점·BK9 은행·
+//   HP8 병원·PM9 약국·PARK 공원 키워드)와 정합 — 미수집 코드는 넣지 않는다(무날조).
+const POI_CONTROL_CODES: Record<string, string[]> = {
+  station: ["SW8"],
+  school: ["SC4"],
+  commerce: ["MT1", "CS2", "BK9"],
+  park: ["PARK"],
+  hospital: ["HP8", "PM9"],
+};
+const POI_CONTROL_COLORS: Record<string, string> = {
+  station: "#0ea5e9",   // 하늘 — 역
+  school: "#8b5cf6",    // 보라 — 학교
+  commerce: "#f59e0b",  // 주황 — 상권
+  park: "#22c55e",      // 초록 — 공원
+  hospital: "#ef4444",  // 빨강 — 병원
 };
 
 export type SatongPresaleItem = {
@@ -392,6 +433,7 @@ export function SatongMultiMap({
   readOnly = false,
   marketPayload = null,
   marketLayer,
+  poiPayload = null,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
@@ -409,12 +451,14 @@ export function SatongMultiMap({
   const baseLayerRef = useRef<any>(null);
   const overlayLayerRef = useRef<any>(null);
   const marketLayerRef = useRef<any>(null);
+  const poiLayerRef = useRef<any>(null);
   const lastFitKeyRef = useRef("");
   const [tileStatus, setTileStatus] = useState<"idle" | "ready" | "error">("idle");
   const [boundaryStatus, setBoundaryStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
+  const [poiNote, setPoiNote] = useState("");
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -1050,6 +1094,69 @@ export function SatongMultiMap({
   }, [mapReady, marketLayer, marketPayload]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect -- POI markers are rendered into an imperative Leaflet layer group. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (poiLayerRef.current) {
+      try { poiLayerRef.current.remove(); } catch { /* noop */ }
+      poiLayerRef.current = null;
+    }
+
+    if (!poiPayload) {
+      setPoiNote("");
+      return;
+    }
+    if (poiPayload.available === false) {
+      // 키 미설정/조회 실패 — 정직 표기(가짜 마커 금지).
+      setPoiNote(poiPayload.reason || "POI 조회 불가");
+      return;
+    }
+
+    const cats = poiPayload.categories || {};
+    const group = L.layerGroup().addTo(map);
+    poiLayerRef.current = group;
+    let poiCount = 0;
+
+    // 컨트롤(역·학교·상권·공원·병원)별로 켜진 것만 렌더 — 컨트롤 상태는 layerState가 SSOT.
+    for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
+      if (!hasSatongLayerControl(layerState, "poi", control)) continue;
+      const color = POI_CONTROL_COLORS[control] || "#0ea5e9";
+      for (const code of codes) {
+        const items = cats[code]?.items || [];
+        const label = cats[code]?.label || code;
+        for (const item of items) {
+          if (typeof item.lat !== "number" || typeof item.lon !== "number") continue;
+          poiCount += 1;
+          L.circleMarker([item.lat, item.lon], {
+            radius: 5,
+            color,
+            weight: 2,
+            fillColor: "#ffffff",
+            fillOpacity: 0.9,
+          })
+            .bindPopup(
+              `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
+                `<b>${escapeHtml(item.name || label)}</b>` +
+                `<br/>${escapeHtml(label)}${item.distance_m != null ? ` · ${Math.round(item.distance_m).toLocaleString()}m` : ""}` +
+                `</div>`,
+              { maxWidth: 260 },
+            )
+            .addTo(group);
+        }
+      }
+    }
+    setPoiNote(poiCount ? `POI ${poiCount}곳` : "POI 무자료");
+
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (poiLayerRef.current === group) poiLayerRef.current = null;
+    };
+  }, [mapReady, poiPayload, layerState]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || focusLat == null || focusLon == null) return;
@@ -1130,7 +1237,7 @@ export function SatongMultiMap({
           )}
         </button>
 
-        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote) && (
+        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote) && (
           <div className="pointer-events-none absolute bottom-3 left-3 z-[410] max-w-[calc(100%-96px)] space-y-1">
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
@@ -1140,6 +1247,11 @@ export function SatongMultiMap({
             {marketNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {marketNote}
+              </span>
+            )}
+            {poiNote && (
+              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                {poiNote}
               </span>
             )}
             {boundaryStatus === "loading" && (

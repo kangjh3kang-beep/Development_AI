@@ -39,6 +39,11 @@ export const SATONG_RENDERABLE_LAYER_IDS = new Set<SatongMapLayerId>([
   "zoning",
   "official-price",
   "age",
+  // 실거래(C1)·POI(C2) — 데이터 배선+마커 렌더가 실재하므로 renderable 등록.
+  //   미등록 시 레일 클릭이 레이어를 켜지 못하고(early-return) "지도에 표시하지 않습니다"
+  //   거짓 배너가 노출된다(정직원칙 역위반 — C2 리뷰 HIGH·C1 도달성 갭 동시 해소).
+  "transactions",
+  "poi",
   "terrain",
 ]);
 
