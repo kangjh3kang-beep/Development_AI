@@ -1640,20 +1640,36 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     if not pp or not pp.get("pnu"):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
+
     area_sqm = zone_type = jimok = None
     official_price_per_sqm = None
-    try:
-        lc = await vworld.get_land_characteristics(pnu)
-        if isinstance(lc, dict):
-            area_sqm = lc.get("area_sqm") or None
-            zone_type = lc.get("zone_type") or None
-            jimok = lc.get("land_category") or None
-            # 개별공시지가(원/㎡) — get_land_characteristics가 이미 반환(추가 호출 0). 공시지가
-            #   레이어(㎡당 단가)가 지도에 반영되려면 이 필드가 필요하다. 0/누락은 None(가짜값 금지).
-            _op = lc.get("official_price_per_sqm")
-            official_price_per_sqm = int(_op) if _op else None
-    except Exception:  # noqa: BLE001
-        pass
+    built_year = building_age_years = None
+    # 토지특성(NED)과 건축물대장 표제부(건축HUB)는 독립 API → 병렬 조회(클릭 지연 최소화).
+    # 각각 best-effort: 한쪽 실패해도 나머지 필드는 정상 반환(무자료·오류는 None, 무날조).
+    lc, title = await asyncio.gather(
+        vworld.get_land_characteristics(pnu),
+        BuildingRegistryService().get_title_by_pnu(pnu),
+        return_exceptions=True,
+    )
+    if isinstance(lc, dict):
+        area_sqm = lc.get("area_sqm") or None
+        zone_type = lc.get("zone_type") or None
+        jimok = lc.get("land_category") or None
+        # 개별공시지가(원/㎡) — get_land_characteristics가 이미 반환(추가 호출 0). 공시지가
+        #   레이어(㎡당 단가)가 지도에 반영되려면 이 필드가 필요하다. 0/누락은 None(가짜값 금지).
+        _op = lc.get("official_price_per_sqm")
+        official_price_per_sqm = int(_op) if _op else None
+    if isinstance(title, dict):
+        # 노후도 레이어용 — 표제부 사용승인일(YYYYMMDD) 앞 4자리 = 준공연도 → 연식 산출.
+        #   나대지/미준공(사용승인일 공란)·멸실·파싱불가는 None(정직 — 가짜 연식 금지).
+        _uad = str(title.get("use_approval_date") or "").strip()
+        if len(_uad) >= 4 and _uad[:4].isdigit() and not title.get("is_demolished"):
+            from datetime import date as _date
+            _y, _now = int(_uad[:4]), _date.today().year
+            if 1900 <= _y <= _now:
+                built_year = _y
+                building_age_years = _now - _y
     bcr = far = None
     if zone_type:
         z = zone_type.replace(" ", "").strip()
@@ -1666,6 +1682,7 @@ async def parcel_at_point(req: ParcelAtPointRequest):
         "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
         "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
         "official_price_per_sqm": official_price_per_sqm,
+        "built_year": built_year, "building_age_years": building_age_years,
         "lat": req.lat, "lon": req.lon,
     }
 

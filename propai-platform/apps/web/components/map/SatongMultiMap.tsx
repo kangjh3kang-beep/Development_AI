@@ -1253,7 +1253,7 @@ export function SatongMultiMap({
               선택 <span className="text-[var(--accent-strong)]">{staged.length}필지</span>
               {totalAreaSqm > 0 && (
                 <span className="ml-1.5 font-normal text-[var(--text-secondary)]">
-                  · 합산 {Math.round(totalAreaSqm).toLocaleString()}㎡
+                  · 합산 {Math.round(totalAreaSqm).toLocaleString()}㎡ ({toP(totalAreaSqm)}평)
                 </span>
               )}
             </span>
