@@ -22,6 +22,14 @@ interface ParcelData {
   landCategory: string; // 지목
   ownerType: string;
   zoneCode?: string | null; // 용도지역 — 다필지 통합 시 면적가중 우세용도 산정에 사용(없으면 면적만 통합)
+  // ── 지도 복원용(옵션B, additive·persist 왕복 무손상) — 필지별 좌표·경계·속성을 SSOT에 영속해
+  //    precheck 재진입 시 지도 오버레이·POI·개발계획 레이어를 필지별로 정밀 복원한다. 미확보는 생략(무날조).
+  lat?: number | null;
+  lon?: number | null;
+  geometry?: unknown; // GeoJSON geometry(필지 경계) — 있으면 재조회 없이 즉시 폴리곤 렌더
+  officialPricePerSqm?: number | null; // 개별공시지가(원/㎡)
+  builtYear?: number | null;
+  buildingAgeYears?: number | null;
 }
 
 /** 토지이용계획 규제 항목 */

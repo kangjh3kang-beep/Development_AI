@@ -90,6 +90,49 @@ export function satongSelectionToParcelRows(
     }));
 }
 
+/** 프로젝트 스토어(SiteAnalysisData.parcels) → precheck 선택필지. read-side 하이드레이션용.
+ *  옵션B로 좌표·경계가 SSOT에 있으면 필지별 정밀 복원. 없으면 fallbackCoord(대표점, 옵션A)를
+ *  첫 필지에 주입해 POI·개발계획 레이어가 최소한 대표점 기준으로라도 발동하게 한다(무날조: 없으면 null). */
+export function siteAnalysisParcelsToSelection(
+  parcels: Array<{
+    pnu?: string | null;
+    address?: string | null;
+    areaSqm?: number | null;
+    landCategory?: string | null;
+    zoneCode?: string | null;
+    lat?: number | null;
+    lon?: number | null;
+    geometry?: unknown;
+    officialPricePerSqm?: number | null;
+    builtYear?: number | null;
+    buildingAgeYears?: number | null;
+  }>,
+  fallbackCoord?: { lat: number; lon: number } | null,
+): SatongSelectionParcel[] {
+  return parcels
+    .filter((parcel) => (parcel.address ?? "").trim().length > 0)
+    .map((parcel, index) => {
+      // 필지별 좌표 우선(옵션B). 첫 필지에 한해 좌표 부재 시 대표점 폴백(옵션A).
+      const lat = parcel.lat ?? (index === 0 ? fallbackCoord?.lat ?? null : null);
+      const lon = parcel.lon ?? (index === 0 ? fallbackCoord?.lon ?? null : null);
+      return {
+        id: parcel.pnu || `store-${index}-${parcel.address}`,
+        address: (parcel.address ?? "").trim(),
+        pnu: parcel.pnu ?? null,
+        lat,
+        lon,
+        areaSqm: parcel.areaSqm ?? null,
+        zoneType: parcel.zoneCode ?? null,
+        jimok: parcel.landCategory ?? null,
+        officialPricePerSqm: parcel.officialPricePerSqm ?? null,
+        builtYear: parcel.builtYear ?? null,
+        buildingAgeYears: parcel.buildingAgeYears ?? null,
+        geometry: parcel.geometry ?? null,
+        source: "map" as const,
+      };
+    });
+}
+
 export function selectionToSiteAnalysisPatch(
   parcels: SatongSelectionParcel[],
 ): Partial<SiteAnalysisData> | null {
@@ -122,6 +165,13 @@ export function selectionToSiteAnalysisPatch(
       landCategory: parcel.jimok || "미확인",
       ownerType: "미확인",
       zoneCode: parcel.zoneType ?? null,
+      // 옵션B: 지도 복원용 좌표·경계·속성을 SSOT에 보존(재진입 시 필지별 정밀 앵커). 미확보는 null.
+      lat: parcel.lat ?? null,
+      lon: parcel.lon ?? null,
+      geometry: parcel.geometry ?? null,
+      officialPricePerSqm: parcel.officialPricePerSqm ?? null,
+      builtYear: parcel.builtYear ?? null,
+      buildingAgeYears: parcel.buildingAgeYears ?? null,
     })),
     dataSource: "satong-map-shell",
     fetchedAt: new Date().toISOString(),
