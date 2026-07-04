@@ -1641,12 +1641,17 @@ async def parcel_at_point(req: ParcelAtPointRequest):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
     area_sqm = zone_type = jimok = None
+    official_price_per_sqm = None
     try:
         lc = await vworld.get_land_characteristics(pnu)
         if isinstance(lc, dict):
             area_sqm = lc.get("area_sqm") or None
             zone_type = lc.get("zone_type") or None
             jimok = lc.get("land_category") or None
+            # 개별공시지가(원/㎡) — get_land_characteristics가 이미 반환(추가 호출 0). 공시지가
+            #   레이어(㎡당 단가)가 지도에 반영되려면 이 필드가 필요하다. 0/누락은 None(가짜값 금지).
+            _op = lc.get("official_price_per_sqm")
+            official_price_per_sqm = int(_op) if _op else None
     except Exception:  # noqa: BLE001
         pass
     bcr = far = None
@@ -1660,6 +1665,7 @@ async def parcel_at_point(req: ParcelAtPointRequest):
         "address": pp.get("address") or "", "jibun": pp.get("address") or "",
         "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
         "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
+        "official_price_per_sqm": official_price_per_sqm,
         "lat": req.lat, "lon": req.lon,
     }
 
