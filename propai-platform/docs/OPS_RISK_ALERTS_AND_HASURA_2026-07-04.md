@@ -43,6 +43,26 @@
    `curl "https://api.telegram.org/bot<토큰>/getMe"` (200·봇 정보) 로 토큰 유효성만 확인
    (실 알림은 고위험 분석 이벤트에서 트리거 — 임의 발송 코드는 두지 않음).
 
+### 연결 테스트(서버 반영 전 즉시 확인 — 발송 경로 end-to-end)
+토큰·chat_id 가 맞는지·실제 도착하는지는 서버 반영 없이 curl 1줄로 확인한다(본인 봇→본인 chat):
+```bash
+curl -s "https://api.telegram.org/bot<봇토큰>/sendMessage" \
+  -d chat_id=<CHAT_ID> -d text="✅ PropAI 위험알림 연결 테스트"
+# 성공: {"ok":true,...} 반환 + 텔레그램에 메시지 도착 → 토큰·chat_id·전송 경로 모두 정상.
+# 실패: {"ok":false,"description":...} → description 이 원인(토큰 오류/chat_id 오류/봇에 먼저 말 안 검).
+```
+앱 배선(append→dispatch→notifier)은 코드로 이미 실증됐으므로, 위 curl 이 도착하면 서버 env 주입
+후 고위험 분석 시 자동 발송이 보장된다.
+
+### ★알림 임계값 튜닝(코드 수정 없이 env 로)
+발송 조건은 `RISK_ALERT_MIN_LEVEL` 환경변수로 조정한다(레벨 순서 none<low<medium<high):
+- **`medium`(기본)**: high(심각 모순·상태 실패) + medium(stale) 발송.
+- **`high`**: 심각(모순/상태 실패)만 발송 — medium(stale) 소음 차단. 조용한 알림을 원하면 이 값.
+- 알 수 없는 값이면 medium 안전측 폴백. 서버 `.env` 에 `RISK_ALERT_MIN_LEVEL=high` 한 줄 추가 후 재기동.
+
+(발송 판정 코드: `risk_monitor.dispatch_risk_alert` — `_LEVEL_ORDER` 비교. 회귀 테스트:
+`tests/ledger/test_risk_monitor.py` 의 기본 medium/high-only/미상값 폴백 3종.)
+
 ### 참고: RISK_MODEL_PATH (별개 — API 키 아님)
 `risk_predictor.py:52-64` 의 위험**예측**은 미설정 시 **휴리스틱(규칙기반) 폴백**으로 정직 동작.
 `RISK_MODEL_PATH` 는 "발급받는 키"가 아니라 **데이터팀이 오프라인 학습한 XGBoost 모델 파일

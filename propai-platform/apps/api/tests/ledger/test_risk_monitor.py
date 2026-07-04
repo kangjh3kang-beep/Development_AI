@@ -138,3 +138,46 @@ async def test_append_with_lineage_attaches_risk_automatically():
         assert "risk" in wb and wb["risk"]["risk_level"] == "high"
     finally:
         await _cleanup(tid)
+
+
+# ── #2 알림 임계값 env 튜닝(RISK_ALERT_MIN_LEVEL) — 순수 로직(무DB) ──
+
+async def test_dispatch_default_medium_sends_high_and_medium(monkeypatch):
+    from app.services.ledger import risk_monitor as R
+    monkeypatch.delenv("RISK_ALERT_MIN_LEVEL", raising=False)
+    R.clear_notifiers()
+    got: list = []
+    R.register_notifier(lambda a: got.append(a["risk_level"]))
+    try:
+        for lvl in ("high", "medium", "low", "none"):
+            await R.dispatch_risk_alert(project_id="p", analysis_type="t",
+                                        risk={"risk_level": lvl, "risks": []})
+        assert got == ["high", "medium"]  # 기본 medium 이상만 발송
+    finally:
+        R.clear_notifiers()
+
+
+async def test_dispatch_high_only_when_min_level_high(monkeypatch):
+    # config.settings 는 lru_cache 라 monkeypatch 로 속성 직접 주입(런타임 게이트 검증)
+    from app.core.config import settings
+    from app.services.ledger import risk_monitor as R
+    monkeypatch.setattr(settings, "RISK_ALERT_MIN_LEVEL", "high", raising=False)
+    R.clear_notifiers()
+    got: list = []
+    R.register_notifier(lambda a: got.append(a["risk_level"]))
+    try:
+        for lvl in ("high", "medium", "low"):
+            res = await R.dispatch_risk_alert(project_id="p", analysis_type="t",
+                                              risk={"risk_level": lvl, "risks": []})
+            if lvl != "high":
+                assert res.get("skipped") and res.get("min_level") == "high"
+        assert got == ["high"]  # high 만 발송(medium 소음 차단)
+    finally:
+        R.clear_notifiers()
+
+
+def test_min_alert_level_unknown_falls_back_medium(monkeypatch):
+    from app.core.config import settings
+    from app.services.ledger import risk_monitor as R
+    monkeypatch.setattr(settings, "RISK_ALERT_MIN_LEVEL", "garbage", raising=False)
+    assert R._min_alert_level() == "medium"  # 알 수 없는 값 안전측 폴백
