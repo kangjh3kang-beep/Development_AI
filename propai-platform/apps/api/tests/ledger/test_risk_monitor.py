@@ -181,3 +181,31 @@ def test_min_alert_level_unknown_falls_back_medium(monkeypatch):
     from app.services.ledger import risk_monitor as R
     monkeypatch.setattr(settings, "RISK_ALERT_MIN_LEVEL", "garbage", raising=False)
     assert R._min_alert_level() == "medium"  # 알 수 없는 값 안전측 폴백
+
+
+# ── 알림 본문 한국어 포맷(_format_alert_text) — 순수 결정론(무네트워크) ──
+
+def test_format_alert_text_korean_high():
+    txt = R._format_alert_text({
+        "risk_level": "high", "analysis_type": "legal_review", "project_id": "PRJ-1",
+        "risks": [{"type": "contradiction_high", "severity": "high",
+                   "detail": "직전 대비 고심각 모순 2건", "recommend": "재검토/재분석"}]})
+    assert txt.startswith("🚨 사통팔땅 위험알림 [심각]")
+    assert "분석: legal_review" in txt and "프로젝트: PRJ-1" in txt
+    assert "위험신호 1건" in txt
+    assert "· 직전 대비 고심각 모순 2건 → 재검토/재분석" in txt
+
+
+def test_format_alert_text_medium_caps_details():
+    risks = [{"type": "stale", "detail": f"신호{i}"} for i in range(7)]
+    txt = R._format_alert_text({"risk_level": "medium", "analysis_type": "t",
+                                "project_id": None, "risks": risks})
+    assert txt.startswith("⚠️ 사통팔땅 위험알림 [주의]")
+    assert "위험신호 7건" in txt and "· 신호4" in txt
+    assert "· 신호5" not in txt and "· 외 2건" in txt  # 상세 5건 캡 + 잔여 정직 표기
+
+
+def test_format_alert_text_unknown_level_and_empty():
+    txt = R._format_alert_text({"risk_level": "custom", "analysis_type": "t",
+                                "project_id": "p", "risks": []})
+    assert "[custom]" in txt and "위험신호 0건" in txt  # 미상 레벨은 원문 유지(무날조)
