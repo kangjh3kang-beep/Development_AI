@@ -1643,37 +1643,38 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     if not pp or not pp.get("pnu"):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
+
     area_sqm = zone_type = jimok = None
     official_price_per_sqm = None
-    try:
-        lc = await vworld.get_land_characteristics(pnu)
-        if isinstance(lc, dict):
-            area_sqm = lc.get("area_sqm") or None
-            zone_type = lc.get("zone_type") or None
-            jimok = lc.get("land_category") or None
-            # 공시지가(개별공시지가, 원/㎡) — 토지특성 응답 재사용(추가 호출 0). 공시지가
-            #  레이어(㎡당 단가)가 지도에 반영되려면 이 필드가 필요하다(#185와 동일 의도).
-            #  comprehensive(위 official_price_per_sqm 산출)와 동일 규칙: 0/누락은 None(가짜값 금지).
-            _op = lc.get("official_price_per_sqm")
-            official_price_per_sqm = int(_op) if _op else None
-    except Exception:  # noqa: BLE001
-        pass
-    # 건축물 노후도 — 건축물대장 표제부 사용승인일 기반(comprehensive와 동일 규칙).
-    #  지도 클릭선택으로 채운 필지도 공시지가/노후도 레이어가 렌더되도록 보강.
-    #  키없음/무자료/조회실패는 None(가짜 생성 금지 — 정직 라벨).
     built_year = building_age_years = None
-    current_year = datetime.now().year
-    try:
-        bldg = await BuildingRegistryService().get_title_by_pnu(pnu)
-        if isinstance(bldg, dict):
-            use_approval_date = str(bldg.get("use_approval_date") or "").strip() or None
-            year_str = (use_approval_date or "")[:4]
-            if year_str.isdigit():
-                built_year = int(year_str)
-                if 1800 <= built_year <= current_year:
-                    building_age_years = current_year - built_year
-    except Exception:  # noqa: BLE001
-        pass
+    # 토지특성(NED)과 건축물대장 표제부(건축HUB)는 독립 API → 병렬 조회(클릭 지연 최소화).
+    # 각각 best-effort: 한쪽 실패해도 나머지 필드는 정상 반환(무자료·오류는 None, 무날조).
+    #   표제부는 노후도 부가정보라 7초 예산으로 캡(느린 건축HUB에도 클릭 응답 스냅 유지 —
+    #   초과 시 TimeoutError로 잡혀 노후도만 None, 나머지 필드 정상).
+    lc, title = await asyncio.gather(
+        vworld.get_land_characteristics(pnu),
+        asyncio.wait_for(BuildingRegistryService().get_title_by_pnu(pnu), timeout=7.0),
+        return_exceptions=True,
+    )
+    if isinstance(lc, dict):
+        area_sqm = lc.get("area_sqm") or None
+        zone_type = lc.get("zone_type") or None
+        jimok = lc.get("land_category") or None
+        # 개별공시지가(원/㎡) — get_land_characteristics가 이미 반환(추가 호출 0). 공시지가
+        #   레이어(㎡당 단가)가 지도에 반영되려면 이 필드가 필요하다. 0/누락은 None(가짜값 금지).
+        _op = lc.get("official_price_per_sqm")
+        official_price_per_sqm = int(_op) if _op else None
+    if isinstance(title, dict):
+        # 노후도 레이어용 — 표제부 사용승인일(YYYYMMDD) 앞 4자리 = 준공연도 → 연식 산출.
+        #   나대지/미준공(사용승인일 공란)·멸실·파싱불가는 None(정직 — 가짜 연식 금지).
+        _uad = str(title.get("use_approval_date") or "").strip()
+        if len(_uad) >= 4 and _uad[:4].isdigit() and not title.get("is_demolished"):
+            from datetime import date as _date
+            _y, _now = int(_uad[:4]), _date.today().year
+            if 1900 <= _y <= _now:
+                built_year = _y
+                building_age_years = _now - _y
     bcr = far = None
     if zone_type:
         z = zone_type.replace(" ", "").strip()

@@ -5,9 +5,9 @@
  * parcel_at_point 가 vworld.get_land_characteristics() 로부터
  * zone_type / zone_type_2 를 반환하고(routers/auto_zoning.py L744-745),
  * SatongMultiMap 이 land-use 컨트롤 기준 용도지역 폴리곤을 실제로
- * 렌더링한다(showZoning, mapEffect 연동 완료). 따라서 status='ready'(준비)
- * 이면서 source 가 '연동 필요'(미연동)로 표기되면 실제 연동 상태와
- * 모순되는 오기표다(연동됐는데 미연동 표기 = 무날조 원칙 위반).
+ * 렌더링한다(showZoning, mapEffect 연동 완료). 따라서 status='active'(실데이터
+ * 렌더 중 — official-price·age 와 동일 등급, #187)이면서 source 가 '연동 필요'
+ * (미연동)로 표기되면 실제 연동 상태와 모순되는 오기표다(무날조 원칙 위반).
  */
 import { describe, expect, it } from "vitest";
 
@@ -18,9 +18,9 @@ describe("SatongMapShell 레이어 정직 라벨 — 용도지역(zoning)", () =
     (layer) => layer.id === "zoning",
   );
 
-  it("zoning 레이어가 레지스트리에 존재하고 status='ready' 다", () => {
+  it("zoning 레이어가 레지스트리에 존재하고 status='active' 다", () => {
     expect(zoningLayer).toBeDefined();
-    expect(zoningLayer?.status).toBe("ready");
+    expect(zoningLayer?.status).toBe("active");
   });
 
   it("zoning 레이어는 지도에 실제 렌더링되는(mapEffect) 용도지역 컨트롤을 가진다", () => {

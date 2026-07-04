@@ -5,7 +5,7 @@ IFC4 BIM 모델을 절차적으로 생성한다. 각 층은 슬래브 + 외벽 4
 IfcExtrudedAreaSolid로 압출해 표현한다.
 
 핵심 원칙:
-- ifcopenshell만 사용(이미 설치, 0.8.0). 외부 IFC 템플릿 파일 불필요.
+- ifcopenshell만 사용(이미 설치, 0.8.4). 외부 IFC 템플릿 파일 불필요.
 - 좌표 단위 미터(IFC 표준). 원점=대지 기준.
 - 실패 시 호출자가 graceful 처리하도록 예외 전파(라우터에서 try).
 
