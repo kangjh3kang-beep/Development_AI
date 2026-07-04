@@ -39,6 +39,7 @@ import type {
   ParcelAtPointResult,
   SatongMarketPayload,
   SatongMultiMapProps,
+  SatongPoiPayload,
 } from "@/components/map/SatongMultiMap";
 import {
   isRenderableSatongMapLayer,
@@ -259,17 +260,17 @@ const LAYERS: SatongLayer[] = [
     id: "poi",
     label: "교통·편의 POI",
     shortLabel: "POI",
-    description: "역세권, 학교, 상권, 편의시설을 입지 점수화에 사용합니다.",
+    description: "선택 필지 주변(800m)의 역·학교·상권·공원·병원을 마커로 표시합니다. 필지를 먼저 선택하세요.",
     icon: TrainFront,
-    status: "ready",
+    status: "active",
     tone: "bg-cyan-100 text-cyan-950 border-cyan-200",
-    source: "카카오/공공데이터 POI 연동 필요",
+    source: "Kakao Local 반경검색(카카오 로컬)",
     controls: [
-      { id: "station", label: "역", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "school", label: "학교", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "commerce", label: "상권", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "park", label: "공원", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "hospital", label: "병원", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "station", label: "역", mapEffect: true },
+      { id: "school", label: "학교", mapEffect: true },
+      { id: "commerce", label: "상권", mapEffect: true },
+      { id: "park", label: "공원", mapEffect: true },
+      { id: "hospital", label: "병원", mapEffect: true },
     ],
   },
   {
@@ -355,6 +356,7 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     zoning: ["land-use"],
     "official-price": ["unit-price"],
     age: ["building-age"],
+    poi: ["station", "school", "commerce", "park", "hospital"],
     terrain: ["base"],
   };
 }
@@ -534,6 +536,42 @@ export function SatongMapShell({ locale }: { locale: string }) {
       cancelled = true;
     };
   }, [marketEnabled, marketAnchorPnu, marketAnchorAddress]);
+
+  // ── 교통·편의 POI 레이어 배선: 레이어 ON + 선택필지 있으면 주변 POI(/site-score/poi-infra) 조회 ──
+  //   렌더(카테고리 색상 마커·팝업)는 SatongMultiMap에 구현 — 여기서는 데이터만 주입.
+  //   실패/키미설정은 available:false로 정직 전달(지도 노트), OFF/무선택은 null(마커 제거).
+  //   의존성은 원시값(lat·lon·address) — 참조 churn 재조회 방지(#178 교훈, 실거래와 동일 패턴).
+  const [poiPayload, setPoiPayload] = useState<SatongPoiPayload | null>(null);
+  const poiEnabled = enabledLayers.has("poi");
+  const poiAnchorLat = marketAnchor?.lat ?? null;
+  const poiAnchorLon = marketAnchor?.lon ?? null;
+  useEffect(() => {
+    if (!poiEnabled || (poiAnchorLat == null && !marketAnchorAddress)) {
+      setPoiPayload(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<SatongPoiPayload>("/site-score/poi-infra", {
+          body: {
+            lat: poiAnchorLat ?? undefined,
+            lon: poiAnchorLon ?? undefined,
+            address: marketAnchorAddress || undefined,
+            radius_m: 800,
+          },
+          useMock: false,
+          timeoutMs: 60000,
+        });
+        if (!cancelled) setPoiPayload(res);
+      } catch {
+        if (!cancelled) setPoiPayload({ available: false, reason: "POI 조회 실패" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [poiEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1118,6 +1156,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 // v1 스코프: 아파트 매매 고정(명시). 유형/기간 필터는 '향후 제공' 컨트롤과 함께 확장 —
                 // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
                 marketLayer={{ kind: "trade", type: "apt" }}
+                poiPayload={poiEnabled ? poiPayload : null}
               />
             </div>
 
