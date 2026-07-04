@@ -88,6 +88,8 @@ export interface SatongMultiMapProps {
   marketLayer?: SatongMarketLayerState;
   /** 교통·편의 POI(지하철·학교·상권·공원·병원) 마커 — /site-score/poi-infra 응답. */
   poiPayload?: SatongPoiPayload | null;
+  /** 주변 도시계획시설(철도·역사 등 개발계획) 마커 — /zoning/development-facilities 응답. */
+  developmentPayload?: SatongDevelopmentPayload | null;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -192,6 +194,20 @@ const POI_CONTROL_COLORS: Record<string, string> = {
   commerce: "#f59e0b",  // 주황 — 상권
   park: "#22c55e",      // 초록 — 공원
   hospital: "#ef4444",  // 빨강 — 병원
+};
+
+/** /zoning/development-facilities 응답(부분집합) — 주변 도시계획시설(철도·역사 등). */
+export type SatongDevelopmentFacility = {
+  type?: string | null;
+  name?: string | null;
+  status?: string | null;      // '계획'/'결정'/'확인필요' 등 속성 그대로(무날조)
+  distance_m?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+};
+export type SatongDevelopmentPayload = {
+  facilities?: SatongDevelopmentFacility[];
+  note?: string;
 };
 
 export type SatongPresaleItem = {
@@ -434,6 +450,7 @@ export function SatongMultiMap({
   marketPayload = null,
   marketLayer,
   poiPayload = null,
+  developmentPayload = null,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
@@ -452,6 +469,7 @@ export function SatongMultiMap({
   const overlayLayerRef = useRef<any>(null);
   const marketLayerRef = useRef<any>(null);
   const poiLayerRef = useRef<any>(null);
+  const developmentLayerRef = useRef<any>(null);
   const lastFitKeyRef = useRef("");
   const [tileStatus, setTileStatus] = useState<"idle" | "ready" | "error">("idle");
   const [boundaryStatus, setBoundaryStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -459,6 +477,7 @@ export function SatongMultiMap({
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
   const [poiNote, setPoiNote] = useState("");
+  const [developmentNote, setDevelopmentNote] = useState("");
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -1157,6 +1176,61 @@ export function SatongMultiMap({
   }, [mapReady, poiPayload, layerState]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Development-facility markers are rendered into an imperative Leaflet layer group. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (developmentLayerRef.current) {
+      try { developmentLayerRef.current.remove(); } catch { /* noop */ }
+      developmentLayerRef.current = null;
+    }
+
+    if (!developmentPayload) {
+      setDevelopmentNote("");
+      return;
+    }
+
+    const facilities = developmentPayload.facilities || [];
+    const group = L.layerGroup().addTo(map);
+    developmentLayerRef.current = group;
+    let devCount = 0;
+    for (const fac of facilities) {
+      if (typeof fac.lat !== "number" || typeof fac.lon !== "number") continue;
+      devCount += 1;
+      L.circleMarker([fac.lat, fac.lon], {
+        radius: 6,
+        color: "#7c3aed",       // 보라 — 개발계획(도시계획시설)
+        weight: 2,
+        fillColor: "#ede9fe",
+        fillOpacity: 0.9,
+      })
+        .bindPopup(
+          `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
+            `<b>${escapeHtml(fac.name || "(명칭 미상)")}</b>` +
+            `<br/>${escapeHtml(fac.type || "도시계획시설")} · ${escapeHtml(fac.status || "확인필요")}` +
+            `${fac.distance_m != null ? `<br/>거리 ${Math.round(fac.distance_m).toLocaleString()}m` : ""}` +
+            `</div>`,
+          { maxWidth: 260 },
+        )
+        .addTo(group);
+    }
+    // 좌표 미상 시설(마커 불가)도 정직 집계 — 목록엔 있으나 지도에 못 찍는 건수를 구분 고지.
+    const noCoord = facilities.length - devCount;
+    if (facilities.length === 0) {
+      setDevelopmentNote(developmentPayload.note || "개발계획 무자료");
+    } else {
+      setDevelopmentNote(`개발계획 ${devCount}건${noCoord > 0 ? ` (좌표미상 ${noCoord}건 제외)` : ""}`);
+    }
+
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (developmentLayerRef.current === group) developmentLayerRef.current = null;
+    };
+  }, [mapReady, developmentPayload]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || focusLat == null || focusLon == null) return;
@@ -1237,7 +1311,7 @@ export function SatongMultiMap({
           )}
         </button>
 
-        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote) && (
+        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote || developmentNote) && (
           <div className="pointer-events-none absolute bottom-3 left-3 z-[410] max-w-[calc(100%-96px)] space-y-1">
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
@@ -1252,6 +1326,11 @@ export function SatongMultiMap({
             {poiNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {poiNote}
+              </span>
+            )}
+            {developmentNote && (
+              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                {developmentNote}
               </span>
             )}
             {boundaryStatus === "loading" && (

@@ -7,6 +7,7 @@ export type SatongMapLayerId =
   | "presale"
   | "auction"
   | "poi"
+  | "development"
   | "terrain"
   | "roadview";
 
@@ -44,6 +45,7 @@ export const SATONG_RENDERABLE_LAYER_IDS = new Set<SatongMapLayerId>([
   //   거짓 배너가 노출된다(정직원칙 역위반 — C2 리뷰 HIGH·C1 도달성 갭 동시 해소).
   "transactions",
   "poi",
+  "development",
   "terrain",
 ]);
 
