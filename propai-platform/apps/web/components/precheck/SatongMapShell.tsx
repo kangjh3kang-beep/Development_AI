@@ -35,7 +35,11 @@ import {
 } from "react";
 
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
-import type { ParcelAtPointResult, SatongMultiMapProps } from "@/components/map/SatongMultiMap";
+import type {
+  ParcelAtPointResult,
+  SatongMarketPayload,
+  SatongMultiMapProps,
+} from "@/components/map/SatongMultiMap";
 import {
   isRenderableSatongMapLayer,
   type SatongMapFeature,
@@ -208,16 +212,16 @@ const LAYERS: SatongLayer[] = [
     id: "transactions",
     label: "실거래·시세",
     shortLabel: "시세",
-    description: "실거래, 경매 감정가, 주변 유사 사례를 같은 지도에서 비교합니다.",
+    description: "선택 필지 주변(1km·최근 3개월) 실거래를 마커로 지도에 반영합니다. 필지를 먼저 선택하세요.",
     icon: Home,
-    status: "ready",
+    status: "active",
     tone: "bg-blue-100 text-blue-950 border-blue-200",
-    source: "국토부 실거래/매물 DB 연동 필요",
+    source: "국토교통부 실거래가(주변 1km·최근 3개월)",
     controls: [
-      { id: "deal-year", label: "거래연도", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
-      { id: "deal-type", label: "거래유형", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
-      { id: "total-price", label: "총액", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
-      { id: "unit-price", label: "면적당 단가", mapEffect: false, description: "국토부 실거래 레이어 연결 후 활성화" },
+      { id: "deal-year", label: "거래연도", mapEffect: false, description: "거래연도 필터 — 향후 제공" },
+      { id: "deal-type", label: "거래유형", mapEffect: false, description: "거래유형 필터 — 향후 제공" },
+      { id: "total-price", label: "총액", mapEffect: false, description: "총액 필터 — 향후 제공" },
+      { id: "unit-price", label: "면적당 단가", mapEffect: false, description: "면적당 단가 필터 — 향후 제공" },
     ],
   },
   {
@@ -473,6 +477,63 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }),
     [enabledLayers, layerControls],
   );
+
+  // ── 실거래·시세 레이어 배선: 레이어 ON + 선택필지 있으면 주변 실거래(nearby-map) 조회 ──
+  //   렌더(마커·반경·팝업)는 SatongMultiMap에 완비 — 여기서는 데이터만 주입한다.
+  //   실패는 fetch_failed로 정직 전달(지도에 "조회 실패" 노트), 무선택·레이어 OFF는 null(마커 제거).
+  const [marketPayload, setMarketPayload] = useState<SatongMarketPayload | null>(null);
+  const marketEnabled = enabledLayers.has("transactions");
+  //   ★의존성은 원시값(pnu·address)으로 — 선택목록 참조가 바뀌어도 anchor가 같으면 재조회 안 함
+  //     (#178 교훈: 참조 churn이 이펙트 무한/중복 실행을 유발).
+  //   anchor = 첫 선택 필지(생성자들이 address를 항상 채우므로 사실상 selectedParcels[0]).
+  const marketAnchor = useMemo(
+    () => selectedParcels.find((p) => p.pnu || p.address) ?? null,
+    [selectedParcels],
+  );
+  const marketAnchorPnu = marketAnchor?.pnu || "";
+  const marketAnchorAddress = marketAnchor?.address || "";
+  useEffect(() => {
+    if (!marketEnabled || (!marketAnchorPnu && !marketAnchorAddress)) {
+      setMarketPayload(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<SatongMarketPayload>("/zoning/nearby-map", {
+          body: {
+            address: marketAnchorAddress || undefined,
+            pnu: marketAnchorPnu || undefined,
+            radius_m: 1000,
+            months: 3,
+          },
+          useMock: false,
+          timeoutMs: 90000,
+        });
+        if (!cancelled) {
+          // 백엔드 소프트 실패(HTTP 200 + {error, center:null})도 fetch_failed로 승격해
+          // 지도에 "조회 불가" 노트를 정직 표기(침묵 빈지도 방지 — 리뷰 LOW 반영).
+          const soft = res as SatongMarketPayload & { error?: string };
+          if (soft.error || !soft.center?.lat) {
+            setMarketPayload({
+              center: null,
+              fetch_failed: true,
+              note: soft.error || "주변 실거래 조회 불가(지역코드 미확인)",
+            });
+          } else {
+            setMarketPayload(res);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setMarketPayload({ center: null, fetch_failed: true, note: "주변 실거래 조회 실패" });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [marketEnabled, marketAnchorPnu, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1053,6 +1114,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 chrome="immersive"
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
+                marketPayload={marketEnabled ? marketPayload : null}
+                // v1 스코프: 아파트 매매 고정(명시). 유형/기간 필터는 '향후 제공' 컨트롤과 함께 확장 —
+                // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
+                marketLayer={{ kind: "trade", type: "apt" }}
               />
             </div>
 
