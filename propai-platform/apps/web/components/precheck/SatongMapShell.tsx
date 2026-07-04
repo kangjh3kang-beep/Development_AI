@@ -485,6 +485,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const marketEnabled = enabledLayers.has("transactions");
   //   ★의존성은 원시값(pnu·address)으로 — 선택목록 참조가 바뀌어도 anchor가 같으면 재조회 안 함
   //     (#178 교훈: 참조 churn이 이펙트 무한/중복 실행을 유발).
+  //   anchor = 첫 선택 필지(생성자들이 address를 항상 채우므로 사실상 selectedParcels[0]).
   const marketAnchor = useMemo(
     () => selectedParcels.find((p) => p.pnu || p.address) ?? null,
     [selectedParcels],
@@ -509,7 +510,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
           useMock: false,
           timeoutMs: 90000,
         });
-        if (!cancelled) setMarketPayload(res);
+        if (!cancelled) {
+          // 백엔드 소프트 실패(HTTP 200 + {error, center:null})도 fetch_failed로 승격해
+          // 지도에 "조회 불가" 노트를 정직 표기(침묵 빈지도 방지 — 리뷰 LOW 반영).
+          const soft = res as SatongMarketPayload & { error?: string };
+          if (soft.error || !soft.center?.lat) {
+            setMarketPayload({
+              center: null,
+              fetch_failed: true,
+              note: soft.error || "주변 실거래 조회 불가(지역코드 미확인)",
+            });
+          } else {
+            setMarketPayload(res);
+          }
+        }
       } catch {
         if (!cancelled) {
           setMarketPayload({ center: null, fetch_failed: true, note: "주변 실거래 조회 실패" });
@@ -1101,6 +1115,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
+                // v1 스코프: 아파트 매매 고정(명시). 유형/기간 필터는 '향후 제공' 컨트롤과 함께 확장 —
+                // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
+                marketLayer={{ kind: "trade", type: "apt" }}
               />
             </div>
 
