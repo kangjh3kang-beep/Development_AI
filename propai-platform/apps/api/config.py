@@ -127,12 +127,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_cache_url: str = "redis://localhost:6379/1"
 
-    # ── GraphQL ──
-    hasura_admin_secret: str = Field(
-        default="hasura_super_secret_key",
-        validation_alias=AliasChoices("hasura_admin_secret", "HASURA_GRAPHQL_ADMIN_SECRET"),
-    )
-    hasura_url: str = "http://localhost:8088/v1/graphql"
+    # ── GraphQL(Hasura) ──
+    # ★FastAPI 앱은 Hasura를 직접 소비하지 않는다(전 코드 grep 소비처 0). Hasura는 별도
+    #   GraphQL 엔진 컨테이너(infra/docker/docker-compose.*.yml)로만 운영되며, 그 admin secret은
+    #   컴포즈가 HASURA_GRAPHQL_ADMIN_SECRET 환경변수를 직접 읽어 주입한다. 따라서 이 Settings의
+    #   hasura_admin_secret/hasura_url 필드는 사문(dead)이었으므로 제거한다 — pydantic extra="ignore"라
+    #   해당 env가 설정돼 있어도 무해히 무시된다. Hasura 운영은 infra 컴포즈에서만 관리.
 
     # ── AI 모델 API ──
     anthropic_api_key: str = ""
