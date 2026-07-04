@@ -162,11 +162,11 @@ const LAYERS: SatongLayer[] = [
     id: "zoning",
     label: "용도지역",
     shortLabel: "용도",
-    description: "국계법 상한과 지자체 조례 연결을 전제로 레이어를 분리합니다.",
+    description: "선택 필지의 용도지역을 색상으로 구분해 지도에 반영합니다.",
     icon: Landmark,
-    status: "ready",
+    status: "active",
     tone: "bg-sky-100 text-sky-950 border-sky-200",
-    source: "토지이음/공간정보 연동 필요",
+    source: "VWorld 용도지역(NED 토지특성)",
     controls: [
       { id: "land-use", label: "용도지역", mapEffect: true },
       { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
@@ -192,11 +192,11 @@ const LAYERS: SatongLayer[] = [
     id: "age",
     label: "노후도",
     shortLabel: "노후",
-    description: "건축물대장 기반 준공연도와 정비 가능성을 색상으로 구분합니다.",
+    description: "건축물대장 기반 준공연도(연식)를 색상으로 구분합니다. 나대지·미준공은 표시하지 않습니다.",
     icon: Building2,
-    status: "ready",
+    status: "active",
     tone: "bg-rose-100 text-rose-950 border-rose-200",
-    source: "건축물대장/세움터 연동 필요",
+    source: "건축물대장 표제부(건축HUB, 사용승인일)",
     controls: [
       { id: "building-age", label: "건축연도", mapEffect: true },
       { id: "structure", label: "구조", mapEffect: false, description: "건축물대장 구조 필드 연결 후 활성화" },
@@ -328,7 +328,9 @@ function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu">): string {
 
 function formatArea(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return "-";
-  return `${Math.round(value).toLocaleString()}㎡`;
+  // ㎡·평 병행 표기(1평 = 3.305785㎡).
+  const pyeong = (value / 3.305785).toFixed(1);
+  return `${Math.round(value).toLocaleString()}㎡ (${pyeong}평)`;
 }
 
 function statusText(status: LayerStatus): string {

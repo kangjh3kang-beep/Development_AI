@@ -97,7 +97,10 @@ export function ageColor(age: number | null | undefined): string {
 
 export function priceManPyeong(perSqm: number | null | undefined): string {
   if (!perSqm || perSqm <= 0) return "-";
-  return `${Math.round((perSqm * 3.305785) / 1e4).toLocaleString()}만원/평`;
+  // ㎡·평 병행 표기(1평 = 3.305785㎡) — 공시지가 원천은 원/㎡, 실무 관행은 만원/평.
+  const manPerSqm = Math.round(perSqm / 1e4).toLocaleString();
+  const manPerPyeong = Math.round((perSqm * 3.305785) / 1e4).toLocaleString();
+  return `${manPerSqm}만원/㎡ (${manPerPyeong}만원/평)`;
 }
 
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {
