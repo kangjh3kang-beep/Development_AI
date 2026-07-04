@@ -1647,9 +1647,11 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     built_year = building_age_years = None
     # 토지특성(NED)과 건축물대장 표제부(건축HUB)는 독립 API → 병렬 조회(클릭 지연 최소화).
     # 각각 best-effort: 한쪽 실패해도 나머지 필드는 정상 반환(무자료·오류는 None, 무날조).
+    #   표제부는 노후도 부가정보라 7초 예산으로 캡(느린 건축HUB에도 클릭 응답 스냅 유지 —
+    #   초과 시 TimeoutError로 잡혀 노후도만 None, 나머지 필드 정상).
     lc, title = await asyncio.gather(
         vworld.get_land_characteristics(pnu),
-        BuildingRegistryService().get_title_by_pnu(pnu),
+        asyncio.wait_for(BuildingRegistryService().get_title_by_pnu(pnu), timeout=7.0),
         return_exceptions=True,
     )
     if isinstance(lc, dict):
