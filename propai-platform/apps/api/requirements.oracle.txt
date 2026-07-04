@@ -1,5 +1,6 @@
 # ── Oracle Cloud 경량 배포용 (1GB RAM VM) ──
-# torch, torchvision, gdal, faiss, mlflow, opencv, ifcopenshell 등 제거
+# 제거(경량화): torch, torchvision, gdal, faiss, mlflow 등.
+# ★유지(필수/경량): ifcopenshell·pygltflib(3D BIM IFC4→glb), opencv-python-headless(이미지융합 AVM·항공 정사영상 특징추출). 위 '제거' 목록에서 제외.
 
 # FastAPI Core
 fastapi==0.115.0
