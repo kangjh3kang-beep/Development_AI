@@ -22,8 +22,8 @@ _NEW = {"platform_events", "platform_insights", "ai_feedback"}
 
 
 def _tables():
-    from apps.api.database.models.base import Base
     import apps.api.database.models.platform_event  # noqa: F401
+    from apps.api.database.models.base import Base
     return [t for t in Base.metadata.sorted_tables if t.name in _NEW]
 
 

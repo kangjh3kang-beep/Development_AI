@@ -10,7 +10,8 @@ WebRTC 세션 생명주기 관리:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from typing import TYPE_CHECKING
 from uuid import UUID

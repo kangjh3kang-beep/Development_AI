@@ -8,14 +8,16 @@ M13: 도시형소규모, M14: 공공임대, M15: 민간리츠
 
 from __future__ import annotations
 
-from app.services.feasibility.modules.base_module import BaseModule, ModuleInput, ModuleOutput
-from app.services.feasibility.modules.common.revenue_block import compute_revenue
-from app.services.feasibility.modules.common.cost_blocks import (
-    compute_land_cost, compute_construction_cost, compute_finance_cost,
-    compute_other_cost, compute_taxes,
-)
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
-
+from app.services.feasibility.modules.base_module import BaseModule, ModuleInput, ModuleOutput
+from app.services.feasibility.modules.common.cost_blocks import (
+    compute_construction_cost,
+    compute_finance_cost,
+    compute_land_cost,
+    compute_other_cost,
+    compute_taxes,
+)
+from app.services.feasibility.modules.common.revenue_block import compute_revenue
 
 MODULE_NAMES: dict[str, str] = {
     "M03": "역세권개발",

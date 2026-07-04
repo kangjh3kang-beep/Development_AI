@@ -79,7 +79,7 @@ async def run_specialist_domains(
         return []
 
     out: list[dict[str, Any]] = []
-    for dom, r in zip(domains.keys(), results):
+    for dom, r in zip(domains.keys(), results, strict=False):
         if isinstance(r, Exception) or not isinstance(r, dict) or not r.get("ok"):
             # ★정직: 시도했으나 실패한 도메인은 '미시도'와 구분되도록 unavailable 엔트리로 표면화.
             reason = (

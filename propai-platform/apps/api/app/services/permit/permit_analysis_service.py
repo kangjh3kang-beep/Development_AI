@@ -288,7 +288,7 @@ class PermitAnalysisService:
             *[self._enrich_site(a, {}) for a in addresses[1:]], return_exceptions=True
         )
         site_list = [primary_site, *[(s if isinstance(s, dict) else {}) for s in sites]]
-        for addr, s in zip(addresses, site_list):
+        for addr, s in zip(addresses, site_list, strict=False):
             area = s.get("land_area_sqm")
             far = s.get("max_far")
             enriched.append({
@@ -337,9 +337,10 @@ class PermitAnalysisService:
 
     async def _llm_analyze(self, address: str, site: dict, ordinance: str) -> dict[str, Any]:
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=70, max_tokens=4000)
             user = _USER_TMPL.format(
@@ -401,9 +402,10 @@ class PermitAnalysisService:
             for i, p in enumerate(parcels)
         )
         try:
-            from app.services.ai.llm_provider import get_llm
-            from app.services.ai.base_interpreter import GROUNDING_RULE
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from app.services.ai.llm_provider import get_llm
 
             llm = get_llm(timeout=70, max_tokens=2500)
             user = _MULTI_TMPL.format(

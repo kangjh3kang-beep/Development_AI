@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from app.services.feasibility.modules.base_module import BaseModule
+from app.services.feasibility.modules.generic_module import GenericModule
 from app.services.feasibility.modules.m01_redevelopment import M01Redevelopment
 from app.services.feasibility.modules.m02_reconstruction import M02Reconstruction
 from app.services.feasibility.modules.m04_union_housing import M04UnionHousing
 from app.services.feasibility.modules.m08_officetel import M08Officetel
-from app.services.feasibility.modules.generic_module import GenericModule
-
 
 # 특화 모듈 매핑
 _SPECIALIZED: dict[str, type[BaseModule]] = {

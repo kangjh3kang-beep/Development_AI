@@ -94,8 +94,8 @@ class GrowthTelemetryMiddleware(BaseHTTPMiddleware):
 
         # 지연 import: 모듈 미존재 환경에서도 앱 부팅 불변.
         try:
-            from app.services.growth import capture_service
             from app.core.request_context import get_current_tenant_id, get_current_user_id
+            from app.services.growth import capture_service
         except Exception:  # noqa: BLE001
             return await call_next(request)
 

@@ -11,10 +11,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.market.pricing_band_service import (  # noqa: E402
-    compute_fair_price,
-    _loan_from_payment,
     W_PRESALE,
     W_TRADE,
+    _loan_from_payment,
+    compute_fair_price,
 )
 
 

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -195,7 +195,7 @@ def _check_special_conditions(dev_type: str, zone_type: str, land_area: float, t
             continue
 
         if m := re.search(r"(\d+)층\s*이하", cond):
-            max_f = int(m.group(1))
+            int(m.group(1))
             issues.append(f"{name}: {cond}")
         if "바닥면적" in cond and (m := re.search(r"([\d,]+)㎡", cond)):
             limit = int(m.group(1).replace(",", ""))

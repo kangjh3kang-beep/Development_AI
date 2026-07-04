@@ -2,8 +2,6 @@
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 
 def _orch_with_row(row):
     """db.execute(...).first() == row 를 반환하는 PropAIOrchestrator."""

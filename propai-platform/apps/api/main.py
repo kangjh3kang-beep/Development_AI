@@ -19,6 +19,8 @@ from prometheus_client import make_asgi_app
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from apps.api.app.routers.bank_report import router as bank_report_router
+from apps.api.app.routers.uploads import router as uploads_router
 from apps.api.config import get_settings
 from apps.api.database.init_qdrant import check_qdrant_health, init_qdrant_collections
 from apps.api.exceptions import register_exception_handlers
@@ -29,18 +31,16 @@ from apps.api.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.api.routers import (
     admin_lists,
     agents,
+    ai_assistant,
     ai_costs,
     analytics,
     api_keys,
-    ai_assistant,
     auction,
     auth,
     auto_zoning,
-    billing,
-    integration,
-    market_report,
     avm,
     avm_vision,
+    billing,
     bim,
     blockchain,
     building_compliance,
@@ -48,18 +48,17 @@ from apps.api.routers import (
     chatbot,
     climate,
     compliance,
-    contracts,
     construction,
     contractors,
+    contracts,
     cost_intelligence,
     dashboard,
     data_integrity,
     design,
-    drawing,
     development_methods,
     digital_twin,
     domain_agents,
-    specialist_agents,
+    drawing,
     drone,
     energy,
     environment,
@@ -70,12 +69,14 @@ from apps.api.routers import (
     facility_reservations,
     finance,
     gresb,
+    integration,
     kdx,
     lcc,
     lease_ops,
     leases,
     maintenance,
     market_ai,
+    market_report,
     marketing,
     monte_carlo,
     notifications,
@@ -91,6 +92,7 @@ from apps.api.routers import (
     reports,
     risk,
     safety,
+    specialist_agents,
     sre,
     system,
     tax,
@@ -103,8 +105,6 @@ from apps.api.routers import (
     webhooks,
     webrtc,
 )
-from apps.api.app.routers.bank_report import router as bank_report_router
-from apps.api.app.routers.uploads import router as uploads_router
 from apps.api.routers.v2 import auth as v2_auth
 from apps.api.routers.v2 import design as v2_design
 from apps.api.routers.v2 import projects as v2_projects
@@ -302,8 +302,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 자가성장 엔진 — 텔레메트리 3 테이블 멱등 보장(마이그레이션 미적용 환경 안전망).
     try:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
         async with AsyncSessionLocal() as _s:
             ok = await schema_guard.ensure_schema(_s)
         logger.info("growth schema_guard", ensured=ok)
@@ -312,8 +312,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 성장 뇌(MemoryHub) — agent_memories 테이블 멱등 보장(없으면 자동 기억저장 ingest 실패).
     try:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.memory_hub import schema_guard as memory_schema_guard
+        from apps.api.database.session import AsyncSessionLocal
         async with AsyncSessionLocal() as _s:
             mok = await memory_schema_guard.ensure_memory_schema(_s)
         logger.info("memory schema_guard", ensured=mok)
@@ -322,8 +322,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 매스 백본 — mass_templates 테이블 멱등 보장(없으면 매스 템플릿 수집 영속이 실패).
     try:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.mass_backbone import schema_guard as mass_schema_guard
+        from apps.api.database.session import AsyncSessionLocal
         async with AsyncSessionLocal() as _s:
             msok = await mass_schema_guard.ensure_mass_schema(_s)
         logger.info("mass schema_guard", ensured=msok)
@@ -342,8 +342,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio as _asyncio
 
     async def _presale_monitor_loop() -> None:
-        from apps.api.database.session import AsyncSessionLocal
         from apps.api.app.services.land_intelligence import presale_monitor_service as _mon
+        from apps.api.database.session import AsyncSessionLocal
         await _asyncio.sleep(300)  # 부팅 안정화 후 시작
         while True:
             try:
@@ -359,6 +359,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("분양 모니터링 루프 시작 실패")
 
+    # 한국은행 ECOS 실 기준금리/시장금리 — 백그라운드 프리페치 + 주기 갱신.
+    #   금융비 엔진 get_pf_rate가 동기 소비라 모듈 캐시를 채운다. ★인라인 await 금지: ECOS 지연이
+    #   기동 readiness를 막지 않도록 create_task(콜드 캐시는 이미 하드코딩 폴백이라 안전). 12h 주기로
+    #   재갱신(기준금리 월 단위 → 7일 TTL 만료 전 갱신, 무재배포 장기가동에도 실시간 유지).
+    async def _ecos_refresh_loop() -> None:
+        from app.services.external_api import ecos_service as _ecos
+        while True:
+            try:
+                await _ecos.refresh()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ECOS 실금리 갱신 실패 — 하드코딩 폴백 유지: %s", str(e)[:120])
+            await _asyncio.sleep(12 * 3600)  # 12시간 주기
+
+    try:
+        app.state.ecos_refresh_task = _asyncio.create_task(_ecos_refresh_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("ECOS 갱신 루프 시작 실패 — 폴백 유지")
+
     # #4 수납 — 분양현장 연체이자 일배치(인프로세스 폴백). 미납 회차의 연체이자를 매일 1회
     # '오늘 기준'으로 산정·적재한다(자금이동 없음, 산출만). overdue_calc 가 멱등이라
     # (site_id,installment_id,calc_date) UNIQUE 로 같은 날 재실행해도 행이 중복되지 않는다.
@@ -373,8 +391,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from sqlalchemy import text as _text  # advisory lock SQL 용.
         if _os2.getenv("SALES_OVERDUE_INPROCESS", "1") == "0":
             return
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.sales.payment.service import run_overdue_all_sites
+        from apps.api.database.session import AsyncSessionLocal
         await _asyncio.sleep(420)  # 부팅 안정화 후 시작(다른 루프와 시차).
         while True:
             try:
@@ -407,8 +425,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Celery Beat(5초)가 정본이지만, Celery 미배포 환경에서도 적재되도록
     # _presale_monitor_loop 와 동일한 asyncio 폴백을 둔다(단일 워커 1개 루프).
     async def _growth_flush_loop() -> None:
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.growth import capture_service
+        from apps.api.database.session import AsyncSessionLocal
         while True:
             await _asyncio.sleep(5)
             try:
@@ -496,8 +514,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         analyze 가 시간경계를 넘었으면 analyze 를 돌린 직후 heal/correct 가 최신
         인사이트를 보게 순서를 보장한다(tick=60초 단위 시계). 부팅 안정화 초기 지연.
         """
-        from app.tasks import growth_tasks
         from app.services.growth import learning_loop
+        from app.tasks import growth_tasks
         from apps.api.database.session import AsyncSessionLocal
 
         await _asyncio.sleep(120)  # 부팅 안정화 후 시작(flush 루프보다 늦게).
@@ -546,6 +564,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _ect = getattr(app.state, "ecos_refresh_task", None)
+    if _ect is not None:
+        _ect.cancel()
     _ot = getattr(app.state, "overdue_batch_task", None)
     if _ot is not None:
         _ot.cancel()
@@ -558,8 +579,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 루프 cancel 직후 마지막 동기 flush 1회 — 종료 시 큐 잔여 이벤트 유실 방지.
         # best-effort: 어떤 예외도 종료를 막지 않는다.
         try:
-            from apps.api.database.session import AsyncSessionLocal
             from app.services.growth import capture_service
+            from apps.api.database.session import AsyncSessionLocal
             if capture_service.queue_size() > 0:
                 async with AsyncSessionLocal() as _fs:
                     for _ in range(20):
@@ -686,16 +707,22 @@ async def health_check() -> HealthResponse:
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(billing.router, tags=["구독·과금"])  # 자체 prefix=/api/v1/billing
 from apps.api.routers import teams as _teams_router  # 팀(공유 워크스페이스)
+
 app.include_router(_teams_router.router, tags=["팀"])  # 자체 prefix=/api/v1/teams
 from apps.api.routers import presale as _presale_router  # 분양·청약 정보 + 관심지역 모니터링
+
 app.include_router(_presale_router.router, tags=["분양정보"])  # 자체 prefix=/api/v1/presale
 from apps.api.routers import design_references as _design_ref_router  # 표준설계 참조 라이브러리(P7)
+
 app.include_router(_design_ref_router.router, tags=["설계 참조 라이브러리"])  # 자체 prefix=/api/v1/design-references
 from apps.api.routers import personas as _personas_router  # P1 실무 전문가 페르소나(분양대행·도시계획)
+
 app.include_router(_personas_router.router, prefix="/api/v1", tags=["실무 전문가 페르소나"])  # /api/v1/personas
 from apps.api.routers import design_generation as _design_gen_router  # 설계 생성(인제스트·검색·생성·법규)
+
 app.include_router(_design_gen_router.router)  # 자체 prefix=/api/v1/design-gen, tags는 라우터에 정의
 from apps.api.routers import senior_agents as _senior_agents_router  # 시니어 전문가 에이전트 자문(결정론)
+
 app.include_router(_senior_agents_router.router, prefix="/api/v1", tags=["시니어 전문가 에이전트"])  # /api/v1/senior/*
 app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])

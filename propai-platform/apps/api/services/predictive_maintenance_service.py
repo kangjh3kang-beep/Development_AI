@@ -6,6 +6,7 @@ numpy 미설치 환경 대비 순수 Python 폴백 지원.
 """
 
 from __future__ import annotations
+
 import math
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -153,10 +154,7 @@ class PredictiveMaintenanceService:
 
         # 건강 점수 (0~100)
         total_range = threshold_value - initial_value
-        if total_range != 0:
-            health_pct = round(max(0, min(100, (1 - degradation / total_range) * 100)), 1)
-        else:
-            health_pct = 100.0
+        health_pct = round(max(0, min(100, (1 - degradation / total_range) * 100)), 1) if total_range != 0 else 100.0
 
         return {
             "rul_hours": round(rul_hours, 1),
@@ -263,10 +261,7 @@ class PredictiveMaintenanceService:
             score = max(70, 100 - deviation * 30)
         else:
             # 범위 밖
-            if current < low:
-                excess = (low - current) / max(range_width, 1)
-            else:
-                excess = (current - high) / max(range_width, 1)
+            excess = (low - current) / max(range_width, 1) if current < low else (current - high) / max(range_width, 1)
             score = max(0, 70 - excess * 35)
 
         score = round(score, 1)

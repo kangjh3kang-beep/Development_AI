@@ -1,5 +1,4 @@
 """특수 프로젝트 (재건축/리모델링) 서비스."""
-from typing import Dict, List
 
 
 class SpecialProjectService:

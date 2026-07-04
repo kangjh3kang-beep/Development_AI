@@ -6,7 +6,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

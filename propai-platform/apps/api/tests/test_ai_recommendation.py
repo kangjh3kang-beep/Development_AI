@@ -1,7 +1,6 @@
 """AI 권고 테스트 — 6규칙 트리거."""
 
-import pytest
-from app.services.feasibility.ai_recommendation import diagnose, Recommendation
+from app.services.feasibility.ai_recommendation import diagnose
 
 
 class TestDiagnose:

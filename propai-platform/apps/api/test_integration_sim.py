@@ -22,14 +22,14 @@ _PROJECT_ROOT = os.path.dirname(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from apps.api.integrations.sgis_client import SgisClient
-from apps.api.integrations.kosis_client import KosisClient
 from apps.api.app.core.config import settings
 from apps.api.app.services.market.market_models import (
+    MacroIncomeData,
     MigrationData,
     PopulationData,
-    MacroIncomeData,
 )
+from apps.api.integrations.kosis_client import KosisClient
+from apps.api.integrations.sgis_client import SgisClient
 
 _results: list[tuple[str, bool, str]] = []
 

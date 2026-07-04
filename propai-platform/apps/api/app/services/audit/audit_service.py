@@ -2,7 +2,6 @@
 import hashlib
 import time
 import uuid
-from typing import Optional
 
 
 class AuditEntry:
@@ -27,9 +26,9 @@ class AuditEntry:
         user_id: str,
         resource_type: str,
         resource_id: str,
-        changes: Optional[dict] = None,
+        changes: dict | None = None,
         prev_hash: str = "",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ):
         self.id = str(uuid.uuid4())
         self.timestamp = time.time()
@@ -88,8 +87,8 @@ class AuditTrailService:
         user_id: str,
         resource_type: str,
         resource_id: str,
-        changes: Optional[dict] = None,
-        metadata: Optional[dict] = None,
+        changes: dict | None = None,
+        metadata: dict | None = None,
     ) -> AuditEntry:
         """감사 로그 추가."""
         entry = AuditEntry(
@@ -107,9 +106,9 @@ class AuditTrailService:
 
     def get_entries(
         self,
-        resource_type: Optional[str] = None,
-        user_id: Optional[str] = None,
-        action: Optional[str] = None,
+        resource_type: str | None = None,
+        user_id: str | None = None,
+        action: str | None = None,
         limit: int = 100,
     ) -> list:
         """필터 조건으로 감사 로그 조회."""
@@ -133,7 +132,7 @@ class AuditTrailService:
             prev = entry.entry_hash
         return True
 
-    def get_entry_by_id(self, entry_id: str) -> Optional[AuditEntry]:
+    def get_entry_by_id(self, entry_id: str) -> AuditEntry | None:
         """ID로 감사 로그 조회."""
         for e in self._entries:
             if e.id == entry_id:

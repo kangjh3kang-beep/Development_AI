@@ -10,9 +10,10 @@ import re
 from typing import Any
 
 import structlog
-from apps.api.integrations.base_client import BaseAPIClient
+
 from apps.api.app.core.config import settings as kosis_settings
 from apps.api.app.services.market.market_models import MacroIncomeData
+from apps.api.integrations.base_client import BaseAPIClient
 
 logger = structlog.get_logger(__name__)
 

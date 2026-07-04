@@ -14,12 +14,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-
-from apps.api.auth.jwt_handler import CurrentUser, get_current_user
-from apps.api.database.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sales import sales_rls_bootstrap
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/admin/sales-rls", tags=["관리자·분양RLS"])
 

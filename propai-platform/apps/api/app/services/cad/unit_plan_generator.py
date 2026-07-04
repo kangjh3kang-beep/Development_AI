@@ -872,10 +872,7 @@ def generate_unit_plan(
     x = 0.0
     n_count = len(rule.north)
     for i, (name, frac) in enumerate(rule.north):
-        if i == n_count - 1:
-            w = _r(body_w - x)
-        else:
-            w = _r(body_w * frac)
+        w = _r(body_w - x) if i == n_count - 1 else _r(body_w * frac)
         rooms.append({"name": name, "x": x, "y": 0.0, "w": w, "h": depth_n})
         x = _r(x + w)
 
@@ -892,10 +889,7 @@ def generate_unit_plan(
     x = 0.0
     s_count = len(rule.south)
     for i, (name, w_fix) in enumerate(rule.south):
-        if i == s_count - 1:
-            w = _r(body_w - x)
-        else:
-            w = _r(w_fix)
+        w = _r(body_w - x) if i == s_count - 1 else _r(w_fix)
         rooms.append({"name": name, "x": x, "y": y_south, "w": w, "h": depth_s})
         x = _r(x + w)
 

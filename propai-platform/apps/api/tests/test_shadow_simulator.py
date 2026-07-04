@@ -1,8 +1,10 @@
 """일영분석 시뮬레이터 테스트."""
 
-import math
 from app.services.drawing.shadow_simulator import (
-    ShadowSimulator, sun_position, shadow_polygon, DECLINATION,
+    DECLINATION,
+    ShadowSimulator,
+    shadow_polygon,
+    sun_position,
 )
 
 

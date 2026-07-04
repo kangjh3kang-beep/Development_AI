@@ -18,7 +18,7 @@ class HubPermitClient(BaseAPIClient):
 
     service_name = "hub_permit"
     base_url = "https://apis.data.go.kr"
-    
+
     # 공공데이터포털 건축HUB 주택인허가 기본 경로
     _HUB_PERMIT_PATH = "/1613000/HsPmsHubService"
 
@@ -60,7 +60,7 @@ class HubPermitClient(BaseAPIClient):
 
     async def get_basis_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """국토교통부_주택인허가 기본개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드 (예: 11680)
             bjdong_cd: 법정동코드 (선택)
@@ -68,7 +68,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpBasisOulnInfo",
             params,
@@ -77,7 +77,7 @@ class HubPermitClient(BaseAPIClient):
 
     async def get_dong_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_주택인허가 동별개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드
             bjdong_cd: 법정동코드
@@ -85,7 +85,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpDongOulnInfo",
             params,
@@ -94,7 +94,7 @@ class HubPermitClient(BaseAPIClient):
 
     async def get_flr_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_주택인허가 층별개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드
             bjdong_cd: 법정동코드
@@ -102,7 +102,7 @@ class HubPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getHpFlrOulnInfo",
             params,
@@ -110,7 +110,7 @@ class HubPermitClient(BaseAPIClient):
         )
 
     # --- 상세 정보 조회 추가 ---
-    
+
     async def get_ho_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_주택인허가 호별개요 조회 (상세)."""
         params = {"sigunguCd": sigungu_cd}
@@ -153,7 +153,7 @@ class ArchPermitClient(BaseAPIClient):
 
     service_name = "arch_permit"
     base_url = "https://apis.data.go.kr"
-    
+
     # 공공데이터포털 건축HUB 건축인허가 기본 경로
     _ARCH_PERMIT_PATH = "/1613000/ArchPmsHubService"
 
@@ -182,7 +182,7 @@ class ArchPermitClient(BaseAPIClient):
 
     async def get_ap_basis_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_건축인허가 기본개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드
             bjdong_cd: 법정동코드
@@ -190,7 +190,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApBasisOulnInfo",
             params,
@@ -199,7 +199,7 @@ class ArchPermitClient(BaseAPIClient):
 
     async def get_ap_dong_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_건축인허가 동별개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드
             bjdong_cd: 법정동코드
@@ -207,7 +207,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApDongOulnInfo",
             params,
@@ -216,7 +216,7 @@ class ArchPermitClient(BaseAPIClient):
 
     async def get_ap_flr_ouln_info(self, sigungu_cd: str, bjdong_cd: str = "") -> list[dict[str, Any]]:
         """건축HUB_건축인허가 층별개요 조회.
-        
+
         Args:
             sigungu_cd: 시군구코드
             bjdong_cd: 법정동코드
@@ -224,7 +224,7 @@ class ArchPermitClient(BaseAPIClient):
         params = {"sigunguCd": sigungu_cd}
         if bjdong_cd:
             params["bjdongCd"] = bjdong_cd
-            
+
         return await self._get_data(
             "getApFlrOulnInfo",
             params,

@@ -1,6 +1,6 @@
 """개발 워크플로 관리 서비스."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select

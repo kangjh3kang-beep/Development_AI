@@ -12,6 +12,7 @@ pytestmark = pytest.mark.asyncio
 async def _db() -> bool:
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory, engine
         await engine.dispose()  # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프 재바인딩)
         async with async_session_factory() as db:
@@ -23,6 +24,7 @@ async def _db() -> bool:
 
 async def _cleanup(tid: str) -> None:
     from sqlalchemy import text
+
     from app.core.database import async_session_factory
     async with async_session_factory() as db:
         await db.execute(text("DELETE FROM analysis_lineage WHERE tenant_id = :t"), {"t": tid})
@@ -33,9 +35,9 @@ async def _cleanup(tid: str) -> None:
 async def test_comprehensive_surfaces_contradiction_and_records_lineage(monkeypatch):
     if not await _db():
         pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
     from app.services.ledger import analysis_ledger_service as ledger
     from app.services.ledger import lineage
-    from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
 
     pnu = f"111501030010{uuid.uuid4().hex[:7]}"
     addr = f"의정부동 224-{uuid.uuid4().hex[:6]}"

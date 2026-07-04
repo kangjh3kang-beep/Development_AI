@@ -1,16 +1,16 @@
 try:
     import torch
     import torch.nn as nn
-    import torchvision.transforms as transforms
     import torchvision.models as models
+    import torchvision.transforms as transforms
 except ImportError:
     torch = None
     nn = None
     transforms = None
     models = None
 
+
 import numpy as np
-from typing import Dict, List, Optional, Tuple
 import structlog
 
 logger = structlog.get_logger()

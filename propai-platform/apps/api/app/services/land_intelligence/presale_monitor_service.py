@@ -22,8 +22,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.app.services.land_intelligence.presale_service import PresaleService, _parse_date
 from app.services.notification import notification_service as notif
+from apps.api.app.services.land_intelligence.presale_service import PresaleService, _parse_date
 
 logger = structlog.get_logger(__name__)
 

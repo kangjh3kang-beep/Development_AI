@@ -1,8 +1,7 @@
 """자재 조달 최적화 테스트 (EOQ + PPI)."""
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

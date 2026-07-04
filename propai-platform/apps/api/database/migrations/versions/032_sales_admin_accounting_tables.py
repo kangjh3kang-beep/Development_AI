@@ -25,9 +25,8 @@ sales_site_accounting / sales_staff_wage 를 마이그레이션 정본으로 이
   (수기 전기는 ym 미지정 → 유니크 미적용. 사람이 의도적으로 같은 항목을 여러 번 기록 가능.)
 """
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "032_sales_admin_accounting"
 down_revision = ("v62_7_learning_examples", "031_analysis_ledger")

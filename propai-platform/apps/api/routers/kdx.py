@@ -2,8 +2,9 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from uuid import UUID
+
 UTC = UTC
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -12,14 +13,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.auth.jwt_handler import CurrentUser
+from apps.api.auth.jwt_handler import CurrentUser, decode_token
 from apps.api.auth.rbac import RequirePermission
-from apps.api.auth.jwt_handler import decode_token
+from apps.api.config import get_settings
 from apps.api.database.models.kdx_market_metric import KDXMarketMetric
 from apps.api.database.models.kdx_telemetry_log import KDXTelemetryLog
-from apps.api.database.session import AsyncSessionLocal
-from apps.api.database.session import get_db
-from apps.api.config import get_settings
+from apps.api.database.session import AsyncSessionLocal, get_db
 from apps.api.services.kdx_integration_service import KDXIntegrationService
 
 router = APIRouter()

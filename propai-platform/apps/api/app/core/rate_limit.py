@@ -6,8 +6,6 @@
 
 import time
 from collections import defaultdict
-from typing import Optional
-
 
 # 테넌트 등급별 분당 요청 한도
 TIER_LIMITS: dict[str, int] = {
@@ -91,7 +89,7 @@ class RateLimiter:
             del self._counters[key]
 
     def check_tenant(self, tenant_id: str, tier: str = "free",
-                     endpoint: Optional[str] = None) -> bool:
+                     endpoint: str | None = None) -> bool:
         """테넌트 등급에 따른 요청 허용 여부를 확인한다."""
         limit = TIER_LIMITS.get(tier, self._default_limit)
         key = f"tenant:{tenant_id}"

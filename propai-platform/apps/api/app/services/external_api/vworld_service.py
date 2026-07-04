@@ -2,15 +2,15 @@ import math
 import re
 
 import httpx
-from typing import Optional, List, Dict, Any
-from app.core.config import settings
 import structlog
+
+from app.core.config import settings
 
 logger = structlog.get_logger()
 
 # 필지(지적도) 프로세스 캐시 — PNU→feature(dict). 필지는 거의 불변이라 대량 다필지
 # 분석 시 동일 PNU 반복/중복 호출을 제거(N+1 완화). 무한증식 방지로 상한 둠.
-_PARCEL_CACHE: Dict[str, dict] = {}
+_PARCEL_CACHE: dict[str, dict] = {}
 _PARCEL_CACHE_MAX = 20000
 
 
@@ -21,7 +21,7 @@ def _parcel_cache_put(pnu: str, value: dict) -> None:
     _PARCEL_CACHE[pnu] = value
 
 
-async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) -> Optional[dict]:
+async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) -> dict | None:
     """VWorld GET → JSON. 대량 동시호출 시 레이트리밋(429)·일시오류(5xx)·타임아웃을
     지수 백오프+지터로 재시도한다(무목업: 끝내 실패하면 None, 가짜 생성 금지).
     Retry-After 헤더가 있으면 우선 적용. 단일 호출에는 영향 없음(성공 시 즉시 반환).
@@ -34,10 +34,7 @@ async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) 
             resp = await client.get(url, params=params)
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
                 ra = resp.headers.get("Retry-After")
-                if ra and ra.replace(".", "", 1).isdigit():
-                    delay = float(ra)
-                else:
-                    delay = (2 ** attempt) + random.uniform(0, 0.3)
+                delay = float(ra) if ra and ra.replace(".", "", 1).isdigit() else 2 ** attempt + random.uniform(0, 0.3)
                 logger.warning("VWORLD 재시도", status=resp.status_code, attempt=attempt, delay=round(delay, 2))
                 await asyncio.sleep(min(delay, 5.0))
                 continue
@@ -66,7 +63,7 @@ class VWorldService:
     """VWORLD API (국토지리정보원) 연동 서비스"""
     BASE_URL = settings.VWORLD_BASE_URL
 
-    async def get_parcel_by_pnu(self, pnu_code: str) -> Optional[dict]:
+    async def get_parcel_by_pnu(self, pnu_code: str) -> dict | None:
         """PNU 코드로 필지 정보 조회.
 
         필지(지적도)는 거의 바뀌지 않으므로 프로세스 캐시로 중복/반복 호출을 제거한다
@@ -96,7 +93,7 @@ class VWorldService:
             _parcel_cache_put(pnu_code, result or {})
             return result
 
-    async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> Optional[dict]:
+    async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> dict | None:
         """다필지 GIS Union 통합 경계 산출.
 
         대량 다필지에서 필지 경계를 PNU별로 순차 조회하면 N+1 지연(수백 필지=수십 초)이
@@ -117,7 +114,7 @@ class VWorldService:
         ]
         if not geometries:
             return None
-        from shapely.geometry import shape, mapping
+        from shapely.geometry import mapping, shape
         from shapely.ops import unary_union
         shapes = [shape(g) for g in geometries if g]
         merged = unary_union(shapes)
@@ -189,7 +186,7 @@ class VWorldService:
                     continue
         return results[:size]
 
-    async def geocode_address(self, address: str) -> Optional[dict]:
+    async def geocode_address(self, address: str) -> dict | None:
         """주소를 좌표+PNU로 변환 (지오코딩).
 
         PARCEL 타입 우선 시도 (PNU 포함) → 실패 시 ROAD 타입 폴백.
@@ -251,7 +248,7 @@ class VWorldService:
                     continue
             return None
 
-    async def get_land_info(self, pnu: str) -> Optional[dict]:
+    async def get_land_info(self, pnu: str) -> dict | None:
         """PNU로 토지정보(지목, 면적, 소유구분, 이용상황, 공시지가) 조회"""
         if not settings.VWORLD_API_KEY:
             return None
@@ -299,7 +296,7 @@ class VWorldService:
                 logger.error("VWORLD 토지정보 조회 실패", pnu=pnu, error=str(e))
                 return None
 
-    async def get_parcel_by_point(self, lat: float, lon: float) -> Optional[dict]:
+    async def get_parcel_by_point(self, lat: float, lon: float) -> dict | None:
         """좌표(점)가 포함된 필지를 조회 (도로명주소 등 PNU 미확보 시 폴백).
 
         VWORLD 지적도 LP_PA_CBND_BUBUN에 geomFilter=POINT 질의 → pnu+geometry 반환.
@@ -542,7 +539,7 @@ class VWorldService:
         return facilities
 
     @staticmethod
-    def _first_coord(geom: Optional[dict]) -> tuple[Optional[float], Optional[float]]:
+    def _first_coord(geom: dict | None) -> tuple[float | None, float | None]:
         """GeoJSON geometry에서 대표 좌표(lat, lon)를 추출.
 
         면(역사 부지 등)은 경계 한 꼭짓점보다 **중심점(centroid)**이 입지~시설 거리를
@@ -579,7 +576,7 @@ class VWorldService:
         a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    async def get_land_use_zone(self, x: float, y: float) -> Optional[dict]:
+    async def get_land_use_zone(self, x: float, y: float) -> dict | None:
         """좌표 기반 용도지역 조회"""
         params = {
             "service": "data",
@@ -605,7 +602,7 @@ class VWorldService:
     # ── VWORLD NED API (공시지가, 토지이용계획) ──
     NED_BASE_URL = "https://api.vworld.kr/ned/data"
 
-    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> Optional[dict]:
+    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> dict | None:
         """PNU 기반 개별공시지가 조회.
 
         반환: { pnu, year, price_per_sqm, land_code, land_name, ... }
@@ -643,7 +640,7 @@ class VWorldService:
             logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> Optional[dict]:
+    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> dict | None:
         """PNU 기반 토지특성정보 조회 (NED getLandCharacteristics).
 
         면적·지목·용도지역(1·2)·이용상황·도로접면·지형·공시지가를 한 번에 반환.
@@ -764,7 +761,7 @@ class VWorldService:
         zoom: int = 18,
         size: int = 512,
         basemap: str = "PHOTO",
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """좌표 중심 정사영상(항공/위성) PNG 취득 (VWorld static image getmap).
 
         라이브 검증 결과: service=image&request=getmap, center=lon,lat(필수),

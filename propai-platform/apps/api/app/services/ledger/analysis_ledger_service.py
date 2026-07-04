@@ -153,6 +153,7 @@ async def set_quota(tenant_id: str, max_entries: int) -> dict[str, Any]:
     """관리자: 테넌트 용량 한도 상향/조정(override)."""
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -175,6 +176,7 @@ async def delete_chain(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -193,6 +195,7 @@ async def prune_old_versions(tenant_id: str | None, keep_per_chain: int = 5) -> 
     """체인별 최신 N개만 남기고 옛 버전 삭제 — 용량 확보(최신·계보 유지)."""
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -226,6 +229,7 @@ async def append_analysis(
     chash = _content_hash(payload)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
 
         async with async_session_factory() as db:
@@ -281,6 +285,7 @@ async def get_latest(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -318,6 +323,7 @@ async def get_history(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -343,6 +349,7 @@ async def verify_chain(
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
         async with async_session_factory() as db:
             await _ensure(db)
@@ -385,6 +392,7 @@ async def verify_all_chains(
     """
     try:
         from sqlalchemy import text
+
         from app.core.database import async_session_factory
 
         async with async_session_factory() as db:

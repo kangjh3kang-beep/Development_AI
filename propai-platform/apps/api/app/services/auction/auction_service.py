@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,8 +124,8 @@ class AuctionStep1Service:
     # ──────────────────────────────────────────
 
     async def sync_region(
-        self, *, service_key: Optional[str], region: Optional[str] = None,
-        kind: Optional[str] = None, rows: int = 50, source: str = "onbid",
+        self, *, service_key: str | None, region: str | None = None,
+        kind: str | None = None, rows: int = 50, source: str = "onbid",
     ) -> dict[str, Any]:
         """공매(온비드) 또는 경매(법원 스크래핑)를 조회해 auction_items에 멱등 upsert.
 
@@ -162,7 +162,7 @@ class AuctionStep1Service:
         }
 
     async def _fetch_court(
-        self, *, region: Optional[str], kind: Optional[str],
+        self, *, region: str | None, kind: str | None,
     ) -> dict[str, Any]:
         """법원경매 스크래핑(동기 requests)을 스레드 오프로드해 호출한다(무목업)."""
         import asyncio
@@ -225,10 +225,10 @@ class AuctionStep1Service:
     # ──────────────────────────────────────────
 
     async def search(
-        self, *, region: Optional[str] = None, kind: Optional[str] = None,
-        min_fail: Optional[int] = None, max_price: Optional[int] = None,
-        est_win_max: Optional[int] = None, page: int = 1, page_size: int = 20,
-        service_key: Optional[str] = None,
+        self, *, region: str | None = None, kind: str | None = None,
+        min_fail: int | None = None, max_price: int | None = None,
+        est_win_max: int | None = None, page: int = 1, page_size: int = 20,
+        service_key: str | None = None,
     ) -> dict[str, Any]:
         """캐시 기반 조건검색. 결과가 비면 온비드 동기화 후 재조회한다."""
         await self.ensure_tables()
@@ -271,7 +271,7 @@ class AuctionStep1Service:
         return result
 
     async def ranking(
-        self, *, region: Optional[str] = None, kind: Optional[str] = None,
+        self, *, region: str | None = None, kind: str | None = None,
         by: str = "min_bid", limit: int = 20,
     ) -> dict[str, Any]:
         """전국 최저입찰가/할인율 순위."""
@@ -318,7 +318,7 @@ class AuctionStep1Service:
         return out
 
     async def ranking_live(
-        self, *, service_key: Optional[str], by: str = "views",
+        self, *, service_key: str | None, by: str = "views",
         kind: str = "부동산", limit: int = 50,
     ) -> dict[str, Any]:
         """온비드 순위(조회수/관심)를 실 API로 직접 조회한다(getInqRnkClg/getItrsCltrRnkClg).
@@ -392,8 +392,8 @@ class AuctionStep1Service:
         return out
 
     async def detail_live(
-        self, *, service_key: Optional[str], cltr_mng_no: str, pbct_cdtn_no: str,
-        pnu: Optional[str] = None,
+        self, *, service_key: str | None, cltr_mng_no: str, pbct_cdtn_no: str,
+        pnu: str | None = None,
     ) -> dict[str, Any]:
         """물건상세 입찰정보(getCltrBidInf2)로 유찰누적횟수·면적·이미지·이전입찰내역을 조회한다.
 
@@ -402,8 +402,8 @@ class AuctionStep1Service:
         실패/무자료/비공개 → unavailable + reason(가짜 금지). est_win(낙찰가능가) 부착.
         """
         client = OnbidClient(service_key)
-        info: Optional[dict[str, Any]] = None
-        unavailable_reason: Optional[str] = None
+        info: dict[str, Any] | None = None
+        unavailable_reason: str | None = None
         try:
             raw_info = await client.get_cltr_bid_info(cltr_mng_no, pbct_cdtn_no)
             if raw_info.get("data_source") != "onbid_live":
@@ -446,7 +446,8 @@ class AuctionStep1Service:
                     rd = result.get("item") if result.get("item") else None
                     if rd:
                         from app.services.auction.onbid_client import (
-                            _parse_amount, _parse_rate,
+                            _parse_amount,
+                            _parse_rate,
                         )
                         if info.get("win_rate") is None:
                             info["win_rate"] = _parse_rate(
@@ -464,7 +465,7 @@ class AuctionStep1Service:
         # ── PNU 토지특성 보강 — ONBID가 토지면적/용도지역을 안 주거나 상세 무자료여도,
         #    PNU(순위 목록 제공)로 NED getLandCharacteristics를 호출해 토지면적·용도지역·
         #    공시지가를 채운다(가짜 금지·실데이터). 나대지 등 "기본정보 누락" 해소.
-        land_extra: Optional[dict[str, Any]] = None
+        land_extra: dict[str, Any] | None = None
         aerial: dict[str, Any] = {}
         if pnu:
             try:
@@ -672,11 +673,11 @@ class AuctionStep1Service:
             braws = info.get("raw") if isinstance(info.get("raw"), list) else []
             b = braws[0] if braws and isinstance(braws[0], dict) else None
             if b:
-                def _yn(v: Any) -> Optional[str]:
+                def _yn(v: Any) -> str | None:
                     s = str(v or "").strip().upper()
                     return "가능" if s == "Y" else ("불가" if s == "N" else None)
 
-                def _txt(v: Any) -> Optional[str]:
+                def _txt(v: Any) -> str | None:
                     s = str(v or "").strip()
                     return s if s and s != "-" else None
 
@@ -704,7 +705,7 @@ class AuctionStep1Service:
         return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(
-        self, *, service_key: Optional[str], filters: dict[str, Any],
+        self, *, service_key: str | None, filters: dict[str, Any],
         page: int = 1, page_size: int = 50, service_key_for_fallback: bool = True,
     ) -> dict[str, Any]:
         """물건 입찰결과목록(getCltrBidRsltList2)으로 조건검색한다(유찰·낙찰가율·감정가).
@@ -749,7 +750,7 @@ class AuctionStep1Service:
             out["reason"] = res["reason"]
         return out
 
-    async def get_item(self, item_id: int) -> Optional[dict[str, Any]]:
+    async def get_item(self, item_id: int) -> dict[str, Any] | None:
         """물건 상세(+raw +est_win)."""
         await self.ensure_tables()
         sql = text(
@@ -847,7 +848,7 @@ class AuctionStep1Service:
     # 내 관리토지 매칭 (프로젝트/토지조서 PNU ∩ 물건 PNU)
     # ──────────────────────────────────────────
 
-    async def match_my_land(self, *, user_id: str, tenant_id: Optional[str]) -> int:
+    async def match_my_land(self, *, user_id: str, tenant_id: str | None) -> int:
         """내 프로젝트/토지조서 PNU와 일치하는 공매 물건을 auction_watch에 자동 등록.
 
         반환: 신규 매칭 건수. 알림훅은 notify_match로 기록(키 없으면 로깅).
@@ -876,7 +877,7 @@ class AuctionStep1Service:
         return created
 
     async def my_listings(
-        self, *, user_id: str, tenant_id: Optional[str], group_by: str = "project",
+        self, *, user_id: str, tenant_id: str | None, group_by: str = "project",
     ) -> dict[str, Any]:
         """내 관리토지 중 경공매 연동분. 자동매칭 후 프로젝트별 분류 + 통합 반환."""
         await self.ensure_tables()
@@ -916,7 +917,7 @@ class AuctionStep1Service:
             }
         return {"group_by": "none", "unified": unified, "total": len(unified)}
 
-    async def _my_pnus(self, tenant_id: Optional[str]) -> set[str]:
+    async def _my_pnus(self, tenant_id: str | None) -> set[str]:
         """내 테넌트의 프로젝트(pnu_codes JSON) + parcels.pnu 집합."""
         pnus: set[str] = set()
         if not tenant_id:
@@ -943,7 +944,7 @@ class AuctionStep1Service:
             logger.warning("parcels PNU 조회 실패: %s", str(e)[:120])
         return pnus
 
-    async def _pnu_project_map(self, tenant_id: Optional[str]) -> dict[str, str]:
+    async def _pnu_project_map(self, tenant_id: str | None) -> dict[str, str]:
         """PNU → project_id 매핑(parcels 기준)."""
         mapping: dict[str, str] = {}
         if not tenant_id:
@@ -965,7 +966,7 @@ class AuctionStep1Service:
     # ──────────────────────────────────────────
 
     async def sync_landschedule_targets(
-        self, *, user_id: str, tenant_id: Optional[str],
+        self, *, user_id: str, tenant_id: str | None,
     ) -> int:
         """(a) 토지조서/프로젝트 보유토지 PNU를 auction_watch_target(source=landschedule)에 등록.
 
@@ -1090,7 +1091,7 @@ class AuctionStep1Service:
 
     async def _geocode_item(
         self, *, item_id: int, address: str, vworld,
-    ) -> Optional[tuple[float, float]]:
+    ) -> tuple[float, float] | None:
         """폴리곤 매칭 대상 물건만 지오코딩(VWorld)하고 좌표를 캐시한다(멱등).
 
         성공 시 (lat,lng) 반환·캐시. 실패/무자료는 None + geocode_status='failed' 기록
@@ -1113,7 +1114,7 @@ class AuctionStep1Service:
         return lat, lng
 
     async def monitor(
-        self, *, user_id: str, tenant_id: Optional[str], group_by: str = "source",
+        self, *, user_id: str, tenant_id: str | None, group_by: str = "source",
         max_geocode: int = 60,
     ) -> dict[str, Any]:
         """관심대상(보유토지/Excel/구획) ↔ 캐시 물건 매칭 결과를 그룹핑해 반환한다.
@@ -1247,8 +1248,8 @@ class AuctionStep1Service:
         return self._attach_est_win(row)
 
     async def monitor_run(
-        self, *, user_id: str, tenant_id: Optional[str],
-        service_key: Optional[str],
+        self, *, user_id: str, tenant_id: str | None,
+        service_key: str | None,
     ) -> dict[str, Any]:
         """(cron/관리) 온비드 동기화 → 매칭 → 신규 물건 알림. 무목업.
 
@@ -1296,7 +1297,7 @@ class AuctionStep1Service:
     # ──────────────────────────────────────────
 
     @staticmethod
-    def _iso(v: Any) -> Optional[str]:
+    def _iso(v: Any) -> str | None:
         """datetime(Postgres) / str(드라이버 차이) 모두 ISO 문자열로 정규화."""
         if v is None:
             return None
@@ -1340,7 +1341,7 @@ class AuctionStep1Service:
         return d
 
     @staticmethod
-    def _notify_match(user_id: str, address: Optional[str]) -> None:
+    def _notify_match(user_id: str, address: str | None) -> None:
         """내토지 매칭 알림훅. 푸시키 없으면 로그로 기록(정직)."""
         logger.info("[auction] 내토지 경공매 매칭 user=%s addr=%s (알림훅 기록)",
                     user_id, address or "")
@@ -1348,7 +1349,7 @@ class AuctionStep1Service:
     @staticmethod
     def _mark_registry(
         *, source: str = "onbid", record_count: int = 0, healthy: bool,
-        reason: Optional[str] = None,
+        reason: str | None = None,
     ) -> None:
         try:
             from app.services.data_validation.public_data_registry import PublicDataRegistry

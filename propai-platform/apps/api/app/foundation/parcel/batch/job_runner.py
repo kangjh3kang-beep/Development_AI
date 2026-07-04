@@ -12,13 +12,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app.foundation.parcel.batch import queue_policy
 from app.foundation.parcel.contracts.batch import BatchItemResult, ItemStatus
 
 
-def resolve_pnu_status(pnu: str, parcel: Optional[dict], chars: Optional[dict]) -> BatchItemResult:
+def resolve_pnu_status(pnu: str, parcel: dict | None, chars: dict | None) -> BatchItemResult:
     """단일 필지 해석 결과를 status 로 분류한다.
 
     ParcelExcelService 와 동일한 정신:
@@ -68,8 +69,8 @@ class JobRunner:
     def __init__(
         self,
         vworld: Any = None,
-        chunk_size: Optional[int] = None,
-        concurrency: Optional[int] = None,
+        chunk_size: int | None = None,
+        concurrency: int | None = None,
     ) -> None:
         self._vworld = vworld
         self.chunk_size = chunk_size or queue_policy.chunk_size()

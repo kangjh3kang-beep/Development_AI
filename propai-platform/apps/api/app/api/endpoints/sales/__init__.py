@@ -11,22 +11,49 @@ from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.commission_agreement import commission_agreement_router
 from app.api.endpoints.sales.crm_enhance import crm_enhance_router
-from app.api.endpoints.sales.referral import referral_router
-from app.api.endpoints.sales.termination_cert import termination_cert_router
-from app.api.endpoints.sales.site_auth import site_auth_router
-from app.api.endpoints.sales.mh import mh_router
-from app.api.endpoints.sales.views import views_router
-from app.api.endpoints.sales.units_live import units_live_router
 from app.api.endpoints.sales.lifecycle_p5 import r5
 from app.api.endpoints.sales.lifecycle_p6 import r6
+from app.api.endpoints.sales.mh import mh_router
+from app.api.endpoints.sales.referral import referral_router
+from app.api.endpoints.sales.site_auth import site_auth_router
+from app.api.endpoints.sales.termination_cert import termination_cert_router
+from app.api.endpoints.sales.units_live import units_live_router
+from app.api.endpoints.sales.views import views_router
 from apps.api.database.models.sales import (
-    commission_mh_harness as cm, contract_crm_ad as cc, site_org as so, staff as st, units_pricing as up,
+    commission_ext as ce,
 )
 from apps.api.database.models.sales import (
-    loan as ln, options as opn, subscription as sub,
+    commission_mh_harness as cm,
 )
 from apps.api.database.models.sales import (
-    commission_ext as ce, guarantee as gu, resale as rs, tax as tx,
+    contract_crm_ad as cc,
+)
+from apps.api.database.models.sales import (
+    guarantee as gu,
+)
+from apps.api.database.models.sales import (
+    loan as ln,
+)
+from apps.api.database.models.sales import (
+    options as opn,
+)
+from apps.api.database.models.sales import (
+    resale as rs,
+)
+from apps.api.database.models.sales import (
+    site_org as so,
+)
+from apps.api.database.models.sales import (
+    staff as st,
+)
+from apps.api.database.models.sales import (
+    subscription as sub,
+)
+from apps.api.database.models.sales import (
+    tax as tx,
+)
+from apps.api.database.models.sales import (
+    units_pricing as up,
 )
 
 sales_router = APIRouter()

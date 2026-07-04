@@ -6,7 +6,8 @@ calculate_realtime_carbon 테스트.
 
 import os
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -17,7 +18,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.carbon_calculation_service import CarbonCalculationService
 from apps.api.services.digital_twin_service import DigitalTwinService
-
 
 # ── parse_ifc_metadata 테스트 ──
 

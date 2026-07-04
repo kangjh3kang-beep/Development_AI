@@ -4,8 +4,6 @@ OWASP 권장 보안 헤더(HSTS, X-Content-Type-Options, X-Frame-Options,
 CSP, Referrer-Policy, X-XSS-Protection)를 모든 응답에 추가한다.
 """
 
-from typing import Optional
-
 
 # 기본 보안 헤더
 DEFAULT_SECURITY_HEADERS: dict[str, str] = {
@@ -26,7 +24,7 @@ class SecurityHeadersMiddleware:
     모든 HTTP 응답에 OWASP 권장 보안 헤더를 추가한다.
     """
 
-    def __init__(self, app, headers: Optional[dict[str, str]] = None):
+    def __init__(self, app, headers: dict[str, str] | None = None):
         self.app = app
         self._headers = headers or DEFAULT_SECURITY_HEADERS
 

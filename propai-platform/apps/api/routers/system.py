@@ -1,6 +1,7 @@
 """System status and version endpoints."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
+
 UTC = UTC
 
 import redis.asyncio as aioredis

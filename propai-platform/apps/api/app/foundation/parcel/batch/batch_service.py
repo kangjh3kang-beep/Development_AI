@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from app.foundation.parcel.batch import region_normalizer
 from app.foundation.parcel.batch.aggregator import Aggregator
@@ -91,9 +91,9 @@ class BatchService:
 
     def __init__(
         self,
-        store: Optional[JobStore] = None,
-        runner: Optional[JobRunner] = None,
-        aggregator: Optional[Aggregator] = None,
+        store: JobStore | None = None,
+        runner: JobRunner | None = None,
+        aggregator: Aggregator | None = None,
         vworld: Any = None,
     ) -> None:
         self.store = store or InMemoryJobStore()
@@ -102,7 +102,7 @@ class BatchService:
         self._vworld = vworld
 
     async def submit(
-        self, inp: BatchInput, snapshot_id: Optional[str] = None
+        self, inp: BatchInput, snapshot_id: str | None = None
     ) -> ParcelBatchJob:
         """배치 잡을 등록한다(멱등). snapshot_id 없으면 고정 생성(INV-M3).
 
@@ -267,7 +267,7 @@ class BatchService:
         await self.store.save(record)
         return record.job
 
-    async def get(self, job_id: str) -> Optional[ParcelBatchJob]:
+    async def get(self, job_id: str) -> ParcelBatchJob | None:
         """잡 헤더 조회."""
         record = await self.store.get(job_id)
         return record.job if record else None

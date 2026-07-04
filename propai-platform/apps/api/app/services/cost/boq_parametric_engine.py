@@ -125,7 +125,7 @@ def _get_master(discipline: str) -> dict[str, Any]:
             if got is not None:
                 items, canonical = got
                 sections: list[dict[str, Any]] = []
-                sec_res = getattr(reg, "get_sections")(discipline)
+                sec_res = reg.get_sections(discipline)
                 if isinstance(sec_res, dict) and sec_res.get("found") is True:
                     sections = [dict(s) for s in (sec_res.get("sections") or [])]
                 return {"discipline": canonical, "items": items, "sections": sections}

@@ -1,6 +1,6 @@
 """LegalHub facade — 법령 단일경유(개념키 위임 + 조문키 교차 + 범용 resolve) 검증(#2)."""
-from app.services.legal.legal_hub import LegalHub
 from app.services.legal import legal_reference_registry as reg
+from app.services.legal.legal_hub import LegalHub
 
 
 def test_refs_delegates_to_registry():

@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+
 from geoalchemy2 import Geometry
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
+
 
 class Project(Base):
     __tablename__ = "projects"

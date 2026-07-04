@@ -11,7 +11,7 @@ from typing import Any
 
 try:
     import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 except ImportError:
     openpyxl = None  # type: ignore[assignment]
 
@@ -52,7 +52,7 @@ class ExcelExportService:
         # 요약 시트
         ws = wb.active
         ws.title = "수지분석 요약"
-        header_font = Font(bold=True, size=12)
+        Font(bold=True, size=12)
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font_white = Font(bold=True, size=11, color="FFFFFF")
         thin_border = Border(

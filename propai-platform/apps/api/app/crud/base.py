@@ -1,8 +1,8 @@
 """제너릭 CRUD 베이스 — 전 sales 엔티티 공통 영속 로직."""
 
 import uuid
-from datetime import datetime, timezone, UTC
-from typing import Generic, Type, TypeVar
+from datetime import UTC, datetime
+from typing import TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 M = TypeVar("M")
 
 
-class CRUDBase(Generic[M]):
+class CRUDBase[M]:
     def __init__(self, model: type[M]):
         self.model = model
 

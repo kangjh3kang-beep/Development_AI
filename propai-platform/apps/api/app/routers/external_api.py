@@ -1,10 +1,11 @@
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List
-from app.services.auth.auth_service import get_current_user
-from app.services.external_api.vworld_service import VWorldService
-from app.services.external_api.molit_service import MOLITService
+
 from app.models.auth import User
+from app.services.auth.auth_service import get_current_user
+from app.services.external_api.molit_service import MOLITService
+from app.services.external_api.vworld_service import VWorldService
 
 router = APIRouter(prefix="/api/v1/external", tags=["외부 API"])
 vworld = VWorldService()

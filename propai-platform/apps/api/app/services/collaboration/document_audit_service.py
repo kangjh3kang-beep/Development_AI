@@ -10,7 +10,8 @@ DXF는 parse_dxf_to_shapes→cad_upload_hub.distribute로 내부 기하(design_r
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import contextlib
+from typing import Any
 
 import structlog
 
@@ -43,8 +44,8 @@ def _design_ext(filename: str) -> str:
 
 def _convert_dxf(data: bytes):
     """DXF 바이트 → (geometry=design_raw, rooms) — run-upload 변환경로와 동일(멱등·외부호출 0)."""
-    from app.services.cad.dxf_import_service import parse_dxf_to_shapes
     from app.services.cad.cad_upload_hub import distribute
+    from app.services.cad.dxf_import_service import parse_dxf_to_shapes
 
     hub = distribute(parse_dxf_to_shapes(data))
     geometry = hub.get("design_raw") if isinstance(hub.get("design_raw"), dict) else None
@@ -75,10 +76,10 @@ async def run_design_document_audit(
     data: bytes,
     convert_dxf=None,
     orchestrator=None,
-    project_id: Optional[str] = None,    # Phase 0 unit d: 원장 backlink context(호출처 thread-through)
-    tenant_id: Optional[str] = None,
-    created_by: Optional[str] = None,
-) -> tuple[str, Optional[dict]]:
+    project_id: str | None = None,    # Phase 0 unit d: 원장 backlink context(호출처 thread-through)
+    tenant_id: str | None = None,
+    created_by: str | None = None,
+) -> tuple[str, dict | None]:
     """설계파일(DXF/IFC) 8엔진 투입 → (audit_status, audit_summary).
 
     - dxf/ifc가 아니면 ("unsupported", None) — 8엔진은 문서를 입력으로 받지 못한다(정직).
@@ -103,10 +104,8 @@ async def run_design_document_audit(
             tmp.close()
             result = await orch.run(db, ifc_file_url=tmp.name)
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp.name)
-            except OSError:
-                pass
 
     # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
     try:

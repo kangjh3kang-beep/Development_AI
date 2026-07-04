@@ -1,9 +1,10 @@
 """원가계산서 생성기 테스트."""
 
 from app.services.cost.origin_cost_calculator import (
-    OriginCostCalculator, CostItem, RATES_2026,
+    RATES_2026,
+    CostItem,
+    OriginCostCalculator,
 )
-
 
 SAMPLE_ITEMS = [
     CostItem(

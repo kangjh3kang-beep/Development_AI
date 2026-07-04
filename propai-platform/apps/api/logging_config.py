@@ -18,6 +18,8 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}"), "****-****-****-****"),  # 카드번호
     (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "***@***.***"),  # 이메일
     (re.compile(r"\d{2,3}-\d{3,4}-\d{4}"), "***-****-****"),  # 전화번호
+    # URL 쿼리파라미터에 실린 API 키(data.go.kr serviceKey 등) — 어떤 로거가 URL을 남겨도 마스킹.
+    (re.compile(r"((?:service[Kk]ey|ap[iI]?[Kk]ey|auth[_]?[Kk]ey)=)[^&\s\"']+"), r"\1***MASKED***"),
 ]
 
 
@@ -82,6 +84,10 @@ def setup_logging(*, json_output: bool = True, log_level: str = "INFO") -> None:
     # SQLAlchemy, uvicorn 로그 레벨 조정
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # ★httpx/httpcore: 요청 URL을 INFO로 남기는데, ECOS·RONE·data.go.kr 등은 API키를 URL
+    #   경로/쿼리에 실어 보내므로 키가 로그에 노출된다. WARNING으로 낮춰 요청 URL 로깅을 억제.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

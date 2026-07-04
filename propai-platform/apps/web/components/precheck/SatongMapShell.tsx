@@ -183,9 +183,9 @@ const LAYERS: SatongLayer[] = [
     id: "official-price",
     label: "공시지가",
     shortLabel: "공시",
-    description: "선택 필지의 연도별 개별공시지가와 주변 단가를 비교합니다.",
+    description: "선택 필지의 개별공시지가(㎡당 단가)를 지도에 색상으로 반영합니다.",
     icon: LineChart,
-    status: "ready",
+    status: "active",
     tone: "bg-emerald-100 text-emerald-950 border-emerald-200",
     source: "공간정보(VWorld NED) 토지특성 API 연동",
     controls: [

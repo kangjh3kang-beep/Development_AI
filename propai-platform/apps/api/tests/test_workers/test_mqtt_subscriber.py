@@ -1,9 +1,7 @@
 """MQTT 드론 구독자 테스트."""
 
 import json
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 
 def test_mqtt_subscriber_init():

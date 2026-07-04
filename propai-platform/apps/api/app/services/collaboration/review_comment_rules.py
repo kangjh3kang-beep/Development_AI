@@ -6,12 +6,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 MAX_COMMENT_BODY = 4000
 
 
-def validate_comment_body(body: Optional[str]) -> str:
+def validate_comment_body(body: str | None) -> str:
     """본문 정규화 — trim 후 비어있지 않고 MAX_COMMENT_BODY 이내. 위반은 ValueError(가짜 댓글 금지)."""
     text = (body or "").strip()
     if not text:
@@ -36,7 +34,7 @@ def resolve_allowed(parent_id) -> bool:
     return is_root(parent_id)
 
 
-def parent_is_valid(parent_status: Optional[str], parent_document_id, document_id) -> bool:
+def parent_is_valid(parent_status: str | None, parent_document_id, document_id) -> bool:
     """답변의 부모 유효성 — 부모가 active이고 동일 문서일 때만(타문서·삭제·미존재 부모 금지).
 
     parent_status가 None이면 부모 미존재로 간주해 False(방어적 — None==active 우연 안전에 의존 안 함).
@@ -46,6 +44,6 @@ def parent_is_valid(parent_status: Optional[str], parent_document_id, document_i
     return parent_status == "active" and str(parent_document_id) == str(document_id)
 
 
-def visible_body(status: str, body: Optional[str]) -> Optional[str]:
+def visible_body(status: str, body: str | None) -> str | None:
     """응답 본문 — 삭제(soft)된 댓글은 본문 은닉(None). active만 원문 노출(정직)."""
     return body if status == "active" else None

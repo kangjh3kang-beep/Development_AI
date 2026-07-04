@@ -35,8 +35,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.pipeline.project_pipeline import (  # noqa: E402
-    ProjectPipeline,
     PipelineStatus,
+    ProjectPipeline,
 )
 
 # asyncio_mode="auto" (pyproject) — async 테스트 함수는 마커 없이 자동 수집된다.
@@ -569,6 +569,7 @@ async def test_라우터_stage_overrides_다단계_병합():
 async def test_라우터_유효하지_않은_단계는_400():
     """알 수 없는 stage 는 400 HTTPException 으로 정직 거부된다."""
     from fastapi import HTTPException
+
     from app.routers.pipeline import StageRerunRequest, rerun_stage
 
     req = StageRerunRequest(address=_ADDRESS, stage="unknown_stage")

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
@@ -20,8 +20,8 @@ from app.schemas.g2b_bid import (
     G2BAnalysisHistoryItem,
     G2BAnalysisHistoryResponse,
     G2BAttachment,
-    G2BAwardStatsResponse,
     G2BAwardStatResponse,
+    G2BAwardStatsResponse,
     G2BBidFilter,
     G2BBidListResponse,
     G2BBidResponse,
@@ -232,13 +232,10 @@ def _is_relevant_bid(title: str, org_name: str = "") -> bool:
                                         "개보수", "보강", "조성")):
             return True
     # 3) 발주기관이 부동산개발 전문기관(LH·도시공사 등)
-    for kw in INCLUDE_ORG_KEYWORDS:
-        if kw in org_name:
-            return True
-    return False
+    return any(kw in org_name for kw in INCLUDE_ORG_KEYWORDS)
 
 
-def _parse_g2b_datetime(raw: Any) -> Optional[datetime]:
+def _parse_g2b_datetime(raw: Any) -> datetime | None:
     """G2B API 응답의 날짜 문자열을 datetime으로 변환한다."""
     if not raw:
         return None
@@ -251,7 +248,7 @@ def _parse_g2b_datetime(raw: Any) -> Optional[datetime]:
     return None
 
 
-def _safe_int(raw: Any) -> Optional[int]:
+def _safe_int(raw: Any) -> int | None:
     if raw is None:
         return None
     try:
@@ -260,7 +257,7 @@ def _safe_int(raw: Any) -> Optional[int]:
         return None
 
 
-def _safe_float(raw: Any) -> Optional[float]:
+def _safe_float(raw: Any) -> float | None:
     if raw is None:
         return None
     try:
@@ -274,7 +271,7 @@ _SIDO_PATTERN = re.compile(
 )
 
 
-def _extract_region(raw_item: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+def _extract_region(raw_item: dict[str, Any]) -> tuple[str | None, str | None]:
     """공고 데이터에서 시/도, 시/군/구를 추출한다.
 
     공사현장지역(cnstrtsiteRgnNm)을 우선 사용하되, 전국 입찰은 모든 시/도가
@@ -309,7 +306,7 @@ _YN_LIMIT = {"Y": "제한", "N": "제한없음"}  # 업종제한
 _YN_YESNO = {"Y": "예", "N": "아니오"}  # 일반 여부
 
 
-def _fmt_amount(raw: Any) -> Optional[str]:
+def _fmt_amount(raw: Any) -> str | None:
     """금액 문자열을 "65,870,000원" 형태로 포맷한다(비거나 0 이하·숫자아님은 None)."""
     val = _safe_int(raw)
     if val is None or val <= 0:
@@ -317,7 +314,7 @@ def _fmt_amount(raw: Any) -> Optional[str]:
     return f"{val:,}원"
 
 
-def _fmt_datetime(raw: Any) -> Optional[str]:
+def _fmt_datetime(raw: Any) -> str | None:
     """G2B 날짜를 "YYYY-MM-DD HH:MM" 형태로 포맷한다(파싱 실패 시 None)."""
     dt = _parse_g2b_datetime(raw)
     if dt is None:
@@ -325,7 +322,7 @@ def _fmt_datetime(raw: Any) -> Optional[str]:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def _fmt_rate(raw: Any) -> Optional[str]:
+def _fmt_rate(raw: Any) -> str | None:
     """낙찰하한율 같은 비율을 "89.745%" 형태로 포맷한다(비거나 0은 None)."""
     val = _safe_float(raw)
     if val is None or val == 0:
@@ -334,7 +331,7 @@ def _fmt_rate(raw: Any) -> Optional[str]:
     return f"{val:g}%"
 
 
-def _clean(raw: Any) -> Optional[str]:
+def _clean(raw: Any) -> str | None:
     """문자열 정리 — 비었거나 공백뿐이면 None(빈값은 노출하지 않는다)."""
     if raw is None:
         return None
@@ -342,7 +339,7 @@ def _clean(raw: Any) -> Optional[str]:
     return s or None
 
 
-def _yn_label(raw: Any, mapping: dict[str, str]) -> Optional[str]:
+def _yn_label(raw: Any, mapping: dict[str, str]) -> str | None:
     """Y/N 코드를 의미값으로 변환한다(Y/N 외 값은 원문 유지, 빈값은 None)."""
     s = _clean(raw)
     if s is None:
@@ -358,7 +355,7 @@ def build_detail_sections(raw: dict[str, Any]) -> G2BDetailSections:
     """
     raw = raw or {}
 
-    def _push(items: list[LabeledItem], label: str, value: Optional[str]) -> None:
+    def _push(items: list[LabeledItem], label: str, value: str | None) -> None:
         """값이 있을 때만 라벨-값 쌍을 목록에 추가한다."""
         if value is not None and value != "":
             items.append(LabeledItem(label=label, value=value))
@@ -645,7 +642,7 @@ class G2BBidService:
             total_pages=max(1, (total + f.page_size - 1) // f.page_size),
         )
 
-    async def get_bid(self, bid_id: UUID) -> Optional[G2BBid]:
+    async def get_bid(self, bid_id: UUID) -> G2BBid | None:
         """입찰 공고 단건 조회."""
         result = await self.db.execute(select(G2BBid).where(G2BBid.id == bid_id))
         return result.scalar_one_or_none()
@@ -692,7 +689,7 @@ class G2BBidService:
         )
 
     async def get_award_stats(
-        self, bid_type: Optional[str] = None, region_sido: Optional[str] = None
+        self, bid_type: str | None = None, region_sido: str | None = None
     ) -> G2BAwardStatsResponse:
         """낙찰가율 통계를 조회한다."""
         query = select(G2BAwardStat)
@@ -734,7 +731,7 @@ class G2BBidService:
         return rec
 
     async def list_analyses(
-        self, bid_id: Optional[UUID] = None, page: int = 1, page_size: int = 20
+        self, bid_id: UUID | None = None, page: int = 1, page_size: int = 20
     ) -> G2BAnalysisHistoryResponse:
         """분석 히스토리 목록(최신순). bid_id 지정 시 해당 공고만."""
         query = select(G2BBidAnalysis)
@@ -757,7 +754,7 @@ class G2BBidService:
             total_pages=max(1, (total + page_size - 1) // page_size),
         )
 
-    async def get_analysis(self, analysis_id: UUID) -> Optional[G2BAnalysisHistoryDetail]:
+    async def get_analysis(self, analysis_id: UUID) -> G2BAnalysisHistoryDetail | None:
         """분석 히스토리 단건(전체 결과 포함)."""
         rec = (await self.db.execute(
             select(G2BBidAnalysis).where(G2BBidAnalysis.id == analysis_id)

@@ -23,16 +23,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 import pytest  # noqa: E402
 
-from app.services.zoning.auto_zoning_service import (  # noqa: E402
-    ZONE_INFERENCE_WARNING,
-    AutoZoningService,
-)
 from app.services.land_intelligence.land_info_service import (  # noqa: E402
     LandInfoService,
     _strip_zone_inference_warning,
 )
+from app.services.zoning.auto_zoning_service import (  # noqa: E402
+    ZONE_INFERENCE_WARNING,
+    AutoZoningService,
+)
 from apps.api.routers.auto_zoning import _build_inputs  # noqa: E402
-
 
 # ── 공용 스텁 ──────────────────────────────────────────────────────────────
 

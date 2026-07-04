@@ -10,8 +10,8 @@ from app.services.tax.regional_tax_data import (
     ACQUISITION_TAX_MATRIX,
     METRO_TRANSPORT_BASE,
     METRO_TRANSPORT_SIGUNGU_OVERRIDE,
-    get_metro_transport_charge,
     get_acquisition_tax_rates,
+    get_metro_transport_charge,
 )
 
 router = APIRouter(prefix="/api/v2/tax", tags=["tax-v2"])

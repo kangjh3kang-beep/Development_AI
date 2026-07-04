@@ -1,6 +1,6 @@
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
 
 from apps.api.app.services.market.conversational_market_ai import ConversationalMarketAI
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
@@ -10,7 +10,7 @@ router = APIRouter()
 
 class MarketQueryRequest(BaseModel):
     query: str
-    context: Optional[dict] = None
+    context: dict | None = None
 
 
 @router.post("/ask")

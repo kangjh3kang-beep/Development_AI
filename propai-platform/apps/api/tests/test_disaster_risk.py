@@ -1,8 +1,7 @@
 """자연재해 리스크 분석 테스트 (자연재해대책법)."""
 
-import sys
 import os
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

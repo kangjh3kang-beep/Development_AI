@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from app.services.finance.monte_carlo_service import MonteCarloService
-from app.services.auth.auth_service import get_current_user
+
 from app.models.auth import User
+from app.services.auth.auth_service import get_current_user
+from app.services.finance.monte_carlo_service import MonteCarloService
 
 router = APIRouter(prefix="/api/v1/finance", tags=["금융 AI"])
 mc_service = MonteCarloService()
@@ -27,6 +28,7 @@ async def run_monte_carlo(req: SimulationRequest, current_user: User = Depends(g
     if isinstance(result, dict):
         try:
             from typing import Any
+
             from app.services.data_validation.evidence_contract import build_evidence_block
 
             items: list[dict[str, Any]] = []

@@ -7,12 +7,12 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models.feasibility_vcs import FeasibilityCommit, FeasibilityBranch, FeasibilityTag
+from database.models.feasibility_vcs import FeasibilityBranch, FeasibilityCommit, FeasibilityTag
 
 
 def compute_sha(data: dict[str, Any]) -> str:
@@ -56,7 +56,7 @@ class FeasibilityVCSDB:
             select(FeasibilityBranch).where(
                 FeasibilityBranch.project_id == self.project_id,
                 FeasibilityBranch.tenant_id == self.tenant_id,
-                FeasibilityBranch.is_default == True,
+                FeasibilityBranch.is_default,
             )
         )
         branch = result.scalar_one_or_none()

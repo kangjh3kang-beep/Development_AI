@@ -7,8 +7,8 @@ orchestrator.run은 use_llm을 폐기하는 결정론 전용이라 본 서비스
 import asyncio
 
 from app.services.collaboration.document_audit_service import (
-    summarize_audit,
     run_design_document_audit,
+    summarize_audit,
 )
 
 RESULT = {

@@ -1,7 +1,8 @@
 """법정요율 서비스 테스트."""
 
 from app.services.cost.legal_rate_service import (
-    LegalRateService, PENSION_SCHEDULE,
+    PENSION_SCHEDULE,
+    LegalRateService,
 )
 
 

@@ -8,13 +8,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.models.sales.commission_mh_harness import MhVisitConsent, MhVisitor
 from app.services.sales.harness.outbox import emit_outbox
 from app.services.sales.mh.consent import (
-    ensure_consent_columns,
     enrich_consent,
+    ensure_consent_columns,
     has_required_consent,
 )
+from apps.api.database.models.sales.commission_mh_harness import MhVisitConsent, MhVisitor
 
 
 async def checkin(db: AsyncSession, site_id, desk_id, payload: dict, consent_ip: str | None = None):

@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timedelta, timezone, UTC
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
 from packages.schemas.enums import UserRole
 from packages.schemas.models import TokenResponse, UserResponse
-import bcrypt as _bcrypt
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.auth.google_handler import GoogleOAuthError, process_google_callback
 from apps.api.auth.jwt_handler import (
     CurrentUser,
     create_access_token,
@@ -23,7 +24,6 @@ from apps.api.auth.jwt_handler import (
     decode_token,
     get_current_user,
 )
-from apps.api.auth.google_handler import GoogleOAuthError, process_google_callback
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
 from apps.api.auth.naver_handler import NaverOAuthError, process_naver_callback
 from apps.api.config import Settings, get_settings

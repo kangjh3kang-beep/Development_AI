@@ -3,7 +3,6 @@
 이를 통해 사용자와 시스템 모두 계산의 신뢰도를 판단할 수 있다.
 """
 from datetime import datetime
-from typing import Optional
 
 
 class CalculationMetadata:
@@ -15,9 +14,9 @@ class CalculationMetadata:
         self.data_sources: list[dict] = []
         self.warnings: list[str] = []
         self.confidence_level: str = "high"  # high | medium | low
-        self.legal_basis_date: Optional[str] = None  # 법령 기준일
+        self.legal_basis_date: str | None = None  # 법령 기준일
 
-    def add_source(self, name: str, source_type: str, last_updated: Optional[datetime] = None, is_live: bool = False):
+    def add_source(self, name: str, source_type: str, last_updated: datetime | None = None, is_live: bool = False):
         """사용된 데이터 소스 기록."""
         self.data_sources.append({
             "name": name,

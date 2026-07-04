@@ -14,9 +14,6 @@ main.py 배선은 통합자가 한다(여기서는 router 만 export).
 
 from __future__ import annotations
 
-import asyncio
-from typing import Optional
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.foundation.parcel.batch.batch_service import BatchService
@@ -62,7 +59,7 @@ def _enqueue_celery(job_id: str) -> bool:
 async def submit_batch(
     inp: BatchInput,
     background: BackgroundTasks,
-    snapshot_id: Optional[str] = None,
+    snapshot_id: str | None = None,
 ) -> dict:
     """배치 제출(멱등). 제출 후 Celery enqueue + 인프로세스 백그라운드 실행을 함께 시도."""
     service = _service()

@@ -4,11 +4,22 @@ PermitDocumentSet, DesignAlternative."""
 from __future__ import annotations
 
 from datetime import datetime
+
 from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, Date, Float, ForeignKey,
-    Integer, Numeric, String, Text, UniqueConstraint,
+    BigInteger,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSON, UUID
+
 from app.core.database import Base
 
 

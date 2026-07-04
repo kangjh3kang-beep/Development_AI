@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import bisect
 import math
-from datetime import datetime, timezone, UTC
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 

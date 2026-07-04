@@ -1,6 +1,5 @@
 """운영 관리 서비스."""
-from datetime import datetime, timezone, UTC
-from typing import Dict, List
+from datetime import UTC, datetime
 
 
 class OperationsService:

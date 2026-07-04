@@ -17,12 +17,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.regional_tax_data import (
-    get_acquisition_tax_rates,
-    FARMLAND_CONVERSION_RATE,
-    FARMLAND_CONVERSION_MAX_PER_M2,
-    FOREST_CONVERSION_RATES,
     DEVELOPMENT_CHARGE_RATES,
+    FARMLAND_CONVERSION_MAX_PER_M2,
+    FARMLAND_CONVERSION_RATE,
+    FOREST_CONVERSION_RATES,
     NORMAL_LAND_RISE_RATE,
+    get_acquisition_tax_rates,
 )
 
 

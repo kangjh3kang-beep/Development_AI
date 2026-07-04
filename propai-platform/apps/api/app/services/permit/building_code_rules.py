@@ -17,16 +17,8 @@ RASE 방법론 기반: 각 법규 조항을 Requirement/Applicability/Selection/
 from __future__ import annotations
 
 import math
-import sys
+from enum import StrEnum
 from typing import Any
-
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:  # Python 3.10 호환성 백포트(코드베이스 공통 패턴) — 프로덕션 3.12엔 무영향.
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        pass
 
 from pydantic import BaseModel
 
@@ -363,7 +355,6 @@ class BuildingCodeRuleEngine:
         if floor_area <= 0 and total_gfa > 0 and floor_count > 0:
             floor_area = total_gfa / floor_count
 
-        issues: list[str] = []
         requirements: list[str] = []
 
         # 직통계단

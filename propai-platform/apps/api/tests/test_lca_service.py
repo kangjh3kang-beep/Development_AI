@@ -1,12 +1,13 @@
 """LCA 탄소 자동 계산 테스트 (ISO 14040, IPCC AR6)."""
 
-import sys
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.esg.lca_service import LCAService, IPCC_AR6_EMISSION_FACTORS
+from app.services.esg.lca_service import IPCC_AR6_EMISSION_FACTORS, LCAService
 
 
 class TestA1A3Calculation:

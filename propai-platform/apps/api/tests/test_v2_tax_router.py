@@ -1,8 +1,8 @@
 """v2 세금 라우터 테스트 — 경량 TestClient (전체 앱 비의존)."""
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from app.routers.v2_tax import router
 
 # 경량 테스트 앱: v2_tax 라우터만 등록

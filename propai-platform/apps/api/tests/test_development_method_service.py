@@ -19,7 +19,6 @@ from apps.api.services.development_method_service import (
     SiteProfile,
 )
 
-
 # ── 공통 테스트 프로파일 ──
 
 
@@ -93,7 +92,7 @@ class TestScoreCalculation:
 
         # 단독개발의 수동 계산
         scores = adjusted["단독개발"]
-        expected = sum(s * w for s, w in zip(scores, AHP_WEIGHTS))
+        expected = sum(s * w for s, w in zip(scores, AHP_WEIGHTS, strict=False))
         assert weighted["단독개발"] == pytest.approx(expected, rel=1e-6)
 
 

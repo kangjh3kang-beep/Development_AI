@@ -10,7 +10,6 @@ MQTT(EMQX) 기반 드론 데이터 수신 + YOLOv8(Roboflow) 하자 탐지.
 4. 심각도별 알림 (DroneAlertEvent SSE)
 """
 
-from typing import Union
 from uuid import UUID
 
 import structlog

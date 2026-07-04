@@ -4,7 +4,7 @@
 전국 최저입찰가 순위) + 저장조건 CRUD + 낙찰가능가 추정 + 관리/cron 동기화.
 """
 
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
@@ -52,7 +52,7 @@ def _subscriber_only_note() -> dict[str, Any]:
     }
 
 
-def _onbid_service_key() -> Optional[str]:
+def _onbid_service_key() -> str | None:
     """온비드 서비스 키 해석: ONBID_SERVICE_KEY → settings 폴백(없으면 None=unavailable)."""
     import os
 
@@ -160,11 +160,11 @@ async def list_auction_opportunities(
 
 @router.get("/search", summary="② 전국 조건검색(지역·종류·유찰·가격·낙찰가능가)")
 async def auction_search(
-    region: Optional[str] = Query(None, description="시/도(예: 서울)"),
-    kind: Optional[str] = Query(None, description="종류(land/building/apt/officetel/factory/etc)"),
-    min_fail: Optional[int] = Query(None, ge=0, description="최소 유찰회수"),
-    max_price: Optional[int] = Query(None, ge=0, description="최대 최저입찰가(원)"),
-    est_win_max: Optional[int] = Query(None, ge=0, description="예상 낙찰가(중앙) 상한(원)"),
+    region: str | None = Query(None, description="시/도(예: 서울)"),
+    kind: str | None = Query(None, description="종류(land/building/apt/officetel/factory/etc)"),
+    min_fail: int | None = Query(None, ge=0, description="최소 유찰회수"),
+    max_price: int | None = Query(None, ge=0, description="최대 최저입찰가(원)"),
+    est_win_max: int | None = Query(None, ge=0, description="예상 낙찰가(중앙) 상한(원)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
@@ -184,8 +184,8 @@ async def auction_search(
 
 @router.get("/ranking", summary="③ 전국 순위(조회수/관심 실데이터, 최저입찰가/할인율 캐시)")
 async def auction_ranking(
-    region: Optional[str] = Query(None, description="시/도(min_bid/discount_rate 캐시순위 전용)"),
-    kind: Optional[str] = Query(None, description="종류(min_bid/discount_rate 캐시순위 전용)"),
+    region: str | None = Query(None, description="시/도(min_bid/discount_rate 캐시순위 전용)"),
+    kind: str | None = Query(None, description="종류(min_bid/discount_rate 캐시순위 전용)"),
     by: str = Query("views", pattern="^(views|interest|min_bid|discount_rate)$",
                     description="views=조회수실데이터 / interest=관심실데이터 / "
                                 "min_bid·discount_rate=캐시순위"),
@@ -237,26 +237,26 @@ async def auction_ranking(
 
 @router.get("/bid-results", summary="④ 물건 입찰결과 조건검색(유찰·낙찰가율·감정가)")
 async def auction_bid_results(
-    sido: Optional[str] = Query(None, description="소재지 시/도(lctnSdnm)"),
-    sigungu: Optional[str] = Query(None, description="소재지 시/군/구(lctnSggnm)"),
-    emd: Optional[str] = Query(None, description="소재지 읍/면/동(lctnEmdNm)"),
-    prpt_div_cd: Optional[str] = Query(None, description="재산구분코드(prptDivCd)"),
-    pbct_stat: Optional[str] = Query(None, pattern="^(win|fail)$",
+    sido: str | None = Query(None, description="소재지 시/도(lctnSdnm)"),
+    sigungu: str | None = Query(None, description="소재지 시/군/구(lctnSggnm)"),
+    emd: str | None = Query(None, description="소재지 읍/면/동(lctnEmdNm)"),
+    prpt_div_cd: str | None = Query(None, description="재산구분코드(prptDivCd)"),
+    pbct_stat: str | None = Query(None, pattern="^(win|fail)$",
                                      description="win=낙찰(0010) / fail=유찰(0011)"),
-    fail_min: Optional[int] = Query(None, ge=0, description="최소 유찰횟수"),
-    fail_max: Optional[int] = Query(None, ge=0, description="최대 유찰횟수"),
-    apsl_min: Optional[int] = Query(None, ge=0, description="최소 감정가(원)"),
-    apsl_max: Optional[int] = Query(None, ge=0, description="최대 감정가(원)"),
-    minbid_min: Optional[int] = Query(None, ge=0, description="최소 최저입찰가(원)"),
-    minbid_max: Optional[int] = Query(None, ge=0, description="최대 최저입찰가(원)"),
-    land_min: Optional[float] = Query(None, ge=0, description="최소 토지면적(㎡)"),
-    land_max: Optional[float] = Query(None, ge=0, description="최대 토지면적(㎡)"),
-    bld_min: Optional[float] = Query(None, ge=0, description="최소 건물면적(㎡)"),
-    bld_max: Optional[float] = Query(None, ge=0, description="최대 건물면적(㎡)"),
-    opbd_start: Optional[str] = Query(None, description="개찰일 시작(yyyyMMdd)"),
-    opbd_end: Optional[str] = Query(None, description="개찰일 종료(yyyyMMdd)"),
-    cltr_nm: Optional[str] = Query(None, description="물건명 키워드"),
-    org_nm: Optional[str] = Query(None, description="처분기관명"),
+    fail_min: int | None = Query(None, ge=0, description="최소 유찰횟수"),
+    fail_max: int | None = Query(None, ge=0, description="최대 유찰횟수"),
+    apsl_min: int | None = Query(None, ge=0, description="최소 감정가(원)"),
+    apsl_max: int | None = Query(None, ge=0, description="최대 감정가(원)"),
+    minbid_min: int | None = Query(None, ge=0, description="최소 최저입찰가(원)"),
+    minbid_max: int | None = Query(None, ge=0, description="최대 최저입찰가(원)"),
+    land_min: float | None = Query(None, ge=0, description="최소 토지면적(㎡)"),
+    land_max: float | None = Query(None, ge=0, description="최대 토지면적(㎡)"),
+    bld_min: float | None = Query(None, ge=0, description="최소 건물면적(㎡)"),
+    bld_max: float | None = Query(None, ge=0, description="최대 건물면적(㎡)"),
+    opbd_start: str | None = Query(None, description="개찰일 시작(yyyyMMdd)"),
+    opbd_end: str | None = Query(None, description="개찰일 종료(yyyyMMdd)"),
+    cltr_nm: str | None = Query(None, description="물건명 키워드"),
+    org_nm: str | None = Query(None, description="처분기관명"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
@@ -341,8 +341,8 @@ async def auction_delete_filter(
 
 @router.post("/sync", summary="경공매 동기화(관리/cron) — 온비드 공매 / 법원경매 스크래핑")
 async def auction_sync(
-    region: Optional[str] = Query(None, description="시/도(미지정=전국 배치)"),
-    kind: Optional[str] = Query(None, description="종류"),
+    region: str | None = Query(None, description="시/도(미지정=전국 배치)"),
+    kind: str | None = Query(None, description="종류"),
     rows: int = Query(50, ge=1, le=200),
     source: str = Query("onbid", pattern="^(onbid|court)$",
                         description="onbid=공매 실API / court=법원경매 스크래핑"),

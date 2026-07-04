@@ -248,7 +248,7 @@ class TestRoundTrip:
         polys = [s for s in out["shapes"] if s["kind"] == "polyline"]
         assert len(polys) == 1
         assert polys[0]["closed"] is True
-        for got, exp in zip(polys[0]["points"], RECT_POINTS):
+        for got, exp in zip(polys[0]["points"], RECT_POINTS, strict=False):
             assert got["x"] == pytest.approx(exp["x"], abs=0.01)
             assert got["y"] == pytest.approx(exp["y"], abs=0.01)
         assert out["main_outline_index"] == out["shapes"].index(polys[0])
@@ -267,13 +267,13 @@ class TestRoundTrip:
         ]
         polygon, rect, line, circle, label = out["shapes"]
 
-        for got, exp in zip(polygon["points"], ROUNDTRIP_SHAPES[0]["points"]):
+        for got, exp in zip(polygon["points"], ROUNDTRIP_SHAPES[0]["points"], strict=False):
             assert got["x"] == pytest.approx(exp["x"], abs=0.01)
             assert got["y"] == pytest.approx(exp["y"], abs=0.01)
         assert polygon["closed"] is True
 
         rect_exp = [(20, 20), (80, 20), (80, 60), (20, 60)]
-        for got, (ex, ey) in zip(rect["points"], rect_exp):
+        for got, (ex, ey) in zip(rect["points"], rect_exp, strict=False):
             assert got["x"] == pytest.approx(ex, abs=0.01)
             assert got["y"] == pytest.approx(ey, abs=0.01)
 

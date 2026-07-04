@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 # ── 2026년 법정요율 ──
 
 RATES_2026: dict[str, float] = {

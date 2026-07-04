@@ -40,7 +40,9 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
     """R-ONE 지가변동률 실데이터로 시점수정(가용 시), 실패 시 근사 테이블 폴백."""
     try:
         from app.services.external_api.reb_client import (
-            reb_ready, fetch_land_price_changes, cumulative_factor_from_rows,
+            cumulative_factor_from_rows,
+            fetch_land_price_changes,
+            reb_ready,
         )
         if reb_ready():
             rows = await fetch_land_price_changes(months=24)

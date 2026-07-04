@@ -18,7 +18,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import io
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -140,7 +140,7 @@ async def _load_project_bim(project_id: str) -> list[dict[str, Any]]:
         return []
 
 
-async def _resolve_unit_prices() -> Optional[dict[str, Any]]:
+async def _resolve_unit_prices() -> dict[str, Any] | None:
     """단가 SSOT(UnitPriceRepository.get_prices) — DB 우선. 실패 시 None.
 
     None 이면 join_prices 가 동기 fallback(UNIT_PRICES_2026)으로 결합(회귀 0·결정론).
@@ -239,7 +239,7 @@ def _as_xlsx_bytes(raw: Any) -> bytes:
     )
 
 
-def _draft_summary_of(draft: Any) -> Optional[dict[str, Any]]:
+def _draft_summary_of(draft: Any) -> dict[str, Any] | None:
     """드래프트 결과에서 summary 추출 — items 전체(최대 3,997행) 중복 동봉 방지."""
     if not isinstance(draft, dict):
         return None
@@ -256,16 +256,16 @@ class BoqDraftParams(BaseModel):
     """드래프트 생성 파라미터 — gfa_sqm 필수(>0), 나머지 선택."""
 
     gfa_sqm: float = Field(..., gt=0, description="연면적(㎡) — 필수, 0 초과")
-    households: Optional[int] = Field(None, ge=0, description="세대수(선택)")
-    site_area_sqm: Optional[float] = Field(None, gt=0, description="대지면적(㎡, 선택)")
-    landscape_area_sqm: Optional[float] = Field(None, gt=0, description="조경면적(㎡, 선택)")
+    households: int | None = Field(None, ge=0, description="세대수(선택)")
+    site_area_sqm: float | None = Field(None, gt=0, description="대지면적(㎡, 선택)")
+    landscape_area_sqm: float | None = Field(None, gt=0, description="조경면적(㎡, 선택)")
 
 
 class BoqDraftRequest(BaseModel):
     """드래프트 생성/내보내기 요청."""
 
     params: BoqDraftParams
-    disciplines: Optional[list[str]] = Field(
+    disciplines: list[str] | None = Field(
         None, description="대상 공종 목록(없으면 B2 기본 = 전체 5공종)")
 
 
@@ -297,8 +297,8 @@ def master_summary() -> dict[str, Any]:
 @router.get("/master/items", summary="공종 표준항목 조회(섹션/검색/페이지네이션)")
 def master_items(
     discipline: str = Query(..., description="공종 — 한글 canonical(건축 등) 또는 영문 stem(architecture 등)"),
-    section_code: Optional[str] = Query(None, description="섹션 코드 필터"),
-    q: Optional[str] = Query(None, description="name/spec 부분일치 검색어"),
+    section_code: str | None = Query(None, description="섹션 코드 필터"),
+    q: str | None = Query(None, description="name/spec 부분일치 검색어"),
     limit: int = Query(100, ge=1, description="페이지 크기(<=500 클램프)"),
     offset: int = Query(0, ge=0, description="페이지 오프셋"),
 ) -> dict[str, Any]:
@@ -455,7 +455,7 @@ async def apply_cost(req: BoqApplyCostRequest) -> dict[str, Any]:
     }
 
 
-async def _priced_cost_estimate(draft: Any) -> Optional[dict[str, Any]]:
+async def _priced_cost_estimate(draft: Any) -> dict[str, Any] | None:
     """단가 결합 항목 직접비 → OriginCostCalculator(12단계 법정요율) 산정(가산·옵션).
 
     결합 항목 0건이거나 경로 실패 시 None(기존 개산 경로가 폴백 — 회귀 0).

@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import random
 import time
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def normalize_kind(raw: Any) -> str:
     return "etc"
 
 
-def sido_to_code(region: Any) -> Optional[str]:
+def sido_to_code(region: Any) -> str | None:
     """시/도 키워드(서울/서울특별시/경기 등)를 rprsAdongSdCd 2자리 코드로 변환."""
     s = str(region or "").strip()
     if not s:
@@ -104,7 +104,7 @@ def sido_to_code(region: Any) -> Optional[str]:
     return None
 
 
-def _safe_int(raw: Any) -> Optional[int]:
+def _safe_int(raw: Any) -> int | None:
     """금액/횟수 문자열을 정수로(원 단위). 0/빈값/'비공개'는 None(가짜 금지)."""
     if raw is None:
         return None
@@ -125,7 +125,7 @@ def _clean(s: Any) -> str:
     return " ".join(str(s or "").split())
 
 
-def _normalize_court_date(raw: Any) -> Optional[str]:
+def _normalize_court_date(raw: Any) -> str | None:
     """yyyyMMdd(매각기일) → ISO8601 날짜. 빈값/형식불일치 시 None."""
     from datetime import datetime
 
@@ -242,7 +242,7 @@ class CourtAuctionScraper:
             time.sleep(delay)
 
     def _build_payload(
-        self, *, region: Optional[str], page: int, page_size: int,
+        self, *, region: str | None, page: int, page_size: int,
     ) -> dict[str, Any]:
         """searchControllerMain.on 요청 본문(부동산 전국/지역 조회)을 구성한다."""
         srch: dict[str, Any] = {
@@ -265,7 +265,7 @@ class CourtAuctionScraper:
             "dma_srchGdsDtlSrchInfo": srch,
         }
 
-    def _request(self, client, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _request(self, client, payload: dict[str, Any]) -> dict[str, Any] | None:
         """검색 컨트롤러에 POST(JSON). 실패/비-JSON 시 None(가짜 생성 금지)."""
         try:
             resp = client.post(
@@ -292,9 +292,9 @@ class CourtAuctionScraper:
     def fetch_items(
         self,
         *,
-        region: Optional[str] = None,
-        kind: Optional[str] = None,
-        max_pages: Optional[int] = None,
+        region: str | None = None,
+        kind: str | None = None,
+        max_pages: int | None = None,
         page_size: int = 40,
     ) -> dict[str, Any]:
         """법원경매 물건을 JSON API로 소량·지연 수집한다(순차).
@@ -311,7 +311,7 @@ class CourtAuctionScraper:
         pages = min(self.max_pages, max_pages or self.max_pages)
         items: list[dict[str, Any]] = []
         total = 0
-        last_reason: Optional[str] = None
+        last_reason: str | None = None
         blocked = False
 
         try:

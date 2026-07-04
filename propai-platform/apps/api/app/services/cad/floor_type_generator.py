@@ -11,9 +11,7 @@
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 import structlog
 
@@ -300,7 +298,7 @@ class FloorTypeGenerator:
         # 코어 면적
         core_w = 4.0
         core_d = 6.0
-        core_area = core_count * core_w * core_d
+        core_count * core_w * core_d
 
         # 가용 세대 면적 (양쪽)
         inner_w = building_width_m - 2 * wt

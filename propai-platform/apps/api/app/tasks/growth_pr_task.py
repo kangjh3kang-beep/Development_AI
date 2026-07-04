@@ -105,9 +105,9 @@ async def _process_proposals(db, *, limit: int = 5) -> dict[str, Any]:
     GH_TOKEN 없으면 전부 'artifact_only' 로 마킹(PR 미생성). 있으면 Draft PR 생성 시도.
     반환: {"processed","pr_created","artifact_only"}.
     """
-    from app.services.growth import improvement_agent
-
     from sqlalchemy import text
+
+    from app.services.growth import improvement_agent
 
     summary = {"processed": 0, "pr_created": 0, "artifact_only": 0}
 

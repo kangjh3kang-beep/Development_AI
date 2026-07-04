@@ -1,11 +1,9 @@
 """유닛믹스 최적화 라우터."""
 
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.app.services.feasibility.unit_mix_optimizer import (
     DEFAULT_DEMAND_RATIO,
     DEFAULT_PRICE_BY_TYPE,
@@ -13,6 +11,7 @@ from apps.api.app.services.feasibility.unit_mix_optimizer import (
     UnitMixInput,
     UnitMixOptimizer,
 )
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter()
 
@@ -26,9 +25,9 @@ class UnitMixRequest(BaseModel):
     max_bcr_pct: float = 60
     max_floors: int = 25
     region: str = "서울"
-    price_by_type: Optional[dict] = None
-    demand_ratio: Optional[dict] = None
-    enabled_types: Optional[list] = None
+    price_by_type: dict | None = None
+    demand_ratio: dict | None = None
+    enabled_types: list | None = None
 
 
 @router.post("/optimize")

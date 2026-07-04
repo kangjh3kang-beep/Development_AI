@@ -17,7 +17,6 @@ from apps.api.services.digital_twin_service import (
     DigitalTwinService,
 )
 
-
 # ── EUI 계산 테스트 ──
 
 

@@ -6,8 +6,6 @@ T3-3: G-SEED, ZEB, LEED 인증 등급 예측 로직을 검증한다.
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from apps.api.services.green_certification_service import (

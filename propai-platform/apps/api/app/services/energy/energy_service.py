@@ -1,6 +1,5 @@
 """건물 에너지 시뮬레이션 서비스."""
 
-from typing import Dict, List
 
 
 class EnergyService:
@@ -43,7 +42,7 @@ class EnergyService:
 
     def simulate_energy(self, building_data: dict, building_type: str = "apartment") -> dict:
         area = building_data.get("total_area_sqm", 5000)
-        floors = building_data.get("floors", 10)
+        building_data.get("floors", 10)
         grade = building_data.get("insulation_grade", "standard")
 
         # Map insulation grade to approximate BEEC grade for intensity lookup
@@ -89,7 +88,7 @@ class EnergyService:
 
     def recommend_improvements(self, current_energy: dict, building_type: str = "apartment") -> list[dict]:
         recommendations = []
-        grade = current_energy.get("beec_grade", "5")
+        current_energy.get("beec_grade", "5")
         kwh_sqm = current_energy.get("annual_kwh_per_sqm", 300)
 
         if kwh_sqm > 200:

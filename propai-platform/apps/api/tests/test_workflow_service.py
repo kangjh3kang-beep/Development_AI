@@ -1,8 +1,9 @@
 import os
 import sys
 import uuid
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -92,7 +93,7 @@ class TestAdvanceStage:
         db.scalar = AsyncMock(return_value=wf)
         db.refresh = AsyncMock()
         svc = WorkflowService(db)
-        result = await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
+        await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
         assert wf.stage_index == 1
         assert wf.current_stage == "B"
 
@@ -104,7 +105,7 @@ class TestAdvanceStage:
         db.scalar = AsyncMock(return_value=wf)
         db.refresh = AsyncMock()
         svc = WorkflowService(db)
-        result = await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
+        await svc.advance_stage(WORKFLOW_ID, TENANT_ID)
         assert wf.status == "completed"
 
     @patch("apps.api.services.workflow_service.get_settings")
