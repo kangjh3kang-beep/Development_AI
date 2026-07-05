@@ -18,7 +18,7 @@ set -uo pipefail
 
 TARGET="${1:-web}"                 # web | api | both
 DEPLOY_REF="${2:-${DEPLOY_REF:-main}}"
-REPO="$HOME/Development_AI"
+REPO="/home/kangjh3kang/My_Projects/Development_AI"
 COMPOSE_DIR="$REPO/propai-platform"
 NET_PRIMARY="propai-platform_propai-network"
 NET_FALLBACK="propai-platform-propai-network"
