@@ -347,10 +347,22 @@ export function ParcelPickerMap({ onPick, onPickMany, height = 360 }: ParcelPick
           zoom: 12,
           scrollWheelZoom: true,
         });
-        // OSM 타일 (카카오 키 없이 전 세계 사용 가능)
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap",
+        const VWORLD_API_KEY = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
+        const domain = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+
+        // VWorld 기본지도 타일
+        L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_API_KEY}/Base/{z}/{y}/{x}.png`, {
+          attribution: "© VWorld",
           maxZoom: 19,
+        }).addTo(map);
+
+        // VWorld 지적도 (Cadastral) WMS 타일
+        L.tileLayer.wms(`https://api.vworld.kr/req/wms?key=${VWORLD_API_KEY}&domain=${domain}`, {
+          layers: 'lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun',
+          styles: 'lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun',
+          format: 'image/png',
+          transparent: true,
+          attribution: '© VWorld 지적도'
         }).addTo(map);
         mapRef.current = map;
 

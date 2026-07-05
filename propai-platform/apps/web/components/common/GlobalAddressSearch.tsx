@@ -1239,7 +1239,7 @@ export function GlobalAddressSearch({
       {/* 다른 등록 방식 — 엑셀 일괄 등록 + 지도 클릭 선택(전체폭 스택).
           (주소·지번 검색은 위 통합 검색으로 일원화. single 모드는 이 영역 미렌더 — 회귀 없음) */}
       {!single && (
-      <div className="grid grid-cols-1 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
       {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강).
           주소·지번 검색은 위 통합 검색(VWorld 자동완성 + 다음 보조)으로 일원화 — 여긴 엑셀·지도만. */}
         <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
