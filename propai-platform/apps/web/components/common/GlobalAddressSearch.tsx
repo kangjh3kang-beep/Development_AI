@@ -27,18 +27,18 @@ import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapComponent } from "@/components/map/ParcelBoundaryMap";
 import type { NearbyTransactionsMap as NearbyTransactionsMapComponent } from "@/components/map/NearbyTransactionsMap";
 
-// 지도 클릭 필지 선택 컴포넌트 — SSR 없이 동적 로드(Leaflet은 window 필요)
-const ParcelPickerMapDynamic = dynamicMap(
-  () => import("@/components/map/ParcelPickerMap"),
-  { pick: "ParcelPickerMap", height: 360, loadingMessage: "필지 선택 지도 로딩…" },
-);
-const ParcelBoundaryMapDynamic = dynamicMap<ComponentProps<typeof ParcelBoundaryMapComponent>>(
-  () => import("@/components/map/ParcelBoundaryMap"),
-  { pick: "ParcelBoundaryMap", height: 500, loadingMessage: "지적도·용도지역 지도 로딩…" },
-);
-const NearbyTransactionsMapDynamic = dynamicMap<ComponentProps<typeof NearbyTransactionsMapComponent>>(
-  () => import("@/components/map/NearbyTransactionsMap"),
-  { pick: "NearbyTransactionsMap", height: 500, loadingMessage: "실거래·분양 지도 로딩…" },
+import dynamic from "next/dynamic";
+
+const SatongMultiMapDynamic = dynamic(
+  () => import("@/components/map/SatongMultiMap").then((m) => m.SatongMultiMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[540px] w-full items-center justify-center rounded-2xl bg-slate-100 text-xs font-semibold text-slate-500">
+        사통팔땅 라이브 통합지도 로딩 중…
+      </div>
+    ),
+  },
 );
 
 type SatongMapMode = "cadastre" | "select" | "market";
@@ -963,6 +963,20 @@ export function GlobalAddressSearch({
       : null
     : localAnalysis;
 
+  const selectedSatongFeatures = useMemo(() => {
+    return addresses.map((a) => ({
+      id: a.__uid || a.pnu || a.fullAddress || a.jibunAddress || "parcel",
+      address: a.fullAddress || a.jibunAddress || a.roadAddress || "필지",
+      pnu: a.pnu ?? null,
+      areaSqm: a.areaSqm ?? null,
+      zoneType: a.zoneCode ?? null,
+      officialPricePerSqm: a.officialPrice ?? null,
+      builtYear: null,
+      buildingAgeYears: null,
+      source: "search" as const,
+    }));
+  }, [addresses]);
+
   const hasRegisteredParcels = displayAddresses.length > 0;
   const activeLayerLabel = mapMode === "cadastre"
     ? "지적·공시·노후"
@@ -1514,145 +1528,19 @@ export function GlobalAddressSearch({
               </div>
             </aside>
             <div className="flex-[2] basis-[400px] min-w-[320px] bg-[var(--surface-secondary)] p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 py-2">
-                <div>
-                  <p className="text-[12px] font-black text-[var(--text-primary)]">사통팔땅 멀티지도</p>
-                  <p className="text-[10.5px] font-semibold text-[var(--text-hint)]">지적·용도지역·공시지가·노후도·실거래·분양·로드뷰를 한 작업면에서 전환합니다.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {([
-                    ["cadastre", "지적·노후도"],
-                    ["market", "실거래·분양"],
-                    ["select", "주변 필지 선택"],
-                  ] as const).map(([mode, label]) => {
-                    const disabledMode = mode !== "select" && mapParcelLabels.length === 0;
-                    const active = mapMode === mode;
-                    return (
-                      <button
-                        key={mode}
-                        type="button"
-                        disabled={disabledMode}
-                        onClick={() => setMapMode(mode)}
-                        className={`rounded-full px-3 py-1.5 text-[11px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                          active
-                            ? "bg-[var(--saas-ink)] text-white"
-                            : "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm">
+                <SatongMultiMapDynamic
+                  height={580}
+                  onPickMany={handleMapPickMany}
+                  focusTarget={mapFocus}
+                  autoPreviewFocus={!!mapFocus}
+                  selectedParcels={selectedSatongFeatures}
+                  layerState={{
+                    enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"],
+                    controlsByLayer: {},
+                  }}
+                />
               </div>
-              <div className="mb-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_250px]">
-                <div className="rounded-2xl border border-[var(--line)] bg-white p-2.5">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
-                      <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 지도 레이어 콘솔
-                    </span>
-                    <span className="rounded-full bg-[var(--saas-lime-soft)] px-2.5 py-1 text-[10.5px] font-black text-[var(--saas-lime-text)]">
-                      현재 {activeLayerLabel}
-                    </span>
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
-                    {satongLayerGroups.map((layer) => {
-                      const active = layer.active;
-                      const target = layer.target;
-                      const stateLabel = active ? "활성" : layer.enabled ? "준비됨" : "주소 필요";
-                      const shellClass = `min-h-[104px] rounded-2xl border px-3 py-2.5 text-left transition-all ${
-                        active
-                          ? "border-[var(--saas-lime)] bg-[var(--saas-ink)] text-white shadow-[var(--shadow-glow)]"
-                          : layer.enabled
-                            ? "border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-primary)] hover:border-[var(--accent-strong)] hover:bg-white"
-                            : "border-dashed border-[var(--line-strong)] bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
-                      }`;
-                      const body = (
-                        <>
-                          <div className="flex items-start justify-between gap-2">
-                            <span className={`text-[10px] font-black uppercase ${active ? "text-[var(--saas-lime)]" : "text-[var(--text-hint)]"}`}>
-                              {layer.meta}
-                            </span>
-                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
-                              active
-                                ? "bg-[var(--saas-lime)] text-[var(--saas-ink)]"
-                                : layer.enabled
-                                  ? "bg-white text-[var(--accent-strong)]"
-                                  : "bg-white/70 text-[var(--text-hint)]"
-                            }`}>
-                              {stateLabel}
-                            </span>
-                          </div>
-                          <p className={`mt-2 text-[13px] font-black ${active ? "text-white" : "text-[var(--text-primary)]"}`}>{layer.label}</p>
-                          <p className={`mt-1 text-[11px] font-semibold leading-5 ${active ? "text-white/72" : "text-[var(--text-secondary)]"}`}>{layer.description}</p>
-                        </>
-                      );
-                      if (target === "tools") {
-                        return <div key={layer.key} className={shellClass}>{body}</div>;
-                      }
-                      return (
-                        <button
-                          key={layer.key}
-                          type="button"
-                          disabled={!layer.enabled}
-                          aria-pressed={active}
-                          onClick={() => setMapMode(target)}
-                          className={`${shellClass} disabled:cursor-not-allowed`}
-                        >
-                          {body}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-[var(--saas-ink-line-strong)] bg-[var(--saas-ink)] p-3 text-white">
-                  <p className="text-[11px] font-black uppercase tracking-widest text-[var(--saas-lime)]">Next action</p>
-                  <p className="mt-2 text-sm font-black text-white">검색부터 산출물까지 한 흐름</p>
-                  <p className="mt-2 text-[11px] font-semibold leading-5 text-white/72">{mapNextAction}</p>
-                  <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-full border border-white/10 bg-white/8 text-center text-[10px] font-black">
-                    <span className="px-2 py-1.5 text-[var(--saas-lime)]">검색</span>
-                    <span className="border-x border-white/10 px-2 py-1.5">지도검토</span>
-                    <span className="px-2 py-1.5">산출물</span>
-                  </div>
-                  <div className="mt-3 rounded-2xl border border-white/10 bg-white/8 p-2">
-                    <p className="mb-1.5 text-[10.5px] font-black text-[var(--saas-lime)]">연결 산출물</p>
-                    <div className="space-y-1.5">
-                      {satongOutputLinks.map((item) => (
-                        <div key={item.label} className="rounded-xl border border-white/10 bg-black/16 px-2.5 py-2">
-                          <p className="text-[11px] font-black text-white">{item.label}</p>
-                          <p className="mt-0.5 text-[10px] font-semibold text-white/58">{item.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              {mapMode === "cadastre" && mapParcelLabels.length > 0 ? (
-                <MapShell height={500} label="지적도·노후도 지도를 표시할 수 없습니다" loadingMessage="지적도·노후도 지도 로딩…">
-                  <ParcelBoundaryMapDynamic
-                    parcels={mapParcelLabels}
-                    primaryZone={displayAnalysis?.zoneCode ?? null}
-                    defaultUseDistrict
-                  />
-                </MapShell>
-              ) : mapMode === "market" && mapParcelLabels.length > 0 ? (
-                <MapShell height={500} label="실거래·분양 지도를 표시할 수 없습니다" loadingMessage="실거래·분양 지도 로딩…">
-                  <NearbyTransactionsMapDynamic
-                    address={displayAddresses[0]?.fullAddress || displayAddresses[0]?.jibunAddress || mapParcelLabels[0]}
-                    pnu={displayAddresses[0]?.pnu}
-                  />
-                </MapShell>
-              ) : (
-                <MapShell height={500} label="필지 선택 지도를 표시할 수 없습니다" loadingMessage="필지 선택 지도 로딩…">
-                  <ParcelPickerMapDynamic
-                    onPick={handleMapPick}
-                    onPickMany={handleMapPickMany}
-                    focusTarget={mapFocus}
-                    autoPreviewFocus={!!mapFocus}
-                    height={500}
-                  />
-                </MapShell>
-              )}
             </div>
           </div>
         </div>
