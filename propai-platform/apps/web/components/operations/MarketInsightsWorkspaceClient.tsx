@@ -12,7 +12,10 @@ import type {
   NearbyMapPayload,
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
+import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(

@@ -19,6 +19,8 @@ const SatongMultiMapDynamic = dynamic(
   () => import("@/components/map/SatongMultiMap").then((m) => m.SatongMultiMap),
   { ssr: false },
 );
+import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
+import { LandShareModal, type LandShareUnit } from "@/components/operations/LandShareModal";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
@@ -834,29 +836,26 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
               <span className="text-[var(--text-hint)]">· 표의 번호/지도 필지 클릭 시 상호 강조</span>
             </div>
-            <ParcelBoundaryMap
-              parcels={rows.map((r) => r.jibun).filter(Boolean)}
-              statusColors={statusColors}
-              statusLabels={statusLabels}
-              highlight={highlight}
-              onParcelClick={(a) => setHighlight(a)}
+            <SatongMultiMapDynamic
+              height={500}
+              selectedParcels={rows.filter((r) => r.jibun).map((r, i) => ({
+                id: r.id || `land-${i}`,
+                address: r.jibun,
+                pnu: r.pnu ?? null,
+                areaSqm: r.area_sqm ?? null,
+                zoneType: r.zone_code ?? null,
+                source: "search" as const,
+              }))}
+              featureStatusColors={statusColors}
+              featureStatusLabels={statusLabels}
+              highlightFeatureAddress={highlight}
+              onFeatureClick={(feat) => setHighlight(feat.address)}
+              layerState={{
+                enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"],
+                controlsByLayer: {},
+              }}
             />
           </div>
-
-          {/* 구획도 주변 토지 실거래·시세(공시지가는 '적정' 분석으로 확인) */}
-          {(highlight || rows.find((r) => r.jibun.trim())?.jibun) && (
-            <div>
-              <p className="mb-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
-                <TrendingUp className="size-4" aria-hidden />주변 토지 실거래·시세 <span className="cc-chip-data">RADIUS 1KM</span> <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준</span>
-              </p>
-              {/* 강조 행(없으면 첫 유효 지번)의 pnu를 함께 전달 — pnu가 없으면 ""로 두어 그 지번 주소로
-                  지오코딩하게 한다(내부 store 폴백이 프로젝트 대표 pnu를 잘못 끌어오는 누수 방지). */}
-              <NearbyTransactionsMap
-                address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""}
-                pnu={(highlight ? rows.find((r) => r.jibun === highlight) : rows.find((r) => r.jibun.trim()))?.pnu ?? ""}
-              />
-            </div>
-          )}
         </>
       )}
 
