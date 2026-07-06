@@ -566,9 +566,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   의존성은 원시값(lat·lon·address) — 참조 churn 재조회 방지(#178 교훈, 실거래와 동일 패턴).
   const [poiPayload, setPoiPayload] = useState<SatongPoiPayload | null>(null);
   const poiEnabled = enabledLayers.has("poi");
-  // 선택필지 좌표 우선, 없으면(브라우즈 모드) 지도중심 폴백(P1) → 필지 없이도 지역 탐색 가능.
-  const poiAnchorLat = marketAnchor?.lat ?? mapCenter?.lat ?? null;
-  const poiAnchorLon = marketAnchor?.lon ?? mapCenter?.lon ?? null;
+  // ★선택필지가 있으면 그 필지 좌표만 사용(좌표 없으면 null → POI는 주소 지오코딩으로 해소).
+  //   선택이 전혀 없을 때만(브라우즈 모드) 지도중심 폴백(P1). 좌표없는 선택필지(엑셀 업로드 등)가
+  //   엉뚱한 지도중심 POI로 폴백되는 역전을 차단(리뷰 LOW).
+  const hasSelection = marketAnchor != null;
+  const poiAnchorLat = hasSelection ? marketAnchor?.lat ?? null : mapCenter?.lat ?? null;
+  const poiAnchorLon = hasSelection ? marketAnchor?.lon ?? null : mapCenter?.lon ?? null;
   useEffect(() => {
     if (!poiEnabled || (poiAnchorLat == null && !marketAnchorAddress)) {
       setPoiPayload(null);
@@ -906,9 +909,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }
     // 폴백: 활성 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값).
     if (storeParcels?.length) {
-      hydratedRef.current = true;
       const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+      // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
+      //   다음 storeParcels 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
       if (seeded.length) {
+        hydratedRef.current = true;
         setSelectedParcels(seeded);
         const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
         if (focused?.lat != null && focused.lon != null) {

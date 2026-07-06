@@ -462,6 +462,7 @@ export function SatongMultiMap({
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
   onCenterChangeRef.current = onCenterChange;
+  const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
     isFull: isMapFullscreen,
@@ -838,11 +839,11 @@ export function SatongMultiMap({
 
         // 지도 이동 완료 → 현재 중심 통지(선택필지 없을 때 지역레이어 폴백 앵커). 디바운스+
         //   좌표 반올림(4자리≈11m)으로 미세 이동/프로그램적 fitBounds에 의한 재조회 폭주를 억제.
-        let moveTimer: ReturnType<typeof setTimeout> | null = null;
+        //   ★타이머는 ref로 관리해 언마운트 cleanup에서 해제(리뷰 LOW — setTimeout 누수 방지).
         let lastCenterKey = "";
         map.on("moveend", () => {
-          if (moveTimer) clearTimeout(moveTimer);
-          moveTimer = setTimeout(() => {
+          if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
+          moveTimerRef.current = setTimeout(() => {
             const cb = onCenterChangeRef.current;
             if (!cb) return;
             const c = map.getCenter();
@@ -862,6 +863,7 @@ export function SatongMultiMap({
 
     return () => {
       alive = false;
+      if (moveTimerRef.current) { clearTimeout(moveTimerRef.current); moveTimerRef.current = null; }
       if (mapRef.current) {
         try { mapRef.current.remove(); } catch { /* noop */ }
         mapRef.current = null;
