@@ -1549,9 +1549,7 @@ export function SatongMultiMap({
         </button>
 
         {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote || developmentNote) && (
-          <div className={`pointer-events-none absolute left-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300 ${
-            hasSatongLayer(layerState, "age") ? "bottom-36" : "bottom-3"
-          }`}>
+          <div className="pointer-events-none absolute left-3 bottom-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300">
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {overlayNote}
@@ -1592,7 +1590,7 @@ export function SatongMultiMap({
 
         {/* 노후도 범례 레전드 UI - 좌하단 이동 및 겹침 방지 */}
         {hasSatongLayer(layerState, "age") && (
-          <div className="absolute bottom-3 left-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
+          <div className="absolute bottom-16 left-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
             <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
             <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
               {AGE_LEGEND_ITEMS.map((item) => (
