@@ -94,7 +94,15 @@ export function priceColor(price: number | null | undefined, min: number, max: n
   return PRICE_RAMP[index];
 }
 
-const AGE_RAMP = ["#7dd3fc", "#34d399", "#facc15", "#fb923c", "#ef4444"];
+const AGE_RAMP = ["#38bdf8", "#34d399", "#facc15", "#fb923c", "#ef4444"];
+
+export const AGE_LEGEND_ITEMS = [
+  { color: "#38bdf8", label: "10년 미만 (신축)" },
+  { color: "#34d399", label: "10~20년 (준신축)" },
+  { color: "#facc15", label: "20~30년 (보통)" },
+  { color: "#fb923c", label: "30~40년 (노후)" },
+  { color: "#ef4444", label: "40년 이상 (극노후)" },
+];
 
 export function ageColor(age: number | null | undefined): string {
   if (age == null || age < 0) return "#94a3b8";
@@ -105,12 +113,27 @@ export function ageColor(age: number | null | undefined): string {
   return AGE_RAMP[4];
 }
 
+export function ageLabel(age: number | null | undefined): string {
+  if (age == null || age < 0) return "정보없음";
+  if (age < 10) return "10년 미만 (신축)";
+  if (age < 20) return "10~20년 (준신축)";
+  if (age < 30) return "20~30년 (보통)";
+  if (age < 40) return "30~40년 (노후)";
+  return "40년 이상 (극노후)";
+}
+
 export function priceManPyeong(perSqm: number | null | undefined): string {
   if (!perSqm || perSqm <= 0) return "-";
   // ㎡·평 병행 표기(1평 = 3.305785㎡) — 공시지가 원천은 원/㎡, 실무 관행은 만원/평.
   const manPerSqm = Math.round(perSqm / 1e4).toLocaleString();
   const manPerPyeong = Math.round((perSqm * 3.305785) / 1e4).toLocaleString();
   return `${manPerSqm}만원/㎡ (${manPerPyeong}만원/평)`;
+}
+
+export function pricePyeongOnly(perSqm: number | null | undefined): string {
+  if (!perSqm || perSqm <= 0) return "-";
+  const manPerPyeong = Math.round((perSqm * 3.305785) / 1e4).toLocaleString();
+  return `${manPerPyeong}만원/평`;
 }
 
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {

@@ -19,12 +19,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
+  AGE_LEGEND_ITEMS,
   ageColor,
+  ageLabel,
   hasSatongLayer,
   hasSatongLayerControl,
   mergeSatongMapFeatures,
   priceColor,
   priceManPyeong,
+  pricePyeongOnly,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
   type SatongMapFeature,
@@ -418,10 +421,14 @@ const MARKET_TYPE_COLORS: Record<string, string> = {
 };
 
 const PRESALE_STATUS_COLORS: Record<string, string> = {
+  분양중: "#ef4444",
   접수중: "#ef4444",
+  분양예정: "#0ea5e9",
   접수예정: "#0ea5e9",
+  미분양: "#f59e0b",
+  분양완료: "#94a3b8",
   마감: "#94a3b8",
-  미정: "#f59e0b",
+  미정: "#64748b",
 };
 
 function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): string {
@@ -951,6 +958,44 @@ export function SatongMultiMap({
       if (baseLayerRef.current === layer) baseLayerRef.current = null;
     };
   }, [baseLayerMode, mapReady]);
+
+  // VWorld 연속지적도 전체 오버레이 타일 (showCadastre 활성화 시 지도 전체 렌더)
+  const cadastreTileRef = useRef<any>(null);
+  const showCadastreTile = hasSatongLayer(layerState, "cadastre");
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (cadastreTileRef.current) {
+      try { map.removeLayer(cadastreTileRef.current); } catch { /* noop */ }
+      cadastreTileRef.current = null;
+    }
+
+    if (showCadastreTile) {
+      const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
+      const cadastreLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
+        layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
+        styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
+        format: "image/png",
+        transparent: true,
+        maxZoom: 19,
+        minZoom: 10,
+        key: apiKey,
+        domain: "www.4t8t.net",
+        attribution: "VWorld 연속지적도",
+      }).addTo(map);
+      cadastreTileRef.current = cadastreLayer;
+    }
+
+    return () => {
+      if (cadastreTileRef.current) {
+        try { map.removeLayer(cadastreTileRef.current); } catch { /* noop */ }
+        cadastreTileRef.current = null;
+      }
+    };
+  }, [mapReady, showCadastreTile]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
@@ -1045,7 +1090,7 @@ export function SatongMultiMap({
           color,
           weight: 2.5,
           fillColor: color,
-          fillOpacity: 0.38,
+          fillOpacity: 0.55,
         });
       }
 
@@ -1474,6 +1519,21 @@ export function SatongMultiMap({
                 VWorld 기본지도 타일 연결 실패
               </span>
             )}
+          </div>
+        )}
+
+        {/* 노후도 범례 레전드 UI */}
+        {hasSatongLayer(layerState, "age") && (
+          <div className="absolute bottom-3 right-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+            <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
+            <div className="flex flex-col gap-1 text-[10.5px]">
+              {AGE_LEGEND_ITEMS.map((item) => (
+                <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                  <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
