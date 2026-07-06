@@ -304,7 +304,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+      <section className="flex flex-col gap-8">
         <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between gap-3">
             <div>
