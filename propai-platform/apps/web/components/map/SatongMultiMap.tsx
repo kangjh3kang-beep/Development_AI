@@ -386,9 +386,9 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
 
 function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): string {
   return [
-    `<div style="padding:8px 10px;font-size:12px;line-height:1.55;min-width:180px;">`,
+    `<div style="padding:10px 12px;font-size:12px;line-height:1.6;min-width:200px;">`,
+    feature.zoneType ? `<div style="margin-bottom:6px;"><span style="background:#0e7490;color:#fff;padding:3px 8px;border-radius:6px;font-weight:900;font-size:11.5px;letter-spacing:-0.2px;">용도지역: ${escapeHtml(feature.zoneType)}</span></div>` : "",
     `<b>${escapeHtml(feature.address || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
-    feature.zoneType ? `<br/>용도지역: ${escapeHtml(feature.zoneType)}${feature.zoneType2 ? ` / ${escapeHtml(feature.zoneType2)}` : ""}` : "",
     feature.areaSqm ? `<br/>면적: ${Math.round(feature.areaSqm).toLocaleString()}㎡ (${toP(feature.areaSqm)}평)` : "",
     feature.jimok ? `<br/>지목: ${escapeHtml(feature.jimok)}` : "",
     feature.officialPricePerSqm ? `<br/>공시지가: ${escapeHtml(priceManPyeong(feature.officialPricePerSqm))}` : "",
@@ -716,6 +716,8 @@ export function SatongMultiMap({
   }, []);
 
   /** 클릭한 좌표로 필지를 조회하고 결과를 pending 상태로 둔다 */
+  const isMapClickSelectionRef = useRef(false);
+
   const queryParcel = useCallback(async (lat: number, lon: number, opts: { autoStage?: boolean } = {}) => {
     const seq = ++querySeqRef.current;
     setStatus("loading");
@@ -727,10 +729,17 @@ export function SatongMultiMap({
     const map = mapRef.current;
     if (!map) return;
 
-    // 클릭 위치에 임시 파란 마커 표시(조회 중 피드백)
-    const tempMarker = L.circleMarker([lat, lon], {
-      radius: 6, color: "#3b82f6", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.5,
-    }).addTo(map);
+    // 클릭 위치에 <16ms 즉시 반응 펄스 마커(Pulsing Wave Ripple) 표출
+    const rippleIcon = L.divIcon({
+      className: "custom-ripple-icon",
+      html: `<div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">
+        <span style="position:absolute;width:100%;height:100%;border-radius:50%;background:#3b82f6;opacity:0.6;animation:ping 1s cubic-bezier(0,0,0.2,1) infinite;"></span>
+        <span style="position:relative;width:14px;height:14px;border-radius:50%;background:#1d4ed8;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></span>
+      </div>`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+    const tempMarker = L.marker([lat, lon], { icon: rippleIcon }).addTo(map);
 
     let result: ParcelAtPointResult;
     try {
@@ -896,6 +905,7 @@ export function SatongMultiMap({
         // 지도 클릭 → 필지 조회
         map.on("click", (e: any) => {
           if (readOnly) return;
+          isMapClickSelectionRef.current = true;
           void queryParcel(e.latlng.lat, e.latlng.lng);
         });
 
@@ -975,7 +985,21 @@ export function SatongMultiMap({
 
     if (showCadastreTile) {
       const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
-      const cadastreLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
+      // 1. 용도지역지구 WMS 타일 (LT_C_UQ111 — 주거/상업/공업/녹지 색상)
+      const zoningTile = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
+        layers: "LT_C_UQ111",
+        styles: "LT_C_UQ111",
+        format: "image/png",
+        transparent: true,
+        maxZoom: 19,
+        minZoom: 10,
+        opacity: 0.55,
+        key: apiKey,
+        domain: "www.4t8t.net",
+      });
+
+      // 2. 연속지적도 WMS 타일 (LP_PA_CBND_BUDB, LP_PA_CBND_BONB — 경계선 및 지번)
+      const cadastreTile = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
         layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
         styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
         format: "image/png",
@@ -984,9 +1008,11 @@ export function SatongMultiMap({
         minZoom: 10,
         key: apiKey,
         domain: "www.4t8t.net",
-        attribution: "VWorld 연속지적도",
-      }).addTo(map);
-      cadastreTileRef.current = cadastreLayer;
+        attribution: "VWorld 연속지적도·용도지역",
+      });
+
+      const group = L.layerGroup([zoningTile, cadastreTile]).addTo(map);
+      cadastreTileRef.current = group;
     }
 
     return () => {
@@ -1117,8 +1143,13 @@ export function SatongMultiMap({
 
     const fitKey = overlayFeatures.map(satongMapFeatureKey).join("||");
     if (fitKey && fitKey !== lastFitKeyRef.current && bounds.isValid()) {
+      const isMapClick = isMapClickSelectionRef.current;
       lastFitKeyRef.current = fitKey;
-      try { map.fitBounds(bounds, { padding: [36, 36], maxZoom: 17 }); } catch { /* noop */ }
+      // ★지도 직접 클릭 선택 시에는 사용자 줌 레벨(Zoom 18~19 등)을 100% 보존 (줌아웃 축소 차단)
+      if (!isMapClick) {
+        try { map.fitBounds(bounds, { padding: [36, 36], maxZoom: 17 }); } catch { /* noop */ }
+      }
+      isMapClickSelectionRef.current = false;
     }
 
     return () => {
@@ -1455,6 +1486,19 @@ export function SatongMultiMap({
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
       <div ref={wrapperRef} className={wrapperClass("relative")}>
+        {/* Leaflet Zoom Control 상단 칩바 겹침 방지 CSS */}
+        <style jsx global>{`
+          .leaflet-top.leaflet-left {
+            top: 56px !important;
+            left: 12px !important;
+          }
+          @keyframes ping {
+            75%, 100% {
+              transform: scale(2);
+              opacity: 0;
+            }
+          }
+        `}</style>
         <div
           ref={mapEl}
           className="w-full overflow-hidden rounded-lg border border-[var(--line)]"
