@@ -190,6 +190,10 @@ const POI_CONTROL_CODES: Record<string, string[]> = {
   park: ["PARK"],
   hospital: ["HP8", "PM9"],
 };
+// 마커 텍스트 상시노출 정책: 레이어별 마커 수가 이 값 이하일 때만 라벨을 permanent(상시)로 표시.
+//   초과(밀집) 시 라벨이 겹쳐 지도를 가리므로 hover 툴팁으로 강등(예: POI 83곳 → hover 유지).
+const TOOLTIP_PERMANENT_MAX = 32;
+
 const POI_CONTROL_COLORS: Record<string, string> = {
   station: "#0ea5e9",   // 하늘 — 역
   school: "#8b5cf6",    // 보라 — 학교
@@ -1139,7 +1143,7 @@ export function SatongMultiMap({
         fillColor: typeColor,
         fillOpacity: 0.9,
       })
-        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "실거래")}</div>`, { direction: "top", offset: [0, -radius], className: "bg-transparent border-none shadow-none" })
+        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "실거래")}</div>`, { permanent: groups.length <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -radius], className: "bg-transparent border-none shadow-none" })
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
       bounds.extend([item.lat, item.lon]);
@@ -1158,7 +1162,7 @@ export function SatongMultiMap({
           iconAnchor: [11, 11],
         });
         L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { permanent: (marketLayer?.presaleItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
           .addTo(group);
         bounds.extend([item.lat, item.lon]);
@@ -1179,7 +1183,7 @@ export function SatongMultiMap({
           iconAnchor: [12, 12],
         });
         L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { permanent: (marketLayer?.auctionItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
           .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
         bounds.extend([item.lat, item.lon]);
@@ -1232,6 +1236,18 @@ export function SatongMultiMap({
     poiLayerRef.current = group;
     let poiCount = 0;
 
+    // 상시라벨 여부 — 켜진 컨트롤의 유효(좌표有) 마커 총수 기준(밀집 시 hover 강등).
+    let poiTotalForLabel = 0;
+    for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
+      if (!hasSatongLayerControl(layerState, "poi", control)) continue;
+      for (const code of codes) {
+        poiTotalForLabel += (cats[code]?.items || []).filter(
+          (item) => typeof item.lat === "number" && typeof item.lon === "number",
+        ).length;
+      }
+    }
+    const poiPermanent = poiTotalForLabel <= TOOLTIP_PERMANENT_MAX;
+
     // 컨트롤(역·학교·상권·공원·병원)별로 켜진 것만 렌더 — 컨트롤 상태는 layerState가 SSOT.
     for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
       if (!hasSatongLayerControl(layerState, "poi", control)) continue;
@@ -1249,7 +1265,7 @@ export function SatongMultiMap({
             fillColor: "#ffffff",
             fillOpacity: 0.9,
           })
-            .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || label)}</div>`, { direction: "top", offset: [0, -5], className: "bg-transparent border-none shadow-none" })
+            .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || label)}</div>`, { permanent: poiPermanent, direction: "top", offset: [0, -5], className: "bg-transparent border-none shadow-none" })
             .bindPopup(
               `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
                 `<b>${escapeHtml(item.name || label)}</b>` +
@@ -1290,6 +1306,10 @@ export function SatongMultiMap({
     const group = L.layerGroup().addTo(map);
     developmentLayerRef.current = group;
     let devCount = 0;
+    // 상시라벨 여부 — 유효(좌표有) 시설 수 기준(밀집 시 hover 강등, 예: 67건 → hover).
+    const devPermanent =
+      facilities.filter((fac) => typeof fac.lat === "number" && typeof fac.lon === "number").length <=
+      TOOLTIP_PERMANENT_MAX;
     for (const fac of facilities) {
       if (typeof fac.lat !== "number" || typeof fac.lon !== "number") continue;
       devCount += 1;
@@ -1300,7 +1320,7 @@ export function SatongMultiMap({
         fillColor: "#ede9fe",
         fillOpacity: 0.9,
       })
-        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(fac.name || "개발계획")}</div>`, { direction: "top", offset: [0, -6], className: "bg-transparent border-none shadow-none" })
+        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(fac.name || "개발계획")}</div>`, { permanent: devPermanent, direction: "top", offset: [0, -6], className: "bg-transparent border-none shadow-none" })
         .bindPopup(
           `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
             `<b>${escapeHtml(fac.name || "(명칭 미상)")}</b>` +
