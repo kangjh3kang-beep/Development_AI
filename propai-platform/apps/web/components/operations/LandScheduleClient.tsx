@@ -112,7 +112,6 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const [priceEvidence, setPriceEvidence] = useState<{ jibun: string; evidence?: BackendEvidence[]; legalRefs?: BackendLegalRef[] } | null>(null);
   const [modalRow, setModalRow] = useState<LandRow | null>(null);
   const [shareRow, setShareRow] = useState<LandRow | null>(null); // 대지지분 분석 대상 행
-  const fileRef = useRef<HTMLInputElement | null>(null);
 
   // 필지 상태(계약/동의) → 색상·라벨 (Leaflet 지도 마커·표 강조).
   // 지도 렌더러는 CSS 변수를 못 받으므로 리터럴 hex가 필요 — 값은 라이트모드 --status-* 토큰과 동일(success/warning/error).
@@ -133,36 +132,6 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     return { statusColors: colors, statusLabels: labels };
   }, [rows, rowStatus]);
 
-  // 엑셀 업로드(대량 지번 일괄 입력)
-  const importExcel = useCallback(async (file: File) => {
-    setBusy("import");
-    try {
-      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${apiBase()}/registry/land-schedule/import`, {
-        method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd,
-      });
-      const data = await res.json();
-      const imported: LandRow[] = (data.rows || []).map((r: Partial<LandRow>) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        jibun: r.jibun || "", owner: r.owner || "", share: r.share || "",
-        area_sqm: r.area_sqm ?? null, exclusive_area_sqm: r.exclusive_area_sqm ?? null, unit_label: r.unit_label,
-        owner_type: (r.owner_type as LandRow["owner_type"]) || "",
-        expected_price: r.expected_price ?? null, purchase_price: r.purchase_price ?? null,
-        contracted: !!r.contracted, land_use_consent: !!r.land_use_consent, district_consent: !!r.district_consent,
-        operator_consent: !!r.operator_consent,
-      }));
-      if (imported.length) setRows(projectId, [...rows, ...imported]);
-      else alert("가져올 행이 없습니다. '지번' 컬럼이 있는 엑셀인지 확인하세요.");
-    } catch {
-      alert("엑셀 업로드에 실패했습니다.");
-    } finally {
-      setBusy(null);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }, [projectId, rows, setRows]);
-
   const agg = useMemo(() => {
     const n = rows.length;
     const area = rows.reduce((a, r) => a + (r.area_sqm || 0), 0);
@@ -179,10 +148,6 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0,
       operRatio: n ? operC / n : 0 };
   }, [rows]);
-
-  const add = useCallback(() => {
-    addRow(projectId, {});
-  }, [projectId, addRow]);
 
   // 소유구분 문자열 → 사유지/국공유지 매핑
   const toOwnerType = (s?: string | null): LandRow["owner_type"] =>
@@ -596,22 +561,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">토지조서 관리 및 문서 변환</p>
-                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지를 수동 추가하거나 엑셀/보고서 형식으로 즉시 다운로드합니다.</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지를 엑셀/보고서 형식으로 즉시 다운로드하거나 유형을 자동 감지합니다.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={add}
-                  className="whitespace-nowrap rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
-                >
-                  ＋ 필지 직접 추가
-                </button>
-                {/* 엑셀 파일 선택(숨김) */}
-                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
-                <button onClick={() => fileRef.current?.click()} disabled={!!busy}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {busy === "import" ? "업로드 중…" : "📁 엑셀 업로드"}
-                </button>
                 <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
                   title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
                   className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
