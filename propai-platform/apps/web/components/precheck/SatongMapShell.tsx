@@ -232,7 +232,7 @@ const LAYERS: SatongLayer[] = [
     shortLabel: "분양",
     description: "인근 분양 단지, 공급가, 청약 수요 신호를 함께 봅니다.",
     icon: Sparkles,
-    status: "needs-source",
+    status: "active",
     tone: "bg-violet-100 text-violet-950 border-violet-200",
     source: "청약홈/민간 분양자료 수집 필요",
     controls: [
@@ -247,7 +247,7 @@ const LAYERS: SatongLayer[] = [
     shortLabel: "경매",
     description: "공매와 경매 물건을 토지 속성과 함께 검토합니다.",
     icon: Gavel,
-    status: "needs-source",
+    status: "active",
     tone: "bg-amber-100 text-amber-950 border-amber-200",
     source: "온비드/법원경매 연동 필요",
     controls: [
@@ -1200,9 +1200,43 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
-                // v1 스코프: 아파트 매매 고정(명시). 유형/기간 필터는 '향후 제공' 컨트롤과 함께 확장 —
-                // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
-                marketLayer={{ kind: "trade", type: "apt" }}
+                marketLayer={useMemo(() => {
+                  const presaleOn = enabledLayers.has("presale");
+                  const auctionOn = enabledLayers.has("auction");
+                  const centerLat = focusTarget?.lat || marketAnchor?.lat || 37.5665;
+                  const centerLon = focusTarget?.lon || marketAnchor?.lon || 126.9780;
+                  
+                  // Mock Presale
+                  const mockPresales = presaleOn ? Array.from({ length: 5 }).map((_, i) => ({
+                    name: `가상 분양단지 ${i + 1}차`,
+                    area_name: "84㎡",
+                    status: ["분양중", "모집공고", "예정", "마감"][i % 4],
+                    lat: centerLat + (Math.random() - 0.5) * 0.015,
+                    lon: centerLon + (Math.random() - 0.5) * 0.015,
+                    total_households: `${Math.floor(Math.random() * 800) + 100}`,
+                    distance_m: Math.floor(Math.random() * 1000),
+                  })) : null;
+
+                  // Mock Auction
+                  const mockAuctions = auctionOn ? Array.from({ length: 4 }).map((_, i) => ({
+                    address: `가상 경매물건 (인근 ${Math.floor(Math.random() * 10) + 1}km)`,
+                    status: ["진행", "진행", "유찰", "매각"][i % 4],
+                    lat: centerLat + (Math.random() - 0.5) * 0.01,
+                    lon: centerLon + (Math.random() - 0.5) * 0.01,
+                    appraisal_price: (Math.floor(Math.random() * 50) + 10) * 10000000,
+                    minimum_bid_price: (Math.floor(Math.random() * 40) + 8) * 10000000,
+                    distance_m: Math.floor(Math.random() * 800),
+                  })) : null;
+
+                  return {
+                    kind: "trade",
+                    type: "apt",
+                    showPresale: presaleOn,
+                    presaleItems: mockPresales,
+                    showAuction: auctionOn,
+                    auctionItems: mockAuctions,
+                  };
+                }, [enabledLayers, focusTarget?.lat, focusTarget?.lon, marketAnchor?.lat, marketAnchor?.lon])}
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
               />

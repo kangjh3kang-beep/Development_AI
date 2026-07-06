@@ -224,11 +224,25 @@ export type SatongPresaleItem = {
   distance_m?: number;
 };
 
+export type SatongAuctionItem = {
+  address?: string;
+  appraisal_price?: number;
+  minimum_bid_price?: number;
+  bid_date?: string;
+  status?: string;
+  url?: string;
+  lat: number;
+  lon: number;
+  distance_m?: number;
+};
+
 export type SatongMarketLayerState = {
   kind?: "trade" | "rent";
   type?: string;
   showPresale?: boolean;
   presaleItems?: SatongPresaleItem[] | null;
+  showAuction?: boolean;
+  auctionItems?: SatongAuctionItem[] | null;
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
@@ -260,8 +274,9 @@ function createOfficialBaseMapLayer(
   baseLayer: VWorldBaseLayer,
   onTileState: (state: "ready" | "error") => void,
 ): any {
+  const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
   const vworld = L.tileLayer(
-    `/tiles/vworld/wmts/${baseLayer}/{z}/{y}/{x}.png`,
+    `https://api.vworld.kr/req/wmts/1.0.0/${apiKey}/${baseLayer}/{z}/{y}/{x}.png`,
     {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
@@ -428,6 +443,29 @@ function presalePopupHtml(item: SatongPresaleItem): string {
     `<div style="color:#475569;font-size:11px;">접수 ${escapeHtml(item.receipt_begin || "-")} ~ ${escapeHtml(item.receipt_end || "-")}</div>`,
     `<div style="color:#475569;font-size:11px;">공급 ${escapeHtml(item.total_households || "-")}세대${item.distance_m ? ` · ${Math.round(item.distance_m / 100) / 10}km` : ""}</div>`,
     url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:6px;color:#2563eb;font-size:11px;font-weight:700;">청약홈 공고 ↗</a>` : "",
+    `</div>`,
+  ].join("");
+}
+
+const AUCTION_STATUS_COLORS: Record<string, string> = {
+  "진행": "#ef4444",
+  "유찰": "#f59e0b",
+  "매각": "#22c55e",
+  "종결": "#64748b",
+};
+
+function auctionPopupHtml(item: SatongAuctionItem): string {
+  const status = item.status || "진행";
+  const url = item.url && /^https?:\/\//.test(item.url) ? item.url : "";
+  const appraisal = item.appraisal_price ? `${(item.appraisal_price / 100000000).toFixed(1)}억` : "-";
+  const minBid = item.minimum_bid_price ? `${(item.minimum_bid_price / 100000000).toFixed(1)}억` : "-";
+  return [
+    `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
+    `<b>${escapeHtml(item.address || "경매/공매 물건")}</b>`,
+    `<div style="margin-top:6px;font-weight:700;color:${escapeHtml(AUCTION_STATUS_COLORS[status] || AUCTION_STATUS_COLORS["진행"])};">경매 · ${escapeHtml(status)}</div>`,
+    `<div style="color:#475569;font-size:11px;">감정가 ${escapeHtml(appraisal)} · 최저가 <span style="color:#ef4444;font-weight:700;">${escapeHtml(minBid)}</span></div>`,
+    `<div style="color:#475569;font-size:11px;">입찰일 ${escapeHtml(item.bid_date || "-")}${item.distance_m ? ` · ${Math.round(item.distance_m / 100) / 10}km` : ""}</div>`,
+    url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:6px;color:#2563eb;font-size:11px;font-weight:700;">상세보기 ↗</a>` : "",
     `</div>`,
   ].join("");
 }
@@ -1072,6 +1110,7 @@ export function SatongMultiMap({
         fillColor: typeColor,
         fillOpacity: 0.9,
       })
+        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "실거래")}</div>`, { direction: "top", offset: [0, -radius], className: "bg-transparent border-none shadow-none" })
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
       bounds.extend([item.lat, item.lon]);
@@ -1090,7 +1129,29 @@ export function SatongMultiMap({
           iconAnchor: [11, 11],
         });
         L.marker([item.lat, item.lon], { icon })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
+          .addTo(group);
+        bounds.extend([item.lat, item.lon]);
+      });
+    }
+
+    let auctionCount = 0;
+    if (marketLayer?.showAuction) {
+      (marketLayer.auctionItems ?? []).forEach((item) => {
+        if (!item.lat || !item.lon) return;
+        auctionCount += 1;
+        const status = item.status || "진행";
+        const color = AUCTION_STATUS_COLORS[status] || AUCTION_STATUS_COLORS["진행"];
+        const icon = L.divIcon({
+          className: "",
+          html: `<div style="width:20px;height:20px;border-radius:10px;background:${escapeHtml(color)};border:2px solid #fff;box-shadow:0 4px 12px rgba(15,23,42,.28);display:flex;align-items:center;justify-content:center;"><span style="color:#fff;font-size:10px;font-weight:900;">경</span></div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+        L.marker([item.lat, item.lon], { icon })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
+          .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
         bounds.extend([item.lat, item.lon]);
       });
@@ -1099,6 +1160,7 @@ export function SatongMultiMap({
     const notes = [
       marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료",
       marketLayer?.showPresale ? (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
+      marketLayer?.showAuction ? (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
     ].filter(Boolean);
     setMarketNote(notes.join(" · "));
 
@@ -1156,6 +1218,7 @@ export function SatongMultiMap({
             fillColor: "#ffffff",
             fillOpacity: 0.9,
           })
+            .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || label)}</div>`, { direction: "top", offset: [0, -5], className: "bg-transparent border-none shadow-none" })
             .bindPopup(
               `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
                 `<b>${escapeHtml(item.name || label)}</b>` +
@@ -1206,6 +1269,7 @@ export function SatongMultiMap({
         fillColor: "#ede9fe",
         fillOpacity: 0.9,
       })
+        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(fac.name || "개발계획")}</div>`, { direction: "top", offset: [0, -6], className: "bg-transparent border-none shadow-none" })
         .bindPopup(
           `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
             `<b>${escapeHtml(fac.name || "(명칭 미상)")}</b>` +
