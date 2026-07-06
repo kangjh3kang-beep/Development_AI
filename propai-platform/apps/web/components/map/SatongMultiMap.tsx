@@ -276,9 +276,11 @@ function createOfficialBaseMapLayer(
   baseLayer: VWorldBaseLayer,
   onTileState: (state: "ready" | "error") => void,
 ): any {
-  const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
+  // ★타일은 프론트 서버 프록시(/tiles/vworld) 경유 — (1)API키를 브라우저에 노출하지 않고
+  //   (2)위성(Satellite)을 .jpeg로 요청하며 (3)VWorld 200+XML 오류를 투명타일로 흡수한다.
+  //   (api.vworld.kr 직접호출은 키노출·위성 png 오류·XML 미처리로 회색지도를 유발하므로 금지.)
   const vworld = L.tileLayer(
-    `https://api.vworld.kr/req/wmts/1.0.0/${apiKey}/${baseLayer}/{z}/{y}/{x}.png`,
+    `/tiles/vworld/wmts/${baseLayer}/{z}/{y}/{x}.png`,
     {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
