@@ -90,6 +90,8 @@ export interface SatongMultiMapProps {
   poiPayload?: SatongPoiPayload | null;
   /** 주변 도시계획시설(철도·역사 등 개발계획) 마커 — /zoning/development-facilities 응답. */
   developmentPayload?: SatongDevelopmentPayload | null;
+  /** 사용자 지도 이동(moveend) 시 현재 중심좌표 통지 — 선택필지 없을 때 지역레이어의 폴백 앵커용. */
+  onCenterChange?: (center: { lat: number; lon: number }) => void;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -274,9 +276,11 @@ function createOfficialBaseMapLayer(
   baseLayer: VWorldBaseLayer,
   onTileState: (state: "ready" | "error") => void,
 ): any {
-  const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
+  // ★타일은 프론트 서버 프록시(/tiles/vworld) 경유 — (1)API키를 브라우저에 노출하지 않고
+  //   (2)위성(Satellite)을 .jpeg로 요청하며 (3)VWorld 200+XML 오류를 투명타일로 흡수한다.
+  //   (api.vworld.kr 직접호출은 키노출·위성 png 오류·XML 미처리로 회색지도를 유발하므로 금지.)
   const vworld = L.tileLayer(
-    `https://api.vworld.kr/req/wmts/1.0.0/${apiKey}/${baseLayer}/{z}/{y}/{x}.png`,
+    `/tiles/vworld/wmts/${baseLayer}/{z}/{y}/{x}.png`,
     {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
@@ -489,12 +493,16 @@ export function SatongMultiMap({
   marketLayer,
   poiPayload = null,
   developmentPayload = null,
+  onCenterChange,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
   highlightFeatureAddress,
 }: SatongMultiMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
+  const onCenterChangeRef = useRef(onCenterChange);
+  onCenterChangeRef.current = onCenterChange;
+  const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
     isFull: isMapFullscreen,
@@ -868,6 +876,25 @@ export function SatongMultiMap({
           if (readOnly) return;
           void queryParcel(e.latlng.lat, e.latlng.lng);
         });
+
+        // 지도 이동 완료 → 현재 중심 통지(선택필지 없을 때 지역레이어 폴백 앵커). 디바운스+
+        //   좌표 반올림(4자리≈11m)으로 미세 이동/프로그램적 fitBounds에 의한 재조회 폭주를 억제.
+        //   ★타이머는 ref로 관리해 언마운트 cleanup에서 해제(리뷰 LOW — setTimeout 누수 방지).
+        let lastCenterKey = "";
+        map.on("moveend", () => {
+          if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
+          moveTimerRef.current = setTimeout(() => {
+            const cb = onCenterChangeRef.current;
+            if (!cb) return;
+            const c = map.getCenter();
+            const lat = Math.round(c.lat * 1e4) / 1e4;
+            const lon = Math.round(c.lng * 1e4) / 1e4;
+            const key = `${lat},${lon}`;
+            if (key === lastCenterKey) return;
+            lastCenterKey = key;
+            cb({ lat, lon });
+          }, 500);
+        });
       })
       .catch(() => {
         setStatus("error");
@@ -876,6 +903,7 @@ export function SatongMultiMap({
 
     return () => {
       alive = false;
+      if (moveTimerRef.current) { clearTimeout(moveTimerRef.current); moveTimerRef.current = null; }
       if (mapRef.current) {
         try { mapRef.current.remove(); } catch { /* noop */ }
         mapRef.current = null;
@@ -928,7 +956,8 @@ export function SatongMultiMap({
     const needsOverlay = showCadastre || showZoning || showPrice || showAge;
 
     if (!needsOverlay || overlayFeatures.length === 0) {
-      setOverlayNote("");
+      // ★레이어는 켜졌는데 그릴 필지가 0 → 침묵 blank 대신 명확 안내(활성배지-무반영 모순 해소).
+      setOverlayNote(needsOverlay ? "필지를 선택하면 레이어가 지도에 표시됩니다" : "");
       return;
     }
 
@@ -1164,7 +1193,9 @@ export function SatongMultiMap({
     ].filter(Boolean);
     setMarketNote(notes.join(" · "));
 
-    if (bounds.isValid()) {
+    // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
+    //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
+    if (bounds.isValid() && selectedParcels.length > 0) {
       try { map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 }); } catch { /* noop */ }
     }
 

@@ -52,6 +52,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
+  siteAnalysisParcelsToSelection,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -436,6 +437,10 @@ function saveSelectionForOutputs(parcels: SatongParcel[]): void {
 export function SatongMapShell({ locale }: { locale: string }) {
   const router = useRouter();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
+  // 읽기 셀렉터 — 활성 프로젝트 필지를 precheck 선택으로 하이드레이션(SSOT 통일). 헤더가 읽는
+  //   siteAnalysis와 동일 출처라 균열 아님. sessionStorage(자기세션 선택)가 우선, 이건 폴백.
+  const storeParcels = useProjectContextStore((state) => state.siteAnalysis?.parcels);
+  const storeCoordinates = useProjectContextStore((state) => state.siteAnalysis?.coordinates);
   const [query, setQuery] = useState("");
   const [searchCandidates, setSearchCandidates] = useState<SearchCandidate[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -509,6 +514,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
   );
   const marketAnchorPnu = marketAnchor?.pnu || "";
   const marketAnchorAddress = marketAnchor?.address || "";
+  // ★지도 현재중심(P1) — 선택필지 없을 때 지역레이어(POI·개발계획)의 폴백 앵커. 원시값(lat/lon)만
+  //   의존성에 쓴다(#178). SatongMultiMap의 moveend가 반올림·디바운스해 통지하므로 재조회 폭주 없음.
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lon: number } | null>(null);
   useEffect(() => {
     if (!marketEnabled || (!marketAnchorPnu && !marketAnchorAddress)) {
       setMarketPayload(null);
@@ -558,8 +566,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   의존성은 원시값(lat·lon·address) — 참조 churn 재조회 방지(#178 교훈, 실거래와 동일 패턴).
   const [poiPayload, setPoiPayload] = useState<SatongPoiPayload | null>(null);
   const poiEnabled = enabledLayers.has("poi");
-  const poiAnchorLat = marketAnchor?.lat ?? null;
-  const poiAnchorLon = marketAnchor?.lon ?? null;
+  // ★선택필지가 있으면 그 필지 좌표만 사용(좌표 없으면 null → POI는 주소 지오코딩으로 해소).
+  //   선택이 전혀 없을 때만(브라우즈 모드) 지도중심 폴백(P1). 좌표없는 선택필지(엑셀 업로드 등)가
+  //   엉뚱한 지도중심 POI로 폴백되는 역전을 차단(리뷰 LOW).
+  const hasSelection = marketAnchor != null;
+  const poiAnchorLat = hasSelection ? marketAnchor?.lat ?? null : mapCenter?.lat ?? null;
+  const poiAnchorLon = hasSelection ? marketAnchor?.lon ?? null : mapCenter?.lon ?? null;
   useEffect(() => {
     if (!poiEnabled || (poiAnchorLat == null && !marketAnchorAddress)) {
       setPoiPayload(null);
@@ -877,16 +889,39 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [commitParcelsToContext, router, selectedParcels],
   );
 
+  // 최초 1회만 하이드레이션(이후 사용자 선택을 덮지 않도록 ref 가드). 우선순위:
+  //   1) sessionStorage(자기세션 선택 — 좌표·경계까지 리치) → 있으면 그대로(기존 동작).
+  //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 헤더의 12필지를 지도/산출물에 복원.
+  //   ★스토어 seed 시 commitParcelsToContext 재호출 금지(이미 스토어에 있는 값 되쓰면 되먹임 루프·#178).
+  const hydratedRef = useRef(false);
   useEffect(() => {
+    if (hydratedRef.current) return;
     const stored = readSatongMapSelection();
-    if (!stored?.parcels.length) return;
-    setSelectedParcels(stored.parcels);
-    commitParcelsToContext(stored.parcels);
-    const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
-    if (focused?.lat != null && focused.lon != null) {
-      setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+    if (stored?.parcels.length) {
+      hydratedRef.current = true;
+      setSelectedParcels(stored.parcels);
+      commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+      const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
+      if (focused?.lat != null && focused.lon != null) {
+        setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+      }
+      return;
     }
-  }, [commitParcelsToContext]);
+    // 폴백: 활성 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값).
+    if (storeParcels?.length) {
+      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+      // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
+      //   다음 storeParcels 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
+      if (seeded.length) {
+        hydratedRef.current = true;
+        setSelectedParcels(seeded);
+        const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
+        if (focused?.lat != null && focused.lon != null) {
+          setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+        }
+      }
+    }
+  }, [commitParcelsToContext, storeParcels, storeCoordinates]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -1239,6 +1274,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 }, [enabledLayers, focusTarget?.lat, focusTarget?.lon, marketAnchor?.lat, marketAnchor?.lon])}
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
+                onCenterChange={setMapCenter}
               />
             </div>
 
