@@ -232,6 +232,12 @@ class AuctionStep1Service:
     ) -> dict[str, Any]:
         """캐시 기반 조건검색. 결과가 비면 온비드 동기화 후 재조회한다."""
         await self.ensure_tables()
+        # region을 저장값(region_sido) 기준으로 공용 정규화 — "충청북도"/"충청북"/"충북" 어떤
+        # 표기가 와도 저장 축약형("충북")으로 매핑. 호출자별 재구현 대신 진실원천 1곳 처리
+        # (접미사만 떼는 호출자는 충북·충남·전북·전남·경북·경남 6개 도가 정확일치 실패 — QA MEDIUM).
+        if region:
+            from app.services.auction.onbid_client import _sido_from_address
+            region = _sido_from_address(region) or region
         rows, total, data_source = await self._query_items(
             region=region, kind=kind, min_fail=min_fail, max_price=max_price,
             page=page, page_size=page_size,

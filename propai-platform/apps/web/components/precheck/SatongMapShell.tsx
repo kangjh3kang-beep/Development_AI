@@ -233,7 +233,7 @@ const LAYERS: SatongLayer[] = [
     id: "presale",
     label: "분양정보",
     shortLabel: "분양",
-    description: "선택 필지 주변(3km)의 분양단지를 마커로 표시합니다. 필지를 먼저 선택하세요.",
+    description: "선택 필지(또는 지도 중심) 주변 3km의 분양단지를 마커로 표시합니다.",
     icon: Sparkles,
     status: "active",
     tone: "bg-violet-100 text-violet-950 border-violet-200",
@@ -694,9 +694,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
           min_bid_price?: number | null;
           bid_end?: string | null;
         };
-        // 앵커 주소의 시/도 토큰(예: "경기도"→"경기") — auction_items.region_sido 정확일치 필터용.
-        const region = (marketAnchorAddress.split(" ")[0] || "")
-          .replace(/(특별자치도|특별자치시|특별시|광역시|도)$/u, "");
+        // 앵커 주소의 시/도 토큰을 **원형 그대로** 전달(예: "충청북도") — 저장 축약형("충북")으로의
+        // 정규화는 서버 공용 _sido_from_address가 담당(진실원천 1곳, 프론트 재구현 금지 — QA MEDIUM).
+        const region = marketAnchorAddress.split(" ")[0] || "";
         const fetchPage = (r?: string) =>
           apiClient.get<{ items?: AuctionSearchItem[] }>(
             `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
