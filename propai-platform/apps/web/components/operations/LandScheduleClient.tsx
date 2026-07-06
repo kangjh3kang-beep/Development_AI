@@ -104,7 +104,6 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     updateRow(projectId, r.id, patch);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, updateRow]);
-  const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
   // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
@@ -182,16 +181,14 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }, [rows]);
 
   const add = useCallback(() => {
-    const a = addr.trim();
-    addRow(projectId, a ? { jibun: a } : {});
-    setAddr("");
-  }, [addr, projectId, addRow]);
+    addRow(projectId, {});
+  }, [projectId, addRow]);
 
   // 소유구분 문자열 → 사유지/국공유지 매핑
   const toOwnerType = (s?: string | null): LandRow["owner_type"] =>
     s?.includes("국") || s?.includes("공") ? "국공유지" : s ? "사유지" : "";
 
-  // 부지분석(프로젝트) → 토지조서 행 시드. 다필지면 전부, 단일이면 1행. (#1·#2·#4)
+  // 부지분석(프로젝트) → 토지조서 행 시드. 다필지면 전부, 단일이면 1행. 기존 작성 정보 보존 병합. (#1·#2·#4)
   const loadFromProject = useCallback(() => {
     const mk = (jibun: string, area: number | null, ot: string, pnu?: string | null): LandRow => ({
       id: Math.random().toString(36).slice(2, 9),
@@ -199,12 +196,33 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       expected_price: null, purchase_price: null,
       contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
+    
+    const currentRows = useLandScheduleStore.getState().byProject[projectId || "_default"] ?? [];
     const parcels = siteAnalysis?.parcels;
+    
     if (parcels && parcels.length) {
-      setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu)));
+      const merged = parcels.map((p) => {
+        const existing = currentRows.find((r) => (p.pnu && r.pnu === p.pnu) || (r.jibun.trim() === p.address.trim()));
+        if (existing) {
+          return {
+            ...existing,
+            area_sqm: p.areaSqm ?? existing.area_sqm,
+            owner_type: toOwnerType(p.ownerType) || existing.owner_type,
+          };
+        }
+        return mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu);
+      });
+      setRows(projectId, merged);
     } else if (siteAnalysis?.address) {
-      // 폴백 단일행: 다필지면 통합면적 우선(대표값 덮어쓰기 면역). parcels 배열 경로는 무변경.
-      setRows(projectId, [mk(siteAnalysis.address, effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
+      const existing = currentRows.find((r) => (siteAnalysis.pnu && r.pnu === siteAnalysis.pnu) || (r.jibun.trim() === (siteAnalysis.address?.trim() ?? "")));
+      if (existing) {
+        setRows(projectId, [{
+          ...existing,
+          area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? existing.area_sqm,
+        }]);
+      } else {
+        setRows(projectId, [mk(siteAnalysis.address ?? "", effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
+      }
     }
   }, [projectId, siteAnalysis, setRows]);
 
@@ -573,35 +591,27 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀. 등기정보분석과 상호 연동.</p>
             </div>
           </div>
-          {/* 컨트롤 영역 재구성: 넓은 화면(xl)에서 좌(필지 등록) | 우(작업·내보내기) 2열,
-              좁은 화면에서는 세로로 자연스럽게 접힘. 라벨 줄바꿈 방지 위해 버튼 whitespace-nowrap. */}
-          <div className="relative z-10 mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
-            {/* ── 좌측: 필지 등록(지번 검색 + 추가 + 프로젝트 불러오기 + 엑셀 업로드) ── */}
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-3">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">필지 등록</p>
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[220px] flex-1">
-                  <ProjectAddressInput single={true} value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
-                </div>
-                <button onClick={add} className="whitespace-nowrap rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">＋ 필지 추가</button>
-                {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (
-                  <button onClick={loadFromProject} title="프로젝트 부지분석의 필지(다필지 포함)를 토지조서로 불러옵니다"
-                    className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:border-[var(--accent-strong)]">
-                    ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels?.length})` : ""}
-                  </button>
-                )}
+          {/* 작업·내보내기 및 필지 관리 툴바 */}
+          <div className="relative z-10 mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">토지조서 관리 및 문서 변환</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지를 수동 추가하거나 엑셀/보고서 형식으로 즉시 다운로드합니다.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={add}
+                  className="whitespace-nowrap rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+                >
+                  ＋ 필지 직접 추가
+                </button>
+                {/* 엑셀 파일 선택(숨김) */}
                 <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
                 <button onClick={() => fileRef.current?.click()} disabled={!!busy}
                   className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {busy === "import" ? "업로드 중…" : "⬆ 엑셀 업로드"}
+                  {busy === "import" ? "업로드 중…" : "📁 엑셀 업로드"}
                 </button>
-              </div>
-            </div>
-            {/* ── 우측: 작업·내보내기(유형 자동감지 + 엑셀 + 보고서). 좁은 화면에서 좌측 아래로 접힘 ── */}
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-3 xl:w-[340px]">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">집계 · 내보내기</p>
-              <div className="flex flex-wrap items-center gap-2">
                 <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
                   title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
                   className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
@@ -628,9 +638,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <FolderTree className="mx-auto size-8 text-[var(--text-tertiary)]" aria-hidden />
               <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">아직 등록된 필지가 없습니다</p>
               <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
-                위에서 <b className="text-[var(--accent-strong)]">지번 주소 검색</b>, <b className="text-[var(--accent-strong)]">엑셀 업로드</b>, 또는 <b className="text-[var(--accent-strong)]">프로젝트 필지 불러오기</b>로 편입토지를 등록하세요.
+                상단 통합 지도의 <b className="text-[var(--accent-strong)]">지번·주소 검색</b>, <b className="text-[var(--accent-strong)]">엑셀 파일 선택</b>, 또는 지도상 필지를 직접 선택해 편입토지를 등록하세요.
               </p>
-              <p className="mt-1.5 text-[11px] text-[var(--text-hint)]">필지를 등록하면 소유·지분·매입가·계약/동의 관리, 집계, 구획도, 엑셀/보고서 기능이 활성화됩니다.</p>
+              <p className="mt-1.5 text-[11px] text-[var(--text-hint)]">필지를 등록하면 소유·지분·매입가·계약/동의 관리, 집계, 구획도, 엑셀/보고서 기능이 즉시 동기화되어 활성화됩니다.</p>
             </div>
           )}
         </CardContent>

@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
-import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
   () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
@@ -19,12 +18,6 @@ import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import type { ParcelRow } from "@/lib/parcel-rows";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import {
-  readSatongMapSelection,
-  satongSelectionAddresses,
-  satongSelectionToParcelRows,
-  selectionToSiteAnalysisPatch,
-} from "@/components/precheck/satong-map-selection";
 
 /* ── Helpers ── */
 
@@ -155,13 +148,11 @@ interface ProviderInfo {
 type AnalysisResult = Record<string, any>;
 
 export function ComprehensiveAnalysisPanel() {
-  const initialAddress = useProjectContextStore((state) => state.siteAnalysis?.address ?? "");
-  const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
-  const [address, setAddress] = useState(initialAddress);
+  const siteAnalysis = useProjectContextStore((state) => state.siteAnalysis);
+  const [address, setAddress] = useState("");
   // 다필지: 검색·엑셀로 등록된 전 필지 주소(2필지↑ 시 통합 개발방식 분석 노출)
   const [parcels, setParcels] = useState<string[]>([]);
   // ★다필지 통합분석용 필지 상세(면적·용도지역·실효한도) — 백엔드 통합집계 전송 페이로드.
-  //   AddressEntry가 보유한 areaSqm/zoneCode/farPct/bcrPct를 백엔드 집계 입력키로 매핑한다.
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -184,22 +175,52 @@ export function ComprehensiveAnalysisPanel() {
   }, []);
 
   useEffect(() => {
-    const stored = readSatongMapSelection();
-    if (!stored?.parcels.length) return;
-
-    const nextAddresses = satongSelectionAddresses(stored.parcels);
-    const nextRows = satongSelectionToParcelRows(stored.parcels);
-    const patch = selectionToSiteAnalysisPatch(stored.parcels);
-    if (nextAddresses.length > 0) {
-      setAddress(nextAddresses[0]);
-      setParcels(nextAddresses);
-      setParcelRows(nextRows);
-      setSelectionNotice(
-        `지도에서 선택한 ${stored.parcels.length}필지를 부지분석 입력으로 반영했습니다.`,
-      );
+    if (!siteAnalysis) {
+      setAddress("");
+      setParcels([]);
+      setParcelRows([]);
+      return;
     }
-    if (patch) updateSiteAnalysis(patch, { source: "user" });
-  }, [updateSiteAnalysis]);
+    const mainAddr = siteAnalysis.address ?? "";
+    setAddress(mainAddr);
+    
+    // 이전 분석결과 무효화 (주소 불일치 시 stale 표시 차단)
+    if (mainAddr && result && mainAddr !== (result as any).address) {
+      setResult(null);
+      setError(null);
+    }
+    
+    const parcelList = siteAnalysis.parcels ?? [];
+    if (parcelList.length > 0) {
+      setParcels(parcelList.map((p) => p.address).filter(Boolean));
+      setParcelRows(
+        parcelList
+          .filter((p) => (p.areaSqm ?? 0) > 0)
+          .map((p) => ({
+            address: p.address,
+            area_sqm: p.areaSqm ?? null,
+            zone_type: p.zoneCode ?? null,
+            farPct: null,
+            bcrPct: null,
+            farLegalPct: null,
+            bcrLegalPct: null,
+          }))
+      );
+    } else if (mainAddr) {
+      setParcels([mainAddr]);
+      setParcelRows([
+        {
+          address: mainAddr,
+          area_sqm: siteAnalysis.landAreaSqm ?? null,
+          zone_type: siteAnalysis.zoneCode ?? null,
+          farPct: null,
+          bcrPct: null,
+          farLegalPct: null,
+          bcrLegalPct: null,
+        }
+      ]);
+    }
+  }, [siteAnalysis, result]);
 
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
@@ -245,44 +266,38 @@ export function ComprehensiveAnalysisPanel() {
             {selectionNotice}
           </p>
         )}
-        <div className="flex gap-3 items-end">
-          <div className="flex-1">
-            <GlobalAddressSearch
-              single={true}
-              writeToContext={false}
-              onChange={(entries) => {
-                const next = entries.length > 0 ? (entries[0].jibunAddress || entries[0].fullAddress) : "";
-                // 새 주소 입력 시 이전 분석결과를 무효화(stale 표시 방지 — SSOT 정합).
-                if (next && next !== address) { setResult(null); setError(null); }
-                if (next) setAddress(next);
-                setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
-                // 통합집계 페이로드: 면적 있는 필지만, 백엔드 _aggregate 입력키로 매핑(실효치 보유 시 재계산 생략).
-                setParcelRows(
-                  entries
-                    .filter((e) => (e.areaSqm ?? 0) > 0)
-                    .map((e) => ({
-                      pnu: e.pnu ?? null,
-                      address: e.jibunAddress || e.fullAddress || e.roadAddress,
-                      area_sqm: e.areaSqm,
-                      zone_type: e.zoneCode ?? null,
-                      // 백엔드 _integrated_context가 읽는 키(farPct/bcrPct=실효·farLegalPct=법정).
-                      farPct: e.farPct ?? null,
-                      bcrPct: e.bcrPct ?? null,
-                      farLegalPct: e.farLegalPct ?? null,
-                      bcrLegalPct: e.bcrLegalPct ?? null,
-                    })),
-                );
-              }}
-              placeholder="분석할 주소 검색 · 다필지는 엑셀로 일괄 등록"
-            />
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-4">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">분석 대상 정보</span>
+            <h3 className="text-sm font-black text-[var(--text-primary)] mt-0.5">
+              {address ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <MapPin className="size-4 text-[var(--accent-strong)]" />
+                  {address}
+                  {parcels.length > 1 ? (
+                    <span className="text-xs font-bold text-[var(--accent-strong)]">(외 {parcels.length - 1}필지 선택됨)</span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="text-[var(--text-hint)]">상단 통합 지도를 클릭하거나 검색하여 필지를 선택해 주세요.</span>
+              )}
+            </h3>
           </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={loading || !address.trim()}
-            className="shrink-0 rounded-xl bg-[var(--accent-strong)] px-6 py-3 text-sm font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:brightness-110 disabled:opacity-50"
-          >
-            {loading ? "분석 중..." : "종합 분석 시작"}
-          </button>
+          <div className="flex items-center gap-3">
+            {siteAnalysis?.landAreaSqm ? (
+              <div className="text-right text-xs font-bold text-[var(--text-secondary)] mr-2">
+                <p>총 대지면적: <span className="text-[var(--text-primary)]">{siteAnalysis.landAreaSqm.toLocaleString()}㎡</span></p>
+                <p className="text-[10px] text-[var(--text-hint)] mt-0.5">용도: {siteAnalysis.dominantZoneCode || siteAnalysis.zoneCode || "미확인"}</p>
+              </div>
+            ) : null}
+            <button
+              onClick={handleAnalyze}
+              disabled={loading || !address.trim()}
+              className="shrink-0 rounded-xl bg-[var(--accent-strong)] px-6 py-3 text-sm font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:brightness-110 disabled:opacity-50"
+            >
+              {loading ? "분석 중..." : "종합 분석 시작"}
+            </button>
+          </div>
         </div>
         {providers.length > 0 ? (
           <div className="flex gap-3 items-center mt-3">

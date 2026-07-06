@@ -45,7 +45,7 @@ export default async function DashboardLayout({
       <AIAssistant />
       
       {/* 헤더 */}
-      <header className="sticky top-2 z-50 rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] px-4 py-3 shadow-[var(--shadow-md)]">
+      <header className="sticky top-2 z-[1000] rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] px-4 py-3 shadow-[var(--shadow-md)]">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <HomeLink href={`/${locale}`} className="flex items-center gap-4 group min-w-0">
              <Logo size="md" className="transition-transform group-hover:scale-105 active:scale-95 shrink-0" />

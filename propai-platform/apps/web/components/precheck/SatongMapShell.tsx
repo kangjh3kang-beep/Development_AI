@@ -1384,8 +1384,18 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div
               ref={railRef}
-              className="absolute right-4 top-20 z-[420] flex flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur"
+              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-[608px] flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur transition-all duration-300 ease-in-out overflow-hidden"
             >
+              {/* 접혔을 때와 펼쳐졌을 때의 앵커가 되는 메인 아이콘 버튼 */}
+              <button
+                type="button"
+                className="grid size-12 shrink-0 place-items-center rounded-2xl border transition border-slate-200 bg-white text-[var(--accent-strong)] hover:bg-slate-50 group-hover:border-slate-300 group-hover:bg-slate-100 group-hover:text-slate-700"
+                title="지도 레이어 관리 (마우스를 올리세요)"
+              >
+                <MapIcon className="size-5 animate-pulse group-hover:animate-none" aria-hidden />
+              </button>
+
+              {/* 내부 레이어 버튼 리스트 (세로 전개) */}
               {LAYERS.map((layer) => {
                 const Icon = layer.icon;
                 const enabled = enabledLayers.has(layer.id);
@@ -1396,7 +1406,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     type="button"
                     onClick={() => handleLayerClick(layer.id)}
                     title={layer.label}
-                    className={`group grid size-12 place-items-center rounded-2xl border text-slate-600 transition ${
+                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-slate-600 transition ${
                       isActive
                         ? "border-slate-950 bg-slate-950 text-white"
                         : enabled

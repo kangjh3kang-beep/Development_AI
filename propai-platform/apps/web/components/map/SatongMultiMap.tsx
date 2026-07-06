@@ -558,6 +558,28 @@ export function SatongMultiMap({
 
   // staged: 사용자가 [＋추가]로 확정한 필지 목록
   const [staged, setStaged] = useState<ParcelAtPointResult[]>([]);
+
+  // 선택 필지 및 staged 필지 통합 평균 노후도 계산
+  const avgAge = useMemo(() => {
+    const allFeatures = new Map<string, { buildingAgeYears?: number | null }>();
+    
+    selectedParcels.forEach((p) => {
+      if (p.id) allFeatures.set(p.id, { buildingAgeYears: p.buildingAgeYears });
+    });
+    
+    staged.forEach((s) => {
+      const id = s.pnu || s.address || s.jibun || "staged";
+      allFeatures.set(id, { buildingAgeYears: s.building_age_years });
+    });
+
+    const validAges = Array.from(allFeatures.values())
+      .map((p) => p.buildingAgeYears)
+      .filter((age): age is number => typeof age === "number" && age >= 0);
+
+    if (validAges.length === 0) return null;
+    const sum = validAges.reduce((a, b) => a + b, 0);
+    return Math.round((sum / validAges.length) * 10) / 10;
+  }, [selectedParcels, staged]);
   // staged 필지별 폴리곤 레이어 — pnu → Leaflet layerGroup
   const stagedLayersRef = useRef<Map<string, any>>(new Map());
 
@@ -1527,7 +1549,9 @@ export function SatongMultiMap({
         </button>
 
         {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote || developmentNote) && (
-          <div className="pointer-events-none absolute bottom-3 left-3 z-[410] max-w-[calc(100%-96px)] space-y-1">
+          <div className={`pointer-events-none absolute left-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300 ${
+            hasSatongLayer(layerState, "age") ? "bottom-36" : "bottom-3"
+          }`}>
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {overlayNote}
@@ -1566,17 +1590,26 @@ export function SatongMultiMap({
           </div>
         )}
 
-        {/* 노후도 범례 레전드 UI */}
+        {/* 노후도 범례 레전드 UI - 좌하단 이동 및 겹침 방지 */}
         {hasSatongLayer(layerState, "age") && (
-          <div className="absolute bottom-3 right-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+          <div className="absolute bottom-3 left-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
             <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
-            <div className="flex flex-col gap-1 text-[10.5px]">
+            <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
               {AGE_LEGEND_ITEMS.map((item) => (
                 <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
                   <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
                   <span>{item.label}</span>
                 </div>
               ))}
+            </div>
+            {/* 선택 필지 평균 노후도 추가 */}
+            <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
+              <span>선택 필지 평균 노후도</span>
+              {avgAge !== null ? (
+                <span className="text-xs font-black text-rose-600">{avgAge}년</span>
+              ) : (
+                <span className="font-semibold text-slate-400">건물 정보 없음</span>
+              )}
             </div>
           </div>
         )}
