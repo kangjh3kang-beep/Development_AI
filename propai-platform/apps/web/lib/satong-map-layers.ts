@@ -46,6 +46,9 @@ export const SATONG_RENDERABLE_LAYER_IDS = new Set<SatongMapLayerId>([
   "transactions",
   "poi",
   "development",
+  // 분양(청약홈 /presale/nearby)·공경매(온비드 /auction/search+geocode) — 실데이터 배선 완료.
+  "presale",
+  "auction",
   "terrain",
 ]);
 

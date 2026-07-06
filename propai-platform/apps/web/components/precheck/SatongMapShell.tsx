@@ -37,10 +37,12 @@ import {
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type {
   ParcelAtPointResult,
+  SatongAuctionItem,
   SatongDevelopmentPayload,
   SatongMarketPayload,
   SatongMultiMapProps,
   SatongPoiPayload,
+  SatongPresaleItem,
 } from "@/components/map/SatongMultiMap";
 import {
   isRenderableSatongMapLayer,
@@ -231,31 +233,31 @@ const LAYERS: SatongLayer[] = [
     id: "presale",
     label: "분양정보",
     shortLabel: "분양",
-    description: "인근 분양 단지, 공급가, 청약 수요 신호를 함께 봅니다.",
+    description: "선택 필지(또는 지도 중심) 주변 3km의 분양단지를 마커로 표시합니다.",
     icon: Sparkles,
     status: "active",
     tone: "bg-violet-100 text-violet-950 border-violet-200",
-    source: "청약홈/민간 분양자료 수집 필요",
+    source: "청약홈 분양정보(주변 3km)",
     controls: [
-      { id: "supply-type", label: "공급유형", mapEffect: false },
-      { id: "presale-price", label: "분양가", mapEffect: false },
-      { id: "move-in", label: "입주시기", mapEffect: false },
+      { id: "supply-type", label: "공급유형", mapEffect: false, description: "공급유형 필터 — 향후 제공" },
+      { id: "presale-price", label: "분양가", mapEffect: false, description: "분양가 필터 — 향후 제공" },
+      { id: "move-in", label: "입주시기", mapEffect: false, description: "입주시기 필터 — 향후 제공" },
     ],
   },
   {
     id: "auction",
     label: "공·경매",
     shortLabel: "경매",
-    description: "공매와 경매 물건을 토지 속성과 함께 검토합니다.",
+    description: "선택 필지 주변(10km)의 온비드 공매 물건을 마커로 표시합니다. 로그인이 필요할 수 있습니다.",
     icon: Gavel,
     status: "active",
     tone: "bg-amber-100 text-amber-950 border-amber-200",
-    source: "온비드/법원경매 연동 필요",
+    source: "온비드 공매(주변 10km·감정가/최저가)",
     controls: [
-      { id: "appraisal", label: "감정가", mapEffect: false },
-      { id: "minimum-bid", label: "최저가", mapEffect: false },
-      { id: "bid-date", label: "입찰일", mapEffect: false },
-      { id: "bid-rate", label: "낙찰률", mapEffect: false },
+      { id: "appraisal", label: "감정가", mapEffect: false, description: "감정가 필터 — 향후 제공" },
+      { id: "minimum-bid", label: "최저가", mapEffect: false, description: "최저가 필터 — 향후 제공" },
+      { id: "bid-date", label: "입찰일", mapEffect: false, description: "입찰일 필터 — 향후 제공" },
+      { id: "bid-rate", label: "낙찰률", mapEffect: false, description: "낙찰률 필터 — 향후 제공" },
     ],
   },
   {
@@ -631,6 +633,132 @@ export function SatongMapShell({ locale }: { locale: string }) {
       cancelled = true;
     };
   }, [developmentEnabled, poiAnchorLat, poiAnchorLon]);
+
+  // ── 분양정보 레이어 배선(실데이터): 레이어 ON + 앵커좌표 → 청약홈 주변 분양(/presale/nearby) ──
+  //   렌더(마커·팝업)는 SatongMultiMap의 presaleItems에 완비. 실패/무자료는 [](정직 "분양 무자료").
+  //   ★무목업: 종전 가상단지(Math.random) 목업을 실데이터로 대체. 패턴은 실거래·POI와 동일.
+  const [presaleItems, setPresaleItems] = useState<SatongPresaleItem[] | null>(null);
+  const presaleEnabled = enabledLayers.has("presale");
+  useEffect(() => {
+    if (!presaleEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setPresaleItems(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<{ available?: boolean; items?: SatongPresaleItem[] }>(
+          "/presale/nearby",
+          {
+            body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 3000 },
+            useMock: false,
+            timeoutMs: 30000,
+          },
+        );
+        if (!cancelled) {
+          setPresaleItems(
+            (res.items ?? []).filter(
+              (item) => typeof item.lat === "number" && typeof item.lon === "number",
+            ),
+          );
+        }
+      } catch {
+        if (!cancelled) setPresaleItems([]); // 실패 → 정직 무자료(가짜 생성 금지)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [presaleEnabled, poiAnchorLat, poiAnchorLon]);
+
+  // ── 공·경매 레이어 배선(실데이터): 온비드 검색(/auction/search) → 주소 지오코딩(/auction/geocode)
+  //   → 앵커 반경(10km) 필터. 지역(시/도) 우선 검색, 0건이면 전국 폴백. 인증실패(401)·무자료는
+  //   [](정직 "경매 무자료"). 좌표 미확인 물건은 스킵(가짜 좌표 금지).
+  const [auctionItems, setAuctionItems] = useState<SatongAuctionItem[] | null>(null);
+  const auctionEnabled = enabledLayers.has("auction");
+  useEffect(() => {
+    if (!auctionEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setAuctionItems(null);
+      return;
+    }
+    const anchorLat = poiAnchorLat;
+    const anchorLon = poiAnchorLon;
+    let cancelled = false;
+    void (async () => {
+      try {
+        type AuctionSearchItem = {
+          id?: number | string;
+          address?: string | null;
+          status?: string | null;
+          appraisal_price?: number | null;
+          min_bid_price?: number | null;
+          bid_end?: string | null;
+        };
+        // 앵커 주소의 시/도 토큰을 **원형 그대로** 전달(예: "충청북도") — 저장 축약형("충북")으로의
+        // 정규화는 서버 공용 _sido_from_address가 담당(진실원천 1곳, 프론트 재구현 금지 — QA MEDIUM).
+        const region = marketAnchorAddress.split(" ")[0] || "";
+        const fetchPage = (r?: string) =>
+          apiClient.get<{ items?: AuctionSearchItem[] }>(
+            `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
+            { useMock: false, timeoutMs: 30000 },
+          );
+        let res = region ? await fetchPage(region) : await fetchPage();
+        if (region && !(res.items ?? []).length) res = await fetchPage(); // 지역 0건 → 전국 폴백
+        const items = (res.items ?? []).filter((item) => (item.address ?? "").trim());
+        if (!items.length) {
+          if (!cancelled) setAuctionItems([]);
+          return;
+        }
+        const geo = await apiClient.post<{ located?: { key: string; lat: number; lon: number }[] }>(
+          "/auction/geocode",
+          {
+            body: {
+              items: items.slice(0, 60).map((item, index) => ({
+                key: String(item.id ?? index),
+                address: item.address,
+              })),
+            },
+            useMock: false,
+            timeoutMs: 60000,
+          },
+        );
+        const located = new Map((geo.located ?? []).map((l) => [l.key, l]));
+        const toRad = (d: number) => (d * Math.PI) / 180;
+        const near = items
+          .map((item, index): SatongAuctionItem | null => {
+            const loc = located.get(String(item.id ?? index));
+            if (!loc) return null;
+            // 하버사인 거리(m) — 앵커 반경 10km만 채택.
+            const dLat = toRad(loc.lat - anchorLat);
+            const dLon = toRad(loc.lon - anchorLon);
+            const h =
+              Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(anchorLat)) * Math.cos(toRad(loc.lat)) * Math.sin(dLon / 2) ** 2;
+            const distanceM = Math.round(2 * 6371000 * Math.asin(Math.sqrt(h)));
+            if (distanceM > 10000) return null;
+            return {
+              address: item.address ?? undefined,
+              status: item.status ?? undefined,
+              appraisal_price: item.appraisal_price ?? undefined,
+              minimum_bid_price: item.min_bid_price ?? undefined,
+              bid_date: item.bid_end ?? undefined,
+              lat: loc.lat,
+              lon: loc.lon,
+              distance_m: distanceM,
+            };
+          })
+          .filter((item): item is SatongAuctionItem => item != null)
+          .sort((a, b) => (a.distance_m ?? 0) - (b.distance_m ?? 0))
+          .slice(0, 30);
+        if (!cancelled) setAuctionItems(near);
+      } catch {
+        if (!cancelled) setAuctionItems([]); // 401 미인증 포함 실패 → 정직 무자료
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auctionEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1235,43 +1363,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
-                marketLayer={useMemo(() => {
-                  const presaleOn = enabledLayers.has("presale");
-                  const auctionOn = enabledLayers.has("auction");
-                  const centerLat = focusTarget?.lat || marketAnchor?.lat || 37.5665;
-                  const centerLon = focusTarget?.lon || marketAnchor?.lon || 126.9780;
-                  
-                  // Mock Presale
-                  const mockPresales = presaleOn ? Array.from({ length: 5 }).map((_, i) => ({
-                    name: `가상 분양단지 ${i + 1}차`,
-                    area_name: "84㎡",
-                    status: ["분양중", "모집공고", "예정", "마감"][i % 4],
-                    lat: centerLat + (Math.random() - 0.5) * 0.015,
-                    lon: centerLon + (Math.random() - 0.5) * 0.015,
-                    total_households: `${Math.floor(Math.random() * 800) + 100}`,
-                    distance_m: Math.floor(Math.random() * 1000),
-                  })) : null;
-
-                  // Mock Auction
-                  const mockAuctions = auctionOn ? Array.from({ length: 4 }).map((_, i) => ({
-                    address: `가상 경매물건 (인근 ${Math.floor(Math.random() * 10) + 1}km)`,
-                    status: ["진행", "진행", "유찰", "매각"][i % 4],
-                    lat: centerLat + (Math.random() - 0.5) * 0.01,
-                    lon: centerLon + (Math.random() - 0.5) * 0.01,
-                    appraisal_price: (Math.floor(Math.random() * 50) + 10) * 10000000,
-                    minimum_bid_price: (Math.floor(Math.random() * 40) + 8) * 10000000,
-                    distance_m: Math.floor(Math.random() * 800),
-                  })) : null;
-
-                  return {
-                    kind: "trade",
+                // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
+                // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
+                marketLayer={useMemo(
+                  () => ({
+                    kind: "trade" as const,
                     type: "apt",
-                    showPresale: presaleOn,
-                    presaleItems: mockPresales,
-                    showAuction: auctionOn,
-                    auctionItems: mockAuctions,
-                  };
-                }, [enabledLayers, focusTarget?.lat, focusTarget?.lon, marketAnchor?.lat, marketAnchor?.lon])}
+                    showPresale: presaleEnabled,
+                    presaleItems: presaleEnabled ? presaleItems : null,
+                    showAuction: auctionEnabled,
+                    auctionItems: auctionEnabled ? auctionItems : null,
+                  }),
+                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
+                )}
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
                 onCenterChange={setMapCenter}
