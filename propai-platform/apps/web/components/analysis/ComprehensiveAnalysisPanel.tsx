@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
@@ -229,6 +230,8 @@ export function ComprehensiveAnalysisPanel() {
 
   return (
     <div className="space-y-4">
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
+      <SatongMapShell locale="ko" />
       {/* Header */}
       <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-strong)] p-6">
         <h2 className="text-xl font-black text-[var(--text-primary)] mb-1">종합 부지분석 보고서</h2>

@@ -12,20 +12,12 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { NumberInput } from "@/components/common/NumberInput";
-import { dynamicMap } from "@/components/common/MapShell";
-import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
-import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
-import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
-import { LandShareModal, type LandShareUnit } from "@/components/operations/LandShareModal";
+import dynamic from "next/dynamic";
+import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 
-// 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
-const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
-  () => import("@/components/map/ParcelBoundaryMap"),
-  { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
-);
-const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
-  () => import("@/components/map/NearbyTransactionsMap"),
-  { pick: "NearbyTransactionsMap", height: 440, loadingMessage: "주변 실거래 지도 로딩…" },
+const SatongMultiMapDynamic = dynamic(
+  () => import("@/components/map/SatongMultiMap").then((m) => m.SatongMultiMap),
+  { ssr: false },
 );
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -556,10 +548,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }
 
   return (
-    // ★grid-cols-1(=minmax(0,1fr)) 필수: 기본 grid 트랙은 min-width:auto라 넓은 토지조서 테이블이
-    //   트랙을 뷰포트 밖으로 밀어내 '프레임 안에 안 들어오는' 오버플로우가 났다. minmax(0,1fr)로
-    //   트랙을 가둬야 안쪽 overflow-x-auto(테이블)가 정상 스크롤된다.
     <div className="grid min-w-0 grid-cols-1 gap-6">
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
+      <SatongMapShell locale={locale} />
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />

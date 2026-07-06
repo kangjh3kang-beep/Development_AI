@@ -12,9 +12,7 @@ import type {
   NearbyMapPayload,
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
-import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
-import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
-import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
@@ -514,18 +512,8 @@ export function MarketInsightsWorkspaceClient() {
         pipeline={deriveMarketPipelineSteps({ genState, report, useLlm })}
       />
 
-      {/* ── ZONE A: 설정→실행 ─────────────────────────────────────────── */}
-      {/* 헤더 */}
-      <div>
-        <div className="flex items-center gap-3">
-          <span className="cc-meta">MARKET · TRANSACTION INTEL</span>
-          <span className="cc-live"><i />LIVE</span>
-        </div>
-        <h2 className="mt-2 text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 시작」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
-        </p>
-      </div>
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
+      <SatongMapShell locale="ko" />
 
       {/* 주소 입력(카카오) */}
       <ProjectAddressInput
