@@ -13,8 +13,10 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { NumberInput } from "@/components/common/NumberInput";
 import dynamic from "next/dynamic";
-import { SatongMapShell } from "@/components/precheck/SatongMapShell";
-
+const SatongMapShellDynamic = dynamic(
+  () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
+  { ssr: false },
+);
 const SatongMultiMapDynamic = dynamic(
   () => import("@/components/map/SatongMultiMap").then((m) => m.SatongMultiMap),
   { ssr: false },
@@ -552,7 +554,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6">
       {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShell locale={locale} />
+      <SatongMapShellDynamic locale={locale} />
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />
@@ -579,7 +581,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">필지 등록</p>
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-[220px] flex-1">
-                  <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
+                  <ProjectAddressInput single={true} value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
                 </div>
                 <button onClick={add} className="whitespace-nowrap rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">＋ 필지 추가</button>
                 {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (

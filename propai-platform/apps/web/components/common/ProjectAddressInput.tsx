@@ -50,6 +50,8 @@ interface ProjectAddressInputProps {
    * 활성 프로젝트와 무관한 탐색용이면 false로 끌 수 있다.
    */
   writeToContext?: boolean;
+  /** 단일 필지 검색 모드 여부 (지도가 숨겨지고 심플 텍스트 인풋만 표시) */
+  single?: boolean;
 }
 
 export function ProjectAddressInput({
@@ -65,6 +67,7 @@ export function ProjectAddressInput({
   onParcelsChange,
   onEntriesChange,
   writeToContext = true,
+  single = false,
 }: ProjectAddressInputProps) {
   void _multi; // 호환용(무시) — 항상 다필지 UI
   const projects = useProjectStore((s) => s.projects);
@@ -157,7 +160,7 @@ export function ProjectAddressInput({
           writeToContext=true로 primary 주소를 store(SSOT)에 기록(단일 동작 보존). */}
       <GlobalAddressSearch
         key={ctxProjectId || "addr"}
-        single={false}
+        single={single}
         initialAddress={value || undefined}
         placeholder={placeholder}
         disabled={disabled}

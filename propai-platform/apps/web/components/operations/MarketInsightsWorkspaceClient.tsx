@@ -13,9 +13,13 @@ import type {
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
-import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import dynamic from "next/dynamic";
+const SatongMapShellDynamic = dynamic(
+  () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
+  { ssr: false },
+);
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
@@ -516,10 +520,11 @@ export function MarketInsightsWorkspaceClient() {
       />
 
       {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShell locale="ko" />
+      <SatongMapShellDynamic locale="ko" />
 
       {/* 주소 입력(카카오) */}
       <ProjectAddressInput
+        single={true}
         value={searchAddr}
         onChange={onAddress}
         onEntriesChange={onEntries}
