@@ -51,6 +51,8 @@ import {
   type SatongMapLayerState,
 } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { restoreSnapshot } from "@/lib/projectSync";
 import {
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
@@ -439,6 +441,16 @@ function saveSelectionForOutputs(parcels: SatongParcel[]): void {
 export function SatongMapShell({ locale }: { locale: string }) {
   const router = useRouter();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
+  const projectId = useProjectContextStore((state) => state.projectId);
+  const setProject = useProjectContextStore((state) => state.setProject);
+  const snapshots = useProjectContextStore((state) => state.snapshots);
+  const projects = useProjectStore((state) => state.projects);
+  const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
+
+  useEffect(() => {
+    if (!projects.length) void syncFromBackend();
+  }, [projects.length, syncFromBackend]);
+
   // 읽기 셀렉터 — 활성 프로젝트 필지를 precheck 선택으로 하이드레이션(SSOT 통일). 헤더가 읽는
   //   siteAnalysis와 동일 출처라 균열 아님. sessionStorage(자기세션 선택)가 우선, 이건 폴백.
   const storeParcels = useProjectContextStore((state) => state.siteAnalysis?.parcels);
@@ -473,6 +485,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
     () => LAYERS.filter((layer) => enabledLayers.has(layer.id)),
     [enabledLayers],
   );
+
+  const analyzedProjects = useMemo(
+    () => projects.filter((p) => p.status !== "draft" || (snapshots?.[p.id]?.completedStages?.length ?? 0) > 0),
+    [projects, snapshots],
+  );
+  const pickerProjects = analyzedProjects.length > 0 ? analyzedProjects : projects;
+
+  const handleSelectProject = useCallback((id: string) => {
+    if (!id) return;
+    const p = projects.find((x) => x.id === id);
+    if (!p) return;
+    setProject(p.id, p.name, p.status, p.address || undefined);
+    void restoreSnapshot(p.id);
+  }, [projects, setProject]);
 
   const selectedMapFeatures = useMemo<SatongMapFeature[]>(
     () =>
@@ -1051,6 +1077,25 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }
   }, [commitParcelsToContext, storeParcels, storeCoordinates]);
 
+  // 프로젝트 전환 감지 시 강제 선택 복원 (세션 가드 리셋)
+  useEffect(() => {
+    if (!projectId) {
+      setSelectedParcels([]);
+      return;
+    }
+    if (storeParcels?.length) {
+      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+      setSelectedParcels(seeded);
+      const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
+      if (focused?.lat != null && focused.lon != null) {
+        setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+      }
+    } else {
+      setSelectedParcels([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -1137,6 +1182,50 @@ export function SatongMapShell({ locale }: { locale: string }) {
             <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
               검색하면 지도 중심이 이동하고, 엑셀을 올리면 다필지 목록이 같은 선택 목록으로 합쳐집니다.
             </p>
+          </div>
+
+          {/* 프로젝트 및 히스토리 연결 */}
+          <div className="mt-4 rounded-[20px] border border-slate-100 bg-slate-50/70 p-3.5 space-y-3">
+            <div>
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
+                <Building2 className="size-4 text-emerald-600" aria-hidden />
+                연결 프로젝트
+              </label>
+              <select
+                value={projectId ?? ""}
+                onChange={(e) => handleSelectProject(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+              >
+                <option value="">프로젝트 선택 안 함 (약식 분석)</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {pickerProjects.length > 0 && (
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
+                  <LineChart className="size-4 text-sky-600" aria-hidden />
+                  분석 히스토리 불러오기
+                </label>
+                <select
+                  value={projectId ?? ""}
+                  onChange={(e) => handleSelectProject(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-sky-500"
+                  title="이전에 분석을 실행한 프로젝트의 필지 정보를 복원합니다"
+                >
+                  <option value="">최근 분석 이력 선택…</option>
+                  {pickerProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.address ? ` — ${p.address}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 space-y-3">
