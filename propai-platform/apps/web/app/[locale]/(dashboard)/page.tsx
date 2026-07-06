@@ -4,7 +4,6 @@ import {
   BarChart3,
   Building2,
   Clock,
-  ClipboardList,
   DraftingCompass,
   Layers3,
   MapPin,
@@ -14,7 +13,7 @@ import {
 } from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
-import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
+import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { isValidLocale } from "@/i18n/config";
 import { PRIMARY_ROUTE_REGISTRY } from "@/lib/navigation/route-registry";
 
@@ -304,7 +303,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+      <section className="flex flex-col gap-8">
         <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -318,19 +317,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
           <DashboardProjectLoader locale={locale} />
         </div>
 
-        <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <span className="db-panel-label">자동 분석</span>
-              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">산출물 생성 엔진</h2>
-            </div>
-            <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-2 py-1 text-xs font-bold text-[var(--data-accent)]">
-              <ClipboardList aria-hidden="true" className="h-3.5 w-3.5" />
-              준비됨
-            </span>
-          </div>
-          <PipelinePanelClient />
-        </div>
+        <SatongMapShell locale={locale} />
       </section>
     </div>
   );

@@ -1450,8 +1450,8 @@ export function GlobalAddressSearch({
             </div>
           </div>
 
-          <div className="grid min-h-[500px] bg-white lg:grid-cols-[380px_minmax(0,1fr)]">
-            <aside className="flex min-h-[420px] flex-col border-b border-[var(--line)] bg-[var(--surface-soft)]/70 p-3 lg:border-b-0 lg:border-r">
+          <div className="flex flex-wrap min-h-[500px] items-stretch bg-white">
+            <aside className="flex min-h-[420px] flex-1 basis-[350px] min-w-[320px] flex-col border-b border-[var(--line)] bg-[var(--surface-soft)]/70 p-3 lg:border-b-0 lg:border-r">
               <div className="flex items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
                   <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 검색·등록 주소
@@ -1513,7 +1513,7 @@ export function GlobalAddressSearch({
                 {parcelStats.regionCnt > 0 ? ` · ${parcelStats.regionCnt}개 지역` : ""}
               </div>
             </aside>
-            <div className="min-w-0 bg-[var(--surface-secondary)] p-3">
+            <div className="flex-[2] basis-[400px] min-w-[320px] bg-[var(--surface-secondary)] p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 py-2">
                 <div>
                   <p className="text-[12px] font-black text-[var(--text-primary)]">사통팔땅 멀티지도</p>
