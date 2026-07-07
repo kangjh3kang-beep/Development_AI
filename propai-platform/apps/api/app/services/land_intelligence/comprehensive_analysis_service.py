@@ -21,31 +21,18 @@ from app.services.land_intelligence.land_info_service import LandInfoService
 
 logger = structlog.get_logger()
 
-# ── 개발방식별 전용율 (전용면적 / 공급면적) ──
-EXCLUSIVE_AREA_RATIO: dict[str, float] = {
-    "M01": 0.75,  # 재개발 (공동주택)
-    "M02": 0.75,  # 재건축 (공동주택)
-    "M03": 0.65,  # 역세권개발
-    "M04": 0.75,  # 지역주택조합
-    "M05": 0.70,  # 임대협동조합
-    "M06": 0.75,  # 일반분양 (공동주택)
-    "M07": 0.60,  # 주상복합
-    "M08": 0.55,  # 오피스텔
-    "M09": 0.55,  # 지식산업센터
-    "M10": 0.85,  # 단독주택
-    "M11": 0.85,  # 전원주택
-    "M12": 0.80,  # 타운하우스
-    "M13": 0.65,  # 도시형생활주택
-    "M14": 0.70,  # 공공임대
-    "M15": 0.75,  # 민간리츠
-}
-
-# ── 개발방식별 평균 전용면적 (m2) ──
-AVG_EXCLUSIVE_AREA: dict[str, float] = {
-    "M01": 84, "M02": 84, "M03": 59, "M04": 84, "M05": 49,
-    "M06": 84, "M07": 102, "M08": 28, "M09": 50, "M10": 165,
-    "M11": 200, "M12": 130, "M13": 26, "M14": 59, "M15": 84,
-}
+# ── 세대·면적 표준(전용율·평균 전용면적·전형 용적률) = 단일 출처 unit_standards (W1-3) ──
+#    Top3 추천(feasibility_v2)과 각자 테이블을 보유해 동일 GFA에서 세대수가 어긋나던
+#    이중정의 해소. 값 수정은 반드시 unit_standards에서(여기 재정의 금지).
+from app.services.feasibility.unit_standards import (  # noqa: E402
+    AVG_EXCLUSIVE_AREA_SQM as AVG_EXCLUSIVE_AREA,
+)
+from app.services.feasibility.unit_standards import (
+    EXCLUSIVE_AREA_RATIO,
+)
+from app.services.feasibility.unit_standards import (
+    TYPICAL_FAR_PCT as TYPICAL_FAR,
+)
 
 # ── 개발방식별 주차 기준 ──
 PARKING_RULES: dict[str, dict[str, Any]] = {
@@ -66,12 +53,7 @@ PARKING_RULES: dict[str, dict[str, Any]] = {
     "M15": {"method": "per_unit", "ratio": 1.0},
 }
 
-# ── 개발방식별 일반적 용적률 ──
-TYPICAL_FAR: dict[str, float] = {
-    "M01": 250, "M02": 300, "M03": 400, "M04": 250, "M05": 200,
-    "M06": 250, "M07": 400, "M08": 500, "M09": 400, "M10": 100,
-    "M11": 80, "M12": 150, "M13": 300, "M14": 250, "M15": 300,
-}
+# ── 개발방식별 일반적 용적률 — 단일 출처 unit_standards.TYPICAL_FAR_PCT(상단 import) ──
 
 # ── 개발방식별 분양가 보정계수 ──
 SALE_PRICE_MULTIPLIER: dict[str, float] = {
