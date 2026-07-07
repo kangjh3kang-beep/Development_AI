@@ -62,23 +62,34 @@ DEV_TYPE_MULTIPLIER: dict[str, float] = {
 _DEFAULT_BASE_MAN_WON = 1500
 
 
-def get_regional_base_price_man_won(region: str = "", address: str = "") -> int:
-    """시군구 → 시도(region) → 주소 내 시도 추론 순으로 기준 분양가(만원/평)를 결정."""
+def resolve_regional_base_price(region: str = "", address: str = "") -> tuple[int, str]:
+    """기준 분양가(만원/평)와 매칭 근거(basis)를 함께 반환 — 폴백 무신호 해소(W2-1).
+
+    basis: "sigungu"(시군구 정밀) | "sido_region"(명시 시도) | "sido_address"(주소 시도 추론)
+           | "national_default"(전국 기본 — 지역 미매칭 폴백. 호출부는 출처를
+           regional_market_table로 오표기하지 말고 폴백임을 정직 표기할 것).
+    """
     # 1) 시군구 세분화 매칭 (가장 정밀)
     for sigungu, price in SIGUNGU_PRICES_MAN_WON.items():
         if sigungu in address:
-            return price
+            return price, "sigungu"
     # 2) 명시된 시도(region) 기본값
     if region:
         price = SIDO_PRICES_MAN_WON.get(region)
         if price is not None:
-            return price
+            return price, "sido_region"
     # 3) 주소에서 시도 추론
     for sido, price in SIDO_PRICES_MAN_WON.items():
         if sido in address:
-            return price
+            return price, "sido_address"
     # 4) 전국 기본값
-    return _DEFAULT_BASE_MAN_WON
+    return _DEFAULT_BASE_MAN_WON, "national_default"
+
+
+def get_regional_base_price_man_won(region: str = "", address: str = "") -> int:
+    """시군구 → 시도(region) → 주소 내 시도 추론 순으로 기준 분양가(만원/평)를 결정."""
+    price, _ = resolve_regional_base_price(region=region, address=address)
+    return price
 
 
 def get_regional_sale_price_per_pyeong(
@@ -97,3 +108,12 @@ def get_regional_sale_price_per_pyeong(
     base_man_won = get_regional_base_price_man_won(region=region, address=address)
     multiplier = DEV_TYPE_MULTIPLIER.get(dev_type, 1.0)
     return int(base_man_won * multiplier * 10000)  # 만원 → 원
+
+
+def resolve_regional_sale_price_per_pyeong(
+    dev_type: str = "", region: str = "", address: str = ""
+) -> tuple[int, str]:
+    """평당 분양가(원)와 매칭 근거(basis)를 함께 반환 — 호출부의 출처 정직 표기용(W2-1)."""
+    base_man_won, basis = resolve_regional_base_price(region=region, address=address)
+    multiplier = DEV_TYPE_MULTIPLIER.get(dev_type, 1.0)
+    return int(base_man_won * multiplier * 10000), basis

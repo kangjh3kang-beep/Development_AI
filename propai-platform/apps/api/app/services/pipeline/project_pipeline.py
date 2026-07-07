@@ -1643,10 +1643,13 @@ class ProjectPipeline:
         # 토지비가 수입에 반영되지 않아 토지비만큼 구조적 적자가 발생한다.
         # regional_pricing(단일 출처)을 사용하고, 조회 실패 시에만 공사비 기반으로 폴백한다.
         from app.services.feasibility.regional_pricing import (
-            get_regional_sale_price_per_pyeong,
+            resolve_regional_sale_price_per_pyeong,
         )
 
-        market_price = get_regional_sale_price_per_pyeong(address=site.address)
+        # W2-1: 매칭 근거(basis)를 함께 받아 전국 기본 폴백을 출처에 정직 표기.
+        market_price, market_price_basis = resolve_regional_sale_price_per_pyeong(
+            address=site.address
+        )
 
         # F1: 다중출처 신뢰도 가중 시장 재평가(지역표준 + MOLIT 실거래 블렌딩). 있으면 우선.
         market_reval: dict | None = None
@@ -1668,7 +1671,11 @@ class ProjectPipeline:
             sale_price_source = "market_blended"
         elif market_price and market_price > 0:
             avg_sale_price = float(market_price)
-            sale_price_source = "regional_market_table"
+            # W2-1: 지역 미매칭 전국 기본(1500만/평) 폴백을 지역시세표 출처로 오표기하지 않음.
+            sale_price_source = (
+                "national_default_fallback" if market_price_basis == "national_default"
+                else "regional_market_table"
+            )
         else:
             avg_sale_price = cost.cost_per_pyeong * 1.3  # 최후 폴백
             sale_price_source = "cost_based_fallback"
@@ -1969,6 +1976,17 @@ class ProjectPipeline:
         from app.services.pipeline.tax_reconcile import compute_project_taxes
 
         feasibility = state.stages.get("feasibility", StageResult(stage=PipelineStage.FEASIBILITY))
+        # W2-3: feasibility 미완료/실패 시 0 입력으로 '완료' 세금이 산출되던 침묵 전파 차단 —
+        # design_review와 동일한 degraded SKIPPED 패턴(러너가 상태 보존, 정직 표기).
+        if feasibility.status != PipelineStatus.COMPLETED:
+            state.stages["tax"].status = PipelineStatus.SKIPPED
+            state.stages["tax"].data = {
+                "skipped_reason": (
+                    f"feasibility 단계 {feasibility.status.value} — 세금 산정 입력(매출·원가) 부재. "
+                    "0 합성 산출 금지(무날조)."
+                )
+            }
+            return
         fdata = feasibility.data
 
         taxes = compute_project_taxes(

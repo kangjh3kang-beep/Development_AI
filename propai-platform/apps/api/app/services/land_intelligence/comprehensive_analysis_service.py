@@ -953,8 +953,15 @@ class ComprehensiveAnalysisService:
                 unit_count=unit_count, total_gfa=total_gfa, floor_count=floor_count,
             )
             return result.to_dict()
-        except Exception:
-            return {"feasibility_status": "조건부", "conditions_met": [], "blocking_issues": [], "recommendations": []}
+        except Exception as e:  # noqa: BLE001
+            # W2-13: 검증엔진 예외를 실제 판정처럼 보이는 "조건부"로 둔갑시키지 않음 —
+            # "검증불가" + 오류 사유로 정직 표기(프론트는 미지정 상태 기본 스타일로 렌더).
+            logger.warning("유형별 법규검증 실패 — 검증불가 표기", dev_type=dev_type, err=str(e)[:160])
+            return {
+                "feasibility_status": "검증불가",
+                "validation_error": str(e)[:120],
+                "conditions_met": [], "blocking_issues": [], "recommendations": [],
+            }
 
     def _calc_parking(self, dev_type: str, unit_count: int, total_gfa: float) -> int:
         rule = PARKING_RULES.get(dev_type, {"method": "per_unit", "ratio": 1.0})
