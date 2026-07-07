@@ -486,11 +486,6 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [enabledLayers],
   );
 
-  const analyzedProjects = useMemo(
-    () => projects.filter((p) => p.status !== "draft" || (snapshots?.[p.id]?.completedStages?.length ?? 0) > 0),
-    [projects, snapshots],
-  );
-  const pickerProjects = analyzedProjects.length > 0 ? analyzedProjects : projects;
 
   const handleSelectProject = useCallback((id: string) => {
     if (!id) return;
@@ -1184,48 +1179,24 @@ export function SatongMapShell({ locale }: { locale: string }) {
             </p>
           </div>
 
-          {/* 프로젝트 및 히스토리 연결 */}
-          <div className="mt-4 rounded-[20px] border border-slate-100 bg-slate-50/70 p-3.5 space-y-3">
-            <div>
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
-                <Building2 className="size-4 text-emerald-600" aria-hidden />
-                연결 프로젝트
-              </label>
-              <select
-                value={projectId ?? ""}
-                onChange={(e) => handleSelectProject(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
-              >
-                <option value="">프로젝트 선택 안 함 (약식 분석)</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {pickerProjects.length > 0 && (
-              <div>
-                <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
-                  <LineChart className="size-4 text-sky-600" aria-hidden />
-                  분석 히스토리 불러오기
-                </label>
-                <select
-                  value={projectId ?? ""}
-                  onChange={(e) => handleSelectProject(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-sky-500"
-                  title="이전에 분석을 실행한 프로젝트의 필지 정보를 복원합니다"
-                >
-                  <option value="">최근 분석 이력 선택…</option>
-                  {pickerProjects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}{p.address ? ` — ${p.address}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+          {/* 프로젝트 연결 */}
+          <div className="mt-4 rounded-[20px] border border-slate-100 bg-slate-50/70 p-3.5">
+            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
+              <Building2 className="size-4 text-emerald-600" aria-hidden />
+              연결 프로젝트
+            </label>
+            <select
+              value={projectId ?? ""}
+              onChange={(e) => handleSelectProject(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+            >
+              <option value="">프로젝트 선택 안 함 (약식 분석)</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.address ? ` — ${p.address}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="mt-4 space-y-3">
