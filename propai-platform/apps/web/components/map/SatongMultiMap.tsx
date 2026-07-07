@@ -286,19 +286,21 @@ function createOfficialBaseMapLayer(
   // ★타일은 프론트 서버 프록시(/tiles/vworld) 경유 — (1)API키를 브라우저에 노출하지 않고
   //   (2)위성(Satellite)을 .jpeg로 요청하며 (3)VWorld 200+XML 오류를 투명타일로 흡수한다.
   //   (api.vworld.kr 직접호출은 키노출·위성 png 오류·XML 미처리로 회색지도를 유발하므로 금지.)
-  const makeTile = (layerName: string) =>
+  const makeTile = (layerName: string, pane?: string) =>
     L.tileLayer(`/tiles/vworld/wmts/${layerName}/{z}/{y}/{x}.png`, {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
       maxZoom: 19,
       crossOrigin: true,
+      ...(pane ? { pane } : {}),
     });
 
   // ★VWorld의 Hybrid는 단독 베이스가 아니라 '위성영상 위에 얹는 투명 라벨·도로 오버레이'다
   //   (타일 실측: Hybrid=PNG RGBA 투명채널, Base=불투명 팔레트). 단독으로 깔면 밝은 배경에
   //   라벨만 뜨는 유령지도가 됨 → 항공뷰는 Satellite(베이스)+Hybrid(오버레이) 두 장을 합성한다.
+  //   텍스트/라벨이 폴리곤(overlayPane, 400) 위로 올라오도록 overlay 타일은 labelPane(450)에 그린다.
   if (baseLayer === "Hybrid") {
     const sat = makeTile("Satellite");
-    const overlay = makeTile("Hybrid");
+    const overlay = makeTile("Hybrid", "labelPane");
     sat.on("tileload", () => onTileState("ready"));
     sat.on("tileerror", () => onTileState("error"));
     return L.layerGroup([sat, overlay]);
@@ -914,6 +916,11 @@ export function SatongMultiMap({
           scrollWheelZoom: true,
           attributionControl: false,
         });
+
+        // 텍스트/라벨 레이어가 폴리곤(overlayPane, 400) 위로 올라오도록 커스텀 Pane 생성
+        const labelPane = map.createPane("labelPane");
+        labelPane.style.zIndex = "450";
+        labelPane.style.pointerEvents = "none";
         L.control.attribution({ prefix: false, position: "bottomright" })
           .addTo(map)
           .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
