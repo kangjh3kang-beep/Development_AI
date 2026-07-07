@@ -1502,7 +1502,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             #   위임 내부에서 대표주소로 재도출되므로, 아래 dominant_zone·blended_*는 '표시·검증용'(위임 미주입)이며
             #   site.zone_basis='representative_parcel'로 실계산 기준이 대표필지임을 명시한다(표시값↔실계산 구분).
             rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
-            region = _extract_sigungu({"address": rep_addr}) or "서울"
+            # 시군구 미추출 시 ""(주소 시도 추론에 양보) — "서울" 폴백은 지방 부지 분양가를 서울가로 과대.
+            region = _extract_sigungu({"address": rep_addr}) or ""
             site = {
                 "total_area_sqm": total_area,
                 "zone_type": dominant_zone,

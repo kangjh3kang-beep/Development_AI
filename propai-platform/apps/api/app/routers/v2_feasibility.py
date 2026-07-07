@@ -1045,7 +1045,9 @@ async def export_feasibility_excel(req: FeasibilityCalculateRequest):
 class AutoRecommendRequest(BaseModel):
     address: str
     land_area_sqm: float | None = None
-    region: str = "서울"
+    # region 기본값은 빈 문자열 — "서울" 고정 기본값은 regional_pricing의 ②시도 매칭을
+    # 선점해 ③주소 시도 추론(지방 900~1300만/평)이 영원히 도달 불가 → 지방 부지 매출 과대.
+    region: str = ""
     equity_won: int = 10_000_000_000
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택)
 

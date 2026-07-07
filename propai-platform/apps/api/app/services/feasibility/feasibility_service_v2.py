@@ -90,7 +90,7 @@ class FeasibilityServiceV2:
         self,
         address: str,
         land_area_sqm: float | None = None,
-        region: str = "서울",
+        region: str = "",  # 빈값=주소 시도 추론에 양보(맹목 "서울"은 지방 매출 과대 — regional_pricing ②가 ③을 선점)
         equity_won: int = 10_000_000_000,  # 자기자본 100억 기본
         use_llm: bool = True,
         with_senior: bool = True,

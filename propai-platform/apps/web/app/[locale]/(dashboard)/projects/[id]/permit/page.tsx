@@ -12,6 +12,7 @@ import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSumm
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LIFECYCLE_STAGES, STAGE_META } from "@/lib/lifecycle-stages";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 import { useDictionary } from "@/hooks/use-dictionary";
 
 /** /permits/ai-analysis 응답(개발방식별 인허가 가능성·근거법령·문제점·해결방안). */
@@ -160,10 +161,9 @@ export default function PermitPage() {
     ? Math.round((permitStages.filter((s) => s.status === "completed").length / permitStages.length) * 100)
     : 0;
 
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary?.workspace.modeLive ?? "LIVE"
-      : dictionary?.workspace.modeMock ?? "MOCK";
+  const runtimeMode = isMockMode()
+    ? dictionary?.workspace.modeMock ?? "MOCK"
+    : dictionary?.workspace.modeLive ?? "LIVE";
   const t = dictionary?.modulePlaceholders["permit"];
 
   return (
