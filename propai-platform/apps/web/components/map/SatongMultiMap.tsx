@@ -563,7 +563,7 @@ export function SatongMultiMap({
   const avgAge = useMemo(() => {
     const allFeatures = new Map<string, { buildingAgeYears?: number | null }>();
     
-    selectedParcels.forEach((p) => {
+    boundaryFeatures.forEach((p) => {
       if (p.id) allFeatures.set(p.id, { buildingAgeYears: p.buildingAgeYears });
     });
     
@@ -579,7 +579,7 @@ export function SatongMultiMap({
     if (validAges.length === 0) return null;
     const sum = validAges.reduce((a, b) => a + b, 0);
     return Math.round((sum / validAges.length) * 10) / 10;
-  }, [selectedParcels, staged]);
+  }, [boundaryFeatures, staged]);
   // staged 필지별 폴리곤 레이어 — pnu → Leaflet layerGroup
   const stagedLayersRef = useRef<Map<string, any>>(new Map());
 
@@ -644,8 +644,8 @@ export function SatongMultiMap({
       setBoundaryStatus((prev) => (prev === "idle" ? prev : "idle"));
       return;
     }
-    const hasAllGeometry = selectedParcels.every((parcel) => !!parcel.geometry);
-    if (hasAllGeometry) {
+    const hasAllGeometryAndMetadata = selectedParcels.every((parcel) => !!parcel.geometry && parcel.buildingAgeYears != null);
+    if (hasAllGeometryAndMetadata) {
       setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
       setBoundaryStatus("ready");
       return;
