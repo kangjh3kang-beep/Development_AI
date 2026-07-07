@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
@@ -18,25 +17,39 @@ vi.mock("@/components/ui/KakaoAddressSearch", () => ({
   KakaoAddressSearch: () => <div data-testid="kakao-address-search" />,
 }));
 
-describe("GlobalAddressSearch multi-map console", () => {
-  it("explains all Satong map layers and keeps parcel-dependent layers gated before address input", () => {
+// 471347cf: 레이어 콘솔 UI가 SatongMultiMap 통합엔진으로 대체됨.
+// 통합지도는 next/dynamic으로 로드되므로 dynamic 자체를 스텁해
+// 전달 props(활성 레이어·선택 필지)를 검증 가능한 DOM 속성으로 노출한다.
+vi.mock("next/dynamic", () => ({
+  default: () =>
+    function SatongMultiMapStub(props: {
+      layerState?: { enabledLayerIds?: string[] };
+      selectedParcels?: unknown[];
+    }) {
+      return (
+        <div
+          data-testid="satong-multi-map"
+          data-layers={props.layerState?.enabledLayerIds?.join(",") ?? ""}
+          data-parcels={String(props.selectedParcels?.length ?? 0)}
+        />
+      );
+    },
+}));
+
+describe("GlobalAddressSearch unified multi-map", () => {
+  it("renders the unified Satong multi-map with the five data layers enabled", () => {
     render(<GlobalAddressSearch single={false} writeToContext={false} />);
 
-    expect(screen.getByText("지도 레이어 콘솔")).toBeInTheDocument();
-    expect(screen.getByText("지적도·용도지역")).toBeInTheDocument();
-    expect(screen.getByText("공시지가·노후도")).toBeInTheDocument();
-    expect(screen.getByText("실거래·시세")).toBeInTheDocument();
-    expect(screen.getByText("분양·공·경매")).toBeInTheDocument();
-    expect(screen.getByText("위성·지형·교통·로드뷰")).toBeInTheDocument();
-    expect(screen.getByText("연결 산출물")).toBeInTheDocument();
-    expect(screen.getByText("후보지 진단서")).toBeInTheDocument();
-    expect(screen.getByText("시장·분양 리포트")).toBeInTheDocument();
-    expect(screen.getByText("건축개요·CAD 계획도면")).toBeInTheDocument();
-    expect(screen.getByText("상단에서 지번·주소를 검색하거나 엑셀을 올리면 지적·공시지가·노후도 레이어가 열립니다.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /지적도·용도지역/ })).toBeDisabled();
+    const map = screen.getByTestId("satong-multi-map");
+    expect(map).toBeInTheDocument();
+    // 지적·용도지역·공시지가·노후도·실거래 5개 레이어가 기본 활성으로 전달되는 계약.
+    expect(map).toHaveAttribute(
+      "data-layers",
+      "cadastre,zoning,official-price,age,transactions",
+    );
   });
 
-  it("switches the visible workflow hint after a parcel exists and the market layer is selected", async () => {
+  it("registers an initial address into the parcel list alongside the map", async () => {
     render(
       <GlobalAddressSearch
         single={false}
@@ -45,12 +58,8 @@ describe("GlobalAddressSearch multi-map console", () => {
       />,
     );
 
-    const marketButton = screen.getByRole("button", { name: /실거래·시세/ });
-    expect(marketButton).toBeEnabled();
-
-    await userEvent.click(marketButton);
-
-    expect(screen.getByText("현재 실거래·분양")).toBeInTheDocument();
-    expect(screen.getByText("필지 경계와 시장 레이어를 오가며 후보지 검토, 인허가, 설계 산출물로 이어갈 수 있습니다.")).toBeInTheDocument();
+    // 초기 주소가 좌측 필지 목록에 등재되고 통합지도가 함께 렌더된다.
+    expect(await screen.findByText(/의정부동 224/)).toBeInTheDocument();
+    expect(screen.getByTestId("satong-multi-map")).toBeInTheDocument();
   });
 });

@@ -63,6 +63,7 @@ dependencies = [
     # 드론/IoT
     "paho-mqtt>=2.0.0",
     "reportlab>=4.1.0",
+    "matplotlib>=3.9",  # 구획도 PNG export(parcel_boundary_export)
     # 외부 API
     "replicate>=0.25.0",
     "openai>=1.14.0",
