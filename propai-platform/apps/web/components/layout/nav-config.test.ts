@@ -16,10 +16,11 @@ describe("buildPrimaryNav", () => {
       "projects",
       "market-acquisition",
       "design-center",
-      "operations-center",
+      "sales-management",
       "admin",
     ]);
-    expect(NAV.find((s) => s.id === "operations-center")?.assetOpsOnly).toBe(true);
+    // 분양 관리는 코어 워크플로우(개발→분양)라 역할 게이트 없음 — 일반 사용자에게 노출.
+    expect(NAV.find((s) => s.id === "sales-management")?.assetOpsOnly).toBeUndefined();
     expect(NAV.find((s) => s.id === "admin")?.adminOnly).toBe(true);
   });
 
