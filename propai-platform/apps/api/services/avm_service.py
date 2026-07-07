@@ -517,10 +517,13 @@ class AVMService:
         )
 
         # 1-1. 콜드스타트: 비교사례 3건 미만이면 CTGAN 합성 보강
+        real_comparable_count = len(comparables)
         if len(comparables) < 3:
             logger.info("콜드스타트 감지 — CTGAN 합성 데이터 생성", count=len(comparables))
             synthetic = self._generate_synthetic_comparables(request.area_sqm)
             comparables.extend(synthetic)
+        # W1-6 정직 분리: 합성 보강은 모델 입력으로만 쓰고, 신뢰도·표기 계수는 실거래 기준.
+        synthetic_count = len(comparables) - real_comparable_count
 
         # 2. 16개 특성 벡터 생성
         features = await self._build_features(request, comparables)
@@ -547,10 +550,12 @@ class AVMService:
             model_version = "simple-estimate-fallback"
 
         price_per_sqm = predicted_price / request.area_sqm if request.area_sqm > 0 else 0
-        confidence = self._calculate_confidence(len(comparables), self._model_stage)
+        # 신뢰도는 실거래 사례 수 기준(W1-6) — 합성 30건이 +보정을 받아 실거래 풍부처럼
+        # 보이던 위장 제거(실사례 0건이면 ≤3 페널티가 정직하게 적용된다).
+        confidence = self._calculate_confidence(real_comparable_count, self._model_stage)
 
-        # 4. 비교 사례 상위 3건 선택
-        top_comparables = comparables[:3]
+        # 4. 비교 사례 상위 3건 선택 (실거래 우선 — 합성은 실거래가 모자랄 때만 노출)
+        top_comparables = sorted(comparables, key=lambda c: bool(c.get("synthetic")))[:3]
 
         # 5. DB 저장
         valuation = AVMValuation(
@@ -619,7 +624,9 @@ class AVMService:
                     {"label": "추정 시세", "value": round(predicted_price), "basis": method_basis},
                     {"label": "㎡당 단가", "value": round(price_per_sqm), "basis": "추정시세 ÷ 대지/전용면적"},
                     {"label": "신뢰도", "value": round(confidence, 3),
-                     "basis": f"비교사례 {len(comparables)}건 · 모델 {self._model_stage}"},
+                     "basis": f"실거래 비교 {real_comparable_count}건"
+                              + (f" + 합성 보강 {synthetic_count}건(참고용)" if synthetic_count else "")
+                              + f" · 모델 {self._model_stage}"},
                 ],
                 sources=["국토교통부 실거래가(MOLIT)", "개별공시지가(공공데이터)"],
             )
@@ -633,6 +640,9 @@ class AVMService:
             price_per_sqm=valuation.price_per_sqm,
             confidence_score=valuation.confidence_score,
             comparable_count=valuation.comparable_count,
+            real_comparable_count=real_comparable_count,
+            synthetic_count=synthetic_count,
+            comparables=self._to_public_comparables(top_comparables),
             model_version=valuation.model_version,
             created_at=valuation.created_at,
             valuation_narrative=narrative.get("valuation_narrative"),
@@ -642,6 +652,32 @@ class AVMService:
             investment_recommendation=narrative.get("investment_recommendation"),
             evidence=evidence_block,
         )
+
+    # ── 응답용 비교사례 매핑(W1-6: 내부 키 → 프론트 계약 키) ──
+
+    @staticmethod
+    def _to_public_comparables(comps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """내부 비교사례(area_m2·price_10k_won·deal_date)를 프론트 표 계약
+        (address·price[원]·area_sqm·transaction_date·synthetic)으로 변환.
+
+        스키마에 comparables 필드가 없어 response_model이 값을 걸러내던 데드 UI를
+        복구하며, 키 불일치(area_m2↔area_sqm 등) 이중 단절도 함께 해소한다.
+        합성 사례는 synthetic=True로 정직 표기(실거래 위장 금지).
+        """
+        public: list[dict[str, Any]] = []
+        for c in comps or []:
+            area = c.get("area_m2") or 0
+            public.append({
+                "address": str(
+                    c.get("address") or c.get("apt_name") or c.get("umd_nm")
+                    or ("합성 사례(참고)" if c.get("synthetic") else "실거래 사례")
+                ),
+                "price": int((c.get("price_10k_won") or 0) * 10_000),
+                "area_sqm": float(area) if area else None,
+                "transaction_date": str(c.get("deal_date") or ""),
+                "synthetic": bool(c.get("synthetic")),
+            })
+        return public
 
     # ── MAPE 검증 ──
 
