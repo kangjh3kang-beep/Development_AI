@@ -245,12 +245,16 @@ def cost_estimate_to_ledger(*, summary: dict[str, Any], header: dict[str, Any],
 
 async def record_cost_estimate(
     *, summary: dict[str, Any], header: dict[str, Any], estimate_id: str | None = None,
-    tenant_id: str | None = None, project_id: str | None = None, created_by: str | None = None,
+    tenant_id: str | None = None, project_id: str | None = None,
+    pnu: str | None = None, address: str | None = None, created_by: str | None = None,
 ) -> dict[str, Any]:
+    # W1-7: pnu/address 체인키 수용 — 미전달 시 project_id 없는 호출이 익명 체인으로
+    # 적재돼 from-ledger 보고서·모순탐지가 cost 단계를 못 찾던 단선 해소.
     return await ledger.append_analysis(
         analysis_type="cost_estimate",
         payload=cost_estimate_to_ledger(summary=summary, header=header, estimate_id=estimate_id),
-        tenant_id=tenant_id, project_id=project_id, source="cost_boq", created_by=created_by,
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source="cost_boq", created_by=created_by,
     )
 
 
