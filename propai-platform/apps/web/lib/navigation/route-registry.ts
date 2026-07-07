@@ -25,7 +25,7 @@ export type PrimaryNavSectionId =
   | "projects"
   | "market-acquisition"
   | "design-center"
-  | "operations-center"
+  | "sales-management"
   | "admin";
 
 export interface PrimaryNavSectionMeta {
@@ -67,7 +67,10 @@ export const PRIMARY_NAV_SECTIONS: PrimaryNavSectionMeta[] = [
   { id: "projects", title: "프로젝트", order: 20 },
   { id: "market-acquisition", title: "시장·획득", order: 30 },
   { id: "design-center", title: "설계 센터", order: 40 },
-  { id: "operations-center", title: "운영 센터", order: 50, assetOpsOnly: true },
+  // 분양 관리 — 구 IA의 "분양 현장 관리" 그룹 복원. IA 통합 리팩토링(800e7477)이 이 그룹을
+  //   registry로 미이관(메뉴 소실)하고, 구 IA가 의도적으로 숨겼던 자산운영(운영 센터)을 되살리는
+  //   이중 역전이 있었음 → 운영 센터를 분양 관리로 대체(자산운영 라우트·페이지는 보존, 향후 복원 가능).
+  { id: "sales-management", title: "분양 관리", order: 50 },
   { id: "admin", title: "관리", order: 60, adminOnly: true },
 ];
 
@@ -389,57 +392,44 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     prefetch: false,
     apiDependencies: ["/design-references"],
   },
+  // ── 분양 관리(구 "분양 현장 관리" 복원) — 분양 ERP는 코어 워크플로우(개발→분양)라 일반 노출.
+  //    자산운영 4종(디지털트윈 /digital-twin·임대 /operations/lease·임차인 /tenant·시설 /maintenance)은
+  //    구 IA 정책대로 네비에서 숨김(라우트·페이지 보존 — 준공 후 운영 단계 성숙 시 재등록).
   {
-    id: "digital-twin",
-    label: "디지털 트윈",
-    sectionId: "operations-center",
+    id: "sales-mgmt",
+    label: "분양 현장 관리",
+    sectionId: "sales-management",
     order: 10,
-    path: "/digital-twin",
-    iconKey: "design",
-    status: "beta",
+    path: "/sales",
+    iconKey: "project",
+    status: "live",
     scope: "global",
-    lifecyclePhase: "operations",
-    assetOpsOnly: true,
-    apiDependencies: ["/digital-twin"],
+    lifecyclePhase: "market",
+    apiDependencies: ["/sales"],
   },
   {
-    id: "lease",
-    label: "임대·임차인 관리",
-    sectionId: "operations-center",
+    id: "sales-sites",
+    label: "내 분양 현장(현장앱)",
+    sectionId: "sales-management",
+    parentId: "sales-mgmt",
+    order: 10,
+    path: "/sales/sites",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "market",
+    apiDependencies: ["/sales/sites"],
+  },
+  {
+    id: "sales-projection",
+    label: "분양관리요약(관리자)",
+    sectionId: "sales-management",
+    parentId: "sales-mgmt",
     order: 20,
-    path: "/operations/lease",
-    iconKey: "project",
-    status: "beta",
+    path: "/sales/projection",
+    status: "live",
     scope: "global",
-    lifecyclePhase: "operations",
-    assetOpsOnly: true,
-    apiDependencies: ["/lease"],
-  },
-  {
-    id: "tenant",
-    label: "임차인 포털",
-    sectionId: "operations-center",
-    order: 30,
-    path: "/tenant",
-    iconKey: "project",
-    status: "beta",
-    scope: "global",
-    lifecyclePhase: "operations",
-    assetOpsOnly: true,
-    apiDependencies: ["/tenant"],
-  },
-  {
-    id: "maintenance",
-    label: "시설 유지보수",
-    sectionId: "operations-center",
-    order: 40,
-    path: "/maintenance",
-    iconKey: "sre",
-    status: "beta",
-    scope: "global",
-    lifecyclePhase: "operations",
-    assetOpsOnly: true,
-    apiDependencies: ["/maintenance"],
+    lifecyclePhase: "market",
+    apiDependencies: ["/sales/projection"],
   },
   {
     id: "settings",

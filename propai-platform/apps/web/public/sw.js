@@ -3,7 +3,7 @@
 //        Link 클릭 시 반환 → 클라 네비게이션 침묵 실패하던 근본원인. RSC 는 콘텐츠해시가
 //        없어(같은 라우트 URL·빌드마다 다른 내용) 절대 캐시하면 안 되므로 network-only 분기.
 //        버전 범프로 v376 캐시(오염된 stale RSC 포함) 일괄 삭제.
-const CACHE_NAME = "propai-v389-hybrid-composite";
+const CACHE_NAME = "propai-v390-sales-nav-restore";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.

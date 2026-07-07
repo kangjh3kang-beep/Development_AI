@@ -32,7 +32,8 @@ describe("WorkspaceNavBar", () => {
       "href",
       "/en/market-insights",
     );
-    expect(within(nav).queryByText("운영 센터")).not.toBeInTheDocument();
+    // 분양 관리는 코어 워크플로우라 일반 사용자에게도 노출(구 IA "분양 현장 관리" 복원).
+    expect(within(nav).getByText("분양 관리")).toBeInTheDocument();
     expect(within(nav).queryByText("관리")).not.toBeInTheDocument();
   });
 
@@ -117,7 +118,7 @@ describe("WorkspaceNavBar", () => {
     }
   });
 
-  it("관리자 로그인 시 역할 게이트 섹션(운영 센터·관리)까지 전부 노출된다 — 절단 회귀 방지", async () => {
+  it("관리자 로그인 시 역할 게이트 섹션(관리)까지 전부 노출된다 — 절단 회귀 방지", async () => {
     // 근본원인 회귀 테스트: 과거 slice(0,5)가 관리자에게 6번째가 되는 '관리' 섹션을 잘라
     // 관리자 메뉴가 사라졌다. 역할 판별이 완료되면 게이트 통과 섹션은 하나도 잘리지 않아야 한다.
     roleMocks.fetchIsAdmin.mockResolvedValueOnce(true);
@@ -130,8 +131,8 @@ describe("WorkspaceNavBar", () => {
     });
 
     const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    // 일반 4섹션 + 역할 게이트 2섹션(운영 센터=assetOps, 관리=admin) 전부 존재
-    for (const title of ["관제", "프로젝트", "시장·획득", "설계 센터", "운영 센터", "관리"]) {
+    // 일반 5섹션(분양 관리 포함) + 역할 게이트 1섹션(관리=admin) 전부 존재
+    for (const title of ["관제", "프로젝트", "시장·획득", "설계 센터", "분양 관리", "관리"]) {
       expect(within(nav).getByText(title)).toBeInTheDocument();
     }
   });
