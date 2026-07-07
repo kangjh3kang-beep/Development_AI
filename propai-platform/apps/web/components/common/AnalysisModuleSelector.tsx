@@ -65,6 +65,8 @@ export interface AnalysisModuleSelectorProps {
   title?: string;
   /** 패널 부제. */
   subtitle?: string;
+  /** 선택 기능 비활성화 여부 (나열 및 정보 제공 전용) */
+  readOnly?: boolean;
 }
 
 const won = (n: number) => `${(n ?? 0).toLocaleString("ko-KR")}원`;
@@ -86,11 +88,12 @@ export function AnalysisModuleSelector({
   onRun,
   runDisabled = false,
   unlimited = false,
-  title = "분석 항목 선택",
-  subtitle = "필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다.",
+  readOnly = false,
+  title = readOnly ? "분석 항목" : "분석 항목 선택",
+  subtitle = readOnly ? "본 보고서에 포함되는 분석 모듈 목록입니다." : "필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다.",
 }: AnalysisModuleSelectorProps) {
-  // required는 항상 선택된 것으로 간주. locked는 선택 불가.
-  const isOn = (m: AnalysisModuleOption) => m.required || (!m.locked && !!selected[m.key]);
+  // required는 항상 선택된 것으로 간주. locked는 선택 불가. readOnly일 때는 잠기지 않은 모든 모듈을 활성으로 간주.
+  const isOn = (m: AnalysisModuleOption) => m.required || (!m.locked && (readOnly || !!selected[m.key]));
 
   // 말단(leaf) 모듈만 모은다 — 자식이 있으면 자식들이 말단, 없으면 자신이 말단.
   // 코인·시간 합계와 "선택 N개"는 모두 이 말단 기준으로 계산한다.
@@ -148,9 +151,11 @@ export function AnalysisModuleSelector({
             <p className="text-sm font-bold text-[var(--text-primary)]">{title}</p>
             <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{subtitle}</p>
           </div>
-          <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] font-bold text-[var(--text-secondary)]">
-            선택 {selectedCount}개
-          </span>
+          {!readOnly && (
+            <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] font-bold text-[var(--text-secondary)]">
+              선택 {selectedCount}개
+            </span>
+          )}
         </div>
 
         {/* 모듈 카탈로그 — 균형 2열 그리드(분류·단일 모두 1칸, 시선축 단일화). 분류는 아코디언. */}
@@ -169,30 +174,35 @@ export function AnalysisModuleSelector({
                   onToggleExpand={() => toggleExpand(m.key)}
                   onToggleParent={toggleParent}
                   onToggleChild={toggleChild}
+                  readOnly={readOnly}
                 />
               );
             }
             // 단일 모듈(자식 없음) — 기존 동작 100% 동일.
             const checked = isOn(m);
-            const interactive = !m.required && !m.locked;
+            const interactive = !m.required && !m.locked && !readOnly;
             const base =
               "flex items-start gap-3 rounded-xl border p-3 transition-colors";
-            const stateClass = m.required
-              ? "cursor-not-allowed border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_6%,transparent)]"
-              : m.locked
-                ? "cursor-not-allowed border-[var(--line-strong)] bg-[var(--surface-card)] opacity-60"
-                : "cursor-pointer border-[var(--line-strong)] bg-[var(--surface-soft)] hover:border-[var(--accent-strong)]";
+            const stateClass = readOnly
+              ? "border-[var(--line-strong)] bg-[var(--surface-soft)]"
+              : m.required
+                ? "cursor-not-allowed border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_6%,transparent)]"
+                : m.locked
+                  ? "cursor-not-allowed border-[var(--line-strong)] bg-[var(--surface-card)] opacity-60"
+                  : "cursor-pointer border-[var(--line-strong)] bg-[var(--surface-soft)] hover:border-[var(--accent-strong)]";
             return (
               <label key={m.key} className={`${base} ${stateClass}`}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  readOnly={!interactive}
-                  disabled={!interactive}
-                  onChange={(e) => toggle(m, e.target.checked)}
-                  className={`mt-0.5 h-4 w-4 accent-[var(--accent-strong)] ${m.required ? "opacity-70" : ""}`}
-                  aria-label={m.label}
-                />
+                {!readOnly && (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    readOnly={!interactive}
+                    disabled={!interactive}
+                    onChange={(e) => toggle(m, e.target.checked)}
+                    className={`mt-0.5 h-4 w-4 accent-[var(--accent-strong)] ${m.required ? "opacity-70" : ""}`}
+                    aria-label={m.label}
+                  />
+                )}
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
                     {m.icon && (typeof m.icon === "string"
@@ -227,13 +237,21 @@ export function AnalysisModuleSelector({
         {/* 합계 요약 + 실행 버튼 */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
           <div className="text-xs text-[var(--text-secondary)]">
-            예상 소모{" "}
-            <b className="text-[var(--text-primary)]">{unlimited ? "무제한(관리자)" : won(totalCoin)}</b>
-            {" · "}예상 소요 <b className="text-[var(--text-primary)]">{formatSeconds(totalSeconds)}</b>
-            <span className="ml-1 text-[var(--text-hint)]">(미선택 모듈은 호출 자체를 생략)</span>
+            {readOnly ? (
+              <span>
+                분석 예상 소요 시간: <b className="text-[var(--text-primary)]">{formatSeconds(totalSeconds)}</b>
+              </span>
+            ) : (
+              <span>
+                예상 소모{" "}
+                <b className="text-[var(--text-primary)]">{unlimited ? "무제한(관리자)" : won(totalCoin)}</b>
+                {" · "}예상 소요 <b className="text-[var(--text-primary)]">{formatSeconds(totalSeconds)}</b>
+                <span className="ml-1 text-[var(--text-hint)]">(미선택 모듈은 호출 자체를 생략)</span>
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {onSelectAll && (
+            {!readOnly && onSelectAll && (
               <button
                 type="button"
                 onClick={onSelectAll}
@@ -305,6 +323,7 @@ function ParentModuleCard({
   onToggleExpand,
   onToggleParent,
   onToggleChild,
+  readOnly = false,
 }: {
   module: AnalysisModuleOption;
   isOn: (m: AnalysisModuleOption) => boolean;
@@ -313,6 +332,7 @@ function ParentModuleCard({
   onToggleExpand: () => void;
   onToggleParent: (parent: AnalysisModuleOption, checked: boolean) => void;
   onToggleChild: (child: AnalysisModuleOption, checked: boolean) => void;
+  readOnly?: boolean;
 }) {
   const kids = m.children || [];
   // 토글 가능한 자식(잠금/필수 제외) 기준으로 부모 3-state 파생.
@@ -326,14 +346,16 @@ function ParentModuleCard({
     <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
       {/* 부모(분류) 헤더 — 좌측 3-state 체크박스(전체선택/부분/해제) + 우측 펼침 chevron */}
       <div className="flex items-start gap-3">
-        <IndeterminateCheckbox
-          checked={allOn}
-          indeterminate={someOn}
-          disabled={parentDisabled}
-          onChange={parentDisabled ? undefined : (c) => onToggleParent(m, c)}
-          ariaLabel={m.label}
-          className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent-strong)]"
-        />
+        {!readOnly && (
+          <IndeterminateCheckbox
+            checked={allOn}
+            indeterminate={someOn}
+            disabled={parentDisabled}
+            onChange={parentDisabled ? undefined : (c) => onToggleParent(m, c)}
+            ariaLabel={m.label}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent-strong)]"
+          />
+        )}
         <button
           type="button"
           onClick={onToggleExpand}
@@ -346,9 +368,11 @@ function ParentModuleCard({
                 ? <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>
                 : <m.icon className="size-4 text-[var(--text-secondary)]" aria-hidden />)}
               {m.label}
-              <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-tertiary)]">
-                {onCount}/{toggleable.length}
-              </span>
+              {!readOnly && (
+                <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-tertiary)]">
+                  {onCount}/{toggleable.length}
+                </span>
+              )}
               {m.locked && (
                 <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
                   잠금
@@ -370,21 +394,23 @@ function ParentModuleCard({
       <div className="mt-2.5 space-y-1.5 border-l border-[var(--line)] pl-3 ml-2">
         {kids.map((c) => {
           const checked = isOn(c);
-          const interactive = !c.required && !c.locked;
+          const interactive = !c.required && !c.locked && !readOnly;
           return (
             <label
               key={c.key}
-              className={`flex items-start gap-2.5 ${interactive ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`}
+              className={`flex items-start gap-2.5 ${interactive ? "cursor-pointer" : "cursor-default opacity-90"}`}
             >
-              <input
-                type="checkbox"
-                checked={checked}
-                readOnly={!interactive}
-                disabled={!interactive}
-                onChange={(e) => onToggleChild(c, e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent-strong)]"
-                aria-label={c.label}
-              />
+              {!readOnly && (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  readOnly={!interactive}
+                  disabled={!interactive}
+                  onChange={(e) => onToggleChild(c, e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent-strong)]"
+                  aria-label={c.label}
+                />
+              )}
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
                   {c.label}

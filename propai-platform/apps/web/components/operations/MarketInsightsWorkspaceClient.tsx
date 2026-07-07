@@ -266,11 +266,11 @@ export function MarketInsightsWorkspaceClient() {
   //   income(거시 소득) 자식: income_avg / income_basis
   //   katlas: 마이크로 타겟팅(프리미엄)
   const [analysisOptions, setAnalysisOptions] = useState<Record<string, boolean>>({
-    pop_age: false,
-    pop_household: false,
-    pop_migration: false,
-    income_avg: false,
-    income_basis: false,
+    pop_age: true,
+    pop_household: true,
+    pop_migration: true,
+    income_avg: true,
+    income_basis: true,
     katlas: false,
   });
   const [error, setError] = useState("");
@@ -386,6 +386,14 @@ export function MarketInsightsWorkspaceClient() {
       .then(setBalance)
       .catch((e) => { if (!(e instanceof ApiClientError)) setBalance(null); });
   }, []);
+
+  // 프리미엄 권한 변경 시 K-Atlas 마이크로 타겟팅 분석 기본값 연동
+  useEffect(() => {
+    setAnalysisOptions(prev => ({
+      ...prev,
+      katlas: !!isPremiumUser,
+    }));
+  }, [isPremiumUser]);
 
   // 주소 변경 감시 → 새 대상 선택 시 기존 결과 비움(stale 차단)
   useEffect(() => {
@@ -527,14 +535,13 @@ export function MarketInsightsWorkspaceClient() {
       {/* 분석 설정 + 실행 — 모듈 선택과 실행 버튼을 하나의 카드로 묶어 "설정→실행" 흐름을 일원화. */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-5 space-y-4">
-          {/* 선택형 분석 모듈 — 선택분만 실행·과금. */}
+          {/* 분석 대상 항목 나열 */}
           <AnalysisModuleSelector
             modules={analysisModules}
             selected={analysisOptions}
-            onChange={onModulesChange}
-            onSelectAll={onSelectAll}
+            onChange={() => {}}
             unlimited={!!balance?.unlimited}
-            subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
+            readOnly={true}
           />
 
           {/* 구분선 */}
