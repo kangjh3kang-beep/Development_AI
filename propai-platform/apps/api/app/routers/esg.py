@@ -149,7 +149,29 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
         pass
 
     # 인증/ZEB 법령 근거 가산(additive·graceful) — AI 해석의 인증 경로·ZEB 로드맵 근거.
-    return _attach_esg_legal_refs(result)
+    result = _attach_esg_legal_refs(result)
+    # ★성장루프 조인키: LCA 요약을 원장에 best-effort 적재(멱등) 후 최상위 `ledger_hash` 노출
+    #   — ESG 화면의 피드백(👍/👎)이 원장과 조인된다. 실패해도 LCA 결과 무손상.
+    try:
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        wb = await record_user_analysis(
+            analysis_type="esg_lca",
+            summary={
+                "building_type": req.building_type,
+                "floor_area_sqm": req.floor_area_sqm,
+                "embodied_carbon_kgco2e": result["embodied_carbon_kgco2e"],
+                "operational_carbon_kgco2e": result["operational_carbon_kgco2e"],
+                "total_carbon_kgco2e": result["total_carbon_kgco2e"],
+            },
+            tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
+            project_id=req.project_id or None,
+            source="esg_lca", created_by=str(getattr(current_user, "id", "") or "") or None,
+        )
+        result = attach_ledger_hash(result, wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 LCA 결과 무손상
+        pass
+    return result
 
 @router.post("/lcc/calculate")
 async def calculate_lcc(req: LCCRequest, current_user: User = Depends(get_current_user)):

@@ -2,12 +2,15 @@
 
 건축허가/개발행위허가/사용승인 서류 체크리스트 생성.
 인허가 진행 상태 추적, 예상 소요 기간 산출.
-B03: Race Condition 제어 (동시 다발 PDF 생성 시 I/O 병목 방어).
+동시성: PDF 디스크 기록은 고유 임시파일 + 원자적 rename 으로 경합 자체를 제거.
 """
 
 from __future__ import annotations
 
-import asyncio
+import io
+import os
+import re
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,7 +23,15 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# 인허가 유형별 필요 서류 체크리스트
+# 인허가 유형별 필요 서류 체크리스트 (정적 기준표 — 법령·실무 기준 요약, LLM/외부API 미사용)
+# ★이중화 주의(SSOT 미통합): 인허가 제출서류 기준표가 지금 두 곳에 나뉘어 있다.
+#   ① 이 파일: '인허가 유형별'(건축허가/개발행위허가/사용승인) 서류 목록
+#   ② app/services/permit/permit_guide_service.py: '시설물(건축물 용도)별'(단독주택/공동주택 등)
+#      절차+제출서류 (쉬운 규제안내서, GET /permits/guide)
+#   관점이 달라(유형별 vs 시설물별) 당장은 각자 쓰이지만, 장기적으로는 서류 기준표를
+#   app/services/permit/ 아래 공용 상수 한 곳으로 모아 두 서비스가 같은 원천(SSOT)을 읽게
+#   통합해야 한다. 그 전까지는 서류 항목을 고칠 일이 생기면 반드시 두 곳을 함께 확인할 것
+#   (버그수정 전역정책 — 같은 패턴 이중화 방치 금지).
 _PERMIT_CHECKLISTS = {
     "건축허가": [
         {"id": "BA-01", "name": "건축계획서", "required": True, "description": "건축물 개요, 배치도, 평면도 포함"},
@@ -80,12 +91,108 @@ _PERMIT_STAGES = [
 ]
 
 
+def _render_package_pdf(project_id: str, checklist: dict, duration: dict) -> bytes:
+    """체크리스트+예상기간 실데이터를 실제 PDF 바이트로 렌더한다(reportlab).
+
+    플랫폼 공용 PDF 패턴(decision_brief_pdf 동형)을 그대로 따른다:
+    - 한글 CID 폰트(HYSMyeongJo-Medium) 등록, 실패 시 Helvetica 폴백
+    - 모든 동적 문자열은 공용 esc(XML 이스케이프)로 감싸 크래시·마크업 주입 차단
+    - 데이터가 비면 '미확보(정직 고지)' 표기(가짜값으로 채우지 않음)
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    from app.services.common.pdf_escape import esc as _esc
+
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
+        font = "HYSMyeongJo-Medium"
+    except Exception:  # noqa: BLE001 — 한글폰트 미가용 환경은 Helvetica 폴백(플랫폼 동형)
+        font = "Helvetica"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm)
+    ss = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=ss["Title"], fontName=font, fontSize=18)
+    h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontName=font, fontSize=13,
+                        textColor=colors.HexColor("#7c3aed"))
+    body = ParagraphStyle("body", parent=ss["BodyText"], fontName=font, fontSize=10, leading=16)
+
+    story: list = []
+
+    def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> None:
+        # 공용 _table 동형 — rows 비면 '미확보(정직 고지)' 1행으로(가짜로 채우지 않음).
+        raw = [header, *rows] if rows else [header, ["미확보(정직 고지)"] + [""] * (len(header) - 1)]
+        data = [[_esc(cell) for cell in row] for row in raw]
+        t = Table(data, colWidths=widths)
+        t.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#7c3aed")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 8))
+
+    permit_type = str(checklist.get("permit_type") or "-")
+    story.append(Paragraph(_esc(f"인허가 서류 패키지 — {permit_type}"), h1))
+    story.append(Paragraph(
+        _esc(f"프로젝트: {project_id} · 생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}"),
+        body))
+    story.append(Spacer(1, 6))
+
+    # ── 1. 필요 서류 체크리스트(정적 기준표 실데이터) ──
+    story.append(Paragraph("1. 필요 서류 체크리스트", h2))
+    rows = [
+        [
+            str(it.get("id") or "-"),
+            str(it.get("name") or "-"),
+            "필수" if it.get("required") else "조건부",
+            "적용" if it.get("applicable") else "해당없음",
+            str(it.get("description") or ""),
+        ]
+        for it in (checklist.get("items") or [])
+    ]
+    _table(["번호", "서류명", "구분", "적용", "비고"],
+           rows, [16 * mm, 44 * mm, 16 * mm, 18 * mm, 76 * mm])
+    story.append(Paragraph(
+        _esc(f"총 {checklist.get('total_items', 0)}건 중 적용 {checklist.get('required_items', 0)}건"
+             f" (조건부 {checklist.get('optional_items', 0)}건)"),
+        body))
+    story.append(Spacer(1, 6))
+
+    # ── 2. 예상 처리 기간(내부 기준표 참고치 — 정직 고지 포함) ──
+    story.append(Paragraph("2. 예상 처리 기간", h2))
+    _table(["항목", "값"], [
+        ["지역", str(duration.get("region") or "-")],
+        ["영업일 기준", f"{duration.get('business_days', '-')}일"],
+        ["달력일 환산", f"{duration.get('calendar_days', '-')}일"],
+    ], [70 * mm, 90 * mm])
+    story.append(Paragraph(
+        "※ 내부 기준표 기반 참고치입니다. 실제 처리기간은 지자체·서류보완·심의 여부에 따라"
+        " 달라질 수 있습니다.", body))
+    story.append(Spacer(1, 6))
+
+    # ── 3. 인허가 진행 단계(참고) ──
+    story.append(Paragraph("3. 인허가 진행 단계", h2))
+    story.append(Paragraph(_esc(" → ".join(duration.get("stages") or _PERMIT_STAGES)), body))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 class PermitPackageService:
     """인허가 서류 패키지 생성 서비스."""
 
     def __init__(self, db: AsyncSession | None = None) -> None:
         self.db = db
-        self._pdf_lock = asyncio.Lock()
         self.settings = get_settings()
 
     def generate_checklist(
@@ -104,10 +211,15 @@ class PermitPackageService:
 
         items = []
         for item in checklist:
-            applicable = item["required"]
+            applicable = bool(item["required"])
+            desc = str(item.get("description") or "")
             if not applicable:
-                # 조건부 서류 적용 판단
-                if "200㎡" in item.get("description", "") and building_area_sqm >= 200 or "공공건축물" in item.get("description", "") and is_public or "농지" in item.get("description", "") and is_agricultural:
+                # 조건부 서류 적용 판단(정적 기준표의 조건 문구 키워드와 1:1 매칭)
+                if (
+                    ("200㎡" in desc and building_area_sqm >= 200)
+                    or ("공공건축물" in desc and is_public)
+                    or ("농지" in desc and is_agricultural)
+                ):
                     applicable = True
 
             items.append({
@@ -126,23 +238,55 @@ class PermitPackageService:
         }
 
     async def generate_permit_pdf(self, project_id: str, payload: dict) -> dict:
-        """인허가 서류 패키지 PDF를 생성한다 (B03: Race Condition 방어)."""
-        async with self._pdf_lock:
-            logger.info("인허가 PDF 생성 시작", project_id=project_id)
-            permit_type = payload.get("permit_type", "건축허가")
-            checklist = self.generate_checklist(permit_type)
+        """인허가 서류 패키지 PDF를 실제로 생성한다.
 
-            pdf_path = f"/tmp/permit_{project_id}.pdf"
-            # 실제 PDF 생성 로직 (reportlab 등)
-            await asyncio.sleep(0.1)  # I/O 시뮬레이션 (최소화)
+        과거에는 경로 문자열만 돌려주고 파일은 만들지 않는 목업이었다(무목업 원칙 위반).
+        지금은 정적 기준표 실데이터(체크리스트+예상기간)를 reportlab 으로 실제 렌더해
+        pdf_bytes(라우터 스트리밍 응답용)와 실파일(pdf_path)을 함께 만든다.
 
-            return {
-                "pdf_path": pdf_path,
-                "project_id": project_id,
-                "permit_type": permit_type,
-                "document_count": checklist["required_items"],
-                "generated_at": datetime.now().isoformat(),
-            }
+        동시성: 같은 project_id 동시 요청이 같은 경로에 반쯤 쓴 파일을 남기지 않도록
+        고유 임시파일에 쓴 뒤 os.replace(원자적 rename)로 최종 경로에 옮긴다.
+        (과거의 인스턴스 필드 락은 요청마다 새 인스턴스라 실효가 없었음 — 안전 착각 제거.)
+        """
+        logger.info("인허가 PDF 생성 시작", project_id=project_id)
+        permit_type = payload.get("permit_type", "건축허가")
+        region = str(payload.get("region") or "default")
+        checklist = self.generate_checklist(
+            permit_type,
+            building_area_sqm=float(payload.get("building_area_sqm") or 0),
+            is_public=bool(payload.get("is_public")),
+            is_agricultural=bool(payload.get("is_agricultural")),
+        )
+        duration = self.estimate_permit_duration(permit_type, region)
+
+        # 실제 PDF 렌더(reportlab) — 정적 기준표 실데이터만 담는다(가짜값 생성 없음).
+        pdf_bytes = _render_package_pdf(str(project_id), checklist, duration)
+
+        # 파일 경로에 들어갈 project_id 는 경로조작('../') 차단을 위해 안전문자만 남긴다.
+        safe_id = re.sub(r"[^0-9A-Za-z가-힣_-]", "_", str(project_id))[:64] or "package"
+        final_path = f"/tmp/permit_{safe_id}.pdf"
+        pdf_path: str | None
+        try:
+            # 반환하는 경로가 실존 파일이 되도록 실제로 기록한다(빈 약속 금지).
+            # 고유 임시파일 → 원자적 rename: 동시 요청이 있어도 최종 파일은 항상 온전한 1본.
+            tmp_path = f"{final_path}.{uuid.uuid4().hex[:8]}.tmp"
+            with open(tmp_path, "wb") as f:  # noqa: PTH123
+                f.write(pdf_bytes)
+            os.replace(tmp_path, final_path)
+            pdf_path = final_path
+        except OSError:  # 디스크 기록 실패해도 bytes 응답은 유효 — 경로만 정직하게 None
+            pdf_path = None
+
+        return {
+            "pdf_path": pdf_path,
+            "pdf_bytes": pdf_bytes,
+            "project_id": project_id,
+            "permit_type": permit_type,
+            "region": region,
+            "document_count": checklist["required_items"],
+            "size_bytes": len(pdf_bytes),
+            "generated_at": datetime.now().isoformat(),
+        }
 
     @staticmethod
     def estimate_permit_duration(permit_type: str, region: str = "default") -> dict:

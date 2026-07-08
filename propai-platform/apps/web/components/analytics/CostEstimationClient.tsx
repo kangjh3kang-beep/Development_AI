@@ -339,6 +339,8 @@ export function CostEstimationClient() {
             <VerificationBadge
               analysisType="cost"
               context={{ inputs: { bt, gfa, floorsAbove, floorsBelow, structure }, result } as unknown as Record<string, unknown>}
+              // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+              ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
             />
             <ExpertPanelCard
               analysisType="cost"

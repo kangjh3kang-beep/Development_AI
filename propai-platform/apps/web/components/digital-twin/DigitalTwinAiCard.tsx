@@ -171,6 +171,8 @@ export function DigitalTwinAiCard({
             sectionLabels={SECTION_LABELS}
             interpretationTitle="가상준공 AI 해설"
             autoRunVerification
+            // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+            ledgerHash={(res as unknown as { ledger_hash?: string })?.ledger_hash}
           />
 
           {res.note && <p className="text-[10px] text-[var(--text-hint)]">{res.note}</p>}

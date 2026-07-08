@@ -160,6 +160,8 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             context={result as unknown as Record<string, unknown>}
             interpretation={result.ai?.summary}
             interpretationTitle="AI 규제 해석"
+            // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+            ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
           />
 
           {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}

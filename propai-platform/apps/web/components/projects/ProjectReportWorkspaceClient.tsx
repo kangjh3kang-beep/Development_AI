@@ -479,6 +479,8 @@ export function ProjectReportWorkspaceClient({
               <VerificationBadge
                 analysisType="report"
                 context={{ inputs: form, result } as unknown as Record<string, unknown>}
+                // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+                ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
               />
               <div className="grid gap-4 md:grid-cols-2">
                 <MetricTile label={labels.reportTypeLabel} value={result.report_type} />

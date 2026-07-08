@@ -567,6 +567,8 @@ export function ProjectEsgWorkspaceClient({
                 context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
                 interpretation={lcaResult.ai_analysis}
                 interpretationTitle="AI 탄소 해석"
+                // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+                ledgerHash={(lcaResult as unknown as { ledger_hash?: string })?.ledger_hash}
               />
               <ExpertPanelCard
                 analysisType="esg"

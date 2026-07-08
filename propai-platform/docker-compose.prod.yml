@@ -14,6 +14,9 @@ services:
       - ENVIRONMENT=production
       - DEBUG=false
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      # 인터프리터 few-shot 주입 게이트 배선(기본 0=꺼짐 — 켜는 건 관리자 결정).
+      # base_interpreter._env_flag 가 콜타임에 읽으므로 값 변경은 재시작 없이도 반영.
+      - INTERP_FEWSHOT=${INTERP_FEWSHOT:-0}
     ports:
       - "8000:8000"
     depends_on:

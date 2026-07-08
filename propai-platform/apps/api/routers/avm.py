@@ -29,4 +29,28 @@ async def estimate_value(
     svc = AVMService(db)
     result = await svc.estimate(body, current_user.tenant_id)
     AVM_ESTIMATES.inc()
+    # ★성장루프 조인키: AVM 결과 요약을 분석원장에 best-effort 적재(멱등)하고
+    #   응답 스키마의 `ledger_hash` 필드로 노출 — 프론트 피드백(👍/👎)이 원장과 조인된다.
+    try:
+        from app.services.ledger.analysis_ledger_service import extract_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        wb = await record_user_analysis(
+            analysis_type="avm",
+            summary={
+                "estimated_price": result.estimated_price,
+                "price_per_sqm": result.price_per_sqm,
+                "confidence_score": result.confidence_score,
+                "comparable_count": result.comparable_count,
+                "model_version": result.model_version,
+                "address": body.address, "area_sqm": body.area_sqm,
+            },
+            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
+            project_id=str(body.project_id), pnu=body.pnu, address=body.address,
+            source="avm",
+        )
+        h = extract_ledger_hash(wb)
+        if h:
+            result.ledger_hash = h
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 AVM 결과는 무손상 반환
+        pass
     return result

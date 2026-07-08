@@ -5,14 +5,16 @@
   세 렌더러(PDF/PPTX/DOCX)는 이 정본 ReportModel 하나만 읽어 같은 문서를 만든다.
 
 무목업/정직: findings·비교표본이 0건이면 design_audit_pdf.py 와 동일한 문구로 정직 표기한다.
-법령 URL 해석(legal_reference_registry 조회)은 순수 어댑터 책임 밖이라 여기서 하지 않는다
-(참조키만 옮겨 담는다) — DB/외부서비스 임포트는 금지.
+법령 근거는 finding 이 이미 들고 있는 레지스트리 레코드(make_finding 이 get_legal_refs 로
+해석해 넣은 legal_refs[])를 evidence_bridge 로 옮겨 담기만 한다 — 여기서 URL 을 조립하거나
+새 법령키를 발명하지 않는다(verified 만 링크, 나머지는 텍스트). DB/외부서비스 임포트는 금지.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from .evidence_bridge import evidence_block_from_contract
 from .model import (
     DataTableBlock,
     GradeBadgeBlock,
@@ -124,6 +126,34 @@ def _metrics(audit: dict[str, Any], efficiency_findings: list[dict[str, Any]]) -
             if isinstance(m, dict) and m:
                 return m
     return {_finding_id(f): _finding_text(f) for f in efficiency_findings}
+
+
+def _collect_legal_refs(findings: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """모든 finding 에서 법령 근거를 수집해 (레코드 목록, 키 목록)으로 반환(수집만, 해석 없음).
+
+    - make_finding 산출 finding 은 이미 해석된 레지스트리 레코드(legal_refs[])를 들고 있다
+      → 그대로 모은다(레코드의 url/url_status 를 신뢰 — 여기서 재조립 금지).
+    - 레코드 없이 참조키만 가진 finding(legal_ref_key/legal_key/ref_key)은 키를 모아
+      브리지가 표준 빌더(evidence_contract.build_legal_refs)로 해석하게 한다.
+    """
+    records: list[dict[str, Any]] = []
+    keys: list[str] = []
+    flat: list[dict[str, Any]] = []
+    if isinstance(findings, dict):
+        for value in findings.values():
+            if isinstance(value, list):
+                flat.extend(f for f in value if isinstance(f, dict))
+    elif isinstance(findings, list):
+        flat = [f for f in findings if isinstance(f, dict)]
+    for f in flat:
+        refs = f.get("legal_refs")
+        if isinstance(refs, list):
+            records.extend(r for r in refs if isinstance(r, dict))
+        for key_field in ("legal_ref_key", "legal_key", "ref_key"):
+            k = f.get(key_field)
+            if k and str(k) not in keys:
+                keys.append(str(k))
+    return records, keys
 
 
 def _grade_from_overall(overall: dict[str, Any]) -> str | None:
@@ -254,6 +284,15 @@ def build_report_model_from_design_audit(data: dict[str, Any]) -> ReportModel:
     else:
         s7_blocks = [NarrativeBlock(paragraphs=["설계 효율 지표 데이터 없음."])]
     sections.append(Section(title="S7. 설계 효율 지표", blocks=s7_blocks))
+
+    # ── S8. 인용 법령 근거·링크 — finding 이 실제 들고 있는 법령 근거가 있을 때만(정직) ──
+    # make_finding 이 각 finding 에 넣어 둔 레지스트리 레코드(legal_refs[]) + 키만 가진
+    # finding 의 참조키를 브리지로 옮겨 담는다(verified URL 만 링크, pending 은 텍스트).
+    ref_records, ref_keys = _collect_legal_refs(data.get("findings"))
+    ev_block = evidence_block_from_contract(
+        {"legal_refs": ref_records, "legal_ref_keys": ref_keys}, title=None)
+    if ev_block is not None:
+        sections.append(Section(title="S8. 인용 법령 근거·링크", blocks=[ev_block]))
 
     # ── 책임한계·면책(ReportModel.disclaimer — 렌더러가 공통 위치에 표기) ──
     disclaimer = (

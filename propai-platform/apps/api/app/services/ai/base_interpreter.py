@@ -118,9 +118,60 @@ class _TTLCache:
 _CACHE_TTL_SEC = int(os.environ.get("INTERP_CACHE_TTL_SEC", "3600"))
 _RESULT_CACHE = _TTLCache(ttl_sec=_CACHE_TTL_SEC)
 
-# 기능 토글(운영 중 환경변수로 끌 수 있도록).
-_REDIS_CACHE_ENABLED = os.environ.get("INTERP_REDIS_CACHE", "1") != "0"
-_PROMPT_CACHE_ENABLED = os.environ.get("INTERP_PROMPT_CACHE", "1") != "0"
+# ── 기능 토글: 콜타임 env 평가(재시작 없이 관리자 시크릿 반영) ──
+# 과거엔 import-time 고정(_X = os.environ.get(...) != "0")이라 관리자 시크릿
+# (/admin/secrets → os.environ 반영)으로 켜고 꺼도 프로세스 재시작 전엔 무효였다.
+# _env_flag 가 os.environ 을 콜타임에 읽되, 짧은 TTL 캐시로 핫패스(매 LLM 호출·
+# 캐시 조회)의 반복 dict 조회 비용을 흡수한다. 판정은 기존과 등가(값 != "0" = 켜짐).
+_ENV_FLAG_TTL_SEC = 30.0
+_env_flag_cache: dict[str, tuple[bool, float]] = {}
+
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """환경변수 불리언 플래그를 콜타임에 읽는다(+짧은 TTL 캐시).
+
+    TTL 내엔 캐시값 반환, 만료 시 os.environ 재조회 → env 변경이 재임포트/재시작
+    없이 수십초 내 반영된다. 테스트·즉시반영은 _env_flag_cache_reset() 으로 우회.
+    """
+    try:
+        cached = _env_flag_cache.get(name)
+        if cached is not None and cached[1] > time.monotonic():
+            return cached[0]
+    except Exception:  # noqa: BLE001 — 캐시 조회 실패는 env 직접 읽기로 폴백.
+        pass
+    val = os.environ.get(name, default) != "0"
+    try:
+        _env_flag_cache[name] = (val, time.monotonic() + _ENV_FLAG_TTL_SEC)
+    except Exception:  # noqa: BLE001
+        pass
+    return val
+
+
+def _env_flag_cache_reset() -> None:
+    """_env_flag TTL 캐시 초기화(테스트·설정 즉시반영용)."""
+    _env_flag_cache.clear()
+
+
+# 모듈 상수 오버라이드(테스트 monkeypatch 호환): None 이면 env 콜타임 평가,
+# True/False 면 그 값으로 강제. 기존 테스트의 setattr(bi, "_FEWSHOT_ENABLED", ...)
+# 패턴이 그대로 동작한다.
+_REDIS_CACHE_ENABLED: bool | None = None
+_PROMPT_CACHE_ENABLED: bool | None = None
+
+
+def _redis_cache_enabled() -> bool:
+    """인터프리터 L2 Redis 캐시 활성 여부(INTERP_REDIS_CACHE, 기본 켜짐)."""
+    if _REDIS_CACHE_ENABLED is not None:
+        return _REDIS_CACHE_ENABLED
+    return _env_flag("INTERP_REDIS_CACHE", "1")
+
+
+def _prompt_cache_enabled() -> bool:
+    """Anthropic prompt caching 활성 여부(INTERP_PROMPT_CACHE, 기본 켜짐)."""
+    if _PROMPT_CACHE_ENABLED is not None:
+        return _PROMPT_CACHE_ENABLED
+    return _env_flag("INTERP_PROMPT_CACHE", "1")
+
 
 def _env_int(name: str, default: int) -> int:
     """환경변수 정수 파싱(비정수면 기본값) — 잘못된 env가 공유 코어 import를 깨지 않게."""
@@ -138,7 +189,16 @@ def _env_int(name: str, default: int) -> int:
 # ★기본 비활성("0") 유지 이유: 전 interpreter 공유 LLM 프롬프트를 바꾸는 변경이라 스테이징
 #   검증 후 관리자가 INTERP_FEWSHOT=1로 의도적 go-live(즉시·가역). 켜져도 안전(테넌트격리+
 #   컬럼없으면 degrade+승격예시 0이면 무동작). 끄면 즉시 기존 동작.
-_FEWSHOT_ENABLED = os.environ.get("INTERP_FEWSHOT", "0") != "0"
+# ★콜타임 평가: None 이면 _env_flag 가 INTERP_FEWSHOT 을 콜타임에 읽는다(재시작 불요).
+#   True/False 로 강제 오버라이드 가능(테스트 monkeypatch 호환).
+_FEWSHOT_ENABLED: bool | None = None
+
+
+def _fewshot_enabled() -> bool:
+    """few-shot 주입 활성 여부(INTERP_FEWSHOT, 기본 꺼짐 — 켜는 건 관리자 결정)."""
+    if _FEWSHOT_ENABLED is not None:
+        return _FEWSHOT_ENABLED
+    return _env_flag("INTERP_FEWSHOT", "0")
 _FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
 _FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
 
@@ -150,7 +210,7 @@ async def _load_fewshot(service: str) -> dict[str, str] | None:
     best-effort·TTL 캐시(빈 결과도 캐시해 반복 DB조회 방지). 사람 승인(active)만 사용하고
     익명 요약(input_summary/good_output)만 인용한다(원본 미저장 원칙 계승).
     """
-    if not _FEWSHOT_ENABLED or not service:
+    if not _fewshot_enabled() or not service:
         return None
     # ★테넌트 스코핑(by-construction): 현재 요청 테넌트의 예시만 사용 → 교차테넌트 누출을
     #   코드 차원에서 차단(플래그가 켜져도 안전). 테넌트 컨텍스트 없으면(배치/크론 등) 미사용.
@@ -207,7 +267,7 @@ async def _redis_get(key: str | None) -> dict[str, str] | None:
     integrations/base_client.py의 검증된 패턴(from_url→get→aclose)을 재사용.
     다중 워커/인스턴스 간 캐시 공유가 목적(L1은 프로세스 한정).
     """
-    if not key or not _REDIS_CACHE_ENABLED:
+    if not key or not _redis_cache_enabled():
         return None
     try:
         import redis.asyncio as aioredis
@@ -226,7 +286,7 @@ async def _redis_get(key: str | None) -> dict[str, str] | None:
 
 async def _redis_set(key: str | None, value: dict[str, str], ttl: int = _CACHE_TTL_SEC) -> None:
     """P4-L2: Redis에 결과 저장. 미가용/오류 시 무시(무중단)."""
-    if not key or not _REDIS_CACHE_ENABLED:
+    if not key or not _redis_cache_enabled():
         return
     try:
         import redis.asyncio as aioredis
@@ -567,7 +627,7 @@ class BaseInterpreter:
         # 표기하면 재호출 시 입력 토큰을 캐시에서 읽어 비용↓(시스템 프롬프트가
         # 캐시 최소 토큰 미만이면 Anthropic이 무시, 오류 없음). 비-Anthropic이면
         # 일반 문자열로 폴백.
-        if _PROMPT_CACHE_ENABLED:
+        if _prompt_cache_enabled():
             system_content: Any = [
                 {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
             ]

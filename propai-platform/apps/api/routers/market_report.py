@@ -55,8 +55,30 @@ async def market_report(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     lawd_cd, pnu = _resolve(req)
-    return await MarketReportService().build_report(
+    result = await MarketReportService().build_report(
         req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options, parcels=req.parcels)
+    # ★성장루프 조인키: 시장보고서 요약을 원장에 best-effort 적재(멱등) 후 최상위 `ledger_hash`
+    #   노출 — 시장 인사이트 화면의 피드백(👍/👎)이 원장과 조인된다. 실패해도 보고서 무손상.
+    try:
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        if isinstance(result, dict):
+            wb = await record_user_analysis(
+                analysis_type="market_report",
+                summary={
+                    "address": req.address, "lawd_cd": lawd_cd, "pnu": pnu,
+                    "use_llm": req.use_llm,
+                    "parcel_count": len(req.parcels or []) or 1,
+                    "trade_count": (result.get("stats") or {}).get("count")
+                    if isinstance(result.get("stats"), dict) else None,
+                },
+                tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
+                pnu=pnu or None, address=req.address, source="market_report",
+            )
+            result = attach_ledger_hash(result, wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 보고서 무손상
+        pass
+    return result
 
 
 class PopulationDensityRequest(BaseModel):

@@ -91,6 +91,27 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     # 실제 분석 실행 → 저장 → 반환. parcels>=2면 서비스가 통합면적·우세용도로 보정.
     result = await RegulationAnalysisService().analyze(
         addr, pnu=pnu, use_llm=body.use_llm, parcels=body.parcels)
+    # ★성장루프 조인키: 규제분석 요약을 원장에 best-effort 적재(멱등) 후 최상위 `ledger_hash` 노출.
+    #   cache_put 이전에 부착해 캐시 히트 응답에도 조인키가 실린다(같은 내용=같은 해시).
+    try:
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        _limits = result.get("limits") if isinstance(result, dict) else None
+        wb = await record_user_analysis(
+            analysis_type="regulation",
+            summary={
+                "address": addr, "pnu": pnu,
+                "parcel_count": len(_rows) or 1,
+                "use_llm": body.use_llm,
+                "zone_type": (result.get("zone_type") if isinstance(result, dict) else None),
+                "limits": _limits if isinstance(_limits, dict) else None,
+            },
+            pnu=pnu, address=addr, source="regulation",
+        )
+        if isinstance(result, dict):
+            result = attach_ledger_hash(result, wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 규제분석 결과 무손상
+        pass
     await cache_put("regulation_analyze", cache_key, result)
     return result
 
