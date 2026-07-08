@@ -444,6 +444,10 @@ class ComprehensiveAnalysisService:
             if integrated.get("blended_bcr_eff_pct") is not None:
                 effective_bcr = float(integrated["blended_bcr_eff_pct"])
             # sec1(실효용적률 카드)도 통합 실효치로 정합 + 통합 메타 부착(혼재 시 검토필요 표기 유지).
+            #   ★national_far_pct(표시필드)는 덮지 않는다 — evidence "국가 법정상한(국토계획법 시행령)"으로
+            #   소비되므로 blended(면적가중 혼합값)로 바꾸면 단일 시행령 정값이 아닌데 시행령 링크가 걸려
+            #   라벨-값 거짓이 된다(리뷰 P1). 표시필드는 보존하고, far_optimization의 ceiling만 아래에서
+            #   통합 blended로 전달한다(두 값은 의미가 다름: 시행령 정값 vs 통합 최대상한).
             sec1 = {
                 **(sec1 if isinstance(sec1, dict) else {}),
                 "effective_far_pct": effective_far,
@@ -454,11 +458,16 @@ class ComprehensiveAnalysisService:
             # ★면적의존 산출물(annotations 문구·far_optimization)도 통합면적 기준으로 재생성한다.
             #   숫자만 바꾸면 "대표 763㎡ 기준 최대 연면적…" 대표필지 문구가 그대로 남는 버그(RC#1)를
             #   공용 SSOT 헬퍼로 봉합 — 문구/시나리오가 통합면적·N필지로 정합.
+            #   ★far_optimization ceiling만 §84 면적가중 법정 blended로 전달(표시필드 national_far_pct는 불변).
+            #   build_integrated_context가 각 필지 실효/법정 결측을 대칭 정규화(같은 부분집합)해
+            #   blended_법정 ≥ blended_실효를 구조보장하므로 ceiling ≥ base(자기모순 차단).
+            #   추가로 simulator가 cap=max(cap,base) 클램프로 방어. 결측이면 대표 법정으로 폴백.
+            _bl_far = integrated.get("blended_far_legal_pct")
             sec1 = far_tier_service.rebuild_area_dependent(
                 sec1,
                 land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
                 zone_type=(zone_type if isinstance(zone_type, str) else str(zone_type)),
-                national_far=sec1.get("national_far_pct"),
+                national_far=(_bl_far if _bl_far is not None else sec1.get("national_far_pct")),
                 parcel_count=int(integrated.get("parcel_count") or 2),
                 zone_mix=integrated.get("zone_mix"),
             )
@@ -1440,11 +1449,35 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
     try:
         from app.services.zoning.special_parcel import _aggregate_integrated_zoning
 
-        # 실효치 미보유 필지가 있으면(프론트 미보강) 라우터 공용 enrich로 보강(조례 1회캐시·순수계산).
+        # 실효치·법정 미보유 필지가 있으면(프론트 미보강) 라우터 공용 enrich로 보강(조례 1회캐시·순수계산).
         #   ★/zoning/integrated-analysis와 동일 산식 단일경유 — 보유 시 재계산 0(핫패스 경량).
-        if any(it.get("_far_eff") is None and it.get("zone_type") for it in items):
+        #   ★법정(_far_legal)만 결측인 경우(예: 지도픽이 farPct만 제공)도 보강 대상에 포함한다 —
+        #   안 하면 아래 _aggregate의 blended가 실효는 그 필지를 포함하고 법정은 제외하는 부분집합 괴리로
+        #   blended_법정 < blended_실효(상한<기준 자기모순)를 만든다.
+        if any(
+            (it.get("_far_eff") is None or it.get("_far_legal") is None) and it.get("zone_type")
+            for it in items
+        ):
             from apps.api.routers.auto_zoning import _enrich_effective_and_special
             await _enrich_effective_and_special(items)
+        # ★부분집합 대칭 정규화(구조적 불변식 보장): _aggregate의 _blended는 실효/법정을 각 키 non-None
+        #   필지만으로 독립 평균하므로, 두 값이 '같은 부분집합'에서 산출되려면 각 필지에서
+        #   (_far_eff 유무) ⟺ (_far_legal 유무)가 성립해야 blended_법정 ≥ blended_실효가 보장된다.
+        #   두 방향 모두 정규화한다(실효/건폐율 각각):
+        #   ① 법정 결측·실효 존재 → 법정을 실효로 하한보정(법정≥실효이므로 안전, 필지 보존).
+        #   ② 실효 결측·법정 존재 → 실효를 날조하지 않고 법정을 제외(양쪽 결측 처리, 실효 과대 방지).
+        #   (①은 지도픽이 farPct만 줄 때, ②는 zone_type 없이 farLegalPct만 있을 때 발생 — 리뷰 P0/P1 봉합)
+        for it in items:
+            fe, fl = it.get("_far_eff"), it.get("_far_legal")
+            if fe is not None and fl is None:
+                it["_far_legal"] = fe
+            elif fe is None and fl is not None:
+                it["_far_legal"] = None
+            be, bl = it.get("_bcr_eff"), it.get("_bcr_legal")
+            if be is not None and bl is None:
+                it["_bcr_legal"] = be
+            elif be is None and bl is not None:
+                it["_bcr_legal"] = None
         return _aggregate_integrated_zoning(items)
     except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
         logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])

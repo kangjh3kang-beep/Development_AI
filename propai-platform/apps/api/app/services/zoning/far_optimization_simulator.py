@@ -141,6 +141,11 @@ def simulate_far_scenarios(
 ) -> dict[str, Any]:
     cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
     base_far = ordinance_far
+    # ★방어 클램프: 상한(cap)은 기준(base) 이상이어야 시나리오가 성립한다. 다필지 통합에서 상류 blended가
+    #   깨져 cap<base로 들어오면 achieved=min(base+인센티브,cap)=cap<base가 되어 음수 인센티브·음수 연면적
+    #   자기모순이 출력된다. 상한을 base로 하한클램프해 어떤 상류 입력에서도 자기모순을 구조적으로 차단한다.
+    if cap_far < base_far:
+        cap_far = base_far
     category = ZONE_CATEGORY_MAP.get(zone_type, "주거")
     ALPHA_COEFFICIENTS.get(category, 1.0)
 

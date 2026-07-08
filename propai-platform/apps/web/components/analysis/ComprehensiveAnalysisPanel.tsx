@@ -571,7 +571,8 @@ export function ComprehensiveAnalysisPanel() {
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <Field label="현재 기본 용적률" value={`${ef.far_optimization.base_far}%`} />
                 <Field label="최대 달성 가능" value={`${ef.far_optimization.max_achievable_far}%`} />
-                <Field label="법정 상한" value={`${ef.far_optimization.cap_far}%`} />
+                {/* 통합모드의 상한은 §84 면적가중 통합값(단일필지 시행령 정값과 의미가 달라 라벨 분리) */}
+                <Field label={ef.integrated ? "통합 상한 (면적가중)" : "법정 상한"} value={`${ef.far_optimization.cap_far}%`} />
               </div>
               {ef.far_optimization.recommended_scenario && (
                 <div className="rounded-lg bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)]/30 p-3 mb-3">
