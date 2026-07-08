@@ -1,0 +1,56 @@
+# W1-1 이식: propai-platform/.github/workflows/security.yml(중첩 위치라 GitHub이 실행하지
+# 않던 죽은 설정) 중 실행 가능한 3잡(bandit·pip-audit·gitleaks)을 리포 루트로 이식 +
+# 모노레포 경로 교정. Trivy/OWASP-ZAP 잡은 존재하지 않는 apps/api/Dockerfile 경로를
+# 전제해 실행 불능이라 미이식(필요 시 Dockerfile.oracle 기준으로 재설계).
+#
+# 트리거는 main push + 주간 스케줄 + 수동 — 보안 스캔은 정보성 신호로 운용하고
+# PR 게이트로 세우지 않는다(취약점 발견이 무관한 PR을 막는 것을 방지).
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+    paths: ["propai-platform/**"]
+  schedule:
+    - cron: "0 15 * * 0" # 매주 일요일 00:00 KST
+  workflow_dispatch:
+
+jobs:
+  bandit:
+    name: Bandit (Python SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Bandit
+        run: |
+          pip install bandit
+          bandit -r propai-platform/apps/api/ -ll -ii \
+            -x propai-platform/apps/api/tests,propai-platform/apps/api/.venv
+
+  pip-audit:
+    name: pip-audit (Dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan Python dependencies (manifest only)
+        # 설치 없이 requirements 매니페스트만 스캔 — gdal 등 네이티브 빌드 의존성 회피.
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc -r propai-platform/apps/api/requirements.txt
+
+  gitleaks:
+    name: Gitleaks (Secret Detection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

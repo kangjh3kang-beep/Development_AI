@@ -39,15 +39,13 @@ jobs:
           pip install "gdal==$(gdal-config --version)"
           pip install -r apps/api/requirements.txt
 
-      # ★#148 재생성: ruff 게이트 신설(warning·비차단). ruff --fix 자동수정(1719건) + 무해규칙
-      #   ignore(pyproject)로 현재 0 유지. continue-on-error 로 다른 PR 을 막지 않고, 점진적으로
-      #   차단(required)화·ignore 규칙별 해제한다.
-      - name: Ruff (lint · warning gate)
+      # ★#148로 위반 0 달성(전면 --fix+무해규칙 ignore) → W1-9에서 차단(required) 게이트로
+      #   승격. 위반 0 시점의 차단화라 기존 PR에 비용 없음; ignore 규칙은 점진 해제.
+      - name: Ruff (lint)
         working-directory: propai-platform/apps/api
         run: |
           pip install ruff
           python -m ruff check .
-        continue-on-error: true
 
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
@@ -79,15 +77,15 @@ jobs:
         run: pnpm install
         working-directory: propai-platform
 
+      # W1-9: tsc·eslint 현재 0 error(그린) → 차단 게이트로 승격(비차단은 게이트 착시).
+      # eslint 경고(~190)는 --max-warnings 미설정이라 통과 — 경고 정리 후 0 게이트화 예정.
       - name: Type check
         run: pnpm type-check
         working-directory: propai-platform/apps/web
-        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
 
       - name: Lint
         run: pnpm lint
         working-directory: propai-platform/apps/web
-        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
 
       - name: Unit tests
         run: pnpm test:run
