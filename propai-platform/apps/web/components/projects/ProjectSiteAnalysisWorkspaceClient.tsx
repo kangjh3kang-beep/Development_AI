@@ -51,12 +51,16 @@ type AVMEstimateResponse = {
   price_per_sqm: number;
   confidence_score: number;
   comparable_count: number;
+  // W1-6 정직 분리 — 실거래/합성(콜드스타트 CTGAN) 계수. 합성은 참고용 표기 동반.
+  real_comparable_count?: number;
+  synthetic_count?: number;
   model_version: string;
   comparables: Array<{
     address: string;
     price: number;
-    area_sqm: number;
+    area_sqm: number | null;
     transaction_date: string;
+    synthetic?: boolean;
   }>;
   created_at: string;
 };
@@ -1000,7 +1004,11 @@ export function ProjectSiteAnalysisWorkspaceClient({
                 />
                 <MetricTile
                   label={labels.avmComparablesLabel}
-                  value={String(avmResult.comparable_count)}
+                  value={
+                    (avmResult.synthetic_count ?? 0) > 0
+                      ? `실거래 ${avmResult.real_comparable_count ?? 0}건 (+합성 ${avmResult.synthetic_count}건·참고)`
+                      : String(avmResult.real_comparable_count ?? avmResult.comparable_count)
+                  }
                 />
                 <MetricTile
                   label={labels.avmModelLabel}
@@ -1122,6 +1130,11 @@ export function ProjectSiteAnalysisWorkspaceClient({
                     >
                       <td className="px-4 py-3 text-[var(--text-primary)]">
                         {comp.address}
+                        {comp.synthetic && (
+                          <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            합성(참고)
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-[var(--text-primary)]">
                         {formatCurrency(locale, comp.price)}

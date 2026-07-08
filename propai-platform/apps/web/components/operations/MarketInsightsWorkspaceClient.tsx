@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -966,9 +967,13 @@ export function MarketInsightsWorkspaceClient() {
                   해당 기능은 관리자가 승인한 <b>엔터프라이즈 및 PRO 등급</b> 전용입니다.<br />
                   (현재 등급: {balance?.tier_label || "미지정"})
                 </p>
-                <button className="mt-5 rounded-xl bg-gradient-to-r from-[var(--text-primary)] to-[var(--text-secondary)] px-6 py-2.5 text-sm font-bold text-[var(--bg-primary)] transition-transform hover:scale-105 shadow-lg">
+                {/* 요금제·등급 관리 화면으로 실배선(무핸들러 죽은 버튼 수선). locale은 이 파일 기존 관례(:505 "ko" 고정)를 따름. */}
+                <Link
+                  href="/ko/settings/billing"
+                  className="mt-5 rounded-xl bg-gradient-to-r from-[var(--text-primary)] to-[var(--text-secondary)] px-6 py-2.5 text-sm font-bold text-[var(--bg-primary)] transition-transform hover:scale-105 shadow-lg"
+                >
                   등급 업그레이드 문의
-                </button>
+                </Link>
               </div>
             </div>
           )}

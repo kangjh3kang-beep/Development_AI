@@ -6,6 +6,7 @@ import { ReportDownloadMenu } from "@/components/report/ReportDownloadMenu";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 
 type ReportPageProps = {
   params: Promise<{
@@ -22,10 +23,9 @@ export default async function ReportPage({ params }: ReportPageProps) {
   }
 
   const dictionary = await getDictionary(locale as Locale);
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const runtimeMode = isMockMode()
+    ? dictionary.workspace.modeMock
+    : dictionary.workspace.modeLive;
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">

@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectLegalWorkspaceClient } from "@/components/projects/ProjectLegalWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
@@ -25,10 +26,9 @@ export default function LegalPage() {
     return null;
   }
 
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const runtimeMode = isMockMode()
+    ? dictionary.workspace.modeMock
+    : dictionary.workspace.modeLive;
 
   const t = dictionary.modulePlaceholders["legal"];
 

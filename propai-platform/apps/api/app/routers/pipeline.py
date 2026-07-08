@@ -640,6 +640,9 @@ _LEDGER_TYPE_TO_STAGE: dict[str, str] = {
     "site_analysis": "site_analysis",
     "design": "design",
     "cost": "cost",
+    # W1-7: 파이프라인 write-back은 "cost_estimate" 타입으로 적재(record_cost_estimate) —
+    # 매핑 부재로 from-ledger 보고서가 cost 단계를 영원히 못 찾던 단선 해소.
+    "cost_estimate": "cost",
     "feasibility": "feasibility",
     "tax": "tax",
     "esg": "esg",

@@ -28,6 +28,7 @@ import { DesignGenPanel } from "@/components/design/DesignGenPanel";
 import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 import { useDictionary } from "@/hooks/use-dictionary";
 
 export default function DesignPage() {
@@ -53,10 +54,9 @@ export default function DesignPage() {
     return null;
   }
 
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const runtimeMode = isMockMode()
+    ? dictionary.workspace.modeMock
+    : dictionary.workspace.modeLive;
 
   const t = dictionary.modulePlaceholders["design"];
 

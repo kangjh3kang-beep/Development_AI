@@ -778,190 +778,19 @@ class ProjectPipeline:
             # 신뢰 메타데이터(additive): 입지분석(auto_zoning)과 동일한 legal_refs[]·evidence[].
             self._attach_site_trust_blocks(state)
             await self._attach_site_ai(state)
+            # W1-7: Project 자동 반영(zone/max_far/면적 등) — 과거 도달불능 분기에만 있어
+            # /pipeline/run 후 Project 테이블이 갱신되지 않던 단선 복구.
+            await self._save_site_analysis_to_project(state)
             return
 
-        # 외부 API 호출 (프론트에서 데이터를 전달하지 않은 경우)
-        zoning: dict[str, Any] = {}
-        comprehensive: dict[str, Any] = {}
-
-        try:
-            from app.services.zoning.auto_zoning_service import AutoZoningService
-
-            zoning_svc = AutoZoningService()
-            zoning = await zoning_svc.analyze_by_address(state.address)
-        except Exception:
-            zoning = {
-                "zone_type": "제2종일반주거지역",
-                "zone_limits": {"max_bcr_pct": 60.0, "max_far_pct": 200.0, "max_height_m": 0.0},
-                "pnu": "",
-            }
-
-        try:
-            from app.services.land_intelligence.land_info_service import LandInfoService
-
-            land_svc = LandInfoService()
-            comprehensive = await land_svc.collect_comprehensive(state.address)
-        except Exception:
-            comprehensive = {
-                "pnu_codes": [],
-                "land_area_sqm": 500.0,
-                "geometry": None,
-                "official_price_per_sqm": 0.0,
-                "coordinates": None,
-            }
-
-        # 종합분석 보고서 생성 (7섹션)
-        comprehensive_report: dict[str, Any] = {}
-        try:
-            from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
-            comp_svc = ComprehensiveAnalysisService()
-            comprehensive_report = await comp_svc.analyze(state.address)
-        except Exception as e:  # noqa: BLE001 — 종합분석 실패가 파이프라인을 막지 않음(정직 degrade)
-            logger.warning("종합분석 보고서 생성 실패 — skipped 표기", err=str(e)[:160])
-            comprehensive_report = {"skipped_reason": f"comprehensive_analysis_failed: {str(e)[:120]}"}
-
-        zone_limits = zoning.get("zone_limits", {})
-        zone_type = zoning.get("zone_type", "")
-
-        # 면적: land_register.area_sqm > land_area_sqm > zoning > 폴백
-        _lr = comprehensive.get("land_register") or {}
-        land_area_sqm = (
-            (float(_lr.get("area_sqm", 0) or 0) if isinstance(_lr, dict) else 0)
-            or float(comprehensive.get("land_area_sqm", 0) or 0)
-            or float(zoning.get("land_area_sqm", 0) or 0)
+        # ── W1-7: 이 아래 있던 '외부 API 직수집' 분기(약 180줄)는 도달불능 사장 코드였다 —
+        #    _fetch_real_site_data가 항상 dict를 반환해 위 pre_collected 경로가 항상 실행·return.
+        #    유일한 실기능이던 Project 자동저장(_save_site_analysis_to_project)은 위 경로로 이관.
+        #    comprehensive_report 첨부는 전 코드베이스 소비처 0건으로 미이관(7섹션 보고서의
+        #    정본은 /analysis/comprehensive 엔드포인트). 계약 위반 시 침묵 대신 정직 실패.
+        raise RuntimeError(
+            "site stage: pre_collected가 None — _fetch_real_site_data 계약(항상 dict 반환) 위반"
         )
-
-        pnu_codes = comprehensive.get("pnu_codes", [])
-        if not pnu_codes:
-            pnu = comprehensive.get("pnu") or zoning.get("pnu", "")
-            pnu_codes = [pnu] if pnu else []
-
-        # 공시지가: land_register > official_prices > 폴백
-        official_land_price = float(_lr.get("official_price_per_sqm", 0) or 0)
-        if not official_land_price:
-            _ops = comprehensive.get("official_prices", [])
-            if _ops and isinstance(_ops, list) and len(_ops) > 0:
-                official_land_price = float(_ops[0].get("price_per_sqm", 0) or 0)
-        if not official_land_price:
-            official_land_price = float(comprehensive.get("official_price_per_sqm", 0) or 0)
-
-        # zone_limits 키 호환: max_bcr_pct 우선, 없으면 bcr 폴백
-        national_bcr = zone_limits.get("max_bcr_pct", zone_limits.get("bcr", 60.0))
-        national_far = zone_limits.get("max_far_pct", zone_limits.get("far", 200.0))
-        max_height = zone_limits.get("max_height_m", zone_limits.get("max_height", 0.0))
-
-        # 조례 조회 시도
-        ordinance_bcr = national_bcr
-        ordinance_far = national_far
-        ordinance_source = "법정상한"
-        # 조례 url 시군구 치환용(신뢰블록): 조회된 sigungu 보존(없으면 None → 주소 폴백).
-        ordinance_sigungu: str | None = None
-        try:
-            from app.services.land_intelligence.ordinance_service import OrdinanceService
-
-            ord_svc = OrdinanceService()
-            ord_result = await ord_svc.get_ordinance_limits(state.address, zone_type)
-            if ord_result.get("ordinance_bcr") is not None:
-                ordinance_bcr = ord_result["ordinance_bcr"]
-                ordinance_far = ord_result.get("ordinance_far", national_far)
-                ordinance_source = ord_result.get("source", "조례")
-            _sgg = ord_result.get("sigungu")
-            if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
-                ordinance_sigungu = str(_sgg).strip()
-        except Exception:
-            pass
-
-        effective_bcr = min(float(national_bcr), float(ordinance_bcr))
-        effective_far = min(float(national_far), float(ordinance_far))
-
-        # 기부체납 인센티브 계산
-        far_incentive: dict[str, Any] = {}
-        try:
-            far_incentive = fic.calculate(
-                zone_type=zone_type,
-                ordinance_far=effective_far,
-                donation_ratio_pct=0.0,
-                national_far=float(national_far),
-            )
-        except Exception:
-            far_incentive = {"error": "인센티브 계산 실패"}
-
-        # 개발 가능 유형 분석
-        development_types: dict[str, Any] = {}
-        try:
-            development_types = dta.analyze(
-                zone_type=zone_type,
-                land_area_sqm=float(land_area_sqm),
-            )
-        except Exception:
-            development_types = {"error": "개발유형 분석 실패"}
-
-        state.site_to_design = SiteToDesignPayload(
-            pnu_codes=pnu_codes,
-            zone_type=zone_type,
-            max_bcr=effective_bcr,
-            max_far=effective_far,
-            max_height=max_height,
-            land_area_sqm=float(land_area_sqm),
-            land_shape=comprehensive.get("geometry"),
-            official_land_price=float(official_land_price),
-            address=state.address,
-            coordinates=comprehensive.get("coordinates"),
-        )
-
-        state.stages["site_analysis"].data = {
-            # 구조화된 데이터 (프론트엔드 SiteAnalysisDetail용)
-            "basic": {
-                "address": state.address,
-                "pnu": pnu_codes[0] if pnu_codes else zoning.get("pnu", ""),
-                "zone_type": zone_type,
-                "land_category": zoning.get("land_category", ""),
-                "land_area_sqm": float(land_area_sqm),
-                "owner_type": zoning.get("owner_type", ""),
-            },
-            "zoning": {
-                "zone_type": zone_type,
-                "national_bcr": float(national_bcr),
-                "national_far": float(national_far),
-                "ordinance_bcr": float(ordinance_bcr),
-                "ordinance_far": float(ordinance_far),
-                "effective_bcr": effective_bcr,
-                "effective_far": effective_far,
-                "max_height_m": max_height,
-                "ordinance_source": ordinance_source,
-                "ordinance_sigungu": ordinance_sigungu,
-                "far_incentive": far_incentive,
-            },
-            "development_types": development_types,
-            "pricing": {
-                "official_price_per_sqm": float(official_land_price),
-                "nearby_transactions": comprehensive.get("nearby_transactions"),
-            },
-            "building": comprehensive.get("building_detail") or comprehensive.get("building_info"),
-            "building_lookup_status": comprehensive.get("building_lookup_status"),
-            "infrastructure": comprehensive.get("infrastructure"),
-            "coordinates": comprehensive.get("coordinates"),
-            "regulations": {
-                "land_use_plan": comprehensive.get("land_use_plan") or comprehensive.get("local_ordinance"),
-                "special_districts": comprehensive.get("special_districts") or zoning.get("special_districts", []),
-                "warnings": comprehensive.get("warnings", []),
-            },
-            # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)
-            "zone_type": zone_type,
-            "max_bcr": effective_bcr,
-            "max_far": effective_far,
-            "land_area_sqm": float(land_area_sqm),
-            "official_land_price": float(official_land_price),
-            "pnu_codes": pnu_codes,
-            "comprehensive_report": comprehensive_report if comprehensive_report else None,
-        }
-
-        # 신뢰 메타데이터(additive): 입지분석(auto_zoning)과 동일한 legal_refs[]·evidence[].
-        self._attach_site_trust_blocks(state)
-        await self._attach_site_ai(state)
-
-        # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영
-        await self._save_site_analysis_to_project(state)
 
     async def _fetch_real_site_data(self, address: str, fallback: dict | None) -> dict:
         """외부 API(VWORLD/MOLIT)를 호출하여 실제 부지 데이터를 수집한다.
@@ -1828,10 +1657,13 @@ class ProjectPipeline:
         # 토지비가 수입에 반영되지 않아 토지비만큼 구조적 적자가 발생한다.
         # regional_pricing(단일 출처)을 사용하고, 조회 실패 시에만 공사비 기반으로 폴백한다.
         from app.services.feasibility.regional_pricing import (
-            get_regional_sale_price_per_pyeong,
+            resolve_regional_sale_price_per_pyeong,
         )
 
-        market_price = get_regional_sale_price_per_pyeong(address=site.address)
+        # W2-1: 매칭 근거(basis)를 함께 받아 전국 기본 폴백을 출처에 정직 표기.
+        market_price, market_price_basis = resolve_regional_sale_price_per_pyeong(
+            address=site.address
+        )
 
         # F1: 다중출처 신뢰도 가중 시장 재평가(지역표준 + MOLIT 실거래 블렌딩). 있으면 우선.
         market_reval: dict | None = None
@@ -1853,7 +1685,11 @@ class ProjectPipeline:
             sale_price_source = "market_blended"
         elif market_price and market_price > 0:
             avg_sale_price = float(market_price)
-            sale_price_source = "regional_market_table"
+            # W2-1: 지역 미매칭 전국 기본(1500만/평) 폴백을 지역시세표 출처로 오표기하지 않음.
+            sale_price_source = (
+                "national_default_fallback" if market_price_basis == "national_default"
+                else "regional_market_table"
+            )
         else:
             avg_sale_price = cost.cost_per_pyeong * 1.3  # 최후 폴백
             sale_price_source = "cost_based_fallback"
@@ -2154,6 +1990,17 @@ class ProjectPipeline:
         from app.services.pipeline.tax_reconcile import compute_project_taxes
 
         feasibility = state.stages.get("feasibility", StageResult(stage=PipelineStage.FEASIBILITY))
+        # W2-3: feasibility 미완료/실패 시 0 입력으로 '완료' 세금이 산출되던 침묵 전파 차단 —
+        # design_review와 동일한 degraded SKIPPED 패턴(러너가 상태 보존, 정직 표기).
+        if feasibility.status != PipelineStatus.COMPLETED:
+            state.stages["tax"].status = PipelineStatus.SKIPPED
+            state.stages["tax"].data = {
+                "skipped_reason": (
+                    f"feasibility 단계 {feasibility.status.value} — 세금 산정 입력(매출·원가) 부재. "
+                    "0 합성 산출 금지(무날조)."
+                )
+            }
+            return
         fdata = feasibility.data
 
         taxes = compute_project_taxes(
