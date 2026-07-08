@@ -118,6 +118,9 @@ export function NearbyTransactionsMap({
   //   선택 필지의 pnu/주소를 구획도(parcel-boundaries) center 로 해석 — MOLIT 지오코딩과
   //   독립적인 경로라, 실거래 지오코딩이 실패해도 지도는 선택 위치로 이동한다(서울 폴백 제거).
   const [fallbackCenter, setFallbackCenter] = useState<{ lat: number; lon: number; address?: string } | null>(null);
+  // 폴백 center 조회마저 실패(네트워크·타임아웃·center 부재)했는지 — true 면 지도는 기본
+  //   위치에 머물므로 '위치 확인 불가' 정직 라벨을 띄운다(무날조: 기본 지도 위장 금지).
+  const [fallbackFailed, setFallbackFailed] = useState(false);
   const [kind, setKind] = useState<"trade" | "rent">("trade");
   const [type, setType] = useState("apt");
   const [showPresale, setShowPresale] = useState(false);
@@ -193,6 +196,7 @@ export function NearbyTransactionsMap({
   const backendCenterOk = !!(payload?.center?.lat && payload?.center?.lon);
   useEffect(() => {
     setFallbackCenter(null);
+    setFallbackFailed(false);
   }, [address, pnu]);
   useEffect(() => {
     // payload 가 왔는데 center 가 유효하면 폴백 불필요.
@@ -209,11 +213,17 @@ export function NearbyTransactionsMap({
             timeoutMs: 45000,
           },
         );
-        if (alive && res?.center?.lat && res.center.lon) {
+        if (!alive) return;
+        if (res?.center?.lat && res.center.lon) {
           setFallbackCenter({ lat: res.center.lat, lon: res.center.lon, address });
+          setFallbackFailed(false);
+        } else {
+          // 응답은 왔지만 center 가 없음 — 좌표 확인 실패로 정직하게 라벨링(가짜 좌표 금지).
+          setFallbackFailed(true);
         }
       } catch {
-        // 폴백 실패는 무시 — 지도는 "위치 확인 불가"로 남는다(가짜 좌표 금지).
+        // 폴백 조회 자체가 실패(네트워크·타임아웃) — '위치 확인 불가' 라벨을 띄운다.
+        if (alive) setFallbackFailed(true);
       }
     })();
     return () => {
@@ -366,6 +376,13 @@ export function NearbyTransactionsMap({
             >
               다시 시도
             </button>
+          </div>
+        )}
+
+        {payload && !loading && !focusTarget && fallbackFailed && (
+          <div className="absolute top-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-800 backdrop-blur">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden />
+            위치 확인 불가 — 선택 위치의 좌표를 확인하지 못해 지도가 기본 위치로 표시 중입니다. 아래 실거래 목록·건수는 정상 조회 결과입니다.
           </div>
         )}
 

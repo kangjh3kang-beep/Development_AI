@@ -1690,6 +1690,9 @@ async def parcel_at_point(req: ParcelAtPointRequest):
 
     지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
     """
+    from datetime import datetime
+
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
     from apps.api.app.services.external_api.vworld_service import VWorldService
     from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
 

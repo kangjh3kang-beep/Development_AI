@@ -153,6 +153,12 @@ type OutputAction = {
   tone: string;
 };
 
+/**
+ * 통합지도 레이어 정의 레지스트리.
+ * 정직 라벨 원칙: 지도에 실데이터가 렌더링되는(mapEffect) 레이어의 source 는
+ * '연동 필요'가 아니라 실제 연동된 원천을 기술해야 한다.
+ * (테스트 검증용으로 export — components/precheck/__tests__/SatongMapShell.layers.test.ts)
+ */
 const LAYERS: SatongLayer[] = [
   {
     id: "cadastre",
@@ -177,7 +183,7 @@ const LAYERS: SatongLayer[] = [
     icon: Landmark,
     status: "active",
     tone: "bg-sky-100 text-sky-950 border-sky-200",
-    source: "VWorld 용도지역(NED 토지특성)",
+    source: "공간정보(토지특성정보) API 연동",
     controls: [
       { id: "land-use", label: "용도지역", mapEffect: true },
       { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
@@ -192,7 +198,7 @@ const LAYERS: SatongLayer[] = [
     icon: LineChart,
     status: "active",
     tone: "bg-emerald-100 text-emerald-950 border-emerald-200",
-    source: "VWorld 개별공시지가(NED)",
+    source: "공간정보(VWorld NED) 토지특성 API 연동",
     controls: [
       { id: "unit-price", label: "㎡당 단가", mapEffect: true },
       { id: "year", label: "연도", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
@@ -300,7 +306,7 @@ const LAYERS: SatongLayer[] = [
     icon: Mountain,
     status: "ready",
     tone: "bg-stone-100 text-stone-950 border-stone-200",
-    source: "VWorld/국토정보 플랫폼 연동 필요",
+    source: "VWorld WMTS 프록시 연동(기본·위성·항공뷰)",
     controls: [
       { id: "base", label: "기본지도", mapEffect: true },
       { id: "satellite", label: "위성", mapEffect: true },
@@ -325,6 +331,8 @@ const LAYERS: SatongLayer[] = [
     ],
   },
 ];
+
+export { LAYERS as SATONG_MAP_SHELL_LAYERS };
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
   search: "검색",
