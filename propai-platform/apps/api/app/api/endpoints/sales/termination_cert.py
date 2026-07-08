@@ -289,7 +289,8 @@ async def _ledger(ctx: SalesCtx, cert_id: uuid.UUID, event: str, payload: dict) 
             source="sales_cert",
             created_by=str(ctx.user.id),
         )
-        return res.get("content_hash") if isinstance(res, dict) else None
+        # 조인키 추출은 공용 헬퍼 단일경유(전 엔드포인트 동일 계약)
+        return ledger.extract_ledger_hash(res)
     except Exception:  # noqa: BLE001 — 원장 기록 실패는 발급을 막지 않음
         return None
 

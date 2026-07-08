@@ -26,6 +26,52 @@ def _to_items(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _narrative_to_items(raw: Any, *, source: str = "interpreter") -> list[dict[str, Any]]:
+    """인터프리터 내러티브(dict[str,str]) → citation_gate items 공용 어댑터.
+
+    market 등 기존 인터프리터는 {"market_overview": "문장…", …} 형태의 내러티브 dict 를
+    반환한다. _to_items 는 items 리스트만 인정해 이런 출력이 전부 버려졌다(침묵실패 —
+    LLM 해석이 돌아도 주입 실효 0). 여기서 내러티브 문장을 **그대로** claim 으로 쓰고
+    (날조 금지 — 요약·재작성 안 함), basis 는 인터프리터 출처 표기만 남긴다.
+    미근거 수치·법조문 검문은 그대로 citation_gate 가 수행한다(결정론 불변식 유지).
+    """
+    if not isinstance(raw, dict):
+        return []
+    items: list[dict[str, Any]] = []
+    for key, value in raw.items():
+        if key == "items":
+            continue  # 구조화 items 는 _to_items 가 처리(이중 합류 방지)
+        if isinstance(value, str) and value.strip():
+            items.append({
+                "claim": value.strip(),
+                "basis": f"{source}:{key}",   # 출처 표기(검문·강등 판단은 citation_gate 몫)
+                "confidence": "medium",
+            })
+    return items
+
+
+async def _call_interpreter(interpreter: Any, data: dict[str, Any], **kwargs: Any) -> Any:
+    """인터프리터 호출 단일경유 — 시그니처가 안 받는 kwargs 는 걸러 TypeError 를 막는다.
+
+    구형 인터프리터(generate_interpretation(self, data))는 prior_context 를 수용하지 않아
+    kwargs 를 그대로 넘기면 TypeError → 해석 전체가 침묵 스킵됐다. inspect.signature 로
+    수용 가능한 키워드만 추려 호출한다(**kwargs 수용형은 전부 통과, 조회 불가 시 원형 시도).
+    """
+    fn = interpreter.generate_interpretation
+    try:
+        sig = inspect.signature(fn)
+        accepts_var_kw = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not accepts_var_kw:
+            kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    except (TypeError, ValueError):  # C-확장 등 시그니처 조회 불가 — 원형 그대로 시도
+        pass
+    out = fn(data, **kwargs)
+    if inspect.isawaitable(out):
+        out = await out
+    return out
+
+
 def _format_recall_block(rag_memories: list[dict[str, Any]]) -> str:
     """회상된 과거 경험(MemoryHub)을 prior_context 뒤에 덧붙일 텍스트 블록으로 정규화.
 
@@ -69,6 +115,7 @@ class SpecialistAgent:
         self, data: dict[str, Any], *, tenant_id: str | None = None,
         project_id: str | None = None, pnu: str | None = None,
         address: str | None = None, created_by: str | None = None,
+        allow_llm: bool = True,
     ) -> dict[str, Any]:
         # 1) 계층1 결정론 도구 — 수치는 여기서만 생성(불변)
         tool_out = self._tool(data)
@@ -108,17 +155,23 @@ class SpecialistAgent:
             logger.warning("specialist memory recall 스킵(graceful)", domain=self.domain, err=str(e)[:160])
 
         # 3) LLM 해석(선택) + citation_gate grounded만 — 수치 비생성
+        #    ★allow_llm=False(과금 게이트): 결정론 도구·prior·recall·원장은 유지하고 LLM 해석만
+        #    스킵한다 — comprehensive(무과금 자동 교차검증)는 False, decision_brief use_llm 경로만 True.
         claims: list[dict[str, Any]] = []
-        if self._interpreter is not None:
+        if self._interpreter is not None and allow_llm:
             try:
                 from app.services.design_audit.blindspot_interpreter import citation_gate
                 from app.services.ledger.prior_context import build_prior_block
 
                 # prior + 회상 과거경험을 결합(회상 블록은 헬퍼로 정규화 — interpreter와 디커플)
                 prior_block = build_prior_block(prior) + _format_recall_block(rag_memories)
-                raw = await self._interpreter.generate_interpretation(
-                    tool_out, prior_context=prior_block)
-                claims = citation_gate(_to_items(raw), findings, prior_evidence=prior)
+                # 단일경유 호출(_call_interpreter) — prior_context 미수용 구형 시그니처도 TypeError 없이 동작
+                raw = await _call_interpreter(
+                    self._interpreter, tool_out, prior_context=prior_block)
+                # 구조화 items + 내러티브(dict[str,str]) 어댑터 합류 — market 등 내러티브형도 검문 통과 후 주입
+                items = _to_items(raw) + _narrative_to_items(
+                    raw, source=f"interpreter:{self.domain}")
+                claims = citation_gate(items, findings, prior_evidence=prior)
             except Exception as e:  # noqa: BLE001
                 logger.warning("specialist LLM 해석 스킵(graceful)", domain=self.domain, err=str(e)[:160])
                 claims = []
@@ -172,8 +225,10 @@ class SpecialistAgent:
 
             ingester = self._ingester
             if ingester is None:
-                from app.tasks.memory_tasks import ingest_experience_task
-                ingester = ingest_experience_task.delay
+                # ★死경로 해소: `.delay` 는 워커 부재(prod 기본) 시 no-op 였다 → 공용 디스패처
+                #   (워커 유무 자동판별 + in-process 폴백)로 교체. 계약 동일(dict 1개·fire-and-forget).
+                from app.tasks.memory_tasks import dispatch_memory_ingest
+                ingester = dispatch_memory_ingest
             ingest_payload = {
                 "project_id": project_id,
                 "session_id": f"auto_session_{self.domain}_{uuid.uuid4().hex[:8]}",
@@ -196,7 +251,7 @@ class SpecialistAgent:
         except Exception as e:  # noqa: BLE001 — Celery/인프라 부재는 graceful(분석 무중단)
             logger.warning("specialist memory auto-ingestion 스킵(graceful)", domain=self.domain, err=str(e)[:160])
 
-        return {
+        result = {
             "domain": self.domain, "task_type": self.task_type,
             "findings": findings, "claims": claims,
             "summary": tool_out.get("summary") or {},
@@ -206,3 +261,7 @@ class SpecialistAgent:
             "panel": panel_out,
             "rag_memories": rag_memories,
         }
+        # ★성장루프 조인키: 원장 content_hash 를 응답 최상위 `ledger_hash` 표준 필드로 노출
+        #   (프론트 피드백 👍/👎 → learning_loop 등가조인). 미적재면 키 생략(정직).
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        return attach_ledger_hash(result, wb)

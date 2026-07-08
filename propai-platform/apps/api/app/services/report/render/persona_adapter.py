@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence_bridge import evidence_block_from_contract
 from .model import (
     DataTableBlock,
     GradeBadgeBlock,
@@ -279,6 +280,14 @@ def build_report_model_from_persona(report: dict, key: str) -> ReportModel:
             DataTableBlock(headers=["단계", "항목", "판정"],
                            rows=[[fmt_value(c.get("step")), fmt_value(c.get("label")), fmt_value(c.get("status"))]
                                  for c in checklist])]))
+
+    # 공통: 산출 근거·법령 링크 — runner._persona_evidence 가 표준 계약(build_evidence_block)으로
+    # 만들어 verification.evidence_block 에 담아 둔 근거(법정한도·조례·산식 트레이스 + verified
+    # 법령링크)를 브리지로 옮겨 담는다. 계약 데이터가 실제 있을 때만 부착(없으면 생략 — 정직).
+    ev_block = evidence_block_from_contract(
+        (report.get("verification") or {}).get("evidence_block"), title=None)
+    if ev_block is not None:
+        sections.append(Section(title="산출 근거·법령 링크", blocks=[ev_block]))
 
     # 공통: 정직 고지
     notes = report.get("honesty_notes") or []

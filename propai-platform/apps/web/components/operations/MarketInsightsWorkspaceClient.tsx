@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Bot, Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
+import { Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -39,7 +39,8 @@ import { deriveMarketPipelineSteps } from "@/lib/context-header";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
-import { entriesToParcelRows, parcelDataToRows, preferredEntryAddress, shouldSendParcels } from "@/lib/parcel-rows";
+import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
@@ -769,11 +770,14 @@ export function MarketInsightsWorkspaceClient() {
               <div>
                 <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
                 <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
-                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
-                  <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--accent-strong)]" disabled={!!genState} />
-                  <span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />AI 분석 포함</span> <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
-                </label>
+                {/* use_llm 옵트인 — 공용 UseLlmToggle로 교체(전파방지·중복 제거, 시각 동일). */}
+                <UseLlmToggle
+                  className="mt-2"
+                  checked={useLlm}
+                  onChange={setUseLlm}
+                  disabled={!!genState}
+                  hint="LLM이 시장요약·기회·리스크·가격동향을 작성"
+                />
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={generateReport} disabled={!!genState}
@@ -977,7 +981,14 @@ export function MarketInsightsWorkspaceClient() {
       )}
 
       {/* AI 검증 + 전문가 패널 (보고서 생성 시) — 분석 신뢰성 검증 */}
-      {report && <VerificationBadge analysisType="market" context={report as unknown as Record<string, unknown>} />}
+      {report && (
+        <VerificationBadge
+          analysisType="market"
+          context={report as unknown as Record<string, unknown>}
+          // 백엔드가 응답 최상위에 노출하는 원장 sha256 — 피드백 조인키(미노출이면 undefined·안전).
+          ledgerHash={(report as { ledger_hash?: string })?.ledger_hash}
+        />
+      )}
       {report && (
         <ExpertPanelCard analysisType="market" address={address} context={report as unknown as Record<string, unknown>} />
       )}

@@ -36,6 +36,7 @@ import {
   auditSchematicGeometry,
   auditVerdict,
 } from "./auditAnnotation";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 
 /* ── 스테퍼 정의 ── */
 
@@ -111,6 +112,10 @@ export function DesignAuditWorkspace({
   const [runError, setRunError] = useState("");
   const [report, setReport] = useState<DesignAuditReport | null>(null);
   const [engineIdx, setEngineIdx] = useState(0);
+  // AI 보조(사각지대 쟁점 생성) 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(True)에 암묵
+  // 의존해 항상 ON이었다. 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반 심사만
+  // 받을 수 있게 한다(D1).
+  const [useLlm, setUseLlm] = useState(true);
 
   /* 실행 중 엔진 체크리스트 진행 표시 — 타이머 기반 "예상" 진행(결과 아님, 라벨로 고지). */
   useEffect(() => {
@@ -233,6 +238,7 @@ export function DesignAuditWorkspace({
             ifc_filename: ifcFile?.name ?? null,
             dxf_filename: dxfFile?.name ?? null,
           },
+          use_llm: useLlm,
         }),
       );
       if (ifcFile) fd.append("ifc_file", ifcFile);
@@ -691,6 +697,12 @@ export function DesignAuditWorkspace({
                       </div>
                     </div>
 
+                    {/* AI 보조(사각지대 쟁점 생성) 옵트인 — 기본 on(기존 동작 보존). 끄면 규칙기반 심사만. */}
+                    <UseLlmToggle
+                      checked={useLlm}
+                      onChange={setUseLlm}
+                      className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]"
+                    />
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"

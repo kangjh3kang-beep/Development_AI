@@ -344,3 +344,44 @@ def test_seed_design_no_mass_reference_graceful(monkeypatch):
     body = r.json()
     assert body["legal_max_mass"] is not None
     assert body["regional_typical_mass"] is None
+
+
+def test_seed_design_special_parcel_gate_attached_when_context_given(monkeypatch):
+    """B2: land_category(예: 학교용지)가 있으면 응답에 special_parcel 게이트가 additive로 부착된다."""
+    monkeypatch.setattr(mt, "_compute_mass", lambda **kw: {"num_floors": 5, "far_pct": 150.0, "bcr_pct": 40.0})
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return None
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "경기도 의정부시 어딘가 224", "land_area_sqm": 1000,
+                          "zone_code": "일반상업지역", "land_category": "학교용지",
+                          "pnu": "4115010100100010000"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    sp = body["special_parcel"]
+    assert sp is not None
+    assert sp["developability"] == "PRECONDITION"
+    assert sp["warnings"]
+    assert sp["pnu"] == "4115010100100010000"
+
+
+def test_seed_design_special_parcel_gate_none_without_context(monkeypatch):
+    """B2: land_category·special_districts 모두 미제공이면 special_parcel=None(정직 생략)."""
+    monkeypatch.setattr(mt, "_compute_mass", lambda **kw: {"num_floors": 30, "far_pct": 250.0})
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return None
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "강원특별자치도 양양군 강현면", "land_area_sqm": 1000})
+    assert r.status_code == 200, r.text
+    assert r.json()["special_parcel"] is None

@@ -633,6 +633,8 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
         <VerificationBadge
           analysisType="pipeline_report"
           context={(result.summary || {}) as Record<string, unknown>}
+          // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+          ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
         />
       </div>
 

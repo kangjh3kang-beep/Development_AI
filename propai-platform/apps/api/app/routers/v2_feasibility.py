@@ -925,6 +925,7 @@ async def vcs_commit(
     except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 커밋을 막지 않음
         logger.warning("원장 배선 append 실패(feasibility_vcs): %s", str(e)[:160])
     # Phase 1 성장루프: 수지 결과 자체를 'feasibility' 체인에 적재(read 대상) + 직전 prior read(best-effort).
+    ledger_wb = None                       # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_feasibility_result
         from app.services.ledger.prior_context import load_prior
@@ -932,12 +933,18 @@ async def vcs_commit(
         _tid = str(current_user.tenant_id) if current_user.tenant_id else None
         _pid = str(_parse_project_id(project_id))
         prior = await load_prior(analysis_type="feasibility", tenant_id=_tid, project_id=_pid)
-        await record_feasibility_result(result=req.snapshot, tenant_id=_tid, project_id=_pid)
+        ledger_wb = await record_feasibility_result(result=req.snapshot, tenant_id=_tid, project_id=_pid)
         if prior:
-            logger.info("feasibility 성장루프 — 직전 수지 prior 적용", prior_version=prior.get("version"))
+            # (버그픽스) stdlib logger 는 structlog 식 kwargs 를 못 받는다 — TypeError 로
+            #   원장 적재 성공이 '배선 실패' 경고로 오인되던 것을 %s 포맷으로 교정.
+            logger.info("feasibility 성장루프 — 직전 수지 prior 적용(version=%s)", prior.get("version"))
     except Exception as e:  # noqa: BLE001
         logger.warning("feasibility 성장루프 배선 실패 — skipped: %s", str(e)[:160])
-    return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
+    # ★성장루프 조인키: 'feasibility' 체인 content_hash 를 최상위 `ledger_hash` 로 노출(피드백 키잉).
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    return attach_ledger_hash(
+        {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")},
+        ledger_wb)
 
 
 @router.post("/repos/{project_id}/rollback")
@@ -954,10 +961,11 @@ async def vcs_rollback(
         raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다")
     await db.commit()                      # rollback도 신규 commit row 생성 — 확정 후 원장 적재
     # Phase 0 unit d: rollback 커밋도 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    ledger_wb = None                       # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_feasibility_commit
 
-        await record_feasibility_commit(
+        ledger_wb = await record_feasibility_commit(
             commit=result,
             tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
             project_id=str(_parse_project_id(project_id)),
@@ -965,7 +973,9 @@ async def vcs_rollback(
         )
     except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 롤백을 막지 않음
         logger.warning("원장 배선 append 실패(feasibility_vcs/rollback): %s", str(e)[:160])
-    return {"sha": result["sha"], "message": result["message"]}
+    # ★성장루프 조인키: 최상위 `ledger_hash` 표준 노출(공용 헬퍼 — 미적재 시 키 생략).
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    return attach_ledger_hash({"sha": result["sha"], "message": result["message"]}, ledger_wb)
 
 
 @router.get("/repos/{project_id}/log")

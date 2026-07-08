@@ -563,7 +563,9 @@ class MarketReportService:
 
         # ── Phase 3: 사업 타당성 분석 (Feasibility Engine) ──
         from app.services.market.feasibility_service import FeasibilityService
-        land_area = float(basic.get("land_area") or basic.get("area_sqm") or 330.0) # 기본 100평
+        # ★면적 미상 시 기본 100평(330㎡) 임의값 제거(완성도 감사 P0 — 근거 없는 수지 날조 방지).
+        #   0이면 아래 통합집계가 채우거나, 끝내 0이면 analyze가 available:False로 정직 반환.
+        land_area = float(basic.get("land_area") or basic.get("area_sqm") or 0.0)
 
         # ── P1 다필지 통합면적 전파 ──
         # 프론트가 2필지 이상 보내면(parcels) 대표 1필지 면적이 아니라 '면적가중 통합면적'으로
@@ -596,11 +598,20 @@ class MarketReportService:
         # 대표 평당가는 아파트 평당가를 우선 사용, 없으면 전체 평균 사용
         valid_pp = [v for v in pp_by_type.values() if v is not None]
         target_pp = apt_pp or (sum(valid_pp)/len(valid_pp) if valid_pp else 2000)
+        # ★P0(완성도 감사): 다필지 통합집계가 이미 산출한 실효 용적률(blended_far_eff_pct,
+        #   면적가중·조례반영·공용 산식)을 개략 수지에 주입 — 자체 하드코딩 표 우회 제거(SSOT).
+        _blend_far = float(integrated.get("blended_far_eff_pct") or 0) if integrated else 0
+        _blend_bcr = float(integrated.get("blended_bcr_eff_pct") or 0) if integrated else 0
+        _far_note = (integrated.get("far_basis_note") or "") if integrated else ""
         feasibility = FeasibilityService().analyze_feasibility(
             land_area_sqm=land_area,
             zone_type=zone_type or "",
             avg_pyeong_price_manwon=target_pp,
-            official_price_per_sqm=official_price or 0
+            official_price_per_sqm=official_price or 0,
+            far_pct_override=_blend_far if _blend_far > 0 else None,
+            bcr_pct_override=_blend_bcr if _blend_bcr > 0 else None,
+            far_basis_override=(f"다필지 통합 실효용적률(면적가중){' — ' + _far_note if _far_note else ''}"
+                                if _blend_far > 0 else None),
         )
 
         # ── M3: 적정 분양가 산정 — 거래사례비교(1차 핵심) + 지불여력(2차 검증)·결정론 ──

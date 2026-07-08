@@ -135,3 +135,43 @@ def test_load_fewshot_cache_separated_by_tenant(monkeypatch):
     assert _run_with_tenant(lambda: bi._load_fewshot("svc_multi"), "TA") is None
     assert _run_with_tenant(lambda: bi._load_fewshot("svc_multi"), "TB") is None
     assert calls["n"] == 2  # 테넌트별 별도 조회(캐시 키 분리)
+
+
+def test_fewshot_flag_calltime_env_switch(monkeypatch):
+    """★콜타임 전환: 환경변수 변경이 재임포트/재시작 없이 반영된다.
+
+    과거엔 import-time 고정(_FEWSHOT_ENABLED = os.environ...)이라 관리자 시크릿
+    (/admin/secrets → os.environ)으로 켜도 재시작 전 무효였다. TTL 캐시는
+    _env_flag_cache_reset() 으로 우회(운영에선 TTL 만료 시 자동 재조회).
+    """
+    # 강제 오버라이드 해제(None) → env 콜타임 평가 경로
+    monkeypatch.setattr(bi, "_FEWSHOT_ENABLED", None)
+
+    monkeypatch.setenv("INTERP_FEWSHOT", "0")
+    bi._env_flag_cache_reset()
+    assert bi._fewshot_enabled() is False
+
+    # 재임포트 없이 env 만 바꿔도 반영(캐시 리셋 = TTL 만료 시뮬레이션)
+    monkeypatch.setenv("INTERP_FEWSHOT", "1")
+    assert bi._fewshot_enabled() is False  # TTL 내에는 캐시값(핫패스 보호)
+    bi._env_flag_cache_reset()
+    assert bi._fewshot_enabled() is True   # TTL 만료 후 새 env 값 반영
+
+    # 모듈 상수 오버라이드(True/False)는 env 보다 우선(기존 테스트 패턴 호환)
+    monkeypatch.setattr(bi, "_FEWSHOT_ENABLED", False)
+    assert bi._fewshot_enabled() is False
+
+    # 나머지 토글도 같은 콜타임 헬퍼를 쓴다(기본값: redis/prompt cache 켜짐)
+    monkeypatch.setattr(bi, "_REDIS_CACHE_ENABLED", None)
+    monkeypatch.setattr(bi, "_PROMPT_CACHE_ENABLED", None)
+    monkeypatch.delenv("INTERP_REDIS_CACHE", raising=False)
+    monkeypatch.delenv("INTERP_PROMPT_CACHE", raising=False)
+    bi._env_flag_cache_reset()
+    assert bi._redis_cache_enabled() is True
+    assert bi._prompt_cache_enabled() is True
+    monkeypatch.setenv("INTERP_REDIS_CACHE", "0")
+    bi._env_flag_cache_reset()
+    assert bi._redis_cache_enabled() is False
+
+    # 테스트가 남긴 TTL 캐시가 다른 테스트에 새지 않게 정리(env 는 monkeypatch 가 원복)
+    bi._env_flag_cache_reset()

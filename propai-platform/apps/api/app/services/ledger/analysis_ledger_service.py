@@ -277,6 +277,37 @@ async def append_analysis(
         return {"ok": False, "message": str(e)[:160]}
 
 
+# ── 성장루프 조인키 공용 헬퍼 ──────────────────────────────────────────────
+# 프론트 피드백(👍/👎)은 응답 최상위 `ledger_hash`(sha256 hex)를 조인키로 서버에 보내고,
+# 학습 큐레이션(learning_loop.curate_few_shot)이 그 값으로 analysis_ledger 와 등가조인한다.
+# 과거엔 프론트가 자체 계산한 32bit 해시를 보내 산식·입력·형식 3중 불일치로 조인이 항상 0건
+# 이었다 — 서버가 append 결과의 content_hash 를 그대로 노출하는 것이 정답 기준선
+# (design_ingest/orchestrator._record_proposal_ledger 패턴)이며, 여기로 일원화한다.
+
+def extract_ledger_hash(append_result: Any) -> str | None:
+    """append_analysis 결과에서 content_hash(sha256 hex)를 안전하게 꺼낸다.
+
+    실패(ok=False)·미적재·비정상 형태면 None 을 반환한다(무날조 — 없으면 없다고).
+    unchanged=True(동일 내용 재분석)도 같은 content_hash 를 돌려주므로 그대로 인정한다.
+    """
+    if isinstance(append_result, dict) and append_result.get("ok") and append_result.get("content_hash"):
+        return str(append_result["content_hash"])
+    return None
+
+
+def attach_ledger_hash(response_payload: dict[str, Any], append_result: Any) -> dict[str, Any]:
+    """분석 응답 최상위에 표준 필드 `ledger_hash` 를 부착한다(피드백 조인키 — 프론트 계약).
+
+    - 필드명은 `ledger_hash` 고정(프론트 VerificationBadge/FeedbackWidget 이 이 이름으로 키잉).
+    - 원장 적재 실패/미적재 시엔 키를 아예 넣지 않는다(정직 — None 목업 금지).
+    - 응답 dict 를 제자리 수정 후 그대로 반환(호출부 한 줄 체이닝용).
+    """
+    h = extract_ledger_hash(append_result)
+    if h and isinstance(response_payload, dict):
+        response_payload["ledger_hash"] = h
+    return response_payload
+
+
 async def get_latest(
     *, analysis_type: str | None = None, tenant_id: str | None = None,
     pnu: str | None = None, address: str | None = None, project_id: str | None = None,
@@ -372,6 +403,13 @@ async def verify_chain(
                 if ph != prev_hash:
                     broken.append({"version": ver, "issue": "chain_broken"})
                 prev_hash = stored_hash
+            if broken:
+                # ★C3 producer: 변조탐지를 치유루프(healing_rules._collect_candidates)에 표면화 —
+                #   kind='ledger_broken' + severity='critical'가 그 브랜치를 발동시켜 재분석을
+                #   제안한다(healing_rules.py:198~209 실측 계약). best-effort(예외 삼킴·검증 결과 무영향).
+                from app.services.growth.capture_service import record_fallback
+                record_fallback("analysis_ledger", "ledger_broken", severity="critical",
+                                analysis_type=analysis_type, broken_count=len(broken))
             return {"ok": True, "verified": not broken, "length": len(rows),
                     "head_version": int(rows[-1][0]), "broken": broken,
                     "message": "무결성 체인 정상(변조 없음)" if not broken else f"무결성 이상 {len(broken)}건 탐지"}

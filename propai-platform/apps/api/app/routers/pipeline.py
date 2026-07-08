@@ -75,6 +75,8 @@ class PipelineRunResponse(BaseModel):
     status: str
     stages: list[PipelineStageStatusResponse]
     summary: dict = {}
+    # 성장루프 조인키: 원장 write-back content_hash(sha256) — 프론트 피드백이 원장과 조인(미적재 시 None)
+    ledger_hash: str | None = None
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────
@@ -135,7 +137,7 @@ async def run_pipeline(req: PipelineRunRequest):
         pass
 
     # Fix #3: 결정론 cost/feasibility 산출을 분석원장에 적재(모순탐지·lineage·SSOT 합류).
-    await _record_pipeline_ledger(result, req)
+    recorded = await _record_pipeline_ledger(result, req)
 
     # 최종 요약
     summary = {}
@@ -143,12 +145,25 @@ async def run_pipeline(req: PipelineRunRequest):
     if report_data and report_data.data:
         summary = report_data.data.get("summary", {})
 
+    # ★성장루프 조인키: write-back 성공분 중 대표 해시(feasibility 우선, 없으면 cost)를
+    #   응답 `ledger_hash`로 노출 — 파이프라인 결과 화면의 피드백(👍/👎)이 원장과 조인된다.
+    ledger_hash: str | None = None
+    try:
+        from app.services.ledger.analysis_ledger_service import extract_ledger_hash
+        for _k in ("feasibility", "cost"):
+            ledger_hash = extract_ledger_hash((recorded or {}).get(_k))
+            if ledger_hash:
+                break
+    except Exception:  # noqa: BLE001 — 조인키 실패해도 파이프라인 응답 무손상
+        ledger_hash = None
+
     return PipelineRunResponse(
         pipeline_id=result.pipeline_id,
         project_id=result.project_id,
         status=result.status.value,
         stages=stages,
         summary=summary,
+        ledger_hash=ledger_hash,
     )
 
 
@@ -282,6 +297,12 @@ async def _interpret_stage(
     data = _normalize_for_interpreter(stage, data)
     from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
     ckey = cache_key(stage, data)
+    # 검증루프 경로(use_verification_retry=True)는 캐시키를 분리(":verified" 접미사).
+    # 무검증 경로가 저장해 둔 캐시를 검증 요구 경로가 영구 재사용하는 것을 막기 위함이다.
+    # (캐시 테이블 구조는 건드리지 않는 보수적 접근 — 기존 무검증 경로 키는 그대로.)
+    # TODO: 캐시 sections에 verified 메타를 통합해 두 경로가 검증본을 공유하도록 개선.
+    if use_verification_retry:
+        ckey = f"{ckey}:verified"
     cached = await get_cached(ckey)
     if cached:
         return {"ok": True, "stage": stage, "sections": cached, "cached": True}
@@ -298,10 +319,13 @@ async def _interpret_stage(
             retry_result = await _verify_and_maybe_retry(stage, data, interp, sections)
             sections = retry_result["sections"]
             extra = {k: retry_result[k] for k in ("verification", "regenerated", "verification_warning") if k in retry_result}
+            # 검증을 통과하지 못한 결과(verification_warning 배지)는 캐시에 남기지 않는다 —
+            # 실패본이 ":verified" 키에 영구 고착되지 않고, 다음 호출에서 재생성·재검증 기회를 남긴다.
+            if "verification_warning" not in retry_result:
+                await put_cached(ckey, stage, sections)
         else:
             extra = {}
-
-        await put_cached(ckey, stage, sections)
+            await put_cached(ckey, stage, sections)
         return {"ok": True, "stage": stage, "sections": sections, **extra}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "stage": stage, "message": str(e)[:160], "sections": {}}
@@ -354,8 +378,15 @@ async def _verify_and_maybe_retry(
     return {"sections": regen, "verification": v2, "regenerated": True}
 
 
-async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float = 28.0) -> dict[str, dict[str, str]]:
-    """보고서 PDF용 — 단계별 AI 해석을 병렬 수집(캐시 우선, 미스는 생성). 타임아웃 내 완료분만."""
+async def _gather_report_narratives(
+    result_dict: dict[str, Any], timeout: float = 28.0, *, use_verification_retry: bool = False
+) -> dict[str, dict[str, str]]:
+    """보고서 PDF용 — 단계별 AI 해석을 병렬 수집(캐시 우선, 미스는 생성). 타임아웃 내 완료분만.
+
+    use_verification_retry=True면 각 단계 해석에 검증→이슈주입→1회 재생성 루프
+    (_verify_and_maybe_retry)를 태운다 — 보고서는 동기 UI가 아니므로 품질우선 경로.
+    기본 False는 기존 호출부(파이프라인 PDF 등) 동작과 완전히 동일(무회귀).
+    """
     import asyncio
 
     stages_map = result_dict.get("stages") or {}
@@ -375,18 +406,30 @@ async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float 
             # summary 폴백
             d = summary.get(stg) if isinstance(summary.get(stg), dict) else None
         if isinstance(d, dict) and d:
-            jobs.append((stg, _interpret_stage(stg, {**ctx, **d})))
+            jobs.append((stg, _interpret_stage(
+                stg, {**ctx, **d}, use_verification_retry=use_verification_retry)))
     if not jobs:
         return {}
     out: dict[str, dict[str, str]] = {}
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*[j for _, j in jobs], return_exceptions=True), timeout=timeout)
-        for (stg, _), r in zip(jobs, results, strict=False):
-            if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
-                out[stg] = r["sections"]
-    except TimeoutError:
-        pass
+    # 타임아웃 부분보존: 이전의 wait_for(gather(...))는 타임아웃이 나면 이미 완료된
+    # 해석까지 전량 유실했다. asyncio.wait(timeout=)로 바꿔 제한시간 내 '완료된'
+    # 내러티브는 보존하고, 미완료 단계만 생략한다(보고서는 있는 만큼이라도 싣는다).
+    tasks = {asyncio.ensure_future(coro): stg for stg, coro in jobs}
+    done, pending = await asyncio.wait(tasks.keys(), timeout=timeout)
+    for t in pending:
+        t.cancel()  # 미완료 태스크는 취소 정리(백그라운드 잔류·리소스 누수 방지)
+    if pending:
+        # 취소가 실제로 마무리될 때까지 회수(예외는 무시) — 'Task was destroyed' 경고 방지
+        await asyncio.gather(*pending, return_exceptions=True)
+    for t, stg in tasks.items():  # dict 삽입순 = jobs 순서 그대로 결과 수집(결정적)
+        if t not in done:
+            continue
+        try:
+            r = t.result()
+        except Exception:  # noqa: BLE001 — 한 단계 실패가 다른 단계 보존을 막지 않는다
+            continue
+        if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
+            out[stg] = r["sections"]
     return out
 
 
@@ -464,12 +507,13 @@ async def _resolve_tenant_id() -> str | None:
     return None
 
 
-async def _record_pipeline_ledger(result, req: PipelineRunRequest) -> None:
+async def _record_pipeline_ledger(result, req: PipelineRunRequest) -> dict[str, Any]:
     """Fix #3(감사 HIGH): 파이프라인 결정론 산출(cost/feasibility)을 분석원장에 적재.
 
     /run·/report 공용. 모순탐지·lineage·SSOT 단일출처에 합류시켜, 통합 파이프라인의 권위수치가
     별도 엔드포인트에서만 적재되던 단선을 닫는다. 결정론 수치는 변경하지 않고 '추가'로 일원화하며,
     어떤 실패도 응답을 막지 않는다(best-effort, 정직 degrade).
+    반환: 성공 적재분 dict({"cost": wb, "feasibility": wb}) — 성장루프 조인키(ledger_hash) 노출용.
     """
     try:
         from app.services.pipeline.pipeline_ledger_writeback import record_pipeline_results
@@ -483,8 +527,10 @@ async def _record_pipeline_ledger(result, req: PipelineRunRequest) -> None:
         )
         if recorded:
             logger.info("파이프라인 원장 write-back", recorded=list(recorded.keys()))
+        return recorded or {}
     except Exception as e:  # noqa: BLE001 — write-back 실패는 본 흐름 무중단(정직표기)
         logger.warning("파이프라인 원장 write-back 실패 — skipped", err=str(e)[:200])
+        return {}
 
 
 @router.post(

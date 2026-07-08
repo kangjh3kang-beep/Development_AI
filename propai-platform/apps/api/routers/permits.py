@@ -1,5 +1,6 @@
 """Permit submission and tracking router for v53."""
 
+import re
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -517,5 +518,131 @@ async def ai_permit_analysis(
                 result.setdefault(_k, ev_block[_k])
     except Exception:  # noqa: BLE001 — 근거블록 실패해도 인허가 분석 결과 무손상
         pass
+    # ★성장루프 조인키: 분석 요약을 원장에 best-effort 적재(멱등) 후 최상위 `ledger_hash` 노출.
+    #   cache_put 이전에 부착해 캐시 히트 응답에도 조인키가 실리게 한다(같은 내용=같은 해시).
+    try:
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        wb = await record_user_analysis(
+            analysis_type="permit_ai",
+            summary={
+                "address": addr, "pnu": req.pnu,
+                "parcel_count": len(req.parcels or []) or 1,
+                "use_llm": req.use_llm,
+                "verdict": result.get("verdict") or result.get("overall_assessment"),
+                "development_methods": [
+                    (m.get("method") or m.get("name"))
+                    for m in (result.get("methods") or result.get("development_methods") or [])
+                    if isinstance(m, dict)
+                ] or None,
+            },
+            tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
+            pnu=req.pnu or None, address=addr,
+            source="permit_ai",
+        )
+        result = attach_ledger_hash(result, wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 분석 결과 무손상
+        pass
     await cache_put("permit_ai_analysis", cache_key, result)
     return result
+
+
+# ── 인허가 서류 패키지(체크리스트+예상기간+PDF) — permit_package_service 배선 ──
+#   그동안 서비스만 있고 라우터·프론트 소비처가 0인 dead code 였다("만들어놓고 배선 안 함" 해소).
+#   LLM 미사용(정적 기준표+PDF 렌더) → 과금(enforce_llm_quota) 게이트 불필요.
+#   ★track_permit_status 는 배선하지 않는다(무목업): 세움터/DB 등 실제 상태 원천을 조회하지 않고
+#     호출자가 보낸 단계명을 진행률로 되돌려주는 계산기일 뿐이라, '상태추적' API 로 노출하면
+#     가짜 추적이 된다. 진짜 상태조회는 이 파일의 GET /submissions/{id}/status(DB 기반)가 담당.
+
+
+@router.get("/package/checklist")
+async def get_permit_package_checklist(
+    permit_type: str = "건축허가",
+    region: str = "default",
+    building_area_sqm: float = 0,
+    is_public: bool = False,
+    is_agricultural: bool = False,
+) -> dict[str, Any]:
+    """인허가 유형별 필요서류 체크리스트 + 예상 처리기간(병합 JSON).
+
+    정적 기준표 기반 결정론 조회 — /guide(쉬운 규제안내서)와 동형의 참조성 엔드포인트.
+    지원 유형: 건축허가/개발행위허가/사용승인. 미지원 유형은 400.
+    building_area_sqm(200㎡ 이상 조경계획서)·is_public(BF 인증)·is_agricultural(농지전용)로
+    조건부 서류의 적용 여부가 갈린다.
+    """
+    from apps.api.services.permit_package_service import PermitPackageService
+
+    svc = PermitPackageService()
+    try:
+        checklist = svc.generate_checklist(
+            permit_type,
+            building_area_sqm=building_area_sqm,
+            is_public=is_public,
+            is_agricultural=is_agricultural,
+        )
+        duration = svc.estimate_permit_duration(permit_type, region)
+    except ValueError as e:  # 지원하지 않는 인허가 유형 — 400 으로 정직 반환
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        "permit_type": permit_type,
+        "region": region,
+        "checklist": checklist,
+        "duration": duration,
+        # 무목업 정직 고지: 기간은 내부 기준표 참고치(지자체·보완요청·심의에 따라 상이).
+        "duration_basis": (
+            "내부 기준표 기반 참고치 — 실제 처리기간은 지자체·서류보완·심의 여부에 따라"
+            " 달라질 수 있습니다."
+        ),
+    }
+
+
+class PermitPackagePdfRequest(BaseModel):
+    """인허가 서류 패키지 PDF 생성 요청."""
+
+    permit_type: str = "건축허가"
+    region: str = "default"
+    project_id: str | None = None  # 파일명 표기용(없으면 'package')
+    building_area_sqm: float = 0   # 200㎡ 이상이면 조경계획서 등 조건부 서류 적용
+    is_public: bool = False        # 공공건축물 여부(BF 인증 등 조건부 서류)
+    is_agricultural: bool = False  # 농지 포함 여부(농지전용허가서)
+
+
+@router.post("/package/pdf")
+async def permit_package_pdf(
+    req: PermitPackagePdfRequest,
+    current_user: CurrentUser = Depends(RequirePermission("permits", "read")),
+):
+    """인허가 서류 패키지 PDF 다운로드(체크리스트+예상기간 실렌더).
+
+    파일 다운로드 계약: 성공=200 + application/pdf + attachment, 실패=4xx/5xx.
+    200 응답에 error JSON 을 담지 않는다(프론트 blob 다운로드가 침묵 오염되는 안티패턴 차단).
+    """
+    from fastapi.responses import StreamingResponse
+
+    from apps.api.services.permit_package_service import PermitPackageService
+
+    try:
+        result = await PermitPackageService().generate_permit_pdf(
+            req.project_id or "package",
+            {
+                "permit_type": req.permit_type,
+                "region": req.region,
+                "building_area_sqm": req.building_area_sqm,
+                "is_public": req.is_public,
+                "is_agricultural": req.is_agricultural,
+            },
+        )
+    except ValueError as e:  # 지원하지 않는 인허가 유형 — 400(200+error JSON 금지)
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    pdf = result.get("pdf_bytes") or b""
+    if not pdf.startswith(b"%PDF"):  # 렌더 실패 시 빈/깨진 파일을 200 으로 주지 않는다
+        raise HTTPException(status_code=500, detail="PDF 생성에 실패했습니다.")
+
+    # 다운로드 파일명: HTTP 헤더 안전을 위해 ASCII 안전문자만 남긴다(경로조작·인코딩 깨짐 차단).
+    safe_id = re.sub(r"[^0-9A-Za-z_-]", "_", req.project_id or "package")[:64] or "package"
+    return StreamingResponse(
+        iter([pdf]), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="permit_package_{safe_id}.pdf"'},
+    )

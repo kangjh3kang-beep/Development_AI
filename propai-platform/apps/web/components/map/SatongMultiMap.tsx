@@ -95,6 +95,9 @@ export interface SatongMultiMapProps {
   developmentPayload?: SatongDevelopmentPayload | null;
   /** 사용자 지도 이동(moveend) 시 현재 중심좌표 통지 — 선택필지 없을 때 지역레이어의 폴백 앵커용. */
   onCenterChange?: (center: { lat: number; lon: number }) => void;
+  /** 경계 API(/zoning/parcel-boundaries)가 보강한 필지 속성(면적·용도·좌표·경계) 역전파 —
+   *  부모가 선택목록·SSOT에 병합해 다필지 통합분석이 면적을 받도록 한다. */
+  onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -518,6 +521,7 @@ export function SatongMultiMap({
   poiPayload = null,
   developmentPayload = null,
   onCenterChange,
+  onBoundaryEnriched,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
@@ -526,6 +530,8 @@ export function SatongMultiMap({
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
   onCenterChangeRef.current = onCenterChange;
+  const onBoundaryEnrichedRef = useRef(onBoundaryEnriched);
+  onBoundaryEnrichedRef.current = onBoundaryEnriched;
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
@@ -538,6 +544,7 @@ export function SatongMultiMap({
   const baseLayerRef = useRef<any>(null);
   const overlayLayerRef = useRef<any>(null);
   const marketLayerRef = useRef<any>(null);
+  const presaleAuctionLayerRef = useRef<any>(null);
   const poiLayerRef = useRef<any>(null);
   const developmentLayerRef = useRef<any>(null);
   const lastFitKeyRef = useRef("");
@@ -546,6 +553,7 @@ export function SatongMultiMap({
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
+  const [presaleAuctionNote, setPresaleAuctionNote] = useState("");
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
 
@@ -670,6 +678,10 @@ export function SatongMultiMap({
         const fromBoundary = (response.features ?? []).map(boundaryFeatureToMapFeature);
         setBoundaryFeatures(mergeSatongMapFeatures([...selectedParcels, ...fromBoundary]));
         setBoundaryStatus("ready");
+        // ★P1(감사): 경계 API가 받아온 면적·용도·좌표·경계를 부모(Shell)로 역전파 —
+        //   종전엔 지도 내부 상태(dead-end)에만 남아, 검색 등록 필지가 면적 없음 →
+        //   통합분석이 침묵 단일 격하되는 원인이었다.
+        if (fromBoundary.length) onBoundaryEnrichedRef.current?.(fromBoundary);
       })
       .catch(() => {
         if (!alive) return;
@@ -972,6 +984,7 @@ export function SatongMultiMap({
       baseLayerRef.current = null;
       overlayLayerRef.current = null;
       marketLayerRef.current = null;
+      presaleAuctionLayerRef.current = null;
       setMapReady(false);
       // staged 레이어 맵도 초기화(지도가 사라지면 참조 불필요)
       stagedLayers.clear();
@@ -1223,7 +1236,6 @@ export function SatongMultiMap({
     const groups = category?.groups ?? [];
     const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
     let marketCount = 0;
-    let presaleCount = 0;
 
     bounds.extend([marketPayload.center.lat, marketPayload.center.lon]);
     L.circleMarker([marketPayload.center.lat, marketPayload.center.lon], {
@@ -1265,8 +1277,49 @@ export function SatongMultiMap({
       bounds.extend([item.lat, item.lon]);
     });
 
-    if (marketLayer?.showPresale) {
-      (marketLayer.presaleItems ?? []).forEach((item) => {
+    // 분양·경매 노트는 독립 이펙트(presaleAuctionNote)가 담당 — 실거래만 여기서.
+    setMarketNote(marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료");
+
+    // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
+    //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
+    if (bounds.isValid() && selectedParcels.length > 0) {
+      try { map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 }); } catch { /* noop */ }
+    }
+
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (marketLayerRef.current === group) marketLayerRef.current = null;
+    };
+  }, [mapReady, marketLayer, marketPayload]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
+  useEffect(() => {
+    // ★P0-1: 분양·경매 렌더를 실거래(marketPayload) 이펙트에서 독립 분리.
+    //   종전엔 market 이펙트 내부에 있어 실거래 레이어 OFF(기본값)거나 nearby-map 실패 시
+    //   분양·경매가 데이터를 받아놓고도 마커·노트 없이 침묵(활성 배지+빈 지도 = 정직원칙 역위반).
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (presaleAuctionLayerRef.current) {
+      try { presaleAuctionLayerRef.current.remove(); } catch { /* noop */ }
+      presaleAuctionLayerRef.current = null;
+    }
+
+    const showPresale = !!marketLayer?.showPresale;
+    const showAuction = !!marketLayer?.showAuction;
+    if (!showPresale && !showAuction) {
+      setPresaleAuctionNote("");
+      return;
+    }
+
+    const group = L.layerGroup().addTo(map);
+    presaleAuctionLayerRef.current = group;
+
+    let presaleCount = 0;
+    if (showPresale) {
+      (marketLayer?.presaleItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
         presaleCount += 1;
         const status = item.status || "미정";
@@ -1281,13 +1334,12 @@ export function SatongMultiMap({
           .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { permanent: (marketLayer?.presaleItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
           .addTo(group);
-        bounds.extend([item.lat, item.lon]);
       });
     }
 
     let auctionCount = 0;
-    if (marketLayer?.showAuction) {
-      (marketLayer.auctionItems ?? []).forEach((item) => {
+    if (showAuction) {
+      (marketLayer?.auctionItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
         auctionCount += 1;
         const status = item.status || "진행";
@@ -1302,28 +1354,20 @@ export function SatongMultiMap({
           .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { permanent: (marketLayer?.auctionItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
           .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
-        bounds.extend([item.lat, item.lon]);
       });
     }
 
     const notes = [
-      marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료",
-      marketLayer?.showPresale ? (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
-      marketLayer?.showAuction ? (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
+      showPresale ? (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
+      showAuction ? (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
     ].filter(Boolean);
-    setMarketNote(notes.join(" · "));
-
-    // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
-    //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
-    if (bounds.isValid() && selectedParcels.length > 0) {
-      try { map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 }); } catch { /* noop */ }
-    }
+    setPresaleAuctionNote(notes.join(" · "));
 
     return () => {
       try { group.remove(); } catch { /* noop */ }
-      if (marketLayerRef.current === group) marketLayerRef.current = null;
+      if (presaleAuctionLayerRef.current === group) presaleAuctionLayerRef.current = null;
     };
-  }, [mapReady, marketLayer, marketPayload]);
+  }, [mapReady, marketLayer]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- POI markers are rendered into an imperative Leaflet layer group. */
@@ -1555,8 +1599,8 @@ export function SatongMultiMap({
           )}
         </button>
 
-        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || poiNote || developmentNote) && (
-          <div className="pointer-events-none absolute left-3 bottom-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300">
+        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote) && (
+          <div className={`pointer-events-none absolute left-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}>
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {overlayNote}
@@ -1565,6 +1609,11 @@ export function SatongMultiMap({
             {marketNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {marketNote}
+              </span>
+            )}
+            {presaleAuctionNote && (
+              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                {presaleAuctionNote}
               </span>
             )}
             {poiNote && (
@@ -1630,7 +1679,7 @@ export function SatongMultiMap({
 
         {/* ── 확인 카드 오버레이 — 조회 완료 후 사용자가 추가/취소를 결정하는 카드 ── */}
         {!readOnly && status === "found" && pending && (
-          <div className="absolute bottom-10 left-1/2 z-[500] -translate-x-1/2 w-[calc(100%-32px)] max-w-sm">
+          <div className="absolute bottom-16 left-1/2 z-[500] -translate-x-1/2 w-[calc(100%-32px)] max-w-sm">
             <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur-sm">
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
@@ -1700,11 +1749,13 @@ export function SatongMultiMap({
             </div>
           </div>
         )}
-      </div>
-
-      {/* ── 하단 고정 바 — 선택 필지 수·합산 면적·완료/전체취소 ── */}
+      {/* ── 하단 바 — 선택 필지 수·합산 면적·완료/전체취소.
+          ★P1(감사): 풀스크린 래퍼 '내부'로 이동 — 종전엔 래퍼 밖이라 풀스크린(z-9990) 중
+          완료/전체취소가 가려져 필지 등록이 불가했다. 풀스크린일 땐 하단 오버레이로 표시. ── */}
       {!readOnly && (
-      <div className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2">
+      <div className={isMapFullscreen
+        ? "absolute inset-x-3 bottom-3 z-[460] flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)]/95 px-3 py-2 shadow-xl backdrop-blur"
+        : "mt-2 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2"}>
         {/* 선택 현황 */}
         <div className="flex-1 text-[11px]">
           {staged.length > 0 ? (
@@ -1743,6 +1794,7 @@ export function SatongMultiMap({
         </button>
       </div>
       )}
+      </div>
     </div>
   );
 }

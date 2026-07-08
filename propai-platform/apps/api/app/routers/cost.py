@@ -274,7 +274,24 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     except Exception:  # noqa: BLE001 — 공용블록 실패해도 공사비 결과 무손상
         ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
 
-    return {
+    # ★성장루프 조인키: 표시 엔드포인트도 원장에 요약 적재(best-effort·멱등) 후
+    #   최상위 `ledger_hash`를 노출 — 프론트 피드백(👍/👎)이 이 해시로 원장과 조인된다.
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    from app.services.ledger.ledger_adapters import record_user_analysis
+    wb = await record_user_analysis(
+        analysis_type="cost_overview",
+        summary={
+            "building_type": req.building_type, "structure_type": req.structure_type,
+            "total_gfa_sqm": gfa,
+            "floor_count_above": req.floor_count_above, "floor_count_below": req.floor_count_below,
+            "expected_total_won": expected["total_won"],
+            "range_min_won": scenario(0.92)["total_won"], "range_max_won": scenario(1.12)["total_won"],
+            "qto_source": qto_source, "unit_price_source": unit_price_source,
+        },
+        project_id=req.project_id, source="cost_overview",
+    )
+
+    return attach_ledger_hash({
         "building_type": req.building_type, "structure_type": req.structure_type,
         "total_gfa_sqm": gfa, "gfa_above_sqm": round(gfa_above, 1), "gfa_below_sqm": round(gfa_below, 1),
         **expected,
@@ -293,7 +310,7 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "evidence": ev_block["evidence"],
         "legal_refs": ev_block["legal_refs"],
         "provenance": ev_block["provenance"],
-    }
+    }, wb)
 
 
 async def _load_bim_quantities(db: AsyncSession, project_id: str) -> list[dict[str, Any]]:
@@ -784,6 +801,7 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
         structure_type=req.structure_type, qto_source="derived",
     )
     estimate_id: str | None = None
+    ledger_wb = None                       # 성장루프 조인키(ledger_hash) 노출용 append 결과
     if req.persist:
         saved = await save_estimate(
             project_id=project_id, tenant_id=req.tenant_id,
@@ -793,7 +811,7 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
         estimate_id = saved.get("estimate_id")
         # Phase 1: 원가추정 SSOT 합류(best-effort — append_analysis가 예외 흡수, 무중단)
         from app.services.ledger.ledger_adapters import record_cost_estimate
-        await record_cost_estimate(
+        ledger_wb = await record_cost_estimate(
             summary=boq["summary"], header=boq["header"], estimate_id=estimate_id,
             tenant_id=req.tenant_id, project_id=project_id,
         )
@@ -820,14 +838,16 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         ai_analysis = None
 
-    return {
+    # ★성장루프 조인키: 원장 content_hash 를 최상위 `ledger_hash` 로 노출(공용 헬퍼 — 프론트 피드백 키잉).
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    return attach_ledger_hash({
         "ok": True,
         "estimate_id": estimate_id,
         "items": boq["items"],
         "summary": boq["summary"],
         "badges": boq["badges"],
         "ai_cost_analysis": ai_analysis,
-    }
+    }, ledger_wb)
 
 
 @router.get("/estimate/{estimate_id}", summary="BOQ 단건 조회(영속화된 원가계산서)")

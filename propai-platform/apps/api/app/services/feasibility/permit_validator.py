@@ -51,8 +51,23 @@ DEVELOPMENT_TYPE_NAMES = {
 }
 
 
+def permitted_types_known(zone_type: str) -> bool:
+    """용도지역이 매트릭스에 등재돼 '판정 가능'한지. 미등재(관리·농림 등)는 판정불가."""
+    if not zone_type:
+        return False
+    if zone_type in ZONE_PERMIT_MATRIX:
+        return True
+    return any(key in zone_type or zone_type in key for key in ZONE_PERMIT_MATRIX)
+
+
 def get_permitted_types(zone_type: str) -> list[str]:
-    """해당 용도지역에서 인허가 가능한 개발유형 목록."""
+    """해당 용도지역에서 인허가 가능한 개발유형 목록.
+
+    ★미등재 용도지역(관리지역·농림지역 등)은 종전 '기본 4종(M06/M08/M10/M13) 허용' 폴백이
+    농림지역에 일반분양·오피스텔 '허가 가능'을 날조할 위험(완성도 감사 P1) → 빈 목록 반환.
+    빈 목록은 '허가불가 단정'이 아니라 '판정불가' — permitted_types_known()으로 구분하라.
+    """
+    zone_type = zone_type or ""
     # Try exact match
     if zone_type in ZONE_PERMIT_MATRIX:
         return ZONE_PERMIT_MATRIX[zone_type]
@@ -60,8 +75,7 @@ def get_permitted_types(zone_type: str) -> list[str]:
     for key in ZONE_PERMIT_MATRIX:
         if key in zone_type or zone_type in key:
             return ZONE_PERMIT_MATRIX[key]
-    # Default: most common types
-    return ["M06", "M08", "M10", "M13"]
+    return []  # 미등재 — 판정불가(기본 허용 날조 금지)
 
 
 def get_permit_complexity(dev_type: str) -> int:
@@ -70,17 +84,29 @@ def get_permit_complexity(dev_type: str) -> int:
 
 
 def check_permit_feasibility(dev_type: str, zone_type: str) -> dict:
-    """특정 개발유형의 인허가 가능성 검증."""
+    """특정 개발유형의 인허가 가능성 검증.
+
+    미등재 용도지역은 '불가' 단정이 아니라 zone_known=False + 판정불가 사유로 정직 표기
+    (is_permitted는 하위호환상 False 유지 — 소비처는 zone_known으로 구분 가능).
+    """
+    zone_known = permitted_types_known(zone_type)
     permitted = get_permitted_types(zone_type)
     is_permitted = dev_type in permitted
     complexity = get_permit_complexity(dev_type)
+
+    if zone_known:
+        reason = f"{zone_type}에서 {DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)} 개발 {'가능' if is_permitted else '불가'}"
+    else:
+        reason = (f"'{zone_type}'은(는) 인허가 매트릭스 미등재 용도지역 — 판정불가"
+                  "(허가 가능/불가 단정 아님, 국토계획법 시행령 별표 확인 필요)")
 
     return {
         "development_type": dev_type,
         "type_name": DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type),
         "zone_type": zone_type,
         "is_permitted": is_permitted,
+        "zone_known": zone_known,
         "permit_complexity": complexity,
         "complexity_label": ["", "매우쉬움", "쉬움", "보통", "어려움", "매우어려움"][complexity],
-        "reason": f"{zone_type}에서 {DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)} 개발 {'가능' if is_permitted else '불가'}",
+        "reason": reason,
     }

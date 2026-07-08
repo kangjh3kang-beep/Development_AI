@@ -274,6 +274,9 @@ class AVMValuationResponse(BaseModel):
     # ── 표준 근거 블록(#5 evidence 전 라우터 표준화) ──
     evidence: dict | None = Field(default=None, description="표준 근거 블록(evidence·legal_refs·provenance·trust)")
 
+    # ── 성장루프 조인키: 분석원장 content_hash(sha256) — 프론트 피드백이 이 값으로 원장과 조인 ──
+    ledger_hash: str | None = Field(default=None, description="분석원장 조인키(미적재 시 None)")
+
 
 class AVMRequest(BaseModel):
     """AVM 시세 추정 요청"""
@@ -1361,6 +1364,8 @@ class InvestorReportResponse(BaseModel):
     report_type: str
     variants: list[InvestorReportVariantResponse] = Field(default_factory=list)
     generated_sections: list[str] = Field(default_factory=list)
+    # 성장루프 조인키: 분석원장 content_hash(sha256) — 프론트 피드백이 원장과 조인(미적재 시 None)
+    ledger_hash: str | None = None
 
 
 class HealthResponse(BaseModel):

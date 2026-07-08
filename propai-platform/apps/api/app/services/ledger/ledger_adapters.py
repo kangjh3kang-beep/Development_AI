@@ -274,3 +274,34 @@ async def record_specialist_result(
         analysis_type=analysis_type, payload=payload,
         tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
         source=source, created_by=created_by)
+
+
+# ── 성장루프 조인키 폐합: 사용자대면 분석 공용 기록기 ──
+#   프론트 화면(VerificationBadge 피드백)이 읽는 표시 엔드포인트가 원장에 적재되어야
+#   피드백 content_hash ↔ 원장 등가조인(learning_loop.curate_few_shot)이 성립한다.
+#   도메인별 매퍼를 일일이 만들지 않고, "요약·핵심 필드만" 규약(kind+schema_version)을
+#   지키는 얕은 공용 매퍼 1개로 수렴한다(대용량 원시데이터는 각 도메인 테이블에 잔류).
+
+def user_analysis_to_ledger(kind: str, summary: dict[str, Any]) -> dict[str, Any]:
+    """사용자대면 분석 요약 → 원장 payload(kind+schema_version 규약, None 값은 생략=정직)."""
+    payload: dict[str, Any] = {"kind": kind, "schema_version": f"{kind}/v1"}
+    payload.update({k: v for k, v in summary.items() if v is not None})
+    return payload
+
+
+async def record_user_analysis(
+    *, analysis_type: str, summary: dict[str, Any], kind: str | None = None,
+    tenant_id: str | None = None, project_id: str | None = None,
+    pnu: str | None = None, address: str | None = None,
+    source: str | None = None, created_by: str | None = None,
+) -> dict[str, Any]:
+    """표시 엔드포인트 응답 요약을 원장에 best-effort 적재(append_analysis가 예외 흡수·멱등).
+
+    반환값을 attach_ledger_hash(response, wb)에 넘기면 응답 최상위 `ledger_hash`가 노출된다.
+    """
+    return await ledger.append_analysis(
+        analysis_type=analysis_type,
+        payload=user_analysis_to_ledger(kind or analysis_type, summary),
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source=source or analysis_type, created_by=created_by,
+    )

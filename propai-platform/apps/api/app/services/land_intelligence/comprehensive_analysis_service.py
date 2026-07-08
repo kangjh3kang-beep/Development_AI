@@ -16,6 +16,7 @@ from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
     get_permitted_types,
+    permitted_types_known,
 )
 from app.services.land_intelligence.land_info_service import LandInfoService
 
@@ -725,6 +726,9 @@ class ComprehensiveAnalysisService:
             tenant_id=tenant_id, pnu=_pnu, address=address, project_id=project_id,
             source="comprehensive", created_by=None,
         )
+        # ★성장루프 조인키: 원장 content_hash 를 응답 최상위 `ledger_hash` 로 노출
+        #   (공용 헬퍼 — 프론트 피드백 👍/👎 → learning_loop 등가조인. 미적재 시 키 생략).
+        ledger.attach_ledger_hash(result, wb)
         # Phase 2: 파생 lineage 엣지(child=이번 write-back, parent=prior) — best-effort
         if (prior and prior.get("content_hash") and wb.get("ok")
                 and not wb.get("unchanged") and wb.get("content_hash")):
@@ -751,13 +755,19 @@ class ComprehensiveAnalysisService:
             )
 
             _engine_set = bool((getattr(_get_settings(), "DELIBERATION_ENGINE_URL", "") or "").strip())
+            # ★A2 additive: pnu·land_area(대지면적)를 심의/설계 엔진 입력 조립에 실전달(engine_inputs
+            #   공용 빌더가 use_zone·calc_targets에 사용). land_area는 기존에도 far 도메인에는
+            #   전달돼 있었으나 심의/설계에는 미도달이었다(build_sync_specialist_domains 내부에서 소비).
             _sync_domains = build_sync_specialist_domains(
                 zone_type=zone_type, base=base, land_area=land_area,
-                address=address, engine_set=_engine_set,
+                address=address, engine_set=_engine_set, pnu=_pnu,
             )
+            # ★A5 과금 게이트: 종합분석은 결정론 교차검증만 유지하고 allow_llm=False로 LLM 해석을
+            #   스킵한다(결정론 findings·prior·recall·원장 cite는 무영향). LLM 해석(과금)은
+            #   decision_brief의 use_llm 경로 전용 — 여기서 이중 과금하지 않는다(정책 명기).
             _specialists = await run_specialist_domains(
                 _sync_domains, tenant_id=tenant_id, project_id=project_id,
-                pnu=_pnu, address=address,
+                pnu=_pnu, address=address, allow_llm=False,
             )
             if _specialists:
                 result["specialists"] = _specialists
@@ -813,6 +823,9 @@ class ComprehensiveAnalysisService:
                 "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
                 "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
                 "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
+                # ★P1(감사): 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구
+                #   미확정("형상 데이터 부족")이었다. 프론트가 보강한 GeoJSON을 그대로 전달.
+                "geometry": p.get("geometry"),
             }
             if (q["area_sqm"] or 0) > 0:
                 items.append(q)
@@ -849,6 +862,11 @@ class ComprehensiveAnalysisService:
         effective_bcr: float,
     ) -> list[dict[str, Any]]:
         permitted = get_permitted_types(zone_type)
+        # ★리뷰 HIGH: 미등재 용도지역은 '허용유형 없음'이 아니라 판정불가 — 빈 섹션 대신 정직 고지.
+        if not permitted and not permitted_types_known(zone_type):
+            return [{"development_type": None, "type_name": "판정불가",
+                     "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
+                             "(국토계획법 시행령 별표 확인 필요)"}]
         results = []
 
         for dev_type in permitted:
@@ -1149,6 +1167,11 @@ class ComprehensiveAnalysisService:
     # ────────────────────────────────────────────
     def _calc_sale_prices(self, address: str, zone_type: str) -> list[dict[str, Any]]:
         permitted = get_permitted_types(zone_type)
+        # ★리뷰 HIGH: 미등재 용도지역은 판정불가 정직 고지(빈 섹션 금지) — _calc_supply_areas와 동일.
+        if not permitted and not permitted_types_known(zone_type):
+            return [{"development_type": None, "type_name": "판정불가",
+                     "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
+                             "(국토계획법 시행령 별표 확인 필요)"}]
         base_price = self._get_base_price(address)
 
         results = []

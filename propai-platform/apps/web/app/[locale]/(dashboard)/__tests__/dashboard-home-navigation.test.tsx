@@ -16,6 +16,14 @@ vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
   PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
 }));
 
+// 9c4a120d: 대시보드 홈이 지도중심 레이아웃으로 전환되며 SatongMapShell(useRouter 사용
+// 클라이언트 셸)을 탑재 — 라우터 invariant 회피 + 셸 탑재 자체를 기대값으로 검증.
+vi.mock("@/components/precheck/SatongMapShell", () => ({
+  SatongMapShell: ({ locale }: { locale: string }) => (
+    <div data-testid="satong-map-shell">{locale}</div>
+  ),
+}));
+
 describe("Dashboard home navigation", () => {
   it("renders the result-generation control room entry links", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));

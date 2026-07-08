@@ -26,6 +26,7 @@ import { useParams } from "next/navigation";
 import { Loader2, RefreshCw, AlertTriangle, Compass, Download } from "lucide-react";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { effectiveLandAreaSqm, analysisInputSignature } from "@/lib/site-area";
 import { DecisionVerdictCard } from "@/components/projects/DecisionVerdictCard";
 import { DomainSummaryCard } from "@/components/projects/DomainSummaryCard";
@@ -380,26 +381,22 @@ export function DecisionBriefPanel({
           {/* ★심의엔진 정밀분석 옵트인 — use_llm을 백엔드에 전달해 외부 심의엔진(11페이즈) 위임 활성화.
               기본 off(무LLM·무과금). 토글 후 '심의엔진 포함 재분석'으로 적용(엔진 미설정 시 정직 unavailable). */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]">
-              <input
-                type="checkbox"
-                checked={includeDeliberation}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setIncludeDeliberation(on);
-                  // ★해제 시: 표시 중인 심의엔진 브리프가 stale이 되지 않도록 캐시 시그니처를 무효화해
-                  //   자동실행이 base(무LLM·무과금)로 재산출하게 한다. 켤 때는 자동 고비용 호출을
-                  //   막기 위해 무효화하지 않는다(사용자가 '심의엔진 포함 재분석' 버튼으로 명시 실행).
-                  if (!on) {
-                    lastFetchedSig.current = null;
-                    inFlightSig.current = null;
-                  }
-                }}
-                className="size-4 accent-[var(--accent-strong)]"
-              />
-              <span className="font-bold text-[var(--text-primary)]">심의엔진 정밀분석 포함</span>
-              <span>(LLM·네트워크 — 외부 심의엔진 11페이즈 verification/conformance. 기본 off=무과금)</span>
-            </label>
+            <UseLlmToggle
+              checked={includeDeliberation}
+              onChange={(on) => {
+                setIncludeDeliberation(on);
+                // ★해제 시: 표시 중인 심의엔진 브리프가 stale이 되지 않도록 캐시 시그니처를 무효화해
+                //   자동실행이 base(무LLM·무과금)로 재산출하게 한다. 켤 때는 자동 고비용 호출을
+                //   막기 위해 무효화하지 않는다(사용자가 '심의엔진 포함 재분석' 버튼으로 명시 실행).
+                if (!on) {
+                  lastFetchedSig.current = null;
+                  inFlightSig.current = null;
+                }
+              }}
+              label="심의엔진 정밀분석 포함"
+              hint="(LLM·네트워크 — 외부 심의엔진 11페이즈 verification/conformance. 기본 off=무과금)"
+              className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]"
+            />
             {includeDeliberation && (
               <button
                 type="button"

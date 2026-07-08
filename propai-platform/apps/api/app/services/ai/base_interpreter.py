@@ -118,9 +118,60 @@ class _TTLCache:
 _CACHE_TTL_SEC = int(os.environ.get("INTERP_CACHE_TTL_SEC", "3600"))
 _RESULT_CACHE = _TTLCache(ttl_sec=_CACHE_TTL_SEC)
 
-# 기능 토글(운영 중 환경변수로 끌 수 있도록).
-_REDIS_CACHE_ENABLED = os.environ.get("INTERP_REDIS_CACHE", "1") != "0"
-_PROMPT_CACHE_ENABLED = os.environ.get("INTERP_PROMPT_CACHE", "1") != "0"
+# ── 기능 토글: 콜타임 env 평가(재시작 없이 관리자 시크릿 반영) ──
+# 과거엔 import-time 고정(_X = os.environ.get(...) != "0")이라 관리자 시크릿
+# (/admin/secrets → os.environ 반영)으로 켜고 꺼도 프로세스 재시작 전엔 무효였다.
+# _env_flag 가 os.environ 을 콜타임에 읽되, 짧은 TTL 캐시로 핫패스(매 LLM 호출·
+# 캐시 조회)의 반복 dict 조회 비용을 흡수한다. 판정은 기존과 등가(값 != "0" = 켜짐).
+_ENV_FLAG_TTL_SEC = 30.0
+_env_flag_cache: dict[str, tuple[bool, float]] = {}
+
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """환경변수 불리언 플래그를 콜타임에 읽는다(+짧은 TTL 캐시).
+
+    TTL 내엔 캐시값 반환, 만료 시 os.environ 재조회 → env 변경이 재임포트/재시작
+    없이 수십초 내 반영된다. 테스트·즉시반영은 _env_flag_cache_reset() 으로 우회.
+    """
+    try:
+        cached = _env_flag_cache.get(name)
+        if cached is not None and cached[1] > time.monotonic():
+            return cached[0]
+    except Exception:  # noqa: BLE001 — 캐시 조회 실패는 env 직접 읽기로 폴백.
+        pass
+    val = os.environ.get(name, default) != "0"
+    try:
+        _env_flag_cache[name] = (val, time.monotonic() + _ENV_FLAG_TTL_SEC)
+    except Exception:  # noqa: BLE001
+        pass
+    return val
+
+
+def _env_flag_cache_reset() -> None:
+    """_env_flag TTL 캐시 초기화(테스트·설정 즉시반영용)."""
+    _env_flag_cache.clear()
+
+
+# 모듈 상수 오버라이드(테스트 monkeypatch 호환): None 이면 env 콜타임 평가,
+# True/False 면 그 값으로 강제. 기존 테스트의 setattr(bi, "_FEWSHOT_ENABLED", ...)
+# 패턴이 그대로 동작한다.
+_REDIS_CACHE_ENABLED: bool | None = None
+_PROMPT_CACHE_ENABLED: bool | None = None
+
+
+def _redis_cache_enabled() -> bool:
+    """인터프리터 L2 Redis 캐시 활성 여부(INTERP_REDIS_CACHE, 기본 켜짐)."""
+    if _REDIS_CACHE_ENABLED is not None:
+        return _REDIS_CACHE_ENABLED
+    return _env_flag("INTERP_REDIS_CACHE", "1")
+
+
+def _prompt_cache_enabled() -> bool:
+    """Anthropic prompt caching 활성 여부(INTERP_PROMPT_CACHE, 기본 켜짐)."""
+    if _PROMPT_CACHE_ENABLED is not None:
+        return _PROMPT_CACHE_ENABLED
+    return _env_flag("INTERP_PROMPT_CACHE", "1")
+
 
 def _env_int(name: str, default: int) -> int:
     """환경변수 정수 파싱(비정수면 기본값) — 잘못된 env가 공유 코어 import를 깨지 않게."""
@@ -138,9 +189,25 @@ def _env_int(name: str, default: int) -> int:
 # ★기본 비활성("0") 유지 이유: 전 interpreter 공유 LLM 프롬프트를 바꾸는 변경이라 스테이징
 #   검증 후 관리자가 INTERP_FEWSHOT=1로 의도적 go-live(즉시·가역). 켜져도 안전(테넌트격리+
 #   컬럼없으면 degrade+승격예시 0이면 무동작). 끄면 즉시 기존 동작.
-_FEWSHOT_ENABLED = os.environ.get("INTERP_FEWSHOT", "0") != "0"
+# ★콜타임 평가: None 이면 _env_flag 가 INTERP_FEWSHOT 을 콜타임에 읽는다(재시작 불요).
+#   True/False 로 강제 오버라이드 가능(테스트 monkeypatch 호환).
+_FEWSHOT_ENABLED: bool | None = None
+
+
+def _fewshot_enabled() -> bool:
+    """few-shot 주입 활성 여부(INTERP_FEWSHOT, 기본 꺼짐 — 켜는 건 관리자 결정)."""
+    if _FEWSHOT_ENABLED is not None:
+        return _FEWSHOT_ENABLED
+    return _env_flag("INTERP_FEWSHOT", "0")
 _FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
 _FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
+
+# 자가성장 L1 A/B 프롬프트 버전 read-back(Lane BE-3 C2) — 후보/채택 조회는 DB 히트를
+# 요구하는 핫패스(_invoke 매 호출)이므로 서비스명별 최종 해석결과를 TTL 캐시로 보호한다
+# (기존 _TTLCache 재사용 — 신규 캐시 구현 금지).
+_PROMPT_VERSION_CACHE = _TTLCache(
+    ttl_sec=_env_int("INTERP_PROMPT_VERSION_TTL_SEC", 60), max_entries=64
+)
 
 
 async def _load_fewshot(service: str) -> dict[str, str] | None:
@@ -150,7 +217,7 @@ async def _load_fewshot(service: str) -> dict[str, str] | None:
     best-effort·TTL 캐시(빈 결과도 캐시해 반복 DB조회 방지). 사람 승인(active)만 사용하고
     익명 요약(input_summary/good_output)만 인용한다(원본 미저장 원칙 계승).
     """
-    if not _FEWSHOT_ENABLED or not service:
+    if not _fewshot_enabled() or not service:
         return None
     # ★테넌트 스코핑(by-construction): 현재 요청 테넌트의 예시만 사용 → 교차테넌트 누출을
     #   코드 차원에서 차단(플래그가 켜져도 안전). 테넌트 컨텍스트 없으면(배치/크론 등) 미사용.
@@ -207,7 +274,7 @@ async def _redis_get(key: str | None) -> dict[str, str] | None:
     integrations/base_client.py의 검증된 패턴(from_url→get→aclose)을 재사용.
     다중 워커/인스턴스 간 캐시 공유가 목적(L1은 프로세스 한정).
     """
-    if not key or not _REDIS_CACHE_ENABLED:
+    if not key or not _redis_cache_enabled():
         return None
     try:
         import redis.asyncio as aioredis
@@ -226,7 +293,7 @@ async def _redis_get(key: str | None) -> dict[str, str] | None:
 
 async def _redis_set(key: str | None, value: dict[str, str], ttl: int = _CACHE_TTL_SEC) -> None:
     """P4-L2: Redis에 결과 저장. 미가용/오류 시 무시(무중단)."""
-    if not key or not _REDIS_CACHE_ENABLED:
+    if not key or not _redis_cache_enabled():
         return
     try:
         import redis.asyncio as aioredis
@@ -413,40 +480,49 @@ class BaseInterpreter:
         """A/B 프롬프트 버전을 1회 해석해 self._active_prompt_version 에 캐시·반환.
 
         자가수정(L1)이 platform_settings('prompt.<name>')에 채택 버전을 기록했고,
-        그 값이 **사전등록 후보군(_PROMPT_AB_CANDIDATES[self.name]) 내**이면 그 버전을,
-        아니면 기본(_PROMPT_VERSION)을 쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
+        그 값이 **사전등록 후보군 내**이면 그 버전을, 아니면 기본(_PROMPT_VERSION)을
+        쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
+
+        ★read-back(BE-3 C2): 후보군 소스를 수동 등록(_PROMPT_AB_CANDIDATES[self.name])
+        우선, 비어 있으면 platform_settings('prompt_candidates.<service>')(L3
+        improvement_agent 가 등록한 실시간 후보 레이블)로 단일화했다 — 과거 소비자
+        (_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES) 가 각각
+        빈 dict 로 갈라져 있던 구조적 단절(감사 적발)을 해소. 핫패스(_invoke 매 호출)
+        보호를 위해 최종 결과를 서비스명별 TTL 캐시(_PROMPT_VERSION_CACHE, 기존
+        _TTLCache 재사용)에 담는다.
 
         완전 격리: import 순환·DB 미가용 등 어떤 예외도 기본 버전으로 폴백한다.
-        후보군이 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
+        후보군이 끝내 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
         """
-        # ★A/B store 단일화: 소비자(_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES)가
-        #   각각 빈 dict로 분리돼 있던 구조적 단절(감사 적발)을 해소 — 둘을 합쳐 단일 출처로 본다.
-        #   지연 import로 순환·부팅순서 안전. 둘 다 비면 기존 동작 완전 불변(후보 없으면 기본 버전).
+        cached = _PROMPT_VERSION_CACHE.get(self.name)
+        if cached is not None:
+            self._active_prompt_version = cached["v"]
+            return self._active_prompt_version
+
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
-        if not candidates:
-            try:
-                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _GATE_CANDS
-                candidates = _GATE_CANDS.get(self.name)
-            except Exception:  # noqa: BLE001 — 게이트 registry 조회 실패는 기본 폴백.
-                candidates = None
-        if not candidates:
-            self._active_prompt_version = _PROMPT_VERSION
-            return _PROMPT_VERSION
         chosen: str | None = None
         try:
-            from app.services.growth import schema_guard
+            from app.services.growth import dynamic_config, schema_guard
             from apps.api.database.session import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
-                val = await schema_guard.get_setting(db, f"prompt.{self.name}")
-            if isinstance(val, dict):
-                cand = val.get("version")
-                if cand and cand in candidates:
-                    chosen = cand
+                if not candidates:
+                    # ★read-back: 정적 후보군이 없으면 L3 가 등록한 실시간 후보군을 읽는다
+                    #   (공용 리더 dynamic_config — settings_readback 중복 헬퍼는 #199와 수렴·폐기).
+                    candidates = await dynamic_config.get_prompt_candidates(db, self.name)
+                if candidates:
+                    val = await schema_guard.get_setting(db, f"prompt.{self.name}")
+                    if isinstance(val, dict):
+                        cand = val.get("version")
+                        if cand and cand in candidates:
+                            chosen = cand
         except Exception:  # noqa: BLE001 — 어떤 실패도 기본 버전으로 폴백.
             chosen = None
-        self._active_prompt_version = chosen or _PROMPT_VERSION
-        return self._active_prompt_version
+
+        resolved = chosen or _PROMPT_VERSION
+        _PROMPT_VERSION_CACHE.set(self.name, {"v": resolved})
+        self._active_prompt_version = resolved
+        return resolved
 
     def _resolve_prompt_version(self) -> str:
         """현재 적용 프롬프트 버전(동기·무DB). _invoke 가 캐시한 값을 그대로 읽는다.
@@ -567,7 +643,7 @@ class BaseInterpreter:
         # 표기하면 재호출 시 입력 토큰을 캐시에서 읽어 비용↓(시스템 프롬프트가
         # 캐시 최소 토큰 미만이면 Anthropic이 무시, 오류 없음). 비-Anthropic이면
         # 일반 문자열로 폴백.
-        if _PROMPT_CACHE_ENABLED:
+        if _prompt_cache_enabled():
             system_content: Any = [
                 {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
             ]
