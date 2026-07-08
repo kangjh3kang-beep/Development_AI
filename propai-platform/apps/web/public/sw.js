@@ -4,7 +4,7 @@
 //        없어(같은 라우트 URL·빌드마다 다른 내용) 절대 캐시하면 안 되므로 network-only 분기.
 //        버전 범프로 v376 캐시(오염된 stale RSC 포함) 일괄 삭제.
 // v393: use_llm 공용 토글(UseLlmToggle)·VerificationBadge ledgerHash 조인키 배선 반영(구캐시 일괄 삭제).
-const CACHE_NAME = "propai-v393-suite-green";
+const CACHE_NAME = "propai-v394-core-engines";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
