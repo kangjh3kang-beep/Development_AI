@@ -15,6 +15,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Bot } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
   BoqResponse,
@@ -23,9 +24,6 @@ import type {
 
 const fcls =
   "w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
-
-// 1평 = 3.305785㎡ — per㎡ 단가의 per평 환산용(코드베이스 공용 관행값).
-const SQM_PER_PYEONG = 3.305785;
 
 function won(v?: number | null): string {
   if (v == null || isNaN(v)) return "—";
@@ -120,7 +118,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
     updateCostData({
       totalConstructionCostWon: s.total,
       perSqmWon: perSqm,
-      perPyeongWon: perSqm != null ? perSqm * SQM_PER_PYEONG : null,
+      perPyeongWon: perSqm != null ? perSqm * PYEONG_SQM : null,
       abovegroundWon: null,
       undergroundWon: null,
       landscapeWon: null,

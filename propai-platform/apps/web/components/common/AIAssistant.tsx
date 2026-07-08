@@ -270,7 +270,12 @@ export function AIAssistant() {
             <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/20 blur-[40px] animate-pulse" />
             
             <div className="relative bg-gradient-to-br from-[var(--accent-strong)] to-[#085d73] p-6 text-white shadow-lg overflow-hidden">
-              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
+              {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
+              <div
+                className="absolute inset-0 opacity-10"
+                style={{ backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)", backgroundSize: "8px 8px" }}
+                aria-hidden
+              />
               <div className="relative flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl ring-1 ring-white/20 shadow-inner">
@@ -401,7 +406,12 @@ export function AIAssistant() {
             : "bg-gradient-to-tr from-[var(--accent-strong)] to-teal-700"
         }`}
       >
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
+        {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
+        <div
+          className="absolute inset-0 opacity-10"
+          style={{ backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)", backgroundSize: "8px 8px" }}
+          aria-hidden
+        />
         {isOpen ? <Icons.X /> : <Icons.Sparkles />}
         
         {!isOpen && (

@@ -521,31 +521,3 @@ export type DigitalTwinDashboardData = {
     last_scan_at: string;
   };
 };
-
-/** Phase 4 — SRE/DevOps 관제 타입. */
-export type SREMetric = {
-  name: string;
-  value: number;
-  unit: string;
-  status: "healthy" | "degraded" | "critical";
-  trend: "up" | "down" | "stable";
-};
-
-export type BackupLogEntry = {
-  id: string;
-  backup_type: string;
-  status: "success" | "failed" | "in_progress";
-  size_mb: number;
-  duration_seconds: number;
-  started_at: string;
-  completed_at: string | null;
-};
-
-export type SREDashboardData = {
-  metrics: SREMetric[];
-  backup_logs: BackupLogEntry[];
-  uptime_percent: number;
-  avg_response_ms: number;
-  error_rate_percent: number;
-  grafana_embed_url: string;
-};

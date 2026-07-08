@@ -13,8 +13,8 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Building2, CheckCircle2 } from "lucide-react";
 import { apiV1BaseUrl } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 
-const PYEONG_SQM = 3.305785; // 1평 = 3.305785㎡ (대지지분 평 환산 공용 상수)
 const py = (sqm: number | null | undefined) =>
   sqm == null ? "—" : `${(sqm / PYEONG_SQM).toLocaleString(undefined, { maximumFractionDigits: 2 })}평`;
 const sm = (v: number | null | undefined) =>

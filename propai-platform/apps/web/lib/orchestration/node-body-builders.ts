@@ -16,6 +16,7 @@
 
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { PYEONG_SQM } from "@/lib/formatters";
 import type {
   SiteAnalysisData,
   DesignData,
@@ -61,9 +62,6 @@ function safeDevelopmentType(v: unknown): string | null {
   if (!s) return null;
   return /^M(0[1-9]|1[0-5])$/.test(s) ? s : null;
 }
-
-/** 1평(坪) = 3.305785㎡ (백엔드 PYEONG_TO_SQM 상수와 동일값). */
-const PYEONG_TO_SQM = 3.305785;
 
 /**
  * 건물유형별 표준 전용률(연면적 대비 분양/전용면적 비율, 0~1).
@@ -273,7 +271,7 @@ export function buildNodeBody(
           design?.buildingType,
         );
         body.avg_area_pyeong = Number(
-          ((gfa * efficiency) / PYEONG_TO_SQM / households).toFixed(2),
+          ((gfa * efficiency) / PYEONG_SQM / households).toFixed(2),
         );
       }
       // LOW(백로그): sales 단가는 현재 trade.아파트.per_pyeong만 추출(useNodeRunner.pickSalesPricePerPyeongWon).

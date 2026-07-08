@@ -1,13 +1,10 @@
 import type {
-  BackupLogEntry,
   DigitalTwinAnomalyPoint,
   DigitalTwinDashboardData,
   ParkingDashboardData,
   ParkingRecord,
   SafetyDashboardData,
   SafetyViolation,
-  SREDashboardData,
-  SREMetric,
   STTTranscript,
 } from "@/components/cad/types";
 
@@ -108,32 +105,4 @@ export const mockDigitalTwinDashboard: DigitalTwinDashboardData = {
     warning_count: 1,
     last_scan_at: "2026-03-22T10:30:00Z",
   },
-};
-
-/* ── Part-N: SRE/DevOps Mock ── */
-
-const mockSREMetrics: SREMetric[] = [
-  { name: "CPU 사용률", value: 34.2, unit: "%", status: "healthy", trend: "stable" },
-  { name: "메모리 사용률", value: 61.8, unit: "%", status: "healthy", trend: "up" },
-  { name: "디스크 사용률", value: 42.5, unit: "%", status: "healthy", trend: "stable" },
-  { name: "API 에러율", value: 0.12, unit: "%", status: "healthy", trend: "down" },
-  { name: "API 평균 응답", value: 145, unit: "ms", status: "healthy", trend: "stable" },
-  { name: "DB 커넥션 풀", value: 12, unit: "/20", status: "healthy", trend: "stable" },
-];
-
-const mockBackupLogs: BackupLogEntry[] = [
-  { id: "bk-1", backup_type: "full", status: "success", size_mb: 2480, duration_seconds: 342, started_at: "2026-03-22T03:00:00Z", completed_at: "2026-03-22T03:05:42Z" },
-  { id: "bk-2", backup_type: "incremental", status: "success", size_mb: 156, duration_seconds: 28, started_at: "2026-03-22T06:00:00Z", completed_at: "2026-03-22T06:00:28Z" },
-  { id: "bk-3", backup_type: "incremental", status: "success", size_mb: 189, duration_seconds: 31, started_at: "2026-03-22T09:00:00Z", completed_at: "2026-03-22T09:00:31Z" },
-  { id: "bk-4", backup_type: "wal_archive", status: "success", size_mb: 64, duration_seconds: 8, started_at: "2026-03-22T09:30:00Z", completed_at: "2026-03-22T09:30:08Z" },
-  { id: "bk-5", backup_type: "full", status: "failed", size_mb: 0, duration_seconds: 120, started_at: "2026-03-21T03:00:00Z", completed_at: null },
-];
-
-export const mockSREDashboard: SREDashboardData = {
-  metrics: mockSREMetrics,
-  backup_logs: mockBackupLogs,
-  uptime_percent: 99.97,
-  avg_response_ms: 145,
-  error_rate_percent: 0.12,
-  grafana_embed_url: "",
 };

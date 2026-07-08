@@ -14,7 +14,6 @@ import {
   mockDigitalTwinDashboard,
   mockParkingDashboard,
   mockSafetyDashboard,
-  mockSREDashboard,
   mockSTTTranscripts,
 } from "@/mocks/phase4-data";
 
@@ -121,11 +120,6 @@ export async function resolveMockRequest<T>(method: string, path: string) {
   // Phase 4 — Part-L: WebRTC STT 회의록
   if (normalizedMethod === "GET" && normalizedPath === "/webrtc/transcripts") {
     return withLatency<T>(mockSTTTranscripts as T);
-  }
-
-  // Phase 4 — Part-N: SRE 대시보드
-  if (normalizedMethod === "GET" && normalizedPath === "/sre/dashboard") {
-    return withLatency<T>(mockSREDashboard as T);
   }
 
   // Stage 4: Feasibility Simulation (Monte Carlo)
