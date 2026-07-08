@@ -531,6 +531,11 @@ async def special_parcels_check(body: dict):
         # ★미분석 식별: 지목·구역 정보가 전혀 없으면 특이성 '판정 불가'(없음 아님).
         if not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type"):
             unanalyzed_idx.append(i)
+        elif not p.get("land_category"):
+            # ★리뷰 MEDIUM: 지목만 없는 필지 — 임야·학교용지 등 지목 기반 게이트가 침묵
+            #   미탐지될 수 있음을 필지 단위로 정직 경고(부분 미분석의 거짓 '특이 없음' 방지).
+            p.setdefault("warnings", []).append(
+                "지목 미확인 — 지목 기반 특이(임야·학교용지·묘지 등) 판정이 누락될 수 있음")
         enriched.append(p)
 
     result = detect_multi_parcel(enriched)
@@ -544,6 +549,7 @@ async def special_parcels_check(body: dict):
         if result.get("special_count", 0) == 0:
             # 특이 미검출이 '데이터 부재' 때문일 수 있음 — 단정 문구를 판정불가로 교체.
             result["developability"] = "UNKNOWN"
+            result["resolvable"] = "UNKNOWN"  # ★리뷰: YES 잔존 시 UNKNOWN과 모순 — 정합화
             result["honest_disclosure"] = (
                 f"{len(unanalyzed_idx)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
                 "불가합니다. analyze:true로 실분석하거나 지목·구역 정보를 제공하세요."
@@ -1263,10 +1269,14 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
     if _pnus:
         from apps.api.app.services.external_api.vworld_service import VWorldService
         _vw = VWorldService()
+        # ★리뷰 MEDIUM: PNU당 2 HTTP콜(UD802/803)×최대 30필지 — 동시성 캡(세마포어 8)으로
+        #   VWorld 레이트리밋·커넥션풀 소진을 방어(지연은 wait_for 6s 캡 유지).
+        _sem = asyncio.Semaphore(8)
 
         async def _districts(pnu: str) -> tuple[str, list | None]:
             try:
-                raw = await asyncio.wait_for(_vw.get_land_use_districts(pnu), timeout=6.0)
+                async with _sem:
+                    raw = await asyncio.wait_for(_vw.get_land_use_districts(pnu), timeout=6.0)
                 return pnu, [d.get("name") for d in (raw or []) if d.get("name")]
             except Exception:  # noqa: BLE001 — 실패는 미확인(None, 빈목록과 구분)
                 return pnu, None
@@ -1290,8 +1300,9 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
             ordinance = await _ordinance_for(p.get("address") or p.get("jibun"), zone)
             try:
                 eff = calc_effective_far(
-                    # ★P1: 구역 실값 주입([] 고정 제거) — GB 등 구역이 실효한도에 반영되게.
-                    {"local_ordinance": ordinance or {}, "zone_limits": {}, "special_districts": _sd or []},
+                    # 구역(special_districts)은 FAR 산식이 아니라 아래 detect_special_parcel
+                    # 게이트가 소비한다(리뷰: calc는 문자열 구역명을 읽지 않음 — 무효 주입 제거).
+                    {"local_ordinance": ordinance or {}, "zone_limits": {}, "special_districts": []},
                     zone_type=zone,
                     land_area=float(p.get("area_sqm") or 0) or 0,
                 )

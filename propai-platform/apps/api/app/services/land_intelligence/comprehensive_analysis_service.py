@@ -16,6 +16,7 @@ from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
     get_permitted_types,
+    permitted_types_known,
 )
 from app.services.land_intelligence.land_info_service import LandInfoService
 
@@ -870,6 +871,11 @@ class ComprehensiveAnalysisService:
         effective_bcr: float,
     ) -> list[dict[str, Any]]:
         permitted = get_permitted_types(zone_type)
+        # ★리뷰 HIGH: 미등재 용도지역은 '허용유형 없음'이 아니라 판정불가 — 빈 섹션 대신 정직 고지.
+        if not permitted and not permitted_types_known(zone_type):
+            return [{"development_type": None, "type_name": "판정불가",
+                     "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
+                             "(국토계획법 시행령 별표 확인 필요)"}]
         results = []
 
         for dev_type in permitted:
@@ -1163,6 +1169,11 @@ class ComprehensiveAnalysisService:
     # ────────────────────────────────────────────
     def _calc_sale_prices(self, address: str, zone_type: str) -> list[dict[str, Any]]:
         permitted = get_permitted_types(zone_type)
+        # ★리뷰 HIGH: 미등재 용도지역은 판정불가 정직 고지(빈 섹션 금지) — _calc_supply_areas와 동일.
+        if not permitted and not permitted_types_known(zone_type):
+            return [{"development_type": None, "type_name": "판정불가",
+                     "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
+                             "(국토계획법 시행령 별표 확인 필요)"}]
         base_price = self._get_base_price(address)
 
         results = []
