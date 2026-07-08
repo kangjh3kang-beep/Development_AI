@@ -403,7 +403,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
         # ── (1) 임계 자동보정: fallback_rate 인사이트의 baseline 분포로 재계산 ──
         # 최근 fallback_rate 인사이트들의 fallback_pct 평균을 baseline 으로 보고,
         # 현재 임계(FALLBACK_WARN_PCT)를 ±20% 내에서 그 분포 쪽으로 수렴.
-        from app.services.growth import analyzer
+        from app.services.growth import analyzer, dynamic_config
         frows = (await db.execute(text(
             "SELECT (metrics_json->>'fallback_pct')::float "
             "FROM platform_insights "
@@ -415,10 +415,18 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
             baseline = sum(pcts) / len(pcts)
             # 제안 임계 = baseline 의 1.5배(정상범위 위) — 단, 현재값 대비 ±20% 클램프는 실행기가.
             proposed = round(baseline * 1.5, 2)
+            # ★current 는 정적상수가 아니라 실제 현재 실효값(직전 자동보정이 기록한
+            # platform_settings 값)을 읽는다 → 매번 15.0 기준으로 재보정하는 고정
+            # 루프가 사라지고 설정값이 목표 분포로 누적수렴한다.
+            current = dynamic_config.as_float(
+                await dynamic_config.get_dynamic(
+                    "threshold.fallback_warn_pct", db=db),
+                analyzer.FALLBACK_WARN_PCT,
+            )
             candidates.append({
                 "kind": ACTION_THRESHOLD_AUTOTUNE,
                 "name": "fallback_warn_pct",
-                "current": analyzer.FALLBACK_WARN_PCT,
+                "current": current,
                 "proposed": proposed,
                 "trigger_key": "threshold:fallback_warn_pct",
             })

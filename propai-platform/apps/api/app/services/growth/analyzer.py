@@ -64,6 +64,54 @@ LATENCY_BASELINE_DAYS = 7
 # LLM narrative 비용가드: critical 인사이트 1배치당 최대 콜 수.
 _LLM_NARRATIVE_MAX_CALLS = 3
 
+# ── L1 자동보정 임계의 소비 배선(write-only dead-end 해소) ─────────────────────
+# L1 자가수정(feature_flags.apply_threshold_autotune)이 platform_settings 에
+# 'threshold.<이름>' 으로 기록한 값을 판정이 실제로 읽는다. 아래 매핑에 등록된
+# 이름만 오버레이 대상(모듈상수 = 기본값·안전 폴백).
+_TUNABLE_THRESHOLDS: dict[str, float] = {
+    "fallback_warn_pct": FALLBACK_WARN_PCT,
+    "fallback_crit_pct": FALLBACK_CRIT_PCT,
+}
+
+# 배치 시작 시 캐시에 미리 채울 동적설정 키(임계 + 피처토글).
+_DYNAMIC_PRIME_KEYS = (
+    *(f"threshold.{name}" for name in _TUNABLE_THRESHOLDS),
+    "feature.llm_narrative",
+)
+
+
+def _effective_threshold(name: str, default: float | None = None) -> float:
+    """실효 임계값 = 모듈상수 기본값 위에 platform_settings('threshold.<name>') 오버레이.
+
+    sync·캐시 전용 읽기(DB 무접근)라 순수 판정 함수에서 그대로 호출 가능하다.
+    캐시가 비어 있으면(프라임 전·단위테스트) 모듈상수 그대로 → stdlib 단독 검증성 유지.
+    analyze_window 가 시작 시 _prime_dynamic_config 로 캐시를 채워 두면 그때부터
+    L1 자동보정 값이 판정 기준이 된다(설정값 누적수렴의 소비 지점).
+    """
+    base = default if default is not None else _TUNABLE_THRESHOLDS.get(name, 0.0)
+    try:
+        from app.services.growth import dynamic_config
+
+        return dynamic_config.as_float(
+            dynamic_config.get_cached(f"threshold.{name}"), base
+        )
+    except Exception:  # noqa: BLE001 — 오버레이 실패는 기본값(판정 비차단).
+        return base
+
+
+async def _prime_dynamic_config(db=None) -> None:
+    """분석 배치 시작 시 동적설정을 TTL 캐시에 프라임(이후 판정은 sync 캐시 읽기).
+
+    best-effort: 실패해도 판정은 모듈상수 기본값으로 진행(배치 비차단).
+    """
+    try:
+        from app.services.growth import dynamic_config
+
+        for key in _DYNAMIC_PRIME_KEYS:
+            await dynamic_config.get_dynamic(key, db=db)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("동적설정 프라임 생략: %s", str(e)[:120])
+
 # 스택트레이스 정규화에서 제거할 변동요소(주소·숫자ID·hex 등).
 _RE_HEX = re.compile(r"0x[0-9a-fA-F]+")
 _RE_NUM = re.compile(r"\b\d+\b")
@@ -159,13 +207,20 @@ def _cluster_verify_issues(
 
 
 def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, float]:
-    """폴백률(%) 산출 + severity. 분모 부족 시 (None, pct)."""
+    """폴백률(%) 산출 + severity. 분모 부족 시 (None, pct).
+
+    임계는 모듈상수가 아니라 실효값(_effective_threshold — L1 자동보정 오버레이)을
+    읽는다. 캐시가 비어 있으면 모듈상수 그대로(순수 검증성 유지).
+    """
     if total_calls < FALLBACK_MIN_CALLS:
         return None, 0.0
     pct = round(100.0 * fallback / total_calls, 2)
-    if pct > FALLBACK_CRIT_PCT:
+    crit_pct = _effective_threshold("fallback_crit_pct", FALLBACK_CRIT_PCT)
+    # warn 이 crit 위로 자동보정되는 역전 방지(항상 warn ≤ crit).
+    warn_pct = min(_effective_threshold("fallback_warn_pct", FALLBACK_WARN_PCT), crit_pct)
+    if pct > crit_pct:
         return "critical", pct
-    if pct > FALLBACK_WARN_PCT:
+    if pct > warn_pct:
         return "warn", pct
     return None, pct
 
@@ -233,6 +288,9 @@ async def analyze_window(
     반환: 생성한 인사이트 dict 목록(테스트·로깅용). best-effort.
     """
     from sqlalchemy import text
+
+    # L1 자동보정 임계·피처토글을 캐시에 프라임 → 이하 판정이 실효값을 소비.
+    await _prime_dynamic_config(db)
 
     insights: list[dict[str, Any]] = []
     try:
@@ -539,8 +597,23 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
 
 
 def _llm_enabled() -> bool:
-    """LLM narrative 활성 여부. 기본 off. GROWTH_LLM_NARRATIVE=1 + 키 존재 시만."""
-    if os.getenv("GROWTH_LLM_NARRATIVE", "0").strip() not in ("1", "true", "True"):
+    """LLM narrative 활성 여부 — env 기본값 위에 L1 토글(feature.llm_narrative) 오버레이.
+
+    기본 off(GROWTH_LLM_NARRATIVE=1 일 때만 on). L1 자가수정이 품질급락 시 기록한
+    platform_settings('feature.llm_narrative')의 enabled 가 env 를 덮는다
+    (자동 비활성 토글의 소비 지점 — 과거엔 기록만 하고 읽는 곳이 없었다).
+    단, ANTHROPIC_API_KEY 가 없으면 어떤 경우에도 off(호출 자체가 불가).
+    """
+    enabled = os.getenv("GROWTH_LLM_NARRATIVE", "0").strip() in ("1", "true", "True")
+    try:
+        from app.services.growth import dynamic_config
+
+        val = dynamic_config.get_cached("feature.llm_narrative")
+        if isinstance(val, dict) and "enabled" in val:
+            enabled = bool(val["enabled"])
+    except Exception:  # noqa: BLE001 — 오버레이 실패는 env 기본값 유지.
+        pass
+    if not enabled:
         return False
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
@@ -599,4 +672,6 @@ __all__ = [
     "_classify_quality",
     "_classify_latency",
     "_percentile",
+    # L1 자동보정 소비 배선(실효 임계 리더).
+    "_effective_threshold",
 ]

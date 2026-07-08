@@ -387,10 +387,11 @@ async def _execute_run(
 
     # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
     # _save_audit가 commit하므로 audit_id 행은 영속 → backlink 안전. RunRequest엔 pnu 없음(pnu 미전달).
+    ledger_wb: dict[str, Any] | None = None   # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_design_audit
 
-        await record_design_audit(
+        ledger_wb = await record_design_audit(
             result=result, audit_id=audit_id,
             tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
             project_id=req.project_id,
@@ -412,7 +413,9 @@ async def _execute_run(
     except Exception as e:  # noqa: BLE001 — 관측은 심사 흐름 절대 방해 금지
         logger.warning("shadow 관측 실패(design_audit)", err=str(e)[:120])
 
-    return {
+    # ★성장루프 조인키: 원장 content_hash 를 응답 최상위 `ledger_hash` 로 노출(공용 헬퍼 — 프론트 피드백 키잉).
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    return attach_ledger_hash({
         "ok": True,
         "audit_id": audit_id,
         "saved": audit_id is not None,
@@ -425,7 +428,7 @@ async def _execute_run(
         "engine_status": result.get("engine_status"),
         "zone_limits": result.get("zone_limits"),
         "disclaimer": _DISCLAIMER,
-    }
+    }, ledger_wb)
 
 
 def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:

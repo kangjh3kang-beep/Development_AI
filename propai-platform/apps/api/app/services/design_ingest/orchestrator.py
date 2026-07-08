@@ -483,9 +483,8 @@ async def _record_proposal_ledger(
             project_id=req.project_id,
             source="design_generation",
         )
-        if isinstance(res, dict) and res.get("ok") and res.get("content_hash"):
-            return str(res["content_hash"])
-        return None
+        # 조인키 추출은 공용 헬퍼 단일경유(전 엔드포인트 동일 계약 — 재구현 금지)
+        return ledger.extract_ledger_hash(res)
     except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 생성 결과를 깨면 안 됨
         logger.info("design 추천안 원장 적재 생략: %s", str(e)[:120])
         return None

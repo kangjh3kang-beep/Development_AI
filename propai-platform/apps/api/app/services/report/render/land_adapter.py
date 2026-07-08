@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence_bridge import evidence_block_from_contract
 from .model import (
     DataTableBlock,
     KVTableBlock,
@@ -193,6 +194,16 @@ def build_report_model_from_land(data: dict[str, Any]) -> ReportModel:
         + "구체적 개발규모는 지구단위계획·조례·인허가 검토로 확정되며, 권리관계는 등기부등본으로 확인하시기 바랍니다."
     )
     sections.append(Section(title=f"{sec_no}. 종합 의견", blocks=[NarrativeBlock(paragraphs=[opinion])]))
+
+    # 산출 근거·법령 링크 — 입력 data 에 표준 근거 계약(evidence[]/legal_refs[])이 실제 담겨
+    # 왔을 때만 부착한다(없으면 섹션 생략 — 정직). 현재 /land-report 생산자는 실효 한도값만
+    # 넘기고 계약 블록은 아직 안 넘기므로, 생산자가 계약을 붙이는 즉시 여기서 자동 소비된다.
+    # ★어댑터에서 법령키를 새로 발명하거나 URL 을 조립하지 않는다(레지스트리 verified 만 통과).
+    ev_block = evidence_block_from_contract(
+        {"evidence": data.get("evidence"), "legal_refs": data.get("legal_refs")}, title=None)
+    if ev_block is not None:
+        next_no = int(sec_no) + 1
+        sections.append(Section(title=f"{next_no}. 산출 근거·법령 링크", blocks=[ev_block]))
 
     meta = ReportMeta(
         title="토지분석보고서",

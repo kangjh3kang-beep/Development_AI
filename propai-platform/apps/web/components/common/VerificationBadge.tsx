@@ -55,10 +55,16 @@ export function VerificationBadge({
   analysisType,
   context,
   autoRun = true,
+  ledgerHash,
 }: {
   analysisType: string;
   context: Record<string, unknown> | null;
   autoRun?: boolean;
+  /**
+   * 서버 분석 원장(analysis_ledger)의 content_hash(sha256 hex) — 응답 최상위 ledger_hash.
+   * 있으면 피드백 조인키로 그대로 전달, 없으면 content_hash 자체를 보내지 않는다.
+   */
+  ledgerHash?: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<VerifyResult | null>(null);
@@ -69,11 +75,11 @@ export function VerificationBadge({
     catch { return ""; }
   }, [analysisType, context]);
 
-  // 피드백 위젯 조인키 — context 해시(analysis_ledger.content_hash 와 동일 산식은 아니나 분석본 식별에 충분).
-  const contentHash = useMemo(() => {
-    try { return context ? hashStr(JSON.stringify(context)) : undefined; }
-    catch { return undefined; }
-  }, [context]);
+  // 피드백 위젯 조인키 — 서버가 준 원장 sha256(ledgerHash)만 사용한다.
+  // ★과거처럼 프론트 hashStr(32bit base36)를 보내면 서버 원장 sha256과 산식이 달라
+  //   조인 0건인 오염 데이터가 된다 → ledgerHash 없으면 content_hash 필드 자체를 생략.
+  //   (hashStr은 localStorage 캐시 키 용도로만 계속 사용.)
+  const contentHash = ledgerHash || undefined;
 
   const run = useCallback(async () => {
     if (!context) return;

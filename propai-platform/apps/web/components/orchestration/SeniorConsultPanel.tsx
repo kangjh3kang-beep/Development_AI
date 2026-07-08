@@ -18,6 +18,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { buildSeniorInputs, type SeniorInputSources } from "@/lib/senior/build-inputs";
 import {
   MANUAL_INPUTS,
@@ -243,16 +244,15 @@ export function SeniorConsultPanel() {
           분석 수치가 연동되면 항목별 PASS/경고/차단 판정을 함께 보여줍니다. AI 보조이며 최종 책임은 면허 전문가입니다.
         </p>
 
-        {/* AI 종합 서술 옵트인(기본 off·무과금). on 시 추론을 LLM이 자연어로 종합(관리자 미설정=무료). */}
-        <label className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]">
-          <input
-            type="checkbox"
-            checked={useLlm}
-            onChange={(e) => setUseLlm(e.target.checked)}
-            className="size-3.5 accent-[var(--accent-strong)]"
-          />
-          AI 종합 서술 포함(LLM) — 추론을 자연어로 종합. 미설정 시 무료·키 없으면 구조만 표시
-        </label>
+        {/* AI 종합 서술 옵트인(기본 off·무과금). on 시 추론을 LLM이 자연어로 종합(관리자 미설정=무료).
+            공용 UseLlmToggle로 교체(전파방지·중복 제거 — 화면별 체크박스 복제 금지). */}
+        <UseLlmToggle
+          className="mb-3 flex w-fit"
+          checked={useLlm}
+          onChange={setUseLlm}
+          label="AI 종합 서술 포함(LLM)"
+          hint="추론을 자연어로 종합 · 미설정 시 무료 · 키 없으면 구조만 표시"
+        />
 
         {listError && <p className="mb-2 text-[11px] text-[var(--status-error)]">{listError}</p>}
         {agents === null && !listError && (

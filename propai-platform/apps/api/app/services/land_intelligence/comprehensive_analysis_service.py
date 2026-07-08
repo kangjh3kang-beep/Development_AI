@@ -744,6 +744,9 @@ class ComprehensiveAnalysisService:
             tenant_id=tenant_id, pnu=_pnu, address=address, project_id=project_id,
             source="comprehensive", created_by=None,
         )
+        # ★성장루프 조인키: 원장 content_hash 를 응답 최상위 `ledger_hash` 로 노출
+        #   (공용 헬퍼 — 프론트 피드백 👍/👎 → learning_loop 등가조인. 미적재 시 키 생략).
+        ledger.attach_ledger_hash(result, wb)
         # Phase 2: 파생 lineage 엣지(child=이번 write-back, parent=prior) — best-effort
         if (prior and prior.get("content_hash") and wb.get("ok")
                 and not wb.get("unchanged") and wb.get("content_hash")):

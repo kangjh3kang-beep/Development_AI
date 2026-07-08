@@ -26,6 +26,7 @@ import { AlertTriangle } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import {
   adaptEvidence,
   type BackendEvidence,
@@ -462,6 +463,8 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   const [runError, setRunError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<"pdf" | "pptx" | "docx" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // AI 종합 서술 옵트인 — 기본 false(무과금 기본 정책 유지). 체크 시에만 use_llm 요청.
+  const [useLlm, setUseLlm] = useState(false);
   // 결과 캐시(로컬 state만 — persist 미접촉). 입력 시그니처가 바뀌면 재실행을 권한다.
   const cacheRef = useRef<Record<string, { report: PersonaReport; sig: string }>>({});
 
@@ -509,7 +512,8 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
         siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0 ? siteAnalysis.landAreaSqm : null,
       zone_code: siteAnalysis?.zoneCode ?? null,
       building_type: designData?.buildingType ?? null,
-      use_llm: false,
+      // 하드코딩 false 해소 — 사용자 옵트인 토글(useLlm) 값을 그대로 전달.
+      use_llm: useLlm,
     };
   }, [
     boundProjectId,
@@ -521,12 +525,15 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
     feasibilityData?.equityWon,
     designData?.totalGfaSqm,
     designData?.buildingType,
+    useLlm,
   ]);
 
   // 입력 시그니처(캐시 키 변화 감지) — store의 currentSignature 발상 재사용.
   // 설계·시공 입력(연면적·대지면적·용도지역·건물유형)이 바뀌면 페르소나 결과를 stale 처리(재실행 유도).
+  // L/D 접두어 = LLM 옵션 포함(SeniorConsultPanel 캐시키 발상 재사용) — 토글 전환 시 재실행 유도.
   const inputSig = useMemo(
     () =>
+      `${useLlm ? "L" : "D"}|` +
       JSON.stringify([
         requestBody.address,
         requestBody.pnu,
@@ -537,6 +544,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
         requestBody.building_type,
       ]),
     [
+      useLlm,
       requestBody.address,
       requestBody.pnu,
       requestBody.parcels,
@@ -695,6 +703,13 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
             >
               {running ? "분석 중…" : report ? "다시 분석" : "분석 실행"}
             </button>
+            {/* AI 종합 서술 옵트인(기본 off·무과금) — 공용 UseLlmToggle(전파방지). */}
+            <UseLlmToggle
+              checked={useLlm}
+              onChange={setUseLlm}
+              disabled={running}
+              hint="LLM이 체크리스트·산출물을 자연어로 종합 · 미설정 시 무료"
+            />
             {!hasContext && (
               <span className="text-[11px] text-[var(--text-tertiary)]">
                 부지(주소·PNU 또는 필지)를 먼저 등록하세요.

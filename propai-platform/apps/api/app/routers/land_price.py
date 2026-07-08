@@ -50,7 +50,7 @@ class DeskAppraisalRequest(BaseModel):
 @limiter.limit(_LAND_PRICE_LIMIT)
 async def land_desk_appraisal(request: Request, req: DeskAppraisalRequest):
     """예상 탁상감정 — 공시지가기준법 + 거래사례비교법 결합(정식감정 아님, 참고용)."""
-    return await desk_appraisal(
+    result = await desk_appraisal(
         pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
         official_price_per_sqm=req.official_price_per_sqm,
         comparable_avg_per_sqm=req.comparable_avg_per_sqm,
@@ -59,6 +59,25 @@ async def land_desk_appraisal(request: Request, req: DeskAppraisalRequest):
         monthly_rent_won=req.monthly_rent_won, deposit_won=req.deposit_won,
         **({"cap_rate": req.cap_rate} if req.cap_rate is not None else {}),
     )
+    # ★성장루프 조인키: 탁상감정 요약을 원장에 best-effort 적재(멱등) 후 최상위 `ledger_hash` 노출
+    #   — 프론트 피드백(👍/👎)이 이 해시로 원장과 조인된다. 실패해도 감정 결과 무손상.
+    try:
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        if isinstance(result, dict):
+            wb = await record_user_analysis(
+                analysis_type="desk_appraisal",
+                summary={
+                    "address": req.address, "pnu": req.pnu, "area_sqm": req.area_sqm,
+                    "final_value_won": result.get("final_value_won") or result.get("estimated_total_won"),
+                    "adopted_method": result.get("adopted_method") or result.get("method"),
+                },
+                pnu=req.pnu or None, address=req.address, source="desk_appraisal",
+            )
+            result = attach_ledger_hash(result, wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 탁상감정 결과 무손상
+        pass
+    return result
 
 
 @router.get("/price-trend")

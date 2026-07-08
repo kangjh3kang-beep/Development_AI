@@ -3,6 +3,7 @@
 SSE 스트리밍 보고서 생성.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
@@ -26,6 +27,11 @@ router = APIRouter()
 class ReportGenerateRequest(BaseModel):
     project_id: str
     format: str = "pdf"   # pdf | pptx | docx — 통합 보고서 생성엔진이 존중
+
+
+# 보고서 내러티브(검증→재생성 루프 포함)는 요청당 최대 2×LLM 콜 × N단계 — 동시 다수 요청 시
+# LLM 비용·커넥션 증폭을 막기 위해 프로세스당 동시 3건으로 상한(초과분은 대기, 실패 아님).
+_NARRATIVE_CONCURRENCY = asyncio.Semaphore(3)
 
 
 @router.post("/generate", summary="프로젝트 통합 보고서 — PDF·PPTX·DOCX(분석 원장 기반·재실행 없음)")
@@ -53,11 +59,15 @@ async def generate_report_pdf(
     if isinstance(stages, list):
         result_dict["stages"] = {s.get("stage"): s for s in stages if isinstance(s, dict) and s.get("stage")}
 
-    # AI 상세 해석 포함(캐시 우선, 미스는 생성 — 타임아웃 내 완료분)
+    # AI 상세 해석 포함(캐시 우선, 미스는 생성 — 타임아웃 내 완료분은 부분 보존).
+    # 보고서는 동기 UI가 아니므로 품질우선: 검증→이슈주입→1회 재생성 루프
+    # (use_verification_retry=True)를 태우고, 재생성 여유를 위해 타임아웃도 상향(55초).
     narratives: dict[str, Any] = {}
     try:
         from app.routers.pipeline import _gather_report_narratives
-        narratives = await _gather_report_narratives(result_dict)
+        async with _NARRATIVE_CONCURRENCY:   # 동시 3건 상한 — LLM 비용·리소스 증폭 방어
+            narratives = await _gather_report_narratives(
+                result_dict, timeout=55.0, use_verification_retry=True)
     except Exception:  # noqa: BLE001
         narratives = {}
 
@@ -138,6 +148,28 @@ async def generate_investor_report(
         risks=body.risks,
         include_sections=body.include_sections,
     )
+    # ★성장루프 조인키: 투자자 보고서 요약을 원장에 best-effort 적재(멱등)하고 응답 스키마의
+    #   `ledger_hash`로 노출 — 보고서 화면의 피드백(👍/👎)이 원장과 조인된다.
+    ledger_hash: str | None = None
+    try:
+        from app.services.ledger.analysis_ledger_service import extract_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        wb = await record_user_analysis(
+            analysis_type="investor_report",
+            summary={
+                "project_name": body.project_name,
+                "asset_type": body.asset_type,
+                "target_languages": list(body.target_languages or []),
+                "sections": list(body.include_sections or []),
+                "variant_count": len(variants),
+            },
+            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
+            project_id=str(body.project_id), source="investor_report",
+        )
+        ledger_hash = extract_ledger_hash(wb)
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 보고서 응답 무손상
+        ledger_hash = None
+
     return InvestorReportResponse(
         project_id=body.project_id,
         report_type="investor",
@@ -152,4 +184,5 @@ async def generate_investor_report(
             for report in variants
         ],
         generated_sections=body.include_sections,
+        ledger_hash=ledger_hash,
     )

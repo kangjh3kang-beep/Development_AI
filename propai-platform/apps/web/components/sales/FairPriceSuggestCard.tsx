@@ -152,6 +152,8 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
                 tiers: data.tiers,
                 trust: data.trust,
               }}
+              // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+              ledgerHash={(data as unknown as { ledger_hash?: string })?.ledger_hash}
             />
           </div>
         </>

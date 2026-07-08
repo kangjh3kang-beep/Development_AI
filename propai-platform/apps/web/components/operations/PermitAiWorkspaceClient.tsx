@@ -338,6 +338,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             context={result as unknown as Record<string, unknown>}
             interpretation={result.summary}
             interpretationTitle="AI 인허가 해석"
+            // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+            ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
           />
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">

@@ -109,6 +109,36 @@ class TestGeneratePermitPdf:
         assert results[0]["project_id"] == "P1"
         assert results[1]["project_id"] == "P2"
 
+    @pytest.mark.asyncio
+    async def test_pdf_is_real_bytes_and_file(self, svc: PermitPackageService) -> None:
+        """무목업: pdf_bytes 가 실제 PDF 시그니처(%PDF)이고, 반환 경로에 실파일이 있어야 한다.
+
+        과거에는 경로 문자열만 돌려주고 파일을 만들지 않는 목업이었다 — 회귀 잠금.
+        """
+        import os
+
+        result = await svc.generate_permit_pdf(
+            "PROJ-REAL", {"permit_type": "건축허가", "region": "서울"}
+        )
+        assert result["pdf_bytes"].startswith(b"%PDF")
+        assert result["size_bytes"] > 500  # 표·문단이 담긴 실문서 크기(빈 껍데기 아님)
+        assert result["pdf_path"] and os.path.exists(result["pdf_path"])
+        assert result["region"] == "서울"
+
+    @pytest.mark.asyncio
+    async def test_pdf_path_traversal_blocked(self, svc: PermitPackageService) -> None:
+        """경로조작 문자가 섞인 project_id 는 안전문자로 치환되어야 한다."""
+        result = await svc.generate_permit_pdf("../../etc/x", {"permit_type": "건축허가"})
+        assert result["pdf_path"] is not None
+        assert ".." not in result["pdf_path"]
+        assert result["pdf_path"].startswith("/tmp/permit_")
+
+    @pytest.mark.asyncio
+    async def test_pdf_invalid_type_raises(self, svc: PermitPackageService) -> None:
+        """지원하지 않는 인허가 유형은 ValueError(라우터에서 400 변환)여야 한다."""
+        with pytest.raises(ValueError, match="지원하지 않는 인허가 유형"):
+            await svc.generate_permit_pdf("P1", {"permit_type": "존재하지않는유형"})
+
 
 # ── estimate_permit_duration ──
 
