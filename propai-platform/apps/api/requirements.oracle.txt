@@ -64,6 +64,7 @@ python-docx==1.1.2
 openpyxl==3.1.5
 fpdf2==2.8.1
 Pillow==10.4.0
+matplotlib==3.9.2  # 구획도 PNG export(parcel_boundary_export.export_png) — 미선언 시 프로덕션 ModuleNotFoundError
 
 # Security
 bcrypt>=4.0.0,<5.0.0

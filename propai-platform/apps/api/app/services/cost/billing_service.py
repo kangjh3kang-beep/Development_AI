@@ -246,8 +246,8 @@ async def register_billing(
             tenant_id=tenant_id, project_id=str(project_id),
             source="cost_billing", created_by=created_by,
         )
-        if isinstance(res, dict) and res.get("ok"):
-            ledger_hash = res.get("content_hash")
+        # 조인키 추출은 공용 헬퍼 단일경유(전 엔드포인트 동일 계약)
+        ledger_hash = analysis_ledger_service.extract_ledger_hash(res)
     except Exception as e:  # noqa: BLE001
         logger.warning("기성 해시체인 적재 실패(무시)", err=str(e)[:160])
 

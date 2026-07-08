@@ -168,7 +168,16 @@ export default function ESGPage() {
             </div>
           )}
           {/* 신뢰도·할루시네이션 검증 */}
-          <VerificationBadge analysisType="esg" context={ai as unknown as Record<string, unknown>} />
+          <VerificationBadge
+            analysisType="esg"
+            context={ai as unknown as Record<string, unknown>}
+            // 응답 ledger_hash(원장 sha256) — useAIAnalyze는 {data,text} 래퍼라 도메인 결과가
+            // data 하위일 수 있어 양쪽 모두 수용한다(미노출이면 undefined·안전).
+            ledgerHash={
+              (aiResult as unknown as { ledger_hash?: string } | undefined)?.ledger_hash
+              ?? (ai as unknown as { ledger_hash?: string } | undefined)?.ledger_hash
+            }
+          />
         </motion.div>
       )}
 

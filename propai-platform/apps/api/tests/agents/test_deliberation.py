@@ -89,3 +89,85 @@ async def test_design_tool_graceful_when_url_unset(monkeypatch):
     )
     out = await _design_tool({"pnu": "1111010100100000001"})
     assert out["findings"] == [] and out["summary"]["available"] is False
+
+
+# ── A3: 심의/설계 SpecialistAgent에 LLM 인터프리터 주입(과거 interpreter=None dead-path 해소) ──
+# market 선례(test_growth_dispatch.py::test_market_specialist_has_interpreter_wired)와 동일 형태.
+
+
+def test_deliberation_specialist_has_interpreter_wired():
+    from app.services.ai.permit_interpreter import PermitInterpreter
+
+    interp = get_specialist("심의")._interpreter
+    assert interp is not None
+    assert isinstance(interp, PermitInterpreter)
+
+
+def test_design_specialist_has_interpreter_wired():
+    from app.services.ai.design_interpreter import DesignInterpreter
+
+    interp = get_specialist("설계")._interpreter
+    assert interp is not None
+    assert isinstance(interp, DesignInterpreter)
+
+
+# ── C3: 엔진 미설정/실패가 치유루프(healing_rules) 관측용 record_fallback을 발화하는지 ──
+
+
+async def test_deliberation_tool_url_unset_records_fallback(monkeypatch):
+    import app.services.growth.capture_service as capture_service
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: types.SimpleNamespace(DELIBERATION_ENGINE_URL="", DELIBERATION_ENGINE_API_TOKEN=""),
+    )
+    seen: dict = {}
+
+    def _fake_record_fallback(service, kind, **meta):
+        seen.update({"service": service, "kind": kind, **meta})
+
+    monkeypatch.setattr(capture_service, "record_fallback", _fake_record_fallback)
+
+    await _deliberation_tool({"pnu": "1111010100100000001"})
+    assert seen["service"] == "deliberation_engine"
+    assert seen["kind"] == "engine_unreachable"
+    assert seen["reason"] == "engine_url_unset"
+
+
+async def test_deliberation_tool_call_failure_records_fallback(monkeypatch):
+    """라이브 호출 실패(연결오류 등)도 record_fallback을 발화한다(무음 방치 금지)."""
+    import app.services.growth.capture_service as capture_service
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: types.SimpleNamespace(
+            DELIBERATION_ENGINE_URL="http://engine.invalid", DELIBERATION_ENGINE_API_TOKEN=""),
+    )
+
+    class _BoomClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            raise ConnectionError("engine down")
+
+    monkeypatch.setattr("httpx.AsyncClient", _BoomClient)
+
+    seen: dict = {}
+
+    def _fake_record_fallback(service, kind, **meta):
+        seen.update({"service": service, "kind": kind, **meta})
+
+    monkeypatch.setattr(capture_service, "record_fallback", _fake_record_fallback)
+
+    out = await _deliberation_tool({"pnu": "1111010100100000001"})
+    assert out["summary"]["available"] is False
+    assert seen["service"] == "deliberation_engine"
+    assert seen["kind"] == "engine_unreachable"
+    assert seen["reason"].startswith("engine_call_failed")

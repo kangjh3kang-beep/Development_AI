@@ -142,6 +142,25 @@ def record_event(event_type: str, props: dict[str, Any] | None = None) -> None:
         logger.debug("growth record_event 무시: %s", str(e)[:120])
 
 
+def record_fallback(service: str, kind: str, *, severity: str = "warn", **meta: Any) -> None:
+    """폴백/장애 이벤트 기록(C3) — 자가치유 루프(healing_rules.py)가 구독하는 공용 계약.
+
+    healing_rules._collect_candidates가 구독하는 계약: event_type='fallback', service 컬럼,
+    payload.kind. kind='ledger_broken' + severity='critical'는 원장 변조탐지(재분석 제안) 브랜치를
+    발동시키고, 그 외 kind는 severity 무관하게 서비스별 10분 윈도 circuit-observe 집계에 잡힌다
+    (healing_rules.py:198~224 실측). severity 기본값은 'warn'(단순 관측), 원장 변조 등 중대 신호는
+    호출측이 severity='critical'로 명시해야 한다.
+
+    record_event와 동일하게 best-effort — 어떤 예외도 호출경로로 전파하지 않는다(치유루프 관측
+    실패가 주경로(엔진 호출·원장 검증 등)를 방해해서는 안 된다).
+    """
+    try:
+        record_event("fallback", {"service": service, "severity": severity,
+                                  "payload": {"kind": kind, **meta}})
+    except Exception as e:  # noqa: BLE001 — 이중 방어(record_event 자체도 이미 삼킴)
+        logger.debug("growth record_fallback 무시: %s", str(e)[:120])
+
+
 def queue_size() -> int:
     """현재 큐 적재 건수(관측·테스트용)."""
     return len(_QUEUE)

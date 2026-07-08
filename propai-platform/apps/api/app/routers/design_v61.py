@@ -163,6 +163,20 @@ class BimGenerateRequest(BaseModel):
     # 세대 구성(있으면 평면 세대배치·해석에 반영 — "데이터 없음" 해소)
     building_use: str = "공동주택"
     unit_types: list[str] | None = None
+    # ★B1(설계자동분석엔진 SSOT 관통) — 부지분석 실효 한도(%). 지자체 도시계획조례·계획상한을
+    #   반영한 min(법정, 조례, 목표) 클램프는 엔진(AutoDesignEngineService._effective_limits)이
+    #   담당한다(라우터는 그대로 전달만 — seed-design(mass_templates.py)과 동일 패턴). 미제공 시
+    #   None=법정상한 기준(기존 동작 100% 불변 — 하위호환).
+    ordinance_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(%)")
+    ordinance_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(%)")
+    # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
+    #   응답에 경고만 additive 부착(차단 아님). 컨텍스트가 전혀 없으면 게이트 자체를 생략한다
+    #   (정직 — 무날조). pnu는 현재 판정에 쓰이지 않고 추적용 메타로 echo만 된다.
+    pnu: str | None = Field(None, description="필지 PNU(특이부지 게이트 참고 메타)")
+    land_category: str | None = Field(None, description="지목(예: 학교용지·전·답·임야) — 특이부지 게이트 입력")
+    special_districts: list[str] | None = Field(
+        None, description="특별구역(개발제한구역·문화재·군사·상수원 등) — 특이부지 게이트 입력",
+    )
 
 
 # ── 응답 스키마 ──
@@ -885,6 +899,28 @@ def _attach_mass_contract(mass: dict[str, Any], req: BimGenerateRequest) -> dict
     return mass
 
 
+def _attach_special_parcel_gate(mass: dict[str, Any], req: BimGenerateRequest) -> dict[str, Any]:
+    """특이부지 게이트(B2) additive 부착 — 학교용지·GB·농지·산지·맹지 등 경고만 부착(차단 아님).
+
+    req에 land_category·special_districts 컨텍스트가 있을 때만 판정하고, 없으면
+    mass["special_parcel"]=None(정직 생략 — 무날조). _resolve_mass_uncached의 3분기(명시치수·
+    자동산출·최종폴백) 공용 — 매스 SSOT(compliance와 같은 자리)에 부착되므로 /mass·/bim·/layout
+    응답이 자동으로 동봉한다(proposals 경로의 _detect_special과 동일 원천 재사용 — 전역패리티).
+    """
+    from app.services.zoning.special_parcel_gate import build_special_parcel_gate
+
+    # LayoutRequest는 zone_name(한글 용도지역명)을 추가로 갖는다 — 있으면 우선(더 정확한 zone_type).
+    zone_type = getattr(req, "zone_name", None) or req.zone_code
+    mass["special_parcel"] = build_special_parcel_gate(
+        land_category=req.land_category,
+        zone_type=zone_type,
+        special_districts=req.special_districts,
+        area_sqm=req.land_area_sqm,
+        pnu=req.pnu,
+    )
+    return mass
+
+
 def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
     """_resolve_mass_uncached의 출력을 '완전히 결정하는' req 필드만 담은 결정적 dict(캐시 열쇠 원료).
 
@@ -899,9 +935,18 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
       - zone_code: 자동산출 분기의 법정/조례 한도·건축유형 추론 입력.
       - building_use: 실내요소(_enrich_interior)·세대평형·건축유형 추론 입력.
       - unit_types: 자동산출 분기 target_unit_types. ★순서 무관이므로 sorted로 정규화(같은 집합=같은 열쇠).
+      - ordinance_far_pct·ordinance_bcr_pct(B1): 자동산출 분기 SiteInput에 주입돼 _effective_limits의
+        min(법정,조례,목표) 클램프 결과(far_pct·bcr_pct·num_floors 등)를 바꾼다 — 누락 시 조례값만
+        다른 요청이 같은 캐시열쇠로 충돌해 잘못된 매스를 돌려주는 캐시오염 버그가 된다.
+      - land_category·special_districts·pnu(B2): _attach_special_parcel_gate가 부착하는
+        mass["special_parcel"](developability·warnings)을 바꾼다 — 같은 이유로 누락 시 캐시오염.
+      - zone_name(B2·★독립리뷰 CRITICAL 반영): _attach_special_parcel_gate가 zone_type으로
+        zone_name을 zone_code보다 우선 소비하므로 special_parcel 결과를 바꾼다 — 누락 시
+        zone_name만 다른 요청이 같은 캐시열쇠로 충돌해 **다른 부지의 특이부지 경고가 새어
+        나가는** 크로스 캐시오염(캐시는 전역 단일 인스턴스·테넌트 무관)이 된다.
 
     제외(비결정·결과 무영향): project_name(IFC 라벨일 뿐 매스 기하 불변), 그리고 LayoutRequest가
-      추가로 받는 필드(zone_name·avg_unit_area_sqm·site_geometry·llm_adjust)는 _resolve_mass가
+      추가로 받는 나머지 필드(avg_unit_area_sqm·site_geometry·llm_adjust)는 _resolve_mass가
       소비하지 않으므로(매스는 BimGenerateRequest 필드만으로 결정) 핑거프린트에 넣지 않는다.
     """
     return {
@@ -914,6 +959,15 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
         "building_use": req.building_use,
         # 평형 목록은 순서가 달라도 같은 집합이면 같은 결과 → sorted로 정규화(없으면 None).
         "unit_types": sorted(req.unit_types) if req.unit_types else None,
+        # ★B1: 부지분석 실효 한도(조례) — 자동산출 분기의 min(법정,조례,목표) 클램프 결과에 영향.
+        "ordinance_far_pct": req.ordinance_far_pct,
+        "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        # ★B2: 특이부지 게이트 입력 — mass["special_parcel"](경고)에 영향.
+        "land_category": req.land_category,
+        "special_districts": sorted(req.special_districts) if req.special_districts else None,
+        "pnu": req.pnu,
+        # ★B2(독립리뷰 CRITICAL): 게이트가 zone_name을 zone_code보다 우선 소비 — 결과를 바꾸는 입력.
+        "zone_name": getattr(req, "zone_name", None),
     }
 
 
@@ -966,6 +1020,9 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         # ★C2R 계약 부착(공용 헬퍼) — 명시 치수 분기는 site/legal이 없으므로 rule_trace는 생략(무날조).
         #   envelope_result+geometry_invariants만 붙는다. 핑거프린트는 req의 결정적 필드로 구성.
         _attach_mass_contract(mass, req)
+        # ★특이부지 게이트(B2) additive 부착 — 이 분기는 조례 실효한도(B1) 적용 대상이 아니다
+        #   (SiteInput/법정한도 자체를 안 쓰는 명시치수 분기이므로 조례 클램프가 개입할 여지가 없음).
+        _attach_special_parcel_gate(mass, req)
         return mass
     # 자동 산출: AutoDesignEngine(대지면적+용도지역 → 최적 매스)
     if req.land_area_sqm:
@@ -997,6 +1054,12 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
             target_unit_types=req.unit_types or ["84A"],
             floor_height_m=req.floor_height_m,
             massing_objective=massing_objective,
+            # ★B1(설계자동분석엔진 SSOT 관통) — 부지분석 실효 한도(%). seed-design(mass_templates.py
+            #   :203-213)과 동일 패턴으로 SiteInput에 그대로 전달한다. 엔진의 _effective_limits가
+            #   이미 min(법정,조례,목표) 클램프를 수행하므로 여기서는 전달만(엔진 수정 불필요).
+            #   미제공(None) 시 클램프 미적용=법정상한 기준(기존 동작 100% 불변).
+            ordinance_far_percent=req.ordinance_far_pct,
+            ordinance_bcr_percent=req.ordinance_bcr_pct,
         )
         legal = svc.get_legal_limits(req.zone_code)
         eff = svc.compute_effective_site(site)
@@ -1009,6 +1072,8 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         #   ★_enrich_interior 이후에 부착(실내요소가 반영된 매스 기준).
         contract = build_mass_contract(mass, site_input=site, legal=legal)
         mass["compliance"] = contract  # additive — mass dict에 부착(/mass·/layout·/bim 응답이 동봉)
+        # ★특이부지 게이트(B2) additive 부착 — 학교용지·GB·농지·산지·맹지 등 경고만(차단 아님).
+        _attach_special_parcel_gate(mass, req)
         return mass
     # 최종 폴백: 합리적 기본값
     mass = {
@@ -1018,6 +1083,8 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     mass = _enrich_interior(mass)
     # ★C2R 계약 부착(공용 헬퍼) — 폴백 분기도 site/legal 없음 → envelope_result+geometry_invariants만(무날조).
     _attach_mass_contract(mass, req)
+    # ★특이부지 게이트(B2) additive 부착 — 폴백 분기도 컨텍스트가 있으면 동일하게 판정(전 경로 패리티).
+    _attach_special_parcel_gate(mass, req)
     return mass
 
 
@@ -1122,6 +1189,9 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         "compliance": mass.get("compliance"),
+        # ★특이부지 게이트 동봉(additive·B2) — _resolve_mass가 부착한 학교용지·GB·농지·산지 등 경고
+        #   (developability·warnings·legal_refs). 컨텍스트 없으면 None(정직 생략).
+        "special_parcel": mass.get("special_parcel"),
         # ★캐시 적중 표기(additive·무날조) — /bim의 cached는 '무거운계산(LLM/IFC) 캐시 적중'을 의미한다
         #   (mass._cache_hit이 아님). 동일 설계입력 2회째면 LLM/IFC를 생략하고 캐시값을 즉시 반환(True).
         "cached": bim_cache_hit,
@@ -1164,6 +1234,8 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         #   기존 키는 그대로 두고 새 키 compliance만 추가(소비처 무파손·전역 공용화 결실).
         "compliance": mass.get("compliance"),
+        # ★특이부지 게이트 동봉(additive·B2) — 학교용지·GB·농지·산지 등 경고(컨텍스트 없으면 None).
+        "special_parcel": mass.get("special_parcel"),
         # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True). 라이브 검증용.
         "cached": bool(mass.get("_cache_hit")),
     }
@@ -1576,7 +1648,10 @@ def _build_site_context_for_layout(req: LayoutRequest, mass: dict[str, Any]):
     return site_context_from_zone(
         req.zone_code, area,
         zone_name=req.zone_name,
-        ordinance_far_pct=None, ordinance_bcr_pct=None,
+        # ★B1 교정 — 기존 하드코딩 None(조례 미반영)이던 것을 req의 부지분석 실효 한도로 교체.
+        #   미제공 시 여전히 None(기존 동작 100% 불변) — 제공 시에만 site_context_from_zone이
+        #   법정상한보다 우선 적용(조례가 법정을 넘으면 내부에서 법정으로 클램프·가짜 상향 없음).
+        ordinance_far_pct=req.ordinance_far_pct, ordinance_bcr_pct=req.ordinance_bcr_pct,
         avg_unit_area_sqm=req.avg_unit_area_sqm,
         unit_types=req.unit_types,
         building_use_kr=map_building_use_kr(req.building_use),
@@ -1671,6 +1746,8 @@ async def compute_design_layout(project_id: str, req: LayoutRequest):
         "total_units": candidate.get("estimated_units") if candidate else mass.get("total_units"),
         # ★C2R 계약 동봉(additive) — _resolve_mass가 부착한 envelope_result·geometry_invariants·rule_trace.
         "compliance": mass.get("compliance"),
+        # ★특이부지 게이트 동봉(additive·B2) — 학교용지·GB·농지·산지 등 경고(컨텍스트 없으면 None).
+        "special_parcel": mass.get("special_parcel"),
         # ★캐시 적중 표기(additive·무날조) — 동일 요청 2회째면 캐시 즉시반환(True).
         "cached": bool(mass.get("_cache_hit")),
         "disclaimer": "AI 보조 초안 — 기하 SSOT(매스·배치·평면). 최종 인허가·설계 책임은 건축사.",

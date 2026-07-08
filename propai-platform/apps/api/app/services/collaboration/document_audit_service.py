@@ -108,14 +108,17 @@ async def run_design_document_audit(
                 os.unlink(tmp.name)
 
     # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    ledger_wb = None                       # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_design_audit
 
-        await record_design_audit(
+        ledger_wb = await record_design_audit(
             result=result, tenant_id=tenant_id, project_id=project_id,
             created_by=created_by,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("원장 배선 append 실패(design_audit/document)", err=str(e)[:160])
 
-    return ("completed", summarize_audit(result))
+    # ★성장루프 조인키: 요약 최상위 `ledger_hash` 표준 노출(공용 헬퍼 — 미적재 시 키 생략)
+    from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+    return ("completed", attach_ledger_hash(summarize_audit(result), ledger_wb))

@@ -109,6 +109,43 @@ export function SolarPlacementCard({
         </div>
       )}
 
+      {/* ★건축가능 볼륨(envelope) — 백엔드가 함께 반환하지만 그간 타입만 선언·렌더 0(핸드오프 손실).
+          compact 여부와 무관하게 항상 표시(요약 모드에서도 최고층수·용적률 등 핵심 수치는 유용). */}
+      {res.envelope && (
+        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+          {res.envelope.max_floors != null && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-center">
+              <p className="text-[9px] text-[var(--text-hint)]">최고층수</p>
+              <p className="text-[11px] font-black text-[var(--text-primary)]">{res.envelope.max_floors}층</p>
+            </div>
+          )}
+          {res.envelope.max_height_m != null && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-center">
+              <p className="text-[9px] text-[var(--text-hint)]">최고높이</p>
+              <p className="text-[11px] font-black text-[var(--text-primary)]">{res.envelope.max_height_m}m</p>
+            </div>
+          )}
+          {res.envelope.realistic_far_pct != null && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-center">
+              <p className="text-[9px] text-[var(--text-hint)]">현실 용적률</p>
+              <p className="text-[11px] font-black text-[var(--text-primary)]">{res.envelope.realistic_far_pct}%</p>
+            </div>
+          )}
+          {res.envelope.min_building_spacing_m != null && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-center">
+              <p className="text-[9px] text-[var(--text-hint)]">동간 최소이격</p>
+              <p className="text-[11px] font-black text-[var(--text-primary)]">{res.envelope.min_building_spacing_m}m</p>
+            </div>
+          )}
+          {res.envelope.daylight_loss_pct != null && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-center">
+              <p className="text-[9px] text-[var(--text-hint)]">일조 손실률</p>
+              <p className="text-[11px] font-black text-[var(--text-primary)]">{res.envelope.daylight_loss_pct}%</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 8방위 동지 일조시간 */}
       {res.orientation_scores && res.orientation_scores.length > 0 && (
         <div className="mt-4">

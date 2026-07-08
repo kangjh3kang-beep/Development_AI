@@ -558,7 +558,12 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
 
             {/* AI 상세 해석(avm) + 신뢰도 검증 */}
             <Section no="Ⅶ" title="AI 상세 해석 · 검증">
-              <VerificationBadge analysisType="desk_appraisal" context={res as unknown as Record<string, unknown>} />
+              <VerificationBadge
+                analysisType="desk_appraisal"
+                context={res as unknown as Record<string, unknown>}
+                // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+                ledgerHash={(res as unknown as { ledger_hash?: string })?.ledger_hash}
+              />
               {narrLoading && (
                 <div className="mt-3 rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/20 p-4">
                   <p className="mb-2 text-[11px] text-[var(--text-hint)]">AI 해석 생성 중…</p>

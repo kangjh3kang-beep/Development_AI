@@ -78,6 +78,8 @@ interface AnalysisVerificationPanelProps {
   context?: Record<string, unknown> | null;
   /** EvidencePanel 항목. 빈 배열/미전달 시 EvidencePanel 렌더 건너뜀. */
   evidenceItems?: EvidenceItem[];
+  /** 서버 분석 원장 sha256(응답 최상위 ledger_hash) — VerificationBadge 피드백 조인키로 전달. */
+  ledgerHash?: string;
   /**
    * 보고서·요약 최상단에만 TrustBadge를 노출할 때 true.
    * 분석 단계 중간 노드에서는 false(기본).
@@ -92,6 +94,7 @@ export function AnalysisVerificationPanel({
   address,
   context,
   evidenceItems,
+  ledgerHash,
   showTrustBadge = false,
   className = "",
 }: AnalysisVerificationPanelProps) {
@@ -124,6 +127,7 @@ export function AnalysisVerificationPanel({
         <VerificationBadge
           analysisType={resolvedAnalysisType}
           context={context!}
+          ledgerHash={ledgerHash}
         />
       )}
 

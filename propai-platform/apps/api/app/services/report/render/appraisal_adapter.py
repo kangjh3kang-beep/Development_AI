@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence_bridge import evidence_block_from_contract
 from .model import (
     DataTableBlock,
     KVTableBlock,
@@ -188,6 +189,13 @@ def build_report_model_from_appraisal(
                 ai_paragraphs.append(f"{key}: {v.strip()}")
         sections.append(Section(title="6. AI 상세 해석", blocks=[NarrativeBlock(paragraphs=ai_paragraphs)]))
 
-    # 7. 면책 — 정본 모델 최상위 disclaimer 필드로 전달(세 렌더러가 공통 하단 문구로 자동 출력).
+    # 7. 산출 근거·법령 링크 — desk_appraisal 서비스가 표준 계약(build_evidence_block)으로
+    #    이미 만들어 둔 result["evidence"](채택가 산식·교차검증·감정평가법/부동산공시법 verified
+    #    링크)를 브리지로 옮겨 담는다. 계약 데이터가 실제 있을 때만 부착(없으면 섹션 생략 — 정직).
+    ev_block = evidence_block_from_contract(data.get("evidence"), title=None)
+    if ev_block is not None:
+        sections.append(Section(title="7. 산출 근거·법령 링크", blocks=[ev_block]))
+
+    # 8. 면책 — 정본 모델 최상위 disclaimer 필드로 전달(세 렌더러가 공통 하단 문구로 자동 출력).
     #    비어 있으면 None 을 넘겨 렌더러 기본 문구(tokens.DISCLAIMER_TEXT)로 자연스럽게 대체된다.
     return ReportModel(meta=meta, sections=sections, disclaimer=data.get("disclaimer") or None)

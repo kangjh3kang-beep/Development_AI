@@ -303,19 +303,45 @@ async def interpret_digital_twin(req: DigitalTwinInterpretRequest) -> dict:
 
     from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
 
+    async def _with_ledger_hash(resp: dict) -> dict:
+        """★성장루프 조인키: 해석 요약을 원장에 best-effort 적재(멱등) 후 `ledger_hash` 노출.
+
+        주소/PNU 식별자가 없으면 적재하지 않는다(익명 체인 누적 방지 — 파이프라인과 동일 정책).
+        실패해도 해석 응답은 무손상.
+        """
+        _addr = (req.address or "").strip() or None
+        _pnu = (req.pnu or "").strip() or None
+        if not (_addr or _pnu):
+            return resp
+        try:
+            from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+            from app.services.ledger.ledger_adapters import record_user_analysis
+            wb = await record_user_analysis(
+                analysis_type="digital_twin",
+                summary={
+                    "address": _addr, "pnu": _pnu,
+                    "section_keys": sorted((resp.get("sections") or {}).keys()) or None,
+                    "used_fields": used_fields or None,
+                },
+                pnu=_pnu, address=_addr, source="digital_twin",
+            )
+            return attach_ledger_hash(resp, wb)
+        except Exception:  # noqa: BLE001 — 원장 적재 실패해도 해석 결과 무손상
+            return resp
+
     data_for_interp = dict(summary)
     if context:
         data_for_interp["context"] = context
     ckey = cache_key("digital_twin", data_for_interp)
     cached = await get_cached(ckey)
     if cached:
-        return {
+        return await _with_ledger_hash({
             "ok": True,
             "sections": cached,
             "cached": True,
             "grounding": {"used_fields": used_fields},
             "note": "AI 해석·참고용 — 가상준공 매스(AI 절차생성)·표고(SRTM 30m)는 실측·인허가도면이 아닙니다.",
-        }
+        })
 
     from app.services.ai.digital_twin_interpreter import DigitalTwinInterpreter
 
@@ -331,7 +357,7 @@ async def interpret_digital_twin(req: DigitalTwinInterpretRequest) -> dict:
     if ok:
         await put_cached(ckey, "digital_twin", sections)
 
-    return {
+    resp = {
         "ok": ok,
         "sections": sections if isinstance(sections, dict) else {},
         "cached": False,
@@ -339,6 +365,8 @@ async def interpret_digital_twin(req: DigitalTwinInterpretRequest) -> dict:
         "note": "AI 해석·참고용 — 가상준공 매스(AI 절차생성)·표고(SRTM 30m)는 실측·인허가도면이 아닙니다.",
         **({} if ok else {"message": "AI 해석 생성에 실패했습니다(LLM 키/타임아웃)."}),
     }
+    # 성공 해석만 원장 적재(실패 응답은 학습가치 없음 — 무의미 적재 방지)
+    return (await _with_ledger_hash(resp)) if ok else resp
 
 
 @router.get("/aerial-image", summary="항공 정사영상 프록시(키 비노출, 지면 텍스처)")

@@ -37,6 +37,13 @@ type DeliberationFinding = {
 // 구획 보고서 한 항목.
 type SectionItem = { item_id?: string };
 
+// 공학지표(L3-B) 한 항목 — DeliberationConsole.AnalysisResult.sim_metrics와 동형(엔진 원시 계약).
+type SimMetric = { metric_id: string; value: number | null; unit: string; status: string; flags: string[] };
+// 유사사례(L4) — 엔진 원시 계약과 동형.
+type Precedent = { status: string; n: number; distribution: Record<string, number> | null } | null;
+// 정성(L3-C) 한 항목 — 엔진 원시 계약과 동형.
+type Qual = { item: string | null; status: string; grade: string | null };
+
 // 성공/degraded 공용 — 빠진 필드는 옵셔널(degraded면 findings:[], complianceScore:null 등).
 type DeliberationResult = {
   status: string; // "ok" | "degraded"
@@ -49,6 +56,11 @@ type DeliberationResult = {
   skipped?: string[];
   snapshot_id?: string | null;
   input_hash?: string | null;
+  // ★핸드오프 손실 복구(D4) — BFF가 동봉하지만 그간 소비되지 않던 3키. additive 확장(옵셔널)이라
+  //   BFF 응답에 없으면(구버전/압축응답) 그냥 미렌더(무목업). DeliberationConsole.tsx:277-300 참고.
+  sim_metrics?: SimMetric[];
+  precedent?: Precedent;
+  qualitative?: Qual[];
 };
 
 /* ── 판정/상태 색상 토큰 ── */
@@ -179,6 +191,9 @@ export function DeliberationResultPanel() {
   const sections = result?.sections ?? {};
   const sectionEntries = Object.entries(sections).filter(([, items]) => items && items.length > 0);
   const skipped = result?.skipped ?? [];
+  // ★핸드오프 손실 복구(D4) — 있을 때만 렌더(무목업). 엔진 미가동/구버전 응답이면 조용히 생략.
+  const simMetrics = result?.sim_metrics ?? [];
+  const qualitative = result?.qualitative ?? [];
 
   return (
     <section className="cc-panel cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] p-6">
@@ -311,6 +326,49 @@ export function DeliberationResultPanel() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* 공학지표(L3-B) — sim_metrics(핸드오프 손실 복구·있을 때만) */}
+          {simMetrics.length > 0 && (
+            <div>
+              <div className="cc-label text-[var(--text-tertiary)]">공학지표(L3-B)</div>
+              <div className="mt-1.5 space-y-1.5">
+                {simMetrics.map((m) => (
+                  <div key={m.metric_id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-[var(--text-secondary)]">{m.metric_id}</span>
+                    <span className="text-[var(--text-primary)]">{m.value ?? "-"} {m.unit}</span>
+                    {(m.flags ?? []).map((fl) => (
+                      <StatusTag key={fl} value={fl} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 유사사례(L4) — precedent(핸드오프 손실 복구·있을 때만) */}
+          {result.precedent && (
+            <div className="text-xs text-[var(--text-secondary)]">
+              <span className="cc-label text-[var(--text-tertiary)]">유사사례(L4)</span>{" "}
+              <StatusTag value={result.precedent.status} /> n={result.precedent.n}
+              {result.precedent.distribution && (
+                <span className="ml-1 text-[var(--text-tertiary)]">
+                  {JSON.stringify(result.precedent.distribution)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 정성(L3-C) — qualitative(핸드오프 손실 복구·있을 때만) */}
+          {qualitative.length > 0 && (
+            <div className="text-xs text-[var(--text-secondary)]">
+              <span className="cc-label text-[var(--text-tertiary)]">정성(L3-C)</span>{" "}
+              {qualitative.map((q, i) => (
+                <span key={q.item ?? i} className="mr-2">
+                  {q.item} <StatusTag value={q.status} /> {q.grade}
+                </span>
+              ))}
             </div>
           )}
 

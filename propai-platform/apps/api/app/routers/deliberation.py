@@ -7,6 +7,7 @@ Phase 0: `GET /health` — 엔진 `/api/v1/doctor`를 인증 후 프록시하되
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import ValidationError
 
 from app.services.auth.auth_service import get_current_user
-from app.services.deliberation import binding_service
+from app.services.deliberation import binding_service, scenario_matrix
 from app.services.deliberation._engine_contract import (
     analysis_input_hash,
     build_input_dump,
@@ -25,6 +26,7 @@ from app.services.deliberation._engine_contract import (
     is_deterministic_path,
     prevalidate,
 )
+from app.services.deliberation.scenario_matrix import ScenarioMatrixRequest, ScenarioSpec
 from app.services.ledger.audit_ledger import append_audit
 from apps.api.config import get_settings
 from apps.api.integrations.base_client import CircuitBreaker
@@ -783,3 +785,153 @@ async def deliberation_analyze_task(run_id: str, user=Depends(get_current_user))
                                  input_hash=bih, decision="pending", http_status=200, fail_closed=False)
     return {"degraded": False, "async": True, "status": status or "PENDING", "run_id": run_id,
             "result": None, "audit_degraded": ad, "audit_skipped": sk}
+
+
+# ── 시나리오 매트릭스(BE-4) — 하나의 부지에 다경우수(overrides) 결정론 비교 ────────────────────
+#
+# 아래 헬퍼는 기존 `deliberation_analyze()`(§analyze BFF)의 흐름을 그대로 재현하되, 시나리오 1건이
+# 실패해도 전체 요청을 raise로 죽이지 않고 그 시나리오만 unavailable로 강등한다(배치 특성상 부분
+# 실패가 정상). build_input_dump·prevalidate·analysis_input_hash·content_input_hash·
+# is_deterministic_path·binding_service.lookup/insert·_engine_post_analyze·_engine_get_analysis·
+# _integrity_ok·_record_audit·_get_degrade_reason·_breaker는 기존 함수를 그대로 호출(복제 없음) —
+# 새로 생기는 것은 이 함수의 제어흐름(호출 순서) 자체뿐이며, `deliberation_analyze()`는 무수정이다.
+
+_SCENARIO_CONCURRENCY = 4  # 엔진 동시부하·circuit breaker 고려 — asyncio.gather 무제한 동시성 금지
+_SCENARIO_BUDGET_MULTIPLIER = 3.0  # 전체 예산 가드 = 단일 read timeout × 배수(ceil(캡/동시성)+여유 근사)
+
+
+async def _run_scenario(base_payload: dict[str, Any], spec: ScenarioSpec, user: Any, tenant: str) -> dict[str, Any]:
+    """시나리오 1건 실행 — overrides 병합 → analyze와 동일 흐름(멱등캐시 경유) → 매트릭스 항목으로 정규화.
+    엔진 미도달·무결성실패·입력오류는 raise 없이 unavailable/invalid_input 정직 강등(배치 부분실패 허용)."""
+    try:
+        merged_payload, warnings = scenario_matrix.apply_overrides(base_payload, spec.overrides)
+    except Exception:  # noqa: BLE001 — ★독립리뷰 HIGH: 클라이언트 overrides 구조 오류는
+        #   해당 시나리오만 강등(배치 생존 계약) — 미처리 예외로 배치 전체 500 금지.
+        logger.warning("deliberation_scenario_invalid_overrides", scenario_id=spec.scenario_id)
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label, reason="invalid_overrides")
+    try:
+        dump = build_input_dump(merged_payload)
+    except ValidationError:
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                   reason="invalid_input", warnings=warnings)
+    err = prevalidate(dump)
+    if err:
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label, reason=err, warnings=warnings)
+
+    cih = content_input_hash(dump)
+    ih = analysis_input_hash(dump)
+    snapshot = dump.get("snapshot_id")
+    deterministic = is_deterministic_path(dump)
+
+    async def _audit(action: str, run_id: str | None, decision: str) -> bool:
+        """배치용 감사 — ★독립리뷰 HIGH: fail_closed=False(감사 1건 실패가 배치 전체를 502로
+        죽이면 안 됨). 미기록 사유는 warnings로 정직 표면화. 반환=감사 정상기록 여부 — 권위
+        판정(reuse/authoritative) 직전 호출은 False면 해당 시나리오를 audit_failed로 강등해
+        '감사 없는 권위 판정 제공 금지' 원칙을 배치에서도 보존한다."""
+        degraded_a, sk = await _record_audit(user, tenant, action=action, run_id=run_id,
+                                             input_hash=ih, decision=decision, http_status=200,
+                                             fail_closed=False)
+        warnings.extend(sk)
+        return not degraded_a
+
+    if deterministic:
+        existing = await binding_service.lookup(tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot)
+        if existing is not None:
+            run_id = existing["run_id"]
+            result = existing.get("result")
+            if result is None:
+                result, greason = await _engine_get_analysis(run_id, tenant=tenant)
+                if result is None:
+                    await _audit("analyze_scenario_reuse", run_id, "degraded")
+                    return scenario_matrix.unavailable_result(
+                        spec.scenario_id, spec.label, reason=_get_degrade_reason(greason),
+                        run_id=run_id, warnings=warnings)
+            if not _integrity_ok(result, existing.get("input_hash")):
+                await _audit("analyze_scenario_reuse", run_id, "degraded")
+                return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                           reason="invalid_response", run_id=run_id,
+                                                           warnings=warnings)
+            if not await _audit("analyze_scenario_reuse", run_id, "reuse"):
+                # 감사 미기록이면 권위 판정 제공 금지(analyze의 fail-closed와 등가) — 시나리오만 강등.
+                return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                           reason="audit_failed", run_id=run_id,
+                                                           warnings=warnings)
+            compat = _compat_fields(result)
+            return scenario_matrix.normalize_result(spec.scenario_id, spec.label, compat, result,
+                                                     run_id=run_id, reused=True, warnings=warnings)
+
+    res, reason = await _engine_post_analyze(dump, deterministic=deterministic, tenant=tenant)
+    if res is None:
+        await _audit("analyze_scenario", None, "degraded")
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label, reason=reason, warnings=warnings)
+
+    if not _integrity_ok(res, ih) or not _is_uuid(res.get("run_id")):
+        _breaker.record_failure()
+        logger.error("deliberation_scenario_integrity_violation", scenario_id=spec.scenario_id, expected_ih=ih)
+        await _audit("analyze_scenario", None, "degraded")
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                   reason="invalid_response", warnings=warnings)
+
+    run_id = str(res["run_id"])
+    result = res
+    inserted = await binding_service.insert(
+        run_id=run_id, tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot,
+        input_hash=ih, source="sync", created_by=str(getattr(user, "id", "")), deterministic=deterministic)
+    if deterministic and not inserted:  # 동시성 경합 — 승자 결속을 권위본으로(analyze와 대칭)
+        again = await binding_service.lookup(tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot)
+        if again is not None:
+            run_id = again["run_id"]
+            won = again.get("result")
+            wreason = "ok"
+            if won is None:
+                won, wreason = await _engine_get_analysis(run_id, tenant=tenant)
+            if won is None or not _integrity_ok(won, again.get("input_hash")):
+                await _audit("analyze_scenario", run_id, "degraded")
+                r2 = "invalid_response" if won is not None else _get_degrade_reason(wreason)
+                return scenario_matrix.unavailable_result(spec.scenario_id, spec.label, reason=r2,
+                                                           run_id=run_id, warnings=warnings)
+            result = won
+        else:
+            await _audit("analyze_scenario", None, "degraded")
+            return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                       reason="invalid_response", warnings=warnings)
+
+    if not await _audit("analyze_scenario", run_id, "authoritative"):
+        # 감사 미기록이면 권위 판정 제공 금지(analyze의 fail-closed와 등가) — 시나리오만 강등.
+        return scenario_matrix.unavailable_result(spec.scenario_id, spec.label,
+                                                   reason="audit_failed", run_id=run_id, warnings=warnings)
+    compat = _compat_fields(result)
+    return scenario_matrix.normalize_result(spec.scenario_id, spec.label, compat, result,
+                                             run_id=run_id, reused=False, warnings=warnings)
+
+
+@router.post("/scenario-matrix")
+async def deliberation_scenario_matrix(req: ScenarioMatrixRequest,
+                                       user=Depends(get_current_user)) -> dict[str, Any]:
+    """시나리오 매트릭스 — base 입력 + overrides N건(최대 12) → 각 결정론 분기 실행·비교.
+
+    완화전제 적용/미적용·측정/한도 대안값·종상향(용도지역 변경)·산정대상 payload 변형을 동시 비교한다.
+    각 시나리오는 기존 /analyze와 동일 흐름(멱등캐시·무결성검증·감사)을 경유(§analyze BFF 재사용) —
+    엔진 미도달/거부는 해당 시나리오만 unavailable로 정직 강등(200, raise 금지). LLM/과금 없음(결정론 경로만,
+    use_llm 미지원). 동시성은 4개로 캡(circuit breaker·엔진 부하 보호), 전체 예산 초과 시 전 시나리오
+    budget_exceeded로 강등(부분결과의 반쪽 신뢰 노출보다 정직한 전면 강등을 택함)."""
+    tenant = _tenant(user)
+    sem = asyncio.Semaphore(_SCENARIO_CONCURRENCY)
+
+    async def _bounded(spec: ScenarioSpec) -> dict[str, Any]:
+        async with sem:
+            return await _run_scenario(req.base, spec, user, tenant)
+
+    budget = get_settings().deliberation_engine_read_timeout_s * _SCENARIO_BUDGET_MULTIPLIER
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*(_bounded(spec) for spec in req.scenarios)), timeout=budget)
+    except TimeoutError:
+        logger.warning("deliberation_scenario_matrix_budget_exceeded", n=len(req.scenarios))
+        results = [scenario_matrix.unavailable_result(spec.scenario_id, spec.label, reason="budget_exceeded")
+                  for spec in req.scenarios]
+
+    comparison = scenario_matrix.build_comparison(results)
+    logger.info("deliberation_scenario_matrix", n=len(req.scenarios),
+               best=comparison.get("best_scenario_id"))
+    return {"scenarios": results, "comparison": comparison}

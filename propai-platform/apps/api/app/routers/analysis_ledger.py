@@ -44,12 +44,14 @@ class AppendRequest(BaseModel):
 
 @router.post("/append", summary="분석 결과 원장 적재(버전+해시체인)")
 async def append(req: AppendRequest, current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return await ledger.append_analysis(
+    res = await ledger.append_analysis(
         analysis_type=req.analysis_type, payload=req.payload,
         tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
         pnu=req.pnu, address=req.address, project_id=req.project_id,
         source=req.source, created_by=str(getattr(current, "user_id", "") or "") or None,
     )
+    # ★성장루프 조인키: content_hash 를 표준 필드 `ledger_hash` 로도 노출(공용 헬퍼 — 프론트 피드백 키잉 계약 통일)
+    return ledger.attach_ledger_hash(res, res)
 
 
 @router.get("/latest", summary="체인 최신 분석 조회(타입 지정 또는 전체)")

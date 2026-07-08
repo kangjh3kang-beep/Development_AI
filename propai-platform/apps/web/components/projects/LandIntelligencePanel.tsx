@@ -22,6 +22,7 @@ import {
   SpecialParcelLegalPrelim,
   type SpecialParcelFactorLike,
 } from "@/components/projects/SpecialParcelLegalPrelim";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
 // ── Icons ──
@@ -323,6 +324,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const [scenarioData, setScenarioData] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number; scenarioStatus: string; honest: string | null } | null>(null);
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
+  // AI 내러티브(수지 해석) 옵트인 — 자동 추천(3)·심층 분석 버튼(triggerDeepAnalysis) 양쪽이 공유.
+  // 종전엔 use_llm 미전송이라 백엔드 기본값(true)에 암묵 의존해 항상 ON이었다. 기본 true로 유지해
+  // 기존 동작을 보존하면서, 끄면 결정론 추천만(무과금) 받을 수 있게 한다(D1).
+  const [useLlm, setUseLlm] = useState(true);
 
   // ── 다필지 통합분석(/zoning/integrated-analysis) API state ──
   //   parcelCount>1 && parcels.length>1일 때만 호출. 결과는 '읽기 소비'(SSOT 재기록 금지) — 로컬 state.
@@ -461,7 +466,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     }
 
     const sAddr = data.address.trim();
-    const sKey = `scenario:${sAddr}:${zoningData?.land_area_sqm ?? ""}`;
+    const sKey = `scenario:${sAddr}:${zoningData?.land_area_sqm ?? ""}:${useLlm ? "L" : "D"}`;
     const sCached = getCachedAnalysis<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number; scenarioStatus: string; honest: string | null }>(sKey, TTL_7D);
     if (sCached) { setScenarioData(sCached); setScenarioLoading(false); return; }
 
@@ -475,6 +480,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             address: data!.address!.trim(),
             land_area_sqm: zoningData?.land_area_sqm ?? undefined,
             region: data?.address?.includes("서울") ? "서울특별시" : "경기도",
+            use_llm: useLlm,
           },
         });
         // 백엔드 응답을 프론트엔드 타입으로 변환 (부분응답에서 recommendations 누락 시 빈배열 폴백)
@@ -501,7 +507,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     const timer = setTimeout(fetchScenarios, 1200);
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.address, zoningData?.land_area_sqm]);
+  }, [data?.address, zoningData?.land_area_sqm, useLlm]);
 
   // ── 다필지 여부(SSOT 기준) — parcelCount>1 && 실제 필지목록>1일 때만 통합분석 경로 진입 ──
   //   (단일/유효<2는 위 단일 경로(/zoning/analyze·/feasibility/auto-recommend)를 그대로 사용)
@@ -593,6 +599,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           land_area_sqm: zoningData?.land_area_sqm ?? undefined,
           region: data.address.includes("서울") ? "서울특별시" : "경기도",
           equity_won: 15_000_000_000,
+          use_llm: useLlm,
         },
       });
       const recs = raw.recommendations ?? [];
@@ -610,7 +617,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     } finally {
       setDeepAnalysisLoading(false);
     }
-  }, [data?.address, data?.pnu, isReady, projectId, runAnalysis, zoningData?.land_area_sqm]);
+  }, [data?.address, data?.pnu, isReady, projectId, runAnalysis, zoningData?.land_area_sqm, useLlm]);
 
   // ── Data Integration: zoning API > local calc > defaults ──
   const aiData = aiResult?.data;
@@ -946,6 +953,15 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 </p>
               </div>
             </div>
+
+            {/* AI 내러티브 옵트인(기본 on — 기존 동작 보존) — 자동 추천·심층 분석 버튼이 공유. */}
+            <UseLlmToggle
+              checked={useLlm}
+              onChange={setUseLlm}
+              label="AI 내러티브 포함"
+              hint="자동 추천·심층 분석에도 적용됩니다(끄면 결정론 추천만·무과금)"
+              className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]"
+            />
 
             {/* Zoning & Regulation KPI */}
             <div className="space-y-4">

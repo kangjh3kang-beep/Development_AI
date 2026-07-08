@@ -338,7 +338,28 @@ async def pricing_generate(body: dict, db: AsyncSession = Depends(get_db),
 async def pricing_suggest(bcode: str | None = None, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
     """P1-1 기준층 적정분양가 3안(공/기/보) — 주변시세(거래사례비교) 기반. bcode 선택(미전달 시 PNU 유도)."""
-    return await suggest_base_price(db, ctx.site_id, bcode=bcode)
+    res = await suggest_base_price(db, ctx.site_id, bcode=bcode)
+    # ★성장루프 조인키: 제안 결과 요약을 원장에 best-effort 적재(멱등 — 같은 내용 재조회는
+    #   버전 증가 없음) 후 최상위 `ledger_hash` 노출. 데이터 미가용(unavailable)은 적재 생략(정직).
+    if isinstance(res, dict) and res.get("data_source") == "live":
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        mr = res.get("market_reference") or {}
+        wb = await record_user_analysis(
+            analysis_type="pricing_suggest",
+            summary={
+                "address": res.get("address"), "lawd_cd": res.get("lawd_cd"),
+                "development_type": res.get("development_type"),
+                "market_pp_supply_10k": mr.get("market_pp_supply_10k"),
+                "market_pp_exclusive_10k": mr.get("market_pp_exclusive_10k"),
+                "tiers": res.get("tiers"),
+            },
+            tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
+            project_id=str(ctx.site_id), address=res.get("address"),
+            source="pricing_suggest", created_by=str(ctx.user.id),
+        )
+        res = attach_ledger_hash(res, wb)
+    return res
 
 
 @actions_router.get("/pricing/revenue")
@@ -366,12 +387,15 @@ async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
     if res.get("ok"):
         await db.commit()
         # Phase 1: 분양매출 SSOT 합류(best-effort) — solve_base는 achieved_total_10k를 total로 정규화
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
         from app.services.ledger.ledger_adapters import record_pricing_revenue
-        await record_pricing_revenue(
+        wb = await record_pricing_revenue(
             rev={**res, "total_revenue_10k": res.get("achieved_total_10k")},
             round_id=str(round_id),
             tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
             project_id=str(ctx.site_id), created_by=str(ctx.user.id))
+        # ★성장루프 조인키: 최상위 `ledger_hash` 표준 노출(공용 헬퍼 — 미적재 시 키 생략)
+        attach_ledger_hash(res, wb)
     return res
 
 
@@ -409,11 +433,14 @@ async def pricing_group_apply(body: dict, db: AsyncSession = Depends(get_db),
     if res.get("ok"):
         await db.commit()
         # Phase 1: 분양매출 SSOT 합류(best-effort 무중단 — append_analysis가 예외 흡수)
+        from app.services.ledger.analysis_ledger_service import attach_ledger_hash
         from app.services.ledger.ledger_adapters import record_pricing_revenue
-        await record_pricing_revenue(
+        wb = await record_pricing_revenue(
             rev=res, round_id=str(round_id),
             tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
             project_id=str(ctx.site_id), created_by=str(ctx.user.id))
+        # ★성장루프 조인키: 최상위 `ledger_hash` 표준 노출(공용 헬퍼 — 미적재 시 키 생략)
+        attach_ledger_hash(res, wb)
     return res
 
 

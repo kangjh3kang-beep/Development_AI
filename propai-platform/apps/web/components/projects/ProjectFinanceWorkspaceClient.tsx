@@ -632,6 +632,8 @@ export function ProjectFinanceWorkspaceClient({
                 <AnalysisVerdict
                   analysisType="avm"
                   context={{ avm: avmResult } as unknown as Record<string, unknown>}
+                  // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
+                  ledgerHash={(avmResult as unknown as { ledger_hash?: string })?.ledger_hash}
                   interpretation={[
                     { label: "추정 근거", text: avmResult.valuation_narrative ?? "" },
                     { label: "비교 사례 분석", text: avmResult.comparable_explanation ?? "" },

@@ -514,9 +514,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         analyze 가 시간경계를 넘었으면 analyze 를 돌린 직후 heal/correct 가 최신
         인사이트를 보게 순서를 보장한다(tick=60초 단위 시계). 부팅 안정화 초기 지연.
         """
-        from app.services.growth import learning_loop
         from app.tasks import growth_tasks
-        from apps.api.database.session import AsyncSessionLocal
 
         await _asyncio.sleep(120)  # 부팅 안정화 후 시작(flush 루프보다 늦게).
 
@@ -539,10 +537,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 if run_correct:
                     await _growth_run_locked("correct", growth_tasks._correct_async)
                 if run_learn:
-                    async def _learn_core():
-                        async with AsyncSessionLocal() as _s:
-                            return await learning_loop.run_learning_cycle(_s)
-                    await _growth_run_locked("learn", _learn_core)
+                    # ★C2: growth_learning_task._learn_async 재사용(세션 자체관리 async
+                    #   코어) — 과거엔 learning_loop.run_learning_cycle 만 호출해, 뒤이은
+                    #   improvement_agent.generate_prompt_candidates(프롬프트 개선후보
+                    #   A/B 후보군 등록)가 Celery 전용 경로(growth_learning_task._learn_async)
+                    #   에만 구현돼 있어 프로드(워커 미가동)에서 영구 미발화였다(중복구현
+                    #   제거 + read-back 배선 완결). asyncio.run 없는 순수 코루틴이라
+                    #   이미 가동 중인 인프로세스 스케줄러 루프에서 안전하게 await 가능.
+                    from app.tasks import growth_learning_task
+                    await _growth_run_locked("learn", growth_learning_task._learn_async)
                 if run_improve:
                     # L2 개선제안 — improvement_agent.generate_proposals(requires_approval=True 인간게이트).
                     #   GH_TOKEN 없으면 PR 생성 스킵·아티팩트만 기록(graceful). main push·자동머지 없음.

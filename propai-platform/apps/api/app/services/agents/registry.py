@@ -224,6 +224,19 @@ def _map_permit_response(res: dict[str, Any]) -> dict[str, Any]:
     return {"findings": findings, "summary": summary}
 
 
+def _record_engine_fallback(kind: str, **meta: Any) -> None:
+    """치유루프(성장뇌 healing_rules) 관측용 폴백 이벤트 — best-effort(예외 삼킴·주경로 무영향).
+
+    ★C3 producer: 외부 심의엔진 장애/미설정이 자가치유 루프(healing_rules._collect_candidates의
+    circuit-observe 집계)에 보이도록 event_type='fallback'을 남긴다. capture_service.record_fallback
+    자체가 이미 best-effort지만, import 실패(순환/미배포 등) 대비 이중 방어한다."""
+    try:
+        from app.services.growth.capture_service import record_fallback
+        record_fallback("deliberation_engine", kind, **meta)
+    except Exception:  # noqa: BLE001 — 관측 실패가 엔진 호출 흐름에 영향 없음
+        pass
+
+
 async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any]:
     """심의엔진 프로세스 엔드포인트(permit/design) 공통 호출. 수치/판정은 엔진 결정론 산출만.
 
@@ -233,6 +246,7 @@ async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any
     s = get_settings()
     base = (getattr(s, "DELIBERATION_ENGINE_URL", "") or "").rstrip("/")
     if not base:
+        _record_engine_fallback("engine_unreachable", reason="engine_url_unset", path=path)
         return {"findings": [], "summary": {"available": False, "reason": "engine_url_unset"}}
     # ★토큰 키 통일: 호스트 .env·BFF와 동일한 DELIBERATION_ENGINE_API_TOKEN 사용(불일치 시 401).
     token = getattr(s, "DELIBERATION_ENGINE_API_TOKEN", "") or ""
@@ -244,6 +258,8 @@ async def _call_engine_process(data: dict[str, Any], path: str) -> dict[str, Any
             r.raise_for_status()
             res = r.json()
     except Exception as exc:  # noqa: BLE001 — 라이브 실패는 graceful 표면화(무음 단정 금지)
+        _record_engine_fallback("engine_unreachable", reason=f"engine_call_failed:{type(exc).__name__}",
+                                path=path)
         return {"findings": [],
                 "summary": {"available": False, "reason": f"engine_call_failed:{type(exc).__name__}"}}
     return _map_permit_response(res if isinstance(res, dict) else {})
@@ -260,13 +276,29 @@ async def _design_tool(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_deliberation() -> SpecialistAgent:
+    # ★A3: market 선례(위 _build_market, try/except ImportError graceful)를 그대로 복제 —
+    #   기존 자산 PermitInterpreter를 주입해 심의 도메인의 interpreter=None dead-path를 해소한다.
+    #   LLM 키 부재/미배포 브랜치는 BaseInterpreter가 graceful degrade(결정론 findings는 무손상).
+    interpreter = None
+    try:
+        from app.services.ai.permit_interpreter import PermitInterpreter
+        interpreter = PermitInterpreter()
+    except Exception:  # noqa: BLE001 — 인터프리터 로드 실패해도 결정론 도구는 동작(graceful)
+        interpreter = None
     return SpecialistAgent(domain="심의", task_type="permit_process",
-                           tool=_deliberation_tool, interpreter=None)
+                           tool=_deliberation_tool, interpreter=interpreter)
 
 
 def _build_design() -> SpecialistAgent:
+    # ★A3: 위와 동일 선례 — DesignInterpreter 주입(design_process dead-path 해소).
+    interpreter = None
+    try:
+        from app.services.ai.design_interpreter import DesignInterpreter
+        interpreter = DesignInterpreter()
+    except Exception:  # noqa: BLE001 — 인터프리터 로드 실패해도 결정론 도구는 동작(graceful)
+        interpreter = None
     return SpecialistAgent(domain="설계", task_type="design_process",
-                           tool=_design_tool, interpreter=None)
+                           tool=_design_tool, interpreter=interpreter)
 
 
 # ── 정비사업 비례율: 시니어 도시계획전문가 평가기(evaluate_urban) 재사용 — 단일 산식 출처 ──

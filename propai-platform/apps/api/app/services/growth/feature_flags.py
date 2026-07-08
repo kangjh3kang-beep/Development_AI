@@ -50,6 +50,24 @@ ACTION_PROMPT_AB_ADOPT = "prompt_ab_adopt"
 # 임계 자동보정 1회 변경폭 상한(±20%). 한 번에 큰 점프 금지.
 CHANGE_CAP_PCT = 20.0
 
+# ★독립리뷰 MEDIUM 반영 — 임계별 절대 안전밴드(min, max).
+# read-back(C1.3)으로 current 가 '직전 자가보정값'이 되면서 ±20% 클램프가 매 사이클 이전값
+# 기준 상대 클램프로 작동 → 방향이 오래 일관되면 복리로 원점에서 멀어질 수 있다.
+# 상대 클램프와 별개로 절대 밴드를 강제해 장기 드리프트의 극단(경보 폭주/장애 무감지)을 차단한다.
+# 밴드 근거: fallback_warn_pct 기본 상수(analyzer.FALLBACK_WARN_PCT) 주변의 운용 가능 범위.
+THRESHOLD_ABS_BANDS: dict[str, tuple[float, float]] = {
+    "fallback_warn_pct": (3.0, 40.0),
+}
+
+
+def clamp_abs_band(name: str, value: float) -> float:
+    """임계 이름별 절대 안전밴드로 최종값을 자른다(밴드 미정의 임계는 그대로 통과)."""
+    band = THRESHOLD_ABS_BANDS.get(name)
+    if band is None:
+        return value
+    lo, hi = band
+    return round(min(max(value, lo), hi), 4)
+
 # 자동 토글 가능한 기능 화이트리스트(이 목록의 기능만 자동 비활성 가능).
 AUTO_TOGGLEABLE = {
     "llm_narrative",       # 분석 narrative LLM 보조(끄면 규칙 narrative 폴백).
@@ -111,15 +129,24 @@ def is_auto_toggleable(feature: str) -> bool:
 
 
 def _pick_better_version(
-    service: str, stats: dict[str, dict[str, Any]]
+    service: str, stats: dict[str, dict[str, Any]], *,
+    allowed_versions: list[str] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """service 의 버전별 품질통계에서 더 나은 버전을 후보군 내에서 고른다.
 
     stats = {version: {"pass": int, "fail": int, "up": int, "down": int, "samples": int}}
-    품질 점수 = pass율 + up율(높을수록 좋음). 후보군(PROMPT_AB_CANDIDATES[service]) 에
-    속한 버전만 비교 대상. 표본 부족·후보 없음·동률이면 (None, meta).
+    품질 점수 = pass율 + up율(높을수록 좋음). 후보군에 속한 버전만 비교 대상
+    (표본 부족·후보 없음·동률이면 (None, meta)).
+
+    allowed_versions: 명시 전달 시 그 목록을 후보군으로 쓴다(read-back 주입용 —
+    evaluate 가 prompt_candidates.<service> 실시간 값을 넣는다). 미전달이면 기존처럼
+    모듈 PROMPT_AB_CANDIDATES[service]를 쓴다(하위호환·무회귀). 이 함수 자체는 여전히
+    순수함수(DB 무의존)로 유지 — read-back 조회는 호출처(evaluate)의 책임.
     """
-    allowed = set(PROMPT_AB_CANDIDATES.get(service) or [])
+    allowed = set(
+        allowed_versions if allowed_versions is not None
+        else (PROMPT_AB_CANDIDATES.get(service) or [])
+    )
     if not allowed:
         return None, {"reason": "no_candidates"}
 
@@ -216,7 +243,9 @@ async def apply_threshold_autotune(
     from app.services.growth import schema_guard
 
     action_id = str(uuid.uuid4())
-    clamped = clamp_change(current, proposed, CHANGE_CAP_PCT)
+    # ★상대 ±20% 클램프 뒤 절대 안전밴드(THRESHOLD_ABS_BANDS)로 한 번 더 자른다 —
+    #   read-back 누적 보정(복리)이 장기적으로 극단으로 밀리는 것을 차단(독립리뷰 MEDIUM).
+    clamped = clamp_abs_band(name, clamp_change(current, proposed, CHANGE_CAP_PCT))
     setting_key = f"threshold.{name}"
     value = {"value": clamped, "previous": current, "proposed": proposed,
              "cap_pct": CHANGE_CAP_PCT}
@@ -271,14 +300,21 @@ async def apply_prompt_ab(
 ) -> dict[str, Any]:
     """프롬프트 A/B 자동채택 — 후보군 내 버전만 platform_settings('prompt.<service>') 기록.
 
+    후보군 = 수동 PROMPT_AB_CANDIDATES[service](코드 오버라이드) ∪ read-back
+    prompt_candidates.<service>(L3 improvement_agent 가 등록한 실시간 후보 레이블,
+    C2). 화이트리스트 밖 버전은 여전히 거부(임의 문자열 채택 금지 — 안전경계 불변).
+
     반환: {"action_id","applied","setting_key","service","version","reason"}.
     """
-    from app.services.growth import schema_guard
+    from app.services.growth import dynamic_config, schema_guard
 
     action_id = str(uuid.uuid4())
     allowed = set(PROMPT_AB_CANDIDATES.get(service) or [])
     if version not in allowed:
-        # ★사전등록 후보군 밖 버전은 채택 거부(임의 값 생성 금지).
+        # ★read-back: 정적 후보군에 없으면 L3 가 등록한 실시간 후보군도 확인한다.
+        allowed |= set(await dynamic_config.get_prompt_candidates(db, service))
+    if version not in allowed:
+        # ★사전등록 후보군(수동+read-back) 밖 버전은 채택 거부(임의 값 생성 금지).
         return {"action_id": action_id, "applied": False, "service": service,
                 "version": version, "reason": "not_in_candidates"}
 
@@ -403,7 +439,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
         # ── (1) 임계 자동보정: fallback_rate 인사이트의 baseline 분포로 재계산 ──
         # 최근 fallback_rate 인사이트들의 fallback_pct 평균을 baseline 으로 보고,
         # 현재 임계(FALLBACK_WARN_PCT)를 ±20% 내에서 그 분포 쪽으로 수렴.
-        from app.services.growth import analyzer
+        from app.services.growth import analyzer, dynamic_config
         frows = (await db.execute(text(
             "SELECT (metrics_json->>'fallback_pct')::float "
             "FROM platform_insights "
@@ -415,10 +451,18 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
             baseline = sum(pcts) / len(pcts)
             # 제안 임계 = baseline 의 1.5배(정상범위 위) — 단, 현재값 대비 ±20% 클램프는 실행기가.
             proposed = round(baseline * 1.5, 2)
+            # ★current 는 정적상수가 아니라 실제 현재 실효값(직전 자동보정이 기록한
+            # platform_settings 값)을 읽는다 → 매번 15.0 기준으로 재보정하는 고정
+            # 루프가 사라지고 설정값이 목표 분포로 누적수렴한다.
+            current = dynamic_config.as_float(
+                await dynamic_config.get_dynamic(
+                    "threshold.fallback_warn_pct", db=db),
+                analyzer.FALLBACK_WARN_PCT,
+            )
             candidates.append({
                 "kind": ACTION_THRESHOLD_AUTOTUNE,
                 "name": "fallback_warn_pct",
-                "current": analyzer.FALLBACK_WARN_PCT,
+                "current": current,
                 "proposed": proposed,
                 "trigger_key": "threshold:fallback_warn_pct",
             })
@@ -443,17 +487,25 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
                     "trigger_key": "feature:llm_narrative",
                 })
 
-        # ── (3) 프롬프트 A/B 자동채택: 후보군 있는 service 만(없으면 스킵) ──
-        if PROMPT_AB_CANDIDATES:
-            stats = await _ab_stats(db)
-            for service, vstats in stats.items():
-                best, meta = _pick_better_version(service, vstats)
-                if best:
-                    candidates.append({
-                        "kind": ACTION_PROMPT_AB_ADOPT,
-                        "service": service, "version": best, "stats_meta": meta,
-                        "trigger_key": f"prompt:{service}",
-                    })
+        # ── (3) 프롬프트 A/B 자동채택: 후보(수동 PROMPT_AB_CANDIDATES ∪ read-back
+        #      prompt_candidates.<service>)가 있는 service 만(둘 다 없으면 스킵) ──
+        # ★C2: 과거엔 PROMPT_AB_CANDIDATES(항상 빈 dict)만 게이트로 써서 _ab_stats 조차
+        #   호출되지 않는 죽은 경로였다. 이제 telemetry 에 실제 등장한 service 마다
+        #   실시간 후보(L3 등록분 포함)를 조회해 판단한다(후보 없으면 기존과 동일 스킵).
+        stats = await _ab_stats(db)
+        for service, vstats in stats.items():
+            allowed_versions = PROMPT_AB_CANDIDATES.get(service)
+            if not allowed_versions:
+                allowed_versions = await dynamic_config.get_prompt_candidates(db, service)
+            if not allowed_versions:
+                continue
+            best, meta = _pick_better_version(service, vstats, allowed_versions=allowed_versions)
+            if best:
+                candidates.append({
+                    "kind": ACTION_PROMPT_AB_ADOPT,
+                    "service": service, "version": best, "stats_meta": meta,
+                    "trigger_key": f"prompt:{service}",
+                })
     except Exception as e:  # noqa: BLE001
         logger.warning("L1 후보 도출 실패: %s", str(e)[:160])
         return summary
@@ -527,9 +579,9 @@ __all__ = [
     "evaluate",
     "apply_threshold_autotune", "apply_feature_toggle", "apply_prompt_ab",
     # 순수 함수(단위검증 공개).
-    "clamp_change", "is_auto_toggleable", "_pick_better_version", "_should_disable",
+    "clamp_change", "clamp_abs_band", "is_auto_toggleable", "_pick_better_version", "_should_disable",
     # 상수.
-    "CHANGE_CAP_PCT", "AUTO_TOGGLEABLE", "CRITICAL_FEATURES",
+    "CHANGE_CAP_PCT", "THRESHOLD_ABS_BANDS", "AUTO_TOGGLEABLE", "CRITICAL_FEATURES",
     "PROMPT_AB_CANDIDATES", "PROMPT_AB_MIN_SAMPLES",
     "ACTION_THRESHOLD_AUTOTUNE", "ACTION_FEATURE_TOGGLE", "ACTION_PROMPT_AB_ADOPT",
 ]

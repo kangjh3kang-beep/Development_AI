@@ -57,11 +57,14 @@ export function AnalysisVerdict({
   defaultOpen = false,
   autoRunVerification = true,
   className = "",
+  ledgerHash,
 }: {
   /** 검증 종류(VerificationBadge로 전달). */
   analysisType: string;
   /** 검증 컨텍스트(원본+출력). null이면 검증 배지 숨김. */
   context: Record<string, unknown> | null;
+  /** 서버 분석 원장 sha256(응답 최상위 ledger_hash) — VerificationBadge 피드백 조인키로 전달. */
+  ledgerHash?: string;
   /** AI 해석(문자열/섹션배열/레코드). 없으면 해석부 숨김. */
   interpretation?: Interpretation;
   /** 레코드형 해석을 정렬·라벨링할 [키, 라벨] 목록(선택). */
@@ -96,6 +99,7 @@ export function AnalysisVerdict({
             analysisType={analysisType}
             context={context}
             autoRun={autoRunVerification}
+            ledgerHash={ledgerHash}
           />
         </div>
       )}

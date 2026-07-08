@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
+from .evidence_bridge import evidence_block_from_contract
 from .model import (
     GradeBadgeBlock,
     KPITile,
@@ -112,6 +114,28 @@ def _build_exec_summary(summary: dict, risk: dict) -> Section:
     return Section(title="심사 요약 (Deal Snapshot)", blocks=blocks)
 
 
+def _pipeline_site_evidence(pipeline_result: dict) -> Any:
+    """stages.site_analysis.data 의 표준 근거 계약(evidence[]/legal_refs[]) → EvidenceBlock.
+
+    파이프라인은 _attach_site_trust_blocks 가 부지분석 stage data 에 evidence/legal_refs 를
+    이미 부착해 둔다(가정값 부지는 빈 배열 — 그 경우 여기서도 None → 섹션 미부착·정직).
+    stages 는 dict({stage: entry}) 또는 list([entry,...]) 두 직렬화 형태를 모두 허용한다.
+    """
+    stages = pipeline_result.get("stages")
+    entry = None
+    if isinstance(stages, dict):
+        entry = stages.get("site_analysis")
+    elif isinstance(stages, list):
+        entry = next((s for s in stages
+                      if isinstance(s, dict) and s.get("stage") == "site_analysis"), None)
+    if not isinstance(entry, dict):
+        return None
+    # StageResult 직렬화({"stage":..,"data":{..}}) 또는 flat dict 모두 대응(_extract_data와 동일 규칙).
+    data = entry["data"] if isinstance(entry.get("data"), dict) else entry
+    return evidence_block_from_contract(
+        {"evidence": data.get("evidence"), "legal_refs": data.get("legal_refs")}, title=None)
+
+
 def build_report_model_from_pipeline(pipeline_result: dict, narratives: dict | None = None) -> ReportModel:
     """파이프라인 통합분석 결과 → 정본 ReportModel."""
     # ★기존 서비스 재사용(산식 복제 0)
@@ -143,6 +167,9 @@ def build_report_model_from_pipeline(pipeline_result: dict, narratives: dict | N
         if texts:
             narr_by_section.setdefault(sec_no, []).extend(texts)
 
+    # 부지분석 근거·법령 링크(표준 계약) — 실데이터가 있을 때만 입지분석 섹션에 부착(정직).
+    site_evidence = _pipeline_site_evidence(pipeline_result)
+
     sections: list[Section] = []
     for sec in rd.get("sections", []) or []:
         no = sec.get("section_no")
@@ -150,6 +177,10 @@ def build_report_model_from_pipeline(pipeline_result: dict, narratives: dict | N
         rows = _content_to_rows(sec.get("content") or {})
         if rows:
             blocks.append(KVTableBlock(rows=rows))
+        # 입지분석 섹션(2)에 산출 근거·법령 링크 부착(stage data 의 표준 계약 그대로 — 산식 0)
+        # 복사본으로 부착 — 여러 섹션이 매칭돼도 같은 가변 객체를 공유하지 않게 한다(dataclass).
+        if site_evidence is not None and no == _STAGE_TO_SECTION["site_analysis"]:
+            blocks.append(dataclasses.replace(site_evidence, title="산출 근거·법령 링크"))
         # 해당 단계 AI 서술 부착
         if no in narr_by_section:
             blocks.append(NarrativeBlock(title="AI 상세 해석", paragraphs=narr_by_section[no]))
@@ -178,6 +209,8 @@ def build_report_model_from_bank(bank_result: dict) -> ReportModel:
 
     ★재구현 금지: 기존 서비스가 만든 10섹션 dict(meta/sections/completeness)를 Block 으로 옮겨 담기만.
       섹션 제목에 이미 번호가 있어(예 '1. 사업개요') section_no 는 비운다(이중 번호 방지).
+    ※ 근거 블록: BankReadyReportService 결과에는 표준 evidence/legal_refs 계약이 없어
+      EvidenceBlock 을 부착하지 않는다(가짜 근거 생성 금지 — 서비스가 계약을 붙이면 자동 소비 가능).
     """
     meta_d = bank_result.get("meta") or {}
     comp = bank_result.get("completeness") or {}
