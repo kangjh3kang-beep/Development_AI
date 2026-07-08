@@ -1105,7 +1105,12 @@ export function ProjectPipelinePanel({
   /* ── Pipeline View (default) ── */
   return (
     <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all relative">
-      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.02] pointer-events-none" />
+      {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
+      <div
+        className="absolute inset-0 opacity-[0.02] pointer-events-none"
+        style={{ backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)", backgroundSize: "8px 8px" }}
+        aria-hidden
+      />
 
       {/* ── Header ── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-[var(--line)] bg-gradient-to-r from-[var(--accent-strong)]/5 to-transparent">

@@ -332,7 +332,12 @@ export function ProjectDesignWorkspaceClient({
                 
                 {/* 2D Vector CAD View Frame */}
                 <div className="relative rounded-[2rem] border border-[var(--line-strong)] overflow-hidden aspect-[3/2] bg-[var(--surface-soft)] flex items-center justify-center group/floor">
-                  <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/grid.png')] opacity-10 pointer-events-none" />
+                  {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
+                  <div
+                    className="absolute inset-0 opacity-10 pointer-events-none"
+                    style={{ backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)", backgroundSize: "8px 8px" }}
+                    aria-hidden
+                  />
                   <img
                     src={results.cadFloorPlanUrl}
                     alt="AI Floor Plan"

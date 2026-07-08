@@ -12,10 +12,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toggleUseDistrict } from "@/lib/kakao-map";
+import { PYEONG_SQM } from "@/lib/formatters";
 
 type MapType = "ROADMAP" | "SKYVIEW" | "HYBRID";
-
-const PYEONG = 3.305785;
 
 /** 좌측 아이콘 버튼 — 롤오버(hover) 시 메뉴명 툴팁 표시. */
 function IconBtn({
@@ -152,7 +151,7 @@ export function KakaoMapControls({
         if (pts.length >= 3) {
           polyRef.current = new kakao.maps.Polygon({ map, path: pts, strokeWeight: 2, strokeColor: "#ef4444", strokeOpacity: 0.9, fillColor: "#ef4444", fillOpacity: 0.18 });
           const area = Math.round(polyRef.current.getArea());
-          setMeasureText(`면적 ${area.toLocaleString()} ㎡ (${Math.round(area / PYEONG).toLocaleString()} 평)`);
+          setMeasureText(`면적 ${area.toLocaleString()} ㎡ (${Math.round(area / PYEONG_SQM).toLocaleString()} 평)`);
         } else {
           setMeasureText("면적: 점을 3개 이상 찍으세요");
         }

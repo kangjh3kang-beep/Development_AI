@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { AlertTriangle, CheckCircle2, Clock, Map, Puzzle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import {
   MultiParcelAttributeMatrix,
@@ -237,7 +238,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
             ) : result.aggregate?.total_area_sqm ? (
               <p className="inline-flex flex-wrap items-center gap-1 text-[var(--text-primary)]">
                 <Puzzle className="size-3.5 shrink-0" aria-hidden />통합 합필 면적 <b className="text-[var(--accent-strong)]">{Math.round(result.aggregate.total_area_sqm).toLocaleString()}㎡</b>
-                {result.aggregate.total_area_sqm ? ` (${Math.round(result.aggregate.total_area_sqm / 3.3058).toLocaleString()}평)` : ""}
+                {result.aggregate.total_area_sqm ? ` (${Math.round(result.aggregate.total_area_sqm / PYEONG_SQM).toLocaleString()}평)` : ""}
               </p>
             ) : (
               <p className="text-[var(--text-secondary)]">집계 대기 중</p>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Layers } from "lucide-react";
+import { PYEONG_SQM } from "@/lib/formatters";
 
 /**
  * 다필지 통합 분석 메타 — 백엔드(_integrated_context)가 내려주는 통합 결과 요약.
@@ -11,8 +12,6 @@ export interface IntegratedMeta {
   total_area_sqm?: number | null;
   dominant_zone?: string | null;
 }
-
-const SQM_PER_PYEONG = 3.305785;
 
 /**
  * 통합 분석 고지 뱃지.
@@ -32,7 +31,7 @@ export function IntegratedParcelsBadge({
   const area = integrated?.total_area_sqm ?? 0;
   if (!integrated || n < 2 || area <= 0) return null;
 
-  const py = Math.round(area / SQM_PER_PYEONG);
+  const py = Math.round(area / PYEONG_SQM);
   const zone = (integrated.dominant_zone || "").trim();
   const mixed = zone === "mixed_review_required";
 

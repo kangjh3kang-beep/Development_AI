@@ -9,8 +9,9 @@ import type { NodeId, LifecycleStage } from "./types";
 import { NODES } from "./node-registry";
 
 /**
- * LifecycleStageViews(컴포넌트)의 비공개 StageType(8)과 정합하는 로컬 미러.
- * 컴포넌트 미수정 원칙상 직접 import하지 않고, 검증된 8값을 여기 선언한다(코드 대조: LifecycleStageViews.tsx L30-38).
+ * 화면탭 뷰가 쓰는 StageType(8, snake)의 로컬 미러.
+ * 라이프사이클 단계 SSOT는 lib/lifecycle-stages.ts(store LIFECYCLE_STAGES 재export)다.
+ * (구 LifecycleStageViews 컴포넌트가 이 8값을 정의했으나 삭제되어, 검증된 8값을 여기 로컬 선언한다.)
  */
 export type StageType =
   | "site_analysis"
