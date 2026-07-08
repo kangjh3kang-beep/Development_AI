@@ -94,8 +94,13 @@ class FeasibilityServiceV2:
         equity_won: int = 10_000_000_000,  # 자기자본 100억 기본
         use_llm: bool = True,
         with_senior: bool = True,
+        parcels: list[dict] | None = None,
     ) -> dict:
-        """부지 주소로부터 최적 사업모델 Top 3 자동 추천."""
+        """부지 주소로부터 최적 사업모델 Top 3 자동 추천.
+
+        parcels(2필지 이상)가 오면 통합면적·우세용도(면적가중)로 산정한다 — 스칼라 land_area_sqm이
+        함께 오면 그것을 우선(기존 정답 경로 유지), 없으면 통합값으로 보강. zone 혼재 시 대표 유지.
+        """
 
         # Step 1: 용도지역 자동 감지
         from ..zoning.auto_zoning_service import AutoZoningService
@@ -110,6 +115,27 @@ class FeasibilityServiceV2:
         site_area = _raw_area if area_reliable else 1000  # 가정치(아래 area_reliable=False + 고지)
         special_districts = zoning.get("special_districts") or []
         land_category = zoning.get("land_category") or ""
+
+        # ★다필지 통합(감사 P1): parcels(2↑)면 통합면적·우세용도로 보강. 스칼라 land_area_sqm이
+        #   명시되면 그것이 우선(기존 정답 경로). zone 혼재 시 대표 유지 + zone_basis 정직 표기.
+        zone_basis = "single"
+        if parcels and isinstance(parcels, list) and len(parcels) >= 2:
+            try:
+                from ..land_intelligence.comprehensive_analysis_service import (
+                    build_integrated_context,
+                )
+                integrated = await build_integrated_context(parcels)
+                if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+                    if not land_area_sqm:      # 스칼라 미주입 시에만 통합면적으로 보강
+                        site_area = float(integrated["total_area_sqm"])
+                    _dz = integrated.get("dominant_zone")
+                    if _dz and _dz != "mixed_review_required":
+                        zone_type = _dz
+                        zone_basis = "integrated_dominant"
+                    else:
+                        zone_basis = "integrated_mixed_representative"
+            except Exception as e:  # noqa: BLE001 — 통합 실패는 단일 경로 폴백(무중단)
+                logger.warning("Top3 다필지 통합 실패 — 대표필지 폴백: %s", str(e)[:160])
 
         # Step 2: 특이부지 게이트 — 학교·도로·GB·농지·산지·맹지 등 비일상 토지는 Top3 산정 정책 분기.
         # ★게이트 정책 SSOT(special_parcel.gate_decision)로 일원화:
@@ -271,6 +297,9 @@ class FeasibilityServiceV2:
             "zone_type": zone_type,
             "zone_limits": zone_limits,
             "land_area_sqm": site_area,
+            # 면적·용도 출처 정직 표기 — single/integrated_dominant/integrated_mixed_representative.
+            "zone_basis": zone_basis,
+            "parcel_count": len(parcels) if (parcels and len(parcels) >= 2) else 1,
             "effective_far_pct": round(max_far, 1),   # FAR→GFA 산정에 실제 사용한 실효 용적률
             "legal_max_far_pct": legal_max_far,        # 법정상한(라벨용 — 실효와 다를 수 있음)
             "total_types_analyzed": len(results),

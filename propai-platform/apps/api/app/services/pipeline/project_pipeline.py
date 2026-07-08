@@ -618,6 +618,35 @@ class ProjectPipeline:
                 if pnu:
                     pre_collected["pnu_codes"] = [pnu]
 
+            # ★다필지 통합(RC#2): parcels가 오면 대표필지 면적을 통합면적으로 대체한다.
+            #   그동안 site stage가 대표필지 land_register 면적을 무조건 덮어써(위 :578) 설계·수지·
+            #   토지비가 전부 대표면적(예 763㎡)으로 캐스케이드되던 통로부재를 공용 SSOT로 봉합.
+            #   우선순위: ①통합면적(parcels≥2) > ②사용자 제공 site_data 면적 > ③대표필지. 정직표기(area_basis).
+            area_basis = "representative_parcel"
+            _parcels = (opts or {}).get("parcels")
+            if _parcels and isinstance(_parcels, list) and len(_parcels) >= 2:
+                try:
+                    from app.services.land_intelligence.comprehensive_analysis_service import (
+                        build_integrated_context,
+                    )
+                    integrated = await build_integrated_context(_parcels)
+                    if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+                        pre_collected["land_area_sqm"] = float(integrated["total_area_sqm"])
+                        _dz = integrated.get("dominant_zone")
+                        if _dz and _dz != "mixed_review_required":
+                            pre_collected["zone_type"] = _dz
+                        if integrated.get("blended_far_eff_pct") is not None:
+                            pre_collected["effective_far"] = float(integrated["blended_far_eff_pct"])
+                        if integrated.get("blended_bcr_eff_pct") is not None:
+                            pre_collected["effective_bcr"] = float(integrated["blended_bcr_eff_pct"])
+                        # 통합 메타를 site stage data에 부착 — 다운스트림(설계·수지·보고서) 그라운딩용.
+                        pre_collected["integrated_zoning"] = integrated
+                        pre_collected["parcel_count"] = integrated.get("parcel_count")
+                        area_basis = "integrated_parcels"
+                except Exception as e:  # noqa: BLE001 — 통합 실패는 단일 경로로 폴백(무중단)
+                    logger.warning("파이프라인 다필지 통합 실패 — 대표필지 폴백", err=str(e)[:160])
+            pre_collected["area_basis"] = area_basis  # 면적 출처 정직 표기(무날조)
+
             # 사용자 오버라이드(stage_overrides.site_analysis)는 실API 병합 이후 주입 —
             # comprehensive가 사용자값을 덮어쓰지 못하도록 적용 순서를 보장한다.
             site_overrides = self._stage_overrides_for(opts, "site_analysis")
@@ -662,6 +691,18 @@ class ProjectPipeline:
 
             effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
             effective_far = min(float(national_far or 200), float(ordinance_far or 200))
+
+            # ★다필지 통합(리뷰 HIGH): 위 min()은 대표필지 zone의 법정/조례로만 산출된다. 통합 블록이
+            #   면적가중 blended 실효율을 계산해뒀으면(area_basis="integrated_parcels") 그 값으로 대체 —
+            #   혼재 용도지역에서 zone 라벨만 우세용도로 바뀌고 FAR/BCR은 대표 zone에 머무는 라벨-숫자
+            #   불일치(이 코드베이스가 반복적으로 싸운 버그 클래스)를 다필지 경로에 재도입하지 않는다.
+            if pre_collected.get("area_basis") == "integrated_parcels":
+                _bf = pre_collected.get("effective_far")
+                _bb = pre_collected.get("effective_bcr")
+                if _bf is not None and float(_bf) > 0:
+                    effective_far = float(_bf)
+                if _bb is not None and float(_bb) > 0:
+                    effective_bcr = float(_bb)
 
             # 기부체납 인센티브 계산
             far_incentive: dict[str, Any] = {}
@@ -768,6 +809,11 @@ class ProjectPipeline:
                 "official_land_price": float(official_land_price),
                 "pnu_codes": pnu_codes,
                 "source": "pre_collected+comprehensive",
+                # ★다필지 통합 메타(리뷰 MEDIUM) — 면적 출처 정직표기·통합집계 그라운딩을 실제로 노출한다
+                #   (설정만 하고 응답에 안 실어 죽은 필드였던 것 봉합). 단일/미전달은 "representative_parcel".
+                "area_basis": pre_collected.get("area_basis", "representative_parcel"),
+                "parcel_count": pre_collected.get("parcel_count"),
+                "integrated_zoning": pre_collected.get("integrated_zoning"),
             }
             if applied_site_overrides:
                 state.stages["site_analysis"].data["applied_overrides"] = applied_site_overrides

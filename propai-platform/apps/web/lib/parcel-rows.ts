@@ -37,6 +37,10 @@ export interface ParcelRow {
   bcrLegalPct?: number | null;
   /** 필지 경계(GeoJSON geometry) — 서버 통합집계의 인접성(contiguous) 판정용(P1 감사). */
   geometry?: unknown;
+  /** 필지고유번호 — 서버 특이부지(detect_special_parcel)·통합게이트 정밀판정용(있으면 전달). */
+  pnu?: string | null;
+  /** 지목(land_category) — 구거·하천·학교용지 등 특이부지 감지에 필수(있으면 전달). */
+  land_category?: string | null;
 }
 
 /** 주소검색 결과(AddressEntry[])를 통합집계 입력행으로. 면적>0인 필지만 포함한다. */
@@ -61,7 +65,14 @@ export function entriesToParcelRows(entries: AddressEntry[]): ParcelRow[] {
  */
 export function parcelDataToRows(
   parcels:
-    | ReadonlyArray<{ address?: string; areaSqm?: number | null; zoneCode?: string | null }>
+    | ReadonlyArray<{
+        address?: string;
+        areaSqm?: number | null;
+        zoneCode?: string | null;
+        pnu?: string | null;
+        landCategory?: string | null;
+        geometry?: unknown;
+      }>
     | undefined
     | null,
 ): ParcelRow[] {
@@ -75,6 +86,10 @@ export function parcelDataToRows(
       zone_type: p.zoneCode ?? null,
       farPct: null, // 실효 용적/건폐는 store ParcelData에 없음(피커 경로에서만 풀데이터)
       bcrPct: null,
+      // 특이부지 감지(지목)·인접성 판정(geometry)·정밀판정(pnu)용 — 보유 시에만 전달(무날조).
+      ...(p.pnu ? { pnu: p.pnu } : {}),
+      ...(p.landCategory ? { land_category: p.landCategory } : {}),
+      ...(p.geometry ? { geometry: p.geometry } : {}),
     }));
 }
 
@@ -84,4 +99,17 @@ export function parcelDataToRows(
  */
 export function shouldSendParcels(rows: ParcelRow[]): boolean {
   return rows.length > 1;
+}
+
+/**
+ * 주소 문자열 목록 계약(list[str])용 공용 헬퍼 — /permits/ai-analysis·의사결정브리프처럼
+ * parcels를 '주소 리스트'로 받는 엔드포인트에 쓴다. parcelDataToRows의 면적>0 필터 의미론을
+ * 그대로 상속(별도 필터 재구현 금지)하고, 주소가 비면 제외한다.
+ */
+export function parcelAddressList(
+  parcels: Parameters<typeof parcelDataToRows>[0],
+): string[] {
+  return parcelDataToRows(parcels)
+    .map((r) => r.address)
+    .filter((a): a is string => Boolean(a));
 }

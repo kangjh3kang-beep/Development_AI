@@ -25,6 +25,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import {
@@ -508,8 +509,12 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
       // 설계·시공 입력 — SSOT 직접 읽기(미확보면 null → 백엔드가 정직 강등). 0 강제 금지(무목업).
       total_gfa_sqm:
         designData?.totalGfaSqm && designData.totalGfaSqm > 0 ? designData.totalGfaSqm : null,
-      land_area_sqm:
-        siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0 ? siteAnalysis.landAreaSqm : null,
+      // ★면적 SSOT: 다필지면 통합면적 우선(effectiveLandAreaSqm) — raw landAreaSqm를 쓰면
+      //   단일 PNU 분석이 대표면적으로 덮을 때 페르소나 5종이 과소면적으로 실행되던 버그(감사 P1).
+      land_area_sqm: (() => {
+        const a = effectiveLandAreaSqm(siteAnalysis);
+        return a && a > 0 ? a : null;
+      })(),
       zone_code: siteAnalysis?.zoneCode ?? null,
       building_type: designData?.buildingType ?? null,
       // 하드코딩 false 해소 — 사용자 옵트인 토글(useLlm) 값을 그대로 전달.
@@ -517,11 +522,9 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
     };
   }, [
     boundProjectId,
-    siteAnalysis?.address,
-    siteAnalysis?.pnu,
-    siteAnalysis?.parcels,
-    siteAnalysis?.landAreaSqm,
-    siteAnalysis?.zoneCode,
+    // siteAnalysis 전체를 의존성으로 — effectiveLandAreaSqm(siteAnalysis)가 객체를 통째로 읽으므로
+    //   개별 필드 나열 대신 전체를 넣어 exhaustive-deps 정합(재계산 비용은 미미).
+    siteAnalysis,
     feasibilityData?.equityWon,
     designData?.totalGfaSqm,
     designData?.buildingType,

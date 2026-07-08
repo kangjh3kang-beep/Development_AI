@@ -20,6 +20,87 @@ from app.services.zoning.far_incentive_calculator import calculate as calc_far_i
 
 logger = structlog.get_logger()
 
+_PYEONG = 3.305785  # 1평 = 3.305785㎡
+
+
+def build_area_annotation(
+    *,
+    land_area: float,
+    effective_far: float,
+    effective_bcr: float,
+    parcel_count: int = 1,
+    zone_mix: list | None = None,
+) -> str:
+    """면적의존 문구(최대 연면적/건축면적) 생성 — 단일필지·다필지 공용 SSOT.
+
+    왜 필요한가(쉬운 설명): 이 문구는 "대지면적 X㎡ 기준 최대 연면적 …"인데, 여러 필지를
+    합친 부지(다필지)에서는 X가 통합 면적이어야 한다. 예전엔 이 문구를 대표필지(작은 면적)로
+    한 번 만들고, 다필지 통합 때 숫자(용적률)만 바꾸고 문구는 안 고쳐서 "763㎡ 기준" 같은
+    대표필지 값이 그대로 노출되는 버그가 있었다. 그래서 문구 생성을 이 함수 1곳으로 모아,
+    단일 경로와 다필지 통합 경로가 같은 함수로 문구를 만들게 한다(어긋남 원천 차단).
+    """
+    max_gfa = land_area * effective_far / 100
+    max_bldg = land_area * effective_bcr / 100
+    # 다필지(2필지 이상)면 "통합 대지면적"임을 명시해 대표필지 오인을 막는다(정직 표기).
+    if parcel_count and parcel_count >= 2:
+        mix_note = ""
+        if zone_mix and len(zone_mix) >= 2:
+            mix_note = "(용도지역 혼재 — 면적가중 실효치 적용) "
+        prefix = f"{parcel_count}개 필지 통합 대지면적 {land_area:,.1f}㎡ {mix_note}기준으로"
+    else:
+        prefix = f"대지면적 {land_area:,.1f}㎡ 기준으로"
+    return (
+        f"{prefix} 최대 연면적 {max_gfa:,.1f}㎡ (약 {max_gfa / _PYEONG:,.0f}평), "
+        f"최대 건축면적 {max_bldg:,.1f}㎡ (약 {max_bldg / _PYEONG:,.0f}평)까지 "
+        f"건축이 가능합니다."
+    )
+
+
+def rebuild_area_dependent(
+    sec1: dict[str, Any],
+    *,
+    land_area: float,
+    effective_far: float,
+    effective_bcr: float,
+    zone_type: str,
+    national_far: float | None = None,
+    parcel_count: int = 1,
+    zone_mix: list | None = None,
+) -> dict[str, Any]:
+    """면적의존 산출물(annotations 문구 + far_optimization)만 통합 기준으로 재생성한다.
+
+    ★다필지 통합 override 전용 공용 함수. calc_effective_far 전체를 다시 부르지 않는다 —
+    대표필지 base의 조례값으로 단일존 실효율을 재산출하면 blended(면적가중) 수치와 어긋나기
+    때문이다(혼재 용도지역 자기모순). 오직 '면적에만 의존하는' 산출물 2가지만 갈아끼운다.
+    나머지 면적 무관 문구(법정/조례 서술)와 필드는 그대로 보존한다(무회귀).
+    """
+    out = dict(sec1)
+    _nat = national_far if national_far is not None else out.get("national_far_pct", effective_far)
+
+    # 1) annotations 중 '면적의존 문구'만 교체(다른 문구는 순서·내용 보존).
+    new_ann = build_area_annotation(
+        land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
+        parcel_count=parcel_count, zone_mix=zone_mix,
+    )
+    anns = list(out.get("annotations") or [])
+    replaced = False
+    for i, a in enumerate(anns):
+        # 면적의존 문구는 "최대 연면적"과 "건축이 가능합니다"를 함께 가진다(식별 키).
+        if isinstance(a, str) and "최대 연면적" in a and "건축이 가능합니다" in a:
+            anns[i] = new_ann
+            replaced = True
+            break
+    if not replaced and land_area > 0:
+        anns.append(new_ann)  # 원래 면적문구가 없던 경우(면적 0 등) 추가
+    out["annotations"] = anns
+
+    # 2) far_optimization(FAR 시나리오별 GFA 테이블)을 통합면적 기준으로 재생성.
+    if land_area > 0:
+        out["far_optimization"] = simulate_far_optimization(
+            zone_type, effective_far, float(_nat), land_area,
+        )
+    return out
+
 
 def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict[str, Any]:
     """실효 용적률 계층(법정범위→조례→계획상한→인센티브) 산정.
@@ -214,13 +295,12 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     )
 
     if land_area > 0:
-        max_gfa = land_area * effective_far / 100
-        max_bldg = land_area * effective_bcr / 100
+        # 면적의존 문구(최대 연면적/건축면적)는 공용 생성기 1곳에서 만든다(SSOT — 다필지 override가
+        #   같은 함수로 재생성하므로 대표필지·통합 문구가 어긋나지 않는다).
         annotations.append(
-            f"대지면적 {land_area:,.1f}㎡ 기준으로 최대 연면적 {max_gfa:,.1f}㎡ "
-            f"(약 {max_gfa / 3.305785:,.0f}평), "
-            f"최대 건축면적 {max_bldg:,.1f}㎡ (약 {max_bldg / 3.305785:,.0f}평)까지 "
-            f"건축이 가능합니다."
+            build_area_annotation(
+                land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
+            )
         )
 
     if incentive.get("simulation_table"):

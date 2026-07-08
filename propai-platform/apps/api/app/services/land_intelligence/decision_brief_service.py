@@ -113,7 +113,7 @@ class DecisionBriefService:
         parcel_count = len([p for p in (parcels or []) if p]) or (1 if address else 0)
 
         # ── 3개 도메인 병렬 집계(부지·시장/법규/인허가·Top3 — 부분실패 graceful) ──
-        site_task = self._run_site_market(address, tenant_id, project_id, use_llm)
+        site_task = self._run_site_market(address, tenant_id, project_id, use_llm, parcels)
         reg_task = self._run_regulation(address, use_llm)
         # ★통합면적 종단배선 — 다필지 통합면적(land_area_sqm)을 Top3 엔진에 전달해 판정 ROI 도
         #   통합면적 기준으로 산정(표시 GFA 와 판정 기준 단위 일치). 양수일 때만 적용(무회귀).
@@ -201,20 +201,39 @@ class DecisionBriefService:
 
     async def _run_site_market(
         self, address: str | None, tenant_id: str | None,
-        project_id: str | None, use_llm: bool,
+        project_id: str | None, use_llm: bool, parcels: list[str] | None = None,
     ) -> dict[str, Any]:
-        """부지/입지+시장 = ComprehensiveAnalysisService.analyze 재사용."""
+        """부지/입지+시장 = ComprehensiveAnalysisService.analyze 재사용.
+
+        ★다필지(감사 P1): parcels(주소목록) 2개↑면 공용 보강 SSOT(enrich_parcel_list)로 면적·용도지역을
+        붙여 analyze(parcels=…)에 전달 — 부지 서술·annotations·특이부지가 통합면적 기준으로 산출된다
+        (예전엔 site 파트만 대표필지로 호출돼 브리프 첫 화면이 대표 763㎡ 기준이었다).
+        """
         if not address:
             raise _DomainSkipError("주소 미확보 — 부지/시장 분석은 주소 기준입니다.")
         from app.services.land_intelligence.comprehensive_analysis_service import (
             ComprehensiveAnalysisService,
         )
+        enriched_parcels: list[dict[str, Any]] | None = None
+        _valid = [p for p in (parcels or []) if p]
+        if len(_valid) >= 2:
+            try:
+                from app.services.land_intelligence.parcel_excel_service import (
+                    ParcelExcelService,
+                )
+                enriched_parcels = await ParcelExcelService().enrich_parcel_list(
+                    [{"address": a} for a in _valid], with_building=False,
+                )
+            except Exception as e:  # noqa: BLE001 — 보강 실패는 단일 경로 폴백(브리프 무중단)
+                logger.warning("브리프 다필지 보강 실패 — 대표필지 폴백: %s", str(e)[:160])
+                enriched_parcels = None
         # use_llm=False면 llm_provider 미지정으로 호출(인터프리터 LLM 생략 경로 유지).
         return await ComprehensiveAnalysisService().analyze(
             address=address,
             llm_provider="anthropic" if use_llm else None,
             tenant_id=tenant_id,
             project_id=project_id,
+            parcels=enriched_parcels,
         )
 
     async def _run_regulation(self, address: str | None, use_llm: bool) -> dict[str, Any]:

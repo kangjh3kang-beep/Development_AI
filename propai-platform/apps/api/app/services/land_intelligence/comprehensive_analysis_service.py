@@ -18,6 +18,7 @@ from app.services.feasibility.permit_validator import (
     get_permitted_types,
     permitted_types_known,
 )
+from app.services.land_intelligence import far_tier_service
 from app.services.land_intelligence.land_info_service import LandInfoService
 
 logger = structlog.get_logger()
@@ -450,6 +451,17 @@ class ComprehensiveAnalysisService:
                 "integrated": True, "parcel_count": integrated.get("parcel_count"),
                 "dominant_zone": dz, "zone_mix": integrated.get("zone_mix"),
             }
+            # ★면적의존 산출물(annotations 문구·far_optimization)도 통합면적 기준으로 재생성한다.
+            #   숫자만 바꾸면 "대표 763㎡ 기준 최대 연면적…" 대표필지 문구가 그대로 남는 버그(RC#1)를
+            #   공용 SSOT 헬퍼로 봉합 — 문구/시나리오가 통합면적·N필지로 정합.
+            sec1 = far_tier_service.rebuild_area_dependent(
+                sec1,
+                land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
+                zone_type=(zone_type if isinstance(zone_type, str) else str(zone_type)),
+                national_far=sec1.get("national_far_pct"),
+                parcel_count=int(integrated.get("parcel_count") or 2),
+                zone_mix=integrated.get("zone_mix"),
+            )
 
         sec2 = self._calc_supply_areas(zone_type, land_area, effective_far, effective_bcr)
         sec3 = self._calc_land_prices(base, land_area)
@@ -795,56 +807,8 @@ class ComprehensiveAnalysisService:
         return result
 
     async def _integrated_context(self, parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
-        """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
-
-        ★공용 단일경유: /zoning/integrated-analysis와 동일한 _enrich_effective_and_special(필지별
-        실효=조례+법정+특이 in-place)+_aggregate_integrated_zoning(면적가중)을 재사용한다(중복산식 0).
-        프론트가 이미 면적·용도지역을 제공하므로 enrich_parcel_list(외부 재수집)는 생략 — 핫패스 경량.
-        N=1은 항등(단일필지값과 동일)이라 단일/다필지가 한 경로로 일원화된다(543㎡ 드리프트 버그 제거).
-        실패는 graceful None(단일 경로로 무회귀 폴백).
-        """
-        def _f(v: Any) -> float | None:
-            try:
-                return float(v) if v is not None else None
-            except (TypeError, ValueError):
-                return None
-
-        items: list[dict[str, Any]] = []
-        for p in parcels or []:
-            if not isinstance(p, dict):
-                continue
-            # 프론트 camelCase(AddressEntry) ↔ 집계 입력키(_far_eff 등) 정규화.
-            q: dict[str, Any] = {
-                "pnu": p.get("pnu"),
-                "address": p.get("address") or p.get("jibunAddress") or p.get("fullAddress"),
-                "zone_type": p.get("zone_type") or p.get("zoneCode") or p.get("zoneType"),
-                "land_category": p.get("land_category") or p.get("landCategory") or p.get("jimok"),
-                "area_sqm": _f(p.get("area_sqm") if p.get("area_sqm") is not None else p.get("areaSqm")),
-                # 실효/법정(프론트 farPct/bcrPct가 이미 조례반영 실효치 — 있으면 재계산 생략).
-                "_far_eff": _f(p.get("_far_eff") if p.get("_far_eff") is not None else p.get("farPct")),
-                "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
-                "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
-                "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
-                # ★P1(감사): 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구
-                #   미확정("형상 데이터 부족")이었다. 프론트가 보강한 GeoJSON을 그대로 전달.
-                "geometry": p.get("geometry"),
-            }
-            if (q["area_sqm"] or 0) > 0:
-                items.append(q)
-        if not items:
-            return None
-        try:
-            from app.services.zoning.special_parcel import _aggregate_integrated_zoning
-
-            # 실효치 미보유 필지가 있으면(프론트 미보강) 라우터 공용 enrich로 보강(조례 1회캐시·순수계산).
-            #   ★/zoning/integrated-analysis와 동일 산식 단일경유 — 보유 시 재계산 0(핫패스 경량).
-            if any(it.get("_far_eff") is None and it.get("zone_type") for it in items):
-                from apps.api.routers.auto_zoning import _enrich_effective_and_special
-                await _enrich_effective_and_special(items)
-            return _aggregate_integrated_zoning(items)
-        except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
-            logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])
-            return None
+        """다필지 통합 컨텍스트(모듈 공개 함수 build_integrated_context로 위임 — SSOT)."""
+        return await build_integrated_context(parcels)
 
     # ────────────────────────────────────────────
     # Section 1: 실효용적률 산정 (단일출처 far_tier_service 위임)
@@ -1426,3 +1390,62 @@ class ComprehensiveAnalysisService:
         """현행 실효 용적률과 분리된 종상향/종변경 잠재 시나리오(단일출처 위임)."""
         from app.services.land_intelligence import far_tier_service
         return far_tier_service.calc_upzoning(base, zone_type, land_area, location, dev_plans)
+
+
+# ────────────────────────────────────────────
+# 다필지 통합 컨텍스트 — 플랫폼 공용 진입점(SSOT)
+# ────────────────────────────────────────────
+
+async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
+
+    ★플랫폼 공용 단일경유(SSOT): /zoning/integrated-analysis와 동일한
+    _enrich_effective_and_special(필지별 실효=조례+법정+특이 in-place)
+    + _aggregate_integrated_zoning(면적가중)을 재사용한다(중복산식 0).
+    종합분석뿐 아니라 파이프라인·수지(Top3)·90초진단·의사결정브리프 등
+    다필지를 받는 모든 분석 진입점이 이 함수를 통해 통합 컨텍스트를 얻는다.
+    프론트가 이미 면적·용도지역을 제공하면 재수집 없이 경량으로 동작하고,
+    N=1은 항등(단일필지값과 동일)이라 단일/다필지가 한 경로로 일원화된다.
+    실패는 graceful None(호출측은 단일 경로로 무회귀 폴백).
+    """
+    def _f(v: Any) -> float | None:
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    items: list[dict[str, Any]] = []
+    for p in parcels or []:
+        if not isinstance(p, dict):
+            continue
+        # 프론트 camelCase(AddressEntry) ↔ 집계 입력키(_far_eff 등) 정규화.
+        q: dict[str, Any] = {
+            "pnu": p.get("pnu"),
+            "address": p.get("address") or p.get("jibunAddress") or p.get("fullAddress"),
+            "zone_type": p.get("zone_type") or p.get("zoneCode") or p.get("zoneType"),
+            "land_category": p.get("land_category") or p.get("landCategory") or p.get("jimok"),
+            "area_sqm": _f(p.get("area_sqm") if p.get("area_sqm") is not None else p.get("areaSqm")),
+            # 실효/법정(프론트 farPct/bcrPct가 이미 조례반영 실효치 — 있으면 재계산 생략).
+            "_far_eff": _f(p.get("_far_eff") if p.get("_far_eff") is not None else p.get("farPct")),
+            "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
+            "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
+            "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
+            # 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구 미확정.
+            "geometry": p.get("geometry"),
+        }
+        if (q["area_sqm"] or 0) > 0:
+            items.append(q)
+    if not items:
+        return None
+    try:
+        from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+        # 실효치 미보유 필지가 있으면(프론트 미보강) 라우터 공용 enrich로 보강(조례 1회캐시·순수계산).
+        #   ★/zoning/integrated-analysis와 동일 산식 단일경유 — 보유 시 재계산 0(핫패스 경량).
+        if any(it.get("_far_eff") is None and it.get("zone_type") for it in items):
+            from apps.api.routers.auto_zoning import _enrich_effective_and_special
+            await _enrich_effective_and_special(items)
+        return _aggregate_integrated_zoning(items)
+    except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
+        logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])
+        return None

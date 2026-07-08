@@ -10,6 +10,7 @@ import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { useUiReset } from "@/store/useUiReset";
 import { apiClient } from "@/lib/api-client";
+import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
@@ -793,6 +794,10 @@ export function ProjectPipelinePanel({
         land_use_districts: siteAnalysis.landUseDistricts ?? [],
       } : undefined;
 
+      // ★다필지 통합(RC#2): store 다필지(2필지↑)면 파이프라인에 필지목록 전송 → site stage가
+      //   통합면적 기준으로 산출(대표 1필지 763㎡ 축소 버그 제거). 1필지·미보유는 미전송(무회귀).
+      const parcelRowsForBackend = parcelDataToRows(siteAnalysis?.parcels);
+
       // 백엔드 진행 단계 호출 (부지분석만)
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
         body: {
@@ -802,6 +807,7 @@ export function ProjectPipelinePanel({
             stop_after: "site_analysis",
             site_data: siteDataForBackend,  // 항상 전달 (null이어도 백엔드가 폴백 처리)
           },
+          ...(shouldSendParcels(parcelRowsForBackend) ? { parcels: parcelRowsForBackend } : {}),
         },
         useMock: false,
         timeoutMs: 170000,  // 부지분석은 데이터수집+LLM으로 ~60초 소요 → 넉넉히
@@ -858,11 +864,15 @@ export function ProjectPipelinePanel({
         coordinates: siteAnalysis.coordinates ?? null,
       } : undefined;
 
+      // ★다필지 통합(RC#2): 전체 파이프라인에도 필지목록 전송 → 설계·수지·보고서까지 통합면적 기준.
+      const parcelRowsForFull = parcelDataToRows(siteAnalysis?.parcels);
+
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
         body: {
           address: address.trim(),
           project_id: projectId,
           options: { site_data: siteDataForBackend },
+          ...(shouldSendParcels(parcelRowsForFull) ? { parcels: parcelRowsForFull } : {}),
         },
         useMock: false,
         // 전체 7단계 동기 실행은 부지분석 재수집(~40s)+설계~보고서를 포함해 가장 무거운 호출이다.

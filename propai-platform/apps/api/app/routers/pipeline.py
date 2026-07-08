@@ -32,6 +32,10 @@ class PipelineRunRequest(BaseModel):
     address: str
     project_id: str | None = None
     options: dict | None = None
+    # 다필지 통합 개발 시 필지목록(2개 이상이면 site stage가 면적가중 통합면적·우세용도로 산출).
+    #   행 계약은 /analysis/comprehensive와 동일(camelCase/snake 양형 수용 — build_integrated_context 정규화).
+    #   미전달/1필지면 기존 단일주소 동작 그대로(무회귀).
+    parcels: list[dict[str, Any]] | None = None
 
 
 class StageRerunRequest(BaseModel):
@@ -44,6 +48,8 @@ class StageRerunRequest(BaseModel):
         default_factory=dict,
         description="해당 단계에 주입할 사용자 수정값 (예: {\"max_far\": 250})",
     )
+    # 다필지 통합 — run과 동일 계약(재실행도 통합면적 유지).
+    parcels: list[dict[str, Any]] | None = None
     stage_overrides: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description=(
@@ -101,6 +107,15 @@ def _build_stages_response(result) -> list[PipelineStageStatusResponse]:
 # ── 엔드포인트 ────────────────────────────────────────────
 
 
+def _merge_parcels_into_options(options: dict | None, parcels: list | None) -> dict | None:
+    """다필지목록을 options["parcels"]로 병합(하위호환·additive). parcels 없으면 원본 그대로."""
+    if not parcels:
+        return options
+    merged = dict(options or {})
+    merged["parcels"] = parcels
+    return merged
+
+
 @router.post(
     "/run",
     response_model=PipelineRunResponse,
@@ -113,7 +128,7 @@ async def run_pipeline(req: PipelineRunRequest):
     result = await pipeline.run(
         address=req.address,
         project_id=req.project_id,
-        options=req.options,
+        options=_merge_parcels_into_options(req.options, req.parcels),
     )
 
     stages = _build_stages_response(result)
@@ -573,7 +588,7 @@ async def generate_report(req: PipelineRunRequest):
     result = await pipeline.run(
         address=req.address,
         project_id=req.project_id,
-        options=req.options,
+        options=_merge_parcels_into_options(req.options, req.parcels),
     )
 
     # Fix #3: 결정론 cost/feasibility 산출을 분석원장에 적재(/run과 동일 경로·best-effort).
@@ -780,6 +795,10 @@ async def rerun_stage(req: StageRerunRequest):
         options["previous_stage_data"] = req.previous_result.get(
             "stages", req.previous_result
         )
+
+    # ★다필지 통합(리뷰 HIGH): 재실행도 parcels를 흘려 site_analysis가 통합면적을 유지한다 —
+    #   없으면 단계 재실행 시 대표필지 면적으로 조용히 회귀(원 버그 재현)한다.
+    options = _merge_parcels_into_options(options, req.parcels) or options
 
     pipeline = ProjectPipeline()
     result = await pipeline.run(
