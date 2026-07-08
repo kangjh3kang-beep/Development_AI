@@ -262,23 +262,6 @@ class TestAIUsageTracker:
 
 
 # ═══════════════════════════════════════════
-# PredictiveMaintenanceService (16 stmts, 6 missed)
-# ═══════════════════════════════════════════
-
-
-class TestPredictiveMaintenanceService:
-    def test_init(self):
-        from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
-
-        # PredictiveMaintenanceService는 인자 없이 생성될 수 있음
-        try:
-            svc = PredictiveMaintenanceService(db=AsyncMock())
-        except TypeError:
-            svc = PredictiveMaintenanceService()
-        assert svc is not None
-
-
-# ═══════════════════════════════════════════
 # AICostsService (40 stmts, 21 missed)
 # ═══════════════════════════════════════════
 

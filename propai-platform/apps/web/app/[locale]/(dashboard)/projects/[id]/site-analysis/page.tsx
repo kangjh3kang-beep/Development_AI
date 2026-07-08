@@ -19,6 +19,7 @@ import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/Projec
 import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel";
 import { EnvironmentAnalysisPanel } from "@/components/environment/EnvironmentAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
@@ -1055,10 +1056,9 @@ export default function SiteAnalysisPage() {
   };
 
   const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const runtimeMode = isMockMode()
+    ? dictionary.workspace.modeMock
+    : dictionary.workspace.modeLive;
   const t = dictionary.modulePlaceholders["site-analysis"];
 
   return (

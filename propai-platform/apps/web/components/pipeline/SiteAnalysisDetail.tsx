@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client"; // 다필지 지번별 용도지역·법규한도 조회(/zoning/parcels-info)
+import { PYEONG_SQM } from "@/lib/formatters";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -46,10 +47,8 @@ interface SiteAnalysisDetailProps {
 
 /* ── Helpers ── */
 
-const SQM_PER_PYEONG = 3.3058;
-
 function sqmToPyeong(sqm: number): string {
-  return (sqm / SQM_PER_PYEONG).toFixed(1);
+  return (sqm / PYEONG_SQM).toFixed(1);
 }
 
 function formatArea(sqm: unknown): string {

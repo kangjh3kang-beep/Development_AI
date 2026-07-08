@@ -90,7 +90,7 @@ class FeasibilityServiceV2:
         self,
         address: str,
         land_area_sqm: float | None = None,
-        region: str = "서울",
+        region: str = "",  # 빈값=주소 시도 추론에 양보(맹목 "서울"은 지방 매출 과대 — regional_pricing ②가 ③을 선점)
         equity_won: int = 10_000_000_000,  # 자기자본 100억 기본
         use_llm: bool = True,
         with_senior: bool = True,
@@ -109,7 +109,10 @@ class FeasibilityServiceV2:
 
         zone_type = zoning.get("zone_type", "")
         zone_limits = zoning.get("zone_limits") or {}
-        site_area = land_area_sqm or zoning.get("land_area_sqm") or 1000
+        # ── W1-5: 면적 미확보 시 무표기 1000㎡ 합성 금지 — 가정치 사용은 정직 고지 동반 ──
+        _raw_area = land_area_sqm or zoning.get("land_area_sqm") or 0
+        area_reliable = bool(_raw_area and _raw_area > 0)
+        site_area = _raw_area if area_reliable else 1000  # 가정치(아래 area_reliable=False + 고지)
         special_districts = zoning.get("special_districts") or []
         land_category = zoning.get("land_category") or ""
 
@@ -166,6 +169,7 @@ class FeasibilityServiceV2:
                 "honest_disclosure": special.get("honest_disclosure")
                 or "통상 절차로 해결 불가능한 제약이 포함되어 개발규모를 산정하지 않습니다.",
                 "land_price_reliable": False,
+                "area_reliable": area_reliable,
                 "ai_interpretation": None,
             }
 
@@ -304,6 +308,8 @@ class FeasibilityServiceV2:
             "all_results": results,  # Full ranking for reference
             # 토지비 신뢰성 — False면 공시지가 미확보로 절대 수익성(ROI·순이익)은 참고용(랭킹은 상대비교 유효).
             "land_price_reliable": land_price_reliable,
+            # 면적 신뢰성 — False면 면적 미확보로 1000㎡ 가정치 기준(전 수치 참고용·재산정 필요).
+            "area_reliable": area_reliable,
             # 시나리오 상태 — "tentative"면 전 후보가 선행절차 전제 잠정치(확정 아님). 프론트 렌더 분기 신호.
             "scenario_status": "tentative" if is_tentative else "actual",
         }
@@ -311,6 +317,11 @@ class FeasibilityServiceV2:
         if special:
             result["special_parcel"] = special
             result["honest_disclosure"] = special.get("honest_disclosure")
+        # 면적 가정치 사용 시 정직 고지(무날조 — 합성 입력을 실측처럼 보이게 하지 않음).
+        if not area_reliable:
+            result["area_disclosure"] = (
+                "부지면적 미확보 — 1000㎡ 가정치 기준 산정(참고용). 실제 면적 입력 시 재산정이 필요합니다."
+            )
 
         # ── ★P1 미래속성(종상향 잠재) 첨부 — '토지속성 확정(현재+미래)' 비전 배선 ──
         # 현행 추천(effective_far 기준)에 더해, 종상향(역세권/일반) 시 잠재 용적률을 정직 제시한다.
@@ -442,36 +453,27 @@ class FeasibilityServiceV2:
     # Helper methods for auto-generation
     # ------------------------------------------------------------------
 
+    # ── W1-3: 세대·면적 계수는 단일 출처(unit_standards)로 위임 — comprehensive(공급면적
+    #    카드)와 각자 테이블을 보유해 동일 GFA에서 세대수가 30% 안팎 어긋나던 이중정의 해소.
+    #    값 수정은 반드시 unit_standards에서(여기 재정의 금지).
+
     def _get_type_typical_far(self, dev_type: str) -> float:
-        """개발유형별 일반적 용적률."""
-        typical = {
-            "M01": 250, "M02": 300, "M03": 400, "M04": 250, "M05": 200,
-            "M06": 250, "M07": 400, "M08": 500, "M09": 400, "M10": 100,
-            "M11": 80, "M12": 150, "M13": 300, "M14": 250, "M15": 300,
-        }
-        return typical.get(dev_type, 250)
+        """개발유형별 일반적 용적률(단일 출처 unit_standards)."""
+        from app.services.feasibility.unit_standards import get_typical_far_pct
+
+        return get_typical_far_pct(dev_type)
 
     def _get_type_avg_unit_area(self, dev_type: str) -> float:
-        """개발유형별 평균 세대면적 (전용 m2)."""
-        areas = {
-            "M01": 84, "M02": 84, "M03": 59, "M04": 84, "M05": 49,
-            "M06": 84, "M07": 102, "M08": 39, "M09": 50, "M10": 165,
-            "M11": 200, "M12": 130, "M13": 30, "M14": 59, "M15": 84,
-        }
-        return areas.get(dev_type, 84)
+        """개발유형별 평균 세대면적(전용 ㎡, 단일 출처 unit_standards)."""
+        from app.services.feasibility.unit_standards import get_avg_exclusive_area_sqm
+
+        return get_avg_exclusive_area_sqm(dev_type)
 
     def _get_type_efficiency_ratio(self, dev_type: str) -> float:
-        """개발유형별 전용률 (전용면적/공급면적).
+        """개발유형별 전용률(전용/공급, 단일 출처 unit_standards)."""
+        from app.services.feasibility.unit_standards import get_exclusive_ratio
 
-        공동주택(아파트·오피스텔)은 코어·복도 등 공용면적으로 0.7~0.8,
-        단독·전원·타운하우스는 공용면적이 작아 0.9 수준.
-        """
-        low_rise = {"M10", "M11", "M12"}  # 단독·전원·타운하우스
-        if dev_type in low_rise:
-            return 0.90
-        if dev_type == "M08":  # 오피스텔 — 전용률 낮음
-            return 0.55
-        return 0.75
+        return get_exclusive_ratio(dev_type)
 
     def _get_regional_price(self, dev_type: str, region: str, address: str = "") -> int:
         """지역x개발유형별 평균 분양가 (원/평).

@@ -5,6 +5,8 @@
  * 모든 좌표는 m 단위 입력 → 내부적으로 scale 곱하여 px 변환.
  */
 
+import { PYEONG_SQM } from "@/lib/formatters";
+
 // ── 타입 ──
 
 export type CommandResult = {
@@ -303,7 +305,7 @@ const COMMANDS: CommandDef[] = [
       }
       area = Math.abs(area) / 2;
       const areaM2 = area / (store.scale * store.scale);
-      return { ok: true, message: `면적: ${areaM2.toFixed(2)}m² (${(areaM2 / 3.3058).toFixed(1)}평)` };
+      return { ok: true, message: `면적: ${areaM2.toFixed(2)}m² (${(areaM2 / PYEONG_SQM).toFixed(1)}평)` };
     },
   },
   {

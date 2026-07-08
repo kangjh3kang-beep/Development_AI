@@ -3,6 +3,8 @@
  * 국토부 표준품셈 기반 13개 공정별 비용 산출
  */
 
+import { PYEONG_SQM } from "@/lib/formatters";
+
 // ── 건물 용도별 기본 단가 (원/m²) ──
 const BASE_COST_PER_SQM: Record<string, number> = {
   apartment: 2_200_000,     // 공동주택
@@ -138,7 +140,7 @@ export function calculateConstructionCost(input: CostInput): CostResult {
   const indirectCostTotal = designFee + supervisionFee + overhead + profit + vat;
 
   const totalCost = directCostTotal + indirectCostTotal;
-  const costPerPyeong = input.totalFloorArea > 0 ? Math.round(totalCost / (input.totalFloorArea / 3.3058)) : 0;
+  const costPerPyeong = input.totalFloorArea > 0 ? Math.round(totalCost / (input.totalFloorArea / PYEONG_SQM)) : 0;
 
   return {
     baseCostPerSqm: baseCost,

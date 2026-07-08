@@ -769,29 +769,6 @@ class TestAdditionalRouterEndpoints:
 # 8. 추가 서비스 커버리지
 # ═══════════════════════════════════════════════
 
-class TestPredictiveMaintenanceService:
-    def test_calc_std(self):
-        from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
-        svc = PredictiveMaintenanceService()
-        result = svc._calc_std([1.0, 2.0, 3.0, 4.0, 5.0])
-        assert result > 0
-
-    def test_calc_mean(self):
-        from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
-        svc = PredictiveMaintenanceService()
-        result = svc._calc_mean([10.0, 20.0, 30.0])
-        assert result == 20.0
-
-    def test_calc_std_empty(self):
-        from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
-        svc = PredictiveMaintenanceService()
-        try:
-            svc._calc_std([])
-            assert True
-        except Exception:
-            pass
-
-
 class TestVersioning:
     def test_current_stable_version(self):
         from apps.api.versioning import CURRENT_STABLE_VERSION

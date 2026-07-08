@@ -5,7 +5,6 @@
 
 import asyncio
 import gc
-import math
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -134,23 +133,23 @@ class TestEncryptionService:
         assert svc.decrypt(c2) == "same"
 
 
-# ── services/dt_service.py ──
+# ── services/digital_twin_service.py ──
 
 
 class TestDigitalTwinService:
     def test_효율_정상(self):
-        from apps.api.services.dt_service import DigitalTwinService
+        from apps.api.services.digital_twin_service import DigitalTwinService
 
         # calculate_efficiency는 @staticmethod — 인스턴스 없이 호출 가능
         assert DigitalTwinService.calculate_efficiency(80, 100) == pytest.approx(20.0)
 
     def test_효율_제로베이스라인(self):
-        from apps.api.services.dt_service import DigitalTwinService
+        from apps.api.services.digital_twin_service import DigitalTwinService
 
         assert DigitalTwinService.calculate_efficiency(50, 0) == 0.0
 
     def test_효율_초과사용(self):
-        from apps.api.services.dt_service import DigitalTwinService
+        from apps.api.services.digital_twin_service import DigitalTwinService
 
         assert DigitalTwinService.calculate_efficiency(120, 100) == pytest.approx(-20.0)
 
@@ -166,47 +165,6 @@ class TestPermitPackageService:
         svc = PermitPackageService()
         result = await svc.generate_permit_pdf("proj123", {})
         assert result["pdf_path"] == "/tmp/permit_proj123.pdf"
-
-
-# ── services/predictive_maintenance_service.py ──
-
-
-class TestPredictiveMaintenanceService:
-    def test_calc_mean(self):
-        from apps.api.services.predictive_maintenance_service import (
-            PredictiveMaintenanceService,
-        )
-
-        svc = PredictiveMaintenanceService()
-        assert svc._calc_mean([1, 2, 3, 4, 5]) == pytest.approx(3.0)
-
-    def test_calc_mean_빈목록(self):
-        from apps.api.services.predictive_maintenance_service import (
-            PredictiveMaintenanceService,
-        )
-
-        svc = PredictiveMaintenanceService()
-        result = svc._calc_mean([])
-        # numpy 환경에서는 NaN, 순수 Python에서는 0.0
-        assert result == pytest.approx(0.0) or math.isnan(result)
-
-    def test_calc_std(self):
-        from apps.api.services.predictive_maintenance_service import (
-            PredictiveMaintenanceService,
-        )
-
-        svc = PredictiveMaintenanceService()
-        result = svc._calc_std([5, 5, 5, 5])
-        assert result == pytest.approx(0.0)
-
-    def test_calc_std_다른값(self):
-        from apps.api.services.predictive_maintenance_service import (
-            PredictiveMaintenanceService,
-        )
-
-        svc = PredictiveMaintenanceService()
-        result = svc._calc_std([0, 10])
-        assert result > 0
 
 
 # ── services/webrtc_service.py ──

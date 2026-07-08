@@ -23,31 +23,18 @@ from app.services.land_intelligence.land_info_service import LandInfoService
 
 logger = structlog.get_logger()
 
-# ── 개발방식별 전용율 (전용면적 / 공급면적) ──
-EXCLUSIVE_AREA_RATIO: dict[str, float] = {
-    "M01": 0.75,  # 재개발 (공동주택)
-    "M02": 0.75,  # 재건축 (공동주택)
-    "M03": 0.65,  # 역세권개발
-    "M04": 0.75,  # 지역주택조합
-    "M05": 0.70,  # 임대협동조합
-    "M06": 0.75,  # 일반분양 (공동주택)
-    "M07": 0.60,  # 주상복합
-    "M08": 0.55,  # 오피스텔
-    "M09": 0.55,  # 지식산업센터
-    "M10": 0.85,  # 단독주택
-    "M11": 0.85,  # 전원주택
-    "M12": 0.80,  # 타운하우스
-    "M13": 0.65,  # 도시형생활주택
-    "M14": 0.70,  # 공공임대
-    "M15": 0.75,  # 민간리츠
-}
-
-# ── 개발방식별 평균 전용면적 (m2) ──
-AVG_EXCLUSIVE_AREA: dict[str, float] = {
-    "M01": 84, "M02": 84, "M03": 59, "M04": 84, "M05": 49,
-    "M06": 84, "M07": 102, "M08": 28, "M09": 50, "M10": 165,
-    "M11": 200, "M12": 130, "M13": 26, "M14": 59, "M15": 84,
-}
+# ── 세대·면적 표준(전용율·평균 전용면적·전형 용적률) = 단일 출처 unit_standards (W1-3) ──
+#    Top3 추천(feasibility_v2)과 각자 테이블을 보유해 동일 GFA에서 세대수가 어긋나던
+#    이중정의 해소. 값 수정은 반드시 unit_standards에서(여기 재정의 금지).
+from app.services.feasibility.unit_standards import (  # noqa: E402
+    AVG_EXCLUSIVE_AREA_SQM as AVG_EXCLUSIVE_AREA,
+)
+from app.services.feasibility.unit_standards import (
+    EXCLUSIVE_AREA_RATIO,
+)
+from app.services.feasibility.unit_standards import (
+    TYPICAL_FAR_PCT as TYPICAL_FAR,
+)
 
 # ── 개발방식별 주차 기준 ──
 PARKING_RULES: dict[str, dict[str, Any]] = {
@@ -68,17 +55,14 @@ PARKING_RULES: dict[str, dict[str, Any]] = {
     "M15": {"method": "per_unit", "ratio": 1.0},
 }
 
-# ── 개발방식별 일반적 용적률 ──
-TYPICAL_FAR: dict[str, float] = {
-    "M01": 250, "M02": 300, "M03": 400, "M04": 250, "M05": 200,
-    "M06": 250, "M07": 400, "M08": 500, "M09": 400, "M10": 100,
-    "M11": 80, "M12": 150, "M13": 300, "M14": 250, "M15": 300,
-}
+# ── 개발방식별 일반적 용적률 — 단일 출처 unit_standards.TYPICAL_FAR_PCT(상단 import) ──
 
 # ── 개발방식별 분양가 보정계수 ──
+# 주의: 다른 계수 테이블(EXCLUSIVE_AREA_RATIO 등)과 동일하게 M01~M15 전수 유지.
 SALE_PRICE_MULTIPLIER: dict[str, float] = {
-    "M01": 1.0, "M02": 1.0, "M04": 0.95, "M06": 1.0,
-    "M07": 1.1, "M08": 0.8, "M09": 0.65,
+    "M01": 1.0, "M02": 1.0, "M03": 1.0, "M04": 0.95,
+    "M05": 0.7,  # 임대협동조합: 저가 임대 성격 반영
+    "M06": 1.0, "M07": 1.1, "M08": 0.8, "M09": 0.65,
     "M10": 1.1, "M11": 0.75, "M12": 1.05, "M13": 0.7,
     "M14": 0.85, "M15": 1.0,
 }
@@ -953,8 +937,15 @@ class ComprehensiveAnalysisService:
                 unit_count=unit_count, total_gfa=total_gfa, floor_count=floor_count,
             )
             return result.to_dict()
-        except Exception:
-            return {"feasibility_status": "조건부", "conditions_met": [], "blocking_issues": [], "recommendations": []}
+        except Exception as e:  # noqa: BLE001
+            # W2-13: 검증엔진 예외를 실제 판정처럼 보이는 "조건부"로 둔갑시키지 않음 —
+            # "검증불가" + 오류 사유로 정직 표기(프론트는 미지정 상태 기본 스타일로 렌더).
+            logger.warning("유형별 법규검증 실패 — 검증불가 표기", dev_type=dev_type, err=str(e)[:160])
+            return {
+                "feasibility_status": "검증불가",
+                "validation_error": str(e)[:120],
+                "conditions_met": [], "blocking_issues": [], "recommendations": [],
+            }
 
     def _calc_parking(self, dev_type: str, unit_count: int, total_gfa: float) -> int:
         rule = PARKING_RULES.get(dev_type, {"method": "per_unit", "ratio": 1.0})
@@ -1151,6 +1142,12 @@ class ComprehensiveAnalysisService:
 
         results = []
         for dev_type in permitted:
+            if dev_type not in SALE_PRICE_MULTIPLIER:
+                # 침묵 폴백 금지: 미등록 개발유형은 감지 가능하도록 경고 후 1.0 적용
+                logger.warning(
+                    "분양가 보정계수 미등록 개발유형 — 기본값 1.0 폴백",
+                    dev_type=dev_type,
+                )
             multiplier = SALE_PRICE_MULTIPLIER.get(dev_type, 1.0)
             price_man = int(base_price * multiplier)
             results.append({

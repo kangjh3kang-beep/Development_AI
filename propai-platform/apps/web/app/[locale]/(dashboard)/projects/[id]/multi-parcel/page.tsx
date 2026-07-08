@@ -20,15 +20,18 @@ import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/ma
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import {
+  MultiParcelAttributeMatrix,
+  resolveMultiParcelReport,
+} from "@/components/projects/MultiParcelAttributeMatrix";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
   { pick: "ParcelBoundaryMap", height: 560, loadingMessage: "구획도 로딩…" },
 );
-
-const PYEONG = 3.305785;
 
 type Integrated = {
   total_area_sqm?: number | null;
@@ -61,6 +64,13 @@ type IntegratedResp = {
   scenario?: Scenario | null;
   per_parcel?: PerParcel[];
   warnings?: string[];
+  // ── S6 다필지 속성 계약(D 웨이브 병렬 — 위치·형상 유동, resolver가 호환 수집·부재 시 미표시) ──
+  multi_parcel_report?: Record<string, unknown> | null;
+  usable_area?: Record<string, unknown> | null;
+  area_verification?: Record<string, unknown> | null;
+  senior_review?: Record<string, unknown>[] | null;
+  zone_straddle_ruling?: Record<string, unknown> | null;
+  exclusion_scenario?: Record<string, unknown> | null;
 };
 
 const num = (v: number | null | undefined, suffix = ""): string =>
@@ -175,6 +185,11 @@ export default function MultiParcelPage() {
   const dev = devLabel(data?.developability);
   const scn = data?.scenario ?? null;
   const scnL = scnLabel(scn?.status);
+  // S6 다필지 속성 보고(usable 3계층·검증·시니어·§84·what-if) — 계약 데이터 실재 시에만.
+  // per_parcel(실데이터)만 있어도 필지×판정 매트릭스는 표시 가능(추정 아님 — 실 게이트 값).
+  const mpReport = data
+    ? (resolveMultiParcelReport(data) ?? ((data.per_parcel?.length ?? 0) > 0 ? {} : null))
+    : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -269,7 +284,7 @@ export default function MultiParcelPage() {
                 <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-secondary)]">통합 핵심지표</p>
                 <div className="grid grid-cols-2 gap-2">
                   <Metric label="통합 대지면적" value={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm)}㎡` : "—"}
-                    sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG)}평` : undefined} />
+                    sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG_SQM)}평` : undefined} />
                   <Metric label="대표 용도지역" value={data.dominant_zone || "혼재/미상"}
                     sub={data.zone_mix && data.zone_mix.length >= 2 ? `혼재 ${data.zone_mix.length}종` : undefined} />
                   <Metric label="면적가중 건폐율" value={pct(integ?.blended_bcr_eff_pct)}
@@ -278,7 +293,7 @@ export default function MultiParcelPage() {
                     sub={integ?.blended_far_legal_pct != null ? `법정 ${integ.blended_far_legal_pct}%` : undefined} />
                   <div className="col-span-2">
                     <Metric label="통합 가능 연면적(GFA)" value={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm)}㎡` : "—"}
-                      sub={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm / PYEONG)}평${integ?.gfa_basis ? ` · ${integ.gfa_basis}` : ""}` : undefined} />
+                      sub={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm / PYEONG_SQM)}평${integ?.gfa_basis ? ` · ${integ.gfa_basis}` : ""}` : undefined} />
                   </div>
                 </div>
                 {integ?.far_basis_note && <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-hint)]">근거: {integ.far_basis_note}</p>}
@@ -308,6 +323,11 @@ export default function MultiParcelPage() {
                   )}
                 </div>
               </section>
+
+              {/* 2.5) S6 다필지 속성 매트릭스·usable 3계층·검증·시니어·§84·what-if — 데이터 부재 섹션은 미표시(무날조) */}
+              {mpReport && (
+                <MultiParcelAttributeMatrix report={mpReport} perParcel={data.per_parcel} />
+              )}
 
               {/* 3) 통합 시나리오 */}
               <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">

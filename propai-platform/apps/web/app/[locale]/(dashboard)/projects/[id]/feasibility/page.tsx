@@ -1,4 +1,5 @@
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { isMockMode } from "@/lib/runtime-mode";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
@@ -19,10 +20,9 @@ export default async function FeasibilityPage({ params }: Props) {
   }
 
   const dictionary = await getDictionary(locale as Locale);
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const runtimeMode = isMockMode()
+    ? dictionary.workspace.modeMock
+    : dictionary.workspace.modeLive;
   const t = dictionary.modulePlaceholders["feasibility"];
 
   return (

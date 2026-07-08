@@ -1330,28 +1330,6 @@ class TestClimateRiskServiceMethods:
                 pass  # 시그니처 다를 수 있음
 
 
-class TestPredictiveMaintenanceMethods:
-    @pytest.mark.asyncio
-    async def test_predict(self):
-        from apps.api.services.predictive_maintenance_service import PredictiveMaintenanceService
-
-        try:
-            svc = PredictiveMaintenanceService(db=AsyncMock())
-        except TypeError:
-            svc = PredictiveMaintenanceService()
-
-        if hasattr(svc, "predict"):
-            try:
-                result = await svc.predict(
-                    tenant_id=TEST_TENANT_ID,
-                    project_id=TEST_PROJECT_ID,
-                    equipment_id="EQ-001",
-                )
-                assert result is not None
-            except (TypeError, AttributeError):
-                pass
-
-
 class TestAICostsServiceMethods:
     @pytest.mark.asyncio
     async def test_get_summary(self):

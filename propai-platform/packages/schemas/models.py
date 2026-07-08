@@ -254,8 +254,13 @@ class AVMValuationResponse(BaseModel):
     project_id: UUID
     estimated_price: float = Field(description="추정 가격 (원)")
     price_per_sqm: float = Field(description="㎡당 단가")
-    confidence_score: float = Field(ge=0, le=1, description="신뢰도")
-    comparable_count: int = Field(description="비교 사례 수")
+    confidence_score: float = Field(ge=0, le=1, description="신뢰도(실거래 사례 수 기준 — 합성 미계상)")
+    comparable_count: int = Field(description="비교 사례 수(실거래+합성 총계 — 모델 입력 기준)")
+    # ── W1-6 정직 분리: 콜드스타트 합성 보강이 실거래처럼 보이지 않도록 계수 분리 ──
+    real_comparable_count: int = Field(default=0, description="실거래 비교 사례 수(합성 제외)")
+    synthetic_count: int = Field(default=0, description="합성 보강 사례 수(콜드스타트 CTGAN, 참고용)")
+    # 비교 거래 사례(프론트 표 렌더 계약: address/price(원)/area_sqm/transaction_date/synthetic)
+    comparables: list[dict] = Field(default_factory=list, description="비교 거래 사례 상위 3건(synthetic 표기 동반)")
     model_version: str
     created_at: datetime
 

@@ -146,7 +146,8 @@ async def record_pipeline_results(
             try:
                 out["cost"] = await cost_recorder(
                     summary=summary, header=header,
-                    tenant_id=tenant_id, project_id=project_id, created_by=created_by)
+                    tenant_id=tenant_id, project_id=project_id,
+                    pnu=pnu, address=addr, created_by=created_by)
             except Exception as e:  # noqa: BLE001 — 무중단(실패 시 키 미생성)이나 관측가능해야 함(불변규칙3)
                 logger.warning("원장 cost 적재 실패 — skipped: %s", str(e)[:200])
 

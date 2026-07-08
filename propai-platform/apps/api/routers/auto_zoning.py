@@ -1289,7 +1289,7 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         # 필지별 구역 실값(입력 우선 → 수집값). None=미확인(수집실패/PNU없음).
         _sd = p.get("special_districts")
         if _sd is None or _sd == []:
-            _sd = districts_by_pnu.get(str(p.get("pnu") or ""), None)
+            _sd = districts_by_pnu.get(str(p.get("pnu") or ""))
         p["_districts_checked"] = _sd is not None  # 정직 플래그(미확인 구분)
 
         # ── 실효 용적률/건폐율(조례 반영) — 미확보 지역은 effective=legal 폴백(정직).
@@ -1565,7 +1565,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             #   위임 내부에서 대표주소로 재도출되므로, 아래 dominant_zone·blended_*는 '표시·검증용'(위임 미주입)이며
             #   site.zone_basis='representative_parcel'로 실계산 기준이 대표필지임을 명시한다(표시값↔실계산 구분).
             rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
-            region = _extract_sigungu({"address": rep_addr}) or "서울"
+            # 시군구 미추출 시 ""(주소 시도 추론에 양보) — "서울" 폴백은 지방 부지 분양가를 서울가로 과대.
+            region = _extract_sigungu({"address": rep_addr}) or ""
             site = {
                 "total_area_sqm": total_area,
                 "zone_type": dominant_zone,
@@ -1689,6 +1690,8 @@ async def parcel_at_point(req: ParcelAtPointRequest):
 
     지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
     """
+
+    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
     from apps.api.app.services.external_api.vworld_service import VWorldService
     from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
 
@@ -1703,7 +1706,6 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     if not pp or not pp.get("pnu"):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
-    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
 
     area_sqm = zone_type = jimok = None
     official_price_per_sqm = None

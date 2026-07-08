@@ -85,12 +85,15 @@ class TestUrlFormat:
         """조례·행정규칙을 제외한 모든 법령 키 URL은 /법령/ 한글주소(인코딩) 형식."""
         prefix = f"{LAW_GO_KR_BASE}/{quote('법령')}/"
         admrule_prefix = f"{LAW_GO_KR_BASE}/{quote('행정규칙')}/"
+        ordinance_prefix = f"{LAW_GO_KR_BASE}/{quote('자치법규')}/"
         for key, ref in LEGAL_REFERENCES.items():
             if key.startswith("ordinance_"):
                 continue  # 조례는 동적(빈 url) — 별도 검증
             url = ref["url"]
             if url.startswith(admrule_prefix):
                 continue  # 행정규칙(고시) 카테고리 — TestSlopeForestExpansion에서 별도 검증
+            if url.startswith(ordinance_prefix):
+                continue  # 자치법규(정적 조례, 예: biotope_grade1) — TestDistrictGateExpansion에서 별도 검증
             assert url.startswith(prefix), f"{key} URL이 /법령/ 형식 아님: {url}"
 
     def test_article_segment_is_korean_ordinal(self):
@@ -463,3 +466,105 @@ class TestSlopeForestExpansion:
         act = get_legal_ref("dev_act_permit")
         assert act["law_name"] == "국토의 계획 및 이용에 관한 법률"
         assert act["article"] == "제56조"
+
+
+# ── 지역지구 게이트 확장(A-districts 참조 키) — 2026-07-02 B-registry 신규 키 ──
+# 조문 확정 키[확실] — 무날조: 근거 확실 항목만 조문 딥링크.
+DISTRICT_GATE_ARTICLE_CASES = {
+    # 수도법 제7조 — 상수원보호구역의 지정·행위제한 [확실]
+    "water_source_protection": ("수도법", "제7조"),
+    # 하천법 제33조 — 하천점용허가 [확실]
+    "river_occupation": ("하천법", "제33조"),
+    # 국토계획법 제75조의2 — 성장관리계획구역의 지정 [확실]
+    "growth_management_zone": ("국토의 계획 및 이용에 관한 법률", "제75조의2"),
+    # 한강수계법 제4조 — 수변구역의 지정 [상당확신 — 온라인 재확인 불가, 조문 통용 확립]
+    "riparian_zone": ("한강수계 상수원수질개선 및 주민지원 등에 관한 법률", "제4조"),
+}
+
+# 조문 재확인 실패 → 법령 루트 폴백(할루시네이션 조문 금지).
+DISTRICT_GATE_ROOT_CASES = {
+    # 행위제한·협의 조문 미검증(제9조·제13조 추정 금지) → 루트.
+    "military_protection_zone": "군사기지 및 군사시설 보호법",
+    # 2024 문화재보호법→문화유산법 개편 후 역사문화환경 조문 미검증 → 루트.
+    "cultural_heritage_env": "문화유산의 보존 및 활용에 관한 법률",
+    # 소하천 점용 조문 미검증 → 루트.
+    "small_river_occupation": "소하천정비법",
+}
+
+
+class TestDistrictGateExpansion:
+    """A-districts 참조 신규 키: 존재·조문 대조·URL 형식·조례(비오톱)·기존 키 회귀."""
+
+    @pytest.mark.parametrize("key", sorted(DISTRICT_GATE_ARTICLE_CASES))
+    def test_article_keys_exist_and_match(self, key):
+        """조문 확정 신규 키 — 법령명·조문·딥링크(디코드 동치) 대조."""
+        law, article = DISTRICT_GATE_ARTICLE_CASES[key]
+        ref = get_legal_ref(key)
+        assert ref is not None, f"신규 키 누락: {key}"
+        assert ref["law_name"] == law
+        assert ref["article"] == article
+        assert isinstance(ref["title"], str) and ref["title"]
+        decoded = unquote(ref["url"])
+        name_nospace = law.replace(" ", "")
+        assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}/{article}"
+
+    @pytest.mark.parametrize("key", sorted(DISTRICT_GATE_ROOT_CASES))
+    def test_root_fallback_keys(self, key):
+        """조문 재확인 실패 신규 키 — 법령 루트 폴백(조문 세그먼트 없음)."""
+        law = DISTRICT_GATE_ROOT_CASES[key]
+        ref = get_legal_ref(key)
+        assert ref is not None, f"신규 키 누락: {key}"
+        assert ref["law_name"] == law
+        assert ref["article"] == ""
+        decoded = unquote(ref["url"])
+        name_nospace = law.replace(" ", "").replace("·", "")
+        assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}"
+
+    def test_biotope_grade1_ordinance_record(self):
+        """비오톱 1등급 — 서울시 도시계획 조례(자치법규 카테고리, build_ordinance_url)."""
+        ordinance_name = "서울특별시 도시계획 조례"
+        ref = get_legal_ref("biotope_grade1")
+        assert ref is not None
+        assert ref["law_name"] == ordinance_name
+        assert ref["article"] == ""  # 조례는 조문 딥링크 미지원 — 루트만
+        assert ref["url"] == build_ordinance_url(ordinance_name)
+        assert unquote(ref["url"]) == (
+            f"{LAW_GO_KR_BASE}/자치법규/서울특별시도시계획조례"
+        )
+        # 관할 한정 규제 — title에 서울(관할) 명시(타 관할 오적용 방지 고지).
+        assert "서울" in ref["title"]
+
+    def test_all_new_keys_url_status_verified(self):
+        """신규 키 전부 law.go.kr 신뢰호스트 URL 보유 → url_status 'verified'."""
+        keys = (
+            list(DISTRICT_GATE_ARTICLE_CASES)
+            + list(DISTRICT_GATE_ROOT_CASES)
+            + ["biotope_grade1"]
+        )
+        refs = get_legal_refs(keys)
+        assert len(refs) == len(keys)
+        for rec in refs:
+            assert rec["url_status"] == "verified", rec["key"]
+            assert rec["url"].startswith(f"{LAW_GO_KR_BASE}/"), rec["key"]
+
+    def test_cultural_heritage_env_distinct_from_generic_key(self):
+        """cultural_heritage_env는 기존 cultural_heritage(동일 법령·범용 title)와 별도 키.
+
+        동일 법령이라도 역사문화환경 보존지역 의미를 title로 구분(기존 키 불변 additive).
+        """
+        env = get_legal_ref("cultural_heritage_env")
+        generic = get_legal_ref("cultural_heritage")
+        assert env["law_name"] == generic["law_name"]
+        assert env["title"] != generic["title"]
+        assert "역사문화환경" in env["title"]
+
+    def test_existing_related_keys_unchanged(self):
+        """회귀: 기존 관련 키(문화유산·그린벨트·경관·개발행위허가) 불변(additive 원칙)."""
+        cul = get_legal_ref("cultural_heritage")
+        assert cul["law_name"] == "문화유산의 보존 및 활용에 관한 법률"
+        assert cul["article"] == ""
+        gb = get_legal_ref("greenbelt")
+        assert gb["law_name"] == "개발제한구역의 지정 및 관리에 관한 특별조치법"
+        crit = get_legal_ref("dev_act_criteria")
+        assert crit["law_name"] == "국토의 계획 및 이용에 관한 법률"
+        assert crit["article"] == "제58조"
