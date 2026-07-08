@@ -831,6 +831,9 @@ class ComprehensiveAnalysisService:
                 "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
                 "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
                 "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
+                # ★P1(감사): 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구
+                #   미확정("형상 데이터 부족")이었다. 프론트가 보강한 GeoJSON을 그대로 전달.
+                "geometry": p.get("geometry"),
             }
             if (q["area_sqm"] or 0) > 0:
                 items.append(q)

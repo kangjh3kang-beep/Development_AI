@@ -95,6 +95,9 @@ export interface SatongMultiMapProps {
   developmentPayload?: SatongDevelopmentPayload | null;
   /** 사용자 지도 이동(moveend) 시 현재 중심좌표 통지 — 선택필지 없을 때 지역레이어의 폴백 앵커용. */
   onCenterChange?: (center: { lat: number; lon: number }) => void;
+  /** 경계 API(/zoning/parcel-boundaries)가 보강한 필지 속성(면적·용도·좌표·경계) 역전파 —
+   *  부모가 선택목록·SSOT에 병합해 다필지 통합분석이 면적을 받도록 한다. */
+  onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -518,6 +521,7 @@ export function SatongMultiMap({
   poiPayload = null,
   developmentPayload = null,
   onCenterChange,
+  onBoundaryEnriched,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
@@ -526,6 +530,8 @@ export function SatongMultiMap({
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
   onCenterChangeRef.current = onCenterChange;
+  const onBoundaryEnrichedRef = useRef(onBoundaryEnriched);
+  onBoundaryEnrichedRef.current = onBoundaryEnriched;
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
@@ -672,6 +678,10 @@ export function SatongMultiMap({
         const fromBoundary = (response.features ?? []).map(boundaryFeatureToMapFeature);
         setBoundaryFeatures(mergeSatongMapFeatures([...selectedParcels, ...fromBoundary]));
         setBoundaryStatus("ready");
+        // ★P1(감사): 경계 API가 받아온 면적·용도·좌표·경계를 부모(Shell)로 역전파 —
+        //   종전엔 지도 내부 상태(dead-end)에만 남아, 검색 등록 필지가 면적 없음 →
+        //   통합분석이 침묵 단일 격하되는 원인이었다.
+        if (fromBoundary.length) onBoundaryEnrichedRef.current?.(fromBoundary);
       })
       .catch(() => {
         if (!alive) return;
@@ -1739,11 +1749,13 @@ export function SatongMultiMap({
             </div>
           </div>
         )}
-      </div>
-
-      {/* ── 하단 고정 바 — 선택 필지 수·합산 면적·완료/전체취소 ── */}
+      {/* ── 하단 바 — 선택 필지 수·합산 면적·완료/전체취소.
+          ★P1(감사): 풀스크린 래퍼 '내부'로 이동 — 종전엔 래퍼 밖이라 풀스크린(z-9990) 중
+          완료/전체취소가 가려져 필지 등록이 불가했다. 풀스크린일 땐 하단 오버레이로 표시. ── */}
       {!readOnly && (
-      <div className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2">
+      <div className={isMapFullscreen
+        ? "absolute inset-x-3 bottom-3 z-[460] flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)]/95 px-3 py-2 shadow-xl backdrop-blur"
+        : "mt-2 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2"}>
         {/* 선택 현황 */}
         <div className="flex-1 text-[11px]">
           {staged.length > 0 ? (
@@ -1782,6 +1794,7 @@ export function SatongMultiMap({
         </button>
       </div>
       )}
+      </div>
     </div>
   );
 }
