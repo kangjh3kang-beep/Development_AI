@@ -58,11 +58,16 @@ type State = {
 
 const KEY = (id: string | null) => id || "_default";
 
+// 빈 프로젝트 폴백은 안정 참조여야 한다. 호출마다 새 []를 반환하면 zustand v5의
+// useSyncExternalStore 스냅샷이 렌더마다 달라져(Object.is 실패) React 19에서
+// "getSnapshot should be cached" 무한 재렌더(Maximum update depth)로 마운트가 크래시한다.
+const EMPTY_ITEMS: DevPlanItem[] = [];
+
 export const useDevelopmentPlanStore = create<State>()(
   persist(
     (set, get) => ({
       byProject: {},
-      getByProject: (pid) => get().byProject[KEY(pid)] || [],
+      getByProject: (pid) => get().byProject[KEY(pid)] || EMPTY_ITEMS,
       add: (pid, item) =>
         set((s) => {
           const k = KEY(pid);

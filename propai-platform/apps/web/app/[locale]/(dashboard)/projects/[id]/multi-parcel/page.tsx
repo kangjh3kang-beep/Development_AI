@@ -20,6 +20,7 @@ import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/ma
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import {
@@ -31,8 +32,6 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
   () => import("@/components/map/ParcelBoundaryMap"),
   { pick: "ParcelBoundaryMap", height: 560, loadingMessage: "구획도 로딩…" },
 );
-
-const PYEONG = 3.305785;
 
 type Integrated = {
   total_area_sqm?: number | null;
@@ -285,7 +284,7 @@ export default function MultiParcelPage() {
                 <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-secondary)]">통합 핵심지표</p>
                 <div className="grid grid-cols-2 gap-2">
                   <Metric label="통합 대지면적" value={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm)}㎡` : "—"}
-                    sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG)}평` : undefined} />
+                    sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG_SQM)}평` : undefined} />
                   <Metric label="대표 용도지역" value={data.dominant_zone || "혼재/미상"}
                     sub={data.zone_mix && data.zone_mix.length >= 2 ? `혼재 ${data.zone_mix.length}종` : undefined} />
                   <Metric label="면적가중 건폐율" value={pct(integ?.blended_bcr_eff_pct)}
@@ -294,7 +293,7 @@ export default function MultiParcelPage() {
                     sub={integ?.blended_far_legal_pct != null ? `법정 ${integ.blended_far_legal_pct}%` : undefined} />
                   <div className="col-span-2">
                     <Metric label="통합 가능 연면적(GFA)" value={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm)}㎡` : "—"}
-                      sub={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm / PYEONG)}평${integ?.gfa_basis ? ` · ${integ.gfa_basis}` : ""}` : undefined} />
+                      sub={integ?.integrated_gfa_sqm != null ? `${num(integ.integrated_gfa_sqm / PYEONG_SQM)}평${integ?.gfa_basis ? ` · ${integ.gfa_basis}` : ""}` : undefined} />
                   </div>
                 </div>
                 {integ?.far_basis_note && <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-hint)]">근거: {integ.far_basis_note}</p>}

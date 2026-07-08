@@ -28,23 +28,16 @@ def recalculate_project_cost(project_id: str) -> dict:
     Returns:
         재계산 결과 딕셔너리.
     """
-    from app.services.cost.origin_cost_calculator import OriginCostCalculator
-
-    logger.info("프로젝트 공사비 재계산 시작: %s", project_id)
-
-    OriginCostCalculator()
-
-    # 실제 구현: DB에서 BimQuantity + MaterialUnitPrice 조회 후 CostItem 구성
-    # 여기서는 스텁 응답 반환
-    result = {
+    # W3-10: 미구현 스텁이 "재생성 완료" 허위 성공을 반환하던 것을 정직화(무날조) —
+    # 아무것도 재계산하지 않으면서 성공 메시지를 주면 법정요율 갱신이 반영된 것처럼
+    # 오인된다. 실제 구현은 DB에서 BimQuantity+MaterialUnitPrice 조회 후 CostItem 구성.
+    logger.warning("프로젝트 공사비 재계산 태스크 호출 — 미구현 스텁(재계산 미수행): %s", project_id)
+    return {
         "project_id": project_id,
-        "status": "recalculated",
-        "message": "원가계산서 재생성 완료 (법정요율 갱신 반영)",
+        "status": "not_implemented",
+        "message": "원가계산서 자동 재생성 미구현 — 재계산은 수행되지 않았습니다(수동 재산출 필요).",
         "calculator_version": "v61",
     }
-
-    logger.info("프로젝트 공사비 재계산 완료: %s", project_id)
-    return result
 
 
 # Celery 데코레이터 적용

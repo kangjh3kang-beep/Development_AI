@@ -19,14 +19,13 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 
 /* ── Helpers ── */
 
-const SQM_PER_PYEONG = 3.3058;
-
 function formatArea(sqm: number): string {
   if (!sqm || sqm <= 0) return "-";
-  return `${sqm.toLocaleString("ko-KR")} m² (${(sqm / SQM_PER_PYEONG).toFixed(1)}평)`;
+  return `${sqm.toLocaleString("ko-KR")} m² (${(sqm / PYEONG_SQM).toFixed(1)}평)`;
 }
 
 function formatWon(value: number): string {
@@ -136,7 +135,7 @@ const SEVERITY_CARD_STYLE: Record<string, string> = {
 
 function PermitBadge({ complexity }: { complexity: number }) {
   const colors = ["", "bg-emerald-500/20 text-emerald-400", "bg-blue-500/20 text-blue-400", "bg-amber-500/20 text-amber-400", "bg-orange-500/20 text-orange-400", "bg-red-500/20 text-red-400"];
-  const labels = ["", "매우쉽움", "쉽움", "보통", "어려움", "매우어려움"];
+  const labels = ["", "매우 쉬움", "쉬움", "보통", "어려움", "매우 어려움"];
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${colors[complexity] || colors[3]}`}>
       {labels[complexity] || "보통"}

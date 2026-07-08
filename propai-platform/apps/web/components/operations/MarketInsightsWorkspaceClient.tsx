@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { PYEONG_SQM } from "@/lib/formatters";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
   NearbyTransactionsMap as NearbyTransactionsMapType,
@@ -95,8 +96,6 @@ type MarketResults = {
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-const PYEONG = 3.305785;
-
 function formatPrice(man: number): string {
   if (!man || man <= 0) return "-";
   if (man >= 10000) {
@@ -175,13 +174,13 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     let ppSum = 0, ppN = 0;
     for (const g of apt.groups) {
       if (g.avg_price_10k && g.avg_area_m2 > 0) {
-        const perPyeong = g.avg_price_10k / (g.avg_area_m2 / PYEONG);
+        const perPyeong = g.avg_price_10k / (g.avg_area_m2 / PYEONG_SQM);
         ppSum += perPyeong * (g.count || 1); ppN += g.count || 1;
       }
     }
     if (ppN > 0) {
       const perPyeong = ppSum / ppN;        // 만원/평
-      const perM2man = perPyeong / PYEONG;  // 만원/㎡
+      const perM2man = perPyeong / PYEONG_SQM;  // 만원/㎡
       avm = {
         estimated_price: Math.round(perM2man * 84 * 10000),
         price_per_sqm: Math.round(perM2man * 10000),
@@ -313,9 +312,10 @@ export function MarketInsightsWorkspaceClient() {
       (balance?.tier_label || "").toUpperCase().includes(tier)
     );
 
-  // ── 선택형 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
-  // 사용자 핵심지침 "선택형 상세분석을 전 시스템 기본으로" — 필요한 모듈만 체크→선택분만 실행·과금.
-  // coinCost/estimatedSeconds는 선택 수→예상 코인·시간 실시간 표시에 사용(안내용 추정치).
+  // ── 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
+  // 현재 셀렉터는 readOnly 목록 표시 전용(onChange no-op) — 실행 대상은 analysisOptions 기본값
+  //   (+katlas는 프리미엄 여부 연동 effect)으로 결정되고, buildOptionsPayload가 그대로 전송한다.
+  // coinCost/estimatedSeconds는 예상 코인·시간 안내 표시에 사용(안내용 추정치).
   //   각 항목 coinCost는 하드코딩 금지 → 관리자 설정값(balance.module_fees)에서 채운다.
   //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
   const fee = useCallback((k: string) => balance?.module_fees?.[k] ?? 0, [balance]);
@@ -338,29 +338,6 @@ export function MarketInsightsWorkspaceClient() {
     },
     { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용", icon: Target },
   ], [isPremiumUser, fee]);
-
-  // 선택 변경 — 공용 컴포넌트의 selected 맵을 그대로 반영(말단 항목 평탄 맵).
-  const onModulesChange = useCallback((next: Record<string, boolean>) => {
-    setAnalysisOptions({
-      pop_age: !!next.pop_age,
-      pop_household: !!next.pop_household,
-      pop_migration: !!next.pop_migration,
-      income_avg: !!next.income_avg,
-      income_basis: !!next.income_basis,
-      katlas: !!next.katlas,
-    });
-  }, []);
-  // 전체 자동분석 — 가능한 항목 전부 선택(잠금 모듈은 프리미엄일 때만).
-  const onSelectAll = useCallback(() => {
-    setAnalysisOptions({
-      pop_age: true,
-      pop_household: true,
-      pop_migration: true,
-      income_avg: true,
-      income_basis: true,
-      katlas: isPremiumUser,
-    });
-  }, [isPremiumUser]);
 
   // 백엔드 build_report 전송용 옵션 payload — 하위호환 sgis/kosis(분류 단위) + 신규 detail(세부).
   //   sgis = 인구/가구 분류 중 하나라도 켜짐, kosis = 소득 분류 중 하나라도 켜짐.

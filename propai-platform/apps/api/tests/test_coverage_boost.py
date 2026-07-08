@@ -268,19 +268,6 @@ class TestAIUsageTracker:
             pass
 
 
-# ── services/demand_forecast_service.py (import) ──
-
-
-class TestDemandForecastImport:
-    def test_redis_모듈_임포트(self):
-        try:
-            from apps.api.services.demand_forecast_service import redis_client
-
-            assert redis_client is not None
-        except Exception:
-            pass
-
-
 # ── services/reservation_service.py ──
 
 

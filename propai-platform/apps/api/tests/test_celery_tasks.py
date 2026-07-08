@@ -115,9 +115,12 @@ class TestRateTasks:
 class TestCostTasks:
     """공사비 재계산 태스크 테스트."""
 
-    def test_recalculate_project_cost(self):
+    def test_recalculate_project_cost_is_honest_stub(self):
+        # W3-10: 미구현 스텁이 "recalculated" 허위 성공을 반환하지 않는지 게이트 —
+        # 실제 재계산이 구현되면 이 테스트를 실동작 검증으로 교체할 것.
         from app.tasks.cost_tasks import recalculate_project_cost
         result = recalculate_project_cost("test-project-123")
         assert result["project_id"] == "test-project-123"
-        assert result["status"] == "recalculated"
+        assert result["status"] == "not_implemented"  # 성공 위장 금지(무날조)
+        assert "재계산은 수행되지 않았습니다" in result["message"]
         assert result["calculator_version"] == "v61"

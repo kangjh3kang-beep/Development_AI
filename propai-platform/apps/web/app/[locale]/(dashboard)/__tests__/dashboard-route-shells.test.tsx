@@ -44,21 +44,6 @@ vi.mock("@/components/layout/OverviewCard", () => ({
   ),
 }));
 
-vi.mock("@/components/dashboard/DashboardClientPanel", () => ({
-  DashboardClientPanel: ({
-    locale,
-    summaryTitle,
-  }: {
-    locale: string;
-    summaryTitle: string;
-  }) => (
-    <div data-testid="dashboard-client-panel">
-      <span>{locale}</span>
-      <span>{summaryTitle}</span>
-    </div>
-  ),
-}));
-
 vi.mock("@/components/onboarding/OnboardingWizard", () => ({
   OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
 }));
@@ -117,36 +102,12 @@ vi.mock("@/components/analytics/CostEstimationClient", () => ({
   CostEstimationClient: () => <div data-testid="cost-workspace">cost</div>,
 }));
 
-vi.mock("@/components/analytics/ConstructionCostWorkspaceClient", () => ({
-  ConstructionCostWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="cost-workspace">{locale}</div>,
-}));
-
 vi.mock("@/components/analytics/OperationsIntelligenceWorkspaceClient", () => ({
   OperationsIntelligenceWorkspaceClient: ({
     locale,
   }: {
     locale: string;
   }) => <div data-testid="ops-intelligence-workspace">{locale}</div>,
-}));
-
-vi.mock("@/components/agent/AgentOrchestrationWorkspaceClient", () => ({
-  AgentOrchestrationWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="agent-workspace">{locale}</div>,
-}));
-
-vi.mock("@/components/agent/ApprovalOperationsWorkspaceClient", () => ({
-  ApprovalOperationsWorkspaceClient: ({
-    locale,
-  }: {
-    locale: string;
-  }) => <div data-testid="approval-ops-workspace">{locale}</div>,
 }));
 
 vi.mock("@/components/safety/SafetyCCTVDashboard", () => ({
@@ -163,10 +124,6 @@ vi.mock("@/features/webrtc/RemoteSupervisionRoom", () => ({
   RemoteSupervisionRoom: () => (
     <div data-testid="remote-supervision-room">Remote supervision room</div>
   ),
-}));
-
-vi.mock("@/components/sre/SREDashboard", () => ({
-  SREDashboard: () => <div data-testid="sre-dashboard">SRE dashboard</div>,
 }));
 
 vi.mock("@/lib/ai-analyze-client", () => ({
