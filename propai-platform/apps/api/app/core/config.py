@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
     RISK_MODEL_PATH: str = ""
+    # 위험알림 최소 발송 레벨 — 이 레벨 이상만 알림(none<low<medium<high). 기본 medium
+    #   (high=심각 모순/상태 실패, medium=stale 포함). "high"로 올리면 소음↓(심각만), 코드
+    #   수정 없이 env(RISK_ALERT_MIN_LEVEL=high)로 튜닝. 알 수 없는 값이면 medium 안전측 폴백.
+    RISK_ALERT_MIN_LEVEL: str = "medium"
 
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""

@@ -139,11 +139,23 @@ def clear_notifiers() -> None:
     _NOTIFIERS.clear()
 
 
+def _min_alert_level() -> str:
+    """알림 최소 발송 레벨(env RISK_ALERT_MIN_LEVEL, 기본 medium). 알 수 없는 값은 medium 폴백."""
+    try:
+        from app.core.config import settings
+        v = str(getattr(settings, "RISK_ALERT_MIN_LEVEL", "medium") or "medium").strip().lower()
+    except Exception:  # noqa: BLE001
+        v = "medium"
+    return v if v in _LEVEL_ORDER else "medium"
+
+
 async def dispatch_risk_alert(*, project_id: Any, analysis_type: str, risk: dict[str, Any]) -> dict[str, Any]:
-    """위험수준 high/medium이면 등록 notifier로 알림(best-effort). low/none은 미발송(정직)."""
+    """위험수준이 설정 최소레벨(RISK_ALERT_MIN_LEVEL, 기본 medium) 이상이면 등록 notifier로
+    알림(best-effort). 그 미만은 미발송(정직)."""
     level = (risk or {}).get("risk_level", "none")
-    if level not in ("high", "medium"):
-        return {"dispatched": 0, "level": level, "skipped": True}
+    min_level = _min_alert_level()
+    if _LEVEL_ORDER.get(level, 0) < _LEVEL_ORDER[min_level]:
+        return {"dispatched": 0, "level": level, "min_level": min_level, "skipped": True}
     alert = {"project_id": project_id, "analysis_type": analysis_type,
              "risk_level": level, "risks": (risk or {}).get("risks", [])}
     sent = 0
@@ -174,8 +186,32 @@ async def on_analysis_appended(
     return {**risk, "notify": notify}
 
 
+_LEVEL_KO = {"high": "심각", "medium": "주의", "low": "낮음", "none": "없음"}
+_ALERT_MAX_DETAILS = 5
+
+
+def _format_alert_text(alert: dict[str, Any]) -> str:
+    """알림 본문(한국어) — 순수 결정론 포맷. classify_risks의 detail/recommend(한국어)를 그대로 표면화."""
+    alert = alert or {}
+    level = str(alert.get("risk_level") or "none")
+    level_ko = _LEVEL_KO.get(level, level)
+    icon = "🚨" if level == "high" else "⚠️"
+    risks = [r for r in (alert.get("risks") or []) if isinstance(r, dict)]
+    lines = [f"{icon} 사통팔땅 위험알림 [{level_ko}]",
+             f"분석: {alert.get('analysis_type')}",
+             f"프로젝트: {alert.get('project_id')}",
+             f"위험신호 {len(risks)}건"]
+    for r in risks[:_ALERT_MAX_DETAILS]:
+        detail = r.get("detail") or r.get("type") or "?"
+        rec = r.get("recommend")
+        lines.append(f"· {detail}" + (f" → {rec}" if rec else ""))
+    if len(risks) > _ALERT_MAX_DETAILS:
+        lines.append(f"· 외 {len(risks) - _ALERT_MAX_DETAILS}건")
+    return "\n".join(lines)
+
+
 async def _telegram_notifier(alert: dict[str, Any]) -> None:
-    """텔레그램 webhook 알림(설정 시). 무설정 시 no-op(정직)."""
+    """텔레그램 webhook 알림(설정 시, 한국어 본문). 무설정 시 no-op(정직)."""
     try:
         from app.core.config import settings
         token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
@@ -185,11 +221,9 @@ async def _telegram_notifier(alert: dict[str, Any]) -> None:
     if not (token and chat):
         return
     import httpx
-    text = (f"⚠️ RISK[{alert.get('risk_level')}] {alert.get('analysis_type')} "
-            f"project={alert.get('project_id')} — {len(alert.get('risks') or [])} signal(s)")
     async with httpx.AsyncClient(timeout=5) as c:
         await c.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id": chat, "text": text})
+                     json={"chat_id": chat, "text": _format_alert_text(alert)})
 
 
 def _ws_notifier(alert: dict[str, Any]):
