@@ -42,7 +42,6 @@ const SatongMultiMapDynamic = dynamic(
 );
 
 type SatongMapMode = "cadastre" | "select" | "market";
-type SatongLayerTarget = SatongMapMode | "tools";
 
 // 행 불변 식별자 — 객체 spread({...a})로 보존되므로 참조 교체에 영향받지 않는 안정 매칭 키.
 let _uidSeq = 0;
@@ -977,87 +976,8 @@ export function GlobalAddressSearch({
     }));
   }, [addresses]);
 
-  const hasRegisteredParcels = displayAddresses.length > 0;
-  const activeLayerLabel = mapMode === "cadastre"
-    ? "지적·공시·노후"
-    : mapMode === "market"
-      ? "실거래·분양"
-      : "주변 선택";
-  const mapNextAction = !hasRegisteredParcels
-    ? "상단에서 지번·주소를 검색하거나 엑셀을 올리면 지적·공시지가·노후도 레이어가 열립니다."
-    : mapMode === "select"
-      ? "지도에서 주변 필지를 클릭하고 완료하면 목록과 구획도가 함께 갱신됩니다."
-      : "필지 경계와 시장 레이어를 오가며 후보지 검토, 인허가, 설계 산출물로 이어갈 수 있습니다.";
-  const satongLayerGroups: Array<{
-    key: string;
-    label: string;
-    meta: string;
-    description: string;
-    target: SatongLayerTarget;
-    enabled: boolean;
-    active: boolean;
-  }> = [
-    {
-      key: "select",
-      label: "필지 선택",
-      meta: "기본지도",
-      description: "지도 클릭으로 주변 필지를 다중 선택하고 왼쪽 목록에 추가합니다.",
-      target: "select",
-      enabled: true,
-      active: mapMode === "select",
-    },
-    {
-      key: "cadastre",
-      label: "지적도·용도지역",
-      meta: "토지이음식 색면",
-      description: "필지 경계, 지목, 용도지역, 통합개발 외곽선을 한 화면에 표시합니다.",
-      target: "cadastre",
-      enabled: hasRegisteredParcels,
-      active: mapMode === "cadastre",
-    },
-    {
-      key: "value-age",
-      label: "공시지가·노후도",
-      meta: "구획도 색상 모드",
-      description: "공시지가와 건축물 노후도 코로플레스를 필지 경계 위에서 전환합니다.",
-      target: "cadastre",
-      enabled: hasRegisteredParcels,
-      active: mapMode === "cadastre",
-    },
-    {
-      key: "market",
-      label: "실거래·시세",
-      meta: "국토부 거래",
-      description: "주변 거래 사례와 시세 흐름을 필지 위치 기준으로 확인합니다.",
-      target: "market",
-      enabled: hasRegisteredParcels,
-      active: mapMode === "market",
-    },
-    {
-      key: "supply",
-      label: "분양·공·경매",
-      meta: "시장 공급 신호",
-      description: "분양 정보와 공매·경매 검토 신호를 시장 지도 작업면으로 묶습니다.",
-      target: "market",
-      enabled: hasRegisteredParcels,
-      active: mapMode === "market",
-    },
-    {
-      key: "tools",
-      label: "위성·지형·교통·로드뷰",
-      meta: "지도 툴바",
-      description: "위성/하이브리드, 지형도, 교통, 로드뷰, 거리·면적 측정을 지도 우측에서 조작합니다.",
-      target: "tools",
-      enabled: true,
-      active: false,
-    },
-  ];
-  const satongOutputLinks = [
-    { label: "후보지 진단서", detail: "규제·면적·접근성" },
-    { label: "인허가 체크리스트", detail: "허가 가능성·보완 항목" },
-    { label: "시장·분양 리포트", detail: "시세·수요·공급" },
-    { label: "건축개요·CAD 계획도면", detail: "법규 맞춤 계획안" },
-  ];
+  // (471347cf에서 레이어 콘솔 UI가 SatongMultiMap 통합엔진으로 대체됨 — 콘솔용
+  //  파생상태(activeLayerLabel·mapNextAction·satongLayerGroups·satongOutputLinks)는 제거.)
 
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);

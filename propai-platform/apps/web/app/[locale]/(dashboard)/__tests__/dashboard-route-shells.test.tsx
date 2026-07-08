@@ -77,6 +77,14 @@ vi.mock("@/components/pipeline/PipelinePanelClient", () => ({
   PipelinePanelClient: () => <div data-testid="pipeline-panel">Pipeline</div>,
 }));
 
+// 9c4a120d: 홈이 SatongMapShell을 실렌더하면 산출물 링크 라벨("시장·분양 리포트")이
+// creationProducts 카드와 중복돼 getByText 단일매치가 깨짐 — 셸은 스텁으로 대체.
+vi.mock("@/components/precheck/SatongMapShell", () => ({
+  SatongMapShell: ({ locale }: { locale: string }) => (
+    <div data-testid="satong-map-shell">{locale}</div>
+  ),
+}));
+
 vi.mock("@/components/pwa/PwaStatusCard", () => ({
   PwaStatusCard: () => <div data-testid="pwa-status-card">PWA status card</div>,
 }));
