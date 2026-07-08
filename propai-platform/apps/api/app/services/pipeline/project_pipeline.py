@@ -1563,6 +1563,17 @@ class ProjectPipeline:
             building_area = float(design_data.get("building_area_sqm") or 0.0)
             total_gfa = float(design.total_gfa_sqm or design_data.get("total_gfa_sqm") or 0.0)
             land_area = float(site.land_area_sqm or 0.0)
+            # ★engine_inputs 공용 헬퍼(build_bcr_far_rules) 재사용 — measured(대지면적으로 산출)와
+            #   limit(실효한도)가 둘 다 있을 때만 rule을 넣는다(land_area=0이면 이전엔 measured=0.0을
+            #   지어냈다 — 무날조 원칙 위반이라 이제 rule 자체를 생략한다).
+            from app.services.agents.engine_inputs import build_bcr_far_rules
+
+            rules = build_bcr_far_rules(
+                bcr_measured=round(building_area / land_area * 100, 2) if land_area > 0 else None,
+                bcr_limit=site.max_bcr if site.max_bcr else None,
+                far_measured=round(total_gfa / land_area * 100, 2) if land_area > 0 else None,
+                far_limit=site.max_far if site.max_far else None,
+            )
             payload: dict[str, Any] = {
                 "pnu": pnu if (pnu and len(str(pnu)) == 19 and str(pnu).isdigit()) else "",
                 "address": site.address or state.address or "",
@@ -1570,19 +1581,21 @@ class ProjectPipeline:
                     {"target": "building_area"},
                     {"target": "gross_floor_area"},
                 ],
-                "rules": [
-                    {"rule": {"rule_id": "BCR_LIMIT", "comparator": "<="},
-                     "measured": round(building_area / land_area * 100, 2) if land_area else 0.0,
-                     "limit": float(site.max_bcr or 0.0)},
-                    {"rule": {"rule_id": "FAR_LIMIT", "comparator": "<="},
-                     "measured": round(total_gfa / land_area * 100, 2) if land_area else 0.0,
-                     "limit": float(site.max_far or 0.0)},
-                ],
             }
+            if rules:
+                payload["rules"] = rules
 
             # BFF 직접 호출(같은 프로세스 함수 재사용) — 라우터/인증 우회, 엔진 graceful 계약 동일.
-            from app.services.deliberation._engine_contract import build_input_dump, prevalidate
-            from apps.api.app.routers.deliberation import _post_analyze, _wrap_result
+            # ★A1: 과거 `_post_analyze`/`_wrap_result`는 현 라우터에 부재한 심볼이라(광역 except가
+            #   ImportError를 삼켜) 이 단계가 항상 무음 SKIPPED였다. 현존 심볼(_engine_post_analyze·
+            #   _compat_fields)로 정렬한다. is_deterministic_path로 결정론 여부를 판단해 라이브
+            #   지오코딩 등 비결정 경로는 async 타임아웃(deterministic=False)을 쓰게 한다(라우터와 동일 규약).
+            from app.services.deliberation._engine_contract import (
+                build_input_dump,
+                is_deterministic_path,
+                prevalidate,
+            )
+            from apps.api.app.routers.deliberation import _compat_fields, _engine_post_analyze
 
             dump = build_input_dump(payload)
             err = prevalidate(dump)
@@ -1592,7 +1605,7 @@ class ProjectPipeline:
                     sr.status = PipelineStatus.SKIPPED
                 return
 
-            data, reason = await _post_analyze(dump)
+            data, reason = await _engine_post_analyze(dump, deterministic=is_deterministic_path(dump))
             if reason != "ok" or data is None:
                 # ★엔진 미연결/오류 → degraded skip(파이프라인 무파괴).
                 if sr:
@@ -1600,7 +1613,8 @@ class ProjectPipeline:
                     sr.status = PipelineStatus.SKIPPED
                 return
 
-            wrapped = _wrap_result(data, str(data.get("run_id") or ""))
+            # ★_wrap_result 호환 형태 재구성(status·run_id + _compat_fields의 평면 필드).
+            wrapped = {"status": "ok", "run_id": str(data.get("run_id") or ""), **_compat_fields(data)}
             if sr:
                 sr.data = wrapped
         except Exception as e:  # noqa: BLE001 — 심의 검토 실패가 파이프라인을 깨지 않게 흡수.

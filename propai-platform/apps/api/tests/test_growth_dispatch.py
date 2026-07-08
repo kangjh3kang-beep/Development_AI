@@ -95,3 +95,38 @@ def test_market_specialist_has_interpreter_wired():
 
     assert get_specialist("market")._interpreter is not None
     assert get_specialist("zoning")._interpreter is None
+
+
+async def test_specialist_agent_default_ingester_uses_dispatch_memory_ingest_not_delay(monkeypatch):
+    """★C5: 기본 ingester가 `.delay`(워커 부재 시 no-op)가 아니라 dispatch_memory_ingest(PR#173
+    패턴 — 워커 없으면 in-process 실제 적재)를 쓰는지 확인한다."""
+    from app.services.agents.specialist_agent import SpecialistAgent
+    from app.tasks import memory_tasks
+
+    seen: dict = {}
+    done = asyncio.Event()
+
+    async def _fake_ingest(payload: dict) -> bool:
+        seen.update(payload)
+        done.set()
+        return True
+
+    monkeypatch.setattr(memory_tasks, "_ingest_async", _fake_ingest)
+    monkeypatch.setattr(memory_tasks, "_celery", None)  # 워커 부재
+
+    def _tool(data):
+        return {"findings": [{"check_id": "X", "status": "pass"}], "summary": {}}
+
+    async def _rec(*, analysis_type, payload, **kw):
+        return {"ok": True, "version": 1, "content_hash": "h",
+                "contradictions": {"has_contradiction": False}}
+
+    async def _prior(**kw):
+        return None
+
+    agent = SpecialistAgent(domain="far", task_type="effective_far", tool=_tool,
+                            interpreter=None, recorder=_rec, prior_loader=_prior)
+    await agent.run({"ok": True}, tenant_id="t", pnu="P1", project_id="proj1")
+    # ★워커 없이도 in-process로 실제 적재가 발화돼야 한다(.delay였다면 no-op이라 아래가 timeout).
+    await asyncio.wait_for(done.wait(), timeout=1.0)
+    assert seen.get("domain") == "far"

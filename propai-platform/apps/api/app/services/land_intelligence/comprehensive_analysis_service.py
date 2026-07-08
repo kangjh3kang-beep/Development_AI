@@ -773,13 +773,19 @@ class ComprehensiveAnalysisService:
             )
 
             _engine_set = bool((getattr(_get_settings(), "DELIBERATION_ENGINE_URL", "") or "").strip())
+            # ★A2 additive: pnu·land_area(대지면적)를 심의/설계 엔진 입력 조립에 실전달(engine_inputs
+            #   공용 빌더가 use_zone·calc_targets에 사용). land_area는 기존에도 far 도메인에는
+            #   전달돼 있었으나 심의/설계에는 미도달이었다(build_sync_specialist_domains 내부에서 소비).
             _sync_domains = build_sync_specialist_domains(
                 zone_type=zone_type, base=base, land_area=land_area,
-                address=address, engine_set=_engine_set,
+                address=address, engine_set=_engine_set, pnu=_pnu,
             )
+            # ★A5 과금 게이트: 종합분석은 결정론 교차검증만 유지하고 allow_llm=False로 LLM 해석을
+            #   스킵한다(결정론 findings·prior·recall·원장 cite는 무영향). LLM 해석(과금)은
+            #   decision_brief의 use_llm 경로 전용 — 여기서 이중 과금하지 않는다(정책 명기).
             _specialists = await run_specialist_domains(
                 _sync_domains, tenant_id=tenant_id, project_id=project_id,
-                pnu=_pnu, address=address,
+                pnu=_pnu, address=address, allow_llm=False,
             )
             if _specialists:
                 result["specialists"] = _specialists

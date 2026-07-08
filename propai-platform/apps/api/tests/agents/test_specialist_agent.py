@@ -78,6 +78,82 @@ async def test_interpreter_failure_is_graceful():
     assert out["findings"]               # 결정론 산출은 무중단
 
 
+# ── A5: allow_llm 과금 게이트 — interpreter 호출(과금 지점)만 스킵, 결정론/prior/recall/원장은 유지 ──
+
+
+async def test_allow_llm_false_skips_interpreter_but_keeps_deterministic_output():
+    called = {"n": 0}
+
+    class _Interp:
+        async def generate_interpretation(self, tool_out, *, prior_context=None):
+            called["n"] += 1
+            return {"items": [{"claim": "x", "basis": "PERMIT"}]}
+
+    async def _rec(*, analysis_type, payload, **kw):
+        return {"ok": True, "version": 1, "content_hash": "h",
+                "contradictions": {"has_contradiction": False}}
+
+    async def _prior(**kw):
+        return None
+
+    agent = SpecialistAgent(domain="permit", task_type="feasibility", tool=_tool,
+                            interpreter=_Interp(), recorder=_rec, prior_loader=_prior)
+    out = await agent.run({"ok": True, "far": 210.0}, tenant_id="t", pnu="P1", allow_llm=False)
+    assert called["n"] == 0              # interpreter 미호출(무과금)
+    assert out["claims"] == []
+    assert out["findings"][0]["current"] == 210.0   # 결정론 산출은 무영향
+
+
+async def test_allow_llm_default_true_calls_interpreter():
+    called = {"n": 0}
+
+    class _Interp:
+        async def generate_interpretation(self, tool_out, *, prior_context=None):
+            called["n"] += 1
+            return {"items": []}
+
+    async def _rec(*, analysis_type, payload, **kw):
+        return {"ok": True, "version": 1, "content_hash": "h",
+                "contradictions": {"has_contradiction": False}}
+
+    async def _prior(**kw):
+        return None
+
+    agent = SpecialistAgent(domain="permit", task_type="feasibility", tool=_tool,
+                            interpreter=_Interp(), recorder=_rec, prior_loader=_prior)
+    await agent.run({"ok": True}, tenant_id="t", pnu="P1")   # allow_llm 미지정 → 기본 True(무회귀)
+    assert called["n"] == 1
+
+
+# ── A3: interpreter 시그니처 호환(prior_context 미지원 인터프리터도 호출되어야 한다) ──
+# 배경: PermitInterpreter/DesignInterpreter.generate_interpretation은 prior_context를 받지 않는다
+# (evidence_text만, 또는 위치인자 1개). 과거엔 prior_context를 강제 전달해 TypeError→graceful catch로
+# claims=[]가 되는 dead-path였다(등록만 되고 실제 해석은 항상 실패).
+
+
+async def test_interpreter_without_prior_context_param_is_still_called():
+    """market과 달리 prior_context를 받지 않는 인터프리터(permit/design 실계약 모사)도 호출된다."""
+    captured: dict = {}
+
+    class _NoPriorInterp:
+        async def generate_interpretation(self, tool_out):   # prior_context 파라미터 없음
+            captured["tool_out"] = tool_out
+            return {"items": [{"claim": "용적률 210% 적용", "basis": "PERMIT"}]}
+
+    async def _rec(*, analysis_type, payload, **kw):
+        return {"ok": True, "version": 1, "content_hash": "h",
+                "contradictions": {"has_contradiction": False}}
+
+    async def _prior(**kw):
+        return None
+
+    agent = SpecialistAgent(domain="permit", task_type="feasibility", tool=_tool,
+                            interpreter=_NoPriorInterp(), recorder=_rec, prior_loader=_prior)
+    out = await agent.run({"ok": True, "far": 210.0}, tenant_id="t", pnu="P1")
+    assert captured.get("tool_out") is not None   # ★TypeError 없이 실제로 호출됐다
+    assert out["claims"]                          # citation_gate grounded 발언이 생성됐다(빈 리스트가 아님)
+
+
 # ── Phase 3.2 잔여: expert_panel 다관점 통합(panel DI, 선택·graceful) ──
 
 async def _rec_ok(*, analysis_type, payload, **kw):

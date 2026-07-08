@@ -115,6 +115,7 @@ class SpecialistAgent:
         self, data: dict[str, Any], *, tenant_id: str | None = None,
         project_id: str | None = None, pnu: str | None = None,
         address: str | None = None, created_by: str | None = None,
+        allow_llm: bool = True,
     ) -> dict[str, Any]:
         # 1) 계층1 결정론 도구 — 수치는 여기서만 생성(불변)
         tool_out = self._tool(data)
@@ -154,8 +155,10 @@ class SpecialistAgent:
             logger.warning("specialist memory recall 스킵(graceful)", domain=self.domain, err=str(e)[:160])
 
         # 3) LLM 해석(선택) + citation_gate grounded만 — 수치 비생성
+        #    ★allow_llm=False(과금 게이트): 결정론 도구·prior·recall·원장은 유지하고 LLM 해석만
+        #    스킵한다 — comprehensive(무과금 자동 교차검증)는 False, decision_brief use_llm 경로만 True.
         claims: list[dict[str, Any]] = []
-        if self._interpreter is not None:
+        if self._interpreter is not None and allow_llm:
             try:
                 from app.services.design_audit.blindspot_interpreter import citation_gate
                 from app.services.ledger.prior_context import build_prior_block

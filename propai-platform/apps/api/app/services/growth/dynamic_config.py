@@ -123,4 +123,20 @@ def as_float(value: Any, default: float) -> float:
     return f
 
 
-__all__ = ["get_dynamic", "get_cached", "as_float", "reset_cache"]
+async def get_prompt_candidates(db: Any, service: str) -> list[str]:
+    """L3(improvement_agent)가 등록한 프롬프트 후보 레이블 목록을 읽는다(read-back·C2).
+
+    키: platform_settings('prompt_candidates.<service>') = {"candidates": ["cand-1", ...]}
+    (_register_candidate 기록 포맷). 부재/형식이상/DB미가용은 [](best-effort) — 후보가
+    없으면 A/B 채택 비대상이라는 기존 의미 그대로다. TTL 캐시는 get_dynamic이 공용 수행.
+    """
+    try:
+        val = await get_dynamic(f"prompt_candidates.{service}", db=db)
+        if isinstance(val, dict) and isinstance(val.get("candidates"), list):
+            return [str(v) for v in val["candidates"] if isinstance(v, (str, int))]
+    except Exception as e:  # noqa: BLE001 — read-back 실패는 '후보 없음'으로 폴백.
+        logger.debug("get_prompt_candidates 실패(%s): %s", service, str(e)[:120])
+    return []
+
+
+__all__ = ["get_dynamic", "get_cached", "as_float", "get_prompt_candidates", "reset_cache"]

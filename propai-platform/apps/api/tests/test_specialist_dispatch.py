@@ -40,8 +40,51 @@ async def test_ok_dispatch_maps_status_ok_and_propagates_ctx(monkeypatch):
     assert out[0]["domain"] == "zoning" and out[0]["status"] == "ok"
     assert out[0]["findings"] == [{"claim": "c"}]
     assert out[0]["ledger"] == {"ok": True, "version": 2}
-    # 컨텍스트(tenant/project/address/pnu) 전파 확인.
-    assert seen["zoning"] == {"tenant_id": "t", "project_id": "p", "address": "a", "pnu": "123"}
+    # 컨텍스트(tenant/project/address/pnu/allow_llm) 전파 확인.
+    assert seen["zoning"] == {"tenant_id": "t", "project_id": "p", "address": "a", "pnu": "123",
+                              "allow_llm": True}
+
+
+@pytest.mark.asyncio
+async def test_allow_llm_false_propagates_to_ctx(monkeypatch):
+    """★A5: allow_llm=False가 coordinator.dispatch → SpecialistAgent.run까지 전파(무과금 게이트)."""
+    seen: dict = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = ctx
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [],
+                "contradictions": None, "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    await run_specialist_domains({"zoning": {"zone_type": "z"}}, allow_llm=False)
+    assert seen["zoning"]["allow_llm"] is False
+
+
+@pytest.mark.asyncio
+async def test_ok_entry_propagates_claims_and_recalled_count(monkeypatch):
+    """★A4: LLM claims(citation_gate grounded)와 회상 provenance(recalled_count)가 ok 엔트리에 표면화."""
+    async def _ok(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [],
+                "claims": [{"claim": "실효용적률 250% 적용", "basis": "FAR"}],
+                "contradictions": None, "ledger": None,
+                "rag_memories": [{"id": "1", "summary": "x"}, {"id": "2", "summary": "y"}]}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await run_specialist_domains({"설계": {"use_zone": "z"}})
+    assert out[0]["claims"] == [{"claim": "실효용적률 250% 적용", "basis": "FAR"}]
+    assert out[0]["recalled_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ok_entry_claims_defaults_empty_when_absent(monkeypatch):
+    """claims/rag_memories 미제공(도구 응답에 없음)이면 빈 목록으로 정직 기본값(가짜 생성 X)."""
+    async def _ok(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "summary": {}, "findings": [],
+                "contradictions": None, "ledger": None}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await run_specialist_domains({"zoning": {"zone_type": "z"}})
+    assert out[0]["claims"] == [] and out[0]["recalled_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -129,11 +172,31 @@ def test_sync_domains_gate_off_zoning_far_only():
 
 
 def test_sync_domains_gate_on_includes_deliberation_design():
-    """엔진 설정(engine_set=True) → 심의/설계 추가(registry 고아 실호출 해소)."""
+    """엔진 설정(engine_set=True) → 심의/설계 추가(registry 고아 실호출 해소).
+
+    ★A2 회귀가드: 엔진 계약키는 zone_type이 아니라 use_zone이다(permit_routes.py:39/
+    design_routes.py:39 실측 — 본문 최상위 use_zone만 읽는다). zone_type을 보내면 두 도메인
+    모두 use_zone=None → 항상 NEEDS_INPUT이었다(이 테스트가 그 회귀를 잠근다)."""
     d = build_sync_specialist_domains(
         zone_type="일반상업지역", base={}, land_area=0.0,
         address="서울 중구", engine_set=True,
     )
     assert set(d.keys()) == {"zoning", "far", "심의", "설계"}
+    assert "zone_type" not in d["심의"] and "zone_type" not in d["설계"]
+    assert d["심의"]["use_zone"] == "일반상업지역"
     assert d["심의"]["address"] == "서울 중구"
-    assert d["설계"]["zone_type"] == "일반상업지역"
+    assert d["설계"]["use_zone"] == "일반상업지역"
+    # land_area=0.0(양수 아님) → calc_targets 생략(가짜 0㎡ 미공급).
+    assert "calc_targets" not in d["설계"]
+    assert d["설계"]["provided"] == {"program": True}
+
+
+def test_sync_domains_gate_on_design_gets_calc_targets_when_land_area_positive():
+    """land_area가 양수면 설계 입력에 calc_targets(plot_area)가 실전달된다(대지면적 종단배선)."""
+    d = build_sync_specialist_domains(
+        zone_type="제2종일반주거지역", base={}, land_area=500.0,
+        address="서울 강남구", engine_set=True, pnu="1168010100101230000",
+    )
+    assert d["설계"]["calc_targets"] == [{"target": "plot_area", "payload": {"parcel_area": 500.0}}]
+    assert d["설계"]["pnu"] == "1168010100101230000"
+    assert d["심의"]["pnu"] == "1168010100101230000"

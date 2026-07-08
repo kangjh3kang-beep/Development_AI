@@ -403,6 +403,13 @@ async def verify_chain(
                 if ph != prev_hash:
                     broken.append({"version": ver, "issue": "chain_broken"})
                 prev_hash = stored_hash
+            if broken:
+                # ★C3 producer: 변조탐지를 치유루프(healing_rules._collect_candidates)에 표면화 —
+                #   kind='ledger_broken' + severity='critical'가 그 브랜치를 발동시켜 재분석을
+                #   제안한다(healing_rules.py:198~209 실측 계약). best-effort(예외 삼킴·검증 결과 무영향).
+                from app.services.growth.capture_service import record_fallback
+                record_fallback("analysis_ledger", "ledger_broken", severity="critical",
+                                analysis_type=analysis_type, broken_count=len(broken))
             return {"ok": True, "verified": not broken, "length": len(rows),
                     "head_version": int(rows[-1][0]), "broken": broken,
                     "message": "무결성 체인 정상(변조 없음)" if not broken else f"무결성 이상 {len(broken)}건 탐지"}

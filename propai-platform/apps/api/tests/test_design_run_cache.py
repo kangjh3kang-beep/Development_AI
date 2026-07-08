@@ -235,6 +235,166 @@ def test_project_name_change_yields_cache_hit():
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# 2.5) B1(설계자동분석엔진 SSOT 관통 — 조례 실효한도) + B2(특이부지 게이트) 라우터 배선(graceful skip)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_ordinance_pct_clamps_far_bcr_in_auto_branch():
+    """ordinance_far_pct/ordinance_bcr_pct 주입 시 자동산출 분기(land_area_sqm) far/bcr가 클램프된다.
+
+    zone_code=2R 법정상한(far 200%·bcr 60%)보다 낮은 조례값(far 100%·bcr 30%)을 주면
+    엔진의 min(법정,조례,목표) 클램프(_effective_limits)가 그대로 반영돼 산출 far/bcr가
+    조례값 이하로 내려가야 한다(라우터가 seed-design과 동일 패턴으로 SiteInput에 전달만 함).
+    """
+    _resolve_mass, _resolve_mass_uncached, _, BimGenerateRequest = _import_router()  # noqa: N806
+
+    baseline = BimGenerateRequest(land_area_sqm=2000.0, zone_code="2R", building_use="공동주택")
+    clamped = BimGenerateRequest(
+        land_area_sqm=2000.0, zone_code="2R", building_use="공동주택",
+        ordinance_far_pct=100.0, ordinance_bcr_pct=30.0,
+    )
+
+    m_base = _resolve_mass_uncached(baseline)
+    m_clamped = _resolve_mass_uncached(clamped)
+
+    # 조례 미제공(baseline)은 법정상한(far 200%) 근접까지 산출 — 조례 제공(clamped)보다 뚜렷이 높다.
+    assert m_clamped["far_pct"] <= 100.5   # 조례 100% 이하(대지분할 반올림 오차만 허용)
+    assert m_clamped["bcr_pct"] <= 30.5    # 조례 30% 이하
+    assert m_clamped["far_pct"] < m_base["far_pct"]
+    assert m_clamped["bcr_pct"] < m_base["bcr_pct"]
+
+
+def test_ordinance_unset_matches_legal_default_behavior():
+    """ordinance_*_pct 미제공(기본 None) 시 클램프가 전혀 개입하지 않아 기존(법정상한 기준) 산출과 동일하다.
+
+    SiteInput.ordinance_far_percent/ordinance_bcr_percent 기본값도 None이라, 라우터가 req의
+    None을 그대로 전달하는 것은 이 필드를 아예 안 넘기던 기존 코드와 동작이 100% 같다(byte-동등).
+    """
+    _resolve_mass, _resolve_mass_uncached, _, BimGenerateRequest = _import_router()  # noqa: N806
+    from app.services.cad.auto_design_engine import AutoDesignEngineService
+
+    req = BimGenerateRequest(land_area_sqm=2000.0, zone_code="2R", building_use="공동주택")
+    mass = _resolve_mass_uncached(req)
+    legal = AutoDesignEngineService.get_legal_limits("2R")
+
+    assert mass["far_pct"] <= legal["max_far_percent"] + 0.01   # 법정상한 초과 없음(클램프 미개입)
+    assert mass["bcr_pct"] <= legal["max_bcr_percent"] + 0.01
+    assert mass["special_parcel"] is None   # B2 컨텍스트 없음 → 게이트 자체 생략(정직)
+
+
+def test_ordinance_difference_changes_cache_key_no_poisoning():
+    """조례값만 다른 두 요청은 서로 다른 캐시열쇠(교차오염 0) — 핑거프린트 누락 시 캐시오염 회귀방어.
+
+    _request_fingerprint에 ordinance_far_pct/bcr_pct가 빠지면, 조례값만 다른 두 요청이 같은 열쇠로
+    충돌해 두 번째 요청이 첫 요청의(잘못된) 클램프 결과를 캐시 히트로 돌려주는 결함이 생긴다.
+    """
+    _resolve_mass, _, _, BimGenerateRequest = _import_router()  # noqa: N806
+    r_none = BimGenerateRequest(land_area_sqm=2000.0, zone_code="2R", building_use="공동주택")
+    r_ord = BimGenerateRequest(
+        land_area_sqm=2000.0, zone_code="2R", building_use="공동주택", ordinance_far_pct=80.0,
+    )
+
+    m_none = _resolve_mass(r_none)
+    m_ord = _resolve_mass(r_ord)
+
+    assert m_none["_cache_hit"] is False
+    assert m_ord["_cache_hit"] is False   # ★독립 열쇠 — 잘못된 캐시히트(교차오염) 아님
+    assert m_ord["far_pct"] != m_none["far_pct"]
+    assert m_ord["far_pct"] <= 80.5
+
+
+def test_layout_site_context_passes_through_ordinance(monkeypatch):
+    """/layout(_build_site_context_for_layout)이 더 이상 ordinance_far/bcr_pct를 None으로 하드코딩하지 않는다.
+
+    수정 전에는 req.ordinance_far_pct/ordinance_bcr_pct를 무시하고 site_context_from_zone에 항상
+    None을 넘겨 /layout 경로만 조례가 반영되지 않는 불일치가 있었다(B1-3 교정 대상).
+    """
+    pytest.importorskip("fastapi")
+    try:
+        from app.routers import design_v61
+        from app.services.design_ingest import composition as comp_mod
+    except Exception as e:  # noqa: BLE001 — 의존성 부재 환경은 정직하게 skip
+        pytest.skip(f"라우터 import 불가(이 환경엔 전체 의존성 없음): {str(e)[:80]}")
+
+    captured: dict = {}
+    original = comp_mod.site_context_from_zone
+
+    def _spy(*args, **kwargs):  # noqa: ANN002, ANN003
+        captured["ordinance_far_pct"] = kwargs.get("ordinance_far_pct")
+        captured["ordinance_bcr_pct"] = kwargs.get("ordinance_bcr_pct")
+        return original(*args, **kwargs)
+
+    # ★_build_site_context_for_layout은 composition.site_context_from_zone을 함수 안에서 지연
+    #   import하므로(모듈 최상단 아님), composition 모듈의 심볼만 갈아끼우면 그대로 반영된다.
+    monkeypatch.setattr(comp_mod, "site_context_from_zone", _spy)
+
+    req = design_v61.LayoutRequest(
+        land_area_sqm=2000.0, zone_code="2R", ordinance_far_pct=95.0, ordinance_bcr_pct=45.0,
+    )
+    mass = design_v61._resolve_mass(req)
+    design_v61._build_site_context_for_layout(req, mass)
+
+    assert captured["ordinance_far_pct"] == 95.0
+    assert captured["ordinance_bcr_pct"] == 45.0
+
+
+def test_special_parcel_gate_attached_when_land_category_given():
+    """B2: land_category(예: 학교용지)가 있으면 mass["special_parcel"]이 additive로 부착된다."""
+    _, _resolve_mass_uncached, _, BimGenerateRequest = _import_router()  # noqa: N806
+    req = BimGenerateRequest(
+        land_area_sqm=2000.0, zone_code="GC", building_use="공동주택",
+        land_category="학교용지", pnu="1111011100100010000",
+    )
+    mass = _resolve_mass_uncached(req)
+    sp = mass["special_parcel"]
+    assert sp is not None
+    assert sp["developability"] == "PRECONDITION"
+    assert sp["warnings"]
+    assert sp["pnu"] == "1111011100100010000"
+
+
+def test_special_parcel_gate_none_without_context():
+    """B2: land_category·special_districts 모두 없으면 mass["special_parcel"]=None(정직 생략)."""
+    _, _resolve_mass_uncached, _, BimGenerateRequest = _import_router()  # noqa: N806
+    req = BimGenerateRequest(land_area_sqm=2000.0, zone_code="GC", building_use="공동주택")
+    mass = _resolve_mass_uncached(req)
+    assert mass["special_parcel"] is None
+
+    # 명시치수 분기·최종폴백 분기도 동일하게 컨텍스트 없으면 None(전 분기 패리티).
+    req_explicit = BimGenerateRequest(building_width_m=20.0, building_depth_m=12.0, floor_count=10)
+    assert _resolve_mass_uncached(req_explicit)["special_parcel"] is None
+
+
+def test_fingerprint_includes_b1_b2_fields():
+    """_request_fingerprint에 B1(조례)·B2(특이부지 게이트) 신규 필드가 빠짐없이 포함된다."""
+    _, _, _request_fingerprint, BimGenerateRequest = _import_router()  # noqa: N806
+    req = BimGenerateRequest(land_area_sqm=2000.0, zone_code="2R")
+    fp = _request_fingerprint(req)
+    for field in (
+        "ordinance_far_pct", "ordinance_bcr_pct", "land_category", "special_districts", "pnu",
+        "zone_name",
+    ):
+        assert field in fp
+
+
+def test_fingerprint_zone_name_prevents_special_parcel_cross_poisoning():
+    """★독립리뷰 CRITICAL 회귀잠금: _attach_special_parcel_gate가 zone_name(LayoutRequest)을
+    zone_code보다 우선 소비하므로, zone_name만 다른 두 요청은 반드시 다른 캐시 열쇠여야 한다 —
+    누락 시 다른 부지(예: 자연녹지 vs 생산녹지 학교용지)의 특이부지 경고가 전역 캐시(테넌트
+    무관)를 타고 새어 나가는 크로스 캐시오염이 된다."""
+    _, _, _request_fingerprint, _ = _import_router()  # noqa: N806
+    try:
+        from app.routers.design_v61 import LayoutRequest
+    except Exception:
+        pytest.skip("design_v61 라우터 의존성 미가용 환경")
+    common = dict(land_area_sqm=1000.0, zone_code="GB",
+                  land_category="학교용지", pnu="1111011100100010000")
+    r1 = LayoutRequest(**common, zone_name="자연녹지지역")
+    r2 = LayoutRequest(**common, zone_name="생산녹지지역")
+    assert _request_fingerprint(r1) != _request_fingerprint(r2)
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 3) generate_bim_model 무거운계산 캐시(INC6-b — 라우터, graceful skip)
 # ──────────────────────────────────────────────────────────────────────────
 #
