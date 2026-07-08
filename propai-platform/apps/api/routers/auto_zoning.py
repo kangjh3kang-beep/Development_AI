@@ -1289,7 +1289,7 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         # 필지별 구역 실값(입력 우선 → 수집값). None=미확인(수집실패/PNU없음).
         _sd = p.get("special_districts")
         if _sd is None or _sd == []:
-            _sd = districts_by_pnu.get(str(p.get("pnu") or ""), None)
+            _sd = districts_by_pnu.get(str(p.get("pnu") or ""))
         p["_districts_checked"] = _sd is not None  # 정직 플래그(미확인 구분)
 
         # ── 실효 용적률/건폐율(조례 반영) — 미확보 지역은 effective=legal 폴백(정직).
@@ -1690,7 +1690,6 @@ async def parcel_at_point(req: ParcelAtPointRequest):
 
     지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
     """
-    from datetime import datetime
 
     from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
     from apps.api.app.services.external_api.vworld_service import VWorldService
@@ -1707,7 +1706,6 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     if not pp or not pp.get("pnu"):
         return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
     pnu = str(pp["pnu"])
-    from apps.api.app.services.external_api.building_registry_service import BuildingRegistryService
 
     area_sqm = zone_type = jimok = None
     official_price_per_sqm = None
