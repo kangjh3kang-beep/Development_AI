@@ -569,7 +569,10 @@ class ProjectPipeline:
                 from app.services.land_intelligence.land_info_service import LandInfoService
                 land_svc = LandInfoService()
                 comprehensive = await land_svc.collect_comprehensive(state.address)
-            except Exception:
+            except Exception as e:  # noqa: BLE001 — 보충 실패는 pre_collected로 진행(무중단)
+                # W3-8 연계: 무로그 침묵이던 보충 실패를 관측 가능하게(원인 추적).
+                logger.warning("site 보충수집(collect_comprehensive) 실패 — pre_collected로 진행",
+                               err=str(e)[:160])
                 comprehensive = {}
 
             # comprehensive 데이터로 pre_collected 덮어쓰기 (실제 API 데이터 우선)
@@ -1182,6 +1185,15 @@ class ProjectPipeline:
         overrides = self._stage_overrides_for(opts, "design")
         applied_overrides: dict[str, Any] = {}
 
+        # W3-8: 폴백 기본값(500㎡/60%/200%) 사용 시 가정 사실을 stage data에 정직 표기 —
+        # site 단계의 assumed_fields 계약(E7)과 동일. 수치·흐름 불변, 표기만 가산.
+        design_assumed_fields: list[str] = []
+        if not site.land_area_sqm:
+            design_assumed_fields.append("land_area_sqm(500㎡ 가정)")
+        if not site.max_bcr:
+            design_assumed_fields.append("max_bcr(60% 가정)")
+        if not site.max_far:
+            design_assumed_fields.append("max_far(200% 가정)")
         land_area = site.land_area_sqm or 500.0
         bcr = site.max_bcr or 60.0
         far = site.max_far or 200.0
@@ -1328,6 +1340,10 @@ class ProjectPipeline:
             )
         if applied_overrides:
             state.stages["design"].data["applied_overrides"] = applied_overrides
+        # W3-8: 폴백 가정치 사용 표기(UI 경고 배지·SSOT 시드 제외 판단용 — site 계약과 동일 키).
+        if design_assumed_fields:
+            state.stages["design"].data["assumed_fields"] = design_assumed_fields
+            state.stages["design"].data["data_quality"] = "assumed_defaults"
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:

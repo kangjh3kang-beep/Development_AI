@@ -61,6 +61,10 @@ export default function ProjectDetailPage() {
 
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
+  // 메타 로드 실패 상태 — 무통지 삼킴 대신 "불러오지 못함 · 재시도" 카드를 렌더하기 위해 보존.
+  const [metaError, setMetaError] = useState(false);
+  // 재시도 트리거 — 증가 시 아래 effect가 재실행돼 fetchProjectMeta를 재호출한다(실패는 캐시되지 않음).
+  const [metaRetryTick, setMetaRetryTick] = useState(0);
 
   // 복원된 분석(스냅샷) 구독 — 히어로 PNU/용도지역/ROI를 실데이터로 표시
   const ctxSite = useProjectContextStore((s) => s.siteAnalysis);
@@ -74,19 +78,22 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
+    setMetaLoading(true);
+    setMetaError(false);
     async function fetchMeta() {
       try {
         const res = await fetchProjectMeta<ProjectMeta>(id);
         if (!cancelled) setMeta(res);
       } catch {
-        // fallback — no metadata available
+        // 실패를 조용히 삼키지 않는다 — 상태 보존 후 아래에서 재시도 카드를 렌더.
+        if (!cancelled) setMetaError(true);
       } finally {
         if (!cancelled) setMetaLoading(false);
       }
     }
     fetchMeta();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, metaRetryTick]);
 
   // 분석 스냅샷 복원 + 원장 통합보고서 로드 — ★두 작업이 동일 원장(latestLedger("pipeline", {address,projectId}))을
   //   쓰므로 단일 effect에서 한 번만 호출해 중복 네트워크를 제거한다(이전: 두 effect가 같은 API 2회 호출).
@@ -302,6 +309,25 @@ export default function ProjectDetailPage() {
             />
           </div>
         </motion.section>
+      ) : metaError ? (
+        /* 메타 로드 실패 — 무통지 대신 정직한 실패 안내 + 재시도(효과 재실행) */
+        <section className="rounded-[2rem] border border-[var(--status-warning)]/40 bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold text-[var(--text-primary)]">프로젝트 정보를 불러오지 못했습니다</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                네트워크 또는 서버 오류로 프로젝트 메타 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMetaRetryTick((t) => t + 1)}
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-4 py-2 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
+            >
+              재시도
+            </button>
+          </div>
+        </section>
       ) : null}
 
       {/* ── High-Fidelity Project Hero ── */}
@@ -309,7 +335,12 @@ export default function ProjectDetailPage() {
         {/* Cinematic Background Elements */}
         <div className="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/15" />
         <div className="absolute -left-20 bottom-0 h-96 w-96 rounded-full bg-blue-500/5 blur-[100px]" />
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] dark:invert pointer-events-none" />
+        {/* 외부 CDN 텍스처(transparenttextures.com) 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
+        <div
+          className="absolute inset-0 opacity-[0.03] pointer-events-none"
+          style={{ backgroundImage: "radial-gradient(currentColor 1px, transparent 1px)", backgroundSize: "8px 8px" }}
+          aria-hidden
+        />
 
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
           <div className="space-y-6">

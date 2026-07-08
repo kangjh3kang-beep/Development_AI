@@ -1,5 +1,8 @@
 // apps/web/lib/formatters.ts
 
+/** 평↔㎡ 환산 SSOT — 1평 = 3.305785㎡ (백엔드 PYEONG_TO_SQM와 동일값. 3.3058 근사값 혼용 금지). */
+export const PYEONG_SQM = 3.305785;
+
 /** 천단위 쉼표 표시(정수부만). null/빈값→"". 소수 허용(keepDecimal). */
 export function withCommas(value: number | string | null | undefined, keepDecimal = false): string {
   if (value == null || value === "") return "";
@@ -28,7 +31,8 @@ export function parseCommaNumber(s: string, allowDecimal = false): number | null
  * Example: 565000000 -> "5억 6,500만 원"
  */
 export function formatCurrencyKRW(value: number): string {
-  if (isNaN(value)) return "0원";
+  // 무효 입력은 "0원"으로 날조하지 않는다 — 값 부재를 정직하게 표기.
+  if (isNaN(value)) return "-";
 
   const num = Math.abs(value);
   const sign = value < 0 ? "-" : "";
@@ -75,7 +79,8 @@ export function formatCurrencyKRW(value: number): string {
  * Formats a number into a shorter version for dense charts (e.g. 1.25B KRW -> 12.5억).
  */
 export function formatCurrencyCompact(value: number): string {
-  if (isNaN(value)) return "0";
+  // 무효 입력은 "0"으로 날조하지 않는다 — 값 부재를 정직하게 표기.
+  if (isNaN(value)) return "-";
   const num = Math.abs(value);
   const sign = value < 0 ? "-" : "";
 
@@ -94,9 +99,11 @@ export function formatCurrencyCompact(value: number): string {
  * 1 Pyeong = 3.305785 m²
  */
 export function formatArea(m2: number): string {
-  if (isNaN(m2) || m2 === 0) return "0 m²";
+  // 무효 입력은 "0 m²"로 날조하지 않는다 — 값 부재를 정직하게 표기.
+  if (isNaN(m2)) return "-";
+  if (m2 === 0) return "0 m²";
 
-  const pyeong = m2 / 3.305785;
+  const pyeong = m2 / PYEONG_SQM;
   return `${m2.toLocaleString("en-US", { maximumFractionDigits: 1 })} m² (약 ${pyeong.toLocaleString("en-US", { maximumFractionDigits: 0 })}평)`;
 }
 

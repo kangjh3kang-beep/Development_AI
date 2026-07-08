@@ -38,7 +38,7 @@ async def get_parcel_info(req: PNURequest, current_user: User = Depends(get_curr
     lc = await vworld.get_land_characteristics(code)
     if not lc:
         raise HTTPException(status_code=404, detail="필지 정보를 찾을 수 없음")
-    return {
+    resp = {
         "pnu": lc.get("pnu", code),
         "address": req.address or "",
         "land_category": lc.get("land_category", "") or "",
@@ -50,6 +50,24 @@ async def get_parcel_info(req: PNURequest, current_user: User = Depends(get_curr
         "terrain": (lc.get("terrain_form") or lc.get("terrain_height") or "") or "",
         "restrictions": [z for z in [lc.get("zone_type_2")] if z],
     }
+    # W3-7(설명가능성 기본화): 프론트(ProjectSiteAnalysisWorkspaceClient)가 선언만 하고
+    # 항상 비어 있던 신뢰메타(legal_refs·inputs)를 additive 부착 — parcels-info와 동일
+    # 빌더 재사용(URL은 legal_reference_registry 출력만, zone 미확정이면 빈 배열=무날조).
+    try:
+        from apps.api.routers.auto_zoning import _build_inputs, _build_legal_refs
+
+        _shaped = {
+            "pnu": resp["pnu"],
+            "zone_type": resp["zoning"],
+            "land_area_sqm": resp["area_sqm"],
+            "official_price_per_sqm": resp["official_price_per_sqm"],
+            "address": resp["address"],
+        }
+        resp["legal_refs"] = _build_legal_refs(_shaped)
+        resp["inputs"] = _build_inputs(_shaped)
+    except Exception:  # noqa: BLE001 — 신뢰메타 부착 실패는 본 응답을 막지 않음(additive)
+        resp.setdefault("legal_refs", [])
+    return resp
 
 @router.post("/parcel/merge")
 async def merge_parcels(req: MergeRequest, current_user: User = Depends(get_current_user)):
