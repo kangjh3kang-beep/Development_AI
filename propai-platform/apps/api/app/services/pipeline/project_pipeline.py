@@ -615,6 +615,35 @@ class ProjectPipeline:
                 if pnu:
                     pre_collected["pnu_codes"] = [pnu]
 
+            # ★다필지 통합(RC#2): parcels가 오면 대표필지 면적을 통합면적으로 대체한다.
+            #   그동안 site stage가 대표필지 land_register 면적을 무조건 덮어써(위 :578) 설계·수지·
+            #   토지비가 전부 대표면적(예 763㎡)으로 캐스케이드되던 통로부재를 공용 SSOT로 봉합.
+            #   우선순위: ①통합면적(parcels≥2) > ②사용자 제공 site_data 면적 > ③대표필지. 정직표기(area_basis).
+            area_basis = "representative_parcel"
+            _parcels = (opts or {}).get("parcels")
+            if _parcels and isinstance(_parcels, list) and len(_parcels) >= 2:
+                try:
+                    from app.services.land_intelligence.comprehensive_analysis_service import (
+                        build_integrated_context,
+                    )
+                    integrated = await build_integrated_context(_parcels)
+                    if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
+                        pre_collected["land_area_sqm"] = float(integrated["total_area_sqm"])
+                        _dz = integrated.get("dominant_zone")
+                        if _dz and _dz != "mixed_review_required":
+                            pre_collected["zone_type"] = _dz
+                        if integrated.get("blended_far_eff_pct") is not None:
+                            pre_collected["effective_far"] = float(integrated["blended_far_eff_pct"])
+                        if integrated.get("blended_bcr_eff_pct") is not None:
+                            pre_collected["effective_bcr"] = float(integrated["blended_bcr_eff_pct"])
+                        # 통합 메타를 site stage data에 부착 — 다운스트림(설계·수지·보고서) 그라운딩용.
+                        pre_collected["integrated_zoning"] = integrated
+                        pre_collected["parcel_count"] = integrated.get("parcel_count")
+                        area_basis = "integrated_parcels"
+                except Exception as e:  # noqa: BLE001 — 통합 실패는 단일 경로로 폴백(무중단)
+                    logger.warning("파이프라인 다필지 통합 실패 — 대표필지 폴백", err=str(e)[:160])
+            pre_collected["area_basis"] = area_basis  # 면적 출처 정직 표기(무날조)
+
             # 사용자 오버라이드(stage_overrides.site_analysis)는 실API 병합 이후 주입 —
             # comprehensive가 사용자값을 덮어쓰지 못하도록 적용 순서를 보장한다.
             site_overrides = self._stage_overrides_for(opts, "site_analysis")

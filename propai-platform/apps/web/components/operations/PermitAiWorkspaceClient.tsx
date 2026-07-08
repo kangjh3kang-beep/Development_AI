@@ -29,6 +29,7 @@ import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { parcelAddressList } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct, specialFactorLabels } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
@@ -122,7 +123,11 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       setError("주소를 먼저 선택하거나 입력하세요.");
       return;
     }
-    const parcels = [target, ...extra.map((s) => s.trim()).filter(Boolean)];
+    // 수동 재검색(extra)이 있으면 그것으로, 없으면 store 다필지(siteAnalysis.parcels)로 폴백 —
+    //   33필지 컨텍스트로 진입해도 수동입력 없이 다필지 인허가 분석이 되도록(감사 P1). 주소 리스트 계약.
+    const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
+    const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(siteAnalysis?.parcels);
+    const parcels = [target, ...extraTrimmed, ...storeAddrs.filter((a) => a !== target)];
     setLoading(true);
     setError("");
     setResult(null);

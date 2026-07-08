@@ -1058,6 +1058,8 @@ class AutoRecommendRequest(BaseModel):
     region: str = "서울"
     equity_won: int = 10_000_000_000
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택)
+    # 다필지 통합 — 2필지 이상이면 통합면적·우세용도로 Top3 산정(미전달/1필지면 기존 단일 경로).
+    parcels: list[dict[str, Any]] | None = None
 
 
 @router.post("/auto-recommend", dependencies=[Depends(enforce_llm_quota)])
@@ -1070,6 +1072,7 @@ async def auto_recommend_top3(req: AutoRecommendRequest):
         region=req.region,
         equity_won=req.equity_won,
         use_llm=req.use_llm,
+        parcels=req.parcels,
     )
 
 
