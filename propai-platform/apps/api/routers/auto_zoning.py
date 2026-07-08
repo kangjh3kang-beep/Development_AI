@@ -520,16 +520,40 @@ async def special_parcels_check(body: dict):
 
     do_analyze = bool(body.get("analyze"))
     enriched: list[dict] = []
-    for p in parcels[:30]:  # 과도 호출 방지(최대 30필지)
+    unanalyzed_idx: list[int] = []
+    for i, p in enumerate(parcels[:30]):  # 과도 호출 방지(최대 30필지)
         p = dict(p or {})
         if do_analyze and not p.get("land_category") and p.get("address"):
             try:
                 p = {**(await AutoZoningService().analyze_by_address(p["address"])), **p}
             except Exception:  # noqa: BLE001 — 개별 실패는 정직하게 미분석으로 둠
                 p.setdefault("warnings", []).append("분석 실패(주소 해석 불가)")
+        # ★미분석 식별: 지목·구역 정보가 전혀 없으면 특이성 '판정 불가'(없음 아님).
+        if not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type"):
+            unanalyzed_idx.append(i)
         enriched.append(p)
 
-    return detect_multi_parcel(enriched)
+    result = detect_multi_parcel(enriched)
+    # ★P0(완성도 감사·무날조): 미분석 필지를 "특이 제약 없음"으로 단정하던 관대 폴백 제거.
+    #   지목·구역 미확인 필지는 특이성 '판정 불가'로 정직 고지하고 개발가능 단정을 강등한다.
+    if unanalyzed_idx:
+        result["unanalyzed_count"] = len(unanalyzed_idx)
+        for i in unanalyzed_idx:
+            if i < len(result.get("per_parcel") or []):
+                result["per_parcel"][i]["analysis_status"] = "unanalyzed"
+        if result.get("special_count", 0) == 0:
+            # 특이 미검출이 '데이터 부재' 때문일 수 있음 — 단정 문구를 판정불가로 교체.
+            result["developability"] = "UNKNOWN"
+            result["honest_disclosure"] = (
+                f"{len(unanalyzed_idx)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
+                "불가합니다. analyze:true로 실분석하거나 지목·구역 정보를 제공하세요."
+            )
+            result["summary"] = f"판정 불가 — {len(unanalyzed_idx)}/{len(enriched)}개 필지 미분석(지목·구역 미확인)."
+        else:
+            result.setdefault("warnings", []).append(
+                f"{len(unanalyzed_idx)}개 필지는 미분석(지목·구역 미확인) — 특이성 누락 가능."
+            )
+    return result
 
 
 @router.post("/comprehensive")

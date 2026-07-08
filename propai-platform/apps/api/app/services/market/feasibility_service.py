@@ -37,57 +37,71 @@ SALEABLE_AREA_RATIO = 0.75
 NPV_DISCOUNT_RATE = 0.08
 NPV_DEV_PERIOD_YEARS = 3
 
-# 용도지역별 기본 건폐율(BCA, %)·용적률(FAR, %) 추정표.
-# 국토계획법 시행령 상한 부근의 대표값이며, 조례 실효값은 V2/조례 엔진이 반영한다.
-ZONING_PARAMS = {
-    "제1종주거": {"bca": 60, "far": 150},
-    "제2종주거": {"bca": 60, "far": 200},
-    "제3종주거": {"bca": 50, "far": 250},
-    "상업": {"bca": 70, "far": 600},
-    "준주거": {"bca": 60, "far": 400},
-    "공업": {"bca": 70, "far": 300},
-    "녹지": {"bca": 20, "far": 80},
-}
-ZONING_PARAMS_DEFAULT = {"bca": 50, "far": 150}  # 미분류 용도지역 기본값
-
-
 class FeasibilityService:
     def __init__(self) -> None:
         pass
 
-    def _estimate_zoning_parameters(self, zone_type: str) -> dict[str, Any]:
-        """용도지역 이름에서 기본 건폐율(BCA)·용적률(FAR) 추정(개략값)."""
-        zone = zone_type or ""
-        # 준주거는 "주거"를 포함하므로 먼저 판정해야 제2종주거로 오분류되지 않는다.
-        if "준주거" in zone:
-            return dict(ZONING_PARAMS["준주거"])
-        if "제1종" in zone and "주거" in zone:
-            return dict(ZONING_PARAMS["제1종주거"])
-        if "제2종" in zone and "주거" in zone:
-            return dict(ZONING_PARAMS["제2종주거"])
-        if "제3종" in zone and "주거" in zone:
-            return dict(ZONING_PARAMS["제3종주거"])
-        if "상업" in zone:
-            return dict(ZONING_PARAMS["상업"])
-        if "공업" in zone:
-            return dict(ZONING_PARAMS["공업"])
-        if "녹지" in zone:
-            return dict(ZONING_PARAMS["녹지"])
-        return dict(ZONING_PARAMS_DEFAULT)
+    def _estimate_zoning_parameters(self, zone_type: str) -> dict[str, Any] | None:
+        """용도지역의 건폐율(BCA)·용적률(FAR) 한도를 공용 SSOT에서 산정.
+
+        ★종전 자체 하드코딩 표(상업600·녹지80·미분류 150 기본값)는 공용 산식(legal_zone_limits)
+        우회 + 미분류 용도지역에 근거 없는 150% 적용 위험이라 제거(완성도 감사 P0). 이제
+        applicable_limits_for(법정범위→조례→계획 계층)에 위임하고, 못 찾으면 None을 반환해
+        호출부가 정직하게 '산출 불가'로 처리한다(무날조).
+        """
+        from app.services.zoning.legal_zone_limits import applicable_limits_for
+
+        limits = applicable_limits_for(zone_type or None)
+        if not limits:
+            return None
+        far = limits.get("applied_far_pct") or limits.get("legal_max_far_pct")
+        bca = limits.get("applied_bcr_pct") or limits.get("legal_max_bcr_pct")
+        if not far:
+            return None
+        basis = str(limits.get("far_source") or "법정범위")
+        if not limits.get("ordinance_confirmed"):
+            basis += " (조례 미확인 — 법정상한 기준)"
+        return {"far": float(far), "bca": float(bca or 0), "basis": basis}
 
     def analyze_feasibility(
         self,
         land_area_sqm: float,
         zone_type: str,
         avg_pyeong_price_manwon: float,
-        official_price_per_sqm: float = 0
+        official_price_per_sqm: float = 0,
+        far_pct_override: float | None = None,
+        bcr_pct_override: float | None = None,
+        far_basis_override: str | None = None,
     ) -> dict[str, Any]:
         """보고서용 개략 사업타당성 계산(참고용). 반환 단위: 만원(10k won).
 
         정밀 수지는 FeasibilityServiceV2 를 사용한다(상단 docstring 참조).
+        far_pct_override: 상위(다필지 통합분석 blended_far_eff_pct 등)가 이미 확보한 실효
+          용적률이 있으면 주입 — 자체 추정 대신 공용 산식 값을 그대로 사용(SSOT 단일경유).
         """
         try:
-            params = self._estimate_zoning_parameters(zone_type)
+            if not land_area_sqm or land_area_sqm <= 0:
+                # 면적 미상 — 종전 기본 100평(330㎡) 임의 대입 제거(무날조).
+                return {
+                    "method": "quick_estimate",
+                    "available": False,
+                    "reason": "대지면적 미확보 — 개략 수지 산출 불가(면적 확인 후 재시도)",
+                }
+            if far_pct_override and far_pct_override > 0:
+                params: dict[str, Any] | None = {
+                    "far": float(far_pct_override),
+                    "bca": float(bcr_pct_override or 0),
+                    "basis": far_basis_override or "다필지 통합분석 실효용적률(면적가중)",
+                }
+            else:
+                params = self._estimate_zoning_parameters(zone_type)
+            if not params:
+                # 용도지역 미확인 — 근거 없는 기본값(구 150%)으로 날조하지 않고 정직 반환.
+                return {
+                    "method": "quick_estimate",
+                    "available": False,
+                    "reason": f"용도지역 미확인('{zone_type}') — 용적률 근거 부재로 개략 수지 산출 불가",
+                }
             far_ratio = params["far"] / 100.0
 
             # 1. 건축 가능 연면적(개략): 토지면적 × 용적률
@@ -133,7 +147,9 @@ class FeasibilityService:
                     "gfa_sqm": round(total_gfa_sqm, 2),
                     "gfa_pyeong": round(total_gfa_pyeong, 2),
                     "estimated_far": params["far"],
-                    "estimated_bca": params["bca"]
+                    "estimated_bca": params["bca"],
+                    # 용적률 출처(공용 산식/blended 주입/법정폴백) — 실무자 근거 추적용(무날조).
+                    "far_basis": params.get("basis") or "",
                 },
                 "financials": {
                     "total_revenue_10k": int(expected_revenue),
