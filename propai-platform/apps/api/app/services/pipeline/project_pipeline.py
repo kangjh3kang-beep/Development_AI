@@ -689,6 +689,18 @@ class ProjectPipeline:
             effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
             effective_far = min(float(national_far or 200), float(ordinance_far or 200))
 
+            # ★다필지 통합(리뷰 HIGH): 위 min()은 대표필지 zone의 법정/조례로만 산출된다. 통합 블록이
+            #   면적가중 blended 실효율을 계산해뒀으면(area_basis="integrated_parcels") 그 값으로 대체 —
+            #   혼재 용도지역에서 zone 라벨만 우세용도로 바뀌고 FAR/BCR은 대표 zone에 머무는 라벨-숫자
+            #   불일치(이 코드베이스가 반복적으로 싸운 버그 클래스)를 다필지 경로에 재도입하지 않는다.
+            if pre_collected.get("area_basis") == "integrated_parcels":
+                _bf = pre_collected.get("effective_far")
+                _bb = pre_collected.get("effective_bcr")
+                if _bf is not None and float(_bf) > 0:
+                    effective_far = float(_bf)
+                if _bb is not None and float(_bb) > 0:
+                    effective_bcr = float(_bb)
+
             # 기부체납 인센티브 계산
             far_incentive: dict[str, Any] = {}
             try:
@@ -794,6 +806,11 @@ class ProjectPipeline:
                 "official_land_price": float(official_land_price),
                 "pnu_codes": pnu_codes,
                 "source": "pre_collected+comprehensive",
+                # ★다필지 통합 메타(리뷰 MEDIUM) — 면적 출처 정직표기·통합집계 그라운딩을 실제로 노출한다
+                #   (설정만 하고 응답에 안 실어 죽은 필드였던 것 봉합). 단일/미전달은 "representative_parcel".
+                "area_basis": pre_collected.get("area_basis", "representative_parcel"),
+                "parcel_count": pre_collected.get("parcel_count"),
+                "integrated_zoning": pre_collected.get("integrated_zoning"),
             }
             if applied_site_overrides:
                 state.stages["site_analysis"].data["applied_overrides"] = applied_site_overrides

@@ -107,12 +107,6 @@ def _build_stages_response(result) -> list[PipelineStageStatusResponse]:
 # ── 엔드포인트 ────────────────────────────────────────────
 
 
-@router.post(
-    "/run",
-    response_model=PipelineRunResponse,
-    # ★전수감사 보강: 전체 파이프라인(LLM 단계 포함) — 익명 always-LLM 접근 차단 위해 인증도 부착.
-    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
-)
 def _merge_parcels_into_options(options: dict | None, parcels: list | None) -> dict | None:
     """다필지목록을 options["parcels"]로 병합(하위호환·additive). parcels 없으면 원본 그대로."""
     if not parcels:
@@ -122,6 +116,12 @@ def _merge_parcels_into_options(options: dict | None, parcels: list | None) -> d
     return merged
 
 
+@router.post(
+    "/run",
+    response_model=PipelineRunResponse,
+    # ★전수감사 보강: 전체 파이프라인(LLM 단계 포함) — 익명 always-LLM 접근 차단 위해 인증도 부착.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def run_pipeline(req: PipelineRunRequest):
     """주소 입력으로 전체 파이프라인 실행."""
     pipeline = ProjectPipeline()
@@ -792,6 +792,10 @@ async def rerun_stage(req: StageRerunRequest):
         options["previous_stage_data"] = req.previous_result.get(
             "stages", req.previous_result
         )
+
+    # ★다필지 통합(리뷰 HIGH): 재실행도 parcels를 흘려 site_analysis가 통합면적을 유지한다 —
+    #   없으면 단계 재실행 시 대표필지 면적으로 조용히 회귀(원 버그 재현)한다.
+    options = _merge_parcels_into_options(options, req.parcels) or options
 
     pipeline = ProjectPipeline()
     result = await pipeline.run(
