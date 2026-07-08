@@ -454,11 +454,18 @@ class ComprehensiveAnalysisService:
             # ★면적의존 산출물(annotations 문구·far_optimization)도 통합면적 기준으로 재생성한다.
             #   숫자만 바꾸면 "대표 763㎡ 기준 최대 연면적…" 대표필지 문구가 그대로 남는 버그(RC#1)를
             #   공용 SSOT 헬퍼로 봉합 — 문구/시나리오가 통합면적·N필지로 정합.
+            #   ★혼재 다필지: far_optimization의 법정상한(ceiling) 기준선도 통합값으로 정합한다.
+            #   zone_type은 위에서 dominant로 덮였는데 national_far만 대표필지 법정값이면,
+            #   base(=blended 실효)가 대표필지 법정상한을 초과해 시나리오표가 자기모순(base>ceiling)날 수 있다.
+            #   → §84 면적가중 법정 blended(blended_far_legal_pct, 집계 SSOT·재구현0)로 대체.
+            #   각 필지 실효 ≤ 법정이므로 blended_실효 ≤ blended_법정이 항상 성립 → 자기모순 원천차단.
+            #   결측(전 필지 법정 미확보)이면 기존 대표값으로 폴백(무회귀).
+            _blended_legal = integrated.get("blended_far_legal_pct")
             sec1 = far_tier_service.rebuild_area_dependent(
                 sec1,
                 land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
                 zone_type=(zone_type if isinstance(zone_type, str) else str(zone_type)),
-                national_far=sec1.get("national_far_pct"),
+                national_far=(_blended_legal if _blended_legal is not None else sec1.get("national_far_pct")),
                 parcel_count=int(integrated.get("parcel_count") or 2),
                 zone_mix=integrated.get("zone_mix"),
             )
