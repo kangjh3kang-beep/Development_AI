@@ -444,33 +444,30 @@ class ComprehensiveAnalysisService:
             if integrated.get("blended_bcr_eff_pct") is not None:
                 effective_bcr = float(integrated["blended_bcr_eff_pct"])
             # sec1(실효용적률 카드)도 통합 실효치로 정합 + 통합 메타 부착(혼재 시 검토필요 표기 유지).
-            #   ★법정상한(national_*_pct)도 §84 면적가중 통합값(blended_*_legal)으로 정합한다.
-            #   zone_type이 위에서 dominant로 덮이는데 법정상한만 대표필지값으로 남으면 (a) evidence·CSP준수검사·
-            #   far_optimization이 서로 다른 법정상한을 노출(표시 불일치)하고 (b) far_optimization의 ceiling이
-            #   base(blended 실효) 미만이 되어 시나리오표가 자기모순(음수 인센티브/연면적)날 수 있다.
-            #   blended_*_legal은 build_integrated_context가 각 필지 법정 결측을 실효로 하한보정(법정≥실효)해
-            #   같은 부분집합에서 산출하므로 blended_법정 ≥ blended_실효가 구조적으로 보장된다. 결측이면 대표값 폴백.
-            _bl_far = integrated.get("blended_far_legal_pct")
-            _bl_bcr = integrated.get("blended_bcr_legal_pct")
-            _prev = sec1 if isinstance(sec1, dict) else {}
+            #   ★national_far_pct(표시필드)는 덮지 않는다 — evidence "국가 법정상한(국토계획법 시행령)"으로
+            #   소비되므로 blended(면적가중 혼합값)로 바꾸면 단일 시행령 정값이 아닌데 시행령 링크가 걸려
+            #   라벨-값 거짓이 된다(리뷰 P1). 표시필드는 보존하고, far_optimization의 ceiling만 아래에서
+            #   통합 blended로 전달한다(두 값은 의미가 다름: 시행령 정값 vs 통합 최대상한).
             sec1 = {
-                **_prev,
+                **(sec1 if isinstance(sec1, dict) else {}),
                 "effective_far_pct": effective_far,
                 "effective_bcr_pct": effective_bcr,
-                "national_far_pct": (_bl_far if _bl_far is not None else _prev.get("national_far_pct")),
-                "national_bcr_pct": (_bl_bcr if _bl_bcr is not None else _prev.get("national_bcr_pct")),
                 "integrated": True, "parcel_count": integrated.get("parcel_count"),
                 "dominant_zone": dz, "zone_mix": integrated.get("zone_mix"),
             }
             # ★면적의존 산출물(annotations 문구·far_optimization)도 통합면적 기준으로 재생성한다.
             #   숫자만 바꾸면 "대표 763㎡ 기준 최대 연면적…" 대표필지 문구가 그대로 남는 버그(RC#1)를
             #   공용 SSOT 헬퍼로 봉합 — 문구/시나리오가 통합면적·N필지로 정합.
-            #   national_far는 위에서 통합 법정상한으로 정합됐으므로 그대로 전달(ceiling≥base 보장·표시 일관).
+            #   ★far_optimization ceiling만 §84 면적가중 법정 blended로 전달(표시필드 national_far_pct는 불변).
+            #   build_integrated_context가 각 필지 실효/법정 결측을 대칭 정규화(같은 부분집합)해
+            #   blended_법정 ≥ blended_실효를 구조보장하므로 ceiling ≥ base(자기모순 차단).
+            #   추가로 simulator가 cap=max(cap,base) 클램프로 방어. 결측이면 대표 법정으로 폴백.
+            _bl_far = integrated.get("blended_far_legal_pct")
             sec1 = far_tier_service.rebuild_area_dependent(
                 sec1,
                 land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
                 zone_type=(zone_type if isinstance(zone_type, str) else str(zone_type)),
-                national_far=sec1.get("national_far_pct"),
+                national_far=(_bl_far if _bl_far is not None else sec1.get("national_far_pct")),
                 parcel_count=int(integrated.get("parcel_count") or 2),
                 zone_mix=integrated.get("zone_mix"),
             )
@@ -1463,14 +1460,24 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
         ):
             from apps.api.routers.auto_zoning import _enrich_effective_and_special
             await _enrich_effective_and_special(items)
-        # ★법정 하한보정(구조적 불변식 보장): zone_type이 없어 enrich로도 못 채운 필지 중, 실효는 있고
-        #   법정만 결측이면 법정을 실효로 보정한다(법정≥실효). 이로써 실효/법정 blended가 '같은 부분집합'에서
-        #   산출되어 blended_법정 ≥ blended_실효가 항상 성립 → far_optimization 상한<기준 자기모순 원천차단.
+        # ★부분집합 대칭 정규화(구조적 불변식 보장): _aggregate의 _blended는 실효/법정을 각 키 non-None
+        #   필지만으로 독립 평균하므로, 두 값이 '같은 부분집합'에서 산출되려면 각 필지에서
+        #   (_far_eff 유무) ⟺ (_far_legal 유무)가 성립해야 blended_법정 ≥ blended_실효가 보장된다.
+        #   두 방향 모두 정규화한다(실효/건폐율 각각):
+        #   ① 법정 결측·실효 존재 → 법정을 실효로 하한보정(법정≥실효이므로 안전, 필지 보존).
+        #   ② 실효 결측·법정 존재 → 실효를 날조하지 않고 법정을 제외(양쪽 결측 처리, 실효 과대 방지).
+        #   (①은 지도픽이 farPct만 줄 때, ②는 zone_type 없이 farLegalPct만 있을 때 발생 — 리뷰 P0/P1 봉합)
         for it in items:
-            if it.get("_far_legal") is None and it.get("_far_eff") is not None:
-                it["_far_legal"] = it["_far_eff"]
-            if it.get("_bcr_legal") is None and it.get("_bcr_eff") is not None:
-                it["_bcr_legal"] = it["_bcr_eff"]
+            fe, fl = it.get("_far_eff"), it.get("_far_legal")
+            if fe is not None and fl is None:
+                it["_far_legal"] = fe
+            elif fe is None and fl is not None:
+                it["_far_legal"] = None
+            be, bl = it.get("_bcr_eff"), it.get("_bcr_legal")
+            if be is not None and bl is None:
+                it["_bcr_legal"] = be
+            elif be is None and bl is not None:
+                it["_bcr_legal"] = None
         return _aggregate_integrated_zoning(items)
     except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
         logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])
