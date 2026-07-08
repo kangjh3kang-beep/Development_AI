@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Building2, Construction, HelpCircle, House, Link2, Pin, Scale, Scissors } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -98,6 +99,9 @@ export function DevelopmentScenarioCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SimResult | null>(null);
+  // AI 종합 서술 옵트인 — 종전엔 use_llm:true 하드코딩(옵트아웃 불가)이라 기본값을 true로 유지해
+  // 현행 동작을 보존하면서, 끄면 결정론 시나리오만(무과금) 받을 수 있게 한다(D1).
+  const [useLlm, setUseLlm] = useState(true);
 
   const cacheKey = useMemo(() => {
     try { return `propai_scenario_${hashStr((address || "") + "|" + list.join("|"))}`; }
@@ -119,7 +123,7 @@ export function DevelopmentScenarioCard({
     setLoading(true); setError(""); setResult(null);
     try {
       const r = await apiClient.post<SimResult>("/development-methods/scenarios", {
-        body: { address: target, parcels: list.length > 1 ? list : undefined, use_llm: true },
+        body: { address: target, parcels: list.length > 1 ? list : undefined, use_llm: useLlm },
         useMock: false, timeoutMs: 150000,
       });
       setResult(r);
@@ -129,7 +133,7 @@ export function DevelopmentScenarioCard({
     } finally {
       setLoading(false);
     }
-  }, [address, list, cacheKey]);
+  }, [address, list, cacheKey, useLlm]);
 
   const site = result?.site;
   const adj = site?.adjacency;
@@ -148,6 +152,8 @@ export function DevelopmentScenarioCard({
           {loading ? "시뮬레이션 중…" : result ? "다시 분석" : "시나리오 분석"}
         </button>
       </div>
+      {/* AI 종합 서술 옵트인(기본 on — 기존 동작 보존). 끄면 결정론 시나리오 판정만 받는다(무과금). */}
+      <UseLlmToggle checked={useLlm} onChange={setUseLlm} className="mt-2 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]" />
       {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
 
       {result && site && (

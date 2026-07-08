@@ -26,6 +26,7 @@ import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -111,6 +112,9 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<PermitAnalysis | null>(null);
+  // AI 인허가 해석 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(true)에 암묵 의존해 항상 ON이었다.
+  // 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반(무과금) 판정만 받을 수 있게 한다(D1).
+  const [useLlm, setUseLlm] = useState(true);
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
@@ -129,6 +133,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
           pnu: siteAnalysis?.pnu || undefined,
           site: siteAnalysis?.address === target ? siteAnalysis : undefined,
           parcels: parcels.length > 1 ? parcels : undefined,
+          use_llm: useLlm,
         },
         useMock: false,
         timeoutMs: 150000,
@@ -146,7 +151,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
     } finally {
       setLoading(false);
     }
-  }, [addr, extra, siteAnalysis]);
+  }, [addr, extra, siteAnalysis, useLlm]);
 
   const site = result?.site;
 
@@ -230,7 +235,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </span>
           </div>
 
-          <div className="relative z-10 mt-4 flex items-center gap-3">
+          <div className="relative z-10 mt-4 flex flex-wrap items-center gap-3">
             <button
               onClick={run}
               disabled={loading}
@@ -238,6 +243,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             >
               {loading ? "AI 분석 중… (최대 1분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
             </button>
+            {/* AI 해석 옵트인(기본 on — 기존 동작 보존). 끄면 규칙기반 판정만(무과금). */}
+            <UseLlmToggle checked={useLlm} onChange={setUseLlm} disabled={loading} className="flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]" />
             {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
           </div>
         </CardContent>

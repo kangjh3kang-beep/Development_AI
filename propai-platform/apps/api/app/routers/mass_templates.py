@@ -184,6 +184,13 @@ class SeedDesignRequest(BaseModel):
     floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
     effective_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)")
     effective_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)")
+    # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
+    #   응답에 경고만 additive 부착(차단 아님). 컨텍스트 없으면 게이트 생략(정직 — 무날조).
+    pnu: str | None = Field(None, description="필지 PNU(특이부지 게이트 참고 메타)")
+    land_category: str | None = Field(None, description="지목(예: 학교용지·전·답·임야) — 특이부지 게이트 입력")
+    special_districts: list[str] | None = Field(
+        None, description="특별구역(개발제한구역·문화재·군사·상수원 등) — 특이부지 게이트 입력",
+    )
 
 
 def _compute_mass(
@@ -237,6 +244,19 @@ async def seed_design(
     region = region_from_address(body.address)
     mass_ref = await get_mass_reference(db, region=region, building_type_label=body.building_use)
     targets = mass_seed_targets(mass_ref)
+    # ★특이부지 게이트(B2) additive 부착 — 학교용지·GB·농지·산지·맹지 등 경고만(차단 아님).
+    #   컨텍스트(land_category·special_districts) 없으면 None(정직 생략) — design_v61.py의
+    #   _attach_special_parcel_gate와 동일 공용 헬퍼(build_special_parcel_gate) 재사용.
+    from app.services.zoning.special_parcel_gate import build_special_parcel_gate
+
+    special_parcel = build_special_parcel_gate(
+        land_category=body.land_category,
+        zone_type=body.zone_code,
+        special_districts=body.special_districts,
+        area_sqm=body.land_area_sqm,
+        pnu=body.pnu,
+    )
+
     regional_mass = None
     if targets:
         # ★실측 median 층수까지 반영(nuance 해소): 단계후퇴로 일조 하드캡(3층) 해제 + target_floors=median으로
@@ -252,6 +272,8 @@ async def seed_design(
         "legal_max_mass": legal_mass,
         "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
         "mass_reference": mass_ref,               # 시드 출처(provenance)
+        # ★특이부지 게이트(additive·B2) — 학교용지·GB·농지·산지 등 경고(컨텍스트 없으면 None).
+        "special_parcel": special_parcel,
         "applied_limit_source": (
             "site_analysis_effective_limits"
             if body.effective_far_pct or body.effective_bcr_pct

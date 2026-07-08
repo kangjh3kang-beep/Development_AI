@@ -26,6 +26,7 @@ import {
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { BulkParcelBatchPanel } from "@/components/common/BulkParcelBatchPanel";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { PreCheckInstantPanel } from "./PreCheckInstantPanel";
 import { readSatongMapSelection, satongSelectionAddresses } from "./satong-map-selection";
 import type {
@@ -283,15 +284,13 @@ export function PreCheckWorkspace() {
             </button>
           </div>
         </div>
-        <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[12px] text-[var(--text-secondary)]">
-          <input
-            type="checkbox"
-            checked={useLlm}
-            onChange={(e) => setUseLlm(e.target.checked)}
-            className="accent-[var(--accent-strong)]"
-          />
-          AI 한 줄 요약 포함(소폭 지연)
-        </label>
+        <UseLlmToggle
+          checked={useLlm}
+          onChange={setUseLlm}
+          label="AI 한 줄 요약 포함(소폭 지연)"
+          hint=""
+          className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[12px] text-[var(--text-secondary)]"
+        />
       </section>
 
       {/* ── 다필지 통합 개발방식 분석 — 엑셀/다중검색으로 2필지 이상 등록 시 ── */}

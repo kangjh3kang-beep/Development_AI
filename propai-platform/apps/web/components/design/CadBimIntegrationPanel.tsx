@@ -27,6 +27,7 @@ import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -880,6 +881,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         building_use: use,
       };
     }
+    // ★B1: 실효(조례) 용적률·건폐율 SSOT 주입(통합>실효>법정 — resolveFarPct/resolveBcrPct 공용헬퍼).
+    //   미주입 시 백엔드가 zone_code 조회 실패 등으로 법정 미지정 폴백에 빠질 수 있다(DesignGenPanel.
+    //   genBody의 ordinance_* 주입 선례와 동일 계약). 값이 없으면 필드를 생략한다(백엔드 기존 폴백 유지).
+    const ordinanceFarPct = resolveFarPct(siteAnalysis);
+    const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
+    if (ordinanceFarPct && ordinanceFarPct > 0) body.ordinance_far_pct = ordinanceFarPct;
+    if (ordinanceBcrPct && ordinanceBcrPct > 0) body.ordinance_bcr_pct = ordinanceBcrPct;
 
     // 폴백 매스도 프로젝트 개요(GFA·층수)에서 역산 — /mass 실패 시에도 "프로젝트와 무관한
     // 40×20 박스"가 잠깐 뜨던 문제 해소(정보 있으면 실제에 근접).
@@ -946,19 +954,27 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   }, [hasDesignBasis, spec, specLoading, resolveSpec]);
 
   // spec → /mass·BIM 요청 바디(명시 매스로 2D와 동일 기하 강제)
-  const bimBody = useCallback(() => JSON.stringify({
-    building_width_m: spec?.building_width_m,
-    building_depth_m: spec?.building_depth_m,
-    floor_count: spec?.floor_count,
-    floor_height_m: spec?.floor_height_m ?? 3.0,
-    // ★대지면적은 단일출처(resolvedLandArea) 우선 — spec 폴백이 비어도 '대지면적 데이터 없음' 차단.
-    land_area_sqm: resolvedLandArea ?? spec?.land_area_sqm,
-    zone_code: spec?.zone_code ?? "2R",
-    project_name: spec?.project_name ?? "PropAI",
-    // 세대 구성(SSOT) — 평면 세대배치·AI 해석의 "세대수·평형 부재" 해소.
-    building_use: designData?.buildingType ?? "공동주택",
-    unit_types: designData?.unitTypes ?? undefined,
-  }), [spec, designData, resolvedLandArea]);
+  const bimBody = useCallback(() => {
+    // ★B1: 실효(조례) 용적률·건폐율 SSOT 주입 — /mass와 동일 계약(resolveFarPct/resolveBcrPct).
+    //   값이 없으면 필드를 생략한다(백엔드 기존 폴백 유지 — 가짜값 금지).
+    const ordinanceFarPct = resolveFarPct(siteAnalysis);
+    const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
+    return JSON.stringify({
+      building_width_m: spec?.building_width_m,
+      building_depth_m: spec?.building_depth_m,
+      floor_count: spec?.floor_count,
+      floor_height_m: spec?.floor_height_m ?? 3.0,
+      // ★대지면적은 단일출처(resolvedLandArea) 우선 — spec 폴백이 비어도 '대지면적 데이터 없음' 차단.
+      land_area_sqm: resolvedLandArea ?? spec?.land_area_sqm,
+      zone_code: spec?.zone_code ?? "2R",
+      project_name: spec?.project_name ?? "PropAI",
+      // 세대 구성(SSOT) — 평면 세대배치·AI 해석의 "세대수·평형 부재" 해소.
+      building_use: designData?.buildingType ?? "공동주택",
+      unit_types: designData?.unitTypes ?? undefined,
+      ...(ordinanceFarPct && ordinanceFarPct > 0 ? { ordinance_far_pct: ordinanceFarPct } : {}),
+      ...(ordinanceBcrPct && ordinanceBcrPct > 0 ? { ordinance_bcr_pct: ordinanceBcrPct } : {}),
+    });
+  }, [spec, designData, resolvedLandArea, siteAnalysis]);
 
   // spec → 도면(generate-full-set) 요청 바디
   // building_use·unit_types를 함께 보내 기준층 평면도를 실제 평형믹스로 분할.

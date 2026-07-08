@@ -119,6 +119,21 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+// 개발계획 종합 리스크 등급 → 배지 색(comprehensive_analysis_service._research_dev_plans 산출).
+const RISK_LEVEL_STYLE: Record<string, string> = {
+  "낮음": "bg-emerald-500/20 text-emerald-400",
+  "보통": "bg-amber-500/20 text-amber-400",
+  "높음": "bg-orange-500/20 text-orange-400",
+  "극히 높음": "bg-red-500/20 text-red-400",
+};
+
+// 결정론 모순탐지(contradictions.contradictions[]) 심각도 → 카드 색(status_flip·numeric_delta 공용).
+const SEVERITY_CARD_STYLE: Record<string, string> = {
+  high: "border-red-500/40 bg-red-500/10",
+  medium: "border-amber-500/40 bg-amber-500/10",
+  low: "border-[var(--line-strong)] bg-[var(--surface-strong)]",
+};
+
 function PermitBadge({ complexity }: { complexity: number }) {
   const colors = ["", "bg-emerald-500/20 text-emerald-400", "bg-blue-500/20 text-blue-400", "bg-amber-500/20 text-amber-400", "bg-orange-500/20 text-orange-400", "bg-red-500/20 text-red-400"];
   const labels = ["", "매우쉽움", "쉽움", "보통", "어려움", "매우어려움"];
@@ -372,6 +387,30 @@ export function ComprehensiveAnalysisPanel() {
 
       {result && (
         <div className="space-y-3">
+          {/* ★결정론 모순탐지(contradictions) — prior(원장) 대비 status 플립·수치 델타(상단 경고).
+              백엔드 detect_contradictions 산출을 그간 미렌더(핸드오프 손실). 모순 0건이면 렌더 안 함. */}
+          {Array.isArray(result.contradictions?.contradictions) && result.contradictions.contradictions.length > 0 && (
+            <div className={`rounded-2xl border p-4 ${SEVERITY_CARD_STYLE[result.contradictions.max_severity as string] || SEVERITY_CARD_STYLE.low}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-[var(--text-primary)]">이전 분석과 모순 감지</span>
+                {result.contradictions.max_severity && (
+                  <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
+                    최고 심각도 {result.contradictions.max_severity}
+                  </span>
+                )}
+              </div>
+              <ul className="mt-2 space-y-1">
+                {(result.contradictions.contradictions as AnalysisResult[]).map((c: AnalysisResult, i: number) => (
+                  <li key={i} className="text-[11px] text-[var(--text-secondary)]">
+                    · {c.key}: {String(c.prev)} → {String(c.now)}
+                    {c.kind === "numeric_delta" && c.rel_change != null ? ` (변화율 ${Math.round(c.rel_change * 100)}%)` : ""}
+                    {c.severity ? ` · 심각도 ${c.severity}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* 기본 정보 요약 */}
           <div className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-5">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -417,6 +456,10 @@ export function ComprehensiveAnalysisPanel() {
 
           {/* ★건축가능항목 랭킹(Stage 1) — 백엔드 buildable_options 소비(orphan handoff 해소) */}
           <BuildableOptionsCard data={result.buildable_options} />
+          {/* ★ai_interpretation.buildable_options_interpretation — 12해석키 중 미소비였던 마지막 1건(핸드오프 손실 해소) */}
+          {result.ai_interpretation?.buildable_options_interpretation && (
+            <AiInterpretation text={result.ai_interpretation.buildable_options_interpretation} />
+          )}
 
           {/* ★종상향/종변경 잠재(예상치 — 현행과 분리) — 백엔드 upzoning 소비 */}
           {Array.isArray(result.upzoning_scenarios) && result.upzoning_scenarios.length > 0 && (
@@ -735,6 +778,15 @@ export function ComprehensiveAnalysisPanel() {
               )}
               <Field label="인근 학교" value={`${location.education?.school_count ?? 0}개교`} />
             </div>
+            {/* ★입지 점수 산정 근거(score_breakdown) — 핸드오프 손실 해소(그간 location_score만 표시). */}
+            {Array.isArray(location.score_breakdown) && location.score_breakdown.length > 0 && (
+              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1">
+                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">입지 점수 산정 근거</p>
+                {(location.score_breakdown as string[]).map((s: string, i: number) => (
+                  <p key={i} className="text-[10px] text-[var(--text-secondary)]">· {s}</p>
+                ))}
+              </div>
+            )}
             {result.ai_interpretation?.location_interpretation && (
               <AiInterpretation text={result.ai_interpretation.location_interpretation} />
             )}
@@ -746,15 +798,46 @@ export function ComprehensiveAnalysisPanel() {
               <div className="space-y-2">
                 {devPlans.land_use_regulations?.length > 0 && (
                   <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                    <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">토지이용계획 규제</p>
-                    <div className="space-y-1">
-                      {(devPlans.land_use_regulations ?? []).map((reg: string, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-[11px]">
-                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                          <span className="text-[var(--text-primary)]">{reg}</span>
-                        </div>
-                      ))}
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
+                      {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
+                      {devPlans.risk_level && (
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
+                          종합 리스크 {devPlans.risk_level}
+                        </span>
+                      )}
                     </div>
+                    <div className="space-y-1">
+                      {(devPlans.land_use_regulations ?? []).map((reg: string, i: number) => {
+                        // ★regulation_notes(이름별 해석 주석) — 매칭되면 회색 보조텍스트로 병기(핸드오프 손실 해소).
+                        const note = (devPlans.regulation_notes as AnalysisResult[] | undefined)?.find(
+                          (n: AnalysisResult) => n?.name === reg,
+                        );
+                        return (
+                          <div key={i} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                              <span className="text-[var(--text-primary)]">{reg}</span>
+                            </div>
+                            {note?.interpretation && (
+                              <p className="ml-3.5 text-[10px] text-[var(--text-hint)]">{note.interpretation}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* ★risk_factors(리스크 유발 규제 목록) — 핸드오프 손실 해소. */}
+                    {Array.isArray(devPlans.risk_factors) && devPlans.risk_factors.length > 0 && (
+                      <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-2">
+                        <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
+                        {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
+                          <div key={i} className="flex items-center gap-2 text-[11px]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                            <span className="text-[var(--text-secondary)]">{f}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

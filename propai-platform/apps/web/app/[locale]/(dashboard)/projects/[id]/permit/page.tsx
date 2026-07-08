@@ -9,6 +9,7 @@ import { NextStageCta } from "@/components/projects/NextStageCta";
 import { ProjectPermitWorkspaceClient } from "@/components/projects/ProjectPermitWorkspaceClient";
 import { DesignChangePredictPanel } from "@/components/design-risk/DesignChangePredictPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LIFECYCLE_STAGES, STAGE_META } from "@/lib/lifecycle-stages";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -63,7 +64,10 @@ export default function PermitPage() {
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "done" | "gated" | "error" | "no-site">("idle");
   // ── 용도지역 기반 인허가 가능성 매트릭스(/permits/feasibility-matrix) ──
   const [matrix, setMatrix] = useState<FeasibilityMatrix | null>(null);
-  const ranRef = useRef<string | null>(null); // 무한루프 가드(주소+pnu 1회)
+  const ranRef = useRef<string | null>(null); // 무한루프 가드(주소+pnu+useLlm 1회)
+  // AI 인허가 진단 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(true)에 암묵 의존해 항상 ON이었다.
+  // 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반(무과금) 판정만 자동 실행한다(D1).
+  const [useLlm, setUseLlm] = useState(true);
 
   // 용도지역(zone_type) 전파 — 부지분석 확정 zoneCode 우선, 없으면 AI 진단 site.zone_type 폴백.
   const siteAddress = siteAnalysis?.address ?? null;
@@ -73,12 +77,12 @@ export default function PermitPage() {
 
   useEffect(() => {
     const address = siteAddress;
-    const key = `${id}:${address ?? ""}:${sitePnu ?? ""}`;
+    const key = `${id}:${address ?? ""}:${sitePnu ?? ""}:${useLlm ? "L" : "D"}`;
     if (!address) {
       setAnalysisState("no-site");
       return;
     }
-    if (ranRef.current === key) return; // 동일 컨텍스트 재호출 방지(주소+pnu 1회)
+    if (ranRef.current === key) return; // 동일 컨텍스트+옵션 재호출 방지(주소+pnu+useLlm 1회)
     ranRef.current = key;
     // 무한로딩 근본 제거: 요청 토큰으로 "이 effect가 시작한 호출의 응답"만 state에 반영.
     // (store siteAnalysis 객체 참조 변동으로 effect가 재실행/cleanup 돼도 진행중 요청의 결과는 유실되지 않음)
@@ -93,6 +97,7 @@ export default function PermitPage() {
             address,
             pnu: sitePnu || undefined,
             site: siteSnapshot,
+            use_llm: useLlm,
           },
           useMock: false,
           timeoutMs: 150000,
@@ -115,9 +120,9 @@ export default function PermitPage() {
       // 마운트 해제뿐. 진행중 요청은 active=false로 마킹돼 stale state set만 차단.
       active = false;
     };
-    // 원시값(주소·pnu)만 의존 — siteAnalysis 객체 참조 변동에 의한 불필요한 재실행/로딩 stranding 방지.
+    // 원시값(주소·pnu·useLlm)만 의존 — siteAnalysis 객체 참조 변동에 의한 불필요한 재실행/로딩 stranding 방지.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, siteAddress, sitePnu]);
+  }, [id, siteAddress, sitePnu, useLlm]);
 
   // 용도지역이 확보되면 개발방식 인허가 가능성 매트릭스 조회(LLM 미사용·실패 무관)
   useEffect(() => {
@@ -278,11 +283,18 @@ export default function PermitPage() {
       <div className="cc-bracketed relative flex flex-col gap-6 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-8">
         <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
         <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <span className="cc-meta">AI DIAGNOSIS · PERMIT</span>
             <h3 className="mt-1 text-xl font-bold text-[var(--text-primary)]">AI 인허가 진단</h3>
           </div>
+          {/* AI 해석 옵트인(기본 on — 기존 동작 보존). 끄면 규칙기반(무과금) 판정만 자동 실행. */}
+          <UseLlmToggle
+            checked={useLlm}
+            onChange={setUseLlm}
+            disabled={analysisState === "loading"}
+            className="flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]"
+          />
           {analysisState === "done" && (
             <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
               analysis?.ai

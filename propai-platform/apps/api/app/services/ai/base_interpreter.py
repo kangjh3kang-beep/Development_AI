@@ -202,6 +202,13 @@ def _fewshot_enabled() -> bool:
 _FEWSHOT_LIMIT = _env_int("INTERP_FEWSHOT_LIMIT", 3)
 _FEWSHOT_CACHE = _TTLCache(ttl_sec=_env_int("INTERP_FEWSHOT_TTL_SEC", 600), max_entries=128)
 
+# 자가성장 L1 A/B 프롬프트 버전 read-back(Lane BE-3 C2) — 후보/채택 조회는 DB 히트를
+# 요구하는 핫패스(_invoke 매 호출)이므로 서비스명별 최종 해석결과를 TTL 캐시로 보호한다
+# (기존 _TTLCache 재사용 — 신규 캐시 구현 금지).
+_PROMPT_VERSION_CACHE = _TTLCache(
+    ttl_sec=_env_int("INTERP_PROMPT_VERSION_TTL_SEC", 60), max_entries=64
+)
+
 
 async def _load_fewshot(service: str) -> dict[str, str] | None:
     """active learning_examples(해당 service)를 few-shot 프롬프트 블록으로 로드.
@@ -473,40 +480,49 @@ class BaseInterpreter:
         """A/B 프롬프트 버전을 1회 해석해 self._active_prompt_version 에 캐시·반환.
 
         자가수정(L1)이 platform_settings('prompt.<name>')에 채택 버전을 기록했고,
-        그 값이 **사전등록 후보군(_PROMPT_AB_CANDIDATES[self.name]) 내**이면 그 버전을,
-        아니면 기본(_PROMPT_VERSION)을 쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
+        그 값이 **사전등록 후보군 내**이면 그 버전을, 아니면 기본(_PROMPT_VERSION)을
+        쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
+
+        ★read-back(BE-3 C2): 후보군 소스를 수동 등록(_PROMPT_AB_CANDIDATES[self.name])
+        우선, 비어 있으면 platform_settings('prompt_candidates.<service>')(L3
+        improvement_agent 가 등록한 실시간 후보 레이블)로 단일화했다 — 과거 소비자
+        (_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES) 가 각각
+        빈 dict 로 갈라져 있던 구조적 단절(감사 적발)을 해소. 핫패스(_invoke 매 호출)
+        보호를 위해 최종 결과를 서비스명별 TTL 캐시(_PROMPT_VERSION_CACHE, 기존
+        _TTLCache 재사용)에 담는다.
 
         완전 격리: import 순환·DB 미가용 등 어떤 예외도 기본 버전으로 폴백한다.
-        후보군이 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
+        후보군이 끝내 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
         """
-        # ★A/B store 단일화: 소비자(_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES)가
-        #   각각 빈 dict로 분리돼 있던 구조적 단절(감사 적발)을 해소 — 둘을 합쳐 단일 출처로 본다.
-        #   지연 import로 순환·부팅순서 안전. 둘 다 비면 기존 동작 완전 불변(후보 없으면 기본 버전).
+        cached = _PROMPT_VERSION_CACHE.get(self.name)
+        if cached is not None:
+            self._active_prompt_version = cached["v"]
+            return self._active_prompt_version
+
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
-        if not candidates:
-            try:
-                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _GATE_CANDS
-                candidates = _GATE_CANDS.get(self.name)
-            except Exception:  # noqa: BLE001 — 게이트 registry 조회 실패는 기본 폴백.
-                candidates = None
-        if not candidates:
-            self._active_prompt_version = _PROMPT_VERSION
-            return _PROMPT_VERSION
         chosen: str | None = None
         try:
-            from app.services.growth import schema_guard
+            from app.services.growth import dynamic_config, schema_guard
             from apps.api.database.session import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
-                val = await schema_guard.get_setting(db, f"prompt.{self.name}")
-            if isinstance(val, dict):
-                cand = val.get("version")
-                if cand and cand in candidates:
-                    chosen = cand
+                if not candidates:
+                    # ★read-back: 정적 후보군이 없으면 L3 가 등록한 실시간 후보군을 읽는다
+                    #   (공용 리더 dynamic_config — settings_readback 중복 헬퍼는 #199와 수렴·폐기).
+                    candidates = await dynamic_config.get_prompt_candidates(db, self.name)
+                if candidates:
+                    val = await schema_guard.get_setting(db, f"prompt.{self.name}")
+                    if isinstance(val, dict):
+                        cand = val.get("version")
+                        if cand and cand in candidates:
+                            chosen = cand
         except Exception:  # noqa: BLE001 — 어떤 실패도 기본 버전으로 폴백.
             chosen = None
-        self._active_prompt_version = chosen or _PROMPT_VERSION
-        return self._active_prompt_version
+
+        resolved = chosen or _PROMPT_VERSION
+        _PROMPT_VERSION_CACHE.set(self.name, {"v": resolved})
+        self._active_prompt_version = resolved
+        return resolved
 
     def _resolve_prompt_version(self) -> str:
         """현재 적용 프롬프트 버전(동기·무DB). _invoke 가 캐시한 값을 그대로 읽는다.

@@ -341,26 +341,16 @@ class DecisionBriefService:
                 area = site_raw.get("land_area_sqm")
                 gfa = (self._pick_supply_gfa(site_raw.get("supply_areas"), far, area)
                        or self._gfa_from_area_far(area, far))
-                # ★pnu는 19자리 ASCII 정규형만 전송(전각/유니코드 숫자 포함 비규격은 엔진 ASCII 패턴 422 →
-                #   빈값 전송으로 address 지오코딩 폴백, 무음 실패 방지).
-                _pnu_s = str(pnu) if pnu else ""
-                _pnu19 = _pnu_s if (_pnu_s.isascii() and _pnu_s.isdigit() and len(_pnu_s) == 19) else ""
-                _design_input: dict[str, Any] = {"pnu": _pnu19, "address": address, "use_zone": zone}
-                if dev_type:
-                    _design_input["dev_type"] = dev_type
-                # 대지면적 → plot_area 산정입력(calc_targets) — 용량검증·용적/건폐 비율의 분모(부재 시 엔진 '미상').
-                #   ★calc_targets 는 도메인마다 새로 만든다(리스트 공유 aliasing 금지 — 여기선 설계 단일이지만
-                #   향후 도메인 추가 시 shallow copy 공유로 인한 상호오염을 원천 차단).
-                if isinstance(area, (int, float)) and not isinstance(area, bool) and area > 0:
-                    _design_input["calc_targets"] = [
-                        {"target": "plot_area", "payload": {"parcel_area": float(area)}}]
-                # 설계는 계획 GFA를 provided로 공급 → massing 용량검증(제안 GFA ≤ 최대 연면적 = 대지×용적률)
-                #   수행. program=기획정보(용도·규모) 가용 표시(기획 단계 완결성). 상세 매스/배치/평면은 도면 확보 후.
-                _design_provided: dict[str, Any] = {"program": True}
-                if gfa:
-                    _design_provided["proposed_gfa"] = float(gfa)
-                _design_input["provided"] = _design_provided
-                domains["설계"] = _design_input
+                # ★A2 DRY: 심의/설계 엔진 입력 조립을 engine_inputs 공용 빌더로 단일화한다(pnu 19자리
+                #   ASCII 가드·use_zone 계약키·calc_targets(대지면적)·provided(기획/GFA) — 이전엔 이
+                #   로직이 여기 인라인으로만 있어 specialist_dispatch.build_sync_specialist_domains가
+                #   독립 재구현하다 zone_type 오배선(A2 버그)을 냈다. 정답 기준선을 여기서 추출했다.
+                from app.services.agents.engine_inputs import build_design_engine_input
+
+                domains["설계"] = build_design_engine_input(
+                    zone_type=zone, address=address, dev_type=dev_type, pnu=pnu,
+                    land_area_sqm=area, proposed_gfa_sqm=gfa,
+                )
 
             out: list[dict[str, Any]] = await run_specialist_domains(
                 domains,
