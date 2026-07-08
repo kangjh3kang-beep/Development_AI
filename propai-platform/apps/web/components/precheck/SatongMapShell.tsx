@@ -857,21 +857,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (id: string) => {
       setSelectedParcels((prev) => {
         const next = prev.filter((parcel) => parcel.id !== id);
+        // ★P1(감사): saveSelectionForOutputs를 분기 밖 무조건 호출 — 종전엔 next.length>0
+        //   조건 안에 있어 '마지막 필지 삭제' 시 sessionStorage가 옛 목록을 유지 →
+        //   재마운트하면 삭제한 필지가 부활했다. 빈 선택은 store 필지 컨텍스트도 명시
+        //   정리한다(스토어 폴백 하이드레이션에 의한 부활 이중 차단).
+        saveSelectionForOutputs(next);
         if (next.length > 0) {
           commitParcelsToContext(next);
-          saveSelectionForOutputs(next);
+        } else {
+          updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
         }
         return next;
       });
     },
-    [commitParcelsToContext],
+    [commitParcelsToContext, updateSiteAnalysis],
   );
 
   const clearParcels = useCallback(() => {
     setSelectedParcels([]);
     setFocusTarget(null);
     saveSelectionForOutputs([]);
-  }, []);
+    // ★P1(감사): 초기화가 store 필지 컨텍스트를 남기면 ①재마운트 시 스토어 폴백 하이드레이션이
+    //   필지를 부활시키고 ②/analysis가 옛 주소를 계속 분석한다 → 명시 정리.
+    updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
+  }, [updateSiteAnalysis]);
 
   const runDirectGeocode = useCallback(
     async (rawQuery: string) => {
@@ -1027,6 +1036,59 @@ export function SatongMapShell({ locale }: { locale: string }) {
       addParcels(parcels.map(mapParcelToSelection));
     },
     [addParcels],
+  );
+
+  // ★P1(감사): 지도 경계 API가 보강한 필지 속성(면적·용도·좌표·경계)을 선택목록+SSOT에 병합.
+  //   종전엔 지도 내부 dead-end → 검색 등록 필지가 면적 0으로 통합분석에서 침묵 탈락했다.
+  //   빈 필드만 채우고(사용자·원천값 우선), 변화가 없으면 setState를 건너뛰어 재조회 루프를 끊는다.
+  const handleBoundaryEnriched = useCallback(
+    (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
+      zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
+      officialPricePerSqm?: number | null; builtYear?: number | null;
+      buildingAgeYears?: number | null; geometry?: unknown }>,
+    ) => {
+      setSelectedParcels((prev) => {
+        if (!prev.length || !features.length) return prev;
+        let changed = false;
+        const byKey = new Map<string, (typeof features)[number]>();
+        for (const f of features) {
+          if (f.pnu) byKey.set(String(f.pnu), f);
+          if (f.address) byKey.set(f.address.trim(), f);
+        }
+        const next = prev.map((p) => {
+          const f = (p.pnu && byKey.get(String(p.pnu))) || byKey.get(p.address.trim());
+          if (!f) return p;
+          const merged = {
+            ...p,
+            areaSqm: p.areaSqm ?? f.areaSqm ?? null,
+            zoneType: p.zoneType ?? f.zoneType ?? null,
+            jimok: p.jimok ?? f.jimok ?? null,
+            lat: p.lat ?? f.lat ?? null,
+            lon: p.lon ?? f.lon ?? null,
+            officialPricePerSqm: p.officialPricePerSqm ?? f.officialPricePerSqm ?? null,
+            builtYear: p.builtYear ?? f.builtYear ?? null,
+            buildingAgeYears: p.buildingAgeYears ?? f.buildingAgeYears ?? null,
+            geometry: p.geometry ?? f.geometry ?? null,
+          };
+          if (
+            merged.areaSqm !== p.areaSqm || merged.zoneType !== p.zoneType ||
+            merged.jimok !== p.jimok || merged.lat !== p.lat || merged.lon !== p.lon ||
+            merged.officialPricePerSqm !== p.officialPricePerSqm ||
+            merged.builtYear !== p.builtYear || merged.buildingAgeYears !== p.buildingAgeYears ||
+            merged.geometry !== p.geometry
+          ) {
+            changed = true;
+            return merged;
+          }
+          return p;
+        });
+        if (!changed) return prev; // 무변화 — 참조 유지로 하류 이펙트 재실행 차단
+        commitParcelsToContext(next); // SSOT 동기화 → /analysis가 보강 면적을 읽는다
+        saveSelectionForOutputs(next);
+        return next;
+      });
+    },
+    [commitParcelsToContext],
   );
 
   const handleOutputClick = useCallback(
@@ -1439,12 +1501,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
                 onCenterChange={setMapCenter}
+                onBoundaryEnriched={handleBoundaryEnriched}
               />
             </div>
 
             <div
               ref={railRef}
-              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-[608px] flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur transition-all duration-300 ease-in-out overflow-hidden"
+              // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
+              //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
+              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-auto hover:max-h-[calc(100%-120px)] flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur transition-all duration-300 ease-in-out overflow-hidden hover:overflow-y-auto"
             >
               {/* 접혔을 때와 펼쳐졌을 때의 앵커가 되는 메인 아이콘 버튼 */}
               <button

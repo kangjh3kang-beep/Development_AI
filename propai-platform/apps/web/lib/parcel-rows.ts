@@ -35,6 +35,8 @@ export interface ParcelRow {
   bcrPct?: number | null;
   farLegalPct?: number | null;
   bcrLegalPct?: number | null;
+  /** 필지 경계(GeoJSON geometry) — 서버 통합집계의 인접성(contiguous) 판정용(P1 감사). */
+  geometry?: unknown;
 }
 
 /** 주소검색 결과(AddressEntry[])를 통합집계 입력행으로. 면적>0인 필지만 포함한다. */

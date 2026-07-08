@@ -16,6 +16,7 @@ import type { DecisionSpecialist } from "@/components/projects/decision-brief-ty
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import type { ParcelRow } from "@/lib/parcel-rows";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -204,6 +205,8 @@ export function ComprehensiveAnalysisPanel() {
             bcrPct: null,
             farLegalPct: null,
             bcrLegalPct: null,
+            // ★P1(감사): 경계 전송 — 서버 통합집계의 인접성(contiguous) 판정 재료.
+            geometry: p.geometry ?? null,
           }))
       );
     } else if (mainAddr) {
@@ -211,7 +214,9 @@ export function ComprehensiveAnalysisPanel() {
       setParcelRows([
         {
           address: mainAddr,
-          area_sqm: siteAnalysis.landAreaSqm ?? null,
+          // ★P1(감사): raw landAreaSqm 직독 금지 — 다필지 통합면적 우선 공용헬퍼로
+          //   (단일 PNU 재조회가 대표면적으로 덮어써도 통합면적이 이긴다: 면적 SSOT 패리티).
+          area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? null,
           zone_type: siteAnalysis.zoneCode ?? null,
           farPct: null,
           bcrPct: null,
@@ -284,10 +289,10 @@ export function ComprehensiveAnalysisPanel() {
             </h3>
           </div>
           <div className="flex items-center gap-3">
-            {siteAnalysis?.landAreaSqm ? (
+            {effectiveLandAreaSqm(siteAnalysis) ? (
               <div className="text-right text-xs font-bold text-[var(--text-secondary)] mr-2">
-                <p>총 대지면적: <span className="text-[var(--text-primary)]">{siteAnalysis.landAreaSqm.toLocaleString()}㎡</span></p>
-                <p className="text-[10px] text-[var(--text-hint)] mt-0.5">용도: {siteAnalysis.dominantZoneCode || siteAnalysis.zoneCode || "미확인"}</p>
+                <p>총 대지면적: <span className="text-[var(--text-primary)]">{(effectiveLandAreaSqm(siteAnalysis) as number).toLocaleString()}㎡</span></p>
+                <p className="text-[10px] text-[var(--text-hint)] mt-0.5">용도: {siteAnalysis?.dominantZoneCode || siteAnalysis?.zoneCode || "미확인"}</p>
               </div>
             ) : null}
             <button

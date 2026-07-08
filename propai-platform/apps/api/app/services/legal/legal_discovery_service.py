@@ -13,16 +13,78 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
 
 import structlog
+from sqlalchemy import text
 
 from app.services.legal import legal_reference_registry as _reg
 from app.services.legal.legal_hub import LegalHub
 
 logger = structlog.get_logger(__name__)
+
+# ── ★P1(완성도 감사): LLM 법령탐색 결과 영속(성장루프) — 같은 맥락 재탐색 금지 ──
+#    종전엔 매 호출 LLM 재탐색(결과 미축적)이라 성장루프가 끊겼다. ordinance_resolutions와
+#    동일 패턴: (맥락해시 → 검증결과) 저장·재사용. DB 불가 시 무캐시로 정상 동작(폴백).
+_DISC_DDL = (
+    "CREATE TABLE IF NOT EXISTS legal_discovery_cache ("
+    "  context_hash varchar(64) PRIMARY KEY,"
+    "  context_summary text,"
+    "  payload jsonb NOT NULL,"
+    "  fetched_at timestamptz NOT NULL DEFAULT now()"
+    ")"
+)
+_DISC_READY = False
+
+
+def _context_hash(context: dict[str, Any]) -> str:
+    """맥락 → 안정 해시(키 정렬 JSON). 같은 부지/개발 맥락은 같은 키로 재사용."""
+    try:
+        blob = json.dumps(context or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001
+        blob = str(context)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+async def _cache_load(ctx_hash: str) -> dict[str, Any] | None:
+    global _DISC_READY
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            if not _DISC_READY:
+                await db.execute(text(_DISC_DDL))
+                await db.commit()
+                _DISC_READY = True
+            row = (await db.execute(
+                text("SELECT payload, fetched_at FROM legal_discovery_cache WHERE context_hash=:h"),
+                {"h": ctx_hash})).first()
+            if not row:
+                return None
+            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            payload["cache"] = {"hit": True, "fetched_at": str(row[1])}
+            return payload
+    except Exception as e:  # noqa: BLE001 — 캐시 불가는 무캐시 동작(기능 무손상)
+        logger.warning("legal_discovery 캐시 조회 불가 — 무캐시 진행", err=str(e)[:100])
+        return None
+
+
+async def _cache_store(ctx_hash: str, summary: str, payload: dict[str, Any]) -> None:
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await db.execute(text(
+                "INSERT INTO legal_discovery_cache (context_hash, context_summary, payload) "
+                "VALUES (:h, :s, cast(:p as jsonb)) "
+                "ON CONFLICT (context_hash) DO UPDATE SET payload=excluded.payload, "
+                "context_summary=excluded.context_summary, fetched_at=now()"),
+                {"h": ctx_hash, "s": summary[:500],
+                 "p": json.dumps(payload, ensure_ascii=False, default=str)})
+            await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("legal_discovery 캐시 저장 불가", err=str(e)[:100])
 
 _SYSTEM = (
     "당신은 대한민국 부동산개발 인허가 법무 전문가입니다. 주어진 부지/개발 맥락에 '실제로 적용되는' "
@@ -39,8 +101,16 @@ _TMPL = "## 부지/개발 맥락\n{context}\n\n위 맥락에 적용되는 핵심
 class LegalDiscoveryService:
     """LLM 법령탐색 → 정본 교차검증."""
 
-    async def discover(self, context: dict[str, Any]) -> dict[str, Any]:
-        """맥락 → {core_laws, related_laws, cross_validation, disclosure, generated}."""
+    async def discover(self, context: dict[str, Any], force_refresh: bool = False) -> dict[str, Any]:
+        """맥락 → {core_laws, related_laws, cross_validation, disclosure, generated}.
+
+        ★성장루프: 같은 맥락은 저장 결과 재사용(LLM 재탐색 0) — force_refresh 시에만 재조사.
+        """
+        ctx_hash = _context_hash(context)
+        if not force_refresh:
+            cached = await _cache_load(ctx_hash)
+            if cached:
+                return cached
         raw = await self._llm_search(context)
         validated = [v for v in (self._crossvalidate(it) for it in raw) if v]
         core = [v for v in validated if v["importance"] == "core"]
@@ -51,7 +121,7 @@ class LegalDiscoveryService:
         sido = context.get("sido")
         sigungu = context.get("sigungu") or context.get("sigungu_name")
         regional = LegalHub.regional_gosi(sido, sigungu) if (sido or sigungu) else None
-        return {
+        result = {
             "core_laws": core,
             "related_laws": related,
             "regional_gosi": regional,  # 부지 시군구 고시정보 열람 링크(토지이음)
@@ -68,6 +138,12 @@ class LegalDiscoveryService:
             ),
             "generated": bool(raw),
         }
+        # 성장루프 축적: 검증 결과를 영속(같은 맥락 재탐색 방지). 실제 탐색이 있었을 때만 저장.
+        if raw:
+            summary = str(context.get("address") or context.get("summary") or "")[:200]
+            await _cache_store(ctx_hash, summary, result)
+        result["cache"] = {"hit": False}
+        return result
 
     def _crossvalidate(self, item: dict[str, Any]) -> dict[str, Any] | None:
         """LLM 1건 → 정본 대조(카테고리별 라우팅). 법령명 없으면 drop(가짜 인용 차단).
