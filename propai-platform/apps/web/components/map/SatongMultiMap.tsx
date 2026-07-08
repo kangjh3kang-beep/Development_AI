@@ -1600,7 +1600,8 @@ export function SatongMultiMap({
         </button>
 
         {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote) && (
-          <div className="pointer-events-none absolute left-3 bottom-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300">
+          {/* 풀스크린에선 완료바(bottom-3·z-460)가 하단을 차지하므로 노트를 그 위(bottom-16)로 올린다(리뷰 MEDIUM). */}
+          <div className={`pointer-events-none absolute left-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}>
             {overlayNote && (
               <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                 {overlayNote}
@@ -1679,7 +1680,8 @@ export function SatongMultiMap({
 
         {/* ── 확인 카드 오버레이 — 조회 완료 후 사용자가 추가/취소를 결정하는 카드 ── */}
         {!readOnly && status === "found" && pending && (
-          <div className="absolute bottom-10 left-1/2 z-[500] -translate-x-1/2 w-[calc(100%-32px)] max-w-sm">
+          {/* 완료바가 래퍼 내부로 들어와 래퍼 하단이 바 높이만큼 내려감 — 카드를 바 위로 상향(리뷰 MEDIUM). */}
+          <div className="absolute bottom-16 left-1/2 z-[500] -translate-x-1/2 w-[calc(100%-32px)] max-w-sm">
             <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur-sm">
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
