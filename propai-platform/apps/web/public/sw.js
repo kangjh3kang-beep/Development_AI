@@ -6,7 +6,7 @@
 // v393: use_llm 공용 토글(UseLlmToggle)·VerificationBadge ledgerHash 조인키 배선 반영(구캐시 일괄 삭제).
 // v396: wave3 리팩토링(dead code 삭제·web 15소스).
 // v397: 다필지 통합 통로 배선(파이프라인·페르소나·인허가 parcels + 면적 SSOT effectiveLandAreaSqm) 반영.
-const CACHE_NAME = "propai-v397-multiparcel-interlock";
+const CACHE_NAME = "propai-v398-multiparcel-far-ceiling";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
