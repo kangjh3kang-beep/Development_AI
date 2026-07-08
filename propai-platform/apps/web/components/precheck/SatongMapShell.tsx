@@ -37,8 +37,12 @@ import {
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type {
   ParcelAtPointResult,
+  SatongAuctionItem,
+  SatongDevelopmentPayload,
   SatongMarketPayload,
   SatongMultiMapProps,
+  SatongPoiPayload,
+  SatongPresaleItem,
 } from "@/components/map/SatongMultiMap";
 import {
   isRenderableSatongMapLayer,
@@ -47,9 +51,12 @@ import {
   type SatongMapLayerState,
 } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { restoreSnapshot } from "@/lib/projectSync";
 import {
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
+  siteAnalysisParcelsToSelection,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -234,48 +241,61 @@ const LAYERS: SatongLayer[] = [
     id: "presale",
     label: "분양정보",
     shortLabel: "분양",
-    description: "인근 분양 단지, 공급가, 청약 수요 신호를 함께 봅니다.",
+    description: "선택 필지(또는 지도 중심) 주변 3km의 분양단지를 마커로 표시합니다.",
     icon: Sparkles,
-    status: "needs-source",
+    status: "active",
     tone: "bg-violet-100 text-violet-950 border-violet-200",
-    source: "청약홈/민간 분양자료 수집 필요",
+    source: "청약홈 분양정보(주변 3km)",
     controls: [
-      { id: "supply-type", label: "공급유형", mapEffect: false },
-      { id: "presale-price", label: "분양가", mapEffect: false },
-      { id: "move-in", label: "입주시기", mapEffect: false },
+      { id: "supply-type", label: "공급유형", mapEffect: false, description: "공급유형 필터 — 향후 제공" },
+      { id: "presale-price", label: "분양가", mapEffect: false, description: "분양가 필터 — 향후 제공" },
+      { id: "move-in", label: "입주시기", mapEffect: false, description: "입주시기 필터 — 향후 제공" },
     ],
   },
   {
     id: "auction",
     label: "공·경매",
     shortLabel: "경매",
-    description: "공매와 경매 물건을 토지 속성과 함께 검토합니다.",
+    description: "선택 필지 주변(10km)의 온비드 공매 물건을 마커로 표시합니다. 로그인이 필요할 수 있습니다.",
     icon: Gavel,
-    status: "needs-source",
+    status: "active",
     tone: "bg-amber-100 text-amber-950 border-amber-200",
-    source: "온비드/법원경매 연동 필요",
+    source: "온비드 공매(주변 10km·감정가/최저가)",
     controls: [
-      { id: "appraisal", label: "감정가", mapEffect: false },
-      { id: "minimum-bid", label: "최저가", mapEffect: false },
-      { id: "bid-date", label: "입찰일", mapEffect: false },
-      { id: "bid-rate", label: "낙찰률", mapEffect: false },
+      { id: "appraisal", label: "감정가", mapEffect: false, description: "감정가 필터 — 향후 제공" },
+      { id: "minimum-bid", label: "최저가", mapEffect: false, description: "최저가 필터 — 향후 제공" },
+      { id: "bid-date", label: "입찰일", mapEffect: false, description: "입찰일 필터 — 향후 제공" },
+      { id: "bid-rate", label: "낙찰률", mapEffect: false, description: "낙찰률 필터 — 향후 제공" },
     ],
   },
   {
     id: "poi",
     label: "교통·편의 POI",
     shortLabel: "POI",
-    description: "역세권, 학교, 상권, 편의시설을 입지 점수화에 사용합니다.",
+    description: "선택 필지 주변(800m)의 역·학교·상권·공원·병원을 마커로 표시합니다. 필지를 먼저 선택하세요.",
     icon: TrainFront,
-    status: "needs-source",
+    status: "active",
     tone: "bg-cyan-100 text-cyan-950 border-cyan-200",
-    source: "카카오/공공데이터 POI 연동 필요",
+    source: "Kakao Local 반경검색(카카오 로컬)",
     controls: [
-      { id: "station", label: "역", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "school", label: "학교", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "commerce", label: "상권", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "park", label: "공원", mapEffect: false, description: "POI API 연결 후 활성화" },
-      { id: "hospital", label: "병원", mapEffect: false, description: "POI API 연결 후 활성화" },
+      { id: "station", label: "역", mapEffect: true },
+      { id: "school", label: "학교", mapEffect: true },
+      { id: "commerce", label: "상권", mapEffect: true },
+      { id: "park", label: "공원", mapEffect: true },
+      { id: "hospital", label: "병원", mapEffect: true },
+    ],
+  },
+  {
+    id: "development",
+    label: "개발계획",
+    shortLabel: "개발",
+    description: "선택 필지 주변(1km)의 도시계획시설(철도·역사 등 계획·결정)을 마커로 표시합니다. 필지를 먼저 선택하세요.",
+    icon: Route,
+    status: "active",
+    tone: "bg-violet-100 text-violet-950 border-violet-200",
+    source: "VWorld 도시계획시설(UPIS 계열)",
+    controls: [
+      { id: "facilities", label: "도시계획시설", mapEffect: true },
     ],
   },
   {
@@ -363,6 +383,8 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     zoning: ["land-use"],
     "official-price": ["unit-price"],
     age: ["building-age"],
+    poi: ["station", "school", "commerce", "park", "hospital"],
+    development: ["facilities"],
     terrain: ["base"],
   };
 }
@@ -427,6 +449,20 @@ function saveSelectionForOutputs(parcels: SatongParcel[]): void {
 export function SatongMapShell({ locale }: { locale: string }) {
   const router = useRouter();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
+  const projectId = useProjectContextStore((state) => state.projectId);
+  const setProject = useProjectContextStore((state) => state.setProject);
+  const snapshots = useProjectContextStore((state) => state.snapshots);
+  const projects = useProjectStore((state) => state.projects);
+  const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
+
+  useEffect(() => {
+    if (!projects.length) void syncFromBackend();
+  }, [projects.length, syncFromBackend]);
+
+  // 읽기 셀렉터 — 활성 프로젝트 필지를 precheck 선택으로 하이드레이션(SSOT 통일). 헤더가 읽는
+  //   siteAnalysis와 동일 출처라 균열 아님. sessionStorage(자기세션 선택)가 우선, 이건 폴백.
+  const storeParcels = useProjectContextStore((state) => state.siteAnalysis?.parcels);
+  const storeCoordinates = useProjectContextStore((state) => state.siteAnalysis?.coordinates);
   const [query, setQuery] = useState("");
   const [searchCandidates, setSearchCandidates] = useState<SearchCandidate[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -457,6 +493,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
     () => LAYERS.filter((layer) => enabledLayers.has(layer.id)),
     [enabledLayers],
   );
+
+
+  const handleSelectProject = useCallback((id: string) => {
+    if (!id) return;
+    const p = projects.find((x) => x.id === id);
+    if (!p) return;
+    setProject(p.id, p.name, p.status, p.address || undefined);
+    void restoreSnapshot(p.id);
+  }, [projects, setProject]);
 
   const selectedMapFeatures = useMemo<SatongMapFeature[]>(
     () =>
@@ -500,6 +545,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
   );
   const marketAnchorPnu = marketAnchor?.pnu || "";
   const marketAnchorAddress = marketAnchor?.address || "";
+  // ★지도 현재중심(P1) — 선택필지 없을 때 지역레이어(POI·개발계획)의 폴백 앵커. 원시값(lat/lon)만
+  //   의존성에 쓴다(#178). SatongMultiMap의 moveend가 반올림·디바운스해 통지하므로 재조회 폭주 없음.
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lon: number } | null>(null);
   useEffect(() => {
     if (!marketEnabled || (!marketAnchorPnu && !marketAnchorAddress)) {
       setMarketPayload(null);
@@ -542,6 +590,204 @@ export function SatongMapShell({ locale }: { locale: string }) {
       cancelled = true;
     };
   }, [marketEnabled, marketAnchorPnu, marketAnchorAddress]);
+
+  // ── 교통·편의 POI 레이어 배선: 레이어 ON + 선택필지 있으면 주변 POI(/site-score/poi-infra) 조회 ──
+  //   렌더(카테고리 색상 마커·팝업)는 SatongMultiMap에 구현 — 여기서는 데이터만 주입.
+  //   실패/키미설정은 available:false로 정직 전달(지도 노트), OFF/무선택은 null(마커 제거).
+  //   의존성은 원시값(lat·lon·address) — 참조 churn 재조회 방지(#178 교훈, 실거래와 동일 패턴).
+  const [poiPayload, setPoiPayload] = useState<SatongPoiPayload | null>(null);
+  const poiEnabled = enabledLayers.has("poi");
+  // ★선택필지가 있으면 그 필지 좌표만 사용(좌표 없으면 null → POI는 주소 지오코딩으로 해소).
+  //   선택이 전혀 없을 때만(브라우즈 모드) 지도중심 폴백(P1). 좌표없는 선택필지(엑셀 업로드 등)가
+  //   엉뚱한 지도중심 POI로 폴백되는 역전을 차단(리뷰 LOW).
+  const hasSelection = marketAnchor != null;
+  const poiAnchorLat = hasSelection ? marketAnchor?.lat ?? null : mapCenter?.lat ?? null;
+  const poiAnchorLon = hasSelection ? marketAnchor?.lon ?? null : mapCenter?.lon ?? null;
+  useEffect(() => {
+    if (!poiEnabled || (poiAnchorLat == null && !marketAnchorAddress)) {
+      setPoiPayload(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<SatongPoiPayload>("/site-score/poi-infra", {
+          body: {
+            lat: poiAnchorLat ?? undefined,
+            lon: poiAnchorLon ?? undefined,
+            address: marketAnchorAddress || undefined,
+            radius_m: 800,
+          },
+          useMock: false,
+          timeoutMs: 60000,
+        });
+        if (!cancelled) setPoiPayload(res);
+      } catch {
+        if (!cancelled) setPoiPayload({ available: false, reason: "POI 조회 실패" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [poiEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
+
+  // ── 개발계획 레이어 배선: 레이어 ON + 선택필지 좌표 있으면 주변 도시계획시설 조회 ──
+  //   /zoning/development-facilities 는 lat/lon 필수(주소 지오코딩 없음) — 좌표 없으면 조회 생략.
+  //   무자료·실패는 빈 facilities + note 정직 전달(무날조). 패턴은 실거래·POI와 동일.
+  const [developmentPayload, setDevelopmentPayload] = useState<SatongDevelopmentPayload | null>(null);
+  const developmentEnabled = enabledLayers.has("development");
+  useEffect(() => {
+    if (!developmentEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setDevelopmentPayload(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<SatongDevelopmentPayload>("/zoning/development-facilities", {
+          // kinds:"all" — 지도 레이어는 전체 도시계획시설(도로·광장·학교·유통 등) 표시.
+          //   (기본 "rail"은 입지 신호용 철도 전용 — 기존 소비처 동작 보존)
+          body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 1000, kinds: "all" },
+          useMock: false,
+          timeoutMs: 60000,
+        });
+        if (!cancelled) setDevelopmentPayload(res);
+      } catch {
+        if (!cancelled) {
+          setDevelopmentPayload({ facilities: [], note: "개발계획(도시계획시설) 조회 실패" });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [developmentEnabled, poiAnchorLat, poiAnchorLon]);
+
+  // ── 분양정보 레이어 배선(실데이터): 레이어 ON + 앵커좌표 → 청약홈 주변 분양(/presale/nearby) ──
+  //   렌더(마커·팝업)는 SatongMultiMap의 presaleItems에 완비. 실패/무자료는 [](정직 "분양 무자료").
+  //   ★무목업: 종전 가상단지(Math.random) 목업을 실데이터로 대체. 패턴은 실거래·POI와 동일.
+  const [presaleItems, setPresaleItems] = useState<SatongPresaleItem[] | null>(null);
+  const presaleEnabled = enabledLayers.has("presale");
+  useEffect(() => {
+    if (!presaleEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setPresaleItems(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.post<{ available?: boolean; items?: SatongPresaleItem[] }>(
+          "/presale/nearby",
+          {
+            body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 3000 },
+            useMock: false,
+            timeoutMs: 30000,
+          },
+        );
+        if (!cancelled) {
+          setPresaleItems(
+            (res.items ?? []).filter(
+              (item) => typeof item.lat === "number" && typeof item.lon === "number",
+            ),
+          );
+        }
+      } catch {
+        if (!cancelled) setPresaleItems([]); // 실패 → 정직 무자료(가짜 생성 금지)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [presaleEnabled, poiAnchorLat, poiAnchorLon]);
+
+  // ── 공·경매 레이어 배선(실데이터): 온비드 검색(/auction/search) → 주소 지오코딩(/auction/geocode)
+  //   → 앵커 반경(10km) 필터. 지역(시/도) 우선 검색, 0건이면 전국 폴백. 인증실패(401)·무자료는
+  //   [](정직 "경매 무자료"). 좌표 미확인 물건은 스킵(가짜 좌표 금지).
+  const [auctionItems, setAuctionItems] = useState<SatongAuctionItem[] | null>(null);
+  const auctionEnabled = enabledLayers.has("auction");
+  useEffect(() => {
+    if (!auctionEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+      setAuctionItems(null);
+      return;
+    }
+    const anchorLat = poiAnchorLat;
+    const anchorLon = poiAnchorLon;
+    let cancelled = false;
+    void (async () => {
+      try {
+        type AuctionSearchItem = {
+          id?: number | string;
+          address?: string | null;
+          status?: string | null;
+          appraisal_price?: number | null;
+          min_bid_price?: number | null;
+          bid_end?: string | null;
+        };
+        // 앵커 주소의 시/도 토큰을 **원형 그대로** 전달(예: "충청북도") — 저장 축약형("충북")으로의
+        // 정규화는 서버 공용 _sido_from_address가 담당(진실원천 1곳, 프론트 재구현 금지 — QA MEDIUM).
+        const region = marketAnchorAddress.split(" ")[0] || "";
+        const fetchPage = (r?: string) =>
+          apiClient.get<{ items?: AuctionSearchItem[] }>(
+            `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
+            { useMock: false, timeoutMs: 30000 },
+          );
+        let res = region ? await fetchPage(region) : await fetchPage();
+        if (region && !(res.items ?? []).length) res = await fetchPage(); // 지역 0건 → 전국 폴백
+        const items = (res.items ?? []).filter((item) => (item.address ?? "").trim());
+        if (!items.length) {
+          if (!cancelled) setAuctionItems([]);
+          return;
+        }
+        const geo = await apiClient.post<{ located?: { key: string; lat: number; lon: number }[] }>(
+          "/auction/geocode",
+          {
+            body: {
+              items: items.slice(0, 60).map((item, index) => ({
+                key: String(item.id ?? index),
+                address: item.address,
+              })),
+            },
+            useMock: false,
+            timeoutMs: 60000,
+          },
+        );
+        const located = new Map((geo.located ?? []).map((l) => [l.key, l]));
+        const toRad = (d: number) => (d * Math.PI) / 180;
+        const near = items
+          .map((item, index): SatongAuctionItem | null => {
+            const loc = located.get(String(item.id ?? index));
+            if (!loc) return null;
+            // 하버사인 거리(m) — 앵커 반경 10km만 채택.
+            const dLat = toRad(loc.lat - anchorLat);
+            const dLon = toRad(loc.lon - anchorLon);
+            const h =
+              Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(anchorLat)) * Math.cos(toRad(loc.lat)) * Math.sin(dLon / 2) ** 2;
+            const distanceM = Math.round(2 * 6371000 * Math.asin(Math.sqrt(h)));
+            if (distanceM > 10000) return null;
+            return {
+              address: item.address ?? undefined,
+              status: item.status ?? undefined,
+              appraisal_price: item.appraisal_price ?? undefined,
+              minimum_bid_price: item.min_bid_price ?? undefined,
+              bid_date: item.bid_end ?? undefined,
+              lat: loc.lat,
+              lon: loc.lon,
+              distance_m: distanceM,
+            };
+          })
+          .filter((item): item is SatongAuctionItem => item != null)
+          .sort((a, b) => (a.distance_m ?? 0) - (b.distance_m ?? 0))
+          .slice(0, 30);
+        if (!cancelled) setAuctionItems(near);
+      } catch {
+        if (!cancelled) setAuctionItems([]); // 401 미인증 포함 실패 → 정직 무자료
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auctionEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -619,21 +865,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (id: string) => {
       setSelectedParcels((prev) => {
         const next = prev.filter((parcel) => parcel.id !== id);
+        // ★P1(감사): saveSelectionForOutputs를 분기 밖 무조건 호출 — 종전엔 next.length>0
+        //   조건 안에 있어 '마지막 필지 삭제' 시 sessionStorage가 옛 목록을 유지 →
+        //   재마운트하면 삭제한 필지가 부활했다. 빈 선택은 store 필지 컨텍스트도 명시
+        //   정리한다(스토어 폴백 하이드레이션에 의한 부활 이중 차단).
+        saveSelectionForOutputs(next);
         if (next.length > 0) {
           commitParcelsToContext(next);
-          saveSelectionForOutputs(next);
+        } else {
+          updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
         }
         return next;
       });
     },
-    [commitParcelsToContext],
+    [commitParcelsToContext, updateSiteAnalysis],
   );
 
   const clearParcels = useCallback(() => {
     setSelectedParcels([]);
     setFocusTarget(null);
     saveSelectionForOutputs([]);
-  }, []);
+    // ★P1(감사): 초기화가 store 필지 컨텍스트를 남기면 ①재마운트 시 스토어 폴백 하이드레이션이
+    //   필지를 부활시키고 ②/analysis가 옛 주소를 계속 분석한다 → 명시 정리.
+    updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
+  }, [updateSiteAnalysis]);
 
   const runDirectGeocode = useCallback(
     async (rawQuery: string) => {
@@ -791,6 +1046,59 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [addParcels],
   );
 
+  // ★P1(감사): 지도 경계 API가 보강한 필지 속성(면적·용도·좌표·경계)을 선택목록+SSOT에 병합.
+  //   종전엔 지도 내부 dead-end → 검색 등록 필지가 면적 0으로 통합분석에서 침묵 탈락했다.
+  //   빈 필드만 채우고(사용자·원천값 우선), 변화가 없으면 setState를 건너뛰어 재조회 루프를 끊는다.
+  const handleBoundaryEnriched = useCallback(
+    (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
+      zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
+      officialPricePerSqm?: number | null; builtYear?: number | null;
+      buildingAgeYears?: number | null; geometry?: unknown }>,
+    ) => {
+      setSelectedParcels((prev) => {
+        if (!prev.length || !features.length) return prev;
+        let changed = false;
+        const byKey = new Map<string, (typeof features)[number]>();
+        for (const f of features) {
+          if (f.pnu) byKey.set(String(f.pnu), f);
+          if (f.address) byKey.set(f.address.trim(), f);
+        }
+        const next = prev.map((p) => {
+          const f = (p.pnu && byKey.get(String(p.pnu))) || byKey.get(p.address.trim());
+          if (!f) return p;
+          const merged = {
+            ...p,
+            areaSqm: p.areaSqm ?? f.areaSqm ?? null,
+            zoneType: p.zoneType ?? f.zoneType ?? null,
+            jimok: p.jimok ?? f.jimok ?? null,
+            lat: p.lat ?? f.lat ?? null,
+            lon: p.lon ?? f.lon ?? null,
+            officialPricePerSqm: p.officialPricePerSqm ?? f.officialPricePerSqm ?? null,
+            builtYear: p.builtYear ?? f.builtYear ?? null,
+            buildingAgeYears: p.buildingAgeYears ?? f.buildingAgeYears ?? null,
+            geometry: p.geometry ?? f.geometry ?? null,
+          };
+          if (
+            merged.areaSqm !== p.areaSqm || merged.zoneType !== p.zoneType ||
+            merged.jimok !== p.jimok || merged.lat !== p.lat || merged.lon !== p.lon ||
+            merged.officialPricePerSqm !== p.officialPricePerSqm ||
+            merged.builtYear !== p.builtYear || merged.buildingAgeYears !== p.buildingAgeYears ||
+            merged.geometry !== p.geometry
+          ) {
+            changed = true;
+            return merged;
+          }
+          return p;
+        });
+        if (!changed) return prev; // 무변화 — 참조 유지로 하류 이펙트 재실행 차단
+        commitParcelsToContext(next); // SSOT 동기화 → /analysis가 보강 면적을 읽는다
+        saveSelectionForOutputs(next);
+        return next;
+      });
+    },
+    [commitParcelsToContext],
+  );
+
   const handleOutputClick = useCallback(
     (action: OutputAction) => {
       saveSelectionForOutputs(selectedParcels);
@@ -800,16 +1108,58 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [commitParcelsToContext, router, selectedParcels],
   );
 
+  // 최초 1회만 하이드레이션(이후 사용자 선택을 덮지 않도록 ref 가드). 우선순위:
+  //   1) sessionStorage(자기세션 선택 — 좌표·경계까지 리치) → 있으면 그대로(기존 동작).
+  //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 헤더의 12필지를 지도/산출물에 복원.
+  //   ★스토어 seed 시 commitParcelsToContext 재호출 금지(이미 스토어에 있는 값 되쓰면 되먹임 루프·#178).
+  const hydratedRef = useRef(false);
   useEffect(() => {
+    if (hydratedRef.current) return;
     const stored = readSatongMapSelection();
-    if (!stored?.parcels.length) return;
-    setSelectedParcels(stored.parcels);
-    commitParcelsToContext(stored.parcels);
-    const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
-    if (focused?.lat != null && focused.lon != null) {
-      setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+    if (stored?.parcels.length) {
+      hydratedRef.current = true;
+      setSelectedParcels(stored.parcels);
+      commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+      const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
+      if (focused?.lat != null && focused.lon != null) {
+        setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+      }
+      return;
     }
-  }, [commitParcelsToContext]);
+    // 폴백: 활성 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값).
+    if (storeParcels?.length) {
+      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+      // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
+      //   다음 storeParcels 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
+      if (seeded.length) {
+        hydratedRef.current = true;
+        setSelectedParcels(seeded);
+        const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
+        if (focused?.lat != null && focused.lon != null) {
+          setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+        }
+      }
+    }
+  }, [commitParcelsToContext, storeParcels, storeCoordinates]);
+
+  // 프로젝트 전환 감지 시 강제 선택 복원 (세션 가드 리셋)
+  useEffect(() => {
+    if (!projectId) {
+      setSelectedParcels([]);
+      return;
+    }
+    if (storeParcels?.length) {
+      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+      setSelectedParcels(seeded);
+      const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
+      if (focused?.lat != null && focused.lon != null) {
+        setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+      }
+    } else {
+      setSelectedParcels([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -897,6 +1247,26 @@ export function SatongMapShell({ locale }: { locale: string }) {
             <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
               검색하면 지도 중심이 이동하고, 엑셀을 올리면 다필지 목록이 같은 선택 목록으로 합쳐집니다.
             </p>
+          </div>
+
+          {/* 프로젝트 연결 */}
+          <div className="mt-4 rounded-[20px] border border-slate-100 bg-slate-50/70 p-3.5">
+            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
+              <Building2 className="size-4 text-emerald-600" aria-hidden />
+              연결 프로젝트
+            </label>
+            <select
+              value={projectId ?? ""}
+              onChange={(e) => handleSelectProject(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+            >
+              <option value="">프로젝트 선택 안 함 (약식 분석)</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.address ? ` — ${p.address}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="mt-4 space-y-3">
@@ -1123,16 +1493,42 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
-                // v1 스코프: 아파트 매매 고정(명시). 유형/기간 필터는 '향후 제공' 컨트롤과 함께 확장 —
-                // apt 실거래 없는 토지권역은 '실거래 무자료'로 정직 표기(리뷰 MEDIUM 인지·의도 명시).
-                marketLayer={{ kind: "trade", type: "apt" }}
+                // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
+                // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
+                marketLayer={useMemo(
+                  () => ({
+                    kind: "trade" as const,
+                    type: "apt",
+                    showPresale: presaleEnabled,
+                    presaleItems: presaleEnabled ? presaleItems : null,
+                    showAuction: auctionEnabled,
+                    auctionItems: auctionEnabled ? auctionItems : null,
+                  }),
+                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
+                )}
+                poiPayload={poiEnabled ? poiPayload : null}
+                developmentPayload={developmentEnabled ? developmentPayload : null}
+                onCenterChange={setMapCenter}
+                onBoundaryEnriched={handleBoundaryEnriched}
               />
             </div>
 
             <div
               ref={railRef}
-              className="absolute right-4 top-20 z-[420] flex flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur"
+              // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
+              //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
+              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-auto hover:max-h-[calc(100%-120px)] flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur transition-all duration-300 ease-in-out overflow-hidden hover:overflow-y-auto"
             >
+              {/* 접혔을 때와 펼쳐졌을 때의 앵커가 되는 메인 아이콘 버튼 */}
+              <button
+                type="button"
+                className="grid size-12 shrink-0 place-items-center rounded-2xl border transition border-slate-200 bg-white text-[var(--accent-strong)] hover:bg-slate-50 group-hover:border-slate-300 group-hover:bg-slate-100 group-hover:text-slate-700"
+                title="지도 레이어 관리 (마우스를 올리세요)"
+              >
+                <MapIcon className="size-5 animate-pulse group-hover:animate-none" aria-hidden />
+              </button>
+
+              {/* 내부 레이어 버튼 리스트 (세로 전개) */}
               {LAYERS.map((layer) => {
                 const Icon = layer.icon;
                 const enabled = enabledLayers.has(layer.id);
@@ -1143,7 +1539,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     type="button"
                     onClick={() => handleLayerClick(layer.id)}
                     title={layer.label}
-                    className={`group grid size-12 place-items-center rounded-2xl border text-slate-600 transition ${
+                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-slate-600 transition ${
                       isActive
                         ? "border-slate-950 bg-slate-950 text-white"
                         : enabled

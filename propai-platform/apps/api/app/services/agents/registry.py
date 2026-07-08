@@ -13,12 +13,18 @@ def _permit_tool(data: dict[str, Any]) -> dict[str, Any]:
     """
     from app.services.feasibility.permit_validator import check_permit_feasibility
     res = check_permit_feasibility(data.get("dev_type", ""), data.get("zone_type", ""))
-    status = "pass" if res.get("is_permitted") else "fail"
+    # ★리뷰 HIGH: 미등재 용도지역(계획관리·농림 등)은 pass/fail 이분 금지 — 판정불가(unknown).
+    #   종전엔 zone_known 무시로 '계획관리+단독주택'이 fail로 역전됐다(판정불가≠불가).
+    if res.get("zone_known") is False:
+        status = "unknown"
+    else:
+        status = "pass" if res.get("is_permitted") else "fail"
     return {
         "findings": [{"check_id": "PERMIT", "status": status,
                       "current": res.get("type_name"), "limit": None,
                       "note": res.get("reason")}],
         "summary": {"is_permitted": res.get("is_permitted"),
+                    "zone_known": res.get("zone_known"),
                     "permit_complexity": res.get("permit_complexity"),
                     "type_name": res.get("type_name")},
     }

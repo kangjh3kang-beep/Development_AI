@@ -17,13 +17,13 @@
  *    /zoning/nearby-map 조회 후 marketPayload/marketLayer props로 SatongMultiMap에
  *    주변 실거래 마커 렌더링(SatongMapShell.tsx marketEnabled 경로). 컨트롤 자체는
  *    필터(향후 제공)라 mapEffect:false지만 렌더 경로는 props로 배선됨.
- * 미연동 근거(코드):
- *  - poi: SatongMultiMap에 POI 렌더 경로 자체가 없음.
  */
 
-// props(marketPayload 등)로 렌더되는 레이어 — 컨트롤 mapEffect 플래그로 렌더 여부를
-// 판정할 수 없다(전용 배선). 아래 mapEffect 휴리스틱 검사에서 제외한다.
-const PROP_RENDERED_LAYERS = new Set(["transactions"]);
+// 전용 배선(props/내부 fetch)으로 렌더되는 레이어 — 컨트롤 mapEffect 플래그로 렌더
+// 여부를 판정할 수 없다. 아래 mapEffect 휴리스틱 검사에서 제외한다:
+//  - transactions: marketPayload props(#188)
+//  - presale/auction: 청약홈·온비드 배선(#197, 컨트롤은 필터 전용)
+const PROP_RENDERED_LAYERS = new Set(["transactions", "presale", "auction"]);
 import { describe, expect, it, vi } from "vitest";
 
 // SatongMapShell은 모듈 스코프에서 next/dynamic을 호출하므로 메타데이터 검증용으로 무해화한다.
@@ -41,12 +41,11 @@ describe("MAP-001 SatongMapShell 레이어 status 정직 라벨", () => {
     expect(dishonest).toEqual([]);
   });
 
-  it("이 화면에서 렌더 경로가 없는 poi는 needs-source다", () => {
-    for (const id of ["poi"]) {
-      const layer = SATONG_MAP_SHELL_LAYERS.find((candidate) => candidate.id === id);
-      expect(layer, id).toBeDefined();
-      expect(layer?.status, id).toBe("needs-source");
-    }
+  it("poi는 Kakao Local 반경검색 배선(#197)으로 active다", () => {
+    const layer = SATONG_MAP_SHELL_LAYERS.find((candidate) => candidate.id === "poi");
+    expect(layer).toBeDefined();
+    expect(layer?.status).toBe("active");
+    expect(layer?.source).not.toContain("연동 필요");
   });
 
   it("transactions는 실거래 배선(#188)으로 active다", () => {

@@ -34,10 +34,30 @@ function upstreamError(message: string, upstreamStatus: number, detail: Record<s
   });
 }
 
+// 투명 1x1 PNG — VWorld가 200 + XML ExceptionReport(예: 위성 미제공영역 'FileNotFound')를
+//   반환할 때 타일로 통과시키면 Leaflet tileerror로 지도 전체가 회색이 된다. 이는 오류가
+//   아니라 정상적 무제공 영역이므로 해당 타일만 빈 채로 두고 지도는 유지한다.
+//   (인증 실패·쿼터 초과는 JSON 본문으로 오므로 upstreamError 503 관측 경로가 따로 처리 —
+//    두 계약의 분기 기준은 content-type: xml→투명타일, 그 외 비이미지→503 JSON.)
+const TRANSPARENT_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+function transparentTile(): Response {
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+  });
+}
+
 export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Response> {
   const key = vworldKey();
   const cleanLayer = SUPPORTED_LAYERS.has(params.layer) ? params.layer : "Base";
-  const cleanX = params.x.replace(/\.png$/i, "");
+  const cleanX = params.x.replace(/\.(png|jpe?g)$/i, "");
+  // ★VWorld 위성영상(Satellite)은 jpeg로만 서빙된다 — png 요청 시 'FileNotFound: 서비스 제공영역이
+  //   아닙니다' XML을 200으로 반환한다. 위성만 jpeg, 나머지(Base·Hybrid·gray·midnight)는 png.
+  const ext = cleanLayer === "Satellite" ? "jpeg" : "png";
 
   if (!key) {
     // [MAP-006] 평문 본문 금지 — 오류는 항상 JSON({ error, status })으로 반환한다.
@@ -54,7 +74,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
     );
   }
 
-  const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.png`;
+  const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
   try {
     const resp = await fetch(targetUrl, {
@@ -69,8 +89,16 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
     }
     const contentType = (resp.headers.get("content-type") ?? "").trim();
     if (contentType && !contentType.toLowerCase().startsWith("image/")) {
-      // VWorld는 인증 실패·쿼터 초과를 200 + JSON/XML 본문으로 반환하기도 한다.
-      // 비이미지 본문을 타일로 위장 포워딩하지 않는다(본문 검사).
+      // 200 + 비이미지 본문은 두 현실이 섞여 있다 — content-type으로 분기해 양쪽 계약 보존:
+      //  · XML(ExceptionReport, 위성 미제공영역 등 정상 무제공) → 투명타일(지도 유지) + warn 로그.
+      //  · 그 외(JSON 인증 실패·쿼터 초과 등) → 503 JSON(관측 가능, 무음 위장 금지).
+      if (contentType.toLowerCase().includes("xml")) {
+        console.warn(
+          `[vworld-wmts-proxy] 200 + XML body → transparent tile (coverage gap 추정)`,
+          { layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType },
+        );
+        return transparentTile();
+      }
       return upstreamError("VWorld WMTS returned a non-image body", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType,
       });
@@ -79,7 +107,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
     return new Response(buf, {
       status: 200,
       headers: {
-        "Content-Type": contentType || "image/png",
+        "Content-Type": contentType || (ext === "jpeg" ? "image/jpeg" : "image/png"),
         "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
       },
     });

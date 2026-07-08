@@ -1,3 +1,4 @@
+import asyncio
 import math
 import re
 
@@ -414,9 +415,13 @@ class VWorldService:
         return results
 
     async def get_planning_facilities(
-        self, lat: float, lon: float, radius_m: int = 1000
+        self, lat: float, lon: float, radius_m: int = 1000, kinds: str = "rail"
     ) -> list[dict]:
         """입지 좌표 주변의 도시계획시설(특히 철도·역사·도시철도 계획결정)을 best-effort로 조회한다.
+
+        kinds: 'rail'(기본, 기존 동작 — 철도 관련만) | 'all'(전체 도시계획시설 — 지도 개발계획 레이어용).
+        'all'은 라이브 검증된 UPIS 시설 레이어(151·152·153·154·155·156·161)만 조회한다
+        (UQ111/112는 용도지역·지구 폴리곤이라 시설 아님 → 제외, 무날조).
 
         VWorld data API GetFeature + geomFilter(BBOX)로 좌표 반경 내 도시계획시설을 받아
         철도/역사/도시철도 관련 시설만 골라 '주변 개발계획' 후보로 반환한다.
@@ -438,13 +443,24 @@ class VWorldService:
         min_lon, max_lon = lon - d_lon, lon + d_lon
         box = f"BOX({min_lon},{min_lat},{max_lon},{max_lat})"
 
-        # 도시계획시설 계열 후보 레이어(확실치 않아 순차 시도) — VWorld 데이터목록 기준.
-        candidate_layers = [
-            "LT_C_UQ111",       # 도시계획시설(점/면)
-            "LT_C_UQ112",
-            "LT_C_UPISUQ151",   # 도시계획시설(UPIS) 계열
-            "LT_C_UPISUQ153",
-        ]
+        # 도시계획시설 계열 후보 레이어 — kinds에 따라 분리.
+        #   'all': 라이브 검증된 UPIS 시설 레이어만(2026-07-04 동탄 검증 — 151교통·152공간·
+        #          153유통공급·154·155·156·161 OK / 157·171 NOT_FOUND·175 INVALID_RANGE 제외).
+        #          UQ111/112는 용도지역·지구 폴리곤(시설 아님)이라 'all'에선 제외.
+        #   'rail'(기존 동작 보존): 종전 후보 4종 순차 시도 + 철도 키워드 필터.
+        if kinds == "all":
+            candidate_layers = [
+                "LT_C_UPISUQ151", "LT_C_UPISUQ152", "LT_C_UPISUQ153",
+                "LT_C_UPISUQ154", "LT_C_UPISUQ155", "LT_C_UPISUQ156",
+                "LT_C_UPISUQ161",
+            ]
+        else:
+            candidate_layers = [
+                "LT_C_UQ111",       # 도시계획시설(점/면)
+                "LT_C_UQ112",
+                "LT_C_UPISUQ151",   # 도시계획시설(UPIS) 계열
+                "LT_C_UPISUQ153",
+            ]
         # 철도/역사/도시철도 판별 키워드(시설명/시설구분 기준).
         # 철도 전용 키워드 — ★바 '역'은 '지역(용도지역)'에 오탐되므로 제외. 명시적 철도용어만.
         rail_kw = ("철도", "도시철도", "전철", "지하철", "광역철도", "고속철도", "경전철", "전동차")
@@ -461,9 +477,9 @@ class VWorldService:
             # 역명(…역) 패턴 — '지역/역사공원/역세권' 등은 위 제외어로 이미 걸러짐.
             return bool(re.search(r"[가-힣]{1,6}역(\s|$|\d)", blob)) and "지역" not in blob
 
-        facilities: list[dict] = []
-        seen: set[str] = set()  # 동일 시설 중복 제거(name+type)
-        for layer in candidate_layers:
+        # 후보 레이어를 병렬 조회(순차 시 최악 tail = 레이어수×timeout이 프론트 예산을 넘김 —
+        #   각 레이어는 독립이므로 asyncio.gather로 팬아웃. 개별 실패는 자체 흡수해 []로).
+        async def _fetch_layer(layer: str) -> list[dict]:
             params = {
                 "service": "data",
                 "request": "GetFeature",
@@ -481,57 +497,65 @@ class VWorldService:
                     resp = await client.get(f"{self.BASE_URL}/data", params=params)
                     resp.raise_for_status()
                     data = resp.json()
-                # 응답 status가 OK일 때만 채택(레이어 미존재·오류면 NOT_FOUND/ERROR).
-                status = data.get("response", {}).get("status")
-                if status != "OK":
-                    continue
-                features = (
+                if data.get("response", {}).get("status") != "OK":
+                    return []  # NOT_FOUND/ERROR 레이어는 무시
+                return (
                     data.get("response", {})
                     .get("result", {})
                     .get("featureCollection", {})
                     .get("features", [])
-                )
-                if not features:
-                    continue
-                for feat in features:
-                    props = feat.get("properties", {}) or {}
-                    # 시설명/시설구분 후보 속성(레이어마다 키가 달라 폭넓게 탐색).
-                    name = (
-                        props.get("dgm_nm") or props.get("fac_nm") or props.get("uname")
-                        or props.get("ntfc_nm") or props.get("ucode_nm") or props.get("name") or ""
-                    )
-                    fac_type = (
-                        props.get("dgm_knd") or props.get("fac_knd") or props.get("ucode_nm")
-                        or props.get("knd_nm") or props.get("uname") or ""
-                    )
-                    blob = f"{name} {fac_type}"
-                    # 철도 관련만 채택(용도지역/지구/공원 오탐 제외).
-                    if not _is_rail(blob):
-                        continue
-                    # 상태(계획/결정/운영 등) 속성 그대로 — 없으면 '확인필요'(가짜 단정 금지).
-                    fac_status = (
-                        props.get("prog_se") or props.get("ntfc_se") or props.get("dgm_se")
-                        or props.get("status") or "확인필요"
-                    )
-                    # 시설 대표 좌표로 입지까지 거리 산출(geometry 첫 좌표 추출).
-                    f_lat, f_lon = self._first_coord(feat.get("geometry"))
-                    distance_m = None
-                    if f_lat is not None and f_lon is not None:
-                        distance_m = round(self._haversine_m(lat, lon, f_lat, f_lon))
-                    dedup_key = f"{name}|{fac_type}"
-                    if dedup_key in seen:
-                        continue
-                    seen.add(dedup_key)
-                    facilities.append({
-                        "type": str(fac_type).strip() or "도시계획시설",
-                        "name": str(name).strip() or "(명칭 미상)",
-                        "status": str(fac_status).strip() or "확인필요",
-                        "distance_m": distance_m,
-                        "source": "vworld_도시계획시설",
-                    })
-            except Exception as e:  # noqa: BLE001 — 후보 레이어 실패는 다음 후보로(가짜 생성 금지).
+                ) or []
+            except Exception as e:  # noqa: BLE001 — 후보 레이어 실패는 [](가짜 생성 금지).
                 logger.warning("도시계획시설 후보 레이어 조회 실패", layer=layer, error=str(e)[:120])
-                continue
+                return []
+
+        layer_features = await asyncio.gather(*[_fetch_layer(ly) for ly in candidate_layers])
+
+        facilities: list[dict] = []
+        seen: set[str] = set()  # 동일 시설 중복 제거(name+type). 레이어 순서대로 파싱해 결정성 유지.
+        for features in layer_features:
+            for feat in features:
+                props = feat.get("properties", {}) or {}
+                # 시설명/시설구분 후보 속성(레이어마다 키가 달라 폭넓게 탐색).
+                name = (
+                    props.get("dgm_nm") or props.get("fac_nm") or props.get("uname")
+                    or props.get("ntfc_nm") or props.get("ucode_nm") or props.get("name") or ""
+                )
+                fac_type = (
+                    # UPIS 실필드(라이브 확인): mls_nam(중분류 '교통광장' 등)·lcl_nam(대분류 '광장' 등)
+                    props.get("mls_nam") or props.get("lcl_nam")
+                    or props.get("dgm_knd") or props.get("fac_knd") or props.get("ucode_nm")
+                    or props.get("knd_nm") or props.get("uname") or ""
+                )
+                blob = f"{name} {fac_type}"
+                # kinds='rail'일 때만 철도 필터(기존 동작). 'all'은 전 시설 통과(지도 레이어용).
+                if kinds != "all" and not _is_rail(blob):
+                    continue
+                # 상태(집행/미집행·계획/결정 등) 속성 그대로 — 없으면 '확인필요'(가짜 단정 금지).
+                fac_status = (
+                    props.get("exc_nam")  # UPIS 실필드(라이브 확인): '집행'/'미집행'
+                    or props.get("prog_se") or props.get("ntfc_se") or props.get("dgm_se")
+                    or props.get("status") or "확인필요"
+                )
+                # 시설 대표 좌표로 입지까지 거리 산출(geometry 첫 좌표 추출).
+                f_lat, f_lon = self._first_coord(feat.get("geometry"))
+                distance_m = None
+                if f_lat is not None and f_lon is not None:
+                    distance_m = round(self._haversine_m(lat, lon, f_lat, f_lon))
+                dedup_key = f"{name}|{fac_type}"
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                facilities.append({
+                    "type": str(fac_type).strip() or "도시계획시설",
+                    "name": str(name).strip() or "(명칭 미상)",
+                    "status": str(fac_status).strip() or "확인필요",
+                    "distance_m": distance_m,
+                    # 대표 좌표(geometry 첫 좌표) — 지도 마커용. 추출 실패 시 None(무날조).
+                    "lat": f_lat,
+                    "lon": f_lon,
+                    "source": "vworld_도시계획시설",
+                })
         if not facilities:
             logger.info("주변 도시계획시설(철도 등) 자동수집 결과 없음", lat=lat, lon=lon, radius_m=radius_m)
         # 가까운 순으로 정렬(거리 미상은 뒤로).

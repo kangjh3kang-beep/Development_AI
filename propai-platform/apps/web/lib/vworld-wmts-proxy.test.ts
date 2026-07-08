@@ -1,0 +1,67 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { proxyVWorldWmts } from "./vworld-wmts-proxy";
+
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+function stubFetch(handler: (url: string) => Response) {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => handler(String(url))));
+}
+
+describe("vworld-wmts-proxy", () => {
+  it("위성(Satellite)은 상류 요청을 .jpeg로 보낸다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "TESTKEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    });
+    const res = await proxyVWorldWmts({ layer: "Satellite", z: "16", y: "25083", x: "55965.png" });
+    expect(requested).toContain("/Satellite/16/25083/55965.jpeg");
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+  });
+
+  it("Base는 .png로 보낸다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "TESTKEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    await proxyVWorldWmts({ layer: "Base", z: "16", y: "25083", x: "55965.png" });
+    expect(requested).toContain("/Base/16/25083/55965.png");
+  });
+
+  it("★200+XML(ExceptionReport)은 투명 PNG로 대체(지도 깨짐 방지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "TESTKEY");
+    stubFetch(() =>
+      new Response('<?xml version="1.0"?><ExceptionReport>서비스 제공영역이 아닙니다</ExceptionReport>', {
+        status: 200,
+        headers: { "content-type": "application/xml;charset=UTF-8" },
+      }),
+    );
+    const res = await proxyVWorldWmts({ layer: "Satellite", z: "16", y: "1", x: "1.png" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(Array.from(bytes.slice(0, 4))).toEqual(PNG_MAGIC); // 유효 PNG(투명타일)
+  });
+
+  it("키 미설정 시 503", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    const res = await proxyVWorldWmts({ layer: "Base", z: "16", y: "1", x: "1.png" });
+    expect(res.status).toBe(503);
+  });
+});

@@ -84,6 +84,23 @@ describe("proxyVWorldWmts — 업스트림 오류의 명시화", () => {
     expect(body.status).toBe(200);
   });
 
+  it("업스트림 200 + XML(ExceptionReport, 위성 미제공영역)은 투명타일 200으로 대체한다", async () => {
+    // main(#197 계열)의 지도 유지 계약: 무제공 영역은 오류가 아니므로 tileerror 폭주 대신
+    // 해당 타일만 투명 처리. (JSON 오류 위장은 위 테스트대로 503 관측 유지 — 분기 기준 content-type)
+    fetchMock.mockResolvedValue(
+      new Response("<ServiceExceptionReport>FileNotFound</ServiceExceptionReport>", {
+        status: 200,
+        headers: { "Content-Type": "text/xml" },
+      }),
+    );
+    const { proxyVWorldWmts } = await loadProxy();
+    const resp = await proxyVWorldWmts(PARAMS);
+
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("Content-Type")).toBe("image/png");
+    expect((await resp.arrayBuffer()).byteLength).toBeGreaterThan(0); // 투명 1x1 PNG
+  });
+
   it("정상 이미지 타일은 200으로 포워딩하고 캐시 헤더를 유지한다", async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     fetchMock.mockResolvedValue(

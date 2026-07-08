@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, Building, Compass, Download, Files, Lock, PenLine, Target, Users, Wallet } from "lucide-react";
+import { Bot, Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
-import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
-import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
   NearbyTransactionsMap as NearbyTransactionsMapType,
@@ -13,8 +11,13 @@ import type {
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
-import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import dynamic from "next/dynamic";
+const SatongMapShellDynamic = dynamic(
+  () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
+  { ssr: false },
+);
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
@@ -241,18 +244,15 @@ function SectionDivider({ kr, en }: { kr: string; en: string }) {
 export function MarketInsightsWorkspaceClient() {
   // 활성 프로젝트(projectId)가 있을 때만 컨텍스트를 사용 — 약식 검색이 타 페이지로 새지 않도록.
   const projectId = useProjectContextStore((s) => s.projectId);
+  const projectName = useProjectContextStore((s) => s.projectName);
   const rawSite = useProjectContextStore((s) => s.siteAnalysis);
   const siteAnalysis = projectId ? rawSite : null;
-  const [searchAddr, setSearchAddr] = useState("");
   // 명시실행: 주소 입력만으로는 분석하지 않고, "분석 실행" 클릭 시에만 runAddress를 확정한다.
   const [runAddress, setRunAddress] = useState("");
-  // 다필지 SSOT: 피커가 올린 전체 필지(면적·용도·용적/건폐·pnu) 후보 → 실행 시 runEntries로 확정.
-  const [entries, setEntries] = useState<AddressEntry[]>([]);
-  const [runEntries, setRunEntries] = useState<AddressEntry[]>([]);
   // store 폴백 다필지(인테이크/프로젝트가 store에 쓴 것)도 실행 시점에 스냅샷으로 고정 — 피커와 동일하게
   //   '미리보기=다운로드' 불변식이 이후 store 변경(다탭 등)에 흔들리지 않게 한다.
   const [runStoreParcels, setRunStoreParcels] = useState<
-    Array<{ address?: string; areaSqm?: number | null; zoneCode?: string | null }>
+    Array<{ address?: string; areaSqm?: number | null; zoneCode?: string | null; pnu?: string | null }>
   >([]);
   // 일괄분석(P2): 「분석 시작」 클릭 시 지도뿐 아니라 시장보고서까지 한 번에 생성하기 위한 대기 플래그.
   const [pendingReport, setPendingReport] = useState(false);
@@ -266,50 +266,33 @@ export function MarketInsightsWorkspaceClient() {
   //   income(거시 소득) 자식: income_avg / income_basis
   //   katlas: 마이크로 타겟팅(프리미엄)
   const [analysisOptions, setAnalysisOptions] = useState<Record<string, boolean>>({
-    pop_age: false,
-    pop_household: false,
-    pop_migration: false,
-    income_avg: false,
-    income_basis: false,
+    pop_age: true,
+    pop_household: true,
+    pop_migration: true,
+    income_avg: true,
+    income_basis: true,
     katlas: false,
   });
   const [error, setError] = useState("");
   const [balance, setBalance] = useState<Balance | null>(null);
 
-  // 입력 후보 주소(실행 전): 검색 → 피커가 올린 대표필지 → 활성 프로젝트 주소(폴백).
-  //   ★stale store 주소가 업로드 필지를 덮어쓰지 않도록, 피커 entries 대표를 store보다 우선.
-  const repAddrFromEntries = entries[0] ? preferredEntryAddress(entries[0]) : "";
-  const inputAddress = searchAddr || repAddrFromEntries || siteAnalysis?.address || "";
+  // 입력 후보 주소(실행 전): 활성 프로젝트 주소(SSOT).
+  const inputAddress = siteAnalysis?.address || "";
   // 실제 분석 대상 주소 — 버튼 클릭으로 확정된 값만 지도/산출에 전달.
   const address = runAddress;
-  // ── 다필지 SSOT 파생(stale store 대신 '현재 피커 선택'을 단일 진실로) ──
-  //   대표필지 = 확정 runEntries[0]. 지도/보고서 pnu는 실제 선택된 필지의 pnu를 우선 사용한다.
-  //   (이전 rawSite.pnu 직접참조는 타 프로젝트 pnu가 새어 지도가 엉뚱한 지역(예: 강릉)을 가리키는 치명버그였음.)
-  const repEntry = runEntries[0];
-  // 피커로 필지를 올린 경우(runEntries 존재) 그 필지의 pnu만 신뢰한다 — pnu가 없으면 빈값으로 두어
-  //   백엔드가 주소(address)로 지오코딩하게 한다(★stale store pnu로 거래수집 구역이 엉뚱하게 잡히는 잔존엣지 차단).
-  //   피커 미사용(프로젝트 드롭다운 단독) 시에만 store pnu 폴백.
-  const mapPnu = runEntries.length > 0
-    ? ((repEntry?.pnu as string) || "")
+  // ── 다필지 SSOT 파생 ──
+  const mapPnu = runStoreParcels.length > 0
+    ? ((runStoreParcels[0]?.pnu as string) || "")
     : ((siteAnalysis?.pnu as string) || "");
-  // 등록된 전 필지 주소(구획도 통합 경계용). 피커(자체 검색)가 비면 인테이크/프로젝트가 store에
-  //   쓴 다필지(siteAnalysis.parcels)로 폴백 — '지도 기반 필지 입력' 등 외부 경로 다필지도 반영. 비면 대표주소 단독.
+  // 등록된 전 필지 주소(구획도 통합 경계용).
   const runParcelAddrs = useMemo(
-    () => (runEntries.length > 0
-      ? runEntries.map((e) => preferredEntryAddress(e))
-      : runStoreParcels.map((p) => p.address ?? "")
-    ).filter(Boolean),
-    [runEntries, runStoreParcels],
+    () => runStoreParcels.map((p) => p.address ?? "").filter(Boolean),
+    [runStoreParcels],
   );
   // 백엔드 통합집계 입력행(면적가중) — comprehensive_analysis 계약과 동일 키. 면적>0만.
-  //   ★피커(자체 검색)로 올렸으면 그 entries, 아니면 store(siteAnalysis.parcels)로 폴백한다.
-  //   인테이크('지도 기반 필지 입력')·프로젝트는 다필지를 store에 쓰므로, 이 폴백이 없으면 보고서·
-  //   feasibility가 대표 1필지로 산출되던 갭(라이브 확인)을 해소한다(다른 소비처와 동일 store 폴백 패턴).
   const runParcelRows = useMemo(
-    () => (runEntries.length > 0
-      ? entriesToParcelRows(runEntries)
-      : parcelDataToRows(runStoreParcels)),
-    [runEntries, runStoreParcels],
+    () => parcelDataToRows(runStoreParcels),
+    [runStoreParcels],
   );
   // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
   const mapBcode = mapPnu.slice(0, 10);
@@ -398,22 +381,28 @@ export function MarketInsightsWorkspaceClient() {
     };
   }, [analysisOptions]);
 
-  // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
   useEffect(() => {
     apiClient.get<Balance>("/billing/balance", { useMock: false })
       .then(setBalance)
       .catch((e) => { if (!(e instanceof ApiClientError)) setBalance(null); });
   }, []);
 
-  // 주소 변경 → 입력 후보만 갱신(자동 분석/조회 없음). 전역 store에는 기록하지 않음.
-  const onAddress = useCallback((addr: string) => {
-    setSearchAddr(addr);
-  }, []);
+  // 프리미엄 권한 변경 시 K-Atlas 마이크로 타겟팅 분석 기본값 연동
+  useEffect(() => {
+    setAnalysisOptions(prev => ({
+      ...prev,
+      katlas: !!isPremiumUser,
+    }));
+  }, [isPremiumUser]);
 
-  // 피커가 올린 다필지 상세(면적·용도·pnu) 후보 보관 — 실행 시 runEntries로 확정한다(SSOT).
-  const onEntries = useCallback((es: AddressEntry[]) => {
-    setEntries(es);
-  }, []);
+  // 주소 변경 감시 → 새 대상 선택 시 기존 결과 비움(stale 차단)
+  useEffect(() => {
+    if (inputAddress && inputAddress !== runAddress) {
+      setMapPayload(null);
+      setReport(null);
+      setError("");
+    }
+  }, [inputAddress, runAddress]);
 
   // 명시 실행: 버튼 클릭 시에만 분석 대상 주소를 확정하고 지도/산출을 트리거한다.
   const runAnalysis = useCallback(() => {
@@ -422,17 +411,15 @@ export function MarketInsightsWorkspaceClient() {
     setReport(null);
     setMapPayload(null);
     setRunAddress(inputAddress);
-    // SSOT 확정: 실행 시점의 피커 다필지를 분석 대상으로 고정(지도·구획도·보고서가 동일 필지를 본다).
-    setRunEntries(entries);
-    // 피커가 비면 store(인테이크/프로젝트) 다필지를 실행 시점 스냅샷으로 고정(폴백도 동일 불변식).
-    setRunStoreParcels(entries.length > 0 ? [] : (siteAnalysis?.parcels ?? []));
+    // 오직 store parcels만 스냅샷으로 캡처
+    setRunStoreParcels(siteAnalysis?.parcels ?? []);
     // P2 일괄분석: 지도와 함께 시장보고서까지 한 번에 생성(아래 effect가 address 확정 후 트리거).
     setPendingReport(true);
     // 실행 후 잔액 갱신(차감 반영) — 약간 지연 후 재조회.
     setTimeout(() => {
       apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
     }, 1500);
-  }, [inputAddress, entries, siteAnalysis?.parcels]);
+  }, [inputAddress, siteAnalysis?.parcels]);
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
@@ -514,39 +501,47 @@ export function MarketInsightsWorkspaceClient() {
         pipeline={deriveMarketPipelineSteps({ genState, report, useLlm })}
       />
 
-      {/* ── ZONE A: 설정→실행 ─────────────────────────────────────────── */}
-      {/* 헤더 */}
-      <div>
-        <div className="flex items-center gap-3">
-          <span className="cc-meta">MARKET · TRANSACTION INTEL</span>
-          <span className="cc-live"><i />LIVE</span>
-        </div>
-        <h2 className="mt-2 text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 시작」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
-        </p>
-      </div>
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
+      <SatongMapShellDynamic locale="ko" />
 
-      {/* 주소 입력(카카오) */}
-      <ProjectAddressInput
-        value={searchAddr}
-        onChange={onAddress}
-        onEntriesChange={onEntries}
-        label="시장 분석 주소"
-        placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
-      />
+      {/* 분석 대상 요약 카드 */}
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-4 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">시장 분석 대상</span>
+          <h3 className="text-sm font-black text-[var(--text-primary)] mt-0.5">
+            {inputAddress ? (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="size-4 text-[var(--accent-strong)]" />
+                {inputAddress}
+                {projectName ? (
+                  <span className="text-xs font-semibold text-[var(--text-secondary)]">({projectName})</span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-[var(--text-hint)]">상단 통합 지도에서 분석 대상을 선택해 주세요.</span>
+            )}
+          </h3>
+        </div>
+        {siteAnalysis?.landAreaSqm ? (
+          <div className="flex gap-4 text-xs font-bold text-[var(--text-secondary)]">
+            <span>대지면적: <b className="text-[var(--text-primary)]">{siteAnalysis.landAreaSqm.toLocaleString()}㎡</b></span>
+            {siteAnalysis.parcelCount ? (
+              <span>필지 수: <b className="text-[var(--text-primary)]">{siteAnalysis.parcelCount}필지</b></span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {/* 분석 설정 + 실행 — 모듈 선택과 실행 버튼을 하나의 카드로 묶어 "설정→실행" 흐름을 일원화. */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-5 space-y-4">
-          {/* 선택형 분석 모듈 — 선택분만 실행·과금. */}
+          {/* 분석 대상 항목 나열 */}
           <AnalysisModuleSelector
             modules={analysisModules}
             selected={analysisOptions}
-            onChange={onModulesChange}
-            onSelectAll={onSelectAll}
+            onChange={() => {}}
             unlimited={!!balance?.unlimited}
-            subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
+            readOnly={true}
           />
 
           {/* 구분선 */}
