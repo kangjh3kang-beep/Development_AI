@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config_sales import sales_settings
 from app.services.sales.org.service import ancestors_path
 from apps.api.database.models.sales.commission_mh_harness import (
     SalesCommissionClawback,
@@ -23,6 +24,10 @@ from apps.api.database.models.sales.commission_mh_harness import (
 logger = logging.getLogger(__name__)
 
 Q = Decimal("1")
+
+# ★머니패스 SSOT: 사업소득 원천징수율 기본값 = config_sales.default_withholding_rate 단일출처.
+#   float→Decimal(str())로 정밀 변환(0.033 동일값·계산 결과 불변). run_due_payouts(extension)도 재사용.
+DEFAULT_WITHHOLDING_RATE = Decimal(str(sales_settings.default_withholding_rate))
 
 
 class CrossSiteOwnershipError(ValueError):
@@ -181,7 +186,7 @@ async def split_commission(db: AsyncSession, site_id, contract):
 
 
 def payout_net(gross: Decimal, tax_type: str = "WITHHOLDING",
-               wh_rate: Decimal = Decimal("0.033"), vat_rate: Decimal = Decimal("0.10")) -> dict:
+               wh_rate: Decimal = DEFAULT_WITHHOLDING_RATE, vat_rate: Decimal = Decimal("0.10")) -> dict:
     """수령자 세금유형별 지급 분개.
 
     - WITHHOLDING(개인 사업소득, 3.3% 원천징수): 지급액에서 원천징수 후 실수령 = gross - 원천.

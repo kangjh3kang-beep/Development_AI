@@ -196,6 +196,24 @@ async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest, f
     if not result.get("ok"):
         return result  # 공시지가 미확인 등 — JSON 오류 반환
 
+    # ★원장 적재(형제 /desk-appraisal :64-79와 동일 인자): PDF 다운로드 경로도 탁상감정 요약을
+    #   분석원장에 best-effort로 적재해 성장루프·SSOT에서 누락되지 않게 한다. PDF는 Response로
+    #   반환하므로 ledger_hash attach는 생략. 원장 적재 실패해도 PDF 생성 무손상.
+    try:
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        if isinstance(result, dict):
+            await record_user_analysis(
+                analysis_type="desk_appraisal",
+                summary={
+                    "address": req.address, "pnu": req.pnu, "area_sqm": req.area_sqm,
+                    "final_value_won": result.get("final_value_won") or result.get("estimated_total_won"),
+                    "adopted_method": result.get("adopted_method") or result.get("method"),
+                },
+                pnu=req.pnu or None, address=req.address, source="desk_appraisal",
+            )
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 PDF 생성 무손상
+        pass
+
     ai_sections: dict | None = None
     if req.include_ai:
         # 통합보고서와 동일 패턴: avm 인터프리터(정규화+캐시) 산출을 PDF에 결합.

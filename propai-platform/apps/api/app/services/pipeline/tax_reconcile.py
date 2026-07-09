@@ -10,6 +10,10 @@
 """
 from __future__ import annotations
 
+# ★세율 SSOT: 토지 취득세율(제세공과 산정 기준) 단일출처.
+#   project_pipeline(제세공과 levies)와 compute_project_taxes(acquisition_rate 기본값)가 공유한다.
+LAND_ACQUISITION_RATE = 0.046
+
 
 def grade_for_profit_rate(profit_rate_pct: float) -> str:
     """사업이익률(%) → 등급(A≥20, B≥10, C≥0, D). project_pipeline 기존 기준과 동일."""
@@ -30,7 +34,7 @@ def compute_project_taxes(
     land_cost: float,
     construction_cost: float,
     levies_in_cost: float | None = None,
-    acquisition_rate: float = 0.046,
+    acquisition_rate: float = LAND_ACQUISITION_RATE,
     property_rate: float = 0.004,
     transfer_rate: float = 0.22,
     vat_rate: float = 0.1,
