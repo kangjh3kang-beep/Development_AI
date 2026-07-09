@@ -13,11 +13,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
 import { Bot } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { isValidLocale } from "@/i18n/config";
+import { BOQ_AUTO_API, type BoqMasterSummaryResponse } from "@/components/cost/boqAutoTypes";
 import type {
   BoqEstimateListItem,
   BoqEstimatesListResponse,
@@ -27,6 +31,20 @@ import type {
 
 const fcls =
   "w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
+
+/** 공종별 마스터 집계(record/배열 양형)의 합계 — 허브 요약카드용(BoqAutoWorkspace 탭별 정규화는 불필요). */
+function sumMasterTotals(res: BoqMasterSummaryResponse | null): { items: number; sections: number } {
+  const src = res?.disciplines;
+  if (!src) return { items: 0, sections: 0 };
+  const rows = Array.isArray(src) ? src : Object.values(src);
+  return rows.reduce<{ items: number; sections: number }>(
+    (acc, d) => ({
+      items: acc.items + (d?.unique_items ?? 0),
+      sections: acc.sections + (d?.sections ?? 0),
+    }),
+    { items: 0, sections: 0 },
+  );
+}
 
 function won(v?: number | null): string {
   if (v == null || isNaN(v)) return "—";
@@ -55,6 +73,29 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
   const designData = useProjectContextStore((s) => s.designData);
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
   const projectId = projectIdProp || ctxProjectId || "default";
+  // 상세 워크플로우(BoqAutoWorkspace)는 실제 프로젝트 선택 시에만 연결(더미 "default" 방지).
+  const hasRealProject = !!(projectIdProp || ctxProjectId);
+  const routeParams = useParams() as { locale?: string };
+  const locale = isValidLocale(routeParams?.locale ?? "") ? (routeParams.locale as string) : "ko";
+
+  // P2 T3: BOQ 허브 요약(마스터 통계 + 상세 워크플로우 진입) — BoqAutoWorkspace 자체는
+  // 임베드하지 않고 요약 카드+링크로만 연결(중복 렌더 금지).
+  const [masterSummary, setMasterSummary] = useState<BoqMasterSummaryResponse | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient
+      .get<BoqMasterSummaryResponse>(BOQ_AUTO_API.masterSummary, { useMock: false, timeoutMs: 20000 })
+      .then((res) => {
+        if (!cancelled) setMasterSummary(res);
+      })
+      .catch(() => {
+        /* 마스터 요약 실패는 조용히 무시 — 상세적산(BOQ) 본 기능은 계속 이용 가능 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const masterTotals = useMemo(() => sumMasterTotals(masterSummary), [masterSummary]);
 
   const [bt, setBt] = useState("apartment");
   const [gfa, setGfa] = useState<string>(
@@ -190,6 +231,57 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           공종별 물량·단가·금액 내역서와 표준/시장(KCCI)/실적 단가 3중 비교를 제공합니다. 산출물은 원가계산서로 영속화됩니다.
         </p>
+      </div>
+
+      {/* P2 T3: BOQ 허브 요약 — 실적 공내역서(5공종·414섹션) 마스터 통계 + 상세 워크플로우
+          진입(BoqAutoWorkspace 임베드 없이 요약 카드+링크로만 연결·중복 렌더 금지). */}
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)]/10 p-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-black text-[var(--text-primary)]">
+              공내역서(BOQ) 자동작성 — 실적기반 상세 워크플로우
+            </h3>
+            <span
+              title="표준항목 마스터는 실적 공내역서 1건(표본) 기반 참고치입니다."
+              className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2 py-0.5 text-[9px] font-black text-[var(--status-warning)]"
+            >
+              실적 1건 기반 참고치
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+            {masterSummary?.project?.name ? (
+              <>
+                {masterSummary.project.name}
+                {masterSummary.project.gfa_sqm ? ` · GFA ${Math.round(masterSummary.project.gfa_sqm).toLocaleString()}㎡` : ""}
+                {masterTotals.items > 0 ? ` · 표준항목 ${masterTotals.items.toLocaleString()}개 · ${masterTotals.sections.toLocaleString()}섹션(5공종)` : ""}
+              </>
+            ) : (
+              "5공종(건축·기계소방·전기통신소방·조경·토목) 표준항목으로 연면적 기반 공내역 드래프트를 자동 생성합니다."
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {hasRealProject ? (
+            <>
+              <Link
+                href={`/${locale}/projects/${projectId}/boq`}
+                className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-xs font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90"
+              >
+                공내역 드래프트 생성하기 →
+              </Link>
+              <Link
+                href={`/${locale}/projects/${projectId}/boq`}
+                className="rounded-xl border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-4 py-2.5 text-xs font-bold text-[var(--accent-strong)] hover:opacity-90"
+              >
+                전체 화면에서 열기
+              </Link>
+            </>
+          ) : (
+            <span className="rounded-xl border border-[var(--line)] px-5 py-2.5 text-xs font-bold text-[var(--text-hint)]">
+              프로젝트 선택 후 이용 가능
+            </span>
+          )}
+        </div>
       </div>
 
       {/* T5: 저장된 적산 목록 — 영속화된 BOQ 재조회 */}
@@ -375,6 +467,12 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
                       {it.name}
                       {it.work_type && (
                         <span className="ml-1 text-[9px] text-[var(--text-hint)]">{it.work_type}</span>
+                      )}
+                      {/* P2 T2: 공종분류 SSOT 대공종(work_breakdown) — additive 그룹핑 칩. */}
+                      {it.wb_name && (
+                        <span className="ml-1.5 rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">
+                          {it.wb_name}
+                        </span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right text-[var(--text-secondary)]">

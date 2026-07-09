@@ -12,7 +12,12 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 
-type QtoItem = { name?: string; work?: string; element?: string; quantity?: number; unit?: string; unit_cost_won?: number; cost_won?: number };
+type QtoItem = {
+  name?: string; work?: string; element?: string; quantity?: number; unit?: string;
+  unit_cost_won?: number; cost_won?: number;
+  // P2 T2: 공종분류 SSOT 대공종(work_breakdown) — additive, 매핑 없으면 null.
+  wb_code?: string | null; wb_name?: string | null;
+};
 type Overview = {
   total_gfa_sqm?: number; gfa_above_sqm?: number; gfa_below_sqm?: number;
   range?: { min_won?: number; expected_won?: number; max_won?: number };
@@ -95,7 +100,14 @@ export function QtoBreakdown({ projectId }: { projectId: string }) {
             <tbody>
               {items.map((it, i) => (
                 <tr key={i} className="border-t border-[var(--line)]/60">
-                  <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{it.name || it.work || it.element || "-"}</td>
+                  <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                    {it.name || it.work || it.element || "-"}
+                    {it.wb_name && (
+                      <span className="ml-1.5 rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">
+                        {it.wb_name}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right text-[var(--text-secondary)]">{it.quantity != null ? `${Math.round(it.quantity).toLocaleString()}${it.unit || ""}` : "—"}</td>
                   <td className="px-3 py-2 text-right text-[var(--text-secondary)]">{won(it.unit_cost_won)}</td>
                   <td className="px-3 py-2 text-right font-bold text-[var(--text-primary)]">{won(it.cost_won)}</td>

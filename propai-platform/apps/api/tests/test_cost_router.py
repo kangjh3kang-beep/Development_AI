@@ -264,3 +264,46 @@ class TestExportExcel:
         assert resp.status_code == 200
         ct = resp.headers["content-type"]
         assert "csv" in ct or "spreadsheet" in ct
+
+
+class TestWorkBreakdownAdditive:
+    """P2 T2/T4: 공종분류 SSOT(wb_code/wb_name) + 단가 3분해 additive 노출 — 기존 키 불변."""
+
+    def test_estimate_overview_items_have_wb_code(self):
+        resp = client.post(
+            "/api/v1/cost/estimate-overview",
+            json={"building_type": "apartment", "total_gfa_sqm": 3000.0,
+                  "floor_count_above": 10, "floor_count_below": 1, "structure_type": "RC"},
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 8  # 표준 8공종(01~08) 불변
+        by_name = {it["name"]: it for it in items}
+        assert by_name["레미콘 타설"]["wb_code"] == "WB04"
+        assert by_name["레미콘 타설"]["wb_name"] == "골조공사(RC·철골)"
+        # 기존 키(가짜값 없이) 그대로 유지 — additive 계약 확인.
+        assert "unit_cost_won" in by_name["레미콘 타설"]
+
+    def test_boq_items_have_wb_code(self):
+        resp = client.post(
+            f"/api/v1/cost/{PROJECT_ID}/boq",
+            json={"total_gfa_sqm": 3000.0, "persist": False, "use_llm": False},
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        by_code = {it["code"]: it for it in items}
+        assert by_code["01-콘크리트"]["wb_code"] == "WB04"
+        assert by_code["07-기계설비"]["wb_code"] == "WB10"
+        assert by_code["08-전기설비"]["wb_code"] == "WB11"
+
+    def test_unit_prices_items_have_mat_labor_exp_decomposition(self):
+        resp = client.get("/api/v1/cost/unit-prices")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        by_code = {it["code"]: it for it in items}
+        concrete = by_code["concrete"]
+        # repository.get_prices()가 이미 반환하던 값 — 라우트에서 노출만(additive).
+        assert concrete["mat_unit"] == 85_000
+        assert concrete["labor_unit"] == 35_000
+        assert concrete["exp_unit"] == 12_000
+        assert concrete["mat_unit"] + concrete["labor_unit"] + concrete["exp_unit"] == concrete["standard"]

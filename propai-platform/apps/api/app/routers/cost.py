@@ -46,6 +46,14 @@ _STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.
 # ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
 # ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
 # 매핑 없는 코드(기계/전기/마감 등)는 단가 미보유로 0원·priced=false 정직 표기.
+# ★P2 T2 조사 결과(갭 해소 시도 — 무날조): UnitPriceRepository.get_prices()는
+# standard_quantity_estimator.UNIT_PRICES_2026 의 6개 키(concrete/rebar/formwork/
+# masonry/waterproof/window)만 순회 반환한다(DB에 다른 material_code가 더 있어도
+# 이 6키 밖은 조회 API가 반환하지 않음). 아래 8개 매핑이 이미 6키를 전부 소진했으므로
+# (콘크리트류 3·조적 1·방수류 2·창호 1 = 실질 6키 전량 사용), IFC_WORK_MAP 19코드 중
+# 나머지 11개(A01·A05 부모 집계코드 2개는 의도적 제외 — 중복합산 방지 / A05-01·A05-02·
+# A05-04·A07·A08·A09·B01·B02·C01 9개는 대응 단가키 자체가 없음)는 발명 없이는 매핑
+# 불가 — 정직하게 unpriced 유지(코드 하단 unpriced_codes로 노출됨).
 _BIM_WORKCODE_TO_PRICE_KEY: dict[str, str] = {
     "A01-01": "formwork",   # 거푸집
     "A01-02": "rebar",      # 철근
@@ -254,8 +262,12 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
             floor_count_below=req.floor_count_below, structure_type=req.structure_type,
             prices=unit_prices,
         )
+        # 공종분류 SSOT(work_breakdown) — work_code(A체계) → 표준 대공종(wb_code/wb_name) additive.
+        from app.services.cost.work_breakdown import resolve as _resolve_wb
+
         for it in raw:
             unit_sum = float(it.get("mat_unit", 0)) + float(it.get("labor_unit", 0)) + float(it.get("exp_unit", 0))
+            wb = _resolve_wb(it.get("work_code", ""), system="numeric")
             items_qto.append({
                 "name": it.get("item_name"), "spec": it.get("spec"), "unit": it.get("unit"),
                 "quantity": it.get("quantity"), "unit_cost_won": int(unit_sum),
@@ -263,6 +275,9 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
                 # 단가 출처 정직 표기(DB 출처명 또는 "fallback") — additive 필드.
                 "price_source": it.get("price_source", "fallback"),
                 "price_basis_year": it.get("price_basis_year", 2026),
+                # P2 T2: 공종분류 SSOT 대공종(additive) — 매핑 없으면 정직 None.
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
     except Exception:  # noqa: BLE001
         items_qto = []
@@ -404,6 +419,7 @@ async def bim_quantities_origin_cost(
         unit_price_source = "fallback"
 
     from app.services.cost.ifc_work_map import IFC_WORK_MAP
+    from app.services.cost.work_breakdown import resolve as _resolve_wb
 
     # work_code → 표시명(ifc_work_map 역참조, 첫 매칭).
     code_to_name: dict[str, str] = {}
@@ -420,6 +436,8 @@ async def bim_quantities_origin_cost(
         unit = g.get("unit") or ""
         price_key = _BIM_WORKCODE_TO_PRICE_KEY.get(wc)
         price = unit_prices.get(price_key) if price_key else None
+        # P2 T2: 공종분류 SSOT 대공종(additive) — 단가 유무와 무관하게 항상 부착.
+        wb = _resolve_wb(wc, system="ifc")
         if price and price_key:
             mat_u = float(price.get("mat_unit", 0))
             labor_u = float(price.get("labor_unit", 0))
@@ -441,6 +459,8 @@ async def bim_quantities_origin_cost(
                 "price_source": price.get("price_source", "fallback"),
                 "price_key": price_key,
                 "priced": True,
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
         else:
             # 단가 미보유(매핑 없음 또는 단가 조회 실패) — 정직 표기(0원·priced=false).
@@ -449,6 +469,8 @@ async def bim_quantities_origin_cost(
                 "work_code": wc, "item_name": code_to_name.get(wc, wc),
                 "unit": unit, "quantity": qty, "amount": 0,
                 "price_source": None, "price_key": None, "priced": False,
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
 
     calc = cost_calc.calculate(cost_items)
@@ -986,6 +1008,8 @@ async def get_unit_prices() -> dict[str, Any]:
             "standard": std, "market": market, "actual": None,
             "source": p["price_source"], "basis_year": p["price_basis_year"],
             "region": p.get("region"),
+            # P2 T4: 재료/노무/경비 3분해(repository에 이미 존재 — 라우트에서 노출만, additive).
+            "mat_unit": p["mat_unit"], "labor_unit": p["labor_unit"], "exp_unit": p["exp_unit"],
             # T5 정직화: market(KCCI)은 결정론 시뮬레이션 — 실 시세 API 아님(값 있을 때만 라벨).
             "market_source": _kcci_market_source_label(key) if market is not None else None,
             # P1 T4(단가 4계층) — additive: tier(T1_public/T2_standard/T3_fallback)·출처 URL.

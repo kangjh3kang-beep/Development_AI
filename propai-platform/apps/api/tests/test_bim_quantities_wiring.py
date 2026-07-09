@@ -435,3 +435,24 @@ class TestOriginCostEndpoint:
         assert "A05" not in _BIM_WORKCODE_TO_PRICE_KEY
         assert _BIM_WORKCODE_TO_PRICE_KEY["A01-03"] == "concrete"
         assert _BIM_WORKCODE_TO_PRICE_KEY["A01-02"] == "rebar"
+
+    def test_wb_code_additive_priced_and_unpriced(self):
+        # P2 T2: 공종분류 SSOT 대공종(wb_code/wb_name) — 단가 유무와 무관하게 항상 부착.
+        grouped = [
+            {"work_code": "A01-03", "unit": "m3", "quantity": 50.0, "line_count": 1},  # priced
+            {"work_code": "B01", "unit": "m", "quantity": 30.0, "line_count": 1},      # unpriced
+        ]
+        client = _make_client(grouped)
+        with patch(
+            "app.services.cost.unit_price_repository.UnitPriceRepository.get_prices",
+            new_callable=AsyncMock, return_value=_fallback_prices(),
+        ):
+            resp = client.get(f"/api/v1/cost/{TEST_PROJECT_ID}/bim-quantities/origin-cost")
+        data = resp.json()
+        a0103 = next(it for it in data["items"] if it["work_code"] == "A01-03")
+        b01 = next(it for it in data["items"] if it["work_code"] == "B01")
+        assert a0103["wb_code"] == "WB04"
+        assert a0103["wb_name"] == "골조공사(RC·철골)"
+        # 단가 미보유(unpriced)여도 대공종은 부착됨(단가와 별개 축).
+        assert b01["wb_code"] == "WB10"
+        assert b01["priced"] is False

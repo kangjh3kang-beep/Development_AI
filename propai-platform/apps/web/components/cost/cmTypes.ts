@@ -21,6 +21,9 @@ export interface BoqItem {
   /** T5 정직화: market_unit_price 출처("simulation" = 결정론 시뮬레이션, 실시세 API 아님). */
   market_unit_price_source?: string | null;
   actual_unit_price?: number | null;
+  /** P2 T2: 공종분류 SSOT 대공종(work_breakdown) — 매핑 없으면 null(정직). */
+  wb_code?: string | null;
+  wb_name?: string | null;
 }
 
 /** BOQ 요약(직접·간접·총·신뢰등급). */
@@ -84,6 +87,10 @@ export interface UnitPriceItem {
   /** P1 T4: 단가 4계층 리졸버 tier(T1_public/T2_standard/T3_fallback). */
   tier?: string | null;
   source_url?: string | null;
+  /** P2 T4: 재료/노무/경비 3분해(표준단가 프리필용, additive). */
+  mat_unit?: number | null;
+  labor_unit?: number | null;
+  exp_unit?: number | null;
 }
 
 /** GET /unit-prices 응답. */

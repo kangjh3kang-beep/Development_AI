@@ -105,6 +105,9 @@ async def build_boq(
         prices=unit_prices,
     )
 
+    # 공종분류 SSOT(work_breakdown) — work_code(A체계) → 표준 대공종(wb_code/wb_name) additive.
+    from app.services.cost.work_breakdown import resolve as _resolve_wb
+
     band = _QTO_BAND.get(qto_source, "±12%")
     items: list[dict[str, Any]] = []
     for it in raw:
@@ -116,6 +119,7 @@ async def build_boq(
         basis_year = int(it.get("price_basis_year", 2026)) if key else 2026
         qty = float(it.get("quantity", 0))
         market_unit = _kcci_market_unit(key) if key else None
+        wb = _resolve_wb(wc, system="numeric")
         items.append({
             "code": wc,
             "name": it.get("item_name"),
@@ -133,6 +137,9 @@ async def build_boq(
             # ★T5 정직화: market_unit_price 출처(결정론 시뮬레이션·실시세 API 아님). 값 없으면 None.
             "market_unit_price_source": _kcci_market_source_label(key) if key else None,
             "actual_unit_price": None,                 # 실적 데이터 없음(정직 표기)
+            # P2 T2: 공종분류 SSOT 대공종(additive) — 매핑 없으면 정직 None.
+            "wb_code": wb["wb_code"],
+            "wb_name": wb["wb_name"],
         })
 
     # 원가 합계(12단계 법정요율).

@@ -10,6 +10,7 @@ import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
+import type { UnitPriceItem, UnitPricesResponse } from "@/components/cost/cmTypes";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -98,6 +99,7 @@ type Labels = {
   addItemAction: string;
   removeItemAction: string;
   submitCostAction: string;
+  loadStandardPricesAction: string;
   checklistTitle: string;
   projectTypeLabel: string;
   projectCostLabel: string;
@@ -143,6 +145,7 @@ const KO_LABELS: Labels = {
   addItemAction: "항목 추가",
   removeItemAction: "삭제",
   submitCostAction: "공사비 산출 실행",
+  loadStandardPricesAction: "표준단가 불러오기",
   checklistTitle: "시공 체크리스트",
   projectTypeLabel: "프로젝트 유형",
   projectCostLabel: "총 공사비 (원)",
@@ -189,6 +192,7 @@ const EN_LABELS: Labels = {
   addItemAction: "Add item",
   removeItemAction: "Remove",
   submitCostAction: "Run cost calculation",
+  loadStandardPricesAction: "Load standard prices",
   checklistTitle: "Construction checklist",
   projectTypeLabel: "Project type",
   projectCostLabel: "Total cost (KRW)",
@@ -264,6 +268,33 @@ const EMPTY_COST_ITEM: CostFormItem = {
   exp_unit: "",
 };
 
+// P2 T4: "표준단가 불러오기" 매칭 보조 — 표준단가(6개 자재키) ↔ 시스템A 숫자공종코드(8개
+// 중 6개) 별칭. work_breakdown SSOT(system="numeric")가 동일 원천으로 묶는 두 표기(원시
+// 코드·단가키)와 같은 실코드(boq_builder._WORKCODE_TO_KEY 역방향) — 사용자가 work_code
+// 칸에 표준단가 코드("concrete" 등) 대신 시스템A 코드("01-콘크리트" 등)를 입력해도
+// 매칭되도록 하는 2차(wb 브리지) 별칭이다. 발명 없음 — 실코드 grep 확인.
+const PRICE_KEY_NUMERIC_ALIASES: Record<string, string[]> = {
+  concrete: ["01-콘크리트"],
+  rebar: ["02-철근"],
+  formwork: ["03-거푸집"],
+  masonry: ["04-조적"],
+  waterproof: ["05-방수"],
+  window: ["06-창호"],
+};
+
+/** work_code(사용자 입력) → 표준단가 항목. ①코드 직매칭 ②wb 브리지 별칭 순서로 시도. */
+function findMatchingUnitPrice(workCode: string, priceItems: UnitPriceItem[]): UnitPriceItem | null {
+  const normalized = workCode.trim().toLowerCase();
+  if (!normalized) return null;
+  const direct = priceItems.find((p) => p.code.toLowerCase() === normalized);
+  if (direct) return direct;
+  return (
+    priceItems.find((p) =>
+      (PRICE_KEY_NUMERIC_ALIASES[p.code] ?? []).some((alias) => alias.toLowerCase() === normalized),
+    ) ?? null
+  );
+}
+
 /* ── Component ── */
 
 export function ProjectConstructionWorkspaceClient({
@@ -308,6 +339,11 @@ export function ProjectConstructionWorkspaceClient({
     excavationDepth: "12",
   });
 
+  // P2 T4: "표준단가 불러오기" — 행 인덱스별 프리필 출처 캡션(source·tier).
+  const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+  const [priceLoadError, setPriceLoadError] = useState("");
+  const [priceCaptions, setPriceCaptions] = useState<Record<number, string>>({});
+
   /* Risk assessment query */
   const riskQuery = useQuery({
     queryKey: ["lifecycle", "risk", projectId],
@@ -340,6 +376,54 @@ export function ProjectConstructionWorkspaceClient({
         i === index ? { ...item, [field]: value } : item,
       ),
     );
+  }
+
+  /** P2 T4: 표준단가 SSOT에서 현재 행들의 mat/labor/exp 빈 필드만 프리필(직매칭+wb 브리지). */
+  async function handleLoadStandardPrices() {
+    setPriceLoadError("");
+    setIsLoadingPrices(true);
+    try {
+      const res = await apiClient.get<UnitPricesResponse>("/cost/unit-prices", {
+        useMock: false,
+      });
+      const priceItems = res.items ?? [];
+      const captions: Record<number, string> = {};
+      setCostItems((current) =>
+        current.map((item, index) => {
+          const match = findMatchingUnitPrice(item.work_code, priceItems);
+          if (!match) return item;
+          const next = { ...item };
+          let filled = false;
+          if (next.mat_unit === "" && match.mat_unit != null) {
+            next.mat_unit = String(match.mat_unit);
+            filled = true;
+          }
+          if (next.labor_unit === "" && match.labor_unit != null) {
+            next.labor_unit = String(match.labor_unit);
+            filled = true;
+          }
+          if (next.exp_unit === "" && match.exp_unit != null) {
+            next.exp_unit = String(match.exp_unit);
+            filled = true;
+          }
+          if (filled) {
+            captions[index] =
+              `표준단가 적용 — 출처: ${match.source}${match.tier ? ` (${match.tier})` : ""}`;
+          }
+          return next;
+        }),
+      );
+      setPriceCaptions(captions);
+      if (Object.keys(captions).length === 0) {
+        setPriceLoadError(
+          "매칭되는 표준단가가 없습니다(공종 코드 미일치) — 직접 입력하세요.",
+        );
+      }
+    } catch (error) {
+      setPriceLoadError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsLoadingPrices(false);
+    }
   }
 
   async function handleCostSubmit(event: FormEvent<HTMLFormElement>) {
@@ -528,11 +612,28 @@ export function ProjectConstructionWorkspaceClient({
                     </Button>
                   )}
                 </div>
+                {/* P2 T4: 표준단가 프리필 출처 캡션(source·tier) — 프리필된 행만 표시 */}
+                {priceCaptions[index] && (
+                  <p className="md:col-span-6 text-[11px] text-[var(--text-tertiary)]">
+                    {priceCaptions[index]}
+                  </p>
+                )}
               </div>
             ))}
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="secondary" onClick={addCostItem}>
                 {labels.addItemAction}
+              </Button>
+              {/* P2 T4: 표준단가 SSOT 프리필 — 빈 필드만 채움(사용자 입력 덮어쓰기 금지) */}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleLoadStandardPrices()}
+                disabled={!canUseLiveApi || isLoadingPrices}
+              >
+                {isLoadingPrices
+                  ? `${labels.loadStandardPricesAction}...`
+                  : labels.loadStandardPricesAction}
               </Button>
               <Button
                 type="submit"
@@ -549,6 +650,9 @@ export function ProjectConstructionWorkspaceClient({
                 disabled={isSubmittingCost}
               />
             </div>
+            {priceLoadError && (
+              <p className="text-sm text-[var(--spot)]">{priceLoadError}</p>
+            )}
           </form>
         </CardContent>
       </Card>
