@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { Building, Compass, Download, Files, Lock, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
+import { Building, Compass, Files, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
@@ -46,6 +45,8 @@ import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
+import { DataSourceBadge } from "@/components/operations/market/DataSourceBadge";
+import type { SeniorInsight, TargetProfile, MarketNarrative } from "@/components/operations/market/marketTypes";
 // B3 채택(additive·무회귀): 오케스트레이션 레지스트리 구동 셀렉터/실행 컨테이너.
 // 기존 도메인 셀렉터(SGIS/KOSIS market 서브모듈)·buildOptionsPayload·/market/report 흐름은 불변.
 // 이 패널은 별도 store(propai-orchestration)·별도 실행경로라 기존 과금/실행과 결선되지 않는다.
@@ -238,6 +239,83 @@ function SectionDivider({ kr, en }: { kr: string; en: string }) {
   );
 }
 
+/* ── 원자료 표 펼치기 컨테이너(로컬) ──
+   차트·요약을 기본으로 두고, 동일 데이터의 세부 표(RawDataTables)는 접힘 '원자료'로 강등해
+   표↔차트 이원화를 없앤다(한 곳에만). 헤더 클릭으로 펼침/접힘. */
+function CollapsibleRaw({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left"
+      >
+        <span className="text-xs font-bold text-[var(--text-secondary)]">{title}</span>
+        <span className="text-xs text-[var(--accent-strong)]">{open ? "▾ 닫기" : "▸ 원자료 보기"}</span>
+      </button>
+      {open && <div className="border-t border-[var(--line)] px-5 pb-5 pt-4">{children}</div>}
+    </div>
+  );
+}
+
+/* ── 보고서 액션 바(로컬·단일화) ──
+   PDF/PPT/DOCX 다운로드 버튼이 '생성 트리거 카드'와 '하단 다운로드 카드'에 완전 중복이던 것을
+   한 곳(보고서 그룹)으로 통합. 미리보기 생성 + AI 사용 토글 + 3개 문서 버튼(기존 콜백 재사용, 로직 0신규). */
+function ReportActionsBar({
+  genState,
+  useLlm,
+  onUseLlmChange,
+  onGenerate,
+  onDownload,
+}: {
+  genState: "" | "report" | "pdf" | "pptx" | "docx";
+  useLlm: boolean;
+  onUseLlmChange: (v: boolean) => void;
+  onGenerate: () => void;
+  onDownload: (fmt: "pdf" | "pptx" | "docx") => void;
+}) {
+  return (
+    <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+      <CardContent className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">위 분석(실거래·시세·입지·인구)을 통합한 심층 보고서를 PDF/PPT/DOCX로 저장합니다.</p>
+            {/* use_llm 옵트인 — 공용 UseLlmToggle(중복 제거, 시각 동일). */}
+            <UseLlmToggle
+              className="mt-2"
+              checked={useLlm}
+              onChange={onUseLlmChange}
+              disabled={!!genState}
+              hint="LLM이 시장요약·기회·리스크·가격동향을 작성"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={onGenerate} disabled={!!genState}
+              className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+              {genState === "report" ? "생성 중…" : "미리보기 생성"}
+            </button>
+            <button onClick={() => onDownload("pdf")} disabled={!!genState}
+              className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+              {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
+            </button>
+            <button onClick={() => onDownload("pptx")} disabled={!!genState}
+              className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+              {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+            </button>
+            <button onClick={() => onDownload("docx")} disabled={!!genState}
+              className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+              {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
+            </button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
@@ -313,8 +391,9 @@ export function MarketInsightsWorkspaceClient() {
     );
 
   // ── 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
-  // 현재 셀렉터는 readOnly 목록 표시 전용(onChange no-op) — 실행 대상은 analysisOptions 기본값
-  //   (+katlas는 프리미엄 여부 연동 effect)으로 결정되고, buildOptionsPayload가 그대로 전송한다.
+  // 선택형 기본(★선택형 분석 기본 지침): 셀렉터에서 체크한 항목만 analysisOptions에 반영되고
+  //   buildOptionsPayload가 그대로 전송한다(체크→선택분만 실행·과금).
+  //   (+katlas는 프리미엄 여부 연동 effect로 기본값 결정 — 비프리미엄은 잠금이라 토글 불가.)
   // coinCost/estimatedSeconds는 예상 코인·시간 안내 표시에 사용(안내용 추정치).
   //   각 항목 coinCost는 하드코딩 금지 → 관리자 설정값(balance.module_fees)에서 채운다.
   //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
@@ -514,13 +593,12 @@ export function MarketInsightsWorkspaceClient() {
       {/* 분석 설정 + 실행 — 모듈 선택과 실행 버튼을 하나의 카드로 묶어 "설정→실행" 흐름을 일원화. */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-5 space-y-4">
-          {/* 분석 대상 항목 나열 */}
+          {/* 분석 대상 항목 선택(선택형 기본) — 체크한 항목만 실행·과금. 아래 「분석 시작」이 실행. */}
           <AnalysisModuleSelector
             modules={analysisModules}
             selected={analysisOptions}
-            onChange={() => {}}
+            onChange={setAnalysisOptions}
             unlimited={!!balance?.unlimited}
-            readOnly={true}
           />
 
           {/* 구분선 */}
@@ -730,141 +808,136 @@ export function MarketInsightsWorkspaceClient() {
         </div>
       )}
 
-      {/* 보고서 원천 데이터 표 — 백엔드 report.raw_data(P2 신설)를 표로 먼저 나열.
-          유형별 매매·전월세·시세추이 + (선택 시) 인구·소득. provider 미제공 값은 "-"·"데이터 없음"으로 정직 표기. */}
-      {report && <RawDataTables raw={report.raw_data as RawData | undefined} />}
-
       {/* ================================================================ */}
-      {/*  [분석 · ANALYSIS] — 위 실데이터를 해석한 결과를 그 다음에 둔다.    */}
+      {/*  [분석 · ANALYSIS] — 위 실데이터(RAW)를 해석한 결과.                 */}
+      {/*  결론(시니어 통합 인사이트)을 최상단에 두고 근거→리스크→권고로 위계를  */}
+      {/*  세운다. 6개 논리 그룹으로 스토리라인을 구성(SectionDivider 재사용):  */}
+      {/*  [시니어]→[수요·인구]→[가격·시세]→[공급 타당성]→[검증]→[보고서].     */}
+      {/*  원자료 표(RawDataTables)는 각 그룹 안에 '펼치기 원자료'로 흡수한다.    */}
       {/* ================================================================ */}
-      <SectionDivider kr="분석" en="ANALYSIS · 해석·전망" />
 
-      {/* 시장조사보고서 생성 트리거 — ANALYSIS 구간 상단에 배치해 보고서 생성→결과 표시의 관계를 명확히 함. */}
-      {address && (
-        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-          <CardContent className="p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Files className="size-4" aria-hidden />시장조사보고서</p>
-                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
-                {/* use_llm 옵트인 — 공용 UseLlmToggle로 교체(전파방지·중복 제거, 시각 동일). */}
-                <UseLlmToggle
-                  className="mt-2"
-                  checked={useLlm}
-                  onChange={setUseLlm}
-                  disabled={!!genState}
-                  hint="LLM이 시장요약·기회·리스크·가격동향을 작성"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={generateReport} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {genState === "report" ? "생성 중…" : "미리보기 생성"}
-                </button>
-                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("docx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
-                </button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* ── 그룹1 [시니어 통합 인사이트] · 결론 우선 ── */}
+      <SectionDivider kr="시니어 통합 인사이트" en="ANALYSIS · 결론 우선 해석" />
 
-      {/* AI 시세 추정 — 데이터 인텔리전스 metric 블록(실거래 기반 해석값이므로 분석으로 재배치) */}
-      <div className="sa-di-block">
-        <header className="sa-di-block__head" style={{ cursor: "default" }}>
-          <span className="sa-di-block__icon" aria-hidden>₩</span>
-          <span className="sa-di-block__title">AI 시세 추정</span>
-          <span className="sa-di-eyebrow">AVM · ESTIMATE</span>
-        </header>
-        <div className="sa-di-block__body">
-          {results?.avm ? (
-            <>
-              <div className="sa-di-tiles sa-di-tiles--4">
-                {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
-                <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
-                <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
-                <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
-                <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
-              </div>
-              <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
-            </>
-          ) : mapLoading || (address && !mapPayload) ? (
-            <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
-          ) : (
-            <p className="sa-di-empty">
-              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
-            </p>
-          )}
-        </div>
-      </div>
+      {/* 시니어 통합 인사이트 카드 — MarketInterpreter 6키 정밀 내러티브를
+          핵심결론(investment_insight)·근거(comparable_analysis·market_overview)·
+          리스크(risk_factors)·권고(timing_recommendation)로 구조화(문단 덤프 금지).
+          헤더 아래 AI 검증 배지를 인라인 배치해 '결론+검증'을 함께 노출한다.
+          senior_insight 부재(use_llm off/미생성) 시 기존 narrative 폴백(무목업). */}
+      {report && (() => {
+        const si = (report.senior_insight ?? null) as SeniorInsight | null;
+        const nar = (report.narrative ?? null) as MarketNarrative | null;
+        const hasSenior = !!si && !!(
+          si.investment_insight || si.comparable_analysis || si.risk_factors ||
+          si.timing_recommendation || si.market_overview || si.price_trend_analysis
+        );
+        return (
+          <div className="sa-di-block">
+            <header className="sa-di-block__head" style={{ cursor: "default" }}>
+              <span className="sa-di-block__icon" aria-hidden><PenLine className="size-4" /></span>
+              <span className="sa-di-block__title">시니어 통합 인사이트</span>
+              <span className="sa-di-eyebrow text-[var(--accent-strong)]">SENIOR ANALYSIS</span>
+            </header>
+            <div className="sa-di-block__body space-y-4">
+              {/* 헤더 인라인 AI 검증 — 결론과 함께 검증 verdict를 노출(하단 매몰 방지). */}
+              <VerificationBadge
+                analysisType="market"
+                context={report as unknown as Record<string, unknown>}
+                ledgerHash={(report as { ledger_hash?: string })?.ledger_hash}
+              />
 
-      {/* 시장조사보고서 미리보기 — LLM 내러티브(요약/기회/리스크/가격동향/타겟). 보고서 생성 시에만. */}
-      {report && (
-        <div className="sa-di-block">
-          <header className="sa-di-block__head" style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden><PenLine className="size-4" /></span>
-            <span className="sa-di-block__title">시장조사보고서 미리보기</span>
-            <span className="sa-di-eyebrow">AI NARRATIVE</span>
-          </header>
-          <div className="sa-di-block__body space-y-4">
-            <div>
-              <p className="sa-di-eyebrow">MARKET SUMMARY · 시장 요약</p>
-              <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
+              {hasSenior && si ? (
+                <>
+                  {/* 핵심 결론(투자 시사점) — accent 박스로 최상단 강조 */}
+                  {si.investment_insight && (
+                    <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
+                      <p className="sa-di-eyebrow text-[var(--accent-strong)]">KEY CONCLUSION · 핵심 결론(투자 시사점)</p>
+                      <p className="mt-1.5 text-sm font-bold leading-relaxed text-[var(--text-primary)]">{si.investment_insight}</p>
+                    </div>
+                  )}
+                  {/* 근거 | 리스크 2열 */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {si.comparable_analysis && (
+                      <div>
+                        <p className="sa-di-eyebrow">EVIDENCE · 근거(실데이터 비교)</p>
+                        <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{si.comparable_analysis}</p>
+                      </div>
+                    )}
+                    {si.risk_factors && (
+                      <div>
+                        <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISK · 리스크 요인</p>
+                        <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{si.risk_factors}</p>
+                      </div>
+                    )}
+                  </div>
+                  {/* 시장 개요 + 가격 추이 — 부연 근거 */}
+                  {(si.market_overview || si.price_trend_analysis) && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {si.market_overview && (
+                        <div>
+                          <p className="sa-di-eyebrow">MARKET · 시장 개요</p>
+                          <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{si.market_overview}</p>
+                        </div>
+                      )}
+                      {si.price_trend_analysis && (
+                        <div>
+                          <p className="sa-di-eyebrow">PRICE TREND · 가격 추이</p>
+                          <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{si.price_trend_analysis}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* 권고(매수·개발 적기) — accent 박스 */}
+                  {si.timing_recommendation && (
+                    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
+                      <p className="sa-di-eyebrow">RECOMMENDATION · 매수·개발 권고(적기)</p>
+                      <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-primary)]">{si.timing_recommendation}</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* 폴백: 기존 AI 내러티브(요약/기회/리스크/가격동향/타겟) — senior_insight 미생성 시(무목업). */
+                <>
+                  <div>
+                    <p className="sa-di-eyebrow">MARKET SUMMARY · 시장 요약</p>
+                    <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{nar?.summary || "-"}</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="sa-di-eyebrow">OPPORTUNITIES · 기회 요인</p>
+                      <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                        {(nar?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISKS · 리스크 요인</p>
+                      <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                        {(nar?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                  {nar?.price_trend && (
+                    <div>
+                      <p className="sa-di-eyebrow">PRICE TREND · 가격 동향</p>
+                      <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{nar.price_trend}</p>
+                    </div>
+                  )}
+                  {nar?.target_persona && (
+                    <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
+                      <p className="sa-di-eyebrow text-[var(--accent-strong)]">TARGET PERSONA · 추천 타겟 고객층</p>
+                      <p className="mt-1 text-sm font-bold leading-relaxed text-[var(--text-primary)]">{nar.target_persona}</p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <p className="sa-di-eyebrow">OPPORTUNITIES · 기회 요인</p>
-                <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                  {(report.narrative?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
-                </ul>
-              </div>
-              <div>
-                <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISKS · 리스크 요인</p>
-                <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                  {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
-                </ul>
-              </div>
-            </div>
-            {report.narrative?.price_trend && (
-              <div>
-                <p className="sa-di-eyebrow">PRICE TREND · 가격 동향</p>
-                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
-              </div>
-            )}
-            {report.narrative?.target_persona && (
-              <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
-                <p className="sa-di-eyebrow text-[var(--accent-strong)]">TARGET PERSONA · 추천 타겟 고객층</p>
-                <p className="mt-1 text-sm font-bold leading-relaxed text-[var(--text-primary)]">{report.narrative.target_persona}</p>
-              </div>
-            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {/* 다필지 통합 고지 — 보고서/타당성이 N필지 통합면적 기준임을 명시(근거·투명성). */}
-      {report?.integrated && <IntegratedParcelsBadge integrated={report.integrated} />}
-
-      {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
-      {report?.feasibility_analysis && (
-        <FeasibilityDashboard
-          data={report.feasibility_analysis}
-          zoneType={report.zone_type}
-        />
-      )}
-
-      {/* 시니어 금융전문가 자문 — 백엔드 senior_consultation 소비. ★정직: 시장보고서 경로는
-          총사업비만 전달(NOI·DSCR·자기자본 미합성)이라 통상 프레임워크·근거 중심(정량 verdict는
-          입력 충족 시에만). 제목을 실제 산출에 맞춰 과장하지 않는다. */}
+      {/* 시니어 금융전문가 자문 — 백엔드 senior_consultation 소비(다도메인 verdict·근거). ★정직:
+          시장보고서 경로는 총사업비만 전달(NOI·DSCR·자기자본 미합성)이라 통상 프레임워크·근거 중심.
+          자문 없으면 미렌더(본 분석을 가리지 않음). */}
       {report && (
         <SeniorVerdictCard
           consultation={(report as { senior_consultation?: SeniorConsultation }).senior_consultation}
@@ -872,170 +945,247 @@ export function MarketInsightsWorkspaceClient() {
         />
       )}
 
-      {/* ── M3: 적정 분양가 밴드 (수요측 지불여력 — 공급측 타당성과 결합) ── */}
-      {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
+      {/* ── 그룹2 [수요·인구] · 인구·가구·소득 차트 + 인구이동망 + 타겟 프로파일 ── */}
+      {report?.demographics && (
+        <>
+          <SectionDivider kr="수요·인구" en="DEMAND · 인구·가구·소득" />
 
-      {/* 인구·가구·소득 시각화(Recharts) — 분석 보조로 재배치(원천 표는 RAW에 별도). 데이터 출처 정직 배지 */}
-      {report?.demographics && <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />}
+          {/* 인구·가구·소득 시각화(Recharts, 차트=기본). 동일 데이터의 세부 표는 아래 '원자료 표'로 강등(이원화 제거). */}
+          <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />
 
-      {/* 인구 이동망 — KOSIS「시군구별 이동자수」로 대상 권역의 총전입·총전출·순이동(유입세)을 표시.
-          ★배선 수정: 예전엔 top_inflow_regions(OD 출발지 Top)만 보고 '데이터 없음'으로 떨어져, 순이동 실데이터가
-          RawDataTables엔 나오는데 이 요약 패널은 숨겼다. 이제 실데이터(data_source==='live')면 전입/전출/순이동을
-          표시하고, 분석범위(권역)를 라벨한다. OD 출발지 Top(권역 흐름도)은 KOSIS 단일분류표에 미제공이라
-          옵션(있을 때만)으로 두고, 없으면 행안부 OD 연동 예정을 정직하게 안내한다(가짜 금지). */}
-      {report?.demographics?.migration && (() => {
-        const mig = report.demographics.migration;
-        const inflow = mig.total_inflow ?? 0;
-        const outflow = mig.total_outflow ?? 0;
-        const net = mig.net_migration ?? 0;
-        const hasFlow = mig.data_source === "live" && (inflow > 0 || outflow > 0);
-        const hasOD = (mig.top_inflow_regions?.length ?? 0) > 0;
-        const scopeRegion = mig.region_name || report?.address?.split(" ").find((t: string) => /(구|시|군)$/.test(t)) || null;
-        return (
+          {/* 인구 이동망 — KOSIS「시군구별 이동자수」로 대상 권역의 총전입·총전출·순이동(유입세)을 표시.
+              ★배선 수정(정본·보존): 실데이터(data_source==='live')면 전입/전출/순이동을 표시하고 분석범위(권역)를
+              라벨한다. OD 출발지 Top(권역 흐름도)은 KOSIS 단일분류표에 미제공이라 옵션(있을 때만)으로 두고,
+              없으면 행안부 OD 연동 예정을 정직하게 안내한다(가짜 금지). RawData(표)의 순이동 타일 중복은 제거. */}
+          {report.demographics.migration && (() => {
+            const mig = report.demographics.migration;
+            const inflow = mig.total_inflow ?? 0;
+            const outflow = mig.total_outflow ?? 0;
+            const net = mig.net_migration ?? 0;
+            const hasFlow = mig.data_source === "live" && (inflow > 0 || outflow > 0);
+            const hasOD = (mig.top_inflow_regions?.length ?? 0) > 0;
+            const scopeRegion = mig.region_name || report?.address?.split(" ").find((t: string) => /(구|시|군)$/.test(t)) || null;
+            return (
+              <div className="sa-di-block">
+                <header className="sa-di-block__head" style={{ cursor: "default" }}>
+                  <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
+                  <span className="sa-di-block__title">인구 이동망 (전입·전출)</span>
+                  {hasFlow ? (
+                    <span className="sa-di-eyebrow">MIGRATION</span>
+                  ) : (
+                    <DataSourceBadge source="unavailable" />
+                  )}
+                </header>
+                <div className="sa-di-block__body">
+                  {/* 이동망 분석범위(권역) — 대상 시군구·기준연도·데이터 출처 정직 표기 */}
+                  {(scopeRegion || hasFlow) && (
+                    <p className="mb-2 text-xs text-[var(--text-tertiary)]">
+                      분석범위(권역): <strong className="text-[var(--text-secondary)]">{scopeRegion ?? "—"}</strong>
+                      {mig.year ? ` · ${mig.year}년 기준` : ""} · 출처 KOSIS 시군구별 이동자수
+                    </p>
+                  )}
+                  {hasFlow ? (
+                    <>
+                      <div className="sa-di-tiles sa-di-tiles--3">
+                        <div className="sa-di-tile">
+                          <span className="sa-di-tile__label">전입</span>
+                          <span className="sa-di-tile__value">{inflow.toLocaleString()}명</span>
+                        </div>
+                        <div className="sa-di-tile">
+                          <span className="sa-di-tile__label">전출</span>
+                          <span className="sa-di-tile__value">{outflow.toLocaleString()}명</span>
+                        </div>
+                        <div className="sa-di-tile">
+                          <span className="sa-di-tile__label">순이동</span>
+                          <span
+                            className="sa-di-tile__value"
+                            style={{ color: net > 0 ? "var(--status-success)" : net < 0 ? "var(--status-danger)" : undefined }}
+                          >
+                            {net > 0 ? "+" : ""}{net.toLocaleString()}명
+                          </span>
+                        </div>
+                      </div>
+                      {hasOD ? (
+                        <ul className="mt-3 space-y-1.5 text-sm text-[var(--text-secondary)]">
+                          {mig.top_inflow_regions!.map((reg: { name?: string; ratio?: number; count?: number }, i: number) => (
+                            <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
+                              <span>{reg.name}</span>
+                              <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="sa-di-empty mt-2">전출지별 유입 Top(OD 출발지)·권역 흐름도는 KOSIS 시군구 이동표에 미제공 — 행정안전부 OD 마이크로데이터 연동 시 표시됩니다(현재 순이동세만 실데이터).</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공·KOSIS 키/시군구 미확정 — 가짜 수치 대신 정직 표기)</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 실데이터 타겟 고객층 프로파일(5축) — 마이크로 타겟팅(K-Atlas 잠금 데드섹션)을 대체.
+              주력 연령·가구·소득분위·상권특성·입지를 인구·소득 실데이터에서 도출해 타일로 표시.
+              신용·카드소비 등 초정밀 금융은 잠금 오버레이 없이 'PREMIUM 제휴 예정' 1줄로 강등(정직·무목업). */}
+          {(() => {
+            const tp = (report.target_profile ?? null) as TargetProfile | null;
+            const tpRec = tp as Record<string, unknown> | null;
+            // 알려진 축 키 → 한국어 라벨(백엔드 키 변형 허용, 미지정 키는 키 그대로 노출).
+            const AXIS_LABELS: Record<string, string> = {
+              primary_age: "주력 연령", age: "주력 연령",
+              primary_household: "주력 가구", household: "주력 가구",
+              income_level: "소득 분위", income_tier: "소득 분위", income_quintile: "소득 분위", income: "소득 분위",
+              commercial: "상권 특성", commercial_type: "상권 특성",
+              location: "입지", location_type: "입지",
+            };
+            // 각 축은 문자열 또는 {label,value,detail,data_source} 객체 — 둘 다 방어적으로 정규화한다.
+            //   축별 data_source도 함께 캡처해 배지를 실제 출처로 계산한다(가짜 'live' 오표시 방지).
+            const axes = tpRec
+              ? Object.entries(tpRec)
+                  .filter(([k]) => k !== "summary" && k !== "data_source" && k !== "premium")
+                  .map(([k, v]) => {
+                    const label = AXIS_LABELS[k] || k;
+                    if (typeof v === "string") return { key: k, label, value: v, detail: undefined as string | undefined, src: undefined as string | undefined };
+                    const o = (v && typeof v === "object" ? v : {}) as { label?: string; value?: string; detail?: string; data_source?: string };
+                    return { key: k, label: o.label || label, value: o.value, detail: o.detail, src: o.data_source };
+                  })
+                  .filter((a) => !!a.value)
+              : [];
+            const hasAxes = axes.length > 0;
+            // 배지 출처: 렌더되는 축들의 data_source 중 가장 보수적인 값(하나라도 fallback이면 fallback).
+            //   ★백엔드 target_profile엔 최상위 data_source가 없으므로 tp.data_source(undefined)를
+            //   'live'로 폴백하면 mock/fallback도 초록으로 오표시된다 → 축별 출처로 정직 계산.
+            const badgeSrc = !hasAxes
+              ? "unavailable"
+              : axes.some((a) => a.src === "fallback") ? "fallback"
+              : axes.every((a) => a.src === "live" || a.src == null) ? "live"
+              : "fallback";
+            return (
+              <div className="sa-di-block">
+                <header className="sa-di-block__head" style={{ cursor: "default" }}>
+                  <span className="sa-di-block__icon" aria-hidden><Target className="size-3.5" /></span>
+                  <span className="sa-di-block__title">타겟 고객층 프로파일</span>
+                  <DataSourceBadge source={badgeSrc} />
+                </header>
+                <div className="sa-di-block__body">
+                  {hasAxes ? (
+                    <>
+                      <div className="sa-di-tiles sa-di-tiles--4">
+                        {axes.map((a) => (
+                          <div key={a.key} className="sa-di-tile">
+                            <span className="sa-di-tile__label">{a.label}</span>
+                            <span className="sa-di-tile__value">{a.value}</span>
+                            {a.detail ? (
+                              <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>{a.detail}</span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                      {tp?.summary ? (
+                        <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">{tp.summary}</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="sa-di-empty">인구·가구·소득 실데이터로 주력 수요층(연령·가구·소득분위·상권·입지)을 산출합니다. 현재 산출된 프로파일이 없습니다(인구/소득 분석 선택 시 표시).</p>
+                  )}
+                  <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 신용점수·카드소비 등 초정밀 금융 데이터(K-Atlas)는 PREMIUM 제휴 연동 예정입니다.</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 인구·소득 원자료 표(펼치기) — 위 차트와 동일 데이터의 세부 표를 한 곳에만(이원화 제거). */}
+          {(report.raw_data?.population || report.raw_data?.income) ? (
+            <CollapsibleRaw title="인구·소득 원자료 표 (세부)">
+              <RawDataTables raw={report.raw_data as RawData | undefined} section="demand" />
+            </CollapsibleRaw>
+          ) : null}
+        </>
+      )}
+
+      {/* ── 그룹3 [가격·시세] · AI 시세 + 적정 분양가 + 매매 원자료(인접 배치) ── */}
+      {address && (
+        <>
+          <SectionDivider kr="가격·시세" en="PRICE · 시세·분양가" />
+
+          {/* AI 시세 추정 — 실거래 평당가 가중평균 → 84㎡ 기준 추정(해석값). */}
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
-              <span className="sa-di-block__title">인구 이동망 (전입·전출)</span>
-              {hasFlow ? (
-                <span className="sa-di-eyebrow">MIGRATION</span>
-              ) : (
-                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "var(--text-tertiary)", backgroundColor: "var(--surface-muted)" }}>데이터 없음</span>
-              )}
+              <span className="sa-di-block__icon" aria-hidden>₩</span>
+              <span className="sa-di-block__title">AI 시세 추정</span>
+              <span className="sa-di-eyebrow">AVM · ESTIMATE</span>
             </header>
             <div className="sa-di-block__body">
-              {/* 이동망 분석범위(권역) — 대상 시군구·기준연도·데이터 출처 정직 표기 */}
-              {(scopeRegion || hasFlow) && (
-                <p className="mb-2 text-xs text-[var(--text-tertiary)]">
-                  분석범위(권역): <strong className="text-[var(--text-secondary)]">{scopeRegion ?? "—"}</strong>
-                  {mig.year ? ` · ${mig.year}년 기준` : ""} · 출처 KOSIS 시군구별 이동자수
-                </p>
-              )}
-              {hasFlow ? (
+              {results?.avm ? (
                 <>
-                  <div className="sa-di-tiles sa-di-tiles--3">
-                    <div className="sa-di-tile">
-                      <span className="sa-di-tile__label">전입</span>
-                      <span className="sa-di-tile__value">{inflow.toLocaleString()}명</span>
-                    </div>
-                    <div className="sa-di-tile">
-                      <span className="sa-di-tile__label">전출</span>
-                      <span className="sa-di-tile__value">{outflow.toLocaleString()}명</span>
-                    </div>
-                    <div className="sa-di-tile">
-                      <span className="sa-di-tile__label">순이동</span>
-                      <span
-                        className="sa-di-tile__value"
-                        style={{ color: net > 0 ? "var(--status-success)" : net < 0 ? "var(--status-danger)" : undefined }}
-                      >
-                        {net > 0 ? "+" : ""}{net.toLocaleString()}명
-                      </span>
-                    </div>
+                  <div className="sa-di-tiles sa-di-tiles--4">
+                    {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
+                    <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
+                    <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
+                    <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
+                    <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
                   </div>
-                  {hasOD ? (
-                    <ul className="mt-3 space-y-1.5 text-sm text-[var(--text-secondary)]">
-                      {mig.top_inflow_regions!.map((reg: { name?: string; ratio?: number; count?: number }, i: number) => (
-                        <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
-                          <span>{reg.name}</span>
-                          <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="sa-di-empty mt-2">전출지별 유입 Top(OD 출발지)·권역 흐름도는 KOSIS 시군구 이동표에 미제공 — 행정안전부 OD 마이크로데이터 연동 시 표시됩니다(현재 순이동세만 실데이터).</p>
-                  )}
+                  <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
                 </>
+              ) : mapLoading || (address && !mapPayload) ? (
+                <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
               ) : (
-                <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공·KOSIS 키/시군구 미확정 — 가짜 수치 대신 정직 표기)</p>
+                <p className="sa-di-empty">
+                  {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
+                </p>
               )}
             </div>
           </div>
-        );
-      })()}
 
-      {/* 초정밀 타겟 분석 (Phase 2 - Premium) */}
-      {report?.demographics && (
-        <div className="sa-di-block relative overflow-hidden">
-          <header className={`sa-di-block__head ${!isPremiumUser ? "opacity-50" : ""}`} style={{ cursor: "default" }}>
-            <span className="sa-di-block__icon" aria-hidden><Target className="size-3.5" /></span>
-            <span className="sa-di-block__title">마이크로 타겟팅 분석</span>
-            <span className="sa-di-eyebrow text-[var(--accent-strong)]">PREMIUM DATA</span>
-          </header>
-          <div className={`sa-di-block__body ${!isPremiumUser ? "opacity-30 blur-[2px] pointer-events-none" : ""}`}>
-            {/* G7: 하드코딩 더미수치 제거 — 실데이터(K-Atlas) 미연동 상태를 정직하게 표기(가짜값 금지). */}
-            {report?.demographics?.micro_finance ? (
-              <div className="sa-di-tiles sa-di-tiles--4">
-                <MetricTile label="평균 월소득 (avgInc)" value={report.demographics.micro_finance.avgInc != null ? `${report.demographics.micro_finance.avgInc}만원` : "-"} />
-                <MetricTile label="급여소득자 수 (cntCustEmp)" value={report.demographics.micro_finance.cntCustEmp != null ? `${report.demographics.micro_finance.cntCustEmp.toLocaleString()}명` : "-"} />
-                <MetricTile label="평균 신용평점 (avrCreditscore)" value={report.demographics.micro_finance.avrCreditscore != null ? `${report.demographics.micro_finance.avrCreditscore}점` : "-"} />
-                <MetricTile label="주택보유자 수 (cntCustHOwn)" value={report.demographics.micro_finance.cntCustHOwn != null ? `${report.demographics.micro_finance.cntCustHOwn.toLocaleString()}명` : "-"} />
-              </div>
-            ) : (
-              <p className="sa-di-empty">K-Atlas 초정밀 금융·소비 데이터는 제휴 연동 후 제공됩니다. (현재 미연동 — 표본 수치 비표시)</p>
-            )}
-          </div>
+          {/* 적정 분양가 밴드(M3) — 수요측 지불여력을 공급측 타당성과 결합. */}
+          {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
-          {/* 권한 미달 시 잠금 오버레이 */}
-          {!isPremiumUser && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-t from-[var(--bg-primary)] via-[var(--bg-primary)]/80 to-transparent pt-12">
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-card)]/95 px-8 py-6 text-center shadow-xl backdrop-blur-md">
-                <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-strong)]/10 text-[var(--accent-strong)]"><Lock className="size-6" aria-hidden /></span>
-                <h4 className="text-lg font-black text-[var(--text-primary)]">K-Atlas 금융 데이터 프리미엄 연동</h4>
-                <p className="mt-2 max-w-sm text-sm leading-relaxed text-[var(--text-secondary)]">
-                  해당 기능은 관리자가 승인한 <b>엔터프라이즈 및 PRO 등급</b> 전용입니다.<br />
-                  (현재 등급: {balance?.tier_label || "미지정"})
-                </p>
-                {/* 요금제·등급 관리 화면으로 실배선(무핸들러 죽은 버튼 수선). locale은 이 파일 기존 관례(:505 "ko" 고정)를 따름. */}
-                <Link
-                  href="/ko/settings/billing"
-                  className="mt-5 rounded-xl bg-gradient-to-r from-[var(--text-primary)] to-[var(--text-secondary)] px-6 py-2.5 text-sm font-bold text-[var(--bg-primary)] transition-transform hover:scale-105 shadow-lg"
-                >
-                  등급 업그레이드 문의
-                </Link>
-              </div>
-            </div>
+          {/* 유형별 매매·전월세·시세추이 원자료 표(펼치기) — 가격 근거 데이터를 한 곳에 인접 배치. */}
+          {report?.raw_data?.real_estate ? (
+            <CollapsibleRaw title="유형별 매매·전월세·시세추이 원자료 표">
+              <RawDataTables raw={report.raw_data as RawData | undefined} section="real_estate" />
+            </CollapsibleRaw>
+          ) : null}
+        </>
+      )}
+
+      {/* ── 그룹4 [공급 타당성] · 통합면적 고지 + AI 사업 타당성 엔진(Feasibility) ── */}
+      {(report?.feasibility_analysis || report?.integrated) && (
+        <>
+          <SectionDivider kr="공급 타당성" en="SUPPLY · 사업 타당성" />
+          {/* 다필지 통합 고지 — 보고서/타당성이 N필지 통합면적 기준임을 명시(근거·투명성). */}
+          {report?.integrated && <IntegratedParcelsBadge integrated={report.integrated} />}
+          {report?.feasibility_analysis && (
+            <FeasibilityDashboard
+              data={report.feasibility_analysis}
+              zoneType={report.zone_type}
+            />
           )}
-        </div>
+        </>
       )}
 
-      {/* AI 검증 + 전문가 패널 (보고서 생성 시) — 분석 신뢰성 검증 */}
+      {/* ── 그룹5 [검증] · 전문가 패널 심화 검증(자동 AI 검증 배지는 결론 카드에 인라인) ── */}
       {report && (
-        <VerificationBadge
-          analysisType="market"
-          context={report as unknown as Record<string, unknown>}
-          // 백엔드가 응답 최상위에 노출하는 원장 sha256 — 피드백 조인키(미노출이면 undefined·안전).
-          ledgerHash={(report as { ledger_hash?: string })?.ledger_hash}
-        />
-      )}
-      {report && (
-        <ExpertPanelCard analysisType="market" address={address} context={report as unknown as Record<string, unknown>} />
+        <>
+          <SectionDivider kr="검증" en="VERIFY · 전문가 패널" />
+          <ExpertPanelCard analysisType="market" address={address} context={report as unknown as Record<string, unknown>} />
+        </>
       )}
 
-      {/* 보고서 다운로드 — ANALYSIS 말미(P4에서 DOCX 버튼 추가 예정이라 구조 유지). 보고서 생성 시에만. */}
-      {report && (
-        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-          <CardContent className="p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]"><Download className="size-4" aria-hidden />보고서 다운로드</p>
-                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">위 분석 결과를 PDF/PPT 문서로 저장합니다.</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
-                </button>
-                <button onClick={() => downloadReport("docx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
-                </button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* ── 그룹6 [보고서] · 단일 다운로드 바(미리보기+AI토글+PDF/PPT/DOCX 통합) ── */}
+      {address && (
+        <>
+          <SectionDivider kr="보고서" en="REPORT · 다운로드" />
+          <ReportActionsBar
+            genState={genState}
+            useLlm={useLlm}
+            onUseLlmChange={setUseLlm}
+            onGenerate={generateReport}
+            onDownload={downloadReport}
+          />
+        </>
       )}
     </section>
   );
