@@ -12,7 +12,7 @@
 // v402: 인구이동망 권역도(순이동 발산 코로플레스·MigrationRegionMap).
 // v404: 사업성 개략수지 워크플로우(RoughScenarioPanel — 프로젝트 선택/수정 + 개략수지 생성 +
 //        2차 실데이터 overrides 수정 + 월별 DCF) 반영 — 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v405-rough-npv-tentative-fix";
+const CACHE_NAME = "propai-v406-investment-labels-rough";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
