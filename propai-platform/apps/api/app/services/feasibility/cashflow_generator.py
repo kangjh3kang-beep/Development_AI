@@ -9,6 +9,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def npv_from_netflows(netflows: list[float] | None, discount_rate_annual: float) -> int | None:
+    """무차입 프로젝트 순현금흐름(netflows, 월별 0-based)을 연 할인율로 할인한 NPV(원).
+
+    ★반드시 '무차입 프로젝트 FCF'(unlevered_netflows)를 쓴다 — IRR과 동일 기저.
+    레버드 월별 rows의 net(=inflow−outflow)에는 자기자본·대출 유입이 양(+)으로 담기고
+    상쇄 유출이 없어, 할인하면 자기자본 전액이 순가치로 새어 NPV가 과대된다(은행 KPI 왜곡).
+    월할인율은 기하 실효월리 (1+r)^(1/12)−1, 월0은 기초시점(미할인).
+    """
+    if not netflows:
+        return None
+    rmonthly = (1 + discount_rate_annual) ** (1 / 12) - 1
+    npv = 0.0
+    for m, nf in enumerate(netflows):
+        npv += float(nf or 0) / ((1 + rmonthly) ** m)
+    return round(npv)
+
+
 class CashflowGenerator:
     """프로젝트 현금흐름 자동 생성기.
 
@@ -319,6 +336,9 @@ class CashflowGenerator:
             "rows": rows,
             "summary": summary,
             "phases": phases,
+            # ★무차입 프로젝트 FCF(월별 0-based) — NPV 산출용. rows.net(레버드)은 자기자본·대출
+            #   유입을 포함해 NPV가 과대되므로, IRR과 동일한 이 unlevered 스트림으로 NPV를 낸다.
+            "unlevered_netflows": [round(x) for x in unlevered],
         }
 
     def _s_curve_distribution(self, total: float, months: int) -> list[float]:

@@ -519,7 +519,18 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
             <div className="sa-di-block__body">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="sa-di-eyebrow">사업성 요약 · SUMMARY</span>
-                <GradeChip grade={result.summary.grade} />
+                <div className="flex items-center gap-1.5">
+                  {/* 선행절차(접도 확보·용도 해제 등) 전제 잠정치 — 등급/ROI를 확정치로 오독 방지 */}
+                  {result.scenario_status === "tentative" && (
+                    <span
+                      className="sa-chip sa-chip--warning"
+                      title="선행절차(접도 확보·용도 해제 등)를 전제한 잠정치 — ROI·등급·수지는 확정치가 아닙니다"
+                    >
+                      잠정 · 선행절차 전제
+                    </span>
+                  )}
+                  <GradeChip grade={result.summary.grade} />
+                </div>
               </div>
               <div className="mt-3 sa-di-stats">
                 <Stat label="총사업비" text={eok(result.summary.total_cost_won)} />
