@@ -406,79 +406,69 @@ export function InvestmentAnalyticsWorkspaceClient({
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
+            {/* ★각 입력에 지속 라벨 부착 — 예전엔 placeholder만 있어 값 입력 시 라벨이 사라져
+                무슨 칸인지 알 수 없었다(예: 300/450). label 로 감싸 항상 표시한다. */}
             <div className="grid gap-3 md:grid-cols-2">
-              <NumberInput
-                allowDecimal
-                value={form.totalCost}
-                onChange={(n) =>
-                  setForm((current) => ({
-                    ...current,
-                    totalCost: n,
-                  }))
-                }
-                placeholder={labels.totalCostLabel}
-                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
-              <NumberInput
-                allowDecimal
-                value={form.expectedRevenue}
-                onChange={(n) =>
-                  setForm((current) => ({
-                    ...current,
-                    expectedRevenue: n,
-                  }))
-                }
-                placeholder={labels.expectedRevenueLabel}
-                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.totalCostLabel}</span>
+                <NumberInput
+                  allowDecimal
+                  value={form.totalCost}
+                  onChange={(n) => setForm((current) => ({ ...current, totalCost: n }))}
+                  placeholder={labels.totalCostLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.expectedRevenueLabel}</span>
+                <NumberInput
+                  allowDecimal
+                  value={form.expectedRevenue}
+                  onChange={(n) => setForm((current) => ({ ...current, expectedRevenue: n }))}
+                  placeholder={labels.expectedRevenueLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
+              </label>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <Input
-                type="number"
-                value={form.constructionPeriod}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    constructionPeriod: event.target.value,
-                  }))
-                }
-                placeholder={labels.constructionPeriodLabel}
-              />
-              <Input
-                type="number"
-                value={form.discountRate}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    discountRate: event.target.value,
-                  }))
-                }
-                placeholder={labels.discountRateLabel}
-              />
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.constructionPeriodLabel}</span>
+                <Input
+                  type="number"
+                  value={form.constructionPeriod}
+                  onChange={(event) => setForm((current) => ({ ...current, constructionPeriod: event.target.value }))}
+                  placeholder={labels.constructionPeriodLabel}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.discountRateLabel}</span>
+                <Input
+                  type="number"
+                  value={form.discountRate}
+                  onChange={(event) => setForm((current) => ({ ...current, discountRate: event.target.value }))}
+                  placeholder={labels.discountRateLabel}
+                />
+              </label>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <Input
-                type="number"
-                value={form.revenueUncertainty}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    revenueUncertainty: event.target.value,
-                  }))
-                }
-                placeholder={labels.revenueUncertaintyLabel}
-              />
-              <NumberInput
-                value={form.simulations}
-                onChange={(n) =>
-                  setForm((current) => ({
-                    ...current,
-                    simulations: n,
-                  }))
-                }
-                placeholder={labels.simulationsLabel}
-                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.revenueUncertaintyLabel}</span>
+                <Input
+                  type="number"
+                  value={form.revenueUncertainty}
+                  onChange={(event) => setForm((current) => ({ ...current, revenueUncertainty: event.target.value }))}
+                  placeholder={labels.revenueUncertaintyLabel}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{labels.simulationsLabel}</span>
+                <NumberInput
+                  value={form.simulations}
+                  onChange={(n) => setForm((current) => ({ ...current, simulations: n }))}
+                  placeholder={labels.simulationsLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
+              </label>
             </div>
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting
