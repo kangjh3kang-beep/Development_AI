@@ -1,5 +1,7 @@
 """DXF/Excel 내보내기 엔드포인트 통합 테스트."""
 
+from unittest.mock import AsyncMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -91,10 +93,34 @@ class TestDxfExportTypes:
 
 
 class TestCostExcelExport:
-    """원가계산서 Excel 내보내기 테스트."""
+    """원가계산서 Excel 내보내기 테스트 — T4: 영속 BOQ 실데이터 기반(가짜 샘플 금지)."""
+
+    _FAKE_ESTIMATE = {
+        "estimate_id": "est-1", "project_id": "test-project",
+        "building_type": "apartment", "structure_type": "RC", "total_gfa_sqm": 1000.0,
+        "summary": {"direct": 1_000_000, "indirect": 200_000, "total": 1_200_000,
+                    "confidence_grade": "B"},
+        "badges": {}, "qto_source": "derived", "created_at": "2026-01-01",
+        "items": [
+            {"code": "A01-03", "name": "콘크리트", "work_type": "철근콘크리트공사",
+             "quantity": 500.0, "unit": "m3", "unit_price": 247000.0, "amount": 123_500_000.0,
+             "price_source": "fallback", "price_basis_year": 2026, "qto_source": "derived",
+             "market_unit_price": None, "actual_unit_price": None},
+        ],
+    }
 
     def test_export_excel_returns_file(self):
-        r = client.get("/api/v1/cost/test-project/export-excel")
+        with (
+            patch(
+                "app.services.cost.cost_estimate_repository.list_estimates",
+                new_callable=AsyncMock, return_value=[{"estimate_id": "est-1"}],
+            ),
+            patch(
+                "app.services.cost.cost_estimate_repository.get_estimate",
+                new_callable=AsyncMock, return_value=self._FAKE_ESTIMATE,
+            ),
+        ):
+            r = client.get("/api/v1/cost/test-project/export-excel")
         assert r.status_code == 200
         ct = r.headers["content-type"]
         assert "csv" in ct or "spreadsheet" in ct
@@ -102,5 +128,24 @@ class TestCostExcelExport:
         assert len(r.content) > 0
 
     def test_export_excel_filename(self):
-        r = client.get("/api/v1/cost/proj-123/export-excel")
+        with (
+            patch(
+                "app.services.cost.cost_estimate_repository.list_estimates",
+                new_callable=AsyncMock, return_value=[{"estimate_id": "est-1"}],
+            ),
+            patch(
+                "app.services.cost.cost_estimate_repository.get_estimate",
+                new_callable=AsyncMock, return_value=self._FAKE_ESTIMATE,
+            ),
+        ):
+            r = client.get("/api/v1/cost/proj-123/export-excel")
         assert "proj-123" in r.headers["content-disposition"]
+
+    def test_export_excel_no_estimate_returns_404(self):
+        """영속 BOQ가 없으면 가짜 샘플 대신 404로 정직 응답한다(무목업 — T4)."""
+        with patch(
+            "app.services.cost.cost_estimate_repository.list_estimates",
+            new_callable=AsyncMock, return_value=[],
+        ):
+            r = client.get("/api/v1/cost/no-estimate-project/export-excel")
+        assert r.status_code == 404

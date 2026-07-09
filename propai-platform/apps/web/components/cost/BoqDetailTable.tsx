@@ -12,12 +12,15 @@
  * 정직성 note·전문 적산사 검토 배지.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import type {
+  BoqEstimateListItem,
+  BoqEstimatesListResponse,
   BoqResponse,
   UnitPricesResponse,
 } from "@/components/cost/cmTypes";
@@ -67,9 +70,51 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
   const [prices, setPrices] = useState<UnitPricesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  // T3: use_llm 옵트인 — 기존 동작(AI 해설 항상 포함)을 보존하기 위해 기본 true로 명시 전송.
+  const [useLlm, setUseLlm] = useState(true);
   // 수지 반영용 — BOQ 실행 시점의 연면적 스냅샷(이후 입력 변경과 무관하게 결과와 정합 유지).
   const [boqGfaSqm, setBoqGfaSqm] = useState<number | null>(null);
   const [applied, setApplied] = useState(false);
+
+  // T5: 영속 BOQ 조회 — "저장된 적산 목록"(GET /estimates) + 선택 시 단건 로드(GET /estimate/{id}).
+  const [savedList, setSavedList] = useState<BoqEstimateListItem[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [loadingEstimateId, setLoadingEstimateId] = useState<string | null>(null);
+
+  const refreshSavedList = useCallback(async () => {
+    setSavedLoading(true);
+    try {
+      const res = await apiClient.get<BoqEstimatesListResponse>(
+        `/cost/${projectId}/estimates`, { useMock: false, timeoutMs: 20000 },
+      );
+      setSavedList(res.items ?? []);
+    } catch {
+      /* 목록 조회 실패는 조용히 무시 — 신규 적산 실행은 계속 가능 */
+    } finally {
+      setSavedLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refreshSavedList();
+  }, [refreshSavedList]);
+
+  const loadSavedEstimate = useCallback(async (estimateId: string) => {
+    setLoadingEstimateId(estimateId);
+    setErr("");
+    try {
+      const res = await apiClient.get<BoqResponse & { total_gfa_sqm?: number }>(
+        `/cost/estimate/${estimateId}`, { useMock: false, timeoutMs: 20000 },
+      );
+      setBoq(res);
+      setBoqGfaSqm(res.total_gfa_sqm ?? null);
+      setApplied(false);
+    } catch {
+      setErr("저장된 적산을 불러오지 못했습니다.");
+    } finally {
+      setLoadingEstimateId(null);
+    }
+  }, []);
 
   const run = useCallback(async () => {
     const gfaNum = Number(gfa);
@@ -89,6 +134,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
             floor_count_below: Number(floorsBelow) || 0,
             structure_type: structure,
             persist: true,
+            use_llm: useLlm,
           },
           useMock: false,
           timeoutMs: 60000,
@@ -101,12 +147,13 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
       setBoqGfaSqm(gfaNum);
       setApplied(false); // 새 적산 결과 — 이전 "반영됨" 표시 해제
       if (priceRes) setPrices(priceRes);
+      void refreshSavedList(); // persist:true로 새 적산이 저장됐으므로 목록 갱신
     } catch {
       setErr("BOQ 상세적산에 실패했습니다. 입력값을 확인하세요.");
     } finally {
       setLoading(false);
     }
-  }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId]);
+  }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId, useLlm, refreshSavedList]);
 
   // BOQ 합계 → 수지 costData 1방향 주입(WP-08). CostData는 full replace 계약이므로
   // BOQ summary가 제공하지 않는 분해 항목(지상/지하/조경·신뢰범위)은 가짜값 대신 null 유지
@@ -145,6 +192,47 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
         </p>
       </div>
 
+      {/* T5: 저장된 적산 목록 — 영속화된 BOQ 재조회 */}
+      <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-black text-[var(--text-primary)]">저장된 적산 목록</h3>
+          <button
+            onClick={() => void refreshSavedList()}
+            disabled={savedLoading}
+            className="text-[11px] font-bold text-[var(--accent-strong)] hover:opacity-80 disabled:opacity-50"
+          >
+            {savedLoading ? "새로고침 중…" : "새로고침"}
+          </button>
+        </div>
+        {savedList.length === 0 ? (
+          <p className="text-[11px] text-[var(--text-hint)]">
+            {savedLoading ? "불러오는 중…" : "저장된 적산이 없습니다. 아래에서 BOQ 상세적산을 실행하면 자동 저장됩니다."}
+          </p>
+        ) : (
+          <ul className="grid gap-2">
+            {savedList.map((it) => (
+              <li
+                key={it.estimate_id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)]/60 bg-[var(--surface-strong)] px-4 py-2.5"
+              >
+                <span className="text-[11px] text-[var(--text-secondary)]">
+                  {it.building_type} · {it.structure_type} · {Math.round(it.total_gfa_sqm).toLocaleString()}㎡ ·{" "}
+                  <b className="text-[var(--text-primary)]">{eok(it.total_won)}</b> · 신뢰등급 {it.confidence_grade || "—"} ·{" "}
+                  {new Date(it.created_at).toLocaleString("ko-KR")}
+                </span>
+                <button
+                  onClick={() => void loadSavedEstimate(it.estimate_id)}
+                  disabled={loadingEstimateId === it.estimate_id}
+                  className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-3 py-1.5 text-[10px] font-black text-[var(--accent-strong)] hover:opacity-90 disabled:opacity-50"
+                >
+                  {loadingEstimateId === it.estimate_id ? "불러오는 중…" : "불러오기"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {/* 건축개요 입력 */}
       <div className="grid gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 sm:grid-cols-2 lg:grid-cols-5">
         <label className="flex flex-col gap-1">
@@ -179,7 +267,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
         </label>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={run}
           disabled={loading}
@@ -187,6 +275,12 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
         >
           {loading ? "상세적산 중…" : "BOQ 상세적산 실행"}
         </button>
+        <UseLlmToggle
+          checked={useLlm}
+          onChange={setUseLlm}
+          hint="AI 공사비 해설 텍스트 생성"
+          disabled={loading}
+        />
         {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
       </div>
 

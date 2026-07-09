@@ -49,6 +49,23 @@ export interface BoqResponse {
   ai_cost_analysis?: string | null;
 }
 
+/** GET /{pid}/estimates 목록 1건(요약) — T5 저장된 적산 목록. */
+export interface BoqEstimateListItem {
+  estimate_id: string;
+  building_type: string;
+  structure_type: string;
+  total_gfa_sqm: number;
+  total_won: number;
+  confidence_grade: string;
+  created_at: string;
+}
+
+/** GET /{pid}/estimates 응답. */
+export interface BoqEstimatesListResponse {
+  ok: boolean;
+  items: BoqEstimateListItem[];
+}
+
 /** 단가 SSOT 3중(D4) 항목. */
 export interface UnitPriceItem {
   code: string;

@@ -598,6 +598,23 @@ export function CostEstimationClient() {
           </Link>
           <span className="text-[11px] text-[var(--text-tertiary)]">{hasDesign ? "설계 연동됨 — BIM·적산에서 부위별 정밀 물량을 확인하세요." : "설계/BIM 완성 후 정밀 적산이 가능합니다."}</span>
         </div>
+
+        {/* T2: 상세 공내역서(실적기반) 진입 — 프로젝트 선택 컨텍스트(projectId)로 /projects/{id}/boq 연결. */}
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--line)] pt-4">
+          {projectId ? (
+            <Link
+              href={`/${locale}/projects/${projectId}/boq`}
+              className="rounded-xl border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-6 py-3 text-sm font-black text-[var(--accent-strong)] hover:opacity-90"
+            >
+              상세 공내역서(실적기반) 자동작성으로 이동 →
+            </Link>
+          ) : (
+            <span className="rounded-xl border border-[var(--line)] px-6 py-3 text-sm font-bold text-[var(--text-hint)]">
+              상세 공내역서(실적기반) — 프로젝트 선택 후 이용 가능
+            </span>
+          )}
+          <span className="text-[11px] text-[var(--text-tertiary)]">건축개요 항목을 실적(표준품셈) 물량·단가로 자동 산출해 공내역서를 작성합니다.</span>
+        </div>
       </div>
     </section>
   );

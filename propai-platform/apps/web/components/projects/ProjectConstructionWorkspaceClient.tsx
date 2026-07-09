@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { NumberInput } from "@/components/common/NumberInput";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
@@ -250,6 +251,8 @@ export function ProjectConstructionWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmittingCost, setIsSubmittingCost] = useState(false);
   const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
+  // T3: use_llm 옵트인 — 기존 동작(AI 원가 해석 항상 포함)을 보존하기 위해 기본 true로 명시 전송.
+  const [useLlm, setUseLlm] = useState(true);
   const [costResult, setCostResult] =
     useState<CostCalculationResponse | null>(null);
   const [checklistResult, setChecklistResult] =
@@ -319,7 +322,7 @@ export function ProjectConstructionWorkspaceClient({
         `/cost/${projectId}/calculate`,
         {
           useMock: false,
-          body: { items },
+          body: { items, use_llm: useLlm },
         },
       );
       setCostResult(result);
@@ -469,7 +472,7 @@ export function ProjectConstructionWorkspaceClient({
                 </div>
               </div>
             ))}
-            <div className="flex gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="secondary" onClick={addCostItem}>
                 {labels.addItemAction}
               </Button>
@@ -481,6 +484,12 @@ export function ProjectConstructionWorkspaceClient({
                   ? `${labels.submitCostAction}...`
                   : labels.submitCostAction}
               </Button>
+              <UseLlmToggle
+                checked={useLlm}
+                onChange={setUseLlm}
+                hint="AI 원가 해석 포함"
+                disabled={isSubmittingCost}
+              />
             </div>
           </form>
         </CardContent>

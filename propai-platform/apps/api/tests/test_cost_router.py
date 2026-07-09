@@ -1,5 +1,7 @@
 """v61 공사비 라우터 테스트 — 경량 TestClient (전체 앱 비의존)."""
 
+from unittest.mock import AsyncMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -89,6 +91,85 @@ class TestCalculateCost:
         assert resp.status_code == 200
 
 
+class TestCostUseLlmGate:
+    """T3: use_llm 게이트 — 기본 false는 CostInterpreter(LLM) 0호출, true는 과금 게이트 적용."""
+
+    def test_calculate_use_llm_false_never_calls_interpreter(self, monkeypatch):
+        calls = {"n": 0}
+
+        class _Boom:
+            def __init__(self):
+                calls["n"] += 1
+
+            async def generate_interpretation(self, _payload):
+                return {}
+
+        monkeypatch.setattr(
+            "app.services.ai.cost_interpreter.CostInterpreter", _Boom, raising=False,
+        )
+        resp = client.post(f"/api/v1/cost/{PROJECT_ID}/calculate", json={"items": COST_ITEMS})
+        assert resp.status_code == 200
+        assert calls["n"] == 0
+        assert resp.json().get("ai_cost_analysis") is None
+
+    def test_calculate_use_llm_true_invokes_interpreter(self, monkeypatch):
+        calls = {"n": 0}
+
+        class _Fake:
+            def __init__(self):
+                calls["n"] += 1
+
+            async def generate_interpretation(self, _payload):
+                return {"cost_analysis": "요약"}
+
+        monkeypatch.setattr(
+            "app.services.ai.cost_interpreter.CostInterpreter", _Fake, raising=False,
+        )
+        resp = client.post(
+            f"/api/v1/cost/{PROJECT_ID}/calculate",
+            json={"items": COST_ITEMS, "use_llm": True},
+        )
+        assert resp.status_code == 200
+        assert calls["n"] == 1
+        assert resp.json().get("ai_cost_analysis") == "요약"
+
+    def test_calculate_use_llm_true_quota_402(self, monkeypatch):
+        async def blocked(db, uid):
+            return True
+
+        async def not_team_over(db, uid):
+            return False
+
+        monkeypatch.setattr("app.core.billing_deps.get_current_user_id", lambda: "u1")
+        monkeypatch.setattr("app.core.billing_deps.billing_service.is_blocked", blocked, raising=False)
+        monkeypatch.setattr(
+            "app.core.billing_deps.billing_service.team_limit_exceeded", not_team_over, raising=False,
+        )
+        resp = client.post(
+            f"/api/v1/cost/{PROJECT_ID}/calculate",
+            json={"items": COST_ITEMS, "use_llm": True},
+        )
+        assert resp.status_code == 402
+
+    def test_boq_use_llm_true_quota_402(self, monkeypatch):
+        async def blocked(db, uid):
+            return True
+
+        async def not_team_over(db, uid):
+            return False
+
+        monkeypatch.setattr("app.core.billing_deps.get_current_user_id", lambda: "u1")
+        monkeypatch.setattr("app.core.billing_deps.billing_service.is_blocked", blocked, raising=False)
+        monkeypatch.setattr(
+            "app.core.billing_deps.billing_service.team_limit_exceeded", not_team_over, raising=False,
+        )
+        resp = client.post(
+            f"/api/v1/cost/{PROJECT_ID}/boq",
+            json={"total_gfa_sqm": 3000.0, "persist": False, "use_llm": True},
+        )
+        assert resp.status_code == 402
+
+
 class TestMonteCarlo:
 
     def test_monte_carlo(self):
@@ -143,7 +224,43 @@ class TestFeasibility:
 
 
 class TestExportExcel:
+    """T4: 영속 BOQ 실데이터 기반 내보내기 — 가짜 샘플(E01 유령코드 등) 금지."""
 
-    def test_export_excel(self):
-        resp = client.get(f"/api/v1/cost/{PROJECT_ID}/export-excel")
+    def test_export_excel_no_estimate_returns_404(self):
+        """영속 BOQ가 없으면 가짜 샘플 대신 404로 정직 응답한다."""
+        with patch(
+            "app.services.cost.cost_estimate_repository.list_estimates",
+            new_callable=AsyncMock, return_value=[],
+        ):
+            resp = client.get(f"/api/v1/cost/{PROJECT_ID}/export-excel")
+        assert resp.status_code == 404
+
+    def test_export_excel_uses_persisted_boq(self):
+        """estimate_id 미지정 시 최신 영속 BOQ의 실 항목으로 Excel을 생성한다(E01 유령코드 없음)."""
+        fake_estimate = {
+            "estimate_id": "est-1", "project_id": PROJECT_ID,
+            "building_type": "apartment", "structure_type": "RC", "total_gfa_sqm": 1000.0,
+            "summary": {"direct": 1_000_000, "indirect": 200_000, "total": 1_200_000,
+                        "confidence_grade": "B"},
+            "badges": {}, "qto_source": "derived", "created_at": "2026-01-01",
+            "items": [
+                {"code": "A01-03", "name": "콘크리트", "work_type": "철근콘크리트공사",
+                 "quantity": 500.0, "unit": "m3", "unit_price": 247000.0, "amount": 123_500_000.0,
+                 "price_source": "fallback", "price_basis_year": 2026, "qto_source": "derived",
+                 "market_unit_price": None, "actual_unit_price": None},
+            ],
+        }
+        with (
+            patch(
+                "app.services.cost.cost_estimate_repository.list_estimates",
+                new_callable=AsyncMock, return_value=[{"estimate_id": "est-1"}],
+            ),
+            patch(
+                "app.services.cost.cost_estimate_repository.get_estimate",
+                new_callable=AsyncMock, return_value=fake_estimate,
+            ),
+        ):
+            resp = client.get(f"/api/v1/cost/{PROJECT_ID}/export-excel")
         assert resp.status_code == 200
+        ct = resp.headers["content-type"]
+        assert "csv" in ct or "spreadsheet" in ct

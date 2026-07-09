@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
 from app.services.bim.bim_service import BIMService
 from app.services.cost.cost_monte_carlo import CostMonteCarlo
@@ -28,6 +29,13 @@ router = APIRouter(
 )
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
+
+
+async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
+    """use_llm=True일 때만 LLM 한도 게이트 적용(무과금 경로는 통과) — personas.py 선례와 동일 계약."""
+    if not use_llm:
+        return
+    await enforce_llm_quota(db)
 
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
 _STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
@@ -444,6 +452,9 @@ class CostCalculateRequest(BaseModel):
         ..., description="공사비 항목 리스트")
     rates: dict[str, float] | None = Field(
         None, description="커스텀 법정요율 (None이면 2026 기본)")
+    # 과금(R4) — 기본 false(무과금). True일 때만 CostInterpreter(LLM) 해석을 시도하고
+    # enforce_llm_quota 게이트를 적용한다(personas.py 선례와 동일 계약).
+    use_llm: bool = Field(default=False, description="AI(LLM) 원가 해석 포함 여부(기본 false=무과금)")
 
 
 class MonteCarloRequest(BaseModel):
@@ -566,45 +577,50 @@ async def upload_ifc(project_id: str, req: IFCUploadRequest):
 
 
 @router.post("/{project_id}/calculate", response_model=CostCalculateResponse)
-async def calculate_cost(project_id: str, req: CostCalculateRequest):
+async def calculate_cost(
+    project_id: str, req: CostCalculateRequest, db: AsyncSession = Depends(get_db),
+):
     """원가계산서를 생성한다."""
     result = cost_calc.calculate(req.items, rates=req.rates)
 
-    # LLM(Claude) 원가 해석 — 실패해도 산정 결과는 정상 반환(graceful fallback)
+    # LLM(Claude) 원가 해석 — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도
+    # 산정 결과는 정상 반환(graceful fallback). use_llm=False면 해석 필드는 생략(무날조).
     ai: dict[str, Any] = {}
-    try:
-        from app.services.ai.cost_interpreter import CostInterpreter
+    if req.use_llm:
+        await _enforce_llm_if_needed(db, req.use_llm)
+        try:
+            from app.services.ai.cost_interpreter import CostInterpreter
 
-        gfa = sum(float(it.get("quantity", 0) or 0) for it in req.items) or 0
-        interp = await CostInterpreter().generate_interpretation({
-            "total_cost": result.get("total_project_cost", 0),
-            "cost_per_sqm": (
-                round(result.get("total_project_cost", 0) / gfa) if gfa else 0
-            ),
-            "cost_items": [
-                {
-                    "category": k,
-                    "amount": v,
-                    "ratio_pct": (
-                        round(v / result.get("total_project_cost", 1) * 100, 1)
-                        if result.get("total_project_cost")
-                        else 0
-                    ),
-                }
-                for k, v in (result.get("category_totals", {}) or {}).items()
-            ],
-            "cost_breakdown": {
-                "material_cost": result.get("direct_material_cost"),
-                "labor_cost": result.get("total_labor_cost"),
-                "expense_cost": result.get("direct_expense_cost"),
-                "overhead_cost": result.get("general_mgmt"),
-                "profit": result.get("profit"),
-            },
-        })
-        if isinstance(interp, dict):
-            ai = interp
-    except Exception:
-        ai = {}
+            gfa = sum(float(it.get("quantity", 0) or 0) for it in req.items) or 0
+            interp = await CostInterpreter().generate_interpretation({
+                "total_cost": result.get("total_project_cost", 0),
+                "cost_per_sqm": (
+                    round(result.get("total_project_cost", 0) / gfa) if gfa else 0
+                ),
+                "cost_items": [
+                    {
+                        "category": k,
+                        "amount": v,
+                        "ratio_pct": (
+                            round(v / result.get("total_project_cost", 1) * 100, 1)
+                            if result.get("total_project_cost")
+                            else 0
+                        ),
+                    }
+                    for k, v in (result.get("category_totals", {}) or {}).items()
+                ],
+                "cost_breakdown": {
+                    "material_cost": result.get("direct_material_cost"),
+                    "labor_cost": result.get("total_labor_cost"),
+                    "expense_cost": result.get("direct_expense_cost"),
+                    "overhead_cost": result.get("general_mgmt"),
+                    "profit": result.get("profit"),
+                },
+            })
+            if isinstance(interp, dict):
+                ai = interp
+        except Exception:
+            ai = {}
 
     return {
         "project_id": project_id,
@@ -754,6 +770,9 @@ class BoqRequest(BaseModel):
     structure_type: str = "RC"
     tenant_id: str | None = None
     persist: bool = True
+    # 과금(R4) — 기본 false(무과금). True일 때만 CostInterpreter(LLM) 해석을 시도하고
+    # enforce_llm_quota 게이트를 적용한다(personas.py 선례와 동일 계약).
+    use_llm: bool = Field(default=False, description="AI(LLM) BOQ 해석 포함 여부(기본 false=무과금)")
 
 
 class AlternativeVariant(BaseModel):
@@ -789,7 +808,9 @@ def _merge_params(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, 
 
 
 @router.post("/{project_id}/boq", summary="상세적산 BOQ 생성·영속화(D4 시장가 3중·정직성 표기)")
-async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
+async def create_boq(
+    project_id: str, req: BoqRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """건축개요로 BOQ(공종별 물량·단가·금액)를 생성하고 cost_estimate(+item)에 영속화한다.
     각 항목에 standard/market(KCCI)/actual:null 3중 단가(D4)와 출처·신뢰구간을 부착한다."""
     from app.services.cost.boq_builder import build_boq
@@ -816,27 +837,30 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
             tenant_id=req.tenant_id, project_id=project_id,
         )
 
-    # D6 AI 해석(BOQ) — 실패해도 결과는 정상 반환(graceful)
+    # D6 AI 해석(BOQ) — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도 결과는
+    # 정상 반환(graceful). use_llm=False면 해석 필드는 생략(무날조).
     ai_analysis: str | None = None
-    try:
-        from app.services.ai.cost_interpreter import CostInterpreter
-        calc = boq.get("_calc", {})
-        interp = await CostInterpreter().generate_interpretation({
-            "project_name": project_id,
-            "building_type": req.building_type,
-            "total_gfa_sqm": req.total_gfa_sqm,
-            "floor_count": req.floor_count_above,
-            "total_cost": calc.get("total_project_cost", 0),
-            "cost_per_sqm": round(calc.get("total_project_cost", 0) / req.total_gfa_sqm)
-            if req.total_gfa_sqm else 0,
-            "cost_items": [
-                {"category": it["name"], "amount": it["amount"]} for it in boq["items"]
-            ],
-        })
-        if isinstance(interp, dict):
-            ai_analysis = interp.get("cost_analysis")
-    except Exception:  # noqa: BLE001
-        ai_analysis = None
+    if req.use_llm:
+        await _enforce_llm_if_needed(db, req.use_llm)
+        try:
+            from app.services.ai.cost_interpreter import CostInterpreter
+            calc = boq.get("_calc", {})
+            interp = await CostInterpreter().generate_interpretation({
+                "project_name": project_id,
+                "building_type": req.building_type,
+                "total_gfa_sqm": req.total_gfa_sqm,
+                "floor_count": req.floor_count_above,
+                "total_cost": calc.get("total_project_cost", 0),
+                "cost_per_sqm": round(calc.get("total_project_cost", 0) / req.total_gfa_sqm)
+                if req.total_gfa_sqm else 0,
+                "cost_items": [
+                    {"category": it["name"], "amount": it["amount"]} for it in boq["items"]
+                ],
+            })
+            if isinstance(interp, dict):
+                ai_analysis = interp.get("cost_analysis")
+        except Exception:  # noqa: BLE001
+            ai_analysis = None
 
     # ★성장루프 조인키: 원장 content_hash 를 최상위 `ledger_hash` 로 노출(공용 헬퍼 — 프론트 피드백 키잉).
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
@@ -942,22 +966,56 @@ async def get_unit_prices() -> dict[str, Any]:
     }
 
 
+def _boq_estimate_to_excel_rows(est: dict[str, Any]) -> list[list[Any]]:
+    """영속화된 BOQ(estimate)를 Excel 행렬로 변환한다.
+
+    BOQ 항목은 재료/노무/경비가 이미 결합된 단가(unit_price)이므로 OriginCostCalculator의
+    12단계 재계산(to_excel_data)에 넣지 않고, 실제 저장된 항목·요약을 그대로 표기한다
+    (가짜 12단계 분해를 발명하지 않음 — 정직성).
+    """
+    header = ["공종코드", "품명", "규격/공종", "물량", "단위", "단가(원)", "금액(원)", "단가출처"]
+    rows: list[list[Any]] = [header]
+    for it in est.get("items", []):
+        rows.append([
+            it.get("code", ""),
+            it.get("name", ""),
+            it.get("work_type", ""),
+            f"{it.get('quantity', 0):,.2f}",
+            it.get("unit", ""),
+            f"{it.get('unit_price', 0):,.0f}",
+            f"{it.get('amount', 0):,.0f}",
+            it.get("price_source", ""),
+        ])
+    summary = est.get("summary") or {}
+    rows.append(["", "", "", "", "", "", "", ""])
+    rows.append(["직접공사비 소계", "", "", "", "", "", f"{summary.get('direct', 0):,.0f}", ""])
+    rows.append(["간접비 소계", "", "", "", "", "", f"{summary.get('indirect', 0):,.0f}", ""])
+    rows.append(["총 공사비", "", "", "", "", "", f"{summary.get('total', 0):,.0f}",
+                 f"신뢰등급 {summary.get('confidence_grade', '-')}"])
+    return rows
+
+
 @router.get("/{project_id}/export-excel", response_class=Response)
-async def export_excel(project_id: str):
-    """원가계산서 샘플을 Excel 파일로 내보낸다."""
+async def export_excel(project_id: str, estimate_id: str | None = None):
+    """영속화된 BOQ(원가계산서)를 Excel 파일로 내보낸다.
+
+    estimate_id 지정 시 해당 건, 미지정 시 프로젝트의 최신 영속 BOQ를 사용한다.
+    영속 BOQ가 없으면 가짜 샘플 대신 404로 정직 응답한다(무목업)."""
+    from app.services.cost.cost_estimate_repository import get_estimate, list_estimates
     from app.services.export.excel_export_service import ExcelExportService
 
-    # 샘플 데이터로 원가계산서 생성
-    sample_items = [
-        {"work_code": "A01", "item_name": "철근콘크리트공사", "spec": "24-210-15",
-         "unit": "m3", "quantity": 500, "mat_unit": 150000, "labor_unit": 80000, "exp_unit": 20000},
-        {"work_code": "A05", "item_name": "창호공사", "spec": "AL 커튼월",
-         "unit": "m2", "quantity": 300, "mat_unit": 200000, "labor_unit": 50000, "exp_unit": 10000},
-        {"work_code": "E01", "item_name": "전기설비공사", "spec": "일반 전기",
-         "unit": "식", "quantity": 1, "mat_unit": 500000000, "labor_unit": 200000000, "exp_unit": 50000000},
-    ]
-    result = cost_calc.calculate(sample_items)
-    rows = cost_calc.to_excel_data(result)
+    eid = estimate_id
+    if not eid:
+        latest = await list_estimates(project_id, limit=1)
+        eid = latest[0]["estimate_id"] if latest else None
+    est = await get_estimate(eid) if eid else None
+    if not est:
+        raise HTTPException(
+            status_code=404,
+            detail="영속화된 BOQ(원가계산서)가 없습니다. 먼저 상세적산(BOQ)을 생성·저장하세요.",
+        )
+
+    rows = _boq_estimate_to_excel_rows(est)
 
     export_svc = ExcelExportService()
     file_bytes, content_type = export_svc.cost_sheet_to_xlsx(rows)
