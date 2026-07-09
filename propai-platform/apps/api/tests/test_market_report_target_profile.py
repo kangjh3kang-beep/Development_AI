@@ -28,7 +28,6 @@ from app.services.market.market_report_service import (
     _roi_grade,
 )
 
-
 # ── 픽스처: 라이브(전 축 실데이터) / 미확보(전 축 강등) rep ──────────────────
 
 def _live_demographics() -> dict:
