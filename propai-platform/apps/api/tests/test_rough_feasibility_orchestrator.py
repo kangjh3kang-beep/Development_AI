@@ -255,6 +255,16 @@ async def test_monthly_dcf_rows(monkeypatch):
     assert "irr_pct" in out["summary"]
     assert "payback_month" in out["summary"]
     assert "peak_negative_cashflow" in cf["summary"]
+    # ★소비처 배선 회귀가드(P2): orchestrator가 실제로 무차입 NPV를 쓰는지 — 출력 npv_won이
+    #   레버드 rows 재계산 NPV보다 작아야 한다(자기자본/대출 유입 미포함). 레버드 인라인으로
+    #   되돌리면 이 단언이 실패해 회귀를 잡는다(헬퍼 단위테스트가 못 잡던 배선 갭 봉합).
+    _r_ann = cf["summary"]["discount_rate_annual_pct"] / 100
+    _rm = (1 + _r_ann) ** (1 / 12) - 1
+    _npv_levered = round(sum(
+        float((rr.get("inflow", 0) or 0) - (rr.get("outflow", 0) or 0))
+        / ((1 + _rm) ** (rr.get("month", 0) or 0)) for rr in rows))
+    if cf["summary"].get("equity_in_total", 0) > 0:
+        assert out["summary"]["npv_won"] < _npv_levered
 
 
 @pytest.mark.asyncio

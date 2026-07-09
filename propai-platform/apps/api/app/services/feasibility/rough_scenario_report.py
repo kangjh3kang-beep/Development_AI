@@ -209,7 +209,9 @@ def _investment_opinion(
     # ★TENTATIVE(선행절차 전제 잠정치) → 확정 Go/등급 부여 금지(특이부지 할루시네이션 가드).
     #   맹지·도로/학교 PRECONDITION 등은 recs가 생성돼도 접도확보·용도해제 등 선행절차가 전제다.
     if scenario.get("scenario_status") == "tentative":
-        _reason = str(degraded[0]) if degraded else "선행절차(접도 확보 등)를 전제한 잠정치"
+        _raw = str(degraded[0]) if degraded else "선행절차(접도 확보 등)를 전제한 잠정치"
+        # orchestrator가 붙인 "[잠정·선행절차 전제] " 접두는 제거(문장 라벨 이중화 방지).
+        _reason = _raw.split("] ", 1)[-1] if _raw.startswith("[") else _raw
         return "조건부 검토(선행절차 전제)", (
             f"본 부지는 선행절차를 전제한 잠정 분석입니다 — {_reason}. "
             "ROI·등급·수지는 확정치가 아니며, 선행절차(접도 확보·용도 해제 등) 완료 후 "
