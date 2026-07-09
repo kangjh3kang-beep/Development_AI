@@ -8,7 +8,9 @@
 // v397: 다필지 통합 통로 배선(파이프라인·페르소나·인허가 parcels + 면적 SSOT effectiveLandAreaSqm) 반영.
 // v399: 시장분석 워크스페이스 체계화(시니어 통합 인사이트 카드·타겟 프로파일·6그룹 스토리라인·
 //        보고서 다운로드 단일화·표↔차트 이원화 제거) 반영 — 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v399-market-insights-systematize";
+// v400: 사업성 개략수지 워크플로우(RoughScenarioPanel — 프로젝트 선택/수정 + 개략수지 생성 +
+//        2차 실데이터 overrides 수정 + 월별 DCF) 반영 — 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v401-feasibility-rough-scenario";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
