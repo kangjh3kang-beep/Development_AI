@@ -14,6 +14,11 @@ from apps.api.database.models.material_price_history import MaterialPriceHistory
 from apps.api.database.models.project import Project
 from apps.api.database.models.quantity_takeoff import QuantityTakeoff
 
+# ★P1 T5 정직화: 이 서비스는 결정론 시뮬레이션(sin 함수 기반 성장률·변동성·위상 모델)이며
+#   실시간 시세 API가 아니다(KCCI 실연동은 이번 스코프 밖). 응답·소비처(D4 단가 3중비교의
+#   market 축)에 이 라벨을 명기해 사용자가 실시세로 오인하지 않도록 한다(무날조).
+MARKET_PRICE_SOURCE_LABEL = "simulation"
+
 # ★시장단가 SSOT(D4 market_unit_price 출처): KCCI 변동모델(성장률·변동성·위상)의 기준값.
 #   품셈 표준단가(standard_quantity_estimator.UNIT_PRICES_2026 / material_unit_prices DB)와는
 #   별개 도메인(시장 변동 시세). 단가 3중비교에서 market 축으로 사용된다.
@@ -404,6 +409,8 @@ class KCCIMaterialPriceService:
                     "estimated_project_cost_krw": project_costs.get(material_code),
                     "alert_level": severity,
                     "history": history_points,
+                    # ★T5 정직화: 결정론 시뮬레이션(실시세 API 아님) — 프론트 배지 표시용.
+                    "source": MARKET_PRICE_SOURCE_LABEL,
                 }
             )
 

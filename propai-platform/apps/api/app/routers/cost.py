@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.core.rbac import Role, require_role
 from app.services.auth.auth_service import get_current_user
 from app.services.bim.bim_service import BIMService
 from app.services.cost.cost_monte_carlo import CostMonteCarlo
@@ -29,6 +30,8 @@ router = APIRouter(
 )
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
+# P1 T1(공공고시 단가 주입) 관리자 게이트 — mass_templates.py 선례 재사용(require_role(Role.ADMIN)).
+require_admin = require_role(Role.ADMIN)
 
 
 async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
@@ -68,6 +71,8 @@ class OverviewCostRequest(BaseModel):
     building_width_m: float | None = None
     building_depth_m: float | None = None
     floor_height_m: float = 3.0
+    # P1 T3: 기본형건축비 고시 대조(baseline_check)용 평균 전용면적(㎡). 미입력 시 대조 생략(정직).
+    avg_unit_sqm: float | None = None
 
 
 def _overview_evidence(
@@ -282,6 +287,26 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     except Exception:  # noqa: BLE001 — 공용블록 실패해도 공사비 결과 무손상
         ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
 
+    # ── P1 T3: 기본형건축비 고시 대조(baseline_check, additive) ──
+    # 주택(아파트) 용도 + 평균 전용면적 입력 시에만 대조(정직 — 임의 추정 금지). 그 외는 생략.
+    baseline_check: dict[str, Any] | None = None
+    if req.building_type == "apartment" and req.avg_unit_sqm:
+        try:
+            from app.services.cost.basic_building_cost import get_baseline
+
+            bl = get_baseline(req.floor_count_above, req.avg_unit_sqm)
+            calc_unit = expected["unit_cost_per_sqm"]
+            baseline_check = {
+                "baseline_won_per_sqm": bl["value"],
+                "calc_won_per_sqm": calc_unit,
+                "deviation_pct": (
+                    round((calc_unit - bl["value"]) / bl["value"] * 100, 2) if bl["value"] else None
+                ),
+                "basis": bl["basis"], "legal_link": bl["legal_link"], "confidence": bl["confidence"],
+            }
+        except Exception:  # noqa: BLE001 — 대조 실패해도 공사비 결과 무손상(블록 생략)
+            baseline_check = None
+
     # ★성장루프 조인키: 표시 엔드포인트도 원장에 요약 적재(best-effort·멱등) 후
     #   최상위 `ledger_hash`를 노출 — 프론트 피드백(👍/👎)이 이 해시로 원장과 조인된다.
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
@@ -318,6 +343,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "evidence": ev_block["evidence"],
         "legal_refs": ev_block["legal_refs"],
         "provenance": ev_block["provenance"],
+        # P1 T3: 기본형건축비 고시 대조(주택+평균전용면적 입력 시만, additive).
+        **({"baseline_check": baseline_check} if baseline_check is not None else {}),
     }, wb)
 
 
@@ -946,7 +973,7 @@ async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[s
 @router.get("/unit-prices", summary="단가 SSOT 조회(D4 standard/market/actual 3중)")
 async def get_unit_prices() -> dict[str, Any]:
     """단가 SSOT(material_unit_prices DB 우선·fallback) 목록 — standard/market/actual 3중."""
-    from app.services.cost.boq_builder import _KEY_TO_KCCI, _kcci_market_unit
+    from app.services.cost.boq_builder import _KEY_TO_KCCI, _kcci_market_source_label, _kcci_market_unit
     from app.services.cost.unit_price_repository import UnitPriceRepository
 
     prices = await UnitPriceRepository().get_prices()
@@ -959,11 +986,44 @@ async def get_unit_prices() -> dict[str, Any]:
             "standard": std, "market": market, "actual": None,
             "source": p["price_source"], "basis_year": p["price_basis_year"],
             "region": p.get("region"),
+            # T5 정직화: market(KCCI)은 결정론 시뮬레이션 — 실 시세 API 아님(값 있을 때만 라벨).
+            "market_source": _kcci_market_source_label(key) if market is not None else None,
+            # P1 T4(단가 4계층) — additive: tier(T1_public/T2_standard/T3_fallback)·출처 URL.
+            "tier": p.get("tier"), "source_url": p.get("source_url"),
         })
     return {
         "ok": True, "items": items,
-        "note": "standard=표준품셈/단가DB, market=KCCI 변동모델, actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장.",
+        "note": (
+            "standard=표준품셈/단가DB, market=KCCI 변동모델(결정론 시뮬레이션·실시세 API 아님), "
+            "actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장."
+        ),
     }
+
+
+class IngestPublicPricesRequest(BaseModel):
+    """P1 T1 — 조달청 표준시장단가 주입 요청(관리자 전용)."""
+    prdct_clsfc_no: str | None = Field(None, description="조달청 품목분류번호(선택 — 미지정 시 전체)")
+    keyword: str | None = Field(None, description="품명 검색 키워드(선택)")
+    max_pages: int = Field(3, ge=1, le=10, description="조회할 최대 페이지 수(페이지당 100건)")
+
+
+@router.post(
+    "/admin/ingest-public-prices",
+    dependencies=[Depends(require_admin)],
+    summary="조달청 표준시장단가 → 단가 SSOT 주입(P1 T1·관리자 전용)",
+)
+async def ingest_public_prices_route(
+    req: IngestPublicPricesRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """조달청 가격정보현황서비스(data.go.kr 15129415)에서 표준시장단가를 조회해
+
+    material_unit_prices에 멱등 upsert한다(단가 4계층 리졸버의 T1·최우선 계층).
+    서비스키 미보유/API 실패 시 0건·정직 사유 반환(서버 동작 무영향)."""
+    from app.services.cost.public_price_ingest import ingest_public_prices
+
+    return await ingest_public_prices(
+        db, prdct_clsfc_no=req.prdct_clsfc_no, keyword=req.keyword, max_pages=req.max_pages,
+    )
 
 
 def _boq_estimate_to_excel_rows(est: dict[str, Any]) -> list[list[Any]]:

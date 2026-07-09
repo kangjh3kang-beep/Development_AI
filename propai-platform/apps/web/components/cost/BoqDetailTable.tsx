@@ -408,7 +408,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
           <h3 className="mb-1 text-sm font-black text-[var(--text-primary)]">단가 3중 비교 (표준 · 시장 · 실적)</h3>
           <p className="mb-3 text-[11px] text-[var(--text-hint)]">
-            표준=품셈/단가DB, 시장=KCCI 변동모델, 실적=실데이터 없음(정직성 표기).
+            표준=품셈/단가DB, 시장=KCCI 변동모델(시뮬레이션 · 실시세 API 아님), 실적=실데이터 없음(정직성 표기).
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
@@ -438,6 +438,11 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
                         {diff != null && (
                           <span className={`ml-1 text-[9px] font-bold ${diff >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
                             {diff >= 0 ? "+" : ""}{diff.toFixed(0)}%
+                          </span>
+                        )}
+                        {p.market != null && p.market_source === "simulation" && (
+                          <span className="ml-1 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
+                            시뮬레이션
                           </span>
                         )}
                       </td>

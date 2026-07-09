@@ -18,6 +18,8 @@ export interface BoqItem {
   qto_source: string; // bim(±5%) | derived(±12%)
   standard_unit_price?: number | null;
   market_unit_price?: number | null;
+  /** T5 정직화: market_unit_price 출처("simulation" = 결정론 시뮬레이션, 실시세 API 아님). */
+  market_unit_price_source?: string | null;
   actual_unit_price?: number | null;
 }
 
@@ -77,6 +79,11 @@ export interface UnitPriceItem {
   source: string;
   basis_year: number | null;
   region?: string | null;
+  /** T5 정직화: market 값 출처("simulation" = KCCI 결정론 시뮬레이션, 실시세 API 아님). */
+  market_source?: string | null;
+  /** P1 T4: 단가 4계층 리졸버 tier(T1_public/T2_standard/T3_fallback). */
+  tier?: string | null;
+  source_url?: string | null;
 }
 
 /** GET /unit-prices 응답. */
