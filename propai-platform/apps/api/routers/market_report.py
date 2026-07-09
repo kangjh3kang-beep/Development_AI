@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.core.billing_deps import enforce_llm_quota
 from app.services.market.market_report_service import MarketReportService
+from app.services.market.migration_region_service import MigrationRegionService
 from app.services.market.population_density_service import PopulationDensityService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
@@ -111,6 +112,33 @@ async def population_density(
         pnu = _pnu_from_bcode(req.bcode, req.jibun_address)
     bcode = ((pnu or "")[:10] if pnu else (req.bcode or "")) or ""
     return await PopulationDensityService().build(bcode=bcode, region_name=_region_name(req.address))
+
+
+class MigrationRegionRequest(BaseModel):
+    address: str | None = None
+    pnu: str | None = None
+    bcode: str | None = None
+    jibun_address: str | None = None
+    year: str | None = None
+
+
+@router.post("/migration-region")
+async def migration_region(
+    req: MigrationRegionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """권역 인구이동망 레이어 — 대상 시군구가 속한 시도의 시군구별 순이동 발산 코로플레스.
+
+    SGIS 시군구 경계(WGS84) + KOSIS「시군구별 이동자수」 순이동을 조인해 권역(시도) 지도를
+    색으로 시각화한다(전출초과=적·전입초과=청·0=중립). LLM 미사용(데이터 조회) → 과금 게이트 없음.
+    KOSIS/SGIS 무키·무자료는 data_source=unavailable(가짜 순이동 금지).
+    """
+    pnu = req.pnu
+    if not pnu and req.bcode and req.jibun_address:
+        pnu = _pnu_from_bcode(req.bcode, req.jibun_address)
+    bcode = ((pnu or "")[:10] if pnu else (req.bcode or "")) or ""
+    return await MigrationRegionService().build_migration_region(
+        bcode=bcode, region_name=_region_name(req.address), year=req.year)
 
 
 @router.post("/report/pdf", dependencies=[Depends(enforce_llm_quota)])

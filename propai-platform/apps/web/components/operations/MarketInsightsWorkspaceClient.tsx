@@ -12,6 +12,7 @@ import type {
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
+import type { MigrationRegionMap as MigrationRegionMapType } from "@/components/map/MigrationRegionMap";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import dynamic from "next/dynamic";
@@ -32,6 +33,10 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
 const PopulationDensityMap = dynamicMap<React.ComponentProps<typeof PopulationDensityMapType>>(
   () => import("@/components/map/PopulationDensityMap"),
   { pick: "PopulationDensityMap", height: 360, loadingMessage: "인구밀도 지도 로딩…" },
+);
+const MigrationRegionMap = dynamicMap<React.ComponentProps<typeof MigrationRegionMapType>>(
+  () => import("@/components/map/MigrationRegionMap"),
+  { pick: "MigrationRegionMap", height: 360, loadingMessage: "권역 순이동 지도 로딩…" },
 );
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ContextHeader } from "@/components/common/ContextHeader";
@@ -376,6 +381,8 @@ export function MarketInsightsWorkspaceClient() {
   // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
   const mapBcode = mapPnu.slice(0, 10);
   const [showDensity, setShowDensity] = useState(false);
+  // 권역 순이동 코로플레스(시군구 발산 지도) 지연로드 토글 — 인구이동망 패널 하단.
+  const [showMigrationMap, setShowMigrationMap] = useState(false);
   const results = useMemo(() => deriveResults(mapPayload, address), [mapPayload, address]);
 
   const totalRemaining = balance
@@ -1017,6 +1024,23 @@ export function MarketInsightsWorkspaceClient() {
                       ) : (
                         <p className="sa-di-empty mt-2">전출지별 유입 Top(OD 출발지)·권역 흐름도는 KOSIS 시군구 이동표에 미제공 — 행정안전부 OD 마이크로데이터 연동 시 표시됩니다(현재 순이동세만 실데이터).</p>
                       )}
+                      {/* 권역도(순이동 코로플레스) — 대상 시군구+주변 시군구(같은 시도)의 순이동을 발산색 지도로.
+                          방향 화살표(OD)는 불가하나, 권역 전체의 순유입/순유출 분포를 시각화한다. 지연로드 토글. */}
+                      <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowMigrationMap((v) => !v)}
+                          className="flex w-full items-center justify-between gap-2 text-left text-sm font-bold text-[var(--text-primary)]"
+                        >
+                          <span className="inline-flex items-center gap-1.5"><Compass className="size-4" aria-hidden />권역 순이동 지도 <span className="ml-1 text-xs font-normal text-[var(--text-hint)]">시군구 발산 코로플레스</span></span>
+                          <span className="text-[var(--accent-strong)]">{showMigrationMap ? "▾ 닫기" : "▸ 보기"}</span>
+                        </button>
+                        {showMigrationMap && (
+                          <div className="mt-3">
+                            <MigrationRegionMap address={address} bcode={mapBcode} />
+                          </div>
+                        )}
+                      </div>
                     </>
                   ) : (
                     <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공·KOSIS 키/시군구 미확정 — 가짜 수치 대신 정직 표기)</p>
