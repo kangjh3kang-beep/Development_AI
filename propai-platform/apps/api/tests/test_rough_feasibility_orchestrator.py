@@ -255,6 +255,16 @@ async def test_monthly_dcf_rows(monkeypatch):
     assert "irr_pct" in out["summary"]
     assert "payback_month" in out["summary"]
     assert "peak_negative_cashflow" in cf["summary"]
+    # ★소비처 배선 회귀가드(P2): orchestrator가 실제로 무차입 NPV를 쓰는지 — 출력 npv_won이
+    #   레버드 rows 재계산 NPV보다 작아야 한다(자기자본/대출 유입 미포함). 레버드 인라인으로
+    #   되돌리면 이 단언이 실패해 회귀를 잡는다(헬퍼 단위테스트가 못 잡던 배선 갭 봉합).
+    _r_ann = cf["summary"]["discount_rate_annual_pct"] / 100
+    _rm = (1 + _r_ann) ** (1 / 12) - 1
+    _npv_levered = round(sum(
+        float((rr.get("inflow", 0) or 0) - (rr.get("outflow", 0) or 0))
+        / ((1 + _rm) ** (rr.get("month", 0) or 0)) for rr in rows))
+    if cf["summary"].get("equity_in_total", 0) > 0:
+        assert out["summary"]["npv_won"] < _npv_levered
 
 
 @pytest.mark.asyncio
@@ -268,6 +278,41 @@ async def test_discount_rate_override_changes_npv(monkeypatch):
     assert hi["cashflow"]["summary"]["discount_rate_annual_pct"] == 20.0
     # 할인율↑ → NPV 변화(동일 현금흐름)
     assert hi["summary"]["npv_won"] != base["summary"]["npv_won"]
+
+
+def test_npv_uses_unlevered_fcf_not_levered_rows():
+    """★P0 회귀가드: NPV는 무차입 프로젝트 FCF(unlevered_netflows) 할인이어야 한다.
+
+    레버드 월별 rows의 net(=inflow−outflow)에는 자기자본·대출 유입이 양(+)으로 담겨,
+    할인하면 자기자본 전액이 순가치로 새어 NPV가 과대된다(은행 KPI 왜곡). 이 테스트가
+    없어서 오염 NPV가 CI를 통과했었다(리뷰 P2). unlevered 스트림과 레버드 rows를 대조해 고정.
+    """
+    from app.services.feasibility.cashflow_generator import (
+        CashflowGenerator,
+        npv_from_netflows,
+    )
+
+    cf = CashflowGenerator().generate_monthly_cashflow(
+        land_cost=5_000_000_000, construction_cost=5_000_000_000, construction_months=12,
+        total_revenue=15_000_000_000, sale_start_month=12, sale_duration_months=6,
+        equity_ratio=1.0,
+    )
+    unl = cf["unlevered_netflows"]
+    # 무차입 FCF: 월0은 토지 유출(음수)·자기자본 유입 없음.
+    assert unl[0] == -5_000_000_000
+    # 레버드 rows에는 자기자본 유입이 존재(오염원).
+    assert cf["summary"]["equity_in_total"] > 0
+
+    npv_unlevered = npv_from_netflows(unl, 0.06)
+    rm = (1.06) ** (1 / 12) - 1
+    npv_levered = round(sum(
+        float(r.get("net") if r.get("net") is not None
+              else (r.get("inflow", 0) or 0) - (r.get("outflow", 0) or 0))
+        / ((1 + rm) ** (r.get("month", 0) or 0)) for r in cf["rows"]))
+    # ★핵심: 무차입 NPV < 레버드(오염) NPV — 자기자본 할인분만큼 작다(오염 제거 증명).
+    assert npv_unlevered < npv_levered
+    # 빈 스트림은 정직 None.
+    assert npv_from_netflows([], 0.06) is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

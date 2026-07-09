@@ -206,6 +206,17 @@ def _investment_opinion(
             "핵심 축(토지비·공사비·분양수입) 중 결측이 있어 개략수지를 확정할 수 없습니다. "
             "미확보 항목의 실측 데이터 확보 후 재분석이 필요합니다."
         )
+    # ★TENTATIVE(선행절차 전제 잠정치) → 확정 Go/등급 부여 금지(특이부지 할루시네이션 가드).
+    #   맹지·도로/학교 PRECONDITION 등은 recs가 생성돼도 접도확보·용도해제 등 선행절차가 전제다.
+    if scenario.get("scenario_status") == "tentative":
+        _raw = str(degraded[0]) if degraded else "선행절차(접도 확보 등)를 전제한 잠정치"
+        # orchestrator가 붙인 "[잠정·선행절차 전제] " 접두는 제거(문장 라벨 이중화 방지).
+        _reason = _raw.split("] ", 1)[-1] if _raw.startswith("[") else _raw
+        return "조건부 검토(선행절차 전제)", (
+            f"본 부지는 선행절차를 전제한 잠정 분석입니다 — {_reason}. "
+            "ROI·등급·수지는 확정치가 아니며, 선행절차(접도 확보·용도 해제 등) 완료 후 "
+            "재분석해야 합니다." + roi_txt
+        )
     # 대주 커버넌트 BLOCK → 보류(자금구조 재설계 필요).
     if verdict == "BLOCK":
         return "보류", (

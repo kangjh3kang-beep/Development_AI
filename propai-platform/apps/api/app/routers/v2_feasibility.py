@@ -1271,6 +1271,7 @@ def _build_cashflow(req: CashflowRequest) -> dict:
     from app.services.feasibility.cashflow_generator import (
         CashflowGenerator,
         build_tax_schedule_from_integrated,
+        npv_from_netflows,
     )
 
     # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(38종) 주입 ──
@@ -1300,14 +1301,12 @@ def _build_cashflow(req: CashflowRequest) -> dict:
         design_cost_ratio=req.design_cost_ratio,
         tax_schedule=tax_schedule,
     )
-    # 월 할인율로 NPV 재계산(엔진 IRR과 별개로 사용자 지정 할인율 반영)
-    rmonthly = (1 + req.discount_rate_annual) ** (1 / 12) - 1
-    npv = 0.0
-    for r in cf["rows"]:
-        net = (r.get("inflow", 0) or 0) - (r.get("outflow", 0) or 0)
-        m = r.get("month", 0) or 0
-        npv += net / ((1 + rmonthly) ** m)
-    cf["summary"]["npv_won"] = round(npv)
+    # 월 할인율로 NPV 재계산(엔진 IRR과 별개로 사용자 지정 할인율 반영).
+    # ★무차입 프로젝트 FCF(unlevered_netflows) 할인 — 레버드 rows.net(자기자본·대출 유입 포함)을
+    #   쓰면 NPV가 과대되므로 IRR과 동일한 unlevered 스트림으로 공용 헬퍼를 통해 산출(전역 정합).
+    cf["summary"]["npv_won"] = npv_from_netflows(
+        cf.get("unlevered_netflows") or [], req.discount_rate_annual
+    )
     cf["summary"]["discount_rate_annual_pct"] = round(req.discount_rate_annual * 100, 2)
     return cf
 

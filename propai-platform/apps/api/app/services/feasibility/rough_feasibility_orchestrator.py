@@ -26,7 +26,7 @@ from typing import Any
 # ── 재사용 자산(모듈 최상단 import — 테스트가 monkeypatch로 대체하기 쉽게 이름을 노출) ──
 from app.services.feasibility import construction_cost_engine, land_cost_engine, regional_pricing
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
-from app.services.feasibility.cashflow_generator import CashflowGenerator
+from app.services.feasibility.cashflow_generator import CashflowGenerator, npv_from_netflows
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
@@ -246,21 +246,6 @@ async def _resolve_sale_price_per_pyeong(
         "지역×유형 시장표준 시세(원/평, 공급면적) — 주변 실거래 미확보 시 추정 폴백",
         note,
     )
-
-
-def _npv_from_rows(rows: list[dict[str, Any]], discount_rate_annual: float) -> int | None:
-    """월별 현금흐름 rows(net)를 월 할인율로 할인한 NPV(원). /cashflow 엔드포인트와 동일 패턴."""
-    if not rows:
-        return None
-    rmonthly = (1 + discount_rate_annual) ** (1 / 12) - 1
-    npv = 0.0
-    for r in rows:
-        net = r.get("net")
-        if net is None:
-            net = (r.get("inflow", 0) or 0) - (r.get("outflow", 0) or 0)
-        m = r.get("month", 0) or 0
-        npv += float(net) / ((1 + rmonthly) ** m)
-    return round(npv)
 
 
 def _payback_month(rows: list[dict[str, Any]]) -> int | None:
@@ -601,7 +586,9 @@ async def build_rough_scenario(
             )
             rows = cf.get("rows") or []
             cf_summary = cf.get("summary") or {}
-            npv = _npv_from_rows(rows, discount_rate)
+            # ★NPV는 무차입 프로젝트 FCF(unlevered_netflows) 할인 — 레버드 rows.net을 쓰면 자기자본
+            #   유입이 순가치로 새어 NPV 과대(IRR과 동일 기저로 정합). payback은 실제 자금위치라 rows 유지.
+            npv = npv_from_netflows(cf.get("unlevered_netflows") or [], discount_rate)
             payback = _payback_month(rows)
             summary.update({
                 "npv_won": npv,
@@ -621,10 +608,23 @@ async def build_rough_scenario(
             logger.warning("월별 DCF 생성 실패: %s", str(e)[:120])
             degraded.append(f"월별 DCF 생성 실패: {str(e)[:100]}")
 
+    # ★TENTATIVE(선행절차 전제 잠정치) 특이부지 정직고지 — has-recs 경로에서도 소실 금지.
+    #   맹지·도로/학교 PRECONDITION 등은 recs가 생성돼 정상 경로를 타지만, ROI·등급·마진·NPV가
+    #   확정치가 아니라 '선행절차 전제 잠정치'임을 반드시 노출한다(특이부지 할루시네이션 가드 재소실 방지).
+    scenario_status = rec_result.get("scenario_status", "actual")
+    if scenario_status == "tentative":
+        _tnote = (
+            (chosen.get("tentative_reason") if isinstance(chosen, dict) else None)
+            or rec_result.get("honest_disclosure")
+            or "선행절차(접도 확보 등)를 전제한 잠정치 — ROI·등급·수지는 확정치가 아닙니다."
+        )
+        degraded.insert(0, f"[잠정·선행절차 전제] {_tnote}")
+
     return {
         "address": address,
         "project_id": project_id,
-        "scenario_status": rec_result.get("scenario_status", "actual"),
+        "scenario_status": scenario_status,
+        "special_parcel": rec_result.get("special_parcel"),
         "inputs": {
             "land_area_sqm": land_area,
             "zone_type": zone_type,
