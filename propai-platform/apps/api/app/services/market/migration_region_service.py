@@ -184,3 +184,4 @@ class MigrationRegionService:
                 except Exception as e:  # noqa: BLE001
                     logger.debug("SGIS 시군구 경계 조회 실패", year=yr, err=str(e)[:80])
         return []
+
