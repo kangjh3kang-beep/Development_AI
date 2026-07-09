@@ -479,7 +479,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           body: {
             address: data!.address!.trim(),
             land_area_sqm: zoningData?.land_area_sqm ?? undefined,
-            region: data?.address?.includes("서울") ? "서울특별시" : "경기도",
+            // 빈 region → 백엔드가 주소로 시도(sido) 추론(resolve_regional_base_price). 하드코딩
+            // "서울"/"경기도" 강제는 비수도권(강원·충청 등)을 경기가로 과대산정(#211 백엔드 수정과 동일 계약).
+            region: "",
             use_llm: useLlm,
           },
         });
@@ -597,7 +599,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         body: {
           address: data.address.trim(),
           land_area_sqm: zoningData?.land_area_sqm ?? undefined,
-          region: data.address.includes("서울") ? "서울특별시" : "경기도",
+          // 빈 region → 백엔드 주소기반 시도 추론(비수도권 경기가 과대 방지, #211과 동일 계약).
+          region: "",
           equity_won: 15_000_000_000,
           use_llm: useLlm,
         },
