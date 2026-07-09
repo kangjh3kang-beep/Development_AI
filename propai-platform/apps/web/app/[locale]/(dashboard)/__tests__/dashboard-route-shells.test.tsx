@@ -6,6 +6,7 @@ import InvestmentPage from "../analytics/investment/page";
 import AuctionPage from "../auction/page";
 import DashboardPage from "../page";
 import ProjectsPage from "../projects/page";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 vi.mock("@/components/layout/ModulePlaceholder", () => ({
   ModulePlaceholder: ({
@@ -334,12 +335,27 @@ describe("Dashboard route shells", () => {
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
   });
 
-  it("renders the investment analytics shell with the live workspace", async () => {
+  it("renders the investment analytics shell with the honest project gate (no project)", async () => {
+    // 새 계약: 프로젝트 미선택이면 리스크 시뮬(워크스페이스)은 빈 패널 대신 정직 게이트로 숨긴다(무목업).
     render(<InvestmentPage />);
 
     expect(screen.getByText("투자수익성 분석")).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
-    expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
+    expect(screen.queryByTestId("investment-workspace")).not.toBeInTheDocument();
+    expect(screen.getByText("먼저 프로젝트를 선택하세요.")).toBeInTheDocument();
+  });
+
+  it("renders the investment risk workspace once a project is selected", async () => {
+    // 프로젝트 선택 시 STEP2·3(요약·리스크 시뮬)이 이어진다 — 게이트 해제 경로.
+    useProjectContextStore.setState({ projectId: "proj-shell-test" });
+    try {
+      render(<InvestmentPage />);
+
+      expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
+    } finally {
+      // 전역 zustand 상태 원복 — 다른 라우트 셸 테스트로의 누수 방지.
+      useProjectContextStore.setState({ projectId: null });
+    }
   });
 
   it("renders the ESG analytics shell with the energy workspace", async () => {
