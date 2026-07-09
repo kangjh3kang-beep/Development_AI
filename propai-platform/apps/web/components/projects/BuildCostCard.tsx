@@ -11,7 +11,7 @@ import { Hammer } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 
 type Envelope = { effective_gfa_sqm?: number; max_floors?: number };
-type Cost = { total_gfa_sqm?: number; cost_range?: { min_won?: number; expected_won?: number; max_won?: number }; per_pyeong_won?: number; min_won?: number; expected_won?: number; max_won?: number };
+type Cost = { total_gfa_sqm?: number; range?: { min_won?: number; expected_won?: number; max_won?: number }; per_pyeong_won?: number; min_won?: number; expected_won?: number; max_won?: number };
 
 function hash(s: string): string {
   let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -54,7 +54,7 @@ export function BuildCostCard({ address, landAreaSqm, zone }: { address?: string
   }
 
   if (!address?.trim()) return null;
-  const r = cost?.cost_range ?? cost;
+  const r = cost?.range ?? cost;
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
       <div className="flex items-center justify-between gap-2">

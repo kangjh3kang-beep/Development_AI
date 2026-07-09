@@ -633,6 +633,10 @@ async def generate_report_pdf(req: ReportPdfRequest):
         pipeline = ProjectPipeline()
         state = await pipeline.run(address=req.address or "", project_id=req.project_id, options=None)
         result_dict = state.model_dump()
+        # W2-2: self-execution 경로도 결정론 cost/feasibility 산출을 분석원장에 적재
+        #   (형제 /report :595와 동일 경로). _record_pipeline_ledger는 내부 try/except로
+        #   어떤 실패도 응답을 막지 않는다(best-effort). 제공-result 경로는 무변경.
+        await _record_pipeline_ledger(state, req)
 
     report = PipelineReportService().generate(result_dict)
     narratives = await _gather_report_narratives(result_dict)
@@ -806,6 +810,12 @@ async def rerun_stage(req: StageRerunRequest):
         project_id=req.project_id,
         options=options,
     )
+
+    # W2-2: 단계 재실행의 결정론 산출(cost/feasibility)도 분석원장에 적재
+    #   (형제 /report :595와 동일 경로·시그니처). _record_pipeline_ledger는 내부
+    #   try/except로 어떤 실패도 응답을 막지 않는다(best-effort). 상태 리매핑 전 적재해도
+    #   record_pipeline_results는 stage.data만 읽으므로 결과는 동일.
+    await _record_pipeline_ledger(result, req)
 
     # 하위호환: 이전 결과로 data가 복원된 skip 단계는 응답에서 completed로 표기
     # (기존 라우터가 prev data 채움+COMPLETED 처리하던 응답 계약 보존).

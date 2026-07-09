@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.commission.engine import payout_net
+from app.services.sales.commission.engine import DEFAULT_WITHHOLDING_RATE, payout_net
 from apps.api.database.models.sales.commission_ext import SalesCommissionHoldback, SalesCommissionPayoutSchedule
 from apps.api.database.models.sales.commission_mh_harness import (
     SalesCommissionEvent,
@@ -129,7 +129,7 @@ async def release_holdback(db: AsyncSession, holdback_id):
     return h
 
 
-async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decimal("0.033")) -> int:
+async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=DEFAULT_WITHHOLDING_RATE) -> int:
     # ★[현장 격리·머니패스] 도래분 지급 스케줄은 '이 현장(site_id)' 것만 선택한다.
     #   schedule → split → event 경로로 event.site_id 를 조인해 본 현장 due 만 지급한다.
     #   (격리 없이 status/planned_at 만 필터하면 한 현장 운영자가 정산 실행 시 전 현장 due 가

@@ -356,11 +356,11 @@ export function ProjectDroneWorkspaceClient({
                   value={String(result.defects_found)}
                 />
                 <MetricTile
-                  label="Inspection date"
+                  label="점검일"
                   value={formatDate(locale, result.inspection_date)}
                 />
                 <MetricTile
-                  label="Created"
+                  label="생성일"
                   value={formatDate(locale, result.created_at)}
                 />
               </div>
@@ -403,8 +403,7 @@ export function ProjectDroneWorkspaceClient({
             </div>
           ) : (
             <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              Submit the inspection form to validate the persisted `drone/inspect`
-              response chain for this project route.
+              점검 양식을 제출하면 드론 하자 탐지 결과가 이 프로젝트에 표시됩니다.
             </div>
           )}
         </CardContent>

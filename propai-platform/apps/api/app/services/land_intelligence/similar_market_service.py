@@ -137,7 +137,7 @@ async def similar_market_feasibility(
     *,
     address: str,
     land_area_sqm: float | None = None,
-    region: str = "서울",
+    region: str = "",  # 빈값=auto_recommend_top3가 주소 시도 추론에 양보(맹목 "서울"은 지방 매출 과대·W1-4)
     equity_won: int = 10_000_000_000,
     use_llm: bool = False,
     with_senior: bool = True,

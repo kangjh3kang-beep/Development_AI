@@ -476,7 +476,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                   </div>
                 </div>
               ) : (
-                <Empty title="NO_ACTIVE_LIFE" body="Submit the first permit package to populate the tracking read model." />
+                <Empty title="진행 중인 항목이 없습니다" body="첫 인허가 패키지를 제출하면 실시간 추적이 시작됩니다." />
               )}
             </div>
           </CardContent>

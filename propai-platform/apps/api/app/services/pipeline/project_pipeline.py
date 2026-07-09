@@ -682,8 +682,8 @@ class ProjectPipeline:
                     _sgg = ord_result.get("sigungu")
                     if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
                         ordinance_sigungu = str(_sgg).strip()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("조례 조회 실패, 법정상한 폴백: %s", str(e)[:160])
             if not ordinance_bcr:
                 ordinance_bcr = national_bcr
                 ordinance_far = national_far
@@ -1809,7 +1809,9 @@ class ProjectPipeline:
         contingency = direct_construction * 0.05             # 예비비(직접공사비 5%)
         # 금융비: PF/브릿지 평균잔액(토지+공사의 절반)×금리×사업기간
         finance_cost = (land_cost + direct_construction) * 0.5 * interest_rate * (proj_months / 12.0)
-        levies = land_cost * 0.046                            # 제세공과(취득세 등 토지비 4.6%)
+        # ★세율 SSOT: 제세공과(토지 취득세)율을 tax_reconcile 단일출처와 공유(리터럴 0.046 중복 제거·값 불변).
+        from app.services.pipeline.tax_reconcile import LAND_ACQUISITION_RATE
+        levies = land_cost * LAND_ACQUISITION_RATE           # 제세공과(취득세 등 토지비 4.6%)
 
         cost_breakdown = {
             "토지비": round(land_cost),

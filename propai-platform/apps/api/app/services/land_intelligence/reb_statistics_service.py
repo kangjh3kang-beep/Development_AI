@@ -16,6 +16,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def _sido_of(address: str) -> str:
     from app.services.land_intelligence.land_price_index import _sido_of as _s
@@ -89,8 +93,8 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
             return {"cap_rate": round(val / 100.0, 4), "pct": val,
                     "wrttime": wrttime, "source": "R-ONE",
                     "basis": "상업용부동산 투자수익률(소득수익률) 실측"}
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("REB 조회 실패: %s", str(e)[:160])
     return None
 
 
@@ -116,8 +120,8 @@ async def jeonse_conversion_rate(address: str = "") -> dict[str, Any] | None:
             return {"rate": round(val / 100.0, 4), "pct": val,
                     "wrttime": wrttime, "source": "R-ONE",
                     "basis": "전월세전환율 실측"}
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("REB 조회 실패: %s", str(e)[:160])
     return None
 
 

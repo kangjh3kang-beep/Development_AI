@@ -41,7 +41,8 @@ class UnitMixInput:
     max_floors: int = 25              # 최대 층수
     min_parking_ratio: float = 1.0    # 세대당 최소 주차대수
     max_parking_spaces: int = 500     # 최대 주차대수
-    region: str = "서울"               # 지역 (시세 결정)
+    region: str = ""                   # 지역 — 현재 optimize() 미소비(가격은 price_by_type로 결정).
+    #                                    API 호환 위해 유지(값 무관·출력 무영향). "시세 결정"은 price_by_type 담당.
     price_by_type: dict | None = None   # 평형별 분양가 (만원/평, 공급면적 기준)
     demand_ratio: dict | None = None     # 평형별 수요 비율 (오버라이드)
     enabled_types: list | None = None    # 허용 평형 (None=전체)
