@@ -43,6 +43,7 @@ from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
+from app.services.feasibility.rough_feasibility_orchestrator import build_rough_scenario
 from app.services.feasibility.sensitivity_engine import (
     SensitivityScenario,
     run_sensitivity_analysis,
@@ -1110,6 +1111,140 @@ async def finalize_business_model(req: FinalizeRequest):
         },
         "finalized_at": datetime.now().isoformat(),
     }
+
+
+# ── 사업성 개략수지 통합 오케스트레이터 ───────────────────────────
+class RoughScenarioRequest(BaseModel):
+    """주소(+다필지) → 개략 사업성 수지(토지비+공사비+분양수입+20% 마진+월별 DCF).
+
+    overrides(2차 사용자 수정): land_cost_won·construction_unit_won·
+    sale_price_per_pyeong·construction_months·margin_rate_pct·discount_rate_pct 등.
+    site_id(선택): sales 현장 연결 시 주변 실거래(MOLIT) 분양단가를 사용(미지정 시 지역 시세 폴백).
+    """
+
+    address: str
+    parcels: list[dict[str, Any]] | None = None
+    project_id: str | None = None
+    dev_type: str | None = None       # 미지정 시 Top1 자동 추천
+    region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
+    equity_won: int | None = None
+    overrides: dict[str, Any] | None = None
+    site_id: str | None = None
+
+
+@router.post("/rough-scenario", dependencies=[Depends(enforce_llm_quota)])
+async def rough_scenario(
+    req: RoughScenarioRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """사업성 개략수지 — 통합면적 토지비 + 국토부 공사비 + Top1 분양수입 + 20% 마진 + 월별 DCF.
+
+    기존 엔진(통합분석·추천·탁상감정·공사비·분양가·현금흐름)을 조합만 한다(규칙 산출,
+    LLM 미사용). 실데이터 미확보 축은 값 null + degraded_notes로 정직 강등(무목업).
+    """
+    try:
+        site_uuid = None
+        if req.site_id:
+            try:
+                site_uuid = uuid.UUID(req.site_id)
+            except ValueError:
+                site_uuid = None
+        return await build_rough_scenario(
+            address=req.address,
+            parcels=req.parcels,
+            project_id=req.project_id,
+            dev_type=req.dev_type,
+            region=req.region,
+            equity_won=req.equity_won,
+            overrides=req.overrides,
+            db=db if site_uuid is not None else None,
+            site_id=site_uuid,
+        )
+    except Exception as e:  # noqa: BLE001 — 개략수지 산출 실패는 422로 정직 반환
+        raise HTTPException(status_code=422, detail=f"개략수지 산정 실패: {str(e)[:160]}")
+
+
+# ── 개략수지 → 시니어 최종 사업성분석 보고서(요구 ⑨) ──────────────
+class RoughScenarioReportRequest(BaseModel):
+    """개략수지 결과를 '시니어 전문 사업성 IM 보고서'(PDF/JSON/DOCX)로 승격.
+
+    scenario(우선): build_rough_scenario() 결과를 그대로 전달하면 재계산 없이 보고서만 만든다.
+    scenario 미제공 시: address(+parcels/dev_type/overrides 등)로 개략수지를 재생성한 뒤 보고서화.
+    use_llm=False면 AI 시니어 서술을 생략하고 'AI 분석 미포함'을 정직 고지한다(무목업).
+    """
+
+    scenario: dict[str, Any] | None = None
+    # ↓ scenario 미제공 시 재생성 입력(/rough-scenario와 동일 계약)
+    address: str | None = None
+    parcels: list[dict[str, Any]] | None = None
+    project_id: str | None = None
+    dev_type: str | None = None
+    region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
+    equity_won: int | None = None
+    overrides: dict[str, Any] | None = None
+    site_id: str | None = None
+    # ↓ 보고서 옵션
+    use_llm: bool = True               # AI 시니어 서술 포함 여부(사용자 선택)
+    format: str = "pdf"                # pdf | json | docx | pptx(미설치 시 PDF 폴백)
+
+
+@router.post("/rough-scenario/report", dependencies=[Depends(enforce_llm_quota)])
+async def rough_scenario_report(
+    req: RoughScenarioReportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """개략수지 → 시니어 최종 사업성분석 보고서(전문 IM 목차·PDF/JSON/DOCX). 요구 ⑨.
+
+    기존 자산만 조합한다(재구현 0): FeasibilityInterpreter(시니어 서술)·
+    attach_senior_consultation_multi(금융·감정평가 verdict)·BankReadyReportService(수지 섹션)·
+    통합 보고서 생성엔진(정본 ReportModel→PDF/DOCX). 실데이터 미확보는 '—'/정직 고지(무목업).
+    """
+    from app.services.feasibility.rough_scenario_report import (
+        generate_rough_scenario_report,
+    )
+
+    # 1) scenario 확보 — 직접 주입 우선, 없으면 address로 개략수지 재생성.
+    scenario = req.scenario
+    if scenario is None:
+        if not req.address:
+            raise HTTPException(status_code=422, detail="scenario 또는 address 중 하나는 필수입니다.")
+        site_uuid = None
+        if req.site_id:
+            try:
+                site_uuid = uuid.UUID(req.site_id)
+            except ValueError:
+                site_uuid = None
+        try:
+            scenario = await build_rough_scenario(
+                address=req.address,
+                parcels=req.parcels,
+                project_id=req.project_id,
+                dev_type=req.dev_type,
+                region=req.region,
+                equity_won=req.equity_won,
+                overrides=req.overrides,
+                db=db if site_uuid is not None else None,
+                site_id=site_uuid,
+            )
+        except Exception as e:  # noqa: BLE001 — 재생성 실패는 422로 정직 반환
+            raise HTTPException(status_code=422, detail=f"개략수지 재생성 실패: {str(e)[:160]}")
+
+    # 2) 시니어 보고서 생성(json이면 dict, 그 외는 (bytes, MIME, 확장자)).
+    try:
+        result = await generate_rough_scenario_report(
+            scenario, use_llm=req.use_llm, format=req.format, equity_won=req.equity_won,
+        )
+    except Exception as e:  # noqa: BLE001 — 보고서 생성 실패는 422로 정직 반환
+        raise HTTPException(status_code=422, detail=f"보고서 생성 실패: {str(e)[:160]}")
+
+    if (req.format or "pdf").strip().lower() == "json":
+        return result  # 구조화 dict → JSON 응답
+    data, media_type, ext = result  # 파일 렌더 결과
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="rough_scenario_report.{ext}"'},
+    )
 
 
 # ── 다기간 DCF 월별 현금흐름(베팅 B) ──────────────────────────────

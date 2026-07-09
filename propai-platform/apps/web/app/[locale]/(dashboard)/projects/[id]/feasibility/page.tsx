@@ -6,6 +6,7 @@ import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { FeasibilityEditorV2 } from "@/components/feasibility/FeasibilityEditorV2";
 import { UnitMixOptimizerPanel } from "@/components/feasibility/UnitMixOptimizerPanel";
+import { RoughScenarioPanel } from "@/components/feasibility/RoughScenarioPanel";
 import { TrustBadge } from "@/components/common/TrustBadge";
 
 type Props = {
@@ -43,6 +44,11 @@ export default async function FeasibilityPage({ params }: Props) {
       {/* 신뢰도 배지(데이터 출처/검증) */}
       <div>
         <TrustBadge />
+      </div>
+
+      {/* ①~⑧ 개략수지 워크플로우 — 프로젝트 선택/수정 → 기본 개략수지 → 2차 실데이터 수정 → 월별 DCF */}
+      <div className="animate-premium-fade" style={{ animationDelay: "150ms" }}>
+        <RoughScenarioPanel projectId={id} />
       </div>
 
       {/* ② 위젯 */}
