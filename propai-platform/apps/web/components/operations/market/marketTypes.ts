@@ -26,10 +26,14 @@ export interface MigrationRegion {
 export interface MigrationData {
   target_adm_cd?: string;
   year?: string;
+  /** 분석범위(권역) 라벨용 — 대상 시군구명(예: '강남구'). */
+  region_name?: string | null;
   total_inflow?: number;
   total_outflow?: number;
   net_migration?: number;
   top_inflow_regions?: MigrationRegion[];
+  /** 'live'|'fallback'|'mock'|'unavailable' — 실데이터/가짜값 구분(정직 표기용). */
+  data_source?: string | null;
 }
 
 /** 거주 인구·가구 특성(SGIS 센서스). age_distribution/household_types는 키-값 맵. */

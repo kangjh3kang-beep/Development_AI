@@ -878,39 +878,79 @@ export function MarketInsightsWorkspaceClient() {
       {/* 인구·가구·소득 시각화(Recharts) — 분석 보조로 재배치(원천 표는 RAW에 별도). 데이터 출처 정직 배지 */}
       {report?.demographics && <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />}
 
-      {/* 인구 이동(OD) — 현재 SGIS 미제공·행안부/KOSIS OD 미연동이라 정직하게 안내(가짜 Top3 금지) */}
-      {report?.demographics?.migration && (
-        (report.demographics.migration.top_inflow_regions?.length ?? 0) > 0 ? (
-          <div className="sa-di-block">
-            <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
-              <span className="sa-di-block__title">인구 이동망 (유입 Top)</span>
-              <span className="sa-di-eyebrow">MIGRATION</span>
-            </header>
-            <div className="sa-di-block__body">
-              <ul className="space-y-1.5 text-sm text-[var(--text-secondary)]">
-                {report.demographics.migration.top_inflow_regions.map((reg: any, i: number) => (
-                  <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
-                    <span>{reg.name}</span>
-                    <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        ) : (
+      {/* 인구 이동망 — KOSIS「시군구별 이동자수」로 대상 권역의 총전입·총전출·순이동(유입세)을 표시.
+          ★배선 수정: 예전엔 top_inflow_regions(OD 출발지 Top)만 보고 '데이터 없음'으로 떨어져, 순이동 실데이터가
+          RawDataTables엔 나오는데 이 요약 패널은 숨겼다. 이제 실데이터(data_source==='live')면 전입/전출/순이동을
+          표시하고, 분석범위(권역)를 라벨한다. OD 출발지 Top(권역 흐름도)은 KOSIS 단일분류표에 미제공이라
+          옵션(있을 때만)으로 두고, 없으면 행안부 OD 연동 예정을 정직하게 안내한다(가짜 금지). */}
+      {report?.demographics?.migration && (() => {
+        const mig = report.demographics.migration;
+        const inflow = mig.total_inflow ?? 0;
+        const outflow = mig.total_outflow ?? 0;
+        const net = mig.net_migration ?? 0;
+        const hasFlow = mig.data_source === "live" && (inflow > 0 || outflow > 0);
+        const hasOD = (mig.top_inflow_regions?.length ?? 0) > 0;
+        const scopeRegion = mig.region_name || report?.address?.split(" ").find((t: string) => /(구|시|군)$/.test(t)) || null;
+        return (
           <div className="sa-di-block">
             <header className="sa-di-block__head" style={{ cursor: "default" }}>
               <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
               <span className="sa-di-block__title">인구 이동망 (전입·전출)</span>
-              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "var(--text-tertiary)", backgroundColor: "var(--surface-muted)" }}>데이터 없음</span>
+              {hasFlow ? (
+                <span className="sa-di-eyebrow">MIGRATION</span>
+              ) : (
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "var(--text-tertiary)", backgroundColor: "var(--surface-muted)" }}>데이터 없음</span>
+              )}
             </header>
             <div className="sa-di-block__body">
-              <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공 — 가짜 수치 대신 정직 표기)</p>
+              {/* 이동망 분석범위(권역) — 대상 시군구·기준연도·데이터 출처 정직 표기 */}
+              {(scopeRegion || hasFlow) && (
+                <p className="mb-2 text-xs text-[var(--text-tertiary)]">
+                  분석범위(권역): <strong className="text-[var(--text-secondary)]">{scopeRegion ?? "—"}</strong>
+                  {mig.year ? ` · ${mig.year}년 기준` : ""} · 출처 KOSIS 시군구별 이동자수
+                </p>
+              )}
+              {hasFlow ? (
+                <>
+                  <div className="sa-di-tiles sa-di-tiles--3">
+                    <div className="sa-di-tile">
+                      <span className="sa-di-tile__label">전입</span>
+                      <span className="sa-di-tile__value">{inflow.toLocaleString()}명</span>
+                    </div>
+                    <div className="sa-di-tile">
+                      <span className="sa-di-tile__label">전출</span>
+                      <span className="sa-di-tile__value">{outflow.toLocaleString()}명</span>
+                    </div>
+                    <div className="sa-di-tile">
+                      <span className="sa-di-tile__label">순이동</span>
+                      <span
+                        className="sa-di-tile__value"
+                        style={{ color: net > 0 ? "var(--status-success)" : net < 0 ? "var(--status-danger)" : undefined }}
+                      >
+                        {net > 0 ? "+" : ""}{net.toLocaleString()}명
+                      </span>
+                    </div>
+                  </div>
+                  {hasOD ? (
+                    <ul className="mt-3 space-y-1.5 text-sm text-[var(--text-secondary)]">
+                      {mig.top_inflow_regions!.map((reg: { name?: string; ratio?: number; count?: number }, i: number) => (
+                        <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
+                          <span>{reg.name}</span>
+                          <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="sa-di-empty mt-2">전출지별 유입 Top(OD 출발지)·권역 흐름도는 KOSIS 시군구 이동표에 미제공 — 행정안전부 OD 마이크로데이터 연동 시 표시됩니다(현재 순이동세만 실데이터).</p>
+                  )}
+                </>
+              ) : (
+                <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공·KOSIS 키/시군구 미확정 — 가짜 수치 대신 정직 표기)</p>
+              )}
             </div>
           </div>
-        )
-      )}
+        );
+      })()}
 
       {/* 초정밀 타겟 분석 (Phase 2 - Premium) */}
       {report?.demographics && (
