@@ -110,12 +110,6 @@ vi.mock("@/components/analytics/OperationsIntelligenceWorkspaceClient", () => ({
   }) => <div data-testid="ops-intelligence-workspace">{locale}</div>,
 }));
 
-vi.mock("@/components/safety/SafetyCCTVDashboard", () => ({
-  SafetyCCTVDashboard: () => (
-    <div data-testid="safety-cctv-dashboard">Safety CCTV dashboard</div>
-  ),
-}));
-
 vi.mock("@/components/safety/ParkingLogView", () => ({
   ParkingLogView: () => <div data-testid="parking-log-view">Parking log view</div>,
 }));

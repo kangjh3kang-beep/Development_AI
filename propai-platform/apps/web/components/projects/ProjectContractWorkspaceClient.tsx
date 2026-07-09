@@ -127,7 +127,7 @@ const LABELS: Record<Locale, Labels> = {
       "프로젝트 상세를 불러오지 못했습니다. 현재 라우트 컨텍스트를 복구한 뒤 다시 시도하세요.",
     draftLoadErrorTitle: "계약 초안 로드 실패",
     draftLoadErrorDetail:
-      "현재 계약 유형의 최신 초안을 불러오지 못했습니다. 다시 시도해 persisted read model을 복구하세요.",
+      "현재 계약 유형의 최신 초안을 불러오지 못했습니다. 다시 시도해 주세요.",
     retryAction: "다시 시도",
     missingCounterpartyError: "상대방 명칭이 필요합니다.",
     missingSignerError: "전자서명 요청에는 이름과 이메일이 필요합니다.",

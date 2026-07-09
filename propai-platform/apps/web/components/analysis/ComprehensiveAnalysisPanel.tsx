@@ -258,7 +258,8 @@ export function ComprehensiveAnalysisPanel() {
       });
       setResult(data);
     } catch (e) {
-      setError(String(e));
+      // 원시 개발자 문자열(Error:…·[object Object]) 노출 금지 — 통상어 안내(정직 표기).
+      setError(e instanceof Error ? e.message : "종합분석 중 오류가 발생했습니다. 입력을 확인하고 다시 시도해 주세요.");
     } finally {
       setLoading(false);
     }
