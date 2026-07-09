@@ -128,7 +128,8 @@ class FeasibilityBaselineRequest(BaseModel):
     zone_code: str = ""           # 용도지역 코드(있으면 라벨용).
     land_area_sqm: float = 0      # 부지면적(㎡). 미입력 시 자동감지.
     pnu: str = ""                 # 필지고유번호(있으면 자동감지 보조).
-    region: str = "서울"          # 시도명(분양가 시드 폴백용).
+    region: str = ""              # 시도명(분양가 시드 폴백용). 빈값=주소 시도 추론에 양보 —
+    #                               맹목 "서울"은 비서울 부지 baseline을 서울가로 과대(W1-4 동일 클래스).
     official_price_per_sqm: float = 0  # 공시지가(원/㎡). 미입력 시 자동감지/표준.
     development_type: str = ""    # 강제 개발유형(미입력 시 용도지역 대표유형 자동선택).
     equity_won: int = 0           # 자기자본(미입력 시 토지비 기반 가정).
