@@ -294,6 +294,8 @@ class KosisClient(BaseAPIClient):
         target = (region_name or "").strip()
         empty = {
             "target_adm_cd": sgg5, "year": year,
+            # 분석범위(권역) 라벨용 — 화면에서 '대상 시군구·연도'를 정직하게 표기하도록 전달.
+            "region_name": target or None,
             "total_inflow": 0, "total_outflow": 0, "net_migration": 0,
             "top_inflow_regions": [], "data_source": "unavailable",
             "note": "국내인구이동 데이터 없음 — KOSIS 키/시군구명 확정 시 산출.",
@@ -337,6 +339,7 @@ class KosisClient(BaseAPIClient):
                         "note": f"KOSIS {tbl_id} '{target}' 전입/전출 수치 없음."}
             return {
                 "target_adm_cd": sgg5, "year": data_year,
+                "region_name": target or None,   # 분석범위(권역) 라벨용
                 "total_inflow": inflow, "total_outflow": outflow, "net_migration": net,
                 # OD 출발지 분해는 이 표에 없음(단일분류) — 정직하게 빈 목록 유지.
                 "top_inflow_regions": [],

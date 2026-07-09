@@ -16,7 +16,7 @@
  * 색상은 전부 토큰(하드코딩 금지), 숫자는 sa-di-num(우측정렬·mono)·천단위 콤마.
  */
 
-import { BarChart3, Compass, Home, Users, Wallet } from "lucide-react";
+import { BarChart3, Home, Users, Wallet } from "lucide-react";
 import type { DataSource } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 
@@ -156,9 +156,15 @@ function asSource(s?: string): DataSource | undefined {
 /*  메인 컴포넌트                                                      */
 /* ------------------------------------------------------------------ */
 
-export function RawDataTables({ raw }: { raw: RawData | undefined }) {
+export function RawDataTables({ raw, section }: { raw: RawData | undefined; section?: "real_estate" | "demand" }) {
   // raw 자체가 없으면(보고서 미생성·구버전 응답) 아무것도 렌더하지 않는다.
   if (!raw) return null;
+
+  // section: 'real_estate'면 매매·전월세·추이 표만, 'demand'면 인구·소득 표만 렌더.
+  //   워크스페이스가 '가격·시세'/'수요·인구' 그룹에 각각 접힘 원자료로 인접 배치하기 위한 분할.
+  //   (미지정이면 전체 — 하위호환.)
+  const showRE = !section || section === "real_estate";
+  const showDemand = !section || section === "demand";
 
   const re = raw.real_estate;
   const pop = raw.population;
@@ -170,6 +176,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
+      {showRE && (<>
       {/* 1) 유형별 매매 시세 */}
       <div className="sa-di-block">
         <header className="sa-di-block__head" style={{ cursor: "default" }}>
@@ -286,6 +293,8 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
         </div>
       </div>
 
+      </>)}
+      {showDemand && (<>
       {/* 4) 인구 규모·가구 (population 선택 시에만 키 존재) */}
       {pop && (
         <>
@@ -403,50 +412,8 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
             </div>
           </div>
 
-          {/* 인구 이동 — 전입·전출·순이동(순이동 부호색) */}
-          <div className="sa-di-block">
-            <header className="sa-di-block__head" style={{ cursor: "default" }}>
-              <span className="sa-di-block__icon" aria-hidden><Compass className="size-3.5" /></span>
-              <span className="sa-di-block__title">인구 이동</span>
-              <DataSourceBadge source={asSource(pop.migration_data_source)} />
-            </header>
-            <div className="sa-di-block__body">
-              {pop.migration.total_inflow != null || pop.migration.total_outflow != null || pop.migration.net_migration != null ? (
-                <div className="sa-di-tiles sa-di-tiles--3">
-                  <div className="sa-di-tile">
-                    <span className="sa-di-tile__label">전입</span>
-                    <span className="sa-di-tile__value">{num(pop.migration.total_inflow, "명")}</span>
-                  </div>
-                  <div className="sa-di-tile">
-                    <span className="sa-di-tile__label">전출</span>
-                    <span className="sa-di-tile__value">{num(pop.migration.total_outflow, "명")}</span>
-                  </div>
-                  <div className="sa-di-tile">
-                    <span className="sa-di-tile__label">순이동</span>
-                    <span
-                      className="sa-di-tile__value"
-                      style={{
-                        color:
-                          pop.migration.net_migration == null
-                            ? undefined
-                            : pop.migration.net_migration > 0
-                            ? "var(--status-success)"
-                            : pop.migration.net_migration < 0
-                            ? "var(--status-danger)"
-                            : undefined,
-                      }}
-                    >
-                      {pop.migration.net_migration == null
-                        ? "-"
-                        : `${pop.migration.net_migration > 0 ? "+" : ""}${pop.migration.net_migration.toLocaleString()}명`}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <EmptyNote>인구 이동(전입·전출) 데이터가 없습니다. (연동 예정)</EmptyNote>
-              )}
-            </div>
-          </div>
+          {/* 인구 이동 블록 제거(중복 해소) — 워크스페이스의 '인구 이동망' 패널이 정본.
+              RawData(표)에서는 순이동 타일 중복을 없앤다(전입·전출·순이동은 인구 이동망 참조). */}
         </>
       )}
 
@@ -515,6 +482,7 @@ export function RawDataTables({ raw }: { raw: RawData | undefined }) {
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 }

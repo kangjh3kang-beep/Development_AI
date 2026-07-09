@@ -12,6 +12,7 @@ class MigrationData(BaseModel):
     """인구 이동망 데이터 (1단계 SGIS 기반)"""
     target_adm_cd: str = Field(..., description="대상 행정구역 코드")
     year: str = Field(..., description="조회 연도")
+    region_name: str | None = Field(None, description="분석범위(권역) 라벨용 대상 시군구명")
     total_inflow: int = Field(0, description="총 전입 인구")
     total_outflow: int = Field(0, description="총 전출 인구")
     net_migration: int = Field(0, description="순이동 인구")

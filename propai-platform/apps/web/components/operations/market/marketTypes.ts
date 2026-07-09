@@ -8,8 +8,6 @@
  * 원칙: report:any 제거 · 하위호환(기존 키 무변경) · 신규는 옵셔널 가산.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 /** 데이터 출처 상태 — live(실데이터)/fallback(합성·추정)/mock(개발목업)/unavailable(데이터 없음). */
 export type DataSource = "live" | "fallback" | "mock" | "unavailable";
 
@@ -26,10 +24,14 @@ export interface MigrationRegion {
 export interface MigrationData {
   target_adm_cd?: string;
   year?: string;
+  /** 분석범위(권역) 라벨용 — 대상 시군구명(예: '강남구'). */
+  region_name?: string | null;
   total_inflow?: number;
   total_outflow?: number;
   net_migration?: number;
   top_inflow_regions?: MigrationRegion[];
+  /** 'live'|'fallback'|'mock'|'unavailable' — 실데이터/가짜값 구분(정직 표기용). */
+  data_source?: string | null;
 }
 
 /** 거주 인구·가구 특성(SGIS 센서스). age_distribution/household_types는 키-값 맵. */
@@ -159,6 +161,60 @@ export interface MarketNarrative {
   target_persona?: string;
 }
 
+/**
+ * 시니어 통합 인사이트 — MarketInterpreter 6키 정밀 내러티브(감정평가사·분양대행 관점).
+ * 각 값은 LLM이 생성한 문자열(결정론 영역 외). use_llm off/미생성 시 미제공(폴백은 narrative).
+ * 화면 위계: investment_insight(결론) → comparable_analysis(근거) → risk_factors(리스크)
+ *   → timing_recommendation(권고), market_overview·price_trend_analysis는 부연 근거.
+ */
+export interface SeniorInsight {
+  /** 지역 시장 종합 현황(특성·시세 수준·활성도). */
+  market_overview?: string;
+  /** 가격 추이 분석·전망(실거래-공시-분양가 상관·방향성). */
+  price_trend_analysis?: string;
+  /** 주변 유사 물건 비교(유형별 시세 차이·개발방식 격차) — 근거. */
+  comparable_analysis?: string;
+  /** 투자 관점 시사점(매입 적정가·수익성·자금) — 핵심 결론. */
+  investment_insight?: string;
+  /** 시장 리스크 요인(금리·규제·공급과잉·수요) + 헤징. */
+  risk_factors?: string;
+  /** 매수·개발 적기 판단(사이클상 위치) — 권고. */
+  timing_recommendation?: string;
+}
+
+/**
+ * 실데이터 타겟 프로파일 단일 축 — 라벨(축명)·값(핵심)·부연.
+ * 백엔드가 문자열만 내려줄 수도 있어(축=문자열), 화면은 문자열/객체 모두 방어적으로 소비한다.
+ */
+export interface TargetProfileAxis {
+  label?: string;
+  value?: string;
+  detail?: string;
+}
+
+/**
+ * 실데이터 기반 타겟 고객층 프로파일(5축) — 마이크로 타겟팅(K-Atlas 잠금)을 대체.
+ * 인구·가구·소득·상권·입지 실데이터에서 도출한 주력 수요층 프로파일(정직: data_source 노출).
+ * 신용·카드소비 등 초정밀 금융은 별도 PREMIUM 제휴(여기 미포함).
+ */
+export interface TargetProfile {
+  /** 주력 연령대(예: '30대'). */
+  primary_age?: TargetProfileAxis | string;
+  /** 주력 가구 유형(예: '2인 가구'). */
+  primary_household?: TargetProfileAxis | string;
+  /** 소득 수준(백엔드 키=income_tier — 렌더러 하위호환 위해 키명 유지). */
+  income_tier?: TargetProfileAxis | string;
+  /** 상권 특성(예: '발달상권'). */
+  commercial?: TargetProfileAxis | string;
+  /** 입지 특성(예: '역세권·학군'). */
+  location?: TargetProfileAxis | string;
+  /** 신용·카드소비 등 마이크로 금융(K-Atlas) — PREMIUM 제휴 예정(값 없음, 배지/타일 미표시). */
+  premium?: Record<string, unknown>;
+  /** 종합 요약(옵셔널). */
+  summary?: string;
+  data_source?: DataSource;
+}
+
 /** /market/report 응답 전체. 기존 키는 그대로, 신규는 옵셔널. */
 export interface MarketReport {
   generated_at?: string;
@@ -174,6 +230,10 @@ export interface MarketReport {
   infrastructure?: Record<string, any>;
   demographics?: DemographicProfile | null;
   narrative?: MarketNarrative | null;
+  /** 신규(옵셔널): 시니어 통합 인사이트(6키 정밀 내러티브). 결론 우선 카드가 소비. */
+  senior_insight?: SeniorInsight | null;
+  /** 신규(옵셔널): 실데이터 타겟 고객층 프로파일(5축). 마이크로 타겟팅 대체. */
+  target_profile?: TargetProfile | null;
   feasibility_analysis?: FeasibilityAnalysis | null;
   pricing_band?: PricingBand | null;
   unit_mix_recommendation?: UnitMixRecommendation | null;
