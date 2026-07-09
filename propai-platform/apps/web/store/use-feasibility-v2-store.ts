@@ -97,6 +97,11 @@ export interface ModuleInfo {
 interface FeasibilityV2State {
   // 입력
   input: Partial<FeasibilityInput>;
+  // 이 input 이 어느 프로젝트에 속하는지(프로젝트 스코핑) — 이 스토어는 전역 단일이라
+  //   프로젝트를 전환해도 이전 프로젝트의 input 이 남는다. 투자분석 등 다른 화면이 이 input 을
+  //   리스크 시뮬 base 로 재사용할 때, boundProjectId 와 현재 projectId 가 다르면 '남의 프로젝트
+  //   데이터'이므로 신뢰하지 않도록 하는 표식(무목업: 다른 프로젝트 실데이터 오표시 방지).
+  boundProjectId: string | null;
   // 결과
   result: FeasibilityResult | null;
   comparisonResults: FeasibilityResult[];
@@ -114,6 +119,8 @@ interface FeasibilityV2State {
   activeTab: "input" | "result" | "montecarlo" | "version" | "tax";
   // 액션
   setInput: (patch: Partial<FeasibilityInput>) => void;
+  // 현재 input 을 특정 프로젝트에 바인딩(수지 에디터가 프로젝트 로드 시 호출).
+  bindProject: (projectId: string) => void;
   setSelectedModule: (code: string) => void;
   setActiveTab: (tab: FeasibilityV2State["activeTab"]) => void;
   // opts.constructionCostOverrideWon: 공사비 정밀분석 결과를 엔진에 주입(3자 수치 정합).
@@ -156,6 +163,7 @@ const DEFAULT_INPUT: Partial<FeasibilityInput> = {
 export const useFeasibilityV2Store = create<FeasibilityV2State>()(
   immer((set, get) => ({
     input: { ...DEFAULT_INPUT },
+    boundProjectId: null,
     result: null,
     comparisonResults: [],
     monteCarloResult: null,
@@ -171,6 +179,18 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
     setInput: (patch) =>
       set((s) => {
         Object.assign(s.input, patch);
+      }),
+
+    // 다른 프로젝트로 바뀌면 이전 프로젝트 input 이 남지 않도록 초기화 후 바인딩(오염 방지).
+    bindProject: (projectId) =>
+      set((s) => {
+        if (s.boundProjectId !== projectId) {
+          s.input = { ...DEFAULT_INPUT };
+          s.result = null;
+          s.monteCarloResult = null;
+          s.baselineNeedsInput = false;
+        }
+        s.boundProjectId = projectId;
       }),
 
     setSelectedModule: (code) =>
@@ -336,6 +356,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
     reset: () =>
       set((s) => {
         s.input = { ...DEFAULT_INPUT };
+        s.boundProjectId = null;
         s.result = null;
         s.comparisonResults = [];
         s.monteCarloResult = null;

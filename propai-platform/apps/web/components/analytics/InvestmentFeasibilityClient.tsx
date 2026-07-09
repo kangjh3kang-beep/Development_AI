@@ -6,13 +6,13 @@
  * SSOT 정합: 수지의 단일 진실원은 프로젝트 수지분석(FeasibilityEditorV2 + use-feasibility-v2-store)이며,
  * 그 결과가 모세혈관(useProjectContextStore.feasibilityData)에 반영된다. 본 화면은 별도 계산을 하지 않고
  * 해당 store를 구독해 동일한 숫자(순이익·수익률·ROI·ROE·NPV·총사업비·등급)를 표시한다.
- *  ① 수지 미산출 시 "프로젝트 수지분석으로 이동" CTA(무목업: 가짜 0 표기 금지)
+ *  ① 수지 미산출 시 같은 화면의 개략수지 패널(#rough-scenario-base)로 스크롤 유도하는 CTA(무목업: 가짜 0 표기 금지)
  *  ② ROI/ROE/실효 LTV 파생 표시(ROE는 자기자본 입력이 있을 때만, 없으면 "—")
  *  ③ 할루시네이션 검증 + 전문가 패널(회계사·세무사·MBA·디벨로퍼·시공사·증권·저축은행)
  */
 
 import { useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Link2 } from "lucide-react";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
@@ -34,6 +34,7 @@ function fmtKrw(won: number | null | undefined): string {
 
 export function InvestmentFeasibilityClient() {
   const params = useParams() as { locale?: string };
+  const router = useRouter();
   const locale = isValidLocale(params?.locale ?? "") ? (params.locale as string) : "ko";
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
@@ -82,6 +83,16 @@ export function InvestmentFeasibilityClient() {
     ? `/${locale}/projects/${projectId}/feasibility`
     : `/${locale}/projects`;
 
+  // ★CTA 상향 — 예전엔 다른 페이지(정밀 수지 에디터)로 이탈시켰지만, 같은 화면 상단의 개략수지
+  //  패널(#rough-scenario-base)로 스크롤해 '원클릭 생성' 진입점으로 유도한다. 개략수지 패널이
+  //  없는 화면에서 재사용될 경우엔 폴백으로 정밀 에디터로 이동(무회귀).
+  const goGenerateRoughScenario = () => {
+    const el =
+      typeof document !== "undefined" ? document.getElementById("rough-scenario-base") : null;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    else router.push(feasibilityHref);
+  };
+
   return (
     <section className="grid grid-cols-1 gap-6 min-w-0">
       <div>
@@ -98,19 +109,28 @@ export function InvestmentFeasibilityClient() {
       {/* ★Stage1 통합분석 기반 — 인허가·Top3(Top1·ROI) 도메인 요약 재사용(없으면 미렌더·폴백) */}
       <DecisionReuseBanner part={permitBriefPart} stale={briefStale} />
 
-      {/* 수지 미산출 — CTA(무목업: 가짜 0 대신 정직 안내) */}
+      {/* 수지 미산출 — CTA(무목업: 가짜 0 대신 정직 안내). 같은 화면 개략수지 패널로 원클릭 유도. */}
       {!hasResult && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6">
           <p className="text-sm font-bold text-[var(--text-primary)]">아직 수지분석 결과가 없습니다.</p>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            프로젝트 수지분석에서 토지비·공사비·일반사업비·금융 레버리지·분양매출을 입력하고 계산하면, 그 결과가 이 화면에 자동 반영됩니다.
+            위 <b className="text-[var(--text-primary)]">개략수지 (기준 산출)</b>에서 프로젝트를 고르고 &lsquo;개략수지 생성&rsquo;을 실행하면, 그 결과(순이익·ROI·등급)가 이 화면에 자동 반영됩니다.
           </p>
-          <Link
-            href={feasibilityHref}
-            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90"
-          >
-            프로젝트 수지분석으로 이동 →
-          </Link>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={goGenerateRoughScenario}
+              className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90"
+            >
+              ↑ 개략수지 생성하러 가기
+            </button>
+            <Link
+              href={feasibilityHref}
+              className="text-xs font-semibold text-[var(--accent-strong)] hover:underline"
+            >
+              정밀 수지분석 에디터로 이동 →
+            </Link>
+          </div>
         </div>
       )}
 

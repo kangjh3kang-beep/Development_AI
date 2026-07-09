@@ -161,7 +161,13 @@ class MonteCarloResponse(BaseModel):
     p50: float
     p95: float
     probability_positive: float
+    # convergence_ratio 는 변동계수 CV(σ/|μ|) — '수렴'이 아니라 결과 분포의 고유 리스크 지표다.
+    #   (이름이 오해를 부르나 하위호환 위해 유지. 실제 수렴 여부는 converged/standard_error_ratio 참조.)
     convergence_ratio: float
+    # ── 수렴 지표(엔진이 이미 산출하나 스키마 미선언으로 드롭되던 것을 additive 노출) ──
+    #   standard_error_ratio = σ/(√N·|μ|)(표준오차 비율), converged = SE비율 < 0.01(표본 충분·안정).
+    standard_error_ratio: float | None = None
+    converged: bool | None = None
     n_simulations: int
     histogram: list[dict[str, Any]] = []
     # ── 실수지 모드 메타(additive — 기본값은 기존 변수합 동작 의미 유지) ──

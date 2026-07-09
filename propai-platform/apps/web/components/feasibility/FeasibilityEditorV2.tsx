@@ -40,6 +40,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     fetchCommitLog,
     calculate,
     runBaseline,
+    bindProject,
   } = useFeasibilityV2Store();
 
   const [showAutoRecommend, setShowAutoRecommend] = useState(false);
@@ -56,9 +57,12 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   const baselineTriedSigRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // 스토어 input 을 현재 프로젝트에 바인딩 — 프로젝트가 바뀌면 이전 input/결과를 비워
+    //   다른 화면(투자분석 등)이 '남의 프로젝트' 수지를 재사용하지 않게 한다(오염 방지).
+    bindProject(projectId);
     fetchModules();
     fetchCommitLog(projectId);
-  }, [fetchModules, fetchCommitLog, projectId]);
+  }, [bindProject, fetchModules, fetchCommitLog, projectId]);
 
   // 결과가 산출되면 모세혈관(feasibilityData)에 반영 — 완성도/금융단계·stale 타임스탬프 갱신.
   useEffect(() => {
