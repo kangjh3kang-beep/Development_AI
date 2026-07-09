@@ -16,6 +16,7 @@ from app.services.senior_agents.specs.bim_specialist import BIM_SPECIALIST_SPEC
 from app.services.senior_agents.specs.deliberation_member import DELIBERATION_MEMBER_SPEC
 from app.services.senior_agents.specs.financial_advisor import FINANCIAL_ADVISOR_SPEC
 from app.services.senior_agents.specs.legal_scrivener import LEGAL_SCRIVENER_SPEC
+from app.services.senior_agents.specs.quantity_surveyor import QUANTITY_SURVEYOR_SPEC
 from app.services.senior_agents.specs.tax_advisor import TAX_ADVISOR_SPEC
 from app.services.senior_agents.specs.urban_planner import URBAN_PLANNER_SPEC
 
@@ -55,7 +56,7 @@ def validate_registry() -> dict[str, list[str]]:
 
 
 # ── 기본 spec 등록(register 게이트 경유·판단자격 검사 통과 필수) ──
-# 도시계획=P0 PoC, 금융=P0, 설계=P1, BIM·심의·세무·회계=P2, 법무사·감정평가사=P3(권리분석 통합).
+# 도시계획=P0 PoC, 금융=P0, 설계=P1, BIM·심의·세무·회계=P2, 법무사·감정평가사·적산(QS)=P3.
 for _spec in (
     URBAN_PLANNER_SPEC,
     FINANCIAL_ADVISOR_SPEC,
@@ -66,5 +67,6 @@ for _spec in (
     ACCOUNTANT_SPEC,
     LEGAL_SCRIVENER_SPEC,
     APPRAISER_SPEC,
+    QUANTITY_SURVEYOR_SPEC,
 ):
     register(_spec)

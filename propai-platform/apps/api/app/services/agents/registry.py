@@ -77,17 +77,49 @@ def _build_far() -> SpecialistAgent:
 
 # ── Phase 3.2 잔여: cost·market 도구 + 다관점 패널 어댑터 ──
 
+# dev_type(개발유형 코드) → StandardQuantityEstimator.STANDARD_QUANTITIES 건물유형(한글) 매핑.
+# 직접 대응하는 코드만 매핑하고, 그 외(재개발/재건축/일반분양 등 공동주택 규모 개발)는
+# estimator 자체 기본값("공동주택")으로 자연 폴백한다(발명 없음 — permit_validator.
+# DEVELOPMENT_TYPE_NAMES 실코드 기준).
+_DEV_TYPE_TO_BUILDING_TYPE: dict[str, str] = {
+    "M08": "오피스텔",        # 오피스텔
+    "M09": "근린생활시설",     # 지식산업센터
+    "M10": "다세대주택", "M11": "다세대주택",  # 단독주택·전원주택(저층 개별주거)
+    "M12": "다세대주택", "M13": "다세대주택",  # 타운하우스·도시형생활주택
+}
+
+
 def _cost_tool(data: dict[str, Any]) -> dict[str, Any]:
-    """계층1 결정론 공사비 도구(CONSTRUCTION_COST_PER_SQM) → findings/summary. 수치=상수×면적만."""
-    from app.services.land_intelligence.comprehensive_analysis_service import CONSTRUCTION_COST_PER_SQM
+    """계층1 결정론 공사비 도구(standard_quantity_estimator+origin_cost_calculator) → findings/summary.
+
+    가용 입력(gfa_sqm·dev_type)만으로 표준 물량(개산)을 추정하고 12단계 법정요율 원가계산으로
+    총공사비를 산정한다(상수×면적 개산 폐기 — 수치는 두 결정론 엔진에서만 생성·불변). 계층1 도구는
+    동기·무DB(단가 SSOT는 동기 fallback resolve — boq_builder의 async DB 조회 미사용)이라 결정론이
+    보존된다(동일 입력 → 동일 출력).
+    """
+    from app.services.cost.origin_cost_calculator import OriginCostCalculator
+    from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
+
     dev_type = data.get("dev_type", "")
     gfa = float(data.get("gfa_sqm") or data.get("total_gfa_sqm") or 0)
-    per_sqm = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
-    total = gfa * per_sqm
+    building_type = _DEV_TYPE_TO_BUILDING_TYPE.get(dev_type, "공동주택")
+    floors_above = int(data.get("floor_count_above") or 1)
+    floors_below = int(data.get("floor_count_below") or 0)
+    structure_type = str(data.get("structure_type") or "RC")
+
+    items = StandardQuantityEstimator().estimate(
+        building_type=building_type, total_gfa_sqm=gfa,
+        floor_count_above=floors_above, floor_count_below=floors_below,
+        structure_type=structure_type,
+    )
+    calc = OriginCostCalculator().calculate(items)
+    total = calc.get("total_project_cost", 0)
+    per_sqm = round(total / gfa) if gfa else 0
     return {
         "findings": [{"check_id": "COST", "status": "info", "current": total, "limit": None}],
         "summary": {"gfa_sqm": gfa, "cost_per_sqm": per_sqm,
-                    "total_construction_cost": total, "dev_type": dev_type},
+                    "total_construction_cost": total, "dev_type": dev_type,
+                    "building_type": building_type},
     }
 
 
@@ -107,8 +139,17 @@ async def _default_panel(domain: str, context: dict[str, Any]) -> dict[str, Any]
 
 
 def _build_cost() -> SpecialistAgent:
+    # ★market 선례(_build_market, try/except ImportError graceful) 복제 — cost 도메인의
+    #   interpreter=None dead-path 해소. LLM 키 부재/미배포 브랜치는 BaseInterpreter가
+    #   graceful degrade(결정론 findings는 무손상).
+    interpreter = None
+    try:
+        from app.services.ai.cost_interpreter import CostInterpreter
+        interpreter = CostInterpreter()
+    except Exception:  # noqa: BLE001 — 인터프리터 로드 실패해도 결정론 도구는 동작(graceful)
+        interpreter = None
     return SpecialistAgent(domain="cost", task_type="construction_cost",
-                           tool=_cost_tool, interpreter=None, panel=_default_panel)
+                           tool=_cost_tool, interpreter=interpreter, panel=_default_panel)
 
 
 def _build_market() -> SpecialistAgent:

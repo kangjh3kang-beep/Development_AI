@@ -81,6 +81,8 @@ class OverviewCostRequest(BaseModel):
     floor_height_m: float = 3.0
     # P1 T3: 기본형건축비 고시 대조(baseline_check)용 평균 전용면적(㎡). 미입력 시 대조 생략(정직).
     avg_unit_sqm: float | None = None
+    # P3: 시니어 적산(QS) 자문 opt-in(기본 false=무과금·미첨부) — True 시 senior_consultation additive.
+    with_senior: bool = Field(default=False, description="시니어 적산(QS) 자문 첨부 여부(기본 false)")
 
 
 def _overview_evidence(
@@ -322,6 +324,32 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         except Exception:  # noqa: BLE001 — 대조 실패해도 공사비 결과 무손상(블록 생략)
             baseline_check = None
 
+    # ── P3: 시니어 적산(QS) 자문(with_senior opt-in, additive) ──
+    # 산출 가능분만 전달(무목업) — 기준선편차(주택+평균전용면적)·예비비율·단가 tier 신뢰도.
+    # ★무회귀: attach_senior_consultation은 절대 raise 안 함(consultation_hook 계약).
+    senior_consultation: dict[str, Any] | None = None
+    if req.with_senior:
+        try:
+            from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+            qs_inputs: dict[str, Any] = {
+                "cost_per_sqm": expected.get("unit_cost_per_sqm"),
+                "floors": req.floor_count_above,
+                "is_housing": req.building_type == "apartment",
+                "contingency_reserve_won": expected.get("contingency_won"),
+                "total_project_cost_won": expected.get("total_won"),
+            }
+            if req.building_type == "apartment" and req.avg_unit_sqm:
+                qs_inputs["avg_unit_sqm"] = req.avg_unit_sqm
+            if items_qto:
+                t3_count = sum(
+                    1 for it in items_qto if (it.get("price_source") or "fallback") == "fallback")
+                qs_inputs["tier_t3_count"] = t3_count
+                qs_inputs["tier_item_count"] = len(items_qto)
+            senior_consultation = attach_senior_consultation("적산", qs_inputs)
+        except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 공사비 결과 무손상(graceful)
+            senior_consultation = None
+
     # ★성장루프 조인키: 표시 엔드포인트도 원장에 요약 적재(best-effort·멱등) 후
     #   최상위 `ledger_hash`를 노출 — 프론트 피드백(👍/👎)이 이 해시로 원장과 조인된다.
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
@@ -360,6 +388,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "provenance": ev_block["provenance"],
         # P1 T3: 기본형건축비 고시 대조(주택+평균전용면적 입력 시만, additive).
         **({"baseline_check": baseline_check} if baseline_check is not None else {}),
+        # P3: 시니어 적산(QS) 자문(with_senior opt-in 시만, additive).
+        **({"senior_consultation": senior_consultation} if senior_consultation is not None else {}),
     }, wb)
 
 
@@ -504,6 +534,8 @@ class CostCalculateRequest(BaseModel):
     # 과금(R4) — 기본 false(무과금). True일 때만 CostInterpreter(LLM) 해석을 시도하고
     # enforce_llm_quota 게이트를 적용한다(personas.py 선례와 동일 계약).
     use_llm: bool = Field(default=False, description="AI(LLM) 원가 해석 포함 여부(기본 false=무과금)")
+    # P3: 시니어 적산(QS) 자문 opt-in(기본 false=무과금·미첨부) — True 시 senior_consultation additive.
+    with_senior: bool = Field(default=False, description="시니어 적산(QS) 자문 첨부 여부(기본 false)")
 
 
 class MonteCarloRequest(BaseModel):
@@ -671,6 +703,24 @@ async def calculate_cost(
         except Exception:
             ai = {}
 
+    # ── P3: 시니어 적산(QS) 자문(with_senior opt-in, additive) ──
+    # 12단계 원가계산 집계(applied_rates·category_totals)가 입력이므로 일반관리비율/이윤율
+    # 법정상한(R2)·공종구성비(R5) 실산출 가능. ★무회귀: attach_senior_consultation은 raise 안 함.
+    senior_consultation: dict[str, Any] | None = None
+    if req.with_senior:
+        try:
+            from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+            applied_rates = result.get("applied_rates") or {}
+            qs_inputs: dict[str, Any] = {
+                "general_mgmt_rate": applied_rates.get("general_mgmt"),
+                "profit_rate": applied_rates.get("profit"),
+                "category_totals": result.get("category_totals"),
+            }
+            senior_consultation = attach_senior_consultation("적산", qs_inputs)
+        except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 원가계산 결과 무손상(graceful)
+            senior_consultation = None
+
     return {
         "project_id": project_id,
         **result,
@@ -679,6 +729,7 @@ async def calculate_cost(
         "ai_material_advice": ai.get("material_advice"),
         "ai_schedule_impact": ai.get("schedule_impact"),
         "ai_risk_factors": ai.get("risk_factors"),
+        **({"senior_consultation": senior_consultation} if senior_consultation is not None else {}),
     }
 
 

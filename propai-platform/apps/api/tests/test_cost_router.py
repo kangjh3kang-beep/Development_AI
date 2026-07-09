@@ -170,6 +170,58 @@ class TestCostUseLlmGate:
         assert resp.status_code == 402
 
 
+class TestSeniorQsConsultation:
+    """P3: with_senior opt-in — /calculate·/estimate-overview 시니어 적산(QS) 자문 배선."""
+
+    def test_calculate_with_senior_default_false_omits_consultation(self):
+        resp = client.post(f"/api/v1/cost/{PROJECT_ID}/calculate", json={"items": COST_ITEMS})
+        assert resp.status_code == 200
+        assert "senior_consultation" not in resp.json()
+
+    def test_calculate_with_senior_true_flags_general_mgmt_over_cap(self):
+        resp = client.post(f"/api/v1/cost/{PROJECT_ID}/calculate", json={
+            "items": COST_ITEMS,
+            "rates": {
+                "indirect_labor_rate": 0.1440, "industrial_accident": 0.0350,
+                "employment_insurance": 0.0090, "health_insurance_emp": 0.03595,
+                "national_pension_emp": 0.04750, "long_term_care": 0.004724,
+                "retirement_fund": 0.02100, "safety_health": 0.02070,
+                "env_preserve": 0.00160,
+                "general_mgmt": 0.08,  # 법정 상한(6%) 초과 → BLOCK 기대
+                "profit": 0.15, "vat": 0.10,
+            },
+            "with_senior": True,
+        })
+        assert resp.status_code == 200
+        sc = resp.json()["senior_consultation"]
+        assert sc["verdict"] == "BLOCK"
+        ev = {e["rule_id"]: e for e in sc["evaluations"]}
+        assert ev["qs.general_mgmt_cap"]["verdict"] == "BLOCK"
+        assert ev["qs.profit_cap"]["verdict"] == "PASS"
+
+    def test_estimate_overview_with_senior_default_false_omits_consultation(self):
+        resp = client.post(
+            "/api/v1/cost/estimate-overview",
+            json={"building_type": "apartment", "total_gfa_sqm": 3000.0,
+                  "floor_count_above": 10, "floor_count_below": 1, "structure_type": "RC"},
+        )
+        assert resp.status_code == 200
+        assert "senior_consultation" not in resp.json()
+
+    def test_estimate_overview_with_senior_true_attaches_consultation(self):
+        resp = client.post(
+            "/api/v1/cost/estimate-overview",
+            json={"building_type": "apartment", "total_gfa_sqm": 3000.0,
+                  "floor_count_above": 10, "floor_count_below": 1, "structure_type": "RC",
+                  "with_senior": True},
+        )
+        assert resp.status_code == 200
+        sc = resp.json()["senior_consultation"]
+        assert sc is not None
+        assert sc["verdict"] != "unavailable"
+        assert sc["consultations"][0]["agent_key"] == "senior_quantity_surveyor"
+
+
 class TestMonteCarlo:
 
     def test_monte_carlo(self):

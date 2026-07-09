@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 
 type CostResult = {
   total_project_cost: number;
@@ -17,6 +18,8 @@ type CostResult = {
   category_totals: Record<string, number>;
   applied_rates: Record<string, number>;
   ai_cost_analysis?: string | null;
+  // P3: 시니어 적산(QS) 자문(with_senior opt-in 시만 채워짐).
+  senior_consultation?: SeniorConsultation | null;
   [key: string]: unknown;
 };
 
@@ -47,6 +50,8 @@ type OverviewResult = {
   underground_won: number;
   landscape_won: number;
   qto_source?: string;
+  // P3: 시니어 적산(QS) 자문(with_senior opt-in 시만 채워짐).
+  senior_consultation?: SeniorConsultation | null;
 };
 
 type MCResult = {
@@ -123,7 +128,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ items, use_llm: useLlm }),
+                body: JSON.stringify({ items, use_llm: useLlm, with_senior: true }),
               },
             );
             if (calcRes.ok) {
@@ -166,6 +171,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
             floor_count_above: floorCount && floorCount > 0 ? floorCount : 1,
             floor_count_below: 0,
             structure_type: "RC",
+            with_senior: true,
           }),
         });
         if (ovRes.ok) {
@@ -277,6 +283,13 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* P3: 시니어 적산(QS) 자문 verdict(with_senior opt-in) — 정량입력 산출 가능분(법정요율 상한·
+          기준선편차·예비비·단가신뢰도·공종구성비) 있을 때만 카드 렌더(SeniorVerdictCard 자체 정직 게이트). */}
+      <SeniorVerdictCard
+        consultation={costResult?.senior_consultation ?? overviewResult?.senior_consultation}
+        title="시니어 적산(QS) 자문"
+      />
 
       <div className="grid gap-8 lg:grid-cols-2">
         {/* Core Financial Results */}

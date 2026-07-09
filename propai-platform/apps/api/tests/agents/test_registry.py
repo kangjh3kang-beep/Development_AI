@@ -68,11 +68,30 @@ def test_cost_and_market_domains_registered():
 
 
 def test_cost_tool_deterministic():
+    # ★P3: 상수(CONSTRUCTION_COST_PER_SQM)×면적 개산 폐기 — standard_quantity_estimator
+    #   (표준물량 추정)+origin_cost_calculator(12단계 법정요율) 실계산으로 교체.
     from app.services.agents.registry import _cost_tool
     o = _cost_tool({"dev_type": "M06", "gfa_sqm": 1000})
     assert o["findings"][0]["check_id"] == "COST"
-    assert o["summary"]["total_construction_cost"] == 1000 * 2_400_000   # M06=2.4M/㎡
+    assert o["findings"][0]["current"] == o["summary"]["total_construction_cost"]
+    assert o["summary"]["total_construction_cost"] > 0
+    assert o["summary"]["building_type"] == "공동주택"  # M06(일반분양) → estimator 기본 폴백
+    assert o["summary"]["cost_per_sqm"] == round(o["summary"]["total_construction_cost"] / 1000)
     assert o == _cost_tool({"dev_type": "M06", "gfa_sqm": 1000})         # 결정론
+
+
+def test_cost_tool_dev_type_maps_building_type():
+    from app.services.agents.registry import _cost_tool
+    # M09(지식산업센터) → 근린생활시설(_DEV_TYPE_TO_BUILDING_TYPE 매핑)
+    o = _cost_tool({"dev_type": "M09", "gfa_sqm": 1000})
+    assert o["summary"]["building_type"] == "근린생활시설"
+
+
+def test_cost_tool_zero_gfa_no_division_error():
+    from app.services.agents.registry import _cost_tool
+    o = _cost_tool({"dev_type": "M06", "gfa_sqm": 0})
+    assert o["summary"]["total_construction_cost"] == 0
+    assert o["summary"]["cost_per_sqm"] == 0
 
 
 def test_market_tool_surfaces_signals_no_fabrication():
