@@ -352,6 +352,106 @@ class KosisClient(BaseAPIClient):
             logger.warning("KOSIS migration fetch failed", err=str(e))
             return empty
 
+    async def get_migration_region_map(
+        self, year: str, use_mock: bool | None = None,
+    ) -> dict[str, Any]:
+        """전국 모든 시군구의 총전입·총전출·순이동을 KOSIS에서 '한 번에' 조회한다(권역도용).
+
+        왜 별도 메서드인가:
+          get_migration_od 는 대상 1개 시군구만 반환하는데, 내부적으로는 매 호출마다
+          objL1=ALL(전국표) 전체를 다시 받는다. 권역도(코로플레스)는 시도 하위 시군구를
+          동시에 그려야 하므로 그 방식으로는 시군구 수만큼 '같은 전국표'를 중복 호출한다.
+          → 이 메서드는 동일한 _fetch_migration(전국표)을 딱 1회만 받아 전 시군구를 파싱한다
+             (외부 호출 1회). 파싱 계약(총전입/총전출/순이동, 실수치만 live)은 get_migration_od 와 동일.
+
+        반환:
+          {
+            data_source: 'live' | 'fallback' | 'unavailable',
+            year: 실제 수록연도(PRD_DE) 또는 요청 year,
+            by_code: {C1코드: {name, total_inflow, total_outflow, net_migration, c1_code}},
+            by_name: {시군구명: {...}},   # 동일명 중복(예: 여러 시도의 '중구')은 제외 → 코드로만 조인
+            note,
+          }
+        키 없음/데이터 없음은 정직하게 unavailable(가짜 금지·외부콜 0).
+        """
+        empty = {
+            "data_source": "unavailable", "year": year,
+            "by_code": {}, "by_name": {},
+            "note": "국내인구이동 데이터 없음 — KOSIS 키/수록표 확정 시 산출.",
+        }
+        has_key = bool(self._kosis_key())
+        if use_mock is None:
+            use_mock = not has_key
+        if use_mock or not has_key:
+            return empty
+        try:
+            rows = await self._fetch_migration("", year, tbl_id=KOSIS_MIGRATION_TBL_ID)
+            if not isinstance(rows, list) or not rows:
+                return empty
+
+            # C1(행정구역 코드) 단위로 총전입/총전출/순이동을 묶는다. 코드가 없으면 이름을 키로.
+            groups: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                nm = (r.get("C1_NM") or "").strip()
+                if not nm or nm in _MIGRATION_TOTAL_LABELS:
+                    continue  # '계/전국/소계' 등 합계행 제외(시군구 셀이 아님)
+                c1 = str(r.get("C1") or "").strip()
+                key = c1 or nm
+                g = groups.setdefault(key, {
+                    "c1_code": c1, "name": nm,
+                    "total_inflow": 0, "total_outflow": 0, "net_migration": 0,
+                    "_has_net": False,
+                })
+                itm = (r.get("ITM_NM") or "").strip()
+                try:
+                    dt = int(float(r.get("DT", 0)))
+                except (TypeError, ValueError):
+                    dt = 0
+                if itm == "총전입":
+                    g["total_inflow"] = dt
+                elif itm == "총전출":
+                    g["total_outflow"] = dt
+                elif itm == "순이동":
+                    g["net_migration"] = dt
+                    g["_has_net"] = True
+                prd = r.get("PRD_DE")
+                if prd:
+                    g["prd_de"] = prd
+
+            # 순이동이 표에 없으면 전입-전출로 보정(둘 다 있을 때만). 실수치가 있는 셀만 채택.
+            valid: list[dict[str, Any]] = []
+            for g in groups.values():
+                inflow, outflow = g["total_inflow"], g["total_outflow"]
+                if not g["_has_net"] and (inflow or outflow):
+                    g["net_migration"] = inflow - outflow
+                # 전입/전출/순이동 중 실수치가 하나라도 있으면 유효(0만 있는 셀은 제외).
+                if inflow > 0 or outflow > 0 or g["net_migration"] != 0:
+                    g.pop("_has_net", None)
+                    valid.append(g)
+
+            if not valid:
+                return {**empty, "data_source": "fallback",
+                        "note": f"KOSIS {KOSIS_MIGRATION_TBL_ID} 전입/전출 수치 없음."}
+
+            by_code = {g["c1_code"]: g for g in valid if g.get("c1_code")}
+            # 동일 시군구명이 여러 시도에 있으면(중구·동구·남구·북구·서구 등) 이름만으로는
+            # 구분 불가 → 이름 조인 후보에서 제외한다(코드 조인만 사용, 가짜 매칭 금지).
+            name_counts: dict[str, int] = {}
+            for g in valid:
+                name_counts[g["name"]] = name_counts.get(g["name"], 0) + 1
+            by_name = {g["name"]: g for g in valid if name_counts[g["name"]] == 1}
+
+            data_year = next((g.get("prd_de") for g in valid if g.get("prd_de")), year)
+            return {
+                "data_source": "live", "year": data_year,
+                "by_code": by_code, "by_name": by_name,
+                "note": (f"KOSIS {KOSIS_MIGRATION_TBL_ID} 전국 시군구 순이동 {len(valid)}건"
+                         f"({data_year}) — 권역 코로플레스용 단일 조회."),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("KOSIS region migration fetch failed", err=str(e))
+            return empty
+
     async def _fetch_migration(
         self, sigungu_cd: str, year: str, tbl_id: str = KOSIS_MIGRATION_TBL_ID,
     ) -> Any:

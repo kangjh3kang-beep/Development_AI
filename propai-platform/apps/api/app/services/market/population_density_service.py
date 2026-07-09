@@ -37,6 +37,20 @@ def _reproject_5179_to_4326(coords: Any, tf: Any) -> Any:
     return [_reproject_5179_to_4326(c, tf) for c in coords]
 
 
+def build_utmk_to_wgs84_transformer() -> Any | None:
+    """UTM-K(EPSG:5179)→WGS84(EPSG:4326) 좌표 변환기를 만든다(공용).
+
+    always_xy=True → (경도,위도) 순. pyproj 미설치/생성 실패 시 None 을 돌려주고,
+    호출측은 500 대신 정직하게 data_source='unavailable' 로 폴백한다(가짜좌표 금지).
+    인구밀도·권역이동 등 UTM-K 경계를 다루는 레이어가 공유한다(한 곳 수정=전역 반영).
+    """
+    try:
+        from pyproj import Transformer
+        return Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _polygon_area_m2(geometry: dict[str, Any]) -> float:
     """UTM-K(m) 폴리곤/멀티폴리곤의 면적(m²) — shapely(투영좌표라 면적 정확)."""
     try:
@@ -67,9 +81,11 @@ class PopulationDensityService:
                     "sgis_cd": sgis_cd}
         pop_by_cd = await self._fetch_population_by_dong(token, sgis_cd, pop_year)
 
-        # 좌표계 변환기(UTM-K→WGS84). always_xy=경도,위도 순.
-        from pyproj import Transformer
-        tf = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
+        # 좌표계 변환기(UTM-K→WGS84, 공용 헬퍼). pyproj 미설치 시 정직 폴백(500 방지).
+        tf = build_utmk_to_wgs84_transformer()
+        if tf is None:
+            return {"data_source": "unavailable", "reason": "좌표 변환기(pyproj) 미설치", "features": [],
+                    "sgis_cd": sgis_cd}
 
         feats: list[dict[str, Any]] = []
         for b in boundaries:
