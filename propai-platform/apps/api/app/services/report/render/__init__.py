@@ -62,6 +62,7 @@ __all__ = [
     "build_report_model_from_land",
     "build_report_model_from_appraisal",
     "build_report_model_from_design_audit",
+    "build_report_model_from_cost_estimation",
 ]
 
 
@@ -119,5 +120,12 @@ def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
 def build_report_model_from_design_audit(data: dict) -> ReportModel:
     """설계심사 보고서(design_audit) → 정본 ReportModel(어댑터). 기존 build_design_audit_pdf 이관."""
     from .design_audit_adapter import build_report_model_from_design_audit as _build
+
+    return _build(data)
+
+
+def build_report_model_from_cost_estimation(data: dict) -> ReportModel:
+    """적산(공사비 견적) 결과 → 정본 ReportModel(어댑터). 가용 산출만 조립(부재 섹션 생략)."""
+    from .cost_estimation_adapter import build_report_model_from_cost_estimation as _build
 
     return _build(data)

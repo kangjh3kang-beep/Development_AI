@@ -12,6 +12,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
+from app.core.rbac import Role, require_role
 from app.services.auth.auth_service import get_current_user
 from app.services.bim.bim_service import BIMService
 from app.services.cost.cost_monte_carlo import CostMonteCarlo
@@ -28,6 +30,15 @@ router = APIRouter(
 )
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
+# P1 T1(공공고시 단가 주입) 관리자 게이트 — mass_templates.py 선례 재사용(require_role(Role.ADMIN)).
+require_admin = require_role(Role.ADMIN)
+
+
+async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
+    """use_llm=True일 때만 LLM 한도 게이트 적용(무과금 경로는 통과) — personas.py 선례와 동일 계약."""
+    if not use_llm:
+        return
+    await enforce_llm_quota(db)
 
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
 _STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
@@ -35,6 +46,14 @@ _STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.
 # ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
 # ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
 # 매핑 없는 코드(기계/전기/마감 등)는 단가 미보유로 0원·priced=false 정직 표기.
+# ★P2 T2 조사 결과(갭 해소 시도 — 무날조): UnitPriceRepository.get_prices()는
+# standard_quantity_estimator.UNIT_PRICES_2026 의 6개 키(concrete/rebar/formwork/
+# masonry/waterproof/window)만 순회 반환한다(DB에 다른 material_code가 더 있어도
+# 이 6키 밖은 조회 API가 반환하지 않음). 아래 8개 매핑이 이미 6키를 전부 소진했으므로
+# (콘크리트류 3·조적 1·방수류 2·창호 1 = 실질 6키 전량 사용), IFC_WORK_MAP 19코드 중
+# 나머지 11개(A01·A05 부모 집계코드 2개는 의도적 제외 — 중복합산 방지 / A05-01·A05-02·
+# A05-04·A07·A08·A09·B01·B02·C01 9개는 대응 단가키 자체가 없음)는 발명 없이는 매핑
+# 불가 — 정직하게 unpriced 유지(코드 하단 unpriced_codes로 노출됨).
 _BIM_WORKCODE_TO_PRICE_KEY: dict[str, str] = {
     "A01-01": "formwork",   # 거푸집
     "A01-02": "rebar",      # 철근
@@ -60,6 +79,10 @@ class OverviewCostRequest(BaseModel):
     building_width_m: float | None = None
     building_depth_m: float | None = None
     floor_height_m: float = 3.0
+    # P1 T3: 기본형건축비 고시 대조(baseline_check)용 평균 전용면적(㎡). 미입력 시 대조 생략(정직).
+    avg_unit_sqm: float | None = None
+    # P3: 시니어 적산(QS) 자문 opt-in(기본 false=무과금·미첨부) — True 시 senior_consultation additive.
+    with_senior: bool = Field(default=False, description="시니어 적산(QS) 자문 첨부 여부(기본 false)")
 
 
 def _overview_evidence(
@@ -241,8 +264,12 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
             floor_count_below=req.floor_count_below, structure_type=req.structure_type,
             prices=unit_prices,
         )
+        # 공종분류 SSOT(work_breakdown) — work_code(A체계) → 표준 대공종(wb_code/wb_name) additive.
+        from app.services.cost.work_breakdown import resolve as _resolve_wb
+
         for it in raw:
             unit_sum = float(it.get("mat_unit", 0)) + float(it.get("labor_unit", 0)) + float(it.get("exp_unit", 0))
+            wb = _resolve_wb(it.get("work_code", ""), system="numeric")
             items_qto.append({
                 "name": it.get("item_name"), "spec": it.get("spec"), "unit": it.get("unit"),
                 "quantity": it.get("quantity"), "unit_cost_won": int(unit_sum),
@@ -250,6 +277,9 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
                 # 단가 출처 정직 표기(DB 출처명 또는 "fallback") — additive 필드.
                 "price_source": it.get("price_source", "fallback"),
                 "price_basis_year": it.get("price_basis_year", 2026),
+                # P2 T2: 공종분류 SSOT 대공종(additive) — 매핑 없으면 정직 None.
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
     except Exception:  # noqa: BLE001
         items_qto = []
@@ -273,6 +303,52 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         )
     except Exception:  # noqa: BLE001 — 공용블록 실패해도 공사비 결과 무손상
         ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
+
+    # ── P1 T3: 기본형건축비 고시 대조(baseline_check, additive) ──
+    # 주택(아파트) 용도 + 평균 전용면적 입력 시에만 대조(정직 — 임의 추정 금지). 그 외는 생략.
+    baseline_check: dict[str, Any] | None = None
+    if req.building_type == "apartment" and req.avg_unit_sqm:
+        try:
+            from app.services.cost.basic_building_cost import get_baseline
+
+            bl = get_baseline(req.floor_count_above, req.avg_unit_sqm)
+            calc_unit = expected["unit_cost_per_sqm"]
+            baseline_check = {
+                "baseline_won_per_sqm": bl["value"],
+                "calc_won_per_sqm": calc_unit,
+                "deviation_pct": (
+                    round((calc_unit - bl["value"]) / bl["value"] * 100, 2) if bl["value"] else None
+                ),
+                "basis": bl["basis"], "legal_link": bl["legal_link"], "confidence": bl["confidence"],
+            }
+        except Exception:  # noqa: BLE001 — 대조 실패해도 공사비 결과 무손상(블록 생략)
+            baseline_check = None
+
+    # ── P3: 시니어 적산(QS) 자문(with_senior opt-in, additive) ──
+    # 산출 가능분만 전달(무목업) — 기준선편차(주택+평균전용면적)·예비비율·단가 tier 신뢰도.
+    # ★무회귀: attach_senior_consultation은 절대 raise 안 함(consultation_hook 계약).
+    senior_consultation: dict[str, Any] | None = None
+    if req.with_senior:
+        try:
+            from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+            qs_inputs: dict[str, Any] = {
+                "cost_per_sqm": expected.get("unit_cost_per_sqm"),
+                "floors": req.floor_count_above,
+                "is_housing": req.building_type == "apartment",
+                "contingency_reserve_won": expected.get("contingency_won"),
+                "total_project_cost_won": expected.get("total_won"),
+            }
+            if req.building_type == "apartment" and req.avg_unit_sqm:
+                qs_inputs["avg_unit_sqm"] = req.avg_unit_sqm
+            if items_qto:
+                t3_count = sum(
+                    1 for it in items_qto if (it.get("price_source") or "fallback") == "fallback")
+                qs_inputs["tier_t3_count"] = t3_count
+                qs_inputs["tier_item_count"] = len(items_qto)
+            senior_consultation = attach_senior_consultation("적산", qs_inputs)
+        except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 공사비 결과 무손상(graceful)
+            senior_consultation = None
 
     # ★성장루프 조인키: 표시 엔드포인트도 원장에 요약 적재(best-effort·멱등) 후
     #   최상위 `ledger_hash`를 노출 — 프론트 피드백(👍/👎)이 이 해시로 원장과 조인된다.
@@ -310,6 +386,10 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "evidence": ev_block["evidence"],
         "legal_refs": ev_block["legal_refs"],
         "provenance": ev_block["provenance"],
+        # P1 T3: 기본형건축비 고시 대조(주택+평균전용면적 입력 시만, additive).
+        **({"baseline_check": baseline_check} if baseline_check is not None else {}),
+        # P3: 시니어 적산(QS) 자문(with_senior opt-in 시만, additive).
+        **({"senior_consultation": senior_consultation} if senior_consultation is not None else {}),
     }, wb)
 
 
@@ -369,6 +449,7 @@ async def bim_quantities_origin_cost(
         unit_price_source = "fallback"
 
     from app.services.cost.ifc_work_map import IFC_WORK_MAP
+    from app.services.cost.work_breakdown import resolve as _resolve_wb
 
     # work_code → 표시명(ifc_work_map 역참조, 첫 매칭).
     code_to_name: dict[str, str] = {}
@@ -385,6 +466,8 @@ async def bim_quantities_origin_cost(
         unit = g.get("unit") or ""
         price_key = _BIM_WORKCODE_TO_PRICE_KEY.get(wc)
         price = unit_prices.get(price_key) if price_key else None
+        # P2 T2: 공종분류 SSOT 대공종(additive) — 단가 유무와 무관하게 항상 부착.
+        wb = _resolve_wb(wc, system="ifc")
         if price and price_key:
             mat_u = float(price.get("mat_unit", 0))
             labor_u = float(price.get("labor_unit", 0))
@@ -406,6 +489,8 @@ async def bim_quantities_origin_cost(
                 "price_source": price.get("price_source", "fallback"),
                 "price_key": price_key,
                 "priced": True,
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
         else:
             # 단가 미보유(매핑 없음 또는 단가 조회 실패) — 정직 표기(0원·priced=false).
@@ -414,6 +499,8 @@ async def bim_quantities_origin_cost(
                 "work_code": wc, "item_name": code_to_name.get(wc, wc),
                 "unit": unit, "quantity": qty, "amount": 0,
                 "price_source": None, "price_key": None, "priced": False,
+                "wb_code": wb["wb_code"],
+                "wb_name": wb["wb_name"],
             })
 
     calc = cost_calc.calculate(cost_items)
@@ -444,6 +531,11 @@ class CostCalculateRequest(BaseModel):
         ..., description="공사비 항목 리스트")
     rates: dict[str, float] | None = Field(
         None, description="커스텀 법정요율 (None이면 2026 기본)")
+    # 과금(R4) — 기본 false(무과금). True일 때만 CostInterpreter(LLM) 해석을 시도하고
+    # enforce_llm_quota 게이트를 적용한다(personas.py 선례와 동일 계약).
+    use_llm: bool = Field(default=False, description="AI(LLM) 원가 해석 포함 여부(기본 false=무과금)")
+    # P3: 시니어 적산(QS) 자문 opt-in(기본 false=무과금·미첨부) — True 시 senior_consultation additive.
+    with_senior: bool = Field(default=False, description="시니어 적산(QS) 자문 첨부 여부(기본 false)")
 
 
 class MonteCarloRequest(BaseModel):
@@ -566,45 +658,68 @@ async def upload_ifc(project_id: str, req: IFCUploadRequest):
 
 
 @router.post("/{project_id}/calculate", response_model=CostCalculateResponse)
-async def calculate_cost(project_id: str, req: CostCalculateRequest):
+async def calculate_cost(
+    project_id: str, req: CostCalculateRequest, db: AsyncSession = Depends(get_db),
+):
     """원가계산서를 생성한다."""
     result = cost_calc.calculate(req.items, rates=req.rates)
 
-    # LLM(Claude) 원가 해석 — 실패해도 산정 결과는 정상 반환(graceful fallback)
+    # LLM(Claude) 원가 해석 — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도
+    # 산정 결과는 정상 반환(graceful fallback). use_llm=False면 해석 필드는 생략(무날조).
     ai: dict[str, Any] = {}
-    try:
-        from app.services.ai.cost_interpreter import CostInterpreter
+    if req.use_llm:
+        await _enforce_llm_if_needed(db, req.use_llm)
+        try:
+            from app.services.ai.cost_interpreter import CostInterpreter
 
-        gfa = sum(float(it.get("quantity", 0) or 0) for it in req.items) or 0
-        interp = await CostInterpreter().generate_interpretation({
-            "total_cost": result.get("total_project_cost", 0),
-            "cost_per_sqm": (
-                round(result.get("total_project_cost", 0) / gfa) if gfa else 0
-            ),
-            "cost_items": [
-                {
-                    "category": k,
-                    "amount": v,
-                    "ratio_pct": (
-                        round(v / result.get("total_project_cost", 1) * 100, 1)
-                        if result.get("total_project_cost")
-                        else 0
-                    ),
-                }
-                for k, v in (result.get("category_totals", {}) or {}).items()
-            ],
-            "cost_breakdown": {
-                "material_cost": result.get("direct_material_cost"),
-                "labor_cost": result.get("total_labor_cost"),
-                "expense_cost": result.get("direct_expense_cost"),
-                "overhead_cost": result.get("general_mgmt"),
-                "profit": result.get("profit"),
-            },
-        })
-        if isinstance(interp, dict):
-            ai = interp
-    except Exception:
-        ai = {}
+            gfa = sum(float(it.get("quantity", 0) or 0) for it in req.items) or 0
+            interp = await CostInterpreter().generate_interpretation({
+                "total_cost": result.get("total_project_cost", 0),
+                "cost_per_sqm": (
+                    round(result.get("total_project_cost", 0) / gfa) if gfa else 0
+                ),
+                "cost_items": [
+                    {
+                        "category": k,
+                        "amount": v,
+                        "ratio_pct": (
+                            round(v / result.get("total_project_cost", 1) * 100, 1)
+                            if result.get("total_project_cost")
+                            else 0
+                        ),
+                    }
+                    for k, v in (result.get("category_totals", {}) or {}).items()
+                ],
+                "cost_breakdown": {
+                    "material_cost": result.get("direct_material_cost"),
+                    "labor_cost": result.get("total_labor_cost"),
+                    "expense_cost": result.get("direct_expense_cost"),
+                    "overhead_cost": result.get("general_mgmt"),
+                    "profit": result.get("profit"),
+                },
+            })
+            if isinstance(interp, dict):
+                ai = interp
+        except Exception:
+            ai = {}
+
+    # ── P3: 시니어 적산(QS) 자문(with_senior opt-in, additive) ──
+    # 12단계 원가계산 집계(applied_rates·category_totals)가 입력이므로 일반관리비율/이윤율
+    # 법정상한(R2)·공종구성비(R5) 실산출 가능. ★무회귀: attach_senior_consultation은 raise 안 함.
+    senior_consultation: dict[str, Any] | None = None
+    if req.with_senior:
+        try:
+            from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+            applied_rates = result.get("applied_rates") or {}
+            qs_inputs: dict[str, Any] = {
+                "general_mgmt_rate": applied_rates.get("general_mgmt"),
+                "profit_rate": applied_rates.get("profit"),
+                "category_totals": result.get("category_totals"),
+            }
+            senior_consultation = attach_senior_consultation("적산", qs_inputs)
+        except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 원가계산 결과 무손상(graceful)
+            senior_consultation = None
 
     return {
         "project_id": project_id,
@@ -614,6 +729,7 @@ async def calculate_cost(project_id: str, req: CostCalculateRequest):
         "ai_material_advice": ai.get("material_advice"),
         "ai_schedule_impact": ai.get("schedule_impact"),
         "ai_risk_factors": ai.get("risk_factors"),
+        **({"senior_consultation": senior_consultation} if senior_consultation is not None else {}),
     }
 
 
@@ -754,6 +870,9 @@ class BoqRequest(BaseModel):
     structure_type: str = "RC"
     tenant_id: str | None = None
     persist: bool = True
+    # 과금(R4) — 기본 false(무과금). True일 때만 CostInterpreter(LLM) 해석을 시도하고
+    # enforce_llm_quota 게이트를 적용한다(personas.py 선례와 동일 계약).
+    use_llm: bool = Field(default=False, description="AI(LLM) BOQ 해석 포함 여부(기본 false=무과금)")
 
 
 class AlternativeVariant(BaseModel):
@@ -768,28 +887,36 @@ class AlternativesRequest(BaseModel):
     variants: list[AlternativeVariant] = Field(default_factory=list)
 
 
-def _merge_params(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    """base_params + overrides 병합(허용 키만)."""
-    allowed = {"building_type", "total_gfa_sqm", "floor_count_above",
-               "floor_count_below", "structure_type"}
-    out = {
-        "building_type": base.get("building_type", "apartment"),
-        "total_gfa_sqm": float(base.get("total_gfa_sqm", 0) or 0),
-        "floor_count_above": int(base.get("floor_count_above", 1) or 1),
-        "floor_count_below": int(base.get("floor_count_below", 0) or 0),
-        "structure_type": base.get("structure_type", "RC"),
-    }
-    for k, v in (overrides or {}).items():
-        if k in allowed and v is not None:
-            out[k] = v
-    out["total_gfa_sqm"] = float(out["total_gfa_sqm"])
-    out["floor_count_above"] = int(out["floor_count_above"])
-    out["floor_count_below"] = int(out["floor_count_below"])
-    return out
+class SavingScenariosRequest(BaseModel):
+    """P4 T1 절감 시나리오 Top-N 요청 — base_params는 alternatives와 동일 계약."""
+    base_params: dict[str, Any] = Field(default_factory=dict)
+    top_n: int = Field(5, ge=1, le=10, description="상위 절감 후보 개수(기본 5, 최대 10)")
+
+
+class ChangeForecastRequest(BaseModel):
+    """P4 T2 설계변경 예측공사비 요청 — base_params는 alternatives와 동일 계약.
+    risks는 opt-in(FE가 /design-risk/predict 결과의 risks[]를 그대로 전달, 서버간 강결합 없음)."""
+    base_params: dict[str, Any] = Field(default_factory=dict)
+    risks: list[dict[str, Any]] = Field(default_factory=list, description="design_change_predictor risks[](opt-in)")
+
+
+class CostReportRequest(BaseModel):
+    """P5 적산 보고서 생성 요청 — FE가 조회한 산출물을 그대로 전달(가용분만 조립).
+
+    도메인별-자체엔드포인트 패턴(bank_report.py:117)을 따른다: 어댑터가 부재 데이터의
+    섹션을 통째로 생략하므로 전 필드 Optional(무날조)."""
+    project_name: str | None = None
+    overview: dict[str, Any] | None = None
+    boq: dict[str, Any] | None = None
+    senior_consultation: dict[str, Any] | None = None
+    saving_scenarios: dict[str, Any] | None = None
+    change_forecast: dict[str, Any] | None = None
 
 
 @router.post("/{project_id}/boq", summary="상세적산 BOQ 생성·영속화(D4 시장가 3중·정직성 표기)")
-async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
+async def create_boq(
+    project_id: str, req: BoqRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """건축개요로 BOQ(공종별 물량·단가·금액)를 생성하고 cost_estimate(+item)에 영속화한다.
     각 항목에 standard/market(KCCI)/actual:null 3중 단가(D4)와 출처·신뢰구간을 부착한다."""
     from app.services.cost.boq_builder import build_boq
@@ -816,27 +943,30 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
             tenant_id=req.tenant_id, project_id=project_id,
         )
 
-    # D6 AI 해석(BOQ) — 실패해도 결과는 정상 반환(graceful)
+    # D6 AI 해석(BOQ) — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도 결과는
+    # 정상 반환(graceful). use_llm=False면 해석 필드는 생략(무날조).
     ai_analysis: str | None = None
-    try:
-        from app.services.ai.cost_interpreter import CostInterpreter
-        calc = boq.get("_calc", {})
-        interp = await CostInterpreter().generate_interpretation({
-            "project_name": project_id,
-            "building_type": req.building_type,
-            "total_gfa_sqm": req.total_gfa_sqm,
-            "floor_count": req.floor_count_above,
-            "total_cost": calc.get("total_project_cost", 0),
-            "cost_per_sqm": round(calc.get("total_project_cost", 0) / req.total_gfa_sqm)
-            if req.total_gfa_sqm else 0,
-            "cost_items": [
-                {"category": it["name"], "amount": it["amount"]} for it in boq["items"]
-            ],
-        })
-        if isinstance(interp, dict):
-            ai_analysis = interp.get("cost_analysis")
-    except Exception:  # noqa: BLE001
-        ai_analysis = None
+    if req.use_llm:
+        await _enforce_llm_if_needed(db, req.use_llm)
+        try:
+            from app.services.ai.cost_interpreter import CostInterpreter
+            calc = boq.get("_calc", {})
+            interp = await CostInterpreter().generate_interpretation({
+                "project_name": project_id,
+                "building_type": req.building_type,
+                "total_gfa_sqm": req.total_gfa_sqm,
+                "floor_count": req.floor_count_above,
+                "total_cost": calc.get("total_project_cost", 0),
+                "cost_per_sqm": round(calc.get("total_project_cost", 0) / req.total_gfa_sqm)
+                if req.total_gfa_sqm else 0,
+                "cost_items": [
+                    {"category": it["name"], "amount": it["amount"]} for it in boq["items"]
+                ],
+            })
+            if isinstance(interp, dict):
+                ai_analysis = interp.get("cost_analysis")
+        except Exception:  # noqa: BLE001
+            ai_analysis = None
 
     # ★성장루프 조인키: 원장 content_hash 를 최상위 `ledger_hash` 로 노출(공용 헬퍼 — 프론트 피드백 키잉).
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
@@ -870,46 +1000,30 @@ async def list_boq(project_id: str) -> dict[str, Any]:
 @router.post("/{project_id}/alternatives", summary="D1 대안설계 A/B 원가비교(변형별 델타·영향공종)")
 async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[str, Any]:
     """base_params 대비 각 변형(구조/층수 등 override)의 원가를 재산정하여
-    총액 델타·델타%·영향공종을 반환한다(추정)."""
-    from app.services.cost.boq_builder import build_boq
+    총액 델타·델타%·영향공종을 반환한다(추정).
 
-    bp = _merge_params(req.base_params, {})
+    P4 T1(전파방지): 실 계산 로직은 alternatives_engine(공용 서비스)으로 추출했다 —
+    saving_scenarios.py(절감 Top-N)·change_forecast.py(설계변경 예측공사비)가 라우터를
+    다시 호출하지 않고 이 서비스를 직접 재사용한다(같은 계산 두 번 구현 금지)."""
+    from app.services.cost.alternatives_engine import (
+        build_boq_for_params,
+        diff_variant,
+        merge_params,
+    )
+
+    bp = merge_params(req.base_params, {})
     if bp["total_gfa_sqm"] <= 0:
         raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
 
-    base_boq = await build_boq(
-        building_type=bp["building_type"], total_gfa_sqm=bp["total_gfa_sqm"],
-        floor_count_above=bp["floor_count_above"], floor_count_below=bp["floor_count_below"],
-        structure_type=bp["structure_type"], qto_source="derived",
-    )
+    base_boq = await build_boq_for_params(bp)
     base_total = int(base_boq["summary"]["total"])
     base_by_code = {it["code"]: it["amount"] for it in base_boq["items"]}
 
     variants_out: list[dict[str, Any]] = []
     for v in req.variants:
-        vp = _merge_params(req.base_params, v.overrides)
-        vb = await build_boq(
-            building_type=vp["building_type"], total_gfa_sqm=vp["total_gfa_sqm"],
-            floor_count_above=vp["floor_count_above"], floor_count_below=vp["floor_count_below"],
-            structure_type=vp["structure_type"], qto_source="derived",
-        )
-        v_total = int(vb["summary"]["total"])
-        delta = v_total - base_total
-        # 영향공종: 항목별 금액 변화 큰 순.
-        affected: list[str] = []
-        for it in vb["items"]:
-            b_amt = base_by_code.get(it["code"], 0)
-            if abs(it["amount"] - b_amt) > max(1, base_total * 0.005):
-                affected.append(it["name"])
-        rationale = ", ".join(
-            f"{k}={vp[k]}" for k in ("structure_type", "floor_count_above", "floor_count_below",
-                                     "total_gfa_sqm") if vp[k] != bp[k]
-        ) or "변경 없음"
-        variants_out.append({
-            "label": v.label, "total": v_total,
-            "delta": delta, "delta_pct": round(delta / base_total * 100, 2) if base_total else 0,
-            "affected_work_types": affected[:8], "rationale": rationale,
-        })
+        vp = merge_params(req.base_params, v.overrides)
+        vb = await build_boq_for_params(vp)
+        variants_out.append(diff_variant(bp, base_total, base_by_code, vp, vb, v.label))
 
     return {
         "ok": True,
@@ -919,10 +1033,68 @@ async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[s
     }
 
 
+@router.post("/{project_id}/saving-scenarios", summary="P4 T1 절감 시나리오 Top-N(변형 자동생성+일괄 delta 랭킹)")
+async def cost_saving_scenarios(project_id: str, req: SavingScenariosRequest) -> dict[str, Any]:
+    """base_params로 결정론 절감 후보(구조/층수/GFA)를 자동 생성해 alternatives 엔진으로
+    일괄 재산정하고, 절감액(음수 delta) 내림차순 Top-N을 반환한다(무과금·결정론).
+
+    project_id는 응답 식별용(계산은 base_params만 사용 — DB 조회 없음)."""
+    from app.services.cost.alternatives_engine import merge_params
+    from app.services.cost.saving_scenarios import build_variant_candidates, rank_savings
+
+    bp = merge_params(req.base_params, {})
+    if bp["total_gfa_sqm"] <= 0:
+        raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
+
+    candidates = build_variant_candidates(req.base_params)
+    result = await rank_savings(req.base_params, candidates, top_n=req.top_n)
+
+    return {"ok": True, "project_id": project_id, **result}
+
+
+@router.post("/{project_id}/change-forecast", summary="P4 T2 설계변경 예측공사비(MC 밴드+리스크 공종 delta)")
+async def cost_change_forecast(project_id: str, req: ChangeForecastRequest) -> dict[str, Any]:
+    """base_params로 몬테카를로 추가공사비 밴드(p10/50/90)를 항상 산출하고, risks(opt-in —
+    design_change_predictor 결과)가 있으면 공종(WB) 단위 delta 시나리오를 함께 반환한다.
+
+    design_risk 서비스와 직접 결합하지 않는다 — FE가 /design-risk/predict 결과의 risks[]를
+    그대로 전달하는 입력 주입 방식(서버간 강결합 신설 금지)."""
+    from app.services.cost.alternatives_engine import merge_params
+    from app.services.cost.change_forecast import forecast_change_cost
+
+    bp = merge_params(req.base_params, {})
+    if bp["total_gfa_sqm"] <= 0:
+        raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
+
+    result = await forecast_change_cost(req.base_params, req.risks)
+
+    return {"ok": True, "project_id": project_id, **result}
+
+
+@router.post("/{project_id}/report", summary="P5 적산 보고서 — PDF·PPTX·DOCX(가용 산출만 조립)")
+async def cost_estimation_report(
+    project_id: str, req: CostReportRequest, format: str = "pdf",
+) -> Response:
+    """적산 산출물(개산·BOQ·시니어 QS·절감·설계변경 예측)을 정본 보고서엔진 경유로
+    PDF/PPTX/DOCX 렌더한다(도메인별-자체엔드포인트 패턴 — bank_report.py:117 선례).
+
+    project_id는 파일명 식별용(계산엔 미사용) — 다른 엔드포인트 프리픽스와의 일관성 유지."""
+    from app.services.report.render import build_report_model_from_cost_estimation, render_report
+
+    model = build_report_model_from_cost_estimation(req.model_dump())
+    payload, media_type, ext = render_report(model, format)
+    return Response(
+        content=payload, media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="cost_estimation_report_{project_id}.{ext}"'
+        },
+    )
+
+
 @router.get("/unit-prices", summary="단가 SSOT 조회(D4 standard/market/actual 3중)")
 async def get_unit_prices() -> dict[str, Any]:
     """단가 SSOT(material_unit_prices DB 우선·fallback) 목록 — standard/market/actual 3중."""
-    from app.services.cost.boq_builder import _KEY_TO_KCCI, _kcci_market_unit
+    from app.services.cost.boq_builder import _KEY_TO_KCCI, _kcci_market_source_label, _kcci_market_unit
     from app.services.cost.unit_price_repository import UnitPriceRepository
 
     prices = await UnitPriceRepository().get_prices()
@@ -935,29 +1107,98 @@ async def get_unit_prices() -> dict[str, Any]:
             "standard": std, "market": market, "actual": None,
             "source": p["price_source"], "basis_year": p["price_basis_year"],
             "region": p.get("region"),
+            # P2 T4: 재료/노무/경비 3분해(repository에 이미 존재 — 라우트에서 노출만, additive).
+            "mat_unit": p["mat_unit"], "labor_unit": p["labor_unit"], "exp_unit": p["exp_unit"],
+            # T5 정직화: market(KCCI)은 결정론 시뮬레이션 — 실 시세 API 아님(값 있을 때만 라벨).
+            "market_source": _kcci_market_source_label(key) if market is not None else None,
+            # P1 T4(단가 4계층) — additive: tier(T1_public/T2_standard/T3_fallback)·출처 URL.
+            "tier": p.get("tier"), "source_url": p.get("source_url"),
         })
     return {
         "ok": True, "items": items,
-        "note": "standard=표준품셈/단가DB, market=KCCI 변동모델, actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장.",
+        "note": (
+            "standard=표준품셈/단가DB, market=KCCI 변동모델(결정론 시뮬레이션·실시세 API 아님), "
+            "actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장."
+        ),
     }
 
 
+class IngestPublicPricesRequest(BaseModel):
+    """P1 T1 — 조달청 표준시장단가 주입 요청(관리자 전용)."""
+    prdct_clsfc_no: str | None = Field(None, description="조달청 품목분류번호(선택 — 미지정 시 전체)")
+    keyword: str | None = Field(None, description="품명 검색 키워드(선택)")
+    max_pages: int = Field(3, ge=1, le=10, description="조회할 최대 페이지 수(페이지당 100건)")
+
+
+@router.post(
+    "/admin/ingest-public-prices",
+    dependencies=[Depends(require_admin)],
+    summary="조달청 표준시장단가 → 단가 SSOT 주입(P1 T1·관리자 전용)",
+)
+async def ingest_public_prices_route(
+    req: IngestPublicPricesRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """조달청 가격정보현황서비스(data.go.kr 15129415)에서 표준시장단가를 조회해
+
+    material_unit_prices에 멱등 upsert한다(단가 4계층 리졸버의 T1·최우선 계층).
+    서비스키 미보유/API 실패 시 0건·정직 사유 반환(서버 동작 무영향)."""
+    from app.services.cost.public_price_ingest import ingest_public_prices
+
+    return await ingest_public_prices(
+        db, prdct_clsfc_no=req.prdct_clsfc_no, keyword=req.keyword, max_pages=req.max_pages,
+    )
+
+
+def _boq_estimate_to_excel_rows(est: dict[str, Any]) -> list[list[Any]]:
+    """영속화된 BOQ(estimate)를 Excel 행렬로 변환한다.
+
+    BOQ 항목은 재료/노무/경비가 이미 결합된 단가(unit_price)이므로 OriginCostCalculator의
+    12단계 재계산(to_excel_data)에 넣지 않고, 실제 저장된 항목·요약을 그대로 표기한다
+    (가짜 12단계 분해를 발명하지 않음 — 정직성).
+    """
+    header = ["공종코드", "품명", "규격/공종", "물량", "단위", "단가(원)", "금액(원)", "단가출처"]
+    rows: list[list[Any]] = [header]
+    for it in est.get("items", []):
+        rows.append([
+            it.get("code", ""),
+            it.get("name", ""),
+            it.get("work_type", ""),
+            f"{it.get('quantity', 0):,.2f}",
+            it.get("unit", ""),
+            f"{it.get('unit_price', 0):,.0f}",
+            f"{it.get('amount', 0):,.0f}",
+            it.get("price_source", ""),
+        ])
+    summary = est.get("summary") or {}
+    rows.append(["", "", "", "", "", "", "", ""])
+    rows.append(["직접공사비 소계", "", "", "", "", "", f"{summary.get('direct', 0):,.0f}", ""])
+    rows.append(["간접비 소계", "", "", "", "", "", f"{summary.get('indirect', 0):,.0f}", ""])
+    rows.append(["총 공사비", "", "", "", "", "", f"{summary.get('total', 0):,.0f}",
+                 f"신뢰등급 {summary.get('confidence_grade', '-')}"])
+    return rows
+
+
 @router.get("/{project_id}/export-excel", response_class=Response)
-async def export_excel(project_id: str):
-    """원가계산서 샘플을 Excel 파일로 내보낸다."""
+async def export_excel(project_id: str, estimate_id: str | None = None):
+    """영속화된 BOQ(원가계산서)를 Excel 파일로 내보낸다.
+
+    estimate_id 지정 시 해당 건, 미지정 시 프로젝트의 최신 영속 BOQ를 사용한다.
+    영속 BOQ가 없으면 가짜 샘플 대신 404로 정직 응답한다(무목업)."""
+    from app.services.cost.cost_estimate_repository import get_estimate, list_estimates
     from app.services.export.excel_export_service import ExcelExportService
 
-    # 샘플 데이터로 원가계산서 생성
-    sample_items = [
-        {"work_code": "A01", "item_name": "철근콘크리트공사", "spec": "24-210-15",
-         "unit": "m3", "quantity": 500, "mat_unit": 150000, "labor_unit": 80000, "exp_unit": 20000},
-        {"work_code": "A05", "item_name": "창호공사", "spec": "AL 커튼월",
-         "unit": "m2", "quantity": 300, "mat_unit": 200000, "labor_unit": 50000, "exp_unit": 10000},
-        {"work_code": "E01", "item_name": "전기설비공사", "spec": "일반 전기",
-         "unit": "식", "quantity": 1, "mat_unit": 500000000, "labor_unit": 200000000, "exp_unit": 50000000},
-    ]
-    result = cost_calc.calculate(sample_items)
-    rows = cost_calc.to_excel_data(result)
+    eid = estimate_id
+    if not eid:
+        latest = await list_estimates(project_id, limit=1)
+        eid = latest[0]["estimate_id"] if latest else None
+    est = await get_estimate(eid) if eid else None
+    if not est:
+        raise HTTPException(
+            status_code=404,
+            detail="영속화된 BOQ(원가계산서)가 없습니다. 먼저 상세적산(BOQ)을 생성·저장하세요.",
+        )
+
+    rows = _boq_estimate_to_excel_rows(est)
 
     export_svc = ExcelExportService()
     file_bytes, content_type = export_svc.cost_sheet_to_xlsx(rows)

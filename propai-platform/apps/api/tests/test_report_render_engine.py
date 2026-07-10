@@ -141,3 +141,100 @@ def test_bank_adapter_renders_all_formats(fmt):
         text = _zip_text(data)
         assert "11,465" in text  # 통합 대지면적
         assert "미확보" in text  # ESG 미확보 섹션 정직 표기
+
+
+def _cost_full_sample() -> dict:
+    """적산 어댑터 표본 — overview+boq+senior+saving+change 전 산출을 채운다."""
+    return {
+        "project_name": "용인 <샘플> 적산",
+        "overview": {
+            "total_won": 103_200_000_000, "unit_cost_per_sqm": 3_500_000,
+            "aboveground_won": 60_000_000_000, "underground_won": 20_000_000_000,
+            "landscape_won": 1_200_000_000, "direct_won": 81_200_000_000,
+            "design_fee_won": 4_000_000_000, "supervision_fee_won": 3_000_000_000,
+            "contingency_won": 8_000_000_000, "general_expense_won": 7_000_000_000,
+            "indirect_won": 22_000_000_000,
+            "items": [
+                {"name": "콘크리트", "spec": "25-24-150", "unit": "m3", "quantity": 12000,
+                 "unit_cost_won": 150000, "cost_won": 1_800_000_000, "price_source": "standard",
+                 "wb_code": "A01", "wb_name": "골조"},
+            ],
+            "qto_source": "derived", "unit_price_source": "db",
+            "evidence": [{"label": "기준단가", "value": "3,500,000원/㎡", "basis": "표준단가 2026"}],
+            "legal_refs": [],
+            "baseline_check": {"baseline_won_per_sqm": 3_200_000, "calc_won_per_sqm": 3_500_000,
+                               "deviation_pct": 9.38, "basis": "기본형건축비 고시", "confidence": "med"},
+        },
+        "boq": {"items": [
+            {"code": "A01-03", "name": "레미콘", "work_type": "골조", "unit": "m3", "quantity": 12000,
+             "unit_price": 150000, "amount": 1_800_000_000, "price_source": "market", "wb_name": "골조"}],
+            "summary": {"total": 103_200_000_000, "direct": 81_200_000_000, "indirect": 22_000_000_000,
+                        "confidence_grade": "B"}},
+        "senior_consultation": {
+            "verdict": "WARN", "needs_expert_review": True, "honest_notes": "개산 기반 자문.",
+            "consultations": [{
+                "agent_key": "qs", "name_ko": "적산 QS", "verdict": "WARN",
+                "evaluations": [{"rule_id": "r1", "label": "일반관리비율", "value": 6.5, "unit": "%",
+                                 "verdict": "PASS", "threshold": "≤ 6%", "basis": "국가계약법 시행규칙"}],
+                "citations": ["국가계약법 시행규칙 §8"], "confidence_label": "중간",
+                "needs_expert_review": True, "honest_notes": ["표준요율 상한 대조."],
+                "license_gate": "적산사 확인 필요"}]},
+        "saving_scenarios": {"base_total": 103_200_000_000, "top_n": 3, "evaluated_count": 6,
+                             "saving_count": 2, "note": "구조/층수/GFA 축소만 시도.",
+                             "candidates": [{"label": "구조 PC 전환", "rationale": "PC 공법",
+                                             "overrides": {"structure_type": "PC"}, "total": 98_000_000_000,
+                                             "delta": -5_200_000_000, "delta_pct": -5.04,
+                                             "savings": 5_200_000_000, "affected_work_types": ["골조"],
+                                             "affected": [], "tradeoff": "공기 단축·품질 변동"}]},
+        "change_forecast": {"base_total": 103_200_000_000,
+                            "mc_band": {"base_total": 103_200_000_000, "p10": 104_000_000_000,
+                                        "p50": 108_000_000_000, "p90": 115_000_000_000,
+                                        "mean": 108_500_000_000, "std": 4_000_000_000},
+                            "scenarios": [{"risk_item": "지반 보강", "risk_category": "구조",
+                                           "severity": "high", "wb_targets": ["A02"], "wb_names": ["기초"],
+                                           "wb_base_amount": 5_000_000_000, "delta_pct_low": 5,
+                                           "delta_pct_high": 15, "delta_low": 250_000_000,
+                                           "delta_high": 750_000_000, "basis": "설계변경 예측"}],
+                            "data_gaps": ["지반조사 보고서 미확보"], "note": "결정론 시뮬레이션."},
+    }
+
+
+@pytest.mark.parametrize("fmt", ["pdf", "pptx", "docx"])
+def test_cost_estimation_adapter_renders_all_formats(fmt):
+    """적산 보고서(full) → 3포맷 렌더 성공 + 핵심 데이터·시니어 verdict 정직 표기."""
+    # ★렌더러 의존 라이브러리 부재 환경(로컬 경량 venv)은 관례대로 skip — CI/프로드는 실행.
+    pytest.importorskip(fmt if fmt != "pdf" else "reportlab")
+    from app.services.report.render import build_report_model_from_cost_estimation
+
+    model = build_report_model_from_cost_estimation(_cost_full_sample())
+    data, _mime, ext = render_report(model, fmt)
+    assert ext == fmt and len(data) > 500
+    sig = b"%PDF" if fmt == "pdf" else b"PK\x03\x04"
+    assert data[:4] == sig
+    if fmt != "pdf":
+        text = _zip_text(data)
+        assert "적산 보고서" in text
+        assert "일반관리비율" in text  # 시니어 QS 평가 항목
+        assert "구조 PC 전환" in text  # 절감 시나리오
+        assert "지반 보강" in text  # 설계변경 예측 시나리오
+
+
+@pytest.mark.parametrize("fmt", ["pdf", "pptx", "docx"])
+def test_cost_estimation_adapter_minimal_overview_only(fmt):
+    """최소 데이터(overview만) — 렌더 성공 + 생략 섹션(절감/시니어)이 출력에 없음(무날조)."""
+    pytest.importorskip(fmt if fmt != "pdf" else "reportlab")
+    from app.services.report.render import build_report_model_from_cost_estimation
+
+    minimal = {"project_name": "최소표본", "overview": _cost_full_sample()["overview"]}
+    # overview 안에 senior_consultation 없음 확인(우선순위 규칙 검증용).
+    minimal["overview"].pop("senior_consultation", None)
+    model = build_report_model_from_cost_estimation(minimal)
+    data, _mime, ext = render_report(model, fmt)
+    assert ext == fmt and len(data) > 500
+    sig = b"%PDF" if fmt == "pdf" else b"PK\x03\x04"
+    assert data[:4] == sig
+    if fmt != "pdf":
+        text = _zip_text(data)
+        assert "적산 보고서" in text
+        assert "구조 PC 전환" not in text  # 절감 섹션 생략(데이터 부재)
+        assert "설계변경 예측공사비" not in text  # change_forecast 섹션 생략

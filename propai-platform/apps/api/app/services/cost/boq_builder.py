@@ -34,7 +34,10 @@ _KEY_TO_KCCI = {
 
 # qto_source 별 신뢰구간(정직성 표기).
 _QTO_BAND = {"bim": "±5%", "derived": "±12%"}
-_HONESTY_NOTE = "참고용 개산 — 전문 적산사 검토 권장. 단가는 표준품셈/시장모델 기반이며 실적단가(actual)는 미보유."
+_HONESTY_NOTE = (
+    "참고용 개산 — 전문 적산사 검토 권장. 단가는 표준품셈/시장모델(시뮬레이션) 기반이며 "
+    "실적단가(actual)는 미보유."
+)
 
 
 def _kcci_market_unit(key: str) -> float | None:
@@ -53,6 +56,22 @@ def _kcci_market_unit(key: str) -> float | None:
         anchor = datetime(now.year, now.month, 1, tzinfo=UTC)
         p = KCCIMaterialPriceService._calc_unit_price(code, anchor)
         return round(float(p["unit_price_krw"]), 2)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _kcci_market_source_label(key: str) -> str | None:
+    """market_unit_price 출처 라벨 — ★T5 정직화(결정론 시뮬레이션, 실시세 API 아님).
+
+    미대응 키(_KEY_TO_KCCI 밖)는 None(값이 없는데 라벨만 남기지 않음 — 정직).
+    """
+    if key not in _KEY_TO_KCCI:
+        return None
+    try:
+        from apps.api.services.kcci_material_price_service import (  # noqa: PLC0415
+            MARKET_PRICE_SOURCE_LABEL,
+        )
+        return MARKET_PRICE_SOURCE_LABEL
     except Exception:  # noqa: BLE001
         return None
 
@@ -86,6 +105,9 @@ async def build_boq(
         prices=unit_prices,
     )
 
+    # 공종분류 SSOT(work_breakdown) — work_code(A체계) → 표준 대공종(wb_code/wb_name) additive.
+    from app.services.cost.work_breakdown import resolve as _resolve_wb
+
     band = _QTO_BAND.get(qto_source, "±12%")
     items: list[dict[str, Any]] = []
     for it in raw:
@@ -97,6 +119,7 @@ async def build_boq(
         basis_year = int(it.get("price_basis_year", 2026)) if key else 2026
         qty = float(it.get("quantity", 0))
         market_unit = _kcci_market_unit(key) if key else None
+        wb = _resolve_wb(wc, system="numeric")
         items.append({
             "code": wc,
             "name": it.get("item_name"),
@@ -111,7 +134,12 @@ async def build_boq(
             # D4 시장가 3중비교
             "standard_unit_price": int(std_unit),
             "market_unit_price": market_unit,
+            # ★T5 정직화: market_unit_price 출처(결정론 시뮬레이션·실시세 API 아님). 값 없으면 None.
+            "market_unit_price_source": _kcci_market_source_label(key) if key else None,
             "actual_unit_price": None,                 # 실적 데이터 없음(정직 표기)
+            # P2 T2: 공종분류 SSOT 대공종(additive) — 매핑 없으면 정직 None.
+            "wb_code": wb["wb_code"],
+            "wb_name": wb["wb_name"],
         })
 
     # 원가 합계(12단계 법정요율).

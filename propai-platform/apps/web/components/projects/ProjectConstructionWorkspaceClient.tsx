@@ -6,29 +6,45 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { NumberInput } from "@/components/common/NumberInput";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
+import type { UnitPriceItem, UnitPricesResponse } from "@/components/cost/cmTypes";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
 
-type CostItem = {
-  work_code: string;
-  description: string;
-  unit: string;
-  quantity: number;
-  unit_rate_krw: number;
-  total_krw: number;
-};
-
+// ★계약 정합(실버그 수정): 과거 이 타입은 items[]/total_cost_krw/ai_analysis 등
+// 백엔드에 존재하지 않는 키를 선언해 결과 패널이 통째로 빈 값이었다(무음 미렌더).
+// 백엔드 정본 = POST /cost/{pid}/calculate 응답(OriginCostCalculator 12단계 집계
+// + 공종별 소계 category_totals + CostInterpreter ai_* 5형제). items는 에코되지 않는다.
 type CostCalculationResponse = {
   project_id: string;
-  items: CostItem[];
-  total_cost_krw: number;
-  vat_krw: number;
-  grand_total_krw: number;
-  ai_analysis?: string;
+  // 12단계 원가 집계(원 단위)
+  direct_material_cost: number;
+  direct_labor_cost: number;
+  direct_expense_cost: number;
+  direct_cost: number;
+  indirect_labor_cost: number;
+  total_labor_cost: number;
+  insurance_total: number;
+  safety_health: number;
+  env_preserve: number;
+  net_construction_cost: number;
+  general_mgmt: number;
+  profit: number;
+  construction_cost_pre_vat: number;
+  vat: number;
+  total_project_cost: number;
+  category_totals: Record<string, number>;
+  item_count: number;
+  // LLM 해석(use_llm 옵트인 시에만 채워짐 — 없으면 미렌더)
+  ai_cost_analysis?: string | null;
+  ai_ve_suggestions?: string | null;
+  ai_material_advice?: string | null;
+  ai_schedule_impact?: string | null;
+  ai_risk_factors?: string | null;
 };
 
 type ChecklistItem = {
@@ -74,10 +90,16 @@ type Labels = {
   costDescLabel: string;
   costUnitLabel: string;
   costQtyLabel: string;
-  costRateLabel: string;
+  costMatRateLabel: string;
+  costLaborRateLabel: string;
+  costExpRateLabel: string;
+  stageBreakdownTitle: string;
+  categorySubtotalTitle: string;
+  supplyPriceLabel: string;
   addItemAction: string;
   removeItemAction: string;
   submitCostAction: string;
+  loadStandardPricesAction: string;
   checklistTitle: string;
   projectTypeLabel: string;
   projectCostLabel: string;
@@ -111,13 +133,19 @@ const KO_LABELS: Labels = {
   formTitle: "공사비 항목 입력",
   costTitle: "공사비 산출 결과",
   costWorkCodeLabel: "공종 코드",
-  costDescLabel: "내용",
+  costDescLabel: "품명·규격",
   costUnitLabel: "단위",
   costQtyLabel: "수량",
-  costRateLabel: "단가 (원)",
+  costMatRateLabel: "재료단가 (원)",
+  costLaborRateLabel: "노무단가 (원)",
+  costExpRateLabel: "경비단가 (원)",
+  stageBreakdownTitle: "12단계 원가 분해",
+  categorySubtotalTitle: "공종별 소계",
+  supplyPriceLabel: "공급가액(부가세 전)",
   addItemAction: "항목 추가",
   removeItemAction: "삭제",
   submitCostAction: "공사비 산출 실행",
+  loadStandardPricesAction: "표준단가 불러오기",
   checklistTitle: "시공 체크리스트",
   projectTypeLabel: "프로젝트 유형",
   projectCostLabel: "총 공사비 (원)",
@@ -152,13 +180,19 @@ const EN_LABELS: Labels = {
   formTitle: "Cost item input",
   costTitle: "Cost calculation results",
   costWorkCodeLabel: "Work code",
-  costDescLabel: "Description",
+  costDescLabel: "Item name/spec",
   costUnitLabel: "Unit",
   costQtyLabel: "Quantity",
-  costRateLabel: "Unit rate (KRW)",
+  costMatRateLabel: "Material rate (KRW)",
+  costLaborRateLabel: "Labor rate (KRW)",
+  costExpRateLabel: "Expense rate (KRW)",
+  stageBreakdownTitle: "12-stage cost breakdown",
+  categorySubtotalTitle: "Subtotal by work type",
+  supplyPriceLabel: "Supply price (pre-VAT)",
   addItemAction: "Add item",
   removeItemAction: "Remove",
   submitCostAction: "Run cost calculation",
+  loadStandardPricesAction: "Load standard prices",
   checklistTitle: "Construction checklist",
   projectTypeLabel: "Project type",
   projectCostLabel: "Total cost (KRW)",
@@ -210,12 +244,18 @@ function extractErrorMessage(error: unknown, authMessage: string) {
   return "Request failed.";
 }
 
+// ★계약 정합: 백엔드 계산기(OriginCostCalculator)는 재료/노무/경비 3분해 단가
+// (mat_unit/labor_unit/exp_unit)를 읽는다 — 과거의 종합단가(unit_rate_krw) 단일 필드는
+// 백엔드가 읽지 않아 직접공사비가 0으로 계산되던 실버그였다(간접노무비 등 12단계가
+// 노무비 기반이라 분해 입력이 정확성의 전제).
 type CostFormItem = {
   work_code: string;
   description: string;
   unit: string;
   quantity: string;
-  unit_rate_krw: string;
+  mat_unit: string;
+  labor_unit: string;
+  exp_unit: string;
 };
 
 const EMPTY_COST_ITEM: CostFormItem = {
@@ -223,8 +263,37 @@ const EMPTY_COST_ITEM: CostFormItem = {
   description: "",
   unit: "m2",
   quantity: "",
-  unit_rate_krw: "",
+  mat_unit: "",
+  labor_unit: "",
+  exp_unit: "",
 };
+
+// P2 T4: "표준단가 불러오기" 매칭 보조 — 표준단가(6개 자재키) ↔ 시스템A 숫자공종코드(8개
+// 중 6개) 별칭. work_breakdown SSOT(system="numeric")가 동일 원천으로 묶는 두 표기(원시
+// 코드·단가키)와 같은 실코드(boq_builder._WORKCODE_TO_KEY 역방향) — 사용자가 work_code
+// 칸에 표준단가 코드("concrete" 등) 대신 시스템A 코드("01-콘크리트" 등)를 입력해도
+// 매칭되도록 하는 2차(wb 브리지) 별칭이다. 발명 없음 — 실코드 grep 확인.
+const PRICE_KEY_NUMERIC_ALIASES: Record<string, string[]> = {
+  concrete: ["01-콘크리트"],
+  rebar: ["02-철근"],
+  formwork: ["03-거푸집"],
+  masonry: ["04-조적"],
+  waterproof: ["05-방수"],
+  window: ["06-창호"],
+};
+
+/** work_code(사용자 입력) → 표준단가 항목. ①코드 직매칭 ②wb 브리지 별칭 순서로 시도. */
+function findMatchingUnitPrice(workCode: string, priceItems: UnitPriceItem[]): UnitPriceItem | null {
+  const normalized = workCode.trim().toLowerCase();
+  if (!normalized) return null;
+  const direct = priceItems.find((p) => p.code.toLowerCase() === normalized);
+  if (direct) return direct;
+  return (
+    priceItems.find((p) =>
+      (PRICE_KEY_NUMERIC_ALIASES[p.code] ?? []).some((alias) => alias.toLowerCase() === normalized),
+    ) ?? null
+  );
+}
 
 /* ── Component ── */
 
@@ -250,14 +319,17 @@ export function ProjectConstructionWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmittingCost, setIsSubmittingCost] = useState(false);
   const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
+  // T3: use_llm 옵트인 — 기존 동작(AI 원가 해석 항상 포함)을 보존하기 위해 기본 true로 명시 전송.
+  const [useLlm, setUseLlm] = useState(true);
   const [costResult, setCostResult] =
     useState<CostCalculationResponse | null>(null);
   const [checklistResult, setChecklistResult] =
     useState<ConstructionChecklistResponse | null>(null);
 
+  // 시작 행은 공종 예시만 제공하고 수량·단가는 비워둔다(임의 데모 단가 하드코딩 금지 — 무목업).
   const [costItems, setCostItems] = useState<CostFormItem[]>([
-    { ...EMPTY_COST_ITEM, work_code: "RC01", description: "철근콘크리트 공사", unit: "m3", quantity: "500", unit_rate_krw: "180000" },
-    { ...EMPTY_COST_ITEM, work_code: "ST01", description: "철골 공사", unit: "ton", quantity: "120", unit_rate_krw: "2500000" },
+    { ...EMPTY_COST_ITEM, work_code: "RC01", description: "철근콘크리트 공사", unit: "m3" },
+    { ...EMPTY_COST_ITEM, work_code: "ST01", description: "철골 공사", unit: "ton" },
   ]);
 
   const [checklistForm, setChecklistForm] = useState({
@@ -266,6 +338,11 @@ export function ProjectConstructionWorkspaceClient({
     floorCount: "25",
     excavationDepth: "12",
   });
+
+  // P2 T4: "표준단가 불러오기" — 행 인덱스별 프리필 출처 캡션(source·tier).
+  const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+  const [priceLoadError, setPriceLoadError] = useState("");
+  const [priceCaptions, setPriceCaptions] = useState<Record<number, string>>({});
 
   /* Risk assessment query */
   const riskQuery = useQuery({
@@ -301,25 +378,76 @@ export function ProjectConstructionWorkspaceClient({
     );
   }
 
+  /** P2 T4: 표준단가 SSOT에서 현재 행들의 mat/labor/exp 빈 필드만 프리필(직매칭+wb 브리지). */
+  async function handleLoadStandardPrices() {
+    setPriceLoadError("");
+    setIsLoadingPrices(true);
+    try {
+      const res = await apiClient.get<UnitPricesResponse>("/cost/unit-prices", {
+        useMock: false,
+      });
+      const priceItems = res.items ?? [];
+      const captions: Record<number, string> = {};
+      setCostItems((current) =>
+        current.map((item, index) => {
+          const match = findMatchingUnitPrice(item.work_code, priceItems);
+          if (!match) return item;
+          const next = { ...item };
+          let filled = false;
+          if (next.mat_unit === "" && match.mat_unit != null) {
+            next.mat_unit = String(match.mat_unit);
+            filled = true;
+          }
+          if (next.labor_unit === "" && match.labor_unit != null) {
+            next.labor_unit = String(match.labor_unit);
+            filled = true;
+          }
+          if (next.exp_unit === "" && match.exp_unit != null) {
+            next.exp_unit = String(match.exp_unit);
+            filled = true;
+          }
+          if (filled) {
+            captions[index] =
+              `표준단가 적용 — 출처: ${match.source}${match.tier ? ` (${match.tier})` : ""}`;
+          }
+          return next;
+        }),
+      );
+      setPriceCaptions(captions);
+      if (Object.keys(captions).length === 0) {
+        setPriceLoadError(
+          "매칭되는 표준단가가 없습니다(공종 코드 미일치) — 직접 입력하세요.",
+        );
+      }
+    } catch (error) {
+      setPriceLoadError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsLoadingPrices(false);
+    }
+  }
+
   async function handleCostSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
     setIsSubmittingCost(true);
 
     try {
+      // ★백엔드 계약 키로 전송: item_name(품명)·mat/labor/exp 3분해 단가.
       const items = costItems.map((item) => ({
         work_code: item.work_code.trim(),
-        description: item.description.trim(),
+        item_name: item.description.trim(),
         unit: item.unit.trim(),
         quantity: Number(item.quantity) || 0,
-        unit_rate_krw: Number(item.unit_rate_krw) || 0,
+        mat_unit: Number(item.mat_unit) || 0,
+        labor_unit: Number(item.labor_unit) || 0,
+        exp_unit: Number(item.exp_unit) || 0,
       }));
 
       const result = await apiClient.post<CostCalculationResponse>(
         `/cost/${projectId}/calculate`,
         {
           useMock: false,
-          body: { items },
+          body: { items, use_llm: useLlm },
         },
       );
       setCostResult(result);
@@ -447,13 +575,30 @@ export function ProjectConstructionWorkspaceClient({
                   placeholder={labels.costQtyLabel}
                   className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
+                {/* ★재료/노무/경비 3분해 단가 — 백엔드 12단계(간접노무비=노무비 기반) 정확성의 전제 */}
+                <NumberInput
+                  value={item.mat_unit === "" ? null : Number(item.mat_unit)}
+                  onChange={(n) =>
+                    updateCostItem(index, "mat_unit", n != null ? String(n) : "")
+                  }
+                  placeholder={labels.costMatRateLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
+                <NumberInput
+                  value={item.labor_unit === "" ? null : Number(item.labor_unit)}
+                  onChange={(n) =>
+                    updateCostItem(index, "labor_unit", n != null ? String(n) : "")
+                  }
+                  placeholder={labels.costLaborRateLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
                 <div className="flex gap-2">
                   <NumberInput
-                    value={item.unit_rate_krw === "" ? null : Number(item.unit_rate_krw)}
+                    value={item.exp_unit === "" ? null : Number(item.exp_unit)}
                     onChange={(n) =>
-                      updateCostItem(index, "unit_rate_krw", n != null ? String(n) : "")
+                      updateCostItem(index, "exp_unit", n != null ? String(n) : "")
                     }
-                    placeholder={labels.costRateLabel}
+                    placeholder={labels.costExpRateLabel}
                     className="flex-1 flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   {costItems.length > 1 && (
@@ -467,11 +612,28 @@ export function ProjectConstructionWorkspaceClient({
                     </Button>
                   )}
                 </div>
+                {/* P2 T4: 표준단가 프리필 출처 캡션(source·tier) — 프리필된 행만 표시 */}
+                {priceCaptions[index] && (
+                  <p className="md:col-span-6 text-[11px] text-[var(--text-tertiary)]">
+                    {priceCaptions[index]}
+                  </p>
+                )}
               </div>
             ))}
-            <div className="flex gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="secondary" onClick={addCostItem}>
                 {labels.addItemAction}
+              </Button>
+              {/* P2 T4: 표준단가 SSOT 프리필 — 빈 필드만 채움(사용자 입력 덮어쓰기 금지) */}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleLoadStandardPrices()}
+                disabled={!canUseLiveApi || isLoadingPrices}
+              >
+                {isLoadingPrices
+                  ? `${labels.loadStandardPricesAction}...`
+                  : labels.loadStandardPricesAction}
               </Button>
               <Button
                 type="submit"
@@ -481,7 +643,16 @@ export function ProjectConstructionWorkspaceClient({
                   ? `${labels.submitCostAction}...`
                   : labels.submitCostAction}
               </Button>
+              <UseLlmToggle
+                checked={useLlm}
+                onChange={setUseLlm}
+                hint="AI 원가 해석 포함"
+                disabled={isSubmittingCost}
+              />
             </div>
+            {priceLoadError && (
+              <p className="text-sm text-[var(--spot)]">{priceLoadError}</p>
+            )}
           </form>
         </CardContent>
       </Card>
@@ -494,70 +665,100 @@ export function ProjectConstructionWorkspaceClient({
           </p>
           {costResult ? (
             <div className="mt-4 space-y-4">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] text-left text-xs uppercase tracking-widest text-[var(--text-tertiary)]">
-                      <th className="py-3 pr-4">{labels.costWorkCodeLabel}</th>
-                      <th className="py-3 pr-4">{labels.costDescLabel}</th>
-                      <th className="py-3 pr-4">{labels.costUnitLabel}</th>
-                      <th className="py-3 pr-4 text-right">
-                        {labels.costQtyLabel}
-                      </th>
-                      <th className="py-3 pr-4 text-right">
-                        {labels.costRateLabel}
-                      </th>
-                      <th className="py-3 text-right">{labels.totalCostLabel}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(costResult.items ?? []).map((item, i) => (
-                      <tr
-                        key={`${item.work_code}-${i}`}
-                        className="border-b border-[var(--line)]"
-                      >
-                        <td className="py-3 pr-4 font-mono text-[var(--text-secondary)]">
-                          {item.work_code}
-                        </td>
-                        <td className="py-3 pr-4 text-[var(--text-primary)]">
-                          {item.description}
-                        </td>
-                        <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                          {item.unit}
-                        </td>
-                        <td className="py-3 pr-4 text-right text-[var(--text-secondary)]">
-                          {item.quantity.toLocaleString()}
-                        </td>
-                        <td className="py-3 pr-4 text-right text-[var(--text-secondary)]">
-                          {formatCurrency(item.unit_rate_krw)}
-                        </td>
-                        <td className="py-3 text-right font-semibold text-[var(--text-primary)]">
-                          {formatCurrency(item.total_krw)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {/* ★백엔드 실계약 렌더(실버그 수정): 계산기는 항목 에코 없이 12단계 집계
+                  +공종별 소계를 반환한다 — 과거의 items 테이블은 항상 빈 배열이었다. */}
               <div className="grid gap-4 md:grid-cols-3">
                 <MetricTile
-                  label={labels.totalCostLabel}
-                  value={formatCurrency(costResult.total_cost_krw)}
+                  label={labels.supplyPriceLabel}
+                  value={formatCurrency(costResult.construction_cost_pre_vat)}
                 />
                 <MetricTile
                   label={labels.vatLabel}
-                  value={formatCurrency(costResult.vat_krw)}
+                  value={formatCurrency(costResult.vat)}
                 />
                 <MetricTile
                   label={labels.grandTotalLabel}
-                  value={formatCurrency(costResult.grand_total_krw)}
+                  value={formatCurrency(costResult.total_project_cost)}
                 />
               </div>
-              {costResult.ai_analysis ? (
-                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-sm leading-7 text-[var(--text-secondary)]">
-                    {costResult.ai_analysis}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-tertiary)]">
+                  {labels.stageBreakdownTitle}
+                </p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {(
+                        [
+                          ["직접재료비", costResult.direct_material_cost],
+                          ["직접노무비", costResult.direct_labor_cost],
+                          ["직접경비", costResult.direct_expense_cost],
+                          ["직접공사비 소계", costResult.direct_cost],
+                          ["간접노무비", costResult.indirect_labor_cost],
+                          ["4대보험 등 보험료", costResult.insurance_total],
+                          ["산업안전보건관리비", costResult.safety_health],
+                          ["환경보전비", costResult.env_preserve],
+                          ["순공사원가", costResult.net_construction_cost],
+                          ["일반관리비", costResult.general_mgmt],
+                          ["이윤", costResult.profit],
+                        ] as const
+                      ).map(([label, amount]) => (
+                        <tr key={label} className="border-b border-[var(--line)]">
+                          <td className="py-2 pr-4 text-[var(--text-secondary)]">{label}</td>
+                          <td className="py-2 text-right font-medium text-[var(--text-primary)]">
+                            {formatCurrency(amount ?? 0)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {costResult.category_totals &&
+              Object.keys(costResult.category_totals).length > 0 ? (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-tertiary)]">
+                    {labels.categorySubtotalTitle}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {Object.entries(costResult.category_totals).map(([code, amt]) => (
+                      <span
+                        key={code}
+                        className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs text-[var(--text-secondary)]"
+                      >
+                        <span className="font-mono">{code}</span>{" "}
+                        <span className="font-semibold text-[var(--text-primary)]">
+                          {formatCurrency(amt)}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {costResult.ai_cost_analysis ? (
+                <div className="space-y-3 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-sm leading-7 text-[var(--text-secondary)]">
+                    {costResult.ai_cost_analysis}
+                  </p>
+                  {(
+                    [
+                      ["VE 제안", costResult.ai_ve_suggestions],
+                      ["자재 조언", costResult.ai_material_advice],
+                      ["공정 영향", costResult.ai_schedule_impact],
+                      ["리스크 요인", costResult.ai_risk_factors],
+                    ] as const
+                  )
+                    .filter(([, text]) => !!text)
+                    .map(([title, text]) => (
+                      <div key={title}>
+                        <p className="text-xs font-semibold text-[var(--text-tertiary)]">
+                          {title}
+                        </p>
+                        <p className="text-sm leading-6 text-[var(--text-secondary)]">
+                          {text}
+                        </p>
+                      </div>
+                    ))}
                 </div>
               ) : null}
             </div>

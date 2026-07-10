@@ -41,6 +41,10 @@ _DDL_MATERIAL_UQ = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_material_unit_prices_code "
     "ON material_unit_prices(material_code)"
 )
+# P1 단가 4계층 리졸버(T1 공공고시) — 기존 배포 테이블에도 멱등 보강(신규 컬럼, 기존 데이터 무영향).
+_DDL_MATERIAL_SOURCE_URL = (
+    "ALTER TABLE material_unit_prices ADD COLUMN IF NOT EXISTS source_url varchar(500)"
+)
 
 _DDL_COST_WORK_TYPES = (
     "CREATE TABLE IF NOT EXISTS cost_work_types ("
@@ -152,7 +156,7 @@ _DDL_COST_ESTIMATE_ITEM_IDX = (
 )
 
 _ALL_DDL = (
-    _DDL_MATERIAL_UNIT_PRICES, _DDL_MATERIAL_UQ,
+    _DDL_MATERIAL_UNIT_PRICES, _DDL_MATERIAL_UQ, _DDL_MATERIAL_SOURCE_URL,
     _DDL_COST_WORK_TYPES, _DDL_WORK_TYPE_UQ,
     _DDL_BIM_QUANTITIES,
     _DDL_PROGRESS_BILLINGS,

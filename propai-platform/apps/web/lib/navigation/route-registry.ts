@@ -192,8 +192,10 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/analytics/investment"],
   },
   {
+    // T2: "공사비 분석"→"적산·공사비 관리" 개칭 — /analytics/cost 허브가 개략 산정뿐 아니라
+    // 상세 내역서(BOQ, BoqDetailTable) 탭도 담당하므로 라벨을 실제 범위에 맞춘다.
     id: "cost",
-    label: "공사비 분석",
+    label: "적산·공사비 관리",
     sectionId: "projects",
     parentId: "business-analysis",
     order: 20,

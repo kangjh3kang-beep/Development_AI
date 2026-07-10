@@ -20,6 +20,8 @@ import {
 } from "recharts";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { ChangeForecastCard } from "@/components/cost/ChangeForecastCard";
+import { SavingScenariosCard } from "@/components/cost/SavingScenariosCard";
 import type {
   AlternativesResponse,
   AlternativeVariantInput,
@@ -137,6 +139,18 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
       })),
     ];
   }, [result]);
+
+  // P4 T3: 절감 Top-N·설계변경 예측 카드가 공유하는 기준안 params(입력 폼 재사용 — 중복 폼 금지).
+  const baseParams = useMemo(
+    () => ({
+      building_type: bt,
+      total_gfa_sqm: Number(gfa) || 0,
+      floor_count_above: Number(floorsAbove) || 1,
+      floor_count_below: Number(floorsBelow) || 0,
+      structure_type: structure,
+    }),
+    [bt, gfa, floorsAbove, floorsBelow, structure],
+  );
 
   return (
     <section className="grid gap-5">
@@ -325,6 +339,10 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
           )}
         </>
       )}
+
+      {/* P4 T3: 절감 Top-N·설계변경 예측 — 위 기준안 입력을 그대로 재사용(무과금·결정론). */}
+      <SavingScenariosCard projectId={projectId} baseParams={baseParams} />
+      <ChangeForecastCard projectId={projectId} baseParams={baseParams} />
     </section>
   );
 }

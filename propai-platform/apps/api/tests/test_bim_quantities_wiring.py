@@ -259,6 +259,116 @@ class TestAnalyzeIfcInsert:
 
 
 # ═══════════════════════════════════════════════
+# 2-1. generate_ifc_from_design — bim_quantities bulk INSERT(D1 신규 배선)
+# ═══════════════════════════════════════════════
+
+
+def _mock_generated_ifc_modules():
+    """ifcopenshell.create_entity 가 매 호출마다 새 Mock(GlobalId/Name 보유)을 반환하도록 구성.
+
+    실제 슬라브/벽 개수만큼 서로 다른 엔터티가 생성돼야 elements 리스트가 올바르게
+    쌓이는지 검증할 수 있다(고정 return_value 1개를 쓰면 전부 같은 객체가 되어 회귀를 못 잡음).
+    """
+    counter = {"n": 0}
+
+    def _new_entity(entity_type, **kwargs):
+        counter["n"] += 1
+        m = MagicMock()
+        m.GlobalId = kwargs.get("GlobalId") or f"GID-{counter['n']}"
+        m.Name = kwargs.get("Name") or f"{entity_type}-{counter['n']}"
+        return m
+
+    mock_ifc_file = MagicMock()
+    mock_ifc_file.create_entity = MagicMock(side_effect=_new_entity)
+    mock_ifc_file.write = MagicMock()
+
+    mock_guid = MagicMock()
+    mock_guid.new.side_effect = lambda: f"GUID-{counter['n']}"
+
+    mock_minio = MagicMock()
+    mock_minio.bucket_exists.return_value = True
+    mock_minio.put_object = MagicMock()
+
+    return mock_ifc_file, mock_guid, mock_minio
+
+
+class TestGenerateIfcInsertsBimQuantities:
+    """WP-18 확장 — /bim/generate-ifc 성공경로에서도 analyze_ifc와 동일하게
+    bim_quantities 가 영속되는지 검증(그동안 프론트 실사용 경로였는데도 미배선이던 결함)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_ifc_persists_bim_quantities(self):
+        from apps.api.services.bim_ifc_service import BIMIFCService
+
+        db = _mock_db_with_refresh()
+        svc = BIMIFCService(db=db)
+        svc.settings = MagicMock()
+        svc.settings.minio_url = "http://localhost:9000"
+        svc.settings.minio_access_key = "test"
+        svc.settings.minio_secret_key = "test"
+
+        mock_ifc_file, mock_guid, mock_minio = _mock_generated_ifc_modules()
+
+        with (
+            patch.dict("sys.modules", {
+                "ifcopenshell": MagicMock(file=MagicMock(return_value=mock_ifc_file), guid=mock_guid),
+                "minio": MagicMock(Minio=MagicMock(return_value=mock_minio)),
+            }),
+            patch("tempfile.NamedTemporaryFile") as mock_tmp,
+            patch("pathlib.Path.read_bytes", return_value=b"fake_ifc_data"),
+            patch("os.unlink"),
+        ):
+            mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake.ifc"
+            result = await svc.generate_ifc_from_design(
+                project_id=uuid.uuid4(), tenant_id=TEST_TENANT_ID,
+                total_area_sqm=1000.0, floors=1, structure_type="RC",
+            )
+
+        # floors=1 → 슬라브 1 + 벽 4 = 5요소. IfcSlab/IfcWall 각 4 work_code → 20행.
+        assert result.element_count == 5
+        assert db.add_all.call_count == 1
+        rows = db.add_all.call_args.args[0]
+        assert len(rows) == 20
+        assert {r.ifc_object_type for r in rows} == {"IfcSlab", "IfcWall"}
+        assert all(r.extraction_method == "AI_AUTO" for r in rows)
+        assert all(r.tenant_id == TEST_TENANT_ID for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_generate_ifc_persist_failure_is_graceful(self):
+        """bim_quantities 영속이 실패해도 IFC 생성 응답 자체는 정상 반환된다(무영향)."""
+        from apps.api.services.bim_ifc_service import BIMIFCService
+
+        db = _mock_db_with_refresh()
+        svc = BIMIFCService(db=db)
+        svc.settings = MagicMock()
+        svc.settings.minio_url = "http://localhost:9000"
+        svc.settings.minio_access_key = "test"
+        svc.settings.minio_secret_key = "test"
+
+        mock_ifc_file, mock_guid, mock_minio = _mock_generated_ifc_modules()
+
+        with (
+            patch.dict("sys.modules", {
+                "ifcopenshell": MagicMock(file=MagicMock(return_value=mock_ifc_file), guid=mock_guid),
+                "minio": MagicMock(Minio=MagicMock(return_value=mock_minio)),
+            }),
+            patch("tempfile.NamedTemporaryFile") as mock_tmp,
+            patch("pathlib.Path.read_bytes", return_value=b"fake_ifc_data"),
+            patch("os.unlink"),
+            patch.object(svc, "_persist_bim_quantities", side_effect=RuntimeError("db down")),
+        ):
+            mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake.ifc"
+            result = await svc.generate_ifc_from_design(
+                project_id=uuid.uuid4(), tenant_id=TEST_TENANT_ID,
+                total_area_sqm=1000.0, floors=1, structure_type="RC",
+            )
+
+        # 영속 실패해도 정상 응답(정직 — 예외를 삼키되 값 조작 없음).
+        assert result.element_count == 5
+        db.rollback.assert_awaited()
+
+
+# ═══════════════════════════════════════════════
 # 3. GET origin-cost 엔드포인트
 # ═══════════════════════════════════════════════
 
@@ -325,3 +435,24 @@ class TestOriginCostEndpoint:
         assert "A05" not in _BIM_WORKCODE_TO_PRICE_KEY
         assert _BIM_WORKCODE_TO_PRICE_KEY["A01-03"] == "concrete"
         assert _BIM_WORKCODE_TO_PRICE_KEY["A01-02"] == "rebar"
+
+    def test_wb_code_additive_priced_and_unpriced(self):
+        # P2 T2: 공종분류 SSOT 대공종(wb_code/wb_name) — 단가 유무와 무관하게 항상 부착.
+        grouped = [
+            {"work_code": "A01-03", "unit": "m3", "quantity": 50.0, "line_count": 1},  # priced
+            {"work_code": "B01", "unit": "m", "quantity": 30.0, "line_count": 1},      # unpriced
+        ]
+        client = _make_client(grouped)
+        with patch(
+            "app.services.cost.unit_price_repository.UnitPriceRepository.get_prices",
+            new_callable=AsyncMock, return_value=_fallback_prices(),
+        ):
+            resp = client.get(f"/api/v1/cost/{TEST_PROJECT_ID}/bim-quantities/origin-cost")
+        data = resp.json()
+        a0103 = next(it for it in data["items"] if it["work_code"] == "A01-03")
+        b01 = next(it for it in data["items"] if it["work_code"] == "B01")
+        assert a0103["wb_code"] == "WB04"
+        assert a0103["wb_name"] == "골조공사(RC·철골)"
+        # 단가 미보유(unpriced)여도 대공종은 부착됨(단가와 별개 축).
+        assert b01["wb_code"] == "WB10"
+        assert b01["priced"] is False

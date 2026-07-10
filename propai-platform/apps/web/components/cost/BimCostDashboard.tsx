@@ -5,6 +5,11 @@ import { AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+// F-3: 무인증 raw fetch(Authorization 미첨부→배포환경 401 조용실패) 대신 apiClient로 통일
+// (자동 Bearer 첨부 + 401 리프레시 재시도 공용 계약 — BoqDetailTable 등 cost 화면 기존 관례와 동일).
+import { apiClient } from "@/lib/api-client";
 
 type CostResult = {
   total_project_cost: number;
@@ -15,7 +20,41 @@ type CostResult = {
   vat: number;
   category_totals: Record<string, number>;
   applied_rates: Record<string, number>;
+  ai_cost_analysis?: string | null;
+  // P3: 시니어 적산(QS) 자문(with_senior opt-in 시만 채워짐).
+  senior_consultation?: SeniorConsultation | null;
   [key: string]: unknown;
+};
+
+// origin-cost(bim_quantities) 항목 — /calculate 재제출용(work_code/mat_unit/labor_unit/exp_unit 보유).
+type OriginCostItem = {
+  work_code: string;
+  item_name: string;
+  spec?: string;
+  unit: string;
+  quantity: number;
+  mat_unit: number;
+  labor_unit: number;
+  exp_unit: number;
+  priced: boolean;
+};
+
+type OriginCostResponse = {
+  status: "ok" | "no_bim_quantities";
+  items: OriginCostItem[];
+};
+
+// /cost/estimate-overview 응답(qto_source 없는 BIM 물량 폴백용 — 건축개요 기반 개산).
+type OverviewResult = {
+  total_won: number;
+  direct_won: number;
+  indirect_won: number;
+  aboveground_won: number;
+  underground_won: number;
+  landscape_won: number;
+  qto_source?: string;
+  // P3: 시니어 적산(QS) 자문(with_senior opt-in 시만 채워짐).
+  senior_consultation?: SeniorConsultation | null;
 };
 
 type MCResult = {
@@ -35,26 +74,28 @@ type Rate = {
   pension_note: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 function fmt(n: number): string {
   return new Intl.NumberFormat("ko-KR").format(Math.round(n));
 }
 
 export default function BimCostDashboard({ projectId }: { projectId: string }) {
   const [costResult, setCostResult] = useState<CostResult | null>(null);
+  const [overviewResult, setOverviewResult] = useState<OverviewResult | null>(null);
   const [mcResult, setMcResult] = useState<MCResult | null>(null);
   const [rates, setRates] = useState<Rate | null>(null);
   const [loading, setLoading] = useState(false);
-  // ★실 BIM 정밀 물량 소스가 프론트에 없으므로, 설계 연면적(designData.totalGfaSqm)으로 개략 물량을 역산한다.
-  //   연면적이 없으면 가짜 고정값(2000m³ 등) 대신 '설계 필요'로 정직 안내(무목업).
+  // T6: 물량 출처 배지 — BIM 실측(bim_quantities, T1 영속 배선) 우선, 없으면 건축개요 개산으로 폴백.
+  const [qtoSource, setQtoSource] = useState<"bim_quantities" | "estimate_overview" | null>(null);
   const totalGfaSqm = useProjectContextStore((s) => s.designData?.totalGfaSqm ?? null);
+  const floorCount = useProjectContextStore((s) => s.designData?.floorCount ?? null);
   const [needDesign, setNeedDesign] = useState(false);
+  // T3: use_llm 옵트인 — 기존 동작(AI 원가 해석 항상 포함)을 보존하기 위해 기본 true로 명시 전송.
+  const [useLlm, setUseLlm] = useState(true);
 
   const fetchRates = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/rates/current`);
-      if (res.ok) setRates(await res.json());
+      const data = await apiClient.get<Rate>("/rates/current", { useMock: false });
+      setRates(data);
     } catch {
       /* silent */
     }
@@ -66,55 +107,65 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
     setNeedDesign(false);
     setLoading(true);
     try {
-      // ★개략 물량 역산(BIM 정밀적산 전·연면적 기반 RC조 표준 원단위) — 실 연면적에 비례하므로
-      //   프로젝트마다 달라진다(고정값 아님). 정밀 물량은 BIM 모델/적산 연동 시 대체.
-      const concreteM3 = Math.max(1, Math.round(totalGfaSqm * 0.5));      // RC조 ~0.5 m³/㎡
-      const windowSet = Math.max(1, Math.round(totalGfaSqm / 40));        // 전용 ~40㎡당 1세트 가정
-      const items = [
-        {
-          work_code: "A01", item_name: "철근콘크리트", spec: "25-240",
-          unit: "m3", quantity: concreteM3, mat_unit: 82000,
-          labor_unit: 45000, exp_unit: 15000,
-        },
-        {
-          work_code: "A05", item_name: "창호", spec: "AL 시스템",
-          unit: "set", quantity: windowSet, mat_unit: 350000,
-          labor_unit: 80000, exp_unit: 20000,
-        },
-      ];
-
-      const calcRes = await fetch(
-        `${API_BASE}/api/v1/cost/${projectId}/calculate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items }),
-        },
-      );
-      if (calcRes.ok) {
-        const data = await calcRes.json();
-        setCostResult(data);
-
-        const mcRes = await fetch(
-          `${API_BASE}/api/v1/cost/${projectId}/monte-carlo`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              base_result: data,
-              iterations: 5000,
-              seed: 42,
-            }),
-          },
+      // 1순위: BIM 실측 물량(bim_quantities, T1로 /bim/generate-ifc 성공경로에 영속 배선됨).
+      //   근사 역산·하드코딩 단가(구버전)를 제거하고 실 데이터만 사용한다(무목업).
+      let usedBim = false;
+      try {
+        const originData = await apiClient.get<OriginCostResponse>(
+          `/cost/${projectId}/bim-quantities/origin-cost`, { useMock: false },
         );
-        if (mcRes.ok) setMcResult(await mcRes.json());
+        const items = (originData.items ?? [])
+          .filter((it) => it.priced)
+          .map((it) => ({
+            work_code: it.work_code, item_name: it.item_name, spec: it.spec,
+            unit: it.unit, quantity: it.quantity, mat_unit: it.mat_unit,
+            labor_unit: it.labor_unit, exp_unit: it.exp_unit,
+          }));
+        if (originData.status === "ok" && items.length > 0) {
+          const data = await apiClient.post<CostResult>(
+            `/cost/${projectId}/calculate`,
+            { body: { items, use_llm: useLlm, with_senior: true }, useMock: false },
+          );
+          setCostResult(data);
+          setOverviewResult(null);
+          setQtoSource("bim_quantities");
+          usedBim = true;
+
+          const mc = await apiClient.post<MCResult>(
+            `/cost/${projectId}/monte-carlo`,
+            { body: { base_result: data, iterations: 5000, seed: 42 }, useMock: false },
+          );
+          setMcResult(mc);
+        }
+      } catch {
+        /* BIM 물량 조회 실패 — 아래 폴백으로 계속 진행 */
+      }
+
+      // 2순위(폴백): BIM 물량 미확보 — 건축개요 기반 개산(estimate-overview, 실 표준품셈 산출).
+      //   리스크 시뮬레이션(MC)은 12단계 원가 분해가 없어 실행하지 않는다(가짜 결과 금지).
+      if (!usedBim) {
+        setMcResult(null);
+        const ov = await apiClient.post<OverviewResult>("/cost/estimate-overview", {
+          body: {
+            project_id: projectId,
+            total_gfa_sqm: totalGfaSqm,
+            floor_count_above: floorCount && floorCount > 0 ? floorCount : 1,
+            floor_count_below: 0,
+            structure_type: "RC",
+            with_senior: true,
+          },
+          useMock: false,
+        });
+        setOverviewResult(ov);
+        setCostResult(null);
+        setQtoSource("estimate_overview");
       }
     } catch {
       /* silent */
     } finally {
       setLoading(false);
     }
-  }, [projectId, totalGfaSqm]);
+  }, [projectId, totalGfaSqm, floorCount, useLlm]);
 
   return (
     <div className="grid grid-cols-1 gap-8 min-w-0">
@@ -124,7 +175,8 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
            <CardTitle className="text-[12px] font-black uppercase tracking-[0.3em] text-[var(--text-primary)]">
              BIM 기반 공사비 시뮬레이션 & 리스크 분석
            </CardTitle>
-           <div className="flex gap-4">
+           <div className="flex flex-wrap items-center gap-4">
+              <UseLlmToggle checked={useLlm} onChange={setUseLlm} hint="AI 원가 해석 포함" disabled={loading} />
               <Button
                 variant="secondary"
                 onClick={fetchRates}
@@ -142,14 +194,18 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
            </div>
         </div>
 
-        {/* ★정직 고지: 물량은 BIM 정밀적산이 아니라 설계 연면적 기반 개략 역산이다(고정 가짜값 아님·실 연면적 비례). */}
+        {/* T6: 물량 출처 정직 고지 — BIM 실측(bim_quantities) 우선, 없으면 건축개요 개산으로 폴백. */}
         {needDesign ? (
           <div className="flex items-start gap-1.5 px-8 py-5 bg-amber-500/10 border-b border-amber-500/30 text-[12px] leading-relaxed text-amber-700">
-            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden /><span>설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 연면적 기반 개략 물량으로 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)</span>
+            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden /><span>설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)</span>
           </div>
-        ) : costResult && totalGfaSqm ? (
+        ) : qtoSource === "bim_quantities" ? (
+          <div className="px-8 py-3 bg-emerald-500/10 border-b border-emerald-500/30 text-[11px] text-emerald-700">
+            BIM 실측 물량(IFC 생성/분석 결과 · bim_quantities) 기반으로 산정했습니다.
+          </div>
+        ) : qtoSource === "estimate_overview" ? (
           <div className="px-8 py-3 bg-[var(--surface-soft)] border-b border-[var(--line)] text-[11px] text-[var(--text-hint)]">
-            개략 물량은 설계 연면적 {fmt(totalGfaSqm)}㎡ 기반 RC조 표준 원단위 역산입니다(BIM 정밀적산 전 추정). 정밀 물량은 BIM 모델·적산 연동 시 대체됩니다.
+            BIM 물량이 아직 없어 건축개요(연면적 {totalGfaSqm ? fmt(totalGfaSqm) : "-"}㎡) 기반 개산으로 산정했습니다. IFC 생성/분석을 실행하면 실측 기반 정밀 원가·리스크 시뮬레이션을 이용할 수 있습니다.
           </div>
         ) : null}
 
@@ -182,6 +238,37 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
           )}
         </AnimatePresence>
       </Card>
+
+      {/* T6 폴백: BIM 물량 미확보 시 건축개요 기반 개산(estimate-overview) 요약 — 12단계 분해가
+          없으므로 KPI 구성을 다르게 표기한다(가짜 재료비/노무비 분해 발명 금지). */}
+      <AnimatePresence>
+        {overviewResult && !costResult && (
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
+            <Card className="border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
+              <div className="bg-[var(--surface-soft)] p-6 border-b border-[var(--line)]">
+                <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.2em]">개산 공사비 요약 (건축개요 기반)</p>
+              </div>
+              <CardContent className="p-8">
+                <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
+                  <KPI label="총 공사비(개산)" value={fmt(overviewResult.total_won)} unit="KRW" highlight />
+                  <KPI label="직접공사비" value={fmt(overviewResult.direct_won)} unit="KRW" />
+                  <KPI label="간접비" value={fmt(overviewResult.indirect_won)} unit="KRW" />
+                  <KPI label="지상 공사비" value={fmt(overviewResult.aboveground_won)} unit="KRW" />
+                  <KPI label="지하 공사비" value={fmt(overviewResult.underground_won)} unit="KRW" />
+                  <KPI label="조경 공사비" value={fmt(overviewResult.landscape_won)} unit="KRW" />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* P3: 시니어 적산(QS) 자문 verdict(with_senior opt-in) — 정량입력 산출 가능분(법정요율 상한·
+          기준선편차·예비비·단가신뢰도·공종구성비) 있을 때만 카드 렌더(SeniorVerdictCard 자체 정직 게이트). */}
+      <SeniorVerdictCard
+        consultation={costResult?.senior_consultation ?? overviewResult?.senior_consultation}
+        title="시니어 적산(QS) 자문"
+      />
 
       <div className="grid gap-8 lg:grid-cols-2">
         {/* Core Financial Results */}
@@ -258,6 +345,16 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+
+                  {/* T3: use_llm=true일 때만 채워지는 AI 원가 해설 */}
+                  {costResult.ai_cost_analysis && (
+                    <div className="mt-10 pt-8 border-t border-[var(--line)]">
+                      <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-3">AI 원가 해설</p>
+                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                        {costResult.ai_cost_analysis}
+                      </p>
                     </div>
                   )}
                 </CardContent>

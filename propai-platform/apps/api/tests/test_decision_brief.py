@@ -1098,6 +1098,56 @@ async def test_specialists_permit_pass_real_validator():
 
 
 @pytest.mark.asyncio
+async def test_specialists_cost_domain_dispatched_when_use_llm_and_gfa(monkeypatch):
+    """★P3: cost 디스패치 게이트(use_llm=True + GFA 가용) — 기존 설계 GFA 산출(gfa 변수)을
+    재사용해 cost 도메인(dev_type·gfa_sqm)이 자연 활성화됨을 잠근다(신규 호출처 아님)."""
+    seen: dict[str, dict] = {}
+
+    async def _ok(self, domain, data, **ctx):
+        seen[domain] = data
+        return {"ok": True, "domain": domain, "task_type": f"{domain}_t",
+                "summary": {"k": 1}, "findings": [{"claim": f"{domain} 결정론"}],
+                "contradictions": None, "ledger": {"ok": True, "version": 1}}
+
+    _patch_dispatch(monkeypatch, _ok)
+
+    async def _fake_deliberation(self, site_raw, tenant_id):
+        return {"domain": "deliberation", "status": "ok", "verdict": "가능"}
+
+    monkeypatch.setattr(DecisionBriefService, "_run_deliberation_engine", _fake_deliberation)
+
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={
+            "zone_type": "일반상업지역", "land_area_sqm": 1000.0,
+            "effective_far": {"effective_far_pct": 200.0},
+            "supply_areas": [{"total_gfa_sqm": 2000.0, "applied_far_pct": 200.0, "permit_complexity": 1}],
+        },
+        reg_raw={}, permit_raw={"recommendations": [{"development_type": "M06"}]},
+        tenant_id="t", project_id="p", address="a", use_llm=True,
+    )
+    assert "cost" in seen
+    assert seen["cost"] == {"dev_type": "M06", "gfa_sqm": 2000.0}
+    assert {d["domain"] for d in out} >= {"zoning", "permit", "설계", "cost"}
+
+
+@pytest.mark.asyncio
+async def test_specialists_cost_domain_absent_when_use_llm_false(monkeypatch):
+    """use_llm=False(기본)면 cost/설계 모두 미배선 — zoning·permit만(기존 계약 무회귀)."""
+    async def _ok(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "task_type": f"{domain}_t",
+                "summary": {"k": 1}, "findings": [{"claim": f"{domain} 결정론"}],
+                "contradictions": None, "ledger": {"ok": True, "version": 1}}
+
+    _patch_dispatch(monkeypatch, _ok)
+    out = await DecisionBriefService()._run_specialists(
+        site_raw={"zone_type": "일반상업지역"}, reg_raw={},
+        permit_raw={"recommendations": [{"development_type": "M06"}]},
+        tenant_id=None, project_id=None, address="a",
+    )
+    assert {d["domain"] for d in out} == {"zoning", "permit"}
+
+
+@pytest.mark.asyncio
 async def test_build_includes_specialists_and_no_regression(monkeypatch):
     """build()에 specialists 주입 + 기존 parts/verdict 계약 무회귀."""
     _patch_domains(monkeypatch, site=_SITE_OK, reg=_REG_OK, permit=_PERMIT_OK)

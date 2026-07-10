@@ -226,13 +226,26 @@ class BIMIFCService:
 
         # 3-1. 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
         # 요소 정보가 없으면(구버전 _parse_ifc/mock) 조용히 스킵 — 하위호환.
-        bim_quantity_rows = self._persist_bim_quantities(
-            project_id=project_id,
-            tenant_id=tenant_id,
-            elements=result.get("elements") or [],
-        )
-        if bim_quantity_rows:
-            await self.db.commit()
+        # ★독립리뷰 MEDIUM(전역 전파방지): generate_ifc_from_design과 동일한 graceful
+        #   래퍼를 형제 경로에도 적용 — 영속 실패가 이미 커밋된 Design을 500으로 고아화
+        #   하지 않게 rollback 후 경고만 남긴다(분석 응답 무영향·가짜 성공 표기 없음).
+        bim_quantity_rows = 0
+        try:
+            bim_quantity_rows = self._persist_bim_quantities(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                elements=result.get("elements") or [],
+            )
+            if bim_quantity_rows:
+                await self.db.commit()
+        except Exception as exc:  # noqa: BLE001 — 영속 실패는 분석 응답을 막지 않는다
+            await self.db.rollback()
+            logger.warning(
+                "IFC 분석 bim_quantities 영속 실패(분석 응답 무영향)",
+                project_id=str(project_id),
+                error=str(exc),
+            )
+            bim_quantity_rows = 0
 
         # 4. 임시 파일 정리
         import os
@@ -318,6 +331,9 @@ class BIMIFCService:
         total_area = 0.0
 
         materials: dict[str, dict] = {}
+        # 요소 단위 물량(bim_quantities 영속 입력) — _persist_bim_quantities 계약과 동일 형식.
+        # analyze_ifc(_parse_ifc)의 elements 리스트와 동일 키(element_type/global_id/name/quantity/unit/floor_level).
+        elements: list[dict] = []
 
         for f in range(floors):
             storey = ifc.create_entity(
@@ -346,6 +362,14 @@ class BIMIFCService:
             materials["IfcSlab"]["count"] += 1
             materials["IfcSlab"]["volume_m3"] += slab_volume
             materials["IfcSlab"]["area_sqm"] += slab_area
+            elements.append({
+                "element_type": "IfcSlab",
+                "global_id": getattr(slab, "GlobalId", "") or "",
+                "name": getattr(slab, "Name", "") or "",
+                "quantity": slab_volume,
+                "unit": "m3",
+                "floor_level": f"{f + 1}F",
+            })
 
             ifc.create_entity("IfcRelContainedInSpatialStructure",
                               GlobalId=ifcopenshell.guid.new(),
@@ -355,7 +379,7 @@ class BIMIFCService:
             # 벽 (4면)
             wall_thickness = 0.2 if structure_type == "RC" else 0.15
             for i in range(4):
-                ifc.create_entity(
+                wall = ifc.create_entity(
                     "IfcWall",
                     GlobalId=ifcopenshell.guid.new(),
                     Name=f"Wall-{f + 1}F-{i + 1}",
@@ -370,6 +394,14 @@ class BIMIFCService:
                 materials["IfcWall"]["count"] += 1
                 materials["IfcWall"]["volume_m3"] += wall_volume
                 materials["IfcWall"]["area_sqm"] += wall_area
+                elements.append({
+                    "element_type": "IfcWall",
+                    "global_id": getattr(wall, "GlobalId", "") or "",
+                    "name": getattr(wall, "Name", "") or "",
+                    "quantity": wall_volume,
+                    "unit": "m3",
+                    "floor_level": f"{f + 1}F",
+                })
 
         # 임시 파일로 IFC 저장
         with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as tmp:
@@ -439,7 +471,32 @@ class BIMIFCService:
         await self.db.commit()
         await self.db.refresh(design)
 
-        logger.info("IFC 자동 생성 완료", elements=element_count)
+        # 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
+        # 실패해도 IFC 생성 응답은 정상 반환한다(graceful) — 이미 커밋된 Design은 무영향,
+        # 물량 영속만 스킵되고 경고 로그로 남긴다(무목업 — 가짜 성공 표기 없음).
+        bim_quantity_rows = 0
+        try:
+            bim_quantity_rows = self._persist_bim_quantities(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                elements=elements,
+            )
+            if bim_quantity_rows:
+                await self.db.commit()
+        except Exception as exc:  # noqa: BLE001 — 영속 실패는 생성 응답을 막지 않는다
+            await self.db.rollback()
+            logger.warning(
+                "IFC 자동생성 bim_quantities 영속 실패(생성 응답 무영향)",
+                project_id=str(project_id),
+                error=str(exc),
+            )
+            bim_quantity_rows = 0
+
+        logger.info(
+            "IFC 자동 생성 완료",
+            elements=element_count,
+            bim_quantities=bim_quantity_rows,
+        )
 
         return BIMQuantityResponse(
             id=design.id,

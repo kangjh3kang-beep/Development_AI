@@ -19,10 +19,11 @@ from app.services.senior_agents.evaluators.bim import evaluate_bim
 from app.services.senior_agents.evaluators.deliberation import evaluate_deliberation
 from app.services.senior_agents.evaluators.financial import evaluate_financial
 from app.services.senior_agents.evaluators.legal import evaluate_legal
+from app.services.senior_agents.evaluators.qs import evaluate_qs
 from app.services.senior_agents.evaluators.tax import evaluate_tax
 from app.services.senior_agents.evaluators.urban import evaluate_urban
 
-# 에이전트 키 → 정량 평가함수. 9개 도메인(법무사·감정평가사 통합 권리분석 추가).
+# 에이전트 키 → 정량 평가함수. 10개 도메인(법무사·감정평가사 통합 권리분석 + 적산(QS) 추가).
 EVALUATORS = {
     "senior_financial_advisor": evaluate_financial,
     "senior_urban_planner": evaluate_urban,
@@ -33,12 +34,13 @@ EVALUATORS = {
     "senior_deliberation_member": evaluate_deliberation,
     "senior_legal_scrivener": evaluate_legal,
     "senior_appraiser": evaluate_appraisal,
+    "senior_quantity_surveyor": evaluate_qs,
 }
 
 __all__ = [
     "EVALUATORS", "RuleEvaluation",
     "evaluate_financial", "evaluate_urban", "evaluate_architect",
     "evaluate_tax", "evaluate_accounting", "evaluate_bim", "evaluate_deliberation",
-    "evaluate_legal", "evaluate_appraisal",
+    "evaluate_legal", "evaluate_appraisal", "evaluate_qs",
     "worst_verdict", "PASS", "WARN", "BLOCK",
 ]

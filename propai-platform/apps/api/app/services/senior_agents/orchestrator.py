@@ -39,6 +39,8 @@ DOMAIN_ROUTES: dict[str, str] = {
     "등기": "senior_legal_scrivener",
     "appraisal": "senior_appraiser", "감정평가": "senior_appraiser", "감정평가사": "senior_appraiser",
     "종전평가": "senior_appraiser",
+    "cost": "senior_quantity_surveyor", "적산": "senior_quantity_surveyor",
+    "시공": "senior_quantity_surveyor", "QS": "senior_quantity_surveyor",
 }
 
 # 고위험 도메인(A9): 오판 비용이 큼(심의·세무·PF 거절·권리 인수누락·감정 과대) → confidence 임계 상향.

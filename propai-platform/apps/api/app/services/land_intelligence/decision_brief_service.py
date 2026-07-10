@@ -371,9 +371,20 @@ class DecisionBriefService:
                     land_area_sqm=area, proposed_gfa_sqm=gfa,
                 )
 
+                # ── ★P3: cost(시니어 QS 고도화 registry.py _cost_tool) 디스패치(use_llm+GFA 가용 시) ──
+                #   위에서 이미 산출한 gfa(부지 supply_areas 우선·면적×실효용적률 폴백)를 그대로 재사용
+                #   — 신규 호출처 추가 없이 기존 use_llm 게이트 안에서만 자연 활성화한다(무리한 확장 금지).
+                if gfa:
+                    domains["cost"] = {"dev_type": dev_type, "gfa_sqm": gfa}
+
+            # ★독립리뷰 LOW 반영(구조적 과금가드): cost 도메인은 인터프리터가 상시 주입돼
+            #   있어(P3) allow_llm을 명시하지 않으면 "use_llm 블록 안에서만 디스패치"라는
+            #   호출부 결합에만 의존하게 된다 — 향후 편집이 블록 밖으로 옮겨도 무과금이
+            #   구조적으로 보장되도록 allow_llm=use_llm을 명시 전달한다.
             out: list[dict[str, Any]] = await run_specialist_domains(
                 domains,
                 tenant_id=tenant_id, project_id=project_id, address=address, pnu=pnu,
+                allow_llm=use_llm,
             )
 
             # ── ★심의엔진 verdict 활성화(opt-in·use_llm 게이트) — 외부 엔진 위임·타임아웃·정직강등 ──

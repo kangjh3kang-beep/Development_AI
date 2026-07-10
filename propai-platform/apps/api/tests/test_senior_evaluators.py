@@ -12,6 +12,7 @@ from app.services.senior_agents.evaluators import (
     evaluate_deliberation,
     evaluate_financial,
     evaluate_legal,
+    evaluate_qs,
     evaluate_tax,
     evaluate_urban,
     worst_verdict,
@@ -313,11 +314,12 @@ def test_legal_rights_takeover_appraisal_integration():
 
 
 def test_all_domains_have_evaluator():
-    # 9개 시니어 도메인 전부 평가기 보유(법무사·감정평가사 통합 추가)
+    # 10개 시니어 도메인 전부 평가기 보유(법무사·감정평가사 통합 + 적산(QS) 추가)
     assert set(EVALUATORS) == {
         "senior_financial_advisor", "senior_urban_planner", "senior_architect",
         "senior_tax_advisor", "senior_accountant", "senior_bim_specialist",
         "senior_deliberation_member", "senior_legal_scrivener", "senior_appraiser",
+        "senior_quantity_surveyor",
     }
 
 
@@ -400,3 +402,95 @@ def test_architect_unit_efficiency_gate():
 def test_architect_empty_inputs_still_empty():
     # ★회귀방어: 신규 게이트 추가 후에도 빈 입력은 [](평가 생략·무목업)
     assert evaluate_architect({}) == []
+
+
+# ── 적산(QS): 기준선편차·법정요율·단가신뢰도·예비비·공종구성비(P3) ──
+
+
+def test_qs_baseline_deviation():
+    # 기본형건축비 기준선 시드 구간(16~25층·전용 60~85㎡) = 2,220,000원/㎡
+    # 편차 5%(<15%) → PASS
+    e = _by_id(evaluate_qs({"cost_per_sqm": 2_220_000 * 1.05, "floors": 20, "avg_unit_sqm": 75}))[
+        "qs.baseline_deviation"]
+    assert e.verdict == PASS
+    # 편차 20%(15~30%) → WARN
+    e2 = _by_id(evaluate_qs({"cost_per_sqm": 2_220_000 * 1.20, "floors": 20, "avg_unit_sqm": 75}))[
+        "qs.baseline_deviation"]
+    assert e2.verdict == WARN
+    # 편차 35%(>30%) → BLOCK
+    e3 = _by_id(evaluate_qs({"cost_per_sqm": 2_220_000 * 1.35, "floors": 20, "avg_unit_sqm": 75}))[
+        "qs.baseline_deviation"]
+    assert e3.verdict == BLOCK and e3.basis
+    # 비주택(is_housing=False) → 생략(무목업)
+    assert "qs.baseline_deviation" not in _by_id(evaluate_qs(
+        {"cost_per_sqm": 2_220_000, "floors": 20, "avg_unit_sqm": 75, "is_housing": False}))
+    # 기준선 미시드 구간(예: 5층) → 생략(정직 — 수치 발명 금지)
+    assert "qs.baseline_deviation" not in _by_id(evaluate_qs(
+        {"cost_per_sqm": 2_000_000, "floors": 5, "avg_unit_sqm": 75}))
+    # 결측 → 생략
+    assert evaluate_qs({}) == []
+
+
+def test_qs_indirect_rate_compliance():
+    # 일반관리비율 5.5%(≤6%) → PASS, 7%(>6%) → BLOCK
+    assert _by_id(evaluate_qs({"general_mgmt_rate": 0.055}))["qs.general_mgmt_cap"].verdict == PASS
+    assert _by_id(evaluate_qs({"general_mgmt_rate": 0.07}))["qs.general_mgmt_cap"].verdict == BLOCK
+    # 이윤율 정확히 15%(경계) → PASS, 16%(>15%) → BLOCK
+    assert _by_id(evaluate_qs({"profit_rate": 0.15}))["qs.profit_cap"].verdict == PASS
+    assert _by_id(evaluate_qs({"profit_rate": 0.16}))["qs.profit_cap"].verdict == BLOCK
+    # 결측 → 생략
+    assert evaluate_qs({}) == []
+
+
+def test_qs_unit_price_reliability():
+    # T3 60%(>50%) → WARN
+    e = _by_id(evaluate_qs({"tier_t3_count": 6, "tier_item_count": 10}))["qs.unit_price_reliability"]
+    assert e.verdict == WARN and e.value == 60.0
+    # T3 30%(≤50%) → PASS
+    assert _by_id(evaluate_qs({"tier_t3_count": 3, "tier_item_count": 10}))[
+        "qs.unit_price_reliability"].verdict == PASS
+    # 분모 0/결측 → 생략
+    assert "qs.unit_price_reliability" not in _by_id(evaluate_qs({"tier_t3_count": 0, "tier_item_count": 0}))
+    assert evaluate_qs({}) == []
+
+
+def test_qs_contingency_reserve():
+    # 예비비율 1%(<3%) → WARN, 5%(≥3%) → PASS
+    e = _by_id(evaluate_qs({"contingency_reserve_won": 1_000_000, "total_project_cost_won": 100_000_000}))[
+        "qs.contingency_reserve"]
+    assert e.verdict == WARN and e.value == 1.0
+    assert "몬테카를로" in e.basis
+    assert _by_id(evaluate_qs({"contingency_reserve_won": 5_000_000, "total_project_cost_won": 100_000_000}))[
+        "qs.contingency_reserve"].verdict == PASS
+    # 분모 0/결측 → 생략
+    assert evaluate_qs({}) == []
+
+
+def test_qs_category_composition():
+    # 골조(WB04) 65%(>60%) → WARN
+    e = _by_id(evaluate_qs({"category_totals": {"WB04": 65, "WB07": 20, "WB11": 15}}))[
+        "qs.category_composition"]
+    assert e.verdict == WARN and e.value == 65.0
+    # 균형 구성(최대 40%) → PASS
+    assert _by_id(evaluate_qs({"category_totals": {"WB04": 40, "WB07": 30, "WB11": 30}}))[
+        "qs.category_composition"].verdict == PASS
+    # 항목 1개(집계 불충분) → 생략(무목업)
+    assert "qs.category_composition" not in _by_id(evaluate_qs({"category_totals": {"WB04": 100}}))
+    # 결측/비dict → 생략
+    assert evaluate_qs({}) == []
+    assert "qs.category_composition" not in _by_id(evaluate_qs({"category_totals": "bad"}))
+
+
+def test_qs_all_rules_combined_worst_verdict():
+    # 5개 룰 동시 입력 — general_mgmt BLOCK이 최악판정
+    evals = evaluate_qs({
+        "cost_per_sqm": 2_220_000, "floors": 20, "avg_unit_sqm": 75,
+        "general_mgmt_rate": 0.08, "profit_rate": 0.10,
+        "tier_t3_count": 1, "tier_item_count": 10,
+        "contingency_reserve_won": 5_000_000, "total_project_cost_won": 100_000_000,
+        "category_totals": {"WB04": 40, "WB07": 30, "WB11": 30},
+    })
+    assert len(evals) == 6  # baseline·general_mgmt·profit·tier·contingency·composition
+    assert worst_verdict(evals) == BLOCK
+    assert all(e.basis.strip() for e in evals)  # citation 게이트: 전부 근거 동반
+    assert evaluate_qs({}) == []
