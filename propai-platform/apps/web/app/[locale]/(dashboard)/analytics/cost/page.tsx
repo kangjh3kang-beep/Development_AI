@@ -44,8 +44,8 @@ export default function CostPage() {
       </div>
 
       {tab === "overview" && (
-        /* 단계별 통합 워크플로우: 프로젝트정보(자동연동)→개략산정→리스크시뮬레이션→BIM정밀적산 연계 */
-        <CostEstimationClient />
+        /* 5단계 통합 허브: 기준정보→물량·개산→적산리스트→AI분석→보고서·수지반영(타 탭 이동 콜백 주입) */
+        <CostEstimationClient onNavigateTab={setTab} />
       )}
 
       {/* CM Phase1 — 상세 내역서(BOQ)·단가 3중(D4)·AI 해설 */}

@@ -900,6 +900,19 @@ class ChangeForecastRequest(BaseModel):
     risks: list[dict[str, Any]] = Field(default_factory=list, description="design_change_predictor risks[](opt-in)")
 
 
+class CostReportRequest(BaseModel):
+    """P5 적산 보고서 생성 요청 — FE가 조회한 산출물을 그대로 전달(가용분만 조립).
+
+    도메인별-자체엔드포인트 패턴(bank_report.py:117)을 따른다: 어댑터가 부재 데이터의
+    섹션을 통째로 생략하므로 전 필드 Optional(무날조)."""
+    project_name: str | None = None
+    overview: dict[str, Any] | None = None
+    boq: dict[str, Any] | None = None
+    senior_consultation: dict[str, Any] | None = None
+    saving_scenarios: dict[str, Any] | None = None
+    change_forecast: dict[str, Any] | None = None
+
+
 @router.post("/{project_id}/boq", summary="상세적산 BOQ 생성·영속화(D4 시장가 3중·정직성 표기)")
 async def create_boq(
     project_id: str, req: BoqRequest, db: AsyncSession = Depends(get_db),
@@ -1056,6 +1069,26 @@ async def cost_change_forecast(project_id: str, req: ChangeForecastRequest) -> d
     result = await forecast_change_cost(req.base_params, req.risks)
 
     return {"ok": True, "project_id": project_id, **result}
+
+
+@router.post("/{project_id}/report", summary="P5 적산 보고서 — PDF·PPTX·DOCX(가용 산출만 조립)")
+async def cost_estimation_report(
+    project_id: str, req: CostReportRequest, format: str = "pdf",
+) -> Response:
+    """적산 산출물(개산·BOQ·시니어 QS·절감·설계변경 예측)을 정본 보고서엔진 경유로
+    PDF/PPTX/DOCX 렌더한다(도메인별-자체엔드포인트 패턴 — bank_report.py:117 선례).
+
+    project_id는 파일명 식별용(계산엔 미사용) — 다른 엔드포인트 프리픽스와의 일관성 유지."""
+    from app.services.report.render import build_report_model_from_cost_estimation, render_report
+
+    model = build_report_model_from_cost_estimation(req.model_dump())
+    payload, media_type, ext = render_report(model, format)
+    return Response(
+        content=payload, media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="cost_estimation_report_{project_id}.{ext}"'
+        },
+    )
 
 
 @router.get("/unit-prices", summary="단가 SSOT 조회(D4 standard/market/actual 3중)")

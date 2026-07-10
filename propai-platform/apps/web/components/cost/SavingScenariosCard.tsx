@@ -9,7 +9,9 @@
 
 import { useCallback, useState } from "react";
 import { apiClient } from "@/lib/api-client";
-import type { SavingScenariosResponse } from "@/components/cost/cmTypes";
+import { PYEONG_SQM } from "@/lib/formatters";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import type { SavingCandidate, SavingScenariosResponse } from "@/components/cost/cmTypes";
 
 function fmtKrw(won?: number | null): string {
   if (won == null || Number.isNaN(won)) return "-";
@@ -39,6 +41,33 @@ export function SavingScenariosCard({
   const [result, setResult] = useState<SavingScenariosResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  // "이 대안을 수지에 반영" — 어느 후보를 반영했는지 로컬 피드백(BoqDetailTable.applied 패턴).
+  const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
+
+  // 후보치를 수지 costData(SSOT)에 1방향 주입 — BoqDetailTable.applyToFeasibility와 동일 형태(meta 생략).
+  // 후보 응답은 총액만 제공하므로 세부 분해(지상/지하/직접/간접·범위)는 가짜값 대신 null 유지.
+  const applyCandidate = useCallback(
+    (c: SavingCandidate, i: number) => {
+      const gfa = baseParams.total_gfa_sqm;
+      const perSqm = gfa && gfa > 0 ? c.total / gfa : null;
+      updateCostData({
+        totalConstructionCostWon: c.total,
+        perSqmWon: perSqm,
+        perPyeongWon: perSqm != null ? perSqm * PYEONG_SQM : null,
+        abovegroundWon: null,
+        undergroundWon: null,
+        landscapeWon: null,
+        directWon: null,
+        indirectWon: null,
+        rangeMinWon: null,
+        rangeMaxWon: null,
+        source: "saving_scenario",
+      });
+      setAppliedIdx(i);
+    },
+    [baseParams.total_gfa_sqm, updateCostData],
+  );
 
   const run = useCallback(async () => {
     if (!baseParams.total_gfa_sqm || baseParams.total_gfa_sqm <= 0) {
@@ -53,6 +82,7 @@ export function SavingScenariosCard({
         { body: { base_params: baseParams, top_n: topN }, useMock: false, timeoutMs: 45000 },
       );
       setResult(r);
+      setAppliedIdx(null); // 새 조회 — 이전 "반영됨" 표시 해제
     } catch {
       setErr("절감 시나리오 조회에 실패했습니다.");
     } finally {
@@ -127,6 +157,24 @@ export function SavingScenariosCard({
                     </div>
                   )}
                   <p className="mt-2 text-[11px] leading-5 text-[var(--text-tertiary)]">{c.tradeoff}</p>
+                  {/* 후보치를 수지(costData)에 반영 — 확정 채택안이 아닌 "후보치" 정직 고지 병기. */}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--line)]/50 pt-2">
+                    <button
+                      onClick={() => applyCandidate(c, i)}
+                      className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-3 py-1.5 text-[10px] font-black text-[var(--accent-strong)] hover:opacity-90"
+                    >
+                      이 대안을 수지에 반영
+                    </button>
+                    {appliedIdx === i ? (
+                      <span className="text-[10px] font-bold text-emerald-400">
+                        반영됨 — 공사비 컨텍스트(출처: 절감 시나리오)가 갱신되었습니다.
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-[var(--text-hint)]">
+                        이 값은 후보 시나리오이며, 다시 클릭하거나 다른 후보를 선택하면 덮어씁니다.
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -259,7 +259,12 @@ interface CostData {
   indirectWon: number | null;
   rangeMinWon: number | null;
   rangeMaxWon: number | null;
-  source: string | null; // overview | bim | boq (boq = 적산 합계 1방향 주입)
+  source: string | null; // overview | bim | boq | saving_scenario (적산 합계 1방향 주입)
+  // ── P5 추가(additive·옵셔널·무회귀): 기존 호출부(BoqDetailTable.applyToFeasibility 등)는
+  //    이 3필드를 채우지 않아도 계속 동작한다(full-replace 계약이지만 optional). ──
+  qtoSource?: string | null; // "bim" | "derived" — 백엔드 qto_source 그대로(물량 산출 정밀도 근거)
+  priceTierSummary?: string | null; // 사람이 읽는 단가출처 요약(예: "표준 8·DB 3·fallback 1")
+  baselineDeviationPct?: number | null; // 기본형건축비 대비 편차(%) — baseline_check.deviation_pct
 }
 
 interface EsgData {
