@@ -887,24 +887,17 @@ class AlternativesRequest(BaseModel):
     variants: list[AlternativeVariant] = Field(default_factory=list)
 
 
-def _merge_params(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    """base_params + overrides 병합(허용 키만)."""
-    allowed = {"building_type", "total_gfa_sqm", "floor_count_above",
-               "floor_count_below", "structure_type"}
-    out = {
-        "building_type": base.get("building_type", "apartment"),
-        "total_gfa_sqm": float(base.get("total_gfa_sqm", 0) or 0),
-        "floor_count_above": int(base.get("floor_count_above", 1) or 1),
-        "floor_count_below": int(base.get("floor_count_below", 0) or 0),
-        "structure_type": base.get("structure_type", "RC"),
-    }
-    for k, v in (overrides or {}).items():
-        if k in allowed and v is not None:
-            out[k] = v
-    out["total_gfa_sqm"] = float(out["total_gfa_sqm"])
-    out["floor_count_above"] = int(out["floor_count_above"])
-    out["floor_count_below"] = int(out["floor_count_below"])
-    return out
+class SavingScenariosRequest(BaseModel):
+    """P4 T1 절감 시나리오 Top-N 요청 — base_params는 alternatives와 동일 계약."""
+    base_params: dict[str, Any] = Field(default_factory=dict)
+    top_n: int = Field(5, ge=1, le=10, description="상위 절감 후보 개수(기본 5, 최대 10)")
+
+
+class ChangeForecastRequest(BaseModel):
+    """P4 T2 설계변경 예측공사비 요청 — base_params는 alternatives와 동일 계약.
+    risks는 opt-in(FE가 /design-risk/predict 결과의 risks[]를 그대로 전달, 서버간 강결합 없음)."""
+    base_params: dict[str, Any] = Field(default_factory=dict)
+    risks: list[dict[str, Any]] = Field(default_factory=list, description="design_change_predictor risks[](opt-in)")
 
 
 @router.post("/{project_id}/boq", summary="상세적산 BOQ 생성·영속화(D4 시장가 3중·정직성 표기)")
@@ -994,46 +987,30 @@ async def list_boq(project_id: str) -> dict[str, Any]:
 @router.post("/{project_id}/alternatives", summary="D1 대안설계 A/B 원가비교(변형별 델타·영향공종)")
 async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[str, Any]:
     """base_params 대비 각 변형(구조/층수 등 override)의 원가를 재산정하여
-    총액 델타·델타%·영향공종을 반환한다(추정)."""
-    from app.services.cost.boq_builder import build_boq
+    총액 델타·델타%·영향공종을 반환한다(추정).
 
-    bp = _merge_params(req.base_params, {})
+    P4 T1(전파방지): 실 계산 로직은 alternatives_engine(공용 서비스)으로 추출했다 —
+    saving_scenarios.py(절감 Top-N)·change_forecast.py(설계변경 예측공사비)가 라우터를
+    다시 호출하지 않고 이 서비스를 직접 재사용한다(같은 계산 두 번 구현 금지)."""
+    from app.services.cost.alternatives_engine import (
+        build_boq_for_params,
+        diff_variant,
+        merge_params,
+    )
+
+    bp = merge_params(req.base_params, {})
     if bp["total_gfa_sqm"] <= 0:
         raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
 
-    base_boq = await build_boq(
-        building_type=bp["building_type"], total_gfa_sqm=bp["total_gfa_sqm"],
-        floor_count_above=bp["floor_count_above"], floor_count_below=bp["floor_count_below"],
-        structure_type=bp["structure_type"], qto_source="derived",
-    )
+    base_boq = await build_boq_for_params(bp)
     base_total = int(base_boq["summary"]["total"])
     base_by_code = {it["code"]: it["amount"] for it in base_boq["items"]}
 
     variants_out: list[dict[str, Any]] = []
     for v in req.variants:
-        vp = _merge_params(req.base_params, v.overrides)
-        vb = await build_boq(
-            building_type=vp["building_type"], total_gfa_sqm=vp["total_gfa_sqm"],
-            floor_count_above=vp["floor_count_above"], floor_count_below=vp["floor_count_below"],
-            structure_type=vp["structure_type"], qto_source="derived",
-        )
-        v_total = int(vb["summary"]["total"])
-        delta = v_total - base_total
-        # 영향공종: 항목별 금액 변화 큰 순.
-        affected: list[str] = []
-        for it in vb["items"]:
-            b_amt = base_by_code.get(it["code"], 0)
-            if abs(it["amount"] - b_amt) > max(1, base_total * 0.005):
-                affected.append(it["name"])
-        rationale = ", ".join(
-            f"{k}={vp[k]}" for k in ("structure_type", "floor_count_above", "floor_count_below",
-                                     "total_gfa_sqm") if vp[k] != bp[k]
-        ) or "변경 없음"
-        variants_out.append({
-            "label": v.label, "total": v_total,
-            "delta": delta, "delta_pct": round(delta / base_total * 100, 2) if base_total else 0,
-            "affected_work_types": affected[:8], "rationale": rationale,
-        })
+        vp = merge_params(req.base_params, v.overrides)
+        vb = await build_boq_for_params(vp)
+        variants_out.append(diff_variant(bp, base_total, base_by_code, vp, vb, v.label))
 
     return {
         "ok": True,
@@ -1041,6 +1018,44 @@ async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[s
         "variants": variants_out,
         "note": "대안별 원가는 건축개요 기반 추정(±12%) — 전문 적산사 검토 권장.",
     }
+
+
+@router.post("/{project_id}/saving-scenarios", summary="P4 T1 절감 시나리오 Top-N(변형 자동생성+일괄 delta 랭킹)")
+async def cost_saving_scenarios(project_id: str, req: SavingScenariosRequest) -> dict[str, Any]:
+    """base_params로 결정론 절감 후보(구조/층수/GFA)를 자동 생성해 alternatives 엔진으로
+    일괄 재산정하고, 절감액(음수 delta) 내림차순 Top-N을 반환한다(무과금·결정론).
+
+    project_id는 응답 식별용(계산은 base_params만 사용 — DB 조회 없음)."""
+    from app.services.cost.alternatives_engine import merge_params
+    from app.services.cost.saving_scenarios import build_variant_candidates, rank_savings
+
+    bp = merge_params(req.base_params, {})
+    if bp["total_gfa_sqm"] <= 0:
+        raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
+
+    candidates = build_variant_candidates(req.base_params)
+    result = await rank_savings(req.base_params, candidates, top_n=req.top_n)
+
+    return {"ok": True, "project_id": project_id, **result}
+
+
+@router.post("/{project_id}/change-forecast", summary="P4 T2 설계변경 예측공사비(MC 밴드+리스크 공종 delta)")
+async def cost_change_forecast(project_id: str, req: ChangeForecastRequest) -> dict[str, Any]:
+    """base_params로 몬테카를로 추가공사비 밴드(p10/50/90)를 항상 산출하고, risks(opt-in —
+    design_change_predictor 결과)가 있으면 공종(WB) 단위 delta 시나리오를 함께 반환한다.
+
+    design_risk 서비스와 직접 결합하지 않는다 — FE가 /design-risk/predict 결과의 risks[]를
+    그대로 전달하는 입력 주입 방식(서버간 강결합 신설 금지)."""
+    from app.services.cost.alternatives_engine import merge_params
+    from app.services.cost.change_forecast import forecast_change_cost
+
+    bp = merge_params(req.base_params, {})
+    if bp["total_gfa_sqm"] <= 0:
+        raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
+
+    result = await forecast_change_cost(req.base_params, req.risks)
+
+    return {"ok": True, "project_id": project_id, **result}
 
 
 @router.get("/unit-prices", summary="단가 SSOT 조회(D4 standard/market/actual 3중)")

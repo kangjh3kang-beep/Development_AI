@@ -210,3 +210,89 @@ export interface AlternativeVariantInput {
     total_gfa_sqm?: number;
   };
 }
+
+/* ── P4 T1 — 절감 시나리오 Top-N ──────────────────────────────────────────── */
+
+/** 절감 후보의 영향 공종 1건(WB 브리지 병기). */
+export interface SavingAffectedItem {
+  name: string;
+  wb_code?: string | null;
+  wb_name?: string | null;
+  delta_amount: number;
+}
+
+/** 절감 시나리오 후보 1건(랭킹된 결과). */
+export interface SavingCandidate {
+  label: string;
+  rationale: string;
+  overrides: Record<string, string | number>;
+  total: number;
+  delta: number;
+  delta_pct: number;
+  savings: number;
+  affected_work_types: string[];
+  affected: SavingAffectedItem[];
+  tradeoff: string;
+}
+
+/** POST /{pid}/saving-scenarios 응답. */
+export interface SavingScenariosResponse {
+  ok: boolean;
+  project_id: string;
+  base_total: number;
+  top_n: number;
+  evaluated_count: number;
+  saving_count: number;
+  candidates: SavingCandidate[];
+  note?: string;
+}
+
+/* ── P4 T2 — 설계변경 예측공사비 ──────────────────────────────────────────── */
+
+/** 몬테카를로 추가공사비 밴드(base 대비 총액 분포). */
+export interface ChangeForecastMcBand {
+  base_total: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  mean: number;
+  std: number;
+}
+
+/** 리스크 1건 → 공종(WB) delta 시나리오. */
+export interface ChangeForecastScenario {
+  risk_item: string;
+  risk_category?: string | null;
+  severity?: string | null;
+  wb_targets: string[];
+  wb_names: (string | null)[];
+  wb_base_amount: number;
+  delta_pct_low: number;
+  delta_pct_high: number;
+  delta_low: number;
+  delta_high: number;
+  basis: string;
+}
+
+/** POST /{pid}/change-forecast 응답. */
+export interface ChangeForecastResponse {
+  ok: boolean;
+  project_id: string;
+  base_total: number;
+  mc_band: ChangeForecastMcBand;
+  scenarios: ChangeForecastScenario[];
+  data_gaps: string[];
+  note?: string;
+}
+
+/** POST /{pid}/change-forecast 요청 risks[] 항목(design_change_predictor risks[]와 동일 계약). */
+export interface ChangeForecastRiskInput {
+  category?: string;
+  item: string;
+  severity?: string;
+  current?: string | null;
+  limit?: string | null;
+  detail?: string;
+  remedy?: string;
+  est_impact?: string | null;
+}

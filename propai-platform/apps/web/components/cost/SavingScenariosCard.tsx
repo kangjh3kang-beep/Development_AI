@@ -1,0 +1,141 @@
+"use client";
+
+/**
+ * P4 T1 — 절감 시나리오 Top-N 카드.
+ * CostAlternativesPanel의 기준안 입력(base_params)을 그대로 받아, alternatives(D1) 엔진을
+ * 재사용해 자동 생성한 절감 후보(구조/층수/GFA)를 일괄 재산정하고 절감액 상위 N개를 보여준다.
+ * POST /api/v1/cost/{pid}/saving-scenarios. 무과금(LLM 없음)·결정론.
+ */
+
+import { useCallback, useState } from "react";
+import { apiClient } from "@/lib/api-client";
+import type { SavingScenariosResponse } from "@/components/cost/cmTypes";
+
+function fmtKrw(won?: number | null): string {
+  if (won == null || Number.isNaN(won)) return "-";
+  const abs = Math.abs(won);
+  const sign = won < 0 ? "-" : "";
+  if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(2)}억`;
+  if (abs >= 1e4) return `${sign}${Math.round(abs / 1e4).toLocaleString()}만`;
+  return `${sign}${Math.round(abs).toLocaleString()}원`;
+}
+
+interface BaseParams {
+  building_type: string;
+  total_gfa_sqm: number;
+  floor_count_above: number;
+  floor_count_below: number;
+  structure_type: string;
+}
+
+export function SavingScenariosCard({
+  projectId,
+  baseParams,
+}: {
+  projectId: string;
+  baseParams: BaseParams;
+}) {
+  const [topN, setTopN] = useState(5);
+  const [result, setResult] = useState<SavingScenariosResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const run = useCallback(async () => {
+    if (!baseParams.total_gfa_sqm || baseParams.total_gfa_sqm <= 0) {
+      setErr("기준안의 연면적(GFA)을 먼저 입력하세요.");
+      return;
+    }
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await apiClient.post<SavingScenariosResponse>(
+        `/cost/${projectId}/saving-scenarios`,
+        { body: { base_params: baseParams, top_n: topN }, useMock: false, timeoutMs: 45000 },
+      );
+      setResult(r);
+    } catch {
+      setErr("절감 시나리오 조회에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, baseParams, topN]);
+
+  return (
+    <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-black text-[var(--text-primary)]">공사비 절감 시나리오 Top-N</h3>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            기준안에서 구조·층수·연면적을 결정론으로 변형한 후보를 자동 생성해, 실제로 절감되는 안만 상위 N개로 보여줍니다.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+            Top
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={topN}
+              onChange={(e) => setTopN(Math.min(10, Math.max(1, Number(e.target.value) || 5)))}
+              className="w-14 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2 py-1 text-center text-xs text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <button
+            onClick={run}
+            disabled={loading}
+            className="rounded-xl bg-[var(--accent-strong)] px-5 py-2 text-xs font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "조회 중…" : "절감 시나리오 조회"}
+          </button>
+        </div>
+      </div>
+
+      {err && <p className="mt-3 text-xs font-semibold text-rose-400">{err}</p>}
+
+      {result && (
+        <div className="mt-4 grid gap-3">
+          <p className="text-[11px] text-[var(--text-tertiary)]">
+            생성 후보 {result.evaluated_count}건 중 절감효과 있는 후보 {result.saving_count}건 — 상위 {result.candidates.length}건 표시
+          </p>
+          {result.candidates.length === 0 ? (
+            <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-3 text-xs text-[var(--text-tertiary)]">
+              이 기준안에서는 절감효과가 있는 자동 후보를 찾지 못했습니다(구조/층수/GFA 축소만 시도).
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {result.candidates.map((c, i) => (
+                <div key={i} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-bold text-[var(--text-primary)]">
+                      {i + 1}. {c.label}
+                    </p>
+                    <p className="text-sm font-[1000] text-emerald-400">
+                      -{fmtKrw(c.savings)} ({c.delta_pct}%)
+                    </p>
+                  </div>
+                  {c.affected_work_types.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {[...new Set(c.affected.map((a) => a.wb_name ?? a.name))].map((w, j) => (
+                        <span
+                          key={j}
+                          className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]"
+                        >
+                          {w}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-2 text-[11px] leading-5 text-[var(--text-tertiary)]">{c.tradeoff}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {result.note && (
+            <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--text-hint)]">{result.note}</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
