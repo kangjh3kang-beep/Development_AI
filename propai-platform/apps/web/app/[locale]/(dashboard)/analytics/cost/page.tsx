@@ -24,7 +24,7 @@ export default function CostPage() {
           <span className="cc-meta">COST · ESTIMATION CONSOLE</span>
           <span className="cc-live"><i />LIVE</span>
         </div>
-        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">공사비 분석</h1>
+        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">적산·공사비 관리</h1>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-1">

@@ -39,6 +39,8 @@ export function ChangeForecastCard({
   baseParams: BaseParams;
 }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // F-4: 조회 성공 시 원응답을 costData에 additive 기록(적산 보고서 조립용 — updatedAt.cost 미변경).
+  const setCostChangeForecast = useProjectContextStore((s) => s.setCostChangeForecast);
 
   const [risks, setRisks] = useState<ChangeForecastRiskInput[]>([]);
   const [riskLoading, setRiskLoading] = useState(false);
@@ -89,12 +91,14 @@ export function ChangeForecastCard({
         { body: { base_params: baseParams, risks }, useMock: false, timeoutMs: 45000 },
       );
       setResult(r);
+      // F-4: 적산 보고서(⑤)가 §7 설계변경 예측공사비를 조립할 수 있도록 원응답을 store에 적재.
+      setCostChangeForecast(r);
     } catch {
       setErr("설계변경 예측공사비 조회에 실패했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, baseParams, risks]);
+  }, [projectId, baseParams, risks, setCostChangeForecast]);
 
   return (
     <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">

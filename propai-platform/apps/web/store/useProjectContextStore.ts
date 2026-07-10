@@ -5,6 +5,8 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveEquityWon, DEFAULT_EQUITY_RATIO_PCT } from "@/lib/finance/leverage";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
 import type { DesignCompliance } from "@/lib/design-contract";
+// F-4: 절감 시나리오/설계변경 예측 카드의 원 응답 타입 재구현 금지 — cmTypes.ts SSOT 재사용(type-only import).
+import type { SavingScenariosResponse, ChangeForecastResponse } from "@/components/cost/cmTypes";
 
 /* ── Types ── */
 
@@ -265,6 +267,14 @@ interface CostData {
   qtoSource?: string | null; // "bim" | "derived" — 백엔드 qto_source 그대로(물량 산출 정밀도 근거)
   priceTierSummary?: string | null; // 사람이 읽는 단가출처 요약(예: "표준 8·DB 3·fallback 1")
   baselineDeviationPct?: number | null; // 기본형건축비 대비 편차(%) — baseline_check.deviation_pct
+  // ── F-4 추가(additive·옵셔널·무회귀): 절감 시나리오(SavingScenariosCard)·설계변경 예측
+  //    (ChangeForecastCard) 카드의 원 응답 전체 — 적산 보고서(⑤)가 조립 시 그대로 동봉한다.
+  //    전용 setter(setCostSavingScenarios/setCostChangeForecast)로만 patch하며 updatedAt.cost는
+  //    stamp하지 않는다(카드 재조회가 수지·금융 staleness를 오염시키지 않도록 —
+  //    setRecommendedDevType/setSalesPricePerPyeong과 동일한 안전 패턴). updateCostData(다른
+  //    호출부의 full replace)는 호출측이 명시하지 않으면 이 두 필드를 이전 값 그대로 이어간다.
+  costSavingScenarios?: SavingScenariosResponse | null;
+  costChangeForecast?: ChangeForecastResponse | null;
 }
 
 interface EsgData {
@@ -506,6 +516,11 @@ export interface ProjectContextState {
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
   updateCostData: (data: CostData, meta?: { source?: FieldSource }) => void;
+  // F-4: 절감 시나리오/설계변경 예측 카드의 원 응답만 부분패치 — updatedAt.cost는 stamp하지 않는다
+  // (setRecommendedDevType/setSalesPricePerPyeong과 동일한 안전 패턴 — 카드 재조회가 수지·금융
+  // staleness를 오염시키지 않도록). null 전달 시 해당 필드를 지운다(카드 초기화 등).
+  setCostSavingScenarios: (data: SavingScenariosResponse | null) => void;
+  setCostChangeForecast: (data: ChangeForecastResponse | null) => void;
   // full replace + provenance(WP-V) — updateCostData와 동일 merge 가드 규칙.
   // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   updateEsgData: (data: EsgData, meta?: { source?: FieldSource }) => void;
@@ -1397,15 +1412,29 @@ export const useProjectContextStore = create<ProjectContextState>()(
           const prevRec = state.costData
             ? (state.costData as unknown as Record<string, unknown>)
             : null;
+          // F-4(전역전파방지): costSavingScenarios/costChangeForecast는 이 액션의 관할이 아니다
+          // (전용 setter로만 채워짐) — 호출측(BoqDetailTable.applyToFeasibility·calc() 재실행 등
+          // 기존/향후 모든 updateCostData 호출부)이 명시하지 않으면 이전 값을 그대로 이어간다.
+          // 개산 재실행·BOQ/절감안 반영 같은 다른 full-replace 호출이 카드가 채운 보고서용
+          // 원응답을 조용히 지우던 결함을 이 한 곳에서 막는다(공용화 수정 — 개별 호출부 무수정).
+          const base: Record<string, unknown> = { ...data };
+          if (prevRec) {
+            if (!("costSavingScenarios" in data) && prevRec.costSavingScenarios !== undefined) {
+              base.costSavingScenarios = prevRec.costSavingScenarios;
+            }
+            if (!("costChangeForecast" in data) && prevRec.costChangeForecast !== undefined) {
+              base.costChangeForecast = prevRec.costChangeForecast;
+            }
+          }
           const next: Partial<ProjectContextState> = {
-            costData: data,
+            costData: base as unknown as CostData,
             updatedAt: stampedAt(state, "cost"),
           };
           if (source === "auto") {
             // merge 가드 — full replace이되 user 플래그 키는 이전값 보존(auto 덮어쓰기 차단).
             const flaggedKeys = Object.keys(flagged);
             if (prevRec && flaggedKeys.length > 0) {
-              const merged = { ...data } as unknown as Record<string, unknown>;
+              const merged = { ...base } as Record<string, unknown>;
               for (const key of flaggedKeys) {
                 if (key in prevRec) merged[key] = prevRec[key];
               }
@@ -1429,6 +1458,41 @@ export const useProjectContextStore = create<ProjectContextState>()(
             };
           }
           return withSnap(state, next);
+        });
+      },
+      // F-4: 절감 시나리오 원응답만 부분패치 — updatedAt.cost 미변경(수지·금융 staleness 오염 회피).
+      setCostSavingScenarios: (data) => {
+        set((state) => {
+          if ((state.costData?.costSavingScenarios ?? null) === data) return {};
+          return withSnap(state, {
+            // merge: costSavingScenarios만 덮고 총액·직접/간접 등 기존 공사비 슬롯은 보존.
+            costData: {
+              totalConstructionCostWon: null, perSqmWon: null, perPyeongWon: null,
+              abovegroundWon: null, undergroundWon: null, landscapeWon: null,
+              directWon: null, indirectWon: null, rangeMinWon: null, rangeMaxWon: null,
+              source: null,
+              ...(state.costData ?? {}),
+              costSavingScenarios: data,
+            } as CostData,
+            // ★updatedAt 미변경 — 카드 재조회가 수지·금융 staleness를 stamp하지 않는다.
+          });
+        });
+      },
+      // F-4: 설계변경 예측 원응답만 부분패치 — updatedAt.cost 미변경(수지·금융 staleness 오염 회피).
+      setCostChangeForecast: (data) => {
+        set((state) => {
+          if ((state.costData?.costChangeForecast ?? null) === data) return {};
+          return withSnap(state, {
+            costData: {
+              totalConstructionCostWon: null, perSqmWon: null, perPyeongWon: null,
+              abovegroundWon: null, undergroundWon: null, landscapeWon: null,
+              directWon: null, indirectWon: null, rangeMinWon: null, rangeMaxWon: null,
+              source: null,
+              ...(state.costData ?? {}),
+              costChangeForecast: data,
+            } as CostData,
+            // ★updatedAt 미변경 — 카드 재조회가 수지·금융 staleness를 stamp하지 않는다.
+          });
         });
       },
 

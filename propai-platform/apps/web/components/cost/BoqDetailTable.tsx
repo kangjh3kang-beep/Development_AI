@@ -15,8 +15,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Bot } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
+import { Bot, Download } from "lucide-react";
+import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
@@ -121,6 +121,9 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
   const [savedList, setSavedList] = useState<BoqEstimateListItem[]>([]);
   const [savedLoading, setSavedLoading] = useState(false);
   const [loadingEstimateId, setLoadingEstimateId] = useState<string | null>(null);
+  // F-2: "저장된 적산 목록" 각 행 엑셀 다운로드(GET /export-excel?estimate_id=) 진행 상태.
+  const [exportingEstimateId, setExportingEstimateId] = useState<string | null>(null);
+  const [exportErr, setExportErr] = useState("");
 
   const refreshSavedList = useCallback(async () => {
     setSavedLoading(true);
@@ -156,6 +159,42 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
       setLoadingEstimateId(null);
     }
   }, []);
+
+  // F-2: 저장된 적산(estimate) 1건을 Excel(원가계산서)로 다운로드 — GET /export-excel?estimate_id=
+  // (BE 기존 additive 쿼리 — BoqAutoWorkspace.handleExport와 동일한 Bearer+blob 패턴, apiClient는
+  //  JSON 파싱 전제라 바이너리 다운로드에 부적합해 여기서만 raw fetch를 쓴다).
+  const downloadExcel = useCallback(async (estimateId: string) => {
+    if (exportingEstimateId) return;
+    setExportingEstimateId(estimateId);
+    setExportErr("");
+    try {
+      const token = typeof window !== "undefined"
+        ? window.localStorage.getItem("propai_access_token") ?? "" : "";
+      const res = await fetch(
+        `${apiV1BaseUrl()}/cost/${projectId}/export-excel?estimate_id=${encodeURIComponent(estimateId)}`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      );
+      const ct = res.headers.get("content-type") ?? "";
+      if (!res.ok || ct.includes("application/json")) {
+        let msg = `엑셀 다운로드에 실패했습니다 (HTTP ${res.status}).`;
+        try { const j = await res.json(); msg = j?.detail || j?.message || msg; } catch { /* noop */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cost_sheet_${projectId}_${estimateId.slice(0, 8)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : "엑셀 다운로드에 실패했습니다.");
+    } finally {
+      setExportingEstimateId(null);
+    }
+  }, [projectId, exportingEstimateId]);
 
   const run = useCallback(async () => {
     const gfaNum = Number(gfa);
@@ -312,17 +351,29 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
                   <b className="text-[var(--text-primary)]">{eok(it.total_won)}</b> · 신뢰등급 {it.confidence_grade || "—"} ·{" "}
                   {new Date(it.created_at).toLocaleString("ko-KR")}
                 </span>
-                <button
-                  onClick={() => void loadSavedEstimate(it.estimate_id)}
-                  disabled={loadingEstimateId === it.estimate_id}
-                  className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-3 py-1.5 text-[10px] font-black text-[var(--accent-strong)] hover:opacity-90 disabled:opacity-50"
-                >
-                  {loadingEstimateId === it.estimate_id ? "불러오는 중…" : "불러오기"}
-                </button>
+                <span className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => void loadSavedEstimate(it.estimate_id)}
+                    disabled={loadingEstimateId === it.estimate_id}
+                    className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-3 py-1.5 text-[10px] font-black text-[var(--accent-strong)] hover:opacity-90 disabled:opacity-50"
+                  >
+                    {loadingEstimateId === it.estimate_id ? "불러오는 중…" : "불러오기"}
+                  </button>
+                  {/* F-2: orphan 해소 — 저장된 적산 각 건을 원가계산서 Excel로 다운로드. */}
+                  <button
+                    onClick={() => void downloadExcel(it.estimate_id)}
+                    disabled={exportingEstimateId === it.estimate_id}
+                    className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-[10px] font-black text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] disabled:opacity-50"
+                  >
+                    <Download className="size-3" aria-hidden />
+                    {exportingEstimateId === it.estimate_id ? "내려받는 중…" : "엑셀 다운로드"}
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
         )}
+        {exportErr && <p className="mt-2 text-[10px] font-semibold text-rose-400">{exportErr}</p>}
       </div>
 
       {/* 건축개요 입력 */}

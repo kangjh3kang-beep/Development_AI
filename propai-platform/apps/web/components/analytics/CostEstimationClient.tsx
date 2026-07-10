@@ -113,6 +113,13 @@ function mapBuildingType(bt?: string | null): string {
   return "apartment";
 }
 
+// F-1: "59A"·"84B"·"114C" → 전용면적(㎡) 추정(앞 숫자). LiveProFormaStrip.tsx typeToArea와 동일 패턴
+// (실패 시 0 — 평균 산출에서 스킵하기 위함, 발명 금지).
+function typeToArea(t: string): number {
+  const m = /(\d+(?:\.\d+)?)/.exec(t || "");
+  return m ? Number(m[1]) : 0;
+}
+
 /** 항목 단가출처 요약("표준 N·DB M·fallback K") — 유의미하게 뽑을 수 있을 때만, 아니면 null(발명 금지). */
 function summarizePriceTiers(items?: { price_source?: string }[]): string | null {
   if (!items || items.length === 0) return null;
@@ -201,6 +208,8 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  // F-4: 절감 시나리오·설계변경 예측 카드가 적재한 원응답 — 보고서(⑤) 조립 시 있으면 동봉.
+  const costData = useProjectContextStore((s) => s.costData);
 
   const [pickerAddr, setPickerAddr] = useState("");
   const [bt, setBt] = useState("apartment");
@@ -215,6 +224,10 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [editedGfa, setEditedGfa] = useState(false);
+  // F-1: 평균 전용면적(㎡) — 주택(아파트) baseline_check(기본형건축비 대조) 입력. 미입력 시 대조 생략(정직).
+  const [avgUnitSqm, setAvgUnitSqm] = useState<number>(0);
+  const [autoAvgUnitSqm, setAutoAvgUnitSqm] = useState(false);
+  const [editedAvgUnitSqm, setEditedAvgUnitSqm] = useState(false);
 
   // ② 리스크 시뮬레이션(몬테카를로) — 개산 결과의 최저~최대 범위 기반.
   const [iterations, setIterations] = useState(10000);
@@ -243,6 +256,16 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     return Math.round((land * far) / 100);
   }, [siteAnalysis]);
 
+  // F-1: 평균 전용면적(㎡) 폴백 추정 — 설계 유닛믹스(designData.unitTypes, 예: ["59A","84A"])의
+  // 평형 코드 앞 숫자를 평균(무날조 — 실존 필드만·부재 시 0으로 수동입력 유도).
+  const estimatedAvgUnitSqmFromDesign = useMemo(() => {
+    const types = designData?.unitTypes;
+    if (!types || types.length === 0) return 0;
+    const areas = types.map(typeToArea).filter((a) => a > 0);
+    if (areas.length === 0) return 0;
+    return Math.round((areas.reduce((s, a) => s + a, 0) / areas.length) * 10) / 10;
+  }, [designData?.unitTypes]);
+
   // 건축개요 자동 로드(수정한 GFA는 보존). 설계가 있으면 설계 GFA, 없으면 부지×용적률 폴백.
   useEffect(() => {
     if (!projectId) return;
@@ -253,8 +276,12 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     }
     if (designData?.floorCount) { setFloorsAbove(designData.floorCount); setAutoFloors(true); }
     if (designData?.buildingType) { setBt(mapBuildingType(designData.buildingType)); setAutoBt(true); }
+    // F-1: 주택(아파트)일 때만 평균 전용면적 자동프리필(BE baseline_check 판정조건과 동일).
+    if (bt === "apartment" && estimatedAvgUnitSqmFromDesign > 0 && !editedAvgUnitSqm) {
+      setAvgUnitSqm(estimatedAvgUnitSqmFromDesign); setAutoAvgUnitSqm(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, designData, estimatedGfaFromSite]);
+  }, [projectId, designData, estimatedGfaFromSite, bt, estimatedAvgUnitSqmFromDesign, editedAvgUnitSqm]);
 
   // ③ 저장된 적산 목록 조회(프로젝트 있을 때만·조용한 실패).
   useEffect(() => {
@@ -272,7 +299,11 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     setLoading(true); setErr(""); setRisk(null);
     try {
       const r = await apiClient.post<Overview>("/cost/estimate-overview", {
-        body: { building_type: bt, total_gfa_sqm: gfa, floor_count_above: floorsAbove, floor_count_below: floorsBelow, structure_type: structure, project_id: projectId || undefined, with_senior: true },
+        body: {
+          building_type: bt, total_gfa_sqm: gfa, floor_count_above: floorsAbove, floor_count_below: floorsBelow, structure_type: structure, project_id: projectId || undefined, with_senior: true,
+          // F-1: 주택(아파트)+양수 입력일 때만 전송 — BE baseline_check가 이 조합에서만 대조를 산출.
+          avg_unit_sqm: bt === "apartment" && avgUnitSqm > 0 ? avgUnitSqm : undefined,
+        },
         useMock: false, timeoutMs: 30000,
       });
       setResult(r);
@@ -289,7 +320,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     } catch {
       setErr("공사비 산정에 실패했습니다. 입력값을 확인하세요.");
     } finally { setLoading(false); }
-  }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId, updateCostData]);
+  }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId, avgUnitSqm, updateCostData]);
 
   // 모세혈관: 부지·설계(업스트림)가 갱신되면 이미 산정된 공사비를 1회 자동 재계산.
   // 백엔드 호출이라 과도호출 금지 — 결과가 있고(hasResult) 로딩 중이 아닐 때만(enabled).
@@ -334,10 +365,22 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
   }, [result, iterations]);
 
   // ⑤: 적산 보고서 다운로드(POST /cost/{pid}/report?format=) — LandScheduleClient.downloadReport 패턴.
+  // F-4: 부분조립 해소 — ①최신 영속 BOQ(저장된 적산 목록 ③의 최신 1건)를 조회해 동봉,
+  //   ②절감 시나리오·설계변경 예측 카드가 store에 적재한 원응답이 있으면 함께 동봉(부재 시 생략 — 정직).
   const downloadReport = useCallback(async (format: "pdf" | "pptx" | "docx") => {
     if (!result) { setReportNotice({ kind: "warn", text: "먼저 ②에서 개략 공사비를 산정하세요." }); return; }
     setReportBusy(format); setReportNotice(null);
     try {
+      // 최신 영속 BOQ — savedList는 GET /estimates(최신순) 결과라 상단 1건이 최신.
+      let boq: Record<string, unknown> | undefined;
+      const latestEstimateId = savedList[0]?.estimate_id;
+      if (latestEstimateId) {
+        try {
+          boq = await apiClient.get<Record<string, unknown>>(
+            `/cost/estimate/${latestEstimateId}`, { useMock: false, timeoutMs: 20000 },
+          );
+        } catch { /* BOQ 조회 실패는 무시 — overview만으로 보고서 생성 계속(정직 생략) */ }
+      }
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
       const res = await fetch(`${apiBase()}/cost/${projectId || "default"}/report?format=${format}`, {
         method: "POST",
@@ -346,6 +389,9 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           project_name: projectName || "적산 보고서",
           overview: result,
           senior_consultation: result.senior_consultation ?? undefined,
+          boq: boq ?? undefined,
+          saving_scenarios: costData?.costSavingScenarios ?? undefined,
+          change_forecast: costData?.costChangeForecast ?? undefined,
         }),
       });
       const ct = res.headers.get("content-type") || "";
@@ -359,7 +405,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     } catch {
       setReportNotice({ kind: "warn", text: "적산 보고서 생성에 실패했습니다. 잠시 후 다시 시도하세요." });
     } finally { setReportBusy(null); }
-  }, [result, projectId, projectName]);
+  }, [result, projectId, projectName, savedList, costData]);
 
   const breakdown = useMemo(() => result ? [
     ["지상 직접공사비", result.aboveground_won],
@@ -389,7 +435,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           <span className="cc-meta">COST · WORKFLOW</span>
           {result && <span className="cc-live"><i />ESTIMATED</span>}
         </div>
-        <h1 className="text-2xl font-black text-[var(--text-primary)]">공사비 분석 (5단계 통합)</h1>
+        <h1 className="text-2xl font-black text-[var(--text-primary)]">적산·공사비 관리 (5단계 통합)</h1>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           기준정보 자동연동 → 물량·개산 → 적산리스트 → AI 분석 → 보고서·수지반영까지 한 흐름으로 진행합니다.
           결과는 <b className="text-[var(--text-primary)]">수지분석·투자수익성(ROI)과 자동 연동</b>됩니다. 자동 값도 모두 수정 가능합니다.
@@ -452,6 +498,20 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
             <span className="text-[11px] font-semibold text-[var(--text-secondary)]">지하 층수</span>
             <input type="number" value={floorsBelow} onChange={(e) => setFloorsBelow(Number(e.target.value))} className={fcls} />
           </label>
+          {/* F-1: 주택(아파트)일 때만 노출 — BE baseline_check(기본형건축비 대조) 판정조건과 동일. */}
+          {bt === "apartment" && (
+            <label className="flex flex-col gap-1">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+                <Term label="평균 전용면적" hint="세대별 전용면적의 평균값(㎡). 기본형건축비 고시 대조·시니어 QS 자문에 사용됩니다. 미입력 시 대조가 생략됩니다." />
+                {autoAvgUnitSqm && !editedAvgUnitSqm && <AutoBadge />}
+                {editedAvgUnitSqm && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <NumberInput allowDecimal value={avgUnitSqm} onChange={(n) => { setAvgUnitSqm(n ?? 0); setEditedAvgUnitSqm(true); }} className={fcls} />
+                <span className="text-[11px] text-[var(--text-tertiary)]">㎡</span>
+              </div>
+            </label>
+          )}
         </div>
       </div>
 

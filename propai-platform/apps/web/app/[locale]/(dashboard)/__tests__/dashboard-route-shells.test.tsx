@@ -353,7 +353,7 @@ describe("Dashboard route shells", () => {
   it("renders the cost analytics shell with the cost workspace", async () => {
     render(<CostPage />);
 
-    expect(screen.getByText("공사비 분석")).toBeInTheDocument();
+    expect(screen.getByText("적산·공사비 관리")).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.getByTestId("cost-workspace")).toHaveTextContent("cost");
   });

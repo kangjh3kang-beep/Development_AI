@@ -7,6 +7,9 @@ import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
+// F-3: 무인증 raw fetch(Authorization 미첨부→배포환경 401 조용실패) 대신 apiClient로 통일
+// (자동 Bearer 첨부 + 401 리프레시 재시도 공용 계약 — BoqDetailTable 등 cost 화면 기존 관례와 동일).
+import { apiClient } from "@/lib/api-client";
 
 type CostResult = {
   total_project_cost: number;
@@ -71,8 +74,6 @@ type Rate = {
   pension_note: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 function fmt(n: number): string {
   return new Intl.NumberFormat("ko-KR").format(Math.round(n));
 }
@@ -93,8 +94,8 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
 
   const fetchRates = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/rates/current`);
-      if (res.ok) setRates(await res.json());
+      const data = await apiClient.get<Rate>("/rates/current", { useMock: false });
+      setRates(data);
     } catch {
       /* silent */
     }
@@ -110,49 +111,31 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
       //   근사 역산·하드코딩 단가(구버전)를 제거하고 실 데이터만 사용한다(무목업).
       let usedBim = false;
       try {
-        const originRes = await fetch(
-          `${API_BASE}/api/v1/cost/${projectId}/bim-quantities/origin-cost`,
+        const originData = await apiClient.get<OriginCostResponse>(
+          `/cost/${projectId}/bim-quantities/origin-cost`, { useMock: false },
         );
-        if (originRes.ok) {
-          const originData: OriginCostResponse = await originRes.json();
-          const items = (originData.items ?? [])
-            .filter((it) => it.priced)
-            .map((it) => ({
-              work_code: it.work_code, item_name: it.item_name, spec: it.spec,
-              unit: it.unit, quantity: it.quantity, mat_unit: it.mat_unit,
-              labor_unit: it.labor_unit, exp_unit: it.exp_unit,
-            }));
-          if (originData.status === "ok" && items.length > 0) {
-            const calcRes = await fetch(
-              `${API_BASE}/api/v1/cost/${projectId}/calculate`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ items, use_llm: useLlm, with_senior: true }),
-              },
-            );
-            if (calcRes.ok) {
-              const data: CostResult = await calcRes.json();
-              setCostResult(data);
-              setOverviewResult(null);
-              setQtoSource("bim_quantities");
-              usedBim = true;
+        const items = (originData.items ?? [])
+          .filter((it) => it.priced)
+          .map((it) => ({
+            work_code: it.work_code, item_name: it.item_name, spec: it.spec,
+            unit: it.unit, quantity: it.quantity, mat_unit: it.mat_unit,
+            labor_unit: it.labor_unit, exp_unit: it.exp_unit,
+          }));
+        if (originData.status === "ok" && items.length > 0) {
+          const data = await apiClient.post<CostResult>(
+            `/cost/${projectId}/calculate`,
+            { body: { items, use_llm: useLlm, with_senior: true }, useMock: false },
+          );
+          setCostResult(data);
+          setOverviewResult(null);
+          setQtoSource("bim_quantities");
+          usedBim = true;
 
-              const mcRes = await fetch(
-                `${API_BASE}/api/v1/cost/${projectId}/monte-carlo`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    base_result: data,
-                    iterations: 5000,
-                    seed: 42,
-                  }),
-                },
-              );
-              if (mcRes.ok) setMcResult(await mcRes.json());
-            }
-          }
+          const mc = await apiClient.post<MCResult>(
+            `/cost/${projectId}/monte-carlo`,
+            { body: { base_result: data, iterations: 5000, seed: 42 }, useMock: false },
+          );
+          setMcResult(mc);
         }
       } catch {
         /* BIM 물량 조회 실패 — 아래 폴백으로 계속 진행 */
@@ -162,24 +145,20 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
       //   리스크 시뮬레이션(MC)은 12단계 원가 분해가 없어 실행하지 않는다(가짜 결과 금지).
       if (!usedBim) {
         setMcResult(null);
-        const ovRes = await fetch(`${API_BASE}/api/v1/cost/estimate-overview`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const ov = await apiClient.post<OverviewResult>("/cost/estimate-overview", {
+          body: {
             project_id: projectId,
             total_gfa_sqm: totalGfaSqm,
             floor_count_above: floorCount && floorCount > 0 ? floorCount : 1,
             floor_count_below: 0,
             structure_type: "RC",
             with_senior: true,
-          }),
+          },
+          useMock: false,
         });
-        if (ovRes.ok) {
-          const ov: OverviewResult = await ovRes.json();
-          setOverviewResult(ov);
-          setCostResult(null);
-          setQtoSource("estimate_overview");
-        }
+        setOverviewResult(ov);
+        setCostResult(null);
+        setQtoSource("estimate_overview");
       }
     } catch {
       /* silent */

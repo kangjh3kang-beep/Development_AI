@@ -43,6 +43,8 @@ export function SavingScenariosCard({
   const [err, setErr] = useState("");
   // "이 대안을 수지에 반영" — 어느 후보를 반영했는지 로컬 피드백(BoqDetailTable.applied 패턴).
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  // F-4: 조회 성공 시 원응답을 costData에 additive 기록(적산 보고서 조립용 — updatedAt.cost 미변경).
+  const setCostSavingScenarios = useProjectContextStore((s) => s.setCostSavingScenarios);
   const [appliedIdx, setAppliedIdx] = useState<number | null>(null);
 
   // 후보치를 수지 costData(SSOT)에 1방향 주입 — BoqDetailTable.applyToFeasibility와 동일 형태(meta 생략).
@@ -83,12 +85,14 @@ export function SavingScenariosCard({
       );
       setResult(r);
       setAppliedIdx(null); // 새 조회 — 이전 "반영됨" 표시 해제
+      // F-4: 적산 보고서(⑤)가 §6 절감 시나리오를 조립할 수 있도록 원응답을 store에 적재.
+      setCostSavingScenarios(r);
     } catch {
       setErr("절감 시나리오 조회에 실패했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, baseParams, topN]);
+  }, [projectId, baseParams, topN, setCostSavingScenarios]);
 
   return (
     <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
