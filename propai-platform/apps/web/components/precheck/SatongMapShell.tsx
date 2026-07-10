@@ -35,6 +35,7 @@ import {
 } from "react";
 
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -113,12 +114,32 @@ type ParsedParcel = {
   zone_type?: string | null;
   jimok?: string | null;
   official_price_per_sqm?: number | null;
+  // ★검증 리포트(additive) — 행별 최종분류. 구버전 응답(필드 부재)과 호환되도록 옵셔널.
+  verification_status?: "verified" | "corrected" | "needs_review" | null;
+  verification_reasons?: string[] | null;
+  injectable?: boolean | null;
+};
+
+type VerificationCorrection = {
+  field?: string | null;
+  before?: string | number | null;
+  after?: string | number | null;
+  reason?: string | null;
+};
+
+type VerificationReport = {
+  counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null;
+  corrections?: VerificationCorrection[] | null;
+  warnings?: string[] | null;
+  llm_used?: boolean | null;
+  passes?: number | null;
 };
 
 type ParseParcelsResponse = {
   parcels?: ParsedParcel[];
   note?: string | null;
   error?: string | null;
+  verification_report?: VerificationReport | null;
 };
 
 type SatongParcel = SatongSelectionParcel;
@@ -470,6 +491,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [selectedParcels, setSelectedParcels] = useState<SatongParcel[]>([]);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
+  // ★검증 리포트(T5) — 업로드 직후 4분류 카운트·보정내역·확인필요 사유를 패널로 노출.
+  const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
+  const [uploadParcels, setUploadParcels] = useState<ParsedParcel[]>([]);
+  // ★use_llm 옵트인(T1) — 기존 동작 보존을 위해 기본 true(비표준 양식 자동 LLM 보조 유지).
+  const [useLlm, setUseLlm] = useState(true);
   const [focusTarget, setFocusTarget] = useState<{ lat: number; lon: number; label?: string } | null>(null);
   const [enabledLayers, setEnabledLayers] = useState<Set<SatongMapLayerId>>(() => new Set(["cadastre"]));
   const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
@@ -961,27 +987,43 @@ export function SatongMapShell({ locale }: { locale: string }) {
       if (!file) return;
       setUploadStatus("loading");
       setUploadNote("");
+      setVerificationReport(null);
+      setUploadParcels([]);
       const form = new FormData();
       form.append("file", file);
+      form.append("use_llm", String(useLlm));
       try {
         const data = await apiClient.post<ParseParcelsResponse>("/zoning/parse-parcels", {
           body: form,
           useMock: false,
-          timeoutMs: 60000,
+          // ★H4-③: LLM 보조 구조인식·반복검증(S1/S3)까지 걸리면 60s로는 대량 엑셀에서 타임아웃이
+          //   잦았다 — GlobalAddressSearch(120s)보다 여유 있게 180s로 상향.
+          timeoutMs: 180000,
         });
         if (data.error) {
           setUploadStatus("error");
           setUploadNote(data.error);
           return;
         }
-        const parcels = (data.parcels ?? []).map(parsedParcelToSelection);
+        const allParcels = data.parcels ?? [];
+        // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
+        //   verified/corrected/needs_review는 모두 주입해 주입 후 2차 enrich(/zoning/parcels-info)
+        //   의 재지오코딩·재검증으로 자기치유되게 한다(injectable 필드 부재 시 구버전 응답
+        //   호환을 위해 기본 포함 — 무회귀). 필터 로직은 그대로 두되(향후 방어), 실제로는
+        //   백엔드 계약상 아래 filter가 걸러내는 행은 사실상 없다.
+        const injectable = allParcels.filter((p) => p.injectable !== false);
+        const parcels = injectable.map(parsedParcelToSelection);
         addParcels(parcels);
         setUploadStatus("idle");
+        setUploadParcels(allParcels);
+        setVerificationReport(data.verification_report ?? null);
+        const skipped = allParcels.length - injectable.length;
         setUploadNote(
-          data.note ||
+          (data.note ||
             (parcels.length > 0
               ? `${parcels.length}개 필지를 지도 선택 목록에 반영했습니다.`
-              : "엑셀에서 등록 가능한 필지를 찾지 못했습니다."),
+              : "엑셀에서 등록 가능한 필지를 찾지 못했습니다.")) +
+            (skipped > 0 ? ` (확인필요 ${skipped}건은 아래 리포트에서 확인)` : ""),
         );
       } catch {
         setUploadStatus("error");
@@ -990,7 +1032,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         event.target.value = "";
       }
     },
-    [addParcels],
+    [addParcels, useLlm],
   );
 
   const handleTemplateDownload = useCallback(() => {
@@ -1361,6 +1403,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 onChange={handleExcelUpload}
               />
             </div>
+            <UseLlmToggle
+              checked={useLlm}
+              onChange={setUseLlm}
+              label="AI 보조 인식"
+              hint="비표준 양식(다중시트·전치·복합셀) 자동 구조분석"
+              disabled={uploadStatus === "loading"}
+              className="px-1"
+            />
             {uploadNote && (
               <p
                 className={`rounded-2xl px-3 py-2 text-xs font-bold ${
@@ -1371,6 +1421,76 @@ export function SatongMapShell({ locale }: { locale: string }) {
               >
                 {uploadNote}
               </p>
+            )}
+            {verificationReport && (
+              <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs font-black text-slate-900">업로드 검증 리포트</h4>
+                  {verificationReport.llm_used && (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-700">
+                      🤖 LLM 보조 사용
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-black text-emerald-700">
+                    확인됨 {verificationReport.counts?.verified ?? 0}
+                  </span>
+                  <span className="rounded-full bg-sky-100 px-2 py-1 text-[11px] font-black text-sky-700">
+                    보정됨 {verificationReport.counts?.corrected ?? 0}
+                  </span>
+                  <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black text-amber-700">
+                    확인필요 {verificationReport.counts?.needs_review ?? 0}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black text-slate-600">
+                    제외 {verificationReport.counts?.excluded ?? 0}
+                  </span>
+                </div>
+                {/* ★H3: 확인필요 행도 일단 주입되며, 주입 후 2차 조회에서 자동보정을 시도한다는
+                    것을 명확히 안내(과거엔 이 자기치유 경로가 자동반영 제외로 조용히 끊겼었음). */}
+                {(verificationReport.counts?.needs_review ?? 0) > 0 && (
+                  <p className="text-[11px] font-semibold text-amber-700">
+                    확인필요 행은 주입 후 자동보정 시도됩니다 — 아래 사유를 확인해 주세요.
+                  </p>
+                )}
+                {(verificationReport.corrections?.length ?? 0) > 0 && (
+                  <p className="text-[11px] font-semibold text-sky-700">
+                    보정 {verificationReport.corrections?.length}건 —{" "}
+                    {(verificationReport.corrections ?? [])
+                      .slice(0, 3)
+                      .map((c) => `${c.field ?? "필드"}: ${c.before ?? "-"}→${c.after ?? "-"}`)
+                      .join(" · ")}
+                    {(verificationReport.corrections?.length ?? 0) > 3
+                      ? ` 외 ${(verificationReport.corrections?.length ?? 0) - 3}건`
+                      : ""}
+                  </p>
+                )}
+                {uploadParcels.filter((p) => p.verification_status === "needs_review").length > 0 && (
+                  <ul className="space-y-1">
+                    {uploadParcels
+                      .filter((p) => p.verification_status === "needs_review")
+                      .slice(0, 8)
+                      .map((p, i) => (
+                        <li
+                          key={`${p.address ?? p.jibun ?? p.pnu ?? "row"}-${i}`}
+                          className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800"
+                        >
+                          {p.address || p.jibun || p.pnu || `행 ${i + 1}`} —{" "}
+                          {(p.verification_reasons ?? []).join(" · ") || "확인 필요"}
+                        </li>
+                      ))}
+                  </ul>
+                )}
+                {(verificationReport.warnings?.length ?? 0) > 0 && (
+                  <ul className="space-y-1">
+                    {(verificationReport.warnings ?? []).map((w, i) => (
+                      <li key={i} className="text-[11px] font-semibold text-rose-600">
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
           </div>
 

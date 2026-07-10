@@ -22,6 +22,7 @@ import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { LandShareModal } from "@/components/operations/LandShareModal";
+import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
 import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapComponent } from "@/components/map/ParcelBoundaryMap";
@@ -982,7 +983,9 @@ export function GlobalAddressSearch({
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string } | null>(null);
+  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string; verify?: string } | null>(null);
+  // ★use_llm 옵트인(T1) — 기존 동작 보존을 위해 기본 true(비표준 양식 자동 LLM 보조 유지).
+  const [useLlm, setUseLlm] = useState(true);
 
   const handleExcelUpload = useCallback(async (file: File) => {
     setUploading(true);
@@ -990,14 +993,20 @@ export function GlobalAddressSearch({
     try {
       const fd = new FormData();
       fd.append("file", file);
+      fd.append("use_llm", String(useLlm));
       const res = await apiClient.post<{
-        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null }>;
+        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null; injectable?: boolean | null }>;
         note?: string; error?: string; registry_guidance?: { message?: string };
+        verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null } | null;
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
       if (res.error) { setUploadInfo({ note: res.error }); return; }
       // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
+      // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
+      //   verified/corrected/needs_review는 모두 반영해 반영 후 2차 조회(/zoning/parcels-info)의
+      //   재지오코딩·재검증으로 자기치유되게 한다(injectable 필드 부재 시 구버전 응답 호환을
+      //   위해 기본 포함 — 무회귀). needs_review 건수는 요약 카운트로 계속 안내.
       const entries: AddressEntry[] = (res.parcels ?? [])
-        .filter((p) => (p.address || p.pnu))
+        .filter((p) => (p.address || p.pnu) && p.injectable !== false)
         .map((p) => {
           // ★소재지(동)와 지번(번지)이 분리된 양식이면 결합해 '완전한 지번주소'를 fullAddress로.
           //   (이게 누락돼 동 단위 주소만 들어가 부지분석·구획도가 동 대표필지로 수렴하던 근본버그.)
@@ -1047,7 +1056,12 @@ export function GlobalAddressSearch({
       onChange?.(merged);
       // 중복(같은 필지 다중행)을 정리했으면 안내에 표기 — 사용자가 '왜 줄었지' 혼란 방지.
       const dupNote = dupRemoved > 0 ? ` · 동일 필지 ${dupRemoved}행 통합(공유지분 등은 토지조서에서 관리)` : "";
-      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message });
+      // ★검증 리포트 간이 요약(카운트만 — 상세 사유·보정내역은 토지조서 화면의 전체 패널에서 확인).
+      const vc = res.verification_report?.counts;
+      const verify = vc
+        ? `검증: 확인 ${vc.verified ?? 0} · 보정 ${vc.corrected ?? 0} · 확인필요 ${vc.needs_review ?? 0} · 제외 ${vc.excluded ?? 0}`
+        : undefined;
+      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message, verify });
       // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
       // ★재업로드 시 자기치유 재시도 카운터 초기화 — 직전 업로드에서 2회 소진한 필지도 다시 보강 시도(무한 아님).
       enrichTries.current.clear();
@@ -1057,7 +1071,7 @@ export function GlobalAddressSearch({
     } finally {
       setUploading(false);
     }
-  }, [single, addresses, onChange, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis, enrichParcels]);
+  }, [single, addresses, onChange, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis, enrichParcels, useLlm]);
 
   const downloadTemplate = useCallback(async () => {
     try {
@@ -1327,6 +1341,14 @@ export function GlobalAddressSearch({
                   >
                     양식 다운로드 ↓
                   </button>
+                  <UseLlmToggle
+                    checked={useLlm}
+                    onChange={setUseLlm}
+                    label="AI 보조 인식"
+                    hint="비표준 양식 자동 구조분석"
+                    disabled={uploading}
+                    className="text-[11px]"
+                  />
                 </div>
                 <div className="relative flex flex-wrap items-center gap-2">
                   <div className="relative min-w-[220px] flex-1">
@@ -1372,6 +1394,7 @@ export function GlobalAddressSearch({
                 {uploadInfo && (
                   <div className="mt-2 rounded-xl border border-[var(--line)] bg-white/72 px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)]">
                     <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
+                    {uploadInfo.verify && <p className="mt-1 text-[11px] font-semibold text-[var(--text-secondary)]">{uploadInfo.verify}</p>}
                     {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
                   </div>
                 )}

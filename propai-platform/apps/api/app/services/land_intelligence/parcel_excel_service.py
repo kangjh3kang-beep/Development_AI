@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+from collections import Counter
 from typing import Any
 
 import structlog
@@ -150,6 +151,23 @@ def _detect_header_row(df0: Any) -> int:
     return best_i if best_score > 0 else 0
 
 
+def _looks_transposed(df0: Any) -> bool:
+    """1열(A열)에 표준 필드라벨(소재지·지번·PNU·면적·지목 등)이 여러 개 나타나면 전치(세로형) 의심.
+
+    ★전치 양식은 필드명이 '행'이 아니라 '열'로 나열돼 _detect_header_row(행 단위 스캐너)가
+    필드라벨 행 하나를 우연히 헤더로 오인(그 행의 라벨셀 1개만 매칭)하기 쉽다 — 이 경우
+    규칙기반이 address 등을 "찾은 것처럼" 보여 S1 LLM 트리거가 새지 않는 사고를 막기 위한
+    별도 신호(1열에 라벨이 3개 이상 반복되면 명백히 전치 의심 → 신뢰도 낮음으로 간주).
+    """
+    sub_keys = ("소재", "지번", "번지", "면적", "법정동", "pnu", "고유번호", "소유", "지목")
+    try:
+        col0 = [_norm(v) for v in df0.iloc[:12, 0].tolist()]
+    except Exception:  # noqa: BLE001
+        return False
+    hits = sum(1 for c in col0 if c and any(k in c for k in sub_keys))
+    return hits >= 3
+
+
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
     """bcode(10)+지번 → PNU(19). 구조: bcode(10)+대지구분(1:산이면2)+본번(4)+부번(4)."""
     b = re.sub(r"\D", "", str(bcode or ""))
@@ -215,62 +233,145 @@ _LLM_ROLES = {
     "address", "jibun", "bcode", "pnu", "jimok", "area", "owner", "label",
     "consent_land", "consent_district", "consent_operator",
 }
-# 헤더 시그니처별 LLM 분류 결과 캐시 — 동일 양식 반복 업로드 시 LLM 재호출/비용 방지.
-_COL_CACHE: dict[tuple, dict[str, str]] = {}
+# 표 구조 시그니처(시트목록+현재시트+헤더)별 LLM 분류 결과 캐시 — 동일 양식 반복 업로드 시
+# LLM 재호출/비용 방지(_llm_detect_columns 시절의 헤더전용 캐시를 구조질의로 확장).
+_STRUCT_CACHE: dict[tuple, dict[str, Any]] = {}
+_LLM_REVERIFY_CONCURRENCY = 5  # 행별 재질의 동시 LLM 호출 상한(대량 실패행 폭주 방지)
+_MAX_REVERIFY_ROWS = 60  # 패스당 재질의 대상 상한(양식이 근본적으로 안 맞으면 LLM 낭비 방지)
+# 지번 형식 게이트 — '산' 지번 포함, 본번(-부번) 형태만 정상(그 외는 needs_review 후보).
+_JIBUN_RE = re.compile(r"^산?\d+(-\d+)?$")
+_UNRESOLVED_STATUSES = ("failed", "ambiguous", "need_geocode")
+_ISSUE_LABELS = {
+    "jibun_format": "지번 형식 불명확(숫자·산 지번 형태가 아님)",
+    "pnu_format": "PNU 형식 오류(19자리 숫자가 아님)",
+    "unresolved_failed": "주소 미해소(failed)",
+    "unresolved_ambiguous": "동명이의 등으로 모호(ambiguous)",
+    "unresolved_need_geocode": "주소 미해소(지오코딩 결과 없음)",
+}
 
 
-async def _llm_detect_columns(headers: list[str], sample_rows: list[dict]) -> dict[str, str]:
-    """규칙기반 컬럼감지 실패 시 LLM 에이전트가 헤더+샘플행을 분석해 컬럼→역할을 매핑.
+def _row_issues(p: dict[str, Any]) -> list[str]:
+    """행별 결정론 검증 게이트 — 지번 형식·PNU 19자리·미해소 상태(failed/ambiguous/need_geocode)."""
+    issues: list[str] = []
+    jb = p.get("jibun")
+    if jb and not _JIBUN_RE.match(jb):
+        issues.append("jibun_format")
+    pnu = p.get("pnu")
+    if pnu and (len(pnu) != 19 or not pnu.isdigit()):
+        issues.append("pnu_format")
+    st = p.get("status")
+    if st in _UNRESOLVED_STATUSES:
+        issues.append(f"unresolved_{st}")
+    return issues
 
-    임의 양식(비표준 헤더, 영문/약어/병합 등)도 분류. 환각 방지: LLM이 답한 컬럼명이 실제
-    headers에 존재할 때만 채택. 키 미설정/실패/무효 → {} 반환(현행 규칙기반 폴백 유지·무목업).
-    동일 헤더 시그니처는 캐시 재사용(LLM 재호출 방지). LLM 토큰은 _record_llm_billing 계측.
+
+def _reverifiable(p: dict[str, Any]) -> bool:
+    """H4-②: S3 선별 재질의 대상 게이트 — 원본 셀 재해석으로 실제 고칠 가능성이 있는 행만 통과.
+
+    need_geocode/failed/ambiguous가 '단독' 이슈(지오코딩·매칭 실패가 근본원인)인 행은 셀을
+    다시 물어봐도 고칠 수 없어 LLM 호출이 낭비된다. jibun_format·pnu_format(형식 이슈)이 있는
+    행만 대상으로 삼는다 — 형식이 교정되면 재지오코딩(changed_addr 경로)으로 자연히 이어진다.
     """
-    if not headers:
+    return any(i in ("jibun_format", "pnu_format") for i in _row_issues(p))
+
+
+def _sheet_previews_xlsx(
+    raw: bytes, max_rows: int = 15, max_sheets: int = 8, max_cols: int = 12,
+) -> dict[str, list[list[str]]]:
+    """xlsx 전체 시트명별 첫 N행 미리보기(값만 문자열화) — LLM 시트선택 판단용. 실패 시 빈dict.
+
+    ★L2: 시트 최대 8·행 최대 15(기존)·열 최대 12로 캡 — 시트/열이 많은 엑셀이 프롬프트를
+    과도하게 부풀려 LLM 비용·타임아웃을 키우는 것을 방지(H4 과금 폭주 방지와 동반).
+    """
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+    except Exception:  # noqa: BLE001
         return {}
-    cache_key = tuple(headers)
-    if cache_key in _COL_CACHE:
-        return dict(_COL_CACHE[cache_key])
+    out: dict[str, list[list[str]]] = {}
+    try:
+        for name in wb.sheetnames[:max_sheets]:
+            ws = wb[name]
+            preview: list[list[str]] = []
+            for i, r in enumerate(ws.iter_rows(values_only=True)):
+                if i >= max_rows:
+                    break
+                preview.append(["" if v is None else str(v)[:60] for v in r[:max_cols]])
+            out[name] = preview
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
+async def _llm_analyze_structure(
+    sheet_previews: dict[str, list[list[str]]],
+    current_sheet: str,
+    headers: list[str],
+    sample_rows: list[dict],
+) -> tuple[dict[str, Any], bool]:
+    """규칙기반 신뢰도가 낮을 때 LLM에게 표 구조 전체를 ★한 번의 JSON 질의로★ 물어본다
+    (시트선택·헤더행/데이터범위·전치판정·복합셀분해·컬럼역할 — 중복 프롬프트 금지, 기존
+    _llm_detect_columns를 이 확장 함수가 흡수).
+
+    반환: (LLM 원시 제안 dict, LLM 실제 호출 여부). ★환각 차단은 여기서 하지 않는다 — 시트가
+    재선택되면 유효 헤더 집합 자체가 바뀌므로, 실존 검증(값이 실제 헤더/시트/행범위에 있는지)은
+    최종 시트·헤더가 확정된 뒤 호출측(parse())이 수행한다. 캐시: 시트+헤더 시그니처로 재호출 방지.
+    LLM 토큰은 _record_llm_billing 계측(service=parcel_excel_structure_detect).
+    """
+    if not headers and not sheet_previews:
+        return {}, False
+    cache_key = (tuple(sorted(sheet_previews.keys())), current_sheet, tuple(headers))
+    if cache_key in _STRUCT_CACHE:
+        return dict(_STRUCT_CACHE[cache_key]), False
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
 
         from app.services.ai.llm_provider import get_llm
     except Exception:  # noqa: BLE001
-        return {}
+        return {}, False
     try:
-        llm = get_llm(timeout=40, max_tokens=600)
+        llm = get_llm(timeout=45, max_tokens=800)
     except Exception:  # noqa: BLE001
-        logger.info("엑셀 LLM 컬럼분류 생략 — 사용가능 LLM 키 없음(규칙기반 폴백)")
-        return {}
+        logger.info("엑셀 LLM 구조분석 생략 — 사용가능 LLM 키 없음(규칙기반 폴백)")
+        return {}, False
     import json as _json
-    sample = []
-    for r in sample_rows[:3]:
-        sample.append({str(k): str(v)[:40] for k, v in r.items()})
+    sample = [{str(k): str(v)[:40] for k, v in r.items()} for r in sample_rows[:3]]
     sys = (
-        "너는 한국 부동산 '토지조서' 엑셀의 컬럼을 표준 역할로 분류하는 분석 에이전트다. "
-        "헤더와 샘플행 값을 보고 각 표준 역할에 해당하는 '실제 컬럼명'을 고른다. JSON만 출력한다."
+        "너는 한국 부동산 '토지조서' 엑셀의 표 구조를 분석하는 에이전트다. 비표준 양식(다중시트·"
+        "세로형·복합셀 등)의 실제 데이터 표 구조를 판단해 JSON만 출력한다."
     )
     human = (
-        f"헤더: {headers}\n샘플행(최대3): {sample}\n\n"
-        "표준 역할(해당 없으면 생략): "
-        "address(소재지/주소), jibun(지번), bcode(법정동코드 10자리), pnu(필지고유번호 19자리), "
-        "jimok(지목), area(면적㎡), owner(소유자 또는 소유구분), label(동·호·건물명칭), "
-        "consent_land(토지사용동의), consent_district(지구단위/정비동의), consent_operator(시행자지정동의).\n"
-        '반드시 JSON 객체만 출력. 예: {"address":"소재지","jibun":"지번","area":"면적(㎡)"}'
+        f"현재 시트: {current_sheet}\n"
+        f"시트별 미리보기(각 최대15행, 행은 0-based): {sheet_previews}\n"
+        f"현재 헤더: {headers}\n샘플행(최대3): {sample}\n\n"
+        "다음 JSON 키를 판단되는 것만 포함해 출력(모르면 생략, 값이 확실하지 않으면 생략):\n"
+        "- sheet_name: 실제 토지조서 데이터가 있는 시트명(현재 시트가 맞으면 생략)\n"
+        "- header_row: 머리글 행의 0-based 인덱스(미리보기 grid의 0-based 행 번호. 0=미리보기 첫 행)\n"
+        "- data_start_row / data_end_row: 실제 데이터 행 범위 — header_row와 '동일한 0-based 좌표계'"
+        "(미리보기 grid의 0-based 행 번호. 1-based 엑셀 행 번호가 아님)\n"
+        "- is_transposed: 필드명이 세로(첫 열)로 나열된 '전치' 양식이면 true\n"
+        "- compound_cell: 주소+지번+지목+면적이 한 컬럼에 합쳐진 경우 "
+        '{"column":"실제컬럼명","regex":"명명그룹(?P<addr>..)(?P<jibun>..)(?P<jimok>..)(?P<area>..)를 '
+        '포함한 파이썬 정규식(필요한 그룹만)"}\n'
+        "- columns: 표준역할(address/jibun/bcode/pnu/jimok/area/owner/label/"
+        "consent_land/consent_district/consent_operator)별 실제 컬럼명\n"
+        'JSON 객체만 출력. 예: {"header_row":2,"columns":{"address":"소재지"}}'
     )
     try:
         resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=human)])
         text = resp.content if hasattr(resp, "content") else str(resp)
         m = re.search(r"\{.*\}", str(text), re.S)
         if not m:
-            return {}
+            return {}, True
         data = _json.loads(m.group(0))
+        if not isinstance(data, dict):
+            return {}, True
     except Exception as e:  # noqa: BLE001
-        logger.warning("엑셀 LLM 컬럼분류 실패: %s", str(e)[:160])
-        return {}
+        logger.warning("엑셀 LLM 구조분석 실패: %s", str(e)[:160])
+        return {}, False
 
     # ★LLM 토큰 사용량을 표준 계측 경로(_record_llm_billing→llm_usage_log)에 best-effort 기록.
-    #   (BaseInterpreter 단일경유 원칙 — 직접 ainvoke라도 사용량은 누락 없이 계측. 실패는 무시.)
     try:
         usage = getattr(resp, "usage_metadata", None) or {}
         in_tok = int(usage.get("input_tokens", 0) or 0)
@@ -278,19 +379,105 @@ async def _llm_detect_columns(headers: list[str], sample_rows: list[dict]) -> di
         if in_tok or out_tok:
             from app.services.ai.base_interpreter import _record_llm_billing
             model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
-            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_column_detect")
+            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_structure_detect")
     except Exception:  # noqa: BLE001
         pass
 
+    if len(_STRUCT_CACHE) > 256:  # 장수명 워커 무한증가 방지(상한 초과 시 비움)
+        _STRUCT_CACHE.clear()
+    # ★C1: 캐시 키(시트목록+현재시트+헤더)에는 행수가 없는데, data_start_row/data_end_row(행범위)를
+    #   그대로 캐시하면 같은 양식을 행 늘려 재업로드할 때 '이전 업로드의 행범위'가 재적용돼 새
+    #   행이 절단된다(예: 1행 업로드 후 4행 재업로드 → 1필지로 절단). 캐시에는 구조적 속성만
+    #   남기고(시트선택·전치·컬럼역할·복합셀정규식), 행범위는 매 호출마다 새로 반영되게 제외한다.
+    cache_value = {k: v for k, v in data.items() if k not in ("data_start_row", "data_end_row")}
+    _STRUCT_CACHE[cache_key] = cache_value
+    return data, True
+
+
+async def _llm_reverify_row(raw_cells: dict[str, str], issues: list[str]) -> tuple[dict[str, str], bool]:
+    """S3 선별 재질의 — 결정론 게이트에 실패한 행 1건의 원본 셀 텍스트만 제시해 역할별 값을 묻는다.
+
+    환각 차단: LLM이 답한 값이 그 행의 원본 셀 텍스트 안에 '실제로 등장하는 부분문자열'일 때만
+    채택(새 값 생성 금지 — 새로 만들어낸 값은 폐기). 반환: (역할→후보값, LLM 실제 호출 여부).
+    """
+    if not raw_cells:
+        return {}, False
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.services.ai.llm_provider import get_llm
+    except Exception:  # noqa: BLE001
+        return {}, False
+    try:
+        llm = get_llm(timeout=30, max_tokens=300)
+    except Exception:  # noqa: BLE001
+        return {}, False
+    import json as _json
+    sys = (
+        "너는 토지조서 엑셀 한 행에서 문제된 값을 원문 그대로 찾아주는 보조 에이전트다. "
+        "제시된 원본 셀 텍스트 안에 실제로 존재하는 부분문자열만 답한다(새로 만들어내지 않는다). "
+        "JSON만 출력한다."
+    )
+    human = (
+        f"원본 셀(컬럼:값): {raw_cells}\n검증 실패 사유: {issues}\n\n"
+        "역할(address/jibun/jimok/area 중 해당하는 것만): 원본 셀 값 안에 실제로 등장하는 "
+        '정확한 부분문자열로만 답하라(추정·생성 금지). 예: {"jibun":"224-1"}'
+    )
+    try:
+        resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=human)])
+        text = resp.content if hasattr(resp, "content") else str(resp)
+        m = re.search(r"\{.*\}", str(text), re.S)
+        if not m:
+            return {}, True
+        data = _json.loads(m.group(0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("엑셀 LLM 행 재질의 실패: %s", str(e)[:160])
+        return {}, False
+
+    try:
+        usage = getattr(resp, "usage_metadata", None) or {}
+        in_tok = int(usage.get("input_tokens", 0) or 0)
+        out_tok = int(usage.get("output_tokens", 0) or 0)
+        if in_tok or out_tok:
+            from app.services.ai.base_interpreter import _record_llm_billing
+            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
+            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_row_reverify")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ★M1: 환각 차단 강화 — ①여러 셀을 이어붙인 haystack이 아니라 '어느 한 개별 셀'의 값 안에
+    #   실제로 등장할 때만 채택(다른 셀 파편이 이어붙어 우연히 매치되는 것 차단). ②역할별 형식
+    #   게이트 — 예: PNU 셀의 숫자 파편("10300")이 haystack 전체매치로는 "area"로 오채택되던
+    #   문제를 셀 단위+역할형식 검증으로 차단.
+    cell_values = list(raw_cells.values())
     out: dict[str, str] = {}
-    for role, col in (data or {}).items():
-        # 환각 차단: 답한 컬럼명이 실제 헤더에 존재할 때만 채택.
-        if role in _LLM_ROLES and isinstance(col, str) and col in headers:
-            out[role] = col
-    if len(_COL_CACHE) > 256:  # 장수명 워커 무한증가 방지(상한 초과 시 비움)
-        _COL_CACHE.clear()
-    _COL_CACHE[cache_key] = dict(out)  # 동일 양식 재업로드 시 LLM 재호출 방지
-    return out
+    for role, val in (data or {}).items():
+        if role not in {"address", "jibun", "jimok", "area"} or not (isinstance(val, str) and val.strip()):
+            continue
+        v = val.strip()
+        source_cell = next((c for c in cell_values if v in c), None)
+        if source_cell is None:
+            continue
+        if not _role_format_ok(role, v, source_cell):
+            continue
+        out[role] = v
+    return out, True
+
+
+def _role_format_ok(role: str, val: str, source_cell: str) -> bool:
+    """M1: 역할별 형식 게이트 — 재질의 후보값이 그 역할에 맞는 형식·출처일 때만 통과시킨다.
+
+    jibun: 지번 정규식(_JIBUN_RE) 매치. area: 값의 출처 셀이 '숫자로만 구성되거나 면적 후보
+    (㎡/m²/평 표기 포함)'일 때만 — 다른 필드(예: PNU) 숫자열의 부분 파편이 area로 채택되는
+    환각을 막는다(파편은 출처 셀 전체를 콤마·공백·단위 제거해도 후보값과 같지 않다).
+    address/jimok은 자유서식이라 추가 형식 게이트를 두지 않는다(부분문자열 검증만 적용).
+    """
+    if role == "jibun":
+        return bool(_JIBUN_RE.match(val))
+    if role == "area":
+        stripped = re.sub(r"[,\s㎡m²]", "", source_cell)
+        return stripped == val
+    return True
 
 
 def build_template_xlsx() -> bytes:
@@ -348,54 +535,184 @@ def build_template_xlsx() -> bytes:
 class ParcelExcelService:
     """업로드 엑셀 → 필지 목록 추출."""
 
-    async def parse(self, raw: bytes, filename: str) -> dict[str, Any]:
+    async def parse(self, raw: bytes, filename: str, use_llm: bool = True) -> dict[str, Any]:
+        """업로드 엑셀/CSV → 필지 목록(+검증 리포트) 추출.
+
+        use_llm(기본 True=기존 동작 보존): False면 규칙기반만 동작(LLM 0호출·무과금·실패는
+        정직 사유표기). True면 규칙기반 신뢰도가 낮을 때만 구조 LLM(S1)·행별 재질의(S3)를 사용.
+        """
         import pandas as pd
 
         name = (filename or "").lower()
+        is_csv = name.endswith(".csv")
         try:
-            if name.endswith(".csv"):
+            if is_csv:
                 # ★CSV 인코딩 폴백 — 한국 엑셀이 내보낸 CSV는 CP949/EUC-KR가 흔하다(UTF-8만
-                #   시도하면 한글이 깨지거나 읽기 실패). 머리글 위치도 자동탐지(제목행 대응).
+                #   시도하면 한글이 깨지거나 읽기 실패).
                 df0 = None
-                used_enc = "utf-8-sig"
                 for enc in ("utf-8-sig", "cp949", "euc-kr", "latin1"):
                     try:
                         df0 = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
                                           header=None, encoding=enc)
-                        used_enc = enc
                         break
                     except (UnicodeDecodeError, ValueError):
                         continue
                 if df0 is None:
                     return {"error": "CSV 인코딩을 인식하지 못했습니다(UTF-8/CP949). 엑셀(.xlsx)로 저장해 올려보세요.", "parcels": []}
-                hdr = _detect_header_row(df0)
-                df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
-                                 header=hdr, encoding=used_enc)
+                current_sheet = "CSV"
             else:
                 # ★머리글 행 자동탐지 — 제목·설명행이 앞에 있는 양식이면 헤더가 1행이 아니다.
-                #   먼저 헤더 없이 읽어 헤더다운 행을 찾고, 그 행을 머리글로 다시 읽는다.
                 df0 = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=None)
-                hdr = _detect_header_row(df0)
-                df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=hdr)
-                # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
-                #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
-                df = _expand_merged_cells(raw, df, header_row=hdr)
+                current_sheet = ""
+                try:
+                    from openpyxl import load_workbook
+                    _wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+                    current_sheet = _wb.sheetnames[0] if _wb.sheetnames else ""
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as e:  # noqa: BLE001
             return {"error": f"엑셀/CSV를 읽지 못했습니다: {str(e)[:120]} — 엑셀(.xlsx)로 저장해 다시 시도해 주세요.", "parcels": []}
 
+        def _rebuild(df0_: Any, hdr_: int) -> tuple[Any, list[str]]:
+            """raw grid(header=None)+헤더행 인덱스 → (데이터프레임, 헤더목록). 재선택/전치 후 공용 재사용."""
+            d = df0_.iloc[hdr_ + 1:].reset_index(drop=True)
+            d.columns = [str(v) if v is not None and str(v).strip() else f"col{i}"
+                         for i, v in enumerate(df0_.iloc[hdr_].tolist())]
+            return d, [str(h) for h in d.columns]
+
+        hdr = _detect_header_row(df0)
+        df, headers = _rebuild(df0, hdr)
+        if not is_csv:
+            # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
+            #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
+            df = _expand_merged_cells(raw, df, header_row=hdr)
+            headers = [str(h) for h in df.columns]
         df = df.fillna("")
-        headers = [str(h) for h in df.columns]
         cols = _detect_columns(headers)
         engine = "rule"
-        # ★규칙기반이 필수컬럼(주소/PNU/법정동코드)을 못 찾으면 LLM 에이전트가 헤더+샘플행을
-        #   분석해 임의 양식의 컬럼을 표준 역할로 분류(엑셀 스마트 분류). 빈칸 역할만 보강.
-        if not cols["address"] and not cols["pnu"] and not cols["bcode"]:
-            llm_cols = await _llm_detect_columns(headers, df.to_dict("records")[:3])
-            if llm_cols:
-                for role, col in llm_cols.items():
-                    if not cols.get(role):
-                        cols[role] = col
-                engine = "rule+llm"
+        llm_used = False
+        structure_notes: list[str] = []
+
+        def _valid_ratio(frame: Any, colmap: dict) -> float:
+            keys = [colmap.get(r) for r in ("address", "pnu", "bcode") if colmap.get(r)]
+            if not keys or len(frame) == 0:
+                return 0.0
+            good = sum(1 for _, r in frame.iterrows() if any(str(r.get(k, "")).strip() for k in keys))
+            return good / len(frame)
+
+        # ── S1: 표 구조 인식(LLM, use_llm 게이트 하) ──
+        #   규칙기반이 필수컬럼(주소/PNU/법정동코드)을 못 찾거나, 컬럼은 찾았지만 유효행<50%
+        #   (다중시트·전치·오탐 헤더행 등 구조 문제 의심)일 때만 LLM에게 표 구조 전체를 질의한다.
+        need_structure_llm = (
+            (not cols["address"] and not cols["pnu"] and not cols["bcode"])
+            or (len(df) > 0 and _valid_ratio(df, cols) < 0.5)
+            or _looks_transposed(df0)
+        )
+        if need_structure_llm and use_llm:
+            sheet_previews = (
+                _sheet_previews_xlsx(raw) if not is_csv
+                # ★L2: CSV 미리보기도 xlsx와 동일하게 열 12개로 캡(과도한 프롬프트 비대화 방지).
+                else {current_sheet: [[str(v) for v in r] for r in df0.head(15).iloc[:, :12].values.tolist()]}
+            )
+            struct, called = await _llm_analyze_structure(
+                sheet_previews=sheet_previews, current_sheet=current_sheet,
+                headers=headers, sample_rows=df.to_dict("records")[:3],
+            )
+            # ★C1 동반(M3 해소): llm_used는 '이번 호출이 실제 LLM API를 태웠는지'가 아니라 'LLM
+            #   유래 구조가 적용됐는지'를 의미해야 한다 — 캐시 히트(called=False)라도 struct가
+            #   이전 LLM 호출로 만들어진 것이면 llm_used=True로 통일한다.
+            llm_used = llm_used or called or bool(struct)
+            if struct:
+                sheet_changed = False
+                transposed = False
+                # 1) 시트 재선택(xlsx만 — 실존 시트명일 때만 채택. 환각 차단).
+                chosen_sheet = struct.get("sheet_name")
+                if (not is_csv and isinstance(chosen_sheet, str) and chosen_sheet in sheet_previews
+                        and chosen_sheet != current_sheet):
+                    try:
+                        df0 = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl",
+                                             header=None, sheet_name=chosen_sheet)
+                        current_sheet = chosen_sheet
+                        structure_notes.append(f"LLM이 '{chosen_sheet}' 시트를 토지조서 데이터로 재선택")
+                        sheet_changed = True
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                # 2) 전치(세로형) 판정 — 결정론 전치(행↔열 swap) 후 재파싱.
+                if struct.get("is_transposed") is True:
+                    df0 = df0.T.reset_index(drop=True)
+                    structure_notes.append("LLM이 세로형(전치) 양식으로 판단 — 전치 후 재파싱")
+                    transposed = True
+
+                # 3) 헤더행 재적용(실존 범위 검증 — 미달/범위초과는 규칙기반 유지).
+                #   ★H2: 시트재선택·전치가 '없으면' rebuild를 건너뛰고 이미 병합셀 forward-fill이
+                #   적용된 기존 df/headers를 그대로 재사용한다(비표준 컬럼명만 LLM이 알려준 흔한
+                #   케이스에서 무조건 rebuild하면 병합 복원이 소실되던 회귀를 차단). 시트/전치가
+                #   바뀐 경우만 rebuild(그 좌표계에서는 원본 병합범위가 더 이상 유효하지 않아
+                #   merge-expand는 건너뜀 — 과도적용 방지).
+                if sheet_changed or transposed:
+                    hdr_llm = struct.get("header_row")
+                    hdr = (hdr_llm if isinstance(hdr_llm, int) and 0 <= hdr_llm < len(df0)
+                           else _detect_header_row(df0))
+                    df, headers = _rebuild(df0, hdr)
+                    df = df.fillna("")
+                    cols = _detect_columns(headers)
+
+                # 4) 데이터 범위(data_start/end_row) — 실존 범위 내일 때만 슬라이스.
+                #   ★H1: LLM 프롬프트가 지시한 대로 ds/de는 header_row와 동일한 0-based
+                #   좌표계(df0 행 인덱스)다. df 행 i는 df0 행 (hdr+1+i)에 대응하므로 base=hdr+1.
+                #   (기존 base=hdr+2는 1-based로 오해석해 마지막 데이터 행이 상시 절단되던 버그.)
+                ds, de = struct.get("data_start_row"), struct.get("data_end_row")
+                if isinstance(ds, int) and isinstance(de, int) and 0 <= ds <= de:
+                    base = hdr + 1  # df0(0-based) 좌표계의 데이터 첫 행 = df 행 0
+                    keep = [i for i in range(len(df)) if ds <= (base + i) <= de]
+                    if keep:
+                        removed = len(df) - len(keep)
+                        df = df.iloc[keep].reset_index(drop=True)
+                        note = f"LLM 판정 데이터범위({ds}~{de}행)로 슬라이스"
+                        if removed:  # ★H1: 무음 제외 금지 — 실제로 행이 줄면 사유를 표면화.
+                            note += f" — 구조인식으로 {removed}행 제외"
+                        structure_notes.append(note)
+
+                # 5) 복합셀 분해 — 채택 전 샘플 매치율 ≥60% 검증(미달 폐기).
+                compound = struct.get("compound_cell")
+                if isinstance(compound, dict):
+                    c_col, c_rx = compound.get("column"), compound.get("regex")
+                    if isinstance(c_col, str) and c_col in headers and isinstance(c_rx, str):
+                        try:
+                            rx = re.compile(c_rx)
+                        except re.error:
+                            rx = None
+                        _GMAP = {"addr": "address", "jibun": "jibun", "jimok": "jimok", "area": "area"}
+                        groups = [g for g in _GMAP if rx and g in (rx.groupindex or {})]
+                        if rx and groups:
+                            vals = [str(v) for v in df[c_col].tolist()]
+                            nonblank = [v for v in vals if v.strip()]
+                            matched = sum(1 for v in nonblank if rx.search(v))
+                            rate = matched / len(nonblank) if nonblank else 0.0
+                            if rate >= 0.6:
+                                for g in groups:
+                                    role = _GMAP[g]
+                                    if cols.get(role):
+                                        continue  # 이미 매핑된 역할은 덮지 않음
+                                    vcol = f"__cc_{g}"
+                                    df[vcol] = [
+                                        (m.group(g) or "") if (m := rx.search(v)) else "" for v in vals
+                                    ]
+                                    cols[role] = vcol
+                                structure_notes.append(f"복합셀 '{c_col}' 분해 적용(매치율 {rate:.0%})")
+                            else:
+                                structure_notes.append(f"복합셀 '{c_col}' 분해 폐기(매치율 {rate:.0%}<60%)")
+
+                # 6) 컬럼 역할(실존 헤더 검증 — 환각 차단: 실제 헤더에 존재할 때만 채택).
+                llm_cols = struct.get("columns")
+                if isinstance(llm_cols, dict):
+                    for role, col in llm_cols.items():
+                        if role in _LLM_ROLES and isinstance(col, str) and col in headers and not cols.get(role):
+                            cols[role] = col
+                if structure_notes or (isinstance(llm_cols, dict) and llm_cols):
+                    engine = "rule+llm"
+
         if not cols["address"] and not cols["pnu"] and not cols["bcode"]:
             return {
                 "error": "필수 컬럼을 찾지 못했습니다 — 최소 [소재지(주소)] 또는 [PNU] 또는 [법정동코드]가 필요합니다. 표준 양식을 내려받아 작성하거나, 헤더에 '소재지/지번/면적' 등을 명시해 주세요.",
@@ -404,11 +721,20 @@ class ParcelExcelService:
 
         rows = df.to_dict("records")[:_MAX_ROWS]
         parcels: list[dict[str, Any]] = []
+        raw_rows: list[dict] = []  # parcels와 같은 인덱스로 원본 셀 보관(S3 재질의용 — 응답에는 미포함)
         need_geocode: list[int] = []  # 주소만 있는 행 인덱스(지오코딩 대상)
+        _cum_area = 0.0
+        declared_total: float | None = None
+        excluded_n = 0  # 합계/소계 등 표 내 집계행으로 감지되어 제외된 행 수
 
         def _g(row: dict, role: str) -> str:
             col = cols.get(role)
             return str(row.get(col, "")).strip() if col else ""
+
+        _SUMMARY_KEYS = {"합계", "소계", "총계", "총합", "계", "합산", "total", "sum"}
+
+        def _is_summary_token(s: str) -> bool:
+            return bool(s) and (s in _SUMMARY_KEYS or s.startswith(("합계", "소계", "총계")))
 
         for row in rows:
             # 전각숫자→반각, 숫자형 '224.0'→'224' 정규화(코드성 칸). 면적은 _to_float가 별도 처리.
@@ -416,7 +742,8 @@ class ParcelExcelService:
             jibun = _clean_num_str(_g(row, "jibun"))
             bcode = re.sub(r"\D", "", _clean_num_str(_g(row, "bcode")))
             pnu_raw = re.sub(r"\D", "", _clean_num_str(_g(row, "pnu")))
-            area = _to_float(_g(row, "area"))
+            area_raw = _g(row, "area")
+            area = _to_float(area_raw)
             jimok = _g(row, "jimok") or None
             owner = _g(row, "owner") or None
             label = _g(row, "label") or None
@@ -426,16 +753,30 @@ class ParcelExcelService:
             consent_operator = _to_consent(_g(row, "consent_operator"))
             if not (address or pnu_raw or bcode):
                 continue  # 완전 빈 행 스킵
-            # 합계·소계 등 푸터/요약행 스킵(주소칸이 집계 표기뿐인 행 — 필지로 오인 방지).
+
+            # S3 집계게이트: 합계·소계 등 표 내 집계행 감지 — ①키워드(주소/비고칸)
+            #   ②면적=상위행 누적합(±1%) 중 하나면 필지가 아닌 집계행으로 보고 제외.
             _ax = address.replace(" ", "")
-            if not jibun and not pnu_raw and not bcode and (
-                _ax in {"합계", "소계", "총계", "총합", "계", "합산", "total", "sum"}
-                or _ax.startswith("합계") or _ax.startswith("소계") or _ax.startswith("총계")
-            ):
+            _lb = (label or "").replace(" ", "")
+            is_summary = not jibun and not pnu_raw and not bcode and (_is_summary_token(_ax) or _is_summary_token(_lb))
+            # ★M4: 누적합 분기도 키워드 분기와 동일하게 not bcode(구조적 필지 식별자 부재)를
+            #   요구한다 — bcode가 있는 정상 마지막 행이 면적만 우연히 이전 누적합과 일치할 때
+            #   집계행으로 오탐지·오제외되던 경계 버그를 차단.
+            if not is_summary and area and _cum_area > 0 and not jibun and not pnu_raw and not bcode:
+                if abs(area - _cum_area) / _cum_area <= 0.01:
+                    is_summary = True
+            if is_summary:
+                if area:
+                    declared_total = area  # 합계행 선언값 — 추출 면적합과 ±1% 대조(S4)
+                excluded_n += 1
+                # ★M4: 무음 제외 금지 — 어떤 원문 행이 제외됐는지 요약을 warnings에 남긴다.
+                _row_summary = " ".join(str(v).strip() for v in row.values() if str(v).strip())[:80]
+                structure_notes.append(f"집계/합계 추정 행 제외: {_row_summary or f'{excluded_n}번째 제외행'}")
                 continue
+
             pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
             status = "ok" if pnu else ("need_geocode" if address else "failed")
-            p = {
+            p: dict[str, Any] = {
                 "address": address or None, "jibun": jibun or None,
                 "bcode": (bcode[:10] if len(bcode) >= 10 else None),
                 "pnu": pnu, "area_sqm": area, "jimok": jimok,
@@ -450,9 +791,18 @@ class ParcelExcelService:
                 "registry_needed": not owner,
                 "status": status,
             }
+            if area_raw.strip() and area is None:
+                # S3 게이트: 입력 면적이 있었지만 형식불량(음수/0/숫자아님) — 정직 기록(공부상 자동보강 대상).
+                p["_corrections"] = [{
+                    "field": "area_sqm", "before": area_raw, "after": None,
+                    "reason": f"입력 면적 '{area_raw}' 형식 불량(음수/0/숫자아님) — 공부상 자동조회로 대체",
+                }]
             if status == "need_geocode":
                 need_geocode.append(len(parcels))
             parcels.append(p)
+            raw_rows.append(row)
+            if area:
+                _cum_area += area
 
         # ③ 주소만 있는 행 — VWorld 지오코딩으로 좌표·PNU 확보(법정동코드 몰라도 됨).
         if need_geocode:
@@ -468,8 +818,6 @@ class ParcelExcelService:
 
         # C3: 중복 PNU 탐지 — 서로 다른 행이 같은 PNU로 해석되면 거의 항상 오매칭(동명이의·
         #     번지누락). 2건 이상 동일 PNU는 ambiguous로 강등(가짜 확신 차단). 1필지만 같은 PNU면 정상.
-        from collections import Counter
-
         def _input_key(p: dict) -> str:
             # 입력 주소+지번을 공백 제거해 비교(같은 필지를 가리키는 행인지 판정).
             a = re.sub(r"\s+", "", (p.get("address") or ""))
@@ -520,6 +868,17 @@ class ParcelExcelService:
                 parts.append(f"같은 필지의 공유지분 등 {co_n}행은 정상 등록")
             dup_warning = (" · ".join(parts) + ".") if parts else None
 
+        # ── S3: 반복검증 루프 — 결정론 게이트에 실패한 행만 선별 재질의(최대 2회) ──
+        reverify = await self._reverify_loop(parcels, raw_rows, use_llm)
+        llm_used = llm_used or reverify["llm_called"]
+
+        # ── S4: 행별 최종분류(verified/corrected/needs_review) + 검증 리포트(additive) ──
+        verification_report = self._build_verification_report(
+            parcels, declared_total=declared_total, excluded_n=excluded_n,
+            dup_warning=dup_warning, llm_used=llm_used, passes=reverify["passes"],
+            structure_notes=structure_notes,
+        )
+
         ok = sum(1 for p in parcels if p["status"] == "ok")
         enriched = sum(1 for p in parcels if p.get("zone_type") or p.get("official_price_per_sqm"))
         return {
@@ -529,7 +888,7 @@ class ParcelExcelService:
             "resolved_count": ok,
             "enriched_count": enriched,
             "detected_columns": cols,
-            "column_engine": engine,  # rule | rule+llm (LLM 에이전트가 컬럼 분류에 관여했는지)
+            "column_engine": engine,  # rule | rule+llm (LLM 에이전트가 구조/컬럼 분류에 관여했는지)
             "duplicate_pnu_warning": dup_warning,
             "examples": parcels[:3],
             # 소유자·권리관계(근저당·지상권 등)는 공공API 미제공 → 등기부등본 열람/발급으로 확보.
@@ -539,11 +898,159 @@ class ParcelExcelService:
                 "message": ("소유자·권리관계(근저당·지상권 등)는 공공데이터로 확인할 수 없습니다 — "
                             "토지조서 화면의 '등기부등본 열람/발급'으로 확보하세요."),
             },
+            # ★additive — 기존 키(parcels/status 등)는 불변. injectable(H3)은 표에서 완전히
+            #   제외된 행(합계/집계)에만 False — verified/corrected/needs_review는 모두 주입해
+            #   주입 후 2차 enrich의 재지오코딩·재검증으로 자기치유되게 한다. 분류·사유는
+            #   verification_status/verification_reasons로 노출.
+            "verification_report": verification_report,
             "note": (f"{len(parcels)}필지 인식 · PNU 확정 {ok}건 · 면적/용도/공시지가 자동보강 {enriched}건. "
-                     + ("🤖 비표준 양식이라 LLM 에이전트가 컬럼을 자동 분류했습니다. " if engine == "rule+llm" else "")
+                     + ("🤖 비표준 양식이라 LLM 에이전트가 구조를 자동 분석했습니다. " if engine == "rule+llm" else "")
                      + "주소·지번만 입력해도 좌표·PNU·면적·용도지역·공시지가는 자동 수집됩니다. "
                      "소유자·권리관계는 등기부등본 열람/발급으로 확인하세요. "
                      "status=failed 행은 주소를 보완해 주세요(가짜값 없음)."),
+        }
+
+    async def _reverify_loop(
+        self, parcels: list[dict[str, Any]], raw_rows: list[dict], use_llm: bool,
+    ) -> dict[str, Any]:
+        """S3: 결정론 게이트(_row_issues)에 실패한 행만 선별 재질의(최대 2회).
+
+        패스마다 남은 실패행만 대상으로 재평가(고쳐진 행은 다음 패스에서 자연히 제외).
+        주소/지번이 교정돼 미해소 상태였던 행은 재지오코딩까지 재시도(기존 인프라 재사용).
+        use_llm=False면 즉시 0회 반환(LLM 0호출 보장).
+        """
+        if not use_llm:
+            return {"passes": 0, "llm_called": False}
+        called = False
+        pass_n = 0
+        sem = asyncio.Semaphore(_LLM_REVERIFY_CONCURRENCY)
+        for _ in range(2):
+            pending = [i for i, p in enumerate(parcels) if _row_issues(p)][:_MAX_REVERIFY_ROWS]
+            # ★H4-②: 셀 재해석으로 실제 고칠 가능성이 있는 행만 대상으로 삼는다 — need_geocode/
+            #   failed/ambiguous가 '단독' 이슈인 행(지오코딩 실패가 근본원인)은 원본 셀을 다시
+            #   물어봐도 고칠 수 없어 LLM 호출만 낭비된다. jibun/pnu 형식 이슈가 있는 행만 대상
+            #   (교정되면 changed_addr 경로로 재지오코딩까지 자연히 이어짐).
+            pending = [i for i in pending if _reverifiable(parcels[i])]
+            if not pending:
+                break
+            pass_n += 1
+            retry_geocode: list[int] = []
+            corrected_this_pass = 0
+
+            async def _one(i: int) -> None:
+                nonlocal called, corrected_this_pass
+                p = parcels[i]
+                raw = raw_rows[i] if i < len(raw_rows) else {}
+                issues = _row_issues(p)
+                async with sem:
+                    cand, hit = await _llm_reverify_row({str(k): str(v) for k, v in raw.items()}, issues)
+                called = called or hit
+                _FIELD = {"address": "address", "jibun": "jibun", "jimok": "jimok", "area": "area_sqm"}
+                changed_addr = False
+                for role, val in cand.items():
+                    field = _FIELD.get(role)
+                    if not field:
+                        continue
+                    before = p.get(field)
+                    new_val = _to_float(val) if role == "area" else val
+                    if new_val and new_val != before:
+                        p[field] = new_val
+                        p.setdefault("_corrections", []).append({
+                            "field": field, "before": before, "after": new_val,
+                            "reason": "LLM 재질의(원문 부분문자열 검증 통과)",
+                        })
+                        corrected_this_pass += 1
+                        if field == "jibun":
+                            p["jibun"] = _clean_num_str(str(new_val))
+                        if field in ("address", "jibun"):
+                            changed_addr = True
+                # ★M2: need_geocode 상태(주소는 있으나 PNU 미확보)도 재지오코딩 대상이어야 한다.
+                #   기존엔 failed/ambiguous만 체크해 need_geocode 상태 행의 교정(예: 지번 보정)이
+                #   재지오코딩으로 이어지지 못하고 사장되던 버그 — _UNRESOLVED_STATUSES 재사용.
+                if changed_addr and p.get("status") in _UNRESOLVED_STATUSES and not p.get("pnu"):
+                    p["status"] = "need_geocode"
+                    retry_geocode.append(i)
+
+            results = await asyncio.gather(*[_one(i) for i in pending], return_exceptions=True)
+            # ★L6: return_exceptions=True로 삼켜지던 개별 행 처리 예외를 로그로 남긴다(무음 금지).
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning("엑셀 반복검증 행 처리 실패", error=str(r)[:160])
+            if retry_geocode:
+                await self._geocode_fill(parcels, retry_geocode)
+                await self._enrich_fill(parcels)
+            # ★H4-①: pass1이 한 건도 교정하지 못했으면 pass2를 시도해도 대부분 소용없다
+            #   (동일 원본 셀에 동일 질의를 반복하는 과금 폭주 방지) — 즉시 종료.
+            if corrected_this_pass == 0:
+                break
+        return {"passes": pass_n, "llm_called": called}
+
+    def _build_verification_report(
+        self, parcels: list[dict[str, Any]], *, declared_total: float | None, excluded_n: int,
+        dup_warning: str | None, llm_used: bool, passes: int, structure_notes: list[str],
+    ) -> dict[str, Any]:
+        """S4: 행별 최종분류(verified/corrected/needs_review) + 요약 리포트."""
+        warnings: list[str] = list(structure_notes)
+        if dup_warning:
+            warnings.append(dup_warning)
+        if declared_total:
+            extracted_sum = sum(p["area_sqm"] for p in parcels if p.get("area_sqm"))
+            if extracted_sum > 0:
+                diff = abs(extracted_sum - declared_total) / declared_total
+                if diff > 0.01:
+                    warnings.append(
+                        f"추출 면적합 {extracted_sum:,.1f}㎡가 표의 합계행 값 {declared_total:,.1f}㎡와 "
+                        f"{diff:.1%} 차이 — 데이터 확인이 필요합니다."
+                    )
+
+        corrections: list[dict] = []
+        for p in parcels:
+            c = p.pop("_corrections", None)
+            if c:
+                corrections.extend(c)
+            issues = _row_issues(p)
+            is_co_owner = bool(p.get("co_owner"))
+            has_correction = bool(c) or bool(p.get("area_warning"))
+            if issues:
+                vstatus = "needs_review"
+            elif is_co_owner:
+                # ★L5: 병합 forward-fill 등으로 co_owner=True 표시된 공유지분 연속행은 값이
+                #   '보정(corrected)'된 게 아니라 정상 확인된 행이다 — verified로 분류.
+                vstatus = "verified"
+            elif has_correction:
+                vstatus = "corrected"
+            else:
+                vstatus = "verified"
+            reasons = [_ISSUE_LABELS.get(i, i) for i in issues]
+            if is_co_owner:
+                reasons.append("공유지분 연속행")
+            if p.get("reason"):
+                reasons.append(p["reason"])
+            if p.get("area_warning"):
+                reasons.append(p["area_warning"])
+            p["verification_status"] = vstatus
+            p["verification_reasons"] = reasons
+            # ★H3: injectable=False는 '표에서 완전히 제외된 행(합계/집계 등)'에만 쓴다. 제외행은
+            #   parse()의 for-loop에서 이미 continue돼 parcels에 아예 들어오지 않으므로, 여기
+            #   도달한 모든 행(verified/corrected/needs_review)은 주입 가능하다. needs_review
+            #   (주소 미해소 등)도 일단 주입해, 주입 후 2차 enrich(/zoning/parcels-info)의
+            #   재지오코딩·재검증으로 자기치유되게 한다 — 과거엔 이 자기치유가 정상 동작했으나
+            #   injectable=False로 조용히 증발했다(FE가 업로드 단계에서 걸러내 버림). 분류·사유는
+            #   verification_status/verification_reasons로 계속 노출해 사용자가 확인할 수 있다.
+            p["injectable"] = True
+
+        counts = Counter(p["verification_status"] for p in parcels)
+        return {
+            "counts": {
+                "verified": counts.get("verified", 0),
+                "corrected": counts.get("corrected", 0),
+                "needs_review": counts.get("needs_review", 0),
+                "excluded": excluded_n,
+            },
+            "corrections": corrections,
+            "warnings": warnings,
+            "llm_used": llm_used,
+            "passes": passes,
         }
 
     async def _geocode_fill(self, parcels: list[dict[str, Any]], idxs: list[int]) -> None:
