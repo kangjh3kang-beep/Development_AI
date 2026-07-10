@@ -202,8 +202,8 @@ def _cost_full_sample() -> dict:
 @pytest.mark.parametrize("fmt", ["pdf", "pptx", "docx"])
 def test_cost_estimation_adapter_renders_all_formats(fmt):
     """적산 보고서(full) → 3포맷 렌더 성공 + 핵심 데이터·시니어 verdict 정직 표기."""
-    if fmt != "pdf":
-        pytest.importorskip(fmt)
+    # ★렌더러 의존 라이브러리 부재 환경(로컬 경량 venv)은 관례대로 skip — CI/프로드는 실행.
+    pytest.importorskip(fmt if fmt != "pdf" else "reportlab")
     from app.services.report.render import build_report_model_from_cost_estimation
 
     model = build_report_model_from_cost_estimation(_cost_full_sample())
@@ -222,8 +222,7 @@ def test_cost_estimation_adapter_renders_all_formats(fmt):
 @pytest.mark.parametrize("fmt", ["pdf", "pptx", "docx"])
 def test_cost_estimation_adapter_minimal_overview_only(fmt):
     """최소 데이터(overview만) — 렌더 성공 + 생략 섹션(절감/시니어)이 출력에 없음(무날조)."""
-    if fmt != "pdf":
-        pytest.importorskip(fmt)
+    pytest.importorskip(fmt if fmt != "pdf" else "reportlab")
     from app.services.report.render import build_report_model_from_cost_estimation
 
     minimal = {"project_name": "최소표본", "overview": _cost_full_sample()["overview"]}

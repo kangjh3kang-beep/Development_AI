@@ -115,11 +115,34 @@ def _cost_tool(data: dict[str, Any]) -> dict[str, Any]:
     calc = OriginCostCalculator().calculate(items)
     total = calc.get("total_project_cost", 0)
     per_sqm = round(total / gfa) if gfa else 0
+    # ★독립리뷰 MEDIUM 반영: CostInterpreter.generate_interpretation은 최상위 키
+    #   (total_cost·cost_per_sqm·building_type·total_gfa_sqm·cost_items)를 읽는다 —
+    #   summary 중첩만 반환하면 use_llm 경로의 LLM이 빈 페이로드로 과금 호출되는
+    #   dead-wiring이 된다(만들어놓고 배선안함 재현 방지). 기존 findings/summary 계약은
+    #   불변(superset·additive)이고 인터프리터 소비 키만 평면으로 병기한다.
+    cost_items = [
+        {"category": k, "amount": v,
+         "ratio_pct": round(v / total * 100, 1) if total else 0}
+        for k, v in (calc.get("category_totals") or {}).items()
+    ]
     return {
         "findings": [{"check_id": "COST", "status": "info", "current": total, "limit": None}],
         "summary": {"gfa_sqm": gfa, "cost_per_sqm": per_sqm,
                     "total_construction_cost": total, "dev_type": dev_type,
                     "building_type": building_type},
+        # CostInterpreter 계약 키(평면) — LLM 해석 입력 전용(수치는 위 결정론 산출 그대로).
+        "total_cost": total,
+        "cost_per_sqm": per_sqm,
+        "building_type": building_type,
+        "total_gfa_sqm": gfa,
+        "cost_items": cost_items,
+        "cost_breakdown": {
+            "material_cost": calc.get("direct_material_cost"),
+            "labor_cost": calc.get("total_labor_cost"),
+            "expense_cost": calc.get("direct_expense_cost"),
+            "overhead_cost": calc.get("general_mgmt"),
+            "profit": calc.get("profit"),
+        },
     }
 
 

@@ -135,9 +135,21 @@ async def test_ingest_with_key_upserts_and_counts_unmapped(monkeypatch):
     # 2건 upsert(INSERT ... ON CONFLICT)가 실행됐고 커밋됐다.
     assert len(db.executed) == 2
     assert db.committed is True
-    for _stmt, params in db.executed:
+    for stmt, params in db.executed:
+        # ★독립리뷰 MEDIUM 반영: 멱등 계약을 SQL 자체로 잠근다 — ON CONFLICT가 빠진
+        #   순수 INSERT로 회귀하면(재실행 시 행 증식) 이 단언이 즉시 잡는다.
+        assert "ON CONFLICT" in str(stmt).upper()
         assert params["price_source"] == PUBLIC_PRICE_SOURCE_LABEL
         assert params["material_code"].startswith("PUB-")
+
+    # ★재실행 멱등: 같은 응답으로 한 번 더 인제스트해도 같은 material_code 2건에 대한
+    #   upsert만 반복된다(신규 코드 증식 없음 — ON CONFLICT DO UPDATE 대상 동일).
+    codes_first = sorted(params["material_code"] for _s, params in db.executed)
+    db2 = _FakeSession()
+    result2 = await ingest_public_prices(db2, keyword="레미콘", max_pages=3, num_rows=100)
+    assert result2["ingested"] == 2
+    codes_second = sorted(params["material_code"] for _s, params in db2.executed)
+    assert codes_first == codes_second
 
     # 1페이지 응답이 num_rows(100)보다 적었으므로(3건) 조기 종료 — 2페이지 호출 안 됨.
     assert _FakeClient.last_kwargs["page"] == 1

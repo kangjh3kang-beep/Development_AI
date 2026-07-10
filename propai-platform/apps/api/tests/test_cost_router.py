@@ -316,6 +316,13 @@ class TestExportExcel:
         assert resp.status_code == 200
         ct = resp.headers["content-type"]
         assert "csv" in ct or "spreadsheet" in ct
+        # ★독립리뷰 MEDIUM 반영: 본문을 실제로 열어 영속 항목 코드가 들어있고
+        #   과거 하드코딩 샘플의 유령코드(E01)가 없음을 잠근다 — 상태코드만으로는
+        #   샘플 회귀를 못 잡는다.
+        body = resp.content.decode("utf-8-sig", errors="ignore") if "csv" in ct else ""
+        if body:
+            assert "A01-03" in body
+            assert "E01" not in body
 
 
 class TestWorkBreakdownAdditive:

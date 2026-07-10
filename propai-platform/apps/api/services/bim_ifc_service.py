@@ -226,13 +226,26 @@ class BIMIFCService:
 
         # 3-1. 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
         # 요소 정보가 없으면(구버전 _parse_ifc/mock) 조용히 스킵 — 하위호환.
-        bim_quantity_rows = self._persist_bim_quantities(
-            project_id=project_id,
-            tenant_id=tenant_id,
-            elements=result.get("elements") or [],
-        )
-        if bim_quantity_rows:
-            await self.db.commit()
+        # ★독립리뷰 MEDIUM(전역 전파방지): generate_ifc_from_design과 동일한 graceful
+        #   래퍼를 형제 경로에도 적용 — 영속 실패가 이미 커밋된 Design을 500으로 고아화
+        #   하지 않게 rollback 후 경고만 남긴다(분석 응답 무영향·가짜 성공 표기 없음).
+        bim_quantity_rows = 0
+        try:
+            bim_quantity_rows = self._persist_bim_quantities(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                elements=result.get("elements") or [],
+            )
+            if bim_quantity_rows:
+                await self.db.commit()
+        except Exception as exc:  # noqa: BLE001 — 영속 실패는 분석 응답을 막지 않는다
+            await self.db.rollback()
+            logger.warning(
+                "IFC 분석 bim_quantities 영속 실패(분석 응답 무영향)",
+                project_id=str(project_id),
+                error=str(exc),
+            )
+            bim_quantity_rows = 0
 
         # 4. 임시 파일 정리
         import os

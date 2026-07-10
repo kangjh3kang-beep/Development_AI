@@ -126,6 +126,11 @@ class TestCostExcelExport:
         assert "csv" in ct or "spreadsheet" in ct
         assert "content-disposition" in r.headers
         assert len(r.content) > 0
+        # ★독립리뷰 MEDIUM 반영: 본문 실검증 — 영속 항목 코드 존재·유령코드(E01) 부재.
+        body = r.content.decode("utf-8-sig", errors="ignore") if "csv" in ct else ""
+        if body:
+            assert "A01-03" in body
+            assert "E01" not in body
 
     def test_export_excel_filename(self):
         with (
