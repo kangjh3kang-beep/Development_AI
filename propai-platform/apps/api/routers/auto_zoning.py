@@ -4,11 +4,13 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.core.database import get_db
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
@@ -1857,18 +1859,29 @@ async def land_report(req: LandReportRequest, format: str = "pdf"):
 
 
 @router.post("/parse-parcels")
-async def parse_parcels(file: UploadFile = File(...)):
+async def parse_parcels(
+    file: UploadFile = File(...),
+    use_llm: bool = Form(True),
+    db: AsyncSession = Depends(get_db),
+):
     """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
 
     PNU 우선순위: PNU열 > 법정동코드+지번 구성 > 주소 지오코딩. 무자료/실패는 status로 정직 표기.
-    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반이 필수컬럼을 못 찾을
-    때만 LLM 에이전트가 컬럼을 1회 분류(헤더 시그니처 캐시로 재호출 방지). LLM 토큰은
-    _record_llm_billing으로 계측·귀속(service=parcel_excel_column_detect). 과금 정책상 컬럼분류는
-    저비용 보조기능으로 별도 차감 게이트 없음(관리자 미설정 시 무료 원칙).
+    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반 신뢰도가 낮을 때만
+    (필수컬럼 부재 또는 유효행<50%) LLM 에이전트가 표 구조(시트선택·헤더행·전치·복합셀분해·
+    컬럼역할)를 한 번의 질의로 분류(헤더 시그니처 캐시로 재호출 방지)하고, 결정론 검증에 실패한
+    행만 최대 2회 선별 재질의한다(원문 부분문자열만 채택 — 환각 차단). LLM 토큰은
+    _record_llm_billing으로 계측·귀속.
+    ★과금 게이트 정합(P0 CostInterpreter/personas.py 선례와 동일 계약): use_llm=True(기본값 —
+    기존 동작 보존)일 때만 enforce_llm_quota 적용(과금은 관리자가 analysis_modules에 설정한
+    경우에만·미설정은 무료). use_llm=False면 규칙기반만 동작(LLM 0호출·무과금·실패는 정직 사유표기).
     """
     from apps.api.app.services.land_intelligence.parcel_excel_service import (
         ParcelExcelService,
     )
+
+    if use_llm:
+        await enforce_llm_quota(db)
 
     try:
         raw = await file.read()
@@ -1876,4 +1889,4 @@ async def parse_parcels(file: UploadFile = File(...)):
         return {"error": f"파일 읽기 실패: {str(e)[:120]}", "parcels": []}
     if not raw:
         return {"error": "빈 파일입니다.", "parcels": []}
-    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx")
+    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx", use_llm=use_llm)
