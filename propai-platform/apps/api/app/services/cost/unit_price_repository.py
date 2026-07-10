@@ -54,6 +54,20 @@ def _public_code(key: str) -> str:
     """단가 SSOT 키 → T1 공공고시 material_code(public_price_ingest.normalize_item과 동일 규칙)."""
     return f"PUB-{key.upper()}"
 
+
+# 단위 정규화(T1 안전가드용) — boq_price_join._UNIT_ALIASES와 동일 규칙.
+#   ★boq_price_join이 이 모듈을 import하므로 역-import는 순환참조 → 로컬 정의로 회피.
+_UNIT_ALIASES: dict[str, str] = {
+    "m2": "m2", "㎡": "m2", "m²": "m2", "sqm": "m2", "제곱미터": "m2",
+    "m3": "m3", "㎥": "m3", "m³": "m3", "cum": "m3", "루베": "m3", "입방미터": "m3",
+    "ton": "ton", "t": "ton", "톤": "ton", "mt": "ton",
+}
+
+
+def _norm_unit(u: Any) -> str:
+    s = str(u or "").strip().lower().replace(" ", "")
+    return _UNIT_ALIASES.get(s, s)
+
 # ── 수지경로 ₩/㎡ 개산단가 SSOT(construction_cost_engine 일원화) ──
 # 적산경로(자재별 단가)와 별개로, 수지경로는 건물유형별 ₩/㎡ 개산단가를 쓴다.
 # 이를 단일 출처(이 모듈)로 일원화한다. 값은 기존 상수와 100% 동일(회귀 0).
@@ -163,19 +177,33 @@ class UnitPriceRepository:
         # T1: 공공고시 표준시장단가(price_source가 _PUBLIC_SOURCE_PREFIX로 시작하는 행) — 최우선.
         pub_row = db.get(_public_code(key))
         if pub_row and str(pub_row.get("price_source") or "").startswith(_PUBLIC_SOURCE_PREFIX):
-            result = {
-                "key": key,
-                "spec": pub_row.get("spec") or fb["spec"], "unit": pub_row.get("unit") or fb["unit"],
-                "mat_unit": pub_row["mat_unit"], "labor_unit": pub_row["labor_unit"],
-                "exp_unit": pub_row["exp_unit"],
-                "price_source": pub_row["price_source"],
-                "price_basis_year": pub_row["price_basis_year"],
-                "region": pub_row["region"],
-                "tier": "T1_public",
-                "source_url": pub_row.get("source_url"),
-                "basis_date": f"{pub_row['price_basis_year']}-01-01",
-            }
-            return await self._maybe_escalate(result, escalate_to_current)
+            # ★T1 안전가드: 공공단가가 (a)노무·경비 분해 없이 재료비 슬롯에 총단가만 싣고 노무·경비를 0으로
+            #   두었거나(labor·exp 모두 0), (b)단위가 표준 기대단위(fb["unit"])와 불일치하면, 하류
+            #   원가계산서(OriginCostCalculator)가 간접노무비(직접노무비×14.4%)·4대보험을 노무=0에 곱해
+            #   법정 노무성 제비율을 통째로 소실시키거나, 물량×엉뚱단가로 금액을 왜곡한다. 이 경우 T1을
+            #   건너뛰고 분해·단위가 정합한 T2/T3로 폴백한다(왜곡단가보다 정합단가가 무목업·정확성에 부합).
+            #   조달청 ingest가 노무/경비 분해·단위를 갖추면 이 가드를 통과해 자동 재활성된다.
+            _lab = float(pub_row.get("labor_unit") or 0)
+            _exp = float(pub_row.get("exp_unit") or 0)
+            _pu, _fu = _norm_unit(pub_row.get("unit")), _norm_unit(fb["unit"])
+            if (_lab > 0 or _exp > 0) and _pu and _fu and _pu == _fu:
+                result = {
+                    "key": key,
+                    "spec": pub_row.get("spec") or fb["spec"], "unit": pub_row.get("unit") or fb["unit"],
+                    "mat_unit": pub_row["mat_unit"], "labor_unit": pub_row["labor_unit"],
+                    "exp_unit": pub_row["exp_unit"],
+                    "price_source": pub_row["price_source"],
+                    "price_basis_year": pub_row["price_basis_year"],
+                    "region": pub_row["region"],
+                    "tier": "T1_public",
+                    "source_url": pub_row.get("source_url"),
+                    "basis_date": f"{pub_row['price_basis_year']}-01-01",
+                }
+                return await self._maybe_escalate(result, escalate_to_current)
+            logger.warning(
+                "t1_public_price_skipped_unsafe",
+                key=key, labor_unit=_lab, exp_unit=_exp, pub_unit=_pu, expected_unit=_fu,
+            )
 
         # T2: 기존 표준품셈 시드(대표 material_code 매핑 존재 시).
         code = _KEY_TO_MATERIAL_CODE.get(key)
