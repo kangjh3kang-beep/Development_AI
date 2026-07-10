@@ -175,6 +175,14 @@ function assembleBase(
   if ((numOf(body.avg_sale_price_per_pyeong) ?? 0) <= 0 && !missing.includes("avg_sale_price_per_pyeong")) {
     missing.push("avg_sale_price_per_pyeong");
   }
+  // ★백엔드 /calculate 매출은 세대수 기반(total_households×avg_area×단가) — 결측 시 revenue=0으로
+  //   손실확률 100% 오탐이 나온다. 세대수·평형 미확보면 정직 게이트(가짜 리스크 지표 금지).
+  if ((numOf(body.total_households) ?? 0) <= 0 && !missing.includes("total_households")) {
+    missing.push("total_households");
+  }
+  if ((numOf(body.avg_area_pyeong) ?? 0) <= 0 && !missing.includes("avg_area_pyeong")) {
+    missing.push("avg_area_pyeong");
+  }
   if (missing.length > 0) return { base: null, baseSource: "project-context", missing };
   return { base: body, baseSource: "project-context", missing: [] };
 }

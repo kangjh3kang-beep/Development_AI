@@ -247,6 +247,13 @@ interface FeasibilityData {
   // ★stamp 주의: setSalesPricePerPyeong로만 patch하며 updatedAt.feasibility를 건드리지 않는다
   // (파생 sales가 feasibility staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정 회피).
   salePricePerPyeongWon?: number | null;
+  // 개략수지(rough-scenario)가 산정한 연면적(㎡) — 설계 확정 전 수지·리스크 시뮬 base 조립용 폴백.
+  // 설계 SSOT(designData.totalGfaSqm)가 있으면 그쪽이 항상 우선한다(bodyBuilder에서 설계 우선 폴백).
+  // optional·하위호환(구 스냅샷=undefined → bodyBuilder 미주입 → 기존 결측 게이트 동작, 무회귀).
+  totalGfaSqm?: number | null;
+  // 개략수지 세대수 가정(GFA÷유형 표준 전용면적, 백엔드 unit_standards 관례) — 설계 확정 전
+  // 리스크 시뮬 base의 매출 재계산용 폴백. 설계 SSOT(designData.unitCount)가 항상 우선.
+  totalHouseholds?: number | null;
 }
 
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.

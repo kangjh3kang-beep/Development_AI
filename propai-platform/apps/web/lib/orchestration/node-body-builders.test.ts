@@ -361,6 +361,89 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     }
   });
 
+  it("feasibility(rough-scenario SSOT): designData 없음 + feasibilityData.totalGfaSqm 폴백 → body.total_gfa_sqm 채움·missing 없음", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      // designData 미확보(설계 전 단계) — 개략수지가 산정한 GFA만 있음.
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        totalGfaSqm: 22_059,
+      } as FeasibilityData,
+    };
+    const { body, missing } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.total_gfa_sqm).toBe(22_059);
+    expect(missing).not.toContain("total_gfa_sqm");
+  });
+
+  it("feasibility(rough-scenario SSOT): designData.totalGfaSqm과 feasibilityData.totalGfaSqm 공존 시 설계값 우선", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design({ totalGfaSqm: 30_000 }),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        totalGfaSqm: 22_059,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.total_gfa_sqm).toBe(30_000); // ★설계 SSOT 우선
+  });
+
+  it("feasibility(rough-scenario SSOT): 설계·개략수지 GFA 둘 다 없으면 기존대로 missing", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        // totalGfaSqm 미설정.
+      } as FeasibilityData,
+    };
+    const { body, missing } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.total_gfa_sqm).toBeUndefined();
+    expect(missing).toContain("total_gfa_sqm");
+  });
+
+  it("feasibility(H1 세대수 SSOT): designData 없음 + feasibilityData.totalHouseholds=200 → body.total_households 채움 + avg_area_pyeong 산출", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        totalGfaSqm: 22_059, // 설계 전 개략수지 GFA 폴백(co-requisite)
+        totalHouseholds: 200,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.total_households).toBe(200);
+    // 설계 없음 → 전용률 기본값(0.75) 폴백. 전용평 = GFA(22059) × 0.75 ÷ 3.305785 ÷ 200세대.
+    expect(body.avg_area_pyeong).toBeCloseTo((22_059 * 0.75) / 3.305785 / 200, 2);
+  });
+
+  it("feasibility(H1 세대수 SSOT): design.unitCount(300)과 feasibilityData.totalHouseholds(200) 공존 시 설계 우선", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design({ unitCount: 300 }),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        totalHouseholds: 200,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.total_households).toBe(300); // ★설계 우선
+  });
+
   it("feasibility: 면적·GFA 둘 다 미확보면 missing 둘 다", () => {
     const { missing } = buildNodeBody(
       "feasibility",

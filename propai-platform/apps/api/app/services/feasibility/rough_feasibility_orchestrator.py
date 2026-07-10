@@ -413,6 +413,17 @@ async def build_rough_scenario(
     else:
         degraded.append("면적 또는 실효용적률 미확보 — GFA/공사비/분양수입 산출 불가.")
 
+    # 세대수 가정(리스크시뮬 base 재계산·표시용): GFA ÷ 유형 표준 전용면적(unit_standards SSOT).
+    # /baseline 라우트와 동일 관례 — 프론트가 산식을 복제하지 않고 이 값을 그대로 소비한다.
+    total_households_assumed: int | None = None
+    if gfa_sqm:
+        try:
+            _avg_unit_area = _service._get_type_avg_unit_area(dev_type_final)
+            if _avg_unit_area > 0:
+                total_households_assumed = max(1, int(gfa_sqm / _avg_unit_area))
+        except Exception:  # noqa: BLE001 — 가정 실패는 정직 null
+            total_households_assumed = None
+
     # ── 3+5) 토지비·분양단가 — 상호 비의존 외부호출을 병렬로(LOW-7) ──
     # 토지비(탁상감정/공시지가)와 분양단가(주변 실거래/지역시세)는 서로 독립적인 외부호출이라
     # 순차로 기다릴 이유가 없다. 각각 자기 주소 지오코딩으로 자립하므로 asyncio.gather로 동시에
@@ -635,6 +646,7 @@ async def build_rough_scenario(
             "saleable_area_pyeong": saleable_pyeong,
             "parcel_count": parcel_count,
             "project_months": project_months,
+            "total_households": total_households_assumed,
         },
         "land_cost": land_block,
         "construction_cost": constr_block,
@@ -729,6 +741,7 @@ def _degraded_result(
             "land_area_sqm": land_area, "zone_type": None, "effective_far_pct": None,
             "dev_type": None, "dev_type_name": None, "gfa_sqm": None,
             "saleable_area_pyeong": None, "parcel_count": parcel_count, "project_months": None,
+            "total_households": None,
         },
         "land_cost": _null_block("land"),
         "construction_cost": _null_block("construction"),

@@ -23,6 +23,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
+import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
 
 /* ── 백엔드 /feasibility/rough-scenario 응답 계약(1:1) ── */
 interface RsInputs {
@@ -35,6 +36,8 @@ interface RsInputs {
   saleable_area_pyeong: number | null;
   parcel_count: number | null;
   project_months: number | null;
+  // 세대수 가정(GFA÷유형 표준 전용면적) — 설계 확정 전 리스크시뮬 base 재계산용(백엔드 additive).
+  total_households?: number | null;
 }
 interface RsLandCost {
   total_won: number | null;
@@ -215,6 +218,11 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
+  const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
+  // ★인플라이트 프로젝트 전환 오염 가드(보강): 요청을 보낸 "시점"의 프로젝트를 기억해뒀다가
+  //   커밋 시점에 대조한다. result.project_id 가드만으로는 약식(프로젝트 미확정) 요청처럼
+  //   응답에 project_id가 없는 경우를 못 걸러 레이스가 남는다.
+  const requestProjectRef = useRef<string | null>(null);
 
   // 부지 컨텍스트 프리필(주소는 수정 가능 — 요구 ①).
   const [address, setAddress] = useState(siteAnalysis?.address ?? "");
@@ -241,6 +249,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     }
   }, [siteAnalysis?.address]);
 
+  // 결과 산출 시 모세혈관(feasibilityData) 반영 — 이 SSOT를 STEP 2 투자수익성 요약과
+  //   STEP 3 리스크 시뮬 base 조립(buildNodeBody)이 읽는다(페이지 계약: 앞 단계 결과 이어받기).
+  //   ★인플라이트 오염 가드: 응답의 project_id가 있고 현재 컨텍스트 프로젝트와 다르면
+  //   (요청 후 프로젝트 전환) 남의 프로젝트 SSOT를 덮지 않도록 커밋하지 않는다.
+  useEffect(() => {
+    if (!result) return;
+    if (result.project_id && ctxProjectId && result.project_id !== ctxProjectId) return;
+    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환·약식→프로젝트 포함) 커밋 금지.
+    if (requestProjectRef.current !== ((projectId || ctxProjectId) ?? null)) return;
+    const patch = roughResultToFeasibilityPatch(result);
+    if (patch) updateFeasibilityData(patch);
+  }, [result, ctxProjectId, updateFeasibilityData, projectId]);
+
   // 컨텍스트에서 파생되는 입력(통합면적·다필지·자기자본).
   const landArea = useMemo(() => effectiveLandAreaSqm(siteAnalysis), [siteAnalysis]);
   const parcelRows = useMemo(
@@ -248,9 +269,12 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     [siteAnalysis?.parcels],
   );
   const equityWon = useMemo(() => {
+    // 자동파생(총사업비×비율) 자기자본은 재전송하지 않는다 — 1차/2차 생성 결과가 달라지는
+    // 비멱등 방지. 사용자가 직접 입력한 값(equityIsManual)만 백엔드에 실어보낸다.
+    if (feasibilityData?.equityIsManual !== true) return undefined;
     const e = feasibilityData?.equityWon;
     return typeof e === "number" && e > 0 ? e : undefined;
-  }, [feasibilityData?.equityWon]);
+  }, [feasibilityData?.equityWon, feasibilityData?.equityIsManual]);
 
   /** rough-scenario 요청 body 조립(공용) — 다필지는 2필지↑일 때만 첨부(무회귀). */
   const buildBody = useCallback(
@@ -276,6 +300,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     setBusy("base");
     setError(null);
     try {
+      requestProjectRef.current = (projectId || ctxProjectId) ?? null;
       const r = await apiClient.postV2<RoughScenarioResult>("/feasibility/rough-scenario", {
         body: buildBody(),
       });
@@ -305,7 +330,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     } finally {
       setBusy("");
     }
-  }, [address, buildBody]);
+  }, [address, buildBody, projectId, ctxProjectId]);
 
   /** 변경된 override 만 추출(원값과 다르고 유효 숫자인 키). */
   const buildOverrides = useCallback((): Record<string, number> => {
@@ -334,6 +359,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     setBusy("override");
     setError(null);
     try {
+      requestProjectRef.current = (projectId || ctxProjectId) ?? null;
       const r = await apiClient.postV2<RoughScenarioResult>("/feasibility/rough-scenario", {
         body: buildBody(overrides),
       });
@@ -343,7 +369,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     } finally {
       setBusy("");
     }
-  }, [address, buildBody, buildOverrides]);
+  }, [address, buildBody, buildOverrides, projectId, ctxProjectId]);
 
   const inp = result?.inputs;
   const cf = result?.cashflow;

@@ -240,7 +240,9 @@ export function buildNodeBody(
         safeDevelopmentType(feas?.developmentType) ?? DEFAULT_DEVELOPMENT_TYPE;
       if (landAreaSqm != null) body.total_land_area_sqm = landAreaSqm;
       else missing.push("total_land_area_sqm");
-      const gfa = positiveNum(design?.totalGfaSqm);
+      // 설계 SSOT 우선, 없으면 개략수지가 산정한 GFA(feasibilityData.totalGfaSqm) 폴백 —
+      //   설계 전 단계에서도 개략수지 base로 수지·리스크 시뮬이 이어지게 한다(실데이터만, 무날조).
+      const gfa = positiveNum(design?.totalGfaSqm) ?? positiveNum(feas?.totalGfaSqm);
       if (gfa != null) body.total_gfa_sqm = gfa;
       else missing.push("total_gfa_sqm");
       const bt = nonEmptyStr(design?.buildingType);
@@ -256,8 +258,11 @@ export function buildNodeBody(
       //    market_report_service._per_pyeong_stat). 따라서 곱하는 면적도 "전용면적 평"이어야 기준이 일치한다.
       const salePriceWon = positiveNum(feas?.salePricePerPyeongWon);
       if (salePriceWon != null) body.avg_sale_price_per_pyeong = salePriceWon;
-      // ② 세대수: 설계(BIM 매스)가 산출한 총세대수. 없으면 미주입(백엔드 0 → 분양수입 0, 종전과 동일).
-      const households = positiveInt(design?.unitCount);
+      // ② 세대수: 설계(BIM 매스)가 산출한 총세대수 우선, 없으면 개략수지 세대수 가정
+      //   (feasibilityData.totalHouseholds, GFA÷유형 표준 전용면적)으로 폴백 — avg_area_pyeong
+      //   산식(GFA×전용률÷세대수)에서 세대수가 소거되므로 매출은 GFA×전용률×단가로 개략수지
+      //   기준을 재현한다(설계 전 단계에서 매출=0 오탐 방지). 둘 다 없으면 미주입(백엔드 0, 무회귀).
+      const households = positiveInt(design?.unitCount) ?? positiveInt(feas?.totalHouseholds);
       if (households != null) body.total_households = households;
       // ③ 세대 평균 "전용"면적(평): 연면적(GFA)에 전용률을 곱해 전용면적으로 환산한 뒤 세대수로 나눈다.
       //    ★면적기준 정합(HIGH 결함 수정): 종전엔 연면적(공용·주차 포함)을 그대로 세대수로 나눠 전용단가와 곱해
