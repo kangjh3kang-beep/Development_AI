@@ -162,6 +162,17 @@ interface ProviderInfo {
 
 type AnalysisResult = Record<string, any>;
 
+// ★F3(QA REQUEST CHANGES) supply_areas 항목 타입 — additive(blocked_reason?/note? 신설).
+//   백엔드가 개발불가 게이트(GB·비연접 등)로 공급규모 산정을 억제할 때 dev_type/지표 필드는
+//   전부 비우고(undefined) blocked_reason(또는 note)만 채워 반환한다("판정불가" 스텁 — P0-2/F1).
+//   나머지 필드는 AnalysisResult(Record<string, any>) 계약을 그대로 잇는다(느슨한 기존 패턴 유지).
+type SupplyAreaItem = AnalysisResult & {
+  dev_type?: string | null;
+  total_gfa_pyeong?: number | null;
+  blocked_reason?: string | null;
+  note?: string | null;
+};
+
 export function ComprehensiveAnalysisPanel() {
   const siteAnalysis = useProjectContextStore((state) => state.siteAnalysis);
   const [address, setAddress] = useState("");
@@ -266,7 +277,7 @@ export function ComprehensiveAnalysisPanel() {
   }, [address, selectedProvider, selectedModel, parcelRows]);
 
   const ef = result?.effective_far || {};
-  const supplyAreas: AnalysisResult[] = result?.supply_areas || [];
+  const supplyAreas: SupplyAreaItem[] = result?.supply_areas || [];
   const landPrices = result?.land_prices || {};
   const transactions = result?.transaction_prices || {};
   const salePrices: AnalysisResult[] = result?.sale_prices || [];
@@ -633,8 +644,27 @@ export function ComprehensiveAnalysisPanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {supplyAreas.map((sa: AnalysisResult) => (
-                      <tr key={sa.dev_type} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
+                    {supplyAreas.map((sa: SupplyAreaItem, i: number) => {
+                      // ★F3(QA REQUEST CHANGES) 개발불가 게이트 정직 표기 — 백엔드가 공급규모를
+                      //   산정하지 않은 항목(total_gfa_pyeong 미확보 + blocked_reason/note 보유,
+                      //   P0-2/F1의 "판정불가" 스텁)은 undefined평·₩NaN 지표 행 대신 colSpan
+                      //   전체 설명 행으로 사유를 표시한다(가짜 지표 은폐 금지).
+                      const blockedText = sa.blocked_reason || sa.note;
+                      const rowKey = sa.dev_type ?? `blocked-${i}`;
+                      if (sa.total_gfa_pyeong == null && blockedText) {
+                        return (
+                          <tr key={rowKey} className="border-b border-[var(--line)]/50">
+                            <td
+                              colSpan={10}
+                              className="py-3 px-3 text-xs leading-relaxed text-[var(--status-warning)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] rounded"
+                            >
+                              {sa.type_name ? `${sa.type_name} — ` : ""}{blockedText}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                      <tr key={rowKey} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
                         <td className="py-2.5 px-2 font-bold text-[var(--text-primary)]">{sa.type_name}</td>
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.exclusive_ratio_pct}%</td>
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.supply_area_per_unit_pyeong}평</td>
@@ -653,7 +683,8 @@ export function ComprehensiveAnalysisPanel() {
                           }`}>{sa.feasibility_status || "-"}</span>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 {/* 유형별 검증 상세 */}

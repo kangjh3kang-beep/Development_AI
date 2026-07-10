@@ -80,6 +80,12 @@ RESIDENTIAL_ZONES = {
     "준주거지역",
 }
 
+# ★건축법 시행령 §61(일조 등의 확보를 위한 건축물의 높이 제한, 정북일조 사선제한)의 적용대상은
+#   '전용주거지역 또는 일반주거지역'에 한정된다(준주거지역은 대상 아님). RESIDENTIAL_ZONES는
+#   다른 검증(예: 주차·건축선후퇴)과의 하위호환을 위해 준주거를 포함한 그대로 두고, 일조권
+#   사선검토 여부만 이 부분집합으로 별도 판별한다(P0-4/RC8).
+DAYLIGHTING_APPLICABLE_ZONES = RESIDENTIAL_ZONES - {"준주거지역"}
+
 PARKING_SQM_PER_SPACE = 30  # 지하주차장 1대당 약 30m²
 UNDERGROUND_RATIO = 0.70     # 대지면적의 약 70%를 지하주차장으로 활용 가능
 
@@ -129,8 +135,21 @@ def _check_parking(dev_type: str, unit_count: int, total_gfa: float, land_area: 
     return ConditionCheck("주차", "conditional", f"필요 {required}대 > 지하추정 {underground_capacity}대 — 주차 확보 방안 필요")
 
 def _check_daylighting(dev_type: str, zone_type: str, floor_count: int, building_area: float) -> ConditionCheck:
-    if zone_type not in RESIDENTIAL_ZONES:
-        return ConditionCheck("일조권", "pass", "상업/공업지역 — 일조권 사선 면제")
+    """일조권(건축법 §61 정북일조 사선제한) 검토 — 적용대상은 전용·일반주거지역 한정.
+
+    ★P0-4(RC8) 수정: 과거엔 비주거 전량(녹지·관리·농림·자연환경보전 포함)을 "상업/공업지역
+    면제"로 하드코딩 라벨링해, 자연녹지 등에서 사실과 다른 서술이 노출됐다(라이브 재현). §61은
+    전용·일반주거지역에만 적용되고 준주거지역도 적용대상이 아니므로(DAYLIGHTING_APPLICABLE_ZONES),
+    비적용 사유를 용도지역 실제 성격(상업/공업 vs 녹지·관리·농림·보전 등)에 맞게 정확히 서술한다.
+    """
+    if zone_type not in DAYLIGHTING_APPLICABLE_ZONES:
+        from app.services.zoning.special_parcel import _zone_family
+        family = _zone_family(zone_type)
+        if family in ("상업", "공업") or zone_type == "준주거지역":
+            note = f"{zone_type or '해당 용도지역'} — 건축법 §61 정북일조 사선제한 비적용(상업/공업지역·준주거지역은 적용대상 아님)"
+        else:
+            note = f"{zone_type or '해당 용도지역'} — 건축법 §61 정북일조 사선제한 비적용(전용·일반주거지역 한정 적용)"
+        return ConditionCheck("일조권", "pass", note)
     if floor_count <= 2:
         return ConditionCheck("일조권", "pass", f"{floor_count}층 — 일조권 사선 영향 미미")
 

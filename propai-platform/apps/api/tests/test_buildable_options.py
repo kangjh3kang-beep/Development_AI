@@ -81,8 +81,12 @@ def test_low_feasibility_upzone_does_not_overrank() -> None:
     assert out["top_recommendation"]["score"] == 200.0
 
 
-def test_greenbelt_no_current_options_only_upzoning() -> None:
-    """자연녹지(별표 미매핑) — 현행 옵션 없음(정직), 종상향 후 주거지역 옵션만."""
+def test_greenzone_has_current_options_from_zone_permit_ssot() -> None:
+    """자연녹지 — 별표 SSOT(development_type_analyzer)로 현행 단독·근생 등이 채워진다(P0-6/RC5 수정).
+
+    ★과거 버그: design_geometry.ALLOWED_USES_BY_ZONE에 녹지 키가 없어 현행 옵션이 0건이었다
+    (개발방식 섹션은 별표 기준 단독·전원 가능이라고 답하는데 랭킹은 0건 — 라이브 재현 모순).
+    """
     upz = {
         "current_zone": "자연녹지지역",
         "scenarios": [
@@ -99,10 +103,22 @@ def test_greenbelt_no_current_options_only_upzoning() -> None:
     out = rank_buildable_options(
         zone_type="자연녹지지역", effective_far_pct=80, upzoning=upz
     )
-    # 현행(자연녹지) 별표 허용용도 미매핑 → 현행 옵션 0.
-    assert all(o["is_upzoning"] for o in out["options"])
-    assert len(out["options"]) >= 1
-    assert out["top_recommendation"]["zone"] == "제1종일반주거지역"
+    current_opts = [o for o in out["options"] if o["is_current"]]
+    assert current_opts, "자연녹지 현행 옵션이 여전히 0건(별표 SSOT 수렴 실패)"
+    products = {o["product"] for o in current_opts}
+    # 별표17(자연녹지): 단독주택·제1종근린생활시설 등.
+    assert "단독·다가구주택" in products
+    # 종상향 옵션도 여전히 함께 존재(제거 아님 — additive).
+    assert any(o["is_upzoning"] for o in out["options"])
+
+
+def test_second_general_residential_current_options_unchanged() -> None:
+    """제2종일반주거 — 별표 SSOT 전환 후에도 기존 사업유형(공동주택·오피스텔·근생)이 유지된다(무회귀)."""
+    out = rank_buildable_options(zone_type="제2종일반주거지역", effective_far_pct=200)
+    products = {o["product"] for o in out["options"] if o["is_current"]}
+    assert "공동주택(아파트)" in products
+    assert "오피스텔" in products
+    assert "근린생활시설" in products
 
 
 def test_commercial_zone_residential_is_mixed_use() -> None:

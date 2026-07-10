@@ -93,3 +93,54 @@ def test_build_area_annotation_multi_vs_single():
         zone_mix=[("제2종일반주거지역", 3000), ("일반상업지역", 2000)],
     )
     assert "용도지역 혼재" in mixed
+
+
+# ── P0-5(RC7): 법정/조례 비교 서술 재생성(수치-서술 충돌 제거) ──────────────
+
+def _stale_annotations_139_6() -> list[str]:
+    """라이브 재현 입력: 통합 실효치가 139.6%로 override됐는데 서술은 대표필지 100% 그대로."""
+    return [
+        "국토계획법 시행령에 따른 자연녹지지역의 법정 건폐율 상한은 20%, 법정 용적률 상한은 100%입니다.",
+        "실효 용적률은 법정상한(100%)과 조례(100%) 중 낮은 값인 100.0%가 적용되며, 실효 건폐율은 20.0%입니다.",
+        "9개 필지 통합 대지면적 9,851.0㎡ 기준으로 최대 연면적 13,752.0㎡ (약 4,161평), "
+        "최대 건축면적 3,526.6㎡ (약 1,067평)까지 건축이 가능합니다.",
+    ]
+
+
+def test_legal_basis_annotation_regenerated_on_integrated_override():
+    """블렌드 override(139.6%)와 서술(100.0% 적용) 충돌을 재생성 함수가 해소한다."""
+    sec1 = {
+        "national_far_pct": 100, "national_bcr_pct": 20,
+        "annotations": _stale_annotations_139_6(),
+    }
+    out = fts.rebuild_legal_basis_annotations(
+        sec1,
+        effective_far=139.6, effective_bcr=35.8,
+        national_far=100.0, national_bcr=20.0,
+        parcel_count=9,
+    )
+    legal_ann = " ".join(out["annotations"])
+    # 과거 충돌 문구("...중 낮은 값인 100.0%가 적용되며...")는 제거되어야 한다.
+    assert "100.0%가 적용되며" not in legal_ann
+    # 새 서술은 실제 override 수치(139.6%)와 일치해야 한다.
+    assert "139.6%" in legal_ann
+    # 면적문구(다른 문장)는 그대로 보존.
+    assert any("최대 연면적 13,752.0㎡" in a for a in out["annotations"])
+
+
+def test_legal_basis_annotation_single_parcel_no_regression():
+    """N=1(단일필지)은 '개 필지 통합' 문구 없이 단문 형태로 재생성(무회귀 확인용 경계값)."""
+    sec1 = {
+        "national_far_pct": 200, "national_bcr_pct": 60,
+        "annotations": [
+            "국토계획법 시행령에 따른 제2종일반주거지역의 법정 건폐율 상한은 60%, 법정 용적률 상한은 200%입니다.",
+            "실효 용적률은 법정상한(200%)과 조례(200%) 중 낮은 값인 200.0%가 적용되며, 실효 건폐율은 60.0%입니다.",
+        ],
+    }
+    out = fts.rebuild_legal_basis_annotations(
+        sec1, effective_far=200.0, effective_bcr=60.0, national_far=200.0, national_bcr=60.0,
+        parcel_count=1,
+    )
+    legal_ann = " ".join(out["annotations"])
+    assert "개 필지 통합" not in legal_ann
+    assert "200%" in legal_ann

@@ -102,6 +102,62 @@ def rebuild_area_dependent(
     return out
 
 
+def rebuild_legal_basis_annotations(
+    sec1: dict[str, Any],
+    *,
+    effective_far: float,
+    effective_bcr: float,
+    national_far: float | None = None,
+    national_bcr: float | None = None,
+    parcel_count: int = 1,
+    zone_mix: list | None = None,
+) -> dict[str, Any]:
+    """다필지 통합(blended) override 시 '법정/조례 비교' 서술 문구만 통합 기준으로 재생성한다.
+
+    ★P0-5(RC7) 봉합: rebuild_area_dependent는 면적의존 문구(최대 연면적 등)만 갈아끼우고
+    "법정 용적률 상한은 250%입니다"·"실효 용적률은 법정상한(250%)과 조례(200%) 중 낮은 값인
+    200%가 적용됩니다" 같은 법정/조례 비교 서술은 대표필지(단일존) 값 그대로 보존한다(그 함수의
+    설계 계약 — 의도적). 하지만 다필지 통합에서는 표시 수치(effective_far_pct)가 면적가중
+    blended 값(예: 139.6%)으로 override되므로, 저 문장을 그대로 두면 "실효 용적률 139.6% vs
+    문장 속 200%가 적용됩니다" 같은 수치-서술 충돌이 남는다(라이브 재현 버그). 이 함수는 그
+    법정/조례 비교 문장만 통합 기준 1문장으로 교체하고, 나머지 문구(면적문구·인센티브 안내 등)는
+    건드리지 않는다(블라스트 최소).
+    """
+    out = dict(sec1)
+    anns = list(out.get("annotations") or [])
+
+    def _is_legal_basis_line(a: Any) -> bool:
+        if not isinstance(a, str):
+            return False
+        return (
+            ("법정" in a and ("건폐율 상한" in a or "용적률 상한" in a))
+            or "실효 용적률은 법정상한" in a
+            or "도시계획 조례에서 용적률을" in a
+            or "조례에서 건폐율을" in a
+        )
+
+    insert_at = next((i for i, a in enumerate(anns) if _is_legal_basis_line(a)), 0)
+    kept = [a for a in anns if not _is_legal_basis_line(a)]
+
+    mix_note = ""
+    if zone_mix and len(zone_mix) >= 2:
+        mix_note = "(용도지역 혼재 — 필지별 법정상한이 다를 수 있어 개별 필지 기준과 차이가 있을 수 있음) "
+    scope = f"{parcel_count}개 필지 통합 " if parcel_count and parcel_count >= 2 else ""
+    summary = (
+        f"{scope}면적가중 {mix_note}기준 실효 용적률은 {effective_far:g}%, "
+        f"실효 건폐율은 {effective_bcr:g}%입니다"
+    )
+    if national_far is not None:
+        summary += f"(통합 법정/조례 적용상한 기준 {national_far:g}%)"
+    if national_bcr is not None:
+        summary += f", 통합 건폐율 상한 기준 {national_bcr:g}%"
+    summary += "."
+
+    kept.insert(min(insert_at, len(kept)), summary)
+    out["annotations"] = kept
+    return out
+
+
 def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict[str, Any]:
     """실효 용적률 계층(법정범위→조례→계획상한→인센티브) 산정.
 
@@ -121,6 +177,47 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     legal_bcr = legal.get("max_bcr_pct")
     legal_far = legal.get("max_far_pct")
     legal_min_far = legal.get("min_far_pct")
+
+    # ★P0-1(RC1) 무날조 정직 반환: 용도지역이 법정 SSOT(legal_limits_for)에서도, zone_limits
+    #   페이로드에서도 확인되지 않으면(예: 개발제한구역·도로 등 '용도지역'이 아닌 용도구역/지목이
+    #   zone_type으로 잘못 들어온 경우) 아래 60%/200% 하드코딩 폴백으로 넘어가지 않고 여기서
+    #   eff/legal 모두 None으로 정직 반환한다. 과거엔 이 경로가 자연녹지(법정 20/100)에 200%/60%를
+    #   지어내 다필지 면적가중 블렌드를 139.6%로 오염시켰다(라이브 재현: 자연녹지+개발제한구역
+    #   혼재 9필지). 소비처(_aggregate_integrated_zoning)는 이미 eff=None 필지를 가중에서
+    #   제외하고 warning을 남기는 구조라 여기서 None만 정직 반환하면 전파는 안전하다.
+    zl_bcr_present = bool(zone_limits.get("max_bcr_pct") or zone_limits.get("bcr"))
+    zl_far_present = bool(zone_limits.get("max_far_pct") or zone_limits.get("far"))
+    if legal_bcr is None and legal_far is None and not zl_bcr_present and not zl_far_present:
+        return {
+            "national_bcr_pct": None,
+            "national_far_pct": None,
+            "ordinance_bcr_pct": None,
+            "ordinance_far_pct": None,
+            "effective_bcr_pct": None,
+            "effective_far_pct": None,
+            "far_basis": "zone_unmatched",
+            "far_basis_detail": {
+                "법정범위": None,
+                "조례값": None,
+                "계획상한": None,
+                "인센티브": None,
+                "최종근거": "용도지역 미확인(법정 상한 매칭 실패) — 임의값 미생성(정직)",
+                "데이터출처": [],
+                "조례확인필요": True,
+            },
+            "ordinance_confirmed": False,
+            "legal_min_far_pct": None,
+            "legal_max_far_pct": None,
+            "relaxation_present": False,
+            "far_incentive": {},
+            "source": "미확인",
+            "annotations": [
+                f"'{zone_type or '(용도지역 미상)'}'은(는) 법정 건폐율/용적률 상한 매칭에 실패한 "
+                "용도지역(개발제한구역 등 비도시계획 용도구역이거나 지목이 잘못 전달된 경우 포함)"
+                "입니다. 임의 수치를 지어내지 않고 실효/법정 용적률을 정직하게 미확인으로 처리합니다."
+            ],
+            "far_optimization": {},
+        }
 
     # ── 계층 적용 한도 산정: 법정범위 → 조례 적용값 → 도시·군관리계획/지구단위계획 상한.
     # base(local_ordinance/zone_limits)와 special_districts(계획 상한용적률)를 페이로드로 전달.

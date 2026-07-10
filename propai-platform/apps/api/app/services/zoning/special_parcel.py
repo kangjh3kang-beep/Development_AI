@@ -1529,21 +1529,34 @@ def _aggregate_integrated_zoning(
     integrated_gfa_val = round(integrated_gfa, 2) if gfa_area_used else None
     integrated_footprint_val = round(integrated_footprint, 2) if gfa_area_used else None
 
-    # far_basis_note: 조례 미확보로 법정폴백된 필지 수(_far_basis가 법정 신호일 때).
+    # far_basis_note: 조례 미확보 법정폴백(legal_fallback)·용도 미확인 제외(zone_unmatched) 필지 수.
     #   far_tier_service의 far_basis 문자열에 '법정'이 들어가면 조례 미반영 폴백으로 본다.
+    #   ★P0-1: far_basis="zone_unmatched"는 법정 SSOT에서도 zone_type을 못 찾아(예: 개발제한구역
+    #   등 비도시계획 구역) calc_effective_far가 eff/legal을 아예 None으로 정직 반환한 필지다
+    #   (과거엔 여기서 60%/200% 하드코딩 폴백 → 자연녹지+개발제한구역 혼재 시 139.6% 오염 재현
+    #   케이스의 근본원인). 위 _blended가 이미 가중에서 제외하므로, 여기서는 사유를 별도로
+    #   명시해 '결측'과 '용도 미확인'을 구분한다(정직 표기).
     legal_fallback = 0
+    zone_unmatched = 0
     for p in parcels:
         if (p.get("zone_type") or "").strip():
             basis = str(p.get("_far_basis") or "")
-            if not basis or "법정" in basis:
+            if basis == "zone_unmatched":
+                zone_unmatched += 1
+            elif not basis or "법정" in basis:
                 legal_fallback += 1
+    note_parts: list[str] = []
     if legal_fallback:
-        far_basis_note = (
+        note_parts.append(
             f"{legal_fallback}개 필지는 조례 실효 용적률 미확보로 법정상한을 폴백 적용했습니다"
             "(실효치는 조례 확정 시 하향될 수 있음)."
         )
-    else:
-        far_basis_note = "전 필지 조례 실효 용적률 반영(법정폴백 없음)."
+    if zone_unmatched:
+        note_parts.append(
+            f"용도 미확인 {zone_unmatched}개 필지(예: 개발제한구역 등 비도시계획 구역)는 법정 "
+            "상한을 산출하지 못해 면적가중에서 제외했습니다(임의 수치 미생성)."
+        )
+    far_basis_note = " ".join(note_parts) if note_parts else "전 필지 조례 실효 용적률 반영(법정폴백 없음)."
 
     return {
         "parcel_count": len(parcels),
