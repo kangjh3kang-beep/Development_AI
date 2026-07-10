@@ -33,8 +33,35 @@ from app.services.cad.massing_strategy import (
     TYPE_OFFICETEL,
     classify_building_type,
 )
-from app.services.design_ingest.design_geometry import allowed_uses as _allowed_uses
+from app.services.design_ingest.design_geometry import allowed_uses as _design_geometry_allowed_uses
 from app.services.zoning.legal_zone_limits import legal_limits_for
+
+
+def _allowed_uses(zone_type: str | None) -> list[str] | None:
+    """용도지역 → 허용 건축물 용도 목록(별표 SSOT 수렴, P0-6/RC5).
+
+    ★과거: design_geometry.ALLOWED_USES_BY_ZONE(설계기하 전용 표)을 1차 소스로 썼는데 그 표에
+    녹지·관리·농림 키가 없어 자연녹지 등에서 현행 옵션이 0건으로 나왔다(개발방식 섹션은 별표
+    기준 단독·전원 가능이라고 답하는데 랭킹은 0건 — 3소스 모순, 라이브 재현). 개발유형 별표
+    SSOT(development_type_analyzer.ZONE_ALLOWED_BUILDINGS — 국토계획법 시행령 별표2~20, 자연
+    녹지 등 녹지지역 3종 포함)를 1차 소스로 삼고, 그 표에 없는 용도지역만 design_geometry로
+    폴백한다(design_geometry는 설계기하 전용 표로 그대로 유지 — 수정 없음).
+    """
+    from app.services.zoning.development_type_analyzer import ZONE_ALLOWED_BUILDINGS
+
+    key = (zone_type or "").replace(" ", "").strip()
+    raw = ZONE_ALLOWED_BUILDINGS.get(key)
+    if not raw:
+        for zk in ZONE_ALLOWED_BUILDINGS:
+            if zk in key or key in zk:
+                raw = ZONE_ALLOWED_BUILDINGS[zk]
+                break
+    if raw:
+        # type_name 공백 제거(design_geometry 표기·_USE_TO_PRODUCT 매칭과 정합 — 예: "제1종 근린생활시설"
+        # → "제1종근린생활시설"). _product_and_type의 부분일치(예: "공동주택" in u)는 영향 없음.
+        return [str(item["type_name"]).replace(" ", "") for item in raw]
+    return _design_geometry_allowed_uses(zone_type)
+
 
 # 인허가가능성(permit feasibility) → 가중치. 가용 용적률에 곱해 랭킹 점수를 만든다.
 _FEASIBILITY_WEIGHT: dict[str, float] = {

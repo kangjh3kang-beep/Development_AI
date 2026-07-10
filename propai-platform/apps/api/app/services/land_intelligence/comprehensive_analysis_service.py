@@ -434,8 +434,26 @@ class ComprehensiveAnalysisService:
         #   미세 차이날 수 있다(프론트는 length>1일 때만 전송 → 운영 UI는 N=1 override 미도달).
         #   미제공(레거시 단일주소 호출)은 위 단일 경로 그대로(완전 무변경).
         integrated = await self._integrated_context(parcels) if parcels else None
+        land_area_basis = "단일/미제공 — 대지면적 그대로"
+        # ★F2(QA REQUEST CHANGES) 면적 기준 이원화: 취득원가(land_cost)는 gross(전체 매입대상
+        #   면적 — 도로·GB 등 제외 필지도 실제로는 매입 대상이므로 축소하면 낙관 편향/무날조
+        #   위반 방향), 개발규모(GFA·세대수 등)는 usable(산입가능 면적) 유지. land_area_gross는
+        #   아래에서 usable로 덮이기 전 gross 값을 별도 보존해 _calc_land_prices에 전달한다.
+        land_area_gross = land_area  # 단일필지 기본값(원본 공부면적, usable 축소 없음)
         if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
             land_area = float(integrated["total_area_sqm"])
+            land_area_gross = land_area  # 다필지 gross(통합 전체 면적 — 제외 필지 포함)
+            land_area_basis = "다필지 통합(gross) 대지면적"
+            # ★P0-2(c)(RC3) 대지면적은 usable(도로·구거·하천 지목·BLOCKED 게이트 제외) 기준을
+            #   채택한다 — gross 전량 합산은 건축 불가 지목까지 개발규모 산정에 넣는 과대표시였다.
+            #   result["integrated_zoning"]에는 gross(total_area_sqm)가 그대로 남아 하위호환되고,
+            #   여기서는 land_area(GFA·세대수 등 이후 산정에 쓰이는 변수)만 usable로 교체한다.
+            #   land_area_gross는 위에서 이미 고정했으므로 아래 override는 land_area에만 영향.
+            _eff_area = integrated.get("land_area_effective_sqm")
+            if _eff_area is not None and float(_eff_area) > 0:
+                land_area = float(_eff_area)
+                if abs(land_area - float(integrated["total_area_sqm"])) > 0.5:
+                    land_area_basis = "실사용가능(usable_confirmed) 대지면적 — 도로·구거·하천·개발불가 게이트 필지 제외"
             dz = integrated.get("dominant_zone")
             if dz and dz != "mixed_review_required":
                 zone_type = dz
@@ -471,9 +489,77 @@ class ComprehensiveAnalysisService:
                 parcel_count=int(integrated.get("parcel_count") or 2),
                 zone_mix=integrated.get("zone_mix"),
             )
+            # ★P0-5(RC7) 봉합: 위 rebuild_area_dependent는 면적의존 문구(최대 연면적 등)만
+            #   갈아끼우고, "법정 용적률 상한은 250%입니다"·"실효 용적률은... 200%가 적용됩니다"
+            #   같은 법정/조례 비교 서술은 대표필지 값 그대로 남긴다(그 함수 설계 계약). 다필지
+            #   통합에서는 effective_far_pct가 blended 값(예: 139.6%)으로 override되므로 저
+            #   문장을 방치하면 "실효 139.6% vs 문장 속 200%" 수치-서술 충돌이 남는다(라이브
+            #   재현 버그). 법정/조례 비교 문장만 통합 기준 1문장으로 교체한다(별도 함수 — 블라스트 최소).
+            sec1 = far_tier_service.rebuild_legal_basis_annotations(
+                sec1,
+                effective_far=effective_far, effective_bcr=effective_bcr,
+                national_far=(_bl_far if _bl_far is not None else sec1.get("national_far_pct")),
+                national_bcr=integrated.get("blended_bcr_legal_pct"),
+                parcel_count=int(integrated.get("parcel_count") or 2),
+                zone_mix=integrated.get("zone_mix"),
+            )
 
-        sec2 = self._calc_supply_areas(zone_type, land_area, effective_far, effective_bcr)
-        sec3 = self._calc_land_prices(base, land_area)
+        # ── P0-2(d)(e)(RC4) 공급면적(세대수/주차 등) 산정 전 경량 게이트 선산출 ──
+        #   기존엔 특이부지(GB 등) 감지가 공급면적 산정 '이후'(아래 특이부지 감지 블록)라 이미
+        #   산정된 공급면적을 막을 수 없었다. detect_special_parcel은 순수 동기 함수라 터레인/
+        #   산림 관측(임야 세부판정 보정용 — GB/도로 등 기본 게이트에는 불필요) 없이도 가볍게
+        #   먼저 호출해 developability만 뽑는다(로직 복제 아님 — 동일 SSOT 함수 재호출, 최종
+        #   상세 감지는 기존 위치에서 관측데이터 포함해 그대로 재실행해 result["special_parcel"]에
+        #   싣는다). 비연접(파편 필지) 클러스터도 여기서 함께 차단한다.
+        _supply_blocked_reason: str | None = None
+        try:
+            _lr_gate = base.get("land_register") if isinstance(base.get("land_register"), dict) else {}
+            _gate_sp_input = {
+                "zone_type": zone_type,
+                "land_category": _lr_gate.get("land_category") or "",
+                "special_districts": base.get("special_districts") or [],
+                "road_contact": base.get("road_contact"),
+                "road_width_m": base.get("road_width_m") or _lr_gate.get("road_width_m"),
+            }
+            _early_gate = _detect_special_parcel_compat(_gate_sp_input, None, None, None)
+            if _early_gate and _early_gate.get("developability") == "BLOCKED":
+                _supply_blocked_reason = (
+                    _early_gate.get("honest_disclosure")
+                    or "개발제한구역 등 개발불가 게이트로 공급규모(세대수·주차)를 산정하지 않습니다."
+                )
+        except Exception:  # noqa: BLE001 — 게이트 선산출 실패는 무손상(기존 공급산정 진행)
+            pass
+        if integrated and (integrated.get("adjacency") or {}).get("contiguous") is False:
+            _components = (integrated.get("adjacency") or {}).get("components")
+            _supply_blocked_reason = (
+                f"비연접 파편 필지 {_components if _components else '다수'}개 클러스터 — "
+                "단일 대지 개발이 불가합니다. 연접 필지 재선택 또는 클러스터별 분석이 필요합니다."
+            )
+
+        # ★F1(QA REQUEST CHANGES·차단) 빈 zone 단일필지 500 크래시 무날조 게이트.
+        #   재현: zone_type=""(빈 용도지역) → calc_effective_far가 P0-1로 eff/legal=None을
+        #   정직 반환하는데, get_permitted_types("")는 부분일치 검색 `zone_type in key`가
+        #   빈 문자열과 항상 True로 매칭돼(예: "" in "제1종전용주거지역") permitted가 비지
+        #   않은 채로 반환된다 — 그래서 _calc_supply_areas의 '미등재 용도지역 판정불가' 조기
+        #   반환(=permitted 빈 목록 전제)을 우회하고 min(effective_far, typical_far)(:941)에서
+        #   effective_far=None과 int를 비교해 TypeError로 500이 난다. get_permitted_types
+        #   자체 수정은 SSOT 전역 영향이 커(블라스트 확대) 이 호출부에서 None을 정직 게이트로
+        #   막는다(임의 수치 미생성 — 기존 _supply_blocked_reason 메커니즘 재사용).
+        if _supply_blocked_reason is None and (effective_far is None or effective_bcr is None):
+            _supply_blocked_reason = "용도지역 미확인 — 공급규모(세대수·주차)를 산정하지 않습니다(임의 수치 미생성)."
+
+        if _supply_blocked_reason:
+            sec2 = [{
+                "development_type": None, "type_name": "판정불가",
+                "note": _supply_blocked_reason, "blocked_reason": _supply_blocked_reason,
+            }]
+        else:
+            sec2 = self._calc_supply_areas(zone_type, land_area, effective_far, effective_bcr)
+        # ★F2: 취득원가(토지가액)는 gross 기준 — 제외 필지(도로·GB 등)도 매입 대상이므로
+        #   usable(land_area)로 축소하면 취득원가를 실제보다 낮게 표시하는 낙관 편향이 된다
+        #   (무날조 원칙 위반 방향: 과소표시도 할루시네이션과 동일하게 금지). GFA/공급 산정
+        #   (sec2, 위)만 usable을 쓰고 land_prices는 이 gross 값을 쓴다.
+        sec3 = self._calc_land_prices(base, land_area_gross)
         sec5 = self._calc_sale_prices(address, zone_type)
 
         # 비동기 섹션
@@ -499,6 +585,15 @@ class ComprehensiveAnalysisService:
             "pnu": base.get("pnu"),
             "zone_type": zone_type,
             "land_area_sqm": land_area,
+            # ★P0-2(c)/F2 land_area_sqm(개발규모=usable 기준)의 산출 근거 — 정직 표기(additive).
+            #   ★F2: 면적 기준 이원화(취득원가 gross vs 개발규모 usable)를 dict로 병기한다.
+            #   gfa_basis는 기존 문자열 그대로(하위 신규 필드라 호환 우려 없음 — 이번 세션 신설).
+            "land_area_basis": {
+                "gfa_basis": land_area_basis,
+                "land_cost_basis": "gross(전체 매입대상 면적 — 도로·구거·하천·개발불가 게이트 필지도 매입 대상이라 제외하지 않음)",
+                "gross_sqm": land_area_gross,
+                "usable_sqm": land_area,
+            },
             # 통합집계 산물(다필지 시) — 프론트 통합 카드·인터프리터 그라운딩용. 단일/미제공은 None.
             "integrated_zoning": integrated,
             "parcel_count": (integrated or {}).get("parcel_count") if integrated else (len(parcels) if parcels else 1),
@@ -519,6 +614,29 @@ class ComprehensiveAnalysisService:
             },
             "warnings": base.get("warnings", []),
         }
+
+        # ── P0-3(RC6) 법정초과 할루시네이션 가드 핫패스 배선 ──
+        #   run_range_checks(다중 도메인 검증 — 무거움) 대신 legal_zone_limits.check_against_legal만
+        #   경량 직접 호출한다. P0-1이 근본원인(zone 미매칭 하드코딩 폴백)을 제거했으므로 이 가드는
+        #   벨트&브레이스(다른 경로로 법정초과 값이 흘러들어와도 정직 경고로 표면화). 값 자체는
+        #   몰래 클램프하지 않는다(무날조) — additive: 기존 키 삭제/변경 없음.
+        try:
+            from app.services.zoning.legal_zone_limits import check_against_legal
+
+            _integrity_issues = check_against_legal(
+                zone_type,
+                bcr_pct=sec1.get("effective_bcr_pct"), far_pct=sec1.get("effective_far_pct"),
+                regulation_payload=base, plan_payload=base.get("special_districts"),
+            )
+            if _integrity_issues:
+                result["integrity_warnings"] = _integrity_issues
+                # 값은 그대로 두고 신뢰 강등 라벨만 부착(정직 표기 — sec1은 result["effective_far"]와
+                # 동일 객체 참조이므로 이 mutation이 곧바로 result에 반영된다).
+                if any(i.get("severity") == "high" for i in _integrity_issues):
+                    sec1["confidence"] = "degraded"
+                    sec1["confidence_note"] = "법정상한 초과 + 완화근거 미확인 — integrity_warnings 참조."
+        except Exception as e:  # noqa: BLE001 — 가드 실패는 무손상(기존 분석 유지)
+            logger.warning("법정초과 가드 스킵(graceful)", err=str(e)[:160])
 
         # ── Stage 1: 건축가능항목 선정·랭킹(인허가가능성 × 가용용적률) — additive·graceful ──
         #   현행 실효 용적률(sec1)과 종상향 시나리오(sec8)를 결합해 '이 부지에서 무엇을 지을
@@ -1416,6 +1534,15 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
     프론트가 이미 면적·용도지역을 제공하면 재수집 없이 경량으로 동작하고,
     N=1은 항등(단일필지값과 동일)이라 단일/다필지가 한 경로로 일원화된다.
     실패는 graceful None(호출측은 단일 경로로 무회귀 폴백).
+
+    ★F5(QA REQUEST CHANGES) 스코프 정리 — 반환 dict의 adjacency/usable/
+    land_area_effective_sqm(P0-2 신설)는 이 함수를 호출하는 모든 소비처에 공통으로
+    실린다(구조상 additive 키라 전 소비처가 받는다). 다만 그 값을 실제로 land_area
+    산정에 '채택'하는 것은 현재 comprehensive_analysis_service.analyze()뿐이다.
+    rough_feasibility_orchestrator.build_rough_scenario·feasibility_service_v2·
+    pipeline.py는 여전히 integrated["total_area_sqm"](gross)만 land_area로 채택한다
+    (usable/adjacency 필드는 받되 미소비 — 과대 주장 금지). usable 채택을 이 소비처들
+    에도 확장하는 것은 후속 P1 스코프다.
     """
     def _f(v: Any) -> float | None:
         try:
@@ -1478,7 +1605,74 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
                 it["_bcr_legal"] = be
             elif be is None and bl is not None:
                 it["_bcr_legal"] = None
-        return _aggregate_integrated_zoning(items)
-    except Exception as e:  # noqa: BLE001 — 통합집계 실패는 단일 경로로 폴백(분석 무중단)
+        integrated = _aggregate_integrated_zoning(items)
+
+        # ★F4(QA REQUEST CHANGES) 블라스트 격리: 아래 인접성·usable 신규 블록은 각자
+        #   독립 try/except로 감싼다. 이전엔 이 블록이 위쪽의 큰 try에 그대로 딸려 있어,
+        #   shapely 형상 파싱 실패 등 신규 로직에서 예외가 나면 바깥 except가 '통합집계
+        #   전체'(blended_far_eff_pct 등 이미 완성된 _aggregate_integrated_zoning 결과까지)를
+        #   버리고 None을 반환해 33필지→대표 763㎡ 단일필지 폴백 회귀를 재현할 위험이 있었다.
+        #   신규 블록 실패는 해당 키만 None+사유로 정직 누락시키고 blended 통합집계는 보존한다.
+        try:
+            # ★P0-2(a)(RC2) 인접성(_parcel_adjacency) 결합 — geometry 보유 시 shapely 연결요소로
+            #   판정한다. /zoning/integrated-analysis(routers/auto_zoning.py)와 동일 함수를
+            #   재import(산식 복제 금지 — 위 _enrich_effective_and_special과 동일한 기존 임포트
+            #   패턴). geometry 미보유(2개 미만)는 True를 지어내지 않고 None+사유로 정직 표기한다.
+            geoms = [it.get("geometry") for it in items]
+            present = [g for g in geoms if g]
+            if len(present) < 2 and len(items) >= 2:
+                integrated["adjacency"] = {
+                    "contiguous": None, "components": None,
+                    "basis": "형상(geometry) 데이터 부족 — 인접성 확인 불가(통합개발 가능 여부 미확정)",
+                }
+            else:
+                from apps.api.routers.auto_zoning import _parcel_adjacency
+                _adj = _parcel_adjacency(geoms)
+                integrated["adjacency"] = {
+                    "contiguous": _adj.get("contiguous"),
+                    "components": _adj.get("components"),
+                    "basis": _adj.get("note"),
+                }
+        except Exception as e:  # noqa: BLE001 — 인접성 산출 실패는 그 키만 정직 누락(통합집계 보존)
+            logger.warning("인접성 산출 실패 — adjacency만 정직 누락(graceful)", err=str(e)[:160])
+            integrated["adjacency"] = {
+                "contiguous": None, "components": None, "basis": "인접성 산출 실패(정직 미확인)",
+            }
+
+        try:
+            # ★P0-2(b)(RC3) 실사용가능용지 3계층(compute_usable_area) 결합 — 도로·구거·하천 지목은
+            #   전액 제외(EXCLUDED_LAND_CATEGORIES), GB 등 BLOCKED 게이트 필지도 제외한다(게이트
+            #   신호는 위 enrich가 붙인 _special을 special 키로 매핑해야 인식 — enrich 미실행 시엔
+            #   지목 제외만 적용되고 게이트 제외는 정직하게 스킵된다). gross 전량 합산(RC3) 방지.
+            from app.services.zoning.usable_area import compute_usable_area
+
+            usable_input = []
+            for it in items:
+                ui = dict(it)
+                sp = it.get("_special")
+                if isinstance(sp, dict):
+                    ui["special"] = sp
+                usable_input.append(ui)
+            _usable = compute_usable_area(usable_input)
+            integrated["usable"] = {
+                "confirmed_sqm": _usable.get("usable_confirmed_sqm"),
+                "conditional_sqm": _usable.get("usable_conditional_sqm"),
+                "excluded_sqm": _usable.get("excluded_sqm"),
+                "excluded": _usable.get("excluded_parcels") or [],
+                "warnings": _usable.get("warnings") or [],
+            }
+            # 실사용가능(confirmed) 면적이 산출되면 그것을, 아니면 gross(total_area_sqm)를 채택한다
+            # (usable_confirmed_sqm=0은 '전부 제외/미확보'일 수 있어 gross 폴백 — 무날조 0 은닉 방지).
+            _confirmed = integrated["usable"]["confirmed_sqm"]
+            integrated["land_area_effective_sqm"] = (
+                _confirmed if _confirmed and _confirmed > 0 else integrated.get("total_area_sqm")
+            )
+        except Exception as e:  # noqa: BLE001 — usable 산출 실패는 그 키만 정직 누락(통합집계 보존)
+            logger.warning("usable 산출 실패 — usable만 정직 누락(graceful)", err=str(e)[:160])
+            integrated["usable"] = None
+            integrated["land_area_effective_sqm"] = None
+
+        return integrated
+    except Exception as e:  # noqa: BLE001 — 통합집계(_aggregate_integrated_zoning) 실패는 단일 경로로 폴백(분석 무중단)
         logger.warning("통합집계 실패 — 단일필지 경로로 폴백(graceful)", err=str(e)[:160])
         return None
