@@ -516,6 +516,22 @@ async def test_medium6_construction_months_floor_guard(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ★H1(QA REQUEST CHANGES): 세대수 가정(total_households) additive 노출
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_h1_total_households_assumed_positive(monkeypatch):
+    """세대수 가정(GFA÷유형 표준 전용면적, unit_standards SSOT)이 inputs에 양수로 노출된다.
+
+    프론트(STEP3 리스크시뮬)가 이 값을 세대수 SSOT 폴백으로 소비해, 설계 확정 전에도
+    avg_area_pyeong 산식(세대수가 소거됨)으로 매출이 0으로 오탐하지 않게 한다.
+    """
+    _stub_happy(monkeypatch)
+    out = await orch.build_rough_scenario(address="서울특별시 강남구 역삼동 736")
+    assert isinstance(out["inputs"]["total_households"], int)
+    assert out["inputs"]["total_households"] > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 라우터 스모크
 # ─────────────────────────────────────────────────────────────────────────────
 def _make_client(monkeypatch):
