@@ -829,6 +829,20 @@ function extractAddressTokens(
   return { sigungu, dong, bunji };
 }
 
+/** 시군구·법정동 토큰만으로 지역 불일치를 판정(번지 비교 제외) — addressTokenMismatch·
+    addressRegionMismatch가 공유하는 내부 산식(산식 복제 금지, 여기 한 곳만 고친다). */
+function tokensRegionMismatch(ta: AddressTokens, tb: AddressTokens): boolean {
+  if (ta.sigungu.length > 0 && tb.sigungu.length > 0) {
+    const setB = new Set(tb.sigungu);
+    if (!ta.sigungu.some((t) => setB.has(t))) return true; // 시군구 전부 불일치
+  }
+  if (ta.dong.length > 0 && tb.dong.length > 0) {
+    const setB = new Set(tb.dong);
+    if (!ta.dong.some((t) => setB.has(t))) return true; // 법정동 전부 불일치
+  }
+  return false;
+}
+
 /** 두 주소의 핵심 토큰(시군구·법정동·번지)이 명백히 불일치하면 true.
     비교 불능(어느 한쪽 토큰 추출 실패)이면 false — 정상 동기화를 막지 않는다. */
 export function addressTokenMismatch(
@@ -838,16 +852,24 @@ export function addressTokenMismatch(
   const ta = extractAddressTokens(a);
   const tb = extractAddressTokens(b);
   if (!ta || !tb) return false;
-  if (ta.sigungu.length > 0 && tb.sigungu.length > 0) {
-    const setB = new Set(tb.sigungu);
-    if (!ta.sigungu.some((t) => setB.has(t))) return true; // 시군구 전부 불일치
-  }
-  if (ta.dong.length > 0 && tb.dong.length > 0) {
-    const setB = new Set(tb.dong);
-    if (!ta.dong.some((t) => setB.has(t))) return true; // 법정동 전부 불일치
-    if (ta.bunji && tb.bunji && ta.bunji !== tb.bunji) return true; // 같은 동, 다른 번지
+  if (tokensRegionMismatch(ta, tb)) return true;
+  if (ta.dong.length > 0 && tb.dong.length > 0 && ta.bunji && tb.bunji && ta.bunji !== tb.bunji) {
+    return true; // 같은 동, 다른 번지
   }
   return false;
+}
+
+/** 지역 단위(시군구·법정동) 불일치만 판정 — 번지 차이는 무시한다.
+ *  지도에서 인접 필지를 프로젝트에 추가하는 정상 워크플로우가 '불일치'로 오판되지 않게,
+ *  사통맵 교차오염 가드 전용으로 쓴다(번지까지 엄격한 addressTokenMismatch는 setProject 오염가드 유지). */
+export function addressRegionMismatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const ta = extractAddressTokens(a);
+  const tb = extractAddressTokens(b);
+  if (!ta || !tb) return false;
+  return tokensRegionMismatch(ta, tb);
 }
 
 /** 오염 스냅샷 정화 — siteAnalysis와 그 파생(designData)을 null로, completedStages에서
