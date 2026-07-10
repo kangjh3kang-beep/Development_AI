@@ -1001,8 +1001,10 @@ export function GlobalAddressSearch({
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
       if (res.error) { setUploadInfo({ note: res.error }); return; }
       // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
-      // ★확정분(verified+corrected)만 기본 반영 — needs_review는 요약 카운트로만 알리고 제외
-      //   (injectable 필드 부재 시 구버전 응답 호환을 위해 기본 포함 — 무회귀).
+      // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
+      //   verified/corrected/needs_review는 모두 반영해 반영 후 2차 조회(/zoning/parcels-info)의
+      //   재지오코딩·재검증으로 자기치유되게 한다(injectable 필드 부재 시 구버전 응답 호환을
+      //   위해 기본 포함 — 무회귀). needs_review 건수는 요약 카운트로 계속 안내.
       const entries: AddressEntry[] = (res.parcels ?? [])
         .filter((p) => (p.address || p.pnu) && p.injectable !== false)
         .map((p) => {

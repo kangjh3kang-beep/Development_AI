@@ -996,7 +996,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
         const data = await apiClient.post<ParseParcelsResponse>("/zoning/parse-parcels", {
           body: form,
           useMock: false,
-          timeoutMs: 60000,
+          // ★H4-③: LLM 보조 구조인식·반복검증(S1/S3)까지 걸리면 60s로는 대량 엑셀에서 타임아웃이
+          //   잦았다 — GlobalAddressSearch(120s)보다 여유 있게 180s로 상향.
+          timeoutMs: 180000,
         });
         if (data.error) {
           setUploadStatus("error");
@@ -1004,9 +1006,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
           return;
         }
         const allParcels = data.parcels ?? [];
-        // ★확정분(verified+corrected)만 기본 주입 — needs_review는 검증 리포트에서 사유를 보고
-        //   사용자가 직접 확인하도록 자동반영에서 제외한다(injectable 필드 부재 시 구버전 응답
-        //   호환을 위해 기본 포함 — 무회귀).
+        // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
+        //   verified/corrected/needs_review는 모두 주입해 주입 후 2차 enrich(/zoning/parcels-info)
+        //   의 재지오코딩·재검증으로 자기치유되게 한다(injectable 필드 부재 시 구버전 응답
+        //   호환을 위해 기본 포함 — 무회귀). 필터 로직은 그대로 두되(향후 방어), 실제로는
+        //   백엔드 계약상 아래 filter가 걸러내는 행은 사실상 없다.
         const injectable = allParcels.filter((p) => p.injectable !== false);
         const parcels = injectable.map(parsedParcelToSelection);
         addParcels(parcels);
@@ -1442,6 +1446,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     제외 {verificationReport.counts?.excluded ?? 0}
                   </span>
                 </div>
+                {/* ★H3: 확인필요 행도 일단 주입되며, 주입 후 2차 조회에서 자동보정을 시도한다는
+                    것을 명확히 안내(과거엔 이 자기치유 경로가 자동반영 제외로 조용히 끊겼었음). */}
+                {(verificationReport.counts?.needs_review ?? 0) > 0 && (
+                  <p className="text-[11px] font-semibold text-amber-700">
+                    확인필요 행은 주입 후 자동보정 시도됩니다 — 아래 사유를 확인해 주세요.
+                  </p>
+                )}
                 {(verificationReport.corrections?.length ?? 0) > 0 && (
                   <p className="text-[11px] font-semibold text-sky-700">
                     보정 {verificationReport.corrections?.length}건 —{" "}
