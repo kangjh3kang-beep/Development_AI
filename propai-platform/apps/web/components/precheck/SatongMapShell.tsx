@@ -53,6 +53,7 @@ import {
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
+import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
@@ -60,6 +61,10 @@ import {
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
+import {
+  deriveProjectNameFromParcels,
+  selectionMismatchesProject,
+} from "./satong-project-connect";
 
 const SatongMultiMap = dynamic<SatongMultiMapProps>(
   () =>
@@ -451,6 +456,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
   const projectId = useProjectContextStore((state) => state.projectId);
   const setProject = useProjectContextStore((state) => state.setProject);
+  const clearProject = useProjectContextStore((state) => state.clearProject);
   const projects = useProjectStore((state) => state.projects);
   const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
 
@@ -462,6 +468,28 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   단일필지(top-level 주소·좌표만) 프로젝트도 비동기 스냅샷 복원 도착을 감지해야 하므로
   //   객체 단위로 읽는다. sessionStorage(자기세션 선택)가 우선, 이건 폴백/전환 시드용.
   const storeSiteAnalysis = useProjectContextStore((state) => state.siteAnalysis);
+  // 연결 대상: "new"=새 프로젝트로 등록(기본) · "none"=연결 안 함(약식) · 그 외=기존 프로젝트 id.
+  //   기본을 '새 프로젝트'로 두는 이유: 마지막 활성 프로젝트가 영속 기본값이면 다른 지역 필지
+  //   선택이 그 프로젝트 siteAnalysis를 조용히 덮어쓴다(교차오염). 이어하기(컨텍스트에 진행 중
+  //   프로젝트+데이터가 있는 경우)만 예외로 그 프로젝트를 유지한다.
+  const [connectTarget, setConnectTarget] = useState<"new" | "none" | string>(() => "new");
+  const [connectNotice, setConnectNotice] = useState("");
+  const connectInitRef = useRef(false);
+  useEffect(() => {
+    if (connectInitRef.current) return;
+    if (!projectId) {
+      connectInitRef.current = true; // 연결된 프로젝트 없음 — 기본 'new' 확정
+      return;
+    }
+    if (storeSiteAnalysis?.address || storeSiteAnalysis?.parcels?.length) {
+      connectInitRef.current = true;
+      setConnectTarget(projectId); // 이어하기 예외
+      return;
+    }
+    // projectId는 있지만 데이터(주소·필지)가 아직 도착 전(스냅샷 복원 비동기 대기) — 여기서
+    // 래치하지 않는다. 다음 storeSiteAnalysis 갱신 때 이 이펙트가 다시 실행돼 재평가한다
+    // (늦은 복원 허용 — F5, 조기 래치로 '이어하기' 판정을 놓치지 않는다).
+  }, [projectId, storeSiteAnalysis]);
   const [query, setQuery] = useState("");
   const [searchCandidates, setSearchCandidates] = useState<SearchCandidate[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -474,9 +502,35 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
+  // 새 프로젝트 생성 인플라이트 표시(버튼 disabled용) — 실제 중복차단은 creatingProjectRef(F4).
+  const [creatingProject, setCreatingProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const railRef = useRef<HTMLDivElement | null>(null);
+  const creatingProjectRef = useRef(false);
+
+  // ── PR#221 프로젝트 전환/하이드레이션 상태 refs(컴포넌트 상단으로 이동 — F1: 아래 콜백들이
+  //   detachProjectCarryingSelection 등에서 참조할 수 있도록 다른 ref 선언 옆에 둔다. 로직은
+  //   기존과 동일 — 하이드레이션 이펙트 본문은 원래 위치에 그대로 있다) ──
+  const hydratedRef = useRef(false);
+  // 직전 projectId(undefined=첫 실행 센티널)와, 전환 후 스토어 시드 허용 여부.
+  const prevProjectIdRef = useRef<string | null | undefined>(undefined);
+  const projectSeedArmedRef = useRef(false);
+  // 마지막으로 시드한 내용의 지문 — siteAnalysis 객체 참조만 바뀌고 내용이 같은 갱신
+  //   (updatedAt 등 무관 필드 변경)에 재시드·지도 이동이 반복되지 않게 한다. ""=전환 직후.
+  const lastSeedKeyRef = useRef("");
+  // 전환 후 지도 이동(포커스)을 아직 못 했는지 — 좌표가 보강으로 늦게 와도 딱 1회만 이동.
+  const projectFocusPendingRef = useRef(false);
+
+  // 의도적 프로젝트 해제(선택 유지): 전환 이펙트가 P→null을 '프로젝트 전환'으로 오인해
+  //   방금 담은 선택·sessionStorage를 지우지 않도록, 이펙트가 볼 직전값을 미리 null로 맞춘다.
+  //   (자동시드도 함께 disarm — 해제 후 스토어 갱신이 선택을 덮지 않게.)
+  const detachProjectCarryingSelection = useCallback(() => {
+    prevProjectIdRef.current = null;
+    hydratedRef.current = true;
+    projectSeedArmedRef.current = false;
+    clearProject();
+  }, [clearProject]);
 
   const selectedTotalArea = useMemo(
     () => selectedParcels.reduce((sum, parcel) => sum + (parcel.areaSqm ?? 0), 0),
@@ -501,6 +555,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
     setProject(p.id, p.name, p.status, p.address || undefined);
     void restoreSnapshot(p.id);
   }, [projects, setProject]);
+
+  const handleConnectTargetChange = useCallback((value: string) => {
+    setConnectNotice("");
+    if (value === "new" || value === "none") {
+      setConnectTarget(value);
+      // 활성 프로젝트가 있으면 해제(스냅샷 보존, 선택 유지) — 이후 선택·커밋이 그 프로젝트를
+      //   덮지 않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
+      //   이펙트가 이 해제를 '프로젝트 전환'으로 오인해 방금 담긴 선택을 지우지 않게 한다(F1).
+      if (projectId) detachProjectCarryingSelection();
+      return;
+    }
+    setConnectTarget(value);
+    handleSelectProject(value); // 기존 경로(setProject+restoreSnapshot) 재사용 — PR#221 시드가 이어짐
+  }, [projectId, detachProjectCarryingSelection, handleSelectProject]);
 
   const selectedMapFeatures = useMemo<SatongMapFeature[]>(
     () =>
@@ -854,6 +922,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const addParcels = useCallback(
     (incoming: SatongParcel[]) => {
       if (incoming.length === 0) return;
+      // ★교차오염 가드: 기존 프로젝트 연결 상태에서 그 프로젝트 주소와 지역이 다른 필지가
+      //   들어오면, 프로젝트를 덮지 않도록 '새 프로젝트로 등록' 모드로 자동 전환한다.
+      //   clearProject 직접 호출 대신 detachProjectCarryingSelection을 쓴다 — 전환 이펙트가
+      //   이 해제를 '프로젝트 전환'으로 오인해 방금 추가한 필지·sessionStorage를 지우는 것을
+      //   막는다(F1: prevProjectIdRef를 미리 null로 맞춰 이펙트가 전환으로 보지 않게 한다).
+      if (projectId && connectTarget === projectId) {
+        const projAddr = projects.find((p) => p.id === projectId)?.address || storeSiteAnalysis?.address;
+        if (selectionMismatchesProject(projAddr, incoming[0]?.address)) {
+          detachProjectCarryingSelection();
+          setConnectTarget("new");
+          setConnectNotice("선택 필지가 연결 프로젝트 주소와 달라 '새 프로젝트로 등록'으로 전환했습니다.");
+        }
+      }
       projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
       setSelectedParcels((prev) => {
         const byKey = new Map(prev.map((parcel) => [parcelKey(parcel), parcel]));
@@ -873,7 +954,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         return next;
       });
     },
-    [syncParcelsToStores],
+    [syncParcelsToStores, projectId, connectTarget, projects, storeSiteAnalysis, detachProjectCarryingSelection],
   );
 
   const removeParcel = useCallback(
@@ -1104,28 +1185,59 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [commitParcelsToContext],
   );
 
+  // 선택 필지로 새 프로젝트 생성·연결(공용) — 셀렉터 아래 버튼과 산출물 실행(연결모드 "new")이 공유.
+  // ★인플라이트 가드(F4): 버튼 연타·산출물 클릭 중복이 프로젝트를 여러 개 만들지 않게 한다.
+  //   ref=동기 즉시차단, state=버튼 disabled 표시용(둘 다 시작/종료 시 함께 토글).
+  const connectAsNewProject = useCallback(async (): Promise<string | null> => {
+    if (selectedParcels.length === 0) return null;
+    if (creatingProjectRef.current) return null;
+    creatingProjectRef.current = true;
+    setCreatingProject(true);
+    try {
+      const created = await createProjectFromParcels(selectedParcels);
+      if (!created) {
+        setConnectNotice("필지 주소가 없어 프로젝트를 생성할 수 없습니다.");
+        return null;
+      }
+      // setProject 직후 같은 틱에 선택 패치를 커밋 — 전환 이펙트가 실행될 땐 storeSiteAnalysis에
+      // 필지가 이미 있어 선택이 그대로 재시드된다(선택 소실 없음, PR#221 상호작용).
+      setProject(created.id, created.name, "draft", created.address);
+      const patch = selectionToSiteAnalysisPatch(selectedParcels);
+      if (patch) updateSiteAnalysis(patch, { source: "user" });
+      setConnectTarget(created.id);
+      setConnectNotice(`'${created.name}' 프로젝트가 생성·연결되었습니다.`);
+      return created.id;
+    } finally {
+      creatingProjectRef.current = false;
+      setCreatingProject(false);
+    }
+  }, [selectedParcels, setProject, updateSiteAnalysis]);
+
+  const handleCreateProjectNow = useCallback(() => {
+    void connectAsNewProject();
+  }, [connectAsNewProject]);
+
   const handleOutputClick = useCallback(
-    (action: OutputAction) => {
+    async (action: OutputAction) => {
+      if (connectTarget === "new" && selectedParcels.length > 0) {
+        try {
+          await connectAsNewProject();
+        } catch {
+          // best-effort — 생성 실패해도 산출물 이동은 계속(기준선 정신)
+        }
+      }
       saveSelectionForOutputs(selectedParcels);
       commitParcelsToContext(selectedParcels);
       router.push(action.href);
     },
-    [commitParcelsToContext, router, selectedParcels],
+    [connectAsNewProject, connectTarget, commitParcelsToContext, router, selectedParcels],
   );
 
   // 최초 1회만 하이드레이션(이후 사용자 선택을 덮지 않도록 ref 가드). 우선순위:
   //   1) sessionStorage(자기세션 선택 — 좌표·경계까지 리치) → 있으면 그대로(기존 동작).
   //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 헤더의 12필지를 지도/산출물에 복원.
   //   ★스토어 seed 시 commitParcelsToContext 재호출 금지(이미 스토어에 있는 값 되쓰면 되먹임 루프·#178).
-  const hydratedRef = useRef(false);
-  // 직전 projectId(undefined=첫 실행 센티널)와, 전환 후 스토어 시드 허용 여부.
-  const prevProjectIdRef = useRef<string | null | undefined>(undefined);
-  const projectSeedArmedRef = useRef(false);
-  // 마지막으로 시드한 내용의 지문 — siteAnalysis 객체 참조만 바뀌고 내용이 같은 갱신
-  //   (updatedAt 등 무관 필드 변경)에 재시드·지도 이동이 반복되지 않게 한다. ""=전환 직후.
-  const lastSeedKeyRef = useRef("");
-  // 전환 후 지도 이동(포커스)을 아직 못 했는지 — 좌표가 보강으로 늦게 와도 딱 1회만 이동.
-  const projectFocusPendingRef = useRef(false);
+  //   (refs 선언은 컴포넌트 상단으로 이동 — F1 참고)
   useEffect(() => {
     if (hydratedRef.current) return;
     const stored = readSatongMapSelection();
@@ -1301,17 +1413,45 @@ export function SatongMapShell({ locale }: { locale: string }) {
               연결 프로젝트
             </label>
             <select
-              value={projectId ?? ""}
-              onChange={(e) => handleSelectProject(e.target.value)}
+              value={connectTarget}
+              onChange={(e) => handleConnectTargetChange(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
             >
-              <option value="">프로젝트 선택 안 함 (약식 분석)</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}{p.address ? ` — ${p.address}` : ""}
-                </option>
-              ))}
+              <option value="new">새 프로젝트로 등록 (기본)</option>
+              <option value="none">프로젝트 연결 안 함 (약식 분석)</option>
+              <optgroup label="기존 프로젝트에 연결">
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.address ? ` — ${p.address}` : ""}
+                  </option>
+                ))}
+              </optgroup>
             </select>
+            {connectTarget === "new" && selectedParcels.length > 0 && (
+              <>
+                <p className="mt-2 text-[11px] font-bold leading-4 text-slate-500">
+                  완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCreateProjectNow}
+                  disabled={creatingProject}
+                  className="mt-2 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {creatingProject ? "생성 중…" : "선택 필지로 새 프로젝트 생성"}
+                </button>
+              </>
+            )}
+            {connectTarget === "none" && (
+              <p className="mt-2 text-[11px] font-bold leading-4 text-slate-500">
+                산출물은 프로젝트에 저장되지 않습니다.
+              </p>
+            )}
+            {connectNotice && (
+              <p className="mt-2 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold leading-4 text-emerald-700">
+                {connectNotice}
+              </p>
+            )}
           </div>
 
           <div className="mt-4 space-y-3">
@@ -1692,7 +1832,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     <button
                       key={action.id}
                       type="button"
-                      onClick={() => handleOutputClick(action)}
+                      onClick={() => void handleOutputClick(action)}
                       disabled={disabled}
                       className={`min-h-[112px] rounded-[22px] border p-3 text-left transition ${action.tone} ${
                         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5 hover:shadow-xl"
