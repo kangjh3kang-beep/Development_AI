@@ -177,16 +177,17 @@ class UnitPriceRepository:
         # T1: 공공고시 표준시장단가(price_source가 _PUBLIC_SOURCE_PREFIX로 시작하는 행) — 최우선.
         pub_row = db.get(_public_code(key))
         if pub_row and str(pub_row.get("price_source") or "").startswith(_PUBLIC_SOURCE_PREFIX):
-            # ★T1 안전가드: 공공단가가 (a)노무·경비 분해 없이 재료비 슬롯에 총단가만 싣고 노무·경비를 0으로
-            #   두었거나(labor·exp 모두 0), (b)단위가 표준 기대단위(fb["unit"])와 불일치하면, 하류
-            #   원가계산서(OriginCostCalculator)가 간접노무비(직접노무비×14.4%)·4대보험을 노무=0에 곱해
-            #   법정 노무성 제비율을 통째로 소실시키거나, 물량×엉뚱단가로 금액을 왜곡한다. 이 경우 T1을
+            # ★T1 안전가드: 공공단가가 (a)노무비 분해 없이(labor_unit=0) 총단가를 재료비 슬롯에만 싣거나,
+            #   (b)단위가 표준 기대단위(fb["unit"])와 불일치하면, 하류 원가계산서(OriginCostCalculator)가
+            #   간접노무비(직접노무비×14.4%)·4대보험·퇴직공제 등 법정 노무성 제비율을 **오직 labor_unit에서만**
+            #   파생하므로 노무=0이면 제비율이 통째로 소실되거나, 물량×엉뚱단가로 금액을 왜곡한다. 이 경우 T1을
             #   건너뛰고 분해·단위가 정합한 T2/T3로 폴백한다(왜곡단가보다 정합단가가 무목업·정확성에 부합).
-            #   조달청 ingest가 노무/경비 분해·단위를 갖추면 이 가드를 통과해 자동 재활성된다.
+            #   ★경비(exp)만 분해되고 노무=0이어도 제비율은 소실되므로 반드시 labor_unit>0를 요구한다.
+            #   조달청 ingest가 노무비 분해·단위를 갖추면 이 가드를 통과해 자동 재활성된다.
             _lab = float(pub_row.get("labor_unit") or 0)
             _exp = float(pub_row.get("exp_unit") or 0)
             _pu, _fu = _norm_unit(pub_row.get("unit")), _norm_unit(fb["unit"])
-            if (_lab > 0 or _exp > 0) and _pu and _fu and _pu == _fu:
+            if _lab > 0 and _pu and _fu and _pu == _fu:
                 result = {
                     "key": key,
                     "spec": pub_row.get("spec") or fb["spec"], "unit": pub_row.get("unit") or fb["unit"],

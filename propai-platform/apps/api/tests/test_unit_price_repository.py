@@ -88,6 +88,29 @@ async def test_t1_skipped_when_unit_mismatch_falls_back():
     assert p["unit"] == "m3"                  # T3 fallback의 정상 단위
 
 
+# ── ★T1 안전가드: 경비만 분해되고 노무=0인 공공단가도 스킵(제비율은 오직 labor_unit서 파생) ──
+#   (or _exp>0 논리홀 회귀가드 — 리뷰 P1)
+
+
+async def test_t1_skipped_when_expense_only_no_labor():
+    repo = _repo_with_cache({
+        _public_code("concrete"): {  # 경비만 분해·노무=0 → 제비율 소실이므로 스킵해야 함
+            "spec": "레미콘(공공)", "unit": "m3", "mat_unit": 125000.0,
+            "labor_unit": 0.0, "exp_unit": 5000.0,
+            "price_basis_year": 2026, "price_source": "표준시장단가 2026상", "region": "전국",
+        },
+        "RC-001": {
+            "spec": "레미콘(품셈)", "unit": "m3", "mat_unit": 82000.0,
+            "labor_unit": 35000.0, "exp_unit": 8000.0,
+            "price_basis_year": 2025, "price_source": "표준품셈2025", "region": "경기도",
+            "source_url": None,
+        },
+    })
+    p = await repo.get_price("concrete")
+    assert p["tier"] != "T1_public"          # 노무 미분해(경비만)면 채택 안 함
+    assert p["labor_unit"] == 35000.0        # T2의 정상 노무비
+
+
 # ── T1 부재, T2 존재 → T2 ──
 
 
