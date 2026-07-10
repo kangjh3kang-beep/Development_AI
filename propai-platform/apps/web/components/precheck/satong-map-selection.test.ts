@@ -5,6 +5,7 @@ import {
   satongSelectionToParcelRows,
   selectionToSiteAnalysisPatch,
   siteAnalysisParcelsToSelection,
+  siteAnalysisToSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
 
@@ -114,5 +115,71 @@ describe("satong-map-selection", () => {
     ]);
     expect(seeded).toHaveLength(1);
     expect(seeded[0].address).toBe("주소2");
+  });
+
+  describe("siteAnalysisToSelection", () => {
+    it("parcels[]가 있으면 siteAnalysisParcelsToSelection과 동일 결과(필지별 매핑, 첫 필지 좌표 폴백)", () => {
+      const rawParcels = [
+        { pnu: "P1", address: "주소1", areaSqm: 100, landCategory: "대" },
+        { pnu: "P2", address: "주소2", areaSqm: 200, landCategory: "대" },
+      ];
+      const fallbackCoord = { lat: 37.4, lon: 127.1 };
+      const expected = siteAnalysisParcelsToSelection(rawParcels, fallbackCoord);
+      const actual = siteAnalysisToSelection({
+        address: "대표주소",
+        coordinates: fallbackCoord,
+        parcels: rawParcels,
+      });
+      expect(actual).toEqual(expected);
+      expect(actual[0].lat).toBe(37.4); // 첫 필지 = 대표점 폴백
+      expect(actual[1].lat).toBeNull();
+    });
+
+    it("parcels[] 없음 + address 있음(레거시 단일필지) → 대표 1필지 생성(pnu/좌표/repLandAreaSqm 우선)", () => {
+      const seeded = siteAnalysisToSelection({
+        address: "서울특별시 종로구 청진동 1",
+        pnu: "1111010100100010000",
+        coordinates: { lat: 37.57, lon: 126.98 },
+        landAreaSqm: 500,
+        repLandAreaSqm: 120,
+        zoneCode: "일반상업지역",
+      });
+      expect(seeded).toHaveLength(1);
+      expect(seeded[0].address).toBe("서울특별시 종로구 청진동 1");
+      expect(seeded[0].pnu).toBe("1111010100100010000");
+      expect(seeded[0].lat).toBe(37.57);
+      expect(seeded[0].lon).toBe(126.98);
+      expect(seeded[0].areaSqm).toBe(120); // repLandAreaSqm 우선
+      expect(seeded[0].zoneType).toBe("일반상업지역");
+      expect(seeded[0].source).toBe("map");
+    });
+
+    it("null 또는 address 없음 → [] (무날조)", () => {
+      expect(siteAnalysisToSelection(null)).toEqual([]);
+      expect(siteAnalysisToSelection({ address: null })).toEqual([]);
+      expect(siteAnalysisToSelection({ address: "  " })).toEqual([]);
+    });
+
+    it("repLandAreaSqm 없고 landAreaSqm만 있는 경우 areaSqm=landAreaSqm", () => {
+      const seeded = siteAnalysisToSelection({
+        address: "주소만있는프로젝트",
+        landAreaSqm: 330,
+      });
+      expect(seeded).toHaveLength(1);
+      expect(seeded[0].areaSqm).toBe(330);
+    });
+
+    it("parcels가 빈 배열(사용자가 명시적으로 비움) → 주소가 있어도 [] (삭제필지 부활 금지)", () => {
+      // 마지막 필지 삭제/전체취소 후 재마운트 시, 남아있는 top-level 주소로
+      // 대표필지를 되살리면 안 된다(QA HIGH 회귀 — 주소 채널 부활).
+      expect(
+        siteAnalysisToSelection({
+          address: "서울 어딘가 100",
+          pnu: "1111000000000000000",
+          coordinates: { lat: 37.5, lon: 127.0 },
+          parcels: [],
+        }),
+      ).toEqual([]);
+    });
   });
 });

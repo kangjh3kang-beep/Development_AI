@@ -133,6 +133,53 @@ export function siteAnalysisParcelsToSelection(
     });
 }
 
+/** 프로젝트 SSOT(siteAnalysis) → precheck 선택필지.
+ *  - parcels 필드가 **존재**하면(빈 배열 포함) 그것이 권위 출처: 채워져 있으면 필지별 정밀 복원,
+ *    빈 배열이면 사용자가 명시적으로 비운 상태이므로 []를 반환한다(주소 폴백으로 삭제한 필지를
+ *    부활시키지 않는다 — 재마운트/새로고침 부활 방지).
+ *  - parcels 필드가 **부재**(undefined/null)인 레거시 단일필지 프로젝트만 대표 필드
+ *    (주소·PNU·좌표·면적·용도지역)로 1필지를 구성한다(SSOT 실데이터 그대로 — 무날조, 없으면 null).
+ *    주소조차 없으면 빈 배열(정직). */
+export function siteAnalysisToSelection(
+  siteAnalysis: {
+    address?: string | null;
+    pnu?: string | null;
+    coordinates?: { lat: number; lon: number } | null;
+    landAreaSqm?: number | null;
+    repLandAreaSqm?: number | null;
+    zoneCode?: string | null;
+    parcels?: Parameters<typeof siteAnalysisParcelsToSelection>[0] | null;
+  } | null,
+): SatongSelectionParcel[] {
+  if (!siteAnalysis) return [];
+  const fallbackCoord = siteAnalysis.coordinates ?? null;
+  if (Array.isArray(siteAnalysis.parcels)) {
+    // 빈 배열 = 명시적 clear(플랫폼은 빈 parcels를 쓰는 유일한 경로가 사용자 초기화) → 부활 금지.
+    return siteAnalysis.parcels.length > 0
+      ? siteAnalysisParcelsToSelection(siteAnalysis.parcels, fallbackCoord)
+      : [];
+  }
+  const address = (siteAnalysis.address ?? "").trim();
+  if (!address) return [];
+  return [
+    {
+      id: siteAnalysis.pnu || `store-rep-${address}`,
+      address,
+      pnu: siteAnalysis.pnu ?? null,
+      lat: fallbackCoord?.lat ?? null,
+      lon: fallbackCoord?.lon ?? null,
+      areaSqm: siteAnalysis.repLandAreaSqm ?? siteAnalysis.landAreaSqm ?? null,
+      zoneType: siteAnalysis.zoneCode ?? null,
+      jimok: null,
+      officialPricePerSqm: null,
+      builtYear: null,
+      buildingAgeYears: null,
+      geometry: null,
+      source: "map" as const,
+    },
+  ];
+}
+
 export function selectionToSiteAnalysisPatch(
   parcels: SatongSelectionParcel[],
 ): Partial<SiteAnalysisData> | null {

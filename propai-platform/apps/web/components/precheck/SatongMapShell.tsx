@@ -57,7 +57,7 @@ import { restoreSnapshot } from "@/lib/projectSync";
 import {
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
-  siteAnalysisParcelsToSelection,
+  siteAnalysisToSelection,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -472,7 +472,6 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
   const projectId = useProjectContextStore((state) => state.projectId);
   const setProject = useProjectContextStore((state) => state.setProject);
-  const snapshots = useProjectContextStore((state) => state.snapshots);
   const projects = useProjectStore((state) => state.projects);
   const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
 
@@ -480,10 +479,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
     if (!projects.length) void syncFromBackend();
   }, [projects.length, syncFromBackend]);
 
-  // 읽기 셀렉터 — 활성 프로젝트 필지를 precheck 선택으로 하이드레이션(SSOT 통일). 헤더가 읽는
-  //   siteAnalysis와 동일 출처라 균열 아님. sessionStorage(자기세션 선택)가 우선, 이건 폴백.
-  const storeParcels = useProjectContextStore((state) => state.siteAnalysis?.parcels);
-  const storeCoordinates = useProjectContextStore((state) => state.siteAnalysis?.coordinates);
+  // 읽기 셀렉터 — 활성 프로젝트 siteAnalysis 전체를 구독(SSOT). parcels[]뿐 아니라 레거시
+  //   단일필지(top-level 주소·좌표만) 프로젝트도 비동기 스냅샷 복원 도착을 감지해야 하므로
+  //   객체 단위로 읽는다. sessionStorage(자기세션 선택)가 우선, 이건 폴백/전환 시드용.
+  const storeSiteAnalysis = useProjectContextStore((state) => state.siteAnalysis);
   const [query, setQuery] = useState("");
   const [searchCandidates, setSearchCandidates] = useState<SearchCandidate[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -862,9 +861,26 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [updateSiteAnalysis],
   );
 
+  // 선택목록 → SSOT(store)·sessionStorage 동기화 공용통로. commitParcelsToContext는 빈 배열에
+  //   no-op이므로, 빈 목록이면 store 필지를 명시 정리한다 — 안 지우면 ①재마운트 시 스토어 폴백
+  //   하이드레이션이 삭제한 필지를 부활시키고 ②/analysis가 옛 주소를 계속 분석한다(P1 감사).
+  //   삭제·전체취소 등 모든 경로가 이 통로를 쓰게 해 경로 간 비대칭 재발을 막는다.
+  const syncParcelsToStores = useCallback(
+    (parcels: SatongParcel[]) => {
+      if (parcels.length > 0) {
+        commitParcelsToContext(parcels);
+      } else {
+        updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
+      }
+      saveSelectionForOutputs(parcels);
+    },
+    [commitParcelsToContext, updateSiteAnalysis],
+  );
+
   const addParcels = useCallback(
     (incoming: SatongParcel[]) => {
       if (incoming.length === 0) return;
+      projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
       setSelectedParcels((prev) => {
         const byKey = new Map(prev.map((parcel) => [parcelKey(parcel), parcel]));
         incoming.forEach((parcel) => {
@@ -879,42 +895,31 @@ export function SatongMapShell({ locale }: { locale: string }) {
           });
         });
         const next = Array.from(byKey.values());
-        commitParcelsToContext(next);
-        saveSelectionForOutputs(next);
+        syncParcelsToStores(next);
         return next;
       });
     },
-    [commitParcelsToContext],
+    [syncParcelsToStores],
   );
 
   const removeParcel = useCallback(
     (id: string) => {
+      projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
       setSelectedParcels((prev) => {
         const next = prev.filter((parcel) => parcel.id !== id);
-        // ★P1(감사): saveSelectionForOutputs를 분기 밖 무조건 호출 — 종전엔 next.length>0
-        //   조건 안에 있어 '마지막 필지 삭제' 시 sessionStorage가 옛 목록을 유지 →
-        //   재마운트하면 삭제한 필지가 부활했다. 빈 선택은 store 필지 컨텍스트도 명시
-        //   정리한다(스토어 폴백 하이드레이션에 의한 부활 이중 차단).
-        saveSelectionForOutputs(next);
-        if (next.length > 0) {
-          commitParcelsToContext(next);
-        } else {
-          updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
-        }
+        syncParcelsToStores(next); // 빈 배열이면 store·sessionStorage 모두 정리(부활 방지)
         return next;
       });
     },
-    [commitParcelsToContext, updateSiteAnalysis],
+    [syncParcelsToStores],
   );
 
   const clearParcels = useCallback(() => {
+    projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
     setSelectedParcels([]);
     setFocusTarget(null);
-    saveSelectionForOutputs([]);
-    // ★P1(감사): 초기화가 store 필지 컨텍스트를 남기면 ①재마운트 시 스토어 폴백 하이드레이션이
-    //   필지를 부활시키고 ②/analysis가 옛 주소를 계속 분석한다 → 명시 정리.
-    updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
-  }, [updateSiteAnalysis]);
+    syncParcelsToStores([]);
+  }, [syncParcelsToStores]);
 
   const runDirectGeocode = useCallback(
     async (rawQuery: string) => {
@@ -1155,6 +1160,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 헤더의 12필지를 지도/산출물에 복원.
   //   ★스토어 seed 시 commitParcelsToContext 재호출 금지(이미 스토어에 있는 값 되쓰면 되먹임 루프·#178).
   const hydratedRef = useRef(false);
+  // 직전 projectId(undefined=첫 실행 센티널)와, 전환 후 스토어 시드 허용 여부.
+  const prevProjectIdRef = useRef<string | null | undefined>(undefined);
+  const projectSeedArmedRef = useRef(false);
+  // 마지막으로 시드한 내용의 지문 — siteAnalysis 객체 참조만 바뀌고 내용이 같은 갱신
+  //   (updatedAt 등 무관 필드 변경)에 재시드·지도 이동이 반복되지 않게 한다. ""=전환 직후.
+  const lastSeedKeyRef = useRef("");
+  // 전환 후 지도 이동(포커스)을 아직 못 했는지 — 좌표가 보강으로 늦게 와도 딱 1회만 이동.
+  const projectFocusPendingRef = useRef(false);
   useEffect(() => {
     if (hydratedRef.current) return;
     const stored = readSatongMapSelection();
@@ -1169,39 +1182,71 @@ export function SatongMapShell({ locale }: { locale: string }) {
       return;
     }
     // 폴백: 활성 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값).
-    if (storeParcels?.length) {
-      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
-      // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
-      //   다음 storeParcels 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
-      if (seeded.length) {
-        hydratedRef.current = true;
-        setSelectedParcels(seeded);
-        const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
-        if (focused?.lat != null && focused.lon != null) {
-          setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
-        }
-      }
-    }
-  }, [commitParcelsToContext, storeParcels, storeCoordinates]);
-
-  // 프로젝트 전환 감지 시 강제 선택 복원 (세션 가드 리셋)
-  useEffect(() => {
-    if (!projectId) {
-      setSelectedParcels([]);
-      return;
-    }
-    if (storeParcels?.length) {
-      const seeded = siteAnalysisParcelsToSelection(storeParcels, storeCoordinates ?? null);
+    const seeded = siteAnalysisToSelection(storeSiteAnalysis);
+    // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
+    //   다음 siteAnalysis 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
+    if (seeded.length) {
+      hydratedRef.current = true;
       setSelectedParcels(seeded);
       const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
       if (focused?.lat != null && focused.lon != null) {
         setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
       }
-    } else {
-      setSelectedParcels([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [commitParcelsToContext, storeSiteAnalysis]);
+
+  // 프로젝트 전환 감지 → 프로젝트 등록 필지로 선택 복원.
+  // ★restoreSnapshot(백엔드 스냅샷 GET)은 비동기라 전환 직후엔 storeSiteAnalysis가 비어있을 수
+  //   있다. siteAnalysis를 의존성에 포함해 늦게 도착한 필지도 시드한다(읽기단선 방지).
+  //   armed 플래그는 전환 시 켜지고 사용자가 직접 편집(추가·삭제·전체취소)하면 꺼져,
+  //   자동시드가 사용자 선택을 덮지 않는다. 첫 마운트는 위 하이드레이션(sessionStorage 우선)이
+  //   담당하므로 개입하지 않는다(약식 모드 선택 전멸 회귀 방지).
+  useEffect(() => {
+    const prev = prevProjectIdRef.current;
+    const isFirstRun = prev === undefined;
+    const isTransition = !isFirstRun && prev !== (projectId ?? null);
+    prevProjectIdRef.current = projectId ?? null;
+    if (isFirstRun) return;
+
+    if (isTransition) {
+      // 이전 프로젝트 선택이 새 프로젝트로 새지 않도록 선택·sessionStorage 즉시 무효화(교차오염 차단)
+      hydratedRef.current = true; // 전환 이후 선택 소유권은 이 이펙트 — 초기 하이드레이션 비활성
+      projectSeedArmedRef.current = !!projectId;
+      lastSeedKeyRef.current = "";
+      projectFocusPendingRef.current = !!projectId;
+      setSelectedParcels([]);
+      setFocusTarget(null);
+      saveSelectionForOutputs([]);
+    }
+
+    if (!projectId || !projectSeedArmedRef.current) return;
+
+    const seeded = siteAnalysisToSelection(storeSiteAnalysis);
+    if (seeded.length) {
+      // 내용 지문이 같으면 스킵 — siteAnalysis 참조만 바뀐 무관 갱신에 재시드·지도 튐 방지.
+      //   지문에 면적·용도지역·좌표·경계 유무를 포함해 보강(enrich) 도착은 반영한다.
+      const seedKey = seeded
+        .map(
+          (p) =>
+            `${p.id}:${p.areaSqm ?? ""}:${p.zoneType ?? ""}:${p.lat ?? ""}:${p.lon ?? ""}:${p.geometry ? 1 : 0}`,
+        )
+        .join("|");
+      if (seedKey === lastSeedKeyRef.current) return;
+      lastSeedKeyRef.current = seedKey;
+      // 시드 출처가 스토어이므로 재커밋 금지(#178 되먹임 방지). sessionStorage만 동기화.
+      setSelectedParcels(seeded);
+      saveSelectionForOutputs(seeded);
+      // 지도 이동은 전환 후 1회만(좌표가 보강으로 늦게 오면 그때 1회) — 이후 갱신 때
+      //   사용자가 보던 화면을 낚아채지 않는다.
+      if (projectFocusPendingRef.current) {
+        const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
+        if (focused?.lat != null && focused.lon != null) {
+          projectFocusPendingRef.current = false;
+          setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+        }
+      }
+    }
+  }, [projectId, storeSiteAnalysis]);
 
   useEffect(() => {
     const trimmed = query.trim();
