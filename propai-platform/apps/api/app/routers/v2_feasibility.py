@@ -21,6 +21,9 @@ from app.core.database import get_db
 # (from __future__ import annotations 활성 → 주석/힌트는 런타임 미평가, 동작 무영향.)
 from app.models.auth import User
 from app.schemas.feasibility_v2 import (
+    BudgetExecutionRequest,
+    BudgetExecutionResponse,
+    DisburseRequest,
     FeasibilityBaselineRequest,
     FeasibilityBaselineResponse,
     FeasibilityCalculateRequest,
@@ -230,6 +233,9 @@ class FeasibilityResultTrustResponse(FeasibilityResultResponse):
 
     evidence: list[dict[str, Any]] = []
     legal_refs: list[dict[str, Any]] = []
+    # 시니어 회계사 자문(opt-in·with_senior=True일 때만) — K-IFRS·세무·리스크 표준 evidence 계약.
+    # 미요청/미가용은 빈 dict(자문은 보조 — 수지 계산값을 절대 덮어쓰지 않음).
+    senior_accountant_review: dict[str, Any] = {}
 
 
 # 통합 세금엔진 항목코드 → 법령 근거 레지스트리 키. 레지스트리 보유분만 매핑하며,
@@ -399,6 +405,33 @@ def _build_cost_trust_blocks(
     return evidence, legal_refs
 
 
+def _attach_senior_accountant(output, req: FeasibilityCalculateRequest) -> dict[str, Any]:
+    """시니어 회계사(K-IFRS·세무·리스크) 자문 — opt-in(with_senior). 표준 evidence 계약 반환.
+
+    ★절대 raise 안 함(수지 결과 무손상·빈 dict 폴백). 계산값을 덮어쓰지 않고 검토 의견만 부착.
+    공용 훅 attach_senior_consultation("accounting")을 재사용(재구현 0) — LLM 계측·과금은 훅 경유.
+    """
+    try:
+        from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+        inputs: dict[str, Any] = {}
+        for key, val in (
+            ("total_revenue", output.total_revenue_won),
+            ("total_cost", output.total_cost_won),
+            ("net_profit", output.net_profit_won),
+            ("profit_rate_pct", output.profit_rate_pct),
+            ("roi_pct", output.roi_pct),
+        ):
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                inputs[key] = float(val)
+        if req.equity_won and req.equity_won > 0:
+            inputs["equity"] = float(req.equity_won)
+        return attach_senior_consultation("accounting", inputs)
+    except Exception as e:  # noqa: BLE001 — 자문 첨부 실패는 수지 분석 무손상
+        logger.warning("시니어 회계사 자문 스킵: %s", str(e)[:120])
+        return {}
+
+
 @router.post(
     "/calculate",
     response_model=FeasibilityResultTrustResponse,
@@ -415,6 +448,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
         except Exception as e:  # noqa: BLE001
             logger.warning("수지 근거 블록 부착 스킵: %s", str(e)[:120])
             evidence, legal_refs = [], []
+        senior_review = _attach_senior_accountant(output, req) if req.with_senior else {}
         return FeasibilityResultTrustResponse(
             development_type=output.development_type,
             module_name=output.module_name,
@@ -430,6 +464,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             special_detail=output.special_detail,
             evidence=evidence,
             legal_refs=legal_refs,
+            senior_accountant_review=senior_review,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -1503,3 +1538,67 @@ async def cashflow_excel(req: CashflowRequest):
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"엑셀 생성 실패: {str(e)[:160]}")
+
+
+@router.post("/budget-execution", response_model=BudgetExecutionResponse)
+async def budget_execution(req: BudgetExecutionRequest):
+    """예산-실적 실시간 집행 추적(설계도 §13) — 라인아이템의 예산 + 집행이벤트 → 기지출·미지출·집행률·롤업.
+
+    지출이 발생할 때마다 해당 항목 disbursements에 append 후 재호출하면 수지가 실시간 재계산된다
+    (무상태·프론트 라이브). 미지출 = 예산 − 기지출, 집행률 = 기지출 ÷ 예산. 영속(DisbursementEvent
+    append-only 원장)은 후속 증분. 무목업: 예산 0이면 집행률 None(0분모 방지).
+    """
+    from app.services.feasibility.budget_execution import (
+        compute_line_execution,
+        rollup_execution,
+    )
+
+    items = [it.model_dump() for it in req.line_items]
+    # project_id 제공 시 영속 집행이벤트(원장)를 항목별로 병합(키=group::label) → 실시간 갱신.
+    if req.project_id:
+        from app.services.feasibility.disbursement_ledger_service import list_disbursements
+
+        persisted = await list_disbursements(req.project_id)
+        for it in items:
+            key = f"{it['group']}::{it['label']}"
+            if key in persisted:
+                it.setdefault("disbursements", []).extend(persisted[key])
+    lines = [
+        {
+            "group": it["group"],
+            "label": it["label"],
+            **compute_line_execution(
+                budget_won=it["budget_won"], disbursements=it.get("disbursements") or []
+            ),
+        }
+        for it in items
+    ]
+    roll = rollup_execution(items)
+    return BudgetExecutionResponse(
+        lines=lines,
+        groups=roll["groups"],
+        total=roll["total"],
+        over_budget_items=roll["over_budget_items"],
+    )
+
+
+@router.post("/budget-execution/disburse")
+async def budget_disburse(req: DisburseRequest):
+    """집행 이벤트 1건 append (설계도 §13 · 해시체인 원장·변조탐지).
+
+    비용 지출 시 해당 라인아이템(line_item_key=group::label)에 지출을 기록한다. 이후
+    /budget-execution을 같은 project_id로 재호출하면 기지출·미지출·집행률이 실시간 갱신된다.
+    영속 실패(DB 미가용)여도 graceful({persisted:False}) — 수지 분석 무손상.
+    """
+    from app.services.feasibility.disbursement_ledger_service import append_disbursement
+
+    return await append_disbursement(
+        project_id=req.project_id,
+        line_item_key=req.line_item_key,
+        amount_won=req.amount_won,
+        group_name=req.group_name or None,
+        label=req.label or None,
+        event_date=req.event_date,
+        memo=req.memo,
+        evidence=req.evidence,
+    )

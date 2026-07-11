@@ -103,8 +103,10 @@ class TestUtilityCharge:
     def test_sigungu_override(self):
         assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "경기", "수원시") == 130_000
 
-    def test_fallback_default(self):
-        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "충남", "논산시") == 120_000
+    def test_unregistered_returns_none(self):
+        # ★조례 미등록 지역 → None (수도법 §71 조례위임·전국 단일값 없음). 종전 임의 폴백 120,000은
+        #   지어낸 값이라 무목업 위반이었음. 소비처(B03/B04)가 unavailable로 정직 처리한다.
+        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "충남", "논산시") is None
 
     def test_sewage_sido(self):
         assert get_utility_charge(SEWAGE_CHARGES_WON, "부산", "해운대구") == 160_000
@@ -126,7 +128,8 @@ class TestConstants:
         assert FOREST_CONVERSION_RATES["semi_conservation"] == 2_500
 
     def test_school_site(self):
-        assert SCHOOL_SITE_CHARGE_RATE == 0.008
+        # 학교용지법 §5의2 현행: 공동주택 0.4% (2025.6.21 개정, 구값 0.8% 아님).
+        assert SCHOOL_SITE_CHARGE_RATE == 0.004
 
     def test_hug_guarantee(self):
         assert HUG_GUARANTEE_RATES["apartment"] == 0.0015

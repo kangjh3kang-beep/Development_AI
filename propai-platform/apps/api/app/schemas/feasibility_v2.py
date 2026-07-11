@@ -31,6 +31,7 @@ class FeasibilityCalculateRequest(BaseModel):
     discount_rate: float = 0.08
     equity_won: int = 0
     params: dict[str, Any] = {}
+    with_senior: bool = False  # ★opt-in: 시니어 회계사(K-IFRS) 자문 첨부(LLM 비용 유발이라 기본 off)
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택). /calculate는 규칙기반이라 무영향.
 
 
@@ -209,3 +210,41 @@ class ModuleListResponse(BaseModel):
 class RecommendationResponse(BaseModel):
     """AI 권고 응답."""
     recommendations: list[dict[str, Any]]
+
+
+class BudgetLineItem(BaseModel):
+    """예산-실적 라인아이템 (설계도 §13)."""
+    group: str = "기타"
+    label: str = ""
+    budget_won: float = 0
+    disbursements: list[dict[str, Any]] = []  # [{amount_won, date?, memo?, evidence?}] append-only
+
+
+class BudgetExecutionRequest(BaseModel):
+    """예산 대비 실적(집행) 계산 요청.
+
+    project_id 제공 시 영속된 집행 이벤트(disbursement_events 원장)를 라인아이템에 병합해
+    실시간 갱신값을 계산한다(키 = group::label). 미제공이면 요청 내 disbursements만 사용(무상태).
+    """
+    line_items: list[BudgetLineItem] = []
+    project_id: str | None = None
+
+
+class DisburseRequest(BaseModel):
+    """집행 이벤트 append 요청 (설계도 §13 원장). line_item_key = group::label."""
+    project_id: str
+    line_item_key: str
+    amount_won: int
+    group_name: str = ""
+    label: str = ""
+    event_date: str | None = None
+    memo: str | None = None
+    evidence: str | None = None
+
+
+class BudgetExecutionResponse(BaseModel):
+    """예산-실적 롤업 응답 — 항목별 + 그룹별·총계 + 초과집행 목록."""
+    lines: list[dict[str, Any]] = []
+    groups: dict[str, Any] = {}
+    total: dict[str, Any] = {}
+    over_budget_items: list[str] = []

@@ -72,12 +72,19 @@ def calculate_b03_water_supply(
 ) -> dict[str, Any]:
     """B03 상수도 원인자부담금."""
     per_hh = get_utility_charge(WATER_SUPPLY_CHARGES_WON, sido_name, sigungu_name)
+    if per_hh is None:  # ★조례 미등록 — 전국 단일값 없음(수도법 §71). 지어내지 않고 정직 표기.
+        return {
+            "code": "B03", "name": "상수도 원인자부담금",
+            "base_won": total_households, "rate": None, "amount_won": 0,
+            "detail": {"confidence": "unavailable",
+                       "reason": "지자체 조례 단가 미등록 — 관할 조례 확인 필요(수도법 §71·전국 단일값 없음)"},
+        }
     amount = per_hh * total_households
     return {
         "code": "B03", "name": "상수도 원인자부담금",
         "base_won": total_households, "rate": per_hh,
         "amount_won": amount,
-        "detail": {"per_hh_won": per_hh},
+        "detail": {"per_hh_won": per_hh, "confidence": "regional"},
     }
 
 
@@ -89,11 +96,19 @@ def calculate_b04_sewage(
 ) -> dict[str, Any]:
     """B04 하수도 원인자부담금."""
     per_hh = get_utility_charge(SEWAGE_CHARGES_WON, sido_name, sigungu_name)
+    if per_hh is None:  # ★조례 미등록 — 전국 단일값 없음(하수도법 §61). 지어내지 않고 정직 표기.
+        return {
+            "code": "B04", "name": "하수도 원인자부담금",
+            "base_won": total_households, "rate": None, "amount_won": 0,
+            "detail": {"confidence": "unavailable",
+                       "reason": "지자체 조례 단가 미등록 — 관할 조례 확인 필요(하수도법 §61·오수발생량×조례단가)"},
+        }
     amount = per_hh * total_households
     return {
         "code": "B04", "name": "하수도 원인자부담금",
         "base_won": total_households, "rate": per_hh,
         "amount_won": amount,
+        "detail": {"per_hh_won": per_hh, "confidence": "regional"},
     }
 
 
