@@ -108,3 +108,33 @@ class TestAllUtilityStage:
         codes = [it["code"] for it in result["items"]]
         assert "B01" in codes
         assert "B08" in codes
+
+
+class TestChargeLegalRefs:
+    """부담금 출력에 법령 근거(근거+링크·evidence) 부착 — verified law.go.kr URL."""
+
+    def test_utility_charges_carry_legal_ref(self):
+        r = calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구", total_households=1000,
+            total_sale_amount_won=500_000_000_000, total_gfa_sqm=100_000,
+        )
+        by_code = {it["code"]: it for it in r["items"]}
+        expect = {"B01": "광역교통", "B02": "학교용지", "B03": "수도법", "B04": "하수도"}
+        for code, kw in expect.items():
+            ref = by_code[code].get("legal_ref")
+            assert ref and ref.get("url"), f"{code}: legal_ref/url 누락"
+            assert kw in (ref.get("law_name", "") + ref.get("title", "")), f"{code}: 근거 법령 불일치"
+        # 법령키 없는 B05~B08은 legal_ref 미부착(오탐 방지).
+        assert "legal_ref" not in by_code["B05"]
+
+    def test_sale_c07_carries_legal_ref(self):
+        from app.services.tax.sale_stage_engine import calculate_all_sale_stage
+
+        r = calculate_all_sale_stage(
+            total_sale_amount_won=500_000_000_000, total_units=1000,
+            total_gfa_sqm=100_000, in_infra_charge_zone=True,
+        )
+        c07 = next(it for it in r["items"] if it["code"] == "C07")
+        ref = c07.get("legal_ref")
+        assert ref and ref.get("url"), "C07 legal_ref/url 누락"
+        assert "국토" in ref.get("law_name", "")
