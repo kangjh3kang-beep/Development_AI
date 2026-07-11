@@ -475,53 +475,6 @@ class FinancialAnalysisResponse(BaseModel):
     created_at: datetime
 
 
-class FeasibilityAnalysisRequest(BaseModel):
-    """사업성 분석 실행 요청."""
-
-    project_id: UUID
-    scenario_name: str = Field(default="base-case", min_length=1, max_length=100)
-    total_investment_krw: float = Field(gt=0, description="초기 투자비 (원)")
-    annual_revenue_krw: float = Field(gt=0, description="연간 매출 (원)")
-    annual_operating_cost_krw: float = Field(ge=0, description="연간 운영비 (원)")
-    discount_rate: float = Field(default=0.05, ge=0.0, le=0.3)
-    annual_growth_rate: float = Field(default=0.02, ge=-0.1, le=0.2)
-    analysis_years: int = Field(default=10, ge=3, le=30)
-    exit_value_krw: float | None = Field(default=None, gt=0, description="종료 시점 잔존가치 (원)")
-
-
-class FeasibilityCashflowRow(BaseModel):
-    """연도별 사업성 현금흐름."""
-
-    year: int
-    revenue_krw: float
-    operating_cost_krw: float
-    net_cashflow_krw: float
-    discounted_cashflow_krw: float
-
-
-class FeasibilityAnalysisResponse(BaseModel):
-    """사업성 분석 상세 응답."""
-
-    id: UUID
-    project_id: UUID
-    scenario_name: str | None = None
-    npv: float = Field(description="순현재가치 (원)")
-    irr: float = Field(description="내부수익률")
-    payback_period_months: int = Field(description="회수 기간 (월)")
-    total_investment_krw: float
-    total_revenue_krw: float
-    risk_score: float = Field(ge=0, le=1)
-    discount_rate: float
-    annual_growth_rate: float
-    analysis_years: int
-    exit_value_krw: float
-    cashflows: list[FeasibilityCashflowRow] = Field(default_factory=list)
-    assumptions: dict = Field(default_factory=dict)
-    created_at: datetime
-    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
-    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
-
-
 # ──────────────────────────────────────
 # 전세 리스크
 # ──────────────────────────────────────
@@ -541,31 +494,6 @@ class JeonseRiskResponse(BaseModel):
     risk_score: float = Field(ge=0, le=1, description="위험 점수")
     analysis: str = Field(description="종합 분석")
     factors: list[dict] = Field(default_factory=list, description="위험 요인")
-    # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
-    evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
-
-
-# ──────────────────────────────────────
-# 조합원 분담금
-# ──────────────────────────────────────
-
-class UnionContributionRequest(BaseModel):
-    """조합원 분담금 산정 요청"""
-    project_id: UUID
-    total_project_cost: float = Field(gt=0, description="총 사업비 (원)")
-    total_appraised_value: float = Field(gt=0, description="총 감정가 (원)")
-    individual_appraised_value: float = Field(gt=0, description="개인 감정가 (원)")
-    target_area_sqm: float = Field(gt=0, description="입주 희망 면적 (㎡)")
-    avg_sale_price_per_sqm: float = Field(gt=0, description="평균 분양가 (원/㎡)")
-
-
-class UnionContributionResponse(BaseModel):
-    """조합원 분담금 산정 응답"""
-    proportional_rate: float = Field(description="비례율")
-    individual_contribution: float = Field(description="개인 분담금 (원)")
-    total_project_cost: float = Field(description="총 사업비 (원)")
-    breakdown: dict = Field(description="분담금 산출 내역")
-    scenarios: list[dict] = Field(default_factory=list, description="시나리오별 분담금")
     # 표준 근거 블록(#5): {evidence, legal_refs, provenance, trust}. 가산(graceful·구버전 None).
     evidence: dict | None = Field(default=None, description="근거·산식·출처 블록")
 

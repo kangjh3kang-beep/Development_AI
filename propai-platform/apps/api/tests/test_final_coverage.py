@@ -1259,11 +1259,6 @@ class TestAdditionalRouterPaths:
         assert r.status_code in {200, 401, 403, 422, 500}
 
     @pytest.mark.asyncio
-    async def test_finance_union_contribution(self, client):
-        r = await client.post("/api/v1/finance/union-contribution", json={})
-        assert r.status_code in {200, 401, 403, 422, 500}
-
-    @pytest.mark.asyncio
     async def test_portals_post_all(self, client):
         r = await client.post("/api/v1/portals/post-all", json={})
         assert r.status_code in {200, 401, 403, 422, 500}

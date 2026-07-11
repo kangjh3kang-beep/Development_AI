@@ -397,11 +397,6 @@ class TestRouterPathsExtra:
         assert r.status_code in {200, 401, 403, 404, 500}
 
     @pytest.mark.asyncio
-    async def test_finance_feasibility(self, client):
-        r = await client.post("/api/v1/finance/feasibility", json={})
-        assert r.status_code in {200, 401, 403, 404, 422, 500}
-
-    @pytest.mark.asyncio
     async def test_agents_status(self, client):
         r = await client.get("/api/v1/agents/status")
         assert r.status_code in {200, 401, 403, 404, 500}

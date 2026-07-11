@@ -1,6 +1,6 @@
 """잔여 커버리지 확보 테스트.
 
-parking, safety, domain_agents, feasibility, climate_risk,
+parking, safety, domain_agents, climate_risk,
 compliance, esg, underwriting, marketing, portals, lease,
 maintenance, regulation, ai_costs, ai_usage_tracker,
 chatbot, predictive_maintenance, webrtc router 핸들러 등
@@ -158,42 +158,6 @@ class TestDomainAgentsServiceAsync:
             )
             assert task is not None
             assert task.domain == domain
-
-
-# ═══════════════════════════════════════════
-# FeasibilityService (85 stmts, 26 missed)
-# ═══════════════════════════════════════════
-
-
-class TestFeasibilityService:
-    @pytest.mark.asyncio
-    async def test_analyze_기본(self):
-        from apps.api.services.feasibility_service import FeasibilityService
-
-        mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
-        # Project 조회 mock
-        mock_project = MagicMock()
-        mock_project.id = TEST_PROJECT_ID
-        mock_project.is_deleted = False
-        mock_db.scalar = AsyncMock(return_value=mock_project)
-
-        svc = FeasibilityService(db=mock_db)
-        result = await svc.analyze(
-            project_id=TEST_PROJECT_ID,
-            tenant_id=TEST_TENANT_ID,
-            scenario_name="기본 시나리오",
-            total_investment_krw=16_000_000_000,
-            annual_revenue_krw=3_000_000_000,
-            annual_operating_cost_krw=500_000_000,
-            discount_rate=0.08,
-            annual_growth_rate=0.03,
-            analysis_years=5,
-            exit_value_krw=20_000_000_000,
-        )
-        assert result is not None
 
 
 # ═══════════════════════════════════════════
