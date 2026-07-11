@@ -150,16 +150,32 @@ export function CarbonEmissionsWorkspaceClient({
   const [error, setError] = useState<string | null>(null);
   // 대안 조회 중인 자재명(중복 클릭 방지·로딩 표시).
   const [altLoading, setAltLoading] = useState<string | null>(null);
+  // (G3/B-4) 커밋 실제 여부 3분기 — 배너가 이 상태만 보고 정직 표기한다(binary projectId 추측 금지).
+  //  "done"=updateEsgData 실행됨 / "skipped"=가드(인플라이트 전환) 또는 patch null로 스킵 /
+  //  "waiting"=projectId 부재(프로젝트 연결 대기).
+  const [committed, setCommitted] = useState<"done" | "skipped" | "waiting" | null>(null);
 
-  // (G3) 계산 결과 → esgData SSOT 커밋(프로젝트 연결 시에만, 무오염 가드 통과 시에만).
+  // (G3/B-4) 계산 결과 → esgData SSOT 커밋 — 실제로 무엇이 일어났는지(done/skipped/waiting)를
+  // committed state에 기록해, 배너가 추측(binary projectId) 대신 실커밋 결과를 그대로 표시한다.
   useEffect(() => {
     if (!result) return;
-    if (!projectId) return; // 프로젝트 미연결 → SSOT 비접촉(안내만, 아래 렌더 참고)
-    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환) 커밋 금지.
-    if (requestProjectRef.current !== projectId) return;
+    if (!projectId) {
+      setCommitted("waiting"); // 프로젝트 미연결 → SSOT 비접촉(연결 대기)
+      return;
+    }
+    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환) 커밋 금지 — 정직 스킵.
+    if (requestProjectRef.current !== projectId) {
+      setCommitted("skipped");
+      return;
+    }
     const prevEsgData = useProjectContextStore.getState().esgData;
     const patch = carbonResultToEsgPatch(result, prevEsgData);
-    if (patch) updateEsgData(patch, { source: "auto" });
+    if (patch) {
+      updateEsgData(patch, { source: "auto" });
+      setCommitted("done");
+    } else {
+      setCommitted("skipped"); // patch null(반영할 변경 없음 등) → 정직 스킵
+    }
   }, [result, projectId, updateEsgData]);
 
   const addMaterial = () => {
@@ -183,6 +199,7 @@ export function CarbonEmissionsWorkspaceClient({
     requestProjectRef.current = projectId;
     setIsAnalyzing(true);
     setError(null);
+    setCommitted(null); // 새 분석 시작 — 이전 커밋 배너 초기화(이번 결과의 committed useEffect가 재산정)
     try {
       // ★실제 백엔드 호출 — EPD Korea Database 기반 탄소발자국 산출(클라이언트 하드코딩 GWP 제거).
       //   body = { material_list: [{ name, quantity_kg }] } (EPDRequest 계약).
@@ -413,12 +430,19 @@ export function CarbonEmissionsWorkspaceClient({
       {/* Results */}
       {result && (
         <>
-          {/* (G3) SSOT 반영 안내 — 프로젝트 연결 여부에 따라 정직 표기(무오염). */}
-          {projectId ? (
+          {/* (G3/B-4) SSOT 반영 안내 — 실커밋 여부(committed) 3분기로 정직 표기(무오염·무추측). */}
+          {committed === "done" && (
             <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
               연결된 프로젝트의 ESG 데이터(embodiedCarbonKg)에 반영되었습니다.
             </div>
-          ) : (
+          )}
+          {committed === "skipped" && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+              ESG 데이터에 반영되지 않았습니다 — 분석 도중 프로젝트가 전환되었거나, 반영할 변경사항이
+              없어 건너뛰었습니다.
+            </div>
+          )}
+          {committed === "waiting" && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs font-medium text-[var(--text-secondary)]">
               프로젝트 연결 시 ESG SSOT에 반영됩니다.
             </div>

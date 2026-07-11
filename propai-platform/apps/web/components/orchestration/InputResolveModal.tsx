@@ -23,15 +23,29 @@ import type {
   SsotInputSpec,
 } from "@/lib/orchestration/types";
 import type { ResolveInputsResult } from "@/store/useOrchestrationStore";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 const BY_ID: Record<NodeId, AnalysisNode> = Object.fromEntries(
   NODES.map((n) => [n.id, n]),
 ) as Record<NodeId, AnalysisNode>;
 
-/** 입력 슬롯 → 사람이 읽는 라벨. */
-function slotLabel(input: SsotInputSpec): string {
+/** 입력 슬롯 → 사람이 읽는 라벨. (LOW-1 테스트: 순수함수 — InputResolveModal.test.ts) */
+export function slotLabel(input: SsotInputSpec): string {
   const f = input.field ? `.${input.field}` : "";
   return input.manualPrompt || `${input.slot}${f}`;
+}
+
+/**
+ * (LOW-1) ready 슬롯이 "실제 SSOT 값 확보"인지, 아니면 readyCheck가 항상 true인
+ * 자기슬롯 파생환류(예: feasibility 노드의 feasibilityData — 있으면 쓰고 없어도 게이트
+ * 하지 않는 옵셔널 입력)인지 구분한다. 항상-ready 슬롯은 readyCheck가 무조건 통과하므로
+ * ready 배열에 들어오지만, 실제 store 값이 null이면 "확보됨(✓)"이 거짓 표시가 된다.
+ * 다른 readyCheck(hasSite 등)는 통과 조건 자체가 슬롯 실값 존재이므로, 이 검사가
+ * 특정 슬롯을 하드코딩하지 않고도 일반적으로 안전하게 동작한다.
+ */
+function hasRealSlotValue(input: SsotInputSpec): boolean {
+  const s = useProjectContextStore.getState() as unknown as Record<string, unknown>;
+  return s[input.slot] != null;
 }
 
 export interface InputResolveModalProps {
@@ -105,12 +119,26 @@ export function InputResolveModal({
           <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
             <p className="mb-1.5 text-[11px] font-bold text-[var(--text-secondary)]">확보된 입력</p>
             <ul className="space-y-1">
-              {ready.map((r) => (
-                <li key={manualKey(r)} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                  <span className="text-[var(--accent-strong)]">✓</span>
-                  {slotLabel(r)}
-                </li>
-              ))}
+              {ready.map((r) => {
+                // (LOW-1) 항상-ready 슬롯(readyCheck 무조건 true)이 실제로는 비어 있으면
+                // ✓(확보됨)로 오인 표시하지 않고 중립 표기로 정직화한다.
+                const confirmed = hasRealSlotValue(r);
+                return (
+                  <li key={manualKey(r)} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                    <span className={confirmed ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)]"}>
+                      {confirmed ? "✓" : "–"}
+                    </span>
+                    <span>
+                      {slotLabel(r)}
+                      {!confirmed && (
+                        <span className="ml-1 text-[10px] text-[var(--text-hint)]">
+                          (선택 입력 — 미확보 시 기본값)
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
