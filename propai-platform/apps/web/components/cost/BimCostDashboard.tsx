@@ -10,6 +10,7 @@ import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysi
 // F-3: 무인증 raw fetch(Authorization 미첨부→배포환경 401 조용실패) 대신 apiClient로 통일
 // (자동 Bearer 첨부 + 401 리프레시 재시도 공용 계약 — BoqDetailTable 등 cost 화면 기존 관례와 동일).
 import { apiClient } from "@/lib/api-client";
+import { CostIntelligenceSection } from "@/components/cost/CostIntelligenceSection";
 
 type CostResult = {
   total_project_cost: number;
@@ -443,6 +444,10 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
           )}
         </AnimatePresence>
       </div>
+
+      {/* 배선 캠페인 2차(cost-intelligence, additive) — KCCI 자재가 스냅샷·공사비 에스컬레이션.
+          기본 접힘(AdvancedDrawer), 기존 BIM 공사비 시뮬레이션 흐름과 무관하게 항상 노출. */}
+      <CostIntelligenceSection projectId={projectId} />
     </div>
   );
 }

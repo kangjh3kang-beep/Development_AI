@@ -28,6 +28,7 @@ import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { CadCorrectionSection } from "@/components/design/CadCorrectionSection";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -2511,6 +2512,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 설계 결과 요약 + AI 설계 해석(designAi 6섹션) — 편집화면(뷰포트) 아래로 재배치 ── */}
       <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
+
+      {/* 배선 캠페인 2차(cad-correction, additive) — CAD 파라메트릭 자동 보정(건폐율/용적률/
+          높이 법규 검증+보정). 기본 접힘(AdvancedDrawer), 기존 2D/3D 생성·편집 흐름과
+          무관하게 항상 노출. */}
+      <CadCorrectionSection projectId={projectId} />
     </div>
   );
 }

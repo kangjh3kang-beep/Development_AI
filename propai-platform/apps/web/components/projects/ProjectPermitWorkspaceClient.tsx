@@ -15,6 +15,7 @@ import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { DecisionReuseBanner } from "@/components/projects/DecisionReuseBanner";
 import { findDecisionPart } from "@/components/projects/decision-brief-types";
+import { PermitCasesSection } from "@/components/projects/PermitCasesSection";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -863,6 +864,12 @@ export function ProjectPermitWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* 배선 캠페인 2차(permit-cases, additive) — 건축HUB 인허가 사례 조회. 기본 접힘
+          (AdvancedDrawer), 기존 인허가 검토·체크리스트 흐름과 무관하게 항상 노출.
+          key는 PNU 프리필 SSOT(siteAnalysis.pnu)가 늦게 도착해도 재캡처하도록 리마운트시킨다
+          (1차 ESG 패널과 동일한 eager-mount 하이드레이션 대응 패턴). */}
+      <PermitCasesSection key={`permit-cases-${siteAnalysis?.pnu ?? "none"}`} projectId={projectId} />
     </section>
   );
 }
