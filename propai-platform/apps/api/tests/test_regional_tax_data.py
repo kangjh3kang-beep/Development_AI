@@ -126,7 +126,8 @@ class TestConstants:
         assert FOREST_CONVERSION_RATES["semi_conservation"] == 2_500
 
     def test_school_site(self):
-        assert SCHOOL_SITE_CHARGE_RATE == 0.008
+        # 학교용지법 §5의2 현행: 공동주택 0.4% (2025.6.21 개정, 구값 0.8% 아님).
+        assert SCHOOL_SITE_CHARGE_RATE == 0.004
 
     def test_hug_guarantee(self):
         assert HUG_GUARANTEE_RATES["apartment"] == 0.0015

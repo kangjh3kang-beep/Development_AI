@@ -40,12 +40,12 @@ class TestB02SchoolSite:
         assert result["amount_won"] == 0
 
     def test_over_300(self):
-        """300세대 이상: 분양가 × 0.8%."""
+        """300세대 이상: 분양가 × 0.4% (학교용지법 §5의2 현행 요율·2025.6.21 개정)."""
         result = calculate_b02_school_site(
             total_sale_amount_won=500_000_000_000,
             total_households=1000,
         )
-        assert result["amount_won"] == 4_000_000_000  # 5000억 × 0.8%
+        assert result["amount_won"] == 2_000_000_000  # 5000억 × 0.4%
 
 
 class TestB03WaterSupply:
