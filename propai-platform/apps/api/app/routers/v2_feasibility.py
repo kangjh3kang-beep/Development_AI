@@ -230,6 +230,9 @@ class FeasibilityResultTrustResponse(FeasibilityResultResponse):
 
     evidence: list[dict[str, Any]] = []
     legal_refs: list[dict[str, Any]] = []
+    # 시니어 회계사 자문(opt-in·with_senior=True일 때만) — K-IFRS·세무·리스크 표준 evidence 계약.
+    # 미요청/미가용은 빈 dict(자문은 보조 — 수지 계산값을 절대 덮어쓰지 않음).
+    senior_accountant_review: dict[str, Any] = {}
 
 
 # 통합 세금엔진 항목코드 → 법령 근거 레지스트리 키. 레지스트리 보유분만 매핑하며,
@@ -399,6 +402,33 @@ def _build_cost_trust_blocks(
     return evidence, legal_refs
 
 
+def _attach_senior_accountant(output, req: FeasibilityCalculateRequest) -> dict[str, Any]:
+    """시니어 회계사(K-IFRS·세무·리스크) 자문 — opt-in(with_senior). 표준 evidence 계약 반환.
+
+    ★절대 raise 안 함(수지 결과 무손상·빈 dict 폴백). 계산값을 덮어쓰지 않고 검토 의견만 부착.
+    공용 훅 attach_senior_consultation("accounting")을 재사용(재구현 0) — LLM 계측·과금은 훅 경유.
+    """
+    try:
+        from app.services.senior_agents.consultation_hook import attach_senior_consultation
+
+        inputs: dict[str, Any] = {}
+        for key, val in (
+            ("total_revenue", output.total_revenue_won),
+            ("total_cost", output.total_cost_won),
+            ("net_profit", output.net_profit_won),
+            ("profit_rate_pct", output.profit_rate_pct),
+            ("roi_pct", output.roi_pct),
+        ):
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                inputs[key] = float(val)
+        if req.equity_won and req.equity_won > 0:
+            inputs["equity"] = float(req.equity_won)
+        return attach_senior_consultation("accounting", inputs)
+    except Exception as e:  # noqa: BLE001 — 자문 첨부 실패는 수지 분석 무손상
+        logger.warning("시니어 회계사 자문 스킵: %s", str(e)[:120])
+        return {}
+
+
 @router.post(
     "/calculate",
     response_model=FeasibilityResultTrustResponse,
@@ -415,6 +445,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
         except Exception as e:  # noqa: BLE001
             logger.warning("수지 근거 블록 부착 스킵: %s", str(e)[:120])
             evidence, legal_refs = [], []
+        senior_review = _attach_senior_accountant(output, req) if req.with_senior else {}
         return FeasibilityResultTrustResponse(
             development_type=output.development_type,
             module_name=output.module_name,
@@ -430,6 +461,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             special_detail=output.special_detail,
             evidence=evidence,
             legal_refs=legal_refs,
+            senior_accountant_review=senior_review,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
