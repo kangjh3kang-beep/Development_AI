@@ -4,7 +4,12 @@
 
 import { describe, it, expect } from "vitest";
 
-import { buildNodeBody, type NodeBodyContext } from "./node-body-builders";
+import {
+  buildNodeBody,
+  SELLABLE_EFFICIENCY_BY_TYPE,
+  DEFAULT_SELLABLE_EFFICIENCY,
+  type NodeBodyContext,
+} from "./node-body-builders";
 import type {
   SiteAnalysisData,
   DesignData,
@@ -552,5 +557,28 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
       "p1",
     );
     expect(body.total_land_area_sqm).toBe(500);
+  });
+});
+
+// (G4) 전용률 상수 FE/BE 계약 고정 — apps/web(SELLABLE_EFFICIENCY_BY_TYPE)과
+// apps/api/app/services/pipeline/project_pipeline.py(_SELLABLE_EFFICIENCY_BY_TYPE)는
+// 이중 하드코딩이라 자동 동기화되지 않는다(정본 미수렴 — P1 unit_standards 노출 예정).
+// 이 테스트는 P0 실용안: 값을 명시 핀해 드리프트를 CI에서 즉시 잡는다.
+// ★백엔드 project_pipeline._SELLABLE_EFFICIENCY_BY_TYPE와 동치 계약 — 한쪽 변경 시 반대쪽
+// 테스트·상수를 함께 갱신하라(apps/api/tests/test_sellable_efficiency_contract.py도 동일 값 대조).
+// 라이브 대조 결과(2026-07-11): 아래 5항목·기본값 전부 백엔드와 일치(불일치 0건).
+describe("G4 계약 — SELLABLE_EFFICIENCY_BY_TYPE FE/BE 동치 고정(드리프트 CI 게이트)", () => {
+  it("건물유형별 전용률 5항목이 백엔드 project_pipeline._SELLABLE_EFFICIENCY_BY_TYPE와 동일 값으로 핀됨", () => {
+    expect(SELLABLE_EFFICIENCY_BY_TYPE).toEqual({
+      아파트: 0.75,
+      다세대주택: 0.78,
+      오피스텔: 0.7,
+      공동주택: 0.76,
+      근린생활시설: 0.7,
+    });
+  });
+
+  it("유형 미상 기본 전용률이 백엔드 .get(building_type, 0.75) 기본값과 동일하게 핀됨", () => {
+    expect(DEFAULT_SELLABLE_EFFICIENCY).toBe(0.75);
   });
 });

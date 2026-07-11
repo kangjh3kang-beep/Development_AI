@@ -89,6 +89,12 @@ class CostToFeasibilityPayload(BaseModel):
 
 # ── 유닛믹스 고도화 상수 ──
 # 건물유형별 전용률(연면적 대비 분양/전용면적 비율) — 고정 0.75를 유형별 현실값으로 대체.
+#
+# ★(G4) FE/BE 이중 하드코딩 계약: apps/web/lib/orchestration/node-body-builders.ts의
+# SELLABLE_EFFICIENCY_BY_TYPE와 "동치 계약"이며 자동 동기화되지 않는다(정본 미수렴 — P1
+# unit_standards 노출 예정). 한쪽을 바꾸면 반드시 반대쪽 상수와 두 계약 테스트
+# (apps/api/tests/test_sellable_efficiency_contract.py·
+# apps/web/lib/orchestration/node-body-builders.test.ts의 "G4 계약" describe)를 함께 갱신할 것.
 _SELLABLE_EFFICIENCY_BY_TYPE: dict[str, float] = {
     "아파트": 0.75,
     "다세대주택": 0.78,
@@ -96,6 +102,10 @@ _SELLABLE_EFFICIENCY_BY_TYPE: dict[str, float] = {
     "공동주택": 0.76,
     "근린생활시설": 0.70,
 }
+
+# 유형 미상 시 기본 전용률 — 프론트 DEFAULT_SELLABLE_EFFICIENCY와 동치 계약(위 G4 주석 참조).
+# 인라인 리터럴 대신 명명 상수로 두어 계약 테스트가 실사용 기본값을 직접 핀할 수 있게 한다.
+_DEFAULT_SELLABLE_EFFICIENCY = 0.75
 
 # 유닛믹스 최적화를 적용할 주거 계열 건물유형(상업/근생은 평형 배분 미적용).
 _RESIDENTIAL_TYPES = {"아파트", "다세대주택", "공동주택", "오피스텔"}
@@ -1270,7 +1280,7 @@ class ProjectPipeline:
             applied_overrides["building_type"] = building_type
 
         # ── 전용률: 건물유형별 현실값 (고정 0.75 대체) ──
-        efficiency = _SELLABLE_EFFICIENCY_BY_TYPE.get(building_type, 0.75)
+        efficiency = _SELLABLE_EFFICIENCY_BY_TYPE.get(building_type, _DEFAULT_SELLABLE_EFFICIENCY)
         sellable_area = total_gfa * efficiency
 
         # ── 유닛믹스 최적화 연동 (UnitMixOptimizer) ──
