@@ -23,6 +23,7 @@ from app.models.auth import User
 from app.schemas.feasibility_v2 import (
     BudgetExecutionRequest,
     BudgetExecutionResponse,
+    DisburseRequest,
     FeasibilityBaselineRequest,
     FeasibilityBaselineResponse,
     FeasibilityCalculateRequest,
@@ -1553,12 +1554,21 @@ async def budget_execution(req: BudgetExecutionRequest):
     )
 
     items = [it.model_dump() for it in req.line_items]
+    # project_id 제공 시 영속 집행이벤트(원장)를 항목별로 병합(키=group::label) → 실시간 갱신.
+    if req.project_id:
+        from app.services.feasibility.disbursement_ledger_service import list_disbursements
+
+        persisted = await list_disbursements(req.project_id)
+        for it in items:
+            key = f"{it['group']}::{it['label']}"
+            if key in persisted:
+                it.setdefault("disbursements", []).extend(persisted[key])
     lines = [
         {
             "group": it["group"],
             "label": it["label"],
             **compute_line_execution(
-                budget_won=it["budget_won"], disbursements=it["disbursements"]
+                budget_won=it["budget_won"], disbursements=it.get("disbursements") or []
             ),
         }
         for it in items
@@ -1569,4 +1579,26 @@ async def budget_execution(req: BudgetExecutionRequest):
         groups=roll["groups"],
         total=roll["total"],
         over_budget_items=roll["over_budget_items"],
+    )
+
+
+@router.post("/budget-execution/disburse")
+async def budget_disburse(req: DisburseRequest):
+    """집행 이벤트 1건 append (설계도 §13 · 해시체인 원장·변조탐지).
+
+    비용 지출 시 해당 라인아이템(line_item_key=group::label)에 지출을 기록한다. 이후
+    /budget-execution을 같은 project_id로 재호출하면 기지출·미지출·집행률이 실시간 갱신된다.
+    영속 실패(DB 미가용)여도 graceful({persisted:False}) — 수지 분석 무손상.
+    """
+    from app.services.feasibility.disbursement_ledger_service import append_disbursement
+
+    return await append_disbursement(
+        project_id=req.project_id,
+        line_item_key=req.line_item_key,
+        amount_won=req.amount_won,
+        group_name=req.group_name or None,
+        label=req.label or None,
+        event_date=req.event_date,
+        memo=req.memo,
+        evidence=req.evidence,
     )

@@ -221,8 +221,25 @@ class BudgetLineItem(BaseModel):
 
 
 class BudgetExecutionRequest(BaseModel):
-    """예산 대비 실적(집행) 계산 요청."""
+    """예산 대비 실적(집행) 계산 요청.
+
+    project_id 제공 시 영속된 집행 이벤트(disbursement_events 원장)를 라인아이템에 병합해
+    실시간 갱신값을 계산한다(키 = group::label). 미제공이면 요청 내 disbursements만 사용(무상태).
+    """
     line_items: list[BudgetLineItem] = []
+    project_id: str | None = None
+
+
+class DisburseRequest(BaseModel):
+    """집행 이벤트 append 요청 (설계도 §13 원장). line_item_key = group::label."""
+    project_id: str
+    line_item_key: str
+    amount_won: int
+    group_name: str = ""
+    label: str = ""
+    event_date: str | None = None
+    memo: str | None = None
+    evidence: str | None = None
 
 
 class BudgetExecutionResponse(BaseModel):
