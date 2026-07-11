@@ -474,6 +474,19 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
             result.setdefault("upzoning_scenarios", upzoning.get("scenarios", []))
             result.setdefault("potential_far_range", upzoning.get("potential_far_range"))
 
+        # ── ★A-3/G8 법정초과 경량 가드 확산 — comprehensive analyze()의 P0-3 패턴을 공용
+        #   헬퍼(hotpath_guard)로 이 응답 표면(실효율 effective_far_tier)에도 적용(additive).
+        #   result 자체가 local_ordinance·zone_limits를 담고 있어 완화근거 판정에 그대로 재사용된다.
+        from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+        apply_legal_hotpath_guard(
+            result,
+            zone_type=zt, bcr_pct=effective_far_tier.get("effective_bcr_pct"),
+            far_pct=effective_far_tier.get("effective_far_pct"),
+            regulation_payload=result, plan_payload=result.get("special_districts"),
+            confidence_target=effective_far_tier,
+        )
+
         interp = await SiteAnalysisInterpreter().generate_interpretation(interp_input)
         if isinstance(interp, dict) and interp:
             result["ai_interpretation"] = interp
@@ -1648,23 +1661,53 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             upzoning_scenarios = []
             potential_far_range = None
 
+    integrated_block = {
+        "total_area_sqm": total_area,
+        "blended_bcr_eff_pct": integrated_zoning.get("blended_bcr_eff_pct"),
+        "blended_far_eff_pct": integrated_zoning.get("blended_far_eff_pct"),
+        "blended_bcr_legal_pct": integrated_zoning.get("blended_bcr_legal_pct"),
+        "blended_far_legal_pct": integrated_zoning.get("blended_far_legal_pct"),
+        "far_basis_note": integrated_zoning.get("far_basis_note"),
+        "integrated_gfa_sqm": integrated_zoning.get("integrated_gfa_sqm"),
+        "integrated_footprint_sqm": integrated_zoning.get("integrated_footprint_sqm"),
+        "gfa_basis": integrated_zoning.get("gfa_basis"),
+    }
+
+    # ── ★A-3/G8 법정초과 경량 가드 확산 — 통합(면적가중) 실효율 응답 표면에도 적용(additive) ──
+    #   comprehensive analyze()의 P0-3 패턴을 공용 헬퍼(hotpath_guard)로 확산 배선. regulation_payload:
+    #   필지 중 하나라도 실효 FAR가 실제 조례 취득(far_basis="조례")이면 그 신호를 local_ordinance로
+    #   전달한다(허위 조례 생성 아님 — 이미 보유한 far_basis를 그대로 재사용, 산식복제 0).
+    #   ★QA MEDIUM 수정: 이 표면의 값은 dominant(대표/우세) 단일 zone이 아니라 면적가중 블렌드
+    #   (blended_far_eff_pct)다. dominant zone의 단일 법정상한과 비교하면 정당한 혼합용도
+    #   (예: 2종일반 250%+준주거 400% 블렌드 290%)도 오탐(false "high")한다 — legal_far_pct/
+    #   legal_bcr_pct override로 비교 기준을 같은 면적가중 법정 블렌드(blended_*_legal_pct)로
+    #   맞춘다(hotpath_guard._check_against_blended_legal 참조). 진짜 오염(eff블렌드>legal블렌드)은
+    #   여전히 검출된다.
+    from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+    _guard_reg_payload = (
+        {"local_ordinance": {"source": "조례",
+                              "effective_far": integrated_block["blended_far_eff_pct"],
+                              "effective_bcr": integrated_block["blended_bcr_eff_pct"]}}
+        if any(p.get("_far_basis") == "조례" for p in enriched) else None
+    )
+    integrity_warnings = apply_legal_hotpath_guard(
+        {},  # 응답 splice는 아래서 별도 처리 — 이 dict는 헬퍼 계약 충족용(미사용)
+        zone_type=dominant_zone,
+        bcr_pct=integrated_block["blended_bcr_eff_pct"], far_pct=integrated_block["blended_far_eff_pct"],
+        regulation_payload=_guard_reg_payload,
+        confidence_target=integrated_block,
+        legal_far_pct=integrated_block["blended_far_legal_pct"],
+        legal_bcr_pct=integrated_block["blended_bcr_legal_pct"],
+    )
+
     return {
         "parcel_count": integrated_zoning.get("parcel_count"),
         "special_count": multi.get("special_count"),
         "zone_mix": integrated_zoning.get("zone_mix"),
         "dominant_zone": dominant_zone,
         "dominant_basis": integrated_zoning.get("dominant_basis"),
-        "integrated": {
-            "total_area_sqm": total_area,
-            "blended_bcr_eff_pct": integrated_zoning.get("blended_bcr_eff_pct"),
-            "blended_far_eff_pct": integrated_zoning.get("blended_far_eff_pct"),
-            "blended_bcr_legal_pct": integrated_zoning.get("blended_bcr_legal_pct"),
-            "blended_far_legal_pct": integrated_zoning.get("blended_far_legal_pct"),
-            "far_basis_note": integrated_zoning.get("far_basis_note"),
-            "integrated_gfa_sqm": integrated_zoning.get("integrated_gfa_sqm"),
-            "integrated_footprint_sqm": integrated_zoning.get("integrated_footprint_sqm"),
-            "gfa_basis": integrated_zoning.get("gfa_basis"),
-        },
+        "integrated": integrated_block,
         "adjacency": adjacency,
         "developability": developability,
         "resolvable": resolvable,
@@ -1677,7 +1720,82 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "potential_far_range": potential_far_range,
         "per_parcel": per_parcel,
         "warnings": warnings,
+        # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
+        "integrity_warnings": integrity_warnings,
     }
+
+
+class MultiParcelReportRequest(BaseModel):
+    """다필지 통합 최종 보고(S5) 요청 — /integrated-analysis와 동일한 필지 입력 계약(additive).
+
+    parcels: [{pnu?, address?, jibun?, bcode?, area_sqm?, land_category?, zone_type?, geometry?}]
+    roadside_strip_commercial: 도로변 띠모양 상업지역 §84 걸침 임계 660㎡ 적용(기본 False=330㎡).
+    """
+    parcels: list[dict] = []
+    roadside_strip_commercial: bool = False
+
+
+@router.post("/multi-parcel-report")
+async def multi_parcel_report(req: MultiParcelReportRequest):
+    """다필지 통합분석 최종 보고(S5) — build_multi_parcel_report 오펀 배선(★G2, additive 전용 엔드포인트).
+
+    special_parcel.py:build_multi_parcel_report는 usable 3계층·§84 걸침·제외 시나리오(what-if)·
+    시니어 리뷰까지 조립하는 완성 함수였으나 프로덕션 소비처가 없었다(오펀). 이 엔드포인트는
+    /integrated-analysis와 동일한 보강 파이프라인(enrich_parcel_list → _enrich_effective_and_special
+    — 둘 다 기존 함수 재사용·산식복제 0)을 거친 뒤 build_multi_parcel_report 한 번으로 최종 보고를
+    조립해 반환한다. /integrated-analysis 자체의 응답·로직은 전혀 건드리지 않는다(별도 엔드포인트 —
+    블라스트 반경 최소화).
+    무목업: 필지 0건은 400(정직 안내). 1건(다필지가 아님)은 차단하지 않고 그대로 산출하되
+    build_multi_parcel_report 결과에 '단일 필지라 통합·§84 걸침·제외 시나리오는 해당사항 없음'
+    정직 고지를 additive로 덧붙인다(값 날조·강제 차단 둘 다 하지 않음).
+    """
+    from app.services.zoning.special_parcel import build_multi_parcel_report
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+
+    raw_parcels = req.parcels or []
+    if not isinstance(raw_parcels, list) or not raw_parcels:
+        from fastapi import HTTPException
+        raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
+
+    items = raw_parcels[:120]  # 1회 상한(대량은 클라가 분할 호출) — /integrated-analysis와 동일 상한.
+
+    # ── 1) enrich_parcel_list 보강(면적·용도지역·지목·공시지가) + 입력 override 우선 병합(정직).
+    #     /integrated-analysis 2)단계와 동일 로직(공용 헬퍼 추출 없이 동일 순서로 재현 — 산식복제 아님,
+    #     동일 기존 함수 2개를 같은 순서로 호출하는 조립일 뿐).
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    for src, p in zip(items, enriched, strict=False):
+        if src.get("zone_type") and not p.get("zone_type"):
+            p["zone_type"] = src["zone_type"]
+        lc = src.get("land_category") or p.get("jimok")
+        if lc:
+            p.setdefault("land_category", lc)
+        if src.get("geometry") is not None:
+            p["geometry"] = src["geometry"]
+        if src.get("area_sqm") and not p.get("area_sqm"):
+            p["area_sqm"] = src["area_sqm"]
+
+    # ── 2) 필지별 실효(조례)+법정+특이 게이트 in-place 부착(공용 헬퍼 — integrated-analysis·land-report와 동일).
+    await _enrich_effective_and_special(enriched)
+
+    # ── 3) build_multi_parcel_report가 읽는 land_category 키로 정렬(jimok→land_category).
+    report_input: list[dict] = []
+    for p in enriched:
+        report_input.append({
+            **p,
+            "land_category": p.get("land_category") or p.get("jimok"),
+        })
+
+    report = build_multi_parcel_report(
+        report_input, roadside_strip_commercial=req.roadside_strip_commercial)
+
+    if len(report_input) < 2:
+        # 단일 필지 — S5는 '다필지' 종합 보고이나 build_multi_parcel_report 자체는 단일 필지도
+        # 안전 산출(usable/verification/matrix 정상, straddle/exclusion만 자연히 미해당)하므로
+        # 차단하지 않고 정직 고지만 추가한다.
+        report["honest_limitations"].append(
+            "단일 필지 입력 — 다필지 통합(§84 걸침·인접성·제외 시나리오)은 해당사항이 없습니다.")
+
+    return report
 
 
 class ParcelAtPointRequest(BaseModel):

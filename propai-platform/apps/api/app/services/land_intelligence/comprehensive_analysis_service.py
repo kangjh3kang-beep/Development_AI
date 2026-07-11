@@ -615,28 +615,22 @@ class ComprehensiveAnalysisService:
             "warnings": base.get("warnings", []),
         }
 
-        # ── P0-3(RC6) 법정초과 할루시네이션 가드 핫패스 배선 ──
-        #   run_range_checks(다중 도메인 검증 — 무거움) 대신 legal_zone_limits.check_against_legal만
-        #   경량 직접 호출한다. P0-1이 근본원인(zone 미매칭 하드코딩 폴백)을 제거했으므로 이 가드는
-        #   벨트&브레이스(다른 경로로 법정초과 값이 흘러들어와도 정직 경고로 표면화). 값 자체는
-        #   몰래 클램프하지 않는다(무날조) — additive: 기존 키 삭제/변경 없음.
-        try:
-            from app.services.zoning.legal_zone_limits import check_against_legal
+        # ── P0-3(RC6) 법정초과 할루시네이션 가드 핫패스 배선 — 공용 헬퍼(★A-3/G8) 경유 ──
+        #   run_range_checks(다중 도메인 검증 — 무거움) 대신 check_against_legal만 경량 직접
+        #   호출한다(hotpath_guard.apply_legal_hotpath_guard로 표준화 — comprehensive이 이
+        #   패턴의 정본이었고, 이제 다른 분석 표면도 동일 헬퍼를 재사용한다). P0-1이 근본원인
+        #   (zone 미매칭 하드코딩 폴백)을 제거했으므로 이 가드는 벨트&브레이스(다른 경로로
+        #   법정초과 값이 흘러들어와도 정직 경고로 표면화). 무날조: 값 자체는 몰래 클램프하지
+        #   않는다 — additive(integrity_warnings 신설, 기존 키 불변). sec1은 result["effective_far"]와
+        #   동일 객체 참조이므로 confidence_target mutation이 곧바로 result에 반영된다(동작 불변).
+        from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
 
-            _integrity_issues = check_against_legal(
-                zone_type,
-                bcr_pct=sec1.get("effective_bcr_pct"), far_pct=sec1.get("effective_far_pct"),
-                regulation_payload=base, plan_payload=base.get("special_districts"),
-            )
-            if _integrity_issues:
-                result["integrity_warnings"] = _integrity_issues
-                # 값은 그대로 두고 신뢰 강등 라벨만 부착(정직 표기 — sec1은 result["effective_far"]와
-                # 동일 객체 참조이므로 이 mutation이 곧바로 result에 반영된다).
-                if any(i.get("severity") == "high" for i in _integrity_issues):
-                    sec1["confidence"] = "degraded"
-                    sec1["confidence_note"] = "법정상한 초과 + 완화근거 미확인 — integrity_warnings 참조."
-        except Exception as e:  # noqa: BLE001 — 가드 실패는 무손상(기존 분석 유지)
-            logger.warning("법정초과 가드 스킵(graceful)", err=str(e)[:160])
+        apply_legal_hotpath_guard(
+            result,
+            zone_type=zone_type, bcr_pct=sec1.get("effective_bcr_pct"), far_pct=sec1.get("effective_far_pct"),
+            regulation_payload=base, plan_payload=base.get("special_districts"),
+            confidence_target=sec1,
+        )
 
         # ── Stage 1: 건축가능항목 선정·랭킹(인허가가능성 × 가용용적률) — additive·graceful ──
         #   현행 실효 용적률(sec1)과 종상향 시나리오(sec8)를 결합해 '이 부지에서 무엇을 지을

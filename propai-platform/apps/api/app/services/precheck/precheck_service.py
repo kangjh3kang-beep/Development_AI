@@ -558,6 +558,25 @@ async def run_instant_precheck(
     permitted_codes = get_permitted_types(zone_type)
     area_checks = _area_checks(resolved_area, legal)
 
+    # ── ★A-3/G8 법정초과 경량 가드 확산 — comprehensive analyze()의 P0-3 패턴을 공용
+    #   헬퍼(hotpath_guard)로 실효율 카드(legal_limits.applied_*_pct)에도 적용(additive).
+    #   regulation_payload: legal이 이미 ordinance_confirmed(실제 조례 취득 여부)를 판정해뒀으므로
+    #   그 신호를 재사용한다(허위 조례 생성 아님·산식복제 0).
+    from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+    _guard_reg_payload = (
+        {"local_ordinance": {"source": "조례",
+                              "effective_far": legal.get("ordinance_far_pct"),
+                              "effective_bcr": legal.get("ordinance_bcr_pct")}}
+        if legal.get("ordinance_confirmed") else None
+    )
+    integrity_warnings = apply_legal_hotpath_guard(
+        {},  # 응답 splice는 return dict에서 직접 처리 — 이 dict는 헬퍼 계약 충족용(미사용)
+        zone_type=zone_type, bcr_pct=legal.get("applied_bcr_pct"), far_pct=legal.get("applied_far_pct"),
+        regulation_payload=_guard_reg_payload,
+        confidence_target=legal,
+    )
+
     # 후보군: 허용된 코드 우선, 불허는 제외(계약은 "해당 용도지역 후보").
     # 단 전부 불허(녹지 등)면 대표 후보 일부를 fail로 보여 변별.
     candidates = permitted_codes if permitted_codes else ["M06", "M08", "M10", "M13"]
@@ -702,6 +721,8 @@ async def run_instant_precheck(
         "special_parcel": special_parcel,
         # 선택적 LLM 다변량 해석(가산) — use_llm=False면 None(기본). 인터프리터 실패도 None.
         "ai_interpretation": ai_interpretation,
+        # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
+        "integrity_warnings": integrity_warnings,
     }
 
 
