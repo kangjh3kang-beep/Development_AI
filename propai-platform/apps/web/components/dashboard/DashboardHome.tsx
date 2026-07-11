@@ -111,66 +111,47 @@ function hrefFor(locale: string, routeId: string): string {
   return `/${locale}${route.path}`;
 }
 
-function productToneClass(tone: CreationProduct["tone"]): string {
-  if (tone === "lime") return "border-[var(--saas-lime-line)] bg-[var(--saas-lime-soft)] text-[var(--saas-lime-text)]";
-  if (tone === "sky") return "border-[var(--saas-sky-line)] bg-[var(--saas-sky-soft)] text-[var(--saas-sky-text)]";
-  if (tone === "coral") return "border-[var(--saas-coral-line)] bg-[var(--saas-coral-soft)] text-[var(--saas-coral-text)]";
-  return "border-[var(--saas-ivory)] bg-[var(--saas-ivory-soft)] text-[var(--saas-ivory-text)]";
-}
-
-function productAccentClass(tone: CreationProduct["tone"]): string {
-  if (tone === "lime") return "bg-[var(--saas-lime)]";
-  if (tone === "sky") return "bg-[var(--saas-sky)]";
-  if (tone === "coral") return "bg-[var(--saas-coral)]";
-  return "bg-[var(--saas-ivory)]";
-}
-
 export function DashboardHome({ locale }: { locale: string }) {
   return (
     <div className="flex flex-col gap-6 pb-12">
       <OnboardingWizard />
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="relative min-w-0 overflow-hidden rounded-lg border border-[var(--saas-lime-hero-line)] bg-[var(--saas-ink)] p-5 text-white shadow-[0_24px_70px_var(--saas-ink-shadow)] sm:p-6">
+        <div className="relative min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-md)] sm:p-6">
+          {/* Nexus 정렬 그리드 오버레이(40px) — 테마 적응형 --grid-line */}
           <div
             aria-hidden="true"
-            className="absolute inset-0 opacity-55"
-            style={{
-              background:
-                "linear-gradient(115deg, var(--saas-hero-sheen), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.05), transparent)",
-            }}
-          />
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 opacity-25"
+            className="pointer-events-none absolute inset-0"
             style={{
               backgroundImage:
-                "linear-gradient(135deg, var(--saas-hero-grid-lime) 1px, transparent 1px), linear-gradient(45deg, var(--saas-hero-grid-sky) 1px, transparent 1px)",
-              backgroundSize: "72px 72px, 96px 96px",
+                "linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)",
+              backgroundSize: "40px 40px",
             }}
           />
           <div className="relative">
-            <span className="text-sm font-bold text-[var(--saas-lime)]">Intelligence Control Room</span>
+            <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--accent-strong)]">
+              Intelligence Control Room
+            </span>
             <div className="mt-3 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
               <div className="min-w-0">
-                <h1 className="max-w-3xl text-2xl font-black leading-tight text-white sm:text-4xl">
+                <h1 className="max-w-3xl text-2xl font-black leading-tight text-[var(--text-primary)] sm:text-4xl">
                   필요한 결과물을 고르면 입력부터 보고서까지 이어집니다
                 </h1>
-                <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-white/70">
+                <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-[var(--text-secondary)]">
                   기능을 찾는 시간을 줄이고 후보지, 사업성, 시장, 인허가, 설계 검토를 산출물 중심으로 시작합니다.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Link
                   href={hrefFor(locale, "precheck")}
-                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--saas-lime)] px-4 text-sm font-black text-[var(--saas-ink)] shadow-[0_12px_28px_var(--saas-lime-shadow)] transition-opacity hover:opacity-90"
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] bg-[var(--accent-strong)] px-4 text-sm font-black text-[var(--on-primary)] shadow-[var(--shadow-sm)] transition-opacity hover:opacity-90"
                 >
                   후보지 진단서 만들기
                   <ArrowRight aria-hidden="true" className="h-4 w-4" />
                 </Link>
                 <Link
                   href={hrefFor(locale, "projects")}
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 text-sm font-bold text-white backdrop-blur transition-colors hover:bg-white/15"
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] px-4 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-tertiary)]"
                 >
                   프로젝트 불러오기
                 </Link>
@@ -179,23 +160,23 @@ export function DashboardHome({ locale }: { locale: string }) {
 
           <div className="mt-6 grid gap-2 md:grid-cols-4">
             {workflowSteps.map((step, index) => (
-              <div key={step.label} className="rounded-lg border border-white/15 bg-white/10 p-3 backdrop-blur">
-                <span className="text-[11px] font-black text-[var(--saas-lime)]">
+              <div key={step.label} className="rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] p-3">
+                <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em] text-[var(--accent-strong)]">
                   {String(index + 1).padStart(2, "0")} {step.label}
                 </span>
-                <p className="mt-2 text-xs font-semibold leading-5 text-white/70">{step.body}</p>
+                <p className="mt-2 text-xs font-semibold leading-5 text-[var(--text-secondary)]">{step.body}</p>
               </div>
             ))}
           </div>
 
-          <div className="mt-5 rounded-lg border border-white/15 bg-white/10 p-3 backdrop-blur">
+          <div className="mt-5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] p-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-bold text-white/60">생성 경로</span>
-              <span className="rounded-lg bg-[var(--saas-sky)] px-2 py-1 text-[11px] font-black text-[var(--saas-ink)]">3분 내 초안</span>
+              <span className="text-xs font-bold text-[var(--text-tertiary)]">생성 경로</span>
+              <span className="rounded-[var(--r-card)] bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-black text-[var(--accent-strong)]">3분 내 초안</span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               {["부지 입력", "AI 분석", "보고서 저장"].map((label) => (
-                <div key={label} className="rounded-lg bg-black/25 px-3 py-2 text-sm font-bold text-white">
+                <div key={label} className="rounded-[var(--r-card)] bg-[var(--surface-tertiary)] px-3 py-2 text-sm font-bold text-[var(--text-primary)]">
                   {label}
                 </div>
               ))}
@@ -204,9 +185,9 @@ export function DashboardHome({ locale }: { locale: string }) {
           </div>
         </div>
 
-        <aside className="rounded-lg border border-[var(--saas-ink-line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-sm)]">
+        <aside className="rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-sm)]">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--saas-lime)] text-[var(--saas-ink)]">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[var(--r-card)] bg-[var(--accent-strong)] text-[var(--on-primary)]">
               <Building2 aria-hidden="true" className="h-5 w-5" />
             </span>
             <div>
@@ -219,7 +200,7 @@ export function DashboardHome({ locale }: { locale: string }) {
           </p>
           <div className="mt-4 space-y-2">
             {intelligenceSignals.map((signal) => (
-              <div key={signal.label} className="rounded-lg border border-[var(--saas-ink-line)] bg-[var(--saas-panel-wash)] p-3">
+              <div key={signal.label} className="rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-soft)] p-3">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-bold text-[var(--text-tertiary)]">{signal.label}</span>
                   <span className="text-xs font-black text-[var(--text-primary)]">{signal.value}</span>
@@ -242,7 +223,7 @@ export function DashboardHome({ locale }: { locale: string }) {
           </div>
           <Link
             href={`/${locale}/guide`}
-            className="inline-flex h-10 items-center gap-2 self-start rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)] md:self-auto"
+            className="inline-flex h-10 items-center gap-2 self-start rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)] md:self-auto"
           >
             전체 흐름 보기
             <ArrowRight aria-hidden="true" className="h-4 w-4" />
@@ -256,15 +237,15 @@ export function DashboardHome({ locale }: { locale: string }) {
               <Link
                 key={item.title}
                 href={hrefFor(locale, item.routeId)}
-                className="group min-w-0 overflow-hidden rounded-lg border border-[var(--saas-ink-line)] bg-[var(--surface-secondary)] shadow-[var(--shadow-sm)] transition hover:-translate-y-0.5 hover:border-[var(--saas-ink-line-strong)] hover:shadow-[var(--shadow-md)]"
+                className="group min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] shadow-[var(--shadow-sm)] transition hover:-translate-y-0.5 hover:border-[var(--accent-strong)] hover:shadow-[var(--shadow-md)]"
               >
-                <div className={`h-1.5 ${productAccentClass(item.tone)}`} />
+                <div className="h-1.5 bg-[var(--accent-strong)]" />
                 <div className="p-4">
                   <div className="flex items-start justify-between gap-3">
-                    <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${productToneClass(item.tone)}`}>
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--accent-soft)] text-[var(--accent-strong)]">
                       <Icon aria-hidden="true" className="h-5 w-5" />
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--surface-soft)] px-2 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">
+                    <span className="inline-flex items-center gap-1 rounded-[var(--r-card)] bg-[var(--surface-soft)] px-2 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">
                       <Clock aria-hidden="true" className="h-3.5 w-3.5" />
                       {item.time}
                     </span>
@@ -293,7 +274,7 @@ export function DashboardHome({ locale }: { locale: string }) {
       </section>
 
       <section className="flex flex-col gap-8">
-        <div className="min-w-0 space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-sm)]">
+        <div className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4 shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <span className="db-panel-label">진행 프로젝트</span>

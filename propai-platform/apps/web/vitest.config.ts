@@ -15,6 +15,8 @@ export default defineConfig({
     css: false,
     globals: true,
     include: [
+      "__tests__/**/*.test.ts",
+      "__tests__/**/*.test.tsx",
       "app/**/*.test.ts",
       "app/**/*.test.tsx",
       "components/**/*.test.ts",
