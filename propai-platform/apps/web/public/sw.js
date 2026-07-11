@@ -14,7 +14,7 @@
 //        2차 실데이터 overrides 수정 + 월별 DCF) 반영 — 구캐시 일괄 삭제.
 // v407: 투자분석 단일 세로 워크플로우 재배치(개략수지 base→투자수익성 요약→리스크 시뮬 + 보조
 //        CashflowDcfPanel 접이식 강등·무목업 자동 재프리필/폴백 제거) 반영 — 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v408-cost-estimation";
+const CACHE_NAME = "propai-v409-chunk-cache-refresh";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
