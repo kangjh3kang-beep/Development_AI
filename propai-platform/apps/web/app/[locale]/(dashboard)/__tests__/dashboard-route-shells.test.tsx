@@ -4,7 +4,8 @@ import CostPage from "../analytics/cost/page";
 import ESGPage from "../analytics/esg/page";
 import InvestmentPage from "../analytics/investment/page";
 import AuctionPage from "../auction/page";
-import DashboardPage from "../page";
+// 홈 콘솔 UI는 인증 분기(P1 랜딩) 도입과 함께 DashboardHome으로 추출됨(page.tsx는 분기 셸).
+import { DashboardHome } from "@/components/dashboard/DashboardHome";
 import ProjectsPage from "../projects/page";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -305,8 +306,8 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home as an operations console", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("renders the dashboard home as an operations console", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
     expect(

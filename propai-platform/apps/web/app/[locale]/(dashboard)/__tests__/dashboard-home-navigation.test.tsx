@@ -1,6 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import DashboardPage from "../page";
+// 대시보드 홈 콘솔 UI는 인증 분기 도입(P1 랜딩)과 함께 DashboardHome 컴포넌트로 추출됐다.
+// (page.tsx는 미인증=랜딩/인증=DashboardHome 분기 셸 — 페이지 분기는 HomeGate.test.tsx가 검증.)
+// 이 파일은 콘솔 UI 자체의 링크·산출물 배선을 계속 검증하므로 렌더 대상만 DashboardHome으로 옮긴다.
+import { DashboardHome } from "@/components/dashboard/DashboardHome";
 
 vi.mock("@/components/onboarding/OnboardingWizard", () => ({
   OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
@@ -25,8 +28,8 @@ vi.mock("@/components/precheck/SatongMapShell", () => ({
 }));
 
 describe("Dashboard home navigation", () => {
-  it("renders the result-generation control room entry links", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("renders the result-generation control room entry links", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
     expect(
@@ -38,8 +41,8 @@ describe("Dashboard home navigation", () => {
     expect(screen.getByRole("link", { name: /전체 흐름 보기/ })).toHaveAttribute("href", "/en/guide");
   });
 
-  it("wires creation products to their source workflows", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("wires creation products to their source workflows", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("무엇을 만들까요?")).toBeInTheDocument();
     expect(screen.getByText("최종 산출물을 기준으로 선택합니다.")).toBeInTheDocument();
