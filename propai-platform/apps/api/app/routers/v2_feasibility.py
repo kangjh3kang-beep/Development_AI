@@ -1643,3 +1643,16 @@ async def budget_disburse(
         evidence=req.evidence,
         created_by=str(getattr(current_user, "id", "") or ""),
     )
+
+
+@router.get("/budget-template")
+async def budget_template(method: str | None = None):
+    """개발방식별 수지 예산 표준 라인아이템 프리셋 (설계도 §12 FeasibilityTemplate).
+
+    §13 편집기의 빈 그룹 골격을 실무 표준 라인아이템으로 프리셋한다. ★무목업 — 금액 없이 라벨·
+    산정근거(note)만 제공(금액은 사용자/분석엔진이 채움). 각종부담금은 개발방식(공동주택 여부)에
+    따라 부과 대상만 포함(부담금 엔진 코드와 정합). 참조데이터(테넌트 데이터 없음 → 무인증).
+    """
+    from app.services.feasibility.budget_template import get_budget_template
+
+    return get_budget_template(method)

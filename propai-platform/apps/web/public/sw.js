@@ -18,7 +18,7 @@
 //        (적산관리 발견성 개선). 개칭·승격된 nav가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v411: 적산·공사비 관리에 '예산-실적 집행' 탭 신설(§13 BudgetExecutionPanel — 기지출/미지출·집행률
 //        실시간 추적). 신규 컴포넌트·탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v411-budget-execution";
+const CACHE_NAME = "propai-v412-budget-template-preset";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
