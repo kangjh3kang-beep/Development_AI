@@ -10,6 +10,8 @@ import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
+// 배선 캠페인 1차(ESG 클러스터 5건) — additive 마운트. 기존 GRESB/LCA 흐름은 무수정.
+import { EsgExtendedPanelsSection } from "@/components/projects/EsgExtendedPanelsSection";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -903,6 +905,11 @@ export function ProjectEsgWorkspaceClient({
       </div>
       </>
       )}
+
+      {/* 배선 캠페인 1차(ESG 클러스터 5건, additive) — RE100/LCC/EU Taxonomy/기후리스크/
+          에너지인증. 기본 접힘(AdvancedDrawer), 부지 데이터 게이트와 무관하게 항상 노출
+          (일부 라우터는 project_id·부지 프리필 없이도 독립 동작). */}
+      <EsgExtendedPanelsSection projectId={projectId} />
     </section>
   );
 }
