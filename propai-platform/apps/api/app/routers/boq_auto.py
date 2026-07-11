@@ -20,14 +20,9 @@ import inspect
 import io
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.services.auth.auth_service import get_current_user
-from app.services.auth.project_ownership import assert_project_owned
-from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/boq-auto", tags=["BOQ 자동화"])
 
@@ -378,19 +373,11 @@ async def export_priced_draft(req: BoqDraftRequest) -> StreamingResponse:
 
 
 @router.post("/draft/from-project", summary="프로젝트 BIM 실측 물량 우선 병합 드래프트(N2)")
-async def create_from_project_draft(
-    req: BoqFromProjectRequest,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-) -> dict[str, Any]:
+async def create_from_project_draft(req: BoqFromProjectRequest) -> dict[str, Any]:
     """generate_draft → merge_bim(프로젝트 BIM 물량 1:1 정합 시 실측치 우선).
 
     BIM 0건이면 parametric 그대로 + bim_merge 안내(가짜값 금지). 우선순위 user>bim>parametric.
-
-    ★인증 필수 + 프로젝트 tenant 소유권 검증(IDOR 방지) — 형제 cost 라우터(라우터레벨 인증)와
-    동일 계약. project_id로 타 프로젝트 BIM 실측물량을 무인증 조회하던 IDOR를 표준 헬퍼로 봉합.
     """
-    await assert_project_owned(req.project_id, db, user)  # tenant 불일치 → 403
     mod = _get_draft_module()
     draft = await _invoke_draft_fn(mod.generate_draft, req)
     bim_rows = await _load_project_bim(req.project_id)
