@@ -139,9 +139,9 @@ async def test_precheck_no_warning_within_legal_limit(monkeypatch):
 
 async def test_zoning_analyze_flags_legal_excess(monkeypatch):
     import apps.api.routers.auto_zoning as az
+    from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
     from app.services.land_intelligence import far_tier_service
     from app.services.land_intelligence.ordinance_service import OrdinanceService
-    from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
 
     async def _fake_analyze(self, address):
         return {

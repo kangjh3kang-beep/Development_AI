@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.feasibility import feasibility_service_v2 as fv2
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.land_intelligence import comprehensive_analysis_service as comp_module
 from app.services.land_intelligence import far_tier_service as far_tier_module
