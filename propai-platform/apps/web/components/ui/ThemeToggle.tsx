@@ -15,11 +15,15 @@ export function ThemeToggle() {
   const toggleTheme = () => {
     const nextDark = !isDark;
     setIsDark(nextDark);
+    const root = document.documentElement;
+    // 클래스(.dark)와 속성([data-theme])을 함께 갱신 — 부트스트랩/토큰 셀렉터 양쪽과 정합
     if (nextDark) {
-      document.documentElement.classList.add("dark");
+      root.classList.add("dark");
+      root.setAttribute("data-theme", "dark");
       localStorage.setItem("theme", "dark");
     } else {
-      document.documentElement.classList.remove("dark");
+      root.classList.remove("dark");
+      root.setAttribute("data-theme", "light");
       localStorage.setItem("theme", "light");
     }
   };
