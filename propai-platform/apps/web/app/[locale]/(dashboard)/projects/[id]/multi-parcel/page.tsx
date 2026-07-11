@@ -14,6 +14,7 @@ import Link from "next/link";
 import {
   Map as MapIcon, Layers, Building2, Link2, Scissors, HelpCircle, AlertTriangle,
   CheckCircle2, RefreshCw, ArrowRight, ListTree, Lightbulb, ExternalLink, MousePointerClick, ChevronDown,
+  FileText,
 } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -27,6 +28,10 @@ import {
   MultiParcelAttributeMatrix,
   resolveMultiParcelReport,
 } from "@/components/projects/MultiParcelAttributeMatrix";
+import {
+  mapMultiParcelReportResponse,
+  type MultiParcelReportResponse,
+} from "@/lib/multi-parcel-report";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
@@ -125,6 +130,12 @@ export default function MultiParcelPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // ── S5 다필지 종합 보고(build_multi_parcel_report 오펀 배선·★G2) — 접힘, 온디맨드 호출 ──
+  const [s5Open, setS5Open] = useState(false);
+  const [s5Data, setS5Data] = useState<MultiParcelReportResponse | null>(null);
+  const [s5Loading, setS5Loading] = useState(false);
+  const [s5Error, setS5Error] = useState("");
+
   // 통합 구획도 입력: 다필지 주소 배열(없으면 대표 주소).
   const mapAddresses = useMemo(() => {
     const list = (ssotParcels ?? [])
@@ -161,6 +172,28 @@ export default function MultiParcelPage() {
     if (!isMulti) return;
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  // S5 종합 보고 — 별도 엔드포인트(무거운 조립)라 자동 실행하지 않고 접힘 섹션에서 온디맨드 호출.
+  // 필지 구성이 바뀌면 이전 선택의 stale 보고가 남지 않도록 초기화만 한다(재조회는 사용자 클릭).
+  const runS5 = useCallback(async () => {
+    if (mapAddresses.length === 0 || s5Loading) return;
+    setS5Loading(true); setS5Error("");
+    try {
+      const r = await apiClient.post<MultiParcelReportResponse>("/zoning/multi-parcel-report", {
+        body: { parcels: mapAddresses.map((address) => ({ address })) },
+        useMock: false, timeoutMs: 90000,
+      });
+      setS5Data(r ?? null);
+    } catch {
+      setS5Error("다필지 종합 보고 호출에 실패했습니다. 잠시 후 재시도하세요.");
+    } finally {
+      setS5Loading(false);
+    }
+  }, [mapAddresses, s5Loading]);
+
+  useEffect(() => {
+    setS5Data(null); setS5Error("");
   }, [key]);
 
   // ── 부지 미확정 — 바로 필지 검색/지도클릭/엑셀로 선택(SSOT 기록) ──
@@ -348,6 +381,63 @@ export default function MultiParcelPage() {
                   <Link href={proj("permit")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">개발방식·인허가 상세 <ArrowRight className="size-3" aria-hidden /></Link>
                   <Link href={proj("canvas")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">중앙분석센터(전탭) <ArrowRight className="size-3" aria-hidden /></Link>
                 </div>
+              </section>
+
+              {/* 3.5) 다필지 종합 보고(S5, 접힘) — build_multi_parcel_report 오펀 배선(★G2).
+                  usable 3계층 명세·§84 걸침 판정·제외 시나리오(what-if)·시니어 종합 리뷰를
+                  버튼 클릭 시 별도 엔드포인트(/zoning/multi-parcel-report)로 온디맨드 조회한다. */}
+              <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !s5Open;
+                    setS5Open(next);
+                    if (next && !s5Data && !s5Loading) void runS5();
+                  }}
+                  className="flex w-full items-center justify-between text-left"
+                >
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--text-secondary)]">
+                    <FileText className="size-3.5" aria-hidden /> 다필지 종합 보고(S5)
+                  </span>
+                  <ChevronDown className={`size-3.5 text-[var(--text-hint)] transition ${s5Open ? "rotate-180" : ""}`} aria-hidden />
+                </button>
+                {s5Open && (
+                  <div className="mt-3">
+                    {s5Loading && (
+                      <p className="text-[11px] text-[var(--text-hint)]">usable 3계층·§84 걸침·제외 시나리오·시니어 리뷰 조립 중…</p>
+                    )}
+                    {s5Error && (
+                      <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-400">{s5Error}</p>
+                    )}
+                    {!s5Loading && !s5Error && s5Data && (
+                      <>
+                        <MultiParcelAttributeMatrix
+                          report={mapMultiParcelReportResponse(s5Data) ?? {}}
+                          perParcel={s5Data.matrix ?? data.per_parcel}
+                        />
+                        {(s5Data.honest_limitations?.length ?? 0) > 0 && (
+                          <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-2.5">
+                            <p className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-500">
+                              <AlertTriangle className="size-3" aria-hidden /> 정직 한계 고지
+                            </p>
+                            <ul className="list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-[var(--text-secondary)]">
+                              {s5Data.honest_limitations!.map((n, i) => <li key={i}>{n}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {!s5Loading && !s5Error && !s5Data && (
+                      <button
+                        type="button"
+                        onClick={() => void runS5()}
+                        className="mt-1 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[11px] font-bold text-white transition hover:opacity-90"
+                      >
+                        종합 보고 불러오기
+                      </button>
+                    )}
+                  </div>
+                )}
               </section>
 
               {/* 4) 필지별 내역(실 per_parcel) */}

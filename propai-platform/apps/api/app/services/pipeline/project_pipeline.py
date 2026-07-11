@@ -59,6 +59,11 @@ class SiteToDesignPayload(BaseModel):
     max_far: float = 200.0
     max_height: float = 0.0
     land_area_sqm: float = 0.0
+    # ★A-2(배선 P1 — usable 면적 전파, additive) — 다필지 통합 경로에서만 채워짐(gross 기준).
+    #   land_area_sqm(개발규모=GFA 산정 기준)은 usable 채택, 이 필드(토지비 산정 기준)는
+    #   gross 유지 — comprehensive_analysis_service F2/P0-2(c)와 동일 이원화. None=단일/미통합
+    #   (다운스트림은 land_area_sqm으로 폴백 — 기존 동작 무회귀).
+    land_area_gross_sqm: float | None = None
     land_shape: dict | None = None  # GeoJSON
     official_land_price: float = 0.0
     address: str = ""
@@ -462,6 +467,10 @@ class ProjectPipeline:
             target["ordinance_far"] = applied["max_far"]
         if "max_bcr" in applied or "max_far" in applied:
             target["ordinance_source"] = "user_override"
+        # ★A-2: 사용자가 land_area_sqm을 직접 오버라이드하면(사용자 입력 존중) usable/gross
+        #   이원화 자체가 무의미해지므로 gross도 동일값으로 동기화한다(stale 통합-gross 잔존 방지).
+        if "land_area_sqm" in applied:
+            target["land_area_gross_sqm"] = applied["land_area_sqm"]
         # E7: 가정값이 사용자값으로 대체되면 해당 필드의 가정 표기를 해제한다.
         assumed = target.get("assumed_fields")
         if isinstance(assumed, list) and applied:
@@ -641,7 +650,17 @@ class ProjectPipeline:
                     )
                     integrated = await build_integrated_context(_parcels)
                     if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
-                        pre_collected["land_area_sqm"] = float(integrated["total_area_sqm"])
+                        # ★A-2(usable 면적 전파): 개발규모(GFA, land_area_sqm)는 usable
+                        #   (land_area_effective_sqm — 도로·구거·하천 지목+BLOCKED 게이트 제외)
+                        #   채택, 토지비(land_area_gross_sqm)는 gross 유지(F2/P0-2(c)와 동일
+                        #   이원화 원칙 — 제외 필지도 실제 매입 대상이므로 축소 금지).
+                        _gross_area = float(integrated["total_area_sqm"])
+                        pre_collected["land_area_gross_sqm"] = _gross_area
+                        _eff_area = integrated.get("land_area_effective_sqm")
+                        pre_collected["land_area_sqm"] = (
+                            float(_eff_area) if (_eff_area is not None and float(_eff_area) > 0)
+                            else _gross_area
+                        )
                         _dz = integrated.get("dominant_zone")
                         if _dz and _dz != "mixed_review_required":
                             pre_collected["zone_type"] = _dz
@@ -768,6 +787,7 @@ class ProjectPipeline:
                 max_far=effective_far,
                 max_height=max_height,
                 land_area_sqm=float(land_area_sqm),
+                land_area_gross_sqm=pre_collected.get("land_area_gross_sqm"),
                 land_shape=None,
                 official_land_price=float(official_land_price),
                 address=state.address,
@@ -824,6 +844,12 @@ class ProjectPipeline:
                 "area_basis": pre_collected.get("area_basis", "representative_parcel"),
                 "parcel_count": pre_collected.get("parcel_count"),
                 "integrated_zoning": pre_collected.get("integrated_zoning"),
+                # ★A-2(usable 면적 전파, additive) — 다필지 통합 경로에서만 채워짐(gfa=usable/land_cost=gross 병기).
+                "land_area_basis": (
+                    {"gfa_sqm_basis": "usable", "land_cost_basis": "gross",
+                     "gross_sqm": pre_collected["land_area_gross_sqm"], "usable_sqm": float(land_area_sqm)}
+                    if pre_collected.get("land_area_gross_sqm") is not None else None
+                ),
             }
             if applied_site_overrides:
                 state.stages["site_analysis"].data["applied_overrides"] = applied_site_overrides
@@ -1723,7 +1749,13 @@ class ProjectPipeline:
         applied_overrides: dict[str, Any] = {}
 
         # ── 기본 수지분석 ──
-        land_cost = site.land_area_sqm * site.official_land_price * 1.3  # 공시지가 x 1.3 보정
+        # ★A-2(usable 면적 전파): 토지비는 gross(land_area_gross_sqm — 다필지 통합 경로에서만
+        #   채워짐, 제외 필지도 실제 매입 대상) 채택, 미설정(단일/미통합)이면 land_area_sqm으로
+        #   폴백(기존 동작 무회귀). GFA(design.total_gfa_sqm)는 이미 usable(land_area_sqm) 기준.
+        _land_cost_area = (
+            site.land_area_gross_sqm if site.land_area_gross_sqm is not None else site.land_area_sqm
+        )
+        land_cost = _land_cost_area * site.official_land_price * 1.3  # 공시지가 x 1.3 보정
 
         # 분양가는 시장 시세 기반으로 산정한다. 공사비에서 역산(cost_per_pyeong x 1.3)하면
         # 토지비가 수입에 반영되지 않아 토지비만큼 구조적 적자가 발생한다.
@@ -1794,7 +1826,7 @@ class ProjectPipeline:
                 _sad = (_sa.data if _sa else {}) or {}
                 _pnu = (_sad.get("basic", {}) or {}).get("pnu") or _sad.get("pnu")
                 est = await estimate_land_price(
-                    address=site.address, area_sqm=site.land_area_sqm, pnu=_pnu,
+                    address=site.address, area_sqm=_land_cost_area, pnu=_pnu,
                 )
                 if est and est.get("ok") and est.get("estimated_total_won"):
                     land_cost = float(est["estimated_total_won"])
@@ -1978,7 +2010,8 @@ class ProjectPipeline:
                 _units = int(design.unit_count or 0)
                 tax_result = calculate_all_taxes(
                     purchase_won=int(land_cost),
-                    area_sqm=float(site.land_area_sqm or 0),
+                    # ★A-2: 취득세 등은 실제 매입(land_cost와 동일 기준) 면적 — gross(_land_cost_area).
+                    area_sqm=float(_land_cost_area or 0),
                     official_price_per_sqm=float(site.official_land_price or 0),
                     total_households=_units,
                     total_sale_amount_won=int(total_revenue),

@@ -117,8 +117,14 @@ class FeasibilityServiceV2:
         land_category = zoning.get("land_category") or ""
 
         # ★다필지 통합(감사 P1): parcels(2↑)면 통합면적·우세용도로 보강. 스칼라 land_area_sqm이
-        #   명시되면 그것이 우선(기존 정답 경로). zone 혼재 시 대표 유지 + zone_basis 정직 표기.
+        #   명시되면 그것이 우선(기존 정답 경로·사용자 입력 존중). zone 혼재 시 대표 유지 + zone_basis 정직 표기.
+        # ★A-2(배선 P1 — usable 면적 전파): 백엔드가 integrated context에서 스스로 채우는 이 경로만
+        #   이원화한다(land_area_sqm 스칼라를 사용자가 명시하면 위 분기 자체가 스킵되므로 무영향).
+        #   GFA/개발규모(site_area)는 usable(land_area_effective_sqm) 채택, 토지비(land_cost_area —
+        #   build_module_input의 total_land_area_sqm)는 gross(total_area_sqm) 유지 —
+        #   comprehensive_analysis_service의 F2/P0-2(c)와 동일 이원화 원칙(제외 필지도 매입 대상).
         zone_basis = "single"
+        land_cost_area: float | None = None
         if parcels and isinstance(parcels, list) and len(parcels) >= 2:
             try:
                 from ..land_intelligence.comprehensive_analysis_service import (
@@ -126,8 +132,13 @@ class FeasibilityServiceV2:
                 )
                 integrated = await build_integrated_context(parcels)
                 if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
-                    if not land_area_sqm:      # 스칼라 미주입 시에만 통합면적으로 보강
-                        site_area = float(integrated["total_area_sqm"])
+                    if not land_area_sqm:      # 스칼라 미주입 시에만 통합값으로 보강
+                        land_cost_area = float(integrated["total_area_sqm"])
+                        _eff_area = integrated.get("land_area_effective_sqm")
+                        site_area = (
+                            float(_eff_area) if (_eff_area is not None and float(_eff_area) > 0)
+                            else land_cost_area
+                        )
                     _dz = integrated.get("dominant_zone")
                     if _dz and _dz != "mixed_review_required":
                         zone_type = _dz
@@ -136,6 +147,11 @@ class FeasibilityServiceV2:
                         zone_basis = "integrated_mixed_representative"
             except Exception as e:  # noqa: BLE001 — 통합 실패는 단일 경로 폴백(무중단)
                 logger.warning("Top3 다필지 통합 실패 — 대표필지 폴백: %s", str(e)[:160])
+        land_area_basis = (
+            {"gfa_sqm_basis": "usable", "land_cost_basis": "gross",
+             "gross_sqm": land_cost_area, "usable_sqm": site_area}
+            if land_cost_area is not None else None
+        )
 
         # Step 2: 특이부지 게이트 — 학교·도로·GB·농지·산지·맹지 등 비일상 토지는 Top3 산정 정책 분기.
         # ★게이트 정책 SSOT(special_parcel.gate_decision)로 일원화:
@@ -238,6 +254,7 @@ class FeasibilityServiceV2:
                     address=address,
                     equity_won=equity_won,
                     official_price_per_sqm=zoning.get("official_price_per_sqm"),
+                    land_cost_area_sqm=land_cost_area,
                 )
 
                 output = self.calculate(inp)
@@ -299,6 +316,8 @@ class FeasibilityServiceV2:
             "land_area_sqm": site_area,
             # 면적·용도 출처 정직 표기 — single/integrated_dominant/integrated_mixed_representative.
             "zone_basis": zone_basis,
+            # ★A-2(usable 면적 전파, additive) — 다필지 통합 경로에서만 채워짐(gfa=usable/land_cost=gross 병기).
+            "land_area_basis": land_area_basis,
             "parcel_count": len(parcels) if (parcels and len(parcels) >= 2) else 1,
             "effective_far_pct": round(max_far, 1),   # FAR→GFA 산정에 실제 사용한 실효 용적률
             "legal_max_far_pct": legal_max_far,        # 법정상한(라벨용 — 실효와 다를 수 있음)
@@ -403,6 +422,7 @@ class FeasibilityServiceV2:
         address: str = "",
         equity_won: int | None = None,
         official_price_per_sqm: float | None = None,
+        land_cost_area_sqm: float | None = None,
     ) -> ModuleInput:
         """용도지역 한도 기반으로 개발유형별 ModuleInput을 자동 생성한다.
 
@@ -414,12 +434,17 @@ class FeasibilityServiceV2:
 
         Args:
             dev_type: 개발유형 코드(M01~M15).
-            site_area_sqm: 부지(통합) 면적(㎡).
+            site_area_sqm: 부지(통합) 면적(㎡) — GFA/세대수 산정 기준(usable 채택 소비처 포함).
             max_far_pct: 적용 용적률 상한(%). 개발유형 일반치와 min으로 클램프.
             region: 지역(분양가 테이블 키).
             address: 주소(지역 분양가 보정용).
             equity_won: 자기자본(원). None이면 ModuleInput 기본(0).
             official_price_per_sqm: 공시지가(원/㎡). 미확보 시 1.5M 묵시폴백(절대수익성은 참고용).
+            land_cost_area_sqm: 토지비(ModuleInput.total_land_area_sqm) 전용 면적(㎡, additive) —
+                미지정 시 site_area_sqm과 동일(기존 동작 무회귀). ★A-2(usable 면적 전파): 다필지
+                통합 경로에서 GFA는 usable(site_area_sqm), 토지비는 gross(이 값)로 분리 전달할 때
+                사용한다(comprehensive_analysis_service F2/P0-2(c)와 동일 이원화 — 제외 필지도
+                실제 매입 대상이므로 축소 금지).
         """
         # 적용 용적률 = 용도지역 상한과 개발유형 일반치 중 낮은 값(과대 산정 방지).
         effective_far = min(max_far_pct, self._get_type_typical_far(dev_type))
@@ -432,7 +457,9 @@ class FeasibilityServiceV2:
 
         return ModuleInput(
             development_type=dev_type,
-            total_land_area_sqm=site_area_sqm,
+            total_land_area_sqm=(
+                land_cost_area_sqm if land_cost_area_sqm is not None else site_area_sqm
+            ),
             total_gfa_sqm=total_gfa,
             total_households=total_hh,
             avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),

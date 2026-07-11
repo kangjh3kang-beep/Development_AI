@@ -350,6 +350,52 @@ async def test_multiparcel_seeds_integrated_area(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a2_usable_adopted_for_gfa_gross_for_land_cost(monkeypatch):
+    """★A-2(배선 P1 — usable 면적 전파) 회귀 — GFA/개발규모는 usable(land_area_effective_sqm),
+    토지비 산정은 gross(total_area_sqm) 채택(comprehensive_analysis_service F2/P0-2(c)와 동일
+    이원화 원칙 — test_f2_land_cost_gross_basis.py 스타일). 도로 지목 혼입 다필지:
+    gross=2000㎡(대 1600+도로 400), usable=1600㎡(도로 제외)."""
+    integrated = {
+        "total_area_sqm": 2000.0, "land_area_effective_sqm": 1600.0,
+        "dominant_zone": "제3종일반주거지역", "blended_far_eff_pct": 200.0, "parcel_count": 2,
+    }
+    _stub_happy(monkeypatch, integrated=integrated)
+
+    # 실제 토지비 계산(land_cost_engine)까지는 타되, _resolve_land_cost가 받은 land_area 인자를
+    # 스파이로 캡쳐해 '토지비는 gross로 호출됐다'를 산식 복제 없이 검증한다.
+    land_cost_calls: list[float] = []
+    orig_resolve = orch._resolve_land_cost
+
+    async def _spy_resolve_land_cost(*, address, land_area, official_price, land_price_reliable):
+        land_cost_calls.append(land_area)
+        return await orig_resolve(
+            address=address, land_area=land_area, official_price=official_price,
+            land_price_reliable=land_price_reliable,
+        )
+
+    monkeypatch.setattr(orch, "_resolve_land_cost", _spy_resolve_land_cost)
+
+    out = await orch.build_rough_scenario(
+        address="서울특별시 강남구 역삼동 736",
+        parcels=[{"area_sqm": 1600, "land_category": "대"}, {"area_sqm": 400, "land_category": "도로"}],
+    )
+
+    # GFA/개발규모(land_area_sqm) = usable(1600) 채택.
+    assert out["inputs"]["land_area_sqm"] == 1600.0
+    assert out["inputs"]["gfa_sqm"] == 3200.0  # 1600 * 200 / 100
+
+    # 이원화 근거 additive 노출(양 면적 병기).
+    basis = out["inputs"]["land_area_basis"]
+    assert basis["gross_sqm"] == 2000.0
+    assert basis["usable_sqm"] == 1600.0
+    assert basis["gfa_sqm_basis"] == "usable"
+    assert basis["land_cost_basis"] == "gross"
+
+    # 토지비 산정에는 gross(2000)가 전달됐다 — usable(1600) 아님(취득원가 축소 방지).
+    assert land_cost_calls == [2000.0]
+
+
+@pytest.mark.asyncio
 async def test_dev_type_specified_uses_it(monkeypatch):
     """dev_type 지정 시 해당 유형 사용(자동 Top1 대체 아님)."""
     async def _fake_auto(**kwargs):

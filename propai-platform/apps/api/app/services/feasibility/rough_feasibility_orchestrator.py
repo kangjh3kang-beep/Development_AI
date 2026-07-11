@@ -352,11 +352,26 @@ async def build_rough_scenario(
     all_results = rec_result.get("all_results") or []
 
     # 통합값 우선(SSOT), 없으면 추천이 산출한 값 사용.
+    # ★A-2(배선 P1 — usable 면적 전파): GFA/개발규모는 usable(land_area_effective_sqm — 도로·구거·
+    #   하천 지목+BLOCKED 게이트 제외, build_integrated_context가 이미 산출) 채택, 토지비 산정
+    #   (desk_appraisal/land_cost 경로)은 gross(total_area_sqm) 유지 — comprehensive_analysis_
+    #   service의 F2/P0-2(c) 이원화 원칙과 동일 SSOT(제외 필지도 실제 매입 대상이므로 축소 금지).
+    #   산식복제 아님 — build_integrated_context 출력을 채택만 한다.
     land_area = None
+    land_area_gross = None
     if integrated and float(integrated.get("total_area_sqm") or 0) > 0:
-        land_area = float(integrated["total_area_sqm"])
+        land_area_gross = float(integrated["total_area_sqm"])
+        _eff_area = integrated.get("land_area_effective_sqm")
+        land_area = float(_eff_area) if (_eff_area is not None and float(_eff_area) > 0) else land_area_gross
     elif rec_result.get("land_area_sqm"):
         land_area = float(rec_result["land_area_sqm"])
+        land_area_gross = land_area
+    # 개발규모/토지비 면적 기준 병기(additive) — usable=0(전 필지 제외) 등 결측 시 gross로 정직 폴백.
+    land_area_basis = (
+        {"gfa_sqm_basis": "usable", "land_cost_basis": "gross",
+         "gross_sqm": land_area_gross, "usable_sqm": land_area}
+        if land_area is not None else None
+    )
     zone_type = None
     if integrated and integrated.get("dominant_zone") and integrated["dominant_zone"] != "mixed_review_required":
         zone_type = integrated["dominant_zone"]
@@ -373,6 +388,23 @@ async def build_rough_scenario(
     else:
         parcel_count = int(rec_result.get("parcel_count") or (len(parcels) if parcels else 1))
 
+    # ── ★A-3/G8 법정초과 경량 가드 확산 — comprehensive analyze()의 P0-3 패턴을 공용
+    #   헬퍼(hotpath_guard)로 이 오케스트레이터의 effective_far 사용부에도 적용(additive).
+    #   BCR은 이 경로에서 미사용(FAR→GFA→ROI만 소비, footprint 산정 없음)이라 far_pct만 검증한다.
+    #   regulation_payload 미보유(이 계층엔 조례 원본 미노출) — 근거 불명확 시 정직하게 경고
+    #   대상으로 다룬다(무날조: 몰래 안전하다고 가정하지 않음).
+    #   ★QA MEDIUM 수정: effective_far는 다필지 통합 시 면적가중 블렌드(blended_far_eff_pct)다.
+    #   zone_type(dominant 단일 zone)의 단일 법정상한과 비교하면 정당한 혼합용도 블렌드도
+    #   오탐(false "high")한다 — legal_far_pct override로 비교 기준을 같은 면적가중 법정
+    #   블렌드(blended_far_legal_pct)로 맞춘다. integrated 부재(단일필지/추천경로)면 override
+    #   미전달로 기존 zone_type 단일 법정상한 비교 그대로(무회귀).
+    from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+    integrity_warnings = apply_legal_hotpath_guard(
+        {}, zone_type=zone_type, bcr_pct=None, far_pct=effective_far,
+        legal_far_pct=(integrated.get("blended_far_legal_pct") if integrated else None),
+    )
+
     # 특이부지 BLOCK 또는 허용유형 없음 → 후보 미생성(정직 고지, 가짜 수치 금지).
     if not recs:
         note = (
@@ -384,7 +416,9 @@ async def build_rough_scenario(
         out["inputs"].update({
             "land_area_sqm": land_area, "zone_type": zone_type,
             "effective_far_pct": effective_far, "parcel_count": parcel_count,
+            "land_area_basis": land_area_basis,
         })
+        out["integrity_warnings"] = integrity_warnings
         if rec_result.get("special_parcel"):
             out["special_parcel"] = rec_result["special_parcel"]
         return out
@@ -436,18 +470,22 @@ async def build_rough_scenario(
         applied.append("sale_price_per_pyeong")
 
     async def _land_leg() -> tuple[int | None, dict[str, Any], list[str]]:
-        """토지비 축 — override면 즉시, 아니면 탁상감정/공시지가(외부호출). notes를 함께 반환."""
+        """토지비 축 — override면 즉시, 아니면 탁상감정/공시지가(외부호출). notes를 함께 반환.
+
+        ★A-2: 토지비는 gross(land_area_gross) 기준 — usable 축소로 제외된 필지(도로·GB 등)도
+        실제로는 매입 대상이라 gross로 산정해야 취득원가를 축소 왜곡하지 않는다(무날조 방향).
+        """
         if ov_land is not None:
             lt = int(ov_land)
             return lt, {
                 "total_won": lt,
-                "per_sqm_won": int(lt / land_area) if land_area else None,
+                "per_sqm_won": int(lt / land_area_gross) if land_area_gross else None,
                 "basis": "사용자 지정 토지비(2차 수정)",
                 "evidence": None, "source": "user_override",
             }, []
-        if land_area:
+        if land_area_gross:
             return await _resolve_land_cost(
-                address=address, land_area=land_area, official_price=official_price,
+                address=address, land_area=land_area_gross, official_price=official_price,
                 land_price_reliable=land_price_reliable,
             )
         return None, _null_block("land"), ["토지면적 미확보 — 토지비 산출 불가."]
@@ -647,6 +685,7 @@ async def build_rough_scenario(
             "parcel_count": parcel_count,
             "project_months": project_months,
             "total_households": total_households_assumed,
+            "land_area_basis": land_area_basis,
         },
         "land_cost": land_block,
         "construction_cost": constr_block,
@@ -657,6 +696,8 @@ async def build_rough_scenario(
         "cashflow": cashflow_block,
         "overrides_applied": applied,
         "degraded_notes": degraded,
+        # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
+        "integrity_warnings": integrity_warnings,
     }
 
 
@@ -755,5 +796,7 @@ def _degraded_result(
         "cashflow": None,
         "overrides_applied": [],
         "degraded_notes": notes,
+        # ★A-3/G8(additive) — 산출 자체가 없어 검증 대상(effective_far)도 없음(빈 배열).
+        "integrity_warnings": [],
     }
 
