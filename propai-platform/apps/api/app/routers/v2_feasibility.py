@@ -1369,6 +1369,16 @@ class DevelopmentFinanceRequest(BaseModel):
     presale_ratio: float = 0.0
     bridge_months: int = 12
     pf_months: int = 30
+    # (P1 B-1 G6) FinanceInterpreter(LLM) 실무 해석 부착 여부. 기본 false=무과금
+    # (personas.py/cost.py 선례와 동일 계약 — opt-in일 때만 enforce_llm_quota 게이트 적용).
+    use_llm: bool = False
+
+
+async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
+    """use_llm=True일 때만 LLM 한도 게이트 적용(무과금 경로는 통과) — personas.py/cost.py 선례와 동일 계약."""
+    if not use_llm:
+        return
+    await enforce_llm_quota(db)
 
 
 def _build_development_finance(req: DevelopmentFinanceRequest) -> dict:
@@ -1448,20 +1458,38 @@ def _build_development_finance(req: DevelopmentFinanceRequest) -> dict:
 
 
 @router.post("/development-finance")
-async def development_finance(req: DevelopmentFinanceRequest):
+async def development_finance(
+    req: DevelopmentFinanceRequest, db: AsyncSession = Depends(get_db)
+):
     """개발금융(PF·브릿지·이자·LTV·DSCR·자기자본비율) 산출.
 
     수지분석(총사업비)·공사비·토지비를 입력으로 finance_cost_engine을 재사용해
     PF대출·금리·총이자·LTV·DSCR을 반환. 새 금융계산 로직 미작성(엔진 재사용).
     """
     try:
-        return _build_development_finance(req)
+        result = _build_development_finance(req)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=422, detail=f"개발금융 산정 실패: {str(e)[:160]}"
         )
+
+    # (P1 B-1 G6) FinanceInterpreter(LLM) 실무 해석 — use_llm=True일 때만 시도
+    # (과금 게이트 적용). project_pipeline._attach_all_ai 패턴: try/except 무해,
+    # 응답에 ai_interpretation만 additive(실패해도 pf_loan/ltv/dscr 등은 무손상).
+    if req.use_llm:
+        await _enforce_llm_if_needed(db, req.use_llm)
+        try:
+            from app.services.ai.finance_interpreter import FinanceInterpreter
+
+            interp = await FinanceInterpreter().generate_interpretation(result)
+            if isinstance(interp, dict) and interp:
+                result["ai_interpretation"] = interp
+        except Exception:  # noqa: BLE001 — 해석 실패는 산출 결과를 손상하지 않는다(graceful).
+            pass
+
+    return result
 
 
 @router.post("/cashflow/excel")

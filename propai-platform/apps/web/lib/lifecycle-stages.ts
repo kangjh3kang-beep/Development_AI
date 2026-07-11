@@ -72,6 +72,58 @@ export function stageRoute(locale: string, projectId: string, stage: LifecycleSt
 }
 
 /**
+ * (G9) 백엔드 파이프라인 스텝(project_pipeline.PipelineStage 8종, StrEnum 리터럴 값) —
+ * apps/api/app/services/pipeline/project_pipeline.py:22-32의 8종을 그대로 옮긴 유니언.
+ * BE가 스텝을 추가/변경하면 이 타입과 아래 PIPELINE_STAGE_TO_LIFECYCLE, 그리고 계약 테스트
+ * (lifecycle-stages.test.ts·apps/api/tests/test_pipeline_stage_contract.py)를 함께 갱신한다.
+ */
+export type PipelineStageBE =
+  | "site_analysis"
+  | "design"
+  | "design_review"
+  | "cost"
+  | "feasibility"
+  | "tax"
+  | "esg"
+  | "report";
+
+/**
+ * (G9) 백엔드 파이프라인 스텝(project_pipeline.PipelineStage 8종) → 프론트 라이프사이클
+ * 단계 매핑. FE(11단계 UI 네비)와 BE(8단계 컴퓨트)는 의도적으로 입도가 다르다 — 이 표가
+ * 유일한 공식 번역이며, 계약 테스트가 양쪽 enum을 핀 고정한다(드리프트=CI 실패).
+ * BE에만 있는 스텝: design_review→(FE) permit(심의·인허가 검토 표면), cost→construction,
+ * tax→feasibility(수지 내 세금). FE에만 있는 단계(bim·finance·operations·legal)는 BE 스텝
+ * 없음(null) — 파이프라인이 산출하지 않는 UI 전용 단계임을 명시(이 표에는 값으로도 등장하지
+ * 않는다 — BE→FE 단방향 매핑이므로).
+ *
+ * 각 매핑의 근거(STAGE_META 실라벨 대조로 가장 자연스러운 대응을 선택):
+ *  - site_analysis → "site-analysis" : 라벨·역할 1:1("부지분석").
+ *  - design        → "design"        : 라벨·역할 1:1("설계"). BIM 3D 뷰(FE 전용 "bim")는
+ *                     파이프라인이 별도 산출하지 않는 UI 하위 화면이라 매핑 대상이 아니다.
+ *  - design_review → "permit"        : 설계도면 자동심의(BE 컴퓨트 스텝, 외부 심의엔진 BFF
+ *                     경유)는 FE에 별도 "심의" 탭이 없고 인허가 그룹(permit)이 그 검토 결과를
+ *                     표면화한다.
+ *  - cost          → "construction"  : BE cost 스텝은 공사비 산정(QTO/BOQ)이며, FE에서는
+ *                     시공계획 그룹(construction)이 이 산출물을 표시한다.
+ *  - feasibility   → "feasibility"   : 라벨·역할 1:1("수지분석").
+ *  - tax           → "feasibility"   : BE tax 스텝(취득세·양도세 등)은 수지분석 결과에 세금
+ *                     항목으로 포함되어 표시된다. FE의 "finance"는 PF/개발금융 전용(별도
+ *                     v2_feasibility API)이라 tax와 역할이 다르므로 오매핑하지 않는다.
+ *  - esg           → "esg"           : 라벨·역할 1:1("ESG").
+ *  - report        → "report"        : 라벨·역할 1:1("보고서").
+ */
+export const PIPELINE_STAGE_TO_LIFECYCLE: Record<PipelineStageBE, LifecycleStage | null> = {
+  site_analysis: "site-analysis",
+  design: "design",
+  design_review: "permit",
+  cost: "construction",
+  feasibility: "feasibility",
+  tax: "feasibility",
+  esg: "esg",
+  report: "report",
+};
+
+/**
  * 상단탭 그룹 정의 — 같은 11단계를 9그룹으로 묶은 "진입 뷰"(개요 그룹 포함 시 10탭).
  *  - 개요는 SSOT 단계가 아닌 프로젝트 루트 진입(별도 처리).
  *  - 설계 그룹 = design + bim, 사업성 그룹 = feasibility + finance + esg.
