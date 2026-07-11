@@ -7,6 +7,10 @@
 - 건축허가 조회 (허가번호, 주소 기반)
 - 건축물대장 조회
 - 인허가 진행상태 추적
+
+★오펀·폐기 후보(2026-07-11 트리아지): import 0건. 조회 기능은 건축HUB(hub_permit_client,
+라이브)와 중복, 세움터 고유가치(전자제출)는 미구현. base_url이 app/core/config와 불일치.
+재사용 판단은 _workspace/TRIAGE_wiring_p2_2026-07-11.md — 삭제는 사용자 승인 대기.
 """
 
 import structlog
