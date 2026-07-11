@@ -170,36 +170,29 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/desk-appraisal"],
   },
   {
-    id: "business-analysis",
-    label: "사업성·비용",
-    sectionId: "projects",
-    order: 30,
-    iconKey: "roi",
-    status: "live",
-    scope: "global",
-    lifecyclePhase: "business",
-  },
-  {
+    // 사업성·비용(2항목) 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·적산)을 가려
+    // 발견성이 나빴다. 투자 수익성·적산·공사비 관리를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출).
+    // 프로젝트 섹션 항목수는 여전히 7개 미만이라 IA 그룹화 규칙(§6) 위반 아님.
     id: "investment",
     label: "투자 수익성",
     sectionId: "projects",
-    parentId: "business-analysis",
-    order: 10,
+    order: 30,
     path: "/analytics/investment",
+    iconKey: "roi",
     status: "live",
     scope: "global",
     lifecyclePhase: "business",
     apiDependencies: ["/analytics/investment"],
   },
   {
-    // T2: "공사비 분석"→"적산·공사비 관리" 개칭 — /analytics/cost 허브가 개략 산정뿐 아니라
-    // 상세 내역서(BOQ, BoqDetailTable) 탭도 담당하므로 라벨을 실제 범위에 맞춘다.
+    // "공사비 분석"→"적산·공사비 관리" 개칭. /analytics/cost 허브가 개략 산정 + 상세 내역서(BOQ,
+    // BoqDetailTable) 탭을 담당. 사업성·비용 그룹 해체로 프로젝트 섹션 직속 승격(적산관리 발견성 개선).
     id: "cost",
     label: "적산·공사비 관리",
     sectionId: "projects",
-    parentId: "business-analysis",
-    order: 20,
+    order: 40,
     path: "/analytics/cost",
+    iconKey: "cost",
     status: "live",
     scope: "global",
     lifecyclePhase: "business",

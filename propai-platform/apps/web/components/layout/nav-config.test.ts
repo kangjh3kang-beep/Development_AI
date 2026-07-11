@@ -41,8 +41,15 @@ describe("buildPrimaryNav", () => {
     expect(landRights?.children?.map((c) => c.href)).toEqual([
       "/en/land-schedule", "/en/registry-analysis", "/en/desk-appraisal",
     ]);
-    const business = projects.items.find((n) => n.id === "business-analysis");
-    expect(business?.children?.map((c) => c.id)).toEqual(["investment", "cost"]);
+    // 사업성·비용 얇은 그룹 해체: 투자 수익성·적산·공사비 관리를 프로젝트 섹션 직속 L2 리프로 승격.
+    // (기본 접힘 그룹이 핵심 사업기능을 가리던 발견성 문제 해소 — 이제 상시 노출.)
+    expect(projects.items.find((n) => n.id === "business-analysis")).toBeUndefined();
+    const investment = projects.items.find((n) => n.id === "investment");
+    const cost = projects.items.find((n) => n.id === "cost");
+    expect(investment?.href).toBe("/en/analytics/investment");
+    expect(investment?.children).toBeUndefined();
+    expect(cost?.href).toBe("/en/analytics/cost");
+    expect(cost?.children).toBeUndefined();
 
     const marketAcquisition = NAV.find((s) => s.id === "market-acquisition")!;
     const marketSales = marketAcquisition.items.find((n) => n.id === "market-sales");
