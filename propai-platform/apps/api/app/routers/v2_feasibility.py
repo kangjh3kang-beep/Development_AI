@@ -1541,12 +1541,15 @@ async def cashflow_excel(req: CashflowRequest):
 
 
 @router.post("/budget-execution", response_model=BudgetExecutionResponse)
-async def budget_execution(req: BudgetExecutionRequest):
+async def budget_execution(
+    req: BudgetExecutionRequest,
+    current_user: User = Depends(get_current_user),
+):
     """예산-실적 실시간 집행 추적(설계도 §13) — 라인아이템의 예산 + 집행이벤트 → 기지출·미지출·집행률·롤업.
 
-    지출이 발생할 때마다 해당 항목 disbursements에 append 후 재호출하면 수지가 실시간 재계산된다
-    (무상태·프론트 라이브). 미지출 = 예산 − 기지출, 집행률 = 기지출 ÷ 예산. 영속(DisbursementEvent
-    append-only 원장)은 후속 증분. 무목업: 예산 0이면 집행률 None(0분모 방지).
+    미지출 = 예산 − 기지출, 집행률 = 기지출 ÷ 예산. 예산 0이면 집행률 None(0분모 방지·무목업).
+    project_id 제공 시 원장의 영속 집행이벤트를 병합해 실시간 갱신 — ★tenant_id 스코프로 소유
+    테넌트 것만 조회(IDOR 방지).
     """
     from app.services.feasibility.budget_execution import (
         compute_line_execution,
@@ -1554,12 +1557,14 @@ async def budget_execution(req: BudgetExecutionRequest):
     )
 
     items = [it.model_dump() for it in req.line_items]
-    # project_id 제공 시 영속 집행이벤트(원장)를 항목별로 병합(키=group::label) → 실시간 갱신.
     if req.project_id:
         from app.services.feasibility.disbursement_ledger_service import list_disbursements
 
-        persisted = await list_disbursements(req.project_id)
+        tenant = str(current_user.tenant_id) if current_user.tenant_id else None
+        persisted = await list_disbursements(tenant, req.project_id)
         for it in items:
+            if not it["label"]:  # 빈 라벨 라인은 키(group::) 충돌 방지 위해 병합 제외
+                continue
             key = f"{it['group']}::{it['label']}"
             if key in persisted:
                 it.setdefault("disbursements", []).extend(persisted[key])
@@ -1583,16 +1588,23 @@ async def budget_execution(req: BudgetExecutionRequest):
 
 
 @router.post("/budget-execution/disburse")
-async def budget_disburse(req: DisburseRequest):
+async def budget_disburse(
+    req: DisburseRequest,
+    current_user: User = Depends(get_current_user),
+):
     """집행 이벤트 1건 append (설계도 §13 · 해시체인 원장·변조탐지).
 
     비용 지출 시 해당 라인아이템(line_item_key=group::label)에 지출을 기록한다. 이후
     /budget-execution을 같은 project_id로 재호출하면 기지출·미지출·집행률이 실시간 갱신된다.
+    ★인증 필수·tenant_id 스코프(임의 프로젝트 원장 주입 IDOR 방지)·created_by 감사기록.
     영속 실패(DB 미가용)여도 graceful({persisted:False}) — 수지 분석 무손상.
     """
     from app.services.feasibility.disbursement_ledger_service import append_disbursement
 
+    if not req.line_item_key or "::" not in req.line_item_key or req.line_item_key.endswith("::"):
+        raise HTTPException(status_code=422, detail="line_item_key는 'group::label'(라벨 필수) 형식이어야 합니다")
     return await append_disbursement(
+        tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
         project_id=req.project_id,
         line_item_key=req.line_item_key,
         amount_won=req.amount_won,
@@ -1601,4 +1613,5 @@ async def budget_disburse(req: DisburseRequest):
         event_date=req.event_date,
         memo=req.memo,
         evidence=req.evidence,
+        created_by=str(getattr(current_user, "id", "") or ""),
     )

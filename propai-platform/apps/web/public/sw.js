@@ -16,7 +16,9 @@
 //        CashflowDcfPanel 접이식 강등·무목업 자동 재프리필/폴백 제거) 반영 — 구캐시 일괄 삭제.
 // v410: 사업성·비용 얇은 L2 그룹 해체 → 투자 수익성·적산·공사비 관리를 프로젝트 섹션 직속 승격
 //        (적산관리 발견성 개선). 개칭·승격된 nav가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v410-nav-cost-promote";
+// v411: 적산·공사비 관리에 '예산-실적 집행' 탭 신설(§13 BudgetExecutionPanel — 기지출/미지출·집행률
+//        실시간 추적). 신규 컴포넌트·탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v411-budget-execution";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.

@@ -5,12 +5,14 @@ import { CostEstimationClient } from "@/components/analytics/CostEstimationClien
 import { CostAlternativesPanel } from "@/components/cost/CostAlternativesPanel";
 import { BoqDetailTable } from "@/components/cost/BoqDetailTable";
 import { BillingDashboard } from "@/components/cost/BillingDashboard";
+import { BudgetExecutionPanel } from "@/components/feasibility/BudgetExecutionPanel";
 
 const TABS = [
   ["overview", "단계별 분석"],
   ["boq", "상세 내역서(BOQ)"],
   ["alternatives", "대안 설계 원가비교"],
   ["billing", "기성·실적관리(EVM)"],
+  ["budget", "예산-실적 집행"],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
@@ -56,6 +58,9 @@ export default function CostPage() {
 
       {/* CM — D2 기성고 EVM + 과다청구 이상탐지 */}
       {tab === "billing" && <BillingDashboard />}
+
+      {/* §13 — 예산 대비 실적(기지출/미지출) 실시간 집행 추적 */}
+      {tab === "budget" && <BudgetExecutionPanel />}
     </div>
   );
 }
