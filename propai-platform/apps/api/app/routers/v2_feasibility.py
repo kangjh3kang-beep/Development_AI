@@ -21,6 +21,8 @@ from app.core.database import get_db
 # (from __future__ import annotations 활성 → 주석/힌트는 런타임 미평가, 동작 무영향.)
 from app.models.auth import User
 from app.schemas.feasibility_v2 import (
+    BudgetExecutionRequest,
+    BudgetExecutionResponse,
     FeasibilityBaselineRequest,
     FeasibilityBaselineResponse,
     FeasibilityCalculateRequest,
@@ -1535,3 +1537,36 @@ async def cashflow_excel(req: CashflowRequest):
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"엑셀 생성 실패: {str(e)[:160]}")
+
+
+@router.post("/budget-execution", response_model=BudgetExecutionResponse)
+async def budget_execution(req: BudgetExecutionRequest):
+    """예산-실적 실시간 집행 추적(설계도 §13) — 라인아이템의 예산 + 집행이벤트 → 기지출·미지출·집행률·롤업.
+
+    지출이 발생할 때마다 해당 항목 disbursements에 append 후 재호출하면 수지가 실시간 재계산된다
+    (무상태·프론트 라이브). 미지출 = 예산 − 기지출, 집행률 = 기지출 ÷ 예산. 영속(DisbursementEvent
+    append-only 원장)은 후속 증분. 무목업: 예산 0이면 집행률 None(0분모 방지).
+    """
+    from app.services.feasibility.budget_execution import (
+        compute_line_execution,
+        rollup_execution,
+    )
+
+    items = [it.model_dump() for it in req.line_items]
+    lines = [
+        {
+            "group": it["group"],
+            "label": it["label"],
+            **compute_line_execution(
+                budget_won=it["budget_won"], disbursements=it["disbursements"]
+            ),
+        }
+        for it in items
+    ]
+    roll = rollup_execution(items)
+    return BudgetExecutionResponse(
+        lines=lines,
+        groups=roll["groups"],
+        total=roll["total"],
+        over_budget_items=roll["over_budget_items"],
+    )

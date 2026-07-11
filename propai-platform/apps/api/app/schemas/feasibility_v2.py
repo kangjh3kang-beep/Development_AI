@@ -210,3 +210,24 @@ class ModuleListResponse(BaseModel):
 class RecommendationResponse(BaseModel):
     """AI 권고 응답."""
     recommendations: list[dict[str, Any]]
+
+
+class BudgetLineItem(BaseModel):
+    """예산-실적 라인아이템 (설계도 §13)."""
+    group: str = "기타"
+    label: str = ""
+    budget_won: float = 0
+    disbursements: list[dict[str, Any]] = []  # [{amount_won, date?, memo?, evidence?}] append-only
+
+
+class BudgetExecutionRequest(BaseModel):
+    """예산 대비 실적(집행) 계산 요청."""
+    line_items: list[BudgetLineItem] = []
+
+
+class BudgetExecutionResponse(BaseModel):
+    """예산-실적 롤업 응답 — 항목별 + 그룹별·총계 + 초과집행 목록."""
+    lines: list[dict[str, Any]] = []
+    groups: dict[str, Any] = {}
+    total: dict[str, Any] = {}
+    over_budget_items: list[str] = []
