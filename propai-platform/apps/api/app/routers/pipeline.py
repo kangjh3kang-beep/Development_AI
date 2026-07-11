@@ -575,7 +575,7 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     "/report",
     response_model=PipelineReport,
     # ★전수감사 보강: 전체 파이프라인(LLM 포함) 실행 — 인증+한도게이트 부착(/run과 동일 계약).
-    # ★잔여 백로그: /report/pdf·/rerun-stage 등 파이프라인 재실행 라우트도 동일 게이트 스윕 권장.
+    # (백로그였던 /report/pdf·/rerun-stage 게이트 스윕 완료 — 동일 계약 부착됨.)
     dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
 async def generate_report(req: PipelineRunRequest):
@@ -618,7 +618,12 @@ def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-@router.post("/report/pdf", summary="통합 보고서 PDF 다운로드(결과 제공 시 재실행 없음)")
+@router.post(
+    "/report/pdf",
+    summary="통합 보고서 PDF 다운로드(결과 제공 시 재실행 없음)",
+    # ★인증+한도게이트(형제 /report·/report/pdf-from-ledger와 동일 계약) — 무인증 재실행·LLM 소비 방지.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def generate_report_pdf(req: ReportPdfRequest):
     """통합 분석 보고서를 PDF로 생성. result가 있으면 그것으로(즉시), 없으면 파이프라인 실행."""
     from fastapi.responses import Response
@@ -746,7 +751,11 @@ async def generate_report_pdf_from_ledger(
     )
 
 
-@router.post("/rerun-stage")
+@router.post(
+    "/rerun-stage",
+    # ★인증+한도게이트(형제 엔드포인트와 동일 계약) — 무인증 파이프라인 재실행·LLM 소비 방지.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def rerun_stage(req: StageRerunRequest):
     """특정 단계만 재실행.
 
