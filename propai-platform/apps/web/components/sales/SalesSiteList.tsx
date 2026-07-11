@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Construction, CreditCard, Key, LockKeyhole, Plus, Wrench } from "lucide-react";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
+import { SalesMarketingSection } from "@/components/sales/SalesMarketingSection";
 import { salesGlobal } from "@/lib/salesApi";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
@@ -205,6 +206,10 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           onClose={() => setPwSite(null)}
         />
       )}
+
+      {/* 배선 캠페인 3차(marketing, additive) — 채널별 마케팅 콘텐츠·OM(투자설명서) 생성.
+          기본 접힘(AdvancedDrawer), 이미 조회된 프로젝트 목록을 그대로 넘겨 재사용한다. */}
+      {projects.length > 0 && <SalesMarketingSection projects={projects} />}
     </div>
   );
 }
