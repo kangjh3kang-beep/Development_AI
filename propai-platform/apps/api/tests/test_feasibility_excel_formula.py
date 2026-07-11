@@ -9,7 +9,6 @@ from __future__ import annotations
 import io
 
 import openpyxl
-import pytest
 
 from app.services.export.excel_export_service import ExcelExportService
 
