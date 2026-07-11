@@ -13,6 +13,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { UnderwritingSection } from "@/components/projects/UnderwritingSection";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -734,6 +735,10 @@ export function ProjectFinanceWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* 배선 캠페인 2차(underwriting, additive) — 투자 언더라이팅(리스크·추천·수익성).
+          기본 접힘(AdvancedDrawer), 기존 수지/전세리스크 흐름과 무관하게 항상 노출. */}
+      <UnderwritingSection projectId={projectId} />
     </section>
   );
 }

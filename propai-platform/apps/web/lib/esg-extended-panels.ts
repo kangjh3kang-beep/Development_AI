@@ -5,15 +5,16 @@ import { ApiClientError } from "@/lib/api-client";
 // 왜 필요한가(쉬운 설명): RE100/LCC/EU Taxonomy/기후리스크/에너지인증 5개 백엔드 라우터는
 // 이미 완성된 서비스인데 화면(UI)이 없어 아무도 호출하지 못했다(배선설계도 P2 트리아지
 // ② 배선 후보). 이 파일은 "화면 입력값 → 백엔드 요청 바디" 조립 로직만 순수함수로 뽑아
-// 단위테스트로 계약(필드명·타입)을 고정한다 — UI(ExtendedEsgPanel.tsx)는 이 함수들을
-// 그대로 호출만 한다(로직 중복 없음, DRY).
+// 단위테스트로 계약(필드명·타입)을 고정한다 — UI(components/common/ExtendedAnalysisPanel.tsx,
+// 배선 캠페인 2차에서 공용 폴더로 이동·리네임됨)는 이 함수들을 그대로 호출만 한다(로직 중복 없음, DRY).
 //
 // 무날조 원칙: SSOT(store)에서 프리필 가능한 값만 채우고, 근거 없는 추정치는 절대
 // 만들어 넣지 않는다(빈 문자열 → 사용자가 직접 입력).
 
 /** 확장 ESG 패널 공용 에러 메시지 추출 — ProjectEsgWorkspaceClient의 동명 로컬 헬퍼와
  *  동일 판정(401/403=인증 안내, 그외=상태코드 노출)이지만 여기서는 독립 export로 두어
- *  기존 파일(불변 요구)을 건드리지 않고 ExtendedEsgPanel이 재사용할 수 있게 한다. */
+ *  기존 파일(불변 요구)을 건드리지 않고 components/common/ExtendedAnalysisPanel.tsx(및
+ *  배선 캠페인 2차의 신규 lib/workspace-extended-panels.ts)가 재사용할 수 있게 한다. */
 export function extractApiErrorMessage(error: unknown, authMessage: string): string {
   if (error instanceof ApiClientError) {
     if (error.status === 401 || error.status === 403) {
@@ -150,7 +151,7 @@ export interface Re100FormValues {
   totalElectricityMwh: string;
   renewableElectricityMwh: string;
   ktsUnitPriceKrw: string;
-  // 인덱스 시그니처 — ExtendedEsgPanel(제네릭 공용 폼 렌더러)의 Record<string, string|boolean>
+  // 인덱스 시그니처 — ExtendedAnalysisPanel(제네릭 공용 폼 렌더러)의 Record<string, string|boolean>
   // 제약과 구조적으로 호환되게 한다(폼 렌더러가 라우터별 타입을 몰라도 되게).
   [key: string]: string | boolean;
 }

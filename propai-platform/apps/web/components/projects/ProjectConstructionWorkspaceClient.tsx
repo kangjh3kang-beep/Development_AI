@@ -10,6 +10,7 @@ import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
+import { ConstructionSafetyExtendedSection } from "@/components/construction/ConstructionSafetyExtendedSection";
 import type { UnitPriceItem, UnitPricesResponse } from "@/components/cost/cmTypes";
 import type { Locale } from "@/i18n/config";
 
@@ -965,6 +966,11 @@ export function ProjectConstructionWorkspaceClient({
       </div>
       </>
       )}
+
+      {/* 배선 캠페인 2차(construction+safety, additive) — 시공일정·ZEB에너지·기후리스크·
+          하자분류(construction.py)·현장 안전관제(safety.py). 기본 접힘(AdvancedDrawer),
+          부지 데이터 게이트와 무관하게 항상 노출(1차 ESG와 동일 판단). */}
+      <ConstructionSafetyExtendedSection projectId={projectId} />
     </section>
   );
 }

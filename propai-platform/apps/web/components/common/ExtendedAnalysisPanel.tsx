@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * ExtendedEsgPanel — 확장 ESG 라우터(RE100/LCC/EU Taxonomy/기후리스크/에너지인증) 공용 소형 패널.
+ * ExtendedAnalysisPanel — "완성 서비스·UI 부재" 백엔드 라우터 공용 소형 패널.
  *
- * 왜 필요한가(쉬운 설명): 5개 백엔드 라우터가 완성돼 있는데 화면이 없어 아무도 못 쓰고
- * 있었다(배선설계도 P2 트리아지). 5개를 각각 따로 만들면 코드가 5배 중복되므로, 이 패널
- * 하나가 "필드 목록 + 바디 조립함수 + 결과 렌더 함수"를 설정(config)으로 받아 동작한다
- * (입력 폼 → 실행 버튼 → 결과 렌더 → 에러 상태 → 로딩, 전부 공용).
+ * 왜 필요한가(쉬운 설명): 배선설계도 P2 트리아지가 찾아낸 다수의 백엔드 라우터가
+ * 이미 완성돼 있는데 화면이 없어 아무도 못 쓰고 있었다. 각 라우터마다 따로 폼을
+ * 만들면 코드가 N배 중복되므로, 이 패널 하나가 "필드 목록 + 바디 조립함수 + 결과
+ * 렌더 함수"를 설정(config)으로 받아 동작한다(입력 폼 → 실행 버튼 → 결과 렌더 →
+ * 에러 상태 → 로딩, 전부 공용).
  *
- * 계약: buildBody는 lib/esg-extended-panels.ts의 순수함수를 그대로 넘긴다(로직 중복 금지).
+ * ★배선 캠페인 2차(2026-07-11): 1차(ESG 클러스터 5건)에서 components/projects/
+ * ExtendedEsgPanel.tsx로 도입됐던 이 컴포넌트를 ESG 전용 폴더에서 공용 폴더로
+ * 이동·리네임했다 — permit-cases/cost-intelligence/underwriting/safety/construction/
+ * cad-correction 등 ESG 외 클러스터에서도 그대로 재사용하기 위함(동작 불변, 이름만 일반화).
+ *
+ * 계약: buildBody는 각 lib/*-extended-panels.ts의 순수함수를 그대로 넘긴다(로직 중복 금지).
  * 에러는 WorkspaceQueryErrorCard(공용)로 정직하게 노출한다(응답에 없는 값 표시 금지).
  */
 
@@ -19,27 +25,27 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { extractApiErrorMessage, validatePositiveFields } from "@/lib/esg-extended-panels";
 
-export type ExtendedEsgFieldType = "number" | "text" | "boolean";
+export type ExtendedAnalysisFieldType = "number" | "text" | "boolean";
 
-export interface ExtendedEsgFormField {
+export interface ExtendedAnalysisFormField {
   /** 폼 값 객체의 키(예: "totalElectricityMwh"). */
   key: string;
   label: string;
-  type: ExtendedEsgFieldType;
+  type: ExtendedAnalysisFieldType;
   /** number 타입 전용 — 소수 허용 여부(기본 true). */
   allowDecimal?: boolean;
   placeholder?: string;
 }
 
-export type ExtendedEsgFormValues = Record<string, string | boolean>;
+export type ExtendedAnalysisFormValues = Record<string, string | boolean>;
 
-export interface ExtendedEsgPanelProps<
-  V extends ExtendedEsgFormValues = ExtendedEsgFormValues,
+export interface ExtendedAnalysisPanelProps<
+  V extends ExtendedAnalysisFormValues = ExtendedAnalysisFormValues,
 > {
   title: string;
-  fields: ExtendedEsgFormField[];
+  fields: ExtendedAnalysisFormField[];
   initialValues: V;
-  /** lib/esg-extended-panels.ts의 순수 바디 조립함수(이미 project_id 등 컨텍스트 바인딩됨). */
+  /** lib/*-extended-panels.ts의 순수 바디 조립함수(이미 project_id 등 컨텍스트 바인딩됨). */
   buildBody: (values: V) => unknown;
   /** apiClient가 프리픽스(/api/v1)를 붙이는 경로(예: "/re100/track"). */
   endpoint: string;
@@ -55,8 +61,8 @@ export interface ExtendedEsgPanelProps<
   requiredPositiveFields?: string[];
 }
 
-export function ExtendedEsgPanel<
-  V extends ExtendedEsgFormValues = ExtendedEsgFormValues,
+export function ExtendedAnalysisPanel<
+  V extends ExtendedAnalysisFormValues = ExtendedAnalysisFormValues,
 >({
   title,
   fields,
@@ -70,7 +76,7 @@ export function ExtendedEsgPanel<
   authErrorMessage,
   placeholderMessage,
   requiredPositiveFields,
-}: ExtendedEsgPanelProps<V>) {
+}: ExtendedAnalysisPanelProps<V>) {
   const [values, setValues] = useState<V>(initialValues);
   const [result, setResult] = useState<unknown>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);

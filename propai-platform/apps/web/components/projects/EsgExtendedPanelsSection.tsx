@@ -32,9 +32,9 @@ import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 import { apiClient } from "@/lib/api-client";
 import {
-  ExtendedEsgPanel,
-  type ExtendedEsgFormField,
-} from "@/components/projects/ExtendedEsgPanel";
+  ExtendedAnalysisPanel,
+  type ExtendedAnalysisFormField,
+} from "@/components/common/ExtendedAnalysisPanel";
 import {
   buildEsgExtendedContext,
   buildRe100Body,
@@ -362,20 +362,20 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
     [projectId, siteAnalysis, designData, feasibilityData, costData, esgData],
   );
 
-  const re100Fields: ExtendedEsgFormField[] = [
+  const re100Fields: ExtendedAnalysisFormField[] = [
     { key: "trackingYear", label: "추적 연도", type: "number", allowDecimal: false },
     { key: "totalElectricityMwh", label: "총 전력 사용량 (MWh)", type: "number" },
     { key: "renewableElectricityMwh", label: "재생에너지 전력량 (MWh)", type: "number" },
     { key: "ktsUnitPriceKrw", label: "K-ETS 배출권 단가 (원/tCO2eq)", type: "number", allowDecimal: false },
   ];
 
-  const lccFields: ExtendedEsgFormField[] = [
+  const lccFields: ExtendedAnalysisFormField[] = [
     { key: "initialConstructionCost", label: "초기 건설비 (원)", type: "number" },
     { key: "annualMaintenanceCost", label: "연간 유지보수비 (원)", type: "number" },
     { key: "annualEnergyCost", label: "연간 에너지비 (원)", type: "number" },
   ];
 
-  const euTaxonomyFields: ExtendedEsgFormField[] = [
+  const euTaxonomyFields: ExtendedAnalysisFormField[] = [
     { key: "primaryEnergyDemandKwhM2", label: "1차 에너지 소요량 (kWh/㎡·년)", type: "number" },
     { key: "renewableEnergyRatio", label: "재생에너지 비율 (0~1)", type: "number" },
     { key: "embodiedCarbonKgco2eM2", label: "내재탄소 (kgCO2e/㎡)", type: "number" },
@@ -387,14 +387,14 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
     { key: "hasSocialSafeguards", label: "사회적 안전장치(ILO 핵심 노동기준) 준수 여부", type: "boolean" },
   ];
 
-  const climateFields: ExtendedEsgFormField[] = [
+  const climateFields: ExtendedAnalysisFormField[] = [
     { key: "lat", label: "위도", type: "number" },
     { key: "lon", label: "경도", type: "number" },
     { key: "assetValueKrw", label: "자산가치 (원)", type: "number" },
     { key: "constructionPeriodMonths", label: "공사 기간 (개월)", type: "number", allowDecimal: false },
   ];
 
-  const energyFields: ExtendedEsgFormField[] = [
+  const energyFields: ExtendedAnalysisFormField[] = [
     { key: "totalAreaSqm", label: "연면적 (㎡)", type: "number" },
     { key: "floors", label: "층수", type: "number", allowDecimal: false },
     { key: "windowWallRatio", label: "창면적비 (0.1~0.9)", type: "number" },
@@ -406,14 +406,14 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
     <AdvancedDrawer label="확장 ESG 분석 (RE100·LCC·EU Taxonomy·기후리스크·에너지인증)">
       <div className="grid gap-6">
         {/* ★QA F2: 각 패널의 key는 그 패널이 실제로 쓰는 프리필 소스 필드만으로 구성한다.
-            ExtendedEsgPanel의 initialValues는 useState(initialValues)로 "첫 마운트에만" 캡처되는데,
+            ExtendedAnalysisPanel의 initialValues는 useState(initialValues)로 "첫 마운트에만" 캡처되는데,
             AdvancedDrawer는 eager 마운트(펼치기 전에도 자식이 이미 마운트)라서 restoreSnapshot 등
             비동기 SSOT 하이드레이션이 늦게 도착하면 프리필이 빈 채로 고착되는 문제가 있었다.
             key가 바뀌면 React가 리마운트하며 initialValues를 최신 ctx로 재캡처한다.
             하이드레이션 도착 시 리마운트로 프리필 재캡처 — 드로어 기본 닫힘이라 사용자 편집 전
             도착이 일반적이며, 편집 후 시그니처 변경은 드묾(수용). RE100은 SSOT 프리필이 전혀
             없으므로(전력사용량은 계량값 — 프리필 불가) key도 정적으로 고정한다. */}
-        <ExtendedEsgPanel
+        <ExtendedAnalysisPanel
           key="re100"
           title="RE100 이행률·K-ETS 비용 추적"
           fields={re100Fields}
@@ -429,7 +429,7 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
           requiredPositiveFields={["totalElectricityMwh"]}
         />
 
-        <ExtendedEsgPanel
+        <ExtendedAnalysisPanel
           key={`lcc-${ctx.constructionCostWon ?? "none"}`}
           title="생애주기비용(LCC) 산출 (ISO 15686-5)"
           fields={lccFields}
@@ -445,7 +445,7 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
           requiredPositiveFields={["initialConstructionCost"]}
         />
 
-        <ExtendedEsgPanel
+        <ExtendedAnalysisPanel
           key={`eu-taxonomy-${ctx.totalGfaSqm ?? "none"}-${ctx.embodiedCarbonPerSqm ?? "none"}`}
           title="EU Taxonomy 적합성 검증"
           fields={euTaxonomyFields}
@@ -461,7 +461,7 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
           requiredPositiveFields={["grossFloorAreaSqm"]}
         />
 
-        <ExtendedEsgPanel
+        <ExtendedAnalysisPanel
           key={`climate-${ctx.lat ?? "none"}-${ctx.lon ?? "none"}-${ctx.assetValueWon ?? "none"}`}
           title="기후리스크·보험 패키지 분석"
           fields={climateFields}
@@ -477,7 +477,7 @@ export function EsgExtendedPanelsSection({ projectId }: { projectId: string }) {
           requiredPositiveFields={["assetValueKrw"]}
         />
 
-        <ExtendedEsgPanel
+        <ExtendedAnalysisPanel
           key={`energy-cert-${ctx.totalGfaSqm ?? "none"}-${ctx.floorCount ?? "none"}`}
           title="에너지효율등급·ZEB 인증 추정"
           fields={energyFields}
