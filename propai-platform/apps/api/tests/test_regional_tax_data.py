@@ -103,8 +103,10 @@ class TestUtilityCharge:
     def test_sigungu_override(self):
         assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "경기", "수원시") == 130_000
 
-    def test_fallback_default(self):
-        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "충남", "논산시") == 120_000
+    def test_unregistered_returns_none(self):
+        # ★조례 미등록 지역 → None (수도법 §71 조례위임·전국 단일값 없음). 종전 임의 폴백 120,000은
+        #   지어낸 값이라 무목업 위반이었음. 소비처(B03/B04)가 unavailable로 정직 처리한다.
+        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "충남", "논산시") is None
 
     def test_sewage_sido(self):
         assert get_utility_charge(SEWAGE_CHARGES_WON, "부산", "해운대구") == 160_000
