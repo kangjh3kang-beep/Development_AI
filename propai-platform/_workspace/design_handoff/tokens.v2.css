@@ -1,0 +1,86 @@
+/* 사통팔땅(PropAI) — Nexus Geo-Intelligence 디자인 토큰 (2차 핸드오프 참조본)
+   DESIGN.md v2.0 Part B 기준. 다크가 기본, [data-theme="light"]로 파스텔 라이트 전환.
+   ※구현 시 packages/ui/src/styles/tokens.css로 반입하되, P0 캐스케이드 역전 해소 후에만 유효.
+   ※@custom-variant dark는 [data-theme="dark"]·.dark 겸용으로 선언(기존 dark: 유틸 호환). */
+
+:root, [data-theme="dark"] {
+  /* 서피스 */
+  --background-deep: #0a0c10;   /* 지도/캔버스 보이드 */
+  --surface: #11131b;           /* 기본 배경 */
+  --surface-panel: #111318;     /* 사이드 패널·헤더 */
+  --surface-container-low: #191b24;
+  --surface-container: #1c1f27; /* 카드·인풋 */
+  --surface-container-high: #282a32;
+  --surface-elevated: #282e39;
+  --border-muted: #282e39;
+  --outline: #8d90a1;
+  --outline-variant: #434655;
+  /* 텍스트 */
+  --on-surface: #e1e1ee;
+  --on-surface-variant: #c3c5d8;
+  --on-surface-muted: #8d90a1;
+  /* 액센트·기능 */
+  --primary: #135bec;
+  --on-primary: #e2e6ff;
+  --primary-dim: #b4c5ff;       /* 다크 위 프라이머리 텍스트 */
+  --secondary: #4cd7f6;
+  --tertiary: #ffb95f;          /* Part A Warm Amber 브릿지 */
+  --ai-accent: #a855f7;         /* AI 생성/추론 표시 전용 */
+  --status-success: #22c55e;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  /* 글래스 */
+  --glass-bg: rgba(22, 25, 32, 0.85);
+  --glass-bg-strong: rgba(22, 25, 32, 0.9);
+  --glass-blur: 12px;
+  /* 문서(종이) 뷰 — 등기부·보고서 미리보기 */
+  --paper: #F7F6F1;
+  --paper-ink: #1E1E22;
+  --paper-line: #D5D2C6;
+  --paper-section: #E9E7DE;
+  /* 레이아웃 */
+  --sidebar-w: 440px;
+  --header-h: 64px;
+  --gap: 24px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  /* 라운드 */
+  --r-input: 4px;
+  --r-card: 8px;
+  --r-panel: 12px;
+  --r-pill: 999px;
+}
+
+/* ── 라이트 파스텔 테마 ── */
+[data-theme="light"] {
+  --background-deep: #ECF0F6;
+  --surface: #F6F7FB;
+  --surface-panel: #FFFFFF;
+  --surface-container-low: #F3F5FA;
+  --surface-container: #F0F2F8;
+  --surface-container-high: #E7EAF2;
+  --surface-elevated: #E2E5EE;
+  --border-muted: #E2E5EE;
+  --outline: #8A90A4;
+  --outline-variant: #D2D7E4;
+  --on-surface: #2A2E3B;
+  --on-surface-variant: #555B6E;
+  --on-surface-muted: #8A90A4;
+  --primary: #7C98F2;
+  --on-primary: #FFFFFF;
+  --primary-dim: #5570DE;       /* 라이트 위 프라이머리 텍스트 */
+  --secondary: #3BA8C4;
+  --tertiary: #C88A3C;
+  --ai-accent: #9356DC;
+  --status-success: #3A9668;
+  --status-warning: #E9A436;
+  --status-error: #D05050;
+  --glass-bg: rgba(255, 255, 255, 0.88);
+  --glass-bg-strong: rgba(255, 255, 255, 0.94);
+}
+
+/* 폰트 스택 (DESIGN.md 0.2 — 실 로드는 next/font로 P0에서) */
+:root {
+  --font-display: 'Space Grotesk', 'Pretendard', sans-serif; /* 영문 헤드라인·라벨 */
+  --font-body: 'Pretendard', sans-serif;                     /* 본문·한글 (Noto Sans 대체) */
+  --font-mono: 'JetBrains Mono', monospace;                  /* 지번·좌표·면적·금액 */
+}

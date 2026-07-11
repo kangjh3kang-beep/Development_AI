@@ -2,51 +2,60 @@
    PropAI Design Tokens v3.0
    건축학의 정밀함 + 미래기술의 진보성
    WCAG 2.1 AA 이상 준수 · 가독성 극대화
+   ───────────────────────────────────────────────────────────────
+   ★ SSOT(Single Source of Truth): 모든 라이트 토큰은 여기 :root 한 곳에만,
+   모든 다크 토큰은 아래 `.dark, [data-theme="dark"]` 한 곳에만 정의한다.
+   globals.css :root 는 더 이상 토큰을 재정의하지 않는다(캐스케이드 역전 방지).
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
+  /* ── Font Stacks (next/font 로컬 변수 소비 — app/fonts.ts) ── */
+  --font-sans: var(--font-pretendard), "Pretendard", sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-pretendard), "Pretendard", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace;
+
   /* ── Light Mode (Architectural Precision) ── */
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: #f7fafc;
+  --foreground: #18212b;
 
   /* ── Surface Hierarchy ── */
   --surface: #ffffff;
-  --surface-strong: #f1f5f9;
-  --surface-soft: #f8fafc;
-  --surface-secondary: #f1f5f9;
+  --surface-strong: #ffffff;
+  --surface-soft: #f3f7fa;
+  --surface-secondary: #ffffff;
   --surface-tertiary: #f1f5f9;
-  --surface-muted: rgba(15, 23, 42, 0.04);
+  --surface-muted: #edf3f7;
 
   /* ── Text Hierarchy (WCAG AA+ 준수) ── */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #64748b;
-  --text-hint: #64748b;
+  --text-primary: #18212b;
+  --text-secondary: #53606c;
+  --text-tertiary: #768493;
+  --text-hint: #95a2af;
 
   /* ── Borders & Dividers ── */
-  --line: rgba(15, 23, 42, 0.08);
-  --line-strong: rgba(15, 23, 42, 0.12);
-  --line-subtle: rgba(15, 23, 42, 0.04);
+  --line: rgba(37, 58, 77, 0.12);
+  --line-strong: rgba(37, 58, 77, 0.20);
+  --line-subtle: rgba(37, 58, 77, 0.08);
 
-  /* ── Brand Accent — Architectural Cyan ── */
-  --accent: #14b8a6;
-  --accent-strong: #0d9488;
-  --accent-soft: rgba(20, 184, 166, 0.08);
+  /* ── Brand Accent ── */
+  --accent: #2f7dd9;
+  --accent-strong: #1d5fd1;
+  --accent-soft: rgba(29, 95, 209, 0.10);
 
   /* ── Elevation Shadows (Light Depth) ── */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 12px 32px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 24px 64px rgba(15, 23, 42, 0.1);
+  --shadow-xs: 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-sm: 0 1px 3px rgba(24, 33, 43, 0.08);
+  --shadow-md: 0 8px 24px rgba(24, 33, 43, 0.08);
+  --shadow-lg: 0 18px 40px rgba(24, 33, 43, 0.10);
   --shadow-xl: 0 40px 100px rgba(15, 23, 42, 0.12);
   --shadow-2xl: 0 48px 120px rgba(15, 23, 42, 0.15);
-  --shadow-inner: inset 0 2px 8px rgba(15, 23, 42, 0.06);
-  --shadow-glow: 0 0 20px rgba(20, 184, 166, 0.25);
+  --shadow-inner: inset 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-glow: 0 10px 30px rgba(29, 95, 209, 0.16);
 
   /* ── Glass Effect (Light) ── */
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(15, 23, 42, 0.08);
-  --glass-blur: 20px;
+  --glass-bg: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(37, 58, 77, 0.12);
+  --glass-blur: 14px;
 
   /* ── Common Radii ── */
   --radius-sm: 0.875rem;
@@ -69,10 +78,10 @@
   --tracking-widest: 0.25em;
 
   /* ── Status Colors ── */
-  --status-success: #10b981;
-  --status-warning: #f59e0b;
-  --status-error: #ef4444;
-  --status-info: #3b82f6;
+  --status-success: #1b8a5a;
+  --status-warning: #b7791f;
+  --status-error: #d74e42;
+  --status-info: #2f7dd9;
 
   /* ── Chart Palette (6 colors, accessible) ── */
   --chart-1: #14b8a6;
@@ -92,20 +101,45 @@
      주의: --accent-strong은 절대 건드리지 않는다(버튼 배경·텍스트 이중용도).
      아래는 그래프/포커스/실시간 인디케이터·스파크라인에만 쓰는 데이터 액센트와
      HUD 그리드/스캔라인 전용 토큰. 버튼엔 기존 accent를 계속 사용. */
-  /* 데이터 액센트(일렉트릭 시안) — 라이트에선 대비 확보용 진한 시안 */
-  --data-accent: #0891b2;
-  --data-accent-soft: rgba(8, 145, 178, 0.10);
-  --data-accent-line: rgba(8, 145, 178, 0.30);
+  --data-accent: #1b8a5a;
+  --data-accent-soft: rgba(27, 138, 90, 0.10);
+  --data-accent-line: rgba(27, 138, 90, 0.28);
+  --data-glow: none;
   /* HUD 그리드 라인(은은) / 코너 브래킷 / 스캔라인 */
-  --grid-line: rgba(15, 23, 42, 0.06);
+  --grid-line: rgba(37, 58, 77, 0.08);
   --grid-line-strong: rgba(15, 23, 42, 0.10);
-  --hud-bracket: rgba(8, 145, 178, 0.45);
-  --hud-scanline: rgba(8, 145, 178, 0.06);
-  /* 실시간 인디케이터 글로우(데이터 액센트 기반) */
-  --data-glow: 0 0 16px rgba(8, 145, 178, 0.30);
+  --hud-bracket: rgba(29, 95, 209, 0.36);
+  --hud-scanline: rgba(37, 58, 77, 0.06);
+
+  /* ── SaaS 팔레트 (globals.css에서 이관 — 랜딩/마케팅 서피스 전용) ── */
+  --saas-ink: #0b120d;
+  --saas-lime: #ddff86;
+  --saas-sky: #bed5e5;
+  --saas-coral: #ffa4a4;
+  --saas-ivory: #ededce;
+  --saas-lime-text: #5b6f12;
+  --saas-sky-text: #29546f;
+  --saas-coral-text: #9f3e3e;
+  --saas-ivory-text: #69693d;
+  --saas-lime-soft: rgba(221, 255, 134, 0.18);
+  --saas-sky-soft: rgba(190, 213, 229, 0.28);
+  --saas-coral-soft: rgba(255, 164, 164, 0.20);
+  --saas-ivory-soft: rgba(237, 237, 206, 0.35);
+  --saas-lime-line: rgba(221, 255, 134, 0.60);
+  --saas-sky-line: rgba(190, 213, 229, 0.80);
+  --saas-coral-line: rgba(255, 164, 164, 0.75);
+  --saas-lime-hero-line: rgba(221, 255, 134, 0.20);
+  --saas-ink-line: rgba(11, 18, 13, 0.10);
+  --saas-ink-line-strong: rgba(11, 18, 13, 0.25);
+  --saas-ink-shadow: rgba(11, 18, 13, 0.22);
+  --saas-lime-shadow: rgba(221, 255, 134, 0.22);
+  --saas-panel-wash: #f8faf2;
+  --saas-hero-sheen: rgba(237, 237, 206, 0.08);
+  --saas-hero-grid-lime: rgba(221, 255, 134, 0.22);
+  --saas-hero-grid-sky: rgba(190, 213, 229, 0.14);
 }
 
-.dark {
+.dark, [data-theme="dark"] {
   /* ── Dark Mode (Nexus Geo-Intelligence) ── */
   --background: #11131b;
   --foreground: #e1e1ee;
@@ -145,7 +179,7 @@
   --shadow-xl: 0 40px 100px rgba(0, 0, 0, 0.9);
   --shadow-2xl: 0 48px 120px rgba(0, 0, 0, 0.95);
   --shadow-inner: inset 0 2px 8px rgba(0, 0, 0, 0.5);
-  
+
   /* Cyber Glows */
   --shadow-glow: 0 0 24px rgba(45, 212, 191, 0.4);
   --shadow-glow-strong: 0 0 32px rgba(45, 212, 191, 0.6), 0 0 12px rgba(45, 212, 191, 0.8);
