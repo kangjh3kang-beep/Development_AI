@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/SatongMultiMap";
+import { KakaoRoadview } from "@/components/map/KakaoRoadview";
 import { apiClient } from "@/lib/api-client";
 import { resolveMapCenter } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -126,6 +127,8 @@ export function NearbyTransactionsMap({
   const [showPresale, setShowPresale] = useState(false);
   const [presale, setPresale] = useState<PresaleItem[] | null>(null);
   const [presaleLoading, setPresaleLoading] = useState(false);
+  // 선택 위치 로드뷰(카카오 SDK, 백엔드 불요) — 접힘 기본값(additive), focusTarget 확보 시에만 노출.
+  const [showRoadview, setShowRoadview] = useState(false);
 
   const onPayloadRef = useRef(onPayload);
   const onLoadingRef = useRef(onLoading);
@@ -197,6 +200,7 @@ export function NearbyTransactionsMap({
   useEffect(() => {
     setFallbackCenter(null);
     setFallbackFailed(false);
+    setShowRoadview(false);
   }, [address, pnu]);
   useEffect(() => {
     // payload 가 왔는데 center 가 유효하면 폴백 불필요.
@@ -404,6 +408,25 @@ export function NearbyTransactionsMap({
           </div>
         )}
       </div>
+
+      {focusTarget && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowRoadview((value) => !value)}
+            aria-expanded={showRoadview}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-muted)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-strong)]"
+          >
+            <span className="text-[var(--accent-strong)]">◉</span>
+            {showRoadview ? "선택 위치 로드뷰 접기" : "선택 위치 로드뷰 보기"}
+          </button>
+          {showRoadview && (
+            <div className="mt-2">
+              <KakaoRoadview lat={focusTarget.lat} lon={focusTarget.lon} height={220} />
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
