@@ -606,30 +606,7 @@ class TestAVMServiceBuild:
 # ═══════════════════════════════════════════════
 
 class TestAdditionalRouterEndpoints:
-    @pytest.mark.asyncio
-    async def test_chatbot_session_create(self, client):
-        r = await client.post("/api/v1/chatbot/sessions", json={
-            "domain": "investment",
-            "model_name": "claude-3",
-        })
-        assert r.status_code in {200, 201, 401, 403, 422, 500}
-
-    @pytest.mark.asyncio
-    async def test_chatbot_session_list(self, client):
-        r = await client.get("/api/v1/chatbot/sessions")
-        assert r.status_code in {200, 401, 403, 500}
-
-    @pytest.mark.asyncio
-    async def test_chatbot_send_message(self, client):
-        r = await client.post(f"/api/v1/chatbot/sessions/{uuid4()}/messages", json={
-            "content": "Hello",
-        })
-        assert r.status_code in {200, 401, 403, 404, 422, 500}
-
-    @pytest.mark.asyncio
-    async def test_chatbot_conversation(self, client):
-        r = await client.get(f"/api/v1/chatbot/sessions/{uuid4()}")
-        assert r.status_code in {200, 401, 403, 404, 500}
+    # chatbot 엔드포인트 테스트 삭제됨(2026-07-12 — routers/chatbot.py 자체 삭제, TRIAGE_wiring_p2 참조)
 
     @pytest.mark.asyncio
     async def test_facility_reserve(self, client):
