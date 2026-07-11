@@ -35,7 +35,7 @@ class TestRouterImportsViaClient:
 
     @pytest.mark.asyncio
     async def test_finance_엔드포인트(self, client):
-        r = await client.post("/api/v1/finance/feasibility", json={})
+        r = await client.post("/api/v1/finance/jeonse-risk", json={})
         assert r.status_code in {401, 403, 422, 500}
 
     @pytest.mark.asyncio
@@ -261,32 +261,6 @@ class TestCarbonCalculationServiceMethods:
         assert result.total_embodied_carbon > 0
         assert result.total_operational_carbon > 0
         assert len(result.reduction_tips) == 2
-
-
-class TestUnionManagementServiceMethods:
-    @pytest.mark.asyncio
-    async def test_calculate_contribution(self):
-        from apps.api.services.union_management_service import UnionManagementService
-
-        mock_db = AsyncMock()
-        svc = UnionManagementService(db=mock_db)
-
-        # _generate_scenarios를 mock (LLM 호출 회피)
-        with patch.object(svc, "_generate_scenarios", return_value=[
-            {"scenario": "기본", "contribution": 500_000_000, "factors": ["현재 조건"]},
-        ]):
-            result = await svc.calculate_contribution(
-                project_id=TEST_PROJECT_ID,
-                tenant_id=TEST_TENANT_ID,
-                total_project_cost=100_000_000_000,
-                total_appraised_value=80_000_000_000,
-                individual_appraised_value=500_000_000,
-                target_area_sqm=84,
-                avg_sale_price_per_sqm=20_000_000,
-            )
-        assert result.proportional_rate > 0
-        assert result.individual_contribution >= 0
-        assert len(result.scenarios) == 1
 
 
 class TestFacilityReservationServiceMethods:

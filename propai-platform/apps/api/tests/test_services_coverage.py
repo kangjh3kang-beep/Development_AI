@@ -325,61 +325,6 @@ class TestKDXStaticMethods:
         assert ms >= 900  # 약 1000ms
 
 
-# ── UnionManagementService ──
-
-
-class TestUnionManagement:
-    def test_비례율_계산(self):
-        from apps.api.services.union_management_service import UnionManagementService
-
-        svc = UnionManagementService(db=AsyncMock())
-        assert svc._calculate_proportional_rate(100_000, 200_000) == 0.5
-
-    def test_비례율_제로_감정가(self):
-        from apps.api.services.union_management_service import UnionManagementService
-
-        svc = UnionManagementService(db=AsyncMock())
-        assert svc._calculate_proportional_rate(100_000, 0) == 1.0
-
-    def test_개인_분담금_계산(self):
-        from apps.api.services.union_management_service import UnionManagementService
-
-        svc = UnionManagementService(db=AsyncMock())
-        result = svc._calculate_contribution(
-            target_area_sqm=84.0,
-            avg_sale_price_per_sqm=20_000_000,
-            individual_appraised_value=500_000_000,
-            proportional_rate=0.8,
-        )
-        # 84 * 20M = 1,680M, credit = 500M * 0.8 = 400M, contribution = 1,280M
-        assert result == pytest.approx(1_280_000_000)
-
-    def test_분담금_음수_방지(self):
-        from apps.api.services.union_management_service import UnionManagementService
-
-        svc = UnionManagementService(db=AsyncMock())
-        result = svc._calculate_contribution(
-            target_area_sqm=50.0,
-            avg_sale_price_per_sqm=10_000,
-            individual_appraised_value=10_000_000,
-            proportional_rate=1.0,
-        )
-        assert result == 0.0  # max(0, 500000 - 10000000) = 0
-
-    def test_결과_클래스(self):
-        from apps.api.services.union_management_service import UnionContributionResult
-
-        r = UnionContributionResult(
-            proportional_rate=0.8,
-            individual_contribution=1_000_000,
-            total_project_cost=10_000_000,
-            breakdown={"a": 1},
-            scenarios=[{"scenario": "base"}],
-        )
-        assert r.proportional_rate == 0.8
-        assert len(r.scenarios) == 1
-
-
 # ── CircuitBreaker (base_client.py) ──
 
 
