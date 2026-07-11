@@ -71,14 +71,14 @@ function safeDevelopmentType(v: unknown): string | null {
  * 분양수입이 부풀려진다. 그래서 연면적에 전용률을 곱해 "전용면적"으로 환산한 뒤 전용단가와 곱한다.
  *
  * ★무목업(정직 표기): 아래 값은 임의 가정이 아니라 이 플랫폼 백엔드가 이미 쓰는 표준 전용률이다
- *  (apps/api/app/services/pipeline/project_pipeline.py:89 _SELLABLE_EFFICIENCY_BY_TYPE,
+ *  (정본: apps/api/app/services/feasibility/unit_standards.py SELLABLE_EFFICIENCY_BY_BUILDING_TYPE,
  *   design_v61.py:347 efficiency_pct 기본 75.0). 백엔드 sellable_area = GFA × 전용률 산식과 동일.
  *  설계(design)가 실제 전용률(efficiencyPct)을 환류하면 그 실값을 우선 쓰고(아래 sale/feasibility),
  *  미확보일 때만 이 표준값으로 폴백한다 — 추정임을 정직히 표기.
  *
- * ★(G4) FE/BE 이중 하드코딩 계약: 이 값은 apps/api/app/services/pipeline/project_pipeline.py의
- *  _SELLABLE_EFFICIENCY_BY_TYPE와 "동치 계약"이며 자동 동기화되지 않는다(정본 미수렴 — P1
- *  unit_standards 노출 예정). 한쪽을 바꾸면 반드시 반대쪽 상수와 두 계약 테스트
+ * ★(G4→P2 수렴 완료) FE/BE 계약: 백엔드 정본은 apps/api/app/services/feasibility/unit_standards.py의
+ *  SELLABLE_EFFICIENCY_BY_BUILDING_TYPE/get_sellable_efficiency로 수렴됐고(P2, project_pipeline은
+ *  import 소비), FE는 교차언어라 이 미러를 유지한다(자동 동기화 없음). 한쪽 변경 시 반대쪽 상수와 두 계약 테스트
  *  (node-body-builders.test.ts의 "G4 계약" describe·apps/api/tests/test_sellable_efficiency_contract.py)를
  *  함께 갱신할 것. export는 그 계약 테스트가 실값을 직접 대조하기 위함(런타임 동작 불변).
  */
@@ -89,7 +89,7 @@ export const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
   공동주택: 0.76,
   근린생활시설: 0.7,
 };
-/** 유형 미상 시 표준 전용률(백엔드 _SELLABLE_EFFICIENCY_BY_TYPE 기본값 0.75와 동일. G4 계약 대상). */
+/** 유형 미상 시 표준 전용률(백엔드 unit_standards.DEFAULT_SELLABLE_EFFICIENCY 0.75와 동일. G4 계약 대상). */
 export const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
 
 /**

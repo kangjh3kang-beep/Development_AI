@@ -1,4 +1,9 @@
-"""v53 permit submission and tracking service."""
+"""v53 permit submission and tracking service.
+
+★오칭 주의: 세움터(EAIS) API를 호출하지 않는다 — 로컬 룰(JSON)+PermitSubmission DB 기반
+제출상태 추적기다. 세움터 실연동은 integrations/seumter_client.py(현재 오펀·폐기 후보) 참조.
+(2026-07-11 트리아지: _workspace/TRIAGE_wiring_p2_2026-07-11.md G10-a)
+"""
 
 from __future__ import annotations
 
