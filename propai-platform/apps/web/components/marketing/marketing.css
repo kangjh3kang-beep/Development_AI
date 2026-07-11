@@ -1,0 +1,313 @@
+/* ═══════════════════════════════════════════════════════════════
+   PropAI 랜딩(마케팅) 전용 스타일 — Design.md Part A "Warm Amber"
+   ─────────────────────────────────────────────────────────────
+   • 전역 토큰(--accent 등)을 절대 사용하지 않는다. 랜딩은 앱 테마
+     (다크/라이트)와 무관하게 "항상" Part A 라이트로 고정한다.
+   • 모든 색·타이포·컴포넌트는 이 파일의 `--mkt-*` 토큰만 소비한다.
+   • 스코프 루트: `.mkt-root` (랜딩 최상위 컨테이너에만 부착).
+   ═══════════════════════════════════════════════════════════════ */
+
+.mkt-root {
+  /* 중성 팔레트 */
+  --mkt-ink: #0e0e10;
+  --mkt-ink-soft: #2a2a2e;
+  --mkt-graphite: #6b6b70;
+  --mkt-line: #e4e4e7;
+  --mkt-paper: #f4f4f2;
+  --mkt-white: #ffffff;
+  /* 액센트(Warm Amber) */
+  --mkt-accent: #c8873f;
+  --mkt-accent-soft: #e8c79a;
+  --mkt-accent-deep: #9c6a2e;
+  /* 레이아웃 상수 */
+  --mkt-maxw: 1440px;
+  --mkt-pad-x: 72px;
+  --mkt-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* 폰트: 본문/한글 헤드라인=Pretendard(--font-sans), 숫자/라벨=Space Grotesk(--font-display) */
+  --mkt-font-sans: var(--font-sans), "Pretendard", system-ui, sans-serif;
+  --mkt-font-display: var(--font-display), var(--font-sans), "Pretendard", sans-serif;
+
+  /* 앱 다크 테마의 영향을 차단하고 항상 라이트로 고정.
+     min-height:100vh — 앱 크롬 없이 풀블리드로 렌더될 때(DashboardChromeGate가
+     미인증 홈에서 헤더/푸터를 스킵) body의 전역 --background(다크 기본)가
+     랜딩 주변/여백에 누출되지 않도록 자체 배경을 뷰포트 전체로 완결시킨다. */
+  min-height: 100vh;
+  color-scheme: light;
+  color: var(--mkt-ink);
+  background: var(--mkt-paper);
+  font-family: var(--mkt-font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 랜딩 내부 색 상속을 확실히 라이트로 고정(앱 --text-* 토큰 유입 방지) */
+.mkt-root :where(h1, h2, h3, h4, p, span, a, li, dt, dd, label, input, button) {
+  color: inherit;
+}
+
+/* ── 레이아웃 컨테이너 ── */
+.mkt-container {
+  width: 100%;
+  max-width: var(--mkt-maxw);
+  margin-inline: auto;
+  padding-inline: var(--mkt-pad-x);
+}
+
+/* ── 섹션 배경(paper / white / ink 3종만) ── */
+.mkt-section {
+  position: relative;
+  padding-block: clamp(64px, 9vw, 128px);
+}
+.mkt-section--paper {
+  background: var(--mkt-paper);
+  color: var(--mkt-ink);
+}
+.mkt-section--white {
+  background: var(--mkt-white);
+  color: var(--mkt-ink);
+}
+.mkt-section--ink {
+  background: var(--mkt-ink);
+  color: var(--mkt-white);
+}
+
+/* ── 타이포 스케일(Part A A2) ── */
+.mkt-display {
+  font-family: var(--mkt-font-sans);
+  font-weight: 600;
+  font-size: clamp(40px, 8vw, 104px);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.mkt-h1 {
+  font-family: var(--mkt-font-sans);
+  font-weight: 600;
+  font-size: clamp(36px, 6vw, 72px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.mkt-h2 {
+  font-family: var(--mkt-font-sans);
+  font-weight: 600;
+  font-size: clamp(30px, 4.4vw, 44px);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.mkt-h3 {
+  font-family: var(--mkt-font-sans);
+  font-weight: 500;
+  font-size: clamp(20px, 2.2vw, 28px);
+  line-height: 1.2;
+}
+.mkt-body-l {
+  font-size: clamp(16px, 1.4vw, 20px);
+  line-height: 1.5;
+  color: var(--mkt-graphite);
+}
+.mkt-body {
+  font-size: 16px;
+  line-height: 1.6;
+}
+.mkt-num {
+  font-family: var(--mkt-font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── 라벨 pill (✦ accent 글리프 1개) ── */
+.mkt-label-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--mkt-line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-family: var(--mkt-font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--mkt-ink);
+  background: transparent;
+}
+.mkt-label-pill .mkt-glyph {
+  color: var(--mkt-accent);
+}
+/* 다크 섹션 위 라벨 */
+.mkt-section--ink .mkt-label-pill {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* ── Primary 버튼(pill): ink 배경 → hover accent ── */
+.mkt-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 15px 30px;
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: none;
+  background: var(--mkt-ink);
+  color: var(--mkt-white);
+  transition: background 220ms var(--mkt-ease), color 220ms var(--mkt-ease),
+    transform 220ms var(--mkt-ease);
+}
+.mkt-pill-btn:hover {
+  background: var(--mkt-accent);
+  color: var(--mkt-ink);
+}
+.mkt-pill-btn:focus-visible {
+  outline: 2px solid var(--mkt-accent);
+  outline-offset: 3px;
+}
+.mkt-pill-btn .mkt-arrow {
+  transition: transform 220ms var(--mkt-ease);
+}
+.mkt-pill-btn:hover .mkt-arrow {
+  transform: translateX(3px);
+}
+
+/* 흰 pill (히어로 스크림 위) */
+.mkt-pill-btn--light {
+  background: var(--mkt-white);
+  color: var(--mkt-ink);
+}
+.mkt-pill-btn--light:hover {
+  background: var(--mkt-accent);
+  color: var(--mkt-ink);
+}
+
+/* 앰버 pill (다크 CTA 섹션) */
+.mkt-pill-btn--accent {
+  background: var(--mkt-accent);
+  color: var(--mkt-ink);
+}
+.mkt-pill-btn--accent:hover {
+  background: var(--mkt-accent-soft);
+  color: var(--mkt-ink);
+}
+
+/* Secondary(투명 + line 보더) */
+.mkt-pill-btn--ghost {
+  background: transparent;
+  color: var(--mkt-ink);
+  border-color: var(--mkt-line);
+}
+.mkt-pill-btn--ghost:hover {
+  background: var(--mkt-ink);
+  color: var(--mkt-white);
+  border-color: var(--mkt-ink);
+}
+
+/* ── 넘버링 행(01/02 + 대형 항목명 + 우측 설명) ── */
+.mkt-num-row {
+  display: grid;
+  grid-template-columns: auto 1fr minmax(220px, 34%);
+  align-items: baseline;
+  gap: 24px 40px;
+  padding-block: clamp(24px, 3vw, 40px);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.mkt-num-row__idx {
+  font-family: var(--mkt-font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: clamp(20px, 2vw, 26px);
+  color: var(--mkt-accent);
+  letter-spacing: 0.02em;
+}
+.mkt-num-row__title {
+  font-family: var(--mkt-font-sans);
+  font-weight: 600;
+  font-size: clamp(30px, 4.6vw, 62px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+}
+.mkt-num-row__desc {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: clamp(14px, 1.2vw, 17px);
+  line-height: 1.55;
+}
+
+/* ── 카드(radius + 1px line 보더) ── */
+.mkt-card {
+  border: 1px solid var(--mkt-line);
+  border-radius: 18px;
+  background: var(--mkt-white);
+  overflow: hidden;
+}
+
+/* ── 진입 모션(Part A A5): fade + translateY(16px) 600ms, 진입 1회 ── */
+@keyframes mkt-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.mkt-reveal {
+  animation: mkt-reveal 600ms var(--mkt-ease) both;
+}
+.mkt-reveal-2 {
+  animation: mkt-reveal 600ms var(--mkt-ease) 120ms both;
+}
+.mkt-reveal-3 {
+  animation: mkt-reveal 600ms var(--mkt-ease) 240ms both;
+}
+
+/* ── 이미지 hover scale(컨테이너 overflow hidden) ── */
+.mkt-img-frame {
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid var(--mkt-line);
+}
+.mkt-img-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 700ms var(--mkt-ease);
+}
+.mkt-img-frame:hover img {
+  transform: scale(1.03);
+}
+
+/* ── 반응형: 1200px 미만 단일 컬럼으로 우아하게 축소 ── */
+@media (max-width: 1200px) {
+  .mkt-num-row {
+    grid-template-columns: auto 1fr;
+  }
+  .mkt-num-row__desc {
+    grid-column: 2 / -1;
+  }
+}
+@media (max-width: 768px) {
+  .mkt-root {
+    --mkt-pad-x: 24px;
+  }
+}
+
+/* ── 모션 감축 사용자 존중 ── */
+@media (prefers-reduced-motion: reduce) {
+  .mkt-reveal,
+  .mkt-reveal-2,
+  .mkt-reveal-3 {
+    animation: none;
+  }
+  .mkt-img-frame img,
+  .mkt-pill-btn,
+  .mkt-pill-btn .mkt-arrow {
+    transition: none;
+  }
+}
