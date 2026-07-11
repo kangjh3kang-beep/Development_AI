@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.legal.legal_reference_registry import get_legal_ref
 from app.services.tax.regional_tax_data import (
     SCHOOL_SITE_CHARGE_RATE,
     SCHOOL_SITE_MIN_HOUSEHOLDS,
@@ -22,6 +23,14 @@ from app.services.tax.regional_tax_data import (
     get_metro_transport_charge,
     get_utility_charge,
 )
+
+# 부담금 코드 → 법령 근거 키(legal_reference_registry). 근거+링크(evidence) 부착용.
+_B_LEGAL_KEY: dict[str, str] = {
+    "B01": "metro_transport_charge",   # 대도시권광역교통관리법 §7의2
+    "B02": "school_land_special",      # 학교용지 확보 특례법
+    "B03": "water_supply_cause_charge",  # 수도법 §71
+    "B04": "sewage_cause_charge",      # 하수도법 §61
+}
 
 
 def calculate_b01_metro_transport(
@@ -218,6 +227,11 @@ def calculate_all_utility_stage(
         calculate_b08_fire(total_gfa_sqm=total_gfa_sqm),
     ]
 
+    # 각 부담금에 법령 근거(근거+링크·evidence) 부착 — DRY 일괄(개별 함수 미수정·verified URL).
+    for it in items:
+        ref = get_legal_ref(_B_LEGAL_KEY.get(it.get("code", ""), ""))
+        if ref:
+            it["legal_ref"] = ref
     total = sum(it["amount_won"] for it in items)
     return {
         "stage": "construction",

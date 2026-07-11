@@ -370,6 +370,12 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 갭법규(feat) 수도권정비계획법(인구집중유발시설·과밀부담금) ──
     "metro_overconcentration":    _ref(_METRO, "제7조", "과밀억제권역의 행위 제한(인구집중유발시설)"),
     "metro_congestion_charge":    _ref(_METRO, "제12조", "과밀부담금의 부과·징수"),
+    # ── 수지 부담금 엔진(B01·B03·B04·C07) 법령 근거 — 과밀부담금(수도권정비법)과 별개 ──
+    "metro_transport_charge":     _ref("대도시권 광역교통 관리에 관한 특별법", "제7조의2", "광역교통시설부담금(표준건축비×부과율×건축연면적)"),
+    "infra_facility_charge":      _ref(_KOOKTO, "제68조", "기반시설부담금(부담구역·표준시설비용×부담률)"),
+    "water_supply_cause_charge":  _ref("수도법", "제71조", "원인자부담금(조례 위임·전국단일값 없음)"),
+    "sewage_cause_charge":        _ref("하수도법", "제61조", "원인자부담금(조례 위임·전국단일값 없음)"),
+    "development_charge":         _ref("개발이익 환수에 관한 법률", "제5조", "개발부담금 부과대상 사업"),
     # ── 갭법규(feat) 학교용지·기부채납·국공유재산 보강 ──
     "school_land_contribution":   _ref(_KOOKTO, "제52조의2", "공공시설등의 설치비용 등(기부채납·공공기여)"),
     "school_land_special":        _ref("학교용지 확보 등에 관한 특례법", None, "학교용지 확보·부담금(현행본)"),

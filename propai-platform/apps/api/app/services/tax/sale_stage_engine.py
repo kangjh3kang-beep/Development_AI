@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.legal.legal_reference_registry import get_legal_ref
 from app.services.tax.regional_tax_data import (
     HUG_GUARANTEE_RATES,
     VAT_EXEMPT_AREA_SQM,
@@ -213,6 +214,12 @@ def calculate_all_sale_stage(
         it["borne_by"] = "buyer"
 
     items = developer_items[:3] + buyer_items + developer_items[3:]  # 기존 C01~C08 순서 유지
+    # 기반시설부담금(C07)에 법령 근거(근거+링크·evidence) 부착 — 국토계획법 §67~69.
+    for it in items:
+        if it.get("code") == "C07":
+            ref = get_legal_ref("infra_facility_charge")
+            if ref:
+                it["legal_ref"] = ref
     total = sum(it["amount_won"] for it in developer_items)
     buyer_total = sum(it["amount_won"] for it in buyer_items)
     return {
