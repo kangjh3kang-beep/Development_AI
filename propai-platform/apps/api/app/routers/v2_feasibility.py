@@ -239,11 +239,17 @@ class FeasibilityResultTrustResponse(FeasibilityResultResponse):
 
 
 # 통합 세금엔진 항목코드 → 법령 근거 레지스트리 키. 레지스트리 보유분만 매핑하며,
-# 그 외 세목(농어촌특별세·각종 부담금 등)은 링크 없이 합계 텍스트로만 표기한다.
+# 그 외 세목(농어촌특별세 등)은 링크 없이 합계 텍스트로만 표기한다.
+# ★부담금(B01·B02·B03·B04·C07)도 레지스트리 키 보유(PR#247) → 근거+링크 노출(부과분만·amount>0).
 _TAX_CODE_TO_REF_KEY: dict[str, str] = {
     "A01": "acquisition_tax",             # 취득세 — 지방세법 제11조
     "A02": "local_education_tax",         # 지방교육세 — 지방세법(루트)
     "A04": "stamp_tax",                   # 인지세 — 인지세법 제3조
+    "B01": "metro_transport_charge",      # 광역교통시설부담금 — 대도시권광역교통관리법 제7조의2
+    "B02": "school_land_special",         # 학교용지부담금 — 학교용지 확보 특례법
+    "B03": "water_supply_cause_charge",   # 상수도 원인자부담금 — 수도법 제71조
+    "B04": "sewage_cause_charge",         # 하수도 원인자부담금 — 하수도법 제61조
+    "C07": "infra_facility_charge",       # 기반시설부담금 — 국토계획법 제68조
     "D01": "capital_gains_tax",           # 양도소득세 — 소득세법 제104조
     "D05": "reconstruction_levy",         # 재건축부담금 — 재건축초과이익 환수법(루트)
     "D06": "comprehensive_property_tax",  # 종합부동산세 — 종합부동산세법(루트)
