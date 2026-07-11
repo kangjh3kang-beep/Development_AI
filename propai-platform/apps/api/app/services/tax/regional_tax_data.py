@@ -351,14 +351,19 @@ def get_utility_charge(
     charge_map: dict[str, int],
     sido_name: str,
     sigungu_name: str,
-) -> int:
-    """상하수도 원인자부담금 단가 조회 (시군구 → 시도 폴백)."""
+) -> int | None:
+    """상하수도 원인자부담금 단가 조회 (시군구 → 시도).
+
+    ★반환 None = 등록된 지자체 단가 없음. 상하수도 원인자부담금은 수도법 §71·하수도법 §61이
+    산정을 지자체 조례에 위임하므로 '전국 단일 표준값'이 존재하지 않는다. 미등록 지역에 임의
+    폴백값을 반환하면 무목업 위반(지어낸 값)이므로 None을 돌려 소비처가 정직 처리하게 한다.
+    """
     sigungu_key = f"{sido_name}_{sigungu_name}"
     if sigungu_key in charge_map:
         return charge_map[sigungu_key]
     if sido_name in charge_map:
         return charge_map[sido_name]
-    return 120_000  # 전국 기본값
+    return None  # 조례 미등록 — 임의 전국폴백 금지(무목업)
 
 
 # ── HUG 분양보증수수료 ──
