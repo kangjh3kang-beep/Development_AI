@@ -295,59 +295,7 @@ class TestClimateRiskService:
         assert svc is not None
 
 
-# ═══════════════════════════════════════════
-# ChatbotService async (57 stmts, 33 missed)
-# ═══════════════════════════════════════════
-
-
-class TestChatbotServiceAsync:
-    @pytest.mark.asyncio
-    async def test_create_session(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
-
-        svc = ChatbotService(db=mock_db)
-        session = await svc.create_session(
-            tenant_id=TEST_TENANT_ID,
-            user_id=uuid4(),
-            project_id=TEST_PROJECT_ID,
-            domain="investment",
-            title="Investment advisory",
-            model_name="claude-sonnet-4-5-20250929",
-        )
-        assert session is not None
-        mock_db.add.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_send_message(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
-
-        # get_conversation mock
-        mock_session = MagicMock()
-        mock_session.id = uuid4()
-        mock_session.domain = "investment"
-        mock_session.tenant_id = TEST_TENANT_ID
-        mock_session.last_activity_at = datetime.now(tz=UTC)
-
-        svc = ChatbotService(db=mock_db)
-        with patch.object(svc, "get_conversation", return_value=(mock_session, [])):
-            session, user_msg, ai_msg = await svc.send_message(
-                session_id=mock_session.id,
-                tenant_id=TEST_TENANT_ID,
-                user_id=uuid4(),
-                content="What is the current cap rate for this asset?",
-            )
-        assert user_msg is not None
-        assert ai_msg is not None
+# ChatbotService 커버리지 삭제됨(2026-07-12 — chatbot_service.py 자체 삭제, TRIAGE_wiring_p2 참조)
 
 
 # ═══════════════════════════════════════════
@@ -667,10 +615,7 @@ class TestAdditionalRouterImports:
         r = await client.post("/api/v1/drone/inspect", json={})
         assert r.status_code in {401, 403, 404, 422, 500}
 
-    @pytest.mark.asyncio
-    async def test_chatbot_엔드포인트(self, client):
-        r = await client.post("/api/v1/chatbot/sessions", json={})
-        assert r.status_code in {401, 403, 404, 422, 500}
+    # chatbot 엔드포인트 테스트 삭제됨(2026-07-12 — routers/chatbot.py 자체 삭제, TRIAGE_wiring_p2 참조)
 
     @pytest.mark.asyncio
     async def test_v2_auth_엔드포인트(self, client):

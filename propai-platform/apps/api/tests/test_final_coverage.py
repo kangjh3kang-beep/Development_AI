@@ -1191,25 +1191,7 @@ class TestAdditionalRouterPaths:
         r = await client.get("/api/v1/system/health/full")
         assert r.status_code in {200, 401, 403, 500}
 
-    @pytest.mark.asyncio
-    async def test_chatbot_sessions_create(self, client):
-        r = await client.post("/api/v1/chatbot/sessions", json={
-            "domain": "investment",
-            "model_name": "claude-sonnet",
-        })
-        assert r.status_code in {200, 401, 403, 422, 500}
-
-    @pytest.mark.asyncio
-    async def test_chatbot_sessions_list(self, client):
-        r = await client.get("/api/v1/chatbot/sessions")
-        assert r.status_code in {200, 401, 403, 500}
-
-    @pytest.mark.asyncio
-    async def test_chatbot_send_message(self, client):
-        r = await client.post(f"/api/v1/chatbot/sessions/{uuid4()}/messages", json={
-            "content": "What is the IRR?",
-        })
-        assert r.status_code in {200, 401, 403, 404, 422, 500}
+    # chatbot 엔드포인트 테스트 삭제됨(2026-07-12 — routers/chatbot.py 자체 삭제, TRIAGE_wiring_p2 참조)
 
     @pytest.mark.asyncio
     async def test_tax_calculate(self, client):
@@ -1378,52 +1360,4 @@ class TestWebhookServiceExtended:
         assert len(sig) == 64  # SHA-256 hex digest
 
 
-class TestChatbotServiceExtended:
-    @pytest.mark.asyncio
-    async def test_list_sessions(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = []
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
-        svc = ChatbotService(db=mock_db)
-        result = await svc.list_sessions(
-            tenant_id=TEST_TENANT_ID,
-            user_id=uuid4(),
-        )
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_get_conversation_not_found(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        mock_db = AsyncMock()
-        mock_db.scalar = AsyncMock(return_value=None)
-
-        svc = ChatbotService(db=mock_db)
-        result = await svc.get_conversation(
-            tenant_id=TEST_TENANT_ID,
-            user_id=uuid4(),
-            session_id=uuid4(),
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_send_message_not_found(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        mock_db = AsyncMock()
-        mock_db.scalar = AsyncMock(return_value=None)
-
-        svc = ChatbotService(db=mock_db)
-        with pytest.raises(ValueError, match="session not found"):
-            await svc.send_message(
-                tenant_id=TEST_TENANT_ID,
-                user_id=uuid4(),
-                session_id=uuid4(),
-                content="Hello",
-            )
+# ChatbotService 커버리지 삭제됨(2026-07-12 — chatbot_service.py 자체 삭제, TRIAGE_wiring_p2 참조)

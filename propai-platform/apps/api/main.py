@@ -45,7 +45,6 @@ from apps.api.routers import (
     blockchain,
     building_compliance,
     cad_correction,
-    chatbot,
     climate,
     compliance,
     construction,
@@ -78,7 +77,6 @@ from apps.api.routers import (
     market_ai,
     market_report,
     marketing,
-    monte_carlo,
     notifications,
     parking,
     permit_cases,
@@ -773,7 +771,7 @@ app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["main
 app.include_router(tenant.router, prefix="/api/v1/tenant", tags=["tenant-experience"])
 app.include_router(digital_twin.router, prefix="/api/v1/digital-twin", tags=["digital-twin"])
 app.include_router(portals.router, prefix="/api/v1/portals", tags=["portals"])
-app.include_router(chatbot.router, prefix="/api/v1/chatbot", tags=["chatbot"])
+# chatbot 라우터 삭제됨(2026-07-12 — 결정론 캔드 리플라이, 전역 AIAssistant 실LLM과 중복·열등)
 app.include_router(auction.router, prefix="/api/v1/auction", tags=["auction"])
 app.include_router(contractors.router, prefix="/api/v1/contractors", tags=["contractors"])
 
@@ -793,7 +791,7 @@ app.include_router(facility_reservations.router, prefix="/api/v1/facilities", ta
 # LCC 생애주기비용 + EU Taxonomy 라우터
 app.include_router(lcc.router, prefix="/api/v1/lcc", tags=["LCC 생애주기비용"])
 app.include_router(eu_taxonomy.router, prefix="/api/v1/eu-taxonomy", tags=["EU Taxonomy"])
-app.include_router(monte_carlo.router, prefix="/api/v1/monte-carlo", tags=["Monte Carlo 시뮬레이션"])
+# monte_carlo 라우터 삭제됨(독립 표면 잉여 — MC는 finance.py·project_dashboard·/cost/{id}/monte-carlo로 노출)
 app.include_router(development_methods.router, prefix="/api/v1/development-methods", tags=["개발기획 자동화"])
 app.include_router(cost_intelligence.router, prefix="/api/v1/cost-intelligence", tags=["cost-intelligence"])
 app.include_router(contracts.router, prefix="/api/v1/contracts", tags=["contracts"])
