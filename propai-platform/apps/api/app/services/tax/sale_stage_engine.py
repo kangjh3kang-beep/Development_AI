@@ -126,14 +126,30 @@ def calculate_c06_housing_bond_buyer(
 def calculate_c07_infrastructure_charge(
     *,
     total_gfa_sqm: float,
-    per_sqm_won: int = 15_000,
+    in_infra_charge_zone: bool = False,
+    standard_cost_per_sqm_won: int = 82_000,  # 국토부 고시 표준시설비용(2026 기준·고시 원문 재확인 권장)
+    charge_rate: float = 0.20,                # 부담률 20% (국토계획법 §68 — 조례로 ±25% 가감)
 ) -> dict[str, Any]:
-    """C07 기반시설부담금."""
-    amount = int(total_gfa_sqm * per_sqm_won)
+    """C07 기반시설부담금 — ★기반시설부담구역 지정 지역만 부과(국토계획법 §67~69).
+
+    ★게이트: 부담구역으로 지정되지 않은 대다수 사업지는 미부과(0). 지정 시에만
+    (표준시설비용 × 부담률) × 건축연면적으로 부과한다. 종전 구현은 게이트 없이 전 프로젝트에
+    연면적 × 15,000원을 무조건 부과해, 부담구역 아닌 사업지의 총사업비를 구조적으로 과대계상했다.
+    """
+    if not in_infra_charge_zone:
+        return {
+            "code": "C07", "name": "기반시설부담금",
+            "base_won": 0, "rate": 0,
+            "amount_won": 0,
+            "detail": {"reason": "기반시설부담구역 미지정 — 미부과 (국토계획법 §67~69)"},
+        }
+    per_sqm = round(standard_cost_per_sqm_won * charge_rate)  # 표준시설비용 × 부담률
+    amount = int(total_gfa_sqm * per_sqm)
     return {
         "code": "C07", "name": "기반시설부담금",
-        "base_won": int(total_gfa_sqm), "rate": per_sqm_won,
+        "base_won": int(total_gfa_sqm), "rate": per_sqm,
         "amount_won": amount,
+        "detail": {"basis": f"표준시설비용 {standard_cost_per_sqm_won:,}원/㎡ × 부담률 {charge_rate:.0%} × 연면적"},
     }
 
 
@@ -158,6 +174,7 @@ def calculate_all_sale_stage(
     avg_area_sqm: float = 85.0,
     total_gfa_sqm: float = 0,
     building_type: str = "apartment",
+    in_infra_charge_zone: bool = False,
 ) -> dict[str, Any]:
     """C01~C08 분양단계 전체 일괄 계산.
 
@@ -176,7 +193,10 @@ def calculate_all_sale_stage(
             building_type=building_type,
         ),
         calculate_c03_ad_charge(total_sale_amount_won=total_sale_amount_won),
-        calculate_c07_infrastructure_charge(total_gfa_sqm=total_gfa_sqm),
+        calculate_c07_infrastructure_charge(
+            total_gfa_sqm=total_gfa_sqm,
+            in_infra_charge_zone=in_infra_charge_zone,
+        ),
         calculate_c08_energy_saving(total_gfa_sqm=total_gfa_sqm),
     ]
     for it in developer_items:

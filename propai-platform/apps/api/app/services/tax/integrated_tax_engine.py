@@ -174,6 +174,7 @@ def calculate_all_taxes(
     # 분양단계
     total_units: int = 0,
     avg_area_sqm: float = 85.0,
+    in_infra_charge_zone: bool = False,  # 기반시설부담구역 지정 여부(C07 게이트·기본 미지정)
     # 양도단계
     gain_10k_won: float = 0,
     gain_won: int = 0,
@@ -241,6 +242,7 @@ def calculate_all_taxes(
         avg_area_sqm=avg_area_sqm,
         total_gfa_sqm=total_gfa_sqm,
         building_type=building_type,
+        in_infra_charge_zone=in_infra_charge_zone,
     )
 
     disposal = calculate_all_disposal_stage(
