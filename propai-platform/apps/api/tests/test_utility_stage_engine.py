@@ -1,7 +1,5 @@
 """공사단계 세금 엔진 테스트 — B01~B08."""
 
-import pytest
-
 from app.services.tax.utility_stage_engine import (
     calculate_all_utility_stage,
     calculate_b01_metro_transport,
@@ -14,20 +12,34 @@ from app.services.tax.utility_stage_engine import (
 
 
 class TestB01MetroTransport:
-    def test_seoul(self):
-        result = calculate_b01_metro_transport(
-            sido_name="서울", sigungu_name="강남구",
-            total_households=1000,
-        )
-        # 21.0만원/세대 × 1000 = 2.1억 (21만원 = 210,000원)
-        assert result["amount_won"] == pytest.approx(210_000_000, rel=0.01)
+    """★실산식(표준건축비×부과율×건축연면적) — 이전 세대별 정액표(날조) 폐기 후 교정."""
 
-    def test_gyeonggi_override(self):
+    def test_formula_with_standard_cost(self):
+        # 표준건축비 200만/㎡ × 부과율 1%(전용 59㎡) × 연면적 10,000㎡ = 2억
         result = calculate_b01_metro_transport(
-            sido_name="경기", sigungu_name="고양시",
-            total_households=500,
+            sido_name="서울", total_gfa_sqm=10_000, building_type="apartment",
+            exclusive_area_sqm=59, standard_build_cost_won_per_sqm=2_000_000,
         )
-        assert result["detail"]["source"] == "override"
+        assert result["name"] == "광역교통시설부담금"
+        assert result["amount_won"] == 200_000_000
+        assert result["detail"]["amount_computable"] is True
+
+    def test_unavailable_without_standard_cost(self):
+        """★무목업: 표준건축비 고시값 미설정 → amount_won 0 + unavailable(합산 안전·정직)."""
+        result = calculate_b01_metro_transport(
+            sido_name="서울", total_gfa_sqm=10_000, building_type="apartment",
+        )
+        assert result["amount_won"] == 0
+        assert result["detail"]["confidence"] == "unavailable"
+        assert result["detail"]["amount_computable"] is False
+
+    def test_non_metro_zero(self):
+        result = calculate_b01_metro_transport(
+            sido_name="제주", total_gfa_sqm=10_000, building_type="apartment",
+            standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert result["amount_won"] == 0
+        assert result["detail"]["applicable"] is False
 
 
 class TestB02SchoolSite:

@@ -67,31 +67,51 @@ class TestAcquisitionTaxMatrix:
 # ── 광역교통부담금 ──
 
 class TestMetroTransportCharge:
-    def test_seoul_base(self):
-        result = get_metro_transport_charge("서울", "강남구", 1000, "apartment")
-        assert result["source"] == "base"
-        assert result["per_hh_10k_won"] == 21.0
+    """★실산식(대도시권광역교통관리법 §7의2): 표준건축비 × 부과율 × 건축연면적.
 
-    def test_gyeonggi_goyang_override(self):
-        """시군구 오버라이드: 경기 고양시 → 서울급."""
-        result = get_metro_transport_charge("경기", "고양시", 500, "apartment")
-        assert result["source"] == "override"
-        assert result["per_hh_10k_won"] == 21.0
+    이전 '만원/세대 정액표'(서울 21만원/세대 등)는 법정 산식(연면적 기반)과 다른 날조라 폐기 후 교정.
+    """
 
-    def test_gyeonggi_hwaseong_override(self):
-        result = get_metro_transport_charge("경기", "화성시", 1000, "officetel")
-        assert result["source"] == "override"
-        assert result["per_hh_10k_won"] == 8.5
+    def test_formula_housing_small_unit_1pct(self):
+        # 표준건축비 200만원/㎡ × 부과율 1%(전용 59㎡≤85) × 연면적 10,000㎡ = 2억
+        r = get_metro_transport_charge(
+            sido_name="서울", gfa_sqm=10_000, building_type="apartment",
+            exclusive_area_sqm=59, standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert r["applicable"] is True
+        assert r["rate"] == 0.01
+        assert r["amount_won"] == 200_000_000
 
-    def test_unregistered_region(self):
-        result = get_metro_transport_charge("제주", "제주시", 100, "apartment")
-        assert result["source"] == "none"
-        assert result["per_hh_10k_won"] == 0.0
+    def test_formula_housing_large_unit_2pct(self):
+        # 전용 100㎡ > 85 → 부과율 2%. 200만 × 0.02 × 10,000 = 4억
+        r = get_metro_transport_charge(
+            sido_name="경기", gfa_sqm=10_000, building_type="apartment",
+            exclusive_area_sqm=100, standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert r["rate"] == 0.02
+        assert r["amount_won"] == 400_000_000
 
-    def test_total_calculation(self):
-        result = get_metro_transport_charge("서울", "서초구", 2000, "apartment")
-        # 21.0만원 × 2000세대 / 10000 = 4.2억
-        assert result["total_100m_won"] == pytest.approx(4.2, abs=0.01)
+    def test_non_housing_rate_2pct(self):
+        r = get_metro_transport_charge(
+            sido_name="서울", gfa_sqm=10_000, building_type="commercial",
+            standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert r["rate"] == 0.02
+
+    def test_unavailable_without_standard_cost(self):
+        """★무목업: 표준건축비 고시값 미주입 → amount_won None(정직 unavailable·날조 금지)."""
+        r = get_metro_transport_charge(sido_name="서울", gfa_sqm=10_000, building_type="apartment")
+        assert r["amount_won"] is None
+        assert r["confidence"] == "unavailable"
+
+    def test_non_metro_area_zero(self):
+        """비대도시권(제주) → 미부과(0·applicable False)."""
+        r = get_metro_transport_charge(
+            sido_name="제주", gfa_sqm=10_000, building_type="apartment",
+            standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert r["applicable"] is False
+        assert r["amount_won"] == 0
 
 
 # ── 상하수도 원인자부담금 ──

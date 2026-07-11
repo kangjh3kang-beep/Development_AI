@@ -27,19 +27,32 @@ from app.services.tax.regional_tax_data import (
 def calculate_b01_metro_transport(
     *,
     sido_name: str,
-    sigungu_name: str,
-    total_households: int,
+    sigungu_name: str = "",
+    total_gfa_sqm: float = 0,
     building_type: str = "apartment",
+    exclusive_area_sqm: float | None = None,
+    standard_build_cost_won_per_sqm: int | None = None,
+    total_households: int = 0,  # 하위호환(미사용 — 실산식은 연면적 기반)
 ) -> dict[str, Any]:
-    """B01 광역교통부담금 — 시군구별 계층 조회 (오류#5 수정)."""
-    result = get_metro_transport_charge(sido_name, sigungu_name, total_households, building_type)
-    amount_won = int(result["total_100m_won"] * 100_000_000)
+    """B01 광역교통시설부담금 = 표준건축비 × 부과율 × 건축연면적(대도시권광역교통관리법 §7의2).
+
+    ★실산식(연면적 기반)으로 교체 — 이전 '만원/세대 정액표'는 법정식과 달라 날조라 폐기(무목업 수정).
+    표준건축비 고시값 미설정 시 amount_won=0 + detail.confidence=unavailable(무목업·정직). 비대도시권=0.
+    """
+    result = get_metro_transport_charge(
+        sido_name=sido_name, gfa_sqm=total_gfa_sqm, building_type=building_type,
+        exclusive_area_sqm=exclusive_area_sqm,
+        standard_build_cost_won_per_sqm=standard_build_cost_won_per_sqm,
+    )
+    amt = result.get("amount_won")
+    detail = {k: v for k, v in result.items() if k != "amount_won"}
+    detail["amount_computable"] = amt is not None
     return {
-        "code": "B01", "name": "광역교통부담금",
-        "base_won": total_households,
-        "rate": result["per_hh_10k_won"],
-        "amount_won": amount_won,
-        "detail": {"source": result["source"], "per_hh_10k_won": result["per_hh_10k_won"]},
+        "code": "B01", "name": "광역교통시설부담금",
+        "base_won": int(total_gfa_sqm),
+        "rate": result.get("rate"),
+        "amount_won": amt if amt is not None else 0,
+        "detail": detail,
     }
 
 
@@ -185,7 +198,7 @@ def calculate_all_utility_stage(
     items = [
         calculate_b01_metro_transport(
             sido_name=sido_name, sigungu_name=sigungu_name,
-            total_households=total_households, building_type=building_type,
+            total_gfa_sqm=total_gfa_sqm, building_type=building_type,
         ),
         calculate_b02_school_site(
             total_sale_amount_won=total_sale_amount_won,
