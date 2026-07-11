@@ -8,6 +8,10 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import {
+  maintenanceAnomalyInitialValues,
+  buildMaintenanceAnomalyBody,
+} from "@/lib/workspace-extended-panels";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = { id: string; name: string; total_area_sqm: number | null };
@@ -34,6 +38,19 @@ type PermitResponse = {
   progress_pct: number;
   submission_reference: string;
   missing_required_documents: string[];
+};
+// ★배선 캠페인 3차(routers/maintenance.py) — MaintenanceAnomalyResponse 계약 1:1
+// (packages/schemas/models.py:1189). 이 카드는 조회 없이 실행-즉시-표시(GET latest 없음
+// — 백엔드에 이력 조회 엔드포인트가 없으므로 다른 3개 DIMENSION과 달리 useQuery 미사용).
+type MaintenanceAnomalyResponse = {
+  alert_id: string;
+  project_id: string;
+  anomaly_score: number;
+  remaining_useful_life_days: number | null;
+  hvac_efficiency_score: number | null;
+  severity: string;
+  recommendation: string;
+  work_order_id: string | null;
 };
 
 const buildingTypes = [
@@ -117,7 +134,10 @@ export function DigitalTwinControlTowerWorkspaceClient({
     submitToSeumter: "true",
     submittedDocumentIds: "BA-01, BA-02, BA-03, BA-04, BA-05",
   });
-  const [pending, setPending] = useState<"status" | "risk" | "permit" | null>(null);
+  const [pending, setPending] = useState<"status" | "risk" | "permit" | "maintenance" | null>(null);
+  // ★배선 캠페인 3차 — 예지보전 이상감지(무날조: SSOT 프리필 없음, 백엔드 Field default와 동일값).
+  const [maintenanceForm, setMaintenanceForm] = useState(() => maintenanceAnomalyInitialValues());
+  const [maintenanceResult, setMaintenanceResult] = useState<MaintenanceAnomalyResponse | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "digital-twin-control-tower"],
@@ -247,6 +267,29 @@ export function DigitalTwinControlTowerWorkspaceClient({
         queryClient.invalidateQueries({ queryKey: ["permit-status", activeProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["unified-risk", activeProjectId] }),
       ]);
+    } catch (error) {
+      setWorkspaceError(errorMessage(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleMaintenance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+    if (!activeProjectId) return setWorkspaceError("A real project UUID is required.");
+    // ★MaintenanceAnomalyRequest.equipment_name/equipment_type은 백엔드 기본값이 없는
+    // 필수 필드다(lib/workspace-extended-panels.ts 초기값 주석 참조) — 422 대신 선제 안내.
+    if (!maintenanceForm.equipmentName.trim() || !maintenanceForm.equipmentType.trim()) {
+      return setWorkspaceError("Equipment name and type are required.");
+    }
+    setPending("maintenance");
+    try {
+      const response = await apiClient.post<MaintenanceAnomalyResponse>("/maintenance/detect-anomaly", {
+        useMock: false,
+        body: buildMaintenanceAnomalyBody(maintenanceForm, { projectId: activeProjectId }),
+      });
+      setMaintenanceResult(response);
     } catch (error) {
       setWorkspaceError(errorMessage(error));
     } finally {
@@ -477,6 +520,48 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 </div>
               ) : (
                 <Empty title="진행 중인 항목이 없습니다" body="첫 인허가 패키지를 제출하면 실시간 추적이 시작됩니다." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* --- Predictive Maintenance(배선 캠페인 3차, additive) --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--warning)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_04</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Predictive Maintenance<span className="text-[var(--warning)]">.</span></CardTitle>
+
+            <form className="mt-8 grid gap-4" onSubmit={handleMaintenance}>
+              <Input value={maintenanceForm.equipmentName} onChange={(event) => setMaintenanceForm((current) => ({ ...current, equipmentName: event.target.value }))} placeholder="Equipment name(예: AHU-3)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input value={maintenanceForm.equipmentType} onChange={(event) => setMaintenanceForm((current) => ({ ...current, equipmentType: event.target.value }))} placeholder="Equipment type(예: hvac)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input value={maintenanceForm.location} onChange={(event) => setMaintenanceForm((current) => ({ ...current, location: event.target.value }))} placeholder="Location(선택)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <div className="grid gap-3 grid-cols-3">
+                <Input type="number" value={maintenanceForm.vibrationMmS} onChange={(event) => setMaintenanceForm((current) => ({ ...current, vibrationMmS: event.target.value }))} placeholder="Vib mm/s" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={maintenanceForm.temperatureC} onChange={(event) => setMaintenanceForm((current) => ({ ...current, temperatureC: event.target.value }))} placeholder="Temp °C" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={maintenanceForm.energyEfficiencyRatio} onChange={(event) => setMaintenanceForm((current) => ({ ...current, energyEfficiencyRatio: event.target.value }))} placeholder="Efficiency" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+              </div>
+              <Button type="submit" disabled={!canUseLiveApi || pending === "maintenance"} className="h-14 rounded-2xl bg-[var(--warning-strong)] text-white font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
+                {pending === "maintenance" ? "ANALYZING..." : "DETECT_ANOMALY"}
+              </Button>
+            </form>
+
+            <div className="mt-10 pt-8 border-t border-[var(--line)]">
+              {maintenanceResult ? (
+                <div className="grid gap-3">
+                  <Stat label="Anomaly Score" value={maintenanceResult.anomaly_score.toFixed(2)} color="text-[var(--warning)]" />
+                  <Stat label="Severity" value={maintenanceResult.severity} />
+                  <Stat label="Remaining Useful Life" value={maintenanceResult.remaining_useful_life_days != null ? `${maintenanceResult.remaining_useful_life_days}d` : "-"} />
+                  <Stat label="HVAC Efficiency" value={maintenanceResult.hvac_efficiency_score != null ? maintenanceResult.hvac_efficiency_score.toFixed(1) : "-"} />
+                  <div className="rounded-2xl bg-[var(--surface-soft)] p-5 border border-[var(--line-subtle)]">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">RECOMMENDATION</p>
+                    <p className="text-xs font-bold leading-relaxed text-[var(--text-secondary)]">{maintenanceResult.recommendation}</p>
+                  </div>
+                  {maintenanceResult.work_order_id ? (
+                    <Stat label="Work Order" value={maintenanceResult.work_order_id} color="text-[var(--spot)]" />
+                  ) : null}
+                </div>
+              ) : (
+                <Empty title="NO_ANOMALY_RUN" body="Submit equipment telemetry to run predictive maintenance detection." />
               )}
             </div>
           </CardContent>

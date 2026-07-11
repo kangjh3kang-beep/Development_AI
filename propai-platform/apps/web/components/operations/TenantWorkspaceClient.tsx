@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { FacilityReservationSection } from "@/components/operations/FacilityReservationSection";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -322,6 +323,13 @@ export function TenantWorkspaceClient({
           )}
         </CardContent>
       </Card>
+
+      {/* 배선 캠페인 3차(facilities, additive) — 공유시설 예약/취소. 기본 접힘(AdvancedDrawer),
+          이미 조회된 프로젝트 목록을 그대로 넘겨 중복 API 호출 없이 선택형 예약을 제공한다. */}
+      <FacilityReservationSection
+        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        canUseLiveApi={canUseLiveApi}
+      />
     </section>
   );
 }
