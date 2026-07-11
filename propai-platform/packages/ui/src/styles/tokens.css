@@ -1,70 +1,45 @@
 /* ═══════════════════════════════════════════════════════════════
-   PropAI Design Tokens v3.0
-   건축학의 정밀함 + 미래기술의 진보성
-   WCAG 2.1 AA 이상 준수 · 가독성 극대화
+   PropAI Design Tokens v2.0 (Nexus Geo-Intelligence)
+   다크 기본 · 라이트=파스텔 · WCAG 2.1 AA 이상 준수
    ───────────────────────────────────────────────────────────────
-   ★ SSOT(Single Source of Truth): 모든 라이트 토큰은 여기 :root 한 곳에만,
-   모든 다크 토큰은 아래 `.dark, [data-theme="dark"]` 한 곳에만 정의한다.
-   globals.css :root 는 더 이상 토큰을 재정의하지 않는다(캐스케이드 역전 방지).
+   ★ SSOT(Single Source of Truth):
+     - 테마 불변 토큰 → :root 의 @tokens:common 구역 한 곳.
+     - 라이트(파스텔) 색/그림자/글래스 → :root 의 @tokens:light 구역 한 곳.
+     - 다크(Nexus) 색/그림자/글래스 → `.dark, [data-theme="dark"]` 의 @tokens:dark 한 곳.
+   ★ 게이트: @tokens:light 와 @tokens:dark 의 토큰 키 집합은 항상 동일해야 한다
+     (한쪽에만 정의된 색 토큰 = 테마 전환 파편화 → 금지).
+     검증: packages/ui/scripts/token_parity.py · AA대비: packages/ui/scripts/token_contrast.py
+   ★ 기존 semantic 토큰 이름은 절대 바꾸지 않는다(값만 교체).
+     cc- · saas- · sa- · db- 계열(별표 접두) 토큰/클래스 불가침.
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
+  /* ═══════════ @tokens:common:start ═══════════
+     테마 불변(라이트/다크 공통) — 파서 parity diff 에서 제외되는 구역. */
+
   /* ── Font Stacks (next/font 로컬 변수 소비 — app/fonts.ts) ── */
   --font-sans: var(--font-pretendard), "Pretendard", sans-serif;
+  --font-body: var(--font-pretendard), "Pretendard", sans-serif; /* DESIGN.md 0.2 본문 별칭 */
   --font-display: var(--font-space-grotesk), var(--font-pretendard), "Pretendard", sans-serif;
   --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace;
 
-  /* ── Light Mode (Architectural Precision) ── */
-  --background: #f7fafc;
-  --foreground: #18212b;
-
-  /* ── Surface Hierarchy ── */
-  --surface: #ffffff;
-  --surface-strong: #ffffff;
-  --surface-soft: #f3f7fa;
-  --surface-secondary: #ffffff;
-  --surface-tertiary: #f1f5f9;
-  --surface-muted: #edf3f7;
-
-  /* ── Text Hierarchy (WCAG AA+ 준수) ── */
-  --text-primary: #18212b;
-  --text-secondary: #53606c;
-  --text-tertiary: #768493;
-  --text-hint: #95a2af;
-
-  /* ── Borders & Dividers ── */
-  --line: rgba(37, 58, 77, 0.12);
-  --line-strong: rgba(37, 58, 77, 0.20);
-  --line-subtle: rgba(37, 58, 77, 0.08);
-
-  /* ── Brand Accent ── */
-  --accent: #2f7dd9;
-  --accent-strong: #1d5fd1;
-  --accent-soft: rgba(29, 95, 209, 0.10);
-
-  /* ── Elevation Shadows (Light Depth) ── */
-  --shadow-xs: 0 1px 2px rgba(24, 33, 43, 0.06);
-  --shadow-sm: 0 1px 3px rgba(24, 33, 43, 0.08);
-  --shadow-md: 0 8px 24px rgba(24, 33, 43, 0.08);
-  --shadow-lg: 0 18px 40px rgba(24, 33, 43, 0.10);
-  --shadow-xl: 0 40px 100px rgba(15, 23, 42, 0.12);
-  --shadow-2xl: 0 48px 120px rgba(15, 23, 42, 0.15);
-  --shadow-inner: inset 0 1px 2px rgba(24, 33, 43, 0.06);
-  --shadow-glow: 0 10px 30px rgba(29, 95, 209, 0.16);
-
-  /* ── Glass Effect (Light) ── */
-  --glass-bg: rgba(255, 255, 255, 0.86);
-  --glass-border: rgba(37, 58, 77, 0.12);
-  --glass-blur: 14px;
-
-  /* ── Common Radii ── */
+  /* ── Radii (기존 semantic — 다수 소비처, 이름 유지) ── */
   --radius-sm: 0.875rem;
   --radius-md: 1.5rem;
   --radius-lg: 2rem;
   --radius-xl: 2.5rem;
   --radius-2xl: 3.5rem;
+  /* ── Radii v2 (DESIGN.md — 신규 병기, 각짐/컴팩트 스케일) ── */
+  --r-input: 4px;
+  --r-card: 8px;
+  --r-panel: 12px;
+  --r-pill: 999px;
 
-  /* ── Typography Tokens ── */
+  /* ── Layout scalars (DESIGN.md) — --sidebar-w 는 전역 강제 보류(미도입) ── */
+  --header-h: 64px;
+  --gap: 24px;
+
+  /* ── Typography Weights & Tracking ── */
   --font-weight-thin: 300;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
@@ -77,41 +52,23 @@
   --tracking-wider: 0.1em;
   --tracking-widest: 0.25em;
 
-  /* ── Status Colors ── */
-  --status-success: #1b8a5a;
-  --status-warning: #b7791f;
-  --status-error: #d74e42;
-  --status-info: #2f7dd9;
-
-  /* ── Chart Palette (6 colors, accessible) ── */
-  --chart-1: #14b8a6;
-  --chart-2: #6366f1;
-  --chart-3: #f59e0b;
-  --chart-4: #ec4899;
-  --chart-5: #8b5cf6;
-  --chart-6: #06b6d4;
-
-  /* ── Transition ── */
+  /* ── Motion ── */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1); /* DESIGN.md 표준 이징 */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --duration-slow: 400ms;
 
-  /* ── Spatial Command Center (커맨드센터 전용 보조 토큰) ──
-     주의: --accent-strong은 절대 건드리지 않는다(버튼 배경·텍스트 이중용도).
-     아래는 그래프/포커스/실시간 인디케이터·스파크라인에만 쓰는 데이터 액센트와
-     HUD 그리드/스캔라인 전용 토큰. 버튼엔 기존 accent를 계속 사용. */
-  --data-accent: #1b8a5a;
-  --data-accent-soft: rgba(27, 138, 90, 0.10);
-  --data-accent-line: rgba(27, 138, 90, 0.28);
-  --data-glow: none;
-  /* HUD 그리드 라인(은은) / 코너 브래킷 / 스캔라인 */
-  --grid-line: rgba(37, 58, 77, 0.08);
-  --grid-line-strong: rgba(15, 23, 42, 0.10);
-  --hud-bracket: rgba(29, 95, 209, 0.36);
-  --hud-scanline: rgba(37, 58, 77, 0.06);
+  /* ── Glass blur (라이트/다크 공통 12px — .glass·backdrop 정렬 기준) ── */
+  --glass-blur: 12px;
 
-  /* ── SaaS 팔레트 (globals.css에서 이관 — 랜딩/마케팅 서피스 전용) ── */
+  /* ── 문서(종이) 뷰 — 등기부·보고서 미리보기 (테마 불변) ── */
+  --paper: #F7F6F1;
+  --paper-ink: #1E1E22;
+  --paper-line: #D5D2C6;
+  --paper-section: #E9E7DE;
+
+  /* ── SaaS 팔레트 (랜딩/마케팅 서피스 전용 · 테마 불변 브랜드색 · P2a 불가침) ── */
   --saas-ink: #0b120d;
   --saas-lime: #ddff86;
   --saas-sky: #bed5e5;
@@ -137,57 +94,144 @@
   --saas-hero-sheen: rgba(237, 237, 206, 0.08);
   --saas-hero-grid-lime: rgba(221, 255, 134, 0.22);
   --saas-hero-grid-sky: rgba(190, 213, 229, 0.14);
+  /* ═══════════ @tokens:common:end ═══════════ */
+
+
+  /* ═══════════ @tokens:light:start ═══════════
+     라이트(파스텔) 테마 — @tokens:dark 와 키 집합이 동일해야 함. */
+
+  /* ── Surface Hierarchy (파스텔: 밝을수록 상단 부양) ── */
+  --background: #F6F7FB;
+  --foreground: #2A2E3B;
+  --surface: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --surface-soft: #F3F5FA;
+  --surface-secondary: #F0F2F8;
+  --surface-tertiary: #E7EAF2;
+  --surface-muted: #E2E5EE;
+  --background-deep: #ECF0F6;   /* 지도/캔버스 보이드 */
+  --surface-panel: #FFFFFF;     /* 사이드 패널·헤더 */
+  --surface-elevated: #E2E5EE;  /* 부양 카드/드롭다운 */
+
+  /* ── Text Hierarchy (WCAG AA+) ── */
+  --text-primary: #2A2E3B;      /* on #FFFFFF 13.53:1 */
+  --text-secondary: #555B6E;    /* on #FFFFFF 6.76:1 */
+  --text-tertiary: #8A90A4;     /* 보조 라벨(AA-large) */
+  --text-hint: #9AA0B2;         /* 힌트/플레이스홀더(장식 계층·hierarchy상 tertiary보다 옅게) */
+  --on-surface-muted: #8A90A4;  /* 뮤트 라벨 on #FFFFFF 3.18:1(AA-large) */
+
+  /* ── Borders & Dividers (투명 잉크 — 파스텔 서피스에 자연 적응) ── */
+  --line: rgba(37, 58, 77, 0.12);
+  --line-strong: rgba(37, 58, 77, 0.20);
+  --line-subtle: rgba(37, 58, 77, 0.08);
+  --border-muted: #E2E5EE;      /* 불투명 뮤트 보더(DESIGN.md B1 글래스·고지 계약) */
+
+  /* ── Brand Accent ──
+     --accent-strong 는 버튼 배경(흰 글자)+강조 텍스트 이중용도.
+     라이트 권고 #5570DE 는 실측 4.41/4.12(<4.5 미달) → 동일 파스텔 계열에서
+     두 용도 모두 4.5:1 이상 통과하는 최명도 값 #4a66d6 채택
+     (흰 글자 버튼 5.04:1 · #F6F7FB 위 텍스트 4.71:1). */
+  --accent: #7C98F2;
+  --accent-strong: #4a66d6;
+  --accent-soft: rgba(74, 102, 214, 0.10);
+  --secondary: #3BA8C4;
+  --tertiary: #C88A3C;          /* Part A Warm Amber 브릿지 */
+  --ai-accent: #9356DC;         /* AI 생성/추론 표시 전용 */
+  --on-primary: #FFFFFF;        /* --primary(=accent) 위 텍스트 */
+  --primary-dim: #5570DE;       /* 라이트 위 프라이머리 텍스트(강조) */
+
+  /* ── Status Colors (파스텔) ── */
+  --status-success: #3A9668;
+  --status-warning: #E9A436;
+  --status-error: #D05050;
+  --status-info: #2f7dd9;
+
+  /* ── Chart Palette (6 colors, accessible) ── */
+  --chart-1: #14b8a6;
+  --chart-2: #6366f1;
+  --chart-3: #f59e0b;
+  --chart-4: #ec4899;
+  --chart-5: #8b5cf6;
+  --chart-6: #06b6d4;
+
+  /* ── Elevation Shadows (Light Depth) ── */
+  --shadow-xs: 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-sm: 0 1px 3px rgba(24, 33, 43, 0.08);
+  --shadow-md: 0 8px 24px rgba(24, 33, 43, 0.08);
+  --shadow-lg: 0 18px 40px rgba(24, 33, 43, 0.10);
+  --shadow-xl: 0 40px 100px rgba(15, 23, 42, 0.12);
+  --shadow-2xl: 0 48px 120px rgba(15, 23, 42, 0.15);
+  --shadow-inner: inset 0 1px 2px rgba(24, 33, 43, 0.06);
+  --shadow-glow: 0 10px 30px rgba(74, 102, 214, 0.16);       /* accent-strong 색조 정렬 */
+  --shadow-glow-strong: 0 0 24px rgba(74, 102, 214, 0.20);   /* parity용·라이트 은은한 글로우 */
+
+  /* ── Glass Effect (Light) ── */
+  --glass-bg: rgba(255, 255, 255, 0.88);
+  --glass-border: rgba(37, 58, 77, 0.12);
+  --glass-bg-strong: rgba(255, 255, 255, 0.94);
+
+  /* ── Spatial Command Center (커맨드센터 전용 · 데이터/HUD 채널) ──
+     주의: 버튼엔 기존 accent 사용. 아래는 그래프/포커스/실시간·스파크라인 전용. */
+  --data-accent: #1b8a5a;
+  --data-accent-soft: rgba(27, 138, 90, 0.10);
+  --data-accent-line: rgba(27, 138, 90, 0.28);
+  --data-glow: none;
+  --grid-line: rgba(37, 58, 77, 0.08);
+  --grid-line-strong: rgba(15, 23, 42, 0.10);
+  --hud-bracket: rgba(29, 95, 209, 0.36);
+  --hud-scanline: rgba(37, 58, 77, 0.06);
+  /* ═══════════ @tokens:light:end ═══════════ */
 }
 
 .dark, [data-theme="dark"] {
-  /* ── Dark Mode (Nexus Geo-Intelligence) ── */
-  --background: #11131b;
-  --foreground: #e1e1ee;
+  /* ═══════════ @tokens:dark:start ═══════════
+     다크(Nexus Geo-Intelligence) — @tokens:light 와 키 집합이 동일해야 함. */
 
   /* ── Surface Hierarchy ── */
+  --background: #11131b;
+  --foreground: #e1e1ee;
   --surface: #11131b;
   --surface-strong: #1c1f27;
   --surface-soft: #0c0e16;
   --surface-secondary: #191b24;
   --surface-tertiary: #282a32;
   --surface-muted: rgba(255, 255, 255, 0.06);
+  --background-deep: #0a0c10;   /* 지도/캔버스 보이드 */
+  --surface-panel: #111318;     /* 사이드 패널·헤더 */
+  --surface-elevated: #282e39;  /* 부양 카드/드롭다운 */
 
   /* ── Text Hierarchy ── */
   --text-primary: #e1e1ee;
   --text-secondary: #c3c5d8;
   --text-tertiary: #a3a7ba;
   --text-hint: #828aa0;
+  --on-surface-muted: #8d90a1;  /* on #11131b 5.86:1 */
 
   /* ── Borders & Dividers ── */
   --line: rgba(255, 255, 255, 0.18);
   --line-strong: #3a4254;
   --line-subtle: rgba(255, 255, 255, 0.10);
+  --border-muted: #282e39;      /* 불투명 뮤트 보더(DESIGN.md B1 글래스·고지 계약) */
 
-  /* ── Brand Accent ── */
-  /* accent-strong: 버튼 배경(흰 글자)·강조 텍스트 양쪽으로 쓰이므로
-     옅은 파스텔(#b4c5ff)은 흰 글자 버튼을 안 보이게 만들었음(대비 ~1.6:1).
-     선명한 블루로 교체 → 흰 글자 버튼 또렷(AA-large) + 다크 배경 강조 텍스트도 readable. */
+  /* ── Brand Accent ──
+     --accent-strong 이중용도(버튼 배경·강조 텍스트). #11131b 위에서는
+     두 용도 4.5:1 동시충족이 수학적으로 불가(프론티어 스캔: 텍스트 가독 명도면
+     흰 글자 버튼이 4.5 미달, 반대도 성립). 현행 #3b82f6 유지 —
+     버튼(흰 글자) 3.68:1(AA-large 3.0 통과·버튼 라벨은 볼드/대형) +
+     강조 텍스트 5.04:1(AA-body 4.5 통과) 로 적용 임계 기준 파레토 최적. */
   --accent: #135bec;
   --accent-strong: #3b82f6;
   --accent-soft: rgba(19, 91, 236, 0.15);
+  --secondary: #4cd7f6;
+  --tertiary: #ffb95f;          /* Part A Warm Amber 브릿지 */
+  --ai-accent: #a855f7;         /* AI 생성/추론 표시 전용 */
+  --on-primary: #e2e6ff;        /* --primary(=accent) 위 텍스트 */
+  --primary-dim: #b4c5ff;       /* 다크 위 프라이머리 텍스트(강조) */
 
-  /* ── Elevation Shadows (Deep Depth) ── */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.6);
-  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.7);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.8);
-  --shadow-xl: 0 40px 100px rgba(0, 0, 0, 0.9);
-  --shadow-2xl: 0 48px 120px rgba(0, 0, 0, 0.95);
-  --shadow-inner: inset 0 2px 8px rgba(0, 0, 0, 0.5);
-
-  /* Cyber Glows */
-  --shadow-glow: 0 0 24px rgba(45, 212, 191, 0.4);
-  --shadow-glow-strong: 0 0 32px rgba(45, 212, 191, 0.6), 0 0 12px rgba(45, 212, 191, 0.8);
-
-  /* ── Status Colors (Dark) ── */
-  --status-success: #34d399;
-  --status-warning: #fbbf24;
-  --status-error: #f87171;
+  /* ── Status Colors (Dark, v2) ── */
+  --status-success: #22c55e;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
   --status-info: #60a5fa;
 
   /* ── Chart Palette (Dark, accessible) ── */
@@ -198,20 +242,31 @@
   --chart-5: #a78bfa;
   --chart-6: #22d3ee;
 
-  /* ── Glass Effect (Readable Dark) ── */
-  --glass-bg: rgba(10, 16, 28, 0.85);
+  /* ── Elevation Shadows (Deep Depth) ── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.8);
+  --shadow-xl: 0 40px 100px rgba(0, 0, 0, 0.9);
+  --shadow-2xl: 0 48px 120px rgba(0, 0, 0, 0.95);
+  --shadow-inner: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px rgba(45, 212, 191, 0.4);
+  --shadow-glow-strong: 0 0 32px rgba(45, 212, 191, 0.6), 0 0 12px rgba(45, 212, 191, 0.8);
+
+  /* ── Glass Effect (Readable Dark, v2) ── */
+  --glass-bg: rgba(22, 25, 32, 0.85);
   --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-bg-strong: rgba(22, 25, 32, 0.90);
 
   /* ── Spatial Command Center (Dark) ──
-     다크에서 데이터 액센트는 선명한 일렉트릭 시안(#22d3ee)으로 계기판 발광 효과.
-     accent-strong(#2dd4bf/버튼)과는 별개 채널 — 버튼에는 절대 쓰지 않는다. */
+     데이터 액센트=일렉트릭 시안(#22d3ee). 버튼엔 절대 쓰지 않는다(별개 채널). */
   --data-accent: #22d3ee;
   --data-accent-soft: rgba(34, 211, 238, 0.12);
   --data-accent-line: rgba(34, 211, 238, 0.30);
-  /* HUD 그리드 라인(다크에선 미세한 흰빛) */
+  --data-glow: 0 0 18px rgba(34, 211, 238, 0.45);
   --grid-line: rgba(255, 255, 255, 0.05);
   --grid-line-strong: rgba(255, 255, 255, 0.09);
   --hud-bracket: rgba(34, 211, 238, 0.50);
   --hud-scanline: rgba(34, 211, 238, 0.07);
-  --data-glow: 0 0 18px rgba(34, 211, 238, 0.45);
+  /* ═══════════ @tokens:dark:end ═══════════ */
 }

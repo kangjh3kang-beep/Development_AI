@@ -192,7 +192,7 @@ export function DigitalTwinAnomalyDashboard() {
                       color: "var(--text-primary)",
                       fontSize: 12,
                       boxShadow: "var(--shadow-2xl)",
-                      backdropFilter: "blur(20px)",
+                      backdropFilter: "blur(var(--glass-blur))",
                       padding: "16px 24px"
                     }}
                     itemStyle={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}

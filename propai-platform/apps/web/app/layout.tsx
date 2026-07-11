@@ -3,9 +3,9 @@ import "@propai/ui/styles/tokens.css";
 import "./globals.css";
 import { fontVariables } from "./fonts";
 
-// 기본 테마(P0=light). P2a에서 다크 기본 전환 시 이 상수 한 곳만 "dark"로 바꾸면 된다
+// 기본 테마(P2a=dark). Nexus 다크가 기본 부팅 테마다. 이 상수 한 곳만 바꾸면 전역 전환
 // (부트스트랩 스크립트가 이 값을 사용 — localStorage에 저장된 사용자 선택이 항상 우선).
-const DEFAULT_THEME = "light";
+const DEFAULT_THEME = "dark";
 
 // 하이드레이션 전에 실행되어 FOUC(라이트→다크 깜빡임)를 막는 인라인 부트스트랩.
 // localStorage("theme")가 dark/light면 그 값을, 아니면 DEFAULT_THEME을 적용한다.
@@ -30,8 +30,13 @@ export const metadata: Metadata = {
   },
 };
 
+// 다크 기본 → 브라우저 UI(주소창 등)도 다크 surface(#11131b)로 정합.
+// 라이트 선호 OS/사용자에겐 파스텔 surface(#F6F7FB)를 media 분기로 함께 선언.
 export const viewport: Viewport = {
-  themeColor: "#060b14",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#11131b" },
+    { media: "(prefers-color-scheme: light)", color: "#F6F7FB" },
+  ],
 };
 
 type RootLayoutProps = Readonly<{

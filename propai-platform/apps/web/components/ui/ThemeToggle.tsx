@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function ThemeToggle() {
-  const [isDark, setIsDark] = useState(false);
+  // 다크가 기본 부팅 테마(P2a) → 초기값 true 로 첫 페인트를 기본 상태와 정합
+  // (하이드레이션 불일치 없음). localStorage 사용자 선택은 아래 useEffect가 반영.
+  const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
-    // Sync with initial state
+    // 실제 적용된 테마(부트스트랩이 .dark 클래스로 확정)와 동기화 — 라이트 선택도 반영
     const isDarkTheme = document.documentElement.classList.contains("dark");
     setIsDark(isDarkTheme);
   }, []);
