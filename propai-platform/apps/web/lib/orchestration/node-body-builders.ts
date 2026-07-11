@@ -75,16 +75,22 @@ function safeDevelopmentType(v: unknown): string | null {
  *   design_v61.py:347 efficiency_pct 기본 75.0). 백엔드 sellable_area = GFA × 전용률 산식과 동일.
  *  설계(design)가 실제 전용률(efficiencyPct)을 환류하면 그 실값을 우선 쓰고(아래 sale/feasibility),
  *  미확보일 때만 이 표준값으로 폴백한다 — 추정임을 정직히 표기.
+ *
+ * ★(G4) FE/BE 이중 하드코딩 계약: 이 값은 apps/api/app/services/pipeline/project_pipeline.py의
+ *  _SELLABLE_EFFICIENCY_BY_TYPE와 "동치 계약"이며 자동 동기화되지 않는다(정본 미수렴 — P1
+ *  unit_standards 노출 예정). 한쪽을 바꾸면 반드시 반대쪽 상수와 두 계약 테스트
+ *  (node-body-builders.test.ts의 "G4 계약" describe·apps/api/tests/test_sellable_efficiency_contract.py)를
+ *  함께 갱신할 것. export는 그 계약 테스트가 실값을 직접 대조하기 위함(런타임 동작 불변).
  */
-const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
+export const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
   아파트: 0.75,
   다세대주택: 0.78,
   오피스텔: 0.7,
   공동주택: 0.76,
   근린생활시설: 0.7,
 };
-/** 유형 미상 시 표준 전용률(백엔드 _SELLABLE_EFFICIENCY_BY_TYPE 기본값 0.75와 동일). */
-const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
+/** 유형 미상 시 표준 전용률(백엔드 _SELLABLE_EFFICIENCY_BY_TYPE 기본값 0.75와 동일. G4 계약 대상). */
+export const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
 
 /**
  * 연면적→전용면적 환산에 쓸 전용률(0~1)을 결정한다.

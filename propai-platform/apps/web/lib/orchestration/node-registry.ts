@@ -417,6 +417,22 @@ export const NODES: AnalysisNode[] = [
       // 매출(feasibilityData.totalRevenueWon) 입력 제거: feasibility는 backend가 regional_pricing으로
       // 매출 자체를 산출한다(siteAnalysis/designData/costData만 사실근거). sales가 매출을 stamp하지 않으므로
       // resolveInputs가 feasibility를 영구 needs-input으로 막지 않는다. sales→매출 주입은 Phase C.
+      {
+        // (G1) 파생 환류 전용(옵셔널): 추천 개발유형(C-1 developmentType)·적정분양가(C-2
+        // salePricePerPyeongWon)·개략수지 GFA/세대수 폴백을 bodyBuilder(node-body-builders.ts의
+        // feas?.developmentType·feas?.salePricePerPyeongWon·feas?.totalGfaSqm·feas?.totalHouseholds)가
+        // 읽도록 컨텍스트(useNodeRunner의 ready 슬롯 → context 조립)에 주입한다.
+        // readyCheck를 항상 true로 두어 ①부재여도 needs-input/그라운딩 미가용으로 게이트하지 않고
+        // (과거 "매출 입력 제거" 의도 보존) ②존재할 때만 context 주입 루프의 null 가드(slotVal != null)가
+        // 실값을 싣는다. 자기 출력 슬롯(ssotOutputs.updateFeasibilityData)을 재참조하지만, 그래프 간선은
+        // dependency-graph.ts가 upstream 필드만으로 계산하므로(ssotInputs는 edge에 미사용, lint-node-registry
+        // [E1] 사이클검사도 upstream 기준) 순환이 아니다(dependency-graph.cycle.test.ts·
+        // lint-node-registry.test.ts로 회귀 고정).
+        slot: "feasibilityData",
+        readyCheck: () => true,
+        resolution: ["ssot"],
+        provenanceGuarded: false,
+      },
     ],
     ssotOutputs: [{ updateAction: "updateFeasibilityData", source: "auto" }],
     runner: {

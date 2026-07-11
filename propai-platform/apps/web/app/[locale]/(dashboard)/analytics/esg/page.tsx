@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
+import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, Leaf, RefreshCw, Settings } from "lucide-react";
 import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { CarbonEmissionsWorkspaceClient } from "@/components/analytics/CarbonEmissionsWorkspaceClient";
 
 type ESGResult = {
   carbonFootprint?: { construction: number; operation: number; total: number; unit: string };
@@ -17,10 +19,13 @@ type ESGResult = {
 };
 
 export default function ESGPage() {
+  const { locale } = useParams() as { locale: string };
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<ESGResult>();
 
   const [form, setForm] = useState({ buildingType: "공동주택", grossArea: "", energySource: "도시가스", renewableRatio: "10" });
+  // (G3) 자재 탄소발자국(EPD) 패널 — 기본 접힘(기존 ESG AI 분석 흐름을 방해하지 않는 additive 배치).
+  const [carbonOpen, setCarbonOpen] = useState(false);
 
   const handleAnalyze = () => {
     mutate({ domain: "esg", context: { buildingType: form.buildingType, grossArea: `${form.grossArea}㎡`, energySource: form.energySource, renewableEnergyRatio: `${form.renewableRatio}%` } });
@@ -188,6 +193,34 @@ export default function ESGPage() {
           <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{cleanFenceText(aiResult.text)}</p>
         </div>
       )}
+
+      {/* (G3) 자재 탄소발자국(EPD) — 위 AI ESG 분석과 별개 도구(additive·기본 접힘).
+          EPD Korea Database 기반 자재별 내재탄소를 산출하고, 프로젝트가 연결돼 있으면
+          esgData.embodiedCarbonKg(모세혈관 SSOT)에 반영한다. */}
+      <div className="cc-panel glass">
+        <button
+          type="button"
+          onClick={() => setCarbonOpen((v) => !v)}
+          aria-expanded={carbonOpen}
+          className="cc-panel__head flex w-full items-center justify-between gap-3 text-left"
+        >
+          <div>
+            <span className="cc-meta">MATERIALS · EPD CARBON</span>
+            <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">자재 탄소발자국(EPD)</h2>
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+              건축자재별 EPD 실데이터로 내재탄소(embodied carbon)를 산출합니다. 필요할 때만 펼쳐 사용하세요.
+            </p>
+          </div>
+          <span className="shrink-0 text-sm font-semibold text-[var(--accent-strong)]">
+            {carbonOpen ? "▾ 닫기" : "▸ 열기"}
+          </span>
+        </button>
+        {carbonOpen && (
+          <div className="cc-panel__body">
+            <CarbonEmissionsWorkspaceClient dictionary={{}} locale={locale} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

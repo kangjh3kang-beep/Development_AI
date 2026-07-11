@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Card, CardContent, Button } from "@propai/ui";
 import { formatCurrencyCompact } from "@/lib/formatters";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { carbonResultToEsgPatch } from "./carbon-result-to-esg-patch";
 
 // ★자재 선택 목록 — 백엔드 EPD Korea Database(EPD_KOREA_DATABASE) 등록 키와 동일하게 맞춘다.
 //   (목록 외 자재는 백엔드가 산출에서 제외하므로, 등록된 자재명만 노출해 누락을 막는다.)
@@ -130,6 +132,14 @@ export function CarbonEmissionsWorkspaceClient({
 }) {
   const t: Labels = { ...DEFAULT_LABELS, ...dictionary };
 
+  // (G3) SSOT 배선 — 계산 성공 시 프로젝트가 연결된 경우에만 esgData.embodiedCarbonKg에 커밋.
+  const projectId = useProjectContextStore((s) => s.projectId);
+  const updateEsgData = useProjectContextStore((s) => s.updateEsgData);
+  // ★인플라이트 프로젝트 전환 오염 가드(RoughScenarioPanel PR#224 패턴 재사용): 분석을 "요청한
+  //   시점"의 프로젝트를 기억해뒀다가 커밋 시점에 대조한다. 응답이 늦게 와서 그사이 프로젝트가
+  //   바뀌었으면(레이스) 남의 프로젝트 SSOT를 덮지 않도록 커밋을 건너뛴다.
+  const requestProjectRef = useRef<string | null>(null);
+
   const [materials, setMaterials] = useState<{ name: string; quantity_kg: number }[]>([]);
   const [newName, setNewName] = useState("");
   const [newQty, setNewQty] = useState<number | null>(null);
@@ -140,6 +150,17 @@ export function CarbonEmissionsWorkspaceClient({
   const [error, setError] = useState<string | null>(null);
   // 대안 조회 중인 자재명(중복 클릭 방지·로딩 표시).
   const [altLoading, setAltLoading] = useState<string | null>(null);
+
+  // (G3) 계산 결과 → esgData SSOT 커밋(프로젝트 연결 시에만, 무오염 가드 통과 시에만).
+  useEffect(() => {
+    if (!result) return;
+    if (!projectId) return; // 프로젝트 미연결 → SSOT 비접촉(안내만, 아래 렌더 참고)
+    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환) 커밋 금지.
+    if (requestProjectRef.current !== projectId) return;
+    const prevEsgData = useProjectContextStore.getState().esgData;
+    const patch = carbonResultToEsgPatch(result, prevEsgData);
+    if (patch) updateEsgData(patch, { source: "auto" });
+  }, [result, projectId, updateEsgData]);
 
   const addMaterial = () => {
     if (!newName || !newQty) return;
@@ -158,6 +179,8 @@ export function CarbonEmissionsWorkspaceClient({
 
   const runAnalysis = async () => {
     if (materials.length === 0) return;
+    // ★요청 시점 프로젝트 스냅샷(인플라이트 전환 가드) — 응답 커밋 시 이 값과 대조한다.
+    requestProjectRef.current = projectId;
     setIsAnalyzing(true);
     setError(null);
     try {
@@ -390,6 +413,17 @@ export function CarbonEmissionsWorkspaceClient({
       {/* Results */}
       {result && (
         <>
+          {/* (G3) SSOT 반영 안내 — 프로젝트 연결 여부에 따라 정직 표기(무오염). */}
+          {projectId ? (
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+              연결된 프로젝트의 ESG 데이터(embodiedCarbonKg)에 반영되었습니다.
+            </div>
+          ) : (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs font-medium text-[var(--text-secondary)]">
+              프로젝트 연결 시 ESG SSOT에 반영됩니다.
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
             <div className="rounded-[2rem] border border-emerald-500/20 bg-emerald-500/5 p-8">
