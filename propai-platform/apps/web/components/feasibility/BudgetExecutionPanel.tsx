@@ -42,9 +42,36 @@ const GROUPS = [
 let _seq = 0;
 const uid = () => `li_${Date.now().toString(36)}_${(_seq += 1)}`;
 
-/** 개발방식별 프리셋은 후속 — 우선 빈 그룹 골격을 제공. */
+/** 개발방식 옵션(M01~M15) — 백엔드 budget_template.METHOD_LABELS와 정합. 프리셋 선택용. */
+const METHOD_OPTIONS: { code: string; label: string }[] = [
+  { code: "M01", label: "재개발" }, { code: "M02", label: "재건축" },
+  { code: "M03", label: "역세권개발" }, { code: "M04", label: "지역주택조합" },
+  { code: "M05", label: "임대협동조합" }, { code: "M06", label: "일반분양" },
+  { code: "M07", label: "주상복합" }, { code: "M08", label: "오피스텔" },
+  { code: "M09", label: "지식산업센터" }, { code: "M10", label: "단독주택" },
+  { code: "M11", label: "전원주택" }, { code: "M12", label: "타운하우스" },
+  { code: "M13", label: "도시형생활주택" }, { code: "M14", label: "공공임대" },
+  { code: "M15", label: "민간리츠" },
+];
+
+/** 빈 그룹 골격(초기값). 실무 표준 라인아이템은 '프리셋 불러오기'로 채운다(§12 FeasibilityTemplate). */
 function defaultItems(): LineItem[] {
   return GROUPS.map((g) => ({ id: uid(), group: g, label: "", budget_won: 0, disbursements: [] }));
+}
+
+/** 백엔드 budget-template 응답 → LineItem[] (무목업: budget_won 0 유지·note는 미저장). */
+type TemplateResp = { items?: { group: string; label: string; budget_won?: number }[] };
+function itemsFromTemplate(resp: TemplateResp): LineItem[] {
+  const rows = Array.isArray(resp?.items) ? resp.items : [];
+  return rows
+    .filter((r) => r && r.group && r.label)
+    .map((r) => ({
+      id: uid(),
+      group: String(r.group),
+      label: String(r.label),
+      budget_won: Number(r.budget_won) || 0,
+      disbursements: [],
+    }));
 }
 
 const won = (n: number) => Math.round(n).toLocaleString("ko-KR");
@@ -66,6 +93,29 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
   const [amountInput, setAmountInput] = useState("");
   const [memoInput, setMemoInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [method, setMethod] = useState("");
+  const [presetLoading, setPresetLoading] = useState(false);
+
+  // 개발방식별 실무 표준 라인아이템 프리셋(§12 FeasibilityTemplate) — 무목업(금액 0·구조만).
+  // 기존 편집분이 있으면 확인 후 대체(실수 방지). graceful — 실패 시 현행 유지.
+  const loadPreset = useCallback(async () => {
+    const hasEdits = items.some((it) => it.label.trim() || it.disbursements.length > 0);
+    if (hasEdits && typeof window !== "undefined" &&
+        !window.confirm("현재 편집 중인 항목을 표준 프리셋으로 대체할까요?")) {
+      return;
+    }
+    setPresetLoading(true);
+    try {
+      const q = method ? `?method=${encodeURIComponent(method)}` : "";
+      const resp = await apiClient.getV2<TemplateResp>(`/feasibility/budget-template${q}`);
+      const next = itemsFromTemplate(resp);
+      if (next.length) setItems(next);
+    } catch {
+      /* graceful: 실패 시 현행 유지 */
+    } finally {
+      setPresetLoading(false);
+    }
+  }, [items, method]);
 
   // 지출 영속(disburse)은 원장에 append(감사·변조탐지). 영속 이벤트를 라인아이템으로 되불러오는
   // 재적재(키=group::label 매칭)는 프로젝트 템플릿 로드 플로우와 함께 후속 증분.
@@ -192,6 +242,33 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
           <Kpi label="집행률" value={total.rate === null ? "—" : `${total.rate}%`} />
         </div>
       </header>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
+        <span className="text-xs font-semibold text-[var(--text-secondary)]">실무 표준 프리셋</span>
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
+          aria-label="개발방식 선택"
+          className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+        >
+          <option value="">개발방식(공통)</option>
+          {METHOD_OPTIONS.map((m) => (
+            <option key={m.code} value={m.code}>
+              {m.code} {m.label}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={loadPreset}
+          disabled={presetLoading}
+          className="rounded bg-[var(--accent-strong)] px-3 py-1 text-xs font-bold text-white disabled:opacity-50"
+        >
+          {presetLoading ? "불러오는 중…" : "프리셋 불러오기"}
+        </button>
+        <span className="text-[11px] text-[var(--text-hint)]">
+          라벨·구조만 채웁니다(금액은 직접 입력 · 무목업). 공동주택 계열은 학교용지·광역교통 부담금 포함.
+        </span>
+      </div>
 
       {overItems.length > 0 && (
         <div className="mb-3 rounded-lg border border-[var(--status-danger,#dc2626)]/40 bg-[var(--status-danger,#dc2626)]/10 px-3 py-2 text-xs text-[var(--status-danger,#dc2626)]">
