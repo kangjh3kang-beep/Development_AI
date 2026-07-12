@@ -70,7 +70,7 @@ export function DashboardChromeGate({
 
           <div className="flex flex-wrap items-center gap-3">
             <MobileSidebarToggle sections={sections} />
-            <span className="hidden sm:inline-block rounded-lg bg-[var(--accent-soft)] border border-[var(--line)] px-3 py-2 text-[11px] font-bold tracking-widest uppercase text-[var(--accent-strong)]">
+            <span className="hidden sm:inline-block rounded-[var(--r-pill)] bg-[var(--status-success)]/10 border border-[var(--status-success)]/30 px-3 py-2 text-[11px] font-bold tracking-widest uppercase text-[var(--status-success)]">
               {runtimeModeLabel}
             </span>
             <div className="flex items-center gap-2 rounded-xl bg-[var(--surface-soft)] p-1 border border-[var(--line)]">

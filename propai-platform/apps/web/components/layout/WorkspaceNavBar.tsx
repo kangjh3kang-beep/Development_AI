@@ -155,9 +155,9 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                 aria-expanded={open}
                 aria-haspopup="menu"
                 onClick={() => openSection(section.id)}
-                className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
+                className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-[var(--r-pill)] px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
                   active
-                    ? "bg-[var(--text-primary)] text-white"
+                    ? "bg-[var(--accent-strong)] text-[var(--on-primary)]"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
                 }`}
               >
@@ -214,7 +214,7 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
         <Link
           href={pathname?.replace(/\/$/, "") || "/"}
           aria-label="현재 워크스페이스 새로고침"
-          className="ml-auto inline-flex h-10 items-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          className="ml-auto inline-flex h-10 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           워크스페이스
         </Link>
