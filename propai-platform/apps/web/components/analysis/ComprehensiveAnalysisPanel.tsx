@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { BarChart3, Construction, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
+import { BarChart3, Construction, ExternalLink, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
   () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
@@ -11,6 +11,7 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { BuildableOptionsCard } from "@/components/analysis/BuildableOptionsCard";
+import { AllowedBuildingsCard } from "@/components/analysis/AllowedBuildingsCard";
 import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialistCard";
 import type { DecisionSpecialist } from "@/components/projects/decision-brief-types";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -140,6 +141,187 @@ function PermitBadge({ complexity }: { complexity: number }) {
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${colors[complexity] || colors[3]}`}>
       {labels[complexity] || "보통"}
     </span>
+  );
+}
+
+/**
+ * ContradictionsCard — "이전 분석과 모순 감지" 렌더.
+ *
+ * ★신규(additive) contradictions.groups[] 있으면 패턴별 그룹 카드(파생 필드 N개 + 펼치면
+ * sample_keys)로 요약, 없으면 기존 원시 나열을 최대 5행 + 접기로 강등(무제한 나열 방지).
+ * 둘 다 없으면 렌더하지 않는다(무목업 — 모순 0건이면 빈 카드도 안 남긴다).
+ */
+function ContradictionsCard({ contradictions }: { contradictions?: AnalysisResult }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!contradictions) return null;
+  const groups: AnalysisResult[] = Array.isArray(contradictions.groups) ? contradictions.groups : [];
+  const raw: AnalysisResult[] = Array.isArray(contradictions.contradictions) ? contradictions.contradictions : [];
+  if (groups.length === 0 && raw.length === 0) return null;
+
+  const maxSeverity = contradictions.max_severity as string | undefined;
+  const visibleRaw = expanded ? raw : raw.slice(0, 5);
+
+  return (
+    <div className={`rounded-2xl border p-4 ${SEVERITY_CARD_STYLE[maxSeverity ?? ""] || SEVERITY_CARD_STYLE.low}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-[var(--text-primary)]">이전 분석과 모순 감지</span>
+        {maxSeverity && (
+          <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
+            최고 심각도 {maxSeverity}
+          </span>
+        )}
+      </div>
+
+      {groups.length > 0 ? (
+        // ★그룹 카드(패턴키 단위 요약) — leaf_count는 같은 패턴에서 몇 개 세부필드가 함께 변했는지.
+        <div className="mt-2 space-y-2">
+          {groups.map((g, i) => (
+            <div key={i} className={`rounded-xl border p-3 ${SEVERITY_CARD_STYLE[g.severity as string] || SEVERITY_CARD_STYLE.low}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold text-[var(--text-primary)]">{g.key_pattern}</span>
+                {g.severity ? (
+                  <span className="rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--text-primary)]">{g.severity}</span>
+                ) : null}
+                {typeof g.leaf_count === "number" && g.leaf_count > 1 ? (
+                  <span className="text-[10px] text-[var(--text-hint)]">파생 필드 {g.leaf_count}개</span>
+                ) : null}
+              </div>
+              <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                {String(g.prev)} → {String(g.now)}
+                {g.rel_change != null ? ` (변화율 ${Math.round((g.rel_change as number) * 100)}%)` : ""}
+              </p>
+              {Array.isArray(g.sample_keys) && g.sample_keys.length > 0 ? (
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[10px] font-semibold text-[var(--accent-strong)]">
+                    세부 키 {g.sample_keys.length}개 보기
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 pl-3">
+                    {(g.sample_keys as string[]).map((k, ki) => (
+                      <li key={ki} className="text-[10px] text-[var(--text-hint)]">· {k}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        // ★그룹 미제공(구버전 응답) — 원시 나열은 최대 5행 + 접기로 강등(무제한 나열 방지).
+        <>
+          <ul className="mt-2 space-y-1">
+            {visibleRaw.map((c, i) => (
+              <li key={i} className="text-[11px] text-[var(--text-secondary)]">
+                · {c.key}: {String(c.prev)} → {String(c.now)}
+                {c.kind === "numeric_delta" && c.rel_change != null ? ` (변화율 ${Math.round(c.rel_change * 100)}%)` : ""}
+                {c.severity ? ` · 심각도 ${c.severity}` : ""}
+              </li>
+            ))}
+          </ul>
+          {raw.length > 5 ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
+            >
+              {expanded ? "접기 ▲" : `${raw.length - 5}건 더보기 ▼`}
+            </button>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 용적률 시나리오 표(1-B 최적화 시뮬레이션) — 전체 표 원형(요약 축약 시에도 재사용). */
+function ScenarioTable({ scenarios, recommended }: { scenarios: AnalysisResult[]; recommended?: string }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-[var(--line)] text-[var(--text-hint)]">
+            <th className="py-2 px-2 text-left">시나리오</th>
+            <th className="py-2 px-1 text-right">달성 용적률</th>
+            <th className="py-2 px-1 text-right">인센티브</th>
+            <th className="py-2 px-1 text-right">기부체납</th>
+            <th className="py-2 px-1 text-right">연면적 증가</th>
+            <th className="py-2 px-1 text-center">상한</th>
+          </tr>
+        </thead>
+        <tbody>
+          {scenarios.map((sc, i) => (
+            <tr key={i} className={`border-b border-[var(--line)]/50 ${sc.scenario_name === recommended ? "bg-[var(--accent-strong)]/5" : ""}`}>
+              <td className="py-2 px-2 font-bold text-[var(--text-primary)]">
+                {sc.scenario_name === recommended && <span className="text-[var(--accent-strong)] mr-1">★</span>}
+                {sc.scenario_name}
+              </td>
+              <td className="py-2 px-1 text-right font-bold text-[var(--accent-strong)]">{sc.achieved_far}%</td>
+              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">+{sc.total_incentive}%</td>
+              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.donation_pct > 0 ? `${sc.donation_pct}%` : "-"}</td>
+              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.gfa_increase_sqm > 0 ? `+${sc.gfa_increase_sqm}m²` : "-"}</td>
+              <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-amber-400 text-[10px] font-bold">상한</span> : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * FarOptimizationPanel — "1-B. 용적률 최적화 시뮬레이션" 섹션.
+ *
+ * 전 시나리오의 achieved_far가 상한(cap_far)과 동일하면(인센티브를 더 써도 무의미) 표 대신
+ * 요약 1행 + '자세히' 접기로 원 표를 강등한다. structural_cap_pct(구조상한 — 층수 제한이
+ * 지배하는 경우)가 있으면 그 사실도 함께 부기해 "인센티브를 더 계산해봐야 소용없는 이유"를 밝힌다.
+ */
+function FarOptimizationPanel({ farOpt, structuralCapPct }: { farOpt?: AnalysisResult; structuralCapPct?: number | null }) {
+  const [showDetail, setShowDetail] = useState(false);
+  if (!farOpt?.scenarios) return null;
+  const scenarios: AnalysisResult[] = farOpt.scenarios;
+  const capFar = farOpt.cap_far;
+  const allCapped = scenarios.length > 0 && scenarios.every((sc) => sc.achieved_far === capFar);
+
+  return (
+    <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon={TrendingUp} defaultOpen>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <Field label="현재 기본 용적률" value={`${farOpt.base_far}%`} />
+        <Field label="최대 달성 가능" value={`${farOpt.max_achievable_far}%`} />
+        {/* 통합모드의 상한은 §84 면적가중 통합값(단일필지 시행령 정값과 의미가 달라 라벨 분리) */}
+        <Field label={farOpt.integrated ? "통합 상한 (면적가중)" : "법정 상한"} value={`${capFar}%`} />
+      </div>
+      {farOpt.recommended_scenario && (
+        <div className="rounded-lg bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)]/30 p-3 mb-3">
+          <p className="text-[10px] font-bold text-[var(--accent-strong)]">추천: {farOpt.recommended_scenario}</p>
+          <p className="text-[10px] text-[var(--text-secondary)]">{farOpt.recommended_reason}</p>
+        </div>
+      )}
+      {allCapped ? (
+        <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+          <p className="text-xs font-bold text-[var(--text-primary)]">
+            모든 시나리오가 상한 {capFar}%에서 cap — 인센티브 추가 완화 불가
+          </p>
+          {structuralCapPct != null && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              층수 제한이 지배 — 구조상한 {structuralCapPct}% 기준으론 인센티브 무의미
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowDetail((v) => !v)}
+            className="mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
+          >
+            {showDetail ? "표 접기 ▲" : "자세히(원 표) ▼"}
+          </button>
+          {showDetail && (
+            <div className="mt-2">
+              <ScenarioTable scenarios={scenarios} recommended={farOpt.recommended_scenario} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <ScenarioTable scenarios={scenarios} recommended={farOpt.recommended_scenario} />
+      )}
+    </SectionCard>
   );
 }
 
@@ -399,28 +581,9 @@ export function ComprehensiveAnalysisPanel() {
       {result && (
         <div className="space-y-3">
           {/* ★결정론 모순탐지(contradictions) — prior(원장) 대비 status 플립·수치 델타(상단 경고).
-              백엔드 detect_contradictions 산출을 그간 미렌더(핸드오프 손실). 모순 0건이면 렌더 안 함. */}
-          {Array.isArray(result.contradictions?.contradictions) && result.contradictions.contradictions.length > 0 && (
-            <div className={`rounded-2xl border p-4 ${SEVERITY_CARD_STYLE[result.contradictions.max_severity as string] || SEVERITY_CARD_STYLE.low}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-bold text-[var(--text-primary)]">이전 분석과 모순 감지</span>
-                {result.contradictions.max_severity && (
-                  <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
-                    최고 심각도 {result.contradictions.max_severity}
-                  </span>
-                )}
-              </div>
-              <ul className="mt-2 space-y-1">
-                {(result.contradictions.contradictions as AnalysisResult[]).map((c: AnalysisResult, i: number) => (
-                  <li key={i} className="text-[11px] text-[var(--text-secondary)]">
-                    · {c.key}: {String(c.prev)} → {String(c.now)}
-                    {c.kind === "numeric_delta" && c.rel_change != null ? ` (변화율 ${Math.round(c.rel_change * 100)}%)` : ""}
-                    {c.severity ? ` · 심각도 ${c.severity}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+              백엔드 detect_contradictions 산출을 그간 미렌더(핸드오프 손실). 모순 0건이면 렌더 안 함.
+              groups[] 있으면 패턴별 그룹 카드, 없으면 원시 나열(최대 5행+접기)로 강등(ContradictionsCard). */}
+          <ContradictionsCard contradictions={result.contradictions} />
 
           {/* 기본 정보 요약 */}
           <div className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-5">
@@ -431,6 +594,31 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="대지면적" value={formatArea(result.land_area_sqm)} />
             </div>
           </div>
+
+          {/* ★정합성 안내 배너 — 비연접 파편 필지(다필지 통합 불가) 경고 + 백엔드 warnings[](이미
+              라이브였으나 미렌더였던 핸드오프 손실 해소). §2 "판정불가" 스텁과 동일 논조로
+              페이지 전체 정직 표기 일관성을 맞춘다(가짜 통합수치를 그대로 믿지 않도록 상단에 배치). */}
+          {(result.integrated_zoning?.adjacency_contiguous === false ||
+            (Array.isArray(result.warnings) && result.warnings.length > 0)) && (
+            <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-4 space-y-2">
+              {result.integrated_zoning?.adjacency_contiguous === false && (
+                <p className="text-xs font-bold leading-relaxed text-[var(--status-warning)]">
+                  비연접 파편 필지
+                  {typeof result.integrated_zoning?.cluster_count === "number"
+                    ? ` ${result.integrated_zoning.cluster_count}개 클러스터`
+                    : ""}
+                  {" "}— 단일 대지 통합개발 불가. 아래 통합 수치는 참고용이며 클러스터별 분석이 필요합니다.
+                </p>
+              )}
+              {Array.isArray(result.warnings) && result.warnings.length > 0 && (
+                <ul className="space-y-1">
+                  {(result.warnings as string[]).map((w, i) => (
+                    <li key={i} className="text-[11px] text-[var(--text-secondary)]">· {w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}
           <SeniorVerdictCard
@@ -465,6 +653,10 @@ export function ComprehensiveAnalysisPanel() {
             </div>
           )}
 
+          {/* ★현행 허용건축물(별표2~20) — 백엔드 allowed_buildings 소비(orphan handoff 해소).
+              스토리: "지금 지을 수 있는 것"을 먼저 보여준 다음, 그 아래 랭킹으로 사업성을 비교한다. */}
+          <AllowedBuildingsCard data={result.allowed_buildings} floorCap={ef.floor_cap} />
+
           {/* ★건축가능항목 랭킹(Stage 1) — 백엔드 buildable_options 소비(orphan handoff 해소) */}
           <BuildableOptionsCard data={result.buildable_options} />
           {/* ★ai_interpretation.buildable_options_interpretation — 12해석키 중 미소비였던 마지막 1건(핸드오프 손실 해소) */}
@@ -490,6 +682,10 @@ export function ComprehensiveAnalysisPanel() {
                     · {s.path} → {s.target_zone}
                     {s.expected_far_pct_high != null ? ` (예상 ${s.expected_far_pct_high}%)` : ""}
                     {s.feasibility ? ` · 가능성 ${s.feasibility}` : ""}
+                    {/* ★신규(additive) blocked_reasons — 비연접 등으로 구역 성립이 불확실한 사유(정직 표기). */}
+                    {Array.isArray(s.blocked_reasons) && s.blocked_reasons.length > 0
+                      ? ` · ${(s.blocked_reasons as string[]).join(" · ")}`
+                      : ""}
                   </li>
                 ))}
               </ul>
@@ -526,32 +722,39 @@ export function ComprehensiveAnalysisPanel() {
             </div>
           )}
 
-          {/* AI 시장분석 종합 해석 (market_interpretation) */}
-          {result.market_interpretation && (
-            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
-              <h3 className="mb-3 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-400"><BarChart3 className="size-4" aria-hidden /> AI 시장분석</h3>
-              <div className="space-y-3">
-                {result.market_interpretation.market_overview && (
-                  <MarketAiBlock label="시장 종합 현황" text={result.market_interpretation.market_overview} />
-                )}
-                {result.market_interpretation.price_trend_analysis && (
-                  <MarketAiBlock label="가격 추이·전망" text={result.market_interpretation.price_trend_analysis} />
-                )}
-                {result.market_interpretation.comparable_analysis && (
-                  <MarketAiBlock label="유사물건 비교" text={result.market_interpretation.comparable_analysis} />
-                )}
-                {result.market_interpretation.investment_insight && (
-                  <MarketAiBlock label="투자 시사점" text={result.market_interpretation.investment_insight} />
-                )}
-                {result.market_interpretation.risk_factors && (
-                  <MarketAiBlock label="시장 리스크" text={result.market_interpretation.risk_factors} />
-                )}
-                {result.market_interpretation.timing_recommendation && (
-                  <MarketAiBlock label="매수·개발 타이밍" text={result.market_interpretation.timing_recommendation} />
-                )}
-              </div>
-            </div>
-          )}
+          {/* AI 시장분석 종합 해석 (market_interpretation) — market_interpretation이 빈 객체({})로만
+              와도 헤더 셸이 남지 않도록 실제 내용(6개 하위텍스트 중 1개 이상) 보유 여부로 게이트한다.
+              내용이 없고 market_interpretation_status.reason이 있으면 정직 미생성 사유 한 줄만 표기(무목업). */}
+          {(() => {
+            const mi = result.market_interpretation as AnalysisResult | undefined;
+            const miFields = mi
+              ? [mi.market_overview, mi.price_trend_analysis, mi.comparable_analysis, mi.investment_insight, mi.risk_factors, mi.timing_recommendation]
+              : [];
+            const hasMarketInterp = miFields.some((v) => typeof v === "string" && v.trim().length > 0);
+            if (hasMarketInterp && mi) {
+              return (
+                <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
+                  <h3 className="mb-3 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-400"><BarChart3 className="size-4" aria-hidden /> AI 시장분석</h3>
+                  <div className="space-y-3">
+                    {mi.market_overview && <MarketAiBlock label="시장 종합 현황" text={mi.market_overview} />}
+                    {mi.price_trend_analysis && <MarketAiBlock label="가격 추이·전망" text={mi.price_trend_analysis} />}
+                    {mi.comparable_analysis && <MarketAiBlock label="유사물건 비교" text={mi.comparable_analysis} />}
+                    {mi.investment_insight && <MarketAiBlock label="투자 시사점" text={mi.investment_insight} />}
+                    {mi.risk_factors && <MarketAiBlock label="시장 리스크" text={mi.risk_factors} />}
+                    {mi.timing_recommendation && <MarketAiBlock label="매수·개발 타이밍" text={mi.timing_recommendation} />}
+                  </div>
+                </div>
+              );
+            }
+            if (result.market_interpretation_status?.reason) {
+              return (
+                <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-xs text-[var(--text-hint)]">
+                  시장분석 미생성 — 사유: {result.market_interpretation_status.reason}
+                </p>
+              );
+            }
+            return null;
+          })()}
 
           {/* Section 1: 실효용적률 */}
           <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen>
@@ -564,6 +767,18 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="실효 용적률" value={`${ef.effective_far_pct ?? "-"}%`} />
             </div>
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
+            {/* ★신규(additive) structural_cap_pct — 구조상한(층수 제한 등)이 조례 용적률보다
+                더 타이트하게 걸리는 경우를 명시(예: 4층 이하 제한 부지). 없으면 미표시(무목업). */}
+            {ef.structural_cap_pct != null && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="text-[11px] font-bold text-amber-400">
+                  구조상한 {ef.structural_cap_pct}%{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
+                </p>
+                {ef.floor_cap_basis && (
+                  <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">근거: {ef.floor_cap_basis}</p>
+                )}
+              </div>
+            )}
             {Array.isArray(ef.annotations) && ef.annotations?.length > 0 && (
               <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1.5">
                 <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
@@ -577,52 +792,8 @@ export function ComprehensiveAnalysisPanel() {
             )}
           </SectionCard>
 
-          {/* Section 1-B: 용적률 최적화 시뮬레이션 */}
-          {ef.far_optimization?.scenarios && (
-            <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon={TrendingUp} defaultOpen>
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                <Field label="현재 기본 용적률" value={`${ef.far_optimization.base_far}%`} />
-                <Field label="최대 달성 가능" value={`${ef.far_optimization.max_achievable_far}%`} />
-                {/* 통합모드의 상한은 §84 면적가중 통합값(단일필지 시행령 정값과 의미가 달라 라벨 분리) */}
-                <Field label={ef.integrated ? "통합 상한 (면적가중)" : "법정 상한"} value={`${ef.far_optimization.cap_far}%`} />
-              </div>
-              {ef.far_optimization.recommended_scenario && (
-                <div className="rounded-lg bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)]/30 p-3 mb-3">
-                  <p className="text-[10px] font-bold text-[var(--accent-strong)]">추천: {ef.far_optimization.recommended_scenario}</p>
-                  <p className="text-[10px] text-[var(--text-secondary)]">{ef.far_optimization.recommended_reason}</p>
-                </div>
-              )}
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] text-[var(--text-hint)]">
-                      <th className="py-2 px-2 text-left">시나리오</th>
-                      <th className="py-2 px-1 text-right">달성 용적률</th>
-                      <th className="py-2 px-1 text-right">인센티브</th>
-                      <th className="py-2 px-1 text-right">기부체납</th>
-                      <th className="py-2 px-1 text-right">연면적 증가</th>
-                      <th className="py-2 px-1 text-center">상한</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(ef.far_optimization.scenarios as AnalysisResult[]).map((sc: AnalysisResult, i: number) => (
-                      <tr key={i} className={`border-b border-[var(--line)]/50 ${sc.scenario_name === ef.far_optimization.recommended_scenario ? "bg-[var(--accent-strong)]/5" : ""}`}>
-                        <td className="py-2 px-2 font-bold text-[var(--text-primary)]">
-                          {sc.scenario_name === ef.far_optimization.recommended_scenario && <span className="text-[var(--accent-strong)] mr-1">★</span>}
-                          {sc.scenario_name}
-                        </td>
-                        <td className="py-2 px-1 text-right font-bold text-[var(--accent-strong)]">{sc.achieved_far}%</td>
-                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">+{sc.total_incentive}%</td>
-                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.donation_pct > 0 ? `${sc.donation_pct}%` : "-"}</td>
-                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.gfa_increase_sqm > 0 ? `+${sc.gfa_increase_sqm}m²` : "-"}</td>
-                        <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-amber-400 text-[10px] font-bold">상한</span> : ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </SectionCard>
-          )}
+          {/* Section 1-B: 용적률 최적화 시뮬레이션 — 전 시나리오 cap 동일 시 요약+접기(FarOptimizationPanel) */}
+          <FarOptimizationPanel farOpt={ef.far_optimization} structuralCapPct={ef.structural_cap_pct} />
 
           {/* Section 2: 개발방식별 적정공급면적 */}
           <SectionCard title="2. 개발방식별 적정공급면적 산정" icon={Construction} defaultOpen>
@@ -825,61 +996,113 @@ export function ComprehensiveAnalysisPanel() {
           </SectionCard>
 
           {/* Section 7: 주변 개발계획 */}
-          <SectionCard title="7. 주변 개발계획 및 규제" icon={Map}>
-            {(devPlans.land_use_regulations?.length > 0 || devPlans.special_districts?.length > 0) ? (
-              <div className="space-y-2">
-                {devPlans.land_use_regulations?.length > 0 && (
-                  <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
-                      {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
-                      {devPlans.risk_level && (
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
-                          종합 리스크 {devPlans.risk_level}
-                        </span>
-                      )}
-                    </div>
-                    <div className="space-y-1">
-                      {(devPlans.land_use_regulations ?? []).map((reg: string, i: number) => {
-                        // ★regulation_notes(이름별 해석 주석) — 매칭되면 회색 보조텍스트로 병기(핸드오프 손실 해소).
-                        const note = (devPlans.regulation_notes as AnalysisResult[] | undefined)?.find(
-                          (n: AnalysisResult) => n?.name === reg,
-                        );
-                        return (
-                          <div key={i} className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-2 text-[11px]">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                              <span className="text-[var(--text-primary)]">{reg}</span>
+          {(() => {
+            // ★신규(additive) land_use_regulations_detail — {name, link|null}. 있으면 이름+링크로
+            //   렌더(이름 중복 제거·순서 보존), 없으면 기존 land_use_regulations(문자열 배열)로 폴백.
+            const rawDetail: AnalysisResult[] = Array.isArray(devPlans.land_use_regulations_detail)
+              ? devPlans.land_use_regulations_detail
+              : [];
+            const seenNames = new Set<string>();
+            const regDetail = rawDetail.filter((r) => {
+              const n = (r?.name ?? "").trim();
+              if (!n || seenNames.has(n)) return false;
+              seenNames.add(n);
+              return true;
+            });
+            const regItems: { name: string; link?: string | null }[] =
+              regDetail.length > 0
+                ? regDetail.map((r) => ({ name: r.name, link: r.link ?? null }))
+                : (devPlans.land_use_regulations ?? []).map((name: string) => ({ name, link: null }));
+            const specialDistricts: string[] = Array.isArray(devPlans.special_districts)
+              ? devPlans.special_districts
+              : [];
+            const hasAnyRegInfo = regItems.length > 0 || specialDistricts.length > 0;
+
+            return (
+              <SectionCard title="7. 주변 개발계획 및 규제" icon={Map}>
+                {hasAnyRegInfo ? (
+                  <div className="space-y-2">
+                    {regItems.length > 0 && (
+                      <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
+                          {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
+                          {devPlans.risk_level && (
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
+                              종합 리스크 {devPlans.risk_level}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {regItems.map((reg, i) => {
+                            // ★regulation_notes(이름별 해석 주석) — 매칭되면 회색 보조텍스트로 병기(핸드오프 손실 해소).
+                            const note = (devPlans.regulation_notes as AnalysisResult[] | undefined)?.find(
+                              (n: AnalysisResult) => n?.name === reg.name,
+                            );
+                            return (
+                              <div key={i} className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-2 text-[11px]">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                                  <span className="text-[var(--text-primary)]">{reg.name}</span>
+                                  {/* 근거 링크 — url 있을 때만(가짜 링크 날조 금지), 새 탭으로 열기. */}
+                                  {reg.link ? (
+                                    <a
+                                      href={reg.link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title={`${reg.name} 근거 새 탭에서 열기`}
+                                      aria-label={`${reg.name} 근거 새 탭에서 열기`}
+                                      className="inline-flex items-center text-[var(--accent-strong)] hover:opacity-80"
+                                    >
+                                      <ExternalLink className="size-3" aria-hidden />
+                                    </a>
+                                  ) : null}
+                                </div>
+                                {note?.interpretation && (
+                                  <p className="ml-3.5 text-[10px] text-[var(--text-hint)]">{note.interpretation}</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* ★risk_factors(리스크 유발 규제 목록) — 핸드오프 손실 해소. */}
+                        {Array.isArray(devPlans.risk_factors) && devPlans.risk_factors.length > 0 && (
+                          <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-2">
+                            <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
+                            {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
+                              <div key={i} className="flex items-center gap-2 text-[11px]">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                                <span className="text-[var(--text-secondary)]">{f}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* 특별·지구 지정 — devPlans.special_districts(그간 게이트 조건에만 쓰이고 미렌더였던 항목). */}
+                    {specialDistricts.length > 0 && (
+                      <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                        <p className="mb-1 text-[10px] font-bold text-[var(--text-hint)]">특별·지구 지정</p>
+                        <div className="space-y-1">
+                          {specialDistricts.map((d, i) => (
+                            <div key={i} className="flex items-center gap-2 text-[11px]">
+                              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0" />
+                              <span className="text-[var(--text-secondary)]">{d}</span>
                             </div>
-                            {note?.interpretation && (
-                              <p className="ml-3.5 text-[10px] text-[var(--text-hint)]">{note.interpretation}</p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {/* ★risk_factors(리스크 유발 규제 목록) — 핸드오프 손실 해소. */}
-                    {Array.isArray(devPlans.risk_factors) && devPlans.risk_factors.length > 0 && (
-                      <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-2">
-                        <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
-                        {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
-                          <div key={i} className="flex items-center gap-2 text-[11px]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                            <span className="text-[var(--text-secondary)]">{f}</span>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
                 )}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
-            )}
-            {result.ai_interpretation?.development_plan_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
-            )}
-          </SectionCard>
+                {result.ai_interpretation?.development_plan_interpretation && (
+                  <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
+                )}
+              </SectionCard>
+            );
+          })()}
 
           {/* 분석 시간 */}
           <p className="text-[10px] text-[var(--text-hint)] text-right">분석 시간: {result.analyzed_at}</p>
