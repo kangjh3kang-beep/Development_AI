@@ -153,7 +153,7 @@ export function AiTokenUsageDashboard() {
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--spot)]">
+      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--status-warning)]">
         {error}
       </div>
     );

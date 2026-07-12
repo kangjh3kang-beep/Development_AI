@@ -37,14 +37,14 @@ export const Toast = forwardRef<HTMLDivElement, ToastProps>(
             </p>
           )}
           {description && (
-            <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
+            <p className="mt-1 text-sm text-[var(--text-tertiary)]">{description}</p>
           )}
         </div>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="text-[var(--muted)] hover:text-[var(--foreground)] transition"
+            className="text-[var(--text-tertiary)] hover:text-[var(--foreground)] transition"
             aria-label="닫기"
           >
             ✕

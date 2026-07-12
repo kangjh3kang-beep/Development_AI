@@ -93,10 +93,10 @@ export function DigitalTwinAnomalyDashboard() {
       {/* KPI 카드 */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "활성 센서", value: summary.total_sensors, unit: "개", color: "text-[var(--info)]", icon: RadioTower },
-          { label: "이상 감지", value: summary.anomalies_detected, unit: "건", color: "text-[var(--warning)]", icon: AlertTriangle },
-          { label: "긴급 경고", value: summary.critical_count, unit: "건", color: "text-[var(--spot)]", icon: Siren },
-          { label: "주의 경고", value: summary.warning_count, unit: "건", color: "text-[var(--warning)]", icon: Zap },
+          { label: "활성 센서", value: summary.total_sensors, unit: "개", color: "text-[var(--status-info)]", icon: RadioTower },
+          { label: "이상 감지", value: summary.anomalies_detected, unit: "건", color: "text-[var(--status-warning)]", icon: AlertTriangle },
+          { label: "긴급 경고", value: summary.critical_count, unit: "건", color: "text-[var(--status-error)]", icon: Siren },
+          { label: "주의 경고", value: summary.warning_count, unit: "건", color: "text-[var(--status-warning)]", icon: Zap },
         ].map((kpi, i) => (
           <motion.div
             key={kpi.label}
@@ -163,7 +163,7 @@ export function DigitalTwinAnomalyDashboard() {
                 </CardTitle>
               </div>
               <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-3 flex items-center gap-3">
-                 <div className="h-3 w-3 rounded-full bg-[var(--spot)] animate-ping" />
+                 <div className="h-3 w-3 rounded-full bg-[var(--status-error)] animate-ping" />
                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-primary)]">LIVE_FEED</span>
               </div>
             </div>
@@ -208,8 +208,8 @@ export function DigitalTwinAnomalyDashboard() {
                       if (payload.is_anomaly) {
                         return (
                           <g key={`dot-${cx}-${cy}`}>
-                            <circle cx={cx} cy={cy} r={10} fill="var(--spot)" opacity={0.2} />
-                            <circle cx={cx} cy={cy} r={5} fill="var(--spot)" stroke="var(--surface-strong)" strokeWidth={2} />
+                            <circle cx={cx} cy={cy} r={10} fill="var(--status-error)" opacity={0.2} />
+                            <circle cx={cx} cy={cy} r={5} fill="var(--status-error)" stroke="var(--surface-strong)" strokeWidth={2} />
                           </g>
                         );
                       }
@@ -229,7 +229,7 @@ export function DigitalTwinAnomalyDashboard() {
                    <span>정상 범위</span>
                  </div>
                  <div className="flex items-center gap-2">
-                   <div className="h-2 w-2 rounded-full bg-[var(--spot)] shadow-[0_0_8px_var(--spot)]" />
+                   <div className="h-2 w-2 rounded-full bg-[var(--status-error)] shadow-[0_0_8px_var(--status-error)]" />
                    <span>이상 징후 감지 (IsolationForest)</span>
                  </div>
                </div>
@@ -240,11 +240,11 @@ export function DigitalTwinAnomalyDashboard() {
 
         {/* 이상 스코어 산점도 */}
         <Card className="lg:col-span-4 rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden min-h-[500px]">
-          <CardContent className="p-10 lg:p-12 border-t-[12px] border-[var(--spot)] h-full flex flex-col">
+          <CardContent className="p-10 lg:p-12 border-t-[12px] border-[var(--status-error)] h-full flex flex-col">
             <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)]">LATENT_SPACE</p>
-            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">이상 스코어 <span className="text-[var(--spot)]">분포.</span></CardTitle>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">이상 스코어 <span className="text-[var(--status-error)]">분포.</span></CardTitle>
             <p className="mt-4 text-xs font-bold leading-relaxed text-[var(--text-hint)]">
-              IsolationForest 알고리즘에 의해 계산된 이상 징후 확률 밀도입니다. <span className="text-[var(--spot)] italic">임계치(-0.3)</span> 미만 포인트는 즉각적인 점검이 필요합니다.
+              IsolationForest 알고리즘에 의해 계산된 이상 징후 확률 밀도입니다. <span className="text-[var(--status-error)] italic">임계치(-0.3)</span> 미만 포인트는 즉각적인 점검이 필요합니다.
             </p>
             
             <div className="mt-12 flex-grow min-h-0">
@@ -268,7 +268,7 @@ export function DigitalTwinAnomalyDashboard() {
                     domain={[-0.6, 0.6]}
                   />
                   <ZAxis range={[50, 400]} />
-                  <ReferenceLine y={-0.3} stroke="var(--spot)" strokeDasharray="8 4" strokeWidth={2} label={{ value: "CRITICAL_THRESHOLD", fill: "var(--spot)", fontSize: 8, fontWeight: 900, position: 'insideTopRight' }} />
+                  <ReferenceLine y={-0.3} stroke="var(--status-error)" strokeDasharray="8 4" strokeWidth={2} label={{ value: "CRITICAL_THRESHOLD", fill: "var(--status-error)", fontSize: 8, fontWeight: 900, position: 'insideTopRight' }} />
                   <ReferenceLine y={0} stroke="var(--line-strong)" strokeOpacity={0.5} />
                   <Tooltip
                     contentStyle={{
@@ -288,7 +288,7 @@ export function DigitalTwinAnomalyDashboard() {
                   />
                   <Scatter
                     data={anomalyPoints}
-                    fill="var(--spot)"
+                    fill="var(--status-error)"
                     opacity={1}
                     name="이상"
                      shape="star"
@@ -297,16 +297,16 @@ export function DigitalTwinAnomalyDashboard() {
               </ResponsiveContainer>
             </div>
 
-            <div className="mt-8 rounded-3xl bg-[var(--surface-soft)] p-6 border border-[var(--line-subtle)] group hover:border-[var(--spot)] transition-colors duration-500">
+            <div className="mt-8 rounded-3xl bg-[var(--surface-soft)] p-6 border border-[var(--line-subtle)] group hover:border-[var(--status-error)] transition-colors duration-500">
                <div className="flex items-center justify-between mb-1">
-                 <span className="text-[10px] font-black uppercase tracking-widest text-[var(--spot)]">SYSTEM_HEALTH</span>
+                 <span className="text-[10px] font-black uppercase tracking-widest text-[var(--status-error)]">SYSTEM_HEALTH</span>
                  <span className="text-xs font-[1000] text-[var(--text-primary)]">{(100 - (summary.anomalies_detected / (summary.total_sensors * 24) * 100)).toFixed(2)}%</span>
                </div>
                <div className="h-1.5 w-full bg-[var(--surface-strong)] rounded-full overflow-hidden">
                  <motion.div 
                     initial={{ width: 0 }}
                     animate={{ width: "98.2%" }} 
-                    className="h-full bg-gradient-to-r from-[var(--info)] to-[var(--accent-strong)]" 
+                    className="h-full bg-gradient-to-r from-[var(--status-info)] to-[var(--accent-strong)]" 
                  />
                </div>
             </div>

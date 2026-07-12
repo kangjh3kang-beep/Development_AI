@@ -11,13 +11,13 @@ const variantClassName: Record<BadgeVariant, string> = {
   default:
     "bg-[var(--surface-soft)] text-[var(--text-secondary)]",
   success:
-    "bg-[var(--success-soft)] text-[var(--success)]",
+    "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)]",
   warning:
-    "bg-[var(--warning-soft)] text-[var(--warning)]",
+    "bg-[color-mix(in_srgb,var(--status-warning)_14%,transparent)] text-[var(--status-warning)]",
   error:
-    "bg-[var(--error-soft)] text-[var(--error)]",
+    "bg-[color-mix(in_srgb,var(--status-error)_14%,transparent)] text-[var(--status-error)]",
   info:
-    "bg-[var(--info-soft)] text-[var(--info)]",
+    "bg-[color-mix(in_srgb,var(--status-info)_14%,transparent)] text-[var(--status-info)]",
 };
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(

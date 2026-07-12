@@ -207,7 +207,7 @@ export function ProjectSummaryClient({
   if (projectQuery.error) {
     return (
       <Card>
-        <CardContent className="p-6 text-sm leading-7 text-[var(--spot)]">
+        <CardContent className="p-6 text-sm leading-7 text-[var(--status-error)]">
           {extractErrorMessage(projectQuery.error)}
         </CardContent>
       </Card>

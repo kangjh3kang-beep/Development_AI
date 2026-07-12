@@ -120,7 +120,7 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
           {(ACTIONS_BY_STATUS[status] || []).map((a) => (
             <button key={a.action} onClick={() => doAction(a.action)} disabled={acting}
               className={`rounded-lg px-3 py-2 text-xs font-black text-white disabled:opacity-50 ${
-                a.tone === "danger" ? "bg-[var(--error)]" : a.tone === "warn" ? "bg-amber-500" : "bg-[var(--accent-strong)]"}`}>
+                a.tone === "danger" ? "bg-[var(--status-error)]" : a.tone === "warn" ? "bg-amber-500" : "bg-[var(--accent-strong)]"}`}>
               {a.label}
             </button>
           ))}

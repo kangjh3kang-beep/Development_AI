@@ -965,7 +965,7 @@ function FeasAiSection({
       className={`rounded-xl p-4 ${
         emphasis
           ? "md:col-span-2 bg-blue-500/10 border border-blue-500/30"
-          : "bg-[var(--surface-muted)]/40 border border-[var(--border)]"
+          : "bg-[var(--surface-muted)]/40 border border-[var(--line)]"
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1.5">

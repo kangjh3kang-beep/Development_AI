@@ -214,7 +214,7 @@ export function WebhookManagementPanel() {
               </div>
 
               {error && (
-                <p className="text-xs text-[var(--spot)]">{error}</p>
+                <p className="text-xs text-[var(--status-error)]">{error}</p>
               )}
 
               <div className="flex gap-3">

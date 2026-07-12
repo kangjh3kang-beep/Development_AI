@@ -83,7 +83,7 @@ export function ParcelExportButton({
           </button>
         ))}
       </div>
-      {error && <p className="text-[10px] text-[var(--danger,#dc2626)]">{error}</p>}
+      {error && <p className="text-[10px] text-[var(--status-error)]">{error}</p>}
     </div>
   );
 }

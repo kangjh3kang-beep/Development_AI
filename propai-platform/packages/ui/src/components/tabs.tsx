@@ -91,7 +91,7 @@ export const TabsTrigger = forwardRef<HTMLButtonElement, TabsTriggerProps>(
           "inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition",
           isActive
             ? "bg-[#ffffff] text-[var(--foreground)] shadow-sm"
-            : "text-[var(--muted)] hover:text-[var(--foreground)]",
+            : "text-[var(--text-tertiary)] hover:text-[var(--foreground)]",
           className,
         )}
         onClick={() => setActiveTab(value)}

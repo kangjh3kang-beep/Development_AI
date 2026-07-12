@@ -333,7 +333,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                   </div>
                   <div className="relative z-10 mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                     {kpis.map(([k, v], i) => (
-                      <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-2)]"}`}>
+                      <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-soft)]"}`}>
                         <p className="cc-label">{k}</p>
                         <p className={`cc-num mt-1 text-base font-[1000] ${i === 0 ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
                       </div>
@@ -376,7 +376,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                     ["용적률 한도", site.max_far != null ? `${site.max_far}%` : "-"],
                     ["대지면적", site.land_area_sqm != null ? `${Math.round(site.land_area_sqm)}㎡` : "-"],
                   ].map(([k, v]) => (
-                    <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
+                    <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
                       <p className="text-[11px] text-[var(--text-tertiary)]">{k}</p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
                     </div>
@@ -433,7 +433,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       className={`rounded-xl border p-3 text-center ${
                         idx === 1
                           ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10"
-                          : "border-[var(--line)] bg-[var(--surface-2)]"
+                          : "border-[var(--line)] bg-[var(--surface-soft)]"
                       }`}
                     >
                       <p className="cc-label">{k as string}</p>
@@ -509,7 +509,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                     <p className="text-xs font-bold text-[var(--accent-strong)]">근거 법령</p>
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {result.multi_parcel.far_key_laws!.map((l, i) => (
-                        <span key={i} className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
+                        <span key={i} className="rounded-md bg-[var(--surface-soft)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
                           {l}
                         </span>
                       ))}
@@ -544,7 +544,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                           <p className="font-bold text-[var(--accent-strong)]">근거 법령</p>
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             {(m.key_laws ?? []).map((l, i) => (
-                              <span key={i} className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
+                              <span key={i} className="rounded-md bg-[var(--surface-soft)] px-2 py-0.5 text-[var(--text-secondary)]">
                                 {l}
                               </span>
                             ))}

@@ -531,7 +531,7 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
             type="button"
             onClick={() => void handleGenerate()}
             disabled={!gfaValid || generating}
-            className="rounded-xl bg-[var(--accent)] px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-white shadow-[var(--shadow-glow)] hover:bg-[var(--accent-strong)] disabled:opacity-50"
+            className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-white shadow-[var(--shadow-glow)] hover:brightness-110 disabled:opacity-50"
           >
             {generating
               ? "생성 중…"

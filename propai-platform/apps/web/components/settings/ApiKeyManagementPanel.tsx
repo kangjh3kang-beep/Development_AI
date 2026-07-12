@@ -166,7 +166,7 @@ function SecretCard({
             <select
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
             >
               <option value="">선택…</option>
               {(item.options || []).map((o) => (
@@ -181,7 +181,7 @@ function SecretCard({
               onChange={(e) => setValue(e.target.value)}
               placeholder={item.is_set ? "새 값 입력 시 교체" : "값 입력"}
               rows={2}
-              className="min-w-[260px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs text-[var(--text-primary)]"
+              className="min-w-[260px] flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 font-mono text-xs text-[var(--text-primary)]"
             />
           ) : (
             <div className="relative flex-1 min-w-[220px]">
@@ -190,7 +190,7 @@ function SecretCard({
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder={item.is_set ? "새 값 입력 시 교체" : "값 입력"}
-                className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 pr-16 text-sm text-[var(--text-primary)]"
+                className="h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 pr-16 text-sm text-[var(--text-primary)]"
               />
               {item.secret && (
                 <button
@@ -217,7 +217,7 @@ function SecretCard({
               type="button"
               onClick={test}
               disabled={busy !== ""}
-              className="h-9 whitespace-nowrap rounded-lg border border-[var(--border)] px-3 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50"
+              className="h-9 whitespace-nowrap rounded-lg border border-[var(--line)] px-3 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50"
             >
               {busy === "test" ? "확인 중…" : "테스트"}
             </button>
@@ -298,7 +298,7 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full rounded-xl border border-dashed border-[var(--border)] py-3 text-sm font-semibold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
+        className="w-full rounded-xl border border-dashed border-[var(--line)] py-3 text-sm font-semibold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
       >
         + 새 API 키 추가 (네임·값 직접 입력)
       </button>
@@ -328,26 +328,26 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="키 이름 (NAVER_MAP_API_KEY)"
-            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-mono text-sm text-[var(--text-primary)]"
+            className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 font-mono text-sm text-[var(--text-primary)]"
           />
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="표시 이름 (선택)"
-            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+            className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
           />
           <input
             value={group}
             onChange={(e) => setGroup(e.target.value)}
             placeholder="분류 (선택, 기본 '사용자 추가')"
-            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+            className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
           />
           <input
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder="키 값"
             type={secret ? "password" : "text"}
-            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+            className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
           />
         </div>
         <div className="mt-3 flex items-center justify-between">
@@ -438,7 +438,7 @@ export function ApiKeyManagementPanel() {
         <button
           type="button"
           onClick={load}
-          className="h-9 rounded-lg border border-[var(--border)] px-3 text-sm font-semibold text-[var(--text-primary)]"
+          className="h-9 rounded-lg border border-[var(--line)] px-3 text-sm font-semibold text-[var(--text-primary)]"
         >
           새로고침
         </button>

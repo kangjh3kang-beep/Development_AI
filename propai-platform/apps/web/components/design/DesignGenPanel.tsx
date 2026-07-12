@@ -915,7 +915,7 @@ export function DesignGenPanel({ projectId }: Props) {
                   style={{
                     borderColor: on ? "var(--accent-strong)" : "var(--line)",
                     backgroundColor: on ? "var(--accent-strong)" : "var(--surface)",
-                    color: on ? "var(--text-on-accent, #fff)" : "var(--text-secondary)",
+                    color: on ? "var(--on-primary)" : "var(--text-secondary)",
                   }}
                 >
                   {ut}

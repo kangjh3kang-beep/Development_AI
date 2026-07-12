@@ -672,7 +672,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         </button>
       </div>
       {runMutation.isError ? (
-        <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--spot)]">
+        <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--status-error)]">
           모니터링 실행 실패: {extractErrorMessage(runMutation.error)}
         </p>
       ) : null}
@@ -722,7 +722,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             {uploadMutation.isPending ? "업로드·파싱 중…" : "파일 선택 (xlsx/xls/csv)"}
           </button>
           {uploadError ? (
-            <p className="mt-2 text-xs font-bold text-[var(--spot)]">업로드 실패: {uploadError}</p>
+            <p className="mt-2 text-xs font-bold text-[var(--status-error)]">업로드 실패: {uploadError}</p>
           ) : null}
           {uploadResult ? (
             <div className="mt-3 rounded-xl bg-[var(--surface-muted)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text-secondary)]">
@@ -762,7 +762,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             <h3 className="text-sm font-black text-[var(--text-primary)]">관심대상 현황</h3>
           </div>
           {watchlistQuery.isError ? (
-            <p className="text-xs font-bold text-[var(--spot)]">
+            <p className="text-xs font-bold text-[var(--status-error)]">
               {extractErrorMessage(watchlistQuery.error)}
             </p>
           ) : (
@@ -830,7 +830,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
               <button
                 type="button"
                 onClick={finishDrawing}
-                className="rounded-xl bg-[var(--status-warning)] px-4 py-2 text-xs font-black text-white"
+                className="rounded-xl bg-[var(--status-warning)] px-4 py-2 text-xs font-black text-[var(--saas-ink)]"
               >
                 구역 완료 ({draftCount})
               </button>
@@ -918,13 +918,13 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             </button>
           )}
           {regionError ? (
-            <span className="text-xs font-bold text-[var(--spot)]">{regionError}</span>
+            <span className="text-xs font-bold text-[var(--status-error)]">{regionError}</span>
           ) : null}
         </div>
 
         {/* 저장된 구역 목록 */}
         {regionsQuery.isError ? (
-          <p className="mt-3 text-xs font-bold text-[var(--spot)]">
+          <p className="mt-3 text-xs font-bold text-[var(--status-error)]">
             {extractErrorMessage(regionsQuery.error)}
           </p>
         ) : regions.length ? (
@@ -958,7 +958,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   type="button"
                   aria-label={`${r.label ?? "구역"} 삭제`}
                   onClick={() => deleteRegionMutation.mutate(r.id)}
-                  className="text-[var(--text-hint)] hover:text-[var(--spot)]"
+                  className="text-[var(--text-hint)] hover:text-[var(--status-error)]"
                 >
                   ✕
                 </button>

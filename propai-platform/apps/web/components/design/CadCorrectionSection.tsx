@@ -57,7 +57,7 @@ function renderCheckResult(raw: unknown): ReactNode {
               <span className="text-[var(--text-primary)]">
                 {formatNumber(v.current_value)} / 한도 {formatNumber(v.limit_value)}
               </span>
-              <span className="text-[var(--spot)]">초과 {formatNumber(v.excess)}</span>
+              <span className="text-[var(--status-error)]">초과 {formatNumber(v.excess)}</span>
             </div>
           ))}
         </div>

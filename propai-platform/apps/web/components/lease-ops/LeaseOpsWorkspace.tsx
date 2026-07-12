@@ -536,7 +536,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <button
               type="submit"
               disabled={tenantMutation.isPending}
-              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent)] disabled:opacity-60"
+              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
             >
               {tenantMutation.isPending ? "등록 중..." : "임차인 등록"}
             </button>
@@ -731,7 +731,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <button
               type="submit"
               disabled={contractMutation.isPending}
-              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent)] disabled:opacity-60"
+              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
             >
               {contractMutation.isPending ? "등록 중..." : "임대계약 등록"}
             </button>

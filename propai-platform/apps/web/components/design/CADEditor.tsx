@@ -1474,7 +1474,7 @@ export default function CADEditor({
           disabled={saveStatus === "saving" || ring.length < 3}
           title={ring.length < 3 ? "외곽 레이어 다각형이 있어야 저장됩니다" : undefined}
           className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-            saveStatus === "saved" ? "bg-[var(--status-success)] text-white"
+            saveStatus === "saved" ? "bg-[var(--status-success)] text-[var(--saas-ink)]"
               : saveStatus === "error" ? "bg-[color-mix(in_srgb,var(--status-error)_80%,transparent)] text-white"
               : "bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_20%,transparent)]"
           }`}
@@ -1490,7 +1490,7 @@ export default function CADEditor({
           disabled={dxfState === "loading"}
           title="저장된 편집본을 정식 DXF(LWPOLYLINE+치수)로 내려받습니다"
           className={`rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-            dxfState === "need-save" ? "bg-[color-mix(in_srgb,var(--status-warning)_80%,transparent)] text-white"
+            dxfState === "need-save" ? "bg-[color-mix(in_srgb,var(--status-warning)_80%,transparent)] text-[var(--saas-ink)]"
               : dxfState === "error" ? "bg-[color-mix(in_srgb,var(--status-error)_80%,transparent)] text-white"
               : "bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_20%,transparent)]"
           }`}

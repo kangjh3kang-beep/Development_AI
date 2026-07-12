@@ -87,14 +87,14 @@ export function InputResolveModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--bg-primary)_70%,transparent)] p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`${node.label} 입력 확인`}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-lg)]"
+        className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-lg)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-2">
@@ -189,7 +189,7 @@ export function InputResolveModal({
                       setManual((prev) => ({ ...prev, [manualKey(m)]: e.target.value }))
                     }
                     placeholder={m.manualPrompt || slotLabel(m)}
-                    className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
+                    className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
                   />
                 ))}
                 <button

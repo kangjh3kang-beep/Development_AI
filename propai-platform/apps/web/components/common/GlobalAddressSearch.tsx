@@ -1286,7 +1286,7 @@ export function GlobalAddressSearch({
             }} />
             <div className="relative flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--saas-lime)]">Parcel Intake Pipeline</p>
+                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--tertiary)]">Parcel Intake Pipeline</p>
                 <h3 className="mt-1 text-base font-black text-white">지도 기반 필지 입력 작업면</h3>
                 <p className="mt-1 text-xs font-semibold text-white/76">상단에서 검색·엑셀을 처리하고, 왼쪽 목록과 오른쪽 지도가 동시에 갱신됩니다.</p>
               </div>
@@ -1304,7 +1304,7 @@ export function GlobalAddressSearch({
             </div>
           </div>
 
-          <div className="border-b border-[var(--line)] bg-[linear-gradient(135deg,var(--saas-panel-wash),var(--surface-secondary)_56%,var(--saas-sky-soft))] px-4 py-3">
+          <div className="border-b border-[var(--line)] bg-[linear-gradient(135deg,var(--surface-soft),var(--surface-secondary)_56%,var(--surface-tertiary))] px-4 py-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
               <div className="min-w-0 flex-1">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -1315,7 +1315,7 @@ export function GlobalAddressSearch({
                     type="button"
                     disabled={disabled}
                     onClick={() => setKakaoOpen(true)}
-                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--saas-sky-line)] bg-[var(--saas-sky-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-sky-text)] hover:bg-[var(--saas-sky)] disabled:opacity-50"
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[color-mix(in_srgb,var(--secondary)_38%,transparent)] bg-[color-mix(in_srgb,var(--secondary)_14%,transparent)] px-2.5 py-1 text-[11px] font-black text-[var(--secondary)] hover:bg-[color-mix(in_srgb,var(--secondary)_24%,transparent)] disabled:opacity-50"
                   >
                     <Building2 className="size-3.5" aria-hidden /> 건물명·아파트
                   </button>
@@ -1337,7 +1337,7 @@ export function GlobalAddressSearch({
                   <button
                     type="button"
                     onClick={() => void downloadTemplate()}
-                    className="rounded-full bg-[var(--saas-lime)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-ink)] hover:brightness-95"
+                    className="rounded-full bg-[var(--accent-strong)] px-2.5 py-1 text-[11px] font-black text-[var(--on-primary)] hover:brightness-95"
                   >
                     양식 다운로드 ↓
                   </button>
@@ -1371,7 +1371,7 @@ export function GlobalAddressSearch({
                             <button
                               type="button"
                               onMouseDown={(e) => { e.preventDefault(); pickCandidate(c); }}
-                              className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[12px] hover:bg-[var(--saas-lime-soft)]"
+                              className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[12px] hover:bg-[var(--accent-soft)]"
                             >
                               <span className="truncate font-bold text-[var(--text-primary)]">{c.address}</span>
                               <span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-black text-[var(--text-tertiary)]">{c.kind || "지번"}</span>
@@ -1413,7 +1413,7 @@ export function GlobalAddressSearch({
                 <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
                   <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 검색·등록 주소
                 </span>
-                <span className="rounded-full bg-[var(--saas-lime-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-lime-text)]">
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--secondary)_14%,transparent)] px-2.5 py-1 text-[11px] font-black text-[var(--secondary)]">
                   {displayAddresses.length > 0 ? `${displayAddresses.length}필지` : "대기"}
                 </span>
               </div>
@@ -1437,7 +1437,7 @@ export function GlobalAddressSearch({
                     {parcelRows.map((row, idx) => (
                       <div key={`${row.label}-${idx}`} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
                         <div className="flex items-start gap-2">
-                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--saas-lime)] text-[10px] font-black text-[var(--saas-ink)]">{idx + 1}</span>
+                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--tertiary)] text-[10px] font-black text-[var(--saas-ink)]">{idx + 1}</span>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[12px] font-black text-[var(--text-primary)]" title={row.label}>{row.label}</p>
                             <p className="mt-0.5 text-[10px] font-semibold text-[var(--text-tertiary)]">

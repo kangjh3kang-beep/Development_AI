@@ -516,7 +516,7 @@ export function ProjectConstructionWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -652,7 +652,7 @@ export function ProjectConstructionWorkspaceClient({
               />
             </div>
             {priceLoadError && (
-              <p className="text-sm text-[var(--spot)]">{priceLoadError}</p>
+              <p className="text-sm text-[var(--status-error)]">{priceLoadError}</p>
             )}
           </form>
         </CardContent>
@@ -857,7 +857,7 @@ export function ProjectConstructionWorkspaceClient({
                       ) : null}
                     </div>
                     {item.required && (
-                      <span className="shrink-0 rounded-lg bg-[rgba(239,68,68,0.1)] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--error)]">
+                      <span className="shrink-0 rounded-lg bg-[rgba(239,68,68,0.1)] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--status-error)]">
                         {labels.requiredLabel}
                       </span>
                     )}
@@ -931,9 +931,9 @@ export function ProjectConstructionWorkspaceClient({
                           <span
                             className={`shrink-0 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
                               factor.risk_level === "high"
-                                ? "bg-[rgba(239,68,68,0.1)] text-[var(--error)]"
+                                ? "bg-[rgba(239,68,68,0.1)] text-[var(--status-error)]"
                                 : factor.risk_level === "medium"
-                                  ? "bg-[rgba(217,119,6,0.1)] text-[var(--spot)]"
+                                  ? "bg-[rgba(217,119,6,0.1)] text-[var(--status-warning)]"
                                   : "bg-[rgba(14,116,144,0.1)] text-[var(--accent-strong)]"
                             }`}
                           >

@@ -177,7 +177,7 @@ export function ExtendedAnalysisPanel<
                   />
                 )}
                 {fieldErrors[field.key] ? (
-                  <p className="text-[11px] font-medium text-[var(--spot)]">
+                  <p className="text-[11px] font-medium text-[var(--status-error)]">
                     {fieldErrors[field.key]}
                   </p>
                 ) : null}

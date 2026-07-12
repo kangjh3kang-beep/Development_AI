@@ -40,7 +40,7 @@ export function AiInsightStrip({ address }: { address?: string | null }) {
           <Sparkles className="size-3.5" aria-hidden /> {loading ? "AI 해석 중…" : error ? "다시 시도" : "AI 통합 해석 생성"}
         </button>
       )}
-      {error && <p className="mt-1 text-[10px] text-[var(--danger,#dc2626)]">{error}</p>}
+      {error && <p className="mt-1 text-[10px] text-[var(--status-error)]">{error}</p>}
     </div>
   );
 }

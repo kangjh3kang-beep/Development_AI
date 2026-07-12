@@ -136,7 +136,7 @@ export function ReportPdfDownload({ projectId }: ReportPdfDownloadProps) {
 
       {/* Error message */}
       {status === "error" && errorMessage && (
-        <p className="text-xs text-[var(--spot)]">{errorMessage}</p>
+        <p className="text-xs text-[var(--status-error)]">{errorMessage}</p>
       )}
     </div>
   );

@@ -102,7 +102,7 @@ export default function ESGPage() {
                       initial={{ width: 0 }}
                       animate={{ width: `${eScore ?? 0}%` }}
                       transition={{ delay: 0.5, duration: 1 }}
-                      className="h-full bg-gradient-to-r from-[var(--accent-strong)] to-[var(--info)]"
+                      className="h-full bg-gradient-to-r from-[var(--accent-strong)] to-[var(--status-info)]"
                     />
                   </div>
                 </div>

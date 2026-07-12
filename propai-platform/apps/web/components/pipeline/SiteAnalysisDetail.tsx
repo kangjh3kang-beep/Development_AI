@@ -1672,8 +1672,8 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
           <div
             className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px]"
             style={{
-              background: "var(--surface-2, rgba(255,255,255,0.04))",
-              border: "1px solid var(--border-accent, rgba(180,197,255,0.25))",
+              background: "var(--surface-soft)",
+              border: "1px solid color-mix(in srgb, var(--accent-strong) 25%, transparent)",
               color: "var(--text-secondary)",
             }}
           >

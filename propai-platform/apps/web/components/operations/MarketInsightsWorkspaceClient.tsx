@@ -1006,7 +1006,7 @@ export function MarketInsightsWorkspaceClient() {
                           <span className="sa-di-tile__label">순이동</span>
                           <span
                             className="sa-di-tile__value"
-                            style={{ color: net > 0 ? "var(--status-success)" : net < 0 ? "var(--status-danger)" : undefined }}
+                            style={{ color: net > 0 ? "var(--status-success)" : net < 0 ? "var(--status-error)" : undefined }}
                           >
                             {net > 0 ? "+" : ""}{net.toLocaleString()}명
                           </span>
@@ -1015,7 +1015,7 @@ export function MarketInsightsWorkspaceClient() {
                       {hasOD ? (
                         <ul className="mt-3 space-y-1.5 text-sm text-[var(--text-secondary)]">
                           {mig.top_inflow_regions!.map((reg: { name?: string; ratio?: number; count?: number }, i: number) => (
-                            <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
+                            <li key={i} className="flex justify-between border-b border-[var(--line-subtle)] pb-1.5">
                               <span>{reg.name}</span>
                               <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
                             </li>
