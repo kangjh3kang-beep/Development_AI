@@ -139,16 +139,34 @@ export function InvestmentFeasibilityClient() {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {([
-              ["순이익", fmtKrw(derived.netProfit), (derived.netProfit ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"],
-              ["수익률", feasibilityData?.profitRatePct != null ? `${feasibilityData.profitRatePct.toFixed(1)}%` : "—", "text-[var(--accent-strong)]"],
-              ["ROI", feasibilityData?.roiPct != null ? `${feasibilityData.roiPct.toFixed(1)}%` : "—", "text-[var(--text-primary)]"],
-              ["자기자본수익률(ROE)", derived.roe != null ? `${derived.roe.toFixed(1)}%` : "—", "text-indigo-400"],
-              ["NPV", fmtKrw(feasibilityData?.npvWon), (feasibilityData?.npvWon ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"],
-              ["총 분양매출", fmtKrw(derived.revenue), "text-[var(--text-primary)]"],
-              ["총 사업비", fmtKrw(derived.cost), "text-[var(--text-primary)]"],
-              ["사업성 등급", feasibilityData?.grade || "—", "text-amber-400"],
-            ] as [string, string, string][]).map(([k, v, cls]) => (
-              <div key={k} className="cc-panel cc-bracketed cc-interactive">
+              [
+                "순이익",
+                fmtKrw(derived.netProfit),
+                (derived.netProfit ?? 0) >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]",
+                (derived.netProfit ?? 0) >= 0 ? "success" : "error",
+              ],
+              ["수익률", feasibilityData?.profitRatePct != null ? `${feasibilityData.profitRatePct.toFixed(1)}%` : "—", "text-[var(--accent-strong)]", null],
+              ["ROI", feasibilityData?.roiPct != null ? `${feasibilityData.roiPct.toFixed(1)}%` : "—", "text-[var(--text-primary)]", null],
+              ["자기자본수익률(ROE)", derived.roe != null ? `${derived.roe.toFixed(1)}%` : "—", "text-[var(--secondary)]", null],
+              [
+                "NPV",
+                fmtKrw(feasibilityData?.npvWon),
+                (feasibilityData?.npvWon ?? 0) >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]",
+                (feasibilityData?.npvWon ?? 0) >= 0 ? "success" : "error",
+              ],
+              ["총 분양매출", fmtKrw(derived.revenue), "text-[var(--text-primary)]", null],
+              ["총 사업비", fmtKrw(derived.cost), "text-[var(--text-primary)]", null],
+              ["사업성 등급", feasibilityData?.grade || "—", "text-[var(--tertiary)]", null],
+            ] as [string, string, string, "success" | "error" | null][]).map(([k, v, cls, tone]) => (
+              <div
+                key={k}
+                className="cc-panel cc-bracketed cc-interactive"
+                style={
+                  tone
+                    ? { borderColor: `color-mix(in srgb, var(--status-${tone}) 40%, transparent)` }
+                    : undefined
+                }
+              >
                 <i className="cc-bracket cc-bracket--tl" />
                 <i className="cc-bracket cc-bracket--br" />
                 <div className="cc-grid-bg opacity-30" />
