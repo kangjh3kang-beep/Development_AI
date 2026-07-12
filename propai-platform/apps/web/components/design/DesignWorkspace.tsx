@@ -13,9 +13,11 @@ import { useParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   DraftingCompass,
-  FileText,
-  Layers3,
+  Info,
   LockKeyhole,
   MapPin,
   Sparkles,
@@ -217,6 +219,16 @@ type ViewKey = "site" | "generate" | "draw";
 
 type PipelineState = "complete" | "ready" | "blocked";
 
+// 설계 엔진 내부 파이프라인(L1~L5) — 참고용 정적 설명. 데모 지표·가짜 상태 없음(무날조):
+//   단계별 실시간 상태·정합 지표는 실측 신호가 배선될 때만 표기한다(현재 정적 리스트만).
+const ENGINE_LAYERS: { code: string; name: string; desc: string }[] = [
+  { code: "L1", name: "기하 커널 SSOT", desc: "설계 기하(좌표·치수)의 단일 진실원천" },
+  { code: "L2", name: "제약 검증", desc: "건폐율·용적률·높이 등 법규 제약 검증" },
+  { code: "L3", name: "LLM 도구이용", desc: "자연어 의도를 도구 호출로 해석(수치 직접생성 아님)" },
+  { code: "L4", name: "근거 검증 게이트", desc: "검증 통과분만 하류 반영(근거·법령 확인)" },
+  { code: "L5", name: "BIM 변환", desc: "검증된 기하를 IFC/BIM 모델로 변환" },
+];
+
 export function DesignWorkspace({ projectId }: { projectId: string }) {
   const params = useParams();
   const locale = (params?.locale as string) || "ko";
@@ -229,6 +241,10 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
   // CAD/BIM(STEP3)은 한 번이라도 진입한 뒤에만 마운트. 첫 진입 전엔 마운트 자체를 막아
   //  WebGL 점유를 차단한다(lazy). 진입 후엔 hidden 토글로 보존.
   const [drawMounted, setDrawMounted] = useState(false);
+  // 좌측 dock(단계 스테퍼)·우측 패널(작업 기준)의 접이 상태 — 기본 펼침.
+  //   좁은 화면이나 도면 집중 편집 시 접어 중앙 뷰포트를 100%로 확장한다(뷰포트 우선).
+  const [dockOpen, setDockOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(true);
 
   // 현재 로케일 기준 views 배열 (labels 의존 → 컴포넌트 내부에서 생성)
   const views: { key: ViewKey; label: string; desc: string; icon: typeof MapPin }[] = [
@@ -275,162 +291,186 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
     draw: drawState,
   };
 
+  // 좌측 dock 스테퍼 각 단계의 상태 배지·상세 문구 — 기존 파이프라인 카드 로직을 그대로 이관.
+  const stepDetail: Record<ViewKey, string> = {
+    site: hasAddressMismatch
+      ? labels.detailReanalysisNeeded
+      : hasSiteBasis
+        ? labels.detailCurrentBasis
+        : labels.detailWaitingSite,
+    generate: hasDesignBasis
+      ? labels.detailRecommendReflected
+      : hasSiteBasis
+        ? labels.detailCanGenerate
+        : labels.detailSiteBasisNeeded,
+    draw: hasDesignBasis ? labels.detailEditorReady : labels.detailRecommendNeeded,
+  };
+  const stepBadge: Record<ViewKey, string> = {
+    site: labels.pipelineStep1Label,
+    generate: labels.pipelineStep2Label,
+    draw: labels.pipelineStep3Label,
+  };
+
   return (
-    <div className="flex min-h-[32rem] min-w-0 flex-col gap-3 md:h-[calc(100dvh-8rem)]">
-      <div className="overflow-hidden rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)]">
-        <div className="grid gap-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
-          <div className="relative overflow-hidden bg-[#07120d] px-6 py-5 text-white">
-            <div
-              aria-hidden
-              className="absolute inset-0 opacity-25"
-              style={{
-                backgroundImage:
-                  "linear-gradient(rgba(221,255,134,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(221,255,134,0.15) 1px, transparent 1px)",
-                backgroundSize: "32px 32px",
-              }}
-            />
-            <div className="relative z-10">
-              <p className="cc-label text-[10px] text-[#ddff86]">UNIFIED DESIGN PIPELINE</p>
-              <h2 className="mt-2 max-w-3xl text-2xl font-black tracking-tight text-white md:text-3xl">
-                조건 확인, 추천안 생성, CAD·BIM 편집을 한 흐름으로 묶었습니다.
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-white/72">
-                현 프로젝트 주소와 부지분석 주소가 맞을 때만 하위 산출물이 열립니다. 이전 주소의 분석값은
-                설계안과 도면으로 전파되지 않습니다.
-              </p>
-              <div className="mt-5 grid gap-2 sm:grid-cols-3">
-                <PipelineCard
-                  icon={FileText}
-                  label={labels.pipelineStep1Label}
-                  title={labels.pipelineStep1Title}
-                  state={siteState}
-                  detail={
-                    hasAddressMismatch
-                      ? labels.detailReanalysisNeeded
-                      : hasSiteBasis
-                        ? labels.detailCurrentBasis
-                        : labels.detailWaitingSite
-                  }
-                />
-                <PipelineCard
-                  icon={Layers3}
-                  label={labels.pipelineStep2Label}
-                  title={labels.pipelineStep2Title}
-                  state={generateState}
-                  detail={
-                    hasDesignBasis
-                      ? labels.detailRecommendReflected
-                      : hasSiteBasis
-                        ? labels.detailCanGenerate
-                        : labels.detailSiteBasisNeeded
-                  }
-                />
-                <PipelineCard
-                  icon={DraftingCompass}
-                  label={labels.pipelineStep3Label}
-                  title={labels.pipelineStep3Title}
-                  state={drawState}
-                  detail={hasDesignBasis ? labels.detailEditorReady : labels.detailRecommendNeeded}
-                />
-              </div>
-            </div>
-          </div>
+    // 스튜디오 셸 — 캔버스 보이드(--background-deep) 위에 좌 dock · 중앙 뷰포트 · 우 패널.
+    // 앱 헤더/설계센터 프레임 아래를 채워 중앙 뷰포트가 화면을 지배한다(페이지 스크롤 최소화).
+    <div className="relative flex min-h-[34rem] min-w-0 flex-col overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)] lg:h-[calc(100dvh-15rem)]">
+      {/* 40px 정렬 그리드 — 보이드 위 정렬 가이드(테마 적응 --grid-line, 신규 색 없음). */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          backgroundImage:
+            "linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+      />
 
-          <div className="flex flex-col justify-between gap-4 bg-[var(--surface-soft)] px-5 py-5">
-            <div>
-              <p className="cc-label text-[10px] text-[var(--text-tertiary)]">{labels.contextWorkBasis}</p>
-              <dl className="mt-3 grid gap-2 text-xs">
-                <ContextRow
-                  label={labels.contextProjectAddress}
-                  value={projectRecord?.address || labels.contextProjectAddressEmpty}
-                />
-                <ContextRow
-                  label={labels.contextAnalysisAddress}
-                  value={siteAnalysis?.address || labels.contextAnalysisAddressEmpty}
-                />
-                <ContextRow
-                  label={labels.contextZone}
-                  value={!hasAddressMismatch ? siteZone || labels.contextZoneEmpty : labels.contextZoneAfterReanalysis}
-                />
-                <ContextRow
-                  label={labels.contextArea}
-                  value={
-                    !hasAddressMismatch && siteAreaSqm
-                      ? `${Math.round(siteAreaSqm).toLocaleString()}㎡`
-                      : labels.contextAreaAfterReanalysis
-                  }
-                />
-              </dl>
-            </div>
-            {hasAddressMismatch ? (
-              /* 주소 불일치 차단 배너 — 스크린리더가 즉시 읽어야 하는 경보 상태 */
-              <div
-                role="alert"
-                aria-live="assertive"
-                className="rounded-2xl border border-amber-400/50 bg-amber-100/60 px-4 py-3 text-xs font-semibold leading-5 text-amber-800"
-              >
-                <div className="flex items-center gap-2 text-sm font-black">
-                  <AlertTriangle className="size-4" aria-hidden />
-                  {labels.addressMismatchTitle}
-                </div>
-                <p className="mt-1">{labels.addressMismatchDesc}</p>
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-xs font-semibold leading-5 text-[var(--text-secondary)]">
-                {labels.pipelineOrderHint}
-                <span className="font-black text-[var(--text-primary)]">{labels.pipelineOrderBold}</span>
-                {labels.pipelineOrderSuffix}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <nav
-          className="flex max-w-full gap-1 overflow-x-auto border-t border-[var(--line)] bg-[var(--surface)] p-2"
-          aria-label={labels.navAriaLabel}
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
+        {/* ── 좌측 dock: 산출 단계 스테퍼(1차 법규·부지 → 2차 개요 Top-N → 3차 CAD·BIM) ── */}
+        <aside
+          className={[
+            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)]",
+            dockOpen ? "w-full lg:w-[320px]" : "w-full lg:w-[3.25rem]",
+          ].join(" ")}
         >
-          {views.map((item) => {
-            const active = view === item.key;
-            const state = activeState[item.key];
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => go(item.key)}
-                aria-pressed={active}
-                className={[
-                  "flex min-w-[12rem] items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors",
-                  active
-                    ? "bg-[var(--saas-ink)] text-white shadow-[var(--shadow-sm)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--surface)]",
-                ].join(" ")}
-              >
-                <span
-                  className={[
-                    "grid size-9 shrink-0 place-items-center rounded-full border",
-                    active ? "border-white/20 bg-white/12" : "border-[var(--line)] bg-[var(--surface-soft)]",
-                  ].join(" ")}
-                >
-                  <Icon className="size-4" aria-hidden />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-xs font-black">{item.label}</span>
-                  <span className={active ? "block text-[10px] text-white/70" : "block text-[10px] text-[var(--text-hint)]"}>
-                    {item.desc}
-                  </span>
-                </span>
-                {state === "blocked" && (
-                  <LockKeyhole className={active ? "ml-auto size-4 text-white/65" : "ml-auto size-4 text-[var(--text-hint)]"} aria-hidden />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
+            {dockOpen && <span className="cc-label text-[10px] text-[var(--text-tertiary)]">설계 파이프라인</span>}
+            <button
+              type="button"
+              onClick={() => setDockOpen((v) => !v)}
+              aria-expanded={dockOpen}
+              aria-label={dockOpen ? "단계 패널 접기" : "단계 패널 펼치기"}
+              className="grid size-7 shrink-0 place-items-center rounded-[var(--r-input)] border border-[var(--line)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+            >
+              {dockOpen ? <ChevronLeft className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
+            </button>
+          </div>
 
-      {/* 메인 — 현재 단계의 패널만 표시. 마운트된 패널은 hidden 토글로 상태 보존(무회귀). */}
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+          {dockOpen && (
+            <nav aria-label={labels.navAriaLabel} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+              {views.map((item) => {
+                const active = view === item.key;
+                const state = activeState[item.key];
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => go(item.key)}
+                    aria-pressed={active}
+                    className={[
+                      "flex items-start gap-3 rounded-[var(--r-card)] border px-3 py-3 text-left transition-colors",
+                      active
+                        ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                        : state === "complete"
+                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_8%,transparent)] hover:border-[color-mix(in_srgb,var(--status-success)_55%,transparent)]"
+                          : "border-[var(--line)] bg-[var(--surface-soft)] hover:border-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]",
+                    ].join(" ")}
+                  >
+                    <span
+                      className={[
+                        "grid size-9 shrink-0 place-items-center rounded-full border",
+                        active
+                          ? "border-transparent bg-[var(--accent-strong)] text-white"
+                          : state === "complete"
+                            ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
+                            : "border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
+                      ].join(" ")}
+                    >
+                      {state === "complete" ? <CheckCircle2 className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={[
+                          "block font-mono text-[10px] font-bold uppercase tracking-wider",
+                          active ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]",
+                        ].join(" ")}
+                      >
+                        {stepBadge[item.key]}
+                      </span>
+                      <span className="mt-0.5 block text-sm font-black text-[var(--text-primary)]">{item.label}</span>
+                      <span className="block text-[11px] font-semibold text-[var(--text-hint)]">{item.desc}</span>
+                      <span
+                        className={[
+                          "mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                          state === "complete"
+                            ? "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)]"
+                            : state === "blocked"
+                              ? "bg-[var(--surface-strong)] text-[var(--text-tertiary)]"
+                              : "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+                        ].join(" ")}
+                      >
+                        {state === "blocked" && <LockKeyhole className="size-3" aria-hidden />}
+                        {stepDetail[item.key]}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
+
+          {/* ── 엔진 파이프라인(L1~L5) 참고 — 정적 설명(가짜 상태·데모 지표 없음). ── */}
+          {dockOpen && (
+            <details className="group shrink-0 border-t border-[var(--line)] px-3 py-2.5">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+                <span className="cc-label text-[10px] text-[var(--text-tertiary)]">엔진 파이프라인 (L1–L5)</span>
+                <ChevronDown className="size-3.5 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <ol className="mt-2 space-y-1.5">
+                {ENGINE_LAYERS.map((l) => (
+                  <li key={l.code} className="flex gap-2 rounded-[var(--r-input)] bg-[var(--surface-soft)] px-2.5 py-1.5">
+                    <span className="mt-0.5 font-mono text-[10px] font-bold text-[var(--text-tertiary)]">{l.code}</span>
+                    <span className="min-w-0">
+                      <span className="block text-[11px] font-bold text-[var(--text-primary)]">{l.name}</span>
+                      <span className="block text-[10px] leading-4 text-[var(--text-hint)]">{l.desc}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-2 text-[10px] leading-4 text-[var(--text-hint)]">
+                참고용 파이프라인 설명입니다. 단계별 실시간 상태·정합 지표는 실측 신호가 배선되면 표시됩니다(현재 미표시 — 무날조).
+              </p>
+            </details>
+          )}
+
+          {/* 접힘(데스크톱): 아이콘 레일로 단계 이동 유지. 모바일 접힘은 헤더 토글만 노출(뷰포트 우선). */}
+          {!dockOpen && (
+            <div className="hidden flex-1 flex-col items-center gap-2 py-3 lg:flex">
+              {views.map((item) => {
+                const active = view === item.key;
+                const state = activeState[item.key];
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => go(item.key)}
+                    aria-pressed={active}
+                    aria-label={item.label}
+                    title={item.label}
+                    className={[
+                      "grid size-9 place-items-center rounded-full border transition-colors",
+                      active
+                        ? "border-transparent bg-[var(--accent-strong)] text-white"
+                        : state === "complete"
+                          ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] text-[var(--status-success)]"
+                          : "border-[var(--line)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
+                    ].join(" ")}
+                  >
+                    {state === "complete" ? <CheckCircle2 className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+
+        {/* ── 중앙: 풀블리드 뷰포트(현재 단계 패널) + 하단 mono 상태바 ── */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+          {/* 뷰포트 시트 — 현재 단계 패널만 표시. 마운트된 패널은 hidden 토글로 상태 보존(무회귀). */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] lg:p-5">
         <div className={view === "site" ? "" : "hidden"}>
           {/* onOpen3D: 부지 단계 우측 캔버스의 "3D·BIM 편집실로 →" 버튼이 호출 → draw 스텝으로 전환.
               go("draw")가 기존 lazy 3D(WebGL)를 그때 마운트한다(컨텍스트 고갈 방지 아키텍처 보존). */}
@@ -467,67 +507,112 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
             }
           />
         )}
-      </div>
-
-      {/* 하단 정본 메트릭바 — 메인 스크롤과 무관하게 grid 행으로 물리 분리(z-index 비의존). */}
-      <div className="min-w-0">
-        {hasAddressMismatch ? (
-          /* 정본 메트릭 잠금 바 — 차단 상태를 스크린리더가 즉시 읽어야 하는 경보 */
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="cc-panel flex min-h-[64px] items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-amber-700"
-          >
-            <span className="flex items-center gap-2">
-              <AlertTriangle className="size-4" aria-hidden />
-              {labels.metricLockText}
-            </span>
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-black">
-              {labels.metricReanalysisNeeded}
-            </span>
           </div>
-        ) : (
-          <MetricBar />
-        )}
-      </div>
-    </div>
-  );
-}
 
-function PipelineCard({
-  icon: Icon,
-  label,
-  title,
-  state,
-  detail,
-}: {
-  icon: typeof MapPin;
-  label: string;
-  title: string;
-  state: PipelineState;
-  detail: string;
-}) {
-  const tone =
-    state === "complete"
-      ? "border-[#ddff86]/50 bg-[#ddff86]/12 text-[#ddff86]"
-      : state === "ready"
-        ? "border-white/16 bg-white/10 text-white"
-        : "border-amber-300/35 bg-amber-300/12 text-amber-100";
-  return (
-    <div className={`rounded-3xl border px-4 py-3 ${tone}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="cc-label text-[10px] text-current/75">{label}</span>
-        {state === "complete" ? <CheckCircle2 className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
+          {/* ── 하단 상태바 — KPI 7종 mono 통합(뷰포트 하단 고정). 분리된 라이트 바 제거. ── */}
+          <div className="min-w-0 shrink-0">
+            {hasAddressMismatch ? (
+              /* 정본 메트릭 잠금 바 — 차단 상태를 스크린리더가 즉시 읽어야 하는 경보(상태색=--status-warning). */
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="flex min-h-[56px] items-center justify-between gap-3 rounded-[var(--r-card)] border border-[color-mix(in_srgb,var(--status-warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-4 py-3 text-xs font-semibold text-[var(--status-warning)]"
+              >
+                <span className="flex items-center gap-2">
+                  <AlertTriangle className="size-4" aria-hidden />
+                  {labels.metricLockText}
+                </span>
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-3 py-1 text-[11px] font-black">
+                  {labels.metricReanalysisNeeded}
+                </span>
+              </div>
+            ) : (
+              <MetricBar />
+            )}
+          </div>
+        </div>
+
+        {/* ── 우측 패널: 현재 작업 기준 + 연결 안내(접이식) ── */}
+        <aside
+          className={[
+            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)]",
+            panelOpen ? "w-full lg:w-[340px]" : "w-full lg:w-[3.25rem]",
+          ].join(" ")}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
+            {panelOpen && <span className="cc-label text-[10px] text-[var(--text-tertiary)]">{labels.contextWorkBasis}</span>}
+            <button
+              type="button"
+              onClick={() => setPanelOpen((v) => !v)}
+              aria-expanded={panelOpen}
+              aria-label={panelOpen ? "작업 기준 패널 접기" : "작업 기준 패널 펼치기"}
+              className="grid size-7 shrink-0 place-items-center rounded-[var(--r-input)] border border-[var(--line)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+            >
+              {panelOpen ? <ChevronRight className="size-4" aria-hidden /> : <ChevronLeft className="size-4" aria-hidden />}
+            </button>
+          </div>
+
+          {panelOpen && (
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+              <dl className="grid gap-2 text-xs">
+                <ContextRow
+                  label={labels.contextProjectAddress}
+                  value={projectRecord?.address || labels.contextProjectAddressEmpty}
+                />
+                <ContextRow
+                  label={labels.contextAnalysisAddress}
+                  value={siteAnalysis?.address || labels.contextAnalysisAddressEmpty}
+                />
+                <ContextRow
+                  label={labels.contextZone}
+                  value={!hasAddressMismatch ? siteZone || labels.contextZoneEmpty : labels.contextZoneAfterReanalysis}
+                />
+                <ContextRow
+                  label={labels.contextArea}
+                  value={
+                    !hasAddressMismatch && siteAreaSqm
+                      ? `${Math.round(siteAreaSqm).toLocaleString()}㎡`
+                      : labels.contextAreaAfterReanalysis
+                  }
+                />
+              </dl>
+              {hasAddressMismatch ? (
+                /* 주소 불일치 차단 배너 — 스크린리더가 즉시 읽어야 하는 경보(상태색=--status-warning). */
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="rounded-[var(--r-card)] border border-[color-mix(in_srgb,var(--status-warning)_45%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-4 py-3 text-xs font-semibold leading-5 text-[var(--status-warning)]"
+                >
+                  <div className="flex items-center gap-2 text-sm font-black">
+                    <AlertTriangle className="size-4" aria-hidden />
+                    {labels.addressMismatchTitle}
+                  </div>
+                  <p className="mt-1 text-[var(--text-secondary)]">{labels.addressMismatchDesc}</p>
+                </div>
+              ) : (
+                <div className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs font-semibold leading-5 text-[var(--text-secondary)]">
+                  {labels.pipelineOrderHint}
+                  <span className="font-black text-[var(--text-primary)]">{labels.pipelineOrderBold}</span>
+                  {labels.pipelineOrderSuffix}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!panelOpen && (
+            <div className="hidden flex-1 items-start justify-center py-3 lg:flex">
+              <Info className="size-4 text-[var(--text-tertiary)]" aria-hidden />
+            </div>
+          )}
+        </aside>
       </div>
-      <p className="mt-3 text-sm font-black text-white">{title}</p>
-      <p className="mt-1 text-[11px] font-semibold text-white/62">{detail}</p>
     </div>
   );
 }
 
 function ContextRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2">
+    <div className="flex items-center justify-between gap-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
       <dt className="shrink-0 font-bold text-[var(--text-tertiary)]">{label}</dt>
       <dd className="min-w-0 truncate font-black text-[var(--text-primary)]" title={value}>
         {value}
@@ -540,7 +625,7 @@ function PipelineBlocker({ title, description }: { title: string; description: s
   return (
     <div className="cc-panel grid min-h-[22rem] place-items-center p-8 text-center">
       <div className="max-w-md">
-        <div className="mx-auto grid size-14 place-items-center rounded-full border border-amber-300/50 bg-amber-100 text-amber-700">
+        <div className="mx-auto grid size-14 place-items-center rounded-full border border-[color-mix(in_srgb,var(--status-warning)_45%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_14%,transparent)] text-[var(--status-warning)]">
           <LockKeyhole className="size-6" aria-hidden />
         </div>
         <h3 className="mt-5 text-xl font-black text-[var(--text-primary)]">{title}</h3>
