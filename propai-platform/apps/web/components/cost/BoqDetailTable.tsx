@@ -20,6 +20,7 @@ import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { isValidLocale } from "@/i18n/config";
 import { BOQ_AUTO_API, type BoqMasterSummaryResponse } from "@/components/cost/boqAutoTypes";
 import type {
@@ -60,7 +61,7 @@ function QtoBadge({ source }: { source?: string }) {
   return (
     <span
       className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
-        isBim ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
+        isBim ? "bg-[var(--status-success)]/15 text-[var(--status-success)]" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
       }`}
     >
       {isBim ? "BIM ±5%" : "추정 ±12%"}
@@ -373,7 +374,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
             ))}
           </ul>
         )}
-        {exportErr && <p className="mt-2 text-[10px] font-semibold text-rose-400">{exportErr}</p>}
+        {exportErr && <p className="mt-2 text-[10px] font-semibold text-[var(--status-error)]">{exportErr}</p>}
       </div>
 
       {/* 건축개요 입력 */}
@@ -424,14 +425,14 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           hint="AI 공사비 해설 텍스트 생성"
           disabled={loading}
         />
-        {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
+        {err && <span className="text-xs font-semibold text-[var(--status-error)]">{err}</span>}
       </div>
 
       {/* AI 해설 */}
       {boq?.ai_cost_analysis && (
-        <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
+        <div className="rounded-2xl border border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 p-5">
           <div className="mb-2 flex items-center gap-2">
-            <Bot className="size-4 text-[var(--accent-strong)]" aria-hidden />
+            <Bot className="size-4 text-[var(--ai-accent)]" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">AI 공사비 해설</h3>
           </div>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">
@@ -446,7 +447,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           <div className="grid gap-4 sm:grid-cols-4">
             <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
               <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">총 공사비</p>
-              <p className="mt-2 text-2xl font-[1000] text-[var(--accent-strong)]">{eok(summary.total)}</p>
+              <p className="mt-2 text-2xl font-[1000] [font-family:var(--font-display)] text-[var(--accent-strong)]">{eok(summary.total)}</p>
             </div>
             <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
               <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">직접비</p>
@@ -474,7 +475,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
               이 적산 결과를 수지분석에 반영
             </button>
             {applied ? (
-              <span className="text-[11px] font-bold text-emerald-400">
+              <span className="text-[11px] font-bold text-[var(--status-success)]">
                 반영됨 — 공사비 컨텍스트(출처: BOQ)가 갱신되어 수지·금융 재계산이 제안됩니다.
               </span>
             ) : (
@@ -500,7 +501,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           <div className="max-h-[560px] overflow-auto">
             <table className="w-full text-[11px]">
               <thead className="sticky top-0">
-                <tr className="bg-[var(--surface-strong)] text-[var(--text-tertiary)]">
+                <tr className="bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
                   <th className="px-3 py-2 text-left font-bold">코드</th>
                   <th className="px-3 py-2 text-left font-bold">공종</th>
                   <th className="px-3 py-2 text-right font-bold">물량</th>
@@ -512,7 +513,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
               </thead>
               <tbody>
                 {items.map((it, i) => (
-                  <tr key={`${it.code}-${i}`} className="border-t border-[var(--line)]/60">
+                  <tr key={`${it.code}-${i}`} className="border-t border-[var(--line)]/60 transition-colors hover:bg-[var(--accent-strong)]/5">
                     <td className="px-3 py-2 font-mono text-[var(--text-tertiary)]">{it.code}</td>
                     <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                       {it.name}
@@ -526,12 +527,12 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right text-[var(--text-secondary)]">
+                    <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">
                       {it.quantity != null ? Math.round(it.quantity).toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-2 text-[var(--text-tertiary)]">{it.unit || "—"}</td>
-                    <td className="px-3 py-2 text-right text-[var(--text-secondary)]">{won(it.unit_price)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-[var(--text-primary)]">{won(it.amount)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{won(it.unit_price)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">{won(it.amount)}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-1">
                         <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">
@@ -562,7 +563,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr className="text-[var(--text-tertiary)]">
+                <tr className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
                   <th className="px-3 py-2 text-left font-bold">자재</th>
                   <th className="px-3 py-2 text-left font-bold">단위</th>
                   <th className="px-3 py-2 text-right font-bold">표준</th>
@@ -578,24 +579,24 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
                       ? ((p.market - p.standard) / p.standard) * 100
                       : null;
                   return (
-                    <tr key={`${p.code}-${i}`} className="border-t border-[var(--line)]/60">
+                    <tr key={`${p.code}-${i}`} className="border-t border-[var(--line)]/60 transition-colors hover:bg-[var(--accent-strong)]/5">
                       <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{p.name}</td>
                       <td className="px-3 py-2 text-[var(--text-tertiary)]">{p.unit}</td>
-                      <td className="px-3 py-2 text-right text-[var(--text-secondary)]">{won(p.standard)}</td>
-                      <td className="px-3 py-2 text-right text-[var(--text-secondary)]">
+                      <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{won(p.standard)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">
                         {p.market != null ? won(p.market) : <span className="text-[var(--text-hint)]">—</span>}
                         {diff != null && (
-                          <span className={`ml-1 text-[9px] font-bold ${diff >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                          <span className={`ml-1 text-[9px] font-bold ${diff >= 0 ? "text-[var(--status-error)]" : "text-[var(--status-success)]"}`}>
                             {diff >= 0 ? "+" : ""}{diff.toFixed(0)}%
                           </span>
                         )}
                         {p.market != null && p.market_source === "simulation" && (
-                          <span className="ml-1 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
+                          <span className="ml-1 rounded bg-[var(--status-warning)]/15 px-1 py-0.5 text-[8px] font-bold text-[var(--status-warning)]">
                             시뮬레이션
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right text-[var(--text-hint)]">데이터 없음</td>
+                      <td className="px-3 py-2 text-right font-mono text-[var(--text-hint)]">데이터 없음</td>
                       <td className="px-3 py-2 text-[var(--text-tertiary)]">{p.basis_year ?? "—"}</td>
                     </tr>
                   );
@@ -603,7 +604,11 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
               </tbody>
             </table>
           </div>
-          {prices?.note && <p className="mt-3 text-[11px] text-[var(--text-hint)]">{prices.note}</p>}
+          <DataSourceNotice
+            className="mt-3"
+            source="표준 품셈·단가DB · 시장 KCCI 변동모델(시뮬레이션)"
+            note={prices?.note ?? "실적 단가 데이터 없음 · 참고용 · 실시세 API 아님"}
+          />
         </div>
       )}
     </section>

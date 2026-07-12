@@ -71,14 +71,14 @@ function AnomalyRow({ a }: { a: BillingAnomaly }) {
     <div
       className={`rounded-xl border p-3.5 ${
         high
-          ? "border-rose-500/40 bg-rose-500/10"
-          : "border-amber-500/40 bg-amber-500/10"
+          ? "border-[var(--status-error)]/40 bg-[var(--status-error)]/10"
+          : "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
       }`}
     >
       <div className="flex items-center gap-2">
         <span
           className={`rounded px-1.5 py-0.5 text-[10px] font-black ${
-            high ? "bg-rose-500/25 text-rose-300" : "bg-amber-500/25 text-amber-300"
+            high ? "bg-[var(--status-error)]/25 text-[var(--status-error)]" : "bg-[var(--status-warning)]/25 text-[var(--status-warning)]"
           }`}
         >
           {high ? "높음" : "주의"}
@@ -105,14 +105,14 @@ function IndexBadge({ label, value, hint }: { label: string; value: number | nul
         naN
           ? "border-[var(--line-strong)] bg-[var(--surface-strong)]"
           : warn
-            ? "border-rose-500/40 bg-rose-500/10"
-            : "border-emerald-500/35 bg-emerald-500/10"
+            ? "border-[var(--status-error)]/40 bg-[var(--status-error)]/10"
+            : "border-[var(--status-success)]/35 bg-[var(--status-success)]/10"
       }`}
     >
       <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
       <p
         className={`mt-1 text-2xl font-[1000] ${
-          naN ? "text-[var(--text-tertiary)]" : warn ? "text-rose-300" : "text-emerald-300"
+          naN ? "text-[var(--text-tertiary)]" : warn ? "text-[var(--status-error)]" : "text-[var(--status-success)]"
         }`}
       >
         {naN ? "산정불가" : value.toFixed(2)}
@@ -265,7 +265,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
 
       {/* 정직성 배지 */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">검토 권장 · 확정 아님</span>
+        <span className="rounded bg-[var(--status-warning)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">검토 권장 · 확정 아님</span>
         {summary?.badges?.unit_price_source && (
           <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
             단가출처: {summary.badges.unit_price_source}
@@ -323,19 +323,19 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
           >
             {submitting ? "등록 중…" : "기성 청구 등록"}
           </button>
-          {formErr && <span className="text-xs font-semibold text-rose-400">{formErr}</span>}
+          {formErr && <span className="text-xs font-semibold text-[var(--status-error)]">{formErr}</span>}
         </div>
 
         {/* 등록 즉시 트리거된 경고 */}
         {triggered && (
           <div className="grid gap-2">
             {triggered.length === 0 ? (
-              <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-[12px] font-semibold text-emerald-300">
+              <p className="rounded-lg bg-[var(--status-success)]/10 px-3 py-2 text-[12px] font-semibold text-[var(--status-success)]">
                 ✓ 등록 완료 — 즉시 탐지된 이상 청구가 없습니다.
               </p>
             ) : (
               <>
-                <p className="text-[12px] font-bold text-rose-300">이번 청구에서 탐지된 이상 {triggered.length}건</p>
+                <p className="text-[12px] font-bold text-[var(--status-error)]">이번 청구에서 탐지된 이상 {triggered.length}건</p>
                 {triggered.map((a, i) => (
                   <AnomalyRow key={i} a={a} />
                 ))}
@@ -351,7 +351,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
         </p>
       )}
       {err && !loading && (
-        <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300">{err}</p>
+        <p className="rounded-xl border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-4 py-3 text-sm font-semibold text-[var(--status-error)]">{err}</p>
       )}
 
       {summary && !loading && !err && noData && (
@@ -387,18 +387,18 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
           <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
             <div className="flex items-baseline justify-between">
               <h3 className="text-sm font-black text-[var(--text-primary)]">계약총액 대비 누적청구</h3>
-              <span className={`text-[12px] font-bold ${overContract ? "text-rose-400" : "text-[var(--text-secondary)]"}`}>
+              <span className={`text-[12px] font-bold ${overContract ? "text-[var(--status-error)]" : "text-[var(--text-secondary)]"}`}>
                 {eok(cumClaimed)} / {eok(summary.contract_total)} ({pct(summary.contract_total > 0 ? (cumClaimed / summary.contract_total) * 100 : null)})
               </span>
             </div>
             <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]">
               <div
-                className={`h-full rounded-full ${overContract ? "bg-rose-500" : "bg-[var(--accent-strong)]"}`}
+                className={`h-full rounded-full ${overContract ? "bg-[var(--status-error)]" : "bg-[var(--accent-strong)]"}`}
                 style={{ width: `${claimRatio}%` }}
               />
             </div>
             {overContract && (
-              <p className="mt-2 text-[12px] font-semibold text-rose-400">
+              <p className="mt-2 text-[12px] font-semibold text-[var(--status-error)]">
                 누적청구가 계약총액을 초과했습니다 — 정산·계약변경 검토가 필요합니다.
               </p>
             )}
@@ -432,16 +432,16 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
                       labelFormatter={(v) => `${v}회차`}
                       formatter={(val, name) => [eok(Number(val)), String(name).toUpperCase()]}
                     />
-                    <Line type="monotone" dataKey="pv" name="PV" stroke="#94a3b8" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="pv" name="PV" stroke="var(--text-tertiary)" strokeWidth={2} dot={false} />
                     <Line type="monotone" dataKey="ev" name="EV" stroke="var(--accent-strong)" strokeWidth={2.5} dot={false} />
-                    <Line type="monotone" dataKey="ac" name="AC" stroke="#f43f5e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="ac" name="AC" stroke="var(--status-error)" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
               <div className="mt-2 flex flex-wrap gap-4 text-[11px] font-semibold text-[var(--text-tertiary)]">
-                <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3 rounded-sm" style={{ background: "#94a3b8" }} /> PV 계획가치</span>
+                <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3 rounded-sm" style={{ background: "var(--text-tertiary)" }} /> PV 계획가치</span>
                 <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3 rounded-sm" style={{ background: "var(--accent-strong)" }} /> EV 달성가치</span>
-                <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3 rounded-sm" style={{ background: "#f43f5e" }} /> AC 실투입</span>
+                <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3 rounded-sm" style={{ background: "var(--status-error)" }} /> AC 실투입</span>
               </div>
             </div>
           )}
@@ -450,7 +450,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
           <div className="grid gap-3 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
             <h3 className="text-sm font-black text-[var(--text-primary)]">과다청구 이상탐지</h3>
             {summary.anomalies?.length === 0 ? (
-              <p className="rounded-lg bg-emerald-500/10 px-3 py-2.5 text-[13px] font-semibold text-emerald-300">
+              <p className="rounded-lg bg-[var(--status-success)]/10 px-3 py-2.5 text-[13px] font-semibold text-[var(--status-success)]">
                 ✓ 현재 탐지된 과다청구·이상 징후가 없습니다.
               </p>
             ) : (
@@ -471,7 +471,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
             <div className="overflow-x-auto">
               <table className="w-full text-left text-[12px]">
                 <thead>
-                  <tr className="border-y border-[var(--line)] text-[10px] uppercase tracking-wider text-[var(--text-hint)]">
+                  <tr className="border-y border-[var(--line)] text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
                     <th className="px-4 py-2 font-bold">회차</th>
                     <th className="px-4 py-2 font-bold">공종</th>
                     <th className="px-4 py-2 font-bold">기간</th>
@@ -483,16 +483,16 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
                 </thead>
                 <tbody>
                   {(summary.claims ?? []).map((c, i) => (
-                    <tr key={i} className="border-b border-[var(--line)] last:border-0">
+                    <tr key={i} className="border-b border-[var(--line)] transition-colors last:border-0 hover:bg-[var(--accent-strong)]/5">
                       <td className="px-4 py-2 font-bold text-[var(--text-primary)]">{c.round}회</td>
                       <td className="px-4 py-2 text-[var(--text-secondary)]">{c.work_type}</td>
                       <td className="px-4 py-2 text-[var(--text-tertiary)]">{c.period}</td>
-                      <td className="px-4 py-2 text-right text-[var(--text-secondary)]">{eok(c.contract_amount)}</td>
-                      <td className="px-4 py-2 text-right font-bold text-[var(--text-primary)]">{eok(c.claimed_amount)}</td>
-                      <td className="px-4 py-2 text-right text-[var(--text-secondary)]">{pct(c.progress_pct)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-[var(--text-secondary)]">{eok(c.contract_amount)}</td>
+                      <td className="px-4 py-2 text-right font-mono font-bold text-[var(--text-primary)]">{eok(c.claimed_amount)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-[var(--text-secondary)]">{pct(c.progress_pct)}</td>
                       <td className="px-4 py-2">
                         {c.ledger_hash ? (
-                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400" title={c.ledger_hash}>
+                          <span className="rounded bg-[var(--status-success)]/15 px-1.5 py-0.5 font-mono text-[10px] text-[var(--status-success)]" title={c.ledger_hash}>
                             {c.ledger_hash.slice(0, 10)}…
                           </span>
                         ) : (
