@@ -5,6 +5,7 @@ import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { TrustBadge } from "@/components/common/TrustBadge";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 /* ── Types ── */
@@ -79,12 +80,18 @@ function CompletenessRing({ pct }: { pct: number }) {
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (pct / 100) * circumference;
-  const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444";
+  // 완성도 구간 → 의미 고정 상태색 토큰(성공/경고/오류). 양테마 자동 대응.
+  const color =
+    pct >= 80
+      ? "var(--status-success)"
+      : pct >= 50
+        ? "var(--status-warning)"
+        : "var(--status-error)";
 
   return (
     <div className="relative inline-flex items-center justify-center">
       <svg width="100" height="100" className="-rotate-90">
-        <circle cx="50" cy="50" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+        <circle cx="50" cy="50" r={radius} fill="none" stroke="var(--border-muted)" strokeWidth="8" />
         <circle
           cx="50"
           cy="50"
@@ -98,7 +105,7 @@ function CompletenessRing({ pct }: { pct: number }) {
           className="transition-all duration-700"
         />
       </svg>
-      <span className="absolute text-lg font-bold" style={{ color }}>
+      <span className="absolute font-[var(--font-display)] text-lg font-bold" style={{ color }}>
         {pct}%
       </span>
     </div>
@@ -211,14 +218,17 @@ function SectionContentView({ section }: { section: ReportSection }) {
       });
   }
 
-  if (rows.length === 0) return <p className="text-sm text-gray-400">표시할 데이터가 없습니다.</p>;
+  if (rows.length === 0)
+    return (
+      <p className="text-sm text-[var(--paper-ink)] opacity-60">표시할 데이터가 없습니다.</p>
+    );
 
   return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm text-[var(--paper-ink)]">
       {rows.map((r) => (
         <div key={r.label} className="contents">
-          <dt className="font-medium text-gray-500">{r.label}</dt>
-          <dd className="text-gray-900 dark:text-gray-100">{r.value}</dd>
+          <dt className="font-medium opacity-60">{r.label}</dt>
+          <dd className="font-[var(--font-mono)]">{r.value}</dd>
         </div>
       ))}
     </dl>
@@ -471,11 +481,11 @@ export function BankReadyReportBuilder() {
               <CardTitle className="text-xl mb-2">
                 은행제출용 사업성 보고서
               </CardTitle>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-[var(--text-secondary)]">
                 전 모듈 분석 데이터를 통합하여 PF 대출 심사용 보고서를 자동 생성합니다.
               </p>
               {projectName && (
-                <p className="text-sm mt-1 text-blue-600 font-medium">
+                <p className="text-sm mt-1 font-medium text-[var(--accent-strong)]">
                   프로젝트: {projectName}
                 </p>
               )}
@@ -483,7 +493,7 @@ export function BankReadyReportBuilder() {
             </div>
             <div className="flex flex-col items-center gap-1">
               <CompletenessRing pct={Math.round((filledCount / ALL_SECTIONS.length) * 100)} />
-              <span className="text-xs text-gray-500">
+              <span className="font-[var(--font-mono)] text-xs text-[var(--text-tertiary)]">
                 {filledCount}/{ALL_SECTIONS.length} 섹션 완성
               </span>
             </div>
@@ -495,13 +505,13 @@ export function BankReadyReportBuilder() {
       <Card>
         <CardContent className="p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-base">섹션 선택</h3>
+            <h3 className="text-base font-semibold text-[var(--text-primary)]">섹션 선택</h3>
             <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-500">템플릿:</label>
+              <label className="text-sm text-[var(--text-tertiary)]">템플릿:</label>
               <select
                 value={template}
                 onChange={(e) => setTemplate(e.target.value as "bank" | "internal")}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+                className="rounded-[var(--r-input)] border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent-strong)]"
               >
                 <option value="bank">금융기관 제출용</option>
                 <option value="internal">내부 검토용</option>
@@ -515,30 +525,30 @@ export function BankReadyReportBuilder() {
               return (
                 <label
                   key={s.id}
-                  className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  className={`flex cursor-pointer items-center gap-3 rounded-[var(--r-card)] border p-3 transition-colors ${
                     selectedSections.has(s.id)
-                      ? "border-blue-400 bg-blue-50 dark:bg-blue-950/30"
-                      : "border-gray-200 dark:border-gray-700"
+                      ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                      : "border-[var(--line)] hover:border-[var(--line-strong)]"
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={selectedSections.has(s.id)}
                     onChange={() => toggleSection(s.id)}
-                    className="rounded border-gray-300"
+                    className="h-5 w-5 rounded-[var(--r-input)] accent-[var(--accent-strong)]"
                   />
-                  <span className="flex-1 text-sm">{s.title}</span>
+                  <span className="flex-1 text-sm text-[var(--text-primary)]">{s.title}</span>
                   <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                    className={`inline-flex items-center rounded-[var(--r-pill)] px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium ${
                       hasData
-                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                        : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                        ? "bg-[color-mix(in_srgb,var(--status-success)_16%,transparent)] text-[var(--status-success)]"
+                        : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
                     }`}
                   >
                     {hasData ? "데이터 있음" : "미완성"}
                   </span>
                   {s.required && (
-                    <span className="text-xs text-red-500 font-medium">필수</span>
+                    <span className="text-xs font-medium text-[var(--status-error)]">필수</span>
                   )}
                 </label>
               );
@@ -560,7 +570,7 @@ export function BankReadyReportBuilder() {
       {error && (
         <Card>
           <CardContent className="p-4">
-            <p className="text-sm text-red-600">{error}</p>
+            <p className="text-sm text-[var(--status-error)]">{error}</p>
           </CardContent>
         </Card>
       )}
@@ -568,13 +578,13 @@ export function BankReadyReportBuilder() {
       {/* Report Result */}
       {report && (
         <div className="space-y-4">
-          {/* Report Header */}
+          {/* Report Header (문서 도구 막대) */}
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold">{report.meta.title}</h2>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <h2 className="text-lg font-bold text-[var(--text-primary)]">{report.meta.title}</h2>
+                  <p className="mt-1 text-xs text-[var(--text-tertiary)]">
                     생성: {report.meta.data_basis_date} | {report.meta.generated_by} |
                     템플릿: {template === "bank" ? "금융기관 제출용" : "내부 검토용"}
                   </p>
@@ -605,52 +615,64 @@ export function BankReadyReportBuilder() {
             </CardContent>
           </Card>
 
-          {/* Section Cards (Accordion) */}
-          {(report.sections ?? []).map((section) => (
-            <Card key={section.id}>
-              <button
-                type="button"
-                onClick={() => toggleExpand(section.id)}
-                className="w-full text-left"
-              >
-                <CardContent className="p-4 flex items-center justify-between">
+          {/* 보고서 미리보기 — 종이 문서 뷰(--paper 4종·테마 불변) */}
+          <div className="overflow-hidden rounded-md bg-[var(--paper)] text-[var(--paper-ink)] shadow-[var(--shadow-lg)]">
+            {(report.sections ?? []).map((section, idx) => (
+              <div key={section.id} className={idx > 0 ? "border-t border-[var(--paper-line)]" : ""}>
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(section.id)}
+                  className="flex w-full items-center justify-between bg-[var(--paper-section)] px-4 py-3 text-left"
+                >
                   <div className="flex items-center gap-3">
                     <span
-                      className={`h-3 w-3 rounded-full ${
-                        section.has_data ? "bg-green-500" : "bg-gray-300"
-                      }`}
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{
+                        backgroundColor: section.has_data
+                          ? "var(--status-success)"
+                          : "color-mix(in srgb, var(--paper-ink) 28%, transparent)",
+                      }}
                     />
-                    <h3 className="font-semibold text-sm">{section.title}</h3>
+                    <h3 className="text-sm font-semibold text-[var(--paper-ink)]">{section.title}</h3>
                   </div>
-                  <span className="text-gray-400 text-lg">
+                  <span className="text-lg text-[var(--paper-ink)] opacity-50">
                     {expandedSections.has(section.id) ? "\u25B2" : "\u25BC"}
                   </span>
-                </CardContent>
-              </button>
-              {expandedSections.has(section.id) && (
-                <CardContent className="px-4 pb-4 pt-0 border-t border-gray-100 dark:border-gray-800">
-                  {section.has_data ? (
-                    <SectionContentView section={section} />
-                  ) : (
-                    <div className="py-3 text-center">
-                      <p className="text-sm text-gray-400 mb-2">데이터 없음</p>
-                      <a
-                        href={`../../${projectId}/${ALL_SECTIONS.find((s) => s.id === section.id)?.module ?? "site-analysis"}`}
-                        className="text-sm text-blue-500 hover:underline"
-                      >
-                        해당 모듈로 이동 &rarr;
-                      </a>
-                    </div>
-                  )}
-                </CardContent>
-              )}
-            </Card>
-          ))}
+                </button>
+                {expandedSections.has(section.id) && (
+                  <div className="border-t border-[var(--paper-line)] px-4 pb-4 pt-3">
+                    {section.has_data ? (
+                      <SectionContentView section={section} />
+                    ) : (
+                      <div className="py-3 text-center">
+                        <p className="mb-2 text-sm text-[var(--paper-ink)] opacity-60">데이터 없음</p>
+                        <a
+                          href={`../../${projectId}/${ALL_SECTIONS.find((s) => s.id === section.id)?.module ?? "site-analysis"}`}
+                          className="text-sm text-[var(--accent-strong)] hover:underline"
+                        >
+                          해당 모듈로 이동 &rarr;
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
 
-          {/* Legal Disclaimer */}
-          <p className="text-xs text-gray-400 text-center px-4">
-            {report.meta.legal_disclaimer}
-          </p>
+            {/* 공공데이터 출처·참고용 고지 — 공용 DataSourceNotice 배선(종이 톤 유지) */}
+            <div className="px-4 pb-4 pt-1">
+              <DataSourceNotice
+                source="공공데이터(국토교통부·조달청 등) 통합 분석"
+                updatedAt={report.meta.data_basis_date}
+                note={report.meta.legal_disclaimer}
+                style={{
+                  fontSize: "11px",
+                  color: "color-mix(in srgb, var(--paper-ink) 62%, transparent)",
+                  borderTop: "1px solid var(--paper-line)",
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>
