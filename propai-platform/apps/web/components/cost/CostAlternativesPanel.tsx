@@ -235,7 +235,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
             <button
               onClick={() => setVariants((p) => p.filter((_, idx) => idx !== i))}
               disabled={variants.length <= 1}
-              className="rounded-lg border border-[var(--line-strong)] px-3 py-2 text-[11px] font-bold text-rose-400 hover:border-rose-400/60 disabled:opacity-40"
+              className="rounded-lg border border-[var(--line-strong)] px-3 py-2 text-[11px] font-bold text-[var(--status-error)] hover:border-[var(--status-error)]/60 disabled:opacity-40"
             >
               삭제
             </button>
@@ -251,13 +251,13 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
         >
           {loading ? "원가비교 중…" : "대안설계 원가비교 실행"}
         </button>
-        {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
+        {err && <span className="text-xs font-semibold text-[var(--status-error)]">{err}</span>}
       </div>
 
       {result && (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">추정 (±12%)</span>
+            <span className="rounded bg-[var(--status-warning)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">추정 (±12%)</span>
             <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">전문 적산사 검토 권장</span>
           </div>
 
@@ -287,7 +287,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                     {chartData.map((d, i) => (
                       <Cell
                         key={i}
-                        fill={d.isBase ? "var(--accent-strong)" : d.delta < 0 ? "#10b981" : "#f43f5e"}
+                        fill={d.isBase ? "var(--accent-strong)" : d.delta < 0 ? "var(--status-success)" : "var(--status-error)"}
                       />
                     ))}
                     <LabelList
@@ -315,7 +315,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                 <div key={i} className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4">
                   <p className="text-[11px] font-bold text-[var(--text-secondary)]">{v.label}</p>
                   <p className="mt-1.5 text-xl font-[1000] text-[var(--text-primary)]">{fmtKrw(v.total)}</p>
-                  <p className={`mt-1 text-sm font-[1000] ${better ? "text-emerald-400" : "text-rose-400"}`}>
+                  <p className={`mt-1 text-sm font-[1000] ${better ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>
                     {better ? "이 설계로 바꾸면 " : "이 설계로 바꾸면 "}
                     {fmtDelta(v.delta)} ({v.delta_pct >= 0 ? "+" : ""}{v.delta_pct}%)
                   </p>
