@@ -1279,24 +1279,44 @@ export function SatongMapShell({ locale }: { locale: string }) {
   );
 
   // 최초 1회만 하이드레이션(이후 사용자 선택을 덮지 않도록 ref 가드). 우선순위:
-  //   1) sessionStorage(자기세션 선택 — 좌표·경계까지 리치) → 있으면 그대로(기존 동작).
-  //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 헤더의 12필지를 지도/산출물에 복원.
+  //   1) sessionStorage(자기세션 선택 — 좌표·경계까지 리치) → 복원(단, 미연결이면 이번 SPA
+  //      세션에 기록된 선택만).
+  //   2) 비었으면 활성 프로젝트 스토어 필지 폴백 → 연결 프로젝트의 필지를 지도/산출물에 복원.
   //   ★스토어 seed 시 commitParcelsToContext 재호출 금지(이미 스토어에 있는 값 되쓰면 되먹임 루프·#178).
   //   (refs 선언은 컴포넌트 상단으로 이동 — F1 참고)
+  //
+  //   ★T1(미연결 잔존 차단): 두 복원 경로 모두 브라우저(localStorage store)·탭(sessionStorage)에
+  //     영속돼, 프로젝트를 연결하지 않고 검색도 안 한 '신규 진입'에서 이전 세션 선택이 되살아났다.
+  //     - projectId가 있으면(이어하기/연결) 기존대로 복원한다(PR#221 스냅샷 하이드레이션 계약 불변).
+  //     - 미연결(projectId 없음)이면: sessionStorage는 '이번 SPA 세션에 기록된 것'(sameSpaSession)
+  //       일 때만 복원해 SPA 내 라우트 이동 후 복귀는 유지하되, 하드 리로드/새 탭 잔존은 차단한다.
+  //       스토어 폴백(경로 2)은 localStorage라 하드 리로드도 넘어 되살아나므로 미연결이면 아예
+  //       건너뛴다(SPA 내 복귀는 sessionStorage 경로가 담당).
+  const hasConnectedProject = !!projectId;
   useEffect(() => {
     if (hydratedRef.current) return;
     const stored = readSatongMapSelection();
     if (stored?.parcels.length) {
-      hydratedRef.current = true;
-      setSelectedParcels(stored.parcels);
-      commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
-      const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
-      if (focused?.lat != null && focused.lon != null) {
-        setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+      const restorable = hasConnectedProject || stored.sameSpaSession;
+      if (restorable) {
+        hydratedRef.current = true;
+        setSelectedParcels(stored.parcels);
+        commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+        const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
+        if (focused?.lat != null && focused.lon != null) {
+          setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
+        }
+        return;
       }
+      // 미연결 + SPA 세션 불연속(하드 리로드/새 탭) → 이전 세션 선택 복원 금지. sessionStorage
+      //   캐시를 정리해 다른 소비처(PreCheckWorkspace·/analysis 산출물)도 잔존을 읽지 않게 한다.
+      hydratedRef.current = true;
+      setSelectedParcels([]);
+      saveSelectionForOutputs([]);
       return;
     }
-    // 폴백: 활성 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값).
+    // 폴백: 연결 프로젝트 필지로 seed(재커밋 금지 — 이미 스토어 값). 미연결이면 스킵(위 주석).
+    if (!hasConnectedProject) return;
     const seeded = siteAnalysisToSelection(storeSiteAnalysis);
     // ★유효 seed(주소 있는 필지)가 하나라도 나왔을 때만 latch. 전부 주소없어 []면 미확정으로 두어
     //   다음 siteAnalysis 변경(늦은 rehydrate) 때 재시도 허용(리뷰 LOW).
@@ -1308,7 +1328,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
       }
     }
-  }, [commitParcelsToContext, storeSiteAnalysis]);
+  }, [commitParcelsToContext, storeSiteAnalysis, hasConnectedProject]);
 
   // 프로젝트 전환 감지 → 프로젝트 등록 필지로 선택 복원.
   // ★restoreSnapshot(백엔드 스냅샷 GET)은 비동기라 전환 직후엔 storeSiteAnalysis가 비어있을 수
@@ -1472,21 +1492,6 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 ))}
               </optgroup>
             </select>
-            {connectTarget === "new" && selectedParcels.length > 0 && (
-              <>
-                <p className="mt-2 text-[11px] font-bold leading-4 text-[var(--text-hint)]">
-                  완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleCreateProjectNow}
-                  disabled={creatingProject}
-                  className="mt-2 w-full rounded-[var(--r-input)] border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/15 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {creatingProject ? "생성 중…" : "선택 필지로 새 프로젝트 생성"}
-                </button>
-              </>
-            )}
             {connectTarget === "none" && (
               <p className="mt-2 text-[11px] font-bold leading-4 text-[var(--text-hint)]">
                 산출물은 프로젝트에 저장되지 않습니다.
@@ -1681,6 +1686,24 @@ export function SatongMapShell({ locale }: { locale: string }) {
               </div>
             )}
           </div>
+
+          {/* 선택 필지로 새 프로젝트 생성 — 작업 순서(검색→필지 선택→생성)상 지번·주소/엑셀
+              입력 아래, 선택 필지 목록 직전에 둔다. 핸들러·조건은 무변경(JSX 재배치만). */}
+          {connectTarget === "new" && selectedParcels.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[11px] font-bold leading-4 text-[var(--text-hint)]">
+                완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
+              </p>
+              <button
+                type="button"
+                onClick={handleCreateProjectNow}
+                disabled={creatingProject}
+                className="mt-2 w-full rounded-[var(--r-input)] border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creatingProject ? "생성 중…" : "선택 필지로 새 프로젝트 생성"}
+              </button>
+            </div>
+          )}
 
           <div className="mt-5 rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
             <div className="flex items-center justify-between gap-3">
