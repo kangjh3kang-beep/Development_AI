@@ -1,5 +1,5 @@
 // BuildableOptionsCard — 건축가능항목 랭킹 카드 렌더 테스트.
-// graceful(없음 미렌더) + 랭킹/인허가배지/현행·종상향 + similar_designs 노출 검증.
+// graceful(없음 미렌더) + 랭킹/인허가배지/현행·종상향 그룹 분리 + similar_designs 노출 검증.
 
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -45,15 +45,53 @@ describe("BuildableOptionsCard", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("최우선 사업유형·랭킹·가용용적률·인허가가능성을 노출한다", () => {
+  it("최우선 사업유형은 현행 1위 기준으로 고정하고, 종상향 1위는 별도 조건부 문장으로 분리한다", () => {
+    // SAMPLE의 backend top_recommendation은 종상향(주상복합, is_current:false)이지만,
+    // 헤드라인 "최우선"은 현행 1위(공동주택(아파트))로 정정되어야 한다(종상향 오독 방지).
     render(<BuildableOptionsCard data={SAMPLE} />);
     expect(screen.getByText("건축가능항목 랭킹")).toBeTruthy();
-    expect(screen.getByText("최우선 주상복합")).toBeTruthy();
+    expect(screen.getByText("최우선 공동주택(아파트)")).toBeTruthy();
     expect(screen.getByText(/가용 용적률 400%/)).toBeTruthy();
     expect(screen.getByText("공동주택(아파트)")).toBeTruthy();
+    // 종상향 1위(주상복합)는 조건부 안내 문장으로 별도 표기.
+    expect(screen.getByText(/종상향 전제 시/)).toBeTruthy();
+    // "주상복합"은 조건부 문장 안 + ②종상향 그룹 목록에도 나오므로 getAllByText로 2회 이상 확인.
+    expect(screen.getAllByText("주상복합").length).toBeGreaterThanOrEqual(2);
+    // ①현행/②종상향 그룹 헤더.
+    expect(screen.getByText("① 현행 가능 (즉시 추진)")).toBeTruthy();
+    expect(screen.getByText("② 종상향 잠재 (조건부 — 예상치)")).toBeTruthy();
     // 현행/종상향 구분 배지.
     expect(screen.getByText("현행 가능")).toBeTruthy();
     expect(screen.getByText("종상향 전제(예상)")).toBeTruthy();
+  });
+
+  it("tier 필드가 명시되면 is_current 대신 tier를 신뢰한다", () => {
+    const data: BuildableOptions = {
+      options: [
+        { product: "오피스텔", tier: "upzoning", is_current: true, achievable_far_pct: 500 },
+        { product: "단독주택", tier: "current", achievable_far_pct: 100 },
+      ],
+    };
+    render(<BuildableOptionsCard data={data} />);
+    // is_current:true여도 tier:"upzoning"이 우선 → 종상향 그룹에 배치.
+    expect(screen.getByText("최우선 단독주택")).toBeTruthy();
+  });
+
+  it("종상향 항목에 blocked_reasons가 있으면 배지+사유를 표시한다", () => {
+    const data: BuildableOptions = {
+      options: [
+        { product: "단독주택", tier: "current", achievable_far_pct: 100 },
+        {
+          product: "공동주택(연립)",
+          tier: "upzoning",
+          achievable_far_pct: 300,
+          blocked_reasons: ["비연접 파편 — 구역 성립 불확실"],
+        },
+      ],
+    };
+    render(<BuildableOptionsCard data={data} />);
+    expect(screen.getByText("구역 성립 불확실")).toBeTruthy();
+    expect(screen.getByText("비연접 파편 — 구역 성립 불확실")).toBeTruthy();
   });
 
   it("Stage3 유사 설계 도면을 노출한다", () => {

@@ -138,6 +138,7 @@ def simulate_far_scenarios(
     ordinance_far: float,
     national_far: float | None = None,
     land_area_sqm: float = 0,
+    structural_cap_pct: float | None = None,
 ) -> dict[str, Any]:
     cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
     base_far = ordinance_far
@@ -146,6 +147,12 @@ def simulate_far_scenarios(
     #   자기모순이 출력된다. 상한을 base로 하한클램프해 어떤 상류 입력에서도 자기모순을 구조적으로 차단한다.
     if cap_far < base_far:
         cap_far = base_far
+    # ★구조상한(건폐율×층수, 자연/생산녹지 등) — 인센티브 시나리오라도 층수 제한이 있는
+    #   물리적 상한을 넘어 달성될 수 없다(기부채납·친환경 등은 통상 층수를 늘리지 않는다).
+    #   법정 cap_far(예: 100%)보다 구조상한(예: 80%)이 더 낮으면 그것을 최종 cap으로 쓴다.
+    #   base_far 미만으로는 내리지 않는다(위 클램프와 동일하게 자기모순 방지).
+    if structural_cap_pct is not None and structural_cap_pct < cap_far:
+        cap_far = max(structural_cap_pct, base_far)
     category = ZONE_CATEGORY_MAP.get(zone_type, "주거")
     ALPHA_COEFFICIENTS.get(category, 1.0)
 

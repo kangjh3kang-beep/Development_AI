@@ -56,6 +56,28 @@ def build_area_annotation(
     )
 
 
+def _structural_cap_for(
+    zone_type: str | None, effective_bcr: float,
+) -> tuple[float | None, int | None, str | None]:
+    """용도지역 법정 층수상한(legal_zone_limits SSOT) × 실효 건폐율 = 구조상한(%).
+
+    ★확정버그(2026-07-12): 자연/생산녹지 등은 법정 용적률 '범위'(예: 자연녹지 50~100%)만
+    보면 100%까지 허용되는 것처럼 보이지만, 국토계획법 시행령 별표15~17 두문(4층 이하)이
+    실질 상한을 만든다(건폐 20%×4층=80% < 법정 100%). 이 물리적 상한을 반영하지 않으면
+    실효 용적률을 과대표시하는 할루시네이션이 된다(90초진단 재현). 근거 미확인 zone
+    (legal_zone_limits.max_floors=None)은 (None,None,None) — 절대 적용하지 않는다(무날조).
+    단일필지(calc_effective_far)·다필지 통합(rebuild_area_dependent) 양쪽이 이 헬퍼 하나로
+    구조상한을 산정한다(산식 복제 금지).
+    """
+    from app.services.zoning.legal_zone_limits import legal_limits_for
+
+    limits = legal_limits_for(zone_type) or {}
+    floor_cap = limits.get("max_floors")
+    if not floor_cap:
+        return None, None, None
+    return round(effective_bcr * floor_cap, 2), floor_cap, limits.get("floor_cap_basis")
+
+
 def rebuild_area_dependent(
     sec1: dict[str, Any],
     *,
@@ -94,10 +116,19 @@ def rebuild_area_dependent(
         anns.append(new_ann)  # 원래 면적문구가 없던 경우(면적 0 등) 추가
     out["annotations"] = anns
 
+    # ── 구조상한(건폐율×층수) — 다필지 통합(대표/우세 zone 기준)도 단일필지와 동일 헬퍼로 산정 ──
+    #   zone_mix 혼재 시에도 대표(우세) zone의 층수제한을 참고치로 노출한다(zone별 정밀 가중은
+    #   이미 각 필지의 _far_eff가 calc_effective_far를 거치며 개별 반영 → blended에 전파됨).
+    structural_cap_pct, floor_cap, floor_cap_basis = _structural_cap_for(zone_type, effective_bcr)
+    out["structural_cap_pct"] = structural_cap_pct
+    out["floor_cap"] = floor_cap
+    out["floor_cap_basis"] = floor_cap_basis
+
     # 2) far_optimization(FAR 시나리오별 GFA 테이블)을 통합면적 기준으로 재생성.
     if land_area > 0:
         out["far_optimization"] = simulate_far_optimization(
             zone_type, effective_far, float(_nat), land_area,
+            structural_cap_pct=structural_cap_pct,
         )
     return out
 
@@ -216,6 +247,10 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
                 "용도지역(개발제한구역 등 비도시계획 용도구역이거나 지목이 잘못 전달된 경우 포함)"
                 "입니다. 임의 수치를 지어내지 않고 실효/법정 용적률을 정직하게 미확인으로 처리합니다."
             ],
+            # 구조상한(건폐율×층수) — zone 미확인이라 산정 불가(스키마 정합용 additive None).
+            "structural_cap_pct": None,
+            "floor_cap": None,
+            "floor_cap_basis": None,
             "far_optimization": {},
         }
 
@@ -314,6 +349,17 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     ):
         far_basis = "법정상한 적용(조례 미확인)"
 
+    # ── 구조상한(건폐율×층수) 계층 — 층수 제한 존재 zone(자연/생산녹지 등)만 최종 적용 ──
+    #   법정/조례/계획/인센티브를 모두 반영한 '기존 실효'가 최종 확정된 시점에 마지막으로
+    #   물리적 상한(건폐율×층수)을 씌운다 — min(기존 실효, 구조상한). 층수상한이 없는 zone은
+    #   _structural_cap_for가 (None,None,None)을 반환해 완전히 무영향(기존값 그대로).
+    structural_cap_pct, floor_cap, floor_cap_basis = _structural_cap_for(zone_type, effective_bcr)
+    _effective_far_before_structural_cap = effective_far
+    _structural_cap_bound = structural_cap_pct is not None and structural_cap_pct < effective_far
+    if _structural_cap_bound:
+        effective_far = structural_cap_pct
+        far_basis = "구조상한(건폐율×층수)"
+
     # ── far_basis 상세 메타: 산정 계층·데이터출처를 그라운딩/검증기가 활용하도록 동봉.
     far_basis_detail: dict[str, Any] = {
         "법정범위": {
@@ -387,9 +433,19 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
 
     annotations.append(
         f"실효 용적률은 법정상한({national_far}%)과 조례({ordinance_far}%) 중 "
-        f"낮은 값인 {effective_far}%가 적용되며, "
+        f"낮은 값인 {_effective_far_before_structural_cap}%가 적용되며, "
         f"실효 건폐율은 {effective_bcr}%입니다."
     )
+
+    if _structural_cap_bound:
+        # ★구조상한(건폐율×층수)이 법정/조례 한도보다 낮은 실질 상한으로 바인딩된 경우 —
+        # 위 문장의 '법정상한/조례 중 낮은 값'만으로는 최종 적용치를 설명하지 못하므로
+        # (수치-서술 불일치 방지) 이 사실을 별도 문장으로 명시한다.
+        annotations.append(
+            f"다만 {zone_type}은 층수 제한({floor_cap}층 이하 — {floor_cap_basis})이 있어, "
+            f"실효 건폐율({effective_bcr}%) × {floor_cap}층 = 구조상한 {structural_cap_pct:g}%가 "
+            f"법정/조례 한도보다 낮은 실질 상한이 되어 실효 용적률은 {effective_far:g}%로 적용됩니다."
+        )
 
     if land_area > 0:
         # 면적의존 문구(최대 연면적/건축면적)는 공용 생성기 1곳에서 만든다(SSOT — 다필지 override가
@@ -425,12 +481,20 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         "far_incentive": incentive,
         "source": source,
         "annotations": annotations,
-        "far_optimization": simulate_far_optimization(zone_type, effective_far, national_far, land_area),
+        # 구조상한(건폐율×층수) — 층수제한 없는 zone은 전부 None(무회귀). additive.
+        "structural_cap_pct": structural_cap_pct,
+        "floor_cap": floor_cap,
+        "floor_cap_basis": floor_cap_basis,
+        "far_optimization": simulate_far_optimization(
+            zone_type, effective_far, national_far, land_area,
+            structural_cap_pct=structural_cap_pct,
+        ),
     }
 
 
 def simulate_far_optimization(
     zone_type: str, effective_far: float, national_far: float, land_area: float,
+    structural_cap_pct: float | None = None,
 ) -> dict[str, Any]:
     try:
         from app.services.zoning.far_optimization_simulator import simulate_far_scenarios
@@ -439,6 +503,7 @@ def simulate_far_optimization(
             ordinance_far=effective_far,
             national_far=national_far,
             land_area_sqm=land_area,
+            structural_cap_pct=structural_cap_pct,
         )
     except Exception:
         return {}

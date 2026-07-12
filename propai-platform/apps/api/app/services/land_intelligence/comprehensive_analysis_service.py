@@ -578,7 +578,8 @@ class ComprehensiveAnalysisService:
         sec7 = self._research_dev_plans(base)
 
         # Section 8: 종상향/종변경 잠재력(예상치 — 현행 실효 용적률과 분리)
-        sec8 = self._calc_upzoning(base, zone_type, land_area, sec6, sec7)
+        # ★integrated(인접성·필지수) 전달 — 파편 다필지 종상향 랭킹 인접성 게이트 배선.
+        sec8 = self._calc_upzoning(base, zone_type, land_area, sec6, sec7, integrated)
 
         result = {
             "address": address,
@@ -823,6 +824,9 @@ class ComprehensiveAnalysisService:
             result["ai_interpretation"] = None
 
         # Phase 4: 시장분석 AI 내러티브 생성 (선택적 — API 키 있을 때만)
+        # ★D-1(정직화) additive: 실패 시 None만 두면 프론트가 "정상인데 비어있음"과
+        # "생성 자체가 실패함"을 구분할 수 없다. market_interpretation_status로 사유를 병기한다
+        # (기존 market_interpretation 키·값은 완전히 그대로 — 이 필드는 순수 추가).
         try:
             from app.services.ai.market_interpreter import MarketInterpreter
             market_interpreter = MarketInterpreter()
@@ -830,9 +834,14 @@ class ComprehensiveAnalysisService:
                 market_interpreter._llm = custom_llm
             market_interpretation = await market_interpreter.generate_interpretation(result, prior_context=prior_block)
             result["market_interpretation"] = market_interpretation
+            result["market_interpretation_status"] = {"status": "ok"}
         except Exception as e:
             logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
             result["market_interpretation"] = None
+            result["market_interpretation_status"] = {
+                "status": "unavailable",
+                "reason": f"{type(e).__name__}: {str(e)[:160]}",
+            }
 
         # Phase 1 성장루프: prior 첨부(주입 증거) + write-back(다음 회차 prior가 됨, best-effort)
         result["prior_analysis"] = prior
@@ -1448,7 +1457,10 @@ class ComprehensiveAnalysisService:
                 if isinstance(d, dict):
                     regulations.append(d.get("district_name", ""))
 
-        clean_regulations = [r for r in regulations if r]
+        # ★D-2(정직화) 중복 제거(순서 보존) — VWorld가 동일 designation을 중복 반환할 때
+        # land_use_regulations·regulation_notes·risk_factors가 그대로 중복 표시되던 문제.
+        # dict.fromkeys는 삽입 순서를 보존하면서 중복만 제거한다(첫 등장 순서 그대로).
+        clean_regulations = list(dict.fromkeys(r for r in regulations if r))
 
         # 각 규제에 대한 해석 주석 생성
         regulation_notes: list[dict[str, str]] = []
@@ -1488,14 +1500,50 @@ class ComprehensiveAnalysisService:
                     elif level == "보통" and risk_level == "낮음":
                         risk_level = "보통"
 
+        # ★D-2(정직화) additive: 규제명 → verified 법령 링크. 기존 법령 레지스트리 자산
+        # (legal_refs_for_districts — 토지이음 지역지구별 규제법령집 매핑, services/legal 계열)을
+        # 그대로 재사용한다(임의 URL 조립 금지 — build_law_url은 이 함수 내부에서만 쓰인다).
+        # 매핑되는 법령키가 없으면 link=None(정직 — 근거 없는 링크 날조 금지).
+        land_use_regulations_detail = self._build_land_use_regulations_detail(clean_regulations)
+
         return {
             "special_districts": districts,
             "land_use_regulations": clean_regulations,
+            "land_use_regulations_detail": land_use_regulations_detail,
             "regulation_notes": regulation_notes,
             "risk_level": risk_level,
             "risk_factors": risk_factors,
             "source": "VWORLD 토지이용계획",
         }
+
+    @staticmethod
+    def _build_land_use_regulations_detail(regulation_names: list[str]) -> list[dict[str, Any]]:
+        """규제명 목록 → [{name, link}] — link는 legal_reference_registry의 verified 키만 채택.
+
+        기존 자산(legal_refs_for_districts, app/services/legal/legal_reference_registry.py —
+        토지이음 지역지구별 규제법령집 매핑) 재사용. 매핑 실패·근거 미확인은 link=None(무날조).
+        """
+        if not regulation_names:
+            return []
+        try:
+            from app.services.legal.legal_reference_registry import legal_refs_for_districts
+
+            lookup = legal_refs_for_districts(regulation_names)
+            refs_by_key = {r.get("key"): r for r in (lookup.get("refs") or [])}
+            by_district = lookup.get("by_district") or {}
+            detail: list[dict[str, Any]] = []
+            for name in regulation_names:
+                link: str | None = None
+                for key in by_district.get(name) or []:
+                    ref = refs_by_key.get(key)
+                    if ref and ref.get("url_status") == "verified":
+                        link = ref.get("url")
+                        break
+                detail.append({"name": name, "link": link})
+            return detail
+        except Exception as e:  # noqa: BLE001 — 링크 매핑 실패는 무손상(link=None 정직 폴백)
+            logger.warning("규제 법령링크 매핑 실패(graceful)", err=str(e)[:160])
+            return [{"name": n, "link": None} for n in regulation_names]
 
     # ────────────────────────────────────────────
     # Section 8: 종상향/종변경 잠재력(예상치)
@@ -1507,10 +1555,25 @@ class ComprehensiveAnalysisService:
         land_area: float,
         location: Any = None,
         dev_plans: Any = None,
+        integrated: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """현행 실효 용적률과 분리된 종상향/종변경 잠재 시나리오(단일출처 위임)."""
+        """현행 실효 용적률과 분리된 종상향/종변경 잠재 시나리오(단일출처 위임).
+
+        ★확정버그 수정(P0): far_tier_service.calc_upzoning은 parcel_count·adjacency_contiguous를
+        이미 받을 수 있었으나(다필지 인접성 게이트) 이 호출부가 인자를 전달하지 않아 항상
+        기본값(1·None)만 넘어가 UpzoningPotentialAnalyzer의 인접성 감점이 무발동이었다(파편
+        9필지+개발제한구역 혼합에서 "종상향 가능성 상·1순위"가 산출되던 실버그). integrated
+        (build_integrated_context가 이미 재사용 가능하게 부착한 adjacency_contiguous·
+        parcel_count — 재계산 금지)를 전달만 하면 된다. 단일필지(integrated=None)는 기존과
+        동일(parcel_count=1·adjacency_contiguous=None, 무회귀).
+        """
         from app.services.land_intelligence import far_tier_service
-        return far_tier_service.calc_upzoning(base, zone_type, land_area, location, dev_plans)
+        _parcel_count = int((integrated or {}).get("parcel_count") or 1)
+        _adjacency_contiguous = (integrated or {}).get("adjacency_contiguous")
+        return far_tier_service.calc_upzoning(
+            base, zone_type, land_area, location, dev_plans,
+            parcel_count=_parcel_count, adjacency_contiguous=_adjacency_contiguous,
+        )
 
 
 # ────────────────────────────────────────────
@@ -1632,6 +1695,12 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             integrated["adjacency"] = {
                 "contiguous": None, "components": None, "basis": "인접성 산출 실패(정직 미확인)",
             }
+
+        # ★P0(종상향 랭킹 인접성 게이트 전파) 최상위 additive 노출 — 기존 adjacency 자산을
+        #   그대로 재사용(재계산 금지)해 _calc_upzoning → UpzoningPotentialAnalyzer가 바로
+        #   소비할 수 있는 얕은 키로 승격한다. integrated_zoning(응답 최상위)에도 그대로 실린다.
+        integrated["adjacency_contiguous"] = (integrated.get("adjacency") or {}).get("contiguous")
+        integrated["cluster_count"] = (integrated.get("adjacency") or {}).get("components")
 
         try:
             # ★P0-2(b)(RC3) 실사용가능용지 3계층(compute_usable_area) 결합 — 도로·구거·하천 지목은
