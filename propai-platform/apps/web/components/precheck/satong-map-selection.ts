@@ -5,6 +5,16 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 
 export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 
+// ★SPA(단일 페이지 앱) 세션 토큰 — 이 JS 모듈이 처음 로드될 때 딱 1회 생성한다.
+//   router.push 소프트 내비게이션(산출물 갔다가 복귀 등) 간에는 모듈이 그대로 유지돼 값이
+//   같지만, 하드 리로드(F5)·새 탭이면 모듈이 재초기화돼 새 값이 된다. sessionStorage에 저장된
+//   선택이 '이번 SPA 세션에 만들어진 것'인지 판별해(같은 탭이라도) 하드 리로드 후 이전 세션
+//   선택이 잔존 복원되는 것을 막는 데 쓴다(미연결 신규 진입은 빈 선택으로 시작 — T1).
+const SPA_SESSION_TOKEN =
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
 export type SatongSelectionParcel = {
   id: string;
   address: string;
@@ -23,10 +33,16 @@ export type SatongSelectionParcel = {
 
 export type SatongMapSelection = {
   savedAt: string;
+  // ★이 선택을 기록한 SPA 세션 토큰(페이지 로드 수명). 하드 리로드 후 잔존 여부 판별용.
+  //   옵셔널 — 이 필드 이전에 저장된 구 payload와 호환(그 경우 sameSpaSession=false로 취급).
+  spaSession?: string;
   parcels: SatongSelectionParcel[];
 };
 
-export function readSatongMapSelection(): SatongMapSelection | null {
+// 읽기 결과 — 저장 payload에 '이번 SPA 세션에 기록됐는지'(sameSpaSession)를 덧붙인 런타임 뷰.
+export type SatongMapSelectionRead = SatongMapSelection & { sameSpaSession: boolean };
+
+export function readSatongMapSelection(): SatongMapSelectionRead | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.sessionStorage.getItem(SATONG_MAP_SELECTION_KEY);
@@ -44,6 +60,9 @@ export function readSatongMapSelection(): SatongMapSelection | null {
     if (parcels.length === 0) return null;
     return {
       savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
+      spaSession: typeof parsed.spaSession === "string" ? parsed.spaSession : undefined,
+      // 구 payload(토큰 부재)는 undefined === TOKEN → false → '이전 세션 잔존'으로 취급(정답).
+      sameSpaSession: parsed.spaSession === SPA_SESSION_TOKEN,
       parcels,
     };
   } catch {
@@ -62,6 +81,7 @@ export function writeSatongMapSelection(parcels: SatongSelectionParcel[]): void 
       SATONG_MAP_SELECTION_KEY,
       JSON.stringify({
         savedAt: new Date().toISOString(),
+        spaSession: SPA_SESSION_TOKEN,
         parcels,
       } satisfies SatongMapSelection),
     );

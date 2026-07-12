@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  readSatongMapSelection,
   satongSelectionAddresses,
   satongSelectionToParcelRows,
   selectionToSiteAnalysisPatch,
   siteAnalysisParcelsToSelection,
   siteAnalysisToSelection,
+  writeSatongMapSelection,
+  SATONG_MAP_SELECTION_KEY,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
 
@@ -181,5 +184,46 @@ describe("satong-map-selection", () => {
         }),
       ).toEqual([]);
     });
+  });
+});
+
+describe("readSatongMapSelection — SPA 세션 스탬프(T1: 미연결 잔존 차단)", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("이번 세션에서 write→read 하면 sameSpaSession=true (SPA 내 복귀 유지)", () => {
+    writeSatongMapSelection(parcels);
+    const read = readSatongMapSelection();
+    expect(read?.parcels).toHaveLength(2);
+    expect(read?.sameSpaSession).toBe(true);
+  });
+
+  it("다른 세션 토큰으로 저장된 payload는 sameSpaSession=false (하드 리로드/새 탭 잔존)", () => {
+    window.sessionStorage.setItem(
+      SATONG_MAP_SELECTION_KEY,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        spaSession: "이전-세션-토큰",
+        parcels,
+      }),
+    );
+    const read = readSatongMapSelection();
+    expect(read?.parcels).toHaveLength(2); // 파싱은 되지만
+    expect(read?.sameSpaSession).toBe(false); // 이번 SPA 세션 것이 아님
+  });
+
+  it("토큰 없는 구 payload(하위호환)는 sameSpaSession=false 로 취급", () => {
+    window.sessionStorage.setItem(
+      SATONG_MAP_SELECTION_KEY,
+      JSON.stringify({ savedAt: new Date().toISOString(), parcels }),
+    );
+    expect(readSatongMapSelection()?.sameSpaSession).toBe(false);
+  });
+
+  it("write([])는 캐시를 제거하고 read 는 null", () => {
+    writeSatongMapSelection(parcels);
+    writeSatongMapSelection([]);
+    expect(readSatongMapSelection()).toBeNull();
   });
 });
