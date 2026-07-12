@@ -274,7 +274,7 @@ export function RawDataTables({ raw, section }: { raw: RawData | undefined; sect
                     // 전월대비: +면 상승(성공색)·-면 하락(위험색)·null이면 "-"(첫 항목).
                     const mom = r.mom_pct;
                     const momColor =
-                      mom == null ? "var(--text-tertiary)" : mom > 0 ? "var(--status-success)" : mom < 0 ? "var(--status-danger)" : "var(--text-secondary)";
+                      mom == null ? "var(--text-tertiary)" : mom > 0 ? "var(--status-success)" : mom < 0 ? "var(--status-error)" : "var(--text-secondary)";
                     const momText = mom == null ? "-" : `${mom > 0 ? "+" : ""}${mom.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
                     return (
                       <tr key={i}>
@@ -469,7 +469,7 @@ export function RawDataTables({ raw, section }: { raw: RawData | undefined; sect
               {inc.bracket_ratio && Object.keys(inc.bracket_ratio).length > 0 ? (
                 <ul className="space-y-1.5 text-xs text-[var(--text-secondary)]">
                   {Object.entries(inc.bracket_ratio).map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-light)] pb-1">
+                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-subtle)] pb-1">
                       <span>{k}</span>
                       <span className="font-bold text-[var(--text-primary)]">{pct(Number(v))}</span>
                     </li>

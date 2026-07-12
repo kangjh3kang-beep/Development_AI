@@ -125,7 +125,7 @@ export function DeskAppraisalModal({
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
   };
 
-  const inp = "h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
+  const inp = "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -219,7 +219,7 @@ export function DeskAppraisalModal({
                 <button onClick={() => { onApply(res.complex_total_won ?? res.appraised_total_won!); onClose(); }} className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white">매입예정가에 반영</button>
               )}
               {([["pdf", "PDF"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
-                <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === fmt ? `${label} 생성 중…` : `${label} ↓`}</button>
+                <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--line)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === fmt ? `${label} 생성 중…` : `${label} ↓`}</button>
               ))}
             </div>
           </div>

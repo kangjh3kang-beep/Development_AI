@@ -227,7 +227,7 @@ function IncentivesCard({ data }: { data: string[] }) {
         {data.map((s, i) => (
           <span
             key={i}
-            className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-card)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
+            className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
           >
             {s}
           </span>
@@ -347,7 +347,7 @@ function CostValidationCard({ data }: { data: Record<string, unknown> }) {
 
 function ArtifactCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] p-3">
+    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-3">
       <p className="mb-2 text-xs font-bold text-[var(--text-primary)]">{title}</p>
       {children}
     </div>
@@ -675,7 +675,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
                   className={`rounded-xl border p-3 text-left transition-colors ${
                     active
                       ? "border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_8%,transparent)]"
-                      : "border-[var(--line-strong)] bg-[var(--surface-card)] hover:border-[var(--accent-strong)]"
+                      : "border-[var(--line-strong)] bg-[var(--surface-strong)] hover:border-[var(--accent-strong)]"
                   }`}
                 >
                   <span className="block text-sm font-bold text-[var(--text-primary)]">
@@ -725,7 +725,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
 
       {/* 결과 */}
       {report && (
-        <div className="grid gap-3 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-card)] p-4">
+        <div className="grid gap-3 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4">
           {/* 헤더: 이름 + status 배지 + 검증 칩 */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -799,7 +799,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
               disabled={pdfDisabled}
               onClick={() => onDownload("pdf")}
               title={!hasAddrAndCode ? "주소·법정동코드 필요" : undefined}
-              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {downloading === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
             </button>
@@ -808,7 +808,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
               disabled={pptxDisabled}
               onClick={() => onDownload("pptx")}
               title={!hasAddrAndCode ? "주소·법정동코드 필요" : undefined}
-              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {downloading === "pptx" ? "PPTX 생성 중…" : "PPTX 다운로드"}
             </button>
@@ -818,7 +818,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
                 disabled={docxDisabled}
                 onClick={() => onDownload("docx")}
                 title={!hasAddrAndCode ? "주소·법정동코드 필요" : undefined}
-                className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {downloading === "docx" ? "Word 생성 중…" : "Word 다운로드"}
               </button>

@@ -85,7 +85,7 @@ export function AgentTimeline({
                     stage.status === "completed"
                       ? "bg-[var(--accent-strong)] text-[#ffffff]"
                       : stage.status === "active"
-                        ? "bg-[var(--spot)] text-[#ffffff]"
+                        ? "bg-[var(--accent-strong)] text-[#ffffff]"
                         : "bg-[var(--surface-muted)] text-[var(--text-primary)]"
                   }`}
                 >

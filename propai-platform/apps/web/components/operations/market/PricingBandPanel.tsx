@@ -38,7 +38,7 @@ function pct(v?: number | null): string {
 const VERDICT: Record<string, { label: string; color: string; bg: string }> = {
   within_conservative: { label: "수요 감당 가능 (보수 상한 이내) — 안전", color: "var(--status-success)", bg: "color-mix(in srgb, var(--status-success) 12%, transparent)" },
   within_optimistic: { label: "수용 가능하나 부담 (낙관 상한 이내)", color: "var(--status-warning)", bg: "color-mix(in srgb, var(--status-warning) 12%, transparent)" },
-  over_band: { label: "지불여력 초과 — 미분양 위험", color: "var(--status-danger)", bg: "color-mix(in srgb, var(--status-danger) 12%, transparent)" },
+  over_band: { label: "지불여력 초과 — 미분양 위험", color: "var(--status-error)", bg: "color-mix(in srgb, var(--status-error) 12%, transparent)" },
 };
 
 export function PricingBandPanel({ data }: { data?: PricingBand | null }) {

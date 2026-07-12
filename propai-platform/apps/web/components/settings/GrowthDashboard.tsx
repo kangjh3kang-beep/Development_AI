@@ -87,7 +87,7 @@ function severityClasses(severity: string | null): string {
     case "critical":
       return "border-[rgba(220,38,38,0.4)] bg-[rgba(220,38,38,0.1)] text-[var(--status-error)]";
     case "warn":
-      return "border-[rgba(217,119,6,0.4)] bg-[rgba(217,119,6,0.1)] text-[var(--spot)]";
+      return "border-[rgba(217,119,6,0.4)] bg-[rgba(217,119,6,0.1)] text-[var(--status-warning)]";
     case "info":
       return "border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] text-[var(--accent-strong)]";
     default:
@@ -371,7 +371,7 @@ function HealSection() {
   /* ---- 오류(전체 로드 실패) ---- */
   if (error && actions.length === 0 && flags.length === 0) {
     return (
-      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--spot)]">
+      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--status-warning)]">
         {error}
       </div>
     );
@@ -383,7 +383,7 @@ function HealSection() {
     <div className="space-y-6">
       {/* 비치명 오류(롤백 실패 등) 인라인 표기 */}
       {error && (
-        <div className="rounded-xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-2.5 text-xs text-[var(--spot)]">
+        <div className="rounded-xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-2.5 text-xs text-[var(--status-warning)]">
           {error}
         </div>
       )}
@@ -658,7 +658,7 @@ export function GrowthDashboard() {
   /* ---- 오류 ---- */
   if (error && insights.length === 0) {
     return (
-      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--spot)]">
+      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--status-warning)]">
         {error}
       </div>
     );
@@ -711,7 +711,7 @@ export function GrowthDashboard() {
     <div className="space-y-6">
       {/* 비치명 오류(목록은 있으나 ack 실패 등) 인라인 표기 */}
       {error && (
-        <div className="rounded-xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-2.5 text-xs text-[var(--spot)]">
+        <div className="rounded-xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-2.5 text-xs text-[var(--status-warning)]">
           {error}
         </div>
       )}
@@ -730,7 +730,7 @@ export function GrowthDashboard() {
                   sev === "critical"
                     ? "text-[var(--status-error)]"
                     : sev === "warn"
-                      ? "text-[var(--spot)]"
+                      ? "text-[var(--status-warning)]"
                       : "text-[var(--accent-strong)]"
                 }`}
               >
@@ -780,7 +780,7 @@ export function GrowthDashboard() {
                                   r.severity === "critical"
                                     ? "bg-[var(--status-error)]"
                                     : r.severity === "warn"
-                                      ? "bg-[var(--spot)]"
+                                      ? "bg-[var(--status-warning)]"
                                       : "bg-[var(--accent-strong)]"
                                 }`}
                                 style={{ width: `${Math.min(display, 100)}%` }}

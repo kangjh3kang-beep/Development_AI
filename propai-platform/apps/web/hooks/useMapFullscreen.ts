@@ -156,9 +156,9 @@ export function useMapFullscreen(mapRef: { current: any }, options: MapFullscree
     (base = "") => {
       const stableBase = withoutPositionClass(base);
       // 네이티브 풀스크린: 브라우저가 요소를 뷰포트 전체로 만들므로 채움(h/w-full)+배경+flex만.
-      if (nativeFs) return `${stableBase} h-screen w-screen m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
+      if (nativeFs) return `${stableBase} h-screen w-screen m-0 bg-[var(--background-deep)] p-3 sm:p-4 flex min-h-0 flex-col`;
       // CSS 폴백 오버레이.
-      if (isFull) return `${stableBase} fixed inset-0 z-[9990] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex min-h-0 flex-col`;
+      if (isFull) return `${stableBase} fixed inset-0 z-[9990] m-0 bg-[var(--background-deep)] p-3 sm:p-4 flex min-h-0 flex-col`;
       return base;
     },
     [isFull, nativeFs],

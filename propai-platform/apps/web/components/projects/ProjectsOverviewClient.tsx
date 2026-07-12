@@ -223,7 +223,7 @@ export function ProjectsOverviewClient({
                     {project.phase}
                   </span>
                   {isSelected && (
-                    <span className="rounded-2xl border border-[var(--spot)]/20 bg-[var(--spot)]/10 px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--spot)] italic">
+                    <span className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--accent-strong)]/10 px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] italic">
                       {labels.selectedLabel}
                     </span>
                   )}

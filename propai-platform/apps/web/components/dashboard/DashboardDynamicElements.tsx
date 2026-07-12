@@ -111,7 +111,7 @@ export function ProjectCardGrid({
               <span className="rounded-lg bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">
                 {proj.tag}
               </span>
-              <div className="h-8 w-8 rounded-full border border-[var(--line)] flex items-center justify-center transition-all group-hover:bg-[var(--accent)] group-hover:border-[var(--accent)]">
+              <div className="h-8 w-8 rounded-full border border-[var(--line)] flex items-center justify-center transition-all group-hover:bg-[var(--accent-strong)] group-hover:border-[var(--accent-strong)]">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="14"

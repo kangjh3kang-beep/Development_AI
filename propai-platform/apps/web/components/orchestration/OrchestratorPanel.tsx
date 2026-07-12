@@ -423,7 +423,7 @@ export function OrchestratorPanel({
                 className={`flex flex-col items-start gap-0.5 rounded-xl px-3.5 py-2 text-left transition-colors ${
                   active
                     ? "bg-[var(--accent-strong)] text-white"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-card)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-strong)]"
                 }`}
               >
                 <span className="text-sm font-bold">{t.label}</span>
@@ -494,7 +494,7 @@ export function OrchestratorPanel({
                   type="button"
                   disabled={!node.available || runDisabled}
                   onClick={() => requestStandalone(id)}
-                  className="flex items-center justify-between gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] px-3.5 py-2.5 text-left transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center justify-between gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3.5 py-2.5 text-left transition-colors hover:border-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-bold text-[var(--text-primary)]">

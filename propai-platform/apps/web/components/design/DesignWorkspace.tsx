@@ -402,7 +402,7 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
                 className={[
                   "flex min-w-[12rem] items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors",
                   active
-                    ? "bg-[var(--ink)] text-white shadow-[var(--shadow-sm)]"
+                    ? "bg-[var(--saas-ink)] text-white shadow-[var(--shadow-sm)]"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface)]",
                 ].join(" ")}
               >

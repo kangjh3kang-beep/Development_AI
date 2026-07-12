@@ -70,7 +70,7 @@ export function PlanPreview({ steps, unlimited = false }: PlanPreviewProps) {
     <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
       <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-bold text-[var(--text-primary)]">실행 계획</p>
-        <span className="rounded-full bg-[var(--surface-card)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+        <span className="rounded-full bg-[var(--surface-strong)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)]">
           실행 {runnable.length}개 · 스킵 {skippedFresh.length + skippedUnavailable.length}개
         </span>
       </div>
@@ -86,7 +86,7 @@ export function PlanPreview({ steps, unlimited = false }: PlanPreviewProps) {
               className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs ${
                 isSkip
                   ? "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
-                  : "bg-[var(--surface-card)] text-[var(--text-secondary)]"
+                  : "bg-[var(--surface-strong)] text-[var(--text-secondary)]"
               }`}
             >
               <span className="w-5 shrink-0 text-center font-mono text-[10px] text-[var(--text-hint)]">

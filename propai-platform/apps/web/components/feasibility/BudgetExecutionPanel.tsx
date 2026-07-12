@@ -212,11 +212,11 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
           className="h-full rounded-full"
           style={{
             width: `${Math.min(100, rate ?? 0)}%`,
-            background: over ? "var(--status-danger, #dc2626)" : "var(--accent-strong)",
+            background: over ? "var(--status-error)" : "var(--accent-strong)",
           }}
         />
       </div>
-      <span className={`text-xs tabular-nums ${over ? "text-[var(--status-danger,#dc2626)] font-bold" : "text-[var(--text-secondary)]"}`}>
+      <span className={`text-xs tabular-nums ${over ? "text-[var(--status-error)] font-bold" : "text-[var(--text-secondary)]"}`}>
         {rate === null ? "—" : `${rate}%`}
       </span>
     </div>
@@ -271,7 +271,7 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
       </div>
 
       {overItems.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[var(--status-danger,#dc2626)]/40 bg-[var(--status-danger,#dc2626)]/10 px-3 py-2 text-xs text-[var(--status-danger,#dc2626)]">
+        <div className="mb-3 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs text-[var(--status-error)]">
           ⚠ 예산 초과 집행 {overItems.length}건: {overItems.map((c) => c.label || c.group).join(", ")}
         </div>
       )}
@@ -322,7 +322,7 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
               <td className="py-2 pr-3">총계</td>
               <td className="py-2 px-3 text-right tabular-nums">{won(total.budget)}</td>
               <td className="py-2 px-3 text-right tabular-nums">{won(total.spent)}</td>
-              <td className={`py-2 px-3 text-right tabular-nums ${total.remaining < 0 ? "text-[var(--status-danger,#dc2626)]" : ""}`}>
+              <td className={`py-2 px-3 text-right tabular-nums ${total.remaining < 0 ? "text-[var(--status-error)]" : ""}`}>
                 {won(total.remaining)}
               </td>
               <td className="py-2 px-3">{rateBar(total.rate, total.remaining < 0)}</td>
@@ -341,7 +341,7 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: "accent" | "danger" }) {
   const color =
-    tone === "accent" ? "text-[var(--accent-strong)]" : tone === "danger" ? "text-[var(--status-danger,#dc2626)]" : "text-[var(--text-primary)]";
+    tone === "accent" ? "text-[var(--accent-strong)]" : tone === "danger" ? "text-[var(--status-error)]" : "text-[var(--text-primary)]";
   return (
     <div className="min-w-[92px]">
       <div className="text-[10px] uppercase tracking-widest text-[var(--text-hint)]">{label}</div>
@@ -402,7 +402,7 @@ function GroupBlock(props: {
             />
           </td>
           <td className="py-1.5 px-3 text-right tabular-nums text-[var(--text-secondary)]">{won(c.spent)}</td>
-          <td className={`py-1.5 px-3 text-right tabular-nums ${c.remaining < 0 ? "text-[var(--status-danger,#dc2626)] font-bold" : "text-[var(--text-primary)]"}`}>
+          <td className={`py-1.5 px-3 text-right tabular-nums ${c.remaining < 0 ? "text-[var(--status-error)] font-bold" : "text-[var(--text-primary)]"}`}>
             {won(c.remaining)}
           </td>
           <td className="py-1.5 px-3">{props.rateBar(c.rate, c.over)}</td>
@@ -453,7 +453,7 @@ function GroupBlock(props: {
                 <button
                   onClick={() => props.onRemove(c.id)}
                   title="항목 삭제"
-                  className="text-xs text-[var(--text-hint)] hover:text-[var(--status-danger,#dc2626)]"
+                  className="text-xs text-[var(--text-hint)] hover:text-[var(--status-error)]"
                 >
                   🗑
                 </button>

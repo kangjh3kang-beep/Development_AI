@@ -35,8 +35,8 @@ const PRIORITY_LABEL: Record<Priority, string> = {
   balanced: "균형", daylight: "일조 우선", density: "밀도 우선",
 };
 const GRADE_COLOR: Record<string, string> = {
-  우수: "var(--success, #16a34a)", 양호: "var(--accent-strong, #3b82f6)",
-  미흡: "var(--warning, #d97706)", 불가: "var(--danger, #dc2626)",
+  우수: "var(--status-success)", 양호: "var(--accent-strong)",
+  미흡: "var(--status-warning)", 불가: "var(--status-error)",
 };
 
 export function SolarPlacementCard({

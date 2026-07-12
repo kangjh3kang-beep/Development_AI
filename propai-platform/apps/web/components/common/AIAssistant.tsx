@@ -402,7 +402,7 @@ export function AIAssistant() {
         onClick={() => setIsOpen(!isOpen)}
         className={`relative flex h-16 w-16 items-center justify-center rounded-[1.75rem] text-white shadow-[var(--shadow-2xl)] transition-all duration-500 overflow-hidden ${
             isOpen 
-            ? "bg-[var(--background-secondary)]" 
+            ? "bg-[var(--surface-secondary)]"
             : "bg-gradient-to-tr from-[var(--accent-strong)] to-teal-700"
         }`}
       >

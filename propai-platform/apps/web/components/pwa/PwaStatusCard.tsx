@@ -175,7 +175,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
         </div>
         {updateReady ? (
           <div
-            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--success)]/20 bg-[var(--success-soft)] p-5"
+            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--status-success)]/20 bg-[var(--status-success)]/12 p-5"
             role="status"
           >
             <p className="text-sm font-semibold text-[var(--text-primary)]">
@@ -195,13 +195,13 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
         ) : null}
         {lastError ? (
           <div
-            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-5"
+            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--status-warning)]/20 bg-[var(--status-warning)]/12 p-5"
             role="alert"
           >
             <p className="text-sm font-semibold text-[var(--text-primary)]">
               {labels.errorTitle}
             </p>
-            <p className="mt-2 text-sm leading-7 text-[var(--spot)]">{lastError}</p>
+            <p className="mt-2 text-sm leading-7 text-[var(--status-error)]">{lastError}</p>
           </div>
         ) : null}
         <div className="mt-5 flex flex-wrap gap-3">

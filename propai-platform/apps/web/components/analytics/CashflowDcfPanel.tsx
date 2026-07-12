@@ -162,7 +162,7 @@ export function CashflowDcfPanel() {
   };
 
   const s = result?.summary;
-  const numCls = "h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
+  const numCls = "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
 
   // 핵심 3축(연동·nullable) — 출처배지 또는 '수지 미산출' 정직표기.
   const linkedFields: Array<{ label: string; val: number | null; set: (n: number | null) => void; source: string | null }> = [
@@ -240,7 +240,7 @@ export function CashflowDcfPanel() {
                 {busy === "calc" ? "산정 중…" : "현금흐름 계산"}
               </button>
               <button type="button" onClick={downloadExcel} disabled={busy !== "" || !canCalc}
-                className="h-9 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">
+                className="h-9 rounded-lg border border-[var(--line)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">
                 {busy === "excel" ? "생성 중…" : "엑셀 다운로드 ↓"}
               </button>
             </div>

@@ -675,7 +675,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
               </div>
             </div>
             {saveError ? (
-              <p className="mt-2 text-xs font-bold text-[var(--spot)]">{saveError}</p>
+              <p className="mt-2 text-xs font-bold text-[var(--status-error)]">{saveError}</p>
             ) : null}
           </form>
 
@@ -698,7 +698,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                     type="button"
                     aria-label={`${filter.name} 삭제`}
                     onClick={() => deleteFilterMutation.mutate(filter.filter_id)}
-                    className="text-[var(--text-hint)] hover:text-[var(--spot)]"
+                    className="text-[var(--text-hint)] hover:text-[var(--status-error)]"
                   >
                     ✕
                   </button>
@@ -1419,7 +1419,7 @@ function DetailModal({
           </p>
         ) : null}
         {canFetchDetail && detailQuery.isError ? (
-          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--spot)]">
+          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--status-error)]">
             상세 불러오기 실패 — 목록 기준 정보만 표시합니다. (
             {extractErrorMessage(detailQuery.error)})
           </p>
@@ -1607,7 +1607,7 @@ function DetailModal({
             <p className="mt-3 text-[11px] font-bold text-[var(--text-hint)]">{regProgress}</p>
           ) : null}
           {regErr ? (
-            <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] font-bold text-[var(--spot)]">
+            <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] font-bold text-[var(--status-error)]">
               {regErr}
             </p>
           ) : null}
@@ -1645,8 +1645,8 @@ function DetailModal({
                 </div>
               ) : null}
               {regResult.ai.risks?.length ? (
-                <div className="rounded-lg border border-[var(--spot)]/30 bg-[var(--spot)]/10 px-3 py-2">
-                  <p className="sa-di-eyebrow mb-1 !text-[var(--spot)]">위험요소</p>
+                <div className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2">
+                  <p className="sa-di-eyebrow mb-1 !text-[var(--status-warning)]">위험요소</p>
                   <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-primary)]">
                     {regResult.ai.risks.map((r, i) => (
                       <li key={i}>{r}</li>

@@ -754,7 +754,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -802,7 +802,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}

@@ -318,7 +318,7 @@ export function UnitMixOptimizerPanel() {
 
         {/* Error */}
         {error && (
-          <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-4 text-sm text-[var(--spot)]">
+          <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-4 text-sm text-[var(--status-warning)]">
             {error}
           </div>
         )}

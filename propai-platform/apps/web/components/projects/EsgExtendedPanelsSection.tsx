@@ -223,7 +223,7 @@ function renderEuTaxonomyResult(raw: unknown): ReactNode {
               <span className="text-[var(--text-secondary)]">
                 [{c.category}] {c.name}
               </span>
-              <span className={c.passed ? "font-semibold text-emerald-600" : "font-semibold text-[var(--spot)]"}>
+              <span className={c.passed ? "font-semibold text-emerald-600" : "font-semibold text-[var(--status-error)]"}>
                 {c.passed ? "통과" : "미통과"} ({c.actual_value}/{c.threshold})
               </span>
             </div>

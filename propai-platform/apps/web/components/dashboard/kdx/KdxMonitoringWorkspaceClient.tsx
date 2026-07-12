@@ -169,12 +169,12 @@ export function KdxMonitoringWorkspaceClient() {
 
             <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 mt-8">
               <div className="lg:col-span-2">
-                <div className="rounded-[var(--radius-3xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1 overflow-hidden shadow-[var(--shadow-lg)]">
+                <div className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1 overflow-hidden shadow-[var(--shadow-lg)]">
                   <KdxRealtimeChart />
                 </div>
               </div>
 
-              <Card className="rounded-[var(--radius-3xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] flex flex-col shadow-[var(--shadow-lg)]">
+              <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] flex flex-col shadow-[var(--shadow-lg)]">
                 <CardContent className="p-8 flex flex-col h-full">
                   <CardTitle className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text-primary)] mb-8">
                     Recent pipeline logs

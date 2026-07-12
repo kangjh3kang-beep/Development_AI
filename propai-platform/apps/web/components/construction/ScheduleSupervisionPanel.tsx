@@ -28,7 +28,7 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
         if (res && res.tasks) {
           const coloredTasks = (res.tasks ?? []).map((task, i: number) => ({
              ...task,
-             color: ["var(--accent-strong)", "var(--info)", "var(--success)", "var(--warning)"][i % 4]
+             color: ["var(--accent-strong)", "var(--status-info)", "var(--status-success)", "var(--status-warning)"][i % 4]
           }));
           setTasks(coloredTasks);
           setTotalMonths(res.total_months ?? null);

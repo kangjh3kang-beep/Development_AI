@@ -128,7 +128,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     <Tooltip
                       cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
                       formatter={(v: any) => [`${Number(v).toLocaleString()}명`, "인구"]}
-                      contentStyle={{ background: "var(--surface-card)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
                     />
                     <Bar dataKey="count" fill="var(--accent-strong)" radius={[0, 4, 4, 0]}>
                       <LabelList dataKey="count" position="right" formatter={(v: any) => Number(v).toLocaleString()}
@@ -153,7 +153,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     </Pie>
                     <Tooltip
                       formatter={(v: any, n: any) => [`${Number(v).toLocaleString()}`, n]}
-                      contentStyle={{ background: "var(--surface-card)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -189,7 +189,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                 <p className="sa-di-eyebrow mb-2">소득 구간 비율</p>
                 <ul className="space-y-1.5 text-xs text-[var(--text-secondary)]">
                   {Object.entries(income.income_bracket_ratio).map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-light)] pb-1">
+                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-subtle)] pb-1">
                       <span>{k.replace("under_30m", "3천만원 미만").replace("30m_to_70m", "3천~7천만원").replace("over_70m", "7천만원 이상")}</span>
                       <span className="font-bold text-[var(--text-primary)]">{Number(v).toFixed(1)}%</span>
                     </li>

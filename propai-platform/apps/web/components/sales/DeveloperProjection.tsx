@@ -144,13 +144,13 @@ export default function DeveloperProjection() {
           {/* 부분내결함 표기(은폐 금지·dead output 해소): consolidated.partial(머신리더블)로 판별.
               실패 현장별 ERROR 배지 + 분류코드 + 상관ID(서버로그 역추적) 노출 — 나머지는 정상 합산. */}
           {(con.partial || (roll?.errors && roll.errors.length > 0)) && (
-            <div className="mt-2 rounded-lg border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-2 text-[11px] text-[var(--error)]">
+            <div className="mt-2 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2.5 py-2 text-[11px] text-[var(--status-error)]">
               <b>통합총계 일부 누락 · 현장 집계 실패({con.failed_count ?? roll?.errors?.length ?? 0}곳)</b>
               <span className="ml-1 text-[var(--text-secondary)]">아래 현장은 합산에서 제외(과소계상)되었습니다. 나머지 현장은 정상 합산됩니다.</span>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {(roll?.errors ?? []).map((e) => (
-                  <span key={e.site_id} className="inline-flex items-center gap-1 rounded border border-[var(--error)]/50 bg-[var(--error)]/15 px-1.5 py-0.5">
-                    <b className="rounded bg-[var(--error)] px-1 text-[9px] font-black text-white">ERROR</b>
+                  <span key={e.site_id} className="inline-flex items-center gap-1 rounded border border-[var(--status-error)]/50 bg-[var(--status-error)]/15 px-1.5 py-0.5">
+                    <b className="rounded bg-[var(--status-error)] px-1 text-[9px] font-black text-white">ERROR</b>
                     <span className="text-[var(--text-primary)]">{e.site_name}</span>
                     <span className="text-[var(--text-secondary)]">· {ERR_LABEL[e.error_code] ?? e.error_code}</span>
                     <span className="text-[var(--text-hint)]" title="서버 로그 역추적용 상관ID">#{e.correlation_id}</span>
@@ -163,7 +163,7 @@ export default function DeveloperProjection() {
               불일치(balanced=false)인 현장 수를 머신리더블 신호(reconcile_failed_count)로 띄운다.
               아래 현장 드릴다운(관리 ▾)에서 불일치 항목(약정표 누락·수납초과 등)을 확인. */}
           {(con.reconcile_failed_count ?? 0) > 0 && (
-            <div className="mt-2 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+            <div className="mt-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-2 text-[11px] text-[var(--status-warning)]">
               <b>독립 대사 불일치 · 현장 {con.reconcile_failed_count}곳</b>
               <span className="ml-1 text-[var(--text-secondary)]">
                 합산은 정상이나 현장 원장(계약·분납약정·수납)이 서로 맞지 않습니다. 각 현장 ‘관리 ▾’에서 불일치 항목(약정표 누락·수납 초과 등)을 확인하세요.
@@ -242,7 +242,7 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
 }) {
   // 발생주의가 현금흐름보다 크고 미수금이 있으면 과대계상 소지(받지 못한 매출까지 이익 반영).
   const overstated = accrualProfit > cashProfit && receivable > 0;
-  const cls = (v: number) => (v >= 0 ? "text-[var(--success)]" : "text-[var(--error)]");
+  const cls = (v: number) => (v >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]");
   return (
     <div className="mt-2 space-y-2">
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-[var(--line-subtle)] sm:grid-cols-4">
@@ -260,7 +260,7 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
         ))}
       </div>
       {overstated && (
-        <p className="flex items-center gap-1.5 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--warning)]">
+        <p className="flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]">
           <AlertTriangle className="size-3.5" aria-hidden />
           발생주의 손익이 현금흐름 손익보다 큽니다 — 미수금({won(receivable)})까지 매출로 인식된 과대계상 소지가 있습니다. 실수납 기준(현금흐름)을 함께 확인하세요.
         </p>
@@ -288,19 +288,19 @@ function ReconciliationView({ rec }: { rec?: Reconciliation }) {
   }
   if (balanced === true) {
     return (
-      <p className="flex items-center gap-1.5 rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--success)]">
+      <p className="flex items-center gap-1.5 rounded-lg border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-success)]">
         <span aria-hidden>✓</span>독립 대사 통과 — 계약·분납약정·수납이 서로 정합합니다.
       </p>
     );
   }
   // balanced === false → 불일치. 각 discrepancy 를 라벨 칩 + 상세로 렌더(은폐 금지).
   return (
-    <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+    <div className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-2 text-[11px] text-[var(--status-warning)]">
       <b className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />독립 대사 불일치 — 현장 원장 점검 필요</b>
       <div className="mt-1.5 flex flex-col gap-1">
         {disc.map((x, i) => (
           <span key={`${x.key}-${i}`} className="inline-flex flex-wrap items-baseline gap-1">
-            <b className="rounded border border-[var(--warning)]/50 bg-[var(--warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--warning)]">
+            <b className="rounded border border-[var(--status-warning)]/50 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
               {RECON_LABEL[x.key] ?? x.key}
             </b>
             {x.detail && <span className="text-[var(--text-secondary)]">{x.detail}</span>}
@@ -446,7 +446,7 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
               <tbody>
                 {pay.staff.slice(0, 30).map((p) => (
                   <tr key={p.staff_id} className="border-t border-[var(--line)]/50">
-                    <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--warning)]">단가미설정</span>}</td>
+                    <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--status-warning)]">단가미설정</span>}</td>
                     <td className="text-right text-[var(--text-primary)]">{p.days}일<span className="ml-0.5 text-[9px] text-[var(--text-tertiary)]">{p.hours}h</span></td>
                     <td>
                       <div className="flex flex-wrap items-center gap-1">
@@ -460,7 +460,7 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
                       </div>
                     </td>
                     <td className="text-right text-[var(--text-secondary)]">{won(p.gross)}</td>
-                    <td className="text-right text-[var(--error)]" title={p.deductions.map((x) => `${x.label} ${won(x.amount)}`).join("\n")}>{p.total_deduction > 0 ? `-${won(p.total_deduction)}` : "-"}</td>
+                    <td className="text-right text-[var(--status-error)]" title={p.deductions.map((x) => `${x.label} ${won(x.amount)}`).join("\n")}>{p.total_deduction > 0 ? `-${won(p.total_deduction)}` : "-"}</td>
                     <td className="text-right font-bold text-[var(--text-primary)]">{won(p.net)}</td>
                   </tr>
                 ))}

@@ -99,11 +99,11 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
               <div>
                 <h4 className="text-sm font-bold text-[var(--text-secondary)] mb-4">건축 규모 가설계 (Massing)</h4>
                 <div className="space-y-3">
-                  <div className="flex justify-between border-b border-[var(--line-light)] pb-2">
+                  <div className="flex justify-between border-b border-[var(--line-subtle)] pb-2">
                     <span className="text-[var(--text-secondary)] text-sm">적용 용도지역</span>
                     <span className="font-semibold text-sm">{zoneType || "정보 없음"}</span>
                   </div>
-                  <div className="flex justify-between border-b border-[var(--line-light)] pb-2">
+                  <div className="flex justify-between border-b border-[var(--line-subtle)] pb-2">
                     <span
                       className="text-[var(--text-secondary)] text-sm"
                       title="가설계 기준 추정값입니다. 실효 용적률(조례)·법정 상한과 다를 수 있으니 부지분석의 '건축 가능 범위'(정북일조·실효 한도)를 함께 확인하세요."
@@ -114,11 +114,11 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                       {massing.estimated_bca}% / {massing.estimated_far}%
                     </span>
                   </div>
-                  <div className="flex justify-between border-b border-[var(--line-light)] pb-2">
+                  <div className="flex justify-between border-b border-[var(--line-subtle)] pb-2">
                     <span className="text-[var(--text-secondary)] text-sm">대지 면적</span>
                     <span className="font-semibold text-sm">{massing.land_area_sqm.toLocaleString()} ㎡</span>
                   </div>
-                  <div className="flex justify-between border-b border-[var(--line-light)] pb-2">
+                  <div className="flex justify-between border-b border-[var(--line-subtle)] pb-2">
                     <span className="text-[var(--text-secondary)] text-sm">건축 가능 연면적</span>
                     <span className="font-semibold text-sm text-[var(--accent-strong)]">
                       {massing.gfa_pyeong.toLocaleString()} 평 ({massing.gfa_sqm.toLocaleString()} ㎡)
@@ -126,7 +126,7 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                   </div>
                 </div>
               </div>
-              <div className="mt-4 p-3 bg-[var(--surface-main)] rounded-lg text-xs text-[var(--text-hint)] border border-[var(--line-light)]">
+              <div className="mt-4 p-3 bg-[var(--surface-soft)] rounded-lg text-xs text-[var(--text-hint)] border border-[var(--line-subtle)]">
                 건축비: 평당 {assumptions?.construction_cost_per_pyeong_10k.toLocaleString()}만원 적용<br/>
                 적정 분양가: 평당 {formatPrice(assumptions?.avg_pyeong_price_10k || 0)} 적용 (전용률 75%)
               </div>
@@ -139,7 +139,7 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
               <div>
                 <h4 className="text-sm font-bold text-[var(--text-secondary)] mb-4">예상 수익률 (ROI) 요약</h4>
                 
-                <div className="flex flex-col items-center justify-center mb-6 py-4 bg-[var(--surface-main)] rounded-xl border border-[var(--status-success)]/30">
+                <div className="flex flex-col items-center justify-center mb-6 py-4 bg-[var(--surface-soft)] rounded-xl border border-[var(--status-success)]/30">
                   <span className="text-xs font-bold text-[var(--status-success)] mb-1">최종 예상 수익률 (ROI)</span>
                   <span className="text-4xl font-black text-[var(--status-success)]">
                     {financials.roi_percent}%
@@ -167,7 +167,7 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                           할인율 {((assumptions?.npv_discount_rate ?? 0.08) * 100).toFixed(0)}%·{assumptions?.npv_dev_period_years ?? 3}년
                         </span>
                       </span>
-                      <span className={`font-bold text-sm ${financials.npv_10k >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-danger)]"}`}>
+                      <span className={`font-bold text-sm ${financials.npv_10k >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>
                         {formatPrice(financials.npv_10k)}
                       </span>
                     </div>

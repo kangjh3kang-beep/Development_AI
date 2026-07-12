@@ -141,15 +141,15 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
 
           <div className="grid grid-cols-2 gap-10 md:grid-cols-3">
              <div className="md:col-span-1">
-                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--success)] mb-2 italic">{t.meanNpv || "평균 NPV"}</p>
+                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--status-success)] mb-2 italic">{t.meanNpv || "평균 NPV"}</p>
                 <p className="text-5xl font-[1000] tracking-tighter text-[var(--text-primary)] italic">{hasResult ? formatCurrencyCompact(npv) : "실행 전"}</p>
              </div>
              <div>
-                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--spot)] mb-2 italic">{t.var5 || "하위 5% 리스크 (VaR)"}</p>
+                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--status-warning)] mb-2 italic">{t.var5 || "하위 5% 리스크 (VaR)"}</p>
                 <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{var5 != null ? formatCurrencyCompact(var5) : "—"}</p>
              </div>
              <div>
-                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--info)] mb-2 italic">{t.profitIndex || "수익성 지수 (PI)"}</p>
+                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--status-info)] mb-2 italic">{t.profitIndex || "수익성 지수 (PI)"}</p>
                 <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{profitIndex != null ? profitIndex : "—"}</p>
              </div>
           </div>
@@ -200,19 +200,19 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                 {var5 != null && (
                   <ReferenceLine
                     x={var5}
-                    stroke="var(--spot)"
+                    stroke="var(--status-warning)"
                     strokeWidth={2}
                     strokeDasharray="10 10"
-                    label={{ position: 'top', value: 'VALUE AT RISK (5%)', fill: 'var(--spot)', fontSize: 9, fontWeight: 900 }}
+                    label={{ position: 'top', value: 'VALUE AT RISK (5%)', fill: 'var(--status-warning)', fontSize: 9, fontWeight: 900 }}
                   />
                 )}
                 {npv != null && (
                   <ReferenceLine
                     x={npv}
-                    stroke="var(--success)"
+                    stroke="var(--status-success)"
                     strokeWidth={2}
                     strokeDasharray="10 10"
-                    label={{ position: 'top', value: 'EXPECTED MEAN', fill: 'var(--success)', fontSize: 9, fontWeight: 900 }}
+                    label={{ position: 'top', value: 'EXPECTED MEAN', fill: 'var(--status-success)', fontSize: 9, fontWeight: 900 }}
                   />
                 )}
                 <Area

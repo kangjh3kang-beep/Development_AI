@@ -11,7 +11,7 @@ type ParcelsLayerProps = {
 
 const parcelStatusClassName = {
   available: "bg-[rgba(14,116,144,0.28)] text-[var(--accent-strong)]",
-  review: "bg-[rgba(217,119,6,0.22)] text-[var(--spot)]",
+  review: "bg-[rgba(217,119,6,0.22)] text-[var(--status-warning)]",
   restricted: "bg-[var(--surface-muted)] text-[var(--text-primary)]",
 } as const;
 
