@@ -25,6 +25,7 @@ import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
 import { LandShareModal, type LandShareUnit } from "@/components/operations/LandShareModal";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
@@ -668,7 +669,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${r.parent_id ? "bg-[var(--surface-soft)]/40" : ""} ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)]" : ""}`}>
+                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${r.parent_id ? "bg-[var(--surface-soft)]/40" : ""} ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)] border-l-2 border-l-[var(--accent-strong)]" : ""}`}>
                       <td className="px-1.5 py-1">
                         <button onClick={() => setHighlight(r.jibun)} title="지도에서 강조" className="flex items-center gap-1">
                           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: rowStatus(r).color }} />
@@ -676,7 +677,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         </button>
                       </td>
                       <td className={`px-1.5 py-1 min-w-[160px] ${r.parent_id ? "pl-4" : ""}`}>
-                        <input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
+                        <input title={r.jibun || "지번"} className={`${inputCls} cc-num`} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
                         {/* S3 케이스 배지: 토지/단일건물/공동주택 자동분류 */}
                         {r.parcel_case && !r.unit_label && (
                           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9px]">
@@ -694,11 +695,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-20">
-                        <NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡ (집합건물 세대행은 대지지분)` : "면적(대지)"} className={inputCls} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} />
+                        <NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡ (집합건물 세대행은 대지지분)` : "면적(대지)"} className={`${inputCls} cc-num`} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} />
                         {r.area_sqm != null && r.area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.area_sqm / 3.305785).toFixed(2)}평</div>}
                       </td>
                       <td className="px-1.5 py-1 w-20">
-                        <NumberInput allowDecimal title={r.exclusive_area_sqm != null ? `${r.exclusive_area_sqm.toLocaleString()}㎡ 세대 전유면적` : "세대 전유면적(집합건물)"} placeholder="—" className={inputCls} value={r.exclusive_area_sqm ?? null} onChange={(n) => updateRow(projectId, r.id, { exclusive_area_sqm: n })} />
+                        <NumberInput allowDecimal title={r.exclusive_area_sqm != null ? `${r.exclusive_area_sqm.toLocaleString()}㎡ 세대 전유면적` : "세대 전유면적(집합건물)"} placeholder="—" className={`${inputCls} cc-num`} value={r.exclusive_area_sqm ?? null} onChange={(n) => updateRow(projectId, r.id, { exclusive_area_sqm: n })} />
                         {r.exclusive_area_sqm != null && r.exclusive_area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.exclusive_area_sqm / 3.305785).toFixed(2)}평</div>}
                       </td>
                       <td className="px-1.5 py-1 w-24">
@@ -707,17 +708,17 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         </select>
                       </td>
                       <td className="px-1.5 py-1 w-36">
-                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
+                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} cc-num text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
                           <button onClick={() => estimatePrice(r)} disabled={!!busy} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
                           <button onClick={() => setModalRow(r)} title="예상 시세 추정 상세(5방법 비교·건물/임대·신뢰도 게이지·리포트 PDF) — 감정평가 아님" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">상세추정</button>
                         </div>
                       </td>
-                      <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
-                      <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
+                      <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} cc-num text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
+                      <td className="px-1.5 py-1 text-center"><input type="checkbox" className="accent-[var(--accent-strong)]" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
                       {consentTypes.map((c) => (
                         <td key={c.id} className="px-1.5 py-1 text-center">
-                          <input type="checkbox" title={`${c.label} 동의`} checked={consentVal(r, c.id)} onChange={(e) => setConsentVal(r, c.id, e.target.checked)} />
+                          <input type="checkbox" className="accent-[var(--accent-strong)]" title={`${c.label} 동의`} checked={consentVal(r, c.id)} onChange={(e) => setConsentVal(r, c.id, e.target.checked)} />
                         </td>
                       ))}
                       <td className="px-1.5 py-1 whitespace-nowrap">
@@ -789,15 +790,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                   <span className="text-[var(--text-secondary)]">세대 전유면적 합(집합건물): <b className="cc-num text-[var(--text-primary)]">{Math.round(agg.exclArea).toLocaleString()}㎡</b></span>
                 )}
               </div>
+              <DataSourceNotice source="부지분석 · 개별공시지가 · 등기부등본" note="집계는 등록 필지 기준 · 참고용" />
             </CardContent>
           </Card>
 
           {/* 구획도 (필지 전체) — 계약/동의 상태색상 + 행 클릭 하이라이트 */}
           <div>
-            <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-success)]" />계약완료</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-warning)]" />동의(미계약)</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-success)]/40 bg-[color-mix(in_srgb,var(--status-success)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-success)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-success)]" />계약완료</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-warning)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-warning)]" />동의(미계약)</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-error)]/40 bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-error)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
               <span className="text-[var(--text-hint)]">· 표의 번호/지도 필지 클릭 시 상호 강조</span>
             </div>
             <SatongMultiMapDynamic
