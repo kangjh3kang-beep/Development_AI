@@ -127,7 +127,7 @@ export function DashboardHome({ locale }: { locale: string }) {
             className="absolute inset-0"
             style={{
               background:
-                "linear-gradient(115deg, rgba(14,14,16,0.82) 0%, rgba(14,14,16,0.5) 55%, rgba(14,14,16,0.32) 100%)",
+                "linear-gradient(115deg, rgba(14,14,16,0.88) 0%, rgba(14,14,16,0.72) 55%, rgba(14,14,16,0.6) 100%)",
             }}
           />
           <div
@@ -140,15 +140,15 @@ export function DashboardHome({ locale }: { locale: string }) {
             }}
           />
           <div className="relative">
-            <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--accent-strong)]">
+            <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.1em] text-white/70">
               Intelligence Control Room
             </span>
             <div className="mt-3 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
               <div className="min-w-0">
-                <h1 className="max-w-3xl text-2xl font-black leading-tight text-[var(--text-primary)] sm:text-4xl">
+                <h1 className="max-w-3xl break-keep text-2xl font-black leading-tight text-white [text-wrap:pretty] sm:text-4xl">
                   필요한 결과물을 고르면 입력부터 보고서까지 이어집니다
                 </h1>
-                <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-[var(--text-secondary)]">
+                <p className="mt-3 max-w-2xl break-keep text-sm font-medium leading-6 text-white/75">
                   기능을 찾는 시간을 줄이고 후보지, 사업성, 시장, 인허가, 설계 검토를 산출물 중심으로 시작합니다.
                 </p>
               </div>
@@ -162,7 +162,7 @@ export function DashboardHome({ locale }: { locale: string }) {
                 </Link>
                 <Link
                   href={hrefFor(locale, "projects")}
-                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] px-4 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-tertiary)]"
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] border border-white/25 bg-white/10 px-4 text-sm font-bold text-white backdrop-blur transition-colors hover:bg-white/20"
                 >
                   프로젝트 불러오기
                 </Link>
@@ -171,23 +171,23 @@ export function DashboardHome({ locale }: { locale: string }) {
 
           <div className="mt-6 grid gap-2 md:grid-cols-4">
             {workflowSteps.map((step, index) => (
-              <div key={step.label} className="rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] p-3">
-                <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em] text-[var(--accent-strong)]">
+              <div key={step.label} className="rounded-[var(--r-card)] border border-white/15 bg-white/10 p-3 backdrop-blur">
+                <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em] text-white/90">
                   {String(index + 1).padStart(2, "0")} {step.label}
                 </span>
-                <p className="mt-2 text-xs font-semibold leading-5 text-[var(--text-secondary)]">{step.body}</p>
+                <p className="mt-2 text-xs font-semibold leading-5 text-white/70">{step.body}</p>
               </div>
             ))}
           </div>
 
-          <div className="mt-5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-muted)] p-3">
+          <div className="mt-5 rounded-[var(--r-card)] border border-white/15 bg-white/10 p-3 backdrop-blur">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-bold text-[var(--text-tertiary)]">생성 경로</span>
-              <span className="rounded-[var(--r-card)] bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-black text-[var(--accent-strong)]">3분 내 초안</span>
+              <span className="text-xs font-bold text-white/70">생성 경로</span>
+              <span className="rounded-[var(--r-card)] bg-[var(--accent-strong)] px-2 py-1 text-[11px] font-black text-[var(--on-primary)]">3분 내 초안</span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               {["부지 입력", "AI 분석", "보고서 저장"].map((label) => (
-                <div key={label} className="rounded-[var(--r-card)] bg-[var(--surface-tertiary)] px-3 py-2 text-sm font-bold text-[var(--text-primary)]">
+                <div key={label} className="rounded-[var(--r-card)] bg-black/40 px-3 py-2 text-sm font-bold text-white">
                   {label}
                 </div>
               ))}
