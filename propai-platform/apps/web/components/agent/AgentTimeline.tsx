@@ -83,7 +83,7 @@ export function AgentTimeline({
                 <span
                   className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
                     stage.status === "completed"
-                      ? "bg-[var(--accent)] text-[#ffffff]"
+                      ? "bg-[var(--accent-strong)] text-[#ffffff]"
                       : stage.status === "active"
                         ? "bg-[var(--spot)] text-[#ffffff]"
                         : "bg-[var(--surface-muted)] text-[var(--text-primary)]"
