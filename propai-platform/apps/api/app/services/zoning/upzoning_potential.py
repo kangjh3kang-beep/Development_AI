@@ -256,7 +256,7 @@ class UpzoningPotentialAnalyzer:
             low_far, high_far, far_source = _target_far_pct(
                 target_zone, sigungu, ordinance_far_resolver
             )
-            feasibility, reason, conditions = self._grade(
+            feasibility, reason, conditions, blocked_reasons = self._grade(
                 pkey, path, area, near_station, near_station_m,
                 adjacency_contiguous, parcel_count, key, blockers,
             )
@@ -270,6 +270,10 @@ class UpzoningPotentialAnalyzer:
                 "conditions": conditions,
                 "feasibility": feasibility,
                 "feasibility_reason": reason,
+                # ★P0 additive: 가능성을 강등시킨 구조적 사유(비연접 파편 필지·규제구역 등)를
+                # 별도 배열로 명시 — feasibility_reason(자유서술)과 달리 프론트가 배지/경고로
+                # 그대로 렌더할 수 있는 사유 목록이다(빈 배열=강등 사유 없음).
+                "blocked_reasons": blocked_reasons,
                 "legal_basis": path["legal_basis"],
                 # verified law.go.kr 딥링크(레지스트리 단일출처). 프론트 LegalRefChip가
                 # url_status='verified'는 클릭 링크, 'pending'/빈값은 텍스트 폴백(죽은 링크 금지).
@@ -311,9 +315,10 @@ class UpzoningPotentialAnalyzer:
         self, pkey: str, path: dict, area: float, near_station: bool,
         near_station_m: float | None, adjacency: bool | None, parcel_count: int,
         zone: str, blockers: list[str],
-    ) -> tuple[str, str, list[str]]:
+    ) -> tuple[str, str, list[str], list[str]]:
         conditions: list[str] = []
         reasons: list[str] = []
+        blocked_reasons: list[str] = []
         score = 0  # +가산/-감산 → 상/중/하
 
         # 1) 면적요건
@@ -358,6 +363,9 @@ class UpzoningPotentialAnalyzer:
             elif adjacency is False:
                 score -= 1
                 reasons.append("필지 비인접(통합개발 제약)")
+                blocked_reasons.append(
+                    "비연접 파편 필지 — 지구단위계획 구역(일단의 토지) 성립 불확실"
+                )
             else:
                 reasons.append("인접성 미확인 — 현장/지적도 확인필요")
 
@@ -384,6 +392,9 @@ class UpzoningPotentialAnalyzer:
         if blockers:
             score -= 2
             reasons.append("규제구역(" + ", ".join(blockers) + ") — 종상향 제약")
+            blocked_reasons.append(
+                f"규제구역({', '.join(blockers)}) — 해제·완화 선행 없이는 종상향 불가"
+            )
 
         if score >= 1:
             grade = "상"
@@ -391,8 +402,14 @@ class UpzoningPotentialAnalyzer:
             grade = "중"
         else:
             grade = "하"
+        # ★확정 강등(P0): 비연접 파편 필지는 감점(-1)만으론 '중'까지만 내려가 종상향 가능성이
+        # 여전히 남아있는 것처럼 보일 위험이 있다(라이브 재현: 파편 9필지+개발제한구역 혼합에서
+        # "가능성 상·1순위" 산출). 인접성 불충족은 지구단위계획 등 '일단의 토지' 성립 요건
+        # 자체가 흔들리는 구조적 결격이므로, 점수와 무관하게 등급을 '하'로 확정 강등한다.
+        if parcel_count >= 2 and adjacency is False:
+            grade = "하"
         reason = "; ".join(reasons) or "보유 데이터로 등급화(전제 충족 시)"
-        return grade, reason, conditions
+        return grade, reason, conditions, blocked_reasons
 
     @staticmethod
     def _blockers(special_districts: list[Any] | None) -> list[str]:

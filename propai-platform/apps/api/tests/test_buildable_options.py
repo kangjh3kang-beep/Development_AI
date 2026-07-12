@@ -37,8 +37,12 @@ def test_current_zone_allowed_uses_promoted() -> None:
     assert out["top_recommendation"]["achievable_far_pct"] == 200
 
 
-def test_upzoning_high_far_outranks_current_when_score_higher() -> None:
-    """종상향(제3종 far 250·가능성 상=0.85→212.5)이 현행(200)보다 점수 높으면 상위 랭크."""
+def test_current_tier_always_outranks_upzoning_even_with_higher_score() -> None:
+    """★P0 정렬정책: 종상향 점수(212.5)가 현행(200)보다 높아도 현행이 항상 top(티어 우선).
+
+    과거 버그: 순수 score 정렬이라 '예상치·미확정'인 종상향이 '현행·바로가능'보다 앞서
+    최우선 사업유형으로 오인될 위험이 있었다(정렬정책 변경으로 봉합).
+    """
     upz = _upzoning([
         {
             "target_zone": "제3종일반주거지역",
@@ -53,9 +57,12 @@ def test_upzoning_high_far_outranks_current_when_score_higher() -> None:
         zone_type="제2종일반주거지역", effective_far_pct=200, upzoning=upz
     )
     top = out["top_recommendation"]
-    assert top["is_upzoning"] is True
-    assert top["zone"] == "제3종일반주거지역"
-    assert top["score"] == round(0.85 * 250, 1)  # 212.5
+    assert top["is_current"] is True
+    assert top["tier"] == "current"
+    # 종상향 후보는 제거되지 않고 여전히 존재(더 높은 점수 유지) — 별도 버킷의 1순위.
+    up_opts = [o for o in out["options"] if o["is_upzoning"]]
+    assert up_opts and up_opts[0]["tier"] == "upzoning"
+    assert up_opts[0]["score"] == round(0.85 * 250, 1)  # 212.5
     # 현행/종상향 버킷이 둘 다 존재(같은 사업유형이라도 의사결정 분리).
     buckets = {o["is_current"] for o in out["options"]}
     assert buckets == {True, False}
@@ -213,7 +220,9 @@ def test_max_options_truncates() -> None:
     assert len(out["options"]) == 3
 
 
-def test_options_sorted_descending_by_score() -> None:
+def test_options_sorted_by_tier_then_score() -> None:
+    """★P0 정렬정책: 모든 현행(tier=current) 옵션이 모든 종상향 옵션보다 앞서고,
+    각 티어 내부는 기존과 동일하게 score 내림차순을 유지한다."""
     upz = _upzoning([
         {
             "target_zone": "제3종일반주거지역", "expected_far_pct_high": 250,
@@ -229,5 +238,28 @@ def test_options_sorted_descending_by_score() -> None:
     out = rank_buildable_options(
         zone_type="제2종일반주거지역", effective_far_pct=200, upzoning=upz
     )
-    scores = [o["score"] for o in out["options"]]
-    assert scores == sorted(scores, reverse=True)
+    tiers = [o["tier"] for o in out["options"]]
+    last_current_idx = max((i for i, t in enumerate(tiers) if t == "current"), default=-1)
+    first_upzoning_idx = min((i for i, t in enumerate(tiers) if t == "upzoning"), default=len(tiers))
+    assert last_current_idx < first_upzoning_idx, "현행 옵션이 종상향보다 항상 앞서야 함"
+
+    cur_scores = [o["score"] for o in out["options"] if o["tier"] == "current"]
+    up_scores = [o["score"] for o in out["options"] if o["tier"] == "upzoning"]
+    assert cur_scores == sorted(cur_scores, reverse=True)
+    assert up_scores == sorted(up_scores, reverse=True)
+
+
+def test_summary_separates_current_and_upzoning_top() -> None:
+    """요약 문구가 '최우선 사업유형'(현행)과 '조건부 잠재'(종상향)를 분리 서술한다."""
+    upz = _upzoning([
+        {
+            "target_zone": "제3종일반주거지역", "expected_far_pct_high": 250,
+            "feasibility": "상", "path": "역세권활성화", "path_key": "역세권활성화",
+            "legal_refs": [],
+        },
+    ])
+    out = rank_buildable_options(
+        zone_type="제2종일반주거지역", effective_far_pct=200, upzoning=upz
+    )
+    assert "최우선 사업유형" in out["summary"]
+    assert "조건부 잠재" in out["summary"]

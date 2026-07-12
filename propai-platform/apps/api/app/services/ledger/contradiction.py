@@ -5,7 +5,13 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any
+
+# 그룹당 노출하는 원본(비정규화) 키 표본 최대 개수(전량 노출은 표시 폭발 재발 — 상한 고정).
+_GROUP_SAMPLE_KEYS_MAX = 3
+# 점경로 키의 배열 인덱스(예: scenarios[0])를 감지하는 정규식 — [*]로 정규화한다.
+_ARRAY_INDEX_RE = re.compile(r"\[\d+\]")
 
 # status 위계(낮을수록 양호). 한/영 동의어 동일 랭크.
 _STATUS_RANK: dict[str, int] = {
@@ -123,6 +129,52 @@ def _unwrap(p: Any) -> dict[str, Any]:
     return p if isinstance(p, dict) else {}
 
 
+def _normalize_key(key: str) -> str:
+    """점경로 키의 배열 인덱스([0]·[12] 등)를 [*]로 정규화 — 표시 폭발 집계 전용.
+
+    쉬운 설명: 하나의 근본 변경(예: 종상향 시나리오 재산정)이 scenarios[0]..scenarios[9]처럼
+    숫자만 다른 leaf 10~20개로 흩어지면 화면에 모순 20개가 뜬다(실제로는 원인 1개). 인덱스
+    숫자만 지우면 "같은 자리(패턴)"를 알아볼 수 있어 그 leaf들을 한 그룹으로 묶을 수 있다.
+    """
+    return _ARRAY_INDEX_RE.sub("[*]", key)
+
+
+def _group_contradictions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """모순 항목을 (정규화 키, prev, now) 동일 기준으로 묶어 표시 폭발을 해소한다.
+
+    기존 `contradictions`(leaf 단위 전량)는 그대로 두고(하위호환), 여기서는 집계용 `groups`만
+    별도로 만든다. prev/now가 서로 다른 leaf(예: 시나리오별 실제 다른 수치)는 여전히 별도
+    그룹으로 남는다 — 이 함수는 "같은 자리 + 같은 값 변화"만 묶어 무손실로 압축한다.
+    """
+    order: list[tuple[str, str, str]] = []
+    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for it in items:
+        raw_key = str(it.get("key", ""))
+        norm_key = _normalize_key(raw_key)
+        # prev/now는 항상 스칼라(status 문자열 또는 float)이나, 방어적으로 문자열화해
+        # 그룹핑 키로 쓴다(비교연산자 없이도 안전하게 동치 판정).
+        group_key = (norm_key, str(it.get("prev")), str(it.get("now")))
+        if group_key not in buckets:
+            buckets[group_key] = []
+            order.append(group_key)
+        buckets[group_key].append(it)
+
+    groups: list[dict[str, Any]] = []
+    for gk in order:
+        members = buckets[gk]
+        rep = members[0]
+        groups.append({
+            "key_pattern": gk[0],
+            "leaf_count": len(members),
+            "prev": rep.get("prev"),
+            "now": rep.get("now"),
+            "rel_change": rep.get("rel_change"),
+            "severity": rep.get("severity"),
+            "sample_keys": [str(m.get("key")) for m in members[:_GROUP_SAMPLE_KEYS_MAX]],
+        })
+    return groups
+
+
 def detect_contradictions(
     prior: Any, current: Any,
     *, rel_threshold: float = 0.10, abs_thresholds: dict[str, float] | None = None,
@@ -130,7 +182,9 @@ def detect_contradictions(
     """prior payload vs 현재 payload 모순(status 플립 + 수치 델타) 결정론 집계.
 
     prior/current는 원장 payload 또는 {'payload': ...} 래퍼 허용.
-    반환: {contradictions, counts(by severity), max_severity, has_contradiction, note}.
+    반환: {contradictions, counts(by severity), max_severity, has_contradiction,
+    groups(additive — 정규화 키+prev+now 동일 leaf 묶음), group_counts(그룹 기준 severity 집계),
+    max_severity_by_group(그룹 기준 최고 심각도), note}.
     """
     pp, cc = _unwrap(prior), _unwrap(current)
     flips = detect_status_flips(extract_status(pp), extract_status(cc))
@@ -141,8 +195,19 @@ def detect_contradictions(
     for it in items:
         counts[it["severity"]] = counts.get(it["severity"], 0) + 1
     max_sev = next((s for s in ("high", "medium", "low") if counts.get(s)), None)
+
+    groups = _group_contradictions(items)
+    group_counts = {"low": 0, "medium": 0, "high": 0}
+    for g in groups:
+        sev = g.get("severity")
+        if sev in group_counts:
+            group_counts[sev] += 1
+    max_sev_grouped = next((s for s in ("high", "medium", "low") if group_counts.get(s)), None)
+
     return {
         "contradictions": items, "counts": counts, "max_severity": max_sev,
         "has_contradiction": bool(items),
+        "groups": groups, "group_counts": group_counts,
+        "max_severity_by_group": max_sev_grouped,
         "note": "결정론 모순탐지(prior 대비 status 플립·수치 델타) — 판정/수치 비생성, 비교 전용",
     }

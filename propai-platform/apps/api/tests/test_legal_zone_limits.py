@@ -355,23 +355,27 @@ def test_extract_ordinance_far_zone_limits_effective_only_not_confirmed():
 
 
 def test_calc_effective_far_statutory_fallback_marks_recheck():
-    # 법정상한 폴백(용인) → ordinance_confirmed=False·조례확인필요=True, effective 100 유지.
+    # 법정상한 폴백(용인) → ordinance_confirmed=False·조례확인필요=True, effective 200 유지.
+    # ★제1종일반주거지역(층수상한 없음)으로 검증 — 자연녹지는 구조상한(건폐×층수) 계층이
+    # 별도로 개입해 이 provenance(recheck_recommended) 라벨링 테스트와 무관하게 값이
+    # 바뀌므로(아래 test_natural_green_effective_far_capped_by_floor_limit에서 별도 검증),
+    # 이 테스트는 층수 제한이 없는 zone으로 두 관심사를 분리한다.
     from app.services.land_intelligence.far_tier_service import calc_effective_far
     base = {
-        "zone_type": "자연녹지지역",
+        "zone_type": "제1종일반주거지역",
         "zone_limits": {},
         "local_ordinance": {
             "ordinance_far": None,
             "ordinance_bcr": None,
-            "effective_far": 100,
-            "effective_bcr": 20,
+            "effective_far": 200,
+            "effective_bcr": 60,
             "source": "법정상한",
             "recheck_recommended": True,
         },
     }
-    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    sec = calc_effective_far(base, "제1종일반주거지역", land_area=1000)
     assert sec["ordinance_confirmed"] is False
-    assert sec["effective_far_pct"] == 100  # 수치 유지
+    assert sec["effective_far_pct"] == 200  # 수치 유지
     assert sec["far_basis_detail"]["조례확인필요"] is True
     assert "법정상한" in sec["far_basis"]
 
@@ -435,23 +439,90 @@ def test_design_audit_orchestrator_limits_trio_fallback_honest():
 def test_far_tier_recheck_recommended_from_provenance_subdict():
     # 리뷰 should_fix#2: recheck_recommended는 ordinance["provenance"] 하위에 실린다
     # (top-level 읽기는 dead-branch였음). far_basis가 실제로 정직 라벨로 전환되는지 확인.
+    # ★층수상한 없는 zone(제1종일반주거)로 검증 — 구조상한 계층과 관심사 분리(위 statutory
+    # fallback 테스트와 동일 사유).
     from app.services.land_intelligence.far_tier_service import calc_effective_far
     base = {
-        "zone_type": "자연녹지지역",
+        "zone_type": "제1종일반주거지역",
         "zone_limits": {},
         "local_ordinance": {
             "ordinance_far": None,
             "ordinance_bcr": None,
-            "effective_far": 100,
-            "effective_bcr": 20,
+            "effective_far": 200,
+            "effective_bcr": 60,
             "source": "법정상한",
             "provenance": {"recheck_recommended": True, "confidence": 0.60},
         },
     }
-    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    sec = calc_effective_far(base, "제1종일반주거지역", land_area=1000)
     assert sec["ordinance_confirmed"] is False
     assert "법정상한" in sec["far_basis"]
     assert sec["far_basis_detail"]["조례확인필요"] is True
+
+
+# ════════════════════════════════════════════════════════════════════
+# 구조상한(건폐율×층수) — 자연/생산녹지 등 층수제한 zone의 실효 용적률 과대표시 확정버그 수정
+# ════════════════════════════════════════════════════════════════════
+def test_natural_green_effective_far_capped_by_structural_floor_limit():
+    """★확정버그 수정: 자연녹지 법정 용적률 100%는 층수 제한(4층 이하) 때문에
+    건폐 20%×4층=80%가 실질 상한이다 — effective_far_pct는 100이 아니라 80이어야 한다."""
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    sec = calc_effective_far({}, "자연녹지지역", land_area=1000)
+    assert sec["national_far_pct"] == 100.0  # 법정상한(표시값)은 불변
+    assert sec["effective_bcr_pct"] == 20.0
+    assert sec["structural_cap_pct"] == 80.0
+    assert sec["floor_cap"] == 4
+    assert sec["floor_cap_basis"] and "별표17" in sec["floor_cap_basis"]
+    assert sec["effective_far_pct"] == 80.0  # 구조상한 적용(과대표시 수정)
+    assert sec["far_basis"] == "구조상한(건폐율×층수)"
+
+
+def test_natural_green_ordinance_below_structural_cap_unaffected():
+    """조례 실효값(50%)이 구조상한(80%)보다 이미 낮으면 구조상한이 바인딩되지 않는다(무회귀)."""
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    base = {
+        "zone_type": "자연녹지지역",
+        "zone_limits": {},
+        "local_ordinance": {
+            "ordinance_far": 50, "ordinance_bcr": 20,
+            "effective_far": 50, "effective_bcr": 20,
+            "source": "지자체 조례(정적캐시)",
+        },
+    }
+    sec = calc_effective_far(base, "자연녹지지역", land_area=1000)
+    assert sec["effective_far_pct"] == 50  # 조례값 그대로(구조상한 미적용)
+    assert sec["structural_cap_pct"] == 80.0  # 참고치는 여전히 노출(additive)
+    assert sec["far_basis"] != "구조상한(건폐율×층수)"
+
+
+def test_zone_without_floor_cap_structural_fields_are_none():
+    """층수상한이 없는 용도지역(제1종일반주거)은 structural_cap_pct 등이 전부 None(기존값 불변)."""
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    sec = calc_effective_far({}, "제1종일반주거지역", land_area=1000)
+    assert sec["structural_cap_pct"] is None
+    assert sec["floor_cap"] is None
+    assert sec["floor_cap_basis"] is None
+    assert sec["effective_far_pct"] == 200.0  # 기존 법정상한 그대로
+
+
+def test_far_optimization_scenarios_do_not_exceed_structural_cap():
+    """far_optimization(1-B) 인센티브 시나리오도 구조상한(80%)을 넘지 않는다."""
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    sec = calc_effective_far({}, "자연녹지지역", land_area=1000)
+    scenarios = sec["far_optimization"]["scenarios"]
+    assert scenarios
+    assert all(s["achieved_far"] <= 80.0 + 0.5 for s in scenarios)
+    assert sec["far_optimization"]["cap_far"] <= 80.0 + 0.5
+
+
+def test_hotpath_guard_passes_for_structural_capped_effective_far():
+    """check_against_legal(80<100) — 구조상한 적용치는 법정초과 가드에 걸리지 않는다."""
+    issues = check_against_legal("자연녹지지역", far_pct=80.0, bcr_pct=20.0)
+    assert issues == []
 
 
 # ════════════════════════════════════════════════════════════════════

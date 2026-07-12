@@ -36,11 +36,17 @@ def test_unmatched_zone_with_zone_limits_override_still_uses_provided_values():
 
 
 def test_natural_green_zone_unaffected_by_p0_1():
-    """정상 자연녹지 단일필지 — 기존과 동일(법정 20/100)하게 산출된다(무회귀)."""
+    """정상 자연녹지 단일필지 — 법정 매칭(P0-1)은 기존과 동일(20/100)하게 산출된다(무회귀).
+
+    ★실효값(effective_far_pct)은 구조상한(건폐 20%×4층 이하=80%) 계층이 별도로 적용되어
+    80.0이다(자연녹지 100%→80% 확정버그 수정 — test_legal_zone_limits.py의
+    test_natural_green_effective_far_capped_by_structural_floor_limit 참조). P0-1이 검증하는
+    것은 '법정 SSOT 매칭이 무너지지 않는다'는 것이므로 national_*(법정 표시값)이 핵심이다.
+    """
     out = fts.calc_effective_far({}, "자연녹지지역", land_area=500.0)
     assert out["national_bcr_pct"] == 20.0
     assert out["national_far_pct"] == 100.0
-    assert out["effective_far_pct"] == 100.0
+    assert out["effective_far_pct"] == 80.0  # 구조상한 적용
     assert out["effective_bcr_pct"] == 20.0
     assert out["far_basis"] != "zone_unmatched"
 

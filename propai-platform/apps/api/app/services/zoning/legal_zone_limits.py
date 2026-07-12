@@ -40,6 +40,20 @@ LEGAL_REF_KEYS: dict[str, str] = {
 # 정한다. ZONE_LIMITS(auto_zoning)의 max_far는 이 범위의 '상한'이다. 본 표는 그 '하한'을
 # 보유하여 검증·그라운딩이 "법정 범위(예: 자연녹지 50~100%)"를 정확히 제시하게 한다.
 # 건폐율(제84조)도 용도지역별 상한이며, 통상 하한은 0(조례로 강화)이므로 min_bcr는 0으로 둔다.
+# ── 법정 층수상한 근거문구(★자연/생산녹지 4층 이하 — legal_limits_for.max_floors와 짝) ──
+# 근거: 국토의 계획 및 이용에 관한 법률 시행령 별표15~17(보전·생산·자연녹지지역 안에서
+# 건축할 수 있는 건축물)의 두문(head note) — "다음 각 호의 어느 하나에 해당하는 건축물로서
+# 4층 이하의 건축물에 한한다." (별표 번호는 development_type_analyzer.ZONE_ALLOWED_BUILDINGS의
+# legal_basis와 교차확인 — 보전=별표15·생산=별표16·자연=별표17). 조례로 이보다 더 낮게(예:
+# 3층) 강화할 수 있다(본 표는 법정 상한만 SSOT — 조례 강화값은 별도 데이터). ★근거 확인이
+# 안 되는 용도지역은 절대 수록하지 않는다(임의 층수제한 날조 금지) — ZONE_LIMITS(auto_zoning_
+# service)에서 max_floors가 None인 용도지역은 이 표에도 없다(구조적으로 정합 보장).
+FLOOR_CAP_BASIS: dict[str, str] = {
+    "보전녹지지역": "국토계획법 시행령 별표15(보전녹지지역) 두문 — 4층 이하(조례로 더 낮게 강화 가능)",
+    "생산녹지지역": "국토계획법 시행령 별표16(생산녹지지역) 두문 — 4층 이하(조례로 더 낮게 강화 가능)",
+    "자연녹지지역": "국토계획법 시행령 별표17(자연녹지지역) 두문 — 4층 이하(조례로 더 낮게 강화 가능)",
+}
+
 # 미수록 용도지역은 max를 min으로 간주(범위정보 없음 → 단일상한).
 ZONE_FAR_MIN: dict[str, int] = {
     "제1종전용주거지역": 50,
@@ -160,6 +174,9 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
         "max_height_m": limits.get("max_height_m"),
         # 층수 제한(★녹지지역 4층 등). SSOT(ZONE_LIMITS)에서 위임. 녹지 외 지역은 None.
         "max_floors": limits.get("max_floors"),
+        # 층수상한 법령 근거문구(구조상한=건폐율×층수 계산 시 출처 표기용). max_floors가
+        # None인 용도지역은 이 값도 None(짝 불변식 — 근거 없는 층수제한 날조 금지).
+        "floor_cap_basis": FLOOR_CAP_BASIS.get(key),
         "legal_basis": LEGAL_BASIS,
         # 옵셔널: 건폐율/용적률 한도의 법령 원문링크 근거키(레지스트리 키와 일치).
         # 기존 키는 전부 유지하며, 소비자는 이 키를 옵셔널로 읽는다(없어도 무해).
