@@ -279,7 +279,14 @@ function FarOptimizationPanel({ farOpt, structuralCapPct }: { farOpt?: AnalysisR
   if (!farOpt?.scenarios) return null;
   const scenarios: AnalysisResult[] = farOpt.scenarios;
   const capFar = farOpt.cap_far;
-  const allCapped = scenarios.length > 0 && scenarios.every((sc) => sc.achieved_far === capFar);
+  // achieved_far(1자리)·cap_far(2자리 가능) 반올림 자릿수가 달라 엄격 등가 대신 0.5%p
+  // 허용오차로 "상한 도달"을 판정한다(소수 상한에서 요약 강등 누락 방지 — 안전 방향 유지).
+  const allCapped =
+    scenarios.length > 0 &&
+    Number.isFinite(capFar) &&
+    scenarios.every(
+      (sc) => Number.isFinite(sc.achieved_far) && Math.abs((sc.achieved_far as number) - (capFar as number)) < 0.5,
+    );
 
   return (
     <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon={TrendingUp} defaultOpen>

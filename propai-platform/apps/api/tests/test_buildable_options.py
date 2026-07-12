@@ -263,3 +263,31 @@ def test_summary_separates_current_and_upzoning_top() -> None:
     )
     assert "최우선 사업유형" in out["summary"]
     assert "조건부 잠재" in out["summary"]
+
+
+def test_blocked_reasons_propagate_to_upzoning_options() -> None:
+    """종상향 시나리오의 게이트 사유가 랭킹 옵션까지 전달된다(랭킹 카드 배지 실데이터 배선).
+
+    과거 결함: 사유가 upzoning_scenarios에만 실리고 buildable_options 후보에는 빠져
+    프론트 배지가 실데이터에서 무동작(handoff 손실)이었다.
+    """
+    reasons = ["비연접 파편 필지 — 지구단위계획 구역(일단의 토지) 성립 불확실"]
+    upz = _upzoning([
+        {
+            "target_zone": "제1종일반주거지역",
+            "expected_far_pct_high": 150,
+            "feasibility": "하",
+            "path": "지구단위계획 수립",
+            "path_key": "지구단위",
+            "legal_refs": [],
+            "blocked_reasons": reasons,
+        }
+    ])
+    out = rank_buildable_options(
+        zone_type="자연녹지지역", effective_far_pct=80, upzoning=upz
+    )
+    upzoning_opts = [o for o in out["options"] if o["tier"] == "upzoning"]
+    assert upzoning_opts, "종상향 옵션이 생성되어야 함"
+    assert all(o["blocked_reasons"] == reasons for o in upzoning_opts)
+    # 현행 옵션은 사유 없음(빈 배열) — 필드 자체는 항상 존재(계약 안정).
+    assert all(o["blocked_reasons"] == [] for o in out["options"] if o["tier"] == "current")

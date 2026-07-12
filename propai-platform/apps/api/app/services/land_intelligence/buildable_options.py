@@ -155,6 +155,7 @@ def _candidate(
     path_key: str | None = None,
     legal_refs: list[dict] | None = None,
     far_source: str = "",
+    blocked_reasons: list[str] | None = None,
 ) -> dict[str, Any]:
     """건축가능항목 후보 1건(랭킹 점수 포함)."""
     product, building_type = _product_and_type(zone, use)
@@ -179,6 +180,9 @@ def _candidate(
         # tier: is_current에서 파생된 응답 계약 필드(프론트·정렬정책 공유용 표준명).
         "tier": "current" if is_current else "upzoning",
         "legal_refs": legal_refs or [],
+        # 종상향 시나리오의 게이트 사유(비연접 파편·규제구역 등)를 랭킹 카드까지 전달
+        # (시나리오 목록에만 있고 랭킹엔 없으면 프론트 배지가 실데이터에서 무동작 — handoff 손실 방지).
+        "blocked_reasons": blocked_reasons or [],
         "score": score,
     }
 
@@ -260,6 +264,7 @@ def rank_buildable_options(
                 via=sc.get("path") or "종상향", is_current=False,
                 path_key=sc.get("path_key"), legal_refs=sc.get("legal_refs") or [],
                 far_source=far_source,
+                blocked_reasons=sc.get("blocked_reasons") or [],
             ))
 
     if not candidates:

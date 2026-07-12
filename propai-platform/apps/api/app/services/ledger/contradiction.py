@@ -139,6 +139,13 @@ def _normalize_key(key: str) -> str:
     return _ARRAY_INDEX_RE.sub("[*]", key)
 
 
+def _scalar_key(v: Any) -> str:
+    """그룹핑 키용 스칼라 문자열화 — float만 4자리 반올림(부동소수 지터 흡수), 나머지는 str."""
+    if isinstance(v, float):
+        return str(round(v, 4))
+    return str(v)
+
+
 def _group_contradictions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """모순 항목을 (정규화 키, prev, now) 동일 기준으로 묶어 표시 폭발을 해소한다.
 
@@ -152,8 +159,9 @@ def _group_contradictions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raw_key = str(it.get("key", ""))
         norm_key = _normalize_key(raw_key)
         # prev/now는 항상 스칼라(status 문자열 또는 float)이나, 방어적으로 문자열화해
-        # 그룹핑 키로 쓴다(비교연산자 없이도 안전하게 동치 판정).
-        group_key = (norm_key, str(it.get("prev")), str(it.get("now")))
+        # 그룹핑 키로 쓴다(비교연산자 없이도 안전하게 동치 판정). float는 4자리 반올림 후
+        # 키화해 지터(139.6 vs 139.60000000000002)로 같은 변화가 쪼개지는 것을 방지(rep는 원본).
+        group_key = (norm_key, _scalar_key(it.get("prev")), _scalar_key(it.get("now")))
         if group_key not in buckets:
             buckets[group_key] = []
             order.append(group_key)

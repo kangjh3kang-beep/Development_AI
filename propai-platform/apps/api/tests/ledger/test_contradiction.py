@@ -131,3 +131,13 @@ def test_compare_with_prior_adds_contradictions_keeping_status_changes():
     assert out["contradictions"]["has_contradiction"] is True
     assert out["contradictions"]["max_severity"] == "high"
     assert out["prior_verdict"] == "적합"   # 기존 키 불변
+
+
+def test_groups_absorb_float_jitter():
+    """부동소수 지터(139.6 vs 139.60000000000002)가 같은 그룹으로 흡수된다(4자리 반올림 키)."""
+    prior = {"payload": {"scenarios": [{"far": 139.6}, {"far": 139.60000000000002}]}}
+    current = {"payload": {"scenarios": [{"far": 100.0}, {"far": 100.00000000000001}]}}
+    res = C.detect_contradictions(prior, current, rel_threshold=0.10)
+    assert len(res["contradictions"]) == 2      # leaf는 전량 보존(무손실)
+    assert len(res["groups"]) == 1              # 그룹은 지터 무시하고 1개로 압축
+    assert res["groups"][0]["leaf_count"] == 2
