@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
+import { HeroMotionLayer } from "@/components/dashboard/HeroMotionLayer";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { PRIMARY_ROUTE_REGISTRY } from "@/lib/navigation/route-registry";
@@ -132,6 +133,17 @@ export function DashboardHome({ locale }: { locale: string }) {
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="relative min-w-0 overflow-hidden rounded-lg border border-[var(--saas-lime-hero-line)] bg-[var(--saas-ink)] p-5 text-white shadow-[0_24px_70px_var(--saas-ink-shadow)] sm:p-6">
+          {/* 도시건축 hero 배경 애니메이션(hero.mp4 배경영상 + 스카이라인 캔버스 폴백) */}
+          <HeroMotionLayer />
+          {/* 텍스트 대비 스크림 — 영상 위를 어둡게(콘텐츠 가독성 확보) */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(115deg, rgba(14,14,16,0.82) 0%, rgba(14,14,16,0.5) 55%, rgba(14,14,16,0.32) 100%)",
+            }}
+          />
           <div
             aria-hidden="true"
             className="absolute inset-0 opacity-55"
