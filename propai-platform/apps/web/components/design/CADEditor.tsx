@@ -1209,13 +1209,13 @@ export default function CADEditor({
   /* ── 렌더 게이트 ── */
   if (rkError) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] px-6 text-center text-white">
+      <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] px-6 text-center text-[var(--text-primary)]">
         <div className="flex flex-col items-center gap-3">
-          <p className="text-sm font-bold text-rose-400">{rkError}</p>
+          <p className="text-sm font-bold text-[var(--status-error)]">{rkError}</p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="rounded-lg border border-teal-500/40 bg-teal-500/10 px-4 py-2 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+            className="rounded-[var(--r-input)] border border-[color-mix(in_srgb,var(--accent-strong)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-strong)_10%,transparent)] px-4 py-2 text-xs font-bold text-[var(--accent-strong)] hover:bg-[color-mix(in_srgb,var(--accent-strong)_20%,transparent)]"
           >
             새로고침
           </button>
@@ -1225,10 +1225,10 @@ export default function CADEditor({
   }
   if (!isReady || !rk) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] text-white">
+      <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] text-[var(--text-primary)]">
         <div className="flex flex-col items-center gap-4">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-teal-500 border-t-transparent" />
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-teal-400">CAD 엔진 초기화...</p>
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">CAD 엔진 초기화...</p>
         </div>
       </div>
     );
@@ -1436,26 +1436,26 @@ export default function CADEditor({
       />
 
       {/* ── 상단 도구 바(슬림, 캔버스 비차폐) ── */}
-      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-white/10 bg-black/55 p-1.5 backdrop-blur-xl shadow-2xl">
+      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 backdrop-blur-[var(--glass-blur)] shadow-2xl">
         {TOOLS.map((t) => (
           <button
             key={t.key}
             onClick={() => { setTool(t.key); setSelectedIdx(null); if (t.key !== tool) setDraft([]); }}
-            className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
-              tool === t.key ? "bg-teal-500 text-white shadow-lg" : "text-white/55 hover:bg-white/10 hover:text-white"
+            className={`rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+              tool === t.key ? "bg-[var(--accent-strong)] text-white shadow-lg" : "text-[var(--text-tertiary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)]"
             }`}
           >
             {t.label}
           </button>
         ))}
-        <div className="mx-1 h-5 w-px bg-white/10" />
+        <div className="mx-1 h-5 w-px bg-[var(--border-muted)]" />
         {/* ── undo/redo(↶↷) — Ctrl+Z / Ctrl+Shift+Z ── */}
         <button
           onClick={undo}
           disabled={!canUndo}
           title="실행 취소 (Ctrl+Z)"
           aria-label="실행 취소"
-          className="rounded-xl px-3 py-2 text-[13px] font-black text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+          className="rounded-[var(--r-input)] px-3 py-2 text-[13px] font-black text-[var(--text-secondary)] transition-colors hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)] disabled:opacity-30"
         >
           ↶
         </button>
@@ -1464,19 +1464,19 @@ export default function CADEditor({
           disabled={!canRedo}
           title="다시 실행 (Ctrl+Shift+Z)"
           aria-label="다시 실행"
-          className="rounded-xl px-3 py-2 text-[13px] font-black text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+          className="rounded-[var(--r-input)] px-3 py-2 text-[13px] font-black text-[var(--text-secondary)] transition-colors hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)] disabled:opacity-30"
         >
           ↷
         </button>
-        <div className="mx-1 h-5 w-px bg-white/10" />
+        <div className="mx-1 h-5 w-px bg-[var(--border-muted)]" />
         <button
           onClick={handleSave}
           disabled={saveStatus === "saving" || ring.length < 3}
           title={ring.length < 3 ? "외곽 레이어 다각형이 있어야 저장됩니다" : undefined}
-          className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-            saveStatus === "saved" ? "bg-emerald-500 text-white"
-              : saveStatus === "error" ? "bg-red-500/80 text-white"
-              : "bg-white/10 text-white hover:bg-white/20"
+          className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+            saveStatus === "saved" ? "bg-[var(--status-success)] text-white"
+              : saveStatus === "error" ? "bg-[color-mix(in_srgb,var(--status-error)_80%,transparent)] text-white"
+              : "bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_20%,transparent)]"
           }`}
         >
           {saveStatus === "saving" ? "저장 중..."
@@ -1489,10 +1489,10 @@ export default function CADEditor({
           onClick={downloadEditedDxf}
           disabled={dxfState === "loading"}
           title="저장된 편집본을 정식 DXF(LWPOLYLINE+치수)로 내려받습니다"
-          className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-            dxfState === "need-save" ? "bg-amber-500/80 text-white"
-              : dxfState === "error" ? "bg-red-500/80 text-white"
-              : "bg-white/10 text-white/80 hover:bg-white/20"
+          className={`rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+            dxfState === "need-save" ? "bg-[color-mix(in_srgb,var(--status-warning)_80%,transparent)] text-white"
+              : dxfState === "error" ? "bg-[color-mix(in_srgb,var(--status-error)_80%,transparent)] text-white"
+              : "bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_20%,transparent)]"
           }`}
         >
           {dxfState === "loading" ? "DXF 생성…"
@@ -1505,17 +1505,17 @@ export default function CADEditor({
           onClick={triggerImport}
           disabled={importState === "loading"}
           title="DXF 파일을 업로드해 도형으로 가져옵니다(폴리라인 → 다각형/선)"
-          className="rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white/80 transition-colors hover:bg-white/20 disabled:opacity-50 bg-white/10"
+          className="rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] transition-colors hover:bg-[color-mix(in_srgb,var(--text-primary)_20%,transparent)] disabled:opacity-50 bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
         >
           {importState === "loading" ? "가져오는 중…" : (<span className="inline-flex items-center gap-1"><Upload className="size-3" aria-hidden />가져오기</span>)}
         </button>
-        <div className="mx-1 h-5 w-px bg-white/10" />
+        <div className="mx-1 h-5 w-px bg-[var(--border-muted)]" />
         {/* ── 전체삭제(confirm — Ctrl+Z 복원 가능) ── */}
         <button
           onClick={clearAll}
           disabled={shapes.length === 0 && draft.length === 0}
           title="모든 도형을 삭제합니다(확인 후 실행, Ctrl+Z로 복원 가능)"
-          className="rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-300/80 transition-colors hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-30"
+          className="rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-[color-mix(in_srgb,var(--status-error)_80%,transparent)] transition-colors hover:bg-[color-mix(in_srgb,var(--status-error)_15%,transparent)] hover:text-[var(--status-error)] disabled:opacity-30"
         >
           전체삭제
         </button>
@@ -1523,16 +1523,16 @@ export default function CADEditor({
 
       {/* ── 좌상단: 레이어 칩(활성 레이어 선택 + 표시 토글) ──
           top-16: 부모(CadBimIntegrationPanel)의 "← 편집 종료" 버튼(left-4 top-4 z-40)과 비충돌. */}
-      <div className="absolute left-4 top-16 z-20 w-[148px] rounded-2xl border border-white/10 bg-black/55 p-2.5 backdrop-blur-xl shadow-2xl">
-        <p className="mb-1.5 text-[8px] font-black uppercase tracking-[0.2em] text-white/40">Layers</p>
+      <div className="absolute left-4 top-16 z-20 w-[148px] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2.5 backdrop-blur-[var(--glass-blur)] shadow-2xl">
+        <p className="mb-1.5 text-[8px] font-black uppercase tracking-[0.2em] text-[var(--text-tertiary)]">Layers</p>
         <div className="space-y-1">
           {LAYER_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-1">
               <button
                 onClick={() => setActiveLayer(k)}
                 title={`${LAYER_LABELS[k]} 레이어에 그리기`}
-                className={`flex flex-1 items-center gap-1.5 rounded-lg px-2 py-1 text-left text-[10px] font-black transition-colors ${
-                  activeLayer === k ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10"
+                className={`flex flex-1 items-center gap-1.5 rounded-[var(--r-input)] px-2 py-1 text-left text-[10px] font-black transition-colors ${
+                  activeLayer === k ? "bg-[color-mix(in_srgb,var(--text-primary)_15%,transparent)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
                 }`}
               >
                 <span className="h-2 w-2 rounded-full" style={{ background: LAYER_COLORS[k] }} />
@@ -1542,8 +1542,8 @@ export default function CADEditor({
                 onClick={() => setVisibleLayers((v) => ({ ...v, [k]: !v[k] }))}
                 title={visibleLayers[k] ? "레이어 숨기기" : "레이어 표시"}
                 aria-label={`${LAYER_LABELS[k]} 레이어 표시 전환`}
-                className={`rounded-lg px-1.5 py-1 text-[11px] font-black transition-colors hover:bg-white/10 ${
-                  visibleLayers[k] ? "text-teal-300" : "text-white/25"
+                className={`rounded-[var(--r-input)] px-1.5 py-1 text-[11px] font-black transition-colors hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] ${
+                  visibleLayers[k] ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"
                 }`}
               >
                 {visibleLayers[k] ? <Eye className="size-3.5" aria-hidden /> : <EyeOff className="size-3.5" aria-hidden />}
@@ -1555,22 +1555,22 @@ export default function CADEditor({
 
       {/* ── 최초 1회 도움말 칩(편집기 첫 진입 안내) ── */}
       {showHelp && !isDrawTool && (
-        <div className="absolute left-1/2 top-[4.5rem] z-30 flex max-w-[440px] -translate-x-1/2 items-start gap-3 rounded-2xl border border-teal-400/30 bg-black/80 px-4 py-3 backdrop-blur-xl shadow-2xl">
-          <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-teal-200" aria-hidden />
+        <div className="absolute left-1/2 top-[4.5rem] z-30 flex max-w-[440px] -translate-x-1/2 items-start gap-3 rounded-[var(--r-panel)] border border-[color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--glass-bg-strong)] px-4 py-3 backdrop-blur-[var(--glass-blur)] shadow-2xl">
+          <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-[var(--accent-strong)]" aria-hidden />
           <div className="flex-1">
-            <p className="text-[11px] font-black text-teal-200">처음이신가요? 이렇게 다듬으세요</p>
-            <p className="mt-1 text-[10px] leading-relaxed text-white/65">
+            <p className="text-[11px] font-black text-[var(--accent-strong)]">처음이신가요? 이렇게 다듬으세요</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-[var(--text-secondary)]">
               정점을 끌어 평면을 수정하면 면적·수지가 실시간 갱신됩니다.
-              레이어 칩(외곽·벽체·치수·주석)을 고르고 선·사각형·주석을 그리거나 <b className="text-white/80">가져오기</b>로 DXF를 불러올 수 있어요.
-              <span className="text-white/40"> 되돌리기 </span><b className="text-white/80">Ctrl+Z</b>
-              <span className="text-white/40"> · 다시 </span><b className="text-white/80">Ctrl+Shift+Z</b>.
-              마치면 <b className="text-white/80">저장</b> 후 <b className="text-white/80">편집본 DXF</b>를 받을 수 있어요.
+              레이어 칩(외곽·벽체·치수·주석)을 고르고 선·사각형·주석을 그리거나 <b className="text-[var(--text-primary)]">가져오기</b>로 DXF를 불러올 수 있어요.
+              <span className="text-[var(--text-tertiary)]"> 되돌리기 </span><b className="text-[var(--text-primary)]">Ctrl+Z</b>
+              <span className="text-[var(--text-tertiary)]"> · 다시 </span><b className="text-[var(--text-primary)]">Ctrl+Shift+Z</b>.
+              마치면 <b className="text-[var(--text-primary)]">저장</b> 후 <b className="text-[var(--text-primary)]">편집본 DXF</b>를 받을 수 있어요.
             </p>
           </div>
           <button
             onClick={dismissHelp}
             aria-label="도움말 닫기"
-            className="rounded-lg px-2 py-0.5 text-[13px] font-black text-white/50 hover:bg-white/10 hover:text-white"
+            className="rounded-[var(--r-input)] px-2 py-0.5 text-[13px] font-black text-[var(--text-tertiary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)]"
           >
             ×
           </button>
@@ -1579,37 +1579,37 @@ export default function CADEditor({
 
       {/* ── POLY 작도 안내(외곽 교체 / 레이어 다각형) ── */}
       {tool === "poly" && (
-        <div className="absolute left-1/2 top-20 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-blue-400/30 bg-black/70 px-4 py-2 backdrop-blur-xl">
-          <span className="text-[11px] font-bold text-blue-200">
+        <div className="absolute left-1/2 top-20 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[var(--r-input)] border border-[color-mix(in_srgb,var(--status-info)_30%,transparent)] bg-[var(--glass-bg-strong)] px-4 py-2 backdrop-blur-[var(--glass-blur)]">
+          <span className="text-[11px] font-bold text-[var(--status-info)]">
             캔버스를 클릭해 정점을 찍으세요 ({draft.length}개)
             {activeLayer === "outline" ? " — 완료 시 외곽 교체" : ` — ${LAYER_LABELS[activeLayer]} 레이어에 추가`}
           </span>
           <button onClick={finishPoly} disabled={draft.length < 3}
-            className="rounded-lg bg-teal-500 px-3 py-1 text-[10px] font-black text-white disabled:opacity-40">완료</button>
+            className="rounded-[var(--r-input)] bg-[var(--accent-strong)] px-3 py-1 text-[10px] font-black text-white disabled:opacity-40">완료</button>
           <button onClick={cancelPoly}
-            className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black text-white/70">취소</button>
+            className="rounded-[var(--r-input)] bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] px-3 py-1 text-[10px] font-black text-[var(--text-secondary)]">취소</button>
         </div>
       )}
 
       {/* ── LINE/RECT 작도 안내(2점 클릭) ── */}
       {(tool === "line" || tool === "rect") && draft.length === 1 && (
-        <div className="absolute left-1/2 top-20 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-blue-400/30 bg-black/70 px-4 py-2 backdrop-blur-xl">
-          <span className="text-[11px] font-bold text-blue-200">
+        <div className="absolute left-1/2 top-20 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[var(--r-input)] border border-[color-mix(in_srgb,var(--status-info)_30%,transparent)] bg-[var(--glass-bg-strong)] px-4 py-2 backdrop-blur-[var(--glass-blur)]">
+          <span className="text-[11px] font-bold text-[var(--status-info)]">
             {tool === "line" ? "끝점을 클릭하면 선이 완성됩니다" : "반대편 모서리를 클릭하면 사각형이 완성됩니다"}
           </span>
           <button onClick={cancelPoly}
-            className="rounded-lg bg-white/10 px-3 py-1 text-[10px] font-black text-white/70">취소</button>
+            className="rounded-[var(--r-input)] bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] px-3 py-1 text-[10px] font-black text-[var(--text-secondary)]">취소</button>
         </div>
       )}
 
       {/* ── DXF 가져오기 결과 토스트(정직 표기: 변환·무시·단위) ── */}
       {importMsg && (
         <div
-          className={`absolute bottom-24 left-1/2 z-30 max-w-[560px] -translate-x-1/2 rounded-2xl border px-4 py-2.5 backdrop-blur-xl shadow-2xl ${
-            importMsg.kind === "ok" ? "border-teal-400/30 bg-black/80" : "border-rose-400/40 bg-black/80"
+          className={`absolute bottom-24 left-1/2 z-30 max-w-[560px] -translate-x-1/2 rounded-[var(--r-panel)] border px-4 py-2.5 backdrop-blur-[var(--glass-blur)] shadow-2xl ${
+            importMsg.kind === "ok" ? "border-[color-mix(in_srgb,var(--status-success)_30%,transparent)] bg-[var(--glass-bg-strong)]" : "border-[color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[var(--glass-bg-strong)]"
           }`}
         >
-          <p className={`text-[11px] font-bold leading-relaxed ${importMsg.kind === "ok" ? "text-teal-200" : "text-rose-300"}`}>
+          <p className={`text-[11px] font-bold leading-relaxed ${importMsg.kind === "ok" ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>
             {importMsg.text}
           </p>
         </div>
@@ -1621,10 +1621,10 @@ export default function CADEditor({
           e.preventDefault();
           runCanvasCommand();
         }}
-        className="absolute bottom-4 left-4 right-4 z-30 rounded-2xl border border-white/10 bg-black/65 p-2.5 backdrop-blur-xl shadow-2xl lg:left-[292px] lg:right-[252px]"
+        className="absolute bottom-4 left-4 right-4 z-30 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2.5 backdrop-blur-[var(--glass-blur)] shadow-2xl lg:left-[292px] lg:right-[252px]"
       >
         <div className="flex items-center gap-2">
-          <Terminal className="size-4 shrink-0 text-teal-300" aria-hidden />
+          <Terminal className="size-4 shrink-0 text-[var(--accent-strong)]" aria-hidden />
           <input
             value={commandText}
             onChange={(e) => setCommandText(e.target.value)}
@@ -1636,7 +1636,7 @@ export default function CADEditor({
             }}
             placeholder="층수 5 · 높이 18 · 선 10,10 30,10 · 사각형 10,10 20 12"
             aria-label="CAD 명령 입력"
-            className="min-w-0 flex-1 bg-transparent text-[12px] font-bold text-white outline-none placeholder:text-white/30"
+            className="min-w-0 flex-1 bg-transparent text-[12px] font-bold text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
           />
           {stt.supported && (
             <button
@@ -1644,10 +1644,10 @@ export default function CADEditor({
               onClick={() => (stt.listening ? stt.stop() : stt.start())}
               title={stt.listening ? "음성 입력 중지" : "음성으로 명령 입력"}
               aria-label={stt.listening ? "음성 입력 중지" : "음성으로 명령 입력"}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors ${
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-input)] border transition-colors ${
                 stt.listening
-                  ? "border-rose-400/50 bg-rose-500/20 text-rose-200"
-                  : "border-white/10 bg-white/10 text-white/65 hover:bg-white/15 hover:text-white"
+                  ? "border-[color-mix(in_srgb,var(--status-error)_50%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_20%,transparent)] text-[var(--status-error)]"
+                  : "border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_15%,transparent)] hover:text-[var(--text-primary)]"
               }`}
             >
               <Mic className="size-4" aria-hidden />
@@ -1658,7 +1658,7 @@ export default function CADEditor({
             disabled={!commandText.trim()}
             title="명령 실행"
             aria-label="명령 실행"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-500 text-white transition-opacity hover:bg-teal-400 disabled:opacity-35"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-input)] bg-[var(--accent-strong)] text-white transition-opacity hover:opacity-90 disabled:opacity-35"
           >
             <Send className="size-4" aria-hidden />
           </button>
@@ -1666,7 +1666,7 @@ export default function CADEditor({
         {(commandText.trim() || commandResult || stt.error) && (
           <p
             className={`mt-1.5 truncate text-[10px] font-bold ${
-              commandResult?.ok === false || stt.error ? "text-rose-300" : "text-white/45"
+              commandResult?.ok === false || stt.error ? "text-[var(--status-error)]" : "text-[var(--text-tertiary)]"
             }`}
             title={commandResult?.message || stt.error || getCommandHint(commandText.split(/\s+/)[0] || "")}
           >
@@ -1679,18 +1679,18 @@ export default function CADEditor({
       </form>
 
       {/* ── 좌하단: 지오메트리·법규 컴팩트 패널(좁게, 캔버스 비차폐) ── */}
-      <div className="absolute bottom-4 left-4 z-20 w-[260px] rounded-2xl border border-white/10 bg-black/60 p-4 backdrop-blur-xl shadow-2xl">
+      <div className="absolute bottom-4 left-4 z-20 w-[260px] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-4 backdrop-blur-[var(--glass-blur)] shadow-2xl">
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/45">Building Geometry</span>
-          <span className={`flex h-2 w-2 rounded-full ${isChecking ? "animate-pulse bg-amber-500" : hasViolationHint ? "bg-rose-500" : "bg-teal-500"}`} />
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-tertiary)]">Building Geometry</span>
+          <span className={`flex h-2 w-2 rounded-full ${isChecking ? "animate-pulse bg-[var(--status-warning)]" : hasViolationHint ? "bg-[var(--status-error)]" : "bg-[var(--status-success)]"}`} />
         </div>
 
         {/* 슬라이더 */}
         <div className="space-y-3">
           <div>
             <div className="flex justify-between px-0.5">
-              <span className="text-[9px] font-black uppercase text-white/40">층수</span>
-              <span className="text-[11px] font-black text-teal-400">{floorCount} F</span>
+              <span className="text-[9px] font-black uppercase text-[var(--text-tertiary)]">층수</span>
+              <span className="text-[11px] font-black text-[var(--accent-strong)]">{floorCount} F</span>
             </div>
             <input type="range" min={1} max={50} value={floorCount}
               onPointerDown={commitSnapshot}
@@ -1700,55 +1700,55 @@ export default function CADEditor({
                 setBuildingHeight(Math.round(v * (initialFloorHeightM || 3)));
                 debouncedCheck(ring);
               }}
-              className="h-1 w-full cursor-pointer rounded-full bg-white/10 accent-teal-400" />
+              className="h-1 w-full cursor-pointer rounded-full bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] accent-[var(--accent-strong)]" />
           </div>
           <div>
             <div className="flex justify-between px-0.5">
-              <span className="text-[9px] font-black uppercase text-white/40">전체높이</span>
-              <span className={`text-[11px] font-black ${overHeight ? "text-rose-400" : "text-blue-400"}`}>{buildingHeight} m</span>
+              <span className="text-[9px] font-black uppercase text-[var(--text-tertiary)]">전체높이</span>
+              <span className={`text-[11px] font-black ${overHeight ? "text-[var(--status-error)]" : "text-[var(--status-info)]"}`}>{buildingHeight} m</span>
             </div>
             <input type="range" min={3} max={300} value={buildingHeight}
               onPointerDown={commitSnapshot}
               onChange={(e) => { setBuildingHeight(Number(e.target.value)); debouncedCheck(ring); }}
-              className="h-1 w-full cursor-pointer rounded-full bg-white/10 accent-blue-400" />
+              className="h-1 w-full cursor-pointer rounded-full bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] accent-[var(--status-info)]" />
           </div>
         </div>
 
         {/* 라이브 지표 */}
-        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-white/5 pt-3">
+        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[var(--border-muted)] pt-3">
           <div>
-            <p className="text-[8px] font-black uppercase tracking-wider text-white/35">건축면적</p>
-            <p className="text-[12px] font-black text-white">{fmt(metrics.areaM2, "㎡")}</p>
+            <p className="text-[8px] font-black uppercase tracking-wider text-[var(--text-tertiary)]">건축면적</p>
+            <p className="text-[12px] font-black text-[var(--text-primary)]">{fmt(metrics.areaM2, "㎡")}</p>
           </div>
           <div>
-            <p className="text-[8px] font-black uppercase tracking-wider text-white/35">건폐율</p>
-            <p className={`text-[12px] font-black ${overBcr ? "text-rose-400" : "text-white"}`}>
+            <p className="text-[8px] font-black uppercase tracking-wider text-[var(--text-tertiary)]">건폐율</p>
+            <p className={`text-[12px] font-black ${overBcr ? "text-[var(--status-error)]" : "text-[var(--text-primary)]"}`}>
               {fmt(metrics.bcr, "%")}
-              {limits.bcr != null && <span className="text-[8px] text-white/35"> /{limits.bcr}</span>}
+              {limits.bcr != null && <span className="text-[8px] text-[var(--text-tertiary)]"> /{limits.bcr}</span>}
             </p>
           </div>
           <div>
-            <p className="text-[8px] font-black uppercase tracking-wider text-white/35">용적률</p>
-            <p className={`text-[12px] font-black ${overFar ? "text-rose-400" : "text-white"}`}>
+            <p className="text-[8px] font-black uppercase tracking-wider text-[var(--text-tertiary)]">용적률</p>
+            <p className={`text-[12px] font-black ${overFar ? "text-[var(--status-error)]" : "text-[var(--text-primary)]"}`}>
               {fmt(metrics.far, "%")}
-              {limits.far != null && <span className="text-[8px] text-white/35"> /{limits.far}</span>}
+              {limits.far != null && <span className="text-[8px] text-[var(--text-tertiary)]"> /{limits.far}</span>}
             </p>
           </div>
         </div>
 
         {/* 법규 위반(클라 힌트 + 백엔드 검증) */}
         {(hasViolationHint || violations.length > 0) ? (
-          <div className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/10 p-2.5">
-            <p className="mb-1 text-[9px] font-black uppercase tracking-wider text-rose-400">법규 초과 감지</p>
-            {overBcr && <p className="text-[10px] leading-tight text-white/80">· 건폐율 {metrics.bcr?.toFixed(1)}% &gt; 상한 {limits.bcr}%</p>}
-            {overFar && <p className="text-[10px] leading-tight text-white/80">· 용적률 {metrics.far?.toFixed(1)}% &gt; 상한 {limits.far}%</p>}
-            {overHeight && <p className="text-[10px] leading-tight text-white/80">· 높이 {buildingHeight}m &gt; 상한 {limits.height}m</p>}
+          <div className="mt-3 rounded-[var(--r-input)] border border-[color-mix(in_srgb,var(--status-error)_25%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] p-2.5">
+            <p className="mb-1 text-[9px] font-black uppercase tracking-wider text-[var(--status-error)]">법규 초과 감지</p>
+            {overBcr && <p className="text-[10px] leading-tight text-[var(--text-secondary)]">· 건폐율 {metrics.bcr?.toFixed(1)}% &gt; 상한 {limits.bcr}%</p>}
+            {overFar && <p className="text-[10px] leading-tight text-[var(--text-secondary)]">· 용적률 {metrics.far?.toFixed(1)}% &gt; 상한 {limits.far}%</p>}
+            {overHeight && <p className="text-[10px] leading-tight text-[var(--text-secondary)]">· 높이 {buildingHeight}m &gt; 상한 {limits.height}m</p>}
             {violations.slice(0, 2).map((v, i) => (
-              <p key={i} className="text-[10px] leading-tight text-white/70">· {v.message}</p>
+              <p key={i} className="text-[10px] leading-tight text-[var(--text-secondary)]">· {v.message}</p>
             ))}
           </div>
         ) : (
-          <p className="mt-3 flex items-center gap-1.5 text-[10px] font-bold text-teal-400">
+          <p className="mt-3 flex items-center gap-1.5 text-[10px] font-bold text-[var(--status-success)]">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
             법규 한도 충족 {limits.bcr == null && "(부지면적 연동 시 정밀)"}
           </p>
@@ -1756,12 +1756,12 @@ export default function CADEditor({
       </div>
 
       {/* ── 우하단: 선택/도움말 칩 ── */}
-      <div className="absolute bottom-4 right-4 z-20 max-w-[220px] rounded-2xl border border-white/10 bg-black/55 px-4 py-3 backdrop-blur-xl">
-        <p className="text-[9px] font-black uppercase tracking-widest text-white/35">
+      <div className="absolute bottom-4 right-4 z-20 max-w-[220px] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] px-4 py-3 backdrop-blur-[var(--glass-blur)]">
+        <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">
           현재 도구 · <span style={{ color: LAYER_COLORS[activeLayer] }}>{LAYER_LABELS[activeLayer]}</span>
         </p>
-        <p className="text-[12px] font-black text-white">{TOOLS.find((t) => t.key === tool)?.label}</p>
-        <p className="mt-1.5 text-[10px] leading-tight text-white/45">
+        <p className="text-[12px] font-black text-[var(--text-primary)]">{TOOLS.find((t) => t.key === tool)?.label}</p>
+        <p className="mt-1.5 text-[10px] leading-tight text-[var(--text-secondary)]">
           {tool === "select" && "외곽 정점을 끌어 수정하고, 벽체·주석 도형은 통째로 이동합니다."}
           {tool === "point" && "파란 + 핸들을 클릭하면 외곽 엣지 중간에 정점이 추가됩니다."}
           {tool === "poly" && (activeLayer === "outline"
@@ -1776,9 +1776,9 @@ export default function CADEditor({
       </div>
 
       {/* ── 좌표계 칩(상단 우측) ── */}
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2 rounded-full bg-black/55 px-4 py-2 backdrop-blur-xl border border-white/10">
-        <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-white/70">EPSG:5186 · 1px={(1 / scalePxPerM).toFixed(2)}m</span>
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-2 rounded-[var(--r-pill)] bg-[var(--glass-bg)] px-4 py-2 backdrop-blur-[var(--glass-blur)] border border-[var(--border-muted)]">
+        <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-success)]" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)]">EPSG:5186 · 1px={(1 / scalePxPerM).toFixed(2)}m</span>
       </div>
     </div>
   );
