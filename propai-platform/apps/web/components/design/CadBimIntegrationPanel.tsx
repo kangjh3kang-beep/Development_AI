@@ -1948,9 +1948,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         ) : (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
             {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환.
-                pt-16 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6)과 겹치지 않도록 상단 여백 확보.
+                pt-24 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6, 높이 ~42px → 하단 ~66px)
+                아래로 툴바 내용을 완전히 내려 '종류' 셀렉트가 토글 뒤로 겹치지 않게 한다(가로 위치 무관 수직 이격).
                 flex-wrap = 좁은 폭/확대 시 우측 버튼군(내보내기·다듬기)이 토글 위로 올라타지 않게 줄바꿈. */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-muted)] px-6 pt-16 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-[var(--border-muted)] px-6 pt-24 pb-3">
               <label className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">도면</span>
                 <select
