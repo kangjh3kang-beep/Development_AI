@@ -1929,7 +1929,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             {/* 편집 종료 → 도면 확인(②) 화면으로 복귀. CADEditor 내부 칩과 비충돌 위치(좌상단). */}
             <button
               onClick={() => { setEditMode(false); setEditMetrics(null); }}
-              className="absolute left-4 top-4 z-40 rounded-full border border-white/15 bg-black/60 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/80 backdrop-blur-xl hover:bg-white/15"
+              className="absolute left-4 top-4 z-40 rounded-[var(--r-pill)] border border-[var(--border-muted)] bg-[var(--glass-bg)] px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-[var(--glass-blur)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)]"
             >
               ← 편집 종료
             </button>
@@ -1950,16 +1950,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환.
                 pt-16 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6)과 겹치지 않도록 상단 여백 확보.
                 flex-wrap = 좁은 폭/확대 시 우측 버튼군(내보내기·다듬기)이 토글 위로 올라타지 않게 줄바꿈. */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-6 pt-16 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-muted)] px-6 pt-16 pb-3">
               <label className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest text-white/40">도면</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">도면</span>
                 <select
                   value={activeCode ?? ""}
                   onChange={(e) => setActiveCode(e.target.value)}
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
+                  className="rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--text-primary)_5%,transparent)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none"
                 >
                   {drawingCodes.map((code) => (
-                    <option key={code} value={code} className="bg-[#0a0f14] text-white">
+                    <option key={code} value={code} className="bg-[var(--surface-strong)] text-[var(--text-primary)]">
                       {DRAWING_LABELS[code] || code}
                     </option>
                   ))}
@@ -1968,15 +1968,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <div className="flex shrink-0 items-center gap-2">
                 {/* DXF 도면종류 셀렉트(평면/상세/단면/입면/배치) — export-dxf drawing_type 분기 */}
                 <label className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-white/35">종류</span>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">종류</span>
                   <select
                     value={dxfType}
                     onChange={(e) => setDxfType(e.target.value)}
                     title="내보낼 DXF 도면 종류"
-                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
+                    className="rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--text-primary)_5%,transparent)] px-2 py-1.5 text-[11px] font-bold text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none"
                   >
                     {DXF_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value} className="bg-[#0a0f14] text-white">
+                      <option key={o.value} value={o.value} className="bg-[var(--surface-strong)] text-[var(--text-primary)]">
                         {o.label}
                       </option>
                     ))}
@@ -2203,14 +2203,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* ── 2D/3D 전환 세그먼트 칩 — 뷰포트 상단 중앙(헤더에서 이동). 프리셋 바와 동일 토큰.
             편집모드에서는 숨김(편집 종료 버튼과 동선 충돌 방지). 3D 클릭 시 editMode 해제 선행. ── */}
         {!editMode && (
-          <div className="absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-white/10 bg-black/45 p-1.5 backdrop-blur-xl shadow-2xl">
+          <div className="absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 backdrop-blur-[var(--glass-blur)] shadow-2xl">
             <button
               type="button"
               onClick={() => setViewMode("cad_2d")}
-              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+              className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "cad_2d"
                   ? "bg-[var(--accent-strong)] text-white shadow-lg"
-                  : "text-white/55 hover:text-white hover:bg-white/10"
+                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
               }`}
             >
               {t.btn2D || "2D 도면"}
@@ -2219,10 +2219,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               type="button"
               data-testid="cadbim-to-3d"
               onClick={() => { setEditMode(false); setViewMode("bim_3d"); }}
-              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+              className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "bim_3d"
                   ? "bg-[var(--accent-strong)] text-white shadow-lg"
-                  : "text-white/55 hover:text-white hover:bg-white/10"
+                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
               }`}
             >
               {t.btn3D || "3D BIM"}
