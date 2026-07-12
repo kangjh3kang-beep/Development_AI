@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -297,31 +298,36 @@ function projectStatusLabel(locale: string, status?: string | null): string {
   return map[key] ?? status;
 }
 
-// rule-check status별 한글 라벨·색상(토큰 기반). 가짜 pass 금지 — 백엔드 status 그대로 매핑.
+// rule-check status별 한글 라벨·색상(의미색 토큰). 가짜 pass 금지 — 백엔드 status 그대로 매핑.
+// 상태 칩 계약: 상태색 10% 틴트 + 1px 보더(적합=success·부적합=error·검토필요=warning·해당없음=중립).
 function ruleStatusMeta(status: string): { label: string; className: string } {
   const s = (status || "").toLowerCase();
   if (s === "pass") {
     return {
       label: "적합",
-      className: "bg-[rgba(14,116,144,0.12)] text-[var(--accent-strong)]",
+      className:
+        "border border-[var(--status-success)]/25 bg-[var(--status-success)]/10 text-[var(--status-success)]",
     };
   }
   if (s === "fail") {
     return {
       label: "부적합",
-      className: "bg-[rgba(239,68,68,0.12)] text-[var(--error)]",
+      className:
+        "border border-[var(--status-error)]/25 bg-[var(--status-error)]/10 text-[var(--status-error)]",
     };
   }
   if (s === "n/a" || s === "na") {
     return {
       label: "해당없음",
-      className: "bg-[var(--surface)] text-[var(--text-tertiary)]",
+      className:
+        "border border-[var(--border-muted)] bg-[var(--surface-soft)] text-[var(--text-tertiary)]",
     };
   }
   // warning 및 기타
   return {
     label: "검토필요",
-    className: "bg-[rgba(217,119,6,0.12)] text-[var(--spot)]",
+    className:
+      "border border-[var(--status-warning)]/25 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
   };
 }
 
@@ -714,7 +720,7 @@ export function ProjectLegalWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[var(--accent-strong)]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -751,7 +757,7 @@ export function ProjectLegalWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -920,7 +926,7 @@ export function ProjectLegalWorkspaceClient({
                 종합 규제 분석 (법령·조례·상/하위법령 + 항목별 이유·관련조항)
               </p>
               {regLlmGated ? (
-                <span className="rounded-full border border-[var(--line-strong)] px-2.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                <span className="rounded-full border border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 px-2.5 py-0.5 text-[10px] font-bold text-[var(--ai-accent)]">
                   AI 통합 해석은 잔액/구독 필요
                 </span>
               ) : null}
@@ -938,7 +944,7 @@ export function ProjectLegalWorkspaceClient({
                 </p>
               </div>
             ) : regError ? (
-              <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              <div className="mt-4 rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-5 text-sm leading-7 text-[var(--status-warning)]">
                 {regError}
               </div>
             ) : (
@@ -1032,7 +1038,7 @@ export function ProjectLegalWorkspaceClient({
                 </p>
               </div>
             ) : ruleError ? (
-              <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              <div className="mt-4 rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-5 text-sm leading-7 text-[var(--status-warning)]">
                 {ruleError}
               </div>
             ) : (
@@ -1082,34 +1088,55 @@ export function ProjectLegalWorkspaceClient({
                     failLabel={labels.failLabel}
                   />
                 </div>
-                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  {/* 3-state 종합 판정: needs_verification → 중립(미확인), pass/fail → 기존 */}
-                  {complianceResult.overall_status === "needs_verification" ? (
-                    <>
-                      <MetricTile
-                        label={labels.overallLabel}
-                        value={labels.verifyLabel}
-                      />
-                      {complianceResult.remarks && (
+                {(() => {
+                  // 3-state 종합 판정(기존 데이터 매핑만): needs_verification→조건부(warning)·pass→적합(success)·fail→부적합(error).
+                  // 판정값 대형(--font-display) + 상태색 보더/틴트. 수치·판정 생성 없음 — complianceResult 그대로 소비.
+                  const needsVerify =
+                    complianceResult.overall_status === "needs_verification";
+                  const toneVar = needsVerify
+                    ? "var(--status-warning)"
+                    : complianceResult.overall_pass
+                      ? "var(--status-success)"
+                      : "var(--status-error)";
+                  const verdictValue = needsVerify
+                    ? labels.verifyLabel
+                    : complianceResult.overall_pass
+                      ? labels.passLabel
+                      : labels.failLabel;
+                  return (
+                    <div
+                      className="rounded-[var(--radius-xl)] border p-6"
+                      style={{
+                        borderColor: `color-mix(in srgb, ${toneVar} 35%, transparent)`,
+                        background: `color-mix(in srgb, ${toneVar} 8%, transparent)`,
+                      }}
+                    >
+                      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                        {labels.overallLabel}
+                      </p>
+                      <p
+                        className="mt-2 text-4xl font-black leading-tight"
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          color: toneVar,
+                        }}
+                      >
+                        {verdictValue}
+                      </p>
+                      {needsVerify && complianceResult.remarks ? (
                         <p className="mt-2 text-xs leading-6 text-[var(--text-secondary)]">
                           {complianceResult.remarks}
                         </p>
-                      )}
-                    </>
-                  ) : (
-                    <MetricTile
-                      label={labels.overallLabel}
-                      value={
-                        complianceResult.overall_pass
-                          ? labels.passLabel
-                          : labels.failLabel
-                      }
-                    />
-                  )}
-                </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
                 {complianceResult.ai_analysis ? (
-                  <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                    <p className="text-sm leading-7 text-[var(--text-secondary)]">
+                  <div className="rounded-[var(--radius-xl)] border border-[var(--ai-accent)]/25 bg-[var(--ai-accent)]/[0.06] p-5">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ai-accent)]">
+                      AI 통합 해석
+                    </p>
+                    <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {complianceResult.ai_analysis}
                     </p>
                   </div>
@@ -1130,6 +1157,12 @@ export function ProjectLegalWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* 데이터 출처·고지 (DESIGN.md B1 공공데이터 고지 계약) — 자동 검토 참고용, 인허가청 최종 확정. */}
+      <DataSourceNotice
+        source="건축법·국토계획법 및 지자체 조례 (규칙기반 자동 검토)"
+        note="자동 검토 참고용 · 실제 인허가 여부는 관할 인허가청이 최종 확정"
+      />
     </section>
   );
 }
@@ -1173,10 +1206,10 @@ function ComplianceMetric({
         {limit} / {planned}
       </p>
       <span
-        className={`inline-block rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
+        className={`inline-block rounded-lg border px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
           pass
-            ? "bg-[rgba(14,116,144,0.1)] text-[var(--accent-strong)]"
-            : "bg-[rgba(239,68,68,0.1)] text-[var(--error)]"
+            ? "border-[var(--status-success)]/25 bg-[var(--status-success)]/10 text-[var(--status-success)]"
+            : "border-[var(--status-error)]/25 bg-[var(--status-error)]/10 text-[var(--status-error)]"
         }`}
       >
         {pass ? passLabel : failLabel}
