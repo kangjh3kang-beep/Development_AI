@@ -114,7 +114,7 @@ function MaterialPricesPanel({ projectId }: { projectId: string }) {
                 {data.items.map((item) => (
                   <div
                     key={item.material_code}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--surface-soft)] px-4 py-3 text-xs"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-card)] bg-[var(--surface-soft)] px-4 py-3 text-xs"
                   >
                     <span className="font-semibold text-[var(--text-primary)]">
                       {item.material_name} <span className="text-[var(--text-tertiary)]">({item.category})</span>
@@ -128,10 +128,10 @@ function MaterialPricesPanel({ projectId }: { projectId: string }) {
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                         item.alert_level === "high"
-                          ? "bg-red-500/10 text-red-500"
+                          ? "bg-[color-mix(in_srgb,var(--status-error)_12%,transparent)] text-[var(--status-error)]"
                           : item.alert_level === "medium"
-                            ? "bg-amber-500/10 text-amber-500"
-                            : "bg-emerald-500/10 text-emerald-500"
+                            ? "bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] text-[var(--status-warning)]"
+                            : "bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
                       }`}
                     >
                       {item.alert_level}
@@ -147,7 +147,7 @@ function MaterialPricesPanel({ projectId }: { projectId: string }) {
             {data.alerts.length > 0 ? (
               <div className="grid gap-2">
                 {data.alerts.map((alert, i) => (
-                  <div key={`${alert.material_code}-${i}`} className="rounded-lg bg-[var(--surface-soft)] px-4 py-3 text-xs">
+                  <div key={`${alert.material_code}-${i}`} className="rounded-[var(--r-card)] bg-[var(--surface-soft)] px-4 py-3 text-xs">
                     <span className="font-semibold text-[var(--text-primary)]">{alert.title}</span>
                     <p className="mt-1 text-[var(--text-secondary)]">{alert.detail}</p>
                   </div>
@@ -197,14 +197,14 @@ function renderEscalationResult(raw: unknown): ReactNode {
         <Tile label="PPI 출처" value={r.ppi_source} />
       </div>
       {r.summary ? (
-        <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+        <div className="rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
           {r.summary}
         </div>
       ) : null}
       {(r.material_impacts?.length ?? 0) > 0 ? (
         <div className="grid gap-2">
           {r.material_impacts.map((m, i) => (
-            <div key={i} className="flex items-center justify-between rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-xs">
+            <div key={i} className="flex items-center justify-between rounded-[var(--r-card)] bg-[var(--surface-soft)] px-3 py-2 text-xs">
               <span className="text-[var(--text-secondary)]">{m.material_name} (가중 {formatPercent01(m.weight_ratio)})</span>
               <span className="text-[var(--text-primary)]">{formatPercent01(m.delta_ratio)} · {formatWon(m.cost_impact_krw)}</span>
             </div>
@@ -214,7 +214,7 @@ function renderEscalationResult(raw: unknown): ReactNode {
       {(r.yearly_projection?.length ?? 0) > 0 ? (
         <div className="grid gap-2">
           {r.yearly_projection.map((y) => (
-            <div key={y.year} className="flex items-center justify-between rounded-lg bg-[var(--surface)] px-3 py-2 text-xs">
+            <div key={y.year} className="flex items-center justify-between rounded-[var(--r-card)] bg-[var(--surface)] px-3 py-2 text-xs">
               <span className="text-[var(--text-secondary)]">{y.year}년</span>
               <span className="text-[var(--text-primary)]">+{formatPercent01(y.escalation_ratio)}</span>
               <span className="text-[var(--text-tertiary)]">{formatWon(y.projected_cost_krw)}</span>
@@ -228,7 +228,7 @@ function renderEscalationResult(raw: unknown): ReactNode {
 
 function Tile({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
+    <div className="rounded-[var(--r-card)] bg-[var(--surface)] p-4">
       <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
     </div>
