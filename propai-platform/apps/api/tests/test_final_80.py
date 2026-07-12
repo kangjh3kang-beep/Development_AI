@@ -655,20 +655,6 @@ class TestAdditionalRouterEndpoints:
         assert r.status_code in {200, 401, 403, 422, 500}
 
     @pytest.mark.asyncio
-    async def test_finance_union_contribution(self, client):
-        r = await client.post("/api/v1/finance/union-contribution", json={
-            "total_project_cost": 100000000000,
-        })
-        assert r.status_code in {200, 401, 403, 422, 500}
-
-    @pytest.mark.asyncio
-    async def test_finance_feasibility(self, client):
-        r = await client.post("/api/v1/finance/feasibility", json={
-            "project_id": str(TEST_PROJECT_ID),
-        })
-        assert r.status_code in {200, 401, 403, 422, 500}
-
-    @pytest.mark.asyncio
     async def test_parking_recognize(self, client):
         r = await client.post("/api/v1/parking/recognize", json={
             "camera_id": "cam01",

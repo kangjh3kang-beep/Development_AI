@@ -1,6 +1,6 @@
 """재무 관련 Pydantic 모델 + 서비스 로직 단위 테스트.
 
-전세 리스크, 조합원 분담금, 탄소 배출량 모델/로직 검증.
+전세 리스크, 탄소 배출량 모델/로직 검증.
 """
 
 from uuid import uuid4
@@ -12,8 +12,6 @@ from packages.schemas.models import (
     CarbonCalculationResponse,
     JeonseRiskRequest,
     JeonseRiskResponse,
-    UnionContributionRequest,
-    UnionContributionResponse,
 )
 
 # ──────────────────────────────────────
@@ -51,36 +49,6 @@ class TestJeonseRiskResponse:
         )
         assert resp.risk_level == "MEDIUM"
         assert len(resp.factors) == 1
-
-
-# ──────────────────────────────────────
-# UnionContribution 모델 테스트
-# ──────────────────────────────────────
-
-class TestUnionContributionRequest:
-    def test_valid(self) -> None:
-        req = UnionContributionRequest(
-            project_id=uuid4(),
-            total_project_cost=100_000_000_000,
-            total_appraised_value=80_000_000_000,
-            individual_appraised_value=500_000_000,
-            target_area_sqm=84.0,
-            avg_sale_price_per_sqm=15_000_000,
-        )
-        assert req.target_area_sqm == 84.0
-
-
-class TestUnionContributionResponse:
-    def test_create(self) -> None:
-        resp = UnionContributionResponse(
-            proportional_rate=1.25,
-            individual_contribution=635_000_000,
-            total_project_cost=100_000_000_000,
-            breakdown={"target_value": 1_260_000_000, "credit": 625_000_000},
-            scenarios=[{"scenario": "기본", "contribution": 635_000_000}],
-        )
-        assert resp.proportional_rate == 1.25
-        assert len(resp.scenarios) == 1
 
 
 # ──────────────────────────────────────
@@ -151,34 +119,6 @@ class TestJeonseRiskCalculation:
         level, score = self._calculate(0.50)
         assert level == "SAFE"
         assert score == 0.10
-
-
-# ──────────────────────────────────────
-# 조합원 분담금 계산 로직 테스트
-# ──────────────────────────────────────
-
-class TestUnionContributionCalculation:
-    """UnionManagementService 비례율/분담금 로직 검증."""
-
-    def test_proportional_rate(self) -> None:
-        rate = 100_000_000_000 / 80_000_000_000
-        assert rate == 1.25
-
-    def test_contribution(self) -> None:
-        target_value = 84.0 * 15_000_000  # 1,260,000,000
-        credit = 500_000_000 * 1.25       # 625,000,000
-        contribution = max(0, target_value - credit)
-        assert contribution == 635_000_000
-
-    def test_zero_appraised(self) -> None:
-        """감정가 0인 경우 비례율은 1.0."""
-        rate = 1.0  # division by zero 방지
-        assert rate == 1.0
-
-    def test_contribution_never_negative(self) -> None:
-        """분담금은 음수가 될 수 없다."""
-        contribution = max(0, 100 - 200)
-        assert contribution == 0
 
 
 # ──────────────────────────────────────

@@ -24,6 +24,12 @@ import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
+
+/** Nexus label-caps(DESIGN.md B2) — 인풋 상단 소형 라벨. Space Grotesk 대문자 트래킹. */
+const labelCapsCls =
+  "text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--text-tertiary)]";
+const labelCapsStyle = { fontFamily: "var(--font-display)" } as const;
 
 /* ── 백엔드 /feasibility/rough-scenario 응답 계약(1:1) ── */
 interface RsInputs {
@@ -385,8 +391,10 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
           {/* 공용 프로젝트 선택기 — 선택 시 컨텍스트(주소·다필지·용도·면적) 자동 적재 */}
           <ProjectSwitcher />
           {/* 주소 직접 수정(요구 ① '수정 가능') */}
-          <label className="block text-xs font-semibold text-[var(--text-secondary)]">
-            분석 주소
+          <label className="block">
+            <span className={labelCapsCls} style={labelCapsStyle}>
+              분석 주소
+            </span>
             <input
               value={address}
               onChange={(e) => setAddress(e.target.value)}
@@ -613,9 +621,11 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                   {OVERRIDE_FIELDS.map((f) => {
                     const changed = changedKeys.has(f.key);
                     return (
-                      <label key={f.key} className="block text-xs text-[var(--text-secondary)]">
+                      <label key={f.key} className="block">
                         <span className="flex items-center gap-1.5">
-                          {f.label}
+                          <span className={labelCapsCls} style={labelCapsStyle}>
+                            {f.label}
+                          </span>
                           {changed && <span className="sa-dot sa-dot--info" title="원값과 다름(반영 예정)" />}
                         </span>
                         <input
@@ -733,6 +743,9 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               )}
             </div>
           </section>
+
+          {/* 공공데이터 고지(DESIGN.md B1) — 개략수지 전체 데이터 뷰 하단 출처·참고용 문구 */}
+          <DataSourceNotice source="국토교통부 실거래가 · 조달청 공사비 지수 등 공공데이터" />
         </>
       )}
     </div>

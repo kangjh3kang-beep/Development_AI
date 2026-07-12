@@ -336,11 +336,11 @@ export function ProjectBimWorkspaceClient({
 
   return (
     <section className="grid grid-cols-1 gap-6 min-w-0">
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+      <Card className="rounded-[var(--r-panel)] border-[var(--border-muted)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="cc-meta">BIM WORKSPACE</span>
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             {runtimeConfig.mode === "live" ? (
@@ -356,8 +356,8 @@ export function ProjectBimWorkspaceClient({
             {labels.heroHint}
           </p>
           {siteAnalysis?.address && (
-            <p className="mt-2 text-xs text-emerald-500 flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <p className="mt-2 text-xs text-[var(--status-success)] flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-[var(--r-pill)] bg-[var(--status-success)]" />
               부지분석 연동: {siteAnalysis.address}
               {designData?.totalGfaSqm && ` · 연면적 ${designData.totalGfaSqm.toLocaleString()}m²`}
               {designData?.floorCount && ` · ${designData.floorCount}층`}
@@ -369,7 +369,7 @@ export function ProjectBimWorkspaceClient({
             </p>
           )}
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+            <div className="mt-6 rounded-[var(--r-card)] border border-dashed border-[var(--border-muted)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           ) : null}
@@ -387,7 +387,7 @@ export function ProjectBimWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--r-card)] border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -406,7 +406,7 @@ export function ProjectBimWorkspaceClient({
             {projectQuery.isLoading ? (
               <SkeletonLoader count={1} itemClassName="h-28" />
             ) : (
-              <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+              <div className="rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5">
                 <p className="text-sm font-semibold text-[var(--text-primary)]">
                   {projectQuery.data?.name ?? labels.projectFallback}
                 </p>
@@ -428,7 +428,7 @@ export function ProjectBimWorkspaceClient({
             )}
           </div>
 
-          <Card className="bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--r-card)] border-[var(--border-muted)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
               <p className="cc-label">
                 {labels.generateTitle}
@@ -445,7 +445,7 @@ export function ProjectBimWorkspaceClient({
                       }))
                     }
                     placeholder={labels.totalAreaLabel}
-                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                    className="flex h-11 w-full rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   <Input
                     type="number"
@@ -515,7 +515,7 @@ export function ProjectBimWorkspaceClient({
                 />
               </div>
             ) : (
-              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              <div className="mt-4 rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.placeholder}
               </div>
             )}
@@ -539,7 +539,7 @@ export function ProjectBimWorkspaceClient({
                     value={String(geometryResult.total_elements)}
                   />
                 </div>
-                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                <div className="rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5">
                   <p className="cc-label">
                     {labels.geometryTypesLabel}
                   </p>
@@ -559,7 +559,7 @@ export function ProjectBimWorkspaceClient({
                 </div>
               </div>
             ) : (
-              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              <div className="mt-4 rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.placeholder}
               </div>
             )}
@@ -578,7 +578,7 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="cc-bracketed rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+    <div className="cc-bracketed rounded-[var(--r-card)] bg-[var(--surface-soft)] p-5">
       <i className="cc-bracket cc-bracket--tl" />
       <i className="cc-bracket cc-bracket--br" />
       <p className="cc-label">

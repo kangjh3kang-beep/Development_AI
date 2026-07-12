@@ -124,7 +124,6 @@ type MutableState = {
   digitalTwinStatus: Record<string, unknown> | null;
   riskSnapshot: Record<string, unknown> | null;
   permitSnapshot: Record<string, unknown> | null;
-  feasibilityReport: Record<string, unknown>;
 };
 
 function createState(): MutableState {
@@ -160,32 +159,6 @@ function createState(): MutableState {
     digitalTwinStatus: null,
     riskSnapshot: null,
     permitSnapshot: null,
-    feasibilityReport: {
-      id: "feasibility-release-001",
-      project_id: RELEASE_PROJECT_ID,
-      scenario_name: "stored-case",
-      npv: 1200000000,
-      irr: 0.118,
-      payback_period_months: 72,
-      total_investment_krw: 1500000000,
-      total_revenue_krw: 3100000000,
-      risk_score: 0.31,
-      discount_rate: 0.05,
-      annual_growth_rate: 0.02,
-      analysis_years: 10,
-      exit_value_krw: 1800000000,
-      cashflows: [
-        {
-          year: 1,
-          revenue_krw: 280000000,
-          operating_cost_krw: 95000000,
-          net_cashflow_krw: 185000000,
-          discounted_cashflow_krw: 176190476.19,
-        },
-      ],
-      assumptions: {},
-      created_at: "2026-03-26T00:00:00Z",
-    },
   };
 }
 
@@ -357,25 +330,6 @@ async function handleApiRoute(route: Route, state: MutableState) {
         },
       ],
     });
-  }
-
-  if (method === "GET" && path === `/finance/feasibility/${RELEASE_PROJECT_ID}/latest`) {
-    return json(route, state.feasibilityReport);
-  }
-
-  if (method === "POST" && path === "/finance/feasibility") {
-    state.feasibilityReport = {
-      ...state.feasibilityReport,
-      id: "feasibility-release-002",
-      scenario_name: "base-case",
-      npv: 1450000000,
-      irr: 0.131,
-      payback_period_months: 60,
-      total_revenue_krw: 3300000000,
-      risk_score: 0.22,
-      created_at: "2026-03-26T00:10:00Z",
-    };
-    return json(route, state.feasibilityReport);
   }
 
   if (method === "POST" && path === "/reports/investor/generate") {

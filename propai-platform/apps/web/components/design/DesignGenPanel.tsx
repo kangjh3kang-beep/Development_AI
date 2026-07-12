@@ -321,7 +321,7 @@ function Metric({ label, value }: { label: string; value: string | number | null
   return (
     <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">{label}</div>
-      <div className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">
+      <div className="mt-0.5 font-mono text-sm font-bold text-[var(--text-primary)]">
         {value === null || value === undefined || value === "" ? "—" : value}
       </div>
     </div>
@@ -812,7 +812,7 @@ export function DesignGenPanel({ projectId }: Props) {
       <CardContent className="space-y-5 p-5">
         <div>
           <CardTitle className="flex items-center gap-2">
-            <Construction className="size-5" aria-hidden />AI 설계생성 <span className="text-xs font-normal text-[var(--text-tertiary)]">검색·조합·인허가·근거</span>
+            <Construction className="size-5 text-[var(--ai-accent)]" aria-hidden />AI 설계생성 <span className="text-xs font-normal text-[var(--text-tertiary)]">검색·조합·인허가·근거</span>
           </CardTitle>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
             부지조건으로 인허가 부합 설계안 초안을 생성하고, 모든 산출에 근거·법령링크를 제공합니다.
@@ -926,7 +926,12 @@ export function DesignGenPanel({ projectId }: Props) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button onClick={handleGenerate} disabled={loading || areaSqm <= 0 || avgUnit <= 0}>
+          <Button
+            onClick={handleGenerate}
+            disabled={loading || areaSqm <= 0 || avgUnit <= 0}
+            className="hover:opacity-90"
+            style={loading || areaSqm <= 0 || avgUnit <= 0 ? undefined : { backgroundColor: "var(--ai-accent)" }}
+          >
             {loading ? "생성 중…" : "설계안 생성"}
           </Button>
           <Button variant="secondary" onClick={handleLaws} disabled={lawsLoading}>
@@ -1242,8 +1247,8 @@ export function DesignGenPanel({ projectId }: Props) {
 
             {/* AI 설계 해석(선택형) — 추천안 6섹션(왜 이 매스인지·법규부합·개선) */}
             {result.interpretation?.sections && (
-              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2.5 text-xs">
-                <div className="mb-1.5 font-semibold text-[var(--text-secondary)]">
+              <div className="rounded-lg border border-[color-mix(in_srgb,var(--ai-accent)_30%,transparent)] bg-[var(--surface-soft)] px-3 py-2.5 text-xs">
+                <div className="mb-1.5 font-semibold text-[var(--ai-accent)]">
                   AI 설계 해석 <span className="text-[var(--text-hint)]">(추천안 · LLM)</span>
                 </div>
                 <dl className="space-y-1.5">
@@ -1260,7 +1265,7 @@ export function DesignGenPanel({ projectId }: Props) {
                     .filter(([k]) => (result.interpretation?.sections?.[k] || "").trim())
                     .map(([k, label]) => (
                       <div key={k}>
-                        <dt className="font-medium text-[var(--accent-strong)]">{label}</dt>
+                        <dt className="font-medium text-[var(--ai-accent)]">{label}</dt>
                         <dd className="text-[var(--text-tertiary)] whitespace-pre-line">
                           {result.interpretation?.sections?.[k]}
                         </dd>

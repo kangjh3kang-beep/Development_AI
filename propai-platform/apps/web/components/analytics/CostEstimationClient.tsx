@@ -159,7 +159,7 @@ function Term({ label, hint }: { label: string; hint: string }) {
 function StepHeader({ n, title, desc, done }: { n: number; title: string; desc: string; done?: boolean }) {
   return (
     <div className="flex items-start gap-3">
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-black ${done ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]"}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-black ${done ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]"}`}>
         {done ? "✓" : n}
       </span>
       <div>
@@ -171,7 +171,7 @@ function StepHeader({ n, title, desc, done }: { n: number; title: string; desc: 
 }
 
 const AutoBadge = () => (
-  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">프로젝트에서 자동</span>
+  <span className="rounded bg-[var(--status-success)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-success)]">프로젝트에서 자동</span>
 );
 
 /** 상단 5단계 인디케이터 — "완료 여부"만 표시(현재 스크롤 위치 추적 아님), 클릭 시 해당 섹션으로 스크롤. */
@@ -185,11 +185,11 @@ function StepIndicator({ steps }: { steps: { n: number; label: string; done: boo
           onClick={() => document.getElementById(`cost-step-${s.n}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
           className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold transition-colors ${
             s.done
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]"
               : "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"
           }`}
         >
-          <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500/25" : "bg-[var(--surface-muted)]"}`}>
+          <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black ${s.done ? "bg-[var(--status-success)]/25" : "bg-[var(--surface-muted)]"}`}>
             {s.done ? "✓" : s.n}
           </span>
           {s.label}
@@ -459,15 +459,15 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
         <ProjectAddressInput value={pickerAddr} onChange={setPickerAddr} label="분석 대상 프로젝트" pickerLabel="프로젝트" placeholder="프로젝트를 선택하거나 주소를 검색하세요" />
 
         {!hasProject && (
-          <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-amber-400">
+          <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--status-warning)]">
             프로젝트 정보 없음 — 위에서 프로젝트를 선택하거나, 부지/설계 분석을 먼저 진행하면 건축개요가 자동으로 채워집니다.
           </p>
         )}
         {hasDesign && (
-          <p className="flex items-center gap-1.5 text-[11px] text-emerald-400"><Construction className="size-3.5 shrink-0" aria-hidden /> 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-[var(--status-success)]"><Construction className="size-3.5 shrink-0" aria-hidden /> 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
         )}
         {!hasDesign && gfaFromSite && !editedGfa && (
-          <p className="flex items-center gap-1.5 text-[11px] text-amber-400"><DraftingCompass className="size-3.5 shrink-0" aria-hidden /> 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-[var(--status-warning)]"><DraftingCompass className="size-3.5 shrink-0" aria-hidden /> 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
         )}
 
         {/* 건축개요 입력 */}
@@ -479,7 +479,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           <label className="flex flex-col gap-1">
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
               <Term label="연면적" hint="건물 전체 바닥면적의 합(GFA, Gross Floor Area). 지상+지하 모든 층 면적을 더한 값." />
-              {autoGfa && !editedGfa && <AutoBadge />}{editedGfa && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}
+              {autoGfa && !editedGfa && <AutoBadge />}{editedGfa && <span className="rounded bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">수정됨</span>}
             </span>
             <div className="flex items-center gap-1.5"><NumberInput allowDecimal value={gfa} onChange={(n) => { setGfa(n ?? 0); setEditedGfa(true); }} className={fcls} /><span className="text-[11px] text-[var(--text-tertiary)]">㎡</span></div>
           </label>
@@ -504,7 +504,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
               <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
                 <Term label="평균 전용면적" hint="세대별 전용면적의 평균값(㎡). 기본형건축비 고시 대조·시니어 QS 자문에 사용됩니다. 미입력 시 대조가 생략됩니다." />
                 {autoAvgUnitSqm && !editedAvgUnitSqm && <AutoBadge />}
-                {editedAvgUnitSqm && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}
+                {editedAvgUnitSqm && <span className="rounded bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">수정됨</span>}
               </span>
               <div className="flex items-center gap-1.5">
                 <NumberInput allowDecimal value={avgUnitSqm} onChange={(n) => { setAvgUnitSqm(n ?? 0); setEditedAvgUnitSqm(true); }} className={fcls} />
@@ -523,7 +523,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           <button onClick={calc} disabled={loading} className="rounded-xl bg-[var(--accent-strong)] px-8 py-3 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50">
             {loading ? "공사비 산정 중…" : "개략 공사비 산정 실행"}
           </button>
-          {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
+          {err && <span className="text-xs font-semibold text-[var(--status-error)]">{err}</span>}
         </div>
 
         {result && (
@@ -542,14 +542,14 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
 
             {/* QTO 물량 산출 배지 + 기본형건축비 대조(baseline_check) — 있을 때만(정직). */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${result.qto_source === "bim" ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"}`}>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${result.qto_source === "bim" ? "bg-[var(--status-success)]/15 text-[var(--status-success)]" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"}`}>
                 <Construction className="size-3" aria-hidden />
                 물량 산출(QTO): {result.qto_source === "bim" ? "BIM 실치수" : "개요 역산(derived)"}
               </span>
               {result.baseline_check && result.baseline_check.deviation_pct != null && (
                 <span
                   title={result.baseline_check.basis || undefined}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${Math.abs(result.baseline_check.deviation_pct) > 15 ? "bg-amber-500/15 text-amber-400" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${Math.abs(result.baseline_check.deviation_pct) > 15 ? "bg-[var(--status-warning)]/15 text-[var(--status-warning)]" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}
                 >
                   기본형건축비 대비 {result.baseline_check.deviation_pct >= 0 ? "+" : ""}{result.baseline_check.deviation_pct}%
                 </span>
@@ -600,8 +600,8 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                     <div key={label} className="flex items-center gap-3">
                       <span className="w-28 shrink-0 text-xs font-semibold text-[var(--text-secondary)]">{label}</span>
                       <div className="h-3 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent-strong)]" style={{ width: `${Math.min(100, pct)}%` }} /></div>
-                      <span className="w-24 shrink-0 text-right text-xs font-bold text-[var(--text-primary)]">{fmtKrw(v)}</span>
-                      <span className="w-10 shrink-0 text-right text-[11px] text-[var(--text-tertiary)]">{pct.toFixed(0)}%</span>
+                      <span className="w-24 shrink-0 text-right font-mono text-xs font-bold text-[var(--text-primary)]">{fmtKrw(v)}</span>
+                      <span className="w-10 shrink-0 text-right font-mono text-[11px] text-[var(--text-tertiary)]">{pct.toFixed(0)}%</span>
                     </div>
                   );
                 })}
@@ -634,18 +634,18 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-[10px] font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
+                      <tr className="text-left text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
                         <th className="pb-2 pr-4">공종</th><th className="pb-2 pr-4">규격</th><th className="pb-2 pr-4 text-right">물량</th><th className="pb-2 pr-4">단위</th><th className="pb-2 text-right">금액</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(result.items ?? []).map((it, i) => (
-                        <tr key={i} className="border-t border-[var(--line)]">
+                        <tr key={i} className="border-t border-[var(--line)] transition-colors hover:bg-[var(--accent-strong)]/5">
                           <td className="py-2 pr-4 font-semibold text-[var(--text-primary)]">{it.name}</td>
                           <td className="py-2 pr-4 text-[var(--text-tertiary)]">{it.spec || "-"}</td>
-                          <td className="py-2 pr-4 text-right text-[var(--text-secondary)]">{it.quantity?.toLocaleString()}</td>
+                          <td className="py-2 pr-4 text-right font-mono text-[var(--text-secondary)]">{it.quantity?.toLocaleString()}</td>
                           <td className="py-2 pr-4 text-[var(--text-tertiary)]">{it.unit || "-"}</td>
-                          <td className="py-2 text-right font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</td>
+                          <td className="py-2 text-right font-mono font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -660,7 +660,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                 <div className="mb-2 flex items-center gap-2">
                   <h3 className="text-sm font-black text-[var(--text-primary)]">기하(Geometry) 정밀 적산</h3>
                   {result.geometry.source === "bim"
-                    ? <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400"><Construction className="size-3" aria-hidden /> BIM 매스 실치수</span>
+                    ? <span className="inline-flex items-center gap-1 rounded bg-[var(--status-success)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-success)]"><Construction className="size-3" aria-hidden /> BIM 매스 실치수</span>
                     : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">개요 역산</span>}
                 </div>
                 <p className="mb-3 text-[11px] text-[var(--text-hint)]">
@@ -882,15 +882,15 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                   </button>
                 ))}
                 {reportNotice && (
-                  <span className={`text-[11px] font-semibold ${reportNotice.kind === "info" ? "text-emerald-400" : "text-rose-400"}`}>{reportNotice.text}</span>
+                  <span className={`text-[11px] font-semibold ${reportNotice.kind === "info" ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>{reportNotice.text}</span>
                 )}
               </div>
             </div>
 
             {/* 수지 반영 상태 — ②의 calc()가 매 산정마다 costData를 자동 주입하므로 별도 버튼 없이 상태만 표기(과설계 금지). */}
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-4">
-              <Link2 className="size-4 shrink-0 text-emerald-400" aria-hidden />
-              <span className="text-[11px] font-bold text-emerald-400">이미 반영됨</span>
+              <Link2 className="size-4 shrink-0 text-[var(--status-success)]" aria-hidden />
+              <span className="text-[11px] font-bold text-[var(--status-success)]">이미 반영됨</span>
               <span className="text-[11px] text-[var(--text-secondary)]">②의 개략 공사비(총·직접·간접·범위·물량출처·기준선편차)가 수지분석·투자수익성(ROI) 공통 컨텍스트에 자동 주입되었습니다(단일 데이터원).</span>
             </div>
           </>

@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Bot,
   Building2,
   CheckCircle2,
   ChevronRight,
@@ -36,6 +37,7 @@ import {
 
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -75,7 +77,7 @@ const SatongMultiMap = dynamic<SatongMultiMapProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="grid h-[720px] place-items-center rounded-[24px] border border-slate-200 bg-slate-50 text-sm font-bold text-slate-500">
+      <div className="grid h-[720px] place-items-center rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] text-sm font-bold text-[var(--text-secondary)]">
         <span className="inline-flex items-center gap-2">
           <Loader2 className="size-4 animate-spin" aria-hidden />
           통합지도를 불러오는 중
@@ -398,9 +400,9 @@ function statusText(status: LayerStatus): string {
 }
 
 function statusClass(status: LayerStatus): string {
-  if (status === "active") return "bg-emerald-100 text-emerald-700";
-  if (status === "ready") return "bg-blue-100 text-blue-700";
-  return "bg-amber-100 text-amber-700";
+  if (status === "active") return "bg-[var(--status-success)]/15 text-[var(--status-success)]";
+  if (status === "ready") return "bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]";
+  return "bg-[var(--status-warning)]/15 text-[var(--status-warning)]";
 }
 
 function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
@@ -890,7 +892,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
         description: "다필지·규제·입지",
         href: `/${locale}/analysis`,
         icon: MapPin,
-        tone: "border-lime-200 bg-lime-50 text-lime-950",
+        // 산출물 dock: primary 1개(부지분석) + 글래스 3개 — DESIGN.md B5 Output Actions.
+        tone: "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]",
       },
       {
         id: "permits",
@@ -898,7 +901,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         description: "허가 가능성·보완 항목",
         href: `/${locale}/permits`,
         icon: CheckCircle2,
-        tone: "border-rose-200 bg-rose-50 text-rose-950",
+        tone: "border-[var(--border-muted)] bg-[var(--surface-strong)] text-[var(--text-primary)]",
       },
       {
         id: "market",
@@ -906,7 +909,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         description: "시세·수요·공급",
         href: `/${locale}/market-insights`,
         icon: LineChart,
-        tone: "border-sky-200 bg-sky-50 text-sky-950",
+        tone: "border-[var(--border-muted)] bg-[var(--surface-strong)] text-[var(--text-primary)]",
       },
       {
         id: "design",
@@ -914,7 +917,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         description: "법규 맞춤 계획안",
         href: `/${locale}/design-studio`,
         icon: Building2,
-        tone: "border-blue-200 bg-blue-50 text-blue-950",
+        tone: "border-[var(--border-muted)] bg-[var(--surface-strong)] text-[var(--text-primary)]",
       },
     ],
     [locale],
@@ -1413,51 +1416,51 @@ export function SatongMapShell({ locale }: { locale: string }) {
   }, [activeLayerId]);
 
   return (
-    <section className="min-w-0 rounded-[32px] border border-slate-200 bg-[#f5f9fb] p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] md:p-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-white/80 bg-white/90 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+    <section className="min-w-0 rounded-[32px] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
+      <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-[var(--accent-strong)]">
             Satong Map OS
           </p>
-          <h1 className="mt-2 text-2xl font-black tracking-normal text-slate-950 md:text-3xl">
+          <h1 className="mt-2 text-2xl font-black tracking-normal text-[var(--text-primary)] md:text-3xl">
             지도 위에서 입력부터 산출물 생성까지 이어갑니다.
           </h1>
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--text-secondary)]">
             지번·주소 검색, 엑셀 다필지 등록, 지도 선택, 레이어 검토를 한 화면에 통합했습니다.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-lime-100 px-3 py-2 text-xs font-black text-lime-950">
+          <span className="rounded-full bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)]">
             필지 선택 {selectedParcels.length}건
           </span>
-          <span className="rounded-full bg-sky-100 px-3 py-2 text-xs font-black text-sky-950">
-            합산 면적 {formatArea(selectedTotalArea || null)}
+          <span className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-secondary)]">
+            합산 면적 <span className="font-mono">{formatArea(selectedTotalArea || null)}</span>
           </span>
         </div>
       </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <aside className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="rounded-[24px] bg-[#0b120d] p-4 text-white shadow-[0_18px_60px_rgba(11,18,13,0.18)]">
-            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-lime-300">
+        <aside className="min-w-0 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-elevated)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
+            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[var(--accent-strong)]">
               Parcel Intake
             </p>
             <h2 className="mt-2 text-xl font-black tracking-normal">통합 필지 입력</h2>
-            <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
+            <p className="mt-2 text-xs font-semibold leading-5 text-[var(--text-secondary)]">
               검색하면 지도 중심이 이동하고, 엑셀을 올리면 다필지 목록이 같은 선택 목록으로 합쳐집니다.
             </p>
           </div>
 
           {/* 프로젝트 연결 */}
-          <div className="mt-4 rounded-[20px] border border-slate-100 bg-slate-50/70 p-3.5">
-            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-slate-700">
-              <Building2 className="size-4 text-emerald-600" aria-hidden />
+          <div className="mt-4 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3.5">
+            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]">
+              <Building2 className="size-4 text-[var(--accent-strong)]" aria-hidden />
               연결 프로젝트
             </label>
             <select
               value={connectTarget}
               onChange={(e) => handleConnectTargetChange(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+              className="w-full rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2.5 text-xs font-bold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
             >
               <option value="new">새 프로젝트로 등록 (기본)</option>
               <option value="none">프로젝트 연결 안 함 (약식 분석)</option>
@@ -1471,26 +1474,26 @@ export function SatongMapShell({ locale }: { locale: string }) {
             </select>
             {connectTarget === "new" && selectedParcels.length > 0 && (
               <>
-                <p className="mt-2 text-[11px] font-bold leading-4 text-slate-500">
+                <p className="mt-2 text-[11px] font-bold leading-4 text-[var(--text-hint)]">
                   완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
                 </p>
                 <button
                   type="button"
                   onClick={handleCreateProjectNow}
                   disabled={creatingProject}
-                  className="mt-2 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-2 w-full rounded-[var(--r-input)] border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/15 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {creatingProject ? "생성 중…" : "선택 필지로 새 프로젝트 생성"}
                 </button>
               </>
             )}
             {connectTarget === "none" && (
-              <p className="mt-2 text-[11px] font-bold leading-4 text-slate-500">
+              <p className="mt-2 text-[11px] font-bold leading-4 text-[var(--text-hint)]">
                 산출물은 프로젝트에 저장되지 않습니다.
               </p>
             )}
             {connectNotice && (
-              <p className="mt-2 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold leading-4 text-emerald-700">
+              <p className="mt-2 rounded-lg bg-[var(--status-success)]/10 px-2.5 py-1.5 text-[11px] font-bold leading-4 text-[var(--status-success)]">
                 {connectNotice}
               </p>
             )}
@@ -1498,8 +1501,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
           <div className="mt-4 space-y-3">
             <div className="relative">
-              <label className="mb-2 flex items-center gap-2 text-xs font-black text-slate-700">
-                <Search className="size-4 text-blue-600" aria-hidden />
+              <label className="mb-2 flex items-center gap-2 text-xs font-black text-[var(--text-primary)]">
+                <Search className="size-4 text-[var(--accent-strong)]" aria-hidden />
                 지번·주소 검색
               </label>
               <div className="flex gap-2">
@@ -1510,13 +1513,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     if (event.key === "Enter") handleSearchSubmit();
                   }}
                   placeholder="예: 의정부동 224, 판교역로 166"
-                  className="min-w-0 flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                  className="min-w-0 flex-1 rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-4 py-3 text-sm font-bold text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:bg-[var(--surface-panel)] focus:ring-4 focus:ring-[var(--accent-soft)]"
                 />
                 <button
                   type="button"
                   onClick={handleSearchSubmit}
                   disabled={!query.trim() || searchStatus === "loading"}
-                  className="inline-flex size-12 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="inline-flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
                   aria-label="검색 추가"
                 >
                   {searchStatus === "loading" ? (
@@ -1527,7 +1530,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 </button>
               </div>
               {searchCandidates.length > 0 && (
-                <div className="absolute left-0 right-14 top-[78px] z-30 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="absolute left-0 right-14 top-[78px] z-30 overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] shadow-[var(--shadow-xl)]">
                   {searchCandidates.slice(0, 6).map((candidate, index) => {
                     const label = getCandidateLabel(candidate);
                     return (
@@ -1535,14 +1538,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
                         key={`${label}-${index}`}
                         type="button"
                         onClick={() => void handleCandidatePick(candidate)}
-                        className="flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50"
+                        className="flex w-full items-start gap-3 border-b border-[var(--line)] px-4 py-3 text-left last:border-0 hover:bg-[var(--surface-strong)]"
                       >
-                        <MapPin className="mt-0.5 size-4 shrink-0 text-blue-600" aria-hidden />
+                        <MapPin className="mt-0.5 size-4 shrink-0 text-[var(--accent-strong)]" aria-hidden />
                         <span className="min-w-0">
-                          <span className="block truncate text-sm font-black text-slate-900">
+                          <span className="block truncate text-sm font-black text-[var(--text-primary)]">
                             {label}
                           </span>
-                          <span className="mt-0.5 block text-xs font-semibold text-slate-500">
+                          <span className="mt-0.5 block text-xs font-semibold text-[var(--text-hint)]">
                             {candidate.kind || candidate.pnu || "주소 후보"}
                           </span>
                         </span>
@@ -1552,7 +1555,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 </div>
               )}
               {searchError && (
-                <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-rose-600">
+                <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-[var(--status-error)]">
                   <AlertTriangle className="size-3.5" aria-hidden />
                   {searchError}
                 </p>
@@ -1563,19 +1566,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-black text-slate-800 transition hover:border-blue-200 hover:bg-blue-50"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
               >
                 {uploadStatus === "loading" ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                 ) : (
-                  <FileSpreadsheet className="size-4 text-emerald-600" aria-hidden />
+                  <FileSpreadsheet className="size-4 text-[var(--accent-strong)]" aria-hidden />
                 )}
                 엑셀 파일 선택
               </button>
               <button
                 type="button"
                 onClick={handleTemplateDownload}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-lime-200 bg-lime-100 px-3 py-3 text-xs font-black text-lime-950 transition hover:bg-lime-200"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
               >
                 <Download className="size-4" aria-hidden />
                 양식 다운로드
@@ -1600,46 +1603,46 @@ export function SatongMapShell({ locale }: { locale: string }) {
               <p
                 className={`rounded-2xl px-3 py-2 text-xs font-bold ${
                   uploadStatus === "error"
-                    ? "bg-rose-50 text-rose-700"
-                    : "bg-emerald-50 text-emerald-700"
+                    ? "bg-[var(--status-error)]/10 text-[var(--status-error)]"
+                    : "bg-[var(--status-success)]/10 text-[var(--status-success)]"
                 }`}
               >
                 {uploadNote}
               </p>
             )}
             {verificationReport && (
-              <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="space-y-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-xs font-black text-slate-900">업로드 검증 리포트</h4>
+                  <h4 className="text-xs font-black text-[var(--text-primary)]">업로드 검증 리포트</h4>
                   {verificationReport.llm_used && (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-700">
-                      🤖 LLM 보조 사용
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--ai-accent)]/15 px-2 py-0.5 text-[10px] font-black text-[var(--ai-accent)]">
+                      <Bot className="size-3" aria-hidden /> LLM 보조 사용
                     </span>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-black text-emerald-700">
+                  <span className="rounded-full bg-[var(--status-success)]/15 px-2 py-1 text-[11px] font-black text-[var(--status-success)]">
                     확인됨 {verificationReport.counts?.verified ?? 0}
                   </span>
-                  <span className="rounded-full bg-sky-100 px-2 py-1 text-[11px] font-black text-sky-700">
+                  <span className="rounded-full bg-[var(--status-info)]/15 px-2 py-1 text-[11px] font-black text-[var(--status-info)]">
                     보정됨 {verificationReport.counts?.corrected ?? 0}
                   </span>
-                  <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black text-amber-700">
+                  <span className="rounded-full bg-[var(--status-warning)]/15 px-2 py-1 text-[11px] font-black text-[var(--status-warning)]">
                     확인필요 {verificationReport.counts?.needs_review ?? 0}
                   </span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black text-slate-600">
+                  <span className="rounded-full bg-[var(--surface-muted)] px-2 py-1 text-[11px] font-black text-[var(--text-secondary)]">
                     제외 {verificationReport.counts?.excluded ?? 0}
                   </span>
                 </div>
                 {/* ★H3: 확인필요 행도 일단 주입되며, 주입 후 2차 조회에서 자동보정을 시도한다는
                     것을 명확히 안내(과거엔 이 자기치유 경로가 자동반영 제외로 조용히 끊겼었음). */}
                 {(verificationReport.counts?.needs_review ?? 0) > 0 && (
-                  <p className="text-[11px] font-semibold text-amber-700">
+                  <p className="text-[11px] font-semibold text-[var(--status-warning)]">
                     확인필요 행은 주입 후 자동보정 시도됩니다 — 아래 사유를 확인해 주세요.
                   </p>
                 )}
                 {(verificationReport.corrections?.length ?? 0) > 0 && (
-                  <p className="text-[11px] font-semibold text-sky-700">
+                  <p className="text-[11px] font-semibold text-[var(--status-info)]">
                     보정 {verificationReport.corrections?.length}건 —{" "}
                     {(verificationReport.corrections ?? [])
                       .slice(0, 3)
@@ -1658,7 +1661,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       .map((p, i) => (
                         <li
                           key={`${p.address ?? p.jibun ?? p.pnu ?? "row"}-${i}`}
-                          className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800"
+                          className="rounded-lg bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
                         >
                           {p.address || p.jibun || p.pnu || `행 ${i + 1}`} —{" "}
                           {(p.verification_reasons ?? []).join(" · ") || "확인 필요"}
@@ -1669,7 +1672,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 {(verificationReport.warnings?.length ?? 0) > 0 && (
                   <ul className="space-y-1">
                     {(verificationReport.warnings ?? []).map((w, i) => (
-                      <li key={i} className="text-[11px] font-semibold text-rose-600">
+                      <li key={i} className="text-[11px] font-semibold text-[var(--status-error)]">
                         {w}
                       </li>
                     ))}
@@ -1679,11 +1682,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
             )}
           </div>
 
-          <div className="mt-5 rounded-[24px] border border-slate-200 bg-slate-50 p-3">
+          <div className="mt-5 rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-black text-slate-950">선택 필지</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
+                <h3 className="text-sm font-black text-[var(--text-primary)]">선택 필지</h3>
+                <p className="mt-1 text-xs font-semibold text-[var(--text-hint)]">
                   검색·엑셀·지도 선택이 같은 목록으로 통합됩니다.
                 </p>
               </div>
@@ -1691,7 +1694,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 <button
                   type="button"
                   onClick={clearParcels}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-600 hover:text-rose-600"
+                  className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--status-error)]"
                 >
                   초기화
                 </button>
@@ -1700,12 +1703,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div className="mt-3 max-h-[360px] space-y-2 overflow-auto pr-1">
               {selectedParcels.length === 0 ? (
-                <div className="rounded-[22px] border border-dashed border-slate-300 bg-white px-4 py-10 text-center">
-                  <MapPin className="mx-auto size-8 text-slate-300" aria-hidden />
-                  <p className="mt-3 text-sm font-black text-slate-700">
+                <div className="rounded-[22px] border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] px-4 py-10 text-center">
+                  <MapPin className="mx-auto size-8 text-[var(--text-hint)]" aria-hidden />
+                  <p className="mt-3 text-sm font-black text-[var(--text-primary)]">
                     아직 선택된 필지가 없습니다.
                   </p>
-                  <p className="mt-1 text-xs font-semibold text-slate-500">
+                  <p className="mt-1 text-xs font-semibold text-[var(--text-hint)]">
                     검색하거나 지도에서 필지를 선택하세요.
                   </p>
                 </div>
@@ -1713,24 +1716,24 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 selectedParcels.map((parcel, index) => (
                   <div
                     key={`${parcel.id}-${index}`}
-                    className="rounded-[20px] border border-slate-200 bg-white p-3 shadow-sm"
+                    className="rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)]"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-slate-950">
+                        <p className="truncate text-sm font-black text-[var(--text-primary)]">
                           {parcel.address}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
-                          <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                          <span className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-1 text-[var(--accent-strong)]">
                             {sourceLabel[parcel.source]}
                           </span>
                           {parcel.zoneType && (
-                            <span className="rounded-full bg-lime-50 px-2 py-1 text-lime-800">
+                            <span className="rounded-full bg-[var(--surface-muted)] px-2 py-1 text-[var(--text-secondary)]">
                               {parcel.zoneType}
                             </span>
                           )}
                           {parcel.jimok && (
-                            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                            <span className="rounded-full bg-[var(--surface-muted)] px-2 py-1 text-[var(--text-secondary)]">
                               지목 {parcel.jimok}
                             </span>
                           )}
@@ -1739,13 +1742,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       <button
                         type="button"
                         onClick={() => removeParcel(parcel.id)}
-                        className="rounded-full p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                        className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
                         aria-label="필지 제거"
                       >
                         <Trash2 className="size-4" aria-hidden />
                       </button>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold text-slate-500">
+                    <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs font-bold text-[var(--text-secondary)]">
                       <span>면적 {formatArea(parcel.areaSqm)}</span>
                       <span className="truncate">PNU {parcel.pnu || "-"}</span>
                     </div>
@@ -1756,13 +1759,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
           </div>
         </aside>
 
-        <section className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-3 shadow-sm md:p-4">
-          <div className="relative min-h-[720px] overflow-hidden rounded-[24px] border border-slate-200 bg-slate-100">
+        <section className="min-w-0 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
+          <div className="relative min-h-[720px] overflow-hidden rounded-[24px] border border-[var(--border-muted)] bg-[var(--background-deep)]">
             <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={(event) => event.stopPropagation()}
-                className="rounded-full bg-[#0b120d]/90 px-3 py-2 text-xs font-black text-white shadow-xl"
+                className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]"
                 aria-label="사통팔땅 멀티지도"
               >
                 사통팔땅 멀티지도
@@ -1775,14 +1778,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     event.stopPropagation();
                     handleLayerClick(layer.id);
                   }}
-                  className="rounded-full bg-white/90 px-3 py-2 text-xs font-black text-slate-800 shadow transition hover:bg-white"
+                  className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)] transition hover:bg-[var(--glass-bg-strong)]"
                   aria-label={`${layer.label} 레이어 전환`}
                 >
                   {layer.label}
                 </button>
               ))}
               {activeLayers.length > 4 && (
-                <span className="rounded-full bg-white/90 px-3 py-2 text-xs font-black text-slate-800 shadow">
+                <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]">
                   +{activeLayers.length - 4}
                 </span>
               )}
@@ -1822,12 +1825,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
               ref={railRef}
               // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
               //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
-              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-auto hover:max-h-[calc(100%-120px)] flex-col gap-2 rounded-[22px] border border-white/70 bg-white/90 p-2 shadow-2xl backdrop-blur transition-all duration-300 ease-in-out overflow-hidden hover:overflow-y-auto"
+              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-auto hover:max-h-[calc(100%-120px)] flex-col gap-2 rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out overflow-hidden hover:overflow-y-auto"
             >
               {/* 접혔을 때와 펼쳐졌을 때의 앵커가 되는 메인 아이콘 버튼 */}
               <button
                 type="button"
-                className="grid size-12 shrink-0 place-items-center rounded-2xl border transition border-slate-200 bg-white text-[var(--accent-strong)] hover:bg-slate-50 group-hover:border-slate-300 group-hover:bg-slate-100 group-hover:text-slate-700"
+                className="grid size-12 shrink-0 place-items-center rounded-2xl border transition border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--accent-strong)] hover:bg-[var(--surface-strong)] group-hover:border-[var(--line-strong)] group-hover:bg-[var(--surface-muted)] group-hover:text-[var(--text-secondary)]"
                 title="지도 레이어 관리 (마우스를 올리세요)"
               >
                 <MapIcon className="size-5 animate-pulse group-hover:animate-none" aria-hidden />
@@ -1844,12 +1847,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     type="button"
                     onClick={() => handleLayerClick(layer.id)}
                     title={layer.label}
-                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-slate-600 transition ${
+                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
                       isActive
-                        ? "border-slate-950 bg-slate-950 text-white"
+                        ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
                         : enabled
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/15 text-[var(--primary-dim)]"
+                          : "border-[var(--border-muted)] bg-[var(--surface-panel)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
                     }`}
                     aria-label={layer.label}
                   >
@@ -1862,7 +1865,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {activeLayer && (
               <div
                 ref={popoverRef}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[26px] border border-slate-200 bg-white p-4 shadow-2xl"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[26px] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1870,29 +1873,29 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${statusClass(activeLayer.status)}`}>
                         {statusText(activeLayer.status)}
                       </span>
-                      <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">
+                      <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
                         Layer
                       </span>
                     </div>
-                    <h3 className="mt-2 text-lg font-black text-slate-950">{activeLayer.label}</h3>
+                    <h3 className="mt-2 text-lg font-black text-[var(--text-primary)]">{activeLayer.label}</h3>
                   </div>
                   <button
                     type="button"
                     onClick={() => setActiveLayerId(null)}
-                    className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                     aria-label="레이어 설정 닫기"
                   >
                     <X className="size-4" aria-hidden />
                   </button>
                 </div>
-                <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
                   {activeLayer.description}
                 </p>
-                <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
+                <div className="mt-4 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
                     Source
                   </p>
-                  <p className="mt-1 text-sm font-bold text-slate-700">{activeLayer.source}</p>
+                  <p className="mt-1 text-sm font-bold text-[var(--text-secondary)]">{activeLayer.source}</p>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {activeLayer.controls.map((control) => (
@@ -1904,10 +1907,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       title={control.mapEffect ? `${control.label} 지도 반영` : control.description || "공식 데이터 소스 연결 후 활성화"}
                       className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
                         layerControls[activeLayer.id]?.includes(control.id)
-                          ? "border-blue-300 bg-blue-600 text-white"
+                          ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
                           : control.mapEffect
-                            ? "border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                            : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                            ? "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 hover:text-[var(--accent-strong)]"
+                            : "cursor-not-allowed border-[var(--border-muted)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
                       }`}
                     >
                       {control.label}
@@ -1915,11 +1918,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   ))}
                 </div>
                 {!isRenderableSatongMapLayer(activeLayer.id) ? (
-                  <div className="mt-4 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+                  <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
                     이 레이어는 아직 공식 데이터 소스와 지도 렌더러가 연결되지 않아 지도에 표시하지 않습니다.
                   </div>
                 ) : activeLayer.status !== "active" && (
-                  <div className="mt-4 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+                  <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
                     선택 필지의 실제 속성 데이터가 확보된 범위에서만 지도에 반영됩니다. 무자료 필지는 추정 표시하지 않습니다.
                   </div>
                 )}
@@ -1927,10 +1930,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
             )}
           </div>
 
-          <div className="mt-3 rounded-[24px] border border-slate-200 bg-[#0b120d] p-3 text-white">
+          <div className="mt-3 rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-elevated)] p-3 text-[var(--text-primary)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-lime-300">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[var(--accent-strong)]">
                   Output Dock
                 </p>
                 <h3 className="mt-1 text-lg font-black">선택 필지로 만들 산출물</h3>
@@ -1938,7 +1941,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
               <button
                 type="button"
                 onClick={() => setIsOutputDockOpen((value) => !value)}
-                className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white transition hover:bg-white/15"
+                className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
               >
                 {isOutputDockOpen ? "접기" : "열기"}
               </button>
@@ -1967,11 +1970,17 @@ export function SatongMapShell({ locale }: { locale: string }) {
               </div>
             )}
             {selectedParcels.length === 0 && (
-              <p className="mt-3 text-xs font-semibold text-white/55">
+              <p className="mt-3 text-xs font-semibold text-[var(--text-hint)]">
                 필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다.
               </p>
             )}
           </div>
+
+          {/* 공공데이터 고지(DESIGN.md B1) — 지도/산출물 데이터 뷰 하단 공용 컴포넌트. */}
+          <DataSourceNotice
+            source="VWorld·국토교통부·공공데이터포털"
+            note="참고용 · 법적 효력 없음"
+          />
         </section>
       </div>
     </section>

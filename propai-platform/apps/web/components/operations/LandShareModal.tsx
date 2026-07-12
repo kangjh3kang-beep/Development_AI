@@ -189,12 +189,12 @@ export function LandShareModal({
                   {(data.units || []).map((u, i) => (
                     <tr key={`${u.dong}-${u.ho}-${i}`} className="border-b border-[var(--line)]/50">
                       <td className="px-2 py-1 text-[var(--text-tertiary)]">{i + 1}</td>
-                      <td className="px-2 py-1">{u.dong || "—"}</td>
-                      <td className="px-2 py-1 font-bold text-[var(--text-primary)]">{u.ho || "—"}</td>
-                      <td className="px-2 py-1">{sm(u.exclusive_area_sqm)}</td>
-                      <td className="px-2 py-1">{(u.share_ratio * 100).toFixed(3)}%</td>
-                      <td className="px-2 py-1 font-bold text-[var(--accent-strong)]">{sm(u.land_share_sqm)}</td>
-                      <td className="px-2 py-1">{py(u.land_share_sqm)}</td>
+                      <td className="cc-num px-2 py-1">{u.dong || "—"}</td>
+                      <td className="cc-num px-2 py-1 font-bold text-[var(--text-primary)]">{u.ho || "—"}</td>
+                      <td className="cc-num px-2 py-1">{sm(u.exclusive_area_sqm)}</td>
+                      <td className="cc-num px-2 py-1">{(u.share_ratio * 100).toFixed(3)}%</td>
+                      <td className="cc-num px-2 py-1 font-bold text-[var(--accent-strong)]">{sm(u.land_share_sqm)}</td>
+                      <td className="cc-num px-2 py-1">{py(u.land_share_sqm)}</td>
                       <td className="px-2 py-1 text-[var(--text-secondary)]">{u.purpose || "—"}</td>
                     </tr>
                   ))}

@@ -8,11 +8,12 @@
  * 토지 소유구분·특성(공부)도 함께 제공.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ClipboardList, FileText, Receipt, Scale, ScrollText, Settings } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -309,19 +310,25 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
 
       {result && (
         <>
-          {/* 발급 등기부 PDF (서버 저장, 만료 후 자동삭제) */}
+          {/* 발급 등기부 PDF (서버 저장, 만료 후 자동삭제) — 종이 문서 뷰(테마 불변 --paper 서피스) */}
           {result.fetched?.pdf_url && (
-            <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
-                <p className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]"><FileText className="size-4 shrink-0" aria-hidden />발급된 등기부등본 원본(PDF) — 서버 저장(30일 후 자동삭제)</p>
+            <PaperDocumentView
+              title={result.fetched.doc_title || "등기사항전부증명서 (등기부등본)"}
+              office={result.fetched.registry_office}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="inline-flex items-center gap-1.5 text-xs" style={{ color: "var(--paper-ink)", opacity: 0.75 }}>
+                  <FileText className="size-4 shrink-0" aria-hidden />발급된 등기부등본 원본 — 서버 저장(30일 후 자동삭제)
+                </p>
                 <div className="flex gap-2">
                   <a href={result.fetched.pdf_url} target="_blank" rel="noopener noreferrer"
-                    className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">PDF 보기 ↗</a>
+                    className="rounded-lg border px-4 py-2 text-xs font-black hover:opacity-80"
+                    style={{ borderColor: "var(--paper-line)", color: "var(--paper-ink)" }}>PDF 보기 ↗</a>
                   <a href={result.fetched.pdf_url} download
-                    className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90">다운로드 ↓</a>
+                    className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90">다운로드 ↓</a>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </PaperDocumentView>
           )}
 
           {/* 토지 소유구분·특성(공부) — 항상 제공 */}
@@ -361,7 +368,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     </div>
                   </div>
                 )}
-                <p className="mt-2 text-[11px] text-[var(--text-hint)]">※ 소유형태·소유자·지분은 등기부 분석 기반, 지목·용도지역·공시지가는 공부(토지대장/이용계획) 기반입니다.</p>
+                <DataSourceNotice source="등기부 · 토지대장 · 토지이용계획" note="소유·지분=등기부 · 지목·용도·공시지가=공부(참고용)" />
               </CardContent>
             </Card>
           )}
@@ -451,7 +458,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     </ul>
                   </div>
                 )}
-                <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 본 분석은 참고용이며 법률자문이 아닙니다. 정확한 권리관계는 등기부등본 원본·전문가 확인이 필요합니다.</p>
+                <DataSourceNotice source="등기부 권리분석(법무 AI)" note="참고용 · 법률자문 아님 · 원본·전문가 확인 필요" />
               </CardContent>
             </Card>
           )}
@@ -467,6 +474,30 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           </Link>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// 종이 문서 뷰 — 등기부등본·발급문서 미리보기 서피스. --paper 4종 토큰(테마 불변)으로
+// 다크 테마에서도 항상 종이 톤을 유지한다(문서=실물 종이 은유). 시각 전용(데이터·핸들러 불변).
+function PaperDocumentView({ title, office, children }: { title: string; office?: string | null; children: ReactNode }) {
+  return (
+    <div
+      className="overflow-hidden"
+      style={{
+        background: "var(--paper)",
+        color: "var(--paper-ink)",
+        border: "1px solid var(--paper-line)",
+        borderRadius: "6px",
+        boxShadow: "var(--shadow-md)",
+      }}
+    >
+      <div className="px-5 py-3" style={{ background: "var(--paper-section)", borderBottom: "1px solid var(--paper-line)" }}>
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--paper-ink)", opacity: 0.55 }}>REGISTRY DOCUMENT</p>
+        <h3 className="mt-0.5 text-sm font-black" style={{ color: "var(--paper-ink)" }}>{title}</h3>
+        {office && <p className="mt-0.5 text-[11px]" style={{ color: "var(--paper-ink)", opacity: 0.65 }}>발급기관: {office}</p>}
+      </div>
+      <div className="px-5 py-4">{children}</div>
     </div>
   );
 }

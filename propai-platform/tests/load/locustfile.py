@@ -143,23 +143,6 @@ class PropAIWriteUser(_AuthMixin, HttpUser):
             },
         )
 
-    @tag("finance")
-    @task(1)
-    def union_contribution(self) -> None:
-        """조합원 분담금 산정."""
-        self.client.post(
-            "/api/v1/finance/union-contribution",
-            headers=self.auth_headers,
-            json={
-                "project_id": "00000000-0000-0000-0000-000000000001",
-                "total_project_cost": 100_000_000_000,
-                "total_appraised_value": 80_000_000_000,
-                "individual_appraised_value": 500_000_000,
-                "target_area_sqm": 84.0,
-                "avg_sale_price_per_sqm": 15_000_000,
-            },
-        )
-
     @tag("blockchain")
     @task(1)
     def escrow_status(self) -> None:
