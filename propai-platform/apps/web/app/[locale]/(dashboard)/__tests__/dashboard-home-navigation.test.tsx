@@ -50,7 +50,7 @@ describe("Dashboard home navigation", () => {
     expect(screen.getAllByText("입력").length).toBeGreaterThan(1);
     expect(screen.getAllByText("결과").length).toBeGreaterThan(1);
 
-    expect(screen.getByText("후보지 진단서").closest("a")).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByText("법규검토서").closest("a")).toHaveAttribute("href", "/en/regulations");
     expect(screen.getByText("사업성 검토서").closest("a")).toHaveAttribute("href", "/en/analytics/investment");
     expect(screen.getByText("시장·분양 리포트").closest("a")).toHaveAttribute("href", "/en/market-insights");
     expect(screen.getByText("인허가 체크리스트").closest("a")).toHaveAttribute("href", "/en/permits");

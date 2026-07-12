@@ -4,11 +4,10 @@ import Link from "next/link";
 import {
   ArrowRight,
   BarChart3,
-  Building2,
   Clock,
   DraftingCompass,
   Layers3,
-  MapPin,
+  Scale,
   Search,
   ShieldCheck,
   type LucideIcon,
@@ -32,13 +31,13 @@ type CreationProduct = {
 
 const creationProducts: CreationProduct[] = [
   {
-    title: "후보지 진단서",
-    routeId: "precheck",
-    icon: MapPin,
-    intent: "주소만 넣고 사업 가능성을 먼저 판정합니다.",
-    inputs: "주소, 용도지역, 대지면적",
-    result: "규제 요약, 개발 가능성, 다음 액션",
-    time: "약 90초",
+    title: "법규검토서",
+    routeId: "regulations",
+    icon: Scale,
+    intent: "부지에 적용되는 법규를 검토하고 적합성을 판정합니다.",
+    inputs: "주소, 용도지역, 규모",
+    result: "법규 검토 항목, 적합 판정, 보완 액션",
+    time: "약 2분",
     tone: "lime",
   },
   {
@@ -100,12 +99,6 @@ const workflowSteps = [
   { label: "공유", body: "프로젝트에 저장하고 보고자료로 전환" },
 ] as const;
 
-const intelligenceSignals = [
-  { label: "입지", value: "후보지 진단", body: "주소 입력 후 규제·시세·접근성 확인" },
-  { label: "수익성", value: "사업성 검토", body: "비용·분양가·ROI를 같은 흐름에서 계산" },
-  { label: "리스크", value: "인허가·설계", body: "보완 항목을 체크리스트로 전환" },
-] as const;
-
 function hrefFor(locale: string, routeId: string): string {
   const route = PRIMARY_ROUTE_REGISTRY.find((item) => item.id === routeId);
   if (!route?.path || route.path === "/") return `/${locale}`;
@@ -117,7 +110,7 @@ export function DashboardHome({ locale }: { locale: string }) {
     <div className="flex flex-col gap-6 pb-12">
       <OnboardingWizard />
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <section>
         <div className="relative min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--saas-ink)] p-5 text-white sm:p-6">
           {/* 도시건축 hero 배경 애니메이션(hero-newtown.mp4 배경영상 + 스카이라인 캔버스 폴백) */}
           <HeroMotionLayer />
@@ -155,7 +148,7 @@ export function DashboardHome({ locale }: { locale: string }) {
               <div className="flex flex-wrap gap-2">
                 <Link
                   href={hrefFor(locale, "precheck")}
-                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] bg-white px-4 text-sm font-black text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-strong)] hover:text-white"
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] bg-white px-4 text-sm font-black text-[var(--saas-ink)] transition-colors hover:bg-[var(--accent-strong)] hover:text-white"
                 >
                   후보지 진단서 만들기
                   <ArrowRight aria-hidden="true" className="h-4 w-4" />
@@ -185,50 +178,9 @@ export function DashboardHome({ locale }: { locale: string }) {
             ))}
           </div>
 
-          <div
-            className="mt-5 rounded-[10px] border border-white/15 p-3 backdrop-blur-[12px]"
-            style={{ backgroundColor: "rgba(20,23,32,0.55)" }}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-bold text-white/70">생성 경로</span>
-              <span className="rounded-[var(--r-card)] bg-[var(--accent-strong)] px-2 py-1 font-mono text-[11px] font-black text-[var(--on-primary)]">3분 내 초안</span>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              {["부지 입력", "AI 분석", "보고서 저장"].map((label) => (
-                <div key={label} className="rounded-[var(--r-card)] bg-black/40 px-3 py-2 text-sm font-bold text-white">
-                  {label}
-                </div>
-              ))}
-            </div>
-          </div>
           </div>
         </div>
 
-        <aside className="rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-5">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[var(--r-card)] bg-[var(--accent-strong)] text-[var(--on-primary)]">
-              <Building2 aria-hidden="true" className="h-5 w-5" />
-            </span>
-            <div>
-              <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">추천 시작점</span>
-              <h2 className="text-lg font-black text-[var(--text-primary)]">부지 검토부터 시작</h2>
-            </div>
-          </div>
-          <p className="mt-4 text-sm font-medium leading-6 text-[var(--text-secondary)]">
-            주소를 입력하면 후보지 진단서가 생성되고, 같은 데이터가 사업성·시장·인허가 검토로 이어집니다.
-          </p>
-          <div className="mt-4 space-y-2">
-            {intelligenceSignals.map((signal) => (
-              <div key={signal.label} className="rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-soft)] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-bold text-[var(--text-tertiary)]">{signal.label}</span>
-                  <span className="text-xs font-black text-[var(--text-primary)]">{signal.value}</span>
-                </div>
-                <p className="mt-1 text-xs font-medium leading-5 text-[var(--text-secondary)]">{signal.body}</p>
-              </div>
-            ))}
-          </div>
-        </aside>
       </section>
 
       <section className="space-y-4">
