@@ -12,13 +12,13 @@ from typing import Any
 
 import structlog
 
+from app.services.data_validation.price_stats import robust_price_stats
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
     get_permitted_types,
     permitted_types_known,
 )
-from app.services.data_validation.price_stats import robust_price_stats
 from app.services.land_intelligence import far_tier_service
 from app.services.land_intelligence.land_info_service import LandInfoService
 

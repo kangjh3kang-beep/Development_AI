@@ -18,9 +18,9 @@ from typing import Any
 import httpx
 import structlog
 
+from app.services.data_validation.price_stats import robust_price_stats
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
-from app.services.data_validation.price_stats import robust_price_stats
 
 logger = structlog.get_logger(__name__)
 
