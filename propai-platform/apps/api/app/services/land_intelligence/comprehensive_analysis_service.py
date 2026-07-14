@@ -706,6 +706,23 @@ class ComprehensiveAnalysisService:
                 _warns = result.get("warnings")
                 result["warnings"] = (_warns if isinstance(_warns, list) else []) + special.get("warnings", [])
                 result["developability"] = special.get("developability")
+            # ── WP-B: 개발행위허가 절차게이트(국토계획법 §56~58) additive 부착 ──
+            #   자연녹지 등 비도시·녹지 지역이 밀도한도만으로 '개발가능'으로 오고지되던 과대낙관을
+            #   봉합한다. 이미 확보한 관측데이터(_slope_criteria·_terrain_facts)를 그대로 넘겨
+            #   경사도 예비판정까지 흐르게 한다(실패는 무손상 graceful).
+            try:
+                from app.services.permit.dev_act_permit_gate import assess_dev_act_permit
+
+                _dev_gate = assess_dev_act_permit(
+                    _sp_input,
+                    slope_criteria=_slope_criteria,
+                    terrain_facts=_terrain_facts,
+                    sigungu=_extract_sigungu_from_address(_addr),
+                )
+                if _dev_gate:
+                    result["dev_act_permit_gate"] = _dev_gate
+            except Exception:  # noqa: BLE001 — 개발행위허가 게이트 실패는 무손상(기존 분석 유지)
+                pass
         except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
             pass
 

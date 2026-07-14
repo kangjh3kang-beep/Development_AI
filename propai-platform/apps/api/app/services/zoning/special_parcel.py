@@ -248,33 +248,75 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
 #   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트).
 #   지목·면적 무관, zone_type이 녹지계열이면 발동. 보전녹지는 원칙적 제한(PRECONDITION)으로 차등.
 # ──────────────────────────────────────────────────────────────────────────
-def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
+def _rule_by_dev_act_permit(
+    result: dict, *, include_non_urban: bool = False
+) -> dict[str, Any] | None:
     """개발행위허가(국토계획법 §56) 선행/병행 게이트 — 도시지역 내 녹지계열에서 발동.
 
     자연녹지·생산녹지 → CONDITIONAL(개발행위허가·형질변경 통과 조건부 가능),
     보전녹지 → PRECONDITION(개발 원칙적 제한 — 더 강한 선행절차 전제).
     녹지계열이 아니면 None(주거·상업·공업 등 일상 도시지역은 게이트 안 함 — 과탐 방지).
+
+    include_non_urban=True(WP-B 개발행위허가 절차게이트 전용 요청):
+      비도시지역(관리·농림·자연환경보전)도 발동한다. 이 지역들은 도시지역이 아니라서
+      '건축물 건축' 자체가 개발행위허가 대상이기 때문이다(자연녹지 과대낙관 버그의 확장 봉합).
+      보전관리·자연환경보전 → PRECONDITION(보전 성격), 그 외(계획/생산관리·농림) → CONDITIONAL.
+    ★기본값 False면 기존 detect_special_parcel 경로는 녹지만 감지한다(바이트 동일 — 회귀 0).
     """
     zone = str(result.get("zone_type") or "")
-    if _zone_family(zone) != "녹지":
-        return None
-    # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+    family = _zone_family(zone)
     z = zone.replace(" ", "")
-    if "보전녹지" in z:
-        developability = "PRECONDITION"
-        head = (
-            "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
-            "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+    is_green = family == "녹지"
+    # 비도시(관리·농림·자연환경보전)는 게이트 서비스가 명시적으로 요청할 때만 발동(과탐 방지).
+    is_non_urban = include_non_urban and family in ("관리", "농림", "자연환경보전")
+    if not (is_green or is_non_urban):
+        return None
+    if is_green:
+        # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+        category = "개발행위허가 선행/병행(도시지역 녹지)"
+        if "보전녹지" in z:
+            developability = "PRECONDITION"
+            head = (
+                "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
+                "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
+            head = (
+                f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+            )
+        caveat = (
+            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     else:
-        developability = "CONDITIONAL"
-        kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
-        head = (
-            f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
-            "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+        # 비도시(관리·농림·자연환경보전) — 건축물 건축 자체가 개발행위허가 대상.
+        category = "개발행위허가 선행/병행(비도시지역)"
+        if family == "자연환경보전" or "보전관리" in z:
+            developability = "PRECONDITION"
+            kind = "자연환경보전지역" if family == "자연환경보전" else "보전관리지역"
+            head = (
+                f"{kind}은 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 개발행위허가"
+                "(국토계획법 §56)·토지형질변경(및 농지·산지전용) 통과가 선행되어야 합니다(허용 범위가 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = ("농림지역" if family == "농림"
+                    else ("생산관리지역" if "생산관리" in z
+                          else ("계획관리지역" if "계획관리" in z else "관리지역")))
+            head = (
+                f"{kind}은 비도시지역으로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축물 건축 자체가 개발행위허가(국토계획법 §56) 대상이며 토지형질변경(및 농지·산지전용)이 "
+                "선행/병행되어야 합니다."
+            )
+        caveat = (
+            "비도시지역(관리·농림·자연환경보전) 건축은 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     return {
-        "category": "개발행위허가 선행/병행(도시지역 녹지)",
+        "category": category,
         "developability": developability,
         "implications": [
             head,
@@ -292,10 +334,7 @@ def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
             "개발행위허가(국토계획법 §56)·토지형질변경 병행 필요",
             "개발행위허가기준(§58) 충족 확인 — 규모 상한·평균경사도·연접개발·도로/배수 기반시설",
         ],
-        "caveat": (
-            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
-            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
-        ),
+        "caveat": caveat,
     }
 
 
