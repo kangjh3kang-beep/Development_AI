@@ -20,7 +20,9 @@
 //        실시간 추적). 신규 컴포넌트·탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v413: 디자인시스템 v2 P0 기반정지(토큰 SSOT 단일화·Tailwind dark variant 정합·테마 부트스트랩·
 //        셀프호스팅 폰트 실로드). 새 CSS/폰트가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v415-realtx-outlier-stats";
+// v416: 사통맵 레이어 좌표앵커 근본수정(#271) — 공용앵커 resolveSelectionAnchor·경매401 인라인 안내.
+//        지도 레이어 신코드가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v416-satong-anchor";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
