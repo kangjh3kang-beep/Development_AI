@@ -558,7 +558,9 @@ def _rule_by_cul_de_sac(result: dict) -> dict[str, Any] | None:
     is_dead_end = result.get("dead_end_road") is True or "막다른" in blob or "막다른도로" in blob.replace(" ", "")
     if not is_dead_end:
         return None
-    length = _num(result.get("dead_end_length_m")) or _num(result.get("road_length_m"))
+    # ★0 보존(첫 non-None). 폴백 의미: road_length_m은 '접한 도로의 길이'라 막다른 도로
+    #   전체 길이와 다를 수 있음 — dead_end_length_m 미상 시의 보수적 근사로만 쓴다(비-PASS 방향).
+    length = _first_num_keep_zero(result.get("dead_end_length_m"), result.get("road_length_m"))
     # 도시지역이 아닌 읍·면 지역은 35m 이상에서 4m로 완화(시행령 제3조의3 단서).
     is_town = result.get("is_urban_area") is False or result.get("is_eup_myeon") is True
     if length is None:
@@ -621,7 +623,7 @@ def _rule_by_flag_lot(result: dict) -> dict[str, Any] | None:
                or "flag" in shape_blob.lower() or "기단" in shape_blob)
     if not is_flag:
         return None
-    corridor = _num(result.get("access_corridor_width_m")) or _num(result.get("corridor_width_m"))
+    corridor = _first_num_keep_zero(result.get("access_corridor_width_m"), result.get("corridor_width_m"))
     # 건축법 §44 접도의무 하한(2m). 자루형 통로 최소너비는 지자체 건축조례로 상향(통상 3m 이상)될 수 있음.
     MIN_CONTACT_M = 2.0
     if corridor is None:
@@ -664,7 +666,7 @@ def _rule_by_emergency_access(result: dict) -> dict[str, Any] | None:
     발동한다. 소방자동차 통행 가능 폭(통상 4m 이상)에 미달=CONDITIONAL, 충족=CAUTION,
     폭 미상+대형=REQUIRES_AUTHORITY_CONFIRMATION로 고지한다. 소형·신호 없으면 None(과탐 방지).
     """
-    width = _num(result.get("fire_truck_access_width_m")) or _num(result.get("emergency_access_width_m"))
+    width = _first_num_keep_zero(result.get("fire_truck_access_width_m"), result.get("emergency_access_width_m"))
     gfa = _num(result.get("total_floor_area_sqm")) or _num(result.get("gfa_sqm")) \
         or _num(result.get("max_gfa_sqm"))
     floors = _num(result.get("floors")) or _num(result.get("floor_count")) \
@@ -731,6 +733,20 @@ def _num(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _first_num_keep_zero(*vals) -> float | None:
+    """여러 후보 중 첫 번째로 숫자 해석되는 값을 반환 — ★0.0을 보존한다.
+
+    `_num(a) or _num(b)` 패턴은 0(예: 접근폭 0m = 접근 전무의 최강 신호)을 falsy로
+    흘려 소실시킨다. 이 헬퍼는 None 여부로만 건너뛰어 0을 살린다(도로폭 0-보존 규율과 동일).
+    ※기존 `_first_num(result, keys)`(:1090)는 가격·면적용이라 양수만 취함(0 배제) — 별개 의미론.
+    """
+    for v in vals:
+        n = _num(v)
+        if n is not None:
+            return n
+    return None
 
 
 def _rule_by_fire_performance(result: dict) -> dict[str, Any] | None:
