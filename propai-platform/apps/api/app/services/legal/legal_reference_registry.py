@@ -234,6 +234,8 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "building_line":      _ref(_BLDG, "제46조", "건축선의 지정"),
     "building_line_limit": _ref(_BLDG, "제47조", "건축선에 따른 건축 제한"),
     "road_relation":      _ref(_BLDG, "제44조", "대지와 도로의 관계(접도요건)"),
+    # WP-A 접도·도로(access_basis) — 막다른 도로 길이별 최소 너비(2/3/6m) 근거.
+    "road_structure_width": _ref(_BLDG_DEC, "제3조의3", "지형적 조건 등에 따른 도로의 구조와 너비(막다른 도로 길이별 최소 너비)"),
     # ── 토지이음 지역지구별 규제법령집 보강(국토계획법 용도지구·도시계획시설 + 개별법) ──
     "specific_use_district": _ref(_KOOKTO, "제37조", "용도지구의 지정(특정용도제한지구·경관·고도지구 등)"),
     "urban_planning_facility": _ref(_KOOKTO, "제43조", "도시·군계획시설(도로·광장·공원 등)의 결정"),
