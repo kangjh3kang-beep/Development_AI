@@ -171,6 +171,18 @@ class DevelopmentScenarioSimulator:
             sp = detect_special_parcel(enriched[0]) if enriched else None
             special_gate = sp  # None이면 일상 부지(특이 없음)
 
+        # ── WP-B: 개발행위허가 절차게이트(국토계획법 §56~58) — 주 필지 기준 additive 부착 ──
+        #   자연녹지 등 비도시·녹지 지역에 개발방식 20종을 밀도한도만으로 찍어내던 과대낙관을 봉합한다
+        #   (건축 전 개발행위허가 대상 여부·기준을 별도 게이트로 고지). 실패는 무손상(graceful).
+        dev_act_gate = None
+        try:
+            from app.services.permit.dev_act_permit_gate import assess_dev_act_permit
+
+            if enriched:
+                dev_act_gate = assess_dev_act_permit(enriched[0])
+        except Exception as e:  # noqa: BLE001 — 개발행위허가 게이트 실패는 시나리오 산출 무손상
+            logger.warning("개발행위허가 게이트 스킵(graceful)", err=str(e)[:160])
+
         if special_gate and (
             special_gate.get("developability") in {"BLOCKED"}
             or special_gate.get("resolvable") in {"NO"}
@@ -250,8 +262,10 @@ class DevelopmentScenarioSimulator:
                     "total_area_sqm": round(total_area, 1) if total_area else None,
                     "primary_zone": primary_zone, "zones": zones,
                     "special_parcel_gate": special_gate,
+                    "dev_act_permit_gate": dev_act_gate,
                 },
                 "special_parcel_gate": special_gate,
+                "dev_act_permit_gate": dev_act_gate,
                 "scenarios": [],  # 전체(full) 기준 시나리오는 미생성(무목업) — 가용필지는 available_subset.
                 "recommended": {
                     "scheme": rec_scheme,
@@ -299,6 +313,8 @@ class DevelopmentScenarioSimulator:
             "buildings": buildings, "block_aging": block,
             # 특이부지 게이트(통과/조건부) 결과 — CONDITIONAL/PRECONDITION이면 경고·선행절차 동반.
             "special_parcel_gate": special_gate,
+            # 개발행위허가 절차게이트(WP-B) — 대상 필지면 개발가능=허가 판정 전제임을 고지.
+            "dev_act_permit_gate": dev_act_gate,
             "parcels": [{"address": p.get("address"), "zone": p.get("zone"),
                          "area": p.get("area"), "max_far": p.get("max_far"),
                          "max_far_legal": p.get("max_far_legal"),
@@ -327,6 +343,8 @@ class DevelopmentScenarioSimulator:
             "magdo_summary": magdo_summary,
             # ★평수 티어 매트릭스(소규모 필지 가능/조건부/불가 상세 분류) — 순수 additive 뷰.
             "pyeong_classification": self._classify_by_pyeong_tier(total_area, scenarios),
+            # 개발행위허가 절차게이트(WP-B) 최상위 노출 — 대상 필지의 개발규모=허가 판정 전제.
+            "dev_act_permit_gate": dev_act_gate,
         }
         # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
         #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
@@ -522,6 +540,9 @@ class DevelopmentScenarioSimulator:
                 enriched[0]["area"] = comp["land_area_sqm"]
             if not enriched[0].get("zone") and comp.get("zone_type"):
                 enriched[0]["zone"] = comp["zone_type"]
+                # 개발행위 게이트 등 하류가 zone_type 키를 읽으므로 함께 동기화(게이트 누락 FN 방지).
+                if not enriched[0].get("zone_type"):
+                    enriched[0]["zone_type"] = comp["zone_type"]
         except Exception:  # noqa: BLE001
             pass
         return enriched, subway_m

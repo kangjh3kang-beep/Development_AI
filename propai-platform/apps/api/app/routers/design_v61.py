@@ -918,6 +918,22 @@ def _attach_special_parcel_gate(mass: dict[str, Any], req: BimGenerateRequest) -
         area_sqm=req.land_area_sqm,
         pnu=req.pnu,
     )
+    # ── WP-B: 개발행위허가 절차게이트(국토계획법 §56~58) additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에도 개발행위허가 대상 여부·기준을 동봉해, 녹지·비도시 부지가
+    #   허가 판정 없이 설계로 진행되던 과대낙관을 봉합한다(build_special_parcel_gate와 동일 패턴·
+    #   실패 graceful None). zone_name(한글명)이 있으면 우선(더 정확한 용도지역).
+    try:
+        from app.services.permit.dev_act_permit_gate import build_dev_act_permit_gate
+
+        mass["dev_act_permit_gate"] = build_dev_act_permit_gate(
+            zone_type=zone_type,
+            land_category=req.land_category,
+            area_sqm=req.land_area_sqm,
+            special_districts=req.special_districts,
+            pnu=req.pnu,
+        )
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["dev_act_permit_gate"] = None
     return mass
 
 
