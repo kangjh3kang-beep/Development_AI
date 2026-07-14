@@ -630,10 +630,6 @@ export function SatongMultiMap({
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
-  // 분양·경매는 '유효 마커 수'만 상태로 두고 노트 문자열은 렌더에서 파생 — 노트 prop 변경이
-  // 마커 이펙트를 다시 돌리지 않게 한다(리뷰 LOW). 수치 setState는 값이 같으면 React가 bail-out.
-  const [presaleCount, setPresaleCount] = useState(0);
-  const [auctionCount, setAuctionCount] = useState(0);
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
 
@@ -1409,19 +1405,15 @@ export function SatongMultiMap({
     }
 
     if (!showPresale && !showAuction) {
-      setPresaleCount(0);
-      setAuctionCount(0);
       return;
     }
 
     const group = L.layerGroup().addTo(map);
     presaleAuctionLayerRef.current = group;
 
-    let presaleMarkerCount = 0;
     if (showPresale) {
       (presaleItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        presaleMarkerCount += 1;
         const status = item.status || "미정";
         const color = PRESALE_STATUS_COLORS[status] || PRESALE_STATUS_COLORS["미정"];
         const icon = L.divIcon({
@@ -1437,11 +1429,9 @@ export function SatongMultiMap({
       });
     }
 
-    let auctionMarkerCount = 0;
     if (showAuction) {
       (auctionItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        auctionMarkerCount += 1;
         const status = item.status || "진행";
         const color = AUCTION_STATUS_COLORS[status] || AUCTION_STATUS_COLORS["진행"];
         const icon = L.divIcon({
@@ -1456,10 +1446,6 @@ export function SatongMultiMap({
           .addTo(group);
       });
     }
-
-    // 노트 문자열은 렌더에서 파생 — 여기서는 유효 마커 수만 기록한다(값 동일 시 React bail-out).
-    setPresaleCount(presaleMarkerCount);
-    setAuctionCount(auctionMarkerCount);
 
     return () => {
       try { group.remove(); } catch { /* noop */ }
@@ -1628,8 +1614,13 @@ export function SatongMultiMap({
   const tileFailureNotice = buildTileFailureNotice(tileStatus);
 
   // 분양·경매 노트(렌더 파생) — 상태 노트 prop(좌표 대기·로그인 필요·조회 실패)이 오면 건수
-  // 라벨보다 우선해 '무자료'와 '아직 조회 못함/권한 없음'을 구분한다(정직원칙). 노트만 바뀔 땐
-  // 마커 이펙트가 돌지 않는다(리뷰 LOW 해소).
+  // 라벨보다 우선해 '무자료'와 '아직 조회 못함/권한 없음'을 구분한다(정직원칙). 건수는 items에서
+  // 직접 계산(마커 렌더와 동일 좌표 필터) — 상태 경유로 1커밋 늦게 따라오던 깜빡임 제거.
+  // 노트만 바뀔 땐 마커 이펙트가 돌지 않는다(리뷰 LOW 해소).
+  const countMappable = (items: Array<{ lat?: number | null; lon?: number | null }> | null) =>
+    (items ?? []).filter((item) => !!item.lat && !!item.lon).length;
+  const presaleCount = showPresale ? countMappable(presaleItems) : 0;
+  const auctionCount = showAuction ? countMappable(auctionItems) : 0;
   const presaleAuctionNote = [
     showPresale ? presaleNote || (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
     showAuction ? auctionNote || (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",

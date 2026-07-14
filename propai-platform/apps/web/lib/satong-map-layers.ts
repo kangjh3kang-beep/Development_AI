@@ -250,15 +250,16 @@ export function resolveSelectionAnchor(
         lat: parcel.lat,
         lon: parcel.lon,
         source: "parcel",
+        // 빈 문자열은 '미보유'로 강등해 null로 통일한다(address·pnu 동일 규약 — 리뷰 LOW).
         address: parcel.address || null,
-        pnu: parcel.pnu ?? null,
+        pnu: parcel.pnu || null,
       };
     }
   }
   for (const parcel of parcels) {
     const point = geometryRepresentativePoint(parcel.geometry);
     if (point) {
-      return { ...point, source: "boundary", address: parcel.address || null, pnu: parcel.pnu ?? null };
+      return { ...point, source: "boundary", address: parcel.address || null, pnu: parcel.pnu || null };
     }
   }
   if (parcels.length === 0 && mapCenter &&
