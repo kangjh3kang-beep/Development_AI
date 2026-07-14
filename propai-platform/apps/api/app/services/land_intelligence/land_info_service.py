@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from ..data_validation.price_stats import robust_price_stats
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
 from ..external_api.molit_service import MOLITService
@@ -959,11 +960,15 @@ class LandInfoService:
                     pass
 
             if prices:
+                # ★대표통계(이상치 제거): 토지 지분·정정 등 미미거래(예 4만원)·초고가가 최저/최고/
+                #   평균을 왜곡하던 문제 수정. count는 원시 유효건수 정직 유지, excluded 투명 표기.
+                _stats = robust_price_stats(prices)
                 result[label] = {
-                    "avg_price_10k": round(sum(prices) / len(prices)),
-                    "max_price_10k": max(prices),
-                    "min_price_10k": min(prices),
-                    "count": len(prices),
+                    "avg_price_10k": _stats["avg"],
+                    "max_price_10k": _stats["max"],
+                    "min_price_10k": _stats["min"],
+                    "count": _stats["count"],
+                    "excluded_outliers": _stats["excluded"],
                     "data_source": live_source,
                     "items": [
                         {

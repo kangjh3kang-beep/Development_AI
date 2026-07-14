@@ -939,7 +939,12 @@ export function ComprehensiveAnalysisPanel() {
                   if (!d || !d.count) return null;
                   return (
                     <div key={type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                      <p className="text-xs font-bold text-[var(--text-primary)] mb-1">{type} ({d.count}건)</p>
+                      <p className="text-xs font-bold text-[var(--text-primary)] mb-1">
+                        {type} ({d.count}건)
+                        {d.excluded_outliers > 0 && (
+                          <span className="ml-1 text-[10px] font-normal text-[var(--text-hint)]">· 이상치 {d.excluded_outliers}건 제외(지분·정정 등)</span>
+                        )}
+                      </p>
                       <div className="grid grid-cols-3 gap-2 text-[11px]">
                         <div><span className="text-[var(--text-hint)]">평균: </span><span className="font-bold">{formatManWon(d.avg_price_10k)}</span></div>
                         <div><span className="text-[var(--text-hint)]">최고: </span><span className="font-bold">{formatManWon(d.max_price_10k)}</span></div>

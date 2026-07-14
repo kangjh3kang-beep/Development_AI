@@ -20,6 +20,7 @@ import structlog
 
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
+from app.services.data_validation.price_stats import robust_price_stats
 
 logger = structlog.get_logger(__name__)
 
@@ -291,9 +292,12 @@ class NearbyMapService:
             g["avg_area_m2"] = round(sum(areas) / len(areas), 1) if areas else 0
             if kind == "trade":
                 p = g.pop("_prices", [])
-                g["avg_price_10k"] = round(sum(p) / len(p)) if p else 0
-                g["min_price_10k"] = min(p) if p else 0
-                g["max_price_10k"] = max(p) if p else 0
+                # ★대표통계(이상치 제거) — 지분·정정 등 미미거래·초고가 왜곡 방지(공용 헬퍼).
+                _s = robust_price_stats(p)
+                g["avg_price_10k"] = _s["avg"]
+                g["min_price_10k"] = _s["min"]
+                g["max_price_10k"] = _s["max"]
+                g["excluded_outliers"] = _s["excluded"]
             else:
                 d = g.pop("_deposits", [])
                 m = g.pop("_monthlies", [])
