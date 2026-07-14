@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.services.auth.auth_service import get_current_user
@@ -34,6 +34,9 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/survey/coordinate", tags=["측량·좌표 계약"])
 
 Point = tuple[float, float]
+
+# base64 DXF 입력 길이 상한(약 20MB) — 디코드·파싱 전 조기 거부용(대형 입력 DoS 방어).
+_MAX_DXF_B64_LEN = 20 * 1024 * 1024
 
 
 class ContractRequest(BaseModel):
@@ -85,6 +88,13 @@ async def reconcile(
     """
     dxf_ring = req.dxf_ring
     if dxf_ring is None and req.dxf_base64:
+        # 대형 base64 입력 DoS 방어 스톱갭 — 디코드/임시파일/파싱 전에 길이로 조기 거부.
+        # (매직바이트·아카이브 한도 등 완전한 콘텐츠 보안은 WP-H 전담)
+        if len(req.dxf_base64) > _MAX_DXF_B64_LEN:
+            raise HTTPException(
+                status_code=413,
+                detail="DXF가 너무 큽니다(base64 20MB 초과) — 파일을 줄여 다시 시도하세요.",
+            )
         try:
             dxf_bytes = base64.b64decode(req.dxf_base64)
         except Exception:  # noqa: BLE001
