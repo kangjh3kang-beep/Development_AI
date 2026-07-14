@@ -22,7 +22,6 @@ import {
   AGE_LEGEND_ITEMS,
   ageColor,
   ageLabel,
-  geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
   mergeSatongMapFeatures,
@@ -431,20 +430,17 @@ function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
 }
 
 function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
-  // ★좌표 파생: /zoning/parcel-boundaries 응답엔 per-feature 좌표가 없어, 좌표 없는 필지
-  //   (엑셀 PNU행 등)가 역전파(onBoundaryEnriched) 후에도 lat/lon이 비어 좌표 앵커
-  //   (분양·경매·개발계획)가 영구 단선됐다. 실측 경계의 대표점(경계상자 중심)으로 채운다
-  //   (기하 파생 = 무날조). 서버가 좌표를 주면 그 값을 우선한다.
-  const derived =
-    typeof feature.lat === "number" && typeof feature.lon === "number"
-      ? { lat: feature.lat, lon: feature.lon }
-      : geometryRepresentativePoint(feature.geometry);
+  // 좌표는 서버가 준 값만 통과시킨다(현재 /zoning/parcel-boundaries는 per-feature 좌표 없음).
+  // ★대표점(경계상자 중심) 파생좌표는 여기서 만들지 않는다 — 만들면 역전파(onBoundaryEnriched)를
+  //   타고 프로젝트 SSOT(/analysis·산출물)의 정본 필지좌표로 영속돼, 근사좌표가 "좌표미상" 분기를
+  //   전역에서 우회한다(리뷰 MEDIUM). 좌표 앵커(분양·경매·개발계획)의 자기치유는
+  //   resolveSelectionAnchor 규칙②가 geometry에서 앵커 해석 시점에 임시 계산하므로 이것으로 충분.
   return {
     id: feature.pnu || feature.address,
     pnu: feature.pnu ?? null,
     address: feature.address || feature.pnu || "필지",
-    lat: derived?.lat ?? null,
-    lon: derived?.lon ?? null,
+    lat: typeof feature.lat === "number" ? feature.lat : null,
+    lon: typeof feature.lon === "number" ? feature.lon : null,
     areaSqm: feature.area_sqm ?? null,
     zoneType: feature.zone_type ?? null,
     zoneType2: feature.zone_type_2 ?? null,

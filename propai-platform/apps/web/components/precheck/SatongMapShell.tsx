@@ -864,6 +864,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
       );
       return;
     }
+    // 토큰 존재는 반응형 신호가 아니다(localStorage 직독) — 이 화면엔 인라인 로그인이 없어
+    // 로그인은 항상 /login 라우트 이동→복귀 리마운트로 해소되므로 stale 위험은 이론적(리뷰 MEDIUM 수용).
+    // 인라인 로그인 UI가 생기면 인증 스토어 구독으로 교체할 것.
     if (!hasAccessToken()) {
       setAuctionItems(null);
       setAuctionNote("경매: 로그인 후 조회 가능합니다");
