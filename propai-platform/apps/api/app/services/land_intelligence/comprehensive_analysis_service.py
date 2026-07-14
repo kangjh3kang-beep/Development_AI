@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 
+from app.services.data_validation.price_stats import robust_price_stats
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
@@ -1246,11 +1247,13 @@ class ComprehensiveAnalysisService:
                     for item in raw
                     if item.get("price_10k_won") or item.get("거래금액")
                 ]
+                _s = robust_price_stats(amounts)  # ★대표통계(이상치 제거·공용 헬퍼)
                 result[key] = {
-                    "count": len(raw),
-                    "avg_price_10k": int(sum(amounts) / len(amounts)) if amounts else 0,
-                    "max_price_10k": max(amounts) if amounts else 0,
-                    "min_price_10k": min(amounts) if amounts else 0,
+                    "count": _s["count"],
+                    "avg_price_10k": _s["avg"],
+                    "max_price_10k": _s["max"],
+                    "min_price_10k": _s["min"],
+                    "excluded_outliers": _s["excluded"],
                     "items": items,
                 }
             return result
