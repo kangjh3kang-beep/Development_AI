@@ -304,4 +304,7 @@ def test_zone_type_takes_precedence_over_zone():
     gate = assess_dev_act_permit({"zone_type": "제2종일반주거지역", "zone": "자연녹지지역",
                                   "land_category": "대"})
     assert gate is not None
-    assert gate["zone_family"] not in ("green", "management")
+    # ★실효 단언(R2 지적 반영): zone(자연녹지)이 이겼다면 family="녹지"·CONDITIONAL이 됐을 것.
+    assert gate["zone_family"] == "주거"
+    assert gate["applicable"] is False
+    assert gate["status"] == STATUS_PASS
