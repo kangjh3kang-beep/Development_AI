@@ -98,6 +98,14 @@ export interface SatongMultiMapProps {
   /** 경계 API(/zoning/parcel-boundaries)가 보강한 필지 속성(면적·용도·좌표·경계) 역전파 —
    *  부모가 선택목록·SSOT에 병합해 다필지 통합분석이 면적을 받도록 한다. */
   onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
+  /** 경계보강 진행상태 통지 — 부모(Shell)가 "좌표 확인 중" 노트를 실패 시 정직 강등하는 데 쓴다. */
+  onBoundaryStatusChange?: (status: "idle" | "loading" | "ready" | "error") => void;
+  /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙).
+   *  ★marketLayer 객체에 넣지 않고 별도 prop으로 받는다 — 노트만 바뀔 때 마커 이펙트가
+   *  전체 재생성되던 낭비(리뷰 LOW)를 차단. */
+  presaleNote?: string | null;
+  /** 경매 상태 노트(로그인 필요·권한 없음·좌표 대기 등) — 위와 동일 규약. */
+  auctionNote?: string | null;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -256,12 +264,10 @@ export type SatongMarketLayerState = {
   type?: string;
   showPresale?: boolean;
   presaleItems?: SatongPresaleItem[] | null;
-  /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙). */
-  presaleNote?: string | null;
   showAuction?: boolean;
   auctionItems?: SatongAuctionItem[] | null;
-  /** 경매 상태 노트(로그인 필요·권한 없음·좌표 대기 등) — 설정 시 건수 라벨 대신 표기. */
-  auctionNote?: string | null;
+  // 상태 노트(presaleNote/auctionNote)는 SatongMultiMapProps의 별도 prop — 객체에 접어 넣으면
+  // 노트 변경마다 marketLayer identity가 바뀌어 마커 이펙트가 전체 재실행된다(리뷰 LOW).
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
@@ -586,6 +592,9 @@ export function SatongMultiMap({
   developmentPayload = null,
   onCenterChange,
   onBoundaryEnriched,
+  onBoundaryStatusChange,
+  presaleNote = null,
+  auctionNote = null,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
@@ -596,6 +605,8 @@ export function SatongMultiMap({
   onCenterChangeRef.current = onCenterChange;
   const onBoundaryEnrichedRef = useRef(onBoundaryEnriched);
   onBoundaryEnrichedRef.current = onBoundaryEnriched;
+  const onBoundaryStatusChangeRef = useRef(onBoundaryStatusChange);
+  onBoundaryStatusChangeRef.current = onBoundaryStatusChange;
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
@@ -619,7 +630,10 @@ export function SatongMultiMap({
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
-  const [presaleAuctionNote, setPresaleAuctionNote] = useState("");
+  // 분양·경매는 '유효 마커 수'만 상태로 두고 노트 문자열은 렌더에서 파생 — 노트 prop 변경이
+  // 마커 이펙트를 다시 돌리지 않게 한다(리뷰 LOW). 수치 setState는 값이 같으면 React가 bail-out.
+  const [presaleCount, setPresaleCount] = useState(0);
+  const [auctionCount, setAuctionCount] = useState(0);
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
 
@@ -718,16 +732,19 @@ export function SatongMultiMap({
       //   setState 하면 참조가 바뀌어 불필요 리렌더가 발생한다(무한 업데이트 방지).
       setBoundaryFeatures((prev) => (prev.length ? [] : prev));
       setBoundaryStatus((prev) => (prev === "idle" ? prev : "idle"));
+      onBoundaryStatusChangeRef.current?.("idle");
       return;
     }
     const hasAllGeometryAndMetadata = selectedParcels.every((parcel) => !!parcel.geometry && parcel.buildingAgeYears != null);
     if (hasAllGeometryAndMetadata) {
       setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
       setBoundaryStatus("ready");
+      onBoundaryStatusChangeRef.current?.("ready");
       return;
     }
     let alive = true;
     setBoundaryStatus("loading");
+    onBoundaryStatusChangeRef.current?.("loading");
     apiClient
       .post<BoundaryResponse>("/zoning/parcel-boundaries", {
         body: {
@@ -744,6 +761,7 @@ export function SatongMultiMap({
         const fromBoundary = (response.features ?? []).map(boundaryFeatureToMapFeature);
         setBoundaryFeatures(mergeSatongMapFeatures([...selectedParcels, ...fromBoundary]));
         setBoundaryStatus("ready");
+        onBoundaryStatusChangeRef.current?.("ready");
         // ★P1(감사): 경계 API가 받아온 면적·용도·좌표·경계를 부모(Shell)로 역전파 —
         //   종전엔 지도 내부 상태(dead-end)에만 남아, 검색 등록 필지가 면적 없음 →
         //   통합분석이 침묵 단일 격하되는 원인이었다.
@@ -753,6 +771,8 @@ export function SatongMultiMap({
         if (!alive) return;
         setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
         setBoundaryStatus("error");
+        // 부모(Shell)가 "좌표 확인 중" 노트를 "확인 실패"로 정직 강등할 수 있도록 통지.
+        onBoundaryStatusChangeRef.current?.("error");
       });
     return () => {
       alive = false;
@@ -1282,6 +1302,16 @@ export function SatongMultiMap({
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // marketLayer에서 마커 이펙트가 실제로 읽는 원시값·참조만 뽑아 구독을 협소화한다(리뷰 LOW) —
+  //   marketLayer 객체 identity가 바뀌어도(다른 필드 갱신) 아래 값이 같으면 마커를 다시 그리지
+  //   않아, 분양 items 도착이 실거래 마커 재생성·재fitBounds를 유발하던 낭비를 끊는다.
+  const marketKind = marketLayer?.kind ?? "trade";
+  const marketType = marketLayer?.type ?? "apt";
+  const showPresale = !!marketLayer?.showPresale;
+  const presaleItems = marketLayer?.presaleItems ?? null;
+  const showAuction = !!marketLayer?.showAuction;
+  const auctionItems = marketLayer?.auctionItems ?? null;
+
   /* eslint-disable react-hooks/set-state-in-effect -- Market markers are rendered into an imperative Leaflet layer group. */
   useEffect(() => {
     const map = mapRef.current;
@@ -1301,8 +1331,8 @@ export function SatongMultiMap({
     const group = L.layerGroup().addTo(map);
     marketLayerRef.current = group;
     const bounds = L.latLngBounds([]);
-    const kind = marketLayer?.kind ?? "trade";
-    const type = marketLayer?.type ?? "apt";
+    const kind = marketKind;
+    const type = marketType;
     const category = marketPayload.categories?.[`${type}_${kind}`];
     const groups = category?.groups ?? [];
     const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
@@ -1361,7 +1391,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
-  }, [mapReady, marketLayer, marketPayload]);
+  }, [mapReady, marketKind, marketType, marketPayload]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
@@ -1378,21 +1408,20 @@ export function SatongMultiMap({
       presaleAuctionLayerRef.current = null;
     }
 
-    const showPresale = !!marketLayer?.showPresale;
-    const showAuction = !!marketLayer?.showAuction;
     if (!showPresale && !showAuction) {
-      setPresaleAuctionNote("");
+      setPresaleCount(0);
+      setAuctionCount(0);
       return;
     }
 
     const group = L.layerGroup().addTo(map);
     presaleAuctionLayerRef.current = group;
 
-    let presaleCount = 0;
+    let presaleMarkerCount = 0;
     if (showPresale) {
-      (marketLayer?.presaleItems ?? []).forEach((item) => {
+      (presaleItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        presaleCount += 1;
+        presaleMarkerCount += 1;
         const status = item.status || "미정";
         const color = PRESALE_STATUS_COLORS[status] || PRESALE_STATUS_COLORS["미정"];
         const icon = L.divIcon({
@@ -1402,17 +1431,17 @@ export function SatongMultiMap({
           iconAnchor: [11, 11],
         });
         L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { permanent: (marketLayer?.presaleItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { permanent: (presaleItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
           .addTo(group);
       });
     }
 
-    let auctionCount = 0;
+    let auctionMarkerCount = 0;
     if (showAuction) {
-      (marketLayer?.auctionItems ?? []).forEach((item) => {
+      (auctionItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        auctionCount += 1;
+        auctionMarkerCount += 1;
         const status = item.status || "진행";
         const color = AUCTION_STATUS_COLORS[status] || AUCTION_STATUS_COLORS["진행"];
         const icon = L.divIcon({
@@ -1422,29 +1451,21 @@ export function SatongMultiMap({
           iconAnchor: [12, 12],
         });
         L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { permanent: (marketLayer?.auctionItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
+          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { permanent: (auctionItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
           .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
       });
     }
 
-    // 상태 노트(좌표 대기·로그인 필요·조회 실패)가 오면 건수 라벨보다 우선 — '무자료'와
-    // '아직 조회 못함/권한 없음'을 구분해 정직 표기한다.
-    const notes = [
-      showPresale
-        ? marketLayer?.presaleNote || (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료")
-        : "",
-      showAuction
-        ? marketLayer?.auctionNote || (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료")
-        : "",
-    ].filter(Boolean);
-    setPresaleAuctionNote(notes.join(" · "));
+    // 노트 문자열은 렌더에서 파생 — 여기서는 유효 마커 수만 기록한다(값 동일 시 React bail-out).
+    setPresaleCount(presaleMarkerCount);
+    setAuctionCount(auctionMarkerCount);
 
     return () => {
       try { group.remove(); } catch { /* noop */ }
       if (presaleAuctionLayerRef.current === group) presaleAuctionLayerRef.current = null;
     };
-  }, [mapReady, marketLayer]);
+  }, [mapReady, showPresale, presaleItems, showAuction, auctionItems]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- POI markers are rendered into an imperative Leaflet layer group. */
@@ -1605,6 +1626,14 @@ export function SatongMultiMap({
 
   // [MAP-007] 기반 타일 실패 오버레이(순수 판정) — error일 때만 메시지+재시도 노출
   const tileFailureNotice = buildTileFailureNotice(tileStatus);
+
+  // 분양·경매 노트(렌더 파생) — 상태 노트 prop(좌표 대기·로그인 필요·조회 실패)이 오면 건수
+  // 라벨보다 우선해 '무자료'와 '아직 조회 못함/권한 없음'을 구분한다(정직원칙). 노트만 바뀔 땐
+  // 마커 이펙트가 돌지 않는다(리뷰 LOW 해소).
+  const presaleAuctionNote = [
+    showPresale ? presaleNote || (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
+    showAuction ? auctionNote || (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <div

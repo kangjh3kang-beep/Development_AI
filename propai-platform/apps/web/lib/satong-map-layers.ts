@@ -219,6 +219,10 @@ export type SelectionAnchor = {
   lat: number;
   lon: number;
   source: "parcel" | "boundary" | "map-center";
+  /** 앵커 필지의 주소·PNU — 좌표와 같은 필지 기준으로 주소 파생(경매 region 등)을 묶는다.
+   *  map-center 앵커(무선택)는 필지가 없으므로 null. */
+  address: string | null;
+  pnu: string | null;
 } | null;
 
 /**
@@ -234,7 +238,7 @@ export type SelectionAnchor = {
  *      (선택이 있는데 좌표가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단, 기존 계약 유지)
  */
 export function resolveSelectionAnchor(
-  parcels: Array<Pick<SatongMapFeature, "lat" | "lon" | "geometry">>,
+  parcels: Array<Pick<SatongMapFeature, "lat" | "lon" | "geometry" | "address" | "pnu">>,
   mapCenter: { lat: number; lon: number } | null | undefined,
 ): SelectionAnchor {
   for (const parcel of parcels) {
@@ -242,16 +246,24 @@ export function resolveSelectionAnchor(
       typeof parcel.lat === "number" && Number.isFinite(parcel.lat) &&
       typeof parcel.lon === "number" && Number.isFinite(parcel.lon)
     ) {
-      return { lat: parcel.lat, lon: parcel.lon, source: "parcel" };
+      return {
+        lat: parcel.lat,
+        lon: parcel.lon,
+        source: "parcel",
+        address: parcel.address || null,
+        pnu: parcel.pnu ?? null,
+      };
     }
   }
   for (const parcel of parcels) {
     const point = geometryRepresentativePoint(parcel.geometry);
-    if (point) return { ...point, source: "boundary" };
+    if (point) {
+      return { ...point, source: "boundary", address: parcel.address || null, pnu: parcel.pnu ?? null };
+    }
   }
   if (parcels.length === 0 && mapCenter &&
     Number.isFinite(mapCenter.lat) && Number.isFinite(mapCenter.lon)) {
-    return { lat: mapCenter.lat, lon: mapCenter.lon, source: "map-center" };
+    return { lat: mapCenter.lat, lon: mapCenter.lon, source: "map-center", address: null, pnu: null };
   }
   return null;
 }
