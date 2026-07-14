@@ -35,7 +35,7 @@ import {
   useState,
 } from "react";
 
-import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import type {
@@ -49,6 +49,7 @@ import type {
 } from "@/components/map/SatongMultiMap";
 import {
   isRenderableSatongMapLayer,
+  resolveSelectionAnchor,
   type SatongMapFeature,
   type SatongMapLayerId,
   type SatongMapLayerState,
@@ -692,14 +693,21 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   의존성은 원시값(lat·lon·address) — 참조 churn 재조회 방지(#178 교훈, 실거래와 동일 패턴).
   const [poiPayload, setPoiPayload] = useState<SatongPoiPayload | null>(null);
   const poiEnabled = enabledLayers.has("poi");
-  // ★선택필지가 있으면 그 필지 좌표만 사용(좌표 없으면 null → POI는 주소 지오코딩으로 해소).
-  //   선택이 전혀 없을 때만(브라우즈 모드) 지도중심 폴백(P1). 좌표없는 선택필지(엑셀 업로드 등)가
-  //   엉뚱한 지도중심 POI로 폴백되는 역전을 차단(리뷰 LOW).
-  const hasSelection = marketAnchor != null;
-  const poiAnchorLat = hasSelection ? marketAnchor?.lat ?? null : mapCenter?.lat ?? null;
-  const poiAnchorLon = hasSelection ? marketAnchor?.lon ?? null : mapCenter?.lon ?? null;
+  // ★좌표 앵커 공용화(resolveSelectionAnchor — satong-map-layers): 종전 '첫 필지의 lat/lon'만
+  //   보던 단선을 ①좌표 보유 첫 필지 ②경계(geometry) 대표점 ③(무선택시) 지도중심 순으로 해소.
+  //   좌표 없는 선택(엑셀 PNU행·프로젝트 시드)도 경계보강 도착 즉시 앵커가 살아나 분양·경매·
+  //   개발계획 조회가 자동 재개된다. 선택이 있는데 좌표·경계가 전무하면 null 유지(엉뚱한
+  //   지도중심 조회 역전 차단 — 기존 계약 보존, 리뷰 LOW). 이펙트 의존성은 원시값만(#178).
+  const selectionAnchor = useMemo(
+    () => resolveSelectionAnchor(selectedParcels, mapCenter),
+    [selectedParcels, mapCenter],
+  );
+  const anchorLat = selectionAnchor?.lat ?? null;
+  const anchorLon = selectionAnchor?.lon ?? null;
+  // 선택은 있는데 좌표·경계가 아직 없음(경계보강 대기) — 좌표 레이어의 정직 노트용.
+  const anchorPending = selectedParcels.length > 0 && selectionAnchor == null;
   useEffect(() => {
-    if (!poiEnabled || (poiAnchorLat == null && !marketAnchorAddress)) {
+    if (!poiEnabled || (anchorLat == null && !marketAnchorAddress)) {
       setPoiPayload(null);
       return;
     }
@@ -708,8 +716,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
       try {
         const res = await apiClient.post<SatongPoiPayload>("/site-score/poi-infra", {
           body: {
-            lat: poiAnchorLat ?? undefined,
-            lon: poiAnchorLon ?? undefined,
+            lat: anchorLat ?? undefined,
+            lon: anchorLon ?? undefined,
             address: marketAnchorAddress || undefined,
             radius_m: 800,
           },
@@ -724,16 +732,27 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [poiEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
+  }, [poiEnabled, anchorLat, anchorLon, marketAnchorAddress]);
 
-  // ── 개발계획 레이어 배선: 레이어 ON + 선택필지 좌표 있으면 주변 도시계획시설 조회 ──
-  //   /zoning/development-facilities 는 lat/lon 필수(주소 지오코딩 없음) — 좌표 없으면 조회 생략.
-  //   무자료·실패는 빈 facilities + note 정직 전달(무날조). 패턴은 실거래·POI와 동일.
+  // ── 개발계획 레이어 배선: 레이어 ON + 앵커 좌표 있으면 주변 도시계획시설 조회 ──
+  //   /zoning/development-facilities 는 lat/lon 필수(주소 지오코딩 없음).
+  //   ★앵커 미해소 시에도 침묵하지 않는다 — 빈 facilities + 대기/안내 note 정직 전달(무날조).
   const [developmentPayload, setDevelopmentPayload] = useState<SatongDevelopmentPayload | null>(null);
   const developmentEnabled = enabledLayers.has("development");
   useEffect(() => {
-    if (!developmentEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+    if (!developmentEnabled) {
       setDevelopmentPayload(null);
+      return;
+    }
+    if (anchorLat == null || anchorLon == null) {
+      // 레이어는 켜졌는데 조회 기준 좌표가 아직 없음 — 종전엔 payload null(노트조차 없는
+      // 침묵 빈지도, 정직원칙 역위반)이었다. 상태를 구분해 지도에 노트로 알린다.
+      setDevelopmentPayload({
+        facilities: [],
+        note: anchorPending
+          ? "개발계획: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
+          : "개발계획: 지도를 이동하면 지도 중심 기준으로 조회합니다",
+      });
       return;
     }
     let cancelled = false;
@@ -742,7 +761,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         const res = await apiClient.post<SatongDevelopmentPayload>("/zoning/development-facilities", {
           // kinds:"all" — 지도 레이어는 전체 도시계획시설(도로·광장·학교·유통 등) 표시.
           //   (기본 "rail"은 입지 신호용 철도 전용 — 기존 소비처 동작 보존)
-          body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 1000, kinds: "all" },
+          body: { lat: anchorLat, lon: anchorLon, radius_m: 1000, kinds: "all" },
           useMock: false,
           timeoutMs: 60000,
         });
@@ -756,16 +775,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [developmentEnabled, poiAnchorLat, poiAnchorLon]);
+  }, [developmentEnabled, anchorLat, anchorLon, anchorPending]);
 
-  // ── 분양정보 레이어 배선(실데이터): 레이어 ON + 앵커좌표 → 청약홈 주변 분양(/presale/nearby) ──
+  // ── 분양정보 레이어 배선(실데이터): 레이어 ON + 앵커좌표(또는 주소) → 청약홈(/presale/nearby) ──
   //   렌더(마커·팝업)는 SatongMultiMap의 presaleItems에 완비. 실패/무자료는 [](정직 "분양 무자료").
   //   ★무목업: 종전 가상단지(Math.random) 목업을 실데이터로 대체. 패턴은 실거래·POI와 동일.
+  //   ★주소 폴백: 서버(presale.nearby)가 좌표 없이 address만 와도 지오코딩으로 해소하므로,
+  //     좌표 미확보 선택(엑셀 PNU행 등)도 주소로 즉시 조회한다(앵커 단선 해소).
   const [presaleItems, setPresaleItems] = useState<SatongPresaleItem[] | null>(null);
+  const [presaleNote, setPresaleNote] = useState("");
   const presaleEnabled = enabledLayers.has("presale");
   useEffect(() => {
-    if (!presaleEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+    if (!presaleEnabled) {
       setPresaleItems(null);
+      setPresaleNote("");
+      return;
+    }
+    if (anchorLat == null && !marketAnchorAddress) {
+      // 좌표도 주소도 없음 — 침묵 대신 상태를 노트로 알린다(정직원칙).
+      setPresaleItems(null);
+      setPresaleNote(
+        anchorPending
+          ? "분양: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
+          : "분양: 지도를 이동하면 지도 중심 기준으로 조회합니다",
+      );
       return;
     }
     let cancelled = false;
@@ -774,7 +807,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
         const res = await apiClient.post<{ available?: boolean; items?: SatongPresaleItem[] }>(
           "/presale/nearby",
           {
-            body: { lat: poiAnchorLat, lon: poiAnchorLon, radius_m: 3000 },
+            body: {
+              lat: anchorLat ?? undefined,
+              lon: anchorLon ?? undefined,
+              // 좌표가 없을 때만 주소 전달 — 서버 지오코딩 1회로 해소(좌표 있으면 좌표 우선).
+              address: anchorLat == null ? marketAnchorAddress || undefined : undefined,
+              radius_m: 3000,
+            },
             useMock: false,
             timeoutMs: 30000,
           },
@@ -785,28 +824,51 @@ export function SatongMapShell({ locale }: { locale: string }) {
               (item) => typeof item.lat === "number" && typeof item.lon === "number",
             ),
           );
+          setPresaleNote("");
         }
       } catch {
-        if (!cancelled) setPresaleItems([]); // 실패 → 정직 무자료(가짜 생성 금지)
+        if (!cancelled) {
+          setPresaleItems([]); // 가짜 생성 금지
+          setPresaleNote("분양: 조회 실패"); // 무자료와 실패를 구분(정직원칙)
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [presaleEnabled, poiAnchorLat, poiAnchorLon]);
+  }, [presaleEnabled, anchorLat, anchorLon, anchorPending, marketAnchorAddress]);
 
   // ── 공·경매 레이어 배선(실데이터): 온비드 검색(/auction/search) → 주소 지오코딩(/auction/geocode)
-  //   → 앵커 반경(10km) 필터. 지역(시/도) 우선 검색, 0건이면 전국 폴백. 인증실패(401)·무자료는
-  //   [](정직 "경매 무자료"). 좌표 미확인 물건은 스킵(가짜 좌표 금지).
+  //   → 앵커 반경(10km) 필터. 지역(시/도) 우선 검색, 0건이면 전국 폴백. 좌표 미확인 물건은
+  //   스킵(가짜 좌표 금지).
+  //   ★인증 정직화: /auction/search만 RBAC 게이트(RequirePermission) — 종전엔 비로그인 401이
+  //     catch로 삼켜져 "경매 무자료"로 오표기됐고, 전역 세션만료 처리(로그인 리다이렉트)가
+  //     발동해 지도에서 튕겨나갔다. ①토큰 없으면 호출 전 게이트(무의미한 401 왕복 차단)
+  //     ②호출은 skipSessionExpiry로 리다이렉트 옵트아웃 ③401/403은 무자료가 아니라
+  //     "로그인/권한 필요" 노트로 구분 표기.
   const [auctionItems, setAuctionItems] = useState<SatongAuctionItem[] | null>(null);
+  const [auctionNote, setAuctionNote] = useState("");
   const auctionEnabled = enabledLayers.has("auction");
   useEffect(() => {
-    if (!auctionEnabled || poiAnchorLat == null || poiAnchorLon == null) {
+    if (!auctionEnabled) {
       setAuctionItems(null);
+      setAuctionNote("");
       return;
     }
-    const anchorLat = poiAnchorLat;
-    const anchorLon = poiAnchorLon;
+    if (anchorLat == null || anchorLon == null) {
+      setAuctionItems(null);
+      setAuctionNote(
+        anchorPending
+          ? "경매: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
+          : "경매: 지도를 이동하면 지도 중심 기준으로 조회합니다",
+      );
+      return;
+    }
+    if (!hasAccessToken()) {
+      setAuctionItems(null);
+      setAuctionNote("경매: 로그인 후 조회 가능합니다");
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -824,7 +886,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
         const fetchPage = (r?: string) =>
           apiClient.get<{ items?: AuctionSearchItem[] }>(
             `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
-            { useMock: false, timeoutMs: 30000 },
+            // skipSessionExpiry: 선택형 지도 레이어가 만료 세션에서 전역 로그인 리다이렉트를
+            // 발동하지 않게 옵트아웃 — 401/403은 아래 catch가 정직 노트로 처리한다.
+            { useMock: false, timeoutMs: 30000, skipSessionExpiry: true },
           );
         let res = region ? await fetchPage(region) : await fetchPage();
         if (region && !(res.items ?? []).length) res = await fetchPage(); // 지역 0건 → 전국 폴백
@@ -874,15 +938,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
           .filter((item): item is SatongAuctionItem => item != null)
           .sort((a, b) => (a.distance_m ?? 0) - (b.distance_m ?? 0))
           .slice(0, 30);
-        if (!cancelled) setAuctionItems(near);
-      } catch {
-        if (!cancelled) setAuctionItems([]); // 401 미인증 포함 실패 → 정직 무자료
+        if (!cancelled) {
+          setAuctionItems(near);
+          setAuctionNote("");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        // 인증/권한 실패는 '무자료'가 아니다 — 상태를 구분해 정직 표기.
+        if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
+          setAuctionItems(null);
+          setAuctionNote(
+            err.status === 403
+              ? "경매: 조회 권한이 없는 계정입니다"
+              : "경매: 로그인 후 조회 가능합니다",
+          );
+        } else {
+          setAuctionItems([]); // 가짜 생성 금지
+          setAuctionNote("경매: 조회 실패"); // 무자료와 실패를 구분(정직원칙)
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [auctionEnabled, poiAnchorLat, poiAnchorLon, marketAnchorAddress]);
+  }, [auctionEnabled, anchorLat, anchorLon, anchorPending, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1832,10 +1911,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     type: "apt",
                     showPresale: presaleEnabled,
                     presaleItems: presaleEnabled ? presaleItems : null,
+                    // 상태 노트(좌표 대기·로그인 필요·조회 실패) — 지도 노트에서 건수 라벨보다 우선.
+                    presaleNote: presaleEnabled ? presaleNote || null : null,
                     showAuction: auctionEnabled,
                     auctionItems: auctionEnabled ? auctionItems : null,
+                    auctionNote: auctionEnabled ? auctionNote || null : null,
                   }),
-                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
+                  [presaleEnabled, presaleItems, presaleNote, auctionEnabled, auctionItems, auctionNote],
                 )}
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
