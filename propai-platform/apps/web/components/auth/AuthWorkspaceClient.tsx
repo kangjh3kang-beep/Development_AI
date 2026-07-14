@@ -595,7 +595,9 @@ export function AuthWorkspaceClient({
                 agree_terms: registerForm.agreeTerms,
                 agree_privacy: registerForm.agreePrivacy,
                 agree_marketing: registerForm.agreeMarketing,
-                policy_version: "2026-07-15",
+                // ★동의 버전 = 이용자가 실제 열람하는 인앱 약관(/legal/terms·privacy)의
+                //   시행일과 일치해야 한다. 약관 개정 시 이 값을 함께 갱신할 것.
+                policy_version: "2026-06-15",
               },
               useMock: false,
             });

@@ -303,7 +303,7 @@ async def _register(client, email: str, password: str = STRONG_PW):
         json={
             "name": "회원테스트", "email": email, "password": password,
             "agree_terms": True, "agree_privacy": True, "agree_marketing": False,
-            "policy_version": "2026-07-15",
+            "policy_version": "2026-06-15",
         },
     )
 
@@ -340,8 +340,8 @@ class TestMemberIntegration:
             )
         ).fetchall()
         consent_map = {row[0]: (row[1], row[2]) for row in rows}
-        assert consent_map["terms_of_service"] == (True, "2026-07-15")
-        assert consent_map["privacy_policy"] == (True, "2026-07-15")
+        assert consent_map["terms_of_service"] == (True, "2026-06-15")
+        assert consent_map["privacy_policy"] == (True, "2026-06-15")
         assert consent_map["marketing"][0] is False   # 선택 거부도 명시 기록
 
         login = await client.post(
@@ -578,6 +578,64 @@ class TestMemberIntegration:
         assert (
             await client.post("/api/v1/auth/login", json={"email": email, "password": STRONG_PW2})
         ).status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_anonymize_batch_after_grace(self, client, member_db):
+        """익명화 배치(§7-2): 유예 미경과=보존, 유예 경과=PII 익명화+토큰 삭제."""
+        from sqlalchemy import text
+
+        from apps.api.services.member_lifecycle import (
+            ANONYMIZED_NAME,
+            anonymize_expired_withdrawals,
+        )
+
+        email = _unique_email()
+        r = await _register(client, email)
+        assert r.status_code == 201
+        headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        assert (
+            await client.post(
+                "/api/v1/auth/account/withdraw",
+                json={"password": STRONG_PW},
+                headers=headers,
+            )
+        ).status_code == 204
+
+        # ① 유예(30일) 미경과 — 익명화되지 않아야 함
+        await anonymize_expired_withdrawals(member_db)
+        row = (
+            await member_db.execute(
+                text("SELECT email, name FROM users WHERE email = :e"), {"e": email}
+            )
+        ).fetchone()
+        assert row is not None and row[0] == email  # 원본 보존
+
+        # ② 유예 경과로 조정 → 배치 실행 → PII 익명화 + 토큰 행 삭제
+        await member_db.execute(
+            text("UPDATE users SET deleted_at = now() - interval '31 days' WHERE email = :e"),
+            {"e": email},
+        )
+        await member_db.commit()
+        result = await anonymize_expired_withdrawals(member_db)
+        assert result["anonymized"] >= 1
+
+        gone = (
+            await member_db.execute(
+                text("SELECT count(*) FROM users WHERE email = :e"), {"e": email}
+            )
+        ).scalar_one()
+        assert gone == 0  # 원본 이메일 소거
+        anon = (
+            await member_db.execute(
+                text(
+                    "SELECT name, phone, oauth_id, hashed_password FROM users"
+                    " WHERE email LIKE 'deleted-%@anonymized.invalid'"
+                    " AND name = :n ORDER BY updated_at DESC LIMIT 1"
+                ),
+                {"n": ANONYMIZED_NAME},
+            )
+        ).fetchone()
+        assert anon is not None and anon[1] is None and anon[2] is None and anon[3] == ""
 
     @pytest.mark.asyncio
     async def test_email_verification_flow(self, client, member_db, monkeypatch):

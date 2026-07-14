@@ -142,7 +142,8 @@ class RegisterRequest(BaseModel):
     agree_terms: bool = Field(description="이용약관 동의(필수)")
     agree_privacy: bool = Field(description="개인정보처리방침 동의(필수)")
     agree_marketing: bool = Field(default=False, description="마케팅 수신 동의(선택)")
-    policy_version: str = Field(default="2026-07-15", max_length=20)
+    # 동의한 약관·방침 버전 — 인앱 /legal 문서 시행일과 일치(프론트가 명시 전송)
+    policy_version: str = Field(default="2026-06-15", max_length=20)
     phone: str | None = Field(default=None, max_length=32, description="휴대전화(선택)")
 
     @field_validator("password")

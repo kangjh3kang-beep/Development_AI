@@ -103,7 +103,13 @@ describe("AuthWorkspaceClient", () => {
       "Tenant AI",
     );
     await userEvent.type(screen.getByLabelText("Admin email"), "admin@tenant.ai");
-    await userEvent.type(screen.getByLabelText(/^Password$/), "strongpass1");
+    // 비밀번호 라벨에 정책 힌트 문구가 포함되므로 부분 일치로 조회
+    await userEvent.type(screen.getByLabelText(/Password/), "Strongpass1!");
+
+    // 2026-07 회원 시스템: 필수 동의(이용약관·개인정보) 체크 후에만 제출 가능
+    const checkboxes = screen.getAllByRole("checkbox");
+    await userEvent.click(checkboxes[0]); // [필수] 이용약관
+    await userEvent.click(checkboxes[1]); // [필수] 개인정보처리방침
     await userEvent.click(screen.getByRole("button", { name: "Create tenant" }));
 
     await waitFor(() => {
@@ -115,7 +121,11 @@ describe("AuthWorkspaceClient", () => {
             name: "Tenant Owner",
             company_name: "Tenant AI",
             email: "admin@tenant.ai",
-            password: "strongpass1",
+            password: "Strongpass1!",
+            agree_terms: true,
+            agree_privacy: true,
+            agree_marketing: false,
+            policy_version: "2026-06-15",
           },
         }),
       );

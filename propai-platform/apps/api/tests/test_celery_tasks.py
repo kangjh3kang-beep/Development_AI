@@ -22,6 +22,7 @@ class TestCeleryAppMeta:
             "check-standard-prices-weekly",
             "check-pension-increase-monthly",
             "sync-onbid-auctions-daily",
+            "anonymize-withdrawn-daily",
             "flush-growth-events",
             "analyze-growth-hourly",
             "analyze-growth-daily",
@@ -55,6 +56,7 @@ class TestCeleryAppMeta:
             "app.tasks.parcel_batch_task.run_batch",
             "tasks.memory.ingest_experience",
             "tasks.specialists.run_for_analysis",
+            "app.tasks.member_tasks.anonymize_withdrawn_accounts",
         }
         assert len(TASK_NAMES) == len(set(TASK_NAMES))  # 중복 금지
 
@@ -76,6 +78,7 @@ class TestCeleryAppMeta:
             "app.tasks.parcel_batch_task",
             "app.tasks.memory_tasks",
             "app.tasks.specialist_tasks",
+            "app.tasks.member_tasks",
         }
         assert len(TASK_MODULES) == len(set(TASK_MODULES))
 
