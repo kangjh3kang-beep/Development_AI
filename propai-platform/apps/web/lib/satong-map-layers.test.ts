@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
   mergeSatongMapFeatures,
+  resolveSelectionAnchor,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
   zoneColor,
@@ -80,5 +82,60 @@ describe("satong-map-layers", () => {
     expect(zoneColor("제2종일반주거지역", 0)).toBe("#14b8a6");
     expect(zoneColor("일반상업지역", 0)).toBe("#ec4899");
     expect(zoneColor("자연녹지지역", 0)).toBe("#65a30d");
+  });
+
+  it("GeoJSON 경계의 대표점(경계상자 중심)을 [lat, lon]으로 파생한다", () => {
+    // GeoJSON 좌표는 [lng, lat] 순 — 반환은 {lat, lon}으로 뒤집혀야 한다.
+    const polygon = {
+      type: "Polygon",
+      coordinates: [[[127.0, 37.0], [127.2, 37.0], [127.2, 37.4], [127.0, 37.4], [127.0, 37.0]]],
+    };
+    expect(geometryRepresentativePoint(polygon)).toEqual({ lat: 37.2, lon: 127.1 });
+
+    const multi = {
+      type: "MultiPolygon",
+      coordinates: [[[[126.0, 36.0], [126.4, 36.0], [126.4, 36.2], [126.0, 36.2], [126.0, 36.0]]]],
+    };
+    const pt = geometryRepresentativePoint(multi);
+    expect(pt?.lat).toBeCloseTo(36.1);
+    expect(pt?.lon).toBeCloseTo(126.2);
+
+    // 비정상 입력은 null(무날조) — 가짜 좌표를 만들지 않는다.
+    expect(geometryRepresentativePoint(null)).toBeNull();
+    expect(geometryRepresentativePoint({ type: "Point", coordinates: [127, 37] })).toBeNull();
+    expect(geometryRepresentativePoint({ type: "Polygon", coordinates: [[["a", "b"]]] })).toBeNull();
+  });
+
+  it("좌표 앵커를 ①좌표 필지 ②경계 대표점 ③(무선택시) 지도중심 순으로 해석한다", () => {
+    const mapCenter = { lat: 37.5665, lon: 126.978 };
+    const geom = {
+      type: "Polygon",
+      coordinates: [[[127.0, 37.0], [127.2, 37.0], [127.2, 37.4], [127.0, 37.4], [127.0, 37.0]]],
+    };
+
+    // ① 좌표 보유 필지가 최우선 — 첫 필지가 좌표 없어도 뒤 필지의 좌표를 쓴다(첫필지 단선 해소).
+    expect(
+      resolveSelectionAnchor(
+        [{ lat: null, lon: null }, { lat: 37.7446, lon: 127.0469 }],
+        mapCenter,
+      ),
+    ).toEqual({ lat: 37.7446, lon: 127.0469, source: "parcel" });
+
+    // ② 좌표는 없지만 경계가 있으면 대표점 — 엑셀 PNU행이 경계보강 후 자동으로 살아나는 경로.
+    expect(
+      resolveSelectionAnchor([{ lat: null, lon: null, geometry: geom }], mapCenter),
+    ).toEqual({ lat: 37.2, lon: 127.1, source: "boundary" });
+
+    // ③ 선택이 아예 없을 때만 지도중심 폴백(브라우즈 모드).
+    expect(resolveSelectionAnchor([], mapCenter)).toEqual({
+      lat: 37.5665,
+      lon: 126.978,
+      source: "map-center",
+    });
+
+    // 선택이 있는데 좌표·경계가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단(기존 계약).
+    expect(resolveSelectionAnchor([{ lat: null, lon: null }], mapCenter)).toBeNull();
+    // 무선택 + 지도중심도 없으면 null(정직).
+    expect(resolveSelectionAnchor([], null)).toBeNull();
   });
 });

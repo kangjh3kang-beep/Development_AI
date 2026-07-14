@@ -113,6 +113,13 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   useMock?: boolean;
   /** 요청 타임아웃(ms). 미지정 시 기본값. 0이면 무제한. */
   timeoutMs?: number;
+  /**
+   * 401이어도 전역 세션만료 처리(토큰 와이프+로그인 리다이렉트)를 하지 않고 그대로 throw.
+   * ★공개 화면의 '선택형' 위젯(예: 사통맵 경매 레이어)이 권한 게이트 엔드포인트를 건드릴 때
+   *   비로그인 사용자가 지도에서 로그인 페이지로 튕겨나가는 부작용을 막는 옵트아웃.
+   *   (refresh 재시도는 그대로 수행 — 만료 토큰 사용자는 여전히 자동 갱신된다.)
+   */
+  skipSessionExpiry?: boolean;
 };
 
 // 백엔드 무응답 시 프론트가 영원히 대기("분석 중...")하는 것을 막는 기본 타임아웃.
@@ -154,6 +161,15 @@ function getAccessToken(): string {
     }
   }
   return "";
+}
+
+/**
+ * 로그인 토큰 보유 여부(진위 검증 아님 — 존재만 확인).
+ * 권한 게이트 엔드포인트를 쓰는 '선택형' 위젯이 비로그인 상태에서 무의미한 401 왕복
+ * (+세션만료 리다이렉트)을 만들지 않도록 사전 게이트로 쓴다.
+ */
+export function hasAccessToken(): boolean {
+  return getAccessToken().length > 0;
 }
 
 // ── 현장 진입 토큰(site_token) 자동첨부 ─────────────────────────────
@@ -398,8 +414,9 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
     }
     // 재시도 후에도 401(refresh 실패/부재)이면 세션 종료 → 단일 choke point에서 로그인 리다이렉트.
     //   화면마다 401 에러가 번져 #185 크래시·홈버튼 무력화로 이어지던 cascade를 원천 차단(근본).
-    //   (403=권한거부는 제외 — 로그인돼 있으나 권한 없음이라 리다이렉트 대상 아님.)
-    if (response.status === 401) handleSessionExpired();
+    //   (403=권한거부는 제외 — 로그인돼 있으나 권한 없음이라 리다이렉트 대상 아님.
+    //    skipSessionExpiry=선택형 위젯 옵트아웃 — 호출부가 401을 정직 노트로 처리한다.)
+    if (response.status === 401 && !options.skipSessionExpiry) handleSessionExpired();
   }
 
   const payload = await parseResponse(response);

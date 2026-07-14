@@ -320,11 +320,14 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const [rankingView, setRankingView] = useState<"list" | "map">("list");
 
   // --- 탭 A: 내 경공매 ---
+  // ★skipSessionExpiry(이 파일 공통): /auction/*는 RBAC 게이트 — 라이브 모드 미인증 401이
+  //   전역 세션만료 처리(토큰 와이프+로그인 하드 리다이렉트)를 발동해, extractErrorMessage의
+  //   인라인 "로그인 필요" 안내를 선점하던 것을 옵트아웃한다(사통맵 경매 레이어와 동일 규약, PR#271).
   const myQuery = useQuery({
     queryKey: ["auction", "my"],
     enabled: canUseLiveApi && activeTab === "my",
     queryFn: () =>
-      apiClient.get<MyAuctionResponse>("/auction/my?group_by=project"),
+      apiClient.get<MyAuctionResponse>("/auction/my?group_by=project", { skipSessionExpiry: true }),
   });
 
   // --- 탭 B: 조건검색 ---
@@ -347,7 +350,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
         land_max: f.land_max,
         pbct_stat: f.pbct_stat,
       });
-      return apiClient.get<BidResultsResponse>(`/auction/bid-results${qs}`);
+      return apiClient.get<BidResultsResponse>(`/auction/bid-results${qs}`, { skipSessionExpiry: true });
     },
   });
 
@@ -355,12 +358,12 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const filtersQuery = useQuery({
     queryKey: ["auction", "filters"],
     enabled: canUseLiveApi && activeTab === "search",
-    queryFn: () => apiClient.get<SavedFilter[]>("/auction/filters"),
+    queryFn: () => apiClient.get<SavedFilter[]>("/auction/filters", { skipSessionExpiry: true }),
   });
 
   const saveFilterMutation = useMutation({
     mutationFn: (payload: { name: string; params: Record<string, string> }) =>
-      apiClient.post<SavedFilter>("/auction/filters", { body: payload }),
+      apiClient.post<SavedFilter>("/auction/filters", { body: payload, skipSessionExpiry: true }),
     onSuccess: () => {
       setSaveName("");
       setSaveError("");
@@ -373,7 +376,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
 
   const deleteFilterMutation = useMutation({
     mutationFn: (filterId: string) =>
-      apiClient.delete<void>(`/auction/filters/${filterId}`),
+      apiClient.delete<void>(`/auction/filters/${filterId}`, { skipSessionExpiry: true }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["auction", "filters"] });
     },
@@ -386,6 +389,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
     queryFn: () =>
       apiClient.get<RankingResponse>(
         `/auction/ranking${buildSearchParams({ by: rankingBy, page: 1, page_size: 30 })}`,
+        { skipSessionExpiry: true },
       ),
   });
 
@@ -1042,6 +1046,7 @@ function DetailModal({
           // ONBID가 토지면적/이미지를 안 주면 PNU로 NED 토지특성·항공뷰 보강.
           ...(itemPnu ? { pnu: itemPnu } : {}),
         })}`,
+        { skipSessionExpiry: true },
       ),
   });
 

@@ -173,6 +173,89 @@ export function resolveMapCenter(
   return null;
 }
 
+/**
+ * GeoJSON Polygon/MultiPolygon의 대표점(경계상자 중심)을 [lat, lon]으로 돌려준다.
+ *
+ * 실측 필지 경계의 기하 중심이므로 날조 좌표가 아니다 — 좌표 필드가 없는 필지
+ * (엑셀 PNU행 등: /zoning/parse-parcels가 lat/lon을 채우지 않음)의 앵커 폴백으로 쓴다.
+ * 좌표계 주의: GeoJSON은 [lng, lat] 순서.
+ */
+export function geometryRepresentativePoint(
+  geometry: unknown,
+): { lat: number; lon: number } | null {
+  const geo = geometry as { type?: string; coordinates?: unknown } | null | undefined;
+  if (!geo?.type || !Array.isArray(geo.coordinates)) return null;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  const eatRing = (ring: unknown) => {
+    if (!Array.isArray(ring)) return;
+    for (const pt of ring) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const [lng, lat] = pt as [number, number];
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLon) minLon = lng;
+      if (lng > maxLon) maxLon = lng;
+    }
+  };
+  if (geo.type === "Polygon") {
+    (geo.coordinates as unknown[]).forEach(eatRing);
+  } else if (geo.type === "MultiPolygon") {
+    (geo.coordinates as unknown[]).forEach((poly) => {
+      if (Array.isArray(poly)) poly.forEach(eatRing);
+    });
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(minLon)) return null;
+  return { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
+}
+
+/** resolveSelectionAnchor 결과 — source로 좌표 출처를 구분한다(정직 노트·디버깅용). */
+export type SelectionAnchor = {
+  lat: number;
+  lon: number;
+  source: "parcel" | "boundary" | "map-center";
+} | null;
+
+/**
+ * 좌표 기반 지도 레이어(분양·경매·개발계획·POI)의 공용 앵커 해석 규칙.
+ *
+ * ★앵커 단선 방지의 단일 계약(버그수정 정책 — 공용화):
+ *   종전엔 '첫 선택 필지의 lat/lon'만 봐서, 좌표 없는 필지(엑셀 PNU행·프로젝트 시드)가
+ *   첫 자리에 오면 레이어를 켜도 조회 자체가 생략돼 침묵 빈지도가 됐다.
+ *   ① 좌표를 가진 첫 필지 → source "parcel"
+ *   ② 없으면 경계(geometry)를 가진 첫 필지의 대표점 → source "boundary"
+ *      (경계보강(/zoning/parcel-boundaries)이 도착하면 자동으로 앵커가 살아난다)
+ *   ③ 선택이 아예 없을 때만 지도중심 폴백 → source "map-center"
+ *      (선택이 있는데 좌표가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단, 기존 계약 유지)
+ */
+export function resolveSelectionAnchor(
+  parcels: Array<Pick<SatongMapFeature, "lat" | "lon" | "geometry">>,
+  mapCenter: { lat: number; lon: number } | null | undefined,
+): SelectionAnchor {
+  for (const parcel of parcels) {
+    if (
+      typeof parcel.lat === "number" && Number.isFinite(parcel.lat) &&
+      typeof parcel.lon === "number" && Number.isFinite(parcel.lon)
+    ) {
+      return { lat: parcel.lat, lon: parcel.lon, source: "parcel" };
+    }
+  }
+  for (const parcel of parcels) {
+    const point = geometryRepresentativePoint(parcel.geometry);
+    if (point) return { ...point, source: "boundary" };
+  }
+  if (parcels.length === 0 && mapCenter &&
+    Number.isFinite(mapCenter.lat) && Number.isFinite(mapCenter.lon)) {
+    return { lat: mapCenter.lat, lon: mapCenter.lon, source: "map-center" };
+  }
+  return null;
+}
+
 export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapFeature[] {
   const byKey = new Map<string, SatongMapFeature>();
   features.forEach((feature) => {

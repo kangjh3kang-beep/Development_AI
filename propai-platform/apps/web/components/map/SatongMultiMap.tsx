@@ -119,6 +119,9 @@ type BoundaryFeature = {
   built_year?: number | null;
   building_age_years?: number | null;
   geometry?: any;
+  // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
+  lat?: number | null;
+  lon?: number | null;
 };
 
 type BoundaryResponse = {
@@ -253,8 +256,12 @@ export type SatongMarketLayerState = {
   type?: string;
   showPresale?: boolean;
   presaleItems?: SatongPresaleItem[] | null;
+  /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙). */
+  presaleNote?: string | null;
   showAuction?: boolean;
   auctionItems?: SatongAuctionItem[] | null;
+  /** 경매 상태 노트(로그인 필요·권한 없음·좌표 대기 등) — 설정 시 건수 라벨 대신 표기. */
+  auctionNote?: string | null;
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
@@ -423,10 +430,17 @@ function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
 }
 
 function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
+  // 좌표는 서버가 준 값만 통과시킨다(현재 /zoning/parcel-boundaries는 per-feature 좌표 없음).
+  // ★대표점(경계상자 중심) 파생좌표는 여기서 만들지 않는다 — 만들면 역전파(onBoundaryEnriched)를
+  //   타고 프로젝트 SSOT(/analysis·산출물)의 정본 필지좌표로 영속돼, 근사좌표가 "좌표미상" 분기를
+  //   전역에서 우회한다(리뷰 MEDIUM). 좌표 앵커(분양·경매·개발계획)의 자기치유는
+  //   resolveSelectionAnchor 규칙②가 geometry에서 앵커 해석 시점에 임시 계산하므로 이것으로 충분.
   return {
     id: feature.pnu || feature.address,
     pnu: feature.pnu ?? null,
     address: feature.address || feature.pnu || "필지",
+    lat: typeof feature.lat === "number" ? feature.lat : null,
+    lon: typeof feature.lon === "number" ? feature.lon : null,
     areaSqm: feature.area_sqm ?? null,
     zoneType: feature.zone_type ?? null,
     zoneType2: feature.zone_type_2 ?? null,
@@ -1414,9 +1428,15 @@ export function SatongMultiMap({
       });
     }
 
+    // 상태 노트(좌표 대기·로그인 필요·조회 실패)가 오면 건수 라벨보다 우선 — '무자료'와
+    // '아직 조회 못함/권한 없음'을 구분해 정직 표기한다.
     const notes = [
-      showPresale ? (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
-      showAuction ? (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
+      showPresale
+        ? marketLayer?.presaleNote || (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료")
+        : "",
+      showAuction
+        ? marketLayer?.auctionNote || (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료")
+        : "",
     ].filter(Boolean);
     setPresaleAuctionNote(notes.join(" · "));
 
