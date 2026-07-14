@@ -65,7 +65,10 @@ class TestRegisterValidation:
                 json={
                     "name": "Operator",
                     "email": "ops@propai.ai",
-                    "password": "test1234",
+                    # 2026-07 회원 시스템: 비밀번호 정책(10자·3종) + 필수 동의 필드 반영
+                    "password": "Test1234!@#",
+                    "agree_terms": True,
+                    "agree_privacy": True,
                 },
             )
         except Exception as exc:  # DB 미가동 환경: 검증 통과 후 DB 접근에서 발생

@@ -9,10 +9,19 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import bcrypt as _bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from packages.schemas.enums import UserRole
 from packages.schemas.models import TokenResponse, UserResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,11 +35,35 @@ from apps.api.auth.jwt_handler import (
 )
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
 from apps.api.auth.naver_handler import NaverOAuthError, process_naver_callback
+from apps.api.auth.oauth_common import OAuthError
 from apps.api.config import Settings, get_settings
+from apps.api.database.models.member_auth import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    UserConsent,
+)
 from apps.api.database.models.refresh_token import RefreshToken
 from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.user import User
 from apps.api.database.session import get_db
+from apps.api.services.auth_tokens import (
+    REJOIN_GRACE_DAYS,
+    RESET_TOKEN_TTL,
+    SOCIAL_REAUTH_WINDOW_SECONDS,
+    VERIFY_TOKEN_TTL,
+    consume_token,
+    email_request_limiter,
+    issue_token,
+    peek_token,
+    revoke_all_refresh_tokens,
+    validate_password_policy,
+)
+from apps.api.services.notifications.email_service import (
+    render_email_verification,
+    render_password_reset_email,
+    render_withdrawal_complete,
+    send_email,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -50,6 +83,33 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 
 UTC = UTC
+
+# 계정 열거 방지(스펙 §3.2): 존재하지 않는 계정 경로에서도 bcrypt 1회를 수행해
+# 응답시간을 평준화하기 위한 더미 해시. 모듈 로드 시 1회 생성(요청 경로 비용 0).
+_TIMING_DUMMY_HASH = _hash_password("propai-timing-equalizer")
+
+# 로그인 실패 통일 메시지(이메일 존재 여부 비노출 — 스펙 §3.2)
+_LOGIN_FAILED_MSG = "이메일 또는 비밀번호가 올바르지 않습니다."
+# 재설정 링크 검증 실패 통일 메시지(토큰 부재/만료/사용됨 구분 비노출)
+_RESET_LINK_INVALID_MSG = "유효하지 않거나 만료된 링크입니다. 재설정을 다시 요청해 주세요."
+
+# 회원 탈퇴 등 민감 작업의 소셜 재인증 확인용 — get_current_user와 동일 토큰을
+# 다시 읽어 발급시각(iat)의 최근성(재로그인)을 확인한다.
+_reauth_bearer = HTTPBearer(auto_error=False)
+
+
+def _client_ip(request: Request) -> str:
+    """감사 로그·레이트리밋용 클라이언트 IP(프록시 뒤: 직결 소켓 기준)."""
+    return request.client.host if request.client else "unknown"
+
+
+def _account_blocked_detail(user: User) -> str | None:
+    """탈퇴/정지 계정 차단 사유(통상어). None=정상."""
+    if user.deleted_at is not None:
+        return "탈퇴한 계정입니다."
+    if not user.is_active:
+        return "이용이 제한된 계정입니다. 관리자에게 문의해 주세요."
+    return None
 
 
 class LoginRequest(BaseModel):
@@ -73,10 +133,42 @@ class LogoutResponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    # 정책(스펙 §3.1): 10~128자 + 문자종 3종 이상(validator)
+    password: str = Field(min_length=10, max_length=128)
     name: str = Field(min_length=1, max_length=100)
     # 회사명은 선택 — 무구독 일반(개인) 회원도 가입 가능. 비우면 개인 워크스페이스로 생성.
     company_name: str = Field(default="", max_length=200)
+    # ── 약관·개인정보 동의(개인정보보호법 §22 — 필수/선택 분리) ──
+    agree_terms: bool = Field(description="이용약관 동의(필수)")
+    agree_privacy: bool = Field(description="개인정보처리방침 동의(필수)")
+    agree_marketing: bool = Field(default=False, description="마케팅 수신 동의(선택)")
+    policy_version: str = Field(default="2026-07-15", max_length=20)
+    phone: str | None = Field(default=None, max_length=32, description="휴대전화(선택)")
+
+    @field_validator("password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        reason = validate_password_policy(v)
+        if reason is not None:
+            raise ValueError(reason)
+        return v
+
+    @field_validator("agree_terms", "agree_privacy")
+    @classmethod
+    def _required_consent(cls, v: bool) -> bool:
+        if v is not True:
+            raise ValueError("필수 약관에 동의해야 가입할 수 있습니다.")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        cleaned = v.strip()
+        if not re.fullmatch(r"\+?[0-9\-\s]{8,31}", cleaned):
+            raise ValueError("전화번호 형식이 올바르지 않습니다.")
+        return cleaned
 
 
 def _slugify_tenant_name(value: str) -> str:
@@ -133,29 +225,43 @@ async def login(
 ) -> TokenResponse:
     """Issue JWT credentials for an existing user."""
     try:
+        # 재가입 정책상 동일 이메일의 탈퇴 행이 병존 가능 → 전 행 조회 후 활성 우선
         result = await db.execute(select(User).where(User.email == body.email))
-        user = result.scalar_one_or_none()
+        rows = list(result.scalars().all())
     except Exception:
         logger.exception("로그인 DB 조회 실패")
         raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
 
+    user = next((u for u in rows if u.deleted_at is None), None)
+
     if user is None:
-        raise HTTPException(status_code=401, detail="등록되지 않은 이메일입니다.")
+        # 탈퇴 계정 로그인 차단(스펙 §5.4). 탈퇴 사실은 **비밀번호 일치(본인 입증) 시에만**
+        # 안내(스펙 §6 통상어) — 불일치면 통일 메시지(열거 방지 §3.2).
+        withdrawn = next((u for u in rows if u.deleted_at is not None), None)
+        if withdrawn is not None and withdrawn.hashed_password and _verify_password(
+            body.password, withdrawn.hashed_password
+        ):
+            logger.info("탈퇴 계정 로그인 시도 차단 user_id=%s", withdrawn.id)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="탈퇴한 계정입니다."
+            )
+        # 계정 열거 방지: 존재 여부 비노출 + 더미 해시로 타이밍 평준화
+        if withdrawn is None:
+            _verify_password(body.password, _TIMING_DUMMY_HASH)
+        raise HTTPException(status_code=401, detail=_LOGIN_FAILED_MSG)
 
     try:
         if not _verify_password(body.password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="비밀번호가 일치하지 않습니다.")
+            raise HTTPException(status_code=401, detail=_LOGIN_FAILED_MSG)
     except HTTPException:
         raise
     except Exception:
         logger.exception("로그인 비밀번호 검증 실패")
         raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="The account is inactive.",
-        )
+    blocked = _account_blocked_detail(user)
+    if blocked is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
 
     access = create_access_token(user.id, user.tenant_id, user.role, settings)
     refresh = create_refresh_token(user.id, user.tenant_id, user.role, settings)
@@ -178,16 +284,30 @@ async def login(
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     """Create a tenant admin account and return JWT credentials."""
     existing_user_result = await db.execute(select(User).where(User.email == body.email))
-    if existing_user_result.scalar_one_or_none() is not None:
+    existing_rows = list(existing_user_result.scalars().all())
+    if any(u.deleted_at is None for u in existing_rows):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A user with that email already exists.",
+            detail="이미 가입된 이메일입니다.",
         )
+    # 탈퇴 후 재가입 유예(확정 정책 §7-1): deleted_at + 30일 경과 전이면 거절(정직 안내)
+    now = datetime.now(UTC)
+    for withdrawn in existing_rows:
+        deleted_at = withdrawn.deleted_at
+        if deleted_at is not None and deleted_at.tzinfo is None:
+            deleted_at = deleted_at.replace(tzinfo=UTC)
+        if deleted_at is not None and now < deleted_at + timedelta(days=REJOIN_GRACE_DAYS):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"탈퇴 후 {REJOIN_GRACE_DAYS}일이 지나야 동일 이메일로 재가입할 수 있습니다.",
+            )
 
     # 회사명 미입력(개인/무료 일반회원) → 본인 이름 기반 개인 워크스페이스로 생성.
     workspace_name = (body.company_name or "").strip() or f"{body.name}님의 워크스페이스"
@@ -207,10 +327,48 @@ async def register(
         hashed_password=_hash_password(body.password),
         role=UserRole.ADMIN.value,
         is_active=True,
+        phone=body.phone,
     )
     db.add(user)
+    await db.flush()
+
+    # 약관·개인정보 동의 이력 저장(개인정보보호법 §22 — 버전·IP·시각. 선택 동의는
+    # 거부(False)도 명시 기록해 이후 분쟁 시 선택 사실을 증빙한다)
+    client_ip = _client_ip(request)
+    for consent_type, agreed in (
+        ("terms_of_service", body.agree_terms),
+        ("privacy_policy", body.agree_privacy),
+        ("marketing", body.agree_marketing),
+    ):
+        db.add(
+            UserConsent(
+                user_id=user.id,
+                consent_type=consent_type,
+                agreed=agreed,
+                policy_version=body.policy_version,
+                ip=client_ip,
+            )
+        )
+
+    # 이메일 인증 토큰 발급(24h) — 발송은 백그라운드(가입 응답 지연·실패 비전파)
+    verify_link: str | None = None
+    try:
+        raw_verify = await issue_token(
+            db, EmailVerificationToken, user.id, VERIFY_TOKEN_TTL, client_ip
+        )
+        verify_link = f"{settings.frontend_base_url}/ko/verify-email?token={raw_verify}"
+    except Exception:
+        # 인증 토큰 발급 실패가 가입 자체를 막지 않는다(재발송 엔드포인트 존재) — 정직 로그
+        logger.exception("가입 시 이메일 인증 토큰 발급 실패(가입은 계속)")
+
     await db.commit()
     await db.refresh(user)
+
+    if verify_link is not None:
+        subject, html, text = render_email_verification(verify_link)
+        background_tasks.add_task(send_email, user.email, subject, html, text, settings)
+
+    logger.info("회원가입 완료 user_id=%s tenant_id=%s ip=%s", user.id, tenant.id, client_ip)
 
     access = create_access_token(user.id, user.tenant_id, user.role, settings)
     refresh = create_refresh_token(user.id, user.tenant_id, user.role, settings)
@@ -271,6 +429,16 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has expired.",
         )
+
+    # 탈퇴·정지 계정 차단(스펙 §5.4 — refresh 경로 가드). 차단 시 해당 토큰도 즉시 revoke.
+    user_result = await db.execute(select(User).where(User.id == UUID(payload.sub)))
+    token_user = user_result.scalar_one_or_none()
+    blocked = _account_blocked_detail(token_user) if token_user is not None else "탈퇴한 계정입니다."
+    if blocked is not None:
+        stored_token.is_revoked = True
+        await db.commit()
+        logger.info("차단 계정 refresh 시도 거부 user_id=%s (%s)", payload.sub, blocked)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
 
     # 기존 토큰 무효화 (토큰 로테이션)
     stored_token.is_revoked = True
@@ -347,6 +515,10 @@ async def get_me(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The authenticated user could not be found.",
         )
+    # 탈퇴·정지 계정 차단(access 토큰 잔존 창 축소 — DB 조회가 이미 있는 경로라 무비용)
+    blocked = _account_blocked_detail(user)
+    if blocked is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
 
     return UserResponse(
         id=user.id,
@@ -356,6 +528,8 @@ async def get_me(
         role=UserRole(user.role),
         is_active=user.is_active,
         created_at=user.created_at,
+        email_verified=bool(user.email_verified),
+        has_password=bool(user.hashed_password),
     )
 
 
@@ -431,6 +605,9 @@ async def kakao_callback(
             status_code=exc.status_code,
             detail=exc.message,
         ) from exc
+    except OAuthError as exc:
+        # 공용 가드(탈퇴 유예·이용 제한 등) — oauth_common에서 발생
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return TokenResponse(
         access_token=result["access_token"],
@@ -500,6 +677,9 @@ async def google_callback(
         )
     except GoogleOAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except OAuthError as exc:
+        # 공용 가드(탈퇴 유예·이용 제한 등) — oauth_common에서 발생
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return TokenResponse(
         access_token=result["access_token"],
@@ -567,12 +747,345 @@ async def naver_callback(
         )
     except NaverOAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except OAuthError as exc:
+        # 공용 가드(탈퇴 유예·이용 제한 등) — oauth_common에서 발생
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return TokenResponse(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
         expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
+
+
+# ── 회원 계정 수명주기(비밀번호 재설정·변경, 이메일 인증, 탈퇴) — 2026-07 확정 스펙 ──
+
+
+async def _load_current_active_user(db: AsyncSession, current_user: CurrentUser) -> User:
+    """현재 인증 유저의 DB 행을 로드하고 탈퇴·정지 계정을 차단(민감 작업 공용 가드).
+
+    참고: 전역 get_current_user는 JWT 검증만 수행(무 DB — 전 라우터 성능·CI 계약 보존).
+    탈퇴 시 refresh 전량 revoke + 전 재발급 경로 차단으로 access 토큰 잔존 노출은
+    최대 30분(만료)이며, 민감 엔드포인트는 본 가드로 즉시 차단한다.
+    """
+    result = await db.execute(select(User).where(User.id == current_user.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+    blocked = _account_blocked_detail(user)
+    if blocked is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
+    return user
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+@router.post("/password/forgot", response_model=MessageResponse)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MessageResponse:
+    """비밀번호 재설정 메일 요청(비로그인) — 30분 유효 링크.
+
+    계정 열거 방지(스펙 §3.2): 이메일 존재 여부와 무관하게 **항상 동일한 200 응답**.
+    실제 발급·발송은 [활성 + 미탈퇴 + 비밀번호 계정]에만 수행하며, 발송은 백그라운드
+    (응답시간 평준화). DB 오류도 응답 계약을 바꾸지 않는다(로그로 정직 관측).
+    """
+    generic = MessageResponse(message="입력하신 이메일로 재설정 안내를 보냈습니다.")
+    ip = _client_ip(request)
+    # 남용 방지(스펙 §3.3): IP·이메일별 분당 3회/시간당 10회
+    if not email_request_limiter.allow(f"forgot-ip:{ip}") or not email_request_limiter.allow(
+        f"forgot-email:{body.email.lower()}"
+    ):
+        raise HTTPException(status_code=429, detail="요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.")
+
+    try:
+        result = await db.execute(
+            select(User).where(User.email == body.email, User.deleted_at.is_(None))
+        )
+        user = result.scalars().first()
+        # 소셜 전용 계정(hashed_password="")은 재설정 대상이 아님(§7-4) — 동일 응답
+        if user is not None and user.is_active and user.hashed_password:
+            raw = await issue_token(db, PasswordResetToken, user.id, RESET_TOKEN_TTL, ip)
+            await db.commit()
+            reset_link = f"{settings.frontend_base_url}/ko/reset-password?token={raw}"
+            subject, html, text = render_password_reset_email(
+                reset_link, valid_minutes=int(RESET_TOKEN_TTL.total_seconds() // 60)
+            )
+            background_tasks.add_task(send_email, user.email, subject, html, text, settings)
+            logger.info("비밀번호 재설정 요청 접수 user_id=%s ip=%s", user.id, ip)
+        else:
+            # 대상 없음/비활성/소셜 — 더미 해시로 타이밍 평준화 후 동일 응답
+            _verify_password("timing-equalizer", _TIMING_DUMMY_HASH)
+            logger.info("비밀번호 재설정 요청 — 발송 대상 아님(응답 동일) ip=%s", ip)
+    except HTTPException:
+        raise
+    except Exception:
+        # 인프라 오류도 열거방지 계약상 동일 200 — 침묵이 아니라 예외 스택을 로그로 남긴다
+        logger.exception("비밀번호 재설정 요청 처리 실패(응답은 계약상 동일 200)")
+    return generic
+
+
+@router.get("/password/reset/validate")
+async def validate_reset_token(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """재설정 링크 유효성 사전 확인(소모하지 않음 — 페이지 진입용).
+
+    부재/만료/사용됨을 구분하지 않는다(열거 방지). 오류 시에도 valid=false(로그 관측).
+    """
+    try:
+        return {"valid": await peek_token(db, PasswordResetToken, token)}
+    except Exception:
+        logger.exception("재설정 토큰 사전확인 실패(valid=false 반환)")
+        return {"valid": False}
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        reason = validate_password_policy(v)
+        if reason is not None:
+            raise ValueError(reason)
+        return v
+
+
+@router.post("/password/reset", response_model=MessageResponse)
+async def reset_password(
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """재설정 링크로 새 비밀번호 설정(30분·1회용) → 전 기기 로그아웃."""
+    user_id = await consume_token(db, PasswordResetToken, body.token)
+    if user_id is None:
+        raise HTTPException(status_code=400, detail=_RESET_LINK_INVALID_MSG)
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or _account_blocked_detail(user) is not None:
+        # 토큰 발급 후 탈퇴/정지된 계정 — 사유 구분 비노출(통일 메시지) + 로그 관측
+        logger.info("재설정 거부: 차단/부재 계정 user_id=%s", user_id)
+        raise HTTPException(status_code=400, detail=_RESET_LINK_INVALID_MSG)
+
+    user.hashed_password = _hash_password(body.new_password)
+    user.password_changed_at = datetime.now(UTC)
+    revoked = await revoke_all_refresh_tokens(db, user.id)
+    await db.commit()
+    logger.info("비밀번호 재설정 완료 user_id=%s refresh_revoked=%d", user.id, revoked)
+    return MessageResponse(message="비밀번호가 변경되었습니다. 새 비밀번호로 로그인해 주세요.")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        reason = validate_password_policy(v)
+        if reason is not None:
+            raise ValueError(reason)
+        return v
+
+
+@router.post("/password/change", response_model=MessageResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """로그인 상태에서 비밀번호 변경(현재 비밀번호 확인) → 전 기기 로그아웃."""
+    user = await _load_current_active_user(db, current_user)
+    if not user.hashed_password:
+        raise HTTPException(
+            status_code=400,
+            detail="소셜 로그인 계정은 비밀번호가 없습니다. 소셜 계정으로 로그인해 주세요.",
+        )
+    if not _verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다.")
+    if _verify_password(body.new_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="현재와 다른 비밀번호를 사용해 주세요.")
+
+    user.hashed_password = _hash_password(body.new_password)
+    user.password_changed_at = datetime.now(UTC)
+    revoked = await revoke_all_refresh_tokens(db, user.id)
+    await db.commit()
+    logger.info("비밀번호 변경 완료 user_id=%s refresh_revoked=%d", user.id, revoked)
+    return MessageResponse(
+        message="비밀번호가 변경되었습니다. 보안을 위해 전 기기에서 로그아웃되었습니다."
+    )
+
+
+# ── 이메일 인증 ──
+
+
+@router.post("/email/verify/request", response_model=MessageResponse)
+async def request_email_verification(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MessageResponse:
+    """이메일 인증 메일 (재)발송 — 24시간 유효 링크. 레이트리밋 적용."""
+    if not email_request_limiter.allow(f"verify:{current_user.user_id}"):
+        raise HTTPException(status_code=429, detail="요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.")
+    user = await _load_current_active_user(db, current_user)
+    if user.email_verified:
+        return MessageResponse(message="이미 인증이 완료된 이메일입니다.")
+
+    ip = _client_ip(request)
+    raw = await issue_token(db, EmailVerificationToken, user.id, VERIFY_TOKEN_TTL, ip)
+    await db.commit()
+    verify_link = f"{settings.frontend_base_url}/ko/verify-email?token={raw}"
+    subject, html, text = render_email_verification(
+        verify_link, valid_hours=int(VERIFY_TOKEN_TTL.total_seconds() // 3600)
+    )
+    background_tasks.add_task(send_email, user.email, subject, html, text, settings)
+    logger.info("이메일 인증 메일 발송 요청 user_id=%s ip=%s", user.id, ip)
+    return MessageResponse(message="인증 메일 발송을 요청했습니다. 메일함을 확인해 주세요.")
+
+
+class VerifyEmailConfirmRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+
+
+@router.post("/email/verify/confirm", response_model=MessageResponse)
+async def confirm_email_verification(
+    body: VerifyEmailConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """이메일 인증 링크 확인(24시간·1회용)."""
+    user_id = await consume_token(db, EmailVerificationToken, body.token)
+    if user_id is None:
+        raise HTTPException(status_code=400, detail=_RESET_LINK_INVALID_MSG)
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or _account_blocked_detail(user) is not None:
+        logger.info("이메일 인증 거부: 차단/부재 계정 user_id=%s", user_id)
+        raise HTTPException(status_code=400, detail=_RESET_LINK_INVALID_MSG)
+    user.email_verified = True
+    user.email_verified_at = datetime.now(UTC)
+    await db.commit()
+    logger.info("이메일 인증 완료 user_id=%s", user.id)
+    return MessageResponse(message="이메일 인증이 완료되었습니다.")
+
+
+# ── 회원탈퇴 ──
+
+
+class WithdrawRequest(BaseModel):
+    password: str | None = Field(default=None, max_length=128, description="비밀번호 계정 본인확인")
+    reason: str | None = Field(default=None, max_length=500, description="탈퇴 사유(선택)")
+    transfer_to_user_id: UUID | None = Field(
+        default=None, description="조직 소유권 이관 대상(조직에 다른 이용자가 있을 때)"
+    )
+
+
+@router.post("/account/withdraw", status_code=status.HTTP_204_NO_CONTENT)
+async def withdraw_account(
+    body: WithdrawRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_reauth_bearer),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """회원탈퇴(소프트 삭제) — 즉시 로그인 차단 + 전 기기 로그아웃(확정 정책 §7-2).
+
+    본인확인: 비밀번호 계정=비밀번호 재확인 / 소셜 전용 계정=최근 재로그인
+    (액세스 토큰 발급시각이 재인증 창 이내 — §7-4).
+    조직 처리(§7-5): 다른 이용자가 있는 조직의 유일 관리자는 이관 후 탈퇴,
+    1인 워크스페이스는 테넌트 비활성화.
+    """
+    user = await _load_current_active_user(db, current_user)
+
+    # ── 본인확인 ──
+    if user.hashed_password:
+        if not body.password:
+            raise HTTPException(status_code=400, detail="본인 확인을 위해 비밀번호를 입력해 주세요.")
+        if not _verify_password(body.password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
+    else:
+        # 소셜 전용 계정 — 최근 재로그인(재인증) 확인(§7-4)
+        payload = decode_token(credentials.credentials, settings) if credentials else None
+        issued_at = payload.iat if payload is not None else None
+        if issued_at is not None and issued_at.tzinfo is None:
+            issued_at = issued_at.replace(tzinfo=UTC)
+        if issued_at is None or (
+            (datetime.now(UTC) - issued_at).total_seconds() > SOCIAL_REAUTH_WINDOW_SECONDS
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="본인 확인을 위해 소셜 계정으로 다시 로그인한 뒤 탈퇴를 진행해 주세요.",
+            )
+
+    # ── 조직(테넌트) 처리 — §7-5 ──
+    others_result = await db.execute(
+        select(User).where(
+            User.tenant_id == user.tenant_id,
+            User.id != user.id,
+            User.deleted_at.is_(None),
+        )
+    )
+    others = list(others_result.scalars().all())
+    if others:
+        other_admins = [u for u in others if u.role == UserRole.ADMIN.value and u.is_active]
+        if user.role == UserRole.ADMIN.value and not other_admins:
+            transfer_target = next(
+                (u for u in others if body.transfer_to_user_id and u.id == body.transfer_to_user_id),
+                None,
+            )
+            if transfer_target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "조직에 다른 이용자가 있습니다. 소유권을 이관할 구성원을 "
+                        "transfer_to_user_id로 지정한 뒤 탈퇴를 진행해 주세요."
+                    ),
+                )
+            transfer_target.role = UserRole.ADMIN.value
+            logger.info(
+                "탈퇴 전 조직 소유권 이관 tenant_id=%s %s→%s",
+                user.tenant_id, user.id, transfer_target.id,
+            )
+    else:
+        # 1인 워크스페이스 — 테넌트 비활성화(데이터는 파기정책 §7-2 준용)
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant is not None:
+            tenant.is_active = False
+
+    # ── 소프트 삭제 + 세션 전량 무효화 ──
+    user.deleted_at = datetime.now(UTC)
+    user.is_active = False
+    user.withdrawn_reason = (body.reason or "").strip()[:500] or None
+    revoked = await revoke_all_refresh_tokens(db, user.id)
+    withdrawn_email, withdrawn_name = user.email, user.name
+    await db.commit()
+
+    subject, html, text = render_withdrawal_complete(withdrawn_name)
+    background_tasks.add_task(send_email, withdrawn_email, subject, html, text, settings)
+    logger.info(
+        "회원탈퇴 완료 user_id=%s tenant_id=%s refresh_revoked=%d ip=%s",
+        user.id, user.tenant_id, revoked, _client_ip(request),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── 관리자 전용 엔드포인트 ──
