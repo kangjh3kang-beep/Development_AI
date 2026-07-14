@@ -12,7 +12,6 @@ from __future__ import annotations
 from app.services.access.access_basis_service import assess_access
 from app.services.zoning import special_parcel as sp
 
-
 # ── 공용 단언 헬퍼 ──────────────────────────────────────────────────────────
 
 def _assert_state_has_evidence(state) -> None:
