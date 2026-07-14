@@ -33,7 +33,8 @@ from typing import Any
 # ── 게이트 문자열 계약(★special_parcel.py GATE_* SSOT와 문자 단위 일치 — 계약 테스트로 고정) ──
 GATE_BLOCK_DEVELOPABILITY = {"BLOCKED"}
 GATE_BLOCK_RESOLVABLE = {"NO"}
-GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY"}
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY",
+                                 "REQUIRES_AUTHORITY_CONFIRMATION"}  # WP-A 접도(관할확인 잠정)
 GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
 
 # 건축 불가 지목(전액 제외) — 계획서 S3-B 확정 범위: 도로·구거·하천만(임의 확장 금지).

@@ -170,6 +170,15 @@ except ImportError:
     except ImportError:
         c2r_router = None
 
+# 접도·도로 기반(access_basis) — P4 legal/physical/emergency 3상태 (자체 prefix="/access")
+try:
+    from apps.api.app.routers.access import router as access_router
+except ImportError:
+    try:
+        from app.routers.access import router as access_router
+    except ImportError:
+        access_router = None
+
 # 측량·좌표 계약(CoordinateContract) — DXF↔GIS 좌표 정합 검증 (자체 prefix="/survey/coordinate")
 try:
     from apps.api.app.routers.survey_coordinate import router as survey_coordinate_router
@@ -1021,6 +1030,9 @@ if comprehensive_analysis_router is not None:
 if c2r_router is not None:
     # C2R: 라우터 자체 prefix="/c2r" → /api/v1/c2r/brief·/api/v1/c2r/render
     app.include_router(c2r_router, prefix="/api/v1")
+if access_router is not None:
+    # 접도·도로 기반(P4): 라우터 자체 prefix="/access" → /api/v1/access/assess
+    app.include_router(access_router, prefix="/api/v1")
 if survey_coordinate_router is not None:
     # 측량·좌표 계약: 자체 prefix="/survey/coordinate" → /api/v1/survey/coordinate/contract·/reconcile
     app.include_router(survey_coordinate_router, prefix="/api/v1")

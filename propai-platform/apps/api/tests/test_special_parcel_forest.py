@@ -312,8 +312,16 @@ class TestGatePreservationInvariant:
             assert "확정" in f["preliminary_assessment"]["disclaimer"]
 
     def test_rank_table_unchanged_by_wiring(self):
+        # 기존 등급값 절대 불변(0/1/2/3/4). WP-A(접도 access_basis)가 추가한
+        #   REQUIRES_AUTHORITY_CONFIRMATION은 CONDITIONAL와 동일한 '잠정' 값 2로만 가산된다
+        #   (NEEDS_OFFICIAL_SURVEY와 동일 패턴 — 기존 값 변경·완화 없음).
         assert _RANK == {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2,
-                         "NEEDS_OFFICIAL_SURVEY": 2, "PRECONDITION": 3, "BLOCKED": 4}
+                         "NEEDS_OFFICIAL_SURVEY": 2, "REQUIRES_AUTHORITY_CONFIRMATION": 2,
+                         "PRECONDITION": 3, "BLOCKED": 4}
+        # 기존 값이 하나도 변하지 않았음을 명시 재확인(불변식 보존).
+        assert _RANK["POSSIBLE"] == 0 and _RANK["CAUTION"] == 1 and _RANK["CONDITIONAL"] == 2
+        assert _RANK["NEEDS_OFFICIAL_SURVEY"] == 2 and _RANK["PRECONDITION"] == 3 and _RANK["BLOCKED"] == 4
+        assert _RANK["REQUIRES_AUTHORITY_CONFIRMATION"] == _RANK["CONDITIONAL"]
 
 
 class TestConversionChargeDisclosure:
