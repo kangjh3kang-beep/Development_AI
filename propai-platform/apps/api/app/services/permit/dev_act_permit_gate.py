@@ -312,7 +312,9 @@ def assess_dev_act_permit(
         _zone_family,
     )
 
-    zone_type = str(result.get("zone_type") or "")
+    # ★키계약 관용: 상류 표면마다 용도지역 키가 zone_type/zone으로 갈리는 비대칭이 실존
+    #   (예: scenario_simulator comp 폴백은 zone만 채움) — 어느 쪽이든 읽어 게이트 누락(FN)을 막는다.
+    zone_type = str(result.get("zone_type") or result.get("zone") or "")
     land_category = str(result.get("land_category") or "")
     family = _zone_family(zone_type)
     # 형질변경(절토·성토·정지·포장) 명시 신호 — 도시지역이라도 형질변경 수반 시 개발행위허가 대상.

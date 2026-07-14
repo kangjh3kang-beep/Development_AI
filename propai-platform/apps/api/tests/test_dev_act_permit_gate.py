@@ -284,3 +284,24 @@ def test_reused_base_factor_embedded():
     bf = gate["base_factor"]
     assert bf["legal_ref_keys"] == ["dev_act_permit", "dev_act_criteria", "land_form_change"]
     assert bf["developability"] == "CONDITIONAL"
+
+
+# ── 리뷰 반영 회귀: zone/zone_type 키계약 비대칭 → 게이트 누락(FN) 방지 ──────────
+
+
+def test_zone_key_only_still_gated_fn_regression():
+    """★리뷰 적발 FN 재현 고정 — zone 키만 채워진 입력(scenario_simulator comp 폴백 형태)도
+    게이트가 반드시 발동해야 한다(zone_type 부재로 조용히 None 반환 금지)."""
+    gate = assess_dev_act_permit({"zone": "자연녹지지역", "zone_type": "", "land_category": ""})
+    assert gate is not None, "zone 키만 있는 자연녹지 입력에서 게이트 누락(FN)"
+    assert gate["applicable"] is True
+    assert gate["status"] in _APPLICABLE_STATUSES  # 절대 PASS 아님
+    _assert_has_evidence(gate)
+
+
+def test_zone_type_takes_precedence_over_zone():
+    """zone_type이 있으면 zone은 무시(기존 계약 유지) — 관용은 폴백일 뿐 우선순위 불변."""
+    gate = assess_dev_act_permit({"zone_type": "제2종일반주거지역", "zone": "자연녹지지역",
+                                  "land_category": "대"})
+    assert gate is not None
+    assert gate["zone_family"] not in ("green", "management")

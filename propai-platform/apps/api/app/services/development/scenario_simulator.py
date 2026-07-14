@@ -540,6 +540,9 @@ class DevelopmentScenarioSimulator:
                 enriched[0]["area"] = comp["land_area_sqm"]
             if not enriched[0].get("zone") and comp.get("zone_type"):
                 enriched[0]["zone"] = comp["zone_type"]
+                # 개발행위 게이트 등 하류가 zone_type 키를 읽으므로 함께 동기화(게이트 누락 FN 방지).
+                if not enriched[0].get("zone_type"):
+                    enriched[0]["zone_type"] = comp["zone_type"]
         except Exception:  # noqa: BLE001
             pass
         return enriched, subway_m
