@@ -170,6 +170,15 @@ except ImportError:
     except ImportError:
         c2r_router = None
 
+# 측량·좌표 계약(CoordinateContract) — DXF↔GIS 좌표 정합 검증 (자체 prefix="/survey/coordinate")
+try:
+    from apps.api.app.routers.survey_coordinate import router as survey_coordinate_router
+except ImportError:
+    try:
+        from app.routers.survey_coordinate import router as survey_coordinate_router
+    except ImportError:
+        survey_coordinate_router = None
+
 # 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
 try:
     from apps.api.app.routers.g2b_bid import router as g2b_router
@@ -1012,3 +1021,6 @@ if comprehensive_analysis_router is not None:
 if c2r_router is not None:
     # C2R: 라우터 자체 prefix="/c2r" → /api/v1/c2r/brief·/api/v1/c2r/render
     app.include_router(c2r_router, prefix="/api/v1")
+if survey_coordinate_router is not None:
+    # 측량·좌표 계약: 자체 prefix="/survey/coordinate" → /api/v1/survey/coordinate/contract·/reconcile
+    app.include_router(survey_coordinate_router, prefix="/api/v1")
