@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,7 +92,12 @@ def check_surface(surface: GrowthSurface, *, base: Path | None = None) -> dict:
     exists = bool(src)
     has_write = any(m in src for m in surface.write_markers)
     has_hash = any(m in src for m in surface.hash_markers)
-    has_type = surface.analysis_type is None or f'analysis_type="{surface.analysis_type}"' in src
+    # ★통합자 리뷰 LOW: 큰따옴표 고정 매칭(`analysis_type="..."`)은 홑따옴표(`analysis_type='...'`)나
+    # 공백 변형(`analysis_type = "..."`)을 false-negative(미배선 오판)로 놓친다. 정규식으로 완화:
+    # `=` 좌우 공백 0개 이상 허용 + 홑/겹따옴표 모두 허용(값 자체는 그대로 정확히 일치해야 함).
+    has_type = surface.analysis_type is None or bool(re.search(
+        rf"analysis_type\s*=\s*[\"']{re.escape(surface.analysis_type)}[\"']", src
+    ))
     return {
         "wired": exists and has_write and has_hash and has_type,
         "exists": exists,

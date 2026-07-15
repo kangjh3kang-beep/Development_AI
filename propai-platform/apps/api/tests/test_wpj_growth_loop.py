@@ -107,6 +107,40 @@ def test_check_surface_flags_missing_wiring(tmp_path):
     assert check_surface(surf_missing, base=tmp_path)["wired"] is False
 
 
+def test_has_type_regex_accepts_quote_and_space_variants(tmp_path):
+    """통합자 리뷰 LOW 회귀: 큰따옴표 고정 매칭이던 has_type 을 정규식으로 완화 —
+    홑따옴표·`=` 주변 공백 변형도 false-negative 없이 인식한다(값 자체는 정확 일치 요구)."""
+    variants = [
+        'analysis_type="cost_overview"',   # 기존 정본 스타일(겹따옴표·공백 없음)
+        "analysis_type='cost_overview'",   # 홑따옴표
+        'analysis_type = "cost_overview"',  # `=` 좌우 공백
+        'analysis_type   =\t"cost_overview"',  # 탭 포함 다중 공백
+    ]
+    surf = GrowthSurface("x", "src.py", "POST /x", "cost_overview",
+                         write_markers=("record_user_analysis",), hash_markers=("ledger_hash",))
+    for i, line in enumerate(variants):
+        (tmp_path / "src.py").write_text(
+            f"async def h():\n    wb = await record_user_analysis(\n        {line},\n    )\n"
+            f"    result['ledger_hash'] = wb\n", encoding="utf-8",
+        )
+        chk = check_surface(surf, base=tmp_path)
+        assert chk["has_type"], f"variant #{i} false-negative: {line!r}"
+        assert chk["wired"]
+
+    # 값 불일치는 여전히 거부(정규식 완화가 오탐을 만들지 않음).
+    (tmp_path / "src.py").write_text(
+        "async def h():\n    wb = await record_user_analysis(analysis_type=\"other_type\")\n"
+        "    result['ledger_hash'] = wb\n", encoding="utf-8",
+    )
+    assert check_surface(surf, base=tmp_path)["has_type"] is False
+
+
+def test_all_11_surfaces_unaffected_by_regex_relaxation():
+    """정규식 완화가 실 11개 표면 판정에 영향 없음을 확인(통합자 지시: "현 11개 무영향 확인")."""
+    assert unwired_surfaces() == []
+    assert all(v["has_type"] for v in verify_surface_wiring().values())
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Goal 2 — LangSmith 토글(기본 OFF·양쪽 env·키 부재 graceful·OFF 무부작용)
 # ════════════════════════════════════════════════════════════════════════════
@@ -295,12 +329,16 @@ class _Result:
 class _FakeDB:
     """asset_rights upsert/get(단건·배치) + learning_examples SELECT 를 모사."""
 
-    def __init__(self, learning_rows=None):
+    def __init__(self, learning_rows=None, fail_on_query_index: set[int] | None = None):
         self.rights: dict[tuple, dict] = {}  # (asset_key, tenant) -> row dict
         self.learning_rows = learning_rows or []
         self.commits = 0
         self.rollbacks = 0
-        self.rights_selects = 0  # asset_rights SELECT 실행 횟수(N+1 제거 증명용)
+        self.rights_selects = 0  # asset_rights SELECT 실행 횟수(청크 수 = 배치질의 횟수 증명용)
+        # 청크 부분실패 시뮬(0-based 배치질의 순번) — 통합자 리뷰 LOW 회귀: 1개 청크만 실패해도
+        # 다른 청크 결과는 보존되고, 실패한 청크의 키만 default-deny 로 떨어짐을 검증.
+        self._fail_on_query_index = fail_on_query_index or set()
+        self._batch_query_count = 0
 
     async def execute(self, statement, params=None):  # noqa: ANN001
         sql = str(getattr(statement, "text", statement))
@@ -313,8 +351,12 @@ class _FakeDB:
                 "source": p["src"], "note": p["note"], "meta": p["meta"],
             }
             return _Result()
-        if "FROM asset_rights" in sql and "IN (" in sql:  # 배치 조회
+        if "FROM asset_rights" in sql and "IN (" in sql:  # 배치 조회(청크 1건당 1회 실행)
             self.rights_selects += 1
+            idx = self._batch_query_count
+            self._batch_query_count += 1
+            if idx in self._fail_on_query_index:
+                raise RuntimeError(f"simulated chunk failure at query index {idx}")
             n = sum(1 for kk in p if kk.startswith("k") and kk[1:].isdigit())
             out = []
             for i in range(n):
@@ -384,6 +426,56 @@ async def test_get_batch_empty_no_query():
     db = _FakeDB()
     got = await ar.get_asset_rights_batch(db, [])
     assert got == {} and db.rights_selects == 0
+
+
+async def test_get_batch_chunks_large_keyspace_over_bind_limit():
+    """통합자 리뷰 LOW 회귀: >1000 고유키(2바인드/키 → 단일질의면 바인드 상한 근접/초과 위험)를
+    청크로 분할 처리하고, 청크 경계를 넘어도 결과가 정확히 병합됨을 검증(N+1 아님·상한 회피)."""
+    n = ar._BATCH_CHUNK_SIZE + 500  # 청크 크기를 명확히 초과(청크 2개 이상 강제)
+    db = _FakeDB()
+    # 짝수 인덱스만 등록(train_allowed=True) — 홀수는 미등록(default-deny 기대).
+    seeded = [
+        ar.AssetRight(asset_key=f"k{i}", scope="train_ok", train_allowed=True, source="test")
+        for i in range(0, n, 2)
+    ]
+    assert await ar.upsert_asset_rights_batch(db, seeded) == len(seeded)
+
+    keys = [(f"k{i}", None) for i in range(n)]
+    got = await ar.get_asset_rights_batch(db, keys)
+
+    # 청크 분할 실증: 단일질의가 아니라 ceil(n/chunk_size) 회 배치질의.
+    import math
+    expected_chunks = math.ceil(n / ar._BATCH_CHUNK_SIZE)
+    assert expected_chunks >= 2, "테스트 전제(청크 2개 이상) 불성립 — n 조정 필요"
+    assert db.rights_selects == expected_chunks
+
+    # 결과 병합 정확성: 전건에 값이 채워지고, 등록분=True·미등록분=default-deny(False).
+    assert len(got) == n
+    for i in range(n):
+        assert got[(f"k{i}", None)].train_allowed is (i % 2 == 0)
+
+
+async def test_get_batch_partial_chunk_failure_isolates_default_deny():
+    """청크 1건 실패해도 다른 청크는 실제 조회결과를 보존하고, 실패 청크만 default-deny(fail-safe)."""
+    n = ar._BATCH_CHUNK_SIZE + 200  # 청크 2개(0번·1번)
+    # 1번 청크(두 번째 배치질의)만 실패하도록 시뮬.
+    db = _FakeDB(fail_on_query_index={1})
+    seeded = [
+        ar.AssetRight(asset_key=f"k{i}", scope="train_ok", train_allowed=True, source="test")
+        for i in range(n)
+    ]
+    assert await ar.upsert_asset_rights_batch(db, seeded) == n
+
+    keys = [(f"k{i}", None) for i in range(n)]
+    got = await ar.get_asset_rights_batch(db, keys)
+
+    assert db.rights_selects == 2  # 두 청크 모두 시도(실패해도 다음 청크는 계속 진행)
+    # 0번 청크(첫 chunk_size 키)는 실제 등록값(True) 보존.
+    for i in range(ar._BATCH_CHUNK_SIZE):
+        assert got[(f"k{i}", None)].train_allowed is True
+    # 1번 청크(실패분)는 등록돼 있었어도 default-deny(False)로 fail-safe 수렴.
+    for i in range(ar._BATCH_CHUNK_SIZE, n):
+        assert got[(f"k{i}", None)].train_allowed is False
 
 
 async def test_aihub_style_seed_roundtrip():

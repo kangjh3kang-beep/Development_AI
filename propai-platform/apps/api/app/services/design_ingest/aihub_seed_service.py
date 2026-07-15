@@ -109,6 +109,18 @@ class AihubSeedService:
           source='aihub-license'). 이는 "권리 불명=금지"의 예외가 아니라 **명시 권리 부여**다
           (연구용 등 제한 라이선스 데이터셋은 seed_train_allowed=False 로 호출). db 미제공 시
           시딩 생략(무회귀 — 기존 호출부 불변).
+
+        ★키스페이스 분리 고지(통합자 리뷰 MEDIUM — 정직표기, 코드변경 아님): 이 시딩이 upsert 하는
+          asset_key 는 **도면 content_hash**(`DesignSpec.content_hash()` — 도면 파싱 결과 해시)다.
+          반면 P16 학습게이트 소비처(`learning_loop.build_dataset_jsonl(enforce_asset_rights=True)`)
+          가 `asset_rights` 를 조회하는 키는 `learning_examples.content_hash` — 이는 **원장
+          (analysis_ledger) content_hash**(ai_feedback→analysis_ledger 조인, `curate_few_shot`
+          경유)로, 도면 해시와는 **다른 키스페이스**다. 즉 현재 이 시딩은 두 텍스트 학습게이트와
+          교집합이 없어 **inert**(그 게이트에 아무 영향 없음)다 — default-deny 원칙상 무해
+          (fail-safe: 교집합 부재가 오히려 "불명=금지"를 자동 유지, 잘못된 허용을 새지 않음).
+          이 레지스트리 행은 **도면-학습 read-path(별도 후속 WP, 미구현)** 를 위한 선제 시딩이며,
+          현재 P16 텍스트 게이트(learning_examples)를 대상으로 하지 않는다. 두 키스페이스를
+          통합(도면 해시 학습경로 연결)하는 것은 이번 WP-J 스코프 밖 — 후속 WP 로 이관.
         """
         if not self._key():
             return {"available": False, "reason": "AIHUB_API_KEY 미설정 — 관리자 시크릿 입력 필요", "ingested": 0}

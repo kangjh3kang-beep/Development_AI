@@ -297,16 +297,27 @@ async def get_asset_right(
     return ar
 
 
+# Postgres 바인드 파라미터 상한(32767)을 피하려고 고유키(쌍당 2바인드)를 이 크기로 청크한다
+# (통합자 리뷰 LOW: ~16k 조합에서 상한 초과→예외→전건 default-deny 되던 under-scale 결함).
+# 1000키/청크 = 2000바인드/질의로 상한에 크게 여유(응답 payload 크기도 청크 단위로 완만).
+_BATCH_CHUNK_SIZE = 1000
+
+
 async def get_asset_rights_batch(
     db: AsyncSession, keys: list[tuple[str, str | None]]
 ) -> dict[tuple[str, str | None], AssetRight]:
-    """여러 자산 권리를 **한 번의 질의**로 조회한다(N+1 제거 — WP-I 리뷰 LOW).
+    """여러 자산 권리를 **청크 단위 배치 질의**로 조회한다(N+1 제거 — WP-I 리뷰 LOW).
 
-    학습셋 수천 행의 권리를 확인할 때 행마다 get_asset_right 를 부르면 왕복이 N배다. 이 함수는
-    고유 (asset_key, tenant_id) 조합을 모아 `WHERE (asset_key, tenant_id) IN (...)` 한 방으로 읽는다.
+    학습셋 수천~수만 행의 권리를 확인할 때 행마다 get_asset_right 를 부르면 왕복이 N배다. 이 함수는
+    고유 (asset_key, tenant_id) 조합을 모아 `WHERE (asset_key, tenant_id) IN (...)` 로 읽되,
+    고유키 수가 `_BATCH_CHUNK_SIZE` 를 넘으면 **여러 청크 질의로 분할**한다(단일 질의 바인드 상한
+    32767 초과 방지 — 통합자 리뷰 LOW: 청크 없이는 ~16k 고유조합에서 예외→전건 default-deny로
+    번지는 under-scale 결함이었다). 결과는 청크 전체를 병합한 뒤 반환한다.
+
     계약은 get_asset_right 와 동일: **미등록 키는 unknown(default-deny) AssetRight** 로 채워
     반환한다(호출부는 언제나 값을 받는다). 반환 dict 키는 **입력한 원본 (asset_key, tenant_id) 튜플**
-    이다(정규화 전 — 호출부 조회 일치). best-effort: 조회 실패 시 전건 default-deny(보수적).
+    이다(정규화 전 — 호출부 조회 일치). best-effort: 청크 조회 실패는 **그 청크의 키만**
+    default-deny(fail-safe·보수적)로 남기고, 이미 성공한 다른 청크의 실제 조회결과는 보존한다.
     """
     out: dict[tuple[str, str | None], AssetRight] = {}
     # 고유·유효 키만 추림(빈 asset_key 는 즉시 default-deny). norm 키=(정규 asset_key, 정규 tenant '').
@@ -318,46 +329,45 @@ async def get_asset_rights_batch(
             continue
         uniq.setdefault((k, tenant_id or ""), []).append((asset_key, tenant_id))
 
-    def _fill_default() -> None:
-        for (nk, _nt), originals in uniq.items():
-            for orig in originals:
-                out[orig] = resolve_asset_right(nk, tenant_id=orig[1])
-
     if not uniq:
-        return out
-    if not await ensure_schema(db):
-        _fill_default()
         return out
 
     norms = list(uniq.keys())
-    pairs_sql = ", ".join(f"(:k{i}, :t{i})" for i in range(len(norms)))
-    params: dict[str, Any] = {}
-    for i, (nk, nt) in enumerate(norms):
-        params[f"k{i}"] = nk
-        params[f"t{i}"] = nt
     found: dict[tuple[str, str], Any] = {}
-    try:
-        rows = (await db.execute(
-            text(
-                "SELECT asset_key, tenant_id, scope, train_allowed, export_allowed, source, note, meta "
-                f"FROM asset_rights WHERE (asset_key, tenant_id) IN ({pairs_sql})"
-            ),
-            params,
-        )).all()
-        for r in rows:
-            found[(r[0], r[1] or "")] = r
-    except Exception as e:  # noqa: BLE001
-        logger.warning("get_asset_rights_batch 조회 실패(%d keys): %s", len(norms), str(e)[:160])
-        with contextlib.suppress(Exception):
-            await db.rollback()
-        _fill_default()
-        return out
+    if await ensure_schema(db):
+        for start in range(0, len(norms), _BATCH_CHUNK_SIZE):
+            chunk = norms[start:start + _BATCH_CHUNK_SIZE]
+            pairs_sql = ", ".join(f"(:k{i}, :t{i})" for i in range(len(chunk)))
+            params: dict[str, Any] = {}
+            for i, (nk, nt) in enumerate(chunk):
+                params[f"k{i}"] = nk
+                params[f"t{i}"] = nt
+            try:
+                rows = (await db.execute(
+                    text(
+                        "SELECT asset_key, tenant_id, scope, train_allowed, export_allowed, "
+                        "source, note, meta "
+                        f"FROM asset_rights WHERE (asset_key, tenant_id) IN ({pairs_sql})"
+                    ),
+                    params,
+                )).all()
+                for r in rows:
+                    found[(r[0], r[1] or "")] = r
+            except Exception as e:  # noqa: BLE001 — 청크 실패는 그 청크만 default-deny(아래서 자동)
+                logger.warning(
+                    "get_asset_rights_batch 청크 조회 실패(%d keys, chunk_start=%d): %s",
+                    len(chunk), start, str(e)[:160],
+                )
+                with contextlib.suppress(Exception):
+                    await db.rollback()
+    # ensure_schema 실패(스키마 미가용)여도 아래 루프가 found 를 빈 채로 두어 전건 default-deny 로
+    # 자연 수렴한다(별도 분기 불요 — get_asset_right 의 단건 폴백과 동일 계약).
 
     for norm, originals in uniq.items():
         r = found.get(norm)
         for orig in originals:
             if r is None:
-                out[orig] = resolve_asset_right(norm[0], tenant_id=orig[1])  # 미등록=불명=금지
+                out[orig] = resolve_asset_right(norm[0], tenant_id=orig[1])  # 미등록/실패=불명=금지
             else:
                 _ak, _t, scope, train, export, source, note, meta = r
                 out[orig] = AssetRight(
