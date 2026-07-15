@@ -1,11 +1,13 @@
-"""A1 회귀가드 — `_run_design_review`(project_pipeline.py)가 실존 라우터 심볼만 import하는지 잠근다.
+"""A1/D3 회귀가드 — `_run_design_review`(project_pipeline.py)가 라우터의 공용 감사경로만 경유하는지 잠근다.
 
-★배경(버그): 과거 `_run_design_review`가 `from apps.api.app.routers.deliberation import
-_post_analyze, _wrap_result`를 했으나 두 심볼 모두 현 라우터에 부재(실존 심볼은
-`_engine_post_analyze`·`_compat_fields`)했다. 함수 전체가 넓은 `except Exception`으로 감싸여
-있어 ImportError가 삼켜지고 design_review 단계가 매번 무음 SKIPPED였다. 이 테스트는
-(1) import 자체가 실제로 성공하는지, (2) 정상 경로에서 단계 data가 기대 계약을 채우는지,
-(3) rules[] 무날조 가드(대지면적 미확보 시 rule 생략)를 잠근다.
+★배경(D3 버그): 과거 `_run_design_review`는 `_engine_post_analyze`를 **직접** 호출해 engine_run_binding
+결속·해시체인 감사원장 기록을 건너뛰었다(BFF는 감사 없는 판정 제공을 502로 금지하는데 파이프라인만 무감사
+우회). 이제 라우터와 동일한 공용 함수 `run_deliberation_analysis`를 경유해 결속·감사·무결성·테넌트 격리를
+동일 계약으로 강제한다. 이 테스트는
+(1) 파이프라인이 실제로 `run_deliberation_analysis`를 호출하는지(무감사 `_engine_post_analyze` 직접호출 회귀 차단),
+(2) 정상 경로에서 단계 data가 기대 계약(평면 필드)을 채우는지,
+(3) 엔진 미연결/무결성/감사 실패 시 degraded SKIPPED로 정직 강등하는지,
+(4) rules[] 무날조 가드(대지면적 미확보 시 rule 생략)를 잠근다.
 """
 from __future__ import annotations
 
@@ -21,11 +23,17 @@ from app.services.pipeline.project_pipeline import (
 from apps.api.app.routers import deliberation as delib
 
 
-def test_design_review_imports_symbols_that_exist_in_router():
-    """★핵심 회귀가드: project_pipeline이 실제로 import하는 심볼(_engine_post_analyze·_compat_fields)이
-    라우터에 실존하고 callable인지 직접 검증한다(과거 _post_analyze/_wrap_result는 부재라 ImportError였다)."""
-    from apps.api.app.routers.deliberation import _compat_fields, _engine_post_analyze
+def test_design_review_routes_through_shared_audited_function():
+    """★핵심 회귀가드: 공용 감사경로 `run_deliberation_analysis`가 라우터에 실존·callable이어야 한다.
+    과거 무감사 우회 심볼(_post_analyze/_wrap_result)은 부재, 공용 헬퍼(_engine_post_analyze·_compat_fields)는
+    시나리오 매트릭스가 여전히 사용하므로 실존 유지."""
+    from apps.api.app.routers.deliberation import (
+        _compat_fields,
+        _engine_post_analyze,
+        run_deliberation_analysis,
+    )
 
+    assert callable(run_deliberation_analysis)
     assert callable(_engine_post_analyze)
     assert callable(_compat_fields)
     # ★과거 버그 심볼은 더 이상 라우터에 없어야 한다(재도입 시 이 assert가 깨져 알려준다).
@@ -50,16 +58,20 @@ def _state_with_design(*, land_area_sqm: float, building_area_sqm: float,
 
 
 async def test_design_review_populates_compat_fields_on_success(monkeypatch):
-    """정상 경로 — 엔진 응답이 _compat_fields 평면 필드(complianceScore·finalStatus·findings)로 채워진다."""
-    async def _fake_post(dump, deterministic=True, **kw):
+    """정상 경로 — 공용 함수가 status ok 봉투(결속·감사 완료)를 돌려주면 단계 data가 평면 필드로 채워진다."""
+    async def _fake_run(payload, user, *, tenant=None):
         return {
+            "degraded": False, "reused": False, "deterministic": True,
             "run_id": "11111111-1111-1111-1111-111111111111",
-            "input_hash": "h", "snapshot_id": "snap-1",
+            "result": {"snapshot_id": "snap-1"},
+            "audit_degraded": False, "audit_skipped": [],
+            "status": "ok",
+            "complianceScore": 100.0, "finalStatus": "CONFIRMED",
             "findings": [{"check_id": "FAR", "status": "pass"}],
-            "report": {"sections": {"CONFIRMED": [1, 2], "NEEDS_REVIEW": [], "BLOCKED": []}},
-        }, "ok"
+            "sections": {"CONFIRMED": [1, 2]},
+        }
 
-    monkeypatch.setattr(delib, "_engine_post_analyze", _fake_post)
+    monkeypatch.setattr(delib, "run_deliberation_analysis", _fake_run)
 
     p = ProjectPipeline()
     state = _state_with_design(land_area_sqm=500.0, building_area_sqm=280.0, total_gfa_sqm=900.0)
@@ -71,16 +83,20 @@ async def test_design_review_populates_compat_fields_on_success(monkeypatch):
     assert data["complianceScore"] == 100.0
     assert data["finalStatus"] == "CONFIRMED"
     assert data["findings"] == [{"check_id": "FAR", "status": "pass"}]
+    # 감사 출처가 표면화된다(무감사 우회 회귀 차단 신호).
+    assert data["audit_degraded"] is False
     # 단계 status는 SKIPPED로 강등되지 않아야 한다(정상 처리).
     assert state.stages[PipelineStage.DESIGN_REVIEW.value].status != PipelineStatus.SKIPPED
 
 
 async def test_design_review_degrades_gracefully_when_engine_unreachable(monkeypatch):
     """엔진 미연결/오류 → degraded SKIPPED(파이프라인 무파괴). 무음 스킵이 아니라 reason 표면화."""
-    async def _fake_post(dump, deterministic=True, **kw):
-        return None, "engine_unreachable"
+    async def _fake_run(payload, user, *, tenant=None):
+        # 공용 함수의 degrade 봉투(_degrade) 형태 — status 키 없음·degraded=True·reason 동봉.
+        return {"degraded": True, "final_status": "NEEDS_REVIEW", "reason": "engine_unreachable",
+                "result": None, "audit_degraded": False, "audit_skipped": []}
 
-    monkeypatch.setattr(delib, "_engine_post_analyze", _fake_post)
+    monkeypatch.setattr(delib, "run_deliberation_analysis", _fake_run)
 
     p = ProjectPipeline()
     state = _state_with_design(land_area_sqm=500.0, building_area_sqm=280.0, total_gfa_sqm=900.0)
@@ -91,22 +107,43 @@ async def test_design_review_degrades_gracefully_when_engine_unreachable(monkeyp
     assert stage.data == {"status": "degraded", "reason": "engine_unreachable"}
 
 
+async def test_design_review_skips_when_audit_fail_closed(monkeypatch):
+    """★D3 감사 fail-closed: 공용 함수가 감사 미기록으로 502를 던지면(감사 없는 판정 제공 금지) 단계는
+    degraded SKIPPED로 강등된다(판정 미표시). 파이프라인은 무파괴."""
+    from fastapi import HTTPException
+
+    async def _fake_run(payload, user, *, tenant=None):
+        raise HTTPException(status_code=502, detail="audit_write_failed")
+
+    monkeypatch.setattr(delib, "run_deliberation_analysis", _fake_run)
+
+    p = ProjectPipeline()
+    state = _state_with_design(land_area_sqm=500.0, building_area_sqm=280.0, total_gfa_sqm=900.0)
+    await p._run_design_review(state, {})
+
+    stage = state.stages[PipelineStage.DESIGN_REVIEW.value]
+    assert stage.status == PipelineStatus.SKIPPED
+    assert stage.data["status"] == "degraded"
+    assert "design_review_error" in stage.data["reason"]  # 502가 무음 아님·표면화
+
+
 async def test_design_review_rules_included_when_land_area_and_limits_present(monkeypatch):
-    """대지면적·법정한도가 모두 있으면 rules[](BCR_LIMIT/FAR_LIMIT)가 payload에 실린다."""
+    """대지면적·법정한도가 모두 있으면 rules[](BCR_LIMIT/FAR_LIMIT)가 공용 함수로 넘긴 payload에 실린다."""
     captured: dict = {}
 
-    async def _fake_post(dump, deterministic=True, **kw):
-        captured["dump"] = dump
-        return {"run_id": None, "report": {"sections": {}}}, "ok"
+    async def _fake_run(payload, user, *, tenant=None):
+        captured["payload"] = payload
+        return {"status": "ok", "run_id": "11111111-1111-1111-1111-111111111111",
+                "complianceScore": None, "finalStatus": "CONFIRMED", "findings": [], "sections": {}}
 
-    monkeypatch.setattr(delib, "_engine_post_analyze", _fake_post)
+    monkeypatch.setattr(delib, "run_deliberation_analysis", _fake_run)
 
     p = ProjectPipeline()
     state = _state_with_design(land_area_sqm=500.0, building_area_sqm=250.0, total_gfa_sqm=800.0,
                                max_bcr=60.0, max_far=200.0)
     await p._run_design_review(state, {})
 
-    rules = captured["dump"].get("rules")
+    rules = captured["payload"].get("rules")
     assert rules, "대지면적·한도가 있으면 rules가 채워져야 한다"
     by_id = {r["rule"]["rule_id"]: r for r in rules}
     assert by_id["BCR_LIMIT"]["measured"] == 50.0   # 250/500*100
@@ -119,14 +156,15 @@ async def test_design_review_rules_omitted_when_land_area_zero_no_fabrication(mo
     """★무날조 가드: 대지면적 미확보(0)면 measured를 0.0으로 지어내지 않고 rules 자체를 생략한다."""
     captured: dict = {}
 
-    async def _fake_post(dump, deterministic=True, **kw):
-        captured["dump"] = dump
-        return {"run_id": None, "report": {"sections": {}}}, "ok"
+    async def _fake_run(payload, user, *, tenant=None):
+        captured["payload"] = payload
+        return {"status": "ok", "run_id": "11111111-1111-1111-1111-111111111111",
+                "complianceScore": None, "finalStatus": "CONFIRMED", "findings": [], "sections": {}}
 
-    monkeypatch.setattr(delib, "_engine_post_analyze", _fake_post)
+    monkeypatch.setattr(delib, "run_deliberation_analysis", _fake_run)
 
     p = ProjectPipeline()
     state = _state_with_design(land_area_sqm=0.0, building_area_sqm=250.0, total_gfa_sqm=800.0)
     await p._run_design_review(state, {})
 
-    assert not captured["dump"].get("rules")
+    assert not captured["payload"].get("rules")

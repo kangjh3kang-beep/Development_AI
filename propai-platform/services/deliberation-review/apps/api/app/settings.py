@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db"
     REDIS_URL: str = "redis://localhost:6379/0"
     DB_SCHEMA: str = "review"
-    USE_MOCK_ADAPTERS: bool = True
+    # ⚠️ USE_MOCK_ADAPTERS(구): 어디서도 소비되지 않는 죽은 설정이라 제거했다(전역 mock 토글로 오해 방지).
+    #    mock/live 선택은 어댑터별 개별 env가 정본 — JURISDICTION_ADAPTER(mock|vworld)·SHEET_CLASSIFIER(mock|vllm)·
+    #    EMBEDDER(hash|openai)·QDRANT_URL(빈=in-memory)·LIVE_NETWORK(공급측 라이브 호출). 각 키 아래 참조.
     # 비동기(Celery): 기본 eager(브로커 없는 dev는 동기 폴백). 운영은 false + worker+redis로 진짜 비동기.
     CELERY_TASK_ALWAYS_EAGER: bool = True
     # INC-14: 라이브 외부 호출(LiveNetwork) 토글 — 기본 False=mock(NetworkError). 공급측 reconcile/harvester

@@ -59,3 +59,6 @@ curl -s https://www.4t8t.net/ko -o /dev/null -w "%{http_code}\n"
 - [ ] `https://www.4t8t.net/ko` 200, `https://api.4t8t.net/health` 200
 - [ ] 백엔드 라우트 변경 시: `curl localhost/openapi.json | grep <새경로>` 로 등록 확인
 - [ ] 핵심 화면 1개 콜드로드(대시보드/프로젝트 상세) 무오류
+
+## 5. 심의엔진 shadow 관측 켜기 (선택·기본 off)
+- **Shadow ON 절차(한 줄)**: api 컨테이너 env에 `DELIBERATION_SHADOW_ENABLED=true` + 엔진 연결(`DELIBERATION_ENGINE_URL`·`DELIBERATION_ENGINE_API_TOKEN`) 설정 후 재배포 → 도메인 분석이 플랫폼 vs 엔진 판정을 대조 적재(관측 전용·판정 무변경, 실패는 무전파). 승격 게이트는 `docs/CENTRAL_ENGINE_STAGE3_PROMOTION.md`.

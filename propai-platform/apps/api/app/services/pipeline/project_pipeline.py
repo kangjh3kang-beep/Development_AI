@@ -1463,10 +1463,13 @@ class ProjectPipeline:
             }
 
     async def _run_design_review(self, state: PipelineState, opts: dict):
-        """STEP 2.5: 심의/설계도면 자동분석 — 설계 결과를 심의 엔진 BFF로 검토.
+        """STEP 2.5: 심의/설계도면 자동분석 — 설계 결과를 심의 엔진 공용 함수로 검토.
 
-        ★graceful: 엔진 미연결/오류 시 단계 data를 degraded로 채우고 정상 반환한다.
-        예외를 던지지 않으므로(또는 던져도 run 루프가 FAILED로 격리) cost 등 하류 단계가
+        ★D3(감사 이중잣대 제거): BFF 라우터와 동일한 공용 함수 `run_deliberation_analysis`를 경유해
+        engine_run_binding 결속 + 해시체인 감사원장 기록 + 무결성/테넌트 격리를 동일 계약으로 강제한다
+        (과거엔 `_engine_post_analyze`를 직접 호출해 결속·감사를 건너뛴 무감사 경로였다).
+        ★graceful: 엔진 미연결/오류·무결성 위반·감사 미기록(fail-closed) 시 단계 data를 degraded로 채우고
+        정상 반환한다. 예외를 던지지 않으므로(또는 던져도 run 루프가 FAILED로 격리) cost 등 하류 단계가
         영향받지 않는다. 결정론 산출 수치는 변경하지 않는다(검토 결과를 표면화만).
         """
         sr = state.stages.get(PipelineStage.DESIGN_REVIEW.value)
@@ -1503,38 +1506,41 @@ class ProjectPipeline:
             if rules:
                 payload["rules"] = rules
 
-            # BFF 직접 호출(같은 프로세스 함수 재사용) — 라우터/인증 우회, 엔진 graceful 계약 동일.
-            # ★A1: 과거 `_post_analyze`/`_wrap_result`는 현 라우터에 부재한 심볼이라(광역 except가
-            #   ImportError를 삼켜) 이 단계가 항상 무음 SKIPPED였다. 현존 심볼(_engine_post_analyze·
-            #   _compat_fields)로 정렬한다. is_deterministic_path로 결정론 여부를 판단해 라이브
-            #   지오코딩 등 비결정 경로는 async 타임아웃(deterministic=False)을 쓰게 한다(라우터와 동일 규약).
-            from app.services.deliberation._engine_contract import (
-                build_input_dump,
-                is_deterministic_path,
-                prevalidate,
-            )
-            from apps.api.app.routers.deliberation import _compat_fields, _engine_post_analyze
+            # ★D3(감사 이중잣대 제거): 라우터와 동일한 공용 함수를 경유해 결속(engine_run_binding)·감사원장·
+            #   무결성·테넌트 격리를 동일 계약으로 강제한다. 과거엔 `_engine_post_analyze`를 직접 호출해 결속·감사
+            #   없이 판정을 산출했다(BFF는 감사 없는 판정 제공을 502로 금지하는데 파이프라인만 무감사 우회였다).
+            #   내부에서 build_input_dump·prevalidate·is_deterministic_path를 수행하므로 여기선 payload만 넘긴다.
+            #   결속·감사에 필요한 사용자/테넌트 컨텍스트는 요청 스코프 contextvar에서 파생(파이프라인 /run은 인증 게이트).
+            from types import SimpleNamespace
 
-            dump = build_input_dump(payload)
-            err = prevalidate(dump)
-            if err:
+            from app.core.request_context import get_current_tenant_id, get_current_user_id
+            from apps.api.app.routers.deliberation import run_deliberation_analysis
+
+            audit_user = SimpleNamespace(
+                id=get_current_user_id() or "", tenant_id=get_current_tenant_id() or "")
+
+            envelope = await run_deliberation_analysis(payload, audit_user)
+            if not isinstance(envelope, dict) or envelope.get("status") != "ok":
+                # 엔진 미연결/오류·무결성 위반·감사 미기록(502) → degraded SKIPPED(무음 아님·reason 표면화).
+                reason = envelope.get("reason") if isinstance(envelope, dict) else "invalid_response"
                 if sr:
-                    sr.data = {"status": "degraded", "reason": err}
+                    sr.data = {"status": "degraded", "reason": reason or "degraded"}
                     sr.status = PipelineStatus.SKIPPED
                 return
 
-            data, reason = await _engine_post_analyze(dump, deterministic=is_deterministic_path(dump))
-            if reason != "ok" or data is None:
-                # ★엔진 미연결/오류 → degraded skip(파이프라인 무파괴).
-                if sr:
-                    sr.data = {"status": "degraded", "reason": reason}
-                    sr.status = PipelineStatus.SKIPPED
-                return
-
-            # ★_wrap_result 호환 형태 재구성(status·run_id + _compat_fields의 평면 필드).
-            wrapped = {"status": "ok", "run_id": str(data.get("run_id") or ""), **_compat_fields(data)}
+            # 정상 — 결속·감사 완료. 평면 필드(complianceScore·finalStatus·findings·sections)와 감사 출처 표면화.
             if sr:
-                sr.data = wrapped
+                sr.data = {
+                    "status": "ok",
+                    "run_id": str(envelope.get("run_id") or ""),
+                    "complianceScore": envelope.get("complianceScore"),
+                    "finalStatus": envelope.get("finalStatus"),
+                    "findings": envelope.get("findings") or [],
+                    "sections": envelope.get("sections") or {},
+                    "skipped": envelope.get("skipped") or [],
+                    "audit_degraded": envelope.get("audit_degraded", False),
+                    "audit_skipped": envelope.get("audit_skipped") or [],
+                }
         except Exception as e:  # noqa: BLE001 — 심의 검토 실패가 파이프라인을 깨지 않게 흡수.
             if sr:
                 sr.data = {"status": "degraded", "reason": f"design_review_error:{str(e)[:140]}"}

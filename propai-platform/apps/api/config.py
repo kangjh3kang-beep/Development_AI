@@ -42,7 +42,13 @@ class Settings(BaseSettings):
     deliberation_engine_read_timeout_s: float = 30.0       # 순수 결정론 입력(동기)
     deliberation_engine_async_read_timeout_s: float = 60.0  # 네트워크 의존 입력
     deliberation_async_result_timeout_s: float = 900.0      # 비동기 task 결과 대기 상한(초과→async_timeout degrade)
-    deliberation_shadow_enabled: bool = False               # 중심엔진 수렴 shadow 비교 적재(기본 off·운영 무중단)
+    # 중심엔진 수렴(shadow) 관측 — 도메인 분석(design_audit·building_compliance 등)이 플랫폼 자체 판정과
+    # 엔진 판정을 best-effort로 대조해 divergence를 `shadow_comparison`에 적재한다(관측 전용·판정값 무변경).
+    # ★기본 False가 정본: 코드 기본값은 끄고, 운영에서 배포 env(DELIBERATION_SHADOW_ENABLED=true)로만 켠다
+    #   (관측이 도메인 응답을 지연/파괴하지 않도록 운영 판단 하에 활성화). shadow OFF/엔진 미설정/매핑 부적합/
+    #   임의 실패는 모두 무전파(None) — 도메인 흐름 무중단. 켜는 절차·승격 게이트: docs/DEPLOY_RUNBOOK.md +
+    #   docs/CENTRAL_ENGINE_STAGE3_PROMOTION.md(§1 운영 활성화, §2 승격 게이트).
+    deliberation_shadow_enabled: bool = False
     deliberation_shadow_engine_timeout_s: float = 5.0       # shadow 엔진 호출 상한(관측이 도메인 응답 지연 금지)
     deliberation_monitor_timeout_s: float = 20.0            # baseline-staleness 법제처 모니터 호출 상한(hang→degrade)
 

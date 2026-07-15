@@ -219,7 +219,7 @@ export function DeliberationResultPanel() {
       </div>
       <p className="relative z-10 mt-1 text-xs text-[var(--text-secondary)]">
         설계 산출(건폐율·용적률)을 심의분석엔진 규칙으로 판정한다. 결정론·근거추적·무음 오판 0.
-        {!isRealSite && " 현재는 고정 샘플 — 프로젝트에서 부지분석+설계를 실행하면 ‘내 부지’가 자동 심의됩니다."}
+        {!isRealSite && " 현재는 고정 샘플 — 프로젝트에서 부지분석+설계를 실행하면 ‘내 부지’ 심의 입력값이 자동 구성됩니다(심의는 아래 버튼으로 실행)."}
       </p>
 
       <div className="relative z-10 mt-4">
