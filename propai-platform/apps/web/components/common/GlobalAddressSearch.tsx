@@ -158,6 +158,36 @@ export function GlobalAddressSearch({
   onAnalyzed,
 }: GlobalAddressSearchProps) {
   const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
+    // ★프로젝트 로드 시 다필지 하이드레이션 — 컨텍스트에 등록된 전 필지로 시작한다.
+    //   이게 없으면 프로젝트(예: 5필지)를 골라도 initialAddress(대표주소 1개)로만 시작해
+    //   인테이크 목록·지도 staged 가 1필지처럼 보이고("면적 보강 대기"·"완료(0필지 등록)"),
+    //   실제 등록된 나머지 필지의 면적·용도가 화면에 반영되지 않는다.
+    //   store 를 SSOT 로 쓰는 모드(writeToContext)일 때만 — 로컬 검색 모드는 결과 누출 방지 위해 제외.
+    if (writeToContext) {
+      const parcels = useProjectContextStore.getState().siteAnalysis?.parcels;
+      if (Array.isArray(parcels) && parcels.length >= 2) {
+        return parcels
+          .filter((p) => p && (p.address || p.pnu))
+          .map((p) => {
+            const pnu = typeof p.pnu === "string" ? p.pnu : "";
+            return {
+              __uid: newUid(),
+              fullAddress: p.address || "",
+              jibunAddress: p.address || "",
+              roadAddress: "",
+              sido: "",
+              sigungu: "",
+              bname: "",
+              zonecode: "",
+              // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
+              bcode: pnu.length >= 10 ? pnu.slice(0, 10) : "",
+              pnu: pnu || undefined,
+              areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
+              zoneCode: p.zoneCode ?? undefined,
+            } as AddressEntry;
+          });
+      }
+    }
     if (initialAddress) {
       return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
     }
