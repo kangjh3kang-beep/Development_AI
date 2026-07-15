@@ -74,6 +74,7 @@ export function AnnotatedSitePlanCard({
         <img
           src={url}
           alt="법규 주석 배치도 — 건폐율·용적률·일조 심사 결과"
+          // @ink-contract-ignore — 도면 이미지의 종이 배경. 텍스트 자식 없음(SVG 자체 색).
           className="w-full rounded-lg border border-[var(--line)] bg-white"
         />
       ) : (

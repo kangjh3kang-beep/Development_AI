@@ -1364,7 +1364,7 @@ export function GlobalAddressSearch({
                       className="h-12 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     {showCandidates && (candidates.length > 0 || searching) && (
-                      <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-white p-1 shadow-[var(--shadow-lg)]">
+                      <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]">
                         {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
                         {candidates.map((c, i) => (
                           <li key={`${c.address}-${i}`}>
@@ -1407,7 +1407,7 @@ export function GlobalAddressSearch({
             </div>
           </div>
 
-          <div className="flex flex-wrap min-h-[500px] items-stretch bg-white">
+          <div className="flex flex-wrap min-h-[500px] items-stretch bg-[var(--surface-panel)]">
             <aside className="flex min-h-[420px] flex-1 basis-[350px] min-w-[320px] flex-col border-b border-[var(--line)] bg-[var(--surface-soft)]/70 p-3 lg:border-b-0 lg:border-r">
               <div className="flex items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
@@ -1431,7 +1431,7 @@ export function GlobalAddressSearch({
                   <CheckCircle2 className={`mx-auto mt-1 size-4 ${displayAddresses.length > 0 ? "text-[var(--status-success)]" : "text-[var(--text-hint)]"}`} aria-hidden />
                 </div>
               </div>
-              <div className="mt-3 flex-1 rounded-2xl border border-dashed border-[var(--line-strong)] bg-white p-2">
+              <div className="mt-3 flex-1 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] p-2">
                 {displayAddresses.length > 0 ? (
                   <div className="space-y-2">
                     {parcelRows.map((row, idx) => (
@@ -1471,7 +1471,7 @@ export function GlobalAddressSearch({
               </div>
             </aside>
             <div className="flex-[2] basis-[400px] min-w-[320px] bg-[var(--surface-secondary)] p-3">
-              <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm">
+              <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-panel)] p-2 shadow-sm">
                 <SatongMultiMapDynamic
                   height={580}
                   onPickMany={handleMapPickMany}

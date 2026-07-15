@@ -212,7 +212,7 @@ export function ModuleInputForm() {
             <select
               value={input.land_category ?? "land"}
               onChange={(e) => setInput({ land_category: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-secondary)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
             >
               {LAND_CATEGORIES.map((c) => (
                 <option key={c.value} value={c.value}>{c.label}</option>
@@ -225,7 +225,7 @@ export function ModuleInputForm() {
             <select
               value={input.building_type ?? "apartment"}
               onChange={(e) => setInput({ building_type: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-secondary)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
             >
               {BUILDING_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
