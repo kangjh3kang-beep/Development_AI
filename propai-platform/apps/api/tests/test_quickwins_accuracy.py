@@ -68,7 +68,7 @@ class TestAutoEstimateUnified:
         out = module.calculate(_default_input(code))
         base = float(out.total_land_cost_won) + float(out.total_construction_cost_won)
         # generic과 동일 산식: PF = base×LTV70%×5.5%×(months/12), 소프트비 = base×7%
-        assert out.total_finance_cost_won == round(base * 0.70 * 0.055 * (36 / 12.0)), code
+        assert out.total_finance_cost_won == round(base * 0.70 * 0.055 * (36 / 12.0) * 0.5)  # W5: 분할실행 평균잔액 50% 기저, code
         assert out.total_other_cost_won == round(base * 0.07), code
 
     @pytest.mark.parametrize(("code", "module"), _MODULES)
@@ -82,7 +82,7 @@ class TestAutoEstimateUnified:
         out = module.calculate(inp)
         # 명시 금융 입력 → 실제 금융엔진 산출(자동추정 산식값과 달라야 함) / 명시 소프트비 → 그대로.
         base = float(out.total_land_cost_won) + float(out.total_construction_cost_won)
-        auto_formula = round(base * 0.70 * 0.055 * (36 / 12.0))
+        auto_formula = round(base * 0.70 * 0.055 * (36 / 12.0) * 0.5)  # W5: 분할실행 평균잔액 50% 기저
         assert out.total_finance_cost_won > 0
         assert out.total_finance_cost_won != auto_formula, code  # 리뷰 R1-LOW: 엔진값 구별 검증
         assert out.total_other_cost_won == 500_000_000, code
@@ -102,7 +102,7 @@ class TestAutoEstimateUnified:
 
         out = GenericModule("M06").calculate(_default_input("M06"))
         base = float(out.total_land_cost_won) + float(out.total_construction_cost_won)
-        assert out.total_finance_cost_won == round(base * 0.70 * 0.055 * (36 / 12.0))
+        assert out.total_finance_cost_won == round(base * 0.70 * 0.055 * (36 / 12.0) * 0.5)  # W5: 분할실행 평균잔액 50% 기저
         assert out.total_other_cost_won == round(base * 0.07)
 
 

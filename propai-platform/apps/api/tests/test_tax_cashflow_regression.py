@@ -345,6 +345,9 @@ class TestAfterTaxIRRIntegration:
         equity_ratio=0.3,
         design_months=3,
         design_cost_ratio=0.03,
+        # ★W5: 이 클래스의 골든은 '세금 주입 위치'(월별 비례 가중 포함) 검증이 취지 —
+        #   분할 유입(기본 installment) 도입과 무관하게 종전 스케줄로 고정해 취지 보존.
+        revenue_schedule="front_loaded",
     )
 
     SCHEDULE = {
