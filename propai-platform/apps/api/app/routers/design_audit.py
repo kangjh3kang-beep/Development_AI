@@ -356,11 +356,18 @@ async def _execute_run(
         run_kwargs["rooms"] = req.rooms
 
     # Phase 1 성장루프: 직전 design_audit prior read(best-effort).
-    # write(record_design_audit)가 tenant+project_id 키만 쓰므로 read도 동일 키로 같은 체인 매칭.
+    # ★write(record_design_audit, 하단)가 site의 pnu/address를 원장 체인키로 담으므로
+    #   read도 **동일 pnu/address**로 조회해야 같은 체인이 매칭된다(_chain_where: pnu 우선 →
+    #   address_norm → 둘 다 없으면 NULL 체인). 과거엔 read가 tenant+project_id만 써서
+    #   pnu 보유 심사(주경로 — 프론트가 site.pnu/address 전송)는 위쪽 write가 pnu 체인에 적재해도
+    #   read는 계속 NULL 체인만 조회 → prior_comparison이 영구 미매칭(항상 공란)이었다.
+    _run_site = req.site if isinstance(req.site, dict) else {}
     from app.services.ledger.prior_context import load_prior
     _prior = await load_prior(
         analysis_type="design_audit",
         tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
+        pnu=(_run_site.get("pnu") or None),
+        address=(_run_site.get("address") or None),
         project_id=req.project_id,
     )
     if _prior:
@@ -441,7 +448,7 @@ async def _execute_run(
     # _save_audit가 commit하므로 audit_id 행은 영속 → backlink 안전.
     # ★원장 스코프: site의 pnu/address를 전달해 수동주소 심사가 단일 NULL 체인에 섞이는 것을 막는다
     #   (ledger_adapters.record_design_audit이 이미 pnu/address를 받게 설계됨 — 배선만 봉합).
-    _site = req.site if isinstance(req.site, dict) else {}
+    #   read(load_prior, 위쪽)와 동일 site(_run_site)를 재사용 — read/write 체인키 대칭 유지.
     ledger_wb: dict[str, Any] | None = None   # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_design_audit
@@ -450,8 +457,8 @@ async def _execute_run(
             result=result, audit_id=audit_id,
             tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
             project_id=req.project_id,
-            pnu=(_site.get("pnu") or None),
-            address=(_site.get("address") or None),
+            pnu=(_run_site.get("pnu") or None),
+            address=(_run_site.get("address") or None),
             created_by=str(getattr(current, "user_id", "") or "") or None,
         )
     except Exception as e:  # noqa: BLE001
@@ -521,6 +528,16 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(gw, list) and gw:
             g_warnings = gw
 
+    # design_review 원자료(파라미터 법규검토) — pass_rate 정직화(not_checked_items) surface.
+    # ★design_review_service가 검사한 항목(건폐율·용적률)만 판정하고 나머지(일조·주차·피난 등)는
+    #   not_checked로 분리해 반환한다(pass_rate 오도 제거) — 이 원자료를 s5에 실어 프론트에 전달.
+    design_review_raw = raw.get("design_review") if isinstance(raw, dict) else None
+    not_checked_items = (
+        design_review_raw.get("not_checked_items")
+        if isinstance(design_review_raw, dict)
+        else None
+    )
+
     if findings:
         s5: dict[str, Any] = {
             "id": "s5",
@@ -530,6 +547,8 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         }
         if g_finger:
             s5["grammar"] = g_finger
+        if not_checked_items:
+            s5["not_checked_items"] = not_checked_items
         sections.append(s5)
     elif g_finger:
         # findings 없이 grammar 핑거만 실재 — S5를 grammar 전용으로 생성(빈 섹션 아님)

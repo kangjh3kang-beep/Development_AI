@@ -443,10 +443,9 @@ class DesignAuditOrchestrator:
         zone_type = site.get("zone_type") or site.get("zone_code")
         # 대지면적은 site(부지분석 SSOT)에 실려 오지만 엔진은 params.land_area_sqm를 읽는다.
         # params(개요서 명시값)에 없을 때만 site 값으로 보강한다(명시값 우선·무날조·덮어쓰기 금지).
-        if merged_params.get("land_area_sqm") in (None, "") and site.get("land_area_sqm") not in (
-            None,
-            "",
-        ):
+        # ★falsy 통일(R2 리뷰): `in (None, "")`는 0을 통과시켜 "0㎡ 대지면적"이라는 무의미한
+        #   명시값을 site 통합값보다 우선시켰다(주석 의도와 불일치 — 0은 값 없음과 동치로 취급).
+        if not merged_params.get("land_area_sqm") and site.get("land_area_sqm") not in (None, ""):
             merged_params["land_area_sqm"] = site.get("land_area_sqm")
 
         result = await self.audit(
@@ -613,12 +612,21 @@ class DesignAuditOrchestrator:
                 "section": None,
             }
 
-        # ComplianceStatus → AuditFinding.status: 해당없음(소규모)은 info(판정 미반영),
-        # 요건 발생 시 warning('설계도서 확인 필요' — 확정 위반 아님).
+        # ComplianceStatus → AuditFinding.status.
+        # ★WARNING→info(판정 미반영, R2 리뷰 확정방침): _check_fire_escape는 "5층 이상 OR
+        #   층당 200㎡ 초과"면 **무조건** WARNING을 낸다 — 이는 확정 위반이 아니라 "직통계단·
+        #   방화구획 요건이 존재하니 설계도서에서 확인하라"는 정직한 불확실 신호다(파라미터만으로
+        #   판정 불가). 이 요건은 사실상 모든 중규모 이상 건물에서 발화하므로, 예전처럼
+        #   STATUS_WARNING으로 verdict를 지배시키면 현실의 거의 모든 건물이 "조건부적합"에
+        #   묶여 "적합"에 도달할 수 없다(모든 건물에서 발화하는 경고는 신호가 없다 — 헤드라인
+        #   회귀). FAIL(확정 위반 — 이 룰은 현재 산출하지 않지만 향후 확장 대비)은 종전대로
+        #   verdict에 반영한다. 검사 자체는 info로도 findings/PDF에 정직하게 surface된다
+        #   (message에 "설계도서에서 확인 필요: ..." 문구 유지 — 무근거 낙관이 아니라 판정
+        #   불가 항목의 정직한 등급).
         status_map = {
             ComplianceStatus.PASS: STATUS_PASS,
             ComplianceStatus.FAIL: STATUS_FAIL,
-            ComplianceStatus.WARNING: STATUS_WARNING,
+            ComplianceStatus.WARNING: STATUS_INFO,
             ComplianceStatus.NOT_APPLICABLE: STATUS_INFO,
         }
         finding = make_finding(

@@ -64,6 +64,44 @@ const ENGINE_STEPS = [
 const MAX_IFC_BYTES = 200 * 1024 * 1024; // 200MB — BIM 모델 상한(클라이언트 사전 차단)
 const MAX_DXF_BYTES = 20 * 1024 * 1024; // 20MB — DXF 상한(백엔드 import-dxf 한도와 동일)
 
+/** 부지분석 SSOT의 조례 데이터(OrdinanceData) → 백엔드 legal_zone_limits.applicable_limits_for
+ * 계약(regulation_payload.local_ordinance)으로 옮겨 담는다(변환만 — 값 생성 금지).
+ *
+ * 실신호(ordinanceFar/ordinanceBcr/effectiveFar/effectiveBcr/source) 전무 시 null(미전송과
+ * 동치) — 백엔드 _extract_ordinance_far가 어차피 source(법정상한 폴백 등)로 재검증하므로
+ * 여기서는 존재하는 값만 그대로 relay한다(무날조 — 프론트가 조례 여부를 판정하지 않는다).
+ */
+function buildRegulationPayload(
+  ordinance:
+    | {
+        ordinanceFar?: number | null;
+        ordinanceBcr?: number | null;
+        effectiveFar?: number | null;
+        effectiveBcr?: number | null;
+        source?: string | null;
+      }
+    | null
+    | undefined,
+): { local_ordinance: Record<string, unknown> } | null {
+  if (!ordinance) return null;
+  const hasSignal =
+    ordinance.ordinanceFar != null ||
+    ordinance.ordinanceBcr != null ||
+    ordinance.effectiveFar != null ||
+    ordinance.effectiveBcr != null ||
+    !!ordinance.source;
+  if (!hasSignal) return null;
+  return {
+    local_ordinance: {
+      ordinance_far: ordinance.ordinanceFar ?? null,
+      ordinance_bcr: ordinance.ordinanceBcr ?? null,
+      effective_far: ordinance.effectiveFar ?? null,
+      effective_bcr: ordinance.effectiveBcr ?? null,
+      source: ordinance.source || null,
+    },
+  };
+}
+
 export function DesignAuditWorkspace({
   locale,
   showHeader = true,
@@ -147,6 +185,8 @@ export function DesignAuditWorkspace({
         sigungu: siteAnalysis?.ordinance?.sigungu ?? null,
         // ★다필지면 통합 면적 — 심의 면적/도식 footprint가 통합 부지 기준이 되도록.
         landAreaSqm: effectiveLandAreaSqm(siteAnalysis),
+        // 조례·실효한도 페이로드(인센티브 조례계층 실효한도 산정용) — SSOT에 실신호 있을 때만.
+        regulationPayload: buildRegulationPayload(siteAnalysis?.ordinance),
       }
     : {
         address: manualAddress.trim(),
@@ -154,6 +194,7 @@ export function DesignAuditWorkspace({
         zoneCode: null,
         sigungu: null,
         landAreaSqm: manualArea,
+        regulationPayload: null,
       };
   const siteReady = !!site.address || !!site.pnu;
 
@@ -230,6 +271,8 @@ export function DesignAuditWorkspace({
             zone_code: site.zoneCode || null,
             sigungu: site.sigungu || null,
             land_area_sqm: site.landAreaSqm ?? null,
+            // 조례·실효한도 페이로드(SSOT에 실신호 있을 때만 — 없으면 null, 날조 금지).
+            regulation_payload: site.regulationPayload ?? null,
           },
           brief: {
             brief_id: briefId,

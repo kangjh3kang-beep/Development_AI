@@ -117,6 +117,9 @@ export interface AuditSection {
   blind_spots?: AuditBlindSpot[] | null;
   evidence?: AuditEvidence[] | null;
   legal_refs?: AuditLegalRef[] | null;
+  // ★pass_rate 정직화(design_review_service) — 이 파라미터 검토가 실제 검사하지 않은
+  //   항목(일조·주차·피난 등)의 한글 라벨 목록. 있을 때만 "미검사 N항목"으로 표시(정직).
+  not_checked_items?: string[] | null;
 }
 
 export interface DesignAuditReport {
@@ -752,6 +755,15 @@ export function AuditReportView({
                     </p>
                   )}
                   {findings.length > 0 && <FindingsTable findings={findings} pools={pools} />}
+                  {Array.isArray(sec.not_checked_items) && sec.not_checked_items.length > 0 && (
+                    <p
+                      className="text-[11px] text-[var(--text-hint)]"
+                      title={sec.not_checked_items.join(", ")}
+                    >
+                      ※ 미검사 {sec.not_checked_items.length}항목(파라미터 검토 범위 밖 — 별도
+                      확인 필요): {sec.not_checked_items.join(", ")}
+                    </p>
+                  )}
                   {sec.case_comparison && <CaseComparisonBlock comparison={sec.case_comparison} />}
                   {incentives.length > 0 && (
                     <IncentiveCards incentives={incentives} pools={pools} />

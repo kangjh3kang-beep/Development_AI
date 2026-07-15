@@ -340,8 +340,12 @@ class TestOrchestratorOverall:
     async def test_bl_rules_evacuation_engine(self):
         """9번째 엔진 bl_rules — 정본 building_code_rules(BL-007) 위임으로 피난·방화 surface.
 
-        5층 이상/층당 200㎡ 초과 → 직통계단·방화구획 확인 필요(warning), 근거 법령 부착.
-        UI가 광고하던 '피난·방화 체크'가 실제로 검사되는지 확인(광고-실검사 정합).
+        5층 이상/층당 200㎡ 초과 → 직통계단·방화구획 확인 필요. ★R2 리뷰 확정방침: BL-007의
+        WARNING은 "요건 존재·확정 위반 아님"이며 사실상 모든 중규모 건물(5층 이상)에서 발화
+        하므로 status=info(판정 미반영)로 사상한다 — verdict를 지배하면 현실의 거의 모든 건물이
+        '적합' 도달 불가(헤드라인 회귀)가 되기 때문. 검사 자체는 findings에 정직 surface된다
+        (improvement에 "설계도서에서 확인 필요" 문구 유지). UI가 광고하던 '피난·방화 체크'가
+        실제로 검사되는지 확인(광고-실검사 정합)하되, 종합판정을 왜곡하지 않는지도 확인.
         """
         params = _clean_params(
             floors_above=15, total_floor_area_sqm=6000.0, building_height_m=45.0,
@@ -350,9 +354,29 @@ class TestOrchestratorOverall:
         assert result["engines"]["bl_rules"] == "ok"
         bl = next(f for f in result["findings"] if f["engine"] == "bl_rules")
         assert bl["check_id"] == "bl_fire_escape"
-        assert bl["status"] == "warning"  # 요건 발생 — 설계도서 확인 필요(확정 위반 아님)
+        assert bl["status"] == "info"  # 판정 미반영 — 요건 존재·설계도서 확인 필요(확정 위반 아님)
+        assert "확인 필요" in (bl["improvement"] or "")
         assert bl["legal_refs"]  # 건축법 시행령 §34/§46 근거 부착
         assert "bl_rules" in result["sections"]
+
+    def test_bl_rules_warning_never_counted_toward_verdict(self):
+        """핵심 회귀 방지(직접 유닛 테스트 — 다른 엔진의 무관한 임계값 간섭 배제).
+
+        _run_bl_rules는 동기 메서드라 오케스트레이터 전체를 돌리지 않고 직접 호출해
+        WARNING→info 사상만을 격리 검증한다(overall verdict 조합은 change_risk 등
+        floors_above 임계값이 겹치는 무관한 엔진에 좌우돼 취약한 e2e 조건이 된다).
+        """
+        orchestrator = DesignAuditOrchestrator()
+        # floor_count>=5 → needs_dual_stair=True → BuildingCodeRuleEngine이 WARNING을 낸다.
+        bl = orchestrator._run_bl_rules(
+            {"floors_above": 15, "total_floor_area_sqm": 6000.0}, ZONE
+        )
+        assert bl["status"] == "ok"
+        finding = bl["findings"][0]
+        assert finding["check_id"] == "bl_fire_escape"
+        # ★R2 확정방침: STATUS_WARNING이 아닌 STATUS_INFO(counts.warning에 미가산 → verdict 미지배).
+        assert finding["status"] == "info"
+        assert finding["status"] != "warning"
 
     async def test_bl_rules_skipped_without_data(self):
         """층수·연면적·층당면적 전무 → bl_rules는 skipped(임의값 강행 금지·정직)."""
@@ -523,6 +547,82 @@ class TestRunAdapter:
         # 기존 응답 키 무파손(additive) — 라우터가 소비하는 키 유지.
         for key in ("schema_version", "limits", "sections", "params_used", "overall"):
             assert key in result
+
+    async def test_run_zone_code_fallback_when_zone_type_absent(self, monkeypatch):
+        """결함1 봉합: site.zone_type 부재 시 zone_code로 폴백(용도지역 엔진 미도달 방지)."""
+        orchestrator = DesignAuditOrchestrator()
+        captured = {}
+
+        async def fake_audit(params, **kwargs):
+            captured.update(kwargs)
+            return {"overall": {"verdict": "적합"}, "findings": []}
+
+        monkeypatch.setattr(orchestrator, "audit", fake_audit)
+        await orchestrator.run(None, site={"zone_code": ZONE}, params={})
+        assert captured["zone_type"] == ZONE
+
+        # zone_type이 실려 있으면 zone_type 우선(zone_code 무시).
+        captured.clear()
+        await orchestrator.run(
+            None, site={"zone_type": "준주거지역", "zone_code": ZONE}, params={}
+        )
+        assert captured["zone_type"] == "준주거지역"
+
+    async def test_run_land_area_falls_back_to_site_when_absent_or_zero(self, monkeypatch):
+        """R2 리뷰 LOW-1: 0㎡은 값 없음과 동치 — falsy 통일 가드로 site 값 폴백."""
+        orchestrator = DesignAuditOrchestrator()
+        captured = {}
+
+        async def fake_audit(params, **kwargs):
+            captured["params"] = params
+            return {"overall": {"verdict": "적합"}, "findings": []}
+
+        monkeypatch.setattr(orchestrator, "audit", fake_audit)
+
+        # params 미제공 → site 값으로 보강.
+        await orchestrator.run(
+            None, site={"land_area_sqm": 500.0}, params={}
+        )
+        assert captured["params"]["land_area_sqm"] == 500.0
+
+        # params.land_area_sqm=0(무의미값) → site 값으로 폴백(과거엔 0이 "명시값"으로 오인돼
+        # site 통합값을 덮어쓰지 못했다).
+        await orchestrator.run(
+            None, site={"land_area_sqm": 500.0}, params={"land_area_sqm": 0}
+        )
+        assert captured["params"]["land_area_sqm"] == 500.0
+
+        # params에 실값이 있으면 명시값 우선(site로 덮어쓰기 금지 — 무날조 원칙 유지).
+        await orchestrator.run(
+            None, site={"land_area_sqm": 500.0}, params={"land_area_sqm": 650.0}
+        )
+        assert captured["params"]["land_area_sqm"] == 650.0
+
+    async def test_run_regulation_payload_passed_through(self, monkeypatch):
+        """결함1 봉합: site.regulation_payload가 audit()으로 배선(조례계층 실효한도 산정용)."""
+        orchestrator = DesignAuditOrchestrator()
+        captured = {}
+
+        async def fake_audit(params, **kwargs):
+            captured.update(kwargs)
+            return {"overall": {"verdict": "적합"}, "findings": []}
+
+        monkeypatch.setattr(orchestrator, "audit", fake_audit)
+        payload = {"local_ordinance": {"ordinance_far": 220.0, "source": "지자체 조례"}}
+        await orchestrator.run(
+            None, site={"zone_type": ZONE, "regulation_payload": payload}, params={}
+        )
+        assert captured["regulation_payload"] is payload
+
+    async def test_run_regulation_payload_applies_ordinance_limit_e2e(self):
+        """결함1 봉합 라이브검증: regulation_payload가 실제 applicable_limits_for에 도달해
+        조례값이 법정한도 대신 적용됨을 audit() 모킹 없이 확인(배선 그 자체를 검증)."""
+        payload = {"local_ordinance": {"ordinance_far": 220.0, "source": "지자체 조례"}}
+        result = await DesignAuditOrchestrator().run(
+            None, site={"zone_type": ZONE, "regulation_payload": payload}, params={}
+        )
+        assert result["limits"]["applied_far_pct"] == 220.0
+        assert result["limits"]["ordinance_confirmed"] is True
 
     async def test_run_merges_ifc_params_user_first(self, monkeypatch):
         """ifc_file_url 제공 시 params_from_ifc→merge_params(user>ifc) 병합 + 출처 표면화."""

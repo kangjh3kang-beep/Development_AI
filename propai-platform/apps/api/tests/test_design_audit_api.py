@@ -311,6 +311,78 @@ class TestRunMockedE2E:
         # sections 영속(런타임 DDL 컬럼) — s1_samples·efficiency_metrics가 저장됨(정직 재구성용).
         assert json.loads(ins["s"])["efficiency_metrics"]["efficiency_pct"] == 78.0
 
+    def test_prior_read_write_chain_symmetry(self, monkeypatch):
+        """R2 리뷰 HIGH: load_prior(read)가 record_design_audit(write)와 동일 pnu/address로
+        호출돼야 같은 원장 체인이 매칭된다(_chain_where: pnu 우선 → address_norm → NULL).
+
+        회귀 시나리오: write는 site.pnu/address를 담아 pnu 체인에 적재하는데 read가 여전히
+        tenant+project_id만 쓰면 NULL 체인만 조회해 prior_comparison이 영구 공란이 된다.
+        """
+        client = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+
+        import app.services.ledger.ledger_adapters as ledger_adapters_mod
+        import app.services.ledger.prior_context as prior_context_mod
+
+        load_prior_calls = []
+        record_calls = []
+
+        async def _fake_load_prior(**kwargs):
+            load_prior_calls.append(kwargs)
+            return None
+
+        async def _fake_record(**kwargs):
+            record_calls.append(kwargs)
+            return {"content_hash": "h1"}
+
+        monkeypatch.setattr(prior_context_mod, "load_prior", _fake_load_prior)
+        monkeypatch.setattr(ledger_adapters_mod, "record_design_audit", _fake_record)
+
+        resp = client.post("/api/v1/design-audit/run", json={
+            "project_id": "p-1",
+            "site": {"zone_type": "제2종일반주거지역", "pnu": "1168010100100010000",
+                     "address": "서울 강남구 역삼동 736-1"},
+            "params": {},
+            "use_llm": False,
+        })
+        assert resp.status_code == 200
+        assert load_prior_calls and record_calls
+        r = load_prior_calls[0]
+        w = record_calls[0]
+        # read/write가 동일 pnu·address·project_id로 같은 체인을 조회·기록해야 한다.
+        assert r["pnu"] == w["pnu"] == "1168010100100010000"
+        assert r["address"] == w["address"] == "서울 강남구 역삼동 736-1"
+        assert r["project_id"] == w["project_id"] == "p-1"
+
+    def test_prior_read_write_symmetry_when_site_empty(self, monkeypatch):
+        """site에 pnu/address가 전혀 없으면(수동주소 미해석 등) read/write 둘 다 None
+        (같은 NULL 체인) — 어느 한쪽만 값을 채워 비대칭이 되지 않는지 확인."""
+        client = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+
+        import app.services.ledger.ledger_adapters as ledger_adapters_mod
+        import app.services.ledger.prior_context as prior_context_mod
+
+        load_prior_calls = []
+        record_calls = []
+
+        async def _fake_load_prior(**kwargs):
+            load_prior_calls.append(kwargs)
+            return None
+
+        async def _fake_record(**kwargs):
+            record_calls.append(kwargs)
+            return {"content_hash": "h1"}
+
+        monkeypatch.setattr(prior_context_mod, "load_prior", _fake_load_prior)
+        monkeypatch.setattr(ledger_adapters_mod, "record_design_audit", _fake_record)
+
+        resp = client.post("/api/v1/design-audit/run",
+                           json={"project_id": "p-1", "site": {}, "use_llm": False})
+        assert resp.status_code == 200
+        assert load_prior_calls[0]["pnu"] is None and load_prior_calls[0]["address"] is None
+        assert record_calls[0]["pnu"] is None and record_calls[0]["address"] is None
+
     def test_run_blindspot_failure_omitted(self, monkeypatch):
         """blindspot 전체 실패 → 섹션 생략(None), 심사 결과는 무중단 반환."""
         client = _make_client()
