@@ -1222,8 +1222,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                   </p>
                 )}
 
-                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—". */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—".
+                    ★칸 실폭 기준(@container): 좁은 임베드 칸에선 2열, 넓으면 3열(뷰포트 sm: 대신 @sm:) */}
+                <div className="grid grid-cols-2 gap-2 @sm:grid-cols-3">
                   {[
                     { label: "층수", val: activeMassing.floors != null ? `${activeMassing.floors}층` : "—" },
                     { label: "건축면적", val: calc.buildableArea != null ? `${Math.round(calc.buildableArea).toLocaleString()}㎡` : "—" },

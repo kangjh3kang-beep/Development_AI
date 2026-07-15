@@ -726,7 +726,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const legalVerdict = single ? complianceVerdict(single.compliance) : null;
 
   return (
-    <div className="@container rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
+    <div className="@container rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 @2xl:p-8">
       {/* 헤더 */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
