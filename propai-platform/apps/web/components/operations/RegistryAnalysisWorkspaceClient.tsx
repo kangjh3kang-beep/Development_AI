@@ -80,26 +80,35 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const [batchResults, setBatchResults] = useState<{ jibun: string; rowId: string; result: Result | null }[] | null>(null);
   const [newJibun, setNewJibun] = useState("");
 
-  const run = useCallback(async (overrideAddr?: string, rowId?: string): Promise<Result | null> => {
-    const target = (typeof overrideAddr === "string" ? overrideAddr : addr) || siteAnalysis?.address || "";
+  const run = useCallback(async (overrideAddr?: string, rowId?: string, row?: LandRow): Promise<Result | null> => {
+    // 특정 필지 분석(overrideAddr 존재 = 일괄/행별)인지, 대표 단일 분석(인자 없음)인지 구분.
+    const isPerParcel = typeof overrideAddr === "string";
+    const target = (isPerParcel ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return null; }
     if (rowId) setBusyId(rowId); else setLoading(true);
     setError(""); setResult(null); setProgress("");
     try {
+      // ★필지 식별자는 '한 행에서 함께' 온다 — 주소만 행별이고 PNU·면적은 대표(siteAnalysis)인
+      //   비대칭을 만들지 않는다. 백엔드는 caller PNU 를 최우선으로 쓰므로(effective_pnu=pnu),
+      //   특정 필지를 분석하면서 대표 PNU 를 보내면 5필지 전부에 대표필지의 소유구분이 조회돼
+      //   공유 스토어(토지조서)의 사유지/국공유지 집계가 오염된다. 면적도 마찬가지 —
+      //   개별 필지 조회에 통합면적을 실으면 그 필지 면적이 통합값으로 write-back 돼 과대해진다.
+      const parcelPnu = isPerParcel ? (row?.pnu || undefined) : (siteAnalysis?.pnu || undefined);
+      const parcelZone = isPerParcel ? (row?.zone_code || undefined) : (siteAnalysis?.zoneCode || undefined);
+      // 면적 힌트: 특정 필지면 그 필지 면적(row.area_sqm), 대표 단일이면 유효면적(통합 우선).
+      const parcelArea = isPerParcel
+        ? (typeof row?.area_sqm === "number" && row.area_sqm > 0 ? row.area_sqm : undefined)
+        : (effectiveLandAreaSqm(siteAnalysis) || undefined);
       // 비동기 작업 제출+폴링(모바일 안정) — 화면 전환/잠금 후 복귀해도 결과 유지
       const r = await analyzeRegistry<Result>({
-        address: target || undefined, pnu: siteAnalysis?.pnu || undefined,
+        address: target || undefined, pnu: parcelPnu,
         registry_text: text.trim() || undefined,
         realty_type: realty, dong: realty === "1" ? dong || undefined : undefined,
         ho: realty === "1" ? ho || undefined : undefined,
-        // 부지분석에서 확보한 토지정보 동봉 → 백엔드 재조회(~31s) 생략
-        land_hint: siteAnalysis
-          ? {
-              pnu: siteAnalysis.pnu || undefined,
-              zone_type: siteAnalysis.zoneCode || undefined,
-              // ★다필지면 통합면적 우선(대표값이 통합을 덮어써도 정확한 면적 사용)
-              land_area_sqm: effectiveLandAreaSqm(siteAnalysis) || undefined,
-            }
+        // 부지분석/필지행에서 확보한 토지정보 동봉 → 백엔드 재조회(~31s) 생략.
+        //   특정 필지면 그 필지의 pnu·zone·면적만(대표값 누출 차단), 하나라도 있을 때만 첨부.
+        land_hint: (parcelPnu || parcelZone || parcelArea != null)
+          ? { pnu: parcelPnu, zone_type: parcelZone, land_area_sqm: parcelArea }
           : undefined,
       }, setProgress);
       setResult(r);
@@ -149,7 +158,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     for (const r of rows) {
       const j = r.jibun.trim();
       if (!j) continue;
-      const res = await run(j, r.id);
+      const res = await run(j, r.id, r); // ★행 전달 — 이 필지의 pnu·면적·용도로 조회(대표값 누출 차단)
       acc.push({ jibun: j, rowId: r.id, result: res });
       setBatchResults([...acc]);
     }
@@ -259,7 +268,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   <span className="min-w-[160px] flex-1 truncate text-xs font-semibold text-[var(--text-primary)]" title={r.jibun}>{r.jibun || "(지번 미입력)"}</span>
                   {r.owner && <span className="truncate text-[11px] text-[var(--text-secondary)]">소유 {r.owner}{r.share ? ` · ${r.share}` : ""}</span>}
                   {r.area_sqm != null && <span className="text-[11px] text-[var(--text-tertiary)]">{Math.round(r.area_sqm).toLocaleString()}㎡</span>}
-                  <button onClick={() => { setAddr(r.jibun); void run(r.jibun, r.id); }} disabled={!r.jibun.trim() || busyId === r.id}
+                  <button onClick={() => { setAddr(r.jibun); void run(r.jibun, r.id, r); }} disabled={!r.jibun.trim() || busyId === r.id}
                     className="rounded-lg bg-[var(--surface-strong)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] disabled:opacity-50">
                     {busyId === r.id ? "…" : "분석"}
                   </button>

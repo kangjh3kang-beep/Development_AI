@@ -1904,7 +1904,7 @@ export function SatongMultiMap({
           onClick={handleComplete}
           className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
         >
-          완료({staged.length}필지 등록)
+          {staged.length > 0 ? `완료(${staged.length}필지 추가)` : "지도에서 필지 선택"}
         </button>
       </div>
       )}

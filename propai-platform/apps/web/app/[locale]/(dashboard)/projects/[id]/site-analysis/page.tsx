@@ -20,6 +20,7 @@ import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel"
 import { EnvironmentAnalysisPanel } from "@/components/environment/EnvironmentAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { isMockMode } from "@/lib/runtime-mode";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
@@ -750,7 +751,12 @@ export default function SiteAnalysisPage() {
     if (!addr) return;
     const nextPnu = siteAnalysis?.pnu ?? undefined;
     const nextZone = siteAnalysis?.zoneCode ?? undefined;
-    const nextLandAreaSqm = siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined;
+    // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지.
+    //   분석은 다필지로 통일한다(단일주소 분석 = 필지 1개인 다필지). 따라서 이 화면의 시드도
+    //   대표필지 면적이 아니라 유효 면적(다필지면 통합)이어야 ContextHeader·인허가 등 다른 표면과
+    //   같은 숫자가 된다.
+    const effArea = effectiveLandAreaSqm(siteAnalysis);
+    const nextLandAreaSqm = effArea != null ? String(effArea) : undefined;
     // ★#185 렌더루프 가드: 값이 실제로 바뀔 때만 setState. 자식(LandIntelligencePanel·AutoZoningBadge)이
     //   /zoning/analyze 결과로 updateSiteAnalysis를 호출하면 이 useEffect가 재실행되는데, 매번 '새'
     //   siteData 객체를 setState하면 자식 리렌더→재호출 순환으로 렌더가 폭주한다(Minified React #185).
@@ -762,7 +768,10 @@ export default function SiteAnalysisPage() {
         : { address: addr, pnu: nextPnu, zoneType: nextZone, landAreaSqm: nextLandAreaSqm },
     );
     setStage((s) => (s === "result" ? s : "result"));
-  }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
+    // ★유효면적이 의존하는 축은 raw landAreaSqm 하나가 아니다 — 다필지 통합면적
+    //   (landAreaSqmTotal)·필지수(parcelCount)가 바뀌면 시드도 갱신돼야 한다(누락 시 옛 면적 고착).
+  }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode,
+      siteAnalysis?.landAreaSqm, siteAnalysis?.landAreaSqmTotal, siteAnalysis?.parcelCount]);
 
   // 결과 단계 진입 시 프로젝트의 최신 설계(design_versions) 존재 여부를 조회.
   // 백엔드 /digital-twin/scene은 design_version_id 경로로 glb URL(/design/{id}/bim/model.glb)을

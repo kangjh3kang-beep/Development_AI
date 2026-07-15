@@ -1,3 +1,4 @@
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 // 설계 스튜디오 "층수 단일 진실원천(SSOT)" 공용 유틸.
 //
 // 배경(층수 3중 불일치 버그): 같은 화면에서 ① 축측 도식이 '25층', ② 예상층수 카드가
@@ -64,6 +65,9 @@ export function resolveCanonicalFloors(
 // 부지분석(SiteAnalysis) — 면적·용도지역(통합값 우선 폴백 포함)만 느슨하게 받는다.
 type DesignSiteInput = {
   landAreaSqm?: number | null;
+  // 다필지 통합면적·필지수 — effectiveLandAreaSqm(SSOT)이 통합 우선 판정에 사용.
+  landAreaSqmTotal?: number | null;
+  parcelCount?: number | null;
   integratedFarEffPct?: number | null;
   integratedBcrEffPct?: number | null;
   dominantZoneCode?: string | null;
@@ -135,8 +139,10 @@ export function deriveDesignSSOT(
   //   미전달(undefined)이면 종전 동작과 완전히 동일(additive·무회귀).
   contractFloors?: number | null,
 ): DesignSSOT {
-  // 면적(㎡) — 부지분석 통합/대표 면적. 미확보 시 null.
-  const landAreaSqm = num(siteAnalysis?.landAreaSqm) ?? null;
+  // 면적(㎡) — ★effectiveLandAreaSqm(SSOT): 다필지면 통합면적 우선, raw 금지.
+  //   종전엔 raw landAreaSqm 을 읽어, 다필지에서 대표필지 면적이 통합을 덮어쓰면 설계 규모가
+  //   축소됐다(문서 주석의 "통합 우선" 선언과 실제 코드가 어긋나 있었음).
+  const landAreaSqm = effectiveLandAreaSqm(siteAnalysis) ?? null;
   // 용도지역 — 통합 dominant 우선, 없으면 단일 zoneCode. 미확보 시 null.
   const zoneCode = str(siteAnalysis?.dominantZoneCode) ?? str(siteAnalysis?.zoneCode);
   // 적용 용적률/건폐율(%) — calc가 이미 "통합>실효>법정" 우선순위로 산출한 확정값.

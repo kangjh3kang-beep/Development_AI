@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useIsAdmin } from "@/lib/use-is-admin";
 import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { readSseStream } from "@/lib/realtime";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import Link from "next/link";
 
@@ -31,7 +32,14 @@ function buildSsotContext(): string {
     const sa = s.siteAnalysis;
     if (sa) {
       if (sa.address) lines.push(`주소: ${sa.address}`);
-      if (sa.landAreaSqm != null) lines.push(`대지면적: ${sa.landAreaSqm.toLocaleString()}㎡`);
+      // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지. 다필지에서 raw 를 주면
+      //   AI 가 대표필지(또는 이전 필지구성의 잔류값) 면적으로 답변해 규모 판단이 틀어진다.
+      const areaSqm = effectiveLandAreaSqm(sa);
+      if (areaSqm != null) {
+        lines.push(
+          `대지면적: ${areaSqm.toLocaleString()}㎡${(sa.parcelCount ?? 1) > 1 ? ` (통합 ${sa.parcelCount}필지)` : ""}`,
+        );
+      }
       if (sa.zoneCode) lines.push(`용도지역: ${sa.zoneCode}`);
       if (sa.estimatedValue != null) lines.push(`추정 토지가치: ${formatWon(sa.estimatedValue)}`);
     }

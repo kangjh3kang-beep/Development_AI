@@ -12,6 +12,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -120,6 +121,9 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
     height_m: undefined,
     parking: undefined,
     units: undefined,
+    // land_area_sqm 은 여기서 시드하지 않는다 — 제출 시점에 주입(아래 handleSubmit).
+    //   이 초기화는 최초 마운트에만 실행되므로, 프로젝트가 나중에 로드되면 면적이 영영 비어
+    //   백엔드 대표필지 폴백이 되살아난다. 사용자 편집 필드도 아니라 state 에 둘 이유가 없다.
   }));
   const [useLlm, setUseLlm] = useState(false);
 
@@ -154,6 +158,15 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
         designParams[k] = v;
       }
     });
+
+    // ★대지면적은 제출 시점에 유효면적(다필지=통합)으로 주입한다 — 항상 최신 컨텍스트 반영.
+    //   미전송하면 백엔드가 대표주소로 재조회해 **대표필지 1개 면적**으로 채우고(_augment_from_site),
+    //   통합 GFA 를 그 면적으로 나눠 용적률을 과대 산정 → 허위 '법규초과' 경고가 난다.
+    //   무목업: 미확보면 주입하지 않는다(0 강제 금지 — 백엔드 계약이 gt=0 이라 0 은 422).
+    const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
+    if (typeof landAreaSqm === "number" && landAreaSqm > 0) {
+      designParams.land_area_sqm = landAreaSqm;
+    }
 
     setLoading(true);
     try {
