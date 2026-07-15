@@ -127,6 +127,27 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_cache_url: str = "redis://localhost:6379/1"
 
+    # ── 이메일 발송(회원 시스템: 비밀번호 재설정·이메일 인증·탈퇴 안내) ──
+    # console(기본): 실발송 없이 서버 로그 출력(무날조 — dev 모드 명시).
+    # smtp: 표준 SMTP(TLS). sendgrid: SendGrid v3 API. 키는 서버 .env(deploy.sh 재배포로 반영).
+    email_provider: str = Field(
+        default="console", description="이메일 발송 방식: console | smtp | sendgrid"
+    )
+    email_from: str = Field(
+        default="사통팔땅 <no-reply@4t8t.net>", description="발신자 표기"
+    )
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    email_smtp_user: str = ""
+    email_smtp_password: str = ""
+    email_sendgrid_api_key: str = Field(
+        default="", validation_alias=AliasChoices("email_sendgrid_api_key", "SENDGRID_API_KEY")
+    )
+    # 재설정/인증 링크 생성용 프론트 베이스 URL(HTTPS)
+    frontend_base_url: str = Field(
+        default="https://4t8t.net", description="이메일 링크(재설정·인증) 생성 베이스 URL"
+    )
+
     # ── GraphQL(Hasura) ──
     # ★FastAPI 앱은 Hasura를 직접 소비하지 않는다(전 코드 grep 소비처 0). Hasura는 별도
     #   GraphQL 엔진 컨테이너(infra/docker/docker-compose.*.yml)로만 운영되며, 그 admin secret은

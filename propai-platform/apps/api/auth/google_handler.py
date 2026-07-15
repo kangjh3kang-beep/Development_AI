@@ -83,16 +83,23 @@ def extract_user_profile(google_data: dict) -> dict:
     """구글 응답에서 공용 프로필을 추출한다.
 
     Returns:
-        {"provider_id": str(sub), "email": str|None, "nickname": str}
+        {"provider_id": str(sub), "email": str|None, "nickname": str, "email_verified": bool}
+
+    email_verified: 구글이 검증한 이메일인지(userinfo email_verified 클레임). 워크스페이스/커스텀
+    도메인 등에서 false일 수 있어, 미검증 이메일 병합에 의한 계정 탈취 차단을 위해 함께 전달한다.
+    (bool 또는 문자열 "true" 모두 수용)
     """
     provider_id = str(google_data.get("sub", ""))
     email = google_data.get("email")
     nickname = google_data.get("name") or email or f"google_{provider_id}"
+    _ev = google_data.get("email_verified")
+    email_verified = _ev is True or (isinstance(_ev, str) and _ev.strip().lower() == "true")
 
     return {
         "provider_id": provider_id,
         "email": email,
         "nickname": nickname,
+        "email_verified": email_verified,
     }
 
 

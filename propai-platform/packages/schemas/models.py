@@ -66,6 +66,9 @@ class UserResponse(BaseModel):
     role: UserRole
     is_active: bool
     created_at: datetime
+    # 회원 시스템(2026-07): 이메일 인증·소셜 전용 여부 — 계정 화면 표시용(additive)
+    email_verified: bool = False
+    has_password: bool = True
 
 
 # ──────────────────────────────────────

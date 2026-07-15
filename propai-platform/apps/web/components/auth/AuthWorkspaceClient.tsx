@@ -459,6 +459,9 @@ export function AuthWorkspaceClient({
     companyName: "",
     email: "",
     password: "",
+    agreeTerms: false,
+    agreePrivacy: false,
+    agreeMarketing: false,
   });
 
   const requestRefresh = useCallback(async () => {
@@ -588,6 +591,13 @@ export function AuthWorkspaceClient({
                 company_name: registerForm.companyName,
                 email: registerForm.email,
                 password: registerForm.password,
+                // 약관·개인정보 동의(필수) + 마케팅(선택) — 서버가 동의 이력을 버전과 함께 저장
+                agree_terms: registerForm.agreeTerms,
+                agree_privacy: registerForm.agreePrivacy,
+                agree_marketing: registerForm.agreeMarketing,
+                // ★동의 버전 = 이용자가 실제 열람하는 인앱 약관(/legal/terms·privacy)의
+                //   시행일과 일치해야 한다. 약관 개정 시 이 값을 함께 갱신할 것.
+                policy_version: "2026-06-15",
               },
               useMock: false,
             });
@@ -602,12 +612,19 @@ export function AuthWorkspaceClient({
       }
       await loadSession(mode, tokens.expires_in);
     } catch (error) {
+      // 가입 422(비밀번호 정책·필수동의 등)는 FastAPI가 배열형 detail을 주어 일반 메시지로
+      // 강등되므로, 등록 모드에서는 무엇을 고쳐야 하는지 명확한 정책 안내로 대체한다.
+      const status = error instanceof ApiClientError ? error.status : 0;
+      const fallback =
+        mode === "register" && status === 422
+          ? "입력값을 확인해 주세요 — 비밀번호는 10자 이상, 영문 대/소문자·숫자·특수문자 중 3종 이상을 조합하고, 필수 약관에 동의해야 합니다."
+          : mode === "login"
+            ? labels.errorLabels.login
+            : labels.errorLabels.register;
       setFeedback({
         tone: "error",
-        message: resolveApiErrorMessage(
-          error,
-          mode === "login" ? labels.errorLabels.login : labels.errorLabels.register,
-        ),
+        message:
+          status === 422 ? fallback : resolveApiErrorMessage(error, fallback),
       });
     } finally {
       setIsSubmitting(false);
@@ -790,11 +807,83 @@ export function AuthWorkspaceClient({
                             password: event.target.value,
                           }))
                         }
-                        placeholder="********"
+                        placeholder="10자 이상 · 영문/숫자/특수문자 조합"
                         required
-                        minLength={8}
+                        minLength={10}
                       />
+                      <span className="text-xs font-normal text-[var(--text-tertiary)]">
+                        10자 이상, 영문 대/소문자·숫자·특수문자 중 3종 이상을 조합해 주세요.
+                      </span>
                     </label>
+
+                    {/* 약관·개인정보 동의(필수/선택 분리 — 개인정보보호법 §22) */}
+                    <div className="grid gap-2 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm">
+                      <label className="flex items-start gap-2 text-[var(--text-primary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreeTerms}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreeTerms: event.target.checked,
+                            }))
+                          }
+                          required
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>
+                          <b>[필수]</b>{" "}
+                          <Link
+                            href={`/${locale}/legal/terms`}
+                            target="_blank"
+                            className="underline underline-offset-2 text-[var(--accent-strong)]"
+                          >
+                            이용약관
+                          </Link>
+                          에 동의합니다.
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-[var(--text-primary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreePrivacy}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreePrivacy: event.target.checked,
+                            }))
+                          }
+                          required
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>
+                          <b>[필수]</b>{" "}
+                          <Link
+                            href={`/${locale}/legal/privacy`}
+                            target="_blank"
+                            className="underline underline-offset-2 text-[var(--accent-strong)]"
+                          >
+                            개인정보처리방침
+                          </Link>
+                          에 동의합니다.
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-[var(--text-secondary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreeMarketing}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreeMarketing: event.target.checked,
+                            }))
+                          }
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>[선택] 새 기능·소식 등 마케팅 정보 수신에 동의합니다.</span>
+                      </label>
+                    </div>
+
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.registerFields.submit}
                     </Button>
@@ -836,6 +925,14 @@ export function AuthWorkspaceClient({
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.loginFields.submit}
                     </Button>
+                    <div className="text-right">
+                      <Link
+                        href={`/${locale}/forgot-password`}
+                        className="text-xs font-medium text-[var(--text-tertiary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline"
+                      >
+                        비밀번호를 잊으셨나요?
+                      </Link>
+                    </div>
                     <div className="relative my-4 flex items-center">
                       <div className="flex-grow border-t border-[var(--line-subtle)]"></div>
                       <span className="cc-label mx-4 text-[var(--text-tertiary)]">SNS · 간편 로그인</span>
@@ -965,7 +1062,7 @@ export function AuthWorkspaceClient({
 
             {/* 법적 고지 — 가입·이용 시 동의 대상 문서 링크(비로그인 열람 가능) */}
             <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-tertiary)]">
-              <span>가입·이용 시 아래 약관에 동의하는 것으로 간주됩니다.</span>
+              <span>서비스 이용 관련 문서는 언제든지 열람할 수 있습니다.</span>
               <span className="flex items-center gap-2">
                 <Link href={`/${locale}/legal/terms`} className="text-[var(--text-secondary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline">서비스이용약관</Link>
                 <span aria-hidden>·</span>

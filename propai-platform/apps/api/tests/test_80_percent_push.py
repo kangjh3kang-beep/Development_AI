@@ -214,8 +214,11 @@ class TestKakaoHandler:
 
         mock_user = MagicMock()
         mock_user.email = "test@kakao.com"
+        mock_user.deleted_at = None  # 활성 계정(정본 oauth_common은 활성 행만 매칭)
+        mock_user.is_active = True
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_user
+        # 정본 oauth_common은 step1(OAuth 매핑)에서 scalars().all()로 조회한다(단일행 scalar_one_or_none 아님).
+        mock_result.scalars.return_value.all.return_value = [mock_user]
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=mock_result)

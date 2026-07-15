@@ -39,6 +39,7 @@ TASK_MODULES = [
     "app.tasks.parcel_batch_task",
     "app.tasks.memory_tasks",
     "app.tasks.specialist_tasks",
+    "app.tasks.member_tasks",
 ]
 
 
@@ -86,6 +87,13 @@ def _create_app() -> Celery:
             "task": "app.tasks.auction_sync_task.sync_onbid_auctions",
             "schedule": crontab(hour=4, minute=0),
             "options": {"queue": "auction"},
+        },
+        # 회원 수명주기 — 탈퇴 30일 유예 경과 계정 익명화(확정 정책 §7-2·개인정보
+        # 처리방침 §9 파기 정합). 매일 03:30(정기배치 시간대), 기본 큐.
+        "anonymize-withdrawn-daily": {
+            "task": "app.tasks.member_tasks.anonymize_withdrawn_accounts",
+            "schedule": crontab(hour=3, minute=30),
+            "options": {"queue": "celery"},
         },
         # 자가성장 엔진 — 텔레메트리 큐 → platform_events 배치 적재(5초 주기).
         # ⚠️ Phase 1 정본은 main.py 인프로세스 flush 루프(같은 프로세스 deque 드레인)다.
@@ -173,6 +181,7 @@ BEAT_SCHEDULE_NAMES = [
     "check-standard-prices-weekly",
     "check-pension-increase-monthly",
     "sync-onbid-auctions-daily",
+    "anonymize-withdrawn-daily",
     "flush-growth-events",
     "analyze-growth-hourly",
     "analyze-growth-daily",
@@ -198,4 +207,5 @@ TASK_NAMES = [
     "app.tasks.parcel_batch_task.run_batch",
     "tasks.memory.ingest_experience",
     "tasks.specialists.run_for_analysis",
+    "app.tasks.member_tasks.anonymize_withdrawn_accounts",
 ]

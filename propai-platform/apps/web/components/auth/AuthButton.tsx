@@ -36,9 +36,19 @@ export function AuthButton({ locale }: { locale: string }) {
   if (isLoggedIn) {
     return (
       <div className="flex items-center gap-1.5">
-        <span className="text-xs font-bold text-[var(--text-secondary)] hidden sm:inline">
+        <Link
+          href={`/${locale}/account`}
+          className="text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors hidden sm:inline"
+          title="내 계정 · 보안"
+        >
           {userName}
-        </span>
+        </Link>
+        <Link
+          href={`/${locale}/account`}
+          className="rounded-lg px-2.5 py-1 text-xs font-bold text-[var(--text-hint)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] transition-colors sm:hidden"
+        >
+          내 계정
+        </Link>
         <button
           onClick={handleLogout}
           className="rounded-lg px-2.5 py-1 text-xs font-bold text-[var(--text-hint)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] transition-colors"
