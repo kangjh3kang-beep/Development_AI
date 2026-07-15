@@ -36,6 +36,11 @@ class ModuleInput:
     #     revenue_block이 면적을 공급평(전용÷전용률)으로 환산해 basis를 일치시킨다.
     #   "exclusive" = 전용면적 기준 단가(MOLIT 실거래 폐루프 — excluUseAr 기반) → 전용면적
     #     그대로 곱한다(환산 시 +33% 과대 회귀 — 2026-07-16 리뷰 라이브 재현).
+    # ★설계한계(단일 플래그): 분양·임대(rental)·조합(union) 단가가 이 플래그 하나를
+    #   공유한다 — 두 단가의 면적 기준이 서로 다른 혼합 입력(예: 분양=공급 시세,
+    #   임대=전용 실거래)은 표현 불가. 현행 생산처는 모두 단일 출처(시세 테이블 또는
+    #   MOLIT 폐루프)라 실害 없음. 분리 필요 시 rent_price_basis 필드 추가가 정답이며,
+    #   그 전까지 혼합 basis 입력을 만들지 말 것(생산처 계약).
     price_basis: str = "supply"
     sale_ratio: float = 1.0
 

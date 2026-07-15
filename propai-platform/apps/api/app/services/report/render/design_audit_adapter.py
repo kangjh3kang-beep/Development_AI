@@ -26,10 +26,13 @@ from .model import (
     fmt_value,
 )
 
-# 심각도/상태 원문 코드 → 한글 라벨(design_audit_pdf._SEVERITY_LABEL 과 동일)
+# 심각도/상태 원문 코드 → 한글 라벨(design_audit_pdf._SEVERITY_LABEL 과 동일).
+# ★실 U5 오케스트레이터 status 어휘(warning·skipped)를 포함해 정렬(과거 warn/pass만 매핑돼
+#   실엔진 status가 원문 그대로 노출되던 절단 수정).
 _SEVERITY_LABEL = {
     "high": "높음", "medium": "중간", "low": "낮음",
-    "fail": "부적합", "warn": "주의", "pass": "적합", "info": "정보",
+    "fail": "부적합", "warn": "주의", "warning": "주의",
+    "pass": "적합", "info": "정보", "skipped": "생략", "not_checked": "미검사",
 }
 
 
@@ -76,7 +79,17 @@ def _group_findings(findings: Any) -> dict[str, list[dict[str, Any]]]:
         cat = str(f.get("category") or f.get("kind") or "").lower()
         cid = _finding_id(f).upper()
         sev = str(f.get("severity") or "").lower()
-        if cat in {"engineering", "eng", "공학"} or cid.startswith("ENG"):
+        # ★실 U5 오케스트레이터 정본 스키마 정렬: finding.engine으로 1차 분류(과거 ENG-/CMP- 접두는
+        #   모킹 _FAKE_RESULT 계약이라 실 check_id[rules8_*/parking/permit_feasibility 등]와 절단됐다).
+        eng = str(f.get("engine") or "").lower()
+        if eng in {"rules8", "design_review", "solar_envelope", "parking",
+                   "change_risk", "grammar", "bl_rules"}:
+            groups["engineering"].append(f)
+        elif eng == "case_compare":
+            groups["comparison"].append(f)
+        elif eng in {"permit", "incentives"}:
+            groups["legal"].append(f)
+        elif cat in {"engineering", "eng", "공학"} or cid.startswith("ENG"):
             groups["engineering"].append(f)
         elif cat in {"comparison", "deviation", "comparable", "사례", "비교"} or cid.startswith(("CMP", "REF")):
             groups["comparison"].append(f)
@@ -222,7 +235,9 @@ def build_report_model_from_design_audit(data: dict[str, Any]) -> ReportModel:
     problems = list(groups["comparison"])
     problems += [
         f for f in groups["other"]
-        if str(f.get("severity") or "").lower() in {"high", "medium", "fail", "warn"}
+        # severity(모킹 계약) 또는 status(실 U5 — fail/warning) 어느 쪽이든 문제군으로 편입.
+        if str(f.get("severity") or f.get("status") or "").lower()
+        in {"high", "medium", "fail", "warn", "warning"}
     ]
     s2_blocks = [_finding_table(problems)] if problems else [
         NarrativeBlock(paragraphs=["확인된 문제점(사례 편차) 없음."])]

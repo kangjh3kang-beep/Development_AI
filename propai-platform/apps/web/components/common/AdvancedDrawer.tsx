@@ -26,16 +26,25 @@ export function AdvancedDrawer({
   label = "고급 설정",
   defaultOpen = false,
   className = "",
+  onOpenChange,
   children,
 }: {
   label?: string;       // 서랍 헤더 라벨(예: "직접 조정(고급)")
   defaultOpen?: boolean; // 처음부터 펼쳐 둘지 — 기본은 접힘
   className?: string;
+  // 펼침/접힘 변화 알림(옵셔널·additive) — 부모가 "서랍 열림 시 요약 칩 숨김" 같은 동시노출
+  //   제거를 구현할 때 쓴다. 내부 상태는 여전히 이 컴포넌트가 소유(uncontrolled·무회귀).
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   // 헤더 버튼과 본문을 연결해 스크린리더가 무엇을 펼치는지 알 수 있게 한다.
   const bodyId = useId();
+  // 상태 변경 + 부모 알림(이벤트 핸들러에서만 호출 — render-phase 부작용 없음).
+  const setOpenAndNotify = (next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  };
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] ${className}`}>
@@ -43,7 +52,7 @@ export function AdvancedDrawer({
         type="button"
         aria-expanded={open}
         aria-controls={bodyId}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpenAndNotify(!open)}
         className="flex w-full items-center justify-between gap-2 rounded-2xl px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50"
       >
         <span className="inline-flex items-center gap-2 text-xs font-bold text-[var(--text-secondary)]">

@@ -336,6 +336,17 @@ class DesignAuditOrchestrator:
                 "note": "rooms(실 타일링) 미제공 — 평면 문법(경계·개구·연결성) 검증 생략",
             }
 
+        # ── ⑨ bl_rules: 피난·방화(BL-007) — 정본 building_code_rules 위임(신작 금지) ──
+        # UI가 '피난·방화 체크'를 광고했으나 8엔진에 피난 검사가 없어 광고-실검사 불일치였다.
+        # 정본 BuildingCodeRuleEngine(BL-007 §34 직통계단/§46 방화구획/§35 특별피난계단)에 위임만 한다.
+        # 주차(BL-005)는 엔진 ④ parking(_compute_parking, 동일 주차장법 시행령 §6 산식)에서 이미
+        # 산정하므로 중복 계상 방지로 여기서 재검하지 않는다(정본 위임=BL-005·런타임=_compute_parking).
+        bl = self._run_bl_rules(params, zone_type)
+        engines_status["bl_rules"] = bl["status"]
+        findings.extend(bl["findings"])
+        if bl.get("section"):
+            sections["bl_rules"] = bl["section"]
+
         # [S7] 효율 지표(결정론 산술 — 엔진 외 공통 섹션).
         sections["efficiency_metrics"] = _efficiency_metrics(params)
 
@@ -425,13 +436,28 @@ class DesignAuditOrchestrator:
                 "ifc_note": ifc.get("note"),
             }
 
+        # ★공용 키 봉합(C2R WP-A 패턴): 프론트/부지분석 SSOT는 용도지역을 zone_code로 싣고,
+        # audit 엔진은 zone_type을 읽는다 — 키 절단으로 용도지역이 엔진에 미도달해 permit·
+        # incentives·solar 등 한도의존 엔진이 무조건 skip되던 문제를 관용 폴백으로 봉합한다
+        # (zone_type 우선, 없으면 zone_code — 둘 다 없으면 None으로 정직 skip).
+        zone_type = site.get("zone_type") or site.get("zone_code")
+        # 대지면적은 site(부지분석 SSOT)에 실려 오지만 엔진은 params.land_area_sqm를 읽는다.
+        # params(개요서 명시값)에 없을 때만 site 값으로 보강한다(명시값 우선·무날조·덮어쓰기 금지).
+        # ★falsy 통일(R2 리뷰): `in (None, "")`는 0을 통과시켜 "0㎡ 대지면적"이라는 무의미한
+        #   명시값을 site 통합값보다 우선시켰다(주석 의도와 불일치 — 0은 값 없음과 동치로 취급).
+        if not merged_params.get("land_area_sqm") and site.get("land_area_sqm") not in (None, ""):
+            merged_params["land_area_sqm"] = site.get("land_area_sqm")
+
         result = await self.audit(
             merged_params,
-            zone_type=site.get("zone_type"),
+            zone_type=zone_type,
             sigungu=site.get("sigungu"),
             address=site.get("address"),
             pnu=site.get("pnu"),
             shapes=geometry,
+            # 조례·계획 상한 페이로드 전달 배선(인센티브 조례계층 실효한도 산정용) —
+            # 미전달 시 None(far_tier_service가 용도지역 기본값으로 폴백, 무중단).
+            regulation_payload=site.get("regulation_payload"),
             rooms=rooms,
             prior_context=prior_context,
         )
@@ -540,6 +566,86 @@ class DesignAuditOrchestrator:
             },
         }
         return {"status": "ok", "findings": findings, "section": section}
+
+    # ── ⑨ bl_rules: 피난·방화(BL-007) — 정본 building_code_rules 위임 ──────────
+    def _run_bl_rules(self, params: dict[str, Any], zone_type: str | None) -> dict[str, Any]:
+        """9번째 엔진 — 정본 building_code_rules에 위임해 피난·방화(BL-007)를 surface한다.
+
+        신작 금지: BuildingCodeRuleEngine._check_fire_escape(건축법 시행령 §34 직통계단·
+        §46 방화구획·§35 특별피난계단) 결과를 AuditFinding으로 옮겨 담기만 한다.
+        데이터(층수·연면적·층당면적) 전무 시 skipped(정직 — 임의값으로 강행 금지).
+        주차(BL-005)는 엔진 ④에서 이미 산정하므로 중복 계상 방지로 여기서 재검하지 않는다.
+        """
+        floors = _num(params.get("floors_above"))
+        gfa = _num(params.get("total_floor_area_sqm"))
+        floor_area = _num(params.get("floor_area_per_floor_sqm"))
+        if floors is None and gfa is None and floor_area is None:
+            return {
+                "status": "skipped",
+                "findings": [make_finding(
+                    "bl_fire_escape", "bl_rules", STATUS_SKIPPED,
+                    note="층수·연면적·층당면적 없음 — 피난/방화(직통계단·방화구획) 검토 생략(임의값 금지)",
+                )],
+                "section": None,
+            }
+        try:
+            from app.services.permit.building_code_rules import (
+                BuildingCodeRuleEngine,
+                ComplianceStatus,
+            )
+
+            design = {
+                "floor_count_above": int(floors) if floors is not None else 1,
+                "total_gfa_sqm": gfa or 0.0,
+                "floor_area_per_floor_sqm": floor_area or 0.0,
+                "building_height_m": _num(params.get("building_height_m")) or 0.0,
+            }
+            res = BuildingCodeRuleEngine()._check_fire_escape(design, {"zone_type": zone_type or ""})
+        except Exception as e:  # noqa: BLE001 — 정본 위임 실패는 skipped(정직)
+            logger.warning("피난/방화(BL-007) 위임 실패 — skipped 처리", error=str(e)[:160])
+            return {
+                "status": "failed",
+                "findings": [make_finding(
+                    "bl_fire_escape", "bl_rules", STATUS_SKIPPED,
+                    note=f"피난/방화 검토 실패 — 결과 미산출(정직한 생략): {str(e)[:160]}",
+                )],
+                "section": None,
+            }
+
+        # ComplianceStatus → AuditFinding.status.
+        # ★WARNING→info(판정 미반영, R2 리뷰 확정방침): _check_fire_escape는 "5층 이상 OR
+        #   층당 200㎡ 초과"면 **무조건** WARNING을 낸다 — 이는 확정 위반이 아니라 "직통계단·
+        #   방화구획 요건이 존재하니 설계도서에서 확인하라"는 정직한 불확실 신호다(파라미터만으로
+        #   판정 불가). 이 요건은 사실상 모든 중규모 이상 건물에서 발화하므로, 예전처럼
+        #   STATUS_WARNING으로 verdict를 지배시키면 현실의 거의 모든 건물이 "조건부적합"에
+        #   묶여 "적합"에 도달할 수 없다(모든 건물에서 발화하는 경고는 신호가 없다 — 헤드라인
+        #   회귀). FAIL(확정 위반 — 이 룰은 현재 산출하지 않지만 향후 확장 대비)은 종전대로
+        #   verdict에 반영한다. 검사 자체는 info로도 findings/PDF에 정직하게 surface된다
+        #   (message에 "설계도서에서 확인 필요: ..." 문구 유지 — 무근거 낙관이 아니라 판정
+        #   불가 항목의 정직한 등급).
+        status_map = {
+            ComplianceStatus.PASS: STATUS_PASS,
+            ComplianceStatus.FAIL: STATUS_FAIL,
+            ComplianceStatus.WARNING: STATUS_INFO,
+            ComplianceStatus.NOT_APPLICABLE: STATUS_INFO,
+        }
+        finding = make_finding(
+            "bl_fire_escape", "bl_rules", status_map.get(res.status, STATUS_INFO),
+            current=res.actual_value,
+            limit=res.required_value,
+            legal_ref_keys=["evacuation"],
+            improvement=res.message,
+            note=f"{res.rule_name}({res.legal_basis})",
+        )
+        section = {
+            "rule_id": res.rule_id,
+            "status": str(res.status),
+            "required": res.required_value,
+            "actual": res.actual_value,
+            "message": res.message,
+            "legal_basis": res.legal_basis,
+        }
+        return {"status": "ok", "findings": [finding], "section": section}
 
     # ── ① rules8: 기하 8룰(BuildingComplianceService 검증기 재사용) ──────────
     async def _run_rules8(
@@ -777,6 +883,10 @@ class DesignAuditOrchestrator:
                 note="세대수·연면적 모두 없음 — 법정주차 산정 생략(0대 날조 금지)",
             )]}
 
+        # ★주차 정본 = 주차장법 시행령 §6(별표1). 룰 정본은 building_code_rules.BL-005
+        #   (_check_parking)이며, 여기 auto_design_engine._compute_parking은 동일 법적근거(§6)의
+        #   런타임 계산 경로다(공동주택 1.0대/세대로 BL-005와 대수 산식 일치). 중복 계상 방지를 위해
+        #   9번째 bl_rules 엔진은 주차를 재검하지 않고 피난(BL-007)만 surface한다(단일 SSOT).
         from app.services.cad.auto_design_engine import PARKING_RULES, _compute_parking
 
         building_use = str(params.get("building_use") or "공동주택")
