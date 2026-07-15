@@ -22,9 +22,12 @@ IfcExtrudedAreaSolid로 압출해 표현한다.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피
+    from app.services.bim.bimir_schema import BimModel
 
 logger = structlog.get_logger()
 
@@ -498,3 +501,20 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         balconies=bool(mass.get("balconies", False)),
         unit_doors=bool(mass.get("unit_doors", False)),
     )
+
+
+def build_ifc_from_bimir(model: BimModel, project_name: str = "PropAI Project") -> bytes:
+    """BimIR(propai.bimir/1.0) → IFC (WP-D 소비처 전환·대표 1곳).
+
+    ★무회귀: 기존 build_ifc_from_mass(매스 dict 직접 경로)는 그대로 둔다. 이 함수는 '추가' 경로로,
+      BimIR에서 매스를 복원(mass_from_bimir)해 동일한 build_ifc_from_mass로 넘긴다.
+    ★구조 동등성: mass_from_bimir(bimir_from_mass(mass)) == mass (왕복 무손실)이므로, 이 BimIR 경로는
+      기존 매스 경로와 '동일 파라미터'로 generate()를 호출한다 → 동일 IFC(요소·기하 동일).
+      (IFC의 GlobalId는 ifcopenshell.guid.new()로 매 호출 랜덤이라 바이트 동일은 불가 — 구조 동등이 정답.)
+
+    glb/QTO의 BimIR 소비 전환은 다음 세션 범위다(이 세션은 IFC 대표 1곳만).
+    """
+    from app.services.bim.bimir_adapters import mass_from_bimir
+
+    mass = mass_from_bimir(model)
+    return build_ifc_from_mass(mass, project_name=project_name)
