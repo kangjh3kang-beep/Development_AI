@@ -9,7 +9,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, Lightbulb } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Info, Lightbulb } from "lucide-react";
 import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -431,6 +431,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   const [canvasView, setCanvasView] = useState<"2d" | "3d">("2d");
   // ②③ 일조 인벨로프 결과 리프트 — 상단 '예상 층수' 카드를 실무 권장 범위로 배선(ceil(FAR/BCR) 날조 제거).
   const [envResult, setEnvResult] = useState<EnvLift | null>(null);
+  // ★Pillar A(중복 제거): '직접 조정(고급)' 서랍이 열리면 확정 칩(읽기전용 요약)을 숨긴다 —
+  //   같은 값(대지면적·용도지역·건물용도)이 칩과 서랍 입력필드에 동시 2벌 노출되던 혼란 제거.
+  //   서랍(폼)은 그대로 마운트 유지되므로 편집 중 포커스 상실 없음(무회귀).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ② projectId 변경 시 폼 기본값 리셋 — 이전 프로젝트의 시드/입력값 잔류 차단.
   const prevProjectRef = useRef(effectiveProjectId);
@@ -440,6 +444,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     setForm({ ...DEFAULT_FORM });
     setZoneEdited(false);
     setUserEdited(false);
+    // ★리뷰 LOW-MEDIUM: '직접 조정(고급)' 서랍을 연 채 프로젝트를 전환하면 새 프로젝트의
+    //   확정 칩이 advancedOpen=true 잔류로 계속 숨겨진 채 서랍만 보이는 경계 상태가 됐다.
+    //   폼 리셋과 함께 서랍도 접어 칩·서랍 동시숨김 상태를 새 프로젝트 기준으로 초기화한다.
+    setAdvancedOpen(false);
   }, [effectiveProjectId]);
 
   // 부지분석(SSOT)에서 대지면적·용도지역을 시드한다. 용도지역은 변형 표기
@@ -804,7 +812,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //    항상 고급 서랍 안에 둔다(미입력 시 기본 3.0 폴백은 기존대로).
   const floorHeightField = (
     <div className="min-w-0">
-      <label className="cc-label mb-2 block whitespace-nowrap">층고 (m)</label>
+      {/* ⓘ 쉬운 설명(F2) — 전문 파라미터를 비전문가도 이해하도록 hover 툴팁으로 부연(easy 토글과 별개로 상시). */}
+      <label
+        className="cc-label mb-2 flex items-center gap-1 whitespace-nowrap"
+        title="한 층의 바닥부터 위층 바닥까지 높이(m). 층수·건물 높이 환산의 기준이 됩니다. 기본 3.0m."
+      >
+        층고 (m)
+        <Info className="size-3 text-[var(--text-hint)]" aria-hidden />
+      </label>
       <NumberInput allowDecimal placeholder="3.0"
         value={form.floorHeight === "" ? null : Number(form.floorHeight)}
         onChange={(n) => {
@@ -904,7 +919,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             언마운트/포커스 상실이 없다. 칩 값은 '현재값'(편집 반영)을 보여주고, 편집은 서랍에서 한다. */}
         {layoutSeeded ? (
           <>
-            {/* 확정 칩 3개 — 현재 적용값(편집하면 즉시 반영). 아직 미수정이면 '부지분석 자동' 배지. */}
+            {/* 확정 칩 3개 — 현재 적용값(편집하면 즉시 반영). 아직 미수정이면 '부지분석 자동' 배지.
+                ★Pillar A: 아래 '직접 조정(고급)' 서랍이 열리면(advancedOpen) 이 칩을 숨겨 같은 값이
+                칩·서랍에 동시 2벌 노출되지 않게 한다(어느 쪽이 정본인지 혼란 제거). */}
+            {!advancedOpen && (
             <InspectorGrid minItemRem={9}>
               {[
                 { label: "대지면적", value: `${Math.round(form.landArea ? Number(form.landArea) : seededLandAreaSqm!).toLocaleString()} ㎡` },
@@ -924,9 +942,20 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                 </div>
               ))}
             </InspectorGrid>
+            )}
             {/* 직접 조정(고급) — 펼치면 편집 폼 4필드 그대로. 폼은 layoutSeeded 동안 항상 이 서랍 안에
-                머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. */}
-            <AdvancedDrawer label="직접 조정(고급)" className="mt-4">
+                머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. onOpenChange로 열림 상태를
+                끌어올려 위 확정 칩을 숨긴다(동시 2벌 노출 제거·Pillar A).
+                ★리뷰 LOW-MEDIUM 후속: AdvancedDrawer는 비제어(내부 open state 자체 소유) —
+                key={effectiveProjectId}로 프로젝트 전환 시 강제 리마운트해야 서랍의 내부 open이
+                리셋된다. key 없이 위 리셋 effect의 setAdvancedOpen(false)만 쓰면 '끌어올린 값'만
+                닫힘으로 바뀌고 서랍 자체는 열린 채 남아 칩+서랍이 다시 동시 노출되는 새 결함이 생긴다. */}
+            <AdvancedDrawer
+              key={effectiveProjectId}
+              label="직접 조정(고급)"
+              className="mt-4"
+              onOpenChange={setAdvancedOpen}
+            >
               <InspectorGrid minItemRem={12}>
                 {landAreaField}
                 {zoningField}

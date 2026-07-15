@@ -39,6 +39,15 @@
   --header-h: 64px;
   --gap: 24px;
 
+  /* ★전역 앱 헤더(DashboardChromeGate.tsx <header>) 회피 오프셋 — sticky 자식(예: 설계
+     스튜디오 좌/우 레일)이 lg: 이상에서 sticky top으로 쓰는 공용값. 헤더는
+     `sticky top-2`(0.5rem) + 실측 높이 80px(5rem) = "고정 시 하단 경계" 5.5rem, 여기에
+     시각적 여백 0.75rem을 더해 6.25rem. 실측: apps/web/e2e 또는 Playwright로
+     `header` bounding box 확인(2026-07-16 1024~1440px 폭에서 80px 일관 측정).
+     ★불변식: DashboardChromeGate.tsx의 헤더 padding/높이가 바뀌면 이 값도 함께 갱신할 것
+     (헤더 파일에 역참조 주석 있음). */
+  --app-header-offset: 6.25rem;
+
   /* ── Typography Weights & Tracking ── */
   --font-weight-thin: 300;
   --font-weight-normal: 400;
