@@ -15,6 +15,15 @@ sudo docker run -d --name "$NAME" --restart always --env-file .env -p ${NEW}:800
 echo "== 신앱 health 대기(8000 내부) =="
 ok=0; for i in $(seq 1 60); do if curl -sf -o /dev/null "http://localhost:${NEW}/health"; then ok=1; break; fi; sleep 3; done
 if [ "$ok" != "1" ]; then echo "!! 신앱 health 실패 — 배포중단(기존 유지)"; sudo docker rm -f "$NAME"; exit 1; fi
+# ★DB 마이그레이션(신 컨테이너 내부 alembic upgrade head) — 트래픽 전환 '전'에 수행.
+#  새 코드가 요구하는 스키마(신규 컬럼/테이블)를 트래픽 받기 전에 반영해, 코드-스키마 불일치로
+#  로그인 등이 500 나던 사고(2026-07-15 042)를 원천 차단한다. additive 마이그레이션 전제라
+#  구 컨테이너는 마이그레이션 중에도 정상 서빙(하위호환). 실패 시 트래픽 전환 없이 배포중단.
+#  ★프로덕션 DB는 alembic 관리(alembic_version=042 stamp 완료) — 이후 신규 리비전만 자동 적용.
+echo "== DB 마이그레이션(alembic upgrade head, 신 컨테이너 내부) =="
+if ! sudo docker exec "$NAME" sh -c "cd /app/apps/api && PYTHONPATH=/app alembic upgrade head"; then
+  echo "!! 마이그레이션 실패 — 배포중단(기존 유지·트래픽 전환 안 함)"; sudo docker rm -f "$NAME"; exit 1
+fi
 echo "== Caddy 전환(graceful reload) → $NEW =="
 printf ":80 {\n  reverse_proxy localhost:%s\n}\n" "$NEW" > ~/caddy/Caddyfile
 sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
