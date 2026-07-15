@@ -82,6 +82,11 @@ interface AutoRecommendApiResponse {
   all_results: BackendRecommendItem[];
   total_types_analyzed: number;
   ai_interpretation?: FeasibilityInterpretation | null;
+  // ★P3(침묵 폴백 정직화): 백엔드 가정치 폴백(면적 1000㎡·용적률 250%·공시지가 150만원/㎡)
+  //   사용 시에만 채워지는 정직 고지 — 있으면 반드시 렌더한다(orphan 금지).
+  area_disclosure?: string | null;
+  far_disclosure?: string | null;
+  land_price_disclosure?: string | null;
   // ★P1 미래속성(종상향 잠재) — 현행 추천에 더해 종상향 시 잠재 용적률(예상치·확정 아님).
   upzoning_potential?: {
     current_far_pct?: number;
@@ -269,6 +274,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [analysisCount, setAnalysisCount] = useState(0);
   // ★P1: 종상향 잠재(미래 토지속성) — 현행 추천과 분리 표기(예상치·확정 아님).
   const [upzoning, setUpzoning] = useState<UpzoningPotential>(null);
+  // ★P3: 백엔드 가정치 폴백 정직 고지(있을 때만 배너 렌더).
+  const [disclosures, setDisclosures] = useState<string[]>([]);
   // ★100% 완성: 종상향 시 추천 사업방식(IntegratedRecommender 2축 랭킹의 종상향 후보) — 실랭킹 반영.
   const [upzoningRanked, setUpzoningRanked] = useState<OptimalRankedCandidate[]>([]);
   const [showFullTable, setShowFullTable] = useState(false);
@@ -293,6 +300,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     setUpzoning(null);
     setUpzoningRanked([]);
     setAiInterpretation(null);
+    setDisclosures([]);
 
     // Simulate progress
     progressRef.current = setInterval(() => {
@@ -327,6 +335,10 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
       setUpzoning(response.upzoning_potential ?? null);
       setAiInterpretation(response.ai_interpretation ?? null);
+      setDisclosures(
+        [response.area_disclosure, response.far_disclosure, response.land_price_disclosure]
+          .filter((d): d is string => typeof d === "string" && d.length > 0),
+      );
 
       // ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹에 반영되도록 IntegratedRecommender(2축)를
       //   ★fire-and-forget(메인 로딩을 막지 않음·외부수집 별도) — 종상향(far_basis='종상향') 후보를 비동기 surface.
@@ -632,6 +644,20 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── Top 3 Cards ── */}
       <AnimatePresence>
+        {/* ★P3: 가정치 폴백 정직 고지 — 백엔드가 disclosure를 보낸 경우에만 노출(무목업). */}
+        {topModels.length > 0 && disclosures.length > 0 && (
+          <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--status-warning)]" />
+              <div className="space-y-1">
+                {disclosures.map((d) => (
+                  <p key={d} className="text-xs leading-5 text-[var(--text-secondary)] break-keep">{d}</p>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {topModels.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 30 }}

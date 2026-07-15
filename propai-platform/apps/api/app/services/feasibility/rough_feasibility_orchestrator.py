@@ -441,6 +441,9 @@ async def build_rough_scenario(
     land_price_reliable = bool(rec_result.get("land_price_reliable"))
     if not rec_result.get("area_reliable", True):
         degraded.append(rec_result.get("area_disclosure") or "부지면적 미확보 — 가정치 기준(참고용).")
+    # ★P3(침묵 폴백 정직화): 용적률 250% 가정치 폴백도 동일 관례로 정직 강등(침묵 전파 금지).
+    if not rec_result.get("far_reliable", True):
+        degraded.append(rec_result.get("far_disclosure") or "용적률 상한 미확보 — 250% 가정치 기준(참고용).")
 
     # ── GFA·분양가능면적(전용률/분양률 반영) ──
     gfa_sqm = None
