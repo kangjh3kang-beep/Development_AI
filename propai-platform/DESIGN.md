@@ -201,23 +201,67 @@
 
 ## B3. 레이아웃 (앱 셸)
 
-### B3.1 공통 셸 (전 화면 검증)
-- **헤더 64px 고정**: 좌측 = 브랜드 블록(32px 사각 로고 `四` + "사통팔땅" + 모듈명 label-caps) + 세로 구분선 + **프로젝트 선택 필드**(폴더 아이콘 + PROJECT 라벨 + 프로젝트명 + ▾) / 우측 = 글로벌 네비(활성 = on-surface 600, 비활성 = 뮤트) + 상태 인디케이터 + 주 액션 버튼.
-- **3열 워크스페이스**: 좌 패널 300–440px + 중앙 유동(지도/캔버스/대시보드) + 우 패널 360–500px. 각 패널 `overflow-y: auto`, 섹션 패딩 16px, 섹션 간 1px 보더 구분.
+### B3.1 공통 셸 (구현 정본 — `components/layout/DashboardChromeGate.tsx`)
+
+앱 셸은 **전 대시보드 화면 공통**이며 개별 화면이 헤더를 다시 그리지 않는다.
+
+- **컨테이너**: `max-w-[1500px]` 중앙 정렬 + `px-4 py-4 md:px-6` + 섹션 `gap-4`.
+- **헤더 — 부유 카드형 sticky**(고정 높이 아님): `sticky top-2` + `rounded-2xl` +
+  `1px --line` 보더 + `--surface-secondary` 배경 + `--shadow-md`. 높이는 콘텐츠에서 파생
+  (`Logo size="md"` = h-8/h-10 + `py-3`).
+  - 좌: 브랜드 `Logo`(홈 링크)
+  - 우: 모바일 사이드바 토글 · 런타임모드 칩(`--status-success` 10% 배경 + 30% 보더 + 11px/bold/uppercase/`--r-pill`) ·
+    테마/언어/인증 묶음(`--surface-soft` + 1px 보더, 세로 구분선으로 3분할)
+- **글로벌 네비는 헤더 밖 별도 줄**: `WorkspaceNavBar`(데스크톱 전용, 모바일은 사이드바 토글).
+- **면책 고지는 셸이 전역 제공**: `main` 하단 `<Disclaimer />` — 개별 화면이 중복 렌더하지 않는다.
+- **프로젝트 선택은 헤더가 아니라 화면 단위**(`ProjectSwitcher`·`ContextHeader` 등).
 - 지도/캔버스 위 플로팅 컨트롤: 글래스, 가장자리 16–24px 이격.
 - 40px 정방 그리드 오버레이: `linear-gradient` 2방향, 다크 `rgba(67,70,85,.14~.18)` / 라이트 `rgba(130,142,170,.16)`.
-- 하단 상태바(엔진·문서 화면): mono 11px, 좌 = 버전·개체수, 우 = 예외(warning)·동기화 상태(success).
+
+> **컴프와의 차이(의도적·미해소 갭)**: 컴프(*.dc.html)는 헤더를 **64px 고정 바**로 그리고 그 안에
+> 모듈명 label-caps · **프로젝트 선택 필드** · 글로벌 네비 · 주 액션을 모두 담았다.
+> 구현은 부유 카드형 셸 + 네비 분리를 택했고 `--header-h`(64px) 토큰은 **정의만 되고 소비처가 없다**.
+> 컴프의 "헤더에 상시 프로젝트 컨텍스트" 의도는 아직 반영되지 않았다 — 되살릴지는 미결.
+>
+> **하단 상태바**(엔진·문서 화면: mono 11px, 좌=버전·개체수, 우=예외/동기화)도 컴프 패턴이나
+> CAD·BIM 어느 화면에도 **미구현**이다.
 
 ### B3.2 대시보드/홈 레이아웃
-- max-width 1560–1600px 중앙 정렬, 패딩 24–32px, 섹션 간 40px.
-- 히어로(관제): 좌 영상/이미지 카드(min 480px, 스크림 좌→우) + 우 380px 사이드 카드.
-- 카드 그리드: KPI 4열 · 모듈 카드 2–3열 · 프로젝트 카드 2열.
+- max-width **1500px**(셸 값) 중앙 정렬, 패딩 16–24px, 섹션 간 `gap-4`~`gap-6`.
+- 히어로(관제): 좌 영상 카드 + 우 사이드 카드. 영상은 A3.1 패턴(로컬 에셋·poster·재생 킥·캔버스 폴백).
+- 카드 그리드: 모듈/생성 허브 2–3열 · 프로젝트 카드 2열.
+- **3열 워크스페이스**(지도·CAD·BIM·수지·적산 등 도구 화면): 좌 패널 300–440px + 중앙 유동 +
+  우 패널 360–500px. 각 패널 `overflow-y: auto`, 섹션 패딩 16px, 섹션 간 1px 보더 구분.
+  현재 이 형태를 완전히 갖춘 화면은 없다(대부분 수직 스택 + 부유 HUD) — 화면별 갭.
 
 ## B4. 깊이·형태
 
-- 깊이는 투명도 + 글로우: L0 캔버스 → L1 글래스(blur 12) → L2 활성 글로우(`0 0 16~24px primary/20~35%`) → L3 팝오버(blur 24).
-- 라운드: 버튼/인풋/칩 4px · 카드 8–12px · 대형 카드/히어로 14–16px · pill(뱃지·GNB 탭) 999px.
-- 그림자 금지 — 보더와 배경 대비로 위계 표현. 예외: 종이 문서 뷰(`0 8px 24px rgba(0,0,0,.4)` 다크 / `rgba(42,46,59,.15)` 라이트)와 활성 글로우.
+- 깊이는 투명도 + 글로우: L0 캔버스 → L1 글래스(blur 12) → L2 활성 글로우 → L3 팝오버(blur 24).
+- 라운드: 버튼/인풋/칩 `--r-input`(4px) · 카드 `--r-card`(8px) · 패널 `--r-panel`(12px) · pill `--r-pill`(999px).
+  `--radius-sm|md|lg|xl|2xl`(0.875~3.5rem) 계열도 병존한다 — 기존 다수 소비처가 있어 이름·값 유지.
+
+### B4.1 그림자 — 토큰 스케일로 관리한다 (금지 아님)
+
+컴프(*.dc.html)는 보더 위주로 그려졌으나, **구현은 그림자를 정식 토큰으로 채택**했다.
+`tokens.css`가 라이트/다크 **양쪽에 동일 키로 정의**하며(parity 게이트 대상) 디자인 v2.0 캠페인이 이를 쓴다.
+
+| 토큰 | 용도 |
+|---|---|
+| `--shadow-xs` · `--shadow-sm` | 칩·소형 컨트롤 |
+| `--shadow-md` · `--shadow-lg` | 카드·드롭다운 |
+| `--shadow-xl` · `--shadow-2xl` | 히어로·모달 |
+| `--shadow-inner` | 인셋(트랙·홈) |
+| `--shadow-glow` · `--shadow-glow-strong` | **활성 상태 글로우**(액센트 색조 정렬) |
+
+규칙:
+- **반드시 토큰으로만 쓴다.** `shadow-[var(--shadow-md)]` ○ / Tailwind 기본 스케일(`shadow-sm`·`shadow-2xl`) ✕
+  (기본 스케일은 테마 전환 시 다크 깊이로 바뀌지 않는다).
+- 라이트는 얕고 중성(`rgba(24,33,43,.06~.15)`), 다크는 깊다(`rgba(0,0,0,.5~.95)`) — tokens.css가 자동 전환.
+- 그림자로 **위계를 만들되 장식하지 않는다.** 같은 층에 여러 깊이를 섞지 않는다.
+- 종이 문서 뷰(등기부·보고서)는 `--shadow-lg` 사용.
+
+> 이력: v3.0 초판은 컴프만 보고 "그림자 금지"로 적었으나, 구현 SSOT가 라이트/다크 parity를 갖춘
+> 정식 토큰 스케일을 제공하고 21개 PR이 이를 채택한 상태였다. **문서를 코드에 맞춰 정정**(2026-07-15).
 
 ## B5. 컴포넌트 패턴 라이브러리 (화면 검증 완료)
 
@@ -286,7 +330,10 @@
 # D. 하지 말 것 (통합 안티패턴)
 
 - ❌ 그라디언트 배경 남발, 다색 강조, 무지개색
-- ❌ 드롭섀도 카드 (보더로 대체 — B4 예외 2종만)
+- ❌ **Tailwind 기본 그림자 스케일**(`shadow-sm`·`shadow-2xl` 등) — 테마 전환 시 다크 깊이로 바뀌지 않는다.
+  그림자는 반드시 토큰으로: `shadow-[var(--shadow-md)]` (B4.1)
+- ❌ **Tailwind 팔레트로 상태색 표현**(`emerald-500`·`rose-500`·`amber-500` 등) — 테마 전환 시 안 바뀐다.
+  의미가 있는 색은 `--status-success|warning|error` 토큰으로 (B1)
 - ❌ 둥근 모서리 + 좌측 컬러 보더 카드 클리셰
 - ❌ 이모지, filled/duotone/혼용 아이콘, 장식용 아이콘, 스파클 FAB
 - ❌ Inter/Roboto/Arial/Fraunces
@@ -301,48 +348,73 @@
 
 ---
 
-# E. 토큰 요약 (Copy-paste)
+# E. 토큰 요약
+
+> **★ 이 절은 참조용이다. 여기 값을 복사해 재정의하지 말 것.**
+> 구현 SSOT는 `packages/ui/src/styles/tokens.css` **한 곳**이며,
+> `apps/web/app/globals.css`는 파생 유틸리티만 보유한다(토큰 재정의 금지).
+> 값 변경은 tokens.css만 고치고 게이트를 통과시킨다:
+> `packages/ui/scripts/token_parity.py`(라이트↔다크 키 집합 동일) · `token_contrast.py`(WCAG AA).
+
+## E1. 이름 대응 — 본문 표기 ↔ 구현명(정본)
+
+본 문서 Part B 본문은 설명 편의상 표준 semantic 명칭을 쓰지만, **구현 토큰명은 아래가 정본**이다.
+이름을 바꾸지 않는 것은 의도된 결정이다(약 1만 개 참조 보호 — tokens.css 헤더에 명시).
+`cc-` · `saas-` · `sa-` · `db-` 계열 접두 토큰/클래스는 불가침.
+
+| 본문 표기 | **구현 토큰명 (정본)** | 값 |
+|---|---|---|
+| `--primary` | `--accent` | 라이트 `#7C98F2` / 다크 `#135bec` |
+| — | **`--accent-strong`** | 라이트 `#4a66d6` / 다크 `#3b82f6` — 실사용 최다 |
+| — | `--accent-soft` | 액센트 10~15% 배경 |
+| `--on-surface` | `--text-primary` | `#2A2E3B` / `#e1e1ee` |
+| `--on-surface-variant` | `--text-secondary` | `#555B6E` / `#c3c5d8` |
+| `--outline` (뮤트 텍스트) | `--on-surface-muted` | `#8A90A4` / `#8d90a1` |
+| `--outline-variant` (보더 강) | `--line-strong` | `--line`·`--line-subtle` 병존 |
+| `--surface-container` | `--surface-secondary` | `#F0F2F8` / `#191b24` |
+| `--surface-container-high` | `--surface-tertiary` | `#E7EAF2` / `#282a32` |
+| `--surface-container-low` | `--surface-soft` | `#F3F5FA` / `#0c0e16` |
+
+이름이 그대로인 토큰: `--background-deep` · `--surface-panel` · `--surface-elevated` · `--border-muted` ·
+`--secondary` · `--tertiary` · `--ai-accent` · `--on-primary` · `--primary-dim` ·
+`--status-success|warning|error|info` · `--glass-bg` · `--glass-bg-strong` · `--glass-blur` ·
+`--paper` 4종 · `--r-input|card|panel|pill` · `--gap` · `--ease` · `--font-display|body|mono`.
+
+### `--accent-strong` 대비 — 컴프 권고를 AA 기준으로 상향한 근거
+- **라이트**: 권고 `#5570DE`는 실측 4.41:1(버튼)/4.12:1(텍스트)로 **AA 미달** → 두 용도 모두 4.5:1을
+  통과하는 `#4a66d6` 채택(흰 글자 버튼 5.04:1 · `#F6F7FB` 위 텍스트 4.71:1).
+- **다크**: `#11131b` 위에서 두 용도 4.5:1 동시충족이 수학적으로 불가 → `#3b82f6` 유지
+  (버튼 3.68:1 = AA-large 통과·라벨은 볼드/대형 + 강조 텍스트 5.04:1 = AA-body 통과)로 파레토 최적.
+
+## E2. 구역 구조 (tokens.css)
+
+- `:root` → `@tokens:common`(테마 불변: 폰트 스택·라운드·모션·`--paper` 4종·`--saas-*` 랜딩 팔레트)
+  \+ `@tokens:light`(파스텔)
+- `.dark, [data-theme="dark"]` → `@tokens:dark`(Nexus)
+- **게이트**: light/dark 키 집합은 항상 동일(한쪽에만 있는 색 토큰 = 테마 파편화 → 금지).
+- 폰트 스택은 `app/fonts.ts`의 next/font 로컬 변수를 소비한다(셀프호스팅 — 외부 CDN 의존 0).
+
+## E3. Part A(랜딩)는 `--mkt-*` 스코프 토큰
+
+Part A는 전역 토큰과 **이름이 겹치지 않도록** `--mkt-` 접두를 쓰고 `.mkt-root` 스코프에 갇힌다
+(`apps/web/components/marketing/marketing.css`). Warm Amber와 Nexus의 액센트가 충돌하지 않는 이유이자,
+C4("랜딩에 Nexus 반입 금지")의 구현 수단이다. 랜딩에서 전역 토큰(`--accent` 등) 사용 금지.
 
 ```css
-:root, [data-theme="dark"] {
-  /* ── Part B: 앱 (다크 기본) ── */
-  --background-deep:#0a0c10; --surface:#11131b; --surface-panel:#111318;
-  --surface-container:#1c1f27; --surface-container-high:#282a32;
-  --surface-elevated:#282e39; --border-muted:#282e39;
-  --outline:#8d90a1; --outline-variant:#434655;
-  --on-surface:#e1e1ee; --on-surface-variant:#c3c5d8;
-  --primary:#135bec; --on-primary:#e2e6ff; --primary-dim:#b4c5ff;
-  --secondary:#4cd7f6; --tertiary:#ffb95f; --ai-accent:#a855f7;
-  --status-success:#22c55e; --status-warning:#f59e0b; --status-error:#ef4444;
-  --glass-bg:rgba(22,25,32,.85); --glass-bg-strong:rgba(22,25,32,.9);
-}
-[data-theme="light"] {
-  --background-deep:#ECF0F6; --surface:#F6F7FB; --surface-panel:#FFFFFF;
-  --surface-container:#F0F2F8; --surface-container-high:#E7EAF2;
-  --surface-elevated:#E2E5EE; --border-muted:#E2E5EE;
-  --outline:#8A90A4; --outline-variant:#D2D7E4;
-  --on-surface:#2A2E3B; --on-surface-variant:#555B6E;
-  --primary:#7C98F2; --on-primary:#FFFFFF; --primary-dim:#5570DE;
-  --secondary:#3BA8C4; --tertiary:#C88A3C; --ai-accent:#9356DC;
-  --status-success:#3A9668; --status-warning:#E9A436; --status-error:#D05050;
-  --glass-bg:rgba(255,255,255,.88); --glass-bg-strong:rgba(255,255,255,.94);
-}
-:root {
-  /* ── Part A: 랜딩 ── */
-  --ink:#0E0E10; --ink-soft:#2A2A2E; --graphite:#6B6B70;
-  --line:#E4E4E7; --paper-a:#F4F4F2; --white:#FFFFFF;
-  --accent:#C8873F; --accent-soft:#E8C79A; --accent-deep:#9C6A2E;
-  /* ── 문서(종이) — 테마 불변 ── */
-  --paper:#F7F6F1; --paper-ink:#1E1E22; --paper-line:#D5D2C6; --paper-section:#E9E7DE;
-  /* ── 공통 ── */
-  --font-display:'Space Grotesk','Pretendard',sans-serif;
-  --font-body:'Pretendard',sans-serif;
-  --font-mono:'JetBrains Mono',monospace;
-  --header-h:64px; --sidebar-w:400px; --gap:24px;
-  --r-input:4px; --r-card:8px; --r-panel:12px; --r-hero:16px; --r-pill:999px;
-  --ease:cubic-bezier(.2,.8,.2,1);
+.mkt-root {
+  --mkt-ink:#0e0e10; --mkt-ink-soft:#2a2a2e; --mkt-graphite:#6b6b70;
+  --mkt-line:#e4e4e7; --mkt-paper:#f4f4f2; --mkt-white:#ffffff;
+  --mkt-accent:#c8873f; --mkt-accent-soft:#e8c79a; --mkt-accent-deep:#9c6a2e;
+  --mkt-maxw:1440px; --mkt-pad-x:72px; --mkt-ease:cubic-bezier(.2,.8,.2,1);
+  color-scheme: light;   /* 앱 다크 테마 누출 차단 */
 }
 ```
+
+## E4. 미도입 — 문서에만 있던 것(처방 금지)
+
+- `--sidebar-w` — 전역 강제 **보류**. 패널 폭은 화면별로 지정한다.
+- `--r-hero` — 미도입. 대형 카드/히어로는 `--r-panel` 또는 화면별 값.
+- `--header-h`(64px) — 정의는 있으나 **소비처 0**. B3.1 참조.
 
 ---
 
@@ -365,3 +437,12 @@
 | 보고서 | `Report Studio (Light).dc.html` | 산출물 선택, 종이 표지, 생성 이력 |
 
 *v3.0 — 2026-07-15. 화면 12종에서 검증된 패턴(앱 셸·편집 테이블·지도 레일·2D/3D 정합·종이 문서·단위 병기·고지 체계)을 지침으로 역반영. v2.0의 A/B 구조 유지.*
+
+*v3.0-a — 2026-07-15. **구현 정합 패스**: 컴프만 보고 쓰인 초판이 코드 실제와 어긋난 4곳을 정정했다.
+(1) §E 토큰 요약 → 구현 토큰명(정본) 대응표 + SSOT 경로·게이트 명시. 초판의 표준명(`--primary`/
+`--on-surface`/`--outline`/`--surface-container`)은 구현에 없어 **"토큰이 없다"는 오독을 실제로 유발**했다.
+(2) §B4 "그림자 금지" → 토큰 스케일로 관리(tokens.css가 라이트/다크 parity 완비, 21PR 채택).
+(3) §B3.1 "헤더 64px 고정" → 실제 부유 카드형 sticky 셸. 컴프 의도(헤더 내 프로젝트 컨텍스트)는 갭으로 명시.
+(4) §D → 실제 안티패턴 2건 추가(Tailwind 기본 그림자·팔레트 = 테마 전환 불가).
+원칙: **문서가 코드보다 뒤처진 경우 문서를 고친다.** 코드 쪽 의도가 주석·parity 게이트·대량 참조로
+명시돼 있으면 그것이 정본이다.*
