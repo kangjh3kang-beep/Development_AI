@@ -197,6 +197,15 @@ except ImportError:
     except ImportError:
         basis_router = None
 
+# 설계 실행(design-run) 커맨드 — WP-L: 승인차원(approve·멱등)·실행차원(job/cancel) (자체 prefix="/design-runs")
+try:
+    from apps.api.app.routers.design_runs import router as design_runs_router
+except ImportError:
+    try:
+        from app.routers.design_runs import router as design_runs_router
+    except ImportError:
+        design_runs_router = None
+
 # 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
 try:
     from apps.api.app.routers.g2b_bid import router as g2b_router
@@ -694,6 +703,14 @@ async def _inject_user_context(request, call_next):
 # 예외 핸들러 등록
 register_exception_handlers(app)
 
+# WP-L: RFC 9457 problem+json 핸들러 additive 등록 — 신규 C2R 표면(access·survey/coordinate·basis·
+# design-runs·submission-bundle)에만 opt-in 적용. 그 밖 경로는 FastAPI 기본 핸들러에 위임(무회귀).
+try:
+    from apps.api.app.core.problem_details import register_problem_handlers
+except ImportError:
+    from app.core.problem_details import register_problem_handlers
+register_problem_handlers(app)
+
 # Rate Limiting 등록 (SlowAPIMiddleware → 모든 엔드포인트에 default_limits 적용)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
@@ -1072,3 +1089,6 @@ if survey_coordinate_router is not None:
 if basis_router is not None:
     # 부지기반 게이트(P7): 자체 prefix="/basis" → /api/v1/basis/assess·/{run_id}/approve·/{run_id}
     app.include_router(basis_router, prefix="/api/v1")
+if design_runs_router is not None:
+    # 설계 실행 커맨드(WP-L): 자체 prefix="/design-runs" → /api/v1/design-runs/{run_id}/approve·/cancel·/job
+    app.include_router(design_runs_router, prefix="/api/v1")
