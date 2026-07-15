@@ -579,6 +579,9 @@ class KakaoCallbackRequest(BaseModel):
 
     code: str
     redirect_uri: str | None = None
+    # CSRF 방지 state(login-url에서 발급) — 프론트가 콜백 URL의 state와 sessionStorage 보관값을
+    # 대조한 뒤 그대로 전달한다. 카카오 토큰교환엔 불필요하나 계약 정합·감사를 위해 받는다.
+    state: str | None = None
 
 
 @router.get("/kakao/login-url")
@@ -591,8 +594,12 @@ async def kakao_login_url(
     프론트 '카카오 로그인' 버튼이 이 URL로 이동하면 카카오 동의→콜백(code)→/kakao/callback 교환.
     redirect_uri 미지정 시 서버 설정값(kakao_redirect_uri) 사용. authorize/callback의 redirect_uri는
     반드시 동일해야 하므로 기본은 서버 설정값으로 통일한다.
+
+    ★state(CSRF 방지)를 발급·반환한다. 프론트는 이 state를 sessionStorage에 보관했다가 콜백에서
+    대조해, 공격자가 자신의 인가코드를 피해자에게 링크로 전달하는 로그인 CSRF/세션 고정을 막는다.
     """
     import os
+    import secrets as _secrets
     from urllib.parse import urlencode
 
     # ★관리자 키화면(secret_store)은 저장 시 os.environ을 즉시 갱신하나, settings는 캐시되어
@@ -603,13 +610,15 @@ async def kakao_login_url(
     if not client_id or client_id.lower() in _PLACEHOLDERS:
         raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or os.environ.get("KAKAO_REDIRECT_URI") or settings.kakao_redirect_uri
+    state = _secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
         "redirect_uri": ruri,
         "response_type": "code",
+        "state": state,
     }
     url = f"https://kauth.kakao.com/oauth/authorize?{urlencode(params)}"
-    return {"url": url, "redirect_uri": ruri}
+    return {"url": url, "redirect_uri": ruri, "state": state}
 
 
 @router.post("/kakao/callback", response_model=TokenResponse)
@@ -657,6 +666,8 @@ class GoogleCallbackRequest(BaseModel):
 
     code: str
     redirect_uri: str | None = None
+    # CSRF 방지 state(login-url 발급) — 프론트가 sessionStorage 보관값과 대조 후 전달(계약 정합).
+    state: str | None = None
 
 
 @router.get("/google/login-url")
@@ -667,8 +678,10 @@ async def google_login_url(
     """구글 인가 페이지 URL을 생성해 반환한다(client_id 서버에서 조립).
 
     프론트 '구글 로그인' 버튼이 이 URL로 이동 → 구글 동의 → 콜백(code) → /google/callback 교환.
+    ★state(CSRF 방지)를 발급·반환한다(카카오·네이버와 동일 — 로그인 CSRF/세션 고정 차단).
     """
     import os
+    import secrets as _secrets
     from urllib.parse import urlencode
 
     # ★os.environ 라이브 우선(관리자 키화면 즉시 반영) → settings 폴백.
@@ -676,15 +689,17 @@ async def google_login_url(
     if not client_id or client_id.lower() in _OAUTH_PLACEHOLDERS:
         raise HTTPException(status_code=503, detail="구글 로그인 미설정(GOOGLE_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or os.environ.get("GOOGLE_REDIRECT_URI") or settings.google_redirect_uri
+    state = _secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
         "redirect_uri": ruri,
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
+        "state": state,
     }
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    return {"url": url, "redirect_uri": ruri}
+    return {"url": url, "redirect_uri": ruri, "state": state}
 
 
 @router.post("/google/callback", response_model=TokenResponse)

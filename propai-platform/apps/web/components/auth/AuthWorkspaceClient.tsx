@@ -949,11 +949,15 @@ export function AuthWorkspaceClient({
                             //  로그인 단계에서 "현재 도메인 기준 콜백주소"를 명시 전달해야
                             //  콜백 교환 때와 정확히 일치한다(불일치=KOE006). 환경(www/no-www/로컬) 무관 정확.
                             const redirectUri = `${window.location.origin}/${locale}/kakao/callback`;
-                            // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) → 이동.
-                            const res = await apiClient.get<{ url: string }>(
+                            // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) + state(CSRF) 발급 → 이동.
+                            const res = await apiClient.get<{ url: string; state?: string }>(
                               `/auth/kakao/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
                               { useMock: false },
                             );
+                            // ★state를 sessionStorage에 보관 → 콜백에서 대조(로그인 CSRF/세션 고정 방지).
+                            if (res?.state) {
+                              window.sessionStorage.setItem("kakao_oauth_state", res.state);
+                            }
                             if (res?.url) window.location.href = res.url;
                           } catch {
                             alert("카카오 로그인 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -1006,11 +1010,15 @@ export function AuthWorkspaceClient({
                           try {
                             // ★카카오와 동일 패턴: 현재 도메인 기준 콜백주소 명시 전달(교환 시 1:1 일치).
                             const redirectUri = `${window.location.origin}/${locale}/google/callback`;
-                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) → 이동.
-                            const res = await apiClient.get<{ url: string }>(
+                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) + state(CSRF) 발급 → 이동.
+                            const res = await apiClient.get<{ url: string; state?: string }>(
                               `/auth/google/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
                               { useMock: false },
                             );
+                            // ★state를 sessionStorage에 보관 → 콜백에서 대조(로그인 CSRF/세션 고정 방지).
+                            if (res?.state) {
+                              window.sessionStorage.setItem("google_oauth_state", res.state);
+                            }
                             if (res?.url) window.location.href = res.url;
                           } catch (error) {
                             const msg =
