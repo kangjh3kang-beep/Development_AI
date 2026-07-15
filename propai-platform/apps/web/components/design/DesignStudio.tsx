@@ -793,7 +793,12 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   );
 
   return (
-    <div className="space-y-8">
+    // @container: 이 스튜디오가 놓인 '칸의 실제 폭'에 반응한다(뷰포트 아님). 설계 스튜디오
+    //   통합 작업면(DesignWorkspace)의 좁은 중앙 뷰포트에 임베드돼도, 아래 2열 분할이
+    //   컨테이너 폭 기준으로만 펼쳐져 인스펙터 컬럼이 굶지 않는다 → 한글 캡션이 1글자 세로로
+    //   무너지던 현상을 구조적으로 차단(InspectorGrid의 '전역 표준'을 최상위 분할에도 적용).
+    //   전폭(프로젝트 설계 페이지)에선 종전처럼 2열로 펼쳐진다(무회귀).
+    <div className="@container space-y-8">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex flex-wrap items-start justify-between gap-3">
         <div>
         <div className="flex flex-wrap items-center gap-3">
@@ -858,9 +863,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           좌측(인스펙터): 입력 + 결과 패널들을 순서대로. 큰 화면에서는 독립 스크롤.
           우측(캔버스): 활성 매싱안의 대형 2D 배치도 + 핵심 지표 + 3D 핸드오프. 큰 화면에서는 sticky 고정.
           작은 화면에서는 1열로 자연스럽게 세로 스택(종전과 동일). */}
-      <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+      <div className="grid grid-cols-1 gap-8 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
         {/* 좌측 인스펙터 — 입력·결과 패널(스크롤). 큰 화면에서 독립 스크롤로 우측 캔버스와 분리. */}
-        <div className="min-w-0 space-y-6 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:pr-2">
+        <div className="min-w-0 space-y-6 @4xl:max-h-[calc(100vh-12rem)] @4xl:overflow-y-auto @4xl:pr-2">
 
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-6 border border-[var(--line-strong)]">
         <div className="mb-6 flex items-center gap-2.5">
@@ -1153,7 +1158,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             큰 화면에서 좌측 스크롤과 무관하게 항상 보이도록 고정. 작은 화면에서는 좌측 아래로 흐른다.
             ★WebGL/Three.js 3D 캔버스를 여기 직접 마운트하지 않는다 — 2D(MassingDiagram=SVG) 전용.
             기존 lazy 3D는 'draw' 스텝에서만 마운트(컨텍스트 고갈 방지)하며, 여기선 버튼으로 핸드오프만 한다. */}
-        <div className="min-w-0 xl:sticky xl:top-6 xl:h-[calc(100vh-12rem)]">
+        <div className="min-w-0 @4xl:sticky @4xl:top-6 @4xl:h-[calc(100vh-12rem)]">
           <div className="cc-panel flex h-full flex-col gap-4 overflow-hidden p-5">
             <div className="flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">CANVAS · {canvasView === "3d" ? "3D 입체" : "2D 평면"}</span>
@@ -1193,8 +1198,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                   })}
                 </div>
 
-                {/* 대형 미리보기 — 2D는 MassingDiagram(배치평면), 3D는 MassingAxon3D(축측투영 입체·SVG). */}
-                <div className="flex flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                {/* 대형 미리보기 — 2D는 MassingDiagram(배치평면), 3D는 MassingAxon3D(축측투영 입체·SVG).
+                    min-h로 최소 높이만 보장하고, 좁은 임베드(1열)에선 100vh 강제 높이가 없어 거대 공백을
+                    만들지 않는다(전폭 2열에선 부모 h-full로 종전처럼 확장). */}
+                <div className="flex min-h-[16rem] flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                   <div className="h-full w-full">
                     {canvasView === "2d" ? (
                       <MassingDiagram name={activeMassing.active.name} active geom={activeMassing.geom} />
@@ -1215,8 +1222,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                   </p>
                 )}
 
-                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—". */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—".
+                    ★칸 실폭 기준(@container): 좁은 임베드 칸에선 2열, 넓으면 3열(뷰포트 sm: 대신 @sm:) */}
+                <div className="grid grid-cols-2 gap-2 @sm:grid-cols-3">
                   {[
                     { label: "층수", val: activeMassing.floors != null ? `${activeMassing.floors}층` : "—" },
                     { label: "건축면적", val: calc.buildableArea != null ? `${Math.round(calc.buildableArea).toLocaleString()}㎡` : "—" },
@@ -1248,7 +1256,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               </>
             ) : (
               // designData(부지면적·용도지역) 게이트 미충족 — 안내 플레이스홀더.
-              <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-6 text-center">
+              <div className="flex min-h-[16rem] flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-6 text-center">
                 <p className="text-sm leading-snug text-[var(--text-hint)]">
                   부지면적·용도지역을 입력하면<br />매싱 미리보기가 표시됩니다
                 </p>
