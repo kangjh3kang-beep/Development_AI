@@ -10,7 +10,7 @@ import { FeasibilityResultView } from "./FeasibilityResultView";
 import { MonteCarloPanel } from "./MonteCarloPanel";
 import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
-import { ExcelExportButton } from "./ExcelExportButton";
+import { FeasibilityExportButton } from "./FeasibilityExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -310,7 +310,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               </motion.div>
             )}
           </AnimatePresence>
-          {result && <ExcelExportButton />}
+          {result && <FeasibilityExportButton />}
         </div>
       </div>
 
