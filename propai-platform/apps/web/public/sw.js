@@ -22,7 +22,9 @@
 //        셀프호스팅 폰트 실로드). 새 CSS/폰트가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v416: 사통맵 레이어 좌표앵커 근본수정(#271) — 공용앵커 resolveSelectionAnchor·경매401 인라인 안내.
 //        지도 레이어 신코드가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v416-satong-anchor";
+// v417: 회원 계정 시스템(#280 — forgot/reset-password·verify-email·account 신규 라우트) 반영.
+//        신규 인증 화면·플로우가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v417-auth-accounts";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
