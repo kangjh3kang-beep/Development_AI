@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -285,8 +286,21 @@ def normalize_sido_short(sido_name: str) -> str:
     """시도명을 부담금 테이블 축약 키로 정규화 — 이미 축약형이면 그대로(멱등)."""
     s = (sido_name or "").strip()
     return _SIDO_FULL_TO_SHORT.get(s, s)
-# 표준건축비(원/㎡): 국토부 고시값 — 미확정(고시 첨부·비색인) → None. 관리자 설정/호출부 주입 필요.
+# 표준건축비(원/㎡): 광특법 시행령 제16조의2가 「공공건설임대주택 표준건축비」 고시(국토부)를
+# 준용 — 고시는 층수×전용면적 구간별 표라 단일 상수 하드코딩 자체가 부정확(사업 특성 의존).
+# 코드 기본값은 None(무날조·unavailable 정직 강등) 유지, 운영자는 사업 포트폴리오에 맞는
+# 구간값을 환경변수 METRO_STANDARD_BUILD_COST_WON_PER_SQM 로 주입한다(_metro_scb_from_env).
 METRO_STANDARD_BUILD_COST_WON_PER_SQM: int | None = None
+
+
+def _metro_scb_from_env() -> int | None:
+    """표준건축비 운영 주입 채널 — env 미설정/비정상 값이면 None(정직 unavailable 유지)."""
+    raw = (os.getenv("METRO_STANDARD_BUILD_COST_WON_PER_SQM") or "").split("#")[0].strip()
+    try:
+        value = int(raw.replace(",", "").replace("_", ""))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 _METRO_HOUSING_TYPES = {"apartment", "아파트", "주택", "공동주택", "다세대", "연립", "도시형생활주택"}
 
 
@@ -321,13 +335,20 @@ def get_metro_transport_charge(
             "reason": f"{sido_name or '지역미상'} — 대도시권 아님(광역교통시설부담금 미부과)",
         }
     rate = metro_transport_charge_rate(is_housing=is_housing, exclusive_area_sqm=exclusive_area_sqm)
-    scb = standard_build_cost_won_per_sqm or METRO_STANDARD_BUILD_COST_WON_PER_SQM
+    # 우선순위: 호출부 명시 인자 > 모듈 상수(테스트/패치용) > 운영 env 주입 채널
+    scb = (
+        standard_build_cost_won_per_sqm
+        or METRO_STANDARD_BUILD_COST_WON_PER_SQM
+        or _metro_scb_from_env()
+    )
     if not scb or gfa_sqm <= 0:
         return {
             "amount_won": None, "applicable": True, "confidence": "unavailable", "rate": rate,
             "formula": "표준건축비 × 부과율 × 건축연면적 − 공제",
-            "reason": ("표준건축비 국토부 고시값(제2024-192호 계열) 미설정 — "
-                       "고시값 주입 시 '표준건축비×부과율×건축연면적'으로 산정"),
+            "reason": ("표준건축비 미설정(광특법 시행령 §16조의2 준용 「공공건설임대주택 "
+                       "표준건축비」 고시 — 층수·면적 구간표) — 환경변수 "
+                       "METRO_STANDARD_BUILD_COST_WON_PER_SQM 주입 시 "
+                       "'표준건축비×부과율×건축연면적'으로 산정"),
         }
     amount = int(round(scb * rate * gfa_sqm))
     return {
