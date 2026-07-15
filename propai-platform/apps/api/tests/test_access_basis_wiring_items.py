@@ -163,8 +163,10 @@ def test_build_gate_helper_pnu_echo():
     assert gate["pnu"] == "1111"
 
 
-def test_build_gate_helper_exception_is_graceful_none():
-    """산출 실패(예외)는 None으로 흡수해 주 경로(매스 산출)를 깨지 않는다."""
+def test_build_gate_helper_none_special_districts_normalized():
+    """special_districts=None 입력은 내부 정규화로 정상 판정된다(예외 없음 == 계약).
+    (구명 test_build_gate_helper_exception_is_graceful_none — 이름이 예외경로 검증으로
+    오독될 수 있어 PR#282 리뷰 지적에 따라 실단언에 맞게 개명)"""
     # special_districts에 리스트가 아닌 값이 들어와도 함수 내부에서 list()로 정규화되므로
     # 정상 동작해야 한다 — 방어 코드 자체를 재확인(예외를 던지지 않음 == 정상 계약).
     gate = build_access_basis_gate(special_districts=None)
