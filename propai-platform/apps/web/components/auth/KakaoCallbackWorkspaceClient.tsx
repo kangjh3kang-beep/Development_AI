@@ -128,7 +128,8 @@ export function KakaoCallbackWorkspaceClient({
 }: KakaoCallbackWorkspaceClientProps) {
   const router = useRouter();
   const labels = LABELS[locale] || LABELS["ko"];
-  const hasRequiredParams = Boolean(code);
+  // ★code와 state 둘 다 필수(fail-closed) — state 생략만으로 CSRF 대조를 건너뛰지 못하게 한다.
+  const hasRequiredParams = Boolean(code && state);
   const [requestState, setRequestState] = useState<{
     status: "loading" | "success" | "error";
     errorMessage?: string;
@@ -144,10 +145,12 @@ export function KakaoCallbackWorkspaceClient({
     let active = true;
 
     const run = async () => {
-      // ★CSRF/세션고정 방지: 로그인 시작 시 sessionStorage에 보관한 state와 콜백 state가
-      //  일치해야 교환한다. 보관값이 있는데 불일치면 차단(보관값 없으면 구버전 호환으로 통과).
+      // ★CSRF/세션고정 방지(fail-closed): 이 브라우저가 로그인을 개시했다는 증거(sessionStorage
+      //  보관 state)가 반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나(피해자가
+      //  로그인을 시작하지 않았는데 공격자 콜백링크를 연 경우) 불일치면 차단 — 공격자는 피해자
+      //  브라우저의 same-origin sessionStorage에 값을 심을 수 없으므로 로그인 CSRF가 성립하지 않는다.
       const savedState = window.sessionStorage.getItem(KAKAO_STATE_KEY);
-      if (savedState && state && savedState !== state) {
+      if (!savedState || savedState !== state) {
         if (active) setRequestState({ status: "error", errorMessage: labels.stateMismatch });
         return;
       }

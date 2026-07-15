@@ -136,11 +136,12 @@ export function NaverCallbackWorkspaceClient({
     let active = true;
 
     const run = async () => {
-      // ★CSRF 방지: 시작 단계(sessionStorage)에 보관한 state 와 콜백 state 가 일치해야 한다.
-      //  보관값이 있고 불일치면 교환을 막는다(보관값이 없으면 서버측 토큰교환의 state 검증에 위임).
+      // ★CSRF 방지(fail-closed): 이 브라우저가 로그인을 개시했다는 증거(sessionStorage 보관 state)가
+      //  반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나 불일치면 차단 —
+      //  공격자는 피해자 브라우저의 same-origin sessionStorage에 값을 심을 수 없어 로그인 CSRF 불성립.
       //  (이펙트 본문 동기 setState 회피 위해 async run 내부에서 처리)
       const savedState = window.sessionStorage.getItem(NAVER_STATE_KEY);
-      if (savedState && state && savedState !== state) {
+      if (!savedState || savedState !== state) {
         if (active) setRequestState({ status: "error", message: labels.stateMismatch });
         return;
       }
