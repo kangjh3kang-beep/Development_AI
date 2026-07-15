@@ -935,16 +935,36 @@ def _attach_special_parcel_gate(mass: dict[str, Any], req: BimGenerateRequest) -
     except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
         mass["dev_act_permit_gate"] = None
 
+    # ── WP-A: 접도·도로 기반(P4) access_basis additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에도 접도 판정(legal/physical/emergency 3상태)을 동봉한다.
+    #   이 진입점엔 도로 실데이터(road_side·road_contact 등)가 없어 대부분 정직하게 미확정
+    #   (REQUIRES_AUTHORITY_CONFIRMATION)으로 응답하지만, build_dev_act_permit_gate와 동일하게
+    #   실패는 graceful None으로 흡수한다(best-effort, 주 경로 무손상).
+    try:
+        from app.services.access.access_basis_service import build_access_basis_gate
+
+        mass["access_basis"] = build_access_basis_gate(
+            zone_type=zone_type,
+            land_category=req.land_category,
+            special_districts=req.special_districts,
+            pnu=req.pnu,
+        )
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["access_basis"] = None
+
     # ── WP-G: 부지기반(P7) 게이트 스냅샷 additive 부착 ──
-    #   설계생성 진입점(매스 SSOT)에 P0 자동판정을 자동 결선한다. 이 진입점엔 접도(P4)·권리(P3)
-    #   실데이터가 없어 정직하게 미확정으로 집계되고(REQUIRES_AUTHORITY_CONFIRMATION 동치),
-    #   basis_status는 항상 ADVISORY로 고정된다(AUTHORIZED는 /api/v1/basis/{run_id}/approve
-    #   인간승인 API 전용 — 이 자동경로에서는 절대 도달하지 않는다).
+    #   설계생성 진입점(매스 SSOT)에 P0 자동판정을 자동 결선한다. access_status는 위 access_basis
+    #   (권위 서비스 실산출값)를 그대로 넘긴다 — dev_act_status와 동일하게 caller 자기신고가 아닌
+    #   server_derived 신뢰경계다. basis_status는 항상 ADVISORY로 고정된다(AUTHORIZED는
+    #   /api/v1/basis/{run_id}/approve 인간승인 API 전용 — 이 자동경로에서는 절대 도달하지 않는다).
     try:
         from app.services.basis.site_basis_service import gate_design_entry
 
         dev_act_status = (mass.get("dev_act_permit_gate") or {}).get("status")
-        mass["site_basis_gate"] = gate_design_entry(dev_act_status=dev_act_status)
+        access_status = (mass.get("access_basis") or {}).get("status")
+        mass["site_basis_gate"] = gate_design_entry(
+            dev_act_status=dev_act_status, access_status=access_status,
+        )
     except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
         mass["site_basis_gate"] = None
     return mass

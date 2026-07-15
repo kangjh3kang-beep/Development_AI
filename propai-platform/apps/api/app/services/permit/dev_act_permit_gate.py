@@ -484,6 +484,21 @@ def assess_dev_act_permit(
     return out
 
 
+def _resolve_zone_code_alias(zone_type: str | None) -> str | None:
+    """축약 용도지역 코드(예: "2R") → 한글 용도지역명 리졸브 — 플랫폼 정본 별칭표 재사용(WP-B 항목4).
+
+    design_ingest.design_geometry._ZONE_CODE_ALIAS(zone_code→한글명 7종 — 프론트 zoningToCode의
+    파이썬측 정본 대응표)를 그대로 재사용한다(재발명 금지). 별칭표에 없는 값(이미 한글명이거나
+    인식 불가 코드)은 원문 그대로 반환한다 — 이후 _zone_family가 재판정하므로 추측·날조가 없다.
+    """
+    if not zone_type:
+        return zone_type
+    from app.services.design_ingest.design_geometry import _ZONE_CODE_ALIAS
+
+    key = zone_type.replace(" ", "").strip()
+    return _ZONE_CODE_ALIAS.get(key, zone_type)
+
+
 def build_dev_act_permit_gate(
     *,
     zone_type: str | None = None,
@@ -507,19 +522,31 @@ def build_dev_act_permit_gate(
     build_special_parcel_gate(특이부지 게이트)와 동일한 additive 패턴. 컨텍스트가 전무하면
     None(정직 생략). 산출 실패(예외)는 graceful None으로 흡수해 주 경로(매스 산출)를 깨지 않는다.
 
-    ★설계경로 노이즈 방어: zone_type이 한글 용도지역명이 아니라 축약코드(예: "2R")면 _zone_family가
-    분류하지 못한다. 이때 지목·형질변경 신호도 없으면 None을 돌려 불필요한 '관할 확인' 게이트를
-    남기지 않는다(FN 대상인 녹지·비도시는 설계요청에 한글 zone_name으로 오므로 그대로 판정된다).
+    ★설계경로 노이즈 방어(WP-B 항목4): zone_type이 한글 용도지역명이 아니라 축약코드(예: "2R")면
+    먼저 _resolve_zone_code_alias로 한글명 리졸브를 시도한다(예: "2R"→"제2종일반주거지역" — 이후
+    정상적으로 '도시지역·형질변경 없음=PASS' 판정까지 흐른다). 리졸브에 실패(별칭표에 없는 코드)
+    했고 형질변경 신호도 없을 때, 지목이 '대'(이미 대지화된 토지)면 불필요한 '관할 확인' 게이트를
+    만들지 않는다(None). ★FN 0 불변식 보호: 리졸브 성공(녹지·비도시로 판명) 또는 형질변경 신호가
+    있으면 이 억제는 절대 적용되지 않으며, 지목이 '대' 이외(임야·전·답 등 비도시 가능성이 있는
+    지목)면 억제하지 않고 기존처럼 관할 확인(CONFIRM) 게이트를 그대로 발동한다.
     """
     if not (zone_type or land_category or land_form_change_required):
         return None
     from app.services.zoning.special_parcel import _zone_family
 
-    if _zone_family(zone_type) is None and not (land_category or land_form_change_required):
-        return None
+    resolved_zone_type = _resolve_zone_code_alias(zone_type)
+    family = _zone_family(resolved_zone_type)
+    if family is None:
+        if land_form_change_required:
+            pass  # 형질변경 신호가 있으면 비도시 가능성을 배제할 수 없어 정상 판정 경로로 진행.
+        elif not land_category:
+            return None  # 기존 동작 그대로 — 신호 전무는 정직 생략.
+        elif land_category.strip() == "대":
+            return None  # ★항목4 신설 — 리졸브 불가+형질변경 없음+이미 대지화(지목 '대')만 억제.
+        # else: 지목이 '대' 이외(임야·전·답 등) — FN 0 보호를 위해 억제하지 않고 CONFIRM 경로 진행.
     try:
         result: dict[str, Any] = {
-            "zone_type": zone_type or "",
+            "zone_type": resolved_zone_type or zone_type or "",
             "land_category": land_category or "",
             "special_districts": list(special_districts or []),
         }

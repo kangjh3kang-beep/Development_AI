@@ -216,11 +216,51 @@ def _legal_factors(result: dict[str, Any]) -> list[dict[str, Any]]:
     return factors
 
 
+def _multi_parcel_mitigation_factor(result: dict[str, Any]) -> dict[str, Any] | None:
+    """다필지 세트 인접(⑳ _parcel_adjacency 재사용) 경유 접근 완화 신호(WP-A 항목3).
+
+    호출측(예: comprehensive_analysis_service)이 다필지 통합분석의 인접성 판정 결과를
+    ``multi_parcel_adjacency={"contiguous": bool|None, "member_road_contact": bool|None}``
+    형태로 넘기면, 대표필지가 맹지라도 '같은 분석 세트(자기 소유로 간주되는 다필지)' 내 다른
+    필지가 도로에 접하고 세트 전체가 shapely로 연접(contiguous=True) 확인됐을 때만 완화
+    (CAUTION) 신호를 만든다.
+
+    ★과대낙관 금지: contiguous가 정확히 True가 아니거나(비연접·미확정) member_road_contact가
+    정확히 True가 아니면(미상·False) 절대 완화하지 않는다(None 반환 — 기존 맹지 판정 그대로
+    유지). 세트 밖(타인 소유) 필지를 경유하는 접근은 이 함수의 입력 범위 밖이다 — 호출측이
+    '자기 세트'만 조립해 넘겨야 한다(그 경계 보장은 호출측 책임, 이 함수는 신호만 소비한다).
+    """
+    ctx = result.get("multi_parcel_adjacency")
+    if not isinstance(ctx, dict):
+        return None
+    if ctx.get("contiguous") is not True or ctx.get("member_road_contact") is not True:
+        return None
+    return {
+        "category": "다필지 통합 접근(자기필지 경유)",
+        "developability": "CAUTION",
+        "implications": [
+            "대표필지 단독으로는 도로에 접하지 않으나(맹지), 같은 분석 세트 내 인접(연접, shapely "
+            "확인) 자기필지가 도로에 접해 있어 그 필지를 경유한 물리적 접근 통로 확보가 가능한 "
+            "것으로 추정됩니다(다필지 합필 또는 도로부지 지정 등 절차 확인 필요 — 확정 아님).",
+        ],
+        "legal_basis": ["건축법 제44조(대지와 도로의 관계)"],
+        "legal_ref_keys": ["road_relation"],
+        "permit_prerequisites": [
+            "다필지 합필 또는 도로부지 지정 절차 확인",
+            "인접 자기필지 경유 통로 폭·구조 실측(현황측량)",
+        ],
+    }
+
+
 def _physical_factors(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """현황 물리적 접근(physical) factor — 도로폭 실재 + 자루형 통로 + 현황도로."""
+    """현황 물리적 접근(physical) factor — 도로폭 실재 + 자루형 통로 + 현황도로 + 다필지 완화."""
     factors: list[dict[str, Any]] = []
     width = sp._access_road_width(result)
-    if _is_maengji(result):
+    mitigation = _multi_parcel_mitigation_factor(result)
+    if _is_maengji(result) and mitigation:
+        base_dev = "CAUTION"
+        note = mitigation["implications"][0]
+    elif _is_maengji(result):
         base_dev = "CONDITIONAL"
         note = "도로에 물리적으로 접하지 않아(맹지) 진입로 확보 없이는 현황 접근이 불가합니다."
     elif width is not None and width > 0:
@@ -238,6 +278,10 @@ def _physical_factors(result: dict[str, Any]) -> list[dict[str, Any]]:
         "legal_ref_keys": ["road_relation"],
         "permit_prerequisites": ["현황 도로폭·진입 동선 실측(현황측량)"],
     })
+    # 다필지 통합 접근 완화 근거(WP-A 항목3) — 위 base_dev를 CAUTION으로 완화시킨 근거를
+    #   별도 finding으로도 남긴다(감사·evidence 추적용, 과탐 방지 — mitigation이 있을 때만 추가).
+    if mitigation and _is_maengji(result):
+        factors.append(mitigation)
     # 자루형(旗竿) 대지 통로 — 신설 세분 룰.
     ff = sp._rule_by_flag_lot(result)
     if ff:
@@ -353,3 +397,89 @@ def assess_access(result: dict[str, Any] | None = None, **kwargs: Any) -> Access
         trust=block.get("trust"),
         echo={k: data.get(k) for k in ("address", "pnu") if data.get(k)},
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# WP-A 항목2 — vworld 실데이터 커넥터(어댑터). 신규 API 호출 없음(기존 조회 산출 재사용).
+# ──────────────────────────────────────────────────────────────────────────
+
+def adapt_vworld_access_fields(
+    land_register: dict[str, Any] | None, special_districts: list[str] | None = None,
+) -> dict[str, Any]:
+    """vworld road_side·getLandCharacteristics 산출(land_register)을 assess_access 입력으로 매핑.
+
+    ★신규 API 호출 없음 — land_info_service.collect_comprehensive가 이미 조회해 실어오는
+    land_register(external_api.vworld_service.get_land_info/get_land_characteristics의
+    road_side_nm/roadSideCodeNm을 정규화한 값 — "road_side" 키)와 special_districts(용도구역
+    목록, 접도구역 포함)만 읽어 정직 매핑한다.
+
+    매핑:
+      road_side          → 그대로 통과(assess_access가 이미 직접 소비하는 필드명과 동일).
+      road_contact        → road_side 텍스트로 파생(맹지=False, 광대/중로/소로/세로=True — 토지이음
+                            보강 표(tojieum_supplement._ROAD_WIDTH_BY_SIDE)와 동일 범주). 인식 불가
+                            텍스트·road_side 자체 미상은 키를 만들지 않는다(추측·날조 금지).
+      road_abutting_zone  → special_districts에 '접도구역' 명시가 있을 때만 True(도로법 §40) —
+                            _rule_by_road_law가 special_districts 자체도 재검사하므로 이 필드는
+                            명시화 보강일 뿐(필수 아님, 신호 확실성만 높인다).
+
+    매핑 불가(원본 필드 부재)는 키 자체를 생략해 정직 미상(None)을 유지한다(낙관 폴백 금지).
+    """
+    out: dict[str, Any] = {}
+    lr = land_register or {}
+    road_side = lr.get("road_side")
+    if road_side:
+        out["road_side"] = road_side
+        text = str(road_side).replace(" ", "")
+        if "맹지" in text:
+            out["road_contact"] = False
+        elif any(k in text for k in ("광대", "중로", "소로", "세로")):
+            out["road_contact"] = True
+        # 그 외 인식 불가 텍스트는 road_contact 키를 만들지 않는다(미상 유지).
+    blob = " ".join(special_districts or [])
+    if "접도구역" in blob:
+        out["road_abutting_zone"] = True
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# WP-A 항목1 — 설계생성 진입(design_v61._attach_special_parcel_gate)용 표준 부착 헬퍼.
+#   build_dev_act_permit_gate/build_special_parcel_gate와 동일 additive 패턴.
+# ──────────────────────────────────────────────────────────────────────────
+
+def build_access_basis_gate(
+    *,
+    zone_type: str | None = None,
+    land_category: str | None = None,
+    road_contact: bool | None = None,
+    road_width_m: float | None = None,
+    road_side: str | None = None,
+    special_districts: list[str] | None = None,
+    sigungu: str | None = None,
+    pnu: str | None = None,
+) -> dict[str, Any] | None:
+    """설계·매스 산출 경로(design_v61 등)용 표준 부착 헬퍼 — assess_access를 안전 호출한다.
+
+    build_dev_act_permit_gate와 동일 additive 패턴(예외는 graceful None으로 흡수해 주 경로인
+    매스 산출을 깨지 않는다). assess_access 자체는 입력이 전무해도 "정직 미확정" 상태로 항상
+    응답하도록 설계돼 있으므로(맹지·접도 근거 확정 불가 시 REQUIRES_AUTHORITY_CONFIRMATION),
+    여기서는 별도 "컨텍스트 전무 → None" 가드를 두지 않는다 — 그 자체가 이미 정직한 산출이다.
+    """
+    try:
+        payload: dict[str, Any] = {
+            "zone_type": zone_type or "",
+            "land_category": land_category or "",
+            "special_districts": list(special_districts or []),
+        }
+        if road_contact is not None:
+            payload["road_contact"] = road_contact
+        if road_width_m is not None:
+            payload["road_width_m"] = road_width_m
+        if road_side:
+            payload["road_side"] = road_side
+        assessment = assess_access(payload, sigungu=sigungu)
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        return None
+    out = assessment.model_dump()
+    if pnu:
+        out["pnu"] = pnu  # 추적용 메타 echo(판정에는 미사용).
+    return out

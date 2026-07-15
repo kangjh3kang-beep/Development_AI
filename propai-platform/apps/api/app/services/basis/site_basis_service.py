@@ -460,8 +460,15 @@ def gate_design_entry(
 
     dev_act_status는 이 진입점에서 항상 권위 서비스(build_dev_act_permit_gate)의 실 산출값이므로
     source="server_derived"로 표기한다(caller 자기신고가 아님 — 호출측이 API 요청 본문이 아니라
-    design_v61 내부에서 직접 그 서비스를 호출한 결과를 넘기기 때문). access_status는 이 진입점에
-    실데이터가 없어 보통 None(미상)이다.
+    design_v61 내부에서 직접 그 서비스를 호출한 결과를 넘기기 때문).
+
+    ★WP-A 배선(항목1) 이후 access_status도 design_v61이 build_access_basis_gate(권위 서비스)를
+    직접 호출한 산출값을 넘긴다 — 하지만 그 호출부(design_v61._attach_special_parcel_gate)에는
+    도로 실데이터(road_contact·road_width_m 등)가 없어 대부분 "신호 없음" 기본값으로만 판정되므로,
+    여기서는 계속 source 기본값(caller_declared 상당의 보수 취급)을 유지해 P0 청산을 과신하지
+    않는다(cap_status_by_trust가 ANALYZED 승격을 REVIEW_REQUIRED로 막는 기존 보수 정책 그대로).
+    access_status를 실제로 뒷받침하는 도로 실데이터가 이 진입점에 흐르게 되면(후속 WP) 그때
+    source="server_derived"로 승격하는 것이 맞다 — 지금은 과신을 피한다.
 
     ★이 함수는 절대 AUTHORIZED를 반환하지 않는다(basis_status 고정 ADVISORY) — 인간승인 액션
     (POST /api/v1/basis/{run_id}/approve)을 거치지 않는 자동경로이기 때문이다. 설계생성 소비처는
