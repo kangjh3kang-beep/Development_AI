@@ -13,7 +13,7 @@
 
 import { useEffect } from "react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
-import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { parcelAddressList, preferredEntryAddress } from "@/lib/parcel-rows";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -99,7 +99,7 @@ export function ProjectAddressInput({
     if (!id) return;
     const p = projects.find((x) => x.id === id);
     if (!p) return;
-    // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다.
+    // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다(동기 set — 직후 getState로 읽을 수 있다).
     setProject(p.id, p.name, p.status);
     // 스냅샷이 없거나(미분석) 비어 있는 항목은 프로젝트 레코드 값으로 보강.
     const areaNum = p.area ? Number(String(p.area).replace(/[^0-9.]/g, "")) : null;
@@ -108,7 +108,21 @@ export function ProjectAddressInput({
       pnu: p.pnu || null,
       ...(areaNum && areaNum > 0 ? { landAreaSqm: areaNum } : {}),
     });
+
+    // ★다필지 하이드레이션 — 복원된 스냅샷의 전 필지를 호스트로 전파한다.
+    //
+    // 이게 없으면: 사통맵에서 5필지로 등록한 프로젝트를 골라도 호스트는 대표주소 1개만 받아
+    // 화면(인테이크 목록·구획도·통합 종합분석)이 1필지로 렌더된다. 반면 ContextHeader 는
+    // store 의 sa.parcelCount 를 직접 읽어 "통합 5필지"를 표시하므로 같은 화면에서 숫자가 갈린다.
+    // 더 위험한 것은 규모 판정이다 — 1필지(446평)와 통합(925평)은 권고 개발방식 자체가 달라진다.
+    // (satong-map-selection.ts 가 parcelCount 와 parcels[] 를 함께 기록하므로 배열은 권위 출처다.)
+    const restored = useProjectContextStore.getState().siteAnalysis;
+    const restoredAddrs = parcelAddressList(restored?.parcels);
+    // 대표주소를 항상 선두에 고정하고 중복 제거(호스트 계약: all[0]=대표, 나머지=추가필지).
+    const all = [p.address, ...restoredAddrs.filter((a) => a && a !== p.address)].filter(Boolean);
     onChange(p.address);
+    // 단일필지(또는 스냅샷에 parcels 부재)면 기존 동작 그대로 — 호스트 state 를 건드리지 않는다.
+    if (all.length > 1) onParcelsChange?.(all);
   };
 
   const handleAddressChange = (entries: AddressEntry[]) => {
