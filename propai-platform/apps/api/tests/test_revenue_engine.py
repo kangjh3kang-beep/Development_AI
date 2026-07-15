@@ -68,8 +68,10 @@ class TestRentalRevenue:
         # 자본환원: 24억 × (1 − 공실률 5%) / 0.05 = 456억
         # (엔진은 공실률 기본 5%를 반영 — 이전 기대값 480억은 공실 미반영으로 항상 실패했음)
         assert result["capitalized_value_won"] == 45_600_000_000
-        # 합계: 200억 + 456억 = 656억
-        assert result["total_revenue_won"] == 65_600_000_000
+        # ★기준선 교정(2026-07-15 갭 감사 P1): 보증금은 환급부채라 수입이 아니다 —
+        #   종전 기대값 656억(보증금 200억 합산)은 이중계상 결함을 고정한 것.
+        #   docstring·신규 경로와 동일 계약: 수입 = 자본환원가치만(보증금은 별도 필드).
+        assert result["total_revenue_won"] == 45_600_000_000
 
     def test_rental_deposit_only(self):
         result = calculate_rental_revenue(
@@ -79,7 +81,9 @@ class TestRentalRevenue:
         )
         assert result["total_deposit_won"] == 15_000_000_000
         assert result["annual_rent_won"] == 0
-        assert result["total_revenue_won"] == 15_000_000_000
+        # ★기준선 교정(갭 감사 P1): 월세 0 → 자본환원가치 0. 보증금(환급부채)은 수입이
+        #   아니므로 total_revenue=0이 정직(보증금 운용수익 모델은 별도 — 날조 금지).
+        assert result["total_revenue_won"] == 0
 
 
 class TestAncillaryRevenue:

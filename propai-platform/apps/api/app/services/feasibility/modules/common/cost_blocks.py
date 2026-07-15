@@ -99,6 +99,40 @@ def _param_int(inp: ModuleInput, key: str) -> int:
     return max(0, value)
 
 
+def apply_auto_estimates(
+    inp: ModuleInput,
+    land: dict[str, Any],
+    construction: dict[str, Any],
+    finance: dict[str, Any],
+    other: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """금융비·소프트비 자동추정(파라미터 미입력 시에만) — 전 모듈 공용.
+
+    ★감사 결함 수지10 봉합(2026-07-15): 이 로직이 generic_module에만 있어 M01 재개발·
+    M02 재건축·M04 지역주택·M08 오피스텔은 params 미입력 시 finance=0·other=0으로
+    총사업비가 과소계상돼 ROI가 비현실적으로 과대(과거 "ROI 566%" 패턴)됐다.
+    공용 추출로 5개 경로가 같은 표준 가정을 쓴다(한 곳 수정→전역 수렴).
+    사용자 명시 입력이 있으면 그 값 우선 — auto_estimated 플래그로 정직 표기.
+
+    Returns: (finance, other) — 자동추정 적용(또는 원본 그대로) dict 쌍.
+    """
+    # ★리뷰 R1-MEDIUM: 전액 자기자본 사업(의도적 금융비 0)의 표현 경로 — params.all_equity
+    #   명시 시 금융비 자동추정을 억제한다(소프트비 추정은 유지 — 자기자본과 무관).
+    all_equity = bool(inp.params.get("all_equity"))
+    base_cost = float(land["total_land_cost_won"]) + float(construction["total_construction_cost_won"])
+    if not all_equity and float(finance.get("total_finance_cost_won") or 0) <= 0 and base_cost > 0:
+        months = float(inp.project_months or 30)
+        pf_amt = base_cost * 0.70  # 표준 LTV 70%
+        est_finance = round(pf_amt * 0.055 * (months / 12.0))  # PF 이자 5.5%, 사업기간 비례
+        finance = {**finance, "total_finance_cost_won": est_finance, "auto_estimated": True,
+                   "estimate_basis": f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월 자동추정(미입력)"}
+    if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:
+        est_other = round(base_cost * 0.07)  # 설계·감리·분양대행·금융수수료·예비비 통칭 7%
+        other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
+                 "estimate_basis": f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% 자동추정(설계·감리·분양대행·예비비 통칭, 미입력)"}
+    return finance, other
+
+
 def compute_taxes(
     inp: ModuleInput,
     total_sale_won: int = 0,

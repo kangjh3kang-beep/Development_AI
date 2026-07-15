@@ -174,7 +174,12 @@ def calculate_rental_revenue(
         "annual_rent_won": annual_rent,
         "annual_net_rent_won": annual_rent_after_vacancy,
         "capitalized_value_won": capitalized,
-        "total_revenue_won": total_deposit + capitalized,
+        # ★갭 감사(2026-07-15) P1 봉합: 보증금은 환급 부채라 수입이 아니다 — docstring·
+        #   신규 경로(total_revenue=capitalized)와 동일 계약. 종전 `total_deposit + capitalized`는
+        #   보증금 제외 수정이 신규 경로에만 반영되고 유일한 활성 소비처(revenue_block —
+        #   레거시 평당단가 방식만 호출)에는 미도달해 임대수입이 ~2배 과대됐다.
+        #   보증금은 total_deposit_won으로 별도 반환(현금흐름·정보용).
+        "total_revenue_won": capitalized,
     }
     result["_metadata"] = metadata.to_dict()
     return result

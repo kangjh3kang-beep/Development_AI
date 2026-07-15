@@ -75,7 +75,15 @@ def aggregate_feasibility(
     net_profit = total_revenue_won - total_cost
 
     # 수익률 = 순이익 / 총수입 × 100
-    profit_rate = (net_profit / total_revenue_won * 100) if total_revenue_won > 0 else 0.0
+    # ★갭 감사(2026-07-15) P3 봉합: 총수입 0 + 비용 존재(전손)일 때 강제 0.0을 쓰면
+    #   determine_grade(0.0)=E(손익분기)로 오판된다 — 전손은 -100%(F 등급)로 정직 표기.
+    #   수입·비용 모두 0(빈 입력)만 0.0 유지(기존 동작).
+    if total_revenue_won > 0:
+        profit_rate = net_profit / total_revenue_won * 100
+    elif total_cost > 0:
+        profit_rate = -100.0  # 무수입·비용 발생 = 전손
+    else:
+        profit_rate = 0.0
 
     # ROI(사업수익률) = 순이익 / 총사업비 × 100 — 경로 간 비교 가능한 표준 정의로 통일.
     #   ★과거 자기자본 제공 시 분모를 자기자본으로 바꿔, precheck/top3가 같은 roi_pct 필드에
