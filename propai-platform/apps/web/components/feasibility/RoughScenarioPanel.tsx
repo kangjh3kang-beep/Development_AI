@@ -70,6 +70,8 @@ interface RsCostBreakdown {
   construction_won: number | null;
   finance_won: number | null;
   other_won: number | null;
+  /** 부담금(B공사+C분양 단계 시행사 부담) — 백엔드 6b 계상. 구버전 응답은 미존재(옵셔널 소비). */
+  charges_won?: number | null;
 }
 interface RsMargin {
   developer_profit_won: number | null;
@@ -584,6 +586,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                 <DataRow label="공사비" text={eok(result.cost_breakdown.construction_won)} />
                 <DataRow label="금융비" text={eok(result.cost_breakdown.finance_won)} />
                 <DataRow label="제경비(기타)" text={eok(result.cost_breakdown.other_won)} />
+                <DataRow label="부담금(공사·분양단계)" text={eok(result.cost_breakdown.charges_won)} />
               </div>
             </div>
           </section>

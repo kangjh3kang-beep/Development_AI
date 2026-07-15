@@ -32,6 +32,7 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +279,9 @@ def _null_block(kind: str) -> dict[str, Any]:
     if kind == "revenue":
         return {"total_won": None, "sale_price_per_pyeong": None,
                 "saleable_area_pyeong": None, "basis": None, "source": None}
+    if kind == "charges":
+        return {"total_won": None, "construction_stage_won": None, "sale_stage_won": None,
+                "buyer_borne_total_won": None, "items": None, "basis": None, "source": None}
     return {}
 
 
@@ -570,6 +574,54 @@ async def build_rough_scenario(
         finance_total = round(base_sum * fin_ratio)
         other_total = round(base_sum * oth_ratio)
 
+    # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
+    # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
+    # B/C단계 부담금이 총사업비에서 통째로 누락됐다(토지비에 계상되는 건 A취득단계뿐).
+    # A단계는 토지비(include_taxes_and_fees=True)에 기계상돼 제외(이중계상 방지),
+    # D(양도)단계는 사업비 성격이 아니라 제외 — 시행사 부담 B+C만 계상한다.
+    charges_total: int | None = None
+    charges_block: dict[str, Any] = _null_block("charges")
+    charges_result: dict[str, Any] | None = None
+    if core_ready:
+        try:
+            charges_result = compute_developer_stage_charges(
+                sido_name=str(getattr(input_used, "sido_name", "") or region or ""),
+                sigungu_name=str(getattr(input_used, "sigungu_name", "") or ""),
+                total_households=total_households_assumed or 0,
+                total_sale_amount_won=revenue_total,
+                total_gfa_sqm=float(gfa_sqm or 0),
+                building_type=_service._get_building_type(dev_type_final),
+                # ★C01 부가세 면세기준(국민주택규모)은 '전용 85㎡' — 공급면적(avg_area_pyeong)을
+                #   넘기면 전용 61~85㎡ 최다 구간이 과세로 뒤집혀 분양수입의 ~2.7%가 날조 과세된다
+                #   (리뷰 P2-2). 개발유형 표준 전용면적(unit_standards SSOT)을 전달한다.
+                avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
+                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
+            )
+            charges_total = int(charges_result["total_won"])
+            _compact = [
+                {"code": it.get("code"), "name": it.get("name"),
+                 "amount_won": it.get("amount_won"), "borne_by": it.get("borne_by", "developer")}
+                for stage in (charges_result["construction"], charges_result["sale"])
+                for it in (stage.get("items") or [])
+            ]
+            charges_block = {
+                "total_won": charges_total,
+                "construction_stage_won": int(charges_result["construction"]["total_won"]),
+                "sale_stage_won": int(charges_result["sale"]["total_won"]),
+                "buyer_borne_total_won": int(charges_result["sale"].get("buyer_borne_total_won") or 0),
+                "items": _compact,
+                "basis": "B(공사)+C(분양) 단계 시행사 부담 합계 — 취득단계 세금은 토지비에 기계상(이중계상 방지), 수분양자 부담분 제외",
+                "source": "utility_stage_engine + sale_stage_engine(통합 세금엔진)",
+            }
+            degraded.extend(charges_result["unavailable_notes"])
+        except Exception as e:  # noqa: BLE001 — 부담금 산출 실패는 정직 강등(총사업비 미반영 고지)
+            logger.warning("부담금(B/C단계) 산출 실패: %s", str(e)[:120])
+            degraded.append(f"부담금(B/C단계) 산출 실패 — 총사업비에 미반영: {str(e)[:100]}")
+            # 부분 성공 잔재 일괄 초기화 — 합계·블록·DCF 주입이 항상 같은 상태를 보게 한다.
+            charges_total = None
+            charges_block = _null_block("charges")
+            charges_result = None
+
     if core_ready:
         agg = aggregate_feasibility(
             total_revenue_won=revenue_total,
@@ -577,7 +629,8 @@ async def build_rough_scenario(
             total_construction_cost_won=constr_total,
             total_finance_cost_won=finance_total or 0,
             total_other_cost_won=other_total or 0,
-            total_tax_cost_won=0,   # 취득세는 이미 토지비(land_cost_engine)에 계상 — 이중계상 방지
+            # ★6b: B+C 시행사 부담금 계상(취득세는 토지비에 기계상 — A단계만 제외)
+            total_tax_cost_won=charges_total or 0,
             equity_won=equity,
             discount_rate=discount_rate,
             project_months=project_months,
@@ -599,10 +652,11 @@ async def build_rough_scenario(
     else:
         degraded.append("핵심 축(토지비·공사비·분양수입) 중 결측이 있어 총사업비·마진을 산출하지 않습니다(무목업).")
 
-    # ── 7) 총사업비 구성(금융·제경비 노출 — 근거 투명화) ──
+    # ── 7) 총사업비 구성(금융·제경비·부담금 노출 — 근거 투명화) ──
     cost_breakdown = {
         "land_won": land_total, "construction_won": constr_total,
         "finance_won": finance_total, "other_won": other_total,
+        "charges_won": charges_total,
     }
 
     # ── 8) 월별 DCF(위 산출을 시드) — npv·irr·payback·peak ──
@@ -623,6 +677,18 @@ async def build_rough_scenario(
         #   0~1로 클램프(총사업비 0/미확보면 엔진 기본 30%로 정직 폴백).
         tc_for_equity = summary.get("total_cost_won")
         equity_ratio = min(1.0, max(0.0, equity / tc_for_equity)) if tc_for_equity else 0.3
+        # ★6b: 부담금(B/C단계)을 DCF에도 시점 주입 — 총사업비(summary)와 현금흐름(NPV·IRR)이
+        #   같은 비용 기저를 쓰도록 정합(B→착공월, C→분양수입 비례; A/D는 0 — 위 6b와 동일 계약).
+        tax_schedule: dict[str, Any] | None = None
+        if charges_result is not None and charges_total:
+            tax_schedule = {
+                "acquisition_won": 0,
+                "construction_won": int(charges_result["construction"]["total_won"]),
+                "sale_won": int(charges_result["sale"]["total_won"]),
+                "disposal_settlement_won": 0,
+                "d06_annual_won": 0,
+                "d06_years": 0,
+            }
         try:
             cf = CashflowGenerator().generate_monthly_cashflow(
                 land_cost=float(land_total),
@@ -632,16 +698,26 @@ async def build_rough_scenario(
                 sale_start_month=sale_start,
                 sale_duration_months=max(1, sale_duration),
                 equity_ratio=equity_ratio,
+                tax_schedule=tax_schedule,
             )
             rows = cf.get("rows") or []
             cf_summary = cf.get("summary") or {}
-            # ★NPV는 무차입 프로젝트 FCF(unlevered_netflows) 할인 — 레버드 rows.net을 쓰면 자기자본
-            #   유입이 순가치로 새어 NPV 과대(IRR과 동일 기저로 정합). payback은 실제 자금위치라 rows 유지.
-            npv = npv_from_netflows(cf.get("unlevered_netflows") or [], discount_rate)
+            # ★NPV는 무차입 프로젝트 FCF 할인 — 레버드 rows.net을 쓰면 자기자본 유입이 순가치로
+            #   새어 NPV 과대(IRR과 동일 기저로 정합). payback은 실제 자금위치라 rows 유지.
+            #   부담금 주입 시(after_tax_netflows 존재) 부담금 차감 스트림으로 할인해
+            #   summary.total_cost_won(부담금 포함)과 동일 기저를 유지한다.
+            npv_stream = cf.get("after_tax_netflows") or cf.get("unlevered_netflows") or []
+            npv = npv_from_netflows(npv_stream, discount_rate)
             payback = _payback_month(rows)
+            # IRR도 동일 기저: 부담금 주입 시 부담금 반영 IRR(after_tax_irr_annual_pct)을 대표값으로.
+            irr_pct = (
+                cf_summary.get("after_tax_irr_annual_pct")
+                if tax_schedule is not None
+                else cf_summary.get("irr_annual_pct")
+            )
             summary.update({
                 "npv_won": npv,
-                "irr_pct": cf_summary.get("irr_annual_pct"),
+                "irr_pct": irr_pct,
                 "payback_month": payback,
             })
             cashflow_block = {
@@ -690,6 +766,7 @@ async def build_rough_scenario(
         "land_cost": land_block,
         "construction_cost": constr_block,
         "revenue": revenue_block,
+        "charges": charges_block,
         "cost_breakdown": cost_breakdown,
         "margin": margin_block,
         "summary": summary,
@@ -787,7 +864,9 @@ def _degraded_result(
         "land_cost": _null_block("land"),
         "construction_cost": _null_block("construction"),
         "revenue": _null_block("revenue"),
-        "cost_breakdown": {"land_won": None, "construction_won": None, "finance_won": None, "other_won": None},
+        "charges": _null_block("charges"),
+        "cost_breakdown": {"land_won": None, "construction_won": None, "finance_won": None,
+                           "other_won": None, "charges_won": None},
         "margin": {"developer_profit_won": None, "rate_pct": _DEFAULT_MARGIN_RATE_PCT, "target_revenue_won": None},
         "summary": {
             "total_cost_won": None, "total_revenue_won": None, "net_profit_won": None,

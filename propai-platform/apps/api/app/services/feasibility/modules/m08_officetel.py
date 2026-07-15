@@ -67,7 +67,10 @@ class M08Officetel(BaseModule):
         construction = compute_construction_cost(inp)
         finance = compute_finance_cost(inp)
         other = compute_other_cost(inp)
-        taxes = compute_taxes(inp, revenue["total_revenue_won"])
+        taxes = compute_taxes(
+            inp, revenue["total_revenue_won"],
+            development_cost_won=int(construction["total_construction_cost_won"]),
+        )
 
         # DCF 분석 (임대수익 기반)
         annual_noi = inp.params.get("annual_noi_won", 0)
