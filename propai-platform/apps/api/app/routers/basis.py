@@ -25,6 +25,12 @@ get_current_user(인증)만 요구하고, "승인 가능 역할/티어"(예: 관
 강제하지 않는다. 인증된 사용자면 누구나 자신이 속한 테넌트의 ANALYZED 건을 승인할 수 있다.
 승인자 역할 제한이 필요한지는 RBAC 정책의 제품 결정 사항으로 이 WP 범위 밖이다(후속 과제).
 
+★테넌트 없는 세션 fail-closed(WP-G LOW-a 하드닝): /approve는 인간승인(AUTHORIZED 전이)이라는
+고위험·비가역 액션이므로, tenant_id가 없는 세션(_tenant_of가 None)은 403으로 거부한다.
+tenant_id IS NOT DISTINCT FROM NULL 쿼리 자체는 여전히 정상 동작하지만(테넌트 없는 여러
+run_id가 서로 뒤섞일 수 있는 경계 케이스), 승인이라는 고위험 액션에서만큼은 그 경계 케이스를
+관대하게 허용하지 않는다(/assess·GET은 조회·집계뿐이라 이 하드닝 범위 밖 — 제품결정 문구는 유지).
+
 게이트: 인증(get_current_user)만. 규칙기반(LLM 무의존)이라 무과금(enforce_llm_quota 미부착).
 """
 from __future__ import annotations
@@ -76,13 +82,22 @@ async def approve_endpoint(
     """인간승인 액션 — ANALYZED + 승인시점 P0 전건 충족일 때만 APPROVED(AUTHORIZED).
 
     ★승인 가능 역할/티어 제한 없음(모듈 docstring "승인 권한 티어" 참조 — 제품 결정 후속 과제).
+    ★테넌트 없는 세션은 fail-closed 거부(403 — 모듈 docstring "테넌트 없는 세션 fail-closed" 참조).
     """
+    tenant_id = _tenant_of(current_user)
+    if tenant_id is None:
+        # ★WP-G LOW-a: 승인은 AUTHORIZED로의 비가역 전이라 테넌트 미상 세션까지 관대히 허용하지
+        #   않는다(fail-closed). /assess·GET은 조회·집계뿐이라 이 하드닝을 적용하지 않는다.
+        raise HTTPException(
+            status_code=403,
+            detail="테넌트 정보가 없는 세션은 부지기반 승인(AUTHORIZED 전이)을 수행할 수 없습니다.",
+        )
     from app.services.basis.site_basis_service import approve_site_basis
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
 
     approved_by = str(getattr(current_user, "id", "") or getattr(current_user, "email", "") or "")
     result = await approve_site_basis(
-        db=db, run_id=run_id, approved_by=approved_by, tenant_id=_tenant_of(current_user),
+        db=db, run_id=run_id, approved_by=approved_by, tenant_id=tenant_id,
         access_status=req.access_status, dev_act_status=req.dev_act_status,
         rights_confirmed=req.rights_confirmed,
     )

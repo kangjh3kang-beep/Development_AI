@@ -270,11 +270,56 @@ def test_build_helper_no_context_returns_none():
     assert build_dev_act_permit_gate() is None
 
 
-def test_build_helper_opaque_zone_code_returns_none():
-    """㉔-b 설계경로 노이즈 방어 — 분류 불가 축약코드('2R')만이면 None(관할확인 게이트 미생성)."""
-    assert build_dev_act_permit_gate(zone_type="2R", area_sqm=1000) is None
-    # 단, 한글 녹지명이면 정상 판정(FN 대상 보존).
+def test_build_helper_resolvable_zone_code_classifies_correctly():
+    """㉔-b(WP-B 항목4 갱신) 축약코드('2R')는 이제 별칭표로 리졸브돼 정확히 판정된다.
+
+    이전엔 '2R'이 분류 불가라 무조건 None(노이즈 회피)만 했으나, 이제 _resolve_zone_code_alias가
+    '2R'→'제2종일반주거지역'으로 리졸브해 정확한 PASS(도시지역·형질변경 없음·비대상)를 반환한다
+    (None으로 숨기는 대신 더 정확한 정보를 준다 — 노이즈 제거를 더 잘 달성).
+    """
+    gate = build_dev_act_permit_gate(zone_type="2R", area_sqm=1000)
+    assert gate is not None
+    assert gate["applicable"] is False
+    assert gate["status"] == STATUS_PASS
+    # 단, 한글 녹지명이면 그대로 정상 판정(FN 대상 보존).
     assert build_dev_act_permit_gate(zone_type="자연녹지지역", area_sqm=1000) is not None
+
+
+def test_build_helper_opaque_zone_code_with_built_land_returns_none():
+    """㉔-c(WP-B 항목4 신설) 별칭표에 없는 진짜 리졸브 불가 코드+형질변경 없음+지목'대'면
+    불필요한 관할확인 게이트를 만들지 않는다(None — docstring 의도와 동작 일치화)."""
+    assert build_dev_act_permit_gate(zone_type="ZZ9", land_category="대") is None
+
+
+def test_build_helper_opaque_zone_code_with_non_built_land_still_confirms():
+    """㉔-d(WP-B 항목4 FN0 보호) 리졸브 불가 코드라도 지목이 '대'가 아니면(임야 등 비도시
+    가능성 있는 지목) 억제하지 않고 기존처럼 관할확인(CONFIRM) 게이트를 그대로 발동한다."""
+    gate = build_dev_act_permit_gate(zone_type="ZZ9", land_category="임야")
+    assert gate is not None
+    assert gate["applicable"] == "UNKNOWN"
+    assert gate["status"] == STATUS_CONFIRM
+
+
+def test_build_helper_opaque_zone_code_with_form_change_still_gates():
+    """㉔-e(WP-B 항목4 FN0 보호) 리졸브 불가 코드+지목'대'라도 형질변경 신호가 있으면
+    비도시 가능성을 배제할 수 없어 억제하지 않고 정상 판정(CONDITIONAL)한다."""
+    gate = build_dev_act_permit_gate(
+        zone_type="ZZ9", land_category="대", land_form_change_required=True,
+    )
+    assert gate is not None
+    assert gate["applicable"] is True
+    assert gate["status"] == STATUS_CONDITIONAL
+    assert gate["applicability_basis"] == "land_form_change"
+
+
+def test_build_helper_green_zone_never_suppressed_by_built_land_guard():
+    """㉔-f(WP-B 항목4 FN0 회귀 고정) 한글 녹지명이 정확히 오면(가장 흔한 실제 배선 경로),
+    지목이 '대'여도 리졸브 자체가 성공(family≠None)하므로 항목4의 억제 분기에 진입하지 않고
+    그대로 개발행위허가 대상(FN0 불변식)으로 판정된다."""
+    gate = build_dev_act_permit_gate(zone_type="자연녹지지역", land_category="대", area_sqm=1000)
+    assert gate is not None
+    assert gate["applicable"] is True
+    assert gate["status"] != STATUS_PASS
 
 
 def test_reused_base_factor_embedded():

@@ -723,6 +723,30 @@ class ComprehensiveAnalysisService:
                     result["dev_act_permit_gate"] = _dev_gate
             except Exception:  # noqa: BLE001 — 개발행위허가 게이트 실패는 무손상(기존 분석 유지)
                 pass
+
+            # ── WP-A: 접도·도로 기반(P4) access_basis additive 부착 ──
+            #   종합분석 result에 접도 판정(legal/physical/emergency 3상태)을 동봉해, 인터프리터가
+            #   맹지·자루형·막다른도로·접도구역 등 접근 제약을 그라운딩할 수 있게 한다(위 WP-B와
+            #   동일 additive·graceful 패턴). vworld road_side(이미 조회된 land_register 산출)
+            #   어댑터로 road_contact를 파생하고, 다필지 세트면 인접(⑳ _parcel_adjacency) 완화신호도
+            #   함께 넘긴다(항목3 — 대표필지 맹지라도 자기세트 내 인접 도로접 필지가 있으면 완화).
+            try:
+                from app.services.access.access_basis_service import (
+                    adapt_vworld_access_fields,
+                    assess_access,
+                )
+
+                _access_input = dict(_sp_input)
+                _access_input.update(
+                    adapt_vworld_access_fields(_lr, _access_input.get("special_districts"))
+                )
+                if integrated is not None:
+                    _access_input["multi_parcel_adjacency"] = integrated.get("adjacency")
+                result["access_basis"] = assess_access(
+                    _access_input, sigungu=_extract_sigungu_from_address(_addr),
+                ).model_dump()
+            except Exception:  # noqa: BLE001 — 접도 게이트 실패는 무손상(기존 분석 유지)
+                pass
         except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
             pass
 
@@ -1645,6 +1669,13 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
             # 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구 미확정.
             "geometry": p.get("geometry"),
+            # ★WP-A 항목3(다필지 접도 완화) 입력 — 프론트/업로드가 이미 실어 보내는 경우만 통과
+            #   (신규 조회 추가 없음). 없으면 None 그대로 — 아래 member_road_contact 집계가
+            #   정직하게 미상(None) 처리한다(과대낙관 금지).
+            "road_side": p.get("road_side") or p.get("roadSide"),
+            "road_contact": (
+                p.get("road_contact") if p.get("road_contact") is not None else p.get("roadContact")
+            ),
         }
         if (q["area_sqm"] or 0) > 0:
             items.append(q)
@@ -1715,6 +1746,28 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             integrated["adjacency"] = {
                 "contiguous": None, "components": None, "basis": "인접성 산출 실패(정직 미확인)",
             }
+
+        try:
+            # ★WP-A 항목3 — 다필지 세트 구성원 도로접면 신호 집계(신규 조회 없음, items에 이미
+            #   실려온 road_side/road_contact만 재사용). access_basis_service._multi_parcel_
+            #   mitigation_factor의 입력(member_road_contact)으로 소비된다. 신호가 하나도 없으면
+            #   None(정직 미상) — 과대낙관 폴백 금지.
+            _road_signals: list[bool] = []
+            for it in items:
+                rc = it.get("road_contact")
+                if isinstance(rc, bool):
+                    _road_signals.append(rc)
+                    continue
+                rs = it.get("road_side")
+                if rs:
+                    _road_signals.append("맹지" not in str(rs))
+            _member_road_contact: bool | None = any(_road_signals) if _road_signals else None
+            integrated["adjacency"] = {
+                **(integrated.get("adjacency") or {}), "member_road_contact": _member_road_contact,
+            }
+        except Exception as e:  # noqa: BLE001 — 신호 집계 실패는 그 키만 정직 누락(adjacency 본체 보존)
+            logger.warning("다필지 도로접면 신호 집계 실패(graceful)", err=str(e)[:160])
+            integrated["adjacency"] = {**(integrated.get("adjacency") or {}), "member_road_contact": None}
 
         # ★P0(종상향 랭킹 인접성 게이트 전파) 최상위 additive 노출 — 기존 adjacency 자산을
         #   그대로 재사용(재계산 금지)해 _calc_upzoning → UpzoningPotentialAnalyzer가 바로
