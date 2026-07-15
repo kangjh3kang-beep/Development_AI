@@ -122,12 +122,19 @@ def calculate_direct_cost(
     if floor_count_above or floor_count_below or structure_type:
         from app.services.cost.overview_estimator import estimate_overview_direct_cost
 
+        fa = floor_count_above or 0
+        fb = floor_count_below or 0
+        if fa <= 0 and fb > 0:
+            # ★리뷰 R1-P2: 지상층수 미상 상태의 지하 분해는 바닥판 비례식이 fa=1 폴백으로
+            #   지하를 극단 배분(예 B3 단독 → GFA 78% 지하 × 30% 할증 = 조용한 과대계상).
+            #   지상층수 확보 전까지 지하 분해는 보류한다(정직 강등 — 구조계수·조경만 반영).
+            fb = 0
         ov = estimate_overview_direct_cost(
             total_gfa_sqm=total_gfa_sqm,
             base_unit_cost_per_sqm=adjusted_unit,
             structure_type=structure_type or "RC",
-            floor_count_above=floor_count_above or 1,
-            floor_count_below=floor_count_below or 0,
+            floor_count_above=fa or 1,
+            floor_count_below=fb,
         )
         return {
             "total_gfa_sqm": round(total_gfa_sqm, 2),

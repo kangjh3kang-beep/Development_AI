@@ -39,7 +39,7 @@ def _legacy_inline_direct(
 ) -> dict[str, int]:
     """봉합 전 routers/cost.py estimate-overview의 인라인 산식 복제(회귀 기준선)."""
     unit = base_unit * STRUCT_COST_FACTOR.get(structure_type, 1.0)
-    _fa, _fb, _bk = max(1, int(fa)), max(0, int(fb)), 1.2
+    _fa, _fb, _bk = max(1, fa), max(0, fb), 1.2
     gfa_below = (gfa * (_fb * _bk) / (_fa + _fb * _bk)) if _fb > 0 else 0.0
     gfa_above = max(0.0, gfa - gfa_below)
     u = int(unit * factor)
@@ -80,6 +80,31 @@ class TestHelperMatchesLegacy:
     def test_split_gfa_below_zero_basement(self):
         above, below = split_gfa_below(10_000.0, 20, 0)
         assert above == 10_000.0 and below == 0.0
+
+    def test_hardcoded_golden_pin(self):
+        """리뷰 R1-P3①: 계수표 드리프트 감지용 절대값 핀 — SSOT 계수가 바뀌면 여기서 터진다.
+
+        (양변이 같은 STRUCT_COST_FACTOR를 참조하는 복제 대조는 계수 '값' 변경을 못 잡는다.
+         SRC=1.15·지하할증 1.3·조경 1.5% 기준 수기 검산 원화를 고정.)
+        """
+        ov = estimate_overview_direct_cost(
+            total_gfa_sqm=10_000.0, base_unit_cost_per_sqm=2_400_000,
+            structure_type="SRC", floor_count_above=20, floor_count_below=2,
+        )
+        # u = int(2,400,000 × 1.15) = 2,760,000 / 지하 = 10,000×2.4/22.4 = 1,071.428…㎡
+        assert ov["unit_cost_per_sqm"] == 2_760_000
+        assert ov["aboveground_won"] == 24_642_857_142_857 // 1_000  # int(8,928.571…×2,760,000)
+        assert ov["underground_won"] == int(10_000.0 * 2.4 / 22.4 * 2_760_000 * 1.3)
+        assert ov["landscape_won"] == int((ov["aboveground_won"] + ov["underground_won"]) * 0.015)
+
+    def test_basement_only_is_deferred(self):
+        """리뷰 R1-P2: 지상층수 미상 + 지하만 제공 → 지하 분해 보류(과대계상 뇌관 차단)."""
+        result = calculate_total_construction_cost(
+            total_gfa_sqm=10_000.0, building_type="apartment", floor_count_below=3,
+        )
+        flat = int(10_000.0 * 2_400_000)
+        # 지하 분해 없이 조경 1.5%만(구조 RC=1.0) — fa=1 폴백으로 지하 78% 배분되면 실패
+        assert result["direct"]["total_direct_cost_won"] == flat + int(flat * 0.015)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +213,7 @@ class TestRouterByteCompat:
         assert resp.status_code == 200
         data = resp.json()
         legacy = _legacy_inline_direct(10_000.0, 2_400_000, "SRC", 20, 2, 1.0)
-        expected = data["expected"] if "expected" in data else data
+        expected = data.get("expected", data)
         assert expected["direct_won"] == legacy["direct"]
         assert expected["underground_won"] == legacy["below"]
         ind = calculate_indirect_cost(direct_cost_won=legacy["direct"])
