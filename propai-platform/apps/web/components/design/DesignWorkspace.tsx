@@ -836,12 +836,18 @@ function FlowAdvanceBar({
             ? labels.flowToDraw
             : null;
   // 미완료/차단/마지막 단계 안내 문구(정직). currentState==="blocked"면 뷰포트 블로커와 동일
-  //   근본원인에서 파생한 문구를 최우선으로 쓴다(단일 소스 — 재발 방지). 차단이 아니면 기존대로
-  //   "아직 도달할 다음이 없음(terminal)" 또는 "다음 단계를 위해 무엇이 필요한지" 안내.
+  //   근본원인에서 파생한 문구를 최우선으로 쓴다(단일 소스 — 재발 방지). 그 외엔 **뷰 자체**로
+  //   분기한다 — draw만 진짜 마지막 단계라 flowTerminal이고, site/generate는 ready(또는
+  //   loading)여도 각자 선행요건 안내가 필요하다.
+  //   ★리뷰 R2 회귀 수정: 예전엔 `ctaTarget===null`을 "terminal"의 기준으로 썼는데, ctaTarget은
+  //   "현재 뷰가 곧 nextView(=아직 미완료인 최전선 단계)"일 때도 null이 된다. 그 결과 신규
+  //   프로젝트의 기본 진입 뷰(site·ready)에서도, 부지확정 후 미생성 상태(generate·ready)에서도
+  //   무조건 "마지막 단계 — 도면 편집"을 오표기했다(1단계인데 "마지막 단계" 날조). view==="draw"로
+  //   직접 분기해 draw만 종료 문구를 쓰게 고정한다.
   const hint =
     currentState === "blocked"
       ? blockedReasonHint(view, hasAddressMismatch, labels)
-      : ctaTarget === null
+      : view === "draw"
         ? labels.flowTerminal
         : view === "site"
           ? labels.flowHintNeedSite

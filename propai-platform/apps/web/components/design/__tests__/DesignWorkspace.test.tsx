@@ -198,4 +198,47 @@ describe("DesignWorkspace", () => {
     // 예전 오안내 문구("추천안을 하나 적용하면...")는 나타나지 않아야 한다(회귀 방지).
     expect(screen.queryByText(/추천안\(건축개요\)을 하나 적용하면/)).not.toBeInTheDocument();
   });
+
+  // R2 리뷰 회귀 테스트(HIGH): 앞선 리뷰 봉합(#1 CTA 타깃 nextView 정렬)이 hint 분기를
+  //   `ctaTarget===null ? flowTerminal : ...`로 바꾸면서 새 결함을 유입했다 — ctaTarget은
+  //   "현재 뷰 자체가 곧 nextView(아직 미완료인 최전선 단계)"일 때도 null이 되므로, 신규/미확정
+  //   프로젝트의 기본 진입 뷰(site·ready)에서도 무조건 "마지막 단계 — 도면 편집"을 오표기했다
+  //   (1단계인데 "마지막 단계"라 날조). 봉합: hint의 terminal 분기를 view==="draw"에만 매핑.
+  it("신규/미확정 프로젝트의 기본 진입(site·ready)에서 흐름 바가 '마지막 단계'를 오표기하지 않는다", () => {
+    // resetStores() 기본값 그대로: siteAnalysis=null → siteState="ready"(미완료·미차단).
+    render(<DesignWorkspace projectId="p1" />);
+
+    // 오표기 회귀 방지 — 1단계(site)인데 draw 전용 종료 문구가 뜨면 안 된다.
+    expect(
+      screen.queryByText("마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다."),
+    ).not.toBeInTheDocument();
+    // 복원된 선행요건 안내 — site가 ready일 때 이 라벨이 실제로 표시돼야 한다(사문화 회귀 방지).
+    expect(
+      screen.getByText("부지 조건(주소·용도지역·대지면적)을 확정하면 다음 단계가 열립니다."),
+    ).toBeInTheDocument();
+  });
+
+  it("부지확정·설계 전(generate·ready)에서 흐름 바가 선행요건 안내를 보여주고 '마지막 단계'를 오표기하지 않는다", async () => {
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: "제2종일반주거지역",
+      }),
+      // designData 없음 → hasDesignBasis=false → generateState="ready"(complete도 blocked도 아님).
+    });
+
+    render(<DesignWorkspace projectId="p1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /추천안 만들기/ }));
+
+    // 복원된 선행요건 안내 — generate가 ready일 때 이 라벨이 실제로 표시돼야 한다(사문화 회귀 방지).
+    expect(
+      screen.getByText("추천안(건축개요)을 하나 적용하면 다음 단계가 열립니다."),
+    ).toBeInTheDocument();
+    // 오표기 회귀 방지 — 2단계(generate)인데 draw 전용 종료 문구가 뜨면 안 된다.
+    expect(
+      screen.queryByText("마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다."),
+    ).not.toBeInTheDocument();
+  });
 });
