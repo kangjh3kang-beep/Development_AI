@@ -726,6 +726,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     //   직접 입력"으로 사용자가 고른 적 없는 하드코딩 기본값을 확정값처럼 날조 노출한다(자연녹지
     //   FAR 100%를 제2종 250%로 오도). 부지분석 확정(siteZone) 또는 사용자가 실제로 용도지역
     //   필드를 편집한 값(userZone·zoneEdited 게이트)만 기록 — 둘 다 없으면 null(ContextHeader "—").
+    // ★R2(PR#316 리뷰): 기록 우선순위는 계산(effectiveZoning:483 — zoneEdited 최우선)과 정합해야
+    //   한다. 사용자값을 부지값보다 먼저 둔다 — 부지 자동감지("제2종일반주거 250%")를 사용자가
+    //   "자연녹지 100%"로 직접 정정했는데 기록이 여전히 부지값을 쓰면, 계산은 사용자 정정을
+    //   반영해 GFA를 낮췄는데 ContextHeader는 정정 전 부지값을 표기해 칩(설계값)과 헤더가
+    //   모순되고 과대 오도가 재발한다.
     const siteZoneForRecord = isSiteMatched ? normalizeZoning(siteAnalysis?.zoneCode) : null;
     const userZoneForRecord = zoneEdited ? normalizeZoning(form.zoning) : null;
     const next = {
@@ -734,7 +739,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
-      zoneCode: siteZoneForRecord ?? userZoneForRecord ?? null,
+      zoneCode: userZoneForRecord ?? siteZoneForRecord ?? null,
       massGeom,
     };
     const cur = useProjectContextStore.getState().designData;
