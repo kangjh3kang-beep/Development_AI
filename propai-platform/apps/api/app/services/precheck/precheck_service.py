@@ -807,7 +807,8 @@ def _build_band_module_input(
         total_gfa_sqm=total_gfa,
         total_households=total_hh,
         avg_sale_price_per_pyeong=svc._get_regional_price(best_code, region, address or ""),
-        avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+        # ★D1 규약: 전용평(공급 환산은 revenue_block 담당 — 매출 라운드트립 무회귀).
+        avg_area_pyeong=avg_unit_area / 3.305785,
         sale_ratio=0.95 if best_code not in ("M14", "M15") else 0.0,
         official_price_per_sqm=official_price_per_sqm,
         price_multiplier=1.1,

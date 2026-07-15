@@ -123,6 +123,7 @@ def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
         total_households=req.total_households,
         avg_sale_price_per_pyeong=req.avg_sale_price_per_pyeong,
         avg_area_pyeong=req.avg_area_pyeong,
+        price_basis=req.price_basis,
         sale_ratio=req.sale_ratio,
         bridge_amount_won=req.bridge_amount_won,
         pf_amount_won=req.pf_amount_won,

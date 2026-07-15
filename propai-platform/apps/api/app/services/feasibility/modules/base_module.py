@@ -29,8 +29,14 @@ class ModuleInput:
     total_households: int = 0
 
     # 분양
-    avg_sale_price_per_pyeong: float = 0
-    avg_area_pyeong: float = 0
+    avg_sale_price_per_pyeong: float = 0  # 평당 분양가 — 기준은 price_basis 필드가 명시
+    avg_area_pyeong: float = 0  # ★D1 규약: '전용면적 평'
+    # ★D1-R1(단가 basis 계약): 평당 단가(분양·임대)의 면적 기준.
+    #   "supply"(기본) = 공급면적 기준 시세(지역시세 테이블·수동폼 관례) → 매출 곱 시
+    #     revenue_block이 면적을 공급평(전용÷전용률)으로 환산해 basis를 일치시킨다.
+    #   "exclusive" = 전용면적 기준 단가(MOLIT 실거래 폐루프 — excluUseAr 기반) → 전용면적
+    #     그대로 곱한다(환산 시 +33% 과대 회귀 — 2026-07-16 리뷰 라이브 재현).
+    price_basis: str = "supply"
     sale_ratio: float = 1.0
 
     # 금융

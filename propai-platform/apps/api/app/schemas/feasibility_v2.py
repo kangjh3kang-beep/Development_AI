@@ -20,11 +20,13 @@ class FeasibilityCalculateRequest(BaseModel):
     building_type: str = "apartment"
     total_households: int = 0
     avg_sale_price_per_pyeong: float = 0
-    # ★주의(2026-07-15): 생산처별 의미 분열 — 공급평(build_module_input·precheck) vs
-    #   전용평(프론트 수동폼 라벨 '평균 전용면적'·orchestration node-body-builders·/baseline).
-    #   소비처도 갈림(revenue=면적×공급단가 전제 vs C01=전용 85㎡ 판정). 규약 통일(제품 결정)
-    #   전까지 소비처에서 임의 환산 금지.
+    # ★D1 규약 확정(2026-07-16): '전용면적 평' — 전 생산처 통일(프론트 폼 라벨과 일치).
+    #   매출 곱(공급평 시세 단가)은 revenue_block이 전용률(unit_standards SSOT)로 공급 환산,
+    #   세금(C01 전용 85㎡ 판정)은 전용 그대로 사용.
     avg_area_pyeong: float = 0
+    # 평당 단가의 면적 기준: "supply"(공급 시세, 기본) | "exclusive"(전용 기준 실거래 —
+    # orchestration 폐루프가 명시). base_module.ModuleInput.price_basis 계약과 동일.
+    price_basis: str = "supply"
     sale_ratio: float = Field(ge=0, le=1, default=1.0)
     bridge_amount_won: int = 0
     pf_amount_won: int = 0

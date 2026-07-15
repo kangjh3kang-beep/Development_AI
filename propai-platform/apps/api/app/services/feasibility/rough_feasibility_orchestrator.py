@@ -585,9 +585,9 @@ async def build_rough_scenario(
                 total_sale_amount_won=revenue_total,
                 total_gfa_sqm=float(gfa_sqm or 0),
                 building_type=_service._get_building_type(dev_type_final),
-                # ★C01 부가세 면세기준(국민주택규모)은 '전용 85㎡' — 공급면적(avg_area_pyeong)을
-                #   넘기면 전용 61~85㎡ 최다 구간이 과세로 뒤집혀 분양수입의 ~2.7%가 날조 과세된다
-                #   (리뷰 P2-2). 개발유형 표준 전용면적(unit_standards SSOT)을 전달한다.
+                # ★C01 부가세 면세기준(국민주택규모)은 '전용 85㎡' — 개발유형 표준 전용면적
+                #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
+                #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
                 avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
                 in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
             )
