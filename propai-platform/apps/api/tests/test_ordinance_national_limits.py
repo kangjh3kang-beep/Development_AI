@@ -33,11 +33,16 @@ def test_national_limits_bcr_far_present_and_numeric():
 
 
 def test_height_limits_still_owned_elsewhere():
-    """높이 제한 데이터 유실 방지: 전용주거 10m/12m는 alris_service가 계속 보유."""
-    import inspect
+    """높이 제한 데이터 유실 방지: 전용주거 10m/12m는 정본(legal_zone_limits SSOT)이 보유한다.
 
-    from app.services.legal.alris_service import ALRISService
+    ★alris_service.check_compliance는 자체 zone표(제1종전용주거 건폐율 40% 오값 포함)를
+    폐기하고 정본에 위임하도록 교정됐다. 따라서 높이/건폐율은 소스 문자열이 아니라 정본
+    동작(legal_limits_for)으로 검증한다 — 전용주거 높이 10m/12m 보존 + 건폐율은 법정 50%.
+    """
+    from app.services.zoning.legal_zone_limits import legal_limits_for
 
-    src = inspect.getsource(ALRISService.check_compliance)
-    assert '"제1종전용주거지역": {"max_far": 100, "max_bcr": 40, "max_height": 10}' in src
-    assert '"제2종전용주거지역": {"max_far": 150, "max_bcr": 50, "max_height": 12}' in src
+    r1 = legal_limits_for("제1종전용주거지역")
+    r2 = legal_limits_for("제2종전용주거지역")
+    assert r1["max_height_m"] == 10 and r2["max_height_m"] == 12, "전용주거 높이(10/12m) 유실"
+    # 종전 alris 자체표의 제1종전용주거 건폐율 40%는 법정 오값 — 정본은 50%.
+    assert r1["max_bcr_pct"] == 50, "제1종전용주거 건폐율 법정상한은 50%(종전 40%는 결함)"

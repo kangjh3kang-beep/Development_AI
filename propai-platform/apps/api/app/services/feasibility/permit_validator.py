@@ -24,6 +24,13 @@ ZONE_PERMIT_MATRIX = {
     "도시재생활성화구역": ["M06", "M08", "M13", "M14"],
 }
 
+# ── 허용용도 판정(ZONE_PERMIT_MATRIX)의 법령 근거 키 ──
+# 용도지역별 건축가능 용도의 1차 근거는 국토계획법 제76조(용도지역에서의 건축물 제한)이며,
+# 구체 허용/제한 목록은 같은 법 시행령 제71조 및 별표2~22(용도지역 안에서 건축할 수 있는
+# 건축물)에 위임된다. legal_reference_registry에 실재하는 키는 'zone_use'(§76)뿐이므로
+# 그 키만 연결한다(무날조 — 시행령 §71·별표는 레지스트리 미등재라 주석으로만 명시, 키 미부여).
+ZONE_PERMIT_LEGAL_REF_KEYS: list[str] = ["zone_use"]
+
 # Permit complexity by development type
 PERMIT_COMPLEXITY = {
     "M01": 5,  # 재개발 -- 매우 어려움 (조합설립, 사업인정, 관리처분)
@@ -109,4 +116,7 @@ def check_permit_feasibility(dev_type: str, zone_type: str) -> dict:
         "permit_complexity": complexity,
         "complexity_label": ["", "매우쉬움", "쉬움", "보통", "어려움", "매우어려움"][complexity],
         "reason": reason,
+        # 허용용도 판정의 법령 근거(국토계획법 §76, 시행령 §71·별표 위임). additive — 소비처는
+        # 레지스트리로 딥링크를 해석한다(mixed_zone_limits 등과 동일 legal_ref_keys 계약).
+        "legal_ref_keys": ZONE_PERMIT_LEGAL_REF_KEYS,
     }

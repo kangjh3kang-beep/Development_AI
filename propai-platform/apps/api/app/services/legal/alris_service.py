@@ -17,7 +17,12 @@ except ImportError:
 logger = structlog.get_logger()
 
 class ALRISService:
-    """ALRIS: RAG 기반 건축 법규 자동 검토 (40개 법령)"""
+    """ALRIS: RAG 기반 건축 법규 자동 검토 프로토타입.
+
+    현재 시드 코퍼스는 건축·녹색건축 법령 스니펫 3종(건폐율·용적률·ZEB)뿐이다.
+    (과거 docstring의 '40개 법령'은 실제 보유량과 어긋난 과대 표기라 실수로 정정.)
+    용도지역 법정 상한(check_compliance)은 자체 표가 아니라 정본(legal_zone_limits SSOT)에 위임한다.
+    """
 
     def __init__(self):
         # langchain 미설치 또는 OPENAI_API_KEY 미설정 시 LLM/임베딩을 구성하지 않는다.
@@ -43,18 +48,24 @@ class ALRISService:
 
     def _load_legal_documents(self) -> list[Document]:
         return [
-            Document(page_content="""건축법 제56조 (건축물의 용적률)
-            용도지역별 용적률 기준 (국토의 계획 및 이용에 관한 법률 제78조):
+            # 용도지역별 용적률의 실제 근거 조문은 국토계획법 제78조다(건축법 제56조는 이 조항에
+            # 위임). 과거 이 스니펫은 건축법 제56조를 1차 근거로 오표기했다 → 정본 조문으로 교정.
+            Document(page_content="""국토의 계획 및 이용에 관한 법률 제78조 (용도지역의 용적률)
+            — 건축법 제56조가 위임하는 용도지역별 용적률 상한:
             제1종 전용주거지역: 50~100%, 제2종 전용주거지역: 100~150%
             제1종 일반주거지역: 100~200%, 제2종 일반주거지역: 100~250%
             제3종 일반주거지역: 100~300%, 준주거지역: 200~500%
             일반상업지역: 200~1300%""",
-                    metadata={"law": "건축법", "article": "제56조", "category": "용적률"}),
-            Document(page_content="""건축법 제55조 (건축물의 건폐율)
+                    metadata={"law": "국토의 계획 및 이용에 관한 법률", "article": "제78조",
+                              "delegated_by": "건축법 제56조", "category": "용적률"}),
+            # 건폐율의 실제 근거 조문은 국토계획법 제77조(건축법 제55조가 위임) — 오표기 교정.
+            Document(page_content="""국토의 계획 및 이용에 관한 법률 제77조 (용도지역의 건폐율)
+            — 건축법 제55조가 위임하는 용도지역별 건폐율 상한:
             제1종 전용주거지역: 50%, 제2종 전용주거지역: 50%
             제1종 일반주거지역: 60%, 제2종 일반주거지역: 60%
             제3종 일반주거지역: 50%, 준주거지역: 70%, 일반상업지역: 80%""",
-                    metadata={"law": "건축법", "article": "제55조", "category": "건폐율"}),
+                    metadata={"law": "국토의 계획 및 이용에 관한 법률", "article": "제77조",
+                              "delegated_by": "건축법 제55조", "category": "건폐율"}),
             Document(page_content="""녹색건축물 조성 지원법 제17조 ZEB 인증 기준:
             ZEB 1등급: 에너지자립률 100% 이상, ZEB 2등급: 80%, ZEB 3등급: 60%
             ZEB 4등급: 40%, ZEB 5등급: 20%""",
@@ -63,48 +74,36 @@ class ALRISService:
 
     async def check_compliance(self, zone_type: str, floor_area_ratio: float,
                                 building_coverage_ratio: float, height_m: float) -> dict:
-        zone_rules = {
-            "제1종전용주거지역": {"max_far": 100, "max_bcr": 40, "max_height": 10},
-            "제2종전용주거지역": {"max_far": 150, "max_bcr": 50, "max_height": 12},
-            "제1종일반주거지역": {"max_far": 200, "max_bcr": 60, "max_height": None},
-            "제2종일반주거지역": {"max_far": 250, "max_bcr": 60, "max_height": None},
-            "제3종일반주거지역": {"max_far": 300, "max_bcr": 50, "max_height": None},
-            "준주거지역": {"max_far": 500, "max_bcr": 70, "max_height": None},
-            "중심상업지역": {"max_far": 1500, "max_bcr": 90, "max_height": None},
-            "일반상업지역": {"max_far": 1300, "max_bcr": 80, "max_height": None},
-            "근린상업지역": {"max_far": 900, "max_bcr": 70, "max_height": None},
-            "유통상업지역": {"max_far": 1100, "max_bcr": 80, "max_height": None},
-            "전용공업지역": {"max_far": 300, "max_bcr": 70, "max_height": None},
-            "일반공업지역": {"max_far": 350, "max_bcr": 70, "max_height": None},
-            "준공업지역": {"max_far": 400, "max_bcr": 70, "max_height": None},
-            "보전녹지지역": {"max_far": 80, "max_bcr": 20, "max_height": None},
-            "생산녹지지역": {"max_far": 100, "max_bcr": 20, "max_height": None},
-            "자연녹지지역": {"max_far": 100, "max_bcr": 20, "max_height": None},
-            # Special districts
-            "역세권개발구역": {"max_far": 700, "max_bcr": 80, "max_height": None},
-            "도시재생활성화구역": {"max_far": 500, "max_bcr": 80, "max_height": None},
-            "지구단위계획구역": {"max_far": 400, "max_bcr": 60, "max_height": None},
-        }
+        # 용도지역 법정 상한은 자체 표가 아니라 정본(legal_zone_limits SSOT = 국토계획법 시행령
+        # §84/§85 재노출)에 위임한다. 과거 자체 zone표는 제1종전용주거 건폐율 40%(법정 50%) 등
+        # 오값 부비트랩이었다 — 소비 0이어도 부활 시 즉시 오염되므로 정본으로 일원화한다.
+        from app.services.zoning.auto_zoning_service import ZONE_LIMITS as _SSOT_ZONES
+        from app.services.zoning.legal_zone_limits import legal_limits_for
 
-        if not zone_type or zone_type not in zone_rules:
+        legal = legal_limits_for(zone_type) if zone_type else None
+        if legal is None:
             return {
                 "compliant": False,
-                "message": f"알 수 없는 용도지역: '{zone_type}'. 지원 용도지역: {', '.join(zone_rules.keys())}",
+                "message": f"알 수 없는 용도지역: '{zone_type}'. 지원 용도지역: {', '.join(_SSOT_ZONES.keys())}",
                 "violations": [f"용도지역 '{zone_type}'을(를) 확인할 수 없습니다."],
                 "warnings": [],
             }
 
-        rules = zone_rules[zone_type]
+        max_far = legal.get("max_far_pct")
+        max_bcr = legal.get("max_bcr_pct")
         violations = []
-        if floor_area_ratio > rules["max_far"]:
-            violations.append(f"용적률 초과: {floor_area_ratio}% > {rules['max_far']}%")
-        if building_coverage_ratio > rules["max_bcr"]:
-            violations.append(f"건폐율 초과: {building_coverage_ratio}% > {rules['max_bcr']}%")
+        if max_far is not None and floor_area_ratio > max_far:
+            violations.append(f"용적률 초과: {floor_area_ratio}% > {max_far}%")
+        if max_bcr is not None and building_coverage_ratio > max_bcr:
+            violations.append(f"건폐율 초과: {building_coverage_ratio}% > {max_bcr}%")
         return {
-            "zone_type": zone_type, "compliant": len(violations) == 0,
-            "violations": violations, "applicable_far": rules["max_far"],
-            "applicable_bcr": rules["max_bcr"],
-            "legal_basis": "건축법 제55조, 제56조"
+            "zone_type": legal.get("zone_type", zone_type),
+            "compliant": len(violations) == 0,
+            "violations": violations,
+            "applicable_far": max_far,
+            "applicable_bcr": max_bcr,
+            # 건폐율 근거=국토계획법 제77조, 용적률 근거=제78조(건축법 §55/§56은 이 조항에 위임).
+            "legal_basis": "국토의 계획 및 이용에 관한 법률 제77조(건폐율)·제78조(용적률)",
         }
 
     async def rag_legal_query(self, query: str) -> dict:

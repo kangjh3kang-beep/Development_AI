@@ -3,6 +3,7 @@
 세트백, 일조권, 용도지역별 법규 조회, 복합 위반 검증.
 """
 
+import math
 import os
 import sys
 
@@ -135,18 +136,24 @@ class TestSunlightVerification:
 
 
 class TestZoneLimits:
-    """용도지역별 법규 기본값 조회 테스트."""
+    """용도지역별 법규 기본값 조회 테스트.
+
+    ★ZONE_LIMITS는 국토계획법 시행령 §84/§85 정본(legal_zone_limits SSOT)에서 파생한다.
+    종전 이 테스트는 결함(제1종일반주거 용적률 100%·일반상업 400%/50m 등)을 고정하고 있어,
+    정본 값 기준으로 갱신했다. 높이 상한이 없는 용도지역(상업·일반주거 등)은 float('inf')
+    (무제한 — 가로구역·일조 별도)로 표현된다.
+    """
 
     def test_zone_1R(self):
-        """제1종일반주거."""
+        """제1종일반주거 — 건폐율 60%, 미터 높이상한 없음(무제한)."""
         lim = ZONE_LIMITS["1R"]
         assert lim.building_coverage_ratio == 0.60
-        assert lim.max_height_m == 12.0
+        assert math.isinf(lim.max_height_m)
 
     def test_zone_2R(self):
-        """제2종일반주거."""
+        """제2종일반주거 — 용적률 법정상한 250%(종전 200%는 결함 고정값)."""
         lim = ZONE_LIMITS["2R"]
-        assert lim.floor_area_ratio == 2.00
+        assert lim.floor_area_ratio == 2.50
 
     def test_zone_3R(self):
         """제3종일반주거."""
@@ -155,9 +162,9 @@ class TestZoneLimits:
         assert lim.min_setback_m == 1.5
 
     def test_zone_GC(self):
-        """일반상업."""
+        """일반상업 — 용적률 법정상한 1300%(종전 400%는 결함 고정값)."""
         lim = ZONE_LIMITS["GC"]
-        assert lim.floor_area_ratio == 4.00
+        assert lim.floor_area_ratio == 13.00
         assert lim.min_setback_m == 0.0
 
     def test_zone_NC(self):
@@ -166,20 +173,35 @@ class TestZoneLimits:
         assert lim.floor_area_ratio == 9.00
 
     def test_zone_QI(self):
-        """준공업."""
+        """준공업 — 용도지역 자체 미터 높이상한 없음(무제한)."""
         lim = ZONE_LIMITS["QI"]
-        assert lim.max_height_m == 35.0
+        assert math.isinf(lim.max_height_m)
 
     def test_zone_QR(self):
         """준주거."""
         lim = ZONE_LIMITS["QR"]
         assert lim.floor_area_ratio == 5.00
 
+    def test_zone_shortcode_korean_name_parity(self):
+        """단축코드와 정식 한글명은 동일 법정 한도를 반환(그림자 없음)."""
+        assert ZONE_LIMITS["GC"] == ZONE_LIMITS["일반상업지역"]
+        assert ZONE_LIMITS["1R"] == ZONE_LIMITS["제1종일반주거지역"]
+        assert ZONE_LIMITS["QI"] == ZONE_LIMITS["준공업지역"]
+
+    def test_zone_matches_legal_ssot(self):
+        """법정 한도가 정본(legal_zone_limits)과 일치 — 하드코딩 그림자 재발 차단."""
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+
+        legal = legal_limits_for("일반상업지역")
+        lim = ZONE_LIMITS["일반상업지역"]
+        assert round(lim.building_coverage_ratio * 100) == legal["max_bcr_pct"]
+        assert round(lim.floor_area_ratio * 100) == legal["max_far_pct"]
+
     def test_get_zone_limits_method(self):
-        """BuildingComplianceService.get_zone_limits 메서드."""
+        """BuildingComplianceService.get_zone_limits 메서드 — 일반상업 높이 무제한."""
         lim = BuildingComplianceService.get_zone_limits("GC")
         assert lim is not None
-        assert lim.max_height_m == 50.0
+        assert math.isinf(lim.max_height_m)
 
     def test_get_zone_limits_unknown(self):
         """미등록 코드는 None."""
