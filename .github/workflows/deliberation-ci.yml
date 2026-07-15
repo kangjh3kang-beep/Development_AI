@@ -39,6 +39,15 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_review
       REDIS_URL: redis://localhost:6379/0
       DB_SCHEMA: review
+      # ★설치 실패 수정(run 29451403757): 엔진 루트가 flat-layout 다중 최상위 디렉토리(ops·apps·tools 등)라
+      #   `pip install -e .`가 setuptools 자동탐색에서 실패한다("Multiple top-level packages discovered").
+      #   중첩 원본 ci.yml도 동일하게 `pip install -e ".[dev]"`를 썼으나 GitHub가 그 워크플로를 한 번도
+      #   실행한 적이 없어(D4 배경) 이 결함이 드러난 적이 없었다. 엔진 pyproject.toml 패키징 변경(예:
+      #   [tool.setuptools] packages 명시)은 침습적이므로, 로컬 패키지를 설치하지 않고 의존성만 설치 +
+      #   PYTHONPATH로 임포트 경로를 명시하는 방식으로 우회한다(pytest는 pyproject.toml의 자체
+      #   `pythonpath` ini 설정으로 이미 이 방식과 동일하게 동작 — alembic·static_scan도 여기 맞춘다).
+      #   절대경로라 각 스텝의 working-directory(cd apps/api 등)와 무관하게 항상 정확히 해석된다.
+      PYTHONPATH: ${{ github.workspace }}/propai-platform/services/deliberation-review/apps/api:${{ github.workspace }}/propai-platform/services/deliberation-review
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +55,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install engine (+dev extras)
-        run: pip install -e ".[dev]"
+      - name: Install engine dependencies (no editable install — see PYTHONPATH 주석)
+        run: |
+          python - <<'PYEOF'
+          import subprocess
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+          deps = [*data["project"]["dependencies"], *data["project"]["optional-dependencies"]["dev"]]
+          subprocess.check_call(["pip", "install", *deps])
+          PYEOF
 
       - name: Ruff (lint, non-blocking)
         run: ruff check . || true
@@ -62,5 +80,7 @@ jobs:
           alembic downgrade base
           alembic upgrade head
 
-      - name: Pytest (515 engine tests)
-        run: pytest -q
+      - name: Pytest (엔진 전체 테스트 — 0 collected 함정 방지로 수집 건수를 로그에 표면화)
+        run: |
+          pytest -q --collect-only 2>&1 | tail -5
+          pytest -q
