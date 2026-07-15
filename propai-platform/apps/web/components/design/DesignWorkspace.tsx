@@ -554,27 +554,23 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
 
           {panelOpen && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+              {/* 현재 작업(설계) 기준 = 부지분석 주소. 상단 ContextHeader와 하단 MetricBar가 이미
+                  용도지역·대지면적을 정본으로 표기하므로, 이 패널에서는 그 수치를 반복하지 않는다
+                  (사용자 지적 '부지 지표 3중 중복' 해소). 대신 '어느 분석을 기준으로 설계하는가'와
+                  프로젝트-분석 주소 정합성만 다뤄, 패널의 고유 역할(기준·정합 확인)을 선명히 한다. */}
               <dl className="grid gap-2 text-xs">
-                <ContextRow
-                  label={labels.contextProjectAddress}
-                  value={projectRecord?.address || labels.contextProjectAddressEmpty}
-                />
                 <ContextRow
                   label={labels.contextAnalysisAddress}
                   value={siteAnalysis?.address || labels.contextAnalysisAddressEmpty}
                 />
-                <ContextRow
-                  label={labels.contextZone}
-                  value={!hasAddressMismatch ? siteZone || labels.contextZoneEmpty : labels.contextZoneAfterReanalysis}
-                />
-                <ContextRow
-                  label={labels.contextArea}
-                  value={
-                    !hasAddressMismatch && siteAreaSqm
-                      ? `${Math.round(siteAreaSqm).toLocaleString()}㎡`
-                      : labels.contextAreaAfterReanalysis
-                  }
-                />
+                {/* 프로젝트 주소는 분석 주소와 어긋날 때만(정합성 경고) 함께 노출 — 일치 시 동일
+                    주소 중복 표기를 피한다(무회귀: 불일치 시 두 주소를 나란히 보여 원인 노출). */}
+                {hasAddressMismatch && (
+                  <ContextRow
+                    label={labels.contextProjectAddress}
+                    value={projectRecord?.address || labels.contextProjectAddressEmpty}
+                  />
+                )}
               </dl>
               {hasAddressMismatch ? (
                 /* 주소 불일치 차단 배너 — 스크린리더가 즉시 읽어야 하는 경보(상태색=--status-warning). */

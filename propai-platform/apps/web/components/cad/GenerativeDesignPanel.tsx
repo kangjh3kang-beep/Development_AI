@@ -11,6 +11,7 @@ import { getZoningList, zoningToCode } from "@/lib/kr-building-regulations";
 import { resolveBcrPct, resolveDominantZone, resolveFarPct } from "@/lib/zoning-ssot";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
 import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import { InspectorGrid } from "@/components/common/InspectorGrid";
 import {
   annotatedGeometryFor,
   buildLegalFindings,
@@ -725,7 +726,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const legalVerdict = single ? complianceVerdict(single.compliance) : null;
 
   return (
-    <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
+    <div className="@container rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
       {/* 헤더 */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -739,7 +740,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
+      {/* @container(패널 루트) 기준 2열 분할 — 뷰포트가 아니라 이 패널이 놓인 칸의 실제 폭에
+          반응한다. CAD/BIM 통합 엔진의 좁은 임베드 폭에서도 우측 액션 컬럼이 과도하게 눌려
+          "Top3 설계안 생성" 버튼 글자가 잘리던 문제를 구조적으로 차단(좁으면 세로 스택). */}
+      <div className="grid gap-6 @2xl:grid-cols-[1fr_1.1fr]">
         {/* ── 좌: 자연어 + 슬라이더 입력 ── */}
         <div className="flex flex-col gap-6">
           {/* 1) 자연어 입력 */}
@@ -1091,13 +1095,15 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
         {/* ── 우: 생성 액션 + 결과 ── */}
         <div className="flex flex-col gap-4">
-          {/* 생성 버튼 2종 */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* 생성 버튼 2종 — InspectorGrid(auto-fit minmax)로 '칸의 실제 폭'에 반응. 각 버튼
+              최소 10rem을 보장해, 좁은 임베드에서 버튼이 반토막 나며 "생성" 글자가 잘리던
+              현상을 차단한다(폭이 모자라면 세로로 자연 스택). text-center로 줄바꿈시에도 정렬 유지. */}
+          <InspectorGrid minItemRem={10} gap={3}>
             <button
               type="button"
               onClick={handleAlternatives}
               disabled={altLoading}
-              className="rounded-2xl bg-[var(--accent-strong)] px-4 py-4 text-sm font-black text-white shadow-[var(--shadow-lg)] transition-opacity disabled:opacity-40"
+              className="rounded-2xl bg-[var(--accent-strong)] px-4 py-4 text-center text-sm font-black text-white shadow-[var(--shadow-lg)] transition-opacity disabled:opacity-40"
             >
               {altLoading ? "설계안 생성 중…" : "Top3 설계안 생성"}
             </button>
@@ -1105,11 +1111,11 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               type="button"
               onClick={handleSingle}
               disabled={singleLoading}
-              className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-4 text-sm font-black text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-soft)] disabled:opacity-40"
+              className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-4 text-center text-sm font-black text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-soft)] disabled:opacity-40"
             >
               {singleLoading ? "자동설계 중…" : "단일 자동설계"}
             </button>
-          </div>
+          </InspectorGrid>
 
           {(altError || singleError) && (
             <p className="text-xs font-bold text-[var(--status-error)]" role="alert">
@@ -1123,6 +1129,33 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               <AlertTriangle className="size-3.5" aria-hidden />{altWarning}
             </p>
           )}
+
+          {/* 빈 상태(C) — 아직 아무 설계안도 생성/선택되지 않았을 때, 큰 결과 컬럼이 빈 채로
+              방치되지 않도록 안내 플레이스홀더를 표시한다. 로딩/에러/결과 어느 것도 없을 때만
+              노출(무날조: 가짜 카드 금지). 생성 후에는 실제 결과 카드가 이 자리를 대체한다. */}
+          {!altLoading &&
+            !singleLoading &&
+            !single &&
+            selectedRank == null &&
+            alternatives.length === 0 &&
+            !evaluation &&
+            similar.length === 0 && (
+              <div className="grid min-h-[16rem] place-items-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-8 text-center">
+                <div className="max-w-xs">
+                  <span className="mx-auto grid size-12 place-items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-tertiary)]">
+                    <Sparkles className="size-5" aria-hidden />
+                  </span>
+                  <p className="mt-3 text-sm font-black text-[var(--text-primary)]">
+                    아직 생성된 설계안이 없습니다
+                  </p>
+                  <p className="mt-1.5 text-[12px] font-semibold leading-5 text-[var(--text-hint)]">
+                    왼쪽에서 원하는 설계를 말·슬라이더로 정한 뒤{" "}
+                    <span className="font-black text-[var(--accent-strong)]">Top3 설계안 생성</span>을
+                    누르면, 법규 검증을 통과한 설계안이 여기에 표시됩니다.
+                  </p>
+                </div>
+              </div>
+            )}
 
           {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
           {evaluation && <EvaluationCard ev={evaluation} />}
