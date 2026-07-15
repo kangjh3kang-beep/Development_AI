@@ -5,6 +5,7 @@ import { Building, Compass, Files, MapPin, PenLine, Target, Users, Wallet } from
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
   NearbyTransactionsMap as NearbyTransactionsMapType,
@@ -587,10 +588,11 @@ export function MarketInsightsWorkspaceClient() {
             )}
           </h3>
         </div>
-        {siteAnalysis?.landAreaSqm ? (
+        {/* ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지(바로 옆 필지 수와 축이 어긋난다). */}
+        {effectiveLandAreaSqm(siteAnalysis) ? (
           <div className="flex gap-4 text-xs font-bold text-[var(--text-secondary)]">
-            <span>대지면적: <b className="text-[var(--text-primary)]">{siteAnalysis.landAreaSqm.toLocaleString()}㎡</b></span>
-            {siteAnalysis.parcelCount ? (
+            <span>대지면적: <b className="text-[var(--text-primary)]">{effectiveLandAreaSqm(siteAnalysis)!.toLocaleString()}㎡</b></span>
+            {siteAnalysis?.parcelCount ? (
               <span>필지 수: <b className="text-[var(--text-primary)]">{siteAnalysis.parcelCount}필지</b></span>
             ) : null}
           </div>

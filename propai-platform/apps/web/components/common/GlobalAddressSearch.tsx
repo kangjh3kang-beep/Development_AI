@@ -21,6 +21,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
@@ -985,7 +986,11 @@ export function GlobalAddressSearch({
     ? siteAnalysis
       ? {
           zoneCode: siteAnalysis.zoneCode,
-          landAreaSqm: siteAnalysis.landAreaSqm,
+          // ★면적은 반드시 effectiveLandAreaSqm(SSOT)로 읽는다 — raw landAreaSqm 금지.
+          //   landAreaSqm 은 '대표 1필지' 분석이 덮어쓰기도 하고, 이전 필지구성의 통합값이
+          //   남아 있기도 해서 다필지에서 통합면적(landAreaSqmTotal)과 갈린다. raw 를 읽으면
+          //   같은 화면의 ContextHeader(=effectiveLandAreaSqm 사용)와 다른 면적이 표시된다.
+          landAreaSqm: effectiveLandAreaSqm(siteAnalysis),
           effectiveBcr: siteAnalysis.ordinance?.effectiveBcr ?? null,
           effectiveFar: siteAnalysis.ordinance?.effectiveFar ?? null,
           dataSource: siteAnalysis.dataSource ?? null,

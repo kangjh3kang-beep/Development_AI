@@ -19,50 +19,10 @@ export function effectiveLandAreaSqm(
   sa: SiteAnalysisData | null | undefined,
 ): number | null {
   if (!sa) return null;
-
-  // ★필지 면적 합 = 권위 크로스체크(교차검증).
-  //   parcels[]는 필지별 실측 면적의 배열이라, 스칼라 landAreaSqm/landAreaSqmTotal 이
-  //   어떤 경로로 오염돼도(예: 지오코딩이 지번을 못 잡아 법정동 단위 면적이 스칼라에
-  //   저장되는 경우) 이 합과 대조해 바로잡을 수 있다. 무목업: 면적 미확보 필지는 합에서 빠진다.
-  const parcelSum = parcelAreaSqmSum(sa);
+  const total = sa.landAreaSqmTotal;
   const isMulti = (sa.parcelCount ?? 1) > 1;
-  const scalar =
-    isMulti && typeof sa.landAreaSqmTotal === "number" && sa.landAreaSqmTotal > 0
-      ? sa.landAreaSqmTotal
-      : typeof sa.landAreaSqm === "number" && sa.landAreaSqm > 0
-        ? sa.landAreaSqm
-        : null;
-
-  // parcels 합이 신뢰 가능(2필지 이상·양수)하면 스칼라와 교차검증한다.
-  if (parcelSum != null && (sa.parcels?.length ?? 0) >= 2) {
-    // 스칼라가 없거나, 스칼라가 필지 합과 5% 넘게 어긋나면 필지 합을 신뢰(권위 출처).
-    //   (반올림·미세 보정 오차는 허용해 정상값을 굳이 흔들지 않는다.)
-    if (scalar == null || Math.abs(scalar - parcelSum) / parcelSum > 0.05) {
-      return parcelSum;
-    }
-  }
-  return scalar;
-}
-
-/**
- * 필지 배열의 면적 합(㎡). 유한 양수만 더한다(null·0·음수·NaN 제외 — 무목업).
- * 유효 면적을 가진 필지가 하나도 없으면 null.
- */
-export function parcelAreaSqmSum(
-  sa: SiteAnalysisData | null | undefined,
-): number | null {
-  const parcels = sa?.parcels;
-  if (!Array.isArray(parcels) || parcels.length === 0) return null;
-  let sum = 0;
-  let counted = 0;
-  for (const p of parcels) {
-    const a = p?.areaSqm;
-    if (typeof a === "number" && Number.isFinite(a) && a > 0) {
-      sum += a;
-      counted += 1;
-    }
-  }
-  return counted > 0 ? Math.round(sum) : null;
+  if (isMulti && typeof total === "number" && total > 0) return total;
+  return typeof sa.landAreaSqm === "number" ? sa.landAreaSqm : null;
 }
 
 /**
