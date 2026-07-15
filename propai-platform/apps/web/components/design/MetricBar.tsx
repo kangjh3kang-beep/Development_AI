@@ -1,28 +1,27 @@
 "use client";
 
 /**
- * 설계 스튜디오 하단 "정본 메트릭바" — 한 창에서 부지·설계 핵심 수치를 상시 확인하는 띠.
+ * 설계 스튜디오 하단 "설계 산출 KPI 바" — 설계 생성 결과 수치를 상시 확인하는 띠.
  *
- * 왜 필요한가(쉬운 설명): 설계 스튜디오는 부지·설계생성·도면 단계를 오가는데, 사용자가
- *   "지금 이 부지의 대지면적·용도지역·건폐율/용적률·연면적·층수·세대수"를 어느 단계에서든
- *   바로 보고 싶어 한다. 이 띠는 그 7개 핵심 수치를 store(단일 진실원천)에서 직접 읽어
- *   화면 하단에 고정한다(어떤 단계든 같은 정본을 본다).
+ * 역할 분리(사용자 지적 '부지 지표 중복' 해소):
+ *   · 상단 ContextHeader = "대상 식별"(프로젝트·주소·PNU·용도지역·대지면적) — 무엇을 대상으로 하는가.
+ *   · 하단 이 바 = "설계 산출 KPI"(건폐율·용적률·연면적·층수·세대수) — 생성한 설계의 결과가 무엇인가.
+ *   대지면적·용도지역 같은 식별 지표는 상단에서만 표기해 화면 내 중복을 제거한다(정보 손실 0 —
+ *   같은 페이지 상단 ContextHeader가 정본으로 항상 노출). 건폐율/용적률은 설계 산출이므로 여기 남기되,
+ *   설계 전(미생성)에는 부지 실효 한도로 폴백해 "설계가 준수해야 할 기준선"을 정직히 보여준다.
  *
- * 단일 진실원천(SSOT): 모든 값은 useProjectContextStore의 designData·siteAnalysis에서만
- *   읽고, 면적·용도지역·건폐율/용적률은 공용 리졸버(lib/zoning-ssot·lib/site-area)로 통일해
- *   "통합값 우선 → 실효 → 법정" 같은 우선순위를 한 곳에서 따른다(읽기 분기 방지).
+ * 단일 진실원천(SSOT): 모든 값은 useProjectContextStore의 designData·siteAnalysis에서만 읽고,
+ *   건폐율/용적률은 공용 리졸버(lib/zoning-ssot)로 "설계값 우선 → 부지 실효" 순위를 한 곳에서 따른다.
  *
  * 무날조 원칙: 어떤 칩이든 값이 없으면(null/undefined) "—"로만 표기한다(가짜 0/임의값 금지).
- *   designData·siteAnalysis가 둘 다 없으면 띠 자체를 그리지 않는다("—" 7개 노출 방지).
+ *   designData·siteAnalysis가 둘 다 없으면 띠 자체를 그리지 않는다(빈 "—" 노출 방지).
  */
 
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
 import {
   resolveBcrPct,
   resolveFarPct,
-  resolveDominantZone,
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
@@ -49,11 +48,6 @@ function fmtPct(v: number | null | undefined): string {
 function fmtCount(v: number | null | undefined, suffix: string): string {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
   return `${v}${suffix}`;
-}
-
-// 문자열 표기(용도지역 등). 빈값/미확보면 "—".
-function fmtText(v: string | null | undefined): string {
-  return typeof v === "string" && v.trim() ? v.trim() : "—";
 }
 
 /* ── C2R 계약(geometry_invariants) 등급 배지 — PASS/WARN/FAIL을 색으로 한눈에 ── */
@@ -198,11 +192,8 @@ export function MetricBar({ className }: { className?: string }) {
   // 데이터 전무(둘 다 없음)면 띠 자체를 렌더하지 않는다(빈 "—" 7개 노출 방지).
   if (!designData && !siteAnalysis) return null;
 
-  // 대지면적 — 다필지 통합 우선 유효 면적(공용 헬퍼). 미확보 시 null.
-  const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
-  // 용도지역 — resolveDominantZone이 내부에서 dominantZoneCode ?? zoneCode를 이미 폴백(단일경유).
-  const zone = resolveDominantZone(siteAnalysis);
   // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 실효값(공용 리졸버). 미확보 시 null.
+  //   대지면적·용도지역(식별 지표)은 상단 ContextHeader가 정본으로 표기하므로 이 바에서는 제외(중복 제거).
   const bcr = designData?.bcr ?? resolveBcrPct(siteAnalysis) ?? null;
   const far = designData?.far ?? resolveFarPct(siteAnalysis) ?? null;
   // 연면적·정본 층수·세대수 — 설계 산출(designData)에서만. 미확보 시 null → "—".
@@ -239,7 +230,7 @@ export function MetricBar({ className }: { className?: string }) {
         className ?? "",
       ].join(" ")}
       role="group"
-      aria-label="정본 메트릭"
+      aria-label="설계 산출 KPI"
     >
       {/* 근거 인스펙터(펼침 시에만) — 칩 행 위에 쌓여 "왜 이 값이 나왔나"를 한 창에서 보여준다. */}
       {showEvidence && hasEvidence && (
@@ -351,10 +342,13 @@ export function MetricBar({ className }: { className?: string }) {
         </div>
       )}
 
-      {/* 칩 행(정본 7개) + 우측 토글. 종전 스타일(가로스크롤·모바일 줄바꿈) 그대로 유지. */}
+      {/* 칩 행(설계 산출 5종) + 우측 토글. 종전 스타일(가로스크롤·모바일 줄바꿈) 그대로 유지.
+          맨 앞 역할 라벨로 "이 띠 = 설계 산출 결과"임을 명시(상단 식별 지표와 역할 구분). */}
       <div className="flex min-h-[48px] items-center gap-1 overflow-x-auto max-md:flex-wrap max-md:overflow-x-visible">
-        <Chip label="대지면적" value={fmtSqm(landAreaSqm)} />
-        <Chip label="용도지역" value={fmtText(zone)} />
+        <span className="flex shrink-0 flex-col justify-center gap-0.5 border-r border-[var(--line)] pl-1 pr-3">
+          <span className="cc-label text-[10px] text-[var(--accent-strong)]">설계 산출</span>
+          <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">생성 결과 KPI</span>
+        </span>
         <Chip label="건폐율" value={fmtPct(bcr)} />
         <Chip label="용적률" value={fmtPct(far)} />
         <Chip label="연면적" value={fmtSqm(gfa)} />
