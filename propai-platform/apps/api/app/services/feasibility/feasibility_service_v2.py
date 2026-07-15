@@ -215,7 +215,12 @@ class FeasibilityServiceV2:
             ordinance = await OrdinanceService().get_ordinance_limits(address, zone_type)
         except Exception:  # noqa: BLE001 — 조회 실패 시 법정 폴백
             ordinance = None
-        legal_max_far = zone_limits.get("max_far_pct", 250)  # 법정상한(라벨 보관)
+        # ★P3(침묵 폴백 정직화): 용적률 상한 미확보 시 250% 가정치가 조용히 들어가
+        #   FAR→GFA→세대수→매출→ROI 전 계단이 가정치로 오염됨에도 어떤 표기도 없었다.
+        #   값은 유지(무회귀·랭킹 상대비교 유효)하되 far_reliable로 정직 표기한다
+        #   (정답 기준선 = 같은 함수의 land_price_reliable/area_reliable 관례).
+        far_reliable = "max_far_pct" in zone_limits
+        legal_max_far = zone_limits.get("max_far_pct", 250)  # 법정상한(라벨 보관, 미확보 시 250 가정치)
         max_far = legal_max_far
         try:
             eff = calc_effective_far(
@@ -329,6 +334,8 @@ class FeasibilityServiceV2:
             "land_price_reliable": land_price_reliable,
             # 면적 신뢰성 — False면 면적 미확보로 1000㎡ 가정치 기준(전 수치 참고용·재산정 필요).
             "area_reliable": area_reliable,
+            # 용적률 신뢰성 — False면 상한 미확보로 250% 가정치 기준(GFA·매출·ROI 전 계단 참고용).
+            "far_reliable": far_reliable,
             # 시나리오 상태 — "tentative"면 전 후보가 선행절차 전제 잠정치(확정 아님). 프론트 렌더 분기 신호.
             "scenario_status": "tentative" if is_tentative else "actual",
         }
@@ -340,6 +347,19 @@ class FeasibilityServiceV2:
         if not area_reliable:
             result["area_disclosure"] = (
                 "부지면적 미확보 — 1000㎡ 가정치 기준 산정(참고용). 실제 면적 입력 시 재산정이 필요합니다."
+            )
+        # 용적률 가정치 사용 시 정직 고지 — 250%는 실측이 아니라 폴백 가정치임을 명시.
+        if not far_reliable:
+            result["far_disclosure"] = (
+                "용도지역 용적률 상한 미확보 — 250% 가정치 기준 산정(참고용). "
+                "GFA·세대수·매출·ROI 전 수치가 가정치 기반이므로 용도지역 확정 후 재산정이 필요합니다."
+            )
+        # 공시지가 가정단가 사용 시 정직 고지 — 플래그(land_price_reliable)만으로는 표시 표면이
+        # 문구를 자체 조립해야 했다. 다른 *_disclosure와 동일하게 표준 문구를 함께 제공한다.
+        if not land_price_reliable:
+            result["land_price_disclosure"] = (
+                "공시지가 미확보 — 표준 가정단가(150만원/㎡) 기준 토지비 산정(참고용). "
+                "절대 수익성(ROI·순이익·NPV)은 참고용이며 랭킹(상대비교)만 유효합니다."
             )
 
         # ── ★P1 미래속성(종상향 잠재) 첨부 — '토지속성 확정(현재+미래)' 비전 배선 ──
