@@ -704,8 +704,28 @@ export function SatongMapShell({ locale }: { locale: string }) {
   );
   const anchorLat = selectionAnchor?.lat ?? null;
   const anchorLon = selectionAnchor?.lon ?? null;
+  // 앵커 필지의 주소 — 좌표와 같은 필지 기준. 다필지에서 첫 필지(주소)와 앵커(좌표)가 서로
+  //   다른 필지를 가리키던 조합 불일치 해소(리뷰 LOW): POI 보조주소·경매 region이 앵커 필지를 따른다.
+  const anchorAddress = selectionAnchor?.address ?? "";
   // 선택은 있는데 좌표·경계가 아직 없음(경계보강 대기) — 좌표 레이어의 정직 노트용.
   const anchorPending = selectedParcels.length > 0 && selectionAnchor == null;
+  // 경계보강 진행상태(SatongMultiMap→onBoundaryStatusChange) — 영구 실패면 "확인 중" 노트를
+  //   "확인 실패"로 정직 강등한다(진행 중인 척 위장 금지, 리뷰 LOW).
+  const [boundaryFailed, setBoundaryFailed] = useState(false);
+  const handleBoundaryStatusChange = useCallback(
+    (status: "idle" | "loading" | "ready" | "error") => setBoundaryFailed(status === "error"),
+    [],
+  );
+  // 좌표 레이어(개발계획·분양·경매) 공용 대기 노트 — 상태 3분류를 한 곳에서 만든다.
+  const anchorWaitNote = useCallback(
+    (label: string) =>
+      anchorPending
+        ? boundaryFailed
+          ? `${label}: 필지 좌표 확인 실패(경계 조회 불가)`
+          : `${label}: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)`
+        : `${label}: 지도를 이동하면 지도 중심 기준으로 조회합니다`,
+    [anchorPending, boundaryFailed],
+  );
   useEffect(() => {
     if (!poiEnabled || (anchorLat == null && !marketAnchorAddress)) {
       setPoiPayload(null);
@@ -718,7 +738,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
           body: {
             lat: anchorLat ?? undefined,
             lon: anchorLon ?? undefined,
-            address: marketAnchorAddress || undefined,
+            // 좌표가 있으면 앵커 필지의 주소(좌표·주소 동일 출처), 좌표 전무 시에만 첫 필지 주소 폴백.
+            address: (anchorLat != null ? anchorAddress : marketAnchorAddress) || undefined,
             radius_m: 800,
           },
           useMock: false,
@@ -732,7 +753,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [poiEnabled, anchorLat, anchorLon, marketAnchorAddress]);
+  }, [poiEnabled, anchorLat, anchorLon, anchorAddress, marketAnchorAddress]);
 
   // ── 개발계획 레이어 배선: 레이어 ON + 앵커 좌표 있으면 주변 도시계획시설 조회 ──
   //   /zoning/development-facilities 는 lat/lon 필수(주소 지오코딩 없음).
@@ -747,12 +768,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     if (anchorLat == null || anchorLon == null) {
       // 레이어는 켜졌는데 조회 기준 좌표가 아직 없음 — 종전엔 payload null(노트조차 없는
       // 침묵 빈지도, 정직원칙 역위반)이었다. 상태를 구분해 지도에 노트로 알린다.
-      setDevelopmentPayload({
-        facilities: [],
-        note: anchorPending
-          ? "개발계획: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
-          : "개발계획: 지도를 이동하면 지도 중심 기준으로 조회합니다",
-      });
+      setDevelopmentPayload({ facilities: [], note: anchorWaitNote("개발계획") });
       return;
     }
     let cancelled = false;
@@ -775,7 +791,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [developmentEnabled, anchorLat, anchorLon, anchorPending]);
+  }, [developmentEnabled, anchorLat, anchorLon, anchorWaitNote]);
 
   // ── 분양정보 레이어 배선(실데이터): 레이어 ON + 앵커좌표(또는 주소) → 청약홈(/presale/nearby) ──
   //   렌더(마커·팝업)는 SatongMultiMap의 presaleItems에 완비. 실패/무자료는 [](정직 "분양 무자료").
@@ -794,11 +810,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     if (anchorLat == null && !marketAnchorAddress) {
       // 좌표도 주소도 없음 — 침묵 대신 상태를 노트로 알린다(정직원칙).
       setPresaleItems(null);
-      setPresaleNote(
-        anchorPending
-          ? "분양: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
-          : "분양: 지도를 이동하면 지도 중심 기준으로 조회합니다",
-      );
+      setPresaleNote(anchorWaitNote("분양"));
       return;
     }
     let cancelled = false;
@@ -836,7 +848,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [presaleEnabled, anchorLat, anchorLon, anchorPending, marketAnchorAddress]);
+  }, [presaleEnabled, anchorLat, anchorLon, anchorWaitNote, marketAnchorAddress]);
 
   // ── 공·경매 레이어 배선(실데이터): 온비드 검색(/auction/search) → 주소 지오코딩(/auction/geocode)
   //   → 앵커 반경(10km) 필터. 지역(시/도) 우선 검색, 0건이면 전국 폴백. 좌표 미확인 물건은
@@ -857,11 +869,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }
     if (anchorLat == null || anchorLon == null) {
       setAuctionItems(null);
-      setAuctionNote(
-        anchorPending
-          ? "경매: 선택 필지 좌표 확인 중(경계 보강 후 자동 조회)"
-          : "경매: 지도를 이동하면 지도 중심 기준으로 조회합니다",
-      );
+      setAuctionNote(anchorWaitNote("경매"));
       return;
     }
     // 토큰 존재는 반응형 신호가 아니다(localStorage 직독) — 이 화면엔 인라인 로그인이 없어
@@ -883,9 +891,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
           min_bid_price?: number | null;
           bid_end?: string | null;
         };
-        // 앵커 주소의 시/도 토큰을 **원형 그대로** 전달(예: "충청북도") — 저장 축약형("충북")으로의
+        // 앵커 필지 주소의 시/도 토큰을 **원형 그대로** 전달(예: "충청북도") — 저장 축약형("충북")
         // 정규화는 서버 공용 _sido_from_address가 담당(진실원천 1곳, 프론트 재구현 금지 — QA MEDIUM).
-        const region = marketAnchorAddress.split(" ")[0] || "";
+        // ★좌표(하버사인 필터)와 같은 앵커 필지의 주소를 쓴다 — 다필지에서 region과 거리필터가
+        //   서로 다른 필지 기준이 되던 조합 불일치 해소(리뷰 LOW). 앵커 주소 부재 시 첫 필지 폴백.
+        const region = (anchorAddress || marketAnchorAddress).split(" ")[0] || "";
         const fetchPage = (r?: string) =>
           apiClient.get<{ items?: AuctionSearchItem[] }>(
             `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
@@ -964,7 +974,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     return () => {
       cancelled = true;
     };
-  }, [auctionEnabled, anchorLat, anchorLon, anchorPending, marketAnchorAddress]);
+  }, [auctionEnabled, anchorLat, anchorLon, anchorAddress, anchorWaitNote, marketAnchorAddress]);
 
   const outputActions: OutputAction[] = useMemo(
     () => [
@@ -1914,18 +1924,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     type: "apt",
                     showPresale: presaleEnabled,
                     presaleItems: presaleEnabled ? presaleItems : null,
-                    // 상태 노트(좌표 대기·로그인 필요·조회 실패) — 지도 노트에서 건수 라벨보다 우선.
-                    presaleNote: presaleEnabled ? presaleNote || null : null,
                     showAuction: auctionEnabled,
                     auctionItems: auctionEnabled ? auctionItems : null,
-                    auctionNote: auctionEnabled ? auctionNote || null : null,
                   }),
-                  [presaleEnabled, presaleItems, presaleNote, auctionEnabled, auctionItems, auctionNote],
+                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
                 )}
+                // 상태 노트는 marketLayer 밖 별도 prop — 노트만 바뀔 때 마커 이펙트가 재실행되지
+                // 않게 한다(리뷰 LOW). 건수 라벨보다 우선 표기(정직원칙).
+                presaleNote={presaleEnabled ? presaleNote || null : null}
+                auctionNote={auctionEnabled ? auctionNote || null : null}
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
                 onCenterChange={setMapCenter}
                 onBoundaryEnriched={handleBoundaryEnriched}
+                onBoundaryStatusChange={handleBoundaryStatusChange}
               />
             </div>
 

@@ -24,8 +24,11 @@ from typing import Any
 # 심각도 순위(높을수록 제약 큼) — 여러 특이요인 중 최댓값을 부지 종합 게이트로 채택.
 #   NEEDS_OFFICIAL_SURVEY = CONDITIONAL과 같은 '잠정' 등급(값 2). 공식 산림데이터 미확보로
 #   확정 설계는 막되(참고안만), CONDITIONAL과 동일 심각도로 취급한다(기존 값 불변).
+#   REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로 access_basis) = 법정 접도 근거를 데이터로
+#   확정할 수 없음(도로접면·도로폭 미상 등) — CONDITIONAL과 같은 '잠정' 급(값 2)으로, 확정 PASS를
+#   막고 관할 확인을 전제로만 진행시킨다(기존 값 불변 — 추가 전용).
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
-         "PRECONDITION": 3, "BLOCKED": 4}
+         "REQUIRES_AUTHORITY_CONFIRMATION": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
 
 def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
@@ -62,7 +65,10 @@ GATE_BLOCK_RESOLVABLE = {"NO"}
 # NEEDS_OFFICIAL_SURVEY(임야/산지 공식 산림데이터 미확보)도 잠정으로 분류한다 —
 #   gate_decision()이 "TENTATIVE"를 반환해 소비처가 '참고안(확정 아님)'으로 안전하게 다룬다.
 #   (확정 % / 확정 설계 없음 — 공식 산림조사서·경사도조사 확보 전까지 예비안만.)
-GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY"}
+# REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로) — 법정 접도 근거를 데이터로 확정 불가 시,
+#   확정 PASS를 막고 '관할 확인 전제 잠정'으로 강등한다("법정도로 근거 없는 PASS 0" 게이트).
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY",
+                                 "REQUIRES_AUTHORITY_CONFIRMATION"}
 GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
 
 
@@ -95,6 +101,10 @@ def tentative_marker(developability: str | None, resolvable: str | None, severit
         # 임야/산지 — 공식 산림데이터(산림청 조사) 미확보. 확정 설계 불가, 참고용 예비안만.
         head = ("공식 산림데이터(산지구분·보전산지 여부·평균경사도·입목축적) 미확보 — 산지전용 확정 판단 "
                 "불가, 참고용 예비안입니다(확정 아님). 산림조사서·평균경사도조사서 등 공식 조사가 필요합니다.")
+    elif dev == "REQUIRES_AUTHORITY_CONFIRMATION":
+        # WP-A 접도·도로 — 법정 접도 근거(도로접면·도로폭·현황도로 인정)를 데이터로 확정할 수 없음.
+        head = ("법정 접도·도로 근거를 현재 데이터로 확정할 수 없어(도로접면·도로폭·현황도로 인정 여부 "
+                "미상 등) 관할 지자체·도로관리청 확인이 필요한 잠정 상태입니다(확정 아님).")
     elif dev == "CONDITIONAL" or res == "CONDITIONAL":
         # CONDITIONAL(인허가·전용·협의) 또는 해결가능성 조건부(예: 맹지·진입로 확보) — 동일하게 조건부 잠정.
         head = "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님)."
@@ -248,33 +258,75 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
 #   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트).
 #   지목·면적 무관, zone_type이 녹지계열이면 발동. 보전녹지는 원칙적 제한(PRECONDITION)으로 차등.
 # ──────────────────────────────────────────────────────────────────────────
-def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
+def _rule_by_dev_act_permit(
+    result: dict, *, include_non_urban: bool = False
+) -> dict[str, Any] | None:
     """개발행위허가(국토계획법 §56) 선행/병행 게이트 — 도시지역 내 녹지계열에서 발동.
 
     자연녹지·생산녹지 → CONDITIONAL(개발행위허가·형질변경 통과 조건부 가능),
     보전녹지 → PRECONDITION(개발 원칙적 제한 — 더 강한 선행절차 전제).
     녹지계열이 아니면 None(주거·상업·공업 등 일상 도시지역은 게이트 안 함 — 과탐 방지).
+
+    include_non_urban=True(WP-B 개발행위허가 절차게이트 전용 요청):
+      비도시지역(관리·농림·자연환경보전)도 발동한다. 이 지역들은 도시지역이 아니라서
+      '건축물 건축' 자체가 개발행위허가 대상이기 때문이다(자연녹지 과대낙관 버그의 확장 봉합).
+      보전관리·자연환경보전 → PRECONDITION(보전 성격), 그 외(계획/생산관리·농림) → CONDITIONAL.
+    ★기본값 False면 기존 detect_special_parcel 경로는 녹지만 감지한다(바이트 동일 — 회귀 0).
     """
     zone = str(result.get("zone_type") or "")
-    if _zone_family(zone) != "녹지":
-        return None
-    # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+    family = _zone_family(zone)
     z = zone.replace(" ", "")
-    if "보전녹지" in z:
-        developability = "PRECONDITION"
-        head = (
-            "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
-            "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+    is_green = family == "녹지"
+    # 비도시(관리·농림·자연환경보전)는 게이트 서비스가 명시적으로 요청할 때만 발동(과탐 방지).
+    is_non_urban = include_non_urban and family in ("관리", "농림", "자연환경보전")
+    if not (is_green or is_non_urban):
+        return None
+    if is_green:
+        # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+        category = "개발행위허가 선행/병행(도시지역 녹지)"
+        if "보전녹지" in z:
+            developability = "PRECONDITION"
+            head = (
+                "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
+                "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
+            head = (
+                f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+            )
+        caveat = (
+            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     else:
-        developability = "CONDITIONAL"
-        kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
-        head = (
-            f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
-            "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+        # 비도시(관리·농림·자연환경보전) — 건축물 건축 자체가 개발행위허가 대상.
+        category = "개발행위허가 선행/병행(비도시지역)"
+        if family == "자연환경보전" or "보전관리" in z:
+            developability = "PRECONDITION"
+            kind = "자연환경보전지역" if family == "자연환경보전" else "보전관리지역"
+            head = (
+                f"{kind}은 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 개발행위허가"
+                "(국토계획법 §56)·토지형질변경(및 농지·산지전용) 통과가 선행되어야 합니다(허용 범위가 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = ("농림지역" if family == "농림"
+                    else ("생산관리지역" if "생산관리" in z
+                          else ("계획관리지역" if "계획관리" in z else "관리지역")))
+            head = (
+                f"{kind}은 비도시지역으로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축물 건축 자체가 개발행위허가(국토계획법 §56) 대상이며 토지형질변경(및 농지·산지전용)이 "
+                "선행/병행되어야 합니다."
+            )
+        caveat = (
+            "비도시지역(관리·농림·자연환경보전) 건축은 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     return {
-        "category": "개발행위허가 선행/병행(도시지역 녹지)",
+        "category": category,
         "developability": developability,
         "implications": [
             head,
@@ -292,10 +344,7 @@ def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
             "개발행위허가(국토계획법 §56)·토지형질변경 병행 필요",
             "개발행위허가기준(§58) 충족 확인 — 규모 상한·평균경사도·연접개발·도로/배수 기반시설",
         ],
-        "caveat": (
-            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
-            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
-        ),
+        "caveat": caveat,
     }
 
 
@@ -494,6 +543,215 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# WP-A 접도·도로 세분 판정 룰군(가산) — 기존 _rule_by_road(§44 맹지)·_rule_by_road_law(도로법)와
+#   같은 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트)으로 도로 접근의
+#   세분 상태(막다른 도로 폭·자루형 대지 통로·소방/공사차량 접근폭)를 판정한다.
+#   ★신설 아님·재발명 아님: 기존 룰을 대체하지 않고, access_basis 조립자(access_basis_service)가
+#   함께 호출해 3상태(legal/physical/emergency)로 합성한다. 신호(값)가 없으면 None(과탐 방지·정직).
+#   판정 불가(폭/길이 미상 등)는 REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지·관할 확인 전제).
+# ──────────────────────────────────────────────────────────────────────────
+
+# 막다른 도로 길이별 최소 너비(건축법 시행령 제3조의3) — (길이 하한 m, 필요 너비 m).
+#   길이 10m 미만 → 2m, 10m 이상 35m 미만 → 3m, 35m 이상 → 6m(도시지역이 아닌 읍·면 지역은 4m).
+_DEAD_END_WIDTH_TIERS: tuple[tuple[float, float], ...] = (
+    (35.0, 6.0),   # 35m 이상 → 6m
+    (10.0, 3.0),   # 10m 이상 35m 미만 → 3m
+    (0.0, 2.0),    # 10m 미만 → 2m
+)
+
+
+def _access_road_width(result: dict) -> float | None:
+    """접한 도로의 폭(m) 추정 — road_width_m/road_width 우선, 없으면 road_side(도로접면) 하한.
+
+    ★0(도로 미접)을 보존한다(0을 falsy로 흘려 맹지를 놓치지 않도록 None 판별만 대체).
+    road_side 라벨(광대/중로/소로/세로(가)/세로(불)/맹지)은 토지이음 보강의 하한폭 표를 재사용한다.
+    """
+    rw = result.get("road_width_m")
+    if rw is None:
+        rw = result.get("road_width")
+    w = _num(rw)
+    if w is not None:
+        return w
+    side = result.get("road_side")
+    if side:
+        try:
+            from app.services.legal.tojieum_supplement import _road_width
+
+            est, _label = _road_width(str(side))
+            if est is not None:
+                return float(est)
+        except Exception:  # noqa: BLE001 — 보강 실패는 폭 미상(None)으로 정직 degrade.
+            return None
+    return None
+
+
+def _rule_by_cul_de_sac(result: dict) -> dict[str, Any] | None:
+    """막다른 도로 길이별 최소 너비(건축법 시행령 제3조의3) 판정 — 접한 도로가 막다른 도로일 때.
+
+    막다른 도로 신호(dead_end_road 플래그 또는 road_type/도로명에 '막다른')가 있을 때만 발동한다.
+    길이별 필요 너비를 실측 도로폭과 비교해, 미달=CONDITIONAL·충족=CAUTION·폭 미상=
+    REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지)로 고지한다. 신호 없으면 None(과탐 방지).
+    """
+    blob = (str(result.get("road_type") or "") + " "
+            + str(result.get("abutting_road_name") or ""))
+    is_dead_end = result.get("dead_end_road") is True or "막다른" in blob or "막다른도로" in blob.replace(" ", "")
+    if not is_dead_end:
+        return None
+    # ★0 보존(첫 non-None). 폴백 의미: road_length_m은 '접한 도로의 길이'라 막다른 도로
+    #   전체 길이와 다를 수 있음 — dead_end_length_m 미상 시의 보수적 근사로만 쓴다(비-PASS 방향).
+    length = _first_num_keep_zero(result.get("dead_end_length_m"), result.get("road_length_m"))
+    # 도시지역이 아닌 읍·면 지역은 35m 이상에서 4m로 완화(시행령 제3조의3 단서).
+    is_town = result.get("is_urban_area") is False or result.get("is_eup_myeon") is True
+    if length is None:
+        req_w: float | None = None
+        length_note = "막다른 도로 길이 미상 — 필요 너비(2/3/6m) 확정 불가"
+    else:
+        req_w = next(w for lo, w in _DEAD_END_WIDTH_TIERS if length >= lo)
+        if is_town and length >= 35.0:
+            req_w = 4.0
+        length_note = (f"막다른 도로 길이 {length:g}m → 시행령 제3조의3상 필요 너비 {req_w:g}m"
+                       + ("(도시지역 외 읍·면)" if is_town and length >= 35.0 else ""))
+    width = _access_road_width(result)
+    if width is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = (f"접한 도로가 막다른 도로로 확인되나 도로폭이 미상입니다 — {length_note}. "
+                "실측 도로폭(현황측량·지적도)과 관할 지자체 확인 전까지 접도요건 충족을 단정할 수 없습니다.")
+    elif req_w is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)이나 길이가 미상이라 필요 너비를 확정할 수 "
+                "없습니다 — 막다른 도로 전체 길이 확인이 필요합니다.")
+    elif width + 1e-6 >= req_w:
+        developability = "CAUTION"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)이며 {length_note}을 충족하는 것으로 "
+                "추정됩니다(실측·지자체 확인 권장).")
+    else:
+        developability = "CONDITIONAL"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)로 {length_note}에 미달합니다 — "
+                "건축선 후퇴 또는 도로 확보(폭원 확대)가 선행/병행되어야 접도요건을 충족합니다.")
+    return {
+        "category": "막다른 도로(길이별 최소 너비)",
+        "developability": developability,
+        "implications": [
+            head,
+            "막다른 도로는 그 길이에 따라 최소 너비가 정해집니다(건축법 시행령 제3조의3): "
+            "길이 10m 미만 2m, 10~35m 3m, 35m 이상 6m(도시지역 외 읍·면 4m).",
+        ],
+        "legal_basis": [
+            "건축법 제44조(대지와 도로의 관계)",
+            "건축법 시행령 제3조의3(지형적 조건 등에 따른 도로의 구조와 너비)",
+        ],
+        "legal_ref_keys": ["road_relation", "road_structure_width"],
+        "permit_prerequisites": [
+            "막다른 도로 전체 길이·현황 도로폭 실측(현황측량·지적도)",
+            "길이별 필요 너비 미달 시 건축선 후퇴 또는 도로 확보 검토",
+        ],
+    }
+
+
+def _rule_by_flag_lot(result: dict) -> dict[str, Any] | None:
+    """자루형(旗竿) 대지 통로부 판정 — 도로에 좁은 통로(자루목)로만 접하는 대지.
+
+    자루형 신호(flag_lot 플래그 또는 lot_shape에 '자루'/'flag')가 있을 때만 발동한다. 통로부
+    너비(access_corridor_width_m)를 건축법 접도의무(2m 이상)와 비교하되, 자루형 통로 최소너비는
+    지자체 건축조례가 별도로 정하므로(전국 단일기준 없음) 정직하게 조례 확인을 전제로 고지한다.
+    통로폭 미상은 REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지).
+    """
+    shape_blob = (str(result.get("lot_shape") or "") + " "
+                  + str(result.get("parcel_shape") or "")).replace(" ", "")
+    is_flag = (result.get("flag_lot") is True or "자루" in shape_blob
+               or "flag" in shape_blob.lower() or "기단" in shape_blob)
+    if not is_flag:
+        return None
+    corridor = _first_num_keep_zero(result.get("access_corridor_width_m"), result.get("corridor_width_m"))
+    # 건축법 §44 접도의무 하한(2m). 자루형 통로 최소너비는 지자체 건축조례로 상향(통상 3m 이상)될 수 있음.
+    MIN_CONTACT_M = 2.0
+    if corridor is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = ("자루형(旗竿) 대지로 도로에 좁은 통로(자루목)로만 접하나 통로부 너비가 미상입니다 — "
+                "통로부 실측(현황측량)과 관할 지자체 건축조례(자루형 대지 통로 최소너비) 확인이 필요합니다.")
+    elif corridor + 1e-6 < MIN_CONTACT_M:
+        developability = "CONDITIONAL"
+        head = (f"자루형 대지의 통로부 너비가 약 {corridor:g}m로 건축법 접도의무(도로에 2m 이상 접함)에 "
+                "미달할 소지가 큽니다 — 통로부 폭원 확보(인접 필지 편입·매입)가 선행되어야 합니다.")
+    else:
+        developability = "CONDITIONAL"
+        head = (f"자루형 대지의 통로부 너비가 약 {corridor:g}m입니다 — 건축법 접도의무(2m)는 충족 추정이나 "
+                "자루형 대지 통로 최소너비는 지자체 건축조례로 별도(통상 3m 이상) 규정될 수 있어 조례 확인이 "
+                "필요합니다(소방·응급 접근폭은 별도 검토).")
+    return {
+        "category": "자루형(旗竿) 대지 통로부",
+        "developability": developability,
+        "implications": [
+            head,
+            "자루형 대지는 통로부(자루목)가 도로에 접하는 폭으로 접도의무를 판단하며, 통로 최소너비·길이 "
+            "기준은 지자체 건축조례에 따라 달라집니다.",
+        ],
+        "legal_basis": [
+            "건축법 제44조(대지와 도로의 관계)",
+            "지자체 건축조례(자루형 대지 통로 최소너비 — 시·군·구별)",
+        ],
+        "legal_ref_keys": ["road_relation"],
+        "permit_prerequisites": [
+            "통로부(자루목) 너비·길이 실측(현황측량)",
+            "관할 지자체 건축조례상 자루형 대지 통로 최소너비 확인",
+        ],
+    }
+
+
+def _rule_by_emergency_access(result: dict) -> dict[str, Any] | None:
+    """소방·응급·공사차량 접근폭 판정 — 소방자동차 통행·소방활동 공간 확보 여부.
+
+    소방차 접근폭(fire_truck_access_width_m) 신호가 있거나, 대형 건축(소방활동 대상 규모)일 때
+    발동한다. 소방자동차 통행 가능 폭(통상 4m 이상)에 미달=CONDITIONAL, 충족=CAUTION,
+    폭 미상+대형=REQUIRES_AUTHORITY_CONFIRMATION로 고지한다. 소형·신호 없으면 None(과탐 방지).
+    """
+    width = _first_num_keep_zero(result.get("fire_truck_access_width_m"), result.get("emergency_access_width_m"))
+    gfa = _num(result.get("total_floor_area_sqm")) or _num(result.get("gfa_sqm")) \
+        or _num(result.get("max_gfa_sqm"))
+    floors = _num(result.get("floors")) or _num(result.get("floor_count")) \
+        or _num(result.get("ground_floors"))
+    explicit = result.get("emergency_access_required") is True
+    # 소방활동 대상 규모(보수적): 연면적 1만㎡↑ 또는 지상 6층↑(소방차 접근·소방활동 공간 확보 중요).
+    _EMS_GFA_SQM = 10_000.0
+    _EMS_FLOORS = 6
+    is_large = (gfa is not None and gfa >= _EMS_GFA_SQM) or (floors is not None and floors >= _EMS_FLOORS)
+    if width is None and not (explicit or is_large):
+        return None  # 소형·신호 없음 — 과탐 방지(정직 미판정)
+    # 소방자동차 통행 가능 폭(보수적 하한 4m). 대형·고층은 회차·전용구역 등 추가 확보가 필요할 수 있음.
+    MIN_FIRE_WIDTH_M = 4.0
+    if width is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = ("소방활동이 중요한 규모(대형·고층)이나 소방차 접근로 폭이 미상입니다 — 소방자동차 통행·회차 "
+                "공간(접근로 폭·활동 공간) 확보 여부를 관할 소방서 사전협의로 확인해야 합니다.")
+    elif width + 1e-6 < MIN_FIRE_WIDTH_M:
+        developability = "CONDITIONAL"
+        head = (f"소방차 접근로 폭이 약 {width:g}m로 소방자동차 통행 가능 폭(통상 4m 이상)에 미달할 소지가 "
+                "있습니다 — 접근로 확보 또는 소방활동 공간 대책이 선행/병행되어야 합니다.")
+    else:
+        developability = "CAUTION"
+        head = (f"소방차 접근로 폭이 약 {width:g}m로 소방자동차 통행 가능 폭(4m)은 확보 추정입니다 — "
+                "대형·고층은 회차 공간·소방자동차 전용구역 등 추가 확보 여부를 관할 소방서와 확인하세요.")
+    return {
+        "category": "소방·응급·공사차량 접근",
+        "developability": developability,
+        "implications": [
+            head,
+            "소방자동차 통행·소방활동 공간(접근로 폭·회차 공간)은 화재 시 인명안전의 전제로, 관할 소방서 "
+            "사전협의로 확정합니다(공사차량 진출입 동선도 함께 검토).",
+        ],
+        "legal_basis": [
+            "소방기본법(소방활동·소방자동차 전용구역 등)",
+            "소방시설 설치 및 관리에 관한 법률(소방 사전검토·협의)",
+        ],
+        "legal_ref_keys": ["fire_performance_design"],
+        "permit_prerequisites": [
+            "소방자동차 접근로 폭·회차 공간·전용구역 확보 여부 확인",
+            "관할 소방서 사전협의(소방활동 공간·공사차량 동선)",
+        ],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 규제 선행절차 레이어(가산) — 지목/구역이 아닌 '개발규모·입지' 임계로 작동하는 인허가
 #   선행요건(소방 성능위주설계·도로법 접도구역/연결허가·하수도 원인자부담금·소규모 환경영향평가).
 #   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability), _RANK 게이트 활용.
@@ -514,6 +772,20 @@ def _num(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _first_num_keep_zero(*vals) -> float | None:
+    """여러 후보 중 첫 번째로 숫자 해석되는 값을 반환 — ★0.0을 보존한다.
+
+    `_num(a) or _num(b)` 패턴은 0(예: 접근폭 0m = 접근 전무의 최강 신호)을 falsy로
+    흘려 소실시킨다. 이 헬퍼는 None 여부로만 건너뛰어 0을 살린다(도로폭 0-보존 규율과 동일).
+    ※기존 `_first_num(result, keys)`(:1090)는 가격·면적용이라 양수만 취함(0 배제) — 별개 의미론.
+    """
+    for v in vals:
+        n = _num(v)
+        if n is not None:
+            return n
+    return None
 
 
 def _rule_by_fire_performance(result: dict) -> dict[str, Any] | None:

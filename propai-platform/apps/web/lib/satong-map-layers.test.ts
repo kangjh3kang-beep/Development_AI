@@ -114,27 +114,44 @@ describe("satong-map-layers", () => {
     };
 
     // ① 좌표 보유 필지가 최우선 — 첫 필지가 좌표 없어도 뒤 필지의 좌표를 쓴다(첫필지 단선 해소).
+    //    ★주소·PNU는 좌표와 같은 앵커 필지의 것 — 첫 필지 주소와 조합되던 불일치 차단.
     expect(
       resolveSelectionAnchor(
-        [{ lat: null, lon: null }, { lat: 37.7446, lon: 127.0469 }],
+        [
+          { lat: null, lon: null, address: "서울 종로구 청진동 1", pnu: "p-first" },
+          { lat: 37.7446, lon: 127.0469, address: "경기 의정부시 의정부동 224", pnu: "p-anchor" },
+        ],
         mapCenter,
       ),
-    ).toEqual({ lat: 37.7446, lon: 127.0469, source: "parcel" });
+    ).toEqual({
+      lat: 37.7446,
+      lon: 127.0469,
+      source: "parcel",
+      address: "경기 의정부시 의정부동 224",
+      pnu: "p-anchor",
+    });
 
     // ② 좌표는 없지만 경계가 있으면 대표점 — 엑셀 PNU행이 경계보강 후 자동으로 살아나는 경로.
     expect(
-      resolveSelectionAnchor([{ lat: null, lon: null, geometry: geom }], mapCenter),
-    ).toEqual({ lat: 37.2, lon: 127.1, source: "boundary" });
+      resolveSelectionAnchor(
+        [{ lat: null, lon: null, geometry: geom, address: "경계필지", pnu: "p-geo" }],
+        mapCenter,
+      ),
+    ).toEqual({ lat: 37.2, lon: 127.1, source: "boundary", address: "경계필지", pnu: "p-geo" });
 
-    // ③ 선택이 아예 없을 때만 지도중심 폴백(브라우즈 모드).
+    // ③ 선택이 아예 없을 때만 지도중심 폴백(브라우즈 모드) — 필지가 없으므로 주소도 null.
     expect(resolveSelectionAnchor([], mapCenter)).toEqual({
       lat: 37.5665,
       lon: 126.978,
       source: "map-center",
+      address: null,
+      pnu: null,
     });
 
     // 선택이 있는데 좌표·경계가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단(기존 계약).
-    expect(resolveSelectionAnchor([{ lat: null, lon: null }], mapCenter)).toBeNull();
+    expect(
+      resolveSelectionAnchor([{ lat: null, lon: null, address: "무좌표", pnu: null }], mapCenter),
+    ).toBeNull();
     // 무선택 + 지도중심도 없으면 null(정직).
     expect(resolveSelectionAnchor([], null)).toBeNull();
   });
