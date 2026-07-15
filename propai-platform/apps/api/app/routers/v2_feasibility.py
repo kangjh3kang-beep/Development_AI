@@ -1051,7 +1051,14 @@ async def vcs_diff(
     return await vcs.diff(sha_a, sha_b)
 
 
-@router.post("/export-excel", response_class=Response)
+@router.post(
+    "/export-excel",
+    response_class=Response,
+    # ★후속 스윕(2026-07-15 감사): 인증 없이 전체 수지 재계산을 수행하던 유일한 무인증
+    #   엔드포인트 — 라우터 관례(get_current_user 6곳)에 맞춰 인증 부착. 프론트
+    #   FeasibilityExportButton은 이미 Bearer를 첨부한다(PR#294).
+    dependencies=[Depends(get_current_user)],
+)
 async def export_feasibility_excel(req: FeasibilityCalculateRequest):
     """수지분석 결과를 Excel 파일로 내보낸다."""
     from app.services.export.excel_export_service import ExcelExportService

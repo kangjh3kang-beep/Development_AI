@@ -189,7 +189,9 @@ def _zone_limits(zone: str) -> dict[str, Any]:
         if k in (zone or "") or (zone or "") in k:
             return v
     # 최종 폴백: 미매칭 용도지역은 보수적 추정(과대 금지 — 녹지를 250%로 부풀리던 사고 차단).
-    return {"max_bcr": 60, "max_far": 200, "max_height": 0}
+    # ★P3 후속 스윕: 가정치 사용 사실을 소비처가 식별하도록 far_reliable 마커를 함께 반환
+    #   (compute_buildable_envelope가 assumptions로 정직 전파 — 값은 유지·무회귀).
+    return {"max_bcr": 60, "max_far": 200, "max_height": 0, "far_reliable": False}
 
 
 def _comfort_bcr_divisors(massing_objective: dict[str, Any] | None) -> tuple[float, float]:
@@ -236,6 +238,14 @@ def compute_buildable_envelope(
     lim = _zone_limits(zone)
     bcr = (bcr_limit_pct if bcr_limit_pct is not None else lim.get("max_bcr", 60)) / 100.0
     far = (far_limit_pct if far_limit_pct is not None else lim.get("max_far", 250)) / 100.0
+    # ★P3 후속 스윕(정직 표기): 호출자가 상한을 명시하지 않았고 용도지역이 권위 테이블·
+    #   ZONE_DEFAULTS 모두 미매칭이라 200% 보수 가정치를 쓴 경우 — 값은 유지(무회귀)하되
+    #   assumptions에 표준 문구(far_fallback SSOT)로 고지한다.
+    far_assumption_note: str | None = None
+    if far_limit_pct is None and lim.get("far_reliable") is False:
+        from app.services.land_intelligence.far_fallback import far_fallback_disclosure
+
+        far_assumption_note = far_fallback_disclosure(lim.get("max_far", 200))
     fh = max(2.4, floor_height_m)
     # ★건축유형별 쾌적 건폐율 분모(권장 층수 = 현실 용적률% ÷ 쾌적 건폐율%). 기본 30/20
     #   (low/high)을 보존하되, objective가 있으면 유형별로 조정(무회귀 — None=기본).
@@ -332,6 +342,7 @@ def compute_buildable_envelope(
             "assumptions": [
                 "정북일조 미적용 용도지역 — 용적률/건폐율만 적용",
                 "가로구역별 최고높이 별도 확인 필요",
+                *([far_assumption_note] if far_assumption_note else []),
             ],
         }
 
@@ -439,5 +450,6 @@ def compute_buildable_envelope(
             "10m 초과 H≤2d 보수 근사·도로사선 미적용",
             "arithmetic_min_floors=건폐율 만충 산술 하한(법적 개념 아님)",
             "recommended_*·floors_at_*·senior_architect_review=실무 추정/근사(계단식 단면)",
+            *([far_assumption_note] if far_assumption_note else []),
         ],
     }
