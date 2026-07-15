@@ -1150,10 +1150,14 @@ async def import_dxf(
         raise HTTPException(status_code=413, detail="DXF가 너무 큽니다(최대 20MB).")
 
     # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — 파싱 전에 실행/스크립트 위장·
-    # MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. 실측 계열은 dxf 로 화이트리스트.
+    # MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. ★expected_kinds 미지정(CSV/parcel_excel과
+    # 동일 정책 — WP-H 세션2 CI 회귀 수정): DXF는 강한 매직바이트가 없는 텍스트 포맷이라
+    # (ASCII DXF는 "0\nSECTION" 류 휴리스틱만 존재) 정상 파일도 매직판별 실패로 415 과대거부될
+    # 수 있다. 형식 판정은 다운스트림 parse_dxf_to_shapes(파서, 손상 시 422)가 맡고, 여기서는
+    # exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단한다(형식 화이트리스트 생략, 그 외 방어 동일).
     from app.services.security.content_inspection import http_status_for, inspect_upload
 
-    _verdict = inspect_upload(data, filename, file.content_type, expected_kinds={"dxf"})
+    _verdict = inspect_upload(data, filename, file.content_type)
     if not _verdict.allowed:
         raise HTTPException(
             status_code=http_status_for(_verdict.code),

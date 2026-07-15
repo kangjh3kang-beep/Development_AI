@@ -121,22 +121,35 @@ def test_xlsx_only_surface_zip_whitelist_blocks_exe_and_csv():
     assert not v.allowed and v.code == "unsupported_type"
 
 
-def test_dxf_surface_whitelist():
-    """design_v61 import-dxf·design_references geometry·design_audit dxf: expected_kinds={"dxf"}."""
-    assert inspect_upload(_DXF_ASCII, "plan.dxf", "application/dxf", expected_kinds={"dxf"}).allowed
-    assert not inspect_upload(_PNG, "plan.dxf", "image/png", expected_kinds={"dxf"}).allowed
-    assert not inspect_upload(_EXE, "plan.dxf", None, expected_kinds={"dxf"}).allowed
+def test_dxf_ifc_surface_no_whitelist_weak_magic_regression():
+    """★CI 회귀 수정(리뷰어 py3.10 collection-error 로 놓친 것 — CI py3.12 가 그라운드 트루스):
+    design_v61 import-dxf·design_references geometry·design_audit dxf/ifc 는 expected_kinds
+    미지정(CSV/parcel_excel과 동일 정책). 근본원인: DXF/IFC 는 강한 매직바이트가 없는 텍스트
+    포맷("0\nSECTION" 류·"ISO-10303-21" 류)이라 expected_kinds={"dxf"/"ifc"} 를 걸면 정상 파일도
+    매직판별 실패(detected_type=None)로 415 과대거부된다(실제 CI 실패 재현 fixture 그대로 검증).
+    형식 판정(손상 여부)은 다운스트림 파서(parse_dxf_to_shapes 등)가 422 로 맡는다 — inspect는
+    exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단."""
+    # CI 회귀를 유발한 실제 테스트 fixture 재현 — 최소 DXF 마커(HEADER/ENTITIES 없음)도 통과해야 함.
+    minimal_dxf = b"0\nSECTION\n"
+    assert inspect_upload(minimal_dxf, "plan.dxf", "application/dxf").allowed
+    # 손상/비DXF 텍스트도 inspect 단계에서는 거부하지 않는다(파서가 422 로 정직 거부할 몫).
+    assert inspect_upload(b"not-a-dxf", "plan.dxf", "application/dxf").allowed
+    assert inspect_upload(b"NOT A DXF FILE AT ALL", "plan.dxf", "application/dxf").allowed
+    # 정상 ASCII DXF(HEADER 포함)·IFC 도 여전히 통과(회귀 없음 — 화이트리스트만 뺐지 판별 자체는 그대로).
+    assert inspect_upload(_DXF_ASCII, "plan.dxf", "application/dxf").allowed
+    assert inspect_upload(_IFC, "m.ifc", "application/octet-stream").allowed
+    # 그러나 exe/스크립트 위장은 .dxf/.ifc 확장자를 둘러도 여전히 차단(핵심 방어선 무회귀).
+    assert not inspect_upload(_EXE, "plan.dxf", None).allowed
+    assert not inspect_upload(_EXE, "m.ifc", None).allowed
+    # 활성 웹 콘텐츠 선언(svg/html)도 여전히 차단.
+    assert not inspect_upload(minimal_dxf, "plan.dxf", "image/svg+xml").allowed
 
 
 def test_pdf_surface_whitelist():
-    """design_audit extract-brief: expected_kinds={"pdf"}. pdf 통과 / zip 거부."""
+    """design_audit extract-brief: expected_kinds={"pdf"}(PDF 는 강한 매직 %PDF- 보유 — 미해당).
+    pdf 통과 / zip 거부."""
     assert inspect_upload(_PDF, "brief.pdf", "application/pdf", expected_kinds={"pdf"}).allowed
     assert not inspect_upload(_xlsx_like(), "brief.pdf", None, expected_kinds={"pdf"}).allowed
-
-
-def test_ifc_surface_whitelist():
-    """design_audit run-upload IFC: expected_kinds={"ifc"}. ifc 통과 / 실행위장 거부."""
-    assert inspect_upload(_IFC, "m.ifc", "application/octet-stream", expected_kinds={"ifc"}).allowed
     assert not inspect_upload(_EXE, "m.ifc", None, expected_kinds={"ifc"}).allowed
 
 
