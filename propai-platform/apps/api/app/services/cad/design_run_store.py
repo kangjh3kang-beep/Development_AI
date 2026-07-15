@@ -46,6 +46,7 @@ from app.services.cad.provenance import (
     ENGINE_SOURCE_VERSION,
     compute_geometry_hash,
     compute_input_hash,
+    normalize_fingerprint,
 )
 
 logger = structlog.get_logger(__name__)
@@ -122,8 +123,17 @@ def compute_anchor_input_hash(anchor: dict[str, Any]) -> str:
 def compute_anchor_geometry_hash(anchor: dict[str, Any]) -> str:
     """정본 앵커 → 파생 기하해시(높이·바닥면적 포함). input_hash와 1:1 결정적 대응.
 
-    geometry_hash는 '산출 기하(박스)의 정체'다. 앵커에서 결정적으로 파생되므로
-    "동일 seed+input_hash → 동일 geometry_hash" 재현 게이트가 구조적으로 성립한다.
+    geometry_hash는 '앵커(폭·깊이·층수·층고)에서 결정적으로 파생한 박스 치수의 지문'이다.
+    앵커에서 파생되므로 "동일 seed+input_hash → 동일 geometry_hash" 재현 게이트가 구조적으로 성립한다.
+
+    ★주의(리뷰 권고①): geometry_hash는 이 최소 박스 치수의 지문일 뿐, '실제로 렌더링되는 enriched
+      기하의 정체'가 아니다 — 코어·복도·창호·게이트 등 부착물이 반영된 산출 기하는 여기에 안 들어간다.
+      따라서 렌더 산출물의 중복제거(dedup)·위조탐지에는 이 해시가 아니라 표면별 해시(surface_hashes:
+      save_stamp/glb/generate…)를 써야 한다. 이 해시를 렌더 dedup 열쇠로 오용하면 '다른 렌더가 같은
+      박스면 같은 해시'가 되어 서로 다른 산출물을 하나로 착각한다.
+    ★결정성 방어(리뷰 권고④): compute_geometry_hash는 정규화 없이 canonical_json만 하므로, 여기서
+      normalize_fingerprint로 숫자를 미리 통일한다(int/float·미세 부동소수 차이에 둔감) — input_hash
+      (compute_input_hash가 이미 정규화)와 동일한 정규화 계약을 geometry_hash에도 적용해 발산을 막는다.
     """
     bw = anchor.get("building_width_m")
     bd = anchor.get("building_depth_m")
@@ -135,7 +145,8 @@ def compute_anchor_geometry_hash(anchor: dict[str, Any]) -> str:
         geometry["building_height_m"] = round(float(nf) * float(fh), 6)
     if bw is not None and bd is not None:
         geometry["footprint_sqm"] = round(float(bw) * float(bd), 6)
-    return compute_geometry_hash(geometry)
+    # ★권고④: 해시 직전 수치 정규화(int/float 혼입 방어) — compute_input_hash와 동일 계약.
+    return compute_geometry_hash(normalize_fingerprint(geometry))
 
 
 def make_design_run_id(
@@ -199,7 +210,13 @@ _SCHEMA_READY = False
 
 
 async def _ensure_schema(db: Any, force: bool = False) -> None:
-    """design_runs 테이블 멱등 보장(부팅 대기 없이 최초 호출 시 lazy 생성)."""
+    """design_runs 테이블 멱등 보장(부팅 대기 없이 최초 호출 시 lazy 생성).
+
+    ★권고②(공용 패턴 교정 — growth/schema_guard.py 선례 정합): _SCHEMA_READY는 DDL '커밋 성공
+      후'에만 세팅한다. 커밋 전에 세팅하면, 이후 데이터 트랜잭션이 롤백될 때 DDL도 함께 되돌려지는데
+      플래그는 ready로 남아 다음 호출이 생성을 건너뛴다 — '유령 ready'(테이블 부재인데 생성 스킵)
+      버그가 된다. DDL을 즉시 확정(commit)하면 이후 INSERT가 실패해도 스키마는 남는다.
+    """
     global _SCHEMA_READY
     if _SCHEMA_READY and not force:
         return
@@ -208,6 +225,7 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
     await db.execute(text(_DESIGN_RUNS_DDL))
     for ix in _INDEXES:
         await db.execute(text(ix))
+    await db.commit()  # ★DDL 즉시 확정 — 커밋 성공 후에만 ready 세팅(유령 ready 방지·schema_guard 동형).
     _SCHEMA_READY = True
 
 

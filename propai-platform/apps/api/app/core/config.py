@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     #   True면 FAIL(0세대·면적불보존·법정초과 등) 시 배선부가 결과에 차단 표기를 단다.
     GEOMETRY_INVARIANT_ENFORCE: bool = False
 
+    # DesignBasis hard 제약 하드게이트(WP-E) — 기본 False=그림자(shadow·무회귀).
+    #   False면 hard 위반을 응답에 구조화 사유로 부착·경고만 하고 절대 산출을 막지 않는다(기존 동작 불변).
+    #   True면 hard(법정·물리) 위반 시 대표 소비처(bim/generate)가 산출을 거부하고 Unsat 사유를 반환한다.
+    DESIGN_BASIS_ENFORCE: bool = False
+
     # Prometheus
     PROMETHEUS_ENABLED: bool = True
 

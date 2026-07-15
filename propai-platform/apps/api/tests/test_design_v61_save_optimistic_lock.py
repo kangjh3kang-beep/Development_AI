@@ -5,6 +5,9 @@
   ①트랜잭션 advisory lock으로 같은 프로젝트 동시 저장을 직렬화(MAX+1 레이스 원천 차단).
   ②expected_version(If-Match) 제공 시 현재 최신과 불일치하면 409로 거부(무음 덮어쓰기 금지).
   ③미제공(None)이면 기존 동작(MAX+1) 유지 — 점진 도입·하위호환.
+  ④(WP-E 세션2 분리 리뷰 MEDIUM) 락 키를 32bit(hashtext)→64bit(hashtextextended)로 상향하되,
+    배포 전환창(블루그린 신·구 파드 혼재)의 상호배제 붕괴를 막기 위해 과도기엔 구키를 먼저,
+    신키를 다음으로 고정 순서 이중 획득한다(차기 릴리스에서 구키 제거 예정).
 
 라이브 DB 없이 라우터 async 함수를 직접 호출하고, 필요한 SQL만 모사하는 fake DB로 구동한다
 (test_design_v61_glb_ownership.py 선례 동형 — '결정적 픽스처만' 원칙).
@@ -109,6 +112,24 @@ async def test_advisory_lock_precedes_max_version_read():
     lock_idx = next(i for i, s in enumerate(db.executed) if "pg_advisory_xact_lock" in s)
     max_idx = next(i for i, s in enumerate(db.executed) if "MAX(version_number)" in s)
     assert lock_idx < max_idx
+
+
+@pytest.mark.asyncio
+async def test_dual_advisory_lock_old_key_before_new_key_both_before_max_version():
+    """★분리 리뷰 MEDIUM(전환기 레이스 봉합) — 배포 전환창 동안 신·구 파드가 혼재해도 상호배제가
+    깨지지 않도록, 구키(hashtext 32bit)와 신키(hashtextextended 64bit)를 **고정 순서(구키 먼저)**
+    로 둘 다 획득한다. 둘 다 MAX(version) 읽기보다 먼저 실행돼야 레이스가 봉합된다."""
+    db = _SaveFakeDb(owner_tenant=TENANT_A, max_version=0)
+    req = CADSaveRequest()
+    await save_drawing(PROJECT_ID, req, db=db, user=_User(TENANT_A))
+    lock_stmts = [s for s in db.executed if "pg_advisory_xact_lock" in s]
+    assert len(lock_stmts) == 2  # 구키+신키 둘 다 획득(전환기 이중 잠금)
+    assert "hashtext(:lk)::bigint" in lock_stmts[0]  # 구키가 먼저(데드락 방지 — 순서 고정)
+    assert "hashtextextended(:lk, 0)" in lock_stmts[1]  # 신키가 다음
+    old_idx = next(i for i, s in enumerate(db.executed) if "hashtext(:lk)::bigint" in s)
+    new_idx = next(i for i, s in enumerate(db.executed) if "hashtextextended(:lk, 0)" in s)
+    max_idx = next(i for i, s in enumerate(db.executed) if "MAX(version_number)" in s)
+    assert old_idx < new_idx < max_idx  # 구키→신키→MAX 조회 순서 고정
 
 
 def test_httpexception_handler_precedes_generic_in_source():

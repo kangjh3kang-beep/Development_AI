@@ -558,8 +558,26 @@ async def save_drawing(
         #   advisory lock으로 직렬화한다(analysis_ledger append 선례 재사용). 이 락이 없으면
         #   두 요청이 같은 MAX(version)을 읽어 같은 next_ver를 이중 발번하는 lost-update가 난다.
         #   락은 커밋/롤백 시 자동 해제(프로세스 스코프·신규 스키마 0).
+        #   ★권고③(64bit 상향): hashtext(::int4→bigint 캐스트)는 32bit라 서로 다른 키가 같은
+        #     락으로 뭉칠 충돌 확률이 크다 → hashtextextended(키, 0)의 64bit 해시가 목표(신키).
+        #   ★분리 리뷰 MEDIUM(전환기 레이스 봉합): 배포는 블루그린이라 신·구 파드가 잠시 혼재한다
+        #     (WORKTREES.md·safe-deploy). 이 전환창 동안 구파드는 여전히 구키(32bit hashtext)로만
+        #     잠그므로, 신키만 쓰면 신파드끼리는 직렬화돼도 신-구 파드 간에는 서로 다른 락 공간이라
+        #     상호배제가 깨진다(레이스 재발). 그래서 과도기엔 **두 키 모두** 고정 순서(구키 먼저)로
+        #     연속 획득한다 — 구키가 최소공통분모라 신·구 파드가 뒤섞여도 구키에서 만나 직렬화된다.
+        #     신키는 32bit보다 넓은 공간으로 오탐충돌만 줄인다(있으면 더 안전, 없어도 구키가 방어).
+        #     ★순서 고정 이유(데드락 방지): 두 세션이 반대 순서로 락을 걸면 상호대기(deadlock)가
+        #     날 수 있다 — 항상 구키→신키 순서만 쓰면 원형대기가 성립하지 않는다.
+        #     ★차기 릴리스에서 구키(hashtext) 획득 제거 예정(신키 단독 운영 — 전체 파드가 신키
+        #     배포분으로 롤아웃 완료된 뒤). version_number 유니크 제약(DB 레벨 이중방어)은 WP-M
+        #     (alembic 헤드 병합) 이후 별도 alembic 마이그레이션으로 다룬다 — 이 WP는 애플리케이션
+        #     레벨 직렬화(advisory lock)만 담당하고 스키마 변경은 하지 않는다(제약 준수).
         await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),
+            text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),  # 구키(32bit) — 먼저.
+            {"lk": f"design_versions:{pid}:cad_2d"},
+        )
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lk, 0))"),  # 신키(64bit) — 다음.
             {"lk": f"design_versions:{pid}:cad_2d"},
         )
         # 현재 최대 버전 (raw — ORM 컬럼 불일치 우회)
@@ -1093,6 +1111,64 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
     }
 
 
+def _attach_design_basis(mass: dict[str, Any], req: BimGenerateRequest) -> None:
+    """★WP-E 세션2(P9 Program·Constraint 정형화) — options를 DesignBasis로 파싱해 매스에 부착.
+
+    무엇을(쉬운 설명): 흩어진 options(building_use·unit_types·zone_code·목표한도)를 정형 스키마
+      (program_items + hard/soft 제약)로 승격하고, 산출된 매스 지표(far_pct·bcr_pct·높이·층수)로
+      hard(법정·물리)/soft(선호) 제약을 판정해 결과를 mass에 additive로 붙인다:
+        mass["design_basis"]      = 정형 계약(프로그램·제약)
+        mass["basis_evaluation"]  = 판정 결과(satisfied·unsat_reasons·soft_warnings·unevaluated)
+      hard 위반(unsat_reasons)이 있으면 무음으로 넘기지 않고 구조화 사유를 남긴다(Unsat Core 최소사상).
+
+    ★무회귀(additive·폴백 유지): 이 함수는 mass에 키를 추가만 한다 — 기존 키·산출을 바꾸지 않는다.
+      임계값·지표가 없으면 그 제약은 unevaluated로 정직 표기(근거 없는 거부 금지). 이 함수의 어떤
+      실패도 매스 산출(주 경로)을 깨지 않는다(예외격리 — 미부착=기존 options dict 경로 유지·폴백).
+    ★실제 산출 거부는 대표 소비처(generate_bim_model)가 settings.DESIGN_BASIS_ENFORCE=True일 때만 한다.
+    """
+    try:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService
+        from app.services.cad.design_basis import (
+            build_design_basis_from_options,
+            extract_metrics_from_mass,
+        )
+
+        # 법정 한도는 정본(get_legal_limits)에서만 받는다(무날조 — 임계값 날조 금지).
+        legal = AutoDesignEngineService.get_legal_limits(req.zone_code)
+        basis = build_design_basis_from_options(
+            building_use=req.building_use,
+            unit_types=req.unit_types,
+            legal_limits=legal,
+            # 조례 실효 한도(있을 때만)를 선호(soft) 목표로 넘긴다 — 위반해도 경고만(기존 동작 불변).
+            target_far_percent=req.ordinance_far_pct,
+            target_bcr_percent=req.ordinance_bcr_pct,
+        )
+        evaluation = basis.evaluate(extract_metrics_from_mass(mass))
+        mass["design_basis"] = basis.model_dump(mode="json")
+        mass["basis_evaluation"] = evaluation.model_dump(mode="json")
+        if evaluation.unsat_reasons:  # 무음 퇴화 금지 — hard 위반은 로그로도 남긴다.
+            import structlog
+
+            structlog.get_logger().warning(
+                "design_basis hard 위반",
+                zone=req.zone_code, use=req.building_use,
+                codes=[u.constraint_code for u in evaluation.unsat_reasons],
+                enforce=_design_basis_enforce_enabled(),
+            )
+    except Exception:  # noqa: BLE001 — DesignBasis 부착 실패가 매스 산출을 막지 않음(폴백=기존 경로).
+        pass
+
+
+def _design_basis_enforce_enabled() -> bool:
+    """DesignBasis hard 위반 시 산출 거부를 실제로 강제할지(기본 False=그림자·무회귀)."""
+    try:
+        from app.core.config import settings
+
+        return bool(getattr(settings, "DESIGN_BASIS_ENFORCE", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
     """_resolve_mass_uncached를 input_hash 멱등 캐시로 감싼 얇은 래퍼(시간절감·무회귀).
 
@@ -1117,6 +1193,8 @@ def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
         result["_cache_hit"] = True
         return result
     # 미스: 실제 산출 → clean 깊은 복사본을 캐시에 저장(저장본엔 _cache_hit 없음) → 반환본만 마킹.
+    #   ★DesignBasis 부착(WP-E)은 _resolve_mass_uncached(정본 빌더) 내부에서 하므로 여기선 손대지
+    #     않는다 — 캐시/무캐시 결과가 완전히 동일하게 유지된다(cache 투명성 계약·무회귀).
     mass = _resolve_mass_uncached(req)
     design_run_cache.put(key, copy.deepcopy(mass))
     mass["_cache_hit"] = False
@@ -1127,9 +1205,10 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출.
 
     확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강하고,
-    C2R 계약(envelope_result·geometry_invariants·rule_trace)을 부착한다(전 분기 공용·additive).
+    C2R 계약(envelope_result·geometry_invariants·rule_trace)+DesignBasis(WP-E 정형 프로그램·제약)를
+    부착한다(전 분기 공용·additive).
 
-    ★이 함수는 _resolve_mass(캐시 래퍼)가 호출한다. 로직·반환은 캐시 도입 전과 100% 동일하다(무회귀).
+    ★이 함수는 _resolve_mass(캐시 래퍼)가 호출한다. 결정적 부착이라 캐시/무캐시 결과가 100% 동일하다.
     """
     if req.building_width_m and req.building_depth_m and req.floor_count:
         mass = {
@@ -1145,6 +1224,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         # ★특이부지 게이트(B2) additive 부착 — 이 분기는 조례 실효한도(B1) 적용 대상이 아니다
         #   (SiteInput/법정한도 자체를 안 쓰는 명시치수 분기이므로 조례 클램프가 개입할 여지가 없음).
         _attach_special_parcel_gate(mass, req)
+        _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착(대표 소비경로·additive·예외격리).
         return mass
     # 자동 산출: AutoDesignEngine(대지면적+용도지역 → 최적 매스)
     if req.land_area_sqm:
@@ -1196,6 +1276,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         mass["compliance"] = contract  # additive — mass dict에 부착(/mass·/layout·/bim 응답이 동봉)
         # ★특이부지 게이트(B2) additive 부착 — 학교용지·GB·농지·산지·맹지 등 경고만(차단 아님).
         _attach_special_parcel_gate(mass, req)
+        _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착 — 이 분기는 far/bcr 지표가 있어 법정 hard 실평가.
         return mass
     # 최종 폴백: 합리적 기본값
     mass = {
@@ -1207,6 +1288,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     _attach_mass_contract(mass, req)
     # ★특이부지 게이트(B2) additive 부착 — 폴백 분기도 컨텍스트가 있으면 동일하게 판정(전 경로 패리티).
     _attach_special_parcel_gate(mass, req)
+    _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착(전 경로 패리티·additive·예외격리).
     return mass
 
 
@@ -1227,6 +1309,27 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
 
     mass = _resolve_mass(req)
+
+    # ★WP-E 하드게이트(대표 소비처): DesignBasis hard(법정·물리) 위반이면 무음 퇴화 대신 산출을
+    #   거부하고 구조화 Unsat 사유를 반환한다(계획서 게이트 "Hard 위반 산출 0"). 기본 shadow
+    #   (DESIGN_BASIS_ENFORCE=False)에서는 거부하지 않는다(무회귀 — 위반 사유는 mass에 부착만).
+    #   ★견고화: "is False" 대신 "is not True"로 비교한다 — 부착이 부분 손상돼 satisfied 키가
+    #     None/누락이면(정상 True/False가 아니면) ENFORCE 모드에서는 "판정불명=미충족"으로 보수
+    #     처리해 거부한다(무음 통과 방지). shadow(기본값)에서는 이 분기 자체가 평가되지 않는다.
+    _eval = mass.get("basis_evaluation") if isinstance(mass, dict) else None
+    if (
+        _design_basis_enforce_enabled()
+        and isinstance(_eval, dict)
+        and _eval.get("satisfied") is not True
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "DesignBasis hard 제약 위반으로 설계 산출을 거부합니다(무음 퇴화 금지).",
+                "unsat_reasons": _eval.get("unsat_reasons", []),
+                "soft_warnings": _eval.get("soft_warnings", []),
+            },
+        )
 
     # ── 무거운계산 캐시 열쇠: mass캐시와 같은 결정적 핑거프린트지만 "bim:" prefix로 네임스페이스 분리 ──
     #   (mass캐시 값은 매스 dict, bim캐시 값은 해석/ifc길이 묶음 — 같은 열쇠로 섞이면 안 되므로 prefix).
