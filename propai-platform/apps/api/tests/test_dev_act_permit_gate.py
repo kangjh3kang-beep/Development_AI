@@ -353,3 +353,24 @@ def test_zone_type_takes_precedence_over_zone():
     assert gate["zone_family"] == "주거"
     assert gate["applicable"] is False
     assert gate["status"] == STATUS_PASS
+
+
+# ── PR#282 리뷰 패스트팔로우: 프론트 실발행 코드(GC/QI) 리졸브 정합 ──────────
+
+
+def test_build_helper_resolves_frontend_gc_code():
+    """★리뷰 적발 회귀 고정 — 프론트 zoningToCode가 실제 발행하는 일반상업 코드는 'GC'다.
+    (별칭표가 과거 'CC'만 알아 GC 리졸브가 무음 no-op이었음) 리졸브 후 도시 상업+대지는
+    개발행위허가 비대상(PASS)으로 정확 판정돼야 한다."""
+    gate = build_dev_act_permit_gate(zone_type="GC", land_category="대")
+    assert gate is not None
+    assert gate["applicable"] is False
+    assert gate["status"] == STATUS_PASS
+
+
+def test_build_helper_resolves_frontend_qi_code():
+    """준공업 실발행 코드 'QI' 동일 회귀 고정(과거 'SI'만 인식)."""
+    gate = build_dev_act_permit_gate(zone_type="QI", land_category="대")
+    assert gate is not None
+    assert gate["applicable"] is False
+    assert gate["status"] == STATUS_PASS
