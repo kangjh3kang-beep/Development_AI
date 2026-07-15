@@ -49,6 +49,11 @@ class CashflowGenerator:
         #   '대체'하고(모듈 total_other_cost_won에 설계·감리가 포함돼 이중계상 방지) 유출을
         #   설계 시작~공사 종료에 균등 분산한다. None(기본)=기존 동작 완전 동일(무회귀).
         soft_cost_won: float | None = None,
+        # ★W5(2026-07-16 승인): 분양대금 유입 스케줄 — "installment"(기본): 계약금 10%
+        #   (분양기간·초기집중) + 중도금 60%(분양개시 익월~공사종료 균등) + 잔금 30%(정산월,
+        #   기존 잔여 로직). 종전 "front_loaded"(전액 분양기간 유입)는 IRR을 비현실적으로
+        #   끌어올렸다(W3 R2 잔여 — 조기 유입 가정). 옵션으로 종전 동작 유지 가능.
+        revenue_schedule: str = "installment",
         tax_schedule: dict[str, Any] | None = None,  # R1: 세금 시점 주입(additive, None=기존 동작)
     ) -> dict[str, Any]:
         """월별 현금흐름을 생성한다.
@@ -113,10 +118,34 @@ class CashflowGenerator:
             construction_cost, construction_months
         )
 
-        # 분양수입 월별 분배
-        monthly_revenue = self._revenue_distribution(
-            total_revenue, sale_duration_months
-        )
+        # 분양수입 월별 분배 — W5: 분할 유입(계약 10·중도 60·잔금 30)이 기본.
+        # ※퇴화 경계(리뷰 R1-MEDIUM-2): 분양개시가 공사종료 직전(ss≥cm−1)이면 중도금
+        #   슬롯이 정산월 밖으로 밀려 수입 대부분이 잔금 balloon으로 후행(후분양 형태로
+        #   퇴화 — 총액 보존·IRR 보수 방향이라 안전하나 '균등 중도금' 의도는 소멸).
+        if revenue_schedule not in ("installment", "front_loaded"):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "revenue_schedule 미지정값 '%s' — front_loaded로 폴백(수치 대변동 파라미터 오타 주의)",
+                revenue_schedule,
+            )
+        if revenue_schedule == "installment":
+            # 계약금 10%: 분양기간 초기집중 분포(청약·계약 시점).
+            down = self._revenue_distribution(total_revenue * 0.10, sale_duration_months)
+            # 중도금 60%: 분양개시 익월 ~ 공사종료 균등(중도금 회차 근사).
+            mid_end_rel = max(1, construction_end - sale_abs_start)
+            monthly_revenue = [0.0] * (mid_end_rel + 1)
+            for i, v in enumerate(down):
+                if i < len(monthly_revenue):
+                    monthly_revenue[i] += v
+            mid_span = mid_end_rel  # 1..mid_end_rel
+            for i in range(1, mid_end_rel + 1):
+                monthly_revenue[i] += (total_revenue * 0.60) / mid_span
+            # 잔금 30%: 스케줄 밖 잔여 → 정산월(기존 잔여 로직)이 일괄 수령.
+        else:
+            monthly_revenue = self._revenue_distribution(
+                total_revenue, sale_duration_months
+            )
 
         # ── R1: 세금 시점 매핑 (tax_schedule 미지정 시 전부 0 — 기존 동작 완전 동일) ──
         tax_by_month: list[float] = [0.0] * total_months
@@ -209,7 +238,9 @@ class CashflowGenerator:
             interest_total += interest
 
             # ── Phase 3: 분양수입 (정산월 전까지만 — 잔금에서 일괄 정산) ──
-            if sale_abs_start <= month <= min(sale_abs_end, construction_end):
+            # W5: 분할 스케줄은 공사종료까지 이어지므로 상한=construction_end
+            # (front_loaded는 len(monthly_revenue)=분양기간이라 ri<len 가드로 종전 동일).
+            if sale_abs_start <= month <= construction_end:
                 ri = month - sale_abs_start
                 if ri < len(monthly_revenue):
                     rev = monthly_revenue[ri]

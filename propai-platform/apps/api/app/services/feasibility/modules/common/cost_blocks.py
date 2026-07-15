@@ -123,9 +123,15 @@ def apply_auto_estimates(
     if not all_equity and float(finance.get("total_finance_cost_won") or 0) <= 0 and base_cost > 0:
         months = float(inp.project_months or 30)
         pf_amt = base_cost * 0.70  # 표준 LTV 70%
-        est_finance = round(pf_amt * 0.055 * (months / 12.0))  # PF 이자 5.5%, 사업기간 비례
+        # ★W5(갭 감사 P2 봉합): 분할실행(progressive drawdown) 평균잔액 ~50% 기저 —
+        #   종전 전액·단리 기저는 정밀입력 경로(finance_cost_engine 분할실행)의 ~2배라
+        #   "정밀 입력할수록 ROI가 좋아지는" 역설을 만들었다. 실행 곡선 평균잔액 근사 0.5.
+        est_finance = round(pf_amt * 0.055 * (months / 12.0) * 0.5)
         finance = {**finance, "total_finance_cost_won": est_finance, "auto_estimated": True,
-                   "estimate_basis": f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월 자동추정(미입력)"}
+                   "estimate_basis": (
+                       f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월"
+                       "×평균잔액 50%(분할실행 근사) 자동추정(미입력)"
+                   )}
     if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:
         est_other = round(base_cost * 0.07)  # 설계·감리·분양대행·금융수수료·예비비 통칭 7%
         other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
