@@ -16,7 +16,7 @@ import {
   type AIDomain,
 } from "@/lib/ai-prompts";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
