@@ -90,7 +90,7 @@ function renderAutoCorrectResult(raw: unknown): ReactNode {
       ) : null}
       {r.corrected ? (
         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4 text-xs text-[var(--text-secondary)]">
-          <p className="mb-2 text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">보정된 설계안</p>
+          <p className="mb-2 label-caps text-[var(--text-tertiary)]">보정된 설계안</p>
           {Object.entries(r.corrected).map(([k, v]) => (
             <div key={k} className="flex items-center justify-between py-0.5">
               <span>{k}</span>
@@ -106,7 +106,7 @@ function renderAutoCorrectResult(raw: unknown): ReactNode {
 function Tile({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">{label}</p>
+      <p className="label-caps text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
     </div>
   );

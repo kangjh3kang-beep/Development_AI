@@ -208,7 +208,7 @@ export function UnitMixOptimizerPanel() {
   return (
     <Card>
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        <p className="label-caps text-[var(--text-tertiary)]">
           평형 구성 최적화
         </p>
         <CardTitle className="mt-2 text-xl">
@@ -261,7 +261,7 @@ export function UnitMixOptimizerPanel() {
         {/* Demand ratio sliders */}
         {Object.keys(demandRatio).length > 0 && (
           <div className="mt-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               수요 비율 조정
             </p>
             <div className="mt-3 grid gap-2">
@@ -348,7 +348,7 @@ export function UnitMixOptimizerPanel() {
 
             {/* Stacked bar chart */}
             <div>
-              <p className="mb-2 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="mb-2 label-caps text-[var(--text-tertiary)]">
                 평형 배분 비율
               </p>
               <div className="flex h-8 w-full overflow-hidden rounded-[var(--radius-lg)]">
@@ -395,22 +395,22 @@ export function UnitMixOptimizerPanel() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[var(--line)]">
-                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-left label-caps text-[var(--text-tertiary)]">
                       평형
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-right label-caps text-[var(--text-tertiary)]">
                       세대수
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-right label-caps text-[var(--text-tertiary)]">
                       비율
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-right label-caps text-[var(--text-tertiary)]">
                       분양가 (만원/평)
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-right label-caps text-[var(--text-tertiary)]">
                       수입
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+                    <th className="px-3 py-2 text-right label-caps text-[var(--text-tertiary)]">
                       주차
                     </th>
                   </tr>
@@ -466,7 +466,7 @@ export function UnitMixOptimizerPanel() {
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

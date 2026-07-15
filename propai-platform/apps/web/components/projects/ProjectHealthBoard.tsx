@@ -113,7 +113,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </div>
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
+            <p className="label-caps text-[var(--accent-strong)]">
               프로젝트 헬스보드
             </p>
             <p className="mt-1 text-lg font-black tracking-tight text-[var(--text-primary)]">
@@ -164,7 +164,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
                 <StageIcon id={nextMeta.icon} size={18} />
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
+                <p className="label-caps text-[var(--accent-strong)]">
                   다음 추천 작업
                 </p>
                 <p className="text-sm font-bold text-[var(--text-primary)]">
@@ -174,7 +174,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </div>
             <Link
               href={`/${locale}/projects/${projectId}/${nextMeta.route}`}
-              className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-6 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
+              className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-6 label-caps text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
             >
               {nextMeta.label} 진입 ↗
             </Link>

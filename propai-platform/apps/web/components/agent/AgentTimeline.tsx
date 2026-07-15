@@ -63,7 +63,7 @@ export function AgentTimeline({
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.connectionTitle}
           </p>
           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">

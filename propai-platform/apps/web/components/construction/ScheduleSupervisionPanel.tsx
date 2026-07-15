@@ -77,7 +77,7 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
           className="flex min-h-[450px] flex-col rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
         >
            <div className="mb-10 flex items-center justify-between">
-              <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+              <h5 className="label-caps text-[var(--text-hint)]">
                 {t.ganttTitle || "PROJECT GANTT TIMELINE"}
               </h5>
               <div className="flex items-center gap-4">
@@ -133,7 +133,7 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
           animate={{ opacity: 1, x: 0 }}
           className="flex flex-col gap-6 rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
         >
-           <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+           <h5 className="label-caps text-[var(--text-hint)]">
              {t.inspectionTitle || "공종별 공기 분배"}
            </h5>
            <div className="mt-4 flex flex-col gap-4">

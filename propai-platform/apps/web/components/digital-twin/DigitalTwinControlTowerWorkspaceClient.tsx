@@ -311,7 +311,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
           <div className="relative z-10 flex flex-wrap items-center gap-4">
             <span className="cc-meta">DIGITAL TWIN · CONTROL TOWER</span>
             {runtime.mode === "live" ? <span className="cc-live"><i />LIVE TELEMETRY</span> : <span className="cc-chip-data">HISTORICAL REPLAY</span>}
-            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] backdrop-blur-md">
+            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 label-caps text-[var(--accent-strong)] backdrop-blur-md">
               <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
               v53.2 CONTROL TOWER
             </span>
@@ -380,7 +380,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         {/* --- Digital Twin Status --- */}
         <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-info)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_01</p>
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_01</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Digital Twin Status<span className="text-[var(--status-info)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handleStatus}>
@@ -423,7 +423,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         {/* --- Unified Risk Engine --- */}
         <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--accent-strong)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_02</p>
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_02</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Unified Risk Engine<span className="text-[var(--accent-strong)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handleRisk}>
@@ -470,7 +470,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         {/* --- Permit Readiness --- */}
         <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-success)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_03</p>
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_03</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Permit Lifecycle<span className="text-[var(--status-success)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handlePermit}>
@@ -528,7 +528,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         {/* --- Predictive Maintenance(배선 캠페인 3차, additive) --- */}
         <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-warning)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_04</p>
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_04</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Predictive Maintenance<span className="text-[var(--status-warning)]">.</span></CardTitle>
 
             <form className="mt-8 grid gap-4" onSubmit={handleMaintenance}>
@@ -585,7 +585,7 @@ function Empty({ title, body }: { title: string; body: string }) {
     <div className="rounded-3xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 p-8 text-center flex flex-col items-center gap-4">
        <div className="h-12 w-12 rounded-2xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50"><RadioTower className="size-6" aria-hidden /></div>
        <div className="space-y-1">
-         <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{title}</p>
+         <p className="label-caps text-[var(--text-hint)]">{title}</p>
          <p className="text-[10px] font-medium leading-relaxed text-[var(--text-hint)]/60 italic">{body}</p>
        </div>
     </div>

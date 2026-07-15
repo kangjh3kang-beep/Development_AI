@@ -508,7 +508,7 @@ export function InvestmentAnalyticsWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[color-mix(in_srgb,var(--accent-strong)_10%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[color-mix(in_srgb,var(--accent-strong)_10%,transparent)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -536,7 +536,7 @@ export function InvestmentAnalyticsWorkspaceClient({
         <Card>
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.baseSummaryTitle}
               </p>
               <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--text-secondary)]">
@@ -600,7 +600,7 @@ export function InvestmentAnalyticsWorkspaceClient({
       {/* 불확실성 입력 */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.formTitle}</p>
+          <p className="label-caps text-[var(--text-tertiary)]">{labels.formTitle}</p>
           <p className="mt-2 text-xs leading-6 text-[var(--text-secondary)]">{labels.uncertaintyIntro}</p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -643,7 +643,7 @@ export function InvestmentAnalyticsWorkspaceClient({
           {/* 리스크 요약 — 손실확률 링 */}
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.riskTitle}</p>
+              <p className="label-caps text-[var(--text-tertiary)]">{labels.riskTitle}</p>
               <div className="mt-4 flex flex-wrap items-center gap-6">
                 <div className="relative flex h-28 w-28 items-center justify-center">
                   <svg className="h-28 w-28 -rotate-90" viewBox="0 0 100 100">
@@ -683,7 +683,7 @@ export function InvestmentAnalyticsWorkspaceClient({
           {/* 순이익 분포 + 히스토그램 + 정직표기 */}
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.distTitle}</p>
+              <p className="label-caps text-[var(--text-tertiary)]">{labels.distTitle}</p>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <MetricTile
                   label={labels.meanLabel}
@@ -702,7 +702,7 @@ export function InvestmentAnalyticsWorkspaceClient({
 
               {mcResult.histogram?.length > 0 ? (
                 <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.histTitle}</p>
+                  <p className="label-caps text-[var(--text-tertiary)]">{labels.histTitle}</p>
                   <div className="mt-3 space-y-2">
                     {(() => {
                       const maxCount = Math.max(...mcResult.histogram.map((h) => h.count), 0);
@@ -739,7 +739,7 @@ export function InvestmentAnalyticsWorkspaceClient({
 
               {/* 정직표기 — CV(변동계수)≠수렴, converged(수렴), SE비율, 대상지표/출처/제약 */}
               <div className="mt-4 rounded-[var(--radius-xl)] border border-[var(--line)] p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.honestTitle}</p>
+                <p className="label-caps text-[var(--text-tertiary)]">{labels.honestTitle}</p>
                 <div className="mt-3 grid gap-x-6 gap-y-2 text-xs md:grid-cols-2">
                   <HonestRow
                     label={labels.cvLabel}
@@ -766,7 +766,7 @@ export function InvestmentAnalyticsWorkspaceClient({
       {baseResult ? (
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.baseResultTitle}</p>
+            <p className="label-caps text-[var(--text-tertiary)]">{labels.baseResultTitle}</p>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               {numOf(baseResult.net_profit_won) != null ? (
                 <MetricTile
@@ -796,7 +796,7 @@ export function InvestmentAnalyticsWorkspaceClient({
       {sensResult && sensResult.tornado.length > 0 ? (
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{labels.tornadoTitle}</p>
+            <p className="label-caps text-[var(--text-tertiary)]">{labels.tornadoTitle}</p>
             <p className="mt-1.5 text-xs leading-6 text-[var(--text-secondary)]">{labels.tornadoNote}</p>
             <div className="mt-4 space-y-3">
               {(() => {
@@ -854,7 +854,7 @@ export function InvestmentAnalyticsWorkspaceClient({
             {/* 섭동 기준값(base_values) — 엔진 산출 출처 정직 표기 */}
             {sensResult.base_values && Object.keys(sensResult.base_values).length > 0 ? (
               <div className="mt-4 rounded-[var(--radius-xl)] border border-[var(--line)] p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="label-caps text-[var(--text-tertiary)]">
                   {labels.baseValuesTitle}
                 </p>
                 <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -898,7 +898,7 @@ function MetricTile({
 }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{label}</p>
+      <p className="label-caps text-[var(--text-tertiary)]">{label}</p>
       <p
         className={`mt-2 text-sm font-semibold ${
           tone === "negative" ? "text-[var(--status-error)]" : "text-[var(--text-primary)]"

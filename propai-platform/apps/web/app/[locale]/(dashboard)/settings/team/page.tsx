@@ -152,7 +152,7 @@ export default function TeamPage() {
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr className="text-left text-[10px] uppercase tracking-[0.1em] text-[var(--text-hint)]">
+                <thead><tr className="text-left label-caps text-[var(--text-hint)]">
                   <th className="pb-2">계정</th><th className="pb-2">상태</th><th className="pb-2 text-right">사용량(30일)</th><th className="pb-2 text-right">한도(원)</th><th className="pb-2 text-right">관리</th>
                 </tr></thead>
                 <tbody>

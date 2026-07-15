@@ -501,7 +501,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           <div className="max-h-[560px] overflow-auto">
             <table className="w-full text-[11px]">
               <thead className="sticky top-0">
-                <tr className="bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
+                <tr className="bg-[var(--surface-strong)] label-caps text-[var(--text-tertiary)]">
                   <th className="px-3 py-2 text-left font-bold">코드</th>
                   <th className="px-3 py-2 text-left font-bold">공종</th>
                   <th className="px-3 py-2 text-right font-bold">물량</th>
@@ -563,7 +563,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
+                <tr className="label-caps text-[var(--text-tertiary)]">
                   <th className="px-3 py-2 text-left font-bold">자재</th>
                   <th className="px-3 py-2 text-left font-bold">단위</th>
                   <th className="px-3 py-2 text-right font-bold">표준</th>

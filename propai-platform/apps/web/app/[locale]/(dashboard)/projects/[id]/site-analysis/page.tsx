@@ -1174,7 +1174,7 @@ export default function SiteAnalysisPage() {
                     <Icons.Map width={40} height={40} strokeWidth={1.5} />
                   </div>
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">분석 대상 부지</p>
+                    <p className="label-caps text-[var(--text-hint)]">분석 대상 부지</p>
                     <p className="text-xl sm:text-2xl lg:text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
                       {siteData.address || "분석 대상 주소를 입력하세요"}
                     </p>

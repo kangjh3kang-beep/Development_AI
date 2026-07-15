@@ -1468,7 +1468,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 적용 건축개요 스트립(선택한 개발종목 기반 — CAD·BIM 공용 기하) ── */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 -mt-4">
-        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">적용 건축개요</span>
+        <span className="label-caps text-[var(--accent-strong)]">적용 건축개요</span>
         {specLoading && !spec ? (
           <span className="text-xs text-[var(--text-hint)]">건축개요 산출 중…</span>
         ) : (

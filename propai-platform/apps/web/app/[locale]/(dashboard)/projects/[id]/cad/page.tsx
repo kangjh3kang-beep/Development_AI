@@ -28,7 +28,7 @@ export default function CadPage() {
             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
           </div>
           <div className="space-y-6">
-            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-4 py-1.5 label-caps text-[var(--accent-strong)]">
                Design-To-Code Pipeline Active
             </div>
             <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] sm:text-4xl">

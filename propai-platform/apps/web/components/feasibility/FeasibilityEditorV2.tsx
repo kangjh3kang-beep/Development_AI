@@ -344,7 +344,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             >
               <div className="space-y-6">
                  <div className="glass rounded-[2.5rem] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
-                    <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)] mb-6">Execution Strategy</p>
+                    <p className="label-caps text-[var(--text-hint)] mb-6">Execution Strategy</p>
                     <ProjectTypeSelector />
                  </div>
               </div>

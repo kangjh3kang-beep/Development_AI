@@ -471,7 +471,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
             <div className="overflow-x-auto">
               <table className="w-full text-left text-[12px]">
                 <thead>
-                  <tr className="border-y border-[var(--line)] text-[10px] uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
+                  <tr className="border-y border-[var(--line)] label-caps text-[var(--text-tertiary)]">
                     <th className="px-4 py-2 font-bold">회차</th>
                     <th className="px-4 py-2 font-bold">공종</th>
                     <th className="px-4 py-2 font-bold">기간</th>

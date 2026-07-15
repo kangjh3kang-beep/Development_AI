@@ -66,7 +66,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
           </div>
           
           <div className="mt-8">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-4">
+            <p className="label-caps text-[var(--text-hint)] mb-4">
               {labels.legendTitle}
             </p>
             <div className="flex flex-wrap gap-3 text-xs font-bold">
@@ -92,7 +92,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
          
          <div className="grid grid-cols-1 gap-6 min-w-0">
           <div className="relative overflow-hidden rounded-[1.5rem] border border-[var(--accent-strong)]/40 bg-gradient-to-br from-[var(--accent-strong)]/10 to-transparent p-6 shadow-[inset_0_0_20px_rgba(45,212,191,0.05)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] mb-2">
+            <p className="label-caps text-[var(--accent-strong)] mb-2">
               Selected Parcel
             </p>
             <p className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)]">
@@ -105,7 +105,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
           
           <div className="grid gap-4">
             <div className="group rounded-[1.25rem] border border-[var(--line-strong)] bg-[var(--surface-muted)] px-5 py-4 transition-all hover:border-[var(--accent-strong)]/30 hover:bg-[var(--surface-soft)]">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
+              <p className="label-caps text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
                 {labels.areaLabel}
               </p>
               <p className="mt-2 text-lg font-bold text-[var(--text-primary)]">
@@ -114,7 +114,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
             </div>
             
             <div className="group rounded-[1.25rem] border border-[var(--line-strong)] bg-[var(--surface-muted)] px-5 py-4 transition-all hover:border-[var(--accent-strong)]/30 hover:bg-[var(--surface-soft)]">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
+              <p className="label-caps text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
                 {labels.ownerLabel}
               </p>
               <p className="mt-2 text-lg font-bold text-[var(--text-primary)] truncate">
@@ -123,7 +123,7 @@ export function CadastralMap({ parcels, labels }: CadastralMapProps) {
             </div>
             
             <div className="group rounded-[1.25rem] border border-[var(--line-strong)] bg-[var(--surface-muted)] px-5 py-4 transition-all hover:border-[var(--accent-strong)]/30 hover:bg-[var(--surface-soft)]">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
+              <p className="label-caps text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">
                 {labels.statusLabel}
               </p>
               <p className="mt-2 inline-flex items-center gap-2 text-lg font-bold text-[var(--text-primary)]">

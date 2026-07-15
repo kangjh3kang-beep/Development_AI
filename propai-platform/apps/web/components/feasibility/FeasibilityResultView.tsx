@@ -213,7 +213,7 @@ export function FeasibilityResultView() {
                   </div>
                </div>
                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 label-caps text-[var(--accent-strong)]">
                     Real-time Analysis
                   </div>
                   <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] leading-tight">{result.module_name}</h3>
@@ -232,14 +232,14 @@ export function FeasibilityResultView() {
             {/* Right: Primary ROI Gauge Result */}
             <div className="flex flex-wrap items-center gap-12 lg:justify-end">
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Expected ROI</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Expected ROI</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-6xl font-[1000] text-[var(--accent-strong)] tracking-tighter">{result.roi_pct.toFixed(2)}</span>
                      <span className="text-xl font-black text-[var(--accent-strong)] opacity-60">%</span>
                   </div>
                </div>
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tight">{formatWon(result.npv_won)}</span>
                   </div>

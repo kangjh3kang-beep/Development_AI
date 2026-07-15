@@ -1228,7 +1228,7 @@ export default function CADEditor({
       <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] text-[var(--text-primary)]">
         <div className="flex flex-col items-center gap-4">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">CAD 엔진 초기화...</p>
+          <p className="label-caps text-[var(--accent-strong)]">CAD 엔진 초기화...</p>
         </div>
       </div>
     );
@@ -1681,7 +1681,7 @@ export default function CADEditor({
       {/* ── 좌하단: 지오메트리·법규 컴팩트 패널(좁게, 캔버스 비차폐) ── */}
       <div className="absolute bottom-4 left-4 z-20 w-[260px] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-4 backdrop-blur-[var(--glass-blur)] shadow-2xl">
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-tertiary)]">Building Geometry</span>
+          <span className="label-caps text-[var(--text-tertiary)]">Building Geometry</span>
           <span className={`flex h-2 w-2 rounded-full ${isChecking ? "animate-pulse bg-[var(--status-warning)]" : hasViolationHint ? "bg-[var(--status-error)]" : "bg-[var(--status-success)]"}`} />
         </div>
 

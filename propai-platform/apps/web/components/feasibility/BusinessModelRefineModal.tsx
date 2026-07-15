@@ -84,7 +84,7 @@ export function BusinessModelRefineModal({
         <div className="p-8 space-y-6">
           {/* Section: 기본 정보 */}
           <div className="space-y-4">
-            <h4 className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)]">
+            <h4 className="label-caps text-[var(--text-hint)]">
               기본 정보
             </h4>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -116,7 +116,7 @@ export function BusinessModelRefineModal({
 
           {/* Section: 사업비 조정 */}
           <div className="space-y-4">
-            <h4 className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)]">
+            <h4 className="label-caps text-[var(--text-hint)]">
               사업비 조정
             </h4>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
