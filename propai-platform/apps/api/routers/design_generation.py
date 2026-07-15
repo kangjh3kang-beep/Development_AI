@@ -504,4 +504,6 @@ async def seed_aihub(
         req.dataset_key, req.file_key,
         max_files=max(1, min(req.max_files, 2000)),
         tenant_id=str(current.tenant_id),
+        # ★자산권리 시딩(WP-J): AI Hub 활용신청 승인 라이선스 → 인제스트 도면을 asset_rights 에 등록.
+        db=db,
     )
