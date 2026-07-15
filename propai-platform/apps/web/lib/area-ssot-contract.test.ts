@@ -18,25 +18,52 @@ import { join } from "node:path";
  *   컨텍스트 store 의 siteAnalysis 에서 면적을 꺼낼 때는 effectiveLandAreaSqm(sa) 를 쓴다.
  *   불가피하게 raw 가 필요하면(예: 대표필지 면적을 일부러 쓰는 경우) 해당 라인에
  *   `@area-ssot-ignore` 주석으로 사유를 남긴다.
+ *
+ * ■ 한계(정직 고지 — 이 게이트는 증명이 아니라 트립와이어다)
+ *   정규식은 소스 식별자(siteAnalysis·sa·s.siteAnalysis·input.siteAnalysis 등)에서 .landAreaSqm 을
+ *   직접 꺼내는 라인만 본다. 다음은 원리적으로 못 잡는다:
+ *     - 별칭 우회: `const site = s.siteAnalysis` 후 `site.landAreaSqm` (site 는 임의 변수명)
+ *     - 구조분해: `const { landAreaSqm } = sa`
+ *     - prop 전달: `<Card landAreaSqm={sa.landAreaSqm} />` (JSX 속성)
+ *   이 경로들은 코드리뷰가 커버한다. 게이트는 '직접 raw 읽기'라는 가장 흔한 재발 형태를 막는다.
  */
 
 const WEB_ROOT = join(__dirname, "..");
-const SCAN_DIRS = ["components", "app"];
+// lib·hooks·store 도 스캔한다 — raw 유출은 매핑/훅 계층에서도 일어난다(실측: workspace-extended-panels).
+const SCAN_DIRS = ["components", "app", "lib", "hooks", "store"];
+// SSOT 정의 파일 자신·store 정의는 raw 를 다룰 수밖에 없어 제외(정의처는 계약의 예외).
+const EXCLUDE_FILES = new Set(["lib/site-area.ts", "store/useProjectContextStore.ts"]);
 
-// ■ 정조준: "raw 면적을 값으로 소비"하는 곳만 잡는다.
-//   존재 확인(`(sa?.landAreaSqm ?? 0) > 0`·`!= null`·의존성 배열)은 raw 로도 무해하므로 제외한다 —
-//   전부 잡으면 게이트가 과다발화해 아무도 안 보게 된다(정확도가 게이트의 생명).
-//   값 소비 = 화면 표시(toLocaleString)·문자열화(String())·산술. 이 클래스가 실제 버그였다.
-//   ※ optional chaining(?.)과 non-null 단언(!)을 모두 허용해야 한다 —
-//     `siteAnalysis!.landAreaSqm!.toLocaleString()` 같은 형태가 실제로 쓰인다(초기 게이트가 놓쳤던 구멍).
-const SA = String.raw`(?:siteAnalysis|sa|curSA|analysisCtx)\s*[!?]?\s*\.\s*landAreaSqm\s*!?`;
-const RAW_READ = new RegExp(
-  [
-    `${SA}\\s*\\)?\\s*\\.toLocaleString\\(`, // 표시: sa.landAreaSqm.toLocaleString()
-    `String\\(\\s*${SA}`, // 문자열화: String(sa.landAreaSqm)
-    `${SA}\\s*[/*+-]\\s*[A-Za-z0-9_.(]`, // 산술: sa.landAreaSqm / PYEONG_SQM 등
-  ].join("|"),
-);
+// ■ 정조준: "raw 면적이 값으로 흘러나가는" 지점만 잡고, 존재 확인은 제외한다.
+//   존재 확인(`(sa?.landAreaSqm ?? 0) > 0`·`!= null`·의존성 배열 `sa?.landAreaSqm]`)은 raw 로도
+//   무해하다 — 전부 잡으면 과다발화해 아무도 게이트를 안 본다(정확도가 게이트의 생명).
+//   ※ optional chaining(?.)·non-null 단언(!)을 모두 허용(`sa!.landAreaSqm!` 형태가 실제로 쓰임).
+const SRC = String.raw`(?:siteAnalysis|sa|curSA|analysisCtx|s\.siteAnalysis|input\.siteAnalysis|ctx\.siteAnalysis)`;
+const SA = String.raw`${SRC}\s*[!?]?\s*\.\s*landAreaSqm\s*!?`;
+
+// (1) 소비 지점 — 표시·문자열화·산술·포맷/래핑 함수 인자.
+const CONSUME = [
+  `${SA}\\s*\\)?\\s*\\.(?:toLocaleString|toFixed|toString)\\(`, // sa.landAreaSqm.toLocaleString()
+  // 함수 첫 인자로 raw 를 넘기는 모든 호출 — Number()·Math.round()·num()·formatArea() 등 래핑을
+  //   통틀어 잡는다(래핑돼도 raw 값을 꺼내 쓰는 것은 동일한 유출이다). 존재확인 헬퍼(Boolean 등)는
+  //   드물고, 그마저도 raw 를 만지므로 SSOT 로 바꾸는 편이 안전하다.
+  `[A-Za-z_]\\w*\\s*\\(\\s*${SA}`, // wrap(sa.landAreaSqm  — 예: num(siteAnalysis?.landAreaSqm)
+  `${SA}\\s*[*/]\\s*[A-Za-z0-9_.(]`, // 산술(곱·나눗셈): sa.landAreaSqm / PYEONG_SQM
+  `\\$\\{[^}]*${SA}`, // 템플릿 리터럴: \`${sa.landAreaSqm}㎡\`
+].join("|");
+
+// (2) ★대입/바인딩 지점 — 리뷰어 지적의 핵심. 코드는 흔히 `const x = sa.landAreaSqm` 로 별칭에
+//     담고 그 별칭을 소비한다. 소비만 검사하면 이 바인딩(진짜 방어선)을 못 본다.
+//     - `= sa.landAreaSqm` 뒤에 존재확인 연산자(??·비교·]·)가 오면 제외(그건 guard).
+//     - 객체 속성값 `key: sa.landAreaSqm` (raw 를 다른 객체/바디로 실어보냄).
+const ASSIGN = [
+  // const/let/var x = sa.landAreaSqm  (뒤가 존재확인이 아니어야 함)
+  `[=]\\s*${SA}\\s*(?![!?=<>]|\\s*(?:\\?\\?|!=|==|>=|<=|[<>)\\]]))`,
+  // 속성값: identifier: sa.landAreaSqm  (뒤가 존재확인이 아니어야 함)
+  `[A-Za-z_]\\w*\\s*:\\s*${SA}\\s*(?![!?=<>]|\\s*(?:\\?\\?|!=|==|>=|<=|[<>)\\]]))`,
+].join("|");
+
+const RAW_READ = new RegExp(`${CONSUME}|${ASSIGN}`);
 // 면제: 명시적 사유 주석
 const IGNORE = /@area-ssot-ignore/;
 
@@ -60,6 +87,8 @@ describe("면적 SSOT 계약 — 다필지 면적은 effectiveLandAreaSqm 으로
 
     for (const dir of SCAN_DIRS) {
       for (const file of walk(join(WEB_ROOT, dir))) {
+        const rel = file.replace(WEB_ROOT + "/", "");
+        if (EXCLUDE_FILES.has(rel)) continue;
         const lines = readFileSync(file, "utf-8").split("\n");
         lines.forEach((line, i) => {
           if (!RAW_READ.test(line)) return;

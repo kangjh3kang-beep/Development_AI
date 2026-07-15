@@ -1,4 +1,18 @@
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+import { getZoningSpec } from "@/lib/kr-building-regulations";
+
+/**
+ * 유효면적 계산에 필요한 최소 구조 — SiteAnalysisData 의 부분집합.
+ *
+ * effectiveLandAreaSqm 을 store 전체 타입을 갖지 못한 좁은 컨텍스트(예: 매핑 함수의
+ * 인라인 입력 타입)에서도 재사용할 수 있게 한다. 이게 없으면 그런 곳에서 raw landAreaSqm 을
+ * 직접 읽는 유혹이 생겨 SSOT 우회가 재발한다(실측: workspace-extended-panels.ts 유출).
+ */
+export type AreaResolvable = {
+  landAreaSqm?: number | null;
+  landAreaSqmTotal?: number | null;
+  parcelCount?: number | null;
+};
 
 /**
  * 유효 대지면적(㎡) — 다필지면 통합면적 우선, 아니면 단일/대표 면적.
@@ -16,13 +30,71 @@ import type { SiteAnalysisData } from "@/store/useProjectContextStore";
  * 무목업: 둘 다 없으면 null(0 강제 금지).
  */
 export function effectiveLandAreaSqm(
-  sa: SiteAnalysisData | null | undefined,
+  sa: AreaResolvable | null | undefined,
 ): number | null {
   if (!sa) return null;
   const total = sa.landAreaSqmTotal;
   const isMulti = (sa.parcelCount ?? 1) > 1;
   if (isMulti && typeof total === "number" && total > 0) return total;
   return typeof sa.landAreaSqm === "number" ? sa.landAreaSqm : null;
+}
+
+/**
+ * 유효 용적률 상한(%) — 다필지면 필지별 용도지역의 **면적가중평균**, 단일이면 대표 용도지역값.
+ *
+ * 왜 필요한가(쉬운 설명):
+ * 면적에는 effectiveLandAreaSqm 이라는 짝이 있는데 용적률에는 없었다. 그래서 소비처가
+ * "면적은 통합(Σ), 용적률은 대표필지 1개"를 곱하는 **혼종 계산**을 하게 된다. 용도지역이 섞인
+ * 부지(zoneMixed)에서 이건 연면적을 통째로 틀리게 만든다 — 예컨대 1종일반주거(200%)가 대표인데
+ * 상업지역(800%)이 섞여 있으면, 통합면적 전체에 200%를 곱해 연면적을 과소산출하고(반대면 과대),
+ * 그 연면적이 공사비·수지로 흘러 금액이 통째로 어긋난다.
+ *
+ * ★주의 — siteAnalysis.zoneCode 와 dominantZoneCode 는 둘 다 '대표(첫) 필지' 값이다
+ *   (satong-map-selection.ts:221-222 가 first.zoneType 을 그대로 넣는다 — 이름과 달리 면적가중이 아님).
+ *   따라서 다필지 계산은 반드시 parcels[] 를 직접 가중해야 한다.
+ *
+ * 계약(백엔드 정답 기준선 미러):
+ *   apps/api/app/services/permit/permit_analysis_service.py:326 `_blended_far`
+ *   — 면적가중평균(국토계획법 시행령 제84조), 면적 누락 시 단순평균 폴백, 소수 1자리 반올림.
+ * 무목업: 용도지역을 하나도 해석 못하면 null(0 강제 금지 — 호출자가 정직하게 분기).
+ */
+export function blendedFarPct(
+  sa: SiteAnalysisData | null | undefined,
+): number | null {
+  const parcels = sa?.parcels;
+  const multi = Array.isArray(parcels) && parcels.length >= 2;
+
+  // 단일필지(또는 parcels 부재) — 기존 동작 그대로 대표 용도지역의 상한을 쓴다.
+  if (!multi) {
+    const far = sa?.zoneCode ? getZoningSpec(sa.zoneCode)?.floorAreaRatioMax : null;
+    return typeof far === "number" && far > 0 ? far : null;
+  }
+
+  // 다필지 — 필지별 (면적, 용적률상한) 수집. 용도지역을 못 읽는 필지는 제외(무날조).
+  const weighted: Array<[number, number]> = [];
+  for (const p of parcels) {
+    const far = p?.zoneCode ? getZoningSpec(p.zoneCode)?.floorAreaRatioMax : null;
+    if (typeof far !== "number" || far <= 0) continue;
+    const area = typeof p.areaSqm === "number" && Number.isFinite(p.areaSqm) && p.areaSqm > 0
+      ? p.areaSqm
+      : 0;
+    weighted.push([area, far]);
+  }
+  if (weighted.length === 0) {
+    // 필지에서 하나도 못 읽으면 대표값으로 폴백(그마저 없으면 null).
+    const far = sa?.zoneCode ? getZoningSpec(sa.zoneCode)?.floorAreaRatioMax : null;
+    return typeof far === "number" && far > 0 ? far : null;
+  }
+
+  // 전 필지 면적 확보 → 면적가중평균. 하나라도 면적 미확보 → 단순평균(근사, 백엔드와 동일).
+  const allHaveArea = weighted.every(([a]) => a > 0);
+  if (allHaveArea) {
+    const tot = weighted.reduce((s, [a]) => s + a, 0);
+    if (tot <= 0) return null;
+    return Math.round((weighted.reduce((s, [a, f]) => s + a * f, 0) / tot) * 10) / 10;
+  }
+  const fars = weighted.map(([, f]) => f);
+  return Math.round((fars.reduce((s, f) => s + f, 0) / fars.length) * 10) / 10;
 }
 
 /**

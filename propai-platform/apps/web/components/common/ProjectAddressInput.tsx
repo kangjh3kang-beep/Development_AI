@@ -101,12 +101,27 @@ export function ProjectAddressInput({
     if (!p) return;
     // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다(동기 set — 직후 getState로 읽을 수 있다).
     setProject(p.id, p.name, p.status);
-    // 스냅샷이 없거나(미분석) 비어 있는 항목은 프로젝트 레코드 값으로 보강.
+
+    // 스냅샷이 없거나(미분석) 비어 있는 항목**만** 프로젝트 레코드 값으로 보강한다.
+    //
+    // ★이 가드가 없으면(종전 코드) 복원 스냅샷의 정확한 면적을 프로젝트 레코드 p.area 로 무조건
+    //   덮어써 면적이 갈라진다 — 실측된 상도동 사례: 스냅샷 landAreaSqmTotal=3,059(정답)인데
+    //   p.area=11,465(대지지분 미적용 원면적 합계 = 11,229+236)가 landAreaSqm 에만 기록돼
+    //   landAreaSqm(11,465) ≠ landAreaSqmTotal(3,059) 분기가 발생했다. 그 결과 effectiveLandAreaSqm
+    //   을 쓰는 ContextHeader 는 3,059 를, raw 를 읽는 표면은 11,465 를 보여줬다(같은 화면 두 숫자).
+    //   게다가 이 값은 scheduleSnapshotSync 로 서버 스냅샷에까지 영속된다.
+    //   ※두 필드에 독립 writer 가 있는 게 구조적 원인이다(여기는 landAreaSqm 단독,
+    //     ProjectAnalysisSummary 는 landAreaSqmTotal 단독). 아래처럼 '빈 값일 때만' 쓰면
+    //     이미 확보된 분석 결과를 레코드 값이 침범하지 못한다.
+    const restoredSA = useProjectContextStore.getState().siteAnalysis;
     const areaNum = p.area ? Number(String(p.area).replace(/[^0-9.]/g, "")) : null;
+    const shouldSeedArea =
+      areaNum != null && areaNum > 0 && (restoredSA?.landAreaSqm ?? null) == null;
     updateSiteAnalysis({
       address: p.address,
-      pnu: p.pnu || null,
-      ...(areaNum && areaNum > 0 ? { landAreaSqm: areaNum } : {}),
+      // pnu 도 빈 값으로 복원값을 지우지 않는다(p.pnu 미보유 프로젝트에서 || null 이 클로버함).
+      ...(p.pnu ? { pnu: p.pnu } : {}),
+      ...(shouldSeedArea ? { landAreaSqm: areaNum } : {}),
     });
 
     // ★다필지 하이드레이션 — 복원된 스냅샷의 전 필지를 호스트로 전파한다.
@@ -121,8 +136,12 @@ export function ProjectAddressInput({
     // 대표주소를 항상 선두에 고정하고 중복 제거(호스트 계약: all[0]=대표, 나머지=추가필지).
     const all = [p.address, ...restoredAddrs.filter((a) => a && a !== p.address)].filter(Boolean);
     onChange(p.address);
-    // 단일필지(또는 스냅샷에 parcels 부재)면 기존 동작 그대로 — 호스트 state 를 건드리지 않는다.
-    if (all.length > 1) onParcelsChange?.(all);
+    // ★단일필지여도 **반드시** 호출한다 — 호출을 건너뛰면 호스트의 extra 가 '이전 프로젝트'의
+    //   필지로 남아 교차오염이 된다(5필지 A → 1필지 B 전환 시 B 화면에 A 의 4필지가 잔류해
+    //   "5개 필지 통합" 날조·B 구획도에 A 필지 렌더·A 필지로 유료 등기조회 발주·인허가 분석이
+    //   두 프로젝트를 혼합). 호스트 계약(setAddr(all[0]); setExtra(all.slice(1)))이 단일필지에서
+    //   extra=[] 로 정확히 정리하므로, 항상 호출하는 것이 유일하게 안전하다.
+    onParcelsChange?.(all);
   };
 
   const handleAddressChange = (entries: AddressEntry[]) => {

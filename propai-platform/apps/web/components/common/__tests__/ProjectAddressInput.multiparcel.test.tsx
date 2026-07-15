@@ -85,7 +85,9 @@ describe("ProjectAddressInput — 프로젝트 선택 시 다필지 하이드레
     for (const p of FIVE) expect(all).toContain(p.address);
   });
 
-  it("단일필지 프로젝트는 onParcelsChange 를 호출하지 않는다 (기존 동작 보존)", () => {
+  it("★단일필지 프로젝트도 호출한다 — 호스트의 extra 를 비워 교차오염을 막는다", () => {
+    // 호출을 건너뛰면 호스트 extra 가 '이전 프로젝트' 필지로 남는다(5필지 A → 1필지 B 전환 시
+    // B 화면에 A 의 4필지 잔류 → "5개 필지 통합" 날조·A 필지로 유료 등기조회·분석 혼합).
     seedProject([FIVE[0]]);
     const onParcelsChange = vi.fn();
     render(
@@ -94,10 +96,10 @@ describe("ProjectAddressInput — 프로젝트 선택 시 다필지 하이드레
 
     selectProject();
 
-    expect(onParcelsChange).not.toHaveBeenCalled();
+    expect(onParcelsChange).toHaveBeenCalledWith([PROJECT.address]); // → 호스트 extra = []
   });
 
-  it("스냅샷에 parcels 가 없으면 호출하지 않는다 (구 스냅샷 하위호환)", () => {
+  it("★스냅샷에 parcels 가 없어도 호출한다 (구 스냅샷 — extra 잔류 차단)", () => {
     seedProject(undefined);
     const onParcelsChange = vi.fn();
     render(
@@ -106,7 +108,7 @@ describe("ProjectAddressInput — 프로젝트 선택 시 다필지 하이드레
 
     selectProject();
 
-    expect(onParcelsChange).not.toHaveBeenCalled();
+    expect(onParcelsChange).toHaveBeenCalledWith([PROJECT.address]);
   });
 
   it("대표주소는 항상 onChange 로 전달된다", () => {
@@ -117,5 +119,57 @@ describe("ProjectAddressInput — 프로젝트 선택 시 다필지 하이드레
     selectProject();
 
     expect(onChange).toHaveBeenCalledWith(PROJECT.address);
+  });
+});
+
+describe("ProjectAddressInput — 면적 write-path 오염 가드", () => {
+  // ★실측 상도동 재현: 분석으로 확보한 정확한 면적(landAreaSqm=3,059)이 이미 store 에 있는데,
+  //   프로젝트 레코드 p.area 는 불량값(11,465 = 대지지분 미적용 원면적 합계)이다. 프로젝트를
+  //   고를 때 레코드 값이 확보된 분석 면적을 덮으면 landAreaSqm ≠ landAreaSqmTotal 분기가 생겨
+  //   같은 화면에서 두 면적이 표시된다. 빈 값일 때만 시드해야 한다.
+  const PROJ_BAD_RECORD = {
+    id: "p2",
+    name: "역세권2",
+    status: "active",
+    address: "서울특별시 동작구 상도동 211-376",
+    area: "11,465㎡", // 불량 레코드 값
+  };
+
+  beforeEach(() => {
+    useProjectContextStore.getState().clearProject?.();
+    vi.clearAllMocks();
+  });
+
+  it("이미 확보된 landAreaSqm 을 프로젝트 레코드 area 로 덮어쓰지 않는다", () => {
+    useProjectStore.setState({ projects: [PROJ_BAD_RECORD] } as never);
+    const ctx = useProjectContextStore.getState();
+    ctx.setProject(PROJ_BAD_RECORD.id, PROJ_BAD_RECORD.name, PROJ_BAD_RECORD.status);
+    // 분석으로 확보한 정확한 면적을 미리 store 에 둔다(3,059).
+    ctx.updateSiteAnalysis({ address: PROJ_BAD_RECORD.address, landAreaSqm: 3059 } as never);
+
+    render(<ProjectAddressInput value="" onChange={() => {}} multi />);
+    const select = screen.getByRole("combobox");
+    fireEvent.change(select, { target: { value: PROJ_BAD_RECORD.id } });
+
+    // 레코드 11,465 가 아니라 확보값 3,059 가 유지돼야 한다.
+    expect(useProjectContextStore.getState().siteAnalysis?.landAreaSqm).toBe(3059);
+  });
+
+  it("면적이 비어 있으면 프로젝트 레코드 area 로 보강한다(기존 보강 동작 보존)", () => {
+    // ★별도 프로젝트 id — clearProject 가 직전 프로젝트를 스냅샷에 보존하므로, 같은 id 를
+    //   재사용하면 앞 테스트의 면적이 복원돼 격리가 깨진다(정상 store 동작).
+    const FRESH = { id: "p3", name: "신규", status: "active", address: "서울특별시 동작구 상도동 211-999", area: "540㎡" };
+    useProjectStore.setState({ projects: [FRESH] } as never);
+    const ctx = useProjectContextStore.getState();
+    ctx.setProject(FRESH.id, FRESH.name, FRESH.status);
+    // 면적 미확보 상태(landAreaSqm 없음).
+    ctx.updateSiteAnalysis({ address: FRESH.address } as never);
+
+    render(<ProjectAddressInput value="" onChange={() => {}} multi />);
+    const select = screen.getByRole("combobox");
+    fireEvent.change(select, { target: { value: FRESH.id } });
+
+    // 빈 값이었으므로 레코드 값(540)으로 보강됨.
+    expect(useProjectContextStore.getState().siteAnalysis?.landAreaSqm).toBe(540);
   });
 });

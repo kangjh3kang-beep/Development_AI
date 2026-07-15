@@ -1,3 +1,4 @@
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 // 배선 캠페인 2차(워크스페이스 클러스터 6건) 순수 로직.
 //
 // 왜 필요한가(쉬운 설명): permit-cases/cost-intelligence/underwriting/safety/construction/
@@ -60,6 +61,9 @@ export function buildWorkspaceExtendedContext(input: {
     pnu?: string | null;
     coordinates?: { lat: number; lon: number } | null;
     landAreaSqm?: number | null;
+    // 다필지 통합면적·필지수 — effectiveLandAreaSqm(SSOT)이 통합면적 우선 판정에 사용.
+    landAreaSqmTotal?: number | null;
+    parcelCount?: number | null;
     effectiveBcrPct?: number | null;
     effectiveFarPct?: number | null;
     nationalBcrPct?: number | null;
@@ -87,7 +91,10 @@ export function buildWorkspaceExtendedContext(input: {
     lon: input.siteAnalysis?.coordinates?.lon ?? null,
     totalGfaSqm: input.designData?.totalGfaSqm ?? null,
     floorCount: input.designData?.floorCount ?? null,
-    landAreaSqm: input.siteAnalysis?.landAreaSqm ?? null,
+    // ★면적은 effectiveLandAreaSqm(SSOT) — raw 금지. 이 값은 CadCorrectionSection 의
+    //   '대지면적' 표시 필드·/cad-correction/check 바디로 흘러가므로 다필지에서 raw 면적이면
+    //   CAD 법규검증이 대표필지 면적 기준으로 오판한다.
+    landAreaSqm: effectiveLandAreaSqm(input.siteAnalysis) ?? null,
     buildingFootprintSqm: input.designData?.massGeom?.footprintSqm ?? null,
     // 실효(조례 반영) 우선 → 없으면 법정 상한으로 폴백(단일필지/통합 모두 자연 동작).
     effectiveBcrPct:

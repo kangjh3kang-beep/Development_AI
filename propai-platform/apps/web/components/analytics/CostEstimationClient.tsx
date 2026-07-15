@@ -19,9 +19,8 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { blendedFarPct, effectiveLandAreaSqm } from "@/lib/site-area";
 import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
-import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -250,8 +249,12 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     // ★다필지면 통합 면적으로 GFA 폴백을 역산(대표값 과소산출 방지).
     const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     if (land <= 0) return 0;
-    const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
-    const far = spec?.floorAreaRatioMax ?? 0;
+    // ★용적률도 면적과 같은 축으로 — blendedFarPct(다필지=면적가중평균, 단일=대표값).
+    //   종전엔 "통합면적 × 대표필지 zoneCode 의 FAR" 이라는 혼종이었다. 용도지역이 섞인 부지에서
+    //   연면적이 통째로 틀어지고(대표가 저FAR이면 과소·고FAR이면 과대), 그 GFA 가 :301
+    //   total_gfa_sqm 으로 전송돼 공사비 금액까지 어긋난다. zoneCode·dominantZoneCode 는 둘 다
+    //   '첫 필지' 값이라 다필지 가중에 쓸 수 없다(satong-map-selection.ts:221-222).
+    const far = blendedFarPct(siteAnalysis) ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
   }, [siteAnalysis]);
