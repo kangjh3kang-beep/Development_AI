@@ -187,6 +187,42 @@ export function FeasibilityResultView() {
     .filter(([, v]) => v > 0)
     .map(([name, value]) => ({ name, value }));
 
+  // ── ★W4(감사 프론트 고아): tax_detail·special_detail 렌더 준비 ──
+  // 백엔드가 채워 반환하는데 어떤 화면도 렌더하지 않던 필드 — 세금 4단계 요약과
+  // 모듈 특화 상세를 정직 표기(값 부재 시 섹션 자체 미렌더·하위호환).
+  const TAX_STAGE_LABELS: Record<string, string> = {
+    acquisition: "취득단계", construction: "공사단계", sale: "분양단계", disposal: "양도단계",
+  };
+  const taxDetail = (result.tax_detail ?? {}) as {
+    grand_total_won?: number;
+    summary_by_stage?: Record<string, number>;
+  } & Record<string, { items?: { code?: string; name?: string; amount_won?: number }[] } | unknown>;
+  const taxStages = Object.entries(taxDetail.summary_by_stage ?? {})
+    .filter(([k]) => TAX_STAGE_LABELS[k])
+    .map(([k, total]) => {
+      const stage = taxDetail[k] as { items?: { code?: string; name?: string; amount_won?: number }[] } | undefined;
+      const items = (Array.isArray(stage?.items) ? stage.items : [])
+        .filter((it) => (it.amount_won ?? 0) > 0)
+        .sort((a, b) => (b.amount_won ?? 0) - (a.amount_won ?? 0));
+      return { key: k, label: TAX_STAGE_LABELS[k], total: Number(total ?? 0), items };
+    });
+  const specialEntries = Object.entries(result.special_detail ?? {}).flatMap(([k, v]) => {
+    if (typeof v === "number") {
+      return [{ key: k, value: k.endsWith("_won") ? formatWon(v) : v.toLocaleString() }];
+    }
+    if (typeof v === "string" && v) return [{ key: k, value: v }];
+    if (v && typeof v === "object") {
+      // 1단계 평탄화 — 숫자/문자만(객체는 정직하게 생략).
+      return Object.entries(v as Record<string, unknown>)
+        .filter(([, sv]) => typeof sv === "number" || (typeof sv === "string" && sv))
+        .map(([sk, sv]) => ({
+          key: `${k}.${sk}`,
+          value: typeof sv === "number" ? (sk.endsWith("_won") ? formatWon(sv) : sv.toLocaleString()) : String(sv),
+        }));
+    }
+    return [];
+  });
+
   // WP-S 산출 근거(옵셔널 가드) — 스토어 타입에 없는 가산 필드는 안전하게 좁혀 읽는다.
   // 구버전 응답(evidence/legal_refs 부재)이면 빈 배열 → 패널 미렌더(기존 화면 무손상).
   const trust = result as typeof result & {
@@ -363,6 +399,58 @@ export function FeasibilityResultView() {
 
             {/* 산출 근거(WP-S evidence[]+legal_refs[]) — 항목이 없으면(구버전 응답) 자동 미표시. */}
             <EvidencePanel title="산출 근거" items={evidenceItems} className="mt-8" />
+
+            {/* ── ★W4: 세금 상세(4단계) — 종전 미렌더 고아 필드의 정직 표기 ── */}
+            {taxStages.length > 0 && (
+              <div className="mt-8 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h5 className="text-sm font-black text-[var(--text-primary)]">제세공과금 상세 (4단계)</h5>
+                  {typeof taxDetail.grand_total_won === "number" && (
+                    <span className="text-xs font-black text-[var(--text-secondary)]">합계 {formatWon(taxDetail.grand_total_won)}</span>
+                  )}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {taxStages.map((st) => (
+                    <div key={st.key} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[11px] font-black text-[var(--text-secondary)]">{st.label}</span>
+                        <span className="text-[11px] font-black text-[var(--text-primary)]">{formatWon(st.total)}</span>
+                      </div>
+                      {st.items.length > 0 ? (
+                        <ul className="space-y-1">
+                          {st.items.slice(0, 6).map((it) => (
+                            <li key={`${st.key}-${it.code}`} className="flex items-center justify-between text-[11px] text-[var(--text-secondary)]">
+                              <span>{it.name ?? it.code}</span>
+                              <span className="cc-num">{formatWon(it.amount_won ?? 0)}</span>
+                            </li>
+                          ))}
+                          {st.items.length > 6 && (
+                            <li className="text-[10px] text-[var(--text-hint)]">외 {st.items.length - 6}건</li>
+                          )}
+                        </ul>
+                      ) : (
+                        <p className="text-[10px] text-[var(--text-hint)]">부과 항목 없음</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── ★W4: 모듈 특화 상세(special_detail) — 종전 미렌더 고아 필드 ── */}
+            {specialEntries.length > 0 && (
+              <div className="mt-6 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6">
+                <h5 className="mb-3 text-sm font-black text-[var(--text-primary)]">모듈 특화 상세</h5>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {specialEntries.map((e) => (
+                    <div key={e.key} className="flex items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-[11px]">
+                      <span className="text-[var(--text-secondary)]">{e.key}</span>
+                      <span className="cc-num font-semibold text-[var(--text-primary)]">{e.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
         {/* AI 총평 카드 제거(무목업) — 데이터 출처 없이 "성수역 12%·92PT"를 상수로 렌더하던 블록.

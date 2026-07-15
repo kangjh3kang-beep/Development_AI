@@ -278,3 +278,24 @@ class TestGradeBoundary:
 
         agg = aggregate_feasibility(total_revenue_won=0)
         assert agg["profit_rate_pct"] == 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# W4 리뷰 LOW-2) MC 삼각분포 반폭 √6 — 스프레드 회귀 앵커
+# ─────────────────────────────────────────────────────────────────────────────
+class TestMonteCarloTriangularHalfWidth:
+    def test_triangular_spread_uses_sqrt6(self):
+        """대칭 삼각분포 var=(b−a)²/24 → 반폭 h=std×√6(≈2.449).
+
+        p95−p5 = 2h(1−√0.1) = 2×std×√6×0.68377 ≈ 3.349×std — 종전 ×2 반폭이면
+        ≈2.735×std로 나와 실패한다(스프레드 ~18% 과소 회귀 앵커).
+        """
+        from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
+
+        var = MCVariable(name="x", mean=100.0, std=10.0, distribution="triangular")
+        result = run_monte_carlo(
+            calculate_fn=lambda v: v["x"], variables=[var],
+            n_simulations=40_000, seed=42,
+        )
+        spread = result["p95"] - result["p5"]
+        assert spread == pytest.approx(3.349 * 10.0, rel=0.03), spread

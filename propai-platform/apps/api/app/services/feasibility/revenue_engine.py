@@ -159,6 +159,9 @@ def calculate_rental_revenue(
         return result
 
     # 레거시 방식 (평당 단가 입력) — 보증금 제외, 월세만 자본환원
+    # ★필드 계약(갭 감사 정합): annual_rent_won = 관리비 차감 후·공실 차감 전 연임대료.
+    #   레거시 입력엔 관리비 항목이 없어(평당 월세만) gross=net — 신규 경로(annual_net_rent)와
+    #   동일 의미로 취급한다. 프론트는 이 키를 '연 순임대료(공실 전)'로 소비할 것.
     total_area = rental_units * avg_area_pyeong
     total_deposit = int(total_area * avg_deposit_per_pyeong)
     annual_rent = int(total_area * avg_monthly_rent_per_pyeong * 12)
