@@ -59,44 +59,66 @@ class TestB02SchoolSite:
         )
         assert result["amount_won"] == 2_000_000_000  # 5000억 × 0.4%
 
-    def test_officetel_exempt_regardless_of_households(self):
-        """★건물유형 게이트(감사 P1 잔여 최종): 오피스텔(준주택·업무시설)은 학교용지법
-        §2 대상 외 — 300호 이상이어도 면제(종전 미게이트 시 분양매출 0.4% 오부과)."""
+    def test_officetel_charged_as_quasi_housing(self):
+        """★R1 CRITICAL 교정: 분양형 오피스텔=준주택 포함 부과 대상(학교용지법 §2 3호·
+        2021.6.23~현행 유지) — 300호 이상이면 0.4% 부과. 무단 면제는 20억 과소계상 회귀."""
         result = calculate_b02_school_site(
             total_sale_amount_won=500_000_000_000,
             total_households=1000,
             building_type="officetel",
         )
-        assert result["amount_won"] == 0
-        assert "주택건설사업 아님" in result["detail"]["reason"]
+        assert result["amount_won"] == 2_000_000_000  # 5000억 × 0.4%
+        assert "준주택" in result["detail"]["note"]  # 규모 기준 한계 정직 표기
 
-    def test_commercial_exempt(self):
-        """상업시설도 대상 외 — 면제."""
-        result = calculate_b02_school_site(
-            total_sale_amount_won=300_000_000_000,
-            total_households=500,
-            building_type="commercial",
-        )
-        assert result["amount_won"] == 0
-
-    def test_housing_types_still_charged(self):
-        """주거 유형(아파트·공동주택·단독주택)은 게이트 통과 — 기존 부과 유지."""
-        for bt in ("apartment", "아파트", "공동주택", "단독주택"):
+    def test_office_and_commercial_exempt(self):
+        """순수 업무(M09 office)·상업시설은 주택건설사업 아님 — 면제(종전 미게이트 오부과 봉합)."""
+        for bt in ("office", "commercial", "지식산업센터"):
             result = calculate_b02_school_site(
-                total_sale_amount_won=500_000_000_000,
-                total_households=1000,
+                total_sale_amount_won=300_000_000_000,
+                total_households=500,
                 building_type=bt,
             )
-            assert result["amount_won"] == 2_000_000_000, bt
+            assert result["amount_won"] == 0, bt
+            assert "주택건설사업 아님" in result["detail"]["reason"]
+
+    def test_detached_house_rate_1_4pct(self):
+        """★R1 MEDIUM 교정: 단독주택지(M10/M11 — 생산자 토큰 'house')는 §5의2 2호
+        1.4% 요율(공동주택 0.4%와 별도)."""
+        result = calculate_b02_school_site(
+            total_sale_amount_won=500_000_000_000,
+            total_households=1000,
+            building_type="house",
+        )
+        assert result["rate"] == 0.014
+        assert result["amount_won"] == 7_000_000_000  # 5000억 × 1.4%
+
+    def test_producer_tokens_all_resolve(self):
+        """★R1 HIGH 교정(토큰 누수): 생산자(_get_building_type) 실방출 토큰 전수가
+        의도된 요율로 판정 — house/townhouse가 死토큰으로 새지 않음."""
+        from app.services.tax.utility_stage_engine import school_site_rate_for
+
+        assert school_site_rate_for("apartment") == 0.004
+        assert school_site_rate_for("officetel") == 0.004  # 준주택 포함
+        assert school_site_rate_for("townhouse") == 0.004  # 연립·공동주택 계열
+        assert school_site_rate_for("house") == 0.014  # 단독주택지 §5의2
+        assert school_site_rate_for("office") is None  # 업무시설 면제
+
+    def test_unknown_token_charged_conservatively(self):
+        """미지 토큰(주상복합 등)은 공동주택 요율 부과 — 과소계상 방지 보수 방향."""
+        from app.services.tax.utility_stage_engine import school_site_rate_for
+
+        assert school_site_rate_for("주상복합") == 0.004
+        assert school_site_rate_for("") == 0.004
 
     def test_orchestrator_passes_building_type(self):
-        """오케스트레이터(calculate_all_utility_stage)가 building_type을 B02에 전달."""
+        """오케스트레이터(calculate_all_utility_stage)가 building_type을 B02에 전달 —
+        업무시설(office)은 면제로 관통."""
         from app.services.tax.utility_stage_engine import calculate_all_utility_stage
 
         r = calculate_all_utility_stage(
             sido_name="서울", sigungu_name="강남구",
             total_households=1000, total_sale_amount_won=500_000_000_000,
-            total_gfa_sqm=100_000, building_type="officetel",
+            total_gfa_sqm=100_000, building_type="office",
         )
         b02 = next(it for it in r["items"] if it["code"] == "B02")
         assert b02["amount_won"] == 0
