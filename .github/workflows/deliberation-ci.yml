@@ -1,0 +1,90 @@
+name: Deliberation Engine CI
+
+# 심의분석 엔진(services/deliberation-review) 전용 백엔드 테스트(515개).
+# ★paths 필터로 엔진 소스가 바뀔 때만 실행 — 나머지 PR의 CI 시간에 영향 0.
+#   (엔진의 중첩 .github/workflows/ci.yml은 저장소 루트가 아니라 GitHub가 실행하지 않으므로,
+#    실제 활성 워크플로인 루트 .github/workflows 아래로 이식해 감사망을 봉합한다.)
+on:
+  push:
+    branches: [main]
+    paths: ["propai-platform/services/deliberation-review/**"]
+  pull_request:
+    paths: ["propai-platform/services/deliberation-review/**"]
+  workflow_dispatch:
+
+jobs:
+  engine-tests:
+    name: Deliberation Engine (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: propai-platform/services/deliberation-review
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
+          POSTGRES_DB: propai_review
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U propai_user" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_review
+      REDIS_URL: redis://localhost:6379/0
+      DB_SCHEMA: review
+      # ★설치 실패 수정(run 29451403757): 엔진 루트가 flat-layout 다중 최상위 디렉토리(ops·apps·tools 등)라
+      #   `pip install -e .`가 setuptools 자동탐색에서 실패한다("Multiple top-level packages discovered").
+      #   중첩 원본 ci.yml도 동일하게 `pip install -e ".[dev]"`를 썼으나 GitHub가 그 워크플로를 한 번도
+      #   실행한 적이 없어(D4 배경) 이 결함이 드러난 적이 없었다. 엔진 pyproject.toml 패키징 변경(예:
+      #   [tool.setuptools] packages 명시)은 침습적이므로, 로컬 패키지를 설치하지 않고 의존성만 설치 +
+      #   PYTHONPATH로 임포트 경로를 명시하는 방식으로 우회한다(pytest는 pyproject.toml의 자체
+      #   `pythonpath` ini 설정으로 이미 이 방식과 동일하게 동작 — alembic·static_scan도 여기 맞춘다).
+      #   절대경로라 각 스텝의 working-directory(cd apps/api 등)와 무관하게 항상 정확히 해석된다.
+      PYTHONPATH: ${{ github.workspace }}/propai-platform/services/deliberation-review/apps/api:${{ github.workspace }}/propai-platform/services/deliberation-review
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install engine dependencies (no editable install — see PYTHONPATH 주석)
+        run: |
+          python - <<'PYEOF'
+          import subprocess
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+          deps = [*data["project"]["dependencies"], *data["project"]["optional-dependencies"]["dev"]]
+          subprocess.check_call(["pip", "install", *deps])
+          PYEOF
+
+      - name: Ruff (lint, non-blocking)
+        run: ruff check . || true
+
+      - name: Static scan (하드코딩 법정수치 스캐너 로딩 확인)
+        run: python -c "from tools.static_scan import scan_for_numeric_legal_constants as s; print('scan ready')"
+
+      - name: Alembic migrate up/down/up (review 스키마)
+        # ★apps/api/alembic.ini의 script_location(`apps/api/alembic`)·prepend_sys_path(`apps/api`)가
+        #   모두 리포 루트(services/deliberation-review) 기준 상대경로다 — CWD=apps/api로 cd해서 실행하면
+        #   alembic이 `apps/api/apps/api/alembic`을 찾다 실패한다(로컬 실측 확인: Makefile의 `cd apps/api &&
+        #   alembic ...` 타깃도 동일하게 깨져 있었음 — 한 번도 실행 검증된 적 없는 경로였다). 잡 기본
+        #   working-directory(리포 루트)를 유지하고 `-c`로 ini 경로만 가리킨다.
+        run: |
+          alembic -c apps/api/alembic.ini upgrade head
+          alembic -c apps/api/alembic.ini downgrade base
+          alembic -c apps/api/alembic.ini upgrade head
+
+      - name: Pytest (엔진 전체 테스트 — 0 collected 함정 방지로 수집 건수를 로그에 표면화)
+        run: |
+          pytest -q --collect-only 2>&1 | tail -5
+          pytest -q

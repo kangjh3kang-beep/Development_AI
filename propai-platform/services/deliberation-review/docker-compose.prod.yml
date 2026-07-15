@@ -37,6 +37,10 @@ services:
     ports:
       - "8801:8801"
     environment:
+      # ★운영 fail-closed 활성화 — settings._production_fail_closed가 발동해 무인증(빈 API_TOKEN)·
+      #   와일드카드 CORS 부팅을 거부한다(무음 개방 차단). 따라서 아래 API_TOKEN·CORS_ORIGINS는
+      #   프로덕션에서 반드시 실값을 주입해야 하며, 미설정 시 엔진이 부팅을 거부(정직한 강제).
+      ENV: production
       # DB 는 내부 네트워크의 deliberation-db 서비스명으로 접속(asyncpg). review 스키마는 앱이 사용.
       DATABASE_URL: postgresql+asyncpg://${DELIBERATION_DB_USER:-propai_user}:${DELIBERATION_DB_PASSWORD:-propai_pass_prod}@deliberation-db:5432/${DELIBERATION_DB_NAME:-propai_review}
       # MVP: 비동기 워커/redis 없이 동기 폴백(eager). 진짜 비동기는 redis+worker 추가 후 false.
@@ -45,12 +49,12 @@ services:
       EMBEDDER: hash
       # 호스트 기존 Qdrant 재사용 옵션. 빈 값이면 in-memory mock(영속X). 예: http://host.docker.internal:6333
       QDRANT_URL: ${QDRANT_URL:-}
-      # 엔진 API 보호 베어러 토큰(.env.prod 에 설정). 빈 값이면 개방.
+      # 엔진 API 보호 베어러 토큰. ★ENV=production 필수(.env.prod에 DELIBERATION_API_TOKEN 설정) — 미설정 시 부팅 거부.
       API_TOKEN: ${DELIBERATION_API_TOKEN:-}
       # 외부 출처 키(선택·graceful). 미설정 시 mock/결손표면화 폴백.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MOLEG_API_KEY: ${MOLEG_API_KEY:-}
-      # 프런트 크로스오리진(콘솔/플랫폼). 운영은 구체 도메인 권장.
+      # 프런트 크로스오리진(콘솔/플랫폼). ★ENV=production은 와일드카드('*') 금지 — 구체 도메인 목록 필수(미설정 시 부팅 거부).
       CORS_ORIGINS: ${DELIBERATION_CORS_ORIGINS:-*}
     depends_on:
       deliberation-db:

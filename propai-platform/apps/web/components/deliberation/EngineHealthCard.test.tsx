@@ -26,6 +26,26 @@ describe("EngineHealthCard", () => {
     expect(getMock).toHaveBeenCalledWith("/deliberation/health");
   });
 
+  it("정직 3상 표기 — true=live·false=mock·null=미확인(구버전 미보고를 mock으로 오표기 금지)", async () => {
+    // ★D1 회귀가드: 과거 `value ? 'live' : 'mock'`가 null(필드 미보고)까지 'mock'으로 왜곡했다.
+    getMock.mockResolvedValue({
+      status: "ok",
+      engine: {
+        database_configured: null,      // 미보고 → "미확인"(mock 아님)
+        sheet_classifier_live: true,    // → "live"
+        jurisdiction_live: false,       // → "mock"
+        embedder_semantic: null,        // 미보고 → "미확인"
+      },
+    });
+    render(<EngineHealthCard />);
+    // 미보고(null) 2필드는 "미확인"으로 표기되어야 한다("mock" 오표기 금지).
+    const unknowns = await screen.findAllByText("미확인");
+    expect(unknowns).toHaveLength(2);
+    // true=live 1개, false=mock 정확히 1개(jurisdiction만) — 미보고가 mock으로 새지 않음.
+    expect(screen.getByText("live")).toBeInTheDocument();
+    expect(screen.getAllByText("mock")).toHaveLength(1);
+  });
+
   it("degraded — 미연결 + 사유 표면화(무음0)", async () => {
     getMock.mockResolvedValue({ status: "degraded", reason: "engine_unreachable", engine: null });
     render(<EngineHealthCard />);
