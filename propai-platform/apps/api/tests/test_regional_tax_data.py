@@ -113,6 +113,31 @@ class TestMetroTransportCharge:
         assert r["applicable"] is False
         assert r["amount_won"] == 0
 
+    def test_env_channel_injects_standard_build_cost(self, monkeypatch):
+        """운영 주입 채널: env METRO_STANDARD_BUILD_COST_WON_PER_SQM → 실산정 활성."""
+        monkeypatch.setenv("METRO_STANDARD_BUILD_COST_WON_PER_SQM", "1,210,000")
+        r = get_metro_transport_charge(sido_name="서울", gfa_sqm=10_000, building_type="apartment")
+        # 1,210,000 × 2%(전용면적 미상 보수적) × 10,000㎡
+        assert r["amount_won"] == int(1_210_000 * 0.02 * 10_000)
+        assert r["standard_build_cost_won_per_sqm"] == 1_210_000
+
+    def test_env_channel_explicit_arg_wins_over_env(self, monkeypatch):
+        """호출부 명시 인자 > env 우선순위."""
+        monkeypatch.setenv("METRO_STANDARD_BUILD_COST_WON_PER_SQM", "1210000")
+        r = get_metro_transport_charge(
+            sido_name="서울", gfa_sqm=10_000, building_type="commercial",
+            standard_build_cost_won_per_sqm=2_000_000,
+        )
+        assert r["standard_build_cost_won_per_sqm"] == 2_000_000
+
+    def test_env_channel_invalid_value_stays_unavailable(self, monkeypatch):
+        """env 비정상 값(음수/0/문자) → None 유지(정직 unavailable·날조 금지)."""
+        for bad in ("-5", "abc", "0"):
+            monkeypatch.setenv("METRO_STANDARD_BUILD_COST_WON_PER_SQM", bad)
+            r = get_metro_transport_charge(sido_name="서울", gfa_sqm=10_000, building_type="apartment")
+            assert r["amount_won"] is None
+            assert r["confidence"] == "unavailable"
+
 
 # ── 상하수도 원인자부담금 ──
 

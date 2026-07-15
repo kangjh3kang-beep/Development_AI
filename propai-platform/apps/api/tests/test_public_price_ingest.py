@@ -31,6 +31,66 @@ def test_normalize_item_matches_keyword_and_candidate_fields():
     assert row["expense_price"] == 0
 
 
+def test_normalize_item_breakdown_fields_populated_when_present():
+    """분해 단가(mtrlcst/lbrcst/gnrlexpns — 라이브 확정 필드)가 채워진 항목은 분리 적재.
+
+    labor>0이 되어 unit_price_repository의 T1 안전가드를 통과한다(死계층 자동 재활성 채널).
+    """
+    row = normalize_item({
+        "krnPrdctNm": "이형철근 SD400 D13", "prce": "900000", "unit": "ton",
+        "mtrlcst": "700,000", "lbrcst": "150000", "gnrlexpns": "50000",
+    })
+    assert row is not None
+    assert row["material_price"] == 700000.0
+    assert row["labor_price"] == 150000.0
+    assert row["expense_price"] == 50000.0
+
+
+def test_normalize_item_empty_breakdown_falls_back_to_total_price():
+    """2026-07-16 라이브 현행(전건 분해 빈 문자열) — 총단가 폴백·labor 0(T1 가드 스킵 유지)."""
+    row = normalize_item({
+        "krnPrdctNm": "레미콘 25-24-150", "prce": "85000", "unit": "㎥",
+        "mtrlcst": "", "lbrcst": "", "gnrlexpns": "",
+    })
+    assert row is not None
+    assert row["material_price"] == 85000.0
+    assert row["labor_price"] == 0
+    assert row["expense_price"] == 0
+
+
+def test_normalize_item_labor_without_material_not_treated_as_breakdown():
+    """노무만 있고 재료 분해가 없으면 불완전 분해 — 총단가 폴백(부분 분해 오적재 방지)."""
+    row = normalize_item({"krnPrdctNm": "철근 D13", "prce": "900000", "lbrcst": "150000"})
+    assert row is not None
+    assert row["material_price"] == 900000.0
+    assert row["labor_price"] == 0
+
+
+def test_normalize_item_breakdown_sum_mismatch_falls_back():
+    """★정합 가드(R1): 분해 합≠총단가 1% 초과 괴리 → 폴백(T1 최우선 단가 침묵 왜곡 방지).
+
+    경비 누락 부분분해(700k+150k=850k vs prce 900k, -5.6%)가 대표 시나리오.
+    """
+    row = normalize_item({
+        "krnPrdctNm": "이형철근 SD400 D13", "prce": "900000",
+        "mtrlcst": "700000", "lbrcst": "150000", "gnrlexpns": "",
+    })
+    assert row is not None
+    assert row["material_price"] == 900000.0  # 검증된 총단가 유지
+    assert row["labor_price"] == 0  # T1 가드 스킵 유지(왜곡 대신 정직 폴백)
+
+
+def test_normalize_item_negative_expense_falls_back():
+    """음수 경비 등 비정상 분해 → 합 괴리로 폴백(무검증 적재 방지)."""
+    row = normalize_item({
+        "krnPrdctNm": "철근 D13", "prce": "900000",
+        "mtrlcst": "800000", "lbrcst": "150000", "gnrlexpns": "-50000",
+    })
+    assert row is not None
+    assert row["material_price"] == 900000.0
+    assert row["labor_price"] == 0
+
+
 def test_normalize_item_prefers_first_present_name_candidate():
     row = normalize_item({"prdctClsfcNoNm": "레미콘 25-24-15", "krnPrdctNm": "무시됨", "prce": "85000"})
     assert row is not None
