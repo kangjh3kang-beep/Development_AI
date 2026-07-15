@@ -18,9 +18,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.cad import design_run_cache  # 설계 매스 input_hash 멱등 캐시(시간절감)
 from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
-from app.services.cad.provenance import compute_input_hash  # 결정적 입력 지문(int/float·키순서 정규화)
+from app.services.cad.provenance import (  # 결정적 입력 지문·run_id·콘텐츠 해시(int/float·키순서 정규화)
+    compute_input_hash,
+    make_run_id,
+    sha256_hex,
+)
+from app.services.cad.sheet_frame import (  # WP-F 도면틀 표준(표제란·시트매니페스트·필수시트)
+    apply_title_block_dxf,
+    apply_title_block_svg,
+    build_sheet_manifest,
+    build_title_block,
+    required_sheet_codes,
+)
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
+from app.services.report.submission_bundle import (  # WP-F 제출 번들 컴파일러
+    RequiredSheetsMissingError,
+    build_submission_bundle,
+)
 from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
@@ -81,6 +96,23 @@ class DrawingSetRequest(BaseModel):
     # DXF 내보내기 도면종류 — 평면(floor_plan)/상세(detail)/단면(section)/입면(elevation)/배치(site).
     # 미전달 시 floor_plan(기존 동작 보존 — 하위호환).
     drawing_type: str = "floor_plan"
+
+
+class SubmissionBundleRequest(DrawingSetRequest):
+    """WP-F 심의·인허가 제출 번들 생성 요청 — 도면 파라미터(상속) + 발행일·축척·포함옵션.
+
+    ★무목업: issue_date(발행일)는 서버 now()가 아니라 '요청 파라미터'로만 받는다. 미상 시 표제란 공란.
+    """
+    issue_date: str | None = Field(
+        None, description="발행일(YYYY-MM-DD 등) — 명시 인자. 미상 시 표제란 공란(now() 금지)",
+    )
+    scale: str = Field("N.T.S.", description="도면 축척 표기(예: 1:100). 미상 시 N.T.S.")
+    include_dxf: bool = Field(True, description="필수시트 DXF 동봉 여부(부가물 — 없어도 SVG로 필수시트 충족)")
+    include_report: bool = Field(True, description="설계요약 보고서 PDF 동봉 여부")
+    include_boq: bool = Field(True, description="공내역서(BOQ) xlsx 동봉 여부")
+    households: int | None = Field(
+        None, ge=0, description="세대수(BOQ 세대당 원단위 — 미상 시 연면적 원단위만)",
+    )
 
 
 class CADSaveRequest(BaseModel):
@@ -198,6 +230,8 @@ class FullDrawingSetResponse(BaseModel):
     project_id: str
     drawings: dict[str, DrawingInfo]
     drawing_count: int
+    # WP-F(additive): 시트 매니페스트(번호·이름·포맷·sha256·필수·존재) — 기존 필드 무회귀.
+    sheet_manifest: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DrawingSaveResponse(BaseModel):
@@ -231,16 +265,14 @@ class PermitDocsResponse(BaseModel):
 
 # ── 엔드포인트 ──
 
-@router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
-async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
-    """전체 도면 세트를 일괄 생성한다 (B-01~C-03).
+def _inject_unit_mix(
+    project_data: dict[str, Any], *, building_use: str, unit_types: list[str] | None
+) -> None:
+    """실제 세대믹스(AutoDesignEngine)를 산출해 project_data['units']에 주입(데이터 있으면).
 
-    building_use·unit_types가 주어지면 AutoDesignEngine으로 실제 평형믹스(세대배치)를
-    산출해 기준층 평면도를 실제 세대 분할로 그린다(미전달 시 generic 균등분할 폴백).
+    generate-full-set·submission-bundle 공용 헬퍼 — 기준층 평면도를 실제 세대분할로 그리기 위함.
+    산출 실패(엔진 미배포·입력 부족 등)는 조용히 통과(generic 균등분할 폴백 — 기존 동작 보존·무회귀).
     """
-    project_data = req.model_dump()
-
-    # ── 실제 세대믹스 산출 → 기준층 평면도에 주입(데이터 있으면) ──
     try:
         from app.services.cad.auto_design_engine import AutoDesignEngineService
 
@@ -256,13 +288,26 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
             "building_footprint_sqm": _bw * _bd,        # compute_unit_layout 필수 입력
             "total_floor_area_sqm": _bw * _bd * _nf,    # compute_core_layout 필수 입력
         }
-        core_layout = svc.compute_core_layout(mass, req.building_use)
+        core_layout = svc.compute_core_layout(mass, building_use)
         unit_layout = svc.compute_unit_layout(
-            mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
+            mass, core_layout, unit_types or ["59A", "84A"], building_use,
         )
         project_data["units"] = unit_layout.get("units")
     except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
         pass
+
+
+@router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
+async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
+    """전체 도면 세트를 일괄 생성한다 (B-01~C-03).
+
+    building_use·unit_types가 주어지면 AutoDesignEngine으로 실제 평형믹스(세대배치)를
+    산출해 기준층 평면도를 실제 세대 분할로 그린다(미전달 시 generic 균등분할 폴백).
+    """
+    project_data = req.model_dump()
+    _inject_unit_mix(
+        project_data, building_use=req.building_use, unit_types=req.unit_types
+    )
 
     drawings = svg_service.generate_full_drawing_set(project_data)
     return {
@@ -270,6 +315,8 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
         "drawings": {code: {"svg_length": len(svg), "has_content": bool(svg)}
                      for code, svg in drawings.items()},
         "drawing_count": len(drawings),
+        # WP-F(additive): 시트 매니페스트 — 기존 drawings/drawing_count 필드는 불변.
+        "sheet_manifest": build_sheet_manifest(drawings),
     }
 
 
@@ -806,6 +853,181 @@ async def export_dxf(project_id: str, req: DrawingSetRequest):
         )
     except (ImportError, ValueError):
         return Response(content=b"DXF_PLACEHOLDER", media_type="application/dxf")
+
+
+# WP-F: 필수시트(sheet_frame.required_sheet_codes) → DXF 생성기 매핑. export_dxf 위의
+# dtype 분기와 동일 서비스 호출(재발명 금지) — 시트코드별로 알맞은 도면종류만 뽑아 쓴다.
+def _dxf_bytes_for_sheet(cad_service: Any, code: str, req: SubmissionBundleRequest) -> bytes | None:
+    """시트 코드(B-01 등) → 해당 DXF bytes. 미지원 코드는 None(정직 — SVG만 번들에 포함)."""
+    if code == "B-01":
+        return cad_service.create_site_plan_dxf(
+            site_width_m=req.site_width_m, site_depth_m=req.site_depth_m,
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            parking_count=req.parking_count,
+        )
+    if code == "B-02-STD":
+        return cad_service.create_detailed_floor_plan_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, unit_width_m=req.unit_width_m,
+        )
+    if code == "B-03":
+        return cad_service.create_section_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            basement_floors=req.basement_floors,
+        )
+    if code == "B-04-F":
+        return cad_service.create_elevation_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            unit_width_m=req.unit_width_m, view="front",
+        )
+    if code == "B-04-S":
+        return cad_service.create_elevation_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            unit_width_m=req.unit_width_m, view="side",
+        )
+    return None
+
+
+def _build_submission_report_model(
+    project_id: str, req: SubmissionBundleRequest, *, run_id: str | None,
+) -> Any:
+    """제출 번들 동봉용 설계요약 보고서 ReportModel 조립(산식 계산 0 — 기하 입력값 그대로 표기).
+
+    ★재사용: report.render 정본 모델·렌더러(PDF)를 그대로 쓴다(신규 PDF 라이브러리 0).
+    """
+    from app.services.report.render.model import KVTableBlock, ReportMeta, ReportModel, Section
+
+    overview = Section(section_no=1, title="설계 개요", blocks=[
+        KVTableBlock(rows=[
+            ("프로젝트", req.project_name),
+            ("대지폭(m)", req.site_width_m),
+            ("대지깊이(m)", req.site_depth_m),
+            ("건물폭(m)", req.building_width_m),
+            ("건물깊이(m)", req.building_depth_m),
+            ("층수", req.floor_count),
+            ("지하층수", req.basement_floors),
+            ("층고(m)", req.floor_height_m),
+            ("주차대수", req.parking_count),
+            ("용도지역", req.zone_code),
+            ("건물용도", req.building_use),
+        ]),
+    ])
+    provenance = Section(section_no=2, title="근거", blocks=[
+        KVTableBlock(rows=[("run_id", run_id), ("축척", req.scale), ("발행일", req.issue_date)]),
+    ])
+    return ReportModel(
+        meta=ReportMeta(
+            title="설계 제출 번들 — 설계요약 보고서",
+            project_address=req.project_name,
+            doc_no=project_id,
+            generated_at=req.issue_date or None,  # ★now() 금지 — 명시 인자만(미상 시 정직 공란)
+        ),
+        sections=[overview, provenance],
+    )
+
+
+@router.post("/{project_id}/submission-bundle", response_class=Response)
+async def generate_submission_bundle(
+    project_id: str,
+    req: SubmissionBundleRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """심의·인허가 제출 번들(zip)을 생성한다 — 도면(SVG/DXF)+보고서 PDF+BOQ xlsx 단일 zip.
+
+    도면틀(타이틀블록)을 모든 시트에 additive로 씌우고, 필수시트(sheet_frame 표준) 100%
+    충족을 강제한다 — 미충족 시 422 + 누락 목록(무음 부분산출 금지). 매니페스트(파일별
+    sha256·run_id/input_hash)는 zip 내부 manifest.json 에 동봉(전수 대조 가능).
+    인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403 — 비UUID/데모는 검사 생략).
+    """
+    await _assert_project_owned(project_id, db, user)
+
+    project_data = req.model_dump()
+    _inject_unit_mix(project_data, building_use=req.building_use, unit_types=req.unit_types)
+
+    # ── provenance(결정적) — 요청 입력 그대로에서 파생. now()/uuid 미사용. ──
+    input_hash = compute_input_hash(project_data)
+    run_id = make_run_id(input_hash)
+
+    # ── 1) 도면 SVG 산출 + 표제란(additive) 부착 ──
+    raw_drawings = svg_service.generate_full_drawing_set(project_data)
+    tb_scale, tb_date = req.scale, (req.issue_date or "")
+    drawings_svg: dict[str, str] = {}
+    for code, svg in raw_drawings.items():
+        if not svg:
+            continue
+        content_hash = sha256_hex(svg)  # 프레임 전 순수 도면 콘텐츠 지문(표제란 표기용)
+        tb = build_title_block(
+            code, project_name=req.project_name, scale=tb_scale,
+            issue_date=tb_date, content_hash=content_hash,
+        )
+        drawings_svg[code] = apply_title_block_svg(svg, tb)
+
+    # ── 2) DXF(옵션) — 필수시트만 부가로 생성 + 표제란 부착(실패해도 SVG로 필수시트는 충족) ──
+    drawings_dxf: dict[str, bytes] = {}
+    if req.include_dxf:
+        try:
+            from app.services.cad.parametric_cad_service import ParametricCADService
+
+            cad_service = ParametricCADService()
+            for code in required_sheet_codes():
+                if not raw_drawings.get(code):
+                    continue
+                dxf_bytes = _dxf_bytes_for_sheet(cad_service, code, req)
+                if not dxf_bytes:
+                    continue
+                tb = build_title_block(
+                    code, project_name=req.project_name, scale=tb_scale, issue_date=tb_date,
+                    content_hash=sha256_hex(raw_drawings[code]),
+                )
+                drawings_dxf[code] = apply_title_block_dxf(dxf_bytes, tb)
+        except ImportError:
+            pass  # ezdxf 미설치 — DXF 없이 SVG만(정직 — include_dxf 요청해도 부재 시 스킵)
+
+    # ── 3) 보고서 PDF(옵션) — ReportModel 정본 렌더러 재사용(산식 계산 0) ──
+    report_pdf: bytes | None = None
+    if req.include_report:
+        from app.services.report.render import render_report
+
+        model = _build_submission_report_model(project_id, req, run_id=run_id)
+        report_pdf, _mime, _ext = render_report(model, "pdf")
+
+    # ── 4) BOQ xlsx(옵션) — boq_parametric_engine(초안) → boq_excel_export(엑셀), 재사용 ──
+    boq_xlsx: bytes | None = None
+    if req.include_boq:
+        from app.services.cost.boq_excel_export import build_xlsx
+        from app.services.cost.boq_parametric_engine import generate_draft
+
+        gfa = req.building_width_m * req.building_depth_m * req.floor_count
+        draft = generate_draft({"gfa_sqm": gfa, "households": req.households})
+        boq_xlsx = build_xlsx(draft, priced=False)
+
+    # ── 5) 번들 컴파일 — 필수시트 미충족 시 RequiredSheetsMissingError(422 정직 거부) ──
+    try:
+        zip_bytes, _manifest = build_submission_bundle(
+            project_id=project_id,
+            project_name=req.project_name,
+            issue_date=tb_date,
+            drawings_svg=drawings_svg,
+            drawings_dxf=drawings_dxf,
+            report_pdf=report_pdf,
+            boq_xlsx=boq_xlsx,
+            provenance={"run_id": run_id, "input_hash": input_hash},
+        )
+    except RequiredSheetsMissingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "필수시트 미충족 — 산출 거부", "missing": exc.missing},
+        ) from exc
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={project_id}_submission_bundle.zip"},
+    )
 
 
 @router.get("/{project_id}/drawings/export-edited-dxf", response_class=Response)
