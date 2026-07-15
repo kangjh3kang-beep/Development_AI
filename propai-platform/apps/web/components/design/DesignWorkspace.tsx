@@ -31,8 +31,7 @@ import { CadBimIntegrationPanel } from "@/components/design/CadBimIntegrationPan
 import { MetricBar } from "@/components/design/MetricBar";
 import { useProjectContextStore, addressTokenMismatch } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveDominantZone } from "@/lib/zoning-ssot";
+import { hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import type { Locale } from "@/i18n/config";
 
 /* ── Labels ── */
@@ -312,16 +311,9 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
     siteAnalysis?.address &&
     addressTokenMismatch(projectRecord.address, siteAnalysis.address)
   );
-  const siteAreaSqm = effectiveLandAreaSqm(siteAnalysis);
-  const siteZone = resolveDominantZone(siteAnalysis);
-  const hasSiteBasis = !!(
-    siteAnalysis &&
-    !hasAddressMismatch &&
-    (siteAnalysis.address || siteAnalysis.pnu) &&
-    siteAreaSqm &&
-    siteAreaSqm > 0 &&
-    siteZone
-  );
+  // ★공용 판정(lib/design-ssot.hasSiteBasis) — DesignStudio(콘솔)도 동일 함수를 호출해 "부지 기준
+  //   준비됨" 판정이 레일·콘솔 사이에서 구조적으로 divergence 불가능하게 한다(PR#316 리뷰 M2).
+  const hasSiteBasis = computeHasSiteBasis(siteAnalysis, projectRecord?.address);
   const hasDesignBasis = !!(
     hasSiteBasis &&
     designData &&

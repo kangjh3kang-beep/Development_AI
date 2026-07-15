@@ -9,18 +9,19 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Lightbulb } from "lucide-react";
 import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
-import { resolveCanonicalFloors } from "@/lib/design-ssot";
+import { resolveCanonicalFloors, hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { InspectorGrid } from "@/components/common/InspectorGrid";
 import { AdvancedDrawer } from "@/components/common/AdvancedDrawer";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { SeedDesignMassComparison } from "@/components/design/SeedDesignMassComparison";
 
@@ -493,6 +494,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   타이핑 중 포커스 상실이 없다(서랍 안 NumberInput은 키 입력마다 onChange라 이 분리가 필수).
   const layoutSeeded = isSiteMatched && seededLandAreaSqm != null;
   // '부지분석 자동' vs '직접 수정' 배지는 칩 렌더에서 !userEdited로 직접 분기한다(별도 변수 불필요).
+  // ★준비상태 술어 정합(레일 hasSiteBasis와 모순 제거·PR#316 리뷰 M2) — 종전엔 콘솔이 자체 판정
+  //   (layoutSeeded=면적만+isSameSite 퍼지매칭)을 써 레일(DesignWorkspace.hasSiteBasis=면적>0+
+  //   용도지역+addressTokenMismatch)과 "제3의 술어"로 갈라져 있었다. 이제 두 화면이 공용 함수
+  //   lib/design-ssot.hasSiteBasis를 그대로 호출해 구조적으로 divergence를 차단한다(공용화).
+  const siteBasisComplete = computeHasSiteBasis(siteAnalysis, projectRecord?.address);
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
@@ -713,12 +719,27 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           residentialGfaSqm: null,       // 부지 기반 단계는 주거전용 분해 없음 → null(무날조)
         }
       : null;
+    // ★H1(PR#316 리뷰): zoneCode는 "실제 출처가 있을 때만" 기록한다. effectiveZoning은 계산용
+    //   변수라 부지분석도 사용자 편집도 없으면 DEFAULT_FORM.zoning("제2종일반주거지역")으로 조용히
+    //   낙하한다(계산은 그래도 진행하기 위한 설계) — 이 계산용 폴백값을 그대로 zoneCode로 기록하면
+    //   `|| null`이 절대 발화하지 않아(문자열이 항상 채워짐) ContextHeader가 "제2종일반주거지역 ·
+    //   직접 입력"으로 사용자가 고른 적 없는 하드코딩 기본값을 확정값처럼 날조 노출한다(자연녹지
+    //   FAR 100%를 제2종 250%로 오도). 부지분석 확정(siteZone) 또는 사용자가 실제로 용도지역
+    //   필드를 편집한 값(userZone·zoneEdited 게이트)만 기록 — 둘 다 없으면 null(ContextHeader "—").
+    // ★R2(PR#316 리뷰): 기록 우선순위는 계산(effectiveZoning:483 — zoneEdited 최우선)과 정합해야
+    //   한다. 사용자값을 부지값보다 먼저 둔다 — 부지 자동감지("제2종일반주거 250%")를 사용자가
+    //   "자연녹지 100%"로 직접 정정했는데 기록이 여전히 부지값을 쓰면, 계산은 사용자 정정을
+    //   반영해 GFA를 낮췄는데 ContextHeader는 정정 전 부지값을 표기해 칩(설계값)과 헤더가
+    //   모순되고 과대 오도가 재발한다.
+    const siteZoneForRecord = isSiteMatched ? normalizeZoning(siteAnalysis?.zoneCode) : null;
+    const userZoneForRecord = zoneEdited ? normalizeZoning(form.zoning) : null;
     const next = {
       totalGfaSqm: calc.maxGrossArea,
       floorCount,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
+      zoneCode: userZoneForRecord ?? siteZoneForRecord ?? null,
       massGeom,
     };
     const cur = useProjectContextStore.getState().designData;
@@ -727,6 +748,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       cur != null &&
       cur.totalGfaSqm === next.totalGfaSqm &&
       cur.floorCount === next.floorCount &&
+      cur.zoneCode === next.zoneCode &&
       cur.bcr === next.bcr &&
       cur.far === next.far &&
       cur.buildingType === next.buildingType &&
@@ -737,6 +759,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   }, [
     calc,
     form.buildingUse,
+    isSiteMatched,
+    siteAnalysis?.zoneCode,
+    zoneEdited,
+    form.zoning,
     updateDesignData,
     markStageComplete,
     siteMatch,
@@ -928,9 +954,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             키 유무와 무관하게 연동 사실은 알린다(키 없으면 등록 후 가능 안내). */}
         {layoutSeeded && (
           <p className="mt-4 text-[11px] leading-snug text-[var(--text-hint)]">
-            {isReady
-              ? "부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다."
-              : "부지분석 연동됨 — API 키 등록 후 심층 분석으로 AI 설계 의견을 추가할 수 있습니다."}
+            {/* 용도지역까지 확보돼야 "부지분석 연동됨"(레일의 '현재 부지 기준'과 정합). 면적만 있고
+                용도지역이 없으면 레일이 "부지분석 대기"이므로, 콘솔도 "면적만 연동 · 용도지역 확인
+                필요"로 정직히 구분해 같은 화면 모순 표기를 없앤다(무날조). */}
+            {!siteBasisComplete
+              ? "부지 면적만 연동됨 — 용도지역을 확인·입력하면 부지 기준이 확정됩니다."
+              : isReady
+                ? "부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다."
+                : "부지분석 연동됨 — API 키 등록 후 심층 분석으로 AI 설계 의견을 추가할 수 있습니다."}
           </p>
         )}
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
@@ -966,6 +997,30 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           )}
 
+          {/* ⑤ 섹션 미니 목차(앵커) — 좁은 중앙 프레임에서 2열 분리가 발화 못해 결과가 길게 세로
+              스택될 때, 원하는 섹션으로 바로 점프해 과적 스크롤을 완화한다. 실제 존재하는 섹션만
+              노출(조건부 섹션은 있을 때만 — 무날조). */}
+          <nav aria-label="설계 결과 섹션 목차" className="flex flex-wrap gap-1.5">
+            {[
+              { id: "ds-compliance", label: "법규 적합" },
+              ...(isSiteMatched && (siteAnalysis?.pnu || siteAnalysis?.landAreaSqm)
+                ? [{ id: "ds-solar", label: "일조 볼륨" }]
+                : []),
+              { id: "ds-area", label: "면적" },
+              { id: "ds-setback", label: "이격거리" },
+              { id: "ds-massing", label: "매싱 대안" },
+              ...(aiEff?.summary ? [{ id: "ds-ai", label: "AI 의견" }] : []),
+            ].map((t) => (
+              <a
+                key={t.id}
+                href={`#${t.id}`}
+                className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+              >
+                {t.label}
+              </a>
+            ))}
+          </nav>
+
           {/* 자동계산 칩 — 칩은 폭이 좁아도 무방하므로 칸 최소폭 7rem(컨테이너 실폭 반응).
               넓으면 종전처럼 4열, 좁아지면 2열→1열로 우아하게 접힘. */}
           <InspectorGrid minItemRem={7}>
@@ -987,7 +1042,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </InspectorGrid>
 
           {/* 법규 적합 체크리스트 — 적용값이 법정 한도 이내인지 한눈에 */}
-          <div className="cc-panel p-6">
+          <div id="ds-compliance" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-3 flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">COMPLIANCE CHECK</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
@@ -1018,9 +1073,18 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           </div>
 
-          {/* 일조 · 건축가능 볼륨(정북일조 + 동지 일영) — 부지분석 연동(주소 일치) 시 */}
+          {/* 일조 · 건축가능 볼륨(정북일조 + 동지 일영) — 부지분석 연동(주소 일치) 시.
+              ⑤ 과적 완화: 가장 키가 큰 심층 섹션이라 기본 접힘(details)으로 두고, 필요 시 펼친다.
+              ★SolarEnvelopeCard는 details가 접혀 있어도 마운트가 유지되므로(useEffect on mount)
+              envResult 리프트(예상 층수·정본 층수 배선)는 접힘과 무관하게 그대로 동작한다(무회귀). */}
           {isSiteMatched && (siteAnalysis?.pnu || siteAnalysis?.landAreaSqm) && (
-            <div>
+            <details id="ds-solar" className="group cc-panel scroll-mt-4 p-4">
+              <summary className="flex cursor-pointer list-none items-center gap-2.5 [&::-webkit-details-marker]:hidden">
+                <span className="cc-label text-[var(--text-secondary)]">SUNLIGHT · ENVELOPE</span>
+                <h3 className="text-sm font-black text-[var(--text-primary)]">일조 · 건축가능 볼륨 (심층)</h3>
+                <ChevronDown className="ml-auto size-4 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="mt-3">
               {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">{EASY["일조"]}</p>}
               <SolarEnvelopeCard
                 address={siteAnalysis?.address || undefined}
@@ -1032,10 +1096,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                 floorHeightM={form.floorHeight ? Number(form.floorHeight) : undefined}
                 onResult={(r) => setEnvResult(r)}
               />
-            </div>
+              </div>
+            </details>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div id="ds-area" className="grid scroll-mt-4 grid-cols-2 gap-4">
             <div className="cc-panel cc-interactive p-5">
               <p className="cc-label text-cyan-400 mb-1">최대 연면적</p>
               <p className="cc-num cc-num--data text-3xl font-black">{calc.maxGrossArea.toLocaleString()} <span className="text-sm">㎡</span></p>
@@ -1046,7 +1111,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           </div>
 
-          <div className="cc-panel p-6">
+          <div id="ds-setback" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-3 flex flex-wrap items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">SETBACK</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">건축선 이격거리</h3>
@@ -1076,7 +1141,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             )}
           </div>
 
-          <div className="cc-panel p-6">
+          <div id="ds-massing" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-1 flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">MASSING · OPTIONS</span>
               <h3 className="text-lg font-black text-[var(--text-primary)]">매싱 대안 비교</h3>
@@ -1138,9 +1203,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </div>
 
           {aiEff?.summary && (
-            <div className="glass rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
+            <div id="ds-ai" className="glass scroll-mt-4 rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
               <h3 className="text-lg font-black text-blue-400 mb-2">AI 설계 의견</h3>
-              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiEff.summary}</p>
+              {/* ★마크다운 원문 덤프 해소 — LLM 응답의 ##·**·--- 기호를 원문 노출하지 않고
+                  안전 렌더러(MarkdownLite)로 제목·굵게·목록·구분선으로 서식화(무XSS·break-keep). */}
+              <MarkdownLite text={aiEff.summary} className="text-sm text-[var(--text-secondary)]" />
             </div>
           )}
 
@@ -1148,7 +1215,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           {aiResult && !aiEff && aiCleanText && (
             <div className="glass rounded-2xl p-6 border border-[var(--line)]">
               <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">AI 설계 결과</h3>
-              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiCleanText}</p>
+              <MarkdownLite text={aiCleanText} className="text-sm text-[var(--text-secondary)]" />
             </div>
           )}
         </motion.div>

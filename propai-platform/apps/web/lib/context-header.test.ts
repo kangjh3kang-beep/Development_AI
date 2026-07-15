@@ -116,6 +116,55 @@ describe("deriveContextHeaderData — 대상 컨텍스트 파생(무목업)", ()
       }),
     );
     expect(d.zoneLabel).toBe("제3종일반주거지역");
+    expect(d.zoneSource).toBe("site");
+  });
+
+  it("용도지역 폴백: 부지분석에 용도지역이 없으면 설계값(designData.zoneCode)을 '직접 입력'으로 표기", () => {
+    // 시나리오(사용자 지적): projectId만 있고 siteAnalysis에 용도지역이 없어 상단이 "용도지역 —"이던
+    // 상황 — 설계 콘솔이 아는 '자연녹지지역'(직접 입력/시드)을 폴백 표기해야 한다(zoneSource="design").
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A" }), // 용도지역 부재
+        designData: { zoneCode: "자연녹지지역" },
+      }),
+    );
+    expect(d.zoneLabel).toBe("자연녹지지역");
+    expect(d.zoneSource).toBe("design");
+  });
+
+  it("용도지역: 부지분석 용도지역이 있으면 설계값보다 우선(site) — 설계 폴백은 부재 시에만", () => {
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A", zoneCode: "제2종일반주거지역" }),
+        designData: { zoneCode: "자연녹지지역" },
+      }),
+    );
+    expect(d.zoneLabel).toBe("제2종일반주거지역");
+    expect(d.zoneSource).toBe("site");
+  });
+
+  it("용도지역: 부지분석·설계 모두 없으면 null + zoneSource=null(무날조)", () => {
+    const d = deriveContextHeaderData(ctx({ projectId: "p1" }));
+    expect(d.zoneLabel).toBeNull();
+    expect(d.zoneSource).toBeNull();
+  });
+
+  it("H1(PR#316 리뷰): site 무zone + 사용자 미선택(designData.zoneCode=null) → zoneLabel=null·zoneSource=null(폼 기본값 누출 금지)", () => {
+    // 시나리오: 부지분석에 면적만 있고 용도지역이 없으며, 사용자가 설계 폼의 용도지역을 실제로
+    // 편집한 적이 없는 상태(DesignStudio가 H1 수정으로 designData.zoneCode를 null로 기록해야
+    // 하는 경우). 이 계약이 깨져 designData.zoneCode에 폼 기본값("제2종일반주거지역" 등)이
+    // 새어 들어오면 ContextHeader가 사용자가 고른 적 없는 값을 "직접 입력"으로 날조 노출한다.
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A", landAreaSqm: 500 }), // 면적만, 용도지역 부재
+        designData: { zoneCode: null }, // H1 수정 후 정직한 기록값(폼 기본값 미기록)
+      }),
+    );
+    expect(d.zoneLabel).toBeNull();
+    expect(d.zoneSource).toBeNull();
   });
 });
 

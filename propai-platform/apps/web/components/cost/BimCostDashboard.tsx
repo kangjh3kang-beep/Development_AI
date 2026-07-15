@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 // F-3: 무인증 raw fetch(Authorization 미첨부→배포환경 401 조용실패) 대신 apiClient로 통일
 // (자동 Bearer 첨부 + 401 리프레시 재시도 공용 계약 — BoqDetailTable 등 cost 화면 기존 관례와 동일).
@@ -353,9 +354,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                   {costResult.ai_cost_analysis && (
                     <div className="mt-10 pt-8 border-t border-[var(--line)]">
                       <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-3">AI 원가 해설</p>
-                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                        {costResult.ai_cost_analysis}
-                      </p>
+                      <MarkdownLite text={costResult.ai_cost_analysis} className="text-[12px] text-[var(--text-secondary)]" />
                     </div>
                   )}
                 </CardContent>

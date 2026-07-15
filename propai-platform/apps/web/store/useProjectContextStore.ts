@@ -176,6 +176,11 @@ interface DesignData {
   buildingType: string | null;
   bcr: number | null;
   far: number | null;
+  // 설계가 계산에 사용한 용도지역(정규화 코드/한글). 부지분석(siteAnalysis)에 용도지역이 없고
+  //   사용자가 설계 폼에서 직접 입력/시드한 경우, 상단 ContextHeader가 "용도지역 —"으로만 뜨던
+  //   문제를 해소하기 위한 폴백 소스(ContextHeader가 siteAnalysis 용도지역 부재 시 이 값을 "직접
+  //   입력" 배지와 함께 표기). 옵셔널/nullable — 구 스냅샷·persist 왕복 무손상. 미확보면 null(무날조).
+  zoneCode?: string | null;
   // 세대 구성(도면·해석·수지 다운스트림의 "데이터 없음" 해소용 SSOT)
   unitCount?: number | null;        // 총 세대수
   unitTypes?: string[] | null;      // 평형 구성(예: ["59A","84A"])

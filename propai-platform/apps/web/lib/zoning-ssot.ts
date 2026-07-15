@@ -311,24 +311,59 @@ type ResolvableSite = {
   zoneCode?: string | null;
 } | null | undefined;
 
+/* ── 용적률/건폐율 리졸버 + '근거(basis)' 동봉(KPI 정직 라벨용) ──
+ *
+ * 배경(무라벨 표시 버그): MetricBar가 `designData?.far ?? resolveFarPct(siteAnalysis)`로 폴백해
+ *   부지값을 보여줄 때, 그 값이 "종상향·조례 반영 실효(effective)"인지 "용도지역 법정상한(national)"
+ *   인지 구분 없이 숫자만 표기했다. 그 결과 자연녹지(법정 100%)를 그대로 100%로 보여 주면서, 옆
+ *   카드(층수클램프 실효 80%)와 모순처럼 읽혔다. 이 리졸버가 값과 함께 **어느 계층에서 왔는지**를
+ *   반환해, 소비처가 "법정상한" vs "실효"를 정직하게 배지로 구분 표기하게 한다(SSOT — 값과 근거를
+ *   한 곳에서 함께 도출). 무목업: 어떤 값도 없으면 null.
+ */
+export type LimitBasis = "integrated" | "effective" | "national";
+
+/** 실효 용적률(%) + 근거 계층. 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 null. */
+export function resolveFarWithBasis(
+  site: ResolvableSite,
+): { value: number; basis: LimitBasis } | null {
+  if (!site) return null;
+  const integrated = num(site.integratedFarEffPct);
+  if (integrated != null) return { value: integrated, basis: "integrated" };
+  const effective = num(site.effectiveFarPct);
+  if (effective != null) return { value: effective, basis: "effective" };
+  const national = num(site.nationalFarPct);
+  if (national != null) return { value: national, basis: "national" };
+  return null;
+}
+
+/** 실효 건폐율(%) + 근거 계층. resolveFarWithBasis와 동형(통합 > 실효 > 법정). 미확보 시 null. */
+export function resolveBcrWithBasis(
+  site: ResolvableSite,
+): { value: number; basis: LimitBasis } | null {
+  if (!site) return null;
+  const integrated = num(site.integratedBcrEffPct);
+  if (integrated != null) return { value: integrated, basis: "integrated" };
+  const effective = num(site.effectiveBcrPct);
+  if (effective != null) return { value: effective, basis: "effective" };
+  const national = num(site.nationalBcrPct);
+  if (national != null) return { value: national, basis: "national" };
+  return null;
+}
+
+/** 근거 계층 → 정직 라벨. 통합/실효는 "실효", 법정상한만 "법정상한"으로 구분(무날조). */
+export function limitBasisLabel(basis: LimitBasis): string {
+  return basis === "national" ? "법정상한" : "실효";
+}
+
 // 실효 용적률(%) — 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 undefined.
+//   근거가 필요하면 resolveFarWithBasis를 쓴다(이 함수는 값만·하위호환).
 export function resolveFarPct(site: ResolvableSite): number | undefined {
-  if (!site) return undefined;
-  return (
-    num(site.integratedFarEffPct) ??
-    num(site.effectiveFarPct) ??
-    num(site.nationalFarPct)
-  );
+  return resolveFarWithBasis(site)?.value;
 }
 
 // 실효 건폐율(%) — resolveFarPct와 동형(통합 > 실효 > 법정). 미확보 시 undefined.
 export function resolveBcrPct(site: ResolvableSite): number | undefined {
-  if (!site) return undefined;
-  return (
-    num(site.integratedBcrEffPct) ??
-    num(site.effectiveBcrPct) ??
-    num(site.nationalBcrPct)
-  );
+  return resolveBcrWithBasis(site)?.value;
 }
 
 // 대표(우세) 용도지역 — 통합 dominant_zone 우선, 없으면 단일 zoneCode. 미확보 시 null.

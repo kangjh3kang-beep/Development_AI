@@ -19,6 +19,7 @@ import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -2159,7 +2160,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                       .map(([k, label]) => (
                         <div key={k}>
                           <p className="text-[9px] font-bold text-indigo-300/80 mb-0.5">{label}</p>
-                          <p className="text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">{designAi[k]}</p>
+                          <MarkdownLite text={designAi[k]} className="text-[11px] text-slate-200" />
                         </div>
                       ))}
                   </div>

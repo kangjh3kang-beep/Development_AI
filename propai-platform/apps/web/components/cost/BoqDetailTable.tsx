@@ -20,6 +20,7 @@ import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { isValidLocale } from "@/i18n/config";
 import { BOQ_AUTO_API, type BoqMasterSummaryResponse } from "@/components/cost/boqAutoTypes";
@@ -435,9 +436,7 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
             <Bot className="size-4 text-[var(--ai-accent)]" aria-hidden />
             <h3 className="text-sm font-black text-[var(--text-primary)]">AI 공사비 해설</h3>
           </div>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">
-            {boq.ai_cost_analysis}
-          </p>
+          <MarkdownLite text={boq.ai_cost_analysis} className="text-sm text-[var(--text-secondary)]" />
         </div>
       )}
 
