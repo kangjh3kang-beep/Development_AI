@@ -795,10 +795,13 @@ function FlowAdvanceBar({
   // 다음 CTA 라벨 — 순차 타깃별(생성/도면). dock 라벨과 어휘를 구분해 접근성 이름 중복을 피한다.
   const ctaLabel =
     nextTarget === "generate" ? labels.flowToGenerate : nextTarget === "draw" ? labels.flowToDraw : null;
-  // 미완료/마지막 단계 안내 문구(정직).
+  // 미완료/마지막 단계 안내 문구(정직). 마지막(도면) 단계라도 아직 차단 상태면 '무엇이 필요한지'를
+  //   보여 뷰포트 블로커와 일관되게(종료 문구가 아니라 선행 요건 안내).
   const hint =
     nextTarget === null
-      ? labels.flowTerminal
+      ? currentState === "blocked"
+        ? labels.flowHintNeedDesign
+        : labels.flowTerminal
       : view === "site"
         ? labels.flowHintNeedSite
         : labels.flowHintNeedDesign;
