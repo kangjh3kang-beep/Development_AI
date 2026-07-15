@@ -135,11 +135,17 @@ async def _load_project_bim(project_id: str) -> list[dict[str, Any]]:
     """프로젝트 BIM 물량(bim_quantities)을 자체 세션으로 조회 — 기존 cost._load_bim_quantities 재사용.
 
     DB/모듈 실패·미존재 시 빈 리스트(정직) → merge_bim 이 parametric 그대로 유지.
+
+    ★부트스트랩 선행(신규 DB 조용한 폴백 방지): 쿼리 전 _ensure_cost_tables 로
+      bim_quantities 테이블을 멱등 생성한다. 없으면 SELECT 가 예외 → except 로 삼켜져
+      'BIM 0건'으로 조용히 퇴화하던 결함을, 테이블 보장 후 조회로 교정한다(진짜 0건과 구분).
     """
     try:
         from app.core.database import async_session_factory
         from app.routers.cost import _load_bim_quantities  # 기존 자산 무수정 재사용
+        from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
         async with async_session_factory() as db:
+            await _ensure_cost_tables(db)  # bim_quantities 테이블 멱등 보장(쿼리 전)
             return await _load_bim_quantities(db, project_id)
     except Exception:  # noqa: BLE001 — DB 실패 시 BIM 0건(가짜값 금지·parametric 폴백)
         return []

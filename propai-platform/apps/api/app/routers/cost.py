@@ -5,8 +5,10 @@ prefix: /api/v1/cost
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -30,6 +32,7 @@ router = APIRouter(
 )
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
+logger = structlog.get_logger(__name__)
 # P1 T1(공공고시 단가 주입) 관리자 게이트 — mass_templates.py 선례 재사용(require_role(Role.ADMIN)).
 require_admin = require_role(Role.ADMIN)
 
@@ -549,7 +552,10 @@ async def bim_quantities_origin_cost(
 # ── 요청 스키마 ──
 
 class IFCUploadRequest(BaseModel):
-    """IFC 업로드 시뮬레이션 (실제는 File 업로드)."""
+    """IFC 요소(사전 추출 JSON) 업로드 — 공종코드 매핑 + bim_quantities 영속 입력.
+
+    실 IFC 파일 파싱(multipart)은 /api/v1/bim/analyze 담당. 본 계약은 요소 JSON 리스트다.
+    """
     elements: list[dict[str, Any]] = Field(
         ..., description="IFC 요소 리스트 [{element_type, quantity, ...}]")
 
@@ -602,6 +608,9 @@ class IFCUploadResponse(BaseModel):
     mapped_items: list[dict[str, Any]]
     item_count: int
     unique_work_codes: list[str]
+    # 실제 bim_quantities 에 영속된 행 수(origin-cost 체인 기여분). DB 미가용/부트스트랩
+    # 실패 시 0 — 매핑은 반환하되 영속 실패를 정직 표기(가짜 성공 없음).
+    persisted_rows: int = 0
 
 
 class CostCalculateResponse(BaseModel):
@@ -675,14 +684,63 @@ class FeasibilityResultResponse(BaseModel):
 # ── 엔드포인트 ──
 
 @router.post("/{project_id}/upload-ifc", response_model=IFCUploadResponse)
-async def upload_ifc(project_id: str, req: IFCUploadRequest):
-    """IFC 파일 업로드 + 공종코드 매핑."""
+async def upload_ifc(
+    project_id: str, req: IFCUploadRequest, db: AsyncSession = Depends(get_db),
+):
+    """IFC 요소(JSON) 공종코드 매핑 + bim_quantities 영속.
+
+    ★정직 계약(이름-동작 정합·체인 연결): 사전 추출된 IFC 요소 리스트(req.elements)를
+      공종코드로 매핑하고 그 결과를 bim_quantities 테이블에 영속한다 → GET
+      /{project_id}/bim-quantities/origin-cost(단가 SSOT 12단계 원가) 체인에 실제로 기여한다.
+      (수정 전에는 매핑만 하고 미영속이라 origin-cost 가 항상 no_bim_quantities 로 단절됐음.)
+    실 IFC 파일 자체 업로드·파싱(multipart)은 /api/v1/bim/analyze(ifcopenshell 실파싱)가
+      담당한다 — 본 엔드포인트는 요소 JSON 계약을 유지한다. DB 미가용·부트스트랩 실패 시
+      매핑 결과는 그대로 반환하되 persisted_rows=0 으로 정직 표기(가짜 성공 없음)."""
     mapped = bim_service.extract_quantities_with_work_codes(req.elements)
+
+    # 매핑 결과를 bim_quantities 로 영속(origin-cost 체인 연결). 실패해도 매핑 응답은
+    # 정상 반환한다(graceful) — DB 미가용/신규 DB 부트스트랩 실패 시 persisted_rows=0.
+    persisted_rows = 0
+    try:
+        from app.models.v61_cost import BimQuantity
+        from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
+
+        # 신규 DB 부트스트랩 보장(bim_quantities 테이블 없으면 생성 — 조용한 단절 방지).
+        await _ensure_cost_tables(db)
+        rows = [
+            BimQuantity(
+                project_id=project_id,
+                ifc_global_id=m.get("ifc_global_id") or None,
+                ifc_object_type=m.get("ifc_object_type") or None,
+                ifc_object_name=m.get("ifc_object_name") or None,
+                work_code=m.get("work_code") or None,
+                floor_level=m.get("floor_level") or None,
+                quantity=m.get("quantity", 0) or 0,
+                unit=m.get("unit") or None,
+                extraction_method=m.get("extraction_method") or "AI_AUTO",
+            )
+            for m in mapped
+        ]
+        if rows:
+            db.add_all(rows)
+            await db.commit()
+            persisted_rows = len(rows)
+    except Exception as exc:  # noqa: BLE001 — 영속 실패는 매핑 응답을 막지 않는다
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        logger.warning(
+            "upload-ifc bim_quantities 영속 실패(매핑 응답 무영향)",
+            project_id=project_id,
+            error=str(exc),
+        )
+        persisted_rows = 0
+
     return {
         "project_id": project_id,
         "mapped_items": mapped,
         "item_count": len(mapped),
         "unique_work_codes": list({m["work_code"] for m in mapped}),
+        "persisted_rows": persisted_rows,
     }
 
 
