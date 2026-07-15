@@ -35,8 +35,37 @@ import React from "react";
 function safeHref(url: string): string | null {
   const u = url.trim();
   if (/^(https?:\/\/|mailto:)/i.test(u)) return u;
-  if (u.startsWith("/") || u.startsWith("#")) return u; // 앱 내부 상대경로·앵커
+  // 앱 내부 상대경로만 허용 — "//"(프로토콜 상대 URL)·"/\"(백슬래시 우회)로 시작하면 차단한다.
+  //   브라우저는 "//evil.com"·"/\evil.com"을 각각 현재 스킴 유지 외부호스트·"//evil.com"으로
+  //   해석해 오픈 리다이렉트로 악용될 수 있다(무XSS 원칙과 별개의 오픈 리다이렉트 방어).
+  if (/^\/(?![/\\])/.test(u)) return u;
+  if (u.startsWith("#")) return u; // 앵커
   return null;
+}
+
+/**
+ * 날짜형 줄(예: "2025. 7. 16. 착공")을 번호 목록으로 오인하지 않기 위한 휴리스틱.
+ *
+ * 배경(M3 — PR#316 리뷰): 번호 목록 판정 정규식(`^\d+\.\s+`)이 "2025. 7. 16. 착공" 같은
+ * 한국어 날짜 표기의 "2025. "를 목록 시작으로 오인해, 렌더 시 <ol>이 1부터 재번호를 매겨
+ * "1. 7. 16. 착공"처럼 연도 정보가 무음으로 사라졌다. 4자리 연도 뒤에 월.일 패턴이 이어지면
+ * 목록이 아닌 날짜로 판정해 목록 인식에서 제외한다(순수 함수).
+ */
+function isDateLikeLine(line: string): boolean {
+  return /^\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}\s*\.?(\s|$)/.test(line);
+}
+
+/**
+ * 테이블형 줄(마크다운 표 행) 판정 — 파이프(|)가 2개 이상이면 표 행으로 간주(L1 — 경량 완화).
+ * 정식 열 파싱은 하지 않고, 모노스페이스 블록으로 원문 정렬만 보존해 raw 파이프 노출을 줄인다.
+ */
+function isTableLikeLine(line: string): boolean {
+  return (line.match(/\|/g)?.length ?? 0) >= 2;
+}
+
+/** 표 헤더 구분선 행(|---|:--:|---|) — 시각 잡음이라 모노스페이스 출력에서 생략한다. */
+function isTableSeparatorLine(line: string): boolean {
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(line);
 }
 
 // 인라인 토큰(굵게/기울임/코드/링크)을 한 번에 잡는 정규식. 순서대로 우선순위를 갖는다.
@@ -192,19 +221,46 @@ function renderBlocks(src: string): React.ReactNode[] {
       continue;
     }
 
-    // 번호 목록(1. 2. …) — 연속 항목 묶기
-    if (/^\d+\.\s+/.test(line)) {
+    // 번호 목록(1. 2. …) — 연속 항목 묶기. 날짜형 줄("2025. 7. 16.")은 목록 시작으로 오인하지
+    //   않는다(무날조 — 숫자 정보 손실 방지). 원문 시작번호를 <ol start>로 보존해 재번호 왜곡을 막는다.
+    if (/^\d+\.\s+/.test(line) && !isDateLikeLine(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^\d+\.\s+/, ""));
+      let startNum: number | null = null;
+      while (i < lines.length) {
+        const cur = lines[i].trim();
+        const m = /^(\d+)\.\s+(.*)$/.exec(cur);
+        if (!m || isDateLikeLine(cur)) break;
+        if (startNum == null) startNum = Number(m[1]);
+        items.push(m[2]);
         i++;
       }
       blocks.push(
-        <ol key={`b${key++}`} className="list-decimal space-y-1 break-keep pl-5">
+        <ol key={`b${key++}`} start={startNum ?? 1} className="list-decimal space-y-1 break-keep pl-5">
           {items.map((it, j) => (
             <li key={j}>{parseInline(it, `ol${key}-${j}`)}</li>
           ))}
         </ol>,
+      );
+      continue;
+    }
+
+    // 테이블형 줄(파이프 구분) — 정식 표 파싱은 아니지만(경량), 문단으로 흘려 파이프(|)가 원문
+    //   그대로 노출되는 것보다 모노스페이스 블록으로 정렬을 보존해 보여 주는 편이 낫다(L1 완화).
+    //   헤더 구분선 행(|---|---|)은 시각 잡음이라 출력에서 생략.
+    if (isTableLikeLine(line)) {
+      const rows: string[] = [];
+      while (i < lines.length && isTableLikeLine(lines[i].trim())) {
+        const cur = lines[i].trim();
+        if (!isTableSeparatorLine(cur)) rows.push(cur);
+        i++;
+      }
+      blocks.push(
+        <pre
+          key={`b${key++}`}
+          className="overflow-x-auto rounded bg-[var(--surface-strong)] p-2 font-mono text-[0.85em] leading-relaxed text-[var(--text-primary)]"
+        >
+          {rows.join("\n")}
+        </pre>,
       );
       continue;
     }
@@ -219,7 +275,8 @@ function renderBlocks(src: string): React.ReactNode[] {
         /^#{1,6}\s+/.test(cur) ||
         /^>\s?/.test(cur) ||
         /^[-*+]\s+/.test(cur) ||
-        /^\d+\.\s+/.test(cur)
+        (/^\d+\.\s+/.test(cur) && !isDateLikeLine(cur)) ||
+        isTableLikeLine(cur)
       ) {
         break;
       }

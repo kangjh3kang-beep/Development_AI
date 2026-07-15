@@ -150,6 +150,22 @@ describe("deriveContextHeaderData — 대상 컨텍스트 파생(무목업)", ()
     expect(d.zoneLabel).toBeNull();
     expect(d.zoneSource).toBeNull();
   });
+
+  it("H1(PR#316 리뷰): site 무zone + 사용자 미선택(designData.zoneCode=null) → zoneLabel=null·zoneSource=null(폼 기본값 누출 금지)", () => {
+    // 시나리오: 부지분석에 면적만 있고 용도지역이 없으며, 사용자가 설계 폼의 용도지역을 실제로
+    // 편집한 적이 없는 상태(DesignStudio가 H1 수정으로 designData.zoneCode를 null로 기록해야
+    // 하는 경우). 이 계약이 깨져 designData.zoneCode에 폼 기본값("제2종일반주거지역" 등)이
+    // 새어 들어오면 ContextHeader가 사용자가 고른 적 없는 값을 "직접 입력"으로 날조 노출한다.
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A", landAreaSqm: 500 }), // 면적만, 용도지역 부재
+        designData: { zoneCode: null }, // H1 수정 후 정직한 기록값(폼 기본값 미기록)
+      }),
+    );
+    expect(d.zoneLabel).toBeNull();
+    expect(d.zoneSource).toBeNull();
+  });
 });
 
 describe("zoneDisplayLabel — 용도지역 표시 라벨", () => {

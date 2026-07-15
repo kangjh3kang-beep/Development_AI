@@ -14,8 +14,8 @@ import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } f
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct, resolveDominantZone } from "@/lib/zoning-ssot";
-import { resolveCanonicalFloors } from "@/lib/design-ssot";
+import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveCanonicalFloors, hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -494,12 +494,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   타이핑 중 포커스 상실이 없다(서랍 안 NumberInput은 키 입력마다 onChange라 이 분리가 필수).
   const layoutSeeded = isSiteMatched && seededLandAreaSqm != null;
   // '부지분석 자동' vs '직접 수정' 배지는 칩 렌더에서 !userEdited로 직접 분기한다(별도 변수 불필요).
-  // ★준비상태 술어 정합(레일 hasSiteBasis와 모순 제거) — 레일(DesignWorkspace.hasSiteBasis)은 면적
-  //   '그리고 용도지역'까지 확보돼야 "현재 부지 기준"으로 본다. 여기 layoutSeeded는 면적만으로 참이라,
-  //   용도지역이 없으면 레일은 "부지분석 대기"인데 콘솔은 "부지분석 연동됨"으로 모순 표기됐다. 부지분석에
-  //   용도지역이 실제로 있는지(siteZonePresent)로 "완전 연동"과 "면적만 연동"을 정직히 구분한다.
-  const siteZonePresent = !!resolveDominantZone(siteAnalysis);
-  const siteBasisComplete = layoutSeeded && siteZonePresent;
+  // ★준비상태 술어 정합(레일 hasSiteBasis와 모순 제거·PR#316 리뷰 M2) — 종전엔 콘솔이 자체 판정
+  //   (layoutSeeded=면적만+isSameSite 퍼지매칭)을 써 레일(DesignWorkspace.hasSiteBasis=면적>0+
+  //   용도지역+addressTokenMismatch)과 "제3의 술어"로 갈라져 있었다. 이제 두 화면이 공용 함수
+  //   lib/design-ssot.hasSiteBasis를 그대로 호출해 구조적으로 divergence를 차단한다(공용화).
+  const siteBasisComplete = computeHasSiteBasis(siteAnalysis, projectRecord?.address);
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
@@ -720,16 +719,22 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           residentialGfaSqm: null,       // 부지 기반 단계는 주거전용 분해 없음 → null(무날조)
         }
       : null;
+    // ★H1(PR#316 리뷰): zoneCode는 "실제 출처가 있을 때만" 기록한다. effectiveZoning은 계산용
+    //   변수라 부지분석도 사용자 편집도 없으면 DEFAULT_FORM.zoning("제2종일반주거지역")으로 조용히
+    //   낙하한다(계산은 그래도 진행하기 위한 설계) — 이 계산용 폴백값을 그대로 zoneCode로 기록하면
+    //   `|| null`이 절대 발화하지 않아(문자열이 항상 채워짐) ContextHeader가 "제2종일반주거지역 ·
+    //   직접 입력"으로 사용자가 고른 적 없는 하드코딩 기본값을 확정값처럼 날조 노출한다(자연녹지
+    //   FAR 100%를 제2종 250%로 오도). 부지분석 확정(siteZone) 또는 사용자가 실제로 용도지역
+    //   필드를 편집한 값(userZone·zoneEdited 게이트)만 기록 — 둘 다 없으면 null(ContextHeader "—").
+    const siteZoneForRecord = isSiteMatched ? normalizeZoning(siteAnalysis?.zoneCode) : null;
+    const userZoneForRecord = zoneEdited ? normalizeZoning(form.zoning) : null;
     const next = {
       totalGfaSqm: calc.maxGrossArea,
       floorCount,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
-      // 설계가 사용한 용도지역(정규화값) — 부지분석에 용도지역이 없을 때 상단 ContextHeader가
-      //   "직접 입력" 배지와 함께 표기할 폴백 소스(무날조 — effectiveZoning은 부지 일치 시 부지값,
-      //   아니면 사용자 직접 입력값). null/빈값은 기록하지 않는다.
-      zoneCode: effectiveZoning || null,
+      zoneCode: siteZoneForRecord ?? userZoneForRecord ?? null,
       massGeom,
     };
     const cur = useProjectContextStore.getState().designData;
@@ -749,7 +754,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   }, [
     calc,
     form.buildingUse,
-    effectiveZoning,
+    isSiteMatched,
+    siteAnalysis?.zoneCode,
+    zoneEdited,
+    form.zoning,
     updateDesignData,
     markStageComplete,
     siteMatch,
