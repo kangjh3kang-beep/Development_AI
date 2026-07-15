@@ -349,11 +349,11 @@ class FeasibilityServiceV2:
                 "부지면적 미확보 — 1000㎡ 가정치 기준 산정(참고용). 실제 면적 입력 시 재산정이 필요합니다."
             )
         # 용적률 가정치 사용 시 정직 고지 — 250%는 실측이 아니라 폴백 가정치임을 명시.
+        # 문구는 공용 SSOT(far_fallback) — solar_envelope 등 다른 가정치 경로와 동일 문장.
         if not far_reliable:
-            result["far_disclosure"] = (
-                "용도지역 용적률 상한 미확보 — 250% 가정치 기준 산정(참고용). "
-                "GFA·세대수·매출·ROI 전 수치가 가정치 기반이므로 용도지역 확정 후 재산정이 필요합니다."
-            )
+            from ..land_intelligence.far_fallback import far_fallback_disclosure
+
+            result["far_disclosure"] = far_fallback_disclosure(250)
         # 공시지가 가정단가 사용 시 정직 고지 — 플래그(land_price_reliable)만으로는 표시 표면이
         # 문구를 자체 조립해야 했다. 다른 *_disclosure와 동일하게 표준 문구를 함께 제공한다.
         if not land_price_reliable:
