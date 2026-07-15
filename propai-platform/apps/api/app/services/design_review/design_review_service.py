@@ -15,6 +15,10 @@ class DesignReviewService:
         "장애인_편의시설": "장애인복지법 제24조", "에너지절약_기준": "건축물에너지절약설계기준",
     }
 
+    # ★review_design_parameters가 실제로 판정하는 항목(건폐율·용적률)만 pass/fail 대상이다.
+    #   나머지 REVIEW_CHECKLIST 항목은 이 파라미터 검토 범위 밖 → not_checked로 분리(정직).
+    CHECKED_ITEMS = ("건폐율_준수", "용적률_준수")
+
     # ── 신뢰 레이어(additive): 체크/오류 항목 → 법령 레지스트리 근거키 매핑 ──
     # legal_reference_registry에 "존재가 검증된 키"만 매핑한다(할루시네이션 링크 금지).
     # 레지스트리에 없는 근거(건축법 제60조 높이제한·장애인복지법 제24조·
@@ -51,12 +55,26 @@ class DesignReviewService:
             ref_key = self.CHECKLIST_REF_KEYS.get(e.get("item", ""))
             if ref_key:
                 e.setdefault("legal_ref_key", ref_key)
-        passed = [item for item in self.REVIEW_CHECKLIST if item not in [e["item"] for e in errors]]
+        # ★정직 분리(pass_rate 오도 제거): 이 파라미터 검토가 실제로 판정하는 항목은
+        #   건폐율·용적률뿐이다. 종전엔 나머지 8개 체크리스트를 '검사도 안 하고' passed로
+        #   합산해 pass_rate를 80%대로 부풀렸다(미검사 항목을 통과로 오도). 검사한 항목만
+        #   passed/failed로 판정하고, 나머지는 not_checked로 분리한다(검사 안 한 것은 통과 아님).
+        checked_items = list(self.CHECKED_ITEMS)
+        err_to_check = {"용적률_초과": "용적률_준수", "건폐율_초과": "건폐율_준수"}
+        failed_checks = {err_to_check.get(e["item"], e["item"]) for e in errors}
+        passed = [item for item in checked_items if item not in failed_checks]
+        not_checked = [item for item in self.REVIEW_CHECKLIST if item not in checked_items]
         return {
             "review_status": "pass" if not errors else "correction_required",
             "error_count": len(errors), "errors_detected": errors,
             "correction_items": corrections, "passed_items": passed,
-            "pass_rate_pct": round(len(passed) / len(self.REVIEW_CHECKLIST) * 100, 1),
+            # 검사하지 않은 항목(일조·주차·피난·방화·장애인·에너지 등)은 별도 표기 —
+            # pass_rate는 '검사한 항목(건폐율·용적률)' 기준이며 미검사 항목은 포함하지 않는다(정직).
+            "checked_items": checked_items,
+            "not_checked_items": not_checked,
+            "pass_rate_pct": (
+                round(len(passed) / len(checked_items) * 100, 1) if checked_items else None
+            ),
             "legal_basis": "건축법 제25조",
             # 법령 원문 근거(law.go.kr 한글주소) — 레지스트리 출력만 사용(additive·graceful).
             "legal_refs": self._build_legal_refs(errors),
