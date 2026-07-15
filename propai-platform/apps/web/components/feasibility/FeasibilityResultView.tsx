@@ -171,6 +171,16 @@ export function FeasibilityResultView() {
     { id: "rate", label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, color: "text-cyan-500", icon: Target },
     { id: "roi", label: <Term definition={TERM_DEFINITIONS.ROI}>ROI</Term>, value: `${result.roi_pct.toFixed(1)}%`, color: "text-indigo-500", icon: Landmark },
     { id: "npv", label: <Term definition={TERM_DEFINITIONS.NPV}>NPV</Term>, value: formatWon(result.npv_won), color: "text-[var(--text-primary)]", icon: Gem },
+    // ★W3(additive): 월별 DCF 지표 — 백엔드 미산출(null)이면 정직하게 "—" 표기.
+    ...(result.cashflow_summary
+      ? [
+          { id: "irr", label: "IRR(연)", value: result.cashflow_summary.irr_pct != null ? `${result.cashflow_summary.irr_pct.toFixed(1)}%` : "—", color: "text-emerald-500", icon: TrendingUp },
+          { id: "payback", label: "회수기간", value: result.cashflow_summary.payback_month != null ? `${result.cashflow_summary.payback_month}개월` : "—", color: "text-amber-500", icon: Target },
+          ...(result.cashflow_summary.dscr != null
+            ? [{ id: "dscr", label: "DSCR", value: `${result.cashflow_summary.dscr.toFixed(2)}x`, color: "text-sky-500", icon: Landmark }]
+            : []),
+        ]
+      : []),
   ];
 
   const costData = Object.entries(result.cost_breakdown_won)
@@ -193,7 +203,10 @@ export function FeasibilityResultView() {
     { label: "세전 이익", value: formatWon(result.net_profit_won), basis: "총 수입 − 총 비용" },
     { label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 수입 × 100" },
     { label: "ROI", value: `${result.roi_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 사업비 × 100 — 투입자본 대비 수익률" },
-    { label: "NPV", value: formatWon(result.npv_won), basis: "기간별 현금흐름을 할인율로 현재가치 환산한 순현재가치(할인율·기간은 입력 가정)" },
+    { label: "NPV", value: formatWon(result.npv_won), basis: result.cashflow_summary?.npv_basis ?? "기간별 현금흐름을 할인율로 현재가치 환산한 순현재가치(할인율·기간은 입력 가정)" },
+    ...(result.cashflow_summary?.dscr != null
+      ? [{ label: "DSCR", value: `${result.cashflow_summary.dscr.toFixed(2)}x`, basis: result.cashflow_summary.dscr_basis ?? "" }]
+      : []),
   ];
 
   return (

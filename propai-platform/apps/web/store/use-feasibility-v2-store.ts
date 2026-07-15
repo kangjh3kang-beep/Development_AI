@@ -49,6 +49,16 @@ export interface FeasibilityResult {
   //   타입은 소비처(에디터)에서 SeniorConsultation으로 단언 — store가 컴포넌트 타입에
   //   역의존하지 않도록 unknown 유지.
   senior_accountant_review?: unknown;
+  // ★W3(100% 캠페인, additive): 월별 DCF 요약 — npv_won은 이 기저로 산출됨.
+  cashflow_summary?: {
+    npv_won?: number | null;
+    irr_pct?: number | null;
+    payback_month?: number | null;
+    dscr?: number | null;
+    dscr_basis?: string;
+    npv_basis?: string;
+    assumptions?: string[];
+  } | null;
   // baseline(추정) 응답에만 존재 — /calculate 결과는 미포함.
   is_baseline?: boolean;
   confidence?: string;

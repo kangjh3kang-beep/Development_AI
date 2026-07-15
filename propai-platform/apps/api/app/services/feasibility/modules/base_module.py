@@ -88,6 +88,10 @@ class ModuleOutput:
     cost_detail: dict[str, Any] = field(default_factory=dict)
     tax_detail: dict[str, Any] = field(default_factory=dict)
     special_detail: dict[str, Any] = field(default_factory=dict)
+    # ★W3(100% 캠페인, additive): 월별 DCF 요약 — service.calculate가 부착.
+    #   {npv_won, irr_pct, payback_month, dscr(임대형 한정)|dscr_reason, npv_basis, assumptions}.
+    #   None = DCF 미산출(수입/비용 결측 등 — 정직 강등). npv_won 필드는 DCF 기저로 교체됨.
+    cashflow_summary: dict[str, Any] | None = None
 
 
 class BaseModule(ABC):
