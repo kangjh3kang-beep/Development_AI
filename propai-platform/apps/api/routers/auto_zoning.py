@@ -2007,4 +2007,19 @@ async def parse_parcels(
         return {"error": f"파일 읽기 실패: {str(e)[:120]}", "parcels": []}
     if not raw:
         return {"error": "빈 파일입니다.", "parcels": []}
+
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — openpyxl 파싱 전에 압축폭탄(xlsx=zip
+    # 계열, 폴리글랏 포함)·실행/스크립트 위장·MIME 위장·경로순회를 차단한다. 이 경로는 CSV 도
+    # 받으므로 형식 화이트리스트(expected_kinds)는 걸지 않는다(CSV 는 매직바이트가 없어 미인식 →
+    # 화이트리스트 시 정상 CSV 가 거부됨). 아카이브 폭탄 검사는 expected_kinds 무관하게 동작한다.
+    from fastapi import HTTPException
+
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(raw, file.filename or "", file.content_type)
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
     return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx", use_llm=use_llm)

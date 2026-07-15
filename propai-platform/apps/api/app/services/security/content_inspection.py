@@ -24,6 +24,7 @@ AV(ClamAV): 데몬 미설치가 기본값이다(사용자 결정 D4). `av_scan()
 
 from __future__ import annotations
 
+import contextlib
 import io
 import zipfile
 from dataclasses import dataclass, field
@@ -379,6 +380,159 @@ def _peek_entry(zf: zipfile.ZipFile, zi: zipfile.ZipInfo, n: int) -> bytes | Non
             return fh.read(n)
     except Exception:  # noqa: BLE001
         return None
+
+
+# ── 안전 추출(zip slip·bomb 방어) — extractall() 대체 공용 헬퍼 ─────────────
+@dataclass
+class ExtractResult:
+    """안전 추출 결과(구조화). ok=False 면 추출을 거부했다(fail-closed — 부분 추출물은 정리)."""
+
+    ok: bool
+    code: str  # ok|path_traversal|archive_bomb|archive_corrupt|extract_error
+    reason: str
+    extracted: int = 0  # 실제 디스크에 쓴 파일 수
+    total_bytes: int = 0  # 전개 총 바이트(실측)
+    details: dict = field(default_factory=dict)
+
+
+def safe_extract_archive(
+    source,
+    dest_dir,
+    *,
+    limits: ArchiveLimits = _DEFAULT_LIMITS,
+    allowed_exts: frozenset[str] | None = None,
+):
+    """zip 아카이브를 **경로순회·압축폭탄 방어**하며 dest_dir 아래로 안전 추출한다.
+
+    `zipfile.extractall()` 직접 호출을 대체하는 공용 헬퍼다(★전역 전파방지 — 어떤 내부/외부
+    소스라도 이 함수만 쓰면 zip slip/bomb 이 구조적으로 불가능). 방어 심층 2겹:
+      1) 엔트리 메타 사전검사(엔트리별): 경로순회(`_has_traversal`)·엔트리 수·전개 총량·압축비.
+      2) 추출 직전 경로 재검증: 각 엔트리를 dest_dir 로 join 한 **실경로(resolve)** 가 dest_dir
+         **안**에 있는지 재확인한다(심볼릭/상대경로 우회 대비 — advisory 메타를 믿지 않는 백스톱).
+    스트리밍 복사로 엔트리를 풀되 누적 전개량이 상한을 넘으면 즉시 중단·정리(부분 추출물 삭제).
+
+    Args:
+        source: zip 경로(str/Path) 또는 바이트(bytes). 경로면 zipfile 이 부분 스트리밍으로 열어
+            전체를 메모리에 올리지 않는다(대형 신뢰 아카이브도 안전).
+        dest_dir: 추출 대상 디렉터리(없으면 생성).
+        limits: 아카이브 한도(엔트리 수·전개 총량·압축비·깊이는 여기선 미사용).
+        allowed_exts: 지정 시 이 확장자(소문자, 점 없이)만 추출(그 외 엔트리는 건너뜀 —
+            거부가 아니라 선별). None 이면 모든 파일 엔트리 추출.
+
+    Returns: ExtractResult. ok=False 면 위반이며 이미 쓴 파일은 정리(best-effort)한다.
+    """
+    from pathlib import Path as _Path
+
+    dest = _Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    dest_root = dest.resolve()
+    written: list[_Path] = []
+    total = 0
+
+    # bytes 는 파일객체가 아니므로 BytesIO 로 감싼다(경로면 zipfile 이 부분 스트리밍으로 연다).
+    zsrc = io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
+
+    def _cleanup() -> None:
+        for p in written:
+            with contextlib.suppress(Exception):
+                p.unlink()
+
+    try:
+        with zipfile.ZipFile(zsrc) as zf:
+            infos = [zi for zi in zf.infolist() if not zi.is_dir()]
+            if len(infos) > limits.max_entries:
+                return ExtractResult(
+                    False, "archive_bomb",
+                    f"압축 내부 파일 수 초과({len(infos)} > {limits.max_entries}).",
+                    details={"entries": len(infos)},
+                )
+            for zi in infos:
+                name = zi.filename
+                # (1) 메타 사전검사 — 경로순회.
+                if _has_traversal(name):
+                    _cleanup()
+                    return ExtractResult(
+                        False, "path_traversal",
+                        f"압축 내부에 경로 순회 항목이 있습니다: {name[:80]}",
+                        extracted=len(written), total_bytes=total,
+                        details={"entry": name[:120]},
+                    )
+                # 전개 총량(선언 file_size 기준 조기 차단).
+                if total + zi.file_size > limits.max_total_uncompressed:
+                    _cleanup()
+                    return ExtractResult(
+                        False, "archive_bomb",
+                        f"압축 전개 총량 초과(> {limits.max_total_uncompressed} bytes) — 압축폭탄 의심.",
+                        extracted=len(written), total_bytes=total,
+                        details={"total_bytes": total + zi.file_size},
+                    )
+                # 압축비(작은 엔트리 제외).
+                if zi.compress_size >= limits.ratio_min_compressed:
+                    ratio = zi.file_size / max(zi.compress_size, 1)
+                    if ratio > limits.max_ratio:
+                        _cleanup()
+                        return ExtractResult(
+                            False, "archive_bomb",
+                            f"압축비 초과({ratio:.0f} > {limits.max_ratio:.0f}) — 압축폭탄 의심: {name[:80]}",
+                            extracted=len(written), total_bytes=total,
+                            details={"ratio": round(ratio, 1), "entry": name[:120]},
+                        )
+                # 확장자 선별(지정 시).
+                if allowed_exts is not None and _ext(name) not in allowed_exts:
+                    continue
+                # (2) 추출 직전 경로 재검증 — join 후 실경로가 dest 안인지.
+                target = (dest / name).resolve()
+                if dest_root != target and dest_root not in target.parents:
+                    _cleanup()
+                    return ExtractResult(
+                        False, "path_traversal",
+                        f"추출 경로가 대상 폴더를 벗어납니다: {name[:80]}",
+                        extracted=len(written), total_bytes=total,
+                        details={"entry": name[:120]},
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # 스트리밍 복사 + 누적 상한(실측 바이트로 truncate 방어 — advisory 메타 불신).
+                remaining = limits.max_total_uncompressed - total
+                try:
+                    with zf.open(zi) as src, open(target, "wb") as dst:
+                        while True:
+                            chunk = src.read(1024 * 256)
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            if remaining < 0:
+                                dst.close()
+                                with contextlib.suppress(Exception):
+                                    target.unlink()
+                                _cleanup()
+                                return ExtractResult(
+                                    False, "archive_bomb",
+                                    f"실제 전개 바이트가 상한을 초과(스푸핑 의심): {name[:80]}",
+                                    extracted=len(written), total_bytes=total,
+                                    details={"entry": name[:120]},
+                                )
+                            dst.write(chunk)
+                            total += len(chunk)
+                except (zipfile.BadZipFile, OSError, EOFError) as e:
+                    _cleanup()
+                    return ExtractResult(
+                        False, "archive_corrupt",
+                        f"압축 해제 실패(손상 의심): {name[:80]} — {str(e)[:80]}",
+                        extracted=len(written), total_bytes=total,
+                        details={"entry": name[:120]},
+                    )
+                written.append(target)
+            return ExtractResult(
+                True, "ok", "안전 추출 완료.",
+                extracted=len(written), total_bytes=total,
+                details={"entries": len(infos)},
+            )
+    except zipfile.BadZipFile:
+        _cleanup()
+        return ExtractResult(False, "archive_corrupt", "손상되었거나 유효하지 않은 압축 파일입니다.")
+    except Exception as e:  # noqa: BLE001 — 예상외 오류도 fail-closed(부분물 정리).
+        _cleanup()
+        return ExtractResult(False, "extract_error", f"추출 중 오류: {str(e)[:120]}")
 
 
 def av_scan(data: bytes) -> dict:

@@ -223,14 +223,23 @@ async def curate_few_shot(db, *, since_days: int = 7,
 
 async def build_dataset_jsonl(db, *, service: str | None = None,
                               statuses: tuple[str, ...] = ("active",),
-                              limit: int = 5000) -> dict[str, Any]:
+                              limit: int = 5000,
+                              enforce_asset_rights: bool = False) -> dict[str, Any]:
     """learning_examples 의 (input_summary, good_output) 페어를 JSONL 문자열로 생성.
 
     ★생성까지만 — 파인튜닝 잡은 절대 트리거하지 않는다(사람 승인 후 수동 실행).
     기본은 status='active'(사람이 promote 한 것)만. 옵션으로 candidate 포함 가능.
     service 필터 지정 시 해당 service 만.
 
-    반환: {"count","jsonl","service","statuses"}. jsonl 은 '\n' 구분 문자열.
+    ★P16 학습게이트(WP-H 세션2 결선): enforce_asset_rights=True 면 각 예시의 자산
+    (content_hash, tenant_id)을 asset_rights 레지스트리로 조회해 **train_allowed 인 것만** 학습셋에
+    포함한다(권리 불명·미등록=제외 = default-deny). 게이트 판정은 공용 순수 함수
+    `keep_train_allowed`(asset_rights)에 위임한다 — 한 곳을 고치면 전 학습 경로가 따른다.
+    ▶실소비 활성화(플래그 ON)와 레지스트리 시딩(ingest 시 upsert_asset_right)은 WP-J 이관.
+      기본값 False 라 현재 동작(run_learning_cycle 메타 카운트·기존 테스트)은 무회귀.
+
+    반환: {"count","jsonl","service","statuses","rights_enforced","excluded_no_rights"}.
+          jsonl 은 '\n' 구분 문자열.
     """
     from sqlalchemy import text
 
@@ -245,13 +254,36 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
     where_sql = " AND ".join(where)
 
     lines: list[str] = []
+    excluded_no_rights = 0
     try:
+        # content_hash·tenant_id 를 함께 조회(학습게이트 키 — asset_rights 는 (asset_key, tenant) 키).
         rows = (await db.execute(text(
-            "SELECT input_summary, good_output FROM learning_examples "
+            "SELECT input_summary, good_output, content_hash, tenant_id "
+            "FROM learning_examples "
             f"WHERE {where_sql} ORDER BY created_at DESC LIMIT :lim"
         ), params)).fetchall()
-        for r in rows:
-            lines.append(_to_jsonl_line(r[0] or "", r[1] or ""))
+
+        pairs = [(r[0] or "", r[1] or "", r[2], r[3]) for r in rows]
+
+        if enforce_asset_rights:
+            from app.services.security.asset_rights import (
+                get_asset_right,
+                keep_train_allowed,
+            )
+
+            # 고유 (content_hash, tenant_id) 조합만 조회(중복 질의 방지).
+            rights: dict[tuple, Any] = {}
+            for _, _, ch, tid in pairs:
+                key = (ch, tid)
+                if ch and key not in rights:
+                    rights[key] = await get_asset_right(db, ch, tid)
+            # keep_train_allowed 는 평면 dict(키=행의 key_index 값)로 판정 → 행에 복합키를 실어 넘긴다.
+            keyed = [(inp, out, (ch, tid)) for (inp, out, ch, tid) in pairs]
+            kept, excluded_no_rights = keep_train_allowed(keyed, rights, key_index=2)
+            pairs = [(inp, out, None, None) for (inp, out, _k) in kept]
+
+        for inp, out, _ch, _tid in pairs:
+            lines.append(_to_jsonl_line(inp, out))
     except Exception as e:  # noqa: BLE001
         logger.warning("L3 데이터셋 생성 실패: %s", str(e)[:160])
 
@@ -260,6 +292,8 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
         "jsonl": "\n".join(lines),
         "service": service,
         "statuses": list(valid),
+        "rights_enforced": bool(enforce_asset_rights),
+        "excluded_no_rights": excluded_no_rights,
     }
 
 

@@ -227,6 +227,19 @@ async def extract_brief(
         if data:
             if len(data) > _MAX_PDF_BYTES:
                 raise HTTPException(status_code=413, detail="파일이 너무 큽니다(최대 25MB).")
+            # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — PDF 텍스트 추출 전에 실행/스크립트
+            # 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. 실측 계열은 pdf 로 화이트리스트.
+            from app.services.security.content_inspection import (
+                http_status_for,
+                inspect_upload,
+            )
+
+            _v = inspect_upload(data, file.filename or "", file.content_type, expected_kinds={"pdf"})
+            if not _v.allowed:
+                raise HTTPException(
+                    status_code=http_status_for(_v.code),
+                    detail=f"업로드가 거부되었습니다: {_v.reason}",
+                )
             extracted = _extract_pdf_text(data)
             if extracted.strip():
                 source_text = (source_text + "\n" + extracted).strip()
@@ -556,6 +569,21 @@ async def _ingest_dxf_upload(dxf_file: UploadFile) -> dict[str, Any] | None:
     if len(data) > _MAX_DXF_BYTES:
         raise HTTPException(status_code=413, detail="DXF 파일이 너무 큽니다(최대 20MB).")
 
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — parse_dxf_to_shapes(공용 파서) 전에
+    # 실행/스크립트 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. ★expected_kinds
+    # 미지정(WP-H 세션2 CI 회귀 수정 — CSV/parcel_excel과 동일 정책): DXF는 강한 매직바이트가
+    # 없는 텍스트 포맷이라 정상 파일도 매직판별 실패로 415 과대거부될 수 있다. 형식 판정(손상/
+    # 비DXF)은 parse_dxf_to_shapes 가 맡아 422 로 정직 거부한다(가짜 기하 금지) — 여기서는
+    # exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단한다.
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _v = inspect_upload(data, dxf_file.filename or "", dxf_file.content_type)
+    if not _v.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_v.code),
+            detail=f"업로드가 거부되었습니다: {_v.reason}",
+        )
+
     from app.services.cad.dxf_import_service import parse_dxf_to_shapes
 
     try:
@@ -615,6 +643,23 @@ async def run_design_audit_upload(
 
         data = await ifc_file.read()
         if data:
+            # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — 신뢰 안 되는 바이트를 디스크
+            # (tempfile)에 쓰기 전에 실행/스크립트 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을
+            # 차단한다. ★expected_kinds 미지정(WP-H 세션2 CI 회귀 수정 — CSV/parcel_excel과 동일
+            # 정책): IFC(STEP)는 강한 매직바이트가 없는 텍스트 포맷이라("ISO-10303-21" 헤더
+            # 휴리스틱만 존재) 정상 파일도 매직판별 실패로 415 과대거부될 수 있다. 형식 판정은
+            # 다운스트림 IFC 파서가 맡고, 여기서는 exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단.
+            from app.services.security.content_inspection import (
+                http_status_for,
+                inspect_upload,
+            )
+
+            _v = inspect_upload(data, ifc_file.filename or "", ifc_file.content_type)
+            if not _v.allowed:
+                raise HTTPException(
+                    status_code=http_status_for(_v.code),
+                    detail=f"업로드가 거부되었습니다: {_v.reason}",
+                )
             tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)
             tmp.write(data)
             tmp.close()

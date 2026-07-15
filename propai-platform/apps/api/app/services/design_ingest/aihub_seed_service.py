@@ -120,26 +120,39 @@ class AihubSeedService:
 
             # ★컨테이너에 unzip 미설치 → aihubshell이 cat-병합한 .zip을 못 푼다. 파이썬 zipfile로 직접
             #   압축해제(시스템 의존 제거). 중첩(zip-in-zip) 3단계까지. 추출 후 원본 zip 제거(디스크 절약).
-            # ★정직 한계 표기(WP-H 세션1 리뷰 권장 반영): 이 zf.extractall()은 아직
-            #   app.services.security.content_inspection(zip bomb·zip slip 방어)에 결선되지 않았다.
-            #   즉시위험은 낮게 평가한다 — 소스가 임의 사용자 업로드가 아니라 관리자 승인 API 키로
-            #   접근하는 공식 정부기관(AI Hub, api.aihub.or.kr) 데이터셋이기 때문이다. 그러나 신뢰
-            #   경계를 완전히 없애는 것은 아니므로(공급망 리스크는 여전) 세션2 전역 스윕에서
-            #   inspect_archive() 사전검사 + 안전 추출(경로화이트리스트 재확인)로 교체할 예정.
-            import zipfile
+            # ★WP-H 세션2 결선: extractall() 을 공용 안전추출(safe_extract_archive)로 교체했다 —
+            #   경로순회(zip slip)·압축폭탄(전개총량·압축비)을 엔트리별로 방어하고, 추출 직전 실경로가
+            #   대상 폴더 안인지 재검증한다. 신뢰 소스(관리자 승인 AI Hub 키)라도 공급망 리스크 대비
+            #   방어 심층. 위반 아카이브는 건너뛴다(정직 — 부분 추출물은 헬퍼가 정리).
+            from app.services.security.content_inspection import (
+                ArchiveLimits,
+                safe_extract_archive,
+            )
+
+            # AI Hub 설계 데이터셋은 도면 파일이 많아 기본 한도보다 넉넉히(단, 폭탄은 차단):
+            #   전개 총량 4GB·엔트리 20만·압축비 200(이미 압축된 이미지/도면은 비율이 낮다).
+            _aihub_limits = ArchiveLimits(
+                max_entries=200_000,
+                max_total_uncompressed=4 * 1024 * 1024 * 1024,
+                max_ratio=200.0,
+            )
             archives_extracted = 0
             for _ in range(3):
                 zips = [p for p in tmp.rglob("*.zip") if p.is_file()]
                 if not zips:
                     break
                 for z in zips:
-                    try:
-                        with zipfile.ZipFile(z) as zf:
-                            zf.extractall(z.parent / f"{z.stem}_x")
+                    res = safe_extract_archive(
+                        z, z.parent / f"{z.stem}_x", limits=_aihub_limits
+                    )
+                    if res.ok:
                         z.unlink()
                         archives_extracted += 1
-                    except Exception:  # noqa: BLE001 — 손상/부분 zip은 건너뜀(정직).
-                        continue
+                    else:
+                        logger.warning(
+                            "aihub.unsafe_archive_skipped",
+                            zip=z.name, code=res.code, reason=res.reason[:120],
+                        )
 
             # 압축해제된 도면 파일 walk → 인제스트(max_files 상한).
             from app.services.design_ingest.ingest_service import ingest_design_file

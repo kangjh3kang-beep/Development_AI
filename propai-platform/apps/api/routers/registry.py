@@ -379,6 +379,20 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
     from openpyxl import load_workbook
 
     raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — openpyxl 파싱 전에 압축폭탄(xlsx=zip
+    # 계열)·실행/스크립트 위장·MIME 위장·경로순회를 차단한다. xlsx 전용이라 실측 계열을 zip 으로
+    # 화이트리스트한다(xlsx 는 항상 PK/zip). 검증 실패는 http_status(4xx).
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(raw, file.filename or "", file.content_type, expected_kinds={"zip"})
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
     try:
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception as e:  # noqa: BLE001

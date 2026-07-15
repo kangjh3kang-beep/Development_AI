@@ -116,6 +116,33 @@ def is_export_allowed(right: AssetRight | None) -> bool:
     return bool(right and right.export_allowed)
 
 
+def keep_train_allowed(
+    rows: list, rights: dict[str, AssetRight | None], *, key_index: int
+) -> tuple[list, int]:
+    """P16 학습게이트(순수) — 학습 데이터셋 행 중 **train_allowed 자산만** 통과시킨다.
+
+    "권리 불명 = 학습 0"(default-deny)의 핵심 필터다. WP-J(성장루프) 데이터셋 빌더가 이 함수로
+    한 번 걸러 권리 미확인·미등록 자산을 학습에서 제외한다(공용 게이트 — 한 곳을 고치면 전 학습
+    경로가 따른다).
+
+    Args:
+        rows: 학습예시 행 리스트(각 행은 튜플/시퀀스). key_index 위치에 자산키(content_hash)가 있다.
+        rights: {자산키 → AssetRight | None} 사전. 미등록 키는 None(=불명=금지)으로 취급.
+        key_index: 각 행에서 자산키(content_hash)의 인덱스.
+
+    Returns: (통과 행 리스트, 제외 건수). ★0-falsy·불명 모두 is_train_allowed 로 판정(None→False).
+    """
+    kept: list = []
+    excluded = 0
+    for r in rows:
+        key = r[key_index] if len(r) > key_index else None
+        if key and is_train_allowed(rights.get(key)):
+            kept.append(r)
+        else:
+            excluded += 1
+    return kept, excluded
+
+
 # ── 영속(schema_guard — CREATE TABLE IF NOT EXISTS, alembic 헤드 없음) ─────────
 # growth/secret_store 선례와 동일. 지연 초기화(첫 호출 보장) + best-effort.
 _SCHEMA_READY = False

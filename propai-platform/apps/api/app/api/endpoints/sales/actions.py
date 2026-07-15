@@ -768,8 +768,18 @@ async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), d
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     """고객명부 Excel(.xlsx) 업로드 → 대상자 등록(이름·연락처 자동인식)."""
     from app.services.sales.draw.draw_engine import add_candidates, parse_excel
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "빈 파일입니다.")
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — openpyxl 파싱 전에 압축폭탄(xlsx=zip
+    # 계열)·실행/스크립트 위장·MIME 위장·경로순회를 차단한다. xlsx 전용이라 실측 계열을 zip 으로
+    # 화이트리스트한다. 검증 실패는 http_status(4xx).
+    _verdict = inspect_upload(content, file.filename or "", file.content_type, expected_kinds={"zip"})
+    if not _verdict.allowed:
+        raise HTTPException(http_status_for(_verdict.code), f"업로드가 거부되었습니다: {_verdict.reason}")
     try:
-        content = await file.read()
         rows = parse_excel(content)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"엑셀 파싱 실패: {str(e)[:120]}") from e
