@@ -149,7 +149,12 @@ export function KakaoCallbackWorkspaceClient({
       //  보관 state)가 반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나(피해자가
       //  로그인을 시작하지 않았는데 공격자 콜백링크를 연 경우) 불일치면 차단 — 공격자는 피해자
       //  브라우저의 same-origin sessionStorage에 값을 심을 수 없으므로 로그인 CSRF가 성립하지 않는다.
-      const savedState = window.sessionStorage.getItem(KAKAO_STATE_KEY);
+      let savedState: string | null = null;
+      try {
+        savedState = window.sessionStorage.getItem(KAKAO_STATE_KEY);
+      } catch {
+        // sessionStorage 접근 불가(프라이빗 모드·차단) → fail-closed(무한로딩 방지, 아래 가드가 차단).
+      }
       if (!savedState || savedState !== state) {
         if (active) setRequestState({ status: "error", errorMessage: labels.stateMismatch });
         return;
@@ -249,8 +254,7 @@ export function KakaoCallbackWorkspaceClient({
         <div
           className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2"
           style={{ borderColor: orb.ring, backgroundColor: orb.fill }}
-          role="status"
-          aria-live="polite"
+          aria-hidden
         >
           {status === "loading" ? (
             <span

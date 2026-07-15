@@ -140,7 +140,12 @@ export function NaverCallbackWorkspaceClient({
       //  반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나 불일치면 차단 —
       //  공격자는 피해자 브라우저의 same-origin sessionStorage에 값을 심을 수 없어 로그인 CSRF 불성립.
       //  (이펙트 본문 동기 setState 회피 위해 async run 내부에서 처리)
-      const savedState = window.sessionStorage.getItem(NAVER_STATE_KEY);
+      let savedState: string | null = null;
+      try {
+        savedState = window.sessionStorage.getItem(NAVER_STATE_KEY);
+      } catch {
+        // sessionStorage 접근 불가(프라이빗 모드·차단) → fail-closed(무한로딩 방지, 아래 가드가 차단).
+      }
       if (!savedState || savedState !== state) {
         if (active) setRequestState({ status: "error", message: labels.stateMismatch });
         return;

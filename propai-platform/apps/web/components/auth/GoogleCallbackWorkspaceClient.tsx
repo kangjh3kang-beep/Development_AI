@@ -140,7 +140,12 @@ export function GoogleCallbackWorkspaceClient({
       // ★CSRF/세션고정 방지(fail-closed): 이 브라우저가 로그인을 개시했다는 증거(sessionStorage
       //  보관 state)가 반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나 불일치면
       //  차단 — 공격자는 피해자 브라우저의 same-origin sessionStorage에 값을 심을 수 없다.
-      const savedState = window.sessionStorage.getItem(GOOGLE_STATE_KEY);
+      let savedState: string | null = null;
+      try {
+        savedState = window.sessionStorage.getItem(GOOGLE_STATE_KEY);
+      } catch {
+        // sessionStorage 접근 불가(프라이빗 모드·차단) → fail-closed(무한로딩 방지, 아래 가드가 차단).
+      }
       if (!savedState || savedState !== state) {
         if (active) setRequestState({ status: "error", message: labels.stateMismatch });
         return;
