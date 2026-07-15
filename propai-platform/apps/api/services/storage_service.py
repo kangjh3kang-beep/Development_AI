@@ -216,7 +216,18 @@ _DESIGN_EXT: dict[str, str] = {
 
 
 async def upload_design_file(data: bytes, content_type: str, file_name: str = "") -> dict[str, str]:
-    """설계 참조도면(DXF/PDF/이미지)을 공개 버킷에 업로드하고 public URL+형식을 반환한다."""
+    """설계 참조도면(DXF/PDF/이미지)을 공개 버킷에 업로드하고 public URL+형식을 반환한다.
+
+    업로드 전 공용 콘텐츠 검증(content_inspection)을 additive 로 적용한다(★기존 _DESIGN_EXT MIME
+    allowlist 유지 + 강화): 실행/스크립트 위장·MIME 위장(선언≠실측)·경로 순회·압축폭탄을 차단한다.
+    검증 실패는 StorageError 로 명시 거부(무음 통과 금지) — 라우터에서 4xx 로 매핑된다.
+    """
+    from app.services.security.content_inspection import inspect_upload
+
+    verdict = inspect_upload(data, file_name, content_type)
+    if not verdict.allowed:
+        raise StorageError(f"콘텐츠 검증 실패({verdict.code}): {verdict.reason}")
+
     base, key = _sb_conf()
     ext = _DESIGN_EXT.get((content_type or "").lower())
     if not ext and file_name and "." in file_name:

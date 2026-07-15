@@ -118,6 +118,27 @@ async def ingest_design_file(
 
     Returns: {ok, drawing_type, source_format, content_hash, indexed, spec, warnings}
     """
+    # ★공용 콘텐츠 검증(additive·fail-closed) — 파싱/저장/인덱싱 전에 위협을 먼저 차단한다.
+    # 실행/스크립트 위장·파일명 경로순회·압축폭탄(xlsx 등 zip 계열)·zip slip 을 막는다. content_type
+    # 은 이 SSOT 진입점에 없어 위장(선언vs실측)은 storage 경로에서 담당하고, 여기선 실측 위협을 본다.
+    # 검증 실패는 명시 거부(ok=False, rejected=True)로 조기 반환 — 무음 통과 금지(배치 시드는 skip 처리).
+    from app.services.security.content_inspection import inspect_upload
+
+    verdict = inspect_upload(content, filename, None)
+    if not verdict.allowed:
+        logger.warning(
+            "design_ingest 콘텐츠 검증 거부: %s (%s)", verdict.code, str(verdict.reason)[:120]
+        )
+        return {
+            "ok": False,
+            "rejected": True,
+            "reason": verdict.reason,
+            "code": verdict.code,
+            "indexed": False,
+            "stored": False,
+            "inspection": verdict.to_dict(),
+        }
+
     spec = await parse_design_file_async(content, filename)
 
     # 원본 파일 영속(R2, best-effort) — content_hash 키로 중복제거·테넌트 격리.
