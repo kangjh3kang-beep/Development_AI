@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
@@ -176,6 +176,7 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
   } else if (ESTIMATE_SOURCE_TOKENS.some((t) => s.includes(t))) {
     variant = "warning";
   }
+
   return (
     <span className={`sa-chip sa-chip--${variant}`} title={`데이터 출처: ${s}`}>
       {label}
@@ -242,6 +243,52 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
   const [form, setForm] = useState<Partial<Record<OverrideKey, string>>>({});
   const [baseline, setBaseline] = useState<OverrideBaseline>({});
   const [showOverrides, setShowOverrides] = useState(false);
+  // ★W4(감사 고아 엔드포인트): 개략수지→시니어 보고서(/rough-scenario/report) 다운로드 상태.
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  // ★W4: 백엔드 보고서 엔진(/rough-scenario/report — BankReady·통합 보고서 정본 조합)이
+  //   프론트 호출 0건 고아였다. 현재 시나리오를 그대로 전달해 재계산 없이 PDF를 받는다.
+  //   use_llm=false 기본(과금 정책 — AI 서술 없이 정직 고지 포함 보고서).
+  const downloadReport = useCallback(async () => {
+    if (!result) return;
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      const token =
+        (typeof window !== "undefined" && localStorage.getItem("propai_access_token")?.trim()) || "";
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+      let res: Response;
+      try {
+        res = await fetch(`${resolveApiOrigin()}/api/v2/feasibility/rough-scenario/report`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ scenario: result, use_llm: false, format: "pdf" }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!res.ok) throw new Error(`보고서 생성 실패 (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `rough-scenario-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "보고서 생성 실패");
+    } finally {
+      setReportBusy(false);
+    }
+  }, [result]);
 
   // 프로젝트 전환(컨텍스트 주소 변경) 시 주소 필드를 그 프로젝트로 재적재하고 이전 결과를 비운다.
   const lastCtxAddrRef = useRef<string | null>(siteAnalysis?.address ?? null);
@@ -590,6 +637,22 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               </div>
             </div>
           </section>
+
+          {/* ── ★W4: 시니어 사업성 보고서(PDF) — 고아 엔드포인트 배선 ── */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={downloadReport}
+              disabled={reportBusy}
+              className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-xs font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
+            >
+              {reportBusy ? "보고서 생성 중…" : "사업성 보고서(PDF) 다운로드"}
+            </button>
+            <span className="text-[10px] text-[var(--text-tertiary)]">
+              현재 개략수지 그대로 보고서화(재계산 없음·AI 서술 미포함 — 추가 LLM 과금 없음)
+            </span>
+            {reportError && <span className="text-[11px] text-[var(--status-error,#ef4444)]">{reportError}</span>}
+          </div>
 
           {/* ── ⑧ 2차 사용자 수정(overrides) ── */}
           <section className="sa-di-block">

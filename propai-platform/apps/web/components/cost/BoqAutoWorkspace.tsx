@@ -799,7 +799,7 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
                                     ? `근거: ${it.basis.trim()}`
                                     : "근거 산식 미제공(서버 응답 기준)",
                                   it.qty_sample != null
-                                    ? `표본 수량: ${fmtQty(it.qty_sample)} (GFA 238,504㎡ 실적 기준)`
+                                    ? `표본 수량: ${fmtQty(it.qty_sample)}${master?.project?.gfa_sqm ? ` (GFA ${fmt(master.project.gfa_sqm)}㎡ 실적 기준)` : " (표본 GFA 서버 미제공)"}`
                                     : null,
                                   it.driver ? `드라이버: ${it.driver}` : null,
                                 ]
@@ -954,7 +954,10 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
                     ? {
                         label: "스케일 기준",
                         value: `GFA ${fmt(gfaNum)}㎡`,
-                        basis: `표본 GFA ${master?.project?.gfa_sqm ? fmt(master.project.gfa_sqm) : "238,504"}㎡ 대비 파라메트릭`,
+                        // ★상수 폴백 제거(무목업): 서버 값 부재 시 수치를 지어내지 않고 정직 표기.
+                        basis: master?.project?.gfa_sqm
+                          ? `표본 GFA ${fmt(master.project.gfa_sqm)}㎡ 대비 파라메트릭`
+                          : "표본 GFA 서버 미제공 — 파라메트릭 기준 확인 필요",
                       }
                     : null,
                 ].filter(Boolean) as EvidenceItem[]

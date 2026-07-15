@@ -50,8 +50,10 @@ def run_monte_carlo(
                 hi = var.mean + var.std * 1.732
                 samples[var.name] = rng.uniform(lo, hi, n_simulations)
             elif var.distribution == "triangular":
-                lo = var.mean - var.std * 2
-                hi = var.mean + var.std * 2
+                # ★갭 감사(2026-07-15) 교정: 대칭 삼각분포의 표준편차↔반폭 관계는
+                #   반폭 = std×√6(≈2.449) — 종전 ×2는 스프레드를 ~18% 과소산정(p5/p95 축소).
+                lo = var.mean - var.std * 2.449  # sqrt(6)
+                hi = var.mean + var.std * 2.449
                 samples[var.name] = rng.triangular(lo, var.mean, hi, n_simulations)
             else:  # normal
                 samples[var.name] = rng.normal(var.mean, var.std, n_simulations)
@@ -118,8 +120,8 @@ def _fallback_monte_carlo(
                 hi = var.mean + var.std * 1.732
                 var_dict[var.name] = random.uniform(lo, hi)
             elif var.distribution == "triangular":
-                lo = var.mean - var.std * 2
-                hi = var.mean + var.std * 2
+                lo = var.mean - var.std * 2.449  # sqrt(6) — 위 numpy 경로와 동일 교정
+                hi = var.mean + var.std * 2.449
                 var_dict[var.name] = random.triangular(lo, hi, var.mean)
             else:  # normal
                 var_dict[var.name] = random.gauss(var.mean, var.std)
