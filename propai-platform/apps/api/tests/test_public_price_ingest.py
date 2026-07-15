@@ -66,6 +66,31 @@ def test_normalize_item_labor_without_material_not_treated_as_breakdown():
     assert row["labor_price"] == 0
 
 
+def test_normalize_item_breakdown_sum_mismatch_falls_back():
+    """★정합 가드(R1): 분해 합≠총단가 1% 초과 괴리 → 폴백(T1 최우선 단가 침묵 왜곡 방지).
+
+    경비 누락 부분분해(700k+150k=850k vs prce 900k, -5.6%)가 대표 시나리오.
+    """
+    row = normalize_item({
+        "krnPrdctNm": "이형철근 SD400 D13", "prce": "900000",
+        "mtrlcst": "700000", "lbrcst": "150000", "gnrlexpns": "",
+    })
+    assert row is not None
+    assert row["material_price"] == 900000.0  # 검증된 총단가 유지
+    assert row["labor_price"] == 0  # T1 가드 스킵 유지(왜곡 대신 정직 폴백)
+
+
+def test_normalize_item_negative_expense_falls_back():
+    """음수 경비 등 비정상 분해 → 합 괴리로 폴백(무검증 적재 방지)."""
+    row = normalize_item({
+        "krnPrdctNm": "철근 D13", "prce": "900000",
+        "mtrlcst": "800000", "lbrcst": "150000", "gnrlexpns": "-50000",
+    })
+    assert row is not None
+    assert row["material_price"] == 900000.0
+    assert row["labor_price"] == 0
+
+
 def test_normalize_item_prefers_first_present_name_candidate():
     row = normalize_item({"prdctClsfcNoNm": "레미콘 25-24-15", "krnPrdctNm": "무시됨", "prce": "85000"})
     assert row is not None
