@@ -60,7 +60,10 @@ export function DashboardChromeGate({
       <ProjectSyncProvider />
       <AIAssistant />
 
-      {/* 헤더 */}
+      {/* 헤더 — ★sticky top-2(0.5rem) + 실측 높이 80px(5rem)="고정 시 하단 경계" 5.5rem.
+          이 값은 tokens.css의 --app-header-offset(6.25rem=5.5rem+여백 0.75rem) 파생 기준이다
+          (하위 sticky 자식이 헤더 뒤로 가려지지 않도록 top 오프셋으로 참조). 이 헤더의
+          padding(py-3)·내부 높이가 바뀌면 --app-header-offset도 함께 갱신할 것(불변식). */}
       <header className="sticky top-2 z-[1000] rounded-2xl border border-[var(--line)] bg-[var(--surface-secondary)] px-4 py-3 shadow-[var(--shadow-md)]">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <HomeLink href={`/${locale}`} className="flex items-center gap-4 group min-w-0">

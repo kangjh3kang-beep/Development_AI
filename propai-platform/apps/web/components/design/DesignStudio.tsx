@@ -444,6 +444,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     setForm({ ...DEFAULT_FORM });
     setZoneEdited(false);
     setUserEdited(false);
+    // ★리뷰 LOW-MEDIUM: '직접 조정(고급)' 서랍을 연 채 프로젝트를 전환하면 새 프로젝트의
+    //   확정 칩이 advancedOpen=true 잔류로 계속 숨겨진 채 서랍만 보이는 경계 상태가 됐다.
+    //   폼 리셋과 함께 서랍도 접어 칩·서랍 동시숨김 상태를 새 프로젝트 기준으로 초기화한다.
+    setAdvancedOpen(false);
   }, [effectiveProjectId]);
 
   // 부지분석(SSOT)에서 대지면적·용도지역을 시드한다. 용도지역은 변형 표기
@@ -941,8 +945,17 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             )}
             {/* 직접 조정(고급) — 펼치면 편집 폼 4필드 그대로. 폼은 layoutSeeded 동안 항상 이 서랍 안에
                 머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. onOpenChange로 열림 상태를
-                끌어올려 위 확정 칩을 숨긴다(동시 2벌 노출 제거·Pillar A). */}
-            <AdvancedDrawer label="직접 조정(고급)" className="mt-4" onOpenChange={setAdvancedOpen}>
+                끌어올려 위 확정 칩을 숨긴다(동시 2벌 노출 제거·Pillar A).
+                ★리뷰 LOW-MEDIUM 후속: AdvancedDrawer는 비제어(내부 open state 자체 소유) —
+                key={effectiveProjectId}로 프로젝트 전환 시 강제 리마운트해야 서랍의 내부 open이
+                리셋된다. key 없이 위 리셋 effect의 setAdvancedOpen(false)만 쓰면 '끌어올린 값'만
+                닫힘으로 바뀌고 서랍 자체는 열린 채 남아 칩+서랍이 다시 동시 노출되는 새 결함이 생긴다. */}
+            <AdvancedDrawer
+              key={effectiveProjectId}
+              label="직접 조정(고급)"
+              className="mt-4"
+              onOpenChange={setAdvancedOpen}
+            >
               <InspectorGrid minItemRem={12}>
                 {landAreaField}
                 {zoningField}

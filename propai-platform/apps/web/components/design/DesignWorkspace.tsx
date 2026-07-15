@@ -38,6 +38,7 @@ import { useProjectContextStore, addressTokenMismatch } from "@/store/useProject
 import { useProjectStore } from "@/store/useProjectStore";
 import { hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { toLegalChips, type LegalRefChipInput } from "@/lib/legal-refs";
 import {
   resolveFarWithBasis,
   resolveBcrWithBasis,
@@ -332,35 +333,6 @@ const ENGINE_LAYERS: { code: string; name: string; desc: string }[] = [
   { code: "L5", name: "BIM 변환", desc: "검증된 기하를 IFC/BIM 모델로 변환" },
 ];
 
-// 법령 원문 링크 한 줄(레지스트리 legalRefs 출력) — store엔 unknown[]로 들어온다(MetricBar와 동형 계약).
-type LegalRefLike = {
-  lawName?: string | null;
-  law_name?: string | null;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-};
-
-// legalRefs(unknown[]) → LegalRefChip 입력. 법령명 없는 항목은 제외(빈 칩 방지·정직성).
-//   백엔드 키가 camel(lawName) 또는 snake(law_name) 둘 다 올 수 있어 양쪽 폴백.
-function toLegalChips(refs?: unknown[] | null): {
-  lawName: string;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-}[] {
-  if (!Array.isArray(refs)) return [];
-  return refs
-    .filter((r): r is LegalRefLike => !!r && typeof r === "object")
-    .map((r) => ({
-      lawName: (r.lawName || r.law_name || "").trim(),
-      article: r.article ?? null,
-      title: r.title ?? null,
-      url: r.url ?? null,
-    }))
-    .filter((r) => !!r.lawName);
-}
-
 export function DesignWorkspace({ projectId }: { projectId: string }) {
   const params = useParams();
   const locale = (params?.locale as string) || "ko";
@@ -526,7 +498,14 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
             노출된다. 레일 자체는 max-h로 뷰포트 이내로 묶고 내부 nav가 넘치면 스크롤(레일만 국소). */}
         <aside
           className={[
-            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)] lg:sticky lg:top-3 lg:self-start lg:max-h-[calc(100dvh-6rem)]",
+            // ★리뷰 HIGH 수정: lg:top-3(0.75rem)는 전역 앱 헤더(DashboardChromeGate 'sticky
+            //   top-2 z-[1000]', 실측 높이 80px)보다 얕아 스크롤 시 dock/panel 상단(라벨+접기
+            //   토글+첫 카드)이 헤더 뒤로 가려져 토글 클릭이 불가능했다. 공용 오프셋
+            //   var(--app-header-offset)(tokens.css SSOT·6.25rem=헤더 고정 시 하단경계
+            //   5.5rem+여백 0.75rem)로 top·max-h를 함께 재정합(불일치 해소). calc() 내부는
+            //   Tailwind 임의값 규칙상 공백을 _로 표기해야 유효 CSS로 컴파일된다(공백 없는
+            //   calc(a-b)는 무효 선언으로 조용히 무시됨 — 브라우저 계산 확인).
+            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)] lg:sticky lg:top-[var(--app-header-offset)] lg:self-start lg:max-h-[calc(100dvh_-_var(--app-header-offset)_-_1rem)]",
             dockOpen ? "w-full lg:w-[320px]" : "w-full lg:w-[3.25rem]",
           ].join(" ")}
         >
@@ -634,31 +613,34 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
                   </Fragment>
                 );
               })}
-            </nav>
-          )}
 
-          {/* ── 엔진 파이프라인(L1~L5) 참고 — 정적 설명(가짜 상태·데모 지표 없음). ── */}
-          {dockOpen && (
-            <details className="group shrink-0 border-t border-[var(--line)] px-3 py-2.5">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
-                <span className="cc-label text-[10px] text-[var(--text-tertiary)]">엔진 파이프라인 (L1–L5)</span>
-                <ChevronDown className="size-3.5 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" aria-hidden />
-              </summary>
-              <ol className="mt-2 space-y-1.5">
-                {ENGINE_LAYERS.map((l) => (
-                  <li key={l.code} className="flex gap-2 rounded-[var(--r-input)] bg-[var(--surface-soft)] px-2.5 py-1.5">
-                    <span className="mt-0.5 font-mono text-[10px] font-bold text-[var(--text-tertiary)]">{l.code}</span>
-                    <span className="min-w-0">
-                      <span className="block text-[11px] font-bold text-[var(--text-primary)]">{l.name}</span>
-                      <span className="block text-[10px] leading-4 text-[var(--text-hint)]">{l.desc}</span>
-                    </span>
-                  </li>
-                ))}
-              </ol>
-              <p className="mt-2 text-[10px] leading-4 text-[var(--text-hint)]">
-                참고용 파이프라인 설명입니다. 단계별 실시간 상태·정합 지표는 실측 신호가 배선되면 표시됩니다(현재 미표시 — 무날조).
-              </p>
-            </details>
+              {/* ── 엔진 파이프라인(L1~L5) 참고 — 정적 설명(가짜 상태·데모 지표 없음).
+                    ★리뷰 LOW 수정: 이전엔 nav 바깥의 별도 shrink-0 형제였다 — nav는 flex-1
+                    overflow-y-auto로 자체 스크롤하는데, details는 shrink-0라 줄어들지 않아
+                    극단적으로 짧은 뷰포트(aside가 --app-header-offset 기반 max-h로 눌릴 때)에서
+                    details 본문이 aside의 overflow-hidden에 잘릴 수 있었다. nav 안으로 옮겨
+                    같은 스크롤 영역에 편입시켜 클립 없이 항상 스크롤로 도달 가능하게 한다. */}
+              <details className="group mt-2 shrink-0 border-t border-[var(--line)] px-1 pt-2.5">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+                  <span className="cc-label text-[10px] text-[var(--text-tertiary)]">엔진 파이프라인 (L1–L5)</span>
+                  <ChevronDown className="size-3.5 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" aria-hidden />
+                </summary>
+                <ol className="mt-2 space-y-1.5">
+                  {ENGINE_LAYERS.map((l) => (
+                    <li key={l.code} className="flex gap-2 rounded-[var(--r-input)] bg-[var(--surface-soft)] px-2.5 py-1.5">
+                      <span className="mt-0.5 font-mono text-[10px] font-bold text-[var(--text-tertiary)]">{l.code}</span>
+                      <span className="min-w-0">
+                        <span className="block text-[11px] font-bold text-[var(--text-primary)]">{l.name}</span>
+                        <span className="block text-[10px] leading-4 text-[var(--text-hint)]">{l.desc}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <p className="mt-2 text-[10px] leading-4 text-[var(--text-hint)]">
+                  참고용 파이프라인 설명입니다. 단계별 실시간 상태·정합 지표는 실측 신호가 배선되면 표시됩니다(현재 미표시 — 무날조).
+                </p>
+              </details>
+            </nav>
           )}
 
           {/* 접힘(데스크톱): 아이콘 레일로 단계 이동 유지 + 미니 진행선. 모바일 접힘은 헤더 토글만. */}
@@ -809,7 +791,14 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
             뷰포트에선 자동 접힘(F1)해 중앙 폭을 양보한다. Pillar D: dock과 동일하게 sticky-top. */}
         <aside
           className={[
-            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)] lg:sticky lg:top-3 lg:self-start lg:max-h-[calc(100dvh-6rem)]",
+            // ★리뷰 HIGH 수정: lg:top-3(0.75rem)는 전역 앱 헤더(DashboardChromeGate 'sticky
+            //   top-2 z-[1000]', 실측 높이 80px)보다 얕아 스크롤 시 dock/panel 상단(라벨+접기
+            //   토글+첫 카드)이 헤더 뒤로 가려져 토글 클릭이 불가능했다. 공용 오프셋
+            //   var(--app-header-offset)(tokens.css SSOT·6.25rem=헤더 고정 시 하단경계
+            //   5.5rem+여백 0.75rem)로 top·max-h를 함께 재정합(불일치 해소). calc() 내부는
+            //   Tailwind 임의값 규칙상 공백을 _로 표기해야 유효 CSS로 컴파일된다(공백 없는
+            //   calc(a-b)는 무효 선언으로 조용히 무시됨 — 브라우저 계산 확인).
+            "flex shrink-0 flex-col overflow-hidden rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] shadow-[var(--shadow-sm)] lg:sticky lg:top-[var(--app-header-offset)] lg:self-start lg:max-h-[calc(100dvh_-_var(--app-header-offset)_-_1rem)]",
             panelOpen ? "w-full lg:w-[340px]" : "w-full lg:w-[3.25rem]",
           ].join(" ")}
         >
@@ -1085,7 +1074,7 @@ function LimitsPanel({
   siteFar: { value: number; basis: LimitBasis } | null;
   siteBcr: { value: number; basis: LimitBasis } | null;
   floorClamp: number | null;
-  legalChips: { lawName: string; article?: string | null; title?: string | null; url?: string | null }[];
+  legalChips: LegalRefChipInput[];
   special: { isSpecial: boolean; honest: string | null; factors: string[] } | null;
   mismatch: boolean;
   labels: Labels;

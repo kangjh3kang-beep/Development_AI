@@ -27,6 +27,7 @@ import {
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
+import { toLegalChips } from "@/lib/legal-refs";
 import {
   summarizeCompliance,
   ruleTraceToEvidence,
@@ -139,35 +140,6 @@ function toEvidenceItems(ev?: unknown[] | null): EvidenceItem[] {
             : null,
       };
     });
-}
-
-// 법령 원문 링크 한 줄(레지스트리 legalRefs 출력). store엔 unknown[]로 들어온다.
-type LegalRefLike = {
-  lawName?: string | null;
-  law_name?: string | null;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-};
-
-// legalRefs(unknown[]) → LegalRefChip 입력. 법령명 없는 항목은 제외(빈 칩 방지·정직성).
-//   백엔드 키가 camel(lawName) 또는 snake(law_name) 둘 다 올 수 있어 양쪽 폴백.
-function toLegalChips(refs?: unknown[] | null): {
-  lawName: string;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-}[] {
-  if (!Array.isArray(refs)) return [];
-  return refs
-    .filter((r): r is LegalRefLike => !!r && typeof r === "object")
-    .map((r) => ({
-      lawName: (r.lawName || r.law_name || "").trim(),
-      article: r.article ?? null,
-      title: r.title ?? null,
-      url: r.url ?? null,
-    }))
-    .filter((r) => !!r.lawName);
 }
 
 // 칩 1개 — 라벨(작은 글씨) + 값(모노 계기 수치). 좁은 화면에선 가로스크롤(shrink-0).
