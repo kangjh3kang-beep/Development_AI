@@ -61,6 +61,7 @@ __all__ = [
     "build_report_model_from_bank",
     "build_report_model_from_land",
     "build_report_model_from_appraisal",
+    "build_report_model_from_appraisal_multi",
     "build_report_model_from_design_audit",
     "build_report_model_from_cost_estimation",
 ]
@@ -115,6 +116,17 @@ def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
     from .appraisal_adapter import build_report_model_from_appraisal as _build
 
     return _build(data, **kwargs)
+
+
+def build_report_model_from_appraisal_multi(
+    results: list, *, addresses: list, ai_sections: dict | None = None, omitted_count: int = 0
+) -> ReportModel:
+    """다필지 탁상감정 보고서(appraisal) → 정본 ReportModel(어댑터).
+
+    대표(첫 성공) 필지 단건 상세 + 맨 앞 '0. 다필지 추정 총괄' 섹션(additive)."""
+    from .appraisal_adapter import build_report_model_from_appraisal_multi as _build
+
+    return _build(results, addresses=addresses, ai_sections=ai_sections, omitted_count=omitted_count)
 
 
 def build_report_model_from_design_audit(data: dict) -> ReportModel:

@@ -738,6 +738,9 @@ class DevelopmentScenarioSimulator:
     def _blended_far(parcels: list[dict], key: str = "max_far") -> float | None:
         """면적가중 평균 용적률. key='max_far'면 실효(현행·조례 반영, 시나리오 기준),
         key='max_far_legal'이면 법정상한(라벨 구분용)."""
+        # TODO(계약표준화 후속): 정본 _aggregate_integrated_zoning(면적가중 blended_far_*_pct)
+        #   위임 검토 — 값 산출 경로 변경이라 이번(계약 shape 정규화) 라운드 제외.
+        #   permit_analysis_service._blended_far 와 동일 산식(정본 일원화 대상).
         w = [(p.get("area"), p.get(key)) for p in parcels if p.get(key)]
         if not w:
             return None

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -32,7 +33,9 @@ class ComplianceCheckRequest(BaseModel):
     # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
     #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
     #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
-    parcels: list[dict] | None = None
+    #   ★공용 정규화(ParcelsIn): str[]/dict[] 양 shape → canonical dict[](무음 no-op 제거).
+    #   ※ /permits/ai-analysis 의 list[str] parcels(주소배열)는 별개 계약 — 변경 대상 아님.
+    parcels: ParcelsIn | None = None
 
 
 class ComplianceItemResult(BaseModel):

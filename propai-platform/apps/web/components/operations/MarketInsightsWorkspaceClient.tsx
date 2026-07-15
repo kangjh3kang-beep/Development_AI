@@ -332,6 +332,8 @@ export function MarketInsightsWorkspaceClient() {
   const projectName = useProjectContextStore((s) => s.projectName);
   const rawSite = useProjectContextStore((s) => s.siteAnalysis);
   const siteAnalysis = projectId ? rawSite : null;
+  // 유효 대지면적(다필지=통합) — 렌더에서 재호출하지 않도록 1회 파생.
+  const effAreaSqm = effectiveLandAreaSqm(siteAnalysis);
   // 명시실행: 주소 입력만으로는 분석하지 않고, "분석 실행" 클릭 시에만 runAddress를 확정한다.
   const [runAddress, setRunAddress] = useState("");
   // store 폴백 다필지(인테이크/프로젝트가 store에 쓴 것)도 실행 시점에 스냅샷으로 고정 — 피커와 동일하게
@@ -589,9 +591,9 @@ export function MarketInsightsWorkspaceClient() {
           </h3>
         </div>
         {/* ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지(바로 옆 필지 수와 축이 어긋난다). */}
-        {effectiveLandAreaSqm(siteAnalysis) ? (
+        {effAreaSqm ? (
           <div className="flex gap-4 text-xs font-bold text-[var(--text-secondary)]">
-            <span>대지면적: <b className="text-[var(--text-primary)]">{effectiveLandAreaSqm(siteAnalysis)!.toLocaleString()}㎡</b></span>
+            <span>대지면적: <b className="text-[var(--text-primary)]">{effAreaSqm.toLocaleString()}㎡</b></span>
             {siteAnalysis?.parcelCount ? (
               <span>필지 수: <b className="text-[var(--text-primary)]">{siteAnalysis.parcelCount}필지</b></span>
             ) : null}

@@ -285,7 +285,7 @@ class AVMRequest(BaseModel):
     """AVM 시세 추정 요청"""
     project_id: UUID
     address: str
-    area_sqm: float = Field(gt=0)
+    area_sqm: float = Field(gt=0, description="전용면적(㎡) — 아파트 세대 기준. MOLIT 실거래 ±15㎡ 매칭용(토지면적·연면적 아님)")
     building_age_years: int | None = Field(default=None, ge=0)
     floor: int | None = None
     total_floors: int | None = None
