@@ -97,10 +97,30 @@ class AihubSeedService:
     async def ingest_dataset(
         self, dataset_key: str, file_key: str | None = None, *,
         max_files: int = 100, tenant_id: str | None = None, timeout: int = 1800,
+        db: Any | None = None, seed_train_allowed: bool = True,
     ) -> dict[str, Any]:
         """특정 filekey 다운로드(aihubshell -mode d) → 압축해제 도면 → design_ingest 인제스트.
 
         디스크 안전: file_key는 ★권장(미지정 시 전체=TB). 임시폴더 작업 후 정리.
+
+        ★자산권리 시딩(WP-J): db 가 주어지면 인제스트 성공 도면의 content_hash 를 asset_rights
+          레지스트리에 배치 upsert 한다. AI Hub 다운로드는 '활용신청 승인'(라이선스)이 선결이므로
+          권리 소스가 명확하다 → train_allowed=seed_train_allowed(기본 True·scope=train_ok·
+          source='aihub-license'). 이는 "권리 불명=금지"의 예외가 아니라 **명시 권리 부여**다
+          (연구용 등 제한 라이선스 데이터셋은 seed_train_allowed=False 로 호출). db 미제공 시
+          시딩 생략(무회귀 — 기존 호출부 불변).
+
+        ★키스페이스 분리 고지(통합자 리뷰 MEDIUM — 정직표기, 코드변경 아님): 이 시딩이 upsert 하는
+          asset_key 는 **도면 content_hash**(`DesignSpec.content_hash()` — 도면 파싱 결과 해시)다.
+          반면 P16 학습게이트 소비처(`learning_loop.build_dataset_jsonl(enforce_asset_rights=True)`)
+          가 `asset_rights` 를 조회하는 키는 `learning_examples.content_hash` — 이는 **원장
+          (analysis_ledger) content_hash**(ai_feedback→analysis_ledger 조인, `curate_few_shot`
+          경유)로, 도면 해시와는 **다른 키스페이스**다. 즉 현재 이 시딩은 두 텍스트 학습게이트와
+          교집합이 없어 **inert**(그 게이트에 아무 영향 없음)다 — default-deny 원칙상 무해
+          (fail-safe: 교집합 부재가 오히려 "불명=금지"를 자동 유지, 잘못된 허용을 새지 않음).
+          이 레지스트리 행은 **도면-학습 read-path(별도 후속 WP, 미구현)** 를 위한 선제 시딩이며,
+          현재 P16 텍스트 게이트(learning_examples)를 대상으로 하지 않는다. 두 키스페이스를
+          통합(도면 해시 학습경로 연결)하는 것은 이번 WP-J 스코프 밖 — 후속 WP 로 이관.
         """
         if not self._key():
             return {"available": False, "reason": "AIHUB_API_KEY 미설정 — 관리자 시크릿 입력 필요", "ingested": 0}
@@ -158,6 +178,7 @@ class AihubSeedService:
             from app.services.design_ingest.ingest_service import ingest_design_file
             ingested, skipped, failed, total = 0, 0, 0, 0
             samples: list[dict[str, Any]] = []
+            seed_hashes: set[str] = set()  # 자산권리 시딩 대상(인제스트 성공분 content_hash)
             for p in sorted(tmp.rglob("*")):
                 if not p.is_file() or p.name == "aihubshell":
                     continue
@@ -168,6 +189,10 @@ class AihubSeedService:
                     continue
                 try:
                     res = await ingest_design_file(filename=p.name, content=p.read_bytes(), tenant_id=tenant_id)
+                    # 권리 시딩 키: 파싱 성공분의 content_hash(인덱싱 실패는 인프라 문제라 권리는 유효).
+                    ch = res.get("content_hash")
+                    if res.get("ok") and ch:
+                        seed_hashes.add(ch)
                     if res.get("indexed"):
                         ingested += 1
                     else:
@@ -176,12 +201,35 @@ class AihubSeedService:
                         samples.append({"file": p.name, "indexed": res.get("indexed"), "type": res.get("drawing_type")})
                 except Exception:  # noqa: BLE001
                     failed += 1
+
+            # ★자산권리 레지스트리 시딩(WP-J) — db 제공 시에만(무회귀). AI Hub 활용신청 승인 =
+            #   명시 라이선스이므로 train_allowed 를 채운다(권리 소스 기반). 실패는 정직 강등(0).
+            seeded_rights = 0
+            if db is not None and seed_hashes:
+                try:
+                    from app.services.security.asset_rights import (
+                        AssetRight,
+                        upsert_asset_rights_batch,
+                    )
+                    rights = [
+                        AssetRight(
+                            asset_key=h, scope="train_ok" if seed_train_allowed else "internal_only",
+                            train_allowed=seed_train_allowed, export_allowed=False,
+                            source="aihub-license", tenant_id=tenant_id,
+                            note=f"AI Hub 시드(datasetkey={dataset_key})",
+                        )
+                        for h in sorted(seed_hashes)
+                    ]
+                    seeded_rights = await upsert_asset_rights_batch(db, rights)
+                except Exception as e:  # noqa: BLE001 — 시딩 실패가 인제스트 결과를 깨면 안 됨
+                    logger.warning("aihub.asset_rights_seed_failed", err=str(e)[:120])
             # 진단: 다운로드 산출물 트리(상위) + aihubshell 로그 꼬리(0건일 때 원인 파악).
             tree = [str(p.relative_to(tmp)) for p in sorted(tmp.rglob("*")) if p.is_file()][:25]
             return {
                 "available": True, "dataset_key": dataset_key, "file_key": file_key,
                 "archives_extracted": archives_extracted,
                 "total_drawings": total, "ingested": ingested, "skipped": skipped, "failed": failed,
+                "seeded_rights": seeded_rights,  # asset_rights 시딩 건수(db 미제공 시 0)
                 "samples": samples,
                 "downloaded_files": tree,
                 "download_log": out[-2000:] if total == 0 else None,

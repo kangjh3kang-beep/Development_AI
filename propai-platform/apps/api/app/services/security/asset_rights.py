@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,35 +192,37 @@ async def ensure_schema(db: AsyncSession, force: bool = False) -> bool:
         return False
 
 
-async def upsert_asset_right(db: AsyncSession, right: AssetRight) -> bool:
-    """권리 1건 upsert((asset_key, tenant_id) 기준). best-effort — 실패해도 예외 안 냄.
+# upsert SQL·파라미터는 단건/배치가 공유(한 곳만 고치면 전 upsert 경로가 따른다).
+_UPSERT_SQL = (
+    "INSERT INTO asset_rights "
+    "(asset_key, tenant_id, scope, train_allowed, export_allowed, source, note, meta) "
+    "VALUES (:k, :t, :sc, :tr, :ex, :src, :note, CAST(:meta AS jsonb)) "
+    "ON CONFLICT (asset_key, tenant_id) DO UPDATE SET "
+    "  scope=EXCLUDED.scope, train_allowed=EXCLUDED.train_allowed, "
+    "  export_allowed=EXCLUDED.export_allowed, source=EXCLUDED.source, "
+    "  note=EXCLUDED.note, meta=EXCLUDED.meta, updated_at=now()"
+)
 
-    ★NULL tenant_id 는 UNIQUE 에서 서로 충돌하지 않으므로, 전역 권리는 tenant_id 를
-      빈 문자열('') 로 정규화해 멱등 upsert 가 되게 한다(NULL 다중행 방지).
-    """
+
+def _upsert_params(right: AssetRight) -> dict[str, Any]:
+    """AssetRight → upsert 바인드 파라미터. ★전역 권리는 tenant_id 를 ''(빈문자)로 정규화해
+    멱등 upsert 가 되게 한다(NULL 다중행 방지 — UNIQUE 에서 NULL 은 서로 충돌 안 함)."""
+    return {
+        "k": right.asset_key, "t": right.tenant_id or "", "sc": right.scope,
+        "tr": bool(right.train_allowed), "ex": bool(right.export_allowed),
+        "src": right.source, "note": right.note,
+        "meta": json.dumps(right.meta or {}, ensure_ascii=False, default=str),
+    }
+
+
+async def upsert_asset_right(db: AsyncSession, right: AssetRight) -> bool:
+    """권리 1건 upsert((asset_key, tenant_id) 기준). best-effort — 실패해도 예외 안 냄."""
     if not right.asset_key:
         return False
     if not await ensure_schema(db):
         return False
-    tid = right.tenant_id or ""
     try:
-        await db.execute(
-            text(
-                "INSERT INTO asset_rights "
-                "(asset_key, tenant_id, scope, train_allowed, export_allowed, source, note, meta) "
-                "VALUES (:k, :t, :sc, :tr, :ex, :src, :note, CAST(:meta AS jsonb)) "
-                "ON CONFLICT (asset_key, tenant_id) DO UPDATE SET "
-                "  scope=EXCLUDED.scope, train_allowed=EXCLUDED.train_allowed, "
-                "  export_allowed=EXCLUDED.export_allowed, source=EXCLUDED.source, "
-                "  note=EXCLUDED.note, meta=EXCLUDED.meta, updated_at=now()"
-            ),
-            {
-                "k": right.asset_key, "t": tid, "sc": right.scope,
-                "tr": bool(right.train_allowed), "ex": bool(right.export_allowed),
-                "src": right.source, "note": right.note,
-                "meta": json.dumps(right.meta or {}, ensure_ascii=False, default=str),
-            },
-        )
+        await db.execute(text(_UPSERT_SQL), _upsert_params(right))
         await db.commit()
         return True
     except Exception as e:  # noqa: BLE001
@@ -227,6 +230,30 @@ async def upsert_asset_right(db: AsyncSession, right: AssetRight) -> bool:
         with contextlib.suppress(Exception):
             await db.rollback()
         return False
+
+
+async def upsert_asset_rights_batch(db: AsyncSession, rights: list[AssetRight]) -> int:
+    """권리 여러 건을 **1 트랜잭션**으로 멱등 upsert 한다(레지스트리 시딩용).
+
+    ingest 소스(예: AI Hub 라이선스)가 한 배치의 자산 권리를 채울 때 단건 upsert(=행마다 commit)의
+    왕복 비용을 없앤다. 빈 asset_key 는 건너뛴다. 반환: 커밋 성공 건수(0=미영속/전무).
+    best-effort — 실패 시 rollback 후 0(호출경로 불변).
+    """
+    valid = [r for r in rights if r.asset_key]
+    if not valid:
+        return 0
+    if not await ensure_schema(db):
+        return 0
+    try:
+        for r in valid:
+            await db.execute(text(_UPSERT_SQL), _upsert_params(r))
+        await db.commit()
+        return len(valid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("upsert_asset_rights_batch 실패(%d건): %s", len(valid), str(e)[:160])
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        return 0
 
 
 async def get_asset_right(
@@ -268,3 +295,85 @@ async def get_asset_right(
         meta=(meta if isinstance(meta, dict) else {}),
     )
     return ar
+
+
+# Postgres 바인드 파라미터 상한(32767)을 피하려고 고유키(쌍당 2바인드)를 이 크기로 청크한다
+# (통합자 리뷰 LOW: ~16k 조합에서 상한 초과→예외→전건 default-deny 되던 under-scale 결함).
+# 1000키/청크 = 2000바인드/질의로 상한에 크게 여유(응답 payload 크기도 청크 단위로 완만).
+_BATCH_CHUNK_SIZE = 1000
+
+
+async def get_asset_rights_batch(
+    db: AsyncSession, keys: list[tuple[str, str | None]]
+) -> dict[tuple[str, str | None], AssetRight]:
+    """여러 자산 권리를 **청크 단위 배치 질의**로 조회한다(N+1 제거 — WP-I 리뷰 LOW).
+
+    학습셋 수천~수만 행의 권리를 확인할 때 행마다 get_asset_right 를 부르면 왕복이 N배다. 이 함수는
+    고유 (asset_key, tenant_id) 조합을 모아 `WHERE (asset_key, tenant_id) IN (...)` 로 읽되,
+    고유키 수가 `_BATCH_CHUNK_SIZE` 를 넘으면 **여러 청크 질의로 분할**한다(단일 질의 바인드 상한
+    32767 초과 방지 — 통합자 리뷰 LOW: 청크 없이는 ~16k 고유조합에서 예외→전건 default-deny로
+    번지는 under-scale 결함이었다). 결과는 청크 전체를 병합한 뒤 반환한다.
+
+    계약은 get_asset_right 와 동일: **미등록 키는 unknown(default-deny) AssetRight** 로 채워
+    반환한다(호출부는 언제나 값을 받는다). 반환 dict 키는 **입력한 원본 (asset_key, tenant_id) 튜플**
+    이다(정규화 전 — 호출부 조회 일치). best-effort: 청크 조회 실패는 **그 청크의 키만**
+    default-deny(fail-safe·보수적)로 남기고, 이미 성공한 다른 청크의 실제 조회결과는 보존한다.
+    """
+    out: dict[tuple[str, str | None], AssetRight] = {}
+    # 고유·유효 키만 추림(빈 asset_key 는 즉시 default-deny). norm 키=(정규 asset_key, 정규 tenant '').
+    uniq: dict[tuple[str, str], list[tuple[str, str | None]]] = {}
+    for asset_key, tenant_id in keys:
+        k = (asset_key or "").strip()
+        if not k:
+            out[(asset_key, tenant_id)] = resolve_asset_right(k, tenant_id=tenant_id)
+            continue
+        uniq.setdefault((k, tenant_id or ""), []).append((asset_key, tenant_id))
+
+    if not uniq:
+        return out
+
+    norms = list(uniq.keys())
+    found: dict[tuple[str, str], Any] = {}
+    if await ensure_schema(db):
+        for start in range(0, len(norms), _BATCH_CHUNK_SIZE):
+            chunk = norms[start:start + _BATCH_CHUNK_SIZE]
+            pairs_sql = ", ".join(f"(:k{i}, :t{i})" for i in range(len(chunk)))
+            params: dict[str, Any] = {}
+            for i, (nk, nt) in enumerate(chunk):
+                params[f"k{i}"] = nk
+                params[f"t{i}"] = nt
+            try:
+                rows = (await db.execute(
+                    text(
+                        "SELECT asset_key, tenant_id, scope, train_allowed, export_allowed, "
+                        "source, note, meta "
+                        f"FROM asset_rights WHERE (asset_key, tenant_id) IN ({pairs_sql})"
+                    ),
+                    params,
+                )).all()
+                for r in rows:
+                    found[(r[0], r[1] or "")] = r
+            except Exception as e:  # noqa: BLE001 — 청크 실패는 그 청크만 default-deny(아래서 자동)
+                logger.warning(
+                    "get_asset_rights_batch 청크 조회 실패(%d keys, chunk_start=%d): %s",
+                    len(chunk), start, str(e)[:160],
+                )
+                with contextlib.suppress(Exception):
+                    await db.rollback()
+    # ensure_schema 실패(스키마 미가용)여도 아래 루프가 found 를 빈 채로 두어 전건 default-deny 로
+    # 자연 수렴한다(별도 분기 불요 — get_asset_right 의 단건 폴백과 동일 계약).
+
+    for norm, originals in uniq.items():
+        r = found.get(norm)
+        for orig in originals:
+            if r is None:
+                out[orig] = resolve_asset_right(norm[0], tenant_id=orig[1])  # 미등록/실패=불명=금지
+            else:
+                _ak, _t, scope, train, export, source, note, meta = r
+                out[orig] = AssetRight(
+                    asset_key=norm[0], scope=scope or DEFAULT_SCOPE,
+                    train_allowed=bool(train), export_allowed=bool(export),
+                    source=source, tenant_id=orig[1], note=note,
+                    meta=(meta if isinstance(meta, dict) else {}),
+                )
+    return out

@@ -267,16 +267,14 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
 
         if enforce_asset_rights:
             from app.services.security.asset_rights import (
-                get_asset_right,
+                get_asset_rights_batch,
                 keep_train_allowed,
             )
 
-            # 고유 (content_hash, tenant_id) 조합만 조회(중복 질의 방지).
-            rights: dict[tuple, Any] = {}
-            for _, _, ch, tid in pairs:
-                key = (ch, tid)
-                if ch and key not in rights:
-                    rights[key] = await get_asset_right(db, ch, tid)
+            # 고유 (content_hash, tenant_id) 조합을 **배치 1질의**로 조회(N+1 제거 — WP-I 리뷰 LOW:
+            #   WHERE (asset_key, tenant) IN (...)). 미등록 키는 배치 헬퍼가 default-deny 로 채운다.
+            batch_keys = [(ch, tid) for (_, _, ch, tid) in pairs if ch]
+            rights = await get_asset_rights_batch(db, batch_keys)
             # keep_train_allowed 는 평면 dict(키=행의 key_index 값)로 판정 → 행에 복합키를 실어 넘긴다.
             keyed = [(inp, out, (ch, tid)) for (inp, out, ch, tid) in pairs]
             kept, excluded_no_rights = keep_train_allowed(keyed, rights, key_index=2)

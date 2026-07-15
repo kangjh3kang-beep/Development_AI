@@ -36,6 +36,16 @@ logger = structlog.get_logger(__name__)
 
 
 # ── 아카이브 한도(zip bomb 방어) ─────────────────────────────────────────
+# 텍스트 계열 확장자 — ASCII 도면/데이터(DXF·JSON·CSV·TXT 등)는 압축이 매우 잘 돼(전개/압축비가
+# 200x~수천x 흔함) 압축비 검사만으로는 정상 시드를 bomb 으로 오거부한다(WP-H2 이관 MEDIUM: aihub
+# 텍스트 시드 유실). 이 확장자는 **압축비 검사에서만 제외**하고, 절대 방어선인 전개 총량 상한
+# (max_total_uncompressed)·엔트리 수·중첩 깊이·실측 truncate 는 그대로 적용한다 — 텍스트로 위장한
+# 압축폭탄도 총량으로 여전히 차단된다(공용 한 곳 수정 → inspect_archive·safe_extract 전역 반영).
+TEXT_RATIO_EXEMPT_EXTS: frozenset[str] = frozenset(
+    {"dxf", "json", "csv", "txt", "tsv", "geojson", "obj", "ifc", "step", "stp", "asc", "xyz"}
+)
+
+
 @dataclass(frozen=True)
 class ArchiveLimits:
     """압축파일 검사 한도. 기본값은 일반 문서(docx/xlsx/hwpx)·설계 zip 을 넉넉히 통과시키되
@@ -47,6 +57,8 @@ class ArchiveLimits:
     max_depth: int = 3  # 중첩 아카이브 재귀 깊이(zip 안의 zip …). 루트 아래 허용 단계 수.
     ratio_min_compressed: int = 4096  # 이 크기 미만 소형 엔트리는 압축비 계산 제외(작은 텍스트 오탐 방지)
     max_nested_read: int = 64 * 1024 * 1024  # 중첩 아카이브 재귀 검사 시 실제로 읽는 엔트리 상한(64MB)
+    # 압축비 검사 제외 확장자(텍스트 계열) — 총량 상한은 유지되므로 bomb 방어는 무손상.
+    ratio_exempt_exts: frozenset[str] = TEXT_RATIO_EXEMPT_EXTS
 
 
 _DEFAULT_LIMITS = ArchiveLimits()
@@ -313,8 +325,11 @@ def _inspect_archive_depth(data: bytes, limits: ArchiveLimits, depth: int) -> In
                                 f"{limits.max_total_uncompressed} bytes) — 압축폭탄 의심."),
                         detected_type="zip", details={"total_uncompressed": total_uncompressed},
                     )
-                # 엔트리별 압축비(작은 엔트리는 제외 — 헤더만 있는 작은 텍스트 오탐 방지).
-                if zi.compress_size >= limits.ratio_min_compressed:
+                # 엔트리별 압축비(작은 엔트리·텍스트 계열은 제외 — 헤더만 있는 작은 텍스트,
+                # 그리고 고압축비가 정상인 ASCII 도면/데이터(DXF·JSON·CSV 등) 오탐 방지).
+                # 텍스트 제외분도 전개 총량 상한(위)에는 계속 계상되므로 bomb 방어는 무손상.
+                if (zi.compress_size >= limits.ratio_min_compressed
+                        and _ext(zi.filename) not in limits.ratio_exempt_exts):
                     ratio = zi.file_size / max(zi.compress_size, 1)
                     if ratio > limits.max_ratio:
                         return InspectionResult(
@@ -466,8 +481,10 @@ def safe_extract_archive(
                         extracted=len(written), total_bytes=total,
                         details={"total_bytes": total + zi.file_size},
                     )
-                # 압축비(작은 엔트리 제외).
-                if zi.compress_size >= limits.ratio_min_compressed:
+                # 압축비(작은 엔트리·텍스트 계열 제외 — 고압축비가 정상인 ASCII 도면/데이터 오탐 방지).
+                # 텍스트 제외분도 위 전개 총량 상한·아래 실측 truncate 로 방어되므로 bomb 무손상.
+                if (zi.compress_size >= limits.ratio_min_compressed
+                        and _ext(name) not in limits.ratio_exempt_exts):
                     ratio = zi.file_size / max(zi.compress_size, 1)
                     if ratio > limits.max_ratio:
                         _cleanup()
