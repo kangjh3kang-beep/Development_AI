@@ -357,7 +357,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
         setRiskNote("BIM 실측 물량 미확보 — 12단계 원가 분해가 없어 몬테카를로를 실행하지 않습니다(확률 분포를 지어내지 않음). CAD/BIM 탭에서 설계를 생성하면 실측 물량 기반 리스크 시뮬레이션이 활성화됩니다.");
         return;
       }
-      const calc = await apiClient.post<Record<string, unknown>>(
+      const calcRes = await apiClient.post<Record<string, unknown>>(
         `/cost/${projectId}/calculate`,
         { body: { items, use_llm: false, with_senior: false }, useMock: false },
       );
@@ -367,7 +367,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
         p10: number; p50: number; p80: number; p90: number; min: number; max: number;
         converged: boolean; risk_contributions?: Record<string, number>;
       }>(`/cost/${projectId}/monte-carlo`, {
-        body: { base_result: calc, iterations: iters, seed: 42 },
+        body: { base_result: calcRes, iterations: iters, seed: 42 },
         useMock: false,
       });
       setRisk({

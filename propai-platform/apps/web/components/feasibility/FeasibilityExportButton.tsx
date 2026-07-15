@@ -22,6 +22,13 @@ export function FeasibilityExportButton() {
   const [exporting, setExporting] = useState<"" | "xlsx" | "json">("");
   const [excelError, setExcelError] = useState<string | null>(null);
 
+  // ★리뷰 R1-P2: 백엔드 FeasibilityCalculateRequest는 면적·GFA가 gt=0 필수 —
+  //   auto-baseline(부지 미완입력) 상태의 result로 버튼이 활성되면 422가 난다.
+  //   유효 입력일 때만 Excel 활성(정직 고지 — riskNote 계약과 동일 패턴).
+  const canExcel =
+    !!result && !result.is_baseline
+    && (input.total_land_area_sqm ?? 0) > 0 && (input.total_gfa_sqm ?? 0) > 0;
+
   const handleExcelExport = async () => {
     if (!result) return;
     setExporting("xlsx");
@@ -30,14 +37,24 @@ export function FeasibilityExportButton() {
       // /feasibility/calculate와 동일 계약(FeasibilityCalculateRequest) — store.input 그대로.
       const token =
         (typeof window !== "undefined" && localStorage.getItem("propai_access_token")?.trim()) || "";
-      const res = await fetch(`${resolveApiOrigin()}/api/v2/feasibility/export-excel`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ ...input, params: input.params ?? {} }),
-      });
+      // 직접 fetch(blob 다운로드 — apiClient.parseResponse는 바이너리를 손상시킴)에도
+      // apiClient 기본과 동일한 120s 타임아웃을 건다(무응답 시 버튼 영구 고착 방지).
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+      let res: Response;
+      try {
+        res = await fetch(`${resolveApiOrigin()}/api/v2/feasibility/export-excel`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ ...input, params: input.params ?? {} }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       if (!res.ok) throw new Error(`Excel 내보내기 실패 (${res.status})`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -94,14 +111,16 @@ export function FeasibilityExportButton() {
 
   return (
     <span className="inline-flex items-center gap-2">
-      <Button
-        variant={"outline" as any}
-        size="sm"
-        onClick={handleExcelExport}
-        disabled={!result || exporting !== ""}
-      >
-        {exporting === "xlsx" ? "Excel 생성 중..." : "Excel 내보내기"}
-      </Button>
+      <span title={canExcel ? undefined : "정식 수지 계산(면적·연면적 입력) 후 활성화됩니다"}>
+        <Button
+          variant={"outline" as any}
+          size="sm"
+          onClick={handleExcelExport}
+          disabled={!canExcel || exporting !== ""}
+        >
+          {exporting === "xlsx" ? "Excel 생성 중..." : "Excel 내보내기"}
+        </Button>
+      </span>
       <Button
         variant={"outline" as any}
         size="sm"
