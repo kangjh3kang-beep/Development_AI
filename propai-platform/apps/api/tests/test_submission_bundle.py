@@ -114,6 +114,29 @@ def test_verify_bundle_detects_tampered_file_content():
     assert any(target in p for p in problems)
 
 
+def test_verify_bundle_detects_smuggled_file_not_in_manifest():
+    """매니페스트에 없는 파일이 zip에 몰래 끼어들면(밀반입) verify_bundle이 ok=False로 잡는다.
+
+    ★리뷰 반영(라이브 실증): 기존 구현은 매니페스트→zip 방향만 대조해, 매니페스트가 모르는 추가
+    파일이 섞여 있어도 파일별 해시 루프를 그냥 통과해 ok=True가 나왔다(밀반입 무탐지). 정상 번들에
+    manifest.json이 선언하지 않은 drawings/SMUGGLED.svg를 주입해, 이제는 거부되는지 확인한다.
+    """
+    zip_bytes, _manifest = build_submission_bundle(
+        project_id="p1", project_name="테스트", drawings_svg=_all_required_svgs(),
+    )
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf_in:
+        names = zf_in.namelist()
+        contents = {n: zf_in.read(n) for n in names}
+    contents["drawings/SMUGGLED.svg"] = b"<svg>smuggled-content</svg>"
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zf_out:
+        for n in [*names, "drawings/SMUGGLED.svg"]:
+            zf_out.writestr(n, contents[n])
+    ok, problems = verify_bundle(out.getvalue())
+    assert ok is False
+    assert any("SMUGGLED" in p for p in problems)
+
+
 def test_verify_bundle_detects_tampered_manifest_bundle_hash():
     """manifest.json 내부 필드를 조작하면 bundle_hash 재계산 불일치로 탐지."""
     zip_bytes, _manifest = build_submission_bundle(

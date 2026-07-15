@@ -4,13 +4,20 @@
 무엇을 푸나(쉬운 설명):
 - 심의·인허가에 제출하려면 '도면 + 보고서 + 공내역서'를 한 묶음(zip)으로 내되, 각 파일이 위·변조되지
   않았음을 증명할 지문(sha256)과 '어떤 입력으로 만들었는지'(run_id·input_hash)를 함께 담아야 한다.
-- 이 모듈은 (1) 필수시트 100% 충족을 강제(미충족=산출 거부+누락 목록), (2) 결정적(같은 입력→같은
-  바이트) zip 생성, (3) 매니페스트 해시 전수 대조가 가능한 검증 헬퍼를 제공한다.
+- 이 모듈은 (1) 필수시트 100% 충족을 강제(미충족=산출 거부+누락 목록), (2) 결정적 zip 생성(SVG-only
+  번들 한정 — 아래 ★결정성 참조), (3) 매니페스트 해시 전수 대조(밀반입 파일 탐지 포함)가 가능한
+  검증 헬퍼를 제공한다.
 
 ★필수시트 게이트: sheet_frame.check_required_sheets 로 판정. 미충족이면 RequiredSheetsMissingError 을
   올린다(무음 부분산출 금지 — 라우터가 422+누락목록으로 정직 거부).
-★결정성(가능 범위): zip 내부 타임스탬프는 고정값(FIXED_ZIP_DT)·엔트리 편철 순서 고정·압축 무순서화
-  → 같은 입력이면 같은 zip 바이트(동일 zlib 환경). 매니페스트 해시 전수 대조로 검증한다.
+★결정성(가능 범위 — 주장 범위 정직 한정): zip 내부 타임스탬프는 고정값(FIXED_ZIP_DT)·엔트리 편철
+  순서 고정·압축 무순서화 → 같은 입력이면 같은 zip 바이트(동일 zlib 환경)가 나오는 것은 **SVG-only
+  번들(도면 SVG만 담긴 경우)에 한정**된다. PDF(reportlab, CreationDate/문서ID 필드) · xlsx(openpyxl,
+  docProps/core.xml 의 created/modified 타임스탬프)는 렌더러가 생성 시각을 자체적으로 내부 메타데이터에
+  박아 넣으므로, report_pdf/boq_xlsx 를 포함한 번들은 같은 입력이라도 매 호출 zip 바이트가 달라질 수
+  있다(비결정적). 이 모듈은 그 비결정성을 숨기지 않는다 — sha256 은 항상 '실제 받은 bytes'를 그대로
+  해시하므로(가짜 고정값 아님), 매니페스트는 매 산출물의 진짜 해시를 정직하게 기록한다. 재현성이
+  필요하면 report_pdf/boq_xlsx 를 빼고 도면 SVG만으로 번들을 구성하라.
 ★무날조: run_id/input_hash 등 생성근거는 '인자로 받은 값'만 기록한다(가짜 생성 0). 부재 시 정직 표기.
   발행일(issue_date)도 명시 인자만 — 이 모듈은 now()/uuid/random 을 쓰지 않는다.
 
@@ -122,6 +129,10 @@ def build_submission_bundle(
     - report_pdf / boq_xlsx: 옵셔널 bytes(없으면 매니페스트에 present=False 로 정직 표기).
     - issue_date / provenance: 명시 인자만(now()·uuid 생성 금지). provenance 예: {run_id, input_hash,
       geometry_hash, compiler_version}.
+
+    ★결정성 주의: report_pdf/boq_xlsx 를 포함하면 zip 바이트가 호출마다 달라질 수 있다(reportlab/
+    openpyxl 내부 타임스탬프 메타데이터 — 모듈 상단 ★결정성 문단 참조). SVG(+DXF)만으로 구성하면
+    바이트 재현성이 보장된다. 어느 경우든 매니페스트 sha256 은 실제 산출물을 정직하게 반영한다.
     """
     drawings_svg = drawings_svg or {}
     drawings_dxf = drawings_dxf or {}
@@ -246,7 +257,11 @@ def _writestr(zf: zipfile.ZipFile, name: str, data: bytes) -> None:
 def verify_bundle(zip_bytes: bytes) -> tuple[bool, list[str]]:
     """번들 무결성 전수 대조 — 매니페스트의 파일별 sha256·bundle_hash 를 zip 실제 내용과 재계산 대조.
 
-    반환: (ok, problems). problems 는 불일치·누락 항목의 사람 읽는 사유 목록.
+    양방향 대조(★리뷰 반영 — 편방향만으로는 밀반입 탐지 불가):
+    - 매니페스트 → zip: 선언된 각 파일이 실제로 있고 해시가 일치하는가.
+    - zip → 매니페스트: zip 안에 매니페스트가 모르는 파일(밀반입)이 끼어있지 않은가.
+
+    반환: (ok, problems). problems 는 불일치·누락·밀반입 항목의 사람 읽는 사유 목록.
     ★게이트 헬퍼: '매니페스트 해시 전수 대조'를 이 함수 하나로 수행(테스트·라우터 공용).
     """
     problems: list[str] = []
@@ -264,7 +279,7 @@ def verify_bundle(zip_bytes: bytes) -> tuple[bool, list[str]]:
             if declared != recomputed:
                 problems.append("bundle_hash 불일치(매니페스트 변조 의심)")
 
-            # (b) 파일별 sha256 전수 대조.
+            # (b) 파일별 sha256 전수 대조(매니페스트 → zip 방향 — 선언된 파일이 실제로 있고 해시 일치).
             for entry in manifest.get("files", []):
                 arc = entry.get("arcname")
                 if arc not in names:
@@ -273,6 +288,22 @@ def verify_bundle(zip_bytes: bytes) -> tuple[bool, list[str]]:
                 actual = _sha256_bytes(zf.read(arc))
                 if actual != entry.get("sha256"):
                     problems.append(f"해시 불일치: {arc}")
+
+            # (c) 역방향 대조(zip → 매니페스트) — 매니페스트에 없는 파일이 zip에 밀반입됐는지 확인.
+            #   (b)만으로는 '선언된 파일이 맞는지'만 보고, '선언 안 된 파일이 몰래 끼어들었는지'는
+            #   놓친다(무음 통과 취약점). declared에 매니페스트 자신(MANIFEST_NAME)도 포함해야
+            #   매니페스트 엔트리 자체가 오탐으로 잡히지 않는다.
+            declared = {e.get("arcname") for e in manifest.get("files", [])} | {MANIFEST_NAME}
+            smuggled = names - declared
+            for name in sorted(smuggled):
+                problems.append(f"미등록 파일(밀반입 의심): {name}")
+            # 전건 대조 보강 단언 — 밀반입이 없다면 zip 엔트리 수는 '매니페스트 파일 수 + manifest.json'
+            # 과 정확히 같아야 한다(개수가 맞아도 이름이 다르면 위 smuggled가 이미 잡으므로, 이 검사는
+            # 이름 집합 비교의 이중 확인 성격 — 실패해도 problems가 이미 채워져 있어 중복 신호 없음).
+            if not smuggled and len(names) != len(manifest.get("files", [])) + 1:
+                problems.append(
+                    f"엔트리 수 불일치: zip={len(names)} vs 매니페스트+1={len(manifest.get('files', [])) + 1}"
+                )
     except Exception as exc:  # noqa: BLE001 — 손상 zip 도 정직하게 실패로(예외 삼키지 않음)
         return False, [f"번들 열기 실패: {exc}"]
     return (len(problems) == 0, problems)

@@ -10,6 +10,7 @@ import copy
 import json
 from typing import Any, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -38,6 +39,7 @@ from app.services.report.submission_bundle import (  # WP-F 제출 번들 컴파
 )
 from apps.api.database.session import get_db
 
+logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
 svg_service = SVGDrawingService()
 alt_selector = DesignAlternativeSelector()
@@ -984,8 +986,11 @@ async def generate_submission_bundle(
                     content_hash=sha256_hex(raw_drawings[code]),
                 )
                 drawings_dxf[code] = apply_title_block_dxf(dxf_bytes, tb)
-        except ImportError:
-            pass  # ezdxf 미설치 — DXF 없이 SVG만(정직 — include_dxf 요청해도 부재 시 스킵)
+        except Exception as exc:  # noqa: BLE001 — DXF는 부가물(SVG로 필수시트 이미 충족):
+            # ezdxf 미설치(ImportError)뿐 아니라 특정 시트 치수 조합에서의 예상 밖 예외까지 폭넓게
+            # 흡수해, 부가 산출물 실패가 번들 전체를 500으로 끌고 내려가지 않게 한다(무음은 아님 —
+            # 원인을 반드시 로깅). 필수시트는 이미 SVG로 충족돼 있으므로 산출 거부 사유가 아니다.
+            logger.warning("submission_bundle_dxf_generation_failed", project_id=project_id, error=str(exc))
 
     # ── 3) 보고서 PDF(옵션) — ReportModel 정본 렌더러 재사용(산식 계산 0) ──
     report_pdf: bytes | None = None
