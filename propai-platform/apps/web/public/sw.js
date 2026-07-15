@@ -24,7 +24,9 @@
 //        지도 레이어 신코드가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v417: 회원 계정 시스템(#280 — forgot/reset-password·verify-email·account 신규 라우트) 반영.
 //        신규 인증 화면·플로우가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v417-auth-accounts";
+// v418: 수지 Excel 실배선·몬테카를로 백엔드 실엔진 교체(#294)+AI 라우트 nodejs 런타임(#295) 반영.
+//        교체된 수지 위젯·라우트가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v418-feasibility-honest";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
