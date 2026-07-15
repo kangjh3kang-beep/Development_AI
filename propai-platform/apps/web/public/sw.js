@@ -26,7 +26,9 @@
 //        신규 인증 화면·플로우가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v418: 수지 Excel 실배선·몬테카를로 백엔드 실엔진 교체(#294)+AI 라우트 nodejs 런타임(#295) 반영.
 //        교체된 수지 위젯·라우트가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v418-feasibility-honest";
+// v419: 설계 스튜디오 임베드 레이아웃 컨테이너 쿼리 전환(#306) — 세로텍스트 붕괴·버튼잘림·
+//        빈상태·부지지표 3중중복 봉합. 재배치된 레이아웃이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v419-design-studio-layout";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
