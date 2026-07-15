@@ -136,6 +136,11 @@ def compute_taxes(
         total_gfa_sqm=inp.total_gfa_sqm,
         building_type=inp.building_type,
         total_units=inp.total_households,
+        # ★C01(부가세 전용 85㎡ 판정) 주의 — avg_area_pyeong은 생산처별 의미 분열 상태:
+        #   공급평(build_module_input·precheck) vs 전용평(프론트 수동폼·orchestration·baseline).
+        #   여기(공유 소비처)서 전용률을 일괄 환산하면 전용평 경로가 이중 축소돼 과세대상
+        #   (전용 85~113㎡)이 날조 면세로 뒤집힌다(2026-07-15 리뷰 라이브 재현). 규약 통일
+        #   전까지 임의 환산 금지 — 공급평 생산 경로의 과세 방향(보수) 결함은 통일 후 교정.
         avg_area_sqm=inp.avg_area_pyeong * 3.305785 if inp.avg_area_pyeong else 85.0,
         in_infra_charge_zone=parse_bool_flag(inp.params.get("in_infra_charge_zone")),
     )
