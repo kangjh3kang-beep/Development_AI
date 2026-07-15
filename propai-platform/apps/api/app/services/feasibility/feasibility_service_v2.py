@@ -564,8 +564,9 @@ class FeasibilityServiceV2:
             total_gfa_sqm=total_gfa,
             total_households=total_hh,
             avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
-            # 분양가(원/평)는 공급면적 기준 시세 → 면적도 공급평수(전용/전용률)로 통일
-            avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+            # ★D1 규약(2026-07-16): avg_area_pyeong = '전용면적 평'. 공급 환산(전용/전용률)은
+            #   매출 곱 시 revenue_block이 수행 — (전용/전용률)=공급 라운드트립으로 매출 무회귀.
+            avg_area_pyeong=avg_unit_area / 3.305785,
             sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
             official_price_per_sqm=official_price_per_sqm or 1_500_000,
             price_multiplier=1.1,

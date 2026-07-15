@@ -254,8 +254,10 @@ export function buildNodeBody(
       const bt = nonEmptyStr(design?.buildingType);
       if (bt) body.building_type = bt;
       // (Phase C-2) ★분양수입 폐루프: 매출단가·세대수·세대(전용)면적을 채워 수지가 실거래 기반으로 계산되게 한다.
-      //  근거(코드 확정): 백엔드 revenue = (total_households × sale_ratio) × avg_area_pyeong(평) × avg_sale_price_per_pyeong(원/평)
-      //   (revenue_engine.calculate_sale_revenue / revenue_block.compute_revenue). 면적에 전용률을 별도로 곱하지 않는다.
+      //  ★D1 규약(2026-07-16 갱신): avg_area_pyeong = '전용면적 평'(전 생산처 통일). 백엔드
+      //   revenue_block이 매출 곱 시 공급평(전용÷전용률, unit_standards SSOT)으로 환산하므로
+      //   여기서는 전용평을 그대로 보낸다(이중 환산 금지). 종전 "전용률 별도 곱하지 않는다"
+      //   계약은 '프론트에서'라는 의미로 유지 — 환산 책임이 백엔드 소비처로 명확해졌다.
       //   ★sale_ratio는 "분양세대/전체세대 비율(세대수 분할)"이지 면적효율이 아니다(기본 1.0). 따라서 면적기준 정합은 우리가 직접 맞춰야 한다.
       //  셋 중 하나라도 0이면 분양수입=0(백엔드는 avg_area_pyeong 폴백이 없음) → 환류만으로는 효과가 없으므로 세대수·면적도 동반 채운다.
       //  모두 optional(미확보 시 미주입=백엔드 기본 0 → 종전과 동일 동작, 무회귀·needs-input 유지).
@@ -263,7 +265,13 @@ export function buildNodeBody(
       //   ★이 단가는 "전용면적 기준 평당 실거래가"다(MOLIT excluUseAr=전용면적으로 정규화 — molit_client.py:369,
       //    market_report_service._per_pyeong_stat). 따라서 곱하는 면적도 "전용면적 평"이어야 기준이 일치한다.
       const salePriceWon = positiveNum(feas?.salePricePerPyeongWon);
-      if (salePriceWon != null) body.avg_sale_price_per_pyeong = salePriceWon;
+      if (salePriceWon != null) {
+        body.avg_sale_price_per_pyeong = salePriceWon;
+        // ★D1-R1(단가 basis 계약): 이 단가는 MOLIT 실거래(전용면적 excluUseAr) 기준 —
+        //   백엔드 revenue_block이 공급 환산을 건너뛰고 전용면적 그대로 곱하도록 명시.
+        //   (미명시 기본 "supply"면 ÷전용률 환산으로 매출 +33% 과대 — 리뷰 라이브 재현)
+        body.price_basis = "exclusive";
+      }
       // ② 세대수: 설계(BIM 매스)가 산출한 총세대수 우선, 없으면 개략수지 세대수 가정
       //   (feasibilityData.totalHouseholds, GFA÷유형 표준 전용면적)으로 폴백 — avg_area_pyeong
       //   산식(GFA×전용률÷세대수)에서 세대수가 소거되므로 매출은 GFA×전용률×단가로 개략수지
