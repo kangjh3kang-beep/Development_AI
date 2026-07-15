@@ -959,13 +959,19 @@ async def generate_submission_bundle(
     input_hash = compute_input_hash(project_data)
     run_id = make_run_id(input_hash)
 
-    # ── WP-L 멱등 재생 판정(키 있을 때만) — request_hash=input_hash(결정적 프로젝트 지문) ──
+    # ── WP-L 멱등 재생 판정(키 있을 때만) ──
+    # ★request_hash는 산출물에 영향을 주는 요청 필드 전체를 반영해야 한다. input_hash(=기하 앵커
+    #   compute_input_hash)는 표제란 cosmetic(축척·발행일)을 제외하므로, scale/issue_date만 다른
+    #   요청이 같은 키로 오면 낡은 표제란 zip이 재생된다(리뷰 MEDIUM). 명시 편입해 봉합.
+    _bundle_req_hash = idempotency.compute_request_hash(
+        {"input_hash": input_hash, "scale": req.scale, "issue_date": req.issue_date or ""}
+    )
     _idem_tenant = str(getattr(user, "tenant_id", "") or "") or None
     _idem_key = idempotency.normalize_key(idempotency_key)
     if _idem_key:
         _look = await idempotency.lookup(
             db=db, key=_idem_key, tenant_id=_idem_tenant,
-            endpoint="submission-bundle", request_hash=input_hash,
+            endpoint="submission-bundle", request_hash=_bundle_req_hash,
         )
         if _look.state == idempotency.STATE_CONFLICT:
             raise HTTPException(
@@ -1055,7 +1061,7 @@ async def generate_submission_bundle(
     if _idem_key:
         await idempotency.save(
             db=db, key=_idem_key, tenant_id=_idem_tenant, endpoint="submission-bundle",
-            request_hash=input_hash, response_status=200, body=zip_bytes,
+            request_hash=_bundle_req_hash, response_status=200, body=zip_bytes,
             media_type="application/zip", run_id=run_id,
         )
 

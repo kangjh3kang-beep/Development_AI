@@ -180,3 +180,19 @@ def test_base64_encoding_used_for_body_storage():
     assert "base64.b64encode" in src
     # sanity: round-trip
     assert base64.b64decode(base64.b64encode(b"\x00\x01")) == b"\x00\x01"
+
+
+def test_submission_bundle_request_hash_includes_cosmetic_fields():
+    """★리뷰 MEDIUM 회귀 고정 — submission-bundle 멱등 지문은 산출물에 영향을 주는
+    표제란 필드(축척·발행일)를 반드시 포함해야 한다. 같은 input_hash라도 scale/issue_date가
+    다르면 지문이 달라져(→ 다른 요청=conflict) 낡은 표제란 zip이 재생되지 않는다."""
+    ih = "abc123deadbeef"
+    base = idem.compute_request_hash({"input_hash": ih, "scale": "1:200", "issue_date": "2026-07-15"})
+    diff_scale = idem.compute_request_hash({"input_hash": ih, "scale": "1:100", "issue_date": "2026-07-15"})
+    diff_date = idem.compute_request_hash({"input_hash": ih, "scale": "1:200", "issue_date": "2026-07-16"})
+    assert base != diff_scale, "축척만 달라도 지문이 달라야 함(낡은 표제란 재생 방지)"
+    assert base != diff_date, "발행일만 달라도 지문이 달라야 함"
+    # 같은 3필드면 결정적으로 동일(정상 재생)
+    assert base == idem.compute_request_hash(
+        {"issue_date": "2026-07-15", "scale": "1:200", "input_hash": ih}
+    )
