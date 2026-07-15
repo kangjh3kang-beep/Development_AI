@@ -21,7 +21,7 @@ from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.modules.common.cost_blocks import compute_taxes
 from app.services.feasibility.modules.generic_module import GenericModule
 from app.services.tax.integrated_tax_engine import calculate_all_taxes
-from app.services.tax.project_charges import compute_developer_stage_charges
+from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
 
 
 def _base_input(**overrides) -> ModuleInput:
@@ -162,6 +162,34 @@ class TestC07Channel:
         result = compute_taxes(inp, 10_000_000_000)
         c07 = _find_item(result["sale"], "C07")
         assert c07 is not None and c07["amount_won"] == 0
+
+    def test_string_false_does_not_charge(self):
+        """리뷰 P2-1: JSON 직렬화로 문자열 "false"가 와도 C07 오부과 금지."""
+        for falsy in ("false", "False", "0", "no", "off", ""):
+            inp = _base_input(params={"in_infra_charge_zone": falsy})
+            result = compute_taxes(inp, 10_000_000_000)
+            c07 = _find_item(result["sale"], "C07")
+            assert c07 is not None and c07["amount_won"] == 0, f"오부과: {falsy!r}"
+        # 문자열 "true"는 정상 활성
+        inp_true = _base_input(params={"in_infra_charge_zone": "true"})
+        c07_true = _find_item(compute_taxes(inp_true, 10_000_000_000)["sale"], "C07")
+        assert c07_true is not None and c07_true["amount_won"] > 0
+
+
+class TestParseBoolFlag:
+    """불리언 게이트 안전 파서 — 문자열/원시값 판정 계약."""
+
+    def test_falsy_strings(self):
+        for v in ("false", "FALSE", " no ", "0", "off", "n", ""):
+            assert parse_bool_flag(v) is False
+
+    def test_truthy_values(self):
+        for v in ("true", "1", "yes", "on", True, 1):
+            assert parse_bool_flag(v) is True
+
+    def test_native_falsy(self):
+        for v in (False, 0, None, 0.0):
+            assert parse_bool_flag(v) is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

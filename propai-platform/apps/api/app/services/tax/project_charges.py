@@ -22,6 +22,21 @@ from typing import Any
 from app.services.tax.sale_stage_engine import calculate_all_sale_stage
 from app.services.tax.utility_stage_engine import calculate_all_utility_stage
 
+# JSON/쿼리스트링 직렬화로 불리언이 문자열로 오는 흔한 오염 케이스의 거짓값 표기들.
+_FALSY_STRINGS = frozenset({"", "0", "false", "no", "n", "off"})
+
+
+def parse_bool_flag(value: Any) -> bool:
+    """부담금 게이트용 불리언 안전 파서 — 문자열 "false"/"0" 오부과 방지(리뷰 P2-1).
+
+    무타입 dict(params·overrides)에서 오는 게이트는 클라이언트 직렬화에 따라
+    문자열 "false"가 올 수 있고, 원시 bool("false")=True라 부담구역이 아닌
+    사업지에 C07이 부과된다. 문자열은 표기 기준으로, 그 외는 truthiness로 판정한다.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSY_STRINGS
+    return bool(value)
+
 
 def _collect_unavailable_notes(stage: dict[str, Any]) -> list[str]:
     """단계 items에서 '산출 불가(정직 강등)' 항목의 사유를 수집한다.
@@ -68,18 +83,18 @@ def compute_developer_stage_charges(
     construction = calculate_all_utility_stage(
         sido_name=sido_name,
         sigungu_name=sigungu_name,
-        total_households=max(0, int(total_households)),
-        total_sale_amount_won=max(0, int(total_sale_amount_won)),
-        total_gfa_sqm=max(0.0, float(total_gfa_sqm)),
+        total_households=max(0, total_households),
+        total_sale_amount_won=max(0, total_sale_amount_won),
+        total_gfa_sqm=max(0.0, total_gfa_sqm),
         building_type=building_type,
     )
     sale = calculate_all_sale_stage(
-        total_sale_amount_won=max(0, int(total_sale_amount_won)),
-        total_units=max(0, int(total_households)),
-        avg_area_sqm=float(avg_area_sqm) if avg_area_sqm else 85.0,
-        total_gfa_sqm=max(0.0, float(total_gfa_sqm)),
+        total_sale_amount_won=max(0, total_sale_amount_won),
+        total_units=max(0, total_households),
+        avg_area_sqm=avg_area_sqm or 85.0,
+        total_gfa_sqm=max(0.0, total_gfa_sqm),
         building_type=building_type,
-        in_infra_charge_zone=bool(in_infra_charge_zone),
+        in_infra_charge_zone=in_infra_charge_zone,
     )
     notes = _collect_unavailable_notes(construction) + _collect_unavailable_notes(sale)
     return {

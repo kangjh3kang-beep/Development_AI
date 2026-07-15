@@ -32,7 +32,7 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
-from app.services.tax.project_charges import compute_developer_stage_charges
+from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
 
 logger = logging.getLogger(__name__)
 
@@ -591,8 +591,11 @@ async def build_rough_scenario(
                 total_sale_amount_won=revenue_total,
                 total_gfa_sqm=float(gfa_sqm or 0),
                 building_type=_service._get_building_type(dev_type_final),
-                avg_area_sqm=(float(getattr(input_used, "avg_area_pyeong", 0) or 0) * _PYEONG_SQM) or 85.0,
-                in_infra_charge_zone=bool(overrides.get("in_infra_charge_zone") or False),
+                # ★C01 부가세 면세기준(국민주택규모)은 '전용 85㎡' — 공급면적(avg_area_pyeong)을
+                #   넘기면 전용 61~85㎡ 최다 구간이 과세로 뒤집혀 분양수입의 ~2.7%가 날조 과세된다
+                #   (리뷰 P2-2). 개발유형 표준 전용면적(unit_standards SSOT)을 전달한다.
+                avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
+                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
             _compact = [

@@ -9,6 +9,7 @@ from app.services.feasibility.finance_cost_engine import calculate_total_finance
 from app.services.feasibility.land_cost_engine import calculate_total_land_cost
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.tax.integrated_tax_engine import calculate_all_taxes
+from app.services.tax.project_charges import parse_bool_flag
 
 
 def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
@@ -127,5 +128,5 @@ def compute_taxes(
         building_type=inp.building_type,
         total_units=inp.total_households,
         avg_area_sqm=inp.avg_area_pyeong * 3.305785 if inp.avg_area_pyeong else 85.0,
-        in_infra_charge_zone=bool(inp.params.get("in_infra_charge_zone") or False),
+        in_infra_charge_zone=parse_bool_flag(inp.params.get("in_infra_charge_zone")),
     )

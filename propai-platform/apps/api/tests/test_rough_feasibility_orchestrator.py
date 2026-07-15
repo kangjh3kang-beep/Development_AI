@@ -151,6 +151,10 @@ async def test_margin_20pct_field(monkeypatch):
     )
     assert charges["buyer_borne_total_won"] == buyer_items_sum
     assert charges["total_won"] + buyer_items_sum == sum(it["amount_won"] for it in charges["items"])
+    # 리뷰 P2-2: C01 부가세 면세기준은 '전용 85㎡' — M06 표준 전용 84㎡는 면세여야 한다.
+    # (공급면적 112㎡를 잘못 전달하면 분양수입의 ~2.4%가 날조 과세로 계상됨)
+    c01 = next(it for it in charges["items"] if it["code"] == "C01")
+    assert c01["amount_won"] == 0
 
 
 @pytest.mark.asyncio
