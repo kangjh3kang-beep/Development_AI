@@ -78,6 +78,28 @@ class TestAssembleMonthlyDcf:
         assert dcf["cf_summary"]["after_tax_irr_annual_pct"] == dcf["irr_pct"]
         assert dcf["cf_summary"]["irr_annual_pct"] != dcf["irr_pct"]
 
+    def test_soft_cost_flows_out_in_unlevered_stream(self):
+        """리뷰 R1-HIGH-2: 소프트비 주입 시 무차입 스트림 총액 = 수입 − (토지+공사+소프트비).
+        누락 시 총사업비의 ~13%가 빠져 NPV 3배 과대·IRR 216% 왜곡이 실측됐던 결함의 고정."""
+        land, constr, soft, rev = 5e9, 10e9, 2e9, 25e9
+        dcf = assemble_monthly_dcf(
+            land_cost_won=land, construction_cost_won=constr, revenue_won=rev,
+            project_months=36, discount_rate=0.06, soft_cost_won=soft,
+        )
+        assert dcf is not None
+        total = sum(dcf["cf"]["unlevered_netflows"])
+        assert total == pytest.approx(rev - land - constr - soft, abs=5)
+
+    def test_soft_cost_none_keeps_legacy_design_ratio(self):
+        """미지정(None)은 기존 내부 3% 설계비 동작 완전 동일(무회귀)."""
+        land, constr, rev = 5e9, 10e9, 25e9
+        dcf = assemble_monthly_dcf(
+            land_cost_won=land, construction_cost_won=constr, revenue_won=rev,
+            project_months=36, discount_rate=0.06,
+        )
+        total = sum(dcf["cf"]["unlevered_netflows"])
+        assert total == pytest.approx(rev - land - constr - constr * 0.03, abs=5)
+
     def test_insufficient_inputs_return_none(self):
         assert assemble_monthly_dcf(
             land_cost_won=0, construction_cost_won=0, revenue_won=10, project_months=36,
@@ -95,6 +117,26 @@ class TestAssembleMonthlyDcf:
         assert payback_month(rows) == 2
         assert payback_month([{"month": 0, "inflow": 0, "cumulative": -1}]) is None
 
+    def test_payback_ignores_loan_drawdown_spike(self):
+        """리뷰 R1-HIGH-1 반증 케이스: 착공월 PF 인출로 누적이 순간 +로 튀어도 회수 아님 —
+        최대 자금소요(트로프) 이후 첫 누적≥0이 회수월(원본 rough 로직)."""
+        rows = [
+            {"month": 0, "inflow": 0, "cumulative": -100},
+            {"month": 4, "inflow": 1_000, "cumulative": 50},    # PF 인출 스파이크(가짜 +)
+            {"month": 10, "inflow": 0, "cumulative": -500},     # 공사비 유출로 트로프
+            {"month": 30, "inflow": 700, "cumulative": 20},     # 분양수입으로 실회수
+        ]
+        assert payback_month(rows) == 30  # 4가 아님(스파이크 무시)
+
+    def test_payback_total_loss_is_none(self):
+        """대손(최종 누적 음수) 사업은 회수월 None — '4개월 회수' 오판 금지."""
+        rows = [
+            {"month": 0, "inflow": 0, "cumulative": -100},
+            {"month": 4, "inflow": 1_000, "cumulative": 50},    # 인출 스파이크
+            {"month": 36, "inflow": 100, "cumulative": -300},   # 트로프이자 최종(미회수)
+        ]
+        assert payback_month(rows) is None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) 경로A(/calculate 서비스) — NPV 교체 + cashflow_summary 부착
@@ -108,9 +150,30 @@ class TestPathADetailedDcf:
         # 종전 단일기간 근사와 다름을 확인(결함 수지7의 실교체 증명)
         legacy_npv = int(out.net_profit_won / ((1 + 0.08) ** (36 / 12)))
         assert out.npv_won != legacy_npv
-        assert "월별 DCF" in cs["npv_basis"]
+        # ★R1-HIGH-2 상한 정합: 무차입 NPV ≤ (수입−토지−공사−소프트비−세금) 미할인 총액
+        #   (할인은 값을 줄이는 방향 — 상한 초과는 비용 누락 신호).
+        undiscounted = (
+            out.total_revenue_won - out.total_land_cost_won
+            - out.total_construction_cost_won - out.total_other_cost_won
+            - out.total_tax_cost_won
+        )
+        assert out.npv_won <= undiscounted
+        # IRR: 존재 + 조기 유입 가정의 정직 라벨(분양대금 분할 미모델링 — 엔진 기존 가정을
+        # 라벨로 노출. 분할 유입 모델링은 후속 — 계획문서 기록).
         assert cs["irr_pct"] is not None
-        assert cs["assumptions"]
+        assert any("조기 유입" in a for a in cs["assumptions"])
+        assert "월별 DCF" in cs["npv_basis"]
+
+    def test_income_dcf_module_npv_preserved(self):
+        """리뷰 R1-MEDIUM-1: 보유형(M08 소득접근 DCF 보유) 모듈의 고유 npv는 보존 —
+        개발현금흐름 NPV는 cashflow_summary에 병기."""
+        inp = _sale_input("M08")
+        inp.params = {"annual_noi_won": 1_500_000_000, "holding_years": 10}
+        out = FeasibilityServiceV2().calculate(inp)
+        if (out.special_detail or {}).get("dcf"):
+            assert out.cashflow_summary is not None
+            assert out.npv_won != out.cashflow_summary["npv_won"]  # 고유 소득 DCF 보존
+            assert "소득접근" in out.cashflow_summary["npv_basis"]
 
     def test_sale_project_dscr_honest_null(self):
         """분양형(임대 0) — DSCR은 사유와 함께 정직 null(무날조)."""

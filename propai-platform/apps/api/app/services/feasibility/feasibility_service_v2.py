@@ -57,6 +57,10 @@ class FeasibilityServiceV2:
                 equity_won=float(inp.equity_won or 0),
                 discount_rate=inp.discount_rate or 0.08,
                 total_cost_won=float(output.total_cost_won or 0) or None,
+                # ★R1-HIGH-2: 소프트비(제경비 7% 통칭 — 설계·감리 포함)를 DCF 유출에 주입.
+                #   누락 시 총사업비의 ~13%가 빠져 NPV 3배 과대·IRR 216% 왜곡 실측.
+                #   금융비는 무차입 FCF 방법론상 제외(자본비용은 할인율이 반영).
+                soft_cost_won=float(output.total_other_cost_won or 0),
                 # 세금 시점주입: A→월0·B→착공·C→분양 비례·D→정산(총액 보존 어댑터).
                 tax_schedule=build_tax_schedule_from_integrated(output.tax_detail),
             )
@@ -76,15 +80,19 @@ class FeasibilityServiceV2:
             if annual_net_rent > 0 and annual_interest > 0:
                 dscr = round(annual_net_rent / annual_interest, 2)
                 dscr_note = (
-                    "연 순임대수입(공실 차감) ÷ 연평균 이자 — 만기일시 원금 가정(원금상환 미포함, "
-                    "이자보상 기준)"
+                    "연 순임대수입(공실 차감) ÷ 개발단계 금융비 연분할 근사 — 이자보상 기준"
+                    "(만기일시 원금 가정·상시 임대운영 대출은 미모델링, 참고용)"
                 )
             elif annual_net_rent > 0:
                 dscr_note = "무차입(금융비 0) — DSCR 분모 없음"
             else:
                 dscr_note = "분양형(임대수입 없음) — 기간 원리금 상환 구조가 아니어서 DSCR 미적용"
 
-            if dcf["npv_won"] is not None:
+            # ★R1-MEDIUM-1: 소득접근 DCF를 고유 npv로 쓰는 보유형 모듈(M08 오피스텔 등 —
+            #   special_detail.dcf 보유)은 정본 가치평가를 보존하고 개발현금흐름 NPV는
+            #   cashflow_summary에만 병기한다(덮어쓰기 금지).
+            income_dcf = bool((output.special_detail or {}).get("dcf"))
+            if dcf["npv_won"] is not None and not income_dcf:
                 output.npv_won = int(dcf["npv_won"])
             output.cashflow_summary = {
                 "npv_won": dcf["npv_won"],
@@ -93,13 +101,17 @@ class FeasibilityServiceV2:
                 "dscr": dscr,
                 "dscr_basis": dscr_note,
                 "npv_basis": (
-                    "월별 DCF — 무차입 프로젝트 FCF 할인(세금 시점주입: 취득→월0·공사→착공·"
-                    "분양→분양수입 비례·양도→정산). 종전 단일기간 근사(순이익/(1+r)^년) 대체."
+                    ("모듈 고유 소득접근 DCF 보존(보유형) — 아래 값은 개발현금흐름 병기. "
+                     if income_dcf else "")
+                    + "월별 DCF — 무차입 프로젝트 FCF 할인(토지+공사+소프트비+세금 시점주입, "
+                    "금융비는 할인율이 반영·제외). 종전 단일기간 근사(순이익/(1+r)^년) 대체."
                 ),
                 "assumptions": [
                     f"공사기간 {dcf['construction_months']}개월(=max(6, 사업기간−6) 표준 근사)",
                     f"분양개시 {dcf['sale_start_month']}개월차·분양 {dcf['sale_duration_months']}개월(표준 근사)",
                     f"자기자본비율 {dcf['equity_ratio']:.0%}(자기자본÷총사업비, 미확보 시 30%)",
+                    "분양수입은 분양기간 조기 유입 가정(계약금·중도금·잔금 분할 미모델링) — "
+                    "무차입 IRR이 실제보다 높게 산출될 수 있음(NPV는 할인 총액이라 영향 제한적)",
                 ],
             }
         except Exception as e:  # noqa: BLE001 — DCF 부착 실패는 수지 본체 무손상

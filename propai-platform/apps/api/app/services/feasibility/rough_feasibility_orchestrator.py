@@ -689,6 +689,9 @@ async def build_rough_scenario(
             equity_won=float(equity),
             discount_rate=discount_rate,
             total_cost_won=summary.get("total_cost_won"),
+            # ★R1-HIGH-2 동반 교정: 제경비(other_total)를 DCF 유출에 주입 — 종전엔 rough도
+            #   동일 누락으로 NPV·IRR이 과대였다(의도된 정확화 — 총사업비와 동일 비용 기저).
+            soft_cost_won=float(other_total) if other_total else None,
             tax_schedule=tax_schedule,
             construction_months=construction_months,
             sale_start_month=sale_start,

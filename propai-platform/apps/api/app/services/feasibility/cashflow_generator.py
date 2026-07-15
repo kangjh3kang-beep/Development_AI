@@ -45,6 +45,10 @@ class CashflowGenerator:
         equity_ratio: float = 0.3,        # 자기자본 비율
         design_months: int = 3,           # 설계 기간
         design_cost_ratio: float = 0.03,  # 설계비 비율 (공사비 대비)
+        # ★W3-R1-HIGH-2(additive): 소프트비 총액 직접 주입 — 지정 시 내부 3% 설계비 계상을
+        #   '대체'하고(모듈 total_other_cost_won에 설계·감리가 포함돼 이중계상 방지) 유출을
+        #   설계 시작~공사 종료에 균등 분산한다. None(기본)=기존 동작 완전 동일(무회귀).
+        soft_cost_won: float | None = None,
         tax_schedule: dict[str, Any] | None = None,  # R1: 세금 시점 주입(additive, None=기존 동작)
     ) -> dict[str, Any]:
         """월별 현금흐름을 생성한다.
@@ -88,7 +92,15 @@ class CashflowGenerator:
         settlement_months = 3
         total_months = construction_end + settlement_months + 1
 
-        design_cost = construction_cost * design_cost_ratio
+        # soft_cost_won 지정 시 설계비 슬롯을 소프트비 총액으로 대체(라벨·유출기간도 확장).
+        if soft_cost_won is not None:
+            design_cost = float(soft_cost_won)
+            soft_spread_end = construction_end  # 설계 시작(월1)~공사 종료 균등 분산
+            soft_label = "소프트비(설계·감리·제경비)"
+        else:
+            design_cost = construction_cost * design_cost_ratio
+            soft_spread_end = design_months
+            soft_label = "설계비"
         total_project_cost = land_cost + design_cost + construction_cost
 
         # ── 자금 구조 ──
@@ -152,11 +164,11 @@ class CashflowGenerator:
                 inflow += bridge_loan_amount
                 items.append("브릿지론 실행")
 
-            # ── Phase 1: 설계 (Month 1 ~ design_months) ──
-            if 1 <= month <= design_months:
-                monthly_design = design_cost / design_months
+            # ── Phase 1: 설계/소프트비 (Month 1 ~ soft_spread_end) ──
+            if 1 <= month <= soft_spread_end:
+                monthly_design = design_cost / max(1, soft_spread_end)
                 outflow += monthly_design
-                items.append("설계비")
+                items.append(soft_label)
 
             # ── 브릿지론 → PF 전환 (시공 시작 시) ──
             if month == construction_start:
@@ -265,9 +277,9 @@ class CashflowGenerator:
         # (rows의 net은 대출 드로/상환·자기자본 포함이라 IRR 폭증 → 의미있는 사업 IRR은 무차입 기준)
         unlevered = [0.0] * total_months
         unlevered[0] -= land_cost
-        for m in range(1, design_months + 1):
+        for m in range(1, soft_spread_end + 1):
             if m < total_months:
-                unlevered[m] -= design_cost / max(1, design_months)
+                unlevered[m] -= design_cost / max(1, soft_spread_end)
         for ci in range(len(monthly_construction)):
             m = construction_start + ci
             if m < total_months:

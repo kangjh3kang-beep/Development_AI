@@ -24,13 +24,18 @@ logger = logging.getLogger(__name__)
 
 
 def payback_month(rows: list[dict[str, Any]]) -> int | None:
-    """누적 현금흐름이 처음 0 이상이 되는 월(레버드 rows 기준 — 실제 자금위치)."""
-    for r in rows:
-        try:
-            if float(r.get("cumulative") or 0) >= 0 and float(r.get("inflow") or 0) > 0:
-                return int(r.get("month"))
-        except (TypeError, ValueError):
-            continue
+    """자금 회수월 — 최대 자금소요(누적 최저) 이후 처음으로 누적현금이 0 이상 되는 월.
+
+    ★리뷰 R1-HIGH-1: rough 원본 로직 그대로 이관(트로프-이후 판정). 단순 '누적≥0 첫 월'
+    방식은 착공월 PF 대출 인출(금융유입)로 누적이 순간 +로 튀는 것을 회수로 오판해
+    대손 사업(최종 누적 음수)조차 "N개월 회수"로 표기한다(20k 스윕 26% 불일치 실측).
+    """
+    if not rows:
+        return None
+    min_idx = min(range(len(rows)), key=lambda i: rows[i].get("cumulative", 0) or 0)
+    for r in rows[min_idx:]:
+        if (r.get("cumulative") or 0) >= 0:
+            return r.get("month")
     return None
 
 
@@ -43,6 +48,7 @@ def assemble_monthly_dcf(
     equity_won: float = 0,
     discount_rate: float = 0.08,
     total_cost_won: float | None = None,
+    soft_cost_won: float | None = None,
     tax_schedule: dict[str, Any] | None = None,
     construction_months: int | None = None,
     sale_start_month: int | None = None,
@@ -85,6 +91,7 @@ def assemble_monthly_dcf(
             sale_start_month=ss,
             sale_duration_months=sd,
             equity_ratio=equity_ratio,
+            soft_cost_won=soft_cost_won,
             tax_schedule=tax_schedule,
         )
         rows = cf.get("rows") or []
