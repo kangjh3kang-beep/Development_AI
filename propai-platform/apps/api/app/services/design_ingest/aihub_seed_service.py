@@ -120,6 +120,12 @@ class AihubSeedService:
 
             # ★컨테이너에 unzip 미설치 → aihubshell이 cat-병합한 .zip을 못 푼다. 파이썬 zipfile로 직접
             #   압축해제(시스템 의존 제거). 중첩(zip-in-zip) 3단계까지. 추출 후 원본 zip 제거(디스크 절약).
+            # ★정직 한계 표기(WP-H 세션1 리뷰 권장 반영): 이 zf.extractall()은 아직
+            #   app.services.security.content_inspection(zip bomb·zip slip 방어)에 결선되지 않았다.
+            #   즉시위험은 낮게 평가한다 — 소스가 임의 사용자 업로드가 아니라 관리자 승인 API 키로
+            #   접근하는 공식 정부기관(AI Hub, api.aihub.or.kr) 데이터셋이기 때문이다. 그러나 신뢰
+            #   경계를 완전히 없애는 것은 아니므로(공급망 리스크는 여전) 세션2 전역 스윕에서
+            #   inspect_archive() 사전검사 + 안전 추출(경로화이트리스트 재확인)로 교체할 예정.
             import zipfile
             archives_extracted = 0
             for _ in range(3):
