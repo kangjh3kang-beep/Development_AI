@@ -8,16 +8,18 @@
  * 좌측 스텝레일을 제거해 화면 진입 장벽과 시선 왕복을 줄인다.
  */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   DraftingCompass,
   Info,
+  Loader2,
   LockKeyhole,
   MapPin,
   Sparkles,
@@ -90,6 +92,25 @@ type Labels = {
   // 하단 정본 메트릭 잠금 바
   metricLockText: string;
   metricReanalysisNeeded: string;
+  // ── 흐름 진행 바(FlowAdvanceBar) — "지금 어느 단계·다음이 무엇" + 다음 액션 CTA ──
+  // dock 스텝 라벨(viewGenerateLabel/viewDrawLabel)과 접근성 이름이 겹치지 않도록 별도 문구.
+  //   dock=단계 네비게이션 컨트롤, CTA=현재 단계 완료 후 진행 액션 → 서로 다른 컨트롤이라
+  //   접근성 이름 중복(중복 매칭)·label-in-name 혼동을 피하려 어휘를 구분한다.
+  flowNextPrefix: string;        // "다음 단계" 프리픽스 칩
+  flowToGenerate: string;        // site 완료 → 생성 단계로 이동 CTA
+  flowToDraw: string;            // generate 완료 → 도면 단계로 이동 CTA
+  flowHintNeedSite: string;      // site 미완료 시 정직 안내(무CTA)
+  flowHintNeedDesign: string;    // generate 미완료 시 정직 안내(무CTA)
+  flowTerminal: string;          // draw(마지막 단계) 안내
+  flowProgressAria: string;      // 진행 표시 aria-label
+  flowNowLabel: string;          // "현재" prefix
+  // 단계 상태 어휘(dock 배지·흐름 바 공용) — 완료/진행가능/대기/로딩
+  stateDone: string;
+  stateReady: string;
+  stateBlocked: string;
+  stateLoading: string;
+  // dock 추천 다음 단계 강조 칩
+  nextChip: string;
 };
 
 const KO_LABELS: Labels = {
@@ -148,6 +169,20 @@ const KO_LABELS: Labels = {
   // 하단 정본 메트릭 잠금
   metricLockText: "정본 메트릭 잠금: 현 프로젝트와 다른 주소의 분석값은 표시하지 않습니다.",
   metricReanalysisNeeded: "재분석 필요",
+  // 흐름 진행 바
+  flowNextPrefix: "다음 단계",
+  flowToGenerate: "추천안 생성 시작",
+  flowToDraw: "CAD·BIM 편집 열기",
+  flowHintNeedSite: "부지 조건(주소·용도지역·대지면적)을 확정하면 다음 단계가 열립니다.",
+  flowHintNeedDesign: "추천안(건축개요)을 하나 적용하면 다음 단계가 열립니다.",
+  flowTerminal: "마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다.",
+  flowProgressAria: "설계 흐름 진행 상태",
+  flowNowLabel: "현재",
+  stateDone: "완료",
+  stateReady: "진행 가능",
+  stateBlocked: "대기",
+  stateLoading: "부지 보강 중",
+  nextChip: "다음",
 };
 
 const EN_LABELS: Labels = {
@@ -206,6 +241,20 @@ const EN_LABELS: Labels = {
   // 하단 정본 메트릭 잠금
   metricLockText: "Metrics locked: analysis values from a different address are not displayed.",
   metricReanalysisNeeded: "Re-analysis required",
+  // 흐름 진행 바
+  flowNextPrefix: "Next step",
+  flowToGenerate: "Start generating options",
+  flowToDraw: "Open CAD·BIM editor",
+  flowHintNeedSite: "Confirm site conditions (address · zone · area) to unlock the next step.",
+  flowHintNeedDesign: "Apply one design brief to unlock the next step.",
+  flowTerminal: "Final step — edit the verified drawings in CAD·BIM.",
+  flowProgressAria: "Design flow progress",
+  flowNowLabel: "Now",
+  stateDone: "Done",
+  stateReady: "In progress",
+  stateBlocked: "Waiting",
+  stateLoading: "Enriching site",
+  nextChip: "Next",
 };
 
 // zh-CN은 참조 파일(ProjectLegalWorkspaceClient)과 동일하게 KO_LABELS alias 사용
@@ -217,7 +266,7 @@ const LABELS: Record<Locale, Labels> = {
 
 type ViewKey = "site" | "generate" | "draw";
 
-type PipelineState = "complete" | "ready" | "blocked";
+type PipelineState = "complete" | "ready" | "blocked" | "loading";
 
 // 설계 엔진 내부 파이프라인(L1~L5) — 참고용 정적 설명. 데모 지표·가짜 상태 없음(무날조):
 //   단계별 실시간 상태·정합 지표는 실측 신호가 배선될 때만 표기한다(현재 정적 리스트만).
@@ -237,6 +286,8 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
   const [view, setView] = useState<ViewKey>("site");
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const designData = useProjectContextStore((s) => s.designData);
+  // 부지 보강(다필지 메타 fetch) 진행 신호 — 실측 store 필드. '로딩' 상태를 날조 없이 표기하는 근거.
+  const parcelEnrichPending = useProjectContextStore((s) => s.parcelEnrichPending);
   const projectRecord = useProjectStore((s) => s.projects.find((p) => p.id === projectId));
   // CAD/BIM(STEP3)은 한 번이라도 진입한 뒤에만 마운트. 첫 진입 전엔 마운트 자체를 막아
   //  WebGL 점유를 차단한다(lazy). 진입 후엔 hidden 토글로 보존.
@@ -282,7 +333,16 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
     setView(next);
   }
 
-  const siteState: PipelineState = hasAddressMismatch ? "blocked" : hasSiteBasis ? "complete" : "ready";
+  // 부지 보강이 진행 중이고 아직 기준이 확정되지 않았으면(그리고 주소불일치가 아니면) '로딩'.
+  //   실측 신호(parcelEnrichPending)에만 의존 — 가짜 로딩 표기 금지(무날조).
+  const siteLoading = parcelEnrichPending && !hasSiteBasis && !hasAddressMismatch;
+  const siteState: PipelineState = hasAddressMismatch
+    ? "blocked"
+    : siteLoading
+      ? "loading"
+      : hasSiteBasis
+        ? "complete"
+        : "ready";
   const generateState: PipelineState = !hasSiteBasis ? "blocked" : hasDesignBasis ? "complete" : "ready";
   const drawState: PipelineState = !hasDesignBasis ? "blocked" : "ready";
   const activeState: Record<ViewKey, PipelineState> = {
@@ -291,13 +351,26 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
     draw: drawState,
   };
 
+  // 추천 '다음 단계' — 순서(부지→생성→도면)상 아직 완료되지 않은 첫 단계(실상태 파생·무날조).
+  //   dock에서 이 단계를 은은한 링·"다음" 칩으로 강조해 시선을 자연스럽게 다음으로 유도한다.
+  const nextView: ViewKey =
+    siteState !== "complete" ? "site" : generateState !== "complete" ? "generate" : "draw";
+  // 각 뷰에서 순차적으로 이어질 다음 뷰(흐름 바 CTA 타깃). draw는 마지막 단계(null).
+  const sequentialNext: Record<ViewKey, ViewKey | null> = {
+    site: "generate",
+    generate: "draw",
+    draw: null,
+  };
+
   // 좌측 dock 스테퍼 각 단계의 상태 배지·상세 문구 — 기존 파이프라인 카드 로직을 그대로 이관.
   const stepDetail: Record<ViewKey, string> = {
     site: hasAddressMismatch
       ? labels.detailReanalysisNeeded
-      : hasSiteBasis
-        ? labels.detailCurrentBasis
-        : labels.detailWaitingSite,
+      : siteLoading
+        ? labels.stateLoading
+        : hasSiteBasis
+          ? labels.detailCurrentBasis
+          : labels.detailWaitingSite,
     generate: hasDesignBasis
       ? labels.detailRecommendReflected
       : hasSiteBasis
@@ -348,64 +421,94 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
           </div>
 
           {dockOpen && (
-            <nav aria-label={labels.navAriaLabel} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
-              {views.map((item) => {
+            // gap-0 + 단계 사이 StepConnector(진행선)로 "부지→생성→도면" 흐름을 시각적으로 잇는다.
+            //   연결선은 이전 단계가 complete일 때만 채워져(초록) 진행이 어디까지 왔는지 정직하게 보인다.
+            <nav aria-label={labels.navAriaLabel} className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
+              {views.map((item, i) => {
                 const active = view === item.key;
                 const state = activeState[item.key];
                 const Icon = item.icon;
+                // '다음 추천 단계' 강조 — 현재 보고 있지 않고 아직 미완료인, 순서상 다음 단계일 때만.
+                const isNext = item.key === nextView && !active && state !== "complete";
                 return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => go(item.key)}
-                    aria-pressed={active}
-                    className={[
-                      "flex items-start gap-3 rounded-[var(--r-card)] border px-3 py-3 text-left transition-colors",
-                      active
-                        ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-                        : state === "complete"
-                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_8%,transparent)] hover:border-[color-mix(in_srgb,var(--status-success)_55%,transparent)]"
-                          : "border-[var(--line)] bg-[var(--surface-soft)] hover:border-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]",
-                    ].join(" ")}
-                  >
-                    <span
+                  <Fragment key={item.key}>
+                    <button
+                      type="button"
+                      onClick={() => go(item.key)}
+                      aria-pressed={active}
+                      aria-current={active ? "step" : undefined}
                       className={[
-                        "grid size-9 shrink-0 place-items-center rounded-full border",
+                        "relative flex items-start gap-3 rounded-[var(--r-card)] border px-3 py-3 text-left transition-colors",
                         active
-                          ? "border-transparent bg-[var(--accent-strong)] text-white"
+                          ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
                           : state === "complete"
-                            ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
-                            : "border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
+                            ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_8%,transparent)] hover:border-[color-mix(in_srgb,var(--status-success)_55%,transparent)]"
+                            : isNext
+                              ? "border-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)] bg-[var(--surface-soft)] ring-1 ring-[color-mix(in_srgb,var(--accent-strong)_30%,transparent)] hover:border-[var(--accent-strong)]"
+                              : "border-[var(--line)] bg-[var(--surface-soft)] hover:border-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]",
                       ].join(" ")}
                     >
-                      {state === "complete" ? <CheckCircle2 className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
-                    </span>
-                    <span className="min-w-0 flex-1">
                       <span
                         className={[
-                          "block font-mono text-[10px] font-bold uppercase tracking-wider",
-                          active ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]",
+                          "grid size-9 shrink-0 place-items-center rounded-full border",
+                          active
+                            ? "border-transparent bg-[var(--accent-strong)] text-white"
+                            : state === "complete"
+                              ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
+                              : state === "loading"
+                                ? "border-[color-mix(in_srgb,var(--accent-strong)_40%,transparent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                                : isNext
+                                  ? "border-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)] bg-[var(--surface-strong)] text-[var(--accent-strong)]"
+                                  : "border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
                         ].join(" ")}
                       >
-                        {stepBadge[item.key]}
+                        {state === "complete" ? (
+                          <CheckCircle2 className="size-4" aria-hidden />
+                        ) : state === "loading" ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                        ) : state === "blocked" ? (
+                          <LockKeyhole className="size-4" aria-hidden />
+                        ) : (
+                          <Icon className="size-4" aria-hidden />
+                        )}
                       </span>
-                      <span className="mt-0.5 block text-sm font-black text-[var(--text-primary)]">{item.label}</span>
-                      <span className="block text-[11px] font-semibold text-[var(--text-hint)]">{item.desc}</span>
-                      <span
-                        className={[
-                          "mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
-                          state === "complete"
-                            ? "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)]"
-                            : state === "blocked"
-                              ? "bg-[var(--surface-strong)] text-[var(--text-tertiary)]"
-                              : "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
-                        ].join(" ")}
-                      >
-                        {state === "blocked" && <LockKeyhole className="size-3" aria-hidden />}
-                        {stepDetail[item.key]}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span
+                            className={[
+                              "font-mono text-[10px] font-bold uppercase tracking-wider",
+                              active ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]",
+                            ].join(" ")}
+                          >
+                            {stepBadge[item.key]}
+                          </span>
+                          {isNext && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+                              <ArrowRight className="size-2.5" aria-hidden />
+                              {labels.nextChip}
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-sm font-black text-[var(--text-primary)]">{item.label}</span>
+                        <span className="block text-[11px] font-semibold text-[var(--text-hint)]">{item.desc}</span>
+                        <span
+                          className={[
+                            "mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                            state === "complete"
+                              ? "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)]"
+                              : state === "blocked"
+                                ? "bg-[var(--surface-strong)] text-[var(--text-tertiary)]"
+                                : "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+                          ].join(" ")}
+                        >
+                          {state === "blocked" && <LockKeyhole className="size-3" aria-hidden />}
+                          {state === "loading" && <Loader2 className="size-3 animate-spin" aria-hidden />}
+                          {stepDetail[item.key]}
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                    {i < views.length - 1 && <StepConnector filled={state === "complete"} />}
+                  </Fragment>
                 );
               })}
             </nav>
@@ -435,32 +538,52 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
             </details>
           )}
 
-          {/* 접힘(데스크톱): 아이콘 레일로 단계 이동 유지. 모바일 접힘은 헤더 토글만 노출(뷰포트 우선). */}
+          {/* 접힘(데스크톱): 아이콘 레일로 단계 이동 유지 + 미니 진행선. 모바일 접힘은 헤더 토글만. */}
           {!dockOpen && (
-            <div className="hidden flex-1 flex-col items-center gap-2 py-3 lg:flex">
-              {views.map((item) => {
+            <div className="hidden flex-1 flex-col items-center py-3 lg:flex">
+              {views.map((item, i) => {
                 const active = view === item.key;
                 const state = activeState[item.key];
                 const Icon = item.icon;
+                const isNext = item.key === nextView && !active && state !== "complete";
                 return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => go(item.key)}
-                    aria-pressed={active}
-                    aria-label={item.label}
-                    title={item.label}
-                    className={[
-                      "grid size-9 place-items-center rounded-full border transition-colors",
-                      active
-                        ? "border-transparent bg-[var(--accent-strong)] text-white"
-                        : state === "complete"
-                          ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] text-[var(--status-success)]"
-                          : "border-[var(--line)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
-                    ].join(" ")}
-                  >
-                    {state === "complete" ? <CheckCircle2 className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
-                  </button>
+                  <Fragment key={item.key}>
+                    <button
+                      type="button"
+                      onClick={() => go(item.key)}
+                      aria-pressed={active}
+                      aria-current={active ? "step" : undefined}
+                      aria-label={`${item.label} — ${stepDetail[item.key]}`}
+                      title={`${item.label} · ${stepDetail[item.key]}`}
+                      className={[
+                        "grid size-9 place-items-center rounded-full border transition-colors",
+                        active
+                          ? "border-transparent bg-[var(--accent-strong)] text-white"
+                          : state === "complete"
+                            ? "border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] text-[var(--status-success)]"
+                            : isNext
+                              ? "border-[color-mix(in_srgb,var(--accent-strong)_50%,transparent)] text-[var(--accent-strong)] ring-1 ring-[color-mix(in_srgb,var(--accent-strong)_30%,transparent)]"
+                              : "border-[var(--line)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]",
+                      ].join(" ")}
+                    >
+                      {state === "complete" ? (
+                        <CheckCircle2 className="size-4" aria-hidden />
+                      ) : state === "loading" ? (
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                      ) : state === "blocked" ? (
+                        <LockKeyhole className="size-4" aria-hidden />
+                      ) : (
+                        <Icon className="size-4" aria-hidden />
+                      )}
+                    </button>
+                    {i < views.length - 1 && (
+                      <span
+                        aria-hidden
+                        className="my-1 block h-4 w-0.5 rounded-full transition-colors"
+                        style={{ background: state === "complete" ? "var(--status-success)" : "var(--line)" }}
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
             </div>
@@ -509,7 +632,20 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
         )}
           </div>
 
-          {/* ── 하단 상태바 — KPI 7종 mono 통합(뷰포트 하단 고정). 분리된 라이트 바 제거. ── */}
+          {/* ── 흐름 진행 바 — "지금 어느 단계·다음이 무엇" + 다음 액션 CTA(뷰포트와 dock을 잇는 연결조직).
+                실상태(activeState)에 직접 연결 — 현재 단계가 complete일 때만 다음 CTA가 활성(무날조). ── */}
+          <div className="min-w-0 shrink-0">
+            <FlowAdvanceBar
+              view={view}
+              states={activeState}
+              views={views}
+              nextTarget={sequentialNext[view]}
+              labels={labels}
+              onGo={go}
+            />
+          </div>
+
+          {/* ── 하단 상태바 — 설계 산출 KPI mono(뷰포트 하단 고정). 대상 식별 지표는 상단 ContextHeader. ── */}
           <div className="min-w-0 shrink-0">
             {hasAddressMismatch ? (
               /* 정본 메트릭 잠금 바 — 차단 상태를 스크린리더가 즉시 읽어야 하는 경보(상태색=--status-warning). */
@@ -601,6 +737,148 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
             </div>
           )}
         </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ── dock 단계 사이 세로 진행선 — 이전 단계가 complete면 초록(진행 통과), 아니면 muted. ──
+      node(size-9=36px) 중심 정렬: 카드 border(1) + px-3(12) + 반지름(18) = 31px → 2px선 중심 30px. */
+function StepConnector({ filled }: { filled: boolean }) {
+  return (
+    <div aria-hidden className="flex py-0.5" style={{ paddingLeft: "1.875rem" }}>
+      <span
+        className="block h-4 w-0.5 rounded-full transition-colors"
+        style={{ background: filled ? "var(--status-success)" : "var(--line)" }}
+      />
+    </div>
+  );
+}
+
+/** PipelineState → 짧은 상태 낱말(dock 배지·흐름 바 공용). */
+function stateWord(state: PipelineState, labels: Labels): string {
+  switch (state) {
+    case "complete":
+      return labels.stateDone;
+    case "loading":
+      return labels.stateLoading;
+    case "blocked":
+      return labels.stateBlocked;
+    default:
+      return labels.stateReady;
+  }
+}
+
+/* ── 흐름 진행 바 ── 뷰포트 하단, dock↔작업면을 잇는 "현재 위치 + 다음 액션" 스트립.
+      좌: 3단계 가로 진행표시(실상태 dot·연결선) + 현재 단계·상태 낱말.
+      우: 현재 단계 complete일 때만 '다음 단계' CTA 활성(무날조). 미완료면 정직 안내, 마지막 단계는 종료 안내. */
+function FlowAdvanceBar({
+  view,
+  states,
+  views,
+  nextTarget,
+  labels,
+  onGo,
+}: {
+  view: ViewKey;
+  states: Record<ViewKey, PipelineState>;
+  views: { key: ViewKey; label: string; desc: string; icon: typeof MapPin }[];
+  nextTarget: ViewKey | null;
+  labels: Labels;
+  onGo: (v: ViewKey) => void;
+}) {
+  const currentState = states[view];
+  const currentLabel = views.find((v) => v.key === view)?.label ?? "";
+  const currentDone = currentState === "complete";
+  const currentIndex = views.findIndex((v) => v.key === view);
+
+  // 다음 CTA 라벨 — 순차 타깃별(생성/도면). dock 라벨과 어휘를 구분해 접근성 이름 중복을 피한다.
+  const ctaLabel =
+    nextTarget === "generate" ? labels.flowToGenerate : nextTarget === "draw" ? labels.flowToDraw : null;
+  // 미완료/마지막 단계 안내 문구(정직).
+  const hint =
+    nextTarget === null
+      ? labels.flowTerminal
+      : view === "site"
+        ? labels.flowHintNeedSite
+        : labels.flowHintNeedDesign;
+
+  return (
+    <div className="flex min-h-[52px] flex-wrap items-center gap-x-4 gap-y-2 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] px-3 py-2 shadow-[var(--shadow-sm)]">
+      {/* 좌: 가로 진행표시 — 3단계 dot + 연결선(실상태). aria로 스크린리더에 현재/전체 위치 고지. */}
+      <div
+        className="flex items-center"
+        role="group"
+        aria-label={`${labels.flowProgressAria} — ${currentLabel} (${currentIndex + 1}/${views.length})`}
+      >
+        {views.map((v, i) => {
+          const s = states[v.key];
+          const isCurrent = v.key === view;
+          return (
+            <Fragment key={v.key}>
+              <span
+                className={[
+                  "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-black transition-colors",
+                  isCurrent
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)] ring-1 ring-[color-mix(in_srgb,var(--accent-strong)_35%,transparent)]"
+                    : s === "complete"
+                      ? "border-transparent bg-[var(--status-success)] text-white"
+                      : "border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
+                ].join(" ")}
+                title={`${v.label} · ${stateWord(s, labels)}`}
+              >
+                {s === "complete" && !isCurrent ? (
+                  <CheckCircle2 className="size-3" aria-hidden />
+                ) : (
+                  i + 1
+                )}
+              </span>
+              {i < views.length - 1 && (
+                <span
+                  aria-hidden
+                  className="mx-1 h-0.5 w-6 rounded-full transition-colors"
+                  style={{ background: s === "complete" ? "var(--status-success)" : "var(--line)" }}
+                />
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
+
+      {/* 현재 단계 낱말(상태색) */}
+      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+        <span className="text-[var(--text-hint)]">{labels.flowNowLabel}</span>
+        <span className="font-black text-[var(--text-primary)]">{currentLabel}</span>
+        <span
+          className={[
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+            currentState === "complete"
+              ? "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)]"
+              : currentState === "blocked"
+                ? "bg-[var(--surface-strong)] text-[var(--text-tertiary)]"
+                : "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+          ].join(" ")}
+        >
+          {currentState === "loading" && <Loader2 className="size-3 animate-spin" aria-hidden />}
+          {stateWord(currentState, labels)}
+        </span>
+      </span>
+
+      {/* 우: 다음 액션 CTA(완료 시) 또는 정직 안내(미완료·마지막) */}
+      <div className="ml-auto flex min-w-0 items-center">
+        {currentDone && nextTarget && ctaLabel ? (
+          <button
+            type="button"
+            onClick={() => onGo(nextTarget)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[var(--accent-strong)] px-3.5 py-1.5 text-[12px] font-bold text-white shadow-[var(--shadow-sm)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_88%,black)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]"
+          >
+            <span className="text-[10px] font-black uppercase tracking-wider opacity-80">{labels.flowNextPrefix}</span>
+            <span>{ctaLabel}</span>
+            <ArrowRight className="size-4" aria-hidden />
+          </button>
+        ) : (
+          <span className="truncate text-[11px] font-semibold text-[var(--text-hint)]">{hint}</span>
+        )}
       </div>
     </div>
   );
