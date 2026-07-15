@@ -10,9 +10,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.services.cost.unit_price_repository import resolve_unit_price_sync
+
+if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피(무거운 체인 차단)
+    from app.services.bim.bimir_schema import BimModel
 
 # 구조형식별 콘크리트 물량 계수(철골조는 콘크리트↓·철골 별도)
 _CONCRETE_STRUCT_FACTOR = {"RC": 1.0, "SRC": 1.05, "SC": 0.45, "철골": 0.45, "PC": 0.95, "목구조": 0.30}
@@ -89,3 +92,43 @@ def derive_dims_from_gfa(gfa_above_sqm: float, floors_above: int, aspect: float 
     depth = max(8.0, math.sqrt(fp / aspect))
     width = fp / depth
     return round(width, 1), round(depth, 1)
+
+
+def geometry_takeoff_from_bimir(
+    model: BimModel,
+    *,
+    floors_below: int = 0,
+    structure_type: str = "RC",
+) -> dict[str, Any]:
+    """BimIR(propai.bimir/1.0) → 기하 QTO (WP-D 세션2 소비처 전환).
+
+    쉬운 설명: 물량 산출을 이제 BimIR 하나만 보고 할 수 있게 하는 '추가' 경로다.
+
+    ★무회귀: 기존 geometry_takeoff(매스 치수 직접 경로)는 그대로 둔다. 이 함수는 '추가' 경로로,
+      BimIR에서 매스를 복원(mass_from_bimir)해 동일한 geometry_takeoff로 넘긴다. 기존 소비처는 무변경.
+    ★수치 동일성: mass_from_bimir(bimir_from_mass(mass)) == mass(왕복 무손실)이므로, 이 BimIR 경로는
+      기존 매스 경로와 '동일 치수'로 geometry_takeoff를 호출한다 → 항목별 물량·금액이 바이트까지 동일.
+
+    floors_below·structure_type은 매스 dict에 없는 값(지하층수·구조형식은 매스 외 별도 입력)이라
+    호출자가 명시 전달한다(기본 지상전용 RC — geometry_takeoff의 기본값과 동일).
+    """
+    # ★선행조건: build_ifc_from_bimir와 동일하게 매스 기원 IR 전용 — cad/ingest 기원 IR을 넣으면
+    #   매스 치수 키가 없어 10×10×5 기본값으로 무음 퇴화하므로 QTO 경로에서도 명시 거부한다(정직 실패).
+    if model.source_kind != "mass_geometry":
+        raise ValueError(
+            f"geometry_takeoff_from_bimir는 mass_geometry 기원 IR 전용입니다(입력={model.source_kind!r}) — "
+            "cad/ingest 기원 IR의 QTO 전환은 WP-D 후속 세션 범위"
+        )
+    # 매스 복원(BUILDING geometry가 진실원천) → 기존 순수 함수로 위임. bimir_from_mass의 기본값과
+    # 동일 키·기본값을 읽어 치수 파생이 두 경로에서 일치하게 한다.
+    from app.services.bim.bimir_adapters import mass_from_bimir
+
+    mass = mass_from_bimir(model)
+    return geometry_takeoff(
+        width_m=float(mass.get("building_width_m", 10.0)),
+        depth_m=float(mass.get("building_depth_m", 10.0)),
+        floors_above=int(mass.get("num_floors", 5)),
+        floors_below=floors_below,
+        floor_height_m=float(mass.get("floor_height_m", 3.0)),
+        structure_type=structure_type,
+    )

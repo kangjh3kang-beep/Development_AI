@@ -36,11 +36,44 @@ if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피(무거운 
     from app.services.cad.design_spec import DesignSpec as CadDesignSpec
     from app.services.design_ingest.design_spec import DesignSpec as IngestDesignSpec
 
-# ── 매스 파생요소 기본 두께(미러 상수) ──
-# ifc_generator_service.IfcGeneratorService.generate 의 wall_thickness_m/slab_thickness_m 기본값과
-# '동일'해야 매스 파생 SLAB/WALL 요소의 물량이 실제 IFC 산출과 일치한다(계약 미러).
-_WALL_THICKNESS_M = 0.2
-_SLAB_THICKNESS_M = 0.2
+# ── 매스 파생요소 기본 두께/치수(미러 상수) ──
+# ifc_generator_service.IfcGeneratorService.generate 의 내부 상수와 '동일'해야 매스 파생 요소의
+# 물량이 실제 IFC 산출과 일치한다(계약 미러). 아래 값들은 generator 코드에 박힌 리터럴을 그대로 복제.
+_WALL_THICKNESS_M = 0.2      # 외벽 두께(generate wall_thickness_m 기본)
+_SLAB_THICKNESS_M = 0.2      # 슬래브 두께(generate slab_thickness_m 기본)
+_CORE_WALL_THICKNESS_M = 0.2  # 코어 외곽벽 두께(generate 내부 cwt)
+_STAIR_THICKNESS_M = 0.15    # 계단참 슬래브 두께(generate 계단 압출 두께)
+_PARTITION_THICKNESS_M = 0.15  # 세대 칸막이 두께(generate 내부 pwt)
+_WINDOW_WIDTH_M = 1.5        # 창호 폭(generate win_w)
+_WINDOW_HEIGHT_M = 1.2       # 창호 높이(generate win_h)
+_WINDOW_SILL_M = 0.9         # 창호 하단 높이(generate sill)
+_DOOR_WIDTH_M = 0.9          # 현관문 폭(generate door_w)
+_DOOR_HEIGHT_M = 2.1         # 현관문 높이(generate door_h)
+
+
+def _mirror_unit_widths(
+    inner_w: float,
+    zone_depth: float,
+    unit_sequence: list[dict[str, Any]] | None,
+    unit_width_m: float,
+) -> list[float]:
+    """세대 폭 리스트 산출 — IfcGeneratorService._unit_widths 를 '그대로' 미러(결정적).
+
+    쉬운 설명: 한 zone(inner_w 폭)을 몇 개 세대로 나눌지 폭 목록을 만든다. 평형시퀀스가 있으면
+    면적/깊이로 가변 폭 후 합=inner_w 로 비례 스케일, 없으면 unit_width_m 균등 분할.
+    ★generator와 동일 수식이라야 파생 PARTITION/DOOR 개수·배치가 실제 IFC 산출과 일치한다.
+    """
+    if unit_sequence and zone_depth > 0.5:
+        raw = [max(3.0, float(u.get("area_sqm", 84.0)) / zone_depth) for u in unit_sequence]
+        total = sum(raw)
+        if total <= 0:
+            return []
+        scale = inner_w / total
+        return [w * scale for w in raw]
+    if unit_width_m and unit_width_m > 0:
+        count = max(1, int(inner_w / unit_width_m))
+        return [inner_w / count] * count
+    return [inner_w]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -190,11 +223,17 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
     """AutoDesignEngine 매스 dict → BimModel.
 
     BUILDING 요소의 geometry에 매스 '전체'를 그대로 담는다(mass_from_bimir가 이걸 되읽어 왕복 무손실).
-    추가로 층/슬래브/외벽을 파생요소로 열거한다(부가·서술적 — 왕복 진실원천이 아니라 IR 풍부화용).
-    파생요소의 물량 수식은 ifc_generator_service의 BaseQuantities 수식을 미러한다(가짜값 0).
+    추가로 층/슬래브/외벽에 더해 코어(COLUMN)·계단(STAIR)·창(WINDOW)·세대칸막이(PARTITION)·문(DOOR)까지
+    파생요소로 열거한다(부가·서술적 — 왕복 진실원천이 아니라 IR 풍부화용). 파생요소의 존재조건·기하·물량
+    수식은 ifc_generator_service.generate 를 '그대로' 미러한다(가짜값 0 — 실제 IFC 산출과 동일).
 
     ★왕복 계약: mass_from_bimir(bimir_from_mass(mass)) == mass (정규화 동일). 그래서 BimIR 경로가
-      기존 매스 경로와 '동일 IFC'를 낸다(구조 동등성).
+      기존 매스 경로와 '동일 IFC'를 낸다(구조 동등성). 파생요소를 늘려도 왕복 진실원천은 BUILDING
+      geometry 한 곳뿐이라 왕복은 불변(파생은 읽기 전용 서술).
+    ★element_path 인덱스 규율: 층(i)·코어(ci)·창/칸막이/문(면·순번) 인덱스로 결정적 경로를 만든다 —
+      같은 매스를 재생성하면 경로·element_id가 불변, 요소 삽입/재정렬 시에는 인덱스가 변한다(정직 표기).
+    ★비-슬래브만 열거: generator의 복도/발코니(IfcSlab)는 파생하지 않는다 — SLAB 범주를 '층 바닥'
+      의미로 유지하기 위함(코어·계단·창·칸막이·문 5군만 미러). 잔여는 후속 세션 범위.
     """
     src = dict(mass)  # 원본 훼손 방지
     design_input_hash = compute_input_hash(src)
@@ -205,6 +244,15 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
     fh = float(src.get("floor_height_m", 3.0))
     wt = _WALL_THICKNESS_M
     st = _SLAB_THICKNESS_M
+    # 파생요소 존재조건 입력(generate 인자와 동일 키·기본값) — 0/False는 '없음' 게이트(값 손실 아님:
+    # 원본 전체는 BUILDING geometry·extras에 보존됨).
+    cores = src.get("core_positions")
+    core_size = float(src.get("core_size_m", 5.0))
+    corridor_width_m = float(src.get("corridor_width_m", 0.0))
+    windows_per_side = int(src.get("windows_per_side", 0))
+    unit_width_m = float(src.get("unit_width_m", 0.0))
+    unit_sequence = src.get("unit_sequence")
+    unit_doors = bool(src.get("unit_doors", False))
 
     elements: list[BimElement] = []
     # BUILDING — 매스 전체 보존(왕복 진실원천).
@@ -263,6 +311,149 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
                     },
                 )
             )
+
+        # ── 코어(COLUMN 외곽벽 4면) + 계단(STAIR 2참) — generator cores 블록 미러 ──
+        # 코어는 전 층 산출(generator도 층 조건 없음). 위치는 generate와 동일하게 클램프.
+        if cores:
+            cs = core_size
+            cwt = _CORE_WALL_THICKNESS_M
+            for ci, c in enumerate(cores):
+                cx = float(c.get("x", bw / 2)) - cs / 2
+                cy = float(c.get("y", bd / 2)) - cs / 2
+                cx = max(wt, min(cx, bw - cs - wt))
+                cy = max(wt, min(cy, bd - cs - wt))
+                core_walls = (
+                    (cx, cy, cs, cwt),                # 하
+                    (cx, cy + cs - cwt, cs, cwt),     # 상
+                    (cx, cy, cwt, cs),                # 좌
+                    (cx + cs - cwt, cy, cwt, cs),     # 우
+                )
+                for wpi, (wx, wy, ww, wd) in enumerate(core_walls):
+                    elements.append(
+                        make_element(
+                            design_input_hash=design_input_hash,
+                            element_path=f"storey[{i}]/core[{ci}]/wall[{wpi}]",
+                            category=BimCategory.COLUMN,
+                            name=f"{i + 1}F-CoreWall-{ci + 1}-{wpi}",
+                            storey_index=i,
+                            geometry={"x": wx, "y": wy, "width_m": ww, "depth_m": wd, "height_m": fh},
+                            quantities={
+                                "Length": fh,
+                                "CrossSectionArea": ww * wd,
+                                "NetVolume": ww * wd * fh,
+                            },
+                        )
+                    )
+                # 계단참 2개(half-flight) — 코어 내부를 가로지르는 얇은 슬래브.
+                inset = cwt + 0.05
+                half_w = (cs - 2 * inset) / 2
+                for sp in range(2):
+                    sx = cx + inset + sp * half_w
+                    st_z = sp * (fh / 2)
+                    st_w = half_w - 0.05
+                    st_d = cs - 2 * inset
+                    elements.append(
+                        make_element(
+                            design_input_hash=design_input_hash,
+                            element_path=f"storey[{i}]/core[{ci}]/stair[{sp}]",
+                            category=BimCategory.STAIR,
+                            name=f"{i + 1}F-Stair-{ci + 1}-{sp}",
+                            storey_index=i,
+                            geometry={
+                                "x": sx, "y": cy + inset, "width_m": st_w, "depth_m": st_d,
+                                "thickness_m": _STAIR_THICKNESS_M, "elevation_offset_m": st_z,
+                            },
+                            quantities={
+                                "Length": st_d,
+                                "GrossArea": st_w * st_d,
+                                "NetVolume": st_w * st_d * _STAIR_THICKNESS_M,
+                            },
+                        )
+                    )
+
+        # ── 창호(WINDOW) — generator windows 블록 미러: 1층 제외(i>0), 정면(F)/배면(B) 등간격 ──
+        if windows_per_side > 0 and i > 0:
+            win_w, win_h, sill = _WINDOW_WIDTH_M, _WINDOW_HEIGHT_M, _WINDOW_SILL_M
+            step = bw / (windows_per_side + 1)
+            for side_y, side in ((0.0, "F"), (bd - wt, "B")):
+                for wj in range(windows_per_side):
+                    wx = step * (wj + 1) - win_w / 2
+                    wx = max(wt, min(wx, bw - win_w - wt))
+                    elements.append(
+                        make_element(
+                            design_input_hash=design_input_hash,
+                            element_path=f"storey[{i}]/window/{side}[{wj}]",
+                            category=BimCategory.WINDOW,
+                            name=f"{i + 1}F-Win-{side}{wj + 1}",
+                            storey_index=i,
+                            geometry={
+                                "side": side, "x": wx, "y": side_y,
+                                "width_m": win_w, "height_m": win_h, "sill_m": sill,
+                            },
+                            quantities={"Width": win_w, "Height": win_h, "Area": win_w * win_h},
+                        )
+                    )
+
+        # ── 세대칸막이(PARTITION) + 현관문(DOOR) — generator units 블록 미러: 1층 제외(i>0) ──
+        if (unit_width_m > 0 or unit_sequence) and i > 0:
+            pwt = _PARTITION_THICKNESS_M
+            inner_w = bw - 2 * wt
+            cw = min(corridor_width_m, bd) if corridor_width_m > 0 else 0.0
+            corr_y0 = (bd - cw) / 2
+            corr_y1 = corr_y0 + cw
+            part_h = fh - st  # generator: fh - slab_thickness_m
+            zones = (
+                ("F", wt, max(wt, corr_y0)),
+                ("B", min(bd - wt, corr_y1), bd - wt),
+            )
+            for face, zy0, zy1 in zones:
+                zd = zy1 - zy0
+                if zd <= 0.3:
+                    continue
+                widths = _mirror_unit_widths(inner_w, zd, unit_sequence, unit_width_m)
+                cursor = wt
+                for ui, uw in enumerate(widths):
+                    # 세대 사이 칸막이(첫 세대 앞은 외벽이라 생략 — ui>0).
+                    if ui > 0:
+                        elements.append(
+                            make_element(
+                                design_input_hash=design_input_hash,
+                                element_path=f"storey[{i}]/partition/{face}[{ui}]",
+                                category=BimCategory.PARTITION,
+                                name=f"{i + 1}F-Part-{face}-{ui}",
+                                storey_index=i,
+                                geometry={
+                                    "face": face, "x": cursor - pwt / 2, "y": zy0,
+                                    "length_m": zd, "height_m": part_h, "thickness_m": pwt,
+                                },
+                                quantities={
+                                    "Length": zd,
+                                    "Height": part_h,
+                                    "NetSideArea": zd * part_h,
+                                    "NetVolume": pwt * zd * part_h,
+                                },
+                            )
+                        )
+                    # 현관문 — 복도 있을 때만(generator: unit_doors and cw>0).
+                    if unit_doors and cw > 0:
+                        door_w, door_h = _DOOR_WIDTH_M, _DOOR_HEIGHT_M
+                        door_y = zy1 if face == "F" else zy0 - wt
+                        dx = cursor + uw / 2 - door_w / 2
+                        elements.append(
+                            make_element(
+                                design_input_hash=design_input_hash,
+                                element_path=f"storey[{i}]/door/{face}[{ui}]",
+                                category=BimCategory.DOOR,
+                                name=f"{i + 1}F-Door-{face}-{ui}",
+                                storey_index=i,
+                                geometry={
+                                    "face": face, "x": dx, "y": door_y,
+                                    "width_m": door_w, "height_m": door_h,
+                                },
+                                quantities={"Width": door_w, "Height": door_h, "Area": door_w * door_h},
+                            )
+                        )
+                    cursor += uw
 
     return BimModel(
         source_kind="mass_geometry",
