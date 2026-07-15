@@ -18,7 +18,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
+# ★CI 실측(2026-07-15)에서 발견: cryptography(platform_secret_loader 실 Fernet 암복호)·
+#   shapely(shadow_3d 실 기하 그림자투영)·qdrant-client(RealQdrantClient 실 임베디드 벡터검색)는
+#   모두 앱 코드가 함수 내부 지연 import로 옵션 취급(미설치=graceful mock/None 폴백, 필수 아님)하지만,
+#   각 test_*_real*.py는 "실" 경로를 검증하므로 dev 스위트 완주에는 필요하다 — 여기 없으면 8개 테스트가
+#   ModuleNotFoundError/후속 TypeError로 조용히 실패한다(전 구간이 mock 폴백만 검증하는 착시 방지).
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "cryptography", "shapely", "qdrant-client"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
