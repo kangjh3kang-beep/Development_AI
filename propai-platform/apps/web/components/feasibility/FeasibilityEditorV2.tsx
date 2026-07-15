@@ -131,7 +131,9 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   useEffect(() => {
     if (!isFeasibilityStale || isCalculating) return;
     if (hasRevenueInputs) {
-      void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon });
+      // ★리뷰 R1-P1: 자동 재계산은 사용자 클릭이 아니므로 유료 시니어 자문을 강제 off —
+      //   토글을 켜 둔 채 업스트림 갱신마다 LLM 비용이 조용히 반복 발생하는 누수 차단.
+      void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon, withSenior: false });
     } else {
       // 면적 등 부지 시그니처를 self-reset해 baseline 재시도를 1회 허용.
       baselineTriedSigRef.current = null;

@@ -181,6 +181,7 @@ export function ModuleInputForm() {
               <input
                 type="checkbox"
                 checked={withSenior}
+                disabled={isCalculating}
                 onChange={(e) => setWithSenior(e.target.checked)}
                 className="h-3.5 w-3.5 accent-[var(--accent-strong)]"
               />

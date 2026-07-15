@@ -132,7 +132,9 @@ interface FeasibilityV2State {
   withSenior: boolean;
   setWithSenior: (v: boolean) => void;
   // opts.constructionCostOverrideWon: 공사비 정밀분석 결과를 엔진에 주입(3자 수치 정합).
-  calculate: (opts?: { constructionCostOverrideWon?: number | null }) => Promise<void>;
+  // opts.withSenior: 호출별 자문 강제 지정 — ★자동 재계산 경로는 반드시 false를 넘겨
+  //   사용자 명시 클릭 없이 유료 LLM 자문이 반복 과금되는 누수를 차단한다(리뷰 R1-P1).
+  calculate: (opts?: { constructionCostOverrideWon?: number | null; withSenior?: boolean }) => Promise<void>;
   // 부지 데이터만으로 시장표준 추정(baseline) 수지를 1회 산출해 즉시 표시.
   runBaseline: (input: FeasibilityBaselineInput) => Promise<void>;
   compareMulti: (inputs: FeasibilityInput[]) => Promise<void>;
@@ -234,8 +236,9 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
             : {}),
         };
         const res = await apiClient.postV2<FeasibilityResult>("/feasibility/calculate", {
-          // with_senior: K-IFRS 자문 opt-in(스토어 토글) — 백엔드가 LLM 계측·과금 훅 경유로 처리.
-          body: { ...base, params, with_senior: get().withSenior } as Record<string, unknown>,
+          // with_senior: K-IFRS 자문 opt-in — 호출별 override(자동 경로=false 강제)가
+          //   스토어 토글보다 우선(유료 LLM 반복 과금 차단, 리뷰 R1-P1).
+          body: { ...base, params, with_senior: opts?.withSenior ?? get().withSenior } as Record<string, unknown>,
         });
         set((s) => {
           s.result = res;
@@ -369,6 +372,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
 
     reset: () =>
       set((s) => {
+        s.withSenior = false;
         s.input = { ...DEFAULT_INPUT };
         s.boundProjectId = null;
         s.result = null;

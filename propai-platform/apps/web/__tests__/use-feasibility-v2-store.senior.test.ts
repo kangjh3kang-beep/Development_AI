@@ -56,6 +56,19 @@ describe("with_senior opt-in 배선 (P4②)", () => {
     expect((opts as { body: Record<string, unknown> }).body.with_senior).toBe(false);
   });
 
+  it("★R1-P1: 토글 true여도 자동 경로 override(withSenior:false)가 우선 — 무동의 반복 과금 차단", async () => {
+    useFeasibilityV2Store.getState().setWithSenior(true);
+    await useFeasibilityV2Store.getState().calculate({ withSenior: false });
+    const [, opts] = vi.mocked(apiClient.postV2).mock.calls[0];
+    expect((opts as { body: Record<string, unknown> }).body.with_senior).toBe(false);
+  });
+
+  it("reset()은 withSenior도 초기화(false) — 테스트 격리·초기 복귀 일관성", () => {
+    useFeasibilityV2Store.getState().setWithSenior(true);
+    useFeasibilityV2Store.getState().reset();
+    expect(useFeasibilityV2Store.getState().withSenior).toBe(false);
+  });
+
   it("setWithSenior(true) 후 calculate는 with_senior: true 전송 + 자문이 result에 적재", async () => {
     useFeasibilityV2Store.getState().setWithSenior(true);
     await useFeasibilityV2Store.getState().calculate();
