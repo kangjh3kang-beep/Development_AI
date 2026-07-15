@@ -41,7 +41,9 @@ async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
     await enforce_llm_quota(db)
 
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
-_STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
+# ★P2: 구조계수 정의를 공용 개산식 SSOT(overview_estimator.STRUCT_COST_FACTOR)로 이관.
+#   기존 참조처 호환을 위해 별칭 유지(값 이원화 금지 — 수정은 overview_estimator에서).
+from app.services.cost.overview_estimator import STRUCT_COST_FACTOR as _STRUCT_FACTOR
 
 # ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
 # ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
@@ -182,29 +184,32 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     PY = 3.305785
     base_unit = req.unit_cost_per_sqm or DEFAULT_DIRECT_COST_PER_SQM.get(
         req.building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"])
-    unit = base_unit * _STRUCT_FACTOR.get(req.structure_type, 1.0)
     gfa = req.total_gfa_sqm
-    # 지하면적 = 층 바닥판 비례 추정. 지하 바닥판은 주차·기계실로 지상보다 약간 넓어(≈1.2배)
-    # footprint×지하층수×1.2 로 잡는다. 기존 min(gfa*0.4, gfa*층수*0.12)은 고층(예 35F/5F)에서도
-    # 0.4 cap 에 걸려 지하가 총GFA의 40%(지상의 67%)가 되는 물리적 비현실 → 층수비례로 교정.
-    _fa = max(1, int(req.floor_count_above))
-    _fb = max(0, int(req.floor_count_below))
-    _BK = 1.2  # 지하 바닥판 확장계수
-    gfa_below = (gfa * (_fb * _BK) / (_fa + _fb * _BK)) if _fb > 0 else 0.0
-    gfa_above = max(0.0, gfa - gfa_below)
+    # ★P2(적산→수지 배선): 인라인 산식(구조계수·지하 바닥판 비례·지하 30% 할증·조경 1.5%)을
+    #   공용 개산식 SSOT(overview_estimator)로 이관 — 수지 construction_cost_engine이 같은
+    #   함수를 소비한다(한 곳 수정 → 양 모듈 동시 반영). 산식·절사 순서 종전 동일(무회귀).
+    from app.services.cost.overview_estimator import (
+        estimate_overview_direct_cost,
+        split_gfa_below,
+    )
+    gfa_above, gfa_below = split_gfa_below(gfa, req.floor_count_above, req.floor_count_below)
 
     def scenario(factor: float) -> dict[str, Any]:
-        u = int(unit * factor)
-        above = int(gfa_above * u)
-        below = int(gfa_below * u * 1.3)  # 지하 30% 할증
-        landscape = int((above + below) * 0.015)  # 조경 1.5%
-        direct = above + below + landscape
-        ind = calculate_indirect_cost(direct_cost_won=direct)
-        total = direct + ind["total_indirect_cost_won"]
+        ov = estimate_overview_direct_cost(
+            total_gfa_sqm=gfa,
+            base_unit_cost_per_sqm=base_unit,
+            structure_type=req.structure_type,
+            floor_count_above=req.floor_count_above,
+            floor_count_below=req.floor_count_below,
+            scenario_factor=factor,
+        )
+        ind = calculate_indirect_cost(direct_cost_won=ov["direct_won"])
+        total = ov["direct_won"] + ind["total_indirect_cost_won"]
         return {
-            "unit_cost_per_sqm": u,
-            "aboveground_won": above, "underground_won": below, "landscape_won": landscape,
-            "direct_won": direct,
+            "unit_cost_per_sqm": ov["unit_cost_per_sqm"],
+            "aboveground_won": ov["aboveground_won"], "underground_won": ov["underground_won"],
+            "landscape_won": ov["landscape_won"],
+            "direct_won": ov["direct_won"],
             "design_fee_won": ind["design_fee_won"], "supervision_fee_won": ind["supervision_fee_won"],
             "contingency_won": ind["contingency_won"], "general_expense_won": ind["general_expense_won"],
             "indirect_won": ind["total_indirect_cost_won"],
@@ -316,7 +321,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
 
         ev_block = build_evidence_block(
             items=_overview_evidence(
-                unit=int(unit), structure_type=req.structure_type, expected=expected,
+                # 종전 int(unit)=int(base×구조계수)와 동일값(factor 1.0의 int 절사 단가).
+                unit=expected["unit_cost_per_sqm"], structure_type=req.structure_type, expected=expected,
                 gfa_above=gfa_above, gfa_below=gfa_below,
                 qto_source=qto_source, unit_price_source=unit_price_source,
             ),
