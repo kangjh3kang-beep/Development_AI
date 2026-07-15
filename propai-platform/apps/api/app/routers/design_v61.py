@@ -934,6 +934,19 @@ def _attach_special_parcel_gate(mass: dict[str, Any], req: BimGenerateRequest) -
         )
     except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
         mass["dev_act_permit_gate"] = None
+
+    # ── WP-G: 부지기반(P7) 게이트 스냅샷 additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에 P0 자동판정을 자동 결선한다. 이 진입점엔 접도(P4)·권리(P3)
+    #   실데이터가 없어 정직하게 미확정으로 집계되고(REQUIRES_AUTHORITY_CONFIRMATION 동치),
+    #   basis_status는 항상 ADVISORY로 고정된다(AUTHORIZED는 /api/v1/basis/{run_id}/approve
+    #   인간승인 API 전용 — 이 자동경로에서는 절대 도달하지 않는다).
+    try:
+        from app.services.basis.site_basis_service import gate_design_entry
+
+        dev_act_status = (mass.get("dev_act_permit_gate") or {}).get("status")
+        mass["site_basis_gate"] = gate_design_entry(dev_act_status=dev_act_status)
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["site_basis_gate"] = None
     return mass
 
 

@@ -188,6 +188,15 @@ except ImportError:
     except ImportError:
         survey_coordinate_router = None
 
+# 부지기반(site basis) 게이트·상태머신 — P7 ADVISORY/AUTHORIZED 분리 (자체 prefix="/basis")
+try:
+    from apps.api.app.routers.basis import router as basis_router
+except ImportError:
+    try:
+        from app.routers.basis import router as basis_router
+    except ImportError:
+        basis_router = None
+
 # 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
 try:
     from apps.api.app.routers.g2b_bid import router as g2b_router
@@ -1036,3 +1045,6 @@ if access_router is not None:
 if survey_coordinate_router is not None:
     # 측량·좌표 계약: 자체 prefix="/survey/coordinate" → /api/v1/survey/coordinate/contract·/reconcile
     app.include_router(survey_coordinate_router, prefix="/api/v1")
+if basis_router is not None:
+    # 부지기반 게이트(P7): 자체 prefix="/basis" → /api/v1/basis/assess·/{run_id}/approve·/{run_id}
+    app.include_router(basis_router, prefix="/api/v1")
