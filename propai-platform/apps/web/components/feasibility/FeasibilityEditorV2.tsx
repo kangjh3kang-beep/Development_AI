@@ -7,6 +7,7 @@ import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { ProjectTypeSelector } from "./ProjectTypeSelector";
 import { ModuleInputForm } from "./ModuleInputForm";
 import { FeasibilityResultView } from "./FeasibilityResultView";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { MonteCarloPanel } from "./MonteCarloPanel";
 import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
@@ -384,7 +385,15 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                   </button>
                 </div>
               ) : (
-                <FeasibilityResultView />
+                <>
+                  <FeasibilityResultView />
+                  {/* ★P4②: 시니어 회계사(K-IFRS) 자문 — with_senior opt-in 시에만 백엔드가 채움.
+                      SeniorVerdictCard 자체 정직 게이트(미가용/빈 자문 → 미렌더)로 노이즈 없음. */}
+                  <SeniorVerdictCard
+                    consultation={(result?.senior_accountant_review ?? null) as SeniorConsultation | null}
+                    title="시니어 회계사(K-IFRS) 자문"
+                  />
+                </>
               )}
               {/* 조망·스카이라인 보조카드(분양가치 근거 — 환경3D 녹여내기) */}
               {(siteAnalysis?.address || siteAnalysis?.pnu) && (

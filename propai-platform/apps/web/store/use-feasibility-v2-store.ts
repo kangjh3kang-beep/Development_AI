@@ -44,6 +44,11 @@ export interface FeasibilityResult {
   cost_breakdown_won: Record<string, number>;
   tax_detail: Record<string, unknown>;
   special_detail: Record<string, unknown>;
+  // ★P4②: 시니어 회계사(K-IFRS) 자문 — with_senior opt-in 시에만 채워짐(기본 {}).
+  //   구조는 공용 evidence 계약(SeniorVerdictCard의 SeniorConsultation과 동일).
+  //   타입은 소비처(에디터)에서 SeniorConsultation으로 단언 — store가 컴포넌트 타입에
+  //   역의존하지 않도록 unknown 유지.
+  senior_accountant_review?: unknown;
   // baseline(추정) 응답에만 존재 — /calculate 결과는 미포함.
   is_baseline?: boolean;
   confidence?: string;
@@ -123,6 +128,9 @@ interface FeasibilityV2State {
   bindProject: (projectId: string) => void;
   setSelectedModule: (code: string) => void;
   setActiveTab: (tab: FeasibilityV2State["activeTab"]) => void;
+  // ★P4②: 시니어 회계 자문(K-IFRS) opt-in — LLM 비용이 발생하므로 기본 false(과금 정책).
+  withSenior: boolean;
+  setWithSenior: (v: boolean) => void;
   // opts.constructionCostOverrideWon: 공사비 정밀분석 결과를 엔진에 주입(3자 수치 정합).
   calculate: (opts?: { constructionCostOverrideWon?: number | null }) => Promise<void>;
   // 부지 데이터만으로 시장표준 추정(baseline) 수지를 1회 산출해 즉시 표시.
@@ -173,6 +181,11 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
     selectedModule: "M06",
     isCalculating: false,
     error: null,
+    withSenior: false,
+    setWithSenior: (v) =>
+      set((s) => {
+        s.withSenior = v;
+      }),
     baselineNeedsInput: false,
     activeTab: "input",
 
@@ -221,7 +234,8 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
             : {}),
         };
         const res = await apiClient.postV2<FeasibilityResult>("/feasibility/calculate", {
-          body: { ...base, params } as Record<string, unknown>,
+          // with_senior: K-IFRS 자문 opt-in(스토어 토글) — 백엔드가 LLM 계측·과금 훅 경유로 처리.
+          body: { ...base, params, with_senior: get().withSenior } as Record<string, unknown>,
         });
         set((s) => {
           s.result = res;
