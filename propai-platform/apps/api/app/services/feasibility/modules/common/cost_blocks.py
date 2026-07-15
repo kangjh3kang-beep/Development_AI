@@ -35,6 +35,11 @@ def compute_construction_cost(inp: ModuleInput) -> dict[str, Any]:
 
     공사비 정밀 분석 결과를 params.construction_cost_override_won 로 주입하면
     수지·사업성(ROI)이 그 공사비를 그대로 사용한다(3자 단일 데이터원 정합).
+
+    ★적산→수지 배선(P2): 층수(inp.floors 또는 params.floor_count_above)·지하층수
+    (params.floor_count_below)·구조유형(params.structure_type) 제공 시 적산
+    estimate-overview와 동일한 공용 개산식으로 산정(구조계수·지하할증·조경).
+    미제공 시 종전 `연면적 × ₩/㎡` 그대로(무회귀).
     """
     override = inp.params.get("construction_cost_override_won")
     if override and float(override) > 0:
@@ -45,11 +50,15 @@ def compute_construction_cost(inp: ModuleInput) -> dict[str, Any]:
             "total_construction_cost_won": total,
             "source": "cost_analysis_override",
         }
+    structure_type = inp.params.get("structure_type")
     return calculate_total_construction_cost(
         total_gfa_sqm=inp.total_gfa_sqm,
         building_type=inp.building_type,
         unit_cost_per_sqm=inp.params.get("unit_cost_per_sqm"),
         cost_index_factor=inp.params.get("cost_index_factor", 1.0),
+        floor_count_above=(int(inp.floors) if inp.floors else 0) or _param_int(inp, "floor_count_above") or None,
+        floor_count_below=_param_int(inp, "floor_count_below") or None,
+        structure_type=str(structure_type).strip() if structure_type else None,
     )
 
 

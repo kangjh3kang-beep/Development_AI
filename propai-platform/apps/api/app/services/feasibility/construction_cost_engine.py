@@ -93,6 +93,9 @@ def calculate_direct_cost(
     building_type: str = "apartment",
     unit_cost_per_sqm: int | None = None,
     cost_index_factor: float = 1.0,
+    floor_count_above: int | None = None,
+    floor_count_below: int | None = None,
+    structure_type: str | None = None,
 ) -> dict[str, Any]:
     """직접공사비 계산.
 
@@ -101,16 +104,46 @@ def calculate_direct_cost(
         building_type: 건물유형
         unit_cost_per_sqm: 직접공사비 단가 (원/m², None이면 기본값)
         cost_index_factor: 물가보정계수
+        floor_count_above / floor_count_below / structure_type:
+            ★적산→수지 배선(2026-07-15 감사 P2) — 하나라도 제공되면 적산
+            estimate-overview와 동일한 공용 개산식(overview_estimator SSOT:
+            구조계수·지하 30% 할증·조경 1.5%)으로 산정하고 분해를 함께 반환한다.
+            전부 미제공(기본 None)이면 종전 `연면적 × ₩/㎡` 그대로(무회귀).
 
     Returns:
         {'total_gfa_sqm', 'unit_cost_per_sqm', 'cost_index_factor', 'total_direct_cost_won'}
+        (+ 공용 개산식 경로일 때 'overview_breakdown', 'basis' 추가 — additive)
     """
     if unit_cost_per_sqm is None:
         unit_cost_per_sqm = _resolve_direct_unit_cost(building_type)
 
     adjusted_unit = int(unit_cost_per_sqm * cost_index_factor)
-    total = int(total_gfa_sqm * adjusted_unit)
 
+    if floor_count_above or floor_count_below or structure_type:
+        from app.services.cost.overview_estimator import estimate_overview_direct_cost
+
+        ov = estimate_overview_direct_cost(
+            total_gfa_sqm=total_gfa_sqm,
+            base_unit_cost_per_sqm=adjusted_unit,
+            structure_type=structure_type or "RC",
+            floor_count_above=floor_count_above or 1,
+            floor_count_below=floor_count_below or 0,
+        )
+        return {
+            "total_gfa_sqm": round(total_gfa_sqm, 2),
+            "building_type": building_type,
+            "unit_cost_per_sqm": ov["unit_cost_per_sqm"],
+            "cost_index_factor": cost_index_factor,
+            "total_direct_cost_won": ov["direct_won"],
+            "overview_breakdown": ov,
+            "basis": (
+                "적산 estimate-overview 동일 공용 개산식(overview_estimator SSOT) — "
+                f"구조계수({structure_type or 'RC'}={ov['structure_factor']}) · "
+                "지하할증 30% · 조경 1.5%"
+            ),
+        }
+
+    total = int(total_gfa_sqm * adjusted_unit)
     return {
         "total_gfa_sqm": round(total_gfa_sqm, 2),
         "building_type": building_type,
@@ -165,8 +198,14 @@ def calculate_total_construction_cost(
     supervision_fee_ratio: float | None = None,
     contingency_ratio: float | None = None,
     general_expense_ratio: float | None = None,
+    floor_count_above: int | None = None,
+    floor_count_below: int | None = None,
+    structure_type: str | None = None,
 ) -> dict[str, Any]:
     """공사비 총합 (직접 + 간접).
+
+    floor_count_above/below·structure_type 제공 시 직접비를 적산 동일
+    공용 개산식으로 산정(calculate_direct_cost 참조). 미제공 시 무회귀.
 
     Returns:
         {'direct', 'indirect', 'total_construction_cost_won'}
@@ -176,6 +215,9 @@ def calculate_total_construction_cost(
         building_type=building_type,
         unit_cost_per_sqm=unit_cost_per_sqm,
         cost_index_factor=cost_index_factor,
+        floor_count_above=floor_count_above,
+        floor_count_below=floor_count_below,
+        structure_type=structure_type,
     )
 
     indirect = calculate_indirect_cost(
