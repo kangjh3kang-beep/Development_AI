@@ -75,8 +75,12 @@ def test_submission_bundle_wires_idempotency():
     assert "idempotency.save(" in src
     assert "idempotency.STATE_CONFLICT" in src
     assert "idempotency.STATE_REPLAY" in src
-    # request_hash로 결정적 input_hash를 재사용(추가 계산 0).
-    assert "request_hash=input_hash" in src
+    # request_hash는 산출물에 영향을 주는 필드 전체(기하 input_hash + 표제란 축척·발행일)를
+    #   반영해야 한다(리뷰 MEDIUM 봉합 — input_hash 단독은 cosmetic 제외라 낡은 표제란 재생 위험).
+    assert "_bundle_req_hash = idempotency.compute_request_hash(" in src
+    assert '"scale": req.scale' in src
+    assert '"issue_date": req.issue_date' in src
+    assert "request_hash=_bundle_req_hash" in src
 
 
 # ── main.py 등록(additive) ───────────────────────────────────────────────────
