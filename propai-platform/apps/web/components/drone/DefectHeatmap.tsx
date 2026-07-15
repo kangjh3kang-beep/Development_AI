@@ -92,7 +92,7 @@ export function DefectHeatmap({
         <div className="grid gap-4">
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
             <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.capturedAtLabel}
               </p>
               <p className="mt-3 text-sm font-medium text-[var(--text-secondary)]">
@@ -100,7 +100,7 @@ export function DefectHeatmap({
               </p>
             </div>
             <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.completionLabel}
               </p>
               <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -108,7 +108,7 @@ export function DefectHeatmap({
               </p>
             </div>
             <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.riskSummaryLabel}
               </p>
               <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
@@ -117,7 +117,7 @@ export function DefectHeatmap({
             </div>
           </div>
           <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.legendTitle}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -138,7 +138,7 @@ export function DefectHeatmap({
             </div>
           </div>
           <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.defectsTitle}
             </p>
             <ul className="mt-3 grid gap-3">

@@ -180,7 +180,7 @@ function StageNode({
       </div>
 
       {/* Label */}
-      <span className="text-[10px] font-bold uppercase tracking-[0.1em] leading-tight text-center whitespace-nowrap">
+      <span className="label-caps leading-tight text-center whitespace-nowrap">
         {stage.label}
       </span>
 

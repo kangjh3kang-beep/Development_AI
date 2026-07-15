@@ -329,6 +329,7 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
       </button>
 
       {/* QR */}
+      {/* @ink-contract-ignore — QR 은 흰 배경이어야 스캔된다(테마 불변). 자식은 각자 색 선언. */}
       <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--line)] bg-white p-4">
         {qrMatrix ? (
           <>

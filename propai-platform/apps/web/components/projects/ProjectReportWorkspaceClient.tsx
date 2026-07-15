@@ -291,7 +291,7 @@ export function ProjectReportWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-[var(--r-pill)] border border-[var(--line)] px-4 py-2 font-[var(--font-mono)] text-xs font-medium text-[var(--text-secondary)]">
@@ -339,7 +339,7 @@ export function ProjectReportWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.contextTitle}
               </p>
               <CardTitle className="mt-2 text-xl">{labels.contextHint}</CardTitle>
@@ -348,13 +348,13 @@ export function ProjectReportWorkspaceClient({
               <SkeletonLoader count={1} itemClassName="h-28" />
             ) : (
               <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="label-caps text-[var(--text-tertiary)]">
                   {labels.projectIdLabel}
                 </p>
                 <p className="mt-2 break-all text-sm font-semibold text-[var(--text-primary)]">
                   {projectId}
                 </p>
-                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="mt-4 label-caps text-[var(--text-tertiary)]">
                   {labels.projectNameLabel}
                 </p>
                 <p className="mt-2 text-sm text-[var(--text-secondary)]">
@@ -380,7 +380,7 @@ export function ProjectReportWorkspaceClient({
 
           <Card className="bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
@@ -470,7 +470,7 @@ export function ProjectReportWorkspaceClient({
 
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.reportTitle}
           </p>
           {result ? (
@@ -510,7 +510,7 @@ export function ProjectReportWorkspaceClient({
                       />
                       <MetricTile label="Title" value={variant.title} />
                     </div>
-                    <p className="mt-4 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                    <p className="mt-4 label-caps text-[var(--text-tertiary)]">
                       {labels.reportBodyLabel}
                     </p>
                     <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[var(--text-secondary)]">
@@ -540,7 +540,7 @@ function MetricTile({
 }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

@@ -113,7 +113,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
   if (loading) return (
     <div className="flex h-64 flex-col items-center justify-center gap-6">
       <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent shadow-[var(--shadow-glow)]" />
-      <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] animate-pulse">AI 산출 내역 분석 중...</p>
+      <p className="label-caps text-[var(--text-hint)] animate-pulse">AI 산출 내역 분석 중...</p>
     </div>
   );
 
@@ -151,7 +151,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
       ) : (
       <div className="overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
          <table className="w-full text-left text-sm border-collapse">
-           <thead className="bg-[var(--surface-soft)]/50 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] border-b border-[var(--line-strong)]">
+           <thead className="bg-[var(--surface-soft)]/50 label-caps text-[var(--text-hint)] border-b border-[var(--line-strong)]">
              <tr>
                <th className="p-10 pl-14">{t.colCode || "공종"}</th>
                <th className="p-10">{t.colDesc || "규격"}</th>

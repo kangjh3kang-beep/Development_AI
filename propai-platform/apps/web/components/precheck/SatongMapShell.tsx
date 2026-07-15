@@ -1531,7 +1531,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     <section className="min-w-0 rounded-[32px] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
       <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
+          <p className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">
             Satong Map OS
           </p>
           <h1 className="mt-2 text-2xl font-black tracking-normal text-[var(--text-primary)] md:text-3xl">
@@ -1554,7 +1554,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         <aside className="min-w-0 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
           <div className="rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-secondary)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
-            <p className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--accent-strong)]">
+            <p className="font-[family-name:var(--font-display)] label-caps text-[var(--accent-strong)]">
               Parcel Intake
             </p>
             <h2 className="mt-2 text-xl font-black tracking-normal">통합 필지 입력</h2>

@@ -83,7 +83,7 @@ function SafetyDashboardPanel() {
   return (
     <Card>
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        <p className="label-caps text-[var(--text-tertiary)]">
           현장 안전관제 대시보드
         </p>
 
@@ -262,7 +262,7 @@ function renderDefectClassificationResult(raw: unknown): ReactNode {
 function Tile({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">{label}</p>
+      <p className="label-caps text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
     </div>
   );

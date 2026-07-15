@@ -84,7 +84,7 @@ function MaterialPricesPanel({ projectId }: { projectId: string }) {
   return (
     <Card>
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        <p className="label-caps text-[var(--text-tertiary)]">
           최신 자재가 스냅샷 (KCCI)
         </p>
 
@@ -229,7 +229,7 @@ function renderEscalationResult(raw: unknown): ReactNode {
 function Tile({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-[var(--r-card)] bg-[var(--surface)] p-4">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">{label}</p>
+      <p className="label-caps text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
     </div>
   );

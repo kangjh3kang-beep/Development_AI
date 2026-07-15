@@ -133,7 +133,7 @@ export function DashboardHome({ locale }: { locale: string }) {
             }}
           />
           <div className="relative">
-            <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-white/70">
+            <span className="font-[family-name:var(--font-display)] label-caps text-white/70">
               Intelligence Control Room
             </span>
             <div className="mt-3 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
@@ -186,7 +186,7 @@ export function DashboardHome({ locale }: { locale: string }) {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">생성 허브</span>
+            <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">생성 허브</span>
             <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">무엇을 만들까요?</h2>
             <p className="mt-1 text-sm font-medium text-[var(--text-secondary)]">
               최종 산출물을 기준으로 선택합니다.
@@ -248,7 +248,7 @@ export function DashboardHome({ locale }: { locale: string }) {
         <div className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <span className="font-[family-name:var(--font-display)] text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">진행 프로젝트</span>
+              <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">진행 프로젝트</span>
               <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">현재 남은 의사결정</h2>
             </div>
             <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">

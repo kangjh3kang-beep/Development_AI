@@ -157,7 +157,7 @@ export function DigitalTwinAnomalyDashboard() {
           <CardContent className="p-10 lg:p-14 h-full flex flex-col">
             <div className="flex items-center justify-between mb-10">
               <div className="space-y-2">
-                <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)]">STREAM_ANALYSIS</p>
+                <p className="label-caps text-[var(--text-hint)]">STREAM_ANALYSIS</p>
                 <CardTitle className="text-3xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">
                   {SENSOR_LABELS[selectedSensor] ?? selectedSensor} <span className="text-[var(--accent-strong)]">추이 분석.</span>
                 </CardTitle>
@@ -241,7 +241,7 @@ export function DigitalTwinAnomalyDashboard() {
         {/* 이상 스코어 산점도 */}
         <Card className="lg:col-span-4 rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden min-h-[500px]">
           <CardContent className="p-10 lg:p-12 border-t-[12px] border-[var(--status-error)] h-full flex flex-col">
-            <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)]">LATENT_SPACE</p>
+            <p className="label-caps text-[var(--text-hint)]">LATENT_SPACE</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">이상 스코어 <span className="text-[var(--status-error)]">분포.</span></CardTitle>
             <p className="mt-4 text-xs font-bold leading-relaxed text-[var(--text-hint)]">
               IsolationForest 알고리즘에 의해 계산된 이상 징후 확률 밀도입니다. <span className="text-[var(--status-error)] italic">임계치(-0.3)</span> 미만 포인트는 즉각적인 점검이 필요합니다.

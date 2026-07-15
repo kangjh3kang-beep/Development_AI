@@ -1468,7 +1468,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 적용 건축개요 스트립(선택한 개발종목 기반 — CAD·BIM 공용 기하) ── */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 -mt-4">
-        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">적용 건축개요</span>
+        <span className="label-caps text-[var(--accent-strong)]">적용 건축개요</span>
         {specLoading && !spec ? (
           <span className="text-xs text-[var(--text-hint)]">건축개요 산출 중…</span>
         ) : (
@@ -2041,6 +2041,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 </div>
               )}
               {!drawingLoading && !drawingError && activeCode && activeSvgUrl && (
+                // @ink-contract-ignore — 도면(SVG img) 종이 배경. 텍스트 자식 없음.
                 <div className="flex h-full w-full max-w-[920px] items-center justify-center rounded-2xl bg-white p-5 shadow-2xl">
                   {/* 보안: dangerouslySetInnerHTML 대신 Blob URL <img>로 렌더 — img로 로드된
                       SVG는 스크립트·이벤트핸들러가 실행되지 않는다(XSS 차단).

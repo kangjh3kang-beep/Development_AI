@@ -219,7 +219,7 @@ export function ProjectDesignWorkspaceClient({
         <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--accent-strong)]/5 blur-[80px] rounded-full transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/10" />
         <CardContent className="p-8 relative z-10">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)] border border-[var(--accent-strong)]/10">
+            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 label-caps text-[var(--accent-strong)] border border-[var(--accent-strong)]/10">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line-strong)] px-4 py-2 text-[10px] font-black tracking-widest text-[var(--text-hint)] uppercase">
@@ -264,7 +264,7 @@ export function ProjectDesignWorkspaceClient({
           {/* Project Context View */}
           <div className="flex flex-col justify-between gap-6 border-b lg:border-b-0 lg:border-r border-[var(--line-strong)]/50 pb-6 lg:pb-0 lg:pr-8">
             <div className="space-y-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)]">
+              <p className="label-caps text-[var(--text-hint)]">
                 {labels.contextTitle}
               </p>
               <CardTitle className="text-xl font-black text-[var(--text-primary)] leading-snug">
@@ -320,7 +320,7 @@ export function ProjectDesignWorkspaceClient({
         {/* Floor Plan Image Deliverable */}
         <Card className="border-[var(--line-strong)]">
           <CardContent className="p-6">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
+            <p className="label-caps text-[var(--text-hint)] mb-4">
               {labels.floorPlanResultTitle}
             </p>
             {results ? (
@@ -407,7 +407,7 @@ export function ProjectDesignWorkspaceClient({
           {/* BIM Volume Results */}
           <Card className="border-[var(--line-strong)]">
             <CardContent className="p-6">
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
+              <p className="label-caps text-[var(--text-hint)] mb-4">
                 {labels.bimResultTitle}
               </p>
               {results ? (
@@ -436,7 +436,7 @@ export function ProjectDesignWorkspaceClient({
           {/* Environmental Carbon LCA Results */}
           <Card className="border-[var(--line-strong)]">
             <CardContent className="p-6">
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
+              <p className="label-caps text-[var(--text-hint)] mb-4">
                 {labels.carbonTitle}
               </p>
               {results ? (
@@ -458,7 +458,7 @@ export function ProjectDesignWorkspaceClient({
                   
                   {/* AI Cost/Carbon Optimization reduction tips */}
                   <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
+                    <p className="label-caps text-[var(--text-hint)]">
                       {labels.reductionTipsLabel}
                     </p>
                     {results.reductionTips?.length ? (

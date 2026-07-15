@@ -199,7 +199,7 @@ export function DecisionVerdictCard({ brief }: { brief: DecisionBrief }) {
             <Icon className="size-7" />
           </span>
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
+            <span className="label-caps text-[var(--text-hint)]">
               통합 의사결정
             </span>
             <span
@@ -303,7 +303,7 @@ export function DecisionVerdictCard({ brief }: { brief: DecisionBrief }) {
 
           {v.reasons.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
+              <span className="label-caps text-[var(--text-hint)]">
                 판정 근거
               </span>
               <ul className="flex flex-col gap-1">
@@ -321,7 +321,7 @@ export function DecisionVerdictCard({ brief }: { brief: DecisionBrief }) {
 
           {v.blockers.length > 0 && (
             <div className="flex flex-col gap-1.5 rounded-2xl border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_6%,transparent)] px-4 py-3">
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--status-error)]">
+              <span className="inline-flex items-center gap-1.5 label-caps text-[var(--status-error)]">
                 <ShieldAlert className="size-3.5" aria-hidden />
                 차단 사유
               </span>

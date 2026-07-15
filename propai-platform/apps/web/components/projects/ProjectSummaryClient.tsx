@@ -266,7 +266,7 @@ export function ProjectSummaryClient({
             />
           </div>
           <div className="mt-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
+            <p className="label-caps text-[var(--text-hint)]">
               Module routes
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -351,7 +351,7 @@ function SummaryTile({
 }) {
   return (
     <div className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
+      <p className="label-caps text-[var(--text-hint)]">
         {label}
       </p>
       <p className="mt-3 break-all text-sm leading-7 text-[var(--text-secondary)]">

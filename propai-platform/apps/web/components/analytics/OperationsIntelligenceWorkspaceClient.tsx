@@ -560,7 +560,7 @@ export function OperationsIntelligenceWorkspaceClient({
         <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
                 {labels.heroTitle}
               </span>
               <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -604,7 +604,7 @@ export function OperationsIntelligenceWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -654,7 +654,7 @@ export function OperationsIntelligenceWorkspaceClient({
             />
           </div>
           <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
             <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
@@ -712,7 +712,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 <span className="cc-meta">MAINTENANCE · PREDICTIVE</span>
                 <span className="cc-live"><i />MONITOR</span>
               </div>
-              <p className="relative z-10 mt-2 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="relative z-10 mt-2 label-caps text-[var(--text-tertiary)]">
                 {labels.maintenanceTitle}
               </p>
               <form className="relative z-10 mt-5 grid gap-3" onSubmit={handleMaintenance}>
@@ -847,7 +847,7 @@ export function OperationsIntelligenceWorkspaceClient({
             {showTenant ? (
               <Card>
                 <CardContent className="p-6">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.tenantTitle}
                   </p>
 
@@ -1002,7 +1002,7 @@ export function OperationsIntelligenceWorkspaceClient({
                     <div className="mt-5 grid gap-4 md:grid-cols-2">
                       {feedbackResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                          <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.sentimentLabel}
                           </p>
                           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -1019,7 +1019,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       ) : null}
                       {satisfactionResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                          <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.gradeLabel}
                           </p>
                           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -1045,7 +1045,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 <CardContent className="p-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                      <p className="label-caps text-[var(--text-tertiary)]">
                         {labels.assetTitle}
                       </p>
                       <CardTitle className="mt-2 text-xl">
@@ -1121,7 +1121,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       </div>
 
                       <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                        <p className="label-caps text-[var(--text-tertiary)]">
                           {labels.recommendationsLabel}
                         </p>
                         <div className="mt-3 space-y-3">

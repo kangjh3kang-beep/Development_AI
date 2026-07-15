@@ -113,7 +113,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
   return (
     <Card className="bg-[var(--surface)]">
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        <p className="label-caps text-[var(--text-tertiary)]">
           {labels.eyebrow}
         </p>
         <div className="mt-3 flex flex-wrap items-start justify-between gap-4">

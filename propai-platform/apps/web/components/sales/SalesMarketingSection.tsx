@@ -151,7 +151,7 @@ export function SalesMarketingSection({
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 채널별 마케팅 콘텐츠
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleContentSubmit}>
@@ -176,7 +176,7 @@ export function SalesMarketingSection({
 
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 OM(투자설명서) 리포트
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleOmSubmit}>

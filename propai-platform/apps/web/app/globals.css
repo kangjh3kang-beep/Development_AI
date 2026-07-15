@@ -53,14 +53,9 @@ body {
   opacity: 1; /* Target browsers that lower opacity by default */
 }
 
-/* ── 폼 컨트롤 가독성 기본(전역) ──
-   텍스트박스 글자색을 토큰 기반 고대비로 보장(컴포넌트가 명시한 색은 유지).
-   element 선택자(0,0,1)라 Tailwind 유틸(0,1,0)이 지정되면 그쪽이 우선. */
-input,
-textarea,
-select {
-  color: var(--text-primary);
-}
+/* 폼 컨트롤 글자색 기본값은 아래 @layer base 로 이관했다(언레이어드 금지 — 그 주석 참조).
+   기존 주석은 "element 선택자(0,0,1)라 Tailwind 유틸(0,1,0)이 우선"이라 적었으나,
+   Cascade Layers 는 명시도보다 먼저 판정하므로 언레이어드가 무조건 이겨 의도와 정반대로 동작했다. */
 
 /* ── 폼 컨트롤 포커스 — 세련된 액센트 글로우 링(눈에 띄게) ── */
 input:focus,
@@ -133,9 +128,29 @@ p {
   border-radius: 4px;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+/* ★ 요소 기본값은 반드시 @layer base 안에 둔다 — 언레이어드 금지.
+   CSS Cascade Layers 규칙: **언레이어드 스타일은 레이어드 스타일을 명시도와 무관하게 이긴다.**
+   Tailwind v4 는 모든 유틸리티를 @layer utilities 에 넣으므로, 여기서 언레이어드로
+   `a { color: inherit }` 을 두면 <a> 의 모든 글자색 유틸리티(text-[var(--saas-ink)] 등)가
+   조용히 무시되고 부모 색을 상속한다.
+   실제 사고(2026-07-15): 관제 홈 히어로의 `bg-white text-[var(--saas-ink)]` CTA 가
+   부모의 text-white 를 상속해 흰 배경에 흰 글씨로 렌더 → 완전 비가시.
+   호버(hover:bg-accent-strong)에서는 배경이 파래져 우연히 보였기 때문에 오래 방치됐고,
+   PR#270 의 --saas-ink 고정 수정도 이 규칙에 막혀 애초에 적용된 적이 없었다.
+   base 레이어에 두면 색 유틸리티가 없는 앵커는 그대로 상속하고(기본값 유지),
+   유틸리티를 준 앵커는 유틸리티가 이긴다(의도대로). */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* 폼 컨트롤 글자색도 같은 이유로 base 에 둔다 — 언레이어드면 text-* 유틸을 이겨버린다. */
+  input,
+  textarea,
+  select {
+    color: var(--text-primary);
+  }
 }
 
 button,
@@ -609,22 +624,44 @@ textarea {
     text-shadow: var(--data-glow);
   }
 
-  /* ── uppercase 메타 라벨(계기판 라벨) ── */
+  /* ── label-caps — 섹션 라벨 시그니처 (DESIGN.md B2) ──
+     Space Grotesk / 11px / 700 / 0.12em / UPPERCASE.
+     --font-display 스택이 Space Grotesk → Pretendard 순이라, 한글은 글리프가 없는
+     Space Grotesk를 글자 단위로 건너뛰고 Pretendard 로 폴백된다(트래킹만 적용).
+     컴프(*.dc.html)도 한글 라벨("생성 허브"·"진행 프로젝트")에 동일하게 0.12em 을 준다.
+     ★ 이 클래스가 정본이다. 신규 라벨은 인라인 tracking-[...] 대신 이것을 쓴다. */
+  .label-caps {
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
+    font-size: 0.6875rem;       /* 11px */
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-tertiary);
+  }
+  /* 한글 문장형 라벨 이탈구 — 자간을 벌리면 안 되는 곳에만. */
+  .label-caps--ko {
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  /* ── uppercase 메타 라벨(계기판 라벨) ──
+     이름 불변(cc- 계열 불가침) · 값만 label-caps 시그니처로 정렬 (DESIGN.md B2). */
   .cc-label {
-    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.6875rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.12em;
     color: var(--text-tertiary);
   }
   /* 패널 메타라벨(헤더용, 데이터 액센트) */
   .cc-meta {
-    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.12em;
     color: var(--data-accent);
   }
 
@@ -1117,15 +1154,17 @@ textarea {
     .db-map-pulse, .db-map-scan { animation: none; }
   }
 
-  /* 작은 대문자 메타 라벨(섹션 분위기 통일) */
+  /* 작은 대문자 메타 라벨(섹션 분위기 통일)
+     이름 불변(db- 계열 불가침) · 값만 label-caps 시그니처로 정렬 (DESIGN.md B2).
+     한글 문장형은 아래 .db-eyebrow--ko 이탈구가 계속 처리한다. */
   .db-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    font-family: var(--font-mono), ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.6875rem;       /* 11px */
-    font-weight: 600;
-    letter-spacing: 0;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
   }

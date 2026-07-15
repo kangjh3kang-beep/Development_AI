@@ -1,6 +1,6 @@
 import { Card, CardContent, Badge, Button } from "@propai/ui";
 import { motion } from "framer-motion";
-import { Gem, Landmark, Sparkles, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { Gem, Landmark, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { useParams } from "next/navigation";
 import {
   Bar,
@@ -213,7 +213,7 @@ export function FeasibilityResultView() {
                   </div>
                </div>
                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 label-caps text-[var(--accent-strong)]">
                     Real-time Analysis
                   </div>
                   <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] leading-tight">{result.module_name}</h3>
@@ -232,14 +232,14 @@ export function FeasibilityResultView() {
             {/* Right: Primary ROI Gauge Result */}
             <div className="flex flex-wrap items-center gap-12 lg:justify-end">
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Expected ROI</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Expected ROI</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-6xl font-[1000] text-[var(--accent-strong)] tracking-tighter">{result.roi_pct.toFixed(2)}</span>
                      <span className="text-xl font-black text-[var(--accent-strong)] opacity-60">%</span>
                   </div>
                </div>
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tight">{formatWon(result.npv_won)}</span>
                   </div>
@@ -290,7 +290,7 @@ export function FeasibilityResultView() {
       </section>
 
       {/* ── Charts Section ── */}
-      <div className="grid gap-8 lg:grid-cols-[1fr_480px]">
+      <div className="grid gap-8">
         {/* Cost Breakdown Chart */}
         <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
           <CardContent className="p-12">
@@ -352,31 +352,9 @@ export function FeasibilityResultView() {
             <EvidencePanel title="산출 근거" items={evidenceItems} className="mt-8" />
           </CardContent>
         </Card>
-
-        {/* AI Insight Card */}
-        <div className="flex flex-col gap-8">
-           <Card className="relative flex-1 overflow-hidden rounded-[3.5rem] border-none bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 p-1 text-white shadow-[var(--shadow-2xl)]">
-              <CardContent className="relative z-10 h-full rounded-[3.4rem] bg-[var(--surface-strong)]/80 p-10 backdrop-blur-3xl flex flex-col border border-white/10">
-                 <div className="mb-10 flex h-14 w-14 items-center justify-center rounded-3xl bg-[var(--surface)] shadow-[var(--shadow-lg)] border border-[var(--line-strong)]">
-                    <Sparkles className="size-7 animate-bounce-subtle" aria-hidden />
-                 </div>
-                 <h4 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] mb-4">AI 총평 및 전략 포인트</h4>
-                 <p className="flex-1 text-base leading-[1.8] text-[var(--text-secondary)] font-bold italic underline decoration-[var(--line)] underline-offset-8">
-                    해당 부지의 개발 시나리오는 <span className="text-[var(--accent-strong)] font-black italic underline decoration-[var(--accent-strong)]/30 underline-offset-4">'상업 복합 시설'</span> 일 때 가장 높은 NPV를 보입니다. 
-                    특히 주변 성수역 시세 상승률이 연평균 12%를 상회하고 있어, 준공 후 매각 차익(Capital Gain) 비중을 높이는 전략이 유효합니다.
-                 </p>
-                 <div className="mt-12 pt-8 border-t border-[var(--line-strong)]">
-                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">AI Investment Viability Score</p>
-                    <div className="flex items-center gap-6">
-                       <div className="h-3 flex-1 rounded-full bg-[var(--line)] overflow-hidden p-0.5 border border-[var(--line-strong)]">
-                          <div className="h-full w-[92%] bg-gradient-to-r from-[var(--accent-strong)] to-blue-400 rounded-full shadow-[var(--shadow-glow)]" />
-                       </div>
-                       <span className="text-2xl font-[1000] italic text-[var(--text-primary)] tracking-tighter">92 <span className="text-xs font-black opacity-40">PT</span></span>
-                    </div>
-                 </div>
-              </CardContent>
-           </Card>
-        </div>
+        {/* AI 총평 카드 제거(무목업) — 데이터 출처 없이 "성수역 12%·92PT"를 상수로 렌더하던 블록.
+           FeasibilityResult 에 총평/점수 필드가 없고, 실제 AI 산출물은 같은 탭의
+           AIRecommendationPanel(/feasibility/recommendations 응답)이 담당한다. */}
       </div>
     </div>
   );

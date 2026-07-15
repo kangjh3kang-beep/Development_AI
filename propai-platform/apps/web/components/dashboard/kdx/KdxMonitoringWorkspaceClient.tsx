@@ -73,7 +73,7 @@ export function KdxMonitoringWorkspaceClient() {
       <div className="mx-auto max-w-7xl space-y-8">
         <header className="flex flex-wrap items-end justify-between gap-6 border-b border-[var(--line)] pb-8">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--accent-strong)] mb-2">
+            <p className="label-caps text-[var(--accent-strong)] mb-2">
               Telemetric Engine / LIVE
             </p>
             <h1 className="text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">

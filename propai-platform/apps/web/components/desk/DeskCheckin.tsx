@@ -99,6 +99,7 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
       <div>
         <p className="mb-1 text-sm text-[var(--text-tertiary)]">서명</p>
         <canvas ref={sig} width={380} height={120}
+          // @ink-contract-ignore — 서명 캔버스의 종이 배경. 텍스트 자식 없음.
           className="w-full touch-none rounded-lg border border-[var(--line)] bg-white"
           onPointerDown={start} onPointerUp={end} onPointerMove={draw} onPointerLeave={end} />
       </div>

@@ -10,7 +10,7 @@ import { FeasibilityResultView } from "./FeasibilityResultView";
 import { MonteCarloPanel } from "./MonteCarloPanel";
 import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
-import { ExcelExportButton } from "./ExcelExportButton";
+import { FeasibilityExportButton } from "./FeasibilityExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -310,7 +310,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               </motion.div>
             )}
           </AnimatePresence>
-          {result && <ExcelExportButton />}
+          {result && <FeasibilityExportButton />}
         </div>
       </div>
 
@@ -344,7 +344,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             >
               <div className="space-y-6">
                  <div className="glass rounded-[2.5rem] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
-                    <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)] mb-6">Execution Strategy</p>
+                    <p className="label-caps text-[var(--text-hint)] mb-6">Execution Strategy</p>
                     <ProjectTypeSelector />
                  </div>
               </div>

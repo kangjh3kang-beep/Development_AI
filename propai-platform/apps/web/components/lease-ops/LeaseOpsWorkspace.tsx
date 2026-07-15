@@ -366,7 +366,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
         <CardContent className="relative z-10 p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="cc-meta">LEASE · OPERATIONS</span>
-            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               임대·임차인 관리
             </span>
             {runtimeConfig.mode === "live" ? (

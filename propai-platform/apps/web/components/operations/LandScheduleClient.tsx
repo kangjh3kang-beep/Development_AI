@@ -12,6 +12,7 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { NumberInput } from "@/components/common/NumberInput";
+import { landRatio, type LandRatio } from "@/lib/land-ratio";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
   () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
@@ -54,7 +55,7 @@ const parseNum = (s: string): number | null => {
   return digits === "" ? null : Number(digits);
 };
 
-function Bar({ label, ratio, color }: { label: string; ratio: number; color: string }) {
+function Bar({ label, ratio, color, sub }: { label: string; ratio: number; color: string; sub?: string }) {
   const pct = Math.round(ratio * 100);
   return (
     <div>
@@ -62,8 +63,14 @@ function Bar({ label, ratio, color }: { label: string; ratio: number; color: str
       <div className="mt-1 h-2 rounded-full bg-[var(--surface-strong)]">
         <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
+      {sub && <p className="mt-1 text-[10px] text-[var(--text-hint)]">{sub}</p>}
     </div>
   );
+}
+
+/** 진행바 보조문구 — 면적 축 옆에 건수(소유자 수 요건 근사)를 병기한다. */
+function ratioSub(r: LandRatio): string {
+  return `필지 ${r.matchedCount}/${r.totalCount}건 · ${Math.round(r.countRatio * 100)}%`;
 }
 
 export function LandScheduleClient({ locale }: { locale: Locale }) {
@@ -138,16 +145,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const area = rows.reduce((a, r) => a + (r.area_sqm || 0), 0);
     const priv = rows.filter((r) => r.owner_type === "사유지").reduce((a, r) => a + (r.area_sqm || 0), 0);
     const pub = rows.filter((r) => r.owner_type === "국공유지").reduce((a, r) => a + (r.area_sqm || 0), 0);
-    const contracted = rows.filter((r) => r.contracted).length;
-    const useC = rows.filter((r) => r.land_use_consent).length;
-    const distC = rows.filter((r) => r.district_consent).length;
-    const operC = rows.filter((r) => r.operator_consent).length;
     const expSum = rows.reduce((a, r) => a + (r.expected_price || 0), 0);
     const purSum = rows.reduce((a, r) => a + (r.purchase_price || 0), 0);
     const exclArea = rows.reduce((a, r) => a + (r.exclusive_area_sqm || 0), 0); // 세대 전유면적 합(집합건물)
-    return { n, area, priv, pub, contracted, useC, distC, operC, expSum, purSum, exclArea,
-      contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0,
-      operRatio: n ? operC / n : 0 };
+    // 확보율은 면적 가중(법정 축) — 건수 기준은 큰 필지 미확보를 가린다. lib/land-ratio 참조.
+    const contract = landRatio(rows, (r) => !!r.contracted);
+    return { n, area, priv, pub, expSum, purSum, exclArea, contract };
   }, [rows]);
 
   // 소유구분 문자열 → 사유지/국공유지 매핑
@@ -774,13 +777,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 ))}
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="var(--status-success)" />
-                {/* 사업방식 동의 항목별 동의율(동적) */}
+                <Bar label="확보비율(계약확정 · 면적)" ratio={agg.contract.areaRatio} color="var(--status-success)" sub={ratioSub(agg.contract)} />
+                {/* 사업방식 동의 항목별 동의율(동적) — 면적 가중이 법정 축, 건수는 병기. */}
                 {consentTypes.map((c, ci) => {
-                  const denom = rows.length || 1;
-                  const got = rows.filter((r) => consentVal(r, c.id)).length;
+                  const r = landRatio(rows, (row) => consentVal(row, c.id));
                   const palette = ["var(--status-info)", "var(--data-accent)", "var(--status-warning)", "var(--accent-strong)", "var(--status-success)"];
-                  return <Bar key={c.id} label={`${c.label} 동의율`} ratio={got / denom} color={palette[ci % palette.length]} />;
+                  return <Bar key={c.id} label={`${c.label} 동의율 (면적)`} ratio={r.areaRatio} color={palette[ci % palette.length]} sub={ratioSub(r)} />;
                 })}
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-xs">

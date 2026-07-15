@@ -141,7 +141,7 @@ export function C2rBriefSection({
     <AdvancedDrawer label="C2R 부지 렌더 브리프·이미지 렌더">
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             좌표 → 렌더 브리프
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleBriefSubmit}>

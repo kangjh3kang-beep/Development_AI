@@ -660,7 +660,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className="text-2xl">{style.emoji}</span>
-                        <span className={`text-[10px] font-[1000] uppercase tracking-[0.4em] ${style.accent}`}>
+                        <span className={`label-caps ${style.accent}`}>
                           {style.label}
                         </span>
                       </div>

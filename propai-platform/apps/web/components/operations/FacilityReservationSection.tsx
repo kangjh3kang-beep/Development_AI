@@ -122,7 +122,7 @@ export function FacilityReservationSection({
     <AdvancedDrawer label="공유시설 예약">
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             공유시설 예약 생성
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleReserveSubmit}>

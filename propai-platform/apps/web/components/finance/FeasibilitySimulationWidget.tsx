@@ -91,7 +91,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
 
       <div className="grid gap-8 xl:grid-cols-[380px_1fr]">
         <div className="flex flex-col gap-8 rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-lg)]">
-          <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+          <h5 className="label-caps text-[var(--text-hint)]">
             {t.inputTitle || "VARIABLE CONTROL"}
           </h5>
           
@@ -130,7 +130,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
 
         <div className="relative min-h-[550px] flex flex-col overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
           <div className="flex items-center justify-between mb-10">
-             <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+             <h5 className="label-caps text-[var(--text-hint)]">
                {t.outputTitle || "AI PREDICTION OVERVIEW"}
              </h5>
              <div className="flex h-10 items-center gap-3 rounded-full bg-[var(--accent-soft)] px-5">

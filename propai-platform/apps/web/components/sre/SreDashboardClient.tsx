@@ -32,7 +32,7 @@ function MetricCard({ label, value, sub, status, progress }: MetricProps) {
       className={`rounded-[2.5rem] border p-8 transition-all hover:scale-[1.02] ${statusColors[status]}`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">{label}</span>
+        <span className="label-caps opacity-60">{label}</span>
         <div className={`h-2 w-2 rounded-full ${barColors[status]} animate-pulse`} />
       </div>
       <div className="mt-6 flex items-baseline gap-2">

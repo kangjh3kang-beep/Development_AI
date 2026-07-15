@@ -400,7 +400,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
 
           {/* ── ② 환경분석 인라인(ESG 배지) ── */}
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">환경분석 · ESG</span>
+            <span className="label-caps text-[var(--accent-strong)]">환경분석 · ESG</span>
             {esgData?.totalCarbonPerSqm || esgData?.embodiedCarbonKg ? (
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
                 {cGrade && (

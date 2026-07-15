@@ -634,7 +634,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--text-tertiary)]">
+                      <tr className="text-left label-caps text-[var(--text-tertiary)]">
                         <th className="pb-2 pr-4">공종</th><th className="pb-2 pr-4">규격</th><th className="pb-2 pr-4 text-right">물량</th><th className="pb-2 pr-4">단위</th><th className="pb-2 text-right">금액</th>
                       </tr>
                     </thead>

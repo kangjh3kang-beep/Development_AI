@@ -80,7 +80,7 @@ export function NextStageCta({
           <StageIcon id={meta.icon} size={26} />
         </div>
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
+          <p className="label-caps text-[var(--accent-strong)]">
             다음 단계
           </p>
           <p className="mt-1 text-lg font-black tracking-tight text-[var(--text-primary)]">
@@ -93,7 +93,7 @@ export function NextStageCta({
       </div>
       <Link
         href={`/${locale}/projects/${projectId}/${meta.route}`}
-        className="inline-flex h-14 shrink-0 items-center gap-3 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-8 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
+        className="inline-flex h-14 shrink-0 items-center gap-3 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-8 label-caps text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
       >
         {meta.label} 진입 ↗
       </Link>

@@ -225,7 +225,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
       {/* Header + Form */}
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-lg)]">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="rounded-full bg-[var(--accent-soft)] px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+          <span className="rounded-full bg-[var(--accent-soft)] px-4 py-1.5 label-caps text-[var(--accent-strong)]">
             설계변경 사전예측
           </span>
           <span className="rounded-full border border-[var(--line)] px-3 py-1 text-[10px] font-medium text-[var(--text-tertiary)]">
@@ -386,7 +386,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
           {/* 필터 */}
           {risks.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+              <span className="label-caps text-[var(--text-tertiary)]">
                 필터
               </span>
               <FilterChip

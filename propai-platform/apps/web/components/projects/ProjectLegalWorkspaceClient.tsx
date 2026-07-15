@@ -720,7 +720,7 @@ export function ProjectLegalWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[var(--accent-strong)]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[var(--accent-strong)]/10 px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -769,7 +769,7 @@ export function ProjectLegalWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.contextTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -780,13 +780,13 @@ export function ProjectLegalWorkspaceClient({
               <SkeletonLoader count={1} itemClassName="h-28" />
             ) : (
               <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="label-caps text-[var(--text-tertiary)]">
                   {labels.projectIdLabel}
                 </p>
                 <p className="mt-2 break-all text-sm font-semibold text-[var(--text-primary)]">
                   {projectId}
                 </p>
-                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="mt-4 label-caps text-[var(--text-tertiary)]">
                   {labels.projectNameLabel}
                 </p>
                 <p className="mt-2 text-sm text-[var(--text-secondary)]">
@@ -812,7 +812,7 @@ export function ProjectLegalWorkspaceClient({
 
           <Card className="bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
@@ -922,7 +922,7 @@ export function ProjectLegalWorkspaceClient({
         <Card>
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 종합 규제 분석 (법령·조례·상/하위법령 + 항목별 이유·관련조항)
               </p>
               {regLlmGated ? (
@@ -961,7 +961,7 @@ export function ProjectLegalWorkspaceClient({
         <Card>
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.ruleCheckTitle}
               </p>
               {ruleResult ? (
@@ -1052,7 +1052,7 @@ export function ProjectLegalWorkspaceClient({
         {/* Compliance Results (보조): 계획값 대조용 정량 적합성 */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.complianceTitle} · 계획값 대조 (보조)
             </p>
             {complianceResult ? (
@@ -1111,7 +1111,7 @@ export function ProjectLegalWorkspaceClient({
                         background: `color-mix(in srgb, ${toneVar} 8%, transparent)`,
                       }}
                     >
-                      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                      <p className="label-caps text-[var(--text-tertiary)]">
                         {labels.overallLabel}
                       </p>
                       <p
@@ -1172,7 +1172,7 @@ export function ProjectLegalWorkspaceClient({
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
@@ -1199,7 +1199,7 @@ function ComplianceMetric({
 }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4 space-y-2">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="text-sm text-[var(--text-secondary)]">

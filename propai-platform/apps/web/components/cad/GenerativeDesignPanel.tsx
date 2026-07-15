@@ -1200,7 +1200,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           {single && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
+                <span className="label-caps text-[var(--text-hint)]">
                   단일 자동설계
                 </span>
                 <div className="flex items-center gap-1.5">

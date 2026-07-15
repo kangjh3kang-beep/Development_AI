@@ -449,7 +449,7 @@ export function ProjectEsgWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -493,7 +493,7 @@ export function ProjectEsgWorkspaceClient({
       {/* ── LCA Section ── */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.lcaFormTitle}
           </p>
           <form className="mt-4 grid gap-4" onSubmit={handleLcaSubmit}>
@@ -558,7 +558,7 @@ export function ProjectEsgWorkspaceClient({
       {/* LCA Results */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.lcaResultTitle}
           </p>
           {lcaResult ? (
@@ -614,7 +614,7 @@ export function ProjectEsgWorkspaceClient({
               ) : null}
               {lcaResult.material_breakdown?.length > 0 && (
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.materialBreakdownLabel}
                   </p>
                   <div className="mt-3 grid gap-3">
@@ -685,7 +685,7 @@ export function ProjectEsgWorkspaceClient({
         {/* ── EPD Carbon Footprint ── */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.epdFormTitle}
             </p>
             <form className="mt-4 grid gap-3" onSubmit={handleEpdSubmit}>
@@ -764,7 +764,7 @@ export function ProjectEsgWorkspaceClient({
 
             {/* EPD Results */}
             <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.epdResultTitle}
               </p>
               {epdResult ? (
@@ -815,7 +815,7 @@ export function ProjectEsgWorkspaceClient({
         {/* ── Low-Carbon Alternatives ── */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.alternativesFormTitle}
             </p>
             <form className="mt-4 grid gap-3" onSubmit={handleAltSubmit}>
@@ -847,7 +847,7 @@ export function ProjectEsgWorkspaceClient({
 
             {/* Alternatives Results */}
             <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.altResultTitle}
               </p>
               {altResult ? (
@@ -920,7 +920,7 @@ export function ProjectEsgWorkspaceClient({
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

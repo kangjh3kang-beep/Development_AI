@@ -950,7 +950,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               </div>
               <div>
                 <h4 className="text-lg font-black text-[var(--text-primary)] tracking-tight">지능형 입지 분석</h4>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-1">
+                <p className="label-caps flex items-center gap-1">
                   <span className={`inline-block h-1.5 w-1.5 rounded-full ${dataSourceLabel.dot}`} />
                   <span className={dataSourceLabel.color}>{dataSourceLabel.text}</span>
                 </p>

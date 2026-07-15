@@ -340,7 +340,7 @@ export function ProjectBimWorkspaceClient({
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="cc-meta">BIM WORKSPACE</span>
-            <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             {runtimeConfig.mode === "live" ? (
