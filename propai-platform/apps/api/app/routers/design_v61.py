@@ -5,6 +5,7 @@ prefix: /api/v1/design
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 from typing import Any, Literal
@@ -104,6 +105,10 @@ class CADSaveRequest(BaseModel):
     building_width_m: float | None = None
     building_depth_m: float | None = None
     floor_height_m: float | None = None
+    # ★WP-E R1(무낙관잠금 봉합·If-Match 의미론): 저장 직전 사용자가 '내가 본 최신 버전'을 함께
+    #   보내면, 서버 현재 최신 버전과 다를 때(다른 사람이 그새 저장) 409로 거부한다(무음 덮어쓰기
+    #   금지 = lost-update 방지). 미전달(None)이면 기존 동작(항상 MAX+1) 유지 — 점진 도입·하위호환.
+    expected_version: int | None = None
 
 
 class PhotorealRenderRequest(BaseModel):
@@ -549,13 +554,31 @@ async def save_drawing(
             }
         tenant_id = row[0]
 
-        # 현재 최대 버전 +1 (raw — ORM 컬럼 불일치 우회)
+        # ★WP-E R1(무낙관잠금 레이스 봉합): 같은 프로젝트+design_type의 동시 저장을 트랜잭션
+        #   advisory lock으로 직렬화한다(analysis_ledger append 선례 재사용). 이 락이 없으면
+        #   두 요청이 같은 MAX(version)을 읽어 같은 next_ver를 이중 발번하는 lost-update가 난다.
+        #   락은 커밋/롤백 시 자동 해제(프로세스 스코프·신규 스키마 0).
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),
+            {"lk": f"design_versions:{pid}:cad_2d"},
+        )
+        # 현재 최대 버전 (raw — ORM 컬럼 불일치 우회)
         ver_row = (await db.execute(
             text("SELECT COALESCE(MAX(version_number),0) FROM design_versions "
                  "WHERE project_id = :pid AND design_type = 'cad_2d'"),
             {"pid": str(pid)},
         )).first()
-        next_ver = int(ver_row[0]) + 1 if ver_row else 1
+        current_ver = int(ver_row[0]) if ver_row else 0
+        # ★If-Match 의미론(하위호환): expected_version이 오면 서버 현재 최신과 대조해 불일치 시
+        #   409로 거부한다(무음 덮어쓰기 금지). 미제공(None)이면 기존 동작(항상 MAX+1) 유지.
+        if req.expected_version is not None and req.expected_version != current_ver:
+            await db.rollback()  # advisory lock 즉시 해제(다른 대기 저장이 지연되지 않게).
+            raise HTTPException(
+                status_code=409,
+                detail=(f"버전 충돌: expected_version={req.expected_version}이(가) 현재 최신 "
+                        f"버전({current_ver})과 다릅니다. 최신본을 다시 불러온 뒤 저장하세요."),
+            )
+        next_ver = current_ver + 1
 
         design_payload: dict[str, Any] = {
             "drawing_code": req.drawing_code,
@@ -620,11 +643,36 @@ async def save_drawing(
              "dj": design_json, "notes": f"CAD 편집 저장 v{next_ver}"},
         )
         await db.commit()
+
+        # ★WP-E: design_run 영속(DRAFT) — 도면 커밋 후 별도 best-effort 트랜잭션으로 설계 실행의
+        #   통일 앵커(bare 기하)·표면해시(save_stamp)·기하해시를 design_runs에 기록한다. 완전한
+        #   매스(폭·깊이·층수)가 있을 때만 기록하고, 실패해도 이미 커밋된 도면은 안전하다(예외격리).
+        if (
+            req.building_width_m is not None
+            and req.building_depth_m is not None
+            and req.floor_count is not None
+        ):
+            with contextlib.suppress(Exception):  # 영속 실패가 저장 응답을 막지 않음(예외격리).
+                from app.services.cad import design_run_store
+
+                _stamp = design_payload.get("bimir") if isinstance(design_payload.get("bimir"), dict) else {}
+                await design_run_store.persist_design_run(
+                    db=db, tenant_id=str(tenant_id), project_id=str(pid),
+                    building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+                    num_floors=req.floor_count, floor_height_m=req.floor_height_m,
+                    surface="save_stamp", surface_hash=(_stamp or {}).get("design_input_hash"),
+                    compiler_version=(_stamp or {}).get("bimir_version"),
+                    metrics={"floor_count": req.floor_count, "building_height_m": req.building_height_m},
+                )
         return {
             "project_id": project_id, "drawing_code": req.drawing_code,
             "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
             "layer_count": len(req.layers), "status": f"saved(v{next_ver})",
         }
+    except HTTPException:
+        # ★409(버전 충돌) 등 의도된 HTTP 응답은 아래 generic 핸들러가 500으로 변환하지 않도록
+        #   먼저 그대로 전파한다(HTTPException도 Exception 하위형이므로 순서가 중요).
+        raise
     except Exception as e:  # noqa: BLE001
         await db.rollback()
         import structlog
