@@ -25,6 +25,9 @@ import { join } from "node:path";
  *     - 별칭 우회: `const site = s.siteAnalysis` 후 `site.landAreaSqm` (site 는 임의 변수명)
  *     - 구조분해: `const { landAreaSqm } = sa`
  *     - prop 전달: `<Card landAreaSqm={sa.landAreaSqm} />` (JSX 속성)
+ *     - ??-폴백 속성값: `key: sa?.landAreaSqm ?? null` — `??` 를 존재확인으로 보고 제외하므로
+ *       놓친다. 이건 workspace-extended-panels.ts:90 원버그의 정확한 형태라, 재도입은 이 게이트가
+ *       아니라 코드리뷰가 막아야 한다(존재확인 오탐과 트레이드오프 — 정확도 우선 결정).
  *   이 경로들은 코드리뷰가 커버한다. 게이트는 '직접 raw 읽기'라는 가장 흔한 재발 형태를 막는다.
  */
 
@@ -45,9 +48,10 @@ const SA = String.raw`${SRC}\s*[!?]?\s*\.\s*landAreaSqm\s*!?`;
 const CONSUME = [
   `${SA}\\s*\\)?\\s*\\.(?:toLocaleString|toFixed|toString)\\(`, // sa.landAreaSqm.toLocaleString()
   // 함수 첫 인자로 raw 를 넘기는 모든 호출 — Number()·Math.round()·num()·formatArea() 등 래핑을
-  //   통틀어 잡는다(래핑돼도 raw 값을 꺼내 쓰는 것은 동일한 유출이다). 존재확인 헬퍼(Boolean 등)는
-  //   드물고, 그마저도 raw 를 만지므로 SSOT 로 바꾸는 편이 안전하다.
-  `[A-Za-z_]\\w*\\s*\\(\\s*${SA}`, // wrap(sa.landAreaSqm  — 예: num(siteAnalysis?.landAreaSqm)
+  //   통틀어 잡는다(래핑돼도 raw 값을 꺼내 쓰는 것은 동일한 유출이다).
+  //   ★제어흐름 키워드(if/while/for/switch/return/catch)는 함수호출이 아니라 존재확인 가드라 제외 —
+  //     `if (sa.landAreaSqm != null)` 를 함수호출로 오인해 거짓 실패하면 게이트 신뢰가 무너진다.
+  `\\b(?!(?:if|while|for|switch|return|catch|typeof)\\b)[A-Za-z_]\\w*\\s*\\(\\s*${SA}`,
   `${SA}\\s*[*/]\\s*[A-Za-z0-9_.(]`, // 산술(곱·나눗셈): sa.landAreaSqm / PYEONG_SQM
   `\\$\\{[^}]*${SA}`, // 템플릿 리터럴: \`${sa.landAreaSqm}㎡\`
 ].join("|");
