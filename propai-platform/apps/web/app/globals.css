@@ -609,22 +609,44 @@ textarea {
     text-shadow: var(--data-glow);
   }
 
-  /* ── uppercase 메타 라벨(계기판 라벨) ── */
+  /* ── label-caps — 섹션 라벨 시그니처 (DESIGN.md B2) ──
+     Space Grotesk / 11px / 700 / 0.12em / UPPERCASE.
+     --font-display 스택이 Space Grotesk → Pretendard 순이라, 한글은 글리프가 없는
+     Space Grotesk를 글자 단위로 건너뛰고 Pretendard 로 폴백된다(트래킹만 적용).
+     컴프(*.dc.html)도 한글 라벨("생성 허브"·"진행 프로젝트")에 동일하게 0.12em 을 준다.
+     ★ 이 클래스가 정본이다. 신규 라벨은 인라인 tracking-[...] 대신 이것을 쓴다. */
+  .label-caps {
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
+    font-size: 0.6875rem;       /* 11px */
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-tertiary);
+  }
+  /* 한글 문장형 라벨 이탈구 — 자간을 벌리면 안 되는 곳에만. */
+  .label-caps--ko {
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  /* ── uppercase 메타 라벨(계기판 라벨) ──
+     이름 불변(cc- 계열 불가침) · 값만 label-caps 시그니처로 정렬 (DESIGN.md B2). */
   .cc-label {
-    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.6875rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.12em;
     color: var(--text-tertiary);
   }
   /* 패널 메타라벨(헤더용, 데이터 액센트) */
   .cc-meta {
-    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.12em;
     color: var(--data-accent);
   }
 
@@ -1117,15 +1139,17 @@ textarea {
     .db-map-pulse, .db-map-scan { animation: none; }
   }
 
-  /* 작은 대문자 메타 라벨(섹션 분위기 통일) */
+  /* 작은 대문자 메타 라벨(섹션 분위기 통일)
+     이름 불변(db- 계열 불가침) · 값만 label-caps 시그니처로 정렬 (DESIGN.md B2).
+     한글 문장형은 아래 .db-eyebrow--ko 이탈구가 계속 처리한다. */
   .db-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    font-family: var(--font-mono), ui-monospace, monospace;
+    font-family: var(--font-display), "Space Grotesk", var(--font-sans), sans-serif;
     font-size: 0.6875rem;       /* 11px */
-    font-weight: 600;
-    letter-spacing: 0;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
   }
