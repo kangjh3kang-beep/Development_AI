@@ -46,9 +46,19 @@ services:
       # MVP: 비동기 워커/redis 없이 동기 폴백(eager). 진짜 비동기는 redis+worker 추가 후 false.
       CELERY_TASK_ALWAYS_EAGER: "true"
       # 결정론 해시 임베더(OpenAI 키 불요). 의미 임베딩은 EMBEDDER=openai + OPENAI_API_KEY 로 격상.
-      EMBEDDER: hash
+      EMBEDDER: ${EMBEDDER:-hash}
       # 호스트 기존 Qdrant 재사용 옵션. 빈 값이면 in-memory mock(영속X). 예: http://host.docker.internal:6333
       QDRANT_URL: ${QDRANT_URL:-}
+      # ── 어댑터 실화(實化) passthrough(감사 2026-07-16 봉합: 실구현 3종이 존재하는데 compose가
+      #    선택 스위치를 안 넘겨 mock이 고정되던 결함). 기본값은 종전과 동일(mock/빈값)이라
+      #    .env.prod에 값을 넣기 전까지 동작 무변화(additive 무회귀).
+      #  · SHEET_CLASSIFIER=vllm (+ANTHROPIC_API_KEY) → 시트 분류기 실화
+      #  · JURISDICTION_ADAPTER=vworld (+VWORLD_API_KEY) → 관할 해석 실화(레이어코드 라이브 검증 1회 필수)
+      #  · EMBEDDER=openai (+OPENAI_API_KEY+QDRANT_URL) → 의미 임베더 실화(Qdrant 없으면 in-memory 비영속)
+      SHEET_CLASSIFIER: ${SHEET_CLASSIFIER:-mock}
+      JURISDICTION_ADAPTER: ${JURISDICTION_ADAPTER:-mock}
+      VWORLD_API_KEY: ${VWORLD_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # 엔진 API 보호 베어러 토큰. ★ENV=production 필수(.env.prod에 DELIBERATION_API_TOKEN 설정) — 미설정 시 부팅 거부.
       API_TOKEN: ${DELIBERATION_API_TOKEN:-}
       # 외부 출처 키(선택·graceful). 미설정 시 mock/결손표면화 폴백.
