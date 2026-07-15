@@ -30,6 +30,7 @@ from app.services.bim.bimir_schema import (
     BimModel,
     make_element,
 )
+from app.services.bim.ifc_generator_service import IfcGeneratorService
 from app.services.cad.provenance import compute_input_hash
 
 if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피(무거운 체인 차단)
@@ -57,23 +58,17 @@ def _mirror_unit_widths(
     unit_sequence: list[dict[str, Any]] | None,
     unit_width_m: float,
 ) -> list[float]:
-    """세대 폭 리스트 산출 — IfcGeneratorService._unit_widths 를 '그대로' 미러(결정적).
+    """세대 폭 리스트 산출 — IfcGeneratorService._unit_widths 를 '직접 재사용'(진짜 SSOT).
 
-    쉬운 설명: 한 zone(inner_w 폭)을 몇 개 세대로 나눌지 폭 목록을 만든다. 평형시퀀스가 있으면
-    면적/깊이로 가변 폭 후 합=inner_w 로 비례 스케일, 없으면 unit_width_m 균등 분할.
-    ★generator와 동일 수식이라야 파생 PARTITION/DOOR 개수·배치가 실제 IFC 산출과 일치한다.
+    ★리뷰 반영(MEDIUM — 미러↔generator 발산 방지): 수식을 이 파일에 복제하지 않는다. 복제하면
+    한쪽만 고치는 순간 발산하므로, generator의 정적메서드를 그대로 호출해 수식을 하나로
+    수렴시킨다(전역 전파방지 — CLAUDE.md 버그수정 정책). 나머지 파생요소(코어·계단·창·칸막이·
+    문의 좌표·존재조건) 수식은 generator 루프 본문에 IFC 엔티티 생성과 인터리브되어 있어
+    이번 세션에서 안전하게 분리 추출하기엔 회귀 리스크가 크다 — 대신
+    tests/test_bimir_consumers.py::test_derived_elements_no_divergence_from_real_generator_ifc
+    가 실제 생성기 IFC의 BaseQuantities를 파싱해 미러 산출과 교차검증하는 발산 감지 안전망이다.
     """
-    if unit_sequence and zone_depth > 0.5:
-        raw = [max(3.0, float(u.get("area_sqm", 84.0)) / zone_depth) for u in unit_sequence]
-        total = sum(raw)
-        if total <= 0:
-            return []
-        scale = inner_w / total
-        return [w * scale for w in raw]
-    if unit_width_m and unit_width_m > 0:
-        count = max(1, int(inner_w / unit_width_m))
-        return [inner_w / count] * count
-    return [inner_w]
+    return IfcGeneratorService._unit_widths(inner_w, zone_depth, unit_sequence, unit_width_m)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,12 +219,20 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
 
     BUILDING 요소의 geometry에 매스 '전체'를 그대로 담는다(mass_from_bimir가 이걸 되읽어 왕복 무손실).
     추가로 층/슬래브/외벽에 더해 코어(COLUMN)·계단(STAIR)·창(WINDOW)·세대칸막이(PARTITION)·문(DOOR)까지
-    파생요소로 열거한다(부가·서술적 — 왕복 진실원천이 아니라 IR 풍부화용). 파생요소의 존재조건·기하·물량
-    수식은 ifc_generator_service.generate 를 '그대로' 미러한다(가짜값 0 — 실제 IFC 산출과 동일).
+    파생요소로 열거한다(부가·서술적 — 왕복 진실원천이 아니라 IR 풍부화용).
 
+    ★정직한 커버리지 범위(과장 금지 — 리뷰 반영): 파생요소의 '존재조건'(층 조건·개수·클램프
+      bw/bd/n/fh)과 '대표 물량'(BaseQuantities 중 면적/체적/길이 등 핵심 스칼라)은
+      ifc_generator_service.generate 의 수식을 미러해 정상 입력 범위에서 일치한다 —
+      tests/test_bimir_consumers.py 의 발산 감지 테스트가 실제 생성기 IFC의 BaseQuantities를
+      파싱해 이를 교차검증한다. 단 일부 부수 스칼라(예: 벽/슬래브 두께를 나타내는 개별 "Width"
+      quantity)와 Pset_WallCommon(LoadBearing/IsExternal)은 geometry 필드로는 보존하되 미러
+      quantities dict·property set에는 담지 않는다 — "실제 IFC와 완전 동일"이 아니라 "핵심 물량
+      항목 미러"다.
     ★왕복 계약: mass_from_bimir(bimir_from_mass(mass)) == mass (정규화 동일). 그래서 BimIR 경로가
       기존 매스 경로와 '동일 IFC'를 낸다(구조 동등성). 파생요소를 늘려도 왕복 진실원천은 BUILDING
-      geometry 한 곳뿐이라 왕복은 불변(파생은 읽기 전용 서술).
+      geometry 한 곳뿐이라 왕복은 불변(파생은 읽기 전용 서술) — 클램프는 파생요소 계산에만 적용되고
+      BUILDING geometry·extras에 보존되는 원본 src는 클램프되지 않는다.
     ★element_path 인덱스 규율: 층(i)·코어(ci)·창/칸막이/문(면·순번) 인덱스로 결정적 경로를 만든다 —
       같은 매스를 재생성하면 경로·element_id가 불변, 요소 삽입/재정렬 시에는 인덱스가 변한다(정직 표기).
     ★비-슬래브만 열거: generator의 복도/발코니(IfcSlab)는 파생하지 않는다 — SLAB 범주를 '층 바닥'
@@ -238,10 +241,14 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
     src = dict(mass)  # 원본 훼손 방지
     design_input_hash = compute_input_hash(src)
 
-    bw = float(src.get("building_width_m", 10.0))
-    bd = float(src.get("building_depth_m", 10.0))
-    n = int(src.get("num_floors", 5))
-    fh = float(src.get("floor_height_m", 3.0))
+    # ★클램프 정합(리뷰 LOW): generator.generate()의 bw=max(...,1.0)·bd=max(...,1.0)·
+    #   n=max(...,1)·fh=max(...,2.0)와 동일 적용 — 퇴화 입력(0/음수/극단값)에서도 파생요소
+    #   좌표·물량이 실제 IFC 산출과 발산하지 않는다. BUILDING geometry·extras에 보존되는
+    #   원본 src는 이 클램프와 무관(왕복 무손실 유지 — 아래 elements[0].geometry=src 참고).
+    bw = max(float(src.get("building_width_m", 10.0)), 1.0)
+    bd = max(float(src.get("building_depth_m", 10.0)), 1.0)
+    n = max(int(src.get("num_floors", 5)), 1)
+    fh = max(float(src.get("floor_height_m", 3.0)), 2.0)
     wt = _WALL_THICKNESS_M
     st = _SLAB_THICKNESS_M
     # 파생요소 존재조건 입력(generate 인자와 동일 키·기본값) — 0/False는 '없음' 게이트(값 손실 아님:
@@ -267,7 +274,8 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
     )
 
     # 파생 envelope 요소(부가): 층·바닥슬래브·외벽 4면. 수식은 ifc_generator와 미러.
-    for i in range(max(1, n)):
+    # n은 위에서 이미 max(...,1) 클램프됨(generator와 동일) — 여기서 재클램프 불필요.
+    for i in range(n):
         elev = i * fh
         elements.append(
             make_element(

@@ -1,9 +1,12 @@
 """BimIR 소비처 전환 테스트 (WP-D 세션2 · P11) — glb·QTO·파생요소 확장.
 
 검증 축(세션2 게이트):
-- glb 전환: build_gltf_from_bimir == 매스 경로 구조 동등(mesh 그룹·정점·삼각형 수 동일) + source_kind 가드.
+- glb 전환: build_gltf_from_bimir == 매스 경로 구조 동등(mesh 그룹·정점수·인덱스수 + POSITION 버퍼
+  실측값까지 바이트 동일) + source_kind 가드.
 - QTO 전환: geometry_takeoff_from_bimir == geometry_takeoff 수치 동일(항목별 물량·금액 바이트 동일) + 가드.
 - 파생요소 확장: 코어(COLUMN)·계단(STAIR)·창(WINDOW)·세대칸막이(PARTITION)·문(DOOR) 결정적 열거·물량 미러.
+- 발산 감지(코디네이터 MEDIUM 리뷰): 미러 산출 물량을 하드코딩 기대값이 아니라 generator가 실제로
+  만든 IFC의 BaseQuantities와 교차검증(test_derived_elements_no_divergence_from_real_generator_ifc).
 - 왕복 확장: 파생요소를 늘려도 mass 왕복 무손실·element_id 결정성(3회 재생성 동일).
 """
 
@@ -170,6 +173,27 @@ def _glb_signature(glb_bytes: bytes) -> dict:
     return sig
 
 
+def _glb_positions(glb_bytes: bytes) -> dict[str, list[float]]:
+    """glb → {그룹명: POSITION 버퍼 실측값} — 좌표 데이터 자체의 동등성 비교용(리뷰 LOW 강화).
+
+    ★서명(개수)만 같아도 좌표가 다를 수 있으므로, bufferView에서 원시 float32 바이트를 직접
+    슬라이스해 실제 정점 좌표까지 비교한다(구조 동등성의 '개수' 증거를 '값' 증거로 보강).
+    """
+    import numpy as np
+    import pygltflib
+
+    g = pygltflib.GLTF2.load_from_bytes(glb_bytes)
+    blob = g.binary_blob()
+    out: dict[str, list[float]] = {}
+    for prim in g.meshes[0].primitives:
+        name = g.materials[prim.material].name
+        acc = g.accessors[prim.attributes.POSITION]
+        bv = g.bufferViews[acc.bufferView]
+        raw = blob[bv.byteOffset : bv.byteOffset + bv.byteLength]
+        out[name] = np.frombuffer(raw, dtype=np.float32).tolist()
+    return out
+
+
 @_glb_gate
 def test_glb_structural_equivalence_mass_vs_bimir():
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
@@ -180,6 +204,8 @@ def test_glb_structural_equivalence_mass_vs_bimir():
     glb_bimir = build_gltf_from_bimir(bimir_from_mass(mass), project_name="EQ")
     # 그룹(mesh 색상군)·정점수·인덱스수가 두 경로에서 동일(구조 동등성).
     assert _glb_signature(glb_mass) == _glb_signature(glb_bimir)
+    # ★강화(리뷰 LOW): 개수뿐 아니라 POSITION 버퍼 실측값까지 그룹별로 바이트 동일.
+    assert _glb_positions(glb_mass) == _glb_positions(glb_bimir)
 
 
 @_glb_gate
@@ -196,6 +222,8 @@ def test_glb_structural_equivalence_rich_mass():
     assert sig_mass == sig_bimir
     # 코어·계단·창·칸막이·문 그룹이 실제로 mesh에 존재(파생요소가 렌더된다).
     assert {"wall", "slab", "core", "stair", "window", "partition", "door"} <= set(sig_mass)
+    # ★강화(리뷰 LOW): 좌표 버퍼까지 그룹별 바이트 동일(개수 동등을 값 동등으로 보강).
+    assert _glb_positions(glb_mass) == _glb_positions(glb_bimir)
 
 
 # ═══════════════════════════ 파생요소 확장 ═══════════════════════════
@@ -273,6 +301,136 @@ def test_derived_element_paths_are_deterministic_and_indexed():
     assert "storey[1]/window/F[0]" in paths
     assert "storey[1]/partition/F[1]" in paths
     assert "storey[1]/door/F[0]" in paths
+
+
+def _ifc_quantity_value(q) -> float:
+    """IfcQuantity* 1건 → 값(Length/Area/Volume). production 파서(design_ingest/parsers.py
+    _ifc_quantity_area)와 동일한 is_a() 판별 패턴을 따른다(추측 API 사용 금지)."""
+    if q.is_a("IfcQuantityLength"):
+        return float(q.LengthValue or 0.0)
+    if q.is_a("IfcQuantityArea"):
+        return float(q.AreaValue or 0.0)
+    if q.is_a("IfcQuantityVolume"):
+        return float(q.VolumeValue or 0.0)
+    return 0.0
+
+
+def _ifc_sum_quantity(ifc_file, ifc_class: str, qty_name: str, *, name_suffix: str | None = None) -> float:
+    """generator가 실제로 만든 IFC에서 ifc_class 전건의 qty_name 물량 합계를 파싱한다.
+
+    name_suffix가 있으면 Name이 그 접미사로 끝나는 엔티티만 집계한다(예: IfcSlab 중 층 바닥
+    "...F-Slab"만 골라 복도/발코니 슬래브를 제외 — 미러가 층 바닥만 파생하므로 동종 비교가
+    되도록 맞춘다).
+
+    ★include_subtypes=False 필수: IfcWallStandardCase(PARTITION이 쓰는 클래스)는 IFC 스키마상
+    IfcWall의 하위형이라 by_type("IfcWall") 기본값(include_subtypes=True)은 파티션까지 함께
+    끌어와 합계를 오염시킨다(실측: WALL Length 465.6 vs 미러 360.0 — 이 필터 없이는 '가짜
+    발산'을 낸다). 정확히 그 클래스만 세도록 명시적으로 하위형을 배제한다.
+    """
+    total = 0.0
+    for ent in ifc_file.by_type(ifc_class, include_subtypes=False):
+        if name_suffix is not None and not str(ent.Name or "").endswith(name_suffix):
+            continue
+        for rel in getattr(ent, "IsDefinedBy", None) or []:
+            if not rel.is_a("IfcRelDefinesByProperties"):
+                continue
+            pd = rel.RelatingPropertyDefinition
+            if not pd.is_a("IfcElementQuantity"):
+                continue
+            for q in pd.Quantities:
+                if q.Name == qty_name:
+                    total += _ifc_quantity_value(q)
+    return total
+
+
+def _mirror_sum_quantity(model, category: BimCategory, qty_name: str) -> float:
+    return sum(e.quantities.get(qty_name, 0.0) for e in model.elements if e.category == category)
+
+
+@_ifc_gate
+def test_derived_elements_no_divergence_from_real_generator_ifc():
+    """★발산 감지(코디네이터 MEDIUM 리뷰 반영) — 이전 테스트들은 미러 산출을 '하드코딩 기대값'과만
+    비교했고, generator가 실제로 만든 IFC와는 대조하지 않았다(리뷰 지적: 두 경로가 함께 발산해도
+    잡히지 않는 사각지대). 이 테스트는 build_ifc_from_mass가 실제로 산출한 IFC를 파싱해 그
+    BaseQuantities 합계와 미러(bimir_from_mass)의 물량 합계를 범주별로 교차검증한다.
+
+    ★SSOT 추출 대신 발산 감지를 택한 근거(커밋에도 기록): 코어·계단·창·칸막이·문의 좌표·존재조건
+    수식은 generator.generate() 루프 본문에 IFC 엔티티 생성 호출과 인터리브되어 있어, 세션2
+    스코프에서 안전하게 순수 함수로 분리 추출하려면 이미 리뷰·머지된 핵심 생성기(세션1 승인)의
+    구조를 재편해야 한다 — 26+2 기존 테스트 대비 회귀 리스크가 이번 세션 범위를 초과한다. 대신
+    이 테스트가 "두 경로가 실제로 같은 물량을 낸다"를 직접 증명하는 안전망 역할을 한다. 단
+    unit_widths 하나는 진짜 SSOT로 전환했다(_mirror_unit_widths → IfcGeneratorService._unit_widths
+    직접 재사용 — bimir_adapters.py 참고).
+    """
+    import ifcopenshell
+
+    from app.services.bim.ifc_generator_service import build_ifc_from_mass
+
+    mass = _rich_mass()
+    ifc = ifcopenshell.file.from_string(build_ifc_from_mass(mass, project_name="DIV").decode("utf-8"))
+    model = bimir_from_mass(mass)
+
+    # (범주, IFC 클래스, Name 접미사 필터, 비교할 물량명들) — 미러가 실제로 저장하는 물량명만
+    # 비교한다(WALL/PARTITION의 Width처럼 미러가 담지 않는 부수 스칼라는 docstring에 정직 표기).
+    checks = [
+        (BimCategory.COLUMN, "IfcColumn", None, ("Length", "CrossSectionArea", "NetVolume")),
+        (BimCategory.STAIR, "IfcStair", None, ("Length", "GrossArea", "NetVolume")),
+        (BimCategory.WINDOW, "IfcWindow", None, ("Width", "Height", "Area")),
+        (BimCategory.DOOR, "IfcDoor", None, ("Width", "Height", "Area")),
+        (BimCategory.PARTITION, "IfcWallStandardCase", None,
+         ("Length", "Height", "NetSideArea", "NetVolume")),
+        (BimCategory.WALL, "IfcWall", None, ("Length", "NetSideArea", "NetVolume")),
+        # IfcSlab은 generator가 층바닥+복도(+발코니)를 함께 만든다 — 미러는 층바닥만 파생하므로
+        # Name 접미사 "-Slab"로 층바닥만 걸러 동종 비교(복도 "-Corridor"는 제외).
+        (BimCategory.SLAB, "IfcSlab", "-Slab", ("NetArea", "NetVolume", "Perimeter")),
+    ]
+    for category, ifc_class, suffix, qty_names in checks:
+        for qty_name in qty_names:
+            real = _ifc_sum_quantity(ifc, ifc_class, qty_name, name_suffix=suffix)
+            mirror = _mirror_sum_quantity(model, category, qty_name)
+            assert real == pytest.approx(mirror), (
+                f"{category.value}.{qty_name} 발산: generator(실제 IFC)={real} mirror(BimIR)={mirror}"
+            )
+
+
+# ═══════════════════════════ 클램프 정합(리뷰 LOW) ═══════════════════════════
+def test_mass_derived_elements_clamp_degenerate_dimensions():
+    """★리뷰 LOW 회귀 고정 — 클램프 정합 전에는 미러가 0/음수/극단값을 그대로 써 generator의
+    max(...,바닥값) 클램프와 발산했다(실측 DIVERGE 확인됨). 이제 파생요소 계산에 동일 클램프를
+    적용한다. BUILDING geometry(왕복 진실원천)는 클램프와 무관 — 원본 그대로 보존(손실 0 유지).
+    """
+    mass = {"building_width_m": 0.1, "building_depth_m": -5.0, "num_floors": 0, "floor_height_m": 0.5}
+    model = bimir_from_mass(mass)
+    slab = next(e for e in model.elements if e.category == BimCategory.SLAB)
+    assert slab.geometry["width_m"] == 1.0  # generator bw=max(0.1,1.0)
+    assert slab.geometry["depth_m"] == 1.0  # generator bd=max(-5.0,1.0)
+    storeys = [e for e in model.elements if e.category == BimCategory.STOREY]
+    assert len(storeys) == 1  # generator n=max(0,1)
+    wall = next(e for e in model.elements if e.category == BimCategory.WALL)
+    assert wall.geometry["height_m"] == 2.0  # generator fh=max(0.5,2.0)
+    # 왕복 진실원천은 클램프 이전 원본 그대로.
+    restored = mass_from_bimir(model)
+    assert restored["building_width_m"] == 0.1
+    assert restored["building_depth_m"] == -5.0
+    assert restored["num_floors"] == 0
+    assert restored["floor_height_m"] == 0.5
+
+
+@_ifc_gate
+def test_mass_adapter_clamp_matches_real_generator_ifc_for_degenerate_input():
+    # 실제 생성기가 만든 IFC와 대조해 클램프 파라미터 정합을 직접 증명(하드코딩 기대값 아님).
+    import ifcopenshell
+
+    from app.services.bim.ifc_generator_service import build_ifc_from_mass
+
+    mass = {"building_width_m": 0.1, "building_depth_m": -5.0, "num_floors": 0, "floor_height_m": 0.5}
+    ifc = ifcopenshell.file.from_string(
+        build_ifc_from_mass(mass, project_name="CLAMP").decode("utf-8")
+    )
+    real_storeys = ifc.by_type("IfcBuildingStorey", include_subtypes=False)
+    model = bimir_from_mass(mass)
+    mirror_storeys = [e for e in model.elements if e.category == BimCategory.STOREY]
+    assert len(real_storeys) == len(mirror_storeys) == 1
 
 
 # ═══════════════════════════ 왕복 확장 검증 ═══════════════════════════
