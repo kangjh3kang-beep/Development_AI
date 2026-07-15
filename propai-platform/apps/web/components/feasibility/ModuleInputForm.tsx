@@ -67,7 +67,7 @@ function NumberInput({
 }
 
 export function ModuleInputForm() {
-  const { input, setInput, calculate, isCalculating, selectedModule, commitVersion } =
+  const { input, setInput, calculate, isCalculating, selectedModule, commitVersion, withSenior, setWithSenior } =
     useFeasibilityV2Store();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const designData = useProjectContextStore((s) => s.designData);
@@ -175,7 +175,18 @@ export function ModuleInputForm() {
           <h3 className="text-lg font-semibold text-[var(--text-primary)]">
             {selectedModule} 입력 항목
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* ★P4②: 시니어 회계 자문(K-IFRS) opt-in — LLM 비용 발생이라 기본 off(과금 정책). */}
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]" title="계산 시 시니어 회계사(K-IFRS·세무·리스크) 검토 의견을 함께 산출합니다 — AI 비용이 발생합니다">
+              <input
+                type="checkbox"
+                checked={withSenior}
+                disabled={isCalculating}
+                onChange={(e) => setWithSenior(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--accent-strong)]"
+              />
+              회계 자문(K-IFRS)
+            </label>
             {siteAnalysis?.address && (
               <Button variant={"outline" as any} size="sm" onClick={loadFromSiteAnalysis} className="text-xs">
                 부지분석 데이터 반영
