@@ -157,4 +157,45 @@ describe("DesignWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: /도면 편집/ }));
     expect(screen.getByText("mock cad bim panel")).toBeInTheDocument();
   });
+
+  // 리뷰 지적 #1 회귀 테스트: 완료된 프로젝트(1차·2차 모두 complete)를 site 뷰(기본 진입 뷰)로
+  //   재진입하면 — 흔한 진입경로 — 흐름 바 CTA는 dock이 "다음"으로 강조하는 것과 동일한 단계
+  //   (nextView=첫 미완료 단계=draw)를 가리켜야 한다. 예전엔 sequentialNext[view]가 "site의
+  //   순차 다음"인 이미 끝난 generate를 다시 가리켜 "추천안 생성 시작"을 오지시했다.
+  it("완료 프로젝트를 site 뷰로 재진입하면 흐름 바 CTA가 첫 미완료 단계(draw)를 가리킨다", () => {
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: "제2종일반주거지역",
+      }),
+      designData: makeDesign({ totalGfaSqm: 1000, floorCount: 5, buildingType: "공동주택" }),
+    });
+
+    render(<DesignWorkspace projectId="p1" />);
+
+    // 기본 진입 뷰=site, siteState·generateState 모두 complete → CTA는 draw(nextView)를 가리켜야 한다.
+    expect(screen.getByRole("button", { name: /CAD·BIM 편집 열기/ })).toBeInTheDocument();
+    // 예전 버그: 이미 complete인 generate로 되돌아가라는 CTA가 떴다 — 회귀 방지.
+    expect(screen.queryByRole("button", { name: /추천안 생성 시작/ })).not.toBeInTheDocument();
+  });
+
+  // 리뷰 지적 #2 회귀 테스트: generate가 blocked인 이유가 "주소 불일치"가 아니라 "부지분석 자체가
+  //   아직 없음"(!hasSiteBasis)일 때, 흐름 바 hint는 뷰포트 PipelineBlocker와 동일한 근본원인에서
+  //   파생된 동일 문구를 써야 한다(단일 소스). 예전엔 view==="generate"라는 이유만으로
+  //   flowHintNeedDesign("추천안을 적용하라")을 오안내했다 — 정작 필요한 건 부지분석이었다.
+  it("부지분석 자체가 없어 generate가 차단되면 흐름 바 hint가 뷰포트 블로커와 동일 문구를 쓴다", async () => {
+    // resetStores() 기본값 그대로: siteAnalysis=null → hasSiteBasis=false·hasAddressMismatch=false.
+    render(<DesignWorkspace projectId="p1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /추천안 만들기/ }));
+
+    // 뷰포트 블로커와 흐름 바 hint가 동일 텍스트를 공유(단일 소스) — 최소 2곳(블로커 본문 + 흐름 바)에서 노출.
+    const sharedReason = screen.getAllByText(
+      "주소·용도지역·대지면적이 준비되면 건축개요 Top-N을 생성할 수 있습니다.",
+    );
+    expect(sharedReason.length).toBeGreaterThanOrEqual(2);
+    // 예전 오안내 문구("추천안을 하나 적용하면...")는 나타나지 않아야 한다(회귀 방지).
+    expect(screen.queryByText(/추천안\(건축개요\)을 하나 적용하면/)).not.toBeInTheDocument();
+  });
 });

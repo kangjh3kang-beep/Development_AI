@@ -104,6 +104,7 @@ type Labels = {
   flowTerminal: string;          // draw(마지막 단계) 안내
   flowProgressAria: string;      // 진행 표시 aria-label
   flowNowLabel: string;          // "현재" prefix
+  flowReview: string;            // CTA 타깃이 이미 complete일 때(방어적 분기) — "이어보기/검토"류
   // 단계 상태 어휘(dock 배지·흐름 바 공용) — 완료/진행가능/대기/로딩
   stateDone: string;
   stateReady: string;
@@ -178,6 +179,7 @@ const KO_LABELS: Labels = {
   flowTerminal: "마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다.",
   flowProgressAria: "설계 흐름 진행 상태",
   flowNowLabel: "현재",
+  flowReview: "결과 이어보기",
   stateDone: "완료",
   stateReady: "진행 가능",
   stateBlocked: "대기",
@@ -250,6 +252,7 @@ const EN_LABELS: Labels = {
   flowTerminal: "Final step — edit the verified drawings in CAD·BIM.",
   flowProgressAria: "Design flow progress",
   flowNowLabel: "Now",
+  flowReview: "Continue to results",
   stateDone: "Done",
   stateReady: "In progress",
   stateBlocked: "Waiting",
@@ -352,15 +355,13 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
   };
 
   // 추천 '다음 단계' — 순서(부지→생성→도면)상 아직 완료되지 않은 첫 단계(실상태 파생·무날조).
-  //   dock에서 이 단계를 은은한 링·"다음" 칩으로 강조해 시선을 자연스럽게 다음으로 유도한다.
+  //   dock의 "다음" 강조와 흐름 바(FlowAdvanceBar)의 CTA 타깃이 **이 값 하나**를 공유한다(단일
+  //   소스). 예전에는 흐름 바가 sequentialNext[view](현재 뷰의 순차 다음)를 따로 썼는데, 완료된
+  //   프로젝트를 site 뷰로 재진입하면(site·generate 둘 다 complete) sequentialNext는 이미 끝난
+  //   generate를 다시 가리키면서 dock의 nextView=draw 강조와 상충했다 — 재발 방지를 위해 이 값
+  //   하나로 통합한다(리뷰 지적 #1).
   const nextView: ViewKey =
     siteState !== "complete" ? "site" : generateState !== "complete" ? "generate" : "draw";
-  // 각 뷰에서 순차적으로 이어질 다음 뷰(흐름 바 CTA 타깃). draw는 마지막 단계(null).
-  const sequentialNext: Record<ViewKey, ViewKey | null> = {
-    site: "generate",
-    generate: "draw",
-    draw: null,
-  };
 
   // 좌측 dock 스테퍼 각 단계의 상태 배지·상세 문구 — 기존 파이프라인 카드 로직을 그대로 이관.
   const stepDetail: Record<ViewKey, string> = {
@@ -639,7 +640,8 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
               view={view}
               states={activeState}
               views={views}
-              nextTarget={sequentialNext[view]}
+              nextView={nextView}
+              hasAddressMismatch={hasAddressMismatch}
               labels={labels}
               onGo={go}
             />
@@ -690,10 +692,12 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
 
           {panelOpen && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-              {/* 현재 작업(설계) 기준 = 부지분석 주소. 상단 ContextHeader와 하단 MetricBar가 이미
-                  용도지역·대지면적을 정본으로 표기하므로, 이 패널에서는 그 수치를 반복하지 않는다
-                  (사용자 지적 '부지 지표 3중 중복' 해소). 대신 '어느 분석을 기준으로 설계하는가'와
-                  프로젝트-분석 주소 정합성만 다뤄, 패널의 고유 역할(기준·정합 확인)을 선명히 한다. */}
+              {/* 현재 작업(설계) 기준 = 부지분석 주소. 상단 ContextHeader가 이미 용도지역·대지면적을
+                  정본으로 표기하므로, 이 패널에서는 그 수치를 반복하지 않는다(사용자 지적 '부지
+                  지표 중복' 해소 — 하단 MetricBar는 이 PR로 설계 산출 KPI 전용으로 재정의되어
+                  더 이상 용도지역·대지면적을 표기하지 않는다). 대신 '어느 분석을 기준으로
+                  설계하는가'와 프로젝트-분석 주소 정합성만 다뤄, 패널의 고유 역할(기준·정합
+                  확인)을 선명히 한다. */}
               <dl className="grid gap-2 text-xs">
                 <ContextRow
                   label={labels.contextAnalysisAddress}
@@ -769,21 +773,42 @@ function stateWord(state: PipelineState, labels: Labels): string {
   }
 }
 
+/** 현재 뷰가 blocked일 때 "왜"를 뷰포트 PipelineBlocker와 **동일한 근본원인 판정**(hasAddressMismatch)
+ *  에서 파생한다(단일 소스). generate·draw는 PipelineBlocker가 실제로 쓰는 문구를 그대로 재사용해
+ *  두 표면이 절대 다른 말을 하지 않도록 구조적으로 보장한다(리뷰 지적 #2 — sequentialNext 시절엔
+ *  view==="site" 여부만 보고 문구를 골라 generate-blocked·!hasSiteBasis 케이스에서 "추천안을
+ *  적용하라"는 오안내가 나갔다). site는 PipelineBlocker가 없고(콘텐츠 항상 렌더) 주소 불일치만이
+ *  유일한 blocked 사유이므로 우측 패널의 addressMismatchDesc와 동일 문구를 공유한다. */
+function blockedReasonHint(view: ViewKey, hasAddressMismatch: boolean, labels: Labels): string {
+  if (view === "site") return labels.addressMismatchDesc;
+  if (view === "generate") {
+    return hasAddressMismatch ? labels.generateBlockDescMismatch : labels.generateBlockDescNoBasis;
+  }
+  // draw
+  return hasAddressMismatch ? labels.drawBlockDescMismatch : labels.drawBlockDescNoBasis;
+}
+
 /* ── 흐름 진행 바 ── 뷰포트 하단, dock↔작업면을 잇는 "현재 위치 + 다음 액션" 스트립.
       좌: 3단계 가로 진행표시(실상태 dot·연결선) + 현재 단계·상태 낱말.
-      우: 현재 단계 complete일 때만 '다음 단계' CTA 활성(무날조). 미완료면 정직 안내, 마지막 단계는 종료 안내. */
+      우: 현재 단계 complete일 때만 '다음 단계' CTA 활성(무날조). 미완료면 정직 안내, 마지막 단계는 종료 안내.
+      CTA 타깃은 부모가 dock 강조에도 쓰는 nextView(첫 미완료 단계) **하나만** 받는다 — 예전엔
+      "현재 뷰의 순차 다음"(sequentialNext[view])을 따로 계산해, 완료된 프로젝트를 site 뷰로
+      재진입하면(site·generate 둘 다 complete) CTA가 이미 끝난 generate를 다시 가리키면서 dock의
+      nextView=draw 강조와 상충했다(리뷰 지적 #1 — 완료 프로젝트 재방문은 흔한 진입경로). */
 function FlowAdvanceBar({
   view,
   states,
   views,
-  nextTarget,
+  nextView,
+  hasAddressMismatch,
   labels,
   onGo,
 }: {
   view: ViewKey;
   states: Record<ViewKey, PipelineState>;
   views: { key: ViewKey; label: string; desc: string; icon: typeof MapPin }[];
-  nextTarget: ViewKey | null;
+  nextView: ViewKey;
+  hasAddressMismatch: boolean;
   labels: Labels;
   onGo: (v: ViewKey) => void;
 }) {
@@ -792,19 +817,35 @@ function FlowAdvanceBar({
   const currentDone = currentState === "complete";
   const currentIndex = views.findIndex((v) => v.key === view);
 
-  // 다음 CTA 라벨 — 순차 타깃별(생성/도면). dock 라벨과 어휘를 구분해 접근성 이름 중복을 피한다.
+  // CTA 타깃 = dock과 동일한 nextView. 현재 뷰 자체가 곧 nextView면(아직 그 단계가 미완료) 더
+  //   나아갈 곳이 없다는 뜻이므로 타깃 없음(null).
+  const ctaTarget = nextView !== view ? nextView : null;
+  const ctaTargetState = ctaTarget ? states[ctaTarget] : null;
+  // 다음 CTA 라벨 — 타깃별(생성/도면). dock 라벨과 어휘를 구분해 접근성 이름 중복을 피한다.
+  //   방어적 분기: nextView는 구조상 항상 미완료 단계를 가리키지만(현재 상태모델상 ctaTargetState는
+  //   "complete"가 될 수 없음), 상태모델이 확장돼도(예: draw에 향후 "complete"가 추가돼도) CTA가
+  //   이미 끝난 작업을 다시 "시작"하라고 오지시하지 않도록 이어보기/검토 문구로 분기해둔다.
   const ctaLabel =
-    nextTarget === "generate" ? labels.flowToGenerate : nextTarget === "draw" ? labels.flowToDraw : null;
-  // 미완료/마지막 단계 안내 문구(정직). 마지막(도면) 단계라도 아직 차단 상태면 '무엇이 필요한지'를
-  //   보여 뷰포트 블로커와 일관되게(종료 문구가 아니라 선행 요건 안내).
+    ctaTarget === null
+      ? null
+      : ctaTargetState === "complete"
+        ? labels.flowReview
+        : ctaTarget === "generate"
+          ? labels.flowToGenerate
+          : ctaTarget === "draw"
+            ? labels.flowToDraw
+            : null;
+  // 미완료/차단/마지막 단계 안내 문구(정직). currentState==="blocked"면 뷰포트 블로커와 동일
+  //   근본원인에서 파생한 문구를 최우선으로 쓴다(단일 소스 — 재발 방지). 차단이 아니면 기존대로
+  //   "아직 도달할 다음이 없음(terminal)" 또는 "다음 단계를 위해 무엇이 필요한지" 안내.
   const hint =
-    nextTarget === null
-      ? currentState === "blocked"
-        ? labels.flowHintNeedDesign
-        : labels.flowTerminal
-      : view === "site"
-        ? labels.flowHintNeedSite
-        : labels.flowHintNeedDesign;
+    currentState === "blocked"
+      ? blockedReasonHint(view, hasAddressMismatch, labels)
+      : ctaTarget === null
+        ? labels.flowTerminal
+        : view === "site"
+          ? labels.flowHintNeedSite
+          : labels.flowHintNeedDesign;
 
   return (
     <div className="flex min-h-[52px] flex-wrap items-center gap-x-4 gap-y-2 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] px-3 py-2 shadow-[var(--shadow-sm)]">
@@ -869,10 +910,10 @@ function FlowAdvanceBar({
 
       {/* 우: 다음 액션 CTA(완료 시) 또는 정직 안내(미완료·마지막) */}
       <div className="ml-auto flex min-w-0 items-center">
-        {currentDone && nextTarget && ctaLabel ? (
+        {currentDone && ctaTarget && ctaLabel ? (
           <button
             type="button"
-            onClick={() => onGo(nextTarget)}
+            onClick={() => onGo(ctaTarget)}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[var(--accent-strong)] px-3.5 py-1.5 text-[12px] font-bold text-white shadow-[var(--shadow-sm)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_88%,black)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]"
           >
             <span className="text-[10px] font-black uppercase tracking-wider opacity-80">{labels.flowNextPrefix}</span>
