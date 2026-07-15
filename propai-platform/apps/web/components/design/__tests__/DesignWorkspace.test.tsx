@@ -241,4 +241,59 @@ describe("DesignWorkspace", () => {
       screen.queryByText("마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다."),
     ).not.toBeInTheDocument();
   });
+
+  // ── Pillar C(준비 대시보드) — 잠긴 단계는 빈 자물쇠 화면 대신 해제 요건 체크리스트 +
+  //    산출물 '예시 구조' 미리보기를 보여준다. 미충족 항목엔 바로가기 버튼이 붙는다. ──
+  it("생성 단계가 부지 기준 미충족으로 잠기면 준비 대시보드가 요건 체크리스트와 예시 구조를 보여준다", async () => {
+    // 주소·면적은 있으나 용도지역이 없어 hasSiteBasis=false → generate 잠금(부분 충족 상태).
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: null,
+      }),
+    });
+
+    render(<DesignWorkspace projectId="p1" />);
+    await userEvent.click(screen.getByRole("button", { name: /추천안 만들기/ }));
+
+    // 해제 요건 체크리스트 — 3요건(주소·용도지역·대지면적)이 표기된다.
+    expect(screen.getByText("해제 요건")).toBeInTheDocument();
+    expect(screen.getByText("용도지역")).toBeInTheDocument();
+    // 미충족 항목(용도지역)엔 부지 조건으로 이동하는 바로가기 버튼이 있다(정확히 1개 — 나머지 2요건은 충족).
+    expect(screen.getByRole("button", { name: "부지 조건 확인하러 가기" })).toBeInTheDocument();
+    // 산출물 미리보기는 '예시 구조'로 정직 라벨링(무목업 — 날조 아님).
+    expect(screen.getByText("예시 구조")).toBeInTheDocument();
+    // 생성 패널 본체는 잠겨 아직 렌더되지 않는다.
+    expect(screen.queryByText("mock design generation panel")).not.toBeInTheDocument();
+  });
+
+  // ── Pillar A(중복 제거·레일 단일화) — dock(좌측 파이프라인 레일)이 펼쳐진 기본 상태에선
+  //    흐름바의 3단계 진행 dots를 숨겨 파이프라인 표현을 레일 하나로 단일화한다. dock을 접으면
+  //    컴팩트 진행 인디케이터가 흐름바에 나타난다. 또 '분석 주소'는 상단 ContextHeader 정본으로
+  //    이관돼 우측 레일에서 제거된다(3중 중복 해소). ──
+  it("dock 펼침 시 흐름바 진행 dots를 숨기고(레일 단일화) 우측 레일에서 '분석 주소'를 제거한다", async () => {
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: "제2종일반주거지역",
+      }),
+    });
+
+    render(<DesignWorkspace projectId="p1" />);
+
+    // dock 펼침(기본) → 흐름바 진행 dots(role=group)는 중복이라 숨긴다.
+    expect(
+      screen.queryByRole("group", { name: /설계 흐름 진행 상태/ }),
+    ).not.toBeInTheDocument();
+    // 분석 주소 카드는 우측 레일에서 제거(상단 ContextHeader가 정본).
+    expect(screen.queryByText("분석 주소")).not.toBeInTheDocument();
+
+    // dock 접기 → 컴팩트 진행 인디케이터(dots)가 흐름바에 나타난다.
+    await userEvent.click(screen.getByRole("button", { name: "단계 패널 접기" }));
+    expect(
+      screen.getByRole("group", { name: /설계 흐름 진행 상태/ }),
+    ).toBeInTheDocument();
+  });
 });

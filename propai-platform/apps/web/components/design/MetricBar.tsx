@@ -241,6 +241,15 @@ export function MetricBar({ className }: { className?: string }) {
   const floors = designData?.floorCount ?? null; // ★INC1이 canonicalFloors로 기록한 정본 층수
   const units = designData?.unitCount ?? null;
 
+  // ★Pillar E(상태 분기): "설계 산출 결과"가 실제로 생성됐는가 — 설계 전용 산출(연면적·층수·세대수)
+  //   중 하나라도 있으면 생성됨. 미생성 시엔 이 띠가 부지 실효 한도(법정상한/실효 배지)로 폴백하는데,
+  //   이를 "생성 결과 KPI"라 부르면 오해(생성 안 했는데 결과처럼 보임)이므로 "설계 산출 대기"로
+  //   정직 분기한다. 생성 후엔 종전 라벨 유지(무회귀). BCR/FAR의 법정상한/실효 배지는 아래 칩에서 그대로.
+  const hasDesignOutput = !!(
+    designData &&
+    ((gfa ?? 0) > 0 || (floors ?? 0) > 0 || (units ?? 0) > 0)
+  );
+
   // 근거 데이터 추출(store 실데이터만 — 무날조). 빈 항목·법령명 없는 항목은 헬퍼가 제외.
   //  evidence/legalRefs는 채워진 위치가 경로마다 달라(siteAnalysis 직속·trustMeta·complianceData)
   //  순서대로 폴백해 실제 있는 근거를 표시한다(가짜 생성 아님 — 모두 없으면 '근거 없음').
@@ -386,8 +395,18 @@ export function MetricBar({ className }: { className?: string }) {
           맨 앞 역할 라벨로 "이 띠 = 설계 산출 결과"임을 명시(상단 식별 지표와 역할 구분). */}
       <div className="flex min-h-[48px] items-center gap-1 overflow-x-auto max-md:flex-wrap max-md:overflow-x-visible">
         <span className="flex shrink-0 flex-col justify-center gap-0.5 border-r border-[var(--line)] pl-1 pr-3">
-          <span className="cc-label text-[10px] text-[var(--accent-strong)]">설계 산출</span>
-          <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">생성 결과 KPI</span>
+          {hasDesignOutput ? (
+            <>
+              <span className="cc-label text-[10px] text-[var(--accent-strong)]">설계 산출</span>
+              <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">생성 결과 KPI</span>
+            </>
+          ) : (
+            <>
+              {/* 미생성 — 아래 건폐/용적은 부지 실효 한도(법정상한/실효 배지) 폴백임을 정직 표기. */}
+              <span className="cc-label text-[10px] text-[var(--text-tertiary)]">설계 산출 대기</span>
+              <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">추천안 생성 시 결과 표시</span>
+            </>
+          )}
         </span>
         <Chip
           label="건폐율"
