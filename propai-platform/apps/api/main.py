@@ -470,6 +470,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("growth flush 루프 시작 실패")
 
+    # 전역 아웃박스(outbox_event) 디스패처 — 인프로세스 폴백(P15 A4).
+    # 정본은 arq 워커(apps/worker/main.py dispatch_outbox)지만, 운영 Micro 는 uvicorn 1워커만
+    # 돌고 arq/Redis 가 없어 아웃박스가 발행되지 않는다. _growth_flush_loop 와 동일한 asyncio
+    # 폴백으로 같은 코어(run_outbox_dispatch_until_empty)를 주기 호출한다. arq 와 동시 구동돼도
+    # mark_published 원자 가드(1승)+소비처 멱등이 중복 발행을 1회로 접으므로 안전하다.
+    # ENV OUTBOX_INPROCESS_DISPATCH=0 으로 끌 수 있다(arq 전용 배포 시).
+    async def _outbox_dispatch_loop() -> None:
+        import os as _os2
+        if _os2.getenv("OUTBOX_INPROCESS_DISPATCH", "1") in ("0", "false", "False"):
+            return
+        from app.tasks.outbox_dispatch_task import run_outbox_dispatch_until_empty
+        await _asyncio.sleep(30)  # 부팅 안정화 후 시작.
+        while True:
+            await _asyncio.sleep(10)  # 10초 폴링 주기.
+            try:
+                await run_outbox_dispatch_until_empty(None)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("outbox 디스패치 루프 오류: %s", str(e)[:160])
+
+    try:
+        app.state.outbox_dispatch_task = _asyncio.create_task(_outbox_dispatch_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("outbox 디스패치 루프 시작 실패")
+
     # 자가성장 엔진 — analyze/heal/correct/learn 주기 잡 인프로세스 스케줄러(Path B).
     # 운영 Micro 는 uvicorn --workers 1 만 돌고 Celery worker/beat·Redis 가 없어
     # Celery Beat 에만 걸린 분석/치유/수정/학습이 실제로는 잠들어 있다. _growth_flush_loop

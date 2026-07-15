@@ -54,3 +54,78 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # WP-I(P15 공급망 게이트): SBOM(syft)+서명(cosign). 기존 CI 게이트(ci.yml pytest·tsc·build)와
+  # 완전 분리된 additive 잡이며, 이 워크플로우는 PR 게이트가 아니라 정보성 신호다(위 헤더 정책).
+  # 도구 미설치 환경 graceful: 설치 스텝 포함·서명은 continue-on-error(키/OIDC 부재 시 비차단).
+  supply-chain:
+    name: Supply Chain (SBOM + cosign)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # cosign keyless(OIDC) 서명용.
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) SBOM 생성 — syft 로 requirements 의존성 목록을 SPDX·CycloneDX 로 산출.
+      #    anchore/sbom-action 이 syft 를 설치·실행한다(별도 설치 스텝 불필요).
+      # continue-on-error: 이 잡은 정보성 신호(위 헤더 정책)라 syft/네트워크 일시장애로 잡
+      # 전체가 실패해선 안 된다 — graceful 시작 원칙(설치 실패해도 기존 게이트 비차단)을
+      # SBOM 생성 단계에도 동일 적용.
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        continue-on-error: true
+        with:
+          path: propai-platform/apps/api
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom.spdx.json
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: propai-platform/apps/api
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
+
+      # 2) SBOM 아티팩트 업로드(공급망 증적 — 릴리스 첨부/감사용).
+      # ★후속 이관(LOW·비차단): anchore/sbom-action 자체가 artifact-name 파라미터로 이미
+      # 아티팩트를 업로드하므로, 아래 upload-artifact 스텝과 산출물이 중복된다(동일 파일 2회
+      # 업로드). 정보성 신호 용도라 지금은 무해하지만, 다음 세션에서 sbom-action 쪽
+      # artifact-name 을 빼고 이 스텝으로 일원화하거나 반대로 이 스텝을 제거해 정리한다.
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cdx.json
+          if-no-files-found: warn
+
+      # 3) cosign 설치.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # 4) SBOM keyless 서명(blob 서명 — 이미지 빌드/푸시는 수동 배포 파이프라인에서 수행하므로
+      #    여기선 SBOM 산출물을 서명해 무결성 증적을 남긴다). OIDC/Rekor 미가용 시 비차단.
+      - name: Sign SBOM (cosign keyless)
+        continue-on-error: true
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign version
+          cosign sign-blob --yes \
+            --output-signature sbom.spdx.json.sig \
+            --output-certificate sbom.spdx.json.pem \
+            sbom.spdx.json
+
+      - name: Upload cosign signature
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-signature
+          path: |
+            sbom.spdx.json.sig
+            sbom.spdx.json.pem
+          if-no-files-found: ignore

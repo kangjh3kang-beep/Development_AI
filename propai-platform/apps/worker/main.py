@@ -163,6 +163,12 @@ async def g2b_rebuild_stats(ctx: dict[str, Any]) -> dict[str, Any]:
     return await rebuild_award_stats(ctx)
 
 
+async def dispatch_outbox(ctx: dict[str, Any]) -> dict[str, Any]:
+    """전역 아웃박스(outbox_event) 미발행 이벤트를 at-least-once 발행한다(P15 A4)."""
+    from app.tasks.outbox_dispatch_task import run_outbox_dispatch_until_empty
+    return await run_outbox_dispatch_until_empty(ctx)
+
+
 class WorkerSettings:
     """arq 워커 설정."""
 
@@ -180,6 +186,7 @@ class WorkerSettings:
         g2b_sync_bids,
         g2b_sync_awards,
         g2b_rebuild_stats,
+        dispatch_outbox,
     ]
 
     cron_jobs = [
@@ -198,6 +205,9 @@ class WorkerSettings:
         cron(g2b_sync_awards, hour=21, minute=0),
         # 매주 월 22:00 UTC: 낙찰가율 통계 재집계
         cron(g2b_rebuild_stats, weekday="mon", hour=22, minute=0),
+        # 전역 아웃박스 디스패처 — 매 분 미발행 이벤트 발행(at-least-once). arq/Redis 미배포
+        # 환경(운영 Micro)에서는 API 인프로세스 루프(main.py)가 같은 코어를 호출한다(중복 안전).
+        cron(dispatch_outbox, minute=set(range(0, 60))),
     ]
 
     on_startup = startup
