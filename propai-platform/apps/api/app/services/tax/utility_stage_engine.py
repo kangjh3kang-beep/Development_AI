@@ -32,6 +32,13 @@ _B_LEGAL_KEY: dict[str, str] = {
     "B04": "sewage_cause_charge",      # 하수도법 §61
 }
 
+# B02 부과 대상 주거 유형 — 학교용지법 §2 '개발사업'=주택건설(공동주택 분양·단독주택지
+# 조성). regional_tax_data._METRO_HOUSING_TYPES와 동일 계열(단독주택 추가 — §5의2 2호).
+_SCHOOL_SITE_HOUSING_TYPES = {
+    "apartment", "아파트", "주택", "공동주택", "다세대", "연립", "도시형생활주택",
+    "단독주택", "detached",
+}
+
 
 def calculate_b01_metro_transport(
     *,
@@ -69,8 +76,26 @@ def calculate_b02_school_site(
     *,
     total_sale_amount_won: int,
     total_households: int,
+    building_type: str = "apartment",
 ) -> dict[str, Any]:
-    """B02 학교용지부담금 (300세대 이상 의무)."""
+    """B02 학교용지부담금 (300세대 이상 의무).
+
+    ★건물유형 게이트(감사 P1 잔여 최종): 학교용지법 §2·§5의 부과 대상은 주택건설사업
+    (공동주택 분양·단독주택지 조성) — 오피스텔(준주택·건축법상 업무시설)·상업·업무시설
+    등 비주거 개발은 세대(호)수가 300 이상이어도 부과 대상이 아니다(종전 미게이트 시
+    분양매출 0.4% 오부과). 한계: 도시형생활주택 소형 등 세부 면제 조항은 미반영
+    (부과 방향 보수적 상한 — 개별 사업 확인 필요).
+    """
+    if building_type not in _SCHOOL_SITE_HOUSING_TYPES:
+        return {
+            "code": "B02", "name": "학교용지부담금",
+            "base_won": 0, "rate": SCHOOL_SITE_CHARGE_RATE,
+            "amount_won": 0,
+            "detail": {"reason": (
+                f"건물유형 '{building_type or '미상'}' — 주택건설사업 아님"
+                "(학교용지법 §2 대상 외 · 오피스텔/비주거 면제)"
+            )},
+        }
     if total_households < SCHOOL_SITE_MIN_HOUSEHOLDS:
         return {
             "code": "B02", "name": "학교용지부담금",
@@ -212,6 +237,7 @@ def calculate_all_utility_stage(
         calculate_b02_school_site(
             total_sale_amount_won=total_sale_amount_won,
             total_households=total_households,
+            building_type=building_type,
         ),
         calculate_b03_water_supply(
             sido_name=sido_name, sigungu_name=sigungu_name,

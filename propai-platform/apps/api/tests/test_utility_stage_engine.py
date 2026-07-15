@@ -59,6 +59,49 @@ class TestB02SchoolSite:
         )
         assert result["amount_won"] == 2_000_000_000  # 5000억 × 0.4%
 
+    def test_officetel_exempt_regardless_of_households(self):
+        """★건물유형 게이트(감사 P1 잔여 최종): 오피스텔(준주택·업무시설)은 학교용지법
+        §2 대상 외 — 300호 이상이어도 면제(종전 미게이트 시 분양매출 0.4% 오부과)."""
+        result = calculate_b02_school_site(
+            total_sale_amount_won=500_000_000_000,
+            total_households=1000,
+            building_type="officetel",
+        )
+        assert result["amount_won"] == 0
+        assert "주택건설사업 아님" in result["detail"]["reason"]
+
+    def test_commercial_exempt(self):
+        """상업시설도 대상 외 — 면제."""
+        result = calculate_b02_school_site(
+            total_sale_amount_won=300_000_000_000,
+            total_households=500,
+            building_type="commercial",
+        )
+        assert result["amount_won"] == 0
+
+    def test_housing_types_still_charged(self):
+        """주거 유형(아파트·공동주택·단독주택)은 게이트 통과 — 기존 부과 유지."""
+        for bt in ("apartment", "아파트", "공동주택", "단독주택"):
+            result = calculate_b02_school_site(
+                total_sale_amount_won=500_000_000_000,
+                total_households=1000,
+                building_type=bt,
+            )
+            assert result["amount_won"] == 2_000_000_000, bt
+
+    def test_orchestrator_passes_building_type(self):
+        """오케스트레이터(calculate_all_utility_stage)가 building_type을 B02에 전달."""
+        from app.services.tax.utility_stage_engine import calculate_all_utility_stage
+
+        r = calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=1000, total_sale_amount_won=500_000_000_000,
+            total_gfa_sqm=100_000, building_type="officetel",
+        )
+        b02 = next(it for it in r["items"] if it["code"] == "B02")
+        assert b02["amount_won"] == 0
+        assert "주택건설사업 아님" in b02["detail"]["reason"]
+
 
 class TestB03WaterSupply:
     def test_oasan_reference(self):
