@@ -71,7 +71,6 @@ const SPECIAL_KEY_LABELS: Record<string, string> = {
   existing_value_won: "종전자산 평가액",
   excess_gain_won: "재건축 초과이익",
   "reconstruction_levy.name": "부담금 항목",
-  "reconstruction_levy.base_won": "부담금 산정기초(초과이익)",
   "reconstruction_levy.amount_won": "재건축부담금",
   "dcf.npv_won": "소득접근 DCF 가치",
   "dcf.pv_noi_won": "NOI 현재가치 합",
@@ -79,6 +78,8 @@ const SPECIAL_KEY_LABELS: Record<string, string> = {
   "dcf.pv_terminal_won": "매각가치 현재가치",
   "dcf.hold_years": "보유기간(년)",
 };
+// R1-LOW: 내부코드("D05")·형제 필드와 중복 수치(base_won=excess_gain_won)는 표시 생략.
+const SPECIAL_KEY_SKIP = new Set(["reconstruction_levy.code", "reconstruction_levy.base_won"]);
 
 /* ── WP-S 신뢰 블록(옵셔널·additive) — /calculate 응답의 evidence[]·legal_refs[] ── */
 
@@ -232,6 +233,10 @@ export function FeasibilityResultView() {
     }
     if (typeof v === "string" && v) return [{ key: k, value: v }];
     if (v && typeof v === "object") {
+      // R1-LOW: M08 소득 DCF 미채택(NOI 미입력 → npv 0) 시 dcf 그룹 자체를 생략 —
+      // 백엔드가 npv_basis에서 '소득접근 보존' 표기를 제거한 케이스에서 0값 나열이
+      // 소득평가가 존재하는 듯 오독시키는 것 방지(백엔드 income_dcf 판정과 동일 게이트).
+      if (k === "dcf" && (((v as Record<string, unknown>).npv_won as number) || 0) <= 0) return [];
       // 1단계 평탄화 — 숫자/문자만(객체는 정직하게 생략).
       return Object.entries(v as Record<string, unknown>)
         .filter(([, sv]) => typeof sv === "number" || (typeof sv === "string" && sv))
@@ -241,7 +246,9 @@ export function FeasibilityResultView() {
         }));
     }
     return [];
-  }).map((e) => ({ ...e, label: SPECIAL_KEY_LABELS[e.key] ?? e.key }));
+  })
+    .filter((e) => !SPECIAL_KEY_SKIP.has(e.key))
+    .map((e) => ({ ...e, label: SPECIAL_KEY_LABELS[e.key] ?? e.key }));
 
   // WP-S 산출 근거(옵셔널 가드) — 스토어 타입에 없는 가산 필드는 안전하게 좁혀 읽는다.
   // 구버전 응답(evidence/legal_refs 부재)이면 빈 배열 → 패널 미렌더(기존 화면 무손상).

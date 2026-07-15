@@ -95,6 +95,8 @@ class FeasibilityServiceV2:
             #   소득 DCF를 채택하지 않은 경우 — m08은 이때 agg 단일기간 근사를 npv로 씀)
             #   보존할 정본이 없으므로 월별 DCF로 정상 교체한다(거짓 "보존" 표기 방지).
             _dcf_sd = (output.special_detail or {}).get("dcf") or {}
+            if not isinstance(_dcf_sd, dict):  # R1-LOW 방어: 비-dict면 미채택 취급
+                _dcf_sd = {}
             income_dcf = bool(_dcf_sd) and (_dcf_sd.get("npv_won") or 0) > 0
             if dcf["npv_won"] is not None and not income_dcf:
                 output.npv_won = int(dcf["npv_won"])
