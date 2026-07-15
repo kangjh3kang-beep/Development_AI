@@ -30,6 +30,9 @@ export interface ContextHeaderInput {
   projectId: string | null;
   projectName: string;
   siteAnalysis: SiteAnalysisData | null;
+  /** 설계 산출(designData) — 부지분석에 용도지역이 없을 때 설계 폼이 쓴 용도지역으로 폴백하기 위한
+   *  최소 입력(옵셔널·하위호환). 미전달이면 종전과 동일하게 siteAnalysis만으로 파생(무회귀). */
+  designData?: { zoneCode?: string | null } | null;
 }
 
 /** ContextHeader 표시용 파생 결과 — 미확보 값은 전부 null(무목업). */
@@ -44,6 +47,8 @@ export interface ContextHeaderData {
   pnu: string | null;
   /** 용도지역 표시 라벨(정규화된 정식 한글, 정규화 실패 시 원문 코드, 미확보 시 null). */
   zoneLabel: string | null;
+  /** 용도지역 출처: "site"=부지분석 확정, "design"=설계 폼 직접 입력(폴백), null=미확보. */
+  zoneSource: "site" | "design" | null;
   /** 유효 대지면적(㎡·다필지면 통합면적) — 미확보 시 null. */
   landAreaSqm: number | null;
   /** 유효 필지 수(다필지 판정용). 단일/미확보면 1 또는 null. */
@@ -85,7 +90,17 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
       ? sa.parcelCount
       : null;
   const isMultiParcel = (parcelCount ?? 1) > 1;
-  const zoneLabel = zoneDisplayLabel(resolveDominantZone(sa));
+  // 용도지역: 부지분석(SSOT) 확정 우선 → 없으면 설계 폼이 쓴 용도지역(designData.zoneCode)으로 폴백.
+  //   부지분석에 용도지역이 없고 사용자가 설계에서 직접 입력한 경우에도 "용도지역 —"이 아니라 실제
+  //   값을 "직접 입력" 배지와 함께 보여 준다(무날조 — 폴백값이 없으면 그대로 null).
+  const siteZoneLabel = zoneDisplayLabel(resolveDominantZone(sa));
+  const designZoneLabel = zoneDisplayLabel(ctx.designData?.zoneCode);
+  const zoneLabel = siteZoneLabel ?? designZoneLabel;
+  const zoneSource: ContextHeaderData["zoneSource"] = siteZoneLabel
+    ? "site"
+    : designZoneLabel
+      ? "design"
+      : null;
   const landAreaSqm = effectiveLandAreaSqm(sa);
   const hasContext = !!(ctx.projectId || address || projectName);
 
@@ -95,6 +110,7 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
     address,
     pnu,
     zoneLabel,
+    zoneSource,
     landAreaSqm,
     parcelCount,
     isMultiParcel,

@@ -14,6 +14,7 @@ import {
 import { Card, CardContent } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import {
@@ -866,8 +867,8 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             </button>
           </div>
           {analyzeResult && (
-            <div className="mt-4 whitespace-pre-wrap rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {analyzeResult}
+            <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+              <MarkdownLite text={analyzeResult} className="text-sm leading-7 text-[var(--text-secondary)]" />
             </div>
           )}
         </SectionCard>

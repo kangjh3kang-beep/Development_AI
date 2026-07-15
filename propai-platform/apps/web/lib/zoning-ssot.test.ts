@@ -7,6 +7,11 @@ import {
   capFarToLegal,
   specialFactorLabels,
   preconditionFactors,
+  resolveFarWithBasis,
+  resolveBcrWithBasis,
+  resolveFarPct,
+  resolveBcrPct,
+  limitBasisLabel,
 } from "@/lib/zoning-ssot";
 
 describe("nationalFarLimitForZone — 용도지역 법정상한(%) 공용 맵(백엔드 정합)", () => {
@@ -146,6 +151,47 @@ describe("preconditionFactors — 개발행위허가 선행요건 상세 factor 
   it("비배열·상세 없음은 빈 배열(카드 미표시 신호)", () => {
     expect(preconditionFactors(null)).toEqual([]);
     expect(preconditionFactors([{ category: "x", developability: "CONDITIONAL" }])).toEqual([]);
+  });
+});
+
+describe("resolveFarWithBasis / resolveBcrWithBasis — 값 + 근거 계층(KPI 정직 라벨)", () => {
+  it("통합(blended)이 있으면 basis=integrated", () => {
+    expect(resolveFarWithBasis({ integratedFarEffPct: 192, effectiveFarPct: 100, nationalFarPct: 100 })).toEqual({
+      value: 192,
+      basis: "integrated",
+    });
+  });
+
+  it("실효만 있으면 basis=effective", () => {
+    expect(resolveFarWithBasis({ effectiveFarPct: 250, nationalFarPct: 250 })).toEqual({
+      value: 250,
+      basis: "effective",
+    });
+  });
+
+  it("법정상한만 있으면 basis=national(자연녹지 100%)", () => {
+    expect(resolveFarWithBasis({ nationalFarPct: 100 })).toEqual({ value: 100, basis: "national" });
+    expect(resolveBcrWithBasis({ nationalBcrPct: 20 })).toEqual({ value: 20, basis: "national" });
+  });
+
+  it("아무 값도 없으면 null(무날조)", () => {
+    expect(resolveFarWithBasis({})).toBeNull();
+    expect(resolveFarWithBasis(null)).toBeNull();
+    expect(resolveBcrWithBasis(undefined)).toBeNull();
+  });
+
+  it("값만 쓰는 하위호환 리졸버(resolveFarPct/resolveBcrPct)는 동일 우선순위·미확보 시 undefined", () => {
+    expect(resolveFarPct({ integratedFarEffPct: 192, nationalFarPct: 100 })).toBe(192);
+    expect(resolveFarPct({ nationalFarPct: 100 })).toBe(100);
+    expect(resolveFarPct({})).toBeUndefined();
+    expect(resolveBcrPct({ effectiveBcrPct: 60 })).toBe(60);
+    expect(resolveBcrPct(null)).toBeUndefined();
+  });
+
+  it("limitBasisLabel — national만 '법정상한', 통합/실효는 '실효'", () => {
+    expect(limitBasisLabel("national")).toBe("법정상한");
+    expect(limitBasisLabel("effective")).toBe("실효");
+    expect(limitBasisLabel("integrated")).toBe("실효");
   });
 });
 

@@ -26,6 +26,7 @@ import { apiClient } from "@/lib/api-client";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 
 /* ── 공사비 estimate-overview 응답(필요 필드만) ── */
 interface CostOverview {
@@ -451,7 +452,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
                   .map(([k, label]) => (
                     <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3">
                       <p className="mb-1 text-[9px] font-black uppercase tracking-widest text-indigo-300/80">{label}</p>
-                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">{designAi[k]}</p>
+                      <MarkdownLite text={designAi[k]} className="text-[12px] text-[var(--text-secondary)]" />
                     </div>
                   ))}
               </div>

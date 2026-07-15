@@ -116,6 +116,39 @@ describe("deriveContextHeaderData — 대상 컨텍스트 파생(무목업)", ()
       }),
     );
     expect(d.zoneLabel).toBe("제3종일반주거지역");
+    expect(d.zoneSource).toBe("site");
+  });
+
+  it("용도지역 폴백: 부지분석에 용도지역이 없으면 설계값(designData.zoneCode)을 '직접 입력'으로 표기", () => {
+    // 시나리오(사용자 지적): projectId만 있고 siteAnalysis에 용도지역이 없어 상단이 "용도지역 —"이던
+    // 상황 — 설계 콘솔이 아는 '자연녹지지역'(직접 입력/시드)을 폴백 표기해야 한다(zoneSource="design").
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A" }), // 용도지역 부재
+        designData: { zoneCode: "자연녹지지역" },
+      }),
+    );
+    expect(d.zoneLabel).toBe("자연녹지지역");
+    expect(d.zoneSource).toBe("design");
+  });
+
+  it("용도지역: 부지분석 용도지역이 있으면 설계값보다 우선(site) — 설계 폴백은 부재 시에만", () => {
+    const d = deriveContextHeaderData(
+      ctx({
+        projectId: "p1",
+        siteAnalysis: sa({ address: "A", zoneCode: "제2종일반주거지역" }),
+        designData: { zoneCode: "자연녹지지역" },
+      }),
+    );
+    expect(d.zoneLabel).toBe("제2종일반주거지역");
+    expect(d.zoneSource).toBe("site");
+  });
+
+  it("용도지역: 부지분석·설계 모두 없으면 null + zoneSource=null(무날조)", () => {
+    const d = deriveContextHeaderData(ctx({ projectId: "p1" }));
+    expect(d.zoneLabel).toBeNull();
+    expect(d.zoneSource).toBeNull();
   });
 });
 

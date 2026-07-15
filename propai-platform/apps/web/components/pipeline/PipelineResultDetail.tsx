@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import {
   useProjectContextStore,
   type CostData,
@@ -862,7 +863,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               {narr.map((n, i) => (
                 <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
                   <p className="mb-1 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">{n.label}</p>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">{n.text}</p>
+                  <MarkdownLite text={n.text} className="text-sm text-[var(--text-secondary)]" />
                 </div>
               ))}
               {isLoading && (

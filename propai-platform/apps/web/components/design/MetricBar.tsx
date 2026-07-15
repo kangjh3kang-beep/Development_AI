@@ -20,8 +20,10 @@
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
-  resolveBcrPct,
-  resolveFarPct,
+  resolveBcrWithBasis,
+  resolveFarWithBasis,
+  limitBasisLabel,
+  type LimitBasis,
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
@@ -169,13 +171,41 @@ function toLegalChips(refs?: unknown[] | null): {
 }
 
 // 칩 1개 — 라벨(작은 글씨) + 값(모노 계기 수치). 좁은 화면에선 가로스크롤(shrink-0).
-function Chip({ label, value }: { label: string; value: string }) {
+//   note: 값 옆 소형 배지(예: "법정상한"·"실효") — 부지 폴백값의 근거를 정직 표기(무라벨 방지).
+function Chip({
+  label,
+  value,
+  note,
+  noteTitle,
+}: {
+  label: string;
+  value: string;
+  note?: string | null;
+  noteTitle?: string;
+}) {
   return (
     <div className="flex min-w-[6.5rem] shrink-0 flex-col justify-center gap-0.5 px-3">
       <span className="cc-label text-[10px] text-[var(--text-tertiary)]">{label}</span>
-      <span className="cc-num text-sm text-[var(--text-primary)]">{value}</span>
+      <span className="flex items-center gap-1">
+        <span className="cc-num text-sm text-[var(--text-primary)]">{value}</span>
+        {note && (
+          <span
+            title={noteTitle}
+            className="shrink-0 rounded-full border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[8px] font-bold leading-none text-[var(--text-tertiary)]"
+          >
+            {note}
+          </span>
+        )}
+      </span>
     </div>
   );
+}
+
+// 부지 폴백값 근거 툴팁 — 법정상한/실효를 정직히 구분(설계 산출값이 아니라 부지 기준선임을 명시).
+function basisTitle(basis: LimitBasis): string {
+  return basis === "national"
+    ? "용도지역 법정상한 — 설계 생성 전 부지 기준선(설계 산출값 아님)"
+    : "조례·종상향 반영 실효 한도 — 설계 생성 전 부지 기준선(설계 산출값 아님)";
 }
 
 export function MetricBar({ className }: { className?: string }) {
@@ -192,10 +222,20 @@ export function MetricBar({ className }: { className?: string }) {
   // 데이터 전무(둘 다 없음)면 띠 자체를 렌더하지 않는다(빈 "—" 7개 노출 방지).
   if (!designData && !siteAnalysis) return null;
 
-  // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 실효값(공용 리졸버). 미확보 시 null.
+  // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 한도(공용 리졸버·근거 동봉). 미확보 시 null.
   //   대지면적·용도지역(식별 지표)은 상단 ContextHeader가 정본으로 표기하므로 이 바에서는 제외(중복 제거).
-  const bcr = designData?.bcr ?? resolveBcrPct(siteAnalysis) ?? null;
-  const far = designData?.far ?? resolveFarPct(siteAnalysis) ?? null;
+  //   ★부지 폴백값은 "법정상한"인지 "실효"인지 근거 배지를 함께 표기한다 — 종전엔 자연녹지 법정상한
+  //   100%를 무라벨로 보여 옆 카드(층수클램프 실효 80%)와 모순처럼 읽혔다. 설계 산출값(designData)일
+  //   때는 배지 없이 그대로(그게 이 바의 본래 KPI). 무날조: 값 없으면 null → "—".
+  const designBcr = designData?.bcr ?? null;
+  const designFar = designData?.far ?? null;
+  const siteBcr = resolveBcrWithBasis(siteAnalysis);
+  const siteFar = resolveFarWithBasis(siteAnalysis);
+  const bcr = designBcr ?? siteBcr?.value ?? null;
+  const far = designFar ?? siteFar?.value ?? null;
+  // 부지 폴백(설계 산출값 아님)일 때만 근거 배지 — 법정상한/실효 정직 구분.
+  const bcrNote = designBcr == null && siteBcr ? limitBasisLabel(siteBcr.basis) : null;
+  const farNote = designFar == null && siteFar ? limitBasisLabel(siteFar.basis) : null;
   // 연면적·정본 층수·세대수 — 설계 산출(designData)에서만. 미확보 시 null → "—".
   const gfa = designData?.totalGfaSqm ?? null;
   const floors = designData?.floorCount ?? null; // ★INC1이 canonicalFloors로 기록한 정본 층수
@@ -349,8 +389,18 @@ export function MetricBar({ className }: { className?: string }) {
           <span className="cc-label text-[10px] text-[var(--accent-strong)]">설계 산출</span>
           <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">생성 결과 KPI</span>
         </span>
-        <Chip label="건폐율" value={fmtPct(bcr)} />
-        <Chip label="용적률" value={fmtPct(far)} />
+        <Chip
+          label="건폐율"
+          value={fmtPct(bcr)}
+          note={bcrNote}
+          noteTitle={siteBcr ? basisTitle(siteBcr.basis) : undefined}
+        />
+        <Chip
+          label="용적률"
+          value={fmtPct(far)}
+          note={farNote}
+          noteTitle={siteFar ? basisTitle(siteFar.basis) : undefined}
+        />
         <Chip label="연면적" value={fmtSqm(gfa)} />
         <Chip label="층수" value={fmtCount(floors, "층")} />
         <Chip label="세대수" value={fmtCount(units, "세대")} />

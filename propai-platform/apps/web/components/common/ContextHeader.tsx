@@ -124,9 +124,11 @@ export function ContextHeader({
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // 설계 산출(designData) — 부지분석에 용도지역이 없을 때 설계 폼이 쓴 용도지역으로 폴백하기 위해 구독.
+  const designData = useProjectContextStore((s) => s.designData);
   const [showEvidence, setShowEvidence] = useState(false);
 
-  const data = deriveContextHeaderData({ projectId, projectName, siteAnalysis });
+  const data = deriveContextHeaderData({ projectId, projectName, siteAnalysis, designData });
   const farBasis =
     typeof siteAnalysis?.farBasis === "string" && siteAnalysis.farBasis.trim()
       ? siteAnalysis.farBasis.trim()
@@ -189,7 +191,11 @@ export function ContextHeader({
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
         <ContextChip label="PNU" value={data.pnu} />
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
-        <ContextChip label="용도지역" value={data.zoneLabel} />
+        <ContextChip
+          label="용도지역"
+          value={data.zoneLabel}
+          badge={data.zoneSource === "design" ? "직접 입력" : null}
+        />
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
         <ContextChip
           label="대지면적"
