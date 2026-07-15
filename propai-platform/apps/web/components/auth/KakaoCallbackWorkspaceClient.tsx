@@ -273,7 +273,8 @@ export function KakaoCallbackWorkspaceClient({
           {labels.brand}
         </p>
         <h1 className="mt-1.5 text-2xl font-bold text-[var(--text-primary)]">{title}</h1>
-        <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{desc}</p>
+        {/* 상태 문구를 live region으로 — 로딩→성공/보안오류 전이를 스크린리더가 고지(구글·네이버 정합). */}
+        <p role="status" aria-live="polite" className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{desc}</p>
 
         {/* 성공: 자동이동 안내 + 즉시 이동 / 오류: 다시 시도 */}
         {status === "success" ? (
