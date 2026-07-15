@@ -685,7 +685,10 @@ class FeasibilityResultResponse(BaseModel):
 
 @router.post("/{project_id}/upload-ifc", response_model=IFCUploadResponse)
 async def upload_ifc(
-    project_id: str, req: IFCUploadRequest, db: AsyncSession = Depends(get_db),
+    project_id: str,
+    req: IFCUploadRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
 ):
     """IFC 요소(JSON) 공종코드 매핑 + bim_quantities 영속.
 
@@ -695,36 +698,30 @@ async def upload_ifc(
       (수정 전에는 매핑만 하고 미영속이라 origin-cost 가 항상 no_bim_quantities 로 단절됐음.)
     실 IFC 파일 자체 업로드·파싱(multipart)은 /api/v1/bim/analyze(ifcopenshell 실파싱)가
       담당한다 — 본 엔드포인트는 요소 JSON 계약을 유지한다. DB 미가용·부트스트랩 실패 시
-      매핑 결과는 그대로 반환하되 persisted_rows=0 으로 정직 표기(가짜 성공 없음)."""
+      매핑 결과는 그대로 반환하되 persisted_rows=0 으로 정직 표기(가짜 성공 없음).
+
+    ★PR#315 M1(소유권 검증): 형제 라우터 boq_auto.create_from_project_draft 와 동일하게
+      assert_project_owned 로 project_id의 tenant 소유권을 검사한다(IDOR 방지) — 이 호출은
+      try/except 밖에서 수행해 403 이 graceful 삼킴에 묻히지 않게 한다(보안검사 무력화 금지).
+      project_id가 UUID가 아니거나 프로젝트 행이 없으면 계약대로 통과(정직 — 데모/테스트 경로).
+    ★PR#315 H1(전역 전파방지): 실제 DB 쓰기는 analyze/generate 와 동일한 공용 헬퍼
+      replace_bim_quantities 를 경유한다 — 같은 프로젝트를 재업로드해도 물량이 배가되지 않는다."""
+    from app.services.auth.project_ownership import assert_project_owned
+
+    await assert_project_owned(project_id, db, current_user)  # tenant 불일치 → 403
+
     mapped = bim_service.extract_quantities_with_work_codes(req.elements)
 
     # 매핑 결과를 bim_quantities 로 영속(origin-cost 체인 연결). 실패해도 매핑 응답은
     # 정상 반환한다(graceful) — DB 미가용/신규 DB 부트스트랩 실패 시 persisted_rows=0.
     persisted_rows = 0
     try:
-        from app.models.v61_cost import BimQuantity
-        from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
+        from app.services.cost.bim_quantity_writer import replace_bim_quantities
 
-        # 신규 DB 부트스트랩 보장(bim_quantities 테이블 없으면 생성 — 조용한 단절 방지).
-        await _ensure_cost_tables(db)
-        rows = [
-            BimQuantity(
-                project_id=project_id,
-                ifc_global_id=m.get("ifc_global_id") or None,
-                ifc_object_type=m.get("ifc_object_type") or None,
-                ifc_object_name=m.get("ifc_object_name") or None,
-                work_code=m.get("work_code") or None,
-                floor_level=m.get("floor_level") or None,
-                quantity=m.get("quantity", 0) or 0,
-                unit=m.get("unit") or None,
-                extraction_method=m.get("extraction_method") or "AI_AUTO",
-            )
-            for m in mapped
-        ]
-        if rows:
-            db.add_all(rows)
+        tenant_id = getattr(current_user, "tenant_id", None)
+        persisted_rows = await replace_bim_quantities(db, project_id, tenant_id, mapped)
+        if persisted_rows:
             await db.commit()
-            persisted_rows = len(rows)
     except Exception as exc:  # noqa: BLE001 — 영속 실패는 매핑 응답을 막지 않는다
         with contextlib.suppress(Exception):
             await db.rollback()

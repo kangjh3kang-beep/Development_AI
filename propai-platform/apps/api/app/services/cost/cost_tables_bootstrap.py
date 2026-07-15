@@ -71,6 +71,7 @@ _DDL_BIM_QUANTITIES = (
     "CREATE TABLE IF NOT EXISTS bim_quantities ("
     "  id bigserial PRIMARY KEY,"
     "  project_id uuid NOT NULL,"
+    "  tenant_id uuid,"  # PR#315 H2: 정본 ORM(TenantMixin)과 물리스키마 정합 — nullable(백필 금지)
     "  ifc_global_id varchar(100),"
     "  ifc_object_type varchar(100),"
     "  ifc_object_name varchar(300),"
@@ -85,6 +86,11 @@ _DDL_BIM_QUANTITIES = (
     "  created_at timestamptz DEFAULT now(),"
     "  updated_at timestamptz DEFAULT now()"
     ")"
+)
+# PR#315 H2: 기존 배포 테이블(CREATE IF NOT EXISTS 로 스킵되는 경우)에도 멱등 보강.
+# nullable 추가 — NOT NULL 백필은 운영 리스크라 금지(기존 행 무영향, 신규 행부터 채움).
+_DDL_BIM_QUANTITIES_TENANT = (
+    "ALTER TABLE bim_quantities ADD COLUMN IF NOT EXISTS tenant_id uuid"
 )
 
 _DDL_PROGRESS_BILLINGS = (
@@ -158,7 +164,7 @@ _DDL_COST_ESTIMATE_ITEM_IDX = (
 _ALL_DDL = (
     _DDL_MATERIAL_UNIT_PRICES, _DDL_MATERIAL_UQ, _DDL_MATERIAL_SOURCE_URL,
     _DDL_COST_WORK_TYPES, _DDL_WORK_TYPE_UQ,
-    _DDL_BIM_QUANTITIES,
+    _DDL_BIM_QUANTITIES, _DDL_BIM_QUANTITIES_TENANT,
     _DDL_PROGRESS_BILLINGS,
     _DDL_COST_ESTIMATE, _DDL_COST_ESTIMATE_IDX,
     _DDL_COST_ESTIMATE_ITEM, _DDL_COST_ESTIMATE_ITEM_IDX,

@@ -263,38 +263,38 @@ class TestAnalyzeIfcInsert:
 # ═══════════════════════════════════════════════
 
 
-def _mock_generated_ifc_modules():
-    """ifcopenshell.create_entity 가 매 호출마다 새 Mock(GlobalId/Name 보유)을 반환하도록 구성.
+def _real_ifcopenshell() -> bool:
+    """실설치된 ifcopenshell인지 확인 — sys.modules 목 주입(MagicMock)은 거부."""
+    import types
+    try:
+        import ifcopenshell
+    except Exception:
+        return False
+    return isinstance(ifcopenshell, types.ModuleType)
 
-    실제 슬라브/벽 개수만큼 서로 다른 엔터티가 생성돼야 elements 리스트가 올바르게
-    쌓이는지 검증할 수 있다(고정 return_value 1개를 쓰면 전부 같은 객체가 되어 회귀를 못 잡음).
-    """
-    counter = {"n": 0}
 
-    def _new_entity(entity_type, **kwargs):
-        counter["n"] += 1
-        m = MagicMock()
-        m.GlobalId = kwargs.get("GlobalId") or f"GID-{counter['n']}"
-        m.Name = kwargs.get("Name") or f"{entity_type}-{counter['n']}"
-        return m
-
-    mock_ifc_file = MagicMock()
-    mock_ifc_file.create_entity = MagicMock(side_effect=_new_entity)
-    mock_ifc_file.write = MagicMock()
-
-    mock_guid = MagicMock()
-    mock_guid.new.side_effect = lambda: f"GUID-{counter['n']}"
-
+def _mock_minio_module():
+    """MinIO 클라이언트 목(외부 I/O 경계만 격리) — bucket_exists=True, put_object no-op."""
     mock_minio = MagicMock()
     mock_minio.bucket_exists.return_value = True
     mock_minio.put_object = MagicMock()
-
-    return mock_ifc_file, mock_guid, mock_minio
+    return MagicMock(Minio=MagicMock(return_value=mock_minio))
 
 
 class TestGenerateIfcInsertsBimQuantities:
-    """WP-18 확장 — /bim/generate-ifc 성공경로에서도 analyze_ifc와 동일하게
-    bim_quantities 가 영속되는지 검증(그동안 프론트 실사용 경로였는데도 미배선이던 결함)."""
+    """WP-18 확장 + PR#315 H1(정본위임) 갱신 — /bim/generate-ifc 성공경로 bim_quantities 영속 검증.
+
+    ★PR#315: generate_ifc_from_design 이 자체 엔티티 조립(빈 IFC 결함)에서 정본
+    build_ifc_from_mass(app.services.bim.ifc_generator_service)로 위임되며, ifcopenshell
+    실행이 ifcopenshell.api.run 동적 액션 시스템을 쓰게 됐다. 과거 sys.modules 목 주입
+    (가짜 ifcopenshell 모듈)은 `from ifcopenshell.api import run` 서브모듈 임포트와
+    호환되지 않아 더 이상 유효하지 않다 — 실 ifcopenshell 로 생성하고 MinIO 만 목 처리한다
+    (무목업 원칙: IFC 내부 로직은 실행, 외부 I/O 경계만 격리). ifcopenshell 미설치 환경은 skip.
+    """
+
+    pytestmark = pytest.mark.skipif(
+        not _real_ifcopenshell(), reason="ifcopenshell 미설치 — 실 IFC 생성 회귀 테스트 스킵",
+    )
 
     @pytest.mark.asyncio
     async def test_generate_ifc_persists_bim_quantities(self):
@@ -307,25 +307,16 @@ class TestGenerateIfcInsertsBimQuantities:
         svc.settings.minio_access_key = "test"
         svc.settings.minio_secret_key = "test"
 
-        mock_ifc_file, mock_guid, mock_minio = _mock_generated_ifc_modules()
-
-        with (
-            patch.dict("sys.modules", {
-                "ifcopenshell": MagicMock(file=MagicMock(return_value=mock_ifc_file), guid=mock_guid),
-                "minio": MagicMock(Minio=MagicMock(return_value=mock_minio)),
-            }),
-            patch("tempfile.NamedTemporaryFile") as mock_tmp,
-            patch("pathlib.Path.read_bytes", return_value=b"fake_ifc_data"),
-            patch("os.unlink"),
-        ):
-            mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake.ifc"
+        with patch.dict("sys.modules", {"minio": _mock_minio_module()}):
             result = await svc.generate_ifc_from_design(
                 project_id=uuid.uuid4(), tenant_id=TEST_TENANT_ID,
                 total_area_sqm=1000.0, floors=1, structure_type="RC",
             )
 
-        # floors=1 → 슬라브 1 + 벽 4 = 5요소. IfcSlab/IfcWall 각 4 work_code → 20행.
+        # floors=1 → 정사각(한 변=sqrt(1000)) 1층: 슬래브1+벽4=5요소. IfcSlab/IfcWall 각 4 work_code → 20행.
         assert result.element_count == 5
+        assert result.total_volume_m3 > 0, "재적산 체적 0 — 정본 위임 지오메트리/물량 결함 재발"
+        assert result.total_area_sqm > 0
         assert db.add_all.call_count == 1
         rows = db.add_all.call_args.args[0]
         assert len(rows) == 20
@@ -345,19 +336,10 @@ class TestGenerateIfcInsertsBimQuantities:
         svc.settings.minio_access_key = "test"
         svc.settings.minio_secret_key = "test"
 
-        mock_ifc_file, mock_guid, mock_minio = _mock_generated_ifc_modules()
-
         with (
-            patch.dict("sys.modules", {
-                "ifcopenshell": MagicMock(file=MagicMock(return_value=mock_ifc_file), guid=mock_guid),
-                "minio": MagicMock(Minio=MagicMock(return_value=mock_minio)),
-            }),
-            patch("tempfile.NamedTemporaryFile") as mock_tmp,
-            patch("pathlib.Path.read_bytes", return_value=b"fake_ifc_data"),
-            patch("os.unlink"),
+            patch.dict("sys.modules", {"minio": _mock_minio_module()}),
             patch.object(svc, "_persist_bim_quantities", side_effect=RuntimeError("db down")),
         ):
-            mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake.ifc"
             result = await svc.generate_ifc_from_design(
                 project_id=uuid.uuid4(), tenant_id=TEST_TENANT_ID,
                 total_area_sqm=1000.0, floors=1, structure_type="RC",

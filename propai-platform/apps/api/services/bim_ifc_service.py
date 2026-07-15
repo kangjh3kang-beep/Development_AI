@@ -123,45 +123,46 @@ class BIMIFCService:
             "elements": elements,
         }
 
-    def _persist_bim_quantities(
+    async def _persist_bim_quantities(
         self,
         project_id: UUID,
         tenant_id: UUID,
         elements: list[dict],
     ) -> int:
-        """요소 단위 물량을 공종코드로 매핑해 bim_quantities 행으로 add 한다.
+        """요소 단위 물량을 공종코드로 매핑해 bim_quantities 로 교체 영속한다.
 
-        commit 은 호출측(analyze_ifc)이 수행한다(동일 세션 일괄 처리).
+        commit 은 호출측(analyze_ifc/generate_ifc_from_design)이 수행한다(동일 세션 일괄 처리).
         매핑되는 공종이 없거나 요소가 없으면 0행을 반환한다(정직 — 가짜 행 없음).
+
+        ★PR#315 H1(전역 전파방지): 실제 DB 쓰기는 공용 헬퍼 replace_bim_quantities 를
+          경유한다 — INSERT 전 같은 project_id·extraction_method(AI_AUTO) 기존 행을 DELETE
+          하므로, 같은 프로젝트를 재분석/재생성해도 물량이 배가되지 않는다(비멱등 이중적재
+          방지). upload_ifc(app/routers/cost.py)도 동일 헬퍼를 경유 — 한 곳 수정이 3개
+          쓰기 경로(analyze/generate/upload) 전부에 적용된다.
         """
         if not elements:
             return 0
 
+        from app.services.cost.bim_quantity_writer import replace_bim_quantities
         from app.services.cost.ifc_work_map import map_ifc_to_work_codes
-        from apps.api.database.models.v61_cost import BimQuantity
 
-        rows: list[BimQuantity] = []
+        mapped_rows: list[dict] = []
         for elem in elements:
             ifc_type = elem.get("element_type", "") or ""
             work_codes = map_ifc_to_work_codes(ifc_type)
             for work_code, _work_name in work_codes:
-                rows.append(BimQuantity(
-                    tenant_id=tenant_id,
-                    project_id=project_id,
-                    ifc_global_id=elem.get("global_id") or None,
-                    ifc_object_type=ifc_type or None,
-                    ifc_object_name=elem.get("name") or None,
-                    work_code=work_code,
-                    floor_level=elem.get("floor_level") or None,
-                    quantity=elem.get("quantity", 0) or 0,
-                    unit=elem.get("unit") or None,
-                    extraction_method="AI_AUTO",
-                ))
+                mapped_rows.append({
+                    "ifc_global_id": elem.get("global_id") or None,
+                    "ifc_object_type": ifc_type or None,
+                    "ifc_object_name": elem.get("name") or None,
+                    "work_code": work_code,
+                    "floor_level": elem.get("floor_level") or None,
+                    "quantity": elem.get("quantity", 0) or 0,
+                    "unit": elem.get("unit") or None,
+                    "extraction_method": "AI_AUTO",
+                })
 
-        if not rows:
-            return 0
-        self.db.add_all(rows)
-        return len(rows)
+        return await replace_bim_quantities(self.db, project_id, tenant_id, mapped_rows)
 
     def _generate_threejs_geometry(self, filepath: str) -> dict:
         """Three.js용 geometry JSON을 생성한다.
@@ -231,7 +232,7 @@ class BIMIFCService:
         #   하지 않게 rollback 후 경고만 남긴다(분석 응답 무영향·가짜 성공 표기 없음).
         bim_quantity_rows = 0
         try:
-            bim_quantity_rows = self._persist_bim_quantities(
+            bim_quantity_rows = await self._persist_bim_quantities(
                 project_id=project_id,
                 tenant_id=tenant_id,
                 elements=result.get("elements") or [],
@@ -272,25 +273,31 @@ class BIMIFCService:
     def _design_params_to_mass(
         total_area_sqm: float,
         floors: int,
-        structure_type: str = "RC",  # noqa: ARG004 — 메타 보존용(정본 generate 기본 벽두께 0.2m)
+        structure_type: str = "RC",
     ) -> dict:
-        """설계 파라미터(연면적·층수)를 정본 생성기 입력 매스 dict로 사상한다.
+        """설계 파라미터(연면적·층수·구조형식)를 정본 생성기 입력 매스 dict로 사상한다.
 
         연면적 ÷ 층수 = 층당 바닥면적 → 정사각 가정으로 한 변 길이 산출
         (building_width_m = building_depth_m). 층고는 legacy와 동일 3.0m.
-        structure_type 은 Design 메타에만 보존(정본 build_ifc_from_mass 는 벽두께
-        인자를 노출하지 않고 기본 0.2m 사용 — 물량은 생성 IFC 재적산으로 정합).
+
+        ★PR#315 M3(전역 전파방지): legacy 는 RC/비RC 벽두께를 0.2/0.15 로 분기했으나,
+        정본 위임 초판은 build_ifc_from_mass 가 wall_thickness_m 을 forwarding 하지 않아
+        고정 0.2 로 근사되며 구조형식 차이가 물량에 반영되지 않았다. build_ifc_from_mass
+        가 이제 mass["wall_thickness_m"]을 forwarding 하므로(같은 PR 수정) 여기서 구조형식
+        분기값을 실제로 전달 — 압출·BaseQuantities 양쪽에 정확히 반영된다(근사 표기 불필요).
         """
         import math
 
         n = max(int(floors), 1)
         floor_area = max(float(total_area_sqm), 1.0) / n
         side = math.sqrt(floor_area)
+        wall_thickness_m = 0.2 if structure_type == "RC" else 0.15
         return {
             "building_width_m": side,
             "building_depth_m": side,
             "num_floors": n,
             "floor_height_m": 3.0,
+            "wall_thickness_m": wall_thickness_m,
         }
 
     async def generate_ifc_from_design(
@@ -403,7 +410,7 @@ class BIMIFCService:
         # 물량 영속만 스킵되고 경고 로그로 남긴다(무목업 — 가짜 성공 표기 없음).
         bim_quantity_rows = 0
         try:
-            bim_quantity_rows = self._persist_bim_quantities(
+            bim_quantity_rows = await self._persist_bim_quantities(
                 project_id=project_id,
                 tenant_id=tenant_id,
                 elements=result.get("elements") or [],
