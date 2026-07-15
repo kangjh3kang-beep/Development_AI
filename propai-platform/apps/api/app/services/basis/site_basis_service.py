@@ -89,7 +89,13 @@ _SCHEMA_READY = False
 
 
 async def _ensure_schema(db: Any, force: bool = False) -> None:
-    """projection·이벤트 테이블 멱등 보장(부팅 대기 없이 최초 호출 시 lazy 생성)."""
+    """projection·이벤트 테이블 멱등 보장(부팅 대기 없이 최초 호출 시 lazy 생성).
+
+    ★권고②(공용 패턴 교정 — growth/schema_guard.py 선례 정합·design_run_store와 동일 방식):
+      _SCHEMA_READY는 DDL '커밋 성공 후'에만 세팅한다. 커밋 전에 세팅하면 이후 데이터 트랜잭션이
+      롤백될 때 DDL도 되돌려지는데 플래그는 ready로 남아 다음 호출이 생성을 건너뛴다('유령 ready').
+      DDL을 즉시 확정(commit)하면 이후 DML이 실패해도 스키마는 남는다.
+    """
     global _SCHEMA_READY
     if _SCHEMA_READY and not force:
         return
@@ -99,6 +105,7 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
     await db.execute(text(_EVENT_DDL))
     for ix in _INDEXES:
         await db.execute(text(ix))
+    await db.commit()  # ★DDL 즉시 확정 — 커밋 성공 후에만 ready 세팅(유령 ready 방지·schema_guard 동형).
     _SCHEMA_READY = True
 
 
