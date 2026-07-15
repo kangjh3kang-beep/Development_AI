@@ -264,6 +264,27 @@ SCHOOL_SITE_MIN_HOUSEHOLDS = 300  # 300세대 이상 의무
 # 대도시권 시·도(대도시권광역교통관리법 시행령 별표1 권역의 중심 시·도). 경남·경북·전남·충남·충북은
 # 일부 시군만 권역 → 과부과 방지 위해 v1은 중심 시·도만 부과(권역 시군 정밀판정 후속).
 METRO_AREA_SIDO: set[str] = {"서울", "인천", "경기", "부산", "울산", "대구", "광주", "대전", "세종"}
+
+# ── 시도명 정규화(완전명 → 단가표 축약 키) ──────────────────────────
+# ★후속 스윕(2026-07-15 감사): 부담금 테이블(METRO_AREA_SIDO·상하수도 단가표)은 축약형
+#   키("서울")인데 호출자(개략수지·지오코딩 경로)는 행정 완전명("서울특별시")을 전달 —
+#   B01 광역교통이 대도시권을 비대도시권으로 오판(침묵 미부과)하고 B03/B04 상하수도가
+#   등록 지자체인데도 unavailable로 강등되던 미매칭을 조회 지점에서 일괄 봉합한다.
+_SIDO_FULL_TO_SHORT: dict[str, str] = {
+    "서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구", "인천광역시": "인천",
+    "광주광역시": "광주", "대전광역시": "대전", "울산광역시": "울산", "세종특별자치시": "세종",
+    "경기도": "경기", "강원특별자치도": "강원", "강원도": "강원",
+    "충청북도": "충북", "충청남도": "충남",
+    "전북특별자치도": "전북", "전라북도": "전북", "전라남도": "전남",
+    "경상북도": "경북", "경상남도": "경남",
+    "제주특별자치도": "제주", "제주도": "제주",
+}
+
+
+def normalize_sido_short(sido_name: str) -> str:
+    """시도명을 부담금 테이블 축약 키로 정규화 — 이미 축약형이면 그대로(멱등)."""
+    s = (sido_name or "").strip()
+    return _SIDO_FULL_TO_SHORT.get(s, s)
 # 표준건축비(원/㎡): 국토부 고시값 — 미확정(고시 첨부·비색인) → None. 관리자 설정/호출부 주입 필요.
 METRO_STANDARD_BUILD_COST_WON_PER_SQM: int | None = None
 _METRO_HOUSING_TYPES = {"apartment", "아파트", "주택", "공동주택", "다세대", "연립", "도시형생활주택"}
@@ -293,6 +314,7 @@ def get_metro_transport_charge(
     · 그 외 → 실산식 산정. (v1은 공제·감면 미반영 = 보수적 상한.)
     """
     is_housing = building_type in _METRO_HOUSING_TYPES
+    sido_name = normalize_sido_short(sido_name)  # 완전명("서울특별시") 입력도 대도시권 정상 판정
     if sido_name not in METRO_AREA_SIDO:
         return {
             "amount_won": 0, "applicable": False, "source": "not_metro_area",
@@ -355,11 +377,12 @@ def get_utility_charge(
     산정을 지자체 조례에 위임하므로 '전국 단일 표준값'이 존재하지 않는다. 미등록 지역에 임의
     폴백값을 반환하면 무목업 위반(지어낸 값)이므로 None을 돌려 소비처가 정직 처리하게 한다.
     """
-    sigungu_key = f"{sido_name}_{sigungu_name}"
+    sido_short = normalize_sido_short(sido_name)  # 완전명 입력도 축약 키 테이블에 매칭
+    sigungu_key = f"{sido_short}_{sigungu_name}"
     if sigungu_key in charge_map:
         return charge_map[sigungu_key]
-    if sido_name in charge_map:
-        return charge_map[sido_name]
+    if sido_short in charge_map:
+        return charge_map[sido_short]
     return None  # 조례 미등록 — 임의 전국폴백 금지(무목업)
 
 
