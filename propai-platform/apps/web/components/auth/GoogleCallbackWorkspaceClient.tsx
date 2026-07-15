@@ -17,8 +17,12 @@ type TokenResponse = {
 type GoogleCallbackWorkspaceClientProps = {
   locale: Locale;
   code: string | null;
+  state: string | null;
   redirectUri: string | null;
 };
+
+// 로그인 시작(login-url) 단계에서 보관한 state — 콜백에서 일치 검증(CSRF/세션고정 방지).
+const GOOGLE_STATE_KEY = "google_oauth_state";
 
 type CallbackLabels = {
   eyebrow: string;
@@ -27,6 +31,7 @@ type CallbackLabels = {
   loading: string;
   success: string;
   missingParams: string;
+  stateMismatch: string;
   error: string;
   openDashboard: string;
   backToLogin: string;
@@ -41,6 +46,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     loading: "구글 인증 코드를 교환하는 중입니다.",
     success: "구글 인증이 완료되어 브라우저 세션을 저장했습니다.",
     missingParams: "구글 callback 파라미터가 부족합니다. code를 확인하세요.",
+    stateMismatch: "보안 검증(state) 불일치 — 로그인을 다시 시도해 주세요(CSRF 방지).",
     error: "구글 인증을 완료하지 못했습니다.",
     openDashboard: "대시보드로 이동",
     backToLogin: "로그인으로 돌아가기",
@@ -54,6 +60,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     success: "Google authentication completed and the browser session has been stored.",
     missingParams:
       "The Google callback payload is incomplete. Check that the code parameter is present.",
+    stateMismatch: "Security check (state) mismatch — please try signing in again (CSRF protection).",
     error: "Google authentication could not be completed.",
     openDashboard: "Open dashboard",
     backToLogin: "Back to login",
@@ -66,6 +73,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     loading: "正在交换 Google 授权码。",
     success: "Google 认证完成，浏览器会话已保存。",
     missingParams: "Google 回调参数不完整，请确认提供 code。",
+    stateMismatch: "安全校验(state)不一致 — 请重新登录(防 CSRF)。",
     error: "无法完成 Google 认证。",
     openDashboard: "进入仪表盘",
     backToLogin: "返回登录",
@@ -106,6 +114,7 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
 export function GoogleCallbackWorkspaceClient({
   locale,
   code,
+  state,
   redirectUri,
 }: GoogleCallbackWorkspaceClientProps) {
   const router = useRouter();
@@ -127,6 +136,13 @@ export function GoogleCallbackWorkspaceClient({
     let active = true;
 
     const run = async () => {
+      // ★CSRF/세션고정 방지: 로그인 시작 시 sessionStorage에 보관한 state와 콜백 state가
+      //  일치해야 교환한다. 보관값이 있는데 불일치면 차단(보관값 없으면 구버전 호환으로 통과).
+      const savedState = window.sessionStorage.getItem(GOOGLE_STATE_KEY);
+      if (savedState && state && savedState !== state) {
+        if (active) setRequestState({ status: "error", message: labels.stateMismatch });
+        return;
+      }
       try {
         // ★구글도 콜백 URL에 redirect_uri를 붙여주지 않는다(code만 전달) →
         //  토큰 교환의 redirect_uri는 "로그인 단계에서 보낸 값"과 1바이트도 다르면 안 되므로
@@ -136,6 +152,7 @@ export function GoogleCallbackWorkspaceClient({
         const tokens = await apiClient.post<TokenResponse>("/auth/google/callback", {
           body: {
             code,
+            state,
             redirect_uri: effectiveRedirectUri,
           },
           useMock: false,
@@ -145,6 +162,7 @@ export function GoogleCallbackWorkspaceClient({
           return;
         }
 
+        window.sessionStorage.removeItem(GOOGLE_STATE_KEY);
         persistTokens(tokens);
         setRequestState({
           status: "success",
@@ -167,7 +185,7 @@ export function GoogleCallbackWorkspaceClient({
     return () => {
       active = false;
     };
-  }, [code, hasRequiredParams, labels.error, labels.success, redirectUri, locale]);
+  }, [code, state, hasRequiredParams, labels.error, labels.success, labels.stateMismatch, redirectUri, locale]);
 
   // ★인증 성공 시 자동으로 홈(대시보드)으로 이동 — 성공화면에 멈춰 "오류처럼" 보이는 문제 해결.
   useEffect(() => {

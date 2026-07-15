@@ -17,8 +17,12 @@ type TokenResponse = {
 type KakaoCallbackWorkspaceClientProps = {
   locale: Locale;
   code: string | null;
+  state: string | null;
   redirectUri: string | null;
 };
+
+// 로그인 시작(login-url) 단계에서 보관한 state — 콜백에서 일치 검증(CSRF/세션고정 방지).
+const KAKAO_STATE_KEY = "kakao_oauth_state";
 
 type CallbackLabels = {
   brand: string;
@@ -30,6 +34,7 @@ type CallbackLabels = {
   goNow: string;
   errorTitle: string;
   error: string;
+  stateMismatch: string;
   missingParams: string;
   openDashboard: string;
   backToLogin: string;
@@ -47,6 +52,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "지금 이동",
     errorTitle: "로그인하지 못했어요",
     error: "카카오 로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    stateMismatch: "보안 검증에 실패했어요. 로그인을 처음부터 다시 시도해 주세요.",
     missingParams: "로그인 정보가 올바르지 않습니다. 처음부터 다시 시도해 주세요.",
     openDashboard: "대시보드로 이동",
     backToLogin: "로그인 다시 시도",
@@ -61,6 +67,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "Go now",
     errorTitle: "Sign-in failed",
     error: "We couldn't complete the Kakao login. Please try again shortly.",
+    stateMismatch: "Security check failed. Please start the login over.",
     missingParams: "The sign-in info is invalid. Please start over.",
     openDashboard: "Open dashboard",
     backToLogin: "Try again",
@@ -75,6 +82,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "立即进入",
     errorTitle: "登录失败",
     error: "无法完成 Kakao 登录，请稍后重试。",
+    stateMismatch: "安全校验失败，请重新登录。",
     missingParams: "登录信息无效，请重新开始。",
     openDashboard: "进入仪表盘",
     backToLogin: "重试",
@@ -115,6 +123,7 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
 export function KakaoCallbackWorkspaceClient({
   locale,
   code,
+  state,
   redirectUri,
 }: KakaoCallbackWorkspaceClientProps) {
   const router = useRouter();
@@ -135,6 +144,13 @@ export function KakaoCallbackWorkspaceClient({
     let active = true;
 
     const run = async () => {
+      // ★CSRF/세션고정 방지: 로그인 시작 시 sessionStorage에 보관한 state와 콜백 state가
+      //  일치해야 교환한다. 보관값이 있는데 불일치면 차단(보관값 없으면 구버전 호환으로 통과).
+      const savedState = window.sessionStorage.getItem(KAKAO_STATE_KEY);
+      if (savedState && state && savedState !== state) {
+        if (active) setRequestState({ status: "error", errorMessage: labels.stateMismatch });
+        return;
+      }
       try {
         // ★카카오는 콜백 URL에 redirect_uri를 붙여주지 않는다(code만 전달) →
         //  쿼리파라미터(redirectUri)는 실제 플로우에서 거의 항상 null이다.
@@ -145,6 +161,7 @@ export function KakaoCallbackWorkspaceClient({
         const tokens = await apiClient.post<TokenResponse>("/auth/kakao/callback", {
           body: {
             code,
+            state,
             redirect_uri: effectiveRedirectUri,
           },
           useMock: false,
@@ -154,6 +171,7 @@ export function KakaoCallbackWorkspaceClient({
           return;
         }
 
+        window.sessionStorage.removeItem(KAKAO_STATE_KEY);
         persistTokens(tokens);
         setRequestState({ status: "success" });
       } catch (error) {
@@ -173,7 +191,7 @@ export function KakaoCallbackWorkspaceClient({
     return () => {
       active = false;
     };
-  }, [code, hasRequiredParams, labels.error, redirectUri, locale]);
+  }, [code, state, hasRequiredParams, labels.error, labels.stateMismatch, redirectUri, locale]);
 
   // ★인증 성공 시 자동으로 홈(대시보드)으로 이동 — 성공화면에 멈춰 "오류처럼" 보이는 문제 해결.
   //  세션 저장(persistTokens) 직후 약간의 지연으로 성공 메시지를 보여준 뒤 전환한다.
