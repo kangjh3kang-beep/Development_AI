@@ -7,6 +7,7 @@ from typing import Any
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
 from app.services.feasibility.modules.base_module import BaseModule, ModuleInput, ModuleOutput
 from app.services.feasibility.modules.common.cost_blocks import (
+    apply_auto_estimates,
     compute_construction_cost,
     compute_finance_cost,
     compute_land_cost,
@@ -67,6 +68,9 @@ class M08Officetel(BaseModule):
         construction = compute_construction_cost(inp)
         finance = compute_finance_cost(inp)
         other = compute_other_cost(inp)
+        # ★감사 수지10 봉합: 금융비·소프트비 자동추정(공용 — generic과 동일 표준 가정).
+        #   params 미입력 시 finance=0·other=0으로 ROI가 과대(예: 566%)되던 비대칭 해소.
+        finance, other = apply_auto_estimates(inp, land, construction, finance, other)
         taxes = compute_taxes(
             inp, revenue["total_revenue_won"],
             development_cost_won=int(construction["total_construction_cost_won"]),

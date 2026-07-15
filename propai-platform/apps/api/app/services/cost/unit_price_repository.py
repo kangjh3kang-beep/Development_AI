@@ -207,8 +207,19 @@ class UnitPriceRepository:
             )
 
         # T2: 기존 표준품셈 시드(대표 material_code 매핑 존재 시).
+        # ★T2 안전가드(2026-07-15 감사 적산2 봉합 — T1 가드와 대칭): 노무비(labor_unit) 0/NULL
+        #   행은 '실단가 0원'이 아니라 결측으로 취급해 T3(fallback)로 폴백한다 — 하류 원가계산서의
+        #   법정 제비율(간접노무비 14.4%·4대보험 등)이 오직 labor_unit에서 파생되므로 노무=0이면
+        #   제비율이 통째로 소실된다. (mat=0·labor>0 행은 채택 — 재료비 축은 별도 검증 항목.)
         code = _KEY_TO_MATERIAL_CODE.get(key)
         row = db.get(code) if code else None
+        if row and float(row.get("labor_unit") or 0) <= 0:
+            logger.warning(
+                "t2_standard_price_skipped_unsafe",
+                key=key, mat_unit=float(row.get("mat_unit") or 0),
+                labor_unit=float(row.get("labor_unit") or 0),
+            )
+            row = None
         if row:
             result = {
                 "key": key,
