@@ -17,6 +17,7 @@ from typing import Any
 from app.services.legal.legal_reference_registry import get_legal_ref
 from app.services.tax.regional_tax_data import (
     SCHOOL_SITE_CHARGE_RATE,
+    SCHOOL_SITE_CHARGE_RATE_DETACHED,
     SCHOOL_SITE_MIN_HOUSEHOLDS,
     SEWAGE_CHARGES_WON,
     WATER_SUPPLY_CHARGES_WON,
@@ -31,6 +32,33 @@ _B_LEGAL_KEY: dict[str, str] = {
     "B03": "water_supply_cause_charge",  # 수도법 §71
     "B04": "sewage_cause_charge",      # 하수도법 §61
 }
+
+# ── B02 학교용지부담금 요율 판정(단일 SSOT — R1 교정) ──
+# 학교용지법 §2 3호: '공동주택'에 **준주택 중 대통령령 규모 오피스텔 포함**(2021.6.23
+# 시행령~현행 2025.6.21 유지) → 분양형(주거용) 오피스텔은 0.4% 부과 대상이다.
+# §5의2: 단독주택 건축용 토지 조성·개발은 1.4%. 순수 업무·상업 등 비주거만 면제.
+# 판정 정책: **명시 비주거만 면제, 미지 토큰은 공동주택 요율로 부과**(과소계상 방지 —
+# 총사업비 보수 방향). 토큰 어휘는 생산자 feasibility_service_v2._get_building_type의
+# 실방출값(apartment/officetel/office/house/townhouse) + 프론트 한글 라벨 계열.
+_SCHOOL_SITE_DETACHED_TYPES = {"house", "단독주택", "detached", "전원주택", "타운하우스분양지"}
+_SCHOOL_SITE_EXEMPT_TYPES = {
+    "office", "업무시설", "commercial", "상업시설", "상가", "근린생활시설",
+    "industrial", "산업시설", "지식산업센터", "물류", "logistics", "창고",
+    "hotel", "호텔", "숙박시설",
+}
+
+
+def school_site_rate_for(building_type: str) -> float | None:
+    """건물유형 → 학교용지부담금 요율(None=면제·비주거).
+
+    공용 헬퍼(SSOT) — budget_template 등 다른 소비처도 이 판정을 따라야 한다.
+    """
+    bt = (building_type or "").strip()
+    if bt in _SCHOOL_SITE_DETACHED_TYPES:
+        return SCHOOL_SITE_CHARGE_RATE_DETACHED  # §5의2 단독주택지 1.4%
+    if bt in _SCHOOL_SITE_EXEMPT_TYPES:
+        return None
+    return SCHOOL_SITE_CHARGE_RATE  # 공동주택 0.4% — officetel·townhouse·미지 토큰 포함(보수)
 
 
 def calculate_b01_metro_transport(
@@ -69,21 +97,48 @@ def calculate_b02_school_site(
     *,
     total_sale_amount_won: int,
     total_households: int,
+    building_type: str = "apartment",
 ) -> dict[str, Any]:
-    """B02 학교용지부담금 (300세대 이상 의무)."""
-    if total_households < SCHOOL_SITE_MIN_HOUSEHOLDS:
+    """B02 학교용지부담금 (300세대 이상 의무).
+
+    ★건물유형 게이트(R1 교정 반영): 요율은 school_site_rate_for(단일 SSOT)가 판정 —
+    공동주택 0.4%(§5의2 1호 — **분양형 오피스텔은 준주택 포함이라 부과 대상**, §2 3호
+    2021.6.23~) · 단독주택지 1.4%(§5의2 2호) · 명시 비주거(업무·상업 등)만 면제.
+    미지 토큰은 공동주택 요율 부과(과소계상 방지 보수). 한계: 오피스텔의 대통령령
+    규모 기준·도시형생활주택 소형 면제 등 세부 조항 미반영 — detail에 표기.
+    """
+    rate = school_site_rate_for(building_type)
+    if rate is None:
         return {
             "code": "B02", "name": "학교용지부담금",
             "base_won": 0, "rate": SCHOOL_SITE_CHARGE_RATE,
             "amount_won": 0,
+            "detail": {"reason": (
+                f"건물유형 '{building_type or '미상'}' — 주택건설사업 아님"
+                "(학교용지법 §2 대상 외 · 업무/상업 등 비주거 면제)"
+            )},
+        }
+    if total_households < SCHOOL_SITE_MIN_HOUSEHOLDS:
+        return {
+            "code": "B02", "name": "학교용지부담금",
+            "base_won": 0, "rate": rate,
+            "amount_won": 0,
             "detail": {"reason": f"{total_households}세대 < {SCHOOL_SITE_MIN_HOUSEHOLDS}세대 면제"},
         }
-    amount = int(total_sale_amount_won * SCHOOL_SITE_CHARGE_RATE)
-    return {
+    amount = int(total_sale_amount_won * rate)
+    result: dict[str, Any] = {
         "code": "B02", "name": "학교용지부담금",
-        "base_won": total_sale_amount_won, "rate": SCHOOL_SITE_CHARGE_RATE,
+        "base_won": total_sale_amount_won, "rate": rate,
         "amount_won": amount,
     }
+    if (building_type or "").strip() in ("officetel", "오피스텔"):
+        # 무날조 한계 표기: §2 3호는 '대통령령으로 정하는 규모'의 오피스텔만 포함 —
+        # 규모 기준 미충족(업무용 등)이면 개별 면제 확인 필요(부과 방향 보수 상한).
+        result["detail"] = {"note": (
+            "분양형 오피스텔=준주택 포함 부과(학교용지법 §2 3호·2021.6.23~) — "
+            "대통령령 규모 기준 미충족·업무용이면 개별 면제 확인 필요"
+        )}
+    return result
 
 
 def calculate_b03_water_supply(
@@ -212,6 +267,7 @@ def calculate_all_utility_stage(
         calculate_b02_school_site(
             total_sale_amount_won=total_sale_amount_won,
             total_households=total_households,
+            building_type=building_type,
         ),
         calculate_b03_water_supply(
             sido_name=sido_name, sigungu_name=sigungu_name,
