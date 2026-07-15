@@ -19,6 +19,14 @@ from app.services.design_ingest.vector_store import (
 
 logger = logging.getLogger(__name__)
 
+# 매직바이트 화이트리스트(리뷰 필수 #3) — parsers._EXT_FORMAT 이 실제로 파싱하는 형식 계열과
+# 대응. "zip"(xlsx/xlsm — Office Open XML)·"ole2"(레거시 .xls 97-2003, CFBF 포맷)를 포함해야
+# 기존 엑셀 스펙시트 업로드가 깨지지 않는다. dwg/gif 는 parsers 가 별도 파싱하진 않지만(→
+# source_format=unknown 으로 정직 처리) 보안 게이트 관점에선 무해해 허용 목록에 남겨둔다.
+_INGEST_UPLOAD_KINDS = frozenset(
+    {"pdf", "png", "jpeg", "webp", "gif", "dxf", "dwg", "ifc", "zip", "ole2"}
+)
+
 
 def _index(
     spec: DesignSpec,
@@ -119,12 +127,13 @@ async def ingest_design_file(
     Returns: {ok, drawing_type, source_format, content_hash, indexed, spec, warnings}
     """
     # ★공용 콘텐츠 검증(additive·fail-closed) — 파싱/저장/인덱싱 전에 위협을 먼저 차단한다.
-    # 실행/스크립트 위장·파일명 경로순회·압축폭탄(xlsx 등 zip 계열)·zip slip 을 막는다. content_type
-    # 은 이 SSOT 진입점에 없어 위장(선언vs실측)은 storage 경로에서 담당하고, 여기선 실측 위협을 본다.
+    # 실행/스크립트 위장·파일명 경로순회·압축폭탄(xlsx 등 zip 계열, 폴리글랏 포함)·zip slip·
+    # 양성 화이트리스트(_INGEST_UPLOAD_KINDS — 리뷰 필수 #3: 미인식 확장자 무통제 통과 차단)를
+    # 막는다. content_type 은 이 SSOT 진입점에 없어 위장(선언vs실측)은 storage 경로에서 담당한다.
     # 검증 실패는 명시 거부(ok=False, rejected=True)로 조기 반환 — 무음 통과 금지(배치 시드는 skip 처리).
     from app.services.security.content_inspection import inspect_upload
 
-    verdict = inspect_upload(content, filename, None)
+    verdict = inspect_upload(content, filename, None, expected_kinds=_INGEST_UPLOAD_KINDS)
     if not verdict.allowed:
         logger.warning(
             "design_ingest 콘텐츠 검증 거부: %s (%s)", verdict.code, str(verdict.reason)[:120]

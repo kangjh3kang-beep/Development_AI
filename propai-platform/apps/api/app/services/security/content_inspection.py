@@ -27,6 +27,7 @@ from __future__ import annotations
 import io
 import zipfile
 from dataclasses import dataclass, field
+from urllib.parse import unquote
 
 import structlog
 
@@ -63,6 +64,7 @@ _SIGNATURES: list[tuple[int, bytes, str]] = [
     (0, b"PK\x07\x08", "zip"),
     (0, b"AC10", "dwg"),  # AutoCAD DWG(AC1012~AC1032). 뒤 2자리는 버전.
     (0, b"AutoCAD Binary DXF", "dxf"),  # 바이너리 DXF
+    (0, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "ole2"),  # 레거시 OLE2 CFBF(.xls/.doc/.ppt 97-2003)
 ]
 
 # 실행/스크립트 시그니처(악성 가능) — 기존 collaboration_rules.is_blocked_upload 를 일반화·확장.
@@ -76,10 +78,22 @@ _EXECUTABLE_SIGNATURES: list[tuple[int, bytes, str]] = [
     (0, b"#!", "script"),  # shell/script shebang
 ]
 
-# 실행 확장자(zip 기반 .jar 포함) — 시그니처가 무해해 보여도 확장자로 차단.
-_BLOCKED_EXTS = frozenset(
-    {"exe", "dll", "so", "dylib", "bat", "cmd", "com", "scr", "msi", "sh", "ps1", "jar", "app", "bin"}
-)
+# 실행 확장자(zip 기반 .jar 포함) + 웹 활성 콘텐츠 확장자 — 시그니처가 무해해 보여도 확장자로
+# 차단한다. HTML/SVG/JS 등은 브라우저가 그대로 실행·렌더링할 수 있는 콘텐츠라, 이미지·문서로
+# 위장해 공개 버킷에 올라가면 저장형 XSS(stored XSS) 매개체가 된다(리뷰 우회 PoC #4 반영).
+_BLOCKED_EXTS = frozenset({
+    # 실행/스크립트
+    "exe", "dll", "so", "dylib", "bat", "cmd", "com", "scr", "msi", "sh", "ps1", "jar", "app", "bin",
+    # 웹 활성 콘텐츠(저장형 XSS 방지)
+    "html", "htm", "xhtml", "svg", "svgz", "js", "mjs", "xml", "py", "rb", "pl", "php", "phtml",
+})
+
+# 선언 MIME 만으로도 활성 콘텐츠로 간주해 거부 — 파일명 확장자를 무해하게(예: photo.png) 지어도
+# content_type 을 svg/html 등으로 선언하면 차단한다(확장자 위장의 역방향 우회 방지).
+_ACTIVE_CONTENT_MIMES = frozenset({
+    "image/svg+xml", "text/html", "application/xhtml+xml",
+    "application/javascript", "text/javascript", "application/x-javascript",
+})
 
 # 선언 MIME → 정규 형식 계열(위장 판정용). 우리가 아는 계열만 사상(모르는 MIME 은 판정 보류).
 _MIME_TO_KIND: dict[str, str] = {
@@ -113,7 +127,7 @@ class InspectionResult:
 
     allowed: bool
     code: str  # ok|empty|too_large|executable|path_traversal|mime_mismatch|
-    #            unsupported_type|archive_bomb|archive_corrupt|inspection_error
+    #            unsupported_type|archive_bomb|archive_corrupt|av_infected|inspection_error
     reason: str  # 사람이 읽는 한국어 사유
     declared_type: str | None = None  # 선언된 형식 계열(있으면)
     detected_type: str | None = None  # 실측된 형식 계열(매직바이트)
@@ -199,10 +213,14 @@ def _detect_executable(data: bytes, filename: str) -> str | None:
 
 
 def _has_traversal(name: str) -> bool:
-    """경로 순회/절대경로/드라이브 지정이면 True. 아카이브 내부 이름·업로드 파일명 공통."""
+    """경로 순회/절대경로/드라이브 지정이면 True. 아카이브 내부 이름·업로드 파일명 공통.
+
+    ★퍼센트 인코딩 우회 방어(권장 반영): 판정 전에 1회 unquote 한다(예: '%2e%2e%2f' →
+    '../'). unquote 는 잘못된 인코딩이어도 예외 없이 원문을 최대한 그대로 반환하므로 안전하다.
+    """
     if not name:
         return False
-    n = name.replace("\\", "/")
+    n = unquote(name).replace("\\", "/")
     if n.startswith("/") or n.startswith("~"):
         return True
     if len(n) >= 2 and n[1] == ":":  # 윈도우 드라이브(C:\ …)
@@ -211,10 +229,34 @@ def _has_traversal(name: str) -> bool:
     return ".." in parts  # 세그먼트 단위 '..' (부분문자열 오탐 방지: '..foo' 는 정상)
 
 
+def _active_content_mime_reason(declared_content_type: str | None) -> str | None:
+    """선언 MIME 만으로 웹 활성 콘텐츠(svg/html/js 등)인지 판별한다. 확장자 쪽은 이미
+    `_detect_executable`(_BLOCKED_EXTS 확장)이 담당하므로 여기선 MIME 전용(확장자 위장의
+    역방향 우회 — 무해한 파일명 + 활성 MIME 선언 — 방지). 아니면 None.
+    """
+    ct = (declared_content_type or "").split(";")[0].strip().lower()
+    return f"mime:{ct}" if ct in _ACTIVE_CONTENT_MIMES else None
+
+
 def _canon_kind(kind: str | None) -> str | None:
     if kind is None:
         return None
     return _KIND_ALIASES.get(kind, kind)
+
+
+def _has_archive_structure(data: bytes) -> bool:
+    """폴리글랏 방어(리뷰 우회 PoC #1): 선두 매직바이트와 무관하게 데이터 안에 유효한 zip 구조
+    (EOCD 레코드)가 있는지 확인한다.
+
+    `zipfile.is_zipfile`은 파일 끝에서부터 EOCD 시그니처를 찾아 판정하므로, 앞부분에 PNG 등
+    다른 형식의 헤더를 붙이고 뒤에 zip 을 이어붙인 폴리글랏(self-extracting 형식과 동일 원리)도
+    탐지한다. 과거 코드는 `sniff_type()`이 선두 매직만 보고 "png"를 반환하면 아카이브 검사
+    자체가 생략됐다 — 이 함수는 detected 타입과 무관하게 별도로 호출해 그 구멍을 막는다.
+    """
+    try:
+        return zipfile.is_zipfile(io.BytesIO(data))
+    except Exception:  # noqa: BLE001 — 판별 실패는 "아카이브 아님"으로 보수적 처리(호출부가 이어서 판단)
+        return False
 
 
 def inspect_archive(data: bytes, limits: ArchiveLimits = _DEFAULT_LIMITS) -> InspectionResult:
@@ -223,8 +265,16 @@ def inspect_archive(data: bytes, limits: ArchiveLimits = _DEFAULT_LIMITS) -> Ins
     검사: 엔트리 수·전개 총량·엔트리별 압축비·내부 경로 순회·중첩 아카이브 재귀 깊이.
     zipfile 은 각 엔트리의 file_size(전개크기)/compress_size 를 central directory 에서
     바로 읽으므로, 실제 압축해제(디스크·메모리 폭발) 없이 bomb 여부를 판정할 수 있다.
-    중첩 아카이브만은 그 엔트리 바이트를 읽어야 하나(그 엔트리 1개만 부분 해제), 읽기 전에
-    선언 전개크기를 상한으로 걸러 재귀 bomb 도 막는다.
+    중첩 아카이브 후보만은 그 엔트리 바이트를 상한 이내로 읽어야 하나(부분 해제), 읽기 전에
+    선언 전개크기를 상한(max_nested_read)으로 걸러 재귀 bomb 도 막는다.
+
+    ★정직한 한계(central directory 신뢰의 한계 — 항목 5 반영): 전개총량·압축비 판정은 central
+    directory 가 **선언**하는 file_size/compress_size 를 신뢰한다. 이 메타데이터 자체가
+    조작된 zip(로컬 헤더와 central directory 불일치, data-descriptor 트릭 등)에 대해서는
+    이 정적 검사가 advisory(참고용)이며 절대적 백스톱이 아니다 — 진짜 최종 방어선은 **실제
+    소비자(압축해제 코드)가 CRC 검증 + 바이트 상한 truncate 로 읽는 것**이다(예: 스트리밍
+    압축해제 중 상한 초과 시 즉시 중단). 이 헬퍼는 "명백한 bomb 조기 차단"이 목적이며, 완전한
+    무결성 보증을 대체하지 않는다.
     """
     return _inspect_archive_depth(data, limits, depth=0)
 
@@ -273,15 +323,29 @@ def _inspect_archive_depth(data: bytes, limits: ArchiveLimits, depth: int) -> In
                             detected_type="zip",
                             details={"ratio": round(ratio, 1), "entry": zi.filename[:120]},
                         )
-                # 중첩 아카이브 재귀 — 이름이 아카이브인 엔트리만, 메모리 폭발 방지 상한(max_nested_read)
-                # 이내에서 1개만 해제해 재귀 검사. 깊이 초과는 자식 호출의 상단 가드가 archive_bomb 로 차단.
-                if _entry_is_nested_archive(zi) and zi.file_size <= limits.max_nested_read:
+                # 중첩 아카이브 재귀 — ★확장자가 아니라 내용(PK 매직)으로 판별한다(리뷰 우회 PoC #1
+                # 반영: 내부 zip 을 .bin 등으로 리네임해 확장자 검사를 우회하는 공격 방어). 먼저
+                # 4바이트만 저비용 peek(ZipExtFile 스트리밍 — 전체 압축해제 없이 앞부분만 뽑아냄)
+                # 하고, PK 매직이 맞을 때만 상한(max_nested_read) 이내에서 전체를 읽어 재귀 검사한다.
+                peek = _peek_entry(zf, zi, 4)
+                if peek is not None and peek[:2] == b"PK" and zi.file_size <= limits.max_nested_read:
                     try:
-                        nested = zf.read(zi)  # 이 엔트리 1개만 해제(상한 검증 후)
+                        with zf.open(zi) as fh:
+                            nested = fh.read(limits.max_nested_read + 1)
                     except Exception:  # noqa: BLE001 — 손상 중첩은 거부(fail-closed)
                         return InspectionResult(
                             allowed=False, code="archive_corrupt",
                             reason=f"중첩 압축 해제 실패(손상 의심): {zi.filename[:80]}",
+                            detected_type="zip", details={"entry": zi.filename[:120]},
+                        )
+                    if len(nested) > limits.max_nested_read:
+                        # 선언 file_size(central directory)는 상한 이내였는데 실제 읽은 바이트가
+                        # 더 많다 — 메타데이터 스푸핑 의심(위 docstring의 "정직한 한계" 사례).
+                        # 여기선 실제 읽은 바이트 기준으로 fail-closed(advisory 판단에 안주하지 않음).
+                        return InspectionResult(
+                            allowed=False, code="archive_bomb",
+                            reason=(f"중첩 엔트리 실제 전개크기가 선언과 불일치(스푸핑 의심): "
+                                    f"{zi.filename[:80]}"),
                             detected_type="zip", details={"entry": zi.filename[:120]},
                         )
                     if nested[:2] == b"PK":
@@ -302,9 +366,19 @@ def _inspect_archive_depth(data: bytes, limits: ArchiveLimits, depth: int) -> In
         )
 
 
-def _entry_is_nested_archive(zi: zipfile.ZipInfo) -> bool:
-    name = (zi.filename or "").lower()
-    return name.endswith((".zip", ".xlsx", ".docx", ".pptx", ".hwpx", ".jar"))
+def _peek_entry(zf: zipfile.ZipFile, zi: zipfile.ZipInfo, n: int) -> bytes | None:
+    """엔트리의 첫 n바이트만 저비용으로 peek 한다(확장자가 아닌 내용으로 중첩 아카이브 판별).
+
+    zipfile.ZipExtFile 은 스트리밍 압축해제라 read(n)은 n바이트를 만드는 데 필요한 만큼만
+    압축해제한다 — 전체 엔트리를 풀지 않으므로 엔트리 수가 많아도(최대 max_entries) 비용이
+    작다. 읽기 실패(손상·미지원 압축방식·암호화 등)면 None — 그 경우 이 엔트리는 중첩판별을
+    보류할 뿐, 이미 계산된 전개총량·압축비 상한은 계속 방어선으로 작동한다.
+    """
+    try:
+        with zf.open(zi) as fh:
+            return fh.read(n)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def av_scan(data: bytes) -> dict:
@@ -355,11 +429,13 @@ def inspect_upload(
 
     검사 순서(빠른 거부 우선):
       1) 빈 파일 / 크기 상한
-      2) 실행/스크립트(시그니처·확장자) → 거부
-      3) 파일명 경로 순회 → 거부
+      2) 실행/스크립트(시그니처·확장자, 웹 활성 콘텐츠 확장자 포함) → 거부
+      2b) 선언 MIME 만으로 웹 활성 콘텐츠(svg/html/js 등) → 거부(확장자 위장의 역방향 우회 방지)
+      3) 파일명 경로 순회 → 거부(퍼센트 인코딩 1회 정규화 후 판정)
       4) 매직바이트 실측 + 선언 MIME 위장 탐지(선언 계열 ≠ 실측 계열) → 거부
       5) expected_kinds 지정 시 실측 계열이 허용목록 밖 → 거부
-      6) 아카이브(zip 계열)면 한도 검사(zip bomb·zip slip)
+      6) 아카이브 한도 검사(zip bomb·zip slip) — ★선두 매직이 zip 이 아니어도 데이터 안에 유효한
+         zip 구조(EOCD)가 있으면 검사한다(폴리글랏 방어: 예 — PNG로 위장한 뒤 zip 을 붙인 파일).
       7) AV 스캔(있으면) — 감염만 거부, 미수행은 통과(Gate-OFF, 정직 기록)
 
     Args:
@@ -405,13 +481,23 @@ def _inspect_upload_impl(
             declared_type=declared_kind, details={"size": len(data)},
         )
 
-    # 2) 실행/스크립트 차단
+    # 2) 실행/스크립트 차단(웹 활성 콘텐츠 확장자 포함 — html/svg/js 등, 리뷰 PoC #4)
     exe = _detect_executable(data, filename)
     if exe:
         return InspectionResult(
             False, "executable",
             "실행·스크립트 파일은 업로드할 수 없습니다.",
             declared_type=declared_kind, detected_type=exe, details={"executable": exe},
+        )
+
+    # 2b) 선언 MIME 만으로 웹 활성 콘텐츠 차단(확장자는 무해해도 content_type 을 svg/html 등으로
+    #     선언하는 역방향 우회 방지).
+    active_mime = _active_content_mime_reason(declared_content_type)
+    if active_mime:
+        return InspectionResult(
+            False, "executable",
+            f"활성 웹 콘텐츠는 업로드할 수 없습니다({active_mime}).",
+            declared_type=declared_kind, details={"executable": active_mime},
         )
 
     # 3) 파일명 경로 순회
@@ -450,8 +536,10 @@ def _inspect_upload_impl(
                 details={"expected": sorted(k for k in allowed_kinds if k), "libmagic": libmagic},
             )
 
-    # 6) 아카이브 한도(zip bomb·zip slip)
-    if detected == "zip" and allow_archive:
+    # 6) 아카이브 한도(zip bomb·zip slip) — ★폴리글랏 방어(리뷰 우회 PoC #1): 선두 매직이 "zip"으로
+    #    판별되지 않았어도(예: PNG 헤더로 시작) 데이터 안에 유효한 zip 구조(EOCD)가 있으면 검사한다.
+    #    과거엔 `detected == "zip"` 에만 걸려, PNG로 위장한 뒤 zip을 붙인 폴리글랏이 검사 전무 통과했다.
+    if allow_archive and (detected == "zip" or _has_archive_structure(data)):
         arc = inspect_archive(data, archive_limits)
         if not arc.allowed:
             arc.declared_type = declared_kind
@@ -472,3 +560,30 @@ def _inspect_upload_impl(
         declared_type=declared_kind, detected_type=detected, av=av,
         details={"size": len(data), "libmagic": libmagic},
     )
+
+
+# ── 거부 코드 → HTTP 상태 매핑(리뷰 필수 #2) ────────────────────────────────
+# 콘텐츠 검증 실패는 **클라이언트 귀책(4xx)**이다 — 스토리지 인프라 장애(502)와는 구분해야
+# 자동재시도·모니터링 오분류를 막는다. 알 수 없는 코드는 400(안전측 기본값)으로 수렴.
+_STATUS_BY_CODE: dict[str, int] = {
+    "empty": 400,
+    "too_large": 413,
+    "executable": 400,
+    "path_traversal": 400,
+    "mime_mismatch": 415,
+    "unsupported_type": 415,
+    "archive_bomb": 400,
+    "archive_corrupt": 400,
+    "av_infected": 400,
+    "inspection_error": 400,
+}
+
+
+def http_status_for(code: str) -> int:
+    """검사 코드에 대응하는 권장 HTTP 상태를 반환한다(호출부가 ContentRejectedError 등에서 사용).
+
+    스토리지 계층(storage_service)의 `ContentRejectedError`가 이 값을 `http_status` 속성으로
+    실어 나르고, 라우터는 그것을 그대로 응답 상태코드로 쓴다 — 진짜 인프라 실패(502)와
+    콘텐츠 거부(4xx)를 코드 경로에서 명확히 분리한다.
+    """
+    return _STATUS_BY_CODE.get(code, 400)

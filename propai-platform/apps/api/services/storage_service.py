@@ -31,6 +31,27 @@ class StorageError(Exception):
     """스토리지 업로드 실패."""
 
 
+class ContentRejectedError(StorageError):
+    """콘텐츠 검증(content_inspection) 실패 전용 예외 — StorageError 를 상속한다(기존
+    `except StorageError`만 있는 호출부도 하위호환으로 계속 잡는다).
+
+    ★리뷰 필수 #2: 이 타입을 별도로 두는 이유는 "클라이언트 귀책(악성/위장 파일 거부)"과
+    "서버측 인프라 장애(Supabase 다운 등)"를 **호출부가 구분해 다른 HTTP 상태를 매길 수 있게**
+    하기 위함이다. 과거엔 둘 다 StorageError 하나로 뭉뚱그려져 라우터가 일괄 502 를 반환했는데,
+    이는 악성 업로드 거부를 "일시적 서버 오류"로 오분류해 클라이언트 자동재시도·모니터링
+    오탐(장애 알림)을 유발한다. 호출부는 `except ContentRejectedError`를 `except StorageError`
+    보다 먼저 잡고 `exc.http_status`(4xx)를 응답 코드로 쓴다.
+    """
+
+    def __init__(self, code: str, reason: str) -> None:
+        from app.services.security.content_inspection import http_status_for
+
+        self.code = code
+        self.reason = reason
+        self.http_status = http_status_for(code)
+        super().__init__(f"콘텐츠 검증 실패({code}): {reason}")
+
+
 def _conf(env_names: tuple[str, ...], attr: str, default: str = "") -> str:
     """Supabase 설정값 읽기 — os.environ 우선, 그다음 캐시된 settings, 마지막 기본값.
 
@@ -213,20 +234,25 @@ _DESIGN_EXT: dict[str, str] = {
     "application/dxf": "dxf", "image/vnd.dxf": "dxf", "image/x-dxf": "dxf",
     "application/acad": "dwg", "image/vnd.dwg": "dwg", "application/x-dwg": "dwg",
 }
+# 매직바이트 화이트리스트(리뷰 필수 #3) — _DESIGN_EXT 가 허용하는 형식 계열과 1:1 대응.
+# 이걸로 "시그니처 테이블에 없는(=미인식) 확장자 무통제 통과" 구멍도 함께 막는다(미인식=거부).
+_DESIGN_UPLOAD_KINDS = frozenset({"pdf", "png", "jpeg", "webp", "dxf", "dwg"})
 
 
 async def upload_design_file(data: bytes, content_type: str, file_name: str = "") -> dict[str, str]:
     """설계 참조도면(DXF/PDF/이미지)을 공개 버킷에 업로드하고 public URL+형식을 반환한다.
 
     업로드 전 공용 콘텐츠 검증(content_inspection)을 additive 로 적용한다(★기존 _DESIGN_EXT MIME
-    allowlist 유지 + 강화): 실행/스크립트 위장·MIME 위장(선언≠실측)·경로 순회·압축폭탄을 차단한다.
-    검증 실패는 StorageError 로 명시 거부(무음 통과 금지) — 라우터에서 4xx 로 매핑된다.
+    allowlist 유지 + 강화): 실행/스크립트 위장·MIME 위장(선언≠실측)·경로 순회·압축폭탄(폴리글랏
+    포함)·양성 화이트리스트(_DESIGN_UPLOAD_KINDS)를 차단한다.
+    검증 실패는 ContentRejectedError(StorageError 서브클래스)로 명시 거부(무음 통과 금지) —
+    라우터가 이를 먼저 잡아 http_status(4xx)로 매핑한다(진짜 인프라 장애 502 와 구분).
     """
     from app.services.security.content_inspection import inspect_upload
 
-    verdict = inspect_upload(data, file_name, content_type)
+    verdict = inspect_upload(data, file_name, content_type, expected_kinds=_DESIGN_UPLOAD_KINDS)
     if not verdict.allowed:
-        raise StorageError(f"콘텐츠 검증 실패({verdict.code}): {verdict.reason}")
+        raise ContentRejectedError(verdict.code, verdict.reason)
 
     base, key = _sb_conf()
     ext = _DESIGN_EXT.get((content_type or "").lower())
@@ -261,9 +287,21 @@ async def upload_collab_document(
     """협업 회의방 문서를 비공개 버킷에 저장하고 만료 서명 URL을 반환한다(TTL=ttl_days).
 
     실파일은 Supabase 비공개 버킷에만 저장하고, DB(ProjectDocument)엔 path+서명URL 메타만 보관한다.
-    경로는 서버측 uuid로 생성(원본 파일명은 DB 메타에만, 경로 traversal 차단).
+    저장 경로 자체는 서버측 uuid로 생성(원본 파일명은 DB 메타에만, 경로 traversal 차단).
+
+    ★전역 스윕(리뷰 권장 반영): purpose=storage 는 제품 의도상 "임의 형식 무제한"이라
+    expected_kinds 화이트리스트는 걸지 않는다(형식 자체는 제한하지 않음). 대신 실행/스크립트·웹
+    활성 콘텐츠(svg/html/js)·MIME 위장·압축폭탄(zip bomb)·zip slip 은 형식과 무관하게 항상
+    위험이므로 공용 헬퍼로 방어한다. 호출부(라우터)의 기존 `is_blocked_upload` 1차 검사에
+    additive — 검증 실패는 ContentRejectedError 로 명시 거부.
     """
     import datetime as _dt
+
+    from app.services.security.content_inspection import inspect_upload
+
+    verdict = inspect_upload(data, filename, content_type)
+    if not verdict.allowed:
+        raise ContentRejectedError(verdict.code, verdict.reason)
 
     base, key = _sb_conf()
     auth = {"Authorization": f"Bearer {key}", "apikey": key}

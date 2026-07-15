@@ -15,6 +15,7 @@ from app.services.security.content_inspection import (
     ArchiveLimits,
     InspectionResult,
     av_scan,
+    http_status_for,
     inspect_upload,
     sniff_type,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "AssetRight",
     "InspectionResult",
     "av_scan",
+    "http_status_for",
     "inspect_upload",
     "is_export_allowed",
     "is_train_allowed",

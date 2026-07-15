@@ -28,7 +28,11 @@ from app.services.cad import template_assembly_service as assembly
 from app.services.cad.design_spec import DesignSpec
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from apps.api.services.storage_service import StorageError, upload_design_file
+from apps.api.services.storage_service import (
+    ContentRejectedError,
+    StorageError,
+    upload_design_file,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/design-references", tags=["설계 참조 라이브러리"])
@@ -78,6 +82,12 @@ async def upload_reference(
             try:
                 up = await upload_design_file(data, file.content_type or "", file.filename or "")
                 file_url, file_type = up["url"], up["file_type"]
+            except ContentRejectedError as exc:
+                # ★리뷰 필수 #2: 콘텐츠 검증 거부(위장/bomb/실행파일 등)는 클라이언트 귀책 4xx —
+                # 인프라 장애(502)와 구분해 자동재시도·오탐 알림을 막는다.
+                raise HTTPException(
+                    status_code=exc.http_status, detail=f"업로드가 거부되었습니다: {exc.reason}"
+                ) from exc
             except StorageError as exc:
                 raise HTTPException(status_code=502, detail=f"스토리지 업로드 실패: {exc}") from exc
 
@@ -214,7 +224,12 @@ async def upload_reference_geometry(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """DXF 업로드 → 표준 기하 추출·부착(관리자). 파싱 실패는 422(가짜 기하 금지)."""
+    """DXF 업로드 → 표준 기하 추출·부착(관리자). 파싱 실패는 422(가짜 기하 금지).
+
+    ★정직 한계 표기: 이 경로는 아직 content_inspection(WP-H)에 결선되지 않았다(관리자 전용·
+    버킷 영속 없이 DXF 파싱만 수행해 즉시위험이 낮다고 판단해 이번 세션 스코프에서 제외).
+    ezdxf 파싱 실패는 422 로 거부되나, zip bomb·MIME 위장 등 별도 검증은 세션2 전역 스윕 대상.
+    """
     await _require_admin(current, db)
     ref = await svc.get_reference(db, ref_id)
     if ref is None:
