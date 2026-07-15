@@ -233,6 +233,8 @@ class FeasibilityResultTrustResponse(FeasibilityResultResponse):
 
     evidence: list[dict[str, Any]] = []
     legal_refs: list[dict[str, Any]] = []
+    # ★W3(additive): 월별 DCF 요약(IRR·회수기간·DSCR·NPV 기저) — None=미산출(정직).
+    cashflow_summary: dict[str, Any] | None = None
     # 시니어 회계사 자문(opt-in·with_senior=True일 때만) — K-IFRS·세무·리스크 표준 evidence 계약.
     # 미요청/미가용은 빈 dict(자문은 보조 — 수지 계산값을 절대 덮어쓰지 않음).
     senior_accountant_review: dict[str, Any] = {}
@@ -468,6 +470,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             cost_breakdown_won=output.cost_detail,
             tax_detail=output.tax_detail,
             special_detail=output.special_detail,
+            cashflow_summary=output.cashflow_summary,
             evidence=evidence,
             legal_refs=legal_refs,
             senior_accountant_review=senior_review,

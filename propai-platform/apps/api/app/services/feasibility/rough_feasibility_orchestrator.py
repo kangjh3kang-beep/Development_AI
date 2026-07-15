@@ -10,7 +10,7 @@
   5) 분양수입(주변 실거래)       = suggest_base_price → (폴백) regional_pricing
   6) 총사업비 + 20% 마진         = aggregate_feasibility(토지+공사+금융+제경비) → 총사업비×0.20
   7) 2차 사용자 수정(overrides)  = 값 교체 후 6·8 재계산(각 값 source=user_override)
-  8) 월별 DCF                    = CashflowGenerator.generate_monthly_cashflow(위 산출 시드)
+  8) 월별 DCF                    = dcf_assembly.assemble_monthly_dcf(공용 SSOT — 상세수지와 동일 규칙)
 
 무목업 원칙: 실데이터를 못 구한 축은 값을 null로 두고 degraded_notes에 사유를 남긴다.
 가짜 0·임의 추정값을 만들지 않는다(정직 degrade). 각 축에는 basis/evidence/source를 붙여
@@ -26,7 +26,7 @@ from typing import Any
 # ── 재사용 자산(모듈 최상단 import — 테스트가 monkeypatch로 대체하기 쉽게 이름을 노출) ──
 from app.services.feasibility import construction_cost_engine, land_cost_engine, regional_pricing
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
-from app.services.feasibility.cashflow_generator import CashflowGenerator, npv_from_netflows
+from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
@@ -249,15 +249,6 @@ async def _resolve_sale_price_per_pyeong(
     )
 
 
-def _payback_month(rows: list[dict[str, Any]]) -> int | None:
-    """자금 회수월 — 최대 자금소요(누적 최저) 이후 처음으로 누적현금이 0 이상 되는 월."""
-    if not rows:
-        return None
-    min_idx = min(range(len(rows)), key=lambda i: rows[i].get("cumulative", 0) or 0)
-    for r in rows[min_idx:]:
-        if (r.get("cumulative") or 0) >= 0:
-            return r.get("month")
-    return None
 
 
 def _num(value: Any) -> float | None:
@@ -676,10 +667,6 @@ async def build_rough_scenario(
         sale_start = max(0, min(sale_start, construction_months - 1))
         sale_duration = _num(overrides.get("sale_duration_months"))
         sale_duration = int(sale_duration) if sale_duration is not None else 6
-        # ★MEDIUM-4: 자기자본비율(equity/총사업비)을 DCF에 실제로 배선(기존엔 인자 미전달→항상 30% 고정).
-        #   0~1로 클램프(총사업비 0/미확보면 엔진 기본 30%로 정직 폴백).
-        tc_for_equity = summary.get("total_cost_won")
-        equity_ratio = min(1.0, max(0.0, equity / tc_for_equity)) if tc_for_equity else 0.3
         # ★6b: 부담금(B/C단계)을 DCF에도 시점 주입 — 총사업비(summary)와 현금흐름(NPV·IRR)이
         #   같은 비용 기저를 쓰도록 정합(B→착공월, C→분양수입 비례; A/D는 0 — 위 6b와 동일 계약).
         tax_schedule: dict[str, Any] | None = None
@@ -692,49 +679,41 @@ async def build_rough_scenario(
                 "d06_annual_won": 0,
                 "d06_years": 0,
             }
-        try:
-            cf = CashflowGenerator().generate_monthly_cashflow(
-                land_cost=float(land_total),
-                construction_cost=float(constr_total),
-                construction_months=construction_months,
-                total_revenue=float(revenue_total),
-                sale_start_month=sale_start,
-                sale_duration_months=max(1, sale_duration),
-                equity_ratio=equity_ratio,
-                tax_schedule=tax_schedule,
-            )
-            rows = cf.get("rows") or []
-            cf_summary = cf.get("summary") or {}
-            # ★NPV는 무차입 프로젝트 FCF 할인 — 레버드 rows.net을 쓰면 자기자본 유입이 순가치로
-            #   새어 NPV 과대(IRR과 동일 기저로 정합). payback은 실제 자금위치라 rows 유지.
-            #   부담금 주입 시(after_tax_netflows 존재) 부담금 차감 스트림으로 할인해
-            #   summary.total_cost_won(부담금 포함)과 동일 기저를 유지한다.
-            npv_stream = cf.get("after_tax_netflows") or cf.get("unlevered_netflows") or []
-            npv = npv_from_netflows(npv_stream, discount_rate)
-            payback = _payback_month(rows)
-            # IRR도 동일 기저: 부담금 주입 시 부담금 반영 IRR(after_tax_irr_annual_pct)을 대표값으로.
-            irr_pct = (
-                cf_summary.get("after_tax_irr_annual_pct")
-                if tax_schedule is not None
-                else cf_summary.get("irr_annual_pct")
-            )
+        # ★W3(100% 캠페인): DCF 조립을 공용 SSOT(dcf_assembly.assemble_monthly_dcf)로 이관 —
+        #   상세수지(경로A /calculate)와 동일 규칙 소비(수치 무회귀·NPV 무차입 기저·IRR 동일 선택).
+        dcf = assemble_monthly_dcf(
+            land_cost_won=float(land_total),
+            construction_cost_won=float(constr_total),
+            revenue_won=float(revenue_total),
+            project_months=project_months,
+            equity_won=float(equity),
+            discount_rate=discount_rate,
+            total_cost_won=summary.get("total_cost_won"),
+            # ★R1-HIGH-2 동반 교정: 제경비(other_total)를 DCF 유출에 주입 — 종전엔 rough도
+            #   동일 누락으로 NPV·IRR이 과대였다(의도된 정확화 — 총사업비와 동일 비용 기저).
+            soft_cost_won=float(other_total) if other_total else None,
+            tax_schedule=tax_schedule,
+            construction_months=construction_months,
+            sale_start_month=sale_start,
+            sale_duration_months=max(1, sale_duration),
+        )
+        if dcf is not None:
             summary.update({
-                "npv_won": npv,
-                "irr_pct": irr_pct,
-                "payback_month": payback,
+                "npv_won": dcf["npv_won"],
+                "irr_pct": dcf["irr_pct"],
+                "payback_month": dcf["payback_month"],
             })
             cashflow_block = {
-                "monthly_rows": rows,
+                "monthly_rows": dcf["rows"],
                 "summary": {
-                    **cf_summary,
-                    "npv_won": npv,
-                    "payback_month": payback,
+                    **dcf["cf_summary"],
+                    "npv_won": dcf["npv_won"],
+                    "payback_month": dcf["payback_month"],
                     "discount_rate_annual_pct": round(discount_rate * 100, 2),
                 },
             }
-        except Exception as e:  # noqa: BLE001 — DCF 실패는 정직 null(수지 요약은 유지)
-            logger.warning("월별 DCF 생성 실패: %s", str(e)[:120])
-            degraded.append(f"월별 DCF 생성 실패: {str(e)[:100]}")
+        else:
+            degraded.append("월별 DCF 생성 실패 — NPV·IRR·회수기간 미산출(정직 null).")
 
     # ★TENTATIVE(선행절차 전제 잠정치) 특이부지 정직고지 — has-recs 경로에서도 소실 금지.
     #   맹지·도로/학교 PRECONDITION 등은 recs가 생성돼 정상 경로를 타지만, ROI·등급·마진·NPV가
