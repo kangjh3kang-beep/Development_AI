@@ -88,6 +88,11 @@ UTC = UTC
 # 응답시간을 평준화하기 위한 더미 해시. 모듈 로드 시 1회 생성(요청 경로 비용 0).
 _TIMING_DUMMY_HASH = _hash_password("propai-timing-equalizer")
 
+# 현재 시행 중인 약관·개인정보처리방침 버전(인앱 /legal 문서 시행일과 일치).
+# 동의 이력에는 **서버 상수**를 스탬프한다 — 클라이언트가 보낸 값을 신뢰하면 법적 증빙
+# 무결성이 약화되므로, 요청 필드는 호환용으로만 받고 저장은 이 값으로 고정한다.
+CURRENT_POLICY_VERSION = "2026-06-15"
+
 # 로그인 실패 통일 메시지(이메일 존재 여부 비노출 — 스펙 §3.2)
 _LOGIN_FAILED_MSG = "이메일 또는 비밀번호가 올바르지 않습니다."
 # 재설정 링크 검증 실패 통일 메시지(토큰 부재/만료/사용됨 구분 비노출)
@@ -99,8 +104,18 @@ _reauth_bearer = HTTPBearer(auto_error=False)
 
 
 def _client_ip(request: Request) -> str:
-    """감사 로그·레이트리밋용 클라이언트 IP(프록시 뒤: 직결 소켓 기준)."""
-    return request.client.host if request.client else "unknown"
+    """감사 로그·레이트리밋용 클라이언트 IP.
+
+    프로덕션은 nginx 프런트(블루그린) 뒤라 직결 소켓 IP가 프록시 하나로 수렴한다 →
+    forgot 레이트리밋(IP당 분당3)이 전역 버킷화되어 복구 경로가 봉쇄되는 것을 막기 위해,
+    신뢰 프록시 구성(WS_TRUST_XFF=true)에서는 X-Forwarded-For 첫 홉을 사용한다.
+    기본(미신뢰)은 직결 소켓 IP — 직결 노출 서버에서 XFF 스푸핑으로 상한을 우회당하지 않도록.
+    (WS 경로와 동일 스위치·동일 헬퍼를 재사용해 운영 설정을 일원화.)
+    """
+    from apps.api.rate_limit import ws_client_ip
+
+    fallback = request.client.host if request.client else None
+    return ws_client_ip(request.headers.get("x-forwarded-for"), fallback)
 
 
 def _account_blocked_detail(user: User) -> str | None:
@@ -239,16 +254,19 @@ async def login(
         # 탈퇴 계정 로그인 차단(스펙 §5.4). 탈퇴 사실은 **비밀번호 일치(본인 입증) 시에만**
         # 안내(스펙 §6 통상어) — 불일치면 통일 메시지(열거 방지 §3.2).
         withdrawn = next((u for u in rows if u.deleted_at is not None), None)
-        if withdrawn is not None and withdrawn.hashed_password and _verify_password(
-            body.password, withdrawn.hashed_password
-        ):
+        # ★타이밍 평준화(열거 방지): 모든 분기에서 정확히 1회 bcrypt를 수행한다. 검증할 실제
+        #   해시가 없으면(부재·소셜 전용 계정 등) 더미 해시로 연산해 응답시간을 일정하게 유지.
+        verify_hash = (
+            withdrawn.hashed_password
+            if (withdrawn is not None and withdrawn.hashed_password)
+            else _TIMING_DUMMY_HASH
+        )
+        password_ok = _verify_password(body.password, verify_hash)
+        if withdrawn is not None and withdrawn.hashed_password and password_ok:
             logger.info("탈퇴 계정 로그인 시도 차단 user_id=%s", withdrawn.id)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="탈퇴한 계정입니다."
             )
-        # 계정 열거 방지: 존재 여부 비노출 + 더미 해시로 타이밍 평준화
-        if withdrawn is None:
-            _verify_password(body.password, _TIMING_DUMMY_HASH)
         raise HTTPException(status_code=401, detail=_LOGIN_FAILED_MSG)
 
     try:
@@ -346,7 +364,8 @@ async def register(
                 user_id=user.id,
                 consent_type=consent_type,
                 agreed=agreed,
-                policy_version=body.policy_version,
+                # 서버 상수 스탬프(클라이언트 임의값 미신뢰 — 법적 증빙 무결성)
+                policy_version=CURRENT_POLICY_VERSION,
                 ip=client_ip,
             )
         )
@@ -444,17 +463,25 @@ async def refresh_token(
     # 기존 토큰 무효화 (토큰 로테이션)
     stored_token.is_revoked = True
 
+    # ★재발급 role은 구 토큰 payload가 아니라 **DB 최신 role**로 서명한다 — 관리자가 role을
+    #   강등해도 회전마다 stale role이 무기한 유지되던 문제 방지(권한 변경 즉시 전파).
+    # ★auth_time은 원래 인증 시각을 보존한다(/refresh는 재인증이 아니므로 갱신 금지) —
+    #   소셜 계정 탈퇴 등 스텝업 판정이 refresh 반복으로 우회되지 않도록.
+    current_role = token_user.role
+    preserved_auth_time = payload.auth_time
     access = create_access_token(
         UUID(payload.sub),
         UUID(payload.tenant_id),
-        payload.role,
+        current_role,
         settings,
+        auth_time=preserved_auth_time,
     )
     refresh = create_refresh_token(
         UUID(payload.sub),
         UUID(payload.tenant_id),
-        payload.role,
+        current_role,
         settings,
+        auth_time=preserved_auth_time,
     )
     await _persist_refresh_token(
         db,
@@ -1023,13 +1050,16 @@ async def withdraw_account(
         if not _verify_password(body.password, user.hashed_password):
             raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
     else:
-        # 소셜 전용 계정 — 최근 재로그인(재인증) 확인(§7-4)
+        # 소셜 전용 계정 — 최근 재로그인(재인증) 확인(§7-4).
+        # ★iat가 아니라 auth_time(실제 인증 시각)을 검사한다. iat는 /refresh로 갱신되므로
+        #   refresh 토큰만 있으면 재로그인 없이 우회 가능하지만, auth_time은 refresh가 보존해
+        #   실제 소셜 재로그인 없이는 신선해지지 않는다(스텝업 무결성).
         payload = decode_token(credentials.credentials, settings) if credentials else None
-        issued_at = payload.iat if payload is not None else None
-        if issued_at is not None and issued_at.tzinfo is None:
-            issued_at = issued_at.replace(tzinfo=UTC)
-        if issued_at is None or (
-            (datetime.now(UTC) - issued_at).total_seconds() > SOCIAL_REAUTH_WINDOW_SECONDS
+        authenticated_at = payload.auth_time if payload is not None else None
+        if authenticated_at is not None and authenticated_at.tzinfo is None:
+            authenticated_at = authenticated_at.replace(tzinfo=UTC)
+        if authenticated_at is None or (
+            (datetime.now(UTC) - authenticated_at).total_seconds() > SOCIAL_REAUTH_WINDOW_SECONDS
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -1048,16 +1078,25 @@ async def withdraw_account(
     if others:
         other_admins = [u for u in others if u.role == UserRole.ADMIN.value and u.is_active]
         if user.role == UserRole.ADMIN.value and not other_admins:
+            # 이관 대상은 활성(미정지) 구성원만 허용 — 정지 계정을 관리자로 승격해
+            # 정지를 우회하는 것을 방지한다.
             transfer_target = next(
-                (u for u in others if body.transfer_to_user_id and u.id == body.transfer_to_user_id),
+                (
+                    u for u in others
+                    if body.transfer_to_user_id
+                    and u.id == body.transfer_to_user_id
+                    and u.is_active
+                ),
                 None,
             )
             if transfer_target is None:
+                # 통상어 안내 — 원시 API 필드명을 사용자에게 노출하지 않는다.
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "조직에 다른 이용자가 있습니다. 소유권을 이관할 구성원을 "
-                        "transfer_to_user_id로 지정한 뒤 탈퇴를 진행해 주세요."
+                        "조직에 다른 구성원이 있어 바로 탈퇴할 수 없습니다. "
+                        "관리자 권한을 넘겨받을 구성원을 지정한 뒤 다시 시도해 주세요. "
+                        "구성원 지정이 어려우면 고객센터(k3880@kakao.com)로 문의해 주세요."
                     ),
                 )
             transfer_target.role = UserRole.ADMIN.value

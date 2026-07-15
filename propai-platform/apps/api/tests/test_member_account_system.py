@@ -628,7 +628,7 @@ class TestMemberIntegration:
         anon = (
             await member_db.execute(
                 text(
-                    "SELECT name, phone, oauth_id, hashed_password FROM users"
+                    "SELECT name, phone, oauth_id, hashed_password, withdrawn_reason FROM users"
                     " WHERE email LIKE 'deleted-%@anonymized.invalid'"
                     " AND name = :n ORDER BY updated_at DESC LIMIT 1"
                 ),
@@ -636,6 +636,171 @@ class TestMemberIntegration:
             )
         ).fetchone()
         assert anon is not None and anon[1] is None and anon[2] is None and anon[3] == ""
+        assert anon[4] is None  # withdrawn_reason(자유서술 PII)도 파기
+
+        # ③ 재실행 시 이미 익명화된 행은 스캔에서 배제(무한 성장 방지) — scanned가 이 행을 세지 않음
+        rerun = await anonymize_expired_withdrawals(member_db)
+        assert rerun["anonymized"] == 0
+        # 방금 익명화한 계정이 재스캔 집합에서 빠졌는지: 동일 tenant의 익명화 행은 미포함
+        # (scanned는 유예 경과 & 미익명화 행만 — 이 테스트 계정 외 잔여가 없다면 0)
+
+
+class TestOAuthEmailVerifiedMerge:
+    """OAuth 병합은 provider 검증 이메일에만 허용 — 미검증 이메일 계정 탈취 차단(M8-1)."""
+
+    async def _make_active_user(self, db, email: str):
+        import uuid as _uuid
+
+        from sqlalchemy import text
+        tid = _uuid.uuid4()
+        uid = _uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO tenants(id,name,slug,plan,is_active)"
+                " VALUES (:id,:n,:s,'free',true)"
+            ),
+            {"id": tid, "n": "oauth-test", "s": f"oauth-{tid.hex[:10]}"},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO users(id,tenant_id,email,name,hashed_password,role,is_active)"
+                " VALUES (:id,:t,:e,'기존회원','x','admin',true)"
+            ),
+            {"id": uid, "t": tid, "e": email},
+        )
+        await db.commit()
+        return uid
+
+    @pytest.mark.asyncio
+    async def test_unverified_email_merge_refused(self, member_db):
+        from apps.api.auth.oauth_common import OAuthError, get_or_create_oauth_user
+
+        email = _unique_email()
+        await self._make_active_user(member_db, email)
+        # provider_id는 테스트 간 DB 잔존 충돌을 피하려 유니크하게(고정값이면 이전 실행분과 매핑 충돌)
+        pid = f"g-unverif-{uuid.uuid4().hex[:10]}"
+        with pytest.raises(OAuthError) as ei:
+            await get_or_create_oauth_user(
+                member_db,
+                "google",
+                {"provider_id": pid, "email": email, "nickname": "공격자",
+                 "email_verified": False},
+            )
+        assert ei.value.status_code == 409  # 병합 거부(탈취 차단)
+
+    @pytest.mark.asyncio
+    async def test_verified_email_merges(self, member_db):
+        from sqlalchemy import text
+
+        from apps.api.auth.oauth_common import get_or_create_oauth_user
+
+        email = _unique_email()
+        uid = await self._make_active_user(member_db, email)
+        pid = f"g-verif-{uuid.uuid4().hex[:10]}"
+        merged = await get_or_create_oauth_user(
+            member_db,
+            "google",
+            {"provider_id": pid, "email": email, "nickname": "본인",
+             "email_verified": True},
+        )
+        await member_db.commit()
+        assert merged.id == uid and merged.oauth_provider == "google"
+        # 실제 연결 확인
+        row = (
+            await member_db.execute(
+                text("SELECT oauth_provider, oauth_id FROM users WHERE id = :id"), {"id": uid}
+            )
+        ).fetchone()
+        assert row[0] == "google" and row[1] == pid
+
+
+class TestSocialReauthAuthTime:
+    """소셜 계정 탈퇴 스텝업은 auth_time(실인증 시각) 기준 — refresh로 우회 불가(M8-4)."""
+
+    async def _make_social_solo_user(self, db):
+        import uuid as _uuid
+
+        from sqlalchemy import text
+        tid = _uuid.uuid4()
+        uid = _uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO tenants(id,name,slug,plan,is_active)"
+                " VALUES (:id,:n,:s,'free',true)"
+            ),
+            {"id": tid, "n": "social-solo", "s": f"social-{tid.hex[:10]}"},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO users(id,tenant_id,email,name,hashed_password,role,is_active,"
+                "oauth_provider,oauth_id) VALUES"
+                " (:id,:t,:e,'소셜회원','','admin',true,'google',:oid)"
+            ),
+            {"id": uid, "t": tid, "e": _unique_email(), "oid": f"sg-{uid.hex[:8]}"},
+        )
+        await db.commit()
+        return uid, tid
+
+    @pytest.mark.asyncio
+    async def test_stale_auth_time_blocks_withdraw_and_refresh_preserves_it(
+        self, client, member_db
+    ):
+        import hashlib
+        from datetime import timedelta
+
+        from sqlalchemy import text
+
+        from apps.api.auth.jwt_handler import (
+            create_access_token,
+            create_refresh_token,
+            decode_token,
+        )
+        from apps.api.config import get_settings
+
+        settings = get_settings()
+        uid, tid = await self._make_social_solo_user(member_db)
+        stale = datetime.now(UTC) - timedelta(minutes=20)
+
+        # 오래된 auth_time access 토큰 → 소셜 탈퇴 403(재로그인 요구)
+        stale_access = create_access_token(uid, tid, "admin", settings, auth_time=stale)
+        r = await client.post(
+            "/api/v1/auth/account/withdraw",
+            json={},
+            headers={"Authorization": f"Bearer {stale_access}"},
+        )
+        assert r.status_code == 403
+
+        # refresh는 auth_time을 보존 → 재발급 access도 여전히 오래됨(우회 불가)
+        stale_refresh = create_refresh_token(uid, tid, "admin", settings, auth_time=stale)
+        await member_db.execute(
+            text(
+                "INSERT INTO refresh_tokens(id,user_id,tenant_id,token_hash,expires_at,is_revoked)"
+                " VALUES (gen_random_uuid(),:u,:t,:h, now() + interval '7 days', false)"
+            ),
+            {
+                "u": uid,
+                "t": tid,
+                "h": hashlib.sha256(stale_refresh.encode()).hexdigest(),
+            },
+        )
+        await member_db.commit()
+        rr = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": stale_refresh}
+        )
+        assert rr.status_code == 200
+        new_access = rr.json()["access_token"]
+        payload = decode_token(new_access, settings)
+        # auth_time이 now로 리셋되지 않고 보존(20분 전) → 여전히 스텝업 창(10분) 밖
+        assert (datetime.now(UTC) - payload.auth_time).total_seconds() > 600
+
+        # 신선한 auth_time이면 탈퇴 통과(204)
+        fresh_access = create_access_token(uid, tid, "admin", settings)
+        ok = await client.post(
+            "/api/v1/auth/account/withdraw",
+            json={},
+            headers={"Authorization": f"Bearer {fresh_access}"},
+        )
+        assert ok.status_code == 204
 
     @pytest.mark.asyncio
     async def test_email_verification_flow(self, client, member_db, monkeypatch):

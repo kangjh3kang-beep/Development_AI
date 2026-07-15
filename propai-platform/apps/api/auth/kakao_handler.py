@@ -105,7 +105,11 @@ def extract_user_profile(kakao_data: dict) -> dict:
     """카카오 응답에서 사용자 프로필을 추출한다.
 
     Returns:
-        {"kakao_id": str, "email": str|None, "nickname": str}
+        {"kakao_id": str, "email": str|None, "nickname": str, "email_verified": bool}
+
+    email_verified: 카카오가 검증·유효 확인한 이메일인지(is_email_verified AND is_email_valid).
+    기존 계정 이메일 병합(계정 연결) 허용 여부의 신뢰 근거 — 미검증 이메일 병합에 의한
+    계정 탈취를 차단하기 위해 반드시 함께 전달한다.
     """
     kakao_id = str(kakao_data.get("id", ""))
     account = kakao_data.get("kakao_account", {})
@@ -113,11 +117,14 @@ def extract_user_profile(kakao_data: dict) -> dict:
 
     email = account.get("email")
     nickname = properties.get("nickname", account.get("profile", {}).get("nickname", ""))
+    # is_email_valid(유효)와 is_email_verified(검증)가 모두 참일 때만 신뢰. 키 부재 시 미검증 취급.
+    email_verified = bool(account.get("is_email_verified")) and account.get("is_email_valid", False) is True
 
     return {
         "kakao_id": kakao_id,
         "email": email,
         "nickname": nickname or f"kakao_{kakao_id}",
+        "email_verified": email_verified,
     }
 
 
@@ -138,6 +145,7 @@ async def get_or_create_user(
             "provider_id": profile["kakao_id"],
             "email": profile.get("email"),
             "nickname": profile["nickname"],
+            "email_verified": profile.get("email_verified", False),
         },
     )
 

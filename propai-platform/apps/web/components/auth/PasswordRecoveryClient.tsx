@@ -77,7 +77,6 @@ export function ForgotPasswordClient({ locale }: { locale: Locale }) {
   const [email, setEmail] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [requested, setRequested] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -89,7 +88,6 @@ export function ForgotPasswordClient({ locale }: { locale: Locale }) {
         useMock: false,
       });
       // 서버 계약: 계정 존재 여부와 무관하게 동일 메시지(열거 방지)
-      setRequested(true);
       setFeedback({
         tone: "success",
         message: `${res.message} 메일이 도착하지 않으면 스팸함을 확인해 주세요. 링크는 발송 후 30분 이내 1회만 사용할 수 있습니다.`,
@@ -124,11 +122,11 @@ export function ForgotPasswordClient({ locale }: { locale: Locale }) {
             onChange={(event) => setEmail(event.target.value)}
             placeholder="가입한 이메일 주소"
             required
-            disabled={requested}
           />
         </label>
-        <Button type="submit" disabled={isSubmitting || requested}>
-          {isSubmitting ? "처리 중..." : requested ? "발송 요청 완료" : "재설정 링크 받기"}
+        {/* 발송 후에도 입력·재요청을 막지 않는다 — 이메일 오타 정정·재발송 허용(남용은 서버 레이트리밋으로 방어). */}
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "처리 중..." : "재설정 링크 받기"}
         </Button>
       </form>
       {feedback ? (

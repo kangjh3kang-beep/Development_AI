@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import html as _html
 import logging
 import smtplib
 from dataclasses import dataclass
@@ -194,9 +195,11 @@ def render_email_verification(verify_link: str, valid_hours: int = 24) -> tuple[
 def render_withdrawal_complete(name: str) -> tuple[str, str, str]:
     """회원탈퇴 완료 안내 (subject, html, text)."""
     subject = "[사통팔땅] 회원탈퇴가 완료되었습니다"
+    # 사용자 입력(name)이 HTML에 삽입되므로 반드시 이스케이프(메일 클라이언트 XSS/깨짐 방지).
+    safe_name = _html.escape(name or "")
     html = (
         f"{_BRAND_HEADER}"
-        f"<p>{name}님, 회원탈퇴가 정상 처리되었습니다.</p>"
+        f"<p>{safe_name}님, 회원탈퇴가 정상 처리되었습니다.</p>"
         "<p>계정은 즉시 로그인할 수 없으며, 30일 유예기간 이후 개인정보는 복구 불가능하게 "
         "익명화됩니다. 관계 법령상 보존 의무가 있는 정보(전자상거래 계약·결제 기록 등)는 "
         "법정 기간 동안 분리 보관 후 파기됩니다.</p>"

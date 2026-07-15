@@ -123,6 +123,9 @@ async def get_or_create_oauth_user(
     _raise_if_in_rejoin_grace(matched_rows)
 
     # 2. 기존 사용자 조회 (이메일 기반) — 동일 이메일이면 기존 계정에 소셜 식별자 연결(병합).
+    #    ★계정 탈취 차단: provider가 **검증한 이메일**(email_verified)일 때만 병합한다.
+    #    미검증 이메일로의 자동 병합을 허용하면, 공격자가 자신의 소셜 계정에 피해자 이메일을
+    #    미검증 상태로 등록해 피해자 계정을 탈취할 수 있다(전형적 OAuth 미검증 이메일 취약점).
     #    탈퇴 행은 병합 대상에서 제외(유예 중이면 정직 안내).
     if profile.get("email"):
         result = await db.execute(
@@ -133,6 +136,16 @@ async def get_or_create_oauth_user(
         if existing is not None:
             if not existing.is_active:
                 raise OAuthError("이용이 제한된 계정입니다. 관리자에게 문의해 주세요.", status_code=403)
+            if not profile.get("email_verified"):
+                # 미검증 이메일 → 자동 병합 거부(계정 탈취 방지). 기존 방식 로그인 후 연동 유도.
+                logger.warning(
+                    "미검증 소셜 이메일의 기존계정 자동병합 차단",
+                    provider=provider, provider_id=provider_id,
+                )
+                raise OAuthError(
+                    "이미 가입된 이메일입니다. 기존 방식으로 로그인한 뒤 계정 설정에서 소셜 연동을 진행해 주세요.",
+                    status_code=409,
+                )
             existing.oauth_provider = provider
             existing.oauth_id = provider_id
             await db.flush()

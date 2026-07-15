@@ -109,6 +109,9 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
       const res = await apiClient.post<{ message: string }>("/auth/password/change", {
         body: { current_password: pwForm.current, new_password: pwForm.next },
         useMock: false,
+        // 현재 비밀번호 오입력 시 서버가 401을 반환 — 이는 세션만료가 아니라 폼 검증 실패이므로
+        // 전역 세션만료 처리(강제 로그아웃·토큰 파기)를 건너뛰고 폼에서 정직하게 안내한다.
+        skipSessionExpiry: true,
       });
       setPwFeedback({ tone: "success", message: `${res.message} 3초 후 로그인 화면으로 이동합니다.` });
       // 전 기기 로그아웃(서버 refresh 전량 revoke) — 로컬 세션도 정리 후 재로그인 유도
@@ -161,6 +164,9 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
           reason: wdForm.reason.trim() || undefined,
         },
         useMock: false,
+        // 비밀번호 오입력(401)·소셜 재인증 필요(403)는 세션만료가 아니라 본인확인 실패이므로
+        // 전역 강제 로그아웃을 건너뛰고 폼에서 안내한다.
+        skipSessionExpiry: true,
       });
       setWdFeedback({
         tone: "success",
@@ -230,7 +236,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
           {!me.email_verified ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
               <p className="text-sm text-[var(--text-secondary)]">
-                이메일 인증을 완료하면 결제·공유 등 모든 기능을 이용할 수 있습니다.
+                이메일 인증을 완료하면 계정 보안이 강화되고 중요한 안내를 이메일로 받을 수 있습니다.
               </p>
               <Button variant="secondary" onClick={() => void handleRequestVerify()} disabled={verifySubmitting}>
                 {verifySubmitting ? "요청 중..." : "인증 메일 보내기"}
@@ -238,7 +244,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
             </div>
           ) : null}
           {verifyFeedback ? (
-            <div className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(verifyFeedback.tone)}`}>
+            <div role="status" className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(verifyFeedback.tone)}`}>
               {verifyFeedback.message}
             </div>
           ) : null}
@@ -299,7 +305,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
             </form>
           )}
           {pwFeedback ? (
-            <div className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(pwFeedback.tone)}`}>
+            <div role="status" className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(pwFeedback.tone)}`}>
               {pwFeedback.message}
             </div>
           ) : null}
@@ -373,7 +379,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
             </form>
           )}
           {wdFeedback ? (
-            <div className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(wdFeedback.tone)}`}>
+            <div role="status" className={`rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClass(wdFeedback.tone)}`}>
               {wdFeedback.message}
             </div>
           ) : null}

@@ -122,17 +122,24 @@ async def consume_token(
     """토큰 검증 + 즉시 사용 처리(1회용). 유효하면 user_id, 아니면 None.
 
     부재/만료/사용됨을 구분해 반환하지 않는다(열거방지 — 호출부 통일 메시지).
+    ★원자적 UPDATE(used_at IS NULL 조건부)로 검증·소비를 한 번에 수행한다 — select→검사→
+    update 사이 경합으로 동일 토큰이 2회 소비되던 TOCTOU를 DB 행 잠금으로 원천 차단.
     """
     ts = _now(now)
-    result = await db.execute(
-        select(model_cls).where(model_cls.token_hash == hash_token(raw_token))
+    stmt = (
+        update(model_cls)
+        .where(
+            model_cls.token_hash == hash_token(raw_token),
+            model_cls.used_at.is_(None),
+            model_cls.expires_at > ts,
+        )
+        .values(used_at=ts)
+        .returning(model_cls.user_id)
     )
-    row = result.scalar_one_or_none()
-    if not _is_token_valid(row, ts):
-        return None
-    row.used_at = ts  # 재사용 차단 — 커밋은 호출부 트랜잭션 경계에서
+    result = await db.execute(stmt)
+    row = result.first()
     await db.flush()
-    return row.user_id
+    return row[0] if row is not None else None
 
 
 async def revoke_all_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> int:

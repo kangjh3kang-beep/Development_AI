@@ -612,12 +612,19 @@ export function AuthWorkspaceClient({
       }
       await loadSession(mode, tokens.expires_in);
     } catch (error) {
+      // 가입 422(비밀번호 정책·필수동의 등)는 FastAPI가 배열형 detail을 주어 일반 메시지로
+      // 강등되므로, 등록 모드에서는 무엇을 고쳐야 하는지 명확한 정책 안내로 대체한다.
+      const status = error instanceof ApiClientError ? error.status : 0;
+      const fallback =
+        mode === "register" && status === 422
+          ? "입력값을 확인해 주세요 — 비밀번호는 10자 이상, 영문 대/소문자·숫자·특수문자 중 3종 이상을 조합하고, 필수 약관에 동의해야 합니다."
+          : mode === "login"
+            ? labels.errorLabels.login
+            : labels.errorLabels.register;
       setFeedback({
         tone: "error",
-        message: resolveApiErrorMessage(
-          error,
-          mode === "login" ? labels.errorLabels.login : labels.errorLabels.register,
-        ),
+        message:
+          status === 422 ? fallback : resolveApiErrorMessage(error, fallback),
       });
     } finally {
       setIsSubmitting(false);
