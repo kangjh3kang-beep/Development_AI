@@ -514,6 +514,13 @@ def build_ifc_from_bimir(model: BimModel, project_name: str = "PropAI Project") 
 
     glb/QTO의 BimIR 소비 전환은 다음 세션 범위다(이 세션은 IFC 대표 1곳만).
     """
+    # ★선행조건: 이 경로는 매스 기원 IR 전용 — cad/ingest 기원 IR을 넣으면 매스 키가 없어
+    #   10×10 기본값으로 무음 퇴화 산출되므로 명시적으로 거부한다(정직 실패).
+    if model.source_kind != "mass_geometry":
+        raise ValueError(
+            f"build_ifc_from_bimir는 mass_geometry 기원 IR 전용입니다(입력={model.source_kind!r}) — "
+            "cad/ingest 기원 IR의 IFC 산출 전환은 WP-D 후속 세션 범위"
+        )
     from app.services.bim.bimir_adapters import mass_from_bimir
 
     mass = mass_from_bimir(model)

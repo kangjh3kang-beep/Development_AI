@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
@@ -269,7 +270,7 @@ def bimir_from_mass(mass: dict[str, Any]) -> BimModel:
         project_name=None,
         attributes={"building_width_m": bw, "building_depth_m": bd, "num_floors": n, "floor_height_m": fh},
         elements=elements,
-        extras={"mass_geometry": src},
+        extras={"mass_geometry": copy.deepcopy(src)},  # ★독립사본 — geometry와 별칭 공유 금지(교차오염 방지)
     )
 
 
@@ -280,5 +281,5 @@ def mass_from_bimir(model: BimModel) -> dict[str, Any]:
     """
     for e in model.elements:
         if e.category == BimCategory.BUILDING:
-            return dict(e.geometry)
-    return dict(model.extras.get("mass_geometry", {}))
+            return copy.deepcopy(e.geometry)  # ★깊은 복사 — 반환본 변이가 IR로 역류하지 않게
+    return copy.deepcopy(model.extras.get("mass_geometry", {}))

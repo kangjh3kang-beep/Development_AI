@@ -16,7 +16,8 @@
 ★element_id 파생식(스키마에 박제 — 감사·재현용):
     element_id = uuid5(BIMIR_NAMESPACE, f"{design_input_hash}|{element_path}|{fingerprint}")
   · design_input_hash: 설계 입력(핑거프린트)의 sha256 — 같은 설계면 같은 값.
-  · element_path: 모델 내 '안정 경로'(예: 'storey[2]/wall/S') — 요소의 불변 정체 앵커.
+  · element_path: 모델 내 결정적 경로(예: 'storey[2]/wall/S') — ★재생성 불변이지만 인덱스
+    파생이라 요소 삽입/재정렬 시에는 변한다. 편집 안정(stable) id는 P12 merge 트랙 범위.
   · fingerprint: 요소 자신의 지문(범주+기하+소속층의 정규화 sha256).
   랜덤/시각 기반(uuid4·UUIDv7)을 쓰지 않고 위 파생으로 UUID 포맷을 충족하면서 결정성을 지킨다.
 
@@ -126,7 +127,7 @@ class BimElement(BaseModel):
     model_config = {"extra": "forbid"}
 
     element_id: str                 # uuid5 파생(결정적) — ELEMENT_ID_DERIVATION 참고
-    element_path: str               # 모델 내 안정 경로(예: 'storey[2]/wall/S') — id 파생·불변 앵커
+    element_path: str               # 결정적 경로 — 재생성 불변·삽입/재정렬 시 변동(P12 merge 트랙 참조)
     category: BimCategory
     fingerprint: str                # 지문(sha256) — 범주+소속층+기하의 결정적 해시
     name: str | None = None

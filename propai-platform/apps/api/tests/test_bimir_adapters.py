@@ -219,3 +219,28 @@ def test_ifc_from_bimir_histogram_equals_mass_path():
     # 핵심 제품 타입 수 동등(결정적).
     for cls in ("IfcSlab", "IfcWall", "IfcColumn", "IfcStair", "IfcBuildingStorey", "IfcSite", "IfcBuilding"):
         assert h_mass[cls] == h_bimir[cls], f"{cls} 요소 수 불일치: {h_mass[cls]} != {h_bimir[cls]}"
+
+
+# ── PR#284 리뷰 MEDIUM 반영 회귀 ────────────────────────────────────────────
+
+
+def test_mass_extras_are_independent_copies_no_alias_leak():
+    """★리뷰 적발 회귀 고정 — 복원본 변이가 원본 mass·model.extras로 역류(별칭 누수)하면 안 된다."""
+    mass = {"building_width_m": 12.0, "core_positions": [{"x": 1.0, "y": 2.0}]}
+    model = bimir_from_mass(mass)
+    restored = mass_from_bimir(model)
+    restored["core_positions"][0]["x"] = 999.0
+    assert mass["core_positions"][0]["x"] == 1.0, "원본 mass로 별칭 누수"
+    assert model.extras["mass_geometry"]["core_positions"][0]["x"] == 1.0, "extras로 별칭 누수"
+
+
+def test_build_ifc_from_bimir_rejects_non_mass_source_kind():
+    """★리뷰 적발 회귀 고정 — 비-매스 기원 IR은 무음 퇴화(10×10 기본값) 대신 명시 거부."""
+    import pytest as _pytest
+
+    from app.services.bim.ifc_generator_service import build_ifc_from_bimir
+
+    model = bimir_from_mass({"building_width_m": 12.0})
+    hacked = model.model_copy(update={"source_kind": "cad_design_spec"})
+    with _pytest.raises(ValueError):
+        build_ifc_from_bimir(hacked)
