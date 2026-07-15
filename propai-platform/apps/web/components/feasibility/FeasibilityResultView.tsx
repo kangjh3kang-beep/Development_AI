@@ -58,6 +58,26 @@ function Term({ children, definition }: { children: React.ReactNode; definition:
 const TERM_DEFINITIONS = {
   ROI: "투자자본수익률 (Return on Investment): 투자액 대비 순이익 비율을 나타내는 지표입니다.",
   NPV: "순현재가치 (Net Present Value): 미래에 발생할 현금흐름을 현재 가치로 환산하여 투자 타당성을 평가하는 지표입니다.",
+  // ★소소잔여(D6-부속): IRR·회수기간·DSCR 산출 전제를 KPI 옆 인라인으로 —
+  //   분양대금은 W5 분할 유입 표준 스케줄이 기본(종전 "조기 유입" 문구는 stale).
+  IRR: "내부수익률 (Internal Rate of Return): 월별 무차입 현금흐름의 연환산 수익률입니다. 분양대금은 분할 유입 표준 스케줄(계약금 10%·중도금 60% 균등·잔금 30% 정산월)이 반영됩니다.",
+  PAYBACK: "회수기간: 누적 현금흐름이 최저점(최대 자금투입) 이후 0 이상으로 회복되는 시점(개월)입니다.",
+  DSCR: "부채상환커버리지 (Debt Service Coverage Ratio): 연 순임대수입 ÷ 연 금융비 근사 — 임대형 사업에서만 산출됩니다.",
+};
+
+// ── ★소소잔여: special_detail 알려진 키 한글 라벨(미지 키는 raw 정직 유지) ──
+const SPECIAL_KEY_LABELS: Record<string, string> = {
+  proportional_rate: "비례율",
+  existing_value_won: "종전자산 평가액",
+  excess_gain_won: "재건축 초과이익",
+  "reconstruction_levy.name": "부담금 항목",
+  "reconstruction_levy.base_won": "부담금 산정기초(초과이익)",
+  "reconstruction_levy.amount_won": "재건축부담금",
+  "dcf.npv_won": "소득접근 DCF 가치",
+  "dcf.pv_noi_won": "NOI 현재가치 합",
+  "dcf.terminal_value_won": "매각가치(터미널)",
+  "dcf.pv_terminal_won": "매각가치 현재가치",
+  "dcf.hold_years": "보유기간(년)",
 };
 
 /* ── WP-S 신뢰 블록(옵셔널·additive) — /calculate 응답의 evidence[]·legal_refs[] ── */
@@ -174,10 +194,10 @@ export function FeasibilityResultView() {
     // ★W3(additive): 월별 DCF 지표 — 백엔드 미산출(null)이면 정직하게 "—" 표기.
     ...(result.cashflow_summary
       ? [
-          { id: "irr", label: "IRR(연)", value: result.cashflow_summary.irr_pct != null ? `${result.cashflow_summary.irr_pct.toFixed(1)}%` : "—", color: "text-emerald-500", icon: TrendingUp },
-          { id: "payback", label: "회수기간", value: result.cashflow_summary.payback_month != null ? `${result.cashflow_summary.payback_month}개월` : "—", color: "text-amber-500", icon: Target },
+          { id: "irr", label: <Term definition={TERM_DEFINITIONS.IRR}>IRR(연)</Term>, value: result.cashflow_summary.irr_pct != null ? `${result.cashflow_summary.irr_pct.toFixed(1)}%` : "—", color: "text-emerald-500", icon: TrendingUp },
+          { id: "payback", label: <Term definition={TERM_DEFINITIONS.PAYBACK}>회수기간</Term>, value: result.cashflow_summary.payback_month != null ? `${result.cashflow_summary.payback_month}개월` : "—", color: "text-amber-500", icon: Target },
           ...(result.cashflow_summary.dscr != null
-            ? [{ id: "dscr", label: "DSCR", value: `${result.cashflow_summary.dscr.toFixed(2)}x`, color: "text-sky-500", icon: Landmark }]
+            ? [{ id: "dscr", label: <Term definition={TERM_DEFINITIONS.DSCR}>DSCR</Term>, value: `${result.cashflow_summary.dscr.toFixed(2)}x`, color: "text-sky-500", icon: Landmark }]
             : []),
         ]
       : []),
@@ -221,7 +241,7 @@ export function FeasibilityResultView() {
         }));
     }
     return [];
-  });
+  }).map((e) => ({ ...e, label: SPECIAL_KEY_LABELS[e.key] ?? e.key }));
 
   // WP-S 산출 근거(옵셔널 가드) — 스토어 타입에 없는 가산 필드는 안전하게 좁혀 읽는다.
   // 구버전 응답(evidence/legal_refs 부재)이면 빈 배열 → 패널 미렌더(기존 화면 무손상).
@@ -444,7 +464,7 @@ export function FeasibilityResultView() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {specialEntries.map((e) => (
                     <div key={e.key} className="flex items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-[11px]">
-                      <span className="text-[var(--text-secondary)]">{e.key}</span>
+                      <span className="text-[var(--text-secondary)]">{e.label}</span>
                       <span className="cc-num font-semibold text-[var(--text-primary)]">{e.value}</span>
                     </div>
                   ))}

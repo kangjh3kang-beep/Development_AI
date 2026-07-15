@@ -91,7 +91,11 @@ class FeasibilityServiceV2:
             # ★R1-MEDIUM-1: 소득접근 DCF를 고유 npv로 쓰는 보유형 모듈(M08 오피스텔 등 —
             #   special_detail.dcf 보유)은 정본 가치평가를 보존하고 개발현금흐름 NPV는
             #   cashflow_summary에만 병기한다(덮어쓰기 금지).
-            income_dcf = bool((output.special_detail or {}).get("dcf"))
+            # ★NOI=0 엣지(D6-부속): dcf dict가 존재해도 npv가 0이면(모듈이 NOI 미입력으로
+            #   소득 DCF를 채택하지 않은 경우 — m08은 이때 agg 단일기간 근사를 npv로 씀)
+            #   보존할 정본이 없으므로 월별 DCF로 정상 교체한다(거짓 "보존" 표기 방지).
+            _dcf_sd = (output.special_detail or {}).get("dcf") or {}
+            income_dcf = bool(_dcf_sd) and (_dcf_sd.get("npv_won") or 0) > 0
             if dcf["npv_won"] is not None and not income_dcf:
                 output.npv_won = int(dcf["npv_won"])
             output.cashflow_summary = {
@@ -110,8 +114,8 @@ class FeasibilityServiceV2:
                     f"공사기간 {dcf['construction_months']}개월(=max(6, 사업기간−6) 표준 근사)",
                     f"분양개시 {dcf['sale_start_month']}개월차·분양 {dcf['sale_duration_months']}개월(표준 근사)",
                     f"자기자본비율 {dcf['equity_ratio']:.0%}(자기자본÷총사업비, 미확보 시 30%)",
-                    "분양수입은 분양기간 조기 유입 가정(계약금·중도금·잔금 분할 미모델링) — "
-                    "무차입 IRR이 실제보다 높게 산출될 수 있음(NPV는 할인 총액이라 영향 제한적)",
+                    "분양수입은 분할 유입 표준 스케줄(계약금 10% 분양개시·중도금 60% 균등·"
+                    "잔금 30% 정산월 — W5 기본값) 반영",
                 ],
             }
         except Exception as e:  # noqa: BLE001 — DCF 부착 실패는 수지 본체 무손상

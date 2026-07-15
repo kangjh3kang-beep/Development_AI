@@ -158,11 +158,27 @@ class TestPathADetailedDcf:
             - out.total_tax_cost_won
         )
         assert out.npv_won <= undiscounted
-        # IRR: 존재 + 조기 유입 가정의 정직 라벨(분양대금 분할 미모델링 — 엔진 기존 가정을
-        # 라벨로 노출. 분할 유입 모델링은 후속 — 계획문서 기록).
+        # IRR: 존재 + 유입 스케줄 정직 라벨. ★재기준(소소잔여): W5(#318)로 분할 유입
+        # (계약10/중도60/잔금30)이 엔진 기본이 됐는데 종전 라벨("조기 유입 가정·분할
+        # 미모델링")이 stale 거짓 표기로 남아 있었다 — 실제 스케줄을 서술하는 라벨로 교정.
         assert cs["irr_pct"] is not None
-        assert any("조기 유입" in a for a in cs["assumptions"])
+        assert any("분할 유입" in a for a in cs["assumptions"])
+        assert not any("조기 유입" in a for a in cs["assumptions"])  # stale 표기 재발 방지
         assert "월별 DCF" in cs["npv_basis"]
+
+    def test_income_dcf_noi_zero_edge_replaced(self):
+        """★D6-부속(NOI=0 엣지): M08이 NOI 미입력이면 special_detail.dcf는 존재하나
+        npv=0(모듈이 소득 DCF를 채택하지 않음) — 월별 DCF로 정상 교체되고
+        '소득접근 보존' 거짓 표기가 없어야 한다."""
+        inp = _sale_input("M08")
+        inp.params = {}  # annual_noi_won 미입력 → NOI=0
+        out = FeasibilityServiceV2().calculate(inp)
+        cs = out.cashflow_summary
+        assert cs is not None
+        dcf_sd = (out.special_detail or {}).get("dcf")
+        assert dcf_sd is not None and (dcf_sd.get("npv_won") or 0) == 0
+        assert out.npv_won == cs["npv_won"]  # 월별 DCF로 교체(단일기간 근사 잔존 방지)
+        assert "소득접근" not in cs["npv_basis"]  # 거짓 '보존' 표기 없음
 
     def test_income_dcf_module_npv_preserved(self):
         """리뷰 R1-MEDIUM-1: 보유형(M08 소득접근 DCF 보유) 모듈의 고유 npv는 보존 —
