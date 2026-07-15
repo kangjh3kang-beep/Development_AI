@@ -11,11 +11,12 @@ import json
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import idempotency  # WP-L: Idempotency-Key 재전송 안전(뮤테이팅 커맨드)
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.cad import design_run_cache  # 설계 매스 input_hash 멱등 캐시(시간절감)
 from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
@@ -937,6 +938,7 @@ async def generate_submission_bundle(
     req: SubmissionBundleRequest,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """심의·인허가 제출 번들(zip)을 생성한다 — 도면(SVG/DXF)+보고서 PDF+BOQ xlsx 단일 zip.
 
@@ -944,6 +946,9 @@ async def generate_submission_bundle(
     충족을 강제한다 — 미충족 시 422 + 누락 목록(무음 부분산출 금지). 매니페스트(파일별
     sha256·run_id/input_hash)는 zip 내부 manifest.json 에 동봉(전수 대조 가능).
     인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403 — 비UUID/데모는 검사 생략).
+
+    ★WP-L Idempotency-Key: 같은 키+같은 요청이면 재생성 없이 처음 zip을 그대로 재생(재전송 안전).
+      같은 키인데 다른 요청이면 422(키 오사용). 산출은 결정적이라(now()/uuid 0) 캐시본과 동치.
     """
     await _assert_project_owned(project_id, db, user)
 
@@ -953,6 +958,24 @@ async def generate_submission_bundle(
     # ── provenance(결정적) — 요청 입력 그대로에서 파생. now()/uuid 미사용. ──
     input_hash = compute_input_hash(project_data)
     run_id = make_run_id(input_hash)
+
+    # ── WP-L 멱등 재생 판정(키 있을 때만) — request_hash=input_hash(결정적 프로젝트 지문) ──
+    _idem_tenant = str(getattr(user, "tenant_id", "") or "") or None
+    _idem_key = idempotency.normalize_key(idempotency_key)
+    if _idem_key:
+        _look = await idempotency.lookup(
+            db=db, key=_idem_key, tenant_id=_idem_tenant,
+            endpoint="submission-bundle", request_hash=input_hash,
+        )
+        if _look.state == idempotency.STATE_CONFLICT:
+            raise HTTPException(
+                status_code=422,
+                detail="같은 Idempotency-Key가 다른 요청에 재사용되었습니다.",
+            )
+        if _look.state == idempotency.STATE_REPLAY and _look.stored is not None:
+            _replay = _look.stored.to_response()
+            if _replay is not None:
+                return _replay  # 처음 zip 그대로 재생(재생성 0)
 
     # ── 1) 도면 SVG 산출 + 표제란(additive) 부착 ──
     raw_drawings = svg_service.generate_full_drawing_set(project_data)
@@ -1027,6 +1050,14 @@ async def generate_submission_bundle(
             status_code=422,
             detail={"message": "필수시트 미충족 — 산출 거부", "missing": exc.missing},
         ) from exc
+
+    # ── WP-L: 성공 zip을 키로 기억(다음 재전송이 재생성 없이 이 바이트를 재생) ──
+    if _idem_key:
+        await idempotency.save(
+            db=db, key=_idem_key, tenant_id=_idem_tenant, endpoint="submission-bundle",
+            request_hash=input_hash, response_status=200, body=zip_bytes,
+            media_type="application/zip", run_id=run_id,
+        )
 
     return Response(
         content=zip_bytes,
