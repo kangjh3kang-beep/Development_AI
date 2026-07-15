@@ -36,15 +36,22 @@ export interface AuditLegalRef {
 export interface AuditFinding {
   item?: string | null;
   label?: string | null;
-  status?: string | null; // pass|warn|fail|적합|조건부|부적합 등
+  // ★실 U5 오케스트레이터 정본 키(과거 프론트가 item/label·legal_ref·recommendation만 읽어
+  //   3열 전부 "—"였다) — check_id·engine·legal_refs[]·improvement·note를 함께 수용.
+  check_id?: string | null;
+  engine?: string | null;
+  status?: string | null; // pass|warning|fail|skipped|info|적합|조건부|부적합 등
   severity?: string | null;
   current?: string | number | null;
   limit?: string | number | null;
   unit?: string | null;
   recommendation?: string | null;
   correction?: string | null;
+  improvement?: string | null;
+  note?: string | null;
   legal_ref?: AuditLegalRef | null;
   legal_ref_key?: string | null;
+  legal_refs?: AuditLegalRef[] | null;
 }
 
 export interface AuditCasePosition {
@@ -80,9 +87,15 @@ export interface AuditIncentive {
 export interface AuditBlindSpot {
   topic?: string | null;
   note?: string | null;
-  /** 0~1 또는 0~100 — 표기 시 정규화. 없으면 수치 미표기(가짜값 금지). */
-  confidence?: number | null;
+  // ★blindspot 정본 항목(generate_blindspot.items)은 {claim, basis, confidence, citation_gate}.
+  //   과거 프론트는 topic/note만 읽어 항목이 "—"로 비었다 — claim/basis도 수용.
+  claim?: string | null;
+  basis?: string | null;
+  /** 0~1·0~100 수치 또는 high|medium|low 문자열 — 표기 시 정규화. 없으면 미표기(가짜값 금지). */
+  confidence?: number | string | null;
   needs_expert?: boolean | null;
+  /** 결정론 인용검문 결과 — gated=true면 미근거 인용 치환됨(전문가 확인 필요 신호). */
+  citation_gate?: { gated?: boolean | null; reasons?: string[] | null } | null;
 }
 
 export interface AuditEvidence {
@@ -153,7 +166,8 @@ function verdictTone(v?: string | null): VerdictTone {
   if (!s) return "unknown";
   if (["적합", "compliant", "pass", "ok", "통과"].includes(s)) return "pass";
   if (
-    ["조건부", "조건부 적합", "조건부적합", "conditional", "warn", "주의", "correction_required"].includes(s)
+    // ★실 U5 status 어휘 "warning" 포함(과거 "warn"만 있어 실엔진 warning이 unknown으로 샜다).
+    ["조건부", "조건부 적합", "조건부적합", "conditional", "warn", "warning", "주의", "correction_required"].includes(s)
   )
     return "conditional";
   if (["부적합", "non_compliant", "noncompliant", "fail", "불가", "critical"].includes(s))
@@ -163,6 +177,15 @@ function verdictTone(v?: string | null): VerdictTone {
 
 /** finding.status → 칩 스타일/라벨 — 미지의 값은 원문 그대로(정직). */
 function findingChip(status?: string | null): { label: string; cls: string } {
+  const s = (status ?? "").trim().toLowerCase();
+  // 실 U5 비판정 status — 검사 못 함/정보성은 판정 색이 아닌 중립 표기(정직).
+  if (s === "skipped") return { label: "생략", cls: VERDICT_META.unknown.chip };
+  if (s === "not_checked") return { label: "미검사", cls: VERDICT_META.unknown.chip };
+  if (s === "info")
+    return {
+      label: "정보",
+      cls: "border-[var(--status-info)]/40 bg-[var(--status-info)]/10 text-[var(--status-info)]",
+    };
   const tone = verdictTone(status);
   if (tone === "unknown") {
     return {
@@ -173,6 +196,29 @@ function findingChip(status?: string | null): { label: string; cls: string } {
   // findings 표는 간결 라벨(적합/조건부/부적합)을 쓴다.
   const label = tone === "pass" ? "적합" : tone === "conditional" ? "조건부" : "부적합";
   return { label, cls: VERDICT_META[tone].chip };
+}
+
+/** 엔진 코드 → 사람이 읽는 검사 항목 라벨(실 U5 finding.engine 기준 — 비전문가 대행 표기). */
+const ENGINE_LABEL: Record<string, string> = {
+  rules8: "법규 8룰(건폐·용적·높이·이격)",
+  design_review: "설계 파라미터 법규검토",
+  solar_envelope: "정북일조 인벨로프",
+  parking: "법정 주차",
+  permit: "인허가 가능성",
+  change_risk: "설계변경 리스크",
+  incentives: "인센티브·종상향",
+  case_compare: "인근 인허가 사례",
+  grammar: "평면 문법(LDK·연결성·채광)",
+  bl_rules: "피난·방화(건축법 §34/§46/§35)",
+};
+
+/** finding의 '검사 항목' 라벨 — item/label 우선, 없으면 engine 라벨, 최후 check_id(정직). */
+function findingItemLabel(f: AuditFinding): string {
+  if (f.item?.trim()) return f.item.trim();
+  if (f.label?.trim()) return f.label.trim();
+  const eng = (f.engine ?? "").toString();
+  if (ENGINE_LABEL[eng]) return ENGINE_LABEL[eng];
+  return (f.check_id ?? "—").toString();
 }
 
 /* ── 값/근거 헬퍼 ── */
@@ -364,12 +410,18 @@ function FindingsTable({
         <tbody>
           {findings.map((f, i) => {
             const chip = findingChip(f.status);
+            // 법령 근거: 실 U5는 legal_refs[](레지스트리 레코드 배열) — 있으면 다중 칩, 없으면
+            // 단일 legal_ref/legal_ref_key 폴백(과거 계약 하위호환). 백엔드 legal_refs 증발 봉합.
+            const directRefs = Array.isArray(f.legal_refs)
+              ? f.legal_refs.filter((r) => r?.law_name?.trim())
+              : [];
             const ref = resolveLegalRef(f.legal_ref, f.legal_ref_key, pools);
-            const recommendation = f.recommendation ?? f.correction;
+            // 개선안: recommendation/correction(구계약) → improvement(실 U5) 순.
+            const recommendation = f.recommendation ?? f.correction ?? f.improvement;
             return (
               <tr key={i} className="border-b border-[var(--line)] last:border-b-0 align-top">
                 <td className="py-2 pr-3 font-semibold text-[var(--text-primary)]">
-                  {f.item || f.label || "—"}
+                  {findingItemLabel(f)}
                 </td>
                 <td className="py-2 pr-3">
                   <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${chip.cls}`}>
@@ -382,7 +434,15 @@ function FindingsTable({
                 <td className="cc-num py-2 pr-3 text-[var(--text-secondary)]">
                   {fmtVal(f.limit, f.unit)}
                 </td>
-                <td className="py-2 pr-3">{legalRefChip(ref, `ref-${i}`) ?? <span className="text-[var(--text-hint)]">—</span>}</td>
+                <td className="py-2 pr-3">
+                  {directRefs.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {directRefs.map((r, j) => legalRefChip(r, `ref-${i}-${j}`))}
+                    </div>
+                  ) : (
+                    legalRefChip(ref, `ref-${i}`) ?? <span className="text-[var(--text-hint)]">—</span>
+                  )}
+                </td>
                 <td className="py-2 text-[var(--text-secondary)]">
                   {recommendation?.trim() || "—"}
                 </td>
@@ -481,16 +541,27 @@ function IncentiveCards({
   );
 }
 
+/** confidence: high|medium|low 문자열 라벨(실 U5 blindspot 항목). */
+const CONF_LABEL: Record<string, string> = { high: "높음", medium: "보통", low: "낮음" };
+
 function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
   return (
     <div className="grid gap-2">
       {spots.map((b, i) => {
-        // confidence 0~1/0~100 표기 변형 정규화 — 수치 없으면 미표기(가짜값 금지).
+        // confidence 정규화 — high|medium|low 문자열 또는 0~1/0~100 수치. 없으면 미표기(가짜값 금지).
         const raw = b.confidence;
-        const pct =
-          raw != null && Number.isFinite(raw)
-            ? Math.round(raw <= 1 ? raw * 100 : raw)
-            : null;
+        let confDisplay: string | null = null;
+        if (typeof raw === "string" && CONF_LABEL[raw.trim().toLowerCase()]) {
+          confDisplay = `확신도 ${CONF_LABEL[raw.trim().toLowerCase()]}`;
+        } else if (typeof raw === "number" && Number.isFinite(raw)) {
+          confDisplay = `확신도 ${Math.round(raw <= 1 ? raw * 100 : raw)}%`;
+        }
+        // 실 U5 항목은 claim/basis — topic/note(구계약) 우선, 없으면 claim/basis로 폴백.
+        const mainText = b.topic?.trim() || b.claim?.trim() || "—";
+        const detail =
+          b.note?.trim() || (b.basis?.trim() ? `근거: ${b.basis.trim()}` : null);
+        // 인용검문 치환(citation_gate.gated) 또는 명시적 needs_expert면 '전문가 확인 필요'.
+        const needsExpert = b.needs_expert ?? b.citation_gate?.gated ?? false;
         return (
           <div
             key={i}
@@ -503,21 +574,21 @@ function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
               >
                 AI 추정
               </span>
-              {pct != null && (
+              {confDisplay != null && (
                 <span className="text-[10px] font-bold text-[var(--text-tertiary)]">
-                  확신도 {pct}%
+                  {confDisplay}
                 </span>
               )}
-              {b.needs_expert && (
+              {needsExpert && (
                 <span className="inline-flex items-center rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--status-warning)]">
                   전문가 확인 필요
                 </span>
               )}
-              <p className="text-[12px] font-bold text-[var(--text-primary)]">{b.topic || "—"}</p>
+              <p className="text-[12px] font-bold text-[var(--text-primary)]">{mainText}</p>
             </div>
-            {b.note?.trim() && (
+            {detail && (
               <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                {b.note.trim()}
+                {detail}
               </p>
             )}
           </div>

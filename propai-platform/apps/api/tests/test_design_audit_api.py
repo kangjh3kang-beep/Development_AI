@@ -31,15 +31,40 @@ USER_ID = uuid.uuid4()
 TENANT_ID = uuid.uuid4()
 AUDIT_ID = str(uuid.uuid4())
 
+# ★실 U5 오케스트레이터(DesignAuditOrchestrator.run) 정본 스키마를 반영한 테스트 더블.
+#   과거 _FAKE_RESULT는 derived_signals/engine_status/ENG-접두 check_id 등 라우터 모킹 계약이라
+#   실엔진 산출(params_used·limits·sections·engines, 한국어 verdict, rules8_*/parking check_id)과
+#   절단됐다 — 실 스키마로 정렬(라우터·프론트·PDF·테스트 일괄 정본화).
 _FAKE_RESULT = {
-    "overall": {"verdict": "conditional", "score": 72, "summary": "조건부 적합"},
+    "schema_version": "design_audit/v1",
+    "zone_type": "제2종일반주거지역",
+    "sigungu": "강남구",
+    "limits": {"applied_far_pct": 250.0, "applied_bcr_pct": 60.0, "legal_refs": []},
+    "overall": {
+        "verdict": "조건부적합",
+        "verdict_en": "conditional",
+        "counts": {"pass": 1, "warning": 1},
+        "basis": "결정론 판정 — warning만 존재 시 조건부적합",
+    },
     "findings": [
-        {"check_id": "ENG-1", "category": "engineering", "severity": "medium",
-         "title": "코어 면적비", "detail": "코어 면적비 12.5% — 권장범위 상회", "value": 12.5},
-        {"check_id": "CMP-1", "category": "comparison", "severity": "low",
-         "title": "세대수 편차", "detail": "비교표본 평균 대비 세대수 100세대", "value": 100},
+        {"check_id": "rules8_floor_area_ratio", "engine": "rules8", "status": "warning",
+         "current": 249.9, "limit": 250.0,
+         "legal_refs": [{"key": "far_limit", "law_name": "국토의 계획 및 이용에 관한 법률",
+                         "article": "제78조", "title": "용적률", "url": "",
+                         "url_status": "pending"}],
+         "improvement": "용적률 초과분 흡수 검토"},
+        {"check_id": "parking", "engine": "parking", "status": "pass",
+         "current": "95대", "limit": "최소 90대", "legal_refs": [], "improvement": None},
     ],
-    "derived_signals": {"far_pct": 249.9, "comparables": []},
+    "engines": {"rules8": "ok", "parking": "ok"},
+    "sections": {
+        "efficiency_metrics": {"efficiency_pct": 78.0, "core_ratio_pct": None,
+                               "common_area_ratio_pct": 22.0, "basis": "입력값", "notes": []},
+        "s1_samples": {"available": False, "note": "PNU 미제공 — 비교 생략"},
+        "s4_incentives": {"effective_far": {"effective_far_pct": 250.0}},
+    },
+    "params_used": {"far_pct": 249.9, "land_area_sqm": 1250.0},
+    "disclaimer": "본 설계심사는 보유 데이터 기반 사전 자동심사(보조)입니다.",
 }
 
 
@@ -53,6 +78,10 @@ class _FakeResult:
 
     def first(self):
         return self._row
+
+    def fetchall(self):
+        # 목록 조회(list endpoint)용 — 단일 행 픽스처를 1건 목록으로 반환(없으면 빈 목록).
+        return [self._row] if self._row is not None else []
 
 
 class _FakeSession:
@@ -86,10 +115,12 @@ class _FakeSession:
 
 class _FakeOrchestrator:
     """U5 run(db, site=, params=, geometry=, ifc_file_url=, use_llm=,
-    use_verification_retry=) 계약 흉내 — 호출 키워드 기록.
+    use_verification_retry=[, prior_context=]) 계약 흉내 — 호출 키워드 기록.
 
     의도적으로 rooms 키워드를 **받지 않는다** — rooms 미제공 요청이 구버전
     run() 계약 그대로 호출됨(키워드 미가산, TypeError 없음)을 함께 증명한다.
+    prior_context는 실 run()의 기존 계약 kwarg이므로 수용한다(성장루프 prior read가
+    非None을 돌려도 TypeError 없이 동작 — 실 오케스트레이터 시그니처와 정합).
     """
 
     def __init__(self, result=None):
@@ -97,7 +128,7 @@ class _FakeOrchestrator:
         self.calls = []
 
     async def run(self, db, *, site, params, geometry, ifc_file_url,
-                  use_llm, use_verification_retry):
+                  use_llm, use_verification_retry, prior_context=None):
         self.calls.append({
             "site": site, "params": params, "geometry": geometry,
             "ifc_file_url": ifc_file_url, "use_llm": use_llm,
@@ -110,7 +141,7 @@ class _FakeRoomsOrchestrator(_FakeOrchestrator):
     """UP3 확장 계약(run(..., rooms=)) 흉내 — rooms 키워드 수용·기록(UP4)."""
 
     async def run(self, db, *, site, params, geometry, ifc_file_url,
-                  use_llm, use_verification_retry, rooms=None):
+                  use_llm, use_verification_retry, rooms=None, prior_context=None):
         self.calls.append({
             "site": site, "params": params, "geometry": geometry,
             "ifc_file_url": ifc_file_url, "use_llm": use_llm,
@@ -172,15 +203,21 @@ def _make_client(*, authed=True, audit_row=None):
 
 
 def _audit_row():
-    """design_audits SELECT 결과 행(jsonb는 asyncpg처럼 str로)."""
+    """design_audits SELECT 결과 행(jsonb는 asyncpg처럼 str로).
+
+    컬럼 순서: id, project_id, user_id, overall, inputs, findings, blindspot, sections, created_at
+    (sections 영속 컬럼 추가 반영 — _load_audit이 sections를 함께 반환).
+    """
     return _Row((
         AUDIT_ID, "p-1", str(USER_ID),
         json.dumps(_FAKE_RESULT["overall"], ensure_ascii=False),
         json.dumps({"site": {}, "derived_signals": {"comparables": []}}, ensure_ascii=False),
         json.dumps(_FAKE_RESULT["findings"], ensure_ascii=False),
         json.dumps({"generated": True, "label": "AI 추정",
-                    "items": [{"claim": "c", "basis": "ENG-1", "confidence": "medium"}]},
+                    "items": [{"claim": "c", "basis": "rules8_floor_area_ratio",
+                               "confidence": "medium"}]},
                    ensure_ascii=False),
+        json.dumps(_FAKE_RESULT["sections"], ensure_ascii=False),
         None,
     ))
 
@@ -251,7 +288,10 @@ class TestRunMockedE2E:
         data = resp.json()
         assert data["ok"] is True
         assert data["saved"] is True and data["audit_id"]
-        assert data["overall"]["verdict"] == "conditional"
+        # 실 U5 정본: 한국어 verdict(dict) + 최상위 verdict 문자열 표면화(.trim 크래시 방지).
+        assert data["overall"]["verdict"] == "조건부적합"
+        assert data["verdict"] == "조건부적합"
+        # derived_signals는 params_used 기반 합성(과거 죽은 키 {} 대체) → 수치 그라운딩 실재.
         assert data["derived_signals"]["far_pct"] == 249.9
         assert data["blindspot"]["label"] == "AI 추정"
         assert data["blindspot"]["items"][0]["basis"] == "ENG-1"
@@ -265,9 +305,11 @@ class TestRunMockedE2E:
         # 저장 페이로드(jsonb 직렬화 + 소유자) 확인
         ins = client._session.inserted
         assert ins is not None and ins["u"] == str(USER_ID) and ins["p"] == "p-1"
-        assert json.loads(ins["f"])[0]["check_id"] == "ENG-1"
+        assert json.loads(ins["f"])[0]["check_id"] == "rules8_floor_area_ratio"
         assert json.loads(ins["b"])["items"][0]["basis"] == "ENG-1"
         assert json.loads(ins["inp"])["derived_signals"]["far_pct"] == 249.9
+        # sections 영속(런타임 DDL 컬럼) — s1_samples·efficiency_metrics가 저장됨(정직 재구성용).
+        assert json.loads(ins["s"])["efficiency_metrics"]["efficiency_pct"] == 78.0
 
     def test_run_blindspot_failure_omitted(self, monkeypatch):
         """blindspot 전체 실패 → 섹션 생략(None), 심사 결과는 무중단 반환."""
@@ -286,7 +328,7 @@ class TestRunMockedE2E:
         data = resp.json()
         assert data["ok"] is True
         assert data["blindspot"] is None
-        assert data["overall"]["verdict"] == "conditional"
+        assert data["overall"]["verdict"] == "조건부적합"
 
     def test_run_use_llm_false_skips_blindspot(self, monkeypatch):
         client = _make_client()
@@ -456,7 +498,8 @@ class TestRunUploadDxf:
         data = resp.json()
         assert data["ok"] is True
         assert data["id"] == data["audit_id"]
-        assert data["verdict"]["verdict"] == "conditional"
+        # ★verdict는 이제 문자열(과거 overall dict 재대입 → 프론트 .trim() 크래시 위험을 봉합).
+        assert data["verdict"] == "조건부적합"
         assert isinstance(data["sections"], list) and data["generated_at"]
         assert "dxf_import" not in data  # DXF 미업로드 시 키 미가산
         call = fake_orch.calls[0]
@@ -514,7 +557,10 @@ class TestGrammarSections:
 
     def _result_with_grammar(self, grammar=None):
         result = dict(_FAKE_RESULT)
-        result["sections"] = {"grammar": dict(_GRAMMAR_RAW) if grammar is None else grammar}
+        # grammar 섹션을 실 sections(efficiency_metrics·s1_samples 등)에 병합(덮어쓰기 아님).
+        base_sections: dict = dict(_FAKE_RESULT.get("sections") or {})
+        base_sections["grammar"] = dict(_GRAMMAR_RAW) if grammar is None else grammar
+        result["sections"] = base_sections
         return result
 
     def test_grammar_finger_on_s5_and_warnings_s6(self, monkeypatch):
@@ -564,9 +610,11 @@ class TestGrammarSections:
         import app.services.design_audit.blindspot_interpreter as bs_mod
 
         async def _fake_blindspot(findings, derived_signals=None, **kwargs):
+            # ★generate_blindspot 정본 반환 키는 items(과거 'blindspots' 오키를 라우터가 읽어
+            #   S6가 항상 비었던 결함 수정 — 실 계약으로 정렬).
             return {"generated": True, "label": "AI 추정",
-                    "blindspots": [{"claim": "c", "basis": "ENG-1",
-                                    "confidence": "medium"}]}
+                    "items": [{"claim": "c", "basis": "ENG-1",
+                               "confidence": "medium"}]}
 
         monkeypatch.setattr(bs_mod, "generate_blindspot", _fake_blindspot)
 
@@ -606,8 +654,10 @@ class TestGetAudit:
         assert resp.status_code == 200
         audit = resp.json()["audit"]
         assert audit["id"] == AUDIT_ID
-        assert audit["overall"]["verdict"] == "conditional"  # jsonb 역직렬화
-        assert audit["findings"][0]["check_id"] == "ENG-1"
+        assert audit["overall"]["verdict"] == "조건부적합"  # jsonb 역직렬화
+        assert audit["findings"][0]["check_id"] == "rules8_floor_area_ratio"
+        # sections 영속 컬럼 역직렬화(조회 시 재구성용 원자료 반환).
+        assert audit["sections"]["efficiency_metrics"]["efficiency_pct"] == 78.0
         # 소유권 필터(user_id) 적용 확인
         assert client._session.select_params["u"] == str(USER_ID)
 
@@ -620,6 +670,38 @@ class TestGetAudit:
         client = _make_client(audit_row=_audit_row())
         resp = client.get("/api/v1/design-audit/not-a-uuid")
         assert resp.status_code == 404
+
+
+# ════════════════════════════════════════════════════════
+# ③-1 GET / — 본인 소유 이력 목록(최신순·소유권 필터)
+# ════════════════════════════════════════════════════════
+
+
+class TestListAudits:
+
+    def _list_row(self):
+        """list SELECT(id, project_id, overall, created_at) 컬럼 순서에 맞춘 행."""
+        return _Row((
+            AUDIT_ID, "p-1",
+            json.dumps(_FAKE_RESULT["overall"], ensure_ascii=False),
+            None,
+        ))
+
+    def test_list_returns_owned(self):
+        client = _make_client(audit_row=self._list_row())
+        resp = client.get("/api/v1/design-audit")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True and data["count"] == 1
+        assert data["audits"][0]["id"] == AUDIT_ID
+        assert data["audits"][0]["overall"]["verdict"] == "조건부적합"
+        # 소유권(user_id) 필터 적용 확인.
+        assert client._session.select_params["u"] == str(USER_ID)
+
+    def test_list_requires_auth(self):
+        client = _make_client(authed=False)
+        resp = client.get("/api/v1/design-audit")
+        assert resp.status_code in {401, 403}
 
 
 # ════════════════════════════════════════════════════════
@@ -752,40 +834,52 @@ class TestPdf:
 
 
 class TestExtractBrief:
+    """정본 brief_extractor 위임 + 프론트 계약 fields[] 직렬화(오케스트레이터 표준 키).
+
+    LLM 미가용 CI에서 결정론을 위해 use_llm=false로 정규식 폴백을 강제한다(값·표준 키 검증).
+    """
 
     def test_text_extraction(self):
         client = _make_client()
         resp = client.post("/api/v1/design-audit/extract-brief", data={
             "text": ("대지면적 1,250.50㎡, 연면적 3,200㎡, 건폐율 59.8%, 용적률 249.9%, "
-                     "지상 15층, 지하 2층, 총 120세대, 높이 45.2m, 주차 95대, "
+                     "지상 15층, 지하 2층, 총 120세대, 최고높이 45.2m, 주차 95대, "
                      "제2종일반주거지역"),
+            "use_llm": "false",
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        brief = data["brief"]
-        assert brief["land_area_sqm"] == 1250.5
-        assert brief["gfa_sqm"] == 3200
-        assert brief["bcr_pct"] == 59.8
-        assert brief["far_pct"] == 249.9
-        assert brief["floors_above"] == 15
-        assert brief["floors_below"] == 2
-        assert brief["units"] == 120
-        assert brief["height_m"] == 45.2
-        assert brief["parking"] == 95
-        assert brief["zone_type"] == "제2종일반주거지역"
+        # 프론트 계약: fields[{key,label,value,unit,quote,confidence,source}] (오케스트레이터 표준 키).
+        by_key = {f["key"]: f for f in data["fields"]}
+        assert by_key["land_area_sqm"]["value"] == 1250.5
+        assert by_key["total_floor_area_sqm"]["value"] == 3200  # gfa_sqm→표준 total_floor_area_sqm
+        assert by_key["bcr_pct"]["value"] == 59.8
+        assert by_key["far_pct"]["value"] == 249.9
+        assert by_key["floors_above"]["value"] == 15
+        assert by_key["floors_below"]["value"] == 2
+        assert by_key["units"]["value"] == 120
+        assert by_key["building_height_m"]["value"] == 45.2  # height_m→표준 building_height_m
+        assert by_key["parking"]["value"] == 95
+        assert by_key["zone_type"]["value"] == "제2종일반주거지역"
+        # 원문 인용(quote) 동반 + 라벨/단위 부착(프론트 그리드 표기용).
+        assert by_key["land_area_sqm"]["quote"]
+        assert by_key["far_pct"]["unit"] == "%"
 
     def test_no_fabricated_fields(self):
         """원문에 없는 필드는 생략(가짜값 금지)."""
         client = _make_client()
         resp = client.post("/api/v1/design-audit/extract-brief",
-                           data={"text": "용적률 200% 계획"})
+                           data={"text": "용적률 200% 계획", "use_llm": "false"})
         assert resp.status_code == 200
-        brief = resp.json()["brief"]
-        assert brief == {"far_pct": 200}
+        fields = resp.json()["fields"]
+        assert [f["key"] for f in fields] == ["far_pct"]
+        assert fields[0]["value"] == 200
 
     def test_empty_input_honest(self):
         client = _make_client()
         resp = client.post("/api/v1/design-audit/extract-brief", data={"text": ""})
         assert resp.status_code == 200
-        assert resp.json()["ok"] is False
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["fields"] == []

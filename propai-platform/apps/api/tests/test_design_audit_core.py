@@ -265,7 +265,9 @@ class TestOrchestratorOverall:
         counts = result["overall"]["counts"]
         assert counts.get("fail", 0) == 0
         assert counts.get("warning", 0) == 0
-        assert set(result["engines"]) == set(ENGINE_NAMES)
+        # 8엔진(ENGINE_NAMES) + 9번째 bl_rules(피난·방화 BL-007) 위임 엔진 — 전부 ok.
+        # (소규모 설계는 피난 특별규정 해당없음→info, 엔진 실행 자체는 성공=ok)
+        assert set(result["engines"]) == set(ENGINE_NAMES) | {"bl_rules"}
         assert all(v == "ok" for v in result["engines"].values())
         # 조례 실효한도 선행 산정(법정 250/60) + 레지스트리 근거.
         assert result["limits"]["applied_far_pct"] == 250.0
@@ -334,6 +336,34 @@ class TestOrchestratorOverall:
         # 인센티브는 예상치(info) — 종합판정에 미반영.
         incentive = next(f for f in result["findings"] if f["engine"] == "incentives")
         assert incentive["status"] == "info"
+
+    async def test_bl_rules_evacuation_engine(self):
+        """9번째 엔진 bl_rules — 정본 building_code_rules(BL-007) 위임으로 피난·방화 surface.
+
+        5층 이상/층당 200㎡ 초과 → 직통계단·방화구획 확인 필요(warning), 근거 법령 부착.
+        UI가 광고하던 '피난·방화 체크'가 실제로 검사되는지 확인(광고-실검사 정합).
+        """
+        params = _clean_params(
+            floors_above=15, total_floor_area_sqm=6000.0, building_height_m=45.0,
+        )
+        result = await DesignAuditOrchestrator().audit(params, zone_type=ZONE)
+        assert result["engines"]["bl_rules"] == "ok"
+        bl = next(f for f in result["findings"] if f["engine"] == "bl_rules")
+        assert bl["check_id"] == "bl_fire_escape"
+        assert bl["status"] == "warning"  # 요건 발생 — 설계도서 확인 필요(확정 위반 아님)
+        assert bl["legal_refs"]  # 건축법 시행령 §34/§46 근거 부착
+        assert "bl_rules" in result["sections"]
+
+    async def test_bl_rules_skipped_without_data(self):
+        """층수·연면적·층당면적 전무 → bl_rules는 skipped(임의값 강행 금지·정직)."""
+        params = _clean_params(
+            floors_above=None, total_floor_area_sqm=None,
+            building_area_sqm=None, avg_unit_area_sqm=None, units=None,
+        )
+        result = await DesignAuditOrchestrator().audit(params, zone_type=ZONE)
+        assert result["engines"]["bl_rules"] == "skipped"
+        bl = next(f for f in result["findings"] if f["engine"] == "bl_rules")
+        assert bl["status"] == "skipped"
 
 
 class TestOrchestratorGraceful:

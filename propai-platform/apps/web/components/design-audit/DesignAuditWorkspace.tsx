@@ -22,6 +22,7 @@ import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveDominantZone } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
 import {
   BriefUploadStep,
@@ -139,7 +140,11 @@ export function DesignAuditWorkspace({
     ? {
         address: siteAnalysis?.address ?? "",
         pnu: siteAnalysis?.pnu ?? null,
-        zoneCode: siteAnalysis?.zoneCode ?? null,
+        // ★용도지역은 SSOT 리더(resolveDominantZone)로 읽는다 — 다필지 통합 대표(우세) 용도지역
+        //   우선, 없으면 단일 zoneCode(직독 대신 단일 계약으로 통합·백엔드 zone_type 봉합).
+        zoneCode: resolveDominantZone(siteAnalysis),
+        // 시군구(조례 딥링크·인센티브 resolver용) — 부지분석 조례 SSOT에서 도출.
+        sigungu: siteAnalysis?.ordinance?.sigungu ?? null,
         // ★다필지면 통합 면적 — 심의 면적/도식 footprint가 통합 부지 기준이 되도록.
         landAreaSqm: effectiveLandAreaSqm(siteAnalysis),
       }
@@ -147,6 +152,7 @@ export function DesignAuditWorkspace({
         address: manualAddress.trim(),
         pnu: null,
         zoneCode: null,
+        sigungu: null,
         landAreaSqm: manualArea,
       };
   const siteReady = !!site.address || !!site.pnu;
@@ -220,7 +226,9 @@ export function DesignAuditWorkspace({
             project_id: usingProject ? projectId : null,
             address: site.address || null,
             pnu: site.pnu || null,
+            // 백엔드 run()이 zone_type←zone_code 폴백으로 봉합(용도지역이 한도의존 엔진에 도달).
             zone_code: site.zoneCode || null,
+            sigungu: site.sigungu || null,
             land_area_sqm: site.landAreaSqm ?? null,
           },
           brief: {
@@ -391,7 +399,8 @@ export function DesignAuditWorkspace({
                           {(
                             [
                               ["주소", siteAnalysis.address || "—"],
-                              ["용도지역", siteAnalysis.zoneCode || "—"],
+                              // ★SSOT 리더 — 다필지 통합 대표(우세) 용도지역 우선(직독 대신 단일 계약).
+                              ["용도지역", resolveDominantZone(siteAnalysis) || "—"],
                               [
                                 "대지면적",
                                 (() => {
