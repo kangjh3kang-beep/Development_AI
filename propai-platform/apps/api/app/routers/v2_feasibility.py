@@ -554,7 +554,9 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
                     "max_far_pct": static_limits["max_far"],
                     "max_height_m": static_limits.get("max_height_m"),
                     "zone_key": zone_key,
-                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+                    # 건폐율 근거=제77조, 용적률 근거=제78조. 이 페이로드는 bcr·far를 모두 실으므로
+                    # 종전 §78 단독 표기는 건폐율 근거(§77) 누락 — 병기로 교정.
+                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제77조·제78조(용도지역 건폐율·용적률)",
                 }
         except Exception:  # noqa: BLE001 — 정적 보강 실패 시 유형 표준 FAR로 진행
             logger.warning("baseline: 용도지역 정적 FAR/BCR 보강 실패")

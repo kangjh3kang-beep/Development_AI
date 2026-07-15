@@ -302,9 +302,11 @@ ORDINANCE_CACHE: dict[str, dict[str, dict[str, float]]] = {
     "제주특별자치도": {"제2종일반주거지역": {"bcr": 60, "far": 250}, "제3종일반주거지역": {"bcr": 50, "far": 250}},
 }
 
-# 법제처 API 엔드포인트
-MOLEG_ORDIN_LIST_URL = "http://www.law.go.kr/DRF/lawSearch.do"
-MOLEG_ORDIN_TEXT_URL = "http://www.law.go.kr/DRF/lawService.do"
+# 법제처 API 엔드포인트 — 법제처 DRF는 https를 지원하므로 평문 http 대신 https 사용
+# (평문 전송 시 API키·조회내용이 중간자에 노출될 수 있음). 만약 특정 환경에서 https 접속이
+# 실패하면 인프라(프록시/CA)를 점검할 것 — 코드에서 http로 되돌리지 말 것.
+MOLEG_ORDIN_LIST_URL = "https://www.law.go.kr/DRF/lawSearch.do"
+MOLEG_ORDIN_TEXT_URL = "https://www.law.go.kr/DRF/lawService.do"
 
 
 class OrdinanceService:

@@ -433,11 +433,18 @@ async def check_compliance(
                 )
                 lim = ZONE_LIMITS.get(code) if code else None
                 if lim:
+                    # 높이 상한이 무제한(inf: 상업·일반주거 등 — 가로구역·일조 별도 규율)이면
+                    # 오값(예: 과거 일반상업 50m) 대신 '제한없음'으로 정직 표기한다.
+                    height_txt = (
+                        "제한없음(가로구역별 최고높이·일조 사선 별도)"
+                        if lim.max_height_m == float("inf")
+                        else f"{lim.max_height_m:.0f}m"
+                    )
                     permit_evidence = (
                         f"- 용도지역 법정 한도({zone_type}, 국토계획법 시행령): "
                         f"건폐율 상한 {lim.building_coverage_ratio * 100:.0f}%, "
                         f"용적률 상한 {lim.floor_area_ratio * 100:.0f}%, "
-                        f"최고높이 {lim.max_height_m:.0f}m. "
+                        f"최고높이 {height_txt}. "
                         "이 법정 한도를 기준으로 위반·완화 가능성을 판단할 것."
                     )
             except Exception:  # noqa: BLE001

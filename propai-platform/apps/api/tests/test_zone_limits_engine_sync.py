@@ -123,6 +123,27 @@ def test_auto_design_covers_standard_korean_zone_labels():
     assert not violations, "auto_design 표준 한글 용도지역 한도 초과:\n" + "\n".join(violations)
 
 
+def test_design_shortcode_korean_alias_parity():
+    """auto_design ZONE_LIMITS: 별칭 한글명은 대응 단축코드와 '동일 한도'를 가져야 한다.
+
+    ★이중 기준 방지: 종전엔 같은 용도지역이 표기(단축코드 GC vs 한글명 '일반상업지역')에 따라
+    건폐율/용적률이 달라(GC 0.60/10.00 vs 일반상업 0.80/13.00 등) 어느 키로 조회하냐로 판정이
+    갈렸다. _ZONE_ALIASES가 한글명을 단축코드로 정규화하므로 두 엔트리 값은 반드시 일치해야 한다.
+    """
+    from app.services.cad.auto_design_engine import _ZONE_ALIASES
+    from app.services.cad.auto_design_engine import ZONE_LIMITS as DESIGN
+
+    mismatches = []
+    for korean_name, code in _ZONE_ALIASES.items():
+        d_name = DESIGN.get(korean_name)
+        d_code = DESIGN.get(code)
+        if d_name is None or d_code is None:
+            mismatches.append(f"{korean_name}->{code}: 엔트리 결손(name={d_name is not None}, code={d_code is not None})")
+        elif d_name != d_code:
+            mismatches.append(f"{korean_name}{tuple(d_name)} != {code}{tuple(d_code)}")
+    assert not mismatches, "단축코드↔한글명 한도 불일치(이중 기준):\n" + "\n".join(mismatches)
+
+
 def test_fixture_matches_live_engine_data():
     """(2단) 엔진 워크트리가 있으면 커밋 fixture가 실 national_zone_limits.json과 비트 일치 — fixture stale 시 RED
     (재생성 강제). 엔진 미체크아웃 시 명시 skip(무음 green 금지)."""

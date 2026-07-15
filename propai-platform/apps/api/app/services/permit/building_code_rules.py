@@ -4,8 +4,8 @@ RASE 방법론 기반: 각 법규 조항을 Requirement/Applicability/Selection/
 건축법, 건축법 시행령, 주차장법 핵심 조항을 논리식으로 인코딩.
 
 검증 항목 8개:
-  BL-001  건폐율        건축법 시행령 §84
-  BL-002  용적률        건축법 시행령 §85
+  BL-001  건폐율        국토계획법 시행령 §84 (건축법 §55 위임)
+  BL-002  용적률        국토계획법 시행령 §85 (건축법 §56 위임)
   BL-003  높이제한      건축법 §60, §61
   BL-004  건축선 후퇴   건축법 §46, §47
   BL-005  주차대수      주차장법 시행령 §6
@@ -125,7 +125,8 @@ class BuildingCodeRuleEngine:
         return RuleCheckResult(
             rule_id="BL-001",
             rule_name="건폐율 검증",
-            legal_basis="건축법 시행령 제84조",
+            # 건폐율 §84는 국토계획법 시행령(건축법 §55가 위임) — 종전 '건축법 시행령' 오표기 교정.
+            legal_basis="국토의 계획 및 이용에 관한 법률 시행령 제84조(건축법 제55조 위임)",
             status=status,
             required_value=f"{max_bcr}% 이하",
             actual_value=f"{actual_bcr:.1f}%",
@@ -148,7 +149,8 @@ class BuildingCodeRuleEngine:
         return RuleCheckResult(
             rule_id="BL-002",
             rule_name="용적률 검증",
-            legal_basis="건축법 시행령 제85조",
+            # 용적률 §85는 국토계획법 시행령(건축법 §56이 위임) — 종전 '건축법 시행령' 오표기 교정.
+            legal_basis="국토의 계획 및 이용에 관한 법률 시행령 제85조(건축법 제56조 위임)",
             status=status,
             required_value=f"{max_far}% 이하",
             actual_value=f"{actual_far:.1f}%",

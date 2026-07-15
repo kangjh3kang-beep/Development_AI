@@ -205,7 +205,8 @@ async def test_designer_compliance_flags_over_limit(monkeypatch):
     assert "용적률 초과" in comp["value"]["violations"]
 
 
-# 매스 — "2R"(법정 bcr 60%·far 200%) 한도 내 값(한글 zone_code 정규화 후 실제 비교 pass 검증용).
+# 매스 — "2R"(법정 bcr 60%·far 250%, 국토계획법 시행령 §85 SSOT) 한도 내 값
+# (한글 zone_code 정규화 후 실제 비교 pass 검증용).
 _MASS_2R = {
     "building_width_m": 24.0, "building_depth_m": 16.0, "num_floors": 12,
     "floor_height_m": 3.0, "building_height_m": 36.0,
@@ -221,17 +222,18 @@ async def test_designer_korean_zone_code_normalized_compliance_fires(monkeypatch
                             {"address": "서울 강남", "land_area_sqm": 1000,
                              "zone_code": "제2종일반주거지역"}, use_llm=False)
     comp = next(c for c in out["checklist"] if c["step"] == "compliance")
-    # 한글명이 2R 로 정규화돼 법정 한도(bcr 60·far 200)가 실제 산출됨 → missing 아님.
+    # 한글명이 2R 로 정규화돼 법정 한도(bcr 60·far 250, 국토계획법 시행령 §85 SSOT)가
+    # 실제 산출됨 → missing 아님. (★§85 정본 정합: 종전 far 200%는 결함 고정값이었음.)
     assert comp["status"] == "pass"
-    assert comp["value"]["max_bcr_pct"] == 60.0 and comp["value"]["max_far_pct"] == 200.0
+    assert comp["value"]["max_bcr_pct"] == 60.0 and comp["value"]["max_far_pct"] == 250.0
     assert comp["value"]["zone_code"] == "2R"
     # 'zone_code 미확보' 정직 고지가 붙지 않아야 한다(정규화 성공 경로).
     assert not any("미확보" in n for n in out["honesty_notes"])
 
 
 async def test_designer_korean_zone_code_over_limit_warns(monkeypatch):
-    # 한글 zone_code 정규화 후 한도 초과(far 290>200)면 missing 이 아니라 warn + 위반 목록.
-    _patch_design(monkeypatch, mass=_MASS)  # far_pct 290 > 2R 한도 200
+    # 한글 zone_code 정규화 후 한도 초과(far 290>250, §85 SSOT)면 missing 이 아니라 warn + 위반 목록.
+    _patch_design(monkeypatch, mass=_MASS)  # far_pct 290 > 2R 한도 250
     out = await run_persona("designer", _FakeDB(),
                             {"address": "서울 강남", "land_area_sqm": 1000,
                              "zone_code": "제2종일반주거지역"}, use_llm=False)
