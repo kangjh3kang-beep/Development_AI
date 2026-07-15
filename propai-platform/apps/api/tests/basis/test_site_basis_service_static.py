@@ -41,12 +41,28 @@ def test_event_table_is_insert_only_in_source():
     assert "INSERT INTO site_basis_transition_event" in source
 
 
-def test_gate_design_entry_never_returns_authorized_when_all_clear():
-    """하류 결선(설계생성 진입) — 전건 P0 충족 입력이어도 자동경로는 ADVISORY 고정."""
+def test_gate_design_entry_never_returns_authorized_basis_status():
+    """하류 결선(설계생성 진입) — 전건 P0 충족 입력이어도 자동경로 basis_status는 항상 ADVISORY."""
     result = gate_design_entry(access_status="PASS", dev_act_status="CONDITIONAL", rights_confirmed=True)
     assert result["basis_status"] == "ADVISORY"
     assert result["all_p0_clear"] is True
-    assert result["artifact_status"] == "ANALYZED"
+
+
+def test_gate_design_entry_caps_analyzed_when_access_is_unverified_self_report():
+    """★MEDIUM-3: access_status는 이 진입점에서 caller_declared(미검증)이므로 P0 전건 충족이어도
+    ANALYZED로 승격하지 않고 REVIEW_REQUIRED로 상한된다(dev_act만 server_derived로는 부족)."""
+    result = gate_design_entry(access_status="PASS", dev_act_status="CONDITIONAL", rights_confirmed=True)
+    assert result["artifact_status"] == "REVIEW_REQUIRED"
+    access_gate = next(g for g in result["gates"] if g["name"] == "access")
+    assert access_gate["source"] == "caller_declared"
+
+
+def test_gate_design_entry_dev_act_status_is_marked_server_derived():
+    """dev_act_status는 design_v61이 build_dev_act_permit_gate를 직접 호출한 실산출값이므로
+    source="server_derived"로 표기된다(caller 자기신고 아님 — 신뢰경계 정직 표기)."""
+    result = gate_design_entry(access_status=None, dev_act_status="CONDITIONAL", rights_confirmed=None)
+    dev_gate = next(g for g in result["gates"] if g["name"] == "dev_act_permit")
+    assert dev_gate["source"] == "server_derived"
 
 
 def test_gate_design_entry_reports_review_required_when_blocked():

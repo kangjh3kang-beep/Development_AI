@@ -8,6 +8,10 @@
  ⑤ 상태전이 불법 경로 거부(예: DRAFT→APPROVED 직행 금지)
  ⑥ 원장 무결성 훼손 0(별도 파일 test_site_basis_service_static.py에서 검증)
 
+추가로 분리 리뷰 MEDIUM-3(게이트 status 신뢰경계) 교정분 — reconcile_status(권위 재도출값과
+caller 자기신고 교차검증)·cap_status_by_trust(미검증 자기신고만으로는 ANALYZED 승격 금지)를
+검증한다.
+
 ★fastapi·DB 미의존(순수 서비스 직접 호출) — 시스템 파이썬으로도 실행 가능.
 """
 from __future__ import annotations
@@ -17,13 +21,17 @@ import pytest
 from app.services.basis.site_basis_state import (
     ArtifactStatus,
     BasisStatus,
+    GateResult,
     IllegalTransitionError,
     aggregate_p0,
     apply_transition,
     basis_status_of,
     can_approve,
+    cap_status_by_trust,
     classify_after_assess,
+    evaluate_gate,
     is_stale,
+    reconcile_status,
 )
 
 # ── ① P0 게이트 각각의 단독 차단 ────────────────────────────────────────────
@@ -212,3 +220,107 @@ def test_reapprove_already_approved_rejected():
     ok, reason = can_approve(ArtifactStatus.APPROVED, all_p0_clear=True, approved_by="reviewer")
     assert ok is False
     assert reason
+
+
+# ── MEDIUM-3(분리 리뷰 교정): 게이트 status 신뢰경계 ────────────────────────
+
+
+def test_evaluate_gate_none_status_forces_unknown_source():
+    """status 미상(None)은 source를 caller_declared로 넘겨도 'unknown'으로 강제된다(정직 표기)."""
+    gate = evaluate_gate("access", None, source="caller_declared")
+    assert gate.source == "unknown"
+    assert gate.clear is False
+
+
+def test_evaluate_gate_preserves_declared_source_when_status_present():
+    """status가 있으면 호출측이 넘긴 source(server_derived 등)를 그대로 보존한다."""
+    gate = evaluate_gate("access", "PASS", source="server_derived")
+    assert gate.source == "server_derived"
+    assert gate.clear is True
+
+
+def test_aggregate_p0_threads_source_params_into_gates():
+    """aggregate_p0에 넘긴 access_source/dev_act_source가 각 게이트에 그대로 반영된다."""
+    _, gates = aggregate_p0(
+        access_status="PASS", dev_act_status="CONDITIONAL", rights_confirmed=True,
+        access_source="server_derived", dev_act_source="server_derived_conflict_resolved",
+    )
+    access_gate = next(g for g in gates if g.name == "access")
+    dev_gate = next(g for g in gates if g.name == "dev_act_permit")
+    assert access_gate.source == "server_derived"
+    assert dev_gate.source == "server_derived_conflict_resolved"
+
+
+def test_reconcile_status_no_authoritative_trusts_caller_declared():
+    """재도출 재료 없음(authoritative=None) — caller 자기신고를 그대로 신뢰."""
+    status, source = reconcile_status("PASS", None)
+    assert status == "PASS"
+    assert source == "caller_declared"
+
+
+def test_reconcile_status_no_caller_uses_authoritative_only():
+    """caller 신고 없음 — 권위 재도출값만 사용."""
+    status, source = reconcile_status(None, "CONDITIONAL")
+    assert status == "CONDITIONAL"
+    assert source == "server_derived"
+
+
+def test_reconcile_status_match_confirms_server_derived():
+    """caller 신고와 권위 재도출값이 일치하면 그 값 그대로, source=server_derived(교차검증 확인됨)."""
+    status, source = reconcile_status("PASS", "PASS")
+    assert status == "PASS"
+    assert source == "server_derived"
+
+
+def test_reconcile_status_mismatch_picks_more_conservative_value():
+    """★MEDIUM-3 핵심: 불일치 시 더 보수적(차단쪽) 값을 채택 — caller가 낙관 신고해도 무력화."""
+    status, source = reconcile_status("PASS", "BLOCKED")  # caller는 PASS라 우기지만 서버는 BLOCKED.
+    assert status == "BLOCKED"
+    assert source == "server_derived_conflict_resolved"
+
+
+def test_reconcile_status_mismatch_conservative_independent_of_argument_order():
+    """보수값 채택은 어느 쪽이 caller/authoritative인지와 무관하게 항상 더 차단적인 값이 이긴다."""
+    status, _source = reconcile_status("BLOCKED", "PASS")  # 이번엔 caller가 BLOCKED로 신고.
+    assert status == "BLOCKED"
+
+
+def test_cap_status_by_trust_forces_review_required_when_access_unverified():
+    """★MEDIUM-3 핵심: access 게이트가 caller_declared(미검증)면, P0 전건 충족(all_clear)이어도
+    ANALYZED로 자동 승격하지 않고 REVIEW_REQUIRED로 강등된다(P0 청산 날조 방지)."""
+    gates = [
+        GateResult(name="access", clear=True, status="PASS", reason="r", source="caller_declared"),
+        GateResult(name="dev_act_permit", clear=True, status="CONDITIONAL", reason="r", source="server_derived"),
+        GateResult(name="rights", clear=True, status="CONFIRMED", reason="r", source="caller_declared"),
+    ]
+    capped = cap_status_by_trust(ArtifactStatus.ANALYZED, gates)
+    assert capped == ArtifactStatus.REVIEW_REQUIRED
+
+
+def test_cap_status_by_trust_allows_analyzed_when_access_and_dev_act_server_derived():
+    """access·dev_act 둘 다 server_derived(재도출·교차검증됨)면 ANALYZED 승격이 허용된다."""
+    gates = [
+        GateResult(name="access", clear=True, status="PASS", reason="r", source="server_derived"),
+        GateResult(name="dev_act_permit", clear=True, status="CONDITIONAL", reason="r", source="server_derived"),
+        GateResult(name="rights", clear=True, status="CONFIRMED", reason="r", source="caller_declared"),
+    ]
+    capped = cap_status_by_trust(ArtifactStatus.ANALYZED, gates)
+    assert capped == ArtifactStatus.ANALYZED
+
+
+def test_cap_status_by_trust_ignores_rights_source():
+    """rights(P3)는 이 WP에서 항상 caller_declared(전용 재도출 서비스 부재)이므로, access·dev_act가
+    server_derived라면 rights의 caller_declared만으로는 cap이 걸리지 않는다(대상 게이트 아님)."""
+    gates = [
+        GateResult(name="access", clear=True, status="PASS", reason="r", source="server_derived"),
+        GateResult(name="dev_act_permit", clear=True, status="PASS", reason="r", source="server_derived"),
+        GateResult(name="rights", clear=True, status="CONFIRMED", reason="r", source="caller_declared"),
+    ]
+    assert cap_status_by_trust(ArtifactStatus.ANALYZED, gates) == ArtifactStatus.ANALYZED
+
+
+def test_cap_status_by_trust_is_noop_for_non_analyzed_status():
+    """이미 REVIEW_REQUIRED/DRAFT/STALE/APPROVED인 상태는 신뢰경계 상한 대상이 아니다(no-op)."""
+    gates = [GateResult(name="access", clear=True, status="PASS", reason="r", source="caller_declared")]
+    for status in (ArtifactStatus.REVIEW_REQUIRED, ArtifactStatus.DRAFT, ArtifactStatus.STALE):
+        assert cap_status_by_trust(status, gates) == status

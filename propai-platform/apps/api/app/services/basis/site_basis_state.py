@@ -63,30 +63,44 @@ class IllegalTransitionError(Exception):
 
 @dataclass(frozen=True)
 class GateResult:
-    """단일 P0 게이트 판정 결과(직렬화 가능 — jsonb 원장·응답 부착용)."""
+    """단일 P0 게이트 판정 결과(직렬화 가능 — jsonb 원장·응답 부착용).
+
+    source(신뢰경계 — MEDIUM-3 교정): 이 status가 어디서 왔는지 표기한다.
+      "server_derived"                — 권위 서비스(access_basis_service·dev_act_permit_gate)
+                                         재도출값을 그대로 채택.
+      "server_derived_conflict_resolved" — 재도출값과 caller 자기신고가 불일치해 더 보수적
+                                         (차단쪽) 값을 채택.
+      "caller_declared"               — 재도출 재료(site_context) 없이 caller 자기신고를 그대로
+                                         신뢰(P3 권리 게이트는 이 WP에서 항상 이 값).
+      "unknown"                       — 아무 신호도 없음(값 자체가 None).
+    """
 
     name: str
     clear: bool
     status: str | None
     reason: str
+    source: str = "caller_declared"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": str(self.name), "clear": self.clear, "status": self.status, "reason": self.reason}
+        return {"name": str(self.name), "clear": self.clear, "status": self.status,
+                "reason": self.reason, "source": self.source}
 
 
-def evaluate_gate(name: str, status: str | None) -> GateResult:
+def evaluate_gate(name: str, status: str | None, *, source: str = "caller_declared") -> GateResult:
     """P2·P4 공용 어휘 기반 단일 게이트 판정.
 
     status 미상(None)은 정직하게 차단으로 취급한다(REQUIRES_AUTHORITY_CONFIRMATION과 동치) —
-    데이터가 없다고 낙관적으로 PASS 처리하지 않는다(무날조·정직 강등 원칙).
+    데이터가 없다고 낙관적으로 PASS 처리하지 않는다(무날조·정직 강등 원칙). 이때 source는
+    "unknown"으로 고정(아무 것도 신고되지 않았으므로 caller_declared라는 표기조차 부정확).
     """
     if status is None:
-        return GateResult(name=name, clear=False, status=None,
+        return GateResult(name=name, clear=False, status=None, source="unknown",
                            reason=f"{name}: 판정 데이터 미확보(미상) — AUTHORIZED 차단")
     normalized = str(status).strip().upper()
     if normalized in _CLEAR_STATUSES:
-        return GateResult(name=name, clear=True, status=normalized, reason=f"{name}: {normalized} — P0 충족")
-    return GateResult(name=name, clear=False, status=normalized,
+        return GateResult(name=name, clear=True, status=normalized, source=source,
+                           reason=f"{name}: {normalized} — P0 충족")
+    return GateResult(name=name, clear=False, status=normalized, source=source,
                        reason=f"{name}: {normalized} — P0 미충족(AUTHORIZED 차단)")
 
 
@@ -95,12 +109,15 @@ def evaluate_rights_gate(rights_confirmed: bool | None) -> GateResult:
 
     registry_analysis_service는 현행 LLM 서술형(전용 차단 상태머신 부재)이라, 이번 WP는 확정 여부
     (rights_confirmed=True)만 P0 충족으로 인정한다. None/False는 모두 미확정으로 정직 차단.
+    재도출 권위 서비스가 없어 source는 항상 caller_declared(명시 신고)·unknown(미신고)뿐이다.
     """
     if rights_confirmed is True:
-        return GateResult(name=GateName.RIGHTS, clear=True, status="CONFIRMED",
+        return GateResult(name=GateName.RIGHTS, clear=True, status="CONFIRMED", source="caller_declared",
                            reason="rights: 권리분석 확정됨 — P0 충족")
-    status = "UNCONFIRMED" if rights_confirmed is False else None
-    return GateResult(name=GateName.RIGHTS, clear=False, status=status,
+    if rights_confirmed is False:
+        return GateResult(name=GateName.RIGHTS, clear=False, status="UNCONFIRMED", source="caller_declared",
+                           reason="rights: 권리분석 미확정 — AUTHORIZED 차단(보수 게이트, 전용 상태머신 부재)")
+    return GateResult(name=GateName.RIGHTS, clear=False, status=None, source="unknown",
                        reason="rights: 권리분석 미확정 — AUTHORIZED 차단(보수 게이트, 전용 상태머신 부재)")
 
 
@@ -109,11 +126,18 @@ def aggregate_p0(
     access_status: str | None,
     dev_act_status: str | None,
     rights_confirmed: bool | None,
+    access_source: str = "caller_declared",
+    dev_act_source: str = "caller_declared",
 ) -> tuple[bool, list[GateResult]]:
-    """P2·P3·P4 P0 게이트 3종을 집계 — 하나라도 미충족·미확정이면 all_clear=False."""
+    """P2·P3·P4 P0 게이트 3종을 집계 — 하나라도 미충족·미확정이면 all_clear=False.
+
+    access_source/dev_act_source: 호출측(site_basis_service)이 권위 서비스로 재도출했으면
+    "server_derived"(또는 불일치 조정 시 "server_derived_conflict_resolved")를, 재도출 재료가
+    없어 caller 자기신고를 그대로 썼으면 기본값 "caller_declared"를 넘긴다.
+    """
     gates = [
-        evaluate_gate(GateName.ACCESS, access_status),
-        evaluate_gate(GateName.DEV_ACT_PERMIT, dev_act_status),
+        evaluate_gate(GateName.ACCESS, access_status, source=access_source),
+        evaluate_gate(GateName.DEV_ACT_PERMIT, dev_act_status, source=dev_act_source),
         evaluate_rights_gate(rights_confirmed),
     ]
     return all(g.clear for g in gates), gates
@@ -122,6 +146,54 @@ def aggregate_p0(
 def classify_after_assess(all_p0_clear: bool) -> ArtifactStatus:
     """자동판정 — P0 전건 충족이면 ANALYZED, 아니면 REVIEW_REQUIRED(인간 검토 필요)."""
     return ArtifactStatus.ANALYZED if all_p0_clear else ArtifactStatus.REVIEW_REQUIRED
+
+
+# P0 상태 어휘의 '차단 정도' 순위 — reconcile_status가 caller 자기신고와 권위 재도출값이
+# 불일치할 때 더 보수적(차단쪽)인 값을 고르는 데 쓴다. 미상 등급은 REQUIRES_AUTHORITY_CONFIRMATION
+# 취급(보수) — 알 수 없는 문자열을 낙관적으로 PASS 취급하지 않는다.
+_STATUS_BLOCK_RANK = {"PASS": 0, "CONDITIONAL": 1, "REQUIRES_AUTHORITY_CONFIRMATION": 2, "BLOCKED": 3}
+
+
+def reconcile_status(caller_declared: str | None, authoritative: str | None) -> tuple[str | None, str]:
+    """caller 자기신고 status와 권위 서비스 재도출(authoritative) status를 신뢰경계에 따라 조정.
+
+    ★MEDIUM-3 교정(택1의 (a)): /basis/assess가 site_context(판정 재료)를 받으면 호출측이
+    access_basis_service·dev_act_permit_gate로 서버측 재도출한 뒤 이 함수로 caller 신고값과
+    교차검증한다. 불일치 시 더 보수적(차단쪽) 값을 채택하고, 그 사실을 source로 남긴다(날조 방지).
+
+    반환: (채택 status, source)
+      authoritative 없음      → (caller_declared, "caller_declared")  — 재도출 재료 없어 자기신고 신뢰.
+      caller_declared 없음    → (authoritative, "server_derived")     — 신고값 없어 재도출값만 사용.
+      둘 다 같음               → (그 값, "server_derived")             — 일치 확인됨.
+      불일치                   → (보수값, "server_derived_conflict_resolved")
+    """
+    if authoritative is None:
+        return caller_declared, "caller_declared"
+    if caller_declared is None:
+        return authoritative, "server_derived"
+    a = authoritative.strip().upper()
+    c = caller_declared.strip().upper()
+    if a == c:
+        return a, "server_derived"
+    rank_a = _STATUS_BLOCK_RANK.get(a, 2)
+    rank_c = _STATUS_BLOCK_RANK.get(c, 2)
+    conservative = a if rank_a >= rank_c else c
+    return conservative, "server_derived_conflict_resolved"
+
+
+def cap_status_by_trust(status: ArtifactStatus, gates: list[GateResult]) -> ArtifactStatus:
+    """P0 게이트(P2 dev_act_permit·P4 access) 중 하나라도 caller_declared(미검증 자기신고)면
+    ANALYZED 승격을 금지하고 REVIEW_REQUIRED로 강등한다 — P0 청산 날조 방지(MEDIUM-3 보수 정책).
+
+    권위 서비스로 재도출·교차검증되지 않은 자기신고만으로는 '인간승인 대기 자격'(ANALYZED)에
+    자동 도달시키지 않는다 — 인간 재검토를 강제한다. rights(P3)는 이 WP에서 항상 caller_declared
+    (전용 재도출 서비스 부재, 별도 명시된 보수 게이트)이므로 이 상한의 판단 대상에서 제외한다.
+    """
+    if status != ArtifactStatus.ANALYZED:
+        return status
+    verifiable_names = {GateName.ACCESS.value, GateName.DEV_ACT_PERMIT.value}
+    unverified = any(g.name in verifiable_names and g.source == "caller_declared" for g in gates)
+    return ArtifactStatus.REVIEW_REQUIRED if unverified else status
 
 
 def basis_status_of(artifact_status: ArtifactStatus) -> BasisStatus:
