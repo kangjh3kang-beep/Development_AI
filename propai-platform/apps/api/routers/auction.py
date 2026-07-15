@@ -419,6 +419,18 @@ async def auction_watchlist_upload(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="빈 파일입니다.")
+
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — openpyxl 파싱 전에 압축폭탄(xlsx=zip
+    # 계열, 폴리글랏 포함)·실행/스크립트 위장·MIME 위장·경로순회를 차단한다. xlsx/xls/csv 를 모두
+    # 받으므로 형식 화이트리스트(expected_kinds)는 걸지 않는다(csv 는 매직바이트가 없어 미인식).
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(raw, file.filename or "", file.content_type)
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
     try:
         return await service.upload_watchlist_excel(
             user_id=str(current_user.user_id), raw=raw, filename=file.filename or "",

@@ -1149,6 +1149,17 @@ async def import_dxf(
     if len(data) > _MAX_DXF_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="DXF가 너무 큽니다(최대 20MB).")
 
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — 파싱 전에 실행/스크립트 위장·
+    # MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. 실측 계열은 dxf 로 화이트리스트.
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(data, filename, file.content_type, expected_kinds={"dxf"})
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
+
     from app.services.cad.dxf_import_service import parse_dxf_to_shapes
 
     try:

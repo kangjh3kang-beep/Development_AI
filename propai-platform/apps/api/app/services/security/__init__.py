@@ -9,26 +9,32 @@ from app.services.security.asset_rights import (
     AssetRight,
     is_export_allowed,
     is_train_allowed,
+    keep_train_allowed,
     resolve_asset_right,
 )
 from app.services.security.content_inspection import (
     ArchiveLimits,
+    ExtractResult,
     InspectionResult,
     av_scan,
     http_status_for,
     inspect_upload,
+    safe_extract_archive,
     sniff_type,
 )
 
 __all__ = [
     "ArchiveLimits",
     "AssetRight",
+    "ExtractResult",
     "InspectionResult",
     "av_scan",
     "http_status_for",
     "inspect_upload",
     "is_export_allowed",
     "is_train_allowed",
+    "keep_train_allowed",
     "resolve_asset_right",
+    "safe_extract_archive",
     "sniff_type",
 ]

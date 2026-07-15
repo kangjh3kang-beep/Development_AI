@@ -643,12 +643,22 @@ async def learning_dataset(
     ★생성/다운로드까지만 — 파인튜닝 잡은 절대 트리거하지 않는다(사람이 수동 실행).
     기본 status='active'(사람이 promote 한 것)만. candidate 도 옵션 지정 가능.
     """
+    import os
+
     from app.services.growth import learning_loop
 
     user_id = await _require_admin(request, db)
     statuses = ("active",) if status != "candidate" else ("candidate",)
+    # ★P16 학습게이트(WP-H 세션2): 자산권리 미확인 예시를 학습셋에서 제외(권리불명=금지)한다.
+    #   실배선은 여기까지(엔드포인트→build_dataset_jsonl→asset_rights). 실소비 활성화는 운영 플래그
+    #   GROWTH_ENFORCE_TRAIN_RIGHTS 로 제어하며 기본 OFF(무회귀) — 레지스트리 시딩(ingest 시
+    #   upsert_asset_right)과 함께 WP-J 가 ON 으로 전환한다.
+    enforce_rights = (os.getenv("GROWTH_ENFORCE_TRAIN_RIGHTS") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
     ds = await learning_loop.build_dataset_jsonl(
-        db, service=service, statuses=statuses, limit=limit
+        db, service=service, statuses=statuses, limit=limit,
+        enforce_asset_rights=enforce_rights,
     )
 
     # 감사: 누가 어떤 학습셋을 다운로드했는지(데이터 반출 추적).

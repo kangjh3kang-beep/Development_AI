@@ -8,7 +8,11 @@ import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
-from apps.api.services.storage_service import StorageError, upload_image
+from apps.api.services.storage_service import (
+    ContentRejectedError,
+    StorageError,
+    upload_image,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +63,11 @@ async def upload_image_endpoint(
 
     try:
         url = await upload_image(data, real_type)
+    except ContentRejectedError as exc:
+        # ★콘텐츠 검증 거부(위장/실행/활성콘텐츠)는 클라이언트 귀책 4xx — 인프라 장애(502)와 구분.
+        raise HTTPException(
+            status_code=exc.http_status, detail=f"업로드가 거부되었습니다: {exc.reason}"
+        ) from exc
     except StorageError as exc:
         logger.warning("이미지 업로드 실패", error=str(exc))
         raise HTTPException(status_code=502, detail=f"스토리지 업로드 실패: {exc}") from exc

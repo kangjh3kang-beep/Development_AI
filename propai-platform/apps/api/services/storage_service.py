@@ -25,6 +25,8 @@ _ALLOWED_TYPES: dict[str, str] = {
     "image/webp": "webp",
     "image/gif": "gif",
 }
+# 공용 콘텐츠 검증(inspect_upload)용 매직바이트 화이트리스트 — _ALLOWED_TYPES 와 1:1 대응.
+_IMAGE_UPLOAD_KINDS = frozenset({"png", "jpeg", "gif", "webp"})
 
 
 class StorageError(Exception):
@@ -102,7 +104,18 @@ async def upload_image(
         data: 이미지 바이트
         content_type: MIME 타입 (image/png 등)
         prefix: 버킷 내 경로 프리픽스
+
+    업로드 전 공용 콘텐츠 검증(content_inspection)을 additive 로 적용한다(★WP-H 세션2 전역 스윕):
+    이 버킷은 공개(public)라 저장형 XSS(svg/html 위장)·실행파일 위장·MIME 위장이 즉시위험이다.
+    실측 계열을 이미지 4종(png/jpeg/gif/webp)으로 화이트리스트하고, 검증 실패는
+    ContentRejectedError(StorageError 서브클래스)로 명시 거부 — 라우터가 http_status(4xx)로 매핑한다.
     """
+    from app.services.security.content_inspection import inspect_upload
+
+    verdict = inspect_upload(data, "", content_type, expected_kinds=_IMAGE_UPLOAD_KINDS)
+    if not verdict.allowed:
+        raise ContentRejectedError(verdict.code, verdict.reason)
+
     base = _conf(("SUPABASE_URL",), "supabase_url").rstrip("/")
     # service_role 키는 두 이름 모두 허용 — 기존 SUPABASE_SERVICE_ROLE_KEY + 신규 대시보드
     # 명칭(SUPABASE_SERVICE_SECRET_KEY, sb_secret_…). 어느 이름으로 등록해도 동작.
