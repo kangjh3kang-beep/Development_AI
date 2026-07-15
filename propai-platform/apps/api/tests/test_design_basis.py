@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from app.services.cad import design_basis as db
 from app.services.cad.design_basis import (
     ConstraintKind,
@@ -277,12 +279,21 @@ def test_rec2_schema_ready_set_after_commit_both_files():
 
 
 def test_rec3_advisory_lock_uses_hashtextextended_64bit():
-    """권고③ — save_drawing advisory lock이 hashtextextended(64bit)로 상향(hashtext(::bigint) 제거)."""
+    """권고③ — save_drawing advisory lock에 hashtextextended(64bit) 신키가 존재한다.
+
+    ★분리 리뷰 MEDIUM(전환기 레이스 봉합) 반영: 신키 단독 전환이 아니라, 배포 전환창(블루그린
+    신·구 파드 혼재) 동안은 구키(hashtext 32bit)도 **고정 순서(구키 먼저)**로 함께 획득해야
+    상호배제가 깨지지 않는다 — 그래서 이제는 hashtext(::bigint)가 '제거'가 아니라 '선행 유지'다
+    (차기 릴리스에서 전 파드 신키 롤아웃 완료 후 제거 예정). 실행 순서는
+    test_dual_advisory_lock_old_key_before_new_key_both_before_max_version이 fake DB로 고정 검증.
+    """
     from app.routers import design_v61
 
     src = inspect.getsource(design_v61.save_drawing)
-    assert "hashtextextended(:lk, 0)" in src
-    assert "hashtext(:lk)::bigint" not in src
+    assert "hashtextextended(:lk, 0)" in src  # 신키(64bit) 존재
+    assert "hashtext(:lk)::bigint" in src  # 구키(32bit) 과도기 유지(전환창 상호배제 방어)
+    # 소스 텍스트 순서로도 구키 선언이 신키보다 먼저 나온다(가독성상 실행 순서와 일치 — 이중 방어).
+    assert src.index("hashtext(:lk)::bigint") < src.index("hashtextextended(:lk, 0)")
 
 
 def test_rec4_geometry_hash_int_float_insensitive():
@@ -296,7 +307,108 @@ def test_rec4_geometry_hash_int_float_insensitive():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 8) 소비 배선(design_v61) — 부착·enforce 결정
+# 8) ★HIGH 회귀 — Hard escape 봉합(제1종전용주거 높이10m 한도 재현·분리 리뷰 반영)
+# ══════════════════════════════════════════════════════════════════════════
+# 재현: building_height_m 키가 매스에 없으면(예: 명시치수 분기는 파생 전에 이 키가 없었다)
+# legal_height_max가 unevaluated로 새어 satisfied=True 무음 통과했다. extract_metrics_from_mass가
+# num_floors×floor_height_m/building_width_m×building_depth_m으로 파생해야 이 구멍이 막힌다.
+
+def test_extract_metrics_derives_height_from_floors_and_floor_height():
+    """★HIGH — building_height_m 부재 + num_floors·floor_height_m 존재 → 곱으로 파생."""
+    m = extract_metrics_from_mass({"num_floors": 60, "floor_height_m": 3.0})
+    assert m["building_height_m"] == 180.0
+
+
+def test_extract_metrics_derives_footprint_from_width_and_depth():
+    """★HIGH — building_footprint_sqm 부재 + width·depth 존재 → 곱으로 파생."""
+    m = extract_metrics_from_mass({"building_width_m": 100.0, "building_depth_m": 100.0})
+    assert m["building_footprint_sqm"] == 10000.0
+
+
+def test_extract_metrics_does_not_override_explicit_height_or_footprint():
+    """명시적으로 존재하는 값은 파생으로 덮어쓰지 않는다(원본 우선)."""
+    m = extract_metrics_from_mass({
+        "building_height_m": 33.3, "num_floors": 60, "floor_height_m": 3.0,
+        "building_footprint_sqm": 55.5, "building_width_m": 100.0, "building_depth_m": 100.0,
+    })
+    assert m["building_height_m"] == 33.3
+    assert m["building_footprint_sqm"] == 55.5
+
+
+def test_extract_metrics_does_not_fabricate_far_bcr_without_land_area():
+    """★무날조 — far_pct·bcr_pct는 대지면적이 이 dict 범위 밖이라 파생하지 않는다(정직 미확정 유지)."""
+    m = extract_metrics_from_mass({"num_floors": 60, "floor_height_m": 3.0})
+    assert "far_pct" not in m
+    assert "bcr_pct" not in m
+
+
+def test_hard_escape_height_violation_caught_via_derivation():
+    """★분리 리뷰 재현 케이스(정형 평가 레벨) — 제1종전용주거 높이10m 한도 + 60층×3m(=180m)는
+    building_height_m 키가 없어도 파생을 통해 legal_height_max 위반으로 잡혀야 한다(거부 방향)."""
+    legal = {"max_height_m": 10.0, "limits_source": "statutory_default"}
+    basis = build_design_basis_from_options(legal_limits=legal)
+    metrics = extract_metrics_from_mass({"num_floors": 60, "floor_height_m": 3.0,
+                                         "building_width_m": 100.0, "building_depth_m": 100.0})
+    ev = basis.evaluate(metrics)
+    assert ev.satisfied is False
+    assert "legal_height_max" in {u.constraint_code for u in ev.unsat_reasons}
+    height_unsat = next(u for u in ev.unsat_reasons if u.constraint_code == "legal_height_max")
+    assert height_unsat.actual == 180.0
+    assert height_unsat.threshold == 10.0
+
+
+@pytest.mark.asyncio
+async def test_wiring_enforce_rejects_height_escape_explicit_dims(monkeypatch):
+    """★분리 리뷰 정확 재현(배선 전 구간·E2E) — 제1종전용주거지역 + 100×100×60층 명시치수
+    요청은 ENFORCE 시 generate_bim_model이 422로 거부하고 legal_height_max를 unsat으로 반환한다
+    (수정 전에는 building_height_m 키 부재로 satisfied=True 무음 통과했다)."""
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+    from app.routers.design_v61 import BimGenerateRequest, generate_bim_model
+
+    monkeypatch.setattr(settings, "DESIGN_BASIS_ENFORCE", True, raising=False)
+    req = BimGenerateRequest(
+        building_width_m=100, building_depth_m=100, floor_count=60,
+        zone_code="제1종전용주거지역", building_use="단독주택",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await generate_bim_model("wpe2-height-escape", req)
+    assert exc.value.status_code == 422
+    codes = [u["constraint_code"] for u in exc.value.detail["unsat_reasons"]]
+    assert "legal_height_max" in codes
+
+
+@pytest.mark.asyncio
+async def test_wiring_shadow_mode_does_not_reject_height_escape(monkeypatch):
+    """기본 shadow(DESIGN_BASIS_ENFORCE=False)에서는 동일 위반 패턴도 거부되지 않는다(무회귀).
+
+    ★테스트 성능: shadow 경로는 reject로 조기 반환하지 않고 build_ifc_from_mass까지 완주하므로
+    치수를 소형(4층·12×9)으로 줄인다 — 60층·100×100(13만 엔티티) IFC 생성은 실측 ~1분45초로
+    테스트 스위트에 부적합. 4층·12×9(=height 12m)도 10m 한도를 여전히 위반해 동일 escape
+    패턴을 검증한다(엔진 실행시간만 절약 — 위반 여부·파생 로직은 치수와 무관).
+    ★응답 스키마는 design_basis/basis_evaluation을 아직 외부 echo하지 않으므로(이번 세션 스코프
+    밖), 위반이 '내부적으로' 잡혔는지는 _resolve_mass를 직접 호출해 검증하고, generate_bim_model
+    호출은 '거부하지 않는다(예외 0)'만 확인한다 — 두 축을 분리해 각각 정확히 검증."""
+    from app.core.config import settings
+    from app.routers.design_v61 import BimGenerateRequest, _resolve_mass, generate_bim_model
+
+    req = BimGenerateRequest(
+        building_width_m=12, building_depth_m=9, floor_count=4,
+        zone_code="제1종전용주거지역", building_use="단독주택",
+    )
+    # 내부 위반 감지 확인(빠름 — IFC 생성 없이 매스만 산출).
+    mass = _resolve_mass(req)
+    assert mass["basis_evaluation"]["satisfied"] is False
+    assert "legal_height_max" in {u["constraint_code"] for u in mass["basis_evaluation"]["unsat_reasons"]}
+
+    monkeypatch.setattr(settings, "DESIGN_BASIS_ENFORCE", False, raising=False)
+    result = await generate_bim_model("wpe2-height-escape-shadow", req)
+    assert isinstance(result, dict)  # 정상 응답(거부 없음) — 기존 동작 100% 보존
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 9) 소비 배선(design_v61) — 부착·enforce 결정
 # ══════════════════════════════════════════════════════════════════════════
 
 def test_wiring_attach_design_basis_adds_machine_readable_evaluation():

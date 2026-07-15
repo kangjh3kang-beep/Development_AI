@@ -558,10 +558,26 @@ async def save_drawing(
         #   advisory lock으로 직렬화한다(analysis_ledger append 선례 재사용). 이 락이 없으면
         #   두 요청이 같은 MAX(version)을 읽어 같은 next_ver를 이중 발번하는 lost-update가 난다.
         #   락은 커밋/롤백 시 자동 해제(프로세스 스코프·신규 스키마 0).
-        #   ★권고③: hashtext(::int4→bigint 캐스트)는 32bit라 서로 다른 키가 같은 락으로 뭉칠
-        #     충돌 확률이 크다 → hashtextextended(키, 0)의 64bit 해시로 상향해 오탐 직렬화를 줄인다.
+        #   ★권고③(64bit 상향): hashtext(::int4→bigint 캐스트)는 32bit라 서로 다른 키가 같은
+        #     락으로 뭉칠 충돌 확률이 크다 → hashtextextended(키, 0)의 64bit 해시가 목표(신키).
+        #   ★분리 리뷰 MEDIUM(전환기 레이스 봉합): 배포는 블루그린이라 신·구 파드가 잠시 혼재한다
+        #     (WORKTREES.md·safe-deploy). 이 전환창 동안 구파드는 여전히 구키(32bit hashtext)로만
+        #     잠그므로, 신키만 쓰면 신파드끼리는 직렬화돼도 신-구 파드 간에는 서로 다른 락 공간이라
+        #     상호배제가 깨진다(레이스 재발). 그래서 과도기엔 **두 키 모두** 고정 순서(구키 먼저)로
+        #     연속 획득한다 — 구키가 최소공통분모라 신·구 파드가 뒤섞여도 구키에서 만나 직렬화된다.
+        #     신키는 32bit보다 넓은 공간으로 오탐충돌만 줄인다(있으면 더 안전, 없어도 구키가 방어).
+        #     ★순서 고정 이유(데드락 방지): 두 세션이 반대 순서로 락을 걸면 상호대기(deadlock)가
+        #     날 수 있다 — 항상 구키→신키 순서만 쓰면 원형대기가 성립하지 않는다.
+        #     ★차기 릴리스에서 구키(hashtext) 획득 제거 예정(신키 단독 운영 — 전체 파드가 신키
+        #     배포분으로 롤아웃 완료된 뒤). version_number 유니크 제약(DB 레벨 이중방어)은 WP-M
+        #     (alembic 헤드 병합) 이후 별도 alembic 마이그레이션으로 다룬다 — 이 WP는 애플리케이션
+        #     레벨 직렬화(advisory lock)만 담당하고 스키마 변경은 하지 않는다(제약 준수).
         await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:lk, 0))"),
+            text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),  # 구키(32bit) — 먼저.
+            {"lk": f"design_versions:{pid}:cad_2d"},
+        )
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lk, 0))"),  # 신키(64bit) — 다음.
             {"lk": f"design_versions:{pid}:cad_2d"},
         )
         # 현재 최대 버전 (raw — ORM 컬럼 불일치 우회)
@@ -1297,11 +1313,14 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
     # ★WP-E 하드게이트(대표 소비처): DesignBasis hard(법정·물리) 위반이면 무음 퇴화 대신 산출을
     #   거부하고 구조화 Unsat 사유를 반환한다(계획서 게이트 "Hard 위반 산출 0"). 기본 shadow
     #   (DESIGN_BASIS_ENFORCE=False)에서는 거부하지 않는다(무회귀 — 위반 사유는 mass에 부착만).
+    #   ★견고화: "is False" 대신 "is not True"로 비교한다 — 부착이 부분 손상돼 satisfied 키가
+    #     None/누락이면(정상 True/False가 아니면) ENFORCE 모드에서는 "판정불명=미충족"으로 보수
+    #     처리해 거부한다(무음 통과 방지). shadow(기본값)에서는 이 분기 자체가 평가되지 않는다.
     _eval = mass.get("basis_evaluation") if isinstance(mass, dict) else None
     if (
         _design_basis_enforce_enabled()
         and isinstance(_eval, dict)
-        and _eval.get("satisfied") is False
+        and _eval.get("satisfied") is not True
     ):
         raise HTTPException(
             status_code=422,

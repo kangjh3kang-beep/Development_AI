@@ -27,6 +27,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 from enum import StrEnum
 from typing import Any
 
@@ -223,6 +224,9 @@ except Exception:  # noqa: BLE001
 
 # 법정 한도가 '확정 근거'로 인정되는 출처(get_legal_limits.limits_source) — 그 외(fallback_default
 # =미지정 용도지역)는 법정 hard로 확정할 수 없어 soft(참고)로 강등한다(정직 미확정).
+# ★"ordinance"/"ordinance_applied"는 현재 get_legal_limits가 절대 반환하지 않는 dead-value다
+#   (실측: statutory_default|fallback_default 둘뿐 — auto_design_engine.py:349). 조례 실효
+#   한도가 이 함수에 흘러들 후속 WP(§4-B)를 위한 선반영 예약이며, 지금은 도달 불가 분기다.
 _CONFIRMED_LEGAL_SOURCES = {"statutory_default", "ordinance", "ordinance_applied"}
 
 
@@ -356,7 +360,18 @@ _METRIC_KEYS = (
 
 
 def extract_metrics_from_mass(mass: dict[str, Any]) -> dict[str, float]:
-    """매스 dict에서 DesignBasis 평가용 지표를 뽑는다(존재·숫자변환 가능 키만)."""
+    """매스 dict에서 DesignBasis 평가용 지표를 뽑는다(존재·숫자변환 가능 키만).
+
+    ★Hard escape 봉합(분리 리뷰 HIGH — 재현: 제1종전용주거 높이10m 한도 + 100×100×60층
+      명시치수 요청은 building_height_m 키가 mass에 없어 legal_height_max가 unevaluated로
+      새어 satisfied=True 무음 통과했다): building_height_m·building_footprint_sqm이 매스에
+      직접 없어도, 그 값을 구성하는 원시 치수(num_floors×floor_height_m,
+      building_width_m×building_depth_m)가 있으면 곱으로 파생한다 — design_run_store.
+      compute_anchor_geometry_hash와 동일 산식 재사용(새 공식 발명 없음). 파생하지 않으면
+      이 두 지표가 unevaluated로 빠져 hard 제약이 위반이어도 놓치는 구멍이 생긴다.
+    ★far_pct·bcr_pct는 대지면적(site_area_sqm)이 이 dict 범위 밖이라 여기서 파생할 수
+      없다 — 무날조(근거 없는 파생 금지) 원칙에 따라 정직 미확정(unevaluated)로 남긴다.
+    """
     out: dict[str, float] = {}
     for k in _METRIC_KEYS:
         v = mass.get(k)
@@ -366,6 +381,19 @@ def extract_metrics_from_mass(mass: dict[str, Any]) -> dict[str, float]:
             out[k] = float(v)
         except (TypeError, ValueError):
             continue
+
+    if "building_height_m" not in out:
+        nf, fh = mass.get("num_floors"), mass.get("floor_height_m")
+        if nf is not None and fh is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                out["building_height_m"] = float(nf) * float(fh)
+
+    if "building_footprint_sqm" not in out:
+        bw, bd = mass.get("building_width_m"), mass.get("building_depth_m")
+        if bw is not None and bd is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                out["building_footprint_sqm"] = float(bw) * float(bd)
+
     return out
 
 
