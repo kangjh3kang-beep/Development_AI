@@ -207,6 +207,80 @@ async def test_deliver_reports_failure_when_consumer_raises():
     assert oc.consumer_count("Y") == 2
 
 
+# ── 9b. 회귀(코디네이터 리뷰 MEDIUM 2건) ──────────────────────────────────
+async def test_deliver_partial_success_replay_does_not_rerun_succeeded_consumer():
+    """부분성공 재전달 시 이미 성공한 소비처는 재실행되지 않고 실패했던 소비처만 재시도된다.
+
+    소비처 A는 항상 성공. 소비처 B는 1회차에 실패, 2회차(재전달)에 성공. 같은 event_id로
+    deliver를 두 번 호출했을 때 A의 호출 횟수는 여전히 1(재실행 안 됨)이어야 하고, B는 2
+    (실패 시도 + 성공 시도)여야 한다. — 소비처별 전용 가드 + 네임스페이스 키(consumer_name:
+    event_id)가 이 계약을 보장한다.
+    """
+    calls_a: list[str] = []
+    calls_b: list[str] = []
+    attempt = {"n": 0}
+
+    async def consumer_a(ev):
+        calls_a.append(ev["event_id"])
+
+    async def consumer_b(ev):
+        attempt["n"] += 1
+        if attempt["n"] == 1:
+            raise RuntimeError("consumer_b 일시 실패")
+        calls_b.append(ev["event_id"])
+
+    oc.register_consumer("Z", consumer_a, name="consumer_a")
+    oc.register_consumer("Z", consumer_b, name="consumer_b")
+
+    event = {"event_type": "Z", "event_id": "99"}
+    ok1 = await oc.deliver(event)
+    assert ok1 is False  # consumer_b 실패 → 재시도 대상
+    assert calls_a == ["99"]  # A는 1회 처리
+    assert calls_b == []  # B는 이번엔 실패(아직 기록 안 됨)
+
+    # 재전달(동일 event_id) — A는 이미 성공했으므로(자기 가드가 기억) 재실행되면 안 된다.
+    ok2 = await oc.deliver(event)
+    assert ok2 is True  # 이번엔 B도 성공 → 전체 성공
+    assert calls_a == ["99"]  # ★핵심 회귀 포인트: A는 여전히 1회(재실행 안 됨)
+    assert calls_b == ["99"]  # B는 재시도로 1회 성공 기록
+    assert attempt["n"] == 2  # B 자체는 실패+성공으로 2번 시도됨
+
+
+async def test_deliver_two_consumers_same_event_id_no_cross_suppression():
+    """두 소비처가 동일 event_id 이벤트를 각자 독립적으로 처리한다(교차억제 0).
+
+    공유 default_guard 를 소비처끼리 나눠 쓰던 구 설계라면, 먼저 성공한 소비처의
+    remember(event_id) 때문에 두 번째 소비처가 seen=True 로 오판해 **전혀 호출되지 않는다**
+    (영구 소실). 소비처별 전용 가드로 이 교차억제를 원천 차단했는지 검증한다.
+    """
+    calls_a: list[str] = []
+    calls_b: list[str] = []
+
+    async def consumer_a(ev):
+        calls_a.append(ev["event_id"])
+
+    async def consumer_b(ev):
+        calls_b.append(ev["event_id"])
+
+    oc.register_consumer("W", consumer_a, name="consumer_a")
+    oc.register_consumer("W", consumer_b, name="consumer_b")
+
+    ok = await oc.deliver({"event_type": "W", "event_id": "7"})
+    assert ok is True
+    # ★두 소비처 모두 독립적으로 동일 event_id를 처리했어야 한다(한쪽이 스킵되면 실패).
+    assert calls_a == ["7"]
+    assert calls_b == ["7"]
+
+
+def test_register_consumer_returns_name_and_auto_assigns_when_missing():
+    oc.clear_consumers()
+    named = oc.register_consumer("V", lambda ev: None, name="explicit-name")
+    auto = oc.register_consumer("V", lambda ev: None)
+    assert named == "explicit-name"
+    assert auto == "V#1"  # 순번 기반 자동 이름(두 번째 등록 = index 1)
+    assert oc.consumer_count("V") == 2
+
+
 # ── 10. sales 원형 → 전역 어댑터(무회귀·미배선) ───────────────────────────
 def test_outbox_event_from_sales_maps_fields():
     ev = ox.outbox_event_from_sales("site-99", "ContractSigned", {"unit_id": "u1", "amount": 500})

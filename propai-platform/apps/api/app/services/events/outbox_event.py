@@ -201,6 +201,11 @@ def register_failure(
     """발행 실패를 기록한다(순수): attempts+1·last_error·next_attempt_at(백오프) 설정.
 
     이미 발행된 행(published_at 有)은 실패로 되돌리지 않는다(멱등 안전).
+
+    ★후속 이관(LOW·비차단): 재시도 소진(status=DEAD)은 여기 조용히 기록될 뿐, 대시보드/알림
+    (예: DEAD 건수 임계치 초과 시 경보) 같은 가시성 표면이 아직 없다 — outbox_event 테이블을
+    쿼리하면 확인 가능하나 능동 통지는 없다. 다음 세션에서 성장루프(growth)나 운영 알림 경로에
+    결선한다(이번 봉합 범위 제외 — at-least-once 계약 자체와는 무관).
     """
     if state.published_at is not None:
         return state

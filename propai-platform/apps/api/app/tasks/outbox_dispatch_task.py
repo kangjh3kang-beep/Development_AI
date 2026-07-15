@@ -42,6 +42,12 @@ async def run_outbox_dispatch(ctx: dict | None = None, limit: int = 200) -> dict
 
     try:
         async with async_session_factory() as db:
+            # ★후속 이관(LOW·비차단): 이 배치는 한 세션·한 트랜잭션을 공유한다. outbox_event.py
+            # 의 mark_published/mark_failed 는 각자 실패 시 best-effort 로 db.rollback() 을
+            # 호출하는데, 같은 세션에서는 그 rollback 이 **이번 배치에서 앞서 처리한 행들의
+            # 미커밋 갱신까지 함께 되돌릴 수 있다**(배치 낭비 — 그 행들은 다음 폴링에 재시도되어
+            # 소실은 없지만 중복 작업이 발생). 행별 SAVEPOINT(중첩 트랜잭션) 분리는 다음
+            # 세션에서 다룬다(at-least-once 정합성 자체는 깨지지 않으므로 이번 봉합 범위 제외).
             rows = await ox.fetch_publishable(db, limit=limit)
             stats["fetched"] = len(rows)
             for row in rows:
