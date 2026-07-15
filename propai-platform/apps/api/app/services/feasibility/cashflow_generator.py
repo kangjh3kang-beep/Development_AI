@@ -332,7 +332,7 @@ class CashflowGenerator:
             },
         }
 
-        return {
+        result = {
             "rows": rows,
             "summary": summary,
             "phases": phases,
@@ -340,6 +340,12 @@ class CashflowGenerator:
             #   유입을 포함해 NPV가 과대되므로, IRR과 동일한 이 unlevered 스트림으로 NPV를 낸다.
             "unlevered_netflows": [round(x) for x in unlevered],
         }
+        # R1(additive): tax_schedule 지정 시에만 세금 차감 무차입 스트림도 노출 — 부담금·세금을
+        # 총사업비에 계상하는 호출자(개략수지)가 NPV를 IRR과 동일한 세후 기저로 낼 수 있게 한다.
+        # None이면 키 자체가 없어 기존 소비자 계약 불변.
+        if tax_schedule is not None:
+            result["after_tax_netflows"] = [round(x) for x in after_tax_netflows]
+        return result
 
     def _s_curve_distribution(self, total: float, months: int) -> list[float]:
         """S-커브 기반 공사비 월별 분배.

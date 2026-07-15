@@ -32,7 +32,10 @@ class M02Reconstruction(BaseModule):
         construction = compute_construction_cost(inp)
         finance = compute_finance_cost(inp)
         other = compute_other_cost(inp)
-        taxes = compute_taxes(inp, revenue["total_revenue_won"])
+        taxes = compute_taxes(
+            inp, revenue["total_revenue_won"],
+            development_cost_won=int(construction["total_construction_cost_won"]),
+        )
 
         # 초과이익환수 추가
         excess_gain = inp.params.get("excess_gain_won", 0)

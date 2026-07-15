@@ -72,7 +72,10 @@ class GenericModule(BaseModule):
             other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
                      "estimate_basis": f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% 자동추정(설계·감리·분양대행·예비비 통칭, 미입력)"}
 
-        taxes = compute_taxes(inp, revenue["total_revenue_won"])
+        taxes = compute_taxes(
+            inp, revenue["total_revenue_won"],
+            development_cost_won=int(construction["total_construction_cost_won"]),
+        )
 
         agg = aggregate_feasibility(
             total_revenue_won=revenue["total_revenue_won"],

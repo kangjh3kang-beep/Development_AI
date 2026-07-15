@@ -80,9 +80,33 @@ def compute_other_cost(inp: ModuleInput) -> dict[str, Any]:
     }
 
 
-def compute_taxes(inp: ModuleInput, total_sale_won: int = 0) -> dict[str, Any]:
-    """세금 일괄 계산."""
+def _param_int(inp: ModuleInput, key: str) -> int:
+    """params의 수치 입력을 int로 안전 변환(문자열 숫자 허용, 비수치·음수는 0)."""
+    try:
+        value = int(float(inp.params.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, value)
+
+
+def compute_taxes(
+    inp: ModuleInput,
+    total_sale_won: int = 0,
+    *,
+    development_cost_won: int = 0,
+) -> dict[str, Any]:
+    """세금 일괄 계산.
+
+    ★부담금 상시-0 봉합: A10 개발부담금·C07 기반시설부담금은 엔진에 구현돼 있었으나
+    이 배선이 인자를 전달하지 않아 어떤 경로에서도 수지에 기여할 수 없었다(상시 0원).
+    - A10: 종료시점 지가(end_land_value_won)는 감정 필요값이라 자동 추정하지 않는다(무날조)
+      — params 제공 시에만 활성. 개시지가 기본값=토지 매입가(권위 출처),
+      개발비용 기본값=모듈이 계산한 공사비(development_cost_won 인자).
+    - C07: 기반시설부담구역 지정 여부(params.in_infra_charge_zone) 게이트를 전달.
+    모든 채널의 기본값은 기존 결과와 완전 동일(미제공 시 무회귀).
+    """
     purchase_won = int(inp.total_land_area_sqm * inp.official_price_per_sqm * inp.price_multiplier)
+    end_land_value_won = _param_int(inp, "end_land_value_won")
     return calculate_all_taxes(
         purchase_won=purchase_won,
         land_category=inp.land_category,
@@ -90,6 +114,10 @@ def compute_taxes(inp: ModuleInput, total_sale_won: int = 0) -> dict[str, Any]:
         is_adjusted=inp.is_adjusted_area,
         area_sqm=inp.total_land_area_sqm,
         official_price_per_sqm=inp.official_price_per_sqm,
+        end_land_value_won=end_land_value_won,
+        start_land_value_won=_param_int(inp, "start_land_value_won") or purchase_won,
+        development_cost_won=_param_int(inp, "development_cost_won") or max(0, development_cost_won),
+        project_years=max(0.5, (inp.project_months or 36) / 12.0),
         region_type=inp.region_type,
         sido_name=inp.sido_name,
         sigungu_name=inp.sigungu_name,
@@ -99,4 +127,5 @@ def compute_taxes(inp: ModuleInput, total_sale_won: int = 0) -> dict[str, Any]:
         building_type=inp.building_type,
         total_units=inp.total_households,
         avg_area_sqm=inp.avg_area_pyeong * 3.305785 if inp.avg_area_pyeong else 85.0,
+        in_infra_charge_zone=bool(inp.params.get("in_infra_charge_zone") or False),
     )

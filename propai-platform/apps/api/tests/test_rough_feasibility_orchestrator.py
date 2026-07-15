@@ -135,10 +135,22 @@ async def test_margin_20pct_field(monkeypatch):
     # 실분양수입 기반 net_profit·roi 도 별도 존재(마진과 분리)
     assert summary["net_profit_won"] == summary["total_revenue_won"] - summary["total_cost_won"]
     assert summary["grade"] in "ABCDEF"
-    # 총사업비 = 토지+공사+금융+제경비(취득세는 토지비에 포함 — tax 이중계상 없음)
+    # 총사업비 = 토지+공사+금융+제경비+부담금(B/C단계 시행사 부담).
+    # (종전 불변식 '토지+공사+금융+제경비'는 부담금 상시-0 결함을 그대로 고정한 것 — 교정.
+    #  취득세는 토지비에 포함돼 charges_won에 미포함(이중계상 없음))
     cb = out["cost_breakdown"]
+    assert cb["charges_won"] is not None and cb["charges_won"] > 0
     assert (cb["land_won"] + cb["construction_won"] + cb["finance_won"] + cb["other_won"]
-            == summary["total_cost_won"])
+            + cb["charges_won"] == summary["total_cost_won"])
+    # charges 블록 정합: 합계 = 공사단계 + 분양단계, 수분양자 부담분은 합계에서 제외 확인
+    charges = out["charges"]
+    assert charges["total_won"] == cb["charges_won"]
+    assert charges["total_won"] == charges["construction_stage_won"] + charges["sale_stage_won"]
+    buyer_items_sum = sum(
+        it["amount_won"] for it in charges["items"] if it.get("borne_by") == "buyer"
+    )
+    assert charges["buyer_borne_total_won"] == buyer_items_sum
+    assert charges["total_won"] + buyer_items_sum == sum(it["amount_won"] for it in charges["items"])
 
 
 @pytest.mark.asyncio
