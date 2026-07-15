@@ -230,11 +230,34 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
             qto_source = "bim"
     if not (W and Dd):
         W, Dd = derive_dims_from_gfa(gfa_above, nf_above)
-    geometry = geometry_takeoff(
-        width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
-        floor_height_m=Hh, structure_type=req.structure_type,
-    )
+    # ★WP-D 세션3 배선(additive): 실측 매스(qto_source="bim")일 때 QTO를 BimIR 경유로 흐르게 한다
+    #   (bimir_from_mass→geometry_takeoff_from_bimir). BimIR가 매스 왕복 무손실이라 동일 치수로
+    #   geometry_takeoff를 호출 → 항목별 물량·금액이 바이트까지 동일(세션2 수치 동일성 게이트가 근거).
+    #   어떤 이유로든 실패하면 기존 직접 경로로 폴백한다(무회귀·예외격리). 파생 매스는 기존 경로 그대로.
+    geometry: dict[str, Any] | None = None
+    qto_path = "direct"
+    if qto_source == "bim":
+        try:
+            from app.services.bim.bimir_adapters import bimir_from_mass
+            from app.services.cost.geometry_qto import geometry_takeoff_from_bimir
+
+            _bimir_model = bimir_from_mass({
+                "building_width_m": W, "building_depth_m": Dd,
+                "num_floors": nf_above, "floor_height_m": Hh,
+            })
+            geometry = geometry_takeoff_from_bimir(
+                _bimir_model, floors_below=req.floor_count_below, structure_type=req.structure_type,
+            )
+            qto_path = "bimir"
+        except Exception:  # noqa: BLE001 — BimIR 경로 실패 시 기존 직접 경로로 폴백
+            geometry = None
+    if geometry is None:
+        geometry = geometry_takeoff(
+            width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
+            floor_height_m=Hh, structure_type=req.structure_type,
+        )
     geometry["source"] = qto_source
+    geometry["qto_path"] = qto_path  # additive: BimIR 경유 여부(라이브 검증 근거)
 
     # 항목별 정밀 적산(QTO) — 레미콘·철근·거푸집·조적·방수·창호·기계·전기(물량×단가).
     # 건축개요(연면적·층수·구조) 기반. 설계/BIM 완성 시 실 매스로 정밀화 가능.

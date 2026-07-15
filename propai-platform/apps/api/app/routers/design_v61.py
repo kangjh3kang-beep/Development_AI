@@ -578,6 +578,31 @@ async def save_drawing(
             design_payload["building_depth_m"] = req.building_depth_m
         if req.floor_height_m is not None:
             design_payload["floor_height_m"] = req.floor_height_m
+        # ★WP-D 세션3(additive·raw SQL·스키마 불변): 완전한 매스(폭·깊이·층수 3필드)가 있으면
+        #   design_data_json 내부에 BimIR provenance 스탬프를 함께 저장한다. 신규 컬럼 없음 —
+        #   JSON 내부 additive 키 'bimir'만 추가한다(기존 스키마·저장본 shape 불변). 저장값은
+        #   4-스칼라 정체(bimir_version·element_count·design_input_hash·run_id)뿐이며, 전체 BimIR
+        #   직렬화(대용량·현 소비처 없음)는 세션4 잔여로 남긴다(write-path 기아 방지). design_input_hash는
+        #   provenance compute_input_hash와 동일 계약이라, 이 행을 재현·중복제거·병합의 결정적 앵커로 쓴다.
+        if (
+            req.building_width_m is not None
+            and req.building_depth_m is not None
+            and req.floor_count is not None
+        ):
+            try:
+                from app.services.bim.ifc_to_gltf_service import bimir_meta_from_mass
+
+                _stamp_mass: dict[str, Any] = {
+                    "building_width_m": req.building_width_m,
+                    "building_depth_m": req.building_depth_m,
+                    "num_floors": req.floor_count,
+                }
+                # floor_height_m은 None이면 키를 넣지 않는다(어댑터 기본 3.0 적용 — float(None) 크래시 회피).
+                if req.floor_height_m is not None:
+                    _stamp_mass["floor_height_m"] = req.floor_height_m
+                design_payload["bimir"] = bimir_meta_from_mass(_stamp_mass)
+            except Exception:  # noqa: BLE001 — 스탬프 실패가 저장을 막지 않는다(예외격리)
+                pass
         design_json = json.dumps(design_payload, ensure_ascii=False)
 
         await db.execute(
@@ -1221,6 +1246,21 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         }))
         bim_cache_hit = False
 
+    # ★WP-D 세션3(additive): BimIR 정체·provenance 메타 부착 — glb_url이 가리키는 산출물의
+    #   BimIR 정체(bimir_version·element_count·design_input_hash·run_id)를 JSON에도 표기한다.
+    #   mass는 항상 신선 산출(캐시 히트여도 위에서 재해석)이라 메타도 신선하다. 순수 계산
+    #   (ifcopenshell 불필요)이라 캐시 밖에서 저렴하게 산출. 실패해도 모델은 정상 반환(예외격리).
+    bimir_meta: dict[str, Any] | None
+    try:
+        from app.services.bim.ifc_to_gltf_service import bimir_meta_from_mass
+
+        bimir_meta = bimir_meta_from_mass(mass)
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("BimIR 메타 산출 스킵", error=str(e)[:120])
+        bimir_meta = None
+
     return {
         "project_id": project_id,
         "mass": {
@@ -1244,6 +1284,9 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         # ★캐시 적중 표기(additive·무날조) — /bim의 cached는 '무거운계산(LLM/IFC) 캐시 적중'을 의미한다
         #   (mass._cache_hit이 아님). 동일 설계입력 2회째면 LLM/IFC를 생략하고 캐시값을 즉시 반환(True).
         "cached": bim_cache_hit,
+        # ★BimIR 정체·provenance(additive·세션3) — bimir_version·element_count·design_input_hash·run_id.
+        #   design_input_hash는 provenance compute_input_hash와 동일 계약(이중 해시 발산 방지). 산출 불가 시 None.
+        "bimir": bimir_meta,
     }
 
 
@@ -1292,20 +1335,29 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
 
 @router.post("/{project_id}/bim/model.glb", response_class=Response)
 async def get_bim_glb(project_id: str, req: BimGenerateRequest):
-    """3D BIM 모델을 glTF binary(.glb)로 반환한다 — 프론트 useGLTF가 직접 로드."""
-    from app.services.bim.ifc_generator_service import build_ifc_from_mass
-    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+    """3D BIM 모델을 glTF binary(.glb)로 반환한다 — 프론트 useGLTF가 직접 로드.
+
+    ★WP-D 세션3 배선: glb 산출을 BimIR 경유(bimir_from_mass→build_gltf_from_bimir)로 흐르게 하되,
+      실패 시 기존 직접 경로로 폴백한다(공용 헬퍼 glb_from_mass_with_bimir·무회귀). BimIR 정체/
+      provenance는 응답 헤더(X-BIMIR-*)로 additive 표기한다(glb 바이트는 불변).
+    """
+    from app.services.bim.ifc_to_gltf_service import (
+        bimir_meta_to_headers,
+        glb_from_mass_with_bimir,
+    )
 
     mass = _resolve_mass(req)
     try:
-        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
-        glb = IfcToGltfService().convert(ifc_bytes)
+        glb, bimir_meta = glb_from_mass_with_bimir(mass, project_name=req.project_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
     return Response(
         content=glb,
         media_type="model/gltf-binary",
-        headers={"Content-Disposition": f"inline; filename={project_id}.glb"},
+        headers={
+            "Content-Disposition": f"inline; filename={project_id}.glb",
+            **bimir_meta_to_headers(bimir_meta),
+        },
     )
 
 
@@ -1397,8 +1449,10 @@ async def get_bim_glb_get(
     행이 없으면 쿼리/기본 폴백 매스(_resolve_mass)로 절차생성한다(가짜 금지·정직한 매스).
     ETag/Cache-Control로 동일 매스 재요청을 캐시한다.
     """
-    from app.services.bim.ifc_generator_service import build_ifc_from_mass
-    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+    from app.services.bim.ifc_to_gltf_service import (
+        bimir_meta_to_headers,
+        glb_from_mass_with_bimir,
+    )
 
     # IDOR 차단: 소유 일치 사용자만 저장 매스를 받고, 무인증/타tenant/행없음은 폴백 절차매스로 강등.
     mass = await _load_mass_from_design_version(design_version_id, db, user)
@@ -1417,9 +1471,9 @@ async def get_bim_glb_get(
         mass = _resolve_mass(fallback_req)
         bim_source = "fallback-procedural"
 
+    # ★WP-D 세션3 배선: glb 산출을 BimIR 경유로(실패 시 직접 경로 폴백·공용 헬퍼). 무회귀.
     try:
-        ifc_bytes = build_ifc_from_mass(mass, project_name=project_name)
-        glb = IfcToGltfService().convert(ifc_bytes)
+        glb, bimir_meta = glb_from_mass_with_bimir(mass, project_name=project_name)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
 
@@ -1434,6 +1488,7 @@ async def get_bim_glb_get(
             "ETag": etag,
             "Cache-Control": "public, max-age=300",
             "X-BIM-Source": bim_source,  # 정직표기: 소유본 복원 vs 폴백 절차매스
+            **bimir_meta_to_headers(bimir_meta),  # BimIR 정체·provenance(additive)
         },
     )
 
