@@ -141,7 +141,11 @@ def _render_block(el: list, block: Any, st: dict, font: str) -> None:
                 parts.append(f'<font color="{T.AMBER}">(신뢰도 {K._esc(ev.confidence)})</font>')
             line = " · ".join(parts)
             if ev.legal_link and (str(ev.confidence).lower() == "high" or ev.confidence is None):
-                line += f' · <a href="{ev.legal_link}"><font color="{T.LINK}">법령</font></a>'
+                # href 도 XML escape — 클라이언트 유래 URL 에 따옴표가 섞이면 reportlab 파싱이
+                # 크래시한다(R1 P3). http(s) 스킴만 허용(그 외는 링크 생략·텍스트만).
+                _link = str(ev.legal_link)
+                if _link.startswith(("http://", "https://")):
+                    line += f' · <a href="{K._esc(_link)}"><font color="{T.LINK}">법령</font></a>'
             el.append(Paragraph(line, st["caption"]))
 
     elif kind == "checklist":

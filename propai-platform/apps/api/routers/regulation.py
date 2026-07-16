@@ -138,6 +138,14 @@ async def regulation_report(body: RegulationReportRequest, format: str = "pdf"):
     파일 다운로드 계약: 성공=200 + 바이너리(attachment), 실패=4xx(200+error JSON 금지).
     기존 /land-price/desk-appraisal/pdf 패턴 미러.
     """
+    # ★무인증 렌더 엔드포인트 자기 DoS 방어(R1 P3) — 정상 /analyze 결과는 수십 KB 급이므로
+    #   2MB 상한이면 실사용 무영향. 초과는 413(조립 거부·서버 자원 보호).
+    import json as _json
+
+    from fastapi import HTTPException
+
+    if len(_json.dumps(body.result, ensure_ascii=False)) > 2_000_000:
+        raise HTTPException(status_code=413, detail="result payload too large (2MB 상한)")
     from fastapi import HTTPException
     from fastapi.responses import Response
 
