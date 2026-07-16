@@ -4,7 +4,18 @@
  * Railway 서버(싱가포르)에서 VWORLD(한국 공공 API) 호출 시 502 에러가 발생하므로,
  * 한국에 위치한 사용자 브라우저에서 직접 VWORLD API를 호출한다.
  *
- * VWORLD API 키는 공개 API 키이며 도메인 제한으로 보호된다.
+ * ★키 이원 계약(PR#329 R1 리뷰 HIGH 반영 — 정직 명시): 이 프로젝트는 VWorld 키를
+ *   용도별로 두 계약으로 나눈다.
+ *   (1) `NEXT_PUBLIC_VWORLD_API_KEY` = 공개(도메인 제한) 키. 브라우저에 값이 노출되는
+ *       것을 전제로 발급된 키이며, VWorld 콘솔의 Referer/도메인 화이트리스트가 보호
+ *       기제다. 이 파일(브라우저 직접 호출)과 `AvmVisionPanel.tsx`(항공영상 썸네일)가
+ *       이 경로를 쓴다 — 두 곳 모두 동일 정책.
+ *   (2) `VWORLD_API_KEY` = 서버 전용 키. 사통맵 타일 프록시(`vworld-wmts-proxy.ts`·
+ *       `vworld-wms-proxy.ts`)가 Node 런타임에서만 읽고, 브라우저 번들·네트워크
+ *       응답 어디에도 값이 노출되지 않는다. 프록시는 이 키가 미설정이면 정직하게
+ *       503으로 실패한다(공개 키로 조용히 대체하지 않음).
+ *   이 파일이 (1)을 쓰는 것은 '키 노출 버그'가 아니라 의도된 설계다 — 리터럴
+ *   하드코딩(소스에 문자열로 박아 넣는 것)과는 다른 문제다.
  */
 
 const VWORLD_API_KEY = process.env.NEXT_PUBLIC_VWORLD_API_KEY ?? "";

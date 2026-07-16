@@ -64,4 +64,25 @@ describe("vworld-wmts-proxy", () => {
     const res = await proxyVWorldWmts({ layer: "Base", z: "16", y: "1", x: "1.png" });
     expect(res.status).toBe(503);
   });
+
+  it("★PR#329 R1: NEXT_PUBLIC_VWORLD_API_KEY(공개키)로는 폴백하지 않는다 — 서버 전용 키만 인정", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "PUBLIC-KEY-SHOULD-NOT-BE-USED");
+    const res = await proxyVWorldWmts({ layer: "Base", z: "16", y: "1", x: "1.png" });
+    expect(res.status).toBe(503);
+  });
+
+  it("★PR#329 R1 MEDIUM2: 200+XML(인증/권한 오류 — coverage 문구 없음)은 503으로 승격(무음 흡수 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "TESTKEY");
+    stubFetch(() =>
+      new Response(
+        '<?xml version="1.0"?><ServiceException code="INVALID_KEY">인증에 실패했습니다</ServiceException>',
+        { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
+      ),
+    );
+    const res = await proxyVWorldWmts({ layer: "Base", z: "16", y: "1", x: "1.png" });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("XML exception");
+  });
 });

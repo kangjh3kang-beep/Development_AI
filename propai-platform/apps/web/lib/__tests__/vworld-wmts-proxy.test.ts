@@ -101,6 +101,35 @@ describe("proxyVWorldWmts — 업스트림 오류의 명시화", () => {
     expect((await resp.arrayBuffer()).byteLength).toBeGreaterThan(0); // 투명 1x1 PNG
   });
 
+  it("★PR#329 R1 MEDIUM2: 업스트림 200 + XML(인증/권한 오류 — coverage 문구 없음)은 503으로 승격한다", async () => {
+    // 종전엔 content-type이 xml이기만 하면 본문을 읽지 않고 전부 투명타일 처리했다 —
+    // VWorld는 인증 실패도 200+XML로 반환하므로 무음 실패가 됐다(MEDIUM2). 본문을 읽어
+    // coverage 문구(FileNotFound·제공영역) 없는 XML은 auth로 분류해 503으로 승격한다.
+    fetchMock.mockResolvedValue(
+      new Response(
+        '<ServiceException code="INVALID_KEY">인증에 실패했습니다</ServiceException>',
+        { status: 200, headers: { "Content-Type": "text/xml" } },
+      ),
+    );
+    const { proxyVWorldWmts } = await loadProxy();
+    const resp = await proxyVWorldWmts(PARAMS);
+
+    expect(resp.status).toBe(503);
+    expect(resp.headers.get("Content-Type")).toContain("application/json");
+    const body = await resp.json();
+    expect(body.error).toContain("XML exception");
+  });
+
+  it("★PR#329 R1: NEXT_PUBLIC_VWORLD_API_KEY(공개키)로는 폴백하지 않는다", async () => {
+    const { proxyVWorldWmts } = await loadProxy({
+      VWORLD_API_KEY: "",
+      NEXT_PUBLIC_VWORLD_API_KEY: "PUBLIC-KEY-SHOULD-NOT-BE-USED",
+    });
+    const resp = await proxyVWorldWmts(PARAMS);
+    expect(resp.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("정상 이미지 타일은 200으로 포워딩하고 캐시 헤더를 유지한다", async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     fetchMock.mockResolvedValue(

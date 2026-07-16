@@ -34,6 +34,12 @@ services:
     restart: always
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # ★config 발산 정합(PR#329 R2): server-only VWORLD_API_KEY 필수 — 사통맵 타일
+      #   프록시(vworld-wmts-proxy.ts·vworld-wms-proxy.ts)가 이 값이 없으면 503을
+      #   반환해 기저지도(Base/Satellite/Hybrid)·지적 WMS가 전면 회색이 된다.
+      #   root docker-compose.yml(web 서비스, safe-deploy 경로)은 env_file:.env로
+      #   이미 주입되지만, 이 prod compose는 누락돼 있었다 — 동일 .env 값을 명시 주입한다.
+      - VWORLD_API_KEY=${VWORLD_API_KEY}
     ports:
       - "3000:3000"
     networks:
