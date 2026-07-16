@@ -123,45 +123,46 @@ class BIMIFCService:
             "elements": elements,
         }
 
-    def _persist_bim_quantities(
+    async def _persist_bim_quantities(
         self,
         project_id: UUID,
         tenant_id: UUID,
         elements: list[dict],
     ) -> int:
-        """요소 단위 물량을 공종코드로 매핑해 bim_quantities 행으로 add 한다.
+        """요소 단위 물량을 공종코드로 매핑해 bim_quantities 로 교체 영속한다.
 
-        commit 은 호출측(analyze_ifc)이 수행한다(동일 세션 일괄 처리).
+        commit 은 호출측(analyze_ifc/generate_ifc_from_design)이 수행한다(동일 세션 일괄 처리).
         매핑되는 공종이 없거나 요소가 없으면 0행을 반환한다(정직 — 가짜 행 없음).
+
+        ★PR#315 H1(전역 전파방지): 실제 DB 쓰기는 공용 헬퍼 replace_bim_quantities 를
+          경유한다 — INSERT 전 같은 project_id·extraction_method(AI_AUTO) 기존 행을 DELETE
+          하므로, 같은 프로젝트를 재분석/재생성해도 물량이 배가되지 않는다(비멱등 이중적재
+          방지). upload_ifc(app/routers/cost.py)도 동일 헬퍼를 경유 — 한 곳 수정이 3개
+          쓰기 경로(analyze/generate/upload) 전부에 적용된다.
         """
         if not elements:
             return 0
 
+        from app.services.cost.bim_quantity_writer import replace_bim_quantities
         from app.services.cost.ifc_work_map import map_ifc_to_work_codes
-        from apps.api.database.models.v61_cost import BimQuantity
 
-        rows: list[BimQuantity] = []
+        mapped_rows: list[dict] = []
         for elem in elements:
             ifc_type = elem.get("element_type", "") or ""
             work_codes = map_ifc_to_work_codes(ifc_type)
             for work_code, _work_name in work_codes:
-                rows.append(BimQuantity(
-                    tenant_id=tenant_id,
-                    project_id=project_id,
-                    ifc_global_id=elem.get("global_id") or None,
-                    ifc_object_type=ifc_type or None,
-                    ifc_object_name=elem.get("name") or None,
-                    work_code=work_code,
-                    floor_level=elem.get("floor_level") or None,
-                    quantity=elem.get("quantity", 0) or 0,
-                    unit=elem.get("unit") or None,
-                    extraction_method="AI_AUTO",
-                ))
+                mapped_rows.append({
+                    "ifc_global_id": elem.get("global_id") or None,
+                    "ifc_object_type": ifc_type or None,
+                    "ifc_object_name": elem.get("name") or None,
+                    "work_code": work_code,
+                    "floor_level": elem.get("floor_level") or None,
+                    "quantity": elem.get("quantity", 0) or 0,
+                    "unit": elem.get("unit") or None,
+                    "extraction_method": "AI_AUTO",
+                })
 
-        if not rows:
-            return 0
-        self.db.add_all(rows)
-        return len(rows)
+        return await replace_bim_quantities(self.db, project_id, tenant_id, mapped_rows)
 
     def _generate_threejs_geometry(self, filepath: str) -> dict:
         """Three.js용 geometry JSON을 생성한다.
@@ -231,7 +232,7 @@ class BIMIFCService:
         #   하지 않게 rollback 후 경고만 남긴다(분석 응답 무영향·가짜 성공 표기 없음).
         bim_quantity_rows = 0
         try:
-            bim_quantity_rows = self._persist_bim_quantities(
+            bim_quantity_rows = await self._persist_bim_quantities(
                 project_id=project_id,
                 tenant_id=tenant_id,
                 elements=result.get("elements") or [],
@@ -268,6 +269,37 @@ class BIMIFCService:
             created_at=design.created_at,
         )
 
+    @staticmethod
+    def _design_params_to_mass(
+        total_area_sqm: float,
+        floors: int,
+        structure_type: str = "RC",
+    ) -> dict:
+        """설계 파라미터(연면적·층수·구조형식)를 정본 생성기 입력 매스 dict로 사상한다.
+
+        연면적 ÷ 층수 = 층당 바닥면적 → 정사각 가정으로 한 변 길이 산출
+        (building_width_m = building_depth_m). 층고는 legacy와 동일 3.0m.
+
+        ★PR#315 M3(전역 전파방지): legacy 는 RC/비RC 벽두께를 0.2/0.15 로 분기했으나,
+        정본 위임 초판은 build_ifc_from_mass 가 wall_thickness_m 을 forwarding 하지 않아
+        고정 0.2 로 근사되며 구조형식 차이가 물량에 반영되지 않았다. build_ifc_from_mass
+        가 이제 mass["wall_thickness_m"]을 forwarding 하므로(같은 PR 수정) 여기서 구조형식
+        분기값을 실제로 전달 — 압출·BaseQuantities 양쪽에 정확히 반영된다(근사 표기 불필요).
+        """
+        import math
+
+        n = max(int(floors), 1)
+        floor_area = max(float(total_area_sqm), 1.0) / n
+        side = math.sqrt(floor_area)
+        wall_thickness_m = 0.2 if structure_type == "RC" else 0.15
+        return {
+            "building_width_m": side,
+            "building_depth_m": side,
+            "num_floors": n,
+            "floor_height_m": 3.0,
+            "wall_thickness_m": wall_thickness_m,
+        }
+
     async def generate_ifc_from_design(
         self,
         project_id: UUID,
@@ -278,189 +310,91 @@ class BIMIFCService:
     ) -> BIMQuantityResponse:
         """설계 파라미터로 IFC 파일을 자동 생성한다.
 
-        ifcopenshell로 기본 건물 모델(벽/슬라브)을 생성하고
-        MinIO에 업로드한 뒤 물량산출 결과를 반환한다.
+        ★정본 위임(전역 전파방지): 자체 엔티티 조립(지오메트리·물량 부재로 '빈 IFC'
+          산출 — /threejs 빈 지오메트리·/analyze 물량 0)을 제거하고, 실압출
+          (IfcExtrudedAreaSolid)·BaseQuantities(IfcElementQuantity)를 부착하는 정본
+          생성기 app.services.bim.ifc_generator_service.build_ifc_from_mass 로 위임한다.
+          → /threejs(지오메트리)·/analyze(물량 재적산)가 실데이터를 반환한다.
+        생성 IFC 를 자사 파서(_parse_ifc)로 재적산해 응답 물량을 산출하고, MinIO 업로드
+        후 Design + bim_quantities 로 영속한다(업로드/영속 실패는 graceful — 메트릭 반환
+        무영향, 가짜 성공 표기 없음). ifcopenshell 미설치 시 build_ifc_from_mass 내부
+        import 가 명시 실패한다(무목업 — 가짜 IFC 없음).
         """
         import io
-        import math
+        import os
         import tempfile
 
-        import ifcopenshell
+        from app.services.bim.ifc_generator_service import build_ifc_from_mass
 
         logger.info(
-            "IFC 자동 생성 시작",
+            "IFC 자동 생성 시작(정본 위임)",
             project_id=str(project_id),
             area=total_area_sqm,
             floors=floors,
         )
 
-        # IFC 파일 생성
-        ifc = ifcopenshell.file(schema="IFC4")
+        # 1. 정본 생성기로 실압출 IFC 생성(지오메트리 + BaseQuantities 부착).
+        mass = self._design_params_to_mass(total_area_sqm, floors, structure_type)
+        ifc_bytes = build_ifc_from_mass(mass, project_name=f"PropAI {project_id}")
 
-        # 프로젝트/사이트/건물 계층
-        owner_history = ifc.create_entity("IfcOwnerHistory")
-        project = ifc.create_entity(
-            "IfcProject",
-            GlobalId=ifcopenshell.guid.new(),
-            Name="PropAI Generated",
-            OwnerHistory=owner_history,
-        )
-        site = ifc.create_entity(
-            "IfcSite",
-            GlobalId=ifcopenshell.guid.new(),
-            Name="Site",
-            OwnerHistory=owner_history,
-        )
-        building = ifc.create_entity(
-            "IfcBuilding",
-            GlobalId=ifcopenshell.guid.new(),
-            Name="Building",
-            OwnerHistory=owner_history,
-        )
-        ifc.create_entity("IfcRelAggregates", GlobalId=ifcopenshell.guid.new(),
-                          RelatingObject=project, RelatedObjects=[site])
-        ifc.create_entity("IfcRelAggregates", GlobalId=ifcopenshell.guid.new(),
-                          RelatingObject=site, RelatedObjects=[building])
-
-        # 층별 건물 요소 생성
-        floor_area = total_area_sqm / floors
-        side = math.sqrt(floor_area)
-        floor_height = 3.0
-        element_count = 0
-        total_volume = 0.0
-        total_area = 0.0
-
-        materials: dict[str, dict] = {}
-        # 요소 단위 물량(bim_quantities 영속 입력) — _persist_bim_quantities 계약과 동일 형식.
-        # analyze_ifc(_parse_ifc)의 elements 리스트와 동일 키(element_type/global_id/name/quantity/unit/floor_level).
-        elements: list[dict] = []
-
-        for f in range(floors):
-            storey = ifc.create_entity(
-                "IfcBuildingStorey",
-                GlobalId=ifcopenshell.guid.new(),
-                Name=f"{f + 1}F",
-                Elevation=f * floor_height,
-                OwnerHistory=owner_history,
-            )
-            ifc.create_entity("IfcRelAggregates", GlobalId=ifcopenshell.guid.new(),
-                              RelatingObject=building, RelatedObjects=[storey])
-
-            # 슬라브 (바닥)
-            slab = ifc.create_entity(
-                "IfcSlab",
-                GlobalId=ifcopenshell.guid.new(),
-                Name=f"Slab-{f + 1}F",
-                OwnerHistory=owner_history,
-            )
-            slab_volume = side * side * 0.2  # 두께 0.2m
-            slab_area = side * side
-            total_volume += slab_volume
-            total_area += slab_area
-            element_count += 1
-            materials.setdefault("IfcSlab", {"count": 0, "volume_m3": 0.0, "area_sqm": 0.0})
-            materials["IfcSlab"]["count"] += 1
-            materials["IfcSlab"]["volume_m3"] += slab_volume
-            materials["IfcSlab"]["area_sqm"] += slab_area
-            elements.append({
-                "element_type": "IfcSlab",
-                "global_id": getattr(slab, "GlobalId", "") or "",
-                "name": getattr(slab, "Name", "") or "",
-                "quantity": slab_volume,
-                "unit": "m3",
-                "floor_level": f"{f + 1}F",
-            })
-
-            ifc.create_entity("IfcRelContainedInSpatialStructure",
-                              GlobalId=ifcopenshell.guid.new(),
-                              RelatingStructure=storey,
-                              RelatedElements=[slab])
-
-            # 벽 (4면)
-            wall_thickness = 0.2 if structure_type == "RC" else 0.15
-            for i in range(4):
-                wall = ifc.create_entity(
-                    "IfcWall",
-                    GlobalId=ifcopenshell.guid.new(),
-                    Name=f"Wall-{f + 1}F-{i + 1}",
-                    OwnerHistory=owner_history,
-                )
-                wall_volume = side * floor_height * wall_thickness
-                wall_area = side * floor_height
-                total_volume += wall_volume
-                total_area += wall_area
-                element_count += 1
-                materials.setdefault("IfcWall", {"count": 0, "volume_m3": 0.0, "area_sqm": 0.0})
-                materials["IfcWall"]["count"] += 1
-                materials["IfcWall"]["volume_m3"] += wall_volume
-                materials["IfcWall"]["area_sqm"] += wall_area
-                elements.append({
-                    "element_type": "IfcWall",
-                    "global_id": getattr(wall, "GlobalId", "") or "",
-                    "name": getattr(wall, "Name", "") or "",
-                    "quantity": wall_volume,
-                    "unit": "m3",
-                    "floor_level": f"{f + 1}F",
-                })
-
-        # 임시 파일로 IFC 저장
+        # 2. 임시 파일로 기록 후 자사 파서로 재적산(자기 생성 IFC 자가 적산 루프).
         with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as tmp:
             tmp_path = tmp.name
-        ifc.write(tmp_path)
-
-        # MinIO 업로드 (실패해도 물량/메트릭은 반환 — 저장만 스킵)
-        import os
+        Path(tmp_path).write_bytes(ifc_bytes)
 
         file_url: str | None = None
         storage_skipped = False
         storage_error: str | None = None
         try:
-            from minio import Minio
+            result = self._parse_ifc(tmp_path)
 
-            minio_client = Minio(
-                self.settings.minio_url.replace("http://", ""),
-                access_key=self.settings.minio_access_key,
-                secret_key=self.settings.minio_secret_key,
-                secure=False,
-            )
-            bucket = "propai-bim"
-            if not minio_client.bucket_exists(bucket):
-                minio_client.make_bucket(bucket)
+            # 3. MinIO 업로드(실패해도 물량/메트릭은 반환 — 저장만 스킵).
+            try:
+                from minio import Minio
 
-            object_name = f"generated/{project_id}/{project_id}_auto.ifc"
-            ifc_bytes = Path(tmp_path).read_bytes()
-            minio_client.put_object(
-                bucket, object_name, io.BytesIO(ifc_bytes),
-                length=len(ifc_bytes), content_type="application/x-step",
-            )
-            file_url = f"{self.settings.minio_url}/{bucket}/{object_name}"
-        except ImportError:
-            storage_skipped = True
-            storage_error = "minio 패키지 미설치 — IFC 파일 저장 스킵"
-            logger.warning("MinIO 미설치로 IFC 저장 스킵", project_id=str(project_id))
-        except Exception as exc:  # noqa: BLE001 (저장 실패는 메트릭 반환을 막지 않음)
-            storage_skipped = True
-            storage_error = f"MinIO 저장 실패: {exc}"
-            logger.warning(
-                "MinIO 업로드 실패로 IFC 저장 스킵",
-                project_id=str(project_id),
-                error=str(exc),
-            )
+                minio_client = Minio(
+                    self.settings.minio_url.replace("http://", ""),
+                    access_key=self.settings.minio_access_key,
+                    secret_key=self.settings.minio_secret_key,
+                    secure=False,
+                )
+                bucket = "propai-bim"
+                if not minio_client.bucket_exists(bucket):
+                    minio_client.make_bucket(bucket)
+
+                object_name = f"generated/{project_id}/{project_id}_auto.ifc"
+                minio_client.put_object(
+                    bucket, object_name, io.BytesIO(ifc_bytes),
+                    length=len(ifc_bytes), content_type="application/x-step",
+                )
+                file_url = f"{self.settings.minio_url}/{bucket}/{object_name}"
+            except ImportError:
+                storage_skipped = True
+                storage_error = "minio 패키지 미설치 — IFC 파일 저장 스킵"
+                logger.warning("MinIO 미설치로 IFC 저장 스킵", project_id=str(project_id))
+            except Exception as exc:  # noqa: BLE001 (저장 실패는 메트릭 반환을 막지 않음)
+                storage_skipped = True
+                storage_error = f"MinIO 저장 실패: {exc}"
+                logger.warning(
+                    "MinIO 업로드 실패로 IFC 저장 스킵",
+                    project_id=str(project_id),
+                    error=str(exc),
+                )
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
 
-        # DB 저장
+        # 4. DB 저장(재적산 물량 기반 — 정본 지오메트리와 정합).
         design = Design(
             tenant_id=tenant_id,
             project_id=project_id,
             design_type="bim_ifc",
             file_url=file_url,
-            total_area_sqm=total_area,
-            total_volume_m3=total_volume,
-            element_count=element_count,
+            total_area_sqm=result["total_area_sqm"],
+            total_volume_m3=result["total_volume_m3"],
+            element_count=result["element_count"],
             metadata_json={
-                "material_breakdown": [{"type": k, **v} for k, v in materials.items()],
+                "material_breakdown": result["material_breakdown"],
                 "generated": True,
                 "structure_type": structure_type,
                 "storage_skipped": storage_skipped,
@@ -471,15 +405,15 @@ class BIMIFCService:
         await self.db.commit()
         await self.db.refresh(design)
 
-        # 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
+        # 5. 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
         # 실패해도 IFC 생성 응답은 정상 반환한다(graceful) — 이미 커밋된 Design은 무영향,
         # 물량 영속만 스킵되고 경고 로그로 남긴다(무목업 — 가짜 성공 표기 없음).
         bim_quantity_rows = 0
         try:
-            bim_quantity_rows = self._persist_bim_quantities(
+            bim_quantity_rows = await self._persist_bim_quantities(
                 project_id=project_id,
                 tenant_id=tenant_id,
-                elements=elements,
+                elements=result.get("elements") or [],
             )
             if bim_quantity_rows:
                 await self.db.commit()
@@ -493,18 +427,18 @@ class BIMIFCService:
             bim_quantity_rows = 0
 
         logger.info(
-            "IFC 자동 생성 완료",
-            elements=element_count,
+            "IFC 자동 생성 완료(정본 위임)",
+            elements=result["element_count"],
             bim_quantities=bim_quantity_rows,
         )
 
         return BIMQuantityResponse(
             id=design.id,
             project_id=design.project_id,
-            total_volume_m3=total_volume,
-            total_area_sqm=total_area,
-            material_breakdown=[{"type": k, **v} for k, v in materials.items()],
-            element_count=element_count,
-            ifc_version="IFC4",
+            total_volume_m3=result["total_volume_m3"],
+            total_area_sqm=result["total_area_sqm"],
+            material_breakdown=result["material_breakdown"],
+            element_count=result["element_count"],
+            ifc_version=result["ifc_version"],
             created_at=design.created_at,
         )

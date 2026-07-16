@@ -312,7 +312,26 @@ class TestBIMIFCServiceParsing:
 
     @pytest.mark.asyncio
     async def test_generate_ifc_from_design_mocked(self):
-        """generate_ifc_from_design를 ifcopenshell+minio mock으로 테스트."""
+        """generate_ifc_from_design — 실 ifcopenshell 생성 + MinIO 만 mock.
+
+        ★PR#315 회귀 봉합(러너 셧다운/행 원인): generate_ifc_from_design 이 정본 생성기
+        (ifcopenshell.api.run 동적 usecase 디스패치)로 위임된 이후, sys.modules 전체를
+        MagicMock 으로 치환하는 구 패턴은 위험하다 — 같은 프로세스에서 앞선 테스트가 실
+        ifcopenshell.api 서브모듈을 이미 임포트해뒀다면, 이 mock 은 최상위 'ifcopenshell'
+        키만 치환하므로 이미 캐시된 실 ifcopenshell.api.run 이 새어 들어와 MagicMock 파일
+        객체를 대상으로 동적 usecase 를 실행 — 무한 지연/메모리 폭증(수 GB)으로 이어져
+        CI 러너가 셧다운됐다(로컬 재현: 2.65GB+ RSS, 150초 타임아웃 킬). 실 ifcopenshell
+        은 가볍고 결정적이므로 그대로 실행하고, 외부 I/O 경계(MinIO)만 격리한다(무목업 원칙).
+        """
+        import types as _types
+
+        try:
+            import ifcopenshell as _ic
+        except Exception:
+            pytest.skip("ifcopenshell 미설치")
+        if not isinstance(_ic, _types.ModuleType):
+            pytest.skip("ifcopenshell 목 주입 환경")
+
         from apps.api.services.bim_ifc_service import BIMIFCService
 
         mock_db = _mock_db_with_refresh()
@@ -322,42 +341,20 @@ class TestBIMIFCServiceParsing:
         svc.settings.minio_access_key = "test"
         svc.settings.minio_secret_key = "test"
 
-        # mock ifcopenshell
-        mock_ifc_file = MagicMock()
-        mock_ifc_file.create_entity = MagicMock(return_value=MagicMock())
-        mock_ifc_file.write = MagicMock()
-
-        mock_guid = MagicMock()
-        mock_guid.new.return_value = "FAKE_GUID"
-
         mock_minio = MagicMock()
         mock_minio.bucket_exists.return_value = True
         mock_minio.put_object = MagicMock()
 
-        with (
-            patch.dict("sys.modules", {
-                "ifcopenshell": MagicMock(file=MagicMock(return_value=mock_ifc_file), guid=mock_guid),
-                "minio": MagicMock(Minio=MagicMock(return_value=mock_minio)),
-            }),
-            patch("tempfile.NamedTemporaryFile") as mock_tmp,
-            patch("pathlib.Path.read_bytes", return_value=b"fake_ifc_data"),
-            patch("os.unlink"),
-        ):
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=MagicMock(name="/tmp/test.ifc"))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
-            try:
-                result = await svc.generate_ifc_from_design(
-                    project_id=TEST_PROJECT_ID,
-                    tenant_id=TEST_TENANT_ID,
-                    total_area_sqm=1000.0,
-                    floors=5,
-                    structure_type="RC",
-                )
-                assert result.ifc_version == "IFC4"
-                assert result.element_count > 0
-            except (ModuleNotFoundError, ImportError, AttributeError):
-                pytest.skip("ifcopenshell or minio not properly mockable")
+        with patch.dict("sys.modules", {"minio": MagicMock(Minio=MagicMock(return_value=mock_minio))}):
+            result = await svc.generate_ifc_from_design(
+                project_id=TEST_PROJECT_ID,
+                tenant_id=TEST_TENANT_ID,
+                total_area_sqm=1000.0,
+                floors=5,
+                structure_type="RC",
+            )
+            assert result.ifc_version == "IFC4"
+            assert result.element_count > 0
 
 
 # ═══════════════════════════════════════════════

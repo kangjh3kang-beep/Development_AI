@@ -11,7 +11,7 @@ from packages.schemas.models import (
     CarbonCalculationRequest,
     CarbonCalculationResponse,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +28,10 @@ class IFCGenerateRequest(BaseModel):
     """IFC 자동 생성 요청."""
 
     project_id: UUID
-    total_area_sqm: float = 1000.0
-    floors: int = 10
+    # PR#315 L1(경계 입력 정직화): 0/음수를 허용하면 1㎡ 클램프(_design_params_to_mass)로
+    # 비0 물량을 날조하게 된다 — 422 로 정직 거부(가짜 물량 생성 금지).
+    total_area_sqm: float = Field(default=1000.0, gt=0)
+    floors: int = Field(default=10, gt=0)
     structure_type: str = "RC"
 
 

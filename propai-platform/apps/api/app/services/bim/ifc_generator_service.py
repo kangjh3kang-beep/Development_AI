@@ -485,6 +485,12 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
     """AutoDesignEngine 매스(+선택 core_layout) dict로 IFC를 생성하는 편의 함수.
 
     mass에 core_positions·corridor_width_m·windows_per_side가 있으면 실내 요소도 압출.
+
+    ★PR#315 M3(전역 전파방지): wall_thickness_m·slab_thickness_m 는 generate()가 이미
+    지원하는 파라미터인데도 이 편의 함수가 forwarding 하지 않아 mass dict에 값을 넣어도
+    조용히 무시되던 결함을 봉합한다(additive — 기본값은 generate()의 기존 기본값 0.2와
+    동일해 무회귀). 예: 벽두께가 구조형식(RC/비RC)에 따라 달라지는 호출부는 이제
+    mass["wall_thickness_m"]로 실제 압출·BaseQuantities에 반영된다.
     """
     return IfcGeneratorService().generate(
         building_width_m=float(mass.get("building_width_m", 10.0)),
@@ -492,6 +498,8 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         num_floors=int(mass.get("num_floors", 5)),
         floor_height_m=float(mass.get("floor_height_m", 3.0)),
         project_name=project_name,
+        wall_thickness_m=float(mass.get("wall_thickness_m", 0.2)),
+        slab_thickness_m=float(mass.get("slab_thickness_m", 0.2)),
         cores=mass.get("core_positions"),
         core_size_m=float(mass.get("core_size_m", 5.0)),
         corridor_width_m=float(mass.get("corridor_width_m", 0.0)),
