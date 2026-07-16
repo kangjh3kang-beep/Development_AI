@@ -148,11 +148,17 @@ async def market_report_pdf(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    """시장조사보고서 PDF — 통합 보고서 생성엔진 경유(build_report_model_from_market + render_report).
+
+    엔드포인트 경로·요청 계약·응답 헤더(파일명 등)는 프론트 무수정 목표로 이전과 동일 유지."""
+    from app.services.report.render import build_report_model_from_market, render_report
+
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
     rep = await svc.build_report(
         req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
-    pdf = svc.to_pdf(rep)
+    model = build_report_model_from_market(rep)
+    pdf, _media_type, _ext = render_report(model, "pdf")
     return StreamingResponse(
         iter([pdf]), media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="market_report.pdf"'},
@@ -164,11 +170,15 @@ async def market_report_pptx(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    """시장조사보고서 PPTX — 통합 보고서 생성엔진 경유(PDF 라우트와 동일 어댑터·모델 재사용)."""
+    from app.services.report.render import build_report_model_from_market, render_report
+
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
     rep = await svc.build_report(
         req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
-    pptx = svc.to_pptx(rep)
+    model = build_report_model_from_market(rep)
+    pptx, _media_type, _ext = render_report(model, "pptx")
     return StreamingResponse(
         iter([pptx]),
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -181,11 +191,15 @@ async def market_report_docx(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    """시장조사보고서 DOCX — 통합 보고서 생성엔진 경유(PDF 라우트와 동일 어댑터·모델 재사용)."""
+    from app.services.report.render import build_report_model_from_market, render_report
+
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
     rep = await svc.build_report(
         req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {}, parcels=req.parcels)
-    docx = svc.to_docx(rep)
+    model = build_report_model_from_market(rep)
+    docx, _media_type, _ext = render_report(model, "docx")
     return StreamingResponse(
         iter([docx]),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

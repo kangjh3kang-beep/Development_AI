@@ -106,6 +106,16 @@ export interface AuditEvidence {
   legal_ref_key?: string | null;
 }
 
+/** 로드맵③ — 중심엔진 shadow 판정(설정 게이트가 켜졌을 때만 백엔드가 동봉·기본 미존재).
+ * shadow_integration.shadow_compare 반환 계약과 1:1(engine_verdict: compliant|needs_review|
+ * non_compliant|null — 3값). matched=false면 플랫폼 자체 판정과 엔진 판정이 갈렸다는 뜻(참고 신호). */
+export interface AuditDeliberationResult {
+  engine_verdict?: string | null;
+  platform_verdict?: string | null;
+  matched?: boolean | null;
+  divergence_score?: number | null;
+}
+
 export interface AuditSection {
   id?: string | null; // "S1"~"S7"
   title?: string | null;
@@ -120,6 +130,8 @@ export interface AuditSection {
   // ★pass_rate 정직화(design_review_service) — 이 파라미터 검토가 실제 검사하지 않은
   //   항목(일조·주차·피난 등)의 한글 라벨 목록. 있을 때만 "미검사 N항목"으로 표시(정직).
   not_checked_items?: string[] | null;
+  // 로드맵③ additive — 게이트 off·구서버는 항상 undefined(기존 렌더 그대로).
+  deliberation_result?: AuditDeliberationResult | null;
 }
 
 export interface DesignAuditReport {
@@ -388,6 +400,127 @@ function AuditPdfDownload({ auditId }: { auditId: string }) {
   );
 }
 
+/** 로드맵⑤ — 제출번들(zip) 다운로드용 실 기하값. 미보유 항목은 백엔드 SubmissionBundleRequest
+ * 기본값(대지폭·깊이 등)에 위임한다(프론트가 값을 지어내지 않음 — 무날조). */
+export interface AuditBundleContext {
+  buildingWidthM?: number | null;
+  buildingDepthM?: number | null;
+  floorCount?: number | null;
+  buildingUse?: string | null;
+  zoneCode?: string | null;
+  projectName?: string | null;
+  unitTypes?: string[] | null;
+  households?: number | null;
+}
+
+/** 제출번들(zip) 다운로드 — design_v61.py POST /{project_id}/submission-bundle 소비.
+ *
+ * CadBimIntegrationPanel.exportSubmissionBundle(직전 캠페인 구현) 패턴을 미러: 인증 Bearer
+ * 토큰 동봉 raw fetch(blob) + 422(필수시트 미충족) 등 실패 사유를 그대로 노출(무음 실패 금지).
+ * bundleContext가 없으면(설계 스튜디오 매스 미보유 — 도면세트 없음) 버튼을 비활성화한다.
+ */
+function AuditSubmissionBundleDownload({
+  projectId,
+  bundleContext,
+}: {
+  projectId: string;
+  bundleContext: AuditBundleContext;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function download() {
+    setBusy(true);
+    setError("");
+    try {
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(
+        `${apiV1BaseUrl()}/design/${encodeURIComponent(projectId)}/submission-bundle`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            // 실보유 기하값만 전송 — 미보유(대지폭·깊이 등)는 생략해 백엔드 선언 기본값에 위임.
+            building_width_m: bundleContext.buildingWidthM ?? undefined,
+            building_depth_m: bundleContext.buildingDepthM ?? undefined,
+            floor_count: bundleContext.floorCount ?? undefined,
+            building_use: bundleContext.buildingUse ?? undefined,
+            zone_code: bundleContext.zoneCode ?? undefined,
+            project_name: bundleContext.projectName ?? undefined,
+            unit_types:
+              bundleContext.unitTypes && bundleContext.unitTypes.length > 0
+                ? bundleContext.unitTypes
+                : undefined,
+            households: bundleContext.households ?? undefined,
+            // 제출번들 전용(SubmissionBundleRequest) — 발행일은 클라이언트 명시 인자(서버 now() 금지 계약).
+            issue_date: new Date().toISOString().slice(0, 10),
+            include_dxf: true,
+            include_report: true,
+            include_boq: true,
+          }),
+          signal: AbortSignal.timeout(120000),
+        },
+      );
+      if (!res.ok) {
+        // 백엔드 거부(4xx)는 사유를 그대로 노출(무날조). 필수시트 미충족(422)은 detail.missing[] 동봉.
+        let msg = `제출번들 생성 실패 (HTTP ${res.status})`;
+        try {
+          const j = await res.json();
+          const detail = (j as { detail?: unknown })?.detail;
+          if (typeof detail === "string" && detail.trim()) {
+            msg = detail.trim();
+          } else if (detail && typeof detail === "object") {
+            const d = detail as { message?: unknown; missing?: unknown };
+            const head =
+              typeof d.message === "string" && d.message.trim() ? d.message.trim() : msg;
+            const missing = Array.isArray(d.missing)
+              ? d.missing.filter((x): x is string => typeof x === "string")
+              : [];
+            msg = missing.length > 0 ? `${head} — 누락 시트: ${missing.join(", ")}` : head;
+          }
+        } catch {
+          /* JSON 아님 — 기본 메시지 유지 */
+        }
+        if (res.status === 401) msg = `로그인이 필요합니다 — ${msg}`;
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${bundleContext.projectName || "PropAI"}_제출번들.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "제출번들 생성에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={busy}
+        className="rounded-xl border border-[var(--accent-strong)]/50 bg-transparent px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50"
+      >
+        {busy ? "준비 중…" : "제출번들(zip) ↓"}
+      </button>
+      {error && <span className="text-[11px] font-semibold text-[var(--status-error)]">{error}</span>}
+    </div>
+  );
+}
+
 /* ── 섹션 본문 블록 ── */
 
 function FindingsTable({
@@ -601,15 +734,68 @@ function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
   );
 }
 
+/* ── 로드맵③ — 심의엔진(shadow) 판정 블록 ──
+ * SeniorVerdictCard(components/analysis)는 senior_consultation 계약(evaluations[]·citations[]
+ * 다중 도메인 자문)전용이라 이 shadow 비교 결과(엔진 3값 verdict + divergence, 세부 근거·인용
+ * 없음)와 데이터 모양이 다르다 — 억지로 끼워 맞추면 evaluations/citations를 날조해야 해서
+ * 재사용하지 않고, 이 파일에 이미 있는 판정 배지 언어(VERDICT_META)를 그대로 재사용한다(보고서
+ * 전체와 시각적으로 일관). */
+
+const DELIB_VERDICT_LABEL: Record<string, string> = {
+  compliant: "통과", needs_review: "조건부", non_compliant: "보류",
+};
+
+function deliberationTone(v?: string | null): VerdictTone {
+  const s = (v ?? "").trim().toLowerCase();
+  if (s === "compliant") return "pass";
+  if (s === "needs_review") return "conditional";
+  if (s === "non_compliant") return "fail";
+  return "unknown";
+}
+
+function DeliberationVerdictBlock({ result }: { result: AuditDeliberationResult }) {
+  const ev = (result.engine_verdict ?? "").trim().toLowerCase();
+  const tone = deliberationTone(ev);
+  const meta = VERDICT_META[tone];
+  const label = DELIB_VERDICT_LABEL[ev] ?? (result.engine_verdict?.trim() || "판정 불가");
+  return (
+    <div className={`rounded-xl border p-3 ${meta.hero}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+          심의엔진 판정(중심엔진 shadow 관측)
+        </p>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${meta.chip}`}>
+          {label}
+        </span>
+        {result.matched === false && (
+          <span className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">
+            플랫폼 판정과 상이
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+        참고용 관측치입니다 — 운영이 표면화 설정을 켰을 때만 표시되며, 플랫폼 자체 판정을
+        대체하지 않습니다.
+      </p>
+    </div>
+  );
+}
+
 /* ── 메인 뷰 ── */
 
 export function AuditReportView({
   report,
   onReset,
+  projectId,
+  bundleContext,
 }: {
   report: DesignAuditReport;
   /** "다시 심사" — 부모가 보고서를 닫고 스테퍼로 복귀. */
   onReset?: () => void;
+  /** 로드맵⑤ — 제출번들(zip) 대상 프로젝트 ID. 실 프로젝트(수동주소 심사가 아님)일 때만 전달. */
+  projectId?: string | null;
+  /** 실 도면세트(설계 스튜디오 매스) 보유 시에만 전달 — 없으면 버튼 자체를 표시하지 않는다(정직). */
+  bundleContext?: AuditBundleContext | null;
 }) {
   const sections = Array.isArray(report.sections) ? report.sections : [];
   // 첫 섹션 기본 펼침 — 나머지는 아코디언 토글.
@@ -668,6 +854,11 @@ export function AuditReportView({
                 보고서 ID 없음 — PDF 다운로드 미제공
               </span>
             )}
+            {/* 로드맵⑤ — 제출번들(zip). 실 프로젝트+실 도면세트(설계 스튜디오 매스) 보유 시에만
+                버튼 자체를 노출한다(비활성 버튼 대신 정직 생략 — PDF 다운로드 관행과 동일). */}
+            {projectId && bundleContext && (
+              <AuditSubmissionBundleDownload projectId={projectId} bundleContext={bundleContext} />
+            )}
             {onReset && (
               <button
                 type="button"
@@ -710,7 +901,8 @@ export function AuditReportView({
             !!sec.case_comparison ||
             incentives.length > 0 ||
             blindSpots.length > 0 ||
-            evidence.length > 0;
+            evidence.length > 0 ||
+            !!sec.deliberation_result; // 로드맵③ — 게이트 off·구서버는 항상 falsy(회귀 없음)
           return (
             <section
               key={i}
@@ -769,6 +961,9 @@ export function AuditReportView({
                     <IncentiveCards incentives={incentives} pools={pools} />
                   )}
                   {blindSpots.length > 0 && <BlindSpotList spots={blindSpots} />}
+                  {sec.deliberation_result && (
+                    <DeliberationVerdictBlock result={sec.deliberation_result} />
+                  )}
                   {evidence.length > 0 && (
                     <EvidencePanel
                       title="산출 근거"

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     deliberation_shadow_enabled: bool = False
     deliberation_shadow_engine_timeout_s: float = 5.0       # shadow 엔진 호출 상한(관측이 도메인 응답 지연 금지)
     deliberation_monitor_timeout_s: float = 20.0            # baseline-staleness 법제처 모니터 호출 상한(hang→degrade)
+    # 로드맵③(설계심사 감사 표면화) — 위 deliberation_shadow_enabled 와 별개의 게이트. shadow 관측이
+    # 켜져 있어도 기본은 계속 fire-and-forget(응답 무변)이며, 이 플래그까지 True여야 design_audit
+    # 응답에 엔진 판정(deliberation_result)이 additive로 동봉된다(대기 호출로 전환 — bounded by
+    # deliberation_shadow_engine_timeout_s). ★기본 False가 정본 — 운영이 명시적으로 올릴 때만 표면화
+    # (코드가 운영 결정을 선점하지 않음). 기본값에서는 응답 바이트가 기존과 완전히 동일하다.
+    deliberation_surface_in_audit: bool = False
 
     @field_validator("debug", mode="before")
     @classmethod

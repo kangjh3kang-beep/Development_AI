@@ -20,6 +20,17 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  BarChart,
+  Bar,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+} from "recharts";
 import { Button, Card, CardContent } from "@propai/ui";
 import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
@@ -703,37 +714,15 @@ export function InvestmentAnalyticsWorkspaceClient({
               {mcResult.histogram?.length > 0 ? (
                 <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                   <p className="label-caps text-[var(--text-tertiary)]">{labels.histTitle}</p>
-                  <div className="mt-3 space-y-2">
-                    {(() => {
-                      const maxCount = Math.max(...mcResult.histogram.map((h) => h.count), 0);
-                      return mcResult.histogram.map((bin, i) => {
-                        const pct = maxCount > 0 ? (bin.count / maxCount) * 100 : 0;
-                        // 손실(음수) 구간은 빨강, 흑자 구간은 강조색, 걸친 구간은 앰버(공용 상태토큰).
-                        const barColor =
-                          bin.bin_end <= 0
-                            ? "var(--status-error)"
-                            : bin.bin_start >= 0
-                              ? "var(--accent-strong)"
-                              : "var(--status-warning)";
-                        return (
-                          <div key={`bin-${i}`} className="flex items-center gap-3">
-                            <span className="w-32 shrink-0 text-[10px] text-[var(--text-tertiary)]">
-                              {fmtEok(locale, bin.bin_start)} ~ {fmtEok(locale, bin.bin_end)}억
-                            </span>
-                            <div className="h-3 flex-1 rounded-full bg-[var(--line)]">
-                              <div
-                                className="h-3 rounded-full"
-                                style={{ width: `${pct}%`, backgroundColor: barColor }}
-                              />
-                            </div>
-                            <span className="w-12 text-right text-[10px] font-semibold text-[var(--text-secondary)]">
-                              {bin.count}
-                            </span>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
+                  {/* ★로드맵④: CSS-div 막대 → recharts 빈도 히스토그램(빈 구간 축·건수 Y축) +
+                      실제 백분위 참조선(P5 하방·P50 중앙·P95 상방 — 응답 실값만, 날조 없음). */}
+                  <McHistogramChart
+                    histogram={mcResult.histogram}
+                    locale={locale}
+                    p5={mcResult.p5}
+                    p50={mcResult.p50}
+                    p95={mcResult.p95}
+                  />
                 </div>
               ) : null}
 
@@ -798,57 +787,19 @@ export function InvestmentAnalyticsWorkspaceClient({
           <CardContent className="p-6">
             <p className="label-caps text-[var(--text-tertiary)]">{labels.tornadoTitle}</p>
             <p className="mt-1.5 text-xs leading-6 text-[var(--text-secondary)]">{labels.tornadoNote}</p>
-            <div className="mt-4 space-y-3">
-              {(() => {
-                const maxSpread = Math.max(...sensResult.tornado.map((t) => t.spread), 0);
-                const center =
+            {/* ★로드맵④: CSS-div 토네이도 → recharts 수평 양방향 BarChart(변수별 ±영향 %p).
+                기준선(base profit_rate) 대비 하방(적색)·상방(녹색) 편차를 축·값 라벨과 함께 표기.
+                center·값은 기존 계산 결과 그대로(재산출 없음). */}
+            <div className="mt-4">
+              <SensitivityTornadoChart
+                tornado={sensResult.tornado}
+                center={
                   numOf(baseResult?.profit_rate_pct) ??
                   (sensResult.tornado.length > 0
                     ? (sensResult.tornado[0].low_profit + sensResult.tornado[0].high_profit) / 2
-                    : 0);
-                return sensResult.tornado.map((t, i) => {
-                  const lowPct = maxSpread > 0 ? (Math.abs(center - t.low_profit) / maxSpread) * 50 : 0;
-                  const highPct = maxSpread > 0 ? (Math.abs(t.high_profit - center) / maxSpread) * 50 : 0;
-                  return (
-                    <div key={`tornado-${i}`} className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold text-[var(--text-primary)]">{t.name}</span>
-                        <span className="text-xs text-[var(--text-tertiary)]">
-                          {labels.profitRateLabel} ±{t.spread.toFixed(1)}%p
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-1">
-                        <div className="flex flex-1 justify-end">
-                          {/* 하방(손실측) 막대 — 공용 상태토큰(60% 혼합). */}
-                          <div
-                            className="h-4 rounded-l-full"
-                            style={{
-                              width: `${lowPct}%`,
-                              backgroundColor: "color-mix(in srgb, var(--status-error) 60%, transparent)",
-                            }}
-                          />
-                        </div>
-                        <div className="h-6 w-px bg-[var(--text-tertiary)]" />
-                        <div className="flex-1">
-                          {/* 상방(수익측) 막대 — 공용 상태토큰(60% 혼합). */}
-                          <div
-                            className="h-4 rounded-r-full"
-                            style={{
-                              width: `${highPct}%`,
-                              backgroundColor: "color-mix(in srgb, var(--status-success) 60%, transparent)",
-                            }}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-1 flex justify-between text-[10px] text-[var(--text-tertiary)]">
-                        <span>{fmtPctRaw(t.low_profit)}</span>
-                        <span>{fmtPctRaw(center)}</span>
-                        <span>{fmtPctRaw(t.high_profit)}</span>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
+                    : 0)
+                }
+              />
             </div>
 
             {/* 섭동 기준값(base_values) — 엔진 산출 출처 정직 표기 */}
@@ -917,5 +868,195 @@ function HonestRow({ label, value }: { label: string; value: string }) {
       <span className="text-[var(--text-tertiary)]">{label}</span>
       <span className="text-right font-medium text-[var(--text-secondary)]">{value}</span>
     </div>
+  );
+}
+
+/**
+ * ★로드맵④: 몬테카를로 순이익 분포 히스토그램(recharts).
+ * 빈 구간(bin)을 X축, 발생 건수(count)를 Y축으로 그리고, 실제 백분위(P5 하방·P50 중앙·P95 상방)
+ * 참조선을 얹는다. 백분위는 응답 실값(p5/p50/p95)만 사용 — 없는 P10/P90을 만들지 않는다(무날조).
+ * 색상은 손실(적)·흑자(강조)·경계(앰버) 공용 상태토큰(기존 색 규칙 그대로).
+ */
+function McHistogramChart({
+  histogram,
+  locale,
+  p5,
+  p50,
+  p95,
+}: {
+  histogram: HistogramBin[];
+  locale: string;
+  p5: number;
+  p50: number;
+  p95: number;
+}) {
+  const data = histogram.map((b, i) => ({
+    idx: i,
+    count: b.count,
+    start: b.bin_start,
+    end: b.bin_end,
+  }));
+  // 백분위 값이 속하는 빈 인덱스(범위 밖이면 양끝으로 클램프) — 참조선 위치.
+  const idxFor = (v: number): number => {
+    const f = histogram.findIndex((b) => v >= b.bin_start && v < b.bin_end);
+    if (f >= 0) return f;
+    return v < histogram[0].bin_start ? 0 : histogram.length - 1;
+  };
+  const barColor = (b: HistogramBin): string =>
+    b.bin_end <= 0
+      ? "var(--status-error)"
+      : b.bin_start >= 0
+        ? "var(--accent-strong)"
+        : "var(--status-warning)";
+  return (
+    <div className="mt-3">
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={data} margin={{ top: 16, right: 12, left: 4, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+          <XAxis
+            dataKey="idx"
+            interval="preserveStartEnd"
+            tick={{ fontSize: 10, fill: "var(--text-tertiary)" }}
+            axisLine={{ stroke: "var(--line)" }}
+            tickLine={false}
+            tickFormatter={(i: number) => `${fmtEok(locale, data[i]?.start ?? 0)}억`}
+          />
+          <YAxis
+            allowDecimals={false}
+            width={36}
+            tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
+            contentStyle={{
+              background: "var(--surface-strong)",
+              border: "1px solid var(--line-strong)",
+              borderRadius: 8,
+              fontSize: 12,
+            }}
+            formatter={(v) => [`${Number(v)}회`, "빈도"]}
+            labelFormatter={(i) => {
+              const b = data[Number(i)];
+              return `${fmtEok(locale, b?.start ?? 0)} ~ ${fmtEok(locale, b?.end ?? 0)}억`;
+            }}
+          />
+          <ReferenceLine
+            x={idxFor(p5)}
+            stroke="var(--status-error)"
+            strokeDasharray="4 3"
+            label={{ value: "P5", position: "top", fontSize: 9, fill: "var(--status-error)" }}
+          />
+          <ReferenceLine
+            x={idxFor(p50)}
+            stroke="var(--text-primary)"
+            strokeDasharray="4 3"
+            label={{ value: "P50", position: "top", fontSize: 9, fill: "var(--text-primary)" }}
+          />
+          <ReferenceLine
+            x={idxFor(p95)}
+            stroke="var(--status-success)"
+            strokeDasharray="4 3"
+            label={{ value: "P95", position: "top", fontSize: 9, fill: "var(--status-success)" }}
+          />
+          <Bar dataKey="count" name="빈도" radius={[2, 2, 0, 0]}>
+            {histogram.map((b, i) => (
+              <Cell key={i} fill={barColor(b)} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * ★로드맵④: 민감도 토네이도(recharts 수평 양방향 BarChart).
+ * 변수별로 기준 수익률(center) 대비 하방(low_profit)·상방(high_profit) 편차(%p)를 좌우로 그린다.
+ * stackOffset="sign"으로 0을 기준선 삼아 좌(적)·우(녹)로 분기. 값·center는 기존 계산 결과 그대로.
+ */
+function SensitivityTornadoChart({
+  tornado,
+  center,
+}: {
+  tornado: TornadoItem[];
+  center: number;
+}) {
+  const data = tornado.map((t) => ({
+    name: t.name,
+    lowDelta: t.low_profit - center, // 보통 음수(하방)
+    highDelta: t.high_profit - center, // 보통 양수(상방)
+  }));
+  const maxAbs = Math.max(
+    ...data.map((d) => Math.max(Math.abs(d.lowDelta), Math.abs(d.highDelta))),
+    0.1,
+  );
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(180, tornado.length * 48)}>
+      <BarChart
+        data={data}
+        layout="vertical"
+        stackOffset="sign"
+        margin={{ top: 16, right: 24, left: 8, bottom: 4 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false} />
+        <XAxis
+          type="number"
+          domain={[-maxAbs, maxAbs]}
+          tick={{ fontSize: 10, fill: "var(--text-tertiary)" }}
+          axisLine={{ stroke: "var(--line)" }}
+          tickLine={false}
+          tickFormatter={(v: number) => `${(center + v).toFixed(0)}%`}
+        />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={96}
+          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Tooltip
+          cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
+          contentStyle={{
+            background: "var(--surface-strong)",
+            border: "1px solid var(--line-strong)",
+            borderRadius: 8,
+            fontSize: 12,
+          }}
+          formatter={(v, name) => [
+            fmtPctRaw(center + Number(v)),
+            name === "하방" ? "하방 수익률" : "상방 수익률",
+          ]}
+        />
+        <ReferenceLine
+          x={0}
+          stroke="var(--text-tertiary)"
+          label={{
+            value: `기준 ${fmtPctRaw(center)}`,
+            position: "top",
+            fontSize: 9,
+            fill: "var(--text-tertiary)",
+          }}
+        />
+        <Bar
+          dataKey="lowDelta"
+          stackId="s"
+          name="하방"
+          fill="color-mix(in srgb, var(--status-error) 60%, transparent)"
+          radius={[4, 0, 0, 4]}
+          maxBarSize={22}
+        />
+        <Bar
+          dataKey="highDelta"
+          stackId="s"
+          name="상방"
+          fill="color-mix(in srgb, var(--status-success) 60%, transparent)"
+          radius={[0, 4, 4, 0]}
+          maxBarSize={22}
+        />
+      </BarChart>
+    </ResponsiveContainer>
   );
 }

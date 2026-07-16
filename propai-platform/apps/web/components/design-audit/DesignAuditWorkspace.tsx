@@ -8,10 +8,14 @@
  *  ⑵ 개요: BriefUploadStep(PDF/텍스트 → POST /design-audit/extract-brief)
  *          + ParamConfirmStep(필드 그리드 — '추출'/'수동' 출처 배지·quote 툴팁·수정).
  *  ⑶ 도면: IFC 업로드 슬롯 + DXF 업로드 슬롯(.dxf · 20MB — CAD 2.0 내보내기 호환).
- *  ⑷ 실행: POST /design-audit/run(multipart: payload JSON + ifc_file? + dxf_file?) →
- *          로딩 중 엔진 체크리스트(예상 진행 표시) → AuditReportView 전환.
+ *  ⑷ 실행: POST /design-audit/run-upload/jobs(제출, multipart: payload JSON + ifc_file?
+ *          + dxf_file?) → job_id 즉시 반환 → GET /design-audit/run-upload/jobs/{id} 폴링
+ *          (등기 권리분석 lib/registry-analyze.ts 패턴 재사용) → AuditReportView 전환.
+ *          진행 중 job_id는 sessionStorage에 보존해 탭 종료·리로드 후에도 재진입 시 폴링을
+ *          이어간다(이전엔 단일 블로킹 POST라 리로드 시 진행이 통째로 유실됐다 — 로드맵②).
  *
- * 정직성 원칙: 빈 결과·서버 오류는 메시지 그대로 노출, 가짜값·임의 링크 생성 금지.
+ * 정직성 원칙: 빈 결과·서버 오류는 메시지 그대로 노출, 가짜값·임의 링크 생성 금지. 실행 중
+ * 표시는 잡 상태(pending/running) 기반 실측 경과 시간만 — 가짜 단계진행 연출 없음.
  * apiClient v1 패턴 + 디자인 토큰(CSS 변수)만 사용.
  */
 
@@ -71,6 +75,38 @@ function formatElapsed(totalSec: number): string {
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return `${m}:${String(rem).padStart(2, "0")}`;
+}
+
+/* ── 로드맵② — 잡 제출+폴링(lib/registry-analyze.ts analyzeRegistry 패턴 재사용) ──
+   design-runs(WP-L)는 사전 존재 run_id의 승인/실행 "상태"만 옮기는 전이 API라 매 실행이
+   신규 job_id를 그 자리에서 발급하는 이 화면에는 맞지 않아(백엔드 design_audit.py 잡 엔드포인트
+   주석 참조), 등기 권리분석과 동일한 제출+폴링 패턴을 그대로 재사용한다. */
+
+const AUDIT_JOB_STORAGE_KEY = "propai:design-audit:active-job";
+
+type AuditJobSubmitResp = { job_id: string | null; status: string };
+type AuditJobStatusResp = { status: string; result?: DesignAuditReport; error?: string };
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** job_id 폴링(4초 간격·최대 8분 — 예상 소요 3~5분 + 여유). 완료 시 보고서, 실패 시 에러 throw. */
+async function pollDesignAuditJob(jobId: string): Promise<DesignAuditReport> {
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await sleep(4000);
+    let s: AuditJobStatusResp;
+    try {
+      s = await apiClient.get<AuditJobStatusResp>(
+        `/design-audit/run-upload/jobs/${encodeURIComponent(jobId)}`,
+        { timeoutMs: 15000 },
+      );
+    } catch {
+      continue; // 네트워크 일시 오류 → 다음 폴링 재시도
+    }
+    if (s.status === "done" && s.result) return s.result;
+    if (s.status === "error") throw new Error(s.error || "설계안 심사 실행에 실패했습니다.");
+  }
+  throw new Error("설계안 심사 시간이 초과되었습니다. 잠시 후 다시 시도하세요.");
 }
 
 /** ★매스 브릿지 — 설계 스튜디오 산출 매스(designData) → 심사 개요 필드(BriefField[]) 매핑.
@@ -222,22 +258,67 @@ export function DesignAuditWorkspace({
   // 의존해 항상 ON이었다. 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반 심사만
   // 받을 수 있게 한다(D1).
   const [useLlm, setUseLlm] = useState(true);
+  // 잡 실제 시작 시각(ms) — 리로드 복원 시에도 실제 경과(원래 시작 시각 기준)를 이어서 표시하기
+  // 위해 ref로 보존(state로 하면 setRunning(true)와의 렌더 순서 경합이 생길 수 있어 ref 사용).
+  const jobStartedAtRef = useRef<number | null>(null);
 
   /* 실행 중 경과 시간(초) 카운터 — 실제 진행과 무관한 '가짜 단계 연출'을 제거한 정직한 시계.
      엔진 단계는 아래에서 '이 심사가 점검하는 항목'으로 나열만 하고, 진행 상태는 단일 '진행 중'으로
-     표시한다(동기 POST가 끝나면 결과 보고서로 전환 — design-runs 잡 전환은 이번 스코프 밖 후속). */
+     표시한다(잡 상태 기반 — 완료되면 결과 보고서로 자동 전환). 리로드로 복원된 실행은
+     jobStartedAtRef가 원래 시작 시각을 담고 있어 경과 시간이 0으로 리셋되지 않는다. */
   useEffect(() => {
     if (!running) {
       setElapsedSec(0);
+      jobStartedAtRef.current = null;
       return;
     }
-    const startedAt = Date.now();
-    setElapsedSec(0);
+    const startedAt = jobStartedAtRef.current ?? Date.now();
+    setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
     const timer = setInterval(() => {
       setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => clearInterval(timer);
   }, [running]);
+
+  /* 리로드·재진입 복원 — 탭 종료·새로고침으로 진행 중이던 잡을 sessionStorage에서 찾아 이어서
+     폴링한다(마운트 1회만). 이전엔 단일 블로킹 POST라 리로드하면 진행 자체가 유실됐다(로드맵②). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem(AUDIT_JOB_STORAGE_KEY);
+    if (!raw) return;
+    let parsed: { jobId?: string; startedAt?: number } | null = null;
+    try {
+      parsed = JSON.parse(raw) as { jobId?: string; startedAt?: number };
+    } catch {
+      parsed = null;
+    }
+    if (!parsed?.jobId) {
+      window.sessionStorage.removeItem(AUDIT_JOB_STORAGE_KEY);
+      return;
+    }
+    let cancelled = false;
+    jobStartedAtRef.current = parsed.startedAt ?? Date.now();
+    setRunning(true);
+    setRunError("");
+    goTo(3); // 진행 패널이 보이는 ⑷ 실행 단계로 복귀(goTo는 함수 선언 — 호이스팅으로 안전 호출)
+    pollDesignAuditJob(parsed.jobId)
+      .then((r) => {
+        if (!cancelled) setReport(r);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setRunError(apiErrorMessage(e, "설계안 심사 실행에 실패했습니다. 잠시 후 다시 시도하세요."));
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRunning(false);
+        window.sessionStorage.removeItem(AUDIT_JOB_STORAGE_KEY);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* 현재 부지 해석 — project 모드는 컨텍스트 스냅샷을 그대로 읽기만 한다. */
   const usingProject = siteMode === "project" && !!projectId && !!siteAnalysis;
@@ -327,6 +408,8 @@ export function DesignAuditWorkspace({
       goTo(0);
       return;
     }
+    const startedAt = Date.now();
+    jobStartedAtRef.current = startedAt;
     setRunning(true);
     setRunError("");
     try {
@@ -365,10 +448,22 @@ export function DesignAuditWorkspace({
       );
       if (ifcFile) fd.append("ifc_file", ifcFile);
       if (dxfFile) fd.append("dxf_file", dxfFile);
-      const r = await apiClient.post<DesignAuditReport>("/design-audit/run-upload", {
+      // ★로드맵② — 블로킹 단일 POST 대신 잡 제출+폴링(등기 권리분석 패턴 재사용). 제출 자체는
+      // 파싱·DXF/IFC 검증만 하므로 빠르다(무거운 심사는 서버 백그라운드).
+      const job = await apiClient.post<AuditJobSubmitResp>("/design-audit/run-upload/jobs", {
         body: fd,
-        timeoutMs: 300_000, // 다단계 엔진 심사 — 기본 120s보다 넉넉히(무한대기는 차단)
+        timeoutMs: 60_000,
       });
+      if (!job?.job_id) {
+        throw new Error("심사 작업 제출에 실패했습니다 — 잠시 후 다시 시도하세요.");
+      }
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          AUDIT_JOB_STORAGE_KEY,
+          JSON.stringify({ jobId: job.job_id, startedAt }),
+        );
+      }
+      const r = await pollDesignAuditJob(job.job_id);
       if (!r || typeof r !== "object") {
         throw new Error("심사 응답이 비어 있습니다 — 잠시 후 다시 시도하세요.");
       }
@@ -377,12 +472,32 @@ export function DesignAuditWorkspace({
       setRunError(apiErrorMessage(e, "설계안 심사 실행에 실패했습니다. 잠시 후 다시 시도하세요."));
     } finally {
       setRunning(false);
+      if (typeof window !== "undefined") window.sessionStorage.removeItem(AUDIT_JOB_STORAGE_KEY);
     }
   }
 
   /* 추출/수동 필드 수 — 실행 요약 표기 */
   const extractedCount = fields.filter((f) => f.source === "extracted").length;
   const userCount = fields.length - extractedCount;
+
+  /* ⑤ 제출번들(zip) — 실제 프로젝트(usingProject)이고 설계 스튜디오 매스(massGeom)가 실재할
+     때만(=도면세트 있음) AuditReportView에 다운로드 버튼 소재를 넘긴다. 대지폭·깊이 등 미보유
+     항목은 값을 지어내지 않고 생략(백엔드 SubmissionBundleRequest 기본값에 위임 — 그 기본값은
+     API 계약 자체가 선언한 것이라 프론트 날조가 아니다). */
+  const bundleProjectId = usingProject ? projectId : null;
+  const bundleContext =
+    bundleProjectId && designData?.massGeom?.buildingWidthM && designData?.massGeom?.buildingDepthM
+      ? {
+          buildingWidthM: designData.massGeom.buildingWidthM,
+          buildingDepthM: designData.massGeom.buildingDepthM,
+          floorCount: designData.floorCount ?? null,
+          buildingUse: designData.buildingType ?? null,
+          zoneCode: site.zoneCode ?? null,
+          projectName: projectName ?? null,
+          unitTypes: designData.unitTypes ?? null,
+          households: designData.unitCount ?? null,
+        }
+      : null;
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
@@ -411,7 +526,12 @@ export function DesignAuditWorkspace({
       {report ? (
         /* 실행 완료 → 보고서 뷰 + §4-C 후속: 법규 준수 배치도(findings→도면 주석, audit↔drawing) */
         <>
-          <AuditReportView report={report} onReset={() => setReport(null)} />
+          <AuditReportView
+            report={report}
+            onReset={() => setReport(null)}
+            projectId={bundleProjectId}
+            bundleContext={bundleContext}
+          />
           {(() => {
             const legal = auditFindingsToLegal(report);
             const geometry = auditSchematicGeometry(site.landAreaSqm, legal);
@@ -776,7 +896,8 @@ export function DesignAuditWorkspace({
                     </ul>
                     <p className="mt-3 text-[11px] text-[var(--text-hint)]">
                       예상 소요 3~5분입니다. 단계별 진행률은 실제 진행과 다를 수 있어 표시하지 않으며(정직하게
-                      생략), 서버 심사가 끝나면 결과 보고서로 자동 전환됩니다. 이 화면을 닫지 말고 기다려 주세요.
+                      생략), 서버 심사가 끝나면 결과 보고서로 자동 전환됩니다. 심사는 서버에서 계속 진행되므로
+                      탭을 닫거나 새로고침해도 안전합니다 — 다시 열면 진행 상황을 이어서 확인합니다.
                     </p>
                   </div>
                 ) : (

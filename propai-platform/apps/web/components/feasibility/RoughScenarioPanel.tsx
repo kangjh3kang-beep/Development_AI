@@ -17,6 +17,19 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+} from "recharts";
 import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -778,6 +791,11 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                     <Stat label="최대 자금소요(peak)" text={eok(cf.summary.peak_negative_cashflow)} />
                     <Stat label="자금 회수월" text={moStr(cf.summary.payback_month ?? result.summary.payback_month)} />
                   </div>
+                  {/* ★로드맵④: 월별 현금흐름 추세 차트(순현금 막대 + 누적 곡선) — 아래 표와 동일 배열(monthly_rows) 재사용(재계산 0). */}
+                  <div>
+                    <p className="sa-di-eyebrow mb-2">현금흐름 추세 · CHART</p>
+                    <MonthlyCashflowChart rows={cf.monthly_rows} />
+                  </div>
                   <div className="max-h-[360px] overflow-auto rounded-lg border border-[var(--line)]">
                     <table className="sa-di-table w-full">
                       <thead className="sticky top-0 bg-[var(--surface-soft)]">
@@ -927,5 +945,81 @@ function CostBlock({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * 월별 현금흐름 추세 차트 — 순현금(막대·부호별 색) + 누적 현금흐름(라인).
+ * DCF 표(cf.monthly_rows)와 동일 배열을 소비해 재계산하지 않는다(표=상세, 차트=보조 추세).
+ * 단위는 억(원/1e8). 색상은 테마 토큰만 사용(DemographicPanel 관례 미러).
+ */
+function MonthlyCashflowChart({ rows }: { rows: RsCashflowRow[] }) {
+  const data = rows.map((r) => ({
+    month: r.month,
+    net: (r.net ?? r.inflow - r.outflow) / 1e8,
+    cumulative: r.cumulative / 1e8,
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+        <XAxis
+          dataKey="month"
+          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+          axisLine={{ stroke: "var(--line)" }}
+          tickLine={false}
+          label={{
+            value: "개월",
+            position: "insideBottomRight",
+            offset: -2,
+            fontSize: 10,
+            fill: "var(--text-tertiary)",
+          }}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+          axisLine={false}
+          tickLine={false}
+          width={48}
+          tickFormatter={(v: number) => `${v}억`}
+        />
+        <Tooltip
+          cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
+          contentStyle={{
+            background: "var(--surface-strong)",
+            border: "1px solid var(--line-strong)",
+            borderRadius: 8,
+            fontSize: 12,
+          }}
+          formatter={(v, name) => [
+            `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`,
+            name,
+          ]}
+          labelFormatter={(m) => `${m}개월차`}
+        />
+        <ReferenceLine y={0} stroke="var(--line-strong)" />
+        <Bar dataKey="net" name="순현금" radius={[2, 2, 0, 0]} maxBarSize={22}>
+          {data.map((d, i) => (
+            <Cell
+              key={i}
+              fill={
+                d.net < 0
+                  ? "var(--status-error)"
+                  : "color-mix(in srgb, var(--accent-strong) 55%, transparent)"
+              }
+            />
+          ))}
+        </Bar>
+        <Line
+          type="monotone"
+          dataKey="cumulative"
+          name="누적"
+          stroke="var(--accent-strong)"
+          strokeWidth={2}
+          dot={false}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
   );
 }
