@@ -1,4 +1,4 @@
-import { classifyVWorldXmlException } from "@/lib/vworld-xml-exception";
+import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/lib/vworld-xml-exception";
 
 /**
  * VWorld WMS 프록시 — 연속지적도(LP_PA_CBND_*) WMS 타일을 프론트 서버 경유로 부설한다.
@@ -139,11 +139,21 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
           return transparentTile();
         }
         // auth/불명 — 무음 흡수 금지, 503으로 승격해 관측 가능하게 한다.
-        return upstreamError("VWorld WMS returned an XML exception (auth/unknown)", resp.status, {
-          layers: canonicalLayers,
-          contentType,
-          bodySnippet: bodyText.slice(0, 200),
-        });
+        // ★2026-07-17: ServiceException code를 표면화한다 — 종전 "(auth/unknown)" 뭉뚱그림
+        //   탓에 실제 원인 INVALID_RANGE(WMS VERSION 파라미터 오류)가 "키 미설정"으로
+        //   오독됐다. code로 INVALID_KEY/UNREGISTERED_DOMAIN/INVALID_RANGE를 즉시 구분한다.
+        const detail = extractVWorldXmlExceptionDetail(bodyText);
+        return upstreamError(
+          `VWorld WMS returned an XML exception (${detail.code ?? "auth/unknown"})`,
+          resp.status,
+          {
+            layers: canonicalLayers,
+            contentType,
+            code: detail.code ?? "",
+            message: detail.message ?? "",
+            bodySnippet: bodyText.slice(0, 200),
+          },
+        );
       }
       return upstreamError("VWorld WMS returned a non-image body", resp.status, {
         layers: canonicalLayers,

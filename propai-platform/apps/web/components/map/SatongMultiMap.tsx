@@ -455,12 +455,14 @@ function createOfficialBaseMapLayer(
   //   (타일 실측: Hybrid=PNG RGBA 투명채널, Base=불투명 팔레트). 단독으로 깔면 밝은 배경에
   //   라벨만 뜨는 유령지도가 됨 → 항공뷰는 Satellite(베이스)+Hybrid(오버레이) 두 장을 합성한다.
   //   텍스트/라벨이 폴리곤(overlayPane, 400) 위로 올라오도록 overlay 타일은 labelPane(450)에 그린다.
-  if (baseLayer === "Hybrid") {
-    const sat = makeTile("Satellite");
+  //   사용자가 일반지도(Base)나 회색지도(gray)를 볼 때도 폴리곤에 텍스트가 덮이지 않도록
+  //   Hybrid 라벨 타일을 labelPane에 함께 얹는다(메인 워크트리 미커밋 초안 포팅).
+  if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "gray") {
+    const base = makeTile(baseLayer === "Hybrid" ? "Satellite" : baseLayer);
     const overlay = makeTile("Hybrid", "labelPane");
-    sat.on("tileload", () => onTileState("ready"));
-    sat.on("tileerror", () => onTileState("error"));
-    return L.layerGroup([sat, overlay]);
+    base.on("tileload", () => onTileState("ready"));
+    base.on("tileerror", () => onTileState("error"));
+    return L.layerGroup([base, overlay]);
   }
 
   const vworld = makeTile(baseLayer);
@@ -1301,6 +1303,12 @@ export function SatongMultiMap({
       styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
       format: "image/png",
       transparent: true,
+      // ★근본원인 수정(2026-07-17 라이브 채증): VWorld WMS는 VERSION 1.3.0만 허용한다 —
+      //   1.1.1은 키 검증보다도 먼저 INVALID_RANGE로 거부된다("유효한 파라미터 값의 범위:
+      //   [1.3.0]"). Leaflet 기본값이 1.1.1이라 version 미지정 시 지적 타일 전체가 실패했고,
+      //   프록시 분류기가 이 XML을 auth로 승격해 "키 미설정" 오해 메시지가 표시됐다.
+      //   1.3.0에서는 Leaflet이 SRS 대신 CRS 파라미터를 전송한다(정상 — VWorld 수용).
+      version: "1.3.0",
       maxZoom: 19,
       minZoom: 10,
       attribution: "VWorld 연속지적도",
