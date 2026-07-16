@@ -9,11 +9,13 @@
  */
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
   Building2,
+  Calculator,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -128,6 +130,11 @@ type Labels = {
   flowHintNeedSite: string;      // site 미완료 시 정직 안내(무CTA)
   flowHintNeedDesign: string;    // generate 미완료 시 정직 안내(무CTA)
   flowTerminal: string;          // draw(마지막 단계) 안내
+  // ★로드맵⑥: 설계→적산→수지 원스톱 — draw(도면 완료) 단계에서 실제 존재하는 다음 경로로 이어준다.
+  //   flowToCost=이 설계로 BIM 5D 적산(/projects/[id]/cost, projectId로 컨텍스트 유지) 실행 CTA.
+  //   flowNextChain=IA 파이프라인(설계 다음=적산→수지분석) 흐름 안내(실경로만·과장 금지).
+  flowToCost: string;            // 도면 완료 → 적산 실행 CTA(프로젝트 컨텍스트 유지)
+  flowNextChain: string;         // "다음 단계: 적산 → 수지 반영" 흐름 안내
   flowProgressAria: string;      // 진행 표시 aria-label
   flowNowLabel: string;          // "현재" prefix
   flowReview: string;            // CTA 타깃이 이미 complete일 때(방어적 분기) — "이어보기/검토"류
@@ -216,6 +223,8 @@ const KO_LABELS: Labels = {
   flowHintNeedSite: "부지 조건(주소·용도지역·대지면적)을 확정하면 다음 단계가 열립니다.",
   flowHintNeedDesign: "추천안(건축개요)을 하나 적용하면 다음 단계가 열립니다.",
   flowTerminal: "마지막 단계 — 검증된 도면을 CAD·BIM으로 편집합니다.",
+  flowToCost: "이 설계로 적산 실행",
+  flowNextChain: "다음 단계: 적산 → 수지 반영",
   flowProgressAria: "설계 흐름 진행 상태",
   flowNowLabel: "현재",
   flowReview: "결과 이어보기",
@@ -302,6 +311,8 @@ const EN_LABELS: Labels = {
   flowHintNeedSite: "Confirm site conditions (address · zone · area) to unlock the next step.",
   flowHintNeedDesign: "Apply one design brief to unlock the next step.",
   flowTerminal: "Final step — edit the verified drawings in CAD·BIM.",
+  flowToCost: "Run cost estimate for this design",
+  flowNextChain: "Next: cost estimate → feasibility",
   flowProgressAria: "Design flow progress",
   flowNowLabel: "Now",
   flowReview: "Continue to results",
@@ -760,6 +771,10 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
               showProgress={!dockOpen}
               labels={labels}
               onGo={go}
+              // ★로드맵⑥: 도면 완료(draw+설계기준 통과) 시 '이 설계로 적산'으로 이어주는 실경로 링크.
+              //   projectId를 경로에 실어 BimCostDashboard(projectId) 컨텍스트를 그대로 유지한다.
+              costHref={`/${locale}/projects/${projectId}/cost`}
+              designReady={hasDesignBasis}
             />
             {/* 하단 상태바 — 설계 산출 KPI(뷰포트 하단 고정). 대상 식별 지표는 상단 ContextHeader. */}
             {hasAddressMismatch ? (
@@ -921,6 +936,8 @@ function FlowAdvanceBar({
   showProgress,
   labels,
   onGo,
+  costHref,
+  designReady,
 }: {
   view: ViewKey;
   states: Record<ViewKey, PipelineState>;
@@ -932,6 +949,10 @@ function FlowAdvanceBar({
   showProgress: boolean;
   labels: Labels;
   onGo: (v: ViewKey) => void;
+  // ★로드맵⑥: draw(마지막) 단계에서 노출할 '적산 실행' 실경로 링크 + 설계 준비 여부(hasDesignBasis).
+  //   designReady일 때만 CTA를 켠다(무날조 — 설계 산출물이 실제 있을 때만 다음 단계 유도).
+  costHref: string;
+  designReady: boolean;
 }) {
   const currentState = states[view];
   const currentLabel = views.find((v) => v.key === view)?.label ?? "";
@@ -1039,8 +1060,10 @@ function FlowAdvanceBar({
         </span>
       </span>
 
-      {/* 우: 다음 액션 CTA(완료 시) 또는 정직 안내(미완료·마지막) */}
-      <div className="ml-auto flex min-w-0 items-center">
+      {/* 우: 다음 액션 CTA(완료 시) 또는 정직 안내(미완료·마지막). ★로드맵⑥: 마지막(draw) 단계라도
+          설계 산출물이 준비되면(designReady) '이 설계로 적산 실행' 실경로 CTA + 흐름 안내를 노출해
+          설계→적산→수지가 화면에서 끊기지 않게 한다. */}
+      <div className="ml-auto flex min-w-0 items-center gap-3">
         {currentDone && ctaTarget && ctaLabel ? (
           <button
             type="button"
@@ -1051,6 +1074,22 @@ function FlowAdvanceBar({
             <span>{ctaLabel}</span>
             <ArrowRight className="size-4" aria-hidden />
           </button>
+        ) : view === "draw" && designReady ? (
+          <>
+            {/* 흐름 안내(실경로만) — 설계 다음이 적산→수지임을 조용히 고지. 좁은 폭에선 숨김(CTA만). */}
+            <span className="hidden truncate text-[11px] font-semibold text-[var(--text-hint)] sm:inline">
+              {labels.flowNextChain}
+            </span>
+            <Link
+              href={costHref}
+              title={labels.flowToCost}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[var(--accent-strong)] px-3.5 py-1.5 text-[12px] font-bold text-white shadow-[var(--shadow-sm)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-strong)_88%,black)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent-strong)_45%,transparent)]"
+            >
+              <Calculator className="size-4" aria-hidden />
+              <span>{labels.flowToCost}</span>
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          </>
         ) : (
           <span className="truncate text-[11px] font-semibold text-[var(--text-hint)]">{hint}</span>
         )}

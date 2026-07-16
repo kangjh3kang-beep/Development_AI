@@ -65,6 +65,7 @@ __all__ = [
     "build_report_model_from_design_audit",
     "build_report_model_from_cost_estimation",
     "build_report_model_from_regulation",
+    "build_report_model_from_market",
 ]
 
 
@@ -151,3 +152,13 @@ def build_report_model_from_regulation(result: dict, *, address: str = "") -> Re
     from .regulation_adapter import build_report_model_from_regulation as _build
 
     return _build(result, address=address)
+
+
+def build_report_model_from_market(report: dict) -> ReportModel:
+    """시장조사보고서(market_report_service) 결과 → 정본 ReportModel(어댑터).
+
+    기존 MarketReportService.to_pdf/to_pptx/to_docx 가 각자 재구현하던 표지·Executive Summary·
+    8섹션 구성을 이 어댑터로 일원화한다(산식 복제 0 — report dict 값을 그대로 조립)."""
+    from .market_adapter import build_report_model_from_market as _build
+
+    return _build(report)

@@ -1,6 +1,5 @@
 """부동산 등기부(소유관계) 라우터 — 단건/다필지 일괄 조회·다운로드 + 토지조서."""
 
-import asyncio
 import io
 import logging
 import time
@@ -227,12 +226,17 @@ async def registry_analyze_submit(
 
     _prune_jobs()
     job_id = uuid.uuid4().hex
-    _JOBS[job_id] = {"status": "pending", "ts": time.time()}
+    # ★소유권 기록(IDOR 봉합 — R1 범위외 발견): 등기 권리분석 결과는 개인정보 급이라
+    #   제출자만 조회 가능해야 한다. GET 이 이 user_id 로 스코프한다(불일치=404).
+    _JOBS[job_id] = {"status": "pending", "ts": time.time(), "user_id": str(current_user.user_id)}
     params = dict(
         address=req.address, pnu=req.pnu, registry_text=req.registry_text,
         realty_type=req.realty_type, dong=req.dong, ho=req.ho, land_hint=req.land_hint,
     )
-    asyncio.create_task(_run_registry_job(job_id, params))
+    # ★태스크 강참조 보관(GC 유실 방지 — design_audit 과 동일 공용 헬퍼).
+    from app.services.common.bg_tasks import create_tracked_task
+
+    create_tracked_task(_run_registry_job(job_id, params))
     return {"job_id": job_id, "status": "pending"}
 
 
@@ -243,7 +247,9 @@ async def registry_analyze_status(
 ) -> dict[str, Any]:
     """작업 상태(pending/done/error)와 완료 시 결과를 반환."""
     j = _JOBS.get(job_id)
-    if not j:
+    # ★소유권 스코프(IDOR 봉합): 타인 job_id 를 추측·탈취해도 404(존재 여부 비노출).
+    #   구(user_id 미기록) 잡은 프루닝 TTL 내 잔존 가능 — 소유 확인 불가라 동일하게 404(fail-closed).
+    if not j or j.get("user_id") != str(current_user.user_id):
         raise HTTPException(404, "작업을 찾을 수 없습니다(만료되었거나 잘못된 ID).")
     return {"status": j["status"], "result": j.get("result"), "error": j.get("error")}
 

@@ -17,6 +17,7 @@ DB 비의존 — get_db override(SQL 텍스트 분기 가짜 세션) + get_curre
 """
 
 import json
+import time
 import uuid
 
 from fastapi import FastAPI
@@ -955,3 +956,208 @@ class TestExtractBrief:
         data = resp.json()
         assert data["ok"] is False
         assert data["fields"] == []
+
+
+# ════════════════════════════════════════════════════════
+# ⑦ 로드맵② — /run-upload/jobs 비동기 잡 제출/폴링(모바일·탭 종료·리로드 내구성)
+# ════════════════════════════════════════════════════════
+
+
+class _JobsFakeSessionCM:
+    """AsyncSessionLocal() 대역 — 백그라운드 잡 전용 독립 세션을 기존 _FakeSession으로 대체."""
+
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class TestRunUploadJobs:
+
+    def _patch_fake_async_session_local(self, monkeypatch, session=None):
+        import apps.api.database.session as session_mod
+
+        monkeypatch.setattr(
+            session_mod, "AsyncSessionLocal",
+            lambda: _JobsFakeSessionCM(session or _FakeSession()),
+        )
+
+    def test_jobs_require_auth(self):
+        client = _make_client(authed=False)
+        resp = client.post("/api/v1/design-audit/run-upload/jobs", data={"payload": "{}"})
+        assert resp.status_code in {401, 403}
+        resp2 = client.get("/api/v1/design-audit/run-upload/jobs/whatever")
+        assert resp2.status_code in {401, 403}
+
+    def test_submit_returns_job_id_pending(self, monkeypatch):
+        """제출은 즉시 job_id+pending을 반환한다(무거운 실행은 백그라운드로 위임)."""
+        client = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+        self._patch_fake_async_session_local(monkeypatch)
+        resp = client.post(
+            "/api/v1/design-audit/run-upload/jobs",
+            data={"payload": json.dumps({
+                "project_id": "p-1",
+                "site": {"zone_type": "제2종일반주거지역"},
+                "use_llm": False,
+            })},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending" and data["job_id"]
+        da_module._AUDIT_JOBS.pop(data["job_id"], None)  # 전역 잡 저장소 — 테스트 간 오염 방지
+
+    def test_submit_validates_input_before_queueing(self):
+        """빠른 검증(DXF 확장자 등)은 잡 큐잉 전에 즉시 422 — 입력오류를 잡 뒤로 숨기지 않는다.
+
+        ★_AUDIT_JOBS는 프로세스 전역 저장소(다른 테스트의 잡이 남아 있을 수 있음) — 절대적 '빈
+        딕셔너리'가 아니라 이 호출 전후로 개수가 늘지 않았는지(신규 잡 미생성)로 검증한다.
+        """
+        before = len(da_module._AUDIT_JOBS)
+        client = _make_client()
+        resp = client.post(
+            "/api/v1/design-audit/run-upload/jobs",
+            data={"payload": "{}"},
+            files={"dxf_file": ("plan.pdf", b"%PDF-", "application/pdf")},
+        )
+        assert resp.status_code == 422
+        assert len(da_module._AUDIT_JOBS) == before  # 검증 실패는 잡 자체를 만들지 않음
+
+    def test_job_not_found_404(self):
+        client = _make_client()
+        resp = client.get("/api/v1/design-audit/run-upload/jobs/does-not-exist")
+        assert resp.status_code == 404
+
+    def test_job_ownership_scoped_404(self):
+        """타인 소유 job_id는 미존재와 동일 취급(존재 비노출 — _load_audit IDOR 방지 관행과 동일)."""
+        client = _make_client()
+        da_module._AUDIT_JOBS["job-other-tenant"] = {
+            "status": "done", "user_id": "someone-else-uid", "ts": time.time(),
+            "result": {"ok": True},
+        }
+        try:
+            resp = client.get("/api/v1/design-audit/run-upload/jobs/job-other-tenant")
+            assert resp.status_code == 404
+        finally:
+            da_module._AUDIT_JOBS.pop("job-other-tenant", None)
+
+    async def test_job_runs_to_completion_and_matches_run_upload_shape(self, monkeypatch):
+        """백그라운드 잡(직접 호출) — done 전이 + /run-upload 응답과 동형(id·sections·generated_at)."""
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+        self._patch_fake_async_session_local(monkeypatch)
+        req = da_module.RunRequest(
+            project_id="p-1", site={"zone_type": "제2종일반주거지역"}, use_llm=False,
+        )
+        current = CurrentUser(user_id=USER_ID, tenant_id=TENANT_ID, role="user")
+        job_id = "job-direct-done"
+        await da_module._run_audit_upload_job(job_id, req, None, current)
+        job = da_module._AUDIT_JOBS.pop(job_id)
+        assert job["status"] == "done"
+        result = job["result"]
+        assert result["ok"] is True
+        assert result["id"] == result["audit_id"]
+        assert result["sections"] is not None
+        assert result["generated_at"]
+
+    async def test_job_records_error_on_orchestrator_failure(self, monkeypatch):
+        """오케스트레이터 실패도 잡 상태로 표면화(무음 유실 금지) — 실행 큐 자체는 무중단."""
+        class _Boom:
+            async def run(self, db, **kw):
+                raise RuntimeError("engine down")
+
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _Boom())
+        self._patch_fake_async_session_local(monkeypatch)
+        req = da_module.RunRequest(project_id="p-1", use_llm=False)
+        current = CurrentUser(user_id=USER_ID, tenant_id=TENANT_ID, role="user")
+        job_id = "job-direct-error"
+        await da_module._run_audit_upload_job(job_id, req, None, current)
+        job = da_module._AUDIT_JOBS.pop(job_id)
+        assert job["status"] == "error" and job["error"]
+
+
+# ════════════════════════════════════════════════════════
+# ⑧ 로드맵③ — deliberation_surface_in_audit 게이트(기본 False)
+# ════════════════════════════════════════════════════════
+
+
+class _FakeSurfaceSettings:
+    """apps.api.config.get_settings() 대역 — shadow/표면화 게이트만 제어(그 외 속성 불필요)."""
+
+    def __init__(self, *, shadow_enabled: bool, surface_enabled: bool):
+        self.deliberation_shadow_enabled = shadow_enabled
+        self.deliberation_surface_in_audit = surface_enabled
+        # 미설정 — shadow_compare가 실네트워크 호출 없이 즉시 None을 반환(off 경로에서 안전).
+        self.deliberation_engine_url = ""
+        self.deliberation_shadow_engine_timeout_s = 5.0
+
+
+class TestDeliberationSurfaceGate:
+
+    def _run_audit(self, client, monkeypatch, *, shadow_enabled, surface_enabled):
+        import apps.api.config as cfg
+
+        monkeypatch.setattr(
+            cfg, "get_settings",
+            lambda: _FakeSurfaceSettings(shadow_enabled=shadow_enabled, surface_enabled=surface_enabled),
+        )
+        resp = client.post("/api/v1/design-audit/run", json={
+            "project_id": "p-1",
+            "site": {"zone_type": "제2종일반주거지역"},
+            "params": {"far_pct": 249.9},
+        })
+        assert resp.status_code == 200
+        return resp.json()
+
+    def test_gate_off_response_byte_identical_to_shadow_only(self, monkeypatch):
+        """기본(둘 다 off)과 shadow만 켠 경우(표면화 off) 응답이 완전히 동일(무회귀 앵커).
+
+        audit_id(호출마다 새 uuid)·ledger_hash(record_design_audit이 자체 세션으로 실제 원장에
+        적재하는 content_hash — 호출마다 달라짐, 이 게이트와 무관)는 비교에서 제외한다.
+        """
+        client_a = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+        base = self._run_audit(client_a, monkeypatch, shadow_enabled=False, surface_enabled=False)
+
+        client_b = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+        shadow_only = self._run_audit(client_b, monkeypatch, shadow_enabled=True, surface_enabled=False)
+
+        assert "deliberation_result" not in base
+        assert "deliberation_result" not in shadow_only
+        for d in (base, shadow_only):
+            d.pop("audit_id", None)
+            d.pop("ledger_hash", None)
+        assert base == shadow_only
+
+    def test_gate_on_surfaces_deliberation_result(self, monkeypatch):
+        """두 게이트 모두 켜지면 shadow_compare를 대기해 응답에 deliberation_result가 동봉된다."""
+        client = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+
+        import app.services.deliberation.shadow_integration as si_mod
+
+        captured = {}
+
+        async def _fake_compare(**kw):
+            captured.update(kw)
+            return {"id": "x", "matched": False, "divergence_score": 1.0,
+                    "quant_rel_err": None, "engine_verdict": "needs_review",
+                    "platform_verdict": kw.get("platform_verdict")}
+
+        monkeypatch.setattr(si_mod, "shadow_compare", _fake_compare)
+
+        data = self._run_audit(client, monkeypatch, shadow_enabled=True, surface_enabled=True)
+        assert data["deliberation_result"]["engine_verdict"] == "needs_review"
+        assert captured["domain"] == "design_audit"
+        assert captured["tenant_id"] == str(TENANT_ID)
+
+    def test_gate_on_but_shadow_off_stays_silent(self, monkeypatch):
+        """표면화만 켜고 shadow 관측 자체가 꺼져 있으면(운영 오설정) 여전히 무변경(gate-first)."""
+        client = _make_client()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+        data = self._run_audit(client, monkeypatch, shadow_enabled=False, surface_enabled=True)
+        assert "deliberation_result" not in data
