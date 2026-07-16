@@ -580,6 +580,16 @@ export function ProjectSiteAnalysisWorkspaceClient({
           },
         });
         if (cancelled) return;
+        // ★앱레벨 실패 가드(R1 적발) — 탁상감정은 공시지가 미확인 등을 HTTP 200 + {ok:false,
+        //   message} 로 반환한다(land_price.py — HTTPException 아님). 가드 없이 통과시키면
+        //   ①실패 사유 미표시(빈 '—' 카드가 성공처럼 보임) ②saveAvm 이 실패를 캐시에 영속해
+        //   TTL 내 재시도 차단 ③estimatedValue: null 이 다른 writer 의 기존값을 클로버해
+        //   수지·시니어·은행보고서로 무음 전파. 실패는 사유만 표시하고 캐시·store 무기록.
+        if (!avm.ok) {
+          setWorkspaceError(avm.message || "탁상감정 실패 — 공시지가 확인 후 다시 시도하세요.");
+          setAvmResult(null);
+          return;
+        }
         setAvmResult(avm);
 
         let parcelZoning: string | null = null;
@@ -676,6 +686,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
           ...(isUuidProject ? { project_id: projectId } : {}),
         },
       });
+      // ★앱레벨 실패 가드(R1 적발) — 자동 경로와 동일 계약(위 주석 참조): 실패 사유 표시만
+      //   하고 캐시·store 는 건드리지 않는다(기존값 보존·무목업).
+      if (!avm.ok) {
+        setWorkspaceError(avm.message || "탁상감정 실패 — 공시지가 확인 후 다시 시도하세요.");
+        setAvmResult(null);
+        return;
+      }
       setAvmResult(avm);
 
       let parcelZoning: string | null = null;
@@ -1029,8 +1046,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
                           </tr>
                         </thead>
                         <tbody>
-                          {(avmResult.methods ?? []).map((m) => (
-                            <tr key={m.method} className="border-t border-[var(--line)] align-top">
+                          {/* key 에 인덱스 결합 — 백엔드가 동명 method 를 추가해도 React key 충돌 없음 */}
+                          {(avmResult.methods ?? []).map((m, mi) => (
+                            <tr key={`${m.method}-${mi}`} className="border-t border-[var(--line)] align-top">
                               <td className="whitespace-nowrap px-3 py-2 font-bold text-[var(--text-primary)]">{m.method}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-[var(--text-primary)]">
                                 {Number.isFinite(m.unit_price) ? formatCurrency(locale, m.unit_price) : "—"}

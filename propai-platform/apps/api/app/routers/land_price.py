@@ -265,6 +265,8 @@ async def _desk_appraisal_pdf_multi(req: "DeskAppraisalRequest", parcels: list[d
                 "final_value_won": total_final,   # 통합(성공 필지 합계) — 다필지 additive
             },
             pnu=rep.get("pnu") or None, address=req.address or rep_addr, source="desk_appraisal",
+            # 단건 경로와 대칭 — 원장 프로젝트 귀속(옵셔널·비-UUID 는 프론트가 미전송).
+            project_id=req.project_id,
         )
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 보고서 생성 무손상
         pass
