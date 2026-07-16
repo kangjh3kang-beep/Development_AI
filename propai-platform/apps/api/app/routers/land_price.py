@@ -44,6 +44,9 @@ class DeskAppraisalRequest(BaseModel):
     deposit_won: float | None = None
     cap_rate: float | None = None
     include_ai: bool = True                          # PDF에 AI 상세 해석(avm) 포함 여부
+    # ★원장 귀속(additive·옵셔널): 프론트가 UUID 프로젝트일 때만 실어 분석원장에 project_id 로 귀속한다.
+    #   무인증 라우터라 tenant 강제는 하지 않으며(기존 소비처 계약 불변), 미전송이면 None(비귀속·정상).
+    project_id: str | None = None
     # ★다필지(additive): /desk-appraisal/pdf 에서 2건 이상이면 통합 보고서 모드로 전환.
     #   행 계약: {pnu?, address?, area_sqm?, official_price_per_sqm?, comparable_avg_per_sqm?}
     #   (단건 desk_appraisal 과 동일 인자만). 1회 상한 30필지 — 초과분은 절단·정직 고지.
@@ -73,10 +76,14 @@ async def land_desk_appraisal(request: Request, req: DeskAppraisalRequest):
                 analysis_type="desk_appraisal",
                 summary={
                     "address": req.address, "pnu": req.pnu, "area_sqm": req.area_sqm,
-                    "final_value_won": result.get("final_value_won") or result.get("estimated_total_won"),
-                    "adopted_method": result.get("adopted_method") or result.get("method"),
+                    # ★키 교정: desk_appraisal 반환 dict 은 final_value_won/estimated_total_won/adopted_method/
+                    #   (최상위)method 키를 갖지 않아 기존 코드는 항상 None 을 적재했다. 실제 채택 총액=
+                    #   appraised_total_won, 채택 근거=weight_note 로 교정(다필지 경로 :258 은 이미 올바름).
+                    "final_value_won": result.get("appraised_total_won"),
+                    "adopted_method": result.get("weight_note"),
                 },
                 pnu=req.pnu or None, address=req.address, source="desk_appraisal",
+                project_id=req.project_id,
             )
             result = attach_ledger_hash(result, wb)
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 탁상감정 결과 무손상
@@ -258,6 +265,8 @@ async def _desk_appraisal_pdf_multi(req: "DeskAppraisalRequest", parcels: list[d
                 "final_value_won": total_final,   # 통합(성공 필지 합계) — 다필지 additive
             },
             pnu=rep.get("pnu") or None, address=req.address or rep_addr, source="desk_appraisal",
+            # 단건 경로와 대칭 — 원장 프로젝트 귀속(옵셔널·비-UUID 는 프론트가 미전송).
+            project_id=req.project_id,
         )
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 보고서 생성 무손상
         pass
@@ -320,10 +329,13 @@ async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest, f
                 analysis_type="desk_appraisal",
                 summary={
                     "address": req.address, "pnu": req.pnu, "area_sqm": req.area_sqm,
-                    "final_value_won": result.get("final_value_won") or result.get("estimated_total_won"),
-                    "adopted_method": result.get("adopted_method") or result.get("method"),
+                    # ★키 교정(형제 /desk-appraisal :76-77 과 동일): 채택 총액=appraised_total_won,
+                    #   채택 근거=weight_note. 기존엔 없는 키를 읽어 항상 None 이 적재됐다.
+                    "final_value_won": result.get("appraised_total_won"),
+                    "adopted_method": result.get("weight_note"),
                 },
                 pnu=req.pnu or None, address=req.address, source="desk_appraisal",
+                project_id=req.project_id,
             )
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 PDF 생성 무손상
         pass

@@ -363,6 +363,7 @@ export type AnalysisCacheKind =
   | "terrain"
   | "environment"
   | "avm"
+  | "deskAppraisal" // 부지분석 탁상감정(토지가치) 캐시 — 구 "avm" 캐시와 별도 키(자연 무시).
   | "digitalTwin"
   | "l3";
 export interface AnalysisCacheEntry {

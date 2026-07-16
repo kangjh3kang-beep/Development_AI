@@ -71,7 +71,9 @@ export function SiteScoreCard() {
     if (!site) { setRes(null); return; }
     const context: Record<string, unknown> = {
       zone_type: site.zoneCode ?? undefined,
-      official_price_per_sqm: site.officialPrices?.[0]?.pricePerSqm ?? site.estimatedValue ?? undefined,
+      // ★단위 계약: official_price_per_sqm 은 '원/㎡'만 허용. estimatedValue 는 총액(원)이라
+      //   폴백에 쓰면 단위 불일치(총액을 단가로 오입력)라 제거 — 단가 미확보 시 정직하게 undefined.
+      official_price_per_sqm: site.officialPrices?.[0]?.pricePerSqm ?? undefined,
       infrastructure: site.infrastructure ?? undefined,
       pnu: site.pnu ?? undefined,
     };
