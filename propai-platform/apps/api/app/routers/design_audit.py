@@ -18,7 +18,6 @@ U5 오케스트레이터(design_audit_orchestrator)는 지연 임포트 — 미�
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid as _uuid
@@ -942,7 +941,10 @@ async def submit_design_audit_upload_job(
     _prune_audit_jobs()
     job_id = _uuid.uuid4().hex
     _AUDIT_JOBS[job_id] = {"status": "pending", "user_id": str(current.user_id), "ts": time.time()}
-    asyncio.create_task(_run_audit_upload_job(job_id, req, dxf_import, current))
+    # ★태스크 강참조 보관(R1 P2) — 미보관 create_task 는 GC 유실로 잡이 조용히 사라질 수 있다.
+    from app.services.common.bg_tasks import create_tracked_task
+
+    create_tracked_task(_run_audit_upload_job(job_id, req, dxf_import, current))
     return {"job_id": job_id, "status": "pending"}
 
 

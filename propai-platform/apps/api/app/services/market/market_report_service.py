@@ -72,19 +72,9 @@ def _per_pyeong_stat(rows: list) -> dict[str, Any]:
     # 평당가는 만원 단위 정수로 반올림
     return {"count": s["count"], "avg": round(s["avg"]), "min": round(s["min"]), "max": round(s["max"])}
 
-
-def _eok(man: float) -> str:
-    if not man:
-        return "-"
-    # 손실 사업(순이익·NPV 음수)도 부호를 보존해 일관 표기("-5.0억"). 절대값 기준으로 억/만 분기.
-    sign = "-" if man < 0 else ""
-    a = abs(man)
-    if a >= 10000:
-        return f"{sign}{a / 10000:.1f}억"
-    return f"{sign}{int(a):,}만"
-
-
 # ── raw_data 빌더(순수 함수·네트워크 없음) ──────────────────────────────────
+
+
 # 프론트(P3)·export(P4)가 dict 를 재가공하지 않도록 표(row 배열)로 평탄화한다.
 # 가짜 데이터 금지: provider 가 안 준 값은 None, 미선택 분류는 키 자체를 생략한다(아래 규칙).
 
@@ -329,58 +319,13 @@ def _income_tier_label(avg_income_10k: float | None) -> str | None:
         return "중상위 소득권(추정)"
     return "상위 소득권(추정)"
 
-
-def _roi_grade(roi_percent: float | None) -> tuple[str, str]:
-    """개략 ROI(%) → (등급, 라벨). 근거(수지) 없으면 ('-', '데이터 없음')."""
-    if roi_percent is None:
-        return ("-", "데이터 없음")
-    r = float(roi_percent)
-    if r >= 20:
-        return ("A", "우수")
-    if r >= 10:
-        return ("B", "양호")
-    if r >= 0:
-        return ("C", "보통")
-    return ("D", "주의")
-
-
-def _market_strength(net_migration: int | None, trend_series: list[dict[str, Any]] | None) -> tuple[str, str]:
-    """시장 강도 = 순유입(수요 유입) + 최근 시세 방향성. (등급, 라벨). 근거 없으면 ('-', '데이터 없음')."""
-    # 최근 추이 방향(마지막 mom_pct 부호)
-    last_mom = None
-    for t in reversed(trend_series or []):
-        if t.get("mom_pct") is not None:
-            last_mom = t.get("mom_pct")
-            break
-    if net_migration is None and last_mom is None:
-        return ("-", "데이터 없음")
-    score = 0
-    if net_migration is not None:
-        score += 1 if net_migration > 0 else (-1 if net_migration < 0 else 0)
-    if last_mom is not None:
-        score += 1 if last_mom > 0 else (-1 if last_mom < 0 else 0)
-    if score >= 1:
-        return ("강세", "수요 유입·시세 상승 우위")
-    if score <= -1:
-        return ("약세", "수요 유출·시세 조정 우위")
-    return ("보합", "수요·시세 혼조(중립)")
-
-
-def _investment_opinion(roi_percent: float | None, afford_verdict: str | None) -> str:
-    """결정론 투자의견(Go/보류/재검토). 개략 ROI·지불여력 판정 기반(전문검토 전제)."""
-    if roi_percent is None:
-        return "재검토 — 사업성 데이터 부족(개략 수지 산출 불가)"
-    r = float(roi_percent)
-    over = afford_verdict == "over_band"
-    if r >= 10 and not over:
-        return "Go(추진 검토) — 개략 수익성 양호"
-    if r >= 0:
-        base = "보류(조건부) — 수익성 보통, 원가·분양가 가정 민감도 점검 필요"
-        return base + (" · 지불여력 초과(미분양 위험) 주의" if over else "")
-    return "재검토 — 개략 수익성 음수(총사업비 대비 분양수익 부족)"
-
-
 def _build_target_profile(
+
+
+
+
+
+
     demographics: dict[str, Any] | None,
     commercial: dict[str, Any] | None,
     commercial_src: str,
@@ -502,80 +447,11 @@ def _build_target_profile(
     }
     return tp
 
-
-def _exec_summary(rep: dict[str, Any]) -> dict[str, Any]:
-    """두괄식 Executive Summary용 핵심 KPI·등급·투자의견(순수 함수·재계산 최소).
-
-    핵심 KPI: 아파트 평당시세·순유입·적정분양가·ROI. 등급: 시장강도·사업성.
-    투자의견: 결정론(Go/보류/재검토) + senior_insight(있으면) 1문장.
-    """
-    # 아파트 평당 시세(만원/평)
-    apt_pp = None
-    _apt = (rep.get("trade") or {}).get("아파트")
-    if isinstance(_apt, dict):
-        apt_pp = (_apt.get("per_pyeong") or {}).get("avg")
-
-    # 순유입(전입-전출) — ★미확보('unavailable'/'mock')는 net_migration이 0으로 채워져 오므로,
-    #   출처(migration_data_source)를 함께 게이트해야 가짜 '0명'·근거없는 시장강도 등급을 막는다(무목업).
-    net_mig = None
-    pop = (rep.get("raw_data") or {}).get("population") or {}
-    mig = pop.get("migration") or {}
-    if _has_source(pop.get("migration_data_source")) and mig.get("net_migration") is not None:
-        net_mig = mig.get("net_migration")
-
-    # 적정 분양가(거래사례비교) — 미확보면 None
-    pb = rep.get("pricing_band") or {}
-    fair = pb.get("fair_price_10k") if _has_source(pb.get("data_source")) else None
-    afford_verdict = pb.get("affordability_verdict")
-
-    # 개략 ROI(%)
-    fe = rep.get("feasibility_analysis") or {}
-    roi = None
-    if isinstance(fe, dict) and not fe.get("error"):
-        roi = (fe.get("financials") or {}).get("roi_percent")
-
-    # 시세 추이(방향성) — raw_data trend_series
-    trend = ((rep.get("raw_data") or {}).get("real_estate") or {}).get("trend_series")
-
-    biz_grade, biz_label = _roi_grade(roi)
-    mkt_grade, mkt_label = _market_strength(net_mig, trend)
-    opinion = _investment_opinion(roi, afford_verdict)
-    # senior_insight 투자의견 1문장(있으면 병기 — 전문가 서술)
-    si = rep.get("senior_insight") or {}
-    si_opinion = si.get("investment_insight") or si.get("timing_recommendation")
-
-    return {
-        "market_strength": {"grade": mkt_grade, "label": mkt_label},
-        "business_grade": {"grade": biz_grade, "label": biz_label},
-        "kpi": {
-            "apt_per_pyeong_manwon": apt_pp,
-            "net_migration": net_mig,
-            "fair_price_10k": fair,
-            "roi_percent": roi,
-        },
-        "opinion": opinion,
-        "expert_opinion": (str(si_opinion) if si_opinion else None),
-    }
-
-
-def _insight_text(rep: dict[str, Any], senior_key: str, narrative_key: str | None = None) -> str | None:
-    """섹션 내러티브 1~2문장 선택: senior_insight(전용 인터프리터) 우선, 없으면 인라인 narrative 폴백.
-
-    둘 다 없으면 None(호출측이 'AI 분석 미포함' 정직 표기). 표만 있던 섹션의 수치→해석 주입용.
-    """
-    si = rep.get("senior_insight") or {}
-    val = si.get(senior_key)
-    if val and str(val).strip():
-        return str(val).strip()
-    if narrative_key:
-        nar = rep.get("narrative") or {}
-        nv = nar.get(narrative_key)
-        if nv and str(nv).strip():
-            return str(nv).strip()
-    return None
-
-
 class MarketReportService:
+
+
+
+
     def __init__(self) -> None:
         from apps.api.integrations.molit_client import MolitClient
 
