@@ -184,6 +184,10 @@ class SeedDesignRequest(BaseModel):
     floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
     effective_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)")
     effective_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)")
+    # ★WP-U2a(실효FAR 근거 정직 전파·additive): effective_far_pct의 산정 근거 라벨
+    #   (far_tier SSOT far_basis — 예 "구조상한(건폐율×층수)")과 신뢰 플래그. 수치 무영향(메타 전파만).
+    far_basis: str | None = Field(None, description="실효 용적률 산정 근거(far_tier SSOT far_basis)")
+    far_reliable: bool | None = Field(None, description="실효 용적률 SSOT 산정 성공 여부(정직 표기)")
     # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
     #   응답에 경고만 additive 부착(차단 아님). 컨텍스트 없으면 게이트 생략(정직 — 무날조).
     pnu: str | None = Field(None, description="필지 PNU(특이부지 게이트 참고 메타)")
@@ -197,6 +201,7 @@ def _compute_mass(
     *, land_area_sqm: float, zone_code: str, building_use: str, floor_height_m: float,
     target_far: float | None = None, target_bcr: float | None = None,
     ordinance_far: float | None = None, ordinance_bcr: float | None = None,
+    far_basis: str | None = None, far_reliable: bool | None = None,
     daylight_step: bool = True, target_floors: int | None = None,
 ) -> dict:
     """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프).
@@ -213,6 +218,8 @@ def _compute_mass(
         site_area_sqm=land_area_sqm, zone_code=zone_code, building_use=building_use,
         floor_height_m=floor_height_m, target_far_percent=target_far, target_bcr_percent=target_bcr,
         ordinance_far_percent=ordinance_far, ordinance_bcr_percent=ordinance_bcr,
+        # ★WP-U2a: 실효 근거 메타(수치 무영향) — applied_limits·rule_trace 정직 전파.
+        far_basis=far_basis, far_reliable=far_reliable,
         daylight_step=daylight_step, target_floors=target_floors,
     )
     legal = svc.get_legal_limits(zone_code)
@@ -238,6 +245,8 @@ async def seed_design(
         "land_area_sqm": body.land_area_sqm, "zone_code": body.zone_code,
         "building_use": body.building_use, "floor_height_m": body.floor_height_m,
         "ordinance_far": body.effective_far_pct, "ordinance_bcr": body.effective_bcr_pct,
+        # ★WP-U2a: 실효 근거 메타 동반 전달(법정최대·지역전형 두 매스 모두 동일 표기).
+        "far_basis": body.far_basis, "far_reliable": body.far_reliable,
     }
     legal_mass = _compute_mass(**common)
 
@@ -279,6 +288,10 @@ async def seed_design(
             if body.effective_far_pct or body.effective_bcr_pct
             else "engine_zone_defaults"
         ),
+        # ★WP-U2a(additive): 실효 용적률 산정 근거·신뢰 플래그(far_tier SSOT far_basis —
+        #   예 "구조상한(건폐율×층수)"). 호출자가 안 보내면 None(무날조·기존 소비처 무회귀).
+        "applied_far_basis": body.far_basis,
+        "applied_far_reliable": body.far_reliable,
         "note": ("legal_max_mass·regional_typical_mass 모두 정북일조 단계후퇴(법 61조) 해석. "
                  "부지분석 실효 한도(effective_far_pct/effective_bcr_pct)가 전달되면 "
                  "지자체 도시계획조례·계획상한을 반영한 min(법정, 조례/계획, 목표) 기준으로 산정. "

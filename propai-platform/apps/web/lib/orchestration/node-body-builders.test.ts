@@ -112,6 +112,47 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.zone_code).toBe("2R");
   });
 
+  // ★WP-U2a: 파이프라인 design 노드도 부지분석 실효 한도를 설계엔진 B1 계약으로 주입한다
+  //   (audit 노드·설계스튜디오 B1과 동일 리졸버 — 종전엔 design 노드만 미주입=이중 진실).
+  it("design(WP-U2a): 실효 한도(effectiveFarPct·farBasis) → ordinance_* + 근거 메타 주입", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        effectiveFarPct: 80,
+        effectiveBcrPct: 20,
+        farBasis: "구조상한(건폐율×층수)",
+      }),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBe(80);
+    expect(body.ordinance_bcr_pct).toBe(20);
+    expect(body.far_reliable).toBe(true); // 실효 계층 = SSOT 산정 성공
+    expect(body.far_basis).toBe("구조상한(건폐율×층수)");
+  });
+
+  it("design(WP-U2a): 법정상한(national)만 있으면 far_reliable=false·far_basis 생략(정직)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ nationalFarPct: 250 }),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBe(250); // 엔진 min-clamp라 상향 불가(하향만 가능)
+    expect(body.far_reliable).toBe(false); // 법정상한 폴백 — SSOT 실효 아님(정직)
+    expect(body.far_basis).toBeUndefined();
+  });
+
+  it("design(WP-U2a): 실효 한도 미확보면 ordinance_*/근거 키 자체를 미주입(무회귀)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(), // FAR 관련 필드 없음
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBeUndefined();
+    expect(body.ordinance_bcr_pct).toBeUndefined();
+    expect(body.far_reliable).toBeUndefined();
+    expect(body.far_basis).toBeUndefined();
+  });
+
   it("sales: address★ + pnu(lawd_cd 도출 보조) + pnu 앞10자리 bcode 파생", () => {
     const { body, missing } = buildNodeBody(
       "sales",

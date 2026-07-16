@@ -253,6 +253,7 @@ def test_seed_design_with_mass_reference(monkeypatch):
 
     def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
                       target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      far_basis=None, far_reliable=None,  # ★WP-U2a: 실효 근거 메타(수치 무영향)
                       target_floors=None, daylight_step=True):
         calls.append({
             "target_far": target_far,
@@ -296,6 +297,7 @@ def test_seed_design_applies_effective_ordinance_limits(monkeypatch):
 
     def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
                       target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      far_basis=None, far_reliable=None,  # ★WP-U2a: 실효 근거 메타(수치 무영향)
                       target_floors=None, daylight_step=True):
         calls.append({
             "target_far": target_far,

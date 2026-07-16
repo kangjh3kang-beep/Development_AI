@@ -210,6 +210,12 @@ class SiteInput:
     # 클램프(가짜 상향 금지). None=조례 미반영(법정상한 기준 — 기존 동작 불변).
     ordinance_bcr_percent: float | None = None
     ordinance_far_percent: float | None = None
+    # ★실효 한도 근거 메타(옵셔널·additive — WP-U2a 실효FAR SSOT 배선): ordinance_*에 주입된
+    #   값의 산정 근거(far_tier SSOT calc_effective_far의 far_basis — 예 "구조상한(건폐율×층수)")와
+    #   신뢰 플래그(SSOT 산정 성공 여부). 수치 계산에는 전혀 쓰이지 않고(무영향) 산출물 메타
+    #   (summary.basis.applied_limits·rule_trace)로 정직 전파만 한다. None=미상(기존 표기 완전 불변).
+    far_basis: str | None = None
+    far_reliable: bool | None = None
     # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
     massing_kind: str | None = None
@@ -1275,6 +1281,11 @@ class AutoDesignEngineService:
                 "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
                 "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
                 "target_far_percent": getattr(site_input, "target_far_percent", None),
+                # ★WP-U2a: ordinance_far_percent의 산정 근거·신뢰 플래그(far_tier SSOT
+                #   calc_effective_far 산출 — 예 "구조상한(건폐율×층수)"). 호출자가 SSOT 값을
+                #   주입할 때만 채워지며(additive), 미상은 None(무날조·기존 표기 불변).
+                "far_basis": getattr(site_input, "far_basis", None),
+                "far_reliable": getattr(site_input, "far_reliable", None),
             },
             "parking_formula": parking_formula,
             "core_formula": (
@@ -1385,6 +1396,8 @@ class AutoDesignEngineService:
                 target_bcr_percent=site_input.target_bcr_percent,
                 ordinance_far_percent=site_input.ordinance_far_percent,
                 ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                far_basis=site_input.far_basis,        # ★WP-U2a: 실효 근거 메타 전파(대안도 동일 표기)
+                far_reliable=site_input.far_reliable,
                 massing_kind="tower",  # §4-A②: 타워형 — 작은 플로어플레이트로 더 높이(최대 세대수)
             )
             result_b = self.generate(input_b)
@@ -1409,6 +1422,8 @@ class AutoDesignEngineService:
                 target_bcr_percent=site_input.target_bcr_percent,
                 ordinance_far_percent=site_input.ordinance_far_percent,
                 ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                far_basis=site_input.far_basis,        # ★WP-U2a: 실효 근거 메타 전파(대안도 동일 표기)
+                far_reliable=site_input.far_reliable,
                 massing_kind="lshape",  # §4-A②: ㄱ자형 — 채광·소음차폐 배치(최적 일조)
             )
             result_c = self.generate(input_c)
