@@ -43,6 +43,7 @@ export function LegalRefChip({
   article,
   title,
   url,
+  urlStatus,
   className = "",
 }: {
   /** 공식 법령명 (예: "건축법", "국토의 계획 및 이용에 관한 법률 시행령"). */
@@ -53,6 +54,8 @@ export function LegalRefChip({
   title?: string | null;
   /** law.go.kr 한글주소 딥링크. 없거나 http(s)가 아니면 링크 없이 텍스트만 렌더. */
   url?: string | null;
+  /** 백엔드 레지스트리 url_status(verified|pending) — 미검증 인용 책임 리스크를 배지로 표기. */
+  urlStatus?: string | null;
   className?: string;
 }) {
   // 법령명조차 없으면 단정하지 않고 미표시(빈 칩 방지·정직성).
@@ -61,6 +64,17 @@ export function LegalRefChip({
   const href = safeHref(url);
   const label = refLabel(lawName, article);
   const hint = title?.trim() ? `${label} — ${title.trim()}` : label;
+  // url_status 배지: verified(검증) = 링크 확인됨, pending(미검증) = 원문 링크 미확인(정직 표기).
+  //   백엔드가 명시적으로 pending을 보낼 때만 '미검증' 배지를 단다(값 없으면 배지 생략 — 무회귀).
+  const pending = urlStatus === "pending";
+  const statusBadge = pending ? (
+    <span
+      className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-bold text-amber-500"
+      title="원문 링크 미검증 — 조문은 참고용, 인용 시 원문 확인 필요"
+    >
+      미검증
+    </span>
+  ) : null;
 
   // 법전(book) 아이콘 — 법령 원문임을 시각적으로 알린다.
   const icon = (
@@ -97,6 +111,7 @@ export function LegalRefChip({
       >
         {icon}
         <span>{label}</span>
+        {statusBadge}
         {/* 새 탭 열림을 알리는 외부링크 아이콘 */}
         <svg
           width="9"
@@ -127,6 +142,7 @@ export function LegalRefChip({
     >
       {icon}
       <span>{label}</span>
+      {statusBadge}
     </span>
   );
 }

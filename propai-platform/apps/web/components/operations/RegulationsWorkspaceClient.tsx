@@ -45,6 +45,9 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const [result, setResult] = useState<RegResult | null>(null);
   // 다필지 통합(공용): 피커가 올린 전 필지 → 면적가중 통합 규제분석을 백엔드로(2필지↑만 전송).
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
+  // WP-R3: run 시점 필지 주소 스냅샷(구획도 정합용) — 대표주소 1개만 넘겨 다필지 구획도가
+  //   누락되던 버그 봉합(MarketInsights runParcelAddrs 정답 기준선과 동일 패턴).
+  const [runParcelAddrs, setRunParcelAddrs] = useState<string[]>([]);
 
   // 프로젝트 선택 시 주소(ProjectAddressInput→setAddr)에 더해 PNU도 입력칸에 자동 채움.
   // ProjectAddressInput이 선택 프로젝트의 pnu를 컨텍스트(siteAnalysis.pnu)에 기록하므로,
@@ -62,7 +65,9 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
     const targetPnu = pnu.trim() || siteAnalysis?.pnu || undefined;
     // 다필지: 피커가 올린 필지 우선, 없으면 프로젝트 컨텍스트 필지(면적만)로 통합면적 반영.
     const effRows = parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels);
-    setLoading(true); setError(""); setLlmGated(false); setResult(null);
+    // WP-R3: 구획도에 넘길 필지 주소 스냅샷을 run 시점에 확정(비동기 이후 상태 변경과 무관하게 고정).
+    const snapshotAddrs = effRows.map((r) => (r.address ?? "").trim()).filter(Boolean);
+    setLoading(true); setError(""); setLlmGated(false); setResult(null); setRunParcelAddrs([]);
     try {
       let r: RegResult;
       try {
@@ -83,6 +88,12 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
         }
       }
       setResult(r);
+      // WP-R3 parity: 백엔드가 echo한 실제 사용 필지 목록(parcels_used)을 최우선 권위목록으로,
+      //   없으면 run 시점 클라 스냅샷을 구획도에 사용(단일 권위목록 — 클라 재파생 드리프트 제거).
+      const usedAddrs = (r.parcels_used ?? [])
+        .map((p) => (p.address ?? "").trim())
+        .filter(Boolean);
+      setRunParcelAddrs(usedAddrs.length > 0 ? usedAddrs : snapshotAddrs);
     } catch {
       setError("규제 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
     } finally {
@@ -173,8 +184,12 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
           {/* 종합 규제 계층·정량 한도·영향도·LLM 통합 해석 (공용 렌더) */}
           <RegulationHierarchyView result={result} locale={locale} />
 
-          {/* 필지 구획도 */}
-          <ParcelBoundaryMap parcels={[result.address]} />
+          {/* 필지 구획도 — 다필지면 run 시점 전 필지(runParcelAddrs), 단일이면 대표주소. primaryZone은
+              분석 확정 용도지역(SSOT)으로 첫 필지 오버레이(구획도-분석 용도 정합). */}
+          <ParcelBoundaryMap
+            parcels={runParcelAddrs.length > 0 ? runParcelAddrs : [result.address]}
+            primaryZone={result.zone_type}
+          />
 
           {/* 전문가 패널 검증 */}
           <ExpertPanelCard

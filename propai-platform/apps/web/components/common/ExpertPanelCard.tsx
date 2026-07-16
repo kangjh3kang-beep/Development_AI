@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, ClipboardList, Gavel, Handshake, MessagesSquare, Search, User } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 
 /** 안정적 캐시키용 경량 해시 */
 function hashStr(s: string): string {
@@ -23,12 +23,23 @@ type Debate = { issue: string; positions: string; resolution: string };
 type Verification = { confidence?: number | null; risks?: string[]; counterpoints?: string[]; data_gaps?: string[] };
 type PanelResult = {
   generated?: boolean;
+  /** WP-R4: 실패 사유(truncation|invalid_json|validation|timeout|provider) — 침묵 폴백 대신 정직 표기. */
+  degraded_reason?: string | null;
   roster?: string[];
   experts: Expert[];
   debate: Debate[];
   consensus: string;
   recommended_actions?: string[];
   verification?: Verification;
+};
+
+// WP-R4: degraded 사유별 사용자 표기(무목업·정직) — LLM 미연결/저신뢰(절단)/형식오류를 구분.
+const DEGRADED_LABEL: Record<string, string> = {
+  truncation: "응답이 토큰 한도로 잘려 검증을 완료하지 못했습니다(저신뢰). 다시 시도하면 정상화될 수 있습니다.",
+  invalid_json: "응답 형식 오류로 해석하지 못했습니다. 잠시 후 다시 시도하세요.",
+  validation: "응답에 필수 항목이 누락되어 검증에 실패했습니다. 잠시 후 다시 시도하세요.",
+  timeout: "LLM 응답이 시간 초과되었습니다. 잠시 후 다시 시도하세요.",
+  provider: "LLM 연결에 실패했습니다. 잠시 후 다시 시도하세요.",
 };
 
 export function ExpertPanelCard({
@@ -75,14 +86,23 @@ export function ExpertPanelCard({
       });
       setResult(r);
       try { if (cacheKey) window.localStorage.setItem(cacheKey, JSON.stringify(r)); } catch { /* quota */ }
-    } catch {
-      setError("전문가 패널 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } catch (e) {
+      // WP-R4: 402(쿼터/잔액)는 침묵하지 않고 구분 표기 — 무목업·정직.
+      if (e instanceof ApiClientError && e.status === 402) {
+        setError("전문가 패널은 AI 잔액/구독이 필요합니다(쿼터 초과). 충전 후 다시 시도하세요.");
+      } else {
+        setError("전문가 패널 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+      }
     } finally {
       setLoading(false);
     }
   }, [analysisType, address, context, deep, cacheKey]);
 
   const conf = result?.verification?.confidence;
+  // WP-R4: 폴백(generated=false) 결과의 실패 사유 표기(침묵 금지) — 저신뢰/미연결/형식오류 구분.
+  const degradedMsg = result && !result.generated
+    ? (DEGRADED_LABEL[result.degraded_reason ?? ""] ?? "전문가 패널 분석이 일시적으로 제공되지 않습니다.")
+    : null;
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
@@ -112,6 +132,13 @@ export function ExpertPanelCard({
 
       {result && (
         <div className="mt-4 space-y-4">
+          {/* WP-R4: degraded 사유 배너(침묵 폴백 금지) — 저신뢰/미연결/형식오류를 구분 표기. */}
+          {degradedMsg && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>전문가 패널 검증 미완료 — {degradedMsg}</span>
+            </div>
+          )}
           {/* 통합 결론 + 신뢰도 */}
           <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
             <div className="flex items-center justify-between">
