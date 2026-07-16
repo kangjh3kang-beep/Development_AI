@@ -55,8 +55,11 @@ class SiteToDesignPayload(BaseModel):
 
     pnu_codes: list[str] = Field(default_factory=list)
     zone_type: str = ""
-    max_bcr: float = 60.0
-    max_far: float = 200.0
+    # ★무날조(WP-U1c): 0.0=미산정 센티널. 과거 기본값 60/200은 부지자료 없이 페이로드가
+    #   생성되면(부지단계 skip 등) 임의 한도를 '실측'처럼 발명했다 — _run_design은 0/None을
+    #   W3-8 계약(assumed_fields 정직 표기 + 보수 기본치 명시 라벨링)으로 소비한다.
+    max_bcr: float = 0.0
+    max_far: float = 0.0
     max_height: float = 0.0
     land_area_sqm: float = 0.0
     # ★A-2(배선 P1 — usable 면적 전파, additive) — 다필지 통합 경로에서만 채워짐(gross 기준).
@@ -512,8 +515,10 @@ class ProjectPipeline:
             state.site_to_design = SiteToDesignPayload(
                 pnu_codes=[str(p) for p in pnu_codes] if isinstance(pnu_codes, list) else [],
                 zone_type=str(site.get("zone_type") or ""),
-                max_bcr=self._as_float(site.get("max_bcr"), 60.0),
-                max_far=self._as_float(site.get("max_far"), 200.0),
+                # ★무날조(WP-U1c): 이전 결과에 한도가 없으면 60/200을 지어내지 않고 0.0(미산정
+                #   센티널) — _run_design이 assumed_fields 정직 표기와 함께 소비(수치 동일·표기 가산).
+                max_bcr=self._as_float(site.get("max_bcr"), 0.0),
+                max_far=self._as_float(site.get("max_far"), 0.0),
                 max_height=self._as_float((zoning or {}).get("max_height_m"), 0.0),
                 land_area_sqm=self._as_float(site.get("land_area_sqm"), 0.0),
                 land_shape=None,
@@ -675,9 +680,11 @@ class ProjectPipeline:
             pnu_codes = pre_collected.get("pnu_codes", [])
             official_land_price = pre_collected.get("official_land_price", 0.0)
 
-            # 국토계획법 법정 상한
-            national_bcr = pre_collected.get("national_bcr") or pre_collected.get("max_bcr", 60.0)
-            national_far = pre_collected.get("national_far") or pre_collected.get("max_far", 200.0)
+            # 국토계획법 법정 상한 — ★무날조(WP-U1c): 무자료 시 `or 200/60` 임의 기본값을
+            #   발명하지 않는다(None 유지). 법정값의 진실원천은 아래 far_tier SSOT가 용도지역
+            #   라벨(legal_limits_for)로 재확인하며, 여기 값은 zone_limits 보조 페이로드일 뿐이다.
+            national_bcr = pre_collected.get("national_bcr") or pre_collected.get("max_bcr")
+            national_far = pre_collected.get("national_far") or pre_collected.get("max_far")
             max_height = pre_collected.get("max_height", 0.0)
 
             # 조례 조회 (pre_collected에 없으면 OrdinanceService로 실시간 조회)
@@ -693,46 +700,163 @@ class ProjectPipeline:
                     ord_result = await ord_svc.get_ordinance_limits(state.address, zone_type)
                     if ord_result.get("ordinance_bcr") is not None:
                         ordinance_bcr = ord_result["ordinance_bcr"]
-                        ordinance_far = ord_result.get("ordinance_far", national_far)
+                        # ★무날조: 조례 용적률 미제공 시 법정값으로 지어내지 않고 None 유지
+                        #   (아래 SSOT가 법정 폴백·정직 표기를 일원 처리).
+                        ordinance_far = ord_result.get("ordinance_far")
                         ordinance_source = ord_result.get("source", "조례")
                     _sgg = ord_result.get("sigungu")
                     if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
                         ordinance_sigungu = str(_sgg).strip()
                 except Exception as e:
                     logger.warning("조례 조회 실패, 법정상한 폴백: %s", str(e)[:160])
-            if not ordinance_bcr:
-                ordinance_bcr = national_bcr
-                ordinance_far = national_far
-                ordinance_source = ordinance_source or "법정상한"
 
-            effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
-            effective_far = min(float(national_far or 200), float(ordinance_far or 200))
+            # ── ★실효 용적률/건폐율 SSOT 단일경유(WP-U1c) — calc_effective_far 소비(재계산 금지) ──
+            # 과거 이 지점의 `min(법정,조례)` 독자 재계산은 ①구조상한(건폐율×층수) 계층 누락으로
+            # 자연/생산녹지(건폐 20%×4층=80% < 법정 100%)를 100%로 과대표시하고, ②무자료 시
+            # `or 200`/`or 60` 날조 기본값으로 자연녹지에 200%를 발명했다(라이브 실측 재현).
+            # 수지(feasibility_v2)·종합(comprehensive)·규제(PR#333)·인허가(PR#334)·90초진단(PR#336)
+            # 표면과 동일 SSOT 계층(법정범위→조례→계획상한→인센티브→구조상한)을 소비한다 —
+            # "2026-06-19 산/임야 과대표시" 버그클래스의 파이프라인 표면 봉합. 층수제한 없는
+            # zone(제2종일반주거 250%·일반상업 1300% 등)은 구조상한 None → 완전 무영향.
+            far_basis: str | None = None
+            far_reliable = False
+            far_basis_detail: dict[str, Any] | None = None
+            structural_cap_pct: float | None = None
+            floor_cap: int | None = None
+            floor_cap_basis: str | None = None
+            _ord_payload: dict[str, Any] = {}
+            if ordinance_bcr is not None or ordinance_far is not None:
+                _ord_payload = {
+                    "ordinance_bcr": ordinance_bcr,
+                    "ordinance_far": ordinance_far,
+                    "source": ordinance_source or "조례",
+                }
+                if ordinance_sigungu:
+                    _ord_payload["sigungu"] = ordinance_sigungu
+            eff: dict[str, Any] = {}
+            try:
+                from app.services.land_intelligence.far_tier_service import calc_effective_far
+                eff = calc_effective_far(
+                    {
+                        "zone_limits": {"max_bcr_pct": national_bcr, "max_far_pct": national_far},
+                        "local_ordinance": _ord_payload,
+                        "special_districts": (
+                            pre_collected.get("special_districts")
+                            or comprehensive.get("special_districts")
+                            or []
+                        ),
+                    },
+                    zone_type,
+                    float(land_area_sqm or 0),
+                )
+            except Exception as e:  # noqa: BLE001 — SSOT 실패 시 정직강등(far_reliable=False)
+                logger.warning("실효 용적률 SSOT 산정 실패 — 정직강등", err=str(e)[:160])
+                eff = {}
 
-            # ★다필지 통합(리뷰 HIGH): 위 min()은 대표필지 zone의 법정/조례로만 산출된다. 통합 블록이
+            _eff_far = eff.get("effective_far_pct")
+            _eff_bcr = eff.get("effective_bcr_pct")
+            if _eff_far is not None and float(_eff_far) > 0:
+                effective_far = float(_eff_far)
+                far_reliable = True
+            else:
+                # SSOT 미산정(zone 미확인/산정 실패) — 날조 금지: 실제 수집값만 보수 적용(min),
+                # 전무하면 None(미산정) 정직 전파. 하류 _run_design은 W3-8 계약(assumed_fields
+                # 정직 표기 + 보수 기본치 명시 라벨링)으로 0/None을 소비한다.
+                _far_cands = [
+                    float(v) for v in (national_far, ordinance_far)
+                    if v is not None and float(v) > 0
+                ]
+                effective_far = min(_far_cands) if _far_cands else None
+            if _eff_bcr is not None and float(_eff_bcr) > 0:
+                effective_bcr = float(_eff_bcr)
+            else:
+                _bcr_cands = [
+                    float(v) for v in (national_bcr, ordinance_bcr)
+                    if v is not None and float(v) > 0
+                ]
+                effective_bcr = min(_bcr_cands) if _bcr_cands else None
+            if eff:
+                far_basis = eff.get("far_basis")
+                far_basis_detail = eff.get("far_basis_detail")
+                structural_cap_pct = eff.get("structural_cap_pct")
+                floor_cap = eff.get("floor_cap")
+                floor_cap_basis = eff.get("floor_cap_basis")
+                # 법정/조례 표기값도 SSOT(용도지역 라벨 재확인) 산출을 소비 — 표기·수치 교차 일치.
+                if eff.get("national_bcr_pct") is not None:
+                    national_bcr = eff["national_bcr_pct"]
+                if eff.get("national_far_pct") is not None:
+                    national_far = eff["national_far_pct"]
+                if eff.get("ordinance_bcr_pct") is not None:
+                    ordinance_bcr = eff["ordinance_bcr_pct"]
+                if eff.get("ordinance_far_pct") is not None:
+                    ordinance_far = eff["ordinance_far_pct"]
+                ordinance_source = ordinance_source or str(eff.get("source") or "")
+
+            # ── 사용자 오버라이드 최종 권위 보존(기존 계약 — _apply_site_overrides 주석 참조):
+            #    max_bcr/max_far 직접 입력은 SSOT 산정과 무관하게 최종 한도로 적용한다(값 자체가
+            #    사용자 명시 입력 — 날조 아님, far_basis로 출처 정직 표기).
+            #    national_*/ordinance_* 개별 오버라이드는 하향(min)으로만 참여(보수 방향).
+            if applied_site_overrides:
+                _uf = self._maybe_float(applied_site_overrides.get("max_far"))
+                if _uf is not None and _uf > 0:
+                    effective_far = _uf
+                    far_basis = "사용자 오버라이드(직접 입력)"
+                    far_reliable = True
+                else:
+                    _ufc = [
+                        c for c in (
+                            self._maybe_float(applied_site_overrides.get(k))
+                            for k in ("national_far", "ordinance_far")
+                        ) if c is not None and c > 0
+                    ]
+                    if _ufc and (effective_far is None or min(_ufc) < effective_far):
+                        effective_far = min(_ufc)
+                        far_basis = "사용자 오버라이드(법정/조례 한도 직접 입력)"
+                _ub = self._maybe_float(applied_site_overrides.get("max_bcr"))
+                if _ub is not None and _ub > 0:
+                    effective_bcr = _ub
+                else:
+                    _ubc = [
+                        c for c in (
+                            self._maybe_float(applied_site_overrides.get(k))
+                            for k in ("national_bcr", "ordinance_bcr")
+                        ) if c is not None and c > 0
+                    ]
+                    if _ubc and (effective_bcr is None or min(_ubc) < effective_bcr):
+                        effective_bcr = min(_ubc)
+
+            # ★다필지 통합(리뷰 HIGH): 위 SSOT 산정은 대표필지 zone 기준이다. 통합 블록이
             #   면적가중 blended 실효율을 계산해뒀으면(area_basis="integrated_parcels") 그 값으로 대체 —
             #   혼재 용도지역에서 zone 라벨만 우세용도로 바뀌고 FAR/BCR은 대표 zone에 머무는 라벨-숫자
             #   불일치(이 코드베이스가 반복적으로 싸운 버그 클래스)를 다필지 경로에 재도입하지 않는다.
+            #   (블렌드는 필지별 SSOT 실효율의 면적가중 집계 — 독자 재계산이 아니라 SSOT 파생값.)
             if pre_collected.get("area_basis") == "integrated_parcels":
                 _bf = pre_collected.get("effective_far")
                 _bb = pre_collected.get("effective_bcr")
                 if _bf is not None and float(_bf) > 0:
                     effective_far = float(_bf)
+                    far_basis = "다필지 통합(면적가중 실효율)"
+                    far_reliable = True
                 if _bb is not None and float(_bb) > 0:
                     effective_bcr = float(_bb)
 
-            # 기부체납 인센티브 계산
+            # 기부체납 인센티브 계산 — ★무날조: 실효 용적률 미산정이면 임의 200 기준 시뮬 대신 생략.
             far_incentive: dict[str, Any] = {}
-            try:
-                far_incentive = fic.calculate(
-                    zone_type=zone_type,
-                    ordinance_far=effective_far,
-                    donation_ratio_pct=0.0,
-                    national_far=float(national_far or 200),
-                )
-            except Exception:
-                far_incentive = {"error": "인센티브 계산 실패"}
+            if effective_far is not None:
+                try:
+                    far_incentive = fic.calculate(
+                        zone_type=zone_type,
+                        ordinance_far=effective_far,
+                        donation_ratio_pct=0.0,
+                        # None이면 fic 내부에서 용도지역 라벨로 법정상한 자동 조회(임의 200 주입 금지).
+                        national_far=float(national_far) if national_far is not None else None,
+                    )
+                except Exception:
+                    far_incentive = {"error": "인센티브 계산 실패"}
+            else:
+                far_incentive = {"skipped": "실효 용적률 미산정 — 인센티브 시뮬 생략(무날조)"}
 
-            # 개발 가능 유형 분석 — 법정 상한이 아닌 실효 BCR/FAR(조례·인센티브 반영, L650-651)을
+            # 개발 가능 유형 분석 — 법정 상한이 아닌 실효 BCR/FAR(SSOT calc_effective_far 소비값)을
             # 주입해 max_gfa를 실효 기준으로 산출(파이프라인 effective vs dta 법정 비대칭 해소).
             development_types: dict[str, Any] = {}
             try:
@@ -770,8 +894,9 @@ class ProjectPipeline:
             state.site_to_design = SiteToDesignPayload(
                 pnu_codes=pnu_codes,
                 zone_type=zone_type,
-                max_bcr=effective_bcr,
-                max_far=effective_far,
+                # 미산정(None)은 0.0 센티널로 전달 — _run_design이 W3-8 계약(가정 표기)으로 소비.
+                max_bcr=effective_bcr if effective_bcr is not None else 0.0,
+                max_far=effective_far if effective_far is not None else 0.0,
                 max_height=max_height,
                 land_area_sqm=float(land_area_sqm),
                 land_area_gross_sqm=pre_collected.get("land_area_gross_sqm"),
@@ -793,16 +918,27 @@ class ProjectPipeline:
                 },
                 "zoning": {
                     "zone_type": zone_type,
-                    "national_bcr": float(national_bcr or 60),
-                    "national_far": float(national_far or 200),
-                    "ordinance_bcr": float(ordinance_bcr or 60),
-                    "ordinance_far": float(ordinance_far or 200),
+                    # ★무날조(WP-U1c): 미확인 한도는 None 정직 전파(과거 `or 60`/`or 200` 날조 제거).
+                    #   프론트(SiteAnalysisDetail 등)는 n()/null 가드로 None 허용 — 표기만 생략.
+                    "national_bcr": float(national_bcr) if national_bcr is not None else None,
+                    "national_far": float(national_far) if national_far is not None else None,
+                    "ordinance_bcr": float(ordinance_bcr) if ordinance_bcr is not None else None,
+                    "ordinance_far": float(ordinance_far) if ordinance_far is not None else None,
                     "effective_bcr": effective_bcr,
                     "effective_far": effective_far,
                     "max_height_m": max_height,
                     "ordinance_source": ordinance_source or "pre_collected",
                     "ordinance_sigungu": ordinance_sigungu,
                     "far_incentive": far_incentive,
+                    # ★실효 산정 근거·신뢰성 정직 전파(additive) — PR#334/#336과 동일 계약.
+                    #   far_basis="구조상한(건폐율×층수)"이면 자연녹지 80%가 조례가 아닌
+                    #   층수제한(4층)에서 온 값임을 소비처가 정직 표기할 수 있다.
+                    "far_basis": far_basis,
+                    "far_reliable": far_reliable,
+                    "far_basis_detail": far_basis_detail,
+                    "structural_cap_pct": structural_cap_pct,
+                    "floor_cap": floor_cap,
+                    "floor_cap_basis": floor_cap_basis,
                 },
                 "development_types": development_types,
                 "pricing": {
@@ -939,8 +1075,11 @@ class ProjectPipeline:
                 result["zone_type"] = zoning["zone_type"]
             if zoning.get("zone_limits"):
                 zl = zoning["zone_limits"]
-                result["max_bcr"] = zl.get("max_bcr_pct", zl.get("bcr", result.get("max_bcr", 60)))
-                result["max_far"] = zl.get("max_far_pct", zl.get("far", result.get("max_far", 200)))
+                # ★무날조(WP-U1c): zone_limits에 한도가 없으면 60/200을 지어내지 않고 None 유지 —
+                #   아래 E7 블록이 assumed_fields 정직 표기와 함께 보수 기본치를 명시 라벨링한다
+                #   (과거엔 여기서 침묵 날조돼 E7 플래그마저 우회됐다).
+                result["max_bcr"] = zl.get("max_bcr_pct", zl.get("bcr", result.get("max_bcr")))
+                result["max_far"] = zl.get("max_far_pct", zl.get("far", result.get("max_far")))
             if zoning.get("pnu"):
                 result["pnu_codes"] = [zoning["pnu"]]
             if zoning.get("land_area_sqm"):
