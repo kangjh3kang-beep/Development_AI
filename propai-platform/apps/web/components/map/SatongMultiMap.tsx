@@ -36,8 +36,10 @@ import {
   type VWorldBaseLayer,
   zoneColor,
 } from "@/lib/satong-map-layers";
-import { bindSatongLabel, planSatongLabels } from "@/lib/satong-map-labels";
+import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
+import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
+import { formatDistance, totalDistanceMeters, type MeasurePoint } from "@/lib/satong-measure";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 declare global {
@@ -748,6 +750,20 @@ export function SatongMultiMap({
   // staged: 사용자가 [＋추가]로 확정한 필지 목록
   const [staged, setStaged] = useState<ParcelAtPointResult[]>([]);
 
+  // ── 지도 클릭 팝오버(단일 팝오버 계약 — 디자인컴프) & 거리재기 ──
+  //   클릭 즉시 필지조회 대신 그 지점에 액션 메뉴 1개를 띄운다(오클릭 API 호출 절감 +
+  //   색깔점/색면 오클릭으로 필지선택이 발동하던 혼선 제거). x/y = 지도 컨테이너 픽셀 좌표.
+  //   w/h = 클릭 시점의 지도 컨테이너 크기(렌더 중 ref 접근 금지 — 클릭 핸들러에서 캡처).
+  const [clickMenu, setClickMenu] = useState<{
+    lat: number; lon: number; x: number; y: number; w: number; h: number;
+  } | null>(null);
+  const [measureOn, setMeasureOn] = useState(false);
+  const measureOnRef = useRef(false);
+  const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
+  const measureLayerRef = useRef<any>(null);
+  // 노후도 범례 접기(기본 접힘) — 하단 도크 과점 해소(U1).
+  const [legendOpen, setLegendOpen] = useState(false);
+
   // 선택 필지 및 staged 필지 통합 평균 노후도 계산
   const avgAge = useMemo(() => {
     const allFeatures = new Map<string, { buildingAgeYears?: number | null }>();
@@ -949,20 +965,21 @@ export function SatongMultiMap({
 
     const layer = L.layerGroup().addTo(map);
 
-    // 선택됨 — 녹색 폴리곤
+    // 선택 확정 — primary 블루 폴리곤(디자인컴프: 선택 필지 = primary. 종전 녹색 교체)
     if (parcel.geometry) {
       const rings = geoJsonToLeafletRings(parcel.geometry);
       if (rings.length > 0) {
         L.polygon(rings, {
-          color: "#22c55e", weight: 2.5, fillColor: "#22c55e", fillOpacity: 0.28,
+          color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.24,
         }).addTo(layer);
       }
     }
 
-    // 중심 마커(녹색)
+    // 중심 마커(primary)
     if (parcel.lat != null && parcel.lon != null) {
       L.circleMarker([parcel.lat, parcel.lon], {
-        radius: 7, color: "#22c55e", weight: 2.5, fillColor: "#22c55e", fillOpacity: 0.9,
+        radius: 7, color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.9,
+        bubblingMouseEvents: false,
       }).addTo(layer);
     }
 
@@ -1069,8 +1086,9 @@ export function SatongMultiMap({
     if (result.geometry && !alreadyStaged) {
       const rings = geoJsonToLeafletRings(result.geometry);
       if (rings.length > 0) {
+        // 확인 대기(pending) = 점선 파랑 — 확정(primary 실선)과 시각 구분.
         const poly = L.polygon(rings, {
-          color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.22,
+          color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.22, dashArray: "6 4",
         }).addTo(layer);
         // 폴리곤 경계에 맞춰 지도 이동
         try { map.fitBounds(poly.getBounds(), { padding: [40, 40], maxZoom: 17 }); } catch { /* noop */ }
@@ -1186,7 +1204,9 @@ export function SatongMultiMap({
           zoom: 12,
           scrollWheelZoom: true,
           attributionControl: false,
+          zoomControl: false, // 아래에서 좌하단으로 재부착(디자인컴프: 줌 좌하단)
         });
+        L.control.zoom({ position: "bottomleft" }).addTo(map);
 
         // 텍스트/라벨 레이어가 폴리곤(overlayPane, 400) 위로 올라오도록 커스텀 Pane 생성
         const labelPane = map.createPane("labelPane");
@@ -1205,11 +1225,25 @@ export function SatongMultiMap({
           map.setView([focus.lat, focus.lon], 17);
         }
 
-        // 지도 클릭 → 필지 조회
+        // 지도 클릭 → 단일 팝오버(필지 선택·정보/거리재기) — 디자인컴프 계약.
+        //   종전 '클릭 즉시 필지조회'는 팝오버의 [필지 선택·정보] 액션으로 이동(오클릭 시
+        //   불필요한 /zoning/parcel-at-point 호출도 함께 제거). 거리재기 모드에선 클릭이
+        //   측정점 추가로 전환된다.
         map.on("click", (e: any) => {
           if (readOnly) return;
-          isMapClickSelectionRef.current = true;
-          void queryParcel(e.latlng.lat, e.latlng.lng);
+          if (measureOnRef.current) {
+            setMeasurePoints((prev) => [...prev, { lat: e.latlng.lat, lon: e.latlng.lng }]);
+            return;
+          }
+          const pt = map.latLngToContainerPoint(e.latlng);
+          const size = map.getSize();
+          setClickMenu({ lat: e.latlng.lat, lon: e.latlng.lng, x: pt.x, y: pt.y, w: size.x, h: size.y });
+        });
+        // 팝오버는 지도 조작 시작과 함께 닫는다(고정 픽셀 앵커라 이동 시 어긋남 방지).
+        map.on("movestart zoomstart", () => setClickMenu(null));
+        // 더블클릭 = 측정 종료(측정 중 doubleClickZoom은 별도 이펙트에서 비활성).
+        map.on("dblclick", () => {
+          if (measureOnRef.current) setMeasureOn(false);
         });
 
         // 지도 이동 완료 → 현재 중심 통지(선택필지 없을 때 지역레이어 폴백 앵커). 디바운스+
@@ -1377,9 +1411,12 @@ export function SatongMultiMap({
 	    const drawPolygon = (style: Record<string, unknown>) => {
 	      if (!hasGeometry) return;
         const resolvedStyle = {
+          // 색면 클릭이 지도 클릭(팝오버)으로 번지지 않게 — 색면 클릭 = 자기 정보 팝업만(U6).
+          bubblingMouseEvents: false,
           ...style,
           ...(statusColor ? { color: statusColor, fillColor: statusColor } : {}),
-          ...(isHighlighted ? { color: "#ef4444", weight: 4, fillOpacity: 0.5 } : {}),
+          // 하이라이트(선택 강조) = primary 블루 — 디자인컴프 정합(#ef4444 에러적색은 컴프 위반).
+          ...(isHighlighted ? { color: "#135bec", weight: 4, fillOpacity: 0.5 } : {}),
         };
 	      const polygon = L.polygon(rings, resolvedStyle).bindPopup(popup, { maxWidth: 280 }).addTo(group);
         polygon.on("click", () => onFeatureClick?.(feature));
@@ -1438,6 +1475,7 @@ export function SatongMultiMap({
           weight: 2,
           fillColor: "#bfdbfe",
           fillOpacity: 0.95,
+          bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(지도 클릭 팝오버로 미전파 — U6)
         }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClick?.(feature)).addTo(group);
         bounds.extend([feature.lat, feature.lon]);
       }
@@ -1512,27 +1550,124 @@ export function SatongMultiMap({
 
     const group = L.layerGroup().addTo(map);
     selectionLabelLayerRef.current = group;
-    overlayFeatures.forEach((feature) => {
-      const point =
-        feature.lat != null && feature.lon != null
-          ? { lat: feature.lat, lon: feature.lon }
-          : geometryRepresentativePoint(feature.geometry);
-      if (!point) return;
-      const anchor = L.circleMarker([point.lat, point.lon], {
-        radius: 0,
-        opacity: 0,
-        fillOpacity: 0,
-        interactive: false,
-      }).addTo(group);
-      bindSatongLabel(anchor, feature.address || feature.pnu || "필지", { permanent: true, offsetY: 2 });
-    });
+
+    const points = overlayFeatures
+      .map((feature) => ({
+        feature,
+        point:
+          feature.lat != null && feature.lon != null
+            ? { lat: feature.lat, lon: feature.lon }
+            : geometryRepresentativePoint(feature.geometry),
+      }))
+      .filter((e): e is { feature: (typeof overlayFeatures)[number]; point: { lat: number; lon: number } } => !!e.point);
+    if (points.length === 0) return;
+
+    const makeAnchor = (lat: number, lon: number) =>
+      L.circleMarker([lat, lon], { radius: 0, opacity: 0, fillOpacity: 0, interactive: false }).addTo(group);
+
+    // ★줌 롤업(U-라벨 파일업): 줌아웃(hover-only LOD)에서 다필지 주소 라벨을 전부 상시
+    //   표시하면 한 점에 겹겹이 쌓인다(12필지 주소 파일업). 줌아웃+다필지에서는 집계 칩
+    //   1개("선택 N필지 · 합산㎡")로 롤업하고, 줌인(z≥15)에서만 필지별 '짧은 지번' 라벨을
+    //   단다. 단일 필지는 어느 줌에서도 개별 라벨(초기 진입 식별 — PR#329 LOW1 의도 유지).
+    const lod = satongLabelLOD(mapZoom);
+    if (lod === "hover-only" && points.length > 1) {
+      const centroid = {
+        lat: points.reduce((s, e) => s + e.point.lat, 0) / points.length,
+        lon: points.reduce((s, e) => s + e.point.lon, 0) / points.length,
+      };
+      const totalArea = overlayFeatures.reduce((s, f) => s + (f.areaSqm || 0), 0);
+      const label = `선택 ${points.length}필지${totalArea > 0 ? ` · ${Math.round(totalArea).toLocaleString()}㎡` : ""}`;
+      bindSatongLabel(makeAnchor(centroid.lat, centroid.lon), label, { permanent: true, offsetY: 2 });
+    } else {
+      points.forEach(({ feature, point }) => {
+        bindSatongLabel(
+          makeAnchor(point.lat, point.lon),
+          shortJibunLabel(feature.address, feature.pnu || "필지"),
+          { permanent: true, offsetY: 2 },
+        );
+      });
+    }
 
     return () => {
       try { group.remove(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures]);
+  }, [mapReady, overlayFeatures, mapZoom]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
+  useEffect(() => {
+    measureOnRef.current = measureOn;
+  }, [measureOn]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Measure shapes are rendered into an imperative Leaflet layer group. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (measureLayerRef.current) {
+      try { measureLayerRef.current.remove(); } catch { /* noop */ }
+      measureLayerRef.current = null;
+    }
+    if (measurePoints.length === 0) return;
+
+    const group = L.layerGroup().addTo(map);
+    measureLayerRef.current = group;
+    const latlngs = measurePoints.map((p) => [p.lat, p.lon] as [number, number]);
+    latlngs.forEach((ll) => {
+      L.circleMarker(ll, {
+        radius: 4, color: "#135bec", weight: 2, fillColor: "#ffffff", fillOpacity: 1,
+        interactive: false, // 측정점이 다음 클릭(점 추가)을 가로채지 않게
+      }).addTo(group);
+    });
+    if (latlngs.length >= 2) {
+      L.polyline(latlngs, { color: "#135bec", weight: 3, dashArray: "6 6", interactive: false }).addTo(group);
+      // 누적 거리 라벨 — 마지막 점 위 상시 표시(순수계산 satong-measure).
+      const anchor = L.circleMarker(latlngs[latlngs.length - 1], {
+        radius: 0, opacity: 0, fillOpacity: 0, interactive: false,
+      }).addTo(group);
+      bindSatongLabel(anchor, `누적 ${formatDistance(totalDistanceMeters(measurePoints))}`, { permanent: true, offsetY: -10 });
+    }
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (measureLayerRef.current === group) measureLayerRef.current = null;
+    };
+  }, [mapReady, measurePoints]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // 측정 모드 UX — 더블클릭줌 비활성(더블클릭=종료 제스처와 충돌)·크로스헤어 커서.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !map) return;
+    if (measureOn) {
+      try { map.doubleClickZoom.disable(); } catch { /* noop */ }
+      if (mapEl.current) mapEl.current.style.cursor = "crosshair";
+    } else {
+      try { map.doubleClickZoom.enable(); } catch { /* noop */ }
+      if (mapEl.current) mapEl.current.style.cursor = "";
+    }
+  }, [mapReady, measureOn]);
+
+  // ESC 단계적 해제 — ①팝오버 닫기 → ②측정 종료 → ③측정 결과 지우기.
+  useEffect(() => {
+    if (!clickMenu && !measureOn && measurePoints.length === 0) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      if (clickMenu) { setClickMenu(null); return; }
+      if (measureOn) { setMeasureOn(false); return; }
+      setMeasurePoints([]);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [clickMenu, measureOn, measurePoints.length]);
+
+  // 클릭 지점의 오버레이 피처(용도지역·공시지가·노후도 색면) — 팝오버 헤더 정보(레이캐스팅).
+  const clickMenuFeature = useMemo(() => {
+    if (!clickMenu) return null;
+    return findFeatureAtPoint(clickMenu.lat, clickMenu.lon, overlayFeatures, (f) =>
+      geoJsonToLeafletRings(f.geometry),
+    );
+  }, [clickMenu, overlayFeatures]);
 
   // marketLayer에서 마커 이펙트가 실제로 읽는 원시값·참조만 뽑아 구독을 협소화한다(리뷰 LOW) —
   //   marketLayer 객체 identity가 바뀌어도(다른 필드 갱신) 아래 값이 같으면 마커를 다시 그리지
@@ -1631,6 +1766,7 @@ export function SatongMultiMap({
       weight: 3,
       fillColor: "#ffffff",
       fillOpacity: 0.95,
+      bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(U6)
     })
       .bindPopup(`<div style="padding:8px 10px;font-size:12px;"><b>분석 대상지</b><br/>${escapeHtml(marketPayload.center.address || "")}</div>`)
       .addTo(group);
@@ -1644,6 +1780,7 @@ export function SatongMultiMap({
         fillColor: "#14b8a6",
         fillOpacity: 0.05,
         dashArray: "6 6",
+        interactive: false, // 반경 링이 지도 클릭(필지 팝오버)을 가로채지 않게
       }).addTo(group);
     }
 
@@ -1658,6 +1795,9 @@ export function SatongMultiMap({
         weight: 2,
         fillColor: typeColor,
         fillOpacity: 0.9,
+        // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
+        //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
+        bubblingMouseEvents: false,
       })
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
@@ -1857,6 +1997,7 @@ export function SatongMultiMap({
         weight: 2,
         fillColor: "#ede9fe",
         fillOpacity: 0.9,
+        bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(U6)
       })
         .bindPopup(
           `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
@@ -1942,7 +2083,7 @@ export function SatongMultiMap({
       {/* 안내 메시지 */}
       {chrome === "default" && !readOnly && (
         <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
-          지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
+          지도를 클릭하면 선택·정보·거리재기 메뉴가 열립니다. [필지 선택·정보] → [＋추가]로 담고 [완료]로 등록하세요.
           {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
           <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
         </p>
@@ -1964,12 +2105,8 @@ export function SatongMultiMap({
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
       <div ref={wrapperRef} className={wrapperClass("relative")}>
-        {/* Leaflet Zoom Control 상단 칩바 겹침 방지 CSS */}
+        {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`
-          .leaflet-top.leaflet-left {
-            top: 56px !important;
-            left: 12px !important;
-          }
           @keyframes ping {
             75%, 100% {
               transform: scale(2);
@@ -2005,44 +2142,166 @@ export function SatongMultiMap({
           )}
         </button>
 
+        {/* ── 지도 클릭 팝오버(단일 팝오버 — 디자인컴프) : 필지 선택·정보 / 거리재기 / 닫기 + 출처 푸터 ── */}
+        {clickMenu && !readOnly && (() => {
+          const pos = clampClickMenuPosition(
+            { x: clickMenu.x, y: clickMenu.y },
+            { width: clickMenu.w, height: clickMenu.h },
+            { width: 224, height: 196 },
+          );
+          const subInfo = [
+            clickMenuFeature?.zoneType || null,
+            clickMenuFeature?.officialPricePerSqm
+              ? `공시 ${Math.round(clickMenuFeature.officialPricePerSqm).toLocaleString()}원/㎡`
+              : null,
+            clickMenuFeature?.buildingAgeYears != null ? `노후 ${clickMenuFeature.buildingAgeYears}년` : null,
+          ].filter(Boolean);
+          return (
+            <div
+              className="pointer-events-auto absolute w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] shadow-xl backdrop-blur"
+              style={{ left: pos.left, top: pos.top, zIndex: SATONG_UI_Z.clickMenu }}
+              role="menu"
+              aria-label="지도 지점 메뉴"
+            >
+              <div className="border-b border-[var(--border-muted)] px-3 py-2">
+                <p className="truncate text-xs font-black text-[var(--text-primary)]">
+                  {clickMenuFeature?.address
+                    ? shortJibunLabel(clickMenuFeature.address)
+                    : `${clickMenu.lat.toFixed(5)}, ${clickMenu.lon.toFixed(5)}`}
+                </p>
+                {subInfo.length > 0 && (
+                  <p className="mt-0.5 truncate text-[10px] font-semibold text-[var(--text-secondary)]">
+                    {subInfo.join(" · ")}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  isMapClickSelectionRef.current = true;
+                  void queryParcel(clickMenu.lat, clickMenu.lon);
+                  setClickMenu(null);
+                }}
+              >
+                📍 이 필지 선택·정보
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
+                  setMeasureOn(true);
+                  setClickMenu(null);
+                }}
+              >
+                📏 거리재기 시작
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-xs font-semibold text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => setClickMenu(null)}
+              >
+                닫기 <span className="font-mono text-[10px]">(ESC)</span>
+              </button>
+              {/* 출처 푸터 — 디자인컴프 '팝업 출처 푸터' 계약 */}
+              <p className="border-t border-[var(--border-muted)] px-3 py-1.5 font-mono text-[9px] text-[var(--text-hint)]">
+                출처 VWorld · 국토교통부 공간정보
+              </p>
+            </div>
+          );
+        })()}
+
+        {/* 거리재기 상태 칩 — 측정 중 안내/누적거리, 종료 후 결과 유지+지우기 */}
+        {(measureOn || measurePoints.length > 0) && (
+          <div
+            className="pointer-events-auto absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 shadow-lg backdrop-blur"
+            style={{ zIndex: SATONG_UI_Z.clickMenu }}
+          >
+            <span className="text-[11px] font-black text-[var(--text-primary)]">
+              📏 {measureOn ? "거리재기 — 클릭: 점 추가 · 더블클릭/ESC: 종료" : "측정 결과"}
+              {measurePoints.length >= 2
+                ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
+                : ""}
+            </span>
+            {measureOn ? (
+              <button
+                type="button"
+                onClick={() => setMeasureOn(false)}
+                className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-0.5 text-[11px] font-black text-[var(--accent-strong)]"
+              >
+                종료
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMeasurePoints([])}
+                className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-black text-[var(--text-secondary)]"
+              >
+                지우기
+              </button>
+            )}
+          </div>
+        )}
+
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
         {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
           <div
-            className={`pointer-events-none absolute left-3 flex max-w-[calc(100%-96px)] flex-col gap-2 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
+            // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
+            className={`pointer-events-none absolute left-14 flex max-w-[calc(100%-152px)] flex-col gap-2 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
           >
             {/* 노후도 범례 (age 레이어 on일 때) — ★WP-M3: 노후도 자료(avgAge)가 있을 때만 5색
                 램프를 노출한다. 자료 0건이면 5색 램프가 '색=노후도' 오인을 조장하므로, "건물 정보
                 없음"과 무자료 사유(나대지/조회실패/대량생략)만 정직 표기한다. */}
+            {/* ★U1(범례 과점): 기본은 1줄 칩으로 접고, 클릭 시에만 5색 램프 카드를 펼친다.
+                무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
             {hasSatongLayer(layerState, "age") && (
-              <div className="rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
-                <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
-                {avgAge !== null ? (
-                  <>
-                    <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
-                      {AGE_LEGEND_ITEMS.map((item) => (
-                        <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
-                          <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
-                          <span>{item.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
-                      <span>선택 필지 평균 노후도</span>
-                      <span className="text-xs font-black text-rose-600">{avgAge}년</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-[10.5px] font-bold text-slate-500 flex flex-col gap-0.5">
-                    <span className="font-semibold text-slate-400">건물 정보 없음</span>
-                    {buildAgeGapDetail(ageStatusCounts) && (
-                      <span className="text-[10px] font-semibold text-slate-400">{buildAgeGapDetail(ageStatusCounts)}</span>
-                    )}
+              avgAge === null ? (
+                <span className="pointer-events-auto inline-flex w-fit items-center rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-bold text-slate-500 shadow">
+                  🏢 노후도 — 건물 정보 없음
+                  {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}
+                </span>
+              ) : legendOpen ? (
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => setLegendOpen(false)}
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-slate-800"
+                    aria-expanded
+                  >
+                    <span>🏢 건물 노후도 구분</span>
+                    <span aria-hidden>▾</span>
+                  </button>
+                  <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
+                    {AGE_LEGEND_ITEMS.map((item) => (
+                      <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                        <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
                   </div>
-                )}
-              </div>
+                  <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
+                    <span>선택 필지 평균 노후도</span>
+                    <span className="text-xs font-black text-rose-600">{avgAge}년</span>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLegendOpen(true)}
+                  aria-expanded={false}
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
+                >
+                  🏢 노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
+                  <span aria-hidden>▸</span>
+                </button>
+              )
             )}
             {/* 상태 칩 스택 */}
             {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (

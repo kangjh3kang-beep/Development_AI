@@ -41,5 +41,6 @@ export const SATONG_UI_Z = {
   cornerDock: 410, // 좌하단 코너 도크(상태 칩 + 노후도 범례)
   tileFailure: 420,
   bottomBar: 460, // 선택 현황·완료/전체취소 바(풀스크린 오버레이 모드)
+  clickMenu: 470, // 지도 클릭 팝오버(단일 팝오버) + 거리재기 상태 칩 — 확인 카드 아래
   confirmCard: 500,
 } as const;
