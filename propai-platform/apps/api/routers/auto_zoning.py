@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
 from app.core.database import get_db
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
-from apps.api.app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
 logger = logging.getLogger(__name__)

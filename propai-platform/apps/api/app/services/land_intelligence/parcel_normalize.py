@@ -79,36 +79,40 @@ def canonicalize_parcel_row(p: dict) -> dict:
 def normalize_parcels(raw: Any) -> list[dict]:
     """parcels 요청값(list[str] | list[dict] | None) → canonical dict[] 로 수렴.
 
+    - top-level 은 **list 만** 허용. None/빈 → []. list 가 아니면 ValueError
+      (Pydantic BeforeValidator 에서 422 로 변환 — 종전 `list[dict]` 계약과 동일한 엄격성).
+      ★가드가 없으면 문자열/객체 같은 iterable 이 for 문을 그대로 통과해
+        "역삼동123" → [{"address":"역"},{"address":"삼"},…] 같은 **유령 필지**가 생기고(무음 오답),
+        int 등 비 iterable 은 raw TypeError → 500 이 된다(R1 리뷰 재현 적발).
     - str  요소 → {"address": s.strip()} 로 승격(공백 트림·빈 문자열 제외).
              ★무음 no-op 은폐 제거: str[] 이 dict 필터에 전량 걸러지지 않고 주소 필지로 진입한다.
+             승격된 str 요소끼리는 동일 주소를 중복 제거한다(같은 문자열의 반복 입력은 동일 필지).
     - dict 요소 → {**원본, **canonicalize_parcel_row(원본)} (merge=무손실).
              원본 키(jibun/bcode/zone_code 등)를 보존한 채 정본 snake 키를 오버레이한다.
+             ★dict 는 중복 제거하지 않는다 — 원본 build_integrated_context 인라인 코드에 dedup 이
+               없었고(바이트 동일 이관 계약), address 는 필지 식별의 정본이 아니다(도로명주소는
+               여러 지번이 공유 → address dedup 시 서로 다른 필지가 collapse 되어 통합면적이
+               무음 과소된다 — R1 리뷰 재현 적발: 2필지 1,000㎡ → 1필지 600㎡).
     - 그 외 타입(int/None 등) 요소 → 드롭(정직 축소 — 가짜 필지 생성 금지).
-    - address(정본) 기준 중복 제거(순서 보존·첫 항목 우선). address 가 없는 행은 dedup 대상이
-      아니다(식별 키가 없어 임의 병합 시 필지 소실 위험 → 전부 보존).
-    - None/빈 입력 → [].
     """
-    if not raw:
+    if raw is None:
         return []
+    if not isinstance(raw, list):
+        # Pydantic 이 ValueError 를 ValidationError(422)로 변환한다 — 종전 계약과 동일한 거절.
+        raise ValueError("parcels 는 배열이어야 합니다 (list[str] | list[dict])")
     out: list[dict] = []
-    seen: set[str] = set()
+    seen_promoted: set[str] = set()
     for item in raw:
         if isinstance(item, str):
             s = item.strip()
-            if not s:
+            if not s or s in seen_promoted:
                 continue
-            row = canonicalize_parcel_row({"address": s})
+            seen_promoted.add(s)
+            out.append(canonicalize_parcel_row({"address": s}))
         elif isinstance(item, dict):
-            # merge: 원본 키 보존 + 정본 snake 키 오버레이(무손실).
-            row = {**item, **canonicalize_parcel_row(item)}
-        else:
-            continue
-        addr = row.get("address")
-        if addr:
-            if addr in seen:
-                continue
-            seen.add(addr)
-        out.append(row)
+            # merge: 원본 키 보존 + 정본 snake 키 오버레이(무손실). dedup 없음(위 docstring).
+            out.append({**item, **canonicalize_parcel_row(item)})
+        # 그 외 타입은 드롭.
     return out
 
 

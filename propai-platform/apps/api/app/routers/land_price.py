@@ -203,21 +203,35 @@ async def _desk_appraisal_pdf_multi(req: "DeskAppraisalRequest", parcels: list[d
     omitted = max(0, len(parcels) - _DESK_APPRAISAL_MAX_PARCELS)
     capped = parcels[:_DESK_APPRAISAL_MAX_PARCELS]
 
-    results: list[dict] = []
-    addresses: list[str] = []
-    for p in capped:
+    # ★필지별 호출 = '제한 동시성(4) + 필지당 타임아웃(20s)' — R1 리뷰 적발 반영.
+    #   순차 × 무타임아웃이면 30필지 × 수 초(실거래 조회)가 게이트웨이/클라이언트 타임아웃을
+    #   넘길 수 있다. 동시 4는 외부 공공API 부하 예의(과도 병렬 금지)와 지연의 절충.
+    #   타임아웃/실패 필지는 행 단위 격리 → '보완필요' 표기(전체 500 전멸 금지).
+    import asyncio as _asyncio
+
+    _sem = _asyncio.Semaphore(4)
+
+    async def _one(p: dict) -> tuple[str, dict]:
         addr = (p.get("address") or "").strip()
-        addresses.append(addr)
         try:
-            # 단건과 동일 인자만 전달(대표필지 수동입력 전파 금지 — 필지별 자체 자동조회).
-            r = await desk_appraisal(
-                pnu=p.get("pnu"), address=addr, area_sqm=p.get("area_sqm"),
-                official_price_per_sqm=p.get("official_price_per_sqm"),
-                comparable_avg_per_sqm=p.get("comparable_avg_per_sqm"),
-            )
-        except Exception:  # noqa: BLE001 — 개별 필지 실패는 통합 보고서를 막지 않음('보완필요' 표기)
+            async with _sem:
+                # 단건과 동일 인자만 전달(대표필지 수동입력 전파 금지 — 필지별 자체 자동조회).
+                r = await _asyncio.wait_for(
+                    desk_appraisal(
+                        pnu=p.get("pnu"), address=addr, area_sqm=p.get("area_sqm"),
+                        official_price_per_sqm=p.get("official_price_per_sqm"),
+                        comparable_avg_per_sqm=p.get("comparable_avg_per_sqm"),
+                    ),
+                    timeout=20.0,
+                )
+        except Exception:  # noqa: BLE001 — 개별 필지 실패/타임아웃은 통합 보고서를 막지 않음
             r = {"ok": False, "message": "추정 실패", "address": addr}
-        results.append(r if isinstance(r, dict) else {"ok": False, "address": addr})
+        return addr, (r if isinstance(r, dict) else {"ok": False, "address": addr})
+
+    # gather 는 입력 순서를 보존하므로 필지 순번(#)이 요청 순서와 일치한다.
+    pairs = await _asyncio.gather(*(_one(p) for p in capped))
+    addresses: list[str] = [a for a, _ in pairs]
+    results: list[dict] = [r for _, r in pairs]
 
     ok_idx = [i for i, r in enumerate(results) if r.get("ok")]
     if not ok_idx:

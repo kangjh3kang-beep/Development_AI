@@ -180,3 +180,54 @@ def test_parcelsin_attached_model_converges_both_shapes():
 
     # 미지정 시 기존 기본값(None) 보존(무회귀).
     assert ComprehensiveAnalysisRequest(address="서울시청").parcels is None
+
+
+# ── R1 리뷰 적발 회귀 앵커 3건 ──
+
+
+def test_duplicate_address_dicts_are_not_collapsed():
+    """★dict 는 address 중복이어도 collapse 금지(R1 적발 — 원본 인라인엔 dedup 이 없었다).
+
+    도로명주소는 여러 지번(필지)이 공유한다 — address 로 dedup 하면 서로 다른 필지가
+    합쳐져 통합면적이 무음 과소된다(재현: 2필지 1,000㎡ → 1필지 600㎡). 통합면적은
+    comprehensive·수지·Top3 의 SSOT 입력이라 이 과소는 전 분석으로 전파된다.
+    """
+    rows = normalize_parcels([
+        {"address": "서울 A로 1", "area_sqm": 600, "zone_type": "제2종일반주거지역"},
+        {"address": "서울 A로 1", "area_sqm": 400, "zone_type": "제2종일반주거지역"},
+    ])
+    assert len(rows) == 2, "동일 주소 dict 2건이 보존돼야 함(필지 식별 정본은 address 가 아님)"
+    assert sum(r["area_sqm"] for r in rows) == 1000
+
+
+def test_promoted_str_duplicates_still_deduped():
+    """str[] 승격 경로의 동일 문자열 반복은 여전히 1건으로(같은 입력의 반복 = 동일 필지)."""
+    rows = normalize_parcels(["서울 B동 2-1", "서울 B동 2-1", " 서울 B동 2-1 "])
+    assert len(rows) == 1
+    assert rows[0]["address"] == "서울 B동 2-1"
+
+
+def test_non_list_input_rejected_not_ghost_parcels():
+    """★top-level 비리스트 입력은 ValueError(→422) — 유령 필지 생성 금지(R1 적발).
+
+    가드가 없으면 문자열이 글자별 iterable 로 순회돼 [{"address":"역"},…] 유령 필지가
+    생기고(무음 오답), int 는 raw TypeError → 500. 종전 list[dict] 계약(422)과 동일한
+    엄격성을 복원한다.
+    """
+    import pytest as _pytest
+
+    for bad in ("역삼동123", {"k": "v"}, 5, 3.14):
+        with _pytest.raises(ValueError):
+            normalize_parcels(bad)
+    # None 은 명시적으로 빈 목록(옵셔널 필드 관례).
+    assert normalize_parcels(None) == []
+
+
+def test_parcelsin_non_list_yields_422_not_500():
+    """ParcelsIn 부착 모델에서 비리스트가 ValidationError(422 경로)로 거절되는지 — 500 금지."""
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    for bad in ("역삼동123", 5):
+        with _pytest.raises(ValidationError):
+            ComprehensiveAnalysisRequest(address="서울", parcels=bad)
