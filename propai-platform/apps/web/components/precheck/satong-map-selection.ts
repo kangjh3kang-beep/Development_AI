@@ -27,6 +27,9 @@ export type SatongSelectionParcel = {
   officialPricePerSqm?: number | null;
   builtYear?: number | null;
   buildingAgeYears?: number | null;
+  /** 노후도 무자료 사유(경계 age_status 역전파) — "age 조회 시도됨" 판정에 쓰여 나대지 1필지에
+   *  의한 경계 재조회 루프를 끊는다(WP-M3). 런타임 전용(세션 영속 대상 아님). */
+  ageStatus?: string | null;
   geometry?: unknown;
   source: "search" | "excel" | "map";
 };

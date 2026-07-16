@@ -31,6 +31,10 @@ export type SatongMapFeature = {
   officialPricePerSqm?: number | null;
   builtYear?: number | null;
   buildingAgeYears?: number | null;
+  /** 노후도 무자료 사유(백엔드 boundary age_status): no_building(나대지·연식없음) /
+   *  lookup_failed(키·인증·호출오류) / skipped_bulk(대량생략). 값 있음/ok는 null·미설정.
+   *  ★"age 조회 시도됨" 판정에 쓰여 나대지 1필지에 의한 경계 전체 재조회 루프를 끊는다(WP-M3). */
+  ageStatus?: string | null;
   geometry?: unknown;
   source?: "search" | "excel" | "map" | "boundary";
 };
@@ -284,6 +288,7 @@ export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapF
       officialPricePerSqm: feature.officialPricePerSqm ?? prev?.officialPricePerSqm ?? null,
       builtYear: feature.builtYear ?? prev?.builtYear ?? null,
       buildingAgeYears: feature.buildingAgeYears ?? prev?.buildingAgeYears ?? null,
+      ageStatus: feature.ageStatus ?? prev?.ageStatus ?? null,
       geometry: feature.geometry ?? prev?.geometry,
       lat: feature.lat ?? prev?.lat ?? null,
       lon: feature.lon ?? prev?.lon ?? null,

@@ -786,6 +786,11 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         jimok = land_use_situation = terrain = None
         building_name = main_purpose = use_approval_date = None
         built_year = building_age_years = None
+        # 노후도 무자료 사유 표면화(WP-M3): no_building(나대지·연식없음) / lookup_failed(키·인증·
+        #   호출오류) / skipped_bulk(41필지+ 대량생략). 값이 있으면(연식 산출됨) None(=ok).
+        #   auto_zoning.py의 침묵 생략(enable_building_age=False)을 프론트 칩("나대지 N·조회실패 M")이
+        #   구분 고지하도록 additive로 내보낸다(계약 확장·기존 필드 무변경).
+        age_status = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
@@ -799,9 +804,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             land_use_situation = lc_res.get("land_use_situation") or None  # 이용상황
             terrain = lc_res.get("terrain_form") or lc_res.get("terrain_height") or None  # 형상·지세
         # 건축물 노후도: 건축물대장 표제부 사용승인일 기반. 키/무자료/대량은 None(가짜 생성 금지).
-        if enable_building_age:
+        if not enable_building_age:
+            age_status = "skipped_bulk"  # 41필지+ 대량 요청 → 표제부 조회 생략(예산 보호)
+        else:
             try:
                 bldg = await building_registry.get_title_by_pnu(pnu)
+                # ★last_status 읽기는 await 직후 동기 연산 — gather 병렬 코루틴 간 인터리브가
+                #   끼지 않아(그 사이 await 없음) 이 호출의 상태를 정확히 반영한다.
+                lookup_state = getattr(building_registry, "last_status", "unknown")
                 if isinstance(bldg, dict):
                     building_name = bldg.get("building_name") or None
                     main_purpose = bldg.get("main_purpose") or None
@@ -811,8 +821,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                         built_year = int(year_str)
                         if 1800 <= built_year <= current_year:
                             building_age_years = current_year - built_year
+                    # 건물은 있으나 사용승인일 없음(미준공 등) → 연식 무자료(no_building)로 표기.
+                    if building_age_years is None:
+                        age_status = "no_building"
+                else:
+                    # None: 조회성공·무건축물(no_data=나대지) vs 키·인증·오류(조회실패) 구분.
+                    age_status = "no_building" if lookup_state == "no_data" else "lookup_failed"
             except Exception:  # noqa: BLE001
-                pass
+                age_status = "lookup_failed"
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -862,6 +878,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "use_approval_date": use_approval_date,
             "built_year": built_year,
             "building_age_years": building_age_years,
+            "age_status": age_status,  # 노후도 무자료 사유(no_building/lookup_failed/skipped_bulk) — 값 있으면 None
             "geometry": geometry,
         }
 

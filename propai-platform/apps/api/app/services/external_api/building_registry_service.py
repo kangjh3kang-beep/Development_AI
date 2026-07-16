@@ -123,8 +123,16 @@ class BuildingRegistryService:
 
         멸실여부·미준공(공사중) 여부도 표제부 상태 필드로 best-effort 판정한다.
         키 미설정/호출실패/무자료 시 None(가짜데이터 생성 금지).
+
+        ★last_status(no_key/unauthorized/error/no_data/ok)를 함께 갱신한다 — 상위(노후도
+          age_status 세분화)가 '나대지(no_data)'와 '조회실패(키·인증·호출오류)'를 구분하는 근거.
+          get_building_info와 동일 규약.
         """
-        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+        if not settings.MOLIT_API_KEY:
+            self.last_status = "no_key"
+            return None
+        if len(pnu) < 19:
+            self.last_status = "error"
             return None
         params = {
             "serviceKey": settings.MOLIT_API_KEY,
@@ -135,11 +143,19 @@ class BuildingRegistryService:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(f"{BASE_URL}/getBrTitleInfo", params=params)
+                # 401/403 또는 'Unauthorized' 본문 → 미승인(활용신청 필요)
+                if resp.status_code in (401, 403) or resp.text.strip().lower().startswith("unauthorized"):
+                    self.last_status = "unauthorized"
+                    logger.warning("표제부 API 미승인(활용신청 필요): %s", resp.status_code)
+                    return None
                 resp.raise_for_status()
                 items = (resp.json().get("response", {}).get("body", {})
                          .get("items", {}) or {}).get("item")
-            return self._parse_title_items(items)
+            parsed = self._parse_title_items(items)
+            self.last_status = "ok" if parsed else "no_data"  # no_data=조회성공·무건축물(나대지 추정)
+            return parsed
         except Exception as e:  # noqa: BLE001
+            self.last_status = "error"
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
 
