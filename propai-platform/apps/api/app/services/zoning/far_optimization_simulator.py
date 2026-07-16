@@ -140,7 +140,26 @@ def simulate_far_scenarios(
     land_area_sqm: float = 0,
     structural_cap_pct: float | None = None,
 ) -> dict[str, Any]:
-    cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
+    # ★무날조(WP-U1e): zone 미매칭 + 법정상한 미전달이면 250% 임의 상한을 발명하지 않고
+    #   미산정(skipped) 정직 반환 — far_incentive_calculator(#342 ①)와 동일 패턴.
+    #   과거엔 `.get(zone_type, 250.0)`이 ①미매칭 zone(개발제한구역 등)에 가짜 상한 250 기준
+    #   시나리오를 만들었고(실측: base 100 → 최대 155% 발명), ②base>250이면 아래 방어클램프가
+    #   cap=base로 승격해 '전 시나리오 인센티브 여지 0'을 위장했다(실측: base 300 → 인센티브 0).
+    #   현 유일 호출처(far_tier_service.simulate_far_optimization)는 national_far를 항상 명시
+    #   전달하므로 사각(dead spot)이지만, 직접 호출자가 생기면 재발하는 통로라 여기서 봉합한다.
+    cap_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type)
+    if cap_far is None:
+        return {
+            "skipped": (
+                f"용도지역 미매칭('{zone_type}') — 법정 상한 미확인으로 용적률 최적화 "
+                "시나리오를 산정하지 않습니다(임의 상한 발명 금지·무날조)."
+            ),
+            "zone_type": zone_type,
+            "base_far": ordinance_far,
+            # ★'scenarios' 키는 의도적으로 미포함: 프론트 FarOptimizationPanel이
+            #   `if (!farOpt?.scenarios) return null`로 게이트하는데 JS에서 빈 배열은
+            #   truthy라 `scenarios: []`를 실으면 깨진 패널(undefined%)이 렌더된다.
+        }
     base_far = ordinance_far
     # ★방어 클램프: 상한(cap)은 기준(base) 이상이어야 시나리오가 성립한다. 다필지 통합에서 상류 blended가
     #   깨져 cap<base로 들어오면 achieved=min(base+인센티브,cap)=cap<base가 되어 음수 인센티브·음수 연면적
