@@ -557,6 +557,8 @@ export function ProjectSiteAnalysisWorkspaceClient({
     }
     // 캐시 신선(입력 불변) & 강제재실행 아님 → 검증된 결과 즉시 재사용, 네트워크 호출 생략.
     if (avmForceRun === 0 && avmFresh && avmCached?.avm) {
+      // 이전 입력의 실패 배너가 복원된 성공 카드와 병존하지 않게 클리어(입력 진동 엣지).
+      setWorkspaceError("");
       setAvmResult(avmCached.avm);
       setParcelResult(avmCached.parcel ?? null);
       setIsAutoLoading(false);
