@@ -44,7 +44,7 @@ _USER_TMPL = """\
 - 용도지역: {zone_type}{zone_2}
 - 대지면적: {area}㎡
 - 건폐율 한도(법정/조례/실효): {bcr}
-- 용적률 한도(법정/조례/실효): {far}
+- 용적률 한도(법정/조례/실효): {far}{far_basis}
 - 적용 규제·지구·구역: {districts}
 
 ## 출력 JSON 스키마
@@ -117,6 +117,37 @@ class RegulationAnalysisService:
         # ── 정량 한도 ──
         limits = self._limits(zl)
 
+        # ── WP-R1: 실효 용적률/건폐율 = far_tier_service SSOT 단일경유 소비(재계산 금지) ──
+        # comp["effective_far"]는 collect_comprehensive가 이미 calc_effective_far로 산정한
+        #   '구조상한 반영 실효치'(자연녹지 = 건폐 20% × 4층 = 80%). zone_limits(zl)엔
+        #   effective_far_pct 키가 없어 _limits가 법정(100%)으로 폴백하므로, 여기서 SSOT값으로
+        #   effective 슬롯을 덮어써 "실효 100%" 오표기(설계 스튜디오와 데이터원 발산)를 봉합한다.
+        #   다필지 통합은 면적가중 blended 실효치(각 필지 calc_effective_far 경유·이미 클램프)가 우선.
+        _eff = comp.get("effective_far")
+        eff = _eff if isinstance(_eff, dict) else None
+        eff_far_pct = eff.get("effective_far_pct") if eff else None
+        eff_bcr_pct = eff.get("effective_bcr_pct") if eff else None
+        if integrated:
+            if integrated.get("blended_far_eff_pct") is not None:
+                eff_far_pct = float(integrated["blended_far_eff_pct"])
+            if integrated.get("blended_bcr_eff_pct") is not None:
+                eff_bcr_pct = float(integrated["blended_bcr_eff_pct"])
+        if eff_far_pct is not None and isinstance(limits.get("far"), dict):
+            limits["far"]["effective"] = eff_far_pct
+        if eff_bcr_pct is not None and isinstance(limits.get("bcr"), dict):
+            limits["bcr"]["effective"] = eff_bcr_pct
+        # 구조상한(건폐율×층수) 근거를 높이 카드 칩으로 노출(층수제한 zone만) — 레지스트리 단일출처.
+        floor_cap = eff.get("floor_cap") if eff else None
+        if floor_cap and isinstance(limits.get("height"), dict):
+            try:
+                from app.services.legal.legal_reference_registry import get_legal_refs
+
+                _hrefs = get_legal_refs(["green_zone_floor_cap"])
+                if _hrefs:
+                    limits["height"]["legal_ref"] = _hrefs[0]
+            except Exception:  # noqa: BLE001 — 근거 칩 부착 실패는 높이 표기 무손상
+                pass
+
         # ── 적용 규제 전수(영향도) ──
         districts = []
         seen = set()
@@ -142,8 +173,12 @@ class RegulationAnalysisService:
 
         # 신뢰 레이어(additive): 계층 각 노드에 법령링크(legal_refs) 가산 + 한도 근거 트레이스(evidence).
         # zone_type 미확정 시 해당 노드 legal_refs는 빈 배열(가짜 링크 금지). url은 레지스트리 출력만.
-        self._attach_node_legal_refs(hierarchy, zone_type, sigungu, zl)
-        evidence = self._build_evidence(zone_type, limits, sigungu)
+        # WP-R2: 개별 규제 레벨은 legal_refs_for_districts(지역지구별 규제법령집) 단일경유로 부착하고,
+        #   상위법령 레벨엔 §77/§78(bcr_law/far_law)·녹지 층수상한(green_zone_floor_cap)을 가산한다.
+        self._attach_node_legal_refs(
+            hierarchy, zone_type, sigungu, zl, districts=districts, has_floor_cap=bool(floor_cap),
+        )
+        evidence = self._build_evidence(zone_type, limits, sigungu, eff)
 
         land_category = lr.get("land_category") or lc.get("land_category")
 
@@ -171,6 +206,30 @@ class RegulationAnalysisService:
         # is_special일 때만 부착(무목업) — 일상 부지면 키 자체를 넣지 않아 하위호환·무회귀.
         if special_parcel:
             result["special_parcel"] = special_parcel
+
+        # WP-R1: effective_far 통과키(구조상한 실체) — 프론트/근거패널이 소비(가산·옵셔널·무회귀).
+        #   층수제한 없는 zone은 structural_cap_pct/floor_cap이 None(자연스레 미표기).
+        if eff:
+            result["effective_far"] = {
+                "effective_far_pct": eff_far_pct,
+                "effective_bcr_pct": eff_bcr_pct,
+                "structural_cap_pct": eff.get("structural_cap_pct"),
+                "floor_cap": eff.get("floor_cap"),
+                "floor_cap_basis": eff.get("floor_cap_basis"),
+                "far_basis": eff.get("far_basis"),
+            }
+
+        # ── WP-R3 parity: 실제 사용된 필지 목록(주소+PNU) echo — 구획도/패널이 단일 권위목록 소비 ──
+        #   다필지(2필지↑)면 전달된 행을, 아니면 해결된 단일 필지를 실어 클라 재파생 드리프트를 제거한다.
+        _used: list[dict] = []
+        if len(_rows) >= 2:
+            for p in _rows:
+                _a = (p.get("address") or "").strip()
+                if _a:
+                    _used.append({"address": _a, "pnu": p.get("pnu") or None})
+        if not _used:
+            _used = [{"address": address, "pnu": comp.get("pnu") or pnu}]
+        result["parcels_used"] = _used
 
         # 다필지 통합 적용 사실(있으면) — 프론트가 "통합 N필지 기준" 표기에 사용.
         #   parcels 미전달/1필지면 키 자체를 생략(단일 경로 무회귀).
@@ -210,7 +269,11 @@ class RegulationAnalysisService:
                 pass
 
         if use_llm:
-            result["ai"] = await self._llm(address, zone_type, zone_2, area, limits, districts)
+            # WP-R1: 실효 용적률 근거(구조상한 등)를 프롬프트에 주입 → AI가 "실효 80%(4층 제한 바인딩)" 서술.
+            _far_basis = (eff or {}).get("far_basis") if eff else None
+            result["ai"] = await self._llm(
+                address, zone_type, zone_2, area, limits, districts, far_basis=_far_basis,
+            )
         else:
             result["ai"] = None
         return result
@@ -340,15 +403,21 @@ class RegulationAnalysisService:
     #   지구단위→district_unit_plan, 조례→ordinance_bcr/ordinance_far.
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _level_ref_keys(level_name: str, zone_known: bool, has_du_plan: bool) -> list[str]:
+    def _level_ref_keys(
+        level_name: str, zone_known: bool, has_du_plan: bool, has_floor_cap: bool = False,
+    ) -> list[str]:
         """계층 레벨명 → 부착할 레지스트리 근거키 목록(중복 없는 순서 보존).
 
         zone_type 미확정(zone_known=False) 시 zone 종속 한도 근거는 부착하지 않는다
         (건폐/용적/용도 한도는 용도지역이 있어야 의미 있음 → 빈 배열로 정직 표기).
         """
         if level_name == "상위법령":
-            # 용도지역 행위제한·건폐율·용적률(국토계획법/시행령) + 건축 한도 + 주차 기준.
-            base = ["zone_use", "bcr_limit", "far_limit", "bldg_far", "parking_min"]
+            # 용도지역 행위제한 + 건폐율/용적률(법률 §77/§78=bcr_law/far_law, 시행령 §84/§85=bcr_limit/
+            #   far_limit) + 건축 한도 + 주차 기준. WP-R2: 법률 조문 링크(§77/§78)가 미배선이던 갭 봉합.
+            base = ["zone_use", "bcr_law", "far_law", "bcr_limit", "far_limit", "bldg_far", "parking_min"]
+            # 녹지 등 층수제한 zone은 구조상한(별표15~17 4층) 근거키를 함께 부착(높이 근거 정합).
+            if has_floor_cap:
+                base.append("green_zone_floor_cap")
             return base if zone_known else ["parking_min"]
         if level_name == "도시·군계획 / 지구단위계획":
             # 지구단위계획 근거는 해당 구역이 실제 있을 때만(가짜 링크 방지).
@@ -359,13 +428,16 @@ class RegulationAnalysisService:
         return []
 
     def _attach_node_legal_refs(
-        self, hierarchy: list[dict], zone_type: str, sigungu: str, zl: dict
+        self, hierarchy: list[dict], zone_type: str, sigungu: str, zl: dict,
+        districts: list[dict] | None = None, has_floor_cap: bool = False,
     ) -> None:
         """hierarchy 각 level dict에 legal_refs[]를 in-place 가산(기존 필드 무손상).
 
         - zone_type 미확정 → zone 종속 노드 legal_refs 빈 배열(할루시네이션 링크 금지).
         - 조례 노드는 sigungu를 전달해 조례명·url을 치환(미상이면 url_status='pending').
-        - URL은 전적으로 get_legal_refs 출력만 사용한다(여기서 URL 조립 금지).
+        - 개별 적용 규제·지구·구역 레벨은 legal_refs_for_districts(지역지구별 규제법령집)로 부착
+          (WP-R2: 현재 [] 반환이던 갭 봉합 — 상대보호구역/비행안전/토지거래 등 개별법 조문 링크).
+        - URL은 전적으로 get_legal_refs/legal_refs_for_districts 출력만 사용한다(여기서 URL 조립 금지).
         - 부착 중 예외가 나도 원본 계층은 그대로 둔다(graceful).
         """
         zone_known = bool(zone_type and str(zone_type).strip())
@@ -380,25 +452,45 @@ class RegulationAnalysisService:
         )
         sgg = sigungu if (sigungu and str(sigungu).strip() and str(sigungu).strip() != "미확인") else None
         try:
-            from app.services.legal.legal_reference_registry import get_legal_refs
+            from app.services.legal.legal_reference_registry import (
+                get_legal_refs,
+                legal_refs_for_districts,
+            )
         except Exception:  # noqa: BLE001
             return
+        _dist_names = [
+            d.get("name") for d in (districts or [])
+            if isinstance(d, dict) and d.get("name")
+        ]
         for lv in hierarchy:
             if not isinstance(lv, dict):
                 continue
-            keys = self._level_ref_keys(lv.get("level", ""), zone_known, has_du_plan)
+            level_name = lv.get("level", "")
             try:
-                lv.setdefault("legal_refs", get_legal_refs(keys, sigungu=sgg) if keys else [])
+                if level_name == "개별 적용 규제·지구·구역":
+                    refs = (
+                        legal_refs_for_districts(_dist_names, sigungu=sgg).get("refs", [])
+                        if _dist_names else []
+                    )
+                    lv.setdefault("legal_refs", refs)
+                else:
+                    keys = self._level_ref_keys(level_name, zone_known, has_du_plan, has_floor_cap)
+                    lv.setdefault("legal_refs", get_legal_refs(keys, sigungu=sgg) if keys else [])
             except Exception:  # noqa: BLE001
                 lv.setdefault("legal_refs", [])
 
     @staticmethod
-    def _build_evidence(zone_type: str, limits: dict, sigungu: str) -> list[dict]:
+    def _build_evidence(
+        zone_type: str, limits: dict, sigungu: str, eff: dict | None = None,
+    ) -> list[dict]:
         """건폐/용적 한도 산출 트레이스(EvidencePanel 소비 구조).
 
         {label, value, basis, legal_ref_key}. 법정 상한 + (조례 실효값이 다르면) 조례 적용값을
         트레이스한다. zone_type 미확정 시 빈 배열. basis는 legal_zone_limits의 법정근거 문구를
         사용(레지스트리 단일출처 원문링크는 legal_ref_key로 프론트가 결합).
+
+        WP-R1: eff(far_tier_service SSOT)에 구조상한(건폐율×층수)이 실려오면 "건폐 20%×4층=80%"의
+        물리 상한 트레이스 1건을 가산해, 법정 100% 옆에 실효 80%의 실체를 근거패널에 노출한다.
         """
         if not (zone_type and str(zone_type).strip()):
             return []
@@ -454,11 +546,25 @@ class RegulationAnalysisService:
                 "label": "조례 적용 용적률", "value": ord_far,
                 "basis": f"{zone_key} · {sgg} 도시계획 조례(실효값)", "legal_ref_key": "ordinance_far",
             })
+        # WP-R1: 구조상한(건폐율×층수) 실효 트레이스 — 층수제한 zone(녹지 등)에서 실효 용적률의 실체.
+        #   법정 100% 표기 옆에 "실효 건폐율×4층=80%"의 물리 상한을 근거패널에 노출한다(과대표시 차단).
+        _eff = eff if isinstance(eff, dict) else {}
+        structural_cap = _pct(_eff.get("structural_cap_pct"))
+        floor_cap = _eff.get("floor_cap")
+        if structural_cap and floor_cap:
+            eff_bcr = _pct(bcr.get("effective")) or "-"
+            floor_basis = _eff.get("floor_cap_basis") or "국토계획법 시행령 별표15~17 두문(4층 이하)"
+            evidence.append({
+                "label": "구조상한 실효 용적률", "value": structural_cap,
+                "basis": (f"{zone_key} · 실효 건폐율 {eff_bcr} × {floor_cap}층 = {structural_cap} "
+                          f"({floor_basis})"),
+                "legal_ref_key": "green_zone_floor_cap",
+            })
         return evidence
 
     async def _llm(
         self, address: str, zone: str, zone2: str, area: Any,
-        limits: dict, districts: list[dict],
+        limits: dict, districts: list[dict], far_basis: str | None = None,
     ) -> dict[str, Any]:
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -467,6 +573,8 @@ class RegulationAnalysisService:
             from app.services.ai.llm_provider import get_llm
 
             bcr = limits["bcr"]; far = limits["far"]
+            # WP-R1: 실효 용적률 근거 문구(구조상한 등)를 프롬프트에 병기 → AI가 실효치를 정확히 서술.
+            far_basis_note = f" — 실효 근거: {far_basis}" if far_basis else ""
             user = _USER_TMPL.format(
                 address=address,
                 zone_type=zone or "미상",
@@ -474,6 +582,7 @@ class RegulationAnalysisService:
                 area=round(area) if area else "-",
                 bcr=f"{bcr.get('legal') or '-'}/{bcr.get('ordinance') or '-'}/{bcr.get('effective') or '-'}",
                 far=f"{far.get('legal') or '-'}/{far.get('ordinance') or '-'}/{far.get('effective') or '-'}",
+                far_basis=far_basis_note,
                 districts=", ".join(f"{d['name']}({d['impact']})" for d in districts[:20]) or "-",
             )
             llm = get_llm(timeout=60, max_tokens=2500)

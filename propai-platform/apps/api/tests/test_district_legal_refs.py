@@ -70,3 +70,29 @@ def test_dedup_keys():
     keys = [r["key"] for r in res["refs"]]
     assert len(keys) == len(set(keys)), "법령키 중복 없어야 함"
     assert "road_relation" in keys
+
+
+def test_flight_safety_and_military_zone_maps_military_law():
+    """WP-R2: 비행안전구역·공항·군사기지·군사시설보호 → 군사기지법(military_protection_zone)."""
+    for name in ("비행안전제5구역", "공항시설보호지구", "군사기지 보호구역", "군사시설보호구역"):
+        res = legal_refs_for_districts([name])
+        assert "military_protection_zone" in _keys(res), f"{name} → 군사기지법 매핑 실패"
+
+
+def test_land_transaction_permit_maps_realtx_report():
+    """WP-R2: 토지거래허가/토지거래계약허가구역 → 부동산 거래신고법(realtx_report)."""
+    for name in ("토지거래계약허가구역", "토지거래허가구역"):
+        res = legal_refs_for_districts([name])
+        assert "realtx_report" in _keys(res), f"{name} → 거래신고법 매핑 실패"
+
+
+def test_green_zone_floor_cap_ref_is_kookto_decree_not_building_act():
+    """WP-R2: 녹지 4층 근거는 건축법이 아니라 국토계획법 시행령(별표15~17)이어야 한다."""
+    from app.services.legal.legal_reference_registry import get_legal_refs
+
+    refs = get_legal_refs(["green_zone_floor_cap"])
+    assert refs, "green_zone_floor_cap 근거키가 존재해야 함"
+    r = refs[0]
+    assert "국토의 계획 및 이용에 관한 법률 시행령" == r["law_name"]
+    assert "건축법" != r["law_name"]
+    assert r["url_status"] == "verified"  # 시행령 법령 루트 = law.go.kr verified

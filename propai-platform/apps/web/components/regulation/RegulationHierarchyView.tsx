@@ -73,12 +73,24 @@ export type RegResult = {
     bcr: LimitTrio;
     far: LimitTrio;
     // height.value: 미터 제한이 없고 층수 제한(녹지 4층 등)만 있으면 실효 높이(층수×층고 근사).
-    height: { value: number | null; unit: string; max_floors?: number | null; basis?: string | null };
+    // legal_ref: 녹지 층수상한(별표15~17) 원문링크 칩(WP-R2 가산·옵셔널).
+    height: { value: number | null; unit: string; max_floors?: number | null; basis?: string | null; legal_ref?: LegalRef | null };
     parking: { description: string };
   };
   hierarchy: HierLevel[];
   districts: District[];
   ai: RegAI | null;
+  /** WP-R1 실효 용적률 SSOT 통과키(구조상한 실체) — 층수제한 zone에서만 structural_cap_pct 존재. */
+  effective_far?: {
+    effective_far_pct?: number | null;
+    effective_bcr_pct?: number | null;
+    structural_cap_pct?: number | null;
+    floor_cap?: number | null;
+    floor_cap_basis?: string | null;
+    far_basis?: string | null;
+  } | null;
+  /** WP-R3 parity — 실제 분석에 사용된 필지 목록(주소+PNU). 구획도 단일 권위목록. */
+  parcels_used?: { address: string; pnu?: string | null }[] | null;
   /** WP-H 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
   evidence?: EvidenceTrace[] | null;
   /** 다필지 통합 메타(가산·옵셔널) — 2필지 이상 통합 분석 시에만 내려온다. */
@@ -168,6 +180,8 @@ export function RegulationHierarchyView({
   // 한도 산출 근거(evidence[] + 계층 legal_refs[]) — 항목이 없으면(구버전) 자동 미표시.
   const allLegalRefs = flattenLegalRefs(result.hierarchy);
   const evidenceItems = buildEvidenceItems(result.evidence, allLegalRefs);
+  // 높이 카드 녹지 층수상한 근거칩(WP-R2) — 없으면(구버전·비녹지) 미표시. 로컬 const로 안전 narrow.
+  const heightRef = result.limits.height.legal_ref;
 
   return (
     <>
@@ -205,6 +219,18 @@ export function RegulationHierarchyView({
               {result.limits.height.basis && (
                 <p className="mt-1 text-[10px] leading-snug text-[var(--text-tertiary)]">{result.limits.height.basis}</p>
               )}
+              {/* 녹지 층수상한(별표15~17) 원문링크 칩(WP-R2) — 4층 근거를 클릭 1회로 확인. */}
+              {heightRef?.law_name ? (
+                <div className="mt-1.5">
+                  <LegalRefChip
+                    lawName={heightRef.law_name}
+                    article={heightRef.article}
+                    title={heightRef.title}
+                    url={heightRef.url}
+                    urlStatus={heightRef.url_status}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
               <p className="text-[11px] font-bold text-[var(--text-secondary)]">주차 기준</p>
@@ -280,6 +306,7 @@ export function RegulationHierarchyView({
                             article={ref.article}
                             title={ref.title}
                             url={ref.url}
+                            urlStatus={ref.url_status}
                           />
                         ) : null,
                       )}

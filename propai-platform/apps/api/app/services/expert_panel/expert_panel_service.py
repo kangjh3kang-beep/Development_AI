@@ -111,22 +111,22 @@ _PANEL_TMPL = """\
 ## 참여 전문가
 {roster}
 
-## 출력 JSON 스키마
+## 출력 JSON 스키마 (간결하게 — 각 문자열은 핵심만, 장황한 서술 금지)
 {{
   "experts": [
-    {{"role": "전문가명", "opinion": "해당 관점 핵심 의견(2~3문장)",
-      "key_points": ["근거·포인트 1~3개"], "concerns": ["우려·이견 1~2개"]}}
+    {{"role": "전문가명", "opinion": "해당 관점 핵심 의견(2문장 이내)",
+      "key_points": ["근거·포인트 최대 2개"], "concerns": ["우려·이견 최대 2개"]}}
   ],
   "debate": [
-    {{"issue": "쟁점", "positions": "전문가간 이견 요약", "resolution": "토론 결과·절충"}}
+    {{"issue": "쟁점", "positions": "전문가간 이견 요약(1문장)", "resolution": "토론 결과·절충(1문장)"}}
   ],
-  "consensus": "다관점 통합 최종 의견(3~5문장, 가장 합리적인 결론)",
-  "recommended_actions": ["실행 권고 2~4개"],
+  "consensus": "다관점 통합 최종 의견(3문장 이내, 가장 합리적인 결론)",
+  "recommended_actions": ["실행 권고 최대 3개"],
   "verification": {{
     "confidence": 0-100 정수(분석 신뢰도),
-    "risks": ["검증상 핵심 리스크 1~3개"],
-    "counterpoints": ["주의해야 할 반론·맹점 1~3개"],
-    "data_gaps": ["추가 확인 필요 데이터 0~3개"]
+    "risks": ["검증상 핵심 리스크 최대 3개"],
+    "counterpoints": ["주의해야 할 반론·맹점 최대 2개"],
+    "data_gaps": ["추가 확인 필요 데이터 최대 2개"]
   }}
 }}
 전문가는 위 명단 그대로 분석하세요.
@@ -229,7 +229,9 @@ class ExpertPanelService:
             result["rag_memories"] = rag_memories
 
         # 2. RAG Ingestion (if not skipped)
-        if not skip_memory and result.get("consensus"):
+        # WP-R4: degraded 폴백(generated=False)은 "일시적으로 제공되지 않습니다" 류 메시지라
+        #   노하우 메모리로 적재하면 향후 RAG 회상을 오염시킨다 → generated 결과만 적재(정직).
+        if not skip_memory and result.get("generated") and result.get("consensus"):
             try:
                 import uuid
 
@@ -259,6 +261,11 @@ class ExpertPanelService:
         return result
 
     async def _single(self, subject, address, ctx, roster) -> dict[str, Any]:
+        # WP-R4: 실패 사유(truncation/timeout/validation/provider)를 분류해 degraded로 전달한다.
+        #   ★근본원인: max_tokens=3500이 4전문가 JSON을 절단 → json.loads 실패 → 침묵 폴백이었다.
+        #   4전문가 풀 스키마(전문가+토론+합의+검증)의 실측 출력은 약 2.5~3.5k 토큰이라 3500은 경계선
+        #   절단이 상시 발생 → 8000으로 상향(약 2.3배 헤드룸)해 절단을 구조적으로 제거한다.
+        reason: str | None = None
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -268,21 +275,38 @@ class ExpertPanelService:
             roster_str = "\n".join(f"- {r['role']} ({r['lens']})" for r in roster)
             user = _PANEL_TMPL.format(subject=subject, address=address or "대상지",
                                       context=ctx, roster=roster_str)
-            llm = get_llm(timeout=75, max_tokens=3500)
+            llm = get_llm(timeout=90, max_tokens=8000)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_PANEL_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="expert_panel")
-            data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            raw = resp.content if hasattr(resp, "content") else str(resp)
+            # 절단 감지: provider stop_reason이 length/max_tokens면 응답이 잘린 것(무목업·정직 사유).
+            stop = ""
+            meta = getattr(resp, "response_metadata", None)
+            if isinstance(meta, dict):
+                stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
+            try:
+                data = json.loads(_strip_json(raw))
+            except json.JSONDecodeError:
+                reason = "truncation" if stop in ("max_tokens", "length") else "invalid_json"
+                raise
             if not isinstance(data.get("experts"), list):
+                reason = "validation"
                 raise ValueError("experts 누락")
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("전문가 패널(single) 실패, 폴백", err=str(e)[:100])
-            return self._fallback(roster)
+            if reason is None:
+                name = type(e).__name__.lower()
+                reason = "timeout" if ("timeout" in name or "timeout" in str(e).lower()) else "provider"
+            logger.warning(
+                "전문가 패널(single) 실패 — degraded(침묵 폴백 아님)",
+                reason=reason, err=str(e)[:160],
+            )
+            return self._fallback(roster, degraded_reason=reason)
 
     async def _deep(self, subject, address, ctx, roster) -> dict[str, Any]:
         try:
@@ -337,17 +361,32 @@ class ExpertPanelService:
             logger.warning("전문가 패널(deep) 실패, single 폴백", err=str(e)[:100])
             return await self._single(subject, address, ctx, roster)
 
+    # WP-R4: degraded 사유별 정직 메시지(무목업) — 프론트가 사유를 구분 표기(침묵 폴백 금지).
+    _DEGRADED_MSG: dict[str, str] = {
+        "truncation": "전문가 패널 응답이 토큰 한도로 잘려 검증을 완료하지 못했습니다. 다시 시도하면 정상화될 수 있습니다.",
+        "invalid_json": "전문가 패널 응답을 해석하지 못했습니다(형식 오류). 잠시 후 다시 시도하세요.",
+        "validation": "전문가 패널 응답 형식 검증에 실패했습니다(필수 항목 누락). 잠시 후 다시 시도하세요.",
+        "timeout": "전문가 패널 LLM 응답이 시간 초과되었습니다. 잠시 후 다시 시도하세요.",
+        "provider": "전문가 패널 LLM 연결에 실패했습니다. 잠시 후 다시 시도하세요.",
+    }
+
     @staticmethod
-    def _fallback(roster) -> dict[str, Any]:
+    def _fallback(roster, degraded_reason: str | None = None) -> dict[str, Any]:
+        consensus = ExpertPanelService._DEGRADED_MSG.get(
+            degraded_reason or "",
+            "전문가 패널 분석은 일시적으로 제공되지 않습니다. 잠시 후 다시 시도하세요.",
+        )
         return {
             "generated": False,
+            # 실패 사유(truncation/timeout/validation/invalid_json/provider) — 프론트 degraded 표기용.
+            "degraded_reason": degraded_reason,
             "experts": [
                 {"role": r["role"], "opinion": "AI 패널 연결 후 상세 의견이 제공됩니다.",
                  "key_points": [], "concerns": []}
                 for r in roster
             ],
             "debate": [],
-            "consensus": "전문가 패널 분석은 일시적으로 제공되지 않습니다. 잠시 후 다시 시도하세요.",
+            "consensus": consensus,
             "recommended_actions": [],
             "verification": {"confidence": None, "risks": [], "counterpoints": [], "data_gaps": []},
         }
