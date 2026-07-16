@@ -10,9 +10,9 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from typing import Any
+
+import pytest
 
 from app.services.report.render import (
     build_report_model_from_appraisal_multi,
