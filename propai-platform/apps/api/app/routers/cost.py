@@ -1212,6 +1212,10 @@ class IngestPublicPricesRequest(BaseModel):
     prdct_clsfc_no: str | None = Field(None, description="조달청 품목분류번호(선택 — 미지정 시 전체)")
     keyword: str | None = Field(None, description="품명 검색 키워드(선택)")
     max_pages: int = Field(3, ge=1, le=10, description="조회할 최대 페이지 수(페이지당 100건)")
+    categories: list[str] | None = Field(
+        None,
+        description="조회 분야 목록(토목/건축/기계설비/전기통신 — 미지정 시 등록 전 분야)",
+    )
 
 
 @router.post(
@@ -1226,10 +1230,20 @@ async def ingest_public_prices_route(
 
     material_unit_prices에 멱등 upsert한다(단가 4계층 리졸버의 T1·최우선 계층).
     서비스키 미보유/API 실패 시 0건·정직 사유 반환(서버 동작 무영향)."""
+    from app.integrations.public_price_client import PRICE_OPERATIONS
     from app.services.cost.public_price_ingest import ingest_public_prices
+
+    if req.categories:
+        unknown = [c for c in req.categories if c not in PRICE_OPERATIONS]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"미등록 가격정보 분야: {unknown} — 등록 분야: {sorted(PRICE_OPERATIONS)}",
+            )
 
     return await ingest_public_prices(
         db, prdct_clsfc_no=req.prdct_clsfc_no, keyword=req.keyword, max_pages=req.max_pages,
+        categories=req.categories,
     )
 
 

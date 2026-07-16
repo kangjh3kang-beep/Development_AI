@@ -151,3 +151,23 @@ async def rebuild_award_stats(ctx: dict) -> dict:
         await db.commit()
         logger.info("G2B 낙찰가율 통계 %d건 재집계 완료", count)
         return {"status": "ok", "stats_count": count}
+
+
+async def sync_public_material_prices(ctx: dict) -> dict:
+    """조달청 가격정보(등록 전 분야)를 T1 공공단가 계층으로 주기 주입한다(멱등).
+
+    실제 수집·정규화·upsert는 public_price_ingest(단가 4계층 T1 통로)에 위임한다 —
+    T2 표준품셈 행과 별개 네임스페이스(PUB-*)라 기존 단가를 덮어쓰지 않는다.
+    키 미설정 시 ingest가 0건·정직 사유를 반환한다(graceful).
+    """
+    from app.core.database import async_session_factory
+    from app.services.cost.public_price_ingest import ingest_public_prices
+
+    try:
+        async with async_session_factory() as db:
+            result = await ingest_public_prices(db, max_pages=10, num_rows=100)
+            logger.info("T1 공공단가 주기 주입 완료: %s", result)
+            return result
+    except Exception as e:
+        logger.exception("T1 공공단가 주기 주입 중 오류")
+        return {"ok": False, "reason": str(e)}
