@@ -82,8 +82,8 @@ def rebuild_area_dependent(
     sec1: dict[str, Any],
     *,
     land_area: float,
-    effective_far: float,
-    effective_bcr: float,
+    effective_far: float | None,
+    effective_bcr: float | None,
     zone_type: str,
     national_far: float | None = None,
     parcel_count: int = 1,
@@ -97,7 +97,22 @@ def rebuild_area_dependent(
     나머지 면적 무관 문구(법정/조례 서술)와 필드는 그대로 보존한다(무회귀).
     """
     out = dict(sec1)
-    _nat = national_far if national_far is not None else out.get("national_far_pct", effective_far)
+    # ★honest 가드(WP-U1f R1): 다필지 override 경로는 SSOT 결합상 blended 실효치 결측 시
+    #   (필지단위 대칭 정규화 → calc_effective_far P0-1 honest-return) effective_far와
+    #   effective_bcr가 동시에 None으로 들어온다. None이면 값을 지어내지 않고(무날조) 면적
+    #   문구·구조상한·far_optimization 재생성을 전부 건너뛰어 sec1의 honest 상태를 그대로
+    #   보존한다(comprehensive의 공급 게이트 `effective_far is None or effective_bcr is None`
+    #   와 동일 계약 — zone_unmatched honest 경로와 일관). 아래 산술(land_area*effective_far,
+    #   effective_bcr*floor_cap, float(_nat))이 전부 None에서 TypeError였다.
+    if effective_far is None or effective_bcr is None:
+        return out
+    # ★None-값 가드(WP-U1f, 심층 방어): sec1에 national_far_pct 키가 None '값'으로 존재하면
+    #   dict.get의 기본값(effective_far)이 무시되어 _nat=None → 아래 float(_nat)에서 TypeError
+    #   크래시. None이면 기존 의도대로 effective_far로 폴백한다(값 의미 변화 없음 — 크래시 가드만).
+    _nat_sec1 = out.get("national_far_pct")
+    _nat = national_far if national_far is not None else (
+        _nat_sec1 if _nat_sec1 is not None else effective_far
+    )
 
     # 1) annotations 중 '면적의존 문구'만 교체(다른 문구는 순서·내용 보존).
     new_ann = build_area_annotation(
@@ -136,8 +151,8 @@ def rebuild_area_dependent(
 def rebuild_legal_basis_annotations(
     sec1: dict[str, Any],
     *,
-    effective_far: float,
-    effective_bcr: float,
+    effective_far: float | None,
+    effective_bcr: float | None,
     national_far: float | None = None,
     national_bcr: float | None = None,
     parcel_count: int = 1,
@@ -155,6 +170,12 @@ def rebuild_legal_basis_annotations(
     건드리지 않는다(블라스트 최소).
     """
     out = dict(sec1)
+    # ★honest 가드(WP-U1f R1): rebuild_area_dependent와 동일 발화 경로(comprehensive의
+    #   다필지 override가 두 함수를 연달아 호출) — blended 실효치가 None이면 아래 f-string
+    #   포맷(`{effective_far:g}`)이 NoneType TypeError로 크래시한다. 수치를 지어내 서술문을
+    #   만들 수 없으므로(무날조) 재생성을 건너뛰고 기존 honest 문구를 보존한다(동일 패턴 봉합).
+    if effective_far is None or effective_bcr is None:
+        return out
     anns = list(out.get("annotations") or [])
 
     def _is_legal_basis_line(a: Any) -> bool:
