@@ -41,7 +41,9 @@
 //        노후도 정직 세분화·레일 아이콘). 규제/사통맵 화면 재배선이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v424: 설계엔진 실효FAR SSOT 승격(#339 — DAG design 노드 ordinance 주입·far_basis/far_reliable
 //        전파·rule_trace 근거 정직화·캐시 핑거프린트). 설계 근거표기 변경이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v424-design-far-ssot";
+// v425: 생성허브 6산출물 100%(#338 — 법규검토서/시장분양/설계검토서 등 문서 산출물 배선·완결자산
+//        표면화·카드 정직화·가짜 단계진행 제거). 신규 다운로드 카드가 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v425-genhub-outputs";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
