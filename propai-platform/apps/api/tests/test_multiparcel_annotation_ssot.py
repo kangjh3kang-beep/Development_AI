@@ -144,3 +144,36 @@ def test_legal_basis_annotation_single_parcel_no_regression():
     legal_ann = " ".join(out["annotations"])
     assert "개 필지 통합" not in legal_ann
     assert "200%" in legal_ann
+
+
+# ── WP-U1f: national_far_pct=None 값 존재 시 float(None) 크래시 가드 ──────────
+
+def test_rebuild_area_dependent_none_far_pct_no_crash():
+    """발화 조건 재현(WP-U1f): 다필지 override 경로에서 blended_far_legal_pct=None ∧
+    sec1["national_far_pct"]=None(키가 None '값'으로 존재)이면 dict.get 기본값이 무시되어
+    float(None) TypeError로 크래시하던 결함 — 가드 후 effective_far 폴백으로 정상 동작."""
+    sec1 = {"national_far_pct": None, "annotations": []}
+    out = fts.rebuild_area_dependent(  # 수정 전: TypeError: float() argument ... 'NoneType'
+        sec1,
+        land_area=1000.0,
+        effective_far=150.0,
+        effective_bcr=50.0,
+        zone_type="제2종일반주거지역",
+        national_far=None,
+        parcel_count=2,
+    )
+    # 폴백 의미: ceiling=effective_far → cap==base라 최대 달성치도 effective_far로 클램프.
+    assert out["far_optimization"].get("max_achievable_far") == 150.0
+    assert any("건축이 가능합니다" in a for a in out["annotations"])
+
+
+def test_rebuild_area_dependent_far_pct_value_semantics_unchanged():
+    """가드가 값 의미를 바꾸지 않음: sec1.national_far_pct에 실값(250)이 있으면
+    national_far=None이어도 종전과 동일하게 그 값을 ceiling으로 쓴다(명시 전달과 동일 출력)."""
+    kwargs = dict(
+        land_area=12000.0, effective_far=200, effective_bcr=60,
+        zone_type="제2종일반주거지역", parcel_count=33,
+    )
+    via_sec1 = fts.rebuild_area_dependent(_rep_sec1(), national_far=None, **kwargs)
+    explicit = fts.rebuild_area_dependent(_rep_sec1(), national_far=250, **kwargs)
+    assert via_sec1["far_optimization"] == explicit["far_optimization"]

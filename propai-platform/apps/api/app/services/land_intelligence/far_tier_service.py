@@ -97,7 +97,14 @@ def rebuild_area_dependent(
     나머지 면적 무관 문구(법정/조례 서술)와 필드는 그대로 보존한다(무회귀).
     """
     out = dict(sec1)
-    _nat = national_far if national_far is not None else out.get("national_far_pct", effective_far)
+    # ★None-값 가드(WP-U1f): sec1에 national_far_pct 키가 None '값'으로 존재하면 dict.get의
+    #   기본값(effective_far)이 무시되어 _nat=None → 아래 float(_nat)에서 TypeError 크래시
+    #   (다필지 override 경로: blended_far_legal_pct=None ∧ sec1.national_far_pct=None).
+    #   None이면 기존 의도대로 effective_far로 폴백한다(값 의미 변화 없음 — 크래시 가드만).
+    _nat_sec1 = out.get("national_far_pct")
+    _nat = national_far if national_far is not None else (
+        _nat_sec1 if _nat_sec1 is not None else effective_far
+    )
 
     # 1) annotations 중 '면적의존 문구'만 교체(다른 문구는 순서·내용 보존).
     new_ann = build_area_annotation(
