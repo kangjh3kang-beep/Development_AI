@@ -20,8 +20,14 @@ import pytest
 from app.services.market.market_report_service import (
     MarketReportService,
     _build_target_profile,
-    _exec_summary,
     _income_tier_label,
+)
+
+# ★렌더 일원화 후 실사본 위치 — 요약/등급/의견 헬퍼는 market_adapter 가 정본이다
+#   (서비스의 to_* 는 어댑터 위임 wrapper 로만 존치·구 헬퍼는 삭제). 이 테스트는 그 로직의
+#   계약 테스트이므로 살아있는 사본을 검증한다.
+from app.services.report.render.market_adapter import (
+    _exec_summary,
     _insight_text,
     _investment_opinion,
     _market_strength,
