@@ -792,6 +792,21 @@ class ProjectPipeline:
                     ordinance_far = eff["ordinance_far_pct"]
                 ordinance_source = ordinance_source or str(eff.get("source") or "")
 
+            # ── ★E7 가정치 모순 봉합(WP-U1d — #337 리뷰 MEDIUM): _fetch_real_site_data가
+            #   외부수집 전면 실패로 zone/max_far를 발명한 assumed_defaults 경로에서는, SSOT가
+            #   그 '가정 zone 라벨'(제2종일반주거 등)로 250%를 실측처럼 산정해 far_reliable=True로
+            #   오인된다(실측 재현: effective_far=250·far_reliable=True). 가정치 기반 산정은
+            #   신뢰 불가 — 값은 유지하되(파이프라인 무중단·W3-8 계약) False로 강등하고 far_basis에
+            #   가정 사실을 정직 표기한다. 아래 사용자 오버라이드는 사용자 명시 입력이므로 이 강등
+            #   뒤에도 True를 회복할 수 있다(블록 순서 의도적 — E7 가정과 무관한 권위 입력).
+            if (
+                pre_collected.get("data_quality") == "assumed_defaults"
+                and "max_far" in (pre_collected.get("assumed_fields") or [])
+            ):
+                far_reliable = False
+                _assumed_note = "가정 기본값(assumed_defaults) 기반 — 실측 미확보"
+                far_basis = f"{far_basis} · {_assumed_note}" if far_basis else _assumed_note
+
             # ── 사용자 오버라이드 최종 권위 보존(기존 계약 — _apply_site_overrides 주석 참조):
             #    max_bcr/max_far 직접 입력은 SSOT 산정과 무관하게 최종 한도로 적용한다(값 자체가
             #    사용자 명시 입력 — 날조 아님, far_basis로 출처 정직 표기).
