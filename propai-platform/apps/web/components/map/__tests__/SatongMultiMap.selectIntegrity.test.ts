@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isSameSpotAsAny,
   parcelMembershipKey,
   selectionBoundaryReady,
 } from "@/components/map/SatongMultiMap";
@@ -69,6 +70,45 @@ describe("WP-M2 CTA 이중표기 파생(신규∖selected · 총=selected+신규
     expect(newCount).toBe(0);
     expect(totalCount).toBe(12);
   });
+
+  // ★리뷰(HIGH) 반영 — 무날조: 위 projectParcels는 전부 real pnu라 pnu/주소 키 이중성
+  // (시드 필지 pnu 미확보 → 합성/주소 키 vs autoStage의 real pnu 키 불일치)을 가려 결함을
+  // 은폐했다. 여기서는 실제 증상 그대로 pnu-less 시드 필지(주소만)를 섞어 재현하고, Shell의
+  // healParcelPnu 치유(핵심 수정)를 거친 뒤에만 카운트가 정합됨을 못박는다.
+  it("★HIGH: pnu 미확보 시드 필지는 real-pnu autoStage 결과와 키가 어긋나 유령 신규가 생긴다(치유 전)", () => {
+    const seedParcels = [
+      { pnu: null, address: "서울특별시 종로구 청진동 56-16" }, // 시드(엑셀/지오코딩) — pnu 미확보
+      ...projectParcels.slice(1), // 나머지 11필지는 이미 real pnu 보유
+    ];
+    // autoStage가 focusTarget(=56-16의 좌표)을 재조회해 얻은 결과 — 같은 물리 필지지만 real pnu.
+    const autoStageResult = { pnu: "1111010100100560016", address: "서울특별시 종로구 청진동 56-16" };
+    const { newCount, totalCount } = counts(seedParcels, [autoStageResult]);
+    // 버그 재현: pnu가 없던 시드 항목의 멤버십 키(=주소)와 autoStage 결과의 멤버십 키(=real pnu)가
+    // 달라 "이미 등록됨"으로 인식되지 못하고 유령 신규 1건이 생긴다(총 13, 보고된 "1필지 추가" 증상).
+    expect(newCount).toBe(1);
+    expect(totalCount).toBe(13);
+  });
+
+  it("★HIGH 근치 검증: boundary가 돌려준 real pnu로 시드 pnu를 승격(healParcelPnu와 동일 규약: "
+    + "기존값 우선, 없을 때만 채택)하면 신규 0 · 총 12로 정합된다", () => {
+    const seedParcels = [
+      { pnu: null as string | null, address: "서울특별시 종로구 청진동 56-16" },
+      ...projectParcels.slice(1),
+    ];
+    const autoStageResult = { pnu: "1111010100100560016", address: "서울특별시 종로구 청진동 56-16" };
+    // Shell.handleBoundaryEnriched가 하는 치유(healParcelPnu 규약)를 인라인으로 적용 — 주소로
+    // 매칭해 pnu가 없던 항목만 real pnu로 승격한다. healParcelPnu 자체의 단위 검증은
+    // components/precheck/__tests__/SatongMapShell.pnuHeal.test.ts 가 실제 export를 직접 import해
+    // 별도로 수행한다(이 파일은 map↔precheck 역참조를 피하는 기존 의존 방향을 유지).
+    const healed = seedParcels.map((p) =>
+      p.address === autoStageResult.address
+        ? { ...p, pnu: p.pnu || autoStageResult.pnu || null }
+        : p,
+    );
+    const { newCount, totalCount } = counts(healed, [autoStageResult]);
+    expect(newCount).toBe(0);
+    expect(totalCount).toBe(12);
+  });
 });
 
 describe("WP-M3 selectionBoundaryReady — 나대지 재조회 루프 제거", () => {
@@ -108,5 +148,30 @@ describe("WP-M3 selectionBoundaryReady — 나대지 재조회 루프 제거", (
     expect(
       selectionBoundaryReady([feat({ geometry: undefined, buildingAgeYears: 30 })]),
     ).toBe(false);
+  });
+});
+
+describe("WP-M2 리뷰(HIGH) 방어선 — isSameSpotAsAny(autoStage 좌표 재조회 판정)", () => {
+  it("동일 좌표(같은 float)면 근접으로 판정한다", () => {
+    expect(isSameSpotAsAny(37.5665, 126.978, [{ lat: 37.5665, lon: 126.978 }])).toBe(true);
+  });
+
+  it("좁은 허용오차(기본 1e-5도≈1.1m) 안이면 근접으로 판정한다", () => {
+    expect(isSameSpotAsAny(37.56650001, 126.97800001, [{ lat: 37.5665, lon: 126.978 }])).toBe(
+      true,
+    );
+  });
+
+  it("★인접한 다른 필지(수십m 이상 떨어짐)는 근접으로 오판하지 않는다", () => {
+    // 위도 0.001도 ≈ 111m — 옆 필지로 충분히 먼 거리, 허용오차(1.1m)를 훌쩍 넘는다.
+    expect(isSameSpotAsAny(37.5675, 126.978, [{ lat: 37.5665, lon: 126.978 }])).toBe(false);
+  });
+
+  it("좌표 없는 필지(lat/lon null)는 근접 후보에서 제외한다", () => {
+    expect(isSameSpotAsAny(37.5665, 126.978, [{ lat: null, lon: null }])).toBe(false);
+  });
+
+  it("후보가 비어있으면 항상 false", () => {
+    expect(isSameSpotAsAny(37.5665, 126.978, [])).toBe(false);
   });
 });

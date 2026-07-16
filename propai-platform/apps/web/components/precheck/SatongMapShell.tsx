@@ -389,6 +389,27 @@ function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu">): string {
   return parcel.pnu || normalizeKey(parcel.address);
 }
 
+/**
+ * ★리뷰(HIGH) 근치 — pnu/주소 키 이중성 승격.
+ *
+ * 시드 필지(엑셀·지오코딩)는 pnu 미확보 상태로 selectedParcels 에 들어온다(pnu=null, 키=주소).
+ * 이후 지도 boundary 보강(/zoning/parcel-boundaries)이 real 19자리 pnu 를 채워 돌려주는데,
+ * 종전 handleBoundaryEnriched 병합은 기존 p.pnu 를 그대로 유지해 이 real pnu 를 버렸다 —
+ * autoStage(parcelMembershipKey, real pnu 기준)는 이후 계속 이 필지를 "미등록"으로 오판했고,
+ * mergeSatongMapFeatures("지적 N건" 등 칩 집계)도 같은 물리 필지를 pnu-키/주소-키 2건으로 쪼갰다.
+ *
+ * 이 함수는 existingPnu 가 있으면 그대로 보존(real→real 덮어쓰기 금지 — 무날조), 없을 때만
+ * boundaryPnu 로 승격한다. handleBoundaryEnriched 한 곳에서 이 값을 채택하면 이후 파생되는
+ * selectedMapFeatures·mergeSatongMapFeatures·parcelMembershipKey 가 모두 같은 real pnu 로
+ * 수렴해 칩·CTA·merge 카운트가 한 번에 정합해진다(공용화 치유).
+ */
+export function healParcelPnu(
+  existingPnu: string | null | undefined,
+  boundaryPnu: string | null | undefined,
+): string | null {
+  return existingPnu || boundaryPnu || null;
+}
+
 function formatArea(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return "-";
   // ㎡·평 병행 표기(1평 = 3.305785㎡).
@@ -1300,6 +1321,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
           if (!f) return p;
           const merged = {
             ...p,
+            // ★리뷰(HIGH) 근치: 시드 필지(pnu 미확보)의 합성/주소 키를 boundary가 돌려준 real
+            //   pnu로 승격한다(기존 real pnu는 보존 — healParcelPnu 참조). 이 한 줄이 칩·CTA·
+            //   merge 카운트 이중성의 근원(pnu/주소 키 불일치)을 한 곳에서 치유한다.
+            pnu: healParcelPnu(p.pnu, f.pnu),
             areaSqm: p.areaSqm ?? f.areaSqm ?? null,
             zoneType: p.zoneType ?? f.zoneType ?? null,
             jimok: p.jimok ?? f.jimok ?? null,
@@ -1314,6 +1339,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             geometry: p.geometry ?? f.geometry ?? null,
           };
           if (
+            merged.pnu !== p.pnu ||
             merged.areaSqm !== p.areaSqm || merged.zoneType !== p.zoneType ||
             merged.jimok !== p.jimok || merged.lat !== p.lat || merged.lon !== p.lon ||
             merged.officialPricePerSqm !== p.officialPricePerSqm ||

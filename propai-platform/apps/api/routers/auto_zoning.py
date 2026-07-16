@@ -361,6 +361,25 @@ def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
     return f"{bcode}{is_mountain}{main_num}{sub_num}"
 
 
+def _classify_age_status(
+    bldg: dict | None, lookup_state: str, building_age_years: int | None,
+) -> str | None:
+    """건축물 노후도 무자료 사유 분류(순수함수, 외부호출 없음) — WP-M3 + 리뷰(MEDIUM1) 반영.
+
+    - building_age_years 산출 성공 → None(=ok, 무자료 아님).
+    - 표제부 레코드(bldg)가 존재(건물 실재)하는데 연식만 산출 불가(사용승인일 미기재·미준공 등)
+      → 'no_approval_date'. ★리뷰(MEDIUM1): 종전엔 이 경우도 'no_building'(나대지)으로 표기해
+      건물 있는 땅을 나대지로 오표기했다(정직성 위배·M3 취지 정면 위배) — 별도 사유로 분리한다.
+    - bldg 없음(None) + lookup_state='no_data'(조회성공·무건축물) → 'no_building'(나대지 추정).
+    - bldg 없음 + lookup_state가 그 외(no_key/unauthorized/error) → 'lookup_failed'(조회실패).
+    """
+    if building_age_years is not None:
+        return None
+    if isinstance(bldg, dict):
+        return "no_approval_date"
+    return "no_building" if lookup_state == "no_data" else "lookup_failed"
+
+
 @router.post("/analyze", dependencies=[Depends(enforce_llm_quota)])
 async def analyze_zoning(req: ZoningAnalyzeRequest):
     """주소 기반 자동 용도지역 감지 및 법적 한도 매핑.
@@ -786,8 +805,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         jimok = land_use_situation = terrain = None
         building_name = main_purpose = use_approval_date = None
         built_year = building_age_years = None
-        # 노후도 무자료 사유 표면화(WP-M3): no_building(나대지·연식없음) / lookup_failed(키·인증·
+        # 노후도 무자료 사유 표면화(WP-M3, 리뷰 MEDIUM1 반영): no_building(나대지·연식없음) /
+        #   no_approval_date(건물은 실재하나 사용승인일 미기재·미준공) / lookup_failed(키·인증·
         #   호출오류) / skipped_bulk(41필지+ 대량생략). 값이 있으면(연식 산출됨) None(=ok).
+        #   분류는 _classify_age_status(순수함수)가 단일 판정한다.
         #   auto_zoning.py의 침묵 생략(enable_building_age=False)을 프론트 칩("나대지 N·조회실패 M")이
         #   구분 고지하도록 additive로 내보낸다(계약 확장·기존 필드 무변경).
         age_status = None
@@ -808,10 +829,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             age_status = "skipped_bulk"  # 41필지+ 대량 요청 → 표제부 조회 생략(예산 보호)
         else:
             try:
-                bldg = await building_registry.get_title_by_pnu(pnu)
-                # ★last_status 읽기는 await 직후 동기 연산 — gather 병렬 코루틴 간 인터리브가
-                #   끼지 않아(그 사이 await 없음) 이 호출의 상태를 정확히 반영한다.
-                lookup_state = getattr(building_registry, "last_status", "unknown")
+                # ★리뷰(MEDIUM2): last_status(공유 가변속성) 대신 (파싱결과, 상태) 튜플을 직접
+                #   받는다 — gather 병렬 호출 직후 공유 인스턴스 속성을 읽는 비국소적 취약점을
+                #   구조적으로 제거(향후 이 사이에 await가 추가돼도 상태 오염 불가능).
+                bldg, lookup_state = await building_registry.get_title_with_status_by_pnu(pnu)
                 if isinstance(bldg, dict):
                     building_name = bldg.get("building_name") or None
                     main_purpose = bldg.get("main_purpose") or None
@@ -821,12 +842,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                         built_year = int(year_str)
                         if 1800 <= built_year <= current_year:
                             building_age_years = current_year - built_year
-                    # 건물은 있으나 사용승인일 없음(미준공 등) → 연식 무자료(no_building)로 표기.
-                    if building_age_years is None:
-                        age_status = "no_building"
-                else:
-                    # None: 조회성공·무건축물(no_data=나대지) vs 키·인증·오류(조회실패) 구분.
-                    age_status = "no_building" if lookup_state == "no_data" else "lookup_failed"
+                age_status = _classify_age_status(bldg, lookup_state, building_age_years)
             except Exception:  # noqa: BLE001
                 age_status = "lookup_failed"
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
@@ -878,7 +894,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "use_approval_date": use_approval_date,
             "built_year": built_year,
             "building_age_years": building_age_years,
-            "age_status": age_status,  # 노후도 무자료 사유(no_building/lookup_failed/skipped_bulk) — 값 있으면 None
+            "age_status": age_status,  # 노후도 무자료 사유(no_building/no_approval_date/lookup_failed/skipped_bulk) — 값 있으면 None
             "geometry": geometry,
         }
 

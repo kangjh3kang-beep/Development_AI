@@ -115,25 +115,30 @@ class BuildingRegistryService:
 
         return await self.get_building_info(sigungu_cd, bjdong_cd, bun, ji)
 
-    async def get_title_by_pnu(self, pnu: str) -> dict[str, Any] | None:
-        """PNU 기반 표제부(getBrTitleInfo) 조회 — 사용승인일·구조·세대수가 충실.
+    async def get_title_with_status_by_pnu(self, pnu: str) -> tuple[dict[str, Any] | None, str]:
+        """PNU 기반 표제부(getBrTitleInfo) 조회 — (파싱결과, 상태) 튜플 반환판.
 
         총괄표제부(getBrBasisOulnInfo)가 사용승인일을 비워두는 경우가 많아,
         노후도·세대수 산정에는 표제부를 사용한다.
 
         멸실여부·미준공(공사중) 여부도 표제부 상태 필드로 best-effort 판정한다.
-        키 미설정/호출실패/무자료 시 None(가짜데이터 생성 금지).
+        키 미설정/호출실패/무자료 시 (None, status)(가짜데이터 생성 금지).
 
-        ★last_status(no_key/unauthorized/error/no_data/ok)를 함께 갱신한다 — 상위(노후도
-          age_status 세분화)가 '나대지(no_data)'와 '조회실패(키·인증·호출오류)'를 구분하는 근거.
-          get_building_info와 동일 규약.
+        상태값: no_key/unauthorized/error/no_data/ok.
+
+        ★리뷰(MEDIUM2) — 구조적 병렬안전: 상위(auto_zoning.py)가 asyncio.gather로 여러 필지를
+          동시 조회하며 각 호출 직후 상태를 읽는다. 종전엔 공유 인스턴스의 self.last_status(가변
+          속성)를 읽었는데, 현재는 호출↔읽기 사이 await가 없어 race-free하지만 향후 그 구간에
+          await 하나만 삽입돼도 다른 필지의 상태로 오염될 수 있는 비국소적 취약점이었다. 상태를
+          반환값에 직접 실어 그 취약점을 구조적으로 제거한다. self.last_status 는 하위호환
+          레거시 소비처(get_title_by_pnu 위임 호출부)를 위해 계속 갱신한다.
         """
         if not settings.MOLIT_API_KEY:
             self.last_status = "no_key"
-            return None
+            return None, "no_key"
         if len(pnu) < 19:
             self.last_status = "error"
-            return None
+            return None, "error"
         params = {
             "serviceKey": settings.MOLIT_API_KEY,
             "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
@@ -147,17 +152,29 @@ class BuildingRegistryService:
                 if resp.status_code in (401, 403) or resp.text.strip().lower().startswith("unauthorized"):
                     self.last_status = "unauthorized"
                     logger.warning("표제부 API 미승인(활용신청 필요): %s", resp.status_code)
-                    return None
+                    return None, "unauthorized"
                 resp.raise_for_status()
                 items = (resp.json().get("response", {}).get("body", {})
                          .get("items", {}) or {}).get("item")
             parsed = self._parse_title_items(items)
-            self.last_status = "ok" if parsed else "no_data"  # no_data=조회성공·무건축물(나대지 추정)
-            return parsed
+            status = "ok" if parsed else "no_data"  # no_data=조회성공·무건축물(나대지 추정)
+            self.last_status = status
+            return parsed, status
         except Exception as e:  # noqa: BLE001
             self.last_status = "error"
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
-            return None
+            return None, "error"
+
+    async def get_title_by_pnu(self, pnu: str) -> dict[str, Any] | None:
+        """PNU 기반 표제부 조회(레거시 하위호환) — dict|None 만 반환한다.
+
+        기존 소비처(scene_service·land_info_service·parcel_excel_service·scenario_simulator·
+        land_share_service 등)의 반환 계약을 그대로 유지하기 위한 얇은 위임 래퍼. 상태가 필요한
+        새 소비처(gather 병렬 조회 후 상태 분기)는 get_title_with_status_by_pnu 를 직접 쓴다
+        (리뷰 MEDIUM2 — auto_zoning.py 가 사용).
+        """
+        parsed, _status = await self.get_title_with_status_by_pnu(pnu)
+        return parsed
 
     async def _list_by_bjdong(
         self, endpoint: str, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
