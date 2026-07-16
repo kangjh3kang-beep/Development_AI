@@ -146,25 +146,55 @@ def test_legal_basis_annotation_single_parcel_no_regression():
     assert "200%" in legal_ann
 
 
-# ── WP-U1f: national_far_pct=None 값 존재 시 float(None) 크래시 가드 ──────────
+# ── WP-U1f: 다필지 override 결측(None) 결합 시나리오 크래시 가드(honest 보존) ──
 
-def test_rebuild_area_dependent_none_far_pct_no_crash():
-    """발화 조건 재현(WP-U1f): 다필지 override 경로에서 blended_far_legal_pct=None ∧
-    sec1["national_far_pct"]=None(키가 None '값'으로 존재)이면 dict.get 기본값이 무시되어
-    float(None) TypeError로 크래시하던 결함 — 가드 후 effective_far 폴백으로 정상 동작."""
-    sec1 = {"national_far_pct": None, "annotations": []}
-    out = fts.rebuild_area_dependent(  # 수정 전: TypeError: float() argument ... 'NoneType'
+def _honest_none_sec1() -> dict:
+    """실호출부(comprehensive 다필지 override) 결합 재현 입력: SSOT 결합상 blended 실효치
+    결측이면 national_far_pct도 동시 None(필지단위 대칭 정규화 → calc_effective_far
+    P0-1 honest-return) — effective_far=150 ∧ national_far=None 같은 조합은 실경로 도달 불가."""
+    return {
+        "national_far_pct": None,
+        "effective_far_pct": None,
+        "effective_bcr_pct": None,
+        "annotations": ["용도지역 미확인 — 실효 용적률을 산정하지 않습니다(임의 수치 미생성)."],
+        "far_optimization": {"marker": "honest_preserved"},
+    }
+
+
+def test_rebuild_area_dependent_none_effective_far_no_crash_honest_preserved():
+    """발화 조건(WP-U1f R1, 실호출부 결합): effective_far=None ∧ effective_bcr=None ∧
+    national_far=None ∧ land_area>0 — 수정 전 build_area_annotation(land_area*None, :42)에서
+    TypeError 크래시. 가드 후 no-crash + 값을 지어내지 않고(무날조) 면적문구·구조상한·
+    far_optimization 재생성을 전부 건너뛰어 sec1의 honest 상태를 그대로 보존한다."""
+    sec1 = _honest_none_sec1()
+    out = fts.rebuild_area_dependent(  # 수정 전: TypeError: float * NoneType (:42)
         sec1,
         land_area=1000.0,
-        effective_far=150.0,
-        effective_bcr=50.0,
-        zone_type="제2종일반주거지역",
+        effective_far=None,
+        effective_bcr=None,
+        zone_type="개발제한구역",
         national_far=None,
         parcel_count=2,
     )
-    # 폴백 의미: ceiling=effective_far → cap==base라 최대 달성치도 effective_far로 클램프.
-    assert out["far_optimization"].get("max_achievable_far") == 150.0
-    assert any("건축이 가능합니다" in a for a in out["annotations"])
+    # honest 보존: 면적문구 미날조·시뮬 미재생성·구조상한 필드 미추가.
+    assert out["annotations"] == sec1["annotations"]
+    assert not any("건축이 가능합니다" in a for a in out["annotations"])
+    assert out["far_optimization"] == {"marker": "honest_preserved"}
+    assert "structural_cap_pct" not in out
+
+
+def test_rebuild_legal_basis_annotations_none_effective_far_no_crash():
+    """동일 발화 경로 2번째 지점(같은 패턴 봉합): comprehensive는 override에서 두 함수를
+    연달아 호출한다 — 법정/조례 서술 재생성도 blended 실효치 None이면 f-string 포맷
+    ({effective_far:g}, :185)에서 NoneType TypeError였다. 가드 후 honest 문구 보존."""
+    sec1 = _honest_none_sec1()
+    out = fts.rebuild_legal_basis_annotations(  # 수정 전: NoneType.__format__ TypeError
+        sec1,
+        effective_far=None, effective_bcr=None,
+        national_far=None, national_bcr=None,
+        parcel_count=2,
+    )
+    assert out["annotations"] == sec1["annotations"]
 
 
 def test_rebuild_area_dependent_far_pct_value_semantics_unchanged():
