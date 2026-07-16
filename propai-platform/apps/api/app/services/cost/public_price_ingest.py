@@ -148,40 +148,58 @@ async def ingest_public_prices(
     keyword: str | None = None,
     max_pages: int = 3,
     num_rows: int = 100,
+    categories: list[str] | None = None,
 ) -> dict[str, Any]:
     """조달청 가격정보를 조회해 material_unit_prices에 멱등 upsert(T1 계층 주입).
 
-    반환: {ok, fetched, ingested, unmapped, reason?}. 키 미보유/실패 시 ok는 여전히
-    True(호출 자체는 정상)이며 ingested=0·reason으로 정직 표기(서버 무영향).
+    categories 미지정 시 등록된 전 분야(토목/건축/기계설비/전기통신)를 순회한다 —
+    분야가 넓을수록 단가 SSOT 6종 키워드에 매칭되는 품목 풀이 커진다(예: 합판거푸집·
+    창호는 건축 분야에서만 응답). 동일 키 다건은 마지막 값 채택(기존 계약 유지).
+    미등록 분야명은 호출자 오류이므로 네트워크 호출 전에 즉시 ValueError.
+
+    반환: {ok, fetched, ingested, unmapped, per_category, reason?}. 키 미보유/실패 시
+    ok는 여전히 True(호출 자체는 정상)이며 ingested=0·reason으로 정직 표기(서버 무영향).
     """
     from sqlalchemy import text
 
-    from app.integrations.public_price_client import PublicPriceClient
+    from app.integrations.public_price_client import PRICE_OPERATIONS, PublicPriceClient
     from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
+
+    cats = list(categories) if categories else list(PRICE_OPERATIONS)
+    unknown = [c for c in cats if c not in PRICE_OPERATIONS]
+    if unknown:
+        raise ValueError(
+            f"미등록 가격정보 분야: {unknown} — 등록 분야: {sorted(PRICE_OPERATIONS)}"
+        )
 
     key = _service_key()
     if not key:
         logger.info("조달청 가격정보 서비스키 미설정 — 주입 0건(graceful)")
         return {
             "ok": True, "fetched": 0, "ingested": 0, "unmapped": 0,
-            "reason": "조달청/MOLIT 서비스키 미설정",
+            "per_category": {}, "reason": "조달청/MOLIT 서비스키 미설정",
         }
 
     await _ensure_cost_tables(db)  # material_unit_prices + source_url 컬럼 보장
 
     client = PublicPriceClient(service_key=key)
     fetched_raw: list[dict[str, Any]] = []
+    per_category: dict[str, int] = {}
     try:
-        for page in range(1, max_pages + 1):
-            items = await client.fetch_facility_material_prices(
-                prdct_clsfc_no=prdct_clsfc_no, krn_prdct_nm=keyword,
-                page=page, num_rows=num_rows,
-            )
-            if not items:
-                break
-            fetched_raw.extend(items)
-            if len(items) < num_rows:
-                break  # 마지막 페이지
+        for category in cats:
+            fetched_before = len(fetched_raw)
+            for page in range(1, max_pages + 1):
+                items = await client.fetch_facility_material_prices(
+                    category=category,
+                    prdct_clsfc_no=prdct_clsfc_no, krn_prdct_nm=keyword,
+                    page=page, num_rows=num_rows,
+                )
+                if not items:
+                    break
+                fetched_raw.extend(items)
+                if len(items) < num_rows:
+                    break  # 마지막 페이지
+            per_category[category] = len(fetched_raw) - fetched_before
     finally:
         await client.close()
 
@@ -198,6 +216,7 @@ async def ingest_public_prices(
     if not normalized:
         return {
             "ok": True, "fetched": len(fetched_raw), "ingested": 0, "unmapped": unmapped,
+            "per_category": per_category,
             "reason": "매핑 가능 항목 없음" if fetched_raw else "API 응답 0건",
         }
 
@@ -226,5 +245,9 @@ async def ingest_public_prices(
     logger.info(
         "공공 표준시장단가 주입 완료",
         fetched=len(fetched_raw), ingested=len(normalized), unmapped=unmapped,
+        per_category=per_category,
     )
-    return {"ok": True, "fetched": len(fetched_raw), "ingested": len(normalized), "unmapped": unmapped}
+    return {
+        "ok": True, "fetched": len(fetched_raw), "ingested": len(normalized),
+        "unmapped": unmapped, "per_category": per_category,
+    }

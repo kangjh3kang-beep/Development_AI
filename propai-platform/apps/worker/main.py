@@ -163,6 +163,12 @@ async def g2b_rebuild_stats(ctx: dict[str, Any]) -> dict[str, Any]:
     return await rebuild_award_stats(ctx)
 
 
+async def g2b_sync_public_prices(ctx: dict[str, Any]) -> dict[str, Any]:
+    """조달청 가격정보 → T1 공공단가(material_unit_prices PUB-*) 주기 주입."""
+    from app.tasks.g2b_sync_task import sync_public_material_prices
+    return await sync_public_material_prices(ctx)
+
+
 async def dispatch_outbox(ctx: dict[str, Any]) -> dict[str, Any]:
     """전역 아웃박스(outbox_event) 미발행 이벤트를 at-least-once 발행한다(P15 A4)."""
     from app.tasks.outbox_dispatch_task import run_outbox_dispatch_until_empty
@@ -186,6 +192,7 @@ class WorkerSettings:
         g2b_sync_bids,
         g2b_sync_awards,
         g2b_rebuild_stats,
+        g2b_sync_public_prices,
         dispatch_outbox,
     ]
 
@@ -205,6 +212,9 @@ class WorkerSettings:
         cron(g2b_sync_awards, hour=21, minute=0),
         # 매주 월 22:00 UTC: 낙찰가율 통계 재집계
         cron(g2b_rebuild_stats, weekday="mon", hour=22, minute=0),
+        # 매일 20:30 UTC(= KST 05:30): 조달청 가격정보 → T1 공공단가 주입
+        # (21:00 낙찰 갱신과 시차를 둬 동일 조달청 API군 레이트리밋 경합 방지)
+        cron(g2b_sync_public_prices, hour=20, minute=30),
         # 전역 아웃박스 디스패처 — 매 분 미발행 이벤트 발행(at-least-once). arq/Redis 미배포
         # 환경(운영 Micro)에서는 API 인프로세스 루프(main.py)가 같은 코어를 호출한다(중복 안전).
         cron(dispatch_outbox, minute=set(range(0, 60))),

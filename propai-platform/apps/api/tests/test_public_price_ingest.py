@@ -150,26 +150,35 @@ async def test_ingest_no_key_returns_zero_graceful(monkeypatch):
 
 
 class _FakeClient:
-    """PublicPriceClient 대역 — page=1에서 3건(2건 매핑성공+1건 미매칭), page=2 이후 빈 응답."""
+    """PublicPriceClient 대역 — 토목 page=1에서 3건(2건 매핑성공+1건 미매칭), 그 외 빈 응답.
+
+    분야 확장 후에도 기존 기대치(fetched=3)가 유지되도록 데이터는 토목 분야에만 존재한다
+    (실제로도 분야별 응답은 서로 다른 품목 풀이다).
+    """
 
     last_kwargs: dict | None = None
+    called_categories: list[str] = []
 
     def __init__(self, service_key: str, timeout: float = 30.0) -> None:
         self.service_key = service_key
         self.closed = False
 
-    async def fetch_facility_material_prices(self, *, prdct_clsfc_no=None, krn_prdct_nm=None, page=1, num_rows=100):
+    async def fetch_facility_material_prices(
+        self, *, category="토목", prdct_clsfc_no=None, krn_prdct_nm=None, page=1, num_rows=100
+    ):
         _FakeClient.last_kwargs = {
+            "category": category,
             "prdct_clsfc_no": prdct_clsfc_no, "krn_prdct_nm": krn_prdct_nm,
             "page": page, "num_rows": num_rows,
         }
-        if page == 1:
+        _FakeClient.called_categories.append(category)
+        if category == "토목" and page == 1:
             return [
                 {"krnPrdctNm": "이형철근 SD400 D13", "unprc": "900000", "unit": "ton"},
                 {"krnPrdctNm": "레미콘 25-24-15", "prce": "85000", "unit": "m3"},
                 {"krnPrdctNm": "바닥 타일 600x600", "prce": "25000"},  # 미매칭 → unmapped
             ]
-        return []  # 2페이지부터 빈 응답 → 조기 종료
+        return []  # 데이터 없는 분야/2페이지부터 빈 응답 → 조기 종료
 
     async def close(self):
         self.closed = True
@@ -219,7 +228,7 @@ async def test_ingest_with_key_upserts_and_counts_unmapped(monkeypatch):
 async def test_ingest_no_mapped_items_returns_zero(monkeypatch):
     class _EmptyMapClient(_FakeClient):
         async def fetch_facility_material_prices(self, **kwargs):
-            if kwargs.get("page", 1) == 1:
+            if kwargs.get("category") == "토목" and kwargs.get("page", 1) == 1:
                 return [{"krnPrdctNm": "바닥 타일", "prce": "25000"}]
             return []
 
@@ -236,6 +245,76 @@ async def test_ingest_no_mapped_items_returns_zero(monkeypatch):
     assert result["fetched"] == 1 and result["ingested"] == 0 and result["unmapped"] == 1
     assert db.executed == []  # upsert 없음
     assert db.committed is False
+
+
+# ── ingest_public_prices: 분야(category) 순회 — 2026-07-17 커버리지 확장 ──
+
+
+class _MultiCategoryClient(_FakeClient):
+    """분야별로 다른 품목 풀을 응답하는 대역 — 토목=철근, 건축=창호(실제 분포 모사)."""
+
+    async def fetch_facility_material_prices(
+        self, *, category="토목", prdct_clsfc_no=None, krn_prdct_nm=None, page=1, num_rows=100
+    ):
+        _FakeClient.called_categories.append(category)
+        if page > 1:
+            return []
+        if category == "토목":
+            return [{"krnPrdctNm": "이형철근 SD400 D13", "prce": "900000", "unit": "ton"}]
+        if category == "건축":
+            return [{"krnPrdctNm": "PVC 창호 이중창", "prce": "180000", "unit": "㎡"}]
+        return []
+
+
+async def test_ingest_default_iterates_all_registered_categories(monkeypatch):
+    """분야 미지정 → 등록 전 분야(토목/건축/기계설비/전기통신) 순회·집계."""
+    from app.integrations.public_price_client import PRICE_OPERATIONS
+
+    monkeypatch.setattr(ingest_mod, "_service_key", lambda: "TESTKEY")
+    monkeypatch.setattr(
+        "app.services.cost.cost_tables_bootstrap._ensure_cost_tables", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.integrations.public_price_client.PublicPriceClient", _MultiCategoryClient
+    )
+    _FakeClient.called_categories = []
+
+    db = _FakeSession()
+    result = await ingest_public_prices(db)
+
+    assert set(_FakeClient.called_categories) == set(PRICE_OPERATIONS)
+    assert result["fetched"] == 2  # 토목 1 + 건축 1
+    assert result["ingested"] == 2  # PUB-REBAR + PUB-WINDOW
+    assert result["per_category"] == {"토목": 1, "건축": 1, "기계설비": 0, "전기통신": 0}
+    codes = sorted(params["material_code"] for _s, params in db.executed)
+    assert codes == [_public_code("rebar"), _public_code("window")]
+
+
+async def test_ingest_explicit_categories_only_calls_those(monkeypatch):
+    monkeypatch.setattr(ingest_mod, "_service_key", lambda: "TESTKEY")
+    monkeypatch.setattr(
+        "app.services.cost.cost_tables_bootstrap._ensure_cost_tables", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.integrations.public_price_client.PublicPriceClient", _MultiCategoryClient
+    )
+    _FakeClient.called_categories = []
+
+    db = _FakeSession()
+    result = await ingest_public_prices(db, categories=["건축"])
+
+    assert _FakeClient.called_categories == ["건축"]
+    assert result["ingested"] == 1
+    assert result["per_category"] == {"건축": 1}
+
+
+async def test_ingest_unknown_category_raises_before_network(monkeypatch):
+    """미등록 분야는 네트워크/DB 접근 전에 즉시 ValueError(호출자 오류 조기 차단)."""
+    monkeypatch.setattr(ingest_mod, "_service_key", lambda: "TESTKEY")
+    db = _FakeSession()
+    with pytest.raises(ValueError, match="미등록 가격정보 분야"):
+        await ingest_public_prices(db, categories=["종합"])
+    assert db.executed == []
 
 
 if __name__ == "__main__":
