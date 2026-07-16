@@ -244,15 +244,17 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
   const [baseline, setBaseline] = useState<OverrideBaseline>({});
   const [showOverrides, setShowOverrides] = useState(false);
   // ★W4(감사 고아 엔드포인트): 개략수지→시니어 보고서(/rough-scenario/report) 다운로드 상태.
-  const [reportBusy, setReportBusy] = useState(false);
+  //   백엔드가 pdf/pptx/docx 3포맷을 지원 → 어떤 포맷이 생성 중인지 문자열로 추적(시장 ReportActionsBar 패턴 미러).
+  const [reportFmt, setReportFmt] = useState<"" | "pdf" | "pptx" | "docx">("");
   const [reportError, setReportError] = useState<string | null>(null);
 
   // ★W4: 백엔드 보고서 엔진(/rough-scenario/report — BankReady·통합 보고서 정본 조합)이
-  //   프론트 호출 0건 고아였다. 현재 시나리오를 그대로 전달해 재계산 없이 PDF를 받는다.
+  //   프론트 호출 0건 고아였다. 현재 시나리오를 그대로 전달해 재계산 없이 보고서를 받는다.
+  //   백엔드는 pdf/pptx/docx 3포맷 지원(v2_feasibility.py RoughScenarioReportRequest.format).
   //   use_llm=false 기본(과금 정책 — AI 서술 없이 정직 고지 포함 보고서).
-  const downloadReport = useCallback(async () => {
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
     if (!result) return;
-    setReportBusy(true);
+    setReportFmt(fmt);
     setReportError(null);
     try {
       const token =
@@ -267,18 +269,26 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ scenario: result, use_llm: false, format: "pdf" }),
+          body: JSON.stringify({ scenario: result, use_llm: false, format: fmt }),
           signal: controller.signal,
         });
       } finally {
         clearTimeout(timeout);
       }
-      if (!res.ok) throw new Error(`보고서 생성 실패 (${res.status})`);
+      if (!res.ok) {
+        // 오류 사유 보존 — 백엔드 {detail}(422 재생성/생성 실패 등)을 읽어 실제 원인을 표기.
+        let detail = "";
+        try {
+          const body = (await res.json()) as { detail?: string };
+          detail = body?.detail || "";
+        } catch { /* JSON 아니면 상태코드만 */ }
+        throw new Error(detail || `보고서 생성 실패 (${res.status})`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `rough-scenario-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `rough-scenario-report-${new Date().toISOString().slice(0, 10)}.${fmt}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -286,7 +296,7 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     } catch (e) {
       setReportError(e instanceof Error ? e.message : "보고서 생성 실패");
     } finally {
-      setReportBusy(false);
+      setReportFmt("");
     }
   }, [result]);
 
@@ -638,15 +648,31 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
             </div>
           </section>
 
-          {/* ── ★W4: 시니어 사업성 보고서(PDF) — 고아 엔드포인트 배선 ── */}
+          {/* ── ★W4: 시니어 사업성 보고서 — 고아 엔드포인트 배선(PDF/PPT/DOCX 3포맷) ── */}
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={downloadReport}
-              disabled={reportBusy}
+              onClick={() => downloadReport("pdf")}
+              disabled={!!reportFmt}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-xs font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
             >
-              {reportBusy ? "보고서 생성 중…" : "사업성 보고서(PDF) 다운로드"}
+              {reportFmt === "pdf" ? "PDF 생성 중…" : "사업성 보고서 PDF"}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadReport("pptx")}
+              disabled={!!reportFmt}
+              className="rounded-xl border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              {reportFmt === "pptx" ? "PPT 생성 중…" : "PPT"}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadReport("docx")}
+              disabled={!!reportFmt}
+              className="rounded-xl border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              {reportFmt === "docx" ? "DOCX 생성 중…" : "DOCX"}
             </button>
             <span className="text-[10px] text-[var(--text-tertiary)]">
               현재 개략수지 그대로 보고서화(재계산 없음·AI 서술 미포함 — 추가 LLM 과금 없음)

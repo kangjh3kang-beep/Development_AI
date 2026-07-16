@@ -64,6 +64,7 @@ __all__ = [
     "build_report_model_from_appraisal_multi",
     "build_report_model_from_design_audit",
     "build_report_model_from_cost_estimation",
+    "build_report_model_from_regulation",
 ]
 
 
@@ -141,3 +142,12 @@ def build_report_model_from_cost_estimation(data: dict) -> ReportModel:
     from .cost_estimation_adapter import build_report_model_from_cost_estimation as _build
 
     return _build(data)
+
+
+def build_report_model_from_regulation(result: dict, *, address: str = "") -> ReportModel:
+    """규제 종합 분석(regulation) 결과 → 정본 ReportModel(어댑터·법규 검토서).
+
+    프론트가 방금 받은 result 를 그대로 넘겨(재분석·LLM 재호출 0) 법규 검토서로 조립한다."""
+    from .regulation_adapter import build_report_model_from_regulation as _build
+
+    return _build(result, address=address)

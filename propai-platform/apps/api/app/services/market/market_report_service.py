@@ -132,6 +132,80 @@ def _build_rent_table(rent: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _deal_ym(deal_date: Any) -> str | None:
+    """거래일 문자열('2024년 3월 15일' 등) → 'YYYY-MM'. 파싱 실패/월범위 이탈 시 None."""
+    if not deal_date:
+        return None
+    m = re.search(r"(\d{4})\D+(\d{1,2})", str(deal_date))
+    if not m:
+        return None
+    y, mo = int(m.group(1)), int(m.group(2))
+    if not (1 <= mo <= 12):
+        return None
+    return f"{y}-{mo:02d}"
+
+
+def _build_competitor_complexes(
+    apt_rows: list[dict[str, Any]] | None, top_n: int = 8,
+) -> list[dict[str, Any]]:
+    """아파트 실거래 원자료(단지명별) → 경쟁 단지 비교표 행 배열.
+
+    ★기존 수집한 아파트 매매 원자료(molit)만 재사용한다 — 신규 외부콜 없음(가짜 단지 금지).
+    단지명(building_name)별로 집계한다:
+      - deal_count: 단지 거래건수
+      - avg_per_pyeong_manwon: 거래액가중 평당가(만원/평) = Σ거래액(만원) / (Σ전용면적㎡ / 3.305785)
+        ★price_basis='전용' — molit 아파트 면적(excluUseAr)이 전용면적이라 평당가도 전용 기준
+        (price_basis 계약 준수). 단순평균이 아닌 거래액가중(대형·고가 세대가 면적만큼 반영).
+      - recent_deal_ym: 단지 최근 거래월('YYYY-MM')
+      - build_year: 준공연도(최빈 non-zero, 없으면 None)
+    집계 기준: 거래건수 상위 top_n(기본 8)개 단지. 동률이면 평당가 높은 순.
+    데이터 없으면 빈 배열([]) 반환(무목업 — 정직).
+    """
+    from collections import Counter
+
+    groups: dict[str, dict[str, Any]] = {}
+    for r in (apt_rows or []):
+        name = str(r.get("building_name") or "").strip()
+        if not name:
+            continue
+        price = float(r.get("price_10k_won") or 0)
+        area = float(r.get("area_m2") or 0)
+        if price <= 0 or area <= 0:
+            continue
+        g = groups.setdefault(name, {
+            "name": name, "deal_count": 0,
+            "sum_price_10k": 0.0, "sum_area_m2": 0.0,
+            "yms": [], "build_years": [],
+        })
+        g["deal_count"] += 1
+        g["sum_price_10k"] += price
+        g["sum_area_m2"] += area
+        ym = _deal_ym(r.get("deal_date"))
+        if ym:
+            g["yms"].append(ym)
+        by = int(r.get("build_year") or 0)
+        if by > 0:
+            g["build_years"].append(by)
+
+    out: list[dict[str, Any]] = []
+    for g in groups.values():
+        # 거래액가중 평당가(전용 기준) = Σ가격(만원) / (Σ면적㎡ / 평㎡)
+        per_pyeong = round(g["sum_price_10k"] / (g["sum_area_m2"] / PYEONG_SQM))
+        recent_ym = max(g["yms"]) if g["yms"] else None  # 'YYYY-MM' 문자열 최대 = 최근
+        build_year = Counter(g["build_years"]).most_common(1)[0][0] if g["build_years"] else None
+        out.append({
+            "name": g["name"],
+            "deal_count": g["deal_count"],
+            "avg_per_pyeong_manwon": per_pyeong,
+            "price_basis": "전용",  # 전용면적 기준 평당가(molit excluUseAr)
+            "recent_deal_ym": recent_ym,
+            "build_year": build_year,
+        })
+    # 거래건수 desc, 동률이면 평당가 desc → 상위 top_n
+    out.sort(key=lambda x: (x["deal_count"], x["avg_per_pyeong_manwon"]), reverse=True)
+    return out[:max(0, top_n)]
+
+
 def _build_trend_series(apt_trend: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """apt_trend(과거→현재 정렬됨) → {ym, per_pyeong_manwon, mom_pct} 행 배열.
 
@@ -537,6 +611,9 @@ class MarketReportService:
         months = self._months(3)
         trade: dict[str, Any] = {}
         rent: dict[str, Any] = {}
+        # 경쟁 단지 비교표(단지명별 집계)용 아파트 매매 원자료 보존 — 아래 trade_one이 채운다.
+        #   ★신규 외부콜 없이 이미 수집한 apt 원자료를 재사용(무목업).
+        apt_raw_rows: list[dict[str, Any]] = []
 
         async def trade_one(pt: str, label: str):
             rows: list = []
@@ -544,6 +621,8 @@ class MarketReportService:
             for r in res:
                 if isinstance(r, list):
                     rows.extend(r)
+            if pt == "apt":  # 경쟁 단지 집계용 원자료 보존(단지명·거래액·전용면적·거래월·준공연도)
+                apt_raw_rows.extend(rows)
             prices = [float(x.get("price_10k_won") or 0) for x in rows]
             areas = [float(x.get("area_m2") or 0) for x in rows]
             return label, {
@@ -583,7 +662,12 @@ class MarketReportService:
         rent = dict(rr)
         # 추이는 과거→현재 순으로
         trend_sorted = sorted(trend, key=lambda t: t["ym"])
-        return {"months": months, "trade": trade, "rent": rent, "apt_trend": trend_sorted}
+        # 경쟁 단지 비교표(아파트 매매 원자료 단지명별 집계·상위 8) — 데이터 없으면 [](무목업).
+        competitor_complexes = _build_competitor_complexes(apt_raw_rows)
+        return {
+            "months": months, "trade": trade, "rent": rent, "apt_trend": trend_sorted,
+            "competitor_complexes": competitor_complexes,
+        }
 
     async def _narrative(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """AI 시장 해석(요약·기회·리스크). 실패 시 구조화 폴백."""
@@ -1146,6 +1230,8 @@ class MarketReportService:
                 "trade_table": _build_trade_table(stats["trade"]),
                 "rent_table": _build_rent_table(stats["rent"]),
                 "trend_series": _build_trend_series(stats.get("apt_trend") or []),
+                # 경쟁 단지 비교(아파트 실거래 단지명별 집계·상위 8) — 데이터 없으면 [](정직).
+                "competitor_complexes": stats.get("competitor_complexes") or [],
                 "source": "국토교통부 실거래가",
                 "data_source": "live",
             },
