@@ -117,6 +117,9 @@ export interface SatongMultiMapProps {
   featureStatusLabels?: Record<string, string>;
   /** 기존 구획도 하이라이트 주소 호환. */
   highlightFeatureAddress?: string;
+  /** 부모(Shell) "초기화"(clearParcels) 신호 — 증가할 때마다 지도 staged·녹색 폴리곤·pending을
+   *  청소한다(WP-M2). 종전엔 목록만 비고 지도엔 잔존했다. undefined면 무동작(하위호환). */
+  clearSignal?: number;
 }
 
 type BoundaryFeature = {
@@ -129,6 +132,8 @@ type BoundaryFeature = {
   official_price_per_sqm?: number | null;
   built_year?: number | null;
   building_age_years?: number | null;
+  // 노후도 무자료 사유(no_building/lookup_failed/skipped_bulk) — 값 있으면 null(WP-M3).
+  age_status?: string | null;
   geometry?: any;
   // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
   lat?: number | null;
@@ -307,6 +312,30 @@ export interface OverlayNoteCounts {
   showAge: boolean;
   ageCount: number;
   markerCount: number;
+  // 노후도 무자료 사유 세분화(WP-M3) — ageCount=0일 때 "나대지 N·미준공 P·조회실패 M·대량생략 K"로 고지.
+  //   미지정(구 호출부·테스트)이면 종전과 동일하게 단일 "노후도 무자료"로 폴백(무회귀).
+  ageNoBuilding?: number;
+  // ★리뷰(MEDIUM1): 건물이 실재하나(building_name 등 존재) 사용승인일 미기재(미준공 등)로 연식
+  //   계산 불가한 경우 — 'no_building'(나대지)과 구분한다. 건물 있는 땅을 나대지로 오표기하면
+  //   정직성 위배(M3 취지 정면 위배)이므로 별도 사유값으로 분리.
+  ageNoApprovalDate?: number;
+  ageLookupFailed?: number;
+  ageSkippedBulk?: number;
+}
+
+/** 노후도 무자료 사유 세분 문구(공용) — "나대지 3·미준공 2·조회실패 9·대량생략 41". 사유 0건이면 "". */
+export function buildAgeGapDetail(counts: {
+  ageNoBuilding?: number;
+  ageNoApprovalDate?: number;
+  ageLookupFailed?: number;
+  ageSkippedBulk?: number;
+}): string {
+  const parts: string[] = [];
+  if (counts.ageNoBuilding) parts.push(`나대지 ${counts.ageNoBuilding}`);
+  if (counts.ageNoApprovalDate) parts.push(`미준공 ${counts.ageNoApprovalDate}`);
+  if (counts.ageLookupFailed) parts.push(`조회실패 ${counts.ageLookupFailed}`);
+  if (counts.ageSkippedBulk) parts.push(`대량생략 ${counts.ageSkippedBulk}`);
+  return parts.join("·");
 }
 
 /**
@@ -319,9 +348,69 @@ export function buildOverlayNotes(counts: OverlayNoteCounts): string {
   if (counts.showCadastre) notes.push(counts.cadastreCount ? `지적 ${counts.cadastreCount}건` : "지적 무자료");
   if (counts.showZoning) notes.push(counts.zoningCount ? `용도지역 ${counts.zoningCount}건` : "용도지역 무자료");
   if (counts.showPrice) notes.push(counts.priceCount ? `공시지가 ${counts.priceCount}건` : "공시지가 무자료");
-  if (counts.showAge) notes.push(counts.ageCount ? `노후도 ${counts.ageCount}건` : "노후도 무자료");
+  if (counts.showAge) {
+    if (counts.ageCount) {
+      notes.push(`노후도 ${counts.ageCount}건`);
+    } else {
+      const detail = buildAgeGapDetail(counts);
+      notes.push(detail ? `노후도 무자료(${detail})` : "노후도 무자료");
+    }
+  }
   if (counts.markerCount) notes.push(`좌표 ${counts.markerCount}건`);
   return notes.join(" · ");
+}
+
+/** 선택 상태 SSOT 멤버십 키(공용) — pnu 우선, 없으면 주소 정규화(공백 축약) 폴백.
+ *  Shell parcelKey(pnu||normalizeKey(address))와 동일 규약 — selectedParcels(프로젝트 필지)와
+ *  staged/pending(지도 선택)을 같은 기준으로 대조해 이중 등록·중복 카운트를 차단한다(WP-M2). */
+export function parcelMembershipKey(p: { pnu?: string | null; address?: string | null }): string {
+  const pnu = (p.pnu || "").trim();
+  if (pnu) return pnu;
+  return (p.address || "").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 경계 조회 준비 판정(WP-M3 재조회 루프 제거) — 순수 함수.
+ *
+ * 종전 hasAllGeometryAndMetadata 는 필지마다 `buildingAgeYears != null` 을 요구했다. 나대지(연식
+ * 없음이 정상)가 1필지라도 있으면 항상 false → 재마운트마다 전체 경계(45s)를 재조회하는 루프였다.
+ * 여기서는 (1) geometry 존재 + (2) 노후도 '조회 시도됨'(age 값이 있거나 ageStatus 로 시도 흔적)만
+ * 요구한다 — 나대지는 ageStatus 로 '시도됨'을 표시하므로 재조회 없이 준비 완료로 판정된다.
+ */
+export function selectionBoundaryReady(
+  parcels: Array<Pick<SatongMapFeature, "geometry" | "buildingAgeYears" | "ageStatus">>,
+): boolean {
+  if (!parcels.length) return false;
+  return parcels.every(
+    (p) => !!p.geometry && (p.buildingAgeYears != null || p.ageStatus != null),
+  );
+}
+
+/**
+ * ★WP-M2 리뷰(HIGH) 방어선 — pnu/주소 키 이중성 보강.
+ *
+ * 시드 필지(엑셀·지오코딩)는 pnu 미확보 상태로 selectedParcels 에 들어오는 경우가 있다. 이후
+ * boundary 보강이 real pnu 를 채워 넣기까지(비동기 왕복) 짧은 과도기 동안, autoStage(프로젝트
+ * 연결 시 focusTarget→같은 지점 재조회)가 parcelMembershipKey 로만 판정하면 "기등록 필지를
+ * 새 staged로" 오카운트할 수 있다(주된 치유는 SatongMapShell.handleBoundaryEnriched의 pnu 승격 —
+ * healParcelPnu). 이 함수는 그 과도기를 메우는 2차 방어선: autoStage 는 항상 selectedParcels 의
+ * 좌표(focusTarget)와 '정확히 같은 지점'을 재조회하므로(같은 float 값), 매우 좁은 허용오차
+ * (기본 1e-5도≈1.1m — 지적 필지 간 간격보다 훨씬 좁아 인접한 '다른' 필지를 오탐하지 않는다)로
+ * "같은 지점 재조회"만 잡아낸다. 수동 지도 클릭(비-autoStage)에는 적용하지 않는다.
+ */
+export function isSameSpotAsAny(
+  lat: number,
+  lon: number,
+  parcels: Array<{ lat?: number | null; lon?: number | null }>,
+  epsilonDeg = 1e-5,
+): boolean {
+  return parcels.some(
+    (p) =>
+      typeof p.lat === "number" &&
+      typeof p.lon === "number" &&
+      Math.abs(p.lat - lat) < epsilonDeg &&
+      Math.abs(p.lon - lon) < epsilonDeg,
+  );
 }
 
 /** [MAP-007] 기반 타일 실패 오버레이 내용. null이면 오버레이를 띄우지 않는다. */
@@ -456,6 +545,7 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     officialPricePerSqm: feature.official_price_per_sqm ?? null,
     builtYear: feature.built_year ?? null,
     buildingAgeYears: feature.building_age_years ?? null,
+    ageStatus: feature.age_status ?? null,
     geometry: feature.geometry,
     source: "boundary",
   };
@@ -601,6 +691,7 @@ export function SatongMultiMap({
   featureStatusColors,
   featureStatusLabels,
   highlightFeatureAddress,
+  clearSignal,
 }: SatongMultiMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
@@ -676,6 +767,23 @@ export function SatongMultiMap({
     const sum = validAges.reduce((a, b) => a + b, 0);
     return Math.round((sum / validAges.length) * 10) / 10;
   }, [boundaryFeatures, staged]);
+
+  // ★WP-M3: 노후도 무자료 사유 세분 집계 — 연식이 없는 필지만 age_status로 나눈다
+  //   (나대지 / 미준공(리뷰 MEDIUM1) / 조회실패 / 대량생략). 칩 문구와 범례 무자료 표기의 단일 출처.
+  const ageStatusCounts = useMemo(() => {
+    let ageNoBuilding = 0;
+    let ageNoApprovalDate = 0;
+    let ageLookupFailed = 0;
+    let ageSkippedBulk = 0;
+    boundaryFeatures.forEach((f) => {
+      if (f.buildingAgeYears != null) return; // 연식 있음 → 무자료 아님
+      if (f.ageStatus === "no_building") ageNoBuilding += 1;
+      else if (f.ageStatus === "no_approval_date") ageNoApprovalDate += 1;
+      else if (f.ageStatus === "lookup_failed") ageLookupFailed += 1;
+      else if (f.ageStatus === "skipped_bulk") ageSkippedBulk += 1;
+    });
+    return { ageNoBuilding, ageNoApprovalDate, ageLookupFailed, ageSkippedBulk };
+  }, [boundaryFeatures]);
   // staged 필지별 폴리곤 레이어 — pnu → Leaflet layerGroup
   const stagedLayersRef = useRef<Map<string, any>>(new Map());
 
@@ -699,6 +807,20 @@ export function SatongMultiMap({
         .join("||"),
     [selectedParcels],
   );
+  // ★WP-M2 선택 상태 SSOT: 프로젝트 필지(selectedParcels)의 멤버십 키 집합. autoStage·확인카드·
+  //   CTA 이중표기·reconcile 이펙트가 모두 이 하나로 "이미 등록됨"을 판정한다(칩 12 vs 완료 1 봉합).
+  const selectedMembershipKeys = useMemo(
+    () => new Set(selectedParcels.map(parcelMembershipKey).filter(Boolean)),
+    [selectedParcels],
+  );
+  // queryParcel(안정 useCallback)이 최신 멤버십을 deps 없이 읽도록 ref 병행 — 지도 재생성 방지.
+  const selectedMembershipKeysRef = useRef(selectedMembershipKeys);
+  selectedMembershipKeysRef.current = selectedMembershipKeys;
+  // ★WP-M2 리뷰(HIGH) 방어선: 좌표 근접(isSameSpotAsAny) 판정용 원본 selectedParcels ref —
+  //   pnu 미확보 시드 필지도 lat/lon은 갖고 있을 수 있어(검색·엑셀 지오코딩), 키 불일치 과도기에도
+  //   "같은 지점 재조회"를 잡아낸다.
+  const selectedParcelsRef = useRef(selectedParcels);
+  selectedParcelsRef.current = selectedParcels;
   const baseLayerMode = useMemo(() => resolveVWorldBaseLayer(layerState), [layerState]);
   const overlayFeatures = useMemo(
     () => mergeSatongMapFeatures([
@@ -741,7 +863,9 @@ export function SatongMultiMap({
       onBoundaryStatusChangeRef.current?.("idle");
       return;
     }
-    const hasAllGeometryAndMetadata = selectedParcels.every((parcel) => !!parcel.geometry && parcel.buildingAgeYears != null);
+    // ★WP-M3: 준비 판정을 selectionBoundaryReady 로 위임 — 나대지(연식 null) 1필지에 의한
+    //   전체 경계 재조회 루프 제거(geometry 존재 + '노후도 조회 시도됨'이면 준비 완료).
+    const hasAllGeometryAndMetadata = selectionBoundaryReady(selectedParcels);
     if (hasAllGeometryAndMetadata) {
       setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
       setBoundaryStatus("ready");
@@ -902,6 +1026,14 @@ export function SatongMultiMap({
 
     // 이미 staged에 있는 필지인지 확인(ref로 읽어 deps 오염 방지)
     const alreadyStaged = stagedRef.current.some((s) => s.pnu && s.pnu === result.pnu);
+    // ★WP-M2: 프로젝트에 이미 등록된 필지인지도 확인 — autoStage(프로젝트 연결 시 첫 필지
+    //   focusTarget)가 기등록 필지를 staged에 재등록해 "1필지 추가"가 뜨던 원천을 차단한다.
+    //   ★리뷰(HIGH) 방어선: 멤버십 키(pnu/주소)가 boundary 치유 전 과도기에 불일치할 수 있어,
+    //   autoStage 한정으로 "정확히 같은 지점 재조회"도 함께 검사한다(주된 치유는 Shell의
+    //   healParcelPnu — pnu 승격). 수동 클릭에는 좌표검사를 적용하지 않는다(인접 다른 필지 오탐 방지).
+    const alreadyRegistered =
+      selectedMembershipKeysRef.current.has(parcelMembershipKey(result)) ||
+      (opts.autoStage === true && isSameSpotAsAny(lat, lon, selectedParcelsRef.current));
 
     setStatus("found");
     setStatusMsg("");
@@ -910,7 +1042,9 @@ export function SatongMultiMap({
     result.lon = lon;
 
     if (opts.autoStage) {
-      if (!alreadyStaged) {
+      // 기등록(selectedParcels 멤버) 또는 기staged면 재등록하지 않는다 — 기등록 필지는 경계
+      //   오버레이가 이미 그리므로 별도 staged 녹색 레이어도 불필요(이중 표시 방지).
+      if (!alreadyStaged && !alreadyRegistered) {
         setStaged((prev) => {
           if (result.pnu && prev.some((s) => s.pnu === result.pnu)) return prev;
           return [...prev, result];
@@ -1004,6 +1138,37 @@ export function SatongMultiMap({
     if (staged.length === 0) return;
     onPickManyRef.current?.(staged);
   }, [staged]);
+
+  // ★WP-M2 reconcile: selectedParcels(프로젝트 필지)에 편입된 staged 항목을 청소한다.
+  //   완료(onPickMany)→부모가 addParcels→selectedParcels 증가→여기서 해당 staged를 제거하고
+  //   임시 녹색 레이어도 걷어 이중 카운트/이중 표시를 없앤다(경계 오버레이가 대신 그린다).
+  //   ★리뷰(MEDIUM3): removeStagedLayer(Leaflet DOM 조작) 부수효과를 setState 업데이터 밖으로
+  //   뺐다 — 업데이터는 React가 재호출(StrictMode 이중호출 등)할 수 있어 순수해야 한다. 최신
+  //   staged는 이미 동기화된 stagedRef(위 useEffect)로 읽고, 변화가 있을 때만 setStaged(값)로
+  //   직접 세팅한다(업데이터 함수 자체를 쓰지 않음).
+  /* eslint-disable-next-line react-hooks/set-state-in-effect -- staged reconcile follows the selectedParcels SSOT. */
+  useEffect(() => {
+    const prevStaged = stagedRef.current;
+    const toRemove: string[] = [];
+    const keep = prevStaged.filter((s) => {
+      const matched = selectedMembershipKeys.has(parcelMembershipKey(s));
+      if (matched && s.pnu) toRemove.push(s.pnu);
+      return !matched;
+    });
+    if (keep.length === prevStaged.length) return; // 변화 없음 — setState·레이어 조작 생략
+    toRemove.forEach((pnu) => removeStagedLayer(pnu));
+    setStaged(keep);
+  }, [selectedMembershipKeys, removeStagedLayer]);
+
+  // ★WP-M2 초기화 배선: 부모(Shell) clearParcels가 clearSignal을 증가시키면 지도 staged·폴리곤·
+  //   pending을 함께 청소한다(종전엔 목록만 비고 지도엔 잔존). 초기값과 같으면 무동작(마운트 무해).
+  const lastClearSignalRef = useRef(clearSignal ?? 0);
+  useEffect(() => {
+    const sig = clearSignal ?? 0;
+    if (sig === lastClearSignalRef.current) return;
+    lastClearSignalRef.current = sig;
+    handleClearAll();
+  }, [clearSignal, handleClearAll]);
 
   // Leaflet 지도 초기화 (컴포넌트 마운트 시 1회)
   useEffect(() => {
@@ -1280,6 +1445,11 @@ export function SatongMultiMap({
       showAge,
       ageCount,
       markerCount,
+      // 노후도 0건일 때 사유 세분("나대지 N·미준공 P·조회실패 M·대량생략 K") — 정직 무자료 고지(WP-M3).
+      ageNoBuilding: ageStatusCounts.ageNoBuilding,
+      ageNoApprovalDate: ageStatusCounts.ageNoApprovalDate,
+      ageLookupFailed: ageStatusCounts.ageLookupFailed,
+      ageSkippedBulk: ageStatusCounts.ageSkippedBulk,
     }));
 
     const fitKey = overlayFeatures.map(satongMapFeatureKey).join("||");
@@ -1298,6 +1468,7 @@ export function SatongMultiMap({
       if (overlayLayerRef.current === group) overlayLayerRef.current = null;
 	    };
 	  }, [
+    ageStatusCounts,
     featureStatusColors,
     featureStatusLabels,
     highlightFeatureAddress,
@@ -1614,13 +1785,18 @@ export function SatongMultiMap({
           if (typeof item.lat !== "number" || typeof item.lon !== "number") continue;
           const ordinal = poiCount;
           poiCount += 1;
-          const marker = L.circleMarker([item.lat, item.lon], {
-            radius: 5,
-            color,
-            weight: 2,
-            fillColor: "#ffffff",
-            fillOpacity: 0.9,
-          })
+          // ★WP-M3: POI는 '흰 코어+색 링+흰 헤일로' 도넛(타겟) 형태로 그린다. POI_CONTROL_COLORS가
+          //   AGE_RAMP(노후도 폴리곤)와 팔레트가 겹쳐 '색 점=노후도'로 오인되던 문제를, 색이 아닌
+          //   형태(링)로 분리한다. 노후도는 채워진 폴리곤, POI는 속 빈 링 → 시각 구분이 명확.
+          // ★리뷰(LOW): 렌더 실제 크기(content-box 14px + border 3px×2=6px = 20px)와
+          //   iconSize/anchor를 일치시킨다(종전 17/8.5는 3px 과소평가 — 앵커가 1.5px 어긋났다).
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="width:14px;height:14px;border-radius:50%;background:#ffffff;border:3px solid ${escapeHtml(color)};box-shadow:0 0 0 1.5px #ffffff,0 1px 3px rgba(15,23,42,.35);"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          });
+          const marker = L.marker([item.lat, item.lon], { icon })
             .bindPopup(
               `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
                 `<b>${escapeHtml(item.name || label)}</b>` +
@@ -1629,7 +1805,7 @@ export function SatongMultiMap({
               { maxWidth: 260 },
             )
             .addTo(group);
-          bindSatongLabel(marker, item.name || label, { permanent: ordinal < poiLabelLimit, offsetY: 5 });
+          bindSatongLabel(marker, item.name || label, { permanent: ordinal < poiLabelLimit, offsetY: 10 });
         }
       }
     }
@@ -1712,12 +1888,23 @@ export function SatongMultiMap({
     void queryParcel(focusLat, focusLon, { autoStage: true });
   }, [autoPreviewFocus, focusLat, focusLon, queryParcel, readOnly]);
 
-  // staged 합산 면적 계산
-  const totalAreaSqm = staged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
+  // ★WP-M2 CTA 이중표기: 신규(=staged∖selectedParcels)와 총(=selectedParcels+신규)을 분리 집계.
+  //   "지적 12건(칩)"↔"완료 1필지(CTA)" 혼란의 원천을 CTA에서 "신규 N · 총 M"으로 못박는다.
+  const newStaged = useMemo(
+    () => staged.filter((s) => !selectedMembershipKeys.has(parcelMembershipKey(s))),
+    [staged, selectedMembershipKeys],
+  );
+  const newCount = newStaged.length;
+  const totalCount = selectedMembershipKeys.size + newCount;
+  // 합산 면적은 신규 staged 기준(총 면적은 프로젝트 목록/분석에서 별도 집계).
+  const totalAreaSqm = newStaged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
 
-  // pending이 이미 staged에 있는지 여부(확인 카드 표시용)
+  // pending이 이미 staged에 있는지 / 프로젝트에 이미 등록됐는지(확인 카드 표시용)
   const pendingAlreadyStaged = pending?.pnu
     ? staged.some((s) => s.pnu === pending.pnu)
+    : false;
+  const pendingAlreadyRegistered = pending
+    ? selectedMembershipKeys.has(parcelMembershipKey(pending))
     : false;
 
   // [MAP-007] 기반 타일 실패 오버레이(순수 판정) — error일 때만 메시지+재시도 노출
@@ -1818,27 +2005,35 @@ export function SatongMultiMap({
             className={`pointer-events-none absolute left-3 flex max-w-[calc(100%-96px)] flex-col gap-2 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
           >
-            {/* 노후도 범례 (age 레이어 on일 때) */}
+            {/* 노후도 범례 (age 레이어 on일 때) — ★WP-M3: 노후도 자료(avgAge)가 있을 때만 5색
+                램프를 노출한다. 자료 0건이면 5색 램프가 '색=노후도' 오인을 조장하므로, "건물 정보
+                없음"과 무자료 사유(나대지/조회실패/대량생략)만 정직 표기한다. */}
             {hasSatongLayer(layerState, "age") && (
               <div className="rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
                 <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
-                <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
-                  {AGE_LEGEND_ITEMS.map((item) => (
-                    <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
-                      <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
-                      <span>{item.label}</span>
+                {avgAge !== null ? (
+                  <>
+                    <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
+                      {AGE_LEGEND_ITEMS.map((item) => (
+                        <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                          <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
+                          <span>{item.label}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                {/* 선택 필지 평균 노후도 */}
-                <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
-                  <span>선택 필지 평균 노후도</span>
-                  {avgAge !== null ? (
-                    <span className="text-xs font-black text-rose-600">{avgAge}년</span>
-                  ) : (
+                    <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
+                      <span>선택 필지 평균 노후도</span>
+                      <span className="text-xs font-black text-rose-600">{avgAge}년</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[10.5px] font-bold text-slate-500 flex flex-col gap-0.5">
                     <span className="font-semibold text-slate-400">건물 정보 없음</span>
-                  )}
-                </div>
+                    {buildAgeGapDetail(ageStatusCounts) && (
+                      <span className="text-[10px] font-semibold text-slate-400">{buildAgeGapDetail(ageStatusCounts)}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             {/* 상태 칩 스택 */}
@@ -1948,7 +2143,20 @@ export function SatongMultiMap({
               </div>
 
               {/* 버튼 영역 */}
-              {pendingAlreadyStaged ? (
+              {pendingAlreadyRegistered && !pendingAlreadyStaged ? (
+                // ★WP-M2: 프로젝트에 이미 등록된 필지 → "이미 등록됨" 배지·닫기만(재등록 불가).
+                //   staged에 담지 않으므로 "1필지 추가" 오카운트가 생기지 않는다.
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-[11px] font-bold text-emerald-500">이미 등록됨(선택 필지)</span>
+                  <button
+                    type="button"
+                    onClick={handleCancelPending}
+                    className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-muted)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--surface)] transition-colors"
+                  >
+                    닫기
+                  </button>
+                </div>
+              ) : pendingAlreadyStaged ? (
                 // 이미 staged에 있는 필지 → 제거 옵션 표시
                 <div className="flex items-center gap-2">
                   <span className="flex-1 text-[11px] font-bold text-emerald-500">이미 선택됨</span>
@@ -1999,14 +2207,15 @@ export function SatongMultiMap({
           : "mt-2 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2"}
         style={isMapFullscreen ? { zIndex: SATONG_UI_Z.bottomBar } : undefined}
       >
-        {/* 선택 현황 */}
+        {/* 선택 현황 — ★WP-M2 이중표기: 신규(이번에 담은 것)와 총(프로젝트 포함) 분리 표기.
+            프로젝트 연결 직후엔 신규 0·총 12로 보여 "지적 12 vs 완료 1" 혼란을 없앤다. */}
         <div className="flex-1 text-[11px]">
-          {staged.length > 0 ? (
+          {totalCount > 0 ? (
             <span className="font-bold text-[var(--text-primary)]">
-              선택 <span className="text-[var(--accent-strong)]">{staged.length}필지</span>
+              신규 <span className="text-[var(--accent-strong)]">{newCount}</span> · 총 <span className="text-[var(--accent-strong)]">{totalCount}필지</span>
               {totalAreaSqm > 0 && (
                 <span className="ml-1.5 font-normal text-[var(--text-secondary)]">
-                  · 합산 {Math.round(totalAreaSqm).toLocaleString()}㎡ ({toP(totalAreaSqm)}평)
+                  · 신규 {Math.round(totalAreaSqm).toLocaleString()}㎡ ({toP(totalAreaSqm)}평)
                 </span>
               )}
             </span>
@@ -2015,8 +2224,8 @@ export function SatongMultiMap({
           )}
         </div>
 
-        {/* 전체취소 버튼 — staged가 있을 때만 활성 */}
-        {staged.length > 0 && (
+        {/* 전체취소 버튼 — 신규 staged가 있을 때만 활성 */}
+        {newCount > 0 && (
           <button
             type="button"
             onClick={handleClearAll}
@@ -2026,14 +2235,14 @@ export function SatongMultiMap({
           </button>
         )}
 
-        {/* 완료 버튼 — staged가 있을 때만 활성(없으면 비활성 스타일) */}
+        {/* 완료 버튼 — 신규가 있을 때만 활성. 라벨에 신규·총을 함께 표기(이중 카운트 봉합). */}
         <button
           type="button"
-          disabled={staged.length === 0}
+          disabled={newCount === 0}
           onClick={handleComplete}
           className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
         >
-          {staged.length > 0 ? `완료(${staged.length}필지 추가)` : "지도에서 필지 선택"}
+          {totalCount > 0 ? `완료(신규 ${newCount} · 총 ${totalCount}필지)` : "지도에서 필지 선택"}
         </button>
       </div>
       )}

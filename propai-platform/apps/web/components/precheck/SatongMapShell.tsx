@@ -13,6 +13,7 @@ import {
   Gavel,
   Home,
   Landmark,
+  Layers,
   LineChart,
   Loader2,
   MapIcon,
@@ -194,7 +195,8 @@ const LAYERS: SatongLayer[] = [
     label: "지적도",
     shortLabel: "지적",
     description: "필지 경계, 지목, 면적, PNU를 선택 기준으로 사용합니다.",
-    icon: MapIcon,
+    // ★WP-M4: 레일 앵커(지도 레이어 관리)의 MapIcon과 중복 인지되던 것을 Layers로 교체(아이콘-기능 1:1).
+    icon: Layers,
     status: "active",
     tone: "bg-lime-100 text-lime-950 border-lime-200",
     source: "필지 클릭 API + 지적 경계",
@@ -387,6 +389,27 @@ function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu">): string {
   return parcel.pnu || normalizeKey(parcel.address);
 }
 
+/**
+ * ★리뷰(HIGH) 근치 — pnu/주소 키 이중성 승격.
+ *
+ * 시드 필지(엑셀·지오코딩)는 pnu 미확보 상태로 selectedParcels 에 들어온다(pnu=null, 키=주소).
+ * 이후 지도 boundary 보강(/zoning/parcel-boundaries)이 real 19자리 pnu 를 채워 돌려주는데,
+ * 종전 handleBoundaryEnriched 병합은 기존 p.pnu 를 그대로 유지해 이 real pnu 를 버렸다 —
+ * autoStage(parcelMembershipKey, real pnu 기준)는 이후 계속 이 필지를 "미등록"으로 오판했고,
+ * mergeSatongMapFeatures("지적 N건" 등 칩 집계)도 같은 물리 필지를 pnu-키/주소-키 2건으로 쪼갰다.
+ *
+ * 이 함수는 existingPnu 가 있으면 그대로 보존(real→real 덮어쓰기 금지 — 무날조), 없을 때만
+ * boundaryPnu 로 승격한다. handleBoundaryEnriched 한 곳에서 이 값을 채택하면 이후 파생되는
+ * selectedMapFeatures·mergeSatongMapFeatures·parcelMembershipKey 가 모두 같은 real pnu 로
+ * 수렴해 칩·CTA·merge 카운트가 한 번에 정합해진다(공용화 치유).
+ */
+export function healParcelPnu(
+  existingPnu: string | null | undefined,
+  boundaryPnu: string | null | undefined,
+): string | null {
+  return existingPnu || boundaryPnu || null;
+}
+
 function formatArea(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return "-";
   // ㎡·평 병행 표기(1평 = 3.305785㎡).
@@ -531,6 +554,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
+  // ★WP-M2: "초기화"(clearParcels)가 지도 내부 staged·녹색 폴리곤도 청소하도록 보내는 신호(nonce).
+  //   증가할 때마다 SatongMultiMap이 handleClearAll을 실행한다(종전엔 목록만 비고 지도엔 잔존).
+  const [clearNonce, setClearNonce] = useState(0);
+  // ★WP-M4: 레일(레이어 아이콘 세로바) 클릭 고정 토글 — hover 없이 터치로도 전개 가능하게.
+  const [railPinned, setRailPinned] = useState(false);
   // 새 프로젝트 생성 인플라이트 표시(버튼 disabled용) — 실제 중복차단은 creatingProjectRef(F4).
   const [creatingProject, setCreatingProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -613,6 +641,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         officialPricePerSqm: parcel.officialPricePerSqm,
         builtYear: parcel.builtYear,
         buildingAgeYears: parcel.buildingAgeYears,
+        ageStatus: parcel.ageStatus,
         geometry: parcel.geometry,
         source: parcel.source,
       })),
@@ -1095,6 +1124,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     setSelectedParcels([]);
     setFocusTarget(null);
     syncParcelsToStores([]);
+    setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
   }, [syncParcelsToStores]);
 
   const runDirectGeocode = useCallback(
@@ -1276,7 +1306,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
       zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
       officialPricePerSqm?: number | null; builtYear?: number | null;
-      buildingAgeYears?: number | null; geometry?: unknown }>,
+      buildingAgeYears?: number | null; ageStatus?: string | null; geometry?: unknown }>,
     ) => {
       setSelectedParcels((prev) => {
         if (!prev.length || !features.length) return prev;
@@ -1291,6 +1321,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
           if (!f) return p;
           const merged = {
             ...p,
+            // ★리뷰(HIGH) 근치: 시드 필지(pnu 미확보)의 합성/주소 키를 boundary가 돌려준 real
+            //   pnu로 승격한다(기존 real pnu는 보존 — healParcelPnu 참조). 이 한 줄이 칩·CTA·
+            //   merge 카운트 이중성의 근원(pnu/주소 키 불일치)을 한 곳에서 치유한다.
+            pnu: healParcelPnu(p.pnu, f.pnu),
             areaSqm: p.areaSqm ?? f.areaSqm ?? null,
             zoneType: p.zoneType ?? f.zoneType ?? null,
             jimok: p.jimok ?? f.jimok ?? null,
@@ -1299,13 +1333,18 @@ export function SatongMapShell({ locale }: { locale: string }) {
             officialPricePerSqm: p.officialPricePerSqm ?? f.officialPricePerSqm ?? null,
             builtYear: p.builtYear ?? f.builtYear ?? null,
             buildingAgeYears: p.buildingAgeYears ?? f.buildingAgeYears ?? null,
+            // ★WP-M3: 노후도 조회 사유(age_status)를 역전파해 "조회 시도됨"을 SSOT에 남긴다 —
+            //   나대지(연식 null)여도 ageStatus가 채워져 경계 재조회 루프가 끊긴다.
+            ageStatus: p.ageStatus ?? f.ageStatus ?? null,
             geometry: p.geometry ?? f.geometry ?? null,
           };
           if (
+            merged.pnu !== p.pnu ||
             merged.areaSqm !== p.areaSqm || merged.zoneType !== p.zoneType ||
             merged.jimok !== p.jimok || merged.lat !== p.lat || merged.lon !== p.lon ||
             merged.officialPricePerSqm !== p.officialPricePerSqm ||
             merged.builtYear !== p.builtYear || merged.buildingAgeYears !== p.buildingAgeYears ||
+            merged.ageStatus !== p.ageStatus ||
             merged.geometry !== p.geometry
           ) {
             changed = true;
@@ -1938,6 +1977,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 onCenterChange={setMapCenter}
                 onBoundaryEnriched={handleBoundaryEnriched}
                 onBoundaryStatusChange={handleBoundaryStatusChange}
+                clearSignal={clearNonce}
               />
             </div>
 
@@ -1945,15 +1985,28 @@ export function SatongMapShell({ locale }: { locale: string }) {
               ref={railRef}
               // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
               //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
-              className="group absolute right-4 top-20 z-[420] flex h-16 w-16 hover:h-auto hover:max-h-[calc(100%-120px)] flex-col gap-2 rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out overflow-hidden hover:overflow-y-auto"
+              // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
+              className={`group absolute right-4 top-20 z-[420] flex w-16 flex-col gap-2 rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+                railPinned
+                  ? "h-auto max-h-[calc(100%-120px)] overflow-y-auto"
+                  : "h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] hover:overflow-y-auto"
+              }`}
             >
-              {/* 접혔을 때와 펼쳐졌을 때의 앵커가 되는 메인 아이콘 버튼 */}
+              {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
+                  아이콘은 MapIcon(지도), 지적도 레이어는 Layers로 분리해 아이콘-기능 1:1. */}
               <button
                 type="button"
-                className="grid size-12 shrink-0 place-items-center rounded-2xl border transition border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--accent-strong)] hover:bg-[var(--surface-strong)] group-hover:border-[var(--line-strong)] group-hover:bg-[var(--surface-muted)] group-hover:text-[var(--text-secondary)]"
-                title="지도 레이어 관리 (마우스를 올리세요)"
+                onClick={() => setRailPinned((v) => !v)}
+                aria-pressed={railPinned}
+                aria-label={railPinned ? "레이어 목록 접기" : "레이어 목록 펼치기(고정)"}
+                className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
+                  railPinned
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+                    : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--accent-strong)] hover:bg-[var(--surface-strong)] group-hover:border-[var(--line-strong)] group-hover:bg-[var(--surface-muted)] group-hover:text-[var(--text-secondary)]"
+                }`}
+                title={railPinned ? "레이어 목록 고정 해제" : "지도 레이어 관리 (클릭 고정 · hover 전개)"}
               >
-                <MapIcon className="size-5 animate-pulse group-hover:animate-none" aria-hidden />
+                <MapIcon className={`size-5 ${railPinned ? "" : "animate-pulse group-hover:animate-none"}`} aria-hidden />
               </button>
 
               {/* 내부 레이어 버튼 리스트 (세로 전개) */}
