@@ -1645,40 +1645,22 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
     (usable/adjacency 필드는 받되 미소비 — 과대 주장 금지). usable 채택을 이 소비처들
     에도 확장하는 것은 후속 P1 스코프다.
     """
-    def _f(v: Any) -> float | None:
-        try:
-            return float(v) if v is not None else None
-        except (TypeError, ValueError):
-            return None
+    # ★다필지 parcels 계약 공용 정규화(SSOT) — str[]/dict[] 양 shape 를 canonical dict[] 로 수렴.
+    #   기존 인라인 camelCase↔snake 키맵(_f 포함)을 parcel_normalize.normalize_parcels 로 이관했다
+    #   (byte-동일 이관 — 재작성 아님). dict 는 원본 키 보존+정본 snake 오버레이(merge)라 통합집계
+    #   산출값은 무회귀(집계는 snake 키만 읽음). str 요소도 {address} 로 승격돼 수용된다
+    #   (과거: isinstance(dict) 필터가 str 을 무음 드롭 → 빈 items → 단일필지 폴백으로 배선실수 은폐).
+    #
+    #   ★area 결측 행 처리(정직 축소): str→{address} 로 승격된 행은 area_sqm 이 없어 아래 필터에
+    #     걸린다. 이 함수의 보강 경로(_enrich_effective_and_special)는 조례/법정한도·특이부지 게이트
+    #     '전용'이라 주소로 area 를 조회하지 못한다(zone 전용 구조). 따라서 무리하게 신규 area 조회를
+    #     만들지 않고 필터를 그대로 유지한다 = 오늘과 동일 동작(무악화). 승격 행은 str 을 dict 로
+    #     받는 다른 엔드포인트(auto_zoning enrich_parcel_list 등, area 를 실제 조회)에서 보강된다.
+    from app.services.land_intelligence.parcel_normalize import normalize_parcels
 
-    items: list[dict[str, Any]] = []
-    for p in parcels or []:
-        if not isinstance(p, dict):
-            continue
-        # 프론트 camelCase(AddressEntry) ↔ 집계 입력키(_far_eff 등) 정규화.
-        q: dict[str, Any] = {
-            "pnu": p.get("pnu"),
-            "address": p.get("address") or p.get("jibunAddress") or p.get("fullAddress"),
-            "zone_type": p.get("zone_type") or p.get("zoneCode") or p.get("zoneType"),
-            "land_category": p.get("land_category") or p.get("landCategory") or p.get("jimok"),
-            "area_sqm": _f(p.get("area_sqm") if p.get("area_sqm") is not None else p.get("areaSqm")),
-            # 실효/법정(프론트 farPct/bcrPct가 이미 조례반영 실효치 — 있으면 재계산 생략).
-            "_far_eff": _f(p.get("_far_eff") if p.get("_far_eff") is not None else p.get("farPct")),
-            "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
-            "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
-            "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
-            # 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구 미확정.
-            "geometry": p.get("geometry"),
-            # ★WP-A 항목3(다필지 접도 완화) 입력 — 프론트/업로드가 이미 실어 보내는 경우만 통과
-            #   (신규 조회 추가 없음). 없으면 None 그대로 — 아래 member_road_contact 집계가
-            #   정직하게 미상(None) 처리한다(과대낙관 금지).
-            "road_side": p.get("road_side") or p.get("roadSide"),
-            "road_contact": (
-                p.get("road_contact") if p.get("road_contact") is not None else p.get("roadContact")
-            ),
-        }
-        if (q["area_sqm"] or 0) > 0:
-            items.append(q)
+    items: list[dict[str, Any]] = [
+        q for q in normalize_parcels(parcels) if (q.get("area_sqm") or 0) > 0
+    ]
     if not items:
         return None
     try:

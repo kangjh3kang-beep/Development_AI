@@ -164,7 +164,9 @@ export function GlobalAddressSearch({
     //   인테이크 목록·지도 staged 가 1필지처럼 보이고("면적 보강 대기"·"완료(0필지 등록)"),
     //   실제 등록된 나머지 필지의 면적·용도가 화면에 반영되지 않는다.
     //   store 를 SSOT 로 쓰는 모드(writeToContext)일 때만 — 로컬 검색 모드는 결과 누출 방지 위해 제외.
-    if (writeToContext) {
+    //   single 모드도 제외 — 단일 입력 계약(예: 반경검색 중심점 1개)에 다필지를 주입하면 계약 위반.
+    //   (현재 single+writeToContext 조합 소비자는 0이라 도달 불가지만, 계약을 코드로 고정한다.)
+    if (writeToContext && !single) {
       const parcels = useProjectContextStore.getState().siteAnalysis?.parcels;
       if (Array.isArray(parcels) && parcels.length >= 2) {
         return parcels

@@ -44,6 +44,10 @@ class DeskAppraisalRequest(BaseModel):
     deposit_won: float | None = None
     cap_rate: float | None = None
     include_ai: bool = True                          # PDF에 AI 상세 해석(avm) 포함 여부
+    # ★다필지(additive): /desk-appraisal/pdf 에서 2건 이상이면 통합 보고서 모드로 전환.
+    #   행 계약: {pnu?, address?, area_sqm?, official_price_per_sqm?, comparable_avg_per_sqm?}
+    #   (단건 desk_appraisal 과 동일 인자만). 1회 상한 30필지 — 초과분은 절단·정직 고지.
+    parcels: list[dict] = []
 
 
 @router.post("/desk-appraisal")
@@ -182,10 +186,120 @@ async def rone_status(keyword: str = "지가변동"):
     return out
 
 
+# ★다필지 1회 상한 — land-report 의 120(auto_zoning.py:1389) 선례보다 보수적. desk-appraisal 은
+#   필지당 외부조회(지오코딩·공시지가·실거래·R-ONE)가 무거워 30필지로 절단(초과분 정직 고지).
+_DESK_APPRAISAL_MAX_PARCELS = 30
+
+
+async def _desk_appraisal_pdf_multi(req: "DeskAppraisalRequest", parcels: list[dict], format: str):
+    """다필지 탁상감정서 — 필지별 desk_appraisal 순차 호출 → 통합 보고서.
+
+    - 상한 30필지: 초과분은 절단하고 보고서 caption 에 정직 고지(N배 외부조회 방지).
+    - AI 해석(include_ai)·원장 적재는 대표(첫 성공) 필지 1건만(N배 LLM 과금·원장 중복 방지).
+    - 성공 필지가 0건이면 단건과 동일하게 JSON 오류 반환(정직).
+    """
+    from app.services.report.render import build_report_model_from_appraisal_multi, render_report
+
+    omitted = max(0, len(parcels) - _DESK_APPRAISAL_MAX_PARCELS)
+    capped = parcels[:_DESK_APPRAISAL_MAX_PARCELS]
+
+    # ★필지별 호출 = '제한 동시성(4) + 필지당 타임아웃(20s)' — R1 리뷰 적발 반영.
+    #   순차 × 무타임아웃이면 30필지 × 수 초(실거래 조회)가 게이트웨이/클라이언트 타임아웃을
+    #   넘길 수 있다. 동시 4는 외부 공공API 부하 예의(과도 병렬 금지)와 지연의 절충.
+    #   타임아웃/실패 필지는 행 단위 격리 → '보완필요' 표기(전체 500 전멸 금지).
+    import asyncio as _asyncio
+
+    _sem = _asyncio.Semaphore(4)
+
+    async def _one(p: dict) -> tuple[str, dict]:
+        addr = (p.get("address") or "").strip()
+        try:
+            async with _sem:
+                # 단건과 동일 인자만 전달(대표필지 수동입력 전파 금지 — 필지별 자체 자동조회).
+                r = await _asyncio.wait_for(
+                    desk_appraisal(
+                        pnu=p.get("pnu"), address=addr, area_sqm=p.get("area_sqm"),
+                        official_price_per_sqm=p.get("official_price_per_sqm"),
+                        comparable_avg_per_sqm=p.get("comparable_avg_per_sqm"),
+                    ),
+                    timeout=20.0,
+                )
+        except Exception:  # noqa: BLE001 — 개별 필지 실패/타임아웃은 통합 보고서를 막지 않음
+            r = {"ok": False, "message": "추정 실패", "address": addr}
+        return addr, (r if isinstance(r, dict) else {"ok": False, "address": addr})
+
+    # gather 는 입력 순서를 보존하므로 필지 순번(#)이 요청 순서와 일치한다.
+    pairs = await _asyncio.gather(*(_one(p) for p in capped))
+    addresses: list[str] = [a for a, _ in pairs]
+    results: list[dict] = [r for _, r in pairs]
+
+    ok_idx = [i for i, r in enumerate(results) if r.get("ok")]
+    if not ok_idx:
+        return {
+            "ok": False,
+            "message": "다필지 탁상감정: 공시지가를 확인할 수 있는 필지가 없습니다. "
+                       "PNU 또는 공시지가를 확인 후 다시 시도하세요.",
+            "parcels_count": len(results),
+        }
+    rep_i = ok_idx[0]
+    rep = results[rep_i]
+    rep_addr = addresses[rep_i]
+
+    # ★원장 적재는 다필지에서도 1회만(N중 과금 방지) — 통합 총액 합계·필지수 summary(additive).
+    try:
+        from app.services.ledger.ledger_adapters import record_user_analysis
+        total_final = sum(int(r.get("appraised_total_won") or 0)
+                          for r in results if r.get("ok") and r.get("appraised_total_won") is not None)
+        await record_user_analysis(
+            analysis_type="desk_appraisal",
+            summary={
+                "address": req.address or rep_addr, "pnu": rep.get("pnu"),
+                "parcels_count": len(results),
+                "final_value_won": total_final,   # 통합(성공 필지 합계) — 다필지 additive
+            },
+            pnu=rep.get("pnu") or None, address=req.address or rep_addr, source="desk_appraisal",
+        )
+    except Exception:  # noqa: BLE001 — 원장 적재 실패해도 보고서 생성 무손상
+        pass
+
+    # ★AI 해석은 대표(첫 성공) 필지 1건만(N배 LLM 과금 방지 — 단건과 동일 패턴).
+    ai_sections: dict | None = None
+    if req.include_ai:
+        import asyncio
+
+        from app.routers.pipeline import _interpret_stage
+
+        try:
+            interp = await asyncio.wait_for(
+                _interpret_stage("avm", {"address": rep_addr, **rep}), timeout=30.0)
+            if isinstance(interp, dict) and interp.get("ok") and isinstance(interp.get("sections"), dict):
+                ai_sections = interp["sections"]
+        except Exception:  # noqa: BLE001 — 타임아웃/해석 실패해도 PDF는 생성
+            ai_sections = None
+
+    model = build_report_model_from_appraisal_multi(
+        results, addresses=addresses, ai_sections=ai_sections, omitted_count=omitted)
+    data, media_type, ext = render_report(model, format)
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=propai_desk_appraisal_multi.{ext}"},
+    )
+
+
 @router.post("/desk-appraisal/pdf")
 @limiter.limit(_LAND_PRICE_LIMIT)
 async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest, format: str = "pdf"):
-    """예상 탁상감정서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유."""
+    """예상 탁상감정서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유.
+
+    ★다필지: req.parcels 가 2건 이상이면 필지별로 desk_appraisal 을 순차 호출해 '다필지 통합'
+      보고서를 만든다(상한 30필지·초과분 절단·정직 고지). 그 외(0~1건)는 기존 단건 경로를
+      바이트 동일하게 유지(무회귀). AI 해석·원장 적재는 다필지에서도 1회만(N배 과금 방지).
+    """
+    # ★다필지 모드 분기 — 단건 경로(아래)는 그대로 두어 무회귀.
+    _parcels = [p for p in (req.parcels or []) if isinstance(p, dict)]
+    if len(_parcels) >= 2:
+        return await _desk_appraisal_pdf_multi(req, _parcels, format)
+
     from app.services.report.render import build_report_model_from_appraisal, render_report
 
     result = await desk_appraisal(

@@ -199,3 +199,105 @@ def build_report_model_from_appraisal(
     # 8. 면책 — 정본 모델 최상위 disclaimer 필드로 전달(세 렌더러가 공통 하단 문구로 자동 출력).
     #    비어 있으면 None 을 넘겨 렌더러 기본 문구(tokens.DISCLAIMER_TEXT)로 자연스럽게 대체된다.
     return ReportModel(meta=meta, sections=sections, disclaimer=data.get("disclaimer") or None)
+
+
+def _adopted_method(result: dict[str, Any]) -> str | None:
+    """채택 산정방법 라벨. desk_appraisal 결과에는 단일 adopted_method 키가 없으므로
+    (있으면 우선) methods[].method 를 이어 붙인다(값 추측 없이 실산출 방법명만 사용)."""
+    m = result.get("adopted_method") or result.get("method")
+    if m:
+        return str(m)
+    methods = result.get("methods") or []
+    names = [str(x.get("method")) for x in methods if isinstance(x, dict) and x.get("method")]
+    return " · ".join(names) if names else None
+
+
+def build_report_model_from_appraisal_multi(
+    results: list[dict[str, Any]],
+    *,
+    addresses: list[str],
+    ai_sections: dict[str, Any] | None = None,
+    omitted_count: int = 0,
+) -> ReportModel:
+    """다필지 탁상감정 결과 → 정본 ReportModel(다필지 총괄 섹션 + 대표필지 상세).
+
+    ★재구현 금지(합성 전략): 대표(첫 ``ok``) 필지로 단건 어댑터 ``build_report_model_from_appraisal``
+      을 그대로 호출해 기본 모델(상세 8섹션)을 만들고, 그 맨 앞에 '0. 다필지 추정 총괄' 섹션만
+      additive 로 끼워 넣는다(단건 상세 로직 복제 0). 결과 dict 키는 단건 어댑터가 읽는 키를
+      그대로 사용한다(appraised_price_per_sqm·appraised_total_won·area_sqm·confidence).
+
+    Args:
+        results: 필지별 ``desk_appraisal`` 산출 dict(실패 필지는 {"ok": False, ...} 포함 가능).
+        addresses: ``results`` 와 같은 순서의 소재지 문자열(짧으면 부족분은 result['address']/빈값).
+        ai_sections: 대표필지 1건에만 결합할 AI 해석 섹션(N배 과금 방지 — 라우터가 1회만 생성).
+        omitted_count: 30필지 상한 초과로 잘려 보고서에 미포함된 필지 수(caption 에 정직 고지).
+    """
+    pairs: list[tuple[dict[str, Any], str]] = []
+    for i, r in enumerate(results or []):
+        rd = r if isinstance(r, dict) else {}
+        addr = addresses[i] if i < len(addresses) else ""
+        addr = (addr or rd.get("address") or "").strip()
+        pairs.append((rd, addr))
+
+    ok_pairs = [(r, a) for r, a in pairs if r.get("ok")]
+    # 대표(첫 성공) 필지로 단건 상세 모델 생성. 방어적으로 성공 필지가 없으면 첫 필지 사용
+    # (라우터가 '성공 0건'을 선차단하므로 실사용에선 항상 ok 대표가 존재).
+    rep_result, rep_addr = ok_pairs[0] if ok_pairs else (pairs[0] if pairs else ({}, ""))
+    model = build_report_model_from_appraisal(rep_result, address=rep_addr, ai_sections=ai_sections)
+
+    # ── 0. 다필지 추정 총괄 표(필지별 채택가 + 통합 합계) ──
+    rows: list[list[Any]] = []
+    for idx, (r, a) in enumerate(pairs, 1):
+        ok = bool(r.get("ok"))
+        area = r.get("area_sqm")
+        if ok:
+            unit_cell = _won_per_sqm(r.get("appraised_price_per_sqm")) or fmt_value(None)
+            total_cell = _won(r.get("appraised_total_won"))
+            method_cell = fmt_value(_adopted_method(r))
+        else:
+            unit_cell = total_cell = method_cell = fmt_value(None)  # 실패 필지는 값 '—'
+        rows.append([
+            str(idx),
+            fmt_value(a or None),
+            f"{float(area):,.1f}" if isinstance(area, (int, float)) and area else fmt_value(None),
+            unit_cell, total_cell, method_cell,
+            "확정" if ok else "보완필요",   # land_adapter.py:89 상태 표기 패턴 미러
+        ])
+
+    n_ok, m = len(ok_pairs), len(pairs)
+    caption = f"성공 {n_ok}/{m}필지 (채택 추정가 확정). "
+    if omitted_count > 0:
+        caption += f"1회 상한(30필지) 초과로 31번째 이상 {omitted_count}필지는 보고서에 미포함. "
+    caption += "실패 필지는 공시지가 미확인 등으로 '보완필요'(주소·PNU 재확인 필요)."
+
+    # 통합 합계 — 성공 필지만 합산(실패 필지 제외, 정직).
+    area_sum = sum(float(r.get("area_sqm") or 0) for r, _ in ok_pairs)
+    total_sum = sum(int(r.get("appraised_total_won") or 0)
+                    for r, _ in ok_pairs if r.get("appraised_total_won") is not None)
+    avg_unit = int(total_sum / area_sum) if area_sum else None
+    totals_rows: list[tuple[str, Any]] = [
+        ("성공 필지 수", f"{n_ok} / {m}필지"),
+        ("합산 대지면적", f"{area_sum:,.1f}㎡" if area_sum else fmt_value(None)),
+        ("합산 추정 총액", _won(total_sum) if total_sum else fmt_value(None)),
+        ("통합 평균단가(/㎡)", _won_per_sqm(avg_unit) or fmt_value(None)),
+    ]
+
+    overview = Section(title="0. 다필지 추정 총괄", blocks=[
+        DataTableBlock(
+            headers=["#", "소재지", "면적(㎡)", "채택 추정단가", "추정 총액", "산정방법", "상태"],
+            rows=rows, caption=caption, numeric_cols=[2, 3, 4]),
+        KVTableBlock(title="통합 합계", rows=totals_rows),
+        NarrativeBlock(paragraphs=[
+            "※ 통합 합계는 채택가가 확정된 성공 필지만 합산합니다(보완필요 필지 제외). "
+            "아래 상세는 대표(첫 성공) 필지 기준이며, 각 필지 개별 상세는 필지 단위로 다시 생성할 수 있습니다.",
+        ]),
+    ])
+    model.sections.insert(0, overview)
+
+    # 표지 메타 보강 — 다필지 통합임을 표지에서 인지(단건 모델의 title/subtitle 덮어씀).
+    model.meta.title = "토지 예상가치 추정 리포트 (다필지 통합)"
+    model.meta.subtitle = (
+        "PropAI 사통팔땅 — 공시지가·실거래 기반 참고용 시세 추정 (감정평가 아님) · "
+        f"다필지 {m}필지 통합"
+    )
+    return model

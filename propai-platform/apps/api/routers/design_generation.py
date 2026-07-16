@@ -56,6 +56,7 @@ from app.services.design_ingest.search_service import (
     get_drawing_object_key,
     search_drawings,
 )
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -106,7 +107,9 @@ class GenerateRequest(BaseModel):
     depth_m: float | None = None             # 부지 깊이(m) — 선택
     land_category: str | None = None         # 지목/토지유형 — 특이부지 게이트(학교용지·농지·산지 등)
     special_districts: list[str] | None = None  # 특별구역(GB·문화재·군사·상수원 등) — 특이부지 게이트
-    parcels: list[dict] | None = None        # 다필지(≥2) 통합 — 각 {area_sqm,zone_code,zone_name,
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[]. merge 보존이라 zone_code/zone_name/
+    #   ordinance_* 등 이 서비스가 읽는 원본 키는 유지되고 snake 키(area_sqm 등)가 오버레이된다(무손실).
+    parcels: ParcelsIn | None = None         # 다필지(≥2) 통합 — 각 {area_sqm,zone_code,zone_name,
     #   ordinance_far_pct,ordinance_bcr_pct,land_category,special_districts}. 주어지면 면적가중 통합
     avg_unit_area_sqm: float = 84.0          # 평균 평형(㎡)
     unit_types: list[str] | None = None      # 평형 믹스(예: ["59A","84A"]) — cad UNIT_TYPES 화이트리스트 검증

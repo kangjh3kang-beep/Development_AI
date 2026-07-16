@@ -226,12 +226,24 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
       // 이미 화면에 확보된 공시지가·면적·PNU를 넘겨 재지오코딩에 의존하지 않게(신뢰성)
-      const pdfBody = {
+      const pdfBody: Record<string, unknown> = {
         ...body(),
         pnu: res?.pnu ?? undefined,
         official_price_per_sqm: official ?? res?.official_price_per_sqm ?? undefined,
         area_sqm: res?.area_sqm ?? undefined,
       };
+      // ★다필지: 일괄 분석(batch)에서 성공 필지가 2건 이상이면 parcels 로 넘겨 '통합 보고서'로 생성.
+      //   실패 필지(res=null)는 생략하고, 각 필지의 화면 확보값(PNU·면적·공시지가)만 전송(재지오코딩 최소화).
+      const okParcels = (batch ?? []).filter((b) => b.res?.ok);
+      const isMultiReport = okParcels.length >= 2;
+      if (isMultiReport) {
+        pdfBody.parcels = okParcels.map((b) => ({
+          pnu: b.res?.pnu ?? undefined,
+          address: b.address,
+          area_sqm: b.res?.area_sqm ?? b.area ?? undefined,
+          official_price_per_sqm: b.res?.official_price_per_sqm ?? undefined,
+        }));
+      }
       const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf?format=${format}`, {
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(pdfBody),
@@ -239,10 +251,11 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
       // 성공=바이너리(pdf/pptx/docx). 실패=JSON(공시지가 미확인 등) → 정직 표기.
       if (!r.ok || (r.headers.get("content-type") || "").includes("json")) { setErr("리포트 생성 실패"); return; }
       const blob = await r.blob(); const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `예상시세추정보고서_${ranAddr || addr}.${format}`;
+      const fname = isMultiReport ? `예상시세추정보고서_통합${okParcels.length}필지` : `예상시세추정보고서_${ranAddr || addr}`;
+      const a = document.createElement("a"); a.href = url; a.download = `${fname}.${format}`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
-  }, [body, addr, ranAddr, res, official]);
+  }, [body, addr, ranAddr, res, official, batch]);
 
   // 프로젝트 부지 주소가 있으면 진입 시 자동 채움(실행은 사용자 클릭)
   useEffect(() => {

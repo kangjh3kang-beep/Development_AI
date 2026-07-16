@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from app.services.market.market_report_service import MarketReportService
 from app.services.market.migration_region_service import MigrationRegionService
 from app.services.market.population_density_service import PopulationDensityService
@@ -28,7 +29,8 @@ class MarketReportRequest(BaseModel):
     #   각 행 = {address, area_sqm, zone_type, farPct(실효), bcrPct(실효), farLegalPct?, bcrLegalPct?}.
     #   2개 이상이면 면적가중 통합면적으로 land_area를 산정한다(대표 1필지 고착 버그 해소).
     #   None/1개면 기존 단일필지 경로 그대로(무회귀).
-    parcels: list[dict] | None = None
+    #   ★공용 정규화(ParcelsIn): str[]/dict[] 양 shape → canonical dict[](무음 no-op 제거).
+    parcels: ParcelsIn | None = None
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:

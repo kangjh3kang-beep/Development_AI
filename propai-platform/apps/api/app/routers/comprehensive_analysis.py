@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 
 # P2-2 보안: 종합분석 LLM 호출 라우트 인증 강제(무인증·무쿼터 LLM 호출 → 미과금 비용남용 차단).
 # ★전수감사 보강: 사용자별 LLM 쿼터(enforce_llm_quota)를 라우터 레벨로 부착해 한도초과(402)
@@ -29,7 +30,9 @@ class ComprehensiveAnalysisRequest(BaseModel):
     )
     # ★다필지 통합분석: 33필지 등 다필지 업로드 시 필지목록(면적·용도지역 포함)을 전달하면
     #   종합분석이 '통합면적' 기준으로 산출된다(미전달 시 대표주소 단일필지 = N=1). 단일/다필지 일원화.
-    parcels: list[dict] | None = Field(
+    # ★parcels 계약 공용 정규화(ParcelsIn): str[](주소배열)/dict[](필지객체) 양 shape 를 검증
+    #   단계에서 canonical dict[] 로 수렴(무음 no-op → 단일필지 폴백 은폐 제거). 미지정 시 None.
+    parcels: ParcelsIn | None = Field(
         None,
         description="필지목록 [{pnu,address,area_sqm,zone_type}]. 다필지 통합분석용(미지정 시 단일).",
     )

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from app.services.ledger import analysis_ledger_service as ledger
 from app.services.pipeline.project_pipeline import (
     PipelineStage,
@@ -35,7 +36,7 @@ class PipelineRunRequest(BaseModel):
     # 다필지 통합 개발 시 필지목록(2개 이상이면 site stage가 면적가중 통합면적·우세용도로 산출).
     #   행 계약은 /analysis/comprehensive와 동일(camelCase/snake 양형 수용 — build_integrated_context 정규화).
     #   미전달/1필지면 기존 단일주소 동작 그대로(무회귀).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
 
 
 class StageRerunRequest(BaseModel):
@@ -49,7 +50,7 @@ class StageRerunRequest(BaseModel):
         description="해당 단계에 주입할 사용자 수정값 (예: {\"max_far\": 250})",
     )
     # 다필지 통합 — run과 동일 계약(재실행도 통합면적 유지).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     stage_overrides: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description=(

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
 from app.core.database import get_db
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
@@ -693,7 +694,9 @@ async def land_share(req: LandShareRequest):
 class ParcelBoundariesRequest(BaseModel):
     """필지 경계(구획도) 요청 — 단필지/다필지."""
 
-    parcels: list[dict] = []  # [{pnu?, address?, bcode?, jibun_address?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[]. merge 보존이라 jibun/bcode 등
+    #   enrich_parcel_list 가 필지 식별에 쓰는 원본 키는 유지된다(무손실·str 요소 crash 방지).
+    parcels: ParcelsIn = []  # [{pnu?, address?, bcode?, jibun_address?}]
     address: str | None = None  # 단일 주소 단축 입력
     pnu: str | None = None
 
@@ -1373,7 +1376,8 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
 
 class ParcelsInfoRequest(BaseModel):
     """다필지 토지정보 일괄 보강 요청 — 개별등록·엑셀 공통."""
-    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode 유지).
+    parcels: ParcelsIn = []  # [{address?, jibun?, pnu?, bcode?}]
 
 
 @router.post("/parcels-info")
@@ -1425,7 +1429,8 @@ class IntegratedAnalysisRequest(BaseModel):
     equity_won: 시나리오 위임(auto_recommend_top3)용 자기자본(미지정 시 서비스 기본).
     use_llm: 기본 false(무과금). True일 때만 시나리오 AI 내러티브 포함(규칙기반 통합집계는 무과금).
     """
-    parcels: list[dict] = []
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode/geometry 유지).
+    parcels: ParcelsIn = []
     equity_won: int | None = None
     use_llm: bool = False
 
@@ -1731,7 +1736,8 @@ class MultiParcelReportRequest(BaseModel):
     parcels: [{pnu?, address?, jibun?, bcode?, area_sqm?, land_category?, zone_type?, geometry?}]
     roadside_strip_commercial: 도로변 띠모양 상업지역 §84 걸침 임계 660㎡ 적용(기본 False=330㎡).
     """
-    parcels: list[dict] = []
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode/geometry 유지).
+    parcels: ParcelsIn = []
     roadside_strip_commercial: bool = False
 
 
@@ -1913,7 +1919,8 @@ async def development_facilities(req: DevelopmentFacilitiesRequest):
 class LandReportRequest(BaseModel):
     """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
     project_name: str = "토지분석보고서"
-    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode 유지).
+    parcels: ParcelsIn = []  # [{address?, jibun?, pnu?, bcode?}]
 
 
 @router.post("/land-report")

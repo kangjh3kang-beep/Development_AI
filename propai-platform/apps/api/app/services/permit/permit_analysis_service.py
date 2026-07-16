@@ -325,6 +325,9 @@ class PermitAnalysisService:
     @staticmethod
     def _blended_far(parcels: list[dict[str, Any]]) -> float | None:
         """면적가중평균 용적률(국토계획법 시행령 제84조). 면적 누락 시 단순평균."""
+        # TODO(계약표준화 후속): 정본 _aggregate_integrated_zoning(면적가중 blended_far_*_pct)
+        #   위임 검토 — 값 산출 경로 변경이라 이번(계약 shape 정규화) 라운드 제외.
+        #   scenario_simulator._blended_far 와 동일 산식이 3벌 존재(정본 일원화 대상).
         weighted = [(p["land_area_sqm"], p["max_far"]) for p in parcels if p.get("max_far")]
         if not weighted:
             return None

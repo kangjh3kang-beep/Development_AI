@@ -9,7 +9,6 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -72,6 +71,7 @@ type Labels = {
   formTitle: string;
   addressLabel: string;
   areaLabel: string;
+  areaHint: string;
   buildingAgeLabel: string;
   floorLabel: string;
   totalFloorsLabel: string;
@@ -118,7 +118,8 @@ const EN_LABELS: Labels = {
   projectUpdatedLabel: "Updated",
   formTitle: "Finance analysis input",
   addressLabel: "Address",
-  areaLabel: "Area (sqm)",
+  areaLabel: "Exclusive area (sqm)",
+  areaHint: "Apartment unit exclusive area — e.g. 59, 84",
   buildingAgeLabel: "Building age (years)",
   floorLabel: "Floor",
   totalFloorsLabel: "Total floors",
@@ -167,7 +168,8 @@ const KO_LABELS: Labels = {
   projectUpdatedLabel: "수정일",
   formTitle: "금융분석 입력",
   addressLabel: "주소",
-  areaLabel: "면적 (㎡)",
+  areaLabel: "전용면적 (㎡)",
+  areaHint: "아파트 세대 전용면적 — 예: 59, 84",
   buildingAgeLabel: "건물 연식 (년)",
   floorLabel: "층",
   totalFloorsLabel: "총층수",
@@ -296,11 +298,10 @@ export function ProjectFinanceWorkspaceClient({
     setForm((current) => ({
       ...current,
       address: current.address || projectQuery.data.address || "",
-      areaSqm:
-        current.areaSqm ??
-        (projectQuery.data.total_area_sqm != null
-          ? projectQuery.data.total_area_sqm
-          : null),
+      // ★area_sqm 프리필 금지: /avm 의 area_sqm 은 '아파트 세대 전용면적(㎡)'인데
+      //   projects.total_area_sqm 은 '연면적(GFA)'이라 축이 다르다. 연면적을 넣으면
+      //   MOLIT 실거래 ±15㎡ 매칭이 전멸→CTGAN 합성 폴백으로 빠져 시세가 왜곡된다.
+      //   무목업 원칙: 전용면적은 빈값으로 두고 사용자가 직접 입력하도록 유도한다(주소만 프리필).
     }));
   }, [projectQuery.data]);
 
@@ -310,8 +311,10 @@ export function ProjectFinanceWorkspaceClient({
     setForm((current) => ({
       ...current,
       address: current.address || siteAnalysis.address || "",
-      // ★다필지면 통합 면적 — 금융 산정이 통합 부지 기준이 되도록.
-      areaSqm: current.areaSqm ?? effectiveLandAreaSqm(siteAnalysis),
+      // ★area_sqm 프리필 금지: /avm 의 area_sqm 은 '아파트 세대 전용면적(㎡)'이라
+      //   부지분석의 토지면적(effectiveLandAreaSqm)과 축이 다르다. 토지면적을 넣으면
+      //   ±15㎡ 실거래 매칭이 전멸→합성 폴백으로 시세가 왜곡된다. 전용면적은 사용자 입력으로
+      //   두고 주소·PNU 만 프리필한다(무목업=빈값 유도).
       pnu: current.pnu || siteAnalysis.pnu || "",
     }));
   }, [siteAnalysis]);
@@ -502,18 +505,22 @@ export function ProjectFinanceWorkspaceClient({
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <NumberInput
-                    allowDecimal
-                    value={form.areaSqm}
-                    onChange={(n) =>
-                      setForm((current) => ({
-                        ...current,
-                        areaSqm: n,
-                      }))
-                    }
-                    placeholder={labels.areaLabel}
-                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-                  />
+                  <div>
+                    <NumberInput
+                      allowDecimal
+                      value={form.areaSqm}
+                      onChange={(n) =>
+                        setForm((current) => ({
+                          ...current,
+                          areaSqm: n,
+                        }))
+                      }
+                      placeholder={labels.areaLabel}
+                      className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                    />
+                    {/* ★전용면적 도움말: AVM 은 세대 전용면적(㎡)으로 실거래를 매칭한다. */}
+                    <p className="mt-1 text-[11px] text-[var(--text-hint)]">{labels.areaHint}</p>
+                  </div>
                   <NumberInput
                     value={form.jeonsePrice}
                     onChange={(n) =>

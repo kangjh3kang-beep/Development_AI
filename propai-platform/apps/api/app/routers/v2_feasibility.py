@@ -52,6 +52,7 @@ from app.services.feasibility.sensitivity_engine import (
     run_sensitivity_analysis,
 )
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
@@ -1116,7 +1117,7 @@ class AutoRecommendRequest(BaseModel):
     equity_won: int = 10_000_000_000
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택)
     # 다필지 통합 — 2필지 이상이면 통합면적·우세용도로 Top3 산정(미전달/1필지면 기존 단일 경로).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
 
 
 @router.post("/auto-recommend", dependencies=[Depends(enforce_llm_quota)])
@@ -1177,7 +1178,7 @@ class RoughScenarioRequest(BaseModel):
     """
 
     address: str
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     project_id: str | None = None
     dev_type: str | None = None       # 미지정 시 Top1 자동 추천
     region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
@@ -1230,7 +1231,7 @@ class RoughScenarioReportRequest(BaseModel):
     scenario: dict[str, Any] | None = None
     # ↓ scenario 미제공 시 재생성 입력(/rough-scenario와 동일 계약)
     address: str | None = None
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     project_id: str | None = None
     dev_type: str | None = None
     region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
