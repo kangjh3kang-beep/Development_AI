@@ -33,7 +33,10 @@
 // v421: 설계 스튜디오 가독성·SSOT 5결함(#316 — AI의견 마크다운 렌더+전역 7표면·KPI 근거배지·
 //        용도지역 무날조 기록) + IA 전면 재설계(#323 — 단일 스크롤·근거한도 패널·준비 대시보드·
 //        레일 단일화·헤더오프셋 토큰). 대규모 레이아웃 재배치가 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v421-studio-ia-overhaul";
+// v422: 사통맵 라벨 시스템 공용화(#329 — bindSatongLabel+무레이어 .satong-tooltip으로 이중 흰박스 제거·
+//        전역 라벨버짓/줌LOD·z계약 SSOT·칩/범례 코너도크 병합) + 보안(VWorld 키 하드코딩 제거·WMS 프록시
+//        일원화). 새 CSS/프록시 라우트가 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v422-satong-map-labels";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
