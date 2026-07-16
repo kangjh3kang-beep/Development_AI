@@ -136,10 +136,20 @@ def _ssot_effective_limits(zone_raw: Any, land_area: Any = None) -> dict[str, An
     far = eff.get("effective_far_pct")
     if far is None or float(far) <= 0:
         return None  # zone 미매칭(zone_unmatched 등) — 임의값 미생성(무날조)
+    far_basis = eff.get("far_basis")
+    # ★법정폴백 정직 강등(WP-U1d — #339 리뷰 MEDIUM): 조례·계획·완화·구조상한 어느 계층도
+    #   확정하지 못하고 법정상한만으로 산정된 값(far_basis "법정/조례"·"법정상한 적용(조례
+    #   미확인)")은 far_reliable=False로 전파한다 — 프론트 계약(node-body-builders.ts design
+    #   노드: basis가 national(법정폴백)이면 reliable=false)과 시맨틱 통일. 구조상한(건폐율×
+    #   층수)·조례 적용값·계획상한 등 계층 확정 산정은 기존대로 True(PR#334 계약 유지).
+    _legal_fallback = (
+        not bool(eff.get("ordinance_confirmed"))
+        and far_basis in (None, "법정/조례", "법정상한 적용(조례 미확인)")
+    )
     out: dict[str, Any] = {
         "far": float(far),
-        "far_basis": eff.get("far_basis"),
-        "far_reliable": True,  # SSOT 산정 성공(계층 min 반영) — PR#334 계약과 동일 의미
+        "far_basis": far_basis,
+        "far_reliable": not _legal_fallback,
     }
     bcr = eff.get("effective_bcr_pct")
     if bcr is not None and float(bcr) > 0:

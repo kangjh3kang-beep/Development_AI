@@ -125,12 +125,27 @@ def calculate(
         dict: base_far, allowed_far, max_far, incentive_far,
               donation_ratio, alpha, zone_category, legal_basis,
               simulation_table
+        zone 미매칭(법정 상한 미확인) 시: {"skipped": <사유>, "zone_type", "zone_category",
+              "simulation_table": []} — 임의 상한을 발명하지 않는다(무날조).
     """
     category = get_zone_category(zone_type)
     alpha = ALPHA_COEFFICIENTS.get(category, 1.0)
 
-    # 법정 상한 (절대 상한)
-    max_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type, 250.0)
+    # 법정 상한 (절대 상한) — ★무날조(WP-U1d): zone 미매칭이면 250% 임의값을 발명하지 않고
+    # 시뮬 미산정(skipped) 정직 반환. 과거엔 여기서 250.0을 지어내 ①미매칭 zone(개발제한구역
+    # 등)에 가짜 상한 기준 시뮬을 만들었고, ②base_far>250이면 반대로 상한이 기준보다 낮아져
+    # allowed_far를 깎는 자기모순 왜곡까지 발생했다(실측: base 300 → allowed 250).
+    max_far = national_far if national_far is not None else NATIONAL_FAR_LIMITS.get(zone_type)
+    if max_far is None:
+        return {
+            "skipped": (
+                f"용도지역 미매칭('{zone_type}') — 법정 상한 미확인으로 기부체납 인센티브 "
+                "시뮬레이션을 산정하지 않습니다(임의 상한 발명 금지·무날조)."
+            ),
+            "zone_type": zone_type,
+            "zone_category": category,
+            "simulation_table": [],
+        }
 
     # 기본용적률 = 조례값
     base_far = ordinance_far
