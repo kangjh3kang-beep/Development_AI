@@ -43,7 +43,10 @@
 //        전파·rule_trace 근거 정직화·캐시 핑거프린트). 설계 근거표기 변경이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v425: 생성허브 6산출물 100%(#338 — 법규검토서/시장분양/설계검토서 등 문서 산출물 배선·완결자산
 //        표면화·카드 정직화·가짜 단계진행 제거). 신규 다운로드 카드가 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v425-genhub-outputs";
+// v426: 생성허브 후속로드맵 6건(#348 — 시장 렌더 ReportModel 일원화·감사 잡 전환·심의 게이트 기본off·
+//        수지 차트 3종·제출번들 감사면·적산 CTA + registry 잡 IDOR 봉합). 신규 차트/잡 폴링 UI가
+//        stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v426-genhub-roadmap";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
