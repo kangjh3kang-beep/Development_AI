@@ -62,6 +62,9 @@ type Props = {
   floorHeightM?: number;
   effectiveFarPct?: number | null;
   effectiveBcrPct?: number | null;
+  /** ★WP-U2a: 실효 용적률 산정 근거 라벨(far_tier SSOT far_basis — 예 "구조상한(건폐율×층수)").
+   *  effectiveFarPct와 함께 백엔드로 정직 전파(메타 additive·수치 무영향). */
+  farBasis?: string | null;
   /** 다른 주소의 잔류 분석 등으로 비활성화해야 할 때 */
   disabled?: boolean;
 };
@@ -190,6 +193,7 @@ export function SeedDesignMassComparison({
   floorHeightM,
   effectiveFarPct,
   effectiveBcrPct,
+  farBasis,
   disabled,
 }: Props) {
   const [loading, setLoading] = useState(false);
@@ -220,7 +224,13 @@ export function SeedDesignMassComparison({
       // 한글→엔진 키 변환 성공 시에만 전달(실패 시 백엔드 기본값에 위임 — 잘못된 한글 주입 방지).
       if (zoneCode) body.zone_code = zoneCode;
       if (floorHeightM && floorHeightM > 0) body.floor_height_m = floorHeightM;
-      if (effectiveFarPct && effectiveFarPct > 0) body.effective_far_pct = effectiveFarPct;
+      if (effectiveFarPct && effectiveFarPct > 0) {
+        body.effective_far_pct = effectiveFarPct;
+        // ★WP-U2a: 실효값은 부지분석 SSOT(calc_effective_far) 산출일 때만 이 prop으로 오므로
+        //   reliable=true, 근거 라벨(farBasis)은 있을 때만 동봉(무날조·메타 additive).
+        body.far_reliable = true;
+        if (farBasis) body.far_basis = farBasis;
+      }
       if (effectiveBcrPct && effectiveBcrPct > 0) body.effective_bcr_pct = effectiveBcrPct;
       const res = await apiClient.post<SeedDesignResponse>("/mass-templates/seed-design", { body });
       setData(res);

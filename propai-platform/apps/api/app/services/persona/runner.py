@@ -105,6 +105,48 @@ def _normalize_zone_code(raw: Any) -> str | None:
     return None
 
 
+def _ssot_effective_limits(zone_raw: Any, land_area: Any = None) -> dict[str, Any] | None:
+    """실효 한도 SSOT(far_tier calc_effective_far) 소비 — 설계 매스 산출 전 실효 FAR/BCR 도출.
+
+    ★WP-U2a(실효FAR SSOT 배선): 종전 _run_designer는 BimGenerateRequest에 ordinance_*를
+    안 실어 설계엔진이 자체 보수 static 한도만 썼다(자연/생산녹지 등 구조상한(건폐율×층수)
+    계층이 있는 zone에서 SSOT 실효치와 이중 진실). calc_effective_far(법정범위→조례→계획상한→
+    인센티브→구조상한 계층 min)를 **순수함수·무네트워크로 1회 소비**(재계산 금지)해 실효 한도와
+    산정 근거(far_basis)를 돌려준다 — _enrich_for_aggregate(도시계획 다필지 집계)와 동일 패턴.
+
+    보수 정책 유지(핵심): 엔진이 min(법정 static, 주입 실효)로 클램프하므로 이 주입은 **하향
+    (과대 방지)만** 가능하다 — SSOT가 static보다 높아도(예: 제2종 250 vs static 200) static이
+    유지된다(가짜 상향 불가·기존 보수 기준선 무회귀).
+
+    반환: {"far","bcr"(옵션),"far_basis","far_reliable"} 또는 None(zone 미매칭 — 축약코드 등.
+    None이면 호출부가 아무것도 주입하지 않아 기존 동작 완전 보존·정직).
+    """
+    zone = str(zone_raw or "").replace(" ", "").strip()
+    if not zone:
+        return None
+    try:
+        from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+        eff = calc_effective_far(
+            {"local_ordinance": {}, "zone_limits": {}, "special_districts": []},
+            zone_type=zone, land_area=float(land_area or 0) or 0,
+        )
+    except Exception:  # noqa: BLE001 — SSOT 산정 실패 시 무주입(기존 보수 동작 유지·정직)
+        return None
+    far = eff.get("effective_far_pct")
+    if far is None or float(far) <= 0:
+        return None  # zone 미매칭(zone_unmatched 등) — 임의값 미생성(무날조)
+    out: dict[str, Any] = {
+        "far": float(far),
+        "far_basis": eff.get("far_basis"),
+        "far_reliable": True,  # SSOT 산정 성공(계층 min 반영) — PR#334 계약과 동일 의미
+    }
+    bcr = eff.get("effective_bcr_pct")
+    if bcr is not None and float(bcr) > 0:
+        out["bcr"] = float(bcr)
+    return out
+
+
 def _derive_status(checklist_items: list[dict[str, Any]]) -> str:
     """체크리스트 판정 → 전체 status(R12 잠정 강등)."""
     statuses = {c.get("status") for c in checklist_items}
@@ -626,6 +668,16 @@ async def _run_designer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any]
             req_kwargs["land_area_sqm"] = float(land_area)
         if zone_code:
             req_kwargs["zone_code"] = str(zone_code)
+        # ★WP-U2a: 실효 한도 SSOT 주입 — 원본 zone 라벨(한글)로 calc_effective_far를 소비해
+        #   ordinance_*로 전달한다. 엔진 min(법정 static, 실효) 클램프 → 하향(과대 방지)만 가능.
+        #   zone 미매칭(축약코드 등)·산정 실패면 None → 무주입(기존 보수 동작 완전 보존·정직).
+        ssot = _ssot_effective_limits(ctx.get("zone_code"), land_area)
+        if ssot:
+            req_kwargs["ordinance_far_pct"] = ssot["far"]
+            if ssot.get("bcr"):
+                req_kwargs["ordinance_bcr_pct"] = ssot["bcr"]
+            req_kwargs["far_basis"] = ssot.get("far_basis")
+            req_kwargs["far_reliable"] = ssot.get("far_reliable")
         # 매스 직접 치수가 ctx 에 있으면 우선(폭·깊이·층수).
         for k_ctx, k_req in (("building_width_m", "building_width_m"),
                              ("building_depth_m", "building_depth_m"),

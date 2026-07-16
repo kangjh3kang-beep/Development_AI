@@ -209,6 +209,11 @@ class BimGenerateRequest(BaseModel):
     #   None=법정상한 기준(기존 동작 100% 불변 — 하위호환).
     ordinance_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(%)")
     ordinance_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(%)")
+    # ★WP-U2a(실효FAR 근거 정직 전파·additive): ordinance_far_pct가 far_tier SSOT
+    #   (calc_effective_far) 산출 실효치일 때 그 산정 근거 라벨(예 "구조상한(건폐율×층수)")과
+    #   신뢰 플래그. 수치 산출에는 무영향 — 산출물 메타(rule_trace·applied_limits)로만 전파.
+    far_basis: str | None = Field(None, description="실효 용적률 산정 근거(far_tier SSOT far_basis)")
+    far_reliable: bool | None = Field(None, description="실효 용적률 SSOT 산정 성공 여부(정직 표기)")
     # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
     #   응답에 경고만 additive 부착(차단 아님). 컨텍스트가 전혀 없으면 게이트 자체를 생략한다
     #   (정직 — 무날조). pnu는 현재 판정에 쓰이지 않고 추적용 메타로 echo만 된다.
@@ -1381,6 +1386,11 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
         # ★B1: 부지분석 실효 한도(조례) — 자동산출 분기의 min(법정,조례,목표) 클램프 결과에 영향.
         "ordinance_far_pct": req.ordinance_far_pct,
         "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        # ★WP-U2a: 실효 근거 메타 — build_mass_contract의 rule_trace(basis 문구·far_basis 키)가
+        #   캐시되는 mass 안에 실리므로, 누락 시 근거만 다른 요청이 같은 열쇠로 충돌해 남의 근거
+        #   문구를 돌려주는 캐시오염이 된다(ordinance_*와 동일 이유).
+        "far_basis": req.far_basis,
+        "far_reliable": req.far_reliable,
         # ★B2: 특이부지 게이트 입력 — mass["special_parcel"](경고)에 영향.
         "land_category": req.land_category,
         "special_districts": sorted(req.special_districts) if req.special_districts else None,
@@ -1541,6 +1551,9 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
             #   미제공(None) 시 클램프 미적용=법정상한 기준(기존 동작 100% 불변).
             ordinance_far_percent=req.ordinance_far_pct,
             ordinance_bcr_percent=req.ordinance_bcr_pct,
+            # ★WP-U2a: 실효 근거 메타(있을 때만 값) — rule_trace·applied_limits로 정직 전파.
+            far_basis=req.far_basis,
+            far_reliable=req.far_reliable,
         )
         legal = svc.get_legal_limits(req.zone_code)
         eff = svc.compute_effective_site(site)

@@ -28,7 +28,7 @@ import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis } from "@/lib/zoning-ssot";
 import { CadCorrectionSection } from "@/components/design/CadCorrectionSection";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
@@ -890,6 +890,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
     if (ordinanceFarPct && ordinanceFarPct > 0) body.ordinance_far_pct = ordinanceFarPct;
     if (ordinanceBcrPct && ordinanceBcrPct > 0) body.ordinance_bcr_pct = ordinanceBcrPct;
+    // ★WP-U2a: 실효 근거 정직 전파(additive) — 실효/통합 계층이면 SSOT(calc_effective_far)
+    //   산정 성공(reliable=true), 법정상한 폴백(national)이면 false. farBasis 라벨(예 "구조상한
+    //   (건폐율×층수)")은 있을 때만 동봉 — design run 메타(rule_trace)의 "조례" 오인 방지(무날조).
+    const farResMass = resolveFarWithBasis(siteAnalysis);
+    if (farResMass && farResMass.value > 0) {
+      body.far_reliable = farResMass.basis !== "national";
+      if (siteAnalysis?.farBasis) body.far_basis = siteAnalysis.farBasis;
+    }
 
     // 폴백 매스도 프로젝트 개요(GFA·층수)에서 역산 — /mass 실패 시에도 "프로젝트와 무관한
     // 40×20 박스"가 잠깐 뜨던 문제 해소(정보 있으면 실제에 근접).
@@ -961,6 +969,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     //   값이 없으면 필드를 생략한다(백엔드 기존 폴백 유지 — 가짜값 금지).
     const ordinanceFarPct = resolveFarPct(siteAnalysis);
     const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
+    // ★WP-U2a: 실효 근거 정직 전파(additive·/mass와 동일 계약) — national 폴백이면 reliable=false.
+    const farResBim = resolveFarWithBasis(siteAnalysis);
     return JSON.stringify({
       building_width_m: spec?.building_width_m,
       building_depth_m: spec?.building_depth_m,
@@ -975,6 +985,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       unit_types: designData?.unitTypes ?? undefined,
       ...(ordinanceFarPct && ordinanceFarPct > 0 ? { ordinance_far_pct: ordinanceFarPct } : {}),
       ...(ordinanceBcrPct && ordinanceBcrPct > 0 ? { ordinance_bcr_pct: ordinanceBcrPct } : {}),
+      ...(farResBim && farResBim.value > 0
+        ? {
+            far_reliable: farResBim.basis !== "national",
+            ...(siteAnalysis?.farBasis ? { far_basis: siteAnalysis.farBasis } : {}),
+          }
+        : {}),
     });
   }, [spec, designData, resolvedLandArea, siteAnalysis]);
 

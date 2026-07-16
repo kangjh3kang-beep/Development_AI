@@ -15,7 +15,7 @@
 //  - 면적은 반드시 effectiveLandAreaSqm(통합면적 우선)으로 읽어 다필지 일관성을 지킨다.
 
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis } from "@/lib/zoning-ssot";
 import { PYEONG_SQM } from "@/lib/formatters";
 import type {
   SiteAnalysisData,
@@ -202,6 +202,24 @@ export function buildNodeBody(
       if (zc) body.zone_code = zc;
       const floor = positiveInt(design?.floorCount);
       if (floor != null) body.floor_count = floor;
+      // ★WP-U2a(실효FAR SSOT 관통): 부지분석 실효 한도(통합>실효>법정)를 설계엔진 B1 계약
+      //   (ordinance_far_pct/bcr_pct)으로 주입. 종전엔 이 design 노드만 미주입이라 파이프라인
+      //   설계 run이 엔진 자체 static 한도만 썼다(같은 파일 audit 노드 limit·설계스튜디오
+      //   CadBimIntegrationPanel B1과 이중 진실). 엔진이 min(법정 static, 주입 실효)로
+      //   클램프하므로 이 주입은 하향(과대 방지)만 가능하다(가짜 상향 불가).
+      //   미확보 시 미주입 — 백엔드 기존 폴백 유지(무회귀·무날조).
+      const farRes = resolveFarWithBasis(site);
+      if (farRes && farRes.value > 0) {
+        body.ordinance_far_pct = farRes.value;
+        // 근거 정직 전파(additive) — 실효/통합 계층이면 SSOT(calc_effective_far) 산정 성공
+        //   (reliable=true), 법정상한 폴백(national)이면 false. farBasis 라벨
+        //   (예 "구조상한(건폐율×층수)")은 있을 때만 동봉(무날조).
+        body.far_reliable = farRes.basis !== "national";
+        const fb = nonEmptyStr(site?.farBasis);
+        if (fb) body.far_basis = fb;
+      }
+      const bcrLim = positiveNum(resolveBcrPct(site));
+      if (bcrLim != null) body.ordinance_bcr_pct = bcrLim;
       break;
     }
 

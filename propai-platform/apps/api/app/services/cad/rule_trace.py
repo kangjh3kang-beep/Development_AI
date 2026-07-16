@@ -180,17 +180,33 @@ def build_rule_trace(
             "legal_link": _verified_legal_link("daylight_height"),
         })
 
-    # ── 3) 조례 실효 한도(지자체 도시계획조례) ──
+    # ── 3) 조례/실효 한도(지자체 도시계획조례·부지분석 실효) ──
     #   ★조례값(ordinance_*)이 실제로 주어진 경우에만 entry(무날조 — 없으면 생략).
+    #   ★WP-U2a: 주입값이 far_tier SSOT(calc_effective_far) 산출 실효치면 그 산정 근거
+    #     (far_basis — 예 "구조상한(건폐율×층수)")를 정직 병기한다. 종전엔 SSOT 실효치도
+    #     일괄 "조례 실효한도"로 표기해 근거가 소실됐다(구조상한 유래를 조례로 오인).
+    ssot_far_basis = getattr(site_input, "far_basis", None)
+    ssot_far_reliable = getattr(site_input, "far_reliable", None)
     if ord_far is not None or ord_bcr is not None:
+        _applied: dict[str, Any] = {
+            "ordinance_far_pct": ord_far,
+            "ordinance_bcr_pct": ord_bcr,
+        }
+        _basis = "조례 실효한도(법정 이내로만 적용 — 가짜 상향 금지)"
+        if ssot_far_basis is not None or ssot_far_reliable is not None:
+            # SSOT 근거 메타가 온 경우에만 additive 키 추가(기존 trace 모양 불변·무회귀).
+            _applied["far_basis"] = ssot_far_basis
+            _applied["far_reliable"] = ssot_far_reliable
+            if ssot_far_basis:
+                _basis = (
+                    f"부지분석 실효한도(산정근거: {ssot_far_basis} — far_tier SSOT, "
+                    "법정 이내로만 적용·가짜 상향 금지)"
+                )
         rule_trace.append({
             "rule_code": "지자체_도시계획조례",
             "rule_name": "조례 실효 한도",
-            "applied": {
-                "ordinance_far_pct": ord_far,
-                "ordinance_bcr_pct": ord_bcr,
-            },
-            "basis": "조례 실효한도(법정 이내로만 적용 — 가짜 상향 금지)",
+            "applied": _applied,
+            "basis": _basis,
             "source": "지자체 도시계획조례",
             # ★조례 딥링크는 지자체명(sigungu)이 있어야 검증 가능(예: "서울특별시 도시계획 조례").
             #   이 추적표에는 지자체명이 없어 가짜 링크 대신 None으로 둔다(무날조 — build_ordinance_url 미사용).

@@ -1010,6 +1010,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           floorHeightM={Number(form.floorHeight) || 3}
           effectiveFarPct={seedEffectiveFarPct}
           effectiveBcrPct={seedEffectiveBcrPct}
+          farBasis={siteMatch !== "mismatch" ? siteAnalysis?.farBasis ?? null : null}
           disabled={siteMatch === "mismatch"}
         />
       )}
