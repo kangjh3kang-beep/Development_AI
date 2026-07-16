@@ -17,10 +17,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Boxes, CheckCircle2, Construction, DraftingCompass, Folder, Settings } from "lucide-react";
+import { Boxes, Construction, DraftingCompass, Folder, Settings } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import type { DesignData } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveDominantZone } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
@@ -48,7 +49,7 @@ const STEPS = [
   { key: "run", label: "실행", desc: "AI 심사 실행" },
 ] as const;
 
-/* ── 실행 로딩 엔진 체크리스트(예상 진행 표시 — 결과 아님) ── */
+/* ── 실행 중 표시할 '심사 점검 항목' 목록 — 순차 완료 연출이 아니라 이 심사가 다루는 범위를 나열만 한다. ── */
 
 const ENGINE_STEPS = [
   "개요·도면 파라미터 정규화",
@@ -63,6 +64,51 @@ const ENGINE_STEPS = [
 
 const MAX_IFC_BYTES = 200 * 1024 * 1024; // 200MB — BIM 모델 상한(클라이언트 사전 차단)
 const MAX_DXF_BYTES = 20 * 1024 * 1024; // 20MB — DXF 상한(백엔드 import-dxf 한도와 동일)
+
+/** 경과 초 → "m:ss" 표기 — 실제 경과 시간만 표시(가짜 단계진행 연출 대체·정직). */
+function formatElapsed(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, "0")}`;
+}
+
+/** ★매스 브릿지 — 설계 스튜디오 산출 매스(designData) → 심사 개요 필드(BriefField[]) 매핑.
+ *
+ * 키/라벨/단위는 백엔드 표준(design_audit.brief_extractor.BRIEF_FIELDS + _BRIEF_UNITS)과 1:1이라
+ * run-upload가 brief.fields[{key,value}] → params dict로 그대로 소비한다(라우터 705~707).
+ * 값이 실재할 때만 담는다(무날조 — 없는 값은 생략). 대지면적·용도지역(zone)은 ⑴부지 입력이
+ * 권위 출처이므로 여기서 중복 시드하지 않는다(혼입 방지). 출처는 'user' — 업로드 문서에서
+ * 추출한 값이 아니라 사용자 프로젝트의 설계 산출값임을 뜻한다(안내 문구로 출처를 별도 명시). */
+function briefFieldsFromDesignData(d: DesignData): BriefField[] {
+  const out: BriefField[] = [];
+  const addNum = (
+    key: string,
+    label: string,
+    unit: string | null,
+    v: number | null | undefined,
+  ) => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return;
+    // 정수 성격(층수·세대수)은 정수로, 그 외는 소수 1자리 반올림 표기.
+    const isCount = key === "floors_above" || key === "units";
+    const value = isCount ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+    out.push({ key, label, value, extractedValue: "", unit, quote: null, source: "user" });
+  };
+  const addStr = (key: string, label: string, v: string | null | undefined) => {
+    const s = (v ?? "").toString().trim();
+    if (!s) return;
+    out.push({ key, label, value: s, extractedValue: "", unit: null, quote: null, source: "user" });
+  };
+  addNum("building_area_sqm", "건축면적(㎡)", "㎡", d.massGeom?.footprintSqm ?? null);
+  addNum("total_floor_area_sqm", "연면적(㎡)", "㎡", d.totalGfaSqm);
+  addNum("bcr_pct", "건폐율(%)", "%", d.bcr);
+  addNum("far_pct", "용적률(%)", "%", d.far);
+  addNum("building_height_m", "건축물 높이(m)", "m", d.heightM ?? null);
+  addNum("floors_above", "지상 층수", "층", d.floorCount);
+  addNum("units", "세대수", "세대", d.unitCount ?? null);
+  addStr("building_use", "주용도", d.buildingType);
+  return out;
+}
 
 /** 부지분석 SSOT의 조례 데이터(OrdinanceData) → 백엔드 legal_zone_limits.applicable_limits_for
  * 계약(regulation_payload.local_ordinance)으로 옮겨 담는다(변환만 — 값 생성 금지).
@@ -113,6 +159,8 @@ export function DesignAuditWorkspace({
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // ★매스 브릿지(모세혈관) — 설계 스튜디오 산출 매스(designData)를 심사 개요에 자동 시드(읽기 전용 구독).
+  const designData = useProjectContextStore((s) => s.designData);
 
   const [step, setStep] = useState(0);
   const [maxVisited, setMaxVisited] = useState(0);
@@ -137,6 +185,24 @@ export function DesignAuditWorkspace({
   const [fields, setFields] = useState<BriefField[]>([]);
   const [briefId, setBriefId] = useState<string | null>(null);
   const [briefNote, setBriefNote] = useState<string | null>(null);
+  // 설계 스튜디오 매스를 개요에 자동 시드했는지(안내 문구 표기용) + 1회 시드 가드.
+  const [seededFromDesign, setSeededFromDesign] = useState(false);
+  const designSeedRef = useRef(false);
+
+  /* ★매스 브릿지 — 설계 스튜디오가 산출한 매스(designData)를 심사 개요 필드로 1회 자동 시드한다.
+     - 있을 때만: 매핑 가능한 값이 하나라도 있을 때만(없으면 무시 — 무날조).
+     - 무손상: 이미 추출/수동 입력한 개요(fields)가 있으면 덮지 않는다(기존 업로드 경로 보존).
+     출처는 'user'(업로드 문서 추출이 아니라 사용자 프로젝트 설계값) — 아래 안내 문구로 출처를 명시한다. */
+  useEffect(() => {
+    if (designSeedRef.current) return; // 1회만 시드(사용자 편집·추출을 재덮어쓰지 않음)
+    if (fields.length > 0) return; // 이미 개요값이 있으면 시드 안 함(무손상)
+    if (!designData) return;
+    const seeded = briefFieldsFromDesignData(designData);
+    if (seeded.length === 0) return; // 매핑 가능한 값이 하나도 없으면 시드 안 함
+    designSeedRef.current = true;
+    setFields(seeded);
+    setSeededFromDesign(true);
+  }, [designData, fields.length]);
 
   /* ⑶ 도면 — IFC·DXF 파일(선택) */
   const ifcRef = useRef<HTMLInputElement>(null);
@@ -150,21 +216,26 @@ export function DesignAuditWorkspace({
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState("");
   const [report, setReport] = useState<DesignAuditReport | null>(null);
-  const [engineIdx, setEngineIdx] = useState(0);
+  // 실행 경과 시간(초) — 실제 시간만 표기(가짜 단계진행 연출 금지·정직).
+  const [elapsedSec, setElapsedSec] = useState(0);
   // AI 보조(사각지대 쟁점 생성) 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(True)에 암묵
   // 의존해 항상 ON이었다. 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반 심사만
   // 받을 수 있게 한다(D1).
   const [useLlm, setUseLlm] = useState(true);
 
-  /* 실행 중 엔진 체크리스트 진행 표시 — 타이머 기반 "예상" 진행(결과 아님, 라벨로 고지). */
+  /* 실행 중 경과 시간(초) 카운터 — 실제 진행과 무관한 '가짜 단계 연출'을 제거한 정직한 시계.
+     엔진 단계는 아래에서 '이 심사가 점검하는 항목'으로 나열만 하고, 진행 상태는 단일 '진행 중'으로
+     표시한다(동기 POST가 끝나면 결과 보고서로 전환 — design-runs 잡 전환은 이번 스코프 밖 후속). */
   useEffect(() => {
     if (!running) {
-      setEngineIdx(0);
+      setElapsedSec(0);
       return;
     }
+    const startedAt = Date.now();
+    setElapsedSec(0);
     const timer = setInterval(() => {
-      setEngineIdx((prev) => Math.min(prev + 1, ENGINE_STEPS.length - 1));
-    }, 2500);
+      setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
     return () => clearInterval(timer);
   }, [running]);
 
@@ -526,8 +597,15 @@ export function DesignAuditWorkspace({
                       setFields(extracted);
                       setBriefId(meta.briefId);
                       setBriefNote(meta.message);
+                      setSeededFromDesign(false); // 추출값이 설계 시드를 대체 — 시드 안내 문구 해제
                     }}
                   />
+                  {seededFromDesign && fields.length > 0 && (
+                    <p className="rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
+                      설계 스튜디오에서 산출된 매스 값(층수·연면적·건폐/용적률 등)을 개요에 불러왔습니다.
+                      값을 확인·수정하거나, 위에서 개요 문서를 업로드하면 추출값으로 대체됩니다.
+                    </p>
+                  )}
                   {briefNote?.trim() && (
                     <p className="text-[11px] text-[var(--text-hint)]">{briefNote.trim()}</p>
                   )}
@@ -665,35 +743,40 @@ export function DesignAuditWorkspace({
               {/* ⑷ 실행 */}
               {step === 3 &&
                 (running ? (
-                  /* 로딩 — 엔진 체크리스트(예상 진행 표시) */
+                  /* 로딩 — 정직 표기: 실제 진행률을 알 수 없으므로 '진행 중' 단일 상태 + 실제 경과 시간만
+                     표시한다. 아래 목록은 '이 심사가 점검하는 항목'을 나열만 한 것(순차 완료 연출 아님). */
                   <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
-                    <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
-                      <Settings className="size-4 animate-spin" aria-hidden />AI 심사 엔진 실행 중…
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                        <Settings className="size-4 animate-spin" aria-hidden />AI 심사 진행 중…
+                      </p>
+                      <span
+                        className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2.5 py-1 font-mono text-[11px] font-bold tabular-nums text-[var(--text-secondary)]"
+                        title="실행 시작 후 실제 경과 시간"
+                      >
+                        경과 {formatElapsed(elapsedSec)}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-[11px] font-semibold text-[var(--text-secondary)]">
+                      이 심사가 점검하는 항목
                     </p>
-                    <ul className="mt-3 grid gap-1.5">
-                      {ENGINE_STEPS.map((label, i) => (
-                        <li key={label} className="flex items-center gap-2 text-[12px]">
-                          {i < engineIdx ? (
-                            <CheckCircle2 className="size-3.5 text-[var(--status-success)]" aria-hidden />
-                          ) : i === engineIdx ? (
-                            <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--accent-strong)]" />
-                          ) : (
-                            <span className="inline-block h-2.5 w-2.5 rounded-full border border-[var(--line-strong)]" />
-                          )}
+                    <ul className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+                      {ENGINE_STEPS.map((label) => (
+                        <li
+                          key={label}
+                          className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)]"
+                        >
                           <span
-                            className={
-                              i <= engineIdx
-                                ? "font-semibold text-[var(--text-primary)]"
-                                : "text-[var(--text-hint)]"
-                            }
-                          >
-                            {label}
-                          </span>
+                            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--line-strong)]"
+                            aria-hidden
+                          />
+                          <span>{label}</span>
                         </li>
                       ))}
                     </ul>
                     <p className="mt-3 text-[11px] text-[var(--text-hint)]">
-                      단계 표시는 예상 진행이며, 서버 심사가 끝나면 결과 보고서로 전환됩니다.
+                      예상 소요 3~5분입니다. 단계별 진행률은 실제 진행과 다를 수 있어 표시하지 않으며(정직하게
+                      생략), 서버 심사가 끝나면 결과 보고서로 자동 전환됩니다. 이 화면을 닫지 말고 기다려 주세요.
                     </p>
                   </div>
                 ) : (

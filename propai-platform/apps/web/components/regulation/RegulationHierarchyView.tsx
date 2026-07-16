@@ -17,6 +17,7 @@ import {
   type LucideIcon,
   Map as MapIcon,
   Scale,
+  ShieldCheck,
   Sparkles,
   Target,
   TrafficCone,
@@ -183,11 +184,37 @@ export function RegulationHierarchyView({
   // 높이 카드 녹지 층수상한 근거칩(WP-R2) — 없으면(구버전·비녹지) 미표시. 로컬 const로 안전 narrow.
   const heightRef = result.limits.height.legal_ref;
 
+  // 검토 요약 배지(★사실 기반 — 판정 아님): 백엔드가 '적합/부적합' verdict를 주지 않으므로
+  //   단정을 만들지 않고, 실재하는 사실만 집계한다 — 적용 규정 항목 수(계층+지구/구역) + 조례
+  //   강화(법정 대비 조례가 축소한) 정량 한도 건수(LimitCard tightened 규칙과 동일). 날조 0.
+  const appliedCount =
+    (result.hierarchy ?? []).reduce((n, lv) => n + (lv.items?.length ?? 0), 0) +
+    (result.districts?.length ?? 0);
+  const tightenedCount = (["bcr", "far"] as const).reduce((n, k) => {
+    const t = result.limits?.[k];
+    return t && t.legal != null && t.ordinance != null && t.ordinance < t.legal ? n + 1 : n;
+  }, 0);
+
   return (
     <>
       {/* 부지 요약 + 정량 한도 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
+          {/* 검토 완료 요약 배지(사실 기반) — 적용 규정 항목 수·조례 강화 건수만 정직 표기. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] px-3 py-1 text-xs font-bold text-[var(--status-success)]">
+              <ShieldCheck className="size-3.5" aria-hidden />규제 검토 완료
+            </span>
+            <span className="text-xs text-[var(--text-secondary)]">
+              적용 규정 <b className="text-[var(--text-primary)]">{appliedCount}개 항목</b>
+              {tightenedCount > 0 && (
+                <>
+                  {" · "}
+                  <span className="font-bold text-amber-400">조례 강화 {tightenedCount}건</span>
+                </>
+              )}
+            </span>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-black text-[var(--accent-strong)]">
               {result.zone_type || "용도미상"}

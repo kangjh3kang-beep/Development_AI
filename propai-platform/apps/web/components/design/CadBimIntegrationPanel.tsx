@@ -477,6 +477,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [dxfBusy, setDxfBusy] = useState(false);
   // §4-E: IFC(.ifc) 내보내기 진행 상태 — BIM 저작도구(Revit/ArchiCAD)용 export.
   const [ifcBusy, setIfcBusy] = useState(false);
+  // WP-F 제출번들(zip) 다운로드 진행/오류 — 심의·인허가 제출용 도면+설계요약 PDF+BOQ 단일 zip.
+  //   인증 필수(get_current_user + tenant 소유권) 엔드포인트라 raw fetch에 Bearer 토큰을 동봉한다.
+  //   필수시트 미충족(422) 등 백엔드 거부는 사유(누락 시트 목록)를 그대로 표기(무날조·정직).
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleError, setBundleError] = useState<string | null>(null);
   // DXF 내보내기 도면종류(평면/상세/단면/입면/배치) — design_v61 export-dxf drawing_type.
   const [dxfType, setDxfType] = useState<string>("floor_plan");
   // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
@@ -631,6 +636,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
   const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
+  // DesignBasis 판정(/bim 응답 basis_evaluation — WP-E 자산 표면화). null=미산출/구서버(미렌더).
+  type BasisEvaluation = {
+    satisfied?: boolean | null;
+    unsat_reasons?: Array<string | { reason?: string; message?: string }> | null;
+    soft_warnings?: Array<string | { reason?: string; message?: string }> | null;
+    unevaluated?: unknown;
+  };
+  const [basisEval, setBasisEval] = useState<BasisEvaluation | null>(null);
   // AI 해석 패널 접기(기본 열림) — 접으면 3D가 전폭이 되고 휠 스크롤이 캔버스(CameraControls)로 직접 전달.
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
 
@@ -1046,6 +1059,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         // ★C2R 계약 환류 — /bim 응답이 동봉한 d.compliance를 store에 저장(공용 헬퍼). 종전엔
         //   ai_interpretation·mass만 꺼내고 d.compliance를 통째로 버렸다(감사 적발).
         flowCompliance(d?.compliance);
+        // ★DesignBasis 판정 표면화(생성허브 100%) — 응답이 동봉한 basis_evaluation(unsat_reasons·
+        //   soft_warnings)을 배지로 렌더. 미동봉(구 서버·미산출)은 null → 미렌더(날조 금지).
+        setBasisEval(
+          d && typeof d.basis_evaluation === "object" ? (d.basis_evaluation as BasisEvaluation | null) : null,
+        );
       })
       .catch(() => { /* 해석 실패는 무시 — 3D 모델은 별도로 로드됨 */ });
 
@@ -1301,6 +1319,98 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     }
   }, [spec]);
 
+  // WP-F: 심의·인허가 제출번들(zip) 다운로드 — 도면(SVG/DXF)+설계요약 PDF+공내역서 xlsx 단일 zip.
+  //   design_v61 POST /{project_id}/submission-bundle(SubmissionBundleRequest: DrawingSetRequest 상속 +
+  //   issue_date·scale·include_* 옵션). 이 엔드포인트는 인증 필수(get_current_user + tenant 소유권)라
+  //   ReportDownloadMenu와 동일하게 localStorage access token을 Bearer로 동봉한다(raw fetch blob 다운로드).
+  //   백엔드가 필수시트(sheet_frame 표준) 100% 충족을 강제 — 미충족 시 422 + 누락 시트 목록을 반환하므로
+  //   사유를 그대로 표기한다(무음 부분산출 금지·무날조).
+  const exportSubmissionBundle = useCallback(async () => {
+    if (!spec) return;
+    setBundleBusy(true);
+    setBundleError(null);
+    try {
+      const base = apiV1BaseUrl();
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/submission-bundle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          // 도면 파라미터(DrawingSetRequest 상속) — spec 기반 전체 치수 동봉(미상 필드는 백엔드 기본값).
+          site_width_m: spec.site_width_m,
+          site_depth_m: spec.site_depth_m,
+          building_width_m: spec.building_width_m,
+          building_depth_m: spec.building_depth_m,
+          floor_count: spec.floor_count,
+          floor_height_m: spec.floor_height_m ?? 3.0,
+          basement_floors: spec.basement_floors ?? 1,
+          unit_width_m: spec.unit_width_m ?? 8,
+          setback_m: spec.setback_m ?? 3,
+          project_name: spec.project_name ?? "PropAI",
+          building_use: spec.building_use,
+          zone_code: spec.zone_code,
+          unit_types:
+            designData?.unitTypes && designData.unitTypes.length ? designData.unitTypes : undefined,
+          // 제출번들 전용(SubmissionBundleRequest) — 발행일은 클라이언트 명시 인자(서버 now() 금지 계약).
+          //   축척(scale)은 미상 → 백엔드 기본 N.T.S.. 도면/보고서/BOQ 3종 모두 동봉.
+          issue_date: new Date().toISOString().slice(0, 10),
+          include_dxf: true,
+          include_report: true,
+          include_boq: true,
+          households: spec.total_units && spec.total_units > 0 ? spec.total_units : undefined,
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!res.ok) {
+        // 백엔드 거부(4xx)는 사유를 그대로 노출(무날조). 필수시트 미충족(422)은 detail.missing[] 동봉.
+        let msg = `제출번들 생성 실패 (HTTP ${res.status})`;
+        try {
+          const j = await res.json();
+          const detail = (j as { detail?: unknown })?.detail;
+          if (typeof detail === "string" && detail.trim()) {
+            msg = detail.trim();
+          } else if (detail && typeof detail === "object") {
+            const d = detail as { message?: unknown; missing?: unknown };
+            const head =
+              typeof d.message === "string" && d.message.trim() ? d.message.trim() : msg;
+            const missing = Array.isArray(d.missing)
+              ? d.missing.filter((x): x is string => typeof x === "string")
+              : [];
+            msg = missing.length > 0 ? `${head} — 누락 시트: ${missing.join(", ")}` : head;
+          } else {
+            const m = (j as { message?: unknown })?.message;
+            if (typeof m === "string" && m.trim()) msg = m.trim();
+          }
+        } catch {
+          /* JSON 아님 — 기본 메시지 유지 */
+        }
+        if (res.status === 401) msg = `로그인이 필요합니다 — ${msg}`;
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${spec.project_name || "PropAI"}_제출번들.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setBundleError(
+        e instanceof Error ? e.message : "제출번들 생성에 실패했습니다. 잠시 후 다시 시도하세요.",
+      );
+    } finally {
+      setBundleBusy(false);
+    }
+  }, [projectId, spec, designData]);
+
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
   const handleGeneratedApplied = useCallback(() => {
@@ -1308,6 +1418,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setBimScene(null);
     setBimError(null);
     setBimMass(null);
+    setBasisEval(null);
     setDesignAi(null);
     setDrawingCodes([]);
     setSvgMap({});
@@ -1531,7 +1642,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           <button
             type="button"
             onClick={() => {
-              setSpec(null); setBimScene(null); setBimError(null); setBimMass(null);
+              setSpec(null); setBimScene(null); setBimError(null); setBimMass(null); setBasisEval(null);
               setDesignAi(null); setDrawingCodes([]); setSvgMap({}); setActiveCode(null);
             }}
             disabled={specLoading}
@@ -1541,6 +1652,31 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             ↻ 개요 재적용
           </button>
         </div>
+        {/* ★DesignBasis 판정 배지(WP-E 자산 표면화) — /bim 응답의 basis_evaluation 이 있을 때만.
+            hard 위반(unsat_reasons)=경고+사유 목록, soft 만=주의, 둘 다 없음=정합 통과. 날조 금지. */}
+        {basisEval && (
+          <div className={`w-full rounded-xl border px-4 py-3 text-xs ${
+            (basisEval.unsat_reasons?.length ?? 0) > 0
+              ? "border-[var(--status-danger)]/40 bg-[var(--status-danger)]/10"
+              : (basisEval.soft_warnings?.length ?? 0) > 0
+                ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
+                : "border-[var(--status-success)]/40 bg-[var(--status-success)]/10"
+          }`}>
+            <p className="font-black text-[var(--text-primary)]">
+              {(basisEval.unsat_reasons?.length ?? 0) > 0
+                ? `설계 기준(DesignBasis) 위반 ${basisEval.unsat_reasons!.length}건`
+                : (basisEval.soft_warnings?.length ?? 0) > 0
+                  ? `설계 기준 주의 ${basisEval.soft_warnings!.length}건`
+                  : "설계 기준(DesignBasis) 정합 통과"}
+            </p>
+            {[...(basisEval.unsat_reasons ?? []), ...(basisEval.soft_warnings ?? [])].slice(0, 6).map((r, i) => {
+              const msg = typeof r === "string" ? r : r?.reason || r?.message || "";
+              return msg ? (
+                <p key={i} className="mt-1 text-[var(--text-secondary)]">· {msg}</p>
+              ) : null;
+            })}
+          </div>
+        )}
         {/* 건폐율/용적률 준수 판정의 근거(적용값·법정/조례 한도·법령 원문) — 한도 SSOT 있을 때만 표시 */}
         {complianceEvidence.length > 0 && (
           <EvidencePanel
@@ -2018,6 +2154,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 >
                   {ifcBusy ? "내보내는 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />IFC(BIM) 내보내기</span>)}
                 </button>
+                {/* WP-F: 제출번들(zip) — 심의·인허가 제출용 도면(SVG/DXF)+설계요약 PDF+공내역서 xlsx 단일 zip */}
+                <button
+                  onClick={exportSubmissionBundle}
+                  disabled={bundleBusy || !spec}
+                  title="심의·인허가 제출용 번들(도면 + 설계요약 PDF + 공내역서 xlsx)을 단일 zip으로 내려받습니다. 필수 도면 시트가 빠지면 서버가 사유와 함께 생성을 거부합니다."
+                  className="rounded-full border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-[var(--accent-strong)]/20 disabled:opacity-50"
+                >
+                  {bundleBusy ? "번들 생성 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />제출번들(zip)</span>)}
+                </button>
                 {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
                   onClick={() => setEditMode(true)}
@@ -2026,6 +2171,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   ③ 도면 다듬기
                 </button>
               </div>
+              {/* 제출번들 생성 실패(필수시트 미충족·인증 등) — 백엔드 사유를 그대로 정직 표기 */}
+              {bundleError && (
+                <p className="flex w-full items-start gap-1 text-[11px] font-semibold text-red-400">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+                  <span>{bundleError}</span>
+                </p>
+              )}
             </div>
 
             {/* 도면 표시 영역 */}

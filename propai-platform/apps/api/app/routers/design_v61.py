@@ -1730,6 +1730,10 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         # ★BimIR 정체·provenance(additive·세션3) — bimir_version·element_count·design_input_hash·run_id.
         #   design_input_hash는 provenance compute_input_hash와 동일 계약(이중 해시 발산 방지). 산출 불가 시 None.
         "bimir": bimir_meta,
+        # ★DesignBasis 판정 동봉(additive·생성허브 100%) — _attach_design_basis 가 mass 내부에만 부착하던
+        #   basis_evaluation(unsat_reasons·soft_warnings)을 응답에 직렬화한다. 종전엔 어떤 응답에도 실리지
+        #   않아 "법규 적합성" 판정 근거가 프론트에서 보이지 않았다(WP-E 완결 자산 미표면). 미산출=None(정직).
+        "basis_evaluation": mass.get("basis_evaluation"),
     }
 
 

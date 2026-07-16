@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Landmark, Search } from "lucide-react";
+import { Bot, FileDown, Landmark, Search } from "lucide-react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
@@ -48,6 +48,9 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   // WP-R3: run 시점 필지 주소 스냅샷(구획도 정합용) — 대표주소 1개만 넘겨 다필지 구획도가
   //   누락되던 버그 봉합(MarketInsights runParcelAddrs 정답 기준선과 동일 패턴).
   const [runParcelAddrs, setRunParcelAddrs] = useState<string[]>([]);
+  // 법규 검토서 다운로드(PDF/PPTX/DOCX) — 방금 받은 result를 body로 전송해 재분석·LLM 재호출 0.
+  const [reportBusy, setReportBusy] = useState<"" | "pdf" | "pptx" | "docx">("");
+  const [reportError, setReportError] = useState("");
 
   // 프로젝트 선택 시 주소(ProjectAddressInput→setAddr)에 더해 PNU도 입력칸에 자동 채움.
   // ProjectAddressInput이 선택 프로젝트의 pnu를 컨텍스트(siteAnalysis.pnu)에 기록하므로,
@@ -100,6 +103,39 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
       setLoading(false);
     }
   }, [addr, pnu, useLlm, siteAnalysis, parcelRows]);
+
+  // 법규 검토서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유. 방금 화면에 받은 result를
+  //   그대로 body로 보내 백엔드가 재분석·LLM 재호출 없이 '조립'만 하게 한다(과금·지연 0).
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
+    if (!result) return;
+    setReportBusy(fmt);
+    setReportError("");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${regulationApiBase()}/regulation/report?format=${fmt}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ result, address: result.address }),
+      });
+      // 성공=바이너리(attachment), 실패=4xx(JSON) — blob 침묵 오염 차단(정직 표기).
+      if (!res.ok || (res.headers.get("content-type") || "").includes("json")) {
+        setReportError("검토서 생성에 실패했습니다.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = (result.address || "규제").replace(/[\\/:*?"<>|]/g, "_");
+      a.download = `법규검토서_${safeName}.${fmt}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportError("검토서 다운로드에 실패했습니다.");
+    } finally {
+      setReportBusy("");
+    }
+  }, [result]);
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
@@ -184,6 +220,36 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
           {/* 종합 규제 계층·정량 한도·영향도·LLM 통합 해석 (공용 렌더) */}
           <RegulationHierarchyView result={result} locale={locale} />
 
+          {/* 법규 검토서 다운로드(PDF/PPTX/DOCX) — 방금 받은 분석 결과를 그대로 문서화(재분석 0). */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                  <FileDown className="size-4" aria-hidden />법규 검토서 다운로드
+                </p>
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                부지·용도지역 요약, 법정·조례·실효 한도, AI 해석, 규제 계층, 근거 법령을 한 문서로 내려받습니다.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {([["pdf", "PDF"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
+                  <button
+                    key={fmt}
+                    onClick={() => void downloadReport(fmt)}
+                    disabled={reportBusy !== ""}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    <FileDown className="size-4" aria-hidden />
+                    {reportBusy === fmt ? `${label} 생성 중…` : label}
+                  </button>
+                ))}
+                {reportError && (
+                  <span className="text-xs font-semibold text-[var(--status-error)]">{reportError}</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* 필지 구획도 — 다필지면 run 시점 전 필지(runParcelAddrs), 단일이면 대표주소. primaryZone은
               분석 확정 용도지역(SSOT)으로 첫 필지 오버레이(구획도-분석 용도 정합). */}
           <ParcelBoundaryMap
@@ -201,4 +267,16 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
       )}
     </div>
   );
+}
+
+// API 오리진(버전 prefix 포함) — 바이너리(검토서) 다운로드는 apiClient(JSON 파서)를 못 쓰므로
+// 원시 fetch 를 쓴다. MarketInsightsWorkspaceClient.marketApiBase 동형(peer 컨벤션 미러).
+function regulationApiBase(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "/api/proxy";
 }

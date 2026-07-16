@@ -118,6 +118,58 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     return result
 
 
+class RegulationReportRequest(BaseModel):
+    """법규 검토서 다운로드 요청 — 프론트가 방금 받은 /analyze 결과를 그대로 실어 재분석·LLM 재호출 0.
+
+    ``result``: /regulation/analyze 응답 dict(부지 요약·정량 한도·계층·영향도·AI 해석·근거) 그대로.
+    ``address``: 표지 소재지 표기용(없으면 result.address 폴백).
+    """
+
+    result: dict
+    address: str | None = None
+
+
+@router.post("/report", summary="법규 검토서 다운로드(PDF/PPTX/DOCX)")
+async def regulation_report(body: RegulationReportRequest, format: str = "pdf"):
+    """법규 검토서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유.
+
+    ★재분석 0: 프론트가 화면에 이미 받은 /analyze 결과(body.result)를 그대로 '조립'만 한다
+      (LLM 재호출·네트워크 0 → 과금·지연 없음). 산식은 어댑터에서 만들지 않는다(값 배치만).
+    파일 다운로드 계약: 성공=200 + 바이너리(attachment), 실패=4xx(200+error JSON 금지).
+    기존 /land-price/desk-appraisal/pdf 패턴 미러.
+    """
+    # ★무인증 렌더 엔드포인트 자기 DoS 방어(R1 P3) — 정상 /analyze 결과는 수십 KB 급이므로
+    #   2MB 상한이면 실사용 무영향. 초과는 413(조립 거부·서버 자원 보호).
+    import json as _json
+
+    from fastapi import HTTPException
+
+    if len(_json.dumps(body.result, ensure_ascii=False)) > 2_000_000:
+        raise HTTPException(status_code=413, detail="result payload too large (2MB 상한)")
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.services.report.render import (
+        build_report_model_from_regulation,
+        render_report,
+    )
+
+    result = body.result if isinstance(body.result, dict) else {}
+    if not result:
+        raise HTTPException(status_code=400, detail="법규 분석 결과가 필요합니다.")
+    fmt = (format or "pdf").lower()
+    if fmt not in {"pdf", "pptx", "docx"}:
+        raise HTTPException(status_code=400, detail="지원하지 않는 포맷입니다(pdf/pptx/docx).")
+
+    address = (body.address or result.get("address") or "").strip()
+    model = build_report_model_from_regulation(result, address=address)
+    data, media_type, ext = render_report(model, fmt)
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=propai_regulation_report.{ext}"},
+    )
+
+
 @router.post("/check", response_model=RegulationCheckResponse)
 @limiter.limit(ai_limiter)
 async def check_regulation(

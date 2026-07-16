@@ -8,8 +8,8 @@
  * 주소는 ProjectAddressInput으로 (1) 프로젝트 선택 (2) 카카오 검색 (3) 변경/추가 입력 모두 지원.
  */
 
-import { useCallback, useState, type ReactNode } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Pin, Puzzle } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AlertTriangle, Bot, CheckCircle2, ClipboardList, FileDown, Pin, Puzzle } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -246,7 +246,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "AI 분석 중… (최대 1분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
+              {loading ? "AI 분석 중… (약 2분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
             </button>
             {/* AI 해석 옵트인(기본 on — 기존 동작 보존). 끄면 규칙기반 판정만(무과금). */}
             <UseLlmToggle checked={useLlm} onChange={setUseLlm} disabled={loading} className="flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]" />
@@ -593,6 +593,15 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </Card>
           )}
 
+          {/* 인허가 서류 체크리스트 + PDF — 카드가 약속한 '필요서류·담당 액션·예상기간' 실산출.
+              백엔드 GET /permits/package/checklist(정적 기준표) 소비 + POST /permits/package/pdf 다운로드.
+              permit_type는 건축개발 기본(건축허가), 대지면적·농지 여부만 result에서 도출 전송(가짜값 0). */}
+          <PermitChecklistCard
+            landAreaSqm={site?.land_area_sqm ?? null}
+            isAgricultural={spFactors.some((f) => f.includes("농지"))}
+            projectId={_projectId ?? null}
+          />
+
           {/* 전문가 패널 검증 */}
           <ExpertPanelCard
             analysisType="permit"
@@ -602,5 +611,240 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         </>
       )}
     </div>
+  );
+}
+
+// API 오리진(버전 prefix 포함) — 바이너리(PDF) 다운로드는 apiClient(JSON 파서)를 못 쓰므로
+// 원시 fetch 를 쓴다. MarketInsightsWorkspaceClient.marketApiBase 동형(peer 컨벤션 미러).
+function permitApiBase(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "/api/proxy";
+}
+
+// 인허가 유형 — 건축개발 프로젝트 기본값(건축허가). 체크리스트/PDF 양쪽에 동일 전송해 산출 일관성 보장.
+const PERMIT_TYPE = "건축허가";
+
+type ChecklistItem = {
+  id: string;
+  name: string;
+  required: boolean;
+  description?: string;
+  applicable: boolean;
+};
+type ChecklistResponse = {
+  permit_type: string;
+  region: string;
+  checklist: {
+    permit_type: string;
+    total_items: number;
+    required_items: number;
+    optional_items: number;
+    items: ChecklistItem[];
+  };
+  duration: {
+    permit_type: string;
+    region: string;
+    business_days: number;
+    calendar_days: number;
+    stages: string[];
+  };
+  duration_basis: string;
+};
+
+/**
+ * 인허가 서류 체크리스트 + 예상기간 + PDF 다운로드 카드.
+ *
+ * 백엔드 GET /permits/package/checklist(정적 기준표 — LLM/외부 API 미사용)를 소비해 카드가 약속한
+ * '필요서류·담당·예상기간' 산출물을 실제로 채운다. permit_type는 건축개발 기본값(건축허가)이며,
+ * 대지면적(≥200㎡ 조경계획서)·농지 여부(농지전용허가서)만 분석 결과에서 도출해 전송한다(가짜값 0).
+ * 조회 실패 시 카드를 숨기지 않고 '조회 실패'를 정직 표기한다(무목업).
+ */
+function PermitChecklistCard({
+  landAreaSqm,
+  isAgricultural,
+  projectId,
+}: {
+  landAreaSqm?: number | null;
+  isAgricultural: boolean;
+  projectId: string | null;
+}) {
+  const [data, setData] = useState<ChecklistResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  // 대지면적 200㎡ 이상이면 조경계획서 등 조건부 서류가 적용된다(백엔드 기준표 매칭).
+  const buildingAreaSqm =
+    landAreaSqm != null && landAreaSqm > 0 ? Math.round(landAreaSqm) : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({ permit_type: PERMIT_TYPE });
+    if (buildingAreaSqm !== undefined) params.set("building_area_sqm", String(buildingAreaSqm));
+    if (isAgricultural) params.set("is_agricultural", "true");
+    apiClient
+      .get<ChecklistResponse>(`/permits/package/checklist?${params.toString()}`, { useMock: false })
+      .then((r) => {
+        if (!cancelled) setData(r);
+      })
+      .catch(() => {
+        if (!cancelled) setError("체크리스트 조회에 실패했습니다. 잠시 후 다시 시도하세요.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildingAreaSqm, isAgricultural]);
+
+  const downloadPdf = useCallback(async () => {
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const token =
+        (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${permitApiBase()}/permits/package/pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          permit_type: PERMIT_TYPE,
+          project_id: projectId || undefined,
+          ...(buildingAreaSqm !== undefined ? { building_area_sqm: buildingAreaSqm } : {}),
+          ...(isAgricultural ? { is_agricultural: true } : {}),
+        }),
+      });
+      // 성공=application/pdf(attachment), 실패=4xx/5xx(JSON) — blob 침묵 오염 차단(정직 표기).
+      if (!res.ok || (res.headers.get("content-type") || "").includes("json")) {
+        setDownloadError("PDF 생성에 실패했습니다. (로그인·권한 필요)");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `인허가서류패키지_${PERMIT_TYPE}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError("PDF 다운로드에 실패했습니다.");
+    } finally {
+      setDownloading(false);
+    }
+  }, [buildingAreaSqm, isAgricultural, projectId]);
+
+  const cl = data?.checklist;
+  const dur = data?.duration;
+
+  return (
+    <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+      <CardContent className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+            <ClipboardList className="size-4" aria-hidden />인허가 서류 체크리스트
+          </p>
+          <span className="rounded-full border border-[var(--line-strong)] px-2.5 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+            {PERMIT_TYPE} 기준
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
+          건축개발 기본(건축허가) 기준의 필요서류·예상기간입니다. 대지면적·농지 포함 여부에 따라 조건부 서류가 자동 반영됩니다.
+        </p>
+
+        {loading && (
+          <p className="mt-4 text-sm text-[var(--text-secondary)]">체크리스트 조회 중…</p>
+        )}
+        {!loading && error && (
+          <p className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--status-error)]">
+            <AlertTriangle className="size-4" aria-hidden />{error}
+          </p>
+        )}
+
+        {!loading && !error && cl && (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-[var(--text-tertiary)]">
+                    <th className="py-1.5 pr-2 text-left font-semibold">번호</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">서류명</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">구분</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">적용</th>
+                    <th className="py-1.5 text-left font-semibold">발급·작성(비고)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cl.items ?? []).map((it) => (
+                    <tr key={it.id} className="border-b border-[var(--line)]/50">
+                      <td className="py-1.5 pr-2 text-[var(--text-tertiary)]">{it.id}</td>
+                      <td className="py-1.5 pr-2 font-semibold text-[var(--text-primary)]">{it.name}</td>
+                      <td className="py-1.5 pr-2 text-[var(--text-secondary)]">
+                        {it.required ? "필수" : "조건부"}
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <span
+                          className={
+                            it.applicable
+                              ? "font-bold text-[var(--status-success)]"
+                              : "text-[var(--text-tertiary)]"
+                          }
+                        >
+                          {it.applicable ? "적용" : "해당없음"}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-[var(--text-secondary)]">{it.description || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="mt-3 text-xs text-[var(--text-secondary)]">
+              총 {cl.total_items}건 중 적용 <b className="text-[var(--text-primary)]">{cl.required_items}건</b>
+              {" "}(조건부 {cl.optional_items}건)
+              {dur && (
+                <>
+                  {" · 예상 소요 "}
+                  <b className="text-[var(--text-primary)]">{dur.business_days}영업일</b>
+                  {` (달력 약 ${dur.calendar_days}일)`}
+                </>
+              )}
+            </p>
+            {data?.duration_basis && (
+              <p className="mt-1 text-[10px] leading-snug text-[var(--text-tertiary)]">
+                ※ {data.duration_basis}
+              </p>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--line)] pt-4">
+              <button
+                onClick={() => void downloadPdf()}
+                disabled={downloading}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+              >
+                <FileDown className="size-4" aria-hidden />
+                {downloading ? "PDF 생성 중…" : "서류 패키지 PDF"}
+              </button>
+              {downloadError && (
+                <span className="text-xs font-semibold text-[var(--status-error)]">{downloadError}</span>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

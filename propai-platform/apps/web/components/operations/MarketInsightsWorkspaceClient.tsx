@@ -48,6 +48,7 @@ import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBad
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
@@ -269,6 +270,18 @@ function CollapsibleRaw({ title, children }: { title: string; children: React.Re
 /* ── 보고서 액션 바(로컬·단일화) ──
    PDF/PPT/DOCX 다운로드 버튼이 '생성 트리거 카드'와 '하단 다운로드 카드'에 완전 중복이던 것을
    한 곳(보고서 그룹)으로 통합. 미리보기 생성 + AI 사용 토글 + 3개 문서 버튼(기존 콜백 재사용, 로직 0신규). */
+/**
+ * 오류 사유 보존 — ApiClientError.payload(백엔드 {detail}/{message}) 우선, 없으면 상태코드.
+ * (인허가/적산 클라이언트의 관례와 동일 패턴 — catch{}로 사유를 삼키지 않는다.)
+ */
+function errorMessage(e: unknown, fallback: string): string {
+  if (e instanceof ApiClientError) {
+    const payload = e.payload as { detail?: string; message?: string } | null;
+    return payload?.detail || payload?.message || `${fallback} (HTTP ${e.status})`;
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
 function ReportActionsBar({
   genState,
   useLlm,
@@ -507,8 +520,9 @@ export function MarketInsightsWorkspaceClient() {
       if (useLlm) {
         apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
       }
-    } catch {
-      setError("보고서 생성에 실패했습니다.");
+    } catch (e) {
+      // 오류 사유 보존(catch{} 삼킴 금지) — 401/402/충전필요 등 실제 원인을 사용자에게 표기.
+      setError(errorMessage(e, "보고서 생성에 실패했습니다."));
     } finally {
       setGenState("");
     }
@@ -529,7 +543,15 @@ export function MarketInsightsWorkspaceClient() {
           ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
         }),
       });
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // 오류 사유 보존 — 스트리밍 에러 본문({detail})을 읽어 실제 원인을 표기(삼킴 금지).
+        let detail = "";
+        try {
+          const body = (await res.json()) as { detail?: string; message?: string };
+          detail = body?.detail || body?.message || "";
+        } catch { /* 본문이 JSON이 아니면 상태코드만 */ }
+        throw new Error(detail || `${fmt.toUpperCase()} 다운로드 실패 (HTTP ${res.status})`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -539,8 +561,8 @@ export function MarketInsightsWorkspaceClient() {
       a.download = `시장조사보고서_${safeName}.${fmt}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      setError(`${fmt.toUpperCase()} 다운로드에 실패했습니다.`);
+    } catch (e) {
+      setError(errorMessage(e, `${fmt.toUpperCase()} 다운로드에 실패했습니다.`));
     } finally {
       setGenState("");
     }
@@ -1169,6 +1191,177 @@ export function MarketInsightsWorkspaceClient() {
 
           {/* 적정 분양가 밴드(M3) — 수요측 지불여력을 공급측 타당성과 결합. */}
           {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
+
+          {/* 시세 추이 — 아파트 평당가 월별 추이(실거래·전월대비). recharts LineChart(DemographicPanel과 동일 라이브러리). */}
+          {(() => {
+            const trend = ((report?.raw_data?.real_estate?.trend_series ?? []) as Array<{
+              ym?: string; per_pyeong_manwon?: number | null; mom_pct?: number | null;
+            }>)
+              .filter((t) => typeof t.per_pyeong_manwon === "number" && (t.per_pyeong_manwon as number) > 0)
+              .map((t) => ({ ym: t.ym ?? "", perPyeong: t.per_pyeong_manwon as number, mom: t.mom_pct ?? null }));
+            if (trend.length < 2) return null; // 추이는 2개월 이상일 때만(1점은 추이 아님) — 데이터 없으면 미렌더(정직).
+            const last = trend[trend.length - 1];
+            return (
+              <div className="sa-di-block">
+                <header className="sa-di-block__head" style={{ cursor: "default" }}>
+                  <span className="sa-di-block__icon" aria-hidden>₩</span>
+                  <span className="sa-di-block__title">시세 추이 (아파트 평당가)</span>
+                  <span className="sa-di-eyebrow">TREND · 월별</span>
+                </header>
+                <div className="sa-di-block__body">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={trend} margin={{ left: 8, right: 16, top: 8, bottom: 4 }}>
+                      <XAxis dataKey="ym" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} width={64} />
+                      <Tooltip formatter={(v) => [`${Number(v).toLocaleString()}만원/평`, "평당가(전용)"]} />
+                      <Line type="monotone" dataKey="perPyeong" stroke="var(--accent-strong)" strokeWidth={2} dot />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <p className="mt-2 text-[11px] text-[var(--text-hint)]">
+                    ※ 국토부 아파트 실거래 평당가(전용 기준) 월별 추이. 최근 {last.ym} 평당 {last.perPyeong.toLocaleString()}만원
+                    {typeof last.mom === "number" ? ` (전월대비 ${last.mom > 0 ? "+" : ""}${last.mom}%)` : ""}.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 경쟁 단지 비교 — 주변 아파트 실거래를 단지명별 집계(거래건수 상위 8). 빈 배열이면 정직 표기. */}
+          {report?.raw_data?.real_estate && (() => {
+            const comps = (report.raw_data.real_estate.competitor_complexes ?? []) as Array<{
+              name?: string; deal_count?: number; avg_per_pyeong_manwon?: number | null;
+              price_basis?: string; recent_deal_ym?: string | null; build_year?: number | null;
+            }>;
+            return (
+              <div className="sa-di-block">
+                <header className="sa-di-block__head" style={{ cursor: "default" }}>
+                  <span className="sa-di-block__icon" aria-hidden>▦</span>
+                  <span className="sa-di-block__title">경쟁 단지 비교</span>
+                  <span className="sa-di-eyebrow">COMPETITORS · 실거래 집계</span>
+                </header>
+                <div className="sa-di-block__body">
+                  {comps.length > 0 ? (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="sa-di-table">
+                          <thead>
+                            <tr>
+                              <th>단지명</th>
+                              <th className="sa-di-num">거래건수</th>
+                              <th className="sa-di-num">평당가(전용)</th>
+                              <th className="sa-di-num">최근 거래월</th>
+                              <th className="sa-di-num">준공</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {comps.map((c, i) => (
+                              <tr key={`${c.name ?? ""}-${i}`}>
+                                <td style={{ fontWeight: 600 }}>{c.name || "—"}</td>
+                                <td className="sa-di-num" style={{ color: "var(--text-secondary)" }}>{(c.deal_count ?? 0).toLocaleString()}건</td>
+                                <td className="sa-di-num">{typeof c.avg_per_pyeong_manwon === "number" ? `${c.avg_per_pyeong_manwon.toLocaleString()}만원/평` : "—"}</td>
+                                <td className="sa-di-num" style={{ color: "var(--text-secondary)" }}>{c.recent_deal_ym || "—"}</td>
+                                <td className="sa-di-num" style={{ color: "var(--text-secondary)" }}>{c.build_year ? `${c.build_year}년` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="mt-2 text-[11px] text-[var(--text-hint)]">
+                        ※ 주변 아파트 실거래를 단지명별로 집계한 경쟁 단지(거래건수 상위 {comps.length}개). 평당가는 전용면적 기준 거래액가중 평균입니다.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="sa-di-empty">비교 가능한 경쟁 단지 실거래가 없습니다.</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 분양 전략 요약 — result에 실재하는 신호(시세방향·경쟁밀도·수요유입·가격수용성·상품전략)만
+              결정론적으로 조합(신규 LLM 호출 없음·날조 없음). 신호가 2개 미만이면 미렌더(정직). */}
+          {(() => {
+            const re = report?.raw_data?.real_estate;
+            const signals: Array<{ label: string; value: string; detail?: string }> = [];
+
+            // ① 시세 방향 — 추이 마지막 전월대비(mom_pct) 부호.
+            const trendPts = ((re?.trend_series ?? []) as Array<{ mom_pct?: number | null }>)
+              .filter((t) => typeof t.mom_pct === "number");
+            if (trendPts.length > 0) {
+              const mom = trendPts[trendPts.length - 1].mom_pct as number;
+              signals.push({
+                label: "시세 방향",
+                value: mom > 0 ? "상승세" : mom < 0 ? "조정세" : "보합",
+                detail: `최근 전월대비 ${mom > 0 ? "+" : ""}${mom}%`,
+              });
+            }
+
+            // ② 경쟁 밀도 — 경쟁 단지 수·총 거래건수.
+            const comps = (re?.competitor_complexes ?? []) as Array<{ deal_count?: number }>;
+            if (comps.length > 0) {
+              const totalDeals = comps.reduce((a, c) => a + (c.deal_count ?? 0), 0);
+              signals.push({
+                label: "경쟁 밀도",
+                value: comps.length >= 5 ? "경쟁 밀집" : comps.length >= 2 ? "경쟁 보통" : "경쟁 희박",
+                detail: `${comps.length}개 단지·실거래 ${totalDeals.toLocaleString()}건`,
+              });
+            }
+
+            // ③ 수요 유입 — 순이동(전입-전출). 미확보(unavailable/mock)는 제외(정직).
+            const mig = report?.demographics?.migration as
+              | { net_migration?: number | null; data_source?: string | null } | undefined;
+            const migSrc = String(mig?.data_source ?? "").toLowerCase();
+            if (mig && typeof mig.net_migration === "number" && migSrc !== "" && migSrc !== "unavailable" && migSrc !== "mock") {
+              const net = mig.net_migration;
+              signals.push({
+                label: "수요 유입",
+                value: net > 0 ? "순유입(수요 유입)" : net < 0 ? "순유출(수요 유출)" : "유입·유출 균형",
+                detail: `순이동 ${net > 0 ? "+" : ""}${net.toLocaleString()}명`,
+              });
+            }
+
+            // ④ 가격 수용성 — 적정분양가 지불여력 판정.
+            const verdict = report?.pricing_band?.affordability_verdict as string | undefined;
+            const verdictLabel: Record<string, string> = {
+              within_conservative: "가격 수용성 높음(보수 밴드 내)",
+              within_optimistic: "가격 수용성 보통(낙관 밴드 내)",
+              over_band: "가격 부담(미분양 위험 주의)",
+            };
+            if (verdict && verdict !== "unavailable" && verdictLabel[verdict]) {
+              signals.push({ label: "가격 수용성", value: verdictLabel[verdict] });
+            }
+
+            // ⑤ 상품 전략 — 수요기반 권장 주력 평형.
+            const um = report?.unit_mix_recommendation as
+              | { dominant_band?: string; data_source?: string | null } | undefined;
+            const umSrc = String(um?.data_source ?? "").toLowerCase();
+            if (um?.dominant_band && umSrc !== "" && umSrc !== "unavailable" && umSrc !== "mock") {
+              signals.push({ label: "상품 전략", value: `주력 ${um.dominant_band} 권장`, detail: "수요(가구원수) 기반" });
+            }
+
+            if (signals.length < 2) return null; // 신호 부족 시 미렌더(무목업 — 억지 요약 금지).
+            return (
+              <div className="sa-di-block">
+                <header className="sa-di-block__head" style={{ cursor: "default" }}>
+                  <span className="sa-di-block__icon" aria-hidden>◆</span>
+                  <span className="sa-di-block__title">분양 전략 요약</span>
+                  <span className="sa-di-eyebrow">STRATEGY · 실데이터 신호</span>
+                </header>
+                <div className="sa-di-block__body">
+                  <ul className="flex flex-col gap-2">
+                    {signals.map((s) => (
+                      <li key={s.label} className="flex flex-wrap items-baseline gap-2 text-sm">
+                        <span className="min-w-[72px] font-bold text-[var(--text-tertiary)]">{s.label}</span>
+                        <span className="font-black text-[var(--text-primary)]">{s.value}</span>
+                        {s.detail ? <span className="text-[11px] text-[var(--text-hint)]">{s.detail}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 수집된 실데이터 신호만 결정론적으로 요약한 것으로, AI 서술이 아닙니다. 상세 전략 서술은 위 시니어 인사이트를 참고하세요.</p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 유형별 매매·전월세·시세추이 원자료 표(펼치기) — 가격 근거 데이터를 한 곳에 인접 배치. */}
           {report?.raw_data?.real_estate ? (
