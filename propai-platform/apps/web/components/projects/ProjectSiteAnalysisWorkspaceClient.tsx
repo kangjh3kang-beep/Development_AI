@@ -8,6 +8,11 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
+// 토지가치 = 탁상감정(공시지가기준+거래사례) 공용 계약. 아파트 실거래 AVM(합성 폴백) → 진짜 토지평가로 교체.
+import {
+  deskToSiteSummary,
+  type DeskAppraisalResult,
+} from "@/lib/land/desk-appraisal";
 import {
   useAnalysisCache,
   analysisSignature,
@@ -42,27 +47,6 @@ type ProjectResponse = {
   total_area_sqm: number | null;
   created_at: string;
   updated_at: string;
-};
-
-type AVMEstimateResponse = {
-  id: string;
-  project_id: string;
-  estimated_price: number;
-  price_per_sqm: number;
-  confidence_score: number;
-  comparable_count: number;
-  // W1-6 정직 분리 — 실거래/합성(콜드스타트 CTGAN) 계수. 합성은 참고용 표기 동반.
-  real_comparable_count?: number;
-  synthetic_count?: number;
-  model_version: string;
-  comparables: Array<{
-    address: string;
-    price: number;
-    area_sqm: number | null;
-    transaction_date: string;
-    synthetic?: boolean;
-  }>;
-  created_at: string;
 };
 
 /* ── 신뢰 메타데이터 타입(WP-D 가산·전부 옵셔널) ──
@@ -150,8 +134,13 @@ type Labels = {
   avmEstimateLabel: string;
   avmUnitPriceLabel: string;
   avmConfidenceLabel: string;
-  avmComparablesLabel: string;
-  avmModelLabel: string;
+  avmRangeLabel: string;
+  avmCrossCheckLabel: string;
+  avmMethodsTitle: string;
+  avmMethodColLabel: string;
+  avmMethodPriceColLabel: string;
+  avmMethodBasisColLabel: string;
+  avmDisclaimerBadge: string;
   parcelTitle: string;
   parcelCategoryLabel: string;
   parcelZoningLabel: string;
@@ -161,11 +150,6 @@ type Labels = {
   parcelRoadLabel: string;
   parcelTerrainLabel: string;
   parcelRestrictionsLabel: string;
-  comparablesTitle: string;
-  comparableAddressLabel: string;
-  comparablePriceLabel: string;
-  comparableAreaLabel: string;
-  comparableDateLabel: string;
   placeholder: string;
   projectFallback: string;
   projectLoadErrorTitle: string;
@@ -198,16 +182,21 @@ const KO_LABELS: Labels = {
   missingAddressError: "주소는 필수 입력 항목입니다.",
   missingAreaError: "양수의 면적 값이 필요합니다.",
   missingPnuError: "PNU는 필지 정보 조회에 필수입니다.",
-  avmTitle: "AVM 시세 추정 (ML 자동감정)",
-  avmAutoHint: "주변 실거래(상단)와 별개의 머신러닝 자동감정 추정치입니다.",
+  avmTitle: "탁상감정 기반 토지가치 추정",
+  avmAutoHint: "공시지가기준법·거래사례비교법으로 산정한 토지 예상가치입니다. 참고용 · 정식 감정평가 아님.",
   autoMissingArea:
-    "면적 정보가 있으면 AVM 자동감정이 표시됩니다.",
-  autoLoading: "AVM ML 자동감정을 분석하는 중입니다...",
-  avmEstimateLabel: "추정 시세",
+    "면적 정보가 있으면 탁상감정 토지가치가 표시됩니다.",
+  autoLoading: "탁상감정으로 토지가치를 산정하는 중입니다...",
+  avmEstimateLabel: "추정 토지가치",
   avmUnitPriceLabel: "㎡당 단가",
   avmConfidenceLabel: "신뢰도",
-  avmComparablesLabel: "비교사례 건수",
-  avmModelLabel: "모델 버전",
+  avmRangeLabel: "채택 단가 범위(원/㎡)",
+  avmCrossCheckLabel: "교차검증 편차(CV)",
+  avmMethodsTitle: "가격 산정방법별 추정",
+  avmMethodColLabel: "산정방법",
+  avmMethodPriceColLabel: "추정 단가(/㎡)",
+  avmMethodBasisColLabel: "근거",
+  avmDisclaimerBadge: "참고용 · 감정평가 아님",
   parcelTitle: "필지 정보",
   parcelCategoryLabel: "지목",
   parcelZoningLabel: "용도지역",
@@ -217,13 +206,8 @@ const KO_LABELS: Labels = {
   parcelRoadLabel: "도로 접면",
   parcelTerrainLabel: "지형",
   parcelRestrictionsLabel: "규제사항",
-  comparablesTitle: "비교 거래 사례",
-  comparableAddressLabel: "주소",
-  comparablePriceLabel: "거래가격",
-  comparableAreaLabel: "면적",
-  comparableDateLabel: "거래일",
   placeholder:
-    "입력 양식을 제출하면 AVM 시세 추정 및 필지 정보가 표시됩니다.",
+    "입력 양식을 제출하면 탁상감정 토지가치 및 필지 정보가 표시됩니다.",
   projectFallback: "라이브 API에서 프로젝트 메타데이터를 로드하지 못했습니다.",
   projectLoadErrorTitle: "프로젝트 메타데이터 불가",
   projectLoadErrorDetail:
@@ -259,17 +243,22 @@ const EN_LABELS: Labels = {
   missingAddressError: "Address is required.",
   missingAreaError: "A positive area value is required.",
   missingPnuError: "PNU is required for parcel info lookup.",
-  avmTitle: "AVM valuation (ML auto-appraisal)",
+  avmTitle: "Desk-appraisal land value",
   avmAutoHint:
-    "An ML auto-appraisal estimate, distinct from the nearby actual transactions shown above.",
+    "Estimated land value from the official-price and comparable-sales methods. Reference only — not a formal appraisal.",
   autoMissingArea:
-    "AVM auto-appraisal will appear when land area is available.",
-  autoLoading: "Running AVM ML auto-appraisal...",
-  avmEstimateLabel: "Estimated price",
+    "Desk-appraisal land value will appear when land area is available.",
+  autoLoading: "Running desk appraisal for land value...",
+  avmEstimateLabel: "Estimated land value",
   avmUnitPriceLabel: "Price per sqm",
   avmConfidenceLabel: "Confidence",
-  avmComparablesLabel: "Comparables",
-  avmModelLabel: "Model version",
+  avmRangeLabel: "Adopted unit-price range (KRW/sqm)",
+  avmCrossCheckLabel: "Cross-check deviation (CV)",
+  avmMethodsTitle: "Valuation by method",
+  avmMethodColLabel: "Method",
+  avmMethodPriceColLabel: "Unit price (/sqm)",
+  avmMethodBasisColLabel: "Basis",
+  avmDisclaimerBadge: "Reference only — not an appraisal",
   parcelTitle: "Parcel information",
   parcelCategoryLabel: "Land category",
   parcelZoningLabel: "Zoning",
@@ -279,13 +268,8 @@ const EN_LABELS: Labels = {
   parcelRoadLabel: "Road access",
   parcelTerrainLabel: "Terrain",
   parcelRestrictionsLabel: "Restrictions",
-  comparablesTitle: "Comparable transactions",
-  comparableAddressLabel: "Address",
-  comparablePriceLabel: "Price",
-  comparableAreaLabel: "Area",
-  comparableDateLabel: "Date",
   placeholder:
-    "Submit the form to view AVM estimates and parcel information.",
+    "Submit the form to view desk-appraisal land value and parcel information.",
   projectFallback: "Project metadata could not be loaded from the live API.",
   projectLoadErrorTitle: "Project metadata unavailable",
   projectLoadErrorDetail:
@@ -450,7 +434,8 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
-  // AVMRequest.project_id는 필수(UUID). 비-UUID 로컬 프로젝트는 백엔드 422 방지를 위해 호출 보류.
+  // 탁상감정은 project_id 옵셔널 — 게이트 아님. UUID일 때만 body에 실어 분석원장에 귀속하고,
+  // 비-UUID 로컬 프로젝트(예: "new")는 project_id 미전송으로 그대로 동작한다(커버리지↑).
   const isUuidProject =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
@@ -470,23 +455,24 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAutoLoading, setIsAutoLoading] = useState(false);
-  const [avmResult, setAvmResult] = useState<AVMEstimateResponse | null>(null);
+  const [avmResult, setAvmResult] = useState<DeskAppraisalResult | null>(null);
   const [parcelResult, setParcelResult] = useState<ParcelInfoResponse | null>(
     null,
   );
 
-  // 영속 캐시: 주소·PNU·면적 불변이면 검증된 AVM·필지 결과 재사용(매 방문 재호출 방지),
+  // 영속 캐시: 주소·PNU·면적 불변이면 검증된 탁상감정·필지 결과 재사용(매 방문 재호출 방지),
   // 입력이 바뀌면 재분석 제안. auto 모드 자동호출을 캐시로 게이팅한다.
-  const avmSignature = analysisSignature(autoAddress, autoPnu, autoArea);
+  // ★캐시 kind는 "deskAppraisal" — 구 "avm" 캐시 엔트리는 다른 키라 자연 무시(별도 무효화 불필요).
+  const deskSignature = analysisSignature(autoAddress, autoPnu, autoArea);
   const {
     cached: avmCached,
     isFresh: avmFresh,
     isStale: avmStale,
     at: avmAt,
     save: saveAvm,
-  } = useAnalysisCache<{ avm: AVMEstimateResponse; parcel: ParcelInfoResponse | null }>(
-    "avm",
-    avmSignature,
+  } = useAnalysisCache<{ avm: DeskAppraisalResult; parcel: ParcelInfoResponse | null }>(
+    "deskAppraisal",
+    deskSignature,
   );
   const [avmForceRun, setAvmForceRun] = useState(0);
   const [form, setForm] = useState<{
@@ -562,10 +548,11 @@ export function ProjectSiteAnalysisWorkspaceClient({
     return <FieldSourceBadge source={source} updatedAt={at} />;
   };
 
-  // auto 모드: 상단 흐름이 확정한 주소(+면적/PNU)로 AVM ML 자동감정·필지정보를 자동 호출한다.
+  // auto 모드: 상단 흐름이 확정한 주소(+면적/PNU)로 탁상감정(토지가치)·필지정보를 자동 호출한다.
   // 면적이 없으면 호출 보류(정직 안내). 무목업 — 실패 시 graceful 에러만 표기.
+  // ★isUuidProject 게이트 제거: 탁상감정은 project_id 옵셔널이라 비-UUID 로컬 프로젝트도 동작.
   useEffect(() => {
-    if (!autoMode || !canUseLiveApi || !autoArea || !isUuidProject) {
+    if (!autoMode || !canUseLiveApi || !autoArea) {
       return;
     }
     // 캐시 신선(입력 불변) & 강제재실행 아님 → 검증된 결과 즉시 재사용, 네트워크 호출 생략.
@@ -581,13 +568,15 @@ export function ProjectSiteAnalysisWorkspaceClient({
 
     (async () => {
       try {
-        const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+        // 아파트 실거래 AVM(/avm/estimate, 합성 폴백) → 탁상감정(/land-price/desk-appraisal, 진짜 토지평가)로 교체.
+        // project_id는 UUID일 때만 실어 원장 귀속(비-UUID는 미전송 — 백엔드 additive 옵셔널).
+        const avm = await apiClient.post<DeskAppraisalResult>("/land-price/desk-appraisal", {
           useMock: false,
           body: {
-            project_id: projectId,
             address: autoAddress,
-            area_sqm: autoArea,
             pnu: autoPnu || undefined,
+            area_sqm: autoArea,
+            ...(isUuidProject ? { project_id: projectId } : {}),
           },
         });
         if (cancelled) return;
@@ -612,11 +601,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
         // 검증된 결과 영속 → 재방문 시 재사용(입력 불변이면 재호출 안 함)
         saveAvm({ avm, parcel: parcelData });
 
+        // 탁상감정 → 부지분석 요약(공용 어댑터). estimatedValue = appraised_total_won ?? null(무목업).
+        const summary = deskToSiteSummary(avm);
         // 신뢰 메타데이터(legal_refs/inputs)를 SSOT에 가산 보존(있을 때만). 없으면 기존 patch 그대로.
         updateSiteAnalysis(
           withSiteTrustMeta(
             {
-              estimatedValue: avm.estimated_price,
+              estimatedValue: summary.estimatedTotalWon,
               landAreaSqm: autoArea,
               zoneCode: parcelZoning,
               address: autoAddress,
@@ -632,8 +623,8 @@ export function ProjectSiteAnalysisWorkspaceClient({
           module: "site-analysis",
           completedAt: new Date().toISOString(),
           summary: {
-            estimatedPrice: avm.estimated_price,
-            confidence: avm.confidence_score,
+            estimatedPrice: summary.estimatedTotalWon,
+            confidence: summary.confidence,
             address: autoAddress,
           },
         });
@@ -674,17 +665,15 @@ export function ProjectSiteAnalysisWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+      // 아파트 실거래 AVM → 탁상감정(토지가치)로 교체. desk는 {address, pnu, area_sqm, project_id?}만 사용
+      // (건물연식·층 등 AVM 전용 입력은 desk 계약 밖이라 전송하지 않음). project_id는 UUID일 때만 귀속.
+      const avm = await apiClient.post<DeskAppraisalResult>("/land-price/desk-appraisal", {
         useMock: false,
         body: {
-          project_id: projectId,
           address,
-          area_sqm: areaSqm,
-          building_age_years: Number(form.buildingAgeYears) || undefined,
-          floor: Number(form.floor) || undefined,
-          total_floors: Number(form.totalFloors) || undefined,
-          lawd_cd: form.lawdCd.trim() || undefined,
           pnu: pnu || undefined,
+          area_sqm: areaSqm,
+          ...(isUuidProject ? { project_id: projectId } : {}),
         },
       });
       setAvmResult(avm);
@@ -705,11 +694,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
       }
 
       // Update project context store (capillary network)
+      // 탁상감정 → 부지분석 요약(공용 어댑터). estimatedValue = appraised_total_won ?? null(무목업).
+      const summary = deskToSiteSummary(avm);
       // 신뢰 메타데이터(legal_refs/inputs)를 SSOT에 가산 보존(있을 때만). 없으면 기존 patch 그대로.
       updateSiteAnalysis(
         withSiteTrustMeta(
           {
-            estimatedValue: avm.estimated_price,
+            estimatedValue: summary.estimatedTotalWon,
             landAreaSqm: areaSqm,
             zoneCode: parcelZoning,
             address,
@@ -726,8 +717,8 @@ export function ProjectSiteAnalysisWorkspaceClient({
         module: "site-analysis",
         completedAt: new Date().toISOString(),
         summary: {
-          estimatedPrice: avm.estimated_price,
-          confidence: avm.confidence_score,
+          estimatedPrice: summary.estimatedTotalWon,
+          confidence: summary.confidence,
           address,
         },
       });
@@ -989,35 +980,79 @@ export function ProjectSiteAnalysisWorkspaceClient({
               />
             )}
             {avmResult ? (
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <MetricTile
-                  label={labels.avmEstimateLabel}
-                  value={formatCurrency(locale, avmResult.estimated_price)}
-                />
-                <MetricTile
-                  label={labels.avmUnitPriceLabel}
-                  value={formatCurrency(locale, avmResult.price_per_sqm)}
-                />
-                <MetricTile
-                  label={labels.avmConfidenceLabel}
-                  value={formatPercent(avmResult.confidence_score)}
-                />
-                <MetricTile
-                  label={labels.avmComparablesLabel}
-                  value={
-                    (avmResult.synthetic_count ?? 0) > 0
-                      ? `실거래 ${avmResult.real_comparable_count ?? 0}건 (+합성 ${avmResult.synthetic_count}건·참고)`
-                      : String(avmResult.real_comparable_count ?? avmResult.comparable_count)
-                  }
-                />
-                <MetricTile
-                  label={labels.avmModelLabel}
-                  value={avmResult.model_version}
-                />
-                <MetricTile
-                  label={labels.projectUpdatedLabel}
-                  value={formatDate(locale, avmResult.created_at)}
-                />
+              <div className="mt-4 space-y-4">
+                {/* 채택 총액·단가·신뢰도·범위 — 결측은 formatCurrency/가드로 "—"(무목업, 0 강제 금지). */}
+                <div className="grid gap-4 md:grid-cols-2">
+                  <MetricTile
+                    label={labels.avmEstimateLabel}
+                    value={formatCurrency(locale, avmResult.appraised_total_won as number)}
+                  />
+                  <MetricTile
+                    label={labels.avmUnitPriceLabel}
+                    value={formatCurrency(locale, avmResult.appraised_price_per_sqm)}
+                  />
+                  <MetricTile
+                    label={labels.avmConfidenceLabel}
+                    value={Number.isFinite(avmResult.confidence) ? formatPercent(avmResult.confidence) : "—"}
+                  />
+                  <MetricTile
+                    label={labels.avmRangeLabel}
+                    value={
+                      avmResult.range_per_sqm &&
+                      Number.isFinite(avmResult.range_per_sqm.low) &&
+                      Number.isFinite(avmResult.range_per_sqm.high)
+                        ? `${formatCurrency(locale, avmResult.range_per_sqm.low)} ~ ${formatCurrency(locale, avmResult.range_per_sqm.high)}`
+                        : "—"
+                    }
+                  />
+                  {avmResult.cross_check && Number.isFinite(avmResult.cross_check.cv_pct) ? (
+                    <MetricTile
+                      label={labels.avmCrossCheckLabel}
+                      value={`${avmResult.cross_check.cv_pct}%`}
+                    />
+                  ) : null}
+                </div>
+
+                {/* 방법별 추정(탁상감정 고유) — 공시지가기준·거래사례 등 방법별 단가·근거. */}
+                {avmResult.methods && avmResult.methods.length > 0 ? (
+                  <div className="overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line)]">
+                    <p className="bg-[var(--surface-soft)] px-4 py-2 label-caps text-[var(--text-tertiary)]">
+                      {labels.avmMethodsTitle}
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="bg-[var(--surface-soft)] text-[var(--text-tertiary)]">
+                            <th className="px-3 py-2 text-left font-bold">{labels.avmMethodColLabel}</th>
+                            <th className="px-3 py-2 text-right font-bold">{labels.avmMethodPriceColLabel}</th>
+                            <th className="px-3 py-2 text-left font-bold">{labels.avmMethodBasisColLabel}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(avmResult.methods ?? []).map((m) => (
+                            <tr key={m.method} className="border-t border-[var(--line)] align-top">
+                              <td className="whitespace-nowrap px-3 py-2 font-bold text-[var(--text-primary)]">{m.method}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-[var(--text-primary)]">
+                                {Number.isFinite(m.unit_price) ? formatCurrency(locale, m.unit_price) : "—"}
+                              </td>
+                              <td className="px-3 py-2 leading-relaxed text-[var(--text-secondary)]">{m.rationale}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* 정직성: 응답 disclaimer 노출 + '참고용 · 감정평가 아님' 배지(DeskAppraisalReportClient 관례 미러). */}
+                {avmResult.disclaimer ? (
+                  <p className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.06)] px-4 py-3 text-[11px] leading-6 text-[var(--text-tertiary)]">
+                    <span className="mr-2 rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
+                      {labels.avmDisclaimerBadge}
+                    </span>
+                    {avmResult.disclaimer}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
@@ -1096,63 +1131,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
           </CardContent>
         </Card>
       </div>
-
-      {/* Comparable Transactions */}
-      {avmResult && avmResult.comparables && avmResult.comparables?.length > 0 && (
-        <Card>
-          <CardContent className="p-6">
-            <p className="label-caps text-[var(--text-tertiary)]">
-              {labels.comparablesTitle}
-            </p>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--line)]">
-                    <th className="px-4 py-3 text-left label-caps text-[var(--text-tertiary)]">
-                      {labels.comparableAddressLabel}
-                    </th>
-                    <th className="px-4 py-3 text-right label-caps text-[var(--text-tertiary)]">
-                      {labels.comparablePriceLabel}
-                    </th>
-                    <th className="px-4 py-3 text-right label-caps text-[var(--text-tertiary)]">
-                      {labels.comparableAreaLabel}
-                    </th>
-                    <th className="px-4 py-3 text-right label-caps text-[var(--text-tertiary)]">
-                      {labels.comparableDateLabel}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(avmResult.comparables ?? []).map((comp, i) => (
-                    <tr
-                      key={`comp-${i}`}
-                      className="border-b border-[var(--line)] last:border-0"
-                    >
-                      <td className="px-4 py-3 text-[var(--text-primary)]">
-                        {comp.address}
-                        {comp.synthetic && (
-                          <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                            합성(참고)
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-[var(--text-primary)]">
-                        {formatCurrency(locale, comp.price)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
-                        {comp.area_sqm != null && Number.isFinite(comp.area_sqm) ? `${comp.area_sqm.toLocaleString()} m2` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
-                        {comp.transaction_date}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* 비교거래 테이블 제거: 탁상감정 응답에는 아파트 실거래 comparables[]가 없다(desk 고유 methods[]로 대체·위 카드). */}
     </section>
   );
 }

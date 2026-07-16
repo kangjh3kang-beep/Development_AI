@@ -14,6 +14,14 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { AvmVisionPanel } from "@/components/avm-vision/AvmVisionPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+// 탁상감정 공용 계약(타입·fetch·포매터) — 부지분석 워크스페이스와 단일 계약 공유(재구현 금지).
+import {
+  apiBase,
+  eok,
+  won,
+  fetchDeskAppraisal,
+  type DeskAppraisalResult as Result,
+} from "@/lib/land/desk-appraisal";
 import type { Locale } from "@/i18n/config";
 
 const APPR_LABELS: Record<string, string> = {
@@ -31,45 +39,6 @@ function apiV2Base(): string {
   }
   return "/api/proxy/v2";
 }
-
-function apiBase(): string {
-  if (typeof window !== "undefined") {
-    const h = window.location.hostname;
-    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr")
-      return "https://api.4t8t.net/api/v1";
-  }
-  return "/api/proxy";
-}
-
-const eok = (v: number | null | undefined) =>
-  v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
-const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString()}원`);
-
-type Method = { method: string; unit_price: number; rationale: string };
-type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number } | null;
-type Result = {
-  ok: boolean; message?: string;
-  appraised_price_per_sqm: number; appraised_total_won: number | null; area_sqm: number | null;
-  official_price_per_sqm?: number; pnu?: string | null;
-  subject?: {
-    land_category?: string | null; zone_type?: string | null; zone_type_2?: string | null;
-    land_use_situation?: string | null; terrain_height?: string | null; terrain_form?: string | null;
-    official_price_year?: number | null;
-  };
-  confidence: number; range_per_sqm: { low: number; high: number };
-  cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
-  irregularity?: number | null; methods: Method[]; weight_note: string;
-  road_side?: string | null; time_adjust?: number; time_adjust_basis?: string; source?: string; base_year?: number;
-  building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
-  income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
-  complex_note?: string | null;
-  market_stats?: {
-    region?: string;
-    rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
-    land_price_trend?: { monthly?: { period: string; rate: number }[]; yearly?: { year: string; rate: number }[] } | null;
-  };
-  disclaimer: string;
-};
 
 function Gauge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
@@ -175,16 +144,9 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   // ★addressOnly: 일괄 경로에선 대표필지의 수동입력(공시지가·GFA·임대료 등)을 전파하지 않고
   //   주소만 전송 → 각 필지가 자체 공시지가·면적을 자동조회(타 필지 추정가 오염 방지).
   const fetchAppraisal = useCallback(async (targetAddr: string, opts?: { addressOnly?: boolean }): Promise<Result> => {
-    const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+    // 네트워크 코어는 공용 fetchDeskAppraisal 로 이관 — payload 구성(수동입력·주소전용)만 컴포넌트에 잔류.
     const payload = opts?.addressOnly ? { address: targetAddr } : { ...body(), address: targetAddr };
-    const r = await fetch(`${apiBase()}/land-price/desk-appraisal`, {
-      method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(`서버 오류(${r.status})`);
-    const d = await r.json();
-    if (!d?.ok) throw new Error(d?.message || "추정 실패");
-    return d as Result;
+    return fetchDeskAppraisal(payload);
   }, [body]);
 
   const run = useCallback(async () => {
