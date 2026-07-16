@@ -36,7 +36,10 @@
 // v422: 사통맵 라벨 시스템 공용화(#329 — bindSatongLabel+무레이어 .satong-tooltip으로 이중 흰박스 제거·
 //        전역 라벨버짓/줌LOD·z계약 SSOT·칩/범례 코너도크 병합) + 보안(VWorld 키 하드코딩 제거·WMS 프록시
 //        일원화). 새 CSS/프록시 라우트가 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v422-satong-map-labels";
+// v423: 규제분석 워크플로우 정합(#333 — 자연녹지 실효FAR 80% SSOT 소비·법규링크 칩·필지구획도
+//        다필지 parity·전문가패널 정직 사유) + 사통맵 선택 SSOT(#332 — healParcelPnu 키이중성 근치·
+//        노후도 정직 세분화·레일 아이콘). 규제/사통맵 화면 재배선이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v423-regulations-far-ssot";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
