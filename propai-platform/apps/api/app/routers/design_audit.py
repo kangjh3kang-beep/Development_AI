@@ -487,6 +487,8 @@ async def _execute_run(
                 deliberation_result = await shadow_integration.shadow_compare(
                     tenant_id=_tid, domain="design_audit",
                     platform_verdict=_verdict, engine_payload=_payload, platform_value=_value,
+                    # 감사 표면화는 전역 shadow 게이트와 독립(OR) — 내부 재게이트 우회(감사 한정).
+                    force_engine_call=True,
                 )
             else:
                 # 표면화 불가(매핑/테넌트 부재) 또는 shadow-only 모드 — 기존 비차단 관측(fire-and-forget).
