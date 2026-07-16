@@ -7,18 +7,7 @@
 
 외부 API 없이 collect_comprehensive만 모킹(순수 서비스 로직 검증). use_llm/with_senior=False.
 """
-import datetime as _dt
-import enum
 from unittest.mock import AsyncMock, patch
-
-# 로컬 dev 인터프리터(≤3.10) 호환 shim — 프로젝트 정본은 Python 3.12(둘 다 내장)라 무영향.
-#   base_client의 StrEnum 백포트가 enum.StrEnum(3.11+)에, schemas가 datetime.UTC(3.11+)에 의존.
-if not hasattr(enum, "StrEnum"):
-    class _StrEnum(str, enum.Enum):
-        pass
-    enum.StrEnum = _StrEnum  # type: ignore[attr-defined]
-if not hasattr(_dt, "UTC"):
-    _dt.UTC = _dt.timezone.utc  # type: ignore[attr-defined]
 
 from app.services.regulation.regulation_analysis_service import RegulationAnalysisService
 

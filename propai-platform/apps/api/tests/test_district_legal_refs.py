@@ -93,6 +93,6 @@ def test_green_zone_floor_cap_ref_is_kookto_decree_not_building_act():
     refs = get_legal_refs(["green_zone_floor_cap"])
     assert refs, "green_zone_floor_cap 근거키가 존재해야 함"
     r = refs[0]
-    assert "국토의 계획 및 이용에 관한 법률 시행령" == r["law_name"]
-    assert "건축법" != r["law_name"]
+    assert r["law_name"] == "국토의 계획 및 이용에 관한 법률 시행령"
+    assert r["law_name"] != "건축법"
     assert r["url_status"] == "verified"  # 시행령 법령 루트 = law.go.kr verified
