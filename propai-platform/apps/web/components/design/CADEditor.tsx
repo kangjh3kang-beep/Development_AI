@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type Konva from "konva";
-import { Check, Download, Eye, EyeOff, Lightbulb, Mic, Send, Terminal, Upload } from "lucide-react";
+import { Check, Download, Eye, EyeOff, Lightbulb, Mic, Send, ShieldCheck, Terminal, Upload } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { executeCommand, getCommandHint } from "@/lib/cad-command-parser";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
@@ -197,6 +197,12 @@ export default function CADEditor({
   const [rkError, setRkError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+  // ★후속④(design-run 승인 흐름 표면화): 저장 응답의 design_run(run_id·status)을 붙잡아 승인 UI에 노출.
+  //   run_id는 컴포넌트 state에만 보관한다 — localStorage 등에 영속하지 않으므로 전체 새로고침/리마운트
+  //   후에는 복원되지 않는다(영속 저장은 이 작업 스코프 밖·백엔드 재저장 시 같은 결정적 run_id 재발급).
+  const [designRun, setDesignRun] = useState<{ run_id: string; status: string } | null>(null);
+  const [approveState, setApproveState] = useState<"idle" | "approving" | "error">("idle");
+  const [approveError, setApproveError] = useState<string>("");
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [tool, setTool] = useState<Tool>("select");
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -431,7 +437,10 @@ export default function CADEditor({
       // apiClient 사용 — Authorization 헤더·401 자동 갱신을 일관 처리(직접 localStorage 토큰 read 금지).
       // C2: ring bbox 역산 매스치수(building_width/depth_m) + floor_height_m 동봉(GLB 12×9 폴백 해소).
       // export-edited-dxf가 vector_data.scale을 소비하므로 scale(px/m)도 함께 영속.
-      const d = await apiClient.post<{ status?: string }>(
+      const d = await apiClient.post<{
+        status?: string;
+        design_run?: { run_id?: string; status?: string } | null;
+      }>(
         `/design/${encodeURIComponent(projectId)}/drawings/save`,
         {
           body: {
@@ -457,12 +466,91 @@ export default function CADEditor({
       setSaveStatus("saved");
       const m = /v(\d+)/.exec(d?.status || "");
       if (m) setLoadedVersion(Number(m[1]));
+      // ★후속④: 저장 응답에 design_run이 실키로 오면 승인 UI를 띄운다. 없으면(매스치수 부재 등
+      //   미영속) null로 지워 stale 승인 버튼 노출을 막는다(정직). 승인 진행상태도 초기화.
+      const runId = d?.design_run?.run_id;
+      setDesignRun(runId ? { run_id: runId, status: d?.design_run?.status || "DRAFT" } : null);
+      setApproveState("idle");
+      setApproveError("");
       setTimeout(() => setSaveStatus("idle"), 2500);
     } catch {
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
   }, [projectId, shapes, ring.length, floorCount, buildingHeight, massDims, floorHeightM, scalePxPerM]);
+
+  /* ── 설계안 승인(POST /design-runs/{run_id}/approve) — 인간승인 명시 액션 ──
+     ★플랫폼 관례("인간 승인 없는 AUTHORIZED 금지"): 사용자의 이 버튼 클릭이 곧 명시적 인간 승인이므로
+       자동경로(persist)가 아닌 이 경로만 DRAFT→APPROVED로 승격한다(정합).
+     Idempotency-Key(재전송 안전 — design_runs.approve 헤더 계약, alias="Idempotency-Key")를 매 클릭
+     새로 발급한다. 실패(401/403/404/409)는 problem+json detail을 우선해 사유를 정직 표기한다. */
+  const handleApprove = useCallback(async () => {
+    const runId = designRun?.run_id;
+    if (!runId || approveState === "approving") return;
+    setApproveState("approving");
+    setApproveError("");
+    try {
+      const res = await apiClient.post<{ run_id: string; status?: string; approved_by?: string }>(
+        `/design-runs/${encodeURIComponent(runId)}/approve`,
+        {
+          body: {},
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+          timeoutMs: 15000,
+        },
+      );
+      setDesignRun({ run_id: res.run_id || runId, status: res.status || "APPROVED" });
+      setApproveState("idle");
+    } catch (err) {
+      // problem+json(application/problem+json)은 apiClient가 { message: '<json 문자열>' }로 회신하므로
+      // detail을 우선 추출한다. 그 외는 상태코드로 정직 표기(조용한 성공 위장 금지).
+      let msg = "승인 실패";
+      if (err instanceof ApiClientError) {
+        const p = err.payload as { detail?: string; message?: string } | null;
+        if (p?.detail) {
+          msg = p.detail;
+        } else if (typeof p?.message === "string") {
+          try {
+            const parsed = JSON.parse(p.message) as { detail?: string };
+            msg = parsed?.detail || p.message;
+          } catch {
+            msg = p.message;
+          }
+        } else {
+          msg = `승인 실패 (${err.status})`;
+        }
+      }
+      setApproveError(msg);
+      setApproveState("error");
+    }
+  }, [designRun, approveState]);
+
+  /* ── 재진입 복원(GET /design-runs/{run_id}) — run_id가 state에 있으면 서버를 단일 진실원천으로
+       승인차원 status를 재동기화한다. run_id가 바뀔 때 1회만 실행(승인 후 같은 run_id면 재실행 안 함).
+       ★한계: run_id를 영속(localStorage 등)하지 않으므로 전체 새로고침/리마운트 후에는 복원되지
+         않는다 — run_id 영속은 이 작업 스코프 밖. */
+  useEffect(() => {
+    const runId = designRun?.run_id;
+    if (!runId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiClient.get<{ run_id: string; status?: string }>(
+          `/design-runs/${encodeURIComponent(runId)}`,
+          { timeoutMs: 12000 },
+        );
+        if (!cancelled && r?.status) {
+          setDesignRun((prev) =>
+            prev && prev.run_id === r.run_id ? { ...prev, status: r.status! } : prev,
+          );
+        }
+      } catch {
+        // 조회 실패는 조용히 무시 — 저장 응답의 status를 그대로 유지(정직).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [designRun?.run_id]);
 
   /* ── 편집본 DXF 다운로드(GET export-edited-dxf) ──
      저장본을 ParametricCADService.create_dxf_from_edited_points로 변환한 정식 DXF(LWPOLYLINE+DIMENSION).
@@ -1484,6 +1572,43 @@ export default function CADEditor({
             : saveStatus === "error" ? "재시도"
             : `저장${loadedVersion ? ` (v${loadedVersion})` : ""}`}
         </button>
+        {/* ── 설계안(design-run) 승인 상태 배지 + 승인 버튼(저장이 design_run 실키를 돌려줬을 때만) ──
+             ★인간승인 표면화: 초안(DRAFT)일 때만 '설계안 승인' 버튼을 보이며, 클릭이 곧 인간 승인이다. */}
+        {designRun ? (
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`inline-flex items-center rounded-[var(--r-input)] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest ${
+                designRun.status === "APPROVED"
+                  ? "bg-[color-mix(in_srgb,var(--status-success)_16%,transparent)] text-[var(--status-success)]"
+                  : "bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] text-[var(--status-warning)]"
+              }`}
+              title={`설계안 run_id: ${designRun.run_id}`}
+            >
+              설계안: {designRun.status === "APPROVED" ? "승인됨" : "초안"}
+            </span>
+            {designRun.status !== "APPROVED" ? (
+              <button
+                onClick={handleApprove}
+                disabled={approveState === "approving"}
+                title="이 클릭이 곧 인간 승인입니다 — 설계안을 승인(APPROVED)으로 승격합니다"
+                className={`rounded-[var(--r-input)] px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                  approveState === "error"
+                    ? "bg-[color-mix(in_srgb,var(--status-error)_80%,transparent)] text-white"
+                    : "bg-[color-mix(in_srgb,var(--accent-strong)_92%,transparent)] text-white hover:bg-[var(--accent-strong)]"
+                }`}
+              >
+                {approveState === "approving" ? "승인 중…"
+                  : approveState === "error" ? "승인 재시도"
+                  : (<span className="inline-flex items-center gap-1"><ShieldCheck className="size-3" aria-hidden />설계안 승인</span>)}
+              </button>
+            ) : null}
+            {approveState === "error" && approveError ? (
+              <span className="max-w-[220px] truncate text-[10px] font-bold text-[var(--status-error)]" role="alert" title={approveError}>
+                {approveError}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {/* ── 편집본 DXF 다운로드(저장본 → 정식 DXF). 404면 "먼저 저장하세요" 안내 ── */}
         <button
           onClick={downloadEditedDxf}

@@ -250,6 +250,11 @@ class DrawingSaveResponse(BaseModel):
     svg_length: int
     layer_count: int
     status: str
+    # ★후속④(design-run 승인 흐름 표면화): 저장 시 design_run이 실제 영속되면 그 실키(run_id)와
+    #   승인차원 status(DRAFT/APPROVED)를 additive 동봉한다. 프론트는 이 run_id로
+    #   POST /design-runs/{run_id}/approve(명시 인간승인)를 호출해 승인 흐름을 표면화한다.
+    #   미영속(매스치수 부재로 스킵/영속 실패) 시 None(정직) — 기존 응답 필드는 무변경(하위호환).
+    design_run: dict[str, Any] | None = None
 
 
 class AlternativeSelectionResponse(BaseModel):
@@ -720,6 +725,7 @@ async def save_drawing(
         # ★WP-E: design_run 영속(DRAFT) — 도면 커밋 후 별도 best-effort 트랜잭션으로 설계 실행의
         #   통일 앵커(bare 기하)·표면해시(save_stamp)·기하해시를 design_runs에 기록한다. 완전한
         #   매스(폭·깊이·층수)가 있을 때만 기록하고, 실패해도 이미 커밋된 도면은 안전하다(예외격리).
+        design_run_info: dict[str, Any] | None = None
         if (
             req.building_width_m is not None
             and req.building_depth_m is not None
@@ -729,7 +735,7 @@ async def save_drawing(
                 from app.services.cad import design_run_store
 
                 _stamp = design_payload.get("bimir") if isinstance(design_payload.get("bimir"), dict) else {}
-                await design_run_store.persist_design_run(
+                _run = await design_run_store.persist_design_run(
                     db=db, tenant_id=str(tenant_id), project_id=str(pid),
                     building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
                     num_floors=req.floor_count, floor_height_m=req.floor_height_m,
@@ -737,10 +743,17 @@ async def save_drawing(
                     compiler_version=(_stamp or {}).get("bimir_version"),
                     metrics={"floor_count": req.floor_count, "building_height_m": req.building_height_m},
                 )
+                # ★후속④: persist_design_run 반환 계약(design_run_store.py:318-324 — run_id·status 등)의
+                #   실키(run_id)·승인차원 status만 응답에 additive 동봉한다. 프론트가 이 run_id로
+                #   /design-runs/{run_id}/approve(인간승인)를 호출해 승인 흐름을 표면화한다. run_id가
+                #   있을 때만 세팅(없으면 None 유지 — 정직). status는 신규 DRAFT 또는 보존된 기존 승인.
+                if isinstance(_run, dict) and _run.get("run_id"):
+                    design_run_info = {"run_id": _run["run_id"], "status": _run.get("status")}
         return {
             "project_id": project_id, "drawing_code": req.drawing_code,
             "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
             "layer_count": len(req.layers), "status": f"saved(v{next_ver})",
+            "design_run": design_run_info,
         }
     except HTTPException:
         # ★409(버전 충돌) 등 의도된 HTTP 응답은 아래 generic 핸들러가 500으로 변환하지 않도록

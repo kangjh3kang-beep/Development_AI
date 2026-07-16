@@ -2,7 +2,6 @@
 
 import io
 import logging
-import time
 import uuid
 from typing import Any
 
@@ -12,20 +11,31 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.services.common.job_store import JobStore
 from app.services.registry.registry_service import RegistryService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/registry", tags=["부동산 등기부"])
 
 # ── 비동기 등기분석 작업 저장소(모바일 안정: 긴 동기요청 대신 제출+폴링) ──
+# ★공용 잡 스토어(Redis 우선·인메모리 폴백) — design_audit과 동일 계약. 인메모리 백킹은 기존
+#   _JOBS 전역 dict를 재사용해 폴백 경로 동작을 보존한다(무악화). Redis 설정 시 블루그린 컷오버·
+#   다중 워커에서도 잡 공유(프로세스 경계 404 봉합).
 _JOBS: dict[str, dict[str, Any]] = {}
-_JOB_TTL = 3600.0
+_JOB_TTL = 3600  # 잡 보관 TTL(초)
+_REGISTRY_STORE = JobStore("job:registry:", memory_backing=_JOBS, default_ttl_s=_JOB_TTL)
 
 
-def _prune_jobs() -> None:
-    now = time.time()
-    for k in [k for k, v in _JOBS.items() if now - v.get("ts", 0) > _JOB_TTL]:
-        _JOBS.pop(k, None)
+async def _set_registry_job(job_id: str, **fields: Any) -> None:
+    """job_id 항목 병합 갱신(user_id 등 소유 필드 보존) — 공용 스토어 경유(get→merge→put).
+
+    ★status 전이 시 소유 필드 소실 버그 봉합: 과거 _run_registry_job이 잡 엔트리를 통째로
+    교체(replace)해 user_id를 떨어뜨려, 완료된 잡을 소유자가 폴링하면 소유권 불일치로 404가
+    나던 결함이 있었다. 병합으로 소유 필드를 보존한다.
+    """
+    cur = dict(await _REGISTRY_STORE.get(job_id) or {})
+    cur.update(fields)
+    await _REGISTRY_STORE.put(job_id, cur, _JOB_TTL)
 
 
 def _issue_failed(result: Any) -> bool:
@@ -58,9 +68,9 @@ async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
         from app.services.registry.registry_analysis_service import RegistryAnalysisService
 
         res = await RegistryAnalysisService().analyze(**params)
-        _JOBS[job_id] = {"status": "done", "result": res, "ts": time.time()}
+        await _set_registry_job(job_id, status="done", result=res)
     except Exception as e:  # noqa: BLE001
-        _JOBS[job_id] = {"status": "error", "error": str(e)[:200], "ts": time.time()}
+        await _set_registry_job(job_id, status="error", error=str(e)[:200])
 
 
 class RegistryBulkRequest(BaseModel):
@@ -224,11 +234,13 @@ async def registry_analyze_submit(
     except Exception:  # noqa: BLE001
         pass
 
-    _prune_jobs()
     job_id = uuid.uuid4().hex
     # ★소유권 기록(IDOR 봉합 — R1 범위외 발견): 등기 권리분석 결과는 개인정보 급이라
     #   제출자만 조회 가능해야 한다. GET 이 이 user_id 로 스코프한다(불일치=404).
-    _JOBS[job_id] = {"status": "pending", "ts": time.time(), "user_id": str(current_user.user_id)}
+    #   프루닝은 스토어가 put 시 lazy 수행(별도 _prune 호출 불필요).
+    await _REGISTRY_STORE.put(
+        job_id, {"status": "pending", "user_id": str(current_user.user_id)}, _JOB_TTL
+    )
     params = dict(
         address=req.address, pnu=req.pnu, registry_text=req.registry_text,
         realty_type=req.realty_type, dong=req.dong, ho=req.ho, land_hint=req.land_hint,
@@ -246,7 +258,7 @@ async def registry_analyze_status(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """작업 상태(pending/done/error)와 완료 시 결과를 반환."""
-    j = _JOBS.get(job_id)
+    j = await _REGISTRY_STORE.get(job_id)
     # ★소유권 스코프(IDOR 봉합): 타인 job_id 를 추측·탈취해도 404(존재 여부 비노출).
     #   구(user_id 미기록) 잡은 프루닝 TTL 내 잔존 가능 — 소유 확인 불가라 동일하게 404(fail-closed).
     if not j or j.get("user_id") != str(current_user.user_id):
