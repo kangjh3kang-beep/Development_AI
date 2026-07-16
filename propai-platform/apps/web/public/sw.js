@@ -39,7 +39,9 @@
 // v423: 규제분석 워크플로우 정합(#333 — 자연녹지 실효FAR 80% SSOT 소비·법규링크 칩·필지구획도
 //        다필지 parity·전문가패널 정직 사유) + 사통맵 선택 SSOT(#332 — healParcelPnu 키이중성 근치·
 //        노후도 정직 세분화·레일 아이콘). 규제/사통맵 화면 재배선이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v423-regulations-far-ssot";
+// v424: 설계엔진 실효FAR SSOT 승격(#339 — DAG design 노드 ordinance 주입·far_basis/far_reliable
+//        전파·rule_trace 근거 정직화·캐시 핑거프린트). 설계 근거표기 변경이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v424-design-far-ssot";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
