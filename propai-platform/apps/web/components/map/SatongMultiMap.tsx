@@ -22,6 +22,7 @@ import {
   AGE_LEGEND_ITEMS,
   ageColor,
   ageLabel,
+  geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
   mergeSatongMapFeatures,
@@ -638,6 +639,9 @@ export function SatongMultiMap({
   const [marketNote, setMarketNote] = useState("");
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
+  // ★PR#329 R1 리뷰(MEDIUM2) 반영: 지적 WMS 타일 실패(키 미설정·상류 인증오류 등)를
+  //   무음 회색지도로 남기지 않고 다른 레이어 노트와 동일한 칩 체계로 표면화한다.
+  const [cadastreTileNote, setCadastreTileNote] = useState("");
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -1117,24 +1121,36 @@ export function SatongMultiMap({
       cadastreTileRef.current = null;
     }
 
-    if (showCadastreTile) {
-      // ★WP-M5: 연속지적도만 프론트 서버 프록시(/tiles/vworld/wms) 경유로 부설한다.
-      //   (1) API 키를 브라우저 번들에 노출하지 않는다 — 키·domain 은 프록시가 서버측에서 주입.
-      //       (종전 하드코딩 폴백 키 + api.vworld.kr 직결 = 자기 원칙(타일 프록시) 위반이었다.)
-      //   (2) 용도지역 WMS(LT_C_UQ111)는 여기서 함께 깔지 않는다 — '용도지역' 레이어 소관
-      //       (의미 1:1). 지적 토글에 겹쳐 부설하면 위성 가림·표현 중복을 유발했다.
-      const cadastreTile = L.tileLayer.wms("/tiles/vworld/wms", {
-        layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
-        styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
-        format: "image/png",
-        transparent: true,
-        maxZoom: 19,
-        minZoom: 10,
-        attribution: "VWorld 연속지적도",
-      });
-      cadastreTile.addTo(map);
-      cadastreTileRef.current = cadastreTile;
+    if (!showCadastreTile) {
+      setCadastreTileNote("");
+      return;
     }
+
+    // ★WP-M5: 연속지적도만 프론트 서버 프록시(/tiles/vworld/wms) 경유로 부설한다.
+    //   (1) API 키를 브라우저 번들에 노출하지 않는다 — 키·domain 은 프록시가 서버측에서 주입.
+    //       (종전 하드코딩 폴백 키 + api.vworld.kr 직결 = 자기 원칙(타일 프록시) 위반이었다.)
+    //   (2) 용도지역 WMS(LT_C_UQ111)는 여기서 함께 깔지 않는다 — '용도지역' 레이어 소관
+    //       (의미 1:1). 지적 토글에 겹쳐 부설하면 위성 가림·표현 중복을 유발했다.
+    const cadastreTile = L.tileLayer.wms("/tiles/vworld/wms", {
+      layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
+      styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
+      format: "image/png",
+      transparent: true,
+      maxZoom: 19,
+      minZoom: 10,
+      attribution: "VWorld 연속지적도",
+    });
+    // ★PR#329 R1 리뷰(MEDIUM2) 반영: 종전엔 tileerror 핸들러가 없어 키 미설정/상류 오류
+    //   시 지도가 빈 채로(무노트) 남았다(무목업 원칙 위반). 실패를 관측 가능한 노트로
+    //   표면화하고, 이후 로드가 성공하면(부분 성공 포함) 노트를 지운다.
+    cadastreTile.on("tileerror", () => {
+      setCadastreTileNote("지적 타일 조회 실패 — 키 미설정 또는 VWorld 응답 오류");
+    });
+    cadastreTile.on("tileload", () => {
+      setCadastreTileNote((prev) => (prev ? "" : prev));
+    });
+    cadastreTile.addTo(map);
+    cadastreTileRef.current = cadastreTile;
 
     return () => {
       if (cadastreTileRef.current) {
@@ -1294,6 +1310,51 @@ export function SatongMultiMap({
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
+  //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획
+  //   상시 라벨이 0개인데, 사용자가 지도를 연 '목적'인 선택 필지 자체까지 사라지면 첫인상이
+  //   빈 지도가 된다. 이 라벨은 labelPlan(전역 48/16/0 버짓) 대상이 아닌 별도 always-on
+  //   트랙이다 — 상위 오버레이 색칠 이펙트(showCadastre 등 토글 게이트)와도 독립적이라,
+  //   레이어 토글을 하나도 켜지 않은 상태(초기 연결 직후)에도 필지가 식별된다.
+  //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
+  //   포인트에 라벨만 부착한다(중복 마커 방지).
+  const selectionLabelLayerRef = useRef<any>(null);
+  /* eslint-disable react-hooks/set-state-in-effect -- Selection labels are rendered into an imperative Leaflet layer group. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+
+    if (selectionLabelLayerRef.current) {
+      try { selectionLabelLayerRef.current.remove(); } catch { /* noop */ }
+      selectionLabelLayerRef.current = null;
+    }
+    if (overlayFeatures.length === 0) return;
+
+    const group = L.layerGroup().addTo(map);
+    selectionLabelLayerRef.current = group;
+    overlayFeatures.forEach((feature) => {
+      const point =
+        feature.lat != null && feature.lon != null
+          ? { lat: feature.lat, lon: feature.lon }
+          : geometryRepresentativePoint(feature.geometry);
+      if (!point) return;
+      const anchor = L.circleMarker([point.lat, point.lon], {
+        radius: 0,
+        opacity: 0,
+        fillOpacity: 0,
+        interactive: false,
+      }).addTo(group);
+      bindSatongLabel(anchor, feature.address || feature.pnu || "필지", { permanent: true, offsetY: 2 });
+    });
+
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
+    };
+  }, [mapReady, overlayFeatures]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   // marketLayer에서 마커 이펙트가 실제로 읽는 원시값·참조만 뽑아 구독을 협소화한다(리뷰 LOW) —
   //   marketLayer 객체 identity가 바뀌어도(다른 필드 갱신) 아래 값이 같으면 마커를 다시 그리지
   //   않아, 분양 items 도착이 실거래 마커 재생성·재fitBounds를 유발하던 낭비를 끊는다.
@@ -1421,7 +1482,7 @@ export function SatongMultiMap({
       })
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
-      bindSatongLabel(L, marker, item.name || "실거래", { permanent: ordinal < marketLabelLimit, offsetY: radius });
+      bindSatongLabel(marker, item.name || "실거래", { permanent: ordinal < marketLabelLimit, offsetY: radius });
       bounds.extend([item.lat, item.lon]);
     });
 
@@ -1483,7 +1544,7 @@ export function SatongMultiMap({
         const marker = L.marker([item.lat, item.lon], { icon })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
           .addTo(group);
-        bindSatongLabel(L, marker, item.name || "분양", { permanent: ordinal < presaleLabelLimit, offsetY: 11 });
+        bindSatongLabel(marker, item.name || "분양", { permanent: ordinal < presaleLabelLimit, offsetY: 11 });
       });
     }
 
@@ -1504,7 +1565,7 @@ export function SatongMultiMap({
         const marker = L.marker([item.lat, item.lon], { icon })
           .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
-        bindSatongLabel(L, marker, "경매물건", { permanent: ordinal < auctionLabelLimit, offsetY: 12 });
+        bindSatongLabel(marker, "경매물건", { permanent: ordinal < auctionLabelLimit, offsetY: 12 });
       });
     }
 
@@ -1568,7 +1629,7 @@ export function SatongMultiMap({
               { maxWidth: 260 },
             )
             .addTo(group);
-          bindSatongLabel(L, marker, item.name || label, { permanent: ordinal < poiLabelLimit, offsetY: 5 });
+          bindSatongLabel(marker, item.name || label, { permanent: ordinal < poiLabelLimit, offsetY: 5 });
         }
       }
     }
@@ -1622,7 +1683,7 @@ export function SatongMultiMap({
           { maxWidth: 260 },
         )
         .addTo(group);
-      bindSatongLabel(L, marker, fac.name || "개발계획", { permanent: ordinal < devLabelLimit, offsetY: 6 });
+      bindSatongLabel(marker, fac.name || "개발계획", { permanent: ordinal < devLabelLimit, offsetY: 6 });
     }
     // 좌표 미상 시설(마커 불가)도 정직 집계 — 목록엔 있으나 지도에 못 찍는 건수를 구분 고지.
     const noCoord = facilities.length - devCount;
@@ -1752,7 +1813,7 @@ export function SatongMultiMap({
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
-        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote) && (
+        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
           <div
             className={`pointer-events-none absolute left-3 flex max-w-[calc(100%-96px)] flex-col gap-2 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
@@ -1781,8 +1842,13 @@ export function SatongMultiMap({
               </div>
             )}
             {/* 상태 칩 스택 */}
-            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote) && (
+            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
               <div className="space-y-1">
+                {cadastreTileNote && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    {cadastreTileNote}
+                  </span>
+                )}
                 {overlayNote && (
                   <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                     {overlayNote}

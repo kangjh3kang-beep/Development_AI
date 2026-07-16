@@ -75,13 +75,15 @@ export interface BindSatongLabelOptions {
 /**
  * 사통맵 마커에 표준 라벨 툴팁을 부착한다(인라인 bindTooltip 5곳의 단일 대체).
  *
- * @param L       window.L (Leaflet 전역)
+ * ★PR#329 R1 리뷰(LOW2) 반영 — 미사용 `L`(Leaflet 전역) 파라미터 제거. 콘텐츠 노드는
+ *   전역 `document`로 직접 만들 뿐 Leaflet 네임스페이스가 필요 없었다(호출부는 `marker`가
+ *   이미 Leaflet 인스턴스라 L을 별도로 넘길 이유가 없다).
+ *
  * @param marker  대상 Leaflet 마커/서클마커
  * @param text    라벨 텍스트(원문 — textContent로 안전하게 삽입, 이스케이프 불필요)
  * @param opts    permanent/offsetY
  */
 export function bindSatongLabel(
-  L: unknown,
   marker: { bindTooltip: (content: unknown, options: unknown) => unknown },
   text: string,
   opts: BindSatongLabelOptions,

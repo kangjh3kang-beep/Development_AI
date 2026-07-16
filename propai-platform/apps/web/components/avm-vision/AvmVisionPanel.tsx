@@ -26,7 +26,12 @@ const ROAD_COLOR: Record<RoadFrontage, string> = { good: "#10b981", normal: "#f5
 
 /**
  * VWorld 항공영상 썸네일 URL.
- * VWorld 키는 도메인 제한 공개키(기존 lib/vworld-client.ts와 동일 정책)지만,
+ *
+ * ★키 이원 계약(PR#329 R1 리뷰 HIGH 반영 — 정직 명시, `lib/vworld-client.ts` 상단
+ *   독스트링과 동일 계약): 여기서 쓰는 `NEXT_PUBLIC_VWORLD_API_KEY`는 공개(도메인
+ *   제한) 키 — 브라우저 노출을 전제로 발급되며 VWorld 콘솔의 Referer/도메인
+ *   화이트리스트가 보호 기제다. 사통맵 타일 프록시가 쓰는 서버 전용 키
+ *   (`VWORLD_API_KEY`)와는 별개 계약이며 섞이지 않는다.
  * getmap 엔드포인트는 Referer 헤더를 요구하므로 Next.js 프록시(/api/vworld/data?service=image)를 경유한다.
  * (브라우저 <img>는 Referer를 설정할 수 없어 직접 호출 시 403/빈응답 위험)
  */
