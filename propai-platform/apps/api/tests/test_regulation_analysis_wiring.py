@@ -4,6 +4,10 @@
 - 자연녹지 실효 용적률은 법정 100%가 아니라 구조상한 80%(건폐20%×4층)여야 한다.
 - 상위법령 §77/§78·개별 규제 지역지구별 법령칩·높이 4층 근거칩이 배선돼야 한다.
 - 응답에 parcels_used(실제 사용 필지 목록)가 echo돼 구획도가 단일 권위목록을 소비한다.
+- ★적대리뷰(PR#333 REVISE) HIGH: 다필지 혼합(면적가중 blended effective)에 대표(첫)필지의
+  구조상한(structural_cap_pct/floor_cap)을 그대로 얹으면 "실효 건폐율 40%(blended) × 4층(대표)
+  = 80%(대표)" 같은 산술 거짓이 재유입된다 — 다필지 혼합은 구조상한 상세를 미표시해야 한다.
+- ★층수클램프가 없는 zone(제2종일반주거 등)은 구조상한이 실효치를 낮추지 않아야 한다(250% 유지).
 
 외부 API 없이 collect_comprehensive만 모킹(순수 서비스 로직 검증). use_llm/with_senior=False.
 """
@@ -125,3 +129,105 @@ async def test_parcels_used_echo_multiparcel():
     used = res.get("parcels_used")
     assert [p["address"] for p in used] == ["신봉동 56-16", "신봉동 56-17"]
     assert [p["pnu"] for p in used] == ["PNU1", "PNU2"]
+
+
+async def test_mixed_multiparcel_no_bogus_structural_cap_row():
+    """★적대리뷰 HIGH: 자연녹지(대표)+제2종일반주거 혼합 다필지는 blended bcr/far가 헤드라인이고,
+    대표필지 전용 구조상한(structural_cap_pct=80·floor_cap=4)을 그 옆에 노출하면 "실효 건폐율
+    40%(blended) × 4층(대표) = 80%(대표)"(40×4=160≠80) 같은 가시적 산술 거짓이 된다.
+    다필지 혼합(integrated 성공) 시엔 구조상한 evidence 행·passthrough 필드·높이칩을 미표시해야 한다.
+    """
+    rows = [
+        {"address": "신봉동 56-16", "area_sqm": 1161.0, "zone_type": "자연녹지지역", "pnu": "PNU1"},
+        {"address": "신봉동 56-17", "area_sqm": 900.0, "zone_type": "제2종일반주거지역", "pnu": "PNU2"},
+    ]
+    blended = {
+        "parcel_count": 2,
+        "total_area_sqm": 2061.0,
+        "dominant_zone": "자연녹지지역",
+        "blended_far_eff_pct": 139.6,
+        "blended_bcr_eff_pct": 40.0,
+    }
+    with (
+        patch(
+            "app.services.land_intelligence.land_info_service.LandInfoService.collect_comprehensive",
+            new=AsyncMock(return_value=_natural_green_comp()),
+        ),
+        patch(
+            "app.services.land_intelligence.comprehensive_analysis_service."
+            "ComprehensiveAnalysisService._integrated_context",
+            new=AsyncMock(return_value=blended),
+        ),
+    ):
+        res = await RegulationAnalysisService().analyze(
+            "신봉동 56-16", pnu=None, use_llm=False, with_senior=False, parcels=rows,
+        )
+
+    # 헤드라인은 blended(면적가중) 값이어야 함 — 대표필지 단독값(80/20)이 아니라.
+    assert res["limits"]["bcr"]["effective"] == 40.0
+    assert res["limits"]["far"]["effective"] == 139.6
+
+    # 구조상한 evidence 행이 없어야 함(대표필지 전용 값 재유입 금지).
+    labels = {e.get("label") for e in res.get("evidence") or []}
+    assert "구조상한 실효 용적률" not in labels, f"다필지 혼합에 대표필지 구조상한 행이 새면 안 됨 — {labels}"
+
+    # passthrough의 구조상한 상세 필드도 None(헤드라인만 유지, 대표필지 근거는 생략).
+    eff = res.get("effective_far")
+    assert eff is not None
+    assert eff["effective_far_pct"] == 139.6 and eff["effective_bcr_pct"] == 40.0
+    assert eff["structural_cap_pct"] is None
+    assert eff["floor_cap"] is None
+    assert eff["floor_cap_basis"] is None
+    assert eff["far_basis"] is None
+
+    # 높이카드 층수상한 근거칩도 대표필지 전용이라 미표시.
+    assert res["limits"]["height"].get("legal_ref") is None
+
+    # 상위법령 legal_refs에도 green_zone_floor_cap(대표필지 근거)이 섞이면 안 됨.
+    upper = next(lv for lv in res["hierarchy"] if lv["level"] == "상위법령")
+    keys = {r.get("key") for r in (upper.get("legal_refs") or [])}
+    assert "green_zone_floor_cap" not in keys
+
+
+async def test_no_floor_cap_zone_keeps_full_effective_far_250():
+    """★적대리뷰 HIGH 반증테스트: 제2종일반주거(층수클램프 없음)는 구조상한이 실효치를 낮추지
+    않는다 — far_tier_service._structural_cap_for가 (None,None,None)을 반환하는 zone은 실효
+    용적률이 법정/조례 그대로(250%) 유지돼야 한다(자연녹지만 테스트하던 이전 커버리지 갭 봉합).
+    """
+    comp = {
+        "zone_type": "제2종일반주거지역",
+        "zone_type_secondary": "",
+        "pnu": "PNU-JUGEO",
+        "coordinates": {"lat": 37.4, "lng": 127.0},
+        "land_area_sqm": 800.0,
+        "land_register": {"area_sqm": 800.0, "land_category": "대"},
+        "land_characteristics": {},
+        "land_use_plan": {"districts": ["제2종일반주거지역"]},
+        "special_districts": [],
+        "zone_limits": {"max_bcr_pct": 60, "max_far_pct": 250},
+        "local_ordinance": {},
+        # far_tier_service.calc_effective_far SSOT 산출값 — 층수제한 없음(구조상한 미적용).
+        "effective_far": {
+            "effective_far_pct": 250.0,
+            "effective_bcr_pct": 60.0,
+            "structural_cap_pct": None,
+            "floor_cap": None,
+            "floor_cap_basis": None,
+            "far_basis": "법정/조례",
+        },
+    }
+    with patch(
+        "app.services.land_intelligence.land_info_service.LandInfoService.collect_comprehensive",
+        new=AsyncMock(return_value=comp),
+    ):
+        res = await RegulationAnalysisService().analyze(
+            "서울시 어딘가 100-1", pnu=None, use_llm=False, with_senior=False,
+        )
+
+    far = res["limits"]["far"]
+    assert far["legal"] == 250, "법정 상한 250% 그대로"
+    assert far["effective"] == 250.0, f"층수제한 없는 zone은 실효가 낮아지면 안 됨 — got {far['effective']}"
+    # 구조상한 evidence 행도 없어야 함(floor_cap 자체가 없으므로).
+    labels = {e.get("label") for e in res.get("evidence") or []}
+    assert "구조상한 실효 용적률" not in labels
+    assert res["limits"]["height"].get("legal_ref") is None

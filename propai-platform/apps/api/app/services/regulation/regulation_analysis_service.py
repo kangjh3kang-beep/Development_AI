@@ -136,8 +136,16 @@ class RegulationAnalysisService:
             limits["far"]["effective"] = eff_far_pct
         if eff_bcr_pct is not None and isinstance(limits.get("bcr"), dict):
             limits["bcr"]["effective"] = eff_bcr_pct
+        # ★적대리뷰 반영(HIGH): eff(구조상한 structural_cap_pct/floor_cap/floor_cap_basis/far_basis)는
+        #   '대표(첫) 필지' 단일존 계산치다. 다필지 혼합(integrated 성공)은 effective(far/bcr)를 면적가중
+        #   blended로 이미 덮어썼으므로, 대표필지의 구조상한을 그 옆에 그대로 노출하면 "실효 건폐율
+        #   40%(blended) × 4층(대표) = 80%(대표)" 같은 가시적 산술 거짓이 재유입된다(far_tier_service.
+        #   rebuild_legal_basis_annotations의 "139.6% vs 200%" 전례와 동일 클래스). integrated가 None일
+        #   때만(진짜 단일필지 또는 통합실패 폴백 — 이 경우 eff_far_pct/eff_bcr_pct는 대표값 그대로라
+        #   구조상한과 정합) 구조상한 상세를 노출한다(정직 — 다필지 혼합은 미표시가 안전).
+        _show_structural = bool(eff) and not integrated
         # 구조상한(건폐율×층수) 근거를 높이 카드 칩으로 노출(층수제한 zone만) — 레지스트리 단일출처.
-        floor_cap = eff.get("floor_cap") if eff else None
+        floor_cap = eff.get("floor_cap") if (eff and _show_structural) else None
         if floor_cap and isinstance(limits.get("height"), dict):
             try:
                 from app.services.legal.legal_reference_registry import get_legal_refs
@@ -178,7 +186,8 @@ class RegulationAnalysisService:
         self._attach_node_legal_refs(
             hierarchy, zone_type, sigungu, zl, districts=districts, has_floor_cap=bool(floor_cap),
         )
-        evidence = self._build_evidence(zone_type, limits, sigungu, eff)
+        # 구조상한 evidence 행도 동일 게이트(_show_structural) — 다필지 혼합엔 eff(대표필지) 미전달.
+        evidence = self._build_evidence(zone_type, limits, sigungu, eff if _show_structural else None)
 
         land_category = lr.get("land_category") or lc.get("land_category")
 
@@ -209,14 +218,16 @@ class RegulationAnalysisService:
 
         # WP-R1: effective_far 통과키(구조상한 실체) — 프론트/근거패널이 소비(가산·옵셔널·무회귀).
         #   층수제한 없는 zone은 structural_cap_pct/floor_cap이 None(자연스레 미표기).
+        #   다필지 혼합(_show_structural=False)은 대표필지 전용 구조상한/근거를 실지 않는다(정직 —
+        #   blended effective_far_pct/effective_bcr_pct 헤드라인만 남기고 산술 불일치 필드는 생략).
         if eff:
             result["effective_far"] = {
                 "effective_far_pct": eff_far_pct,
                 "effective_bcr_pct": eff_bcr_pct,
-                "structural_cap_pct": eff.get("structural_cap_pct"),
-                "floor_cap": eff.get("floor_cap"),
-                "floor_cap_basis": eff.get("floor_cap_basis"),
-                "far_basis": eff.get("far_basis"),
+                "structural_cap_pct": eff.get("structural_cap_pct") if _show_structural else None,
+                "floor_cap": eff.get("floor_cap") if _show_structural else None,
+                "floor_cap_basis": eff.get("floor_cap_basis") if _show_structural else None,
+                "far_basis": eff.get("far_basis") if _show_structural else None,
             }
 
         # ── WP-R3 parity: 실제 사용된 필지 목록(주소+PNU) echo — 구획도/패널이 단일 권위목록 소비 ──
@@ -270,7 +281,9 @@ class RegulationAnalysisService:
 
         if use_llm:
             # WP-R1: 실효 용적률 근거(구조상한 등)를 프롬프트에 주입 → AI가 "실효 80%(4층 제한 바인딩)" 서술.
-            _far_basis = (eff or {}).get("far_basis") if eff else None
+            #   다필지 혼합(_show_structural=False)은 대표필지 전용 근거문구를 주입하지 않는다(AI가
+            #   blended 헤드라인 옆에 대표필지 근거를 잘못 서술하는 것을 방지 — 근거 없음이 정직).
+            _far_basis = eff.get("far_basis") if (eff and _show_structural) else None
             result["ai"] = await self._llm(
                 address, zone_type, zone_2, area, limits, districts, far_basis=_far_basis,
             )
