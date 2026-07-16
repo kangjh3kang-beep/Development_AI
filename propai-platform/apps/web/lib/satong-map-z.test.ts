@@ -14,11 +14,13 @@ describe("satong-map-z — z-index 계약", () => {
     expect(SATONG_UI_Z.confirmCard).toBe(max);
   });
 
-  it("오버레이 상대 순서: 전체화면버튼 ≤ 코너도크 < 타일실패 < 하단바 < 확인카드", () => {
+  it("오버레이 상대 순서: 전체화면버튼 ≤ 코너도크 < 타일실패 < 하단바 < 클릭팝오버 < 확인카드", () => {
     expect(SATONG_UI_Z.fullscreenButton).toBeLessThanOrEqual(SATONG_UI_Z.cornerDock);
     expect(SATONG_UI_Z.cornerDock).toBeLessThan(SATONG_UI_Z.tileFailure);
     expect(SATONG_UI_Z.tileFailure).toBeLessThan(SATONG_UI_Z.bottomBar);
-    expect(SATONG_UI_Z.bottomBar).toBeLessThan(SATONG_UI_Z.confirmCard);
+    // 클릭 팝오버는 하단바 위(액션 메뉴 가림 금지), 확인 카드 아래(사용자 결정 최우선).
+    expect(SATONG_UI_Z.bottomBar).toBeLessThan(SATONG_UI_Z.clickMenu);
+    expect(SATONG_UI_Z.clickMenu).toBeLessThan(SATONG_UI_Z.confirmCard);
   });
 
   it("labelPane 은 폴리곤(overlay=400)과 마커(600) 사이 — 라벨이 폴리곤 위·마커 흐름 아래", () => {
