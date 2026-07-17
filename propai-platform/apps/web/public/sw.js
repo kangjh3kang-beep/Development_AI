@@ -65,7 +65,7 @@
 //        OWS ExceptionReport 파서 갭). ★구캐시 삭제 필수 — 구 번들은 존재하지 않는 tiletype
 //        "gray"를 계속 요청해 회색 베이스맵에서 배경지도가 통째로 미표시된다(프록시가 레거시
 //        별칭으로 흡수하지만, 캐시된 구 JS 자체를 걷어내야 완전 복구).
-const CACHE_NAME = "propai-v434-basemap-tiletype";
+const CACHE_NAME = "propai-v435-address-search-unify";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
