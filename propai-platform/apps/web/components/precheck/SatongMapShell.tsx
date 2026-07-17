@@ -369,16 +369,29 @@ const LAYERS: SatongLayer[] = [
 
 export { LAYERS as SATONG_MAP_SHELL_LAYERS };
 
-// 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — terrain 컨트롤 재사용, 스와치는 CSS
-// 그라디언트(외부 이미지 금지·CSP 안전). resolveVWorldBaseLayer와 1:1 대응.
+// 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — terrain 컨트롤 재사용.
+// ★스와치=실물 타일 미리보기(2026-07-17 직관력 보강): 스와치의 본질은 "이 버튼을 누르면
+//   실제로 보이는 지도"의 미리보기라, 같은 프록시(/tiles/vworld/wmts)의 실제 타일을 쓴다
+//   — 실서비스(카카오·네이버·jootek) 관행. 생성/장식 이미지는 실렌더와 어긋나는 약속이라
+//   무목업 원칙에 반한다. 자기 오리진 프록시 경유 = CSP 안전(외부 host 아님 — 종전
+//   "외부 이미지 금지" 의도 유지). 그라디언트 클래스는 타일 로드 실패 시 폴백으로 잔존.
+//   대표 타일 z12/1583/3492 = 서울 도심(한강·시가지·산 대비로 4스타일 차이가 명확 —
+//   2026-07-17 라이브 4종 200 실측). Hybrid는 실렌더와 동일하게 위성 위 라벨 합성.
+const SWATCH_TILE_BASE = "/tiles/vworld/wmts";
+const SWATCH_TILE_ZYX = "12/1583/3492";
 const BASEMAP_SWITCHES = [
-  { id: "base", label: "일반", base: "Base", swatch: "bg-gradient-to-br from-slate-100 via-emerald-50 to-emerald-100" },
-  { id: "satellite", label: "위성", base: "Satellite", swatch: "bg-gradient-to-br from-slate-800 via-emerald-950 to-slate-900" },
-  { id: "hybrid", label: "하이브리드", base: "Hybrid", swatch: "bg-gradient-to-br from-slate-700 via-sky-950 to-slate-800" },
+  { id: "base", label: "일반", base: "Base", swatch: "bg-gradient-to-br from-slate-100 via-emerald-50 to-emerald-100",
+    tiles: [`${SWATCH_TILE_BASE}/Base/${SWATCH_TILE_ZYX}.png`] },
+  { id: "satellite", label: "위성", base: "Satellite", swatch: "bg-gradient-to-br from-slate-800 via-emerald-950 to-slate-900",
+    tiles: [`${SWATCH_TILE_BASE}/Satellite/${SWATCH_TILE_ZYX}.jpeg`] },
+  { id: "hybrid", label: "하이브리드", base: "Hybrid", swatch: "bg-gradient-to-br from-slate-700 via-sky-950 to-slate-800",
+    // CSS 다중 배경은 먼저 쓴 것이 위 — 라벨(Hybrid)을 위성 위에 얹는 실렌더 합성과 동일.
+    tiles: [`${SWATCH_TILE_BASE}/Hybrid/${SWATCH_TILE_ZYX}.png`, `${SWATCH_TILE_BASE}/Satellite/${SWATCH_TILE_ZYX}.jpeg`] },
   // ★id("gray")=UI 컨트롤 식별자(:1353 상호배타 해제셋 키·LAYERS 정의와 일치) /
   //   base("white")=VWorld tiletype 정본 — 별개 네임스페이스라 분리 유지한다.
   //   종전 base:"gray"는 상류 미존재값이라 회색 선택 시 배경지도가 통째로 사라졌다.
-  { id: "gray", label: "회색", base: "white", swatch: "bg-gradient-to-br from-slate-200 to-slate-400" },
+  { id: "gray", label: "회색", base: "white", swatch: "bg-gradient-to-br from-slate-200 to-slate-400",
+    tiles: [`${SWATCH_TILE_BASE}/white/${SWATCH_TILE_ZYX}.png`] },
 ] as const;
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
@@ -2192,7 +2205,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                         : "border-transparent hover:border-[var(--line-strong)]"
                     }`}
                   >
-                    <span aria-hidden className={`block h-7 w-full rounded-lg border border-black/10 ${opt.swatch}`} />
+                    <span
+                      aria-hidden
+                      // 실물 타일을 background-image로 — <img>와 달리 로드 실패 시 깨진 아이콘
+                      // 없이 뒤의 그라디언트(opt.swatch)가 그대로 폴백된다(무음 열화·정직 유지).
+                      className={`block h-7 w-full rounded-lg border border-black/10 bg-cover bg-center ${opt.swatch}`}
+                      style={{ backgroundImage: opt.tiles.map((t) => `url(${t})`).join(", ") }}
+                    />
                     <span className="mt-0.5 block text-[10px] font-black text-[var(--text-primary)]">{opt.label}</span>
                   </button>
                 );
