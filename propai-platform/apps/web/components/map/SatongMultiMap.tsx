@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Building2, MapPin, Ruler, X } from "lucide-react";
+import { AlertTriangle, Building2, LandPlot, MapPin, Ruler, Search, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
   AGE_LEGEND_ITEMS,
@@ -39,7 +39,13 @@ import {
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
-import { formatDistance, totalDistanceMeters, type MeasurePoint } from "@/lib/satong-measure";
+import {
+  formatAreaSqm,
+  formatDistance,
+  polygonAreaSqm,
+  totalDistanceMeters,
+  type MeasurePoint,
+} from "@/lib/satong-measure";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 declare global {
@@ -738,6 +744,39 @@ export function SatongMultiMap({
   //   무음 회색지도로 남기지 않고 다른 레이어 노트와 동일한 칩 체계로 표면화한다.
   const [cadastreTileNote, setCadastreTileNote] = useState("");
 
+  // I9 자가진단: 지적 오류 배지 클릭 → 프록시 1회 프로브로 실제 원인(code)을 배지에 표면화.
+  //   #347/#354가 프록시 오류에 ServiceException code를 담으므로, 배지만으로 '키/도메인/
+  //   파라미터/네트워크'를 현장에서 즉시 구분할 수 있다(서버 로그 접근 불요).
+  const diagnoseBusyRef = useRef(false);
+  const diagnoseCadastreTiles = useCallback(async () => {
+    if (diagnoseBusyRef.current) return; // 연타 가드(R1)
+    diagnoseBusyRef.current = true;
+    setCadastreTileNote("지적 프록시 진단 중…");
+    try {
+      // ★R1(SW 캐시 오진): fetch cache:no-store는 브라우저 HTTP 캐시만 통제하고 서비스워커
+      //   Cache Storage(staleWhileRevalidate)는 우회하지 못한다 — 과거 성공본이 '정상' 오진을
+      //   만들 수 있어 타임스탬프 캐시버스터로 SW 캐시 키를 매번 미스시킨다(항상 라이브).
+      const probe =
+        "/tiles/vworld/wms?service=WMS&request=GetMap&layers=LP_PA_CBND_BUDB,LP_PA_CBND_BONB" +
+        "&styles=LP_PA_CBND_BUDB,LP_PA_CBND_BONB&format=image/png&transparent=true&version=1.3.0" +
+        `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
+      const resp = await fetch(probe, { cache: "no-store" });
+      const contentType = resp.headers.get("content-type") || "";
+      if (resp.ok && contentType.startsWith("image/")) {
+        setCadastreTileNote("지적 프록시 정상 — 지도를 이동/새로고침해도 안 보이면 줌·영역을 확인하세요");
+        return;
+      }
+      const body = await resp.json().catch(() => null);
+      setCadastreTileNote(
+        `지적 타일 조회 실패 — ${body?.error ?? `HTTP ${resp.status}`} (진단)`,
+      );
+    } catch {
+      setCadastreTileNote("지적 타일 조회 실패 — 네트워크 오류(진단)");
+    } finally {
+      diagnoseBusyRef.current = false;
+    }
+  }, []);
+
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
@@ -758,6 +797,8 @@ export function SatongMultiMap({
     lat: number; lon: number; x: number; y: number; w: number; h: number;
   } | null>(null);
   const [measureOn, setMeasureOn] = useState(false);
+  // 측정 모드(I6): distance=폴리라인 누적거리 / area=폴리곤 면적(등장방형 신발끈 — satong-measure).
+  const [measureMode, setMeasureMode] = useState<"distance" | "area">("distance");
   const measureOnRef = useRef(false);
   const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
   const measureLayerRef = useRef<any>(null);
@@ -1646,7 +1687,21 @@ export function SatongMultiMap({
         interactive: false, // 측정점이 다음 클릭(점 추가)을 가로채지 않게
       }).addTo(group);
     });
-    if (latlngs.length >= 2) {
+    if (measureMode === "area" && latlngs.length >= 3) {
+      // 면적재기(I6): 채움 폴리곤 + 중심 면적 라벨(둘레는 칩에서 병기).
+      L.polygon(latlngs, {
+        color: "#135bec", weight: 3, dashArray: "6 6", fillColor: "#135bec", fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(group);
+      const centroid: [number, number] = [
+        measurePoints.reduce((s, p) => s + p.lat, 0) / measurePoints.length,
+        measurePoints.reduce((s, p) => s + p.lon, 0) / measurePoints.length,
+      ];
+      const anchor = L.circleMarker(centroid, {
+        radius: 0, opacity: 0, fillOpacity: 0, interactive: false,
+      }).addTo(group);
+      bindSatongLabel(anchor, formatAreaSqm(polygonAreaSqm(measurePoints)), { permanent: true, offsetY: 0 });
+    } else if (latlngs.length >= 2) {
       L.polyline(latlngs, { color: "#135bec", weight: 3, dashArray: "6 6", interactive: false }).addTo(group);
       // 누적 거리 라벨 — 마지막 점 위 상시 표시(순수계산 satong-measure).
       const anchor = L.circleMarker(latlngs[latlngs.length - 1], {
@@ -1658,7 +1713,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (measureLayerRef.current === group) measureLayerRef.current = null;
     };
-  }, [mapReady, measurePoints]);
+  }, [mapReady, measurePoints, measureMode]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // 측정 모드 UX — 더블클릭줌 비활성(더블클릭=종료 제스처와 충돌)·크로스헤어 커서.
@@ -2234,12 +2289,26 @@ export function SatongMultiMap({
                 role="menuitem"
                 className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                 onClick={() => {
+                  setMeasureMode("distance");
                   setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
                   setMeasureOn(true);
                   setClickMenu(null);
                 }}
               >
                 <span className="inline-flex items-center gap-1"><Ruler className="size-3.5" aria-hidden />거리재기 시작</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  setMeasureMode("area");
+                  setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
+                  setMeasureOn(true);
+                  setClickMenu(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-1"><LandPlot className="size-3.5" aria-hidden />면적재기 시작</span>
               </button>
               <button
                 type="button"
@@ -2263,12 +2332,25 @@ export function SatongMultiMap({
             className="pointer-events-auto absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 shadow-lg backdrop-blur"
             style={{ zIndex: SATONG_UI_Z.clickMenu }}
           >
+            {/* #359 아이콘 규약(lucide) + 측정 모드(I6) 병합 */}
             <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--text-primary)]">
-              <Ruler className="size-3.5 shrink-0" aria-hidden />
-              {measureOn ? "거리재기 — 클릭: 점 추가 · 더블클릭/ESC: 종료" : "측정 결과"}
-              {measurePoints.length >= 2
-                ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
-                : ""}
+              {measureMode === "area" ? (
+                <LandPlot className="size-3.5 shrink-0" aria-hidden />
+              ) : (
+                <Ruler className="size-3.5 shrink-0" aria-hidden />
+              )}
+              {measureOn
+                ? `${measureMode === "area" ? "면적재기" : "거리재기"} — 클릭: 점 추가 · 더블클릭/ESC: 종료`
+                : "측정 결과"}
+              {measureMode === "area"
+                ? measurePoints.length >= 3
+                  ? ` · ${formatAreaSqm(polygonAreaSqm(measurePoints))} · 둘레 ${formatDistance(
+                      totalDistanceMeters([...measurePoints, measurePoints[0]]),
+                    )}`
+                  : " · 점 3개 이상 필요" // R1: 면적 라벨 아래 거리값 표기 혼동 방지
+                : measurePoints.length >= 2
+                  ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
+                  : ""}
             </span>
             {measureOn ? (
               <button
@@ -2351,9 +2433,17 @@ export function SatongMultiMap({
             {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
               <div className="space-y-1">
                 {cadastreTileNote && (
-                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
-                    {cadastreTileNote}
-                  </span>
+                  // I9: 배지 = 자가진단 버튼 — 클릭 시 프록시 프로브로 실제 오류 code 표면화.
+                  <button
+                    type="button"
+                    onClick={() => void diagnoseCadastreTiles()}
+                    title="클릭: 지적 프록시 자가진단(오류 원인 코드 확인)"
+                    className="pointer-events-auto inline-flex w-fit rounded-full bg-amber-50/95 px-3 py-1.5 text-left text-[11px] font-black text-amber-800 shadow transition hover:bg-amber-100"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {cadastreTileNote} <Search className="size-3 shrink-0" aria-hidden />
+                    </span>
+                  </button>
                 )}
                 {overlayNote && (
                   <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">

@@ -157,6 +157,44 @@ describe("SatongMapShell 필지 상세 패널(WS-C)", () => {
     expect(screen.queryByTestId("parcel-detail-panel")).not.toBeInTheDocument();
   });
 
+  it("I3 로드뷰: 좌표 보유 필지 → 패널에 카카오 로드뷰 링크(라이브 검증 URL 계약)", () => {
+    writeSatongMapSelection([
+      { id: "P-rv", address: "경기도 성남시 분당구 판교동 500", source: "map", areaSqm: 500, lat: 37.40219, lon: 127.10111 },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("판교동 500"));
+
+    const link = within(screen.getByTestId("parcel-detail-panel")).getByRole("link", {
+      name: /카카오 로드뷰/,
+    });
+    expect(link).toHaveAttribute("href", "https://map.kakao.com/link/roadview/37.40219,127.10111");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("I3 로드뷰: 좌표 없는 필지 → 로드뷰 링크 미표시(정직)", () => {
+    writeSatongMapSelection([
+      { id: "P-norv", address: "경기도 성남시 분당구 판교동 600", source: "map", areaSqm: 600 },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("판교동 600"));
+
+    expect(
+      within(screen.getByTestId("parcel-detail-panel")).queryByRole("link", { name: /카카오 로드뷰/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("I5 내보내기: 경계 없는 선택 → 파일 생성 없이 정직 고지", () => {
+    writeSatongMapSelection([
+      { id: "P-geo", address: "경기도 성남시 분당구 판교동 700", source: "map", areaSqm: 700 },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: "GeoJSON" }));
+    expect(screen.getByText(/내보낼 경계\(geometry\) 보유 필지가 없습니다/)).toBeInTheDocument();
+  });
+
   it("★R1 키보드: 삭제 버튼 위에서 Enter keydown이 카드 활성(상세 열기)으로 번지지 않는다", () => {
     writeSatongMapSelection([
       { id: "P-k", address: "경기도 성남시 분당구 판교동 400", source: "map", areaSqm: 400 },
