@@ -52,7 +52,9 @@
 // v428: 사통맵 WS-C 필지 상세 패널(#356 — 클릭 통합정보+산출물 퍼널+좌표복사) + WS-B2 관리자키
 //        폴백(#354 — web 키부재 시 api 타일 프록시 중계). 셸 UI·프록시 폴백이 stale 캐시로
 //        남지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v428-satong-detail-panel";
+// v429: 사통맵 보강 4종(#358 — 로드뷰·면적재기·타일 자가진단·GeoJSON 내보내기) + 완성도100
+//        캠페인(#359). 팝오버/칩 UI와 진단 프로브가 stale 캐시로 남지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v429-satong-map-tools";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
