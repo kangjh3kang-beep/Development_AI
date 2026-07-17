@@ -35,6 +35,19 @@ export const SATONG_PANE_Z = {
  * 지도 위 React 오버레이(형제) 상대 층위 — 값이 클수록 위.
  *   확인 카드(confirmCard)는 항상 최상위: 사용자 결정(＋추가/제거) 흐름이 어떤 오버레이에도
  *   가려지지 않아야 한다.
+ *
+ * ★코너 슬롯 레지스트리(x/y — 2026-07-17 겹침 구조 진단의 처방②):
+ *   z는 이 레지스트리로 충돌이 사라졌지만 x/y는 각자 absolute 좌표를 고르다 겹침이
+ *   3회 재발했다(측정rail↔줌·칩행↔스위처·배너↔완료바). 신규 오버레이는 아래 슬롯
+ *   소유권을 확인하고 **빈 슬롯에만** 배치하거나 기존 도크 flow에 합류할 것.
+ *   ┌ 좌상: 검색/네비(셸) · 우상: 풀스크린 버튼 + 레이어 레일(right-4 top-20)
+ *   ├ 좌중앙: 측정 rail(top-1/2 left-4 — 지도높이<282px 배치 금지, MultiMap 주석 참조)
+ *   ├ 상중앙: 측정 상태 칩(top-14)
+ *   ├ 하단 전폭: cornerDock(bottom-16 left-14~right-3) = 상태 칩(좌) + bottomDockSlot(우,
+ *   │   베이스맵 스위처) — 하단 신규 요소는 **이 도크 flow에 합류**(독립 absolute 금지:
+ *   │   암묵 예약값이 겹침의 근원이었다. 계약 테스트 SatongMultiMap.bottomDock.test.tsx)
+ *   └ 지도 기준(Leaflet): 줌=bottomleft · 출처표기=bottomright — 래퍼 기준 absolute와
+ *     좌표계가 다름(완료바 높이만큼 어긋남)에 주의.
  */
 export const SATONG_UI_Z = {
   fullscreenButton: 400,

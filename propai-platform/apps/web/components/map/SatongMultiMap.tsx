@@ -15,7 +15,7 @@
  * 좌표 주의: Leaflet은 [lat, lng] 순, GeoJSON은 [lng, lat] 순이라 변환이 필요하다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Building2, LandPlot, MapPin, Ruler, Search, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -128,6 +128,11 @@ export interface SatongMultiMapProps {
   /** 부모(Shell) "초기화"(clearParcels) 신호 — 증가할 때마다 지도 staged·녹색 폴리곤·pending을
    *  청소한다(WP-M2). 종전엔 목록만 비고 지도엔 잔존했다. undefined면 무동작(하위호환). */
   clearSignal?: number;
+  /** 하단 도크 우측 슬롯 — 베이스맵 스위처 등 부모 소유 컨트롤을 도크 flow 안에 배치한다.
+   *  ★겹침 구조 진단(2026-07-17): 독립 absolute 섬(스위처 bottom-20 right-4)과 칩 행의
+   *  암묵 예약값(max-w calc 152px)이 겹침의 근원 — 같은 flex 행에 흘리면 겹침이 문법적으로
+   *  불가능하고 예약값 자체가 사라진다. 슬롯이 있으면 도크는 칩이 없어도 항상 렌더된다. */
+  bottomDockSlot?: ReactNode;
 }
 
 type BoundaryFeature = {
@@ -694,6 +699,7 @@ export function SatongMultiMap({
   selectedParcels = EMPTY_SELECTED_PARCELS,
   layerState,
   readOnly = false,
+  bottomDockSlot,
   marketPayload = null,
   marketLayer,
   poiPayload = null,
@@ -2556,7 +2562,7 @@ export function SatongMultiMap({
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
-        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
+        {(bottomDockSlot != null || hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
           <div
             // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
             // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
@@ -2564,7 +2570,13 @@ export function SatongMultiMap({
             // ★겹침 근본해소(2026-07-17 라이브 신고): 하단 완료바는 비풀스크린에서도 래퍼
             //   '내부' flow 요소(지도 아래)라 bottom-3(래퍼 바닥) 앵커는 완료바 밴드와 정면
             //   충돌했다 — 두 모드 모두 bottom-16으로 완료바 위에 분리.
-            className={"pointer-events-none absolute bottom-16 left-14 flex max-w-[calc(100%-152px)] flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
+            // ★도크 단일화(2026-07-17 구조 진단): 종전 max-w-[calc(100%-152px)]는 우측
+            //   스위처 섬(bottom-20 right-4)을 위한 암묵 예약이었는데 스위처 실폭(~280px)이
+            //   152px를 초과해 칩이 스위처 밑으로 파고들었다 — 스위처를 bottomDockSlot으로
+            //   같은 flex 행에 흘려(right-3까지 전폭) 예약값 자체를 제거. flow 안에서는
+            //   겹침이 문법적으로 불가능하다.
+            data-testid="satong-bottom-dock"
+            className={"pointer-events-none absolute bottom-16 left-14 right-3 flex flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
           >
             {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
@@ -2689,6 +2701,11 @@ export function SatongMultiMap({
                   </span>
                 )}
               </div>
+            )}
+            {/* 우측 슬롯(베이스맵 스위처 등 부모 소유) — ml-auto로 같은 행 우측 정렬, 공간이
+                부족하면 flex-wrap이 자기 행으로 내린다(칩과의 겹침이 문법적으로 불가능). */}
+            {bottomDockSlot != null && (
+              <div className="pointer-events-auto ml-auto shrink-0 self-end">{bottomDockSlot}</div>
             )}
           </div>
         )}

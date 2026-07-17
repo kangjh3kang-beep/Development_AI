@@ -1653,6 +1653,44 @@ export function SatongMapShell({ locale }: { locale: string }) {
     };
   }, [activeLayerId]);
 
+  // 베이스맵 스위처(jootek 패리티) — 지도 하단 도크의 우측 슬롯으로 전달(2026-07-17 겹침
+  // 구조 단일화). 종전 독립 absolute 섬(bottom-20 right-4)은 칩 행의 암묵 예약값(152px)을
+  // 실폭(~280px)으로 침묵 초과해 칩이 밑으로 파고들었다 — 같은 flex 행에 흘리면 겹침이
+  // 문법적으로 불가능하다. 스위처는 컨트롤(L1 글래스 blur12) — 팝오버(L3 blur24)와 구분.
+  const basemapSwitcherDock = (
+    <div className="flex gap-1.5 rounded-2xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
+      {BASEMAP_SWITCHES.map((opt) => {
+        const active = resolveVWorldBaseLayer(mapLayerState) === opt.base;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            aria-pressed={active}
+            aria-label={`베이스맵: ${opt.label}`}
+            title={`베이스맵: ${opt.label}`}
+            onClick={() =>
+              handleLayerControlClick("terrain", { id: opt.id, label: opt.label, mapEffect: true })
+            }
+            className={`w-14 rounded-xl border p-1 text-center transition ${
+              active
+                ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                : "border-transparent hover:border-[var(--line-strong)]"
+            }`}
+          >
+            <span
+              aria-hidden
+              // 실물 타일을 background-image로 — <img>와 달리 로드 실패 시 깨진 아이콘
+              // 없이 뒤의 그라디언트(opt.swatch)가 그대로 폴백된다(무음 열화·정직 유지).
+              className={`block h-7 w-full rounded-lg border border-black/10 bg-cover bg-center ${opt.swatch}`}
+              style={{ backgroundImage: opt.tiles.map((t) => `url(${t})`).join(", ") }}
+            />
+            <span className="mt-0.5 block text-[10px] font-black text-[var(--text-primary)]">{opt.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
       <div className="mb-4 flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
@@ -2096,6 +2134,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 autoPreviewFocus
                 height={720}
                 chrome="immersive"
+                bottomDockSlot={basemapSwitcherDock}
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
@@ -2185,43 +2224,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
               })}
             </div>
 
-            {/* 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — 우하단, 완료 바 위(bottom-20) */}
-            <div className="absolute bottom-20 right-4 z-[410] flex gap-1.5 rounded-2xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
-              {BASEMAP_SWITCHES.map((opt) => {
-                const active = resolveVWorldBaseLayer(mapLayerState) === opt.base;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    aria-pressed={active}
-                    aria-label={`베이스맵: ${opt.label}`}
-                    title={`베이스맵: ${opt.label}`}
-                    onClick={() =>
-                      handleLayerControlClick("terrain", { id: opt.id, label: opt.label, mapEffect: true })
-                    }
-                    className={`w-14 rounded-xl border p-1 text-center transition ${
-                      active
-                        ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
-                        : "border-transparent hover:border-[var(--line-strong)]"
-                    }`}
-                  >
-                    <span
-                      aria-hidden
-                      // 실물 타일을 background-image로 — <img>와 달리 로드 실패 시 깨진 아이콘
-                      // 없이 뒤의 그라디언트(opt.swatch)가 그대로 폴백된다(무음 열화·정직 유지).
-                      className={`block h-7 w-full rounded-lg border border-black/10 bg-cover bg-center ${opt.swatch}`}
-                      style={{ backgroundImage: opt.tiles.map((t) => `url(${t})`).join(", ") }}
-                    />
-                    <span className="mt-0.5 block text-[10px] font-black text-[var(--text-primary)]">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* 베이스맵 스위처는 독립 absolute 섬(bottom-20 right-4)에서 지도 하단 도크의
+                bottomDockSlot으로 이동(2026-07-17 겹침 구조 단일화 — basemapSwitcherDock 참조).
+                칩 행과 같은 flex flow에 흘러 겹침이 문법적으로 불가능해졌고, 칩 행의 암묵
+                예약값(max-w calc 152px)도 함께 제거됐다. */}
 
             {activeLayer && (
               <div
                 ref={popoverRef}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2290,7 +2301,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {detailFeature && !activeLayer && (
               <div
                 data-testid="parcel-detail-panel"
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
