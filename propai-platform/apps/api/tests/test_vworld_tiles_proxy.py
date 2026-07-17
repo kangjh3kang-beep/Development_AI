@@ -31,6 +31,11 @@ LIVE_INVALID_RANGE_XML = (
 
 def _app() -> FastAPI:
     app = FastAPI()
+    # slowapi @limiter.limit 데코레이터는 app.state.limiter를 요구한다(미들웨어 불요 —
+    # 테스트 상한 1200/min은 시나리오 요청 수로는 미도달).
+    from apps.api.rate_limit import limiter
+
+    app.state.limiter = limiter
     app.include_router(router, prefix="/api/v1")
     return app
 

@@ -28,9 +28,17 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from apps.api.rate_limit import limiter
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tiles/vworld", tags=["VWorld 타일 프록시"])
+
+# ★R1 #1(레이트리밋 퍼널): 전역 기본 100/min은 keyless-web 배포에서 치명 — 모든 사용자의
+#   타일이 web 서버 단일 egress IP로 귀속돼 지도 몇 뷰(뷰당 수십 타일)만으로 버킷이 소진되고
+#   429→광역 회색타일이 된다. 타일 전용 상한을 크게 부여(전면 예외는 두지 않음 — 공개
+#   라우트의 남용 방어는 레이어 화이트리스트+이 상한+VWorld 자체 쿼터의 3중으로 유지).
+TILE_PROXY_LIMIT = "1200/minute"
 
 VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms"
 VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0"
@@ -120,6 +128,7 @@ def _relay_tile(resp: httpx.Response, *, kind: str, ctx: dict[str, str]) -> Resp
 
 
 @router.get("/wms", summary="VWorld WMS(연속지적도) 타일 프록시 — web 키 부재 폴백")
+@limiter.limit(TILE_PROXY_LIMIT)
 async def proxy_vworld_wms(request: Request) -> Response:
     key = _vworld_key()
     if not key:
@@ -139,7 +148,8 @@ async def proxy_vworld_wms(request: Request) -> Response:
     canonical = ",".join(layer for layer in ALLOWED_WMS_LAYERS if layer in requested)
 
     # 검증된 canonical 값만 상류 전달(원본 layers/styles 변형 전부 폐기) + 키·domain 서버 주입.
-    params: list[tuple[str, str]] = [
+    # (타입은 httpx 파라미터 시그니처와 동일하게 str|None — list 불변성 오탐 방지)
+    params: list[tuple[str, str | None]] = [
         (k, v)
         for k, v in request.query_params.multi_items()
         if k.lower() not in ("layers", "styles", "key", "domain")
@@ -153,7 +163,13 @@ async def proxy_vworld_wms(request: Request) -> Response:
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(VWORLD_WMS_BASE, params=params, headers={"Referer": VWORLD_REFERER})
+            resp = await client.get(
+                VWORLD_WMS_BASE,
+                # tuple 변환: list 불변성 탓에 정확 일치 원소타입만 허용되는 타입체커 오탐 회피
+                # (tuple은 공변 — httpx 시그니처의 tuple[tuple[str, ...], ...] 분기에 안착).
+                params=httpx.QueryParams(tuple(params)),
+                headers={"Referer": VWORLD_REFERER},
+            )
     except Exception as exc:  # noqa: BLE001 — 네트워크 오류 정직 503
         logger.error("[vworld-tiles] WMS proxy fetch failed: %s", exc)
         return _json_error(f"VWorld WMS proxy failed: {exc}", 502)
@@ -161,7 +177,8 @@ async def proxy_vworld_wms(request: Request) -> Response:
 
 
 @router.get("/wmts/{layer}/{z}/{y}/{x_file}", summary="VWorld WMTS(베이스맵) 타일 프록시 — web 키 부재 폴백")
-async def proxy_vworld_wmts(layer: str, z: int, y: int, x_file: str) -> Response:
+@limiter.limit(TILE_PROXY_LIMIT)
+async def proxy_vworld_wmts(request: Request, layer: str, z: int, y: int, x_file: str) -> Response:
     key = _vworld_key()
     if not key:
         return _json_error("VWORLD_API_KEY is not configured", 503)
