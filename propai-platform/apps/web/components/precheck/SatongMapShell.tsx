@@ -54,6 +54,7 @@ import {
   type SatongMapFeature,
   type SatongMapLayerId,
   type SatongMapLayerState,
+  resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, kakaoRoadviewUrl } from "@/lib/satong-export";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -218,6 +219,7 @@ const LAYERS: SatongLayer[] = [
     source: "공간정보(토지특성정보) API 연동",
     controls: [
       { id: "land-use", label: "용도지역", mapEffect: true },
+      { id: "land-use-wide", label: "전국 지적편집도", mapEffect: true, description: "화면 전체를 용도지역 색상으로 표시(VWorld)" },
       { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
       { id: "development-limit", label: "개발행위 제한", mapEffect: false, description: "개발행위허가 제한구역 원천 연결 후 활성화" },
     ],
@@ -266,7 +268,7 @@ const LAYERS: SatongLayer[] = [
       { id: "deal-year", label: "거래연도", mapEffect: false, description: "거래연도 필터 — 향후 제공" },
       { id: "deal-type", label: "거래유형", mapEffect: false, description: "거래유형 필터 — 향후 제공" },
       { id: "total-price", label: "총액", mapEffect: false, description: "총액 필터 — 향후 제공" },
-      { id: "unit-price", label: "면적당 단가", mapEffect: false, description: "면적당 단가 필터 — 향후 제공" },
+      { id: "unit-price", label: "평당가 라벨", mapEffect: true, description: "실거래 라벨을 총액 대신 평당가로 표시" },
     ],
   },
   {
@@ -344,6 +346,7 @@ const LAYERS: SatongLayer[] = [
       { id: "satellite", label: "위성", mapEffect: true },
       { id: "hybrid", label: "항공뷰", mapEffect: true },
       { id: "elevation", label: "표고", mapEffect: false, description: "표고/경사도 격자 원천 연결 후 활성화" },
+      { id: "gray", label: "회색지도", mapEffect: true, description: "저채도 배경 — 데이터 대비 강조" },
     ],
   },
   {
@@ -365,6 +368,15 @@ const LAYERS: SatongLayer[] = [
 ];
 
 export { LAYERS as SATONG_MAP_SHELL_LAYERS };
+
+// 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — terrain 컨트롤 재사용, 스와치는 CSS
+// 그라디언트(외부 이미지 금지·CSP 안전). resolveVWorldBaseLayer와 1:1 대응.
+const BASEMAP_SWITCHES = [
+  { id: "base", label: "일반", base: "Base", swatch: "bg-gradient-to-br from-slate-100 via-emerald-50 to-emerald-100" },
+  { id: "satellite", label: "위성", base: "Satellite", swatch: "bg-gradient-to-br from-slate-800 via-emerald-950 to-slate-900" },
+  { id: "hybrid", label: "하이브리드", base: "Hybrid", swatch: "bg-gradient-to-br from-slate-700 via-sky-950 to-slate-800" },
+  { id: "gray", label: "회색", base: "gray", swatch: "bg-gradient-to-br from-slate-200 to-slate-400" },
+] as const;
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
   search: "검색",
@@ -2136,6 +2148,33 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     aria-label={layer.label}
                   >
                     <Icon className="size-5" aria-hidden />
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — 우하단, 완료 바 위(bottom-20) */}
+            <div className="absolute bottom-20 right-4 z-[410] flex gap-1.5 rounded-2xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
+              {BASEMAP_SWITCHES.map((opt) => {
+                const active = resolveVWorldBaseLayer(mapLayerState) === opt.base;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-pressed={active}
+                    aria-label={`베이스맵: ${opt.label}`}
+                    title={`베이스맵: ${opt.label}`}
+                    onClick={() =>
+                      handleLayerControlClick("terrain", { id: opt.id, label: opt.label, mapEffect: true })
+                    }
+                    className={`w-14 rounded-xl border p-1 text-center transition ${
+                      active
+                        ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                        : "border-transparent hover:border-[var(--line-strong)]"
+                    }`}
+                  >
+                    <span aria-hidden className={`block h-7 w-full rounded-lg border border-black/10 ${opt.swatch}`} />
+                    <span className="mt-0.5 block text-[10px] font-black text-[var(--text-primary)]">{opt.label}</span>
                   </button>
                 );
               })}

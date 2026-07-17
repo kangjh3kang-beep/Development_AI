@@ -61,11 +61,23 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(503); // 공개키가 설정돼 있어도 서버 전용 키가 없으면 정직 실패
   });
 
-  it("허용되지 않은 WMS 레이어(용도지역 LT_C_UQ111 등)는 400으로 거부한다", async () => {
+  it("허용되지 않은 WMS 레이어는 400으로 거부한다(화이트리스트 밖 임의 레이어)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
     stubFetch(() => new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } }));
-    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_UQ111"));
+    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_EVIL_LAYER"));
     expect(res.status).toBe(400);
+  });
+
+  it("용도지역(LT_C_UQ111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_UQ111"));
+    expect(res.status).toBe(200);
+    expect(requested).toContain("LAYERS=LT_C_UQ111");
   });
 
   it("빈 LAYERS 는 400", async () => {
@@ -83,7 +95,7 @@ describe("vworld-wms-proxy", () => {
     });
     // URLSearchParams는 문자열 생성자로만 진짜 중복 키를 만들 수 있다(객체 리터럴은 키가 유일).
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_UQ111&format=image/png",
+      "service=WMS&request=GetMap&LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_EVIL_LAYER&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
@@ -98,7 +110,7 @@ describe("vworld-wms-proxy", () => {
       return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
     });
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&layers=LT_C_UQ111&LAYERS=LP_PA_CBND_BUDB&format=image/png",
+      "service=WMS&request=GetMap&layers=LT_C_EVIL_LAYER&LAYERS=LP_PA_CBND_BUDB&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
@@ -168,6 +180,44 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).toContain("INVALID_RANGE");
+  });
+
+  it("★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 키가 키무효로 거부되면 api로 재중계한다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "STALE-LOCAL-KEY");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      if (urls.length === 1) {
+        return new Response(
+          '<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="INCORRECT_KEY">잘못된 인증키입니다.</ServiceException></ServiceExceptionReport>',
+          { status: 200, headers: { "content-type": "text/xml;charset=UTF-8" } },
+        );
+      }
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(200);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("api.vworld.kr/req/wms"); // 1차: 로컬 키 직행
+    expect(urls[1]).toContain("https://api.4t8t.net/api/v1/tiles/vworld/wms?"); // 2차: 관리자 키(api) 재중계
+    expect(urls[1]).not.toContain("key=");
+  });
+
+  it("★파라미터 오류(INVALID_RANGE)는 페일오버하지 않는다 — 재시도 무의미, 503 유지", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      return new Response(
+        '<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="INVALID_RANGE">VERSION</ServiceException></ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "application/xml" } },
+      );
+    }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    expect(calls).toBe(1);
   });
 
   it("키 미설정 + API base 미설정 시 503(정직 강등 근거 — 추측 중계 금지)", async () => {

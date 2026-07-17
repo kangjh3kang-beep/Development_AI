@@ -1,4 +1,4 @@
-import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/lib/vworld-xml-exception";
+import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 
 /**
  * VWorld WMS 프록시 — 연속지적도(LP_PA_CBND_*) WMS 타일을 프론트 서버 경유로 부설한다.
@@ -29,11 +29,13 @@ import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/l
 
 const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 
-// 프록시가 허용하는 WMS 레이어(오픈 프록시 남용 방지) — 연속지적도만.
-//   ★용도지역(LT_C_UQ111)은 의도적으로 제외한다: '용도지역' 레이어 소관(의미 1:1)이며,
-//     지적 토글에 함께 부설하면 위성 가림·표현 중복을 유발한다(WP-M5).
+// 프록시가 허용하는 WMS 레이어(오픈 프록시 남용 방지) — 연속지적도 + 용도지역.
+//   ★용도지역(LT_C_UQ111)은 2026-07-17부터 허용: '용도지역' 레이어의 별도 컨트롤
+//     (land-use-wide — 전국 지적편집도 오버레이)로 도입. 지적 토글과는 여전히 분리
+//     (WP-M5의 '함께 부설 금지' 원칙 유지 — 소비 컨트롤이 다르다).
+//   ★api측 프록시(app/routers/vworld_tiles.py ALLOWED_WMS_LAYERS)와 동기 유지할 것.
 //   배열(순서 보존) + Set(조회용) 이원 유지 — 화이트리스트 재구성 시 결정적 순서가 필요하다.
-const ALLOWED_WMS_LAYERS_ORDER = ["LP_PA_CBND_BUDB", "LP_PA_CBND_BONB"] as const;
+const ALLOWED_WMS_LAYERS_ORDER = ["LP_PA_CBND_BUDB", "LP_PA_CBND_BONB", "LT_C_UQ111"] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {
@@ -180,6 +182,16 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         //   탓에 실제 원인 INVALID_RANGE(WMS VERSION 파라미터 오류)가 "키 미설정"으로
         //   오독됐다. code로 INVALID_KEY/UNREGISTERED_DOMAIN/INVALID_RANGE를 즉시 구분한다.
         const detail = extractVWorldXmlExceptionDetail(bodyText);
+        // ★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 서버키가 '키 자체 무효'로
+        //   거부되면 api(관리자 등록 키·#354 통로)로 1회 재중계 — 관리자 화면 키 등록만으로
+        //   web 재빌드 없이 복구된다. 파라미터 오류(INVALID_RANGE 등)는 재시도 무의미라 제외.
+        if (isVWorldKeyFault(detail.code)) {
+          const origin = vworldApiFallbackOrigin();
+          if (origin) {
+            console.warn(`[vworld-wms-proxy] local key fault (${detail.code}) → api fallback retry`);
+            return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy(key-fault)");
+          }
+        }
         return upstreamError(
           `VWorld WMS returned an XML exception (${detail.code ?? "auth/unknown"})`,
           resp.status,

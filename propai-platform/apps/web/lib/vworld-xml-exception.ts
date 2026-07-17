@@ -57,3 +57,11 @@ export function extractVWorldXmlExceptionDetail(xmlText: string): VWorldXmlExcep
   const rawMessage = MESSAGE_PATTERN.exec(xmlText)?.[1]?.trim() || undefined;
   return { code, message: rawMessage ? rawMessage.slice(0, 120) : undefined };
 }
+
+/** 키 자체 무효 코드(라이브 채증: INVALID_KEY 2026-07-17 로컬, INCORRECT_KEY 2026-07-17 프로드).
+ *  파라미터 오류(INVALID_RANGE 등)와 달리 다른 키(관리자 등록)로 재시도할 가치가 있다. */
+export const VWORLD_KEY_FAULT_CODES = new Set(["INVALID_KEY", "INCORRECT_KEY"]);
+
+export function isVWorldKeyFault(code?: string | null): boolean {
+  return !!code && VWORLD_KEY_FAULT_CODES.has(code);
+}

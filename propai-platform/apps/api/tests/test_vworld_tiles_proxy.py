@@ -115,10 +115,10 @@ def test_wms_rejects_unlisted_and_smuggled_layers(monkeypatch):
     monkeypatch.setattr(mod, "_vworld_key", lambda: "SECRET-KEY")
     captured = _mock_async_client(monkeypatch, _png_response)
     client = TestClient(_app())
-    assert client.get("/api/v1/tiles/vworld/wms?layers=LT_C_UQ111").status_code == 400
+    assert client.get("/api/v1/tiles/vworld/wms?layers=LT_C_EVIL_LAYER").status_code == 400
     # 중복 키 스머글링(허용+차단 혼합)도 400 — 상류 요청 자체가 없어야 한다.
     assert (
-        client.get("/api/v1/tiles/vworld/wms?LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_UQ111").status_code
+        client.get("/api/v1/tiles/vworld/wms?LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_EVIL_LAYER").status_code
         == 400
     )
     assert client.get("/api/v1/tiles/vworld/wms?layers=").status_code == 400
@@ -163,6 +163,17 @@ def test_wms_upstream_4xx_becomes_503(monkeypatch):
     resp = client.get(f"/api/v1/tiles/vworld/wms?{WMS_QUERY}")
     assert resp.status_code == 503
     assert "upstream" in resp.json()["error"]
+
+
+def test_wms_allows_zoning_layer_lt_c_uq111(monkeypatch):
+    """★web 화이트리스트와 동기 계약(R1 #1): LT_C_UQ111(용도지역·전국 지적편집도) 허용 —
+    api측에서 실수로 제거되면 web 키부재 폴백 경로만 용도지역을 거부하는 발산이 생긴다."""
+    monkeypatch.setattr(mod, "_vworld_key", lambda: "SECRET-KEY")
+    captured = _mock_async_client(monkeypatch, _png_response)
+    client = TestClient(_app())
+    resp = client.get("/api/v1/tiles/vworld/wms?service=WMS&request=GetMap&layers=LT_C_UQ111&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64")
+    assert resp.status_code == 200
+    assert "LAYERS=LT_C_UQ111" in str(captured[0].url)
 
 
 # ── WMTS ──

@@ -1,4 +1,4 @@
-import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/lib/vworld-xml-exception";
+import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
@@ -126,6 +126,17 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
         }
         // ★2026-07-17: ServiceException code 표면화(WMS 프록시와 동일 계약 — 원인 즉시 구분).
         const detail = extractVWorldXmlExceptionDetail(bodyText);
+        // ★키-오류 페일오버 — WMS 프록시와 동일 계약(관리자 키 경유 1회 재중계).
+        if (isVWorldKeyFault(detail.code)) {
+          const origin = vworldApiFallbackOrigin();
+          if (origin) {
+            console.warn(`[vworld-wmts-proxy] local key fault (${detail.code}) → api fallback retry`);
+            return relayViaApi(
+              `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+              "vworld-wmts-proxy(key-fault)",
+            );
+          }
+        }
         return upstreamError(
           `VWorld WMTS returned an XML exception (${detail.code ?? "auth/unknown"})`,
           resp.status,
