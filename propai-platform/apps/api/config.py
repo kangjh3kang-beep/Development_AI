@@ -160,6 +160,14 @@ class Settings(BaseSettings):
         default="https://4t8t.net", description="이메일 링크(재설정·인증) 생성 베이스 URL"
     )
 
+    # ── 코인 충전 결제(마이페이지) ──
+    # ★기본 false(fail-closed): 사용자 self-confirm(시뮬레이션 결제)은 개발/데모 전용.
+    #   프로덕션 지급 경로는 관리자 수동 확정(super_admin) 또는 후속 PG(토스) 웹훅만.
+    billing_simulated_payments: bool = Field(
+        default=False,
+        description="충전 주문 self-confirm(시뮬레이션) 허용 — dev/demo 전용, 프로덕션 금지",
+    )
+
     # ── GraphQL(Hasura) ──
     # ★FastAPI 앱은 Hasura를 직접 소비하지 않는다(전 코드 grep 소비처 0). Hasura는 별도
     #   GraphQL 엔진 컨테이너(infra/docker/docker-compose.*.yml)로만 운영되며, 그 admin secret은

@@ -18,6 +18,7 @@ export type LifecyclePhase =
   | "business"
   | "design"
   | "operations"
+  | "account"
   | "admin";
 
 export type PrimaryNavSectionId =
@@ -26,6 +27,7 @@ export type PrimaryNavSectionId =
   | "market-acquisition"
   | "design-center"
   | "sales-management"
+  | "my"
   | "admin";
 
 export interface PrimaryNavSectionMeta {
@@ -71,6 +73,8 @@ export const PRIMARY_NAV_SECTIONS: PrimaryNavSectionMeta[] = [
   //   registry로 미이관(메뉴 소실)하고, 구 IA가 의도적으로 숨겼던 자산운영(운영 센터)을 되살리는
   //   이중 역전이 있었음 → 운영 센터를 분양 관리로 대체(자산운영 라우트·페이지는 보존, 향후 복원 가능).
   { id: "sales-management", title: "분양 관리", order: 50 },
+  // 마이페이지 — SaaS 계정 셀프서비스(코인·결제·사용내역·프로필·개인정보). 전 회원 노출.
+  { id: "my", title: "마이페이지", order: 55 },
   { id: "admin", title: "관리", order: 60, adminOnly: true },
 ];
 
@@ -481,6 +485,82 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     adminOnly: true,
     prefetch: false,
     apiDependencies: ["/settings/lists"],
+  },
+
+  // ── 마이페이지(SaaS 계정 셀프서비스, 2026-07-17) — 코인·결제·사용내역·프로필·개인정보 ──
+  //    스펙=docs/design/MYPAGE_SAAS_SPEC_2026-07-17.md. 계정 보안(/account)은 기존 검증
+  //    화면을 재사용하고 여기서는 메뉴 진입만 제공한다.
+  {
+    id: "mypage",
+    label: "내 계정 요약",
+    sectionId: "my",
+    order: 10,
+    path: "/mypage",
+    iconKey: "dashboard",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/balance", "/billing/ledger"],
+  },
+  {
+    id: "mypage-coins",
+    label: "코인 충전·결제내역",
+    sectionId: "my",
+    order: 20,
+    path: "/mypage/coins",
+    iconKey: "cost",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/packages", "/billing/orders", "/billing/ledger"],
+  },
+  {
+    id: "mypage-usage",
+    label: "AI 사용내역",
+    sectionId: "my",
+    order: 30,
+    path: "/mypage/usage",
+    iconKey: "roi",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/token-usage"],
+  },
+  {
+    id: "mypage-profile",
+    label: "프로필 관리",
+    sectionId: "my",
+    order: 40,
+    path: "/mypage/profile",
+    iconKey: "project",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me"],
+  },
+  {
+    id: "mypage-privacy",
+    label: "개인정보·약관",
+    sectionId: "my",
+    order: 50,
+    path: "/mypage/privacy",
+    iconKey: "regulation",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me/consents"],
+  },
+  {
+    id: "mypage-security",
+    label: "계정 보안",
+    sectionId: "my",
+    order: 60,
+    path: "/account",
+    iconKey: "permit",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me"],
   },
 ];
 

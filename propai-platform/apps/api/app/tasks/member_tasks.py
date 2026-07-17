@@ -46,9 +46,38 @@ def anonymize_withdrawn_accounts() -> dict:
     return result
 
 
+async def _purge_order_pii_async() -> dict:
+    from app.services.billing.coin_orders_service import purge_expired_buyer_pii
+
+    return await purge_expired_buyer_pii()
+
+
+def purge_expired_order_pii() -> dict:
+    """전상법 §6 보존기간(5년) 경과 충전주문의 구매자 PII 파기 배치. 반환: {"purged": n}.
+
+    개인정보보호법 §21(보유기간 경과 시 지체 없는 파기) 정합 — 회원 익명화(탈퇴 기준)와
+    독립적으로 주문 자체의 법정 보존기간을 근거로 buyer_name/buyer_email을 NULL화한다.
+    """
+    import asyncio
+
+    try:
+        result = asyncio.run(_purge_order_pii_async())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_purge_order_pii_async())
+        finally:
+            loop.close()
+    logger.info("충전주문 PII 파기 배치 완료: %s", result)
+    return result
+
+
 # Celery 태스크 등록(앱이 있을 때만; 미설치 환경에서도 함수는 직접 호출 가능).
 _celery_app = _get_celery_app()
 if _celery_app is not None:
     anonymize_withdrawn_accounts = _celery_app.task(
         name="app.tasks.member_tasks.anonymize_withdrawn_accounts"
     )(anonymize_withdrawn_accounts)
+    purge_expired_order_pii = _celery_app.task(
+        name="app.tasks.member_tasks.purge_expired_order_pii"
+    )(purge_expired_order_pii)

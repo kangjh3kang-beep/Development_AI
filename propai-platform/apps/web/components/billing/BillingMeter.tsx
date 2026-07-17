@@ -101,6 +101,9 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [topupAmount, setTopupAmount] = useState(30000);
   const [paying, setPaying] = useState(false);
+  // 레거시 직접충전(/topup)은 프로덕션에서 403(무결제 자가증액 차단) — 실패를 무음으로 삼키지
+  // 않고 신규 마이페이지 코인 충전으로 안내한다(성장루프 MEDIUM 수렴).
+  const [topupError, setTopupError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -121,10 +124,15 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => { load(); }, [load]);
   // 페이지 이동 시 모달 자동 닫힘 — 대시보드 레이아웃이 유지돼 모달이 남던 문제 방어.
-  useEffect(() => { setModalOpen(false); }, [pathname]);
+  useEffect(() => { setModalOpen(false); setTopupError(false); }, [pathname]);
+
+  // 마이페이지 코인 충전 링크(로케일 접두 유지).
+  const locale = (pathname?.split("/")[1] || "ko");
+  const coinsHref = `/${locale}/mypage/coins`;
 
   const handleTopup = async () => {
     setPaying(true);
+    setTopupError(false);
     try {
       const s = await apiClient.post<Status>("/billing/topup", {
         body: { amount_krw: topupAmount },
@@ -135,7 +143,8 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
       apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
       setModalOpen(false);
     } catch {
-      /* noop */
+      // 무음 실패 금지 — 신규 코인 충전 주문(마이페이지)으로 안내.
+      setTopupError(true);
     } finally {
       setPaying(false);
     }
@@ -238,6 +247,15 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               {status.tier_label} 구독 · 현재 잔여 {won(status.remaining_krw)}. 충전 금액을 선택하세요.
             </p>
+            {topupError && (
+              <div role="status" className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
+                이 화면의 직접 충전은 더 이상 지원되지 않습니다.{" "}
+                <Link href={coinsHref} className="font-bold underline underline-offset-2" onClick={() => setModalOpen(false)}>
+                  마이페이지 코인 충전
+                </Link>
+                에서 결제해 주세요.
+              </div>
+            )}
             <div className="mt-4 grid grid-cols-2 gap-2">
               {TOPUP_PRESETS.map((amt) => (
                 <button key={amt} onClick={() => setTopupAmount(amt)}

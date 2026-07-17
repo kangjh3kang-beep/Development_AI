@@ -95,6 +95,13 @@ def _create_app() -> Celery:
             "schedule": crontab(hour=3, minute=30),
             "options": {"queue": "celery"},
         },
+        # 충전주문 구매자 PII 파기 — 전상법 §6 보존기간(5년) 경과 행의 성명·이메일 NULL화
+        # (개인정보보호법 §21 지체없는 파기·자체 고지 정합). 매일 03:40, 기본 큐.
+        "purge-order-pii-daily": {
+            "task": "app.tasks.member_tasks.purge_expired_order_pii",
+            "schedule": crontab(hour=3, minute=40),
+            "options": {"queue": "celery"},
+        },
         # 자가성장 엔진 — 텔레메트리 큐 → platform_events 배치 적재(5초 주기).
         # ⚠️ Phase 1 정본은 main.py 인프로세스 flush 루프(같은 프로세스 deque 드레인)다.
         #    capture_service 큐는 프로세스-로컬이라 별도 Celery 워커에는 API 가 쌓은
@@ -182,6 +189,7 @@ BEAT_SCHEDULE_NAMES = [
     "check-pension-increase-monthly",
     "sync-onbid-auctions-daily",
     "anonymize-withdrawn-daily",
+    "purge-order-pii-daily",
     "flush-growth-events",
     "analyze-growth-hourly",
     "analyze-growth-daily",
@@ -208,4 +216,5 @@ TASK_NAMES = [
     "tasks.memory.ingest_experience",
     "tasks.specialists.run_for_analysis",
     "app.tasks.member_tasks.anonymize_withdrawn_accounts",
+    "app.tasks.member_tasks.purge_expired_order_pii",
 ]
