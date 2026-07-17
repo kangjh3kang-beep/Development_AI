@@ -763,6 +763,8 @@ export function SatongMultiMap({
   const measureLayerRef = useRef<any>(null);
   // 노후도 범례 접기(기본 접힘) — 하단 도크 과점 해소(U1).
   const [legendOpen, setLegendOpen] = useState(false);
+  // 팝오버 좌표 복사 피드백 — 복사한 좌표 문자열(현재 팝오버와 일치할 때만 '복사됨' 표시).
+  const [copiedCoord, setCopiedCoord] = useState<string | null>(null);
 
   // 선택 필지 및 staged 필지 통합 평균 노후도 계산
   const avgAge = useMemo(() => {
@@ -862,6 +864,12 @@ export function SatongMultiMap({
   useEffect(() => {
     onPickManyRef.current = onPickMany;
   }, [onPickMany]);
+
+  // addStagedLayer(useCallback [])가 최신 onFeatureClick을 보도록 ref 경유(onPickRef 관례).
+  const onFeatureClickRef = useRef(onFeatureClick);
+  useEffect(() => {
+    onFeatureClickRef.current = onFeatureClick;
+  }, [onFeatureClick]);
 
   useEffect(() => {
     stagedRef.current = staged;
@@ -972,7 +980,10 @@ export function SatongMultiMap({
         L.polygon(rings, {
           color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.24,
           bubblingMouseEvents: false, // 확정 필지 재클릭이 지점 팝오버를 열지 않게(R1 L3)
-        }).addTo(layer);
+        })
+          // 확정 필지 클릭 = 상세 패널(WS-C) — 레이어 토글 없이도 상세 접근 가능한 통로.
+          .on("click", () => onFeatureClickRef.current?.(pointResultToFeature(parcel)))
+          .addTo(layer);
       }
     }
 
@@ -2171,6 +2182,7 @@ export function SatongMultiMap({
               : null,
             clickMenuFeature?.buildingAgeYears != null ? `노후 ${clickMenuFeature.buildingAgeYears}년` : null,
           ].filter(Boolean);
+          const coordText = `${clickMenu.lat.toFixed(6)}, ${clickMenu.lon.toFixed(6)}`;
           return (
             <div
               className="pointer-events-auto absolute w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] shadow-xl backdrop-blur"
@@ -2189,6 +2201,21 @@ export function SatongMultiMap({
                     {subInfo.join(" · ")}
                   </p>
                 )}
+                {/* 좌표 복사 — 임장·외부 공유용(WGS84 소수 6자리 ≈ 0.1m 정밀). */}
+                <button
+                  type="button"
+                  className="mt-1 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
+                  onClick={() => {
+                    // ★R1: clipboard 미지원이면 옵셔널 체이닝이 조용히 단락되므로 성공 표기를
+                    //   해선 안 되고, writeText Promise 거부(권한/포커스)도 삼키면 거짓 성공이
+                    //   된다 — 실제 resolve 후에만 '복사됨' 표기(정직).
+                    const writing = navigator.clipboard?.writeText?.(coordText);
+                    if (!writing) return;
+                    writing.then(() => setCopiedCoord(coordText)).catch(() => { /* 거부 — 무표기 */ });
+                  }}
+                >
+                  {copiedCoord === coordText ? "좌표 복사됨 ✓" : `좌표 복사 (${coordText})`}
+                </button>
               </div>
               <button
                 type="button"

@@ -554,6 +554,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
+  // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
+  //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
+  const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
+  const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
+    setDetailFeature(feature);
+    setActiveLayerId(null);
+  }, []);
   // ★WP-M2: "초기화"(clearParcels)가 지도 내부 staged·녹색 폴리곤도 청소하도록 보내는 신호(nonce).
   //   증가할 때마다 SatongMultiMap이 handleClearAll을 실행한다(종전엔 목록만 비고 지도엔 잔존).
   const [clearNonce, setClearNonce] = useState(0);
@@ -1111,8 +1118,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (id: string) => {
       projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
       setSelectedParcels((prev) => {
+        const removed = prev.find((parcel) => parcel.id === id);
         const next = prev.filter((parcel) => parcel.id !== id);
         syncParcelsToStores(next); // 빈 배열이면 store·sessionStorage 모두 정리(부활 방지)
+        // ★R1 HIGH(유령 패널): 삭제한 필지가 상세 패널에 떠 있으면 함께 닫는다 —
+        //   화면엔 삭제된 필지, 퍼널은 남은 선택으로 실행되는 오도 조합 차단.
+        if (removed) {
+          setDetailFeature((current) =>
+            current &&
+            ((removed.pnu && current.pnu === removed.pnu) || current.address === removed.address)
+              ? null
+              : current,
+          );
+        }
         return next;
       });
     },
@@ -1123,6 +1141,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
     setSelectedParcels([]);
     setFocusTarget(null);
+    setDetailFeature(null); // ★R1 HIGH: 전체초기화 시 상세 패널 잔존 방지
     syncParcelsToStores([]);
     setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
   }, [syncParcelsToStores]);
@@ -1252,6 +1271,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
   }, []);
 
   const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
+    setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
     if (!isRenderableSatongMapLayer(layerId)) {
       setActiveLayerId((current) => (current === layerId ? null : layerId));
       return;
@@ -1482,6 +1502,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       projectFocusPendingRef.current = !!projectId;
       setSelectedParcels([]);
       setFocusTarget(null);
+      setDetailFeature(null); // ★R1 HIGH: 이전 프로젝트 필지 정보가 새 프로젝트 화면에 잔존 금지
       saveSelectionForOutputs([]);
     }
 
@@ -1870,10 +1891,41 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 // ★U4(카드 과점): 지번 전문·PNU 행이 차지하던 공간 압축 — 1줄 헤더(짧은
                 //   지번+면적)+칩 1줄. 전체 주소·PNU는 hover title로 보존(정보 손실 없음).
                 selectedParcels.map((parcel, index) => (
+                  // 카드 클릭 = 상세 패널 + 지도 포커스(좌표 보유 시) — 카드-지도 연동(WS-C).
                   <div
                     key={`${parcel.id}-${index}`}
-                    className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 shadow-[var(--shadow-sm)]"
-                    title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      const feature =
+                        selectedMapFeatures.find(
+                          (f) => (parcel.pnu && f.pnu === parcel.pnu) || f.address === parcel.address,
+                        ) ??
+                        ({
+                          id: parcel.id,
+                          address: parcel.address,
+                          pnu: parcel.pnu ?? null,
+                          areaSqm: parcel.areaSqm ?? null,
+                          zoneType: parcel.zoneType ?? null,
+                          jimok: parcel.jimok ?? null,
+                          source: parcel.source,
+                        } satisfies SatongMapFeature);
+                      openFeatureDetail(feature);
+                      if (feature.lat != null && feature.lon != null) {
+                        setFocusTarget({ lat: feature.lat, lon: feature.lon, label: parcel.address });
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      // ★R1: 중첩 삭제버튼에서의 keydown 버블링이 카드 활성(상세 열기)으로
+                      //   번지지 않게 target 가드, Space 스크롤은 preventDefault.
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.currentTarget.click();
+                      }
+                    }}
+                    className="cursor-pointer rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)]/40"
+                    title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""} — 클릭: 상세 정보`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="min-w-0 truncate text-[13px] font-black text-[var(--text-primary)]">
@@ -1884,7 +1936,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       </span>
                       <button
                         type="button"
-                        onClick={() => removeParcel(parcel.id)}
+                        onClick={(e) => {
+                          e.stopPropagation(); // 삭제가 카드 클릭(상세 열기)으로 번지지 않게
+                          removeParcel(parcel.id);
+                        }}
                         className="shrink-0 rounded-full p-1.5 text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
                         aria-label="필지 제거"
                       >
@@ -1948,6 +2003,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             <div className="p-2">
               <SatongMultiMap
                 onPickMany={handleMapPickMany}
+                onFeatureClick={openFeatureDetail}
                 focusTarget={focusTarget}
                 autoPreviewFocus
                 height={720}
@@ -2105,6 +2161,112 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     선택 필지의 실제 속성 데이터가 확보된 범위에서만 지도에 반영됩니다. 무자료 필지는 추정 표시하지 않습니다.
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── WS-C 필지 상세 패널 — 개요·보유 속성(무자료 '-' 정직표기)·산출물 원클릭 퍼널.
+                 레이어 패널과 같은 슬롯(상호 배타 — 단일 팝오버 원칙). ── */}
+            {detailFeature && !activeLayer && (
+              <div
+                data-testid="parcel-detail-panel"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[26px] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
+                      Parcel
+                    </span>
+                    <h3 className="mt-1 truncate text-lg font-black text-[var(--text-primary)]">
+                      {detailFeature.address?.split(/\s+/).slice(-2).join(" ") || detailFeature.address || "필지"}
+                    </h3>
+                    <p className="truncate text-xs font-semibold text-[var(--text-hint)]">{detailFeature.address}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDetailFeature(null)}
+                    className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+                    aria-label="필지 상세 닫기"
+                  >
+                    <X className="size-4" aria-hidden />
+                  </button>
+                </div>
+
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">면적</dt>
+                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm)}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">용도지역</dt>
+                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
+                      {detailFeature.zoneType || "-"}
+                      {detailFeature.zoneType2 ? ` · ${detailFeature.zoneType2}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">지목</dt>
+                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">{detailFeature.jimok || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">개별공시지가</dt>
+                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">
+                      {detailFeature.officialPricePerSqm
+                        ? `${Math.round(detailFeature.officialPricePerSqm).toLocaleString()}원/㎡`
+                        : "-"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">건물 노후도</dt>
+                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
+                      {detailFeature.buildingAgeYears != null
+                        ? `${detailFeature.buildingAgeYears}년${detailFeature.builtYear ? ` (준공 ${detailFeature.builtYear})` : ""}`
+                        : detailFeature.ageStatus === "no_building"
+                          ? "나대지·건물 없음"
+                          : detailFeature.ageStatus === "no_approval_date"
+                            ? "사용승인일 미기재(연식 미상)" // ★R1: 백엔드 4번째 상태 — 나대지와 구분(정직)
+                            : detailFeature.ageStatus === "lookup_failed"
+                              ? "조회 실패"
+                              : detailFeature.ageStatus === "skipped_bulk"
+                                ? "대량 선택 생략"
+                                : "-"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="font-black text-[var(--text-hint)]">PNU</dt>
+                    <dd className="mt-0.5 truncate font-mono font-bold text-[var(--text-secondary)]" title={detailFeature.pnu || undefined}>
+                      {detailFeature.pnu || "-"}
+                    </dd>
+                  </div>
+                  {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
+                    <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
+                      <dt className="font-black text-[var(--text-hint)]">공시지가 총액(참고 — 공시지가×면적)</dt>
+                      <dd className="mt-0.5 font-mono font-bold text-[var(--accent-strong)]">
+                        {Math.round((detailFeature.officialPricePerSqm * detailFeature.areaSqm) / 10_000).toLocaleString()}만원
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+
+                {/* 원클릭 산출물 퍼널 — Output Dock과 동일 공용통로(handleOutputClick: 프로젝트 연결 규약 유지) */}
+                <p className="mt-3 text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
+                  이 선택으로 바로 실행
+                </p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {outputActions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      disabled={selectedParcels.length === 0}
+                      onClick={() => void handleOutputClick(action)}
+                      className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3 font-mono text-[9px] text-[var(--text-hint)]">
+                  출처 VWorld·국토교통부 공간정보 — 무자료 항목은 &quot;-&quot;로 표기(추정 금지)
+                </p>
               </div>
             )}
           </div>
