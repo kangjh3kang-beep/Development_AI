@@ -53,7 +53,12 @@ VWORLD_DOMAIN = "www.4t8t.net"
 #   근본원인). 데이터 API의 LP_PA_CBND_BUBUN(대문자)은 별개 계약이므로 혼동 금지.
 # ★_line은 레이어가 아니라 '스타일' 변형(2026-07-17 GetMap 매트릭스 채증) — 레이어
 #   화이트리스트엔 두지 않고 아래 스타일 결정에서 파생형으로만 허용(web과 동기).
-ALLOWED_WMS_LAYERS: tuple[str, ...] = ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111")
+# ★규제 오버레이 5종(2026-07-17 채증 — web과 동기): upisuq171 개발행위허가제한 ·
+#   upisuq161 지구단위 · um710 상수원보호 · uo101 교육환경보호 · uq123 고도지구.
+ALLOWED_WMS_LAYERS: tuple[str, ...] = (
+    "lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111",
+    "lt_c_upisuq171", "lt_c_upisuq161", "lt_c_um710", "lt_c_uo101", "lt_c_uq123",
+)
 # ★WMTS tiletype 정본(2026-07-17 라이브 채증) — 상류 InvalidParameterValue 본문이 유효값을
 #   직접 열거한다: [Base, midnight, Hybrid, Satellite, white]. 종전 "gray"는 실존하지 않는
 #   오기로, 회색 베이스맵 선택 시 배경지도가 통째로 미표시됐다(web과 동기 유지).
