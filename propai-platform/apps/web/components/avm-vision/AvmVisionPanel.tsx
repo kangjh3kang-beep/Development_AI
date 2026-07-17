@@ -8,6 +8,7 @@
  *   할루시네이션 방지 철학에 따라 가용값만 표시(null graceful)하고 폴백 사유를 note에 명시한다.
  */
 
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { useCallback, useState } from "react";
 import { AlertTriangle, FlaskConical, Map, Satellite } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
@@ -152,15 +153,18 @@ export function AvmVisionPanel({
 
         {/* 입력 */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
-          <label className="min-w-[240px] flex-1 text-xs text-[var(--text-secondary)]">
-            대상지 주소
-            <input
-              className={`${inp} mt-1`}
-              value={addr}
-              onChange={(e) => setAddr(e.target.value)}
-              placeholder="지번/도로명 주소"
-            />
-          </label>
+          {/* bare input 은 주소검색 자체가 안 되는 결함 — 전 모듈 표준 ProjectAddressInput 으로 통일.
+              ★writeToContext={false} 필수: 비교·탐색 검색이 활성 프로젝트 SSOT 를 덮지 않게. */}
+          <ProjectAddressInput
+            value={addr}
+            onChange={setAddr}
+            label="대상지 주소"
+            placeholder="지번/도로명 주소"
+            className="min-w-[240px] flex-1"
+            hideProjectPicker
+            single
+            writeToContext={false}
+          />
           <label className="w-40 text-xs text-[var(--text-secondary)]">
             기준시세(원, 선택)
             <input

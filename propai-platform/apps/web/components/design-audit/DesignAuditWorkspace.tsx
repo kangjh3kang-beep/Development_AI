@@ -19,6 +19,7 @@
  * apiClient v1 패턴 + 디자인 토큰(CSS 변수)만 사용.
  */
 
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Boxes, Construction, DraftingCompass, Folder, Settings } from "lucide-react";
@@ -680,17 +681,18 @@ export function DesignAuditWorkspace({
                     )
                   ) : (
                     <div className="grid gap-2 sm:grid-cols-[2fr_1fr]">
-                      <div>
-                        <span className="block text-[11px] font-semibold text-[var(--text-tertiary)]">
-                          대지 주소
-                        </span>
-                        <input
-                          value={manualAddress}
-                          onChange={(e) => setManualAddress(e.target.value)}
-                          placeholder="예: 서울특별시 강남구 역삼동 736-1"
-                          className="mt-1 w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-                        />
-                      </div>
+                      {/* 수동 모드의 1차 대지 주소 — 폴백이 아니라 분석에 직송되는 주 입력이라
+                          bare input(검색 없음)은 같은 결함이다. 전 모듈 표준으로 통일.
+                          writeToContext={false}: 수동 입력면이 활성 프로젝트 SSOT 를 덮지 않게. */}
+                      <ProjectAddressInput
+                        value={manualAddress}
+                        onChange={setManualAddress}
+                        label="대지 주소"
+                        placeholder="지번·도로명 검색 (예: 의정부동 224)"
+                        hideProjectPicker
+                        single
+                        writeToContext={false}
+                      />
                       <div>
                         <span className="block text-[11px] font-semibold text-[var(--text-tertiary)]">
                           대지면적 ㎡ (선택)
