@@ -170,11 +170,39 @@ describe("vworld-wms-proxy", () => {
     expect(body.error).toContain("INVALID_RANGE");
   });
 
-  it("키 미설정 시 503(정직 강등 근거)", async () => {
+  it("키 미설정 + API base 미설정 시 503(정직 강등 근거 — 추측 중계 금지)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "");
     vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
     const res = await proxyVWorldWms(leafletWmsQuery());
     expect(res.status).toBe(503);
+  });
+
+  it("★WS-B2: 키 미설정 + API base 설정 시 api 타일 프록시로 중계(키는 api가 주입 — URL에 없음)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net/api/v1");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    // /api/v1 꼬리는 정규화되어 1번만 등장 + 키/도메인은 api측 주입(URL에 없음)
+    expect(requested).toBe(`https://api.4t8t.net/api/v1/tiles/vworld/wms?${leafletWmsQuery().toString()}`);
+    expect(requested).not.toContain("key=");
+  });
+
+  it("★WS-B2: api 폴백 fetch 실패 시 정직 503(무음 회색타일 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("api fallback failed");
   });
 
   it("상류 4xx/5xx 는 503 JSON 으로 승격(무음 회색타일 금지)", async () => {
