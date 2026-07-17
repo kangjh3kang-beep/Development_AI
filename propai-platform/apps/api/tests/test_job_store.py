@@ -50,7 +50,8 @@ class _FakeRedis:
 def _memory_store(ns: str = "job:test:", **kw) -> JobStore:
     """프로브를 생략하고 memory 백엔드로 고정한 스토어(결정론·무네트워크)."""
     s = JobStore(ns, **kw)
-    s._backend = "memory"  # 테스트 환경 Redis 부재 확정 — 프로브(0.5s 타임아웃) 생략
+    s._backend = "memory"
+    s._backend_checked_at = time.time()  # 재프로브 창 닫기(결정론·무네트워크 계약)  # 테스트 환경 Redis 부재 확정 — 프로브(0.5s 타임아웃) 생략
     return s
 
 

@@ -33,6 +33,7 @@ TTL:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -118,7 +119,11 @@ class JobStore:
         if self._backend == "redis":
             return self._client
         self._backend_checked_at = time.time()
-        client = await self._probe_redis()
+        try:
+            # DNS 미해결은 socket_connect_timeout(0.5s)에 안 걸린다 — 프로브 전체를 1s 로 바운드.
+            client = await asyncio.wait_for(self._probe_redis(), timeout=1.0)
+        except TimeoutError:
+            client = None
         if client is not None:
             self._backend = "redis"
             self._client = client
@@ -147,17 +152,19 @@ class JobStore:
     async def get(self, job_id: str) -> dict[str, Any] | None:
         client = await self._get_client()
         if client is not None:
+            raw = None
             try:
                 raw = await client.get(self._rkey(job_id))
-            except Exception:  # noqa: BLE001 — Redis 조회 실패는 best-effort(미존재 취급)
-                return None
-            if raw is None:
-                return None
-            try:
-                return json.loads(raw)
-            except (ValueError, TypeError):
-                return None
-        # 인메모리 폴백: get 시에도 만료분 정리(② GET 프루닝 요건 충족).
+            except Exception:  # noqa: BLE001 — Redis 순단은 아래 memory 미러 2차 조회로
+                raw = None
+            if raw is not None:
+                try:
+                    return json.loads(raw)
+                except (ValueError, TypeError):
+                    return None
+            # ★미러 2차 조회(R2 적발) — put 이 Redis 순단으로 memory 에 미러한 잡을 redis 모드
+            #   get 이 안 읽으면 "fail-open" 이 무효(순단-중-404 잔존). 미스/예외 시 미러 확인.
+        # 인메모리(폴백 또는 미러): get 시에도 만료분 정리(② GET 프루닝).
         self._prune_mem()
         return self._mem.get(job_id)
 
