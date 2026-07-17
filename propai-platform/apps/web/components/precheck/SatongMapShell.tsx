@@ -220,8 +220,14 @@ const LAYERS: SatongLayer[] = [
     controls: [
       { id: "land-use", label: "용도지역", mapEffect: true },
       { id: "land-use-wide", label: "전국 지적편집도", mapEffect: true, description: "화면 전체를 용도지역 색상으로 표시(VWorld)" },
-      { id: "district-unit", label: "지구단위", mapEffect: false, description: "도시군관리계획 원천 연결 후 활성화" },
-      { id: "development-limit", label: "개발행위 제한", mapEffect: false, description: "개발행위허가 제한구역 원천 연결 후 활성화" },
+      // ★규제 오버레이(2026-07-17 잠금 해제): 아래 2개는 "원천 연결 후 활성화" 플레이스홀더로
+      //   설계돼 있었고, VWorld WMS 원천(GetCapabilities+GetMap 매트릭스 채증)이 확보되어
+      //   설계 의도대로 활성화한다. 매핑은 satong-map-layers.REGULATION_WMS_BY_CONTROL 단일 SSOT.
+      { id: "district-unit", label: "지구단위", mapEffect: true, description: "지구단위계획 구역을 지도에 표시(VWorld)" },
+      { id: "development-limit", label: "개발행위 제한", mapEffect: true, description: "개발행위허가 제한구역을 지도에 표시(VWorld)" },
+      { id: "water-protect", label: "상수원보호", mapEffect: true, description: "상수원보호구역 — 개발행위 제한 요인(VWorld)" },
+      { id: "edu-protect", label: "교육환경보호", mapEffect: true, description: "교육환경보호구역 — 숙박·위락 업종 인허가 직결(VWorld)" },
+      { id: "height-district", label: "고도지구", mapEffect: true, description: "고도지구 — 건축물 높이 제한(VWorld)" },
     ],
   },
   {

@@ -238,6 +238,18 @@ LIVE_OWS_TILETYPE_XML = (
 )
 
 
+def test_wms_whitelist_includes_regulation_overlays_in_canonical_order():
+    """★규제 오버레이 5종(2026-07-17 GetCapabilities+GetMap 매트릭스 채증) — web과 동기 핀.
+
+    소문자 정본명 고정(#366 대문자·축약 함정 계열). 순서는 canonical LAYERS 조인 순서라
+    바꾸면 상류 요청 문자열이 달라진다 — 의도적 변경 시에만 갱신할 것.
+    """
+    assert mod.ALLOWED_WMS_LAYERS == (
+        "lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111",
+        "lt_c_upisuq171", "lt_c_upisuq161", "lt_c_um710", "lt_c_uo101", "lt_c_uq123",
+    )
+
+
 def test_wmts_layer_whitelist_matches_upstream_canon():
     """★tiletype 정본 — 상류가 유효값을 직접 열거한 그대로여야 한다(web과 동기).
 

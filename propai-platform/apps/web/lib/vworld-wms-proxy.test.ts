@@ -68,6 +68,19 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(400);
   });
 
+  it("★규제 오버레이 5종은 허용·다중 조인도 canonical 그대로 통과(2026-07-17 채증)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery("lt_c_upisuq171,lt_c_uq123"));
+    expect(res.status).toBe(200);
+    // canonical 순서는 화이트리스트 정의 순서 — 요청 순서와 무관하게 고정.
+    expect(requested).toContain("LAYERS=lt_c_upisuq171%2Clt_c_uq123");
+  });
+
   it("용도지역(lt_c_uq111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
     let requested = "";

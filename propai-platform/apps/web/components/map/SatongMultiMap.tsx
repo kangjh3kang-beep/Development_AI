@@ -29,6 +29,7 @@ import {
   priceColor,
   priceManPyeong,
   pricePyeongOnly,
+  resolveRegulationWmsLayers,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
   type SatongMapFeature,
@@ -1460,6 +1461,49 @@ export function SatongMultiMap({
   }, [mapReady, showZoningWide]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // ── 규제 오버레이(지구단위·개발행위 제한·상수원·교육환경·고도지구) — WMS 다중 레이어 ──
+  //   zoning 플레이스홀더 컨트롤의 잠금 해제(2026-07-17 — GetCapabilities+GetMap 매트릭스
+  //   채증 후 활성화). 활성 컨트롤들을 콤마 조인한 한 장의 WMS 타일로 부설한다(조합이
+  //   바뀌면 재부설). 매핑 SSOT는 satong-map-layers.REGULATION_WMS_BY_CONTROL.
+  const regulationTileRef = useRef<any>(null);
+  const [regulationNote, setRegulationNote] = useState("");
+  const regulationWmsLayers = useMemo(() => resolveRegulationWmsLayers(layerState), [layerState]);
+  /* eslint-disable react-hooks/set-state-in-effect -- Imperative Leaflet tile layer wiring. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (regulationTileRef.current) {
+      try { map.removeLayer(regulationTileRef.current); } catch { /* noop */ }
+      regulationTileRef.current = null;
+    }
+    if (!regulationWmsLayers) {
+      setRegulationNote("");
+      return;
+    }
+    const tile = L.tileLayer.wms("/tiles/vworld/wms", {
+      layers: regulationWmsLayers,
+      styles: regulationWmsLayers, // VWorld는 레이어명과 동명 스타일 사용(uq111 관례 동일)
+      format: "image/png",
+      transparent: true,
+      version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
+      opacity: 0.6,
+      zIndex: 4, // z 스케일: zoningWide(3) < 규제(4) < 지적선(5) — 채움이 지적선을 못 덮는다
+      maxZoom: 19,
+      minZoom: 7,
+      attribution: "VWorld 규제(도시계획·보호구역)",
+    });
+    tile.on("tileerror", () => setRegulationNote("규제 오버레이 타일 조회 실패 — 지적 배지의 자가진단으로 원인 확인"));
+    tile.on("tileload", () => setRegulationNote((prev) => (prev ? "" : prev)));
+    tile.addTo(map);
+    regulationTileRef.current = tile;
+    return () => {
+      try { map.removeLayer(tile); } catch { /* noop */ }
+      if (regulationTileRef.current === tile) regulationTileRef.current = null;
+    };
+  }, [mapReady, regulationWmsLayers]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1498,7 +1542,11 @@ export function SatongMultiMap({
       //   프록시 분류기가 이 XML을 auth로 승격해 "키 미설정" 오해 메시지가 표시됐다.
       //   1.3.0에서는 Leaflet이 SRS 대신 CRS 파라미터를 전송한다(정상 — VWorld 수용).
       version: "1.3.0",
-      zIndex: 4, // 전국 지적편집도(zoning-wide, 3) '위' — 용도색이 지적선을 덮지 않게(R1 #2)
+      // ★z 스케일(2026-07-18 R1 MAJOR 반영): zoningWide=3 < regulation=4 < cadastre=5.
+      //   종전 지적=4는 규제 오버레이(4)와 동률 — 같은 pane에서 동률 z는 DOM 삽입 순서로
+      //   갈려, 나중에 켠 규제 채움(opacity .6)이 기본-온 지적선을 덮었다(불변식 위반).
+      //   지적선은 모든 채움 오버레이 '위'가 계약이므로 5로 승격.
+      zIndex: 5,
       maxZoom: 19,
       minZoom: 10,
       attribution: "VWorld 연속지적도",
@@ -2562,7 +2610,7 @@ export function SatongMultiMap({
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
-        {(bottomDockSlot != null || hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
+        {(bottomDockSlot != null || hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || regulationNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
           <div
             // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
             // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
@@ -2645,7 +2693,7 @@ export function SatongMultiMap({
               )
             )}
             {/* 상태 칩 — 가로 1줄(겹침 해소) */}
-            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote) && (
+            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || regulationNote) && (
               <div className="flex flex-row flex-wrap items-end gap-1.5">
                 {cadastreTileNote && (
                   // I9: 배지 = 자가진단 버튼 — 클릭 시 프록시 프로브로 실제 오류 code 표면화.
@@ -2663,6 +2711,11 @@ export function SatongMultiMap({
                 {zoningWideNote && (
                   <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
                     {zoningWideNote}
+                  </span>
+                )}
+                {regulationNote && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    {regulationNote}
                   </span>
                 )}
                 {overlayNote && (

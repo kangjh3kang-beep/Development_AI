@@ -42,7 +42,10 @@ const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 //   ★_line은 '레이어'가 아니라 '스타일' 변형이다(2026-07-17 GetMap 매트릭스 라이브 채증:
 //     LAYERS=_line → XML 오류 / LAYERS=채움+STYLES=_line → image/png). 레이어 화이트리스트엔
 //     넣지 않고 아래 스타일 결정 로직에서 파생형으로만 허용한다.
-const ALLOWED_WMS_LAYERS_ORDER = ["lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111"] as const;
+// ★규제 오버레이 5종(2026-07-17 GetCapabilities+GetMap 매트릭스 채증 — api측과 동기 유지):
+//   upisuq171 개발행위허가제한 · upisuq161 지구단위계획 · um710 상수원보호 ·
+//   uo101 교육환경보호 · uq123 고도지구.
+const ALLOWED_WMS_LAYERS_ORDER = ["lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111", "lt_c_upisuq171", "lt_c_upisuq161", "lt_c_um710", "lt_c_uo101", "lt_c_uq123"] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {

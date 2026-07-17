@@ -148,6 +148,30 @@ export function pricePyeongOnly(perSqm: number | null | undefined): string {
   return `${manPerPyeong}만원/평`;
 }
 
+/** 규제 오버레이 — zoning 컨트롤 id → VWorld WMS 레이어 정본명.
+ *  ★2026-07-17 라이브 채증: 5종 전부 WMS GetCapabilities 355개 목록 실존 + GetMap 매트릭스
+ *   (서울 광역 bbox) 실PNG 반환 확인(무날조 게이트 — lp_pa_cbnd·tiletype 함정 재발 방지).
+ *  ★"지구단위"·"개발행위 제한"은 LAYERS의 기존 플레이스홀더("원천 연결 후 활성화")를
+ *   설계 의도대로 잠금 해제한 것 — 신규 발명 아님. 이름은 소문자 정본(WMS는 대소문자 구분,
+ *   데이터 API의 대문자 계약과 별개 — #366 교훈). */
+export const REGULATION_WMS_BY_CONTROL: Record<string, string> = {
+  "development-limit": "lt_c_upisuq171", // 개발행위허가제한지역
+  "district-unit": "lt_c_upisuq161", // 지구단위계획
+  "water-protect": "lt_c_um710", // 상수원보호구역
+  "edu-protect": "lt_c_uo101", // 교육환경보호구역(숙박·위락 업종 인허가 직결)
+  "height-district": "lt_c_uq123", // 고도지구(높이 제한)
+};
+
+/** 활성 규제 컨트롤 → WMS LAYERS 파라미터(콤마 조인, 사전 정의 순서 고정).
+ *  빈 문자열 = 규제 오버레이 없음(타일 레이어 미부설). */
+export function resolveRegulationWmsLayers(state: SatongMapLayerState | undefined): string {
+  if (!hasSatongLayer(state, "zoning")) return "";
+  return Object.keys(REGULATION_WMS_BY_CONTROL)
+    .filter((controlId) => hasSatongLayerControl(state, "zoning", controlId))
+    .map((controlId) => REGULATION_WMS_BY_CONTROL[controlId])
+    .join(",");
+}
+
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {
   if (!hasSatongLayer(state, "terrain")) return "Base";
   if (hasSatongLayerControl(state, "terrain", "satellite")) return "Satellite";
