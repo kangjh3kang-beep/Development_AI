@@ -56,7 +56,7 @@ import {
   type SatongMapLayerState,
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
-import { buildSelectionGeoJson, kakaoRoadviewUrl } from "@/lib/satong-export";
+import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
@@ -683,27 +683,35 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [enabledLayers, layerControls],
   );
 
-  // I5: 선택 필지 → GeoJSON 파일 다운로드(순수 직렬화는 satong-export — 테스트 고정).
-  const exportSelectionGeoJson = useCallback(() => {
-    const { json, included, skipped } = buildSelectionGeoJson(selectedMapFeatures);
-    if (included === 0) {
+  // I5+V3: 선택 필지 → GeoJSON/KML 파일 다운로드(순수 직렬화는 satong-export — 테스트 고정).
+  //   포맷별 중복을 공용 실행기로 일원화(버그수정 정책 — 공용화).
+  const exportSelection = useCallback(
+    (format: "geojson" | "kml") => {
+      const built =
+        format === "kml" ? buildSelectionKml(selectedMapFeatures) : buildSelectionGeoJson(selectedMapFeatures);
+      if (built.included === 0) {
+        setExportNote(
+          "내보낼 경계(geometry) 보유 필지가 없습니다 — 지도에서 필지를 선택(경계 조회)한 뒤 다시 시도하세요.",
+        );
+        return;
+      }
+      const mime = format === "kml" ? "application/vnd.google-earth.kml+xml" : "application/geo+json";
+      const blob = new Blob([built.json], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `satong-parcels-${built.included}.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      // R1: click() 직후 동기 revoke는 일부 환경에서 다운로드를 끊을 수 있어 다음 틱으로 지연.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       setExportNote(
-        "내보낼 경계(geometry) 보유 필지가 없습니다 — 지도에서 필지를 선택(경계 조회)한 뒤 다시 시도하세요.",
+        `${format === "kml" ? "KML" : "GeoJSON"} ${built.included}필지 내보냄${built.skipped ? ` · 경계 없음 ${built.skipped}필지 제외(정직 고지)` : ""}`,
       );
-      return;
-    }
-    const blob = new Blob([json], { type: "application/geo+json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `satong-parcels-${included}.geojson`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    // R1: click() 직후 동기 revoke는 일부 환경에서 다운로드를 끊을 수 있어 다음 틱으로 지연.
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-    setExportNote(`GeoJSON ${included}필지 내보냄${skipped ? ` · 경계 없음 ${skipped}필지 제외(정직 고지)` : ""}`);
-  }, [selectedMapFeatures]);
+    },
+    [selectedMapFeatures],
+  );
 
   // ── 실거래·시세 레이어 배선: 레이어 ON + 선택필지 있으면 주변 실거래(nearby-map) 조회 ──
   //   렌더(마커·반경·팝업)는 SatongMultiMap에 완비 — 여기서는 데이터만 주입한다.
@@ -1912,11 +1920,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   {/* I5: 선택 필지 GeoJSON 내보내기 — 측량·타 GIS 연계(기하 없는 필지는 제외 정직 고지) */}
                   <button
                     type="button"
-                    onClick={exportSelectionGeoJson}
+                    onClick={() => exportSelection("geojson")}
                     title="선택 필지를 GeoJSON(FeatureCollection)으로 내려받기"
                     className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
                   >
                     GeoJSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportSelection("kml")}
+                    title="선택 필지를 KML(구글어스·측량 호환)로 내려받기 — V3"
+                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
+                  >
+                    KML
                   </button>
                   <button
                     type="button"

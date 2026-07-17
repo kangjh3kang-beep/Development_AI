@@ -176,6 +176,24 @@ def test_wms_allows_zoning_layer_lt_c_uq111(monkeypatch):
     assert "LAYERS=lt_c_uq111" in str(captured[0].url)
 
 
+def test_wms_line_style_variant_kept_and_arbitrary_forced_canonical(monkeypatch):
+    """★V1(web과 동기): STYLES가 '각 canonical 레이어+_line' 집합이면 선 스타일 유지,
+    임의 스타일은 canonical 강제(스머글링 불변)."""
+    monkeypatch.setattr(mod, "_vworld_key", lambda: "SECRET-KEY")
+    captured = _mock_async_client(monkeypatch, _png_response)
+    client = TestClient(_app())
+    resp = client.get(
+        "/api/v1/tiles/vworld/wms?layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"
+        "&styles=lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line&version=1.3.0"
+        "&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64"
+    )
+    assert resp.status_code == 200
+    url = str(captured[0].url)
+    assert "STYLES=lp_pa_cbnd_bubun_line%2Clp_pa_cbnd_bonbun_line" in url or "STYLES=lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line" in url
+    client.get("/api/v1/tiles/vworld/wms?layers=lp_pa_cbnd_bubun&styles=EVIL&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64")
+    assert "STYLES=lp_pa_cbnd_bubun" in str(captured[1].url).replace("%2C", ",")
+
+
 # ── WMTS ──
 
 
