@@ -208,7 +208,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         // ★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 서버키가 '키 자체 무효'로
         //   거부되면 api(관리자 등록 키·#354 통로)로 1회 재중계 — 관리자 화면 키 등록만으로
         //   web 재빌드 없이 복구된다. 파라미터 오류(INVALID_RANGE 등)는 재시도 무의미라 제외.
-        if (isVWorldKeyFault(detail.code)) {
+        if (isVWorldKeyFault(detail)) {
           const origin = vworldApiFallbackOrigin();
           if (origin) {
             console.warn(`[vworld-wms-proxy] local key fault (${detail.code}) → api fallback retry`);

@@ -12,8 +12,10 @@ from fastapi.testclient import TestClient
 
 from app.routers import vworld_tiles as mod
 from app.routers.vworld_tiles import (
+    SUPPORTED_WMTS_LAYERS,
     classify_vworld_xml,
     extract_vworld_code,
+    extract_vworld_locator,
     router,
 )
 
@@ -216,6 +218,74 @@ def test_wmts_unknown_layer_falls_back_to_base_and_bad_coord_400(monkeypatch):
     # 비숫자 x좌표(경로 주입류)는 400 — 상류 URL 조립 전에 거부.
     assert client.get("/api/v1/tiles/vworld/wmts/Base/6/24/abc.png").status_code == 400
     assert len(captured) == 1  # 400 케이스는 상류 요청 자체가 없다
+
+
+# ── OWS 1.1 ExceptionReport (WMTS 계열) — web lib/vworld-xml-exception.ts와 동기 ──
+# ★2026-07-17 라이브 채증 원문. WMS(ServiceException@code)와 스키마가 달라 종전 파서는
+#   WMTS의 code 추출에 100% 실패했고, 진짜 원인(tiletype 오기)이 "auth/unknown"으로 은폐됐다.
+LIVE_OWS_TILETYPE_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<ExceptionReport xmlns="http://www.opengis.net/ows/1.1"\n'
+    '\tversion="1.1.0" xml:lang="kor">\n'
+    '\t<Exception exceptionCode="InvalidParameterValue" locator="tiletype">\n'
+    "\t\t<ExceptionText>\n"
+    "<![CDATA[tiletype 파라미터의 값이 유효한 범위를 넘었습니다."
+    " 유효한 파라미터 값의 범위 : [Base, midnight, Hybrid, Satellite, white],"
+    " 입력한 파라미터 값 : gray]]>\n"
+    "</ExceptionText>\n"
+    "\t</Exception>\n"
+    "</ExceptionReport>"
+)
+
+
+def test_wmts_layer_whitelist_matches_upstream_canon():
+    """★tiletype 정본 — 상류가 유효값을 직접 열거한 그대로여야 한다(web과 동기).
+
+    종전 "gray"는 실존하지 않는 값이라 회색 배경지도가 전역 미표시됐다.
+    """
+    assert {"Base", "midnight", "Hybrid", "Satellite", "white"} == SUPPORTED_WMTS_LAYERS
+    assert "gray" not in SUPPORTED_WMTS_LAYERS
+
+
+def test_extract_code_and_locator_from_ows_exception_report():
+    """OWS(WMTS) 스키마에서도 code·locator를 추출한다 — 원인 은폐 방지."""
+    assert extract_vworld_code(LIVE_OWS_TILETYPE_XML) == "InvalidParameterValue"
+    assert extract_vworld_locator(LIVE_OWS_TILETYPE_XML) == "tiletype"
+
+
+def test_wms_schema_still_wins_and_has_no_locator():
+    """WMS 경로 무회귀 — OWS 분기 추가가 기존 계약을 퇴행시키지 않는다."""
+    assert extract_vworld_code(LIVE_INVALID_RANGE_XML) == "INVALID_RANGE"
+    assert extract_vworld_locator(LIVE_INVALID_RANGE_XML) is None
+
+
+def test_ows_exception_report_tag_is_not_mistaken_for_exception():
+    """★<ExceptionReport version="1.1.0">를 <Exception>으로 오탐하지 않는다(접두 동일).
+
+    \\s 경계가 없으면 ExceptionReport@version("1.1.0")을 code로 잡는 사고가 난다.
+    """
+    assert extract_vworld_code(LIVE_OWS_TILETYPE_XML) != "1.1.0"
+    assert extract_vworld_code('<ExceptionReport version="1.1.0"></ExceptionReport>') is None
+
+
+def test_ows_xml_is_classified_auth_and_surfaces_locator(monkeypatch):
+    """200+OWS XML → 503 + (code/locator) 표면화. 투명타일로 무음 흡수 금지."""
+
+    def _ows_response(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/xml;charset=UTF-8"},
+            text=LIVE_OWS_TILETYPE_XML,
+        )
+
+    monkeypatch.setattr(mod, "_vworld_key", lambda: "SECRET-KEY")
+    _mock_async_client(monkeypatch, _ows_response)
+    client = TestClient(_app())
+    resp = client.get("/api/v1/tiles/vworld/wmts/Base/6/24/54.png")
+    assert resp.status_code == 503
+    # ★locator 병기 필수 — OWS는 code가 InvalidParameterValue 하나로 뭉뚱그려져
+    #   code만으로는 tiletype 오기와 key 무효를 구분할 수 없다.
+    assert "InvalidParameterValue/tiletype" in resp.json()["error"]
 
 
 if __name__ == "__main__":

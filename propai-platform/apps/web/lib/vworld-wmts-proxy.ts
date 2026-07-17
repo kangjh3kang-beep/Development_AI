@@ -2,7 +2,15 @@ import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKe
 import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
-const SUPPORTED_LAYERS = new Set(["Base", "gray", "midnight", "Hybrid", "Satellite"]);
+// ★tiletype 정본(2026-07-17 라이브 채증 — 상류 InvalidParameterValue 본문이 유효값을 직접
+//   열거: [Base, midnight, Hybrid, Satellite, white]). 종전 "gray"는 실존하지 않는 오기였다.
+const SUPPORTED_LAYERS = new Set(["Base", "white", "midnight", "Hybrid", "Satellite"]);
+
+// 레거시 별칭 — 구 SW 캐시를 든 클라이언트가 배포 후에도 한동안 /gray 를 보낸다.
+// ★아래 화이트리스트의 unknown→"Base" 폴백에 맡기지 않는다: 그 폴백은 **주입 방어용**이라
+//   "회색을 눌렀는데 일반지도가 나오는" 무음 강등이 되어 무목업 원칙에 걸린다. gray는
+//   우리가 아는 별칭이므로 정본으로 명시 승격해 과도기를 무손실로 만든다(가드는 그대로).
+const LEGACY_LAYER_ALIAS: Record<string, string> = { gray: "white" };
 
 export type VWorldWmtsParams = {
   layer: string;
@@ -64,10 +72,11 @@ function transparentTile(): Response {
 
 export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Response> {
   const key = vworldKey();
-  const cleanLayer = SUPPORTED_LAYERS.has(params.layer) ? params.layer : "Base";
+  const requested = LEGACY_LAYER_ALIAS[params.layer] ?? params.layer;
+  const cleanLayer = SUPPORTED_LAYERS.has(requested) ? requested : "Base";
   const cleanX = params.x.replace(/\.(png|jpe?g)$/i, "");
   // ★VWorld 위성영상(Satellite)은 jpeg로만 서빙된다 — png 요청 시 'FileNotFound: 서비스 제공영역이
-  //   아닙니다' XML을 200으로 반환한다. 위성만 jpeg, 나머지(Base·Hybrid·gray·midnight)는 png.
+  //   아닙니다' XML을 200으로 반환한다. 위성만 jpeg, 나머지(Base·Hybrid·white·midnight)는 png.
   const ext = cleanLayer === "Satellite" ? "jpeg" : "png";
 
   if (!key) {
@@ -127,7 +136,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
         // ★2026-07-17: ServiceException code 표면화(WMS 프록시와 동일 계약 — 원인 즉시 구분).
         const detail = extractVWorldXmlExceptionDetail(bodyText);
         // ★키-오류 페일오버 — WMS 프록시와 동일 계약(관리자 키 경유 1회 재중계).
-        if (isVWorldKeyFault(detail.code)) {
+        if (isVWorldKeyFault(detail)) {
           const origin = vworldApiFallbackOrigin();
           if (origin) {
             console.warn(`[vworld-wmts-proxy] local key fault (${detail.code}) → api fallback retry`);
@@ -137,12 +146,20 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
             );
           }
         }
+        // ★locator 병기 필수 — OWS는 code가 InvalidParameterValue 하나로 뭉뚱그려져
+        //   code만으로는 원인을 구분할 수 없다(locator=tiletype 레이어명 오기 /
+        //   locator=key 인증키). 2026-07-17 회색 배경지도 전역 미표시가 "(auth/unknown)"으로
+        //   은폐된 근본이 이 누락이었다.
+        const reason = detail.code
+          ? `${detail.code}${detail.locator ? `/${detail.locator}` : ""}`
+          : "auth/unknown";
         return upstreamError(
-          `VWorld WMTS returned an XML exception (${detail.code ?? "auth/unknown"})`,
+          `VWorld WMTS returned an XML exception (${reason})`,
           resp.status,
           {
             layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType,
             code: detail.code ?? "",
+            locator: detail.locator ?? "",
             message: detail.message ?? "",
             bodySnippet: bodyText.slice(0, 200),
           },

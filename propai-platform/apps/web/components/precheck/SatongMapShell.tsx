@@ -375,7 +375,10 @@ const BASEMAP_SWITCHES = [
   { id: "base", label: "일반", base: "Base", swatch: "bg-gradient-to-br from-slate-100 via-emerald-50 to-emerald-100" },
   { id: "satellite", label: "위성", base: "Satellite", swatch: "bg-gradient-to-br from-slate-800 via-emerald-950 to-slate-900" },
   { id: "hybrid", label: "하이브리드", base: "Hybrid", swatch: "bg-gradient-to-br from-slate-700 via-sky-950 to-slate-800" },
-  { id: "gray", label: "회색", base: "gray", swatch: "bg-gradient-to-br from-slate-200 to-slate-400" },
+  // ★id("gray")=UI 컨트롤 식별자(:1353 상호배타 해제셋 키·LAYERS 정의와 일치) /
+  //   base("white")=VWorld tiletype 정본 — 별개 네임스페이스라 분리 유지한다.
+  //   종전 base:"gray"는 상류 미존재값이라 회색 선택 시 배경지도가 통째로 사라졌다.
+  { id: "gray", label: "회색", base: "white", swatch: "bg-gradient-to-br from-slate-200 to-slate-400" },
 ] as const;
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
