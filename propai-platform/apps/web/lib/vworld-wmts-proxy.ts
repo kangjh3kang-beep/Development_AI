@@ -1,4 +1,5 @@
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/lib/vworld-xml-exception";
+import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
 const SUPPORTED_LAYERS = new Set(["Base", "gray", "midnight", "Hybrid", "Satellite"]);
@@ -70,6 +71,15 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
   const ext = cleanLayer === "Satellite" ? "jpeg" : "png";
 
   if (!key) {
+    // ★WS-B2: 서버키 부재 → api 타일 프록시로 폴백(관리자 등록 키는 api에만 반영됨 —
+    //   vworld-wms-proxy.vworldApiFallbackOrigin 참조). 폴백 오리진도 없으면 기존 정직 503.
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy",
+      );
+    }
     // [MAP-006] 평문 본문 금지 — 오류는 항상 JSON({ error, status })으로 반환한다.
     // 평문은 타일 응답을 JSON으로 해석하는 소비자의 JSON.parse 예외를 유발한다.
     return new Response(

@@ -1034,6 +1034,16 @@ try:
 except Exception as e:
     logger.warning("app/routers/mass_templates 로드 실패", error=str(e))
 
+# VWorld 타일 프록시(WS-B2): /api/v1/tiles/vworld/{wms,wmts/...} — 관리자 등록 키
+# (platform_secrets→load_into_env)가 web 컨테이너에 전달되지 않는 구조 결함의 폴백 통로.
+# web 타일 프록시가 로컬 VWORLD_API_KEY 부재 시 여기로 중계한다(레이어 화이트리스트 동일).
+try:
+    from app.routers.vworld_tiles import router as vworld_tiles_router
+
+    app.include_router(vworld_tiles_router, prefix="/api/v1", tags=["VWorld 타일 프록시"])
+except Exception as e:
+    logger.warning("app/routers/vworld_tiles 로드 실패", error=str(e))
+
 # 프론트가 호출하나 미마운트였던 app/routers(자체 prefix 보유, 기존 라우트와 경로
 # 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents는
 # 표면 확대 방지로 미마운트(필요시 추후). v2_tax는 삭제됨(2026-07-12 정리 — v1 tax와

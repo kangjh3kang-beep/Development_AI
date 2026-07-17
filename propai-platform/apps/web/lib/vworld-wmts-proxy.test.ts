@@ -58,11 +58,27 @@ describe("vworld-wmts-proxy", () => {
     expect(Array.from(bytes.slice(0, 4))).toEqual(PNG_MAGIC); // 유효 PNG(투명타일)
   });
 
-  it("키 미설정 시 503", async () => {
+  it("키 미설정 + API base 미설정 시 503", async () => {
     vi.stubEnv("VWORLD_API_KEY", "");
     vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
     const res = await proxyVWorldWmts({ layer: "Base", z: "16", y: "1", x: "1.png" });
     expect(res.status).toBe(503);
+  });
+
+  it("★WS-B2: 키 미설정 + API base 설정 시 api 타일 프록시로 중계(위성 jpeg 규칙 유지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    let requested = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      requested = String(url);
+      return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, { status: 200, headers: { "content-type": "image/jpeg" } });
+    }));
+    const res = await proxyVWorldWmts({ layer: "Satellite", z: "6", y: "24", x: "54.png" });
+    expect(res.status).toBe(200);
+    expect(requested).toBe("https://api.4t8t.net/api/v1/tiles/vworld/wmts/Satellite/6/24/54.jpeg");
+    expect(requested).not.toContain("key");
   });
 
   it("★PR#329 R1: NEXT_PUBLIC_VWORLD_API_KEY(공개키)로는 폴백하지 않는다 — 서버 전용 키만 인정", async () => {

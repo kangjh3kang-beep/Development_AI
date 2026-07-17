@@ -51,6 +51,37 @@ function jsonError(message: string, status: number): Response {
   });
 }
 
+/**
+ * ★WS-B2(관리자 키 web 미배선 봉합): 로컬 서버키 부재 시 api 타일 프록시로 중계할 오리진.
+ *   관리자 화면(platform_secrets) 키는 load_into_env()로 apps/api에만 주입되므로, web에
+ *   키가 없으면 api(/api/v1/tiles/vworld/*)가 자기(관리자 반영된) 키로 대신 프록시한다.
+ *   NEXT_PUBLIC_API_BASE_URL 이 명시된 경우에만 폴백(미설정이면 기존 정직 503 유지 —
+ *   Docker 내부 DNS 추측 중계는 web/api 분리 호스트 배포에서 오배선이 된다).
+ */
+export function vworldApiFallbackOrigin(): string | null {
+  const raw = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!raw) return null;
+  return raw.replace(/\/+$/, "").replace(/\/api\/v[12]$/, "");
+}
+
+export async function relayViaApi(url: string, proxyTag: string): Promise<Response> {
+  try {
+    const resp = await fetch(url, { next: { revalidate: 60 * 60 * 24 } });
+    // api측이 이미 web과 동일 계약(투명타일/503+code)으로 변환해 주므로 그대로 통과.
+    const body = await resp.arrayBuffer();
+    return new Response(body, {
+      status: resp.status,
+      headers: {
+        "Content-Type": resp.headers.get("content-type") ?? "application/octet-stream",
+        "Cache-Control": resp.headers.get("cache-control") ?? "no-store",
+      },
+    });
+  } catch (error) {
+    console.error(`[${proxyTag}] api fallback failed`, { url, error: String(error) });
+    return jsonError("VWORLD_API_KEY is not configured (api fallback failed)", 503);
+  }
+}
+
 function upstreamError(message: string, upstreamStatus: number, detail: Record<string, string>): Response {
   console.error(`[vworld-wms-proxy] ${message} (upstream status=${upstreamStatus})`, detail);
   return jsonError(message, 503);
@@ -78,7 +109,13 @@ function transparentTile(): Response {
 export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Response> {
   const key = vworldKey();
   if (!key) {
-    // [MAP-006] 평문 금지 — 오류는 항상 JSON. (키 미설정 노출은 지적 토글 시 정직 강등의 근거)
+    // ★WS-B2: 서버키 부재 → api 타일 프록시로 폴백(관리자 등록 키가 api에는 반영됨).
+    //   api측이 레이어 화이트리스트·XML 분류를 동일 계약으로 수행한다. 폴백 오리진도
+    //   없으면 기존 정직 503([MAP-006] 평문 금지 — 오류는 항상 JSON).
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy");
+    }
     return jsonError("VWORLD_API_KEY is not configured", 503);
   }
 
