@@ -13,6 +13,8 @@ from typing import Any
 
 import structlog
 
+from app.services.data_validation.deal_date import deal_ym as _deal_ym
+
 logger = structlog.get_logger(__name__)
 
 # 주소에서 시/군/구 토큰 추출. KOSIS·SGIS는 통합시(수원·성남·고양 등)를 다르게 표기한다:
@@ -114,19 +116,6 @@ def _build_rent_table(rent: dict[str, Any]) -> list[dict[str, Any]]:
             "max_10k": s.get("max", 0),
         })
     return rows
-
-
-def _deal_ym(deal_date: Any) -> str | None:
-    """거래일 문자열('2024년 3월 15일' 등) → 'YYYY-MM'. 파싱 실패/월범위 이탈 시 None."""
-    if not deal_date:
-        return None
-    m = re.search(r"(\d{4})\D+(\d{1,2})", str(deal_date))
-    if not m:
-        return None
-    y, mo = int(m.group(1)), int(m.group(2))
-    if not (1 <= mo <= 12):
-        return None
-    return f"{y}-{mo:02d}"
 
 
 def _build_competitor_complexes(
@@ -407,6 +396,8 @@ def _build_target_profile(
             "category_distribution": commercial.get("category_distribution"),
             "vitality_score": commercial.get("vitality_score"),
             "grade": _grade,
+            # ★등급 산정 근거 — commercial_area_service.vitality_grade() 문턱값과 일치(임의 재정의 금지).
+            "grade_legend": "점포밀도·업종다양성 기반 활력점수 — A(80+)/B(65+)/C(50+)/D(35+)/E(35미만)",
             "data_source": "live",
             "value": str(_grade) if _grade else "상권 형성",
             "detail": f"점포 {int(_stores):,}개" if _stores else None,
@@ -447,6 +438,27 @@ def _build_target_profile(
     }
     return tp
 
+
+_TREND_MONTHS_DEFAULT = 3
+_TREND_MONTHS_MAX = 24
+
+
+def _resolve_trend_months(options: dict | None) -> int:
+    """options['trend_months'](시세 추이 조회 기간, 개월) → 검증된 int.
+
+    기본 3개월(기존 하드코딩 무회귀), 상한 24개월(MOLIT 과다호출 방지). 미전달/비정수/범위
+    이탈은 정직 폴백(기본값) — 잘못된 옵션으로 조회가 실패하거나 과도해지지 않게 한다.
+    """
+    raw = (options or {}).get("trend_months")
+    if raw is None:
+        return _TREND_MONTHS_DEFAULT
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return _TREND_MONTHS_DEFAULT
+    return max(1, min(_TREND_MONTHS_MAX, n))
+
+
 class MarketReportService:
 
 
@@ -472,13 +484,17 @@ class MarketReportService:
                 y -= 1
         return out
 
-    async def _category_stats(self, lawd_cd: str) -> dict[str, Any]:
+    async def _category_stats(self, lawd_cd: str, months_n: int = 3) -> dict[str, Any]:
         import asyncio
 
         # ★MOLIT LAWD_CD 는 시군구 5자리. 10자리 법정동/bcode 가 들어오면 [:5]로 정규화하지 않으면
         #   실거래가 전부 빈 결과가 되어 trade·comparable_trade(적정분양가 앵커)가 통째로 누락된다.
         lawd_cd = (lawd_cd or "")[:5]
-        months = self._months(3)
+        # months_n: 시세 추이 조회 기간(개월, 기본 3) — build_report가 options.trend_months를
+        #   검증(_resolve_trend_months)해 전달. trade/rent 집계·apt_trend(월별 추이) 모두 이 기간을
+        #   공유한다(시세 추이 차트와 동일 창을 봐야 정합). 각 개월 MOLIT 호출은 아래에서 이미
+        #   asyncio.gather로 병렬 수행된다(trade_one/rent_one의 gather, apt_month의 gather).
+        months = self._months(months_n)
         trade: dict[str, Any] = {}
         rent: dict[str, Any] = {}
         # 경쟁 단지 비교표(단지명별 집계)용 아파트 매매 원자료 보존 — 아래 trade_one이 채운다.
@@ -825,6 +841,9 @@ class MarketReportService:
         from app.services.land_intelligence.land_info_service import LandInfoService
 
         options = options or {}
+        # 시세 추이 조회 기간(개월) — 기본 3, 상한 24, int 검증(정직 폴백). additive 옵션이라
+        #   미전달 시 기존 3개월 동작과 100% 동일(무회귀).
+        trend_months = _resolve_trend_months(options)
         use_sgis = options.get("sgis", False)
         use_kosis = options.get("kosis", False)
         # 항목 단위 게이팅: 프론트(P1)가 보내는 세부 선택. 없을 수도 있음(하위호환).
@@ -857,7 +876,7 @@ class MarketReportService:
             comp = await LandInfoService().collect_comprehensive(address, pnu=pnu)
         except Exception:  # noqa: BLE001
             pass
-        stats = await self._category_stats(lawd_cd)
+        stats = await self._category_stats(lawd_cd, months_n=trend_months)
 
         # ── Phase 1: 공공 인구 및 소득 데이터(SGIS, KOSIS) 연동 ──
         import asyncio

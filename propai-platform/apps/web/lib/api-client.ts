@@ -378,7 +378,14 @@ async function executeFetch(
         null,
       );
     }
-    throw err;
+    // 네트워크 실패(연결 끊김·DNS·CORS 등) — 브라우저 원시 예외("Failed to fetch" 등)를 화면에
+    //   그대로 노출하지 않고 한국어 메시지로 포장한다(status=0). apiClient를 경유하는 전 소비처가
+    //   ApiClientError만 분기하면 되므로(errorMessage 류 관례) 이 한 곳의 래핑이 전역 전파된다.
+    throw new ApiClientError(
+      "네트워크 오류 — 연결이 지연되거나 끊겼습니다. 다시 시도해 주세요.",
+      0,
+      null,
+    );
   } finally {
     if (timer != null) clearTimeout(timer);
   }

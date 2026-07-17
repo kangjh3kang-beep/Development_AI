@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building, Compass, Files, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
-import { PYEONG_SQM } from "@/lib/formatters";
+import { PYEONG_SQM, formatCurrencyKRW, formatManwon as formatPrice, formatYm } from "@/lib/formatters";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
@@ -48,7 +48,7 @@ import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
@@ -86,6 +86,8 @@ type AvmSummary = {
   price_per_sqm: number;   // 원/㎡
   confidence_score: number;
   comparable_count: number;
+  sample_count: number;     // 신뢰도(CV) 산출에 실제 사용된 개별 거래 표본 수
+  price_cv_percent: number; // 표본 가격 변동계수(CV, %) — 낮을수록 가격이 고르게 형성됨
 };
 
 type TxItem = {
@@ -110,20 +112,6 @@ type MarketResults = {
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
-
-function formatPrice(man: number): string {
-  if (!man || man <= 0) return "-";
-  if (man >= 10000) {
-    const uk = Math.floor(man / 10000);
-    const rest = man % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${man.toLocaleString()}만원`;
-}
-
-function formatCurrency(won: number): string {
-  return new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 }).format(won);
-}
 
 function distanceM(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const R = 6371000, toRad = (d: number) => (d * Math.PI) / 180;
@@ -178,6 +166,13 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     }
   }
 
+  // 거래일 desc 정렬(최신 거래가 먼저) — 연/월/일을 zero-pad한 문자열 비교로 결측(day 없음)도 안전.
+  transactions.sort((a, b) => {
+    const key = (t: TxItem) =>
+      `${t.deal_year ?? ""}${(t.deal_month ?? "").padStart(2, "0")}${(t.deal_day ?? "").padStart(2, "0")}`;
+    return key(b).localeCompare(key(a));
+  });
+
   const radiusGroups: RadiusBucket[] = buckets
     .filter((b) => b.count > 0)
     .map((b) => ({ label: b.label, count: b.count, avgPrice: b.pN ? Math.round(b.pSum / b.pN) : 0 }));
@@ -196,11 +191,32 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     if (ppN > 0) {
       const perPyeong = ppSum / ppN;        // 만원/평
       const perM2man = perPyeong / PYEONG_SQM;  // 만원/㎡
+      // 신뢰도 — 예전엔 log(표본수)만 반영하는 항등식이라 사실상 상시 95%였다. 실측 가격
+      //   변동계수(CV=표준편차/평균)로 교체: 표본이 많고(count 항) 가격이 고르게 형성될수록
+      //   (CV 항, 낮을수록 가산) 신뢰도가 높다. 두 항을 절반씩 반영해 0.3~0.98로 클램프.
+      const dealPrices = apt.groups
+        .flatMap((g) => g.deals || [])
+        .map((d) => d.price_10k_won)
+        .filter((p): p is number => typeof p === "number" && p > 0);
+      let confidence = 0.5; // 개별 거래가(price_10k_won) 표본이 없는 비정상 케이스 폴백
+      let cvPercent = 0;
+      if (dealPrices.length > 0) {
+        const n = dealPrices.length;
+        const mean = dealPrices.reduce((a, b) => a + b, 0) / n;
+        const variance = dealPrices.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+        const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
+        cvPercent = cv * 100;
+        const countFactor = Math.min(1, Math.log10(n + 1) / 2); // 표본 ~100건에서 포화
+        const dispersionFactor = Math.max(0, 1 - cv / 0.5); // CV 0~50% 구간을 1→0으로 선형 감산
+        confidence = 0.4 + 0.3 * countFactor + 0.3 * dispersionFactor;
+      }
       avm = {
         estimated_price: Math.round(perM2man * 84 * 10000),
         price_per_sqm: Math.round(perM2man * 10000),
-        confidence_score: Math.min(0.95, 0.5 + Math.log10((apt.count || 0) + 1) / 4),
+        confidence_score: Math.min(0.98, Math.max(0.3, confidence)),
         comparable_count: apt.count || 0,
+        sample_count: dealPrices.length,
+        price_cv_percent: Math.round(cvPercent),
       };
     }
   }
@@ -228,11 +244,12 @@ const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
 
 /* ── 데이터 인텔리전스 metric 타일 ──
    핵심 수치는 mono·tabular-nums로 자릿수 정렬(sa-di-tile). accent=true는 핵심 KPI 1개에만. */
-function MetricTile({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function MetricTile({ label, value, accent = false, detail }: { label: string; value: string; accent?: boolean; detail?: string }) {
   return (
     <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
       <span className="sa-di-tile__label">{label}</span>
       <span className="sa-di-tile__value">{value || "-"}</span>
+      {detail ? <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>{detail}</span> : null}
     </div>
   );
 }
@@ -284,6 +301,12 @@ function errorMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiClientError) {
     const payload = e.payload as { detail?: string; message?: string } | null;
     return payload?.detail || payload?.message || `${fallback} (HTTP ${e.status})`;
+  }
+  // 다운로드(PDF/PPT/DOCX) 경로는 apiClient가 아닌 raw fetch()를 쓰므로 lib/api-client.ts의
+  //   네트워크 오류 래핑을 타지 않는다 — 여기서도 브라우저 원시 예외("Failed to fetch" 등)를
+  //   그대로 노출하지 않고 한국어로 정규화한다.
+  if (e instanceof TypeError || (e instanceof DOMException && e.name !== "AbortError")) {
+    return "네트워크 오류 — 연결이 지연되거나 끊겼습니다. 다시 시도해 주세요.";
   }
   return e instanceof Error && e.message ? e.message : fallback;
 }
@@ -738,7 +761,17 @@ export function MarketInsightsWorkspaceClient() {
       {/* 에러 */}
       {error && (
         <div className="rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-5 text-sm leading-7 text-[var(--status-warning)]">
-          {error}
+          <p>{error}</p>
+          {address && (
+            <button
+              type="button"
+              onClick={() => { setError(""); void generateReport(); }}
+              disabled={genState === "report"}
+              className="mt-3 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--surface)] px-3 py-1.5 text-xs font-bold text-[var(--status-warning)] hover:bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] disabled:opacity-50"
+            >
+              {genState === "report" ? "재시도 중…" : "다시 시도"}
+            </button>
+          )}
         </div>
       )}
 
@@ -811,7 +844,7 @@ export function MarketInsightsWorkspaceClient() {
           <header className="sa-di-block__head" style={{ cursor: "default" }}>
             <span className="sa-di-block__icon" aria-hidden>≣</span>
             <span className="sa-di-block__title">실거래 상세 내역</span>
-            <span className="sa-di-eyebrow">{results.totalCount.toLocaleString()} DEALS</span>
+            <span className="sa-di-eyebrow">표본 {Math.min(50, results.transactions.length).toLocaleString()} / 전체 {results.totalCount.toLocaleString()} DEALS</span>
           </header>
           <div className="sa-di-block__body">
             <div className="overflow-x-auto">
@@ -1103,9 +1136,22 @@ export function MarketInsightsWorkspaceClient() {
                   .filter(([k]) => k !== "summary" && k !== "data_source" && k !== "premium")
                   .map(([k, v]) => {
                     const label = AXIS_LABELS[k] || k;
-                    if (typeof v === "string") return { key: k, label, value: v, detail: undefined as string | undefined, src: undefined as string | undefined };
-                    const o = (v && typeof v === "object" ? v : {}) as { label?: string; value?: string; detail?: string; data_source?: string };
-                    return { key: k, label: o.label || label, value: o.value, detail: o.detail, src: o.data_source };
+                    if (typeof v === "string") return { key: k, label, value: v, detail: undefined as string | undefined, src: undefined as string | undefined, tooltip: undefined as string | undefined };
+                    const o = (v && typeof v === "object" ? v : {}) as {
+                      label?: string; value?: string; detail?: string; data_source?: string;
+                      // 상권(E) 축 전용 — 백엔드가 추가 배선 중인 옵셔널 필드(부재 시 미표기).
+                      vitality_score?: number; grade_legend?: string;
+                    };
+                    // 상권 특성 축은 활력점수(vitality_score)를 detail에 부연하고, 등급 범례
+                    //   (grade_legend)를 툴팁(title)으로 노출한다 — 둘 다 옵셔널 소비(부재해도 정상 렌더).
+                    let detail = o.detail;
+                    let tooltip: string | undefined;
+                    if (k === "commercial") {
+                      const scoreText = typeof o.vitality_score === "number" ? `활력점수 ${o.vitality_score}` : undefined;
+                      detail = [o.detail, scoreText].filter(Boolean).join(" · ") || o.detail;
+                      tooltip = o.grade_legend;
+                    }
+                    return { key: k, label: o.label || label, value: o.value, detail, src: o.data_source, tooltip };
                   })
                   .filter((a) => !!a.value)
               : [];
@@ -1128,9 +1174,9 @@ export function MarketInsightsWorkspaceClient() {
                 <div className="sa-di-block__body">
                   {hasAxes ? (
                     <>
-                      <div className="sa-di-tiles sa-di-tiles--4">
+                      <div className={`sa-di-tiles${axes.length >= 4 ? " sa-di-tiles--4" : axes.length === 3 ? " sa-di-tiles--3" : axes.length === 2 ? " sa-di-tiles--2" : ""}`}>
                         {axes.map((a) => (
-                          <div key={a.key} className="sa-di-tile">
+                          <div key={a.key} className="sa-di-tile" title={a.tooltip}>
                             <span className="sa-di-tile__label">{a.label}</span>
                             <span className="sa-di-tile__value">{a.value}</span>
                             {a.detail ? (
@@ -1178,9 +1224,13 @@ export function MarketInsightsWorkspaceClient() {
                 <>
                   <div className="sa-di-tiles sa-di-tiles--4">
                     {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
-                    <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
-                    <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
-                    <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
+                    <MetricTile label="추정 시세 (84㎡)" value={formatCurrencyKRW(results.avm.estimated_price)} accent />
+                    <MetricTile label="㎡당 시세" value={formatCurrencyKRW(results.avm.price_per_sqm)} />
+                    <MetricTile
+                      label="표본 신뢰도(표본수·분산 기반)"
+                      value={`${(results.avm.confidence_score * 100).toFixed(0)}%`}
+                      detail={`표본 ${results.avm.sample_count.toLocaleString()}건 · 가격변동계수 ${results.avm.price_cv_percent}%`}
+                    />
                     <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
                   </div>
                   <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
@@ -1207,6 +1257,13 @@ export function MarketInsightsWorkspaceClient() {
               .map((t) => ({ ym: t.ym ?? "", perPyeong: t.per_pyeong_manwon as number, mom: t.mom_pct ?? null }));
             if (trend.length < 2) return null; // 추이는 2개월 이상일 때만(1점은 추이 아님) — 데이터 없으면 미렌더(정직).
             const last = trend[trend.length - 1];
+            // Y축 범위 — recharts 기본(auto)은 0부터 시작해 실측 변동폭이 작아 보일 수 있다.
+            //   실측 최소~최대에 10% 여백만 둬 "데이터가 주인공"이 되도록(dataviz 원칙).
+            const values = trend.map((t) => t.perPyeong);
+            const minV = Math.min(...values);
+            const maxV = Math.max(...values);
+            const pad = Math.max(1, (maxV - minV) * 0.1);
+            const yDomain: [number, number] = [Math.max(0, Math.floor(minV - pad)), Math.ceil(maxV + pad)];
             return (
               <div className="sa-di-block">
                 <header className="sa-di-block__head" style={{ cursor: "default" }}>
@@ -1217,14 +1274,15 @@ export function MarketInsightsWorkspaceClient() {
                 <div className="sa-di-block__body">
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={trend} margin={{ left: 8, right: 16, top: 8, bottom: 4 }}>
-                      <XAxis dataKey="ym" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} width={64} />
-                      <Tooltip formatter={(v) => [`${Number(v).toLocaleString()}만원/평`, "평당가(전용)"]} />
+                      <CartesianGrid stroke="var(--line-subtle)" strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="ym" tickFormatter={(v) => formatYm(String(v))} tick={{ fontSize: 11 }} />
+                      <YAxis domain={yDomain} tick={{ fontSize: 11 }} width={64} />
+                      <Tooltip formatter={(v) => [`${Number(v).toLocaleString()}만원/평`, "평당가(전용)"]} labelFormatter={(v) => formatYm(String(v))} />
                       <Line type="monotone" dataKey="perPyeong" stroke="var(--accent-strong)" strokeWidth={2} dot />
                     </LineChart>
                   </ResponsiveContainer>
                   <p className="mt-2 text-[11px] text-[var(--text-hint)]">
-                    ※ 국토부 아파트 실거래 평당가(전용 기준) 월별 추이. 최근 {last.ym} 평당 {last.perPyeong.toLocaleString()}만원
+                    ※ 국토부 아파트 실거래 평당가(전용 기준) 월별 추이. 최근 {formatYm(last.ym)} 평당 {last.perPyeong.toLocaleString()}만원
                     {typeof last.mom === "number" ? ` (전월대비 ${last.mom > 0 ? "+" : ""}${last.mom}%)` : ""}.
                   </p>
                 </div>

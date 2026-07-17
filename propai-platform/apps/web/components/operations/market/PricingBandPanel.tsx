@@ -15,17 +15,7 @@ import { Tag } from "lucide-react";
 import type { PricingBand } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
-
-// 만원 → "N억 N,NNN만원".
-function man(v?: number | null): string {
-  if (!v || v <= 0) return "-";
-  if (v >= 10000) {
-    const uk = Math.floor(v / 10000);
-    const rest = v % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${v.toLocaleString()}만원`;
-}
+import { formatManwon as man } from "@/lib/formatters";
 
 // 비율(0.40 같은 소수) → "40%". 백엔드가 분수로 주는 값을 사람이 읽기 쉬운 %로.
 function pct(v?: number | null): string {

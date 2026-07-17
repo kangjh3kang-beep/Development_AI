@@ -18,6 +18,7 @@ import { Home, Users, Wallet } from "lucide-react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import type { DemographicProfile, DataSource, UnitMixRecommendation } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
+import { formatManwon as formatMan } from "@/lib/formatters";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -44,16 +45,6 @@ function toCount(v: number | Record<string, number> | undefined): number {
   if (typeof v === "number") return v;
   if (v && typeof v === "object") return Object.values(v).reduce((a, b) => a + (Number(b) || 0), 0);
   return 0;
-}
-
-function formatMan(man?: number): string {
-  if (!man || man <= 0) return "-";
-  if (man >= 10000) {
-    const uk = Math.floor(man / 10000);
-    const rest = man % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${man.toLocaleString()}만원`;
 }
 
 export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile | null; unitMix?: UnitMixRecommendation | null }) {
@@ -99,7 +90,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
 
   return (
     <>
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className={`grid gap-6${hasPop && hasIncome ? " md:grid-cols-2" : ""}`}>
       {/* 인구·가구 구조(SGIS) */}
       {hasPop && (
         <div className="sa-di-block">

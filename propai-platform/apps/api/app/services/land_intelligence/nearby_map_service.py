@@ -18,6 +18,8 @@ from typing import Any
 import httpx
 import structlog
 
+from app.core.db_utils import PostGISHelper
+from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
@@ -40,6 +42,9 @@ _RENT_TYPES = [
 ]
 
 _MAX_GROUPS_PER_CAT = 28  # 카테고리별 마커 상한(건물 수) — 지오코딩 부하·페이로드 축소(40→28)
+# 지오코딩 '사전 컷' 상한 — 반경 필터가 캡(28)보다 먼저 돌게 되면서(순서: 지오코딩→필터→캡)
+# 지오코딩 대상이 시군구 전체로 커지는 것을 막는 콜드로드 안전판. 최종 캡(28)보다 충분히 넓게.
+_MAX_GEOCODE_GROUPS_PER_CAT = 80
 _GEOCODE_CONCURRENCY = 12  # 지오코딩 병렬도(6→12) — 첫 로딩 시간 단축
 
 # ── 결과 캐시(프로세스 메모리, TTL) ──
@@ -115,31 +120,82 @@ class NearbyMapService:
             )
 
         # 3) 고유 지오코딩 쿼리 수집 → dedupe → 병렬 지오코딩
+        # ★지오코딩 사전 컷(R1 P2): 캡(28)을 반경 필터 뒤로 옮기면서 지오코딩 대상이 시군구
+        #   전체 건물로 확대될 수 있다(대형 시군구 콜드로드에서 수백~천 건 → 수십 초 지연·쿼터
+        #   소모). 카테고리별 거래건수 상위 _MAX_GEOCODE_GROUPS_PER_CAT 건만 지오코딩 대상으로
+        #   사전 컷해 콜드 비용을 상수로 묶는다. 반경 내 상위 28건 정합성은 사전 컷 폭(80)이
+        #   최종 캡(28)보다 충분히 넓어 실용상 유지된다. 컷된 그룹 수는 정직 카운트로 노출.
+        geocode_precut = 0
+        for cat in categories.values():
+            if len(cat["groups"]) > _MAX_GEOCODE_GROUPS_PER_CAT:
+                cat["groups"].sort(key=lambda x: x["count"], reverse=True)
+                geocode_precut += len(cat["groups"]) - _MAX_GEOCODE_GROUPS_PER_CAT
+                cat["groups"] = cat["groups"][:_MAX_GEOCODE_GROUPS_PER_CAT]
         queries: set[str] = set()
         for cat in categories.values():
             for grp in cat["groups"]:
                 queries.add(grp["_query"])
         coords = await self._geocode_many(sorted(queries))
 
-        # 4) 좌표 주입 + 미해결 그룹 제거 + 정리
-        # 중심좌표: (1) 이미 지오코딩된 주소 좌표 → (2) 주소 재지오코딩 → (3) 라우터 힌트.
+        # 4) 중심좌표 확보: (1) 이미 지오코딩된 주소 좌표 → (2) 주소 재지오코딩 → (3) 라우터 힌트.
         #   ★(3) 힌트가 있으면 자체 지오코딩이 실패해도 center가 null로 남지 않는다(서울 폴백 방지).
         center = coords.get(address.strip()) or await self._geocode_one(address.strip())
         if not center and has_hint:
             center = {"lat": hint_lat, "lon": hint_lon, "address": address}
+        center_lat = (center or {}).get("lat")
+        center_lon = (center or {}).get("lon")
+        # 반경 필터는 중심좌표와 radius_m 이 모두 있어야 의미가 있다. 중심좌표가 없으면
+        # (지오코딩 전면 실패 + 힌트도 없음) radius_m 은 여전히 "요청값"으로만 에코되고
+        # 실제 필터링은 하지 않는다 — 그 사실을 radius_applied=False 로 정직 표기한다.
+        radius_applied = bool(center_lat and center_lon and radius_m)
+
+        # 5) 좌표 주입 + 반경 필터(★실구현 — 종전엔 radius_m 을 필터에 전혀 쓰지 않고
+        #    result["radius_m"]에 요청값을 에코만 해 라벨이 거짓이었다) + 좌표 미확보 그룹 보존
+        #    (반경 밖으로 단정하지 않는다 — 무날조) + 상한(_MAX_GROUPS_PER_CAT)은 반경 필터
+        #    이후에 적용한다(순서: 지오코딩 → 반경 필터 → 캡).
+        groups_evaluated = 0   # 좌표 확보 후 반경 판정 대상이 된 그룹 수(필터 "전")
+        filtered_out = 0       # 반경 밖으로 제외된 그룹 수
+        coords_unresolved = 0  # 좌표 미확보로 반경 판정 자체가 불가능했던 그룹 수(보존)
         for cat in categories.values():
-            resolved = []
+            resolved: list[dict] = []
+            unresolved: list[dict] = []
             for grp in cat["groups"]:
                 c = coords.get(grp.pop("_query"))
-                if c:
-                    grp["lat"], grp["lon"] = c["lat"], c["lon"]
-                    resolved.append(grp)
-            cat["groups"] = resolved
-            cat["count"] = sum(g["count"] for g in resolved)
+                if not c:
+                    # 좌표 미확보 — 제외하지 않고 보존한다(반경 밖 단정 금지). 지도 마커로는
+                    # 못 찍지만(lat/lon 없음), 실거래 데이터 자체는 응답에 남는다.
+                    unresolved.append(grp)
+                    continue
+                grp["lat"], grp["lon"] = c["lat"], c["lon"]
+                resolved.append(grp)
+            coords_unresolved += len(unresolved)
+
+            if radius_applied:
+                groups_evaluated += len(resolved)
+                in_radius = []
+                for grp in resolved:
+                    dist_km = PostGISHelper.st_distance(center_lat, center_lon, grp["lat"], grp["lon"])
+                    if dist_km * 1000.0 <= radius_m:
+                        in_radius.append(grp)
+                filtered_out += len(resolved) - len(in_radius)
+                resolved = in_radius
+
+            # 거래 많은 순 정렬 후 상한 — ★반경 필터 이후에 캡을 적용해야 "반경 내 상위 N건"이
+            # 된다(캡을 필터보다 먼저 적용하면 시군구 전체 상위 N건이 되어 radius_m 이 무의미).
+            resolved.sort(key=lambda x: x["count"], reverse=True)
+            capped = resolved[:_MAX_GROUPS_PER_CAT]
+            cat["groups"] = capped + unresolved
+            cat["count"] = sum(g["count"] for g in cat["groups"])
 
         result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
             "radius_m": radius_m,
+            # ★프론트 라벨 연동용 additive 필드 — 반경 필터가 실제로 적용됐는지와 그 전/후 카운트.
+            "radius_applied": radius_applied,
+            "groups_evaluated_count": groups_evaluated,
+            "radius_filtered_out_count": filtered_out,
+            "coords_unresolved_count": coords_unresolved,
+            "geocode_precut_count": geocode_precut,
             "lawd_cd": lawd_cd,
             "months": ym_list,
             "categories": categories,
@@ -303,11 +359,15 @@ class NearbyMapService:
                 m = g.pop("_monthlies", [])
                 g["avg_deposit_10k"] = round(sum(d) / len(d)) if d else 0
                 g["avg_monthly_10k"] = round(sum(m) / len(m)) if m else 0
+            # ★최신순 정렬 후 절단 — 무정렬 [:10]은 최신 거래를 잘라낼 수 있다(수집 순서는
+            #   MOLIT 응답 순서일 뿐 날짜순이 아님). 파싱 실패분(날짜 없음)은 최하위로 보존.
+            g["deals"].sort(key=lambda d: parse_deal_date(d.get("deal_date")) or (0, 0, 0), reverse=True)
             g["deals"] = g["deals"][:10]
             out.append(g)
-        # 거래 많은 순 정렬 + 상한
+        # 거래 많은 순 정렬. ★상한(_MAX_GROUPS_PER_CAT)은 여기서 적용하지 않는다 — build()가
+        #   지오코딩·반경 필터 이후에 적용한다. 여기서 캡을 걸면 "반경 내 상위 N건"이 아니라
+        #   "시군구 전체 상위 N건"이 되어 radius_m 라벨이 실제 필터와 무관한 거짓 표기가 된다.
         out.sort(key=lambda x: x["count"], reverse=True)
-        out = out[:_MAX_GROUPS_PER_CAT]
         return {"label": label, "type": type_key, "kind": kind,
                 "count": sum(x["count"] for x in out), "groups": out}
 

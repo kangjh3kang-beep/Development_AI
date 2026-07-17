@@ -12,7 +12,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/SatongMultiMap";
 import { KakaoRoadview } from "@/components/map/KakaoRoadview";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { resolveMapCenter } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -52,6 +52,10 @@ type Category = {
 export type NearbyMapPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m: number;
+  /** 반경 필터가 실제로 적용됐는지(중심좌표+radius_m 확보 시 true). 옵셔널(배선 진행 중). */
+  radius_applied?: boolean;
+  /** 반경 밖으로 걸러진 그룹 수. 옵셔널(배선 진행 중) — 있을 때만 라벨에 부연. */
+  radius_filtered_out_count?: number;
   lawd_cd: string;
   months: string[];
   categories: Record<string, Category>;
@@ -129,35 +133,52 @@ export function NearbyTransactionsMap({
   const [presaleLoading, setPresaleLoading] = useState(false);
   // 선택 위치 로드뷰(카카오 SDK, 백엔드 불요) — 접힘 기본값(additive), focusTarget 확보 시에만 노출.
   const [showRoadview, setShowRoadview] = useState(false);
+  // 반경 선택(500m/1km/3km) — 요청 radius_m 변경 시 재조회. 기본값은 기존 하드코딩 동일(1000m).
+  const [radiusM, setRadiusM] = useState(1000);
 
   const onPayloadRef = useRef(onPayload);
   const onLoadingRef = useRef(onLoading);
   onPayloadRef.current = onPayload;
   onLoadingRef.current = onLoading;
 
+  // 반경 칩(500m/1km/3km) 연타 시 요청이 중첩될 수 있다 — 느린 선행 응답이 나중에 도착해
+  // 최신 반경 결과를 덮는 레이스를 시퀀스 가드로 차단(마지막 요청만 반영). (R1 P3)
+  const fetchSeqRef = useRef(0);
+
   const fetchData = useCallback(async () => {
     if (!address) return;
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     onLoadingRef.current?.(true);
     setError("");
     try {
       const res = await apiClient.post<NearbyMapPayload>("/zoning/nearby-map", {
-        body: { address, pnu, radius_m: 1000, months: 3 },
+        body: { address, pnu, radius_m: radiusM, months: 3 },
         useMock: false,
         timeoutMs: 90000,
       });
+      if (seq !== fetchSeqRef.current) return; // stale 응답 — 이후 요청이 이미 발화됨
       setPayload(res);
       onPayloadRef.current?.(res);
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "주변 실거래 조회 실패";
+      if (seq !== fetchSeqRef.current) return;
+      // 원시 예외(TypeError: Failed to fetch 등)를 화면에 그대로 노출하지 않는다
+      //   (PopulationDensityMap의 관례 미러 — 정직하되 사용자 대면 텍스트는 정규화).
+      const message = e instanceof ApiClientError
+        ? ((e.payload as { detail?: string; message?: string } | null)?.detail
+          || (e.payload as { detail?: string; message?: string } | null)?.message
+          || e.message)
+        : "주변 실거래 조회에 실패했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.";
       setError(message);
       setPayload(null);
       onPayloadRef.current?.(null);
     } finally {
-      setLoading(false);
-      onLoadingRef.current?.(false);
+      if (seq === fetchSeqRef.current) {
+        setLoading(false);
+        onLoadingRef.current?.(false);
+      }
     }
-  }, [address, pnu]);
+  }, [address, pnu, radiusM]);
 
   useEffect(() => {
     void fetchData();
@@ -268,6 +289,14 @@ export function NearbyTransactionsMap({
 
   if (!address) return null;
 
+  // 반경 라벨 — 응답의 radius_m(요청→응답 에코, 백엔드가 실제 필터에 사용)을 우선하고,
+  //   응답 전이면 현재 요청 중인 radiusM으로 폴백(실값 연동).
+  //   radius_applied(옵셔널·배선 진행 중)는 그 radius_m이 실제로 필터에 쓰였는지 여부(boolean) —
+  //   false면 중심좌표 미확보로 필터가 적용되지 않았다는 뜻이라 정직하게 부연한다.
+  const radiusVal = payload?.radius_m ?? radiusM;
+  const radiusLabel = radiusVal >= 1000 ? `${(radiusVal / 1000).toLocaleString()}km` : `${radiusVal}m`;
+  const radiusNotApplied = payload?.radius_applied === false;
+
   return (
     <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -276,11 +305,33 @@ export function NearbyTransactionsMap({
             <span className="text-[var(--accent-strong)]">◉</span> 주변 실거래 지도
           </h3>
           <p className="mt-0.5 text-[11px] text-[var(--text-hint)]">
-            {payload?.center?.address || address} 중심 · 반경 {(payload?.radius_m || 1000) / 1000}km · 최근 {payload?.months?.length || 3}개월 · 마커 클릭 시 상세
+            {payload?.center?.address || address} 중심 · 반경 {radiusLabel}
+            {radiusNotApplied ? "(미적용 — 좌표 미확보)" : ""} · 최근 {payload?.months?.length || 3}개월
+            {typeof payload?.radius_filtered_out_count === "number" && payload.radius_filtered_out_count > 0
+              ? ` · 반경 초과 ${payload.radius_filtered_out_count.toLocaleString()}곳 제외`
+              : ""}
+            {" · 마커 클릭 시 상세"}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex overflow-hidden rounded-xl border border-[var(--line-strong)]">
+            {([500, 1000, 3000] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRadiusM(r)}
+                aria-pressed={radiusM === r}
+                className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                  radiusM === r
+                    ? "bg-[var(--accent-strong)] text-white"
+                    : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+                }`}
+              >
+                {r >= 1000 ? `${r / 1000}km` : `${r}m`}
+              </button>
+            ))}
+          </div>
           <div className="flex overflow-hidden rounded-xl border border-[var(--line-strong)]">
             {(["trade", "rent"] as const).map((nextKind) => (
               <button
@@ -384,14 +435,14 @@ export function NearbyTransactionsMap({
         )}
 
         {payload && !loading && !focusTarget && fallbackFailed && (
-          <div className="absolute top-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-800 backdrop-blur">
+          <div className="absolute top-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
             <AlertTriangle className="size-4 shrink-0" aria-hidden />
             위치 확인 불가 — 선택 위치의 좌표를 확인하지 못해 지도가 기본 위치로 표시 중입니다. 아래 실거래 목록·건수는 정상 조회 결과입니다.
           </div>
         )}
 
         {payload && !loading && payload.fetch_failed && (
-          <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-800 backdrop-blur">
+          <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
             <AlertTriangle className="size-4 shrink-0" aria-hidden /> {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패입니다."}
           </div>
         )}
