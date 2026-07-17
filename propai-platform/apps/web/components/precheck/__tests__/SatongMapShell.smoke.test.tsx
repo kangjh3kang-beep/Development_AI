@@ -148,7 +148,9 @@ describe("SatongMapShell 연결 프로젝트 가드", () => {
     });
 
     // 선택 필지 카드에 방금 고른 주소가 남아있어야 한다(F1 회귀 없음 — 전환 이펙트가 와이프 안 함).
-    expect(screen.getByText("경기도 용인시 수지구 고기동 689")).toBeInTheDocument();
+    // U4 카드 압축: 목록엔 짧은 지번, 전체 주소는 카드 title 속성에 보존.
+    expect(screen.getByText("고기동 689")).toBeInTheDocument();
+    expect(screen.getByTitle(/경기도 용인시 수지구 고기동 689/)).toBeInTheDocument();
     // 가드가 발화해 '새 프로젝트로 등록' 모드로 전환했다는 안내도 함께 보여야 한다.
     expect(
       screen.getByText("선택 필지가 연결 프로젝트 주소와 달라 '새 프로젝트로 등록'으로 전환했습니다."),

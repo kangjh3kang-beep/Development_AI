@@ -1867,44 +1867,44 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   </p>
                 </div>
               ) : (
+                // ★U4(카드 과점): 지번 전문·PNU 행이 차지하던 공간 압축 — 1줄 헤더(짧은
+                //   지번+면적)+칩 1줄. 전체 주소·PNU는 hover title로 보존(정보 손실 없음).
                 selectedParcels.map((parcel, index) => (
                   <div
                     key={`${parcel.id}-${index}`}
-                    className="rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)]"
+                    className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 shadow-[var(--shadow-sm)]"
+                    title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""}`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-[var(--text-primary)]">
-                          {parcel.address}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
-                          <span className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-1 text-[var(--accent-strong)]">
-                            {sourceLabel[parcel.source]}
-                          </span>
-                          {parcel.zoneType && (
-                            <span className="rounded-full bg-[var(--surface-muted)] px-2 py-1 text-[var(--text-secondary)]">
-                              {parcel.zoneType}
-                            </span>
-                          )}
-                          {parcel.jimok && (
-                            <span className="rounded-full bg-[var(--surface-muted)] px-2 py-1 text-[var(--text-secondary)]">
-                              지목 {parcel.jimok}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="min-w-0 truncate text-[13px] font-black text-[var(--text-primary)]">
+                        {parcel.address?.split(/\s+/).slice(-2).join(" ") || parcel.address}
+                      </p>
+                      <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--text-secondary)]">
+                        {formatArea(parcel.areaSqm)}
+                      </span>
                       <button
                         type="button"
                         onClick={() => removeParcel(parcel.id)}
-                        className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
+                        className="shrink-0 rounded-full p-1.5 text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
                         aria-label="필지 제거"
                       >
                         <Trash2 className="size-4" aria-hidden />
                       </button>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs font-bold text-[var(--text-secondary)]">
-                      <span>면적 {formatArea(parcel.areaSqm)}</span>
-                      <span className="truncate">PNU {parcel.pnu || "-"}</span>
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-bold">
+                      <span className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-0.5 text-[var(--accent-strong)]">
+                        {sourceLabel[parcel.source]}
+                      </span>
+                      {parcel.zoneType && (
+                        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[var(--text-secondary)]">
+                          {parcel.zoneType}
+                        </span>
+                      )}
+                      {parcel.jimok && (
+                        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[var(--text-secondary)]">
+                          지목 {parcel.jimok}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1986,10 +1986,16 @@ export function SatongMapShell({ locale }: { locale: string }) {
               // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
               //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
               // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
-              className={`group absolute right-4 top-20 z-[420] flex w-16 flex-col gap-2 rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+              // ★U3(비반응형 레일): 상한을 컨테이너뿐 아니라 브라우저 뷰포트(dvh)로도 걸어,
+              //   지도가 화면보다 클 때 레일이 폴드 밑으로 늘어나 하단 버튼 도달 불가·페이지
+              //   스크롤 시 hover 전개가 풀리던 문제를 해소. 고정(핀) 시 2열 그리드로 접어
+              //   12버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시.
+              //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
+              //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
+              className={`group absolute right-4 top-20 z-[420] rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
                 railPinned
-                  ? "h-auto max-h-[calc(100%-120px)] overflow-y-auto"
-                  : "h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] hover:overflow-y-auto"
+                  ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
+                  : "flex w-16 flex-col gap-2 h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
               }`}
             >
               {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
