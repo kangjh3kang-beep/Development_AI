@@ -2206,10 +2206,12 @@ export function SatongMultiMap({
                   type="button"
                   className="mt-1 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
                   onClick={() => {
-                    try {
-                      void navigator.clipboard?.writeText(coordText);
-                      setCopiedCoord(coordText);
-                    } catch { /* clipboard 미지원 — 무동작(정직) */ }
+                    // ★R1: clipboard 미지원이면 옵셔널 체이닝이 조용히 단락되므로 성공 표기를
+                    //   해선 안 되고, writeText Promise 거부(권한/포커스)도 삼키면 거짓 성공이
+                    //   된다 — 실제 resolve 후에만 '복사됨' 표기(정직).
+                    const writing = navigator.clipboard?.writeText?.(coordText);
+                    if (!writing) return;
+                    writing.then(() => setCopiedCoord(coordText)).catch(() => { /* 거부 — 무표기 */ });
                   }}
                 >
                   {copiedCoord === coordText ? "좌표 복사됨 ✓" : `좌표 복사 (${coordText})`}

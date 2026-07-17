@@ -1118,8 +1118,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (id: string) => {
       projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
       setSelectedParcels((prev) => {
+        const removed = prev.find((parcel) => parcel.id === id);
         const next = prev.filter((parcel) => parcel.id !== id);
         syncParcelsToStores(next); // 빈 배열이면 store·sessionStorage 모두 정리(부활 방지)
+        // ★R1 HIGH(유령 패널): 삭제한 필지가 상세 패널에 떠 있으면 함께 닫는다 —
+        //   화면엔 삭제된 필지, 퍼널은 남은 선택으로 실행되는 오도 조합 차단.
+        if (removed) {
+          setDetailFeature((current) =>
+            current &&
+            ((removed.pnu && current.pnu === removed.pnu) || current.address === removed.address)
+              ? null
+              : current,
+          );
+        }
         return next;
       });
     },
@@ -1130,6 +1141,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
     projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
     setSelectedParcels([]);
     setFocusTarget(null);
+    setDetailFeature(null); // ★R1 HIGH: 전체초기화 시 상세 패널 잔존 방지
     syncParcelsToStores([]);
     setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
   }, [syncParcelsToStores]);
@@ -1490,6 +1502,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       projectFocusPendingRef.current = !!projectId;
       setSelectedParcels([]);
       setFocusTarget(null);
+      setDetailFeature(null); // ★R1 HIGH: 이전 프로젝트 필지 정보가 새 프로젝트 화면에 잔존 금지
       saveSelectionForOutputs([]);
     }
 
@@ -1903,7 +1916,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       }
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") e.currentTarget.click();
+                      // ★R1: 중첩 삭제버튼에서의 keydown 버블링이 카드 활성(상세 열기)으로
+                      //   번지지 않게 target 가드, Space 스크롤은 preventDefault.
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.currentTarget.click();
+                      }
                     }}
                     className="cursor-pointer rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)]/40"
                     title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""} — 클릭: 상세 정보`}
@@ -2203,11 +2222,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                         ? `${detailFeature.buildingAgeYears}년${detailFeature.builtYear ? ` (준공 ${detailFeature.builtYear})` : ""}`
                         : detailFeature.ageStatus === "no_building"
                           ? "나대지·건물 없음"
-                          : detailFeature.ageStatus === "lookup_failed"
-                            ? "조회 실패"
-                            : detailFeature.ageStatus === "skipped_bulk"
-                              ? "대량 선택 생략"
-                              : "-"}
+                          : detailFeature.ageStatus === "no_approval_date"
+                            ? "사용승인일 미기재(연식 미상)" // ★R1: 백엔드 4번째 상태 — 나대지와 구분(정직)
+                            : detailFeature.ageStatus === "lookup_failed"
+                              ? "조회 실패"
+                              : detailFeature.ageStatus === "skipped_bulk"
+                                ? "대량 선택 생략"
+                                : "-"}
                     </dd>
                   </div>
                   <div>

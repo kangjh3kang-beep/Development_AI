@@ -124,4 +124,53 @@ describe("SatongMapShell 필지 상세 패널(WS-C)", () => {
     // 삭제도 실제 반영(목록 비움 상태 문구)
     expect(screen.getByText("아직 선택된 필지가 없습니다.")).toBeInTheDocument();
   });
+
+  it("★R1 유령 패널 회귀: 패널에 뜬 필지를 삭제하면 패널도 닫힌다", () => {
+    writeSatongMapSelection([
+      { id: "P-a", address: "경기도 성남시 분당구 판교동 100", source: "map", areaSqm: 500, pnu: "PNU-A" },
+      { id: "P-b", address: "경기도 성남시 분당구 판교동 200", source: "map", areaSqm: 700, pnu: "PNU-B" },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.click(screen.getByText("판교동 100"));
+    expect(screen.getByTestId("parcel-detail-panel")).toBeInTheDocument();
+
+    // 패널에 뜬 필지(판교동 100)의 삭제 버튼 클릭 → 패널 동반 닫힘(오도 퍼널 차단).
+    fireEvent.click(screen.getAllByRole("button", { name: "필지 제거" })[0]);
+    expect(screen.queryByTestId("parcel-detail-panel")).not.toBeInTheDocument();
+    // 다른 필지는 남아 있다(삭제 자체는 표적만).
+    expect(screen.getByText("판교동 200")).toBeInTheDocument();
+  });
+
+  it("★R1 유령 패널 회귀: 전체 초기화 시 패널도 닫힌다", () => {
+    writeSatongMapSelection([
+      { id: "P-c", address: "경기도 성남시 분당구 판교동 300", source: "map", areaSqm: 300 },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.click(screen.getByText("판교동 300"));
+    expect(screen.getByTestId("parcel-detail-panel")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "초기화" }));
+    expect(screen.queryByTestId("parcel-detail-panel")).not.toBeInTheDocument();
+  });
+
+  it("★R1 키보드: 삭제 버튼 위에서 Enter keydown이 카드 활성(상세 열기)으로 번지지 않는다", () => {
+    writeSatongMapSelection([
+      { id: "P-k", address: "경기도 성남시 분당구 판교동 400", source: "map", areaSqm: 400 },
+    ]);
+
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "필지 제거" }), { key: "Enter" });
+    expect(screen.queryByTestId("parcel-detail-panel")).not.toBeInTheDocument();
+
+    // 카드 자체에서의 Enter는 열린다(target === currentTarget 경로).
+    const card = screen.getByText("판교동 400").closest("[role='button']");
+    expect(card).not.toBeNull();
+    fireEvent.keyDown(card!, { key: "Enter" });
+    expect(screen.getByTestId("parcel-detail-panel")).toBeInTheDocument();
+  });
 });

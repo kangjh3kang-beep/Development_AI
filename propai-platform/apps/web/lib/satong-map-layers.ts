@@ -31,7 +31,8 @@ export type SatongMapFeature = {
   officialPricePerSqm?: number | null;
   builtYear?: number | null;
   buildingAgeYears?: number | null;
-  /** 노후도 무자료 사유(백엔드 boundary age_status): no_building(나대지·연식없음) /
+  /** 노후도 무자료 사유(백엔드 boundary age_status): no_building(나대지·건물없음) /
+   *  no_approval_date(건물 실재·사용승인일 미기재 — 나대지와 구분) /
    *  lookup_failed(키·인증·호출오류) / skipped_bulk(대량생략). 값 있음/ok는 null·미설정.
    *  ★"age 조회 시도됨" 판정에 쓰여 나대지 1필지에 의한 경계 전체 재조회 루프를 끊는다(WP-M3). */
   ageStatus?: string | null;
