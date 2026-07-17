@@ -48,7 +48,10 @@ VWORLD_DOMAIN = "www.4t8t.net"
 # 화이트리스트 — web 프록시(ALLOWED_WMS_LAYERS_ORDER·SUPPORTED_LAYERS)와 동일 유지.
 # ★web측(lib/vworld-wms-proxy.ts ALLOWED_WMS_LAYERS_ORDER)과 동기 유지 — LT_C_UQ111은
 #   2026-07-17 전국 지적편집도(용도지역 land-use-wide) 컨트롤 도입으로 허용.
-ALLOWED_WMS_LAYERS: tuple[str, ...] = ("LP_PA_CBND_BUDB", "LP_PA_CBND_BONB", "LT_C_UQ111")
+# ★레이어명 정본(2026-07-17 GetCapabilities 채증): WMS는 소문자만 인식 — 연속지적도는
+#   lp_pa_cbnd_bubun/bonbun(종전 LP_PA_CBND_BUDB/BONB는 실존하지 않는 오기 — LayerNotDefined
+#   근본원인). 데이터 API의 LP_PA_CBND_BUBUN(대문자)은 별개 계약이므로 혼동 금지.
+ALLOWED_WMS_LAYERS: tuple[str, ...] = ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111")
 SUPPORTED_WMTS_LAYERS: frozenset[str] = frozenset({"Base", "Satellite", "Hybrid", "gray", "midnight"})
 
 # 투명 1x1 PNG — 정상 무제공영역(coverage) 타일 자리 흡수(지도 회색화 방지).
@@ -142,7 +145,7 @@ async def proxy_vworld_wms(request: Request) -> Response:
         if k.lower() != "layers":
             continue
         for token in v.split(","):
-            token = token.strip()
+            token = token.strip().lower()  # VWorld WMS는 소문자만 인식 — 대문자 유입 정규화
             if token:
                 requested.add(token)
     if not requested or not requested.issubset(set(ALLOWED_WMS_LAYERS)):

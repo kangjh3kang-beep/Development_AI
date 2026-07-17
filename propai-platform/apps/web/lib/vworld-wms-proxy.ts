@@ -35,7 +35,11 @@ const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 //     (WP-M5의 '함께 부설 금지' 원칙 유지 — 소비 컨트롤이 다르다).
 //   ★api측 프록시(app/routers/vworld_tiles.py ALLOWED_WMS_LAYERS)와 동기 유지할 것.
 //   배열(순서 보존) + Set(조회용) 이원 유지 — 화이트리스트 재구성 시 결정적 순서가 필요하다.
-const ALLOWED_WMS_LAYERS_ORDER = ["LP_PA_CBND_BUDB", "LP_PA_CBND_BONB", "LT_C_UQ111"] as const;
+//   ★레이어명 정본(2026-07-17 GetCapabilities 라이브 채증): WMS는 소문자만 인식하며
+//     연속지적도는 lp_pa_cbnd_bubun(부번)·lp_pa_cbnd_bonbun(본번)이다 — 종전
+//     LP_PA_CBND_BUDB/BONB는 데이터 API명(LP_PA_CBND_BUBUN)을 잘못 축약한 실존하지 않는
+//     이름(도입 PR#329부터의 오기, LayerNotDefined 근본원인). 비교는 소문자 정규화.
+const ALLOWED_WMS_LAYERS_ORDER = ["lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111"] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {
@@ -131,7 +135,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
   for (const [k, v] of incoming.entries()) {
     if (k.toLowerCase() !== "layers") continue;
     for (const token of v.split(",").map((s) => s.trim()).filter(Boolean)) {
-      requestedLayers.add(token);
+      requestedLayers.add(token.toLowerCase()); // VWorld WMS는 소문자만 인식 — 대문자 유입 정규화
     }
   }
   if (requestedLayers.size === 0 || ![...requestedLayers].every((layer) => ALLOWED_WMS_LAYERS.has(layer))) {

@@ -765,8 +765,8 @@ export function SatongMultiMap({
       //   Cache Storage(staleWhileRevalidate)는 우회하지 못한다 — 과거 성공본이 '정상' 오진을
       //   만들 수 있어 타임스탬프 캐시버스터로 SW 캐시 키를 매번 미스시킨다(항상 라이브).
       const probe =
-        "/tiles/vworld/wms?service=WMS&request=GetMap&layers=LP_PA_CBND_BUDB,LP_PA_CBND_BONB" +
-        "&styles=LP_PA_CBND_BUDB,LP_PA_CBND_BONB&format=image/png&transparent=true&version=1.3.0" +
+        "/tiles/vworld/wms?service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun" +
+        "&styles=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun&format=image/png&transparent=true&version=1.3.0" +
         `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
       const resp = await fetch(probe, { cache: "no-store" });
       const contentType = resp.headers.get("content-type") || "";
@@ -1420,8 +1420,8 @@ export function SatongMultiMap({
       return;
     }
     const tile = L.tileLayer.wms("/tiles/vworld/wms", {
-      layers: "LT_C_UQ111",
-      styles: "LT_C_UQ111",
+      layers: "lt_c_uq111",
+      styles: "lt_c_uq111",
       format: "image/png",
       transparent: true,
       version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
@@ -1463,8 +1463,8 @@ export function SatongMultiMap({
     //   (2) 용도지역 WMS(LT_C_UQ111)는 여기서 함께 깔지 않는다 — '용도지역' 레이어 소관
     //       (의미 1:1). 지적 토글에 겹쳐 부설하면 위성 가림·표현 중복을 유발했다.
     const cadastreTile = L.tileLayer.wms("/tiles/vworld/wms", {
-      layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
-      styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
+      layers: "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun",
+      styles: "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun",
       format: "image/png",
       transparent: true,
       // ★근본원인 수정(2026-07-17 라이브 채증): VWorld WMS는 VERSION 1.3.0만 허용한다 —

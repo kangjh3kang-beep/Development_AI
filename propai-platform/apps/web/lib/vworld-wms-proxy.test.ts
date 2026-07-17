@@ -14,7 +14,7 @@ function stubFetch(handler: (url: string) => Response) {
 }
 
 // Leaflet WMS(`L.tileLayer.wms`)가 조립하는 GetMap 쿼리(키·domain 없음)를 모사한다.
-function leafletWmsQuery(layers = "LP_PA_CBND_BUDB,LP_PA_CBND_BONB"): URLSearchParams {
+function leafletWmsQuery(layers = "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"): URLSearchParams {
   return new URLSearchParams({
     service: "WMS",
     request: "GetMap",
@@ -51,7 +51,7 @@ describe("vworld-wms-proxy", () => {
     expect(requested).toContain("https://api.vworld.kr/req/wms?");
     expect(requested).toContain("key=SECRET-KEY"); // 서버측 주입
     expect(requested).toContain("domain=www.4t8t.net");
-    expect(requested).toContain("LP_PA_CBND");
+    expect(requested).toContain("lp_pa_cbnd");
   });
 
   it("★PR#329 R1: NEXT_PUBLIC_VWORLD_API_KEY(공개키) 로는 폴백하지 않는다 — 서버 전용 키만 인정", async () => {
@@ -68,16 +68,16 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(400);
   });
 
-  it("용도지역(LT_C_UQ111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
+  it("용도지역(lt_c_uq111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
     let requested = "";
     stubFetch((url) => {
       requested = url;
       return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
     });
-    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_UQ111"));
+    const res = await proxyVWorldWms(leafletWmsQuery("lt_c_uq111"));
     expect(res.status).toBe(200);
-    expect(requested).toContain("LAYERS=LT_C_UQ111");
+    expect(requested).toContain("LAYERS=lt_c_uq111");
   });
 
   it("빈 LAYERS 는 400", async () => {
@@ -95,7 +95,7 @@ describe("vworld-wms-proxy", () => {
     });
     // URLSearchParams는 문자열 생성자로만 진짜 중복 키를 만들 수 있다(객체 리터럴은 키가 유일).
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_EVIL_LAYER&format=image/png",
+      "service=WMS&request=GetMap&LAYERS=lp_pa_cbnd_bubun&LAYERS=LT_C_EVIL_LAYER&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
@@ -110,7 +110,7 @@ describe("vworld-wms-proxy", () => {
       return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
     });
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&layers=LT_C_EVIL_LAYER&LAYERS=LP_PA_CBND_BUDB&format=image/png",
+      "service=WMS&request=GetMap&layers=LT_C_EVIL_LAYER&LAYERS=lp_pa_cbnd_bubun&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
@@ -125,14 +125,14 @@ describe("vworld-wms-proxy", () => {
       return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
     });
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&Layers=LP_PA_CBND_BUDB,LP_PA_CBND_BONB&format=image/png",
+      "service=WMS&request=GetMap&Layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(200);
     const url = new URL(requested);
     // 상류 URL엔 canonical LAYERS 파라미터가 정확히 1개만 존재 — 원본 "Layers" 키가 그대로
     // 새어나가 중복/미검증 값이 함께 전달되지 않는다.
-    expect(url.searchParams.getAll("LAYERS")).toEqual(["LP_PA_CBND_BUDB,LP_PA_CBND_BONB"]);
+    expect(url.searchParams.getAll("LAYERS")).toEqual(["lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"]);
     expect(url.searchParams.has("Layers")).toBe(false);
   });
 
