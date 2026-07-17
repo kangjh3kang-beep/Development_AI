@@ -22,10 +22,12 @@ function leafletWmsQuery(layers = "LP_PA_CBND_BUDB,LP_PA_CBND_BONB"): URLSearchP
     styles: layers,
     format: "image/png",
     transparent: "true",
-    version: "1.1.1",
+    // ★2026-07-17: 프론트가 version 1.3.0을 명시(VWorld WMS는 1.3.0만 허용 —
+    //   1.1.1은 INVALID_RANGE로 거부됨). 1.3.0에서 Leaflet은 srs 대신 crs를 보낸다.
+    version: "1.3.0",
     width: "256",
     height: "256",
-    srs: "EPSG:3857",
+    crs: "EPSG:3857",
     bbox: "14135029,4518899,14137474,4521344",
   });
 }
@@ -149,6 +151,23 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).toContain("XML exception");
+    // ★2026-07-17: ServiceException code가 오류 메시지에 표면화된다 — "(auth/unknown)"
+    //   뭉뚱그림 탓에 INVALID_RANGE(파라미터 오류)가 "키 미설정"으로 오독된 사고 재발 방지.
+    expect(body.error).toContain("INVALID_KEY");
+  });
+
+  it("★근본원인 회귀(2026-07-17): INVALID_RANGE(WMS VERSION 오류)도 code가 그대로 표면화된다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() =>
+      new Response(
+        '<?xml version="1.0" encoding="UTF-8" ?><ServiceExceptionReport version="1.3.0"><ServiceException code="INVALID_RANGE">VERSION 파라미터의 값이 유효한 범위를 넘었습니다. 유효한 파라미터 값의 범위 : [1.3.0], 입력한 파라미터 값 : 1.1.1</ServiceException></ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
+      ),
+    );
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("INVALID_RANGE");
   });
 
   it("키 미설정 시 503(정직 강등 근거)", async () => {
