@@ -367,6 +367,12 @@ class BuildingRegistryService:
             "ground_floors": int(_f(main, "grndFlrCnt")),
             "underground_floors": int(_f(main, "ugrndFlrCnt")),
             "total_area_sqm": _f(main, "totArea"),
+            # ★WS-D 개발여력 — 현황 용적률의 정직한 분모는 '주된 동'이 아니라 **전 동 합계**다
+            #   (주된 동만 쓰면 다동 필지의 현황이 과소 → 개발여력 과대낙관 방향 오류).
+            "total_area_sqm_all": round(sum(_f(r, "totArea") for r in rows), 1),
+            # numOfRows=10 캡 — rows가 10에 도달하면 절단 가능성이 있어 합계를 신뢰할 수 없다
+            # (절단=합계 과소=여력 과대낙관). 소비처는 True면 현황FAR 미상(None) 처리할 것.
+            "dong_truncated": len(rows) >= 10,
             "plat_area_sqm": _f(main, "platArea"),   # 대지면적(공동주택 대지지분 산정 기준)
             "household_count": int(_f(main, "hhldCnt")),
             "ho_count": int(_f(main, "hoCnt")),

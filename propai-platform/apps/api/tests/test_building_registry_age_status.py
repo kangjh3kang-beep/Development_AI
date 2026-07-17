@@ -56,3 +56,26 @@ async def test_get_title_by_pnu_delegates_to_status_variant(monkeypatch):
     legacy_result = await svc.get_title_by_pnu("1" * 19)
     assert legacy_result == tuple_result
     assert svc.last_status == tuple_status
+
+
+# ── WS-D 개발여력 — 전 동 연면적 합계·numOfRows 캡 절단 플래그(무날조 게이트) ──
+
+def _rows(*areas):
+    return [{"totArea": a, "useAprDay": "20000101", "bldNm": f"동{i}"} for i, a in enumerate(areas)]
+
+
+def test_total_area_all_sums_every_dong_not_main_only():
+    """★현황 용적률 분모는 전 동 합계 — 주된 동만 쓰면 다동 필지 여력이 과대낙관된다."""
+    svc = brs.BuildingRegistryService()
+    parsed = svc._parse_title_items(_rows(1000.0, 300.0, 200.5))
+    assert parsed["total_area_sqm"] == 1000.0          # 주된 동(기존 계약 유지)
+    assert parsed["total_area_sqm_all"] == 1500.5      # 전 동 합계(신규)
+    assert parsed["dong_truncated"] is False
+
+
+def test_dong_truncated_flag_at_page_cap():
+    """numOfRows=10 도달 = 절단 가능 → 소비처가 현황FAR 미상(None) 처리하도록 플래그."""
+    svc = brs.BuildingRegistryService()
+    parsed = svc._parse_title_items(_rows(*[100.0] * 10))
+    assert parsed["dong_truncated"] is True
+    assert parsed["total_area_sqm_all"] == 1000.0

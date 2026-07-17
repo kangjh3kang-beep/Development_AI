@@ -131,3 +131,18 @@ describe("WP-M3 노후도 무자료 사유 세분화", () => {
     expect(note).toBe("노후도 5건");
   });
 });
+
+describe("WS-D 개발여력 노트(정직 라벨)", () => {
+  const base = { showCadastre: false, cadastreCount: 0, showZoning: false, zoningCount: 0,
+                 showPrice: false, priceCount: 0, showAge: false, ageCount: 0, markerCount: 0 };
+
+  it("켰는데 산정 가능 필지 0 → '개발여력 무자료(실효·현황 용적률 필요)'", () => {
+    expect(buildOverlayNotes({ ...base, showCapacity: true, capacityCount: 0 }))
+      .toContain("개발여력 무자료(실효·현황 용적률 필요)");
+  });
+
+  it("산정 N건 표기·미지정(구 호출부)은 무언급(무회귀)", () => {
+    expect(buildOverlayNotes({ ...base, showCapacity: true, capacityCount: 3 })).toContain("개발여력 3건");
+    expect(buildOverlayNotes(base)).not.toContain("개발여력");
+  });
+});

@@ -20,6 +20,8 @@ import { AlertTriangle, Building2, LandPlot, MapPin, Ruler, Search, X } from "lu
 import { apiClient } from "@/lib/api-client";
 import {
   AGE_LEGEND_ITEMS,
+  CAPACITY_LEGEND_ITEMS,
+  capacityColor,
   ageColor,
   ageLabel,
   geometryRepresentativePoint,
@@ -148,6 +150,10 @@ type BoundaryFeature = {
   building_age_years?: number | null;
   // 노후도 무자료 사유(no_building/lookup_failed/skipped_bulk) — 값 있으면 null(WP-M3).
   age_status?: string | null;
+  /** WS-D 개발여력 — 서버 산정 실효/현황 용적률(%). 미상 None. */
+  effective_far_pct?: number | null;
+  current_far_pct?: number | null;
+  total_floor_area_sqm?: number | null;
   geometry?: any;
   // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
   lat?: number | null;
@@ -325,6 +331,9 @@ export interface OverlayNoteCounts {
   priceCount: number;
   showAge: boolean;
   ageCount: number;
+  /** WS-D 개발여력 — 미지정(구 호출부·테스트)이면 종전 문구와 동일(무회귀). */
+  showCapacity?: boolean;
+  capacityCount?: number;
   markerCount: number;
   // 노후도 무자료 사유 세분화(WP-M3) — ageCount=0일 때 "나대지 N·미준공 P·조회실패 M·대량생략 K"로 고지.
   //   미지정(구 호출부·테스트)이면 종전과 동일하게 단일 "노후도 무자료"로 폴백(무회귀).
@@ -370,6 +379,7 @@ export function buildOverlayNotes(counts: OverlayNoteCounts): string {
       notes.push(detail ? `노후도 무자료(${detail})` : "노후도 무자료");
     }
   }
+  if (counts.showCapacity) notes.push(counts.capacityCount ? `개발여력 ${counts.capacityCount}건` : "개발여력 무자료(실효·현황 용적률 필요)");
   if (counts.markerCount) notes.push(`좌표 ${counts.markerCount}건`);
   return notes.join(" · ");
 }
@@ -562,6 +572,8 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     builtYear: feature.built_year ?? null,
     buildingAgeYears: feature.building_age_years ?? null,
     ageStatus: feature.age_status ?? null,
+    effectiveFarPct: feature.effective_far_pct ?? null,
+    currentFarPct: feature.current_far_pct ?? null,
     geometry: feature.geometry,
     source: "boundary",
   };
@@ -1589,7 +1601,8 @@ export function SatongMultiMap({
     const showZoning = hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use");
     const showPrice = hasSatongLayer(layerState, "official-price") && hasSatongLayerControl(layerState, "official-price", "unit-price");
     const showAge = hasSatongLayer(layerState, "age") && hasSatongLayerControl(layerState, "age", "building-age");
-    const needsOverlay = showCadastre || showZoning || showPrice || showAge;
+    const showCapacity = hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom");
+    const needsOverlay = showCadastre || showZoning || showPrice || showAge || showCapacity;
 
     if (!needsOverlay || overlayFeatures.length === 0) {
       // ★레이어는 켜졌는데 그릴 필지가 0 → 침묵 blank 대신 명확 안내(활성배지-무반영 모순 해소).
@@ -1603,6 +1616,7 @@ export function SatongMultiMap({
     let cadastreCount = 0;
     let zoningCount = 0;
     let priceCount = 0;
+    let capacityCount = 0;
     let ageCount = 0;
     let markerCount = 0;
 
@@ -1662,6 +1676,14 @@ export function SatongMultiMap({
         });
       }
 
+      if (showCapacity && hasGeometry) {
+        const color = capacityColor(feature.effectiveFarPct, feature.currentFarPct);
+        if (color) {
+          capacityCount += 1;
+          drawPolygon({ color, weight: 2.5, fillColor: color, fillOpacity: 0.5 });
+        }
+      }
+
       if (showAge && hasGeometry && feature.buildingAgeYears != null) {
         ageCount += 1;
         const color = ageColor(feature.buildingAgeYears);
@@ -1696,6 +1718,8 @@ export function SatongMultiMap({
       priceCount,
       showAge,
       ageCount,
+      showCapacity,
+      capacityCount,
       markerCount,
       // 노후도 0건일 때 사유 세분("나대지 N·미준공 P·조회실패 M·대량생략 K") — 정직 무자료 고지(WP-M3).
       ageNoBuilding: ageStatusCounts.ageNoBuilding,
@@ -2644,6 +2668,24 @@ export function SatongMultiMap({
                 </button>
               </span>
             )}
+            {/* WS-D 개발여력 범례 — capacity 레이어 on + 산정 가능 필지가 있을 때만 노출
+                (무자료는 overlayNote "개발여력 무자료(실효·현황 용적률 필요)"가 정직 고지 —
+                램프만 띄우면 '색=여력' 오인 조장·노후도 범례와 동일 원칙). */}
+            {hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom") &&
+              overlayFeatures.some((f) => capacityColor(f.effectiveFarPct, f.currentFarPct) != null) && (
+              <div className="pointer-events-auto w-fit rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
+                <p className="mb-1 text-[10px] font-extrabold text-slate-700">개발여력 = (실효−현황)/실효 용적률</p>
+                <div className="flex flex-col gap-0.5">
+                  {CAPACITY_LEGEND_ITEMS.map((item) => (
+                    <span key={item.label} className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-slate-600">
+                      <span className="inline-block size-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
+                      {item.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 노후도 범례 (age 레이어 on일 때) — ★WP-M3: 노후도 자료(avgAge)가 있을 때만 5색
                 램프를 노출한다. 자료 0건이면 5색 램프가 '색=노후도' 오인을 조장하므로, "건물 정보
                 없음"과 무자료 사유(나대지/조회실패/대량생략)만 정직 표기한다. */}
