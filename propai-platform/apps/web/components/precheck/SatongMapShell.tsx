@@ -55,6 +55,7 @@ import {
   type SatongMapLayerId,
   type SatongMapLayerState,
 } from "@/lib/satong-map-layers";
+import { buildSelectionGeoJson, kakaoRoadviewUrl } from "@/lib/satong-export";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
@@ -561,6 +562,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
     setDetailFeature(feature);
     setActiveLayerId(null);
   }, []);
+  // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
+  const [exportNote, setExportNote] = useState("");
   // ★WP-M2: "초기화"(clearParcels)가 지도 내부 staged·녹색 폴리곤도 청소하도록 보내는 신호(nonce).
   //   증가할 때마다 SatongMultiMap이 handleClearAll을 실행한다(종전엔 목록만 비고 지도엔 잔존).
   const [clearNonce, setClearNonce] = useState(0);
@@ -662,6 +665,27 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }),
     [enabledLayers, layerControls],
   );
+
+  // I5: 선택 필지 → GeoJSON 파일 다운로드(순수 직렬화는 satong-export — 테스트 고정).
+  const exportSelectionGeoJson = useCallback(() => {
+    const { json, included, skipped } = buildSelectionGeoJson(selectedMapFeatures);
+    if (included === 0) {
+      setExportNote(
+        "내보낼 경계(geometry) 보유 필지가 없습니다 — 지도에서 필지를 선택(경계 조회)한 뒤 다시 시도하세요.",
+      );
+      return;
+    }
+    const blob = new Blob([json], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `satong-parcels-${included}.geojson`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setExportNote(`GeoJSON ${included}필지 내보냄${skipped ? ` · 경계 없음 ${skipped}필지 제외(정직 고지)` : ""}`);
+  }, [selectedMapFeatures]);
 
   // ── 실거래·시세 레이어 배선: 레이어 ON + 선택필지 있으면 주변 실거래(nearby-map) 조회 ──
   //   렌더(마커·반경·팝업)는 SatongMultiMap에 완비 — 여기서는 데이터만 주입한다.
@@ -1866,15 +1890,29 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 </p>
               </div>
               {selectedParcels.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearParcels}
-                  className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--status-error)]"
-                >
-                  초기화
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {/* I5: 선택 필지 GeoJSON 내보내기 — 측량·타 GIS 연계(기하 없는 필지는 제외 정직 고지) */}
+                  <button
+                    type="button"
+                    onClick={exportSelectionGeoJson}
+                    title="선택 필지를 GeoJSON(FeatureCollection)으로 내려받기"
+                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
+                  >
+                    GeoJSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearParcels}
+                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--status-error)]"
+                  >
+                    초기화
+                  </button>
+                </div>
               )}
             </div>
+            {exportNote && (
+              <p className="mt-2 text-[11px] font-bold text-[var(--text-hint)]">{exportNote}</p>
+            )}
 
             <div className="mt-3 max-h-[360px] space-y-2 overflow-auto pr-1">
               {selectedParcels.length === 0 ? (
@@ -2263,6 +2301,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       {action.label}
                     </button>
                   ))}
+                  {/* I3: 카카오 로드뷰(현장 확인) — URL 계약 라이브 검증(302→파노라마). 좌표 없으면 미표시(정직). */}
+                  {(() => {
+                    const roadview = kakaoRoadviewUrl(detailFeature.lat, detailFeature.lon);
+                    return roadview ? (
+                      <a
+                        href={roadview}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="col-span-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
+                      >
+                        🛣️ 카카오 로드뷰로 현장 보기 ↗
+                      </a>
+                    ) : null;
+                  })()}
                 </div>
                 <p className="mt-3 font-mono text-[9px] text-[var(--text-hint)]">
                   출처 VWorld·국토교통부 공간정보 — 무자료 항목은 &quot;-&quot;로 표기(추정 금지)
