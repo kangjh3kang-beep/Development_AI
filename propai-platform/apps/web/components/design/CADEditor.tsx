@@ -201,6 +201,7 @@ export default function CADEditor({
   //   run_id는 컴포넌트 state에만 보관한다 — localStorage 등에 영속하지 않으므로 전체 새로고침/리마운트
   //   후에는 복원되지 않는다(영속 저장은 이 작업 스코프 밖·백엔드 재저장 시 같은 결정적 run_id 재발급).
   const [designRun, setDesignRun] = useState<{ run_id: string; status: string } | null>(null);
+  const approveKeyRef = useRef<{ runId: string; key: string } | null>(null);
   const [approveState, setApproveState] = useState<"idle" | "approving" | "error">("idle");
   const [approveError, setApproveError] = useState<string>("");
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
@@ -469,6 +470,12 @@ export default function CADEditor({
       // ★후속④: 저장 응답에 design_run이 실키로 오면 승인 UI를 띄운다. 없으면(매스치수 부재 등
       //   미영속) null로 지워 stale 승인 버튼 노출을 막는다(정직). 승인 진행상태도 초기화.
       const runId = d?.design_run?.run_id;
+      // ★승인 멱등키는 run 당 1회 고정(R1 적발) — 클릭마다 randomUUID 를 새로 만들면 백엔드의
+      //   Idempotency 재생(같은 키 재전송=최초 200 응답 재생)이 무력화되어, 타임아웃-재시도 시
+      //   서버는 APPROVED 인데 UI 는 409 로 "초안" 오표기에 갇힌다. 같은 run 재시도=같은 키.
+      if (runId && runId !== approveKeyRef.current?.runId) {
+        approveKeyRef.current = { runId, key: crypto.randomUUID() };
+      }
       setDesignRun(runId ? { run_id: runId, status: d?.design_run?.status || "DRAFT" } : null);
       setApproveState("idle");
       setApproveError("");
@@ -482,7 +489,7 @@ export default function CADEditor({
   /* ── 설계안 승인(POST /design-runs/{run_id}/approve) — 인간승인 명시 액션 ──
      ★플랫폼 관례("인간 승인 없는 AUTHORIZED 금지"): 사용자의 이 버튼 클릭이 곧 명시적 인간 승인이므로
        자동경로(persist)가 아닌 이 경로만 DRAFT→APPROVED로 승격한다(정합).
-     Idempotency-Key(재전송 안전 — design_runs.approve 헤더 계약, alias="Idempotency-Key")를 매 클릭
+     Idempotency-Key(재전송 안전 — design_runs.approve 헤더 계약)는 run 당 1회 고정 키를
      새로 발급한다. 실패(401/403/404/409)는 problem+json detail을 우선해 사유를 정직 표기한다. */
   const handleApprove = useCallback(async () => {
     const runId = designRun?.run_id;
@@ -494,7 +501,7 @@ export default function CADEditor({
         `/design-runs/${encodeURIComponent(runId)}/approve`,
         {
           body: {},
-          headers: { "Idempotency-Key": crypto.randomUUID() },
+          headers: { "Idempotency-Key": approveKeyRef.current?.runId === runId ? approveKeyRef.current.key : (approveKeyRef.current = { runId, key: crypto.randomUUID() }).key },
           timeoutMs: 15000,
         },
       );

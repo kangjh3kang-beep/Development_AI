@@ -77,6 +77,7 @@ class JobStore:
         self._default_ttl = int(default_ttl_s)
         # 백엔드 결정 캐시: None=미결정, "redis", "memory".
         self._backend: str | None = None
+        self._backend_checked_at: float = 0.0
         self._client: Any = None  # redis 모드 시 재사용 클라이언트
 
     def _rkey(self, job_id: str) -> str:
@@ -102,13 +103,21 @@ class JobStore:
                     await client.aclose()
             return None
 
+    # memory 폴백 확정 후 재프로브 간격(초) — 블루그린 컷오버 등 Redis "순단 중 부팅"이
+    # 프로세스 수명 내내 memory 고착되지 않도록(R1 적발). 순단 복구 후 첫 접근에서 redis 승격.
+    _REPROBE_INTERVAL_S = 60.0
+
     async def _get_client(self) -> Any:
-        """redis 모드면 재사용 클라이언트, memory 모드면 None. 백엔드는 최초 1회만 결정."""
+        """redis 모드면 재사용 클라이언트, memory 모드면 None(단, 주기 재프로브)."""
         global _FALLBACK_LOGGED
         if self._backend == "memory":
-            return None
+            if time.time() - self._backend_checked_at < self._REPROBE_INTERVAL_S:
+                return None
+            # 재프로브 창 — 실패하면 다시 memory 로(아래 공통 경로).
+            self._backend = None
         if self._backend == "redis":
             return self._client
+        self._backend_checked_at = time.time()
         client = await self._probe_redis()
         if client is not None:
             self._backend = "redis"
@@ -153,17 +162,25 @@ class JobStore:
         return self._mem.get(job_id)
 
     async def put(self, job_id: str, data: dict[str, Any], ttl_s: int) -> None:
+        # ★두 백엔드가 '동일한 JSON'을 저장하도록 선(先)정규화(R1 적발) — 종전엔 Redis 만
+        #   default=str 로 Decimal→"문자열"·datetime→비ISO 가 되어 프로덕션에서만 타입이 갈렸다.
+        #   jsonable_encoder 는 FastAPI 응답 직렬화와 동일 규칙(Decimal→number·datetime→ISO).
+        from fastapi.encoders import jsonable_encoder
+
+        payload = jsonable_encoder(data)
         client = await self._get_client()
         if client is not None:
-            with contextlib.suppress(Exception):  # 저장 실패는 best-effort(무중단)
+            try:
                 await client.setex(
                     self._rkey(job_id),
                     max(1, int(ttl_s)),
-                    json.dumps(data, ensure_ascii=False, default=str),
+                    json.dumps(payload, ensure_ascii=False),
                 )
-            return
-        # 인메모리 폴백: 방어적 복사 + ts/_ttl_s 부착(lazy 프루닝 기준) 후 저장.
-        entry = dict(data)
+                return
+            except Exception:  # noqa: BLE001 — Redis 순단 시 memory 미러로 fail-open(R1 적발:
+                pass  #   종전 무음 폐기는 봉합하려던 404 를 재도입했다)
+        # 인메모리(폴백 또는 Redis put 실패 미러): ts/_ttl_s 부착(lazy 프루닝 기준) 후 저장.
+        entry = dict(payload)
         entry["ts"] = time.time()
         entry["_ttl_s"] = int(ttl_s)
         self._prune_mem()

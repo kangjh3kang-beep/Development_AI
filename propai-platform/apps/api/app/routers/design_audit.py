@@ -477,6 +477,9 @@ async def _execute_run(
 
         _settings = get_settings()
         _surface = getattr(_settings, "deliberation_surface_in_audit", False)
+        # ※동기 /run-upload 경로에선 표면화 대기(≤deliberation_shadow_engine_timeout_s=5s)가 응답
+        #   지연으로 더해진다 — 주 UI 경로는 잡(/run-upload/jobs, 백그라운드)이라 수용(R1 검토).
+        #   지연이 문제면 env DELIBERATION_SURFACE_IN_AUDIT=false 로 즉시 끌 수 있다.
         if _settings.deliberation_shadow_enabled or _surface:  # 감사 한정 자립 게이트(OR)
             from app.services.deliberation import shadow_integration, shadow_mappers
 

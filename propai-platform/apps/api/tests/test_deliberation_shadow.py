@@ -408,3 +408,50 @@ async def test_divergence_stats_aggregates(shadow_db):
         async with async_session_factory() as db:
             await db.execute(text("DELETE FROM shadow_comparison WHERE tenant_id = :t"), {"t": tnt})
             await db.commit()
+
+
+# ── force_engine_call 실게이트 앵커(R1) — 몽키패치 아닌 실제 :92 게이트 검증 ──
+
+
+class _GateSettings:
+    deliberation_shadow_enabled = False
+    deliberation_engine_url = "http://engine.local"
+    deliberation_shadow_engine_timeout_s = 0.1
+
+
+class _GateSettingsNoUrl(_GateSettings):
+    deliberation_engine_url = ""
+
+
+@pytest.mark.asyncio
+async def test_force_engine_call_bypasses_shadow_gate_only(monkeypatch):
+    """force=True 는 shadow_enabled=False 를 넘되(게이트 통과 = build_input_dump 도달),
+    engine_url 미설정은 여전히 차단(None) — 우회 범위가 정확히 shadow 게이트 하나임을 고정."""
+    import app.services.deliberation.shadow_integration as si
+
+    monkeypatch.setattr(si, "get_settings", lambda: _GateSettings())
+    called = {"dump": 0}
+
+    def _fake_dump(payload):
+        called["dump"] += 1
+        raise RuntimeError("stop-after-gate")  # 게이트 통과 증명 후 하류 중단(엔진 호출 방지)
+
+    monkeypatch.setattr(si, "build_input_dump", _fake_dump)
+
+    # force 없이: shadow off → 게이트에서 차단(dump 미도달)
+    r0 = await si.shadow_compare(tenant_id="t", domain="design_audit",
+                                 platform_verdict="pass", engine_payload={})
+    assert r0 is None and called["dump"] == 0
+
+    # force=True: 게이트 통과(dump 도달) — 하류 예외는 best-effort None
+    r1 = await si.shadow_compare(tenant_id="t", domain="design_audit",
+                                 platform_verdict="pass", engine_payload={},
+                                 force_engine_call=True)
+    assert r1 is None and called["dump"] == 1
+
+    # engine_url="" 이면 force 여도 차단(정직 강등)
+    monkeypatch.setattr(si, "get_settings", lambda: _GateSettingsNoUrl())
+    r2 = await si.shadow_compare(tenant_id="t", domain="design_audit",
+                                 platform_verdict="pass", engine_payload={},
+                                 force_engine_call=True)
+    assert r2 is None and called["dump"] == 1
