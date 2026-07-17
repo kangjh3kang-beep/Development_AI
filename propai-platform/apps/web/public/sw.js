@@ -46,7 +46,10 @@
 // v426: 생성허브 후속로드맵 6건(#348 — 시장 렌더 ReportModel 일원화·감사 잡 전환·심의 게이트 기본off·
 //        수지 차트 3종·제출번들 감사면·적산 CTA + registry 잡 IDOR 봉합). 신규 차트/잡 폴링 UI가
 //        stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v426-genhub-roadmap";
+// v427: 사통맵 지적타일 근본수정(#347 — WMS 1.3.0) + 인터랙션 P0(#351 — 클릭 단일팝오버·거리재기·
+//        라벨 줌롤업·범례 컴팩트·레일 반응형·버블링 차단). 지적 WMS 요청 파라미터와 지도 UI가
+//        stale 캐시로 남으면 수정 전 오류가 재현되므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v427-satong-map-p0";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
