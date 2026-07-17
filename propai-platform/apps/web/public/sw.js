@@ -71,7 +71,9 @@
 //        #376 사통맵 rail 좌중앙(줌 중첩 근본해소)+클릭팝업 위계 재작성(blur24·좌표 mono) ·
 //        #378 베이스맵 스와치 실물 타일. ★구캐시 삭제 필수 — 구 CSS/JS가 남으면 라운드가
 //        화면별로 섞여(12px vs 16px) 정합이 반쪽이 된다.
-const CACHE_NAME = "propai-v436-design-alignment";
+// v437: 사통맵 하단 도크 단일화(#380 — 스위처 섬 흡수·예약값 제거·코너 슬롯 레지스트리).
+//        재배치된 도크 UI가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v437-satong-dock-unify";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
