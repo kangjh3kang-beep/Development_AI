@@ -324,7 +324,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
   const nextNo = () => (++_sectionNo);
 
   return (
-    <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
+    <section className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><ClipboardList className="size-5" aria-hidden /></span>

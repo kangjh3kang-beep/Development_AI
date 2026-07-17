@@ -62,7 +62,7 @@ export default function ConstructionPage() {
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.2 }}
-        className="cc-panel cc-bracketed relative overflow-hidden rounded-[2.5rem] p-10 shadow-xl group"
+        className="cc-panel cc-bracketed relative overflow-hidden rounded-[var(--radius-xl)] p-10 shadow-xl group"
       >
         <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
         <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -99,7 +99,7 @@ export default function ConstructionPage() {
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="cc-panel rounded-[3rem] p-6 lg:p-12 shadow-2xl"
+          className="cc-panel rounded-[var(--radius-2xl)] p-6 lg:p-12 shadow-2xl"
         >
           <ContractorIntelligence locale={locale as Locale} />
         </motion.div>
@@ -108,7 +108,7 @@ export default function ConstructionPage() {
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="cc-panel rounded-[3rem] p-6 lg:p-12 shadow-2xl"
+          className="cc-panel rounded-[var(--radius-2xl)] p-6 lg:p-12 shadow-2xl"
         >
           <CostAndQuantityDashboard projectId={id} dictionary={(dictionary as any).cost ?? {}} />
         </motion.div>
@@ -117,7 +117,7 @@ export default function ConstructionPage() {
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="cc-panel rounded-[3rem] p-6 lg:p-12 shadow-2xl"
+          className="cc-panel rounded-[var(--radius-2xl)] p-6 lg:p-12 shadow-2xl"
         >
           <ScheduleSupervisionPanel projectId={id} dictionary={(dictionary as any).schedule ?? {}} />
         </motion.div>

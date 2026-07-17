@@ -51,7 +51,7 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
       </div>
 
       {/* ── Terminal Emulator ── */}
-      <div className="relative rounded-[2rem] border border-[var(--line-strong)] bg-neutral-950 p-6 shadow-2xl">
+      <div className="relative rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-neutral-950 p-6 shadow-2xl">
         <div className="absolute top-4 right-6 flex items-center gap-1.5 opacity-60">
           <span className="h-2 w-2 rounded-full bg-red-500/80" />
           <span className="h-2 w-2 rounded-full bg-amber-500/80" />
@@ -100,7 +100,7 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
 
       {/* ── Active Module Progress Dashboard ── */}
       {isGenerating && (
-        <div className="grid gap-4.5 rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-6 backdrop-blur-3xl">
+        <div className="grid gap-4.5 rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-6 backdrop-blur-3xl">
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {t.activeEngine} Pipeline
           </p>

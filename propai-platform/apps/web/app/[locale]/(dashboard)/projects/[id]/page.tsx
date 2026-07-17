@@ -251,7 +251,7 @@ export default function ProjectDetailPage() {
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]"
+          className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]"
         >
           <div className="flex flex-wrap items-start justify-between gap-6 mb-5">
             <div className="space-y-2">
@@ -311,7 +311,7 @@ export default function ProjectDetailPage() {
         </motion.section>
       ) : metaError ? (
         /* 메타 로드 실패 — 무통지 대신 정직한 실패 안내 + 재시도(효과 재실행) */
-        <section className="rounded-[2rem] border border-[var(--status-warning)]/40 bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+        <section className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/40 bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-sm font-bold text-[var(--text-primary)]">프로젝트 정보를 불러오지 못했습니다</p>
@@ -331,7 +331,7 @@ export default function ProjectDetailPage() {
       ) : null}
 
       {/* ── High-Fidelity Project Hero ── */}
-      <section className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-12 shadow-[var(--shadow-2xl)] group">
+      <section className="relative overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-12 shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Background Elements */}
         <div className="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/15" />
         <div className="absolute -left-20 bottom-0 h-96 w-96 rounded-full bg-blue-500/5 blur-[100px]" />
@@ -388,7 +388,7 @@ export default function ProjectDetailPage() {
               { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : null, color: "text-[var(--text-primary)]" },
               { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : null), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
-              <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
+              <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <i className="cc-bracket cc-bracket--tl" />
                 <i className="cc-bracket cc-bracket--br" />
                 <p className="cc-label tracking-[0.4em] mb-3">{stat.label}</p>

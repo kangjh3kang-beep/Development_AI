@@ -62,7 +62,7 @@ export function DefectHeatmap({
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[linear-gradient(180deg,#fffefb_0%,#f5efe6_100%)] p-4">
-          <div className="relative min-h-[340px] overflow-hidden rounded-[1.35rem] border border-[var(--line)] bg-[radial-gradient(circle_at_top,rgba(14,116,144,0.12),transparent_28%),linear-gradient(180deg,#ffffff_0%,#f4ede4_100%)]">
+          <div className="relative min-h-[340px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[radial-gradient(circle_at_top,rgba(14,116,144,0.12),transparent_28%),linear-gradient(180deg,#ffffff_0%,#f4ede4_100%)]">
             <div className="absolute inset-0 bg-[linear-gradient(rgba(19,33,47,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(19,33,47,0.04)_1px,transparent_1px)] bg-[size:40px_40px]" />
             <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100">
               {(snapshot.defects ?? []).map((defect) => (

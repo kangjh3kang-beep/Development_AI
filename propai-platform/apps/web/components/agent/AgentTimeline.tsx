@@ -77,7 +77,7 @@ export function AgentTimeline({
           {(snapshot.stages ?? []).map((stage, index) => (
             <li
               key={stage.id}
-              className="grid gap-3 rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4 md:grid-cols-[auto_1fr]"
+              className="grid gap-3 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4 md:grid-cols-[auto_1fr]"
             >
               <div className="flex items-start gap-3">
                 <span

@@ -146,7 +146,7 @@ export function ProjectsOverviewClient({
           />
         ) : null}
         {isError ? (
-          <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
+          <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
             <CardContent className="p-12 text-center flex flex-col items-center">
               <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500 mb-6 font-bold text-2xl">!</div>
               <h3 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
@@ -183,7 +183,7 @@ export function ProjectsOverviewClient({
             <i className="cc-bracket cc-bracket--br" />
             <div className="relative z-10 p-12 text-center flex flex-col items-center">
               <span className="cc-label mb-6">NO ACTIVE PROJECTS</span>
-              <div className="h-20 w-20 rounded-[2.5rem] bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] mb-8 shadow-[var(--shadow-lg)] border border-[var(--line)]">
+              <div className="h-20 w-20 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] mb-8 shadow-[var(--shadow-lg)] border border-[var(--line)]">
                 <Construction className="size-9" aria-hidden />
               </div>
               <h3 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">

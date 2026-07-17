@@ -459,7 +459,7 @@ export function TerrainAnalysisPanel({
                           contentStyle={{
                             background: "var(--surface-strong)",
                             border: "1px solid var(--line)",
-                            borderRadius: 8,
+                            borderRadius: "var(--r-card)",
                             fontSize: 11,
                           }}
                           labelStyle={{ color: "var(--text-secondary)" }}

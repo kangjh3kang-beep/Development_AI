@@ -317,7 +317,7 @@ export function CarbonEmissionsWorkspaceClient({
   return (
     <div className="space-y-8">
       {/* Hero */}
-      <div className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-xl)]">
+      <div className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-xl)]">
         <div className="flex items-center gap-3 mb-4">
           <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
           <span className="label-caps text-emerald-600">
@@ -336,7 +336,7 @@ export function CarbonEmissionsWorkspaceClient({
       </div>
 
       {/* Input Section */}
-      <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+      <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
         <CardContent className="p-8 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
@@ -450,21 +450,21 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-[2rem] border border-emerald-500/20 bg-emerald-500/5 p-8">
+            <div className="rounded-[var(--radius-lg)] border border-emerald-500/20 bg-emerald-500/5 p-8">
               <p className="label-caps text-emerald-600">{t.totalLabel}</p>
               <p className="mt-3 text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {formatCurrencyCompact(result.total_carbon_footprint_kgco2e)}
               </p>
               <p className="mt-1 text-xs font-bold text-[var(--text-tertiary)]">kgCO₂eq</p>
             </div>
-            <div className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] p-8">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] p-8">
               <p className="label-caps text-[var(--text-hint)]">{t.materialsLabel}</p>
               <p className="mt-3 text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {result.materials_assessed}
               </p>
               <p className="mt-1 text-xs font-bold text-[var(--text-tertiary)]">items analyzed</p>
             </div>
-            <div className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] p-8">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] p-8">
               <p className="label-caps text-[var(--text-hint)]">{t.standardLabel}</p>
               <p className="mt-3 text-xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {result.standard}
@@ -478,7 +478,7 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* Scope Breakdown */}
           {scopeData && (
-            <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+            <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
               <CardContent className="p-8 space-y-6">
                 <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.scopeTitle}</h3>
                 {/* ★정직 고지: EPD는 자재 내재탄소(A1~A3=대부분 Scope 3)를 측정한다. 아래 Scope 1/2/3 분해는
@@ -514,7 +514,7 @@ export function CarbonEmissionsWorkspaceClient({
           )}
 
           {/* Breakdown Table */}
-          <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+          <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
             <CardContent className="p-8 space-y-6">
               <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.breakdownTitle}</h3>
               <div className="space-y-3">

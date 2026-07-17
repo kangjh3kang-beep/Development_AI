@@ -991,7 +991,7 @@ function MonthlyCashflowChart({ rows }: { rows: RsCashflowRow[] }) {
           contentStyle={{
             background: "var(--surface-strong)",
             border: "1px solid var(--line-strong)",
-            borderRadius: 8,
+            borderRadius: "var(--r-card)",
             fontSize: 12,
           }}
           formatter={(v, name) => [

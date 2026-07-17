@@ -1641,8 +1641,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
   }, [activeLayerId]);
 
   return (
-    <section className="min-w-0 rounded-[32px] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
+    <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
+      <div className="mb-4 flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">
             Satong Map OS
@@ -1665,8 +1665,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
       </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <aside className="min-w-0 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
-          <div className="rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-secondary)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
+        <aside className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
+          <div className="rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-secondary)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
             <p className="font-[family-name:var(--font-display)] label-caps text-[var(--accent-strong)]">
               Parcel Intake
             </p>
@@ -1677,7 +1677,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
           </div>
 
           {/* 프로젝트 연결 */}
-          <div className="mt-4 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3.5">
+          <div className="mt-4 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3.5">
             <label className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]">
               <Building2 className="size-4 text-[var(--accent-strong)]" aria-hidden />
               연결 프로젝트
@@ -1910,7 +1910,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             </div>
           )}
 
-          <div className="mt-5 rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
+          <div className="mt-5 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-black text-[var(--text-primary)]">선택 필지</h3>
@@ -1953,7 +1953,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div className="mt-3 max-h-[360px] space-y-2 overflow-auto pr-1">
               {selectedParcels.length === 0 ? (
-                <div className="rounded-[22px] border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] px-4 py-10 text-center">
+                <div className="rounded-[var(--r-panel)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] px-4 py-10 text-center">
                   <MapPin className="mx-auto size-8 text-[var(--text-hint)]" aria-hidden />
                   <p className="mt-3 text-sm font-black text-[var(--text-primary)]">
                     아직 선택된 필지가 없습니다.
@@ -2043,8 +2043,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
           </div>
         </aside>
 
-        <section className="min-w-0 rounded-[28px] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
-          <div className="relative min-h-[720px] overflow-hidden rounded-[24px] border border-[var(--border-muted)] bg-[var(--background-deep)]">
+        <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
+          <div className="relative min-h-[720px] overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]">
             <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -2123,7 +2123,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
               //   12버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시.
               //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
               //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
-              className={`group absolute right-4 top-20 z-[420] rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+              className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
                 railPinned
                   ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
                   : "flex w-16 flex-col gap-2 h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
@@ -2202,7 +2202,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {activeLayer && (
               <div
                 ref={popoverRef}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[26px] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2228,7 +2228,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
                   {activeLayer.description}
                 </p>
-                <div className="mt-4 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
+                <div className="mt-4 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
                     Source
                   </p>
@@ -2271,7 +2271,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {detailFeature && !activeLayer && (
               <div
                 data-testid="parcel-detail-panel"
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[26px] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-[var(--glass-blur)]"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -2293,7 +2293,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   </button>
                 </div>
 
-                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[20px] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
                   <div>
                     <dt className="font-black text-[var(--text-hint)]">면적</dt>
                     <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm)}</dd>
@@ -2389,7 +2389,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             )}
           </div>
 
-          <div className="mt-3 rounded-[24px] border border-[var(--border-muted)] bg-[var(--surface-elevated)] p-3 text-[var(--text-primary)]">
+          <div className="mt-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-elevated)] p-3 text-[var(--text-primary)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[var(--accent-strong)]">
@@ -2416,7 +2416,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       type="button"
                       onClick={() => void handleOutputClick(action)}
                       disabled={disabled}
-                      className={`min-h-[112px] rounded-[22px] border p-3 text-left transition ${action.tone} ${
+                      className={`min-h-[112px] rounded-[var(--r-panel)] border p-3 text-left transition ${action.tone} ${
                         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5 hover:shadow-xl"
                       }`}
                     >

@@ -497,7 +497,7 @@ function PaperDocumentView({ title, office, children }: { title: string; office?
         background: "var(--paper)",
         color: "var(--paper-ink)",
         border: "1px solid var(--paper-line)",
-        borderRadius: "6px",
+        borderRadius: "var(--r-input)",
         boxShadow: "var(--shadow-md)",
       }}
     >

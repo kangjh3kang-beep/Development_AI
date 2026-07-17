@@ -1114,7 +1114,7 @@ export function ProjectPipelinePanel({
 
   /* ── Pipeline View (default) ── */
   return (
-    <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all relative">
+    <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all relative">
       {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
       <div
         className="absolute inset-0 opacity-[0.02] pointer-events-none"

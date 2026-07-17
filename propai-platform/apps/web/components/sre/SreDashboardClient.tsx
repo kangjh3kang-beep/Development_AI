@@ -29,7 +29,7 @@ function MetricCard({ label, value, sub, status, progress }: MetricProps) {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`rounded-[2.5rem] border p-8 transition-all hover:scale-[1.02] ${statusColors[status]}`}
+      className={`rounded-[var(--radius-xl)] border p-8 transition-all hover:scale-[1.02] ${statusColors[status]}`}
     >
       <div className="flex items-center justify-between">
         <span className="label-caps opacity-60">{label}</span>
@@ -84,7 +84,7 @@ export function SreDashboardClient({ dictionary }: { dictionary: import("@/i18n/
 
   return (
     <div className="space-y-10 font-sans">
-      <header className="relative overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] group">
+      <header className="relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] group">
         <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px]" />
         <div className="relative z-10 space-y-6">
            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--accent-strong)] animate-pulse" />
@@ -122,7 +122,7 @@ export function SreDashboardClient({ dictionary }: { dictionary: import("@/i18n/
       </div>
 
       <div className="grid gap-10 lg:grid-cols-2">
-         <Card className="rounded-[3rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+         <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-10 space-y-6">
                <h3 className="text-xs font-black uppercase tracking-[0.4em] text-[var(--accent-strong)]">Real-time System Logs</h3>
                <div className="h-[300px] rounded-2xl bg-[#0a0f14] p-6 font-mono text-[11px] text-emerald-400 overflow-y-auto space-y-2 border border-emerald-500/10">
@@ -142,7 +142,7 @@ export function SreDashboardClient({ dictionary }: { dictionary: import("@/i18n/
             </CardContent>
          </Card>
 
-         <Card className="rounded-[3rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+         <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-10 space-y-8">
                <h3 className="text-xs font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">Quality Gate Checklist</h3>
                <div className="space-y-4">

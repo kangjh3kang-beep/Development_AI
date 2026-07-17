@@ -29,7 +29,7 @@ export default function GuidePage() {
   return (
     <div className="flex flex-col gap-16 pb-32">
       {/* ── Header — 관제 매뉴얼 브리핑 ── */}
-      <section className="cc-bracketed relative overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-16 lg:p-24 shadow-[var(--shadow-2xl)]">
+      <section className="cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-16 lg:p-24 shadow-[var(--shadow-2xl)]">
         <div className="cc-grid-bg cc-grid-bg--radial opacity-60" />
         <div className="cc-scanline" />
         <i className="cc-bracket cc-bracket--tl" />
@@ -64,7 +64,7 @@ export default function GuidePage() {
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="flex flex-col lg:flex-row gap-20 items-center"
           >
-            <div className={`cc-interactive flex-1 flex flex-col gap-8 p-8 lg:p-12 rounded-[3rem] bg-[var(--surface-soft)] border border-[var(--line-strong)] backdrop-blur-2xl shadow-[var(--shadow-xl)] relative overflow-hidden group/card ${i % 2 === 1 ? 'lg:order-2' : ''}`}>
+            <div className={`cc-interactive flex-1 flex flex-col gap-8 p-8 lg:p-12 rounded-[var(--radius-2xl)] bg-[var(--surface-soft)] border border-[var(--line-strong)] backdrop-blur-2xl shadow-[var(--shadow-xl)] relative overflow-hidden group/card ${i % 2 === 1 ? 'lg:order-2' : ''}`}>
                <div className="cc-grid-bg opacity-40" />
                {/* Cyber Glow Background */}
                <div className="absolute -inset-20 bg-gradient-to-tr from-[var(--data-accent-soft)] via-transparent to-[var(--accent-soft)] opacity-0 group-hover/card:opacity-100 transition-opacity duration-1000 blur-2xl" />
@@ -93,8 +93,8 @@ export default function GuidePage() {
             </div>
 
             <div className={`flex-[1.5] relative group ${i % 2 === 1 ? 'lg:order-1' : ''}`}>
-               <div className="absolute -inset-1 rounded-[3rem] bg-gradient-to-tr from-[var(--data-accent-soft)] via-transparent to-[var(--accent-soft)] blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
-               <div className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-2xl)] transition-all duration-700 group-hover:scale-[1.03] group-hover:border-[var(--data-accent-line)]">
+               <div className="absolute -inset-1 rounded-[var(--radius-2xl)] bg-gradient-to-tr from-[var(--data-accent-soft)] via-transparent to-[var(--accent-soft)] blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+               <div className="relative overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-2xl)] transition-all duration-700 group-hover:scale-[1.03] group-hover:border-[var(--data-accent-line)]">
                   <div className="flex items-center gap-2 border-b border-[var(--line-subtle)] bg-[var(--surface-muted)] px-6 py-4">
                      <div className="flex gap-1.5">
                        <div className="h-2.5 w-2.5 rounded-full bg-[var(--status-error)]/60" />
@@ -126,7 +126,7 @@ export default function GuidePage() {
       </div>
 
       {/* ── Final Call to Action ── */}
-      <section className="cc-bracketed relative mt-24 overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-16 lg:p-24 text-center group shadow-[var(--shadow-2xl)]">
+      <section className="cc-bracketed relative mt-24 overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-16 lg:p-24 text-center group shadow-[var(--shadow-2xl)]">
          <div className="cc-grid-bg cc-grid-bg--radial opacity-50" />
          <div className="cc-scanline" />
          <i className="cc-bracket cc-bracket--tl" />
@@ -145,7 +145,7 @@ export default function GuidePage() {
               </p>
             </div>
 
-            <button className="group relative overflow-hidden rounded-[2rem] bg-[var(--accent-strong)] h-20 px-16 text-xl font-black text-white uppercase tracking-widest transition-all hover:scale-[1.05] active:scale-95 shadow-[var(--shadow-glow)]">
+            <button className="group relative overflow-hidden rounded-[var(--radius-lg)] bg-[var(--accent-strong)] h-20 px-16 text-xl font-black text-white uppercase tracking-widest transition-all hover:scale-[1.05] active:scale-95 shadow-[var(--shadow-glow)]">
                <span className="relative z-10">새 프로젝트 생성하기</span>
                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
             </button>

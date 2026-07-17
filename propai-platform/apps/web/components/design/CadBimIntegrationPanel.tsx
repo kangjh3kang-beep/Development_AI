@@ -1728,7 +1728,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         className={
           fullscreen
             ? "fixed inset-0 z-[60] h-screen w-screen overflow-hidden rounded-none border-0 bg-[#0d1520] shadow-none group"
-            : "relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group"
+            : "relative h-[650px] w-full overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group"
         }
       >
         {/* 1차-A: 전체화면 토글. ON이면 뷰포트를 전 뷰포트 오버레이로 띄워 캔버스가 포인터를 100%

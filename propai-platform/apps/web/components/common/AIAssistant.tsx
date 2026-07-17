@@ -273,7 +273,7 @@ export function AIAssistant() {
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
             exit={{ opacity: 0, y: 20, scale: 0.95, filter: "blur(10px)" }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
+            className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
           >
             <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/20 blur-[40px] animate-pulse" />
             
@@ -339,7 +339,7 @@ export function AIAssistant() {
                   <motion.div 
                     initial={{ opacity: 0, x: msg.role === "user" ? 10 : -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className={`relative max-w-[85%] rounded-[1.5rem] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all whitespace-pre-wrap ${
+                    className={`relative max-w-[85%] rounded-[var(--radius-md)] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all whitespace-pre-wrap ${
                     msg.role === "user" 
                       ? "bg-[var(--accent-strong)] text-white" 
                       : "bg-[var(--surface)] text-[var(--text-primary)] border border-[var(--line)]"
@@ -353,7 +353,7 @@ export function AIAssistant() {
               ))}
               {isLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-[var(--surface)] border border-[var(--line)] rounded-[1.5rem] px-4 py-3 flex items-center gap-1">
+                  <div className="bg-[var(--surface)] border border-[var(--line)] rounded-[var(--radius-md)] px-4 py-3 flex items-center gap-1">
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" />
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
@@ -367,7 +367,7 @@ export function AIAssistant() {
                         <button 
                             key={tag}
                             onClick={() => handleTagClick(tag)}
-                            className="shrink-0 rounded-[1.25rem] bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-tighter text-[var(--accent-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all transform hover:-translate-y-1"
+                            className="shrink-0 rounded-[var(--radius-md)] bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-tighter text-[var(--accent-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all transform hover:-translate-y-1"
                         >
                             {tag}
                         </button>
@@ -384,7 +384,7 @@ export function AIAssistant() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   disabled={!connected || isLoading}
-                  className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
+                  className="w-full rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
                 />
                 <button 
                   type="submit"
@@ -408,7 +408,7 @@ export function AIAssistant() {
         whileHover={{ scale: 1.1, rotate: isOpen ? 0 : 10 }}
         whileTap={{ scale: 0.9 }}
         onClick={() => setIsOpen(!isOpen)}
-        className={`relative flex h-16 w-16 items-center justify-center rounded-[1.75rem] text-white shadow-[var(--shadow-2xl)] transition-all duration-500 overflow-hidden ${
+        className={`relative flex h-16 w-16 items-center justify-center rounded-[var(--radius-lg)] text-white shadow-[var(--shadow-2xl)] transition-all duration-500 overflow-hidden ${
             isOpen 
             ? "bg-[var(--surface-secondary)]"
             : "bg-gradient-to-tr from-[var(--accent-strong)] to-teal-700"

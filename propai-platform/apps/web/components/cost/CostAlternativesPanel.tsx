@@ -278,7 +278,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                     contentStyle={{
                       background: "var(--surface-strong)",
                       border: "1px solid var(--line-strong)",
-                      borderRadius: 12,
+                      borderRadius: "var(--r-panel)",
                       fontSize: 12,
                     }}
                     formatter={(v) => [fmtKrw(Number(v)), "총공사비"]}

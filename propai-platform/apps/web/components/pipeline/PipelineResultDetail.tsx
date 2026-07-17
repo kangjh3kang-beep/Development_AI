@@ -603,7 +603,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   const grade = getFieldValue("feasibility", "grade");
 
   return (
-    <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
+    <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
       {/* ── Header ── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-[var(--line)] bg-gradient-to-r from-[var(--accent-strong)]/5 to-transparent">
         <div className="flex items-center gap-3 mb-1">

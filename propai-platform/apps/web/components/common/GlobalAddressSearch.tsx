@@ -1316,7 +1316,7 @@ export function GlobalAddressSearch({
           </button>
         )
       ) : (
-        <div className="overflow-hidden rounded-[22px] border border-[var(--saas-ink-line-strong)] bg-[var(--surface-secondary)] shadow-[var(--shadow-lg)]">
+        <div className="overflow-hidden rounded-[var(--r-panel)] border border-[var(--saas-ink-line-strong)] bg-[var(--surface-secondary)] shadow-[var(--shadow-lg)]">
           <div className="relative overflow-hidden bg-[var(--saas-ink)] px-4 py-3 text-white">
             <div className="absolute inset-0 opacity-40" style={{
               backgroundImage: "linear-gradient(90deg, var(--saas-hero-grid-lime) 1px, transparent 1px), linear-gradient(0deg, var(--saas-hero-grid-sky) 1px, transparent 1px)",

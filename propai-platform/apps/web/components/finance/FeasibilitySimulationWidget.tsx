@@ -63,7 +63,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
     }
   };
 
-  if (!isMounted) return <div className="h-[500px] w-full animate-pulse rounded-[3.5rem] bg-[var(--surface-soft)]" />;
+  if (!isMounted) return <div className="h-[500px] w-full animate-pulse rounded-[var(--radius-2xl)] bg-[var(--surface-soft)]" />;
 
   return (
     <div className="flex flex-col gap-10">
@@ -80,7 +80,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
         <button
           onClick={runSimulation}
           disabled={isRunning}
-          className="group relative overflow-hidden rounded-[2rem] bg-[var(--accent-strong)] px-10 py-5 text-xs font-black uppercase tracking-widest text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+          className="group relative overflow-hidden rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-10 py-5 text-xs font-black uppercase tracking-widest text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
         >
           <span className="relative z-10 flex items-center gap-3">
             {isRunning ? (t.runningBtn || "시뮬레이션 중...") : (t.runBtn || "시뮬레이션 실행 →")}
@@ -90,7 +90,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
       </div>
 
       <div className="grid gap-8 xl:grid-cols-[380px_1fr]">
-        <div className="flex flex-col gap-8 rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-lg)]">
+        <div className="flex flex-col gap-8 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-lg)]">
           <h5 className="label-caps text-[var(--text-hint)]">
             {t.inputTitle || "VARIABLE CONTROL"}
           </h5>
@@ -128,7 +128,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
           </div>
         </div>
 
-        <div className="relative min-h-[550px] flex flex-col overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
+        <div className="relative min-h-[550px] flex flex-col overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
           <div className="flex items-center justify-between mb-10">
              <h5 className="label-caps text-[var(--text-hint)]">
                {t.outputTitle || "AI PREDICTION OVERVIEW"}
@@ -156,7 +156,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
           
           <div className="mt-12 flex-1 w-full relative">
             {isRunning && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface)]/40 backdrop-blur-md z-20 rounded-[2.5rem]">
+              <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface)]/40 backdrop-blur-md z-20 rounded-[var(--radius-xl)]">
                  <div className="flex flex-col items-center gap-6">
                     <div className="h-20 w-20 animate-spin rounded-full border-[6px] border-[var(--accent-soft)] border-t-[var(--accent-strong)] shadow-[var(--shadow-glow)]"></div>
                     <p className="text-xs font-black uppercase tracking-[0.5em] text-[var(--text-hint)] animate-pulse">Running Monte Carlo...</p>
@@ -164,7 +164,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
               </div>
             )}
             {!hasResult ? (
-              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 rounded-[2.5rem] border border-dashed border-[var(--line-strong)] text-center">
+              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 rounded-[var(--radius-xl)] border border-dashed border-[var(--line-strong)] text-center">
                 <TrendingUp className="size-10 opacity-50" aria-hidden />
                 <p className="text-sm font-bold text-[var(--text-secondary)]">시뮬레이션 실행 전</p>
                 <p className="text-xs text-[var(--text-hint)]">‘시뮬레이션 실행’을 누르면 몬테카를로 기반 NPV 분포·VaR가 표시됩니다.</p>
@@ -188,7 +188,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "var(--surface-strong)",
-                    borderRadius: "2rem",
+                    borderRadius: "var(--radius-lg)",
                     border: "1px solid var(--line-strong)",
                     boxShadow: "var(--shadow-2xl)",
                     padding: "1.5rem"

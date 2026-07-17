@@ -64,7 +64,7 @@ export function BusinessModelRefineModal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
-        className="relative w-full max-w-lg overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-2xl"
+        className="relative w-full max-w-lg overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-2xl"
       >
         {/* Header */}
         <div className="border-b border-[var(--line)] p-8 pb-6">

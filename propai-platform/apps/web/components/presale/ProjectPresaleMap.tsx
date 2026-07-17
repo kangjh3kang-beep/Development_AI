@@ -150,7 +150,7 @@ export function ProjectPresaleMap({
           <button key={s} onClick={() => toggle(s)}
             className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-bold transition-all ${active.has(s) ? "border-transparent text-white" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-hint)] line-through opacity-60"}`}
             style={active.has(s) ? { backgroundColor: STATUS_COLOR[s] } : undefined}>
-            <span className="h-2 w-2 rotate-45 rounded-[2px]" style={{ backgroundColor: STATUS_COLOR[s] }} />
+            <span className="h-2 w-2 rotate-45 rounded-[var(--r-input)]" style={{ backgroundColor: STATUS_COLOR[s] }} />
             {STATUS_LABEL[s]} {counts[s] || 0}
           </button>
         ))}

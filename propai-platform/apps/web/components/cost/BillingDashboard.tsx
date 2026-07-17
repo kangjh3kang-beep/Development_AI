@@ -435,7 +435,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
                       contentStyle={{
                         background: "var(--surface-strong)",
                         border: "1px solid var(--line-strong)",
-                        borderRadius: 12,
+                        borderRadius: "var(--r-panel)",
                         fontSize: 12,
                       }}
                       labelFormatter={(v) => `${v}회차`}

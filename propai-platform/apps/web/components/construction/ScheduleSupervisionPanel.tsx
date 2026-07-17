@@ -74,7 +74,7 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
         <motion.div 
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="flex min-h-[450px] flex-col rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
+          className="flex min-h-[450px] flex-col rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
         >
            <div className="mb-10 flex items-center justify-between">
               <h5 className="label-caps text-[var(--text-hint)]">
@@ -88,11 +88,11 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
            
            <div className="flex flex-1 flex-col gap-6">
               {loading ? (
-                <div className="flex flex-1 items-center justify-center py-4 text-center text-[10px] font-black uppercase tracking-[0.5em] animate-pulse text-[var(--text-hint)] italic border border-dashed border-[var(--line-strong)] rounded-[2.5rem]">
+                <div className="flex flex-1 items-center justify-center py-4 text-center text-[10px] font-black uppercase tracking-[0.5em] animate-pulse text-[var(--text-hint)] italic border border-dashed border-[var(--line-strong)] rounded-[var(--radius-xl)]">
                   Ochestrating Timelines...
                 </div>
               ) : tasks.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center py-4 text-center text-[10px] font-bold tracking-widest text-[var(--text-secondary)] italic border border-dashed border-[var(--line-strong)] rounded-[2.5rem] p-6">
+                <div className="flex flex-1 items-center justify-center py-4 text-center text-[10px] font-bold tracking-widest text-[var(--text-secondary)] italic border border-dashed border-[var(--line-strong)] rounded-[var(--radius-xl)] p-6">
                   건축개요(연면적·층수)가 없어 공정을 추정할 수 없습니다. 부지/설계 분석을 먼저 진행하세요.
                 </div>
               ) : tasks.map((task, i) => {
@@ -131,19 +131,19 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
         <motion.div 
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="flex flex-col gap-6 rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
+          className="flex flex-col gap-6 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
         >
            <h5 className="label-caps text-[var(--text-hint)]">
              {t.inspectionTitle || "공종별 공기 분배"}
            </h5>
            <div className="mt-4 flex flex-col gap-4">
               {tasks.length === 0 ? (
-                <p className="rounded-[2rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-6 text-center text-[11px] font-bold text-[var(--text-secondary)] italic">공정 추정 데이터 없음</p>
+                <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-6 text-center text-[11px] font-bold text-[var(--text-secondary)] italic">공정 추정 데이터 없음</p>
               ) : tasks.map((task, i) => (
                  <motion.div
                    key={i}
                    whileHover={{ scale: 1.02, x: 5 }}
-                   className="flex flex-col gap-3 rounded-[2rem] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-sm)] border border-[var(--line)] transition-all hover:bg-[var(--surface)]"
+                   className="flex flex-col gap-3 rounded-[var(--radius-lg)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-sm)] border border-[var(--line)] transition-all hover:bg-[var(--surface)]"
                  >
                     <div className="flex items-center justify-between">
                        <p className="font-black text-sm text-[var(--text-primary)] tracking-tight">{task.task}</p>

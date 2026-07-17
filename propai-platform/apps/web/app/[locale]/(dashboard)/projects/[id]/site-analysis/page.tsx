@@ -1112,8 +1112,8 @@ export default function SiteAnalysisPage() {
             exit={{ opacity: 0, y: -40, filter: "blur(20px)" }}
             className="mx-auto w-full max-w-5xl"
           >
-            <div className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
-               <div className="rounded-xl sm:rounded-[2.2rem] lg:rounded-[4.2rem] p-6 sm:p-10 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
+            <div className="rounded-2xl sm:rounded-[var(--radius-xl)] lg:rounded-[var(--radius-2xl)] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
+               <div className="rounded-xl sm:rounded-[var(--radius-lg)] lg:rounded-[var(--radius-2xl)] p-6 sm:p-10 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
                   <SiteInitiator onInitiate={handleInitiate} loading={false} />
                </div>
             </div>
@@ -1133,7 +1133,7 @@ export default function SiteAnalysisPage() {
               <motion.div
                 animate={{ scale: [1, 1.05, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
-                className="relative flex h-64 w-64 items-center justify-center rounded-[4rem] bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden"
+                className="relative flex h-64 w-64 items-center justify-center rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden"
               >
                  <div className="absolute inset-0 bg-[var(--accent-strong)]/5 animate-pulse" />
                  <Icons.Brain width={112} height={112} strokeWidth={1} />
@@ -1177,9 +1177,9 @@ export default function SiteAnalysisPage() {
             className="w-full flex flex-col gap-16"
           >
             {/* Context Summary Bar */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl sm:rounded-[2rem] lg:rounded-[4rem] bg-[var(--surface-strong)] p-6 sm:p-8 lg:p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-6 sm:gap-8">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl sm:rounded-[var(--radius-lg)] lg:rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] p-6 sm:p-8 lg:p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-6 sm:gap-8">
                <div className="flex items-center gap-8">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
                     <Icons.Map width={40} height={40} strokeWidth={1.5} />
                   </div>
                   <div className="space-y-1">
@@ -1238,7 +1238,7 @@ export default function SiteAnalysisPage() {
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
+              className="rounded-2xl sm:rounded-[var(--radius-xl)] lg:rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
             >
               <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>

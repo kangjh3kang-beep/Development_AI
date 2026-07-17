@@ -80,7 +80,7 @@ export function ProjectGenerationWizard({
   return (
     <div className="flex flex-col gap-6">
       {/* ── Template Select Tabs ── */}
-      <div className="relative rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-2 shadow-[var(--shadow-lg)] backdrop-blur-2xl">
+      <div className="relative rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-2 shadow-[var(--shadow-lg)] backdrop-blur-2xl">
         <div className="grid grid-cols-3 gap-2">
           {(["residential", "logistics", "eco-office"] as GenerationTemplateType[]).map((temp) => {
             const isActive = currentTemplate === temp;
@@ -111,8 +111,8 @@ export function ProjectGenerationWizard({
 
       {/* ── Wizard Form ── */}
       <div className="relative group">
-        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/10 to-indigo-500/10 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000" />
-        <div className="relative rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-2xl)]">
+        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/10 to-indigo-500/10 rounded-[var(--radius-xl)] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000" />
+        <div className="relative rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-2xl)]">
           <div className="mb-6 flex justify-between items-center">
             <h4 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
               {t.inputsTitle}
