@@ -971,6 +971,7 @@ export function SatongMultiMap({
       if (rings.length > 0) {
         L.polygon(rings, {
           color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.24,
+          bubblingMouseEvents: false, // 확정 필지 재클릭이 지점 팝오버를 열지 않게(R1 L3)
         }).addTo(layer);
       }
     }
@@ -1038,6 +1039,7 @@ export function SatongMultiMap({
       const notFoundLayer = L.layerGroup().addTo(map);
       L.circleMarker([lat, lon], {
         radius: 7, color: "#ef4444", weight: 2, fillColor: "#ef4444", fillOpacity: 0.3,
+        bubblingMouseEvents: false, // X 클릭 = 사유 팝업만(지점 팝오버 동시 표출 방지 — R1 L3)
       }).bindPopup(`<div style="font-size:12px;max-width:200px;">${msg}</div>`, { maxWidth: 220 }).openPopup().addTo(notFoundLayer);
       pendingLayerRef.current = notFoundLayer;
       return;
@@ -1089,6 +1091,7 @@ export function SatongMultiMap({
         // 확인 대기(pending) = 점선 파랑 — 확정(primary 실선)과 시각 구분.
         const poly = L.polygon(rings, {
           color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.22, dashArray: "6 4",
+          bubblingMouseEvents: false, // 확인 대기 필지 재클릭 = 무동작(팝오버 중복 방지 — R1 L3)
         }).addTo(layer);
         // 폴리곤 경계에 맞춰 지도 이동
         try { map.fitBounds(poly.getBounds(), { padding: [40, 40], maxZoom: 17 }); } catch { /* noop */ }
@@ -1098,6 +1101,7 @@ export function SatongMultiMap({
     // 중심점 마커(폴리곤 없을 때도 위치 표시)
     L.circleMarker([lat, lon], {
       radius: 7, color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.8,
+      bubblingMouseEvents: false,
     }).addTo(layer);
 
     // 하위호환: 단일 모드(onPick만, onPickMany 없음)에서만 즉시 호출.
@@ -1232,7 +1236,14 @@ export function SatongMultiMap({
         map.on("click", (e: any) => {
           if (readOnly) return;
           if (measureOnRef.current) {
-            setMeasurePoints((prev) => [...prev, { lat: e.latlng.lat, lon: e.latlng.lng }]);
+            setMeasurePoints((prev) => {
+              // Leaflet은 dblclick 전에 click을 2회 발화(알려진 동작) — 동일 좌표 중복점 스킵(R1 L1).
+              const last = prev[prev.length - 1];
+              if (last && Math.abs(last.lat - e.latlng.lat) < 1e-9 && Math.abs(last.lon - e.latlng.lng) < 1e-9) {
+                return prev;
+              }
+              return [...prev, { lat: e.latlng.lat, lon: e.latlng.lng }];
+            });
             return;
           }
           const pt = map.latLngToContainerPoint(e.latlng);
@@ -1536,6 +1547,8 @@ export function SatongMultiMap({
   //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
   //   포인트에 라벨만 부착한다(중복 마커 방지).
   const selectionLabelLayerRef = useRef<any>(null);
+  // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
+  const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
   /* eslint-disable react-hooks/set-state-in-effect -- Selection labels are rendered into an imperative Leaflet layer group. */
   useEffect(() => {
     const map = mapRef.current;
@@ -1569,14 +1582,16 @@ export function SatongMultiMap({
     //   표시하면 한 점에 겹겹이 쌓인다(12필지 주소 파일업). 줌아웃+다필지에서는 집계 칩
     //   1개("선택 N필지 · 합산㎡")로 롤업하고, 줌인(z≥15)에서만 필지별 '짧은 지번' 라벨을
     //   단다. 단일 필지는 어느 줌에서도 개별 라벨(초기 진입 식별 — PR#329 LOW1 의도 유지).
-    const lod = satongLabelLOD(mapZoom);
-    if (lod === "hover-only" && points.length > 1) {
+    if (selectionRollup && points.length > 1) {
       const centroid = {
         lat: points.reduce((s, e) => s + e.point.lat, 0) / points.length,
         lon: points.reduce((s, e) => s + e.point.lon, 0) / points.length,
       };
-      const totalArea = overlayFeatures.reduce((s, f) => s + (f.areaSqm || 0), 0);
-      const label = `선택 ${points.length}필지${totalArea > 0 ? ` · ${Math.round(totalArea).toLocaleString()}㎡` : ""}`;
+      // ★정직표기(R1 M1): 면적은 라벨이 세는 피처(points)와 같은 모집단으로 합산하고,
+      //   결측이 하나라도 있으면 부분합을 전체합처럼 보이게 하지 않도록 면적 표기를 생략한다.
+      const hasAllAreas = points.every((e) => (e.feature.areaSqm ?? 0) > 0);
+      const totalArea = points.reduce((s, e) => s + (e.feature.areaSqm || 0), 0);
+      const label = `선택 ${points.length}필지${hasAllAreas && totalArea > 0 ? ` · ${Math.round(totalArea).toLocaleString()}㎡` : ""}`;
       bindSatongLabel(makeAnchor(centroid.lat, centroid.lon), label, { permanent: true, offsetY: 2 });
     } else {
       points.forEach(({ feature, point }) => {
@@ -1592,7 +1607,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures, mapZoom]);
+  }, [mapReady, overlayFeatures, selectionRollup]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──

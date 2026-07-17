@@ -1990,10 +1990,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
               //   지도가 화면보다 클 때 레일이 폴드 밑으로 늘어나 하단 버튼 도달 불가·페이지
               //   스크롤 시 hover 전개가 풀리던 문제를 해소. 고정(핀) 시 2열 그리드로 접어
               //   12버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시.
+              //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
+              //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
               className={`group absolute right-4 top-20 z-[420] rounded-[22px] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
                 railPinned
-                  ? "grid w-[7.25rem] auto-rows-min grid-cols-2 gap-2 h-auto max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
-                  : "flex w-16 flex-col gap-2 h-16 overflow-hidden hover:h-auto hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
+                  ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
+                  : "flex w-16 flex-col gap-2 h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
               }`}
             >
               {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
