@@ -577,8 +577,14 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
 function won(man?: number): string {
   if (!man || man <= 0) return "-";
   if (man >= 10000) {
-    const eok = Math.floor(man / 10000);
-    const rest = Math.round((man % 10000) / 1000);
+    let eok = Math.floor(man / 10000);
+    let rest = Math.round((man % 10000) / 1000);
+    // ★R1 발견(발견즉시 수정): 9,900만대 반올림 시 rest=10이 되어 "4.10억"으로 오표기 —
+    //   자리올림해 "5억"으로 정직 표기.
+    if (rest >= 10) {
+      eok += 1;
+      rest = 0;
+    }
     return rest > 0 ? `${eok}.${rest}억` : `${eok}억`;
   }
   return `${Math.round(man).toLocaleString()}만`;
@@ -1885,10 +1891,8 @@ export function SatongMultiMap({
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
       // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
-      const priceTag =
-        kind === "trade" && item.avg_price_10k
-          ? ` ${(item.avg_price_10k / 10_000).toFixed(1)}억`
-          : "";
+      // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
+      const priceTag = kind === "trade" && item.avg_price_10k ? ` ${won(item.avg_price_10k)}` : "";
       bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < marketLabelLimit, offsetY: radius });
       bounds.extend([item.lat, item.lon]);
     });
