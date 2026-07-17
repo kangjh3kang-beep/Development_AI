@@ -61,7 +61,11 @@
 // v432: 지적타일 최종 근본원인 봉합 — VWorld WMS 레이어명 오기 정정(lp_pa_cbnd_bubun/bonbun
 //        소문자 정본·대소문자 정규화). 구캐시의 잘못된 레이어명 요청 잔존 방지 삭제.
 // v433: VWorld A군 3종(#368 — 위성뷰 지적 선 스타일·측정 rail·KML 내보내기). UI stale 방지 삭제.
-const CACHE_NAME = "propai-v433-satong-a-pack";
+// v434: 배경지도 전역 미표시 근본봉합(#370 — VWorld tiletype 오기 gray→white 정본화 + WMTS
+//        OWS ExceptionReport 파서 갭). ★구캐시 삭제 필수 — 구 번들은 존재하지 않는 tiletype
+//        "gray"를 계속 요청해 회색 베이스맵에서 배경지도가 통째로 미표시된다(프록시가 레거시
+//        별칭으로 흡수하지만, 캐시된 구 JS 자체를 걷어내야 완전 복구).
+const CACHE_NAME = "propai-v434-basemap-tiletype";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
