@@ -1154,10 +1154,33 @@ class TestDeliberationSurfaceGate:
         assert data["deliberation_result"]["engine_verdict"] == "needs_review"
         assert captured["domain"] == "design_audit"
         assert captured["tenant_id"] == str(TENANT_ID)
+        # ★force_engine_call 전파 앵커(R1) — 호출부에서 이 인자를 지우면(전역 shadow 게이트에
+        #   재의존) 표면화가 기본 환경(shadow off)에서 dead-path 로 회귀한다.
+        assert captured.get("force_engine_call") is True
 
-    def test_gate_on_but_shadow_off_stays_silent(self, monkeypatch):
-        """표면화만 켜고 shadow 관측 자체가 꺼져 있으면(운영 오설정) 여전히 무변경(gate-first)."""
+    def test_surface_independent_of_shadow_gate(self, monkeypatch):
+        """★표면화는 전역 shadow 게이트와 독립(OR·07-17 기본 ON 승격) — shadow off 여도 동봉된다.
+
+        구 앵커(test_gate_on_but_shadow_off_stays_silent)는 "shadow off→침묵"을 고정했으나
+        그 전제는 자립 게이트 설계와 모순이며, engine_url="" 우연으로만 녹색이었다(R1 적발).
+        새 앵커: shadow=False + surface=True 에서 shadow_compare 가 force_engine_call=True 로
+        호출되고 결과가 응답에 동봉됨을 고정한다(감사 한정 자립의 계약).
+        """
         client = _make_client()
         monkeypatch.setattr(da_module, "_get_orchestrator", lambda: _FakeOrchestrator())
+
+        import app.services.deliberation.shadow_integration as si_mod
+
+        captured = {}
+
+        async def _fake_compare(**kw):
+            captured.update(kw)
+            return {"id": "y", "matched": True, "divergence_score": 0.0,
+                    "quant_rel_err": None, "engine_verdict": "pass",
+                    "platform_verdict": kw.get("platform_verdict")}
+
+        monkeypatch.setattr(si_mod, "shadow_compare", _fake_compare)
+
         data = self._run_audit(client, monkeypatch, shadow_enabled=False, surface_enabled=True)
-        assert "deliberation_result" not in data
+        assert data["deliberation_result"]["engine_verdict"] == "pass"
+        assert captured.get("force_engine_call") is True
