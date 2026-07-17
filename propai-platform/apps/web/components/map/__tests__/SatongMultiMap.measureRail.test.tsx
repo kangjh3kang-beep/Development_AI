@@ -41,4 +41,15 @@ describe("SatongMultiMap 측정 rail(V2)", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(area).toHaveAttribute("aria-pressed", "false");
   });
+
+  it("★rail은 좌중앙(top-1/2) 앵커 — bottom 앵커 금지(줌 컨트롤 중첩 재발 방지)", () => {
+    // 위치 이력: 우상단(레이어 레일 충돌)→bottom-28(줌 '+' 중첩 — 래퍼 기준 absolute가
+    // 완료바 높이만큼 지도 기준으로 내려앉는 함정)→좌중앙. 이 핀은 세 번째 회귀를 막는다.
+    render(<SatongMultiMap />);
+    const rail = screen.getByRole("button", { name: "거리재기 도구" }).parentElement;
+    expect(rail?.className).toContain("top-1/2");
+    expect(rail?.className).not.toMatch(/bottom-\d/);
+    // DESIGN.md B3.1:218 — 플로팅 컨트롤 가장자리 16px 이상 이격(left-4=16px).
+    expect(rail?.className).toContain("left-4");
+  });
 });

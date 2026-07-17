@@ -2331,8 +2331,20 @@ export function SatongMultiMap({
         {/* ── V2 측정 rail(VWorld 공식 프로토타입 패턴) — 팝오버 진입과 병행하는 상시 도구 ── */}
         {!readOnly && (
           <div
-            // R1 M1: 우상단은 셸 레이어 레일(right-4 top-20)과 겹침 — 좌하단 줌 컨트롤 위로 이동.
-            className="pointer-events-auto absolute bottom-28 left-3 flex flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
+            // ★위치 이력(재발 방지): 우상단→셸 레이어 레일(right-4 top-20)과 겹침(R1 M1) →
+            //   좌하단 bottom-28로 이동 → ★다시 줌 컨트롤과 중첩(2026-07-17 라이브 신고).
+            //   근본원인: 이 absolute의 기준은 지도가 아니라 '래퍼'(하단 완료바 포함 — :2536
+            //   배너 주석과 동일 함정)라, bottom-28(112px)이 지도 기준으로는 완료바 높이만큼
+            //   내려앉아(≈50px) 지도 기준 10~78px의 줌 '+' 버튼을 정확히 덮었다.
+            //   → 좌중앙(top-1/2) 앵커로 이동: 줌(좌하단)·레이어 레일(우측)·저줌 배너(하단)·
+            //   완료바(하단) 어느 것과도 세로 대역이 겹치지 않는 유일한 좌측 슬롯.
+            //   ★정직 고지(R1): 앵커 공식은 완료바 유무에 불변이지만 **충돌무결성은 높이
+            //   의존**이다 — 지도 높이 H<약 282px면 rail 하단이 줌 '+'와 재중첩한다(rail은
+            //   래퍼 중앙 비례·줌은 지도 바닥 고정 오프셋이라). 현행 비-readOnly 콜러 최소
+            //   높이 500 → 안전 마진 ≥69px. 새 콜러는 500px 미만 높이 배치 금지.
+            //   left-4=16px — DESIGN.md B3.1:218
+            //   "플로팅 컨트롤 가장자리 16~24px 이격" 충족(종전 left-3=12px는 미달).
+            className="pointer-events-auto absolute left-4 top-1/2 flex -translate-y-1/2 flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
             style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
           >
             <button
@@ -2381,7 +2393,8 @@ export function SatongMultiMap({
           const pos = clampClickMenuPosition(
             { x: clickMenu.x, y: clickMenu.y },
             { width: clickMenu.w, height: clickMenu.h },
-            { width: 224, height: 196 },
+            // ★w-64(256px)·좌표행 추가 반영 — 컨테이너 실측과 동기 유지(어긋나면 화면 밖 클램프 오차).
+            { width: 256, height: 232 },
           );
           const subInfo = [
             clickMenuFeature?.zoneType || null,
@@ -2393,54 +2406,69 @@ export function SatongMultiMap({
           const coordText = `${clickMenu.lat.toFixed(6)}, ${clickMenu.lon.toFixed(6)}`;
           return (
             <div
-              className="pointer-events-auto absolute w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] shadow-xl backdrop-blur"
+              // ★DESIGN.md 정합(2026-07-17): L3 팝오버=blur 24px(B4:239 — 종전 기본
+              //   backdrop-blur 8px는 위반) · 라운드 12px(:290) · w-64 — 좌표 잘림 원천 해소.
+              className="pointer-events-auto absolute w-64 -translate-x-1/2 overflow-hidden rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] shadow-xl backdrop-blur-xl"
               style={{ left: pos.left, top: pos.top, zIndex: SATONG_UI_Z.clickMenu }}
               role="menu"
               aria-label="지도 지점 메뉴"
             >
               <div className="border-b border-[var(--border-muted)] px-3 py-2">
-                <p className="truncate text-xs font-black text-[var(--text-primary)]">
-                  {clickMenuFeature?.address
-                    ? shortJibunLabel(clickMenuFeature.address)
-                    : `${clickMenu.lat.toFixed(5)}, ${clickMenu.lon.toFixed(5)}`}
+                {/* label-caps 시그니처(B2 — 패널 최상단) — 팝업 성격을 한눈에.
+                    ★라벨은 피처 '존재'로 판정(R1 m2) — address 유무로 가르면 피처는 매치됐는데
+                    주소 보강만 늦은 경우 "지도 지점" 라벨 아래 용도지역·공시가가 떠 모순된다. */}
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--on-surface-muted)]">
+                  {clickMenuFeature ? "필지" : "지도 지점"}
                 </p>
+                {clickMenuFeature?.address && (
+                  <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text-primary)]">
+                    {shortJibunLabel(clickMenuFeature.address)}
+                  </p>
+                )}
                 {subInfo.length > 0 && (
-                  <p className="mt-0.5 truncate text-[10px] font-semibold text-[var(--text-secondary)]">
+                  <p className="mt-0.5 truncate text-[11px] text-[var(--text-secondary)]">
                     {subInfo.join(" · ")}
                   </p>
                 )}
-                {/* 좌표 복사 — 임장·외부 공유용(WGS84 소수 6자리 ≈ 0.1m 정밀). */}
-                <button
-                  type="button"
-                  className="mt-1 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
-                  onClick={() => {
-                    // ★R1: clipboard 미지원이면 옵셔널 체이닝이 조용히 단락되므로 성공 표기를
-                    //   해선 안 되고, writeText Promise 거부(권한/포커스)도 삼키면 거짓 성공이
-                    //   된다 — 실제 resolve 후에만 '복사됨' 표기(정직).
-                    const writing = navigator.clipboard?.writeText?.(coordText);
-                    if (!writing) return;
-                    writing.then(() => setCopiedCoord(coordText)).catch(() => { /* 거부 — 무표기 */ });
-                  }}
-                >
-                  {copiedCoord === coordText ? "좌표 복사됨 ✓" : `좌표 복사 (${coordText})`}
-                </button>
+                {/* 좌표행 — 수치는 data-mono(B2). 복사 라벨은 고정("복사")·좌표는 이 행이 정본
+                    → 종전 "좌표 복사 (37.30...)" 버튼 내 좌표 중복이 w-56에서 잘리던 결함 해소. */}
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="truncate font-mono text-[11px] text-[var(--text-secondary)]" title={coordText}>
+                    {coordText}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`좌표 복사 (${coordText})`}
+                    className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
+                    onClick={() => {
+                      // ★R1: clipboard 미지원이면 옵셔널 체이닝이 조용히 단락되므로 성공 표기를
+                      //   해선 안 되고, writeText Promise 거부(권한/포커스)도 삼키면 거짓 성공이
+                      //   된다 — 실제 resolve 후에만 '복사됨' 표기(정직).
+                      const writing = navigator.clipboard?.writeText?.(coordText);
+                      if (!writing) return;
+                      writing.then(() => setCopiedCoord(coordText)).catch(() => { /* 거부 — 무표기 */ });
+                    }}
+                  >
+                    {copiedCoord === coordText ? "복사됨 ✓" : "복사"}
+                  </button>
+                </div>
               </div>
               <button
                 type="button"
                 role="menuitem"
-                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                 onClick={() => {
                   isMapClickSelectionRef.current = true;
                   void queryParcel(clickMenu.lat, clickMenu.lon);
                   setClickMenu(null);
                 }}
               >
-                <span className="inline-flex items-center gap-1"><MapPin className="size-3.5" aria-hidden />이 필지 선택·정보</span>
+                <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5 text-[var(--text-secondary)]" aria-hidden />이 필지 선택·정보</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
-                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                 onClick={() => {
                   setMeasureMode("distance");
                   setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
@@ -2448,12 +2476,12 @@ export function SatongMultiMap({
                   setClickMenu(null);
                 }}
               >
-                <span className="inline-flex items-center gap-1"><Ruler className="size-3.5" aria-hidden />거리재기 시작</span>
+                <span className="inline-flex items-center gap-1.5"><Ruler className="size-3.5 text-[var(--text-secondary)]" aria-hidden />거리재기 시작</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
-                className="block w-full px-3 py-2 text-left text-xs font-bold text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                 onClick={() => {
                   setMeasureMode("area");
                   setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
@@ -2461,7 +2489,7 @@ export function SatongMultiMap({
                   setClickMenu(null);
                 }}
               >
-                <span className="inline-flex items-center gap-1"><LandPlot className="size-3.5" aria-hidden />면적재기 시작</span>
+                <span className="inline-flex items-center gap-1.5"><LandPlot className="size-3.5 text-[var(--text-secondary)]" aria-hidden />면적재기 시작</span>
               </button>
               <button
                 type="button"
