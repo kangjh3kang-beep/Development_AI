@@ -76,7 +76,9 @@
 // v438: 규제 오버레이 5종(#382 — zoning 플레이스홀더 잠금해제: 개발행위허가제한·지구단위·
 //        상수원보호·교육환경보호·고도지구 + 지적선 z5 승격). 구캐시의 구 화이트리스트
 //        프록시 JS가 남으면 신규 레이어 요청이 400으로 거부되므로 일괄 삭제 필수.
-const CACHE_NAME = "propai-v439-market-precision";
+// v440: WS-D① 개발여력 히트맵(#387 — 실효·현황 용적률 표면화+선택필지 코로플레스·
+//        renderable 불변식). 구캐시 JS는 capacity 레이어를 몰라 레일에 미노출 — 삭제 필수.
+const CACHE_NAME = "propai-v440-capacity-heatmap";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
