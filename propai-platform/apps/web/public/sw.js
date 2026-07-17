@@ -60,7 +60,8 @@
 //        스위처·INCORRECT_KEY 자동 재중계·자동진단·도크 겹침 해소). 프록시/칩 UI stale 방지 삭제.
 // v432: 지적타일 최종 근본원인 봉합 — VWorld WMS 레이어명 오기 정정(lp_pa_cbnd_bubun/bonbun
 //        소문자 정본·대소문자 정규화). 구캐시의 잘못된 레이어명 요청 잔존 방지 삭제.
-const CACHE_NAME = "propai-v432-wms-layer-names";
+// v433: VWorld A군 3종(#368 — 위성뷰 지적 선 스타일·측정 rail·KML 내보내기). UI stale 방지 삭제.
+const CACHE_NAME = "propai-v433-satong-a-pack";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
