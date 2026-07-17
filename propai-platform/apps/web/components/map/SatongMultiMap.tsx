@@ -2337,8 +2337,12 @@ export function SatongMultiMap({
             //   배너 주석과 동일 함정)라, bottom-28(112px)이 지도 기준으로는 완료바 높이만큼
             //   내려앉아(≈50px) 지도 기준 10~78px의 줌 '+' 버튼을 정확히 덮었다.
             //   → 좌중앙(top-1/2) 앵커로 이동: 줌(좌하단)·레이어 레일(우측)·저줌 배너(하단)·
-            //   완료바(하단) 어느 것과도 세로 대역이 겹치지 않는 유일한 좌측 슬롯이며, 완료바
-            //   유무(래퍼 높이 변동)에도 불변이다. left-4=16px — DESIGN.md B3.1:218
+            //   완료바(하단) 어느 것과도 세로 대역이 겹치지 않는 유일한 좌측 슬롯.
+            //   ★정직 고지(R1): 앵커 공식은 완료바 유무에 불변이지만 **충돌무결성은 높이
+            //   의존**이다 — 지도 높이 H<약 282px면 rail 하단이 줌 '+'와 재중첩한다(rail은
+            //   래퍼 중앙 비례·줌은 지도 바닥 고정 오프셋이라). 현행 비-readOnly 콜러 최소
+            //   높이 500 → 안전 마진 ≥69px. 새 콜러는 500px 미만 높이 배치 금지.
+            //   left-4=16px — DESIGN.md B3.1:218
             //   "플로팅 컨트롤 가장자리 16~24px 이격" 충족(종전 left-3=12px는 미달).
             className="pointer-events-auto absolute left-4 top-1/2 flex -translate-y-1/2 flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
             style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
@@ -2410,9 +2414,11 @@ export function SatongMultiMap({
               aria-label="지도 지점 메뉴"
             >
               <div className="border-b border-[var(--border-muted)] px-3 py-2">
-                {/* label-caps 시그니처(B2 — 패널 최상단) — 팝업 성격을 한눈에. */}
+                {/* label-caps 시그니처(B2 — 패널 최상단) — 팝업 성격을 한눈에.
+                    ★라벨은 피처 '존재'로 판정(R1 m2) — address 유무로 가르면 피처는 매치됐는데
+                    주소 보강만 늦은 경우 "지도 지점" 라벨 아래 용도지역·공시가가 떠 모순된다. */}
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--on-surface-muted)]">
-                  {clickMenuFeature?.address ? "필지" : "지도 지점"}
+                  {clickMenuFeature ? "필지" : "지도 지점"}
                 </p>
                 {clickMenuFeature?.address && (
                   <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text-primary)]">
