@@ -1488,7 +1488,7 @@ export function SatongMultiMap({
       transparent: true,
       version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
       opacity: 0.6,
-      zIndex: 4, // 지적편집도(3) 위, 폴리곤(overlayPane)·라벨 pane 아래
+      zIndex: 4, // z 스케일: zoningWide(3) < 규제(4) < 지적선(5) — 채움이 지적선을 못 덮는다
       maxZoom: 19,
       minZoom: 7,
       attribution: "VWorld 규제(도시계획·보호구역)",
@@ -1542,7 +1542,11 @@ export function SatongMultiMap({
       //   프록시 분류기가 이 XML을 auth로 승격해 "키 미설정" 오해 메시지가 표시됐다.
       //   1.3.0에서는 Leaflet이 SRS 대신 CRS 파라미터를 전송한다(정상 — VWorld 수용).
       version: "1.3.0",
-      zIndex: 4, // 전국 지적편집도(zoning-wide, 3) '위' — 용도색이 지적선을 덮지 않게(R1 #2)
+      // ★z 스케일(2026-07-18 R1 MAJOR 반영): zoningWide=3 < regulation=4 < cadastre=5.
+      //   종전 지적=4는 규제 오버레이(4)와 동률 — 같은 pane에서 동률 z는 DOM 삽입 순서로
+      //   갈려, 나중에 켠 규제 채움(opacity .6)이 기본-온 지적선을 덮었다(불변식 위반).
+      //   지적선은 모든 채움 오버레이 '위'가 계약이므로 5로 승격.
+      zIndex: 5,
       maxZoom: 19,
       minZoom: 10,
       attribution: "VWorld 연속지적도",
