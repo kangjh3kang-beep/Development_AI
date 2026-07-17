@@ -125,3 +125,29 @@ export function formatAnalysisValue(
   if (trimmed === "") return "분석 전";
   return `${trimmed}${suffix}`;
 }
+
+/**
+ * 만원 단위 금액 → "N억 N,NNN만원"(예: 12500 → "1억 2,500만원", 500 → "500만원").
+ * 시장분석(시장인사이트) 화면 여러 곳에 흩어져 있던 동일 로직(formatPrice·formatMan·man 등
+ * 4중복)의 단일 출처(SSOT). 무효/0 이하 입력은 "-"(가짜 0원 표기 금지).
+ */
+export function formatManwon(man?: number | null): string {
+  if (!man || man <= 0) return "-";
+  if (man >= 10000) {
+    const uk = Math.floor(man / 10000);
+    const rest = man % 10000;
+    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
+  }
+  return `${man.toLocaleString()}만원`;
+}
+
+/**
+ * "YYYYMM" 연월 문자열 → "YY.MM" 축약 표기(차트 축 라벨·표 셀 등 좁은 공간용).
+ * 형식이 다르면(YYYYMM 6자리가 아니면) 원본 값을 그대로 반환(날조 금지).
+ */
+export function formatYm(ym?: string | null): string {
+  if (!ym) return "-";
+  const m = String(ym).match(/^(\d{4})(\d{2})$/);
+  if (!m) return String(ym);
+  return `${m[1].slice(2)}.${m[2]}`;
+}

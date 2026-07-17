@@ -30,6 +30,8 @@ type FeasibilityData = {
     construction_cost_per_pyeong_10k: number;
     npv_discount_rate?: number;
     npv_dev_period_years?: number;
+    /** 토지 매입비 = 공시지가 × 이 배수(실거래가 프리미엄 추정 반영). 백엔드 feasibility_service.py 산출. */
+    land_cost_official_price_multiplier?: number;
   };
 };
 
@@ -44,6 +46,10 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
   if (!data || !data.financials || !data.massing) return null;
 
   const { financials, massing, assumptions } = data;
+
+  // 자연녹지·보전·생산 계열 용도지역은 공동주택 건축이 제한적으로만 허용된다 — 개략 수치를
+  //   무조건적 가능치처럼 오인하지 않도록 카드 상단에 조건부 경고를 정직하게 노출한다.
+  const isRestrictedZone = !!zoneType && /(자연녹지|보전|생산)/.test(zoneType);
 
   const formatPrice = (val: number) => {
     if (val >= 10000) {
@@ -72,9 +78,19 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
     { label: "예상 세전 순수익", value: formatPrice(financials.net_profit_10k), basis: "분양 수익 − 총 사업비" },
     { label: "예상 수익률(ROI)", value: `${financials.roi_percent}%`, basis: "세전 순수익 ÷ 총 사업비 × 100 — 투입자본 대비 수익률(추정)" },
     { label: "총 사업비", value: formatPrice(financials.total_cost_10k), basis: "토지 매입비 + 예상 건축비 + 부대 비용(아래 지출 구조 차트 참조)" },
+  ];
+  // 토지 매입비 산출 근거 — 공시지가 × 배수(백엔드 옵셔널 필드, 부재 시 미표기).
+  if (assumptions?.land_cost_official_price_multiplier != null) {
+    evidenceItems.push({
+      label: "토지 매입비",
+      value: formatPrice(financials.land_cost_10k),
+      basis: `토지 매입비 = 공시지가 × 배수 ${assumptions.land_cost_official_price_multiplier}(실거래가 프리미엄 추정 반영)`,
+    });
+  }
+  evidenceItems.push(
     { label: "분양 수익", value: formatPrice(financials.total_revenue_10k), basis: `건축가능 연면적 ${massing.gfa_pyeong.toLocaleString()}평 × 평당 분양가 ${formatPrice(assumptions?.avg_pyeong_price_10k || 0)} × 전용률 75%(추정)` },
     { label: "건축비 단가", value: `평당 ${(assumptions?.construction_cost_per_pyeong_10k ?? 0).toLocaleString()}만원`, basis: "예상 건축비 산정 단가(추정)" },
-  ];
+  );
   if (financials.npv_10k != null) {
     evidenceItems.push({
       label: "순현재가치(NPV)",
@@ -93,6 +109,11 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
         </header>
 
         <div className="sa-di-block__body grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-[var(--surface-soft)] rounded-b-2xl">
+          {isRestrictedZone && (
+            <div className="md:col-span-2 rounded-xl border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-4 py-3 text-xs font-bold leading-relaxed text-[var(--status-warning)]">
+              이 용도지역은 공동주택 건축이 제한적으로 허용됩니다 — 개발행위허가·조례 확인 필수. 아래 수치는 허용을 전제한 개략 추정입니다.
+            </div>
+          )}
           {/* 가설계 / Massing */}
           <Card className="border-[var(--line-strong)] shadow-sm">
             <CardContent className="p-5 flex flex-col justify-between h-full">

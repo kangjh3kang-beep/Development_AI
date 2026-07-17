@@ -19,6 +19,7 @@
 import { BarChart3, Home, Users, Wallet } from "lucide-react";
 import type { DataSource } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
+import { formatManwon as man, formatYm } from "@/lib/formatters";
 
 /* ------------------------------------------------------------------ */
 /*  raw_data 타입 (백엔드 P2 스키마)                                   */
@@ -104,17 +105,6 @@ export interface RawData {
 /* ------------------------------------------------------------------ */
 /*  헬퍼 (이 컴포넌트 내부 전용 — 기존 formatPrice 패턴 참고)          */
 /* ------------------------------------------------------------------ */
-
-/** 만원 단위 금액 → "N억 N,NNN만원". 값이 없거나 0 이하면 "-". */
-function man(v?: number | null): string {
-  if (v == null || v <= 0) return "-";
-  if (v >= 10000) {
-    const uk = Math.floor(v / 10000);
-    const rest = v % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${v.toLocaleString()}만원`;
-}
 
 /** 평당가(만원/평) → "N,NNN만원/평". null이면 "-". */
 function perPyeong(v: number | null): string {
@@ -289,7 +279,7 @@ export function RawDataTables({ raw, section }: { raw: RawData | undefined; sect
                     const momText = mom == null ? "-" : `${mom > 0 ? "+" : ""}${mom.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
                     return (
                       <tr key={i}>
-                        <td className="sa-di-num" style={{ textAlign: "left", color: "var(--text-secondary)" }}>{r.ym}</td>
+                        <td className="sa-di-num" style={{ textAlign: "left", color: "var(--text-secondary)" }}>{formatYm(r.ym)}</td>
                         <td className="sa-di-num">{perPyeong(r.per_pyeong_manwon)}</td>
                         <td className="sa-di-num" style={{ color: momColor, fontWeight: 700 }}>{momText}</td>
                       </tr>
