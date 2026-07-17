@@ -507,7 +507,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── Input Form (체험/모달 모드) ── */}
       {!embedded && (
-      <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-xl)]">
+      <div className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-xl)]">
         <div className="flex flex-col gap-6">
           {/* Row 1: Address + Region */}
           <div className="flex flex-col gap-4 lg:flex-row">
@@ -674,13 +674,13 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                 <TiltCard
                   key={model.type_code}
                   glowColor={style.glow}
-                  className="rounded-[2.5rem]"
+                  className="rounded-[var(--radius-xl)]"
                 >
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 * (idx + 1) }}
-                    className={`relative flex flex-col gap-6 rounded-[2.5rem] border-2 ${style.border} ${style.bg} p-8 backdrop-blur-xl shadow-[var(--shadow-xl)] h-full`}
+                    className={`relative flex flex-col gap-6 rounded-[var(--radius-xl)] border-2 ${style.border} ${style.bg} p-8 backdrop-blur-xl shadow-[var(--shadow-xl)] h-full`}
                   >
                     {/* Rank Badge */}
                     <div className="flex items-center justify-between">
@@ -766,7 +766,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── ★P1 미래속성: 종상향 잠재(현행 추천과 분리·예상치) ── */}
       {upzoning?.potential_far_range && (upzoning.potential_far_range.max_pct ?? 0) > (upzoning.current_far_pct ?? 0) && (
-        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-amber-500/30 bg-amber-500/5 p-6">
           <div className="mb-2 flex items-center gap-2">
             <TrendingUp className="size-5 text-amber-400" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">미래 토지속성 — 종상향 잠재(예상치)</h3>
@@ -793,7 +793,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       {/* ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹 반영(IntegratedRecommender 2축의 종상향 후보).
           ★배너(upzoning_potential)와 독립 — 두 엔진(calc_upzoning vs IntegratedRecommender) 판정이 달라도 노출. */}
       {upzoningRanked.length > 0 && (
-        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-amber-500/30 bg-amber-500/5 p-6">
           <div className="mb-2 flex items-center gap-2">
             <TrendingUp className="size-5 text-amber-400" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">종상향 시 추천 사업방식(수익순·잠재)</h3>
@@ -825,7 +825,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── LLM(Claude) 사업성 종합 해석 ── */}
       {aiInterpretation && (
-        <div className="rounded-[2rem] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
+        <div className="rounded-[var(--radius-lg)] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
           <div className="flex items-center gap-2 mb-4">
             <Brain className="size-5 text-blue-400" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">

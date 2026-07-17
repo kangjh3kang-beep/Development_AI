@@ -19,12 +19,12 @@ export default function CadPage() {
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.2 }}
-        className="relative overflow-hidden rounded-[3rem] border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-12 lg:p-16 shadow-[var(--shadow-2xl)] backdrop-blur-3xl group"
+        className="relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-12 lg:p-16 shadow-[var(--shadow-2xl)] backdrop-blur-3xl group"
       >
         <div className="absolute -left-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[100px] transition-all duration-1000 group-hover:scale-150" />
         
         <div className="relative z-10 flex flex-col gap-10 lg:flex-row lg:items-center lg:gap-16">
-          <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
+          <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
           </div>
           <div className="space-y-6">
@@ -45,7 +45,7 @@ export default function CadPage() {
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="cc-panel cc-bracketed rounded-[4rem] p-4 lg:p-8 shadow-[var(--shadow-2xl)] overflow-hidden group"
+        className="cc-panel cc-bracketed rounded-[var(--radius-2xl)] p-4 lg:p-8 shadow-[var(--shadow-2xl)] overflow-hidden group"
       >
         <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
         <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />

@@ -136,8 +136,8 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
 
       {/* Input Area */}
       <div className="relative group">
-        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/20 to-indigo-500/20 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000"></div>
-        <div className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl">
+        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/20 to-indigo-500/20 rounded-[var(--radius-xl)] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+        <div className="relative rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl">
           <AnimatePresence mode="wait">
             {activeTab === "search" ? (
               <motion.div

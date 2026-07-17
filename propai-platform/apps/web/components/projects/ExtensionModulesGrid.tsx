@@ -88,7 +88,7 @@ export function ExtensionModulesGrid({ locale, projectId }: { locale: string; pr
   return (
     <section
       aria-label="확장 모듈"
-      className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-lg)]"
+      className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-lg)]"
     >
       <div className="mb-6 space-y-2">
         <p className="cc-meta tracking-[0.3em]">Extension Modules</p>

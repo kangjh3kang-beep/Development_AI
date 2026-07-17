@@ -64,7 +64,7 @@ export function DashboardKpiLoader() {
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-[160px] animate-pulse rounded-[2.5rem] bg-[var(--surface-soft)] border border-[var(--line)]"
+            className="h-[160px] animate-pulse rounded-[var(--radius-xl)] bg-[var(--surface-soft)] border border-[var(--line)]"
           />
         ))}
       </div>

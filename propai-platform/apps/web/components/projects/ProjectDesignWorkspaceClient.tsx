@@ -331,7 +331,7 @@ export function ProjectDesignWorkspaceClient({
                 />
                 
                 {/* 2D Vector CAD View Frame */}
-                <div className="relative rounded-[2rem] border border-[var(--line-strong)] overflow-hidden aspect-[3/2] bg-[var(--surface-soft)] flex items-center justify-center group/floor">
+                <div className="relative rounded-[var(--radius-lg)] border border-[var(--line-strong)] overflow-hidden aspect-[3/2] bg-[var(--surface-soft)] flex items-center justify-center group/floor">
                   {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
                   <div
                     className="absolute inset-0 opacity-10 pointer-events-none"
@@ -362,7 +362,7 @@ export function ProjectDesignWorkspaceClient({
                 </div>
               </div>
             ) : (
-              <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-8 text-center text-xs font-semibold leading-relaxed text-[var(--text-hint)] h-[240px] flex items-center justify-center">
+              <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-8 text-center text-xs font-semibold leading-relaxed text-[var(--text-hint)] h-[240px] flex items-center justify-center">
                 {labels.placeholder}
               </div>
             )}
@@ -426,7 +426,7 @@ export function ProjectDesignWorkspaceClient({
                   />
                 </div>
               ) : (
-                <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
+                <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
                   {labels.placeholder}
                 </div>
               )}
@@ -457,7 +457,7 @@ export function ProjectDesignWorkspaceClient({
                   </div>
                   
                   {/* AI Cost/Carbon Optimization reduction tips */}
-                  <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6">
+                  <div className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6">
                     <p className="label-caps text-[var(--text-hint)]">
                       {labels.reductionTipsLabel}
                     </p>
@@ -475,7 +475,7 @@ export function ProjectDesignWorkspaceClient({
                   </div>
                 </div>
               ) : (
-                <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
+                <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
                   {labels.placeholder}
                 </div>
               )}

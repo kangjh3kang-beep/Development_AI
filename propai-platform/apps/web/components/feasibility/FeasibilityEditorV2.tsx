@@ -264,7 +264,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="w-full max-w-5xl rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-2xl"
+                className="w-full max-w-5xl rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-2xl"
               >
                 <AutoRecommendPanel isModal onClose={() => setShowAutoRecommend(false)} />
               </motion.div>
@@ -275,7 +275,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
 
       {/* ── High-Fidelity Tab Navigation ── */}
       <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between px-2">
-        <div className="flex items-center gap-2 rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1.5 backdrop-blur-xl shadow-[var(--shadow-xl)]">
+        <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1.5 backdrop-blur-xl shadow-[var(--shadow-xl)]">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -324,7 +324,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="rounded-[2rem] border border-rose-500/20 bg-rose-500/10 p-6 text-sm font-bold text-rose-400 backdrop-blur-3xl shadow-2xl flex items-center gap-4"
+            className="rounded-[var(--radius-lg)] border border-rose-500/20 bg-rose-500/10 p-6 text-sm font-bold text-rose-400 backdrop-blur-3xl shadow-2xl flex items-center gap-4"
           >
             <div className="h-10 w-10 rounded-2xl bg-rose-500/20 flex items-center justify-center text-rose-400">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
@@ -346,13 +346,13 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               className="grid gap-10 lg:grid-cols-[340px_1fr]"
             >
               <div className="space-y-6">
-                 <div className="glass rounded-[2.5rem] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
+                 <div className="glass rounded-[var(--radius-xl)] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
                     <p className="label-caps text-[var(--text-hint)] mb-6">Execution Strategy</p>
                     <ProjectTypeSelector />
                  </div>
               </div>
-              <div className="glass rounded-[3rem] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
-                 <div className="rounded-[3rem] p-10 bg-[var(--surface-strong)] backdrop-blur-3xl">
+              <div className="glass rounded-[var(--radius-2xl)] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
+                 <div className="rounded-[var(--radius-2xl)] p-10 bg-[var(--surface-strong)] backdrop-blur-3xl">
                     <ModuleInputForm />
                  </div>
               </div>
@@ -369,7 +369,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             >
               {/* 결과 없음 + 추정 입력 부족(422): 빈 0 대신 입력 유도 게이트(무목업). */}
               {!result && baselineNeedsInput ? (
-                <div className="glass rounded-[3rem] border border-amber-500/30 bg-amber-500/5 p-12 text-center shadow-[var(--shadow-xl)]">
+                <div className="glass rounded-[var(--radius-2xl)] border border-amber-500/30 bg-amber-500/5 p-12 text-center shadow-[var(--shadow-xl)]">
                   <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
                   </div>
@@ -405,8 +405,8 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                   focus="view"
                 />
               )}
-              <div className="glass rounded-[3rem] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
-                <div className="rounded-[3rem] p-12 bg-[var(--surface-strong)] backdrop-blur-3xl">
+              <div className="glass rounded-[var(--radius-2xl)] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
+                <div className="rounded-[var(--radius-2xl)] p-12 bg-[var(--surface-strong)] backdrop-blur-3xl">
                   <AIRecommendationPanel />
                 </div>
               </div>

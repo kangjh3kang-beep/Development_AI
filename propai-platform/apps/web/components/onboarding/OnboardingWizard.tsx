@@ -153,7 +153,7 @@ export function OnboardingWizard() {
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="relative w-full max-w-lg mx-4 overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface)] shadow-2xl"
+        className="relative w-full max-w-lg mx-4 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface)] shadow-2xl"
       >
         {/* Progress dots */}
         <div className="flex items-center justify-center gap-2 pt-8">

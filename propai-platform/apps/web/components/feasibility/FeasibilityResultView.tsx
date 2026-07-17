@@ -168,7 +168,7 @@ export function FeasibilityResultView() {
 
   if (!result) {
     return (
-      <Card className="rounded-[3rem] border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-none">
+      <Card className="rounded-[var(--radius-2xl)] border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-none">
         <CardContent className="p-16 text-center flex flex-col items-center gap-6">
           <div className="h-20 w-20 rounded-3xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] shadow-[var(--shadow-lg)] border border-[var(--line)]">
              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
@@ -275,14 +275,14 @@ export function FeasibilityResultView() {
   return (
     <div className="space-y-12 animate-premium-fade">
       {/* ── Summary Hero Scorecard ── */}
-      <div className="relative overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-2xl)]">
+      <div className="relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-2xl)]">
          <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-[var(--accent-strong)] opacity-[0.05] blur-[100px]" />
          <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-blue-500/5 blur-[100px]" />
          
          <div className="relative z-10 grid items-center gap-10 lg:grid-cols-[1fr_auto_1.2fr]">
             {/* Left: Grade Indicator */}
             <div className="flex items-center gap-10">
-               <div className={`relative flex h-32 w-32 items-center justify-center rounded-[2.5rem] text-5xl font-[1000] ${GRADE_COLORS[result.grade] ?? "bg-slate-700"} ring-8 ring-[var(--line-strong)]/50`}>
+               <div className={`relative flex h-32 w-32 items-center justify-center rounded-[var(--radius-xl)] text-5xl font-[1000] ${GRADE_COLORS[result.grade] ?? "bg-slate-700"} ring-8 ring-[var(--line-strong)]/50`}>
                   {result.grade}
                   <div className="absolute -bottom-2 -right-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--surface)] text-[10px] font-black text-[var(--accent-strong)] shadow-lg border border-[var(--line-strong)]">
                     AI
@@ -334,7 +334,7 @@ export function FeasibilityResultView() {
             transition={{ delay: i * 0.05 }}
             className="flex"
           >
-            <Card className="group flex-1 rounded-[2.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
+            <Card className="group flex-1 rounded-[var(--radius-xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
               <CardContent className="p-8">
                 <div className="mb-6 flex items-center justify-between">
                    <div className={`h-10 w-10 rounded-2xl bg-[var(--surface-soft)] flex items-center justify-center shadow-[var(--shadow-sm)] border border-[var(--line)] ${kpi.color}`}>
@@ -358,7 +358,7 @@ export function FeasibilityResultView() {
           <div className="h-2 w-10 rounded-full bg-[var(--accent-strong)]" />
           <h4 className="text-xl font-[1000] tracking-tighter text-[var(--text-primary)] uppercase">Financial Sensitivity Matrix</h4>
         </div>
-        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
           <CardContent className="p-10">
             <FeasibilitySimulationWidget projectId={projectId} dictionary={simulationDict} />
           </CardContent>
@@ -368,7 +368,7 @@ export function FeasibilityResultView() {
       {/* ── Charts Section ── */}
       <div className="grid gap-8">
         {/* Cost Breakdown Chart */}
-        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
           <CardContent className="p-12">
             <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -410,7 +410,7 @@ export function FeasibilityResultView() {
                     ))}
                   </Pie>
                   <Tooltip 
-                    contentStyle={{ borderRadius: '2rem', border: '1px solid var(--line-strong)', backgroundColor: 'var(--surface)', boxShadow: 'var(--shadow-2xl)', padding: '1.5rem', fontWeight: 'bold' }}
+                    contentStyle={{ borderRadius: "var(--radius-lg)", border: '1px solid var(--line-strong)', backgroundColor: 'var(--surface)', boxShadow: 'var(--shadow-2xl)', padding: '1.5rem', fontWeight: 'bold' }}
                     itemStyle={{ color: 'var(--text-primary)' }}
                     formatter={(v) => [formatWon(Number(v ?? 0)), '비용 규모']}
                   />

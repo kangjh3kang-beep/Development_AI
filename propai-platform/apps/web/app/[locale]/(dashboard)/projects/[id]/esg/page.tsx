@@ -58,7 +58,7 @@ export default function ESGPage() {
           initial={{ opacity: 0, x: -30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.2 }}
-          className="rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
+          className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl"
         >
           <div className="flex items-center gap-4 mb-10">
             <div className="h-10 w-10 rounded-2xl bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-strong)]">
@@ -79,7 +79,7 @@ export default function ESGPage() {
             return (
               <div className="grid grid-cols-1 gap-6 min-w-0">
                 {/* E — 실 LCA 탄소 기반 */}
-                <div className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)]">
+                <div className="relative rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)]">
                   <div className="flex items-center justify-between">
                     <div className="space-y-1">
                       <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]">Environmental (E)</span>
@@ -108,7 +108,7 @@ export default function ESGPage() {
                 </div>
 
                 {/* S / G — 정량 데이터 없음(가짜 점수 금지). GRESB 스코어링으로 안내 */}
-                <div className="rounded-[2rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-6">
+                <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-6">
                   <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]">Social (S) · Governance (G)</span>
                   <p className="mt-2 text-xs font-medium text-[var(--text-tertiary)] leading-relaxed">
                     본 단계는 LCA 탄소(E) 중심입니다. S/G는 정량 평가 데이터가 없어 점수를 표기하지 않습니다.

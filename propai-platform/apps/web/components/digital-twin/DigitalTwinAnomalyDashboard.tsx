@@ -76,9 +76,9 @@ export function DigitalTwinAnomalyDashboard() {
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-6 min-w-0">
-         <SkeletonLoader count={1} itemClassName="h-32 rounded-[2rem]" />
+         <SkeletonLoader count={1} itemClassName="h-32 rounded-[var(--radius-lg)]" />
          <div className="grid gap-6 md:grid-cols-2">
-            <SkeletonLoader count={2} itemClassName="h-[400px] rounded-[3rem]" />
+            <SkeletonLoader count={2} itemClassName="h-[400px] rounded-[var(--radius-2xl)]" />
          </div>
       </div>
     );
@@ -104,7 +104,7 @@ export function DigitalTwinAnomalyDashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: i * 0.05 }}
           >
-            <Card className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] overflow-hidden group">
+            <Card className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] overflow-hidden group">
               <CardContent className="p-8 relative">
                  <kpi.icon className="absolute top-4 right-6 size-7 opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" aria-hidden />
 
@@ -124,7 +124,7 @@ export function DigitalTwinAnomalyDashboard() {
 
       <div className="grid gap-8 lg:grid-cols-12">
         {/* 센서 필터 및 설정 */}
-        <Card className="lg:col-span-12 rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="lg:col-span-12 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-8 lg:p-10 flex flex-wrap items-center justify-between gap-6">
             <div className="space-y-1">
                <h4 className="text-xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">센서 텔레메트리 스트림<span className="text-[var(--accent-strong)]">.</span></h4>
@@ -153,7 +153,7 @@ export function DigitalTwinAnomalyDashboard() {
         </Card>
 
         {/* 시계열 차트 — 센서 값 추이 + 이상 감지 포인트 */}
-        <Card className="lg:col-span-8 rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden aspect-video lg:aspect-auto min-h-[500px]">
+        <Card className="lg:col-span-8 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden aspect-video lg:aspect-auto min-h-[500px]">
           <CardContent className="p-10 lg:p-14 h-full flex flex-col">
             <div className="flex items-center justify-between mb-10">
               <div className="space-y-2">
@@ -186,7 +186,7 @@ export function DigitalTwinAnomalyDashboard() {
                   />
                   <Tooltip
                     contentStyle={{
-                      borderRadius: 24,
+                      borderRadius: "var(--radius-md)",
                       border: "1px solid var(--line-strong)",
                       backgroundColor: "var(--surface-strong)",
                       color: "var(--text-primary)",
@@ -239,7 +239,7 @@ export function DigitalTwinAnomalyDashboard() {
         </Card>
 
         {/* 이상 스코어 산점도 */}
-        <Card className="lg:col-span-4 rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden min-h-[500px]">
+        <Card className="lg:col-span-4 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden min-h-[500px]">
           <CardContent className="p-10 lg:p-12 border-t-[12px] border-[var(--status-error)] h-full flex flex-col">
             <p className="label-caps text-[var(--text-hint)]">LATENT_SPACE</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">이상 스코어 <span className="text-[var(--status-error)]">분포.</span></CardTitle>
@@ -272,7 +272,7 @@ export function DigitalTwinAnomalyDashboard() {
                   <ReferenceLine y={0} stroke="var(--line-strong)" strokeOpacity={0.5} />
                   <Tooltip
                     contentStyle={{
-                      borderRadius: 20,
+                      borderRadius: "var(--radius-md)" /* 20px→24px(레거시 md 최근접) */,
                       border: "none",
                       backgroundColor: "var(--surface-soft)",
                       boxShadow: "var(--shadow-xl)",

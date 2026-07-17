@@ -141,7 +141,7 @@ export default function SettingsPage() {
           <div className="h-5 w-96 animate-pulse rounded-lg bg-[var(--surface-soft)]" />
         </div>
         <div className="h-14 animate-pulse rounded-2xl bg-[var(--surface-soft)]" />
-        <div className="h-64 animate-pulse rounded-[2.5rem] bg-[var(--surface-soft)]" />
+        <div className="h-64 animate-pulse rounded-[var(--radius-xl)] bg-[var(--surface-soft)]" />
       </div>
     );
   }
@@ -171,7 +171,7 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto">
       {/* Header — 관제 콘솔 식별자 */}
-      <div className="cc-bracketed relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-7 lg:p-9 shadow-[var(--shadow-xl)]">
+      <div className="cc-bracketed relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-7 lg:p-9 shadow-[var(--shadow-xl)]">
         <div className="cc-grid-bg opacity-60" />
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />

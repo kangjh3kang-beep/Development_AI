@@ -166,7 +166,7 @@ export function DashboardHome({ locale }: { locale: string }) {
             {workflowSteps.map((step, index) => (
               <div
                 key={step.label}
-                className="rounded-[10px] border border-white/15 p-3 backdrop-blur-[12px]"
+                className="rounded-[var(--r-card)] border border-white/15 p-3 backdrop-blur-[12px]"
                 style={{ backgroundColor: "rgba(20,23,32,0.55)" }}
               >
                 <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em]">

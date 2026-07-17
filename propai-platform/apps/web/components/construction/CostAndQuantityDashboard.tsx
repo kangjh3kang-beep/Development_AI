@@ -134,7 +134,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
               : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">건축개요 역산(추정) — 설계/BIM 완성 시 정밀화</span>}
           </div>
         </div>
-        <button className="group relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] px-8 py-4 text-xs font-black uppercase tracking-widest text-[var(--text-primary)] shadow-[var(--shadow-lg)] transition-all hover:-translate-y-1 hover:bg-[var(--surface-soft)]">
+        <button className="group relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] px-8 py-4 text-xs font-black uppercase tracking-widest text-[var(--text-primary)] shadow-[var(--shadow-lg)] transition-all hover:-translate-y-1 hover:bg-[var(--surface-soft)]">
           <span className="relative z-10 flex items-center gap-3">
             {t.exportBtn || "데이터 내보내기"}
             <svg className="h-4 w-4 transition-transform group-hover:rotate-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
@@ -143,13 +143,13 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
       </div>
 
       {err ? (
-        <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-bold text-amber-400 italic">{err}</div>
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-bold text-amber-400 italic">{err}</div>
       ) : items.length === 0 ? (
-        <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-medium text-[var(--text-secondary)] italic">
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-medium text-[var(--text-secondary)] italic">
           건축개요(연면적·층수)가 없어 물량을 산출할 수 없습니다. 부지/설계 분석을 먼저 진행하면 자동으로 채워집니다.
         </div>
       ) : (
-      <div className="overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
+      <div className="overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
          <table className="w-full text-left text-sm border-collapse">
            <thead className="bg-[var(--surface-soft)]/50 label-caps text-[var(--text-hint)] border-b border-[var(--line-strong)]">
              <tr>

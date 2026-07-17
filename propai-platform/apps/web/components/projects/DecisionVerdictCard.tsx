@@ -179,7 +179,7 @@ export function DecisionVerdictCard({ brief }: { brief: DecisionBrief }) {
 
   return (
     <div
-      className="flex flex-col gap-5 rounded-[2.5rem] border p-7 shadow-[var(--shadow-2xl)]"
+      className="flex flex-col gap-5 rounded-[var(--radius-xl)] border p-7 shadow-[var(--shadow-2xl)]"
       style={{
         borderColor: `color-mix(in srgb, var(${meta.token}) 40%, transparent)`,
         backgroundColor: `color-mix(in srgb, var(${meta.token}) 6%, var(--surface-strong))`,

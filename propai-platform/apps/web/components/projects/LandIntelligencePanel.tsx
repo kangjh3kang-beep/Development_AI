@@ -926,7 +926,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   }, [isAnalyzing, deepAnalysisLoading, deepAnalysisResult, aiData, hasZoningApi, localResult]);
 
   return (
-    <div className="relative w-full rounded-[3rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+    <div className="relative w-full rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
       {/* ── Background Decorations (pointer-events-none) ── */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute inset-0 opacity-40 bg-gradient-to-br from-blue-900/20 via-slate-800/30 to-emerald-900/20" />
@@ -941,7 +941,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           <motion.div
             initial={{ x: -20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            className="glass rounded-[2rem] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
+            className="glass rounded-[var(--radius-lg)] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
           >
             {/* Header */}
             <div className="flex items-center gap-3 mb-5">
@@ -1428,7 +1428,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             initial={{ x: 20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.15 }}
-            className="glass rounded-[2rem] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
+            className="glass rounded-[var(--radius-lg)] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
           >
             <div className="flex items-center justify-between mb-6">
               <h4 className="text-lg font-black text-[var(--text-primary)] tracking-tight">
@@ -1524,7 +1524,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="glass rounded-[2rem] p-5 border border-[var(--line)] bg-[var(--surface-muted)]"
+            className="glass rounded-[var(--radius-lg)] p-5 border border-[var(--line)] bg-[var(--surface-muted)]"
           >
             <div className="flex items-center gap-3 mb-3">
               <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-[var(--line)] text-[var(--text-tertiary)]">

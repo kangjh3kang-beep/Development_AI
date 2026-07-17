@@ -128,7 +128,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     <Tooltip
                       cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
                       formatter={(v: any) => [`${Number(v).toLocaleString()}명`, "인구"]}
-                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: "var(--r-card)", fontSize: 12 }}
                     />
                     <Bar dataKey="count" fill="var(--accent-strong)" radius={[0, 4, 4, 0]}>
                       <LabelList dataKey="count" position="right" formatter={(v: any) => Number(v).toLocaleString()}
@@ -153,7 +153,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     </Pie>
                     <Tooltip
                       formatter={(v: any, n: any) => [`${Number(v).toLocaleString()}`, n]}
-                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: "var(--r-card)", fontSize: 12 }}
                     />
                   </PieChart>
                 </ResponsiveContainer>

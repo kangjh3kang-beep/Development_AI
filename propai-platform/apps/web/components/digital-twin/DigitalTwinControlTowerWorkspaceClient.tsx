@@ -299,7 +299,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
 
   return (
     <section className="grid gap-10 font-sans">
-      <Card className="cc-bracketed rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
+      <Card className="cc-bracketed rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
         <CardContent className="p-10 lg:p-14 relative">
           <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px] transition-all duration-1000 group-hover:scale-150" />
           <div className="cc-grid-bg opacity-40" />
@@ -331,7 +331,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 value={selectedProjectId}
                 onValueChange={(value) => setSelectedProjectId(value)}
                 options={projectsQuery.data?.items?.map((project) => ({ label: project.name, value: project.id })) ?? []}
-                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
+                className="h-16 rounded-[var(--radius-lg)] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
               />
             </div>
             <div className="space-y-3">
@@ -340,7 +340,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 value={manualProjectId} 
                 onChange={(event) => setManualProjectId(event.target.value)} 
                 placeholder="00000000-0000-0000-0000-000000000000" 
-                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
+                className="h-16 rounded-[var(--radius-lg)] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
               />
             </div>
           </div>
@@ -378,7 +378,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
 
       <div className="grid gap-8 xl:grid-cols-3">
         {/* --- Digital Twin Status --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-info)]">
             <p className="label-caps text-[var(--text-hint)]">DIMENSION_01</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Digital Twin Status<span className="text-[var(--status-info)]">.</span></CardTitle>
@@ -421,7 +421,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         </Card>
 
         {/* --- Unified Risk Engine --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--accent-strong)]">
             <p className="label-caps text-[var(--text-hint)]">DIMENSION_02</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Unified Risk Engine<span className="text-[var(--accent-strong)]">.</span></CardTitle>
@@ -468,7 +468,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         </Card>
 
         {/* --- Permit Readiness --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-success)]">
             <p className="label-caps text-[var(--text-hint)]">DIMENSION_03</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Permit Lifecycle<span className="text-[var(--status-success)]">.</span></CardTitle>
@@ -526,7 +526,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
         </Card>
 
         {/* --- Predictive Maintenance(배선 캠페인 3차, additive) --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-warning)]">
             <p className="label-caps text-[var(--text-hint)]">DIMENSION_04</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Predictive Maintenance<span className="text-[var(--status-warning)]">.</span></CardTitle>

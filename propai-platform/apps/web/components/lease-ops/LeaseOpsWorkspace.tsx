@@ -460,7 +460,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
                       contentStyle={{
                         background: "var(--surface)",
                         border: "1px solid var(--line)",
-                        borderRadius: 12,
+                        borderRadius: "var(--r-panel)",
                         color: "var(--text-primary)",
                       }}
                     />

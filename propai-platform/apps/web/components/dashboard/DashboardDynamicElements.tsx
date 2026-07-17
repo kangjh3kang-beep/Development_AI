@@ -99,7 +99,7 @@ export function ProjectCardGrid({
       {projects.map((proj) => (
         <TiltCard
           key={proj.id}
-          className="group rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-md)] hover:shadow-[var(--shadow-glow)] backdrop-blur-lg"
+          className="group rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-md)] hover:shadow-[var(--shadow-glow)] backdrop-blur-lg"
           maxTilt={5}
         >
           <Link

@@ -44,7 +44,7 @@ export function ProjectAnalysisFlow({
   if (storeProjectId === null) {
     return (
       <div
-        className="h-48 animate-pulse rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)]"
+        className="h-48 animate-pulse rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-soft)]"
         aria-hidden
       />
     );
@@ -57,7 +57,7 @@ export function ProjectAnalysisFlow({
   // ── 주소 미설정 — 입력 프롬프트 ──
   if (!hasAddress) {
     return (
-      <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 sm:p-10 shadow-[var(--shadow-xl)] relative overflow-hidden">
+      <section className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 sm:p-10 shadow-[var(--shadow-xl)] relative overflow-hidden">
         <div className="absolute top-0 right-0 w-40 h-40 bg-[var(--accent-strong)]/10 blur-[60px] rounded-full pointer-events-none" />
         <div className="relative z-10 max-w-2xl space-y-5">
           <div className="flex items-center gap-3">
@@ -133,7 +133,7 @@ export function ProjectAnalysisFlow({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.4 }}
-            className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-10 shadow-[var(--shadow-2xl)] relative overflow-hidden"
+            className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-10 shadow-[var(--shadow-2xl)] relative overflow-hidden"
           >
             <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[var(--accent-strong)]/8 blur-[90px] pointer-events-none" />
             <div className="relative z-10 space-y-8">

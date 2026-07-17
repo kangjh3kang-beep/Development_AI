@@ -66,7 +66,7 @@ export default function OperationsPage() {
           initial={{ opacity: 0, x: -30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.2 }}
-          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[3.5rem] p-12 shadow-2xl"
+          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[var(--radius-2xl)] p-12 shadow-2xl"
         >
           <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
           <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -105,7 +105,7 @@ export default function OperationsPage() {
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.3 }}
-          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[3.5rem] p-12 shadow-2xl"
+          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[var(--radius-2xl)] p-12 shadow-2xl"
         >
           <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
           <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -144,7 +144,7 @@ export default function OperationsPage() {
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
-        className="cc-panel cc-bracketed relative overflow-hidden rounded-[4rem] p-12 lg:p-20 shadow-2xl group"
+        className="cc-panel cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] p-12 lg:p-20 shadow-2xl group"
       >
         <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
         <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -165,7 +165,7 @@ export default function OperationsPage() {
                initial={{ opacity: 0, scale: 0.9 }}
                whileInView={{ opacity: 1, scale: 1 }}
                transition={{ delay: 0.1 * i }}
-               className="cc-interactive group/sensor relative flex flex-col gap-10 rounded-[3rem] border border-[var(--line)] bg-[var(--surface-soft)] p-12"
+               className="cc-interactive group/sensor relative flex flex-col gap-10 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-12"
             >
               <div className="flex items-center justify-between">
                 <span className="text-5xl drop-shadow-2xl transition-transform group-hover/sensor:scale-125 duration-500">{item.icon}</span>
@@ -193,7 +193,7 @@ export default function OperationsPage() {
         initial={{ opacity: 0, y: 30 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
-        className="cc-bracketed relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between overflow-hidden rounded-[3rem] border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] p-10 lg:px-14 shadow-2xl"
+        className="cc-bracketed relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] p-10 lg:px-14 shadow-2xl"
       >
          <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
          <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -201,7 +201,7 @@ export default function OperationsPage() {
             <span className="cc-live"><i />INTELLIGENCE REPORT</span>
             <p className="text-2xl font-black text-[var(--text-primary)] tracking-tight">수익 안정화 단계 진입<span className="text-[var(--text-tertiary)] ml-3 font-medium text-lg leading-relaxed italic">/ 월간 수익 가이드라인 기준 12.4% 초과 달성</span></p>
          </div>
-         <button className="cc-interactive group relative z-10 overflow-hidden rounded-[2rem] bg-[var(--accent-strong)] px-10 py-5 text-sm font-black text-white transition-all hover:scale-105 active:scale-95 shadow-[var(--shadow-glow)]">
+         <button className="cc-interactive group relative z-10 overflow-hidden rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-10 py-5 text-sm font-black text-white transition-all hover:scale-105 active:scale-95 shadow-[var(--shadow-glow)]">
             <span className="relative z-10 flex items-center gap-3">
               운영 리포트 생성
               <svg className="h-5 w-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>

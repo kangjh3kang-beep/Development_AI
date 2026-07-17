@@ -933,7 +933,7 @@ function McHistogramChart({
             contentStyle={{
               background: "var(--surface-strong)",
               border: "1px solid var(--line-strong)",
-              borderRadius: 8,
+              borderRadius: "var(--r-card)",
               fontSize: 12,
             }}
             formatter={(v) => [`${Number(v)}회`, "빈도"]}
@@ -1022,7 +1022,7 @@ function SensitivityTornadoChart({
           contentStyle={{
             background: "var(--surface-strong)",
             border: "1px solid var(--line-strong)",
-            borderRadius: 8,
+            borderRadius: "var(--r-card)",
             fontSize: 12,
           }}
           formatter={(v, name) => [
