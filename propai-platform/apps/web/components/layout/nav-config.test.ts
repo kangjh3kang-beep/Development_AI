@@ -17,11 +17,23 @@ describe("buildPrimaryNav", () => {
       "market-acquisition",
       "design-center",
       "sales-management",
+      "my",
       "admin",
     ]);
     // 분양 관리는 코어 워크플로우(개발→분양)라 역할 게이트 없음 — 일반 사용자에게 노출.
     expect(NAV.find((s) => s.id === "sales-management")?.assetOpsOnly).toBeUndefined();
     expect(NAV.find((s) => s.id === "admin")?.adminOnly).toBe(true);
+    // 마이페이지 — 전 회원 노출(게이트 없음) + 코인·보안 등 6개 진입.
+    const my = NAV.find((s) => s.id === "my");
+    expect(my?.adminOnly).toBeUndefined();
+    expect(my?.items.map((n) => n.href)).toEqual([
+      "/en/mypage",
+      "/en/mypage/coins",
+      "/en/mypage/usage",
+      "/en/mypage/profile",
+      "/en/mypage/privacy",
+      "/en/account",
+    ]);
   });
 
   it("최신 main의 관제 동선과 프리페치 정책을 registry에서 전달", () => {

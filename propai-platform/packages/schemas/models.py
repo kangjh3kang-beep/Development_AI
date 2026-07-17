@@ -69,6 +69,8 @@ class UserResponse(BaseModel):
     # 회원 시스템(2026-07): 이메일 인증·소셜 전용 여부 — 계정 화면 표시용(additive)
     email_verified: bool = False
     has_password: bool = True
+    # 마이페이지(2026-07-17): 프로필 표시·수정용(additive)
+    phone: str | None = None
 
 
 # ──────────────────────────────────────

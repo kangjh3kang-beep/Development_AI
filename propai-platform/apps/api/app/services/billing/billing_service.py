@@ -111,6 +111,26 @@ def _sync_budget(monthly_base: float, topup: float) -> float:
     return float(monthly_base) + float(topup)
 
 
+async def _record_coin_event(db: AsyncSession, **kwargs: Any) -> None:
+    """관측 훅: 이미 커밋된 잔액 변경을 코인원장에 **비차단** 기록.
+
+    ★호출자 세션(db)을 재사용한다 — 별도 async_session_factory를 열지 않으므로 무 DB 단위테스트
+      (FakeSession)의 밀폐성이 보존되고, 실 DATABASE_URL 부수효과·연결 지연이 발생하지 않는다
+      (성장루프 MEDIUM 수렴). 잔액은 이미 SSOT(users)에 커밋됐으므로, 원장 기록 실패는 잔액을
+      되돌리지 않고 삼킨다(원장은 이력·감사 목적).
+    """
+    from app.services.billing import coin_ledger_service
+
+    try:
+        await coin_ledger_service.append_event(db=db, **kwargs)
+        await db.commit()
+    except Exception:  # noqa: BLE001 — 원장 기록 실패가 잔액 처리를 되돌리지 않는다(이미 커밋됨)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def ensure_cycle(db: AsyncSession, user_id: Any):
     """월이 바뀌면 청구사용량 리셋 + 월기본만 등급 포함한도로 재설정(충전 보존).
 
@@ -137,6 +157,13 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
         )
         await db.commit()
         billed = 0.0
+        if monthly_base > 0:
+            # 코인원장 관측 기록(월기본 부여가 코인내역에 보이도록) — 비차단·세션 재사용.
+            await _record_coin_event(
+                db, user_id=str(user_id), entry_type="monthly_grant", amount_krw=monthly_base,
+                description=f"월기본 코인 부여({tier})", ref_type="billing_cycle",
+                ref_id=f"{now.year}-{now.month:02d}",
+            )
     elif is_metered_tier(tier) and monthly_base <= 0:
         # 같은 달이라도 월기본이 미할당(0)인 과금 등급 — 포함한도를 지연 할당(사용량·사이클 보존).
         #   원인: 마이그레이션 이전부터 현재 월 사이클이 잡혀 롤오버가 한 번도 안 돈 기존 유저.
@@ -288,7 +315,10 @@ async def record_usage_usd(
 
 
 async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
-    """추가결제(시뮬레이션): 충전 잔액(topup_krw) 증액 + 하위호환 budget 동기화."""
+    """추가결제(시뮬레이션): 충전 잔액(topup_krw) 증액 + 하위호환 budget 동기화.
+
+    ★신규 충전 경로는 coin_orders(주문→확정)가 정본 — 이 함수는 레거시 /topup 하위호환.
+    """
     await ensure_schema(db)
     row = await _row(db, user_id)
     if not row:
@@ -303,6 +333,11 @@ async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
         {"a": float(amount_krw), "b": _sync_budget(monthly_base, new_topup), "id": str(user_id)},
     )
     await db.commit()
+    # 코인원장 관측 기록(이력·감사) — 비차단·세션 재사용.
+    await _record_coin_event(
+        db, user_id=str(user_id), entry_type="topup", amount_krw=float(amount_krw),
+        description="충전(레거시 시뮬레이션)", ref_type="legacy_topup", created_by=str(user_id),
+    )
 
 
 async def is_super_admin(db: AsyncSession, user_id: Any) -> bool:
@@ -559,6 +594,13 @@ async def charge_service(db: AsyncSession, user_id: Any, action: str) -> dict[st
             {"f": float(fee), "id": str(user_id)},
         )
     await db.commit()
+    if fee > 0:
+        # 코인원장 관측 기록(마이페이지 '코인내역'의 서비스료 이력) — 비차단·세션 재사용.
+        await _record_coin_event(
+            db, user_id=str(user_id), entry_type="service_fee", amount_krw=-float(fee),
+            description=f"서비스 사용료({action})", ref_type="action", ref_id=action,
+            created_by=str(user_id),
+        )
     return {
         "action": action,
         "charged_krw": fee,
@@ -583,3 +625,8 @@ async def set_tier(db: AsyncSession, user_id: Any, tier: str) -> None:
          "c": datetime.now(UTC), "id": str(user_id)},
     )
     await db.commit()
+    # 코인원장 관측 기록(등급 변경에 따른 월기본 재설정 이력) — 비차단·세션 재사용.
+    await _record_coin_event(
+        db, user_id=str(user_id), entry_type="tier_change", amount_krw=monthly_base,
+        description=f"등급 변경({tier}) — 월기본 재설정", ref_type="tier", ref_id=tier,
+    )

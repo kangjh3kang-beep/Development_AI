@@ -558,7 +558,171 @@ async def get_me(
         created_at=user.created_at,
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
+        phone=user.phone,
     )
+
+
+class UpdateMeRequest(BaseModel):
+    """프로필 수정(마이페이지) — 변경 가능한 필드만 화이트리스트 허용.
+
+    ★이메일은 여기서 변경 불가(재인증 플로우 필요 — 후속). role/tier/is_active 등
+      권한·과금 필드는 절대 받지 않는다(mass-assignment 차단).
+    - name=None → 변경 안 함. phone=None → 변경 안 함, phone="" → 삭제.
+    """
+
+    name: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=32)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("이름은 비울 수 없습니다.")
+        return stripped
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return ""  # 명시적 삭제
+        if not re.fullmatch(r"\+?[0-9\-\s]{8,31}", cleaned):
+            raise ValueError("전화번호 형식이 올바르지 않습니다.")
+        return cleaned
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    body: UpdateMeRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """내 프로필 수정(이름·휴대전화) — 탈퇴·정지 계정 차단(민감작업 가드)."""
+    user = await _load_current_active_user(db, current_user)
+    if body.name is not None:
+        user.name = body.name
+    if body.phone is not None:
+        user.phone = body.phone or None  # "" → NULL(삭제)
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse(
+        id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        name=user.name,
+        role=UserRole(user.role),
+        is_active=user.is_active,
+        created_at=user.created_at,
+        email_verified=bool(user.email_verified),
+        has_password=bool(user.hashed_password),
+        phone=user.phone,
+    )
+
+
+@router.get("/me/consents")
+async def my_consents(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """내 약관·개인정보 동의 이력(개인정보보호법 §22·§35 열람) + 현재 정책 버전.
+
+    ★열람 완전성(성장루프 LOW 수렴): 마케팅 수신동의 철회/재동의는 append-only라 반복 토글로
+      최근 100건을 초과하면 가입 시 필수동의(약관·개인정보) 원본이 최근순 윈도에서 밀려난다.
+      필수동의의 **최초 행**은 항상 응답에 포함되도록 별도 보장한 뒤 최근 이력과 병합한다.
+    """
+    recent = (
+        await db.execute(
+            select(UserConsent)
+            .where(UserConsent.user_id == current_user.user_id)
+            .order_by(UserConsent.agreed_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    # 각 필수동의 유형의 최초(가입 시점) 행 — 최근 윈도에서 밀려나도 열람에 보장 포함.
+    earliest_required = (
+        await db.execute(
+            select(UserConsent)
+            .where(
+                UserConsent.user_id == current_user.user_id,
+                UserConsent.consent_type.in_(["terms_of_service", "privacy_policy"]),
+            )
+            .order_by(UserConsent.agreed_at.asc())
+        )
+    ).scalars().all()
+    originals: list[UserConsent] = []
+    seen_types: set[str] = set()
+    for c in earliest_required:
+        if c.consent_type not in seen_types:
+            seen_types.add(c.consent_type)
+            originals.append(c)
+    # id 기준 병합(중복 제거) 후 최신순 정렬.
+    merged: dict = {c.id: c for c in recent}
+    for c in originals:
+        merged[c.id] = c
+    rows = sorted(merged.values(), key=lambda c: c.agreed_at, reverse=True)
+    # 현재 마케팅 수신동의 상태(선택 동의) — 가장 최근 marketing 이력의 값(없으면 미동의).
+    marketing_current = next(
+        (bool(c.agreed) for c in rows if c.consent_type == "marketing"), False
+    )
+    return {
+        "current_policy_version": CURRENT_POLICY_VERSION,
+        "marketing_opt_in": marketing_current,
+        "consents": [
+            {
+                "consent_type": c.consent_type,
+                "agreed": bool(c.agreed),
+                "policy_version": c.policy_version,
+                "agreed_at": c.agreed_at.isoformat() if c.agreed_at else None,
+            }
+            for c in rows
+        ],
+    }
+
+
+class MarketingConsentRequest(BaseModel):
+    """마케팅 수신동의 변경(선택) — 정보통신망법 §50④ 동일 방법 철회권."""
+
+    agreed: bool
+
+
+@router.post("/me/consents/marketing")
+async def update_marketing_consent(
+    body: MarketingConsentRequest,
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """마케팅 정보 수신동의 철회/재동의 — 동의를 받은 것과 같은 방법(화면)으로 언제든 변경.
+
+    ★정보통신망법 §50④: 수신동의자는 동의를 준 것과 같은 방법으로 언제든 철회할 수 있어야 한다.
+      동의 이력(UserConsent)에 marketing 변경을 **추가 기록**(append-only — 시점·버전·IP 보존)한다.
+      필수 동의(약관·개인정보)는 이 경로로 변경할 수 없다(선택 동의만).
+
+    (response_model=MessageResponse 미사용 — 해당 스키마는 이 파일 하단에서 정의되어 import
+     시점 NameError를 유발하므로 dict로 반환한다. 응답 형태 {"message": str}는 동일.)
+    """
+    user = await _load_current_active_user(db, current_user)
+    db.add(
+        UserConsent(
+            user_id=user.id,
+            consent_type="marketing",
+            agreed=bool(body.agreed),
+            policy_version=CURRENT_POLICY_VERSION,
+            ip=_client_ip(request),
+        )
+    )
+    await db.commit()
+    return {
+        "message": (
+            "마케팅 정보 수신에 동의하셨습니다." if body.agreed
+            else "마케팅 정보 수신을 철회했습니다."
+        )
+    }
 
 
 @router.get("/is-admin")

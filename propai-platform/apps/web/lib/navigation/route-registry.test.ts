@@ -15,6 +15,7 @@ describe("route registry IA gate", () => {
       "market-acquisition",
       "design-center",
       "sales-management",
+      "my",
       "admin",
     ]);
   });
