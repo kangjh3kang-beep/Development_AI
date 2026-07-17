@@ -66,6 +66,10 @@ export const SATONG_RENDERABLE_LAYER_IDS = new Set<SatongMapLayerId>([
   // 분양(청약홈 /presale/nearby)·공경매(온비드 /auction/search+geocode) — 실데이터 배선 완료.
   "presale",
   "auction",
+  // 개발여력(WS-D①) — 서버 산정(실효·현황 FAR) 데이터소스+capacityColor 렌더러 실재.
+  //   ★R1 BLOCKING 재발 방지: 이 Set 누락 = 레일 클릭 무반응+거짓 "미표시" 배너(위 주석 동일).
+  //   active+mapEffect 레이어는 반드시 여기 등록 — 불변식 테스트로 고정.
+  "capacity",
   "terrain",
 ]);
 
@@ -361,6 +365,8 @@ export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapF
       builtYear: feature.builtYear ?? prev?.builtYear ?? null,
       buildingAgeYears: feature.buildingAgeYears ?? prev?.buildingAgeYears ?? null,
       ageStatus: feature.ageStatus ?? prev?.ageStatus ?? null,
+    effectiveFarPct: feature.effectiveFarPct ?? prev?.effectiveFarPct ?? null,
+    currentFarPct: feature.currentFarPct ?? prev?.currentFarPct ?? null,
       geometry: feature.geometry ?? prev?.geometry,
       lat: feature.lat ?? prev?.lat ?? null,
       lon: feature.lon ?? prev?.lon ?? null,

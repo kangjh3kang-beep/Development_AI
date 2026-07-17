@@ -2672,7 +2672,7 @@ export function SatongMultiMap({
                 (무자료는 overlayNote "개발여력 무자료(실효·현황 용적률 필요)"가 정직 고지 —
                 램프만 띄우면 '색=여력' 오인 조장·노후도 범례와 동일 원칙). */}
             {hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom") &&
-              overlayFeatures.some((f) => f.effectiveFarPct != null && f.currentFarPct != null) && (
+              overlayFeatures.some((f) => capacityColor(f.effectiveFarPct, f.currentFarPct) != null) && (
               <div className="pointer-events-auto w-fit rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
                 <p className="mb-1 text-[10px] font-extrabold text-slate-700">개발여력 = (실효−현황)/실효 용적률</p>
                 <div className="flex flex-col gap-0.5">

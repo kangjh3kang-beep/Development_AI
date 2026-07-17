@@ -849,8 +849,15 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                     if _tfa and not bldg.get("dong_truncated"):
                         total_floor_area_sqm = round(float(_tfa), 1)
                 elif lookup_state == "no_data":
-                    # 조회 성공·무건축물(나대지 추정) — 현황 연면적 0은 '실측된 0'(정직).
-                    total_floor_area_sqm = 0.0
+                    # ★R1 MAJOR 반영 — no_data는 '측정'이 아니라 '추정'이다(서비스 계층 표기와
+                    #   일치: "나대지 추정"). 집합건물 대지권 비대표지번·대장 미등재·생성지연·
+                    #   커버리지 갭에서도 빈 items가 오므로, 0을 단정하면 실재 건물 필지가
+                    #   "여력 100%(거의 빈 땅)"로 과대낙관 표시된다 — 이 기능이 잡으려는 바로
+                    #   그 방향오류. **나대지 양성증거(토지특성 이용상황에 '나지')가 있을 때만**
+                    #   0을 채택하고, 그 외 no_data는 미상(None=무색+무자료 고지)으로 정직 강등.
+                    if land_use_situation and "나지" in str(land_use_situation):
+                        total_floor_area_sqm = 0.0
+                    # else: None 유지(미상)
                 age_status = _classify_age_status(bldg, lookup_state, building_age_years)
             except Exception:  # noqa: BLE001
                 age_status = "lookup_failed"
