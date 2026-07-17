@@ -20,6 +20,7 @@ geoalchemy2==0.15.2
 redis==5.2.0
 celery==5.3.6
 flower==2.0.1
+arq>=0.25  # apps/worker/main.py(arq 워커·cron)가 사용 — 미선언 시 워커 부팅 크래시(requirements.txt P0-1과 동일 함정)
 
 # AI/ML (경량만)
 scikit-learn==1.5.2

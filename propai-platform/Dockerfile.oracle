@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=propai:propai packages/ ./packages/
 COPY --chown=propai:propai apps/__init__.py ./apps/__init__.py
 COPY --chown=propai:propai apps/api/ ./apps/api/
+# ★arq 워커 코드 동봉 — 이 이미지 하나로 api(uvicorn)와 워커(arq apps.worker.main.WorkerSettings)
+#   두 컨테이너를 띄운다. 워커 미동봉 시 cron(공공단가 동기화·outbox 디스패치 등)이 어디서도 안 돈다.
+COPY --chown=propai:propai apps/worker/ ./apps/worker/
 
 RUN mkdir -p /app/uploads && chown -R propai:propai /app
 
