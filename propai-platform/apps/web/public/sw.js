@@ -76,7 +76,7 @@
 // v438: 규제 오버레이 5종(#382 — zoning 플레이스홀더 잠금해제: 개발행위허가제한·지구단위·
 //        상수원보호·교육환경보호·고도지구 + 지적선 z5 승격). 구캐시의 구 화이트리스트
 //        프록시 JS가 남으면 신규 레이어 요청이 400으로 거부되므로 일괄 삭제 필수.
-const CACHE_NAME = "propai-v438-regulation-overlays";
+const CACHE_NAME = "propai-v439-market-precision";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
