@@ -2317,7 +2317,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
                         rel="noopener noreferrer"
                         className="col-span-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
                       >
-                        🛣️ 카카오 로드뷰로 현장 보기 ↗
+                        <span className="inline-flex items-center gap-1">
+                          <Route className="size-3.5" aria-hidden />카카오 로드뷰로 현장 보기 ↗
+                        </span>
                       </a>
                     ) : null;
                   })()}

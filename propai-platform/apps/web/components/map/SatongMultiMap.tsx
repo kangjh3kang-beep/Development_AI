@@ -2440,7 +2440,9 @@ export function SatongMultiMap({
                     title="클릭: 지적 프록시 자가진단(오류 원인 코드 확인)"
                     className="pointer-events-auto inline-flex w-fit rounded-full bg-amber-50/95 px-3 py-1.5 text-left text-[11px] font-black text-amber-800 shadow transition hover:bg-amber-100"
                   >
-                    {cadastreTileNote} 🔍
+                    <span className="inline-flex items-center gap-1">
+                      {cadastreTileNote} <Search className="size-3 shrink-0" aria-hidden />
+                    </span>
                   </button>
                 )}
                 {overlayNote && (
