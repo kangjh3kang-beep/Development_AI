@@ -564,6 +564,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
   }, []);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
+  // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
+  //   비운다 — "3필지 내보냄"이 4필지 상태에 잔존하는 정직-고지 역위반 방지.
+  useEffect(() => {
+    setExportNote("");
+  }, [selectedParcels]);
   // ★WP-M2: "초기화"(clearParcels)가 지도 내부 staged·녹색 폴리곤도 청소하도록 보내는 신호(nonce).
   //   증가할 때마다 SatongMultiMap이 handleClearAll을 실행한다(종전엔 목록만 비고 지도엔 잔존).
   const [clearNonce, setClearNonce] = useState(0);
@@ -683,7 +688,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    URL.revokeObjectURL(url);
+    // R1: click() 직후 동기 revoke는 일부 환경에서 다운로드를 끊을 수 있어 다음 틱으로 지연.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     setExportNote(`GeoJSON ${included}필지 내보냄${skipped ? ` · 경계 없음 ${skipped}필지 제외(정직 고지)` : ""}`);
   }, [selectedMapFeatures]);
 

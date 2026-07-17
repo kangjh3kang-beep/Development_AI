@@ -20,7 +20,15 @@ export function buildSelectionGeoJson(features: SatongMapFeature[]): SatongGeoJs
   const out: object[] = [];
   let skipped = 0;
   for (const f of features) {
-    if (!f.geometry || typeof f.geometry !== "object") {
+    // R1: 얕은 GeoJSON 검증 — type 문자열 + coordinates(또는 GeometryCollection의
+    // geometries) 보유만 확인. 비-GeoJSON 임의 객체가 Feature로 새지 않게(skipped 계상).
+    const g = f.geometry as { type?: unknown; coordinates?: unknown; geometries?: unknown } | null;
+    if (
+      !g ||
+      typeof g !== "object" ||
+      typeof g.type !== "string" ||
+      (g.coordinates === undefined && g.geometries === undefined)
+    ) {
       skipped += 1;
       continue;
     }

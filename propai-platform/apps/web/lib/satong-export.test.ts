@@ -19,6 +19,16 @@ describe("buildSelectionGeoJson (I5)", () => {
     expect(parsed.features[0].geometry).toEqual(GEOM);
   });
 
+  it("R1: 비-GeoJSON 임의 객체 geometry는 skipped로 계상(얕은 검증)", () => {
+    const out = buildSelectionGeoJson([
+      { id: "bad1", address: "a", geometry: {} },
+      { id: "bad2", address: "b", geometry: { foo: 1 } },
+      { id: "ok", address: "c", geometry: GEOM },
+    ] as never);
+    expect(out.included).toBe(1);
+    expect(out.skipped).toBe(2);
+  });
+
   it("전부 무기하면 included 0(파일 생성 게이트)", () => {
     const out = buildSelectionGeoJson([{ id: "x", address: "y" }] as never);
     expect(out.included).toBe(0);

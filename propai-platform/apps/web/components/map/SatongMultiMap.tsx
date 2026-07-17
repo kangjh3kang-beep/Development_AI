@@ -747,13 +747,19 @@ export function SatongMultiMap({
   // I9 자가진단: 지적 오류 배지 클릭 → 프록시 1회 프로브로 실제 원인(code)을 배지에 표면화.
   //   #347/#354가 프록시 오류에 ServiceException code를 담으므로, 배지만으로 '키/도메인/
   //   파라미터/네트워크'를 현장에서 즉시 구분할 수 있다(서버 로그 접근 불요).
+  const diagnoseBusyRef = useRef(false);
   const diagnoseCadastreTiles = useCallback(async () => {
+    if (diagnoseBusyRef.current) return; // 연타 가드(R1)
+    diagnoseBusyRef.current = true;
     setCadastreTileNote("지적 프록시 진단 중…");
     try {
+      // ★R1(SW 캐시 오진): fetch cache:no-store는 브라우저 HTTP 캐시만 통제하고 서비스워커
+      //   Cache Storage(staleWhileRevalidate)는 우회하지 못한다 — 과거 성공본이 '정상' 오진을
+      //   만들 수 있어 타임스탬프 캐시버스터로 SW 캐시 키를 매번 미스시킨다(항상 라이브).
       const probe =
         "/tiles/vworld/wms?service=WMS&request=GetMap&layers=LP_PA_CBND_BUDB,LP_PA_CBND_BONB" +
         "&styles=LP_PA_CBND_BUDB,LP_PA_CBND_BONB&format=image/png&transparent=true&version=1.3.0" +
-        "&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000";
+        `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
       const resp = await fetch(probe, { cache: "no-store" });
       const contentType = resp.headers.get("content-type") || "";
       if (resp.ok && contentType.startsWith("image/")) {
@@ -766,6 +772,8 @@ export function SatongMultiMap({
       );
     } catch {
       setCadastreTileNote("지적 타일 조회 실패 — 네트워크 오류(진단)");
+    } finally {
+      diagnoseBusyRef.current = false;
     }
   }, []);
 
@@ -2334,10 +2342,12 @@ export function SatongMultiMap({
               {measureOn
                 ? `${measureMode === "area" ? "면적재기" : "거리재기"} — 클릭: 점 추가 · 더블클릭/ESC: 종료`
                 : "측정 결과"}
-              {measureMode === "area" && measurePoints.length >= 3
-                ? ` · ${formatAreaSqm(polygonAreaSqm(measurePoints))} · 둘레 ${formatDistance(
-                    totalDistanceMeters([...measurePoints, measurePoints[0]]),
-                  )}`
+              {measureMode === "area"
+                ? measurePoints.length >= 3
+                  ? ` · ${formatAreaSqm(polygonAreaSqm(measurePoints))} · 둘레 ${formatDistance(
+                      totalDistanceMeters([...measurePoints, measurePoints[0]]),
+                    )}`
+                  : " · 점 3개 이상 필요" // R1: 면적 라벨 아래 거리값 표기 혼동 방지
                 : measurePoints.length >= 2
                   ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
                   : ""}
