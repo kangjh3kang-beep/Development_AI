@@ -27,4 +27,11 @@ describe("satong-map-z — z-index 계약", () => {
     expect(SATONG_PANE_Z.label).toBeGreaterThan(LEAFLET_PANE_Z.overlay);
     expect(SATONG_PANE_Z.label).toBeLessThan(LEAFLET_PANE_Z.marker);
   });
+
+  it("★팝업 최상위 사슬(2026-07-17 겹침 신고): overlay < label < marker < tooltip < popup — 지명 타일·상시 라벨이 팝업을 가리면 안 된다", () => {
+    expect(LEAFLET_PANE_Z.overlay).toBeLessThan(SATONG_PANE_Z.label);
+    expect(SATONG_PANE_Z.label).toBeLessThan(LEAFLET_PANE_Z.marker);
+    expect(LEAFLET_PANE_Z.marker).toBeLessThan(LEAFLET_PANE_Z.tooltip);
+    expect(LEAFLET_PANE_Z.tooltip).toBeLessThan(LEAFLET_PANE_Z.popup);
+  });
 });

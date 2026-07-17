@@ -11,10 +11,12 @@
  *   이 헬퍼는 라벨 내용을 textContent(안전한 텍스트 노드)로만 넣어 XSS 여지를 없앤다.
  */
 
-/** z≥17(근접)에서 허용하는 전역 상시 라벨 상한(모든 레이어 합산). */
-export const SATONG_LABEL_BUDGET = 48;
+/** z=17(근접)에서 허용하는 전역 상시 라벨 상한(모든 레이어 합산). */
+export const SATONG_LABEL_BUDGET = 64;
+/** z≥18(초근접) 상한 — 확대로 화면 밀도가 낮아지면 사실상 전 마커 상시 표시(정보 상시화). */
+export const SATONG_LABEL_BUDGET_NEAR = 96;
 /** 15~16(중간 줌)에서 허용하는 축소 상한 — '상위 N'만 상시 표시. */
-export const SATONG_LABEL_BUDGET_MID = 16;
+export const SATONG_LABEL_BUDGET_MID = 24;
 
 export type SatongLabelLOD = "all" | "top" | "hover-only";
 
@@ -28,8 +30,13 @@ export function satongLabelLOD(zoom: number): SatongLabelLOD {
   return "hover-only";
 }
 
-/** 줌 레벨에 대응하는 전역 상시 라벨 버짓(상한). */
+/** 줌 레벨에 대응하는 전역 상시 라벨 버짓(상한).
+ *
+ * ★2026-07-17 정보 상시화: "마우스를 올려야만 보인다"는 불편을 줄이기 위해 버짓 상향
+ *   (48/16 → 96·64/24) — 확대할수록 화면 공간이 생기므로 상시 라벨을 늘린다(jootek류
+ *   가격 pill 패턴). 겹침 방지는 여전히 버짓 상한+선택 라벨 줌 롤업이 담당한다. */
 export function satongLabelBudget(zoom: number): number {
+  if (zoom >= 18) return SATONG_LABEL_BUDGET_NEAR;
   const lod = satongLabelLOD(zoom);
   if (lod === "all") return SATONG_LABEL_BUDGET;
   if (lod === "top") return SATONG_LABEL_BUDGET_MID;
