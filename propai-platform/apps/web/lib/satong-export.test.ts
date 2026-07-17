@@ -61,6 +61,19 @@ describe("buildSelectionKml (V3)", () => {
     expect(out.json).toContain("<coordinates>127.08,37.3,0 127.09,37.3,0");
   });
 
+  it("R1 M3: 구멍(내부 링)은 innerBoundaryIs로 보존 — GeoJSON과 기하 동일성", () => {
+    const holed = {
+      type: "Polygon",
+      coordinates: [
+        [[127.08, 37.3], [127.09, 37.3], [127.09, 37.31], [127.08, 37.3]],
+        [[127.083, 37.302], [127.085, 37.302], [127.085, 37.304], [127.083, 37.302]],
+      ],
+    };
+    const out = buildSelectionKml([{ id: "h", address: "도넛", geometry: holed }] as never);
+    expect(out.json).toContain("<innerBoundaryIs>");
+    expect(out.json).toContain("127.083,37.302,0");
+  });
+
   it("MultiPolygon → MultiGeometry, 전부 무기하면 included 0", () => {
     const multi = { type: "MultiPolygon", coordinates: [GEOM.coordinates, GEOM.coordinates] };
     const out = buildSelectionKml([{ id: "m", address: "멀티", geometry: multi }] as never);

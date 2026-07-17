@@ -8,7 +8,7 @@
 import type { SatongMapFeature } from "@/lib/satong-map-layers";
 
 export interface SatongGeoJsonExport {
-  /** FeatureCollection 문자열(pretty 2-space). */
+  /** 직렬화 결과 문자열 — GeoJSON(FeatureCollection) 또는 KML 문서(R1 L2: 필드명은 하위호환 유지). */
   json: string;
   /** 포함된 필지 수. */
   included: number;
@@ -83,10 +83,15 @@ function geometryToKmlPolygons(geometry: { type?: unknown; coordinates?: unknown
   return polys
     .filter((rings) => Array.isArray(rings) && Array.isArray(rings[0]))
     .map((rings) => {
-      const outer = rings[0]
-        .map((pt) => `${pt[0]},${pt[1]},0`)
-        .join(" ");
-      return `<Polygon><outerBoundaryIs><LinearRing><coordinates>${outer}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+      const ringToCoords = (ring: number[][]) => ring.map((pt) => `${pt[0]},${pt[1]},0`).join(" ");
+      const outer = `<outerBoundaryIs><LinearRing><coordinates>${ringToCoords(rings[0])}</coordinates></LinearRing></outerBoundaryIs>`;
+      // R1 M3: 내부 링(구멍)도 innerBoundaryIs로 보존 — GeoJSON 내보내기와 기하 동일성 유지.
+      const inners = rings
+        .slice(1)
+        .filter((r) => Array.isArray(r))
+        .map((r) => `<innerBoundaryIs><LinearRing><coordinates>${ringToCoords(r)}</coordinates></LinearRing></innerBoundaryIs>`)
+        .join("");
+      return `<Polygon>${outer}${inners}</Polygon>`;
     });
 }
 

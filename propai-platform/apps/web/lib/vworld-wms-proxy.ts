@@ -39,13 +39,10 @@ const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 //     연속지적도는 lp_pa_cbnd_bubun(부번)·lp_pa_cbnd_bonbun(본번)이다 — 종전
 //     LP_PA_CBND_BUDB/BONB는 데이터 API명(LP_PA_CBND_BUBUN)을 잘못 축약한 실존하지 않는
 //     이름(도입 PR#329부터의 오기, LayerNotDefined 근본원인). 비교는 소문자 정규화.
-const ALLOWED_WMS_LAYERS_ORDER = [
-  "lp_pa_cbnd_bubun",
-  "lp_pa_cbnd_bonbun",
-  "lp_pa_cbnd_bubun_line", // V1: 선 전용(위성뷰 가독 — VWorld 공식 프로토타입 채증)
-  "lp_pa_cbnd_bonbun_line",
-  "lt_c_uq111",
-] as const;
+//   ★_line은 '레이어'가 아니라 '스타일' 변형이다(2026-07-17 GetMap 매트릭스 라이브 채증:
+//     LAYERS=_line → XML 오류 / LAYERS=채움+STYLES=_line → image/png). 레이어 화이트리스트엔
+//     넣지 않고 아래 스타일 결정 로직에서 파생형으로만 허용한다.
+const ALLOWED_WMS_LAYERS_ORDER = ["lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111"] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {
@@ -159,7 +156,23 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
     params.append(k, v);
   }
   params.set("LAYERS", canonicalLayers);
-  params.set("STYLES", canonicalLayers);
+  // ★V1 선 스타일(위성뷰): 클라이언트 STYLES 토큰이 정확히 '각 canonical 레이어+_line'
+  //   집합이면 선 스타일을 유지한다(그 외 임의 스타일은 canonical로 강제 — 스머글링 불변).
+  const requestedStyles = new Set<string>();
+  for (const [k, v] of incoming.entries()) {
+    if (k.toLowerCase() !== "styles") continue;
+    for (const token of v.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)) {
+      requestedStyles.add(token);
+    }
+  }
+  const canonicalList = canonicalLayers.split(",");
+  const lineStyleRequested =
+    requestedStyles.size === canonicalList.length &&
+    canonicalList.every((layer) => requestedStyles.has(`${layer}_line`));
+  params.set(
+    "STYLES",
+    lineStyleRequested ? canonicalList.map((layer) => `${layer}_line`).join(",") : canonicalLayers,
+  );
   params.set("key", key);
   params.set("domain", "www.4t8t.net");
   if (![...params.keys()].some((k) => k.toLowerCase() === "service")) params.set("SERVICE", "WMS");

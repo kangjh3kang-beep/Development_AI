@@ -182,6 +182,28 @@ describe("vworld-wms-proxy", () => {
     expect(body.error).toContain("INVALID_RANGE");
   });
 
+  it("★V1 선 스타일: STYLES가 '각 레이어+_line' 집합이면 유지, 임의 스타일은 canonical로 강제", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const q = new URLSearchParams(
+      "service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun&styles=lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64",
+    );
+    expect((await proxyVWorldWms(q)).status).toBe(200);
+    const u = new URL(requested);
+    expect(u.searchParams.get("STYLES")).toBe("lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line");
+    expect(u.searchParams.get("LAYERS")).toBe("lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"); // 레이어는 항상 채움명
+
+    const evil = new URLSearchParams(
+      "service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun&styles=EVIL_STYLE&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64",
+    );
+    await proxyVWorldWms(evil);
+    expect(new URL(requested).searchParams.get("STYLES")).toBe("lp_pa_cbnd_bubun"); // canonical 강제
+  });
+
   it("★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 키가 키무효로 거부되면 api로 재중계한다", async () => {
     vi.stubEnv("VWORLD_API_KEY", "STALE-LOCAL-KEY");
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
