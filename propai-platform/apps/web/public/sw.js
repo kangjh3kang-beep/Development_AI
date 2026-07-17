@@ -65,7 +65,13 @@
 //        OWS ExceptionReport 파서 갭). ★구캐시 삭제 필수 — 구 번들은 존재하지 않는 tiletype
 //        "gray"를 계속 요청해 회색 베이스맵에서 배경지도가 통째로 미표시된다(프록시가 레거시
 //        별칭으로 흡수하지만, 캐시된 구 JS 자체를 걷어내야 완전 복구).
-const CACHE_NAME = "propai-v435-address-search-unify";
+// v435: 주소검색 공용화(#373) 반영.
+// v436: 디자인 정합 3종 라이브 반영 — #375 라운드 스케일 코드→DESIGN.md(B4 4단 수렴: 유틸
+//        2,168곳 정의 1곳 수렴·임의값 178곳 토큰화 — 2xl 16→12px 등 전역 시각변경) ·
+//        #376 사통맵 rail 좌중앙(줌 중첩 근본해소)+클릭팝업 위계 재작성(blur24·좌표 mono) ·
+//        #378 베이스맵 스와치 실물 타일. ★구캐시 삭제 필수 — 구 CSS/JS가 남으면 라운드가
+//        화면별로 섞여(12px vs 16px) 정합이 반쪽이 된다.
+const CACHE_NAME = "propai-v436-design-alignment";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
