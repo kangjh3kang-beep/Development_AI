@@ -144,7 +144,9 @@ describe("SatongMapShell 초기 하이드레이션(T1)", () => {
 
     render(<SatongMapShell locale="ko" />);
 
-    expect(screen.getByText("서울특별시 종로구 청진동 1")).toBeInTheDocument();
+    // U4 카드 압축: 목록엔 짧은 지번, 전체 주소는 카드 title 속성에 보존.
+    expect(screen.getByText("청진동 1")).toBeInTheDocument();
+    expect(screen.getByTitle(/서울특별시 종로구 청진동 1/)).toBeInTheDocument();
   });
 
   it("③ 같은 SPA 세션 내 복귀 — 미연결이라도 이번 세션 선택은 유지", () => {
@@ -155,6 +157,7 @@ describe("SatongMapShell 초기 하이드레이션(T1)", () => {
 
     render(<SatongMapShell locale="ko" />);
 
-    expect(screen.getByText("경기도 성남시 분당구 판교동 100")).toBeInTheDocument();
+    expect(screen.getByText("판교동 100")).toBeInTheDocument();
+    expect(screen.getByTitle(/경기도 성남시 분당구 판교동 100/)).toBeInTheDocument();
   });
 });
