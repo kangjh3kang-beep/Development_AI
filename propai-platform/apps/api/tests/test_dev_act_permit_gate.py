@@ -374,3 +374,77 @@ def test_build_helper_resolves_frontend_qi_code():
     assert gate is not None
     assert gate["applicable"] is False
     assert gate["status"] == STATUS_PASS
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# G. 접도 도로폭 출처(provenance) 표면화 — 표기사기 방지
+#
+# ★배경: road_width_m은 두 경로에서 나온다 — 지적 실측(land_info_service의 도로필지 MRR)과
+#   '도로접면' 범주 대표값 환산(auto_zoning_service의 estimate_road_width_m: 광대로→40m 등).
+#   종전엔 근거 문구가 "접도 도로폭 40m(≥4m)"로 동일해 **범주 추정이 실측으로 읽혔다**.
+#   판정(MET/CONFIRM)은 범주 경계가 4m 임계와 어긋나지 않아 유효하나 숫자의 정밀도는 사칭이다.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _road_basis(result: dict) -> str:
+    """접도 기준 판정의 basis 문구만 뽑는다."""
+    from app.services.permit.dev_act_permit_gate import _eval_infra_road
+
+    return str(_eval_infra_road(result).get("basis") or "")
+
+
+def test_road_width_estimate_source_is_disclosed_in_basis():
+    """★범주 추정은 근거에 '도로접면 범주 추정'으로 명시된다(실측으로 오독 금지)."""
+    basis = _road_basis({
+        "road_contact": True, "road_width_m": 40.0,
+        "road_width_source": "road_side_estimate",
+    })
+    assert "도로접면 범주 추정" in basis
+    assert "40m" in basis
+
+
+def test_road_width_cadastral_source_is_disclosed_in_basis():
+    """지적 실측은 '지적 실측'으로 명시 — 같은 폭이라도 신뢰도가 다르다."""
+    basis = _road_basis({
+        "road_contact": True, "road_width_m": 6.0,
+        "road_width_source": "cadastral_road_parcel",
+    })
+    assert "지적 실측" in basis
+
+
+def test_road_width_source_absent_keeps_legacy_basis():
+    """출처 미상이면 꼬리표 없이 현행 문구 동일 — additive(무회귀)."""
+    basis = _road_basis({"road_contact": True, "road_width_m": 6.0})
+    assert basis == "접도 도로폭 6m(≥4m) — 건축법 제44조 접도요건 충족 추정"
+
+
+def test_road_width_source_disclosed_on_narrow_road_too():
+    """<4m(CONFIRM) 경로에도 출처가 붙는다 — MET만 고치면 반쪽."""
+    basis = _road_basis({
+        "road_contact": True, "road_width_m": 3.0,
+        "road_width_source": "road_side_estimate",
+    })
+    assert "도로접면 범주 추정" in basis
+    assert "<4m" in basis
+
+
+def test_road_width_unknown_source_is_ignored_not_leaked():
+    """미등록 출처 문자열은 꼬리표 없이 무시 — 원문 노출 금지(계약 밖 값 방어)."""
+    basis = _road_basis({
+        "road_contact": True, "road_width_m": 6.0,
+        "road_width_source": "somethingelse",
+    })
+    assert "somethingelse" not in basis
+    assert basis == "접도 도로폭 6m(≥4m) — 건축법 제44조 접도요건 충족 추정"
+
+
+def test_road_width_source_label_contract_is_closed():
+    """★출처 어휘 계약 고정 — 생산자 2곳이 싣는 값과 1:1이어야 한다.
+
+    생산자: land_info_service='cadastral_road_parcel'(지적 실측) /
+            auto_zoning_service='road_side_estimate'(도로접면 범주 추정).
+    새 출처를 추가하면서 라벨을 빠뜨리면 꼬리표가 조용히 사라지므로(무음 회귀)
+    어휘를 여기서 닫아 동반 갱신을 강제한다.
+    """
+    from app.services.permit.dev_act_permit_gate import _ROAD_WIDTH_SOURCE_LABEL
+
+    assert set(_ROAD_WIDTH_SOURCE_LABEL) == {"cadastral_road_parcel", "road_side_estimate"}

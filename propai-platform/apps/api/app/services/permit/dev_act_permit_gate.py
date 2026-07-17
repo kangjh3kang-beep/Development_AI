@@ -153,11 +153,31 @@ def _eval_adjacent_development(cumulative_dev_area_sqm: float | None) -> dict[st
     return {"status": CR_CONFIRM, "value": None, "basis": note + " 관할 확인 필요"}
 
 
+# 도로폭 출처 → 근거 문구에 삽입할 한국어 꼬리표.
+# ★표기사기 방지: road_side_estimate는 '도로접면' 범주(광대로·중로·소로·세로)를 대표값으로
+#   환산한 것이라 이 필지 도로를 잰 값이 아니다(광대로→40m 등 — 실제 25m 이상이기만 하면 전부 40m).
+#   꼬리표 없이 "접도 도로폭 40m"만 찍으면 실측으로 읽힌다(은행제출 보고서까지 그대로 흐른다).
+#   판정(MET/CONFIRM)은 범주 경계가 4m 임계와 어긋나지 않아 유효하나, **숫자의 정밀도는 사칭**이다.
+_ROAD_WIDTH_SOURCE_LABEL: dict[str, str] = {
+    "cadastral_road_parcel": "지적 실측",
+    "road_side_estimate": "도로접면 범주 추정",
+}
+
+
+def _road_width_note(source: str | None) -> str:
+    """근거 문구에 붙일 출처 꼬리표. 미상은 빈 문자열(현행 문구 동일 — additive)."""
+    label = _ROAD_WIDTH_SOURCE_LABEL.get(source or "")
+    return f"·{label}" if label else ""
+
+
 def _eval_infra_road(result: dict) -> dict[str, Any]:
     """기반시설(도로) — 진입도로 확보(건축법 §44 접도요건) 판정. 맹지/협소도로 세분.
 
     road_contact/road_width_m(또는 road_width)에서 접도 여부를 읽는다. 0폭·미접은 맹지(NOT_MET),
     4m 이상은 충족(MET), 0<폭<4m는 확인 필요(CONFIRM), 미상은 UNKNOWN(정직).
+
+    ★road_width_source를 근거 문구에 표면화한다 — 같은 "4m"라도 지적 실측과 도로접면 범주
+      추정은 신뢰도가 다르다. 출처 미상이면 꼬리표 없이 현행과 동일(additive).
     """
     from app.services.zoning.special_parcel import _num
 
@@ -166,16 +186,17 @@ def _eval_infra_road(result: dict) -> dict[str, Any]:
     if rw is None:
         rw = result.get("road_width")
     rw = _num(rw)
+    src = _road_width_note(result.get("road_width_source"))
     if rc is False or (rw is not None and rw == 0):
         return {"status": CR_NOT_MET, "value": (0.0 if rw is not None else None),
                 "basis": ("도로에 접하지 않는 맹지 — 건축법 제44조 접도요건(4m 이상 도로에 2m 이상 접함) "
                           "미충족. 진입도로(사도 개설·지역권) 확보 선행 필요")}
     if rw is not None and rw >= _MIN_ROAD_WIDTH_M:
         return {"status": CR_MET, "value": rw,
-                "basis": f"접도 도로폭 {rw:g}m(≥4m) — 건축법 제44조 접도요건 충족 추정"}
+                "basis": f"접도 도로폭 {rw:g}m(≥4m{src}) — 건축법 제44조 접도요건 충족 추정"}
     if rw is not None and 0 < rw < _MIN_ROAD_WIDTH_M:
         return {"status": CR_CONFIRM, "value": rw,
-                "basis": (f"접도 도로폭 {rw:g}m(<4m) — 현황도로 인정·도로 확폭 여부 관할 확인 필요")}
+                "basis": (f"접도 도로폭 {rw:g}m(<4m{src}) — 현황도로 인정·도로 확폭 여부 관할 확인 필요")}
     return {"status": CR_UNKNOWN, "value": None,
             "basis": "접도(도로폭·접함) 데이터 미확보 — 진입도로 충족 판정 불가(현황도로 확인 필요)"}
 

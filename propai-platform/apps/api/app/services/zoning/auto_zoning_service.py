@@ -176,6 +176,11 @@ class AutoZoningService:
                         result["zone_type_secondary"] = lc["zone_type_2"]
                     # 접도(도로접면) → 대표 도로폭(m). estimate_road_width_m 재사용(DRY·NED 실데이터).
                     # 시니어 심의 접도 CSP·건축법 44조 적합성 입력원(미확보 시 미설정·무목업).
+                    # ★road_width_source 동반 필수 — 이 경로는 기하 실측 없이 '도로접면' 범주를
+                    #   대표값으로 환산할 뿐이다(광대로→40m 등). 출처를 함께 싣지 않으면 하류
+                    #   (dev_act_permit_gate._eval_road)가 실측과 구분하지 못해 근거 문구에
+                    #   "접도 도로폭 40m"를 실측인 양 표기한다(표기사기). land_info_service는
+                    #   같은 필드에 'cadastral_road_parcel'(지적 실측)을 싣는다 — 계약 동일 유지.
                     road_side = lc.get("road_side")
                     if road_side:
                         # lazy import — land_info_service↔auto_zoning 순환참조 회피.
@@ -186,6 +191,7 @@ class AutoZoningService:
                         rw = estimate_road_width_m(road_side)
                         if rw is not None:
                             result["road_width_m"] = rw
+                            result["road_width_source"] = "road_side_estimate"
             except Exception as e:  # noqa: BLE001
                 result["warnings"].append(f"토지특성 조회 실패: {str(e)}")
 
