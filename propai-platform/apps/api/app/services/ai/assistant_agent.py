@@ -38,6 +38,9 @@ _AGENT_ADDENDUM = (
     "- 사실(용적률·건폐율·면적·공시지가·시세·개발방식)은 반드시 도구 결과만 근거로 답하라. "
     "도구로 확인되지 않은 수치는 추정하지 말고 '확인 불가'로 정직히 고지하라.\n"
     "- 용적률은 실효(조례) 기준과 특이부지 판정을 우선 안내하고, 법정상한은 별도로 구분해 제시하라.\n"
+    "- 개략 수지(총사업비·순이익·ROI·등급)를 구체적으로 물으면 rough_feasibility를, "
+    "추천 개발모델·Top3를 물으면 permit_top3를, 주변 시세·실거래를 물으면 nearby_transactions를 "
+    "호출하라. 필요한 도구만 호출하고 과호출은 피하라.\n"
     "- 단순 일반 질문(개념 설명 등)은 도구 없이 바로 답하라. 필요한 도구만 호출하라."
 )
 
@@ -59,6 +62,21 @@ def _chunk_text(chunk: object) -> str:
                 parts.append(p["text"])
         return "".join(parts)
     return ""
+
+
+# 절단 정직 고지 — provider stop_reason(anthropic)/finish_reason(openai 등)이 max_tokens/length면
+# 문장 중간 절단이 에러 표시 없이 조용히 전송된 것(무목업 원칙 위반). 기존 관례
+# (expert_panel_service._single의 절단 감지)와 동일 판정 로직을 재사용(신규 산식 0).
+_TRUNCATION_NOTICE = "\n\n_(응답이 길어 일부 생략되었습니다 — 이어서 질문해 주세요)_"
+
+
+def _is_truncated(response: object) -> bool:
+    """LLM 응답이 max_tokens 절단으로 끝났는지 판정(response_metadata.stop_reason/finish_reason)."""
+    meta = getattr(response, "response_metadata", None)
+    if not isinstance(meta, dict):
+        return False
+    stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
+    return stop in ("max_tokens", "length")
 
 
 # ─────────────────────────── 읽기 도구(무료·in-process) ───────────────────────────
@@ -98,6 +116,29 @@ async def analyze_site(address: str) -> str:
             lines.append(f"공시지가: {int(r['official_price_per_sqm']):,}원/㎡")
         except (TypeError, ValueError):
             lines.append(f"공시지가: {r['official_price_per_sqm']}원/㎡")
+
+    # ★법정·실효 용적률 분리 표기 — feasibility_precheck가 이미 타는 SSOT 체인
+    #   (precheck_service._legal_limits → OrdinanceService·calc_effective_far)을 재계산 없이
+    #   재사용한다(신규 산식 0). zone_type이 주소 키워드 추론(inferred)이면 신뢰불가 zone 기반
+    #   산정을 피해 생략한다(정직 — precheck_service의 PNU 미확인 차단 게이트와 동일 원칙).
+    if r.get("zone_type") and not inferred:
+        try:
+            from app.services.precheck.precheck_service import _legal_limits
+
+            # pnu 전달 — 동단위 주소의 시군구 PNU 폴백이 재지오코딩 없이 근거를 갖게.
+            legal = await _legal_limits(r["zone_type"], address, pnu=r.get("pnu"))
+            legal_far = legal.get("far_pct")
+            eff_far = legal.get("applied_far_pct")
+            if legal_far is not None:
+                lines.append(f"법정 용적률(legal_far): {legal_far:g}%")
+            if eff_far is not None:
+                reliability = "SSOT 확정" if legal.get("far_reliable") else "미확정(정직강등·참고용)"
+                lines.append(
+                    f"실효 용적률(effective_far): {eff_far:g}% "
+                    f"(far_source: {legal.get('far_source') or legal.get('far_basis') or '법정상한'}, {reliability})"
+                )
+        except Exception:  # noqa: BLE001 — 실효값 조회 실패는 법정 한도만 안내(무중단)
+            pass
     if r.get("special_districts"):
         lines.append(f"특이/지구: {', '.join(str(x) for x in r['special_districts'])}")
     if r.get("warnings"):
@@ -186,13 +227,164 @@ async def estimate_land_price(address: str, area_sqm: float | None = None) -> st
     return "\n".join(lines) if lines else "토지가 추정 결과가 비어 있습니다(데이터 없음)."
 
 
+@tool
+async def rough_feasibility(address: str, dev_type: str | None = None) -> str:
+    """주소 기반 개략 사업성 수지(총사업비·매출·순이익·ROI·등급)를 산출한다(읽기 전용,
+    검증된 수지엔진 재사용). '수지분석·사업성·순이익·ROI·개략수지'를 구체적으로 물으면 호출한다.
+    dev_type(M01~M15)을 지정하지 않으면 Top1 추천 유형으로 자동 산정한다."""
+    from app.services.feasibility.rough_feasibility_orchestrator import build_rough_scenario
+
+    try:
+        r = await build_rough_scenario(address=address, dev_type=dev_type)
+    except Exception as e:  # noqa: BLE001
+        return f"개략수지 산출 실패: {str(e)[:120]}. 이 정보 없이 정직하게 '확인 불가'로 답하라."
+    if not isinstance(r, dict):
+        return "개략수지 결과가 없습니다(데이터 없음)."
+    if r.get("scenario_status") == "unavailable":
+        notes = r.get("degraded_notes") or []
+        reason = notes[0] if notes else "산출 불가"
+        return f"개략수지 산출 불가: {reason}"
+
+    lines: list[str] = []
+    inputs = r.get("inputs") or {}
+    if inputs.get("zone_type"):
+        lines.append(f"용도지역: {inputs['zone_type']}")
+    if inputs.get("dev_type_name"):
+        lines.append(f"개발유형: {inputs['dev_type_name']}")
+    if inputs.get("effective_far_pct") is not None:
+        lines.append(f"실효 용적률: {inputs['effective_far_pct']}%")
+    if inputs.get("gfa_sqm") is not None:
+        try:
+            lines.append(f"연면적(GFA): {float(inputs['gfa_sqm']):,.0f}㎡")
+        except (TypeError, ValueError):
+            pass
+    summary = r.get("summary") or {}
+    if summary.get("total_cost_won") is not None:
+        lines.append(f"총사업비: {int(summary['total_cost_won']):,}원")
+    if summary.get("total_revenue_won") is not None:
+        lines.append(f"총매출: {int(summary['total_revenue_won']):,}원")
+    if summary.get("net_profit_won") is not None:
+        lines.append(f"순이익: {int(summary['net_profit_won']):,}원")
+    if summary.get("roi_pct") is not None:
+        lines.append(f"ROI: {summary['roi_pct']}%")
+    if summary.get("grade"):
+        lines.append(f"등급: {summary['grade']}")
+    if r.get("scenario_status") == "tentative":
+        lines.append("[주의] 선행절차(접도 확보 등)를 전제한 잠정치 — 확정치가 아닙니다.")
+    degraded = r.get("degraded_notes") or []
+    if degraded:
+        lines.append("참고: " + "; ".join(str(x) for x in degraded[:3]))
+    return "\n".join(lines) if lines else "개략수지 결과가 비어 있습니다(데이터 없음)."
+
+
+@tool
+async def permit_top3(address: str, area_sqm: float | None = None) -> str:
+    """부지 주소로 인허가 가능한 개발모델 Top3를 추천한다(읽기 전용 — LLM 해석·시니어자문
+    등 무거운 하위호출은 제외하고 규칙기반 산정만 사용). '추천 개발모델·Top3·어떤 유형이
+    좋은지'를 물으면 호출한다."""
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    try:
+        r = await FeasibilityServiceV2().auto_recommend_top3(
+            address=address, land_area_sqm=area_sqm, use_llm=False, with_senior=False,
+        )
+    except Exception as e:  # noqa: BLE001
+        return f"Top3 추천 실패: {str(e)[:120]}. 이 정보 없이 정직하게 '확인 불가'로 답하라."
+    if not isinstance(r, dict):
+        return "Top3 추천 결과가 없습니다(데이터 없음)."
+    if r.get("error"):
+        return f"Top3 추천 불가: {r['error']}"
+    recs = r.get("recommendations") or []
+    if not recs:
+        return r.get("honest_disclosure") or "추천 가능한 개발모델이 없습니다(데이터 없음)."
+
+    lines: list[str] = [f"용도지역: {r.get('zone_type') or '미상'}"]
+    if r.get("effective_far_pct") is not None:
+        lines.append(f"실효 용적률: {r['effective_far_pct']}%")
+    if r.get("land_price_reliable") is False:
+        lines.append("[주의] 공시지가 미확보 — 절대 수익성(ROI·순이익)은 참고용(랭킹만 유효).")
+    if r.get("far_reliable") is False:
+        lines.append("[주의] 용적률 상한 미확보 — 가정치 기준(참고용).")
+    for i, rec in enumerate(recs[:3], 1):
+        feas = rec.get("feasibility") or {}
+        parts = [f"{i}. {rec.get('type_name') or rec.get('development_type')}"]
+        if feas.get("profit_rate_pct") is not None:
+            parts.append(f"수익률 {feas['profit_rate_pct']}%")
+        if feas.get("net_profit_won") is not None:
+            parts.append(f"순이익 {int(feas['net_profit_won']):,}원")
+        if feas.get("grade"):
+            parts.append(f"등급 {feas['grade']}")
+        if rec.get("tentative"):
+            parts.append("[잠정·선행절차 전제]")
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
+
+
+@tool
+async def nearby_transactions(address: str, months: int = 3) -> str:
+    """주소 주변(반경 1km) 실거래(매매·전월세)를 국토부 공공데이터로 요약 조회한다(읽기 전용).
+    '주변 시세·실거래·얼마에 거래됐는지'를 물으면 호출한다."""
+    from app.services.zoning.auto_zoning_service import AutoZoningService
+
+    try:
+        zoning = await AutoZoningService().analyze_by_address(address)
+    except Exception as e:  # noqa: BLE001
+        return f"주소 확인 실패: {str(e)[:120]}. 이 정보 없이 정직하게 '확인 불가'로 답하라."
+    pnu = (zoning or {}).get("pnu")
+    if not pnu:
+        return f"'{address}'의 필지(PNU)를 확인하지 못해 주변 실거래를 조회할 수 없습니다(데이터 없음)."
+
+    from app.services.land_intelligence.nearby_map_service import NearbyMapService
+
+    months_clamped = max(1, min(months or 3, 6))
+    try:
+        r = await NearbyMapService().build(address=address, lawd_cd=pnu[:5], months=months_clamped)
+    except Exception as e:  # noqa: BLE001
+        return f"주변 실거래 조회 실패: {str(e)[:120]}. 이 정보 없이 정직하게 '확인 불가'로 답하라."
+    if not isinstance(r, dict):
+        return "주변 실거래 결과가 없습니다(데이터 없음)."
+    if r.get("data_source") == "unavailable":
+        return r.get("note") or "국토부 실거래 공공데이터가 응답하지 않습니다(일시 조회 실패)."
+
+    categories = r.get("categories") or {}
+    active = [(k, c) for k, c in categories.items() if isinstance(c, dict) and c.get("count")]
+    if not active:
+        return f"'{address}' 주변 최근 {months_clamped}개월 내 실거래가 없습니다(데이터 없음)."
+
+    lines: list[str] = [f"주변(반경 1km) 최근 {months_clamped}개월 실거래 요약:"]
+    active.sort(key=lambda kv: kv[1]["count"], reverse=True)
+    for _, cat in active[:4]:
+        lines.append(f"- {cat.get('label')}({cat.get('kind')}): {cat.get('count')}건")
+        for g in (cat.get("groups") or [])[:3]:
+            if cat.get("kind") == "trade":
+                lines.append(
+                    f"  · {g.get('name')} {g.get('count')}건, "
+                    f"평균 {int(g.get('avg_price_10k') or 0):,}만원(전용{g.get('avg_area_m2')}㎡)"
+                )
+            else:
+                lines.append(
+                    f"  · {g.get('name')} {g.get('count')}건, "
+                    f"보증금 {int(g.get('avg_deposit_10k') or 0):,}만원/"
+                    f"월세 {int(g.get('avg_monthly_10k') or 0):,}만원"
+                )
+    if r.get("note"):
+        lines.append(f"참고: {r['note']}")
+    return "\n".join(lines)
+
+
 # 질의당 노출 도구는 소수로 유지(과다 도구는 오선택·토큰폭증 유발).
-_READ_TOOLS = [analyze_site, feasibility_precheck, estimate_land_price]
+_READ_TOOLS = [
+    analyze_site, feasibility_precheck, estimate_land_price,
+    rough_feasibility, permit_top3, nearby_transactions,
+]
 _TOOLS_BY_NAME = {t.name: t for t in _READ_TOOLS}
 _TOOL_LABELS = {
     "analyze_site": "부지 분석",
     "feasibility_precheck": "사업성 사전진단",
     "estimate_land_price": "토지가 추정",
+    "rough_feasibility": "개략 수지분석",
+    "permit_top3": "개발모델 Top3 추천",
+    "nearby_transactions": "주변 실거래 조회",
 }
 
 
@@ -249,10 +441,14 @@ async def run_agent_events(msgs: list, *, service: str = "ai_assistant") -> Asyn
     langchain-anthropic 버전에서 확실히 채워져 계측이 누락되지 않고(stream_usage 의존 제거),
     ② 도구 호출(tool_calls)이 버전 무관하게 파싱돼 prod에서 조용히 무효화되지 않는다.
     대신 최종 답변은 토큰 단위 스트리밍이 아니라 완성 후 1회 델타로 송출된다(도구 진행은 실시간).
+
+    ★max_tokens는 명시 지정하지 않고 llm_provider.get_llm 기본값(4096)을 따른다 — 과거
+    1024 하드코딩이 플랫폼 기본(4096)보다 낮아 문장 중간에서 조용히 절단(에러 표시 없음)됐다.
+    절단이 발생해도(다른 프로바이더 등) _is_truncated로 감지해 정직 고지를 덧붙인다.
     """
     from app.services.ai.llm_provider import get_llm
 
-    base_llm = get_llm(timeout=60.0, max_tokens=1024)
+    base_llm = get_llm(timeout=60.0)
     if not hasattr(base_llm, "bind_tools"):
         raise AgentUnavailableError("LLM이 bind_tools를 지원하지 않습니다.")
 
@@ -267,6 +463,8 @@ async def run_agent_events(msgs: list, *, service: str = "ai_assistant") -> Asyn
         if not tool_calls:
             text = _chunk_text(resp)
             if text:
+                if _is_truncated(resp):
+                    text += _TRUNCATION_NOTICE
                 yield {"type": "delta", "text": text}
             return  # 도구 호출 없음 = 최종 답변 완료
 
@@ -283,6 +481,8 @@ async def run_agent_events(msgs: list, *, service: str = "ai_assistant") -> Asyn
     await _meter(base_llm, resp, service)
     text = _chunk_text(resp)
     if text:
+        if _is_truncated(resp):
+            text += _TRUNCATION_NOTICE
         yield {"type": "delta", "text": text}
 
 

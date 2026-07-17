@@ -239,8 +239,19 @@ class VWorldService:
                     # PNU 추출: PARCEL → level4LC, ROAD → level4AC
                     structure = response.get("refined", {}).get("structure", {})
                     pnu = structure.get("level4LC") or None
+                    # ★additive(2026-07-17): level1(시도)/level2(시군구) 명칭도 함께 반환한다.
+                    # 종전엔 여기서 버려지고 PNU만 취했는데, 시/군/구 토큰이 없는 동 단위
+                    # 주소(예: '의정부동 224')는 정규식 기반 시군구 추출이 전부 실패해 조례값을
+                    # 못 찾고 법정상한으로 과대 폴백했다. VWorld가 이미 확정한 이 명칭을
+                    # 그대로 재사용하면(코드→명칭 표 새로 발명 없이) 정규식 실패 시 PNU 폴백의
+                    # 근거로 쓸 수 있다(ordinance_service.resolve_region_via_pnu_fallback 소비).
+                    sido = structure.get("level1") or None
+                    sigungu = structure.get("level2") or None
 
-                    return {"lat": lat, "lon": lon, "pnu": pnu, "address": address}
+                    return {
+                        "lat": lat, "lon": lon, "pnu": pnu, "address": address,
+                        "sido": sido, "sigungu": sigungu,
+                    }
                 except Exception as e:
                     logger.error(
                         "VWORLD 지오코딩 실패 (%s): %s — error=%s, type=%s",

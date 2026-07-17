@@ -1313,7 +1313,7 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
             return None
         # 지역 키: OrdinanceService 와 동일한 시군구 추출을 캐시키로 사용(주소 전체 대신 시군구).
         try:
-            region = ord_svc._extract_region(addr)  # noqa: SLF001 — 캐시키 일관성용 내부 추출 재사용
+            region = await ord_svc._extract_region(addr)  # noqa: SLF001 — 캐시키 일관성용 내부 추출 재사용
             region_key = f"{region.get('sido') or ''}|{region.get('sigungu') or ''}"
         except Exception:  # noqa: BLE001
             region_key = addr.strip()

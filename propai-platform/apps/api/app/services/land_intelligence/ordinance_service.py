@@ -17,6 +17,7 @@
 - 각 지방자치단체 도시계획 조례
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -86,6 +87,58 @@ def resolve_ordinance_region(address: str | None) -> str | None:
     for m in re.finditer(r"([가-힣]{1,4}[시군])(?:\s|$)", addr):
         return m.group(1)
     return None
+
+
+# 시군구 PNU 폴백(VWorld 재지오코딩) SLA 가드 — 90초 진단류 소비처가 걸려있어 짧게 유지.
+_REGION_FALLBACK_TIMEOUT = 6.0
+
+
+async def resolve_region_via_pnu_fallback(
+    address: str | None, pnu: str | None = None,
+) -> dict[str, str | None]:
+    """정규식 시군구 추출 실패(동 단위 주소 등) 시 PNU 폴백 — (시도명, 시군구명) 해석.
+
+    ★근본원인(2026-07-17 조례 미반영 감사): resolve_ordinance_region/_extract_region/
+    _extract_sigungu_from_address는 모두 주소 문자열의 '(\\S{2,4}[시군구])' 정규식에만
+    의존한다. '의정부동 224'처럼 시/군/구 토큰 자체가 없는 동 단위 주소는 sigungu=None이 되어
+    정적 캐시(ORDINANCE_CACHE)에 이미 있는 정답(예: 의정부시 일반상업 far=900)을 못 찾고
+    법정상한(1,300%)으로 과대 폴백한다.
+
+    법정동코드(PNU 앞 5자리)→시군구 명칭 매핑 테이블은 이 리포에 없다(전국 250+ 시군구를
+    새로 하드코딩하는 것은 검증되지 않은 표를 만드는 것이라 무날조 원칙에 위배). 대신 PNU를
+    만들어낸 바로 그 VWorld 지오코딩 응답의 refined.structure(level1=시도/level2=시군구
+    명칭)를 그대로 재사용한다 — VWorld 자체가 권위 소스이므로 코드→명칭 변환을 새로 발명하지
+    않는다(무날조).
+
+    pnu(선택)는 상위에서 이미 확인된 PNU가 있다는 신호로만 쓰인다(로그·근거용) — 이름 해석은
+    항상 이 지오코딩 응답을 경유하며 pnu 자릿수를 직접 디코딩하지 않는다. address만으로도
+    항상 시도된다(상위가 pnu를 안 넘겨도 이 함수 자체가 무력화되지 않도록).
+
+    실패 시 {"sido": None, "sigungu": None} — 호출부의 기존 동작(법정상한 정직 폴백)을 그대로
+    보존한다(할루시네이션 금지).
+    """
+    addr = (address or "").strip()
+    if not addr:
+        return {"sido": None, "sigungu": None}
+    try:
+        from app.services.external_api.vworld_service import VWorldService
+
+        geo = await asyncio.wait_for(
+            VWorldService().geocode_address(addr), timeout=_REGION_FALLBACK_TIMEOUT,
+        )
+        if not geo:
+            return {"sido": None, "sigungu": None}
+        sigungu = geo.get("sigungu") or None
+        sido = geo.get("sido") or None
+        if sigungu:
+            logger.info(
+                "시군구 PNU 폴백 성공: address=%s pnu=%s sigungu=%s",
+                addr[:30], str(pnu or geo.get("pnu") or "")[:10], sigungu,
+            )
+        return {"sido": sido, "sigungu": sigungu}
+    except Exception as e:  # noqa: BLE001 — 폴백 실패는 기존 동작(None) 보존(무중단)
+        logger.warning("시군구 PNU 폴백 실패: %s", str(e)[:120])
+        return {"sido": None, "sigungu": None}
 
 
 # ── 조례 해석 영속(persist) — 한번 조사한 (시군구·용도지역) 값을 저장해 재사용한다.
@@ -313,7 +366,9 @@ class OrdinanceService:
     """전국 지자체 도시계획조례 실시간 조회 서비스."""
 
     async def get_ordinance_limits(
-        self, address: str, zone_type: str, force_refresh: bool = False
+        self, address: str, zone_type: str, force_refresh: bool = False,
+        pnu: str | None = None,
+        resolved_sigungu: str | None = None,
     ) -> dict[str, Any]:
         """주소와 용도지역으로 해당 지자체 조례 건폐율/용적률을 조회.
 
@@ -325,8 +380,13 @@ class OrdinanceService:
         → 1~3 결과는 저장(persist)하고 provenance(출처·신뢰도·재확인 권장)를 부착한다.
         force_refresh=True(사용자 '재분석' 실행) 일 때만 저장본을 무시하고 다시 조사·덮어쓴다.
         """
-        # 주소에서 지자체 추출
-        region_info = self._extract_region(address)
+        # 주소에서 지자체 추출(정규식 우선, 실패 시 PNU 폴백 — pnu는 있으면 근거로 전달).
+        # 호출부가 이미 해석한 sigungu(resolved_sigungu)를 주면 재해석을 생략한다 —
+        # 동단위 주소에서 같은 주소를 한 요청 안에 두 번 지오코딩하는 낭비(최대 6s×2) 방지.
+        if resolved_sigungu:
+            region_info: dict[str, Any] = {"sido": "미확인", "sigungu": resolved_sigungu}
+        else:
+            region_info = await self._extract_region(address, pnu=pnu)
         sido = region_info["sido"]
         sigungu = region_info["sigungu"]
         # ★조례 관할명 정규화(공용 SSOT resolve_ordinance_region 재사용) — 특별시/광역시 자치구
@@ -1145,8 +1205,14 @@ class OrdinanceService:
         data = ORDINANCE_CACHE.get(sido, {}).get(zone_type)
         return data
 
-    def _extract_region(self, address: str) -> dict[str, str | None]:
-        """주소에서 시도/시군구를 추출."""
+    async def _extract_region(
+        self, address: str, pnu: str | None = None,
+    ) -> dict[str, str | None]:
+        """주소에서 시도/시군구를 추출.
+
+        (a) 정규식 우선(기존 동작 무변경) → (b) 실패 시 PNU 폴백(VWorld 재지오코딩 —
+        resolve_region_via_pnu_fallback 재사용) → (c) 그래도 실패면 기존 동작(sigungu=None).
+        """
         # 광역시/특별시/도
         SIDO_LIST = [
             "서울특별시", "부산광역시", "대구광역시", "인천광역시",
@@ -1188,4 +1254,14 @@ class OrdinanceService:
                 if candidate not in SIDO_LIST and "특별" not in candidate and "광역" not in candidate:
                     sigungu = candidate
 
+        # (b) 정규식 실패(동 단위 등 시/군/구 토큰 없는 주소) → PNU 폴백. sido/sigungu 둘 다
+        #     이미 확인됐으면 폴백 스킵(불필요 지오코딩 호출 방지 — 정상 경로 지연 0).
+        if not sigungu:
+            fb = await resolve_region_via_pnu_fallback(address, pnu)
+            if fb.get("sigungu"):
+                sigungu = fb["sigungu"]
+                if not sido:
+                    sido = fb.get("sido")
+
+        # (c) 그래도 실패 시 기존 동작 그대로(sigungu=None → 호출부가 법정상한 정직 폴백).
         return {"sido": sido or "미확인", "sigungu": sigungu}

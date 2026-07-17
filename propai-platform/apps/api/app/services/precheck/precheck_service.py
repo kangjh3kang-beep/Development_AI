@@ -49,7 +49,9 @@ def _normalize_zone(zone_type: str) -> str:
     return key
 
 
-async def _legal_limits(zone_type: str | None, address: str | None = None) -> dict[str, Any]:
+async def _legal_limits(
+    zone_type: str | None, address: str | None = None, pnu: str | None = None,
+) -> dict[str, Any]:
     """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조) + 실효값(SSOT, 가산).
 
     기존 반환 키(bcr_pct/far_pct/height_m/source)는 전부 보존한다(_area_checks·프론트 무영향).
@@ -91,7 +93,7 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
     # ── 조례 실효값 적용(가산) — applicable_limits_for 경유(새 산식 0) ──
     # 법령 한도 근거키는 항상 부착(zone 매칭 시), 조례 적용은 확인된 경우에만 표기.
     ref_keys: list[str] = ["far_limit", "bcr_limit"]
-    sigungu = _extract_sigungu_from_address(address)
+    sigungu = await _extract_sigungu_from_address(address, pnu)
     legal["sigungu"] = sigungu
     legal["ordinance_confirmed"] = False
     legal["applied_bcr_pct"] = legal["bcr_pct"]
@@ -104,7 +106,10 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
             from app.services.land_intelligence.ordinance_service import OrdinanceService
 
             ord_result = await asyncio.wait_for(
-                OrdinanceService().get_ordinance_limits(address, zone_type),
+                # resolved_sigungu: 위에서 이미 해석한 값 하향 전달 — 동일주소 중복 지오코딩 방지.
+                OrdinanceService().get_ordinance_limits(
+                    address, zone_type, pnu=pnu, resolved_sigungu=sigungu,
+                ),
                 timeout=_ORDINANCE_TIMEOUT,
             )
             regulation_payload = ord_result
@@ -193,12 +198,20 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
     return legal
 
 
-def _extract_sigungu_from_address(address: str | None) -> str | None:
-    """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용).
+async def _extract_sigungu_from_address(
+    address: str | None, pnu: str | None = None,
+) -> str | None:
+    """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용 + 조례 캐시 매칭 키).
 
-    특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구 토큰을 반환한다. 모든 후보를
-    순회(finditer)하므로 '서울특별시 강남구 …'에서 '강남구'를 정확히 잡는다.
-    추출 실패 시 None(레지스트리에 sigungu 미전달 → 조례 url_status='pending').
+    (a) 정규식 우선(기존 동작 무변경) — 특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구
+    토큰을 반환한다. 모든 후보를 순회(finditer)하므로 '서울특별시 강남구 …'에서 '강남구'를
+    정확히 잡는다.
+    (b) 정규식 실패 시 PNU 폴백 — '의정부동 224'처럼 시/군/구 토큰 자체가 없는 동 단위
+    주소는 (a)가 항상 None이 되어 정적 조례캐시(ORDINANCE_CACHE)에 이미 있는 정답을 못 찾고
+    법정상한으로 과대 폴백한다(2026-07-17 조례 미반영 근본원인). ordinance_service의 공용
+    헬퍼(resolve_region_via_pnu_fallback — VWorld 재지오코딩 refined.structure 재사용,
+    코드→명칭 표 새로 발명 없음)로 폴백한다.
+    (c) 그래도 실패 시 기존 동작(None → 레지스트리에 sigungu 미전달, 조례 url_status='pending').
     """
     addr = str(address or "")
     if not addr:
@@ -207,7 +220,14 @@ def _extract_sigungu_from_address(address: str | None) -> str | None:
         cand = m.group(1)
         if "특별" not in cand and "광역" not in cand:
             return cand
-    return None
+    try:
+        from app.services.land_intelligence.ordinance_service import (
+            resolve_region_via_pnu_fallback,
+        )
+        fb = await resolve_region_via_pnu_fallback(addr, pnu)
+        return fb.get("sigungu")
+    except Exception:  # noqa: BLE001 — 폴백 실패는 기존 동작(None) 보존
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -639,7 +659,7 @@ async def run_instant_precheck(
         }
 
     # ── 2) 법정 한도(실효값 SSOT 가산) + 후보 개발방식 ──
-    legal = await _legal_limits(zone_type, address)
+    legal = await _legal_limits(zone_type, address, pnu=resolved_pnu)
     permitted_codes = get_permitted_types(zone_type)
     area_checks = _area_checks(resolved_area, legal)
 
@@ -727,7 +747,7 @@ async def run_instant_precheck(
         used_sources=sources, quantitative_reliable=quantitative_reliable,
         ordinance_confirmed=bool(legal.get("ordinance_confirmed")),
     )
-    feasibility_band = _build_feasibility_band(
+    feasibility_band = await _build_feasibility_band(
         best_code=best, zone_type=zone_type, legal=legal,
         area_sqm=resolved_area, address=address,
         official_price_per_sqm=official_price,
@@ -864,7 +884,7 @@ _BAND_ASSUMPTIONS: dict[str, dict[str, float]] = {
 }
 
 
-def _build_band_module_input(
+async def _build_band_module_input(
     *,
     best_code: str,
     zone_type: str,
@@ -892,7 +912,7 @@ def _build_band_module_input(
     eff_ratio = svc._get_type_efficiency_ratio(best_code)
     avg_unit_area = svc._get_type_avg_unit_area(best_code)
     total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
-    region = (legal.get("sigungu") or _extract_sigungu_from_address(address) or "서울")
+    region = (legal.get("sigungu") or await _extract_sigungu_from_address(address) or "서울")
 
     inp = ModuleInput(
         development_type=best_code,
@@ -914,7 +934,7 @@ def _build_band_module_input(
     return svc, inp
 
 
-def _build_feasibility_band(
+async def _build_feasibility_band(
     *,
     best_code: str | None,
     zone_type: str | None,
@@ -939,7 +959,7 @@ def _build_feasibility_band(
     if not official_price_per_sqm or official_price_per_sqm <= 0:
         return None
     try:
-        svc, base_inp = _build_band_module_input(
+        svc, base_inp = await _build_band_module_input(
             best_code=best_code, zone_type=zone_type, legal=legal,
             area_sqm=float(area_sqm), address=address,
             official_price_per_sqm=official_price_per_sqm,

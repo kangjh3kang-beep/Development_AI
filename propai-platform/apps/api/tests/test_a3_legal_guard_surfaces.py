@@ -95,7 +95,7 @@ def _precheck_stub_zoning(monkeypatch):
 async def test_precheck_flags_legal_excess(monkeypatch):
     svc = _precheck_stub_zoning(monkeypatch)
 
-    async def _fake_legal_limits(zone_type, address=None):
+    async def _fake_legal_limits(zone_type, address=None, pnu=None):
         return {
             "bcr_pct": 20, "far_pct": 100, "height_m": None,
             "source": "국토의 계획 및 이용에 관한 법률 제78조", "zone_type": "자연녹지지역",
@@ -117,7 +117,7 @@ async def test_precheck_flags_legal_excess(monkeypatch):
 async def test_precheck_no_warning_within_legal_limit(monkeypatch):
     svc = _precheck_stub_zoning(monkeypatch)
 
-    async def _fake_legal_limits(zone_type, address=None):
+    async def _fake_legal_limits(zone_type, address=None, pnu=None):
         return {
             "bcr_pct": 20, "far_pct": 100, "height_m": None,
             "source": "국토의 계획 및 이용에 관한 법률 제78조", "zone_type": "자연녹지지역",

@@ -619,7 +619,7 @@ class LandInfoService:
         if result["zone_type"]:
             try:
                 ordinance_result = await self.ordinance.get_ordinance_limits(
-                    address, result["zone_type"]
+                    address, result["zone_type"], pnu=effective_pnu,
                 )
                 result["local_ordinance"] = ordinance_result
 
