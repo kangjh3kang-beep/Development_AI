@@ -61,9 +61,11 @@ export function ChangeForecastCard({
     setRiskLoading(true);
     setRiskMsg("");
     try {
+      // 백엔드 PredictRequest 계약 = {address?, pnu?, zone_type?, design_params?, use_llm?}.
+      // project_id 는 모델에 없어 Pydantic 이 조용히 버리던 필드(무음 드롭 패턴) — 전송 제거.
       const r = await apiClient.post<DesignRiskPredictResponse>("/design-risk/predict", {
         useMock: false,
-        body: { address: addr, pnu: siteAnalysis?.pnu ?? undefined, project_id: projectId },
+        body: { address: addr, pnu: siteAnalysis?.pnu ?? undefined },
       });
       if (r.ok && r.risks) {
         setRisks(r.risks as ChangeForecastRiskInput[]);
@@ -76,7 +78,7 @@ export function ChangeForecastCard({
     } finally {
       setRiskLoading(false);
     }
-  }, [siteAnalysis, projectId]);
+  }, [siteAnalysis]);
 
   const run = useCallback(async () => {
     if (!baseParams.total_gfa_sqm || baseParams.total_gfa_sqm <= 0) {

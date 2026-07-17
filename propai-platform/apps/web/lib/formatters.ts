@@ -104,7 +104,7 @@ export function formatArea(m2: number): string {
   if (m2 === 0) return "0 m²";
 
   const pyeong = m2 / PYEONG_SQM;
-  return `${m2.toLocaleString("en-US", { maximumFractionDigits: 1 })} m² (약 ${pyeong.toLocaleString("en-US", { maximumFractionDigits: 0 })}평)`;
+  return `${m2.toLocaleString("en-US", { maximumFractionDigits: 1 })} m² (약 ${pyeong.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}평)`;
 }
 
 /**

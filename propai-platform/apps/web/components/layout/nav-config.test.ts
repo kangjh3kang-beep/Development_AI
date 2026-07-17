@@ -26,7 +26,9 @@ describe("buildPrimaryNav", () => {
 
   it("최신 main의 관제 동선과 프리페치 정책을 registry에서 전달", () => {
     const control = NAV.find((s) => s.id === "control")!;
-    expect(control.items.map((n) => n.href)).toEqual(["/en", "/en/precheck", "/en/analysis"]);
+    expect(control.items.map((n) => n.href)).toEqual([
+      "/en", "/en/precheck", "/en/analysis", "/en/settings/team",
+    ]);
 
     const designRefs = NAV.find((s) => s.id === "design-center")?.items.find((n) => n.id === "design-refs");
     const adminItems = NAV.find((s) => s.id === "admin")?.items ?? [];

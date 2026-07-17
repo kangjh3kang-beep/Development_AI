@@ -112,6 +112,20 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/analysis"],
   },
   {
+    // 내 구독·팀 관리(MY PAGE) — 관리자 전용이 아니라 전 회원(팀장·일반회원 공통) 개인 화면이라
+    // adminOnly 섹션(admin)이 아닌 관제(control, 게이트 없음)에 배선한다.
+    id: "team",
+    label: "내 구독·팀 관리",
+    sectionId: "control",
+    order: 40,
+    path: "/settings/team",
+    iconKey: "team",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "control",
+    apiDependencies: ["/teams"],
+  },
+  {
     id: "projects",
     label: "프로젝트 관리",
     sectionId: "projects",
@@ -197,6 +211,19 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     scope: "global",
     lifecyclePhase: "business",
     apiDependencies: ["/analytics/cost"],
+  },
+  {
+    // ESG(GRESB) 분석 페이지 — 투자·적산과 나란히 사업성 분석군 직속 리프로 승격(orphan 배선 해소).
+    id: "esg",
+    label: "ESG 분석",
+    sectionId: "projects",
+    order: 50,
+    path: "/analytics/esg",
+    iconKey: "esg",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "business",
+    apiDependencies: ["/ai/llm"],
   },
   {
     id: "market-sales",

@@ -10,12 +10,14 @@ import {
   IconCost,
   IconDashboard,
   IconDesign,
+  IconESG,
   IconMarket,
   IconPermit,
   IconProject,
   IconRegulation,
   IconROI,
   IconSRE,
+  IconTeam,
 } from "./nav-icons";
 import {
   buildPrimaryRegistrySections,
@@ -45,12 +47,14 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   cost: <IconCost />,
   dashboard: <IconDashboard />,
   design: <IconDesign />,
+  esg: <IconESG />,
   market: <IconMarket />,
   permit: <IconPermit />,
   project: <IconProject />,
   regulation: <IconRegulation />,
   roi: <IconROI />,
   sre: <IconSRE />,
+  team: <IconTeam />,
 };
 
 function toNavNode(node: RegistryNavNode): NavNode {

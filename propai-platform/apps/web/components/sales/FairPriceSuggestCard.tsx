@@ -84,7 +84,9 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
                     cost_viable(원가 회수 가능 여부) 배지 + 원가비율·마진. 데이터 없는 tier 는 정직 생략. */}
                 {t.cost_viable != null && (
                   <span className={`mt-1 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold ${t.cost_viable ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/15 text-rose-500"}`}>
-                    {t.cost_viable ? "원가회수 가능" : "원가미회수 ⚠"}
+                    {t.cost_viable ? "원가회수 가능" : (
+                      <span className="inline-flex items-center gap-0.5">원가미회수<AlertTriangle className="size-2.5" aria-hidden /></span>
+                    )}
                   </span>
                 )}
                 {(t.construction_cost_ratio_pct != null || t.margin_over_construction_pct != null) && (
@@ -114,7 +116,9 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
                   안 그리던 dead 필드 제거 — 백엔드가 산출한 지표를 화면에 종단배선). */}
               {data.cost_validation.conservative_viable != null && (
                 <b className={data.cost_validation.conservative_viable ? "text-emerald-600" : "text-rose-500"}>
-                  {data.cost_validation.conservative_viable ? "보수안 원가회수 OK" : "보수안 원가미회수 ⚠"} ·{" "}
+                  {data.cost_validation.conservative_viable ? "보수안 원가회수 OK" : (
+                    <span className="inline-flex items-center gap-0.5">보수안 원가미회수<AlertTriangle className="size-2.5" aria-hidden /></span>
+                  )} ·{" "}
                 </b>
               )}
               원가검증({data.cost_validation.cost_basis})
@@ -122,7 +126,9 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
                 ? ` · 공급평당 원가 ${data.cost_validation.construction_cost_per_supply_pyeong_10k.toLocaleString()}만원/평`
                 : ""}
               {" · 원가기반 최저선 "}<b>{data.cost_validation.viable_price_floor_per_pyeong_10k?.toLocaleString()}만원/평</b>
-              {data.cost_validation.warning ? ` · ⚠ ${data.cost_validation.warning}` : " · 보수안이 원가 최저선을 충족합니다."}
+              {data.cost_validation.warning ? (
+                <span className="inline-flex items-center gap-0.5"> · <AlertTriangle className="size-2.5 shrink-0" aria-hidden />{" "}{data.cost_validation.warning}</span>
+              ) : " · 보수안이 원가 최저선을 충족합니다."}
             </p>
           )}
 

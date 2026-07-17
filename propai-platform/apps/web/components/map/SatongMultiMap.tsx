@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Building2, MapPin, Ruler, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
   AGE_LEGEND_ITEMS,
@@ -2227,7 +2227,7 @@ export function SatongMultiMap({
                   setClickMenu(null);
                 }}
               >
-                📍 이 필지 선택·정보
+                <span className="inline-flex items-center gap-1"><MapPin className="size-3.5" aria-hidden />이 필지 선택·정보</span>
               </button>
               <button
                 type="button"
@@ -2239,7 +2239,7 @@ export function SatongMultiMap({
                   setClickMenu(null);
                 }}
               >
-                📏 거리재기 시작
+                <span className="inline-flex items-center gap-1"><Ruler className="size-3.5" aria-hidden />거리재기 시작</span>
               </button>
               <button
                 type="button"
@@ -2263,8 +2263,9 @@ export function SatongMultiMap({
             className="pointer-events-auto absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 shadow-lg backdrop-blur"
             style={{ zIndex: SATONG_UI_Z.clickMenu }}
           >
-            <span className="text-[11px] font-black text-[var(--text-primary)]">
-              📏 {measureOn ? "거리재기 — 클릭: 점 추가 · 더블클릭/ESC: 종료" : "측정 결과"}
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--text-primary)]">
+              <Ruler className="size-3.5 shrink-0" aria-hidden />
+              {measureOn ? "거리재기 — 클릭: 점 추가 · 더블클릭/ESC: 종료" : "측정 결과"}
               {measurePoints.length >= 2
                 ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
                 : ""}
@@ -2305,8 +2306,9 @@ export function SatongMultiMap({
                 무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
             {hasSatongLayer(layerState, "age") && (
               avgAge === null ? (
-                <span className="pointer-events-auto inline-flex w-fit items-center rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-bold text-slate-500 shadow">
-                  🏢 노후도 — 건물 정보 없음
+                <span className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-bold text-slate-500 shadow">
+                  <Building2 className="size-3" aria-hidden />
+                  노후도 — 건물 정보 없음
                   {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}
                 </span>
               ) : legendOpen ? (
@@ -2317,7 +2319,7 @@ export function SatongMultiMap({
                     className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-slate-800"
                     aria-expanded
                   >
-                    <span>🏢 건물 노후도 구분</span>
+                    <span className="inline-flex items-center gap-1"><Building2 className="size-3" aria-hidden />건물 노후도 구분</span>
                     <span aria-hidden>▾</span>
                   </button>
                   <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
@@ -2340,7 +2342,7 @@ export function SatongMultiMap({
                   aria-expanded={false}
                   className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
                 >
-                  🏢 노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
+                  <Building2 className="size-3" aria-hidden />노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
                   <span aria-hidden>▸</span>
                 </button>
               )

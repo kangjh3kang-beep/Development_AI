@@ -990,6 +990,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     # ── 다필지 종합분석 — 필지별 속성·형질 차이 + 통합 지표(개발사업분석 기반) ──
     integrated_analysis = None
     if features:
+        # ★실효한도 SSOT 수렴(7번째 표면) — parcels-info/land-report/integrated-analysis와 동일하게
+        #   calc_effective_far(법정범위→조례→계획상한→구조상한)를 공용헬퍼(_enrich_effective_and_special)
+        #   경유해 필지별로 부착한다. 과거엔 아래 면적가중 블록이 zone_limits(법정상한)를 그대로
+        #   가중해, 자연녹지처럼 구조상한(건폐율×층수) 대상 용도지역의 통합 실질치가 법정상한
+        #   (예: 100%)으로 과대표시됐다 — 다른 6표면(규제·인허가·90초진단·파이프라인·수지·종합)과
+        #   불일치하는 재계산이었다. 재계산 금지·소비만.
+        await _enrich_effective_and_special(features)
+
         zone_set = sorted({f["zone_type"] for f in features if f.get("zone_type")})
         jimok_set = sorted({f["jimok"] for f in features if f.get("jimok")})
         priced = [(f["official_price_per_sqm"], f.get("area_sqm") or 0)
@@ -1006,15 +1014,17 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             notes.append("필지 비인접 — 통합개발 제약(분리개발 또는 진입로 확보 검토)")
         elif adjacency.get("contiguous") is True and len(features) >= 2:
             notes.append("필지 인접 — 통합개발 가능(합필·공동개발 검토)")
-        # ── 면적가중 실질 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
+        # ── 면적가중 실효(SSOT) 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
         #  필지별 용도지역 한도가 다르면 단순 적용 불가 → 면적가중으로 통합 실질치를 산정한다.
-        #  통합 건축면적 = Σ(필지면적×건폐율), 통합 연면적 = Σ(필지면적×용적률) → 합을 총면적으로 나눠 실질%.
-        lim = [(f.get("area_sqm") or 0, (f.get("zone_limits") or {})) for f in features]
-        a_for_limit = sum(a for a, zl in lim if a and zl.get("max_bcr_pct"))
-        buildable_area = sum(a * (zl.get("max_bcr_pct") or 0) / 100 for a, zl in lim)
-        total_gfa = sum(a * (zl.get("max_far_pct") or 0) / 100 for a, zl in lim)
-        eff_bcr = round(buildable_area / a_for_limit * 100, 1) if a_for_limit else None
-        eff_far = round(total_gfa / a_for_limit * 100, 1) if a_for_limit else None
+        #  산식은 /zoning/integrated-analysis와 동일한 순수함수(_aggregate_integrated_zoning)를
+        #  단일경유한다(로직 복제 금지) — 통합 건축면적/연면적도 이 함수의 SSOT 집계값을 그대로 쓴다.
+        from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+        _agg = _aggregate_integrated_zoning(features)
+        eff_bcr = _agg.get("blended_bcr_eff_pct")
+        eff_far = _agg.get("blended_far_eff_pct")
+        buildable_area = _agg.get("integrated_footprint_sqm") or 0
+        total_gfa = _agg.get("integrated_gfa_sqm") or 0
 
         # ── 개발가능방법 + 최적추진방안 제안(총면적·인접성·용도혼재 기반) ──
         methods: list[str] = []
@@ -1059,6 +1069,13 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "methods_note": "정밀 적용판정은 /development-methods/scenarios(인접성·정책 시뮬)로 확인하세요.",
             "notes": notes,
         }
+
+    # _enrich_effective_and_special가 부착한 내부 전용 키(_bcr_eff 등)는 features 응답 계약에
+    # 없던 필드라 노출하지 않는다(응답 필드명 유지 — 프론트 무변경).
+    for _f in features:
+        for _k in ("_bcr_legal", "_far_legal", "_bcr_eff", "_far_eff", "_far_basis",
+                   "_special", "_districts_checked"):
+            _f.pop(_k, None)
 
     return {
         "features": features,

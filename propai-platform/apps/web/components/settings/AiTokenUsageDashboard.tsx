@@ -37,7 +37,6 @@ type Balance = {
   topup_krw: number;
   topup_remaining: number;
   used_this_cycle_krw: number;
-  markup_pct: number;
   cycle_start: string | null;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };

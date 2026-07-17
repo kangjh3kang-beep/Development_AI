@@ -315,5 +315,51 @@ def test_AT_M11_pagination():
     assert p2.has_next is False
 
 
+# ── AT-M12: 러너 예외 → FAILED 전이(도달불가 FAILED 버그수정 회귀) ──
+# 과거엔 라우터의 인프로세스 백그라운드 태스크가 `except Exception: pass`로 예외를 삼켜
+# 아무 코드도 JobState.FAILED를 쓰지 않았다 — 잡이 RUNNING에 영구 고착돼 프론트가 1.5s
+# 무한 폴링했다. BatchService.run()이 내부에서 FAILED를 저장한 뒤 재전파하는지 검증한다.
+
+class _RaisingRunner:
+    """run_chunks 호출 시 항상 예외를 던지는 모의 러너(네트워크 단절 등 실행 실패 재현)."""
+
+    async def run_chunks(self, pnus, on_chunk, is_cancelled):  # noqa: ANN001, ARG002
+        raise RuntimeError("모의 실행 실패(네트워크 단절 등)")
+
+
+def _failing_service(fake: FakeVWorld) -> BatchService:
+    store = InMemoryJobStore()
+    aggregator = Aggregator(vworld=fake)
+    return BatchService(store=store, runner=_RaisingRunner(), aggregator=aggregator, vworld=fake)
+
+
+def test_AT_M12_runner_exception_transitions_to_failed():
+    fake = FakeVWorld(confirmed_pnus=["1111010100100010000"], ambiguous_pnus=[])
+    svc = _failing_service(fake)
+
+    async def go():
+        job = await svc.submit(BatchInput(pnu_list=["1111010100100010000"]))
+        raised = None
+        try:
+            await svc.run(job.id)
+        except RuntimeError as e:
+            raised = e
+        rec = await svc.store.get(job.id)
+        res = await svc.result(job.id)
+        return raised, rec, res
+
+    raised, rec, res = _run(go())
+    # run()은 실패를 삼키지 않고 재전파해야 호출측(인프로세스 태스크·Celery)의 기존 처리가 유지된다.
+    assert raised is not None
+    assert "모의 실행 실패" in str(raised)
+    # 저장소에 FAILED가 영속돼야 폴링이 항상 터미널로 수렴한다(도달불가 버그의 핵심 수정).
+    assert rec.job.state == JobState.FAILED
+    assert "모의 실행 실패" in (rec.job.region_input or {}).get("_error", "")
+    # 폴링 응답(BatchResult)도 동일 터미널 상태 + 실패 사유를 노출해야 한다.
+    assert res.state == JobState.FAILED
+    assert res.error is not None and "모의 실행 실패" in res.error
+    assert res.state not in (JobState.QUEUED, JobState.RUNNING)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

@@ -4,6 +4,8 @@
  * D2 — 기성고 EVM + 과다청구 이상탐지.
  *  ① 기성 청구 등록 폼: 회차·공종·계약액·청구액·진행률·기간(+선택 단가)
  *     → POST /api/v1/cost/{pid}/billing → 등록 후 목록·EVM 갱신, anomalies_triggered 즉시 경고.
+ *     기간은 월 입력("2026-06")을 백엔드 계약(period_from/period_to, DATE)에 맞는
+ *     날짜 범위로 파생해 전송한다(lib/billing-period.ts 공용 헬퍼).
  *  ② EVM 시각화: PV/EV/AC 누적 곡선(LineChart, curve[]) + SPI·CPI 배지(null→"산정불가", <0.9 경고색)
  *     + 계약총액 대비 누적청구 바.
  *  ③ 과다청구 이상탐지: anomalies[](high=빨강/warn=주황) 쉬운 설명.
@@ -22,6 +24,7 @@ import {
   YAxis,
 } from "recharts";
 import { apiClient } from "@/lib/api-client";
+import { deriveBillingPeriod } from "@/lib/billing-period";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
   BillingAnomaly,
@@ -198,8 +201,12 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
       setFormErr("계약액·청구액을 입력하세요.");
       return;
     }
-    if (!form.period.trim()) {
-      setFormErr("청구 기간을 입력하세요(예: 2026-06).");
+    // 기간: 백엔드 계약은 period_from/period_to(DATE 컬럼) — 단일 월 입력("2026-06")에서
+    // 완전한 날짜 범위를 파생해 보낸다. (기존에는 백엔드 모델에 없는 `period` 필드로 보내
+    // Pydantic 이 조용히 버려 기간이 저장되지 않던 결함 — 감사 실증 후 교정.)
+    const range = deriveBillingPeriod(form.period);
+    if (!range) {
+      setFormErr("청구 기간을 YYYY-MM(월) 형식으로 입력하세요(예: 2026-06).");
       return;
     }
     const body: BillingRegisterRequest = {
@@ -208,7 +215,8 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
       contract_amount: contract,
       claimed_amount: claimed,
       progress_pct: isNaN(progress) ? 0 : progress,
-      period: form.period.trim(),
+      period_from: range.period_from,
+      period_to: range.period_to,
     };
     if (form.unit_price) body.unit_price = Number(form.unit_price);
     if (form.contract_unit_price) body.contract_unit_price = Number(form.contract_unit_price);
@@ -303,7 +311,8 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
             <input value={form.progress_pct} onChange={(e) => setField({ progress_pct: e.target.value })} inputMode="decimal" className={fcls} placeholder="예: 10" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">청구 기간</span>
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">청구 기간(월)</span>
+            {/* 월(YYYY-MM) 입력 → 해당 월 1일~말일 범위(period_from/period_to)로 파생 전송 */}
             <input value={form.period} onChange={(e) => setField({ period: e.target.value })} className={fcls} placeholder="2026-06" />
           </label>
           <label className="flex flex-col gap-1">

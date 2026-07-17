@@ -65,7 +65,7 @@ function SectionCard({ title, icon: Icon, children, defaultOpen = false }: {
 function MarketAiBlock({ label, text }: { label: string; text: string }) {
   return (
     <div>
-      <p className="text-xs font-black text-emerald-400 mb-1">{label}</p>
+      <p className="text-xs font-black text-[var(--status-success)] mb-1">{label}</p>
       <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
         {text}
       </p>
@@ -93,10 +93,10 @@ function AnnotationLine({ text }: { text: string }) {
   const [, tag, content] = tagMatch;
   const colors: Record<string, string> = {
     "법정 상한": "bg-blue-500/20 text-blue-400",
-    "조례 제한": "bg-amber-500/20 text-amber-400",
+    "조례 제한": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
     "조례 동일": "bg-gray-500/20 text-gray-400",
-    "실효 용적률": "bg-emerald-500/20 text-emerald-400",
-    "실효 건폐율": "bg-emerald-500/20 text-emerald-400",
+    "실효 용적률": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
+    "실효 건폐율": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
     "적용 결과": "bg-[var(--accent-strong)]/20 text-[var(--accent-strong)]",
     "기부체납 여력": "bg-purple-500/20 text-purple-400",
   };
@@ -121,21 +121,21 @@ function Field({ label, value }: { label: string; value: string | number }) {
 
 // 개발계획 종합 리스크 등급 → 배지 색(comprehensive_analysis_service._research_dev_plans 산출).
 const RISK_LEVEL_STYLE: Record<string, string> = {
-  "낮음": "bg-emerald-500/20 text-emerald-400",
-  "보통": "bg-amber-500/20 text-amber-400",
+  "낮음": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
+  "보통": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
   "높음": "bg-orange-500/20 text-orange-400",
-  "극히 높음": "bg-red-500/20 text-red-400",
+  "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
 };
 
 // 결정론 모순탐지(contradictions.contradictions[]) 심각도 → 카드 색(status_flip·numeric_delta 공용).
 const SEVERITY_CARD_STYLE: Record<string, string> = {
-  high: "border-red-500/40 bg-red-500/10",
-  medium: "border-amber-500/40 bg-amber-500/10",
+  high: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10",
+  medium: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10",
   low: "border-[var(--line-strong)] bg-[var(--surface-strong)]",
 };
 
 function PermitBadge({ complexity }: { complexity: number }) {
-  const colors = ["", "bg-emerald-500/20 text-emerald-400", "bg-blue-500/20 text-blue-400", "bg-amber-500/20 text-amber-400", "bg-orange-500/20 text-orange-400", "bg-red-500/20 text-red-400"];
+  const colors = ["", "bg-[var(--status-success)]/20 text-[var(--status-success)]", "bg-blue-500/20 text-blue-400", "bg-[var(--status-warning)]/20 text-[var(--status-warning)]", "bg-orange-500/20 text-orange-400", "bg-[var(--status-error)]/20 text-[var(--status-error)]"];
   const labels = ["", "매우 쉬움", "쉬움", "보통", "어려움", "매우 어려움"];
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${colors[complexity] || colors[3]}`}>
@@ -258,7 +258,7 @@ function ScenarioTable({ scenarios, recommended }: { scenarios: AnalysisResult[]
               <td className="py-2 px-1 text-right text-[var(--text-secondary)]">+{sc.total_incentive}%</td>
               <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.donation_pct > 0 ? `${sc.donation_pct}%` : "-"}</td>
               <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.gfa_increase_sqm > 0 ? `+${sc.gfa_increase_sqm}m²` : "-"}</td>
-              <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-amber-400 text-[10px] font-bold">상한</span> : ""}</td>
+              <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-[var(--status-warning)] text-[10px] font-bold">상한</span> : ""}</td>
             </tr>
           ))}
         </tbody>
@@ -308,7 +308,7 @@ function FarOptimizationPanel({ farOpt, structuralCapPct }: { farOpt?: AnalysisR
             모든 시나리오가 상한 {capFar}%에서 cap — 인센티브 추가 완화 불가
           </p>
           {structuralCapPct != null && (
-            <p className="mt-1 text-[11px] text-amber-400">
+            <p className="mt-1 text-[11px] text-[var(--status-warning)]">
               층수 제한이 지배 — 구조상한 {structuralCapPct}% 기준으론 인센티브 무의미
             </p>
           )}
@@ -571,7 +571,7 @@ export function ComprehensiveAnalysisPanel() {
       )}
 
       {error && (
-        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">{error}</div>
+        <div className="rounded-xl bg-[var(--status-error)]/10 border border-[var(--status-error)]/30 p-4 text-sm text-[var(--status-error)]">{error}</div>
       )}
 
       {loading && (
@@ -716,12 +716,12 @@ export function ComprehensiveAnalysisPanel() {
               </p>
               {result.ai_interpretation.risk_factors && (
                 <div className="mt-3 flex gap-4">
-                  <div className="flex-1 rounded-lg bg-red-500/5 border border-red-500/20 p-3">
-                    <p className="text-[10px] font-bold text-red-400 mb-1">리스크 요인</p>
+                  <div className="flex-1 rounded-lg bg-[var(--status-error)]/5 border border-[var(--status-error)]/20 p-3">
+                    <p className="text-[10px] font-bold text-[var(--status-error)] mb-1">리스크 요인</p>
                     <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-line">{result.ai_interpretation.risk_factors}</p>
                   </div>
-                  <div className="flex-1 rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-3">
-                    <p className="text-[10px] font-bold text-emerald-400 mb-1">기회 요인</p>
+                  <div className="flex-1 rounded-lg bg-[var(--status-success)]/5 border border-[var(--status-success)]/20 p-3">
+                    <p className="text-[10px] font-bold text-[var(--status-success)] mb-1">기회 요인</p>
                     <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-line">{result.ai_interpretation.opportunity_factors}</p>
                   </div>
                 </div>
@@ -740,8 +740,8 @@ export function ComprehensiveAnalysisPanel() {
             const hasMarketInterp = miFields.some((v) => typeof v === "string" && v.trim().length > 0);
             if (hasMarketInterp && mi) {
               return (
-                <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
-                  <h3 className="mb-3 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-400"><BarChart3 className="size-4" aria-hidden /> AI 시장분석</h3>
+                <div className="rounded-2xl border border-[var(--status-success)]/25 bg-[var(--status-success)]/5 p-6">
+                  <h3 className="mb-3 inline-flex items-center gap-1.5 text-sm font-bold text-[var(--status-success)]"><BarChart3 className="size-4" aria-hidden /> AI 시장분석</h3>
                   <div className="space-y-3">
                     {mi.market_overview && <MarketAiBlock label="시장 종합 현황" text={mi.market_overview} />}
                     {mi.price_trend_analysis && <MarketAiBlock label="가격 추이·전망" text={mi.price_trend_analysis} />}
@@ -777,8 +777,8 @@ export function ComprehensiveAnalysisPanel() {
             {/* ★신규(additive) structural_cap_pct — 구조상한(층수 제한 등)이 조례 용적률보다
                 더 타이트하게 걸리는 경우를 명시(예: 4층 이하 제한 부지). 없으면 미표시(무목업). */}
             {ef.structural_cap_pct != null && (
-              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-                <p className="text-[11px] font-bold text-amber-400">
+              <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
+                <p className="text-[11px] font-bold text-[var(--status-warning)]">
                   구조상한 {ef.structural_cap_pct}%{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
                 </p>
                 {ef.floor_cap_basis && (
@@ -854,9 +854,9 @@ export function ComprehensiveAnalysisPanel() {
                         <td className="py-2.5 px-1 text-center"><PermitBadge complexity={sa.permit_complexity} /></td>
                         <td className="py-2.5 px-1 text-center">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            sa.feasibility_status === "적합" ? "bg-emerald-500/20 text-emerald-400" :
-                            sa.feasibility_status === "조건부" ? "bg-amber-500/20 text-amber-400" :
-                            sa.feasibility_status === "부적합" ? "bg-red-500/20 text-red-400" :
+                            sa.feasibility_status === "적합" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                            sa.feasibility_status === "조건부" ? "bg-[var(--status-warning)]/20 text-[var(--status-warning)]" :
+                            sa.feasibility_status === "부적합" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
                             "bg-gray-500/20 text-gray-400"
                           }`}>{sa.feasibility_status || "-"}</span>
                         </td>
@@ -877,19 +877,19 @@ export function ComprehensiveAnalysisPanel() {
                           <p className="text-[11px] font-bold text-[var(--text-primary)] mb-1">
                             {sa.type_name}
                             <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
-                              sa.feasibility_status === "적합" ? "bg-emerald-500/20 text-emerald-400" :
-                              sa.feasibility_status === "부적합" ? "bg-red-500/20 text-red-400" :
-                              "bg-amber-500/20 text-amber-400"
+                              sa.feasibility_status === "적합" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                              sa.feasibility_status === "부적합" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
+                              "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
                             }`}>{sa.feasibility_status}</span>
                           </p>
                           <div className="space-y-0.5">
                             {conditions.map((c: AnalysisResult, i: number) => (
                               <p key={i} className="text-[10px] text-[var(--text-secondary)]">
                                 <span className={`inline-block w-3 h-3 mr-1 rounded-full text-center text-[8px] leading-3 font-bold ${
-                                  c.status === "pass" ? "bg-emerald-500/20 text-emerald-400" :
-                                  c.status === "fail" ? "bg-red-500/20 text-red-400" :
+                                  c.status === "pass" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                                  c.status === "fail" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
                                   c.status === "unknown" ? "bg-gray-500/20 text-gray-400" :
-                                  "bg-amber-500/20 text-amber-400"
+                                  "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
                                 }`}>{c.status === "pass" ? "O" : c.status === "fail" ? "X" : "?"}</span>
                                 <span className="font-medium">{c.rule}:</span> {c.detail}
                               </p>
@@ -1054,7 +1054,7 @@ export function ComprehensiveAnalysisPanel() {
                             return (
                               <div key={i} className="flex flex-col gap-0.5">
                                 <div className="flex items-center gap-2 text-[11px]">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
                                   <span className="text-[var(--text-primary)]">{reg.name}</span>
                                   {/* 근거 링크 — url 있을 때만(가짜 링크 날조 금지), 새 탭으로 열기. */}
                                   {reg.link ? (
@@ -1083,7 +1083,7 @@ export function ComprehensiveAnalysisPanel() {
                             <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
                             {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
                               <div key={i} className="flex items-center gap-2 text-[11px]">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
                                 <span className="text-[var(--text-secondary)]">{f}</span>
                               </div>
                             ))}
