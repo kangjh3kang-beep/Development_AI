@@ -4,6 +4,7 @@
  */
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -17,7 +18,12 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("next/dynamic", () => ({
   default: () => {
-    const DynamicStub = () => <div data-testid="dynamic-map-stub" />;
+    // ★도크 단일화(2026-07-17): 스위처는 Shell의 absolute 섬이 아니라 SatongMultiMap의
+    //   bottomDockSlot으로 렌더된다 — 스텁이 슬롯을 마운트해야 스위처 상호작용 테스트가
+    //   실제 배선(Shell 상태→슬롯 전달)을 그대로 검증한다.
+    const DynamicStub = (props: { bottomDockSlot?: ReactNode }) => (
+      <div data-testid="dynamic-map-stub">{props.bottomDockSlot}</div>
+    );
     return DynamicStub;
   },
 }));
