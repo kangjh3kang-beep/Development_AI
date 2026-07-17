@@ -4,6 +4,8 @@ import {
   geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
+  capacityColor,
+  capacityRatio,
   mergeSatongMapFeatures,
   REGULATION_WMS_BY_CONTROL,
   resolveRegulationWmsLayers,
@@ -203,5 +205,31 @@ describe("resolveRegulationWmsLayers — 규제 오버레이(플레이스홀더 
       ["development-limit", "district-unit", "edu-protect", "height-district", "water-protect"],
     );
     expect(Object.values(REGULATION_WMS_BY_CONTROL).every((l) => l === l.toLowerCase())).toBe(true);
+  });
+});
+
+describe("capacityRatio / capacityColor — WS-D 개발여력(무날조 계약)", () => {
+  it("실효·현황 중 하나라도 None이면 null(색칠 금지 — 미상은 회색 아님·무색)", () => {
+    expect(capacityRatio(null, 50)).toBeNull();
+    expect(capacityRatio(200, null)).toBeNull();
+    expect(capacityRatio(0, 0)).toBeNull(); // 실효 0/미상 — 분모 불가
+    expect(capacityColor(undefined, 10)).toBeNull();
+  });
+
+  it("여력비 = (실효−현황)/실효 — 나대지(현황 0)는 여력 100%", () => {
+    expect(capacityRatio(200, 0)).toBe(1);
+    expect(capacityRatio(200, 100)).toBe(0.5);
+    expect(capacityRatio(200, 180)).toBeCloseTo(0.1);
+  });
+
+  it("★한도 초과(현황>실효)는 클램프하지 않고 별색(보라) — '여력 없음'과 다른 정보", () => {
+    expect(capacityRatio(200, 260)).toBeCloseTo(-0.3);
+    expect(capacityColor(200, 260)).toBe("#a855f7");
+  });
+
+  it("램프 구간 매핑(5단) — 경계값 검증", () => {
+    expect(capacityColor(100, 95)).toBe("#e2e8f0");  // 5% 여력 → 최하단
+    expect(capacityColor(100, 0)).toBe("#166534");   // 100% → 최상단(1.0 인덱스 클램프)
+    expect(capacityColor(100, 50)).toBe("#4ade80");  // 50% → 중간
   });
 });

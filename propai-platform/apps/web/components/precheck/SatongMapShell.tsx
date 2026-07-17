@@ -25,6 +25,7 @@ import {
   Trash2,
   TrainFront,
   X,
+  TrendingUp,
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -243,6 +244,22 @@ const LAYERS: SatongLayer[] = [
       { id: "unit-price", label: "㎡당 단가", mapEffect: true },
       { id: "year", label: "연도", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
       { id: "change-rate", label: "변동률", mapEffect: false, description: "연도별 공시지가 이력 연결 후 활성화" },
+    ],
+  },
+  {
+    // WS-D① 개발여력 히트맵(선택필지 MVP) — (실효FAR−현황FAR)/실효FAR 코로플레스.
+    // 실효=calc_effective_far 7계층 min(서버)·현황=건축물대장 전동 연면적합/대지면적(서버).
+    // 미상 필지는 무색+무자료 고지(무날조). 뷰포트 전역 배치 산출은 후속(배치 엔드포인트).
+    id: "capacity",
+    label: "개발여력",
+    shortLabel: "여력",
+    description: "실효 용적률 대비 남은 개발 여력을 색상으로 표시합니다(지을 수 있는 만큼 못 지은 땅 발굴).",
+    icon: TrendingUp,
+    status: "active",
+    tone: "bg-green-100 text-green-950 border-green-200",
+    source: "실효한도(7계층)+건축물대장 연면적 서버 산정",
+    controls: [
+      { id: "far-headroom", label: "용적 여력", mapEffect: true },
     ],
   },
   {

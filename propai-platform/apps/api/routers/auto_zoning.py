@@ -805,6 +805,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         jimok = land_use_situation = terrain = None
         building_name = main_purpose = use_approval_date = None
         built_year = building_age_years = None
+        total_floor_area_sqm = None  # 전 동 연면적 합(현황 용적률 분모 — WS-D 개발여력)
         # 노후도 무자료 사유 표면화(WP-M3, 리뷰 MEDIUM1 반영): no_building(나대지·연식없음) /
         #   no_approval_date(건물은 실재하나 사용승인일 미기재·미준공) / lookup_failed(키·인증·
         #   호출오류) / skipped_bulk(41필지+ 대량생략). 값이 있으면(연식 산출됨) None(=ok).
@@ -842,6 +843,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                         built_year = int(year_str)
                         if 1800 <= built_year <= current_year:
                             building_age_years = current_year - built_year
+                    # ★WS-D 현황 연면적 — 전 동 합계(total_area_sqm_all)만 채택.
+                    #   dong_truncated(10동 캡 도달)면 합계 과소=여력 과대낙관 위험 → 미상(None) 유지.
+                    _tfa = bldg.get("total_area_sqm_all")
+                    if _tfa and not bldg.get("dong_truncated"):
+                        total_floor_area_sqm = round(float(_tfa), 1)
+                elif lookup_state == "no_data":
+                    # 조회 성공·무건축물(나대지 추정) — 현황 연면적 0은 '실측된 0'(정직).
+                    total_floor_area_sqm = 0.0
                 age_status = _classify_age_status(bldg, lookup_state, building_age_years)
             except Exception:  # noqa: BLE001
                 age_status = "lookup_failed"
@@ -895,6 +904,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "built_year": built_year,
             "building_age_years": building_age_years,
             "age_status": age_status,  # 노후도 무자료 사유(no_building/no_approval_date/lookup_failed/skipped_bulk) — 값 있으면 None
+            # ── WS-D 개발여력(선택필지 MVP) — 현황 용적률 원료. 미상은 None(무날조·낙관 금지) ──
+            "total_floor_area_sqm": total_floor_area_sqm,
+            "current_far_pct": (round(total_floor_area_sqm / area_sqm * 100, 1)
+                                if total_floor_area_sqm is not None and area_sqm > 0 else None),
             "geometry": geometry,
         }
 
@@ -1073,6 +1086,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     # _enrich_effective_and_special가 부착한 내부 전용 키(_bcr_eff 등)는 features 응답 계약에
     # 없던 필드라 노출하지 않는다(응답 필드명 유지 — 프론트 무변경).
     for _f in features:
+        # ★WS-D — 필지별 실효FAR(7계층 min)을 공개 필드로 표면화(내부 키는 계속 스트립).
+        #   미산정은 None(무날조) — 프론트 개발여력 = (실효−현황)/실효는 두 값 모두 있을 때만.
+        if _f.get("_far_eff") is not None:
+            _f["effective_far_pct"] = _f["_far_eff"]
         for _k in ("_bcr_legal", "_far_legal", "_bcr_eff", "_far_eff", "_far_basis",
                    "_special", "_districts_checked"):
             _f.pop(_k, None)

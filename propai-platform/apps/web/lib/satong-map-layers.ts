@@ -8,6 +8,7 @@ export type SatongMapLayerId =
   | "auction"
   | "poi"
   | "development"
+  | "capacity"
   | "terrain"
   | "roadview";
 
@@ -43,6 +44,10 @@ export type SatongMapFeature = {
    *  lookup_failed(키·인증·호출오류) / skipped_bulk(대량생략). 값 있음/ok는 null·미설정.
    *  ★"age 조회 시도됨" 판정에 쓰여 나대지 1필지에 의한 경계 전체 재조회 루프를 끊는다(WP-M3). */
   ageStatus?: string | null;
+  /** WS-D 개발여력 — 실효 용적률(%, 7계층 min·서버 산정). 미산정 None(무날조). */
+  effectiveFarPct?: number | null;
+  /** WS-D 개발여력 — 현황 용적률(%, 전동 연면적합/대지면적·서버 산정). 나대지=0·미상 None. */
+  currentFarPct?: number | null;
   geometry?: unknown;
   source?: "search" | "excel" | "map" | "boundary";
 };
@@ -107,6 +112,40 @@ export function priceColor(price: number | null | undefined, min: number, max: n
 }
 
 const AGE_RAMP = ["#38bdf8", "#34d399", "#facc15", "#fb923c", "#ef4444"];
+
+/* ── WS-D 개발여력 히트맵(선택필지 MVP) ──
+   여력비 = (실효FAR − 현황FAR) / 실효FAR. 두 값 모두 서버 산정치가 있을 때만(무날조 —
+   한쪽이라도 None이면 null 반환→회색). 음수(현황>실효 — 기존 건물이 현행 한도 초과)는
+   0으로 클램프하지 않고 별색(보라)으로 정직 표기: "여력 없음+초과 상태"는 다른 정보다. */
+const CAPACITY_RAMP = ["#e2e8f0", "#a7f3d0", "#4ade80", "#16a34a", "#166534"];
+
+export const CAPACITY_LEGEND_ITEMS = [
+  { color: "#166534", label: "여력 80%+ (거의 빈 땅)" },
+  { color: "#16a34a", label: "60~80%" },
+  { color: "#4ade80", label: "40~60%" },
+  { color: "#a7f3d0", label: "20~40%" },
+  { color: "#e2e8f0", label: "0~20% (거의 소진)" },
+  { color: "#a855f7", label: "한도 초과(현황>실효)" },
+];
+
+export function capacityRatio(
+  effectiveFarPct: number | null | undefined,
+  currentFarPct: number | null | undefined,
+): number | null {
+  if (effectiveFarPct == null || currentFarPct == null || effectiveFarPct <= 0) return null;
+  return (effectiveFarPct - currentFarPct) / effectiveFarPct;
+}
+
+export function capacityColor(
+  effectiveFarPct: number | null | undefined,
+  currentFarPct: number | null | undefined,
+): string | null {
+  const ratio = capacityRatio(effectiveFarPct, currentFarPct);
+  if (ratio == null) return null; // 미상 — 색칠하지 않음(무날조)
+  if (ratio < 0) return "#a855f7"; // 한도 초과(보라 — 정직 별색)
+  const idx = Math.min(CAPACITY_RAMP.length - 1, Math.floor(ratio * CAPACITY_RAMP.length));
+  return CAPACITY_RAMP[idx];
+}
 
 export const AGE_LEGEND_ITEMS = [
   { color: "#38bdf8", label: "10년 미만 (신축)" },
