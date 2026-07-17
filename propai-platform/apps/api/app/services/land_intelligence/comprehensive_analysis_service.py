@@ -521,6 +521,9 @@ class ComprehensiveAnalysisService:
                 "special_districts": base.get("special_districts") or [],
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr_gate.get("road_width_m"),
+                # ★road_width_source 동반 — 폭만 넘기면 하류가 실측/추정을 구분하지 못해
+                #   근거 문구가 범주 대표값을 실측인 양 표기한다(필드는 최종표면까지 추적).
+                "road_width_source": base.get("road_width_source") or _lr_gate.get("road_width_source"),
             }
             _early_gate = _detect_special_parcel_compat(_gate_sp_input, None, None, None)
             if _early_gate and _early_gate.get("developability") == "BLOCKED":
@@ -681,6 +684,8 @@ class ComprehensiveAnalysisService:
                 or [],
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr.get("road_width_m"),
+                # ★road_width_source 동반 — 위 _gate_sp_input과 동일 계약(폭만 넘기면 출처 소실).
+                "road_width_source": base.get("road_width_source") or _lr.get("road_width_source"),
             }
             # T1/T2/T3 실배선 — 임야/산지 후보만 관측데이터 3종을 병렬 조회해 전달:
             #   terrain_facts(DEM 경사도)·slope_criteria(조례 경사도 기준)·forest_data(산림청 임목축적).
