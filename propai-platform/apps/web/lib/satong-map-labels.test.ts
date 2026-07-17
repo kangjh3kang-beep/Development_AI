@@ -5,6 +5,7 @@ import {
   satongLabelBudget,
   satongLabelLOD,
   SATONG_LABEL_BUDGET,
+  SATONG_LABEL_BUDGET_NEAR,
   SATONG_LABEL_BUDGET_MID,
 } from "./satong-map-labels";
 
@@ -18,11 +19,12 @@ describe("satong-map-labels — 줌 LOD", () => {
     expect(satongLabelLOD(12)).toBe("hover-only");
   });
 
-  it("LOD에 대응하는 전역 상시 라벨 버짓을 돌려준다", () => {
-    expect(satongLabelBudget(17)).toBe(SATONG_LABEL_BUDGET); // 48
-    expect(satongLabelBudget(18)).toBe(48);
-    expect(satongLabelBudget(15)).toBe(SATONG_LABEL_BUDGET_MID); // 16
-    expect(satongLabelBudget(16)).toBe(16);
+  it("LOD에 대응하는 전역 상시 라벨 버짓을 돌려준다(2026-07-17 정보 상시화 상향)", () => {
+    expect(satongLabelBudget(17)).toBe(SATONG_LABEL_BUDGET); // 64
+    expect(satongLabelBudget(18)).toBe(SATONG_LABEL_BUDGET_NEAR); // 96 — 초근접 사실상 전 마커
+    expect(satongLabelBudget(19)).toBe(96);
+    expect(satongLabelBudget(15)).toBe(SATONG_LABEL_BUDGET_MID); // 24
+    expect(satongLabelBudget(16)).toBe(24);
     expect(satongLabelBudget(14)).toBe(0); // hover-only
     expect(satongLabelBudget(10)).toBe(0);
   });
@@ -47,7 +49,7 @@ describe("satong-map-labels — 전역 버짓 배분(planSatongLabels)", () => {
     expect(plan).toEqual({ market: 5, poi: 10, development: 8 });
   });
 
-  it("★버짓 초과 시 우선순위 순으로 배분하고 합산이 버짓(48)을 넘지 않는다", () => {
+  it("★버짓 초과 시 우선순위 순으로 배분하고 합산이 버짓(64)을 넘지 않는다", () => {
     const plan = planSatongLabels(17, [
       { id: "market", count: 30 },
       { id: "presale", count: 30 },
@@ -55,10 +57,10 @@ describe("satong-map-labels — 전역 버짓 배분(planSatongLabels)", () => {
       { id: "poi", count: 83 },
       { id: "development", count: 67 },
     ]);
-    // market 30 → 남은 18 → presale 18 → 이후 0
+    // market 30 → presale 30 → 남은 4 → auction 4 → 이후 0
     expect(plan.market).toBe(30);
-    expect(plan.presale).toBe(18);
-    expect(plan.auction).toBe(0);
+    expect(plan.presale).toBe(30);
+    expect(plan.auction).toBe(4);
     expect(plan.poi).toBe(0);
     expect(plan.development).toBe(0);
     const total = Object.values(plan).reduce((a, b) => a + b, 0);
@@ -66,12 +68,12 @@ describe("satong-map-labels — 전역 버짓 배분(planSatongLabels)", () => {
     expect(total).toBeLessThanOrEqual(SATONG_LABEL_BUDGET);
   });
 
-  it("중간 줌(15~16)은 축소 버짓(16)만 배분한다", () => {
+  it("중간 줌(15~16)은 축소 버짓(24)만 배분한다", () => {
     const plan = planSatongLabels(16, [
       { id: "poi", count: 83 },
       { id: "development", count: 67 },
     ]);
-    expect(plan.poi).toBe(16);
+    expect(plan.poi).toBe(24);
     expect(plan.development).toBe(0);
     const total = Object.values(plan).reduce((a, b) => a + b, 0);
     expect(total).toBe(SATONG_LABEL_BUDGET_MID);

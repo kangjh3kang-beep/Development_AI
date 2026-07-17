@@ -577,8 +577,14 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
 function won(man?: number): string {
   if (!man || man <= 0) return "-";
   if (man >= 10000) {
-    const eok = Math.floor(man / 10000);
-    const rest = Math.round((man % 10000) / 1000);
+    let eok = Math.floor(man / 10000);
+    let rest = Math.round((man % 10000) / 1000);
+    // ★R1 발견(발견즉시 수정): 9,900만대 반올림 시 rest=10이 되어 "4.10억"으로 오표기 —
+    //   자리올림해 "5억"으로 정직 표기.
+    if (rest >= 10) {
+      eok += 1;
+      rest = 0;
+    }
     return rest > 0 ? `${eok}.${rest}억` : `${eok}억`;
   }
   return `${Math.round(man).toLocaleString()}만`;
@@ -806,6 +812,8 @@ export function SatongMultiMap({
   const [legendOpen, setLegendOpen] = useState(false);
   // 팝오버 좌표 복사 피드백 — 복사한 좌표 문자열(현재 팝오버와 일치할 때만 '복사됨' 표시).
   const [copiedCoord, setCopiedCoord] = useState<string | null>(null);
+  // I4 저줌 안내(jootek 패턴): 라벨이 롤업되는 줌(<15)에서 "확대하면 표시" 안내+원클릭 확대.
+  const [zoomHintDismissed, setZoomHintDismissed] = useState(false);
 
   // 선택 필지 및 staged 필지 통합 평균 노후도 계산
   const avgAge = useMemo(() => {
@@ -1882,7 +1890,10 @@ export function SatongMultiMap({
       })
         .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
         .addTo(group);
-      bindSatongLabel(marker, item.name || "실거래", { permanent: ordinal < marketLabelLimit, offsetY: radius });
+      // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
+      // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
+      const priceTag = kind === "trade" && item.avg_price_10k ? ` ${won(item.avg_price_10k)}` : "";
+      bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < marketLabelLimit, offsetY: radius });
       bounds.extend([item.lat, item.lon]);
     });
 
@@ -2375,12 +2386,31 @@ export function SatongMultiMap({
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
-        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
+        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
           <div
             // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
-            className={`pointer-events-none absolute left-14 flex max-w-[calc(100%-152px)] flex-col gap-2 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
+            // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
+            //   (wrap 최소화)로 재배치 — 하단 배경정보 가림 면적을 구조적으로 축소.
+            className={`pointer-events-none absolute left-14 flex max-w-[calc(100%-152px)] flex-row flex-wrap items-end gap-1.5 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
           >
+            {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
+                알리고 원클릭 확대 제공. 닫으면 세션 내 재표시 안 함. */}
+            {overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed && (
+              <span className="pointer-events-auto inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow backdrop-blur">
+                확대하면 필지·마커 상세 라벨이 표시됩니다
+                <button
+                  type="button"
+                  onClick={() => { try { mapRef.current?.setZoom(16); } catch { /* noop */ } }}
+                  className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-0.5 text-[var(--accent-strong)]"
+                >
+                  확대
+                </button>
+                <button type="button" onClick={() => setZoomHintDismissed(true)} aria-label="확대 안내 닫기" className="text-[var(--text-hint)]">
+                  <X className="size-3" aria-hidden />
+                </button>
+              </span>
+            )}
             {/* 노후도 범례 (age 레이어 on일 때) — ★WP-M3: 노후도 자료(avgAge)가 있을 때만 5색
                 램프를 노출한다. 자료 0건이면 5색 램프가 '색=노후도' 오인을 조장하므로, "건물 정보
                 없음"과 무자료 사유(나대지/조회실패/대량생략)만 정직 표기한다. */}
@@ -2429,9 +2459,9 @@ export function SatongMultiMap({
                 </button>
               )
             )}
-            {/* 상태 칩 스택 */}
+            {/* 상태 칩 — 가로 1줄(겹침 해소) */}
             {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
-              <div className="space-y-1">
+              <div className="flex flex-row flex-wrap items-end gap-1.5">
                 {cadastreTileNote && (
                   // I9: 배지 = 자가진단 버튼 — 클릭 시 프록시 프로브로 실제 오류 code 표면화.
                   <button
