@@ -463,9 +463,9 @@ function createOfficialBaseMapLayer(
   //   (타일 실측: Hybrid=PNG RGBA 투명채널, Base=불투명 팔레트). 단독으로 깔면 밝은 배경에
   //   라벨만 뜨는 유령지도가 됨 → 항공뷰는 Satellite(베이스)+Hybrid(오버레이) 두 장을 합성한다.
   //   텍스트/라벨이 폴리곤(overlayPane, 400) 위로 올라오도록 overlay 타일은 labelPane(450)에 그린다.
-  //   사용자가 일반지도(Base)나 회색지도(gray)를 볼 때도 폴리곤에 텍스트가 덮이지 않도록
-  //   Hybrid 라벨 타일을 labelPane에 함께 얹는다(메인 워크트리 미커밋 초안 포팅).
-  if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "gray") {
+  //   사용자가 일반지도(Base)나 회색지도(white — VWorld tiletype 정본, UI 라벨 "회색")를
+  //   볼 때도 폴리곤에 텍스트가 덮이지 않도록 Hybrid 라벨 타일을 labelPane에 함께 얹는다.
+  if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "white") {
     const base = makeTile(baseLayer === "Hybrid" ? "Satellite" : baseLayer);
     const overlay = makeTile("Hybrid", "labelPane");
     base.on("tileload", () => onTileState("ready"));

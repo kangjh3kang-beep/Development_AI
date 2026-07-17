@@ -35,6 +35,17 @@ describe("satong-map-layers", () => {
     expect(resolveVWorldBaseLayer(ignoredWhenDisabled)).toBe("Base");
   });
 
+  it("★회색 컨트롤(id=gray)은 VWorld tiletype 정본 'white'로 해석한다", () => {
+    // 2026-07-17 결함: 전송값이 "gray"였고 그 값은 상류에 실존하지 않아
+    // (InvalidParameterValue/locator=tiletype) 회색 선택 시 배경지도가 통째로 미표시됐다.
+    // ★컨트롤 id("gray")와 전송값("white")은 별개 네임스페이스 — 이 단언이 그 경계를 고정한다.
+    const gray: SatongMapLayerState = {
+      enabledLayerIds: ["cadastre", "terrain"],
+      controlsByLayer: { terrain: ["gray"] },
+    };
+    expect(resolveVWorldBaseLayer(gray)).toBe("white");
+  });
+
   it("레이어와 세부 컨트롤 활성 상태를 분리해 판정한다", () => {
     const state: SatongMapLayerState = {
       enabledLayerIds: ["cadastre", "zoning"],

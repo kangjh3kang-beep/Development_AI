@@ -11,7 +11,14 @@ export type SatongMapLayerId =
   | "terrain"
   | "roadview";
 
-export type VWorldBaseLayer = "Base" | "Satellite" | "Hybrid" | "gray";
+/** VWorld WMTS tiletype 정본(2026-07-17 라이브 채증 — 상류가 유효값을 직접 열거).
+ *  유효 범위: [Base, midnight, Hybrid, Satellite, white] — 종전 "gray"는 실존하지 않는
+ *  오기였다(InvalidParameterValue/locator=tiletype → 배경지도 전역 미표시). 회색 계열
+ *  백지도의 정본명은 "white"다. ★UI 컨트롤 id는 "gray"로 유지하고 전송값(이 타입)만 정본으로
+ *  교정했다 — 둘은 별개 네임스페이스다. 컨트롤 id를 함께 바꾸지 않는 이유는 그것이 UI 식별자
+ *  (상호배타 해제셋 키·aria 라벨·기본 컨트롤 정의)이기 때문이지 영속 저장 때문이 아니다
+ *  (layerControls는 useState 뿐 — localStorage 영속 없음. 근거를 오독하지 말 것). */
+export type VWorldBaseLayer = "Base" | "Satellite" | "Hybrid" | "white";
 
 export type SatongMapLayerState = {
   enabledLayerIds: SatongMapLayerId[];
@@ -147,7 +154,8 @@ export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): 
   if (hasSatongLayerControl(state, "terrain", "hybrid") || hasSatongLayerControl(state, "terrain", "aerial")) {
     return "Hybrid";
   }
-  if (hasSatongLayerControl(state, "terrain", "gray")) return "gray";
+  // 컨트롤 id "gray"(UI 식별자·라벨 "회색") → 전송값은 VWorld tiletype 정본 "white".
+  if (hasSatongLayerControl(state, "terrain", "gray")) return "white";
   return "Base";
 }
 

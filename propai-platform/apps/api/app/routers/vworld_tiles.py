@@ -54,7 +54,10 @@ VWORLD_DOMAIN = "www.4t8t.net"
 # ★_line은 레이어가 아니라 '스타일' 변형(2026-07-17 GetMap 매트릭스 채증) — 레이어
 #   화이트리스트엔 두지 않고 아래 스타일 결정에서 파생형으로만 허용(web과 동기).
 ALLOWED_WMS_LAYERS: tuple[str, ...] = ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111")
-SUPPORTED_WMTS_LAYERS: frozenset[str] = frozenset({"Base", "Satellite", "Hybrid", "gray", "midnight"})
+# ★WMTS tiletype 정본(2026-07-17 라이브 채증) — 상류 InvalidParameterValue 본문이 유효값을
+#   직접 열거한다: [Base, midnight, Hybrid, Satellite, white]. 종전 "gray"는 실존하지 않는
+#   오기로, 회색 베이스맵 선택 시 배경지도가 통째로 미표시됐다(web과 동기 유지).
+SUPPORTED_WMTS_LAYERS: frozenset[str] = frozenset({"Base", "Satellite", "Hybrid", "white", "midnight"})
 
 # 투명 1x1 PNG — 정상 무제공영역(coverage) 타일 자리 흡수(지도 회색화 방지).
 TRANSPARENT_PNG = base64.b64decode(
@@ -65,6 +68,15 @@ TRANSPARENT_PNG = base64.b64decode(
 _COVERAGE_PATTERN = re.compile(r"filenotfound|제공\s*영역", re.IGNORECASE)
 # ★경계 필수: <ServiceExceptionReport>(접두 동일)가 매칭되는 오탐 방지 — \s 강제.
 _CODE_PATTERN = re.compile(r'<ServiceException\s[^>]*\bcode="([^"]+)"', re.IGNORECASE)
+# ── OWS 1.1 ExceptionReport (WMTS 계열) ──
+# ★2026-07-17 라이브 채증: WMS(ServiceException@code)와 WMTS(OWS Exception@exceptionCode)는
+#   스키마가 다르다. 종전엔 WMS 형식만 알아 WMTS의 code 추출이 100% 실패했고, 진짜 원인
+#   (tiletype 오기)이 "auth/unknown"으로 은폐됐다. <Exception\s 경계 필수(<ExceptionReport>·
+#   <ExceptionText>가 접두 동일).
+_OWS_CODE_PATTERN = re.compile(
+    r'<(?:\w+:)?Exception\s[^>]*\bexceptionCode="([^"]+)"', re.IGNORECASE
+)
+_OWS_LOCATOR_PATTERN = re.compile(r'<(?:\w+:)?Exception\s[^>]*\blocator="([^"]+)"', re.IGNORECASE)
 
 
 def classify_vworld_xml(xml_text: str) -> str:
@@ -73,8 +85,17 @@ def classify_vworld_xml(xml_text: str) -> str:
 
 
 def extract_vworld_code(xml_text: str) -> str | None:
-    """ServiceException code 추출(INVALID_KEY·INVALID_RANGE·UNREGISTERED_DOMAIN 등)."""
+    """오류 코드 추출 — WMS ServiceException@code 우선, 없으면 OWS Exception@exceptionCode."""
     m = _CODE_PATTERN.search(xml_text or "")
+    if m:
+        return m.group(1).strip()
+    m = _OWS_CODE_PATTERN.search(xml_text or "")
+    return m.group(1).strip() if m else None
+
+
+def extract_vworld_locator(xml_text: str) -> str | None:
+    """OWS locator 추출 — 문제가 된 파라미터명(tiletype·key). WMS엔 없어 None."""
+    m = _OWS_LOCATOR_PATTERN.search(xml_text or "")
     return m.group(1).strip() if m else None
 
 
@@ -119,12 +140,16 @@ def _relay_tile(resp: httpx.Response, *, kind: str, ctx: dict[str, str]) -> Resp
             if classify_vworld_xml(body_text) == "coverage":
                 logger.warning("[vworld-tiles] %s 200+XML(coverage) → transparent tile %s", kind, ctx)
                 return _transparent_tile()
-            code = extract_vworld_code(body_text) or "auth/unknown"
+            # ★locator 병기 — OWS(WMTS)는 code가 InvalidParameterValue 하나로 뭉뚱그려져
+            #   code만으로 원인 구분 불가(tiletype=레이어명 오기 / key=인증키). web과 동일 계약.
+            raw_code = extract_vworld_code(body_text)
+            locator = extract_vworld_locator(body_text)
+            reason = f"{raw_code}/{locator}" if raw_code and locator else (raw_code or "auth/unknown")
             logger.error(
                 "[vworld-tiles] %s XML exception (%s) %s body=%s",
-                kind, code, ctx, body_text[:200],
+                kind, reason, ctx, body_text[:200],
             )
-            return _json_error(f"VWorld {kind} returned an XML exception ({code})", 503)
+            return _json_error(f"VWorld {kind} returned an XML exception ({reason})", 503)
         logger.error("[vworld-tiles] %s non-image body (%s) %s", kind, content_type, ctx)
         return _json_error(f"VWorld {kind} returned a non-image body", 503)
     return Response(
