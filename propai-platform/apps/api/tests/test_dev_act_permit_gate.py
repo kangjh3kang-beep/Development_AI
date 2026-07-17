@@ -382,7 +382,8 @@ def test_build_helper_resolves_frontend_qi_code():
 # ★배경: road_width_m은 두 경로에서 나온다 — 지적 실측(land_info_service의 도로필지 MRR)과
 #   '도로접면' 범주 대표값 환산(auto_zoning_service의 estimate_road_width_m: 광대로→40m 등).
 #   종전엔 근거 문구가 "접도 도로폭 40m(≥4m)"로 동일해 **범주 추정이 실측으로 읽혔다**.
-#   판정(MET/CONFIRM)은 범주 경계가 4m 임계와 어긋나지 않아 유효하나 숫자의 정밀도는 사칭이다.
+# ★★판정 오차는 **잔존**한다 — 이 꼬리표는 완화지 해결이 아니다(아래 회귀 핀으로 고정).
+#   '세로(가)'는 기능 기준("차량통행 가능")이라 4m 하회 가능한데 대표값은 6.0이다.
 # ══════════════════════════════════════════════════════════════════════════
 
 def _road_basis(result: dict) -> str:
@@ -400,6 +401,28 @@ def test_road_width_estimate_source_is_disclosed_in_basis():
     })
     assert "도로접면 범주 추정" in basis
     assert "40m" in basis
+    # 꼬리표는 폭 값을 수식해야 한다 — 임계(≥4m)가 아니라.
+    assert "40m(도로접면 범주 추정, ≥4m)" in basis
+
+
+def test_sero_ga_estimate_can_overstate_met_known_residual_defect():
+    """★★잔존 결함 고정 — '세로(가)' 추정(6.0)은 4m 하회 실도로를 MET로 과대판정한다.
+
+    '세로(가)'는 치수가 아니라 기능 기준("차량통행 가능 소도로")이다 —
+    tojieum_supplement._ROAD_WIDTH_BY_SIDE는 광대(25m↑)·중로(12~25m)·소로(8~12m)엔
+    명시 범위를 주면서 세로(가)엔 범위 없이 "폭 약 4m"라고만 한다. 그런데
+    land_info_service는 세로(가)를 6.0으로 환산하므로 폭 3.5m 골목이 MET가 된다.
+
+    ★이 테스트는 '올바른 동작'이 아니라 **현행 결함을 명시적으로 고정**한다 —
+      근본 수정(세로(가) CONFIRM 강등 또는 두 표 SSOT 통합) 시 여기서 실패해야 한다.
+      최소한 근거에 '추정'이 드러나 하류가 실측으로 오독하지 않는 것이 현재 방어선이다.
+    """
+    basis = _road_basis({
+        "road_contact": True, "road_width_m": 6.0,  # 세로(가) 대표값 — 실도로는 3.5m일 수 있다
+        "road_width_source": "road_side_estimate",
+    })
+    assert "충족 추정" in basis          # 현행: MET (과대판정 잔존)
+    assert "도로접면 범주 추정" in basis  # 방어선: 추정임이 근거에 드러남
 
 
 def test_road_width_cadastral_source_is_disclosed_in_basis():
@@ -435,6 +458,22 @@ def test_road_width_unknown_source_is_ignored_not_leaked():
     })
     assert "somethingelse" not in basis
     assert basis == "접도 도로폭 6m(≥4m) — 건축법 제44조 접도요건 충족 추정"
+
+
+def test_build_helper_carries_road_width_source():
+    """★build 헬퍼도 출처를 함께 싣는다 — 폭만 실으면 하류에서 무음 소실(R1 m2).
+
+    현재 유일 호출자(design_v61)는 폭을 넘기지 않아 라이브 갭은 아니나,
+    나중에 road_width_m=만 넘기면 근거가 추정을 실측처럼 표기하게 된다.
+    """
+    gate = build_dev_act_permit_gate(
+        zone_type="자연녹지지역", land_category="임야",
+        road_contact=True, road_width_m=40.0,
+        road_width_source="road_side_estimate",
+    )
+    assert gate is not None
+    road = gate["criteria"]["infrastructure_road"]
+    assert "도로접면 범주 추정" in str(road.get("basis") or "")
 
 
 def test_road_width_source_label_contract_is_closed():

@@ -157,7 +157,15 @@ def _eval_adjacent_development(cumulative_dev_area_sqm: float | None) -> dict[st
 # ★표기사기 방지: road_side_estimate는 '도로접면' 범주(광대로·중로·소로·세로)를 대표값으로
 #   환산한 것이라 이 필지 도로를 잰 값이 아니다(광대로→40m 등 — 실제 25m 이상이기만 하면 전부 40m).
 #   꼬리표 없이 "접도 도로폭 40m"만 찍으면 실측으로 읽힌다(은행제출 보고서까지 그대로 흐른다).
-#   판정(MET/CONFIRM)은 범주 경계가 4m 임계와 어긋나지 않아 유효하나, **숫자의 정밀도는 사칭**이다.
+#
+# ★★판정 오차가 **잔존**한다(이 꼬리표는 완화일 뿐 해결이 아니다):
+#   '세로(가)'는 치수가 아니라 **기능 기준**("차량통행 가능 소도로")이라 4m를 하회할 수 있다.
+#   실제로 legal/tojieum_supplement._ROAD_WIDTH_BY_SIDE는 광대(25m↑)·중로(12~25m)·소로(8~12m)엔
+#   명시 범위를 주면서 세로(가)에는 범위 없이 "폭 **약** 4m"라고만 한다. 그런데
+#   land_info_service._ROAD_SIDE_WIDTH_M은 세로(가)를 **6.0**으로 환산하므로,
+#   폭 3.5m 골목(차량통행 가능)이 6.0→MET로 과대판정될 수 있다(정답은 CONFIRM).
+#   → 근본 수정(세로(가)의 CONFIRM 강등 또는 두 표의 SSOT 통합)은 별건. 여기서는 최소한
+#     **추정임을 근거에 드러내** 하류가 실측으로 오독하지 않게 한다.
 _ROAD_WIDTH_SOURCE_LABEL: dict[str, str] = {
     "cadastral_road_parcel": "지적 실측",
     "road_side_estimate": "도로접면 범주 추정",
@@ -165,9 +173,13 @@ _ROAD_WIDTH_SOURCE_LABEL: dict[str, str] = {
 
 
 def _road_width_note(source: str | None) -> str:
-    """근거 문구에 붙일 출처 꼬리표. 미상은 빈 문자열(현행 문구 동일 — additive)."""
+    """근거 문구의 폭 값 뒤에 붙일 출처 꼬리표. 미상은 빈 문자열(현행 문구 동일 — additive).
+
+    ★꼬리표는 **폭 값**을 수식해야 한다 — "40m(도로접면 범주 추정, ≥4m)". 임계 절에 붙이면
+      ("40m(≥4m·도로접면 범주 추정)") 추정 대상이 임계인 것처럼 읽힌다(R1 m5).
+    """
     label = _ROAD_WIDTH_SOURCE_LABEL.get(source or "")
-    return f"·{label}" if label else ""
+    return f"{label}, " if label else ""
 
 
 def _eval_infra_road(result: dict) -> dict[str, Any]:
@@ -193,10 +205,10 @@ def _eval_infra_road(result: dict) -> dict[str, Any]:
                           "미충족. 진입도로(사도 개설·지역권) 확보 선행 필요")}
     if rw is not None and rw >= _MIN_ROAD_WIDTH_M:
         return {"status": CR_MET, "value": rw,
-                "basis": f"접도 도로폭 {rw:g}m(≥4m{src}) — 건축법 제44조 접도요건 충족 추정"}
+                "basis": f"접도 도로폭 {rw:g}m({src}≥4m) — 건축법 제44조 접도요건 충족 추정"}
     if rw is not None and 0 < rw < _MIN_ROAD_WIDTH_M:
         return {"status": CR_CONFIRM, "value": rw,
-                "basis": (f"접도 도로폭 {rw:g}m(<4m{src}) — 현황도로 인정·도로 확폭 여부 관할 확인 필요")}
+                "basis": (f"접도 도로폭 {rw:g}m({src}<4m) — 현황도로 인정·도로 확폭 여부 관할 확인 필요")}
     return {"status": CR_UNKNOWN, "value": None,
             "basis": "접도(도로폭·접함) 데이터 미확보 — 진입도로 충족 판정 불가(현황도로 확인 필요)"}
 
@@ -527,6 +539,9 @@ def build_dev_act_permit_gate(
     area_sqm: float | None = None,
     road_contact: bool | None = None,
     road_width_m: float | None = None,
+    # ★road_width_m과 반드시 짝으로 — 폭만 넘기면 근거가 범주 추정을 실측처럼 표기한다.
+    #   값 어휘는 _ROAD_WIDTH_SOURCE_LABEL 참조("cadastral_road_parcel"/"road_side_estimate").
+    road_width_source: str | None = None,
     in_sewer_service_area: bool | None = None,
     land_form_change_required: bool | None = None,
     special_districts: list[str] | None = None,
@@ -577,6 +592,10 @@ def build_dev_act_permit_gate(
             result["road_contact"] = road_contact
         if road_width_m is not None:
             result["road_width_m"] = road_width_m
+            # 폭과 출처는 원자적으로 함께 실린다(desync 방지 — 폭만 남고 출처가 빠지면
+            # _eval_infra_road가 범주 추정을 실측처럼 표기한다).
+            if road_width_source is not None:
+                result["road_width_source"] = road_width_source
         if in_sewer_service_area is not None:
             result["in_sewer_service_area"] = in_sewer_service_area
         if land_form_change_required:
