@@ -53,7 +53,7 @@ async def test_natural_green_ordinance_cannot_inflate_above_structural_cap(monke
     """조례 effective_far=100이 실려와도 구조상한 80%가 최종 상한(과대낙관 차단)."""
     import app.services.land_intelligence.ordinance_service as ordinance_module
 
-    async def _fake_ordinance(self, address, zone_type, force_refresh=False):
+    async def _fake_ordinance(self, address, zone_type, force_refresh=False, pnu=None, **_kwargs):
         return {"effective_far": 100, "effective_bcr": 20, "ordinance_far": 100,
                 "ordinance_bcr": 20, "source": "지자체 도시계획조례", "sigungu": "용인시"}
 
@@ -141,7 +141,7 @@ async def test_area_checks_use_effective_far():
 async def test_band_module_input_consumes_effective_far():
     """수지밴드 연면적 = 대지면적 × min(실효 80%, 유형 일반 FAR) — 법정 100% 기준 과대 금지."""
     legal = await _legal_limits("자연녹지지역")
-    svc, inp = _build_band_module_input(
+    svc, inp = await _build_band_module_input(
         best_code="M06", zone_type="자연녹지지역", legal=legal,
         area_sqm=1000.0, address="경기도 용인시 처인구 어딘가 산 12",
         official_price_per_sqm=1_000_000,

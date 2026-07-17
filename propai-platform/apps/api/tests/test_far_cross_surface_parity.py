@@ -145,7 +145,7 @@ async def _surface_permit(monkeypatch, case: ZoneCase, ssot: dict) -> dict[str, 
             "special_districts": [],
         }
 
-    async def _fake_ordinance(self, address, zone_type, force_refresh=False):  # noqa: ANN001
+    async def _fake_ordinance(self, address, zone_type, force_refresh=False, **_kwargs):  # noqa: ANN001 — additive 파라미터(pnu·resolved_sigungu 등) 수용: TypeError 침묵 삼킴 방지
         return {}
 
     monkeypatch.setattr(auto_zoning_module.AutoZoningService, "analyze_by_address", _fake_analyze)
@@ -186,7 +186,7 @@ async def _surface_pipeline(monkeypatch, case: ZoneCase, ssot: dict) -> dict[str
     async def _fake_comprehensive(self, address, pnu=None):  # noqa: ANN001
         return {}
 
-    async def _fake_ordinance(self, address, zone_type, force_refresh=False):  # noqa: ANN001
+    async def _fake_ordinance(self, address, zone_type, force_refresh=False, **_kwargs):  # noqa: ANN001 — additive 파라미터(pnu·resolved_sigungu 등) 수용: TypeError 침묵 삼킴 방지
         return {}
 
     async def _noop_ai(self, state):  # noqa: ANN001 — LLM 해석은 본 계약과 무관(네트워크 차단)
@@ -232,7 +232,7 @@ async def _surface_feasibility_top3(monkeypatch, case: ZoneCase, ssot: dict) -> 
             "land_category": "대",
         }
 
-    async def _fake_ordinance(self, address, zone_type, force_refresh=False):  # noqa: ANN001
+    async def _fake_ordinance(self, address, zone_type, force_refresh=False, **_kwargs):  # noqa: ANN001 — additive 파라미터(pnu·resolved_sigungu 등) 수용: TypeError 침묵 삼킴 방지
         return {}
 
     monkeypatch.setattr(auto_zoning_module.AutoZoningService, "analyze_by_address", _fake_analyze)
