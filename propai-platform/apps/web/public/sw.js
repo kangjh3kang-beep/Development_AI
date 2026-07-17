@@ -54,7 +54,9 @@
 //        남지 않도록 구캐시 일괄 삭제.
 // v429: 사통맵 보강 4종(#358 — 로드뷰·면적재기·타일 자가진단·GeoJSON 내보내기) + 완성도100
 //        캠페인(#359). 팝오버/칩 UI와 진단 프로브가 stale 캐시로 남지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v429-satong-map-tools";
+// v430: 사통맵 정보 상시화·겹침 해소(#361 — 라벨 버짓 96/64/24·실거래 가격 pill·도크 가로
+//        1줄·저줌 확대 안내·won() 자리올림 봉합). 라벨/칩 UI가 stale 캐시로 남지 않도록 삭제.
+const CACHE_NAME = "propai-v430-satong-map-density";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
