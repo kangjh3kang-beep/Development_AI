@@ -99,7 +99,62 @@ _PANEL_SYSTEM = """\
 자신의 전문 관점에서 독립적으로 검토하고, 핵심 쟁점을 토론한 뒤, 다관점을 통합한 최종
 의견과 검증(반론·리스크·신뢰도)을 제시합니다.
 원칙: 제공 데이터에 근거하고 과장·허위 금지. 전문가마다 관점 차이를 분명히 드러낼 것.
+실효 한도와 법정 한도가 다를 때 그 원인은 자료의 [실효 한도 근거] 블록(far_basis)으로만
+설명하라 — 근거 없이 '조례 실효치'로 단정하는 것을 금지한다(근거 부재 시 '근거 미확인' 표기).
 반드시 JSON만 출력."""
+
+
+def _effective_limit_note(context: dict[str, Any] | str) -> str:
+    """실효 한도 근거 해설 블록 — /regulation/analyze 류 응답의 SSOT 통과키를 사람이 읽는
+    한 문단으로 승격해 프롬프트 선두에 놓는다(무날조 — 존재하는 필드만 사용).
+
+    왜 필요한가(실측 결함): 전체 결과 JSON은 아래 [:N] 절단을 거치는데 effective_far
+    통과키(far_basis·구조상한)는 응답 뒤쪽이라 전문가 LLM에 도달하지 못했고, 전문가들이
+    "실효 80% ≠ 법정 100%"의 원인을 조례로 오귀속했다(자연녹지 구조상한 = 건폐율 20%×
+    최고 4층 = 80%, 조례 인하가 아님). 선두 삽입으로 절단과 무관하게 항상 생존시킨다.
+    """
+    if not isinstance(context, dict):
+        return ""
+    eff = context.get("effective_far")
+    if not isinstance(eff, dict):
+        return ""
+
+    def _num(v: Any) -> float | None:
+        # 외부 클라이언트가 임의 context를 보낼 수 있으므로(라우터 미검증 dict) 수치형만 수용 —
+        # 문자열 값에 :g 포맷을 적용하면 ValueError→500 이 되는 것을 차단(R1 P2).
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    eff_far = _num(eff.get("effective_far_pct"))
+    if eff_far is None:
+        return ""
+    limits = context.get("limits") if isinstance(context.get("limits"), dict) else {}
+    far_slot = limits.get("far") if isinstance(limits.get("far"), dict) else {}
+    legal_far = _num(far_slot.get("legal"))
+    far_basis = eff.get("far_basis")
+    lines = ["[실효 한도 근거 — SSOT]"]
+    head = f"- 실효 용적률 {eff_far:g}%"
+    if legal_far is not None:
+        head += f" (법정 상한 {legal_far:g}%)"
+    lines.append(head)
+    if far_basis and "구조상한" in str(far_basis):
+        cap = _num(eff.get("structural_cap_pct"))
+        floors = _num(eff.get("floor_cap"))
+        bcr = _num(eff.get("effective_bcr_pct"))
+        formula = ""
+        if bcr is not None and floors is not None and cap is not None:
+            formula = f" — 건폐율 {bcr:g}% × 최고 {int(floors)}층 = {cap:g}%"
+        lines.append(
+            f"- 근거: {far_basis}{formula}. 조례가 낮춘 것이 아니라 층수 제한 때문에"
+            " 실무상 도달 가능한 물리적 상한이다(법정 용적률 자체는 유지)."
+        )
+        basis_src = eff.get("floor_cap_basis")
+        if basis_src:
+            lines.append(f"- 층수 제한 근거: {basis_src}")
+    elif far_basis:
+        lines.append(f"- 근거: {far_basis}")
+    else:
+        lines.append("- 근거 필드 미제공 — 원인(조례/구조상한 등)을 단정하지 말 것.")
+    return "\n".join(lines) + "\n\n"
 
 _PANEL_TMPL = """\
 ## 분석 주제
@@ -203,12 +258,17 @@ class ExpertPanelService:
 
         # Prepare context string and append recalled memories if present
         # ★회상 포맷은 공용 헬퍼 단일경유(specialist_agent와 동일 계약) — score None/비수치 안전(:.2f 오류 방지).
+        # ★실효 한도 근거 블록을 '선두'에 삽입 — 아래 절단([:N])을 항상 생존해 far_basis 오귀속
+        #   (구조상한 80%를 '조례 실효치'로 설명)을 차단한다. 필드 부재 시 빈 문자열(무날조).
         ctx_str = context if isinstance(context, str) else json.dumps(context, ensure_ascii=False)
+        ctx_str = _effective_limit_note(context) + ctx_str
         if rag_memories:
             from app.services.memory_hub.recall_format import format_recall_block
             ctx_str += format_recall_block(rag_memories, header="[이전 유사 분석 및 참고 노하우]")
 
-        ctx_str = ctx_str[:4000]
+        # 6000자: 종전 4000자는 규제 결과 JSON 후반부(근거 통과키·evidence)를 통째로 잘랐다.
+        # 근거 블록 선두 삽입과 별개로, 절단 여유를 완만히 상향(비용 영향 제한적).
+        ctx_str = ctx_str[:6000]
 
         if mode in ("deep", "graph"):
             # LangGraph 일원화: 전문가(다각도) → 검증(원데이터 대조·할루시네이션 게이트) → 통합.
