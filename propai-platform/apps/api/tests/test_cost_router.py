@@ -261,6 +261,58 @@ class TestBilling:
         assert resp.status_code == 200
 
 
+class TestBillingRegisterD2:
+    """D2 기성 등록(POST /{pid}/billing) — 청구기간 계약(period_from/period_to) 회귀 고정.
+
+    감사 실증 결함: 프론트가 백엔드 모델에 없는 `period` 단일 필드로 전송
+    → 필드가 optional 이라 422 없이 Pydantic 이 조용히 버려 기간이 NULL 로 영속.
+    프론트는 이제 월 입력("2026-06")에서 period_from/period_to 를 파생해 보낸다.
+    """
+
+    def _post(self, body: dict):
+        """영속 계층(register_billing)을 모킹하고 라우터 계약만 검증한다."""
+        with patch(
+            "app.services.cost.billing_service.register_billing",
+            new=AsyncMock(return_value={
+                "ok": True, "claim_id": 1,
+                "ledger_hash": None, "anomalies_triggered": [],
+            }),
+        ) as mock_reg:
+            resp = client.post(f"/api/v1/cost/{PROJECT_ID}/billing", json=body)
+        return resp, mock_reg
+
+    def test_period_range_reaches_persistence(self):
+        """period_from/period_to 가 영속 호출까지 그대로 전달된다(기간 저장 확인)."""
+        resp, mock_reg = self._post({
+            "round": 1, "work_type": "골조",
+            "contract_amount": 5_000_000_000, "claimed_amount": 500_000_000,
+            "progress_pct": 10,
+            "period_from": "2026-06-01", "period_to": "2026-06-30",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        kwargs = mock_reg.call_args.kwargs
+        assert kwargs["period_from"] == "2026-06-01"
+        assert kwargs["period_to"] == "2026-06-30"
+        assert kwargs["billing_no"] == 1
+
+    def test_legacy_period_field_is_silently_dropped(self):
+        """(결함 문서화) 모델에 없는 `period` 단일 필드는 무음 드롭 → 기간 None.
+
+        이 동작이 프론트가 반드시 period_from/period_to 로 보내야 하는 이유다.
+        """
+        resp, mock_reg = self._post({
+            "round": 2, "work_type": "골조",
+            "contract_amount": 5_000_000_000, "claimed_amount": 500_000_000,
+            "progress_pct": 20,
+            "period": "2026-06",  # 잘못된 구계약 필드 — Pydantic extra 무시
+        })
+        assert resp.status_code == 200
+        kwargs = mock_reg.call_args.kwargs
+        assert kwargs["period_from"] is None
+        assert kwargs["period_to"] is None
+
+
 class TestFeasibility:
 
     def test_cost_to_feasibility(self):

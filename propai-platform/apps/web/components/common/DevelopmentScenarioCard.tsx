@@ -81,8 +81,8 @@ type SimResult = {
 };
 
 const APP_STYLE: Record<string, string> = {
-  가능: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  조건부: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  가능: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  조건부: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
   불가: "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
 };
 
@@ -154,7 +154,7 @@ export function DevelopmentScenarioCard({
       </div>
       {/* AI 종합 서술 옵트인(기본 on — 기존 동작 보존). 끄면 결정론 시나리오 판정만 받는다(무과금). */}
       <UseLlmToggle checked={useLlm} onChange={setUseLlm} className="mt-2 flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]" />
-      {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
+      {error && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{error}</p>}
 
       {result && site && (
         <div className="mt-4 space-y-4">
@@ -164,7 +164,7 @@ export function DevelopmentScenarioCard({
             {site.total_area_sqm != null && <span className="text-[var(--text-secondary)]">{site.total_area_sqm.toLocaleString()}㎡</span>}
             {site.near_station != null && <span className="text-[var(--text-secondary)]">역세권 {site.near_station ? "○" : "✕"}{site.near_station_m != null ? ` (${site.near_station_m}m)` : ""}</span>}
             {site.multi && adj && (
-              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-emerald-500/30 text-emerald-400" : adj.contiguous === false ? "border-rose-500/30 text-rose-400" : "border-amber-500/30 text-amber-400"}`}>
+              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-[var(--status-success)]/30 text-[var(--status-success)]" : adj.contiguous === false ? "border-[var(--status-error)]/30 text-[var(--status-error)]" : "border-[var(--status-warning)]/30 text-[var(--status-warning)]"}`}>
                 {adj.contiguous === true ? (<><Link2 className="size-3.5" aria-hidden />통합개발 가능</>) : adj.contiguous === false ? (<><Scissors className="size-3.5" aria-hidden />통합개발 불가</>) : (<><HelpCircle className="size-3.5" aria-hidden />인접성 미상</>)}
               </span>
             )}
@@ -177,7 +177,7 @@ export function DevelopmentScenarioCard({
               </span>
             )}
             {site.block_aging && (site.block_aging.buildings_found ?? 0) > 0 && (
-              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${site.block_aging.meets_2_3 ? "border-rose-500/30 text-rose-400" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
+              <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${site.block_aging.meets_2_3 ? "border-[var(--status-error)]/30 text-[var(--status-error)]" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
                 <House className="size-3.5" aria-hidden />블록노후 {Math.round((site.block_aging.old_ratio ?? 0) * 100)}%
                 {` (반경${site.block_aging.radius_m}m·${site.block_aging.buildings_found}동${site.block_aging.meets_2_3 ? "·2/3충족" : ""})`}
               </span>
@@ -192,7 +192,7 @@ export function DevelopmentScenarioCard({
             )}
             {result.ai?.summary && <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">{result.ai.summary}</p>}
             {(result.ai?.cautions?.length ?? 0) > 0 && (
-              <ul className="mt-1.5 space-y-0.5 text-[11px] text-amber-500">
+              <ul className="mt-1.5 space-y-0.5 text-[11px] text-[var(--status-warning)]">
                 {result.ai!.cautions!.map((c, i) => <li key={i} className="flex items-start gap-1"><AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{c}</span></li>)}
               </ul>
             )}
@@ -200,8 +200,8 @@ export function DevelopmentScenarioCard({
 
           {/* ★특이부지 개발가능 방안(선행절차) — '개발 불가' 대신 인허가·도시계획 변경 경로 제시 */}
           {(result.resolution_methods?.length ?? 0) > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-              <p className="inline-flex items-center gap-1.5 text-xs font-black text-amber-500">
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-4">
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--status-warning)]">
                 <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 개발가능 방안(선행절차)
               </p>
               {result.honest_disclosure && (
@@ -210,7 +210,7 @@ export function DevelopmentScenarioCard({
               <ol className="mt-2 space-y-1 text-[11px] leading-relaxed text-[var(--text-primary)]">
                 {result.resolution_methods!.map((m, i) => (
                   <li key={i} className="flex items-start gap-1.5">
-                    <span className="grid size-4 shrink-0 place-items-center rounded-full bg-amber-500/20 text-[10px] font-black text-amber-500">{i + 1}</span>
+                    <span className="grid size-4 shrink-0 place-items-center rounded-full bg-[var(--status-warning)]/20 text-[10px] font-black text-[var(--status-warning)]">{i + 1}</span>
                     <span>{m}</span>
                   </li>
                 ))}
@@ -256,8 +256,8 @@ export function DevelopmentScenarioCard({
                     items.length > 0 ? (
                       <div key={label} className="flex flex-wrap items-center gap-1.5">
                         <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${
-                          tone === "emerald" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                            : tone === "amber" ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                          tone === "emerald" ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]"
+                            : tone === "amber" ? "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
                             : "border-[var(--line-strong)] bg-[var(--surface)] text-[var(--text-tertiary)]"}`}>
                           {label} {items.length}
                         </span>
@@ -284,7 +284,7 @@ export function DevelopmentScenarioCard({
                   ))}
                 </div>
                 {pc.self_standing_only && (
-                  <p className="mt-2 inline-flex items-start gap-1 text-[11px] leading-relaxed text-amber-500">
+                  <p className="mt-2 inline-flex items-start gap-1 text-[11px] leading-relaxed text-[var(--status-warning)]">
                     <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
                     <span>인접 필지를 지도에서 추가 선택해 통합하면 상위 티어 개발방식이 해금됩니다.</span>
                   </p>
@@ -302,7 +302,7 @@ export function DevelopmentScenarioCard({
                   <p>동의 요건: <b className="text-[var(--text-primary)]">{result.magdo_summary.consent_required}</b></p>
                   <p>
                     동의 임계 <b className="text-[var(--accent-strong)]">{result.magdo_summary.consent_threshold_pct}%</b> 충족 시
-                    {" "}미동의 잔여 <b className="text-rose-400">~{result.magdo_summary.claimable_remainder_pct}%</b> 매도청구 가능
+                    {" "}미동의 잔여 <b className="text-[var(--status-error)]">~{result.magdo_summary.claimable_remainder_pct}%</b> 매도청구 가능
                   </p>
                   {result.magdo_summary.parcel_estimate && (
                     <p className="text-[11px] text-[var(--text-tertiary)]">
@@ -321,8 +321,8 @@ export function DevelopmentScenarioCard({
 
           {/* ★P0: 가용 필지 개발방식(일부 필지 차단 시) — '개발불가'만 보이던 것 해소 */}
           {result.available_subset?.scenarios?.length ? (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5">
-              <p className="inline-flex items-center gap-1.5 text-xs font-black text-emerald-500">
+            <div className="rounded-xl border border-[var(--status-success)]/30 bg-[var(--status-success)]/5 p-3.5">
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--status-success)]">
                 <Building2 className="size-3.5" aria-hidden /> 가용 필지 개발방식
                 {result.available_subset.parcel_count != null && (
                   <span className="font-bold text-[var(--text-secondary)]">
@@ -378,10 +378,10 @@ export function DevelopmentScenarioCard({
                       <p className="text-[var(--text-tertiary)]">요건: {s.requirements!.join(" · ")}</p>
                     )}
                     {(s.pros?.length ?? 0) > 0 && (
-                      <p className="text-emerald-500">장점: {s.pros!.join(" · ")}</p>
+                      <p className="text-[var(--status-success)]">장점: {s.pros!.join(" · ")}</p>
                     )}
                     {s.magdo && (
-                      <p className="inline-flex items-start gap-1 text-rose-400 md:col-span-2">
+                      <p className="inline-flex items-start gap-1 text-[var(--status-error)] md:col-span-2">
                         <Scale className="mt-0.5 size-3.5 shrink-0" aria-hidden /><span>매도청구: 동의 {s.magdo.consent_threshold_pct}% 충족 시 잔여 ~{s.magdo.claimable_remainder_pct}% 청구 가능 ({s.magdo.basis})</span>
                       </p>
                     )}

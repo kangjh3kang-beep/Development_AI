@@ -50,7 +50,6 @@ type Balance = {
   topup_krw: number;
   topup_remaining: number;
   used_this_cycle_krw: number;
-  markup_pct: number;
   cycle_start: string | null;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };
@@ -165,7 +164,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
             </button>
           </div>
           <div className="h-2 w-full rounded-full bg-[var(--surface-muted)] overflow-hidden">
-            <div className="h-full rounded-full transition-all" style={{ width: `${quota ? (used / quota) * 100 : 100}%`, backgroundColor: soaked ? "#f59e0b" : "var(--accent-strong)" }} />
+            <div className="h-full rounded-full transition-all" style={{ width: `${quota ? (used / quota) * 100 : 100}%`, backgroundColor: soaked ? "var(--status-warning)" : "var(--accent-strong)" }} />
           </div>
           <div className="mt-1.5 text-[10px] text-[var(--text-hint)]">
             {soaked
@@ -179,7 +178,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   }
 
   const pct = Math.min(100, status.usage_pct || 0);
-  const barColor = status.blocked ? "#ef4444" : pct >= 80 ? "#f59e0b" : "var(--accent-strong)";
+  const barColor = status.blocked ? "var(--status-error)" : pct >= 80 ? "var(--status-warning)" : "var(--accent-strong)";
   // 코인 잔액(월기본 + 충전) — /billing/balance 실데이터. 소진 임박(85%+) 경고.
   const totalRemaining = balance
     ? (balance.monthly_base_remaining || 0) + (balance.topup_remaining || 0)

@@ -44,7 +44,7 @@ import { ContextHeader } from "@/components/common/ContextHeader";
 import { deriveMarketPipelineSteps } from "@/lib/context-header";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
-import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
+import { IntegratedParcelsBadge, type IntegratedMeta } from "@/components/common/IntegratedParcelsBadge";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
@@ -53,7 +53,14 @@ import { DemographicPanel } from "@/components/operations/market/DemographicPane
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
 import { DataSourceBadge } from "@/components/operations/market/DataSourceBadge";
-import type { SeniorInsight, TargetProfile, MarketNarrative } from "@/components/operations/market/marketTypes";
+import type { MarketReport, SeniorInsight, TargetProfile, MarketNarrative } from "@/components/operations/market/marketTypes";
+
+// /market/report 응답 계약 — marketTypes.MarketReport에 이 화면이 소비하는 부가 필드 2종을 더한 것.
+// (raw_data/integrated 는 각 소비 컴포넌트의 export 타입이 정본이라 여기서 교차만 한다.)
+type MarketReportResponse = MarketReport & {
+  raw_data?: RawData | null;
+  integrated?: IntegratedMeta | null;
+};
 // B3 채택(additive·무회귀): 오케스트레이션 레지스트리 구동 셀렉터/실행 컨테이너.
 // 기존 도메인 셀렉터(SGIS/KOSIS market 서브모듈)·buildOptionsPayload·/market/report 흐름은 불변.
 // 이 패널은 별도 store(propai-orchestration)·별도 실행경로라 기존 과금/실행과 결선되지 않는다.
@@ -212,7 +219,6 @@ type Balance = {
   tier_label: string;
   monthly_base_remaining: number;
   topup_remaining: number;
-  markup_pct: number;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 게이트 면제
   // 관리자가 설정한 분석 모듈 사용료 맵(미설정 시 빈 dict = 전부 무료).
   module_fees?: Record<string, number>;
@@ -358,7 +364,7 @@ export function MarketInsightsWorkspaceClient() {
   const [pendingReport, setPendingReport] = useState(false);
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
-  const [report, setReport] = useState<any | null>(null);
+  const [report, setReport] = useState<MarketReportResponse | null>(null);
   const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx" | "docx">("");
   const [useLlm, setUseLlm] = useState(true);
   // 선택 상태(말단 항목 기준 평탄 boolean 맵). 분류 sgis/kosis는 자식들에서 파생해 전송한다.
@@ -507,7 +513,7 @@ export function MarketInsightsWorkspaceClient() {
     if (!address) return;
     setGenState("report");
     try {
-      const r = await apiClient.post<any>("/market/report", {
+      const r = await apiClient.post<MarketReportResponse>("/market/report", {
         // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
         body: {
           address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
@@ -1381,7 +1387,7 @@ export function MarketInsightsWorkspaceClient() {
           {report?.feasibility_analysis && (
             <FeasibilityDashboard
               data={report.feasibility_analysis}
-              zoneType={report.zone_type}
+              zoneType={report.zone_type ?? undefined}
             />
           )}
         </>

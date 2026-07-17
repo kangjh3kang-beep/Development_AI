@@ -32,7 +32,6 @@ type Balance = {
   tier_label: string;
   monthly_base_remaining: number;
   topup_remaining: number;
-  markup_pct: number;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 게이트 면제
   module_fees?: Record<string, number>; // 관리자 설정 분석 모듈 사용료(미설정 빈 dict=전부 무료)
 };

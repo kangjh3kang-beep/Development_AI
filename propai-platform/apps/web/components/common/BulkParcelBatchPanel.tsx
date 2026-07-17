@@ -45,6 +45,7 @@ type BatchResult = {
   aggregate?: Aggregate | null;
   multi_parcel_report?: Record<string, unknown> | null;
   pending?: string[];
+  error?: string | null;
   outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
   fee_per_unit_krw?: number;
   estimated_fee_krw?: number;
@@ -87,6 +88,8 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
       setResult(r);
       // 종료 조건: 진행상태(queued/running)가 아니면 터미널.
       // state=partial 은 "전 필지 처리됐으나 일부 미확정"인 종료 상태(INV-M4) — 무한폴링 방지.
+      // state=failed/cancelled도 이 조건으로 이미 걸러진다 — ★과거엔 백엔드가 FAILED를 저장하는
+      // 코드경로가 없어(도달불가) 실질적으로 무한폴링했다(backend: parcel_batch.py 참조).
       if (!["queued", "running"].includes(r.state)) {
         stop(); setLoading(false);
       }
@@ -207,16 +210,29 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-[11px]">
             <span className="inline-flex items-center gap-1 font-bold text-[var(--text-primary)]">
+              {/* ★버그수정: 과거엔 completeness 기준이라 FAILED/CANCELLED도 "완료(일부 미확정)"로
+                  오표기했다(잡이 RUNNING에 고착돼 도달 불가했던 상태라 실제로 노출된 적은 없었으나,
+                  FAILED 도달가능화 이후 재현되던 잠복 결함) — state 기준으로 명시 분기한다. */}
               {["queued", "running"].includes(result.state)
                 ? (<span className="inline-flex items-center gap-1"><Clock className="size-3.5" aria-hidden />진행</span>)
-                : result.completeness === "complete"
-                  ? (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(전 필지 확정)</span>)
-                  : (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(일부 미확정)</span>)} · {result.state}
+                : result.state === "failed"
+                  ? (<span className="inline-flex items-center gap-1 text-rose-500"><AlertTriangle className="size-3.5" aria-hidden />실패</span>)
+                  : result.state === "cancelled"
+                    ? (<span className="inline-flex items-center gap-1 text-[var(--text-tertiary)]"><AlertTriangle className="size-3.5" aria-hidden />취소됨</span>)
+                    : result.completeness === "complete"
+                      ? (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(전 필지 확정)</span>)
+                      : (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(일부 미확정)</span>)} · {result.state}
             </span>
             <span className="text-[var(--text-secondary)]">
               총 {c.total} · 확정 {c.confirmed} · 모호 {c.ambiguous} · 미발견 {c.not_found} · 오류 {c.error}
             </span>
           </div>
+          {result.state === "failed" && (
+            <p className="inline-flex items-start gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-rose-500">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              {result.error || "배치 실행 중 오류가 발생했습니다."}
+            </p>
+          )}
           {/* 사용료 — 관리자 미책정 시 무료(하드코딩 아님: 서버 단가 반영) */}
           <div className="text-[11px] text-[var(--text-secondary)]">
             예상 사용료: {(result.estimated_fee_krw ?? 0) > 0

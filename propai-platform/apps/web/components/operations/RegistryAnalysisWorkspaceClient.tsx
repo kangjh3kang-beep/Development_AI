@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ClipboardList, FileText, Receipt, Scale, ScrollText, Settings } from "lucide-react";
+import { AlertTriangle, ClipboardList, FileText, LandPlot, Receipt, Scale, ScrollText, Settings } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -344,7 +344,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           {land && (
             <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
-                <p className="text-sm font-black text-[var(--accent-strong)]">🟫 토지 소유·특성 정보 (공부 + 등기)</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><LandPlot className="size-4" aria-hidden />토지 소유·특성 정보 (공부 + 등기)</p>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {[
                     ["소유형태", land.ownership_form || "-"],

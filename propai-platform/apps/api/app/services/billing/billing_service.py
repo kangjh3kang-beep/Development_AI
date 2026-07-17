@@ -413,7 +413,11 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     if not row:
         return {
             "tier": "guest", "tier_label": "비회원", "monthly_base_krw": 0,
-            "monthly_base_remaining": 0, "topup_krw": 0, "used_this_cycle_krw": 0,
+            "monthly_base_remaining": 0, "topup_krw": 0, "topup_remaining": 0,
+            "used_this_cycle_krw": 0,
+            # ★"guest"는 TIER_BILLING 미포함(비과금) → 다른 분기의 unlimited=not is_metered_tier(tier)와
+            #   동일 의미론(코인 게이트 면제). get_status()의 무-row 분기(blocked=False)와도 일치.
+            "unlimited": True,
             "cycle_start": None,
             "module_fees": {},
         }

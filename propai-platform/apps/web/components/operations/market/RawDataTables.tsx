@@ -48,12 +48,23 @@ export interface RawTrendPoint {
   mom_pct: number | null; // 전월대비% (첫 항목 null)
 }
 
+/** 경쟁 단지 집계 행 — 주변 실거래를 단지명별로 묶은 것(백엔드 /market/report 산출). */
+export interface RawCompetitorComplex {
+  name?: string;
+  deal_count?: number;
+  avg_per_pyeong_manwon?: number | null;
+  price_basis?: string;
+  recent_deal_ym?: string | null;
+  build_year?: number | null;
+}
+
 export interface RawRealEstate {
   trade_table: RawTradeRow[];
   rent_table: RawRentRow[];
   trend_series: RawTrendPoint[];
   source: string;
   data_source: DataSource | string;
+  competitor_complexes?: RawCompetitorComplex[];
 }
 
 export interface RawPopulation {

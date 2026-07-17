@@ -16,6 +16,19 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+
+  /* Tailwind 기본 그림자 유틸(shadow-sm 등)을 tokens.css --shadow-* 로 수렴시킨다
+     (DESIGN.md B4.1/D — 기본 스케일은 테마 전환 시 깊이가 안 바뀌므로 토큰으로 강제 매핑).
+     inline 사용 이유: --shadow-* 가 :root/.dark 양쪽에서 값이 달라지는 런타임 변수이므로,
+     컴파일 시점에 한 번만 굳는 일반 @theme 대신 매 사용처에서 var()를 그대로 참조해야 한다. */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+  --shadow-inner: var(--shadow-inner);
+  --shadow: var(--shadow-sm);
 }
 
 /* ★ 디자인 토큰 정의는 전부 @propai/ui tokens.css 의 :root / .dark 한 곳으로 이관했다

@@ -15,7 +15,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       secondary: "bg-surface-dark text-white hover:bg-card-border border border-card-border",
       outline: "border border-primary text-primary hover:bg-primary/10",
       ghost: "text-slate-400 hover:text-white hover:bg-surface-dark",
-      danger: "bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white",
+      danger: "bg-[var(--status-error)]/10 text-[var(--status-error)] hover:bg-[var(--status-error)] hover:text-white",
     };
     
     const sizeClasses = {

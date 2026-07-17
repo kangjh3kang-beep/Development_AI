@@ -12,6 +12,7 @@
  *   마운트 시 POST /feasibility/budget-execution 로 영속 이벤트를 불러와 병합한다(graceful).
  */
 import { useCallback, useMemo, useState } from "react";
+import { AlertTriangle, Trash2 } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -271,8 +272,9 @@ export function BudgetExecutionPanel({ projectId: propProjectId }: { projectId?:
       </div>
 
       {overItems.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs text-[var(--status-error)]">
-          ⚠ 예산 초과 집행 {overItems.length}건: {overItems.map((c) => c.label || c.group).join(", ")}
+        <div className="mb-3 flex items-start gap-1 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs text-[var(--status-error)]">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span>예산 초과 집행 {overItems.length}건: {overItems.map((c) => c.label || c.group).join(", ")}</span>
         </div>
       )}
 
@@ -455,7 +457,7 @@ function GroupBlock(props: {
                   title="항목 삭제"
                   className="text-xs text-[var(--text-hint)] hover:text-[var(--status-error)]"
                 >
-                  🗑
+                  <Trash2 className="size-3.5" aria-hidden />
                 </button>
               </span>
             )}

@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, Search, TrendingUp } from "lucide-react";
+import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, LandPlot, Search, TrendingUp } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -689,7 +689,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                             ) : r.parcel_case === "building" ? (
                               <span className="inline-flex items-center gap-1 rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]"><Home className="size-3" aria-hidden />단일건물</span>
                             ) : (
-                              <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🟩 토지</span>
+                              <span className="inline-flex items-center gap-1 rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]"><LandPlot className="size-3" aria-hidden />토지</span>
                             )}
                             {r.zone_code && <span className="text-[var(--text-hint)]">{r.zone_code}</span>}
                           </div>

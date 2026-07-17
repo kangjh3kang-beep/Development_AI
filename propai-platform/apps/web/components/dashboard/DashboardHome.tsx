@@ -170,7 +170,7 @@ export function DashboardHome({ locale }: { locale: string }) {
                 style={{ backgroundColor: "rgba(20,23,32,0.55)" }}
               >
                 <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em]">
-                  <span style={{ color: "#A8BCF8" }}>{String(index + 1).padStart(2, "0")}</span>{" "}
+                  <span style={{ color: "var(--primary-dim)" }}>{String(index + 1).padStart(2, "0")}</span>{" "}
                   <span className="text-white/90">{step.label}</span>
                 </span>
                 <p className="mt-2 text-xs font-semibold leading-5 text-white/70">{step.body}</p>

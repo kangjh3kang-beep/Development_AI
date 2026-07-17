@@ -14,12 +14,16 @@ main.py 배선은 통합자가 한다(여기서는 router 만 export).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.foundation.parcel.batch.batch_service import BatchService
 from app.foundation.parcel.batch.job_store import DbJobStore
 from app.foundation.parcel.contracts.batch import BatchInput, BatchResult
 from app.services.auth.auth_service import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/parcels/batch",
@@ -34,11 +38,19 @@ def _service() -> BatchService:
 
 
 async def _run_inprocess(job_id: str) -> None:
-    """인프로세스 백그라운드 실행(워커 미가동 폴백)."""
+    """인프로세스 백그라운드 실행(워커 미가동 폴백).
+
+    ★버그수정(FAILED 도달불가): BatchService.run()이 예외를 JobState.FAILED로 저장한 뒤
+    재전파하므로(app/foundation/parcel/batch/batch_service.py), 여기서는 로깅만 한다.
+    과거엔 이 except가 `pass`로 예외를 완전히 삼켜 아무 코드도 FAILED를 쓰지 않았다 —
+    잡이 RUNNING에 영구 고착돼 BulkParcelBatchPanel.tsx가 1.5s 간격으로 무한 폴링했다.
+    """
     try:
         await _service().run(job_id)
-    except Exception:  # noqa: BLE001 - 백그라운드 실패는 폴링 상태로 노출됨
-        pass
+    except Exception as e:  # noqa: BLE001 - FAILED 저장은 run() 내부에서 이미 수행됨. 로그만.
+        logger.warning(
+            "배치 인프로세스 실행 실패(FAILED로 저장됨): job_id=%s error=%s", job_id, str(e)[:200]
+        )
 
 
 def _enqueue_celery(job_id: str) -> bool:

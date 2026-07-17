@@ -11,6 +11,19 @@
 //   - locked = !node.available(audit 심의엔진 미머지) 또는 폐포 강제 노드(의존 자동포함, 체크 불가).
 //   - description = 신선분이면 "최신(스킵)" / unavailable이면 정직 표기.
 
+import {
+  BarChart3,
+  Compass,
+  Landmark,
+  LayoutGrid,
+  Map as MapIcon,
+  Ruler,
+  Scale,
+  Search,
+  Tag,
+  Blocks,
+  type LucideIcon,
+} from "lucide-react";
 import { NODES } from "./node-registry";
 import type { AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import type { AnalysisNode, NodeId, LifecycleStage } from "./types";
@@ -139,7 +152,7 @@ function nodeToOption(
         ? "심의엔진 연동 예정"
         : "의존 항목(자동 포함)"
       : undefined,
-    icon: nodeEmoji(node),
+    icon: nodeIcon(node),
   };
 }
 
@@ -165,28 +178,28 @@ function describeNode(
   return src ? `근거: ${src}` : node.label;
 }
 
-/** 노드 아이콘 키 → 표시용 이모지(순수 표시·직관). 미지정은 일반 분석 아이콘. */
-function nodeEmoji(node: AnalysisNode): string {
+/** 노드 아이콘 키 → 표시용 Lucide 아이콘(순수 표시·직관). 미지정은 일반 분석 아이콘. */
+function nodeIcon(node: AnalysisNode): LucideIcon {
   switch (node.id) {
     case "land":
-      return "🗺️";
+      return MapIcon;
     case "legal":
-      return "⚖️";
+      return Scale;
     case "recommend":
-      return "🧭";
+      return Compass;
     case "design":
-      return "📐";
+      return Ruler;
     case "audit":
-      return "🔍";
+      return Search;
     case "sales":
-      return "🏷️";
+      return Tag;
     case "qto":
-      return "🧱";
+      return Blocks;
     case "feasibility":
-      return "📊";
+      return BarChart3;
     case "finance":
-      return "🏦";
+      return Landmark;
     default:
-      return "▦";
+      return LayoutGrid;
   }
 }

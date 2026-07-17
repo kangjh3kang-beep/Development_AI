@@ -55,7 +55,9 @@ describe("route registry IA gate", () => {
       .find((section) => section.id === "design-center")
       ?.items.find((item) => item.id === "design-refs");
 
-    expect(control?.items.map((item) => item.href)).toEqual(["/ko", "/ko/precheck", "/ko/analysis"]);
+    expect(control?.items.map((item) => item.href)).toEqual([
+      "/ko", "/ko/precheck", "/ko/analysis", "/ko/settings/team",
+    ]);
 
     expect(landRights?.children?.map((child) => child.href)).toEqual([
       "/ko/land-schedule",

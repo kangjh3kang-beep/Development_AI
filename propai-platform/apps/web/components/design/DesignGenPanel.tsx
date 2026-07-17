@@ -16,7 +16,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Check, Construction, DraftingCompass, Search, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, Box, Check, Construction, DraftingCompass, FileText, Map, Package, Search, Sun, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -942,7 +942,7 @@ export function DesignGenPanel({ projectId }: Props) {
             onClick={handleDownloadPdf}
             disabled={pdfBusy || areaSqm <= 0 || avgUnit <= 0}
           >
-            {pdfBusy ? "PDF 생성 중…" : "📄 보고서 PDF"}
+            {pdfBusy ? "PDF 생성 중…" : (<><FileText className="mr-1 size-3.5" aria-hidden />보고서 PDF</>)}
           </Button>
           <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
             <input type="checkbox" checked={verifyOpt} onChange={(e) => setVerifyOpt(e.target.checked)} />
@@ -1027,8 +1027,8 @@ export function DesignGenPanel({ projectId }: Props) {
 
           {/* 콜드스타트 배치 업로드 — 표준설계 다중 파일 일괄 적재(코퍼스 부트스트랩) */}
           <div className="mt-3 border-t border-dashed border-[var(--line)] pt-3">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
-              📦 일괄 업로드 <span className="font-normal text-[var(--text-tertiary)]">표준설계 다중 파일을 한 번에 색인(콜드스타트 · 최대 50개)</span>
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+              <Package className="size-3.5" aria-hidden />일괄 업로드 <span className="font-normal text-[var(--text-tertiary)]">표준설계 다중 파일을 한 번에 색인(콜드스타트 · 최대 50개)</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input
@@ -1281,8 +1281,8 @@ export function DesignGenPanel({ projectId }: Props) {
             {/* 다필지 통합 배너(있을 때만) — 면적가중 실효한도·통합GFA·대표 용도지역 */}
             {result.multi_parcel?.aggregation && (
               <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs">
-                <div className="font-bold text-[var(--text-primary)]">
-                  🗺 다필지 통합: {result.multi_parcel.aggregation.parcel_count}개 필지 · 통합면적 {(result.multi_parcel.aggregation.total_area_sqm || 0).toLocaleString()}㎡
+                <div className="inline-flex items-center gap-1 font-bold text-[var(--text-primary)]">
+                  <Map className="size-3.5" aria-hidden />다필지 통합: {result.multi_parcel.aggregation.parcel_count}개 필지 · 통합면적 {(result.multi_parcel.aggregation.total_area_sqm || 0).toLocaleString()}㎡
                 </div>
                 <div className="mt-0.5 text-[var(--text-secondary)]">
                   대표 용도지역 {result.multi_parcel.aggregation.dominant_zone || "—"} · 면적가중 용적률(실효) {result.multi_parcel.aggregation.blended_far_eff_pct ?? "—"}% · 통합 연면적 {(result.multi_parcel.aggregation.integrated_gfa_sqm || 0).toLocaleString()}㎡
@@ -1302,8 +1302,8 @@ export function DesignGenPanel({ projectId }: Props) {
                   background: "color-mix(in srgb, var(--status-warning) 8%, transparent)",
                 }}
               >
-                <div className="font-bold text-[var(--text-primary)]">
-                  ⚠ 특이부지: {result.special_parcel.severity_label || "비일상 토지"}
+                <div className="inline-flex items-center gap-1 font-bold text-[var(--text-primary)]">
+                  <AlertTriangle className="size-3.5 shrink-0" aria-hidden />특이부지: {result.special_parcel.severity_label || "비일상 토지"}
                   {result.special_parcel.gate === "BLOCK"
                     ? " — 개발 게이트(개발규모·수지 미산정)"
                     : result.special_parcel.gate === "TENTATIVE"
@@ -1370,7 +1370,7 @@ export function DesignGenPanel({ projectId }: Props) {
                     {/* 정북일조 envelope(건축법 61조) — 주거지역 상부층 북측 단계후퇴 반영(값 있을 때만) */}
                     {c.sunlight_profile && (
                       <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                        ☀ 일조 envelope(정북사선·건축법 61조): {c.sunlight_profile.floors}층 ·{" "}
+                        <span className="inline-flex items-center gap-1"><Sun className="size-3.5" aria-hidden />일조 envelope(정북사선·건축법 61조)</span>: {c.sunlight_profile.floors}층 ·{" "}
                         연면적 {Math.round(c.sunlight_profile.gfa).toLocaleString()}㎡ · 북측 기준 이격 {c.sunlight_profile.base_north_m}m
                         {c.sunlight_profile.binding ? (
                           <span style={{ color: "var(--status-warning)" }}> · 일조가 층수 제약(binding)</span>
@@ -1472,8 +1472,9 @@ export function DesignGenPanel({ projectId }: Props) {
                             : " · 배치 불가"}
                         <PlacementSvg placement={c.placement} />
                         {c.placement.setback_binds && (
-                          <span style={{ color: "var(--status-warning)" }}>
-                            ⚠ 이격이 건폐율보다 배치 제약(실배치 {Math.round(c.placement.buildable_region_sqm)}㎡).{" "}
+                          <span className="inline-flex items-center gap-0.5" style={{ color: "var(--status-warning)" }}>
+                            <AlertTriangle className="size-3 shrink-0" aria-hidden />
+                            이격이 건폐율보다 배치 제약(실배치 {Math.round(c.placement.buildable_region_sqm)}㎡).{" "}
                           </span>
                         )}
                         <span className="text-[var(--text-hint)]">{c.placement.note}</span>
@@ -1566,7 +1567,7 @@ export function DesignGenPanel({ projectId }: Props) {
                             variant="secondary"
                             onClick={() => setShow3d((prev) => ({ ...prev, [i]: !prev[i] }))}
                           >
-                            🧊 3D 매스 {show3d[i] ? "닫기" : "보기"}
+                            <Box className="mr-1 size-3.5" aria-hidden />3D 매스 {show3d[i] ? "닫기" : "보기"}
                           </Button>
                           {show3d[i] && (
                             <div className="mt-2">

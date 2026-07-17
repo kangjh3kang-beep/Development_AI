@@ -9,6 +9,7 @@
  * drift==0에 묻히지 않게 별도 경보로 노출. 엔진 미연결/거부 시 degrade 정직 안내(무음0).
  */
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 
@@ -114,10 +115,13 @@ export function RegDivergenceCard() {
         // ★실제 트리거 법령명 기반(감시는 모법 Act 수준 — '시행령 개정' 단정 금지, 오라벨 회피).
         <p
           role="alert"
-          className="relative z-10 mt-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
+          className="relative z-10 mt-2 flex items-start gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
         >
-          ⚠ 출처 관련 법령 개정 감지 — baseline 검토 필요
-          {staleLaws.length ? `: ${staleLaws.join(", ")}` : ""}
+          <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
+          <span>
+            출처 관련 법령 개정 감지 — baseline 검토 필요
+            {staleLaws.length ? `: ${staleLaws.join(", ")}` : ""}
+          </span>
         </p>
       )}
     </section>
@@ -155,9 +159,10 @@ function ReadyBody({ data }: { data: DivergenceResp }) {
         // role=alert: 핵심 회귀 신호를 스크린리더가 즉시 announce(a11y).
         <p
           role="alert"
-          className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
+          className="flex items-start gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
         >
-          ⚠ 엔진 규제 누락 의심: {unexpected.join(", ")}
+          <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
+          <span>엔진 규제 누락 의심: {unexpected.join(", ")}</span>
         </p>
       )}
       {engineOnly.length > 0 && (
