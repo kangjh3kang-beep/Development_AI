@@ -62,3 +62,61 @@ export function kakaoRoadviewUrl(lat?: number | null, lon?: number | null): stri
   if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   return `https://map.kakao.com/link/roadview/${lat},${lon}`;
 }
+
+/** XML 텍스트 이스케이프(KML name/description). */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** GeoJSON Polygon/MultiPolygon → KML Polygon 문자열들(외곽 링만·lon,lat 순). */
+function geometryToKmlPolygons(geometry: { type?: unknown; coordinates?: unknown }): string[] {
+  const polys: number[][][][] =
+    geometry.type === "Polygon"
+      ? [geometry.coordinates as number[][][]]
+      : geometry.type === "MultiPolygon"
+        ? (geometry.coordinates as number[][][][])
+        : [];
+  return polys
+    .filter((rings) => Array.isArray(rings) && Array.isArray(rings[0]))
+    .map((rings) => {
+      const outer = rings[0]
+        .map((pt) => `${pt[0]},${pt[1]},0`)
+        .join(" ");
+      return `<Polygon><outerBoundaryIs><LinearRing><coordinates>${outer}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+    });
+}
+
+/**
+ * 선택 필지 KML 내보내기(V3 — VWorld 활용모델 [23.12] 참고) — 측량·구글어스 호환.
+ * GeoJSON 내보내기와 동일한 얕은 검증·정직 제외 계약(included/skipped).
+ */
+export function buildSelectionKml(features: SatongMapFeature[]): SatongGeoJsonExport {
+  const placemarks: string[] = [];
+  let skipped = 0;
+  for (const f of features) {
+    const g = f.geometry as { type?: unknown; coordinates?: unknown } | null;
+    const kmlPolys = g && typeof g === "object" ? geometryToKmlPolygons(g) : [];
+    if (kmlPolys.length === 0) {
+      skipped += 1;
+      continue;
+    }
+    const name = escapeXml(f.address || f.pnu || "필지");
+    const desc = escapeXml(
+      [f.pnu ? `PNU ${f.pnu}` : null, f.zoneType, f.areaSqm ? `${Math.round(f.areaSqm)}㎡` : null]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    const body = kmlPolys.length === 1 ? kmlPolys[0] : `<MultiGeometry>${kmlPolys.join("")}</MultiGeometry>`;
+    placemarks.push(`<Placemark><name>${name}</name><description>${desc}</description>${body}</Placemark>`);
+  }
+  const kml =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>satong-selected-parcels</name>` +
+    placemarks.join("") +
+    `</Document></kml>`;
+  return { json: kml, included: placemarks.length, skipped };
+}

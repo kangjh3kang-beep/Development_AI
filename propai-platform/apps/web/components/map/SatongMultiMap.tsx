@@ -1462,9 +1462,16 @@ export function SatongMultiMap({
     //       (종전 하드코딩 폴백 키 + api.vworld.kr 직결 = 자기 원칙(타일 프록시) 위반이었다.)
     //   (2) 용도지역 WMS(LT_C_UQ111)는 여기서 함께 깔지 않는다 — '용도지역' 레이어 소관
     //       (의미 1:1). 지적 토글에 겹쳐 부설하면 위성 가림·표현 중복을 유발했다.
+    // ★V1(VWorld 공식 활용모델 채증): 위성·하이브리드 뷰에서는 채움 폴리곤 대신
+    //   '선' 전용 레이어(lp_pa_cbnd_*_line)를 쓴다 — 항공사진 위 주황 경계선 룩(가독 최적).
+    //   일반/회색 지도는 기존 채움 레이어 유지.
+    const aerialView = baseLayerMode === "Satellite" || baseLayerMode === "Hybrid";
+    const cadastreLayers = aerialView
+      ? "lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line"
+      : "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun";
     const cadastreTile = L.tileLayer.wms("/tiles/vworld/wms", {
-      layers: "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun",
-      styles: "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun",
+      layers: cadastreLayers,
+      styles: cadastreLayers,
       format: "image/png",
       transparent: true,
       // ★근본원인 수정(2026-07-17 라이브 채증): VWorld WMS는 VERSION 1.3.0만 허용한다 —
@@ -1498,7 +1505,7 @@ export function SatongMultiMap({
         cadastreTileRef.current = null;
       }
     };
-  }, [mapReady, showCadastreTile]);
+  }, [mapReady, showCadastreTile, baseLayerMode]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
@@ -2308,6 +2315,51 @@ export function SatongMultiMap({
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
           )}
         </button>
+
+        {/* ── V2 측정 rail(VWorld 공식 프로토타입 패턴) — 팝오버 진입과 병행하는 상시 도구 ── */}
+        {!readOnly && (
+          <div
+            className="pointer-events-auto absolute right-3 top-16 flex flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
+            style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
+          >
+            <button
+              type="button"
+              aria-label="거리재기 도구"
+              aria-pressed={measureOn && measureMode === "distance"}
+              title="거리재기 — 지도 클릭으로 점 추가, 더블클릭/ESC 종료"
+              onClick={() => {
+                setMeasureMode("distance");
+                setMeasurePoints([]);
+                setMeasureOn(true);
+              }}
+              className={`grid size-9 place-items-center rounded-lg border transition ${
+                measureOn && measureMode === "distance"
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
+              }`}
+            >
+              <Ruler className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="면적재기 도구"
+              aria-pressed={measureOn && measureMode === "area"}
+              title="면적재기 — 점 3개 이상, 더블클릭/ESC 종료"
+              onClick={() => {
+                setMeasureMode("area");
+                setMeasurePoints([]);
+                setMeasureOn(true);
+              }}
+              className={`grid size-9 place-items-center rounded-lg border transition ${
+                measureOn && measureMode === "area"
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
+              }`}
+            >
+              <LandPlot className="size-4" aria-hidden />
+            </button>
+          </div>
+        )}
 
         {/* ── 지도 클릭 팝오버(단일 팝오버 — 디자인컴프) : 필지 선택·정보 / 거리재기 / 닫기 + 출처 푸터 ── */}
         {clickMenu && !readOnly && (() => {

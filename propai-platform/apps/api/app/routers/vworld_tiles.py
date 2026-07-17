@@ -51,7 +51,13 @@ VWORLD_DOMAIN = "www.4t8t.net"
 # ★레이어명 정본(2026-07-17 GetCapabilities 채증): WMS는 소문자만 인식 — 연속지적도는
 #   lp_pa_cbnd_bubun/bonbun(종전 LP_PA_CBND_BUDB/BONB는 실존하지 않는 오기 — LayerNotDefined
 #   근본원인). 데이터 API의 LP_PA_CBND_BUBUN(대문자)은 별개 계약이므로 혼동 금지.
-ALLOWED_WMS_LAYERS: tuple[str, ...] = ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111")
+ALLOWED_WMS_LAYERS: tuple[str, ...] = (
+    "lp_pa_cbnd_bubun",
+    "lp_pa_cbnd_bonbun",
+    "lp_pa_cbnd_bubun_line",  # V1: 선 전용(위성뷰) — web과 동기
+    "lp_pa_cbnd_bonbun_line",
+    "lt_c_uq111",
+)
 SUPPORTED_WMTS_LAYERS: frozenset[str] = frozenset({"Base", "Satellite", "Hybrid", "gray", "midnight"})
 
 # 투명 1x1 PNG — 정상 무제공영역(coverage) 타일 자리 흡수(지도 회색화 방지).

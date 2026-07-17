@@ -39,7 +39,13 @@ const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 //     연속지적도는 lp_pa_cbnd_bubun(부번)·lp_pa_cbnd_bonbun(본번)이다 — 종전
 //     LP_PA_CBND_BUDB/BONB는 데이터 API명(LP_PA_CBND_BUBUN)을 잘못 축약한 실존하지 않는
 //     이름(도입 PR#329부터의 오기, LayerNotDefined 근본원인). 비교는 소문자 정규화.
-const ALLOWED_WMS_LAYERS_ORDER = ["lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun", "lt_c_uq111"] as const;
+const ALLOWED_WMS_LAYERS_ORDER = [
+  "lp_pa_cbnd_bubun",
+  "lp_pa_cbnd_bonbun",
+  "lp_pa_cbnd_bubun_line", // V1: 선 전용(위성뷰 가독 — VWorld 공식 프로토타입 채증)
+  "lp_pa_cbnd_bonbun_line",
+  "lt_c_uq111",
+] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {
