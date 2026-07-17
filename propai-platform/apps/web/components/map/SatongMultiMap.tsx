@@ -754,6 +754,8 @@ export function SatongMultiMap({
   //   #347/#354가 프록시 오류에 ServiceException code를 담으므로, 배지만으로 '키/도메인/
   //   파라미터/네트워크'를 현장에서 즉시 구분할 수 있다(서버 로그 접근 불요).
   const diagnoseBusyRef = useRef(false);
+  const lastAutoDiagnoseAtRef = useRef(0);
+  const autoDiagnoseRef = useRef<(() => void) | null>(null);
   const diagnoseCadastreTiles = useCallback(async () => {
     if (diagnoseBusyRef.current) return; // 연타 가드(R1)
     diagnoseBusyRef.current = true;
@@ -773,8 +775,12 @@ export function SatongMultiMap({
         return;
       }
       const body = await resp.json().catch(() => null);
+      const errText: string = body?.error ?? `HTTP ${resp.status}`;
+      // 긴 원문 대신 원인 코드만 요약 — 키 무효(INVALID/INCORRECT_KEY)면 복구 경로 안내.
+      const code = /\(([A-Z_/]+)\)/.exec(errText)?.[1];
+      const keyFault = code === "INVALID_KEY" || code === "INCORRECT_KEY";
       setCadastreTileNote(
-        `지적 타일 조회 실패 — ${body?.error ?? `HTTP ${resp.status}`} (진단)`,
+        `지적 타일 오류 — ${code ?? errText}${keyFault ? " · 인증키 무효(관리자 화면에 유효 키 등록 시 자동 복구)" : ""}`,
       );
     } catch {
       setCadastreTileNote("지적 타일 조회 실패 — 네트워크 오류(진단)");
@@ -782,6 +788,16 @@ export function SatongMultiMap({
       diagnoseBusyRef.current = false;
     }
   }, []);
+
+  // tileerror 자동진단 배선 — 60초 스로틀(연속 타일 실패의 프로브 폭주 방지).
+  useEffect(() => {
+    autoDiagnoseRef.current = () => {
+      const now = Date.now();
+      if (now - lastAutoDiagnoseAtRef.current < 60_000) return;
+      lastAutoDiagnoseAtRef.current = now;
+      void diagnoseCadastreTiles();
+    };
+  }, [diagnoseCadastreTiles]);
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -1457,6 +1473,7 @@ export function SatongMultiMap({
       //   프록시 분류기가 이 XML을 auth로 승격해 "키 미설정" 오해 메시지가 표시됐다.
       //   1.3.0에서는 Leaflet이 SRS 대신 CRS 파라미터를 전송한다(정상 — VWorld 수용).
       version: "1.3.0",
+      zIndex: 4, // 전국 지적편집도(zoning-wide, 3) '위' — 용도색이 지적선을 덮지 않게(R1 #2)
       maxZoom: 19,
       minZoom: 10,
       attribution: "VWorld 연속지적도",
@@ -1465,7 +1482,9 @@ export function SatongMultiMap({
     //   시 지도가 빈 채로(무노트) 남았다(무목업 원칙 위반). 실패를 관측 가능한 노트로
     //   표면화하고, 이후 로드가 성공하면(부분 성공 포함) 노트를 지운다.
     cadastreTile.on("tileerror", () => {
-      setCadastreTileNote("지적 타일 조회 실패 — 키 미설정 또는 VWorld 응답 오류");
+      // 모호한 고정 문구 대신 자동진단으로 실원인 코드를 표면화(60초 스로틀 — 타일 다발 오류 대비).
+      setCadastreTileNote((prev) => prev || "지적 타일 오류 — 원인 진단 중…");
+      autoDiagnoseRef.current?.();
     });
     cadastreTile.on("tileload", () => {
       setCadastreTileNote((prev) => (prev ? "" : prev));
@@ -1947,7 +1966,7 @@ export function SatongMultiMap({
         kind === "trade" && item.avg_price_10k
           ? perPyeong
             ? ` ${perPyeong.toLocaleString()}만/평`
-            : ` ${won(item.avg_price_10k)}`
+            : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
           : "";
       bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < marketLabelLimit, offsetY: radius });
       bounds.extend([item.lat, item.lon]);
@@ -2447,7 +2466,10 @@ export function SatongMultiMap({
             // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
             // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
             //   (wrap 최소화)로 재배치 — 하단 배경정보 가림 면적을 구조적으로 축소.
-            className={`pointer-events-none absolute left-14 flex max-w-[calc(100%-152px)] flex-row flex-wrap items-end gap-1.5 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}
+            // ★겹침 근본해소(2026-07-17 라이브 신고): 하단 완료바는 비풀스크린에서도 래퍼
+            //   '내부' flow 요소(지도 아래)라 bottom-3(래퍼 바닥) 앵커는 완료바 밴드와 정면
+            //   충돌했다 — 두 모드 모두 bottom-16으로 완료바 위에 분리.
+            className={"pointer-events-none absolute bottom-16 left-14 flex max-w-[calc(100%-152px)] flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
           >
             {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
@@ -2523,8 +2545,8 @@ export function SatongMultiMap({
                   <button
                     type="button"
                     onClick={() => void diagnoseCadastreTiles()}
-                    title="클릭: 지적 프록시 자가진단(오류 원인 코드 확인)"
-                    className="pointer-events-auto inline-flex w-fit rounded-full bg-amber-50/95 px-3 py-1.5 text-left text-[11px] font-black text-amber-800 shadow transition hover:bg-amber-100"
+                    title={`${cadastreTileNote} — 클릭: 재진단`}
+                    className="pointer-events-auto inline-flex w-fit max-w-[380px] rounded-full bg-amber-50/95 px-3 py-1.5 text-left text-[11px] font-black text-amber-800 shadow transition hover:bg-amber-100"
                   >
                     <span className="inline-flex items-center gap-1">
                       {cadastreTileNote} <Search className="size-3 shrink-0" aria-hidden />

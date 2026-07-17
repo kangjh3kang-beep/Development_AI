@@ -346,6 +346,7 @@ const LAYERS: SatongLayer[] = [
       { id: "satellite", label: "위성", mapEffect: true },
       { id: "hybrid", label: "항공뷰", mapEffect: true },
       { id: "elevation", label: "표고", mapEffect: false, description: "표고/경사도 격자 원천 연결 후 활성화" },
+      { id: "gray", label: "회색지도", mapEffect: true, description: "저채도 배경 — 데이터 대비 강조" },
     ],
   },
   {

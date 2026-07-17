@@ -1,4 +1,4 @@
-import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/lib/vworld-xml-exception";
+import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 
 /**
  * VWorld WMS 프록시 — 연속지적도(LP_PA_CBND_*) WMS 타일을 프론트 서버 경유로 부설한다.
@@ -182,6 +182,16 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         //   탓에 실제 원인 INVALID_RANGE(WMS VERSION 파라미터 오류)가 "키 미설정"으로
         //   오독됐다. code로 INVALID_KEY/UNREGISTERED_DOMAIN/INVALID_RANGE를 즉시 구분한다.
         const detail = extractVWorldXmlExceptionDetail(bodyText);
+        // ★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 서버키가 '키 자체 무효'로
+        //   거부되면 api(관리자 등록 키·#354 통로)로 1회 재중계 — 관리자 화면 키 등록만으로
+        //   web 재빌드 없이 복구된다. 파라미터 오류(INVALID_RANGE 등)는 재시도 무의미라 제외.
+        if (isVWorldKeyFault(detail.code)) {
+          const origin = vworldApiFallbackOrigin();
+          if (origin) {
+            console.warn(`[vworld-wms-proxy] local key fault (${detail.code}) → api fallback retry`);
+            return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy(key-fault)");
+          }
+        }
         return upstreamError(
           `VWorld WMS returned an XML exception (${detail.code ?? "auth/unknown"})`,
           resp.status,
