@@ -36,6 +36,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 
@@ -462,18 +463,20 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
           </div>
           {/* 공용 프로젝트 선택기 — 선택 시 컨텍스트(주소·다필지·용도·면적) 자동 적재 */}
           <ProjectSwitcher />
-          {/* 주소 직접 수정(요구 ① '수정 가능') */}
-          <label className="block">
-            <span className={labelCapsCls} style={labelCapsStyle}>
-              분석 주소
-            </span>
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="예) 서울특별시 강남구 역삼동 737"
-              className={`${inputCls} mt-1`}
-            />
-          </label>
+          {/* 주소 직접 수정(요구 ① '수정 가능') — 공용 주소검색 바(전 모듈 표준).
+              ★종전 bare <input> 은 검색 수단이 아예 없어 지번을 찾을 수 없었다(사용자 실버그).
+              ★single 금지: single 은 Daum 단독 렌더(GlobalAddressSearch:1305)라 "의정부동 224"·산·농지·
+                맹지 같은 지번을 못 찾는다(:203 주석이 명시). 기본(다필지) 모드의 VWorld 지번 자동완성이
+                이들을 커버하고, 이 패널은 다필지(parcelRows·shouldSendParcels)가 본업이라 계약도 맞다.
+              writeToContext 는 기본 true 유지 — 여기 주소는 그 프로젝트의 실제 분석 주소다.
+              프로젝트 선택은 위 ProjectSwitcher 가 담당하므로 picker 만 숨긴다. */}
+          <ProjectAddressInput
+            value={address}
+            onChange={setAddress}
+            label="분석 주소"
+            placeholder="예) 의정부동 224, 산 12-3, 판교역로 166"
+            hideProjectPicker
+          />
           {/* 적재된 컨텍스트 요약(전송될 값) */}
           <div className="sa-di-tiles sa-di-tiles--4">
             <div className="sa-di-tile">
