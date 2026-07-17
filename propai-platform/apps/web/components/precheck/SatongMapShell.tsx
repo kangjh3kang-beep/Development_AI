@@ -1655,7 +1655,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
   // 베이스맵 스위처(jootek 패리티) — 지도 하단 도크의 우측 슬롯으로 전달(2026-07-17 겹침
   // 구조 단일화). 종전 독립 absolute 섬(bottom-20 right-4)은 칩 행의 암묵 예약값(152px)을
-  // 실폭(~280px)으로 침묵 초과해 칩이 밑으로 파고들었다 — 같은 flex 행에 흘리면 겹침이
+  // 실폭(≈192px — 3×w-14+간격+패딩)으로 침묵 초과해 칩이 밑으로 파고들었다 — 같은 flex 행에 흘리면 겹침이
   // 문법적으로 불가능하다. 스위처는 컨트롤(L1 글래스 blur12) — 팝오버(L3 blur24)와 구분.
   const basemapSwitcherDock = (
     <div className="flex gap-1.5 rounded-2xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">

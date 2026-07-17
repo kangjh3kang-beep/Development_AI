@@ -41,7 +41,7 @@ export const SATONG_PANE_Z = {
  *   3회 재발했다(측정rail↔줌·칩행↔스위처·배너↔완료바). 신규 오버레이는 아래 슬롯
  *   소유권을 확인하고 **빈 슬롯에만** 배치하거나 기존 도크 flow에 합류할 것.
  *   ┌ 좌상: 검색/네비(셸) · 우상: 풀스크린 버튼 + 레이어 레일(right-4 top-20)
- *   ├ 좌중앙: 측정 rail(top-1/2 left-4 — 지도높이<282px 배치 금지, MultiMap 주석 참조)
+ *   ├ 좌중앙: 측정 rail(top-1/2 left-4 — 콜러 계약: 지도높이 500px 미만 배치 금지. 282px는 기하 충돌점이지 계약이 아님 — MultiMap 주석 참조)
  *   ├ 상중앙: 측정 상태 칩(top-14)
  *   ├ 하단 전폭: cornerDock(bottom-16 left-14~right-3) = 상태 칩(좌) + bottomDockSlot(우,
  *   │   베이스맵 스위처) — 하단 신규 요소는 **이 도크 flow에 합류**(독립 absolute 금지:
