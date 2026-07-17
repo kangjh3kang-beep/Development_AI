@@ -115,10 +115,10 @@ def test_wms_rejects_unlisted_and_smuggled_layers(monkeypatch):
     monkeypatch.setattr(mod, "_vworld_key", lambda: "SECRET-KEY")
     captured = _mock_async_client(monkeypatch, _png_response)
     client = TestClient(_app())
-    assert client.get("/api/v1/tiles/vworld/wms?layers=LT_C_UQ111").status_code == 400
+    assert client.get("/api/v1/tiles/vworld/wms?layers=LT_C_EVIL_LAYER").status_code == 400
     # 중복 키 스머글링(허용+차단 혼합)도 400 — 상류 요청 자체가 없어야 한다.
     assert (
-        client.get("/api/v1/tiles/vworld/wms?LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_UQ111").status_code
+        client.get("/api/v1/tiles/vworld/wms?LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_EVIL_LAYER").status_code
         == 400
     )
     assert client.get("/api/v1/tiles/vworld/wms?layers=").status_code == 400

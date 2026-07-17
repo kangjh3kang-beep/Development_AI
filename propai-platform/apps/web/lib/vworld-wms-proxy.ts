@@ -29,11 +29,13 @@ import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail } from "@/l
 
 const VWORLD_WMS_BASE = "https://api.vworld.kr/req/wms";
 
-// 프록시가 허용하는 WMS 레이어(오픈 프록시 남용 방지) — 연속지적도만.
-//   ★용도지역(LT_C_UQ111)은 의도적으로 제외한다: '용도지역' 레이어 소관(의미 1:1)이며,
-//     지적 토글에 함께 부설하면 위성 가림·표현 중복을 유발한다(WP-M5).
+// 프록시가 허용하는 WMS 레이어(오픈 프록시 남용 방지) — 연속지적도 + 용도지역.
+//   ★용도지역(LT_C_UQ111)은 2026-07-17부터 허용: '용도지역' 레이어의 별도 컨트롤
+//     (land-use-wide — 전국 지적편집도 오버레이)로 도입. 지적 토글과는 여전히 분리
+//     (WP-M5의 '함께 부설 금지' 원칙 유지 — 소비 컨트롤이 다르다).
+//   ★api측 프록시(app/routers/vworld_tiles.py ALLOWED_WMS_LAYERS)와 동기 유지할 것.
 //   배열(순서 보존) + Set(조회용) 이원 유지 — 화이트리스트 재구성 시 결정적 순서가 필요하다.
-const ALLOWED_WMS_LAYERS_ORDER = ["LP_PA_CBND_BUDB", "LP_PA_CBND_BONB"] as const;
+const ALLOWED_WMS_LAYERS_ORDER = ["LP_PA_CBND_BUDB", "LP_PA_CBND_BONB", "LT_C_UQ111"] as const;
 const ALLOWED_WMS_LAYERS = new Set<string>(ALLOWED_WMS_LAYERS_ORDER);
 
 function vworldKey(): string {

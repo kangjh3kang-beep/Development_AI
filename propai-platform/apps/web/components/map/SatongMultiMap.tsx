@@ -1383,6 +1383,49 @@ export function SatongMultiMap({
   const cadastreTileRef = useRef<any>(null);
   const showCadastreTile = hasSatongLayer(layerState, "cadastre");
 
+  // ── 전국 지적편집도(용도지역 LT_C_UQ111) 오버레이 — jootek/카카오 지적편집도 패리티 ──
+  //   기존 '용도지역'은 선택 필지만 색칠 → land-use-wide 컨트롤을 켜면 화면 전체를
+  //   VWorld 용도지역 색상으로 덮는다(프록시 화이트리스트에 2026-07-17 허용).
+  const zoningWideTileRef = useRef<any>(null);
+  const [zoningWideNote, setZoningWideNote] = useState("");
+  const showZoningWide =
+    hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use-wide");
+  /* eslint-disable react-hooks/set-state-in-effect -- Imperative Leaflet tile layer wiring. */
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (zoningWideTileRef.current) {
+      try { map.removeLayer(zoningWideTileRef.current); } catch { /* noop */ }
+      zoningWideTileRef.current = null;
+    }
+    if (!showZoningWide) {
+      setZoningWideNote("");
+      return;
+    }
+    const tile = L.tileLayer.wms("/tiles/vworld/wms", {
+      layers: "LT_C_UQ111",
+      styles: "LT_C_UQ111",
+      format: "image/png",
+      transparent: true,
+      version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
+      opacity: 0.55, // 베이스맵 지형·도로가 비치게(전면 오버레이의 가독 균형)
+      zIndex: 3, // 베이스 타일 위, 폴리곤(overlayPane)·라벨 pane 아래
+      maxZoom: 19,
+      minZoom: 7,
+      attribution: "VWorld 용도지역(지적편집도)",
+    });
+    tile.on("tileerror", () => setZoningWideNote("지적편집도 타일 조회 실패 — 지적 배지의 자가진단으로 원인 확인"));
+    tile.on("tileload", () => setZoningWideNote((prev) => (prev ? "" : prev)));
+    tile.addTo(map);
+    zoningWideTileRef.current = tile;
+    return () => {
+      try { map.removeLayer(tile); } catch { /* noop */ }
+      if (zoningWideTileRef.current === tile) zoningWideTileRef.current = null;
+    };
+  }, [mapReady, showZoningWide]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1762,6 +1805,8 @@ export function SatongMultiMap({
   //   marketLayer 객체 identity가 바뀌어도(다른 필드 갱신) 아래 값이 같으면 마커를 다시 그리지
   //   않아, 분양 items 도착이 실거래 마커 재생성·재fitBounds를 유발하던 낭비를 끊는다.
   const marketKind = marketLayer?.kind ?? "trade";
+  // 실거래 라벨 총액/평당 토글(jootek 패리티) — transactions 레이어의 unit-price 컨트롤.
+  const pricePerPyeongOn = hasSatongLayerControl(layerState, "transactions", "unit-price");
   const marketType = marketLayer?.type ?? "apt";
   const showPresale = !!marketLayer?.showPresale;
   const presaleItems = marketLayer?.presaleItems ?? null;
@@ -1892,7 +1937,18 @@ export function SatongMultiMap({
         .addTo(group);
       // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
       // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
-      const priceTag = kind === "trade" && item.avg_price_10k ? ` ${won(item.avg_price_10k)}` : "";
+      // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
+      // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
+      const perPyeong =
+        pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
+          ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
+          : null;
+      const priceTag =
+        kind === "trade" && item.avg_price_10k
+          ? perPyeong
+            ? ` ${perPyeong.toLocaleString()}만/평`
+            : ` ${won(item.avg_price_10k)}`
+          : "";
       bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < marketLabelLimit, offsetY: radius });
       bounds.extend([item.lat, item.lon]);
     });
@@ -1914,7 +1970,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
-  }, [mapReady, marketKind, marketType, marketPayload, marketLabelLimit, selectedParcelKey, selectedParcels.length]);
+  }, [mapReady, marketKind, marketType, marketPayload, marketLabelLimit, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
@@ -2386,7 +2442,7 @@ export function SatongMultiMap({
         {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
              종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
              정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
-        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
+        {(hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
           <div
             // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
             // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
@@ -2460,7 +2516,7 @@ export function SatongMultiMap({
               )
             )}
             {/* 상태 칩 — 가로 1줄(겹침 해소) */}
-            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote) && (
+            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote) && (
               <div className="flex flex-row flex-wrap items-end gap-1.5">
                 {cadastreTileNote && (
                   // I9: 배지 = 자가진단 버튼 — 클릭 시 프록시 프로브로 실제 오류 code 표면화.
@@ -2474,6 +2530,11 @@ export function SatongMultiMap({
                       {cadastreTileNote} <Search className="size-3 shrink-0" aria-hidden />
                     </span>
                   </button>
+                )}
+                {zoningWideNote && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    {zoningWideNote}
+                  </span>
                 )}
                 {overlayNote && (
                   <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">

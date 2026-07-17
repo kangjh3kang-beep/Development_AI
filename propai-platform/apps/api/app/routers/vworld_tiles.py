@@ -46,7 +46,9 @@ VWORLD_REFERER = "https://www.4t8t.net"
 VWORLD_DOMAIN = "www.4t8t.net"
 
 # 화이트리스트 — web 프록시(ALLOWED_WMS_LAYERS_ORDER·SUPPORTED_LAYERS)와 동일 유지.
-ALLOWED_WMS_LAYERS: tuple[str, ...] = ("LP_PA_CBND_BUDB", "LP_PA_CBND_BONB")
+# ★web측(lib/vworld-wms-proxy.ts ALLOWED_WMS_LAYERS_ORDER)과 동기 유지 — LT_C_UQ111은
+#   2026-07-17 전국 지적편집도(용도지역 land-use-wide) 컨트롤 도입으로 허용.
+ALLOWED_WMS_LAYERS: tuple[str, ...] = ("LP_PA_CBND_BUDB", "LP_PA_CBND_BONB", "LT_C_UQ111")
 SUPPORTED_WMTS_LAYERS: frozenset[str] = frozenset({"Base", "Satellite", "Hybrid", "gray", "midnight"})
 
 # 투명 1x1 PNG — 정상 무제공영역(coverage) 타일 자리 흡수(지도 회색화 방지).

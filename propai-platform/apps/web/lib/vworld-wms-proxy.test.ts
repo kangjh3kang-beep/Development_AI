@@ -61,11 +61,23 @@ describe("vworld-wms-proxy", () => {
     expect(res.status).toBe(503); // 공개키가 설정돼 있어도 서버 전용 키가 없으면 정직 실패
   });
 
-  it("허용되지 않은 WMS 레이어(용도지역 LT_C_UQ111 등)는 400으로 거부한다", async () => {
+  it("허용되지 않은 WMS 레이어는 400으로 거부한다(화이트리스트 밖 임의 레이어)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
     stubFetch(() => new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } }));
-    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_UQ111"));
+    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_EVIL_LAYER"));
     expect(res.status).toBe(400);
+  });
+
+  it("용도지역(LT_C_UQ111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_UQ111"));
+    expect(res.status).toBe(200);
+    expect(requested).toContain("LAYERS=LT_C_UQ111");
   });
 
   it("빈 LAYERS 는 400", async () => {
@@ -83,7 +95,7 @@ describe("vworld-wms-proxy", () => {
     });
     // URLSearchParams는 문자열 생성자로만 진짜 중복 키를 만들 수 있다(객체 리터럴은 키가 유일).
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_UQ111&format=image/png",
+      "service=WMS&request=GetMap&LAYERS=LP_PA_CBND_BUDB&LAYERS=LT_C_EVIL_LAYER&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
@@ -98,7 +110,7 @@ describe("vworld-wms-proxy", () => {
       return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
     });
     const incoming = new URLSearchParams(
-      "service=WMS&request=GetMap&layers=LT_C_UQ111&LAYERS=LP_PA_CBND_BUDB&format=image/png",
+      "service=WMS&request=GetMap&layers=LT_C_EVIL_LAYER&LAYERS=LP_PA_CBND_BUDB&format=image/png",
     );
     const res = await proxyVWorldWms(incoming);
     expect(res.status).toBe(400);
