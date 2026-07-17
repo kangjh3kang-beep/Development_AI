@@ -56,7 +56,9 @@
 //        캠페인(#359). 팝오버/칩 UI와 진단 프로브가 stale 캐시로 남지 않도록 구캐시 일괄 삭제.
 // v430: 사통맵 정보 상시화·겹침 해소(#361 — 라벨 버짓 96/64/24·실거래 가격 pill·도크 가로
 //        1줄·저줌 확대 안내·won() 자리올림 봉합). 라벨/칩 UI가 stale 캐시로 남지 않도록 삭제.
-const CACHE_NAME = "propai-v430-satong-map-density";
+// v431: jootek 패리티 3종+키오류 페일오버(#364 — 전국 지적편집도·평당가 토글·베이스맵
+//        스위처·INCORRECT_KEY 자동 재중계·자동진단·도크 겹침 해소). 프록시/칩 UI stale 방지 삭제.
+const CACHE_NAME = "propai-v431-satong-jootek-parity";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
