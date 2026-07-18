@@ -154,7 +154,7 @@ describe("AnalysisDiffTable", () => {
     expect(formatFieldValue(undefined, "won")).toBe("—");
   });
 
-  it("DIFF_FIELD_MAP — 4개 분석 유형 모두 키맵이 정의되어 있다", () => {
+  it("DIFF_FIELD_MAP — 6개 분석 유형 모두 키맵이 정의되어 있다", () => {
     expect(DIFF_FIELD_MAP.feasibility.map((f) => f.key)).toEqual([
       "profit_rate_pct",
       "npv_won",
@@ -174,5 +174,140 @@ describe("AnalysisDiffTable", () => {
       "parcel_count",
     ]);
     expect(DIFF_FIELD_MAP.permit_ai.map((f) => f.key)).toEqual(["verdict", "development_methods"]);
+    expect(DIFF_FIELD_MAP.site_analysis.map((f) => f.key)).toEqual([
+      "zone_type",
+      "effective_far.effective_far_pct",
+      "land_area_sqm",
+      "potential_far_range.max_pct",
+      "location.grade",
+    ]);
+    expect(DIFF_FIELD_MAP.precheck.map((f) => f.key)).toEqual([
+      "zone_type",
+      "area_sqm",
+      "far_effective_pct",
+      "bcr_effective_pct",
+      "best",
+      "pass_count",
+    ]);
+  });
+
+  it("site_analysis — comprehensive_analysis 원장 요약 필드를 렌더한다(실효 용적률 결측 시 상향 상한 폴백)", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="site_analysis"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: {
+            zone_type: "자연녹지지역",
+            effective_far: { effective_far_pct: null },
+            land_area_sqm: 500,
+            potential_far_range: { max_pct: 80 },
+            // ★R1 REVISE: comprehensive_analysis_service._analyze_location() 실제 반환 형태(1:1) —
+            //   과거 { grade: "B" }만 손수 날조해 getFieldPath("location.grade")가 항상 통과하는
+            //   허위 안전망이었다. 실 payload 형태(transportation/education/coordinates 등 동봉)로
+            //   재작성해 wb_payload가 정말 이 형태를 그대로 실어야 그리드가 렌더됨을 검증한다.
+            location: {
+              transportation: { nearest_subway: null, subway_accessible: false },
+              education: { schools: [], school_count: 0 },
+              coordinates: {},
+              location_score: 65,
+              grade: "B",
+              grade_description: "양호 입지 — 교통 또는 교육 인프라 중 하나 이상 양호",
+              score_breakdown: ["기본 입지점수 50점"],
+            },
+          },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: {
+            zone_type: "자연녹지지역",
+            effective_far: { effective_far_pct: null },
+            land_area_sqm: 520,
+            potential_far_range: { max_pct: 100 },
+            location: {
+              transportation: {
+                nearest_subway: { name: "테스트역", distance_m: 250 },
+                subway_accessible: true,
+              },
+              education: { schools: [{ name: "테스트초" }], school_count: 1 },
+              coordinates: { lat: 37.5, lon: 127.0 },
+              location_score: 85,
+              grade: "A",
+              grade_description: "우수 입지 — 역세권·학군 모두 양호하여 주거·상업 개발 모두 유리",
+              score_breakdown: ["기본 입지점수 50점", "역세권 최우수 — 테스트역 도보 250m (+25점)"],
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("용도지역")).toBeInTheDocument();
+    expect(screen.getByText("대지면적")).toBeInTheDocument();
+    expect(screen.getByText("입지등급")).toBeInTheDocument();
+    // 실효 용적률이 old/new 모두 결측 → "실효 용적률" 행은 "—", 상향 상한 폴백 행이 추가된다.
+    expect(screen.getByText("실효 용적률")).toBeInTheDocument();
+    // "상향 상한" 라벨은 두 번 등장한다 — ①실효 결측 시 붙는 폴백 행, ②상향 상한 자체의 주 필드 행.
+    // 두 행 모두 같은 키(potential_far_range.max_pct)를 읽으므로 값도 동일하게 두 번씩 렌더된다.
+    expect(screen.getAllByText("상향 상한").length).toBe(2);
+    expect(screen.getAllByText("80.0%").length).toBe(2);
+    expect(screen.getAllByText("100.0%").length).toBe(2);
+  });
+
+  it("site_analysis — 실효 용적률이 확보되면 폴백 행 없이 실측값을 렌더한다", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="site_analysis"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: { effective_far: { effective_far_pct: 180 } },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: { effective_far: { effective_far_pct: 190 } },
+        }}
+      />,
+    );
+    expect(screen.getByText("180.0%")).toBeInTheDocument();
+    expect(screen.getByText("190.0%")).toBeInTheDocument();
+    // 실효값이 있으므로 폴백 행은 추가되지 않는다 — "상향 상한" 라벨은 그 자체의 주 필드 행(4번째
+    // 정의) 1개만 남는다(값은 potential_far_range 미전달이라 "—").
+    expect(screen.getAllByText("상향 상한").length).toBe(1);
+  });
+
+  it("precheck — /precheck/instant 원장 요약 필드를 렌더하고 결측은 '—'로 표기한다", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="precheck"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: {
+            zone_type: "제2종일반주거지역",
+            area_sqm: 300,
+            far_effective_pct: 200,
+            bcr_effective_pct: 50,
+            best: "M06",
+            pass_count: 3,
+          },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: { zone_type: "제2종일반주거지역" },
+        }}
+      />,
+    );
+    expect(screen.getByText("용도지역")).toBeInTheDocument();
+    expect(screen.getByText("대지면적")).toBeInTheDocument();
+    expect(screen.getByText("실효 용적률")).toBeInTheDocument();
+    expect(screen.getByText("실효 건폐율")).toBeInTheDocument();
+    expect(screen.getByText("추천 개발방식")).toBeInTheDocument();
+    expect(screen.getByText("허용방식수")).toBeInTheDocument();
+    // newEntry에 area_sqm/far/bcr/best/pass_count가 모두 없음 → 각 "—"(가짜 0 금지)
+    const dashes = screen.getAllByText("—");
+    expect(dashes.length).toBeGreaterThanOrEqual(5);
   });
 });

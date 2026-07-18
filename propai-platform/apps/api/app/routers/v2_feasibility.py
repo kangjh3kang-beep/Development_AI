@@ -40,7 +40,7 @@ from app.schemas.feasibility_v2 import (
     VCSCommitRequest,
     VCSRollbackRequest,
 )
-from app.services.auth.auth_service import get_current_user
+from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
@@ -1191,11 +1191,19 @@ class RoughScenarioRequest(BaseModel):
 async def rough_scenario(
     req: RoughScenarioRequest,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_optional),
 ):
     """사업성 개략수지 — 통합면적 토지비 + 국토부 공사비 + Top1 분양수입 + 20% 마진 + 월별 DCF.
 
     기존 엔진(통합분석·추천·탁상감정·공사비·분양가·현금흐름)을 조합만 한다(규칙 산출,
     LLM 미사용). 실데이터 미확보 축은 값 null + degraded_notes로 정직 강등(무목업).
+
+    인증은 선택(비로그인 투자분석 체험 무회귀) — 산정 자체는 로그인 여부와 무관하게 수행한다.
+    ★P3(R1 REVISE): 원장 적재(analysis_type="feasibility" 재사용 — address/pnu 스코프라
+    VCS-result(project_id 스코프)의 별도 "feasibility_vcs" 체인과 혼입되지 않는다)는 로그인
+    사용자에 한해 best-effort로 수행한다(precheck.py와 대칭 — 이전엔 익명도 tenant_id=None으로
+    적재했으나, GET /analysis-ledger/history가 JWT 필수라 익명 기록은 아무도 조회할 수 없는
+    write-only 고아였고 tenant_id IS NULL 공용 버킷의 쿼터만 계속 소진시켰다).
     """
     try:
         site_uuid = None
@@ -1204,7 +1212,7 @@ async def rough_scenario(
                 site_uuid = uuid.UUID(req.site_id)
             except ValueError:
                 site_uuid = None
-        return await build_rough_scenario(
+        scenario = await build_rough_scenario(
             address=req.address,
             parcels=req.parcels,
             project_id=req.project_id,
@@ -1217,6 +1225,48 @@ async def rough_scenario(
         )
     except Exception as e:  # noqa: BLE001 — 개략수지 산출 실패는 422로 정직 반환
         raise HTTPException(status_code=422, detail=f"개략수지 산정 실패: {str(e)[:160]}")
+
+    # ★히스토리 확산(관례 미러 — permits.py/avm.py와 동일 try/except best-effort).
+    #   ★P3(R1 REVISE): 익명(current_user is None)은 skip — precheck.py와 대칭(익명 기록은
+    #   JWT 필수 /history에서 아무도 못 읽는 write-only 고아 + NULL 쿼터 낭비였다).
+    if current_user is not None:
+        try:
+            from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+            from app.services.ledger.ledger_adapters import record_user_analysis
+
+            summ = scenario.get("summary") or {}
+            cf_summ = (scenario.get("cashflow") or {}).get("summary") or {}
+            # ★roi_pct(÷총사업비)→profit_rate_pct 매핑: DIFF_FIELD_MAP.feasibility가 기대하는
+            #   키는 profit_rate_pct 하나뿐이라 roi_pct를 우선 채택하고, 결측 시에만
+            #   cashflow.summary.profit_rate_pct(÷실제사업비, CashflowGenerator 산출)로 폴백한다.
+            profit_rate_pct = summ.get("roi_pct")
+            if profit_rate_pct is None:
+                profit_rate_pct = cf_summ.get("profit_rate_pct")
+
+            wb = await record_user_analysis(
+                analysis_type="feasibility",
+                summary={
+                    "profit_rate_pct": profit_rate_pct,
+                    "npv_won": summ.get("npv_won"),
+                    "total_revenue_won": summ.get("total_revenue_won"),
+                    "net_profit_won": summ.get("net_profit_won"),
+                    "grade": summ.get("grade"),
+                },
+                tenant_id=str(current_user.tenant_id),
+                # ★project_id 미전달(의도적) — VCS-result(record_feasibility_result)는 project_id
+                #   스코프+address=None으로 같은 analysis_type="feasibility" 체인에 적재된다. rough를
+                #   address 스코프로만 두면 식별자(pnu-or-address_norm) 자체가 달라 project_id가
+                #   같아도 체인이 자동 분리된다(혼입 없음 — _chain_where 식별자 우선순위).
+                address=req.address,
+                source="rough_scenario",
+                # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters).
+                parcel_count=len(req.parcels) if req.parcels else 1, use_llm=False,
+            )
+            scenario = attach_ledger_hash(scenario, wb)
+        except Exception:  # noqa: BLE001 — 원장 적재 실패해도 개략수지 결과 무손상
+            pass
+
+    return scenario
 
 
 # ── 개략수지 → 시니어 최종 사업성분석 보고서(요구 ⑨) ──────────────

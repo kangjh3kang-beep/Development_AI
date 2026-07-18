@@ -13,7 +13,13 @@
 
 import { formatManwon } from "@/lib/formatters";
 
-export type DiffAnalysisType = "feasibility" | "regulation" | "market_report" | "permit_ai";
+export type DiffAnalysisType =
+  | "feasibility"
+  | "regulation"
+  | "market_report"
+  | "permit_ai"
+  | "site_analysis"
+  | "precheck";
 
 export type DiffFieldFmt = "number" | "percent" | "won" | "manwon" | "text";
 
@@ -56,6 +62,31 @@ export const DIFF_FIELD_MAP: Record<DiffAnalysisType, DiffFieldDef[]> = {
   permit_ai: [
     { key: "verdict", label: "판정", fmt: "text" },
     { key: "development_methods", label: "개발방식", fmt: "text" },
+  ],
+  // ★comprehensive_analysis_service 원장 write-back(wb_payload) 요약 필드와 1:1(routers/comprehensive_analysis.py).
+  //   실효 용적률이 결측(자연녹지 등 실효치 미산출 부지)이면 상향 잠재 상한으로 폴백 —
+  //   regulation의 legal 폴백과 동일 원칙(무날조 — 값이 있을 때만 행 추가).
+  site_analysis: [
+    { key: "zone_type", label: "용도지역", fmt: "text" },
+    {
+      key: "effective_far.effective_far_pct",
+      label: "실효 용적률",
+      unit: "%",
+      fmt: "percent",
+      fallback: { key: "potential_far_range.max_pct", label: "상향 상한" },
+    },
+    { key: "land_area_sqm", label: "대지면적", unit: "㎡", fmt: "number" },
+    { key: "potential_far_range.max_pct", label: "상향 상한", unit: "%", fmt: "percent" },
+    { key: "location.grade", label: "입지등급", fmt: "text" },
+  ],
+  // ★POST /precheck/instant 원장 write-back 요약 필드와 1:1(routers/precheck.py).
+  precheck: [
+    { key: "zone_type", label: "용도지역", fmt: "text" },
+    { key: "area_sqm", label: "대지면적", unit: "㎡", fmt: "number" },
+    { key: "far_effective_pct", label: "실효 용적률", unit: "%", fmt: "percent" },
+    { key: "bcr_effective_pct", label: "실효 건폐율", unit: "%", fmt: "percent" },
+    { key: "best", label: "추천 개발방식", fmt: "text" },
+    { key: "pass_count", label: "허용방식수", unit: "개", fmt: "number" },
   ],
 };
 
@@ -161,12 +192,18 @@ export function AnalysisDiffTable({
           {fields.flatMap((f) => {
             const oldV = getFieldPath(oldEntry.payload, f.key);
             const newV = getFieldPath(newEntry.payload, f.key);
-            const rows = [renderRow(f.key, f.label, oldV, newV, f.fmt, f.unit)];
+            // ★row key는 f.key(정의 자체의 키) 기준으로 접미사를 붙인다 — 데이터 경로 문자열
+            //   (f.key/f.fallback.key)만 키로 쓰면, "폴백 대상 필드"가 다른 필드 정의의
+            //   "주 필드"로도 별도 등재된 경우(예: site_analysis의 potential_far_range.max_pct —
+            //   실효 용적률의 폴백이자 그 자체로도 상향 상한 행) 두 <tr>이 같은 문자열 키를
+            //   공유해 React 중복 키 경고 + 재조정 오동작을 유발한다(무목업 원칙과 별개의
+            //   렌더 안정성 결함 — 발견 즉시 공용 렌더러에서 수정, 표시값은 무변경).
+            const rows = [renderRow(`${f.key}:main`, f.label, oldV, newV, f.fmt, f.unit)];
             // 폴백(예: 실효 용적률 결측 시 법정 용적률) — old/new 모두 결측일 때만 추가 행.
             if (f.fallback && oldV == null && newV == null) {
               const oldFb = getFieldPath(oldEntry.payload, f.fallback.key);
               const newFb = getFieldPath(newEntry.payload, f.fallback.key);
-              rows.push(renderRow(f.fallback.key, f.fallback.label, oldFb, newFb, f.fmt, f.unit));
+              rows.push(renderRow(`${f.key}:fallback`, f.fallback.label, oldFb, newFb, f.fmt, f.unit));
             }
             return rows;
           })}

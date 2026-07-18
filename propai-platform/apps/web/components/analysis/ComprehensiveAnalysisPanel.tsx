@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { BarChart3, Construction, ExternalLink, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
@@ -16,6 +16,8 @@ import { DecisionSpecialistCard } from "@/components/projects/DecisionSpecialist
 import type { DecisionSpecialist } from "@/components/projects/decision-brief-types";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -376,6 +378,8 @@ export function ComprehensiveAnalysisPanel() {
   const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectionNotice, setSelectionNotice] = useState("");
+  // 히스토리 카드 재조회 신호 — handleAnalyze 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
 
   useEffect(() => {
     apiClient.get<{ providers: ProviderInfo[] }>("/analysis/llm-providers")
@@ -457,6 +461,7 @@ export function ComprehensiveAnalysisPanel() {
         useMock: false,
       });
       setResult(data);
+      setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       // 원시 개발자 문자열(Error:…·[object Object]) 노출 금지 — 통상어 안내(정직 표기).
       setError(e instanceof Error ? e.message : "종합분석 중 오류가 발생했습니다. 입력을 확인하고 다시 시도해 주세요.");
@@ -464,6 +469,19 @@ export function ComprehensiveAnalysisPanel() {
       setLoading(false);
     }
   }, [address, selectedProvider, selectedModel, parcelRows]);
+
+  // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약].
+  //   parcelCount는 handleAnalyze가 실제 전송하는 parcelRows(2필지↑일 때만 전송)와 동일 출처.
+  //   ★idx3(useLlm) 취약점(P3, R1 REVISE 검토됨): 백엔드는 build_signature_parts에
+  //   use_llm=bool(llm_provider)(comprehensive_analysis_service.py)를 넘겨 저장하는데, 이 프론트는
+  //   selectedProvider 상태값을 안 읽고 "true" 상수로 고정한다. selectedProvider 기본값이
+  //   "anthropic"(항상 truthy)이라 실사용 경로에서 백엔드 bool(llm_provider)도 거의 항상 True로
+  //   일치해 현재 무해하다(로직 변경 불요 — 사용자가 provider를 명시적으로 비우는 드문 경로만
+  //   불일치, idx3 자체가 비교 대상이라 그 경우도 오탐 배너 최악의 경우일 뿐 데이터 손상은 없다).
+  const historySignatureParts = useMemo(
+    () => [result?.address ?? address, result?.pnu ?? "", String(parcelRows.length || 1), "true", optionsSummary(undefined)],
+    [result?.address, result?.pnu, address, parcelRows.length],
+  );
 
   const ef = result?.effective_far || {};
   const supplyAreas: SupplyAreaItem[] = result?.supply_areas || [];
@@ -1118,6 +1136,18 @@ export function ComprehensiveAnalysisPanel() {
 
           {/* 분석 시간 */}
           <p className="text-[10px] text-[var(--text-hint)] text-right">분석 시간: {result.analyzed_at}</p>
+
+          {/* 분석 히스토리 — 원장 조회(옵셔널 소비). 입력변동 감지 시 재분석 제안(자동실행 없음).
+              배치=result 블록 최하단(evidence/ai_interpretation 등 전 섹션 뒤). */}
+          <AnalysisHistoryCard
+            analysisType="site_analysis"
+            address={result.address ?? address}
+            pnu={result.pnu ?? null}
+            currentSignatureParts={historySignatureParts}
+            onReanalyze={handleAnalyze}
+            reanalyzing={loading}
+            refreshSignal={historyRefreshTick}
+          />
         </div>
       )}
     </div>

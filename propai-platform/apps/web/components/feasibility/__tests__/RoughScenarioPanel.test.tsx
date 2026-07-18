@@ -46,6 +46,14 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   };
 });
 
+const { historyCardCalls } = vi.hoisted(() => ({ historyCardCalls: [] as Record<string, unknown>[] }));
+vi.mock("@/components/common/AnalysisHistoryCard", () => ({
+  AnalysisHistoryCard: (props: Record<string, unknown>) => {
+    historyCardCalls.push(props);
+    return <div data-testid="history-card" data-analysis-type={String(props.analysisType)} />;
+  },
+}));
+
 function resetStore() {
   act(() => {
     useProjectContextStore.setState({
@@ -104,6 +112,7 @@ describe("RoughScenarioPanel — 지불여력→개략수지 프리필 read", ()
   beforeEach(() => {
     postV2Mock.mockReset();
     searchParamsGet.mockReset();
+    historyCardCalls.length = 0;
     resetStore();
   });
 
@@ -143,5 +152,77 @@ describe("RoughScenarioPanel — 지불여력→개략수지 프리필 read", ()
     expect(options.body.overrides).toBeUndefined();
 
     expect(screen.queryByTestId("market-prefill-notice")).not.toBeInTheDocument();
+  });
+});
+
+describe("RoughScenarioPanel — 분석 히스토리 카드 배선", () => {
+  beforeEach(() => {
+    postV2Mock.mockReset();
+    searchParamsGet.mockReturnValue(null);
+    historyCardCalls.length = 0;
+    resetStore();
+  });
+
+  it("주소 미확정 시 히스토리 카드를 렌더하지 않는다", () => {
+    render(<RoughScenarioPanel />);
+    expect(screen.queryByTestId("history-card")).not.toBeInTheDocument();
+  });
+
+  it("개략수지 생성 성공 후 결과 섹션 뒤에 feasibility 히스토리 카드를 배선한다", async () => {
+    postV2Mock.mockResolvedValue(scenarioResult(30_000_000, []));
+
+    render(<RoughScenarioPanel />);
+    await userEvent.type(screen.getByTestId("addr-input"), "서울시 강남구");
+    await userEvent.click(screen.getByRole("button", { name: "개략수지 생성" }));
+
+    await waitFor(() => expect(postV2Mock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId("history-card")).toBeInTheDocument());
+
+    // DataSourceNotice(결과 섹션의 실제 마지막 콘텐츠) 뒤에 카드가 오는지 DOM 순서로 확인.
+    const notice = screen.getByText(/국토교통부 실거래가/);
+    const historyCard = screen.getByTestId("history-card");
+    expect(notice.compareDocumentPosition(historyCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    expect(historyCardCalls.at(-1)).toMatchObject({
+      analysisType: "feasibility",
+      address: "서울시 강남구",
+      pnu: null,
+      reanalyzing: false,
+      refreshSignal: 1,
+    });
+    expect(historyCardCalls.at(-1)?.currentSignatureParts).toEqual([
+      "서울시 강남구",
+      "",
+      "1",
+      "false",
+      "",
+    ]);
+  });
+
+  it("siteAnalysis.pnu가 채워져 있어도 히스토리 카드는 pnu=null로 조회한다(P1 — rough write/read pnu 비대칭 봉합, WRITE는 pnu 미전달 address-스코프)", async () => {
+    act(() => {
+      useProjectContextStore.setState({
+        siteAnalysis: {
+          estimatedValue: null,
+          landAreaSqm: null,
+          zoneCode: null,
+          address: "서울시 강남구",
+          pnu: "1168010100108250000",
+        },
+      });
+    });
+    postV2Mock.mockResolvedValue(scenarioResult(30_000_000, []));
+
+    render(<RoughScenarioPanel />);
+    await userEvent.click(screen.getByRole("button", { name: "개략수지 생성" }));
+
+    await waitFor(() => expect(postV2Mock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId("history-card")).toBeInTheDocument());
+
+    expect(historyCardCalls.at(-1)).toMatchObject({
+      analysisType: "feasibility",
+      address: "서울시 강남구",
+      pnu: null,
+    });
   });
 });
