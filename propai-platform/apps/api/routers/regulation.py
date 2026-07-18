@@ -109,6 +109,8 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
                 "limits": _limits if isinstance(_limits, dict) else None,
             },
             pnu=pnu, address=addr, source="regulation",
+            # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters)에서 조합.
+            parcel_count=len(_rows) or 1, use_llm=body.use_llm,
         )
         if isinstance(result, dict):
             result = attach_ledger_hash(result, wb)

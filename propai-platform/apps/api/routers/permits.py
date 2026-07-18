@@ -542,6 +542,8 @@ async def ai_permit_analysis(
             tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
             pnu=req.pnu or None, address=addr,
             source="permit_ai",
+            # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters)에서 조합.
+            parcel_count=len(req.parcels or []) or 1, use_llm=req.use_llm,
         )
         result = attach_ledger_hash(result, wb)
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 분석 결과 무손상
