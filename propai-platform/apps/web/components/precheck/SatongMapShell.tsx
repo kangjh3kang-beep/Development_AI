@@ -2442,7 +2442,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       return (
                         <p className={`mt-1 font-mono text-[11px] font-black ${ratio < 0 ? "text-[#a855f7]" : "text-[var(--status-success)]"}`}>
                           {ratio < 0
-                            ? `한도 초과 — 현황이 실효 한도를 ${Math.round(-ratio * 100)}%p 상회`
+                            // ★R1 MAJOR: -ratio*100은 '실효 대비 상대%'라 %p 라벨이 오독(초과 절반
+                            //   과소 표기 — 200/260에서 "30%p"로 읽힘). 용적률 초과는 점차이가 관행:
+                            //   현황−실효 = 진짜 %p(260−200=60%p). ratio<0이면 두 값 모두 non-null.
+                            ? `한도 초과 — 현황이 실효 한도를 ${Math.round((detailFeature.currentFarPct as number) - (detailFeature.effectiveFarPct as number))}%p 상회`
                             : `개발여력 ${Math.round(ratio * 100)}% (실효 대비 잔여)`}
                         </p>
                       );

@@ -241,7 +241,8 @@ describe("I7 규제 요약(상세 패널 인라인)", () => {
     }]);
     render(<SatongMapShell locale="ko" />);
     fireEvent.click(screen.getByText("신당동 349").closest("[role='button']")!);
-    expect(screen.getByTestId("parcel-detail-panel")).toHaveTextContent("한도 초과");
+    // ★R1 MAJOR 회귀 핀 — 초과는 점차이 %p(260−200=60%p). 상대%(30) 오표기 재발 금지.
+    expect(screen.getByTestId("parcel-detail-panel")).toHaveTextContent("60%p 상회");
     expect(screen.getByTestId("parcel-detail-panel")).not.toHaveTextContent("개발여력 ");
   });
 
