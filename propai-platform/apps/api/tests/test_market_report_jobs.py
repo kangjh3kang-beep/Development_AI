@@ -25,7 +25,6 @@ from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.routers import market_report as market_router
 from apps.api.routers.market_report import MarketReportRequest
 
-
 # ─────────────────────────────────────────────────────────────────────────
 # (a) _aggregate_trade_stats — 기존 result['stats'] 오참조 버그 수정 앵커
 # ─────────────────────────────────────────────────────────────────────────
