@@ -153,6 +153,7 @@ type BoundaryFeature = {
   /** WS-D 개발여력 — 서버 산정 실효/현황 용적률(%). 미상 None. */
   effective_far_pct?: number | null;
   current_far_pct?: number | null;
+  effective_bcr_pct?: number | null;
   total_floor_area_sqm?: number | null;
   geometry?: any;
   // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
@@ -574,6 +575,7 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     ageStatus: feature.age_status ?? null,
     effectiveFarPct: feature.effective_far_pct ?? null,
     currentFarPct: feature.current_far_pct ?? null,
+    effectiveBcrPct: feature.effective_bcr_pct ?? null,
     geometry: feature.geometry,
     source: "boundary",
   };

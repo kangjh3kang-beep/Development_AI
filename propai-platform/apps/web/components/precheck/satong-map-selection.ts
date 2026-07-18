@@ -30,6 +30,10 @@ export type SatongSelectionParcel = {
   /** 노후도 무자료 사유(경계 age_status 역전파) — "age 조회 시도됨" 판정에 쓰여 나대지 1필지에
    *  의한 경계 재조회 루프를 끊는다(WP-M3). 런타임 전용(세션 영속 대상 아님). */
   ageStatus?: string | null;
+  /** I7/WS-D — 경계 응답 서버 산정치(실효 FAR/BCR·현황 FAR). 미산정 None(무날조). */
+  effectiveFarPct?: number | null;
+  effectiveBcrPct?: number | null;
+  currentFarPct?: number | null;
   geometry?: unknown;
   source: "search" | "excel" | "map";
 };

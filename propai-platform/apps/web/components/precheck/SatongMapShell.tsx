@@ -55,6 +55,7 @@ import {
   type SatongMapFeature,
   type SatongMapLayerId,
   type SatongMapLayerState,
+  capacityRatio,
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
@@ -708,6 +709,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
         builtYear: parcel.builtYear,
         buildingAgeYears: parcel.buildingAgeYears,
         ageStatus: parcel.ageStatus,
+        effectiveFarPct: parcel.effectiveFarPct,
+        effectiveBcrPct: parcel.effectiveBcrPct,
+        currentFarPct: parcel.currentFarPct,
         geometry: parcel.geometry,
         source: parcel.source,
       })),
@@ -1415,7 +1419,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
       zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
       officialPricePerSqm?: number | null; builtYear?: number | null;
-      buildingAgeYears?: number | null; ageStatus?: string | null; geometry?: unknown }>,
+      buildingAgeYears?: number | null; ageStatus?: string | null;
+      effectiveFarPct?: number | null; effectiveBcrPct?: number | null;
+      currentFarPct?: number | null; geometry?: unknown }>,
     ) => {
       setSelectedParcels((prev) => {
         if (!prev.length || !features.length) return prev;
@@ -1445,6 +1451,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
             // ★WP-M3: 노후도 조회 사유(age_status)를 역전파해 "조회 시도됨"을 SSOT에 남긴다 —
             //   나대지(연식 null)여도 ageStatus가 채워져 경계 재조회 루프가 끊긴다.
             ageStatus: p.ageStatus ?? f.ageStatus ?? null,
+            // I7/WS-D — 서버 산정치 역전파(선택 SSOT까지 — orphan handoff 방지).
+            effectiveFarPct: p.effectiveFarPct ?? f.effectiveFarPct ?? null,
+            effectiveBcrPct: p.effectiveBcrPct ?? f.effectiveBcrPct ?? null,
+            currentFarPct: p.currentFarPct ?? f.currentFarPct ?? null,
             geometry: p.geometry ?? f.geometry ?? null,
           };
           if (
@@ -1454,6 +1464,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
             merged.officialPricePerSqm !== p.officialPricePerSqm ||
             merged.builtYear !== p.builtYear || merged.buildingAgeYears !== p.buildingAgeYears ||
             merged.ageStatus !== p.ageStatus ||
+            merged.effectiveFarPct !== p.effectiveFarPct ||
+            merged.effectiveBcrPct !== p.effectiveBcrPct ||
+            merged.currentFarPct !== p.currentFarPct ||
             merged.geometry !== p.geometry
           ) {
             changed = true;
@@ -2392,6 +2405,50 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       {detailFeature.pnu || "-"}
                     </dd>
                   </div>
+                  {/* ── I7 규제 요약 — 실효 한도·현황·개발여력 인라인(경계 응답 서버 산정치 —
+                       분석캐시 불요·#387). 미산정 '-' 정직 표기, 전항 미상이면 안내 1줄.
+                       상세 산출·근거는 아래 퍼널의 '종합 부지분석'이 담당(중복 CTA 배제). ── */}
+                  <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
+                    <dt className="font-black text-[var(--text-hint)]">규제 요약(실효 한도 — 7계층 min)</dt>
+                    <dd className="mt-1 grid grid-cols-3 gap-x-2 text-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 용적률</p>
+                        <p className="font-mono font-bold text-[var(--text-primary)]">
+                          {detailFeature.effectiveFarPct != null ? `${Math.round(detailFeature.effectiveFarPct)}%` : "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 건폐율</p>
+                        <p className="font-mono font-bold text-[var(--text-primary)]">
+                          {detailFeature.effectiveBcrPct != null ? `${Math.round(detailFeature.effectiveBcrPct)}%` : "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-[var(--text-hint)]">현황 용적률</p>
+                        <p className="font-mono font-bold text-[var(--text-primary)]">
+                          {detailFeature.currentFarPct != null ? `${Math.round(detailFeature.currentFarPct)}%` : "-"}
+                        </p>
+                      </div>
+                    </dd>
+                    {(() => {
+                      const ratio = capacityRatio(detailFeature.effectiveFarPct, detailFeature.currentFarPct);
+                      if (ratio == null) {
+                        return detailFeature.effectiveFarPct == null && detailFeature.effectiveBcrPct == null && detailFeature.currentFarPct == null ? (
+                          <p className="mt-1 text-[10px] font-semibold text-[var(--text-hint)]">
+                            산정 자료 미확보 — 용도지역·건축물대장 확보 시 자동 표시(상세는 아래 종합 부지분석)
+                          </p>
+                        ) : null;
+                      }
+                      return (
+                        <p className={`mt-1 font-mono text-[11px] font-black ${ratio < 0 ? "text-[#a855f7]" : "text-[var(--status-success)]"}`}>
+                          {ratio < 0
+                            ? `한도 초과 — 현황이 실효 한도를 ${Math.round(-ratio * 100)}%p 상회`
+                            : `개발여력 ${Math.round(ratio * 100)}% (실효 대비 잔여)`}
+                        </p>
+                      );
+                    })()}
+                  </div>
+
                   {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
                     <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
                       <dt className="font-black text-[var(--text-hint)]">공시지가 총액(참고 — 공시지가×면적)</dt>

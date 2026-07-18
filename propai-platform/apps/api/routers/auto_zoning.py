@@ -1097,6 +1097,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         #   미산정은 None(무날조) — 프론트 개발여력 = (실효−현황)/실효는 두 값 모두 있을 때만.
         if _f.get("_far_eff") is not None:
             _f["effective_far_pct"] = _f["_far_eff"]
+        # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
+        if _f.get("_bcr_eff") is not None:
+            _f["effective_bcr_pct"] = _f["_bcr_eff"]
         for _k in ("_bcr_legal", "_far_legal", "_bcr_eff", "_far_eff", "_far_basis",
                    "_special", "_districts_checked"):
             _f.pop(_k, None)
