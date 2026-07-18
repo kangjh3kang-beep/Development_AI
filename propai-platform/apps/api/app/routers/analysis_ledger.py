@@ -72,12 +72,14 @@ async def latest(
 async def history(
     analysis_type: str, pnu: str | None = None,
     address: str | None = None, project_id: str | None = None, limit: int = 50,
+    include_payload: bool = False,
     current: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     rows = await ledger.get_history(
         analysis_type=analysis_type,
         tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
         pnu=pnu, address=address, project_id=project_id, limit=limit,
+        include_payload=include_payload,
     )
     return {"ok": True, "count": len(rows), "history": rows}
 

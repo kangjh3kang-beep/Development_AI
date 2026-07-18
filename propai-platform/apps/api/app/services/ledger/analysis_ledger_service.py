@@ -253,12 +253,25 @@ async def append_analysis(
                 return {"ok": True, "unchanged": True, "version": int(prev[0]),
                         "content_hash": chash, "analysis_type": analysis_type}
 
-            # 용량 쿼터 — 신규 버전 적재 전 한도 확인(초과 시 삭제·상향 안내)
+            # 용량 쿼터 — 신규 버전 적재 전 한도 확인(초과 시 자동 프룬 후 재검사, 그래도 초과면 정직 거부)
             used = await _count_entries(db, tenant_id)
             quota = await _quota(db, tenant_id)
             if used >= quota:
-                return {"ok": False, "quota_exceeded": True, "used": used, "quota": quota,
-                        "message": f"저장 용량 한도({quota}건) 초과 — 오래된 분석을 삭제하거나 관리자에게 용량 상향을 요청하세요."}
+                # ★자동 프룬 배선 — 체인별 최신 5개만 남기고 오래된 버전을 선제 정리한 뒤 재검사한다
+                #   (쿼터 자체는 상향하지 않음 — 운영 결정. prune_old_versions는 별도 세션에서 즉시
+                #   commit하므로, READ COMMITTED 하에서 재검사 쿼리는 정리된 카운트를 본다).
+                #   원자성 노트: 프룬은 이 append와 별도 세션에서 즉시 커밋되므로, 프룬 이후 이
+                #   append의 INSERT가 실패해 바깥 트랜잭션이 롤백되더라도(예: advisory lock 밖의
+                #   예외) 프룬으로 삭제된 옛 버전은 되돌아오지 않는다 — append 실패와 프룬은
+                #   원자적으로 묶이지 않는다. 프룬 자체는 "오래된 버전 정리"라는 유지보수 성격의
+                #   부수효과라 append 실패 시에도 그대로 유지되는 편이 안전하며(용량 확보 목적 달성),
+                #   append가 실패하는 경로 자체가 드물어(쿼터 재검사 통과 후 INSERT) 실무 영향은
+                #   낮다고 판단해 별도 트랜잭션 결합 없이 현재 형태로 수용한다.
+                await prune_old_versions(tenant_id, keep_per_chain=5)
+                used = await _count_entries(db, tenant_id)
+                if used >= quota:
+                    return {"ok": False, "quota_exceeded": True, "used": used, "quota": quota,
+                            "message": f"저장 용량 한도({quota}건) 초과 — 오래된 분석을 삭제하거나 관리자에게 용량 상향을 요청하세요."}
 
             version = (int(prev[0]) + 1) if prev else 1
             prev_hash = prev[1] if prev else None
@@ -348,9 +361,14 @@ async def get_latest(
 async def get_history(
     *, analysis_type: str, tenant_id: str | None = None,
     pnu: str | None = None, address: str | None = None, project_id: str | None = None,
-    limit: int = 50,
+    limit: int = 50, include_payload: bool = False,
 ) -> list[dict[str, Any]]:
-    """체인 전체 버전 이력(최신순) — 버전 타임라인·비교용."""
+    """체인 전체 버전 이력(최신순) — 버전 타임라인·비교용.
+
+    include_payload=True 면 각 버전의 payload(jsonb)도 함께 반환한다(상세 비교 화면 옵트인 —
+    기본 False는 목록 응답을 가볍게 유지, 기존 응답과 바이트 동일해 무회귀). append 경로(해시체인)는
+    이 변경으로 건드리지 않는다(read 확장만).
+    """
     address_norm = _norm_addr(address)
     try:
         from sqlalchemy import text
@@ -361,12 +379,19 @@ async def get_history(
             key_sql, params = _chain_where(pnu, address_norm, project_id)
             params.update({"tid": tenant_id, "atype": analysis_type, "lim": limit})
             tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"
+            cols = "version, content_hash, prev_hash, source, created_by, created_at"
+            if include_payload:
+                cols += ", payload"
             rows = (await db.execute(text(
-                f"SELECT version, content_hash, prev_hash, source, created_by, created_at "
+                f"SELECT {cols} "
                 f"FROM analysis_ledger WHERE {tenant_sql} AND {key_sql} AND analysis_type = :atype "
                 f"ORDER BY version DESC LIMIT :lim"), params)).all()
-            return [{"version": int(r[0]), "content_hash": r[1], "prev_hash": r[2],
-                     "source": r[3], "created_by": r[4], "created_at": str(r[5])} for r in rows]
+            out = [{"version": int(r[0]), "content_hash": r[1], "prev_hash": r[2],
+                    "source": r[3], "created_by": r[4], "created_at": str(r[5])} for r in rows]
+            if include_payload:
+                for item, r in zip(out, rows, strict=True):
+                    item["payload"] = r[6]
+            return out
     except Exception as e:  # noqa: BLE001
         logger.warning("분석원장 이력 실패", err=str(e)[:160])
         return []

@@ -98,3 +98,90 @@ async def test_record_design_audit_appends_to_ledger(tnt):
         analysis_type="design_audit", tenant_id=tnt, project_id="PRJ-9"
     )
     assert latest is not None and latest["payload"]["verdict"] == "적합"
+
+
+# ── 변동감지 계약: build_signature_parts/build_input_signature(단일 소유자) ──────
+
+def test_build_signature_parts_order_and_normalization():
+    from app.services.ledger.ledger_adapters import build_signature_parts
+
+    parts = build_signature_parts(
+        address="  서울  강남구   역삼동  ", pnu="1168010100",
+        parcel_count=3, use_llm=True, options={"b": 1, "a": {"z": 2, "y": 1}},
+    )
+    # 순서 고정: [address_norm, pnu, parcel_count, use_llm, options_summary]
+    assert parts[0] == "서울 강남구 역삼동"       # 공백 정규화(analysis_ledger_service._norm_addr)
+    assert parts[1] == "1168010100"
+    assert parts[2] == "3"
+    assert parts[3] == "True"
+    assert parts[4] == "a={y:1,z:2},b=1"          # 키 정렬(중첩 dict 포함) — 결정적
+
+
+def test_build_signature_parts_defaults_are_honest_not_fake():
+    from app.services.ledger.ledger_adapters import build_signature_parts
+
+    parts = build_signature_parts(address=None, pnu=None, parcel_count=None, use_llm=None, options=None)
+    assert parts == ["", "", "0", "False", ""]
+
+
+def test_build_signature_parts_options_key_order_independent():
+    from app.services.ledger.ledger_adapters import build_signature_parts
+
+    p1 = build_signature_parts(address="a", options={"x": 1, "y": 2})
+    p2 = build_signature_parts(address="a", options={"y": 2, "x": 1})
+    assert p1 == p2  # 삽입 순서와 무관하게 동일 파트(정렬 정규화)
+
+
+def test_build_input_signature_deterministic_and_sensitive_to_change():
+    from app.services.ledger.ledger_adapters import build_input_signature
+
+    parts_a = ["addr1", "pnu1", "1", "True", ""]
+    parts_b = ["addr1", "pnu1", "1", "True", ""]
+    parts_c = ["addr1", "pnu1", "2", "True", ""]  # parcel_count만 다름
+    sig_a = build_input_signature(parts_a)
+    sig_b = build_input_signature(parts_b)
+    sig_c = build_input_signature(parts_c)
+    assert sig_a == sig_b                          # 같은 파트 → 같은 해시(결정론)
+    assert sig_a != sig_c                          # 다른 파트 → 다른 해시(변동감지)
+    assert len(sig_a) == 16                         # sha256 앞 16자(짧은 결정적 해시)
+
+
+async def test_record_user_analysis_attaches_signature_when_materials_given(tnt):
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger.ledger_adapters import (
+        build_input_signature,
+        build_signature_parts,
+        record_user_analysis,
+    )
+
+    pnu = "1168010100"
+    res = await record_user_analysis(
+        analysis_type="market_report",
+        summary={"address": "서울 강남", "trade_count": 5},
+        tenant_id=tnt, pnu=pnu, address="서울 강남",
+        parcel_count=1, use_llm=True, options=None,
+    )
+    assert res["ok"] is True
+    latest = await ledger.get_latest(analysis_type="market_report", tenant_id=tnt, pnu=pnu)
+    payload = latest["payload"]
+    expected_parts = build_signature_parts(address="서울 강남", pnu=pnu, parcel_count=1, use_llm=True)
+    assert payload["signature_parts"] == expected_parts
+    assert payload["input_signature"] == build_input_signature(expected_parts)
+    assert payload["trade_count"] == 5              # 기존 summary 필드도 그대로 보존
+
+
+async def test_record_user_analysis_omits_signature_when_no_materials_given(tnt):
+    """parcel_count/use_llm/options 모두 미전달(기존 호출부) — 표준키 키 자체가 생기지 않는다(무회귀)."""
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger.ledger_adapters import record_user_analysis
+
+    pnu = "1168010101"
+    res = await record_user_analysis(
+        analysis_type="market_report", summary={"address": "서울 서초"},
+        tenant_id=tnt, pnu=pnu, address="서울 서초",
+    )
+    assert res["ok"] is True
+    latest = await ledger.get_latest(analysis_type="market_report", tenant_id=tnt, pnu=pnu)
+    payload = latest["payload"]
+    assert "signature_parts" not in payload
+    assert "input_signature" not in payload

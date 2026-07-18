@@ -4,6 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building, Compass, Files, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import {
+  submitMarketReportJob,
+  readActiveMarketReportJob,
+  resumeMarketReportJob,
+} from "@/lib/market-report-job";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import { PYEONG_SQM, formatCurrencyKRW, formatManwon as formatPrice, formatYm } from "@/lib/formatters";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -390,6 +397,9 @@ export function MarketInsightsWorkspaceClient() {
   const [report, setReport] = useState<MarketReportResponse | null>(null);
   const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx" | "docx">("");
   const [useLlm, setUseLlm] = useState(true);
+  // 히스토리 카드 재조회 신호 — 새 보고서 생성/복원 완료 시 증가시켜 AnalysisHistoryCard가
+  //   언마운트 없이 목록을 다시 불러오게 한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
   // 선택 상태(말단 항목 기준 평탄 boolean 맵). 분류 sgis/kosis는 자식들에서 파생해 전송한다.
   //   population(인구/가구) 자식: pop_age / pop_household / pop_migration
   //   income(거시 소득) 자식: income_avg / income_basis
@@ -491,6 +501,17 @@ export function MarketInsightsWorkspaceClient() {
     };
   }, [analysisOptions]);
 
+  // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서
+  //   [address, pnu||"", parcelCount, useLlm, options요약].
+  //   parcelCount는 실행 바디(generateReport의 body.parcels)와 동일 출처·동일 폴백으로 맞춘다
+  //   — runStoreParcels(store 원본)가 아니라 실제로 전송되는 runParcelRows 기준, 백엔드
+  //   `len(req.parcels or []) or 1`을 그대로 미러(`|| 1`). options는 optionsSummary()로
+  //   백엔드 _options_summary()와 canonical 일치시킨다(JSON.stringify는 키 순서에 민감해 폐기).
+  const historySignatureParts = useMemo(
+    () => [address, mapPnu || "", String(runParcelRows.length || 1), String(useLlm), optionsSummary(buildOptionsPayload())],
+    [address, mapPnu, runParcelRows.length, useLlm, buildOptionsPayload],
+  );
+
   useEffect(() => {
     apiClient.get<Balance>("/billing/balance", { useMock: false })
       .then(setBalance)
@@ -531,20 +552,34 @@ export function MarketInsightsWorkspaceClient() {
     }, 1500);
   }, [inputAddress, siteAnalysis?.parcels]);
 
-  // 시장조사보고서: 구조화 미리보기
+  // 시장조사보고서: 구조화 미리보기 — ★로드맵(잡 제출+폴링, 등기 권리분석 패턴 재사용).
+  //   /market/report/jobs 가 아직 배포되지 않은 환경(404)에서는 기존 동기 POST로 폴백해
+  //   백엔드·프론트 병렬 배포 순서와 무관하게 동작한다.
   const generateReport = useCallback(async () => {
     if (!address) return;
     setGenState("report");
+    setError("");
     try {
-      const r = await apiClient.post<MarketReportResponse>("/market/report", {
-        // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
-        body: {
-          address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
-          ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
-        },
-        useMock: false, timeoutMs: 120000,
-      });
+      // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
+      const body = {
+        address, pnu: mapPnu || undefined, use_llm: useLlm, options: buildOptionsPayload(),
+        ...(shouldSendParcels(runParcelRows) ? { parcels: runParcelRows } : {}),
+      };
+      let r: MarketReportResponse;
+      try {
+        r = await submitMarketReportJob<MarketReportResponse>(body);
+      } catch (jobErr) {
+        if (jobErr instanceof ApiClientError && jobErr.status === 404) {
+          // 잡 엔드포인트 미배포 — 기존 동기 POST 폴백(순서 독립 배포).
+          r = await apiClient.post<MarketReportResponse>("/market/report", {
+            body, useMock: false, timeoutMs: 120000,
+          });
+        } else {
+          throw jobErr;
+        }
+      }
       setReport(r);
+      setHistoryRefreshTick((t) => t + 1);
       // LLM 분석 후 코인 차감 반영 — 잔액 재조회.
       if (useLlm) {
         apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
@@ -556,6 +591,36 @@ export function MarketInsightsWorkspaceClient() {
       setGenState("");
     }
   }, [address, mapPnu, runParcelRows, useLlm, buildOptionsPayload]);
+
+  // 리로드·재진입 복원 — 진행 중이던 보고서 잡을 sessionStorage에서 찾아 이어서 폴링한다
+  //   (design-audit DesignAuditWorkspace.tsx:284-322 패턴, 마운트 1회만).
+  useEffect(() => {
+    const active = readActiveMarketReportJob();
+    if (!active) return;
+    let cancelled = false;
+    setGenState("report");
+    setError("");
+    // stale 가드 — 저장된 잡의 address와 현재 SSOT 주소(inputAddress)가 다르면 폴링 없이
+    //   스킵하고 흔적만 제거한다(다른 프로젝트로 전환된 사이 남은 잡이 엉뚱하게 표시되는 사고 방지).
+    resumeMarketReportJob<MarketReportResponse>(active.jobId, inputAddress || undefined)
+      .then((r) => {
+        if (cancelled || !r) return;
+        setReport(r);
+        setHistoryRefreshTick((t) => t + 1);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errorMessage(e, "보고서 생성에 실패했습니다."));
+      })
+      .finally(() => {
+        if (!cancelled) setGenState("");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 마운트 1회만(리로드 복원) — inputAddress는 최초 렌더 시점 값으로 충분(가드는 "그 사이
+    //   바뀌었는가"만 확인하면 되고, 이후 주소 변경까지 추적할 필요는 없다).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // PDF/PPTX 다운로드(바이너리)
   const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
@@ -1471,6 +1536,30 @@ export function MarketInsightsWorkspaceClient() {
             onDownload={downloadReport}
           />
         </>
+      )}
+      {/* 분석 히스토리 — 원장 조회(옵셔널 소비). 입력변동 감지 시 재분석 제안(자동실행 없음).
+          ★실행 확정 주소(runAddress)가 아니라 입력 후보(SSOT inputAddress)까지 폴백한다 —
+          명시실행 계약상 리로드 직후 runAddress 는 비어 있는데, 그때야말로 사용자가
+          "이전 분석"을 보러 온 순간이기 때문(W5 실동선 검증에서 적발된 소실 결함).
+          재분석은 명시실행 계약을 그대로 태운다: runAddress 미확정이면 pendingReport
+          플래그로 기존 일괄분석 플로우를 재사용(자동 아님 — 버튼 클릭에만 반응). */}
+      {(address || inputAddress) && (
+        <AnalysisHistoryCard
+          analysisType="market_report"
+          address={address || inputAddress}
+          pnu={mapPnu || null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={() => {
+            if (!address && inputAddress) {
+              setRunAddress(inputAddress);
+              setPendingReport(true);
+              return;
+            }
+            void generateReport();
+          }}
+          reanalyzing={genState === "report"}
+          refreshSignal={historyRefreshTick}
+        />
       )}
     </section>
   );

@@ -1,0 +1,178 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { AnalysisDiffTable, DIFF_FIELD_MAP, formatFieldValue, getFieldPath } from "./AnalysisDiffTable";
+
+describe("AnalysisDiffTable", () => {
+  it("feasibility 키맵의 모든 필드를 행으로 렌더하고 증감(Δ)을 부호와 함께 표기한다", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="feasibility"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: {
+            profit_rate_pct: 10,
+            npv_won: 1_000_000,
+            total_revenue_won: 5_000_000,
+            net_profit_won: 500_000,
+            grade: "B",
+          },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: {
+            profit_rate_pct: 12,
+            npv_won: 900_000,
+            total_revenue_won: 5_000_000,
+            net_profit_won: 600_000,
+            grade: "A",
+          },
+        }}
+      />,
+    );
+
+    // 헤더 — 비교 대상 버전
+    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.getByText("v2")).toBeInTheDocument();
+
+    // 수익률 10% → 12% : +2.0%p
+    expect(screen.getByText("수익률")).toBeInTheDocument();
+    expect(screen.getByText("+2.0%p")).toBeInTheDocument();
+
+    // NPV 감소(-100,000원) → down 방향
+    expect(screen.getByText("-100,000원")).toBeInTheDocument();
+
+    // 변동 없는 총 매출 → ±0
+    const flatCells = screen.getAllByText("±0");
+    expect(flatCells.length).toBeGreaterThan(0);
+
+    // 텍스트 필드(등급)는 증감 개념이 없어 "—"로 표기
+    expect(screen.getByText("등급")).toBeInTheDocument();
+    expect(screen.getByText("B")).toBeInTheDocument();
+    expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("결측값은 가짜 0이 아니라 '—'로 표기한다(무날조)", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="regulation"
+        oldEntry={{ version: 1, created_at: "2026-07-01T00:00:00Z", payload: { zone_type: "제2종일반주거" } }}
+        newEntry={{ version: 2, created_at: "2026-07-10T00:00:00Z", payload: {} }}
+      />,
+    );
+    // newEntry에 zone_type이 없으므로 "—" 표기(빈 문자열·0 등 가짜값 금지)
+    const dashes = screen.getAllByText("—");
+    expect(dashes.length).toBeGreaterThan(0);
+  });
+
+  it("★버그 재현 방지: regulation limits는 실제 백엔드 dict shape({legal,ordinance,effective})이고, " +
+    "실효 용적률/건폐율(.effective)이 숫자로 렌더된다 — 수정 전 코드(key='limits.far' 자체)라면 " +
+    "'[object Object]'가 찍혔을 것이다", () => {
+    // 실제 regulation_analysis_service.py 산출 shape 그대로(legal=법정·ordinance=조례·effective=실효).
+    render(
+      <AnalysisDiffTable
+        analysisType="regulation"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: {
+            limits: {
+              far: { legal: 250, ordinance: 200, effective: 180 },
+              bcr: { legal: 60, ordinance: 50, effective: 45 },
+            },
+          },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: {
+            limits: {
+              far: { legal: 250, ordinance: 200, effective: 190 },
+              bcr: { legal: 60, ordinance: 50, effective: 48 },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("실효 용적률")).toBeInTheDocument();
+    expect(screen.getByText("실효 건폐율")).toBeInTheDocument();
+    expect(screen.getByText("180.0%")).toBeInTheDocument();
+    expect(screen.getByText("190.0%")).toBeInTheDocument();
+    expect(screen.getByText("45.0%")).toBeInTheDocument();
+    expect(screen.getByText("48.0%")).toBeInTheDocument();
+    // dict를 leaf로 잘못 렌더하면 이 문자열이 찍힌다 — 부재를 명시적으로 확인(무날조 회귀 방지).
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
+
+  it("실효(.effective)가 old/new 모두 결측이면 법정(.legal) 폴백 행을 추가로 표시한다(무날조)", () => {
+    render(
+      <AnalysisDiffTable
+        analysisType="regulation"
+        oldEntry={{
+          version: 1,
+          created_at: "2026-07-01T00:00:00Z",
+          payload: { limits: { far: { legal: 100, ordinance: null, effective: null } } },
+        }}
+        newEntry={{
+          version: 2,
+          created_at: "2026-07-10T00:00:00Z",
+          payload: { limits: { far: { legal: 100, ordinance: null, effective: null } } },
+        }}
+      />,
+    );
+    // 실효 행은 결측 "—", 법정 폴백 행이 별도로 추가되어 100.0%를 보여준다(값 실종 금지).
+    expect(screen.getByText("실효 용적률")).toBeInTheDocument();
+    expect(screen.getByText("법정 용적률")).toBeInTheDocument();
+    expect(screen.getAllByText("100.0%").length).toBe(2); // old·new 모두 동일 법정값
+  });
+
+  it("정의되지 않은 분석 유형은 안내 문구만 표시하고 크래시하지 않는다", () => {
+    render(
+      <AnalysisDiffTable
+        // @ts-expect-error — 런타임 방어 확인용 미정의 타입
+        analysisType="unknown_type"
+        oldEntry={{ version: 1, created_at: "2026-07-01T00:00:00Z", payload: {} }}
+        newEntry={{ version: 2, created_at: "2026-07-10T00:00:00Z", payload: {} }}
+      />,
+    );
+    expect(screen.getByText(/비교 항목이 정의되어 있지 않습니다/)).toBeInTheDocument();
+  });
+
+  it("getFieldPath — 점 표기 중첩 경로를 안전하게 조회한다(중간 경로 부재는 undefined)", () => {
+    expect(getFieldPath({ limits: { far: 250 } }, "limits.far")).toBe(250);
+    expect(getFieldPath({}, "limits.far")).toBeUndefined();
+    expect(getFieldPath(null, "limits.far")).toBeUndefined();
+  });
+
+  it("formatFieldValue — fmt별 표기 규칙(퍼센트·원·만원·텍스트)", () => {
+    expect(formatFieldValue(12.345, "percent")).toBe("12.3%");
+    expect(formatFieldValue(1_234_567, "won")).toBe("1,234,567원");
+    expect(formatFieldValue(12500, "manwon")).toBe("1억 2,500만원");
+    expect(formatFieldValue("제2종일반주거", "text")).toBe("제2종일반주거");
+    expect(formatFieldValue(null, "text")).toBe("—");
+    expect(formatFieldValue(undefined, "won")).toBe("—");
+  });
+
+  it("DIFF_FIELD_MAP — 4개 분석 유형 모두 키맵이 정의되어 있다", () => {
+    expect(DIFF_FIELD_MAP.feasibility.map((f) => f.key)).toEqual([
+      "profit_rate_pct",
+      "npv_won",
+      "total_revenue_won",
+      "net_profit_won",
+      "grade",
+    ]);
+    expect(DIFF_FIELD_MAP.regulation.map((f) => f.key)).toEqual([
+      "zone_type",
+      "limits.far.effective",
+      "limits.bcr.effective",
+      "parcel_count",
+    ]);
+    expect(DIFF_FIELD_MAP.market_report.map((f) => f.key)).toEqual([
+      "trade_count",
+      "avg_price_10k",
+      "parcel_count",
+    ]);
+    expect(DIFF_FIELD_MAP.permit_ai.map((f) => f.key)).toEqual(["verdict", "development_methods"]);
+  });
+});

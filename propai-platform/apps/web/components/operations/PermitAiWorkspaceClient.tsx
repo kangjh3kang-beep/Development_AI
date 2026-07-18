@@ -8,7 +8,7 @@
  * 주소는 ProjectAddressInput으로 (1) 프로젝트 선택 (2) 카카오 검색 (3) 변경/추가 입력 모두 지원.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Bot, CheckCircle2, ClipboardList, FileDown, Pin, Puzzle } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -23,6 +23,8 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
   { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
 );
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
@@ -116,6 +118,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   // AI 인허가 해석 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(true)에 암묵 의존해 항상 ON이었다.
   // 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반(무과금) 판정만 받을 수 있게 한다(D1).
   const [useLlm, setUseLlm] = useState(true);
+  // 히스토리 카드 재조회 신호 — run() 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
@@ -144,6 +148,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         timeoutMs: 150000,
       });
       setResult(r);
+      setHistoryRefreshTick((t) => t + 1);
     } catch (err) {
       // 무반응 방지: 실패 원인을 구체적으로 안내(인증/과금/기타). 401·403=로그인 필요, 402=코인.
       if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
@@ -157,6 +162,22 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       setLoading(false);
     }
   }, [addr, extra, siteAnalysis, useLlm]);
+
+  // 히스토리 대상(현재 입력) + 변동감지 시그니처 파트 — run() 내부와 동일한 필지 폴백 규칙을 미러링.
+  //   백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(인허가는 옵션 없음→"")].
+  const historyAddress = addr || siteAnalysis?.address || "";
+  const historyPnu = siteAnalysis?.pnu || "";
+  const historySignatureParts = useMemo(() => {
+    const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
+    const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(siteAnalysis?.parcels);
+    const parcels = historyAddress
+      ? [historyAddress, ...extraTrimmed, ...storeAddrs.filter((a) => a !== historyAddress)]
+      : [];
+    // parcelCount는 run()이 실제 전송하는 parcels(length>1일 때만 전송)와 동일 출처. 백엔드
+    // (permits.py) `len(req.parcels or []) or 1`을 그대로 미러(`|| 1`) — 단일필지(미전송)여도
+    // 백엔드는 1로 적재하므로 0이면 오탐.
+    return [historyAddress, historyPnu, String(parcels.length || 1), String(useLlm), optionsSummary(undefined)];
+  }, [historyAddress, historyPnu, extra, siteAnalysis?.parcels, useLlm]);
 
   const site = result?.site;
 
@@ -274,6 +295,19 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       )}
 
       {/* 부지 요약 + 종합 */}
+      {/* 분석 히스토리 — ★result 조건 밖(실행 전·리로드 직후에도 접근 가능 — W5 소실 결함 교정). */}
+      {historyAddress ? (
+        <AnalysisHistoryCard
+          analysisType="permit_ai"
+          address={historyAddress}
+          pnu={historyPnu || null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={run}
+          reanalyzing={loading}
+          refreshSignal={historyRefreshTick}
+        />
+      ) : null}
+
       {result && (
         <>
           {/* 특이부지 게이트 — 임야·학교용지·GB·맹지·도시계획시설 등은 용도지역상 법정 최대
@@ -353,6 +387,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
             ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
           />
+
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
