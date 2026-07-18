@@ -3,6 +3,7 @@
 import hashlib
 import re
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 from app.core.billing_deps import enforce_llm_quota
 from app.services.common.job_store import JobStore
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
-from app.services.market.market_report_service import MarketReportService
+from app.services.market.market_report_service import MarketReportService, _resolve_trend_months
 from app.services.market.migration_region_service import MigrationRegionService
 from app.services.market.population_density_service import PopulationDensityService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
@@ -251,6 +252,72 @@ async def market_report_job_status(
     if not j or j.get("user_id") != str(current_user.user_id):
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다(만료되었거나 잘못된 ID).")
     return {"status": j["status"], "result": j.get("result"), "error": j.get("error")}
+
+
+_TREND_CACHE_TTL_HOURS = 6  # 시세추이 경량 캐시 신선도 — 6시간 내 재요청은 MOLIT 재호출 없이 저장본 재사용.
+
+
+def _trend_cache_is_fresh(cached: dict[str, Any] | None) -> bool:
+    """cache_get이 부착한 `_cache.created_at` 메타를 읽어 TTL(6시간) 이내인지 판정.
+
+    파싱 실패·메타 부재는 정직하게 stale 취급(재조회로 진행 — 오래된 값을 신선한 척 반환하지 않음).
+    """
+    if not cached:
+        return False
+    created_raw = (cached.get("_cache") or {}).get("created_at")
+    if not created_raw:
+        return False
+    try:
+        created = datetime.fromisoformat(str(created_raw))
+    except ValueError:
+        return False
+    now = datetime.now(created.tzinfo) if created.tzinfo else datetime.now()
+    return (now - created) < timedelta(hours=_TREND_CACHE_TTL_HOURS)
+
+
+@router.get("/trend", summary="시세추이 경량 조회(아파트 평당가 월별)")
+async def market_trend(
+    address: str = "",
+    pnu: str | None = None,
+    bcode: str | None = None,
+    jibun_address: str | None = None,
+    months: int = 12,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """시세추이만 경량 조회 — 보고서 전체(MOLIT 4유형+SGIS+KOSIS+LLM) 재생성 없이 기간만 바꿔 본다.
+
+    아파트 매매 월별 평당가만 산출(MarketReportService.build_trend_only → _apt_trend 공용 재사용,
+    신규 산식 0). MOLIT 아파트 매매만 호출 — 전월세·SGIS·KOSIS·LLM·분양 전부 미호출(LLM 과금 게이트
+    없음 — enforce_llm_quota 미적용).
+
+    analysis_cache(kind='market_trend', 키=[lawd_cd, months]) 6시간 이내 재사용 — 신선하면
+    MOLIT 미호출(source='cache'). lawd_cd 해석은 /report와 동일 헬퍼(_resolve) 재사용.
+    """
+    from app.services.common.analysis_cache import _key, cache_get, cache_put
+
+    lawd_cd, _pnu = _resolve(MarketReportRequest(
+        address=address, pnu=pnu, bcode=bcode, jibun_address=jibun_address, use_llm=False))
+    months_n = _resolve_trend_months({"trend_months": months})
+
+    cache_key = _key(lawd_cd, months_n)
+    cached = await cache_get("market_trend", cache_key)
+    if _trend_cache_is_fresh(cached):
+        return {
+            "months": cached.get("months", months_n),
+            "trend": cached.get("trend", []),
+            "source": "cache",
+            "cached": True,
+        }
+
+    apt_trend = await MarketReportService().build_trend_only(lawd_cd, months_n)
+    result = {
+        "months": months_n,
+        "trend": [{"ym": t.get("ym"), "avg_per_pyeong": t.get("avg_per_pyeong")} for t in apt_trend],
+        "source": "molit",
+        "cached": False,
+    }
+    await cache_put("market_trend", cache_key, result)
+    return result
 
 
 class PopulationDensityRequest(BaseModel):

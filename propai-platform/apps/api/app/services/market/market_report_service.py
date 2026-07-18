@@ -484,6 +484,50 @@ class MarketReportService:
                 y -= 1
         return out
 
+    async def _apt_trend(
+        self, lawd_cd: str, months_n: int = 3, months: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """아파트 매매 월별 시세 추이(평당가) — MOLIT 아파트만 호출(다른 유형·전월세·경쟁단지 미호출).
+
+        _category_stats(보고서 전체 경로)와 routers/market_report.py의 경량 GET /market/trend
+        (build_trend_only)가 공용으로 쓴다(신규 산식 0 — 기존 apt_month 로직 그대로 추출).
+
+        months: 호출부가 이미 산출한 개월 리스트를 주면 그대로 쓴다(재산출 안 함). _category_stats가
+        trade/rent와 '동일한' 창을 공유하도록 자기 months 를 넘겨 월 경계 자정 통과 시의 1개월
+        어긋남(추이 창 ≠ 거래 창)을 원천 차단한다.
+        """
+        import asyncio
+
+        lawd_cd = (lawd_cd or "")[:5]
+        if months is None:
+            months = self._months(months_n)
+
+        async def apt_month(ym: str):
+            try:
+                rows = await self.molit.get_transactions(lawd_cd, ym, prop_type="apt", num_rows=1000)
+            except Exception:  # noqa: BLE001
+                rows = []
+            prices = [float(x.get("price_10k_won") or 0) for x in rows if (x.get("price_10k_won") or 0) > 0]
+            pp = _per_pyeong_stat(rows)
+            return {
+                "ym": ym,
+                "avg": round(sum(prices) / len(prices)) if prices else 0,  # 총액 평균(만원)
+                "avg_per_pyeong": pp["avg"],  # 평당가(만원/평) — 추이 기준
+                "count": len(prices),
+            }
+
+        trend = await asyncio.gather(*[apt_month(ym) for ym in months])
+        return sorted(trend, key=lambda t: t["ym"])  # 추이는 과거→현재 순으로
+
+    async def build_trend_only(self, lawd_cd: str, months_n: int = 12) -> list[dict[str, Any]]:
+        """시세추이 경량 조회 — 아파트 매매 월별 평당가만(LLM·SGIS·KOSIS·분양 전부 미호출).
+
+        routers/market_report.py `GET /market/trend`(보고서 전체 재생성 없이 기간만 바꿔 추이를
+        보고 싶을 때) 전용 얇은 진입점 — _apt_trend를 그대로 위임한다(_category_stats와 동일 재료,
+        신규 산식 0).
+        """
+        return await self._apt_trend(lawd_cd, months_n)
+
     async def _category_stats(self, lawd_cd: str, months_n: int = 3) -> dict[str, Any]:
         import asyncio
 
@@ -526,28 +570,13 @@ class MarketReportService:
             dep = [float(x.get("deposit_10k_won") or 0) for x in rows]
             return label, {**_stat(dep), "count": len([d for d in dep if d > 0])}
 
-        # 아파트 매매 월별 추이(시세 추이 차트용)
-        async def apt_month(ym: str):
-            try:
-                rows = await self.molit.get_transactions(lawd_cd, ym, prop_type="apt", num_rows=1000)
-            except Exception:  # noqa: BLE001
-                rows = []
-            prices = [float(x.get("price_10k_won") or 0) for x in rows if (x.get("price_10k_won") or 0) > 0]
-            pp = _per_pyeong_stat(rows)
-            return {
-                "ym": ym,
-                "avg": round(sum(prices) / len(prices)) if prices else 0,  # 총액 평균(만원)
-                "avg_per_pyeong": pp["avg"],  # 평당가(만원/평) — 추이 기준
-                "count": len(prices),
-            }
-
         tr = await asyncio.gather(*[trade_one(pt, lb) for pt, lb in _TRADE])
         rr = await asyncio.gather(*[rent_one(pt, lb) for pt, lb in _RENT])
-        trend = await asyncio.gather(*[apt_month(ym) for ym in months])
+        # 아파트 매매 월별 추이(시세 추이 차트용) — _apt_trend 공용 메서드로 위임(build_trend_only와 동일 재료).
+        #   ★trade/rent와 '동일한' months 리스트를 넘겨 창 일치를 보장(자정 경계 통과 시 어긋남 방지).
+        trend_sorted = await self._apt_trend(lawd_cd, months_n, months=months)
         trade = dict(tr)
         rent = dict(rr)
-        # 추이는 과거→현재 순으로
-        trend_sorted = sorted(trend, key=lambda t: t["ym"])
         # 경쟁 단지 비교표(아파트 매매 원자료 단지명별 집계·상위 8) — 데이터 없으면 [](무목업).
         competitor_complexes = _build_competitor_complexes(apt_raw_rows)
         return {
