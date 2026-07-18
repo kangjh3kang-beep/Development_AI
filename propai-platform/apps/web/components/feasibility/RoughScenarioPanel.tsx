@@ -40,6 +40,8 @@ import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 
 /** Nexus label-caps(DESIGN.md B2) — 인풋 상단 소형 라벨. Space Grotesk 대문자 트래킹. */
 const labelCapsCls =
@@ -262,6 +264,9 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   const [form, setForm] = useState<Partial<Record<OverrideKey, string>>>({});
   const [baseline, setBaseline] = useState<OverrideBaseline>({});
   const [showOverrides, setShowOverrides] = useState(false);
+  // 히스토리 카드 재조회 신호 — generateBase/recalcWithOverrides 성공 시 증가시켜 AnalysisHistoryCard가
+  //   새 항목을 반영한다(다른 표면과 동일한 refreshSignal tick 관례).
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
   // ★W4(감사 고아 엔드포인트): 개략수지→시니어 보고서(/rough-scenario/report) 다운로드 상태.
   //   백엔드가 pdf/pptx/docx 3포맷을 지원 → 어떤 포맷이 생성 중인지 문자열로 추적(시장 ReportActionsBar 패턴 미러).
   const [reportFmt, setReportFmt] = useState<"" | "pdf" | "pptx" | "docx">("");
@@ -405,6 +410,7 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
         body: buildBody(prefillOverrides),
       });
       setResult(r);
+      setHistoryRefreshTick((t) => t + 1);
       // 2차 수정 기준값(원값) 시드 — 공사기간/분양시작은 백엔드 기본식과 동일하게 근사.
       const pm = r.inputs.project_months ?? 30;
       const cm = Math.max(6, pm - 6);
@@ -475,6 +481,7 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
         body: buildBody(overrides),
       });
       setResult(r); // 기준값(baseline)은 유지 — 계속 원값 대비 변경을 하이라이트.
+      setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "재계산에 실패했습니다.");
     } finally {
@@ -484,6 +491,15 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
 
   const inp = result?.inputs;
   const cf = result?.cashflow;
+
+  // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약].
+  //   parcelCount는 buildBody가 실제 전송하는 parcelRows(2필지↑일 때만 전송)와 동일 출처(|| 1 폴백).
+  //   개략수지는 AI 서술을 쓰지 않는 결정론 산정(보고서 다운로드도 use_llm=false 고정)이라
+  //   useLlm은 항상 "false"로 고정한다(다른 표면의 use_llm 계약과 동형 유지 목적).
+  const historySignatureParts = useMemo(
+    () => [address, siteAnalysis?.pnu ?? "", String(parcelRows.length || 1), "false", optionsSummary(undefined)],
+    [address, siteAnalysis?.pnu, parcelRows.length],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -905,6 +921,26 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
           {/* 공공데이터 고지(DESIGN.md B1) — 개략수지 전체 데이터 뷰 하단 출처·참고용 문구 */}
           <DataSourceNotice source="국토교통부 실거래가 · 조달청 공사비 지수 등 공공데이터" />
         </>
+      )}
+
+      {/* 분석 히스토리 — 결과 섹션 뒤(원장 조회 옵셔널 소비 + 입력변동 감지 시 재분석 제안).
+          onReanalyze=generateBase(기본 개략수지 재산정 — 2차 수정 overrides는 재적용하지 않는다).
+          ★P1(R1 REVISE): pnu는 항상 null로 고정한다 — rough(WRITE, v2_feasibility.py
+          record_user_analysis 호출)는 pnu를 전달하지 않는 address-스코프 체인이라(project_id 스코프인
+          VCS-result의 별도 "feasibility_vcs" 체인과 의도적으로 분리), read가 siteAnalysis?.pnu를
+          쓰면(과거 코드) _chain_where가 pnu 우선 조건으로 바뀌어 WRITE가 쌓은 address-스코프 행(pnu
+          IS NULL)과 영영 매칭되지 않았다(주 진입경로=pnu 보유 상태에서 히스토리 상시 공란).
+          pnu 보유 여부와 무관하게 null 고정이 WRITE와의 유일한 정합 선택. */}
+      {address && (
+        <AnalysisHistoryCard
+          analysisType="feasibility"
+          address={address}
+          pnu={null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={() => void generateBase()}
+          reanalyzing={busy === "base"}
+          refreshSignal={historyRefreshTick}
+        />
       )}
     </div>
   );

@@ -895,6 +895,7 @@ class ComprehensiveAnalysisService:
         from app.services.ledger import analysis_ledger_service as ledger
         from app.services.ledger import lineage
         from app.services.ledger.contradiction import detect_contradictions
+        from app.services.ledger.ledger_adapters import build_input_signature, build_signature_parts
 
         wb_payload = {
             "kind": "site_analysis", "schema_version": "site_analysis/v1",
@@ -902,12 +903,26 @@ class ComprehensiveAnalysisService:
             "effective_far": result.get("effective_far"),
             "land_area_sqm": result.get("land_area_sqm"),
             "potential_far_range": result.get("potential_far_range"),
+            # ★P3(R1 REVISE): location(입지등급 등 — 라이브 result:610 "location": sec6, 무날조
+            #   존재 시만) 적재. 과거 미적재로 site_analysis DiffTable의 "입지등급"(location.grade)
+            #   행이 항상 "—"였다(사영필드 — 라이브 응답엔 있는데 원장 요약엔 빠진 상태).
+            "location": result.get("location"),
             "findings_brief": [
                 {"check_id": "ZONE", "status": "info",
                  "current": (result.get("effective_far") or {}).get("effective_far_pct"),
                  "limit": None},
             ],
         }
+        # ★히스토리 확산: 프론트 재분석 변동감지(analysisSignature)가 소비하는 signature_parts/
+        #   input_signature를 부착한다(단일 소유자 build_signature_parts 재사용 — 신규 산식 0).
+        #   신규 analysis_type 신설 없이 기존 site_analysis append payload에 병합만 한다
+        #   (comprehensive는 site_analysis로 이미 적재 — 이중기록 회피).
+        _sig_parts = build_signature_parts(
+            address=address, pnu=_pnu, parcel_count=(len(parcels) if parcels else 1),
+            use_llm=bool(llm_provider),
+        )
+        wb_payload["signature_parts"] = _sig_parts
+        wb_payload["input_signature"] = build_input_signature(_sig_parts)
         # Phase 2: prior 대비 결정론 모순 표면화(판정/수치 불변 — 비교 전용)
         contradictions = detect_contradictions(prior, wb_payload)
         result["contradictions"] = contradictions

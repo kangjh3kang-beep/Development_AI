@@ -11,7 +11,7 @@
  * apiClient v1 POST(lib/api-client.ts) 패턴, Leaflet은 dynamic ssr:false.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -27,6 +27,8 @@ import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { BulkParcelBatchPanel } from "@/components/common/BulkParcelBatchPanel";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import { PreCheckInstantPanel } from "./PreCheckInstantPanel";
 import { readSatongMapSelection, satongSelectionAddresses } from "./satong-map-selection";
 import type {
@@ -127,6 +129,8 @@ export function PreCheckWorkspace() {
   const [instant, setInstant] = useState<InstantPreCheckResponse | null>(null);
   const [instantLoading, setInstantLoading] = useState(false);
   const [instantError, setInstantError] = useState("");
+  // 히스토리 카드 재조회 신호 — runInstant() 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
 
   const [zoning, setZoning] = useState<ZoningSignalsResponse | null>(null);
   const [zoningLoading, setZoningLoading] = useState(false);
@@ -159,12 +163,25 @@ export function PreCheckWorkspace() {
         timeoutMs: 90_000,
       });
       setInstant(res);
+      setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       setInstantError(readError(e, "즉시 진단을 불러오지 못했습니다."));
     } finally {
       setInstantLoading(false);
     }
   }
+
+  // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(90초 진단은 옵션 없음→"")].
+  //   ★P2(R1 REVISE): idx2는 "1" 상수 고정 — runInstant()는 address 단일값만 전송하고(아래 body
+  //   참고), 백엔드도 precheck.py의 record_user_analysis 호출에서 parcel_count=1을 하드코딩한다
+  //   (parcels 등록 수와 무관). 과거 주석의 "runInstant가 다필지(parcels) 조회" 서술은 오기였다 —
+  //   parcels는 지도에서 등록한 별도 필지 세트(DevelopmentScenarioCard 소비용)일 뿐 /precheck/instant
+  //   요청 바디에 실리지 않는다. idx2를 parcels.length로 두면 2필지↑ 등록 직후 방금 저장한
+  //   히스토리(parcel_count="1") 대비 현재값("2")이 항상 달라 상시 변동 배너가 오발화했다.
+  const historySignatureParts = useMemo(
+    () => [address, instant?.pnu ?? "", "1", String(useLlm), optionsSummary(undefined)],
+    [address, instant?.pnu, useLlm],
+  );
 
   async function runZoning() {
     if (!address.trim()) return;
@@ -341,6 +358,20 @@ export function PreCheckWorkspace() {
               data={instant}
               onStartAnalysis={startProject}
             />
+            {/* 분석 히스토리 — instant 결과 렌더 뒤(중앙 워크스페이스 전용 — PreCheckInstantPanel
+                스탠드얼론 사용처는 이 카드를 갖지 않는다). 원장 조회(옵셔널 소비)+입력변동 감지. */}
+            {address && (
+              <AnalysisHistoryCard
+                analysisType="precheck"
+                address={address}
+                pnu={instant?.pnu ?? null}
+                currentSignatureParts={historySignatureParts}
+                onReanalyze={() => void runInstant()}
+                reanalyzing={instantLoading}
+                refreshSignal={historyRefreshTick}
+                className="mt-4"
+              />
+            )}
           </motion.div>
         ) : (
           <motion.div
