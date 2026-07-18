@@ -78,7 +78,10 @@
 //        프록시 JS가 남으면 신규 레이어 요청이 400으로 거부되므로 일괄 삭제 필수.
 // v440: WS-D① 개발여력 히트맵(#387 — 실효·현황 용적률 표면화+선택필지 코로플레스·
 //        renderable 불변식). 구캐시 JS는 capacity 레이어를 몰라 레일에 미노출 — 삭제 필수.
-const CACHE_NAME = "propai-v441-analysis-history";
+// v442: 사통맵 상세패널 I7 규제요약(#389 — 실효 FAR/BCR·현황·개발여력 인라인). 신규
+//        인라인 규제 요약 UI가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+//        (v441=#390 분석 히스토리 뒤에 #389 프론트 머지됐으나 소유 세션 sw 누락 → 통합자 대행)
+const CACHE_NAME = "propai-v442-satong-i7-regsummary";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
