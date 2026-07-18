@@ -180,6 +180,21 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
       {visibleSections.map((section, idx) => {
         const open = expanded[section.id] ?? true; // 섹션 기본 펼침(접기 가능)
         const sectionActive = activeSections.has(section.id);
+        // 단일-리프 섹션(항목 1개 + 하위메뉴 없음, 예: 적산·시공비): 빈 드롭다운/무동작 헤더를
+        // 피하려 섹션 슬롯 자체를 그 리프 링크(prominent pill)로 렌더한다. 다항목 섹션은 회귀 없이
+        // 기존 헤더+목록 렌더 유지.
+        const singleLeaf =
+          section.items.length === 1 && !section.items[0].children?.length
+            ? section.items[0]
+            : null;
+        if (singleLeaf) {
+          return (
+            <div key={section.id}>
+              {idx > 0 && <div className="h-px bg-[var(--line)] opacity-50 mb-2" aria-hidden="true" />}
+              {renderLeaf(singleLeaf, 0)}
+            </div>
+          );
+        }
         return (
           <div key={section.id}>
             {idx > 0 && <div className="h-px bg-[var(--line)] opacity-50 mb-2" aria-hidden="true" />}
