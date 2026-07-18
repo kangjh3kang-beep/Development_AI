@@ -16,7 +16,7 @@
  * '데이터 없음'으로 정직 표기하고 가짜 0 을 만들지 않는다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ComposedChart,
@@ -238,7 +238,10 @@ type OverrideBaseline = Partial<Record<OverrideKey, number | null>>;
 const inputCls =
   "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
-export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
+// ★Next.js 16 CSR bailout 가드: 아래 Inner 가 useSearchParams()(prefillSaleSupplyWon 퍼널
+//   #398)를 쓰므로, 이 컴포넌트를 렌더하는 페이지(analytics/investment 등)의 정적 프리렌더가
+//   Suspense 경계 없이는 실패한다. 컴포넌트 자체를 Suspense 로 감싸 페이지별 누락을 원천 차단.
+function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
   const searchParams = useSearchParams();
@@ -1066,5 +1069,16 @@ function MonthlyCashflowChart({ rows }: { rows: RsCashflowRow[] }) {
         <Legend wrapperStyle={{ fontSize: 11 }} />
       </ComposedChart>
     </ResponsiveContainer>
+  );
+}
+
+// 공개 export — useSearchParams(Inner)를 Suspense 경계로 감싸 정적 프리렌더 안전화.
+// (fallback=null: 이 패널은 클라이언트 하이드레이션 직후 즉시 렌더되고 searchParams 는
+//  클라이언트에서만 값이 있어, 프리렌더 시 빈 상태 잠깐만 노출 — 시각 회귀 없음.)
+export function RoughScenarioPanel(props: { projectId?: string }) {
+  return (
+    <Suspense fallback={null}>
+      <RoughScenarioPanelInner {...props} />
+    </Suspense>
   );
 }
