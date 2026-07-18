@@ -24,6 +24,7 @@ export type LifecyclePhase =
 export type PrimaryNavSectionId =
   | "control"
   | "projects"
+  | "cost-mgmt"
   | "market-acquisition"
   | "design-center"
   | "sales-management"
@@ -67,6 +68,11 @@ export interface RegistryNavSection extends PrimaryNavSectionMeta {
 export const PRIMARY_NAV_SECTIONS: PrimaryNavSectionMeta[] = [
   { id: "control", title: "관제", order: 10 },
   { id: "projects", title: "프로젝트", order: 20 },
+  // 적산·시공비 — 사용자 요청으로 최상위 독립 섹션 승격(구 IA: 프로젝트 드롭다운 하위 L2라 발견성 저하).
+  //   항목이 "적산·공사비 관리" 1개뿐이라 렌더러(SidebarNav·WorkspaceNavBar)는 단일-리프 섹션을
+  //   드롭다운 없이 섹션 슬롯 자체를 /analytics/cost 링크로 렌더한다(빈 드롭다운 방지).
+  //   order 25 = 프로젝트(20) 직후·시장획득(30) 앞(사업 흐름상 프로젝트 인접). RBAC 없음(scope global).
+  { id: "cost-mgmt", title: "적산·시공비", order: 25 },
   { id: "market-acquisition", title: "시장·획득", order: 30 },
   { id: "design-center", title: "설계 센터", order: 40 },
   // 분양 관리 — 구 IA의 "분양 현장 관리" 그룹 복원. IA 통합 리팩토링(800e7477)이 이 그룹을
@@ -188,9 +194,10 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/desk-appraisal"],
   },
   {
-    // 사업성·비용(2항목) 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·적산)을 가려
-    // 발견성이 나빴다. 투자 수익성·적산·공사비 관리를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출).
-    // 프로젝트 섹션 항목수는 여전히 7개 미만이라 IA 그룹화 규칙(§6) 위반 아님.
+    // 사업성·비용 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·ESG)을 가려 발견성이
+    // 나빴다. 투자 수익성·ESG를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출). 적산·공사비 관리는
+    // 이후 최상위 독립 섹션(cost-mgmt)으로 재승격. 프로젝트 섹션 항목수는 여전히 7개 미만이라
+    // IA 그룹화 규칙(§6) 위반 아님.
     id: "investment",
     label: "투자 수익성",
     sectionId: "projects",
@@ -204,11 +211,13 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
   },
   {
     // "공사비 분석"→"적산·공사비 관리" 개칭. /analytics/cost 허브가 개략 산정 + 상세 내역서(BOQ,
-    // BoqDetailTable) 탭을 담당. 사업성·비용 그룹 해체로 프로젝트 섹션 직속 승격(적산관리 발견성 개선).
+    // BoqDetailTable) 탭을 담당. 사용자 요청으로 최상위 독립 섹션(cost-mgmt "적산·시공비")으로 승격 —
+    // 프로젝트 드롭다운 하위라 발견성이 나빴다. 섹션 내 단독 리프라 렌더러가 섹션 슬롯을 곧바로 링크로
+    // 렌더한다(섹션명=범주 "적산·시공비", 항목=페이지 "적산·공사비 관리" — 중복 아님).
     id: "cost",
     label: "적산·공사비 관리",
-    sectionId: "projects",
-    order: 40,
+    sectionId: "cost-mgmt",
+    order: 10,
     path: "/analytics/cost",
     iconKey: "cost",
     status: "live",
