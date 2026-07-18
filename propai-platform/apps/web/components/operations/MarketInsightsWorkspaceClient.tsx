@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building, Compass, Files, MapPin, PenLine, Target, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -61,6 +61,15 @@ import { PricingBandPanel } from "@/components/operations/market/PricingBandPane
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
 import { DataSourceBadge } from "@/components/operations/market/DataSourceBadge";
 import type { MarketReport, SeniorInsight, TargetProfile, MarketNarrative } from "@/components/operations/market/marketTypes";
+import {
+  buildTrendLightPath,
+  mapLightTrend,
+  mapReportTrendSeries,
+  selectTrendChartPoints,
+  trendStatusMessage,
+  type MarketTrendLightResponse,
+  type TrendPeriodMonths,
+} from "@/lib/market-trend-light";
 
 // /market/report 응답 계약 — marketTypes.MarketReport에 이 화면이 소비하는 부가 필드 2종을 더한 것.
 // (raw_data/integrated 는 각 소비 컴포넌트의 export 타입이 정본이라 여기서 교차만 한다.)
@@ -414,6 +423,12 @@ export function MarketInsightsWorkspaceClient() {
   });
   const [error, setError] = useState("");
   const [balance, setBalance] = useState<Balance | null>(null);
+  // 시세추이 경량 조회(GET /market/trend) — 기간 칩(3/12/24개월). 3=report.trend_series
+  //   그대로(무변경 기본, 아래 상태들 미사용). 12/24 선택 시에만 별도 GET을 쏜다(보고서 재생성 없음).
+  const [trendMonths, setTrendMonths] = useState<TrendPeriodMonths>(3);
+  const [trendLight, setTrendLight] = useState<MarketTrendLightResponse | null>(null);
+  const [trendLightLoading, setTrendLightLoading] = useState(false);
+  const [trendLightError, setTrendLightError] = useState("");
 
   // 입력 후보 주소(실행 전): 활성 프로젝트 주소(SSOT).
   const inputAddress = siteAnalysis?.address || "";
@@ -532,6 +547,10 @@ export function MarketInsightsWorkspaceClient() {
       setMapPayload(null);
       setReport(null);
       setError("");
+      // 시세추이 경량 조회도 대상 전환 시 초기화(다른 지역의 12/24개월 추이가 남아있으면 오염).
+      setTrendMonths(3);
+      setTrendLight(null);
+      setTrendLightError("");
     }
   }, [inputAddress, runAddress]);
 
@@ -559,6 +578,10 @@ export function MarketInsightsWorkspaceClient() {
     if (!address) return;
     setGenState("report");
     setError("");
+    // 새 보고서 = 새 3개월 추이(SSOT) — 이전 보고서에서 조회했던 12/24개월 경량 결과는 폐기.
+    setTrendMonths(3);
+    setTrendLight(null);
+    setTrendLightError("");
     try {
       // pnu·parcels 모두 SSOT(현재 피커 선택)에서: 단일필지 고착·엉뚱지역 표시 동시 해소.
       const body = {
@@ -591,6 +614,41 @@ export function MarketInsightsWorkspaceClient() {
       setGenState("");
     }
   }, [address, mapPnu, runParcelRows, useLlm, buildOptionsPayload]);
+
+  // 12/24 칩 연타·응답 재정렬 시 느린 선행 응답이 최신 선택을 덮는 레이스 방지(#385 패턴).
+  //   요청마다 시퀀스를 증가시키고, 응답이 최신 시퀀스일 때만 반영한다.
+  const trendSeqRef = useRef(0);
+
+  // 시세추이 경량 조회(GET /market/trend) — 12/24개월 칩 선택 시에만 호출. 보고서 전체
+  //   재생성(MOLIT 6유형+SGIS+KOSIS+LLM) 없이 아파트 매매 월별 평당가만 가져온다.
+  const fetchTrendLight = useCallback(async (months: 12 | 24) => {
+    if (!address) return;
+    const seq = ++trendSeqRef.current;
+    setTrendLightLoading(true);
+    setTrendLightError("");
+    try {
+      const r = await apiClient.get<MarketTrendLightResponse>(
+        buildTrendLightPath({ address, pnu: mapPnu || undefined, months }),
+        { useMock: false, timeoutMs: 30000 },
+      );
+      if (seq !== trendSeqRef.current) return; // stale 응답 — 이후 칩 선택이 이미 발화됨
+      setTrendLight(r);
+    } catch (e) {
+      if (seq !== trendSeqRef.current) return;
+      // 오류 사유 보존(catch{} 삼킴 금지) — 정직 실패 문구를 그대로 카드에 노출.
+      setTrendLightError(errorMessage(e, "시세 추이 조회에 실패했습니다."));
+      setTrendLight(null);
+    } finally {
+      if (seq === trendSeqRef.current) setTrendLightLoading(false);
+    }
+  }, [address, mapPnu]);
+
+  // 기간 칩 전환 — 3개월은 이미 보유한 report.trend_series를 그대로 쓰므로 재요청 없음(무변경 기본).
+  const handleTrendMonthsChange = useCallback((months: TrendPeriodMonths) => {
+    setTrendMonths(months);
+    if (months === 3) return;
+    void fetchTrendLight(months);
+  }, [fetchTrendLight]);
 
   // 리로드·재진입 복원 — 진행 중이던 보고서 잡을 sessionStorage에서 찾아 이어서 폴링한다
   //   (design-audit DesignAuditWorkspace.tsx:284-322 패턴, 마운트 1회만).
@@ -1313,20 +1371,22 @@ export function MarketInsightsWorkspaceClient() {
           {/* 적정 분양가 밴드(M3) — 수요측 지불여력을 공급측 타당성과 결합. */}
           {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
-          {/* 시세 추이 — 아파트 평당가 월별 추이(실거래·전월대비). recharts LineChart(DemographicPanel과 동일 라이브러리). */}
-          {(() => {
-            const trend = ((report?.raw_data?.real_estate?.trend_series ?? []) as Array<{
-              ym?: string; per_pyeong_manwon?: number | null; mom_pct?: number | null;
-            }>)
-              .filter((t) => typeof t.per_pyeong_manwon === "number" && (t.per_pyeong_manwon as number) > 0)
-              .map((t) => ({ ym: t.ym ?? "", perPyeong: t.per_pyeong_manwon as number, mom: t.mom_pct ?? null }));
-            if (trend.length < 2) return null; // 추이는 2개월 이상일 때만(1점은 추이 아님) — 데이터 없으면 미렌더(정직).
+          {/* 시세 추이 — 아파트 평당가 월별 추이(실거래·전월대비). recharts LineChart(DemographicPanel과 동일 라이브러리).
+              기간 칩(3/12/24개월): 3=report.trend_series 그대로(무변경 기본), 12/24=경량 GET /market/trend
+              (보고서 전체 재생성 없이 아파트 매매 월별 평당가만 조회 — lib/market-trend-light.ts 순수 헬퍼). */}
+          {report && (() => {
+            const baseTrend = mapReportTrendSeries(report.raw_data?.real_estate?.trend_series);
+            const lightTrend = mapLightTrend(trendLight?.trend);
+            const trend = selectTrendChartPoints(trendMonths, baseTrend, lightTrend);
+            const statusMsg = trendStatusMessage({
+              months: trendMonths, loading: trendLightLoading, error: trendLightError, pointsCount: trend.length,
+            });
             const last = trend[trend.length - 1];
             // Y축 범위 — recharts 기본(auto)은 0부터 시작해 실측 변동폭이 작아 보일 수 있다.
             //   실측 최소~최대에 10% 여백만 둬 "데이터가 주인공"이 되도록(dataviz 원칙).
             const values = trend.map((t) => t.perPyeong);
-            const minV = Math.min(...values);
-            const maxV = Math.max(...values);
+            const minV = values.length ? Math.min(...values) : 0;
+            const maxV = values.length ? Math.max(...values) : 0;
             const pad = Math.max(1, (maxV - minV) * 0.1);
             const yDomain: [number, number] = [Math.max(0, Math.floor(minV - pad)), Math.ceil(maxV + pad)];
             return (
@@ -1337,19 +1397,43 @@ export function MarketInsightsWorkspaceClient() {
                   <span className="sa-di-eyebrow">TREND · 월별</span>
                 </header>
                 <div className="sa-di-block__body">
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={trend} margin={{ left: 8, right: 16, top: 8, bottom: 4 }}>
-                      <CartesianGrid stroke="var(--line-subtle)" strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="ym" tickFormatter={(v) => formatYm(String(v))} tick={{ fontSize: 11 }} />
-                      <YAxis domain={yDomain} tick={{ fontSize: 11 }} width={64} />
-                      <Tooltip formatter={(v) => [`${Number(v).toLocaleString()}만원/평`, "평당가(전용)"]} labelFormatter={(v) => formatYm(String(v))} />
-                      <Line type="monotone" dataKey="perPyeong" stroke="var(--accent-strong)" strokeWidth={2} dot />
-                    </LineChart>
-                  </ResponsiveContainer>
-                  <p className="mt-2 text-[11px] text-[var(--text-hint)]">
-                    ※ 국토부 아파트 실거래 평당가(전용 기준) 월별 추이. 최근 {formatYm(last.ym)} 평당 {last.perPyeong.toLocaleString()}만원
-                    {typeof last.mom === "number" ? ` (전월대비 ${last.mom > 0 ? "+" : ""}${last.mom}%)` : ""}.
-                  </p>
+                  <div className="sa-seg mb-3 w-fit" role="tablist" aria-label="시세추이 조회 기간">
+                    {([3, 12, 24] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        role="tab"
+                        aria-selected={trendMonths === m}
+                        data-active={trendMonths === m}
+                        onClick={() => handleTrendMonthsChange(m)}
+                        className="sa-seg__item"
+                      >
+                        {m}개월
+                      </button>
+                    ))}
+                  </div>
+                  {statusMsg ? (
+                    <p className={trendMonths !== 3 && trendLightError ? "text-sm font-semibold text-[var(--status-error)]" : "sa-di-empty"}>
+                      {statusMsg}
+                    </p>
+                  ) : (
+                    <>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <LineChart data={trend} margin={{ left: 8, right: 16, top: 8, bottom: 4 }}>
+                          <CartesianGrid stroke="var(--line-subtle)" strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="ym" tickFormatter={(v) => formatYm(String(v))} tick={{ fontSize: 11 }} />
+                          <YAxis domain={yDomain} tick={{ fontSize: 11 }} width={64} />
+                          <Tooltip formatter={(v) => [`${Number(v).toLocaleString()}만원/평`, "평당가(전용)"]} labelFormatter={(v) => formatYm(String(v))} />
+                          <Line type="monotone" dataKey="perPyeong" stroke="var(--accent-strong)" strokeWidth={2} dot />
+                        </LineChart>
+                      </ResponsiveContainer>
+                      <p className="mt-2 text-[11px] text-[var(--text-hint)]">
+                        ※ 국토부 아파트 실거래 평당가(전용 기준) 월별 추이({trendMonths}개월{trendMonths !== 3 ? (trendLight?.cached ? " · 캐시" : "") : ""}).
+                        최근 {formatYm(last.ym)} 평당 {last.perPyeong.toLocaleString()}만원
+                        {typeof last.mom === "number" ? ` (전월대비 ${last.mom > 0 ? "+" : ""}${last.mom}%)` : ""}.
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             );
