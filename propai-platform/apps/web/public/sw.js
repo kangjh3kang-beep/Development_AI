@@ -81,7 +81,10 @@
 // v442: 사통맵 상세패널 I7 규제요약(#389 — 실효 FAR/BCR·현황·개발여력 인라인). 신규
 //        인라인 규제 요약 UI가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 //        (v441=#390 분석 히스토리 뒤에 #389 프론트 머지됐으나 소유 세션 sw 누락 → 통합자 대행)
-const CACHE_NAME = "propai-v446-history-expansion7-regsummary";
+// v447: 네비 적산·시공비 최상위 섹션 승격(#403 — cost-mgmt 독립 섹션) + 상단 드롭다운 3개 절단
+//        (slice 0,3) 봉합·전 섹션 스크롤(max-h+overflow). 재배치된 상단 네비/드롭다운이 stale
+//        app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제(구 번들은 여전히 섹션당 3개만 렌더).
+const CACHE_NAME = "propai-v447-nav-cost-toplevel";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
