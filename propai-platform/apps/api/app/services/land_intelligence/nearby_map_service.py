@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import math
 import time
 from datetime import datetime
 from typing import Any
@@ -25,6 +26,8 @@ from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
 
 logger = structlog.get_logger(__name__)
+
+PYEONG_SQM = 3.305785  # 1평 = 3.305785㎡ (프론트 lib/formatters.ts PYEONG_SQM 상수 미러)
 
 _TRADE_TYPES = [
     ("apt", "아파트"),
@@ -199,6 +202,10 @@ class NearbyMapService:
             "lawd_cd": lawd_cd,
             "months": ym_list,
             "categories": categories,
+            # ★AVM SSOT 일원화(PropAI#3): 아파트 매매 실거래 그룹(반경 필터·캡 적용 후,
+            #   위 categories와 동일 객체) 통계로 AI 시세를 계산해 함께 싣는다 — 프론트가
+            #   같은 payload를 재가공(평당가 가중평균+CV)하던 것을 여기로 이동(SSOT).
+            "avm": self._compute_avm_summary(categories.get("apt_trade")),
         }
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
@@ -370,6 +377,80 @@ class NearbyMapService:
         out.sort(key=lambda x: x["count"], reverse=True)
         return {"label": label, "type": type_key, "kind": kind,
                 "count": sum(x["count"] for x in out), "groups": out}
+
+    # ── AI 시세(AVM) 요약 ──
+    @staticmethod
+    def _js_round(x: float) -> int:
+        """JS `Math.round` 방식(0.5는 항상 올림)으로 반올림한다.
+
+        Python 내장 `round()`는 banker's rounding(가장 가까운 짝수로 반올림)이라 종전
+        프론트 계산(Math.round)과 .5 경계에서 값이 어긋날 수 있다 — 이 함수는 값 동일성
+        (프론트 재구현 이전과 이후 산출값이 정확히 같아야 함)을 보장하기 위한 것.
+        본 서비스에서 다루는 값(가격·면적·CV%)은 항상 0 이상이라 이 구현으로 충분하다.
+        """
+        return math.floor(x + 0.5)
+
+    def _compute_avm_summary(self, apt_trade_category: dict[str, Any] | None) -> dict[str, Any] | None:
+        """아파트 매매 실거래 그룹(반경 필터·캡 적용 후) 통계로 AI 시세(AVM) 요약을 계산한다.
+
+        SSOT 일원화(PropAI 아이디어#3): 종전엔 프론트(MarketInsightsWorkspaceClient.tsx
+        deriveResults :196-238)가 이 서비스의 apt_trade 응답을 다시 순회해 재계산했다 —
+        그 로직을 그대로(재구현 아님) 이 메서드로 이식했을 뿐 계산방식은 불변이다.
+
+        - 시세: 그룹별 평당가(avg_price_10k / (avg_area_m2/평)) 를 그룹 거래건수(count)로
+          가중평균 → 84㎡ 환산 총액·㎡당 시세.
+        - 신뢰도: 개별 거래가(price_10k_won) 표본의 변동계수(CV=표준편차/평균) 기반 —
+          표본이 많고(count 항) 가격이 고르게 형성될수록(CV 항, 낮을수록 가산) 신뢰도가
+          높다. 두 항을 절반씩 반영해 0.3~0.98로 클램프.
+        - 표본(비교 가능한 그룹) 0건이면 None — 무날조.
+        """
+        groups = (apt_trade_category or {}).get("groups") or []
+        if not groups:
+            return None
+
+        pp_sum = 0.0
+        pp_n = 0
+        for g in groups:
+            avg_price_10k = g.get("avg_price_10k")
+            avg_area_m2 = g.get("avg_area_m2") or 0
+            if avg_price_10k and avg_area_m2 > 0:
+                per_pyeong = avg_price_10k / (avg_area_m2 / PYEONG_SQM)
+                cnt = g.get("count") or 1
+                pp_sum += per_pyeong * cnt
+                pp_n += cnt
+        if pp_n <= 0:
+            return None
+
+        per_pyeong = pp_sum / pp_n          # 만원/평
+        per_m2_man = per_pyeong / PYEONG_SQM  # 만원/㎡
+
+        deal_prices = [
+            d.get("price_10k_won")
+            for g in groups
+            for d in (g.get("deals") or [])
+            if isinstance(d.get("price_10k_won"), (int, float)) and d.get("price_10k_won") > 0
+        ]
+
+        confidence = 0.5  # 개별 거래가 표본이 없는 비정상 케이스 폴백(프론트와 동일)
+        cv_percent = 0.0
+        if deal_prices:
+            n = len(deal_prices)
+            mean = sum(deal_prices) / n
+            variance = sum((p - mean) ** 2 for p in deal_prices) / n
+            cv = (math.sqrt(variance) / mean) if mean > 0 else 0.0
+            cv_percent = cv * 100
+            count_factor = min(1.0, math.log10(n + 1) / 2)  # 표본 ~100건에서 포화
+            dispersion_factor = max(0.0, 1 - cv / 0.5)  # CV 0~50% 구간을 1→0으로 선형 감산
+            confidence = 0.4 + 0.3 * count_factor + 0.3 * dispersion_factor
+
+        return {
+            "estimated_price": self._js_round(per_m2_man * 84 * 10000),
+            "price_per_sqm": self._js_round(per_m2_man * 10000),
+            "confidence_score": min(0.98, max(0.3, confidence)),
+            "comparable_count": (apt_trade_category or {}).get("count") or 0,
+            "sample_count": len(deal_prices),
+            "price_cv_percent": self._js_round(cv_percent),
+        }
 
     # ── 공개 지오코딩(다른 서비스 재사용·캐시 공유) ──
     async def geocode_addresses(self, queries: list[str]) -> dict[str, dict]:

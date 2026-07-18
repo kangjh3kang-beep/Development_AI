@@ -59,6 +59,16 @@ export type NearbyMapPayload = {
   lawd_cd: string;
   months: string[];
   categories: Record<string, Category>;
+  /** AI 시세(AVM) 요약 — 백엔드(nearby_map_service._compute_avm_summary)가 apt_trade
+   *  그룹(반경 필터 적용 후)으로 계산해 싣는다(SSOT). 비교 표본 0건이면 null(무날조). */
+  avm?: {
+    estimated_price: number; // 원(84㎡ 환산)
+    price_per_sqm: number;   // 원/㎡
+    confidence_score: number;
+    comparable_count: number;
+    sample_count: number;     // 신뢰도(CV) 산출에 실제 사용된 개별 거래 표본 수
+    price_cv_percent: number; // 표본 가격 변동계수(CV, %) — 낮을수록 가격이 고르게 형성됨
+  } | null;
   data_source?: string;
   fetch_failed?: boolean;
   partial_failed?: boolean;

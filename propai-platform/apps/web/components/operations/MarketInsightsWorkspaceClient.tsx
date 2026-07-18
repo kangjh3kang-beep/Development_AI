@@ -11,7 +11,7 @@ import {
 } from "@/lib/market-report-job";
 import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
-import { PYEONG_SQM, formatCurrencyKRW, formatManwon as formatPrice, formatYm } from "@/lib/formatters";
+import { formatCurrencyKRW, formatManwon as formatPrice, formatYm } from "@/lib/formatters";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
@@ -193,49 +193,12 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     .filter((b) => b.count > 0)
     .map((b) => ({ label: b.label, count: b.count, avgPrice: b.pN ? Math.round(b.pSum / b.pN) : 0 }));
 
-  // AI 시세: 아파트 매매 실거래 평당가 가중평균 → 84㎡ 기준 추정
-  const apt = cats["apt_trade"];
-  let avm: AvmSummary | null = null;
-  if (apt?.groups?.length) {
-    let ppSum = 0, ppN = 0;
-    for (const g of apt.groups) {
-      if (g.avg_price_10k && g.avg_area_m2 > 0) {
-        const perPyeong = g.avg_price_10k / (g.avg_area_m2 / PYEONG_SQM);
-        ppSum += perPyeong * (g.count || 1); ppN += g.count || 1;
-      }
-    }
-    if (ppN > 0) {
-      const perPyeong = ppSum / ppN;        // 만원/평
-      const perM2man = perPyeong / PYEONG_SQM;  // 만원/㎡
-      // 신뢰도 — 예전엔 log(표본수)만 반영하는 항등식이라 사실상 상시 95%였다. 실측 가격
-      //   변동계수(CV=표준편차/평균)로 교체: 표본이 많고(count 항) 가격이 고르게 형성될수록
-      //   (CV 항, 낮을수록 가산) 신뢰도가 높다. 두 항을 절반씩 반영해 0.3~0.98로 클램프.
-      const dealPrices = apt.groups
-        .flatMap((g) => g.deals || [])
-        .map((d) => d.price_10k_won)
-        .filter((p): p is number => typeof p === "number" && p > 0);
-      let confidence = 0.5; // 개별 거래가(price_10k_won) 표본이 없는 비정상 케이스 폴백
-      let cvPercent = 0;
-      if (dealPrices.length > 0) {
-        const n = dealPrices.length;
-        const mean = dealPrices.reduce((a, b) => a + b, 0) / n;
-        const variance = dealPrices.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
-        const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
-        cvPercent = cv * 100;
-        const countFactor = Math.min(1, Math.log10(n + 1) / 2); // 표본 ~100건에서 포화
-        const dispersionFactor = Math.max(0, 1 - cv / 0.5); // CV 0~50% 구간을 1→0으로 선형 감산
-        confidence = 0.4 + 0.3 * countFactor + 0.3 * dispersionFactor;
-      }
-      avm = {
-        estimated_price: Math.round(perM2man * 84 * 10000),
-        price_per_sqm: Math.round(perM2man * 10000),
-        confidence_score: Math.min(0.98, Math.max(0.3, confidence)),
-        comparable_count: apt.count || 0,
-        sample_count: dealPrices.length,
-        price_cv_percent: Math.round(cvPercent),
-      };
-    }
-  }
+  // AI 시세(AVM) — SSOT 일원화(PropAI 아이디어#3): 종전엔 여기서 apt_trade 그룹을 다시
+  //   순회해 평당가 가중평균+CV 신뢰도를 재계산했으나, 백엔드(nearby_map_service
+  //   ._compute_avm_summary)가 동일 로직으로 이미 계산해 payload.avm에 실어보낸다 —
+  //   프론트는 그 값을 그대로 소비한다(계산 위치만 이동, 값·표기는 불변). 비교 표본
+  //   0건이면 백엔드가 null을 보낸다(무날조) — "일시 미제공" graceful 표기로 소비.
+  const avm: AvmSummary | null = payload.avm ?? null;
 
   return {
     avm, totalCount,
