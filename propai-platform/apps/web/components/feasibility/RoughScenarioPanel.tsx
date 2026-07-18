@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ComposedChart,
   Bar,
@@ -240,6 +241,7 @@ const inputCls =
 export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
+  const searchParams = useSearchParams();
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
   // ★인플라이트 프로젝트 전환 오염 가드(보강): 요청을 보낸 "시점"의 프로젝트를 기억해뒀다가
@@ -370,7 +372,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     [address, parcelRows, projectId, ctxProjectId, equityWon],
   );
 
-  /** 기본 개략수지 생성(요구 ③④⑤⑥⑦) — overrides 없이 호출하고 2차 수정 기준값을 시드. */
+  // ★아이디어#4(지불여력→개략수지 원클릭 퍼널) read 끝 봉합: PricingBandPanel CTA가
+  //   URL 파라미터 prefillSaleSupplyWon(원/평·**공급면적 기준**, CTA에서 전용→공급 변환 완료 —
+  //   rough_feasibility_orchestrator.py:494 override와 동일 basis)로 1회 핸드오프한 값을 읽어
+  //   기본 생성 시 overrides.sale_price_per_pyeong로 프리필한다. 공유 스토어 슬롯은 basis 혼재라
+  //   쓰지 않고, 축이 명시된 전용 파라미터만 소비한다(무변환 — CTA가 이미 공급 basis로 확정).
+  const marketAffordPricePerPyeongWon = useMemo(() => {
+    const raw = searchParams?.get("prefillSaleSupplyWon");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  }, [searchParams]);
+
+  /** 기본 개략수지 생성(요구 ③④⑤⑥⑦) — market 지불여력 프리필(있으면)만 얹어 호출하고 2차 수정 기준값을 시드. */
   const generateBase = useCallback(async () => {
     if (!address.trim()) {
       setError("주소가 없습니다. 프로젝트를 선택하거나 주소를 입력하세요.");
@@ -380,8 +394,12 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     setError(null);
     try {
       requestProjectRef.current = (projectId || ctxProjectId) ?? null;
+      const prefillOverrides: Record<string, number> = {};
+      if (marketAffordPricePerPyeongWon != null && marketAffordPricePerPyeongWon > 0) {
+        prefillOverrides.sale_price_per_pyeong = marketAffordPricePerPyeongWon;
+      }
       const r = await apiClient.postV2<RoughScenarioResult>("/feasibility/rough-scenario", {
-        body: buildBody(),
+        body: buildBody(prefillOverrides),
       });
       setResult(r);
       // 2차 수정 기준값(원값) 시드 — 공사기간/분양시작은 백엔드 기본식과 동일하게 근사.
@@ -409,7 +427,18 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     } finally {
       setBusy("");
     }
-  }, [address, buildBody, projectId, ctxProjectId]);
+  }, [address, buildBody, projectId, ctxProjectId, marketAffordPricePerPyeongWon]);
+
+  // 프리필 출처 배지용 — 응답이 실제로 market-affordability 프리필값을 반영했는지 "읽기"로만
+  // 판정(별도 상태 없이 result/스토어 실값 비교 — 2차 수정으로 값이 바뀌면 자동으로 꺼진다).
+  const marketPrefillSourced = useMemo(
+    () =>
+      !!result &&
+      result.overrides_applied.includes("sale_price_per_pyeong") &&
+      marketAffordPricePerPyeongWon != null &&
+      result.revenue.sale_price_per_pyeong === marketAffordPricePerPyeongWon,
+    [result, marketAffordPricePerPyeongWon],
+  );
 
   /** 변경된 override 만 추출(원값과 다르고 유효 숫자인 키). */
   const buildOverrides = useCallback((): Record<string, number> => {
@@ -594,6 +623,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               source={result.revenue.source}
             />
           </div>
+          {/* ★아이디어#4 read 끝 봉합 — 분양단가가 시장 지불여력 상한(PricingBandPanel CTA)에서
+              프리필되었음을 정직 고지(출처 배지 대체 — 백엔드 source는 "user_override"로만
+              내려와 이 문구가 없으면 사용자가 왜 원값이 바뀌었는지 알 수 없다). */}
+          {marketPrefillSourced && (
+            <p
+              data-testid="market-prefill-notice"
+              className="-mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
+            >
+              ※ 분양단가(원/평)가 시장 지불여력 상한에서 프리필되었습니다 — 지불여력 상한은 미분양
+              회피 하한 시나리오(시장 실현가 아님)이며, 「실데이터로 2차 수정」에서 직접 조정할 수
+              있습니다.
+            </p>
+          )}
 
           {/* ── 20% 마진(개발이익) 카드(요구) ── */}
           <section className="sa-di-block">
