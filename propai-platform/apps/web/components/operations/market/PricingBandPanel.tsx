@@ -11,11 +11,38 @@
  * 색상 토큰만 사용.
  */
 
+import { useCallback } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { Tag } from "lucide-react";
 import type { PricingBand } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { formatManwon as man } from "@/lib/formatters";
+
+// 1평 = 3.305785㎡ — market_report_service.py:55 PYEONG_SQM 상수 미러(신규 산식 금지).
+const PYEONG_SQM = 3.305785;
+// 전용률(전용/공급) 표준 가정 — 백엔드 suggest.py:27 `_JEONYULRYUL` 미러(신규 계수 금지).
+//   전용 평당가 × 전용률 = 공급 평당가(총액 고정, 공급면적>전용면적이므로 평당가는 낮아진다).
+const EXCLUSIVE_TO_SUPPLY_RATIO = 0.747;
+
+/**
+ * 아이디어#4(지불여력→개략수지 원클릭 퍼널) 단위변환 — 지불여력 상한(cap)을
+ * rough-scenario override(sale_price_per_pyeong)가 소비하는 **공급면적 기준 원/평**으로 만든다.
+ *
+ * 2단계 변환(둘 다 기존 백엔드 관례 미러 — 신규 산식 0):
+ *  1) 84㎡ 총액(만원) → **전용** 평당가(만원/평): market_report_service.py:793
+ *     `round(_fp / (84.0 / PYEONG_SQM))`. 여기서 84 = 전용면적 84㎡(국민평형, :670 주석).
+ *  2) **전용** 평당가 → **공급** 평당가: × 전용률(suggest.py:341 `market_pp_exclusive × _JEONYULRYUL`).
+ *
+ * ★R1 P1 봉합: 종전엔 (1)만 하고 전용값을 공급 basis override로 그대로 보내 **분양수입 +33.9% 과대**
+ *   (node-body-builders.ts:71-76이 문서화한 "전용률 미적용 시 매출 부풀림" 재발). (2)를 더해 축을 맞춘다.
+ */
+export function capManwonToPricePerPyeongWon(capManwon: number): number {
+  const exclusivePerPyeongManwon = Math.round(capManwon / (84.0 / PYEONG_SQM));
+  const exclusivePerPyeongWon = exclusivePerPyeongManwon * 10000;
+  // 전용 → 공급 평당가(rough override의 실제 소비 basis). round로 정수 유지(백엔드 int 캐스트 정합).
+  return Math.round(exclusivePerPyeongWon * EXCLUSIVE_TO_SUPPLY_RATIO);
+}
 
 // 비율(0.40 같은 소수) → "40%". 백엔드가 분수로 주는 값을 사람이 읽기 쉬운 %로.
 function pct(v?: number | null): string {
@@ -32,6 +59,23 @@ const VERDICT: Record<string, { label: string; color: string; bg: string }> = {
 };
 
 export function PricingBandPanel({ data }: { data?: PricingBand | null }) {
+  // ★훅은 조건부 early return 이전에 호출(React 규칙) — data가 없어도 항상 동일 순서로 실행.
+  const params = useParams();
+  const router = useRouter();
+  const recommendedCap10k = data?.affordability?.recommended_cap_10k;
+  const handleRecalcWithAffordCap = useCallback(() => {
+    if (recommendedCap10k == null) return;
+    const perPyeongWon = capManwonToPricePerPyeongWon(recommendedCap10k);
+    // ★공유 스토어 슬롯(salePricePerPyeongWon)은 basis가 혼재한다(node-body-builders는 전용,
+    //   rough-scenario-commit은 공급값을 씀 — 기존 P2). 거기에 쓰면 소비처마다 축이 갈려 왜곡되므로,
+    //   축이 명시된 전용 URL 파라미터(공급 basis)로 1회 핸드오프한다(모호 슬롯 우회).
+    //   이동만 트리거 — 재계산은 사용자가 개략수지 페이지에서 직접 클릭(자동 실행 금지).
+    const locale = typeof params?.locale === "string" ? params.locale : "ko";
+    router.push(
+      `/${locale}/analytics/investment?prefillSaleSupplyWon=${perPyeongWon}#rough-scenario-base`,
+    );
+  }, [recommendedCap10k, params, router]);
+
   if (!data) return null;
 
   // 비교 데이터 없음(주변 실거래·분양가 없음) → 정직 안내(가짜 분양가 금지).
@@ -154,6 +198,28 @@ export function PricingBandPanel({ data }: { data?: PricingBand | null }) {
             {verdict && (
               <div className="mt-3 rounded-xl px-3 py-2 text-xs font-bold" style={{ color: verdict.color, backgroundColor: verdict.bg }}>
                 적정 분양가 {man(data.fair_price_10k)} → {verdict.label}
+              </div>
+            )}
+
+            {/* ★아이디어#4: 지불여력→개략수지 원클릭 퍼널. over_band(미분양 위험)일 때만 노출 —
+                권장 수용 상한(recommended_cap_10k)을 분양단가(원/평)로 환산해 스토어에 반영 후
+                개략수지 페이지로 "이동만" 한다(재계산은 사용자가 그 화면에서 직접 클릭). 평형믹스는
+                rough에 입력 채널이 없어 전달되지 않는다 — 문구도 "분양단가만" 반영으로 한정. */}
+            {data.affordability_verdict === "over_band" && af?.recommended_cap_10k != null && (
+              <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2.5">
+                <button
+                  type="button"
+                  data-testid="afford-cap-recalc-cta"
+                  onClick={handleRecalcWithAffordCap}
+                  title="환산 기준: 전용 84㎡(국민평형) 총액 → 평당가(공급면적 환산 아님) — 정직 고지"
+                  className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                >
+                  지불여력 상한 분양가로 개략수지 재산정
+                </button>
+                <p className="mt-2 text-[10px] leading-snug text-[var(--text-hint)]">
+                  ※ 지불여력 상한 = 미분양 회피 하한 시나리오(시장 실현가 아님) · 분양단가만 반영(평형믹스는
+                  별도) · 환산 기준: 전용 84㎡(국민평형) 총액 → 평당가(공급면적 환산 아님)
+                </p>
               </div>
             )}
 

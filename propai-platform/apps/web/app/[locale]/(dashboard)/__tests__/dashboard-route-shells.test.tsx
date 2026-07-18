@@ -260,6 +260,8 @@ vi.mock("next/navigation", () => {
   return {
     useParams: () => ({ locale: "en" }),
     usePathname: () => "/en",
+    // RoughScenarioPanel(투자분석 셸)이 지불여력 프리필 파라미터를 읽는다 — 빈 파라미터로 모킹.
+    useSearchParams: () => ({ get: () => null }),
     useRouter: () => ({
       push: vi.fn(),
       replace: vi.fn(),
