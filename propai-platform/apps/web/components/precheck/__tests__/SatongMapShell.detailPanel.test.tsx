@@ -212,3 +212,47 @@ describe("SatongMapShell 필지 상세 패널(WS-C)", () => {
     expect(screen.getByTestId("parcel-detail-panel")).toBeInTheDocument();
   });
 });
+
+describe("I7 규제 요약(상세 패널 인라인)", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("실효 FAR/BCR·현황·개발여력을 인라인 표기(#387 경계 산정치 — 분석캐시 불요)", () => {
+    writeSatongMapSelection([{
+      id: "P-reg", address: "경기도 성남시 분당구 판교동 200", source: "map",
+      zoneType: "제2종일반주거지역", areaSqm: 500,
+      effectiveFarPct: 200, effectiveBcrPct: 60, currentFarPct: 120,
+    }]);
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("판교동 200").closest("[role='button']")!);
+    const panel = screen.getByTestId("parcel-detail-panel");
+    expect(panel).toHaveTextContent("규제 요약");
+    expect(panel).toHaveTextContent("200%");
+    expect(panel).toHaveTextContent("60%");
+    expect(panel).toHaveTextContent("120%");
+    expect(panel).toHaveTextContent("개발여력 40%"); // (200-120)/200
+  });
+
+  it("★한도 초과(현황>실효)는 초과로 정직 표기 — '여력'으로 오표기 금지", () => {
+    writeSatongMapSelection([{
+      id: "P-over", address: "서울 중구 신당동 349", source: "map",
+      zoneType: "제2종일반주거지역", areaSqm: 268,
+      effectiveFarPct: 200, currentFarPct: 260,
+    }]);
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("신당동 349").closest("[role='button']")!);
+    // ★R1 MAJOR 회귀 핀 — 초과는 점차이 %p(260−200=60%p). 상대%(30) 오표기 재발 금지.
+    expect(screen.getByTestId("parcel-detail-panel")).toHaveTextContent("60%p 상회");
+    expect(screen.getByTestId("parcel-detail-panel")).not.toHaveTextContent("개발여력 ");
+  });
+
+  it("전항 미상이면 '-' 3개+자료 미확보 안내 1줄(무날조)", () => {
+    writeSatongMapSelection([{
+      id: "P-none", address: "경기도 성남시 분당구 판교동 300", source: "map", areaSqm: 100,
+    }]);
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("판교동 300").closest("[role='button']")!);
+    const panel = screen.getByTestId("parcel-detail-panel");
+    expect(panel).toHaveTextContent("산정 자료 미확보");
+  });
+});

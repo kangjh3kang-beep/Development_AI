@@ -48,6 +48,8 @@ export type SatongMapFeature = {
   effectiveFarPct?: number | null;
   /** WS-D 개발여력 — 현황 용적률(%, 전동 연면적합/대지면적·서버 산정). 나대지=0·미상 None. */
   currentFarPct?: number | null;
+  /** I7 규제요약 — 실효 건폐율(%, calc_effective_far 동일 계층·서버 산정). 미산정 None. */
+  effectiveBcrPct?: number | null;
   geometry?: unknown;
   source?: "search" | "excel" | "map" | "boundary";
 };
@@ -367,6 +369,7 @@ export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapF
       ageStatus: feature.ageStatus ?? prev?.ageStatus ?? null,
     effectiveFarPct: feature.effectiveFarPct ?? prev?.effectiveFarPct ?? null,
     currentFarPct: feature.currentFarPct ?? prev?.currentFarPct ?? null,
+    effectiveBcrPct: feature.effectiveBcrPct ?? prev?.effectiveBcrPct ?? null,
       geometry: feature.geometry ?? prev?.geometry,
       lat: feature.lat ?? prev?.lat ?? null,
       lon: feature.lon ?? prev?.lon ?? null,
