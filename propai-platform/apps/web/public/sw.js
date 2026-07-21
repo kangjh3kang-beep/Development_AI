@@ -86,7 +86,10 @@
 //        app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제(구 번들은 여전히 섹션당 3개만 렌더).
 // v448: 다필지 파이프라인 절단 3건 근본수정(#405 — permits 구획도/등기/시뮬 12→1 등 분석·렌더
 //        동일 SSOT 공용화). 구 번들이 절단된 목록을 렌더하지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v448-multiparcel-truncation-fix";
+// v449: 실효용적률 설계 전파 봉합(#408 — 설계엔진 실효FAR 리졸버 통일·우선순위 역전 수정·
+//        정직 배지). 재배선된 설계 실효FAR 표기가 stale app-shell 캐시에 가려지지 않도록
+//        구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v449-design-far-propagation";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
