@@ -176,6 +176,12 @@ interface DesignData {
   buildingType: string | null;
   bcr: number | null;
   far: number | null;
+  // ★설계스튜디오 실효FAR 전파 봉합(additive) — far가 실제 실효값(통합/실효/조례·구조상한)
+  //   근거로 산정됐는지(true), 아니면 실효 미확보로 법정상한(national)에 폴백한 값인지(false)를
+  //   함께 기록한다. 미확보(구 스냅샷 등)면 undefined — 하류는 "실효 여부 불명"으로 취급(무날조).
+  //   하류(MetricBar·CadBimIntegrationPanel 등)가 "조용한 법정 100% 확정"처럼 보이는 걸 막고
+  //   정직 배지("법정상한 기준")를 표기하는 근거로 쓴다.
+  farIsEffective?: boolean | null;
   // 설계가 계산에 사용한 용도지역(정규화 코드/한글). 부지분석(siteAnalysis)에 용도지역이 없고
   //   사용자가 설계 폼에서 직접 입력/시드한 경우, 상단 ContextHeader가 "용도지역 —"으로만 뜨던
   //   문제를 해소하기 위한 폴백 소스(ContextHeader가 siteAnalysis 용도지역 부재 시 이 값을 "직접

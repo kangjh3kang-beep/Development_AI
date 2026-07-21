@@ -63,7 +63,7 @@ async def get_mass_reference(
                 "median_far_pct": row.get("median_far_pct"),
                 "median_floors": row.get("median_floors"),
                 "median_total_area_sqm": row.get("median_total_area_sqm"),
-                "source": "mass_backbone(building_registry)",
+                "source": "지자체 건축물대장 실측 통계",
                 "note": "이 지역 같은 종류 건축물의 실측 중앙값(전형 규모) — 설계/사업성 참고용.",
             }
     return None

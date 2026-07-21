@@ -87,3 +87,55 @@ describe("MetricBar — 설계 산출 상태 분기(Pillar E)", () => {
     expect(screen.queryByText("설계 산출 대기")).not.toBeInTheDocument();
   });
 });
+
+// ── 설계스튜디오 실효FAR 전파 봉합 — designData.far가 설계 산출값이어도, 그 값이 실효 한도
+//    근거가 아니라 법정상한 폴백(farIsEffective===false)이면 "법정상한 기준"으로 정직 표기한다.
+//    종전엔 designData.far가 있으면 무조건 배지 없이 표시돼, 법정폴백(예: 자연녹지 100%)이
+//    확정 실효값처럼 조용히 보였다. ──
+describe("MetricBar — designData.farIsEffective 정직 배지(설계스튜디오 실효FAR 전파 봉합)", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("designData.far가 있고 farIsEffective=false면 '법정상한 기준' 배지를 표기한다", () => {
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: "자연녹지지역",
+      }),
+      designData: makeDesign({
+        totalGfaSqm: 500,
+        floorCount: 4,
+        far: 100,
+        bcr: 20,
+        farIsEffective: false,
+      }),
+    });
+
+    render(<MetricBar />);
+
+    expect(screen.getByText("법정상한 기준")).toBeInTheDocument();
+  });
+
+  it("designData.far가 있고 farIsEffective=true면 배지를 표기하지 않는다(무회귀)", () => {
+    useProjectContextStore.setState({
+      siteAnalysis: makeSite({
+        address: "서울특별시 강남구 역삼동 737",
+        landAreaSqm: 500,
+        zoneCode: "자연녹지지역",
+      }),
+      designData: makeDesign({
+        totalGfaSqm: 400,
+        floorCount: 4,
+        far: 80,
+        bcr: 20,
+        farIsEffective: true,
+      }),
+    });
+
+    render(<MetricBar />);
+
+    expect(screen.queryByText("법정상한 기준")).not.toBeInTheDocument();
+  });
+});

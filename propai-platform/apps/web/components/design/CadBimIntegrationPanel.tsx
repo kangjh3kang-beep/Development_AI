@@ -142,6 +142,9 @@ interface DesignSpec {
   // ★/mass 호출이 네트워크 오류 등으로 실패해 "추정 기본값"으로 채워졌는지 표시(정직표기).
   //  true면 화면에 "기본값 사용 중" 오버레이를 띄워 산출값으로 오인되지 않도록 한다. 기본 false.
   isFallback?: boolean;
+  // ★설계스튜디오 실효FAR 전파 봉합(정직 배지) — 적용된 bcr/far가 실효 한도(통합/실효/조례) 근거인지,
+  //  실효 미확보로 법정상한(national)에 폴백했는지(false). 부지분석 자체가 없으면 null(판정 불가).
+  farReliable?: boolean | null;
 }
 
 // 3D 렌더: 서버 glb(scene)가 있으면 그것을, 없으면 spec 기반 절차생성 모델을 표시.
@@ -833,6 +836,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     const use = mapUse(designData?.buildingType);
     const floors = designData?.floorCount || undefined;
     const gfa = designData?.totalGfaSqm || undefined;
+    // ★설계스튜디오 실효FAR 전파 봉합(정직 배지 근거) — 부지분석 실효 한도(통합/실효/조례) 확보
+    //   여부를 한 번만 계산해 이 함수의 모든 spec 산출 경로(매스 재사용·/mass 성공·폴백)에서
+    //   공유한다. basis="national"(법정폴백)이면 false, 부지분석 자체가 없으면 null(판정 불가).
+    const farRes = resolveFarWithBasis(siteAnalysis);
+    const farReliableNow = farRes ? farRes.basis !== "national" : null;
 
     // ── (0) 확정 매스(massGeom) 재사용 — site/generate가 정한 매스가 있으면 /mass 재산출 생략 ──
     // 왜(쉬운 설명): 설계 생성 단계가 정한 건물 덩어리(podium-tower 포함)를 그대로 3D로 그린다.
@@ -866,6 +874,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           ? { width: mg.tower.widthM ?? w, depth: mg.tower.depthM ?? d, floors: mg.tower.floors ?? 0 }
           : null,
         isFallback: false, // site/generate 확정 매스(추정 기본값 아님)
+        farReliable: farReliableNow,
       });
       setSpecLoading(false);
       return;
@@ -906,9 +915,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     // ★WP-U2a: 실효 근거 정직 전파(additive) — 실효/통합 계층이면 SSOT(calc_effective_far)
     //   산정 성공(reliable=true), 법정상한 폴백(national)이면 false. farBasis 라벨(예 "구조상한
     //   (건폐율×층수)")은 있을 때만 동봉 — design run 메타(rule_trace)의 "조례" 오인 방지(무날조).
-    const farResMass = resolveFarWithBasis(siteAnalysis);
-    if (farResMass && farResMass.value > 0) {
-      body.far_reliable = farResMass.basis !== "national";
+    //   ★farRes/farReliableNow는 resolveSpec 상단에서 1회 계산해 공유(중복 리졸버 호출 제거).
+    if (farRes && farRes.value > 0) {
+      body.far_reliable = farReliableNow;
       if (siteAnalysis?.farBasis) body.far_basis = siteAnalysis.farBasis;
     }
 
@@ -931,6 +940,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
       total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
       isFallback: true,  // ★/mass 실패 → 역산 추정 기본값. 정직 오버레이('추정치') 발화용.
+      farReliable: farReliableNow,
     };
 
     try {
@@ -952,14 +962,20 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         land_area_sqm: landArea, zone_code: zone, building_use: use,
         building_type: designData?.buildingType ?? null,
         gfa: gfa ?? null,
-        bcr: designData?.bcr ?? m.bcr_pct ?? null,
-        far: designData?.far ?? m.far_pct ?? null,
+        // ★설계스튜디오 실효FAR 전파 봉합: 백엔드 매스엔진이 실제 산출한 실현값(m.bcr_pct/m.far_pct)을
+        //   우선한다(역전 — 종전엔 designData.far/bcr가 항상 이겨서, 부지분석 SSOT 갱신 전에 store에
+        //   영속된 값이나 법정폴백값이 실제 산출값을 절대 못 넘어서지 못했다). /mass 바디에는
+        //   ordinance_far_pct/ordinance_bcr_pct(공용 리졸버 산출)를 이미 주입하므로, m.far_pct/
+        //   m.bcr_pct는 그 실효 한도를 반영한 산출 결과다(정본). designData는 값이 없을 때만 폴백.
+        bcr: m.bcr_pct ?? designData?.bcr ?? null,
+        far: m.far_pct ?? designData?.far ?? null,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
         // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(backend width_m/depth_m/floors).
         podium: m.podium ? { width: m.podium.width_m, depth: m.podium.depth_m, floors: m.podium.floors } : null,
         tower: m.tower ? { width: m.tower.width_m, depth: m.tower.depth_m, floors: m.tower.floors } : null,
         isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
+        farReliable: farReliableNow,
       });
       // ★C2R 계약 환류 — /mass 응답이 동봉한 m.compliance(envelope_result·geometry_invariants)를
       //   store에 저장(공용 헬퍼). 종전엔 m의 치수만 읽고 m.compliance를 통째로 버렸다(감사 적발).
@@ -1634,6 +1650,17 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               title="네트워크 오류로 매스 산출에 실패했습니다. 대지·개요에서 역산한 추정 기본값을 표시 중입니다. '개요 재적용'으로 다시 시도하세요."
             >
               <AlertTriangle className="size-3" aria-hidden />네트워크 오류로 기본값 사용 중 · 추정치
+            </span>
+          )}
+          {/* ★설계스튜디오 실효FAR 전파 봉합 — 실효 한도(통합/실효/조례)를 확보하지 못해 위 건폐율/
+              용적률이 법정상한으로 폴백됐음을 정직 표기(조용한 100% 확정 오인 방지). isFallback이면
+              위 배지가 이미 "산출값 아님"을 알리므로 중복 표기하지 않는다. */}
+          {!spec?.isFallback && spec?.farReliable === false && (
+            <span
+              className="flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]"
+              title="실효 한도(조례·계획 반영)를 확보하지 못해 법정상한 기준으로 산정했습니다. 부지분석을 실행하면 정밀화됩니다."
+            >
+              <AlertTriangle className="size-3" aria-hidden />실효 한도 미산정 · 법정상한 기준
             </span>
           )}
           {!designData?.totalGfaSqm && (

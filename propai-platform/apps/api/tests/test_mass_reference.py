@@ -31,7 +31,9 @@ def test_get_mass_reference_normalizes_label_and_returns_typical(monkeypatch):
     assert seen["building_type"] == "오피스텔"   # 라벨 정규화
     assert out["region"] == "분당구" and out["sample_count"] == 30
     assert out["median_bcr_pct"] == 60.0 and out["median_far_pct"] == 600.0
-    assert out["source"].startswith("mass_backbone")
+    # ★사용자向 라벨(코드 심볼 노출 금지) — "mass_backbone(building_registry)" 같은 내부 식별자 대신
+    #   평이한 한국어 출처명을 노출한다(mass_reference.py get_mass_reference 정직 라벨 계약).
+    assert out["source"] == "지자체 건축물대장 실측 통계"
 
 
 def test_get_mass_reference_skips_missing_bcr_far(monkeypatch):

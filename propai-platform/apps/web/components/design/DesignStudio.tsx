@@ -14,7 +14,7 @@ import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } f
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis, resolveBcrWithBasis } from "@/lib/zoning-ssot";
 import { resolveCanonicalFloors, hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
@@ -517,25 +517,29 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정)로 일원화 — 다필지에서는 통합 실효가
     //   대표 1필지 실효를 대체한다(인벨로프 카드·사업개요와 일관). 주소 불일치 잔류 스냅샷이 다른
     //   부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedFar = resolveFarPct(siteAnalysis);
+    const resolvedFarRes = resolveFarWithBasis(siteAnalysis);
     const effFarPct =
-      siteMatch !== "mismatch" && resolvedFar != null && resolvedFar > 0
-        ? resolvedFar
+      siteMatch !== "mismatch" && resolvedFarRes != null && resolvedFarRes.value > 0
+        ? resolvedFarRes.value
         : null;
     const farUsed = effFarPct ?? spec.floorAreaRatioMax; // 적용 용적률(%) — 실효 우선, 법정 폴백
-    const farIsEffective = effFarPct != null;            // 실효값 적용 여부(라벨·근거 표기용)
+    // ★실효 여부는 값 존재가 아니라 basis 로 판정 — resolveFarPct 는 법정상한(national)도 값으로
+    //   돌려주므로 `!= null` 판정은 법정폴백을 "실효"로 오표기한다(R1 P2 — CadBim/seed 의
+    //   basis !== "national" 술어와 상반 라벨이 나던 모순 봉합. 판정 술어를 전 표면 동일하게).
+    const farIsEffective = effFarPct != null && resolvedFarRes!.basis !== "national";
     const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     // 실효 건폐율 우선: FAR과 동일하게 resolveBcrPct(통합 > 실효 > 법정)가 있으면 법정상한
     // (buildingCoverageMax) 대신 사용. 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch"
     // 조건 동일하게 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedBcr = resolveBcrPct(siteAnalysis);
+    const resolvedBcrRes = resolveBcrWithBasis(siteAnalysis);
     const effBcrPct =
-      siteMatch !== "mismatch" && resolvedBcr != null && resolvedBcr > 0
-        ? resolvedBcr
+      siteMatch !== "mismatch" && resolvedBcrRes != null && resolvedBcrRes.value > 0
+        ? resolvedBcrRes.value
         : null;
     const bcrUsed = effBcrPct ?? spec.buildingCoverageMax;  // 적용 건폐율(%) — 실효 우선, 법정 폴백
-    const bcrIsEffective = effBcrPct != null;               // 실효값 적용 여부(라벨·근거 표기용)
+    // ★FAR 과 동일 — basis 기준 판정(법정폴백을 실효로 오표기 금지, R1 P2).
+    const bcrIsEffective = effBcrPct != null && resolvedBcrRes!.basis !== "national";
     const buildableArea = area * (bcrUsed / 100);
     const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
     const heightPerFloor = Number(form.floorHeight) || 3.3;
@@ -678,14 +682,19 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
-  const seedEffectiveFarPct =
-    siteMatch !== "mismatch"
-      ? (siteAnalysis?.integratedFarEffPct ?? siteAnalysis?.effectiveFarPct ?? siteAnalysis?.ordinance?.effectiveFar ?? null)
-      : null;
-  const seedEffectiveBcrPct =
-    siteMatch !== "mismatch"
-      ? (siteAnalysis?.integratedBcrEffPct ?? siteAnalysis?.effectiveBcrPct ?? siteAnalysis?.ordinance?.effectiveBcr ?? null)
-      : null;
+  // ★SSOT 일원화(국소 리졸버 제거): 종전엔 이 두 값만 ordinance.effectiveFar/effectiveBcr를 직접
+  //   읽어(3순위 폴백) "지역 실측 전형 매스 비교" 카드에만 실효 80%가 반영되고, 나머지 화면
+  //   (자동계산 칩·법규 체크리스트·MetricBar·CAD/BIM)은 공용 리졸버(3단만 지원)라 법정 100%로
+  //   낙하했다. 이제 공용 리졸버(resolveFarWithBasis — 4단: 통합>실효>법정>조례실효, 다필지는
+  //   조례 계층 자동 스킵)를 그대로 호출한다(중복 로직 제거·SSOT 일원화).
+  //   단, 이 두 값은 "법정상한 그대로"를 실효값으로 오인 표기하지 않도록 basis=national(법정폴백)은
+  //   여전히 제외한다 — SeedDesignMassComparison이 이 값을 받으면 far_reliable=true·백엔드
+  //   applied_limit_source="site_analysis_effective_limits"("조례·계획 실효 한도 반영" 배지)로
+  //   승격하므로, 법정상한을 그대로 흘려보내면 "실효 반영"이라는 거짓 배지가 뜬다(무날조 유지).
+  const farRes = siteMatch !== "mismatch" ? resolveFarWithBasis(siteAnalysis) : null;
+  const seedEffectiveFarPct = farRes && farRes.basis !== "national" ? farRes.value : null;
+  const bcrRes = siteMatch !== "mismatch" ? resolveBcrWithBasis(siteAnalysis) : null;
+  const seedEffectiveBcrPct = bcrRes && bcrRes.basis !== "national" ? bcrRes.value : null;
 
   // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.
   // BIM(ProjectBimWorkspaceClient)이 designData.totalGfaSqm을 쓰도록 하여
@@ -746,6 +755,12 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       floorCount,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
+      // ★설계스튜디오 실효FAR 전파 봉합: far가 실제 실효값(통합/실효/조례)인지, 아니면 법정폴백
+      //   (national)인지를 designData에 함께 기록한다. 종전엔 이 값이 far 숫자로만 store에
+      //   영속돼(설계 산출 SSOT 단일 출처), CAD/BIM·MetricBar 등 하류 소비처가 "법정 100%가
+      //   확정 실효값"인지 "실효 미확보 폴백"인지 구분할 방법이 없었다. false여도 far는 그대로
+      //   기록(최소 침습 — 값 자체는 유지하고 플래그만 동반해 하류가 정직 배지로 구분).
+      farIsEffective: calc.farIsEffective,
       buildingType: form.buildingUse,
       zoneCode: userZoneForRecord ?? siteZoneForRecord ?? null,
       massGeom,
@@ -759,6 +774,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       cur.zoneCode === next.zoneCode &&
       cur.bcr === next.bcr &&
       cur.far === next.far &&
+      (cur.farIsEffective ?? false) === next.farIsEffective &&
       cur.buildingType === next.buildingType &&
       curMassW === (massGeom?.buildingWidthM ?? null);
     if (unchanged) return;
@@ -1078,6 +1094,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
             </div>
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
+            {/* ★정직 배지 — 실효 한도(통합/실효/조례·구조상한)를 확보하지 못해 법정상한으로
+                폴백했음을 명시(조용한 100% 확정 오인 방지). 실효 확보 시엔 표시하지 않는다(무회귀). */}
+            {(!calc.farIsEffective || !calc.bcrIsEffective) && (
+              <p className="mb-3 inline-flex items-start gap-1.5 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2 text-[11px] leading-relaxed text-[var(--status-warning)]">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                실효 한도 미산정 — 법정상한 기준(부지분석 실행 시 정밀화)
+              </p>
+            )}
             {/* ★무날조: 적용값 vs 법정상한을 '실제 비교'한다. 적용 건폐율/용적률은 종상향·인센티브로
                 법정상한을 넘을 수 있으므로(실효값) 항상 '적합'으로 단정하지 않고 실비교로 적합/초과를 가린다.
                 종전 자가비교(적용=한도) 행은 제거. 높이는 법정 제한이 없으면(상업·준주거) '제한 없음'으로 정직 표기. */}
