@@ -143,9 +143,43 @@ class RegulationAnalysisService:
         #   rebuild_legal_basis_annotations의 "139.6% vs 200%" 전례와 동일 클래스). integrated가 None일
         #   때만(진짜 단일필지 또는 통합실패 폴백 — 이 경우 eff_far_pct/eff_bcr_pct는 대표값 그대로라
         #   구조상한과 정합) 구조상한 상세를 노출한다(정직 — 다필지 혼합은 미표시가 안전).
-        _show_structural = bool(eff) and not integrated
+        # ★근거체인 절단 수정(2026-07-19 라이브 신고 — AI 검증이 "far.effective=80 근거 미명시"
+        #   경고): 위 가드는 혼합존의 산술 거짓(blended 40%×대표 4층=대표 80%)을 막으려는 것인데,
+        #   **동질존**(zone_mix 1종 — 예: 12필지 전부 자연녹지)까지 근거를 숨겨 실효 80%가
+        #   무근거 하드코딩처럼 보였다. 동질존에선 면적가중 blended = 단일존 실효치라 구조상한
+        #   (건폐×층수상한)·far_basis가 전체 집합에 그대로 유효 — 산술 거짓이 성립하지 않는다.
+        _zone_mix = integrated.get("zone_mix") if isinstance(integrated, dict) else None
+        _uniform_zone = (
+            bool(_zone_mix)
+            and all(z.get("zone") for z in _zone_mix if isinstance(z, dict))
+            and len({z.get("zone") for z in _zone_mix if isinstance(z, dict)}) == 1
+        )
+        # ★R1 하드닝(MAJOR): 동질존이어도 **시군구가 다르면** 필지별 조례 BCR이 달라
+        #   blended(면적가중)가 대표필지 구조상한과 발산할 수 있다(예: blended 19%×4층 문구에
+        #   대표 80%가 붙는 산술 거짓 — 이 가드가 원래 봉인하려던 결함 클래스). 동질존 표시는
+        #   blended가 대표 구조상한 산식과 ε(0.5%p) 내로 정합할 때만 허용하고, 발산하면 기존
+        #   안전 동작(미표시=정직)으로 폴백한다.
+        _struct_consistent = True
+        if integrated and _uniform_zone and eff:
+            _cap = eff.get("structural_cap_pct")
+            _fc = eff.get("floor_cap")
+            if _cap is not None and _fc and eff_bcr_pct is not None:
+                _struct_consistent = abs(float(eff_bcr_pct) * float(_fc) - float(_cap)) <= 0.5
+            if _struct_consistent and _cap is not None and eff_far_pct is not None:
+                _struct_consistent = abs(float(_cap) - float(eff_far_pct)) <= 0.5
+        _show_structural = bool(eff) and (not integrated or (_uniform_zone and _struct_consistent))
         # 구조상한(건폐율×층수) 근거를 높이 카드 칩으로 노출(층수제한 zone만) — 레지스트리 단일출처.
         floor_cap = eff.get("floor_cap") if (eff and _show_structural) else None
+        # 근거 텍스트를 응답 표면에 명시(additive) — AI 검증·프론트·전문가 패널이 동일 근거를 본다.
+        #   far.effective_basis: "건폐 20%×4층=80% 구조상한(시행령 별표17)" 류의 산정 근거.
+        #   height.basis: zl(height_basis) 우선, 없으면 구조상한 근거(floor_cap_basis)로 보충.
+        if _show_structural and eff:
+            _fb = eff.get("far_basis")
+            if _fb and isinstance(limits.get("far"), dict):
+                limits["far"]["effective_basis"] = _fb
+            _fcb = eff.get("floor_cap_basis")
+            if _fcb and isinstance(limits.get("height"), dict) and not limits["height"].get("basis"):
+                limits["height"]["basis"] = _fcb
         if floor_cap and isinstance(limits.get("height"), dict):
             try:
                 from app.services.legal.legal_reference_registry import get_legal_refs
@@ -617,6 +651,14 @@ class RegulationAnalysisService:
             logger.warning("규제 LLM 해석 실패, 폴백", err=str(e)[:100])
             return {
                 "generated": False,
+                # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
+                # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
+                "fallback_reason": (
+                    "timeout" if "Timeout" in type(e).__name__
+                    else "parse" if type(e).__name__ in ("JSONDecodeError", "ValueError", "KeyError")
+                    else "import" if type(e).__name__ in ("ImportError", "ModuleNotFoundError")
+                    else "provider"
+                ),
                 "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
                 "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
                 "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
