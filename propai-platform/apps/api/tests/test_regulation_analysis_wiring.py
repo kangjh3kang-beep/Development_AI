@@ -231,3 +231,60 @@ async def test_no_floor_cap_zone_keeps_full_effective_far_250():
     labels = {e.get("label") for e in res.get("evidence") or []}
     assert "구조상한 실효 용적률" not in labels
     assert res["limits"]["height"].get("legal_ref") is None
+
+
+# ── 근거체인 절단 수정(2026-07-19) — 동질존 다필지 구조상한 근거 표면화 핀 ──
+
+def _integrated(zone_mix, far=80.0, bcr=20.0):
+    return {
+        "total_area_sqm": 12079.0, "parcel_count": len(zone_mix) + 10,
+        "dominant_zone": zone_mix[0]["zone"], "zone_mix": zone_mix,
+        "blended_far_eff_pct": far, "blended_bcr_eff_pct": bcr,
+    }
+
+
+async def _analyze_multi(zone_mix):
+    parcels = [{"address": f"신봉동 56-{i}", "area_sqm": 100.0, "zone_type": zone_mix[0]["zone"]}
+               for i in range(2)]
+    with patch(
+        "app.services.land_intelligence.land_info_service.LandInfoService.collect_comprehensive",
+        new=AsyncMock(return_value=_natural_green_comp()),
+    ), patch(
+        "app.services.land_intelligence.comprehensive_analysis_service.ComprehensiveAnalysisService._integrated_context",
+        new=AsyncMock(return_value=_integrated(zone_mix)),
+    ):
+        return await RegulationAnalysisService().analyze(
+            "경기도 용인시 수지구 신봉동 56-16", pnu=None, use_llm=False,
+            with_senior=False, parcels=parcels,
+        )
+
+
+async def test_uniform_multi_parcel_surfaces_structural_basis():
+    """★동질존 다필지(12필지 전부 자연녹지)는 구조상한 근거를 표면화한다.
+
+    종전: not integrated 가드가 동질존까지 숨겨 far.effective=80이 무근거 하드코딩처럼
+    보였다(AI 검증 '근거 미명시' 경고·라이브 신고). 동질존은 blended=단일존 실효치라
+    구조상한(건폐20%×4층=80%)·별표17 근거가 전체 집합에 유효 — 산술 거짓 불성립.
+    """
+    res = await _analyze_multi([{"zone": "자연녹지지역", "area_sqm": 12079.0, "share_pct": 100.0}])
+    far = res["limits"]["far"]
+    assert far["effective"] == 80.0
+    assert far.get("effective_basis"), "동질존 다필지엔 실효 산정 근거가 표면화되어야 함"
+    hgt = res["limits"]["height"]
+    assert hgt.get("basis"), "높이 근거(별표17 층수상한)가 표면화되어야 함"
+    assert hgt.get("legal_ref", {}).get("key") == "green_zone_floor_cap"
+
+
+async def test_mixed_multi_parcel_keeps_basis_hidden():
+    """혼합존 다필지는 기존 가드 보존 — 대표필지 근거를 blended 옆에 노출하면 산술 거짓."""
+    res = await _analyze_multi([
+        {"zone": "자연녹지지역", "area_sqm": 8000.0, "share_pct": 66.0},
+        {"zone": "제2종일반주거지역", "area_sqm": 4079.0, "share_pct": 34.0},
+    ])
+    assert not res["limits"]["far"].get("effective_basis"), "혼합존은 근거 미표시(정직)가 계약"
+
+
+async def test_single_parcel_far_effective_basis_additive():
+    """단일필지도 far.effective_basis 신설 필드가 실린다(additive — AI 검증 근거 확인용)."""
+    res = await _analyze_natural_green()
+    assert res["limits"]["far"].get("effective_basis"), "단일필지 실효 근거 표면화"
