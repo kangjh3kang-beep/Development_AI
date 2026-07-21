@@ -288,3 +288,26 @@ async def test_single_parcel_far_effective_basis_additive():
     """단일필지도 far.effective_basis 신설 필드가 실린다(additive — AI 검증 근거 확인용)."""
     res = await _analyze_natural_green()
     assert res["limits"]["far"].get("effective_basis"), "단일필지 실효 근거 표면화"
+
+
+async def test_uniform_but_divergent_blended_hides_basis():
+    """★R1 하드닝 — 동질존이어도 blended(19%×4=76)≠대표 구조상한(80)이면 미표시(산술 거짓 방지).
+
+    시군구 상이 조례로 필지별 BCR이 갈리는 좁은 케이스 — 표시하면 evidence가
+    "실효 건폐율 19% × 4층 = 80%" 같은 가시적 거짓을 만든다. ε(0.5%p) 밖이면 숨김이 정직.
+    """
+    zone_mix = [{"zone": "자연녹지지역", "area_sqm": 12079.0, "share_pct": 100.0}]
+    parcels = [{"address": f"신봉동 56-{i}", "area_sqm": 100.0, "zone_type": "자연녹지지역"}
+               for i in range(2)]
+    with patch(
+        "app.services.land_intelligence.land_info_service.LandInfoService.collect_comprehensive",
+        new=AsyncMock(return_value=_natural_green_comp()),
+    ), patch(
+        "app.services.land_intelligence.comprehensive_analysis_service.ComprehensiveAnalysisService._integrated_context",
+        new=AsyncMock(return_value=_integrated(zone_mix, far=76.0, bcr=19.0)),
+    ):
+        res = await RegulationAnalysisService().analyze(
+            "경기도 용인시 수지구 신봉동 56-16", pnu=None, use_llm=False,
+            with_senior=False, parcels=parcels,
+        )
+    assert not res["limits"]["far"].get("effective_basis"), "발산 동질존은 근거 미표시(ε 가드)"

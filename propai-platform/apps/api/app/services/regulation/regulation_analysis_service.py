@@ -154,7 +154,20 @@ class RegulationAnalysisService:
             and all(z.get("zone") for z in _zone_mix if isinstance(z, dict))
             and len({z.get("zone") for z in _zone_mix if isinstance(z, dict)}) == 1
         )
-        _show_structural = bool(eff) and (not integrated or _uniform_zone)
+        # ★R1 하드닝(MAJOR): 동질존이어도 **시군구가 다르면** 필지별 조례 BCR이 달라
+        #   blended(면적가중)가 대표필지 구조상한과 발산할 수 있다(예: blended 19%×4층 문구에
+        #   대표 80%가 붙는 산술 거짓 — 이 가드가 원래 봉인하려던 결함 클래스). 동질존 표시는
+        #   blended가 대표 구조상한 산식과 ε(0.5%p) 내로 정합할 때만 허용하고, 발산하면 기존
+        #   안전 동작(미표시=정직)으로 폴백한다.
+        _struct_consistent = True
+        if integrated and _uniform_zone and eff:
+            _cap = eff.get("structural_cap_pct")
+            _fc = eff.get("floor_cap")
+            if _cap is not None and _fc and eff_bcr_pct is not None:
+                _struct_consistent = abs(float(eff_bcr_pct) * float(_fc) - float(_cap)) <= 0.5
+            if _struct_consistent and _cap is not None and eff_far_pct is not None:
+                _struct_consistent = abs(float(_cap) - float(eff_far_pct)) <= 0.5
+        _show_structural = bool(eff) and (not integrated or (_uniform_zone and _struct_consistent))
         # 구조상한(건폐율×층수) 근거를 높이 카드 칩으로 노출(층수제한 zone만) — 레지스트리 단일출처.
         floor_cap = eff.get("floor_cap") if (eff and _show_structural) else None
         # 근거 텍스트를 응답 표면에 명시(additive) — AI 검증·프론트·전문가 패널이 동일 근거를 본다.
@@ -638,9 +651,14 @@ class RegulationAnalysisService:
             logger.warning("규제 LLM 해석 실패, 폴백", err=str(e)[:100])
             return {
                 "generated": False,
-                # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가(타임아웃/파싱/
-                # 프로바이더 구분 필요). 예외 클래스명만 노출(내부 메시지·스택 비노출).
-                "fallback_reason": type(e).__name__,
+                # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
+                # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
+                "fallback_reason": (
+                    "timeout" if "Timeout" in type(e).__name__
+                    else "parse" if type(e).__name__ in ("JSONDecodeError", "ValueError", "KeyError")
+                    else "import" if type(e).__name__ in ("ImportError", "ModuleNotFoundError")
+                    else "provider"
+                ),
                 "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
                 "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
                 "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
