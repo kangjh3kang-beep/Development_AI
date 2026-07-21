@@ -207,7 +207,17 @@ export function MetricBar({ className }: { className?: string }) {
   const far = designFar ?? siteFar?.value ?? null;
   // 부지 폴백(설계 산출값 아님)일 때만 근거 배지 — 법정상한/실효 정직 구분.
   const bcrNote = designBcr == null && siteBcr ? limitBasisLabel(siteBcr.basis) : null;
-  const farNote = designFar == null && siteFar ? limitBasisLabel(siteFar.basis) : null;
+  // ★설계스튜디오 실효FAR 전파 봉합: 설계 산출값(designFar)이 있어도, 그 값이 실효 한도(통합/
+  //   실효/조례) 근거가 아니라 실효 미확보로 법정상한에 폴백한 값이면(farIsEffective===false)
+  //   "법정상한 기준"으로 정직 표기한다. 종전엔 designFar가 있으면 무조건 배지 없이 표시돼
+  //   법정폴백(예: 자연녹지 100%)이 확정 실효값처럼 보였다(조용한 100% 확정 오인).
+  const farFallbackToLegal = designFar != null && designData?.farIsEffective === false;
+  const farNote =
+    designFar == null && siteFar
+      ? limitBasisLabel(siteFar.basis)
+      : farFallbackToLegal
+        ? "법정상한 기준"
+        : null;
   // 연면적·정본 층수·세대수 — 설계 산출(designData)에서만. 미확보 시 null → "—".
   const gfa = designData?.totalGfaSqm ?? null;
   const floors = designData?.floorCount ?? null; // ★INC1이 canonicalFloors로 기록한 정본 층수
@@ -390,7 +400,13 @@ export function MetricBar({ className }: { className?: string }) {
           label="용적률"
           value={fmtPct(far)}
           note={farNote}
-          noteTitle={siteFar ? basisTitle(siteFar.basis) : undefined}
+          noteTitle={
+            farFallbackToLegal
+              ? "실효 한도 미확보 — 설계값이 법정상한 기준으로 산정됨(부지분석 실행 시 정밀화)"
+              : siteFar
+                ? basisTitle(siteFar.basis)
+                : undefined
+          }
         />
         <Chip label="연면적" value={fmtSqm(gfa)} />
         <Chip label="층수" value={fmtCount(floors, "층")} />

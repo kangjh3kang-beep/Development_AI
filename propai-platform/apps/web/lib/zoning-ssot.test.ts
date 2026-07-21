@@ -188,10 +188,62 @@ describe("resolveFarWithBasis / resolveBcrWithBasis — 값 + 근거 계층(KPI 
     expect(resolveBcrPct(null)).toBeUndefined();
   });
 
-  it("limitBasisLabel — national만 '법정상한', 통합/실효는 '실효'", () => {
+  it("limitBasisLabel — national만 '법정상한', ordinance는 전용 라벨, 나머지(통합/실효)는 '실효'", () => {
     expect(limitBasisLabel("national")).toBe("법정상한");
     expect(limitBasisLabel("effective")).toBe("실효");
     expect(limitBasisLabel("integrated")).toBe("실효");
+    expect(limitBasisLabel("ordinance")).toBe("조례·구조상한 실효");
+  });
+});
+
+describe("resolveFarWithBasis / resolveBcrWithBasis — 4단계 조례·구조상한 실효 계층(설계스튜디오 전파 봉합)", () => {
+  it("단일필지: 통합/실효/법정이 모두 없고 ordinance.effectiveFar만 있으면 basis=ordinance", () => {
+    // 자연녹지 구조상한(건폐20%×4층=80%) 같은 시나리오 — 종전엔 DesignStudio 로컬 폴백에서만
+    // 보이고 공용 리졸버(자동계산 칩·법규체크·MetricBar·CAD/BIM)엔 반영되지 않던 결함.
+    expect(
+      resolveFarWithBasis({ ordinance: { effectiveFar: 80 } }),
+    ).toEqual({ value: 80, basis: "ordinance" });
+    expect(
+      resolveBcrWithBasis({ ordinance: { effectiveBcr: 20 } }),
+    ).toEqual({ value: 20, basis: "ordinance" });
+  });
+
+  it("우선순위: 통합 > 실효 > 법정 > 조례실효 — 상위 계층이 있으면 ordinance는 쓰이지 않는다", () => {
+    expect(
+      resolveFarWithBasis({
+        integratedFarEffPct: 192,
+        nationalFarPct: 100,
+        ordinance: { effectiveFar: 80 },
+      }),
+    ).toEqual({ value: 192, basis: "integrated" });
+    expect(
+      resolveFarWithBasis({ nationalFarPct: 100, ordinance: { effectiveFar: 80 } }),
+    ).toEqual({ value: 100, basis: "national" });
+  });
+
+  it("다필지(parcels.length>1)면 ordinance 계층을 건너뛴다(대표필지 오염 방지·PR#302 원칙)", () => {
+    // 법정/실효/통합이 전혀 없고 ordinance만 있는 다필지 — 대표 1필지 유래 값이 통합 SSOT를
+    // 오염시키지 않도록 이 계층 전체가 비활성화돼 null(무날조 — 없는 값을 지어내지 않음).
+    expect(
+      resolveFarWithBasis({
+        ordinance: { effectiveFar: 80 },
+        parcels: [{ pnu: "1" }, { pnu: "2" }],
+      }),
+    ).toBeNull();
+    // 단일필지(parcels 1개 이하)면 정상 활성화.
+    expect(
+      resolveFarWithBasis({ ordinance: { effectiveFar: 80 }, parcels: [{ pnu: "1" }] }),
+    ).toEqual({ value: 80, basis: "ordinance" });
+  });
+
+  it("ordinance.effectiveFar/effectiveBcr=0(미해결 잠정 시드)은 채택하지 않는다(무목업)", () => {
+    expect(resolveFarWithBasis({ ordinance: { effectiveFar: 0 } })).toBeNull();
+    expect(resolveBcrWithBasis({ ordinance: { effectiveBcr: 0 } })).toBeNull();
+  });
+
+  it("resolveFarPct/resolveBcrPct(하위호환 값-only)도 ordinance 계층을 동일하게 반영", () => {
+    expect(resolveFarPct({ ordinance: { effectiveFar: 80 } })).toBe(80);
+    expect(resolveBcrPct({ ordinance: { effectiveBcr: 20 } })).toBe(20);
   });
 });
 

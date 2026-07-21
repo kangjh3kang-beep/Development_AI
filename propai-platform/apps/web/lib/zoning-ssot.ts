@@ -309,6 +309,9 @@ type ResolvableSite = {
   nationalFarPct?: number | null;
   nationalBcrPct?: number | null;
   zoneCode?: string | null;
+  // 4번째 계층(ordinance) + 다필지 판정용(아래 resolveFarWithBasis 배경 설명 참조).
+  ordinance?: { effectiveFar?: number | null; effectiveBcr?: number | null } | null;
+  parcels?: unknown[] | null;
 } | null | undefined;
 
 /* ── 용적률/건폐율 리졸버 + '근거(basis)' 동봉(KPI 정직 라벨용) ──
@@ -320,9 +323,29 @@ type ResolvableSite = {
  *   반환해, 소비처가 "법정상한" vs "실효"를 정직하게 배지로 구분 표기하게 한다(SSOT — 값과 근거를
  *   한 곳에서 함께 도출). 무목업: 어떤 값도 없으면 null.
  */
-export type LimitBasis = "integrated" | "effective" | "national";
+export type LimitBasis = "integrated" | "effective" | "national" | "ordinance";
 
-/** 실효 용적률(%) + 근거 계층. 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 null. */
+/* ── 4번째 계층(ordinance) — DesignStudio 매스카드 전용 국소 폴백을 SSOT로 승격 ──
+ *
+ * 배경(부분 반영 버그): DesignStudio.tsx의 seedEffectiveFarPct/seedEffectiveBcrPct(지역 실측
+ *   전형 매스 비교 카드 전용)만 `siteAnalysis.ordinance.effectiveFar/effectiveBcr`를 3순위
+ *   폴백으로 봤고, 이 공용 리졸버(자동계산 칩·법규 체크리스트·MetricBar·CAD/BIM 등 전역 소비처)는
+ *   보지 않았다. 그 결과 자연녹지 실효 80%(구조상한)가 그 카드에만 반영되고 나머지 화면은
+ *   법정 100%로 조용히 낙하했다(같은 화면 모순 표기). 이 계층을 리졸버에 흡수해 모든 소비처가
+ *   같은 값을 보게 한다(SSOT 일원화 — 국소 중복 폴백은 DesignStudio.tsx에서 제거).
+ *
+ * ★다필지 오염 가드(위임 관계 명시): ordinance는 GlobalAddressSearch.tsx가 매 주소검색마다
+ *   대표 1필지 유래로 기록하는데(다필지 가드 없음 — 그 파일은 타 세션 claim이라 본 작업에서는
+ *   손대지 않는다), site-analysis/page.tsx의 승격 경로는 이미 다필지를 가드하지만 두 쓰기
+ *   경로가 공존해 완전 차단이 아니다. 근본적 쓰기측 오염 차단은 별도 세션 소관이므로, 이
+ *   리졸버(읽기측)에서 방어적으로 다필지(parcels.length>1)면 이 계층을 건너뛴다(PR#302 원칙 —
+ *   대표필지 값이 통합값을 이기지 못하게). 단일필지에서만 활성화(무회귀).
+ */
+function isMultiParcelSite(site: ResolvableSite): boolean {
+  return !!site && Array.isArray(site.parcels) && site.parcels.length > 1;
+}
+
+/** 실효 용적률(%) + 근거 계층. 통합(blended) > 단일 실효 > 법정 상한 > 조례·구조상한 실효 순. 미확보 시 null. */
 export function resolveFarWithBasis(
   site: ResolvableSite,
 ): { value: number; basis: LimitBasis } | null {
@@ -333,10 +356,16 @@ export function resolveFarWithBasis(
   if (effective != null) return { value: effective, basis: "effective" };
   const national = num(site.nationalFarPct);
   if (national != null) return { value: national, basis: "national" };
+  // 4단계: 조례·구조상한 실효(단일필지만 — 다필지는 대표필지 오염 방지로 건너뜀).
+  //   0은 "미해결 잠정 시드"(OrdinanceData 기본값)일 수 있어 >0만 채택(무목업).
+  if (!isMultiParcelSite(site)) {
+    const ordinanceFar = num(site.ordinance?.effectiveFar);
+    if (ordinanceFar != null && ordinanceFar > 0) return { value: ordinanceFar, basis: "ordinance" };
+  }
   return null;
 }
 
-/** 실효 건폐율(%) + 근거 계층. resolveFarWithBasis와 동형(통합 > 실효 > 법정). 미확보 시 null. */
+/** 실효 건폐율(%) + 근거 계층. resolveFarWithBasis와 동형(통합 > 실효 > 법정 > 조례실효). 미확보 시 null. */
 export function resolveBcrWithBasis(
   site: ResolvableSite,
 ): { value: number; basis: LimitBasis } | null {
@@ -347,12 +376,18 @@ export function resolveBcrWithBasis(
   if (effective != null) return { value: effective, basis: "effective" };
   const national = num(site.nationalBcrPct);
   if (national != null) return { value: national, basis: "national" };
+  if (!isMultiParcelSite(site)) {
+    const ordinanceBcr = num(site.ordinance?.effectiveBcr);
+    if (ordinanceBcr != null && ordinanceBcr > 0) return { value: ordinanceBcr, basis: "ordinance" };
+  }
   return null;
 }
 
-/** 근거 계층 → 정직 라벨. 통합/실효는 "실효", 법정상한만 "법정상한"으로 구분(무날조). */
+/** 근거 계층 → 정직 라벨. 법정상한만 "법정상한", 조례·구조상한 실효는 별도 라벨, 나머지(통합/실효)는 "실효"(무날조). */
 export function limitBasisLabel(basis: LimitBasis): string {
-  return basis === "national" ? "법정상한" : "실효";
+  if (basis === "national") return "법정상한";
+  if (basis === "ordinance") return "조례·구조상한 실효";
+  return "실효";
 }
 
 // 실효 용적률(%) — 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 undefined.
