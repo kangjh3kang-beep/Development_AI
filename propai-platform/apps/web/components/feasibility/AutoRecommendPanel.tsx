@@ -15,6 +15,7 @@ import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { parcelAddressList } from "@/lib/parcel-rows";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
@@ -257,6 +258,14 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     const eff = effectiveLandAreaSqm(site);
     if (eff && eff > 0 && !landArea) {
       setLandArea(eff.toString());
+    }
+    // ★다필지 배선 절단 근본수정(2026-07-19 전역 스윕): 복원 effect가 address·landArea·region은
+    //   챙기면서 parcels만 누락해, 다필지 컨텍스트로 진입 시 parcels=[] → 개발방식(Development
+    //   ScenarioCard) 블록이 통째로 사라졌다. landArea를 통합면적으로 미리 채우는 것 자체가
+    //   다필지 계승 의도이므로 parcels도 같은 규약(로컬 미입력일 때만)으로 동기화한다.
+    if (parcels.length === 0) {
+      const storeAddrs = parcelAddressList(site.parcels);
+      if (storeAddrs.length > 1) setParcels(storeAddrs);
     }
     if (site.address) {
       const match = REGIONS.find((r) => site.address!.includes(r) || site.address!.includes(r.replace("특별시","").replace("광역시","").replace("도","")));

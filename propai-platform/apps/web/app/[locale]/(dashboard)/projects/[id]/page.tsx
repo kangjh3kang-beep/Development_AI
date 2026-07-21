@@ -14,6 +14,7 @@ import { apiClient } from "@/lib/api-client";
 import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { parcelAddressList } from "@/lib/parcel-rows";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
@@ -68,6 +69,7 @@ export default function ProjectDetailPage() {
 
   // 복원된 분석(스냅샷) 구독 — 히어로 PNU/용도지역/ROI를 실데이터로 표시
   const ctxSite = useProjectContextStore((s) => s.siteAnalysis);
+  const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const ctxFeas = useProjectContextStore((s) => s.feasibilityData);
 
   // 원장의 통합 분석 보고서(payload) — 있으면 대시보드 분석이력과 동일한 보고서형 상세 렌더
@@ -425,7 +427,18 @@ export default function ProjectDetailPage() {
       {/* ── 통합 분석 보고서(원장 기반) — 대시보드 분석이력과 동일한 보고서형 상세 ── */}
       {ledgerReport && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-          <PipelineResultDetail result={ledgerReport as never} />
+          {/* ★다필지 배선 절단 근본수정(2026-07-19 전역 스윕): addresses 미전달 시 SiteAnalysisDetail이
+              대표 1필지로 강등돼 통합보고서 구획도가 12필지→1필지로 표시됐다. store 다필지를 전달하되,
+              ★교차 프로젝트 오염 방지 — 이 store가 현재 프로젝트(id)로 스코프될 때만(:106 복원 가드와
+              동일 계약). 미일치·단일필지면 undefined로 두어 기존 대표필지 폴백을 유지한다. */}
+          <PipelineResultDetail
+            result={ledgerReport as never}
+            addresses={
+              ctxProjectId === id && (ctxSite?.parcels?.length ?? 0) > 1
+                ? parcelAddressList(ctxSite?.parcels)
+                : undefined
+            }
+          />
         </motion.div>
       )}
 

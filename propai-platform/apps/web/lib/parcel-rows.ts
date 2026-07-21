@@ -113,3 +113,29 @@ export function parcelAddressList(
     .map((r) => r.address)
     .filter((a): a is string => Boolean(a));
 }
+
+/**
+ * 분석 대상 필지 주소 목록(SSOT) — 분석 호출과 지도/등기/시뮬 렌더가 **동일 목록**을 쓰도록 공용화.
+ *
+ * ★배선 절단 방지(2026-07-19): 종전 permits 페이지는 분석 호출엔 store 다필지를 포함하고
+ *   렌더 자식엔 대표주소만 넘겨, 12필지 선택 시 구획도·개발방식·등기가 1필지만 표시했다.
+ *   규칙: (1)수동 재검색(extra)이 있으면 그것을 다필지로 (2)없으면 store 다필지(siteAnalysis.parcels)로
+ *   폴백 — 컨텍스트 진입만으로 무수동 다필지 분석이 되도록. target(대표)은 항상 선두, 중복 제거·순서 보존.
+ */
+export function buildAnalysisParcelAddrs(
+  target: string,
+  extra: string[],
+  storeParcels: Parameters<typeof parcelDataToRows>[0],
+): string[] {
+  const t = (target || "").trim();
+  if (!t) return [];
+  const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
+  const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(storeParcels);
+  // 중복 제거(target·extra 간, store와의 중첩 모두) — 순서 보존.
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of [t, ...extraTrimmed, ...storeAddrs]) {
+    if (!seen.has(a)) { seen.add(a); out.push(a); }
+  }
+  return out;
+}

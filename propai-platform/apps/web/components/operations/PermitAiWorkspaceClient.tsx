@@ -31,7 +31,7 @@ import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { parcelAddressList } from "@/lib/parcel-rows";
+import { buildAnalysisParcelAddrs } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct, specialFactorLabels } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
@@ -121,17 +121,23 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   // 히스토리 카드 재조회 신호 — run() 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
   const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
 
+  // ★다필지 배선 절단 근본수정(2026-07-19 라이브 신고: 12필지 선택 → 구획도·개발방식·등기에
+  //   1필지만 반영). 종전엔 run()만 store 다필지(siteAnalysis.parcels)를 폴백에 포함하고,
+  //   렌더 자식(ParcelBoundaryMap·DevelopmentScenarioCard·RegistryBulkButton)엔 인라인
+  //   [addr, ...extra](스토어 다필지 누락)를 넘겨 대표주소 1개만 갔다. 단일 SSOT로 공용화 —
+  //   run()과 모든 렌더 자식이 이 동일 목록을 쓴다(주소 문자열 계약·중복 target 제거·순서 보존).
+  const analysisParcelAddrs = useMemo(
+    () => buildAnalysisParcelAddrs(addr || siteAnalysis?.address || "", extra, siteAnalysis?.parcels),
+    [addr, extra, siteAnalysis],
+  );
+
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
     if (!target) {
       setError("주소를 먼저 선택하거나 입력하세요.");
       return;
     }
-    // 수동 재검색(extra)이 있으면 그것으로, 없으면 store 다필지(siteAnalysis.parcels)로 폴백 —
-    //   33필지 컨텍스트로 진입해도 수동입력 없이 다필지 인허가 분석이 되도록(감사 P1). 주소 리스트 계약.
-    const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
-    const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(siteAnalysis?.parcels);
-    const parcels = [target, ...extraTrimmed, ...storeAddrs.filter((a) => a !== target)];
+    const parcels = analysisParcelAddrs;
     setLoading(true);
     setError("");
     setResult(null);
@@ -161,21 +167,18 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
     } finally {
       setLoading(false);
     }
-  }, [addr, extra, siteAnalysis, useLlm]);
+  }, [addr, siteAnalysis, useLlm, analysisParcelAddrs]);
 
   // 히스토리 대상(현재 입력) + 변동감지 시그니처 파트 — run() 내부와 동일한 필지 폴백 규칙을 미러링.
   //   백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(인허가는 옵션 없음→"")].
   const historyAddress = addr || siteAnalysis?.address || "";
   const historyPnu = siteAnalysis?.pnu || "";
   const historySignatureParts = useMemo(() => {
-    const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
-    const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(siteAnalysis?.parcels);
-    const parcels = historyAddress
-      ? [historyAddress, ...extraTrimmed, ...storeAddrs.filter((a) => a !== historyAddress)]
-      : [];
-    // parcelCount는 run()이 실제 전송하는 parcels(length>1일 때만 전송)와 동일 출처. 백엔드
-    // (permits.py) `len(req.parcels or []) or 1`을 그대로 미러(`|| 1`) — 단일필지(미전송)여도
-    // 백엔드는 1로 적재하므로 0이면 오탐.
+    // ★run()이 실제 보내는 목록과 동일 SSOT(buildAnalysisParcelAddrs) — 손수 미러링하면
+    //   시그니처와 분석 대상이 어긋나 변동감지가 오작동(중복 제거 규칙까지 일치해야 한다).
+    const parcels = buildAnalysisParcelAddrs(historyAddress, extra, siteAnalysis?.parcels);
+    // parcelCount는 백엔드(permits.py) `len(req.parcels or []) or 1`을 미러(`|| 1`) — 단일필지
+    // (미전송)여도 백엔드는 1로 적재하므로 0이면 오탐.
     return [historyAddress, historyPnu, String(parcels.length || 1), String(useLlm), optionsSummary(undefined)];
   }, [historyAddress, historyPnu, extra, siteAnalysis?.parcels, useLlm]);
 
@@ -278,20 +281,20 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
 
       {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) — 주소 확정 시에만 */}
       {(addr || siteAnalysis?.address) && (
-        <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} primaryZone={siteAnalysis?.zoneCode ?? undefined} />
+        <ParcelBoundaryMap parcels={analysisParcelAddrs} primaryZone={siteAnalysis?.zoneCode ?? undefined} />
       )}
 
       {/* 다각도 개발방식 시뮬레이션 (정책 적용판정 + 최적안 + 인접성) */}
       {(addr || siteAnalysis?.address) && (
         <DevelopmentScenarioCard
           address={addr || siteAnalysis?.address || undefined}
-          parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)}
+          parcels={analysisParcelAddrs}
         />
       )}
 
       {/* 등기부 일괄 조회/다운로드 (단/다필지 소유관계) */}
       {(addr || siteAnalysis?.address) && (
-        <RegistryBulkButton addresses={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} />
+        <RegistryBulkButton addresses={analysisParcelAddrs} />
       )}
 
       {/* 부지 요약 + 종합 */}
