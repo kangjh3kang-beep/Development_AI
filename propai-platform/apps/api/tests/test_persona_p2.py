@@ -324,6 +324,40 @@ async def test_designer_expert_panel_design_lens(monkeypatch):
     assert out["verification"]["expert_panel"]["consensus"] == "design-ok"
 
 
+class _FakeTruncatedResp:
+    """DesignInterpreter의 fallback_key(design_overview) 하나에만 원문이 뭉치는 절단 JSON."""
+    content = '{"design_overview": "설계 개요를 서술하던 중 max_tokens에 걸려 문장이 중간에서 짤'
+    response_metadata = {"stop_reason": "max_tokens"}
+    usage_metadata: dict = {}
+
+
+class _FakeTruncatedLLM:
+    model = "fake"
+
+    async def ainvoke(self, messages, config=None):  # noqa: ARG002
+        return _FakeTruncatedResp()
+
+
+async def test_designer_llm_fallback_only_not_exposed(monkeypatch):
+    """★재발 방지 앵커(R1 R2): design 인터프리터가 절단(fallback-only)으로 응답해도
+    BaseInterpreter._invoke가 {}로 강등 → persona/runner.py의 "if isinstance(interp, dict)
+    and interp:" 가드가 무수정으로 raw 원문을 artifacts에 노출하지 않는다(persona/runner.py:774
+    소비처, R1이 무가드로 지적한 지점)."""
+    from app.services.ai.design_interpreter import DesignInterpreter
+
+    _patch_design(monkeypatch)
+    monkeypatch.setattr(DesignInterpreter, "_get_llm", lambda self: _FakeTruncatedLLM(), raising=True)
+    monkeypatch.setenv("INTERP_REDIS_CACHE", "0")
+
+    out = await run_persona("designer", _FakeDB(),
+                            {"address": "서울 강남", "land_area_sqm": 1000, "zone_code": "3R"},
+                            use_llm=True)
+    art = out["artifacts"]
+    # 절단 응답이라도 raw 원문("짤"로 끝나는 미완성 문장)이 artifacts 어디에도 노출되지 않는다.
+    assert "ai_interpretation" not in art or not art.get("ai_interpretation")
+    assert "짤" not in str(art)
+
+
 # ── 시공 ──
 
 _EST = {

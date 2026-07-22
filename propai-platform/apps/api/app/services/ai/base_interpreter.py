@@ -71,7 +71,11 @@ GROUNDING_RULE = """\
 # v2: 분양가 벤치마크 날조·평↔㎡ 환산오류·근거없는 비율 단정 금지 강화(2026-06-10).
 # v3: 결론성 수치에 근거 표기 계약(값/근거/출처/신뢰도)+법정vs실효 분리+저신뢰 명시 추가(2026-07-03).
 #     ★공용 규칙 한 곳 수정 → 9개 인터프리터 전역 전파(버그수정 전역전파 정책). 캐시 자동 무효화.
-_PROMPT_VERSION = "v3"
+# v4: _invoke가 폴백-only 결과를 빈 dict로 강등하도록 변경(2026-07-22) — 이 버전 이전에 L2(Redis)에
+#     저장된 캐시 항목은 (드물게) fallback_key에 원문 텍스트가 든 "구버전 결과"일 수 있다. 캐시키에
+#     버전이 반영되므로 이 범프만으로 그 항목들은 즉시 미스 처리되고 안전한 값으로 재생성된다
+#     (TTL 만료를 기다리거나 Redis를 수동으로 비울 필요 없음).
+_PROMPT_VERSION = "v4"
 
 # ── 자가성장 L1 A/B 프롬프트 버전 후보군(Phase 4, 설계서 §6.2) ──
 # service명 → 허용 버전 목록. 자가수정(L1)이 platform_settings('prompt.<service>')에
@@ -179,6 +183,28 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+def is_fallback_only(result: dict[str, str], fallback_key: str) -> bool:
+    """결과가 JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치)만 채워졌는지 판정(SSOT).
+
+    _parse_response가 파싱에 완전히 실패하면 {fallback_key: 원문 텍스트[:500]}만 반환한다.
+    이를 "정상 해석"으로 오인해 그대로 노출하면 raw JSON/절단 텍스트가 사용자 화면에 뜬다
+    (2026-07-22 라이브 실측: design 인터프리터 → CadBimIntegrationPanel "설계 해설" 패널).
+    ★R1 R2(전역 전파방지 HIGH): design_v61.py·design_ingest/orchestrator.py 2곳에만 개별
+    호출되던 가드로는 동일 클래스(BaseInterpreter) 전 서브클래스(avm/market/feasibility/esg/
+    permit/report/site_analysis/tax/cost/finance/development_method/digital_twin 등)·전
+    소비처(persona/runner·v2_feasibility·esg·cost·market_report_service·
+    comprehensive_analysis_service·precheck_service 등 40여 곳)를 커버하지 못한다. 판정
+    자체는 이 함수(호출측 유틸)로 남기되, 실제 강등은 _invoke가 반환 직전에 수행한다(아래).
+    결과가 완전히 비어 있으면(폴백조차 없음) True(호출자가 별도로 "빈 결과"로 처리).
+    """
+    if not result:
+        return True
+    if not fallback_key:
+        return False
+    # ★None 방어: 값이 None이면 str(None)="None"(비어있지 않음)으로 오판정될 수 있어 명시 제외.
+    return not any(k != fallback_key and v is not None and str(v).strip() for k, v in result.items())
 
 
 # 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
@@ -407,6 +433,37 @@ class BaseInterpreter:
         피드백이 있으면 캐시를 우회해 LLM을 다시 호출한다(상한은 호출처가 통제).
         """
         self._retry_feedback = (feedback or "").strip() or None
+
+    # ★근원 봉합(R1 R2, 전역 전파방지 HIGH) — _invoke 래퍼(generate_interpretation 층):
+    #   JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치, is_fallback_only SSOT)을
+    #   빈 dict로 강등해 반환한다. 이 클래스를 상속하는 모든 서브클래스(design/avm/market/
+    #   feasibility/esg/permit/report/site_analysis/tax/cost/finance/development_method/
+    #   digital_twin 등)와 그 전 소비처(persona/runner·v2_feasibility·esg·cost·
+    #   market_report_service·comprehensive_analysis_service·precheck_service 등)가 이미 쓰는
+    #   "if result:"/"result or None"/"isinstance(x, dict) and x" 관용구가 기존 코드 무수정으로
+    #   정직 처리하게 된다(과거 LLM 초기화 실패·호출 예외 경로도 원래 `{}`를 반환해왔으므로 이
+    #   반환값 형태 자체는 신규가 아니다 — 기존 계약 재사용).
+    #   ★병행 작업(#424, base_interpreter._invoke/_parse_response 내부의 캐시오염·절단관측
+    #   재구조화)과의 충돌 표면을 줄이기 위해 _invoke 본문은 건드리지 않고, 이 얇은 래퍼가
+    #   _invoke의 반환값(캐시 히트·신규 계산 어느 경로든 동일)에 사후 적용한다. 관심사 분리:
+    #   #424=캐시에 무엇을 저장할지(캐시 오염 차단), 이 래퍼=호출자에게 무엇을 반환할지(원문
+    #   노출 차단) — 서로 다른 층이라 상보적이며 중복이 아니다.
+    async def _invoke_or_empty(self, user_prompt: str, **kwargs: Any) -> dict[str, str]:
+        """_invoke(user_prompt, **kwargs)를 호출하고 폴백-only 결과만 빈 dict로 강등해 반환.
+
+        서브클래스의 generate_interpretation은 `self._invoke(...)` 대신 이 메서드를 호출하면
+        된다(시그니처 동일 — 순수 대체 가능). design_ingest/orchestrator.py·design_v61.py에
+        남아 있는 개별 is_fallback_only 호출은 이 래퍼를 통과한 뒤의 결과에 대한 이중 방어다
+        (무해·삭제 불필요).
+        """
+        result = await self._invoke(user_prompt, **kwargs)
+        if is_fallback_only(result, self.fallback_key):
+            logger.info(
+                "인터프리터 결과가 폴백-only — 빈 dict로 강등(raw 노출 방지)",
+                interp=self.name, fallback_key=self.fallback_key,
+            )
+            return {}
+        return result
 
     # ── P2: LLM 지연 생성(키 정상화 경유, ImportError 폴백) ──
     def _get_llm(self) -> Any:

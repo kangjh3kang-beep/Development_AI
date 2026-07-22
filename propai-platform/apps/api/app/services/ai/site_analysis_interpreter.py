@@ -193,7 +193,7 @@ class SiteAnalysisInterpreter(BaseInterpreter):
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(
+        return await self._invoke_or_empty(
             user_prompt, cache_data=compact, evidence_data=analysis_data,
             evidence_text=evidence_text, prior_context=prior_context,
         )

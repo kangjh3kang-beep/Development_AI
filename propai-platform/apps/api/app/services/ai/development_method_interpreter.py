@@ -119,7 +119,7 @@ class DevelopmentMethodInterpreter(BaseInterpreter):
             recommend_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(user_prompt, cache_data=compact)
+        return await self._invoke_or_empty(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """추천 결과에서 LLM에 필요한 핵심 데이터(게이트 요약 + Top3)만 추출.

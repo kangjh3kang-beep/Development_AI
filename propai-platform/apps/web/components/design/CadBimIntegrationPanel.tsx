@@ -18,7 +18,7 @@ import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
 import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
-import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
+import { DesignOutcomeSummary, looksLikeRawDesignAiFallback } from "@/components/design/DesignOutcomeSummary";
 import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
@@ -638,6 +638,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [bimError, setBimError] = useState<string | null>(null);
   // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
   const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
+  // ★stale 감지(라이브 실측: 해설 연면적 670㎡ vs 현재 KPI 1,216㎡ 불일치): 해석이 생성될 당시의
+  //   연면적(GFA) SSOT값을 스냅샷해두고, 이후 설계가 바뀌어 designData.totalGfaSqm이 달라지면
+  //   "해설이 최신 설계와 다르다"는 배지·재생성 유도로만 표시한다(재계산 자동유발 금지 — 과설계 방지).
+  const [designAiGfaAtGen, setDesignAiGfaAtGen] = useState<number | null>(null);
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
   // DesignBasis 판정(/bim 응답 basis_evaluation — WP-E 자산 표면화). null=미산출/구서버(미렌더).
   type BasisEvaluation = {
@@ -1070,7 +1074,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
+        if (d?.ai_interpretation) {
+          setDesignAi(d.ai_interpretation);
+          setDesignAiGfaAtGen(designData?.totalGfaSqm ?? null); // stale 배지 비교 기준 스냅샷
+        }
         if (d?.mass) setBimMass(d.mass);
         // ★C2R 계약 환류 — /bim 응답이 동봉한 d.compliance를 store에 저장(공용 헬퍼). 종전엔
         //   ai_interpretation·mass만 꺼내고 d.compliance를 통째로 버렸다(감사 적발).
@@ -1123,7 +1130,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setBimLoading(false);
     }
-  }, [projectId, spec, bimBody, flowCompliance]);
+  }, [projectId, spec, bimBody, flowCompliance, designData?.totalGfaSqm]);
 
   // 절차생성 모델용 카메라 프레이밍 — spec이 준비되고 서버 glb가 아직 없으면 spec 치수로 시점 산정.
   // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
@@ -1208,29 +1215,66 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     [projectId, spec, svgQuery],
   );
 
+  // ★R1 R2(LOW): regenerateDesignAi가 setDesignAi(null) 직후 곧장 fetch도 호출하면, 2D 뷰에서는
+  //   아래 effect도 (designAi가 null이 됐으므로) 같은 tick에 재발화해 동일 요청이 2회 나간다.
+  //   in-flight 가드(ref)로 겹치는 호출을 1회로 합친다(effect·수동 재생성 어느 쪽에서 와도 안전).
+  const designAiFetchInFlightRef = useRef(false);
+
+  // AI 설계 해석(6섹션)만 단독 조회 — 2D 진입 1회 자동 + 아래 "재생성" 수동 트리거가 공유한다.
+  // ★백엔드가 동일 입력을 input_hash로 캐시하므로(design_run_cache), spec 불변 재호출은 캐시 히트로
+  //   빠르게 반환된다(재계산 폭주 우려 없음) — stale 배지의 "재생성" 버튼이 뷰모드 무관하게 동작하도록
+  //   2D 진입 effect의 인라인 fetch를 재사용 가능한 콜백으로 추출(기존 동작 100% 동일, 위치만 이동).
+  const fetchDesignInterpretation = useCallback(() => {
+    if (designAiFetchInFlightRef.current) return Promise.resolve(); // 진행 중 — 중복 호출 skip
+    designAiFetchInFlightRef.current = true;
+    const base = apiV1BaseUrl();
+    const gfaAtFetch = designData?.totalGfaSqm ?? null;
+    return fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bimBody(),
+      signal: AbortSignal.timeout(90000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.ai_interpretation) {
+          setDesignAi(d.ai_interpretation);
+          setDesignAiGfaAtGen(gfaAtFetch); // stale 배지 비교 기준 스냅샷
+        }
+        // ★C2R 계약 환류 — 2D 진입 경로도 /bim 응답의 compliance를 store에 저장(공용 헬퍼).
+        //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
+        flowCompliance(d?.compliance);
+      })
+      .catch(() => { /* 무시 */ })
+      .finally(() => { designAiFetchInFlightRef.current = false; });
+  }, [projectId, bimBody, flowCompliance, designData?.totalGfaSqm]);
+
+  // 설계 해설이 stale 하거나(연면적 등 KPI 불일치) 파싱 실패로 정직 폴백을 보였을 때 수동 재생성.
+  // 뷰모드(2D/3D) 무관하게 동작 — designAi를 비우면 아래 effect의 자동조건도 되살아나지만
+  // in-flight 가드가 겹침을 막는다(1회만 실제 fetch).
+  const regenerateDesignAi = useCallback(() => {
+    setDesignAi(null);
+    setDesignAiGfaAtGen(null);
+    void fetchDesignInterpretation();
+  }, [fetchDesignInterpretation]);
+
+  // stale 판정: 해석 생성 시점 연면적(GFA)과 현재 KPI(designData.totalGfaSqm)가 2% 넘게
+  // 다르면 "최신 설계와 다름"으로 본다(간단한 명시적 배지 수준 — 자동 재계산은 유발하지 않음).
+  const designAiStale = useMemo(() => {
+    const cur = designData?.totalGfaSqm;
+    if (designAiGfaAtGen == null || typeof cur !== "number" || cur <= 0) return false;
+    return Math.abs(designAiGfaAtGen - cur) / cur > 0.02;
+  }, [designAiGfaAtGen, designData?.totalGfaSqm]);
+
   // 2D 뷰 진입 시(기하 준비 후) 도면 세트 1회 로드 + AI 설계해석
   useEffect(() => {
     if (viewMode === "cad_2d" && !editMode && spec && drawingCodes.length === 0 && !drawingLoading && !drawingError) {
       loadDrawingSet();
     }
     if (viewMode === "cad_2d" && !editMode && spec && !designAi) {
-      const base = apiV1BaseUrl();
-      fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: bimBody(),
-        signal: AbortSignal.timeout(90000),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
-          // ★C2R 계약 환류 — 2D 진입 경로도 /bim 응답의 compliance를 store에 저장(공용 헬퍼).
-          //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
-          flowCompliance(d?.compliance);
-        })
-        .catch(() => { /* 무시 */ });
+      void fetchDesignInterpretation();
     }
-  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, projectId, bimBody, flowCompliance]);
+  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, fetchDesignInterpretation]);
 
   // 활성 도면 SVG 로드
   useEffect(() => {
@@ -1436,6 +1480,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setBimMass(null);
     setBasisEval(null);
     setDesignAi(null);
+    setDesignAiGfaAtGen(null);
     setDrawingCodes([]);
     setSvgMap({});
     setActiveCode(null);
@@ -2259,7 +2304,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </div>
 
             {/* 2D 도면 AI 해석(평면효율·동선코어 — 평면도 관련 섹션) */}
-            {designAi && (designAi.floor_efficiency || designAi.circulation_core) && (
+            {/* ★파싱 실패 원문 폴백(raw JSON)은 노출하지 않는다(백엔드 가드 우회·구캐시 대비 2차 방어). */}
+            {designAi && !looksLikeRawDesignAiFallback(designAi) && (designAi.floor_efficiency || designAi.circulation_core) && (
               <div className="border-t border-white/5 px-6 py-4 max-h-[180px] overflow-y-auto">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
@@ -2332,7 +2378,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               )}
 
               {/* AI 설계 해석(DesignInterpreter 6섹션) */}
-              {designAi && (
+              {/* ★파싱 실패 원문 폴백(raw JSON)은 노출하지 않는다(백엔드 가드 우회·구캐시 대비 2차 방어). */}
+              {designAi && !looksLikeRawDesignAiFallback(designAi) && (
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -2709,7 +2756,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       )}
 
       {/* ── 설계 결과 요약 + AI 설계 해석(designAi 6섹션) — 편집화면(뷰포트) 아래로 재배치 ── */}
-      <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
+      <DesignOutcomeSummary
+        projectId={projectId}
+        designAi={designAi}
+        designAiStale={designAiStale}
+        onRegenerateDesignAi={regenerateDesignAi}
+      />
 
       {/* 배선 캠페인 2차(cad-correction, additive) — CAD 파라메트릭 자동 보정(건폐율/용적률/
           높이 법규 검증+보정). 기본 접힘(AdvancedDrawer), 기존 2D/3D 생성·편집 흐름과

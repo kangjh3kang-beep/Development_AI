@@ -1685,7 +1685,12 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
                 "building_use": req.building_use,
                 **units_data,
             })
-            if isinstance(interp, dict) and interp:
+            # ★R1 R2(근원 봉합): BaseInterpreter._invoke가 이제 폴백-only 결과를 빈 dict로 강등하므로
+            #   (base_interpreter.py, is_fallback_only SSOT) interp는 이미 안전하다. 아래 재판정은
+            #   이중 방어(무해·삭제 불필요) — design_ingest/orchestrator.py._interpret_proposal과 동일 판정.
+            from app.services.ai.base_interpreter import is_fallback_only
+
+            if isinstance(interp, dict) and interp and not is_fallback_only(interp, DesignInterpreter.fallback_key):
                 ai_interpretation = interp
         except Exception as e:  # noqa: BLE001
             import structlog

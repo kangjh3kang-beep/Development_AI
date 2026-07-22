@@ -408,9 +408,12 @@ async def _interpret_proposal(site: SiteContext, candidate: dict) -> dict | None
         # 빈 dict(LLM 실패) 또는 내용 없음 → 정직 None.
         if not result or not any(str(v).strip() for v in result.values()):
             return None
-        # ★JSON 파싱 실패 폴백({fallback_key: 원문 한 덩어리})을 정상 해석으로 노출 금지(무목업·정직).
-        #   fallback_key 외 실내용 섹션이 하나도 없으면 LLM 출력 형식 실패로 보고 None.
-        if not any(k != interp.fallback_key and str(v).strip() for k, v in result.items()):
+        # ★R1 R2(근원 봉합): BaseInterpreter._invoke가 이제 폴백-only 결과를 빈 dict로 강등하므로
+        #   (base_interpreter.py, is_fallback_only SSOT) 여기 도달하는 result는 이미 안전하다.
+        #   아래 재판정은 이중 방어(무해·삭제 불필요 — result가 부분적으로 채워진 뒤에도 안전망 유지).
+        from app.services.ai.base_interpreter import is_fallback_only
+
+        if is_fallback_only(result, interp.fallback_key):
             return None
         return {"sections": result, "input": payload}
     except Exception as e:  # noqa: BLE001 — 해석 실패가 생성 결과를 깨면 안 됨

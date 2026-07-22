@@ -213,14 +213,17 @@ class TestGenerateInterpretationSignature:
 
         async def _fake_invoke(user_prompt, **kwargs):  # noqa: ANN001
             captured.update(kwargs)
-            return {"overall_summary": "ok"}
+            # ★fallback_key(overall_summary) 하나만 채우면 base_interpreter.is_fallback_only가
+            #   폴백-only로 오판정해 {}로 강등한다(R1 R2 근원 봉합) — 이 테스트의 관심사(kwarg
+            #   플러밍)와 무관하므로 다른 키도 함께 채워 폴백-only 판정을 피한다.
+            return {"overall_summary": "ok", "risk_factors": "리스크 실내용"}
 
         interp._invoke = _fake_invoke  # type: ignore[method-assign]
         result = _run(interp.generate_interpretation(
             {"address": "A", "zone_type": "Z", "land_area_sqm": 100},
             evidence_text="근거X", prior_context="prior Y",
         ))
-        assert result == {"overall_summary": "ok"}
+        assert result == {"overall_summary": "ok", "risk_factors": "리스크 실내용"}
         # _invoke에 evidence_text/prior_context가 그대로 전달됨.
         assert captured.get("evidence_text") == "근거X"
         assert captured.get("prior_context") == "prior Y"
@@ -234,14 +237,16 @@ class TestGenerateInterpretationSignature:
 
         async def _fake_invoke(user_prompt, **kwargs):  # noqa: ANN001
             captured.update(kwargs)
-            return {"overall_summary": "legacy ok"}
+            # ★fallback_key(overall_summary) 하나만 채우면 폴백-only로 오판정되므로(위와 동일 사유)
+            #   다른 키도 함께 채운다 — 이 테스트의 관심사는 시그니처 하위호환뿐이다.
+            return {"overall_summary": "legacy ok", "risk_factors": "리스크"}
 
         interp._invoke = _fake_invoke  # type: ignore[method-assign]
         # evidence_text 미지정(기존 호출부 형태).
         result = _run(interp.generate_interpretation(
             {"address": "A", "zone_type": "Z", "land_area_sqm": 100},
         ))
-        assert result == {"overall_summary": "legacy ok"}
+        assert result == {"overall_summary": "legacy ok", "risk_factors": "리스크"}
         assert captured.get("evidence_text") is None
         assert captured.get("prior_context") is None
 
