@@ -182,11 +182,20 @@ class FeasibilityServiceV2:
         use_llm: bool = True,
         with_senior: bool = True,
         parcels: list[dict] | None = None,
+        use_optimization_pipeline: bool = False,
+        optimization_seed: int = 42,
+        optimization_shortlist_k: int = 3,
     ) -> dict:
         """부지 주소로부터 최적 사업모델 Top 3 자동 추천.
 
         parcels(2필지 이상)가 오면 통합면적·우세용도(면적가중)로 산정한다 — 스칼라 land_area_sqm이
         함께 오면 그것을 우선(기존 정답 경로 유지), 없으면 통합값으로 보강. zone 혼재 시 대표 유지.
+
+        use_optimization_pipeline(opt-in, 기본 False — 무회귀): True면 이미 계산된 전체
+        후보(all_results)를 공용 6단계 최적화 파이프라인 계약(app.services.optimization.pipeline)
+        으로 재-표기해 result["optimization_pipeline"]에 additive 부착한다(기존 recommendations/
+        all_results/composite_score 등은 무손상 — 완전 추가전용). 기본값(False)에서는 바이트
+        단위로 기존 출력과 동일하다.
         """
 
         # Step 1: 용도지역 자동 감지
@@ -514,7 +523,98 @@ class FeasibilityServiceV2:
         else:
             result["ai_interpretation"] = None
 
+        # ── opt-in(W3-4): 공용 최적화 파이프라인 계약으로 재-표기(additive, 기본 False 무회귀) ──
+        if use_optimization_pipeline and results:
+            try:
+                self._attach_optimization_pipeline(
+                    result, results, seed=optimization_seed, shortlist_k=optimization_shortlist_k,
+                )
+            except Exception as e:  # noqa: BLE001 — opt-in 실험 기능 실패는 본체 추천 무손상
+                logger.warning("최적화 파이프라인 부착 스킵(opt-in): %s", str(e)[:160])
+
         return result
+
+    def _attach_optimization_pipeline(
+        self, result: dict[str, Any], results: list[dict[str, Any]], *, seed: int, shortlist_k: int,
+    ) -> None:
+        """opt-in(W3-4): 이미 계산된 Top3 후보 결과를 공용 6단계 파이프라인 계약으로 재-표기.
+
+        ★정직 표기: 이 호출부에서는 후보생성(permitted_types 전수)·hard 필터
+        (permit_validator.get_permitted_types — 위에서 이미 적용)·평가(self.calculate())가
+        전부 이 함수 호출 이전에 실행 완료된 상태다. 따라서 이 파이프라인은 CandidateSet
+        (이산 도메인 전수열거, LHS 아님 — sampling_method="full_enumeration"으로 정직 표기)·
+        ParetoFront·shortlist 3단계만 그 결과 위에 재구성한다(중복 재계산 없음). 이 소비처엔
+        '저비용 1차 평가(rough)' 대안이 실재하지 않으므로(대안 저비용 계산기 부재) 있는 척
+        만들지 않고 evaluator_grade="precise"로 정직 표기한다(rough_grade override).
+        """
+        from app.services.optimization.pipeline import (
+            CandidateSet,
+            OptimizationSpec,
+            ParetoFront,
+            Variable,
+            VariableType,
+            evaluate_candidates,
+        )
+        from app.services.optimization.pipeline import shortlist as build_shortlist
+
+        dev_types = tuple(r["development_type"] for r in results)
+        spec = OptimizationSpec(
+            variables=(
+                Variable(name="development_type", var_type=VariableType.CATEGORICAL, choices=dev_types),
+            )
+        )
+        cset = CandidateSet.from_enumeration(spec, seed=seed)
+
+        # 3목적: 순이익(최대화)·수익률(최대화)·인허가복잡도(최소화) — composite_score(가중스칼라화)와
+        # 별개로 트레이드오프를 있는 그대로 노출(예: 순이익은 낮지만 인허가가 쉬운 후보).
+        objectives_by_type = {
+            r["development_type"]: {
+                "net_profit_won": float(r["feasibility"]["net_profit_won"] or 0),
+                "profit_rate_pct": float(r["feasibility"]["profit_rate_pct"] or 0),
+                "permit_complexity": float(r["permit"]["permit_complexity"]),
+            }
+            for r in results
+        }
+        directions = {
+            "net_profit_won": "maximize",
+            "profit_rate_pct": "maximize",
+            "permit_complexity": "minimize",
+        }
+
+        evaluations = evaluate_candidates(
+            cset.candidates,
+            rough_evaluator=lambda c: objectives_by_type[c["development_type"]],
+            rough_grade="precise",  # 위에서 calculate()로 이미 정밀계산된 값 재사용(중복계산 없음)
+        )
+        front = ParetoFront.compute(evaluations, directions)
+        picked = build_shortlist(front, shortlist_k, rank_key="net_profit_won")
+
+        result["optimization_pipeline"] = {
+            "seed": cset.seed,
+            "sampling_method": cset.sampling_method,
+            "candidates_generated": len(cset.candidates),
+            "hard_filter_survivors": len(cset.candidates),
+            "hard_filter_note": (
+                "get_permitted_types()가 후보생성 이전에 이미 hard 필터로 적용됨"
+                "(이 단계에서 중복 재필터 없음)"
+            ),
+            "evaluator_grade": "precise",
+            "evaluator_note": (
+                "이 소비처엔 저비용 1차(rough) 평가 대안이 없어 self.calculate() 정밀값을 "
+                "그대로 재사용(정밀값을 저비용인 척 표기하지 않음)"
+            ),
+            "directions": directions,
+            "pareto_front_size": len(front.members),
+            "pareto_front": [e.candidate["development_type"] for e in front.members],
+            "shortlist": [
+                {
+                    "development_type": item.evaluation.candidate["development_type"],
+                    "objectives": item.evaluation.objectives,
+                    "reason": item.reason,
+                }
+                for item in picked
+            ],
+        }
 
     # ------------------------------------------------------------------
     # 공용 입력 빌더 (auto_recommend_top3 + 통합추천 공유)
