@@ -587,11 +587,13 @@ class RuleCheckRequest(BaseModel):
     floor_area_per_floor_sqm: float = 0  # 층당 바닥면적(㎡)
 
     # ── 주차 기하 검증(opt-in, 스펙 P·W3-5) — 전부 미입력이면 완전히 생략(무회귀) ──
-    parking_layout_area_sqm: float | None = None  # 지하/부지 주차 가용면적(㎡). 있으면 기하검증 실행.
+    # ★R1 LOW: 경계값 가드. area는 0(=미제공과 동일 취급 sentinel)을 허용해야 하므로 ge=0,
+    # 차로폭/회전반경/각도는 0 이하가 물리적으로 무의미해 gt=0(제공 시에는 반드시 양수).
+    parking_layout_area_sqm: float | None = Field(default=None, ge=0)  # 지하/부지 주차 가용면적(㎡). 있으면 기하검증 실행.
     parking_stall_type: str | None = None         # general/expanded/parallel/disabled(기본 general)
-    parking_angle_deg: int | None = None          # 주차각(도, 90/60/45/0=평행). 기본 90.
-    parking_aisle_width_m: float | None = None    # 실제 계획 차로폭(m). swept path 1차 검증용.
-    parking_turn_radius_m: float | None = None    # 실제 계획 회전반경(m). swept path 1차 검증용.
+    parking_angle_deg: int | None = Field(default=None, ge=0, le=180)  # 주차각(도, 90/60/45/0=평행). 기본 90.
+    parking_aisle_width_m: float | None = Field(default=None, gt=0)  # 실제 계획 차로폭(m). swept path 1차 검증용.
+    parking_turn_radius_m: float | None = Field(default=None, gt=0)  # 실제 계획 회전반경(m). swept path 1차 검증용.
 
 
 class RuleCheckItem(BaseModel):

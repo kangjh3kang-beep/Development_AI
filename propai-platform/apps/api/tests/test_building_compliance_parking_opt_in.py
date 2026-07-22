@@ -11,6 +11,7 @@ import os
 import sys
 
 import pytest
+from pydantic import ValidationError
 
 # 다른 building_compliance 테스트(test_legal_check_failclosed.py)와 동일 패턴.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -90,3 +91,30 @@ class TestRuleCheckParkingGeometryOptIn:
         resp = await rule_check(req)
         assert hasattr(resp, "parking_geometry")
         assert resp.parking_geometry["layout"]["stall_type"] == "general"
+
+
+class TestRuleCheckParkingFieldBoundaries:
+    """★R1 LOW: opt-in 수치 필드 경계값 가드(Field(gt=0)/Field(ge=0))."""
+
+    def test_negative_layout_area_rejected(self):
+        with pytest.raises(ValidationError):
+            RuleCheckRequest(land_area_sqm=1000, parking_layout_area_sqm=-1.0)
+
+    def test_zero_layout_area_still_allowed_as_skip_sentinel(self):
+        """0은 '미제공'과 동일하게 취급되는 sentinel이므로 ge=0으로 허용해야 한다."""
+        req = RuleCheckRequest(land_area_sqm=1000, parking_layout_area_sqm=0.0)
+        assert req.parking_layout_area_sqm == 0.0
+
+    def test_zero_or_negative_aisle_width_rejected(self):
+        with pytest.raises(ValidationError):
+            RuleCheckRequest(land_area_sqm=1000, parking_aisle_width_m=0.0)
+        with pytest.raises(ValidationError):
+            RuleCheckRequest(land_area_sqm=1000, parking_aisle_width_m=-2.0)
+
+    def test_zero_or_negative_turn_radius_rejected(self):
+        with pytest.raises(ValidationError):
+            RuleCheckRequest(land_area_sqm=1000, parking_turn_radius_m=0.0)
+
+    def test_negative_angle_rejected(self):
+        with pytest.raises(ValidationError):
+            RuleCheckRequest(land_area_sqm=1000, parking_angle_deg=-10)

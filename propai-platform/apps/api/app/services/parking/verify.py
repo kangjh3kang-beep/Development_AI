@@ -28,6 +28,16 @@ class ParkingPlanVerdict(StrEnum):
     FAIL = "fail"
 
 
+# ── 수용력 3밴드 판정 여유계수(assumption) ★R1 MEDIUM-2 ─────────────────────
+# 계획대수/추정수용력 비율(capacity_margin_ratio)이 이 값 이하면 "여유 충분"(PASS),
+# 초과~1.0까지는 "경계 구간"(WARN — 정밀 배치도로 재확인 필요), 1.0 초과는 FAIL.
+LAYOUT_WARN_MARGIN_RATIO: float = 0.85
+LAYOUT_WARN_MARGIN_BASIS: str = (
+    "실무 설계관례 참고치(assumption) — 1차 추정 수용력의 85%를 넘어서면 실제 배치에서 "
+    "여유가 부족할 위험이 커진다고 보수적으로 가정. 확정 법정 기준 아님 — verified=False."
+)
+
+
 def required_legal_parking_count(
     *,
     building_type: str,
@@ -59,6 +69,9 @@ class ParkingPlanVerification(BaseModel):
     planned_count: int
     layout: ParkingLayoutEstimate | None
     swept_path: SweptPathCheck | None
+    # ★R1 MEDIUM-2: 3밴드 판정 근거 수치를 결과 필드로 정직 노출(마진 계수 은닉 금지).
+    capacity_margin_ratio: float | None = None
+    capacity_warn_threshold_ratio: float = LAYOUT_WARN_MARGIN_RATIO
     reasons: list[str] = Field(default_factory=list)
     basis: str
     assumptions: list[str] = Field(default_factory=list)
@@ -108,6 +121,7 @@ def verify_parking_plan(
 
     layout: ParkingLayoutEstimate | None = None
     layout_ok: bool | None = None
+    capacity_margin_ratio: float | None = None
     if available_layout_area_sqm is not None and available_layout_area_sqm > 0:
         layout = estimate_layout_capacity(
             gross_area_sqm=available_layout_area_sqm,
@@ -115,20 +129,40 @@ def verify_parking_plan(
             parking_angle_deg=parking_angle_deg,
             deduction_ratios=deduction_ratios,
         )
-        layout_ok = layout.estimated_capacity >= planned_parking_count
-        if layout_ok:
-            reasons.append(
-                f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 "
-                f"{layout.estimated_capacity}대 ≥ 계획 {planned_parking_count}대"
-            )
-        else:
-            reasons.append(
-                f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 "
-                f"{layout.estimated_capacity}대 < 계획 {planned_parking_count}대 — "
-                "기하적으로 물리 수용 곤란"
-            )
         limitations.extend(layout.limitations)
         assumptions.extend(layout.assumptions)
+        assumptions.append(LAYOUT_WARN_MARGIN_BASIS)
+
+        capacity = layout.estimated_capacity
+        # ★R1 MEDIUM-2: 이진(≥/<) 판정 대신 3밴드(여유 충분/경계/초과) 판정.
+        if capacity <= 0:
+            layout_ok = False if planned_parking_count > 0 else None
+            reasons.append(
+                f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 0대 — 물리 수용 불가"
+            )
+        else:
+            capacity_margin_ratio = round(planned_parking_count / capacity, 4)
+            if capacity_margin_ratio <= LAYOUT_WARN_MARGIN_RATIO:
+                layout_ok = True
+                reasons.append(
+                    f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 {capacity}대, "
+                    f"계획 {planned_parking_count}대 — 여유 충분(마진비율 {capacity_margin_ratio:.2f} "
+                    f"≤ {LAYOUT_WARN_MARGIN_RATIO})"
+                )
+            elif capacity_margin_ratio <= 1.0:
+                layout_ok = None  # 경계 구간 — 하드 FAIL 아닌 WARN(soft_warns로 반영)
+                reasons.append(
+                    f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 {capacity}대, "
+                    f"계획 {planned_parking_count}대 — 경계 구간(마진비율 {capacity_margin_ratio:.2f}, "
+                    f"{LAYOUT_WARN_MARGIN_RATIO}~1.0) — 정밀 배치도 확인 필요"
+                )
+            else:
+                layout_ok = False
+                reasons.append(
+                    f"제공면적({available_layout_area_sqm:.0f}㎡) 기준 추정 수용력 {capacity}대 < "
+                    f"계획 {planned_parking_count}대(마진비율 {capacity_margin_ratio:.2f}) — "
+                    "기하적으로 물리 수용 곤란"
+                )
     else:
         limitations.append("대지/지하층 가용면적 미입력 — 수용력 추정 생략")
 
@@ -140,7 +174,11 @@ def verify_parking_plan(
             actual_aisle_width_m=actual_aisle_width_m,
             actual_turn_radius_m=actual_turn_radius_m,
         )
-        swept_ok = swept.status == "pass"
+        # ★R1 HIGH-2 교정: "warn"(부분입력)·"unavailable"은 None(soft warn)으로 유지해야
+        # 한다 — 이전엔 status=="pass" 비교만 해서 "warn"이 False로 접혀 하드 FAIL을
+        # 유발했다(자기 계약 위반: docstring/reasons는 "부분 검증만 수행"이라 해놓고
+        # 실제로는 종합판정을 FAIL로 강제했었다).
+        swept_ok = None if swept.status in ("warn", "unavailable") else (swept.status == "pass")
         if swept.status == "fail":
             reasons.append("swept path 1차 판정: 차로폭/회전반경 기준 미달")
         elif swept.status == "warn":
@@ -168,6 +206,8 @@ def verify_parking_plan(
         planned_count=planned_parking_count,
         layout=layout,
         swept_path=swept,
+        capacity_margin_ratio=capacity_margin_ratio,
+        capacity_warn_threshold_ratio=LAYOUT_WARN_MARGIN_RATIO,
         reasons=reasons,
         basis=(
             "법정대수(주차장법 시행령 §6 별표1, PARKING_REQUIREMENTS 재사용) vs "
