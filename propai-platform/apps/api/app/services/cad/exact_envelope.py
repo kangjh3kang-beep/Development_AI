@@ -309,11 +309,19 @@ def _compute(
     threshold_m: float, min_low_m: float, slope: float, floor_height_m: float,
     with_reference: bool = False,
 ) -> dict[str, Any]:
-    """단일 제약조합(측면이격·정북사선 적용여부·절대높이)에 대한 solid 산출(공용 코어)."""
+    """단일 제약조합(측면이격·정북사선 적용여부·절대높이)에 대한 solid 산출(공용 코어).
+
+    ★R1 수정: z_cap이 None(=상한이 전혀 없는 진짜 무한체적)인 경우와 z_cap이 0에 수렴하는
+    경우(=상한은 있으나 실제로 지을 수 없는 정상적 0체적)를 더 이상 같은 분기로 뭉개
+    volume_m3=0.0을 반환하지 않는다. 전자는 unbounded=True·volume_m3=None으로 정직 표기
+    (예전엔 0.0을 반환해 "가장 관대한 변형(conditional)이 오히려 base보다 작게 지음"처럼
+    보이는 불변식 붕괴를 유발했다 — 리뷰어가 joint_development_agreement=True+height_limit_m
+    미지정 조합으로 재현). 후자(z_cap≈0)는 진짜 0이므로 그대로 둔다.
+    """
     poly = _apply_side_setback(base_poly, is_rect, side_setback_m)
     if poly.is_empty:
         return {"volume_m3": 0.0, "max_height_m": 0.0, "gfa_sqm": 0.0, "num_floors": 0,
-                "floors": [], "z_breakpoints": []}
+                "floors": [], "z_breakpoints": [], "unbounded": False}
 
     z_cap = height_limit_m
     if nl_applies:
@@ -322,9 +330,17 @@ def _compute(
         z_daylight = _z_max_daylight(max_extent, threshold_m, min_low_m, slope)
         z_cap = z_daylight if z_cap is None else min(z_cap, z_daylight)
 
-    if z_cap is None or z_cap <= 1e-9:
+    if z_cap is None:
+        # 정북사선도 미적용·절대높이도 없음 → 상한이 전혀 없는 진짜 무한 체적(계산 불가).
+        return {
+            "volume_m3": None, "max_height_m": None, "gfa_sqm": None, "num_floors": None,
+            "floors": [], "z_breakpoints": [], "unbounded": True,
+            "note": "절대 높이상한 없음 — 계산 불가(무한 체적)",
+        }
+
+    if z_cap <= 1e-9:
         return {"volume_m3": 0.0, "max_height_m": 0.0, "gfa_sqm": 0.0, "num_floors": 0,
-                "floors": [], "z_breakpoints": []}
+                "floors": [], "z_breakpoints": [], "unbounded": False}
 
     volume, breakpoints = _integrate_volume(
         poly, north_y, z_cap, applies=nl_applies, threshold_m=threshold_m, min_low_m=min_low_m, slope=slope
@@ -341,6 +357,7 @@ def _compute(
         "num_floors": len(floors),
         "floors": floors,
         "z_breakpoints": [round(b, 3) for b in breakpoints],
+        "unbounded": False,
     }
     if with_reference:
         ref = _riemann_reference(
@@ -377,7 +394,9 @@ def build_exact_envelope(footprint: dict[str, Any], constraints: dict[str, Any])
     zone_min_setback_m = float(constraints.get("zone_min_setback_m") or 0.0)
     floor_height_m = max(2.4, float(constraints.get("floor_height_m", 3.0) or 3.0))
     height_limit_raw = constraints.get("height_limit_m")
-    height_limit_m = float(height_limit_raw) if height_limit_raw else None
+    # ★R1 LOW 수정: `if height_limit_raw`(truthy) 체크는 명시적 0(=실제로 0m 상한을 안다는
+    #   유효한 값)을 '미지정'으로 강등시킨다 — `is not None`으로 실제 부재만 None 처리.
+    height_limit_m = float(height_limit_raw) if height_limit_raw is not None else None
 
     nl_cfg = constraints.get("north_light") or {}
     nl_applies = bool(nl_cfg.get("applies", True))

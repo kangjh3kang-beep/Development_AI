@@ -3,7 +3,9 @@
 검증 축:
   1) 폐형식(closed-form) 대조 — 직사각형 대지에서 손으로 유도한 정확한 적분값과 일치(무근사).
   2) round-trip — 참조 Riemann 구적(150분할)과의 오차가 명시된 한계(1%) 이내.
-  3) property test — 결정론 격자 샘플점이 envelope 내부면 전 제약 만족, 경계 바로 바깥이면 위반.
+  3) property test — 결정론 격자 샘플점의 정북사선(g(z)) 제약 검사(내부면 만족, 경계 바로 바깥이면 위반).
+     ★R1 정직 축소: side_setback·height_limit까지 포함한 "전 제약"이 아니라 정북사선 half-plane
+     경계 하나만 검증한다(과대표기 금지).
   4) 3종 envelope(conservative/base/conditional) 차등·제약별 차감체적(offending face) 정합.
   5) 부정형 폴리곤 footprint 지원 + 무효입력 정직 에러.
   6) solar_envelope_service 배선(additive) — 기존 2D 근사 필드 무손상 + exact_envelope 병행노출.
@@ -74,9 +76,13 @@ def test_round_trip_flat_only_zero_error():
 # ── 3) property test: 결정론 격자 샘플점 경계 정확성 ──────────────────────────
 
 
-def test_property_interior_points_satisfy_all_constraints_boundary_violates():
+def test_property_interior_points_satisfy_north_light_constraint_boundary_violates():
     """결정론 격자(무작위 아님)로 여러 (x,z) 조합을 순회 — 허용영역 내부점은 항상 정북사선
-    최소거리 조건을 만족하고, 그 바로 바깥(북쪽으로 살짝 더 가까운) 인접점은 위반한다.
+    최소거리 조건(g(z))을 만족하고, 그 바로 바깥(북쪽으로 살짝 더 가까운) 인접점은 위반한다.
+
+    ★R1 정직 축소: 이 테스트는 '정북사선 제약'만 검사한다(side_setback·height_limit까지
+    포함한 "전 제약 만족"이 아니다 — 과대표기 금지). footprint 자체는 side_setback 없이
+    직접 구성한 순수 대지 폴리곤이라 side_setback 위반 여부는 이 테스트의 범위 밖이다.
     """
     footprint = {"width_m": 10.0, "depth_m": 20.0}
     base_poly, north_y, _ = build_footprint_polygon(footprint)
@@ -88,6 +94,8 @@ def test_property_interior_points_satisfy_all_constraints_boundary_violates():
         allowed = footprint_polygon_at_height(base_poly, north_y, z)
         if allowed.is_empty:
             continue
+        # 구멍 폴리곤 방어 — half-plane 클리핑 결과가 무효(자기교차 등)가 되면 안 된다.
+        assert allowed.is_valid, f"z={z} half-plane 클리핑 결과가 무효 폴리곤(구멍 등)이 됨"
         g = north_light_min_distance_m(z)
         for x in x_values:
             # 내부점: 북측 경계로부터 g+0.05m 확보 지점(허용영역 내부 — within이어야 함).
@@ -171,6 +179,32 @@ def test_north_light_contribution_honestly_unbounded_without_height_limit():
     assert "계산 불가" in by_constraint["north_light"]["basis"]
 
 
+def test_conditional_unbounded_reports_none_not_zero_r1_repro():
+    """★R1 HIGH 재현·회귀방지: joint_development_agreement=True(정북사선 해제)+height_limit_m
+    미지정 조합에서 conditional 변형은 유일한 상한이 사라져 무한체적이 된다. 예전엔 내부
+    z_cap-None 가드가 volume_m3=0.0을 반환해 base(17,290)≤conditional(0)이라는 불변식
+    붕괴(가장 관대한 변형이 오히려 못 지음)를 유발했다 — 0이 아니라 unbounded=True·
+    volume_m3=None으로 정직 표기해야 하고, base는 여전히 정상 유한값이어야 한다.
+    """
+    footprint = {"width_m": 20.0, "depth_m": 30.0}
+    r = build_exact_envelope(footprint, {"side_setback_m": 0.5, "joint_development_agreement": True})
+    base, cond = r["variants"]["base"], r["variants"]["conditional"]
+
+    assert base["unbounded"] is False
+    assert base["volume_m3"] is not None and base["volume_m3"] > 0
+
+    assert cond["north_light_applies"] is False
+    assert cond["unbounded"] is True
+    assert cond["volume_m3"] is None, "무한체적을 0.0으로 오보고(R1 HIGH 회귀)"
+    assert cond["max_height_m"] is None
+    assert isinstance(cond.get("note"), str) and "무한" in cond["note"]
+
+    # 숫자 비교(불변식 검사)는 None/unbounded를 반드시 제외해야 한다 — 포함시키면 비교 자체가 오류.
+    numeric_volumes = [v["volume_m3"] for v in r["variants"].values() if not v.get("unbounded")]
+    assert all(v is not None for v in numeric_volumes)
+    assert base["volume_m3"] in numeric_volumes
+
+
 # ── 5) 부정형 폴리곤 + 무효입력 ────────────────────────────────────────────────
 
 
@@ -219,7 +253,15 @@ def test_wired_into_solar_envelope_service_additive_no_regression():
     assert ee["volume_m3"] > 0
     assert set(ee["variants"]) == {"conservative", "base", "conditional"}
     assert isinstance(ee["constraint_contributions"], list) and ee["constraint_contributions"]
-    assert "vs_2d_strip_approx_gfa_sqm_diff" in ee  # 기존 2D 근사와의 정직 대조(교체 아님)
+    # ★R1 MEDIUM 수정: 단일 뭉뚱그린 필드(vs_2d_strip_approx_gfa_sqm_diff, 오표기) 대신
+    # 층별 이산화 보수화분과 진짜 방법론 차이를 분리 노출 — 합치면 예전 단일값과 일치해야 한다.
+    assert "exact_volume_vs_2d_gfa_diff" in ee
+    assert "exact_floorstack_vs_2d_gfa_diff" in ee
+    assert "vs_2d_strip_approx_gfa_sqm_diff" not in ee  # 오표기 필드 제거 확인
+    recombined = ee["exact_volume_vs_2d_gfa_diff"] + ee["exact_floorstack_vs_2d_gfa_diff"]
+    assert math.isclose(recombined, ee["gfa_sqm"] - r["envelope_gfa_sqm"], abs_tol=0.5)
+    # 진짜 방법론 차이(exact 해석적분 vs 2D 스트립적분)는 작아야 한다(같은 물리적 envelope).
+    assert abs(ee["exact_volume_vs_2d_gfa_diff"]) < 0.05 * r["envelope_gfa_sqm"]
 
 
 def test_wired_service_non_north_light_zone_has_no_exact_envelope_key():
