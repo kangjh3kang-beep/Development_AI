@@ -42,6 +42,7 @@ from typing import Any
 
 import structlog
 
+from app.services.approval.sod import SelfApprovalError, enforce_sod
 from app.services.basis import site_basis_state as sbs
 from app.services.basis.site_basis_state import ArtifactStatus, GateResult
 
@@ -61,6 +62,7 @@ _STATE_DDL = (
     "  content_hash text,"
     "  approved_by text,"
     "  approved_at timestamptz,"
+    "  sod_check text,"  # ★백로그③ SoD 표식(승인 시점 기록 — ADD COLUMN 방어로 하위 보강)
     "  created_at timestamptz NOT NULL DEFAULT now(),"
     "  updated_at timestamptz NOT NULL DEFAULT now()"
     ")"
@@ -105,6 +107,9 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
     await db.execute(text(_EVENT_DDL))
     for ix in _INDEXES:
         await db.execute(text(ix))
+    # ★백로그③(SoD) — 이미 배포된 site_basis_state 테이블에는 sod_check 컬럼이 없으므로
+    #   ADD COLUMN IF NOT EXISTS로 방어적으로 보강한다(design_run_job.py의 job_status 선례 동형).
+    await db.execute(text("ALTER TABLE site_basis_state ADD COLUMN IF NOT EXISTS sod_check text"))
     await db.commit()  # ★DDL 즉시 확정 — 커밋 성공 후에만 ready 세팅(유령 ready 방지·schema_guard 동형).
     _SCHEMA_READY = True
 
@@ -116,6 +121,28 @@ async def _safe_rollback(db: Any) -> None:
     """
     with contextlib.suppress(Exception):
         await db.rollback()
+
+
+async def _tenant_user_count(db: Any, tenant_id: str | None) -> int | None:
+    """테넌트 소속 사용자 수(1쿼리) — 백로그③ R2 HIGH 봉합(solo 테넌트 waiver) 판정 재료.
+
+    ★"판정 실패"와 "확인된 멀티유저"를 절대 혼동하지 않는다 — None은 정직하게 "모른다"만
+      뜻한다(0/1로 임의 해석 금지). tenant_id가 없거나(스코프 불가) COUNT 쿼리 자체가 예외를
+      던지면(DB 장애 등) None을 반환해 호출측이 fail-open(enforce_sod의 determination_failed)
+      정책을 적용하게 한다 — 판정 인프라 장애가 정당한 승인을 영구 차단하면 안 된다.
+    """
+    if not tenant_id:
+        return None
+    try:
+        from sqlalchemy import text
+
+        row = (await db.execute(
+            text("SELECT COUNT(*) FROM users WHERE tenant_id::text = :tid"), {"tid": tenant_id}
+        )).first()
+        return int(row[0]) if row is not None else None
+    except Exception as e:  # noqa: BLE001 — 판정 인프라 장애로 정상 승인이 막히면 안 됨(fail-open).
+        logger.warning("테넌트 사용자 수 조회 실패 — solo 판정 불가(fail-open)", err=str(e)[:120])
+        return None
 
 
 # ── 결정론 run_id(⑦ provenance triad 패턴 재사용 — compute_input_hash) ──────────
@@ -398,6 +425,45 @@ async def approve_site_basis(
     if not ok:
         return {"ok": False, "message": reason, "run_id": run_id, "artifact_status": current.value}
 
+    # ★백로그③ SoD(직무분리, W1-B 계약 동형 재구현) — 이 run_id를 최초로 만든 작성자(assess
+    #   행위자)와 지금 승인자가 동일하면 자기승인 차단(단, R2 HIGH 봉합 — solo 테넌트는 waived,
+    #   아래 참조). site_basis_state에는 별도 author 컬럼이 없어(assess는 판정 자동조립일 뿐
+    #   "레코드 소유자" 개념이 없었음), append-only site_basis_transition_event의 최초 'assess'
+    #   이벤트 actor를 author로 재사용한다(새 컬럼 추가 없이 기존 감사 이력만 조회 — 그린필드 금지).
+    #   ★author 프록시의 한계(R1 리뷰어 실증 — 정직 명시, 이번 스코프에서 해소하지 않음): "최초
+    #     assess 행위자"는 이 정확한 입력(run_id=content_hash)을 가장 먼저 조회·분석한 사람일 뿐,
+    #     "이 분석을 발의·소유한 사람"과 항상 같지는 않다 — assess는 멱등 재호출 가능한 자동
+    #     조립이지 배타적 "생성" 이벤트가 아니기 때문이다. 예: 리뷰어가 검토 목적으로 남보다 먼저
+    #     assess를 호출하면, 그 리뷰어가 이후 자신의 정당한 승인 시도에서 "작성자 본인"으로
+    #     오판되어 차단될 수 있다(R2에서는 solo 테넌트 waiver가 그 최악 사례를 완화하지만,
+    #     멀티유저 테넌트에서는 여전히 남는 한계 — 진짜 해결은 site_basis_state에 "레코드
+    #     소유자" 전용 필드를 도입하는 것으로, 이번 스코프 밖 후속 과제로 남긴다).
+    #   actor가 "system"(created_by 미기재 시 assess_site_basis의 기본값)이면 author 미기록으로
+    #   취급한다 — 무기재 레코드까지 임의로 차단하면 무회귀 원칙을 깬다.
+    #   ORDER BY created_at ASC, id ASC — 동일 timestamptz(동시 assess 경합) 시에도 결정적으로
+    #   같은 행을 고르도록 2차 정렬키를 추가한다(R1 MEDIUM — 비결정성 제거. id는 gen_random_uuid()
+    #   라 "진짜 최초"를 보장하진 않지만, 같은 DB 상태에 대해서는 항상 같은 결과를 보장한다).
+    author_row = (await db.execute(text(
+        "SELECT actor FROM site_basis_transition_event "
+        "WHERE run_id = :rid AND action = 'assess' ORDER BY created_at ASC, id ASC LIMIT 1"
+    ), {"rid": run_id})).first()
+    author = author_row[0] if author_row and author_row[0] and author_row[0] != "system" else None
+
+    # ★R2 HIGH 봉합 — solo 테넌트 영구 락아웃 방지: 자기승인 후보(author==approved_by)일 때만
+    #   테넌트 사용자 수를 추가 조회한다(최소비용 — 통상 승인 경로는 추가 쿼리 0). 판정
+    #   자체(정책 적용)는 enforce_sod가 전담하고, 여기서는 "판정 재료"만 만든다.
+    sod_kwargs: dict[str, Any] = {}
+    if author is not None and author.strip() == approved_by.strip():
+        user_count = await _tenant_user_count(db, tenant_id)
+        sod_kwargs = (
+            {"determination_failed": True} if user_count is None
+            else {"sole_operator": user_count <= 1}
+        )
+    try:
+        sod_check = enforce_sod(author, approved_by, context="site_basis_approve", **sod_kwargs).marker
+    except SelfApprovalError as e:
+        return {"ok": False, "message": str(e), "run_id": run_id, "artifact_status": current.value}
+
     new_status = sbs.apply_transition(current, "approve", approved_by=approved_by, all_p0_clear=all_clear)
     basis_status = sbs.basis_status_of(new_status)
 
@@ -405,14 +471,16 @@ async def approve_site_basis(
     try:
         await db.execute(text(
             "UPDATE site_basis_state SET artifact_status = :st, basis_status = :bst, "
-            "approved_by = :by, approved_at = now(), updated_at = now() WHERE run_id = :rid"
-        ), {"st": new_status.value, "bst": basis_status.value, "by": approved_by, "rid": run_id})
+            "approved_by = :by, approved_at = now(), updated_at = now(), sod_check = :sod "
+            "WHERE run_id = :rid"
+        ), {"st": new_status.value, "bst": basis_status.value, "by": approved_by,
+            "sod": sod_check, "rid": run_id})
         await db.execute(text(
             "INSERT INTO site_basis_transition_event"
             "(run_id, from_status, to_status, action, actor, reason) "
             "VALUES (:rid, :frm, :to, 'approve', :actor, :reason)"
         ), {"rid": run_id, "frm": current.value, "to": new_status.value, "actor": approved_by,
-            "reason": "인간승인 — P0 전건 충족 확인됨"})
+            "reason": f"인간승인 — P0 전건 충족 확인됨; sod_check={sod_check}"})
         await db.commit()
 
         from app.services.ledger.ledger_adapters import record_user_analysis
@@ -420,7 +488,8 @@ async def approve_site_basis(
         ledger_result = await record_user_analysis(
             analysis_type="site_basis", kind="site_basis_approval",
             summary={"run_id": run_id, "artifact_status": new_status.value,
-                     "basis_status": basis_status.value, "approved_by": approved_by},
+                     "basis_status": basis_status.value, "approved_by": approved_by,
+                     "sod_check": sod_check},
             tenant_id=row[3], project_id=row[5], pnu=row[4],
             source="site_basis_approve", created_by=approved_by,
         )
@@ -430,7 +499,7 @@ async def approve_site_basis(
 
     return {
         "ok": True, "run_id": run_id, "artifact_status": new_status.value,
-        "basis_status": basis_status.value, "approved_by": approved_by,
+        "basis_status": basis_status.value, "approved_by": approved_by, "sod_check": sod_check,
         "gates": stored_gates, "content_hash": row[2], "stale_propagated": [], "ledger": ledger_result,
     }
 

@@ -19,6 +19,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.approval.sod import SelfApprovalError, enforce_sod
+
 _PROTECTED_ROLES = {"owner"}
 
 _DDL = [
@@ -40,10 +42,14 @@ _DDL = [
         requested_at timestamptz NOT NULL DEFAULT now(),
         approved_at timestamptz,
         approved_by uuid,
+        sod_check text,                           -- ★백로그③ SoD 표식(승인 시점 기록)
         UNIQUE(team_id, user_id)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_team_members_team_status ON team_members(team_id, status)",
+    # ★백로그③(SoD) — 이미 배포된 team_members 테이블에는 sod_check 컬럼이 없으므로
+    #   ADD COLUMN IF NOT EXISTS로 방어적으로 보강한다(design_run_job.py의 job_status 선례 동형).
+    "ALTER TABLE team_members ADD COLUMN IF NOT EXISTS sod_check text",
 ]
 
 
@@ -172,11 +178,13 @@ async def request_join(db: AsyncSession, user_id: Any, user_tenant_id: Any, owne
     return {"ok": True, "team_name": team["name"]}
 
 
-async def _assign_to_team(db: AsyncSession, team: dict, user_id: Any, approver_id: Any) -> None:
+async def _assign_to_team(
+    db: AsyncSession, team: dict, user_id: Any, approver_id: Any, *, sod_check: str = "n/a",
+) -> None:
     await db.execute(
-        text("UPDATE team_members SET status='approved', approved_at=now(), approved_by=:a "
-             "WHERE team_id=:t AND user_id=:u"),
-        {"a": str(approver_id), "t": team["id"], "u": str(user_id)},
+        text("UPDATE team_members SET status='approved', approved_at=now(), approved_by=:a, "
+             "sod_check=:sod WHERE team_id=:t AND user_id=:u"),
+        {"a": str(approver_id), "sod": sod_check, "t": team["id"], "u": str(user_id)},
     )
     await db.execute(text("UPDATE users SET tenant_id=:tt, role='team_member' WHERE id=:u"),
                      {"tt": team["tenant_id"], "u": str(user_id)})
@@ -185,17 +193,29 @@ async def _assign_to_team(db: AsyncSession, team: dict, user_id: Any, approver_i
 
 async def approve_member(db: AsyncSession, team: dict, user_id: Any, approver_id: Any) -> dict[str, Any]:
     """팀장이 멤버의 자발 신청(pending)만 승인 → 팀 테넌트 배정.
-    ★invited(팀장 초대)는 승인 불가 — 반드시 멤버 본인의 동의(accept_invite)를 거쳐야 한다(강제 합류 방지)."""
+    ★invited(팀장 초대)는 승인 불가 — 반드시 멤버 본인의 동의(accept_invite)를 거쳐야 한다(강제 합류 방지).
+    ★백로그③ SoD(직무분리, W1-B 계약 동형 재구현): 여기서는 "신청자(author) 본인이 자기 신청을
+      스스로 승인"하는 것이 자연 SoD 대상이다 — author=신청자 user_id, approver=approver_id(팀장).
+      request_join()이 이미 자기 팀 신청(owner_id==user_id)을 구조적으로 막아 정상 흐름에서는
+      도달하지 않지만(§13 IDOR 교훈 — 방어는 도달 가능성과 무관하게 값싸다), 심층방어로 여기서도
+      명시 차단한다."""
     m = (await db.execute(text("SELECT status FROM team_members WHERE team_id=:t AND user_id=:u"),
                           {"t": team["id"], "u": str(user_id)})).first()
     if not m or m[0] != "pending":
         return {"ok": False, "error": "승인할 가입 신청이 없습니다(초대는 상대의 동의가 필요)."}
-    await _assign_to_team(db, team, user_id, approver_id)
-    return {"ok": True}
+    try:
+        sod_check = enforce_sod(str(user_id), str(approver_id), context="team_member_approve").marker
+    except SelfApprovalError as e:
+        return {"ok": False, "error": str(e)}
+    await _assign_to_team(db, team, user_id, approver_id, sod_check=sod_check)
+    return {"ok": True, "sod_check": sod_check}
 
 
 async def accept_invite(db: AsyncSession, user_id: Any, team_id: str) -> dict[str, Any]:
-    """멤버가 초대(invited)에 동의 → 팀 합류(테넌트 배정)."""
+    """멤버가 초대(invited)에 동의 → 팀 합류(테넌트 배정).
+    ★SoD 비대상: 초대 수락은 본인이 본인 초대에 동의하는 행위라 자기승인 차단이 애초에 성립하지
+      않는다(approver=user_id는 설계상 항상 자기 자신) — sod_check는 "n/a(self-accept)"로 정직
+      표기(무언 "passed" 참칭 금지, hitl_queue.py의 reject n/a 표기 관례 동형)."""
     team = await get_team(db, team_id)
     if not team:
         return {"ok": False, "error": "팀을 찾을 수 없습니다."}
@@ -203,7 +223,7 @@ async def accept_invite(db: AsyncSession, user_id: Any, team_id: str) -> dict[st
                           {"t": team_id, "u": str(user_id)})).first()
     if not m or m[0] != "invited":
         return {"ok": False, "error": "수락할 초대가 없습니다."}
-    await _assign_to_team(db, team, user_id, user_id)
+    await _assign_to_team(db, team, user_id, user_id, sod_check="n/a(self-accept)")
     return {"ok": True}
 
 

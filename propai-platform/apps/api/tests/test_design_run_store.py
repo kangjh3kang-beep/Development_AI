@@ -343,6 +343,39 @@ async def test_approve_transitions_draft_to_approved():
     assert got["status"] == "APPROVED" and got["approved_by"] == "admin@x"
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 4) SoD(직무분리, 백로그③) — design_run은 author 개념 자체가 없어 항상 skip 표식
+# ══════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_approve_sod_check_is_always_skip_marker_no_author_concept():
+    """★design_runs·persist_design_run 어디에도 author(작성자) 컬럼·인자가 없다 — 자기승인
+    비교 자체가 성립하지 않으므로 누가 승인하든 sod_check는 항상 "skipped(author 미기록)"이다
+    (무언 "passed" 참칭 금지 — W1-B 정직 표기 원칙). 이는 곧 이 경로에서 실제 SoD 차단이
+    "발생하지 않는다"는 사실을 기계적으로 고정한다(author 배선 전까지는 정직한 통과일 뿐)."""
+    db = _FakeDesignRunsDb()
+    res = await store.persist_design_run(
+        db=db, tenant_id="t-a", project_id="p1",
+        building_width_m=30, building_depth_m=12, num_floors=8, floor_height_m=3.0)
+    out = await store.approve_design_run(db=db, run_id=res["run_id"], approved_by="admin@x", tenant_id="t-a")
+    assert out["ok"] is True
+    assert out["sod_check"] == "skipped(author 미기록)"
+
+
+@pytest.mark.asyncio
+async def test_approve_regression_unaffected_by_sod_wiring():
+    """★무회귀 — SoD 배선 이후에도 기존 승인 흐름(성공 status/approved_by)은 그대로 유지."""
+    db = _FakeDesignRunsDb()
+    res = await store.persist_design_run(
+        db=db, tenant_id="t-a", project_id="p1",
+        building_width_m=20, building_depth_m=10, num_floors=5, floor_height_m=3.0)
+    out = await store.approve_design_run(db=db, run_id=res["run_id"], approved_by="reviewer@x", tenant_id="t-a")
+    assert out == {
+        "ok": True, "run_id": res["run_id"], "status": "APPROVED",
+        "approved_by": "reviewer@x", "sod_check": "skipped(author 미기록)",
+    }
+
+
 @pytest.mark.asyncio
 async def test_approve_wrong_tenant_is_not_found():
     """★게이트④ — 다른 테넌트의 run_id 승인 시도는 '없음'으로 거부(IDOR 오라클 방지)."""
