@@ -22,6 +22,7 @@ from ..external_api.commercial_area_service import CommercialAreaService
 from ..external_api.molit_service import MOLITService
 from ..external_api.vworld_service import VWorldService
 from ..zoning.auto_zoning_service import ZONE_INFERENCE_WARNING, AutoZoningService
+from ..zoning.legal_zone_limits import _is_confirmed_ordinance_source
 from .ordinance_service import OrdinanceService
 
 logger = logging.getLogger(__name__)
@@ -624,10 +625,19 @@ class LandInfoService:
                 result["local_ordinance"] = ordinance_result
 
                 # 조례 실효값으로 zone_limits 업데이트
+                # ★정직성 가드(2026-07-22 라이브 결함, live-fix①): ordinance_result["effective_*"]는
+                #   조례 미확보(source="법정상한") 폴백 시에도 항상 채워진다(national_* 값 그대로).
+                #   이를 무조건 ordinance_*_pct에 얹으면 legal_zone_limits._extract_ordinance_far가
+                #   "명시적 조례 신호"로 오인해 far_basis_detail.조례값.confirmed=True로 승격시킨다
+                #   (라이브 재현: 용인시 수지구 자연녹지 — 법정상한 100%가 조례값·확정으로 표시).
+                #   project_pipeline._site_trust_adapter가 이미 쓰는 정답 패턴(source가 실제
+                #   조례/법제처 확정출처일 때만 ordinance_*_pct 주입)을 여기도 동일 적용한다
+                #   (무날조·정직표기 — 수치는 그대로, '확정' 오표기만 제거).
                 if result["zone_limits"] and ordinance_result:
-                    if ordinance_result.get("effective_bcr"):
+                    _ord_confirmed_src = _is_confirmed_ordinance_source(ordinance_result.get("source"))
+                    if _ord_confirmed_src and ordinance_result.get("effective_bcr"):
                         result["zone_limits"]["ordinance_bcr_pct"] = ordinance_result["effective_bcr"]
-                    if ordinance_result.get("effective_far"):
+                    if _ord_confirmed_src and ordinance_result.get("effective_far"):
                         result["zone_limits"]["ordinance_far_pct"] = ordinance_result["effective_far"]
                     result["zone_limits"]["ordinance_source"] = ordinance_result.get("source", "")
                     result["zone_limits"]["ordinance_legal_basis"] = ordinance_result.get("legal_basis", "")
