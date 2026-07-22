@@ -71,6 +71,11 @@ async def generate_senior_narrative(prompt: str, *, use_llm: bool) -> str | None
     if interp.last_truncated:
         return None
     narrative = (result.get("narrative") or "").strip()
+    # ★R1 반영: 절단이 아니어도 "파싱 실패 + 중괄호로 시작"이면 깨진 JSON 덤프다(따옴표
+    #   미이스케이프 등) — raw 노출 금지. 정상 산문(중괄호 미시작)은 parse_ok=False여도
+    #   보존(산문=정상 출력인 인터프리터라 parse_ok 단독 강등은 오탐 — 위 docstring 참조).
+    if not interp.last_parse_ok and narrative[:1] in ("{", "["):
+        return None
     return narrative or None
 
 
@@ -84,6 +89,9 @@ async def _debate_side(prompt: str) -> str | None:
     if interp.last_truncated:
         return None
     text = (result.get("text") or "").strip()
+    # ★R1 반영: narrative 게이트와 동일 — 깨진 JSON 덤프(파싱 실패+중괄호 시작)만 차단.
+    if not interp.last_parse_ok and text[:1] in ("{", "["):
+        return None
     return text or None
 
 

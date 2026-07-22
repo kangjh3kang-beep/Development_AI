@@ -140,3 +140,32 @@ async def test_debate_truncated_side_degrades_like_failure(monkeypatch):
     monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", half)
     r = await generate_senior_debate({"pro": "적합하다는 입장", "con": "부적합하다는 입장"}, use_llm=True)
     assert r == {"pro": "프로 논증"}
+
+
+@pytest.mark.asyncio
+async def test_broken_json_dump_not_truncated_is_blocked(monkeypatch):
+    """★R1 반영 회귀앵커: 절단이 아니어도(stop_reason=end_turn) 파싱 실패 + 중괄호 시작이면
+    깨진 JSON 덤프다(따옴표 미이스케이프 등) — raw 노출 금지(None 강등). 정상 산문 보존
+    (test_non_json_prose_narrative_is_preserved)과 쌍을 이루는 경계다."""
+    async def broken_json_invoke(self, prompt):  # noqa: ANN001, ARG001
+        self.last_parse_ok = False   # 파싱 실패
+        self.last_truncated = False  # 절단은 아님
+        return {"narrative": '{"narrative": "따옴표가 "깨진" 원문 뭉치...'}
+
+    monkeypatch.setattr(SeniorNarratorInterpreter, "_invoke", broken_json_invoke)
+    assert await generate_senior_narrative("FinCoT 프롬프트", use_llm=True) is None
+
+
+@pytest.mark.asyncio
+async def test_debate_broken_json_dump_blocked_like_narrative(monkeypatch):
+    """debate 쪽도 동일 게이트 — 깨진 JSON 덤프 입장은 생략, 정상 입장은 유지."""
+    async def half(self, prompt):  # noqa: ANN001, ARG001
+        if "부적합" in prompt:
+            self.last_parse_ok = False
+            self.last_truncated = False
+            return {"text": '["broken", "json...'}
+        return {"text": "프로 논증"}
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", half)
+    r = await generate_senior_debate({"pro": "적합하다는 입장", "con": "부적합하다는 입장"}, use_llm=True)
+    assert r == {"pro": "프로 논증"}
