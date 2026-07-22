@@ -593,7 +593,9 @@ class MarketReportService:
 
             # ★max_tokens 3000: 1500 캡은 라이브에서 output==1500 캡 도달(절단) 실측 —
             #   절단된 JSON은 파싱 실패→폴백 강등이라 여유 캡이 비용상으로도 이득이다.
-            llm = get_llm(timeout=40, max_tokens=3000)
+            #   timeout 60: 캡 상한 근접 생성(~75tok/s 필요)이 40s를 초과할 수 있어 동반 상향
+            #   — 절단 실패가 타임아웃 실패로 라벨만 바뀌지 않게(R1 권고).
+            llm = get_llm(timeout=60, max_tokens=3000)
             # 근거 그라운딩: 대상지 주소 기반 지역 시세 벤치마크를 근거로 주입한다.
             # 전용 인터프리터(MarketInterpreter)와 동일 근거원인 BaseInterpreter._regional_benchmark
             # (정적·sync·키불필요·결정적 로컬 테이블 — 블로킹 I/O 없음)를 재사용해, 인라인 경로도
