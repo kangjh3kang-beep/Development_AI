@@ -12,6 +12,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# web3 미설치 경고를 프로세스당 1회로 제한(10분 주기 cron 노이즈 방지)
+_DEP_WARNED = False
+
 # PropAIEscrow 이벤트 시그니처 (Solidity → keccak256 해시)
 EVENT_SIGNATURES = {
     "EscrowCreated": "0x" + "EscrowCreated(uint256,address,address,uint256)"[:32].encode().hex()[:64],
@@ -31,8 +34,18 @@ async def run_blockchain_listener(
     2. EscrowCreated/FundDeposited/FundReleased/DisputeRaised 이벤트 파싱
     3. escrow_transactions 테이블 상태 업데이트
     """
-    from web3 import AsyncWeb3
-    from web3.providers import AsyncHTTPProvider
+    # ★web3는 운영(oracle 경량) 이미지에 미설치 — 10분 주기 cron이라 무가드 import는
+    #   하루 144회 트레이스백 노이즈였다(2026-07-22 운영 실측). 미설치=기능 비활성으로
+    #   정직 스킵하고, 경고는 프로세스당 1회만 남긴다.
+    global _DEP_WARNED
+    try:
+        from web3 import AsyncWeb3
+        from web3.providers import AsyncHTTPProvider
+    except ImportError:
+        if not _DEP_WARNED:
+            logger.warning("web3 미설치(경량 이미지) — 블록체인 리스너 비활성, 이후 스킵은 무로그")
+            _DEP_WARNED = True
+        return {"status": "skipped", "reason": "web3_not_installed"}
 
     from apps.api.config import get_settings
     from apps.api.database.session import AsyncSessionLocal
