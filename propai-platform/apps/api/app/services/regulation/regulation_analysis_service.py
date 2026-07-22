@@ -637,10 +637,17 @@ class RegulationAnalysisService:
             logger.warning("규제 LLM 모듈 로드 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
             return self._llm_fallback(zone, districts, "import")
         try:
-            llm = get_llm(timeout=60, max_tokens=2500)
+            # ★max_tokens 4096: 이 프롬프트의 자연 응답이 2,200~2,600+ 토큰(한국어 6필드 JSON)이라
+            #   2500 캡에서는 약 절반이 JSON 중간 절단→파싱 실패→폴백 강등이었다(2026-07-22
+            #   llm_usage_log 실측: output==2500 캡 도달 호출만 정확히 실패). 절단 호출도
+            #   과금은 전액 발생하므로 여유 캡이 비용상으로도 이득이다.
+            #   timeout 90: 실측 생성속도(~64tok/s)로 상한 근접 생성 시 60s 초과 소지 —
+            #   절단 실패가 타임아웃 실패로 라벨만 바뀌지 않게 expert_panel(90s) 관례 정합.
+            llm = get_llm(timeout=90, max_tokens=4096)
         except Exception as e:  # noqa: BLE001 — 키 미설정·모델 구성 오류 등
             logger.warning("규제 LLM 초기화 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
             return self._llm_fallback(zone, districts, "provider")
+        resp = None
         try:
             bcr = limits["bcr"]; far = limits["far"]
             # WP-R1: 실효 용적률 근거 문구(구조상한 등)를 프롬프트에 병기 → AI가 실효치를 정확히 서술.
@@ -668,14 +675,20 @@ class RegulationAnalysisService:
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("규제 LLM 해석 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
             # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
             # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
+            # ★절단(truncated)을 'parse'와 구분 — 잘린 JSON은 파서 문제가 아니라 캡 부족이며,
+            #   섞어 두면 이번처럼(#411) 파서 수리로 오진단하게 된다(절단감지 SSOT=llm_json).
+            from app.services.ai.llm_json import is_truncated
             reason = (
                 "timeout" if "Timeout" in type(e).__name__
+                else "truncated" if (
+                    isinstance(e, json.JSONDecodeError) and is_truncated(resp))
                 else "parse" if isinstance(e, (json.JSONDecodeError, KeyError))
                 else "provider"
             )
+            logger.warning("규제 LLM 해석 실패, 폴백",
+                           reason=reason, err=f"{type(e).__name__}: {str(e)[:100]}")
             return self._llm_fallback(zone, districts, reason)
 
     @staticmethod

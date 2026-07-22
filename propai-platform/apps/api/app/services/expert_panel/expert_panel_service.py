@@ -340,14 +340,11 @@ class ExpertPanelService:
             await record_llm_response_billing(llm, resp, service="expert_panel")
             raw = resp.content if hasattr(resp, "content") else str(resp)
             # 절단 감지: provider stop_reason이 length/max_tokens면 응답이 잘린 것(무목업·정직 사유).
-            stop = ""
-            meta = getattr(resp, "response_metadata", None)
-            if isinstance(meta, dict):
-                stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
+            from app.services.ai.llm_json import is_truncated
             try:
                 data = parse_llm_json(raw)
             except json.JSONDecodeError:
-                reason = "truncation" if stop in ("max_tokens", "length") else "invalid_json"
+                reason = "truncation" if is_truncated(resp) else "invalid_json"
                 raise
             if not isinstance(data.get("experts"), list):
                 reason = "validation"

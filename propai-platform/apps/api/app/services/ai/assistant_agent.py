@@ -65,18 +65,15 @@ def _chunk_text(chunk: object) -> str:
 
 
 # 절단 정직 고지 — provider stop_reason(anthropic)/finish_reason(openai 등)이 max_tokens/length면
-# 문장 중간 절단이 에러 표시 없이 조용히 전송된 것(무목업 원칙 위반). 기존 관례
-# (expert_panel_service._single의 절단 감지)와 동일 판정 로직을 재사용(신규 산식 0).
+# 문장 중간 절단이 에러 표시 없이 조용히 전송된 것(무목업 원칙 위반).
 _TRUNCATION_NOTICE = "\n\n_(응답이 길어 일부 생략되었습니다 — 이어서 질문해 주세요)_"
 
 
 def _is_truncated(response: object) -> bool:
-    """LLM 응답이 max_tokens 절단으로 끝났는지 판정(response_metadata.stop_reason/finish_reason)."""
-    meta = getattr(response, "response_metadata", None)
-    if not isinstance(meta, dict):
-        return False
-    stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
-    return stop in ("max_tokens", "length")
+    """LLM 응답이 max_tokens 절단으로 끝났는지 판정(판정 SSOT=llm_json.is_truncated)."""
+    from app.services.ai.llm_json import is_truncated
+
+    return is_truncated(response)
 
 
 # ─────────────────────────── 읽기 도구(무료·in-process) ───────────────────────────

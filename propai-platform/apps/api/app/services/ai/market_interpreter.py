@@ -124,7 +124,9 @@ class MarketInterpreter(BaseInterpreter):
         "timing_recommendation",
     ]
     fallback_key = "market_overview"
-    max_tokens = 4096
+    # ★6000: 6섹션 한국어 JSON이 라이브에서 output==4096 캡 도달(절단) 실측 —
+    #   feasibility(6000)·site_analysis(6000)와 동일한 다섹션 인터프리터 관례를 따른다.
+    max_tokens = 6000
     system_prompt = SYSTEM_PROMPT
 
     # 폴백 시 반환할 기본 키 목록
