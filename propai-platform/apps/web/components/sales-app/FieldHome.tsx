@@ -170,7 +170,13 @@ export default function FieldHome({
     const total = Object.values(c).reduce((a, b) => a + (b || 0), 0);
     const active = total - (c.CANCELLED || 0);
     const soldRatio = active ? Math.round(((c.CONTRACTED || 0) / active) * 1000) / 10 : 0;
-    return { total, soldRatio, contracted: c.CONTRACTED || 0, hold: c.HOLD || 0 };
+    return {
+      total,
+      soldRatio,
+      contracted: c.CONTRACTED || 0,
+      hold: c.HOLD || 0,
+      available: c.AVAILABLE || 0,
+    };
   }, [board]);
 
   // '오늘 할 일' — 실 신호에서만 조립(가짜 항목 없음).
@@ -223,33 +229,61 @@ export default function FieldHome({
 
   return (
     <div className="space-y-4">
-      {/* 인사 + 계약률 히어로 */}
-      <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
+      {/* 인사 + 계약률 히어로 — 디자인 핸드오프 시그니처: 네이비(#2A2E3B) 카드·대형 분양률
+          디스플레이(Space Grotesk)·진행바·하단 3스탯. 네이비는 라이트/다크 양 테마에서 동일한
+          '어두운 관제 카드'라 테마 토큰 대신 핸드오프 고정색을 쓴다(디자인 정본 충실). */}
+      <header className="relative overflow-hidden rounded-2xl bg-[#2A2E3B] p-5 shadow-[var(--shadow-md)]">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-10 -top-14 h-36 w-36 rounded-full bg-[var(--accent-soft)] blur-3xl"
+          className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-[#7C98F2]/20 blur-3xl"
         />
-        <div className="relative flex flex-col gap-3">
-          <div>
-            <span className="cc-meta">FIELD APP · HOME</span>
-            <h1 className="mt-0.5 text-lg font-black leading-tight text-[var(--text-primary)]">
-              {roleLabel}님, {isManager ? "조직 현황입니다" : "오늘의 할 일입니다"}
-            </h1>
+        <div className="relative flex flex-col gap-3.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="font-[family-name:var(--font-display)] text-[10px] font-bold uppercase tracking-[0.12em] text-white/55">
+              FIELD APP · HOME
+            </span>
+            <span className="rounded-full bg-[#7C98F2]/20 px-2.5 py-0.5 text-[10px] font-bold text-[#A8BCF8]">
+              {roleLabel}
+            </span>
           </div>
+          <h1 className="text-[17px] font-black leading-tight text-white">
+            {roleLabel}님, {isManager ? "조직 현황입니다" : "오늘의 할 일입니다"}
+          </h1>
           {loading && !board ? (
-            <SkeletonLoader className="h-16 rounded-xl" />
+            <SkeletonLoader className="h-24 rounded-xl" />
           ) : board === null ? (
             // ★로드 실패를 '0%·0세대'로 위장하지 않는다(무목업·정직표기). board=null 은 fetch 실패.
-            <p className="rounded-xl bg-[var(--surface)] px-3 py-4 text-center text-xs font-semibold text-[var(--text-tertiary)]">
+            <p className="rounded-xl bg-white/10 px-3 py-4 text-center text-xs font-semibold text-white/70">
               핵심 지표를 불러오지 못했습니다. 연결 후 새로고침하면 최신 집계로 갱신됩니다.
             </p>
           ) : (
-            <div className="grid grid-cols-4 gap-1.5 rounded-xl bg-[var(--surface-strong,var(--surface))] p-1.5">
-              <Kpi label="분양률" value={`${kpi.soldRatio}%`} tone="var(--accent-strong)" />
-              <Kpi label="계약" value={`${kpi.contracted}`} />
-              <Kpi label="선점중" value={`${kpi.hold}`} />
-              <Kpi label="총 세대" value={`${kpi.total}`} />
-            </div>
+            <>
+              {/* 대형 분양률 디스플레이 + 진행바(핸드오프 01 홈 히어로 구성) */}
+              <div className="flex items-baseline gap-2">
+                <span className="font-[family-name:var(--font-display)] text-[42px] font-bold leading-none tracking-[-0.02em] text-white">
+                  {kpi.soldRatio}
+                  <span className="text-lg text-white/60">%</span>
+                </span>
+                <span className="text-[11px] font-semibold text-white/60">분양률 · 전체 {kpi.total}세대</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
+                <div
+                  className="h-full rounded-full bg-[#7C98F2] transition-[width]"
+                  style={{ width: `${Math.min(100, Math.max(0, kpi.soldRatio))}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] text-white/65">
+                <span>
+                  계약 <span className="font-[family-name:var(--font-mono)] font-medium text-white">{kpi.contracted}</span>
+                </span>
+                <span>
+                  선점중 <span className="font-[family-name:var(--font-mono)] font-medium text-white">{kpi.hold}</span>
+                </span>
+                <span>
+                  분양가능 <span className="font-[family-name:var(--font-mono)] font-medium text-white">{kpi.available}</span>
+                </span>
+              </div>
+            </>
           )}
         </div>
       </header>
