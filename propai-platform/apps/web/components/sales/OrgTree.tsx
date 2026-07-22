@@ -137,12 +137,21 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     return next;
   });
 
-  // 내가 이 부모 아래에 추가할 수 있는 직급 — 서버 매트릭스(addable_types)∩위계. ctx 미로드면 빈 배열
-  // (fail-closed: 서버가 거부할 버튼을 낙관적으로 보여주지 않는다).
+  // 내가 이 부모 아래에 추가할 수 있는 직급 — 서버 매트릭스(addable_types)∩위계.
+  // ★[배포순서 회귀 방지] /org/context 는 이 트랙에서 신설된 엔드포인트라, 프론트(158)가 백엔드(168)
+  //   보다 먼저 배포되면 404 → ctx=null 이 된다. 이때 빈 배열(fail-closed)로 두면 조직도 추가/이동
+  //   기능이 통째로 사라지는 회귀이므로, ctx 실패 시엔 '구버전 동작'(전 직급 노출·위계 필터만)으로
+  //   폴백한다 — 실제 권한 판정은 어차피 서버(매트릭스+위계+스코프)가 강제하므로 보안 저하가 아니다.
+  const legacyAllTypes = NODE_TYPES.map((t) => t.value);
   const addableUnder = useCallback(
-    (parentType: string | null) => addableChildTypes(ctx?.addable_types ?? [], parentType),
-    [ctx]);
-  const canAddRoot = addableUnder(null).length > 0 && (ctx?.scope === "site");
+    (parentType: string | null) =>
+      ctx ? addableChildTypes(ctx.addable_types, parentType)
+        : legacyAllTypes.filter((t) => parentType === null || orgRank(t) > orgRank(parentType)),
+    [ctx]); // eslint-disable-line react-hooks/exhaustive-deps
+  const canAddRoot = ctx ? addableUnder(null).length > 0 && ctx.scope === "site" : true;
+  // 이동 백엔드는 대행본사/시행사/총괄관리자 전용 — 그 외 역할에 눌러봤자 403 인 버튼을 숨긴다
+  // (R1 MINOR). ctx 미로드(구백엔드)면 구버전처럼 노출하고 서버 판정에 위임한다.
+  const canMove = ctx ? ["AGENCY", "DEVELOPER", "SUPERADMIN"].includes(ctx.role) : true;
 
   const addNode = async (parent: Node | null) => {
     if (!name.trim() || !newType) return;
@@ -196,6 +205,16 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     catch (e) { alert(e instanceof Error && e.message ? e.message : "정산 명세 조회 실패"); }
   };
   const won = (n: number) => `${(n || 0).toLocaleString()}원`;
+
+  // 오버레이(액션시트/배정/정산) 오픈 중 배경 스크롤 잠금 — 닫히면 해제(R1 MINOR).
+  // FieldNav 시트에서 배운 교훈: CSS 로만 숨기면 body 부수효과가 남는다 — 상태로 잠그고 cleanup.
+  const anyOverlay = !!(sheet || assign || settle);
+  useEffect(() => {
+    if (!anyOverlay) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [anyOverlay]);
 
   // ★표시행(상위 N명)과 그 합을 한 번만 계산해, 표 본문(.map)과 footer '행 합'이 같은 한 부를 쓴다.
   const rosterAll = ov?.roster ?? [];
@@ -252,7 +271,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
               {open ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
             </button>
           ) : <span className="size-9 shrink-0" />}
-          <button onClick={() => setSheet({ node: n, mode: "actions" })}
+          <button onClick={() => { setRootAdd(false); setNewType(""); setName(""); setSheet({ node: n, mode: "actions" }); }}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left">
             <span className="shrink-0 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>
             <span className="truncate text-sm font-semibold text-[var(--text-primary)]">{n.display_name ?? "-"}</span>
@@ -267,7 +286,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
   const sheetTypes = sheet ? addableUnder(sheet.node.node_type) : [];
-  const sheetMoveTargets = sheet ? moveTargets(tree, sheet.node) : [];
+  const sheetMoveTargets = sheet && canMove ? moveTargets(tree, sheet.node) : [];
   return (
     <div className="space-y-4">
       {/* ① 내 조직 카드 — 내 직급·열람 범위·지정 가능 직급(서버 /org/context SSOT). */}

@@ -60,7 +60,10 @@ _ORG_RANK = {
 }
 
 # 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
-_R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER")
+# ★SUPERADMIN 포함(2026-07-23): 매트릭스는 총괄관리자(SUPERADMIN)의 대행사 지정을 허용하는데
+#   라우터 게이트에 SUPERADMIN 이 빠져 매트릭스 도달 전에 403 — 스펙("총괄관리자는 하위
+#   대행사만 지정") 위배였다. 게이트는 통과시키고 실제 한계는 매트릭스가 강제한다.
+_R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER", "SUPERADMIN")
 _R_TEAM = ("TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_SALES_ALL = ("MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_CONTRACT = ("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
@@ -105,6 +108,12 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
         if ntype != "AGENCY":
             raise HTTPException(400, "최상위에는 대행사(AGENCY)만 둘 수 있습니다. 상위 노드를 지정하세요.")
     if parent_id:
+        # ★[입력검증(R1 MINOR)] parent_id 는 UUID 컬럼 비교에 그대로 실리므로, 형식 불량이면
+        #   DB 계층 오류→500 누출이었다. move_node 와 대칭으로 400 으로 돌린다.
+        try:
+            parent_id = uuid.UUID(str(parent_id))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, "parent_id 형식이 올바르지 않습니다(UUID 필요)") from e
         parent = (await db.execute(select(SalesOrgNode).where(
             SalesOrgNode.id == parent_id, SalesOrgNode.site_id == ctx.site_id,
             SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
@@ -343,6 +352,36 @@ async def move_node(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(g
         new_parent_id = uuid.UUID(str(raw))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, "new_parent_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    # ★[직속 파이프라인 대칭(2026-07-23 R1)] add_node 와 동일 술어(위계·서브트리)를 move 에도
+    #   강제한다 — add 만 막고 move 를 열어두면 '허용 위치에 추가 후 이동'으로 위계가 우회된다
+    #   (예: 본부장 서브트리를 직원 노드 밑으로 — 수수료 2단 배분 기준 붕괴). 노드/새부모를
+    #   현장 스코프로 먼저 조회해 서열을 검증한다(move_subtree 재조회와 중복되지만, 위계 술어는
+    #   엔드포인트 계약이라 add_node 와 같은 계층에 둔다).
+    node = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == node_id, SalesOrgNode.site_id == ctx.site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if node is None:
+        raise HTTPException(404, "이동할 노드를 찾을 수 없습니다")
+    new_parent = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == new_parent_id, SalesOrgNode.site_id == ctx.site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if new_parent is None:
+        raise HTTPException(404, "새 상위 노드를 찾을 수 없습니다")
+    # 사이클(자기 자신/자손 아래로) 검사를 위계보다 먼저 — 정상 트리에선 자손이 항상 하위 서열이라
+    # 위계 400 이 사이클 422 를 가려버린다(422=의미상 불가능한 입력 계약 보존, iter-4 결정).
+    node_path, parent_path = str(node.path), str(new_parent.path)
+    if parent_path == node_path or parent_path.startswith(node_path + "."):
+        raise HTTPException(422, "자기 자신 또는 하위 노드 아래로는 이동할 수 없습니다(순환)")
+    p_rank = _ORG_RANK.get(new_parent.node_type)
+    n_rank = _ORG_RANK.get(node.node_type)
+    if p_rank is None or n_rank is None or p_rank >= n_rank:
+        raise HTTPException(
+            400, f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).")
+    my_path = getattr(ctx, "org_path", None) or ""
+    if my_path:
+        for p in (node_path, parent_path):
+            if not (p == my_path or p.startswith(my_path + ".")):
+                raise HTTPException(403, "내 하위 조직 안에서만 이동할 수 있습니다")
     try:
         await move_subtree(db, ctx.site_id, node_id, new_parent_id, by=ctx.user.id)
     except OrgNodeNotFoundError as e:
