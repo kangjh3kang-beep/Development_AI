@@ -1,18 +1,32 @@
 "use client";
 
 /**
- * 분양 조직도 — ltree 계층 트리 + 노드 추가/이동.
- * 백엔드: GET /sales/org/tree · POST /sales/org/nodes · PATCH /sales/org/nodes/{id}/move
+ * 분양 조직도 — ltree 계층 트리 + 직속 지정 파이프라인(모바일 우선 UX).
+ * 백엔드: GET /sales/org/tree · GET /sales/org/context · POST /sales/org/nodes
+ *        · PATCH /sales/org/nodes/{id}/move
+ *
+ * ★[모바일 재설계(2026-07-23)] 과거 화면은 데스크톱 폼 문법(상위/직급/이름 3연 셀렉트 + 행마다
+ *   '이동…' 셀렉트)이라 스마트폰에서 가독성·직관력이 무너졌다. 재설계 원칙:
+ *   ① '내 조직' 카드 — 서버 /org/context 가 알려주는 내 직급·열람 범위·지정 가능 직급을 먼저 보여줘
+ *      "내가 여기서 뭘 할 수 있는지"를 화면이 스스로 설명한다.
+ *   ② 추가는 '노드에서 시작' — 전역 폼(상위 셀렉트) 대신 트리의 노드를 탭 → 액션시트 → "하위 추가".
+ *      부모가 먼저 정해지므로 직급 선택지는 매트릭스∩위계 교집합만 남는다(서버가 거부할 선택지 제거).
+ *   ③ 트리는 아코디언 — 하위가 많아도 접어서 스캔 가능. 행 전체가 터치 대상(44px).
+ *   ④ 이동도 액션시트에서 — 행마다 붙던 '이동…' 셀렉트 제거(시각 소음 제거).
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Building2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Building2, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { NODE_TYPE_LABEL, nodeTypeOptions } from "@/components/sales-app/roleConfig";
+import {
+  NODE_TYPE_LABEL, ROLE_LABEL, nodeTypeOptions, nodeTypeLabel, orgRank, addableChildTypes,
+} from "@/components/sales-app/roleConfig";
 
 interface Node { id: string; path: string; node_type: string; display_name?: string | null }
+/** GET /org/context 응답 — 프론트 게이팅의 서버 SSOT(권한 판단을 프론트가 재발명하지 않는다). */
+interface OrgCtx { role: string; org_path: string; addable_types: string[]; scope: "site" | "subtree" }
 
 // ★[정합(iter-6)] 로스터 표는 상위 N명만 그린다(긴 조직 잘림). 표시행 합(footer '행 합')은 반드시
 //   '실제로 그린 행들'의 합과 일치해야 한다(과거엔 footer 가 서버 전체 로스터 합 roster_totals 를
@@ -32,47 +46,61 @@ export function sumRosterRows(rows: RosterRow[]): RosterRow {
   );
 }
 
-// ★[라벨 SSOT(2026-07-22 봉합)] node_type→한국어 라벨 정본은 이제 roleConfig.NODE_TYPE_LABEL
-//   한 부(= 백엔드 site_auth._ROLE_LABEL·로그인 역할 라벨과 1:1). 과거엔 조직도 배지=프론트 상수 vs
-//   로스터 표=백엔드 라벨로 DIRECTOR 가 '본부장' vs '이사' 로 모순 표시됐고, 수수료/더치페이 화면은
-//   또 다른 라벨(대대행/총괄본부장/본부장)을 써서 3벌로 갈라졌다. 트리배지·로스터표·드롭다운·수수료가
-//   모두 roleConfig 한 부를 소비하게 일원화한다. 위계=본부장(GM_DIRECTOR) > 이사(DIRECTOR).
+// ★[라벨 SSOT(2026-07-22 봉합)] node_type→한국어 라벨 정본은 roleConfig.NODE_TYPE_LABEL 한 부.
 // ★export: OrgTree.contract.test.ts 가 SSOT 패리티와 '트리배지=로스터표' 동일문자열을 회귀로 고정.
 export const NODE_TYPES = nodeTypeOptions();
 export const LABEL: Record<string, string> = { ...NODE_TYPE_LABEL }; // 방어적 복사(SSOT 원본 오염 차단)
-const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
+
+/**
+ * 이동 가능한 새 상위 후보 — 순수 헬퍼(테스트 고정).
+ * 제외: 자기 자신, 자기 자손(순환 방지 — ltree 경계는 반드시 `path + "."` 로 비교한다:
+ * 과거 `startsWith(n.path)` 는 "r.n1" 이 "r.n10" 을 자손으로 오인해 형제를 후보에서 잘못 제외했다),
+ * 현재 부모(제자리 이동 무의미), 위계 위반(새 상위는 나보다 서열이 높아야 — 서버 400과 동일 술어).
+ */
+export function moveTargets(all: Node[], node: Node): Node[] {
+  const parentPath = node.path.includes(".") ? node.path.slice(0, node.path.lastIndexOf(".")) : "";
+  return all.filter((x) =>
+    x.id !== node.id &&
+    x.path !== node.path &&
+    !x.path.startsWith(node.path + ".") &&
+    x.path !== parentPath &&
+    orgRank(x.node_type) < orgRank(node.node_type));
+}
+
+const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
 export default function OrgTree({ siteCode }: { siteCode: string }) {
   const api = salesApi(siteCode);
   const [nodes, setNodes] = useState<Node[]>([]);
-  const [parentId, setParentId] = useState("");
-  const [nodeType, setNodeType] = useState("DIRECTOR");
-  const [name, setName] = useState("");
+  const [ctx, setCtx] = useState<OrgCtx | null>(null);
   const [busy, setBusy] = useState(false);
   // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
   const [loaded, setLoaded] = useState(false);
+  // 아코디언 펼침 상태(node.id 집합). 최초 로드 시 상위 2계층만 펼친다(긴 조직 스캔성).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // 행 탭 → 액션시트. mode: 액션 목록 → 하위추가 폼 → 이동 대상 선택.
+  const [sheet, setSheet] = useState<{ node: Node; mode: "actions" | "add" | "move" } | null>(null);
+  // 최상위(대행사) 추가 폼 — 본사 권한(scope=site)에서만 노출.
+  const [rootAdd, setRootAdd] = useState(false);
+  const [newType, setNewType] = useState("");
+  const [name, setName] = useState("");
+
   // Ov: 백엔드 TeamOverviewResponse(overview.py) 의 superset 중 프론트가 소비하는 키.
   // ★[혼동해소(iter-3)] totals(범위 안 전체 노드 합 — 본사 AGENCY/SUBAGENCY 귀속분 포함)와
-  //   roster_totals(아래 표에 보이는 직급 행만의 합)를 둘 다 받아 화면에 명시한다. 과거엔 totals 만
-  //   소비해, '헤더 계약수(전체 합)'와 '표의 행 합'이 달라 보일 때 사용자가 데이터 오류로 오해했다
-  //   (본사 노드에 직접 귀속된 계약이 있으면 totals > 행 합). 두 합을 분리 표기해 혼동을 없앤다.
+  //   roster_totals(아래 표에 보이는 직급 행만의 합)를 둘 다 받아 화면에 명시한다.
   type Totals = { contracts: number; customers: number; work_logs: number };
   type Ov = { members: number; totals: Totals; roster_totals?: Totals; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
   const [ov, setOv] = useState<Ov | null>(null);
-  // ★[정직성(iter-7)] team-overview 로드 실패를 화면에 명시한다. 과거엔 .catch(()=>setOv(null)) 가
-  //   401/403/5xx 를 모두 '패널 미표시'로 흡수해, 백엔드가 silent-fail 을 제거한 정직성이 화면에
-  //   전달되지 않았다(권한부족·서버오류를 사용자가 구분 못 함). 4xx=권한/요청 문제, 5xx=서버 오류로
-  //   나눠 인라인 안내한다(빈값 은폐 금지).
+  // ★[정직성(iter-7)] team-overview 로드 실패를 화면에 명시한다(4xx=권한, 5xx/0=서버·연결).
   const [ovErr, setOvErr] = useState<{ kind: "auth" | "server"; status: number } | null>(null);
   // #5 해촉/정산 — 노드 수수료 정산 명세(기발생−기지급=미지급, 세금분개).
   type Settle = { tax_type: string; contracts: number; earned_gross: number; paid_gross: number; outstanding_gross: number; settlement: { withholding: number; vat: number; net: number; total_paid: number } };
   const [settle, setSettle] = useState<{ name: string; data: Settle } | null>(null);
 
   const load = useCallback(() => {
-    // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
     api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([])).finally(() => setLoaded(true));
-    // team-overview: 성공 시 ov 세팅·에러 해제. 실패 시 status 로 권한(4xx)/서버(5xx)를 분류해 인라인
-    // 안내한다(은폐 금지). status 0(네트워크/타임아웃)도 서버오류로 분류해 '문제 있음'을 알린다.
+    // 컨텍스트 실패는 치명 아님 — 카드 미표시 + 추가 게이팅이 보수적(추가 버튼 숨김)으로 동작한다.
+    api.get<OrgCtx>("/org/context").then((r) => setCtx(r)).catch(() => setCtx(null));
     api.get<Ov>("/org/team-overview")
       .then((r) => { setOv(r); setOvErr(null); })
       .catch((e) => {
@@ -83,44 +111,53 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
-  const setTax = async (nodeId: string, taxType: string) => {
-    try { await api.post("/commission/tax-pref", { node_id: nodeId, tax_type: taxType }); load(); }
-    catch { alert("세금유형 저장 실패(권한 확인)"); }
-  };
-  // P2-3 인원배정: 같은 조직 사용자를 이메일로 노드에 배정/해제(미배정 해소).
-  const assignUser = async (nodeId: string) => {
-    const email = prompt("배정할 사용자의 이메일(같은 조직 가입자)")?.trim();
-    if (!email) return;
-    try { const r = await api.post<{ name: string }>(`/org/nodes/${nodeId}/assign`, { email }); alert(`배정 완료: ${r?.name ?? email}`); load(); }
-    catch (e) { alert(e instanceof Error && e.message ? e.message : "배정 실패"); }
-  };
-  const unassignUser = async (nodeId: string) => {
-    if (!confirm("이 인원 배정을 해제할까요? (노드·실적은 유지)")) return;
-    try { await api.post(`/org/nodes/${nodeId}/unassign`, {}); load(); }
-    catch (e) { alert(e instanceof Error && e.message ? e.message : "해제 실패"); }
-  };
-  const loadSettle = async (nodeId: string, name: string) => {
-    try { const d = await api.get<Settle>(`/commission/settle-summary?node_id=${nodeId}`); setSettle({ name, data: d }); }
-    catch (e) { alert(e instanceof Error && e.message ? e.message : "정산 명세 조회 실패"); }
-  };
-  const won = (n: number) => `${(n || 0).toLocaleString()}원`;
 
-  const tree = nodes.slice().sort((a, b) => a.path.localeCompare(b.path));
+  const tree = useMemo(() => nodes.slice().sort((a, b) => a.path.localeCompare(b.path)), [nodes]);
   const depth = (p: string) => p.split(".").length - 1;
+  // 서브트리 스코프 뷰(본부장 등)에선 내 노드가 depth>0 이어도 '이 화면의 루트'다 — 절대 depth 가
+  // 아니라 화면 안 최소 depth 를 0 으로 보는 상대 계층으로 그린다.
+  const minDepth = useMemo(() => tree.reduce((m, n) => Math.min(m, depth(n.path)), Infinity), [tree]);
+  const level = (n: Node) => depth(n.path) - minDepth;
+  const childrenOf = useCallback(
+    (n: Node) => tree.filter((x) => x.path.startsWith(n.path + ".") && depth(x.path) === depth(n.path) + 1),
+    [tree]);
+  const roots = useMemo(() => tree.filter((n) => level(n) === 0), [tree]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const addNode = async () => {
-    if (!name.trim()) return;
+  // 최초 로드(또는 조직 변경) 시 상위 2계층 펼침 — 이후 사용자의 접기/펼치기는 보존한다.
+  useEffect(() => {
+    setExpanded((prev) => {
+      if (prev.size > 0) return prev;
+      return new Set(tree.filter((n) => level(n) <= 1).map((n) => n.id));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree]);
+  const toggle = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // 내가 이 부모 아래에 추가할 수 있는 직급 — 서버 매트릭스(addable_types)∩위계. ctx 미로드면 빈 배열
+  // (fail-closed: 서버가 거부할 버튼을 낙관적으로 보여주지 않는다).
+  const addableUnder = useCallback(
+    (parentType: string | null) => addableChildTypes(ctx?.addable_types ?? [], parentType),
+    [ctx]);
+  const canAddRoot = addableUnder(null).length > 0 && (ctx?.scope === "site");
+
+  const addNode = async (parent: Node | null) => {
+    if (!name.trim() || !newType) return;
     setBusy(true);
     try {
-      await api.post("/org/nodes", { node_type: nodeType, parent_id: parentId || undefined, display_name: name.trim() });
-      setName(""); load();
-    } catch { alert("노드 추가 실패(권한을 확인하세요)"); }
+      await api.post("/org/nodes", { node_type: newType, parent_id: parent?.id, display_name: name.trim() });
+      setName(""); setNewType(""); setSheet(null); setRootAdd(false);
+      if (parent) setExpanded((prev) => new Set(prev).add(parent.id)); // 새 자식이 바로 보이게 펼침.
+      load();
+    } catch (e) { alert(e instanceof Error && e.message ? e.message : "추가 실패(권한을 확인하세요)"); }
     finally { setBusy(false); }
   };
-  const move = async (id: string, newParent: string) => {
-    if (!newParent) return;
-    try { await api.patch(`/org/nodes/${id}/move`, { new_parent_id: newParent }); load(); }
-    catch { alert("이동 실패(권한/순환 확인)"); }
+  const move = async (node: Node, newParentId: string) => {
+    try { await api.patch(`/org/nodes/${node.id}/move`, { new_parent_id: newParentId }); setSheet(null); load(); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "이동 실패(권한/순환 확인)"); }
   };
   const seedDefault = async () => {
     if (!confirm("기본조직(대행사→본부장→5팀×10명)을 생성할까요? 빈 조직에서만 가능합니다.")) return;
@@ -131,24 +168,124 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     } catch { alert("기본조직 생성 실패(권한을 확인하세요)."); }
     finally { setBusy(false); }
   };
+  const setTax = async (nodeId: string, taxType: string) => {
+    try { await api.post("/commission/tax-pref", { node_id: nodeId, tax_type: taxType }); load(); }
+    catch { alert("세금유형 저장 실패(권한 확인)"); }
+  };
+  // P2-3 인원배정: 같은 조직 사용자를 이메일로 노드에 배정/해제(미배정 해소).
+  // ★UX 감사(2026-07-23) 지적 반영: 모바일에서 최악이던 브라우저 prompt() 대신 인라인 배정 시트
+  //   (이메일 입력 폼)로 교체 — 결과/오류도 시트 안에 표시한다.
+  const [assign, setAssign] = useState<{ nodeId: string; name: string; email: string; err: string | null; busy: boolean } | null>(null);
+  const submitAssign = async () => {
+    if (!assign || !assign.email.trim()) return;
+    setAssign({ ...assign, busy: true, err: null });
+    try {
+      await api.post<{ name: string }>(`/org/nodes/${assign.nodeId}/assign`, { email: assign.email.trim() });
+      setAssign(null); load();
+    } catch (e) {
+      setAssign((prev) => prev && { ...prev, busy: false, err: e instanceof Error && e.message ? e.message : "배정 실패(같은 조직 가입자인지 확인하세요)" });
+    }
+  };
+  const unassignUser = async (nodeId: string) => {
+    if (!confirm("이 인원 배정을 해제할까요? (노드·실적은 유지)")) return;
+    try { await api.post(`/org/nodes/${nodeId}/unassign`, {}); load(); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "해제 실패"); }
+  };
+  const loadSettle = async (nodeId: string, name2: string) => {
+    try { const d = await api.get<Settle>(`/commission/settle-summary?node_id=${nodeId}`); setSettle({ name: name2, data: d }); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "정산 명세 조회 실패"); }
+  };
+  const won = (n: number) => `${(n || 0).toLocaleString()}원`;
 
-  // ★표시행(상위 N명)과 그 합을 한 번만 계산해, 표 본문(.map)과 footer '행 합'이 같은 한 부를
-  //   쓰도록 한다(화면 ≠ footer 불일치 차단). 전체 로스터 합은 서버 roster_totals 로 따로 명시한다.
+  // ★표시행(상위 N명)과 그 합을 한 번만 계산해, 표 본문(.map)과 footer '행 합'이 같은 한 부를 쓴다.
   const rosterAll = ov?.roster ?? [];
   const rosterShown = rosterAll.slice(0, ROSTER_DISPLAY_LIMIT);
   const shownTotals = sumRosterRows(rosterShown);
   const isTruncated = rosterAll.length > rosterShown.length;
-  // ★[게이트 완화(iter-7)] 과거엔 ov.members>0 일 때만 패널을 그려, 로스터 직급(MEMBER~GM_DIRECTOR)이
-  //   0명이어도 본사(AGENCY/SUBAGENCY) 노드에 직접 귀속된 실적(totals/roster_totals)이 있으면 패널이
-  //   통째로 사라져 그 실적이 화면에서 소실됐다. 이제 '표시할 데이터가 하나라도 있으면'(관리대상 인원
-  //   또는 어떤 활동 합계가 0 초과) 패널을 그린다(본사 귀속 실적 소실 방지).
   const tNonZero = (t?: Totals) => !!t && (t.contracts > 0 || t.customers > 0 || t.work_logs > 0);
   const hasOvData = !!ov && (ov.members > 0 || tNonZero(ov.totals) || tNonZero(ov.roster_totals));
 
+  /** 하위추가 폼(공용) — 부모 고정 + 직급 칩(허용 교집합만) + 이름. sheet/루트 양쪽에서 사용.
+   * ★렌더 '함수'로 호출한다(JSX 컴포넌트 금지) — 컴포넌트를 함수 안에서 정의해 <AddForm/> 으로
+   *   쓰면 렌더마다 컴포넌트 정체성이 바뀌어 입력 필드가 매 키입력마다 재마운트(포커스 소실)된다. */
+  const renderAddForm = (parent: Node | null) => {
+    const types = addableUnder(parent ? parent.node_type : null);
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-[var(--text-tertiary)]">
+          상위: <b className="text-[var(--text-primary)]">{parent ? `${nodeTypeLabel(parent.node_type)} ${parent.display_name ?? ""}` : "최상위(현장 직속)"}</b>
+        </p>
+        <div>
+          <p className="mb-1.5 text-[10px] text-[var(--text-tertiary)]">직급 (내 권한으로 지정 가능한 직급만 표시)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {types.map((t) => (
+              <button key={t} onClick={() => setNewType(t)}
+                className={`min-h-9 rounded-full border px-3 text-xs font-bold ${newType === t
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                  : "border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-secondary)]"}`}>
+                {nodeTypeLabel(t)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름 (예: 김본부)"
+          className={`${fcls} w-full`} onKeyDown={(e) => { if (e.key === "Enter") void addNode(parent); }} />
+        <button onClick={() => addNode(parent)} disabled={busy || !name.trim() || !newType}
+          className="min-h-11 w-full rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-black text-white disabled:opacity-40">
+          ＋ 추가
+        </button>
+      </div>
+    );
+  };
+
+  /** 트리 한 행 — 행 전체 터치(44px). 좌측 셰브론=접기/펼치기, 행 탭=액션시트. */
+  const renderRow = (n: Node) => {
+    const kids = childrenOf(n);
+    const open = expanded.has(n.id);
+    return (
+      <div key={n.id}>
+        <div className="flex min-h-11 items-center gap-1 rounded-lg hover:bg-[var(--surface)]"
+          style={{ paddingLeft: `${Math.min(level(n), 4) * 14}px` }}>
+          {kids.length > 0 ? (
+            <button onClick={() => toggle(n.id)} aria-label={open ? "접기" : "펼치기"} aria-expanded={open}
+              className="flex size-9 shrink-0 items-center justify-center text-[var(--text-tertiary)]">
+              {open ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
+            </button>
+          ) : <span className="size-9 shrink-0" />}
+          <button onClick={() => setSheet({ node: n, mode: "actions" })}
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left">
+            <span className="shrink-0 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>
+            <span className="truncate text-sm font-semibold text-[var(--text-primary)]">{n.display_name ?? "-"}</span>
+            {kids.length > 0 && <span className="shrink-0 text-[10px] text-[var(--text-hint)]">하위 {kids.length}</span>}
+          </button>
+        </div>
+        {open && kids.map((k) => renderRow(k))}
+      </div>
+    );
+  };
+
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
+  const sheetTypes = sheet ? addableUnder(sheet.node.node_type) : [];
+  const sheetMoveTargets = sheet ? moveTargets(tree, sheet.node) : [];
   return (
     <div className="space-y-4">
+      {/* ① 내 조직 카드 — 내 직급·열람 범위·지정 가능 직급(서버 /org/context SSOT). */}
+      {ctx && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 sm:p-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 font-black text-[var(--accent-strong)]">{ROLE_LABEL[ctx.role] ?? ctx.role}</span>
+            <span className="text-[var(--text-tertiary)]">{ctx.scope === "site" ? "전체 조직 열람" : "내 하위 조직만 열람"}</span>
+          </div>
+          <p className="mt-2 text-[11px] text-[var(--text-tertiary)]">
+            {ctx.addable_types.length > 0 ? (
+              <>지정 가능 직급: {ctx.addable_types.map((t) => <b key={t} className="mr-1 text-[var(--text-primary)]">{nodeTypeLabel(t)}</b>)}
+                <span className="text-[var(--text-hint)]"> — 조직 노드를 탭해 하위를 추가하세요.</span></>
+            ) : "조직원 지정 권한이 없는 직급입니다(열람 전용)."}
+          </p>
+        </div>
+      )}
+
       {/* ★[정직성(iter-7)] team-overview 로드 실패를 숨기지 않고 인라인 안내. 권한(4xx)/서버(5xx) 구분. */}
       {ovErr && (
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-xs text-[var(--text-secondary)]">
@@ -159,11 +296,11 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           )}
         </div>
       )}
+
       {/* P2-3 팀 현황(내 하위 조직 활동 집계) */}
       {hasOvData && ov && (
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-          {/* 헤더는 '전체 합(totals)' — 범위 안 전체 노드(본사 AGENCY/SUBAGENCY 귀속분 포함)의 합계다.
-              아래 표의 행 합(roster_totals)과 다를 수 있어, 헤더에 '전체 합(본사 포함)'을 명시한다. */}
+          {/* 헤더는 '전체 합(totals)' — 아래 표의 행 합과 다를 수 있어 '전체 합(본사 포함)'을 명시. */}
           <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
             <span className="font-bold text-[var(--text-secondary)]">팀 현황(하위 조직)</span>
             <span className="text-[var(--text-tertiary)]">관리대상 <b className="text-[var(--text-primary)]">{ov.members}</b>명</span>
@@ -173,18 +310,19 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
             <span className="text-[9px] text-[var(--text-hint)]">전체 합(본사 포함)</span>
           </div>
           <div className="max-h-40 overflow-auto">
-            <table className="w-full text-[11px]">
+            <table className="w-full min-w-[560px] text-[11px]">
               <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-center font-medium">인원</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th><th className="text-center font-medium">정산</th></tr></thead>
               <tbody>
                 {rosterShown.map((r, i) => (
-                  <tr key={i} className="border-t border-[var(--line)]/50">
+                  // 미배정 행은 흐리게 — '아직 사람이 연결 안 된 자리'를 시각으로 구분(배정 버튼은 선명 유지).
+                  <tr key={i} className={`border-t border-[var(--line)]/50 ${r.assigned ? "" : "opacity-60"}`}>
                     <td className="py-0.5 text-[var(--text-tertiary)]">{r.role_label}</td>
                     <td className="text-[var(--text-secondary)]">{r.name}{!r.assigned && <span className="ml-1 text-[9px] text-[var(--text-hint)]">(미배정)</span>}</td>
                     <td className="text-center">
                       {r.assigned ? (
                         <button onClick={() => unassignUser(r.node_id)} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]" title="배정 해제">해제</button>
                       ) : (
-                        <button onClick={() => assignUser(r.node_id)} className="rounded border border-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)]">배정</button>
+                        <button onClick={() => setAssign({ nodeId: r.node_id, name: r.name, email: "", err: null, busy: false })} className="rounded border border-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] opacity-100">배정</button>
                       )}
                     </td>
                     <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>
@@ -195,11 +333,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
                   </tr>
                 ))}
               </tbody>
-              {/* ★[정합(iter-6)] footer '행 합'은 반드시 위에 '실제로 그린 행(상위 N명)'의 합이어야
-                  한다(shownTotals — 화면과 1:1). 전체 로스터 합(서버 roster_totals)은 표가 잘린 경우에만
-                  '로스터 전체 합' 행으로 따로 명시해, '화면 행 합'과 '전체 합'을 혼동하지 않게 한다.
-                  과거엔 footer 가 roster_totals(서버 전체 로스터 합)를 써서 31명+ 현장에선 보이는 30행
-                  합과 어긋났다(이 루프가 제거하려던 '행 합 vs 전체 합' 혼동의 재도입). */}
+              {/* ★[정합(iter-6)] footer '행 합'은 반드시 '실제로 그린 행(상위 N명)'의 합(shownTotals). */}
               <tfoot>
                 <tr className="border-t-2 border-[var(--line)] font-bold text-[var(--text-secondary)]">
                   <td className="py-0.5" colSpan={3}>행 합(표시 {rosterShown.length}명)</td>
@@ -236,50 +370,112 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
         </div>
       )}
 
-      {/* 노드 추가 */}
-      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-        <label className="flex flex-col gap-1"><span className="text-[10px] text-[var(--text-tertiary)]">상위(부모)</span>
-          <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={`${fcls} w-44`}>
-            <option value="">최상위(대행사)</option>
-            {tree.map((n) => <option key={n.id} value={n.id}>{"·".repeat(depth(n.path))}{LABEL[n.node_type] ?? n.node_type} {n.display_name ?? ""}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1"><span className="text-[10px] text-[var(--text-tertiary)]">직급</span>
-          <select value={nodeType} onChange={(e) => setNodeType(e.target.value)} className={`${fcls} w-32`}>
-            {NODE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-1 flex-col gap-1"><span className="text-[10px] text-[var(--text-tertiary)]">이름</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 김본부" className={`${fcls} min-w-[140px]`} onKeyDown={(e) => { if (e.key === "Enter") void addNode(); }} />
-        </label>
-        <button onClick={addNode} disabled={busy} className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white disabled:opacity-50">＋ 추가</button>
-      </div>
-
-      {/* 트리 */}
-      <div className="space-y-1 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+      {/* ③ 조직 트리(아코디언). 헤더에 최상위(대행사) 추가 — 본사 권한(scope=site)에서만. */}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 sm:p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs font-bold text-[var(--text-secondary)]">조직 트리</span>
+          {canAddRoot && (
+            <button onClick={() => { setRootAdd((v) => !v); setNewType(""); setName(""); }}
+              className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-[var(--accent-strong)] px-2.5 text-xs font-black text-[var(--accent-strong)]">
+              <Plus className="size-3.5" aria-hidden /> 대행사 추가
+            </button>
+          )}
+        </div>
+        {rootAdd && canAddRoot && (
+          <div className="mb-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3">{renderAddForm(null)}</div>
+        )}
         {tree.length === 0 && (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하거나, 기본조직을 한 번에 생성하세요.</p>
-            <button onClick={seedDefault} disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-              <Building2 className="size-4" aria-hidden /> 기본조직 생성 (대행사→본부장→5팀×10명)
-            </button>
+            <p className="text-sm text-[var(--text-secondary)]">
+              조직 노드가 없습니다. {canAddRoot ? "위 '대행사 추가'로 최상위부터 만들거나, 기본조직을 한 번에 생성하세요." : "관리자가 조직을 구성하면 여기에 표시됩니다."}
+            </p>
+            {canAddRoot && (
+              <button onClick={seedDefault} disabled={busy}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[var(--accent-strong)] px-3 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+                <Building2 className="size-4" aria-hidden /> 기본조직 생성 (대행사→본부장→5팀×10명)
+              </button>
+            )}
           </div>
         )}
-        {tree.map((n) => (
-          <div key={n.id} className="flex flex-wrap items-center gap-2 rounded-lg py-1 text-sm hover:bg-[var(--surface)]" style={{ paddingLeft: `${depth(n.path) * 18}px` }}>
-            <span className="rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>
-            <span className="font-semibold text-[var(--text-primary)]">{n.display_name ?? "-"}</span>
-            <select value="" onChange={(e) => move(n.id, e.target.value)} className="ml-auto rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]" title="상위 이동">
-              <option value="">이동…</option>
-              {tree.filter((x) => x.id !== n.id && !x.path.startsWith(n.path)).map((x) => (
-                <option key={x.id} value={x.id}>→ {LABEL[x.node_type] ?? x.node_type} {x.display_name ?? ""} 하위로</option>
-              ))}
-            </select>
-          </div>
-        ))}
+        <div className="space-y-0.5">{roots.map((n) => renderRow(n))}</div>
       </div>
       <p className="text-[11px] text-[var(--text-hint)]">계층(대행본사＞대행지사＞본부장＞이사＞팀장＞직원)은 수수료 2단 배분의 기준이 됩니다. 이동 시 하위 조직도 함께 이동합니다.</p>
+
+      {/* ②④ 행 액션시트 — 모바일은 하단 시트, 데스크톱(sm+)은 중앙 카드. */}
+      {sheet && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center" onClick={() => setSheet(null)}>
+          <div className="w-full rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[var(--shadow-lg)] sm:mx-4 sm:max-w-md sm:rounded-2xl sm:pb-4"
+            onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 font-black text-[var(--text-primary)]">
+                <span className="rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[sheet.node.node_type] ?? sheet.node.node_type}</span>
+                {sheet.node.display_name ?? "-"}
+              </h3>
+              <button onClick={() => setSheet(null)} aria-label="닫기" className="flex size-9 items-center justify-center text-[var(--text-tertiary)]">✕</button>
+            </div>
+            {sheet.mode === "actions" && (
+              <div className="space-y-1.5">
+                {sheetTypes.length > 0 && (
+                  <button onClick={() => { setNewType(sheetTypes.length === 1 ? sheetTypes[0] : ""); setName(""); setSheet({ ...sheet, mode: "add" }); }}
+                    className="flex min-h-12 w-full items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-left text-sm font-bold text-[var(--text-primary)]">
+                    <Plus className="size-4 text-[var(--accent-strong)]" aria-hidden />
+                    여기에 하위 추가
+                    <span className="ml-auto text-[10px] font-normal text-[var(--text-hint)]">{sheetTypes.map(nodeTypeLabel).join("·")}</span>
+                  </button>
+                )}
+                {sheetMoveTargets.length > 0 && (
+                  <button onClick={() => setSheet({ ...sheet, mode: "move" })}
+                    className="flex min-h-12 w-full items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-left text-sm font-bold text-[var(--text-primary)]">
+                    <ChevronRight className="size-4 text-[var(--text-tertiary)]" aria-hidden />
+                    다른 상위로 이동
+                  </button>
+                )}
+                {sheetTypes.length === 0 && sheetMoveTargets.length === 0 && (
+                  <p className="py-2 text-center text-xs text-[var(--text-tertiary)]">이 노드에서 할 수 있는 조직 작업이 없습니다(권한/위계).</p>
+                )}
+              </div>
+            )}
+            {sheet.mode === "add" && renderAddForm(sheet.node)}
+            {sheet.mode === "move" && (
+              <div className="max-h-72 space-y-1 overflow-auto">
+                <p className="mb-1 text-[10px] text-[var(--text-tertiary)]">새 상위를 선택하세요 (하위 조직도 함께 이동합니다)</p>
+                {sheetMoveTargets.map((x) => (
+                  <button key={x.id} onClick={() => move(sheet.node, x.id)}
+                    className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-left text-sm text-[var(--text-primary)]"
+                    style={{ paddingLeft: `${12 + Math.min(depth(x.path) - minDepth, 4) * 12}px` }}>
+                    <span className="rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-strong)]">{LABEL[x.node_type] ?? x.node_type}</span>
+                    <span className="truncate">{x.display_name ?? "-"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 인원배정 시트 — prompt() 대체(모바일 우선). 이메일 입력·오류를 시트 안에서 처리. */}
+      {assign && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center" onClick={() => setAssign(null)}>
+          <div className="w-full rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[var(--shadow-lg)] sm:mx-4 sm:max-w-md sm:rounded-2xl sm:pb-4"
+            onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-black text-[var(--text-primary)]">인원 배정 — {assign.name}</h3>
+              <button onClick={() => setAssign(null)} aria-label="닫기" className="flex size-9 items-center justify-center text-[var(--text-tertiary)]">✕</button>
+            </div>
+            <div className="space-y-3">
+              <input type="email" value={assign.email} autoFocus
+                onChange={(e) => setAssign({ ...assign, email: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") void submitAssign(); }}
+                placeholder="배정할 사용자 이메일(같은 조직 가입자)" className={`${fcls} w-full`} />
+              {assign.err && <p className="text-xs text-[var(--status-error,#D05050)]">{assign.err}</p>}
+              <button onClick={submitAssign} disabled={assign.busy || !assign.email.trim()}
+                className="min-h-11 w-full rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-black text-white disabled:opacity-40">
+                배정
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* #5 해촉/정산 명세 모달 */}
       {settle && (

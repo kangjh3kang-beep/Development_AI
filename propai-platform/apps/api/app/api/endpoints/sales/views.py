@@ -238,8 +238,20 @@ async def list_sites(db: AsyncSession = Depends(get_db), user=Depends(get_curren
 
 @views_router.get("/org/tree")
 async def org_tree(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    rows = (await db.execute(select(SalesOrgNode).where(
-        SalesOrgNode.site_id == ctx.site_id, SalesOrgNode.deleted_at.is_(None)))).scalars().all()
+    """조직 트리 — ★서브트리 가시성 스코프(2026-07-23 직속 파이프라인 스펙).
+
+    org_path(내 노드)가 있는 역할은 '자신이 승인·지정한 하부'(내 노드 포함 서브트리)만 본다.
+    본사 권한(SUPERADMIN/DEVELOPER/AGENCY 멤버십 등 org_path 없음)은 현장 전체.
+    응답 shape 은 기존 배열 그대로(소비처 OrgTree·CommissionDutchPay 무회귀 — 더치페이
+    참여자 선택도 내 하부로 좁아지는 것이 스펙 정합).
+    """
+    q = select(SalesOrgNode).where(
+        SalesOrgNode.site_id == ctx.site_id, SalesOrgNode.deleted_at.is_(None))
+    my_path = getattr(ctx, "org_path", None) or ""
+    rows = (await db.execute(q)).scalars().all()
+    if my_path:
+        rows = [n for n in rows
+                if str(n.path) == my_path or str(n.path).startswith(my_path + ".")]
     return [{"id": str(n.id), "path": str(n.path), "node_type": n.node_type,
              "display_name": n.display_name} for n in rows]
 

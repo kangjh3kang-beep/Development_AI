@@ -610,15 +610,59 @@ async def test_add_node_director_ladder_applies_member_rejected():
     assert ei.value.status_code == 403
 
 
-def test_add_node_director_register_matrix_allows_gm_director():
-    """권한 단조성: DIRECTOR 등록 허용집합에 GM_DIRECTOR+상위·관리자가 모두 포함된다."""
-    allowed = sales_actions._REGISTER_MATRIX["DIRECTOR"]
-    assert {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"} <= allowed
-    # 하급(TEAM_LEADER/MEMBER)은 DIRECTOR 를 등록할 수 없다(상위만 등록).
-    assert "TEAM_LEADER" not in allowed and "MEMBER" not in allowed
-    # 단조성: DIRECTOR 는 TEAM_LEADER/MEMBER 보다 상위라 그 등록 허용집합에 포함돼야 한다.
-    assert "DIRECTOR" in sales_actions._REGISTER_MATRIX["TEAM_LEADER"]
-    assert "DIRECTOR" in sales_actions._REGISTER_MATRIX["MEMBER"]
+def test_register_matrix_direct_pipeline_spec():
+    """★직속 지정 파이프라인(2026-07-23 사용자 스펙) — 과거 '단조성'(상위=하위 전부 등록) 폐기.
+
+    총괄관리자/시행사→대행사만 · 대행사→대대행/총괄본부장/본부장 · 대대행→총괄본부장/본부장 ·
+    총괄본부장→본부장/팀장 · 본부장→팀장 · 팀장→직원. 상위가 말단을 건너뛰어 직접 등록하면
+    중간 계층 승인·책임 체계(수수료 2단 배분 기준)가 무너진다 — 매트릭스 전체를 byte-고정.
+    """
+    m = sales_actions._REGISTER_MATRIX
+    assert m["AGENCY"] == {"DEVELOPER", "SUPERADMIN"}  # 총괄관리자/시행사는 대행사'만'
+    assert m["SUBAGENCY"] == {"AGENCY"}
+    assert m["GM_DIRECTOR"] == {"AGENCY", "SUBAGENCY"}
+    assert m["DIRECTOR"] == {"AGENCY", "SUBAGENCY", "GM_DIRECTOR"}
+    assert m["TEAM_LEADER"] == {"GM_DIRECTOR", "DIRECTOR"}
+    assert m["MEMBER"] == {"TEAM_LEADER"}  # 직원은 팀장이 지정·승인
+    # 역인덱스(addable): 총괄관리자는 AGENCY 하나만 지정 가능해야 한다.
+    addable_super = [t for t, allowed in m.items() if "SUPERADMIN" in allowed]
+    assert addable_super == ["AGENCY"]
+    # 팀장은 MEMBER 하나만.
+    addable_tl = [t for t, allowed in m.items() if "TEAM_LEADER" in allowed]
+    assert addable_tl == ["MEMBER"]
+
+
+def test_org_rank_hierarchy_order():
+    """위계 서열 상수 — 부모-자식 검증(_ORG_RANK)이 계층 순서와 일치."""
+    r = sales_actions._ORG_RANK
+    assert (r["AGENCY"] < r["SUBAGENCY"] < r["GM_DIRECTOR"]
+            < r["DIRECTOR"] < r["TEAM_LEADER"] < r["MEMBER"])
+
+
+@pytest.mark.asyncio
+async def test_add_node_root_requires_agency_type():
+    """★루트 생성 가드①: parent_id 없이(최상위) 대행사 아닌 직급 → 400.
+
+    파이프라인 스펙상 최상위는 대행사만 — 과거엔 본사 권한이 부모 없이 루트 DIRECTOR 등을
+    만들 수 있어 위계의 시작점이 무너질 수 있었다."""
+    ctx = _FakeCtx(uuid.uuid4(), "AGENCY", uuid.uuid4())
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node({"node_type": "DIRECTOR"}, db=_NoopDB(), ctx=ctx)
+    assert ei.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_add_node_root_bypass_blocked_for_subtree_scoped_caller():
+    """★루트 생성 가드②: org_path 보유(서브트리 권한자)가 parent 미지정으로 루트 생성 시도 → 400.
+
+    parent 검증(서브트리 스코프)은 parent_id 가 있을 때만 돌던 구조라, 부모를 아예 빼면
+    '내 하위에만 추가' 스코프를 통째로 우회할 수 있었다(스코프 우회 봉합)."""
+    ctx = _FakeCtx(uuid.uuid4(), "GM_DIRECTOR", uuid.uuid4())
+    ctx.org_path = "a.b"  # 내 노드 보유 = 서브트리 스코프 대상.
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node({"node_type": "TEAM_LEADER"}, db=_NoopDB(), ctx=ctx)
+    assert ei.value.status_code == 400
+    assert "상위" in ei.value.detail
 
 
 @pytest.mark.asyncio
@@ -771,10 +815,12 @@ async def test_add_node_cross_site_parent_returns_404():
     site_a, site_b = uuid.uuid4(), uuid.uuid4()
     parent_b = _MoveNode(uuid.uuid4(), site_b, "x.y")
     db = _CreateNodeFakeDB([parent_b])
+    # ★직속 파이프라인 전환(2026-07-23): AGENCY→MEMBER 는 이제 매트릭스에서 403 이라
+    #   404 경로에 도달 못 한다. 허용 조합(AGENCY→DIRECTOR)으로 교차현장 404 를 검증한다.
     ctx = _FakeCtx(site_a, "AGENCY", uuid.uuid4())
     with pytest.raises(HTTPException) as ei:
         await sales_actions.add_node(
-            {"node_type": "MEMBER", "parent_id": str(parent_b.id)}, db=db, ctx=ctx)
+            {"node_type": "DIRECTOR", "parent_id": str(parent_b.id)}, db=db, ctx=ctx)
     assert ei.value.status_code == 404
     assert db.added == []  # 거부 시 노드 미생성.
 

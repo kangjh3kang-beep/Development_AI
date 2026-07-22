@@ -81,6 +81,31 @@ export const nodeTypeOptions = (
   types: readonly string[] = ORG_NODE_TYPES,
 ): { value: string; label: string }[] => types.map((value) => ({ value, label: nodeTypeLabel(value) }));
 
+/**
+ * 직급 위계 서열 — ORG_NODE_TYPES 배열 순서가 곧 서열(0=최상위 대행본사)이다.
+ * 백엔드 sales/actions.py 의 _ORG_RANK 와 1:1(드리프트 시 백엔드 400과 프론트 노출이 어긋남).
+ * 미등록 직급은 99(항상 최하위 취급 — fail-closed).
+ */
+export const orgRank = (t: string): number => {
+  const i = ORG_NODE_TYPES.indexOf(t as OrgNodeType);
+  return i === -1 ? 99 : i;
+};
+
+/**
+ * 특정 부모 아래에 '내가' 추가할 수 있는 직급 목록.
+ * addable = 서버 /org/context 의 addable_types(직속 지정 매트릭스 역인덱스 — 권한 축),
+ * parentType = 붙일 부모의 직급(위계 축: 자식은 부모보다 반드시 서열이 낮아야 한다).
+ * 두 축의 교집합만 UI에 노출해, 서버가 400/403으로 거부할 선택지를 애초에 보여주지 않는다.
+ * parentType=null 은 최상위(루트) — 루트에는 대행사만 둘 수 있다(백엔드 루트 가드와 동일).
+ */
+export const addableChildTypes = (
+  addable: readonly string[],
+  parentType: string | null,
+): string[] =>
+  parentType === null
+    ? addable.filter((t) => t === "AGENCY")
+    : addable.filter((t) => orgRank(t) > orgRank(parentType));
+
 // 현장 비밀번호 설정/변경 권한 역할(백엔드 _MANAGE_ROLES 정합). can_manage 응답을 우선 신뢰.
 export const MANAGE_ROLES = new Set(["SUPERADMIN", "DEVELOPER", "AGENCY", "GM_DIRECTOR"]);
 
