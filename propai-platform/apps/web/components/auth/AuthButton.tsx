@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { loginUrlWithReturn } from "@/lib/authReturnPath";
 import { clearOnLogout } from "@/lib/projectSync";
 
 export function AuthButton({ locale }: { locale: string }) {
@@ -30,7 +31,9 @@ export function AuthButton({ locale }: { locale: string }) {
     localStorage.removeItem("propai_refresh_token");
     setIsLoggedIn(false);
     setUserName("");
-    window.location.href = `/${locale}/login`;
+    // ★앱 컨텍스트 복귀(2026-07-23): 현재 화면(예: 분양 현장앱)을 ?next= 로 실어, 재로그인 시
+    //   메인 대시보드가 아니라 로그아웃한 그 앱으로 돌아가게 한다.
+    window.location.href = loginUrlWithReturn(locale);
   };
 
   if (isLoggedIn) {

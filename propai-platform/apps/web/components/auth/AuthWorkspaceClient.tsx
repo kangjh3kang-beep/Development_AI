@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { resolveNextPath } from "@/lib/authReturnPath";
 import { clearOnLogout, ensureDataOwner } from "@/lib/projectSync";
 import type { Locale } from "@/i18n/config";
 
@@ -519,9 +520,13 @@ export function AuthWorkspaceClient({
         setSession({ user, expiresIn, source });
         setStoredTokenPresent(true);
 
-        // 로그인 성공 → 대시보드 홈으로 자동 이동 (홈은 /{locale}, /dashboard 라우트는 없음=404)
+        // 로그인 성공 → ?next=(있고 안전하면) 원래 있던 앱 화면으로 복귀, 없으면 대시보드 홈.
+        // ★앱 컨텍스트 복귀(2026-07-23): 분양 현장앱 등에서 로그아웃/세션만료 후 재로그인하면
+        //   메인 대시보드가 아니라 원래 앱으로 돌아가야 한다 — next 소비 지점을 헬퍼로 일원화.
+        //   (useSearchParams 는 Suspense 경계를 요구해 핸들러 시점에 location 에서 직접 읽는다.)
         if (source === "login" || source === "register") {
-          router.push(`/${locale}`);
+          const next = new URLSearchParams(window.location.search).get("next");
+          router.push(resolveNextPath(next, locale));
           return;
         }
       } catch (error) {
@@ -604,10 +609,12 @@ export function AuthWorkspaceClient({
 
       persistTokens(tokens);
       setStoredTokenPresent(true);
-      // ★로그인/등록 성공 시 즉시 대시보드로 이동 — 추가 /auth/me 왕복을 기다리지 않아
-      //  perceived 로딩시간이 절반↓. 세션 검증은 대시보드(ProjectSyncProvider/AuthButton)가 수행.
+      // ★로그인/등록 성공 시 즉시 이동 — 추가 /auth/me 왕복을 기다리지 않아 perceived 로딩시간
+      //  절반↓. 세션 검증은 목적지(ProjectSyncProvider/AuthButton/AuthGuard)가 수행.
+      //  목적지는 ?next=(안전한 내부 경로) 우선 — 현장앱 등 원래 앱 컨텍스트로 복귀(2026-07-23).
       if (mode === "login" || mode === "register") {
-        router.push(`/${locale}`);
+        const next = new URLSearchParams(window.location.search).get("next");
+        router.push(resolveNextPath(next, locale));
         return;
       }
       await loadSession(mode, tokens.expires_in);
