@@ -1176,12 +1176,20 @@ async def parcel_boundaries_export(req: ParcelExportRequest):
 
 
 def _parcel_adjacency(geoms: list) -> dict:
-    """필지 폴리곤 인접성(연결요소) 판정 — shapely."""
+    """필지 폴리곤 인접성(연결요소) 판정 — shapely.
+
+    ★W2-5 R1(HIGH-1) 톨러런스 SSOT 일원화: 인접 판정 톨러런스(~6m)와 술어(겹침·접촉·근접)는
+    app.services.zoning.parcel_graph.is_parcel_adjacent 를 그대로 사용한다(이 함수가 정답
+    기준선이었고, ParcelGraph(W2-5)의 간선 판정을 그 기준에 맞춰 통일했다 — 이제 두 표면은
+    같은 상수·같은 술어 하나만 참조하므로 서로 다른 기준으로 갈라질 수 없다).
+    """
     present = [g for g in geoms if g]
     if len(present) < 2:
         return {"contiguous": True, "components": 1, "note": "단일 필지"}
     try:
         from shapely.geometry import shape
+
+        from app.services.zoning.parcel_graph import is_parcel_adjacent
 
         polys = []
         for g in geoms:
@@ -1192,7 +1200,6 @@ def _parcel_adjacency(geoms: list) -> dict:
         idx = [i for i, p in enumerate(polys) if p is not None]
         if len(idx) < 2:
             return {"contiguous": None, "components": None, "note": "형상 데이터 부족 — 인접성 확인 불가"}
-        tol = 0.00006  # ~6m
         n = len(idx)
         parent = list(range(n))
 
@@ -1204,7 +1211,7 @@ def _parcel_adjacency(geoms: list) -> dict:
 
         for a in range(n):
             for b in range(a + 1, n):
-                if polys[idx[a]].distance(polys[idx[b]]) <= tol:
+                if is_parcel_adjacent(polys[idx[a]], polys[idx[b]]):
                     parent[find(a)] = find(b)
         comps = len({find(i) for i in range(n)})
         return {
@@ -1800,6 +1807,38 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         legal_bcr_pct=integrated_block["blended_bcr_legal_pct"],
     )
 
+    # ── ★W2-5(ParcelGraph) 인접 그래프·핵심필지·N-1 시나리오(additive) ──
+    #   enriched는 이미 pnu/geometry/area_sqm/_far_eff(실효용적률)를 보유하므로 변형 없이 그대로
+    #   투입한다(build_parcel_graph가 road_frontage/road_contact·effective_far_pct/_far_eff 등
+    #   여러 별칭을 알아서 흡수 — 여기서 재매핑 불필요). 실패는 정직 degrade(집계 손상 금지).
+    parcel_graph_summary: dict = {"status": "unavailable"}
+    try:
+        from app.services.zoning.parcel_graph import build_parcel_graph
+
+        _pg = build_parcel_graph(enriched)
+        _road_dep = _pg.get("road_dependency") or {}
+        parcel_graph_summary = {
+            "status": _pg.get("status"),
+            "component_count": _pg.get("component_count"),
+            "articulation_points": _pg.get("articulation_points"),
+            "critical_parcels": _pg.get("critical_parcels"),
+            "landlocked_risk": {
+                # ★W2-5 R1(MEDIUM-2): status가 "unknown(...)"이면 confirmed_pnus 가 빈 배열이어도
+                # '맹지 없음'이 아니라 접도정보 미보유로 판정을 유보했다는 뜻이다(오독 차단).
+                "status": _road_dep.get("status"),
+                "confirmed_pnus": _road_dep.get("landlocked_pnus"),
+                "unknown_pnus": _road_dep.get("unknown_landlocked_pnus"),
+            },
+            "n_minus_1": _pg.get("n_minus_1"),
+            "geometry_unknown_pnus": _pg.get("geometry_unknown_pnus"),
+            "note": _pg.get("note"),
+            "basis": _pg.get("basis"),
+        }
+        warnings.extend(_pg.get("warnings") or [])
+    except Exception as e:  # noqa: BLE001 — 그래프 산출 실패는 통합집계를 손상하지 않는다(정직 degrade).
+        logger.warning("ParcelGraph 산출 실패: %s", str(e)[:160])
+        parcel_graph_summary = {"status": "unavailable", "note": "인접 그래프 산출에 실패했습니다."}
+
     return {
         "parcel_count": integrated_zoning.get("parcel_count"),
         "special_count": multi.get("special_count"),
@@ -1821,6 +1860,9 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "warnings": warnings,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
+        # ★W2-5(ParcelGraph, additive) — 인접 그래프·핵심필지·N-1 시나리오 요약. 기하 미확보/상한
+        #   초과는 status로 정직 표기(무회귀 — 기존 키는 전혀 건드리지 않음).
+        "parcel_graph": parcel_graph_summary,
     }
 
 
