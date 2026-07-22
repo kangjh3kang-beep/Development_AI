@@ -1215,11 +1215,18 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     [projectId, spec, svgQuery],
   );
 
+  // ★R1 R2(LOW): regenerateDesignAi가 setDesignAi(null) 직후 곧장 fetch도 호출하면, 2D 뷰에서는
+  //   아래 effect도 (designAi가 null이 됐으므로) 같은 tick에 재발화해 동일 요청이 2회 나간다.
+  //   in-flight 가드(ref)로 겹치는 호출을 1회로 합친다(effect·수동 재생성 어느 쪽에서 와도 안전).
+  const designAiFetchInFlightRef = useRef(false);
+
   // AI 설계 해석(6섹션)만 단독 조회 — 2D 진입 1회 자동 + 아래 "재생성" 수동 트리거가 공유한다.
   // ★백엔드가 동일 입력을 input_hash로 캐시하므로(design_run_cache), spec 불변 재호출은 캐시 히트로
   //   빠르게 반환된다(재계산 폭주 우려 없음) — stale 배지의 "재생성" 버튼이 뷰모드 무관하게 동작하도록
   //   2D 진입 effect의 인라인 fetch를 재사용 가능한 콜백으로 추출(기존 동작 100% 동일, 위치만 이동).
   const fetchDesignInterpretation = useCallback(() => {
+    if (designAiFetchInFlightRef.current) return Promise.resolve(); // 진행 중 — 중복 호출 skip
+    designAiFetchInFlightRef.current = true;
     const base = apiV1BaseUrl();
     const gfaAtFetch = designData?.totalGfaSqm ?? null;
     return fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
@@ -1238,11 +1245,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
         flowCompliance(d?.compliance);
       })
-      .catch(() => { /* 무시 */ });
+      .catch(() => { /* 무시 */ })
+      .finally(() => { designAiFetchInFlightRef.current = false; });
   }, [projectId, bimBody, flowCompliance, designData?.totalGfaSqm]);
 
   // 설계 해설이 stale 하거나(연면적 등 KPI 불일치) 파싱 실패로 정직 폴백을 보였을 때 수동 재생성.
-  // 뷰모드(2D/3D) 무관하게 동작 — designAi를 비우면 아래 effect의 자동조건도 되살아난다.
+  // 뷰모드(2D/3D) 무관하게 동작 — designAi를 비우면 아래 effect의 자동조건도 되살아나지만
+  // in-flight 가드가 겹침을 막는다(1회만 실제 fetch).
   const regenerateDesignAi = useCallback(() => {
     setDesignAi(null);
     setDesignAiGfaAtGen(null);

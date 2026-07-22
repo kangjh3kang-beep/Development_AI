@@ -51,9 +51,15 @@ const DESIGN_AI_SECTION_KEYS = [
 ] as const;
 
 /** 백엔드 JSON 파싱이 실패해 원문 텍스트가 한 키에 그대로 뭉쳐 담긴 폴백을 방어적으로 재판정.
- *  (백엔드 is_fallback_only 가드가 1차 방어선 — 이 함수는 배포 전 캐시된 구버전 응답 등에
- *  대한 프론트 2차 방어선이다.) 한 섹션 값 안에 다른 섹션명이 리터럴 키(`"mass_strategy"` 등)로
- *  2개 이상 등장하면, 그 섹션 하나에 6개 키 JSON 전체가 문자열째 들어간 것으로 판단한다. */
+ *  (백엔드 is_fallback_only 가드가 1차 방어선 — 이제는 BaseInterpreter._invoke 반환 직전에서
+ *  실행되므로 정상 경로로는 이 함수가 발동할 일이 없다. 이 함수는 배포 전 캐시된 구버전 응답 등에
+ *  대한 프론트 2차 방어선으로만 남긴다.) 한 섹션 값 안에 다른 섹션명이 리터럴 키(`"mass_strategy"`
+ *  등)로 2개 이상 등장하면, 그 섹션 하나에 6개 키 JSON 전체가 문자열째 들어간 것으로 판단한다.
+ *  ★한계(의도적 미해결): fallback_key를 expected_keys 밖의 별도 센티널 키(예: `_raw`)로 분리하면
+ *  이 휴리스틱 자체가 불필요해진다. 다만 fallback_key가 이미 "정상 섹션 이름"과 같은 키(예:
+ *  design_overview)를 겸하는 계약이 design_interpreter.py 등 여러 인터프리터에 퍼져 있어, 분리하려면
+ *  백엔드 스키마·9개 인터프리터·프론트 소비처를 동시에 바꿔야 한다(파급 큼). 근원 봉합(base
+ *  degrade)으로 실질 위험은 이미 제거됐으므로 이번 라운드에서는 보류한다. */
 export function looksLikeRawDesignAiFallback(ai: DesignAi): boolean {
   if (!ai) return false;
   return Object.values(ai).some((v) => {
