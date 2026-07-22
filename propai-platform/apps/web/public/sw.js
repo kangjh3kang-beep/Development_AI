@@ -103,7 +103,9 @@
 //        신설된 홈 셸/기본 진입 탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v455: 현장앱 모바일 하단 5탭+전체메뉴 시트(#440 — FieldNav·IA SSOT·상단탭바 모바일 숨김).
 //        구 번들의 모바일 21탭 가로스크롤이 재생되지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v455-fieldapp-bottom-nav";
+// v456: 현장앱 홈 히어로 네이비 카드 시각충실(#449 — 대형 분양률·진행바·3스탯).
+//        구 번들의 흰 히어로가 재생되지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v456-fieldapp-hero-navy";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
