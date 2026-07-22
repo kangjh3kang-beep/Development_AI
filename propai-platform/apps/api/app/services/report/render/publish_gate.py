@@ -245,6 +245,15 @@ def _check_untraced_lineage(model: ReportModel) -> list[GateViolation]:
     hard 로 막으면 기존 EXPERT_REVIEWED/APPROVED 문서 발행이 전량 깨진다(무회귀 위반). lineage
     채택률이 충분히 올라간 뒤에만(후속 W2-N) 승인 트랙 한정 hard 승격을 검토한다 — 지금은
     "채워진 경로는 경고 없음, 안 채운 경로는 항상 경고"만 보장한다.
+
+    ★known limitation(게이트 소비자용 — R1 R2 명시): 'traced=True'가 스펙 원문이 말하는
+    "SourceSnapshot까지 진짜 추적됨"을 의미하지 않는다. LineageRef.source_kind가
+    STATIC_CACHE·LIVE_API 인 값도 traced=True(경고 면제)로 완화되어 있는데, 이 두 등급은
+    실제로는 아직 SourceSnapshot(원본 바이트)에 연결되지 않았다(provenance/lineage_ref.py
+    모듈독스트링 참고) — "출처가 정직하게 명시됨"만 보증할 뿐이다. 즉 이 UNTRACED 경고가
+    0건이라고 해서 스펙 원문 수준의 Zero-Trust 완결(원본 바이트까지 재현 가능)이 보장되는
+    것은 아니다 — 완전 미상(UNKNOWN) 값만 걸러낼 뿐이다. SNAPSHOT 등급이 실제로 배선되는
+    후속(W2-3 이후)에서 이 완화를 좁혀갈 수 있다(관련 필드: LineageRef.snapshot_fingerprint).
     """
     violations: list[GateViolation] = []
     for ev in _iter_evidence_items(model):

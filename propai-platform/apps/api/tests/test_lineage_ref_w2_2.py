@@ -5,8 +5,9 @@
      to_dict/lineage_from_dict 왕복.
  (b) Evidence.lineage 하위호환 — 기존 호출부(lineage 미지정)는 그대로 동작, 값 채워 넣기도 가능.
  (c) 대표 1경로(실효FAR) 끝-끝 연결 — land_adapter 가 far_basis_detail+ordinance 를 받으면
-     법정범위(RULE)·조례값(STATIC_CACHE)·최종근거(CALC) 3종 Evidence 를 lineage 채운 상태로
-     생성한다(정적캐시 케이스). far_basis_detail 이 없으면(기존 호출부) 조용히 생략(무회귀).
+     법정범위(RULE)·조례값(STATIC_CACHE/LIVE_API — ordinance.source 별)·최종근거(CALC) 3종
+     Evidence 를 lineage 채운 상태로 생성한다. far_basis_detail 이 없으면(기존 호출부) 조용히
+     생략(무회귀).
  (d) publish_gate UNTRACED soft 경고 — claim_type=FACT/CALCULATION 인데 lineage 미채움(None
      또는 traced=False)은 항상 warnings(soft, 승인등급 무관) — 채워진 경로는 경고 없음.
 """
@@ -31,7 +32,7 @@ def test_lineage_ref_default_is_unknown_and_untraced():
     assert ref.traced is False
 
 
-@pytest.mark.parametrize("kind", ["SNAPSHOT", "STATIC_CACHE", "CALC", "RULE", "USER_INPUT"])
+@pytest.mark.parametrize("kind", ["SNAPSHOT", "STATIC_CACHE", "LIVE_API", "CALC", "RULE", "USER_INPUT"])
 def test_lineage_ref_known_kinds_are_traced(kind):
     ref = LineageRef(source_kind=kind)
     assert ref.source_kind == kind
@@ -126,8 +127,15 @@ def test_evidence_asdict_serialization_includes_lineage_field():
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _far_basis_detail(*, ordinance_confirmed: bool = True) -> dict:
-    """calc_effective_far()가 실제로 반환하는 far_basis_detail 형태(실측 구조 미러)."""
+def _far_basis_detail(*, ordinance_confirmed: bool = True, data_source_label: str = "지자체 조례(정적캐시)") -> dict:
+    """calc_effective_far()가 실제로 반환하는 far_basis_detail 형태(실측 구조 미러).
+
+    ★LOW(R1 R2 봉합 — 모순 픽스처 정합): data_source_label 은 이 far_basis_detail 을 만든
+    ordinance 의 실제 출처와 일치해야 한다(호출부가 함께 넘긴다) — 예전엔 이 값이
+    "지자체 조례(정적캐시)"로 고정이라 ordinance.source="법제처API"인 시나리오에서도
+    데이터출처가 정적캐시라고 말하는 모순 조합이었다(테스트 대상 코드는 이 필드를 읽지
+    않아 결과에는 영향 없었지만, 픽스처 자체가 비현실적이었다).
+    """
     return {
         "법정범위": {"min_far_pct": 100, "max_far_pct": 250, "max_bcr_pct": 60},
         "조례값": (
@@ -136,12 +144,20 @@ def _far_basis_detail(*, ordinance_confirmed: bool = True) -> dict:
         "계획상한": None,
         "인센티브": None,
         "최종근거": "실효 용적률은 법정상한(250%)과 조례(200%) 중 낮은 값인 200%가 적용됩니다",
-        "데이터출처": ["지자체 조례(정적캐시)"],
+        "데이터출처": [data_source_label] if ordinance_confirmed else ["법정범위"],
         "조례확인필요": not ordinance_confirmed,
     }
 
 
 def _land_report_data_with_far_lineage(*, ordinance_source: str = "지자체 조례(정적캐시)") -> dict:
+    provenance = (
+        {
+            "disclaimer": "정적 캐시(2025~2026 기준) — 조례 개정 가능, "
+                          "'재분석'으로 실시간 재확인 권장.",
+        }
+        if ordinance_source == "지자체 조례(정적캐시)"
+        else {"disclaimer": "법제처 자치법규 실시간 조회값(도시계획조례 본문)."}
+    )
     return {
         "project_name": "테스트 토지분석(W2-2)",
         "parcels": [
@@ -149,14 +165,9 @@ def _land_report_data_with_far_lineage(*, ordinance_source: str = "지자체 조
                 "jibun": "용인시 1-1", "area_sqm": 500, "zone_type": "제2종일반주거지역",
                 "bcr_pct": 60, "far_pct": 200, "jimok": "대", "official_price_per_sqm": 1_000_000,
                 "parcel_case": "land", "status": "ok",
-                "far_basis_detail": _far_basis_detail(),
-                "ordinance": {
-                    "source": ordinance_source,
-                    "provenance": {
-                        "disclaimer": "정적 캐시(2025~2026 기준) — 조례 개정 가능, "
-                                      "'재분석'으로 실시간 재확인 권장.",
-                    },
-                },
+                # ★LOW 봉합: 데이터출처를 실제 ordinance_source 와 일치시켜(모순 픽스처 제거).
+                "far_basis_detail": _far_basis_detail(data_source_label=ordinance_source),
+                "ordinance": {"source": ordinance_source, "provenance": provenance},
             },
         ],
     }
@@ -190,14 +201,20 @@ def test_land_adapter_builds_far_lineage_evidence_for_static_cache_ordinance():
     assert by_kind["CALC"].lineage["fact_status"] == "DERIVED"
 
 
-def test_land_adapter_marks_moleg_live_ordinance_as_untraced_unknown():
-    """★스파이크 결론: 법제처 실시간 조회는 아직 SourceSnapshot 미연동 — 정직하게 UNKNOWN."""
+def test_land_adapter_marks_moleg_live_ordinance_as_live_api_traced():
+    """★R1 R2 봉합: 법제처 실시간 조회는 아직 SourceSnapshot 미연동이지만 '출처는 정직하게
+    명시됨' — 정적캐시보다 낮게(UNKNOWN) 취급되던 등급 역전을 해소해 LIVE_API(traced=True)로
+    승격한다. SNAPSHOT 만이 원본 바이트까지 진짜 추적됨을 보증하고, LIVE_API 는 그보다 약한
+    '출처 명시 수준' 완화임을 fact_status=OBSERVED·basis 문구로 함께 남긴다."""
     model = build_report_model_from_land(
         _land_report_data_with_far_lineage(ordinance_source="법제처API"))
     block = _find_far_lineage_block(model)
     assert block is not None
     by_kind = {ev.lineage["source_kind"]: ev for ev in block.items}
-    assert by_kind["UNKNOWN"].lineage["traced"] is False
+    assert by_kind["LIVE_API"].lineage["traced"] is True
+    assert by_kind["LIVE_API"].lineage["fact_status"] == "OBSERVED"
+    assert by_kind["LIVE_API"].lineage["snapshot_fingerprint"] is None
+    assert "미연동" in by_kind["LIVE_API"].lineage["basis"]
 
 
 def test_land_adapter_without_far_basis_detail_omits_lineage_block_honestly():
@@ -245,8 +262,11 @@ def test_untraced_lineage_filled_traced_produces_no_warning():
 
 
 def test_untraced_lineage_filled_but_unknown_kind_still_warns():
-    """traced=False(source_kind=UNKNOWN)로 채워졌어도 미추적은 미추적 — 경고 대상."""
-    ref = LineageRef(source_kind="UNKNOWN", basis="법제처 실시간 조회(스냅샷 미연동)")
+    """traced=False(source_kind=UNKNOWN)로 채워졌어도 미추적은 미추적 — 경고 대상.
+
+    ★출처가 정직하게 명시된 STATIC_CACHE/LIVE_API 와 달리, 진짜 완전 미상(출처를 아예
+    특정 못한 경우)만 이 케이스에 해당한다."""
+    ref = LineageRef(source_kind="UNKNOWN", basis="출처 미상(경위 확인 불가)")
     model = _model_with_evidence(
         Evidence(value="조례 용적률 200%", claim_type="FACT", lineage=ref.to_dict()))
     result = check_publishable(model)

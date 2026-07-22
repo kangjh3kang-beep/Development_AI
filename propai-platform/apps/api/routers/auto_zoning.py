@@ -1100,8 +1100,12 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
         if _f.get("_bcr_eff") is not None:
             _f["effective_bcr_pct"] = _f["_bcr_eff"]
-        for _k in ("_bcr_legal", "_far_legal", "_bcr_eff", "_far_eff", "_far_basis",
-                   "_special", "_districts_checked"):
+        # ★R1 HIGH(W2-2 R2 봉합): 종전 고정 튜플 denylist는 _enrich_effective_and_special가
+        #   새 내부키(_far_basis_detail·_ordinance — W2-2)를 부착할 때마다 이 목록을 사람이
+        #   같이 갱신해야 하는 구조라, 실제로 신규 키가 이 응답(features[])으로 새는 회귀가
+        #   났다(내부키는 전부 접두어 "_" 규약을 공유). 접두어 스트립으로 표준화해 향후
+        #   내부키 추가를 이 목록 갱신 없이 자동으로 커버한다(전역 전파방지 — 공용 규약화).
+        for _k in [k for k in _f if k.startswith("_")]:
             _f.pop(_k, None)
 
     return {

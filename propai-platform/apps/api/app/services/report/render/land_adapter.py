@@ -92,7 +92,10 @@ def _far_lineage_evidence_block(parcels: list[dict]) -> EvidenceBlock | None:
             basis=ref.basis, claim_type="FACT", lineage=ref.to_dict(),
         ))
 
-    # ② 조례값(STATIC_CACHE/UNKNOWN) — ordinance.source 로 정직 등급을 가른다(스파이크 결론).
+    # ② 조례값(STATIC_CACHE/LIVE_API) — ordinance.source 로 정직 등급을 가른다(스파이크 결론).
+    #    ★R1 R2 반영: 법제처API(실시간)를 정적캐시보다 낮은 UNKNOWN으로 취급하던 등급 역전을
+    #    해소한다 — 둘 다 "출처는 정직하게 명시했으나 SourceSnapshot은 아직 없음"이라는 동일
+    #    사유로 완화(traced=True)되며, "완전 미상(UNKNOWN)"과는 범주가 다르다.
     ordinance_detail = detail.get("조례값")
     if isinstance(ordinance_detail, dict):
         src = str(ordinance.get("source") or "")
@@ -100,8 +103,9 @@ def _far_lineage_evidence_block(parcels: list[dict]) -> EvidenceBlock | None:
         ref: LineageRef | None
         if src == "지자체 조례(정적캐시)":
             # ★스파이크 결론: ORDINANCE_CACHE 는 정적캐시라 W2-1 SourceSnapshot 이 없다.
-            #   SNAPSHOT 을 자칭하지 않고 STATIC_CACHE 로 정직 하강 — disclaimer(원문 재대조
-            #   권장 문구)를 basis 로 그대로 인용해 "출처는 있으나 스냅샷 없음"을 명시한다.
+            #   SNAPSHOT 을 자칭하지 않고 STATIC_CACHE 로 완화 하강(traced=True) — disclaimer
+            #   (원문 재대조 권장 문구)를 basis 로 그대로 인용해 "출처는 있으나 스냅샷 없음"을
+            #   명시한다.
             ref = LineageRef(
                 source_kind="STATIC_CACHE",
                 fact_status="STALE",  # 재검증 권장 — provenance.disclaimer 문구와 정합.
@@ -109,12 +113,14 @@ def _far_lineage_evidence_block(parcels: list[dict]) -> EvidenceBlock | None:
             )
         elif src == "법제처API":
             # ★한계(W2-2 1차, 후속 W2-3): 법제처(MOLEG) 실시간 조회는 아직 SourceSnapshot
-            #   opt-in 대상이 아니다(W2-1 은 VWorld·G2B 두 커넥터만). 스냅샷 없이 SNAPSHOT 을
-            #   자칭하면 날조이므로 UNKNOWN(미추적)으로 정직 하강한다 — MOLEG 커넥터가
-            #   SourceSnapshot 을 켜는 순간 이 분기를 SNAPSHOT+snapshot_fingerprint 로 승격한다.
+            #   opt-in 대상이 아니다(W2-1 은 VWorld·G2B 두 커넥터만) — 원본 바이트 재현은
+            #   못 하지만, "출처 자체는 정직하게 명시된 실시간 조회"라 완전 미상(UNKNOWN)과는
+            #   다르다. STATIC_CACHE 와 동일한 완화 논리로 LIVE_API(traced=True)를 준다.
+            #   MOLEG 커넥터가 SourceSnapshot 을 켜는 순간 이 분기를 SNAPSHOT+
+            #   snapshot_fingerprint 로 승격한다(단방향 승격 — 완화 등급으로 되돌리지 않는다).
             ref = LineageRef(
-                source_kind="UNKNOWN", fact_status="UNKNOWN",
-                basis="법제처 실시간 조회(SourceSnapshot 미연동 — 후속 과제)",
+                source_kind="LIVE_API", fact_status="OBSERVED",
+                basis="법제처 실시간 조회(SourceSnapshot 미연동 — 스냅샷 연동 시 SNAPSHOT 승격 예정)",
             )
         else:
             # source == "법정상한"(조례 미확보) 등 — far_basis_detail["조례값"]은 이미
