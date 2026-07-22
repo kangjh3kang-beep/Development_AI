@@ -7,9 +7,9 @@ name: Deliberation Engine CI
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/services/deliberation-review/**"]
+    paths: ["propai-platform/services/deliberation-review/**", ".github/workflows/deliberation-ci.yml"]
   pull_request:
-    paths: ["propai-platform/services/deliberation-review/**"]
+    paths: ["propai-platform/services/deliberation-review/**", ".github/workflows/deliberation-ci.yml"]
   workflow_dispatch:
 
 jobs:
