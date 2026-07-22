@@ -186,6 +186,14 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
 
 # ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
 #   폴백을 뜻하므로 여기 포함하지 않는다(effective_far가 법정값과 같아도 조례값이 아님).
+# ★한계(2026-07-22, live-fix① R2 — LOW#2 명시): 이 판정은 문자열 하드코딩 키워드 결합이다.
+#   confirmed/미확정 정직 게이트 전체(_extract_ordinance_far 경로1/2/4·land_info_service의
+#   zone_limits 배선·이 파일 하단 zl_source_is_fallback 등)가 이 판정에 의존하므로, 새 조례
+#   생산자가 "법정상한"/"조례"/"법제처"/"ELIS"/"elis"와 다른 명명 규칙(예: 영문 대문자 표기
+#   변형, 신규 데이터소스명)으로 source 문자열을 지으면 이 판정이 조용히 틀릴 수 있다(과다
+#   신뢰 또는 과다 불신). 생산자의 source 명명을 바꾸거나 새 확정 출처를 추가할 때는 반드시
+#   이 튜플과 "법정상한" 부정판정을 함께 갱신할 것 — 그렇지 않으면 confirmed 판정이 전역적으로
+#   어긋난다(이 함수가 SSOT이므로 갱신 누락의 파급이 크다).
 _CONFIRMED_ORDINANCE_SOURCE_HINTS: tuple[str, ...] = ("조례", "법제처", "ELIS", "elis")
 
 
@@ -250,15 +258,24 @@ def _extract_ordinance_far(regulation_payload: Any) -> dict[str, Any]:
 
     # 2) zone_limits 형태: ordinance_far_pct / effective_far_pct
     #    ★가드: 명시적 ordinance_*_pct가 있을 때만 confirmed. effective_*_pct만으론 조례 아님.
+    #    ★추가가드(2026-07-22 전역 스윕, live-fix①): 생산자가 실수로 법정상한 폴백값을
+    #    ordinance_*_pct 키에 얹어도(용인 자연녹지 재현 클래스), 같은 zone_limits에 함께
+    #    실리는 ordinance_source가 그 사실을 정직 고지하면(법정상한 등 미확정 출처) 여기서
+    #    다시 걸러낸다 — 이 SSOT 추출 헬퍼가 모든 생산자(zone_limits 형태)의 공용 게이트이므로
+    #    한 곳만 고치면 전역(현재+향후 생산자)에 적용된다. ordinance_source가 없는 페이로드는
+    #    기존 계약대로 명시 키를 그대로 신뢰한다(하위호환·무회귀).
     zl = regulation_payload.get("zone_limits")
     if isinstance(zl, dict):
-        explicit_far = zl.get("ordinance_far_pct")
-        explicit_bcr = zl.get("ordinance_bcr_pct")
-        if explicit_far or explicit_bcr:
-            out["ord_far"] = float(explicit_far) if explicit_far else None
-            out["ord_bcr"] = float(explicit_bcr) if explicit_bcr else None
-            out["source"] = "지자체 조례"
-            return out
+        zl_src = zl.get("ordinance_source")
+        zl_source_is_fallback = bool(zl_src) and not _is_confirmed_ordinance_source(zl_src)
+        if not zl_source_is_fallback:
+            explicit_far = zl.get("ordinance_far_pct")
+            explicit_bcr = zl.get("ordinance_bcr_pct")
+            if explicit_far or explicit_bcr:
+                out["ord_far"] = float(explicit_far) if explicit_far else None
+                out["ord_bcr"] = float(explicit_bcr) if explicit_bcr else None
+                out["source"] = zl_src or "지자체 조례"
+                return out
 
     # 3) RegulationAnalysisService.limits 형태: {"far": {"legal": ..., "ordinance": ..., "effective": ...}}
     #    ★가드(step1과 동일 계약): trio 생산자(_limits.trio)가 ordinance 미보유 시
@@ -278,13 +295,19 @@ def _extract_ordinance_far(regulation_payload: Any) -> dict[str, Any]:
 
     # 4) 평탄 형태: regulation_payload.{ordinance_far, ordinance_bcr} 직접(테스트/단순 호출).
     #    주의: 일반 far/bcr는 '검증 대상값'일 수 있어 조례값으로 오인하지 않는다(명시 키만 인정).
+    #    ★추가가드(2026-07-22 전역 스윕, live-fix①): 경로5(깊이탐색)가 zone_limits 내부 dict를
+    #    그대로 재귀 호출하면 이 평탄 형태가 경로2의 ordinance_source 정직가드를 우회해 법정상한
+    #    폴백을 조례확정으로 채택한다(용인 자연녹지 재현 클래스 — 같은 SSOT 함수 내 동일 패턴).
+    #    source/ordinance_source 둘 중 하나라도 폴백 출처를 정직 고지하면 여기서도 미채택.
+    _flat_src = regulation_payload.get("source") or regulation_payload.get("ordinance_source")
+    _flat_source_is_fallback = bool(_flat_src) and not _is_confirmed_ordinance_source(_flat_src)
     far = regulation_payload.get("ordinance_far") or regulation_payload.get("ordinance_far_pct")
     bcr = regulation_payload.get("ordinance_bcr") or regulation_payload.get("ordinance_bcr_pct")
-    if far or bcr:
+    if (far or bcr) and not _flat_source_is_fallback:
         try:
             out["ord_far"] = float(far) if far else None
             out["ord_bcr"] = float(bcr) if bcr else None
-            out["source"] = regulation_payload.get("source") or "지자체 조례"
+            out["source"] = _flat_src or "지자체 조례"
             return out
         except (TypeError, ValueError):
             pass

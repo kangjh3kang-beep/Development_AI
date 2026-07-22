@@ -69,3 +69,67 @@ describe("SiteAnalysisDetail 스모크", () => {
     expect(screen.getByText("기본 토지정보")).toBeInTheDocument();
   });
 });
+
+// ── 조례 폴백 confirmed 정직화 회귀앵커(live-fix① R2 — R1 리뷰 확정) ──
+// 라이브 재현(용인시 수지구 자연녹지): 조례 미해석(ordinance_confirmed=false) 폴백값이
+// "조례 용적률 (지자체)" 타일에 확정 수치처럼 표시되고, 바로 아래 "출처: 법정상한"과
+// 자기모순을 일으켰다. 백엔드 SSOT가 미확정 시 ordinance_far_pct/ordinance_bcr_pct를
+// None으로 반환해도, 이 타일은 ordinance_confirmed를 직접 게이트해야 안전하다(구버전
+// 캐시 응답 등 값이 여전히 실리는 경로 방어).
+describe("조례 폴백 confirmed 정직화(R1 봉합)", () => {
+  it("조례 미확정(ordinance_confirmed=false)이면 '확인 필요'로 표시하고 폴백수치를 확정처럼 보여주지 않는다", () => {
+    render(
+      <SiteAnalysisDetail
+        data={{
+          basic: { address: "용인시 수지구 신봉동 56-19", land_area_sqm: 500 },
+          zoning: {
+            zone_type: "자연녹지지역",
+            ordinance_source: "법정상한",
+            effective_far: {
+              national_bcr_pct: 20,
+              national_far_pct: 100,
+              ordinance_bcr_pct: null,
+              ordinance_far_pct: null,
+              effective_bcr_pct: 20,
+              effective_far_pct: 80,
+              ordinance_confirmed: false,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("용도지역 · 법규한도")).toBeInTheDocument();
+    // 폴백값(100%)이 "조례 용적률" 타일에 확정 수치로 나타나지 않는다.
+    const farLabels = screen.getAllByText("조례 용적률 (지자체)");
+    expect(farLabels.length).toBeGreaterThan(0);
+    expect(screen.getAllByText("확인 필요").length).toBeGreaterThan(0);
+  });
+
+  it("조례 확정(ordinance_confirmed=true)이면 정상 수치를 표시한다(무회귀)", () => {
+    render(
+      <SiteAnalysisDetail
+        data={{
+          basic: { address: "서울특별시 종로구 1-1", land_area_sqm: 500 },
+          zoning: {
+            zone_type: "자연녹지지역",
+            ordinance_source: "지자체 조례(정적캐시)",
+            effective_far: {
+              national_bcr_pct: 20,
+              national_far_pct: 100,
+              ordinance_bcr_pct: 20,
+              ordinance_far_pct: 50,
+              effective_bcr_pct: 20,
+              effective_far_pct: 50,
+              ordinance_confirmed: true,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("조례 용적률 (지자체)")).toBeInTheDocument();
+    expect(screen.getAllByText("50.0%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("확인 필요")).not.toBeInTheDocument();
+  });
+});

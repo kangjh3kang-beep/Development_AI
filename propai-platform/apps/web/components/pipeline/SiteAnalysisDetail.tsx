@@ -167,14 +167,17 @@ function Tile({
   value,
   accent = false,
   text = false,
+  muted = false,
 }: {
   label: string;
   value: string;
   accent?: boolean;
   text?: boolean;
+  /** 미확정값(조례 폴백 등) — "확인 필요" 정직 표기 스타일(live-fix① R2). accent와 배타적. */
+  muted?: boolean;
 }) {
   return (
-    <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
+    <div className={`sa-di-tile${accent && !muted ? " sa-di-tile--accent" : ""}${muted ? " sa-di-tile--muted" : ""}`}>
       <span className="sa-di-tile__label">{label}</span>
       <span className={`sa-di-tile__value${text ? " sa-di-tile__value--text" : ""}`}>{value || "-"}</span>
     </div>
@@ -1480,6 +1483,16 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
   const nationalFar = n(ef.national_far_pct ?? zoning.national_far ?? data.national_far);
   const ordinanceBcr = n(ef.ordinance_bcr_pct ?? zoning.ordinance_bcr ?? data.ordinance_bcr);
   const ordinanceFar = n(ef.ordinance_far_pct ?? zoning.ordinance_far ?? data.ordinance_far);
+  // ★정직가드(2026-07-22, live-fix① R2 — R1 리뷰 확정): 이 타일은 종전 ordinance_confirmed
+  //   체크 없이 값이 있으면(법정상한 폴백값 포함) 무조건 "조례 용적률(지자체)"로 표시해,
+  //   바로 아래 "출처: 법정상한" 문구와 자기모순을 일으켰다(용인 자연녹지 재현). 백엔드
+  //   SSOT(calc_effective_far)는 이제 미확정 시 ordinance_*_pct를 None으로 반환하지만,
+  //   구버전 캐시 응답(zoning.ordinance_far/data.ordinance_far 폴백)까지 방어하기 위해
+  //   ordinance_confirmed 필드 자체를 명시 게이트로 별도 확인한다(주 카드 site-analysis/
+  //   page.tsx와 동일 관례). 필드 부재(레거시 응답)는 기존 동작 보존(값 존재=신뢰).
+  const ordinanceConfirmedRaw = ef.ordinance_confirmed;
+  const ordinanceConfirmed =
+    typeof ordinanceConfirmedRaw === "boolean" ? ordinanceConfirmedRaw : ordinanceFar != null;
   const effectiveBcr = n(ef.effective_bcr_pct ?? zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
   const effectiveFar = n(ef.effective_far_pct ?? zoning.effective_far ?? data.max_far ?? data.effective_far);
   const heightLimit = n(zoning.height_limit ?? data.height_limit);
@@ -1637,8 +1650,20 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
               {zoneType && <Tile label="용도지역" value={zoneType} text />}
               {nationalBcr != null && <Tile label="법정 건폐율 (국토계획법)" value={formatPct(nationalBcr)} />}
               {nationalFar != null && <Tile label="법정 용적률 (국토계획법)" value={formatPct(nationalFar)} />}
-              {ordinanceBcr != null && <Tile label="조례 건폐율 (지자체)" value={formatPct(ordinanceBcr)} />}
-              {ordinanceFar != null && <Tile label="조례 용적률 (지자체)" value={formatPct(ordinanceFar)} />}
+              {(ordinanceBcr != null || nationalBcr != null) && (
+                <Tile
+                  label="조례 건폐율 (지자체)"
+                  value={ordinanceConfirmed && ordinanceBcr != null ? formatPct(ordinanceBcr) : "확인 필요"}
+                  muted={!(ordinanceConfirmed && ordinanceBcr != null)}
+                />
+              )}
+              {(ordinanceFar != null || nationalFar != null) && (
+                <Tile
+                  label="조례 용적률 (지자체)"
+                  value={ordinanceConfirmed && ordinanceFar != null ? formatPct(ordinanceFar) : "확인 필요"}
+                  muted={!(ordinanceConfirmed && ordinanceFar != null)}
+                />
+              )}
               {effectiveBcr != null && <Tile label="실효 건폐율" value={formatPct(effectiveBcr)} accent />}
               {effectiveFar != null && <Tile label="실효 용적률" value={formatPct(effectiveFar)} accent />}
               {heightLimit != null && heightLimit > 0 && <Tile label="높이제한" value={`${heightLimit}m`} />}
