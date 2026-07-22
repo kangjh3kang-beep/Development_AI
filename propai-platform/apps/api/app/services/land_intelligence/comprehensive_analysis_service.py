@@ -408,6 +408,67 @@ def _attach_csm_and_risk_register(result: dict[str, Any]) -> None:
         logger.warning("CSM/Risk Register 조립 실패(degrade, 기존 분석 무손상)", err=str(e)[:160])
 
 
+# ── W3-6(RFI 루프 계약) 소비 배선 1곳 — 무음 기본가정 지점 → 구조화 RFI 방출(opt-in) ──
+#   ★스파이크로 확정한 배선 지점: far_tier_service.calc_effective_far()가 조례 미확인 시 이미
+#   far_basis_detail["조례확인필요"]=True 정직 마커(annotations 안내문까지)를 남기지만(#422
+#   조례 폴백 confirmed 정직화), 지금까지는 "표시용 안내 텍스트"에 그칠 뿐 무엇이 부족한지·
+#   왜 필요한지·어느 계산이 막히는지·기본가정 진행 시 위험이 무엇인지를 구조화·추적 가능한
+#   형태로 방출하지 않았다 — 이 함수가 그 정확한 공백을 emit_rfi() 1회 호출로 메운다.
+def _attach_rfi_register(result: dict[str, Any]) -> None:
+    """조례 미확인(#422 마커) 등 기존 정직 표식에서 RFI를 방출해 result에 additive 부착한다.
+
+    ★무회귀: 이 함수는 result에 "rfi_register" 신규 키만 추가한다(기존 키·계산은 절대
+    건드리지 않는다 — _attach_csm_and_risk_register와 동일한 additive·degrade 전략).
+    ★opt-in: RDM(required_data)이 이미 이 필드류(land_area_sqm/max_bcr/max_far)를
+    requirement_level=REQUIRED·critical=False로 선언해 CONDITIONAL까지만 올리듯, 이
+    RFI도 같은 등급(REQUIRED·비critical)으로 방출한다 — 새 BLOCKED/차단을 만들지 않는다.
+    """
+    try:
+        from app.services.provenance.required_data import RequirementLevel
+        from app.services.rfi.rfi_register import RFIRegister, build_subject_ref, emit_rfi
+
+        register = RFIRegister()
+        eff = result.get("effective_far")
+        detail = eff.get("far_basis_detail") if isinstance(eff, dict) else None
+        if isinstance(eff, dict) and isinstance(detail, dict) and detail.get("조례확인필요"):
+            zone_type = result.get("zone_type") or "(용도지역 미상)"
+            national_far = eff.get("national_far_pct")
+            # ★무날조(R1 MEDIUM 봉합): zone_unmatched 분기(legal_zone_limits.legal_limits_for가
+            #   용도지역명을 매칭하지 못함)는 national_far_pct 자체가 None(정직 미산출)이다 —
+            #   이때 "법정상한(None%)을 잠정 적용해 진행합니다"라고 쓰면 실제로는 아무 값도
+            #   적용되지 않았는데(폴백조차 없음) 마치 잠정치가 있는 것처럼 지어내는 날조가 된다
+            #   (far_tier_service.calc_effective_far의 zone_unmatched 반환 자체가 "임의값
+            #   미생성(정직)"이라고 명시하는 것과 모순). 실폴백 로직을 그대로 서술한다.
+            if national_far is None:
+                default_assumption = (
+                    "용도지역 법정상한 매칭 실패로 실효 용적률/건폐율이 산출되지 않았습니다"
+                    "(잠정치 없음 — far_tier_service.calc_effective_far가 임의값을 생성하지 "
+                    "않고 미확인으로 정직 반환) — 용도지역 확인이 먼저 필요합니다."
+                )
+            else:
+                default_assumption = (
+                    f"조례 미확인 상태로 법정상한({national_far}%)을 잠정 적용해 진행합니다 — "
+                    "실제 조례가 이보다 낮게(강화 방향으로) 규정돼 있으면 설계 규모·사업성이 "
+                    "과대산정될 위험이 있습니다(관할 지자체 확인 전까지 잠정치)."
+                )
+            emit_rfi(
+                register,
+                subject_ref=build_subject_ref(
+                    pnu=result.get("pnu"), address=result.get("address"),
+                    field_name="effective_far.ordinance_far_pct",
+                ),
+                missing_what=f"{zone_type} 지자체 도시계획조례 실효 용적률/건폐율 확인값",
+                needed_for="실효 용적률/건폐율 산정(설계·수지분석 등 후속 단계가 소비하는 SSOT 값)",
+                blocking_calc="far_tier_service.calc_effective_far — effective_far_pct/effective_bcr_pct",
+                default_assumption=default_assumption,
+                requirement_level=RequirementLevel.REQUIRED.value,
+                critical=False,
+            )
+        result["rfi_register"] = register.to_dict()
+    except Exception as e:  # noqa: BLE001 — RFI 조립 실패는 기존 분석 결과 무손상
+        logger.warning("RFI Register 조립 실패(degrade, 기존 분석 무손상)", err=str(e)[:160])
+
+
 class ComprehensiveAnalysisService:
     """주소 입력만으로 7개 분석 카테고리를 자동 수행."""
 
@@ -827,6 +888,7 @@ class ComprehensiveAnalysisService:
         # 실려있다(스파이크 확인 — 이 함수가 그 최대 조립 지점). 값 재계산 없이 참조만
         # 재구조화한다(csm.assemble_csm). 실패는 기존 분석 결과에 전혀 영향을 주지 않는다.
         _attach_csm_and_risk_register(result)
+        _attach_rfi_register(result)
 
         # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — deliberation(심의)·urban·legal ──
         # 시니어 전문가 판단프레임워크·근거(법조문 citation)를 result에 첨부해 메인 분석에
