@@ -56,6 +56,8 @@ import ReferralSharePanel from "@/components/sales-app/ReferralSharePanel";
 import InstallGuide from "@/components/sales-app/InstallGuide";
 // 역할별 홈(랜딩) 대시보드 — 기본 진입 탭.
 import FieldHome from "@/components/sales-app/FieldHome";
+// 모바일 하단 5탭+전체메뉴 시트(디자인 핸드오프 P0#2) — 데스크톱은 기존 상단 탭바.
+import { FieldBottomNav, FieldMenuSheet } from "@/components/sales-app/FieldNav";
 import { captureLandingRef } from "@/lib/referralRef";
 
 interface RoleResponse {
@@ -74,6 +76,8 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [needEnter, setNeedEnter] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [tab, setTab] = useState<string>("home");
+  // 모바일 전체메뉴 시트 열림 상태(하단 탭바 '전체' 슬롯).
+  const [menuOpen, setMenuOpen] = useState(false);
   // 세대 탭 보드 전환: 실시간 선점(live) ↔ 배치도·상세(grid). 두 보드 동시 렌더(중복) 방지.
   const [unitView, setUnitView] = useState<"live" | "grid" | "draw">("live");
   const [err, setErr] = useState("");
@@ -199,7 +203,10 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const canManage = role ? (role.can_manage ?? MANAGE_ROLES.has(role.role)) : false;
 
   return (
-    <div className="space-y-5">
+    // 모바일은 하단 탭바(fixed)가 콘텐츠를 가리지 않게 하단 여백 확보(sm+ 은 불필요).
+    // ★safe-area 포함 — 홈인디케이터 기기에서 하단바 총높이(≈64px+inset)가 pb-20(80px)을
+    //   넘어 마지막 콘텐츠가 가려지던 R1 지적 반영.
+    <div className="space-y-5 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-0">
       {/* 워크스페이스 헤더 — 커맨드센터 패널. 뒤로가기 / 타이틀·역할 / 액션 그룹의 3영역 위계. */}
       <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
         <div className="cc-grid-bg opacity-30" aria-hidden />
@@ -292,8 +299,9 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       {!loading && role && (
         <>
           {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출.
-              모바일: 가로 스크롤 탭바(스냅·페이드·터치타깃 ≥44px)+아이콘으로 직관화. */}
-          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur">
+              데스크톱(sm+) 전용 가로 탭바. 모바일은 하단 5탭+전체메뉴 시트(FieldNav —
+              디자인 핸드오프 P0#2, 21탭 가로스크롤 인지부하 해소)로 대체한다. */}
+          <div className="sticky top-0 z-20 -mx-1 hidden border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur sm:block">
             <div className="mb-1.5 flex items-center gap-2 px-1">
               <span className="cc-label">MENU</span>
               <span className="text-[11px] font-bold text-[var(--text-tertiary)]">
@@ -449,6 +457,21 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             </div>
           )}
           {tab === "staff" && canStaff && <StaffOverviewPanel siteId={siteId} />}
+
+          {/* 모바일 하단 5탭+전체메뉴 시트 — tabs(visibleTabs)가 라벨·아이콘·게이팅 단일 출처. */}
+          <FieldBottomNav
+            tabs={tabs}
+            activeTab={tab}
+            onNavigate={(k) => setTab(k)}
+            onOpenMenu={() => setMenuOpen(true)}
+          />
+          <FieldMenuSheet
+            open={menuOpen}
+            tabs={tabs}
+            activeTab={tab}
+            onNavigate={(k) => setTab(k)}
+            onClose={() => setMenuOpen(false)}
+          />
         </>
       )}
 

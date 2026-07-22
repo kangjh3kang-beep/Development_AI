@@ -152,3 +152,16 @@ export function visibleTabs(features: string[]): SalesTabDef[] {
   const set = new Set(features ?? []);
   return SALES_TABS.filter((t) => t.alwaysOn || set.has(t.feature));
 }
+
+// ── 모바일 내비 IA(디자인 핸드오프 design_handoff_salesapp) — 하단 5탭 + 전체메뉴 4그룹 ──
+// 하단 탭바 주 슬롯(홈/고객/배치도/수납) — 마지막 슬롯 '전체'는 FieldNav 가 상시 부착한다.
+// 역할별 노출은 visibleTabs 결과와 교집합(예: MEMBER 는 payments 미노출 → 3슬롯+전체).
+export const BOTTOM_NAV_KEYS = ["home", "customers", "units", "payments"] as const;
+
+/** 전체메뉴 시트의 4그룹(IA SSOT) — 각 그룹의 탭 키. 노출은 visibleTabs 와 교집합으로 판정. */
+export const MENU_GROUPS: { title: string; keys: string[] }[] = [
+  { title: "Sales", keys: ["units", "customers", "pricing", "subscription"] },
+  { title: "Money", keys: ["payments", "loan", "resale", "tax"] },
+  { title: "Operations", keys: ["worklog", "desk", "integrity", "projection", "org", "commission", "staff", "cert", "market"] },
+  { title: "My", keys: ["profile", "social", "referral"] },
+];
