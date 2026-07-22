@@ -187,3 +187,55 @@ def test_parse_example_fence_then_answer_fence_prefers_last():
     """펜스 블록이 여럿이면 마지막(실제 답 관례)이 이긴다."""
     raw = '스키마 예시:\n```json\n{"x": 999}\n```\n최종 답변:\n```json\n{"x": 1}\n```'
     assert parse_llm_json(raw) == {"x": 1}
+
+
+# ── is_truncated: 절단감지 SSOT + regulation 'truncated' 정직 분류 ─────────────
+# 2026-07-22 라이브 실측(#411 배포 후): 규제분석 파싱 실패는 전부 output_tokens==캡(2500)
+# 도달 호출 — 파서 격차가 아니라 max_tokens 절단이 잔여 근본원인. 절단은 'parse'와
+# 구분해 분류해야 캡 수리로 이어진다(오진단 재발 방지).
+
+def _resp(text: str, stop: str | None = None, key: str = "stop_reason"):
+    resp = MagicMock()
+    resp.content = text
+    resp.response_metadata = {key: stop} if stop is not None else {}
+    return resp
+
+
+def test_is_truncated_stop_reason_and_finish_reason():
+    from app.services.ai.llm_json import is_truncated
+    assert is_truncated(_resp("x", "max_tokens")) is True
+    assert is_truncated(_resp("x", "length", key="finish_reason")) is True
+    assert is_truncated(_resp("x", "end_turn")) is False
+    assert is_truncated(_resp("x")) is False           # 메타 있음·사유 없음
+    assert is_truncated(object()) is False             # response_metadata 부재
+    assert is_truncated(MagicMock()) is False          # 메타가 dict 아님(MagicMock)
+
+
+async def test_llm_truncated_response_classified_truncated_not_parse():
+    """★실측 재현 — 캡 절단(잘린 JSON+stop_reason=max_tokens)은 'truncated'다('parse' 아님)."""
+    resp = _resp('```json\n{"summary": "요약이 길어서 캡에서 잘', "max_tokens")
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=resp)
+    out = await _run_llm(mock_llm=llm)
+    assert out["generated"] is False
+    assert out["fallback_reason"] == "truncated"
+
+
+async def test_llm_garbage_without_truncation_still_parse():
+    """절단이 아닌 순수 파싱 실패는 여전히 'parse'(분류 경계 회귀 잠금)."""
+    resp = _resp("죄송합니다. JSON을 생성할 수 없습니다.", "end_turn")
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=resp)
+    out = await _run_llm(mock_llm=llm)
+    assert out["generated"] is False
+    assert out["fallback_reason"] == "parse"
+
+
+async def test_llm_truncated_but_parseable_still_succeeds():
+    """절단 플래그가 있어도 JSON이 온전하면 성공 경로 무회귀(절단검사는 파싱 실패시에만)."""
+    resp = _resp(_OBJ_TXT, "max_tokens")
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=resp)
+    out = await _run_llm(mock_llm=llm)
+    assert out["generated"] is True
+    assert out["summary"] == "요약"

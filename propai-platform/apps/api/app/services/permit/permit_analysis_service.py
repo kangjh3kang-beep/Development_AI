@@ -469,7 +469,9 @@ class PermitAnalysisService:
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
 
-            llm = get_llm(timeout=70, max_tokens=2500)
+            # ★max_tokens 4000: 단일필지 _llm_analyze(4000)와 동일 캡 — 2500은 다필지 한국어
+            #   JSON 절단→파싱 실패→폴백 강등 위험(규제분석 2500 캡 절단 실측과 동일 클래스).
+            llm = get_llm(timeout=70, max_tokens=4000)
             user = _MULTI_TMPL.format(
                 n=len(parcels),
                 total_area=round(total_area) if total_area else "-",

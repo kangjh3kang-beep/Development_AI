@@ -11,6 +11,22 @@ import json
 from typing import Any
 
 
+def is_truncated(response: Any) -> bool:
+    """LLM 응답이 max_tokens 절단으로 끝났는지 판정(절단감지 SSOT).
+
+    provider stop_reason(anthropic)/finish_reason(openai 등)이 max_tokens/length면
+    출력이 중간에서 잘린 것 — 잘린 JSON은 어떤 관대 파서로도 복구할 수 없으므로,
+    호출처는 이 판정으로 절단을 'parse'가 아닌 별도 사유로 정직하게 분류해야 한다.
+    (2026-07-22 라이브 실측: 규제분석 output_tokens==캡(2500)인 호출만 정확히 파싱 실패
+    — 파서 격차가 아니라 응답 절단이 잔여 근본원인이었다.)
+    """
+    meta = getattr(response, "response_metadata", None)
+    if not isinstance(meta, dict):
+        return False
+    stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
+    return stop in ("max_tokens", "length")
+
+
 def coerce_llm_text(raw: Any) -> str:
     """LLM 응답 content를 str로 정규화. langchain 콘텐츠 블록(list)도 텍스트로 합친다."""
     if isinstance(raw, str):
