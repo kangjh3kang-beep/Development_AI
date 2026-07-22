@@ -10,6 +10,7 @@ import { Lock } from "lucide-react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { nodeTypeOptions } from "@/components/sales-app/roleConfig";
 
 interface Master { id?: string; basis: string; fixed_amount?: number | null; rate?: number | null; locked?: boolean }
 interface Dist { id: string; master_id?: string; target_node_type?: string | null; target_node_id?: string | null; basis: string; value: number }
@@ -19,10 +20,12 @@ const BASIS_MASTER = [
   { value: "RATE_OF_PRICE", label: "분양가 요율(%)" },
   { value: "TOTAL_POOL", label: "총액 풀(정액)" },
 ];
+// 수수료 배분 대상 = 대행지사 이하 조직 라벨(roleConfig SSOT) + 부동산MGM(외부 추천 수수료 —
+// 조직 node_type 이 아니라 여기 로컬로 덧붙임. 총액에서 차감·예약, 잔여는 대행사 귀속).
+// ★과거 이 목록이 대대행/총괄본부장/본부장/팀원으로 갈라져 조직도(이사/직원)와 모순됐다 → SSOT 일원화.
 const NODE_TYPES = [
-  { value: "SUBAGENCY", label: "대대행" }, { value: "GM_DIRECTOR", label: "총괄본부장" },
-  { value: "DIRECTOR", label: "본부장" }, { value: "TEAM_LEADER", label: "팀장" }, { value: "MEMBER", label: "팀원" },
-  { value: "MGM", label: "부동산MGM" },  // 외부 부동산 추천 수수료(총액에서 차감·예약). 잔여는 대행사 귀속.
+  ...nodeTypeOptions(["SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TEAM_LEADER", "MEMBER"]),
+  { value: "MGM", label: "부동산MGM" },
 ];
 const NT: Record<string, string> = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]));
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";

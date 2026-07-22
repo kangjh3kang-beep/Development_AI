@@ -10,6 +10,7 @@ import { Building2 } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { NODE_TYPE_LABEL, nodeTypeOptions } from "@/components/sales-app/roleConfig";
 
 interface Node { id: string; path: string; node_type: string; display_name?: string | null }
 
@@ -31,25 +32,14 @@ export function sumRosterRows(rows: RosterRow[]): RosterRow {
   );
 }
 
-// ★[라벨 SSOT(iter-7)] node_type→한국어 라벨의 정본은 '백엔드' overview._LABEL 한 부다.
-//   같은 화면에서 트리 배지(LABEL[node_type])는 프론트 상수를, 로스터 표(role_label)는 백엔드
-//   _LABEL 을 써서, 과거엔 DIRECTOR 같은 노드가 배지='본부장' vs 표='이사' 로 모순 표시됐다
-//   ('직급별 관리' 핵심가치 훼손). 그래서 프론트 라벨을 백엔드 _LABEL 과 6개 전부 byte-동일로
-//   맞춘다(트리배지·로스터표·드롭다운이 모두 같은 한국어 문자열). 위계는 도메인상 자연스러운
-//   '본부장(GM_DIRECTOR) > 이사(DIRECTOR)'(site_auth._ROLE_LABEL 과도 동일)를 정본으로 택했다.
-//   ★변경 시 백엔드 overview._LABEL 도 함께 바꿔야 하며, OrgTree.contract.test.ts·
-//     test_sales_org.py 가 두 소스의 라벨 '값' 일치를 회귀로 고정한다.
-// ★export(iter-7): OrgTree.contract.test.ts 가 라벨 '값' 패리티와 '트리배지=로스터표' 동일문자열을
-//   byte-동일로 고정할 수 있도록 NODE_TYPES·LABEL 을 내보낸다(테스트가 화면과 같은 한 부를 소비).
-export const NODE_TYPES: { value: string; label: string }[] = [
-  { value: "AGENCY", label: "대행본사" },
-  { value: "SUBAGENCY", label: "대행지사" },
-  { value: "GM_DIRECTOR", label: "본부장" },
-  { value: "DIRECTOR", label: "이사" },
-  { value: "TEAM_LEADER", label: "팀장" },
-  { value: "MEMBER", label: "직원" },
-];
-export const LABEL: Record<string, string> = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]));
+// ★[라벨 SSOT(2026-07-22 봉합)] node_type→한국어 라벨 정본은 이제 roleConfig.NODE_TYPE_LABEL
+//   한 부(= 백엔드 site_auth._ROLE_LABEL·로그인 역할 라벨과 1:1). 과거엔 조직도 배지=프론트 상수 vs
+//   로스터 표=백엔드 라벨로 DIRECTOR 가 '본부장' vs '이사' 로 모순 표시됐고, 수수료/더치페이 화면은
+//   또 다른 라벨(대대행/총괄본부장/본부장)을 써서 3벌로 갈라졌다. 트리배지·로스터표·드롭다운·수수료가
+//   모두 roleConfig 한 부를 소비하게 일원화한다. 위계=본부장(GM_DIRECTOR) > 이사(DIRECTOR).
+// ★export: OrgTree.contract.test.ts 가 SSOT 패리티와 '트리배지=로스터표' 동일문자열을 회귀로 고정.
+export const NODE_TYPES = nodeTypeOptions();
+export const LABEL: Record<string, string> = { ...NODE_TYPE_LABEL }; // 방어적 복사(SSOT 원본 오염 차단)
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
 export default function OrgTree({ siteCode }: { siteCode: string }) {

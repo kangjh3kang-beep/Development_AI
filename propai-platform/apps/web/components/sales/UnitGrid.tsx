@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { salesApi } from "@/lib/salesApi";
 import { useSalesStore, type Unit } from "@/store/useSalesStore";
+import {
+  UNIT_STATUSES,
+  UNIT_STATUS_LABEL,
+  unitStatusCellClass,
+} from "@/components/sales/unitStatus";
 
 const Grid3D = dynamic(() => import("@/components/sales/Grid3D"), {
   ssr: false,
@@ -14,17 +19,7 @@ const Grid3D = dynamic(() => import("@/components/sales/Grid3D"), {
   ),
 });
 
-const COLOR: Record<string, string> = {
-  AVAILABLE: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300",
-  HOLD: "bg-amber-500/15 border-amber-500/40 text-amber-300",
-  APPLIED: "bg-sky-500/15 border-sky-500/40 text-sky-300",
-  CONTRACTED: "bg-rose-500/15 border-rose-500/40 text-rose-300",
-  CANCELLED: "bg-zinc-500/15 border-zinc-500/40 text-zinc-400 line-through",
-};
-const LABELS: Record<string, string> = {
-  AVAILABLE: "분양가능", HOLD: "보류", APPLIED: "청약", CONTRACTED: "계약", CANCELLED: "취소",
-};
-
+// 색·라벨은 세대 상태 SSOT(unitStatus) 소비 — 배치도/실시간보드/상세/3D 전 화면 동일 표기.
 export default function UnitGrid({ siteCode }: { siteCode: string }) {
   const units = useSalesStore((s) => s.units);
   const select = useSalesStore((s) => s.select);
@@ -69,10 +64,10 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
           {[
             ["총 세대", `${stats.total}`],
             ["분양률", `${stats.soldRatio}%`],
-            ["분양가능", `${stats.c.AVAILABLE}`],
-            ["보류", `${stats.c.HOLD}`],
-            ["청약", `${stats.c.APPLIED}`],
-            ["계약", `${stats.c.CONTRACTED}`],
+            [UNIT_STATUS_LABEL.AVAILABLE, `${stats.c.AVAILABLE}`],
+            [UNIT_STATUS_LABEL.HOLD, `${stats.c.HOLD}`],
+            [UNIT_STATUS_LABEL.APPLIED, `${stats.c.APPLIED}`],
+            [UNIT_STATUS_LABEL.CONTRACTED, `${stats.c.CONTRACTED}`],
           ].map(([k, v]) => (
             <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-2.5 text-center">
               <p className="text-[10px] text-[var(--text-tertiary)]">{k}</p>
@@ -101,9 +96,10 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
           </div>
         )}
         <div className="ml-auto flex flex-wrap gap-3 text-xs">
-          {Object.entries(LABELS).map(([k, v]) => (
+          {UNIT_STATUSES.map((k) => (
             <span key={k} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
-              <i className={`inline-block h-3 w-3 rounded ${COLOR[k].split(" ")[0]}`} />{v}
+              <i className={`inline-block h-3 w-3 rounded ${unitStatusCellClass(k).split(" ")[0]}`} />
+              {UNIT_STATUS_LABEL[k]}
             </span>
           ))}
         </div>
@@ -128,7 +124,7 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
                     <span className="w-10 text-xs font-semibold text-[var(--text-tertiary)]">{f}F</span>
                     {us.sort((a, b) => (a.ho || "").localeCompare(b.ho || "")).map((u) => (
                       <button key={u.id} onClick={() => select(u)}
-                        className={`flex h-12 w-16 flex-col items-center justify-center rounded border text-[11px] font-medium ${COLOR[u.status]}`}>
+                        className={`flex h-12 w-16 flex-col items-center justify-center rounded border text-[11px] font-medium ${unitStatusCellClass(u.status)}`}>
                         {u.ho}
                       </button>
                     ))}
