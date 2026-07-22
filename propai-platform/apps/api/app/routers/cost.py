@@ -1026,6 +1026,16 @@ async def create_boq(
             summary=boq["summary"], header=boq["header"], estimate_id=estimate_id,
             tenant_id=req.tenant_id, project_id=project_id,
         )
+        # W3-3(P9): back-test 계약 — 예측(견적) 스냅샷 기록(best-effort, 예외 흡수).
+        # 실적(실행내역)이 없는 현재는 compute_accuracy()가 여전히 null+사유를 반환하지만,
+        # 이 호출이 있어야 실적이 훗날 들어왔을 때 APE/MAPE 산출이 가능하다(무목업).
+        if estimate_id:
+            from app.services.cost.backtest import record_estimate
+            await record_estimate(
+                estimate_id=estimate_id, predicted_total_won=boq["summary"].get("total", 0),
+                project_id=project_id, tenant_id=req.tenant_id,
+                predicted_breakdown=boq["summary"].get("tier_distribution"),
+            )
 
     # D6 AI 해석(BOQ) — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도 결과는
     # 정상 반환(graceful). use_llm=False면 해석 필드는 생략(무날조).

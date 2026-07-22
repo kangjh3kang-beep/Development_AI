@@ -158,6 +158,17 @@ def merge_bim(
         src = str(it.get("qty_source") or "parametric")
         by_source[src] = by_source.get(src, 0) + 1
 
+    # W3-3(P9): Q1~Q4 등급(사실 재-표기 — qty_source 를 이미 부착했으므로 새 계산 아님).
+    # 항목별로 tier/tier_basis 를 부착(disciplines 내 동일 dict 참조라 in-place 갱신이
+    # new_disc 구조에도 그대로 반영된다) + 초안 전체 분포도 함께 계산한다. 초안은 단가가
+    # 빈칸(공내역서 표준)이라 금액 기준 분포는 의미 없고 건수 기준(pct_count)이 견적 성숙도
+    # 지표(예: "이 초안 중 Q1 실측 확정 비중 x%")로 유의미하다.
+    from app.services.cost.qto_tier import classify_item, summarize_tiers
+
+    for it in all_copies:
+        it.update(classify_item(it))
+    tier_summary = summarize_tiers(all_copies)
+
     bim_merge = {
         "bim_rows_count": len(rows),
         "bim_matched_count": matched,
@@ -166,6 +177,11 @@ def merge_bim(
         "unmatched_bim_codes": unmatched,
         "by_source": by_source,
         "warnings": warnings,
+        "tier_distribution": {
+            "by_tier": tier_summary["by_tier"],
+            "dominant_tier": tier_summary["dominant_tier"],
+            "note": tier_summary["note"],
+        },
         "note": (
             "BIM 실측 우선 병합(1:1·단위정합만 교체). 모호·단위불일치·미매칭은 "
             "파라메트릭 유지(허위 분배 금지) — 전문 적산 검토 필수."

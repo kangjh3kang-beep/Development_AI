@@ -520,3 +520,43 @@ class TestChangeForecastRoute:
             "base_params": {"total_gfa_sqm": 0},
         })
         assert resp.status_code == 422
+
+
+class TestBoqBacktestWiring:
+    """W3-3(P9) — /boq persist=True 시 back-test 예측 스냅샷(record_estimate) 기록 배선."""
+
+    def test_persist_true면_record_estimate_호출(self):
+        fake_saved = {"ok": True, "estimate_id": "est-bt-1"}
+        with (
+            patch(
+                "app.services.cost.cost_estimate_repository.save_estimate",
+                new_callable=AsyncMock, return_value=fake_saved,
+            ),
+            patch(
+                "app.services.cost.backtest.record_estimate",
+                new_callable=AsyncMock, return_value={"ok": True},
+            ) as mock_record,
+        ):
+            resp = client.post(
+                f"/api/v1/cost/{PROJECT_ID}/boq",
+                json={"total_gfa_sqm": 3000.0, "persist": True},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["estimate_id"] == "est-bt-1"
+        mock_record.assert_awaited_once()
+        _, kwargs = mock_record.call_args
+        assert kwargs["estimate_id"] == "est-bt-1"
+        assert kwargs["predicted_total_won"] == data["summary"]["total"]
+
+    def test_persist_false면_record_estimate_미호출(self):
+        with patch(
+            "app.services.cost.backtest.record_estimate",
+            new_callable=AsyncMock, return_value={"ok": True},
+        ) as mock_record:
+            resp = client.post(
+                f"/api/v1/cost/{PROJECT_ID}/boq",
+                json={"total_gfa_sqm": 3000.0, "persist": False},
+            )
+        assert resp.status_code == 200
+        mock_record.assert_not_awaited()
