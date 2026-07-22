@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import pytest
+from packages.schemas.run_state import RunStateEnum
 
 from app.services.approval.approval_state import ApprovalState
 from app.services.approval.archetype_adapters import (
@@ -22,7 +23,6 @@ from app.services.approval.archetype_adapters import (
 )
 from app.services.basis.site_basis_state import ArtifactStatus
 from app.services.cad import design_run_store
-from packages.schemas.run_state import RunStateEnum
 
 # ── ① site_basis — 5:5 완전 1:1(엄밀 무손실) ────────────────────────────────
 

@@ -17,9 +17,10 @@
 """
 from __future__ import annotations
 
+from packages.schemas.run_state import RunStateEnum
+
 from app.services.basis.site_basis_state import ArtifactStatus
 from app.services.cad import design_run_store
-from packages.schemas.run_state import RunStateEnum
 
 from .approval_state import ApprovalState
 

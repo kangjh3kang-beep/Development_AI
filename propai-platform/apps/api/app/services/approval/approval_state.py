@@ -19,14 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-try:
-    from enum import StrEnum
-except ImportError:  # pragma: no cover - Python 3.10 백포트(packages/schemas/run_state.py 선례 재사용)
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        pass
+from enum import StrEnum  # 프로젝트 requires-python>=3.12 — 표준 StrEnum 직수입(rbac.py 선례)
 
 
 class ApprovalState(StrEnum):
