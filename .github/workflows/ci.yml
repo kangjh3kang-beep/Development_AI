@@ -3,9 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/**"]
+    # 워크플로우 자신 포함 — CI 정의만 바꾼 PR이 CI 미발화로 무검증 머지되던 갭 봉합
+    # (paths 필터가 propai-platform/** 뿐이라 .github 변경은 트리거 밖이었음).
+    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
   pull_request:
-    paths: ["propai-platform/**"]
+    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 jobs:
