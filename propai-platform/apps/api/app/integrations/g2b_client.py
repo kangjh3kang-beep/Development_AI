@@ -39,6 +39,50 @@ G2B_BASE_URL = "http://apis.data.go.kr/1230000"
 BID_SERVICE_PATH = "/ad/BidPublicInfoService"
 AWARD_SERVICE_PATH = "/as/ScsbidInfoService"
 
+# SourceSnapshot 기록 ON(W2-1) — 스파이크 결과 G2BClient는 BaseAPIClient를 상속하지 않는
+# 별도 httpx 클라이언트라 base_client.py 훅이 닿지 않는다. 실사용 커넥터 2종(VWorld·G2B)
+# 중 하나이므로 여기 직접 최소 훅을 둔다(opt-in·best-effort — 기존 반환값/로직 불변).
+_SNAPSHOT_ENABLED = True
+_SNAPSHOT_SOURCE_ID = "g2b"
+_SNAPSHOT_SOURCE_NAME = "나라장터(조달청) 공공데이터포털"
+_SNAPSHOT_AUTHORITY_GRADE = "OFFICIAL"
+
+
+async def _snapshot_success(url: str, params: dict, payload_bytes: bytes, http_status: int) -> None:
+    """G2B 성공 응답 SourceSnapshot 기록(opt-in·best-effort) — 실패해도 수집에 영향 없음."""
+    if not _SNAPSHOT_ENABLED:
+        return
+    try:
+        from app.services.provenance import source_snapshot
+
+        await source_snapshot.safe_record_success(
+            source_id=_SNAPSHOT_SOURCE_ID, method="GET", url=url, params=params,
+            payload_bytes=payload_bytes, http_status=http_status,
+            source_name=_SNAPSHOT_SOURCE_NAME, authority_grade=_SNAPSHOT_AUTHORITY_GRADE,
+        )
+    except Exception:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
+        pass
+
+
+async def _snapshot_dead_letter(
+    url: str, params: dict, error_message: str,
+    http_status: int | None = None, payload_bytes: bytes | None = None,
+) -> None:
+    """G2B 실패 응답 SourceSnapshot dead-letter 기록(opt-in·best-effort)."""
+    if not _SNAPSHOT_ENABLED:
+        return
+    try:
+        from app.services.provenance import source_snapshot
+
+        await source_snapshot.safe_record_dead_letter(
+            source_id=_SNAPSHOT_SOURCE_ID, method="GET", url=url, params=params,
+            payload_bytes=payload_bytes, http_status=http_status,
+            source_name=_SNAPSHOT_SOURCE_NAME, authority_grade=_SNAPSHOT_AUTHORITY_GRADE,
+            error_message=error_message,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 
 class G2BRateLimiter:
     """일일 호출 한도를 준수하기 위한 간이 Rate Limiter."""
@@ -121,12 +165,18 @@ class G2BClient:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
+            await _snapshot_success(url, params, resp.content, resp.status_code)
             return self._extract_items(data)
         except httpx.HTTPStatusError as exc:
             logger.error("G2B 입찰공고 API 오류 (HTTP %d): %s", exc.response.status_code, exc)
+            await _snapshot_dead_letter(
+                url, params, str(exc),
+                http_status=exc.response.status_code, payload_bytes=exc.response.content,
+            )
             return []
         except Exception as exc:
             logger.error("G2B 입찰공고 API 호출 실패: %s", exc)
+            await _snapshot_dead_letter(url, params, str(exc))
             return []
 
     async def fetch_all_bid_notices(
@@ -194,12 +244,18 @@ class G2BClient:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
+            await _snapshot_success(url, params, resp.content, resp.status_code)
             return self._extract_items(data)
         except httpx.HTTPStatusError as exc:
             logger.error("G2B 낙찰정보 API 오류 (HTTP %d): %s", exc.response.status_code, exc)
+            await _snapshot_dead_letter(
+                url, params, str(exc),
+                http_status=exc.response.status_code, payload_bytes=exc.response.content,
+            )
             return []
         except Exception as exc:
             logger.error("G2B 낙찰정보 API 호출 실패: %s", exc)
+            await _snapshot_dead_letter(url, params, str(exc))
             return []
 
     async def fetch_all_award_results(
