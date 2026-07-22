@@ -15,6 +15,7 @@ import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { ProceduralBuilding } from "./ProceduralBuilding";
 import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
+import { resolveAppliedOverview } from "./appliedOverview";
 import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
@@ -113,27 +114,6 @@ function fmtPctLabel(v?: number | null): string | null {
   if (v == null || !isFinite(v)) return null;
   const n = Math.round(v * 10) / 10;
   return `${n}%`;
-}
-
-/** ★"적용 건축개요" 소스 혼입 방지(단일 파생점 — 백로그②) ─────────────────────────────
- *  연면적·건폐율·용적률을 항상 "같은 우선순위"로 함께 뽑는다. 라이브 실측(2026-07-22):
- *  이 패널이 연면적은 designData(선택한 개요·목표값)로, 건폐율/용적률은 백엔드 /mass 응답
- *  (매스엔진 실현값)으로 따로 조회해 "연면적 1,216㎡(304㎡×4F) vs 그 옆 건폐율/용적률을
- *  역산하면 670.32㎡(13.3×12.6m×4F)"처럼 한 패널 안에서 서로 다른 소스가 섞이는 결함이 있었다.
- *  #408 계약(m.bcr_pct/m.far_pct 우선 — 매스엔진이 실제 산출한 실현값이 정본)을 연면적에도
- *  동일하게 적용해, m(백엔드 매스 응답)이 있으면 세 필드 모두 그 소스부터 채택하고, 없는
- *  필드만 designData(목표값)로 보완한다. 호출부가 이 함수를 거치지 않고 gfa만 따로 배선하면
- *  이번 결함이 재발하므로, setSpec 호출은 반드시 이 함수의 반환값만 사용한다(혼입 구조 불가화).
- *  m이 없는 분기(massGeom 재사용·완전폴백)는 m=null로 호출 → 세 필드 모두 designData로 통일된다. */
-function resolveAppliedOverview(
-  m: { total_floor_area_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null } | null,
-  designData: { totalGfaSqm?: number | null; bcr?: number | null; far?: number | null } | null | undefined,
-): { gfa: number | null; bcr: number | null; far: number | null } {
-  return {
-    gfa: m?.total_floor_area_sqm ?? designData?.totalGfaSqm ?? null,
-    bcr: m?.bcr_pct ?? designData?.bcr ?? null,
-    far: m?.far_pct ?? designData?.far ?? null,
-  };
 }
 
 /** CAD 2D·3D BIM이 공유하는 단일 건축 기하(선택한 건축개요에서 파생). */
@@ -1713,7 +1693,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               ["건물규모", spec ? `${spec.building_width_m}×${spec.building_depth_m}m` : "-"],
               ["세대/호실", spec?.total_units != null ? `${spec.total_units}` : "-"],
             ].map(([k, v]) => (
-              <span key={k} className="flex items-center gap-1.5">
+              <span
+                key={k}
+                className="flex items-center gap-1.5"
+                // ★백로그② — 연면적은 이제 건폐율/용적률과 같은 소스(매스 실현값)라 하단바 KPI의
+                //   목표 연면적과 값이 다를 수 있다(정직 설명 — 은폐·평균화 금지).
+                title={k === "연면적" ? "매스 실현 기준(백엔드 산출 매스의 연면적 — 건폐율·용적률과 동일 소스). 하단바 KPI의 목표 연면적과 다를 수 있습니다." : undefined}
+              >
                 <span className="text-[var(--text-hint)]">{k}</span>
                 <b className="text-[var(--text-primary)]">{v}</b>
               </span>
