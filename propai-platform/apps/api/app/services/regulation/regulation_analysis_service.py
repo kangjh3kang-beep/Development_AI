@@ -307,8 +307,17 @@ class RegulationAnalysisService:
                     bcr_actual=_bcr.get("effective"), bcr_limit=_bcr.get("legal") or _bcr.get("effective"),
                     height_actual=_hgt.get("value"), height_limit=_hgt.get("value"),
                 )
+                # 데이터 완결도 신호(정직 confidence): 건폐/용적/높이 3축 중 확보된 축 비율.
+                _axes = (_bcr.get("effective") or _bcr.get("legal"),
+                         _far.get("effective") or _far.get("legal"),
+                         _hgt.get("value"))
+                _completeness = sum(1 for a in _axes if a is not None) / len(_axes)
+                # 풍성화(사용자 신고 '시니어 분석 빈약'): IRAC 체인(쟁점→규칙[법령 근거]→적용→결론)
+                # 동봉 — 결정론·무LLM이라 지연/비용 0. 프론트 SeniorVerdictCard가 렌더.
                 result["senior_consultation"] = attach_senior_consultation_multi(
                     ["deliberation", "urban", "legal"], _sr_inputs,
+                    include_reasoning=True,
+                    context_signals={"data_completeness": _completeness},
                 )
             except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 규제 분석 무손상
                 pass

@@ -94,7 +94,7 @@ def _unavailable(note: str = "시니어 자문 미가용") -> dict[str, Any]:
 def _normalize_one(consultation: Any) -> dict[str, Any]:
     """SeniorConsultation → 표준 계약 1건 dict(verdict·evaluations·citations·notes 포함)."""
     d = consultation.to_dict()
-    return {
+    out = {
         "agent_key": d.get("agent_key"),
         "name_ko": d.get("name_ko"),
         "maturity": d.get("maturity"),
@@ -108,7 +108,19 @@ def _normalize_one(consultation: Any) -> dict[str, Any]:
         "high_risk": bool(d.get("high_risk")),
         "license_gate": d.get("license_gate"),
         "honest_notes": d.get("honest_notes", []),
+        # 풍성화(additive): 시니어가 경계하는 실패모드·점검 체크리스트 — 프론트 카드가 렌더.
+        "risk_warnings": d.get("risk_warnings", []),
+        "checklist": d.get("checklist", []),
     }
+    # IRAC 추론 체인(include_reasoning 시에만 존재) — 쟁점→규칙(법령 근거)→적용→결론.
+    # prompt(FinCoT 원문)는 감사·재현용 내부 필드라 API 응답에서 제외(페이로드·노출 최소화).
+    reasoning = d.get("reasoning")
+    if isinstance(reasoning, dict) and reasoning.get("irac_steps"):
+        out["reasoning"] = {
+            "mode": reasoning.get("mode"),
+            "irac_steps": reasoning.get("irac_steps", []),
+        }
+    return out
 
 
 def _aggregate(consults: list[dict[str, Any]]) -> dict[str, Any]:
@@ -163,15 +175,28 @@ def attach_senior_consultation_multi(
     domains: list[str],
     inputs: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
+    *,
+    include_reasoning: bool = False,
+    context_signals: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """다도메인 시니어 자문(예: 종합분석=urban+legal) → 표준 evidence 계약(절대 raise 안 함)."""
+    """다도메인 시니어 자문(예: 종합분석=urban+legal) → 표준 evidence 계약(절대 raise 안 함).
+
+    include_reasoning=True면 각 자문에 IRAC 추론 체인(쟁점→규칙[법령 근거]→적용→결론)을
+    동봉한다(결정론·무LLM — 지연/비용 0). context_signals로 confidence 신호
+    (data_completeness/rag_strength 등 [0,1])를 주입할 수 있다(미지정=기존 중립).
+    """
     try:
         from app.services.senior_agents.orchestrator import senior_orchestrator
     except Exception as e:  # noqa: BLE001 — 엔진 import 실패는 graceful 미가용
         logger.info("senior consultation 엔진 import 생략: %s", str(e)[:120])
         return _unavailable()
 
-    ctx = {"inputs": inputs} if isinstance(inputs, dict) else {}
+    ctx: dict[str, Any] = {"inputs": inputs} if isinstance(inputs, dict) else {}
+    if isinstance(context_signals, dict):
+        # inputs 키는 위 계약이 소유 — 신호가 덮어쓰지 못하게 방어.
+        ctx.update({k: v for k, v in context_signals.items() if k != "inputs"})
+    if include_reasoning:
+        ctx["include_reasoning"] = True
     consults: list[dict[str, Any]] = []
     seen: set[str] = set()
     for domain in domains:
