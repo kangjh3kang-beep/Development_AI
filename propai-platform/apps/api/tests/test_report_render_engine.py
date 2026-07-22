@@ -7,6 +7,7 @@ PPTX/DOCX 라이브러리 미설치 환경에서는 해당 포맷만 skip(무결
 
 from __future__ import annotations
 
+import dataclasses
 import zipfile
 
 import pytest
@@ -99,6 +100,24 @@ def test_ooxml_render_signature_content_and_xml_safety(fmt, sig):
 def test_unknown_format_falls_back_to_pdf():
     data, mime, ext = render_report(_sample_model(), "xlsx")
     assert ext == "pdf" and data[:4] == b"%PDF"
+
+
+def test_report_meta_default_approval_state_is_draft():
+    """W1-A: 승인등급 미지정 시 기본값 DRAFT — 기존 흐름(생성·다운로드) 무회귀."""
+    model = _sample_model()
+    assert model.meta.approval_state == "DRAFT"
+
+
+def test_report_meta_approval_state_included_in_serialization():
+    """W1-A: approval_state 가 dataclasses.asdict 직렬화(기존 JSON 소비 경로)에 포함된다."""
+    model = _sample_model()
+    serialized = dataclasses.asdict(model.meta)
+    assert serialized["approval_state"] == "DRAFT"
+
+    approved_model = ReportModel(
+        meta=ReportMeta(title="승인본", approval_state="APPROVED"), sections=[]
+    )
+    assert dataclasses.asdict(approved_model.meta)["approval_state"] == "APPROVED"
 
 
 def test_no_formula_duplication_in_render_package():
