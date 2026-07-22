@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from app.services.cost.qto_tier import QtoTier
 from app.services.cost.unit_price_repository import resolve_unit_price_sync
 
 if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피(무거운 체인 차단)
@@ -68,13 +69,22 @@ def geometry_takeoff(
     c = resolve_unit_price_sync("concrete")
     r = resolve_unit_price_sync("rebar")
     f = resolve_unit_price_sync("formwork")
+    # W3-3(P9): Q1~Q4 등급(사실 표기) — 이 함수의 물량은 매스 치수(둘레·층고 등, 실측/역산
+    # 혼용 가능)에 표준 부재두께(_SLAB_T 등) 가정을 곱한 산식이라, 형상 입력의 출처(실치수
+    # 매스 vs GFA 역산)와 무관하게 물량 자체는 항상 파라메트릭(Q2)이다(BIM 요소 1:1 실측
+    # 집계인 boq_bim_merge qty_source='bim'과는 다름 — 억지로 Q1 승격 금지).
+    _tier = QtoTier.Q2_PARAMETRIC.value
+    _basis = "매스치수(footprint×층수)×표준 부재두께 산식(geometry_takeoff) — Q2 파라메트릭"
     items = [
         {"name": "레미콘 타설(기하산출)", "spec": c["spec"], "unit": "m3",
-         "quantity": round(concrete_m3, 1), "cost_won": _cost(c, concrete_m3)},
+         "quantity": round(concrete_m3, 1), "cost_won": _cost(c, concrete_m3),
+         "tier": _tier, "tier_basis": _basis},
         {"name": "철근 가공·조립(기하산출)", "spec": r["spec"], "unit": "ton",
-         "quantity": round(rebar_ton, 2), "cost_won": _cost(r, rebar_ton)},
+         "quantity": round(rebar_ton, 2), "cost_won": _cost(r, rebar_ton),
+         "tier": _tier, "tier_basis": _basis},
         {"name": "거푸집(기하산출)", "spec": f["spec"], "unit": "m2",
-         "quantity": round(formwork_m2, 1), "cost_won": _cost(f, formwork_m2)},
+         "quantity": round(formwork_m2, 1), "cost_won": _cost(f, formwork_m2),
+         "tier": _tier, "tier_basis": _basis},
     ]
     structural_direct = sum(it["cost_won"] for it in items)
     return {
