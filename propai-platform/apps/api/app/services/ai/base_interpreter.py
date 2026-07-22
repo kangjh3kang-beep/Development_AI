@@ -425,6 +425,16 @@ class BaseInterpreter:
         # 버전(M-1 해소). None 이면 미해석(기본 _PROMPT_VERSION 사용 = 기존 동작 불변).
         # 동기 _cache_key·텔레메트리는 이 캐시값만 참조한다(asyncio.run 죽은경로 제거).
         self._active_prompt_version: str | None = None
+        # ★백로그①(2026-07-22) 최소 노출: _invoke가 매 호출 내부에서 parse_ok(원문이
+        # JSON 객체로 파싱되는지)·truncated(max_tokens 캡 절단)를 이미 계산하지만
+        # 반환값(dict[str, str])에는 담기지 않는다. fallback_key가 유일한 expected_key인
+        # 서브클래스(예: SeniorNarratorInterpreter)는 is_fallback_only 판정이 구조적으로
+        # 불가(정상 응답도 폴백과 동일 형태)해 _invoke_or_empty를 못 쓴다 — 그런 호출처가
+        # _invoke 직후 이 인스턴스 속성을 읽어 절단·파싱 신호로 직접 강등 여부를 정할 수
+        # 있게 한다(반환값 계약은 불변 — 기존 소비처 전부 무영향). 캐시 히트 경로는
+        # 이미 "성공 파싱+비절단"만 저장되므로(L840) True/False로 채워 넣는다.
+        self.last_parse_ok: bool | None = None
+        self.last_truncated: bool = False
 
     def set_retry_feedback(self, feedback: str | None) -> None:
         """검증관 이슈를 다음 1회 생성에 주입(재생성 피드백 루프).
@@ -652,11 +662,14 @@ class BaseInterpreter:
             cached = _RESULT_CACHE.get(cache_key)
             if cached is not None:
                 logger.info("인터프리터 캐시 적중(L1)", interp=self.name)
+                # 캐시엔 성공파싱+비절단만 저장됨(L840 게이트) — 히트는 항상 양호 신호.
+                self.last_parse_ok, self.last_truncated = True, False
                 return cached
             l2 = await _redis_get(redis_key)
             if l2 is not None:
                 logger.info("인터프리터 캐시 적중(L2 Redis)", interp=self.name)
                 _RESULT_CACHE.set(cache_key, l2)  # L1 워밍
+                self.last_parse_ok, self.last_truncated = True, False
                 return l2
 
         # P3: 추가 근거 부착 — (1) sync 자체근거(_evidence: 지역시세 등)
@@ -690,6 +703,7 @@ class BaseInterpreter:
             llm = self._get_llm()
         except Exception as e:  # noqa: BLE001
             logger.warning("LLM 초기화 실패", interp=self.name, error=str(e)[:120])
+            self.last_parse_ok, self.last_truncated = False, False
             return {}
 
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -750,6 +764,7 @@ class BaseInterpreter:
                 )
             except Exception:  # noqa: BLE001
                 pass
+            self.last_parse_ok, self.last_truncated = False, False
             return {}
 
         raw_text = response.content if hasattr(response, "content") else str(response)
@@ -757,6 +772,7 @@ class BaseInterpreter:
         #   커스텀 정규화)가 이 경로로 실행된다. parse_ok는 정규화와 독립인 원문 술어로 분리.
         result = self._parse_response(raw_text)
         parse_ok = self._raw_parses_as_object(raw_text)
+        self.last_parse_ok = parse_ok
 
         # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
         # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
@@ -792,6 +808,7 @@ class BaseInterpreter:
                 )
         except Exception:  # noqa: BLE001
             pass
+        self.last_truncated = truncated
 
         # 자가성장 텔레메트리(설계서 §3.2): 빌링 정본(llm_usage_log)은 위에서 기록하고,
         # 여기서는 품질·지연 신호만 platform_events 에 1줄 push(논블로킹, 예외 안전).

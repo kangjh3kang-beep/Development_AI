@@ -93,3 +93,79 @@ def test_narrator_single_path_contract():
     assert i.name == "senior_reasoning"
     assert i.expected_keys == ["narrative"] and i.fallback_key == "narrative"
     assert "만들지 마라" in i.system_prompt and "면허" in i.system_prompt
+
+
+# ── 백로그①(2026-07-22): 절단신호(is_truncated) 기반 강등 회귀앵커 ──
+# fallback_key="narrative"/"text"가 유일한 expected_key라 _invoke_or_empty(is_fallback_only)를
+# 못 쓴다(정상 응답도 폴백과 동일 형태). 대신 BaseInterpreter._invoke가 매 호출 인스턴스에
+# 남기는 last_truncated(최소 노출 속성)로만 강등 여부를 가른다 — parse_ok는 이 인터프리터엔
+# 부적합(산문이 정상 출력이라 JSON 미준수=오탐)해서 의도적으로 게이트에서 제외했다.
+
+@pytest.mark.asyncio
+async def test_truncated_narrative_degrades_to_none(monkeypatch):
+    async def truncated_invoke(self, prompt):  # noqa: ANN001, ARG001
+        self.last_truncated = True  # max_tokens 캡 절단 시뮬레이션
+        return {"narrative": "…에서 중간에 잘려나간 부분 JSON/텍스트 뭉치"}
+
+    monkeypatch.setattr(SeniorNarratorInterpreter, "_invoke", truncated_invoke)
+    # 절단된 원문이 narrative로 노출되지 않고 None(호출처 결정론 강등)으로 떨어져야 한다.
+    assert await generate_senior_narrative("FinCoT 프롬프트", use_llm=True) is None
+
+
+@pytest.mark.asyncio
+async def test_non_json_prose_narrative_is_preserved(monkeypatch):
+    """LLM이 JSON 지시(시스템프롬프트)를 어기고 순수 산문으로만 답해도 — 그 자체는 정상
+    답변이다(narrative는 산문이 정상 출력). parse_ok=False(비JSON)만으로는 강등하지
+    않고, 절단이 없으면 그대로 노출해야 한다(오탐 방지 회귀앵커)."""
+    async def prose_invoke(self, prompt):  # noqa: ANN001, ARG001
+        self.last_parse_ok = False  # JSON 형식 미준수(정상 산문 응답)
+        self.last_truncated = False  # 절단 아님
+        return {"narrative": "종합 판단: 조건부 Go. 핵심 리스크는 …"}
+
+    monkeypatch.setattr(SeniorNarratorInterpreter, "_invoke", prose_invoke)
+    r = await generate_senior_narrative("FinCoT 프롬프트", use_llm=True)
+    assert r == "종합 판단: 조건부 Go. 핵심 리스크는 …"
+
+
+@pytest.mark.asyncio
+async def test_debate_truncated_side_degrades_like_failure(monkeypatch):
+    """pro/con 중 한쪽만 절단되면 그 쪽만 생략하고 나머지는 유지(기존 partial-failure
+    graceful 패턴과 동일 처리)."""
+    async def half(self, prompt):  # noqa: ANN001, ARG001
+        if "부적합" in prompt:
+            self.last_truncated = True
+            return {"text": "절단된 con 논증 뭉치…"}
+        return {"text": "프로 논증"}
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", half)
+    r = await generate_senior_debate({"pro": "적합하다는 입장", "con": "부적합하다는 입장"}, use_llm=True)
+    assert r == {"pro": "프로 논증"}
+
+
+@pytest.mark.asyncio
+async def test_broken_json_dump_not_truncated_is_blocked(monkeypatch):
+    """★R1 반영 회귀앵커: 절단이 아니어도(stop_reason=end_turn) 파싱 실패 + 중괄호 시작이면
+    깨진 JSON 덤프다(따옴표 미이스케이프 등) — raw 노출 금지(None 강등). 정상 산문 보존
+    (test_non_json_prose_narrative_is_preserved)과 쌍을 이루는 경계다."""
+    async def broken_json_invoke(self, prompt):  # noqa: ANN001, ARG001
+        self.last_parse_ok = False   # 파싱 실패
+        self.last_truncated = False  # 절단은 아님
+        return {"narrative": '{"narrative": "따옴표가 "깨진" 원문 뭉치...'}
+
+    monkeypatch.setattr(SeniorNarratorInterpreter, "_invoke", broken_json_invoke)
+    assert await generate_senior_narrative("FinCoT 프롬프트", use_llm=True) is None
+
+
+@pytest.mark.asyncio
+async def test_debate_broken_json_dump_blocked_like_narrative(monkeypatch):
+    """debate 쪽도 동일 게이트 — 깨진 JSON 덤프 입장은 생략, 정상 입장은 유지."""
+    async def half(self, prompt):  # noqa: ANN001, ARG001
+        if "부적합" in prompt:
+            self.last_parse_ok = False
+            self.last_truncated = False
+            return {"text": '["broken", "json...'}
+        return {"text": "프로 논증"}
+
+    monkeypatch.setattr(SeniorDebateInterpreter, "_invoke", half)
+    r = await generate_senior_debate({"pro": "적합하다는 입장", "con": "부적합하다는 입장"}, use_llm=True)
+    assert r == {"pro": "프로 논증"}
