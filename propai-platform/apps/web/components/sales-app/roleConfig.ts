@@ -11,6 +11,7 @@ import {
   ConciergeBell,
   FileText,
   FolderTree,
+  Home,
   Landmark,
   MessageCircle,
   NotebookPen,
@@ -103,6 +104,8 @@ export interface SalesTabDef {
 //   dashboard·org·pricing·units·contracts·commission·customers·ads·reports·settings·site_password.
 // 계약 후속 업무(청약/수납/대출/전매/세금)는 백엔드 'contracts' 기능키로 게이팅한다(별도 키 미정의).
 export const SALES_TABS: SalesTabDef[] = [
+  // 홈 — 역할별 랜딩 대시보드. 현장 멤버 전원 공통(alwaysOn)이며 기본 진입 탭이다.
+  { key: "home", label: "홈", feature: "home", alwaysOn: true, icon: Home, desc: "오늘 할 일·핵심 지표·역할별 요약. 현장 실데이터 집계." },
   { key: "units", label: "세대 배치도", feature: "units", icon: Building2, desc: "동·호 배치·상태관리·지정/추첨. 세대 클릭으로 상태전이·특이사항·계약." },
   { key: "customers", label: "고객·상담", feature: "customers", icon: Users, desc: "방문·상담 고객 관리와 등급·배정." },
   // Phase 1-D — 업무일지. 현장 멤버 전원 공통(alwaysOn): 일자별 작성·실적집계.
