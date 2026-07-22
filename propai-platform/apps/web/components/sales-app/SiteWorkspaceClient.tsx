@@ -54,6 +54,8 @@ import SocialPanel from "@/components/sales-app/SocialPanel";
 // Phase C — 공유·바이럴(추천코드·공유링크/QR·Web Share·퍼널통계) + 앱 설치 안내.
 import ReferralSharePanel from "@/components/sales-app/ReferralSharePanel";
 import InstallGuide from "@/components/sales-app/InstallGuide";
+// 역할별 홈(랜딩) 대시보드 — 기본 진입 탭.
+import FieldHome from "@/components/sales-app/FieldHome";
 import { captureLandingRef } from "@/lib/referralRef";
 
 interface RoleResponse {
@@ -71,7 +73,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [loading, setLoading] = useState(true);
   const [needEnter, setNeedEnter] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
-  const [tab, setTab] = useState<string>("units");
+  const [tab, setTab] = useState<string>("home");
   // 세대 탭 보드 전환: 실시간 선점(live) ↔ 배치도·상세(grid). 두 보드 동시 렌더(중복) 방지.
   const [unitView, setUnitView] = useState<"live" | "grid" | "draw">("live");
   const [err, setErr] = useState("");
@@ -341,6 +343,15 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           })()}
 
           {/* 탭 ↔ 기존 패널 연결. siteCode 자리에 현장 UUID(siteId) 전달. */}
+          {/* 역할별 홈(랜딩) — 실데이터 요약 + CTA가 setTab 으로 각 탭에 이동. */}
+          {tab === "home" && (
+            <FieldHome
+              siteCode={siteId}
+              role={role}
+              onNavigate={setTab}
+              visibleTabKeys={tabs.map((t) => t.key)}
+            />
+          )}
           {tab === "units" && (
             <div className="space-y-4">
               {/* 보드 전환 — 한 번에 하나만 표시(그리드 중복 제거). 선점=실시간 hold/예약, 배치도=2D/3D+계약상세 */}
