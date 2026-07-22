@@ -229,6 +229,42 @@ def _check_forbidden_words(model: ReportModel) -> list[GateViolation]:
     return violations
 
 
+def _check_untraced_lineage(model: ReportModel) -> list[GateViolation]:
+    """claim_type=FACT/CALCULATION 인 Evidence 가 필드수준 계보(lineage)를 못 채웠는지 검출.
+
+    v4.0 [필드수준 계보] 계약(W2-2 1차): "ReportClaim→...→SourceSnapshot→Original bytes 사슬이
+    끊기면 UNTRACED"를 실용화한다. lineage 가 None 이거나(아직 미채택), 채워졌어도 traced=False
+    (source_kind가 UNKNOWN)이면 검출한다. Evidence.lineage 는 provenance.lineage_ref.LineageRef.
+    to_dict() 결과이므로 'traced' 키를 직접 읽고, LineageRef 타입 자체는 다시 import하지 않는다
+    — Evidence.lineage 는 "값이 아니라 참조 계약"의 직렬화 dict이고 이 게이트는 그 계약의
+    소비자일 뿐이라, report/render → provenance 방향 의존을 새로 만들지 않기 위함이다.
+
+    ★hard 승격 없음(현재는 항상 soft — 후속 과제): 이 검사는 항상 warnings 에만 담긴다.
+    forbidden_word/assumption 규칙(②③)처럼 approval_state 로 hard/soft 를 이원화하지 않는다 —
+    아직 lineage 를 채택한 어댑터가 land_adapter 대표 1경로 1건뿐이라(W2-2 시점) 승인 트랙에서
+    hard 로 막으면 기존 EXPERT_REVIEWED/APPROVED 문서 발행이 전량 깨진다(무회귀 위반). lineage
+    채택률이 충분히 올라간 뒤에만(후속 W2-N) 승인 트랙 한정 hard 승격을 검토한다 — 지금은
+    "채워진 경로는 경고 없음, 안 채운 경로는 항상 경고"만 보장한다.
+    """
+    violations: list[GateViolation] = []
+    for ev in _iter_evidence_items(model):
+        if ev.claim_type not in ("FACT", "CALCULATION"):
+            continue
+        lineage = ev.lineage
+        traced = isinstance(lineage, dict) and bool(lineage.get("traced"))
+        if traced:
+            continue
+        snippet = ev.value if len(ev.value) <= 60 else ev.value[:57] + "..."
+        violations.append(GateViolation(
+            code="UNTRACED_LINEAGE",
+            message=(
+                f"claim_type={ev.claim_type} 근거의 필드수준 계보(lineage)가 없거나 미추적"
+                f"(UNTRACED)입니다: {snippet!r}"
+            ),
+        ))
+    return violations
+
+
 def _check_assumption_stated_as_fact(model: ReportModel) -> list[GateViolation]:
     """claim_type=ASSUMPTION 인 Evidence 가 결정론 금지어와 결합됨(가정을 사실처럼 서술).
 
@@ -271,6 +307,9 @@ def check_publishable(model: ReportModel) -> GateResult:
     else:
         warnings.extend(word_hits)
         warnings.extend(assumption_hits)
+
+    # ★W2-2: UNTRACED 는 승인등급 무관 항상 soft(warnings) — 위 함수 docstring 참고.
+    warnings.extend(_check_untraced_lineage(model))
 
     return GateResult(violations=violations, warnings=warnings)
 

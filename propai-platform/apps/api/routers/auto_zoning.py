@@ -1391,6 +1391,8 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         bcr_eff = bcr_legal
         far_eff = far_legal
         far_basis = None
+        far_basis_detail = None  # ★W2-2: 필드수준 계보(법정범위/조례값/최종근거) — additive.
+        ordinance = None  # ★W2-2: 조례 원본(source/provenance) — 아래에서 p에 그대로 보존.
         if zone:
             ordinance = await _ordinance_for(p.get("address") or p.get("jibun"), zone)
             try:
@@ -1407,6 +1409,12 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
                 if eff.get("effective_bcr_pct") is not None:
                     bcr_eff = eff.get("effective_bcr_pct")
                 far_basis = eff.get("far_basis")
+                # ★W2-2(v4.0 [필드수준 계보]): 종전엔 far_basis(문자열)만 남기고 far_basis_detail
+                #   (법정범위/조례값/최종근거 계층)과 ordinance(출처·provenance)를 여기서 버려서
+                #   land-report 어댑터까지 계보가 한 번도 도달하지 못했다(절단점 — W2-2 스파이크
+                #   실측). 두 값을 함께 보존해 소비처(land_adapter)가 LineageRef 를 채울 수 있게
+                #   한다 — 계산 자체는 그대로(재구현 없음), additive 보존만 추가.
+                far_basis_detail = eff.get("far_basis_detail")
             except Exception:  # noqa: BLE001 — 실효 산출 실패는 법정값 유지(무손상)
                 pass
 
@@ -1448,6 +1456,11 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         p["_bcr_eff"] = bcr_eff
         p["_far_eff"] = far_eff
         p["_far_basis"] = far_basis
+        # ★W2-2(v4.0 [필드수준 계보]): far_basis_detail·ordinance 를 보존해 소비처(land-report)가
+        #   LineageRef 를 채울 수 있게 한다(계산 재사용 — 새 계산 아님). 기존 소비자는 이 키를
+        #   모르므로 무해(additive).
+        p["_far_basis_detail"] = far_basis_detail
+        p["_ordinance"] = ordinance
         p["_special"] = special
 
 
@@ -2036,6 +2049,9 @@ async def land_report(req: LandReportRequest, format: str = "pdf"):
             "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
             "parcel_case": "aggregate" if is_agg else ("building" if bld else "land"),
             "building": bld, "status": p.get("status", "ok"), "reason": p.get("reason"),
+            # ★W2-2(v4.0 [필드수준 계보]): 실효 용적률의 계보(법정범위/조례값/최종근거)+조례
+            #   출처를 land_adapter 로 그대로 실어 보낸다(additive — 기존 렌더 로직 무회귀).
+            "far_basis_detail": p.get("_far_basis_detail"), "ordinance": p.get("_ordinance"),
         })
         # 집합건물은 세대 대지지분 상세 부착(전유부 전수).
         if is_agg and p.get("pnu"):

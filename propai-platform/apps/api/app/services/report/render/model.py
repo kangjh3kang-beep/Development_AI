@@ -134,6 +134,11 @@ class Evidence:
     # ★W1-C(v4.0 P12): 이 근거가 어떤 claim 인지. None=미분류(기존 브리지·어댑터 무회귀).
     #   publish_gate.check_publishable 이 ASSUMPTION+확정형 문구 결합을 검사할 때 사용.
     claim_type: str | None = None
+    # ★W2-2(v4.0 [필드수준 계보]): 이 근거의 계보 참조(provenance.lineage_ref.LineageRef.to_dict()
+    #   결과 — 값이 아니라 참조 태그). None=미채택(기존 어댑터 전량 무회귀 — 점진 채택 계약).
+    #   publish_gate.check_publishable 이 claim_type=FACT/CALCULATION 인데 이 값이 None 이거나
+    #   traced=False 이면 UNTRACED(soft 경고)로 잡는다.
+    lineage: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         _validate_claim_type(self.claim_type)
