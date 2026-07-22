@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveNextPath } from "./authReturnPath";
+import { resolveNextPath, loginUrlWithReturn } from "./authReturnPath";
 
 /**
  * 로그인 복귀경로(?next=) 안전 해석 계약 — 앱 컨텍스트 복귀 + 오픈 리다이렉트 차단.
@@ -46,5 +46,49 @@ describe("resolveNextPath — ★오픈 리다이렉트 차단", () => {
 
   it("상대경로(선행 / 없음) 거부", () => {
     expect(resolveNextPath("ko/sales/sites", "ko")).toBe("/ko");
+  });
+
+  it("★제어문자 변종(탭/LF/CR — WHATWG URL 파서가 파싱 전 제거해 //로 정규화) 거부 (R1 B1)", () => {
+    // "/\t/evil.com" 은 접두 검사(/·//·\\)를 전부 통과하지만 URL 파서를 거치면
+    // https://evil.com 으로 정규화된다 — R1 적대리뷰가 실증한 우회. 회귀 고정.
+    expect(resolveNextPath("/\t/evil.com", "ko")).toBe("/ko");
+    expect(resolveNextPath("/\n/evil.com", "ko")).toBe("/ko");
+    expect(resolveNextPath("/\r/evil.com", "ko")).toBe("/ko");
+    // NUL 등 그 외 C0 제어문자도 동일 클래스로 거부(변종 전면 차단).
+    expect(resolveNextPath("/\u0000/evil.com", "ko")).toBe("/ko");
+  });
+
+  it("로그인/가입 화면 자기참조 → 홈 폴백(재착지 루프 방지)", () => {
+    expect(resolveNextPath("/ko/login", "ko")).toBe("/ko");
+    expect(resolveNextPath("/ko/login?next=%2Fko", "ko")).toBe("/ko");
+    expect(resolveNextPath("/ko/register", "ko")).toBe("/ko");
+  });
+
+  it("정규화된 경로만 반환(원문 재사용 금지) — 경로+쿼리+해시 보존", () => {
+    expect(resolveNextPath("/ko/sales/sites?tab=a#top", "ko")).toBe("/ko/sales/sites?tab=a#top");
+  });
+});
+
+describe("loginUrlWithReturn — 현재 경로를 next로 실은 로그인 URL", () => {
+  const setLocation = (pathname: string, search = "") => {
+    Object.defineProperty(window, "location", {
+      value: { pathname, search },
+      writable: true,
+      configurable: true,
+    });
+  };
+
+  it("일반 화면 → next에 경로+쿼리 인코딩", () => {
+    setLocation("/ko/sales/sites", "");
+    expect(loginUrlWithReturn("ko")).toBe(`/ko/login?next=${encodeURIComponent("/ko/sales/sites")}`);
+    setLocation("/ko/projects", "?tab=cost");
+    expect(loginUrlWithReturn("ko")).toBe(`/ko/login?next=${encodeURIComponent("/ko/projects?tab=cost")}`);
+  });
+
+  it("로그인/가입 화면에서는 next 생략(루프 방지)", () => {
+    setLocation("/ko/login", "?next=%2Fko%2Fsales%2Fsites");
+    expect(loginUrlWithReturn("ko")).toBe("/ko/login");
+    setLocation("/ko/register", "");
+    expect(loginUrlWithReturn("ko")).toBe("/ko/login");
   });
 });
