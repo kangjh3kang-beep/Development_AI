@@ -26,6 +26,60 @@ def npv_from_netflows(netflows: list[float] | None, discount_rate_annual: float)
     return round(npv)
 
 
+def irr_annual_pct_from_netflows(cashflows: list[float]) -> float | None:
+    """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬).
+
+    ★W3-1(수익 KPI): 종전 CashflowGenerator._irr_from_netflows 사설(private) 산식을
+    npv_from_netflows와 동일하게 모듈 레벨로 승격 — Equity IRR(return_kpi.py)이 프로젝트
+    IRR과 '동일 산식'을 재사용하도록 한다(신규 IRR 알고리즘 0, 계산 로직 이동만).
+    """
+    try:
+        # 부호 변화(유출→유입)가 없으면 IRR 정의 불가
+        if not any(c < 0 for c in cashflows) or not any(c > 0 for c in cashflows):
+            return None
+
+        def npv_at(rate: float) -> float:
+            return sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
+
+        # npv(0)=순현금합. 부호 기준으로 0에서 bracket을 키워 주근(主根)만 탐색
+        # (극단 음수 rate에서 말기 현금흐름이 발산해 가짜 근을 잡는 문제 회피).
+        base = npv_at(0.0)
+        if abs(base) < 1.0:
+            return 0.0
+        if base > 0:  # IRR>0: 0에서 위로
+            lo, hi = 0.0, 0.01
+            ok = False
+            for _ in range(80):
+                if npv_at(hi) < 0:
+                    ok = True
+                    break
+                hi = min(hi * 1.5, 10.0)
+            if not ok:
+                return None  # 월 IRR>1000% 수준 — 비정상
+        else:  # IRR<0: 0에서 아래로
+            lo, hi = -0.01, 0.0
+            ok = False
+            for _ in range(80):
+                if npv_at(lo) > 0:
+                    ok = True
+                    break
+                lo = max(lo * 1.5, -0.99)
+            if not ok:
+                return None
+        # lo: npv>0, hi: npv<0 → 이분법
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if npv_at(mid) > 0:
+                lo = mid
+            else:
+                hi = mid
+        monthly_irr = (lo + hi) / 2
+        annual_irr = (1 + monthly_irr) ** 12 - 1
+        return round(annual_irr * 100, 2)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class CashflowGenerator:
     """프로젝트 현금흐름 자동 생성기.
 
@@ -520,52 +574,13 @@ class CashflowGenerator:
         return "정산"
 
     def _irr_from_netflows(self, cashflows: list[float]) -> float | None:
-        """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬)."""
-        try:
-            # 부호 변화(유출→유입)가 없으면 IRR 정의 불가
-            if not any(c < 0 for c in cashflows) or not any(c > 0 for c in cashflows):
-                return None
+        """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬).
 
-            def npv_at(rate: float) -> float:
-                return sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
-
-            # npv(0)=순현금합. 부호 기준으로 0에서 bracket을 키워 주근(主根)만 탐색
-            # (극단 음수 rate에서 말기 현금흐름이 발산해 가짜 근을 잡는 문제 회피).
-            base = npv_at(0.0)
-            if abs(base) < 1.0:
-                return 0.0
-            if base > 0:  # IRR>0: 0에서 위로
-                lo, hi = 0.0, 0.01
-                ok = False
-                for _ in range(80):
-                    if npv_at(hi) < 0:
-                        ok = True
-                        break
-                    hi = min(hi * 1.5, 10.0)
-                if not ok:
-                    return None  # 월 IRR>1000% 수준 — 비정상
-            else:  # IRR<0: 0에서 아래로
-                lo, hi = -0.01, 0.0
-                ok = False
-                for _ in range(80):
-                    if npv_at(lo) > 0:
-                        ok = True
-                        break
-                    lo = max(lo * 1.5, -0.99)
-                if not ok:
-                    return None
-            # lo: npv>0, hi: npv<0 → 이분법
-            for _ in range(200):
-                mid = (lo + hi) / 2
-                if npv_at(mid) > 0:
-                    lo = mid
-                else:
-                    hi = mid
-            monthly_irr = (lo + hi) / 2
-            annual_irr = (1 + monthly_irr) ** 12 - 1
-            return round(annual_irr * 100, 2)
-        except Exception:  # noqa: BLE001
-            return None
+        ★W3-1(수익 KPI): 실제 산식은 모듈 레벨 irr_annual_pct_from_netflows로 이관(위임) —
+        Equity IRR(return_kpi.py)이 '신규 IRR 알고리즘'이 아니라 이 산식을 그대로 재사용하게
+        한다. 기존 호출부(본 클래스·테스트의 private 메서드 직접호출)는 완전 동일 동작.
+        """
+        return irr_annual_pct_from_netflows(cashflows)
 
 
 def build_tax_schedule_from_integrated(
