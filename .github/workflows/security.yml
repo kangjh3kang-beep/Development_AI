@@ -10,7 +10,7 @@ name: Security Scan
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/**"]
+    paths: ["propai-platform/**", ".github/workflows/security.yml"]
   schedule:
     - cron: "0 15 * * 0" # 매주 일요일 00:00 KST
   workflow_dispatch:

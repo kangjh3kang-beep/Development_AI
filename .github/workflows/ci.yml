@@ -6,13 +6,49 @@ on:
     # 워크플로우 자신 포함 — CI 정의만 바꾼 PR이 CI 미발화로 무검증 머지되던 갭 봉합
     # (paths 필터가 propai-platform/** 뿐이라 .github 변경은 트리거 밖이었음).
     paths: ["propai-platform/**", ".github/workflows/ci.yml"]
+  # ★pull_request는 paths 필터 없이 항상 발화 — 브랜치보호 required check가 워크플로우
+  #   레벨 paths 스킵과 만나면 문서 전용 PR이 "Expected" 영구대기로 차단되는 함정이 있다.
+  #   경로 판별은 아래 changes 잡(잡 레벨 if)으로 이관: GitHub는 if로 스킵된 잡을
+  #   required 충족으로 취급하므로, 문서 PR은 3잡 스킵으로 통과·플랫폼 PR은 전체 실행.
   pull_request:
-    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      platform: ${{ steps.filter.outputs.platform }}
+    steps:
+      - name: Filter paths (PR만 판별 — push/dispatch는 항상 전체 실행)
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # ★R1 하드닝: 판별 실패는 반드시 '전체 실행'으로 귀결(fail-safe) — 이 잡의 실패가
+        #   하위 required 잡 skip=충족(fail-open 무검증 머지)으로 새지 않게. here-string은
+        #   대형 PR에서 printf|grep-q/head 조합의 SIGPIPE+pipefail 오판을 원천 제거.
+        #   잔여 실패(러너 사망 등) 대비로 브랜치보호에 'Detect changes'도 required 등록.
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+            echo "files API 실패 — 안전측 전체 실행"
+            echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          head -50 <<<"$FILES" || true
+          if grep -qE '^(propai-platform/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
+            echo "platform=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "platform=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backend-tests:
     name: Backend (pytest)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,6 +97,8 @@ jobs:
 
   frontend-checks:
     name: Frontend (type-check + lint + test)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +137,8 @@ jobs:
   #   backend-tests(~14m)가 장대(critical path)라 병렬 잡 추가는 총 CI 시간을 늘리지 않는다.
   frontend-build:
     name: Frontend (next build)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
