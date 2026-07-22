@@ -586,6 +586,15 @@ class RuleCheckRequest(BaseModel):
     parking_count: int = 0              # 계획 주차대수
     floor_area_per_floor_sqm: float = 0  # 층당 바닥면적(㎡)
 
+    # ── 주차 기하 검증(opt-in, 스펙 P·W3-5) — 전부 미입력이면 완전히 생략(무회귀) ──
+    # ★R1 LOW: 경계값 가드. area는 0(=미제공과 동일 취급 sentinel)을 허용해야 하므로 ge=0,
+    # 차로폭/회전반경/각도는 0 이하가 물리적으로 무의미해 gt=0(제공 시에는 반드시 양수).
+    parking_layout_area_sqm: float | None = Field(default=None, ge=0)  # 지하/부지 주차 가용면적(㎡). 있으면 기하검증 실행.
+    parking_stall_type: str | None = None         # general/expanded/parallel/disabled(기본 general)
+    parking_angle_deg: int | None = Field(default=None, ge=0, le=180)  # 주차각(도, 90/60/45/0=평행). 기본 90.
+    parking_aisle_width_m: float | None = Field(default=None, gt=0)  # 실제 계획 차로폭(m). swept path 1차 검증용.
+    parking_turn_radius_m: float | None = Field(default=None, gt=0)  # 실제 계획 회전반경(m). swept path 1차 검증용.
+
 
 class RuleCheckItem(BaseModel):
     rule_id: str
@@ -706,7 +715,7 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
             if k not in _top_keys:
                 _top_keys.append(k)
 
-    return RuleCheckResponse(
+    response = RuleCheckResponse(
         zone_code=req.zone_code,
         zone_name=matched_zone,
         overall_status=overall,
@@ -718,6 +727,38 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
         summary=summary,
         legal_refs=_legal_refs_for(_top_keys),
     )
+
+    # ── 주차 기하 검증(opt-in, 스펙 P·W3-5) ──────────────────────────────────
+    # parking_layout_area_sqm 미입력이면 이 블록 전체가 스킵되어 응답 객체에
+    # parking_geometry 속성 자체가 설정되지 않는다(extra="allow"라 미설정 속성은
+    # 직렬화에 나타나지 않음 — 기본 경로 응답 바이트 무변화, 무회귀).
+    if req.parking_layout_area_sqm is not None and req.parking_layout_area_sqm > 0:
+        try:
+            from app.services.parking import StallType, verify_parking_plan
+
+            try:
+                stall_type = StallType(req.parking_stall_type) if req.parking_stall_type else StallType.GENERAL
+            except ValueError:
+                stall_type = StallType.GENERAL
+
+            verification = verify_parking_plan(
+                building_type=req.building_type or "아파트",
+                unit_count=req.unit_count,
+                total_gfa_sqm=req.total_gfa_sqm,
+                planned_parking_count=req.parking_count,
+                available_layout_area_sqm=req.parking_layout_area_sqm,
+                stall_type=stall_type,
+                parking_angle_deg=req.parking_angle_deg or 90,
+                actual_aisle_width_m=req.parking_aisle_width_m,
+                actual_turn_radius_m=req.parking_turn_radius_m,
+            )
+            response.parking_geometry = verification.model_dump(mode="json")
+        except Exception as _e:  # noqa: BLE001 — opt-in 검증 실패는 8룰 응답을 절대 막지 않음
+            import structlog
+
+            structlog.get_logger(__name__).warning("주차 기하검증 실패(opt-in)", err=str(_e)[:160])
+
+    return response
 
 
 @router.post("/legal-check", response_model=LegalCheckResponse)
