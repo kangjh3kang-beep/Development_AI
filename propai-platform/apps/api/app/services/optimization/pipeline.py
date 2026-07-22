@@ -185,6 +185,21 @@ class Evaluation:
     evaluator_grade: EvaluatorGrade
 
 
+def _objective_value(objectives: dict[str, float], key: str, direction: Direction) -> float:
+    """목적값 조회 공용 헬퍼 — 결측 시 방향별 최악값(maximize→-inf, minimize→+inf).
+
+    ★R1-LOW#2 + R2b(전역 전파방지): 목적 키 결측을 0.0(또는 방향 무관 -inf)으로 취급하면
+    minimize 목적에서 결측 후보가 부당히 '최우수'로 오판될 수 있다 — 같은 결함 클래스가
+    `pareto_dominates`(지배판정)뿐 아니라 `evaluate_candidates`/`shortlist`의 랭킹 정렬
+    (`sorted(..., key=...)`)에도 있었다(정렬은 방향과 무관하게 -inf 고정 기본값을 썼다).
+    이 헬퍼 하나로 세 경로가 물리적으로 같은 술어를 쓰게 해, 한 곳을 고치면 전역에
+    반영되도록 한다(한 곳 수정=전역 반영 원칙 — 지배판정만 고치고 랭킹 정렬에 남기는
+    반쪽 봉합 금지).
+    """
+    worst = float("-inf") if direction == "maximize" else float("inf")
+    return objectives.get(key, worst)
+
+
 def evaluate_candidates(
     candidates: Sequence[dict[str, Any]],
     rough_evaluator: Callable[[dict[str, Any]], dict[str, float]],
@@ -208,8 +223,12 @@ def evaluate_candidates(
         return rough_evals
 
     key = rank_key or next(iter(rough_evals[0].objectives))
+    # ★R2b(전역 전파방지): pareto_dominates와 물리적으로 동일한 _objective_value 헬퍼를
+    # 써서 결측 목적값을 방향별 최악값으로 취급한다(고정 -inf 기본값이면 minimize
+    # rank_key에서 결측 후보가 부당히 1위가 되는 역전 — R1-LOW#2와 동일 결함 클래스).
+    _direction: Direction = "maximize" if maximize else "minimize"
     ranked = sorted(
-        rough_evals, key=lambda e: e.objectives.get(key, float("-inf")), reverse=maximize
+        rough_evals, key=lambda e: _objective_value(e.objectives, key, _direction), reverse=maximize
     )
     top = ranked[:precise_topk]
     rest = ranked[precise_topk:]
@@ -225,16 +244,13 @@ def pareto_dominates(
 ) -> bool:
     """a가 b를 지배하는가 — 모든 목적에서 a가 최소 동등 이상이며 최소 1개는 진짜 우수.
 
-    ★R1-LOW#2: 목적 키가 후보에 없을 때 기본값 0.0은 minimize 목적에서 결측 후보를
-    '0(최우수)'로 오판할 위험이 있다(예: risk 결측 후보가 risk=0으로 채택돼 최우수처럼
-    보임). 방향별 최악값(maximize→-inf, minimize→+inf)을 기본값으로 써서, 결측 후보가
-    그 목적에서 항상 불리하게(최악으로) 취급되도록 한다 — 무음 우대 금지.
+    결측 목적 키는 `_objective_value`(방향별 최악값)로 조회한다 — 결측 후보가 그 목적에서
+    항상 불리하게(최악으로) 취급되도록 한다(무음 우대 금지).
     """
     at_least_as_good = True
     strictly_better = False
     for key, direction in directions.items():
-        worst = float("-inf") if direction == "maximize" else float("inf")
-        av, bv = a.get(key, worst), b.get(key, worst)
+        av, bv = _objective_value(a, key, direction), _objective_value(b, key, direction)
         if direction == "maximize":
             if av < bv:
                 at_least_as_good = False
@@ -291,10 +307,13 @@ def shortlist(front: ParetoFront, k: int, rank_key: str) -> list[ShortlistItem]:
     명시적으로 0(빈 shortlist)으로 클램프한다(무음 절단 금지 — 의도한 동작을 코드로 명시).
     """
     k = max(0, k)
-    direction = front.directions.get(rank_key, "maximize")
+    direction: Direction = front.directions.get(rank_key, "maximize")
+    # ★R2b(전역 전파방지): _objective_value 공용 헬퍼로 결측 목적값을 방향별 최악값
+    # 취급 — minimize rank_key에서 결측 후보가 고정 -inf 기본값 탓에 부당히 1위로
+    # 오판되던 것을 pareto_dominates와 동일한 술어로 봉합(R1-LOW#2와 같은 결함 클래스).
     ranked = sorted(
         front.members,
-        key=lambda e: e.objectives.get(rank_key, float("-inf")),
+        key=lambda e: _objective_value(e.objectives, rank_key, direction),
         reverse=(direction == "maximize"),
     )
     picked = ranked[:k]

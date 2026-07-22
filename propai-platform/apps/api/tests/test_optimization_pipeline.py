@@ -275,6 +275,24 @@ class TestShortlist:
         picked = shortlist(front, k=-1, rank_key="profit")
         assert picked == []
 
+    def test_R2b_minimize_rank_key에서_결측후보가_1위로_오판되지_않음(self):
+        """★R2b(전역 전파방지): rank_key가 minimize 목적일 때, 그 키가 결측인 후보를
+        고정 -inf 기본값으로 정렬하면(방향 무관) 오름차순 정렬에서 -inf가 최소값이라
+        '가장 우수'로 오판돼 1위가 된다. _objective_value 공용화(방향별 최악값=
+        minimize→+inf) 이후에는 결측 후보가 항상 최하위로 밀려야 한다."""
+        directions = {"risk": "minimize"}
+        evals = [
+            Evaluation(candidate={"id": "missing"}, objectives={}, evaluator_grade="precise"),  # risk 결측
+            Evaluation(candidate={"id": "risk_5"}, objectives={"risk": 5.0}, evaluator_grade="precise"),
+            Evaluation(candidate={"id": "risk_20"}, objectives={"risk": 20.0}, evaluator_grade="precise"),
+        ]
+        front = ParetoFront(directions=directions, members=evals)
+        picked = shortlist(front, k=3, rank_key="risk")
+        ordered_ids = [item.evaluation.candidate["id"] for item in picked]
+        # 결측 후보는 risk=+inf(최악) 취급 — 항상 맨 뒤(3위), risk_5가 1위여야 한다.
+        assert ordered_ids[0] == "risk_5"
+        assert ordered_ids[-1] == "missing"
+
 
 class TestRunPipeline:
     def test_동일_spec_seed_동일_shortlist(self):
