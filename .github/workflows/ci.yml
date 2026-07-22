@@ -26,13 +26,20 @@ jobs:
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
+        # ★R1 하드닝: 판별 실패는 반드시 '전체 실행'으로 귀결(fail-safe) — 이 잡의 실패가
+        #   하위 required 잡 skip=충족(fail-open 무검증 머지)으로 새지 않게. here-string은
+        #   대형 PR에서 printf|grep-q/head 조합의 SIGPIPE+pipefail 오판을 원천 제거.
+        #   잔여 실패(러너 사망 등) 대비로 브랜치보호에 'Detect changes'도 required 등록.
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
-          printf '%s\n' "$FILES" | head -50
-          if printf '%s\n' "$FILES" | grep -qE '^(propai-platform/|\.github/workflows/ci\.yml)'; then
+          if ! FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+            echo "files API 실패 — 안전측 전체 실행"
+            echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          head -50 <<<"$FILES" || true
+          if grep -qE '^(propai-platform/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
             echo "platform=true" >> "$GITHUB_OUTPUT"
           else
             echo "platform=false" >> "$GITHUB_OUTPUT"
