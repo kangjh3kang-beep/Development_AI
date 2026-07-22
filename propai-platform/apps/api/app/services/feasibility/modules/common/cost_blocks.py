@@ -11,6 +11,12 @@ from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.tax.integrated_tax_engine import calculate_all_taxes
 from app.services.tax.project_charges import parse_bool_flag
 
+# ★W3-1(수익 KPI 감사·GAP_v4 P10): 종전 함수 본문에 무명 리터럴로 박혀 있던 "표준 LTV 70%"를
+#   명명 상수로 추출(값은 무변경 — 자동추정 산식 무회귀, test_quickwins_accuracy.py 등 고정 회귀).
+#   업계 관행상 PF+브릿지 합산 LTC(대출/토지+공사비) 65~75%대 표준치이며, 동일 관행값을
+#   return_kpi.py의 covenant LTV 임계 기본값(DEFAULT_LTV_COVENANT_THRESHOLD_PCT)도 참조한다.
+_STANDARD_PF_LTC_RATIO = 0.70
+
 
 def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
     """표준 토지비 계산.
@@ -122,14 +128,14 @@ def apply_auto_estimates(
     base_cost = float(land["total_land_cost_won"]) + float(construction["total_construction_cost_won"])
     if not all_equity and float(finance.get("total_finance_cost_won") or 0) <= 0 and base_cost > 0:
         months = float(inp.project_months or 30)
-        pf_amt = base_cost * 0.70  # 표준 LTV 70%
+        pf_amt = base_cost * _STANDARD_PF_LTC_RATIO
         # ★W5(갭 감사 P2 봉합): 분할실행(progressive drawdown) 평균잔액 ~50% 기저 —
         #   종전 전액·단리 기저는 정밀입력 경로(finance_cost_engine 분할실행)의 ~2배라
         #   "정밀 입력할수록 ROI가 좋아지는" 역설을 만들었다. 실행 곡선 평균잔액 근사 0.5.
         est_finance = round(pf_amt * 0.055 * (months / 12.0) * 0.5)
         finance = {**finance, "total_finance_cost_won": est_finance, "auto_estimated": True,
                    "estimate_basis": (
-                       f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월"
+                       f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV{_STANDARD_PF_LTC_RATIO:.0%})×5.5%×{months:.0f}개월"
                        "×평균잔액 50%(분할실행 근사) 자동추정(미입력)"
                    )}
     if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:

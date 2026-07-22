@@ -28,6 +28,7 @@ from app.services.feasibility import construction_cost_engine, land_cost_engine,
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
 from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.finance.return_kpi import compute_return_kpi
 from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
@@ -655,6 +656,7 @@ async def build_rough_scenario(
 
     # ── 8) 월별 DCF(위 산출을 시드) — npv·irr·payback·peak ──
     cashflow_block: dict[str, Any] | None = None
+    return_kpi_block: dict[str, Any] | None = None
     if core_ready:
         construction_months = _num(overrides.get("construction_months"))
         if construction_months is not None:
@@ -712,6 +714,23 @@ async def build_rough_scenario(
                     "discount_rate_annual_pct": round(discount_rate * 100, 2),
                 },
             }
+            # ★W3-1(수익 KPI 완성 — P10 갭): 기존 waterfall(dcf) 위 파생 KPI만 추가(재계산 0).
+            #   MOIC·Equity IRR·LTV/LTC 시계열·break-even·RLV·covenant 경고. additive — 실패해도
+            #   summary·cashflow는 무손상(best-effort try/except).
+            try:
+                return_kpi_block = compute_return_kpi(
+                    dcf=dcf,
+                    land_cost_won=float(land_total),
+                    construction_cost_won=float(constr_total),
+                    revenue_won=float(revenue_total),
+                    discount_rate=discount_rate,
+                    total_cost_won=summary.get("total_cost_won"),
+                    soft_cost_won=float(other_total) if other_total else None,
+                    tax_schedule=tax_schedule,
+                )
+            except Exception as e:  # noqa: BLE001 — KPI 실패는 개략수지 본체 무손상
+                logger.warning("수익 KPI(return_kpi) 산출 실패: %s", str(e)[:120])
+                return_kpi_block = None
         else:
             degraded.append("월별 DCF 생성 실패 — NPV·IRR·회수기간 미산출(정직 null).")
 
@@ -753,6 +772,8 @@ async def build_rough_scenario(
         "margin": margin_block,
         "summary": summary,
         "cashflow": cashflow_block,
+        # ★W3-1(수익 KPI 완성) — additive(None=미산출·기존 소비처 무영향).
+        "return_kpi": return_kpi_block,
         "overrides_applied": applied,
         "degraded_notes": degraded,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
@@ -855,6 +876,8 @@ def _degraded_result(
             "roi_pct": None, "npv_won": None, "irr_pct": None, "payback_month": None, "grade": None,
         },
         "cashflow": None,
+        # ★W3-1(수익 KPI 완성) — 산출 자체가 없어 KPI도 null(계약 형태 일관).
+        "return_kpi": None,
         "overrides_applied": [],
         "degraded_notes": notes,
         # ★A-3/G8(additive) — 산출 자체가 없어 검증 대상(effective_far)도 없음(빈 배열).
