@@ -55,9 +55,21 @@ class _CountingLLM:
         return self._resp
 
 
+@pytest.fixture(autouse=True)
+def _clean_result_cache():
+    """L1 전역 캐시를 테스트 전후 청소 — 스위트 전역 격리(R1 위생 권고)."""
+    from app.services.ai import base_interpreter as bi
+
+    bi._RESULT_CACHE._store.clear()
+    yield
+    bi._RESULT_CACHE._store.clear()
+
+
 def _setup(monkeypatch, llm):
     async def _noop_billing(*a, **k):
         return None
+
+    from app.services.ai import base_interpreter as bi
 
     _install_fake_langchain(monkeypatch)
     monkeypatch.setattr(BaseInterpreter, "_get_llm", lambda self: llm, raising=True)
@@ -65,6 +77,7 @@ def _setup(monkeypatch, llm):
         "app.services.ai.base_interpreter._record_llm_billing", _noop_billing, raising=True
     )
     monkeypatch.setenv("INTERP_REDIS_CACHE", "0")
+    bi._env_flag_cache.clear()  # 30초 TTL 플래그 캐시 즉시 반영(직전 테스트 잔상 차단)
 
 
 @pytest.mark.asyncio
@@ -134,3 +147,52 @@ async def test_untruncated_success_flags(monkeypatch):
     payloads = [e["payload"] for e in events if e.get("kind") == "llm_call"]
     assert payloads and payloads[-1]["truncated"] is False
     assert payloads[-1]["parse_ok"] is True
+
+
+class _OverrideProbe(BaseInterpreter):
+    """_parse_response를 오버라이드하는 서브클래스(blindspot·brief 패턴 대역)."""
+
+    name = "probe_override"
+    expected_keys = ("items",)
+    fallback_key = ""
+    max_tokens = 256
+    system_prompt = "test"
+
+    def _parse_response(self, raw: str) -> dict[str, str]:
+        # blindspot 패턴: 리스트 값을 str() 평탄화 대신 유효 JSON 문자열로 보존.
+        import json as _json
+
+        parsed = _json.loads(raw)
+        return {"items": _json.dumps(parsed["items"], ensure_ascii=False)}
+
+
+@pytest.mark.asyncio
+async def test_invoke_respects_parse_response_override(monkeypatch):
+    """★R1 CRITICAL 회귀 잠금 — _invoke는 반드시 다형성 _parse_response를 태운다.
+
+    _parse_response_ex 직접 호출로 오버라이드가 우회되면 blindspot(심의 쟁점 소실)·
+    brief(quote/confidence 소실)가 무경보로 깨진다(라이브 재현됐던 결함).
+    """
+    import json as _json
+
+    llm = _CountingLLM(_FakeResp('{"items": [{"k": "v"}]}'))
+    _setup(monkeypatch, llm)
+    itp = _OverrideProbe()
+
+    out = await itp._invoke("P", cache_data={"unique": "override-case-1"})
+
+    # 오버라이드가 살아있으면 items는 '유효 JSON 문자열'(json.loads 가능·쌍따옴표).
+    assert _json.loads(out["items"]) == [{"k": "v"}]
+
+
+@pytest.mark.asyncio
+async def test_truncated_but_parseable_not_cached(monkeypatch):
+    """★R1 MEDIUM 잠금 — 절단됐지만 관대파서가 살린 부분 JSON은 캐시 박제 금지."""
+    llm = _CountingLLM(_FakeResp('{"text": "ok"}', stop="max_tokens"))
+    _setup(monkeypatch, llm)
+    itp = _Probe()
+
+    await itp._invoke("P", cache_data={"unique": "trunc-parsed-1"})
+    await itp._invoke("P", cache_data={"unique": "trunc-parsed-1"})
+
+    assert llm.calls == 2  # 캐시 미적중 = 미완결 응답이 박제되지 않았다는 행위 증거

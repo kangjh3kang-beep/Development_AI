@@ -696,7 +696,10 @@ class BaseInterpreter:
             return {}
 
         raw_text = response.content if hasattr(response, "content") else str(response)
-        result, parse_ok = self._parse_response_ex(raw_text)
+        # ★반드시 다형성 진입점(_parse_response)으로 — 서브클래스 오버라이드(blindspot·brief
+        #   커스텀 정규화)가 이 경로로 실행된다. parse_ok는 정규화와 독립인 원문 술어로 분리.
+        result = self._parse_response(raw_text)
+        parse_ok = self._raw_parses_as_object(raw_text)
 
         # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
         # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
@@ -721,13 +724,17 @@ class BaseInterpreter:
         # 절단 정직 관측(절단감지 SSOT=llm_json.is_truncated) — 캡 도달 절단은 파서로
         # 복구 불가한 별개 결함 클래스(2026-07-22 규제분석 실측: output==캡인 호출만 실패).
         # 경고+텔레메트리 플래그로 표면화해, 절단 사냥이 포렌식이 아닌 쿼리가 되게 한다.
-        from app.services.ai.llm_json import is_truncated
-        truncated = is_truncated(response)
-        if truncated:
-            logger.warning(
-                "LLM 응답 절단(max_tokens 캡 도달)", interp=self.name,
-                max_tokens=self.max_tokens, output_tokens=output_tokens, parse_ok=parse_ok,
-            )
+        truncated = False
+        try:  # 주변 빌링·텔레메트리와 동일 디시플린 — 관측 실패가 추론을 깨뜨리지 않게.
+            from app.services.ai.llm_json import is_truncated
+            truncated = is_truncated(response)
+            if truncated:
+                logger.warning(
+                    "LLM 응답 절단(max_tokens 캡 도달)", interp=self.name,
+                    max_tokens=self.max_tokens, output_tokens=output_tokens, parse_ok=parse_ok,
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 자가성장 텔레메트리(설계서 §3.2): 빌링 정본(llm_usage_log)은 위에서 기록하고,
         # 여기서는 품질·지연 신호만 platform_events 에 1줄 push(논블로킹, 예외 안전).
@@ -768,41 +775,52 @@ class BaseInterpreter:
             cache_hit_ratio=cache_hit_ratio,
         )
 
-        # P4: 결과를 L1·L2 모두에 저장 — ★성공 파싱만. 파싱 폴백({fallback_key: 원문})은
-        # truthy라 기존엔 성공과 구분 없이 캐시에 박제됐다(#411 라우터 폴백 캐시오염과
-        # 동일 클래스·registry '성공만 캐시' 선례의 기반클래스 일반화). 폴백은 미저장 →
-        # 다음 호출이 재시도해 자가치유된다.
-        if cache_key and result and parse_ok:
+        # P4: 결과를 L1·L2 모두에 저장 — ★성공 파싱+비절단만. 파싱 폴백({fallback_key:
+        # 원문})은 truthy라 기존엔 성공과 구분 없이 캐시에 박제됐다(#411 라우터 폴백
+        # 캐시오염과 동일 클래스·registry '성공만 캐시' 선례의 기반클래스 일반화).
+        # 절단-but-파싱성공(관대 파서의 부분 salvage)도 미완결 응답이므로 박제 금지(R1).
+        # 미저장 → 다음 호출이 재시도해 자가치유된다.
+        if cache_key and result and parse_ok and not truncated:
             _RESULT_CACHE.set(cache_key, result)
             await _redis_set(redis_key, result)
         return result
 
     # ── P2: 공통 JSON 파서(expected_keys/fallback_key 파라미터화) ──
+    # ★서브클래스가 오버라이드하는 다형성 진입점(blindspot·brief가 커스텀 정규화로 재정의)
+    #   — _invoke는 반드시 이 메서드를 호출해야 한다(R1: _ex 직접 호출로 오버라이드가
+    #   우회돼 심의 쟁점 소실·근거 소실이 재현됐던 CRITICAL의 회귀 잠금점).
     def _parse_response(self, raw: str) -> dict[str, str]:
-        return self._parse_response_ex(raw)[0]
-
-    def _parse_response_ex(self, raw: str) -> tuple[dict[str, str], bool]:
-        """공통 파서 + 파싱 성공 여부.
-
-        두 번째 값(parse_ok)이 False면 반환 dict는 강등 폴백(원문 절삭) — _invoke가
-        이를 L1/L2 캐시에 박제하지 않기 위한 내부 계약(#411 폴백 캐시오염과 동일
-        클래스: 강등 결과가 truthy라 성공과 구분 없이 캐시되던 결함의 봉합점).
-        """
         from app.services.ai.llm_json import extract_json_text, parse_llm_json
 
         try:
             parsed = parse_llm_json(raw)
         except json.JSONDecodeError:
             logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
-            return ({self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}), False
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
         if not isinstance(parsed, dict):
             # 기대 스키마는 항상 객체 — 리스트/스칼라 응답은 파싱 실패와 동일 취급.
             logger.warning("AI 응답이 JSON 객체가 아님", interp=self.name, raw_length=len(raw))
-            return ({self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}), False
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
 
         result: dict[str, str] = {}
         for key in self.expected_keys:
             val = parsed.get(key)
             if val is not None:
                 result[key] = str(val)
-        return result, True
+        return result
+
+    @staticmethod
+    def _raw_parses_as_object(raw: str) -> bool:
+        """원문이 JSON '객체'로 파싱되는지 — 캐시 게이트(parse_ok) 전용 술어.
+
+        서브클래스의 _parse_response 정규화와 독립적으로 원문 유효성만 판정한다
+        (다형성 훼손 없이 폴백 캐시오염을 막기 위한 분리 — 강등 폴백({fallback_key:
+        원문})이 truthy라 성공과 구분 없이 L1/L2에 박제되던 #411 동일 클래스 봉합).
+        재파싱 비용은 수 KB 문자열 json.loads 1회(<1ms)로 무시 가능.
+        """
+        from app.services.ai.llm_json import parse_llm_json
+
+        try:
+            return isinstance(parse_llm_json(raw), dict)
+        except json.JSONDecodeError:
+            return False
