@@ -196,3 +196,69 @@ async def test_truncated_but_parseable_not_cached(monkeypatch):
     await itp._invoke("P", cache_data={"unique": "trunc-parsed-1"})
 
     assert llm.calls == 2  # 캐시 미적중 = 미완결 응답이 박제되지 않았다는 행위 증거
+
+
+# ── 백로그①(2026-07-22) 최소 노출 회귀앵커 — last_parse_ok/last_truncated ──
+# fallback_key가 유일한 expected_key라 _invoke_or_empty(is_fallback_only)를 못 쓰는
+# 서브클래스(SeniorNarratorInterpreter 등)가 _invoke 직후 읽는 인스턴스 속성. 반환값
+# 계약(dict[str, str])은 이 변경으로 전혀 달라지지 않는다 — 아래는 부가 속성만 고정.
+
+
+@pytest.mark.asyncio
+async def test_last_flags_true_false_on_clean_success(monkeypatch):
+    llm = _CountingLLM(_FakeResp('{"text": "ok"}', stop="end_turn"))
+    _setup(monkeypatch, llm)
+    itp = _Probe()
+
+    await itp._invoke("P", cache_data=None)
+
+    assert itp.last_parse_ok is True
+    assert itp.last_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_last_flags_reflect_truncation(monkeypatch):
+    llm = _CountingLLM(_FakeResp('{"text": "절단직전이지만 완결', stop="max_tokens"))
+    _setup(monkeypatch, llm)
+    itp = _Probe()
+
+    await itp._invoke("P", cache_data=None)
+
+    assert itp.last_truncated is True
+    assert itp.last_parse_ok is False  # 미종단 JSON은 관대파서로도 복구 불가
+
+
+@pytest.mark.asyncio
+async def test_last_flags_true_on_cache_hit(monkeypatch):
+    """캐시엔 성공파싱+비절단만 저장되므로, L1 히트 응답도 양호 신호(True/False)로 채운다."""
+    llm = _CountingLLM(_FakeResp('{"text": "ok"}', stop="end_turn"))
+    _setup(monkeypatch, llm)
+    itp = _Probe()
+
+    await itp._invoke("P", cache_data={"unique": "cache-hit-flags-1"})
+    assert llm.calls == 1
+    # 두 번째 호출은 L1 캐시 적중(LLM 미호출)이지만 플래그는 여전히 양호로 채워져야 한다.
+    itp.last_parse_ok, itp.last_truncated = None, True  # 오염값으로 초기화해 실제 갱신을 검증
+    await itp._invoke("P", cache_data={"unique": "cache-hit-flags-1"})
+
+    assert llm.calls == 1  # 여전히 캐시 적중(재호출 없음)
+    assert itp.last_parse_ok is True
+    assert itp.last_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_last_flags_false_on_llm_call_exception(monkeypatch):
+    class _BoomLLM:
+        model = "fake"
+
+        async def ainvoke(self, messages, config=None):  # noqa: ARG002
+            raise RuntimeError("LLM 호출 실패")
+
+    _setup(monkeypatch, _BoomLLM())
+    itp = _Probe()
+
+    result = await itp._invoke("P", cache_data=None)
+
+    assert result == {}
+    assert itp.last_parse_ok is False
+    assert itp.last_truncated is False
