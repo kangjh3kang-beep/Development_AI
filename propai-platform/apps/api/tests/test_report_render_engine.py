@@ -102,6 +102,37 @@ def test_unknown_format_falls_back_to_pdf():
     assert ext == "pdf" and data[:4] == b"%PDF"
 
 
+@pytest.mark.parametrize(
+    "approval_state,approved_by",
+    [("DRAFT", None), ("MACHINE_VALIDATED", None), ("EXPERT_REVIEWED", None),
+     ("APPROVED", "reviewer@propai.io"), ("SUPERSEDED", None)],
+)
+def test_approval_badge_renders_for_every_state(approval_state, approved_by):
+    """W1-C 워터마크: pdf_kit.approval_badge 가 5개 승인등급 전부에서 예외 없이 배지를 만든다."""
+    pytest.importorskip("reportlab")
+    from app.services.report.render import pdf_kit as K
+    from app.services.report.render.model import ReportMeta
+
+    font = K.register_font()
+    meta = ReportMeta(title="테스트", approval_state=approval_state, approved_by=approved_by)
+    badge = K.approval_badge(meta, font)
+    assert badge is not None
+
+
+def test_pdf_render_includes_approval_watermark_for_draft_and_approved():
+    """W1-C 워터마크: DRAFT/APPROVED 각각 표지 배지 삽입 후에도 PDF 렌더가 정상 완주한다."""
+    pytest.importorskip("reportlab")
+    draft_model = _sample_model()
+    data, _mime, _ext = render_report(draft_model, "pdf")
+    assert data[:4] == b"%PDF" and len(data) > 2000
+
+    approved_model = _sample_model()
+    approved_model.meta.approval_state = "APPROVED"
+    approved_model.meta.approved_by = "reviewer@propai.io"
+    data2, _mime2, _ext2 = render_report(approved_model, "pdf")
+    assert data2[:4] == b"%PDF" and len(data2) > 2000
+
+
 def test_report_meta_default_approval_state_is_draft():
     """W1-A: 승인등급 미지정 시 기본값 DRAFT — 기존 흐름(생성·다운로드) 무회귀."""
     model = _sample_model()

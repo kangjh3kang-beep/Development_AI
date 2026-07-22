@@ -230,8 +230,52 @@ def vector_chart(block, font: str):
     return d
 
 
+def approval_badge(meta, font: str):
+    """표지용 승인등급 배지(W1-C 워터마크) — DRAFT류=회색 스탬프, APPROVED=승인표시+승인자,
+    SUPERSEDED=폐기 경고. tokens.APPROVAL_LABEL 문구를 그대로 사용(세 포맷 공용 출처)."""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    state = getattr(meta, "approval_state", "DRAFT")
+    label = T.APPROVAL_LABEL.get(state, state)
+    if state == "APPROVED":
+        fg, bg = T.GRADE["good"]["fg"], T.GRADE["good"]["bg"]
+        text = f"✓ {label}"
+        if getattr(meta, "approved_by", None):
+            text += f" · 승인자 {meta.approved_by}"
+    elif state == "SUPERSEDED":
+        fg, bg = T.SIGNAL["danger"], "#fee2e2"
+        text = f"⚠ {label}(재발급 필요)"
+    else:
+        fg, bg = T.MUTED, T.PANEL
+        text = f"● {label}"
+
+    st = styles(font)
+    pstyle = ParagraphStyle("prds_approval_badge", parent=st["caption"], textColor=_c(fg), fontSize=9)
+    t = Table([[Paragraph(f"<b>{_esc(text)}</b>", pstyle)]], colWidths=None)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _c(bg)),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+    ]))
+    return t
+
+
+def draft_warning_notice(warning_count: int, font: str):
+    """W1-C R2(soft-gate 경고): DRAFT/MACHINE_VALIDATED 문서에 소프트게이트 경고가 있으면
+    표지에 눈에 띄는 경고 문구를 얹는다(정직표기 강화). warning_count<=0 이면 호출부가 생략."""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+
+    st = styles(font)
+    text = f"⚠ 미검증 단정 표현 {warning_count}건 포함(내부 초안)"
+    pstyle = ParagraphStyle("prds_draft_warning", parent=st["caption"], textColor=_c(T.SIGNAL["warn"]), fontSize=9)
+    return Paragraph(f"<b>{_esc(text)}</b>", pstyle)
+
+
 def footer_callback(meta):
-    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일. reportlab onPage 콜백."""
+    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백."""
 
     def _draw(canvas, doc):
         canvas.saveState()
@@ -241,6 +285,9 @@ def footer_callback(meta):
 
         y = 8 * mm
         left = f"{T.BRANDING}"
+        approval_state = getattr(meta, "approval_state", None)
+        if approval_state:
+            left += f"   ·   {T.APPROVAL_LABEL.get(approval_state, approval_state)}"
         if meta.confidential:
             left += f"   ·   {T.CONFIDENTIAL_LABEL}"
         right_parts = [f"p.{doc.page}"]
