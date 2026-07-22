@@ -12,32 +12,42 @@
 제거-재탐색 O(V·(V+E))로 충분 — 스파이크 결정, requirements 변경 없음).
 
 무날조 원칙:
-  · 간선(edge) = 두 필지 경계의 실제 접촉(shapely touches()+intersection 길이>0)만 인정한다.
-    bbox(외접상자)만 겹치고 실제 도형이 이격돼 있으면 touches() 자체가 False라 간선을 만들지
-    않는다. 점(코너) 접촉은 intersection 길이가 0이라 자동 제외된다(스침 배제).
+  · 간선(edge) 판정 = 기존 정답 기준선 routers/auto_zoning.py:_parcel_adjacency 와 동일한
+    톨러런스(SSOT — ADJACENCY_TOLERANCE_DEG, ~6m)를 공유한다. 두 필지가 겹치거나(overlap)
+    맞닿거나(touch) 그 톨러런스 이내로 근접(distance<=tol)하면 인접(간선 존재)으로 본다
+    (is_parcel_adjacent 참조). ★R1 리뷰 반영: 처음엔 shapely touches()+intersection 길이>0
+    만 간선으로 인정했으나, 같은 응답의 adjacency(_parcel_adjacency, 거리<=6m 허용)와 정면
+    모순되고(5cm/3m 간격을 서로 다르게 판정) 겹침(area>0) 필지 간선도 누락시켰다 — 두 표면이
+    다른 기준으로 갈라지는 회귀이므로 톨러런스 기반 판정으로 일원화했다(공용 헬퍼로 추출).
+    실제 경계 접촉선 길이(contact_length)는 성립 조건이 아니라 참고 메타로만 남긴다.
   · geometry 가 없는 필지는 그래프에서 UNKNOWN 처리한다 — 있는 것처럼 간선을 지어내지 않는다
     (그 필지의 연결성분/articulation 판정은 산출하지 않고 'geometry 미확보' 로 명세한다).
   · road_frontage(도로접면)가 미상(None)인 필지는 '맹지 아님'으로 단정하지 않는다(landlocked
-    판정은 True/False/None 3값 — 확정 정보가 없으면 None=미상).
+    판정은 True/False/None 3값 — 확정 정보가 없으면 None=미상). 전 필지가 미상이면
+    road_dependency.status 로 "판정 유보"를 명시한다(빈 배열을 '맹지 없음'으로 오독 차단).
   · critical_parcel_score 는 정성 등급(CRITICAL/IMPORTANT/NORMAL)이며 산식은 아래 _grade_parcel
     docstring 에 명시한다(가중치 날조 방지 — 코드가 곧 근거).
 
-성능 가드: 필지 200개 초과 시 그래프 산출을 생략한다(status="skipped_large_set"). 제거-재탐색
-  기반 N-1/articulation은 O(V²·(V+E)) 규모라 대량 배치(과거 5000행 배치 메모리 교훈)에는
-  부적합 — 호출부가 소규모(수십 필지) 조합에서만 쓰는 것을 전제로 한다.
+성능 가드: 필지 200개 초과 시 그래프 산출을 생략한다(status="skipped_large_set"). 간선 판정은
+  쌍별 비교라 O(V²), articulation/N-1은 제거-재탐색(정점당 O(V+E) 재탐색)이라 O(V·(V+E)) —
+  대량 배치(과거 5000행 배치 메모리 교훈)에는 부적합해, 호출부가 소규모(수십 필지) 조합에서만
+  쓰는 것을 전제로 한다. 현재 유일 소비처(routers/auto_zoning.py:integrated_analysis)는 이미
+  120필지로 사전 제한하므로 skipped_large_set 경로는 그 호출부에서는 도달하지 않는다(모듈은
+  다른/향후 호출부까지 겨냥한 방어라 가드 자체는 유지).
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
-# 필지 수 상한 — 초과 시 그래프 생략(제거-재탐색 O(V²·(V+E)) 비용 보호).
+# 필지 수 상한 — 초과 시 그래프 생략(제거-재탐색 비용 보호).
 MAX_PARCELS_FOR_GRAPH = 200
 
-# 좌표 스냅 격자(도 단위, ~1cm) — 부동소수 연산 오차(예: 127.001+0.001 != 127.002)로 실제
-# 맞닿은 두 필지가 touches() 판정에서 미세 중첩/미세 간격으로 새는 것을 흡수한다. 실제 물리적
-# 이격(도로 등, 통상 수십cm~수m 이상)은 이 격자보다 훨씬 커서 영향받지 않는다(무날조 — 실측
-# 간격을 지우는 게 아니라 좌표 표현 오차만 정규화).
-_SNAP_GRID_DEG = 1e-7
+# 인접 톨러런스 SSOT(도 단위, ~6m 위도 기준 근사) — routers/auto_zoning.py:_parcel_adjacency
+# 의 기존 톨러런스(정답 기준선)를 그대로 추출한 값이다. 두 표면(그 함수의 연결성분 판정과
+# 이 모듈의 인접 그래프)이 서로 다른 기준으로 갈라지지 않도록 이 상수 하나만 바꾸면 양쪽에
+# 함께 반영된다(공용화 — 국소 패치 금지).
+ADJACENCY_TOLERANCE_DEG = 0.00006
 
 
 def _parcel_id(p: dict, idx: int) -> str:
@@ -87,6 +97,13 @@ def _to_polygon(geom: Any) -> Any | None:
     """GeoJSON dict 또는 shapely 지오메트리 → buffer(0)로 유효화한 shapely 도형.
 
     파싱 실패·None 입력·빈 도형은 None(무날조 — 그래프에서 UNKNOWN 처리, 간선 생성 안 함).
+
+    ★R1 리뷰 수정 기록: 최초 구현은 여기서 shapely.set_precision(1e-7도) 스냅으로 부동소수
+    좌표 오차(예: 127.001+0.001 != 127.002)를 흡수하려 했다. 그러나 두 필지가 각자 독립적으로
+    스냅되면 서로 다른 격자선에 반올림될 수 있어(리뷰어 실측: 0.5cm 간격이 스냅 후에도 ~1cm로
+    남음) 약속(미세 오차 흡수)을 이행하지 못했다 — 근본 해결이 아니라 무날조 원칙에 반하는
+    견고성 주장이었다. is_parcel_adjacent 의 거리 톨러런스(SSOT) 판정으로 대체하고 스냅은
+    제거했다(중복·무효 로직 삭제).
     """
     if geom is None:
         return None
@@ -101,14 +118,6 @@ def _to_polygon(geom: Any) -> Any | None:
         else:
             return None
         fixed = poly.buffer(0)
-        if fixed.is_empty:
-            return None
-        try:
-            from shapely import set_precision
-
-            fixed = set_precision(fixed, _SNAP_GRID_DEG)
-        except Exception:  # noqa: BLE001 — 정밀도 스냅 실패해도 buffer(0) 결과로 계속 진행
-            pass
         return None if fixed.is_empty else fixed
     except Exception:  # noqa: BLE001 — 형상 파싱 실패는 정직 None
         return None
@@ -123,13 +132,28 @@ def _looks_like_lonlat(poly: Any) -> bool:
         return False
 
 
-def _contact_length(a: Any, b: Any) -> float:
-    """실접촉(경계) 길이 — touches()로 '접점 존재·내부 비중첩'을 먼저 확인한 뒤에만
-    intersection 길이를 잰다. 점(코너) 접촉은 길이 0이라 호출부에서 자동 제외된다.
-    bbox만 겹치고 실제 도형이 떨어져 있으면 touches() 자체가 False라 0.0을 반환한다.
+def is_parcel_adjacent(a: Any, b: Any, tol: float = ADJACENCY_TOLERANCE_DEG) -> bool:
+    """두 필지 도형이 '인접'인지 — 간선 성립 조건의 유일한 SSOT(공용 헬퍼).
+
+    겹침(overlap)·접촉(touch)·근접(distance<=tol) 전부 인정한다. shapely distance()는
+    겹치거나 맞닿은 두 도형에 대해 정확히 0을 반환하므로, 이 거리 하나만 재면 겹침·접촉·근접을
+    모두 포괄한다 — routers/auto_zoning.py:_parcel_adjacency와 동일 기준(같은 상수·같은 술어).
     """
     try:
-        if not a.touches(b):
+        return a.distance(b) <= tol
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _contact_length(a: Any, b: Any) -> float:
+    """실제 경계 접촉선 길이 — 참고 메타 전용(간선 성립 조건 아님, is_parcel_adjacent가 따로 판정).
+
+    두 도형이 실제로 맞닿거나 겹칠 때(touches 또는 intersects)만 의미 있는 길이를 반환한다.
+    톨러런스 이내로 근접했을 뿐 실제 접촉선이 없는 경우(예: 3m 이격)는 0.0을 반환한다 —
+    "접촉선은 없지만 인접 톨러런스 내"라는 뜻이며 간선 자체는 여전히 존재한다(gap 메타 참조).
+    """
+    try:
+        if not a.intersects(b):
             return 0.0
         inter = a.intersection(b)
         return float(inter.length or 0.0)
@@ -238,7 +262,7 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
             "parcel_count": 0,
             "ids": [], "geometry_unknown_pnus": [], "edges": [], "adjacency": {},
             "connected_components": [], "component_count": 0, "articulation_points": [],
-            "road_dependency": {"frontage_pnus": [], "frontage_unknown_pnus": [],
+            "road_dependency": {"status": "assessed", "frontage_pnus": [], "frontage_unknown_pnus": [],
                                  "landlocked_pnus": [], "unknown_landlocked_pnus": [],
                                  "access_path": {}},
             "critical_parcels": {"CRITICAL": [], "IMPORTANT": [], "NORMAL": []},
@@ -261,24 +285,34 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
             "(간선 날조 금지 — 해당 필지는 UNKNOWN으로 표기)."
         )
 
-    # ── 1) 간선(edge) 판정 — 실접촉(touches + intersection 길이>0)만 인정 ──
+    # ── 1) 간선(edge) 판정 — is_parcel_adjacent(SSOT: 겹침·접촉·근접<=6m)만 성립 조건.
+    #    contact_length(실제 경계 접촉선 길이)는 참고 메타일 뿐 성립 조건에서 제외한다.
     edges: list[dict[str, Any]] = []
     adjacency: dict[str, set[str]] = {i: set() for i in known_ids}
     for a_idx in range(len(known_ids)):
         for b_idx in range(a_idx + 1, len(known_ids)):
             a_id, b_id = known_ids[a_idx], known_ids[b_idx]
-            length = _contact_length(polys[a_id], polys[b_id])
-            if length > 0:
-                adjacency[a_id].add(b_id)
-                adjacency[b_id].add(a_id)
-                edge: dict[str, Any] = {"a": a_id, "b": b_id, "contact_length": round(length, 6)}
-                if _looks_like_lonlat(polys[a_id]):
-                    import math
-
-                    lat = (polys[a_id].centroid.y + polys[b_id].centroid.y) / 2
-                    m_per_deg = 111_000 * math.cos(math.radians(lat))
-                    edge["contact_length_m_approx"] = round(length * m_per_deg, 1)
-                edges.append(edge)
+            poly_a, poly_b = polys[a_id], polys[b_id]
+            if not is_parcel_adjacent(poly_a, poly_b):
+                continue
+            adjacency[a_id].add(b_id)
+            adjacency[b_id].add(a_id)
+            length = _contact_length(poly_a, poly_b)
+            try:
+                gap = float(poly_a.distance(poly_b))
+            except Exception:  # noqa: BLE001
+                gap = 0.0
+            edge: dict[str, Any] = {
+                "a": a_id, "b": b_id,
+                "contact_length": round(length, 6),  # 참고 메타(실제 접촉선, 근접만인 경우 0)
+                "gap": round(gap, 6),  # 참고 메타(두 도형 사이 거리 — 겹침/접촉이면 0)
+            }
+            if _looks_like_lonlat(poly_a):
+                lat = (poly_a.centroid.y + poly_b.centroid.y) / 2
+                m_per_deg = 111_000 * math.cos(math.radians(lat))
+                edge["contact_length_m_approx"] = round(length * m_per_deg, 1)
+                edge["gap_m_approx"] = round(gap * m_per_deg, 1)
+            edges.append(edge)
 
     # ── 2) 연결성분·articulation point ──
     components = _components(known_ids, adjacency)
@@ -355,7 +389,16 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
             access_path[i] = None
             landlocked[i] = None
 
+    # ★R1 MEDIUM-2(접도정보 starved 정직화): 라이브 소비처(integrated_analysis)의 enriched는
+    #   현재 필지별 접도(road_contact/road_frontage) 필드를 채우지 않는 경로가 있다(write-path
+    #   미배선 — access_basis_service의 판정 결과를 필지별로 부착하는 배선은 W2-6 후보). 그 경우
+    #   전 필지가 frontage=None이 되어 landlocked_pnus가 상시 빈 배열로 나오는데, 이를 "맹지
+    #   없음"으로 오독하면 위험하다 — status로 "판정 유보"를 명시해 오독을 차단한다.
+    _all_frontage_unknown = bool(ids) and len(frontage_unknown) == len(ids)
+    road_status = "unknown(접도정보 미보유 — 판정 유보)" if _all_frontage_unknown else "assessed"
+
     road_dependency = {
+        "status": road_status,
         "frontage_pnus": sorted(frontage_true),
         "frontage_unknown_pnus": sorted(frontage_unknown),
         "landlocked_pnus": sorted(k for k, v in landlocked.items() if v is True),
@@ -364,7 +407,9 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
         "basis": (
             "그룹(연결성분) 내 최소 1필지가 도로접면(True)이면 나머지는 인접 경유로 접근 가능(맹지 "
             "아님)으로 판정한다. 그룹 전원이 명시적 False면 확정 맹지, True 없이 미상(None)이 섞이면 "
-            "확정하지 않고 미상 처리한다(과대낙관 금지)."
+            "확정하지 않고 미상 처리한다(과대낙관 금지). 전 필지 접도정보가 미보유(None)면 "
+            "landlocked_pnus 는 항상 빈 배열이므로 '맹지 없음'이 아니라 status(판정 유보)로 "
+            "해석해야 한다."
         ),
     }
 
@@ -393,7 +438,13 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
         }
         critical_parcels[grade].append(i)
 
-    # ── 5) N-1 시나리오 — 필지별 제거 시 연결성·면적·실효한도(면적가중 근사) delta ──
+    # ── 5) N-1 시나리오 — 필지별 제거 시 연결성·면적·블렌드 용적률(면적가중 근사) delta ──
+    # ★R1 MEDIUM-3(용어 정정): 이 값은 "실효 용적률(effective FAR)" SSOT(calc_effective_far·
+    #   _aggregate_integrated_zoning 의 GFA-basis 정밀 블렌드)가 아니라, 입력받은 개별 필지
+    #   effective_far_pct를 면적으로 단순 가중평균한 1차 근사다(결합·연접 개발 효과 미반영 —
+    #   standalone). effective_far_pct_* 로 명명하면 정밀 SSOT 용어와 오독될 수 있어
+    #   blended_far_pct_* 로 개명하고 far_basis 라벨을 함께 부착한다(무날조 — 근사임을 명시).
+    _BLENDED_FAR_BASIS = "area_weighted_standalone(결합효과 미반영)"
     baseline_comp_count = len(components)
     total_area_all = sum(a for a in (areas.get(i) for i in ids) if a is not None) or 0.0
 
@@ -420,9 +471,10 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
                 "remains_connected": None, "components_after": None,
                 "remaining_area_sqm": round(remaining_area, 2) if others else 0.0,
                 "area_delta_sqm": round(area_delta, 2) if area_delta is not None else None,
-                "effective_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
-                "effective_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
-                "effective_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+                "blended_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
+                "blended_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
+                "blended_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+                "blended_far_pct_basis": _BLENDED_FAR_BASIS,
                 "newly_landlocked_pnus": None,
                 "note": "형상(geometry) 미확보 필지 — 연결성 영향은 판단 불가(미상)입니다.",
             }
@@ -434,9 +486,10 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
                 "remains_connected": None, "components_after": 0,
                 "remaining_area_sqm": round(remaining_area, 2) if others else 0.0,
                 "area_delta_sqm": round(area_delta, 2) if area_delta is not None else None,
-                "effective_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
-                "effective_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
-                "effective_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+                "blended_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
+                "blended_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
+                "blended_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+                "blended_far_pct_basis": _BLENDED_FAR_BASIS,
                 "newly_landlocked_pnus": None,
                 "note": "제거 후 형상 확보 필지가 남지 않아 연결성 판단이 성립하지 않습니다.",
             }
@@ -477,9 +530,10 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
             "components_after": after_count,
             "remaining_area_sqm": round(remaining_area, 2) if others else 0.0,
             "area_delta_sqm": round(area_delta, 2) if area_delta is not None else None,
-            "effective_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
-            "effective_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
-            "effective_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+            "blended_far_pct_before": round(blended_before, 1) if blended_before is not None else None,
+            "blended_far_pct_after": round(blended_after, 1) if blended_after is not None else None,
+            "blended_far_pct_delta": round(far_delta, 1) if far_delta is not None else None,
+            "blended_far_pct_basis": _BLENDED_FAR_BASIS,
             "newly_landlocked_pnus": sorted(newly_landlocked),
         }
 
@@ -496,11 +550,17 @@ def build_parcel_graph(parcels: list[dict[str, Any]] | None) -> dict[str, Any]:
         "road_dependency": road_dependency,
         "critical_parcels": critical_parcels,
         "critical_scores": critical_scores,
+        # ★LOW(페이로드): n_minus_1은 필지당 1개 엔트리(요약 없이 전량)라 payload 크기가
+        #   parcel_count에 선형 비례한다. 현재 유일 소비처는 120필지 상한이라 실사용 규모에서는
+        #   문제되지 않는다 — 필지 수가 커질 소비처가 생기면 critical_parcels 등급 상위만
+        #   추리는 요약 모드를 추가 고려(현재는 전량 유지가 더 유용해 그대로 둔다).
         "n_minus_1": n_minus_1,
         "warnings": warnings,
         "basis": (
-            "간선=경계 실접촉(shapely touches+intersection 길이>0, bbox 스침·코너 접촉 제외). "
-            "articulation point=제거-재탐색(O(V·(V+E)))으로 연결성분 증가 여부 판정. "
-            "critical_parcel_score 산식은 _grade_parcel 참조(articulation·유일접면·면적지분 가중)."
+            "간선=is_parcel_adjacent(SSOT: 겹침·접촉·근접<=6m — routers/auto_zoning.py:"
+            "_parcel_adjacency와 동일 기준). 접촉선 길이(contact_length)는 참고 메타일 뿐 성립 "
+            "조건이 아니다. articulation point=제거-재탐색(정점당 O(V+E))으로 연결성분 증가 여부 "
+            "판정. critical_parcel_score 산식은 _grade_parcel 참조(articulation·유일접면·면적지분 "
+            "가중)."
         ),
     }

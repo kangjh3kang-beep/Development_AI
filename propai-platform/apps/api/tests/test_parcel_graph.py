@@ -1,17 +1,31 @@
 """ParcelGraph(W2-5) — 인접 그래프·articulation point·N-1 시나리오·핵심필지 판정 — TDD.
 
-계약:
-  · 간선 = 경계 실접촉(shapely touches + intersection 길이>0)만 인정. bbox(외접상자)만
-    겹치고 실제 도형이 이격돼 있으면 간선을 만들지 않는다(bbox 스침 배제).
+계약(★R1 리뷰 반영 — 간선 톨러런스 SSOT 일원화):
+  · 간선 = is_parcel_adjacent(a, b) — 겹침(overlap)·접촉(touch)·근접(distance<=6m, SSOT
+    ADJACENCY_TOLERANCE_DEG) 전부 인정. 이 톨러런스는 routers/auto_zoning.py:_parcel_adjacency
+    (기존 정답 기준선)와 공유하는 단일 상수/헬퍼다 — 두 표면이 서로 다른 기준으로 갈라지지
+    않는다. 접촉선 길이(contact_length)는 참고 메타일 뿐 간선 성립 조건이 아니다.
   · geometry 없는 필지는 그래프에서 UNKNOWN 처리(간선 날조 금지) — n_minus_1에도
     "미상" 정직 표기.
   · articulation point = 제거-재탐색 시 연결성분 수가 늘어나는 필지(일자형 3필지 가운데=critical).
-  · N-1: 도로접면 유일 필지 제거 시 나머지가 맹지화되는지 검출한다.
+  · N-1: 도로접면 유일 필지 제거 시 나머지가 맹지화되는지 검출한다(blended_far_pct_* 는 결합
+    효과 미반영 area_weighted_standalone 근사 — 정밀 실효FAR SSOT 아님).
+  · road_frontage 전원 미상이면 road_dependency.status="unknown(...)"로 판정 유보를 명시한다
+    (빈 landlocked_pnus를 '맹지 없음'으로 오독 차단).
   · 상한(MAX_PARCELS_FOR_GRAPH) 초과 시 그래프 산출을 생략한다(status=skipped_large_set).
 """
 from __future__ import annotations
 
-from app.services.zoning.parcel_graph import MAX_PARCELS_FOR_GRAPH, build_parcel_graph
+from shapely.geometry import shape
+
+from app.services.zoning.parcel_graph import (
+    ADJACENCY_TOLERANCE_DEG,
+    MAX_PARCELS_FOR_GRAPH,
+    build_parcel_graph,
+    is_parcel_adjacent,
+)
+
+_M_PER_DEG_LAT = 111_320.0  # 위도 1도 ≈ 111.32km(근사) — 테스트 좌표 설계용(경도 cos 보정 불요)
 
 
 def _square(lon0: float, lat0: float, size: float = 0.001) -> dict:
@@ -27,9 +41,73 @@ def _triangle(pts: list[tuple[float, float]]) -> dict:
     return {"type": "Polygon", "coordinates": [ring]}
 
 
+def _stack_with_gap(gap_m: float, lon0: float = 127.000, lat0: float = 37.000, size: float = 0.001):
+    """정사각형 두 개를 위도(남북) 방향으로 gap_m(미터, 음수=겹침) 간격을 두고 배치."""
+    gap_deg = gap_m / _M_PER_DEG_LAT
+    south = _square(lon0, lat0, size)
+    north = _square(lon0, lat0 + size + gap_deg, size)
+    return south, north
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) 간선 판정 — 실접촉 vs bbox 스침 vs 이격
+# 1) 간선 판정 — is_parcel_adjacent 톨러런스 스윕(겹침 → 미세간격 → 수십cm → 3m → 7m)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def test_edge_overlap_creates_edge():
+    """겹침(intersection.area>0) — 톨러런스 논의 이전에 이미 인접(거리=0)."""
+    south, north = _stack_with_gap(-1.0)  # 1m 겹침
+    out = build_parcel_graph([
+        {"pnu": "A", "geometry": south, "area_sqm": 500},
+        {"pnu": "B", "geometry": north, "area_sqm": 500},
+    ])
+    assert len(out["edges"]) == 1
+    assert out["component_count"] == 1
+
+
+def test_edge_micro_gap_under_1m_is_adjacent():
+    """미세간격(5cm, <1m) — 톨러런스(6m) 내라 인접."""
+    south, north = _stack_with_gap(0.05)
+    out = build_parcel_graph([
+        {"pnu": "A", "geometry": south, "area_sqm": 500},
+        {"pnu": "B", "geometry": north, "area_sqm": 500},
+    ])
+    assert len(out["edges"]) == 1
+    assert out["component_count"] == 1
+
+
+def test_edge_tens_of_cm_gap_is_adjacent():
+    """수십cm(30cm) 간격 — 톨러런스(6m) 내라 인접(측량 오차 수준의 어긋남도 흡수)."""
+    south, north = _stack_with_gap(0.3)
+    out = build_parcel_graph([
+        {"pnu": "A", "geometry": south, "area_sqm": 500},
+        {"pnu": "B", "geometry": north, "area_sqm": 500},
+    ])
+    assert len(out["edges"]) == 1
+    assert out["component_count"] == 1
+
+
+def test_edge_3m_gap_within_tolerance_is_adjacent():
+    """3m 간격 — 공유 톨러런스(~6m) 이내라 인접(_parcel_adjacency와 동일 기준)."""
+    south, north = _stack_with_gap(3.0)
+    assert is_parcel_adjacent(shape(south).buffer(0), shape(north).buffer(0))
+    out = build_parcel_graph([
+        {"pnu": "A", "geometry": south, "area_sqm": 500},
+        {"pnu": "B", "geometry": north, "area_sqm": 500},
+    ])
+    assert len(out["edges"]) == 1
+    assert out["component_count"] == 1
+
+
+def test_edge_7m_gap_outside_tolerance_is_separate():
+    """7m 이격 — 공유 톨러런스(~6m) 밖이라 분리(간선 미생성)."""
+    south, north = _stack_with_gap(7.0)
+    out = build_parcel_graph([
+        {"pnu": "A", "geometry": south, "area_sqm": 500},
+        {"pnu": "B", "geometry": north, "area_sqm": 500},
+    ])
+    assert out["edges"] == []
+    assert out["component_count"] == 2
+
 
 def test_edge_real_contact_creates_edge():
     """경계를 실제로 공유하는 두 필지 — 간선 생성 + 하나의 연결성분."""
@@ -40,13 +118,12 @@ def test_edge_real_contact_creates_edge():
     out = build_parcel_graph(parcels)
     assert out["status"] == "ok"
     assert len(out["edges"]) == 1
-    assert out["edges"][0]["contact_length"] > 0
     assert out["connected_components"] == [["A", "B"]]
     assert out["component_count"] == 1
 
 
-def test_edge_bbox_overlap_without_touch_is_excluded():
-    """외접상자(bbox)는 겹치지만 실제 도형은 이격된 두 삼각형 — 간선 미생성(스침 배제)."""
+def test_edge_far_bbox_overlap_but_real_separation_beyond_tolerance():
+    """외접상자(bbox)는 겹치지만 실제 최소거리(~63m)가 톨러런스(6m)를 훨씬 초과 — 분리."""
     s = 0.001
     ox, oy = 127.0, 37.0
     tri_a = _triangle([(ox, oy), (ox + s, oy), (ox, oy + s)])
@@ -72,16 +149,23 @@ def test_edge_real_separation_no_edge():
     assert out["component_count"] == 2
 
 
-def test_edge_corner_only_touch_excluded_length_zero():
-    """점(코너)만 맞닿는 두 사각형 — intersection 길이 0이라 간선 미생성."""
+def test_edge_corner_touch_counts_as_adjacent_like_baseline():
+    """점(코너)만 맞닿는 두 사각형 — 거리=0이라 baseline(_parcel_adjacency)과 동일하게 인접
+    (구법인 touches+length>0 기준이었다면 길이 0으로 배제됐을 것 — SSOT 일원화로 baseline과
+    합치)."""
     a = _square(127.000, 37.000)
     b = _square(127.001, 37.001)  # A의 우상단 코너에서만 만남
     out = build_parcel_graph([
         {"pnu": "A", "geometry": a, "area_sqm": 500},
         {"pnu": "B", "geometry": b, "area_sqm": 500},
     ])
-    assert out["edges"] == []
-    assert out["component_count"] == 2
+    assert len(out["edges"]) == 1
+    assert out["component_count"] == 1
+
+
+def test_adjacency_tolerance_constant_is_shared():
+    """모듈 상수 ADJACENCY_TOLERANCE_DEG가 곧 _parcel_adjacency의 6m 값과 동일함을 고정."""
+    assert ADJACENCY_TOLERANCE_DEG == 0.00006
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -200,7 +284,33 @@ def test_all_geometry_missing_returns_empty_graph_honestly():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6) 상한 가드 — 대량 조합 성능 보호
+# 6) road_frontage 전원 미상 — 판정 유보 정직화(R1 MEDIUM-2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_road_dependency_status_deferred_when_all_frontage_unknown():
+    """전 필지 road_frontage 미상 — landlocked_pnus는 빈 배열이지만 status로 판정 유보를 명시."""
+    parcels = [
+        {"pnu": "A", "geometry": _square(127.000, 37.000), "area_sqm": 500},
+        {"pnu": "B", "geometry": _square(127.001, 37.000), "area_sqm": 500},
+    ]
+    out = build_parcel_graph(parcels)
+    rd = out["road_dependency"]
+    assert rd["landlocked_pnus"] == []
+    assert rd["status"] == "unknown(접도정보 미보유 — 판정 유보)"
+
+
+def test_road_dependency_status_assessed_when_frontage_known():
+    """접도정보가 하나라도 확정이면 status는 'assessed'(정상 판정)."""
+    parcels = [
+        {"pnu": "A", "geometry": _square(127.000, 37.000), "area_sqm": 500, "road_frontage": True},
+        {"pnu": "B", "geometry": _square(127.001, 37.000), "area_sqm": 500, "road_frontage": False},
+    ]
+    out = build_parcel_graph(parcels)
+    assert out["road_dependency"]["status"] == "assessed"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7) 상한 가드 — 대량 조합 성능 보호
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_parcel_count_over_cap_skips_graph():
@@ -220,7 +330,7 @@ def test_parcel_count_at_cap_still_computes():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 기타 — 빈 입력·실효한도(면적가중) delta
+# 기타 — 빈 입력·블렌드 용적률(면적가중 근사) delta
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_empty_parcels_returns_honest_empty_shape():
@@ -229,8 +339,8 @@ def test_empty_parcels_returns_honest_empty_shape():
     assert out["n_minus_1"] == {}
 
 
-def test_effective_far_delta_computed_when_far_provided():
-    """effective_far_pct 제공 시 면적가중 블렌드 delta 산출(1차 근사 — 명시적 산식)."""
+def test_blended_far_delta_computed_when_far_provided():
+    """effective_far_pct 제공 시 면적가중 블렌드 delta 산출(1차 근사 — 명시적 산식·용어 라벨)."""
     parcels = [
         {"pnu": "A", "geometry": _square(127.000, 37.000), "area_sqm": 1000, "effective_far_pct": 200.0},
         {"pnu": "B", "geometry": _square(127.001, 37.000), "area_sqm": 500, "effective_far_pct": 100.0},
@@ -238,6 +348,7 @@ def test_effective_far_delta_computed_when_far_provided():
     out = build_parcel_graph(parcels)
     n1_b = out["n_minus_1"]["B"]
     # before = (1000*200+500*100)/1500 = 166.7, after(=A만) = 200.0 → delta = +33.3
-    assert n1_b["effective_far_pct_before"] == 166.7
-    assert n1_b["effective_far_pct_after"] == 200.0
-    assert n1_b["effective_far_pct_delta"] == 33.3
+    assert n1_b["blended_far_pct_before"] == 166.7
+    assert n1_b["blended_far_pct_after"] == 200.0
+    assert n1_b["blended_far_pct_delta"] == 33.3
+    assert n1_b["blended_far_pct_basis"] == "area_weighted_standalone(결합효과 미반영)"

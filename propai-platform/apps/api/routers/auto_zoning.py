@@ -1176,12 +1176,20 @@ async def parcel_boundaries_export(req: ParcelExportRequest):
 
 
 def _parcel_adjacency(geoms: list) -> dict:
-    """필지 폴리곤 인접성(연결요소) 판정 — shapely."""
+    """필지 폴리곤 인접성(연결요소) 판정 — shapely.
+
+    ★W2-5 R1(HIGH-1) 톨러런스 SSOT 일원화: 인접 판정 톨러런스(~6m)와 술어(겹침·접촉·근접)는
+    app.services.zoning.parcel_graph.is_parcel_adjacent 를 그대로 사용한다(이 함수가 정답
+    기준선이었고, ParcelGraph(W2-5)의 간선 판정을 그 기준에 맞춰 통일했다 — 이제 두 표면은
+    같은 상수·같은 술어 하나만 참조하므로 서로 다른 기준으로 갈라질 수 없다).
+    """
     present = [g for g in geoms if g]
     if len(present) < 2:
         return {"contiguous": True, "components": 1, "note": "단일 필지"}
     try:
         from shapely.geometry import shape
+
+        from app.services.zoning.parcel_graph import is_parcel_adjacent
 
         polys = []
         for g in geoms:
@@ -1192,7 +1200,6 @@ def _parcel_adjacency(geoms: list) -> dict:
         idx = [i for i, p in enumerate(polys) if p is not None]
         if len(idx) < 2:
             return {"contiguous": None, "components": None, "note": "형상 데이터 부족 — 인접성 확인 불가"}
-        tol = 0.00006  # ~6m
         n = len(idx)
         parent = list(range(n))
 
@@ -1204,7 +1211,7 @@ def _parcel_adjacency(geoms: list) -> dict:
 
         for a in range(n):
             for b in range(a + 1, n):
-                if polys[idx[a]].distance(polys[idx[b]]) <= tol:
+                if is_parcel_adjacent(polys[idx[a]], polys[idx[b]]):
                     parent[find(a)] = find(b)
         comps = len({find(i) for i in range(n)})
         return {
@@ -1816,6 +1823,9 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             "articulation_points": _pg.get("articulation_points"),
             "critical_parcels": _pg.get("critical_parcels"),
             "landlocked_risk": {
+                # ★W2-5 R1(MEDIUM-2): status가 "unknown(...)"이면 confirmed_pnus 가 빈 배열이어도
+                # '맹지 없음'이 아니라 접도정보 미보유로 판정을 유보했다는 뜻이다(오독 차단).
+                "status": _road_dep.get("status"),
                 "confirmed_pnus": _road_dep.get("landlocked_pnus"),
                 "unknown_pnus": _road_dep.get("unknown_landlocked_pnus"),
             },

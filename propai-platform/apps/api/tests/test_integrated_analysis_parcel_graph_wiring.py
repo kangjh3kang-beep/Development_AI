@@ -64,6 +64,8 @@ async def test_parcel_graph_field_present_and_additive_with_geometry(monkeypatch
     assert pg["status"] == "ok"
     assert pg["component_count"] == 1
     assert pg["geometry_unknown_pnus"] == []
+    # road_contact가 True/False로 확정돼 있으므로 판정 유보가 아니라 정상 판정("assessed").
+    assert pg["landlocked_risk"]["status"] == "assessed"
     assert "P-A" in pg["landlocked_risk"]["confirmed_pnus"] or pg["landlocked_risk"]["confirmed_pnus"] == []
     assert "n_minus_1" in pg and "P-A" in pg["n_minus_1"]
 
@@ -90,6 +92,10 @@ async def test_parcel_graph_honest_unknown_without_geometry(monkeypatch):
     assert sorted(pg["geometry_unknown_pnus"]) == ["P-A", "P-B"]
     assert pg["component_count"] == 0
     assert pg["articulation_points"] == []
+    # 이 세트는 road_contact 필드가 전혀 없다(접도 write-path 미배선, W2-6 후보) — 판정 유보를
+    # status로 명시해 빈 confirmed_pnus를 '맹지 없음'으로 오독하지 않도록 한다(R1 MEDIUM-2).
+    assert pg["landlocked_risk"]["status"] == "unknown(접도정보 미보유 — 판정 유보)"
+    assert pg["landlocked_risk"]["confirmed_pnus"] == []
 
 
 async def test_parcel_graph_failure_degrades_without_damaging_integrated_block(monkeypatch):
