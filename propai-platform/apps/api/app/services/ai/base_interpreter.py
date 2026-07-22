@@ -762,32 +762,17 @@ class BaseInterpreter:
 
     # ── P2: 공통 JSON 파서(expected_keys/fallback_key 파라미터화) ──
     def _parse_response(self, raw: str) -> dict[str, str]:
-        text = raw.strip()
-
-        # ```json ... ``` 코드블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[1:end])
+        from app.services.ai.llm_json import extract_json_text, parse_llm_json
 
         try:
-            parsed = json.loads(text)
+            parsed = parse_llm_json(raw)
         except json.JSONDecodeError:
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
-                    return {self.fallback_key: text[:500]} if self.fallback_key else {}
-            else:
-                logger.warning("AI 응답에서 JSON 미발견", interp=self.name, raw_length=len(raw))
-                return {self.fallback_key: text[:500]} if self.fallback_key else {}
+            logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
+        if not isinstance(parsed, dict):
+            # 기대 스키마는 항상 객체 — 리스트/스칼라 응답은 파싱 실패와 동일 취급.
+            logger.warning("AI 응답이 JSON 객체가 아님", interp=self.name, raw_length=len(raw))
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
 
         result: dict[str, str] = {}
         for key in self.expected_keys:

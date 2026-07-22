@@ -613,12 +613,22 @@ class RegulationAnalysisService:
         self, address: str, zone: str, zone2: str, area: Any,
         limits: dict, districts: list[dict], far_basis: str | None = None,
     ) -> dict[str, Any]:
+        # 초기화 단계를 호출 단계와 분리 — get_llm의 키 미설정 ValueError가 'parse'로
+        # 오분류되던 결함 교정(사유 정직성: import/provider/timeout/parse 각자 자리).
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
-
+        except Exception as e:  # noqa: BLE001
+            logger.warning("규제 LLM 모듈 로드 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
+            return self._llm_fallback(zone, districts, "import")
+        try:
+            llm = get_llm(timeout=60, max_tokens=2500)
+        except Exception as e:  # noqa: BLE001 — 키 미설정·모델 구성 오류 등
+            logger.warning("규제 LLM 초기화 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
+            return self._llm_fallback(zone, districts, "provider")
+        try:
             bcr = limits["bcr"]; far = limits["far"]
             # WP-R1: 실효 용적률 근거 문구(구조상한 등)를 프롬프트에 병기 → AI가 실효치를 정확히 서술.
             far_basis_note = f" — 실효 근거: {far_basis}" if far_basis else ""
@@ -632,37 +642,39 @@ class RegulationAnalysisService:
                 far_basis=far_basis_note,
                 districts=", ".join(f"{d['name']}({d['impact']})" for d in districts[:20]) or "-",
             )
-            llm = get_llm(timeout=60, max_tokens=2500)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="regulation")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-                raw = raw.strip()
-            data = json.loads(raw)
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
+            if not isinstance(data, dict):
+                raise json.JSONDecodeError("JSON 객체가 아닌 응답", doc="", pos=0)
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("규제 LLM 해석 실패, 폴백", err=str(e)[:100])
-            return {
-                "generated": False,
-                # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
-                # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
-                "fallback_reason": (
-                    "timeout" if "Timeout" in type(e).__name__
-                    else "parse" if type(e).__name__ in ("JSONDecodeError", "ValueError", "KeyError")
-                    else "import" if type(e).__name__ in ("ImportError", "ModuleNotFoundError")
-                    else "provider"
-                ),
-                "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
-                "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
-                "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
-                "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],
-                "opportunities": [],
-                "risks": [d["name"] for d in districts if d["impact"] in ("상", "중")][:3],
-            }
+            logger.warning("규제 LLM 해석 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
+            # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
+            # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
+            reason = (
+                "timeout" if "Timeout" in type(e).__name__
+                else "parse" if isinstance(e, (json.JSONDecodeError, KeyError))
+                else "provider"
+            )
+            return self._llm_fallback(zone, districts, reason)
+
+    @staticmethod
+    def _llm_fallback(zone: str, districts: list[dict], reason: str) -> dict[str, Any]:
+        """LLM 미가용 시의 정직 폴백(구조 요약) + coarse 사유."""
+        return {
+            "generated": False,
+            "fallback_reason": reason,
+            "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
+            "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
+            "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
+            "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],
+            "opportunities": [],
+            "risks": [d["name"] for d in districts if d["impact"] in ("상", "중")][:3],
+        }

@@ -54,7 +54,12 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     """
     import re as _re
 
-    from app.services.common.analysis_cache import _key, cache_get, cache_put
+    from app.services.common.analysis_cache import (
+        _key,
+        cache_get,
+        cache_put,
+        llm_fallback_stale,
+    )
     from app.services.regulation.regulation_analysis_service import (
         RegulationAnalysisService,
     )
@@ -84,10 +89,12 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     )
     cache_key = _key(addr, str(pnu), str(body.use_llm), _parcels_sig)
 
-    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환.
+    # ★단, LLM 폴백("AI 해석 일시 미제공")이 박제된 캐시는 유예(5분) 경과 시 miss로
+    #   취급해 재분석 → 성공 시 upsert로 덮어써 자가치유(폴백 영속화 결함 봉합).
     if not body.refresh:
         cached = await cache_get("regulation_analyze", cache_key)
-        if cached is not None:
+        if cached is not None and not (body.use_llm and llm_fallback_stale(cached)):
             return cached
 
     # 실제 분석 실행 → 저장 → 반환. parcels>=2면 서비스가 통합면적·우세용도로 보정.

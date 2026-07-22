@@ -231,15 +231,8 @@ class ConversationalMarketAI:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="market_ai")
-            raw = resp.content if hasattr(resp, "content") else str(resp)
-            txt = str(raw).strip()
-            if txt.startswith("```"):
-                txt = (
-                    txt.split("```")[1].lstrip("json").strip()
-                    if "```" in txt[3:]
-                    else txt.strip("`")
-                )
-            parsed = json.loads(txt)
+            from app.services.ai.llm_json import parse_llm_json
+            parsed = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             summary = parsed.get("summary")
             if not isinstance(summary, str) or not summary.strip():
                 return None

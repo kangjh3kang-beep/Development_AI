@@ -616,15 +616,15 @@ class MarketReportService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="market_report")
-            raw = resp.content if hasattr(resp, "content") else str(resp)
-            txt = raw.strip()
-            if txt.startswith("```"):
-                txt = txt.split("```")[1].lstrip("json").strip() if "```" in txt[3:] else txt.strip("`")
-            data = json.loads(txt)
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
+            if isinstance(data, dict):
+                # 폴백 판별 마커(additive) — 캐시 오염 방지 술어(llm_fallback_present)가 소비.
+                data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
             logger.warning("시장 내러티브 생성 실패, 구조화 폴백", err=str(e)[:80])
-            return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": "", "target_persona": "데이터 기반 타겟팅 분석 불가"}
+            return {"generated": False, "summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": "", "target_persona": "데이터 기반 타겟팅 분석 불가"}
 
     async def _nearby_presale_84_price(
         self, lawd_cd: str, coords: Any,
