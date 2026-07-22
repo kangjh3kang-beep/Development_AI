@@ -44,6 +44,42 @@ export const STATUS_LABEL: Record<string, string> = {
   CLOSED: "분양종료",
 };
 
+/**
+ * 현장 조직 node_type 라벨 SSOT — 백엔드 site_auth._ROLE_LABEL 정본과 1:1.
+ *
+ * ★봉합 배경(2026-07-22): 과거 같은 조직 노드가 조직도에선 DIRECTOR="이사"인데 수수료/더치페이
+ *   화면에선 "본부장"(GM_DIRECTOR="총괄본부장")으로 표시돼, 한 사람의 직급이 화면마다 달랐다.
+ *   정본은 로그인 역할 라벨(ROLE_LABEL)·백엔드와 동일한 '본부장(GM_DIRECTOR) > 이사(DIRECTOR)'.
+ *   조직도·수수료·더치페이가 모두 이 한 부를 소비한다(재발 방지). MGM 등 도메인 전용 항목은
+ *   소비처가 이 목록에 로컬로 덧붙인다(조직 node_type 이 아니므로 SSOT에 넣지 않는다).
+ */
+export const ORG_NODE_TYPES = [
+  "AGENCY",
+  "SUBAGENCY",
+  "GM_DIRECTOR",
+  "DIRECTOR",
+  "TEAM_LEADER",
+  "MEMBER",
+] as const;
+export type OrgNodeType = (typeof ORG_NODE_TYPES)[number];
+
+export const NODE_TYPE_LABEL: Record<OrgNodeType, string> = {
+  AGENCY: ROLE_LABEL.AGENCY, // 대행본사
+  SUBAGENCY: ROLE_LABEL.SUBAGENCY, // 대행지사
+  GM_DIRECTOR: ROLE_LABEL.GM_DIRECTOR, // 본부장
+  DIRECTOR: ROLE_LABEL.DIRECTOR, // 이사
+  TEAM_LEADER: ROLE_LABEL.TEAM_LEADER, // 팀장
+  MEMBER: ROLE_LABEL.MEMBER, // 직원
+};
+
+/** node_type → 라벨(미등록 값은 원문 폴백). */
+export const nodeTypeLabel = (t: string): string => NODE_TYPE_LABEL[t as OrgNodeType] ?? t;
+
+/** { value, label }[] 옵션 — 조직도/수수료 select 공용. 기본은 전 조직 node_type. */
+export const nodeTypeOptions = (
+  types: readonly string[] = ORG_NODE_TYPES,
+): { value: string; label: string }[] => types.map((value) => ({ value, label: nodeTypeLabel(value) }));
+
 // 현장 비밀번호 설정/변경 권한 역할(백엔드 _MANAGE_ROLES 정합). can_manage 응답을 우선 신뢰.
 export const MANAGE_ROLES = new Set(["SUPERADMIN", "DEVELOPER", "AGENCY", "GM_DIRECTOR"]);
 

@@ -3,10 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { Unit } from "@/store/useSalesStore";
-
-const C: Record<string, number> = {
-  AVAILABLE: 0x34d399, HOLD: 0xfbbf24, APPLIED: 0x38bdf8, CONTRACTED: 0xfb7185, CANCELLED: 0xa1a1aa,
-};
+import { unitStatusHex } from "@/components/sales/unitStatus"; // 색 인코딩 SSOT(배치도·보드와 동일)
 
 export default function Grid3D({ units, onSelect }: { units: Unit[]; onSelect: (u: Unit) => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -31,7 +28,7 @@ export default function Grid3D({ units, onSelect }: { units: Unit[]; onSelect: (
     const meshes: { mesh: THREE.Mesh; unit: Unit }[] = [];
     units.forEach((u) => {
       const g = new THREE.BoxGeometry(1.4, 1.0, 1.4);
-      const m = new THREE.MeshLambertMaterial({ color: C[u.status] ?? 0xcccccc });
+      const m = new THREE.MeshLambertMaterial({ color: unitStatusHex(u.status) });
       const cube = new THREE.Mesh(g, m);
       const dx = dongs.indexOf(u.dong) * 6;
       const lx = parseInt(u.line || "1", 10);

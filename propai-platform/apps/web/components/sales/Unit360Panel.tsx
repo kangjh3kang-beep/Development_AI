@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 import { useSalesStore } from "@/store/useSalesStore";
+import { unitStatusLabel } from "@/components/sales/unitStatus";
 
 interface Detail {
   unit: { dong: string; ho: string; floor: number; line: string; aspect?: string; status: string } | null;
@@ -17,9 +18,9 @@ interface UnitEvent {
   from_status?: string; to_status?: string; message?: string;
   occurred_at: string; content_hash: string;
 }
-const STATUS_LABEL: Record<string, string> = {
-  AVAILABLE: "분양가능", HOLD: "동·호지정 대기", APPLIED: "계약 대기", CONTRACTED: "계약 체결", CANCELLED: "취소",
-};
+// 상태 표시 라벨은 세대 상태 SSOT(unitStatus.unitStatusLabel) 소비 — 배치도·보드와 동일 표기.
+// ★아래 ACTIONS_BY_STATUS 의 label 은 '상태'가 아니라 그 상태에서 실행할 '액션(전이)' 캡션이므로
+//   별개다(예: AVAILABLE 에서 누르는 버튼 "동·호지정 대기"는 HOLD 로 보내는 동작 이름).
 // 현재 상태에서 가능한 액션(컨텍스트 메뉴).
 const ACTIONS_BY_STATUS: Record<string, { action: string; label: string; tone: "accent" | "warn" | "danger" }[]> = {
   AVAILABLE: [{ action: "HOLD_REQUEST", label: "동·호지정 대기", tone: "accent" }],
@@ -110,7 +111,7 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
       </div>
       <Section title="기본">
         <Row k="층/라인/향" v={`${selectedUnit.floor}F / ${selectedUnit.line} / ${selectedUnit.aspect ?? "-"}`} />
-        <Row k="상태" v={STATUS_LABEL[status] || status} />
+        <Row k="상태" v={unitStatusLabel(status)} />
         <Row k="분양가" v={d?.price ? won(d.price.total_price) : "-"} />
       </Section>
 
@@ -181,7 +182,7 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
               <li key={e.seq} className="relative">
                 <span className="absolute -left-[1.07rem] top-1 h-2 w-2 rounded-full bg-[var(--accent-strong)]" aria-hidden />
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-[var(--text-primary)]">{e.event_label}{e.to_status ? ` · ${STATUS_LABEL[e.to_status] || e.to_status}` : ""}</span>
+                  <span className="text-xs font-bold text-[var(--text-primary)]">{e.event_label}{e.to_status ? ` · ${unitStatusLabel(e.to_status)}` : ""}</span>
                   <span className="text-[10px] tabular-nums text-[var(--text-tertiary)]">{new Date(e.occurred_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}</span>
                 </div>
                 {e.message && <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{e.message}</p>}

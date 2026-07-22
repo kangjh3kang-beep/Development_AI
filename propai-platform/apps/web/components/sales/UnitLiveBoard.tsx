@@ -27,9 +27,16 @@ import {
   type UnitStatusEvent,
   type AuthErrorReason,
 } from "@/lib/unitBoardWs";
+import {
+  UNIT_STATUS_LABEL,
+  unitStatusCellClass,
+  type UnitStatus,
+} from "@/components/sales/unitStatus";
 
 // ── 보드 모델 ─────────────────────────────────────────────────────
-type BoardStatus = "AVAILABLE" | "HOLD" | "CONTRACTED";
+// ★status 는 5상태 전체(UnitStatus SSOT). 백엔드 board_rows.effective_status 는 CONTRACTED·CANCELLED·
+//   APPLIED 도 반환하므로 3상태로 좁히면 그 세대가 색맵 폴백으로 분양가능(초록)처럼 오표시된다.
+type BoardStatus = UnitStatus;
 
 interface BoardUnit {
   unit_id: string;
@@ -83,18 +90,19 @@ interface CustomerRow {
 type HoldTokens = Record<string, string>;
 type Toast = { tone: "ok" | "warn" | "err"; text: string };
 
-const COLOR: Record<string, string> = {
-  AVAILABLE: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25",
-  HOLD: "bg-amber-500/15 border-amber-500/40 text-amber-300",
-  HOLD_ME: "bg-[var(--accent-strong)] border-[var(--accent-strong)] text-white ring-2 ring-[var(--accent-strong)]",
-  CONTRACTED: "bg-rose-500/15 border-rose-500/40 text-rose-300",
-};
-const LABELS: Record<string, string> = {
-  AVAILABLE: "분양가능",
-  HOLD: "선점중(타인)",
-  HOLD_ME: "내 선점",
-  CONTRACTED: "계약완료",
-};
+// 색·라벨은 세대 상태 SSOT(unitStatus) 소비. HOLD_ME 는 실시간 보드 전용 view 변형(내가 선점한
+// 세대 = 소유권 강조·accent) — 기저 status 는 HOLD(지정대기) 이지만 화면에선 소유 여부로 구분한다.
+const HOLD_ME_CLASS =
+  "bg-[var(--accent-strong)] border-[var(--accent-strong)] text-white ring-2 ring-[var(--accent-strong)]";
+/** visualStatus(HOLD_ME 포함) → 셀 클래스. HOLD_ME 만 accent, 나머지는 SSOT(CANCELLED 등 정확히 표기). */
+const cellClass = (vs: string): string => (vs === "HOLD_ME" ? HOLD_ME_CLASS : unitStatusCellClass(vs));
+// 범례 — 실시간 보드가 보여줄 수 있는 상태 + '내 선점' view 변형.
+const LEGEND: { key: string; label: string }[] = [
+  { key: "AVAILABLE", label: UNIT_STATUS_LABEL.AVAILABLE },
+  { key: "HOLD", label: UNIT_STATUS_LABEL.HOLD },
+  { key: "HOLD_ME", label: "내 선점" },
+  { key: "CONTRACTED", label: UNIT_STATUS_LABEL.CONTRACTED },
+];
 
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return "00:00";
@@ -489,10 +497,10 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
           <RefreshCw className="size-3.5" aria-hidden /> 새로고침
         </button>
         <div className="ml-auto flex flex-wrap gap-3 text-xs">
-          {Object.entries(LABELS).map(([k, v]) => (
-            <span key={k} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
-              <i className={`inline-block h-3 w-3 rounded ${COLOR[k].split(" ")[0]}`} />
-              {v}
+          {LEGEND.map(({ key, label }) => (
+            <span key={key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+              <i className={`inline-block h-3 w-3 rounded ${cellClass(key).split(" ")[0]}`} />
+              {label}
             </span>
           ))}
         </div>
@@ -592,8 +600,8 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
                                       : u.ho
                                 }
                                 className={`relative flex h-14 w-16 flex-col items-center justify-center rounded border text-[11px] font-medium transition ${
-                                  COLOR[vs] ?? COLOR.AVAILABLE
-                                } ${clickable ? "cursor-pointer" : "cursor-default"} ${busy === u.unit_id ? "opacity-60" : ""}`}
+                                  cellClass(vs)
+                                } ${clickable ? "cursor-pointer hover:brightness-110" : "cursor-default"} ${busy === u.unit_id ? "opacity-60" : ""}`}
                               >
                                 <span className="font-bold">{u.ho}</span>
                                 {u.status === "HOLD" && !u.held_by_me && (

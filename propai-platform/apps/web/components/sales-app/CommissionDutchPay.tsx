@@ -26,6 +26,7 @@ import { salesApi, won } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { NumberInput } from "@/components/common/NumberInput";
 import { TrustBadge } from "@/components/common/TrustBadge";
+import { nodeTypeLabel } from "@/components/sales-app/roleConfig";
 
 // ── 타입(백엔드 응답 스키마 정합) ─────────────────────────────────────────────
 type Basis = "RATIO" | "AMOUNT";
@@ -102,14 +103,8 @@ interface DraftParticipant {
 }
 
 // ── 표시 상수 ────────────────────────────────────────────────────────────────
-const NODE_TYPE_LABEL: Record<string, string> = {
-  AGENCY: "분양대행사",
-  SUBAGENCY: "대대행",
-  GM_DIRECTOR: "총괄본부장",
-  DIRECTOR: "본부장",
-  TEAM_LEADER: "팀장",
-  MEMBER: "팀원",
-};
+// node_type 라벨은 roleConfig.nodeTypeLabel SSOT 소비(조직도·수수료와 동일 표기). 과거 로컬
+// 상수(분양대행사/대대행/총괄본부장/본부장/팀원)는 조직도(대행본사/이사/직원)와 갈라져 제거.
 
 const STATUS_META: Record<AgreementStatus, { label: string; cls: string }> = {
   pending: { label: "동의 대기", cls: "border-amber-400/40 bg-amber-500/10 text-amber-300" },
@@ -133,7 +128,7 @@ let _draftSeq = 0;
 const newDraftKey = () => `d${++_draftSeq}`;
 
 function nodeLabel(n: OrgNode): string {
-  const t = NODE_TYPE_LABEL[n.node_type] ?? n.node_type;
+  const t = nodeTypeLabel(n.node_type);
   return n.display_name ? `${n.display_name} (${t})` : t;
 }
 
