@@ -14,9 +14,11 @@
   설치돼 있지 않다(`ModuleNotFoundError: No module named 'scipy'` 실측 확인, 2026-07-23).
   따라서 `scipy.stats.qmc.LatinHypercube`/`Sobol`은 채택하지 않고:
   - LHS는 numpy만으로 자체 구현(표준 stratified permutation 방식).
-  - Sobol 1차 민감도는 정식 분산분해(A/B 재표본 행렬) 대신 "입력-출력 피어슨 상관계수
-    제곱"을 1차 근사로 사용한다(단조/선형 관계에서 분산기여의 합리적 근사 — 비선형·
-    상호작용 효과는 놓친다). `sobol_first_order()`의 `method` 필드에 이 강등을 명시한다.
+  - 1차 민감도(전역 분산 기여)는 정식 Sobol 분산분해(A/B 재표본 행렬) 대신 "입력-출력
+    피어슨 상관계수 제곱"을 1차 근사로 사용한다(단조/선형 관계에서 분산기여의 합리적
+    근사 — 비선형·상호작용 효과는 놓친다). `sensitivity_first_order_proxy()`의 `method`
+    필드에 이 강등을 명시한다(★R1-LOW#3: 함수명에 "Sobol"을 쓰지 않는다 — 실제 구현은
+    상관계수 제곱 근사이며 프로덕션 소비처 0건 확인돼 과대주장 명칭을 정직 개명).
 - 무목업 원칙: "저비용 평가(surrogate)" 단계는 학습된 ML 모델이 아니라, 호출자가 주입하는
   **기존 저비용 실계산기**(예: rough_scenario 계산기)를 그대로 쓴다. `Evaluation.evaluator_grade`
   는 "rough"|"precise" 중 하나로 정직 표기하며, 저비용 대안이 아예 없는 소비처는
@@ -221,11 +223,18 @@ def evaluate_candidates(
 def pareto_dominates(
     a: dict[str, float], b: dict[str, float], directions: dict[str, Direction]
 ) -> bool:
-    """a가 b를 지배하는가 — 모든 목적에서 a가 최소 동등 이상이며 최소 1개는 진짜 우수."""
+    """a가 b를 지배하는가 — 모든 목적에서 a가 최소 동등 이상이며 최소 1개는 진짜 우수.
+
+    ★R1-LOW#2: 목적 키가 후보에 없을 때 기본값 0.0은 minimize 목적에서 결측 후보를
+    '0(최우수)'로 오판할 위험이 있다(예: risk 결측 후보가 risk=0으로 채택돼 최우수처럼
+    보임). 방향별 최악값(maximize→-inf, minimize→+inf)을 기본값으로 써서, 결측 후보가
+    그 목적에서 항상 불리하게(최악으로) 취급되도록 한다 — 무음 우대 금지.
+    """
     at_least_as_good = True
     strictly_better = False
     for key, direction in directions.items():
-        av, bv = a.get(key, 0.0), b.get(key, 0.0)
+        worst = float("-inf") if direction == "maximize" else float("inf")
+        av, bv = a.get(key, worst), b.get(key, worst)
         if direction == "maximize":
             if av < bv:
                 at_least_as_good = False
@@ -275,7 +284,13 @@ class ShortlistItem:
 
 
 def shortlist(front: ParetoFront, k: int, rank_key: str) -> list[ShortlistItem]:
-    """Pareto front 내에서 rank_key 기준 상위 k개 선택 — 선택 근거를 문자열로 남긴다."""
+    """Pareto front 내에서 rank_key 기준 상위 k개 선택 — 선택 근거를 문자열로 남긴다.
+
+    ★R1-LOW#1: k<0(음수)을 파이썬 슬라이스(`ranked[:k]`)에 그대로 넘기면 "끝에서 |k|개
+    제외"로 무음 재해석돼 호출자 의도(상위 k개)와 다른 결과가 조용히 나온다. 음수는
+    명시적으로 0(빈 shortlist)으로 클램프한다(무음 절단 금지 — 의도한 동작을 코드로 명시).
+    """
+    k = max(0, k)
     direction = front.directions.get(rank_key, "maximize")
     ranked = sorted(
         front.members,
@@ -365,10 +380,16 @@ def run_pipeline(
     )
 
 
-def sobol_first_order(
+def sensitivity_first_order_proxy(
     samples: dict[str, Sequence[float]], objective: Sequence[float]
 ) -> dict[str, Any]:
-    """Sobol 1차 민감도(전역 분산 기여) — correlation-based 1차 근사.
+    """1차 민감도(전역 분산 기여) — correlation-based 1차 근사(Sobol 아님).
+
+    ★R1-LOW#3(2026-07-23): 함수명이 원래 `sobol_first_order`였으나, 프로덕션 소비처
+    0건(dead export) 실측 확인 + 실제 구현은 정식 Sobol 분산분해(A/B 재표본 행렬)가
+    아닌 상관계수 제곱 근사라 이름 자체가 과대주장이었다. `sensitivity_first_order_proxy`
+    로 개명해 "Sobol"이라는 특정 방법론을 실제로 구현한 것처럼 보이지 않게 한다(기존
+    이름은 제거 — 재도입 시 동일 실측 필요).
 
     ★스파이크 실측(모듈 docstring 참조): scipy.stats.qmc 기반 정식 Sobol 분산분해(A/B
     재표본 행렬 + Saltelli 시퀀스)는 이 venv에 scipy가 없어 채택하지 않는다. 대신
