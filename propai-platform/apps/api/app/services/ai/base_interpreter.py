@@ -696,7 +696,7 @@ class BaseInterpreter:
             return {}
 
         raw_text = response.content if hasattr(response, "content") else str(response)
-        result = self._parse_response(raw_text)
+        result, parse_ok = self._parse_response_ex(raw_text)
 
         # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
         # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
@@ -718,6 +718,17 @@ class BaseInterpreter:
         cached_total = cache_read + cache_creation
         cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
 
+        # 절단 정직 관측(절단감지 SSOT=llm_json.is_truncated) — 캡 도달 절단은 파서로
+        # 복구 불가한 별개 결함 클래스(2026-07-22 규제분석 실측: output==캡인 호출만 실패).
+        # 경고+텔레메트리 플래그로 표면화해, 절단 사냥이 포렌식이 아닌 쿼리가 되게 한다.
+        from app.services.ai.llm_json import is_truncated
+        truncated = is_truncated(response)
+        if truncated:
+            logger.warning(
+                "LLM 응답 절단(max_tokens 캡 도달)", interp=self.name,
+                max_tokens=self.max_tokens, output_tokens=output_tokens, parse_ok=parse_ok,
+            )
+
         # 자가성장 텔레메트리(설계서 §3.2): 빌링 정본(llm_usage_log)은 위에서 기록하고,
         # 여기서는 품질·지연 신호만 platform_events 에 1줄 push(논블로킹, 예외 안전).
         # ⚠️ 토큰/비용 중복 INSERT 아님 — 신호용 부가 이벤트.
@@ -737,6 +748,9 @@ class BaseInterpreter:
                         "cache_hit": cache_hit_ratio,
                         "cache_read": cache_read,
                         "retry": bool(self._retry_feedback),
+                        # 절단·파싱 신호(관측성) — 플릿 전체 절단율을 쿼리 1방으로.
+                        "truncated": truncated,
+                        "parse_ok": parse_ok,
                         # 자가성장 L1 A/B 집계용 — 이번 호출의 프롬프트 버전(기본 v2).
                         "prompt_version": self._resolve_prompt_version(),
                     },
@@ -754,29 +768,41 @@ class BaseInterpreter:
             cache_hit_ratio=cache_hit_ratio,
         )
 
-        # P4: 결과를 L1·L2 모두에 저장.
-        if cache_key and result:
+        # P4: 결과를 L1·L2 모두에 저장 — ★성공 파싱만. 파싱 폴백({fallback_key: 원문})은
+        # truthy라 기존엔 성공과 구분 없이 캐시에 박제됐다(#411 라우터 폴백 캐시오염과
+        # 동일 클래스·registry '성공만 캐시' 선례의 기반클래스 일반화). 폴백은 미저장 →
+        # 다음 호출이 재시도해 자가치유된다.
+        if cache_key and result and parse_ok:
             _RESULT_CACHE.set(cache_key, result)
             await _redis_set(redis_key, result)
         return result
 
     # ── P2: 공통 JSON 파서(expected_keys/fallback_key 파라미터화) ──
     def _parse_response(self, raw: str) -> dict[str, str]:
+        return self._parse_response_ex(raw)[0]
+
+    def _parse_response_ex(self, raw: str) -> tuple[dict[str, str], bool]:
+        """공통 파서 + 파싱 성공 여부.
+
+        두 번째 값(parse_ok)이 False면 반환 dict는 강등 폴백(원문 절삭) — _invoke가
+        이를 L1/L2 캐시에 박제하지 않기 위한 내부 계약(#411 폴백 캐시오염과 동일
+        클래스: 강등 결과가 truthy라 성공과 구분 없이 캐시되던 결함의 봉합점).
+        """
         from app.services.ai.llm_json import extract_json_text, parse_llm_json
 
         try:
             parsed = parse_llm_json(raw)
         except json.JSONDecodeError:
             logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
-            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
+            return ({self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}), False
         if not isinstance(parsed, dict):
             # 기대 스키마는 항상 객체 — 리스트/스칼라 응답은 파싱 실패와 동일 취급.
             logger.warning("AI 응답이 JSON 객체가 아님", interp=self.name, raw_length=len(raw))
-            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
+            return ({self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}), False
 
         result: dict[str, str] = {}
         for key in self.expected_keys:
             val = parsed.get(key)
             if val is not None:
                 result[key] = str(val)
-        return result
+        return result, True
