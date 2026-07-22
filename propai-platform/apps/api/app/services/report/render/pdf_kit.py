@@ -262,6 +262,18 @@ def approval_badge(meta, font: str):
     return t
 
 
+def draft_warning_notice(warning_count: int, font: str):
+    """W1-C R2(soft-gate 경고): DRAFT/MACHINE_VALIDATED 문서에 소프트게이트 경고가 있으면
+    표지에 눈에 띄는 경고 문구를 얹는다(정직표기 강화). warning_count<=0 이면 호출부가 생략."""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+
+    st = styles(font)
+    text = f"⚠ 미검증 단정 표현 {warning_count}건 포함(내부 초안)"
+    pstyle = ParagraphStyle("prds_draft_warning", parent=st["caption"], textColor=_c(T.SIGNAL["warn"]), fontSize=9)
+    return Paragraph(f"<b>{_esc(text)}</b>", pstyle)
+
+
 def footer_callback(meta):
     """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백."""
 

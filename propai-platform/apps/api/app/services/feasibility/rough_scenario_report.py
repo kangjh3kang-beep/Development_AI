@@ -47,6 +47,7 @@ from app.services.report.render.model import (
     Series,
     fmt_value,
 )
+from app.services.report.render.publish_gate import check_publishable
 from app.services.report.render.tokens import SIGNAL
 from app.services.senior_agents.consultation_hook import attach_senior_consultation_multi
 
@@ -601,13 +602,20 @@ def _model_to_json(
     ai_included: bool,
     ai_note: str,
 ) -> dict[str, Any]:
-    """정본 ReportModel + 원천 데이터 → 구조화 JSON 보고서(정직 플래그 포함)."""
+    """정본 ReportModel + 원천 데이터 → 구조화 JSON 보고서(정직 플래그 포함).
+
+    ★W1-C(R2) 게이트 스코프 결정: 이 경로는 render_report(바이너리 포맷 전용 hard-block)를
+    거치지 않는다 — JSON은 프리뷰/구조화 소비 채널로 간주해 **절대 차단하지 않는다**. 대신
+    check_publishable 을 직접 호출해 violations/warnings 를 "gate" 필드로 정직하게 동봉한다
+    (engine.py render_report 의 스코프 결정 문서 참조).
+    """
     opinion_label, opinion_reason = _investment_opinion(scenario, consultation)
     toc: list[str] = []
     if model.exec_summary is not None:
         toc.append(model.exec_summary.title)
     for s in model.sections:
         toc.append(f"{s.section_no}. {s.title}" if s.section_no else s.title)
+    gate = check_publishable(model)
     return {
         "meta": dataclasses.asdict(model.meta),
         "toc": toc,
@@ -620,6 +628,12 @@ def _model_to_json(
         "degraded_notes": scenario.get("degraded_notes") or [],
         # ★정직 플래그: AI 시니어 서술 포함 여부·사유를 숨기지 않는다.
         "honesty": {"use_llm": use_llm, "ai_included": ai_included, "ai_note": ai_note},
+        # ★W1-C(R2): JSON은 게이트를 절대 차단하지 않되(위 docstring), 발견된 위반/경고는
+        #   정보성으로 그대로 노출한다(호출부가 UI 경고 배지 등에 활용 가능).
+        "gate": {
+            "violations": [{"code": v.code, "message": v.message} for v in gate.violations],
+            "warnings": [{"code": v.code, "message": v.message} for v in gate.warnings],
+        },
     }
 
 

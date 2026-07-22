@@ -19,10 +19,17 @@ from .model import (
     Section,
     fmt_value,
 )
+from .publish_gate import GateViolation
 
 
-def render_pdf(model: ReportModel) -> bytes:
-    """정본 모델 → PDF bytes."""
+def render_pdf(model: ReportModel, gate_warnings: list[GateViolation] | None = None) -> bytes:
+    """정본 모델 → PDF bytes.
+
+    gate_warnings: publish_gate.check_publishable 의 soft 경고(DRAFT/MACHINE_VALIDATED 전용).
+      전달되면(비어있지 않으면) 표지에 "⚠ 미검증 단정 표현 N건" 문구를 얹는다(W1-C R2).
+      None(기본값)은 render_pdf 를 엔진 경유 없이 직접 호출하는 경우를 위한 안전 기본값 —
+      경고문구를 생략할 뿐 렌더 자체는 항상 무회귀로 통과한다.
+    """
     font = K.register_font()
     st = K.styles(font)
     buf = io.BytesIO()
@@ -44,6 +51,9 @@ def render_pdf(model: ReportModel) -> bytes:
     el.append(Paragraph(K._esc(T.BRANDING), st["caption"]))
     el.append(Spacer(1, 2 * mm))
     el.append(K.approval_badge(model.meta, font))
+    if gate_warnings:
+        el.append(Spacer(1, 1 * mm))
+        el.append(K.draft_warning_notice(len(gate_warnings), font))
     if model.meta.confidential:
         el.append(Spacer(1, 2 * mm))
         el.append(Paragraph(
