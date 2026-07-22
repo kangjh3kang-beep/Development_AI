@@ -49,11 +49,15 @@ TIER_LABELS: dict[QtoTier, str] = {
 
 # ── 항목(dict) 레벨 분류 신호 — 첫 일치 우선 ──
 
-# boq_bim_merge.merge_bim 의 qty_source(항목별 부착).
-_QTY_SOURCE_TIER: dict[str, QtoTier] = {
-    "user": QtoTier.Q1_MEASURED,       # 사용자 직접 입력(현장 확정 수량)
-    "bim": QtoTier.Q1_MEASURED,        # BIM 요소 실측 물량(1:1 매칭, boq_bim_merge)
-    "parametric": QtoTier.Q2_PARAMETRIC,  # 실적 원단위 스케일링(gfa/세대/조경 비례)
+# boq_bim_merge.merge_bim 의 qty_source(항목별 부착) → (tier, 근거 라벨).
+# ★R1 정직화: user 와 bim 은 둘 다 Q1(직접 물량)이지만 근거가 다르다 — user 는 "현장
+# 실측"이 아니라 "사용자가 직접 입력한 확정 수량"(계약서·수기 산출 등)이라, 라벨에
+# '실측'을 쓰지 않는다(P9 스펙은 Q1을 '직접 물량'으로만 정의하고 실측/확정을 세분하지
+# 않으므로 tier 재분류는 하지 않되, tier_basis 문구만 정직하게 구분한다 — 무날조).
+_QTY_SOURCE_INFO: dict[str, tuple[QtoTier, str]] = {
+    "user": (QtoTier.Q1_MEASURED, "사용자 확정 수량(현장 실측 아님 — 확정치)"),
+    "bim": (QtoTier.Q1_MEASURED, "BIM 요소 실측 물량(1:1 매칭, boq_bim_merge)"),
+    "parametric": (QtoTier.Q2_PARAMETRIC, "실적 원단위 스케일링(gfa/세대/조경 비례)"),
 }
 
 # boq_builder.build_boq 의 qto_source(항목 전체 공통값).
@@ -71,6 +75,12 @@ _DRIVER_TIER: dict[str, QtoTier] = {
 }
 
 # 항목명 키워드(qty_source/qto_source/driver 신호가 없는 항목의 최후 폴백 — 실제 관측 문자열).
+# ★R1 LOW③ 한계: 이름 키워드 매칭은 구조화 신호(qty_source 등)가 전혀 없을 때만 쓰는
+# 최후 수단 휴리스틱이다 — 부분 문자열 매칭이라 오탐 가능(예: 실제로는 계수 산정이
+# 아닌 항목이 우연히 '이윤분배금' 처럼 힌트 문자열을 포함하면 오분류될 수 있다).
+# 구조화 신호가 있는 모든 실제 소비처(boq_bim_merge/boq_builder/boq_parametric_engine)는
+# 이 폴백에 도달하지 않는다 — 이름 매칭은 향후 새 소비처의 임시 안전망일 뿐, 상시
+# 신뢰 경로로 승격하지 말 것.
 _ALLOWANCE_NAME_HINTS: tuple[str, ...] = ("contingency", "예비비", "우발상황비", "allowance")
 _FACTORED_NAME_HINTS: tuple[str, ...] = (
     "design_fee", "supervision_fee", "general_expense",
@@ -85,9 +95,9 @@ def classify_item(item: dict[str, Any]) -> dict[str, Any]:
     반환: {"tier": QtoTier, "tier_basis": str(판정 근거)}.
     """
     qty_source = item.get("qty_source")
-    if qty_source in _QTY_SOURCE_TIER:
-        tier = _QTY_SOURCE_TIER[qty_source]
-        return {"tier": tier, "tier_basis": f"qty_source={qty_source!r} — {TIER_LABELS[tier]}"}
+    if qty_source in _QTY_SOURCE_INFO:
+        tier, note = _QTY_SOURCE_INFO[qty_source]
+        return {"tier": tier, "tier_basis": f"qty_source={qty_source!r} — {note}"}
 
     qto_source = item.get("qto_source")
     if qto_source in _QTO_SOURCE_TIER:
@@ -105,11 +115,11 @@ def classify_item(item: dict[str, Any]) -> dict[str, Any]:
     for hint in _ALLOWANCE_NAME_HINTS:
         if hint in name_lower or hint in name:
             tier = QtoTier.Q4_ALLOWANCE
-            return {"tier": tier, "tier_basis": f"항목명 '{hint}' 매칭 — {TIER_LABELS[tier]}"}
+            return {"tier": tier, "tier_basis": f"항목명 '{hint}' 매칭(최후 폴백 휴리스틱) — {TIER_LABELS[tier]}"}
     for hint in _FACTORED_NAME_HINTS:
         if hint in name_lower or hint in name:
             tier = QtoTier.Q3_FACTORED
-            return {"tier": tier, "tier_basis": f"항목명 '{hint}' 매칭 — {TIER_LABELS[tier]}"}
+            return {"tier": tier, "tier_basis": f"항목명 '{hint}' 매칭(최후 폴백 휴리스틱) — {TIER_LABELS[tier]}"}
 
     return {
         "tier": QtoTier.UNKNOWN,
@@ -121,6 +131,11 @@ def classify_item(item: dict[str, Any]) -> dict[str, Any]:
 # 집계값(direct_cost·total_labor_cost·net_construction_cost·construction_cost_pre_vat·
 # total_project_cost 등)은 서로 다른 tier 항목의 합이라 단일 tier 로 표기할 수 없어
 # 매핑에서 **제외**한다(억지 분류 금지 — origin_cost_calculator.py 자체는 무변경).
+# ★R1 HIGH 수정(이중계상): insurance_total 은 아래 6개 보험료 항목(industrial_acc_ins~
+# retirement_fund)의 **소계**다 — 이 6개와 insurance_total 을 동시에 매핑하면 같은 금액이
+# Q3 버킷에 두 번 더해진다(리뷰어 실증: Q3 금액 +15.5%·분포 3.1pp 왜곡). "집계값은 매핑
+# 제외" 원칙을 insurance_total 에도 동일 적용해 명단에서 제거한다(개별 6항목만 유지 —
+# 소계는 net_construction_cost 등과 마찬가지로 파생값이지 원본 계수 라인이 아니다).
 ORIGIN_COST_KEY_TIER: dict[str, QtoTier] = {
     "indirect_labor_cost": QtoTier.Q3_FACTORED,   # 직접노무비 × 14.40%(RATES_2026)
     "industrial_acc_ins": QtoTier.Q3_FACTORED,    # 노무비 × 3.50%
@@ -129,7 +144,7 @@ ORIGIN_COST_KEY_TIER: dict[str, QtoTier] = {
     "national_pension": QtoTier.Q3_FACTORED,      # 노무비 × 4.75%
     "long_term_care": QtoTier.Q3_FACTORED,        # 노무비 × 0.4724%
     "retirement_fund": QtoTier.Q3_FACTORED,       # 노무비 × 2.10%
-    "insurance_total": QtoTier.Q3_FACTORED,       # 상기 보험료 소계(전부 Q3의 합)
+    # "insurance_total" 은 위 6개 보험료의 소계(집계값) — 이중계상 방지를 위해 매핑 제외.
     "safety_health": QtoTier.Q3_FACTORED,         # (재료비+노무비) × 2.07%
     "env_preserve": QtoTier.Q3_FACTORED,          # (재료비+노무비) × 0.16%
     "general_mgmt": QtoTier.Q3_FACTORED,          # 순공사원가 × 5.50%
@@ -176,7 +191,13 @@ def summarize_tiers(
         tagged.append({**it, **cls})
         bucket = by_tier[cls["tier"].value]
         bucket["count"] += 1
+        # ★R1 LOW② 방어적 폴백: amount_key(기본 'amount')가 없으면 'cost_won'(geometry_qto
+        # 계열 관례 필드명)으로 재시도한다 — 호출자가 geometry_takeoff류 항목을 amount_key
+        # 지정 없이 넘기면 조용히 0으로 잠식(무기여 착시)되는 것을 방지(값 자체는 무변경,
+        # 우선순위는 amount_key 그대로 — cost_won 은 amount_key 부재 시에만 참조).
         amt = it.get(amount_key)
+        if amt is None and amount_key != "cost_won":
+            amt = it.get("cost_won")
         if isinstance(amt, (int, float)) and not isinstance(amt, bool):
             bucket["amount_won"] += float(amt)
 

@@ -42,8 +42,14 @@ class TestBuildBoqTierDistribution:
         )
         td = boq["summary"]["tier_distribution"]
         by_tier = td["by_tier"]
-        # 원가계산서 12단계 요율 항목(indirect_labor~vat, 보험료 소계 포함 13개)이 Q3 로 집계.
-        assert by_tier["Q3_FACTORED"]["count"] == 13
+        # 원가계산서 12단계 요율 항목(indirect_labor~vat)이 Q3 로 집계된다.
+        # ★R1 HIGH 교정(R2): 이 단언은 원래 "13"이었다 — insurance_total(보험료 6항목의
+        # 소계, 집계값)까지 ORIGIN_COST_KEY_TIER 에 매핑되어 개별 보험료 6항목과 함께
+        # Q3 금액에 이중 합산되고 있었는데, 이 단언이 그 결함을 "정상"으로 고정하고
+        # 있었다(기존테스트가 결함을 고정하는 패턴의 실사례). insurance_total 매핑 제거
+        # 후 올바른 개수(12 = indirect_labor_cost + 보험료 6항목 + safety_health +
+        # env_preserve + general_mgmt + profit + vat)로 교정한다.
+        assert by_tier["Q3_FACTORED"]["count"] == 12
         assert by_tier["Q2_PARAMETRIC"]["count"] == len(boq["items"])
         assert by_tier["Q3_FACTORED"]["amount_won"] > 0
 

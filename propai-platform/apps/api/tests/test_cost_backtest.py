@@ -126,10 +126,35 @@ class TestGracefulDbFailure:
             raise RuntimeError("db down")
 
         monkeypatch.setattr(dbm, "async_session_factory", _boom)
-        r = await compute_accuracy()
+        r = await compute_accuracy(tenant_id="t1")
         assert r["ok"] is False
         assert r["mape"] is None
         assert r["reason"] is not None
+
+
+class TestComputeAccuracyTenantScope:
+    """★R1 MEDIUM 봉합(§13 IDOR 클래스 선제 봉합) — tenant_id 필수화 검증."""
+
+    @pytest.mark.asyncio
+    async def test_tenant_id_누락시_TypeError(self):
+        # tenant_id 는 기본값 없는 필수 키워드 인자 — 호출 자체가 거부된다.
+        with pytest.raises(TypeError):
+            await compute_accuracy()  # type: ignore[call-arg]
+
+    @pytest.mark.asyncio
+    async def test_tenant_id_빈문자열이면_deny_all(self):
+        # 타입힌트를 우회해 빈 값을 명시적으로 넘겨도(2중 방어) 쿼리 없이 거부.
+        r = await compute_accuracy(tenant_id="")
+        assert r["ok"] is False
+        assert r["n_pairs"] == 0
+        assert r["mape"] is None
+        assert "tenant_id" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_tenant_id_None이면_deny_all(self):
+        r = await compute_accuracy(tenant_id=None)  # type: ignore[arg-type]
+        assert r["ok"] is False
+        assert "tenant_id" in r["reason"]
 
 
 class TestRoundTripAgainstDb:
@@ -153,13 +178,19 @@ class TestRoundTripAgainstDb:
             pytest.skip("로컬 개발 DB 미가용 — 라운드트립 skip(CI 기본 상태)")
 
         eid = f"w3s3-roundtrip-{uuid.uuid4().hex[:12]}"
+        tenant = f"w3s3-tenant-{uuid.uuid4().hex[:8]}"
         try:
-            rec = await record_estimate(estimate_id=eid, predicted_total_won=1_000_000)
+            rec = await record_estimate(
+                estimate_id=eid, predicted_total_won=1_000_000, tenant_id=tenant)
             assert rec["ok"] is True
             act = await record_actual(estimate_id=eid, actual_total_won=900_000, source_note="테스트")
             assert act["ok"] is True
 
-            result = await compute_accuracy()
+            # 다른 테넌트로 조회하면 매칭 0건(스코프 격리 확인).
+            other = await compute_accuracy(tenant_id="w3s3-other-tenant")
+            assert not any(it["estimate_id"] == eid for it in other["items"])
+
+            result = await compute_accuracy(tenant_id=tenant)
             assert result["ok"] is True
             matched = [it for it in result["items"] if it["estimate_id"] == eid]
             assert len(matched) == 1

@@ -259,14 +259,29 @@ def compute_stats_from_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_NO_TENANT_REASON = "tenant_id 필수 — 테넌트 스코프 없는 조회는 거부(IDOR 방지)"
+
+
 async def compute_accuracy(
-    *, project_id: str | None = None, tenant_id: str | None = None,
+    *, tenant_id: str, project_id: str | None = None,
 ) -> dict[str, Any]:
     """예측(cost_backtest_prediction) ⋈ 실적(cost_backtest_actual)을 조인해 정확도를 계산한다.
+
+    ★R1 MEDIUM 봉합(§13 IDOR 클래스 선제 봉합): tenant_id 는 필수 키워드 인자다(기본값
+    없음 — 호출 시 누락하면 TypeError). 아직 어떤 라우터도 이 함수를 호출하지 않지만,
+    나중에 엔드포인트가 노출되는 순간 테넌트 스코프를 빠뜨리면 즉시 크로스테넌트 조회가
+    가능해지는 잠복 IDOR 이라, 이 시점에 계약으로 막는다. 타입힌트를 우회해 빈 문자열/
+    None 을 명시적으로 넘겨도(방어적 2중 체크) 쿼리를 실행하지 않고 deny-all(ok=False)
+    로 거부한다 — project_id 는 부가 필터로만 additive.
 
     실적이 하나도 매칭되지 않으면(현재 플랫폼 상태) 가짜 숫자 없이 null + 사유를 반환한다.
     DB 조회 실패 시에도 동일하게 정직 실패(ok=False)로 반환한다(예외 흡수 — 호출부 무중단).
     """
+    if not tenant_id:
+        return {
+            "ok": False, "n_pairs": 0, "mape": None, "bias_pct": None,
+            "items": [], "outliers": [], "reason": _NO_TENANT_REASON,
+        }
     try:
         from sqlalchemy import text
 
@@ -274,15 +289,12 @@ async def compute_accuracy(
 
         async with async_session_factory() as db:
             await _ensure_backtest_tables(db)
-            clauses = []
-            params: dict[str, Any] = {}
+            clauses = ["p.tenant_id = :tid"]
+            params: dict[str, Any] = {"tid": tenant_id}
             if project_id:
                 clauses.append("p.project_id = :pid")
                 params["pid"] = project_id
-            if tenant_id:
-                clauses.append("p.tenant_id = :tid")
-                params["tid"] = tenant_id
-            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            where = f"WHERE {' AND '.join(clauses)}"
             rows = (await db.execute(text(
                 "SELECT p.estimate_id, p.predicted_total_won, a.actual_total_won "
                 "FROM cost_backtest_prediction p "

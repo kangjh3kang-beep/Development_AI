@@ -29,9 +29,21 @@ class TestClassifyItemQtySource:
         r = classify_item({"qty_source": "user"})
         assert r["tier"] == QtoTier.Q1_MEASURED
 
+    def test_user_입력_라벨은_확정치이지_실측이_아님(self):
+        # ★오케스트레이터 OpenQ 판정: user 는 Q1 유지하되 라벨은 정직화 — "현장 실측"을
+        # 무조건 주장하지 않고, 오히려 "실측 아님(확정치)"임을 명시한다.
+        r = classify_item({"qty_source": "user"})
+        assert "확정" in r["tier_basis"]
+        assert "실측 아님" in r["tier_basis"]
+        assert "BIM" not in r["tier_basis"]
+
     def test_bim_실측은_Q1(self):
         r = classify_item({"qty_source": "bim"})
         assert r["tier"] == QtoTier.Q1_MEASURED
+
+    def test_bim_라벨은_실측_명시(self):
+        r = classify_item({"qty_source": "bim"})
+        assert "실측" in r["tier_basis"]
 
     def test_parametric은_Q2(self):
         r = classify_item({"qty_source": "parametric"})
@@ -111,6 +123,25 @@ class TestClassifyOriginCostKeys:
     def test_calc에_없는_키는_생략(self):
         out = classify_origin_cost_keys({"vat": 100})
         assert list(out.keys()) == ["vat"]
+
+    def test_insurance_total은_이중계상_방지위해_매핑에서_제외(self):
+        """★R1 HIGH 회귀가드: insurance_total(6개 보험료의 소계)이 개별 6항목과
+        함께 Q3 로 다시 잡히면 같은 금액이 두 번 합산된다(리뷰어 실증: Q3 +15.5%).
+        ORIGIN_COST_KEY_TIER·classify_origin_cost_keys 양쪽에서 배제되어야 한다."""
+        assert "insurance_total" not in ORIGIN_COST_KEY_TIER
+        calc = {
+            "industrial_acc_ins": 10, "employment_ins": 5, "health_ins": 8,
+            "national_pension": 12, "long_term_care": 1, "retirement_fund": 6,
+            "insurance_total": 42,  # 위 6개의 합(집계값)
+        }
+        out = classify_origin_cost_keys(calc)
+        assert "insurance_total" not in out
+        assert len(out) == 6  # 개별 보험료 6항목만 분류(소계 제외)
+
+    def test_ORIGIN_COST_KEY_TIER_12개(self):
+        # indirect_labor_cost·보험료 6항목·safety_health·env_preserve·general_mgmt·
+        # profit·vat = 12개(insurance_total 소계 제외).
+        assert len(ORIGIN_COST_KEY_TIER) == 12
 
 
 class TestSummarizeTiers:
