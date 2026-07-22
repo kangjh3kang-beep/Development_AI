@@ -372,8 +372,17 @@ class BaseAPIClient:
             EXTERNAL_API_REQUESTS.labels(self.service_name, method, "error").inc()
             _emit_growth_fallback(self.service_name, self.circuit_breaker.state)  # 성장엔진 관측(로직불변·best-effort)
             logger.error("외부 API 호출 실패", service=self.service_name, error=str(e))
-            # SourceSnapshot dead-letter 기록(W2-1, opt-in·best-effort) — 재시도 소진(사실상
-            # 이 except 도달 자체가 재시도 경로의 최종 실패다) 응답을 dead-letter로 분리한다.
+            # SourceSnapshot dead-letter 기록(W2-1, opt-in·best-effort).
+            # ★정정(R1): "재시도 소진 후 1회 기록"이 아니다 — 여기서 ExternalServiceError로
+            #   재래핑해서 던지므로, 위 @retry(retry_if_exception_type=httpx.HTTPStatusError)는
+            #   실제로는 결코 재시도를 발동시키지 못한다(재래핑된 예외 타입이 일치하지 않음
+            #   — 선재하는 별도 결함, 이번 W2-1 범위 밖). 그 덕에 지금은 이 except가 "요청당
+            #   정확히 1회"만 실행되고, 그 부수효과로 dead-letter도 1회만 쌓인다.
+            #   ★향후 그 재시도 결함을 고쳐 실제 재시도가 동작하게 되면, 이 except가 시도마다
+            #   (최대 3회) 실행되어 같은 논리적 요청에 dead-letter가 중복 적재될 수 있다 —
+            #   그때는 request_fingerprint 기준 짧은 시간창 내 중복 무해화(예: 같은 fingerprint가
+            #   최근 N초 내 이미 DEAD_LETTER로 있으면 재기록 skip)를 추가하거나, 기록 위치를
+            #   재시도 전체를 감싸는 바깥 레이어로 옮기는 구조변경이 필요하다.
             await self._record_snapshot_dead_letter(
                 method=method, path=path, params=params,
                 payload_bytes=getattr(response, "content", None),
@@ -406,8 +415,12 @@ class BaseAPIClient:
                 params=params, payload_bytes=payload_bytes, http_status=http_status,
                 source_name=self.source_name, authority_grade=self.authority_grade,
             )
-        except Exception:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
-            pass
+        except Exception as e:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
+            # ★R1 MEDIUM: 이 바깥 except는 source_snapshot 모듈 자체의 import 실패 등
+            #   safe_record_success 내부 try/except보다도 더 이례적인 실패를 뜻한다(무음
+            #   skip 금지 — 최소한 warning으로 남긴다).
+            logger.warning("SourceSnapshot 훅 실패(성공응답, 임포트/호출 단계)",
+                            service=self.service_name, error=str(e)[:160])
 
     async def _record_snapshot_dead_letter(
         self, *, method: str, path: str, params: dict | None,
@@ -425,8 +438,9 @@ class BaseAPIClient:
                 source_name=self.source_name, authority_grade=self.authority_grade,
                 error_message=error_message,
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 — R1 MEDIUM: 위 _record_snapshot_ok와 동일 사유(무음 skip 금지).
+            logger.warning("SourceSnapshot 훅 실패(dead-letter, 임포트/호출 단계)",
+                            service=self.service_name, error=str(e)[:160])
 
     async def _alert_ops(self, message: str) -> None:
         """Slack #propai-alerts 채널로 장애 알림을 전송한다.

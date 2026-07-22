@@ -60,8 +60,10 @@ async def _snapshot_success(url: str, params: dict, payload_bytes: bytes, http_s
             payload_bytes=payload_bytes, http_status=http_status,
             source_name=_SNAPSHOT_SOURCE_NAME, authority_grade=_SNAPSHOT_AUTHORITY_GRADE,
         )
-    except Exception:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
-        pass
+    except Exception as e:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
+        # ★R1 MEDIUM: 무음 skip 금지 — 이 바깥 except는 source_snapshot 모듈 임포트 실패 등
+        #   내부 safe_record_success보다 더 이례적인 실패라 최소한 warning으로 남긴다.
+        logger.warning("G2B SourceSnapshot 훅 실패(성공응답, 임포트/호출 단계): %s", str(e)[:160])
 
 
 async def _snapshot_dead_letter(
@@ -80,8 +82,8 @@ async def _snapshot_dead_letter(
             source_name=_SNAPSHOT_SOURCE_NAME, authority_grade=_SNAPSHOT_AUTHORITY_GRADE,
             error_message=error_message,
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001 — R1 MEDIUM: 위 _snapshot_success와 동일 사유(무음 skip 금지).
+        logger.warning("G2B SourceSnapshot 훅 실패(dead-letter, 임포트/호출 단계): %s", str(e)[:160])
 
 
 class G2BRateLimiter:

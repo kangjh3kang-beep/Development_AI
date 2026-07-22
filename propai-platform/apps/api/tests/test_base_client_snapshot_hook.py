@@ -140,3 +140,60 @@ def test_base_client_default_snapshot_flags():
     assert BaseAPIClient.snapshot_enabled is False
     assert BaseAPIClient.source_name is None
     assert BaseAPIClient.authority_grade is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 무음 실패 해소(★R1 MEDIUM-1) — 바깥 except(임포트/호출 단계 실패)도 warning으로 남는지
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class _CapturingLogger:
+    def __init__(self):
+        self.warnings: list[tuple] = []
+
+    def warning(self, *a, **k):
+        self.warnings.append((a, k))
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: None
+
+
+async def test_record_snapshot_ok_outer_exception_logs_warning(monkeypatch):
+    client = _DummyClient()
+    client.snapshot_enabled = True
+
+    async def _boom(**kwargs):
+        raise RuntimeError("boom")
+
+    import app.services.provenance.source_snapshot as ss
+    monkeypatch.setattr(ss, "safe_record_success", _boom)
+
+    import apps.api.integrations.base_client as bc
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(bc, "logger", fake_logger)
+
+    await client._record_snapshot_ok(
+        method="GET", path="/x", params=None, payload_bytes=b"{}", http_status=200,
+    )
+    assert len(fake_logger.warnings) == 1
+
+
+async def test_record_snapshot_dead_letter_outer_exception_logs_warning(monkeypatch):
+    client = _DummyClient()
+    client.snapshot_enabled = True
+
+    async def _boom(**kwargs):
+        raise RuntimeError("boom")
+
+    import app.services.provenance.source_snapshot as ss
+    monkeypatch.setattr(ss, "safe_record_dead_letter", _boom)
+
+    import apps.api.integrations.base_client as bc
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(bc, "logger", fake_logger)
+
+    await client._record_snapshot_dead_letter(
+        method="GET", path="/x", params=None, payload_bytes=None,
+        http_status=None, error_message="x",
+    )
+    assert len(fake_logger.warnings) == 1

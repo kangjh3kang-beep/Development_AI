@@ -1,8 +1,9 @@
-"""SourceSnapshot 계약 테스트 (W2-1).
+"""SourceSnapshot 계약 테스트 (W2-1, R1 R2 봉합 포함).
 
-순수 헬퍼(마스킹·checksum·지문·절단)는 DB 없이, 기록/조회(safe_record_*·get_by_*)는
-app/services/ai/base_interpreter fewshot 테스트와 동형의 인메모리 fake session으로
-실 Postgres 없이 검증한다(analysis_ledger_service._ensure 동형 DDL 경로 포함).
+순수 헬퍼(마스킹·checksum·지문·절단·error_message 스크러빙)는 DB 없이, 기록/조회
+(safe_record_*·get_by_*)는 app/services/ai/base_interpreter fewshot 테스트와 동형의
+인메모리 fake session으로 실 Postgres 없이 검증한다(analysis_ledger_service._ensure
+동형 DDL 경로 포함).
 """
 from __future__ import annotations
 
@@ -10,10 +11,22 @@ import hashlib
 import json
 import uuid
 
+import httpx
+import pytest
+
 from app.services.provenance import source_snapshot as ss
 
+
+@pytest.fixture(autouse=True)
+def _reset_schema_ready_flag(monkeypatch):
+    """_SCHEMA_READY 모듈 전역을 매 테스트 시작 전 False로 되돌린다(R1 MEDIUM-3 1회화
+    플래그를 테스트했을 때, 어떤 테스트가 먼저 실행되든 _ensure의 to_regclass 왕복 여부가
+    결정론적이도록 — 순서 의존 플레이키 방지)."""
+    monkeypatch.setattr(ss, "_SCHEMA_READY", False)
+
+
 # ══════════════════════════════════════════════════════════════════════════
-# 1) 순수 헬퍼 — 마스킹·지문·checksum·절단(DB 불요)
+# 1) 순수 헬퍼 — 마스킹·지문·checksum·절단·error_message 스크러빙(DB 불요)
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -120,6 +133,45 @@ def test_default_payload_limit_is_512kb():
     assert ss.PAYLOAD_LIMIT_BYTES == 512 * 1024
 
 
+# ── error_message 스크러빙(★R1 HIGH 회귀 수정) ──────────────────────────────
+
+
+def test_scrub_error_message_strips_url_query_string_and_key():
+    msg = ("Client error '404 Not Found' for url "
+           "'https://api.vworld.kr/req/data?service=data&key=SECRET123&pnu=1'")
+    scrubbed = ss.scrub_error_message(msg)
+    assert "SECRET123" not in scrubbed
+    assert "?***" in scrubbed
+
+
+def test_scrub_error_message_none_passthrough():
+    assert ss.scrub_error_message(None) is None
+
+
+def test_scrub_error_message_empty_string_passthrough():
+    assert ss.scrub_error_message("") == ""
+
+
+def test_scrub_error_message_no_url_left_unchanged():
+    assert ss.scrub_error_message("plain error, no url") == "plain error, no url"
+
+
+def test_scrub_error_message_second_url_without_query_untouched():
+    # 쿼리스트링이 없는 URL(예: 안내 링크)은 건드리지 않는다 — 과다삭제 방지.
+    msg = "for url 'https://x.example/path?key=SECRET' more info: https://docs.example.com/404"
+    scrubbed = ss.scrub_error_message(msg)
+    assert "SECRET" not in scrubbed
+    assert "https://docs.example.com/404" in scrubbed
+
+
+def test_scrub_error_message_reuses_logging_config_pii_patterns():
+    # 쿼리스트링 형태가 아닌 위치(예: 헤더/바디 로그)의 serviceKey=... 도 logging_config의
+    # 마스킹 규칙 재사용으로 잡혀야 한다(계약 정합 — 로그와 저장소가 같은 규칙 공유).
+    msg = "auth failed serviceKey=ABCDEFG in header"
+    scrubbed = ss.scrub_error_message(msg)
+    assert "ABCDEFG" not in scrubbed
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 2) 인메모리 fake DB — 기록(성공/dead-letter)·조회·예외흡수
 #    (app/services/ai/base_interpreter fewshot 테스트 동형 패턴)
@@ -222,6 +274,11 @@ async def test_safe_record_success_persists_and_returns_checksum(monkeypatch):
 
 
 async def test_safe_record_dead_letter_persists_with_status_and_error(monkeypatch):
+    # ★교훈(R1): 이 테스트는 원래 error_message="boom"처럼 "이미 안전한" 문자열만 검증했다.
+    #   스크러빙 로직이 아예 없어도(또는 고장나도) 이 테스트는 그대로 통과하므로, 실제
+    #   비밀유출(str(httpx.HTTPStatusError)에 담긴 쿼리스트링 키)을 잡지 못하고 은폐했다 —
+    #   기본 저장 동작(상태·에러문구 보존)만 확인하는 용도로 남기고, 진짜 스크러빙 검증은
+    #   아래 test_dead_letter_scrubs_secret_from_real_httpx_error_message가 담당한다.
     db = _FakeDB(table_exists=True)
     _patch_session(monkeypatch, db)
     result = await ss.safe_record_dead_letter(
@@ -236,6 +293,38 @@ async def test_safe_record_dead_letter_persists_with_status_and_error(monkeypatc
     assert p["hs"] == 500
     assert p["err"] == "boom"
     assert "SECRET" not in json.dumps(p, default=str)
+
+
+async def test_dead_letter_scrubs_secret_from_real_httpx_error_message(monkeypatch):
+    """★R1 HIGH 회귀(리뷰어 실증 벡터) — str(httpx.HTTPStatusError)는 요청 URL 전체를
+    쿼리스트링(인증키 포함)까지 그대로 문자열화한다. "boom" 같은 안전한 문자열이 아니라,
+    실제 httpx 예외가 만드는 진짜 문자열을 그대로 error_message에 흘려보내 저장값에
+    비밀이 남지 않는지 검증한다(위 test_safe_record_dead_letter_persists_with_status_and_error
+    가 은폐했던 바로 그 유출 경로).
+    """
+    db = _FakeDB(table_exists=True)
+    _patch_session(monkeypatch, db)
+
+    req = httpx.Request("GET", "https://api.vworld.kr/req/data",
+                         params={"service": "data", "key": "SECRET123ABC", "pnu": "1111"})
+    resp = httpx.Response(404, request=req, content=b"not found")
+    try:
+        resp.raise_for_status()
+        raise AssertionError("raise_for_status가 예외를 던지지 않음(테스트 셋업 오류)")
+    except httpx.HTTPStatusError as exc:
+        real_error_message = str(exc)
+
+    # 원본 문자열에는 비밀이 그대로 있다는 것부터 재확인(그렇지 않으면 이 테스트가 무의미).
+    assert "SECRET123ABC" in real_error_message
+
+    await ss.safe_record_dead_letter(
+        source_id="vworld", method="GET", url="https://api.vworld.kr/req/data",
+        params={"key": "SECRET123ABC", "pnu": "1111"}, http_status=404,
+        error_message=real_error_message,
+    )
+    p = _insert_params(db)
+    assert "SECRET123ABC" not in p["err"]
+    assert "?***" in p["err"]
 
 
 async def test_safe_record_success_flags_payload_truncated_over_limit(monkeypatch):
@@ -324,3 +413,92 @@ async def test_get_by_request_fingerprint_failure_returns_empty_list(monkeypatch
 
     monkeypatch.setattr(dbm, "async_session_factory", _boom)
     assert await ss.get_by_request_fingerprint("whatever") == []
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3) _ensure 1회화(★R1 MEDIUM-3) — 모듈 플래그로 to_regclass 왕복 생략 + 생성 직후 commit
+# ══════════════════════════════════════════════════════════════════════════
+
+
+async def test_ensure_sets_ready_flag_and_queries_to_regclass_once(monkeypatch):
+    monkeypatch.setattr(ss, "_SCHEMA_READY", False)
+    db1 = _FakeDB(table_exists=True)
+    await ss._ensure(db1)
+    assert any("to_regclass" in sql for sql, _ in db1.executed)
+    assert ss._SCHEMA_READY is True
+
+    # 두 번째 호출은 플래그가 이미 True라 DB 왕복 자체가 없어야 한다(1회화 핵심).
+    db2 = _FakeDB(table_exists=True)
+    await ss._ensure(db2)
+    assert db2.executed == []
+
+
+async def test_ensure_creates_table_when_missing_and_commits_before_flag(monkeypatch):
+    """생성 분기에서는 반드시 즉시 commit한 뒤 플래그를 세운다 — 그렇지 않으면 읽기전용
+    호출부(get_by_*)가 커밋하지 않아 세션 종료 시 방금 만든 테이블이 롤백되는데도
+    _SCHEMA_READY만 True로 남아 이후 모든 호출이 "존재한다고 착각"하는 위험한 상태가
+    된다(1회화 리팩토링이 새로 만들 뻔한 회귀 — 여기서 직접 검증)."""
+    monkeypatch.setattr(ss, "_SCHEMA_READY", False)
+    db = _FakeDB(table_exists=False)
+    await ss._ensure(db)
+    sqls = [sql for sql, _ in db.executed]
+    assert any("to_regclass" in s for s in sqls)
+    assert any(s.startswith("CREATE TABLE") for s in sqls)
+    assert any("pg_advisory_xact_lock" in s for s in sqls)
+    assert db.committed is True  # ★핵심 회귀 가드
+    assert ss._SCHEMA_READY is True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 4) 무음 실패 해소(★R1 MEDIUM-1) — 기록 실패 로그가 debug가 아니라 warning으로 남는지
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class _CapturingLogger:
+    def __init__(self):
+        self.warnings: list[tuple] = []
+        self.debugs: list[tuple] = []
+
+    def warning(self, *a, **k):
+        self.warnings.append((a, k))
+
+    def debug(self, *a, **k):
+        self.debugs.append((a, k))
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: None
+
+
+async def test_safe_record_success_db_failure_logs_warning_not_debug(monkeypatch):
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(ss, "logger", fake_logger)
+
+    import app.core.database as dbm
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(dbm, "async_session_factory", _boom)
+    await ss.safe_record_success(
+        source_id="vworld", method="GET", url="url", params=None,
+        payload_bytes=b"{}", http_status=200,
+    )
+    assert len(fake_logger.warnings) == 1
+    assert fake_logger.debugs == []  # ★역전 해소 확인 — 더 이상 debug로 무음 처리하지 않는다.
+
+
+async def test_safe_record_dead_letter_db_failure_logs_warning_not_debug(monkeypatch):
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(ss, "logger", fake_logger)
+
+    import app.core.database as dbm
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(dbm, "async_session_factory", _boom)
+    await ss.safe_record_dead_letter(
+        source_id="g2b", method="GET", url="url", params=None, error_message="x",
+    )
+    assert len(fake_logger.warnings) == 1
+    assert fake_logger.debugs == []

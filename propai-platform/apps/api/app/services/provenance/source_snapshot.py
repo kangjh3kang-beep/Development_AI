@@ -36,11 +36,20 @@ SPEC v4 Zero-Trust ACQUIRE 단계 계약의 실용 부분집합을 구현한다
 ★커넥터 opt-in(기본 OFF): 전 커넥터 일괄 ON은 용량 위험이 커서, 호출부가 명시적으로 켠 커넥터만
   기록한다. 1차 ON 대상은 VWorld(BaseAPIClient.snapshot_enabled)·G2B(g2b_client._SNAPSHOT_ENABLED)
   2종 — 스파이크에서 실제 사용 경로를 확인한 결과다.
+
+★"불변" 명칭의 실제 수준 — 정직화(R1 MEDIUM): 이 테이블은 analysis_ledger처럼 content_hash
+  체인(prev_hash 연결)으로 변조를 재계산·탐지하거나, DB 권한 수준에서 UPDATE/DELETE를
+  REVOKE해 강제하는 진짜 "불변 저장소"가 아니다. 이 모듈의 코드 경로가 INSERT만 발행한다는
+  의미의 "관례적(conventional) append-only"일 뿐이며, 이 테이블에 직접 접근하는 다른 경로
+  (운영자 SQL·다른 서비스의 실수 등)의 수정·삭제를 막지 않는다. analysis_ledger 수준의 진짜
+  불변성(해시체인+변조탐지)이 필요해지면 checksum을 prev_checksum으로 체이닝하는 승격은
+  후속 과제다(보존기간 정책과 마찬가지로 이번 1차 범위 밖).
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 import structlog
@@ -113,6 +122,43 @@ def truncate_payload(
     return payload_bytes[:limit], True
 
 
+# URL 뒤에 붙은 쿼리스트링을 통째로 "?***"로 절단한다(리뷰어 지정 1차 방어) — 어떤
+# 파라미터 이름이든(예: VWorld 평문 'key') 무조건 제거되므로 키 이름을 일일이 나열할
+# 필요가 없다. httpx.HTTPStatusError.__str__()가 "...for url '<원본URL+쿼리스트링>'"
+# 형태로 요청 URL을 그대로 문자열화하는 것이 실제 유출 경로(★R1 HIGH 근거).
+_URL_QUERY_STRIP = re.compile(r"(https?://[^\s'\"?]+)\?[^\s'\"]*")
+
+
+def scrub_error_message(message: str | None) -> str | None:
+    """error_message를 저장 직전에 스크러빙한다 — 비밀이 평문으로 append-only 테이블에
+    영구 저장되는 것을 막는 마지막 방어선(★R1 HIGH 회귀 수정).
+
+    근본원인: mask_secret_params()는 request_fingerprint 계산 "입력"만 마스킹했고,
+    error_message는 그 경로를 거치지 않는 별도 필드였다. 그런데 httpx.HTTPStatusError를
+    str()하면 "Client error '...' for url 'https://.../data?service=data&key=SECRET&...'"
+    처럼 원본 요청 URL(쿼리스트링 포함)이 그대로 들어있다 — VWorld/G2B는 인증키를
+    쿼리파라미터로 보내므로, 이 문자열을 그대로 저장하면 비밀 마스킹 계약(★비밀 마스킹
+    후 해시) 자체가 error_message 필드 하나 때문에 무의미해진다.
+
+    1차 방어(리뷰어 지정): URL의 "?" 뒤 전체를 통째로 "?***"로 절단 — 파라미터 이름을
+    몰라도(모든 커넥터에 공용) 항상 안전하다.
+    2차 방어(계약 정합): logging_config._PII_PATTERNS(serviceKey=/apiKey=/authKey= 등)를
+    재사용해, 쿼리스트링 형태가 아닌 위치(헤더 로그 등)에 실린 키도 함께 잡는다. 로그와
+    저장소가 "같은 비밀 판정 규칙"을 공유하게 되어 계약이 갈라지지 않는다.
+    """
+    if not message:
+        return message
+    scrubbed = _URL_QUERY_STRIP.sub(r"\1?***", message)
+    try:
+        from apps.api.logging_config import _PII_PATTERNS
+
+        for pattern, replacement in _PII_PATTERNS:
+            scrubbed = pattern.sub(replacement, scrubbed)
+    except Exception:  # noqa: BLE001 — 로그마스킹 모듈 부재/구조변경 시에도 1차 방어는 이미 적용됨.
+        pass
+    return scrubbed
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 영속 — 런타임 스키마 보강(analysis_ledger_service._ensure 동형·그린필드 금지)
 # ══════════════════════════════════════════════════════════════════════════
@@ -147,22 +193,43 @@ _IDX: tuple[str, ...] = (
 )
 
 
-async def _ensure(db: Any) -> None:
-    """테이블 보장(멱등) — analysis_ledger_service._ensure 동형(advisory lock 이중검사).
+# 프로세스-로컬 1회화 플래그(design_run_job._JOB_SCHEMA_READY 동형) — 첫 확인 이후에는
+# to_regclass DB 왕복 자체를 생략한다.
+_SCHEMA_READY = False
 
-    fast-path: 테이블이 이미 있으면 DDL 재실행을 생략해 동시 트랜잭션 간 카탈로그 락
-    경합(교착)을 피한다. 최초 생성 시에만 전역 advisory lock으로 경쟁을 직렬화한다.
+
+async def _ensure(db: Any) -> None:
+    """테이블 보장(멱등) — 프로세스-로컬 플래그로 1회화 + 최초생성 advisory lock.
+
+    ★정정(R1 MEDIUM): 이전 주석은 "advisory lock 이중검사(double-checked locking)"라 적었지만
+    실제로는 매 호출마다 to_regclass DB 왕복을 했다(이중검사가 아니라 매번 확인). 이제는
+    모듈 전역 _SCHEMA_READY를 1차 방어로 둬 최초 확인 이후엔 DB 왕복 자체를 생략한다.
+    advisory lock은 "테이블이 아직 없어 최초 생성해야 하는" 드문 경로에서만(동시 최초생성
+    경합 직렬화) 쓰인다 — analysis_ledger_service._ensure의 advisory lock과 동일 역할.
+
+    ★1회화가 새로 만든 위험과 그 봉합: get_by_checksum/get_by_request_fingerprint 같은
+    읽기전용 호출부는 이후 db.commit()을 하지 않는다. 만약 여기서 DDL만 실행하고 커밋하지
+    않으면, 세션 종료 시 암묵적 롤백으로 방금 만든 테이블이 사라지는데 _SCHEMA_READY만
+    True로 남아 "존재한다고 착각"하는 상태가 된다(이후 모든 호출이 DB 왕복 없이 스킵되며
+    실패). 그래서 생성 분기에서는 반드시 여기서 즉시 commit한다(design_run_job.
+    _ensure_job_schema 동형 — 그 함수도 자기 안에서 commit 후 READY 플래그를 세운다).
     """
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
     from sqlalchemy import text
 
     exists = (await db.execute(text(
         "SELECT to_regclass('source_snapshots') IS NOT NULL"))).scalar()
     if exists:
+        _SCHEMA_READY = True
         return
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('source_snapshots_ddl')::bigint)"))
     await db.execute(text(_DDL))
     for ix in _IDX:
         await db.execute(text(ix))
+    await db.commit()  # ★생성 직후 즉시 커밋(위 독스트링 참고) — 읽기전용 호출부에서도 안전.
+    _SCHEMA_READY = True
 
 
 async def _persist(
@@ -203,7 +270,9 @@ async def _persist(
             "sid": source_id, "sname": source_name, "agrade": authority_grade,
             "obs": observed_at, "fp": fingerprint, "ch": checksum,
             "pb": stored_payload, "trunc": was_truncated, "st": status,
-            "hs": http_status, "err": (error_message or "")[:2000] or None,
+            # ★R1 HIGH: error_message는 저장 직전 이 한 곳에서만 스크러빙한다(공용화) —
+            #   호출부(base_client·g2b_client)가 str(exc)를 그대로 넘겨도 여기서 안전해진다.
+            "hs": http_status, "err": (scrub_error_message(error_message) or "")[:2000] or None,
         })
         row = res.first()
         await db.commit()
@@ -243,7 +312,10 @@ async def safe_record_success(
             observed_at=observed_at, error_message=None,
         )
     except Exception as e:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
-        logger.debug("SourceSnapshot 기록 실패(성공응답)", source_id=source_id, err=str(e)[:160])
+        # ★R1 MEDIUM: debug→warning — 조회 실패(get_by_*)는 이미 warning인데 "쓰기" 실패가
+        #   더 낮은 debug였던 역전을 해소한다(무음 skip 금지 원칙 — 감사기록 유실은 조용히
+        #   넘어갈 사안이 아니다).
+        logger.warning("SourceSnapshot 기록 실패(성공응답)", source_id=source_id, err=str(e)[:160])
         return None
 
 
@@ -267,8 +339,8 @@ async def safe_record_dead_letter(
             source_name=source_name, authority_grade=authority_grade,
             observed_at=None, error_message=error_message,
         )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("SourceSnapshot 기록 실패(dead-letter)", source_id=source_id, err=str(e)[:160])
+    except Exception as e:  # noqa: BLE001 — R1 MEDIUM: debug→warning(위 safe_record_success 동일 사유).
+        logger.warning("SourceSnapshot 기록 실패(dead-letter)", source_id=source_id, err=str(e)[:160])
         return None
 
 

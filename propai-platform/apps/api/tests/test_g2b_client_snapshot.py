@@ -107,6 +107,46 @@ async def test_snapshot_dead_letter_swallows_exceptions(monkeypatch):
     await gm._snapshot_dead_letter("url", {"serviceKey": "x"}, "err")
 
 
+class _CapturingLogger:
+    def __init__(self):
+        self.warnings: list[tuple] = []
+
+    def warning(self, *a, **k):
+        self.warnings.append((a, k))
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: None
+
+
+async def test_snapshot_success_outer_exception_logs_warning(monkeypatch):
+    # ★R1 MEDIUM-1: 무음 skip 금지 — 이중 except: pass에도 로그가 남아야 한다.
+    async def _boom(**kwargs):
+        raise RuntimeError("boom")
+
+    import app.services.provenance.source_snapshot as ss
+    monkeypatch.setattr(ss, "safe_record_success", _boom)
+
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(gm, "logger", fake_logger)
+
+    await gm._snapshot_success("url", {"serviceKey": "x"}, b"{}", 200)
+    assert len(fake_logger.warnings) == 1
+
+
+async def test_snapshot_dead_letter_outer_exception_logs_warning(monkeypatch):
+    async def _boom(**kwargs):
+        raise RuntimeError("boom")
+
+    import app.services.provenance.source_snapshot as ss
+    monkeypatch.setattr(ss, "safe_record_dead_letter", _boom)
+
+    fake_logger = _CapturingLogger()
+    monkeypatch.setattr(gm, "logger", fake_logger)
+
+    await gm._snapshot_dead_letter("url", {"serviceKey": "x"}, "err")
+    assert len(fake_logger.warnings) == 1
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 2) fetch_bid_notices 배선 — 성공/HTTP오류/네트워크오류 3경로에서 훅이 정확히 발화하는지
 # ══════════════════════════════════════════════════════════════════════════
