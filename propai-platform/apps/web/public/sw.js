@@ -93,7 +93,10 @@
 //        확장된 SeniorVerdictCard가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 // v451: 조례 폴백 confirmed 승격 정직화(#422 — SSOT 게이트·잔존 서피스 봉합·globals.css +
 //        SiteAnalysisDetail). 전역 CSS·부지분석 상세 재배선이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v451-ordinance-fallback-honesty";
+// v452: 설계 해설 raw JSON 근원 차단·zone 초기값 경합 봉합(#428 — CadBimIntegrationPanel
+//        정직 폴백·stale 배지·재생성 in-flight 가드, GenerativeDesignPanel lazy init).
+//        구 번들이 raw JSON 해설·2R 오호출을 재생하지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v452-design-narrative-honesty";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
