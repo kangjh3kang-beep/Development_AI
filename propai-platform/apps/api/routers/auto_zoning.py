@@ -1800,6 +1800,35 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         legal_bcr_pct=integrated_block["blended_bcr_legal_pct"],
     )
 
+    # ── ★W2-5(ParcelGraph) 인접 그래프·핵심필지·N-1 시나리오(additive) ──
+    #   enriched는 이미 pnu/geometry/area_sqm/_far_eff(실효용적률)를 보유하므로 변형 없이 그대로
+    #   투입한다(build_parcel_graph가 road_frontage/road_contact·effective_far_pct/_far_eff 등
+    #   여러 별칭을 알아서 흡수 — 여기서 재매핑 불필요). 실패는 정직 degrade(집계 손상 금지).
+    parcel_graph_summary: dict = {"status": "unavailable"}
+    try:
+        from app.services.zoning.parcel_graph import build_parcel_graph
+
+        _pg = build_parcel_graph(enriched)
+        _road_dep = _pg.get("road_dependency") or {}
+        parcel_graph_summary = {
+            "status": _pg.get("status"),
+            "component_count": _pg.get("component_count"),
+            "articulation_points": _pg.get("articulation_points"),
+            "critical_parcels": _pg.get("critical_parcels"),
+            "landlocked_risk": {
+                "confirmed_pnus": _road_dep.get("landlocked_pnus"),
+                "unknown_pnus": _road_dep.get("unknown_landlocked_pnus"),
+            },
+            "n_minus_1": _pg.get("n_minus_1"),
+            "geometry_unknown_pnus": _pg.get("geometry_unknown_pnus"),
+            "note": _pg.get("note"),
+            "basis": _pg.get("basis"),
+        }
+        warnings.extend(_pg.get("warnings") or [])
+    except Exception as e:  # noqa: BLE001 — 그래프 산출 실패는 통합집계를 손상하지 않는다(정직 degrade).
+        logger.warning("ParcelGraph 산출 실패: %s", str(e)[:160])
+        parcel_graph_summary = {"status": "unavailable", "note": "인접 그래프 산출에 실패했습니다."}
+
     return {
         "parcel_count": integrated_zoning.get("parcel_count"),
         "special_count": multi.get("special_count"),
@@ -1821,6 +1850,9 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "warnings": warnings,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
+        # ★W2-5(ParcelGraph, additive) — 인접 그래프·핵심필지·N-1 시나리오 요약. 기하 미확보/상한
+        #   초과는 status로 정직 표기(무회귀 — 기존 키는 전혀 건드리지 않음).
+        "parcel_graph": parcel_graph_summary,
     }
 
 
