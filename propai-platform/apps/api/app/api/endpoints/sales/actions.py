@@ -32,31 +32,38 @@ from app.services.sales.pricing.engine import (
 )
 from app.services.sales.pricing.suggest import suggest_base_price
 from app.services.sales.units.generation import generate_units
+from apps.api.database.models.sales.site_org import SalesOrgNode
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 
 actions_router = APIRouter(tags=["sales-actions"])
 
-# P2 직급별 등록권한: 각 node_type 을 등록할 수 있는 '상위 역할' 집합(상위 역할·관리자는 항상 허용).
+# P2 직급별 등록권한 — ★직속 지정 파이프라인(2026-07-23 사용자 스펙 확정).
 # 계층: 시행사(DEVELOPER)＞대행사(AGENCY)＞대대행(SUBAGENCY)＞총괄본부장(GM_DIRECTOR)＞
 #       본부장(DIRECTOR)＞팀장(TEAM_LEADER)＞직원(MEMBER).
-# ★[HIGH·fail-open authz 해소(iter-4)] 과거엔 'DIRECTOR' 키가 없어 add_node 에서
-#   _REGISTER_MATRIX.get('DIRECTOR')=None → 'allowed is not None' 가 False → 등록 권한사다리가
-#   통째로 스킵되고 require_role 게이트만 남았다(권한 우회). DIRECTOR 는 OrgTree.tsx 기본 선택값
-#   (useState('DIRECTOR'))이자 overview._LABEL 의 '이사' 라벨 인식=실사용 경로다. DIRECTOR 키를
-#   더해 권한사다리를 모든 직급에 빠짐없이 적용한다(DIRECTOR 는 GM_DIRECTOR 이상만 등록 가능).
-#   또 DIRECTOR 는 TEAM_LEADER 보다 상위이므로, TEAM_LEADER/MEMBER 등록 가능집합에도 DIRECTOR 를
-#   포함해 '상위 직급은 하위가 가능한 등록을 항상 할 수 있다'는 권한 단조성을 지킨다.
+# 과거 정책("상위 직급은 하위가 가능한 등록을 항상 할 수 있다" 단조성)을 폐기하고,
+# **각 역할이 자기 직속 단계만 지정**하도록 좁혔다(조직 위임 체계 — 총괄관리자/시행사는
+# 대행사'만' 지정, 대행사가 그 아래를, …, 팀장이 직원을 지정·승인). 이유: 상위가 말단을
+# 건너뛰어 직접 등록하면 중간 계층의 승인·책임 체계가 무너진다(수수료 2단 배분 기준 붕괴).
+# ★fail-closed 유지: 미등재 node_type 은 403(권한 우회 차단·iter-4 결정 보존).
 _REGISTER_MATRIX = {
     "AGENCY": {"DEVELOPER", "SUPERADMIN"},
-    "SUBAGENCY": {"AGENCY", "DEVELOPER", "SUPERADMIN"},
-    "GM_DIRECTOR": {"AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
-    "DIRECTOR": {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
-    "TEAM_LEADER": {"DIRECTOR", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
-    "MEMBER": {"TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "SUBAGENCY": {"AGENCY"},
+    "GM_DIRECTOR": {"AGENCY", "SUBAGENCY"},
+    "DIRECTOR": {"AGENCY", "SUBAGENCY", "GM_DIRECTOR"},
+    "TEAM_LEADER": {"GM_DIRECTOR", "DIRECTOR"},
+    "MEMBER": {"TEAM_LEADER"},
+}
+
+# 조직 위계 서열(작을수록 상위) — add_node 부모-자식 위계 검증·프론트 addable 판정 공용.
+_ORG_RANK = {
+    "AGENCY": 0, "SUBAGENCY": 1, "GM_DIRECTOR": 2, "DIRECTOR": 3, "TEAM_LEADER": 4, "MEMBER": 5,
 }
 
 # 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
-_R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER")
+# ★SUPERADMIN 포함(2026-07-23): 매트릭스는 총괄관리자(SUPERADMIN)의 대행사 지정을 허용하는데
+#   라우터 게이트에 SUPERADMIN 이 빠져 매트릭스 도달 전에 403 — 스펙("총괄관리자는 하위
+#   대행사만 지정") 위배였다. 게이트는 통과시키고 실제 한계는 매트릭스가 강제한다.
+_R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER", "SUPERADMIN")
 _R_TEAM = ("TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_SALES_ALL = ("MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_CONTRACT = ("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
@@ -82,13 +89,51 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
     #   통과시키지 않는다(권한 우회 차단). 등재 직급은 caller 역할이 허용집합에 있어야 한다.
     allowed = _REGISTER_MATRIX.get(ntype)
     if allowed is None or ctx.role not in allowed:
-        raise HTTPException(403, f"{ntype} 등록 권한이 없습니다(상위 직급만 등록 가능).")
+        raise HTTPException(403, f"{ntype} 등록 권한이 없습니다(직속 상위 직급만 지정 가능).")
+    # ★[직속 파이프라인 2026-07-23] parent 검증 2종을 추가한다(매트릭스만으론 '어디에' 붙이는지
+    #   통제 불가였다 — 팀장이 남의 팀 아래에 직원을 붙이거나, 대행사 바로 아래에 직원을 붙이는
+    #   위계 붕괴가 가능했다).
+    #   ①부모 위계: parent.node_type 은 새 노드보다 반드시 상위(_ORG_RANK 작음)여야 한다.
+    #   ②서브트리 스코프: caller 에 org_path(내 노드)가 있으면 parent 는 내 서브트리 안이어야
+    #     한다(내가 승인·지정한 하부에만 추가 — 가시성 스코프와 동일 원칙). 본사 권한
+    #     (SUPERADMIN/DEVELOPER/AGENCY 등 org_path 없음)은 현장 전체가 스코프다.
+    parent_id = body.get("parent_id")
+    # ★[루트 생성 가드(2026-07-23)] parent_id 미지정 = 최상위(루트) 생성. 두 가지를 막는다:
+    #   ①서브트리 권한자(org_path 보유 — 본부장 등)가 부모 없이 루트를 만들면 '내 하위에만
+    #     추가' 스코프를 통째로 우회한다 → 400(상위 지정 강제).
+    #   ②최상위에는 대행사(AGENCY)만 둘 수 있다(파이프라인 스펙: 총괄관리자→대행사가 시작점).
+    if not parent_id:
+        if getattr(ctx, "org_path", None):
+            raise HTTPException(400, "상위(부모) 노드를 지정하세요(내 하위 조직에만 추가할 수 있습니다).")
+        if ntype != "AGENCY":
+            raise HTTPException(400, "최상위에는 대행사(AGENCY)만 둘 수 있습니다. 상위 노드를 지정하세요.")
+    if parent_id:
+        # ★[입력검증(R1 MINOR)] parent_id 는 UUID 컬럼 비교에 그대로 실리므로, 형식 불량이면
+        #   DB 계층 오류→500 누출이었다. move_node 와 대칭으로 400 으로 돌린다.
+        try:
+            parent_id = uuid.UUID(str(parent_id))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, "parent_id 형식이 올바르지 않습니다(UUID 필요)") from e
+        parent = (await db.execute(select(SalesOrgNode).where(
+            SalesOrgNode.id == parent_id, SalesOrgNode.site_id == ctx.site_id,
+            SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+        if parent is None:
+            raise HTTPException(404, "상위(부모) 노드를 찾을 수 없습니다")
+        p_rank = _ORG_RANK.get(parent.node_type)
+        n_rank = _ORG_RANK.get(ntype)
+        if p_rank is None or n_rank is None or p_rank >= n_rank:
+            raise HTTPException(
+                400, f"{parent.node_type} 아래에 {ntype}을(를) 둘 수 없습니다(직속 위계 위반).")
+        my_path = getattr(ctx, "org_path", None) or ""
+        parent_path = str(parent.path)
+        if my_path and not (parent_path == my_path or parent_path.startswith(my_path + ".")):
+            raise HTTPException(403, "내 하위 조직에만 추가할 수 있습니다")
     # ★[IDOR·미존재 부모 대칭(iter-3)] create_node 는 parent_id 가 타 현장 노드이거나 미존재면
     #   ValueError 를 던진다(과거엔 scalar_one 의 NoResultFound→500 누출 + 교차현장 graft 가능).
     #   node_type 누락(400)과 대칭이 되도록 404(부모 못 찾음)로 매핑한다(클라이언트 입력문제이지
     #   서버오류가 아님 — 500 누출 차단).
     try:
-        node = await create_node(db, ctx.site_id, ntype, body.get("parent_id"),
+        node = await create_node(db, ctx.site_id, ntype, parent_id,
                                  user_id=body.get("user_id"), company_id=body.get("company_id"),
                                  display_name=body.get("display_name"))
     except ValueError as e:
@@ -96,6 +141,25 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
         raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"id": str(node.id), "path": str(node.path)}
+
+
+@actions_router.get("/org/context")
+async def org_context(ctx: SalesCtx = Depends(sales_ctx)) -> dict:
+    """내 조직 컨텍스트 — 프론트 UI 게이팅의 서버 SSOT.
+
+    반환: {role, org_path, addable_types[], scope}.
+    addable_types = 이 역할이 '직속 지정'할 수 있는 직급(_REGISTER_MATRIX 역인덱스).
+    scope = 'site'(본사 권한: 현장 전체) | 'subtree'(내 하위만).
+    """
+    addable = [t for t, allowed in _REGISTER_MATRIX.items() if ctx.role in allowed]
+    addable.sort(key=lambda t: _ORG_RANK.get(t, 99))
+    my_path = getattr(ctx, "org_path", None) or ""
+    return {
+        "role": ctx.role,
+        "org_path": my_path,
+        "addable_types": addable,
+        "scope": "subtree" if my_path else "site",
+    }
 
 
 @actions_router.get("/org/team-overview", response_model=TeamOverviewResponse)
@@ -288,6 +352,36 @@ async def move_node(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(g
         new_parent_id = uuid.UUID(str(raw))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, "new_parent_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    # ★[직속 파이프라인 대칭(2026-07-23 R1)] add_node 와 동일 술어(위계·서브트리)를 move 에도
+    #   강제한다 — add 만 막고 move 를 열어두면 '허용 위치에 추가 후 이동'으로 위계가 우회된다
+    #   (예: 본부장 서브트리를 직원 노드 밑으로 — 수수료 2단 배분 기준 붕괴). 노드/새부모를
+    #   현장 스코프로 먼저 조회해 서열을 검증한다(move_subtree 재조회와 중복되지만, 위계 술어는
+    #   엔드포인트 계약이라 add_node 와 같은 계층에 둔다).
+    node = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == node_id, SalesOrgNode.site_id == ctx.site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if node is None:
+        raise HTTPException(404, "이동할 노드를 찾을 수 없습니다")
+    new_parent = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == new_parent_id, SalesOrgNode.site_id == ctx.site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if new_parent is None:
+        raise HTTPException(404, "새 상위 노드를 찾을 수 없습니다")
+    # 사이클(자기 자신/자손 아래로) 검사를 위계보다 먼저 — 정상 트리에선 자손이 항상 하위 서열이라
+    # 위계 400 이 사이클 422 를 가려버린다(422=의미상 불가능한 입력 계약 보존, iter-4 결정).
+    node_path, parent_path = str(node.path), str(new_parent.path)
+    if parent_path == node_path or parent_path.startswith(node_path + "."):
+        raise HTTPException(422, "자기 자신 또는 하위 노드 아래로는 이동할 수 없습니다(순환)")
+    p_rank = _ORG_RANK.get(new_parent.node_type)
+    n_rank = _ORG_RANK.get(node.node_type)
+    if p_rank is None or n_rank is None or p_rank >= n_rank:
+        raise HTTPException(
+            400, f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).")
+    my_path = getattr(ctx, "org_path", None) or ""
+    if my_path:
+        for p in (node_path, parent_path):
+            if not (p == my_path or p.startswith(my_path + ".")):
+                raise HTTPException(403, "내 하위 조직 안에서만 이동할 수 있습니다")
     try:
         await move_subtree(db, ctx.site_id, node_id, new_parent_id, by=ctx.user.id)
     except OrgNodeNotFoundError as e:
