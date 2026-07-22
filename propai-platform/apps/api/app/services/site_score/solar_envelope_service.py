@@ -407,7 +407,7 @@ def compute_buildable_envelope(
         winter_daylight_continuous_min=None,
     )
 
-    return {
+    result = {
         "applies_north_light": True,
         "min_building_spacing_m": min_spacing_080,        # 동간 채광거리 권고(0.8H)
         "min_building_spacing_blank_wall_m": min_spacing_050,  # 무창벽 0.5H
@@ -453,3 +453,50 @@ def compute_buildable_envelope(
             *([far_assumption_note] if far_assumption_note else []),
         ],
     }
+
+    # ── W3-2: exact solid Envelope(additive·병행 필드) ──────────────────────────
+    #   기존 2D 근사(위 200분할 스트립 적분)와 별개로, footprint×정북사선 half-space를
+    #   해석적으로 교차한 exact solid 체적·층별 slice·제약별 차감체적·3종(conservative/
+    #   base/conditional)을 병행 노출한다. 기존 키(envelope_gfa_sqm 등)는 절대 건드리지
+    #   않고 신규 키 exact_envelope만 additive로 붙인다(무회귀 — best-effort, 실패 시 생략).
+    try:
+        from app.services.cad.exact_envelope import build_exact_envelope
+
+        zone_setback_m = None
+        for k, v in ZONE_DEFAULTS.items():
+            if k in (zone or "") or (zone or "") in k:
+                zone_setback_m = v.get("setback_m")
+                break
+        exact = build_exact_envelope(
+            {"width_m": W, "depth_m": D},
+            {
+                "side_setback_m": side_setback_m,
+                "floor_height_m": fh,
+                "height_limit_m": lim.get("max_height") or None,
+                "zone_min_setback_m": zone_setback_m,
+            },
+        )
+        if "error" not in exact:
+            variants = exact["variants"]
+            exact_base = variants["base"]
+            result["exact_envelope"] = {
+                "volume_m3": exact_base["volume_m3"],
+                "gfa_sqm": exact_base["gfa_sqm"],
+                "max_height_m": exact_base["max_height_m"],
+                "num_floors": exact_base["num_floors"],
+                "floors": exact_base["floors"],
+                "round_trip_error_pct": exact_base.get("round_trip_error_pct"),
+                "variants": {
+                    k: {"volume_m3": v["volume_m3"], "gfa_sqm": v["gfa_sqm"], "max_height_m": v["max_height_m"]}
+                    for k, v in variants.items()
+                },
+                "constraint_contributions": exact["constraint_contributions"],
+                # 차이=개선분(정직 보고) — 기존 2D 스트립근사 GFA를 대체하지 않고 대조만 병행 노출.
+                "vs_2d_strip_approx_gfa_sqm_diff": round(exact_base["gfa_sqm"] - envelope_gfa, 1),
+                "approximation": exact["approximation"],
+                "assumptions": exact["assumptions"],
+            }
+    except Exception:  # noqa: BLE001 — exact envelope 실패해도 기존 2D 근사 결과 무손상
+        pass
+
+    return result
