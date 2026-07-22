@@ -91,7 +91,9 @@
 //        구캐시 일괄 삭제.
 // v450: 시니어 규제자문 풍성화(#412 — IRAC 법령근거 판단체인·실패모드·체크리스트 표면화).
 //        확장된 SeniorVerdictCard가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v450-senior-consultation-enrichment";
+// v451: 조례 폴백 confirmed 승격 정직화(#422 — SSOT 게이트·잔존 서피스 봉합·globals.css +
+//        SiteAnalysisDetail). 전역 CSS·부지분석 상세 재배선이 stale 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v451-ordinance-fallback-honesty";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
