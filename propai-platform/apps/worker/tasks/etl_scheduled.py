@@ -91,7 +91,11 @@ async def run_etl_public_data(ctx: dict[str, Any]) -> dict[str, Any]:
 # 삭제까지 롤백시키고 webhook_deliveries 정리를 영영 막았다(2026-07-22 운영 실측).
 _RETENTION_TARGETS: list[tuple[str, str]] = [
     ("refresh_tokens", "expires_at < NOW()"),
-    ("llm_usage_log", "created_at < NOW() - INTERVAL '90 days'"),
+    # ★1830일(5년): llm_usage_log는 순수 로그가 아니라 사용자향 재무 명세의 소스다 —
+    #   코인내역 타임라인·CSV 내보내기(coin_ledger_service get_timeline/export_rows)가
+    #   최대 1830일 윈도우를 계약하므로 보존기간을 그 상한에 정렬(R1 게이트 반영).
+    #   90일이면 잔액·원장 무결성은 불변이나 명세에서 AI사용 차감 항목만 조용히 소실된다.
+    ("llm_usage_log", "created_at < NOW() - INTERVAL '1830 days'"),
     ("webhook_deliveries", "created_at < NOW() - INTERVAL '30 days'"),
 ]
 
@@ -100,7 +104,7 @@ async def run_cleanup_expired(ctx: dict[str, Any]) -> dict[str, Any]:
     """만료 데이터 정리 태스크 — 대상별 독립 트랜잭션(한 대상의 실패·부재가 다른 정리를 막지 않게).
 
     1. 만료된 리프레시 토큰 삭제
-    2. 90일 이상 된 LLM 사용 로그 삭제(llm_usage_log)
+    2. 1830일(5년·명세 내보내기 상한) 초과 LLM 사용 로그 삭제(llm_usage_log)
     3. 30일 이상 웹훅 배송 기록 삭제
     """
     from sqlalchemy import text
