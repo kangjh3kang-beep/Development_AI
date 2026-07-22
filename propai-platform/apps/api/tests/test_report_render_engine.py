@@ -120,6 +120,15 @@ def test_report_meta_approval_state_included_in_serialization():
     assert dataclasses.asdict(approved_model.meta)["approval_state"] == "APPROVED"
 
 
+def test_report_meta_rejects_invalid_approval_state():
+    """W1-A(R1 반영): 불법 등급 문자열은 생성 시점에 거부 — 오타·임의값이 보고서 표면까지
+    침투하지 못하게 한다(정직표기)."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        ReportMeta(title="불법등급", approval_state="TOTALLY_INVALID")
+
+
 def test_no_formula_duplication_in_render_package():
     """렌더 패키지는 '표현'만 — 도메인 산식 서비스를 임포트하지 않는다(어댑터 제외)."""
     import pathlib

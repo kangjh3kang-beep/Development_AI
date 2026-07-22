@@ -8,9 +8,14 @@
   뽑아낸다. 3원형 코드는 이 파일을 몰라도 되고(그린필드 금지), 이 파일도 3원형을 재구현하지
   않는다 — 원형↔공용 변환은 archetype_adapters.py가 별도로 담당한다.
 
-★"승인 없이 APPROVED 도달 경로 0"(v4.0 Gate) — 이 모듈의 구조 자체가 보장한다:
-  apply_transition()이 유일한 전이 관문이고, to==APPROVED일 때 actor(승인자)가 비어있으면
-  무조건 예외를 던진다(다른 우회 함수가 없다 — site_basis의 can_approve() 선례와 동일 철학).
+★"승인 없이 APPROVED 도달 경로 0"(v4.0 Gate) — 강제력의 경계를 정직하게 명시한다(R1 반영):
+  - **구조적 강제**: apply_transition() "전이"에 한한다 — to==APPROVED일 때 actor(승인자)가
+    비어있으면 무조건 예외(site_basis의 can_approve() 선례와 동일 철학).
+  - **관례적 강제**: ApprovalState.APPROVED "값" 자체의 생성(enum 참조·어댑터 변환·필드 대입)은
+    파이썬 언어 특성상 완전 차단이 불가능하다. 어댑터가 돌려주는 APPROVED는 상류 원형
+    (site_basis can_approve·run_state HITL)이 이미 actor-게이팅한 결과의 "라벨 번역"일 뿐이며,
+    신규 코드가 관문(apply_transition) 없이 APPROVED를 대입하는 것은 계약 위반이다 —
+    "구조가 막아주니 자유 대입해도 된다"고 읽지 말 것.
 
 ★전이표는 "합법 전이만" 명시한다(그 외 전부 거부) — 역행(예: APPROVED→DRAFT)은 이 표에
   없다: 사양은 "재발급은 SUPERSEDED 경유"(새 초안을 새로 시작하는 원칙)이지, 기존 레코드를
@@ -38,8 +43,10 @@ class IllegalApprovalTransitionError(Exception):
 
 # ── 전이표 — 합법 전이만 명시(그 외 전부 거부) ──────────────────────────────
 # DRAFT→MACHINE_VALIDATED→EXPERT_REVIEWED→APPROVED→SUPERSEDED 의 선형 사슬 하나뿐이다.
-# 역행·건너뛰기(예: DRAFT→APPROVED 직행)는 site_basis의 "ANALYZED 상태에서만 승인 가능"
-# 선례와 동형으로 구조상 차단한다. SUPERSEDED는 종단(빈 집합 — 이 표 안에서는 더 못 감).
+# 역행·건너뛰기(예: DRAFT→APPROVED 직행)는 구조상 차단한다. SUPERSEDED는 종단(빈 집합).
+# ★스코프 경계(R1 반영): 이 표는 v4.0 스펙 P13의 "이상형 선형 사슬"이며, 넷-신규 채택자만
+#   통제한다. 원형 전이그래프의 상위집합이 아니다 — 예: site_basis는 ANALYZED→APPROVED
+#   (EXPERT_REVIEWED 건너뜀)를 자체 관문으로 허용하며 그 관문을 그대로 유지한다.
 _LEGAL_TRANSITIONS: dict[ApprovalState, frozenset[ApprovalState]] = {
     ApprovalState.DRAFT: frozenset({ApprovalState.MACHINE_VALIDATED}),
     ApprovalState.MACHINE_VALIDATED: frozenset({ApprovalState.EXPERT_REVIEWED}),
