@@ -42,6 +42,7 @@ from typing import Any
 
 import structlog
 
+from app.services.approval.sod import enforce_sod
 from app.services.cad.provenance import (
     ENGINE_SOURCE_VERSION,
     compute_geometry_hash,
@@ -197,6 +198,7 @@ _DESIGN_RUNS_DDL = (
     "  job_status text,"                        # ★WP-L 예약(실행상태 QUEUED/RUNNING 등) — 이 WP 미사용·미접촉
     "  approved_by text,"
     "  approved_at timestamptz,"
+    "  sod_check text,"  # ★백로그③ SoD 표식(승인 시점 기록) — ADD COLUMN 방어로 하위 보강도 병행
     "  created_at timestamptz NOT NULL DEFAULT now(),"
     "  updated_at timestamptz NOT NULL DEFAULT now()"
     ")"
@@ -225,6 +227,9 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
     await db.execute(text(_DESIGN_RUNS_DDL))
     for ix in _INDEXES:
         await db.execute(text(ix))
+    # ★백로그③(SoD) — 이미 배포된 design_runs 테이블에는 sod_check 컬럼이 없으므로
+    #   ADD COLUMN IF NOT EXISTS로 방어적으로 보강한다(job_status 컬럼 보강 선례 동형 — design_run_job.py).
+    await db.execute(text("ALTER TABLE design_runs ADD COLUMN IF NOT EXISTS sod_check text"))
     await db.commit()  # ★DDL 즉시 확정 — 커밋 성공 후에만 ready 세팅(유령 ready 방지·schema_guard 동형).
     _SCHEMA_READY = True
 
@@ -361,6 +366,12 @@ async def approve_design_run(
     ★HIGH-1(테넌트 격리): run_id 조회를 tenant_id로 스코프한다 — 다른 테넌트의 run_id는 '없음'과
       동일 취급(존재 비노출 — IDOR 오라클 방지).
     ★자동경로(persist)는 절대 APPROVED를 만들지 않는다 — 이 함수만이 유일한 승격 경로(WP-G 계약 정합).
+    ★백로그③ SoD(직무분리, W1-B 계약 동형 재구현): design_runs·persist_design_run 어디에도
+      "작성자(author)" 개념 자체가 없다(created_by 인자·컬럼 부재 — site_basis와 달리 assess류
+      행위자 기록 경로가 아예 없다). W1-B 정직 표기 원칙에 따라 author=None을 그대로 넘겨
+      enforce_sod가 "skipped(author 미기록)"을 반환하게 한다 — 실제로 차단되는 경우는 없고
+      (author가 없어 비교 불가), sod_check 표식만 정직하게 남는다. author 기록 경로가 후속으로
+      생기면 그 실필드를 여기 전달하는 것만으로 즉시 실질 SoD가 적용된다(이 함수는 무변경).
     """
     from sqlalchemy import text
 
@@ -377,15 +388,21 @@ async def approve_design_run(
     if not ok:
         return {"ok": False, "message": reason, "run_id": run_id, "status": current}
 
+    # author 개념 부재(design_runs에 작성자 컬럼 없음) — 항상 skip 표식(무회귀: 실차단 0).
+    sod_check = enforce_sod(None, approved_by, context="design_run_approve").marker
+
     try:
         await db.execute(text(
             "UPDATE design_runs SET status = 'APPROVED', approved_by = :by, "
-            "approved_at = now(), updated_at = now() WHERE run_id = :rid"
-        ), {"by": approved_by, "rid": run_id})
+            "approved_at = now(), updated_at = now(), sod_check = :sod WHERE run_id = :rid"
+        ), {"by": approved_by, "sod": sod_check, "rid": run_id})
         await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("design_run 승인 영속 실패", err=str(e)[:160])
         await _safe_rollback(db)
         return {"ok": False, "message": f"승인 저장 실패: {str(e)[:120]}", "run_id": run_id}
 
-    return {"ok": True, "run_id": run_id, "status": STATUS_APPROVED, "approved_by": approved_by}
+    return {
+        "ok": True, "run_id": run_id, "status": STATUS_APPROVED, "approved_by": approved_by,
+        "sod_check": sod_check,
+    }

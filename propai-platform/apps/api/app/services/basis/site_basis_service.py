@@ -42,6 +42,7 @@ from typing import Any
 
 import structlog
 
+from app.services.approval.sod import SelfApprovalError, enforce_sod
 from app.services.basis import site_basis_state as sbs
 from app.services.basis.site_basis_state import ArtifactStatus, GateResult
 
@@ -61,6 +62,7 @@ _STATE_DDL = (
     "  content_hash text,"
     "  approved_by text,"
     "  approved_at timestamptz,"
+    "  sod_check text,"  # ★백로그③ SoD 표식(승인 시점 기록 — ADD COLUMN 방어로 하위 보강)
     "  created_at timestamptz NOT NULL DEFAULT now(),"
     "  updated_at timestamptz NOT NULL DEFAULT now()"
     ")"
@@ -105,6 +107,9 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
     await db.execute(text(_EVENT_DDL))
     for ix in _INDEXES:
         await db.execute(text(ix))
+    # ★백로그③(SoD) — 이미 배포된 site_basis_state 테이블에는 sod_check 컬럼이 없으므로
+    #   ADD COLUMN IF NOT EXISTS로 방어적으로 보강한다(design_run_job.py의 job_status 선례 동형).
+    await db.execute(text("ALTER TABLE site_basis_state ADD COLUMN IF NOT EXISTS sod_check text"))
     await db.commit()  # ★DDL 즉시 확정 — 커밋 성공 후에만 ready 세팅(유령 ready 방지·schema_guard 동형).
     _SCHEMA_READY = True
 
@@ -398,6 +403,23 @@ async def approve_site_basis(
     if not ok:
         return {"ok": False, "message": reason, "run_id": run_id, "artifact_status": current.value}
 
+    # ★백로그③ SoD(직무분리, W1-B 계약 동형 재구현) — 이 run_id를 최초로 만든 작성자(assess
+    #   행위자)와 지금 승인자가 동일하면 자기승인 차단. site_basis_state에는 별도 author 컬럼이
+    #   없어(assess는 판정 자동조립일 뿐 "레코드 소유자" 개념이 없었음), append-only
+    #   site_basis_transition_event의 최초 'assess' 이벤트 actor를 author로 재사용한다(새 컬럼
+    #   추가 없이 기존 감사 이력만 조회 — 그린필드 금지).
+    #   actor가 "system"(created_by 미기재 시 assess_site_basis의 기본값)이면 author 미기록으로
+    #   취급한다 — 무기재 레코드까지 임의로 차단하면 무회귀 원칙을 깬다.
+    author_row = (await db.execute(text(
+        "SELECT actor FROM site_basis_transition_event "
+        "WHERE run_id = :rid AND action = 'assess' ORDER BY created_at ASC LIMIT 1"
+    ), {"rid": run_id})).first()
+    author = author_row[0] if author_row and author_row[0] and author_row[0] != "system" else None
+    try:
+        sod_check = enforce_sod(author, approved_by, context="site_basis_approve").marker
+    except SelfApprovalError as e:
+        return {"ok": False, "message": str(e), "run_id": run_id, "artifact_status": current.value}
+
     new_status = sbs.apply_transition(current, "approve", approved_by=approved_by, all_p0_clear=all_clear)
     basis_status = sbs.basis_status_of(new_status)
 
@@ -405,14 +427,16 @@ async def approve_site_basis(
     try:
         await db.execute(text(
             "UPDATE site_basis_state SET artifact_status = :st, basis_status = :bst, "
-            "approved_by = :by, approved_at = now(), updated_at = now() WHERE run_id = :rid"
-        ), {"st": new_status.value, "bst": basis_status.value, "by": approved_by, "rid": run_id})
+            "approved_by = :by, approved_at = now(), updated_at = now(), sod_check = :sod "
+            "WHERE run_id = :rid"
+        ), {"st": new_status.value, "bst": basis_status.value, "by": approved_by,
+            "sod": sod_check, "rid": run_id})
         await db.execute(text(
             "INSERT INTO site_basis_transition_event"
             "(run_id, from_status, to_status, action, actor, reason) "
             "VALUES (:rid, :frm, :to, 'approve', :actor, :reason)"
         ), {"rid": run_id, "frm": current.value, "to": new_status.value, "actor": approved_by,
-            "reason": "인간승인 — P0 전건 충족 확인됨"})
+            "reason": f"인간승인 — P0 전건 충족 확인됨; sod_check={sod_check}"})
         await db.commit()
 
         from app.services.ledger.ledger_adapters import record_user_analysis
@@ -420,7 +444,8 @@ async def approve_site_basis(
         ledger_result = await record_user_analysis(
             analysis_type="site_basis", kind="site_basis_approval",
             summary={"run_id": run_id, "artifact_status": new_status.value,
-                     "basis_status": basis_status.value, "approved_by": approved_by},
+                     "basis_status": basis_status.value, "approved_by": approved_by,
+                     "sod_check": sod_check},
             tenant_id=row[3], project_id=row[5], pnu=row[4],
             source="site_basis_approve", created_by=approved_by,
         )
@@ -430,7 +455,7 @@ async def approve_site_basis(
 
     return {
         "ok": True, "run_id": run_id, "artifact_status": new_status.value,
-        "basis_status": basis_status.value, "approved_by": approved_by,
+        "basis_status": basis_status.value, "approved_by": approved_by, "sod_check": sod_check,
         "gates": stored_gates, "content_hash": row[2], "stale_propagated": [], "ledger": ledger_result,
     }
 
