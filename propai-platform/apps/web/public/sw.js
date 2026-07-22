@@ -89,7 +89,9 @@
 // v449: 실효용적률 설계 전파 봉합(#408 — 설계엔진 실효FAR 리졸버 통일·우선순위 역전 수정·
 //        정직 배지). 재배선된 설계 실효FAR 표기가 stale app-shell 캐시에 가려지지 않도록
 //        구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v449-design-far-propagation";
+// v450: 시니어 규제자문 풍성화(#412 — IRAC 법령근거 판단체인·실패모드·체크리스트 표면화).
+//        확장된 SeniorVerdictCard가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v450-senior-consultation-enrichment";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
