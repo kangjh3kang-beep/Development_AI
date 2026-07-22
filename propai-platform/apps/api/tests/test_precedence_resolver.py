@@ -1,9 +1,13 @@
 """W1-E 법령 위계 precedence resolver 테스트.
 
-검증 범위(작업지시서 §3):
+검증 범위(작업지시서 §3 + R1 REVISE 봉합분):
 ①위계 서열(조례/시행령/법률) ②시행일 필터(미시행·폐지) ③특별법 우선
 ④위임 한계(조례>법정 → 법정 우선) ⑤동위계 동시행일 상충=CONFLICT(양측 보존)
-⑥trace 근거 비어있지 않음 ⑦실효FAR 어댑터 2케이스.
+⑥trace 근거 비어있지 않음 ⑦실효FAR 어댑터 2케이스
+⑧신법우선(lex posterior) 단독승자·다른 시행일 소스가 CONFLICT에 섞이지 않음
+⑨위임 링크 방향 이상(고시가 법률 위임했다고 잘못 표기) 가드
+⑩value_semantics="floor" 부등호 반전
+⑪value 전부 None인 동위계 소스는 합의로 눈감지 않고 CONFLICT.
 """
 from __future__ import annotations
 
@@ -231,3 +235,125 @@ def test_explain_far_precedence_ordinance_exceeding_limit_national_wins():
     assert result.winner is not None
     assert result.winner.source_id == "national_far_decree"
     assert any("위임 한계 초과" in t for t in result.trace)
+
+
+# ── ⑧신법우선(lex posterior) — R1 REVISE 봉합 ───────────────────────────
+def test_lex_posterior_newer_source_wins_when_authority_ties():
+    """④권위로 못 가른 동위계 소스 중 시행일이 최신인 근거가 이긴다."""
+    old = _src(
+        source_id="old", title="구법", authority_level=AuthorityLevel.ORDINANCE,
+        effective_from=date(2010, 1, 1), value=100,
+    )
+    new = _src(
+        source_id="new", title="신법", authority_level=AuthorityLevel.ORDINANCE,
+        effective_from=date(2020, 1, 1), value=200,
+    )
+    result = resolve_precedence([old, new])
+    assert result.status == PrecedenceStatus.RESOLVED
+    assert result.winner is not None
+    assert result.winner.source_id == "new"
+    assert any("신법우선" in t for t in result.trace)
+
+
+def test_lex_posterior_narrows_before_conflict_excludes_older_source():
+    """★R1 HIGH 반례 재현: effective_from이 다른 소스(2010)가 동시행일 CONFLICT에
+    섞여 들어가던 결함 — 신법우선이 먼저 구법을 배제해, 진짜 동시행일 상충
+    (2020 두 건)만 CONFLICT로 남아야 한다."""
+    old = _src(
+        source_id="old", title="2010년 조례", authority_level=AuthorityLevel.ORDINANCE,
+        effective_from=date(2010, 1, 1), value=1,
+    )
+    new_a = _src(
+        source_id="new_a", title="2020년 조례A", authority_level=AuthorityLevel.ORDINANCE,
+        effective_from=date(2020, 1, 1), value=100,
+    )
+    new_b = _src(
+        source_id="new_b", title="2020년 조례B", authority_level=AuthorityLevel.ORDINANCE,
+        effective_from=date(2020, 1, 1), value=200,
+    )
+    result = resolve_precedence([old, new_a, new_b])
+    assert result.status == PrecedenceStatus.CONFLICT
+    conflicting_ids = {c.source_id for c in result.conflicting}
+    assert conflicting_ids == {"new_a", "new_b"}
+    assert "old" not in conflicting_ids
+    assert any("신법우선" in t for t in result.trace)
+
+
+# ── ⑨위임 링크 방향 이상 가드 ───────────────────────────────────────────
+def test_delegation_direction_guard_skips_reversed_link():
+    """고시(행정규칙)가 법률을 위임했다고 잘못 표기된 라이브 반례 — 위임 판정을
+    스킵하고 권위 단계로 넘겨, 법률이 정상적으로 이겨야 한다(고시가 이기면 결함)."""
+    admrule = _src(
+        source_id="admrule", title="고시(오설정 부모)", authority_level=AuthorityLevel.ADMIN_RULE,
+        value=1,
+    )
+    law = _src(
+        source_id="law", title="법률(오설정 자식)", authority_level=AuthorityLevel.LAW,
+        delegation_parent="admrule", value=2,
+    )
+    result = resolve_precedence([admrule, law])
+    assert result.status == PrecedenceStatus.RESOLVED
+    assert result.winner is not None
+    assert result.winner.source_id == "law"
+    assert any("위임 링크 방향 이상" in t for t in result.trace)
+    assert any("④상위법 우선" in t for t in result.trace)
+
+
+# ── ⑩value_semantics="floor" 부등호 반전 ────────────────────────────────
+def test_floor_semantics_reverses_exceeds_direction():
+    """하한(floor) 기준은 cap과 부등호가 반대다 — 하위가 상위보다 더 낮은(완화된)
+    최소기준을 정하면 위임 한계 초과, 더 높은(엄격한) 기준을 정하면 구체화."""
+    parent = _src(
+        source_id="parent", title="시행령 최소기준", authority_level=AuthorityLevel.ENFORCEMENT_DECREE,
+        value=10, value_semantics="floor",
+    )
+    weaker_child = _src(
+        source_id="weaker", title="조례(완화된 최소기준)", authority_level=AuthorityLevel.ORDINANCE,
+        delegation_parent="parent", value=5, value_semantics="floor",
+    )
+    result_weaker = resolve_precedence([parent, weaker_child])
+    assert result_weaker.status == PrecedenceStatus.RESOLVED
+    assert result_weaker.winner.source_id == "parent"
+    assert any("위임 한계 초과" in t and "하한" in t for t in result_weaker.trace)
+
+    stricter_child = _src(
+        source_id="stricter", title="조례(강화된 최소기준)", authority_level=AuthorityLevel.ORDINANCE,
+        delegation_parent="parent", value=15, value_semantics="floor",
+    )
+    result_stricter = resolve_precedence([parent, stricter_child])
+    assert result_stricter.status == PrecedenceStatus.RESOLVED
+    assert result_stricter.winner.source_id == "stricter"
+    assert any("위임 구체화" in t and "하한" in t for t in result_stricter.trace)
+
+
+def test_delegation_semantics_mismatch_skips_comparison():
+    """cap 소스와 floor 소스가 위임쌍이면 부등호 방향을 정할 수 없어 비교 불가 —
+    CONFLICT이 아니라 위임 단계 스킵 후 권위 단계로 넘어간다."""
+    cap_parent = _src(
+        source_id="cap_parent", title="cap상위", authority_level=AuthorityLevel.ENFORCEMENT_DECREE,
+        value=100, value_semantics="cap",
+    )
+    floor_child = _src(
+        source_id="floor_child", title="floor하위", authority_level=AuthorityLevel.ORDINANCE,
+        delegation_parent="cap_parent", value=50, value_semantics="floor",
+    )
+    result = resolve_precedence([cap_parent, floor_child])
+    assert result.status == PrecedenceStatus.RESOLVED
+    assert result.winner is not None
+    assert result.winner.source_id == "cap_parent"  # ④권위 — 시행령 > 조례
+    assert any("value_semantics 불일치" in t for t in result.trace)
+
+
+# ── ⑪value 전부 None인 동위계 소스는 CONFLICT(합의 눈감기 금지) ──────────
+def test_both_none_values_same_authority_is_conflict_not_agreement():
+    """정성적 판정 자체가 없는(value=None) 동위계 소스 여럿은 '합의'로 눈감지
+    않고 CONFLICT로 표면화한다(비교 불가를 합의로 위장하면 안 됨)."""
+    a = _src(source_id="a", title="근거A(판정미정)", authority_level=AuthorityLevel.ORDINANCE, value=None)
+    b = _src(source_id="b", title="근거B(판정미정)", authority_level=AuthorityLevel.ORDINANCE, value=None)
+
+    result = resolve_precedence([a, b])
+    assert result.status == PrecedenceStatus.CONFLICT
+    assert result.winner is None
+    conflicting_ids = {c.source_id for c in result.conflicting}
+    assert conflicting_ids == {"a", "b"}
+    assert any("미정" in t for t in result.trace)

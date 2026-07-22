@@ -2,15 +2,17 @@
 
 쉬운 설명(비전문가용): 같은 대상(예: 특정 부지의 용적률 상한)에 여러 법령 근거가
 동시에 적용될 때 "어느 것이 이기는가"를 사람이 짐작하지 않고 코드가 근거와 함께
-판정한다. 판정은 4단계 순서로 진행한다:
+판정한다. 판정은 5단계 순서로 진행한다:
 
-    ①시행일 필터 → ②위임(delegation) → ③특별법 우선(specificity) → ④상위법 우선(authority)
+    ①시행일 필터 → ②위임(delegation) → ③특별법 우선(specificity)
+    → ④상위법 우선(authority) → ⑤신법우선(lex posterior)
 
 각 단계에서 승자가 정해지면 그 자리에서 멈추고, 왜 그 근거가 이겼는지 `trace`
-문자열 목록에 남긴다(감사 가능). 어느 단계로도 승자를 가릴 수 없으면(같은 위계·
-같은 시행일에 서로 다른 값) 임의로 승자를 뽑지 않고 `status="CONFLICT"`로 정직하게
-표면화하며, 상충한 양쪽 근거를 전부 보존한다(심의엔진 `CrossValidation`의
-CONFLICT/dissent 관례를 계승 — 임의 승자 선정 금지 원칙).
+문자열 목록에 남긴다(감사 가능). 다섯 단계 모두로도 승자를 가릴 수 없으면(같은
+위계·같은 특정성·같은 시행일에 값이 다름 — 혹은 값 자체가 전부 미정) 임의로
+승자를 뽑지 않고 `status="CONFLICT"`로 정직하게 표면화하며, 상충한 양쪽 근거를
+전부 보존한다(심의엔진 `CrossValidation`의 CONFLICT/dissent 관례를 계승 — 임의
+승자 선정 금지 원칙).
 
 법체계 위계 근거(주석 — 근거 조문 명시):
 - 헌법 제117조 ①: "지방자치단체는 … 법령의 범위 안에서 자치에 관한 규정을 제정할
@@ -21,6 +23,10 @@ CONFLICT/dissent 관례를 계승 — 임의 승자 선정 금지 원칙).
   제정 — 법률 > 시행령 > 시행규칙.
 - 행정규제기본법·행정 실무: 고시·훈령·예규 등 행정규칙은 원칙적으로 대외적 구속력이
   없는 행정 내부 기준으로, 법률·명령·조례보다 하위로 취급한다.
+- 법해석 3원칙(신법우선·특별법우선·상위법우선) 중 신법우선(lex posterior derogat
+  legi priori): 동일 위계·동일 적용범위에서 근거가 여럿이면 나중에 시행된 근거가
+  이전 근거를 갱신한다 — ④권위로도 못 가른 다음, 임의 승자를 뽑기 전에 이 원칙을
+  ⑤단계로 적용한다.
 
 이 5단계 위계(법률>시행령>시행규칙>조례>행정규칙)를 `AUTHORITY_ORDER`로 코드
 상수화한다. 도시·군관리계획/지구단위계획("도시계획")처럼 특정 부지에만 적용되는
@@ -40,6 +46,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -62,7 +69,7 @@ class AuthorityLevel(StrEnum):
 # 행정규칙 사이에 두되(법률이 직접 권한을 부여한 계획이라 조례보다는 하위 일반
 # 규범이지만, 행정규칙보다는 대외적 구속력이 강함), 실무에서는 대부분 ③특정성
 # 단계에서 먼저 판가름난다(부지 전용 계획이므로) — 이 표는 ③에서도 못 가른
-# 마지막 안전망(④)일 뿐이다.
+# 다음의 안전망(④)일 뿐이다.
 AUTHORITY_ORDER: dict[AuthorityLevel, int] = {
     AuthorityLevel.LAW: 0,
     AuthorityLevel.ENFORCEMENT_DECREE: 1,
@@ -91,10 +98,12 @@ class LegalSource(BaseModel):
     - specificity: "특별법"이면 일반법보다 우선(법 해석의 특별법 우선 원칙,
       lex specialis). None/기본값은 "일반법"으로 취급.
     - delegation_parent: 이 근거가 위임받은 상위 근거의 source_id(위임 관계가
-      없으면 None).
+      없으면 None). 부모의 authority_level이 자식보다 실제로 상위여야 유효한
+      위임으로 인정한다(방향 가드 — ②단계 참고).
     - effective_from/effective_to: 시행일 구간(effective_to=None이면 현재도 유효).
-    - value: 판정 대상 수치(예: 용적률 상한 %) 또는 정성적 판정 문자열. 수치는
-      "상한(cap, 클수록 완화)" 의미로 취급한다(위임 한계 비교에 사용).
+    - value: 판정 대상 수치(예: 용적률 상한 %) 또는 정성적 판정 문자열.
+    - value_semantics: value가 "cap"(상한, 클수록 완화 — 기본값)인지 "floor"
+      (하한, 작을수록 완화)인지. 위임 한계 비교(②단계)의 부등호 방향을 정한다.
     """
 
     source_id: str
@@ -106,6 +115,7 @@ class LegalSource(BaseModel):
     effective_from: date
     effective_to: date | None = None
     value: float | str | None = None
+    value_semantics: Literal["cap", "floor"] = "cap"
     basis_article: str | None = None  # 근거 조문(감사 추적용, 예: "국토계획법 시행령 §85")
 
 
@@ -126,29 +136,56 @@ def _is_effective(source: LegalSource, as_of: date) -> bool:
     return not (source.effective_to is not None and source.effective_to < as_of)
 
 
+def _is_numeric(value: object) -> bool:
+    """숫자(상한/하한) 비교가 가능한 값인가 — bool은 int의 서브클래스라 제외해야 한다.
+
+    (bool 값(True/False)은 정성적 판정을 표현할 때 쓰이는데, isinstance(True, int)가
+    True라서 걸러주지 않으면 "합격/불합격" 같은 판정이 숫자 위임한계 비교로 잘못
+    들어가 True>False 같은 무의미한 대소비교가 발생한다.)
+    """
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def _resolve_delegation_pair(
     parent: LegalSource, child: LegalSource,
-) -> tuple[LegalSource, str]:
+) -> tuple[LegalSource | None, str]:
     """위임 관계 1쌍 판정 — 위임받은 하위가 구체화하되, 위임 한계 초과값은 상위 우선.
 
-    value가 둘 다 숫자(상한값)면: child > parent(하위가 상위보다 더 완화된 값을
-    설정) → 위임 한계 초과이므로 상위(parent) 우선(헌법 §117·지방자치법 §28 —
-    법령 범위 초과 조례는 무효). child <= parent면 위임 범위 내 구체화이므로
-    하위(child) 우선.
+    반환의 승자가 None이면 "이 쌍은 위임으로 비교할 수 없다"는 뜻이다(호출부는
+    이 쌍을 그대로 두고 ③특정성/④권위 단계로 넘긴다) — value_semantics가
+    서로 다르면(하나는 상한 기준, 하나는 하한 기준) 부등호 방향을 하나로 정할 수
+    없어 비교 자체가 성립하지 않기 때문이다.
+
+    value_semantics="cap"(상한, 기본값): child > parent(하위가 상위보다 더
+    완화된 값) → 위임 한계 초과 → 상위(parent) 우선(헌법 §117·지방자치법 §28).
+    value_semantics="floor"(하한): 반대로 child < parent(하위가 상위보다 더
+    완화된 — 즉 더 낮은 — 최소기준) → 위임 한계 초과 → 상위 우선.
+    한계 이내면 하위(child)가 구체화 우선.
     값이 숫자가 아니거나(정성적 판정) 비교 불가하면, 위임의 취지(하위가 더
     구체적 사안을 규율)에 따라 기본적으로 하위(child)를 우선한다.
     """
+    if parent.value_semantics != child.value_semantics:
+        reason = (
+            f"value_semantics 불일치({parent.title}={parent.value_semantics} vs "
+            f"{child.title}={child.value_semantics}) — 상한/하한 기준이 달라 위임 한계 "
+            "비교 불가, 위임 판정 스킵(다음 단계로 이관)"
+        )
+        return None, reason
+
     p_val, c_val = parent.value, child.value
-    if isinstance(p_val, int | float) and isinstance(c_val, int | float):
-        if c_val > p_val:
+    if _is_numeric(p_val) and _is_numeric(c_val):
+        semantics = child.value_semantics
+        exceeds = (c_val > p_val) if semantics == "cap" else (c_val < p_val)
+        semantics_label = "상한" if semantics == "cap" else "하한"
+        if exceeds:
             reason = (
-                f"위임 한계 초과 — {child.title}({child.value})가 위임 상위 "
-                f"{parent.title}({parent.value}) 한도를 벗어나 더 완화된 값을 정함 → "
+                f"위임 한계 초과({semantics_label} 기준) — {child.title}({child.value})가 "
+                f"위임 상위 {parent.title}({parent.value}) 한도를 벗어나 더 완화된 값을 정함 → "
                 f"상위법 우선(헌법 §117·지방자치법 §28: 조례는 법령 범위 안에서만 제정)"
             )
             return parent, reason
         reason = (
-            f"위임 구체화 — {child.title}({child.value})가 위임 상위 "
+            f"위임 구체화({semantics_label} 기준) — {child.title}({child.value})가 위임 상위 "
             f"{parent.title}({parent.value}) 범위 내에서 구체화 → 하위법 우선"
         )
         return child, reason
@@ -162,11 +199,12 @@ def _resolve_delegation_pair(
 def resolve_precedence(
     sources: list[LegalSource], *, as_of: date | None = None,
 ) -> PrecedenceResult:
-    """같은 대상에 겹치는 법령 근거들의 우선순위를 4단계로 판정한다.
+    """같은 대상에 겹치는 법령 근거들의 우선순위를 5단계로 판정한다.
 
-    ①시행일 필터 → ②위임(delegation) → ③특별법 우선(specificity) → ④상위법 우선
-    (authority). 각 단계 적용 근거를 trace에 남긴다. 어느 단계도 단독 승자를
-    가르지 못하면(동위계·동시행일에 값이 다름) CONFLICT로 정직 표면화하고 양측을
+    ①시행일 필터 → ②위임(delegation) → ③특별법 우선(specificity) → ④상위법
+    우선(authority) → ⑤신법우선(lex posterior). 각 단계 적용 근거를 trace에
+    남긴다. 다섯 단계 모두 단독 승자를 가르지 못하면(동위계·동특정성·동시행일에
+    값이 다르거나, 값 자체가 전부 미정) CONFLICT로 정직 표면화하고 양측을
     보존한다(임의 승자 선정 금지).
     """
     trace: list[str] = []
@@ -199,15 +237,36 @@ def resolve_precedence(
         )
 
     # ② 위임(delegation) — 위임 부모/자식 쌍을 찾아 순차 해소(체인 방어를 위해
-    #    후보 수만큼 반복 — 매 회차 최대 1쌍을 줄인다).
+    #    후보 수만큼 반복 — 매 회차 최대 1건을 처리한다). 위임 링크의 방향이
+    #    거꾸로 되어 있으면(예: 고시가 법률을 위임했다고 잘못 표기된 경우처럼
+    #    parent의 위계가 child보다 실제로는 낮음) 위임으로 판정하지 않고
+    #    그대로 다음 단계(③특정성/④권위)로 넘긴다 — 잘못된 링크가 엉뚱한 승자를
+    #    만들지 못하게 막는 방향 가드.
+    skip_delegation_ids: set[str] = set()
     by_id = {s.source_id: s for s in candidates}
     for _ in range(len(candidates)):
         pair_found = False
         for child in list(candidates):
-            parent = by_id.get(child.delegation_parent) if child.delegation_parent else None
+            if child.source_id in skip_delegation_ids or not child.delegation_parent:
+                continue
+            parent = by_id.get(child.delegation_parent)
             if parent is None or parent not in candidates or parent is child:
                 continue
+            if AUTHORITY_ORDER[parent.authority_level] > AUTHORITY_ORDER[child.authority_level]:
+                trace.append(
+                    f"②위임 — 위임 링크 방향 이상: {child.title}({child.authority_level.value})가 "
+                    f"{parent.title}({parent.authority_level.value})의 위임을 받았다고 표기되어 있으나 "
+                    "부모가 자식보다 하위 위계 — 위임 판정 스킵(다음 단계로 이관)"
+                )
+                skip_delegation_ids.add(child.source_id)
+                pair_found = True
+                break
             winner, reason = _resolve_delegation_pair(parent, child)
+            if winner is None:
+                trace.append(f"②위임 — {reason}")
+                skip_delegation_ids.add(child.source_id)
+                pair_found = True
+                break
             loser = child if winner is parent else parent
             trace.append(f"②위임 — {reason}")
             candidates = [c for c in candidates if c is not loser]
@@ -265,25 +324,63 @@ def resolve_precedence(
             candidates=all_sources_effective, trace=trace,
         )
 
-    # ⑤ 여기까지 왔는데도 복수 후보가 남았다면: 값이 실제로 같으면 상충이 아니다
-    #    (같은 결론에 여러 근거가 동의한 것 — 임의로 하나를 고른다). 값이 다르면
-    #    해소 불가 상충 — 임의 승자를 뽑지 않고 CONFLICT로 표면화, 양측 보존.
-    distinct_values = {s.value for s in candidates}
-    if len(distinct_values) <= 1:
+    # ⑤ 신법우선(lex posterior derogat legi priori) — 위계·특정성으로 못 가른
+    #    동위계 근거들 중 시행일이 서로 다르면 가장 최근에 시행된 근거가 이긴다.
+    #    (법해석 3원칙 중 하나. 이 단계 덕분에 바로 다음 CONFLICT 판정이
+    #    "정말로 동일 시행일" 조건에서만 발생하게 된다 — 실제 시행일 동일성을
+    #    아래에서 다시 검사해 trace 문구가 거짓이 되지 않게 한다.)
+    distinct_effective_from = {s.effective_from for s in candidates}
+    if len(distinct_effective_from) > 1:
+        latest = max(distinct_effective_from)
+        newer = [s for s in candidates if s.effective_from == latest]
         trace.append(
-            f"동위계·동특정성 근거 {len(candidates)}건이 동일 값에 합의 — 상충 아님, "
-            f"{candidates[0].title} 대표 채택"
+            "⑤신법우선(lex posterior) — 동위계·동특정성에서 시행일이 최신인 근거 우선: "
+            + ", ".join(f"{s.title}({s.effective_from})" for s in newer)
+            + " 채택, 구법 배제: "
+            + ", ".join(f"{s.title}({s.effective_from})" for s in candidates if s not in newer)
+        )
+        candidates = newer
+    else:
+        trace.append("⑤신법우선 — 전원 동일 시행일(신법우선으로 가려지지 않음)")
+
+    if len(candidates) == 1:
+        trace.append(f"⑤신법우선 해소 후 단독 승자 — {candidates[0].title}")
+        return PrecedenceResult(
+            status=PrecedenceStatus.RESOLVED, winner=candidates[0],
+            candidates=all_sources_effective, trace=trace,
+        )
+
+    # ⑥ 여기까지 왔다면 남은 후보는 실제로 동일 위계·동일 특정성·동일 시행일이다
+    #    (⑤단계가 시행일을 실검사해 이미 필터링했다 — 아래 문구는 그 실검사
+    #    결과를 그대로 반영한다). 값이 실제로 같으면 상충이 아니다(같은 결론에
+    #    여러 근거가 동의한 것 — 대표 하나를 채택). 값이 하나라도 다르면, 그리고
+    #    값이 전부 None(정성적 판정 자체가 없어 비교조차 불가)이어도, 임의로
+    #    승자를 뽑지 않고 CONFLICT로 표면화한다(전부 None을 "합의"로 눈감으면
+    #    실제로는 판정이 없는 상태를 숨기는 것이므로 은폐 금지 원칙 위반).
+    distinct_values = {s.value for s in candidates}
+    genuine_agreement = len(distinct_values) == 1 and next(iter(distinct_values)) is not None
+    if genuine_agreement:
+        trace.append(
+            f"동위계·동특정성·동일시행일({next(iter(distinct_effective_from))}) 근거 "
+            f"{len(candidates)}건이 동일 값에 합의 — 상충 아님, {candidates[0].title} 대표 채택"
         )
         return PrecedenceResult(
             status=PrecedenceStatus.RESOLVED, winner=candidates[0],
             candidates=all_sources_effective, trace=trace,
         )
 
-    trace.append(
-        "해소 불가 상충(CONFLICT) — 동일 위계·동일 시행일 구간에서 서로 다른 값 "
-        + ", ".join(f"{s.title}={s.value}" for s in candidates)
-        + " — 임의 승자 선정 금지, 양측 보존(수동 검토 필요)"
-    )
+    if distinct_values == {None}:
+        trace.append(
+            "해소 불가 상충(CONFLICT) — 동일 위계·동일 시행일 구간에서 값 자체가 전부 "
+            "미정(None)이라 합의 여부를 판단할 수 없음 — 임의 승자 선정 금지, "
+            "양측 보존(수동 검토 필요, 정성적 판정 은폐 방지)"
+        )
+    else:
+        trace.append(
+            "해소 불가 상충(CONFLICT) — 동일 위계·동일 시행일 구간에서 서로 다른 값 "
+            + ", ".join(f"{s.title}={s.value}" for s in candidates)
+            + " — 임의 승자 선정 금지, 양측 보존(수동 검토 필요)"
+        )
     return PrecedenceResult(
         status=PrecedenceStatus.CONFLICT,
         winner=None,
@@ -324,7 +421,15 @@ def explain_far_precedence(
     as_of: date | None = None,
     zone_type: str | None = None,
 ) -> PrecedenceResult:
-    """법정 용적률 상한 vs 조례 용적률의 위임 관계를 precedence resolver로 설명.
+    """법정 용적률 상한 vs 조례 용적률, '이 두 값만 있을 때'의 위임 관계를 설명.
+
+    ★스코프 한정(중요): 이 어댑터는 "법정상한 vs 조례"라는 2자 관계만 다룬다.
+    calc_effective_far는 실제로는 도시·군관리계획/지구단위계획 상한이 있으면
+    그 계획상한을 법정·조례 한도보다 우선 적용해 **법정상한을 초과하는 값**도
+    허용한다(far_tier_service.py의 "도시·군관리계획/지구단위계획 상한용적률이
+    있으면 최우선 적용" 분기 — 국토계획법 §52가 부여한 예외적 권한). 이 함수는
+    계획상한·완화 인센티브가 없는(또는 아직 반영하지 않은) 단순 법정 vs 조례
+    비교만 설명하며, 계획상한이 실제로 개입하는 사례까지 재현하지 않는다.
 
     - 법정상한(national): 국토계획법 시행령 §84·85(별표) — 상위 근거.
     - 조례(ordinance): 국토계획법 §78 위임에 따라 지자체가 정하는 자치법규 —
@@ -333,8 +438,8 @@ def explain_far_precedence(
     - 조례 > 법정상한: 위임 한계 초과 → "법정상한 우선(위임 한계)".
 
     반환 trace로 실제 근거를 확인할 수 있다. calc_effective_far의 결과값(둘 중
-    낮은 값 채택)과 항상 같은 결론이 나오도록 설계했으나, 이 함수는 그 계산을
-    대체하지 않는다(설명 계약 전용).
+    낮은 값 채택, 계획상한 미개입 케이스에 한해)과 같은 결론이 나오도록
+    설계했으나, 이 함수는 그 계산을 대체하지 않는다(설명 계약 전용).
     """
     base_date = as_of or date.today()
     national = LegalSource(
