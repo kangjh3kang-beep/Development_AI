@@ -186,6 +186,14 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
 
 # ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
 #   폴백을 뜻하므로 여기 포함하지 않는다(effective_far가 법정값과 같아도 조례값이 아님).
+# ★한계(2026-07-22, live-fix① R2 — LOW#2 명시): 이 판정은 문자열 하드코딩 키워드 결합이다.
+#   confirmed/미확정 정직 게이트 전체(_extract_ordinance_far 경로1/2/4·land_info_service의
+#   zone_limits 배선·이 파일 하단 zl_source_is_fallback 등)가 이 판정에 의존하므로, 새 조례
+#   생산자가 "법정상한"/"조례"/"법제처"/"ELIS"/"elis"와 다른 명명 규칙(예: 영문 대문자 표기
+#   변형, 신규 데이터소스명)으로 source 문자열을 지으면 이 판정이 조용히 틀릴 수 있다(과다
+#   신뢰 또는 과다 불신). 생산자의 source 명명을 바꾸거나 새 확정 출처를 추가할 때는 반드시
+#   이 튜플과 "법정상한" 부정판정을 함께 갱신할 것 — 그렇지 않으면 confirmed 판정이 전역적으로
+#   어긋난다(이 함수가 SSOT이므로 갱신 누락의 파급이 크다).
 _CONFIRMED_ORDINANCE_SOURCE_HINTS: tuple[str, ...] = ("조례", "법제처", "ELIS", "elis")
 
 

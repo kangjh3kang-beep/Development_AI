@@ -906,6 +906,15 @@ textarea {
     background: var(--data-accent-soft);
     box-shadow: inset 2px 0 0 var(--data-accent);
   }
+  /* 미확정 타일(조례 폴백 등) — "확인 필요" 정직 표기. 값이 있어도 확정이 아니면 이 스타일로
+     구분해 확정 타일(--accent)과 시각적으로 자기모순 없이 병존하게 한다(live-fix① R2). */
+  .sa-di-tile--muted {
+    background: var(--surface-muted);
+  }
+  .sa-di-tile--muted .sa-di-tile__value {
+    color: var(--text-hint);
+    font-style: italic;
+  }
   .sa-di-tile__label {
     font-size: 0.625rem;
     font-weight: 600;

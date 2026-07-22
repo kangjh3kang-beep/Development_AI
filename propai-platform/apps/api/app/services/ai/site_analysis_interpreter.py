@@ -242,8 +242,13 @@ class SiteAnalysisInterpreter(BaseInterpreter):
             compact["effective_far"] = {
                 "national_bcr_pct": far.get("national_bcr_pct"),
                 "national_far_pct": far.get("national_far_pct"),
+                # ★정직가드(2026-07-22, live-fix① R2 — R1 봉합): ordinance_*_pct는 SSOT
+                #   (far_tier_service.calc_effective_far)가 이미 미확정 시 None을 반환하지만,
+                #   ordinance_confirmed를 함께 동봉해 LLM이 "확인 안 됨"을 명시 근거로 인지하게
+                #   한다(필드 부재만으론 LLM이 누락으로 오인할 수 있음 — 명시 신호가 더 안전).
                 "ordinance_bcr_pct": far.get("ordinance_bcr_pct"),
                 "ordinance_far_pct": far.get("ordinance_far_pct"),
+                "ordinance_confirmed": bool(far.get("ordinance_confirmed")),
                 "effective_bcr_pct": far.get("effective_bcr_pct"),
                 "effective_far_pct": far.get("effective_far_pct"),
                 "source": far.get("source"),

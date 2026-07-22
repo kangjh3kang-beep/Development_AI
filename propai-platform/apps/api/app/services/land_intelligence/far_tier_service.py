@@ -440,10 +440,19 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             f"법정상한 대비 {diff_pct:.0f}%p 낮게 적용됩니다. "
             f"이는 해당 지역의 도시계획 방향(기반시설 용량, 주거환경 보전 등)을 반영한 것입니다."
         )
-    elif ordinance_far == national_far:
+    elif ordinance_confirmed and ordinance_far == national_far:
         annotations.append(
             f"{region_name}의 조례 용적률이 법정상한({national_far}%)과 동일하게 규정되어 있어, "
             f"별도의 조례 제한 없이 법정상한이 그대로 적용됩니다."
+        )
+    elif not ordinance_confirmed and ordinance_far == national_far:
+        # ★정직가드(2026-07-22, live-fix① R2 — R1 봉합): 조례 미확인 폴백은 effective_far가
+        #   national_far와 수치상 같아도(폴백 계산식이 그렇게 만듦) "조례가 법정상한과 동일하게
+        #   규정됨"이라 단정하지 않는다 — 조례 자체를 확인 못했을 뿐이다(용인 자연녹지 재현
+        #   패턴과 동일 — annotations는 site_analysis_interpreter의 LLM 컨텍스트로도 전달됨).
+        annotations.append(
+            f"{region_name}의 도시계획조례를 확인하지 못해 법정상한({national_far}%)을 "
+            f"잠정 적용합니다. 정확한 조례 용적률은 관할 지자체 확인이 필요합니다."
         )
 
     if ordinance_bcr < national_bcr:
@@ -486,11 +495,25 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             f"기부체납 비율에 따른 상세 시뮬레이션은 별도 섹션을 참조하세요."
         )
 
+    # ★직렬화 정직가드(2026-07-22, live-fix① R2 — R1 리뷰 확정 잔존결함): ordinance_bcr/
+    #   ordinance_far(로컬변수, :303-304)는 위 min(national, ordinance) 산식에 반드시 그대로
+    #   쓰여야 하므로(법정상한 폴백을 하한으로 두는 계산 불변) 건드리지 않는다 — 이 아래에서
+    #   응답에 '직렬화'되는 값만 별도 변수로 분리해 confirmed일 때만 노출한다. 미확정(법정상한
+    #   폴백)이면 ordinance_bcr/ordinance_far가 national_*와 동일값(그 폴백 자체)이라, 이를
+    #   그대로 ordinance_*_pct로 내보내면 소비처가 "명시적 조례값"으로 오인한다 — 소비처 전수
+    #   스윕 결과 SiteAnalysisDetail.tsx(프론트 조례 타일)·site_analysis_interpreter.py(LLM
+    #   컨텍스트)가 이 최상위 필드를 ordinance_confirmed 체크 없이 직접 읽고 있었다(라이브
+    #   재현: 용인 자연녹지 100%가 "조례 용적률"로 표시). 수치 계산 소비처는 전수조사 결과
+    #   없음(다른 calc_effective_far 호출부는 전부 effective_far_pct/far_basis/
+    #   ordinance_confirmed만 소비 — grep 재현 가능) — 이 SSOT 한 곳만 고치면 전역이 따라온다.
+    ordinance_bcr_pct_out = ordinance_bcr if ordinance_confirmed else None
+    ordinance_far_pct_out = ordinance_far if ordinance_confirmed else None
+
     return {
         "national_bcr_pct": national_bcr,
         "national_far_pct": national_far,
-        "ordinance_bcr_pct": ordinance_bcr,
-        "ordinance_far_pct": ordinance_far,
+        "ordinance_bcr_pct": ordinance_bcr_pct_out,
+        "ordinance_far_pct": ordinance_far_pct_out,
         "effective_bcr_pct": effective_bcr,
         "effective_far_pct": effective_far,
         "far_basis": far_basis,
