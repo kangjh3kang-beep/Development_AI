@@ -136,12 +136,8 @@ def _prescan(context: dict[str, Any] | str) -> list[dict[str, str]]:
     return issues
 
 
-def _strip_json(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[4:] if raw.lower().startswith("json") else raw
-    return raw.strip()
+# 관대 JSON 추출은 공용 파서(llm_json) SSOT로 일원화 — 프리앰블·후행 설명 허용.
+from app.services.ai.llm_json import parse_llm_json  # noqa: E402
 
 
 class VerifierService:
@@ -182,7 +178,7 @@ class VerifierService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="verifier")
-            data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             issues = list(data.get("issues") or []) + pre
             # 판정 보정(사전검사 high 반영)
             verdict = data.get("verdict") or "pass"

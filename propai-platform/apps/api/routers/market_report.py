@@ -174,12 +174,14 @@ async def market_report(
     재분석 후 저장본을 덮어쓴다(regulation.py `/analyze`와 동일 계약).
     """
     lawd_cd, pnu = _resolve(req)
-    from app.services.common.analysis_cache import _key, cache_get
+    from app.services.common.analysis_cache import _key, cache_get, llm_fallback_stale
 
     cache_key = _key(*_market_report_signature_parts(req, pnu))
+    # ★LLM 폴백(narrative.generated=False)이 박제된 캐시는 유예(5분) 경과 시 miss로
+    #   취급해 재생성 → 성공 시 upsert로 덮어써 자가치유(규제분석과 동일 결함 클래스).
     if not req.refresh:
         cached = await cache_get("market_report", cache_key)
-        if cached is not None:
+        if cached is not None and not (req.use_llm and llm_fallback_stale(cached)):
             return cached
 
     tenant_id = str(getattr(current_user, "tenant_id", "") or "") or None
@@ -218,12 +220,13 @@ async def market_report_submit(
     (잡 완료 = 히스토리 엔트리 생성). 진행은 GET /report/jobs/{id}로 폴링.
     """
     lawd_cd, pnu = _resolve(req)
-    from app.services.common.analysis_cache import _key, cache_get
+    from app.services.common.analysis_cache import _key, cache_get, llm_fallback_stale
 
     cache_key = _key(*_market_report_signature_parts(req, pnu))
+    # ★동기 /report와 동일 — LLM 폴백 박제 캐시는 유예 경과 시 재생성으로 자가치유.
     if not req.refresh:
         cached = await cache_get("market_report", cache_key)
-        if cached is not None:
+        if cached is not None and not (req.use_llm and llm_fallback_stale(cached)):
             return {"job_id": None, "status": "done", "result": cached}
 
     tenant_id = str(getattr(current_user, "tenant_id", "") or "") or None

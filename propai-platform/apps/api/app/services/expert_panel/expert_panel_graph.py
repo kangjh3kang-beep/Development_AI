@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, TypedDict
 
@@ -87,12 +86,8 @@ _SYNTH_TMPL = """\
 """
 
 
-def _strip_json(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[4:] if raw.lower().startswith("json") else raw
-    return raw.strip()
+# 관대 JSON 추출은 공용 파서(llm_json) SSOT로 일원화 — 프리앰블·후행 설명 허용.
+from app.services.ai.llm_json import parse_llm_json  # noqa: E402
 
 
 async def _experts_node(state: PanelState) -> dict[str, Any]:
@@ -112,7 +107,7 @@ async def _experts_node(state: PanelState) -> dict[str, Any]:
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
         try:
-            d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            d = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             d.setdefault("role", r["role"])
             return d
         except Exception:  # noqa: BLE001
@@ -141,7 +136,7 @@ async def _verify_node(state: PanelState) -> dict[str, Any]:
         resp = await llm.ainvoke([SystemMessage(content=_VERIFY_SYSTEM), HumanMessage(content=user)])
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
-        report = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+        report = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
     except Exception:  # noqa: BLE001
         report = {"verified": [], "overall_confidence": None, "notes": "검증 일시 불가"}
     return {"verification_report": report}
@@ -175,7 +170,7 @@ async def _synth_node(state: PanelState) -> dict[str, Any]:
         resp = await llm.ainvoke([SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
-        synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+        synth = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
     except Exception:  # noqa: BLE001
         synth = {}
     verification = synth.get("verification", {}) or {}

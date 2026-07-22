@@ -5,7 +5,6 @@
 권리관계를 구조화해 제공한다. LLM 실패 시 graceful 폴백.
 """
 
-import json
 import time
 from typing import Any
 
@@ -410,11 +409,9 @@ class RegistryAnalysisService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="registry")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-            data = json.loads(raw.strip())
+            from app.services.ai.llm_json import coerce_llm_text, parse_llm_json
+            raw = coerce_llm_text(resp.content if hasattr(resp, "content") else str(resp)).strip()
+            data = parse_llm_json(raw)  # 공용 관대 파서(프리앰블·후행 설명 허용) — 파서 SSOT
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001

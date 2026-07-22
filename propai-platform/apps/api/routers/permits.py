@@ -474,7 +474,12 @@ async def ai_permit_analysis(
     첫 호출만 느리고, 이후 같은 입력은 저장본을 즉시 반환한다.
     req.refresh=True 를 보내면 재분석 후 저장본을 덮어쓴다.
     """
-    from app.services.common.analysis_cache import _key, cache_get, cache_put
+    from app.services.common.analysis_cache import (
+        _key,
+        cache_get,
+        cache_put,
+        llm_fallback_stale,
+    )
     from app.services.permit.permit_analysis_service import PermitAnalysisService
 
     if not req.address or not req.address.strip():
@@ -485,10 +490,12 @@ async def ai_permit_analysis(
     parcels_str = ",".join(sorted(req.parcels or []))
     cache_key = _key(addr, str(req.pnu), str(req.use_llm), parcels_str)
 
-    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환.
+    # ★단, LLM 폴백(ai=False)이 박제된 캐시는 유예(5분) 경과 시 miss로 취급해 재분석
+    #   → 성공 시 upsert로 덮어써 자가치유(규제분석과 동일 결함 클래스 공용 봉합).
     if not req.refresh:
         cached = await cache_get("permit_ai_analysis", cache_key)
-        if cached is not None:
+        if cached is not None and not (req.use_llm and llm_fallback_stale(cached)):
             return cached
 
     # 실제 분석 실행 → 저장 → 반환

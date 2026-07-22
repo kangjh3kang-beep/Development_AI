@@ -222,12 +222,8 @@ _SYNTH_TMPL = """\
 """
 
 
-def _strip_json(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[4:] if raw.lower().startswith("json") else raw
-    return raw.strip()
+# 관대 JSON 추출은 공용 파서(llm_json) SSOT로 일원화 — 프리앰블·후행 설명 허용.
+from app.services.ai.llm_json import parse_llm_json  # noqa: E402
 
 
 class ExpertPanelService:
@@ -349,7 +345,7 @@ class ExpertPanelService:
             if isinstance(meta, dict):
                 stop = str(meta.get("stop_reason") or meta.get("finish_reason") or "")
             try:
-                data = json.loads(_strip_json(raw))
+                data = parse_llm_json(raw)
             except json.JSONDecodeError:
                 reason = "truncation" if stop in ("max_tokens", "length") else "invalid_json"
                 raise
@@ -385,7 +381,7 @@ class ExpertPanelService:
                 from app.services.ai.base_interpreter import record_llm_response_billing
                 await record_llm_response_billing(llm, resp, service="expert_panel")
                 try:
-                    d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+                    d = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
                     d.setdefault("role", r["role"])
                     return d
                 except Exception:  # noqa: BLE001
@@ -408,7 +404,7 @@ class ExpertPanelService:
             )
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="expert_panel")
-            synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            synth = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             return {
                 "generated": True,
                 "experts": experts,
