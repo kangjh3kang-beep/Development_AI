@@ -167,6 +167,21 @@ def _canonical_json_bytes(obj: Any) -> bytes:
     ).encode("utf-8")
 
 
+def compute_payload_checksum(payload: dict[str, Any]) -> str:
+    """payload(dict)의 canonical JSON sha256 checksum — seal() 내부와 동일 알고리즘의 공개 API.
+
+    ★소비 직전 "소비대상↔봉인 스냅샷" 드리프트 대조용(W2-3 R2 MEDIUM-1 봉합). verify_for_
+    consumption()은 ``bundle.payload``(봉인 시점 스냅샷) 자체의 자기무결성만 검사한다 —
+    실제 소비 대상이 그 스냅샷과 별개의 "라이브 객체"(예: project_pipeline.PipelineState.
+    site_to_design)라면, 그 라이브 객체가 봉인 이후 별도로 변조/표류(drift)해도
+    verify_for_consumption()은 라이브 객체를 재해싱하지 않으므로 검출하지 못한다(리뷰어
+    실증: bundle은 그대로 두고 site_to_design.max_far만 바꾸면 무검출 통과). 소비측이 이
+    함수로 라이브 객체를 직접 재직렬화해 ``bundle.payload_checksum``과 대조해야 그
+    드리프트를 잡을 수 있다 — 이 대조는 이 모듈이 강제하지 않는다(호출부 책임).
+    """
+    return _sha256_bytes(_canonical_json_bytes(payload))
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -383,6 +398,7 @@ __all__ = [
     "HandoffExpiredError",
     "HandoffSchemaVersionError",
     "bundle_from_dict",
+    "compute_payload_checksum",
     "decision_from_gate_result",
     "from_submission_bundle_manifest",
     "seal",

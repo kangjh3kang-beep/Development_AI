@@ -928,28 +928,44 @@ class ProjectPipeline:
 
             # ── W2-3: Stage Handoff bundle 계약 — 대표 1경로(부지분석→설계) seal() ──
             # 무회귀: site_to_design 직접 전달은 그대로 유지하고, 번들은 병행 도입(soft 채택
-            # — _run_design 이 checksum 변조만 hard, 그 외는 warning 으로 흡수한다). decision은
-            # 이 경계의 실제 결함 이력(0.0 센티널·far_reliable=False 가정치 폴백)을 그대로
-            # 반영한다 — SSOT 산정을 신뢰 못 하거나 한도가 미산정이면 CONDITIONAL.
+            # — _run_design 이 checksum 변조만 hard, 그 외는 warning 으로 흡수한다).
+            # ★R2(R1 MEDIUM-2 봉합 — soft 실배선): decision 은 새로 지어낸 판정이 아니라
+            # 이 파이프라인이 이미 갖고 있는 정직 표식(E7 assumed_defaults/assumed_fields)을
+            # 그대로 재사용한다 — 장식적 문구 대신 실제 프로덕션에서 도달 가능한 값을 방출해야
+            # BLOCKED/CONDITIONAL soft 경로가 죽은 분기(사문)로 남지 않는다:
+            #   BLOCKED     : pre_collected.data_quality=="assumed_defaults"(외부수집 전면
+            #                 실패로 zone_type 등이 전부 가정치) — 이 인계 자체를 신뢰 불가로
+            #                 표시. conditions=pre_collected.assumed_fields 그대로 재사용.
+            #   CONDITIONAL : 위에 해당하지 않지만 max_far/max_bcr 미산정(0.0 센티널) 또는
+            #                 far_reliable=False(SSOT 신뢰도 낮음) — 기존 design_assumed_fields
+            #                 표기와 동일한 "필드(사유)" 어휘로 conditions 를 채운다.
             try:
                 from app.services.provenance.handoff_bundle import HandoffDecision, seal
 
+                _site_all_assumed = pre_collected.get("data_quality") == "assumed_defaults"
                 _far_bcr_missing = not effective_far or not effective_bcr
                 _conditional = _far_bcr_missing or not far_reliable
-                _conditions: list[str] = []
-                if _far_bcr_missing:
-                    _conditions.append(
-                        "max_far/max_bcr 미산정(0.0 센티널) — 설계 단계 폴백 가정치 적용 예정"
-                    )
-                if not far_reliable and not _far_bcr_missing:
-                    _conditions.append("실효 용적률 SSOT 신뢰도 낮음(far_reliable=False)")
+
+                if _site_all_assumed:
+                    _decision = HandoffDecision.BLOCKED.value
+                    _conditions = list(pre_collected.get("assumed_fields") or [])
+                elif _conditional:
+                    _decision = HandoffDecision.CONDITIONAL.value
+                    _conditions = []
+                    if not effective_far or float(effective_far or 0) <= 0:
+                        _conditions.append("max_far(0.0 센티널 — 미산정)")
+                    if not effective_bcr or float(effective_bcr or 0) <= 0:
+                        _conditions.append("max_bcr(0.0 센티널 — 미산정)")
+                    if not far_reliable and not _far_bcr_missing:
+                        _conditions.append("far_reliable(False — SSOT 신뢰도 낮음)")
+                else:
+                    _decision = HandoffDecision.PASS.value
+                    _conditions = []
+
                 state.site_to_design_bundle = seal(
                     producer="site_analysis",
                     payload=state.site_to_design.model_dump(),
-                    decision=(
-                        HandoffDecision.CONDITIONAL.value if _conditional
-                        else HandoffDecision.PASS.value
-                    ),
+                    decision=_decision,
                     conditions=_conditions,
                 ).to_dict()
             except Exception as e:  # noqa: BLE001 — 번들 봉인 실패가 부지분석을 막으면 안 됨(best-effort).
@@ -1449,17 +1465,35 @@ class ProjectPipeline:
         # 불일치(변조)만 hard(그대로 재전파 — 파이프라인이 FAILED 로 전환)이고 나머지
         # (BLOCKED/schema_version 미허용/만료)는 soft — 경고 로그+표식만 남기고 기존
         # 로직(site 그대로 사용)을 계속 진행한다(W2-2 UNTRACED 와 동일 soft 전략).
+        #
+        # ★R2(R1 LOW-1 봉합) — handoff_unverified: 아래 3경로는 모두 "검증을 아예 못 했다"는
+        # 뜻이라 "검증통과"(handoff_bundle_warning 無)와 구분해야 감사 가능하다(무음 우회 금지):
+        #   ① 번들 자체가 없음(state.site_to_design_bundle 이 falsy — 레거시 호출/복원 경로/
+        #      위 seal() 이 예외로 실패한 경우 모두 여기로 수렴).
+        #   ② 번들 dict 형식이 손상됨(bundle_from_dict 가 None 반환 — malformed).
+        # 검증이 실제로 수행된 경우(③)에만 handoff_unverified 를 남기지 않는다.
         handoff_bundle_warning: str | None = None
-        if state.site_to_design_bundle:
+        handoff_payload_drift: str | None = None
+        handoff_unverified: str | None = None
+        if not state.site_to_design_bundle:
+            handoff_unverified = (
+                "site_to_design_bundle 없음(레거시 호출·_restore_previous 복원 경로·"
+                "seal() 실패 중 하나 — 검증 생략, 미검증 소비)"
+            )
+        else:
             from app.services.provenance.handoff_bundle import (
                 CURRENT_SCHEMA_VERSION,
                 HandoffBundleRejectedError,
                 HandoffChecksumMismatchError,
                 bundle_from_dict,
+                compute_payload_checksum,
             )
 
             bundle = bundle_from_dict(state.site_to_design_bundle)
-            if bundle is not None:
+            if bundle is None:
+                handoff_unverified = "site_to_design_bundle 형식 손상(malformed) — 검증 생략, 미검증 소비"
+                logger.warning("Stage Handoff 번들 형식 손상(soft — 미검증 소비로 진행)")
+            else:
                 try:
                     bundle.verify_for_consumption(
                         allowed_schema_versions={CURRENT_SCHEMA_VERSION}
@@ -1471,6 +1505,28 @@ class ProjectPipeline:
                     logger.warning(
                         "Stage Handoff 번들 소비 거부(soft — 파이프라인은 계속 진행)",
                         err=str(e)[:200],
+                    )
+
+                # ★R2(R1 MEDIUM-1 봉합) — 소비대상(site, state.site_to_design 라이브 객체)
+                # ↔ 봉인 스냅샷(bundle.payload) 드리프트 대조. verify_for_consumption() 은
+                # bundle.payload 자기무결성만 본다 — 실제로 아래에서 쓰는 것은 site(별개
+                # 라이브 객체)라, site 자체가 봉인 이후 변조/표류해도 위 검증은 못 잡는다
+                # (리뷰어 실증: site.max_far 를 직접 바꾸면 verify_for_consumption() 은
+                # 통과). 스파이크: seal() 호출 지점(_run_site_analysis 끝)과 이 소비 지점
+                # 사이 코드 경로에 state.site_to_design 을 재대입/mutate하는 정당한 분기는
+                # 없다(grep 확인) — 그럼에도 soft 로 시작한다(★hard 미승격 근거: 드리프트가
+                # 정상적으로 발생하는 케이스가 실제로 없다는 것이 운영에서 확증되기 전까지는,
+                # 향후 파이프라인 내부에 정당한 보정 경로가 추가될 때 오차단할 위험을 배제할
+                # 수 없다 — W2-2 UNTRACED 와 동일하게 채택률 확보 후 hard 승격을 검토한다).
+                live_checksum = compute_payload_checksum(site.model_dump())
+                if live_checksum != bundle.payload_checksum:
+                    handoff_payload_drift = (
+                        "소비대상(site_to_design)이 봉인 스냅샷과 다름(payload drift) — "
+                        f"sealed={bundle.payload_checksum[:12]}... live={live_checksum[:12]}..."
+                    )
+                    logger.warning(
+                        "Stage Handoff 소비대상 드리프트(soft — 파이프라인은 계속 진행)",
+                        err=handoff_payload_drift[:200],
                     )
 
         # W3-8: 폴백 기본값(500㎡/60%/200%) 사용 시 가정 사실을 stage data에 정직 표기 —
@@ -1636,9 +1692,18 @@ class ProjectPipeline:
         if design_assumed_fields:
             state.stages["design"].data["assumed_fields"] = design_assumed_fields
             state.stages["design"].data["data_quality"] = "assumed_defaults"
-        # W2-3: Stage Handoff 번들 soft 거부 표식(위 사전검증 참고 — 파이프라인 자체는 무중단).
+        # W2-3: Stage Handoff 번들 soft 표식 3종(위 사전검증 참고 — 파이프라인 자체는 무중단).
+        # ★R2(R1 LOW-2 봉합) — 이 표식들은 PipelineStageStatusResponse.data(dict, 라우터
+        # pipeline.py)를 통해 그대로 API 응답에 직렬화되지만, 이를 읽어 배지·경고를 렌더하는
+        # 전용 프론트 서피스는 아직 없다(orphan handoff 재발 방지 문서화 — "필드는 최종 소비
+        # 표면까지 추적" 원칙, project_analysis_integrity_storyline 교훈). 전용 서피스 배선은
+        # 후속 과제이며, 그 전까지는 로그(logger.warning 위)가 유일한 실관측 경로다.
         if handoff_bundle_warning:
             state.stages["design"].data["handoff_bundle_warning"] = handoff_bundle_warning
+        if handoff_payload_drift:
+            state.stages["design"].data["handoff_payload_drift"] = handoff_payload_drift
+        if handoff_unverified:
+            state.stages["design"].data["handoff_unverified"] = handoff_unverified
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:
