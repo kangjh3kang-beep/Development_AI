@@ -578,12 +578,15 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     form.floorHeight,
     effectiveZoning,
     form.buildingUse,
-    siteAnalysis?.integratedFarEffPct,
-    siteAnalysis?.integratedBcrEffPct,
-    siteAnalysis?.effectiveFarPct,
-    siteAnalysis?.effectiveBcrPct,
-    siteAnalysis?.nationalFarPct,
-    siteAnalysis?.nationalBcrPct,
+    // ★React Compiler 정합(react-hooks/preserve-manual-memoization): resolveFarWithBasis·
+    //   resolveBcrWithBasis 가 siteAnalysis 객체 전체를 인자로 받아 내부에서
+    //   integrated/effective/national FAR·BCR + ordinance + parcels 필드를 읽는다. 그래서
+    //   컴파일러가 추론하는 의존성은 개별 서브필드가 아니라 siteAnalysis 전체다. 서브필드만
+    //   나열하면 "inferred less specific"로 판정돼 최적화가 스킵되고 CI 가 error 로 막힌다.
+    //   siteAnalysis 전체를 의존성으로 두면 추론과 정확히 일치한다. 계산은 siteAnalysis 의
+    //   순수 함수라 결과값은 불변이며(불변 업데이트 규약상 서브필드 변경=참조 변경, 재계산은
+    //   상위집합), 종전 deps 가 누락했던 ordinance·parcels 변화도 함께 반영해 정합성이 오른다.
+    siteAnalysis,
     siteMatch,
   ]);
 
