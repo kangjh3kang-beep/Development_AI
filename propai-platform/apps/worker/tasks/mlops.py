@@ -21,11 +21,24 @@ async def run_retrain_avm(ctx: dict[str, Any]) -> dict[str, Any]:
     3. train_test_split(0.8) → XGBoost 학습
     4. MAPE 계산 → 챔피언 비교 → MLflow 등록
     """
-    import mlflow
-    import numpy as np
-    import pandas as pd
-    import xgboost as xgb
-    from sklearn.model_selection import train_test_split
+    # ★mlflow는 운영 이미지에서 의도적 제외(requirements.oracle.txt 경량화) —
+    #   등록처(MLflow 레지스트리) 없이 학습만 돌리면 결과가 버려지므로(비용 낭비+부정직)
+    #   의존성 부재 시 학습 착수 전에 정직 스킵한다(avm_service lazy import 관례 정합).
+    try:
+        import mlflow
+        import numpy as np
+        import pandas as pd
+        import xgboost as xgb
+        from sklearn.model_selection import train_test_split
+    except ImportError as e:
+        logger.warning("재학습 의존성 미설치(경량 이미지) — AVM 재학습 건너뜀", missing=str(e)[:80])
+        return {
+            "status": "skipped",
+            "reason": f"dependency_missing: {getattr(e, 'name', None) or str(e)[:40]}",
+            "model_version": "unchanged",
+            "mape": 0.0,
+            "is_champion": False,
+        }
 
     from apps.api.integrations.molit_client import MolitClient
 

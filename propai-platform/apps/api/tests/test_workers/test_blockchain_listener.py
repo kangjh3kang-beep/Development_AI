@@ -70,3 +70,17 @@ async def test_blockchain_listener_with_events(mock_db_session):
     assert result["status"] == "completed"
     assert result["events_processed"] == 1
     assert result["from_block"] == 900
+
+
+@pytest.mark.asyncio
+async def test_blockchain_listener_web3_missing_skips_honestly():
+    """★운영(경량 이미지) 재현 — web3 미설치면 트레이스백 없이 정직 스킵."""
+    import sys
+
+    from apps.worker.tasks import blockchain_listener
+
+    blockchain_listener._DEP_WARNED = False
+    with patch.dict(sys.modules, {"web3": None, "web3.providers": None}):
+        result = await blockchain_listener.run_blockchain_listener(ctx={})
+
+    assert result == {"status": "skipped", "reason": "web3_not_installed"}
