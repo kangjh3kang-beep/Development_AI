@@ -222,6 +222,14 @@ class BaseAPIClient:
     base_url: str = ""
     timeout: float = 30.0
 
+    # SourceSnapshot 기록 opt-in(기본 OFF — W2-1). 전 커넥터 일괄 ON은 용량 위험이 커서
+    # 커넥터별로 명시적으로 켠다(1차 대상: VWorldClient). source_name/authority_grade는
+    # Source Manifest 필수필드의 실용 부분집합(app/services/provenance/source_snapshot.py)
+    # 중 값이 있는 것만 채우며, 모르면 None으로 정직하게 둔다.
+    snapshot_enabled: bool = False
+    source_name: str | None = None
+    authority_grade: str | None = None
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.circuit_breaker = CircuitBreaker()
@@ -335,6 +343,7 @@ class BaseAPIClient:
         except Exception:  # noqa: BLE001 — effector 실패는 기본 동작으로.
             pass
 
+        response: httpx.Response | None = None  # SourceSnapshot 훅에서 실패 시에도 안전 참조(W2-1)
         try:
             response = await client.request(method, path, **request_kwargs)
             response.raise_for_status()
@@ -350,6 +359,12 @@ class BaseAPIClient:
             if cache_key:
                 await self._set_cache(cache_key, data, cache_ttl)
 
+            # SourceSnapshot 기록(W2-1, opt-in·best-effort) — 절대 응답 반환을 막지 않는다.
+            await self._record_snapshot_ok(
+                method=method, path=path, params=params,
+                payload_bytes=response.content, http_status=response.status_code,
+            )
+
             return data
 
         except Exception as e:
@@ -357,12 +372,75 @@ class BaseAPIClient:
             EXTERNAL_API_REQUESTS.labels(self.service_name, method, "error").inc()
             _emit_growth_fallback(self.service_name, self.circuit_breaker.state)  # 성장엔진 관측(로직불변·best-effort)
             logger.error("외부 API 호출 실패", service=self.service_name, error=str(e))
+            # SourceSnapshot dead-letter 기록(W2-1, opt-in·best-effort).
+            # ★정정(R1): "재시도 소진 후 1회 기록"이 아니다 — 여기서 ExternalServiceError로
+            #   재래핑해서 던지므로, 위 @retry(retry_if_exception_type=httpx.HTTPStatusError)는
+            #   실제로는 결코 재시도를 발동시키지 못한다(재래핑된 예외 타입이 일치하지 않음
+            #   — 선재하는 별도 결함, 이번 W2-1 범위 밖). 그 덕에 지금은 이 except가 "요청당
+            #   정확히 1회"만 실행되고, 그 부수효과로 dead-letter도 1회만 쌓인다.
+            #   ★향후 그 재시도 결함을 고쳐 실제 재시도가 동작하게 되면, 이 except가 시도마다
+            #   (최대 3회) 실행되어 같은 논리적 요청에 dead-letter가 중복 적재될 수 있다 —
+            #   그때는 request_fingerprint 기준 짧은 시간창 내 중복 무해화(예: 같은 fingerprint가
+            #   최근 N초 내 이미 DEAD_LETTER로 있으면 재기록 skip)를 추가하거나, 기록 위치를
+            #   재시도 전체를 감싸는 바깥 레이어로 옮기는 구조변경이 필요하다.
+            await self._record_snapshot_dead_letter(
+                method=method, path=path, params=params,
+                payload_bytes=getattr(response, "content", None),
+                http_status=getattr(response, "status_code", None),
+                error_message=str(e),
+            )
             # Circuit OPEN 시 Slack 알림
             if self.circuit_breaker.state == CircuitState.OPEN:
                 await self._alert_ops(
                     f"{self.service_name}: {self.circuit_breaker.failure_count}회 연속 실패 — Circuit OPEN"
                 )
             raise ExternalServiceError(self.service_name, str(e)) from e
+
+    async def _record_snapshot_ok(
+        self, *, method: str, path: str, params: dict | None,
+        payload_bytes: bytes, http_status: int,
+    ) -> None:
+        """성공 응답 SourceSnapshot 기록(opt-in·best-effort, W2-1).
+
+        snapshot_enabled=False(기본)면 아무 것도 하지 않는다. import 자체가 실패해도(순환·
+        모듈 부재) 예외를 삼켜 기존 호출경로에 영향을 주지 않는다.
+        """
+        if not self.snapshot_enabled:
+            return
+        try:
+            from app.services.provenance import source_snapshot
+
+            await source_snapshot.safe_record_success(
+                source_id=self.service_name, method=method, url=f"{self.base_url}{path}",
+                params=params, payload_bytes=payload_bytes, http_status=http_status,
+                source_name=self.source_name, authority_grade=self.authority_grade,
+            )
+        except Exception as e:  # noqa: BLE001 — 기록 실패가 수집 호출경로를 절대 막으면 안 됨.
+            # ★R1 MEDIUM: 이 바깥 except는 source_snapshot 모듈 자체의 import 실패 등
+            #   safe_record_success 내부 try/except보다도 더 이례적인 실패를 뜻한다(무음
+            #   skip 금지 — 최소한 warning으로 남긴다).
+            logger.warning("SourceSnapshot 훅 실패(성공응답, 임포트/호출 단계)",
+                            service=self.service_name, error=str(e)[:160])
+
+    async def _record_snapshot_dead_letter(
+        self, *, method: str, path: str, params: dict | None,
+        payload_bytes: bytes | None, http_status: int | None, error_message: str,
+    ) -> None:
+        """실패 응답 SourceSnapshot dead-letter 기록(opt-in·best-effort, W2-1)."""
+        if not self.snapshot_enabled:
+            return
+        try:
+            from app.services.provenance import source_snapshot
+
+            await source_snapshot.safe_record_dead_letter(
+                source_id=self.service_name, method=method, url=f"{self.base_url}{path}",
+                params=params, payload_bytes=payload_bytes, http_status=http_status,
+                source_name=self.source_name, authority_grade=self.authority_grade,
+                error_message=error_message,
+            )
+        except Exception as e:  # noqa: BLE001 — R1 MEDIUM: 위 _record_snapshot_ok와 동일 사유(무음 skip 금지).
+            logger.warning("SourceSnapshot 훅 실패(dead-letter, 임포트/호출 단계)",
+                            service=self.service_name, error=str(e)[:160])
 
     async def _alert_ops(self, message: str) -> None:
         """Slack #propai-alerts 채널로 장애 알림을 전송한다.

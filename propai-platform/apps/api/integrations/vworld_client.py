@@ -29,6 +29,10 @@ class VWorldClient(BaseAPIClient):
 
     service_name = "vworld"
     base_url = "https://api.vworld.kr"
+    # SourceSnapshot 기록 ON(W2-1) — 스파이크에서 BaseAPIClient 경유가 확인된 실사용 커넥터.
+    snapshot_enabled = True
+    source_name = "V-World 국토정보플랫폼"
+    authority_grade = "OFFICIAL"
 
     def _default_headers(self) -> dict[str, str]:
         return {"User-Agent": "PropAI/30.0", "Accept": "application/json"}
