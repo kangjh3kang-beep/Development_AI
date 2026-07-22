@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FieldBottomNav, FieldMenuSheet } from "@/components/sales-app/FieldNav";
-import { visibleTabs } from "@/components/sales-app/roleConfig";
+import {
+  BOTTOM_NAV_KEYS,
+  MENU_GROUPS,
+  SALES_TABS,
+  visibleTabs,
+} from "@/components/sales-app/roleConfig";
 
 /**
  * 모바일 하단탭바+전체메뉴 시트 계약 회귀(디자인 핸드오프 P0#2).
@@ -18,6 +23,17 @@ const DEV_TABS = visibleTabs([
   "dashboard", "org", "pricing", "units", "contracts", "commission",
   "customers", "ads", "reports", "settings", "site_password",
 ]);
+
+describe("모바일 도달성 불변식(IA SSOT)", () => {
+  it("★BOTTOM_NAV_KEYS ∪ MENU_GROUPS ∪ {home} == SALES_TABS 전체 키(전단사) — 누락=모바일 도달불가 회귀", () => {
+    const union = new Set<string>([
+      ...BOTTOM_NAV_KEYS,
+      ...MENU_GROUPS.flatMap((g) => g.keys),
+      "home",
+    ]);
+    expect(union).toEqual(new Set(SALES_TABS.map((t) => t.key)));
+  });
+});
 
 describe("FieldBottomNav 계약", () => {
   it("① MEMBER: 홈/고객/배치도 슬롯 + 전체 — '수납' 슬롯 없음(contracts 미보유)", () => {
@@ -45,6 +61,14 @@ describe("FieldBottomNav 계약", () => {
     );
     const all = screen.getByText("전체").closest("button");
     expect(all?.className).toContain("--accent-strong");
+  });
+
+  it("③-음성: 주 슬롯 탭(home) 활성이면 '전체' 슬롯 비활성(항상-활성 회귀 방지)", () => {
+    render(
+      <FieldBottomNav tabs={DEV_TABS} activeTab="home" onNavigate={() => {}} onOpenMenu={() => {}} />,
+    );
+    const all = screen.getByText("전체").closest("button");
+    expect(all?.className).not.toContain("--accent-strong");
   });
 });
 

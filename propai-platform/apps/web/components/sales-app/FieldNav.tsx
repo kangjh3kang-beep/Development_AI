@@ -95,6 +95,28 @@ export function FieldMenuSheet({
     };
   }, [open]);
 
+  // ESC 닫기(WAI-ARIA 다이얼로그 패턴) + sm(640px) 이상 확장 시 자동 닫기 —
+  // 시트가 sm:hidden 으로 CSS 만 숨으면 body 잠금이 해제 불가로 남던 R1 지적 반영
+  // (태블릿 회전·반응형 토글·폴더블 확장 시 스크롤 먹통 방지).
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    // matchMedia 는 일부 테스트 환경(jsdom)에 없을 수 있어 존재 시에만 바인드.
+    const mq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 640px)") : null;
+    const onMq = () => {
+      if (mq?.matches) onClose();
+    };
+    if (mq?.matches) onClose(); // 열림 시점에 이미 sm+ 면 즉시 닫기.
+    mq?.addEventListener("change", onMq);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      mq?.removeEventListener("change", onMq);
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
   const byKey = new Map(tabs.map((t) => [t.key, t]));
   const groups = MENU_GROUPS.map((g) => ({

@@ -204,7 +204,9 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
 
   return (
     // 모바일은 하단 탭바(fixed)가 콘텐츠를 가리지 않게 하단 여백 확보(sm+ 은 불필요).
-    <div className="space-y-5 pb-20 sm:pb-0">
+    // ★safe-area 포함 — 홈인디케이터 기기에서 하단바 총높이(≈64px+inset)가 pb-20(80px)을
+    //   넘어 마지막 콘텐츠가 가려지던 R1 지적 반영.
+    <div className="space-y-5 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-0">
       {/* 워크스페이스 헤더 — 커맨드센터 패널. 뒤로가기 / 타이틀·역할 / 액션 그룹의 3영역 위계. */}
       <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
         <div className="cc-grid-bg opacity-30" aria-hidden />
