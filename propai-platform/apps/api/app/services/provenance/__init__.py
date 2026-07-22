@@ -7,7 +7,14 @@
 - required_data: 원본자료 충족도 Required Data Matrix 계약 — 요구등급 4단계(required/
   conditionally_required/recommended/reference_only) × 상태 6종을 판정해 종합 decision을
   산출한다(W2-4).
+- csm: Canonical Site Model 조립체 — 종합분석 결과를 5개 섹션(parcel/legal/
+  effective_limits/access/market)으로 재구조화 + 섹션별/전체 해시 + 부분 invalidation
+  권장(diff_csm/invalidation_advice)(W2-6).
+- risk_register: Risk Register 계약 — Risk=P×I×D, Red Flag는 평균 상쇄 없이 항상
+  단독 표면화. 기존 정직 표식(특이부지·조례·접도·ParcelGraph·RDM)에서만 리스크를
+  도출한다(W2-6).
 
-이번 1차는 계약(스냅샷 저장·상태 어휘·매트릭스 판정)만 구현한다. 값 단위 계보(ReportClaim→
-...→SourceSnapshot)로 실제 소비 배선을 잇는 것은 W2-2 이후 점진 채택 범위다.
+이번 1차는 계약(스냅샷 저장·상태 어휘·매트릭스 판정·CSM 조립·리스크 등록)만 구현한다.
+값 단위 계보(ReportClaim→...→SourceSnapshot)로 실제 소비 배선을 잇는 것은 W2-2 이후
+점진 채택 범위다.
 """
