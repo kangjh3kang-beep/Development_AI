@@ -189,6 +189,17 @@ class ReportMeta:
     accent_color: str | None = None             # 도메인별 강조색(없으면 PRDS 딥틸)
     confidential: bool = True
     completeness: dict[str, Any] | None = None  # {total,filled,empty,pct} 정직 채움도
+    # ★W1-A(v4.0 P13): 이 산출물의 승인등급(ApprovalState 값 — DRAFT/MACHINE_VALIDATED/
+    #   EXPERT_REVIEWED/APPROVED/SUPERSEDED). 기본값 DRAFT — 기존 생성·다운로드 흐름은
+    #   전혀 바뀌지 않는다(등급만 명시적으로 부착, 렌더러 시각화는 W1-C 스코프).
+    approval_state: str = "DRAFT"
+
+    def __post_init__(self) -> None:
+        # ★R1 반영: 불법 등급 문자열("TOTALLY_INVALID" 등)이 보고서 표면까지 흘러가지 않게
+        #   생성 시점에 조기 거부한다(정직표기 원칙). 저장 타입은 asdict 직렬화 안정성을 위해
+        #   str 유지 — ApprovalState 로 정규화만 거친다.
+        from app.services.approval.approval_state import ApprovalState
+        self.approval_state = ApprovalState(self.approval_state).value
 
 
 @dataclass
