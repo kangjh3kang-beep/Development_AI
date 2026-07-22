@@ -42,6 +42,8 @@ def render_pdf(model: ReportModel) -> bytes:
         el.append(Paragraph(K._esc(sub), st["caption"]))
     el.append(Spacer(1, 4 * mm))
     el.append(Paragraph(K._esc(T.BRANDING), st["caption"]))
+    el.append(Spacer(1, 2 * mm))
+    el.append(K.approval_badge(model.meta, font))
     if model.meta.confidential:
         el.append(Spacer(1, 2 * mm))
         el.append(Paragraph(

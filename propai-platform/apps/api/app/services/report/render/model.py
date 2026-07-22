@@ -35,6 +35,18 @@ def fmt_value(v: Any) -> str:
     return s if s else EMPTY_MARK
 
 
+# ── claim 분류(W1-C · v4.0 P12) ─────────────────────────────────────
+# Evidence/서술 블록에 '이 문구가 어떤 종류의 주장인지'를 명시적으로 태깅한다(선택·점진 채택).
+# ApprovalState(W1-A)와 동일한 철학: 허용 5종 + None(미분류 — 기존 어댑터 무회귀) 외 값은 조기 거부.
+CLAIM_TYPES = frozenset({"FACT", "CALCULATION", "ASSUMPTION", "INTERPRETATION", "RECOMMENDATION"})
+
+
+def _validate_claim_type(value: str | None) -> None:
+    """claim_type 은 CLAIM_TYPES 5종 또는 None(미분류)만 허용. 불법값은 생성 시점에 거부."""
+    if value is not None and value not in CLAIM_TYPES:
+        raise ValueError(f"claim_type 은 {sorted(CLAIM_TYPES)} 또는 None 이어야 합니다: {value!r}")
+
+
 # ── Block 판별유니온 ────────────────────────────────────────────────
 # 각 Block 은 kind 로 구분한다. 렌더러는 kind 로 분기해 그린다.
 
@@ -101,7 +113,13 @@ class NarrativeBlock:
     """AI/전문가 서술 문단(들)."""
     paragraphs: list[str]
     title: str | None = None
+    # ★W1-C: 이 서술이 어떤 claim 인지(FACT/CALCULATION/ASSUMPTION/INTERPRETATION/RECOMMENDATION).
+    #   None=미분류(기존 어댑터 무회귀). publish_gate 는 현재 Evidence 만 검사(스펙 스코프).
+    claim_type: str | None = None
     kind: Literal["narrative"] = "narrative"
+
+    def __post_init__(self) -> None:
+        _validate_claim_type(self.claim_type)
 
 
 @dataclass
@@ -113,6 +131,12 @@ class Evidence:
     provenance: str | None = None
     legal_link: str | None = None
     confidence: str | None = None   # high/med/low — low 는 앰버 태그(R4)
+    # ★W1-C(v4.0 P12): 이 근거가 어떤 claim 인지. None=미분류(기존 브리지·어댑터 무회귀).
+    #   publish_gate.check_publishable 이 ASSUMPTION+확정형 문구 결합을 검사할 때 사용.
+    claim_type: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_claim_type(self.claim_type)
 
 
 @dataclass
@@ -193,6 +217,9 @@ class ReportMeta:
     #   EXPERT_REVIEWED/APPROVED/SUPERSEDED). 기본값 DRAFT — 기존 생성·다운로드 흐름은
     #   전혀 바뀌지 않는다(등급만 명시적으로 부착, 렌더러 시각화는 W1-C 스코프).
     approval_state: str = "DRAFT"
+    # ★W1-C(v4.0 P12): APPROVED 라벨로 발행하려면 승인자가 필수(publish_gate 규칙① — 라벨
+    #   사칭 차단). APPROVED 미만 등급에서는 비어 있어도 무방(기존 흐름 무회귀).
+    approved_by: str | None = None
 
     def __post_init__(self) -> None:
         # ★R1 반영: 불법 등급 문자열("TOTALLY_INVALID" 등)이 보고서 표면까지 흘러가지 않게
