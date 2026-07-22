@@ -180,9 +180,11 @@ def test_invalidation_advice_market_change_recommends_feasibility_only():
     assert advice["recommended_reanalysis"] == ["feasibility"]
 
 
-def test_invalidation_advice_access_change_recommends_design_only():
+def test_invalidation_advice_access_change_recommends_design_and_feasibility():
+    """R1 반영: 접도 변경(맹지화 등)은 설계뿐 아니라 사업성(pro-forma) 직결 —
+    과소통보보다 과다통보가 안전(diff_csm 원칙)."""
     advice = invalidation_advice(["access"])
-    assert advice["recommended_reanalysis"] == ["design"]
+    assert advice["recommended_reanalysis"] == ["design", "feasibility"]
 
 
 def test_invalidation_advice_no_change_recommends_nothing():
