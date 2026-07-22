@@ -86,6 +86,16 @@ class RFISeverity(StrEnum):
 
 VALID_RFI_SEVERITIES: frozenset[str] = frozenset(s.value for s in RFISeverity)
 
+# 심각도 서열(중복방출 병합 시 "더 나쁜 쪽이 이긴다" 판정용) — RFISeverity 선언 순서와 동일한
+# 의미론(CRITICAL이 최상위)을 숫자로 명시한다(문자열 알파벳 순서에 의존하지 않기 위함).
+_SEVERITY_RANK: dict[str, int] = {
+    RFISeverity.INFO.value: 0,
+    RFISeverity.LOW.value: 1,
+    RFISeverity.MEDIUM.value: 2,
+    RFISeverity.HIGH.value: 3,
+    RFISeverity.CRITICAL.value: 4,
+}
+
 
 def _normalize_upper(value: object) -> str:
     return str(value).strip().upper()
@@ -220,6 +230,14 @@ class RFIItem:
     override_note: str | None = None
 
     def __post_init__(self) -> None:
+        # ★무날조(R1 LOW 봉합): missing_what/needed_for는 이 계약의 핵심 서술 필드다 —
+        # 빈 문자열(또는 공백만)은 "무엇이 부족한지/왜 필요한지 모른 채 방출"이라는 뜻이라
+        # 조용히 통과시키지 않고 즉시 거부한다(다른 서술 필드보다 이 둘을 우선 강제하는 이유:
+        # RDM DataItemResult.reason과 대응하는 "왜 이 RFI가 존재하는가"의 최소 근거이기 때문).
+        if not str(self.missing_what).strip():
+            raise ValueError(f"missing_what 은 빈 문자열일 수 없습니다(rfi_id={self.rfi_id!r})")
+        if not str(self.needed_for).strip():
+            raise ValueError(f"needed_for 는 빈 문자열일 수 없습니다(rfi_id={self.rfi_id!r})")
         sev = _normalize_upper(self.severity)
         if sev not in VALID_RFI_SEVERITIES:
             raise ValueError(
@@ -265,13 +283,21 @@ class RFIRegister:
         self.generated_at = generated_at or _utc_now_iso()
 
     def collect(self, item: RFIItem) -> RFIItem:
-        """RFIItem 1건을 등록한다. 이미 같은 rfi_id가 있으면 덮어쓰지 않고 기존 값을 반환한다
-        (같은 결측을 재방출해도 상태전이 이력이 유실되지 않도록 — 중복 누적 무해화)."""
+        """RFIItem 1건을 등록한다. 이미 같은 rfi_id가 있으면(같은 결측 재방출) 상태전이 이력을
+        보존한 채(다른 필드는 최초 방출 값을 그대로 유지) 덮어쓰지 않는다 — 단, severity만은
+        예외: 재방출분이 기존보다 더 나쁘면(``_SEVERITY_RANK`` 기준) 기존 항목의 severity를
+        그 더 나쁜 값으로 상향한다(★무하향 — 재방출이 더 낮은 severity라도 기존 severity를
+        절대 낮추지 않는다. 이미 확인된 심각도를 뒤늦게 완화하면 위험을 과소평가하게 되므로).
+        """
         existing = self._items.get(item.rfi_id)
-        if existing is not None:
-            return existing
-        self._items[item.rfi_id] = item
-        return item
+        if existing is None:
+            self._items[item.rfi_id] = item
+            return item
+        if _SEVERITY_RANK[item.severity] > _SEVERITY_RANK[existing.severity]:
+            upgraded = dataclasses.replace(existing, severity=item.severity)
+            self._items[item.rfi_id] = upgraded
+            return upgraded
+        return existing
 
     def get(self, rfi_id: str) -> RFIItem | None:
         return self._items.get(rfi_id)

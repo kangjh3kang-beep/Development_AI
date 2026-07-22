@@ -156,6 +156,18 @@ def test_rfi_item_rejects_invalid_status():
         _make_item(status="not_a_status")
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_rfi_item_rejects_blank_missing_what(blank):
+    with pytest.raises(ValueError, match="missing_what"):
+        _make_item(missing_what=blank)
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_rfi_item_rejects_blank_needed_for(blank):
+    with pytest.raises(ValueError, match="needed_for"):
+        _make_item(needed_for=blank)
+
+
 def test_rfi_item_default_status_is_open():
     item = _make_item()
     assert item.status == RFIStatus.OPEN.value
@@ -194,6 +206,39 @@ def test_register_collect_duplicate_rfi_id_keeps_existing():
     returned = register.collect(duplicate)
     assert returned.status == RFIStatus.ANSWERED.value  # 기존 상태 보존(덮어쓰기 없음)
     assert len(register.items) == 1
+
+
+def test_register_collect_duplicate_upgrades_severity_when_worse():
+    """동일 rfi_id 재방출이 더 높은(나쁜) severity면 기존 항목 severity를 상향한다."""
+    register = RFIRegister()
+    register.collect(_make_item(severity=RFISeverity.HIGH.value))
+    upgraded_via_return = register.collect(
+        _make_item(missing_what="첫 방출", severity=RFISeverity.CRITICAL.value)
+    )
+    assert upgraded_via_return.severity == RFISeverity.CRITICAL.value
+    assert register.get("abc123").severity == RFISeverity.CRITICAL.value
+    assert len(register.items) == 1  # 새 항목이 추가되는 게 아니라 기존 항목이 갱신됨
+
+
+def test_register_collect_duplicate_never_downgrades_severity():
+    """동일 rfi_id 재방출이 더 낮은 severity라도 기존(더 나쁜) severity를 낮추지 않는다."""
+    register = RFIRegister()
+    register.collect(_make_item(severity=RFISeverity.CRITICAL.value))
+    returned = register.collect(
+        _make_item(missing_what="첫 방출", severity=RFISeverity.LOW.value)
+    )
+    assert returned.severity == RFISeverity.CRITICAL.value
+    assert register.get("abc123").severity == RFISeverity.CRITICAL.value
+
+
+def test_register_collect_duplicate_same_severity_is_noop():
+    register = RFIRegister()
+    register.collect(_make_item(severity=RFISeverity.HIGH.value))
+    returned = register.collect(
+        _make_item(missing_what="첫 방출", severity=RFISeverity.HIGH.value)
+    )
+    assert returned.severity == RFISeverity.HIGH.value
+    assert register.get("abc123") is returned
 
 
 def test_register_by_status_and_open_items():
@@ -386,6 +431,31 @@ def test_wiring_emits_rfi_when_ordinance_unconfirmed_marker_present():
     # 기존 키는 전혀 제거/변경되지 않는다(additive — rfi_register 1개만 늘어난다).
     assert existing_keys.issubset(result.keys())
     assert result["zone_type"] == _BASE_RESULT["zone_type"]
+
+
+def test_wiring_zone_unmatched_default_assumption_does_not_fabricate_none_percent():
+    """R1 MEDIUM 봉합: zone_unmatched(national_far_pct=None) — far_tier_service가 실제로는
+    아무 값도 적용하지 않았는데(임의값 미생성·정직 반환) "법정상한(None%)을 잠정 적용해
+    진행합니다"처럼 마치 잠정치가 있는 것으로 서술하면 안 된다(무날조 원칙 위반)."""
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        _attach_rfi_register,
+    )
+
+    # far_tier_service.calc_effective_far의 zone_unmatched 반환 shape 그대로(:242-276 참고).
+    result = _clone_result(effective_far={
+        "national_bcr_pct": None, "national_far_pct": None,
+        "ordinance_bcr_pct": None, "ordinance_far_pct": None,
+        "effective_bcr_pct": None, "effective_far_pct": None,
+        "far_basis": "zone_unmatched",
+        "far_basis_detail": {"조례확인필요": True, "최종근거": "용도지역 미확인(법정 상한 매칭 실패) — 임의값 미생성(정직)"},
+        "ordinance_confirmed": False,
+    })
+    _attach_rfi_register(result)
+
+    assert result["rfi_register"]["item_count"] == 1
+    default_assumption = result["rfi_register"]["items"][0]["default_assumption"]
+    assert "None%" not in default_assumption  # 날조된 잠정치 문자열 부재
+    assert "용도지역" in default_assumption and "확인" in default_assumption
 
 
 def test_wiring_no_rfi_when_ordinance_confirmed():
