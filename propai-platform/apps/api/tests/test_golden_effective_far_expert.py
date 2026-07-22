@@ -42,7 +42,6 @@ import pytest
 from app.services.land_intelligence.far_tier_service import calc_effective_far
 from app.services.zoning.special_parcel import detect_special_parcel
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # 케이스 1 — 자연녹지지역 + 조례 80%(신봉동 56-16 계열): 법정 100% 대비 실효 = 80%.
 # ══════════════════════════════════════════════════════════════════════════
