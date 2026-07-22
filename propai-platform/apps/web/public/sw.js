@@ -99,7 +99,9 @@
 // v453: 분양앱 SSOT 라벨 봉합(#431 — 세대 상태 unitStatus.ts·조직 직급 roleConfig 일원화).
 //        ★구 번들의 실시간보드가 취소세대를 분양가능(초록)으로 위장하던 정합성 결함을 봉합했으므로
 //        구캐시를 반드시 일괄 삭제한다(stale 번들이 위장 렌더를 재생하지 않도록).
-const CACHE_NAME = "propai-v453-sales-ssot-labels";
+// v454: 분양 현장앱 역할별 홈(#436 — FieldHome 기본 랜딩 대시보드·무목업 실데이터).
+//        신설된 홈 셸/기본 진입 탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v454-fieldapp-role-home";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
