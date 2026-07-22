@@ -115,6 +115,27 @@ function fmtPctLabel(v?: number | null): string | null {
   return `${n}%`;
 }
 
+/** ★"적용 건축개요" 소스 혼입 방지(단일 파생점 — 백로그②) ─────────────────────────────
+ *  연면적·건폐율·용적률을 항상 "같은 우선순위"로 함께 뽑는다. 라이브 실측(2026-07-22):
+ *  이 패널이 연면적은 designData(선택한 개요·목표값)로, 건폐율/용적률은 백엔드 /mass 응답
+ *  (매스엔진 실현값)으로 따로 조회해 "연면적 1,216㎡(304㎡×4F) vs 그 옆 건폐율/용적률을
+ *  역산하면 670.32㎡(13.3×12.6m×4F)"처럼 한 패널 안에서 서로 다른 소스가 섞이는 결함이 있었다.
+ *  #408 계약(m.bcr_pct/m.far_pct 우선 — 매스엔진이 실제 산출한 실현값이 정본)을 연면적에도
+ *  동일하게 적용해, m(백엔드 매스 응답)이 있으면 세 필드 모두 그 소스부터 채택하고, 없는
+ *  필드만 designData(목표값)로 보완한다. 호출부가 이 함수를 거치지 않고 gfa만 따로 배선하면
+ *  이번 결함이 재발하므로, setSpec 호출은 반드시 이 함수의 반환값만 사용한다(혼입 구조 불가화).
+ *  m이 없는 분기(massGeom 재사용·완전폴백)는 m=null로 호출 → 세 필드 모두 designData로 통일된다. */
+function resolveAppliedOverview(
+  m: { total_floor_area_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null } | null,
+  designData: { totalGfaSqm?: number | null; bcr?: number | null; far?: number | null } | null | undefined,
+): { gfa: number | null; bcr: number | null; far: number | null } {
+  return {
+    gfa: m?.total_floor_area_sqm ?? designData?.totalGfaSqm ?? null,
+    bcr: m?.bcr_pct ?? designData?.bcr ?? null,
+    far: m?.far_pct ?? designData?.far ?? null,
+  };
+}
+
 /** CAD 2D·3D BIM이 공유하는 단일 건축 기하(선택한 건축개요에서 파생). */
 interface DesignSpec {
   building_width_m: number;
@@ -861,13 +882,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const w = typeof mg.buildingWidthM === "number" && mg.buildingWidthM > 0 ? mg.buildingWidthM : (fpW ?? 40);
       const d = typeof mg.buildingDepthM === "number" && mg.buildingDepthM > 0 ? mg.buildingDepthM : (fpD ?? 20);
       const fc = floors ?? mg.floorsForUnits ?? 5; // 정본 층수(site) 우선
+      // ★백로그② — 이 분기는 /mass를 부르지 않으므로(m=null) 연면적·건폐율·용적률 모두
+      //   designData로 통일된다(resolveAppliedOverview 단일 파생점 — 혼입 구조 불가화).
+      const ov = resolveAppliedOverview(null, designData);
       setSpec({
         building_width_m: r2(w), building_depth_m: r2(d), floor_count: fc, floor_height_m: 3.0,
         site_width_m: r2((w ?? 40) + 6), site_depth_m: r2((d ?? 20) + 6),
         setback_m: 3, unit_width_m: 8, basement_floors: 1,
         land_area_sqm: landArea, zone_code: zone, building_use: use,
         building_type: designData?.buildingType ?? null,
-        gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
+        gfa: ov.gfa, bcr: ov.bcr, far: ov.far,
         total_units: designData?.unitCount ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
         // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(massGeom passthrough).
@@ -937,11 +961,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const side = Math.sqrt(landArea) * 0.6;  // 대지의 ~60% 변길이 가정
       fbW = Math.max(8, side); fbD = Math.max(8, side * 0.6);
     }
+    // ★백로그② — /mass 요청 자체가 없는 폴백 분기(m=null)라 세 필드 모두 designData로 통일된다.
+    const ovFallback = resolveAppliedOverview(null, designData);
     const fallback: DesignSpec = {
       building_width_m: r2(fbW), building_depth_m: r2(fbD), floor_count: fbFloors, floor_height_m: 3.0,
       site_width_m: r2(fbW + 6), site_depth_m: r2(fbD + 6), setback_m: 3, unit_width_m: 8, basement_floors: 1,
       land_area_sqm: landArea, zone_code: zone, building_use: use, building_type: designData?.buildingType ?? null,
-      gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
+      gfa: ovFallback.gfa, bcr: ovFallback.bcr, far: ovFallback.far,
       total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
       isFallback: true,  // ★/mass 실패 → 역산 추정 기본값. 정직 오버레이('추정치') 발화용.
       farReliable: farReliableNow,
@@ -956,6 +982,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       });
       if (!res.ok) throw new Error(String(res.status));
       const m = await res.json();
+      // ★백로그②(2026-07-22 라이브 실측) 근본수정 — 종전엔 이 자리에서 gfa(designData 목표값)만
+      //   따로 쓰고 bcr/far는 m(백엔드 매스 실현값)을 썼다. "적용 건축개요" 패널이 연면적=A소스,
+      //   건폐율/용적률=B소스로 자기모순 표기(연면적 1,216㎡ vs 그 비율을 역산하면 670㎡)되던
+      //   근본원인. resolveAppliedOverview 단일 파생점으로 셋 다 같은 우선순위(m 우선)로 통일한다.
+      //   m.total_floor_area_sqm은 백엔드가 bcr_pct/far_pct를 산출한 바로 그 연면적이므로(정본),
+      //   이제 연면적도 그 소스와 100% 정합한다.
+      const ov = resolveAppliedOverview(m, designData);
       setSpec({
         building_width_m: m.building_width_m, building_depth_m: m.building_depth_m,
         // ★층수는 site의 정본(designData.floorCount)을 신뢰 — /mass 응답 num_floors가 정본을 덮지 않게 한다
@@ -965,14 +998,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         setback_m: m.setback_m ?? 3, unit_width_m: m.unit_width_m ?? 8, basement_floors: 1,
         land_area_sqm: landArea, zone_code: zone, building_use: use,
         building_type: designData?.buildingType ?? null,
-        gfa: gfa ?? null,
+        gfa: ov.gfa,
         // ★설계스튜디오 실효FAR 전파 봉합: 백엔드 매스엔진이 실제 산출한 실현값(m.bcr_pct/m.far_pct)을
         //   우선한다(역전 — 종전엔 designData.far/bcr가 항상 이겨서, 부지분석 SSOT 갱신 전에 store에
         //   영속된 값이나 법정폴백값이 실제 산출값을 절대 못 넘어서지 못했다). /mass 바디에는
         //   ordinance_far_pct/ordinance_bcr_pct(공용 리졸버 산출)를 이미 주입하므로, m.far_pct/
         //   m.bcr_pct는 그 실효 한도를 반영한 산출 결과다(정본). designData는 값이 없을 때만 폴백.
-        bcr: m.bcr_pct ?? designData?.bcr ?? null,
-        far: m.far_pct ?? designData?.far ?? null,
+        bcr: ov.bcr,
+        far: ov.far,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
         // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(backend width_m/depth_m/floors).
