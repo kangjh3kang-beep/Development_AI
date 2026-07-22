@@ -16,9 +16,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import structlog
+
 from app.services.common.sunlight_setback import max_height_for_north_distance_m
 from app.services.permit.building_code_rules import ZONE_DEFAULTS
 from app.services.zoning.legal_zone_limits import legal_limits_for
+
+logger = structlog.get_logger(__name__)
 
 # 정북일조 적용 용도지역(전용/일반주거). 준주거·상업·공업은 통상 미적용/완화.
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
@@ -407,7 +411,7 @@ def compute_buildable_envelope(
         winter_daylight_continuous_min=None,
     )
 
-    return {
+    result = {
         "applies_north_light": True,
         "min_building_spacing_m": min_spacing_080,        # 동간 채광거리 권고(0.8H)
         "min_building_spacing_blank_wall_m": min_spacing_050,  # 무창벽 0.5H
@@ -453,3 +457,73 @@ def compute_buildable_envelope(
             *([far_assumption_note] if far_assumption_note else []),
         ],
     }
+
+    # ── W3-2: exact solid Envelope(additive·병행 필드) ──────────────────────────
+    #   기존 2D 근사(위 200분할 스트립 적분)와 별개로, footprint×정북사선 half-space를
+    #   해석적으로 교차한 exact solid 체적·층별 slice·제약별 차감체적·3종(conservative/
+    #   base/conditional)을 병행 노출한다. 기존 키(envelope_gfa_sqm 등)는 절대 건드리지
+    #   않고 신규 키 exact_envelope만 additive로 붙인다(무회귀 — best-effort, 실패 시 생략).
+    try:
+        from app.services.cad.exact_envelope import build_exact_envelope
+
+        zone_setback_m = None
+        for k, v in ZONE_DEFAULTS.items():
+            if k in (zone or "") or (zone or "") in k:
+                zone_setback_m = v.get("setback_m")
+                break
+        exact = build_exact_envelope(
+            {"width_m": W, "depth_m": D},
+            {
+                "side_setback_m": side_setback_m,
+                "floor_height_m": fh,
+                "height_limit_m": lim.get("max_height") or None,
+                "zone_min_setback_m": zone_setback_m,
+            },
+        )
+        if "error" not in exact:
+            variants = exact["variants"]
+            exact_base = variants["base"]
+            # ── R1 MEDIUM 수정: 기존 단일 필드(vs_2d_strip_approx_gfa_sqm_diff)는 '2D 근사
+            #   대비 차이'라고 표기했지만 실측 분해 결과 그 값(예: -5,751.5)의 대부분은 exact
+            #   모델 자신의 층별 이산화(floor-top 보수적 채택) 때문이었고, 진짜 방법론 차이
+            #   (같은 물리적 envelope를 다른 구적법으로 적분한 차이)는 +51㎡/0.012% 수준으로
+            #   사실상 일치했다. 하나의 필드로 뭉치면 '2D 근사가 5,751㎡나 틀렸다'는 오독을
+            #   유발하므로 두 필드로 정직 분리한다(additive — 기존 값 유지, 신규 필드만 추가).
+            exact_volume_equiv_gfa = (exact_base["volume_m3"] / fh) if exact_base["volume_m3"] is not None else None
+            exact_volume_vs_2d_diff = (
+                round(exact_volume_equiv_gfa - envelope_gfa, 1) if exact_volume_equiv_gfa is not None else None
+            )
+            exact_floorstack_vs_volume_diff = (
+                round(exact_base["gfa_sqm"] - exact_volume_equiv_gfa, 1)
+                if exact_base["gfa_sqm"] is not None and exact_volume_equiv_gfa is not None
+                else None
+            )
+            result["exact_envelope"] = {
+                "volume_m3": exact_base["volume_m3"],
+                "gfa_sqm": exact_base["gfa_sqm"],
+                "max_height_m": exact_base["max_height_m"],
+                "num_floors": exact_base["num_floors"],
+                "floors": exact_base["floors"],
+                "round_trip_error_pct": exact_base.get("round_trip_error_pct"),
+                "variants": {
+                    k: {
+                        "volume_m3": v["volume_m3"], "gfa_sqm": v["gfa_sqm"], "max_height_m": v["max_height_m"],
+                        "unbounded": v.get("unbounded", False),
+                    }
+                    for k, v in variants.items()
+                },
+                "constraint_contributions": exact["constraint_contributions"],
+                # 진짜 방법론 차이(volume/층고 − 2D 스트립근사 GFA) — 같은 물리적 envelope를
+                # exact 해석적분 vs 200분할 스트립적분으로 각각 구한 값의 순수 대조(거의 0에 근접).
+                "exact_volume_vs_2d_gfa_diff": exact_volume_vs_2d_diff,
+                # 층별 이산화 보수화분(exact 모델 자신의 floor-stack GFA − 같은 모델의 volume 기반
+                # 등가 GFA) — 층마다 그 층 최상단(가장 좁은 단면)을 채택하는 계단식 근사가 만드는
+                # 손실. 2D 근사와의 차이가 아니라 exact 모델 내부의 이산화 보수화다.
+                "exact_floorstack_vs_2d_gfa_diff": exact_floorstack_vs_volume_diff,
+                "approximation": exact["approximation"],
+                "assumptions": exact["assumptions"],
+            }
+    except Exception as exc:  # noqa: BLE001 — exact envelope 실패해도 기존 2D 근사 결과 무손상
+        logger.warning("exact_envelope_wiring_failed", error=str(exc), zone=zone)
+
+    return result
