@@ -3,9 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/**"]
+    # 워크플로우 자신 포함 — CI 정의만 바꾼 PR이 CI 미발화로 무검증 머지되던 갭 봉합
+    # (paths 필터가 propai-platform/** 뿐이라 .github 변경은 트리거 밖이었음).
+    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
   pull_request:
-    paths: ["propai-platform/**"]
+    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 jobs:
@@ -89,4 +91,32 @@ jobs:
 
       - name: Unit tests
         run: pnpm test:run
+        working-directory: propai-platform/apps/web
+
+  # ★next build 게이트 — 정적 프리렌더(Suspense 경계)·React Compiler 결함은 tsc/eslint를
+  #   통과하고도 build에서만 표면화되어 배포서(158)에서 처음 발견되던 클래스였다
+  #   (#398→#400 useSearchParams 프리렌더 fail·#408→#410 React Compiler error 전례).
+  #   backend-tests(~14m)가 장대(critical path)라 병렬 잡 추가는 총 CI 시간을 늘리지 않는다.
+  frontend-build:
+    name: Frontend (next build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: propai-platform/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: propai-platform
+
+      - name: Next build (prerender + React Compiler gate)
+        run: pnpm build
         working-directory: propai-platform/apps/web
