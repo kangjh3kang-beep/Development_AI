@@ -101,7 +101,9 @@
 //        구캐시를 반드시 일괄 삭제한다(stale 번들이 위장 렌더를 재생하지 않도록).
 // v454: 분양 현장앱 역할별 홈(#436 — FieldHome 기본 랜딩 대시보드·무목업 실데이터).
 //        신설된 홈 셸/기본 진입 탭이 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v454-fieldapp-role-home";
+// v455: 현장앱 모바일 하단 5탭+전체메뉴 시트(#440 — FieldNav·IA SSOT·상단탭바 모바일 숨김).
+//        구 번들의 모바일 21탭 가로스크롤이 재생되지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v455-fieldapp-bottom-nav";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
