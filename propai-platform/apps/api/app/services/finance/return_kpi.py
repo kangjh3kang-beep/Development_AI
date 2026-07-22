@@ -211,6 +211,9 @@ def compute_moic_and_equity_irr(
     if moic_value is not None:
         moic = {
             "value": moic_value,
+            # R1 반영: 근거 수치를 문자열에만 두지 않고 구조화 노출(감사·테스트 앵커용).
+            "equity_in_total_won": equity_in_total,
+            "final_distribution_won": final_distribution,
             "basis": (
                 "MOIC = 총 equity 유입(최종 잔존현금 — 자본반환+순이익, 부채 전액상환 후 일괄회수 "
                 f"가정) {final_distribution:,.0f}원 ÷ 총 equity 투입(토지+시공 시점) "
@@ -281,7 +284,11 @@ def compute_ltv_ltc_series(
     elif gdv_fallback_won and gdv_fallback_won > 0:
         ltv_denominator = float(gdv_fallback_won)
         collateral_basis = "담보가치=총분양수입(GDV) 관행적 근사(실감정 아님 — 별도 감정평가 미제공)"
-        notes.append("담보가치 미제공 — 총분양수입(GDV)을 관행적 근사로 대체(실감정 아님).")
+        notes.append(
+            "담보가치 미제공 — 총분양수입(GDV)을 관행적 근사로 대체(실감정 아님). "
+            "★GDV 근사는 LTV를 낮게(covenant 경고 과소) 추정하는 경향 — "
+            "보수적 심사는 실감정/원가기저 담보가치 사용 권장(R1 고지)."
+        )
     else:
         notes.append("담보가치·GDV 모두 결측 — LTV 시계열 산출 불가(LTC만 산출).")
 
@@ -483,7 +490,9 @@ def compute_break_even_and_rlv(
         "target_return_pct": round(discount_rate * 100, 2),
         "basis": (
             f"목표수익률(할인율 {discount_rate:.1%}) 달성 전제 최대 토지비 — "
-            "NPV(토지비=RLV)=0(토지잔여법 표준 정의, 요구수익 초과분은 전부 토지가에 귀속 가정)"
+            "NPV(토지비=RLV)=0(토지잔여법 표준 정의, 요구수익 초과분은 전부 토지가에 귀속 가정). "
+            "★취득세 등 세금 절대금액 고정 가정으로 RLV는 상방(낙관) 편향 — "
+            "실제 지불가능 토지가는 이보다 낮을 수 있음(R1 고지)"
         ),
     }
 

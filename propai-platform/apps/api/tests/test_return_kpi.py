@@ -232,6 +232,27 @@ class TestLtvLtcAndCovenant:
         expected_peak_ltc = round((1 - _LEV_EQUITY_RATIO) * 100, 2)
         assert kpi["ltv_ltc"]["peak_ltc_pct"] == pytest.approx(expected_peak_ltc, abs=0.5)
 
+    def test_leveraged_moic_denominator_is_equity_not_total_cost(self):
+        """R1 반영(변이-킬): MOIC 분모=자기자본 투입(총사업비 아님). 100% 자기자본 golden에선
+        두 분모가 같아 변조를 못 잡는다 — 레버리지에서만 갈라지므로 여기서 고정한다
+        (분모를 총사업비로 변조 시 1.814→0.544로 붕괴해 이 단언이 잡는다)."""
+        dcf = _leveraged_dcf()
+        kpi = compute_return_kpi(
+            dcf=dcf, land_cost_won=_GOLDEN_LAND, construction_cost_won=_GOLDEN_CONSTR,
+            revenue_won=_GOLDEN_REVENUE, discount_rate=_GOLDEN_DISCOUNT,
+            total_cost_won=_LEV_TOTAL_COST,
+        )
+        # ★분모 시맨틱 고정(출력 복사 없이): ①투입 equity가 총사업비×비율(독립 상수)과 일치
+        #   ②MOIC = 최종분배/투입equity 항등 ③총사업비 분모로 변조하면 ①이 즉시 FAIL.
+        #   (금융비용(이자)이 최종분배를 줄이므로 무이자 손계산 절대값 대조는 부정확 —
+        #    대신 분모의 정체를 직접 고정한다.)
+        equity_in = kpi["moic"]["equity_in_total_won"]
+        assert equity_in == pytest.approx(_LEV_TOTAL_COST * _LEV_EQUITY_RATIO, rel=1e-6)
+        assert equity_in != pytest.approx(_LEV_TOTAL_COST, rel=1e-3)  # 총사업비 분모 변조 차단
+        assert kpi["moic"]["value"] == pytest.approx(
+            kpi["moic"]["final_distribution_won"] / equity_in, abs=1e-3
+        )
+
     def test_gdv_fallback_used_when_no_collateral_given(self):
         dcf = _leveraged_dcf()
         kpi = compute_return_kpi(
