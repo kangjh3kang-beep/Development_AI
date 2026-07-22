@@ -7,10 +7,11 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from packages.schemas.models import ErrorResponse
 
-# ★W1-C(R2): 보고서 발행 게이트 hard 위반 → 4xx로 매핑(공용 처리 1곳 — 라우터 6곳 개별
-#   try/except 대신 여기 한 곳만 고친다). 가벼운 모듈(re/dataclasses만 의존)이라 상단에서
-#   즉시 임포트해도 순환/기동 비용 문제가 없다.
-from app.services.report.render.publish_gate import ReportPublishGateError
+# ★W1-C(R2)+핫픽스: 보고서 발행 게이트 hard 위반 → 4xx 매핑(공용 처리 1곳).
+#   `app.*` 임포트는 모듈 상단에 두면 안 된다 — 이 파일은 루트 계약 스위트
+#   (propai-platform/tests, cwd=propai-platform)에서도 `apps.api.exceptions`로 임포트되는데
+#   그 컨텍스트에서는 `app` 패키지가 해석되지 않아 수집 자체가 깨진다(#425 CI 실측).
+#   따라서 register_exception_handlers() 내부(앱 기동 컨텍스트에서만 실행)로 지연 임포트한다.
 
 
 class PropAIError(Exception):
@@ -93,6 +94,9 @@ def register_exception_handlers(app: FastAPI) -> None:
                 details=exc.details,
             ).model_dump(),
         )
+
+    # 핫픽스: 앱 기동 컨텍스트에서만 임포트(모듈 상단 금지 — 위 주석 참조).
+    from app.services.report.render.publish_gate import ReportPublishGateError
 
     @app.exception_handler(ReportPublishGateError)
     async def report_publish_gate_error_handler(
