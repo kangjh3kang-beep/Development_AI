@@ -60,7 +60,9 @@ SECTION_DOWNSTREAM: dict[str, tuple[str, ...]] = {
     "parcel": ("design", "feasibility"),
     "legal": ("design", "feasibility"),
     "effective_limits": ("design", "feasibility"),
-    "access": ("design",),
+    # R1 반영: 접도 변경(맹지화·도로접면 상실)은 설계뿐 아니라 pro-forma 전체를 무효화하는
+    # 사업성 직결 사안 — 과소통보보다 과다통보가 안전(diff_csm 원칙과 정합).
+    "access": ("design", "feasibility"),
     "market": ("feasibility",),
 }
 

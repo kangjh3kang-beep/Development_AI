@@ -125,6 +125,9 @@ class RiskRegister:
         return {
             "items": [item.to_dict() for item in self.items],
             "generated_at": self.generated_at,
+            # R1 반영: P/I/D 는 보수적 정성 기본표에서 온 값 — score 곱은 우선순위 정렬용
+            # 보조 수치이지 정량 캘리브레이션이 아니다(거짓 정밀 오독 차단 마커).
+            "scale_basis": "qualitative_conservative(P/I/D 1-5 정성 기본표 — 정량 보정 아님)",
             "item_count": len(self.items),
             "average_score": round(sum(scores) / len(scores), 2) if scores else None,
             "max_score": max(scores) if scores else None,
