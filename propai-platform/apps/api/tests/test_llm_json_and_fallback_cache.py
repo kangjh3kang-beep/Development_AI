@@ -175,3 +175,15 @@ def test_parse_bare_json_with_inner_fence_in_string():
     """★퇴행 방지 — JSON 문자열 값 안의 ``` 가 펜스 추출을 오도하면 안 된다(원문 1차 후보)."""
     obj = {"summary": "예시는 ```json 블록``` 표기와 무관합니다", "risks": []}
     assert parse_llm_json(json.dumps(obj, ensure_ascii=False)) == obj
+
+
+def test_parse_example_fence_then_bare_answer_prefers_answer():
+    """★R1 MINOR-1 — 예시를 펜스로 감싸고 실제 답을 뒤에 둔 응답에서 예시(999)를 오반환하면 안 된다."""
+    raw = '예시:\n```json\n{"x": 999}\n```\n실제 답:\n{"x": 1}'
+    assert parse_llm_json(raw) == {"x": 1}
+
+
+def test_parse_example_fence_then_answer_fence_prefers_last():
+    """펜스 블록이 여럿이면 마지막(실제 답 관례)이 이긴다."""
+    raw = '스키마 예시:\n```json\n{"x": 999}\n```\n최종 답변:\n```json\n{"x": 1}\n```'
+    assert parse_llm_json(raw) == {"x": 1}

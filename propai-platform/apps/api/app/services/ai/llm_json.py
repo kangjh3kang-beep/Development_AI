@@ -71,24 +71,35 @@ def _boundary_candidates(text: str) -> list[str]:
 def parse_llm_json(raw: Any) -> Any:
     """LLM 텍스트에서 JSON 값(dict/list)을 관대하게 추출·파싱한다.
 
-    시도 순서(전부 실패 시 json.JSONDecodeError — 호출처 폴백 분류가 'parse'로 잡게):
-    1) 원문 전체 json.loads — JSON 문자열 값 '안에' 펜스(```)가 든 무펜스 응답을
-       펜스 추출이 망가뜨리지 않게 원문을 항상 1차 후보로 둔다.
-    2) 펜스 내부 추출본 json.loads
-    3) 각 후보의 괄호 경계({…}/[…]) 재시도 — 프리앰블·후행 설명 허용
+    후보 순서(각 후보마다 직접 파싱→괄호 경계 복구를 시도, 전부 실패면 json.JSONDecodeError
+    — 호출처 폴백 분류가 'parse'로 잡게):
+    1) 원문 전체 — JSON 문자열 값 '안에' 펜스(```)가 든 무펜스 응답을 펜스 추출이
+       망가뜨리지 않게 원문을 항상 1차 후보로 둔다.
+    2) 최후 닫는 펜스 '뒤' 꼬리 — 모델이 예시를 펜스로 감싸고 실제 답을 뒤에 두는 패턴.
+    3) 펜스 내부 블록들 '역순' — 예시(앞)보다 실제 답(뒤)이 이기게(R1 MINOR-1: 첫 펜스만
+       집으면 예시 JSON을 오답 무음 반환).
     """
     original = coerce_llm_text(raw).strip()
     candidates = [original]
-    fenced = extract_json_text(original)
-    if fenced != original:
-        candidates.append(fenced)
+    if "```" in original:
+        seg = original.split("```")
+        # 균형 펜스(닫는 펜스 존재)일 때만 꼬리를 후보로 — 미종단 펜스의 꼬리는 내부와 동일.
+        if len(seg) >= 3 and len(seg) % 2 == 1 and seg[-1].strip():
+            candidates.append(seg[-1].strip())
+        inner_blocks: list[str] = []
+        for i in range(1, len(seg), 2):
+            block = seg[i]
+            if block[:4].lower() == "json":
+                block = block[4:]
+            if block.strip():
+                inner_blocks.append(block.strip())
+        candidates.extend(reversed(inner_blocks))
     last_err: json.JSONDecodeError | None = None
     for cand in candidates:
         try:
             return json.loads(cand)
         except json.JSONDecodeError as e:
-            last_err = e
-    for cand in candidates:
+            last_err = last_err or e
         for bounded in _boundary_candidates(cand):
             try:
                 return json.loads(bounded)
