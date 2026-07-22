@@ -380,6 +380,34 @@ def _detect_special_parcel_compat(
     return detect(sp_input, **kwargs)
 
 
+# ── W2-6: CSM 조립 + Risk Register 1차(additive 부착 헬퍼) ──
+#   comprehensive_analysis_service.analyze()는 실코드 확인상 P0~P4 부지분석 사실(필지·법규·
+#   실효한도·접도·시장)을 가장 넓게 이미 모으는 지점이라(스파이크 결론 — csm.py 모듈
+#   독스트링 참고), CSM 조립을 이 함수 하나로 얇게 배선한다. 독립 함수로 분리한 이유는
+#   analyze() 전체를 무겁게 모킹하지 않고도 이 정확한 배선 계약(호출 시그니처·additive
+#   키만 부착·실패 시 무손상)을 단위 테스트로 직접 검증하기 위함이다(이 파일의
+#   apply_legal_hotpath_guard 배선과 동일한 테스트 패턴 — test_comprehensive_integrity_guard.py).
+def _attach_csm_and_risk_register(result: dict[str, Any]) -> None:
+    """CSM(csm_hash) + Risk Register 요약을 result에 additive 부착한다.
+
+    ★무회귀: 기존 키는 절대 건드리지 않는다(csm_hash·risk_register는 신규 키만 추가).
+    ★재계산 금지: assemble_csm은 result의 기존 값을 참조로만 재구조화한다(새 산식 0).
+    parcel_graph/required_data는 이 조립 지점에 아직 배선되지 않아 전달하지 않는다(1차
+    범위 — build_risk_register가 그 두 입력 없이도 3개 규칙은 정상 동작한다).
+    실패는 기존 분석 결과를 전혀 훼손하지 않는다(degrade 경고 로그만).
+    """
+    try:
+        from app.services.provenance.csm import assemble_csm
+        from app.services.provenance.risk_register import build_risk_register
+
+        csm = assemble_csm(result)
+        risk_register = build_risk_register(csm)
+        result["csm_hash"] = csm.csm_hash
+        result["risk_register"] = risk_register.to_dict()
+    except Exception as e:  # noqa: BLE001 — CSM/리스크 조립 실패는 기존 분석 결과 무손상
+        logger.warning("CSM/Risk Register 조립 실패(degrade, 기존 분석 무손상)", err=str(e)[:160])
+
+
 class ComprehensiveAnalysisService:
     """주소 입력만으로 7개 분석 카테고리를 자동 수행."""
 
@@ -793,6 +821,12 @@ class ComprehensiveAnalysisService:
             result.setdefault("provenance", _ev_block.get("provenance", []))
         except Exception:  # noqa: BLE001 — 근거 블록 부착 실패는 무손상
             pass
+
+        # ── W2-6: CSM(Canonical Site Model) 조립 + Risk Register 1차 additive 부착 ──
+        # 이 시점까지 P0~P4 부지분석 사실(필지·법규·실효한도·접도·시장)이 result에 전부
+        # 실려있다(스파이크 확인 — 이 함수가 그 최대 조립 지점). 값 재계산 없이 참조만
+        # 재구조화한다(csm.assemble_csm). 실패는 기존 분석 결과에 전혀 영향을 주지 않는다.
+        _attach_csm_and_risk_register(result)
 
         # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — deliberation(심의)·urban·legal ──
         # 시니어 전문가 판단프레임워크·근거(법조문 citation)를 result에 첨부해 메인 분석에
