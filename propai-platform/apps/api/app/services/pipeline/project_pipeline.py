@@ -143,6 +143,11 @@ class PipelineState(BaseModel):
     site_to_design: SiteToDesignPayload | None = None
     design_to_cost: DesignToCostPayload | None = None
     cost_to_feasibility: CostToFeasibilityPayload | None = None
+    # W2-3: site_to_design 의 Stage Handoff 번들(HandoffBundle.to_dict()) — 대표 1경로.
+    # dict 로 보관하는 이유: PipelineState 는 순수 Pydantic 모델이라 dataclass 를 그대로
+    # 담으면 직렬화 계약이 흔들린다(arbitrary_types_allowed 확산 방지). None=봉인 실패/미배선
+    # (하위호환 — _run_design 은 None 이면 검증 자체를 생략하고 기존 동작 그대로 진행).
+    site_to_design_bundle: dict[str, Any] | None = None
 
 
 class ProjectPipeline:
@@ -921,6 +926,35 @@ class ProjectPipeline:
                 coordinates=pre_collected.get("coordinates"),
             )
 
+            # ── W2-3: Stage Handoff bundle 계약 — 대표 1경로(부지분석→설계) seal() ──
+            # 무회귀: site_to_design 직접 전달은 그대로 유지하고, 번들은 병행 도입(soft 채택
+            # — _run_design 이 checksum 변조만 hard, 그 외는 warning 으로 흡수한다). decision은
+            # 이 경계의 실제 결함 이력(0.0 센티널·far_reliable=False 가정치 폴백)을 그대로
+            # 반영한다 — SSOT 산정을 신뢰 못 하거나 한도가 미산정이면 CONDITIONAL.
+            try:
+                from app.services.provenance.handoff_bundle import HandoffDecision, seal
+
+                _far_bcr_missing = not effective_far or not effective_bcr
+                _conditional = _far_bcr_missing or not far_reliable
+                _conditions: list[str] = []
+                if _far_bcr_missing:
+                    _conditions.append(
+                        "max_far/max_bcr 미산정(0.0 센티널) — 설계 단계 폴백 가정치 적용 예정"
+                    )
+                if not far_reliable and not _far_bcr_missing:
+                    _conditions.append("실효 용적률 SSOT 신뢰도 낮음(far_reliable=False)")
+                state.site_to_design_bundle = seal(
+                    producer="site_analysis",
+                    payload=state.site_to_design.model_dump(),
+                    decision=(
+                        HandoffDecision.CONDITIONAL.value if _conditional
+                        else HandoffDecision.PASS.value
+                    ),
+                    conditions=_conditions,
+                ).to_dict()
+            except Exception as e:  # noqa: BLE001 — 번들 봉인 실패가 부지분석을 막으면 안 됨(best-effort).
+                logger.warning("HandoffBundle 봉인 실패(site_analysis→design)", err=str(e)[:160])
+
             state.stages["site_analysis"].data = {
                 # 구조화된 데이터 (프론트엔드 SiteAnalysisDetail용)
                 "basic": {
@@ -1408,6 +1442,37 @@ class ProjectPipeline:
         overrides = self._stage_overrides_for(opts, "design")
         applied_overrides: dict[str, Any] = {}
 
+        # ── W2-3: Stage Handoff bundle 소비측 사전검증(대표 1경로) ──
+        # 번들이 없으면(레거시 호출·_restore_previous 복원 경로 — 아직 미배선) 완전
+        # 하위호환: 검증 자체를 생략하고 site(위 SiteToDesignPayload)를 그대로 쓴다.
+        # 번들이 있으면 checksum·decision·schema_version 을 사전검증하되, ★checksum
+        # 불일치(변조)만 hard(그대로 재전파 — 파이프라인이 FAILED 로 전환)이고 나머지
+        # (BLOCKED/schema_version 미허용/만료)는 soft — 경고 로그+표식만 남기고 기존
+        # 로직(site 그대로 사용)을 계속 진행한다(W2-2 UNTRACED 와 동일 soft 전략).
+        handoff_bundle_warning: str | None = None
+        if state.site_to_design_bundle:
+            from app.services.provenance.handoff_bundle import (
+                CURRENT_SCHEMA_VERSION,
+                HandoffBundleRejectedError,
+                HandoffChecksumMismatchError,
+                bundle_from_dict,
+            )
+
+            bundle = bundle_from_dict(state.site_to_design_bundle)
+            if bundle is not None:
+                try:
+                    bundle.verify_for_consumption(
+                        allowed_schema_versions={CURRENT_SCHEMA_VERSION}
+                    )
+                except HandoffChecksumMismatchError:
+                    raise  # ★hard — 무결성(변조) 위반은 타협 없이 파이프라인 실패로 전파.
+                except HandoffBundleRejectedError as e:
+                    handoff_bundle_warning = str(e)
+                    logger.warning(
+                        "Stage Handoff 번들 소비 거부(soft — 파이프라인은 계속 진행)",
+                        err=str(e)[:200],
+                    )
+
         # W3-8: 폴백 기본값(500㎡/60%/200%) 사용 시 가정 사실을 stage data에 정직 표기 —
         # site 단계의 assumed_fields 계약(E7)과 동일. 수치·흐름 불변, 표기만 가산.
         design_assumed_fields: list[str] = []
@@ -1571,6 +1636,9 @@ class ProjectPipeline:
         if design_assumed_fields:
             state.stages["design"].data["assumed_fields"] = design_assumed_fields
             state.stages["design"].data["data_quality"] = "assumed_defaults"
+        # W2-3: Stage Handoff 번들 soft 거부 표식(위 사전검증 참고 — 파이프라인 자체는 무중단).
+        if handoff_bundle_warning:
+            state.stages["design"].data["handoff_bundle_warning"] = handoff_bundle_warning
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:
