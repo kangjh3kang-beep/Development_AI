@@ -1685,7 +1685,12 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
                 "building_use": req.building_use,
                 **units_data,
             })
-            if isinstance(interp, dict) and interp:
+            # ★JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치)을 정상 해석으로 노출 금지.
+            #   design_ingest/orchestrator.py._interpret_proposal과 동일 판정(SSOT=is_fallback_only)
+            #   — 이 경로(라이브 실측: "설계 해설" 패널에 raw JSON 노출)만 그 가드가 빠져 있었다.
+            from app.services.ai.base_interpreter import is_fallback_only
+
+            if isinstance(interp, dict) and interp and not is_fallback_only(interp, DesignInterpreter.fallback_key):
                 ai_interpretation = interp
         except Exception as e:  # noqa: BLE001
             import structlog

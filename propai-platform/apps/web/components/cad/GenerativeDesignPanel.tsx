@@ -355,7 +355,12 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   // ── 부지 컨텍스트 기반 폼 상태 ──
   const [siteArea, setSiteArea] = useState(500);
-  const [zoneCode, setZoneCode] = useState("2R");
+  // ★1-tick 경합 봉합(자연녹지 프로젝트에 "2R" 라벨 혼재): 하드코딩 초기값("2R")으로 마운트되면,
+  //   아래 컨텍스트 주입 useEffect가 반영되기 전 첫 렌더에서 이 초기값으로 legal-limits(zone_code=2R)가
+  //   1회 호출돼 잘못된 용도지역 한도가 잠깐 노출됐다(다른 SSOT 기반 라벨과 혼재). ctx가 마운트 시점에
+  //   이미 있으면(흔한 케이스 — siteAnalysis가 스토어에 먼저 채워진 뒤 진입) lazy 초기화로 첫 렌더부터
+  //   정확한 zoneCode를 쓴다(ctx 부재 시엔 기존과 동일하게 "2R" 폴백).
+  const [zoneCode, setZoneCode] = useState(() => ctxZone ?? "2R");
   const [editedArea, setEditedArea] = useState(false);
   const [editedZone, setEditedZone] = useState(false);
   const [autoArea, setAutoArea] = useState(false);

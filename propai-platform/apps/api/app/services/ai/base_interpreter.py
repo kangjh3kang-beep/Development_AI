@@ -181,6 +181,23 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def is_fallback_only(result: dict[str, str], fallback_key: str) -> bool:
+    """결과가 JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치)만 채워졌는지 판정(SSOT).
+
+    _parse_response가 파싱에 완전히 실패하면 {fallback_key: 원문 텍스트[:500]}만 반환한다.
+    이를 "정상 해석"으로 오인해 그대로 노출하면 raw JSON/절단 텍스트가 사용자 화면에 뜬다
+    (2026-07-22 라이브 실측: design 인터프리터 → CadBimIntegrationPanel "설계 해설" 패널).
+    한 곳(design_ingest/orchestrator.py._interpret_proposal)에만 있던 가드를 여기로 옮겨
+    다른 호출처(design_v61.py 등)도 동일하게 걸러지도록 한다(전역 전파방지).
+    결과가 완전히 비어 있으면(폴백조차 없음) True(호출자가 별도로 "빈 결과"로 처리).
+    """
+    if not result:
+        return True
+    if not fallback_key:
+        return False
+    return not any(k != fallback_key and str(v).strip() for k, v in result.items())
+
+
 # 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
 # 해당 service 프롬프트에 참고 사례로 주입한다. 예시가 없으면 완전 무동작(기존 동작 불변).
 # ★전제 모두 충족(2026-06): ①테넌트 스코핑 by-construction(_load_fewshot이 현재 tenant 예시만

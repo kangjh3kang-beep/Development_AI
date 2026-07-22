@@ -410,7 +410,10 @@ async def _interpret_proposal(site: SiteContext, candidate: dict) -> dict | None
             return None
         # ★JSON 파싱 실패 폴백({fallback_key: 원문 한 덩어리})을 정상 해석으로 노출 금지(무목업·정직).
         #   fallback_key 외 실내용 섹션이 하나도 없으면 LLM 출력 형식 실패로 보고 None.
-        if not any(k != interp.fallback_key and str(v).strip() for k, v in result.items()):
+        #   판정은 base_interpreter.is_fallback_only(SSOT) — 다른 호출처(design_v61.py 등)도 동일 판정.
+        from app.services.ai.base_interpreter import is_fallback_only
+
+        if is_fallback_only(result, interp.fallback_key):
             return None
         return {"sections": result, "input": payload}
     except Exception as e:  # noqa: BLE001 — 해석 실패가 생성 결과를 깨면 안 됨

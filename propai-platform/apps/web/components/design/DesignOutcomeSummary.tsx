@@ -44,6 +44,25 @@ interface CostOverview {
 /* ── 설계해설(DesignInterpreter 6섹션) ── */
 type DesignAi = Record<string, string> | null;
 
+// DesignInterpreter가 실제로 채우는 6개 섹션 키(design_interpreter.py expected_keys와 동일).
+const DESIGN_AI_SECTION_KEYS = [
+  "design_overview", "mass_strategy", "floor_efficiency",
+  "compliance_review", "circulation_core", "improvement",
+] as const;
+
+/** 백엔드 JSON 파싱이 실패해 원문 텍스트가 한 키에 그대로 뭉쳐 담긴 폴백을 방어적으로 재판정.
+ *  (백엔드 is_fallback_only 가드가 1차 방어선 — 이 함수는 배포 전 캐시된 구버전 응답 등에
+ *  대한 프론트 2차 방어선이다.) 한 섹션 값 안에 다른 섹션명이 리터럴 키(`"mass_strategy"` 등)로
+ *  2개 이상 등장하면, 그 섹션 하나에 6개 키 JSON 전체가 문자열째 들어간 것으로 판단한다. */
+export function looksLikeRawDesignAiFallback(ai: DesignAi): boolean {
+  if (!ai) return false;
+  return Object.values(ai).some((v) => {
+    if (typeof v !== "string") return false;
+    const hits = DESIGN_AI_SECTION_KEYS.filter((k) => v.includes(`"${k}"`)).length;
+    return hits >= 2;
+  });
+}
+
 /** 설계 buildingType(한글/임의) → estimate-overview building_type 코드 매핑(CostEstimationClient와 동일 규칙). */
 function mapBuildingType(bt?: string | null): string {
   const s = (bt || "").toString();
@@ -121,9 +140,13 @@ interface Props {
   projectId: string;
   /** 스튜디오가 이미 받아온 설계해설(있으면 재호출 없이 표면화만). */
   designAi: DesignAi;
+  /** 해설이 생성된 시점 이후 설계(연면적 등)가 바뀌어 최신 KPI와 어긋났는지(간단 배지용). */
+  designAiStale?: boolean;
+  /** "재생성" 버튼 클릭 핸들러(호스트가 없으면 버튼 미표시). */
+  onRegenerateDesignAi?: () => void;
 }
 
-export function DesignOutcomeSummary({ projectId, designAi }: Props) {
+export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onRegenerateDesignAi }: Props) {
   // ── SSOT(모세혈관 스토어) ── 설계·공사비·수지·환경은 단일 진실원을 읽는다.
   const designData = useProjectContextStore((s) => s.designData);
   const costData = useProjectContextStore((s) => s.costData);
@@ -281,7 +304,9 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
     ["circulation_core", "동선·코어"],
     ["improvement", "개선 제안"],
   ];
-  const hasAi = !!designAi && aiSections.some(([k]) => designAi[k]);
+  // ★파싱 실패 원문 폴백은 정상 해설로 취급하지 않는다(라이브 실측: raw JSON 노출 방지).
+  const isRawFallback = looksLikeRawDesignAiFallback(designAi);
+  const hasAi = !!designAi && !isRawFallback && aiSections.some(([k]) => designAi[k]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -442,9 +467,24 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
           {/* ── ③ 설계해설(쉬운 한국어) — DesignInterpreter 6섹션 표면화 ── */}
           {hasAi && designAi && (
             <div className="rounded-2xl border border-indigo-400/20 bg-[var(--surface-soft)] px-5 py-4">
-              <div className="mb-3 flex items-center gap-2">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">설계 해설 · 왜 이런 설계인가 · Claude</p>
+                {/* ★stale 배지(간단 표시 수준) — 해설 생성 이후 설계(연면적 등)가 바뀌면 재생성 유도 */}
+                {designAiStale && (
+                  <span className="flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-bold text-amber-400">
+                    최신 설계와 불일치 · 재생성 필요
+                    {onRegenerateDesignAi && (
+                      <button
+                        type="button"
+                        onClick={onRegenerateDesignAi}
+                        className="underline decoration-dotted underline-offset-2 hover:text-amber-300"
+                      >
+                        재생성
+                      </button>
+                    )}
+                  </span>
+                )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {aiSections
@@ -457,6 +497,23 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
                   ))}
               </div>
               <p className="mt-3 text-[9px] text-[var(--text-hint)]">AI 생성 · 비전문가용 쉬운 해설 · 참고용</p>
+            </div>
+          )}
+
+          {/* ── ③' 파싱 실패 폴백(원문 JSON/절단 텍스트)을 raw로 노출하지 않고 정직 고지 ── */}
+          {designAi && isRawFallback && (
+            <div className="rounded-2xl border border-dashed border-amber-400/40 bg-amber-400/5 px-5 py-4 text-center">
+              <p className="text-xs font-bold text-amber-400">해설 생성이 불완전합니다 — 재생성이 필요합니다</p>
+              <p className="mt-1 text-[11px] text-[var(--text-hint)]">AI 응답이 중간에 잘리거나 형식이 어긋나 원문을 표시하지 않았습니다.</p>
+              {onRegenerateDesignAi && (
+                <button
+                  type="button"
+                  onClick={onRegenerateDesignAi}
+                  className="mt-3 rounded-full border border-amber-400/50 px-4 py-1.5 text-[11px] font-black uppercase tracking-widest text-amber-400 transition-colors hover:bg-amber-400/10"
+                >
+                  설계 해설 재생성
+                </button>
+              )}
             </div>
           )}
         </>

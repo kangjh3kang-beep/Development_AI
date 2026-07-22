@@ -100,7 +100,12 @@ class DesignInterpreter(BaseInterpreter):
         "improvement",
     ]
     fallback_key = "design_overview"
-    max_tokens = 4096
+    # ★2026-07-22 라이브 실측(절단→raw JSON 노출) 근본원인 중 하나: 6섹션 각각 (1)분석→(2)근거수치
+    #   →(3)시사점→(4)리스크→(5)권고의 5단 구조로 "밀도 있게" 작성하도록 지시하면서 4096은 여유가
+    #   빠듯해 max_tokens 절단(stop_reason=max_tokens)이 발생했다 — expert_panel_service의 동일
+    #   교훈(4전문가 JSON 절단→3500→8000 상향)과 같은 패턴. site_analysis/feasibility/market
+    #   인터프리터도 유사하게 조밀한 다섹션 출력이라 6000을 쓴다 — 그 헤드룸에 맞춘다.
+    max_tokens = 6000
     system_prompt = SYSTEM_PROMPT
 
     async def generate_interpretation(self, design_data: dict) -> dict[str, str]:
