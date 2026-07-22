@@ -239,3 +239,22 @@ async def test_llm_truncated_but_parseable_still_succeeds():
     out = await _run_llm(mock_llm=llm)
     assert out["generated"] is True
     assert out["summary"] == "요약"
+
+
+async def test_llm_limits_missing_classified_data_not_parse():
+    """★정직 분류 — limits 결손(KeyError)은 'data'다(파서 사유 'parse' 아님).
+
+    사유가 수리 방향을 가리키게: parse→파서, truncated→캡, data→상류 수집.
+    """
+    from app.services.regulation.regulation_analysis_service import (
+        RegulationAnalysisService,
+    )
+
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock()
+    with patch("app.services.ai.llm_provider.get_llm", return_value=llm):
+        out = await RegulationAnalysisService()._llm(
+            "서울 강남구 역삼동 736-1", "일반상업지역", "", 4172.0, {}, _DISTRICTS,
+        )
+    assert out["generated"] is False
+    assert out["fallback_reason"] == "data"

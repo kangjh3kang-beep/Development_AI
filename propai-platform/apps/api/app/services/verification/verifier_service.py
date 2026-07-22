@@ -173,7 +173,10 @@ class VerifierService:
                 source=src[:4000],
                 output=out[:4000],
             )
-            llm = get_llm(timeout=50, max_tokens=1500)
+            # ★max_tokens 3000: 1500 캡에서 라이브 3콜 중 2콜이 캡 도달(절단→파싱 실패→
+            #   검증 폴백)이었다(2026-07-22 llm_usage_log 실측). timeout은 캡 상향분
+            #   생성시간 헤드룸으로 동반 상향(캡/최저 생성속도 ~60tok/s 규칙).
+            llm = get_llm(timeout=90, max_tokens=3000)
             resp = await llm.ainvoke([SystemMessage(content=_SYSTEM), HumanMessage(content=user)])
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
