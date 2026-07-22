@@ -7,11 +7,16 @@ approve_site_basis()가 실제로 실행하는 SQL 표면만 충실히 모사하
 SQL 표면만 좁게 검증한다.
 
 게이트:
- ①자기승인(author == approved_by, 최초 assess 이벤트 actor로 author 도출) 차단.
+ ①자기승인(author == approved_by, 최초 assess 이벤트 actor로 author 도출) — 멀티유저 테넌트
+   (사용자 수>1 확인)에서 차단.
  ②타인 승인(author != approved_by) 정상 통과("passed").
  ③author 미기록(assess 이벤트 actor가 "system"이거나 이벤트 자체가 없음) → skip 표식, 승인은
    그대로 진행(무회귀 — author 배선 미완료를 하드 차단하지 않는다).
  ④기존 흐름(run_id 미존재·P0 미충족)은 SoD 배선 이후에도 그대로 거부된다(무회귀).
+ ⑤(R2 HIGH 봉합) solo 테넌트(사용자 수<=1)에서는 자기승인이 waived(solo-tenant)로 통과한다
+   — 1인 테넌트 영구 락아웃 방지(R1 REVISE).
+ ⑥(R2 HIGH 봉합) 테넌트 사용자 수 조회 자체가 실패하면 fail-open으로 통과하되
+   "waived(solo-판정실패)"로 solo 확정 케이스와 구분 표기한다.
 """
 from __future__ import annotations
 
@@ -54,6 +59,8 @@ class _FakeSiteBasisApproveDb:
         self._seq = 0
         self.commits = 0
         self.rollbacks = 0
+        self.tenant_user_counts: dict[str, int] = {}
+        self.raise_on_user_count = False
 
     def seed_state(
         self, run_id, *, tenant_id=None, pnu=None, project_id=None,
@@ -69,6 +76,10 @@ class _FakeSiteBasisApproveDb:
     def seed_assess_event(self, run_id, *, actor) -> None:
         self._seq += 1
         self.events.append({"run_id": run_id, "action": "assess", "actor": actor, "seq": self._seq})
+
+    def seed_tenant_user_count(self, tenant_id: str, count: int) -> None:
+        """R2 HIGH — 테넌트 소속 사용자 수(solo 판정 재료) seed."""
+        self.tenant_user_counts[tenant_id] = count
 
     async def execute(self, statement, params=None):  # noqa: ANN001
         sql = str(getattr(statement, "text", statement))
@@ -89,6 +100,10 @@ class _FakeSiteBasisApproveDb:
             if not matches:
                 return _Res(None)
             return _Res((matches[0]["actor"],))
+        if "SELECT COUNT(*) FROM users WHERE tenant_id::text" in sql:
+            if self.raise_on_user_count:
+                raise RuntimeError("simulated tenant user count query failure")
+            return _Res((self.tenant_user_counts.get(p["tid"], 0),))
         if sql.strip().startswith("UPDATE site_basis_state SET artifact_status"):
             row = self.state.get(p["rid"])
             if row is not None:
@@ -109,15 +124,16 @@ class _FakeSiteBasisApproveDb:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ① 자기승인 차단
+# ① 자기승인 차단(멀티유저 테넌트 조건 — R2 REVISE: solo 테넌트는 waived로 별도 검증)
 # ══════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-async def test_self_approval_blocked_when_author_matches_approver():
-    """작성자(최초 assess actor)와 승인자가 동일하면 SoD 위반으로 거부된다."""
+async def test_self_approval_blocked_when_author_matches_approver_in_multi_user_tenant():
+    """★R2 REVISE — 테넌트 사용자 수>1(확인됨)일 때만 자기승인이 SoD 위반으로 거부된다."""
     db = _FakeSiteBasisApproveDb()
     db.seed_state("basis_x1", tenant_id="t-a")
     db.seed_assess_event("basis_x1", actor="user-1")
+    db.seed_tenant_user_count("t-a", 2)  # 멀티유저 테넌트 확정
 
     out = await approve_site_basis(db=db, run_id="basis_x1", approved_by="user-1", tenant_id="t-a")
 
@@ -126,6 +142,43 @@ async def test_self_approval_blocked_when_author_matches_approver():
     # 원본은 여전히 ANALYZED(무단 승격 0).
     assert db.state["basis_x1"]["artifact_status"] == "ANALYZED"
     assert db.state["basis_x1"]["approved_by"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⑤⑥ R2 HIGH 봉합 — solo 테넌트 waiver(1인 테넌트 영구 락아웃 방지)
+# ══════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_self_approval_waived_for_solo_tenant():
+    """★R1 REVISE HIGH — 테넌트 사용자 수<=1(solo)이면 자기승인이 waived(solo-tenant)로 통과한다
+    (1인 테넌트에서 assess→approve 왕복이 영구 락아웃되던 회귀를 봉합)."""
+    db = _FakeSiteBasisApproveDb()
+    db.seed_state("basis_solo1", tenant_id="t-solo")
+    db.seed_assess_event("basis_solo1", actor="solo-user")
+    db.seed_tenant_user_count("t-solo", 1)
+
+    out = await approve_site_basis(db=db, run_id="basis_solo1", approved_by="solo-user", tenant_id="t-solo")
+
+    assert out["ok"] is True
+    assert out["artifact_status"] == "APPROVED"
+    assert out["sod_check"] == "waived(solo-tenant)"
+    assert db.state["basis_solo1"]["sod_check"] == "waived(solo-tenant)"
+
+
+@pytest.mark.asyncio
+async def test_self_approval_waived_when_user_count_query_fails():
+    """테넌트 사용자 수 조회 자체가 실패하면 fail-open으로 통과하되 solo 확정 케이스와는
+    구분되는 "waived(solo-판정실패)" 표식을 남긴다(판정 인프라 장애가 정상 승인을 영구
+    차단하지 않도록 하되, 무언 "확정 solo"로 과대포장하지 않는다)."""
+    db = _FakeSiteBasisApproveDb()
+    db.seed_state("basis_solo2", tenant_id="t-b")
+    db.seed_assess_event("basis_solo2", actor="user-1")
+    db.raise_on_user_count = True
+
+    out = await approve_site_basis(db=db, run_id="basis_solo2", approved_by="user-1", tenant_id="t-b")
+
+    assert out["ok"] is True
+    assert out["sod_check"] == "waived(solo-판정실패)"
 
 
 # ══════════════════════════════════════════════════════════════════════════
