@@ -193,8 +193,10 @@ def attach_senior_consultation_multi(
 
     ctx: dict[str, Any] = {"inputs": inputs} if isinstance(inputs, dict) else {}
     if isinstance(context_signals, dict):
-        # inputs 키는 위 계약이 소유 — 신호가 덮어쓰지 못하게 방어.
-        ctx.update({k: v for k, v in context_signals.items() if k != "inputs"})
+        # ★R1 MINOR-4: allowlist — consult의 예약키(inputs·matched_rule_ids·rule_fit·
+        #   include_reasoning)를 신호가 가장해 주입하지 못하게 confidence 신호만 통과.
+        _ALLOWED_SIGNALS = {"data_completeness", "rag_strength", "correction_rate"}
+        ctx.update({k: v for k, v in context_signals.items() if k in _ALLOWED_SIGNALS})
     if include_reasoning:
         ctx["include_reasoning"] = True
     consults: list[dict[str, Any]] = []

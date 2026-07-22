@@ -69,6 +69,7 @@ def test_context_signals_cannot_override_inputs():
         context_signals={"inputs": {"far_actual": 99999, "far_limit": 1}},
     )
     evals = out["consultations"][0]["evaluations"]
+    assert evals, "정량 평가가 산출돼야 한다(공허 통과 방지)"
     assert all(e.get("verdict") != "BLOCK" for e in evals), "오염된 inputs가 반영되면 안 된다"
 
 

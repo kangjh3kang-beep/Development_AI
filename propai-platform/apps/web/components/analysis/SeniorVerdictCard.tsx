@@ -203,7 +203,7 @@ export function SeniorVerdictCard({
               ) : null}
 
               {/* IRAC 판단 체인(풍성화) — 쟁점→규칙(법령 근거)→적용→결론. 백엔드 결정론 산출. */}
-              {(d.reasoning?.irac_steps ?? []).length > 0 ? (
+              {Array.isArray(d.reasoning?.irac_steps) && (d.reasoning?.irac_steps ?? []).length > 0 ? (
                 <details className="mt-2">
                   <summary className="cursor-pointer text-[11px] font-semibold text-[var(--text-primary)]">
                     판단 체인 {(d.reasoning?.irac_steps ?? []).length}건 (쟁점→규칙→적용→결론)
@@ -211,7 +211,7 @@ export function SeniorVerdictCard({
                   <ol className="mt-1.5 space-y-2">
                     {(d.reasoning?.irac_steps ?? []).map((s, k) => (
                       <li
-                        key={s.rule_id ?? k}
+                        key={s.rule_id || k}
                         className="break-keep rounded border border-[var(--line)] bg-[var(--surface-soft)] p-2 text-[11px] leading-relaxed text-[var(--text-secondary)]"
                       >
                         {s.issue ? (

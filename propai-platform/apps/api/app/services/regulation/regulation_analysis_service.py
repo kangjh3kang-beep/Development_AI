@@ -308,8 +308,12 @@ class RegulationAnalysisService:
                     height_actual=_hgt.get("value"), height_limit=_hgt.get("value"),
                 )
                 # 데이터 완결도 신호(정직 confidence): 건폐/용적/높이 3축 중 확보된 축 비율.
-                _axes = (_bcr.get("effective") or _bcr.get("legal"),
-                         _far.get("effective") or _far.get("legal"),
+                # ★R1 MINOR-1: 0도 '확보된 값'이다 — `or` 폴백은 0을 결측 취급(0-falsy)하므로
+                #   is not None 기준으로 통일(3축 동일 정책).
+                def _first_known(*vals):
+                    return next((v for v in vals if v is not None), None)
+                _axes = (_first_known(_bcr.get("effective"), _bcr.get("legal")),
+                         _first_known(_far.get("effective"), _far.get("legal")),
                          _hgt.get("value"))
                 _completeness = sum(1 for a in _axes if a is not None) / len(_axes)
                 # 풍성화(사용자 신고 '시니어 분석 빈약'): IRAC 체인(쟁점→규칙[법령 근거]→적용→결론)
