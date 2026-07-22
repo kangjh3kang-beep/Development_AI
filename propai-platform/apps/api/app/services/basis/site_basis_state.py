@@ -18,6 +18,16 @@ DB/원장 연동은 site_basis_service.py(별도 파일)가 이 모듈을 호출
 status 값만 받아 판정한다(각 게이트의 판정 로직 자체는 재구현하지 않는다 — 그린필드 금지 준수).
 P3 권리는 registry_analysis_service의 전용 차단 상태머신이 아직 없어(알려진 갭), 이번 WP는
 '권리분석 미확정=AUTHORIZED 차단'이라는 보수 게이트(rights_confirmed bool)로만 소비한다.
+
+★W2-4 Required Data Matrix와의 관계(즉시 전면 이관 금지 — 무회귀, 특수사례로만 문서화):
+이 모듈의 ``aggregate_p0()``(access/dev_act_permit/rights 3게이트 중 하나라도 미충족이면
+전체 미충족)은 provenance.required_data.evaluate_matrix()로 access/dev_act_permit/rights
+3개 필드를 모두 requirement_level=REQUIRED+critical=True로 선언한 매트릭스와 동형이다(이
+모듈의 PASS/CONDITIONAL="충족"·BLOCKED/REQUIRES_AUTHORITY_CONFIRMATION/None="미충족" 분류를
+그 계약의 PRESENT_VALID·PRESENT_INVALID/MISSING으로 옮기면 된다). 이 동형성은
+tests/test_required_data.py로 증명하지만, 이 모듈 자체(DB·원장·승인 상태전이와 깊게 얽혀
+있음)는 이번 WP에서 evaluate_matrix()로 재구현하지 않는다(즉시 이관은 무회귀 원칙에 반함 —
+후속 과제).
 """
 from __future__ import annotations
 

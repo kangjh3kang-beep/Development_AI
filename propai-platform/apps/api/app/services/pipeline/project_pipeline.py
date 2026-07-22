@@ -1531,13 +1531,49 @@ class ProjectPipeline:
 
         # W3-8: 폴백 기본값(500㎡/60%/200%) 사용 시 가정 사실을 stage data에 정직 표기 —
         # site 단계의 assumed_fields 계약(E7)과 동일. 수치·흐름 불변, 표기만 가산.
-        design_assumed_fields: list[str] = []
-        if not site.land_area_sqm:
-            design_assumed_fields.append("land_area_sqm(500㎡ 가정)")
-        if not site.max_bcr:
-            design_assumed_fields.append("max_bcr(60% 가정)")
-        if not site.max_far:
-            design_assumed_fields.append("max_far(200% 가정)")
+        #
+        # ★W2-4(Required Data Matrix) — 대표 1단계 적용: 아래 3개 필드가 없으면(MISSING)
+        # design_assumed_fields에 라벨을 붙이던 옛 ad hoc `if not site.X: append(...)` 3줄은
+        # 이 단계의 소형 로컬 게이트였다 — 이제 공용 계약(evaluate_matrix)에 위임한다. 세 필드
+        # 모두 requirement_level=REQUIRED**이되 critical=False**로 선언한다(★무회귀 — 오늘까지
+        # 이 필드들이 없어도 파이프라인이 절대 멈추지 않았으므로, 여기서 critical=True를 주면
+        # 새로 BLOCKED를 방출해 회귀가 된다). zone_type은 building_type 자동판정 근거라
+        # RECOMMENDED로만 추가 관측한다(결측이어도 기존처럼 "" 폴백으로 계속 진행 — 제어흐름
+        # 불변). 산출되는 design_assumed_fields 문자열·트리거 조건은 리팩토링 전후 동일함을
+        # tests/test_required_data.py의 동작 동일성 테스트로 고정한다.
+        from app.services.provenance.required_data import DataRequirement, DataStatus, evaluate_matrix
+
+        design_requirements = (
+            DataRequirement(
+                field="land_area_sqm", requirement_level="required",
+                description="설계개요(건축면적·연면적) 산출의 대지면적 기준 — "
+                             "0.0=미산정 센티널, 없으면 500㎡ 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="max_bcr", requirement_level="required",
+                description="건폐율 상한 — 0.0=미산정 센티널, 없으면 60% 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="max_far", requirement_level="required",
+                description="용적률 상한 — 0.0=미산정 센티널, 없으면 200% 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="zone_type", requirement_level="recommended",
+                description="건물유형(아파트/다세대/근생/공동주택) 자동판정 근거 — "
+                             "없으면 기본값 '공동주택'으로 진행.",
+            ),
+        )
+        design_matrix_result = evaluate_matrix(design_requirements, site.model_dump())
+        _design_fallback_labels = {
+            "land_area_sqm": "land_area_sqm(500㎡ 가정)",
+            "max_bcr": "max_bcr(60% 가정)",
+            "max_far": "max_far(200% 가정)",
+        }
+        design_assumed_fields: list[str] = [
+            _design_fallback_labels[item.field]
+            for item in design_matrix_result.items
+            if item.field in _design_fallback_labels and item.status == DataStatus.MISSING.value
+        ]
         land_area = site.land_area_sqm or 500.0
         bcr = site.max_bcr or 60.0
         far = site.max_far or 200.0
@@ -1704,6 +1740,10 @@ class ProjectPipeline:
             state.stages["design"].data["handoff_payload_drift"] = handoff_payload_drift
         if handoff_unverified:
             state.stages["design"].data["handoff_unverified"] = handoff_unverified
+        # W2-4: Required Data Matrix 판정(순수 additive — decision이 BLOCKED이어도 이 단계의
+        # 제어흐름은 바꾸지 않는다. 위 design_requirements가 전부 critical=False라 이 대표
+        # 배선에서 decision은 절대 BLOCKED가 될 수 없다 — PASS/CONDITIONAL만 방출된다).
+        state.stages["design"].data["data_readiness"] = design_matrix_result.to_dict()
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:
