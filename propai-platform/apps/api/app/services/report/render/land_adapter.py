@@ -13,9 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.provenance.lineage_ref import LineageRef
+
 from .evidence_bridge import evidence_block_from_contract
 from .model import (
     DataTableBlock,
+    Evidence,
+    EvidenceBlock,
     KVTableBlock,
     NarrativeBlock,
     ReportMeta,
@@ -49,6 +53,98 @@ def _sqm(v: Any) -> str:
 
 def _pct(v: Any) -> str:
     return f"{fmt_value(v)}%" if v is not None else fmt_value(None)
+
+
+def _far_lineage_evidence_block(parcels: list[dict]) -> EvidenceBlock | None:
+    """실효 용적률의 필드수준 계보(W2-2 대표 1경로) — 첫 필지의 far_basis_detail 을 채택.
+
+    입력 계약(routers/auto_zoning.py `_enrich_effective_and_special` → `land_report` 핸들러가
+    additive 로 실어 보내는 값 — 기존 소비자는 이 키가 없어도 무해):
+        parcel["far_basis_detail"] = calc_effective_far()["far_basis_detail"]
+        parcel["ordinance"]        = OrdinanceService.get_ordinance_limits() 원본(dict)
+
+    ★"재구현 금지" 원칙: 여기서 용적률을 다시 계산하지 않는다 — calc_effective_far 가 이미
+      계층별(법정범위→조례값→최종근거)로 나눠 준 dict 를 LineageRef 태그로 '옮겨 담기'만 한다.
+    ★대표 1경로: far_basis_detail 을 가진 첫 필지 하나만 사용한다(v4.0 [필드수준 계보] 계약의
+      끝-끝 연결을 실증하는 1차 배선 — 전 필지 배선은 후속 과제, 한계 참고).
+    far_basis_detail 이 없는 입력(기존 호출부·zone_unmatched 등)은 None(정직 — 지어내지 않음).
+    """
+    target = next((p for p in parcels if isinstance(p.get("far_basis_detail"), dict)), None)
+    if target is None:
+        return None
+    detail: dict[str, Any] = target["far_basis_detail"]
+    ordinance = target.get("ordinance") if isinstance(target.get("ordinance"), dict) else {}
+    items: list[Evidence] = []
+
+    # ① 법정범위(RULE) — 국토계획법 시행령 별표에 코드화된 고정 상한. 스냅샷 대상이 아니라
+    #    '규칙 인용'이므로 RULE 등급(항상 traced=True — 법령 자체는 미추적 사유가 없다).
+    legal = detail.get("법정범위")
+    if isinstance(legal, dict):
+        ref = LineageRef(
+            source_kind="RULE",
+            basis="국토의 계획 및 이용에 관한 법률 시행령 제71~84조(용도지역별 건폐율·용적률 법정범위)",
+        )
+        items.append(Evidence(
+            value=(
+                f"법정 용적률 범위: {fmt_value(legal.get('min_far_pct'))}~"
+                f"{fmt_value(legal.get('max_far_pct'))}%"
+            ),
+            basis=ref.basis, claim_type="FACT", lineage=ref.to_dict(),
+        ))
+
+    # ② 조례값(STATIC_CACHE/LIVE_API) — ordinance.source 로 정직 등급을 가른다(스파이크 결론).
+    #    ★R1 R2 반영: 법제처API(실시간)를 정적캐시보다 낮은 UNKNOWN으로 취급하던 등급 역전을
+    #    해소한다 — 둘 다 "출처는 정직하게 명시했으나 SourceSnapshot은 아직 없음"이라는 동일
+    #    사유로 완화(traced=True)되며, "완전 미상(UNKNOWN)"과는 범주가 다르다.
+    ordinance_detail = detail.get("조례값")
+    if isinstance(ordinance_detail, dict):
+        src = str(ordinance.get("source") or "")
+        prov = ordinance.get("provenance") if isinstance(ordinance.get("provenance"), dict) else {}
+        ref: LineageRef | None
+        if src == "지자체 조례(정적캐시)":
+            # ★스파이크 결론: ORDINANCE_CACHE 는 정적캐시라 W2-1 SourceSnapshot 이 없다.
+            #   SNAPSHOT 을 자칭하지 않고 STATIC_CACHE 로 완화 하강(traced=True) — disclaimer
+            #   (원문 재대조 권장 문구)를 basis 로 그대로 인용해 "출처는 있으나 스냅샷 없음"을
+            #   명시한다.
+            ref = LineageRef(
+                source_kind="STATIC_CACHE",
+                fact_status="STALE",  # 재검증 권장 — provenance.disclaimer 문구와 정합.
+                basis=str(prov.get("disclaimer") or "정적캐시(조례 원문 재대조 권장)"),
+            )
+        elif src == "법제처API":
+            # ★한계(W2-2 1차, 후속 W2-3): 법제처(MOLEG) 실시간 조회는 아직 SourceSnapshot
+            #   opt-in 대상이 아니다(W2-1 은 VWorld·G2B 두 커넥터만) — 원본 바이트 재현은
+            #   못 하지만, "출처 자체는 정직하게 명시된 실시간 조회"라 완전 미상(UNKNOWN)과는
+            #   다르다. STATIC_CACHE 와 동일한 완화 논리로 LIVE_API(traced=True)를 준다.
+            #   MOLEG 커넥터가 SourceSnapshot 을 켜는 순간 이 분기를 SNAPSHOT+
+            #   snapshot_fingerprint 로 승격한다(단방향 승격 — 완화 등급으로 되돌리지 않는다).
+            ref = LineageRef(
+                source_kind="LIVE_API", fact_status="OBSERVED",
+                basis="법제처 실시간 조회(SourceSnapshot 미연동 — 스냅샷 연동 시 SNAPSHOT 승격 예정)",
+            )
+        else:
+            # source == "법정상한"(조례 미확보) 등 — far_basis_detail["조례값"]은 이미
+            # ordinance_confirmed=True 일 때만 채워지므로(far_tier_service 계약) 이 분기는
+            # 정상 경로에서 도달하지 않는다. 그래도 방어적으로 조용히 건너뛴다(정직 — 지어내지 않음).
+            ref = None
+        if ref is not None:
+            items.append(Evidence(
+                value=f"조례 용적률: {fmt_value(ordinance_detail.get('far_pct'))}%",
+                basis=ref.basis, source=src or None, claim_type="FACT", lineage=ref.to_dict(),
+            ))
+
+    # ③ 최종근거(CALC) — calc_effective_far 의 결정론적 계층산정 결과(far_basis 문자열).
+    final_basis = detail.get("최종근거")
+    if final_basis:
+        ref = LineageRef(source_kind="CALC", fact_status="DERIVED", basis=str(final_basis))
+        items.append(Evidence(
+            value=f"실효 용적률 산정근거: {final_basis}",
+            basis=str(final_basis), claim_type="CALCULATION", lineage=ref.to_dict(),
+        ))
+
+    if not items:
+        return None
+    return EvidenceBlock(items=items, title="실효 용적률 계보(필드수준 — v4.0 계약 대표 1경로)")
 
 
 def build_report_model_from_land(data: dict[str, Any]) -> ReportModel:
@@ -140,13 +236,19 @@ def build_report_model_from_land(data: dict[str, Any]) -> ReportModel:
             _pct(bcr), _pct(far),
             f"{a:,.0f}㎡" if a else fmt_value(None), arch, gfa,
         ])
-    sections.append(Section(title="4. 규제 · 개발가능성(법정 상한 기준)", blocks=[
+    blocks4: list[Any] = [
         DataTableBlock(
             headers=["지번", "용도지역", "건폐율", "용적률", "대지면적", "허용 건축면적", "허용 연면적"],
             rows=rows4,
             caption="※ 필지별 법정 상한(국토계획법 시행령)이며, 용도지역이 섞인 다필지는 단순 합산이 "
                     "불가합니다(통합 한도는 면적가중 종합분석 참조). 지구단위계획·조례·인센티브로 가감될 수 있습니다."),
-    ]))
+    ]
+    # ★W2-2(v4.0 [필드수준 계보]): 실효 용적률의 계보(법정범위→조례값→최종근거)를 far_basis_detail
+    #   이 실린 대표 1필지에서 뽑아 부착한다. 없으면(호출부가 아직 안 실어 보내면) 조용히 생략(무회귀).
+    far_lineage = _far_lineage_evidence_block(parcels)
+    if far_lineage is not None:
+        blocks4.append(far_lineage)
+    sections.append(Section(title="4. 규제 · 개발가능성(법정 상한 기준)", blocks=blocks4))
 
     # §5 대지지분/세대(집합건물) — 집합건물 필지가 있을 때만(생산자와 동일 조건부 렌더).
     agg_parcels = [p for p in parcels if (p.get("parcel_case") == "aggregate")]

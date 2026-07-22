@@ -88,8 +88,17 @@ async def test_parcel_boundaries_effective_far_matches_ssot_natural_green(monkey
 
     # 응답 계약 무변경 — SSOT 보강용 내부 전용 키(_far_eff 등)는 features에 노출되지 않는다.
     feat = result["features"][0]
-    for k in ("_far_eff", "_bcr_eff", "_far_legal", "_bcr_legal", "_far_basis", "_special"):
+    for k in ("_far_eff", "_bcr_eff", "_far_legal", "_bcr_legal", "_far_basis", "_special",
+              "_districts_checked", "_far_basis_detail", "_ordinance"):
         assert k not in feat, f"내부 SSOT 전용 키 {k}가 응답에 누출됨(계약 위반)"
+    # ★R1 HIGH 봉합(W2-2 R2): 고정 목록 대신 접두어 규약(모든 내부키는 "_"로 시작)으로도
+    #   앵커한다 — 이번에 신규 내부키(_far_basis_detail·_ordinance)가 고정 denylist 밖이라
+    #   새어나간 회귀가 났다. 접두어 스트립으로 표준화했으니, 향후 어떤 새 내부키가 추가되어도
+    #   이 단언 1건이 자동으로 잡아낸다(전역 전파방지).
+    assert not any(k.startswith("_") for k in feat), (
+        f"밑줄 접두 내부키가 응답(features[0])에 남아있음: "
+        f"{sorted(k for k in feat if k.startswith('_'))}"
+    )
 
 
 async def test_parcel_boundaries_effective_far_no_regression_for_uncapped_zone(monkeypatch):
