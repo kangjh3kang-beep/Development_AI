@@ -39,7 +39,7 @@ export function sumRosterRows(rows: RosterRow[]): RosterRow {
 //   모두 roleConfig 한 부를 소비하게 일원화한다. 위계=본부장(GM_DIRECTOR) > 이사(DIRECTOR).
 // ★export: OrgTree.contract.test.ts 가 SSOT 패리티와 '트리배지=로스터표' 동일문자열을 회귀로 고정.
 export const NODE_TYPES = nodeTypeOptions();
-export const LABEL: Record<string, string> = NODE_TYPE_LABEL;
+export const LABEL: Record<string, string> = { ...NODE_TYPE_LABEL }; // 방어적 복사(SSOT 원본 오염 차단)
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
 export default function OrgTree({ siteCode }: { siteCode: string }) {

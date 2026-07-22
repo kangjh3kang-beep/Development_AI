@@ -8,6 +8,7 @@
 import { Dices, Ticket } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { UNIT_STATUS_LABEL } from "@/components/sales/unitStatus";
 
 interface Group { id: string; name: string; status: string; candidates: number; drawn: number }
 interface Ann { id: string; announce_no?: string; status: string }
@@ -194,8 +195,10 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
                     <span className="flex items-center gap-2">
                       <b className="text-[var(--accent-strong)]">{r.assigned_label}</b>
                       {r.seed && <span className="font-mono text-[9px] text-[var(--text-hint)]" title="추첨 seed(감사·재현검증)">seed {r.seed.slice(0, 8)}</span>}
+                      {/* 라벨은 세대 상태 SSOT 소비(전 화면 동일 표기). 색은 여기선 '계약 존재' 성공
+                          플래그라 emerald 유지(재고 상태 셀이 아니므로 rose 강제 안 함). */}
                       {r.contract_id ? (
-                        <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">계약완료</span>
+                        <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">{UNIT_STATUS_LABEL.CONTRACTED}</span>
                       ) : (
                         <button onClick={() => makeContract(r.id)} disabled={busy}
                           className="rounded-md border border-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">계약 생성</button>

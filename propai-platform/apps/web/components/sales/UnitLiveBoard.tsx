@@ -596,8 +596,10 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
                                   u.status === "HOLD" && !u.held_by_me
                                     ? "다른 직원이 선점 중"
                                     : u.status === "CONTRACTED"
-                                      ? "계약 완료"
-                                      : u.ho
+                                      ? UNIT_STATUS_LABEL.CONTRACTED
+                                      : u.status === "CANCELLED"
+                                        ? UNIT_STATUS_LABEL.CANCELLED
+                                        : u.ho
                                 }
                                 className={`relative flex h-14 w-16 flex-col items-center justify-center rounded border text-[11px] font-medium transition ${
                                   cellClass(vs)
