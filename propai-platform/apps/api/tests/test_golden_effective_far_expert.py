@@ -93,7 +93,9 @@ def test_golden_natural_green_structural_cap_binds_over_higher_ordinance_no_fals
         f"{out['effective_far_pct']}%"
     )
     assert out["effective_far_pct"] == expert_confirmed_max
-    assert out["far_basis"] == "구조상한(건폐율×층수)"
+    # R1 반영: 표시 라벨은 리워딩될 수 있으므로 정확일치 대신 핵심어 포함으로 판정
+    # (동작 자체는 위의 structural_cap_pct==80·effective==80 이 완전 고정).
+    assert "구조상한" in out["far_basis"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -173,21 +175,23 @@ def test_golden_commercial_zone_adversarial_ordinance_cannot_exceed_legal_cap():
 # ══════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.parametrize(
-    ("zone_type", "ordinance_far", "ordinance_bcr"),
+    # R1 반영: expected_national(법정상한)을 독립 상수로 병기 — 엔진 출력만으로 천장을 만들면
+    # national·effective가 함께 부풀어도 통과하는 결합버그를 못 잡는다(국토계획법 시행령 §84·§85 SSOT).
+    ("zone_type", "ordinance_far", "ordinance_bcr", "expected_national"),
     [
         # 자연녹지 — 조례=법정 그대로(구조상한이 최종 바인딩, 케이스1/2와 동일 사실 재확인).
-        ("자연녹지지역", 100.0, 20.0),
+        ("자연녹지지역", 100.0, 20.0, 100.0),
         # 자연녹지 — 조례가 구조상한보다 이미 낮음(조례가 최종 바인딩, 구조상한 미개입).
-        ("자연녹지지역", 60.0, 15.0),
+        ("자연녹지지역", 60.0, 15.0, 100.0),
         # 제1종일반주거지역 — 의정부시 등 조례 계열(케이스3과 동일 사실 재확인).
-        ("제1종일반주거지역", 150.0, 60.0),
+        ("제1종일반주거지역", 150.0, 60.0, 200.0),
         # 일반상업지역 — 의정부시 조례 실측(법정 1300% 대비 낮음).
-        ("일반상업지역", 900.0, 80.0),
+        ("일반상업지역", 900.0, 80.0, 1300.0),
         # 제3종일반주거지역 — 근거 없는 적대적 조례값(법정 300% 초과 시도).
-        ("제3종일반주거지역", 999.0, 999.0),
+        ("제3종일반주거지역", 999.0, 999.0, 300.0),
     ],
 )
-def test_golden_effective_far_never_exceeds_min_of_applied_layers(zone_type, ordinance_far, ordinance_bcr):
+def test_golden_effective_far_never_exceeds_min_of_applied_layers(zone_type, ordinance_far, ordinance_bcr, expected_national):
     """어떤 입력 조합에서도 effective_far_pct/effective_bcr_pct는 (법정상한, 조례값) 중
     최솟값을 넘지 않고, 구조상한이 있으면 그보다도 낮아야 한다 — false-pass=0의 일반화된 불변식.
     """
@@ -202,7 +206,9 @@ def test_golden_effective_far_never_exceeds_min_of_applied_layers(zone_type, ord
         zone_type=zone_type, land_area=500.0,
     )
     assert out["effective_far_pct"] is not None
-    far_ceiling = min(out["national_far_pct"], ordinance_far)
+    # R1 반영: 법정상한을 엔진 출력이 아닌 독립 상수로 먼저 고정(동반팽창 결합버그 차단).
+    assert out["national_far_pct"] == expected_national
+    far_ceiling = min(expected_national, ordinance_far)
     if out["structural_cap_pct"] is not None:
         far_ceiling = min(far_ceiling, out["structural_cap_pct"])
     assert out["effective_far_pct"] <= far_ceiling + 1e-9, (
