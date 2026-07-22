@@ -1732,6 +1732,8 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
             "building_height_m": round(int(mass["num_floors"]) * mass.get("floor_height_m", req.floor_height_m), 2),
             "bcr_pct": mass.get("bcr_pct"),
             "far_pct": mass.get("far_pct"),
+            # ★백로그②(연면적·비율 소스 혼입) — /mass와 동일 계약(mass.get 그대로 통과). additive.
+            "total_floor_area_sqm": mass.get("total_floor_area_sqm"),
             "total_units": mass.get("total_units"),
         },
         "ai_interpretation": ai_interpretation,
@@ -1781,6 +1783,12 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         "setback_m": setback,
         "bcr_pct": mass.get("bcr_pct"),
         "far_pct": mass.get("far_pct"),
+        # ★백로그②(연면적·비율 소스 혼입) 근본수정 — bcr_pct/far_pct는 이 total_floor_area_sqm
+        #   (매스엔진이 실제 산출한 연면적) 기준으로 계산됐는데, 종전엔 이 필드를 직렬화하지 않아
+        #   프론트가 연면적만 designData(목표값)로 별도 조회해 "연면적=A소스, 비율=B소스" 혼입이
+        #   생겼다(CadBimIntegrationPanel "적용 건축개요" 패널). 이 값을 그대로 공개해 프론트가
+        #   bcr_pct/far_pct와 동일 소스로 연면적을 표시할 수 있게 한다(additive·무회귀).
+        "total_floor_area_sqm": mass.get("total_floor_area_sqm"),
         "total_units": mass.get("total_units"),
         "unit_width_m": round(float(mass.get("unit_width_m", 8.0)), 2),
         # ★podium-tower 매스(고FAR 상업지 주상복합) — 3D를 저층 podium+고층 tower 2-volume으로
