@@ -169,3 +169,9 @@ async def test_llm_garbage_response_classified_parse():
     out = await _run_llm(mock_llm=llm)
     assert out["generated"] is False
     assert out["fallback_reason"] == "parse"
+
+
+def test_parse_bare_json_with_inner_fence_in_string():
+    """★퇴행 방지 — JSON 문자열 값 안의 ``` 가 펜스 추출을 오도하면 안 된다(원문 1차 후보)."""
+    obj = {"summary": "예시는 ```json 블록``` 표기와 무관합니다", "risks": []}
+    assert parse_llm_json(json.dumps(obj, ensure_ascii=False)) == obj

@@ -45,33 +45,53 @@ def extract_json_text(raw: Any) -> str:
     return text
 
 
+def _boundary_candidates(text: str) -> list[str]:
+    """최초 여는 괄호({/[ 중 먼저 등장하는 쪽)~최후 닫는 괄호 경계 후보들.
+
+    리스트 응답에서 내부 dict만 건져 리스트를 잃는 오추출을 막기 위해, 먼저 등장하는
+    괄호 종류를 우선한다.
+    """
+    first_obj = text.find("{")
+    first_arr = text.find("[")
+    if first_obj != -1 and (first_arr == -1 or first_obj < first_arr):
+        pairs = [("{", "}"), ("[", "]")]
+    elif first_arr != -1:
+        pairs = [("[", "]"), ("{", "}")]
+    else:
+        return []
+    out: list[str] = []
+    for open_ch, close_ch in pairs:
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end > start:
+            out.append(text[start:end + 1])
+    return out
+
+
 def parse_llm_json(raw: Any) -> Any:
     """LLM 텍스트에서 JSON 값(dict/list)을 관대하게 추출·파싱한다.
 
-    1) 펜스 내부 추출 후 json.loads
-    2) 실패 시 최초 여는 괄호({/[ 중 먼저 나오는 쪽)부터 최후 닫는 괄호까지 재시도
-    최종 실패면 json.JSONDecodeError를 그대로 던진다(호출처의 폴백 분류가 'parse'로 잡게).
+    시도 순서(전부 실패 시 json.JSONDecodeError — 호출처 폴백 분류가 'parse'로 잡게):
+    1) 원문 전체 json.loads — JSON 문자열 값 '안에' 펜스(```)가 든 무펜스 응답을
+       펜스 추출이 망가뜨리지 않게 원문을 항상 1차 후보로 둔다.
+    2) 펜스 내부 추출본 json.loads
+    3) 각 후보의 괄호 경계({…}/[…]) 재시도 — 프리앰블·후행 설명 허용
     """
-    text = extract_json_text(raw)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        first_obj = text.find("{")
-        first_arr = text.find("[")
-        # 먼저 등장하는 괄호 종류를 우선 시도 — 리스트 응답에서 내부 dict만 건져
-        # 리스트를 잃는 오추출 방지.
-        if first_obj != -1 and (first_arr == -1 or first_obj < first_arr):
-            pairs = [("{", "}"), ("[", "]")]
-        elif first_arr != -1:
-            pairs = [("[", "]"), ("{", "}")]
-        else:
-            raise
-        for open_ch, close_ch in pairs:
-            start = text.find(open_ch)
-            end = text.rfind(close_ch)
-            if start != -1 and end > start:
-                try:
-                    return json.loads(text[start:end + 1])
-                except json.JSONDecodeError:
-                    continue
-        raise
+    original = coerce_llm_text(raw).strip()
+    candidates = [original]
+    fenced = extract_json_text(original)
+    if fenced != original:
+        candidates.append(fenced)
+    last_err: json.JSONDecodeError | None = None
+    for cand in candidates:
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError as e:
+            last_err = e
+    for cand in candidates:
+        for bounded in _boundary_candidates(cand):
+            try:
+                return json.loads(bounded)
+            except json.JSONDecodeError:
+                continue
+    raise last_err if last_err else json.JSONDecodeError("JSON 미발견", doc=original[:80], pos=0)
