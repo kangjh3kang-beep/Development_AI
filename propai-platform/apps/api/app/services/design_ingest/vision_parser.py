@@ -216,6 +216,10 @@ async def parse_drawing_with_vision(content: bytes, filename: str, fmt: str) -> 
 
         llm = get_llm(provider="anthropic", max_tokens=1500, timeout=40.0)
         resp = await llm.ainvoke([HumanMessage(content=blocks)])
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort) —
+        # 유일한 무계측 직접호출이라 캡 절단 감사(output==캡 대조)의 사각이었다.
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="design_ingest")
         data = _parse_json(_message_text(resp))
     except Exception as e:  # noqa: BLE001 — best-effort 비전, 실패는 정직 고지
         logger.warning("design_ingest 비전 파싱 실패(%s): %s", fmt, str(e)[:160])

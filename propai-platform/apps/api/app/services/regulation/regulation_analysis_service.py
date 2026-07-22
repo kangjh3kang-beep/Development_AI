@@ -684,7 +684,10 @@ class RegulationAnalysisService:
                 "timeout" if "Timeout" in type(e).__name__
                 else "truncated" if (
                     isinstance(e, json.JSONDecodeError) and is_truncated(resp))
-                else "parse" if isinstance(e, (json.JSONDecodeError, KeyError))
+                else "parse" if isinstance(e, json.JSONDecodeError)
+                # KeyError는 limits["bcr"]/["far"] 등 입력 데이터 결손 — 파서 사유가 아니라
+                # 'data'로 정직 분류(사유가 수리 방향을 가리키게: parse→파서, data→상류 수집).
+                else "data" if isinstance(e, KeyError)
                 else "provider"
             )
             logger.warning("규제 LLM 해석 실패, 폴백",

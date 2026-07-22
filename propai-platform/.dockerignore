@@ -11,8 +11,10 @@ apps/web/.env.*
 node_modules/
 .git/
 .github/
-__pycache__/
-*.pyc
+# ★**/ 필수 — .dockerignore 패턴은 컨텍스트 루트 기준이라 '__pycache__/'는 루트만 매칭,
+#   apps/api/app/** 하위 수백 개 __pycache__가 이미지에 통째로 복사되고 있었다(용량 낭비+구 바이트코드).
+**/__pycache__
+**/*.pyc
 
 # 테스트/빌드 결과
 .build-journal/
