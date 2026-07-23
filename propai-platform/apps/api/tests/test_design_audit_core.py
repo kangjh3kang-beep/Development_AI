@@ -744,6 +744,7 @@ class TestGrammarSection:
         finding = next(f for f in result["findings"] if f["engine"] == "grammar")
         assert finding["status"] == "skipped"
         assert "미산출" in finding["note"]
+        assert result["overall"]["verdict"] == "적합"  # skipped는 판정 미반영
 
 
 # ─────────────────────────────────────────────────────────────────────────────

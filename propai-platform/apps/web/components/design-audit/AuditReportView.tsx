@@ -992,8 +992,9 @@ export function AuditReportView({
                     </div>
                   )}
                   {blindSpots.length > 0 && <BlindSpotList spots={blindSpots} />}
-                  {/* 인허가 시니어 자문(도시계획·심의·법무) — 공용 카드 재사용(자문 미가용 시 카드 자체가 null) */}
-                  {sec.senior_consultation && (
+                  {/* 인허가 시니어 자문(도시계획·심의·법무) — 공용 카드 재사용(자문 미가용 시 카드 자체가 null).
+                      ★hasSeniorConsultation(verdict·consultations 길이 조건 포함)과 렌더 기준 통일. */}
+                  {hasSeniorConsultation && (
                     <SeniorVerdictCard
                       consultation={sec.senior_consultation}
                       title="인허가 시니어 자문"
