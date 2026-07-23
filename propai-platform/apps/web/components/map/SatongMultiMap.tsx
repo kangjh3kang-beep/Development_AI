@@ -131,6 +131,10 @@ export interface SatongMultiMapProps {
   /** 부모(Shell) "초기화"(clearParcels) 신호 — 증가할 때마다 지도 staged·녹색 폴리곤·pending을
    *  청소한다(WP-M2). 종전엔 목록만 비고 지도엔 잔존했다. undefined면 무동작(하위호환). */
   clearSignal?: number;
+  /** ★R2(MEDIUM): staged(확정 [완료] 전, 녹색으로 찍어둔) 필지 개수 역전파 — 부모(Shell)는
+   *  이 내부 상태를 원래 볼 수 없어 "확정 선택은 0건인데 지도엔 임시 선택이 남는" 상황을
+   *  무음으로 지나쳤다. staged 길이가 바뀔 때마다 통지한다(개수만 — 배열 자체는 전달 안 함). */
+  onStagedCountChange?: (count: number) => void;
   /** 하단 도크 우측 슬롯 — 베이스맵 스위처 등 부모 소유 컨트롤을 도크 flow 안에 배치한다.
    *  ★겹침 구조 진단(2026-07-17): 독립 absolute 섬(스위처 bottom-20 right-4)과 칩 행의
    *  암묵 예약값(max-w calc 152px)이 겹침의 근원 — 같은 flex 행에 흘리면 겹침이 문법적으로
@@ -729,12 +733,15 @@ export function SatongMultiMap({
   featureStatusLabels,
   highlightFeatureAddress,
   clearSignal,
+  onStagedCountChange,
 }: SatongMultiMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
   onCenterChangeRef.current = onCenterChange;
   const onBoundaryEnrichedRef = useRef(onBoundaryEnriched);
   onBoundaryEnrichedRef.current = onBoundaryEnriched;
+  const onStagedCountChangeRef = useRef(onStagedCountChange);
+  onStagedCountChangeRef.current = onStagedCountChange;
   const onBoundaryStatusChangeRef = useRef(onBoundaryStatusChange);
   onBoundaryStatusChangeRef.current = onBoundaryStatusChange;
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -837,6 +844,12 @@ export function SatongMultiMap({
 
   // staged: 사용자가 [＋추가]로 확정한 필지 목록
   const [staged, setStaged] = useState<ParcelAtPointResult[]>([]);
+
+  // ★R2(MEDIUM): staged 개수 역전파 — 부모(Shell)가 "확정 선택 0건인데 지도엔 임시 선택이
+  //   남아있다"를 판별해 무음 정리를 피하게 한다. ref로 콜백을 받아 매 렌더 재구독 없이 통지.
+  useEffect(() => {
+    onStagedCountChangeRef.current?.(staged.length);
+  }, [staged.length]);
 
   // ── 지도 클릭 팝오버(단일 팝오버 계약 — 디자인컴프) & 거리재기 ──
   //   클릭 즉시 필지조회 대신 그 지점에 액션 메뉴 1개를 띄운다(오클릭 API 호출 절감 +
