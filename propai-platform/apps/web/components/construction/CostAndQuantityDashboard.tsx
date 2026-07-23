@@ -8,7 +8,7 @@ import { formatCurrencyKRW } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
-import { resolveFarForDesign } from "@/lib/zoning-ssot";
+import { resolveFarWithBasis } from "@/lib/zoning-ssot";
 
 /** estimate-overview 항목별 적산(QTO) 행 — cost.py items[] 스키마 정합. */
 interface QtoItem {
@@ -65,7 +65,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
     //   자체가 없을 때만(리졸버 null) 법정상한표로 폴백한다(무날조 — 실제 법령표 값이라 폴백
     //   자체는 유지, 다만 더 나은 값이 있으면 더 이상 무시하지 않는다).
     const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
-    const far = resolveFarForDesign(siteAnalysis)?.value ?? spec?.floorAreaRatioMax ?? 0;
+    const far = resolveFarWithBasis(siteAnalysis)?.value ?? spec?.floorAreaRatioMax ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
   }, [siteAnalysis]);

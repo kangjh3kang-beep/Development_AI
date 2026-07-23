@@ -14,7 +14,7 @@ import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } f
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct, resolveFarForDesign, resolveBcrForDesign } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis, resolveBcrWithBasis } from "@/lib/zoning-ssot";
 import { resolveCanonicalFloors, hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
@@ -517,7 +517,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정)로 일원화 — 다필지에서는 통합 실효가
     //   대표 1필지 실효를 대체한다(인벨로프 카드·사업개요와 일관). 주소 불일치 잔류 스냅샷이 다른
     //   부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedFarRes = resolveFarForDesign(siteAnalysis);
+    const resolvedFarRes = resolveFarWithBasis(siteAnalysis);
     const effFarPct =
       siteMatch !== "mismatch" && resolvedFarRes != null && resolvedFarRes.value > 0
         ? resolvedFarRes.value
@@ -535,7 +535,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // 실효 건폐율 우선: FAR과 동일하게 resolveBcrPct(통합 > 실효 > 법정)가 있으면 법정상한
     // (buildingCoverageMax) 대신 사용. 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch"
     // 조건 동일하게 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedBcrRes = resolveBcrForDesign(siteAnalysis);
+    const resolvedBcrRes = resolveBcrWithBasis(siteAnalysis);
     const effBcrPct =
       siteMatch !== "mismatch" && resolvedBcrRes != null && resolvedBcrRes.value > 0
         ? resolvedBcrRes.value
@@ -697,9 +697,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   여전히 제외한다 — SeedDesignMassComparison이 이 값을 받으면 far_reliable=true·백엔드
   //   applied_limit_source="site_analysis_effective_limits"("조례·계획 실효 한도 반영" 배지)로
   //   승격하므로, 법정상한을 그대로 흘려보내면 "실효 반영"이라는 거짓 배지가 뜬다(무날조 유지).
-  const farRes = siteMatch !== "mismatch" ? resolveFarForDesign(siteAnalysis) : null;
+  const farRes = siteMatch !== "mismatch" ? resolveFarWithBasis(siteAnalysis) : null;
   const seedEffectiveFarPct = farRes && farRes.basis !== "national" ? farRes.value : null;
-  const bcrRes = siteMatch !== "mismatch" ? resolveBcrForDesign(siteAnalysis) : null;
+  const bcrRes = siteMatch !== "mismatch" ? resolveBcrWithBasis(siteAnalysis) : null;
   const seedEffectiveBcrPct = bcrRes && bcrRes.basis !== "national" ? bcrRes.value : null;
 
   // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.

@@ -469,9 +469,10 @@ class TestSigunguUpzoningRelay:
         assert redev["expected_far_pct_high"] == 200
 
     async def test_special_districts_absent_yields_honest_data_gap_and_rfi(self):
-        """special_districts 미수집 시 upzoning.data_gaps + RFI 방출(무음 가정 금지, W3-6)."""
+        """pnu도 address도 없어 서버측 조회 자체가 시도되지 않는 경우 — upzoning.data_gaps
+        + RFI 방출(무음 가정 금지, W3-6)."""
         result = await DesignAuditOrchestrator().audit(
-            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu="1111010100",
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu=None, address=None,
         )
         s4 = result["sections"]["s4_incentives"]
         data_gaps = s4["upzoning"]["data_gaps"]
@@ -480,7 +481,7 @@ class TestSigunguUpzoningRelay:
         assert rfi is not None
         assert rfi["item_count"] == 1
         assert rfi["items"][0]["missing_what"].startswith("규제구역")
-        assert rfi["items"][0]["subject_ref"] == "pnu=1111010100|field=upzoning.special_districts"
+        assert rfi["items"][0]["subject_ref"] == "field=upzoning.special_districts"
 
     async def test_special_districts_present_empty_list_no_data_gap(self):
         """확인 결과 규제구역 없음([])은 '미수집'과 달리 data_gaps를 남기지 않는다(과탐지 방지)."""
@@ -491,6 +492,64 @@ class TestSigunguUpzoningRelay:
         s4 = result["sections"]["s4_incentives"]
         assert s4["upzoning"]["data_gaps"] == []
         assert "rfi_register" not in s4
+
+    async def test_special_districts_fetched_server_side_by_pnu(self, monkeypatch):
+        """R2 MEDIUM 봉합 — pnu만으로 서버가 VWorldService.get_land_use_plan을 직접 호출해
+        special_districts를 조달한다(프론트 릴레이 불필요·실원천 배선). 실제로 개발제한구역이
+        blocked_reasons에 반영됨을 확인(오탐 없는 진짜 규제구역 반영)."""
+        async def fake_get_land_use_plan(_self, pnu):
+            assert pnu == "4159010500100010000"
+            return [{"district_name": "개발제한구역"}, {"district_name": "도시지역"}]
+
+        import app.services.external_api.vworld_service as vw
+        monkeypatch.setattr(vw.VWorldService, "get_land_use_plan", fake_get_land_use_plan)
+
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(land_area_sqm=20000.0), zone_type="자연녹지지역", sigungu="용인시",
+            pnu="4159010500100010000",
+        )
+        s4 = result["sections"]["s4_incentives"]
+        assert s4["upzoning"]["data_gaps"] == []  # 조회 성공 — 미수집 아님
+        assert "rfi_register" not in s4
+        scenarios = s4["upzoning"]["scenarios"]
+        assert scenarios
+        assert all("개발제한" in " ".join(s["blocked_reasons"]) for s in scenarios)
+
+    async def test_special_districts_fetch_failure_falls_back_to_data_gap(self, monkeypatch):
+        """VWorld 조회 실패(예외)는 미수집으로 정직 폴백(무중단 — 인센티브 산출 자체는 계속됨)."""
+        async def boom(_self, pnu):
+            raise RuntimeError("vworld down")
+
+        import app.services.external_api.vworld_service as vw
+        monkeypatch.setattr(vw.VWorldService, "get_land_use_plan", boom)
+
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu="1111010100",
+        )
+        s4 = result["sections"]["s4_incentives"]
+        assert s4["upzoning"]["data_gaps"], "조회 실패는 미수집으로 폴백해야 함"
+
+    async def test_special_districts_explicit_payload_wins_over_server_fetch(self, monkeypatch):
+        """명시값 우선 — regulation_payload.special_districts가 이미 있으면 pnu가 있어도
+        서버측 조회로 덮어쓰지 않는다(무날조 원칙: 명시값 보존, sigungu와 동형 계약)."""
+        called = False
+
+        async def fake_get_land_use_plan(_self, pnu):
+            nonlocal called
+            called = True
+            return [{"district_name": "개발제한구역"}]
+
+        import app.services.external_api.vworld_service as vw
+        monkeypatch.setattr(vw.VWorldService, "get_land_use_plan", fake_get_land_use_plan)
+
+        payload = {"local_ordinance": {}, "special_districts": []}
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시",
+            regulation_payload=payload, pnu="1111010100",
+        )
+        assert not called, "명시값(빈 리스트 포함)이 있으면 서버측 조회를 시도하면 안 됨"
+        s4 = result["sections"]["s4_incentives"]
+        assert s4["upzoning"]["data_gaps"] == []
 
 
 class TestOrchestratorGraceful:

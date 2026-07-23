@@ -140,6 +140,10 @@ export interface AuditSection {
   // ★pass_rate 정직화(design_review_service) — 이 파라미터 검토가 실제 검사하지 않은
   //   항목(일조·주차·피난 등)의 한글 라벨 목록. 있을 때만 "미검사 N항목"으로 표시(정직).
   not_checked_items?: string[] | null;
+  // ★레인C(R2) — S4(인센티브) upzoning.data_gaps 표면화. 규제구역 등 데이터 미수집으로
+  //   종상향 차단사유가 반영되지 않았을 수 있다는 정직 고지(있을 때만·not_checked_items와
+  //   동형 계약 — 신규 UI 패턴 아님).
+  data_gaps?: string[] | null;
   // 로드맵③ additive — 게이트 off·구서버는 항상 undefined(기존 렌더 그대로).
   deliberation_result?: AuditDeliberationResult | null;
 }
@@ -915,6 +919,7 @@ export function AuditReportView({
             !!sec.senior_consultation &&
             sec.senior_consultation.verdict !== "unavailable" &&
             (sec.senior_consultation.consultations?.length ?? 0) > 0;
+          const dataGaps = Array.isArray(sec.data_gaps) ? sec.data_gaps : [];
           const hasBody =
             !!sec.summary?.trim() ||
             findings.length > 0 ||
@@ -924,6 +929,7 @@ export function AuditReportView({
             blindSpots.length > 0 ||
             evidence.length > 0 ||
             hasSeniorConsultation ||
+            dataGaps.length > 0 ||
             !!sec.deliberation_result; // 로드맵③ — 게이트 off·구서버는 항상 falsy(회귀 없음)
           return (
             <section
@@ -977,6 +983,20 @@ export function AuditReportView({
                       ※ 미검사 {sec.not_checked_items.length}항목(파라미터 검토 범위 밖 — 별도
                       확인 필요): {sec.not_checked_items.join(", ")}
                     </p>
+                  )}
+                  {/* ★레인C(R2) — upzoning.data_gaps 표면화(리뷰어 지적: JSON에만 존재하던 결함
+                      봉합). not_checked_items와 동일한 정직 고지 톤 유지. */}
+                  {dataGaps.length > 0 && (
+                    <div className="grid gap-1">
+                      {dataGaps.map((gap, gi) => (
+                        <p
+                          key={gi}
+                          className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] px-3 py-2 text-[11px] leading-relaxed text-[var(--status-warning)]"
+                        >
+                          ※ {gap}
+                        </p>
+                      ))}
+                    </div>
                   )}
                   {sec.case_comparison && <CaseComparisonBlock comparison={sec.case_comparison} />}
                   {incentives.length > 0 && (

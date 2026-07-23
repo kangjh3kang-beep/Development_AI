@@ -1127,6 +1127,53 @@ class TestZeroIncentiveAndEmptySeniorConsultationGuards:
 
 
 # ════════════════════════════════════════════════════════
+# ②-5 레인C(R2) — S4(incentives) upzoning.data_gaps 표면화(리뷰어 지적: JSON에만 존재하던 결함)
+# ════════════════════════════════════════════════════════
+class TestS4DataGapsSurfacing:
+    def _result_with_upzoning(self, data_gaps):
+        result = dict(_FAKE_RESULT)
+        base_sections: dict = dict(_FAKE_RESULT.get("sections") or {})
+        base_sections["s4_incentives"] = {
+            "effective_far": {"effective_far_pct": 250.0},
+            "upzoning": {
+                "scenarios": [], "potential_far_range": None, "data_gaps": data_gaps,
+                # ★레인B 병합(s4_incentives_to_web) 정합 — summary는 실 오케스트레이터
+                # (upzoning_potential.analyze)가 항상 채우는 필드라 픽스처도 동일하게 채운다
+                # (없으면 s4_web이 완전히 비어 섹션 자체가 안 생기는 realistic 상황이 아님).
+                "summary": "정형화된 종상향 경로 매핑이 없습니다(예상치 미산출).",
+            },
+        }
+        result["sections"] = base_sections
+        return result
+
+    def test_data_gaps_surfaced_on_s4_section(self, monkeypatch):
+        """upzoning.data_gaps가 비어있지 않으면 S4 섹션에 additive로 표면화된다(화면 도달)."""
+        client = _make_client()
+        gaps = ["규제구역(개발제한구역 등) 데이터 미수집 — 종상향 차단사유가 반영되지 않았을 수 있습니다."]
+        fake_orch = _FakeRoomsOrchestrator(result=self._result_with_upzoning(gaps))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s4 = next(s for s in sections if s["id"] == "s4")
+        assert s4["data_gaps"] == gaps
+
+    def test_no_data_gaps_key_when_empty(self, monkeypatch):
+        """data_gaps가 빈 리스트(확인완료)면 S4 섹션에 키 자체를 만들지 않는다(빈 섹션 오염 방지)."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator(result=self._result_with_upzoning([]))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s4 = next(s for s in sections if s["id"] == "s4")
+        assert "data_gaps" not in s4
+
+
+
+# ════════════════════════════════════════════════════════
 # ③ GET /{audit_id} — 조회·소유권·404 정직
 # ════════════════════════════════════════════════════════
 

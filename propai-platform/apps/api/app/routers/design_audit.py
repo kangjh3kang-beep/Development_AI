@@ -719,12 +719,24 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         from app.services.design_audit.report_sections import s4_incentives_to_web
 
         s4_web = s4_incentives_to_web(s4)
-        if s4_web:
-            sections.append({
+        # ★레인C(R2, MEDIUM 봉합) — upzoning.data_gaps(규제구역 데이터 미수집 등 정직 고지)를
+        #   S4 섹션에 additive로 표면화한다. 종전엔 raw 원자료(sections_raw)에만 존재해 화면
+        #   어디서도 렌더되지 않았다("필드는 최종표면까지 추적" 원칙 재발 — JSON에만 존재).
+        #   S5의 not_checked_items와 동일한 표기 관례를 재사용한다(신규 UI 패턴 아님).
+        #   ★레인B(s4_incentives_to_web — 배열 형상 정규화) 위에 얹는다. 원본 dict를 그대로
+        #   싣던 예전 코드(레인C 초판)로 되돌리면 레인B의 형상 봉합이 파괴되므로 절대 금지.
+        s4_upzoning = s4.get("upzoning") if isinstance(s4, dict) else None
+        s4_data_gaps = s4_upzoning.get("data_gaps") if isinstance(s4_upzoning, dict) else None
+        has_data_gaps = isinstance(s4_data_gaps, list) and bool(s4_data_gaps)
+        if s4_web or has_data_gaps:
+            section_s4: dict[str, Any] = {
                 "id": "s4",
                 "title": "적용 가능 법규·정책 인센티브",
                 **s4_web,
-            })
+            }
+            if has_data_gaps:
+                section_s4["data_gaps"] = s4_data_gaps
+            sections.append(section_s4)
     eff = raw.get("efficiency_metrics") if isinstance(raw, dict) else None
     if eff:
         from app.services.design_audit.report_sections import efficiency_metrics_to_evidence

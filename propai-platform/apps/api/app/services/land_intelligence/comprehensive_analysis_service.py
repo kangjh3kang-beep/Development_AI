@@ -747,9 +747,16 @@ class ComprehensiveAnalysisService:
                     attach_similar_designs_to_options,
                 )
 
+                # ★레인C(R2 봉합) — 형제 결함: land_area는 대지면적(site/parcel area)인데
+                #   이를 area_sqm(유사 "건물 설계" 검색 기준)으로 넘기면 다른 물리량(대지면적↔
+                #   건물 연면적)을 혼동한다(similar_market_feasibility의 site_area 오용과
+                #   동일 결함 클래스). options[]는 zone별 achievable_far_pct가 달라 정확한
+                #   per-option GFA 역산은 이 호출 시그니처(옵션 배치당 단일 area_sqm)로는
+                #   불가능 — area_sqm은 SiteQuery 소프트 신호(hard_filter 기본 False)이므로
+                #   부정확한 대지면적을 넣기보다 None(무제약, zone+키워드 기반 검색)이 정직하다.
                 _bo["options"] = await attach_similar_designs_to_options(
                     _bo.get("options") or [], zone_type=zone_type,
-                    area_sqm=land_area, top_n=2,
+                    area_sqm=None, top_n=2,
                 )
                 if _bo.get("options"):
                     _bo["top_recommendation"] = _bo["options"][0]

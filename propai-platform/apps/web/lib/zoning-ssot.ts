@@ -390,30 +390,6 @@ export function limitBasisLabel(basis: LimitBasis): string {
   return "실효";
 }
 
-/* ── 설계 화면 전용 FAR/BCR 단일 진입점(레인C P2 — 무음 폴백 근절) ──
- *
- * 배경: DesignStudio.tsx·CostAndQuantityDashboard.tsx·CADEditor.tsx(경유: 호출부인
- *   CadBimIntegrationPanel.tsx)가 각자 resolveFarWithBasis를 부르거나(전자), 아예 부르지 않고
- *   법정상한 표(kr-building-regulations.getZoningSpec)를 직독하거나(후자 2곳), 그마저 실패하면
- *   임의 배율(구 landArea*2.5)을 지어냈다. 이 함수를 "설계 화면이 실효 용적률을 물을 때"의
- *   유일 진입점으로 두어(resolveFarWithBasis 위임 — 로직 복제 아님), 한 곳을 고치면 전역이
- *   따라오게 한다. null이면 호출부가 값을 지어내지 말고 "실효 용적률 미확보 — 부지분석 필요"로
- *   표기하거나, 법정상한(실제 법령표 값 — 임의 배율 아님)으로 폴백하되 반드시 limitBasisLabel
- *   배지를 노출해야 한다(조용한 낙하 금지). 건폐율은 동형 resolveBcrForDesign 참고.
- */
-export function resolveFarForDesign(
-  site: ResolvableSite,
-): { value: number; basis: LimitBasis } | null {
-  return resolveFarWithBasis(site);
-}
-
-/** 건폐율판 resolveFarForDesign — resolveBcrWithBasis 위임(동형 계약). */
-export function resolveBcrForDesign(
-  site: ResolvableSite,
-): { value: number; basis: LimitBasis } | null {
-  return resolveBcrWithBasis(site);
-}
-
 // 실효 용적률(%) — 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 undefined.
 //   근거가 필요하면 resolveFarWithBasis를 쓴다(이 함수는 값만·하위호환).
 export function resolveFarPct(site: ResolvableSite): number | undefined {

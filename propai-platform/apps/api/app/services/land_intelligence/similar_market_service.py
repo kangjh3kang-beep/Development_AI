@@ -113,8 +113,13 @@ async def attach_similar_designs_to_options(
 ) -> list[dict[str, Any]]:
     """Stage 1 buildable_options 상위 top_n개에 similar_designs를 가산(무회귀·가산만).
 
-    각 옵션의 product 라벨 + 옵션 zone(현행/종상향 목표) + 부지면적으로 유사도면을 검색해
-    option["similar_designs"]에 첨부한다. 나머지 옵션은 변형하지 않는다.
+    각 옵션의 product 라벨 + 옵션 zone(현행/종상향 목표) + area_sqm(있으면)으로 유사도면을
+    검색해 option["similar_designs"]에 첨부한다. 나머지 옵션은 변형하지 않는다.
+
+    ★area_sqm은 "건물 연면적(GFA)" 기준이지 대지면적(site/parcel area)이 아니다(과거 문구
+    "부지면적으로 검색"이 이 혼동을 유발했다 — 레인C(R2) 정정). 옵션마다 achievable_far_pct가
+    달라 정확한 per-option GFA를 이 배치 시그니처(단일 area_sqm)로 역산할 수 없으면 호출부는
+    None을 넘겨야 한다(대지면적 대입 금지 — find_similar_designs가 None을 무제약으로 처리).
     """
     if not options:
         return options
@@ -171,24 +176,20 @@ async def similar_market_feasibility(
     for r in recommendations[: max(0, top_n)]:
         if not isinstance(r, dict):
             continue
+        # ★레인C(R2 봉합) 무날조: 연면적(GFA) 미확보 시 대지면적(site_area)을 GFA로 오용해
+        #   검색하던 결함(서로 다른 물리량 혼동)만 근절한다 — area_sqm은 SiteQuery의 **소프트
+        #   신호**(hard_filter 기본 False, 임베딩에만 반영)라 미지정=무제약 검색이 계약이다.
+        #   (R1에서 GFA 미확보 시 검색 자체를 생략하도록 과잉교정했으나, 이는 zone+키워드만으로
+        #   얻던 유용한 결과까지 0으로 만드는 과잉교정이라 되돌린다.) find_similar_designs가
+        #   자체적으로 area_sqm None을 무제약으로 처리하므로 여기서는 GFA를 있는 그대로
+        #   넘기기만 한다(site_area 대체 금지).
         gfa = (r.get("unit_summary") or {}).get("total_gfa_sqm")
-        # ★레인C(P2) 무날조: 연면적(GFA) 미확보 시 대지면적(site_area)을 GFA로 오용해 검색하던
-        #   결함 근절 — 서로 다른 물리량(대지면적 vs 건물 연면적)을 혼동해 "유사 설계"가 실제로는
-        #   부지 크기 기준으로 검색되던 문제. GFA 미확보 시 검색 자체를 생략하고 정직한
-        #   skipped_reason으로 표기한다(find_similar_designs 자체 계약과 동일 shape — 가짜 유사설계 금지).
-        if isinstance(gfa, (int, float)) and gfa > 0:
-            sd = await find_similar_designs(
-                zone_type=zone_type,
-                area_sqm=gfa,
-                label=r.get("type_name") or r.get("development_type"),
-                top_k=top_k,
-            )
-        else:
-            sd = {
-                "results": [], "count": 0,
-                "skipped_reason": "gfa_unavailable",
-                "query_label": r.get("type_name") or r.get("development_type"),
-            }
+        sd = await find_similar_designs(
+            zone_type=zone_type,
+            area_sqm=gfa,
+            label=r.get("type_name") or r.get("development_type"),
+            top_k=top_k,
+        )
         r["similar_designs"] = sd
 
     # 매스 백본 레퍼런스 가산(P2·무회귀·graceful): 이 지역 같은 종류 건축물의 실측 전형 규모(건폐/용적/

@@ -145,9 +145,11 @@ async def test_block_and_honest_policy_preserved(monkeypatch) -> None:
     assert out["stage"] == "similar_market_feasibility"
 
 
-async def test_gfa_unavailable_skips_search_instead_of_using_site_area(monkeypatch) -> None:
-    """레인C(P2) 무날조: unit_summary.total_gfa_sqm 미확보 시 대지면적(site_area)을 GFA로
-    오용해 검색하던 결함 근절 — 검색 자체를 생략하고 정직한 skipped_reason으로 표기."""
+async def test_gfa_unavailable_searches_with_none_not_site_area(monkeypatch) -> None:
+    """레인C(R2 봉합) 무날조: unit_summary.total_gfa_sqm 미확보 시 대지면적(site_area)을
+    GFA로 오용해 검색하던 결함만 근절한다 — area_sqm은 소프트 신호(SiteQuery hard_filter
+    기본 False)라 미지정=무제약 검색이 계약이다. GFA 미확보라도 검색은 계속되고(zone+키워드
+    기반 결과는 그대로 얻는다), area_sqm에 site_area(1000)가 새어 들어가지만 않으면 된다."""
     class FakeSvc:
         async def auto_recommend_top3(self, **kwargs):
             return {
@@ -165,22 +167,22 @@ async def test_gfa_unavailable_skips_search_instead_of_using_site_area(monkeypat
     import app.services.feasibility.feasibility_service_v2 as fv2
     monkeypatch.setattr(fv2, "FeasibilityServiceV2", FakeSvc)
 
-    called = False
+    captured: dict = {}
 
     async def fake_find(*, zone_type, area_sqm, label, top_k=4):
-        nonlocal called
-        called = True
-        return {"results": [], "count": 0, "skipped_reason": None, "query_label": label}
+        captured["area_sqm"] = area_sqm
+        return {"results": [{"title": "APT_FP.jpg"}], "count": 1, "skipped_reason": None, "query_label": label}
 
     monkeypatch.setattr(sms, "find_similar_designs", fake_find)
 
     out = await similar_market_feasibility(address="서울 강남구 역삼동 737", top_n=2)
-    assert not called, "GFA 미확보면 site_area(1000)를 GFA로 오용해 검색을 호출하면 안 됨"
+    # ★핵심 회귀 감지: area_sqm에 site_area(1000)가 절대 새어 들어가면 안 됨(GFA 없으면 None).
+    assert captured["area_sqm"] != 1000
+    assert captured["area_sqm"] is None
+    # 검색 자체는 계속되어 zone+키워드 기반 결과를 그대로 얻는다(과잉 생략 금지).
     sd = out["recommendations"][0]["similar_designs"]
-    assert sd == {
-        "results": [], "count": 0,
-        "skipped_reason": "gfa_unavailable", "query_label": "주상복합",
-    }
+    assert sd["count"] == 1
+    assert sd["results"] == [{"title": "APT_FP.jpg"}]
 
 
 async def test_skipped_reason_passthrough(monkeypatch) -> None:
