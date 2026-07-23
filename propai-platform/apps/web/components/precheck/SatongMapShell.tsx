@@ -548,10 +548,6 @@ function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
   };
 }
 
-function saveSelectionForOutputs(parcels: SatongParcel[]): void {
-  writeSatongMapSelection(parcels);
-}
-
 export function SatongMapShell({ locale }: { locale: string }) {
   const router = useRouter();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
@@ -665,6 +661,16 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   이 무조건 null로 설정 — 데이터 손실보다 잔존이 덜 위험하다는 보존 우선 원칙, 잔존분은
   //   사용자가 명시적으로 지울 수 있다).
   const selectionOwnerProjectIdRef = useRef<string | null>(null);
+
+  // ★R2b(HIGH): sessionStorage write 통로를 이 한 곳으로 강제한다 — 소유권을 매 호출부가
+  //   각자 실어야 한다면 한 곳이라도 빠뜨리는 순간 재발한다(실제로 세션 미러 경로가 그렇게
+  //   샜다: 소유권 ref는 컴포넌트 인스턴스에만 있어 재마운트를 못 넘기고, 산출물로 갔다가
+  //   소프트 내비로 돌아오는 흔한 재진입에서 사용자 소유로 영구 오분류됐다 — PROBE_P3).
+  //   selectionOwnerProjectIdRef.current를 항상 함께 기록해 재마운트를 넘어 소유권 판별이
+  //   살아남게 한다(구조적으로 누락 불가 — 모든 호출부가 이 콜백 하나만 거친다).
+  const saveSelectionForOutputs = useCallback((parcels: SatongParcel[]) => {
+    writeSatongMapSelection(parcels, selectionOwnerProjectIdRef.current);
+  }, []);
 
   // 의도적 프로젝트 해제(선택 유지): 전환 이펙트가 P→null을 '프로젝트 전환'으로 오인해
   //   방금 담은 선택·sessionStorage를 지우지 않도록, 이펙트가 볼 직전값을 미리 null로 맞춘다.
@@ -1181,7 +1187,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       }
       saveSelectionForOutputs(parcels);
     },
-    [commitParcelsToContext, updateSiteAnalysis],
+    [commitParcelsToContext, updateSiteAnalysis, saveSelectionForOutputs],
   );
 
   const addParcels = useCallback(
@@ -1564,7 +1570,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         return next;
       });
     },
-    [commitParcelsToContext],
+    [commitParcelsToContext, saveSelectionForOutputs],
   );
 
   // 선택 필지로 새 프로젝트 생성·연결(공용) — 셀렉터 아래 버튼과 산출물 실행(연결모드 "new")이 공유.
@@ -1587,9 +1593,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
       //   (지도 staged 폴리곤도 함께 청소됨). 의도한 동작이다 — 방금 확정한 selectedParcels는
       //   위 재시드로 안전하게 복원되고(소실 없음), 프로젝트를 새로 여는 시점에 이 프로젝트와
       //   무관한 잔여 staged(다른 임시 클릭)까지 함께 정리되는 편이 "새 프로젝트 문맥 시작"
-      //   의미에 부합한다(드롭다운 전환과 같은 근거). 재시드 시 selectionOwnerProjectIdRef도
-      //   created.id로 재설정되어(전환 이펙트 하단) 이후 소유권 판별이 이 새 프로젝트를 정확히 가리킨다.
+      //   의미에 부합한다(드롭다운 전환과 같은 근거). 전환 이펙트도 재시드 시 이 값을 다시
+      //   같은 값으로 세팅하지만(대칭), 여기서 동기로 먼저 세팅해두는 이유는 아래 R2b 참고.
       setProject(created.id, created.name, "draft", created.address);
+      // ★R2b(HIGH, 쓰기경로 전수감사): 전환 이펙트는 React가 커밋·이펙트를 플러시해야 실행되는데,
+      //   그 전에 handleOutputClick 등 호출부가 이 함수의 반환을 이어받아 곧장
+      //   saveSelectionForOutputs(selectedParcels)를 호출하면(예: 산출물 이동 직전 기록) 그 시점의
+      //   ref가 아직 갱신 전이라 세션 미러에 잘못된(옛) 소유권이 실릴 수 있다. 여기서 동기로
+      //   즉시 세팅해 그 경합을 원천 차단한다(효과 대기 불필요 — ref 쓰기는 렌더와 무관).
+      selectionOwnerProjectIdRef.current = created.id;
       const patch = selectionToSiteAnalysisPatch(selectedParcels);
       if (patch) updateSiteAnalysis(patch, { source: "user" });
       setConnectTarget(created.id);
@@ -1618,7 +1630,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       commitParcelsToContext(selectedParcels);
       router.push(action.href);
     },
-    [connectAsNewProject, connectTarget, commitParcelsToContext, router, selectedParcels],
+    [connectAsNewProject, connectTarget, commitParcelsToContext, router, selectedParcels, saveSelectionForOutputs],
   );
 
   // 최초 1회만 하이드레이션(이후 사용자 선택을 덮지 않도록 ref 가드). 우선순위:
@@ -1644,6 +1656,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
       if (restorable) {
         hydratedRef.current = true;
         setSelectedParcels(stored.parcels);
+        // ★R2b(HIGH·PROBE_P3): 세션 미러에 함께 실린 소유권을 복원한다 — 안 하면 재마운트마다
+        //   (예: 산출물 페이지 소프트 내비 후 복귀) 상속 선택이 사용자 소유로 영구 오분류돼
+        //   드롭다운 전환 시 원 버그리포트 증상이 재현된다. 구 payload(필드 부재)는 undefined
+        //   → null(사용자 소유, 안전측)로 취급.
+        selectionOwnerProjectIdRef.current = stored.ownerProjectId ?? null;
         commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
         const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
         if (focused?.lat != null && focused.lon != null) {
@@ -1672,7 +1689,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
       }
     }
-  }, [commitParcelsToContext, storeSiteAnalysis, hasConnectedProject, projectId]);
+  }, [commitParcelsToContext, storeSiteAnalysis, hasConnectedProject, projectId, saveSelectionForOutputs]);
 
   // 프로젝트 전환 감지 → 프로젝트 등록 필지로 선택 복원.
   // ★restoreSnapshot(백엔드 스냅샷 GET)은 비동기라 전환 직후엔 storeSiteAnalysis가 비어있을 수
@@ -1730,7 +1747,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         }
       }
     }
-  }, [projectId, storeSiteAnalysis, clearSelectionUiArtifacts]);
+  }, [projectId, storeSiteAnalysis, clearSelectionUiArtifacts, saveSelectionForOutputs]);
 
   useEffect(() => {
     const trimmed = query.trim();

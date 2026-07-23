@@ -45,6 +45,13 @@ export type SatongMapSelection = {
   // ★이 선택을 기록한 SPA 세션 토큰(페이지 로드 수명). 하드 리로드 후 잔존 여부 판별용.
   //   옵셔널 — 이 필드 이전에 저장된 구 payload와 호환(그 경우 sameSpaSession=false로 취급).
   spaSession?: string;
+  // ★R2b(HIGH): 이 선택의 소유권 — 프로젝트에서 상속(시드)됐으면 그 projectId, 사용자가
+  //   직접 편집했으면 null. spaSession과 동일하게 옵셔널(이 필드 이전 구 payload 호환 —
+  //   부재 시 호출부가 안전측(사용자 소유=null)으로 취급). 소유권을 sessionStorage에도 함께
+  //   영속해야, 산출물 페이지로 소프트 내비했다가 돌아오는(재마운트) 흔한 재진입 경로에서도
+  //   "연결 대상 전환 시 상속 선택만 정리" 판별이 살아남는다(컴포넌트 인스턴스 ref만으로는
+  //   재마운트에 소실 — PROBE_P3).
+  ownerProjectId?: string | null;
   parcels: SatongSelectionParcel[];
 };
 
@@ -67,11 +74,17 @@ export function readSatongMapSelection(): SatongMapSelectionRead | null {
         )
       : [];
     if (parcels.length === 0) return null;
+    // ownerProjectId: string(소유 프로젝트) 또는 explicit null(사용자 소유)만 신뢰하고,
+    //   그 외(부재·오염값)는 undefined로 접어 호출부가 안전측(사용자 소유)으로 취급하게 한다.
+    const rawOwner = (parsed as { ownerProjectId?: unknown }).ownerProjectId;
+    const ownerProjectId =
+      typeof rawOwner === "string" ? rawOwner : rawOwner === null ? null : undefined;
     return {
       savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
       spaSession: typeof parsed.spaSession === "string" ? parsed.spaSession : undefined,
       // 구 payload(토큰 부재)는 undefined === TOKEN → false → '이전 세션 잔존'으로 취급(정답).
       sameSpaSession: parsed.spaSession === SPA_SESSION_TOKEN,
+      ownerProjectId,
       parcels,
     };
   } catch {
@@ -79,7 +92,10 @@ export function readSatongMapSelection(): SatongMapSelectionRead | null {
   }
 }
 
-export function writeSatongMapSelection(parcels: SatongSelectionParcel[]): void {
+export function writeSatongMapSelection(
+  parcels: SatongSelectionParcel[],
+  ownerProjectId?: string | null,
+): void {
   if (typeof window === "undefined") return;
   try {
     if (parcels.length === 0) {
@@ -91,6 +107,9 @@ export function writeSatongMapSelection(parcels: SatongSelectionParcel[]): void 
       JSON.stringify({
         savedAt: new Date().toISOString(),
         spaSession: SPA_SESSION_TOKEN,
+        // ★R2b: 호출부가 명시적으로 전달하지 않으면(구 호출부·향후 누락 방지 차원의 기본값)
+        //   undefined로 두어 write 시점에 필드 자체를 생략한다(구 payload와 동일 형태 유지).
+        ...(ownerProjectId !== undefined ? { ownerProjectId } : {}),
         parcels,
       } satisfies SatongMapSelection),
     );
