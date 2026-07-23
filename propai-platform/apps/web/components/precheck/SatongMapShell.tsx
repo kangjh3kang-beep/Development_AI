@@ -629,6 +629,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
   // ★WP-M2: "초기화"(clearParcels)가 지도 내부 staged·녹색 폴리곤도 청소하도록 보내는 신호(nonce).
   //   증가할 때마다 SatongMultiMap이 handleClearAll을 실행한다(종전엔 목록만 비고 지도엔 잔존).
   const [clearNonce, setClearNonce] = useState(0);
+  // ★R2(MEDIUM): 지도에 찍었지만 아직 [완료]를 안 눌러 selectedParcels엔 없는 staged(녹색) 개수.
+  //   SatongMultiMap 내부 상태라 Shell은 원래 볼 수 없었다 — onStagedCountChange로 역전파해,
+  //   "확정 선택은 0건이지만 staged는 있다"는 상황에서도 연결전환 고지가 무음이 되지 않게 한다.
+  const [stagedCount, setStagedCount] = useState(0);
   // ★WP-M4: 레일(레이어 아이콘 세로바) 클릭 고정 토글 — hover 없이 터치로도 전개 가능하게.
   const [railPinned, setRailPinned] = useState(false);
   // 베이스맵 팝오버 열림 — 레이어 팝오버(activeLayerId)와 상호배타(같은 좌표를 쓰므로).
@@ -653,6 +657,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const lastSeedKeyRef = useRef("");
   // 전환 후 지도 이동(포커스)을 아직 못 했는지 — 좌표가 보강으로 늦게 와도 딱 1회만 이동.
   const projectFocusPendingRef = useRef(false);
+  // ★R2(HIGH): 현재 selectedParcels의 소유권 — 프로젝트에서 상속(시드)된 값이면 그 projectId,
+  //   사용자가 직접 편집(추가·삭제)했으면 null. 드롭다운으로 연결 대상을 바꿀 때 이 값으로
+  //   "지금 해제하려는 프로젝트가 남긴 선택인지"를 판별해 그 경우만 정리한다 — addParcels의
+  //   교차오염 가드(:1179)가 사용자 선택을 항상 보존하는 것과 대칭. 부분 소유(시드+사용자 추가
+  //   혼재)는 사용자 편집이 한 번이라도 있으면 null(사용자 소유)로 굳는다(addParcels/removeParcel
+  //   이 무조건 null로 설정 — 데이터 손실보다 잔존이 덜 위험하다는 보존 우선 원칙, 잔존분은
+  //   사용자가 명시적으로 지울 수 있다).
+  const selectionOwnerProjectIdRef = useRef<string | null>(null);
 
   // 의도적 프로젝트 해제(선택 유지): 전환 이펙트가 P→null을 '프로젝트 전환'으로 오인해
   //   방금 담은 선택·sessionStorage를 지우지 않도록, 이펙트가 볼 직전값을 미리 null로 맞춘다.
@@ -1160,7 +1172,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
     (parcels: SatongParcel[]) => {
       if (parcels.length > 0) {
         commitParcelsToContext(parcels);
-      } else {
+      } else if (useProjectContextStore.getState().siteAnalysis != null) {
+        // ★R2(LOW): siteAnalysis가 이미 null이면(예: 방금 clearProject로 프로젝트 해제 직후)
+        //   빈 patch를 merge하지 않는다 — updateSiteAnalysis는 null일 때 기본 빈 객체와
+        //   merge하므로, 여기서 그냥 호출하면 null→"내용 없는 빈 객체"로 부활시켜 다른 화면의
+        //   "분석 없음" 판정을 오염시킨다.
         updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
       }
       saveSelectionForOutputs(parcels);
@@ -1185,6 +1201,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         }
       }
       projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
+      selectionOwnerProjectIdRef.current = null; // ★R2: 사용자 편집 — 이후 소유권은 사용자(부분편집도 동일)
       setSelectedParcels((prev) => {
         const byKey = new Map(prev.map((parcel) => [parcelKey(parcel), parcel]));
         incoming.forEach((parcel) => {
@@ -1209,6 +1226,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const removeParcel = useCallback(
     (id: string) => {
       projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
+      selectionOwnerProjectIdRef.current = null; // ★R2: 사용자 편집 — 이후 소유권은 사용자(부분편집도 동일)
       setSelectedParcels((prev) => {
         const removed = prev.find((parcel) => parcel.id === id);
         const next = prev.filter((parcel) => parcel.id !== id);
@@ -1229,18 +1247,29 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [syncParcelsToStores],
   );
 
-  // ★레인F P0-2: clearParcels와 프로젝트 전환 이펙트가 공통으로 손대야 할 4종 청소(목록·
-  //   포커스·상세패널·지도 staged 폴리곤)를 한 곳에 묶는다 — 어느 한쪽만 고치면 반대편이
-  //   새는 비대칭(형제 결함)을 막는다. 스토어/sessionStorage 동기화는 호출부마다 의미가
-  //   달라(사용자 초기화=syncParcelsToStores 전체커밋, 프로젝트 전환=saveSelectionForOutputs
-  //   직접 — 전환 중 store 위로 덮어써 새 프로젝트 복원 데이터와 경합하지 않도록) 이 함수
-  //   밖에 남겨 각 호출부가 스스로 처리한다.
-  const clearSelectionUiArtifacts = useCallback(() => {
+  // ★R2(관심사 분리): "확정 선택(selectedParcels) 정리"와 "지도 staged 폴리곤 정리"를 분리한다.
+  //   staged(지도에 찍었지만 [완료] 안 누른 임시 클릭)는 아직 확정 선택이 아니라 소유권 개념이
+  //   없다 — 프로젝트 문맥이 바뀌면 누구 선택이든 상관없이 항상 청소해도 안전하다. 반면
+  //   확정 선택은 "누가 담았나"에 따라 지워도 되는지가 갈린다(아래 handleConnectTargetChange의
+  //   selectionOwnerProjectIdRef 판별). 두 함수를 쪼개 각 호출부가 필요한 것만 조합하게 한다.
+  const clearConfirmedSelectionUi = useCallback(() => {
     setSelectedParcels([]);
     setFocusTarget(null);
     setDetailFeature(null); // ★R1 HIGH: 상세 패널(유령 패널) 잔존 방지
+    selectionOwnerProjectIdRef.current = null; // 빈 목록은 소유자가 없다
+  }, []);
+
+  const bumpMapClearSignal = useCallback(() => {
     setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
   }, []);
+
+  // ★레인F P0-2: clearParcels(전체 초기화 버튼)와 프로젝트 전환 이펙트처럼 "확정목록+지도"를
+  //   무조건 통째로 비워야 하는 호출부를 위한 번들 — 부분 청소가 필요한 handleConnectTargetChange
+  //   는 아래에서 두 함수를 따로 조합한다(중복 구현 금지 — 항상 이 두 함수를 통해서만 청소).
+  const clearSelectionUiArtifacts = useCallback(() => {
+    clearConfirmedSelectionUi();
+    bumpMapClearSignal();
+  }, [clearConfirmedSelectionUi, bumpMapClearSignal]);
 
   const clearParcels = useCallback(() => {
     projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
@@ -1248,37 +1277,50 @@ export function SatongMapShell({ locale }: { locale: string }) {
     syncParcelsToStores([]);
   }, [clearSelectionUiArtifacts, syncParcelsToStores]);
 
-  // ★레인F P0-1(사용자 버그리포트): "새 프로젝트로 등록"·"연결 안 함"으로 전환해도 이전
-  //   프로젝트의 선택 필지가 잔존하던 결함 수정. detachProjectCarryingSelection은 프로젝트
-  //   연결만 해제할 뿐 선택목록은 그대로 둔다(가드 자동해제 경로 전용 설계 — addParcels
-  //   :1188 참조, 그 경로는 건드리지 않는다). 사용자가 드롭다운을 직접 바꾼 이 경로에서는
-  //   정본 clearParcels()를 이어 호출해 선택목록·지도 staged 폴리곤·상세 패널·sessionStorage
-  //   미러까지 함께 비운다 — 안 비우면 오염된 선택 그대로 "선택 필지로 새 프로젝트 생성"이
-  //   실행돼 백엔드 프로젝트 신규생성+과금+오염 스냅샷 서버영속까지 번진다(데이터 영속 오염).
-  //   ★R1b(관심사 분리): 정리(clearParcels)는 조건 없이 항상 실행한다 — 멱등이고, selectedParcels
-  //   가 0이어도 지도에 staged(녹색, 아직 [완료] 안 누른) 폴리곤만 있는 경우가 있어(같은 결함
-  //   클래스: clearNonce 누락 시 그 staged 폴리곤이 그대로 남는다) selectedParcels 카운트만으로는
-  //   "비울 게 없다"고 판단할 수 없다. 고지(connectNotice)만 조건부 — Shell은 staged 존재 여부를
-  //   알 수 없으므로(SatongMultiMap 내부 상태) selectedParcels.length 기준으로 "실제로 확정목록을
-  //   비웠을 때만" 알린다(무음 금지와 과다고지 사이 절충 — 정리 누락은 없다).
+  // ★레인F P0-1(사용자 버그리포트) → R2(HIGH) 재교정: "새 프로젝트로 등록"·"연결 안 함"으로
+  //   전환해도 이전 프로젝트에서 상속된 선택 필지가 잔존하던 결함을 고친다. 단, R1 리뷰어
+  //   프로브가 실증했듯 무조건 clearParcels()는 "방금 사용자가 지도로 직접 담은 선택"까지
+  //   지워 addParcels 가드 경로(선택 항상 보존)와 정반대 계약이 됐다 — 소유권으로 가른다.
+  //   selectionOwnerProjectIdRef가 "지금 해제하려는 프로젝트"와 같을 때만(=순수 상속, 사용자
+  //   편집이 한 번도 없었을 때만) 확정목록을 지운다. staged(지도 임시 클릭)는 확정 선택이
+  //   아니므로 소유권과 무관하게 항상 청소한다(R1b 결정 유지).
   const handleConnectTargetChange = useCallback((value: string) => {
     setConnectNotice("");
     if (value === "new" || value === "none") {
       setConnectTarget(value);
+      // ★Open Question(저비용 대응): 렌더 시점 클로저 대신 스토어의 현재값을 읽어, 혹시라도
+      //   stale closure로 엉뚱한 프로젝트를 대상으로 판단·해제하는 것을 원천 차단한다(기존
+      //   "초기화" 버튼류에도 있던 저확신 우려 — 여기서 같이 닫는다. 비용 없음).
+      const activeProjectId = useProjectContextStore.getState().projectId;
+      const ownedByDetachingProject =
+        activeProjectId != null && selectionOwnerProjectIdRef.current === activeProjectId;
       // 활성 프로젝트가 있으면 해제(스냅샷 보존) — 이후 선택·커밋이 그 프로젝트를 덮지
       //   않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
       //   이펙트가 이 해제를 '프로젝트 전환'으로 오인하지 않게 한다(F1).
-      if (projectId) detachProjectCarryingSelection();
-      const hadSelection = selectedParcels.length > 0;
-      clearParcels(); // 항상 실행(멱등) — staged 폴리곤·상세 패널·sessionStorage까지 확실히 정리
-      if (hadSelection) {
+      if (activeProjectId) detachProjectCarryingSelection();
+      bumpMapClearSignal(); // staged는 소유권 무관 — 항상 청소(R1b)
+      if (ownedByDetachingProject && selectedParcels.length > 0) {
+        clearConfirmedSelectionUi();
+        syncParcelsToStores([]); // store·sessionStorage까지 함께 정리(부활 방지)
         setConnectNotice("연결 대상을 바꿔 선택 필지를 비웠습니다.");
+      } else if (stagedCount > 0) {
+        // 확정목록은 보존(사용자 소유이거나 이미 0건)했지만 지도의 임시 선택은 정리했다 —
+        //   staged만 있고 selectedParcels가 0인 경우에도 무음이 되지 않게(R2 MEDIUM).
+        setConnectNotice("연결 대상을 바꿔 지도에 임시로 찍어둔 선택을 정리했습니다.");
       }
       return;
     }
     setConnectTarget(value);
     handleSelectProject(value); // 기존 경로(setProject+restoreSnapshot) 재사용 — PR#221 시드가 이어짐
-  }, [projectId, detachProjectCarryingSelection, handleSelectProject, selectedParcels, clearParcels]);
+  }, [
+    detachProjectCarryingSelection,
+    handleSelectProject,
+    selectedParcels.length,
+    stagedCount,
+    clearConfirmedSelectionUi,
+    bumpMapClearSignal,
+    syncParcelsToStores,
+  ]);
 
   const runDirectGeocode = useCallback(
     async (rawQuery: string) => {
@@ -1541,6 +1583,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
       }
       // setProject 직후 같은 틱에 선택 패치를 커밋 — 전환 이펙트가 실행될 땐 storeSiteAnalysis에
       // 필지가 이미 있어 선택이 그대로 재시드된다(선택 소실 없음, PR#221 상호작용).
+      // ★R2(MEDIUM, 의도 명시): 이 null→created.id 전환도 전환 이펙트를 타 clearNonce가 오른다
+      //   (지도 staged 폴리곤도 함께 청소됨). 의도한 동작이다 — 방금 확정한 selectedParcels는
+      //   위 재시드로 안전하게 복원되고(소실 없음), 프로젝트를 새로 여는 시점에 이 프로젝트와
+      //   무관한 잔여 staged(다른 임시 클릭)까지 함께 정리되는 편이 "새 프로젝트 문맥 시작"
+      //   의미에 부합한다(드롭다운 전환과 같은 근거). 재시드 시 selectionOwnerProjectIdRef도
+      //   created.id로 재설정되어(전환 이펙트 하단) 이후 소유권 판별이 이 새 프로젝트를 정확히 가리킨다.
       setProject(created.id, created.name, "draft", created.address);
       const patch = selectionToSiteAnalysisPatch(selectedParcels);
       if (patch) updateSiteAnalysis(patch, { source: "user" });
@@ -1618,12 +1666,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
     if (seeded.length) {
       hydratedRef.current = true;
       setSelectedParcels(seeded);
+      selectionOwnerProjectIdRef.current = projectId; // ★R2: 프로젝트 상속 시드 — 소유권=이 프로젝트
       const focused = seeded.find((parcel) => parcel.lat != null && parcel.lon != null);
       if (focused?.lat != null && focused.lon != null) {
         setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
       }
     }
-  }, [commitParcelsToContext, storeSiteAnalysis, hasConnectedProject]);
+  }, [commitParcelsToContext, storeSiteAnalysis, hasConnectedProject, projectId]);
 
   // 프로젝트 전환 감지 → 프로젝트 등록 필지로 선택 복원.
   // ★restoreSnapshot(백엔드 스냅샷 GET)은 비동기라 전환 직후엔 storeSiteAnalysis가 비어있을 수
@@ -1669,6 +1718,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       lastSeedKeyRef.current = seedKey;
       // 시드 출처가 스토어이므로 재커밋 금지(#178 되먹임 방지). sessionStorage만 동기화.
       setSelectedParcels(seeded);
+      selectionOwnerProjectIdRef.current = projectId; // ★R2: 프로젝트 상속 시드 — 소유권=이 프로젝트
       saveSelectionForOutputs(seeded);
       // 지도 이동은 전환 후 1회만(좌표가 보강으로 늦게 오면 그때 1회) — 이후 갱신 때
       //   사용자가 보던 화면을 낚아채지 않는다.
@@ -2264,6 +2314,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 onBoundaryEnriched={handleBoundaryEnriched}
                 onBoundaryStatusChange={handleBoundaryStatusChange}
                 clearSignal={clearNonce}
+                onStagedCountChange={setStagedCount}
               />
             </div>
 
