@@ -794,6 +794,25 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     # ── 확정 매칭: SSOT 한도값 사용(로컬표 드리프트 제거) ──
     bcr_lim = resolution.max_bcr_pct
     far_lim = resolution.max_far_pct
+
+    # ★구조상한(건폐율×층수) 흡수(레인H, 2026-07-24): resolve_zone_limits는 legal_limits_for만
+    #   쓰고 applicable_limits_for(레인A가 구조상한을 흡수시킨 함수)를 거치지 않아, 이 라우터가
+    #   /rule-check(BuildingCodeRuleEngine._check_far)와 동일한 결함(자연녹지 법정 100%로
+    #   far=100%가 그대로 '적합')을 형제로 안고 있었다. 로직 복제 없이 같은 공용 헬퍼
+    #   (far_cap_with_structural_overlay — legal_zone_limits.py, _check_far와 공유)를 재사용한다.
+    #   planned_bcr(계획 건폐율)을 rule-check의 '설계 실건폐율'과 동일 시맨틱으로 전달.
+    from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
+
+    applied_bcr_for_cap = req.planned_bcr if req.planned_bcr > 0 else None
+    far_lim, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+        resolution.zone_type, far_lim, applied_bcr_for_cap,
+    )
+    cap_note: str | None = None
+    if cap_basis:
+        cap_note = f"구조상한(건폐율×{cap_floor}층) 적용 — {cap_basis}"
+    elif cap_unresolved_note:
+        cap_note = cap_unresolved_note
+
     # 높이: SSOT는 높이 상한을 두지 않음(기존 로컬표도 전부 0=별도규정). 별도규정으로 통과 처리.
     h_lim = 0.0
     bcr_pass = req.planned_bcr <= bcr_lim if req.planned_bcr > 0 else True
@@ -808,6 +827,10 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     if not height_pass:
         notes.append(f"높이 {req.planned_height_m}m > 상한 {h_lim}m")
 
+    remarks = "적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)
+    if cap_note:
+        remarks = f"{remarks} ({cap_note})"
+
     resp = LegalCheckResponse(
         address=req.address, zone_code=req.zone_code, zone_name=resolution.zone_type,
         bcr_limit=bcr_lim, bcr_planned=req.planned_bcr, bcr_pass=bcr_pass,
@@ -815,7 +838,7 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
         height_limit_m=h_lim, height_planned_m=req.planned_height_m, height_pass=height_pass,
         overall_pass=overall,
         overall_status="pass" if overall else "fail",
-        remarks=("적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)),
+        remarks=remarks,
     )
     # 법령 근거키(가산·옵셔널) — 확정 매칭 시 근거 조문키 부착(응답은 extra="allow").
     if resolution.legal_ref_keys:

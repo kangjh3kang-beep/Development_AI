@@ -276,6 +276,58 @@ def should_apply_structural_cap(
     return cap_pct < applied_far_pct
 
 
+def far_cap_with_structural_overlay(
+    zone_type: str | None,
+    max_far_pct: float | None,
+    applied_bcr_pct: float | None,
+) -> tuple[float | None, int | None, str | None, str | None]:
+    """단순 용적률 한도(max_far_pct)에 구조상한(건폐율×층수) 오버레이를 흡수한 공용 헬퍼.
+
+    ★확정버그(레인H, 2026-07-24 라이브 재현): `rule-check`(BuildingCodeRuleEngine._check_far)와
+    `/legal-check` 라우터는 `resolve_zone_limits`(zone_limit_contract)가 반환하는 법정 상한만
+    비교했다. `resolve_zone_limits`는 `legal_limits_for`만 쓰고 `applicable_limits_for`(레인A가
+    구조상한을 흡수시킨 함수)를 거치지 않으므로, 자연녹지 법정 100%로 far=100% 설계가 그대로
+    '적합' 판정됐다(실효 상한은 건폐 20%×법정4층=80%). `calc_effective_far`(far_tier_service)·
+    `applicable_limits_for`(이 모듈, 레인A)가 이미 쓰는 `structural_cap_for`+
+    `should_apply_structural_cap` 조합을 여기서도 그대로 재사용해(산식 복제 0) 두 호출부
+    (`_check_far`·`/legal-check`)가 이 함수 하나만 임포트하게 한다(공용화 — 한 곳 수정이
+    두 경로에 전파).
+
+    Args:
+        zone_type: 용도지역명(정규화 전 — 내부에서 legal_limits_for가 정규화).
+        max_far_pct: 오버레이 전 용적률 한도(법정/조례 등 — 호출부가 이미 산정한 값).
+        applied_bcr_pct: 비교 대상 설계/계획의 실제 건폐율(%). rule-check는 설계 실건폐율
+            (building_area_sqm/land_area_sqm×100), legal-check는 planned_bcr(계획 건폐율)을
+            그대로 전달한다. None이면(건폐율 미입력) 구조상한을 산정할 근거가 없어 원래
+            max_far_pct를 무음으로 유지한다(정상 케이스 — 경고 아님).
+
+    Returns:
+        (effective_max_far_pct, floor_cap, cap_basis, unresolved_note)
+        - 구조상한이 실제로 max_far_pct보다 낮아 바인딩되면 (cap_pct, floor_cap, cap_basis, None).
+        - 층수 무제한 zone이거나 applied_bcr_pct 미입력이면 (max_far_pct, None, None, None)
+          (완전 무영향 — 무회귀).
+        - 층수제한 zone인데 applied_bcr_pct가 비물리값(<1%·법정건폐율 초과 — 비율↔퍼센트
+          오입력/오염 의심, structural_cap_for의 R1 타당성 게이트)이면 (max_far_pct, None, None,
+          "건폐율 입력 이상…") — 법정 한도는 유지하되(무음 폴백 금지) 사유를 정직 표기한다.
+    """
+    if max_far_pct is None:
+        return None, None, None, None
+    limits = legal_limits_for(zone_type) or {}
+    if not limits.get("max_floors"):
+        return max_far_pct, None, None, None  # 층수 무제한 zone — 구조상한 대상 아님(무영향)
+    if applied_bcr_pct is None:
+        return max_far_pct, None, None, None  # 건폐율 미입력 — 산정 근거 없음(정직 침묵)
+    cap_pct, floor_cap, cap_basis = structural_cap_for(zone_type, applied_bcr_pct)
+    if cap_pct is None:
+        return (
+            max_far_pct, None, None,
+            "건폐율 입력 이상으로 구조상한 미산정(비율↔퍼센트 오입력/법정초과 의심 — 확인 필요)",
+        )
+    if should_apply_structural_cap(cap_pct, max_far_pct, plan_relaxed=False):
+        return cap_pct, floor_cap, cap_basis, None
+    return max_far_pct, None, None, None
+
+
 # ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
 #   폴백을 뜻하므로 여기 포함하지 않는다(effective_far가 법정값과 같아도 조례값이 아님).
 # ★한계(2026-07-22, live-fix① R2 — LOW#2 명시): 이 판정은 문자열 하드코딩 키워드 결합이다.
