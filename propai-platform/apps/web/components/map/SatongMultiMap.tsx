@@ -739,6 +739,41 @@ function auctionPopupHtml(item: SatongAuctionItem): string {
   ].join("");
 }
 
+/** 시장(실거래) 마커 렌더 계획 항목 — 유형 1개가 실제로 그릴 좌표확보 그룹 목록. */
+export interface MarketRenderEntry {
+  type: string;
+  color: string;
+  groups: SatongMarketGroup[];
+  cappedCount: number;
+}
+
+/**
+ * ★다중 유형 렌더 계획을 순수 함수로 분리(POI 이펙트와 동형 계약을 window.L 목업 없이
+ * 회귀 테스트하기 위한 추출 — 이 파일의 관례: Leaflet을 직접 건드리는 이펙트는 스모크만,
+ * "무엇을 그릴지" 결정 로직은 순수 함수로 빼서 단위테스트한다. buildOverlayNotes·
+ * planSatongLabels와 동일 패턴).
+ *
+ * marketLayer.types 배열 순서대로 켜진 유형 전부에 대해 항목을 만든다 — 이 배열의 길이가
+ * 곧 "실제로 순회될 유형 수"라, 회귀(예: 첫 유형만 순회)가 있으면 length가 줄어들어
+ * 테스트가 즉시 실패한다. center 미확보·조회 실패 시 빈 배열(무표시)을 반환한다.
+ */
+export function resolveMarketRenderPlan(
+  payload: SatongMarketPayload | null | undefined,
+  types: string[],
+  kind: "trade" | "rent",
+): MarketRenderEntry[] {
+  if (!payload?.center?.lat || !payload?.center?.lon || payload.fetch_failed) return [];
+  return types.map((type) => {
+    const category = payload.categories?.[`${type}_${kind}`];
+    return {
+      type,
+      color: MARKET_TYPE_COLORS[type] || "#2563eb",
+      groups: (category?.groups ?? []).filter((g) => !!g.lat && !!g.lon),
+      cappedCount: category?.capped_count ?? 0,
+    };
+  });
+}
+
 // ★기본값 배열을 매 렌더 새로 만들지 않도록 모듈 상수로 고정한다. selectedParcels prop 을
 //   생략한 소비처(NearbyTransactionsMap 등)에서 기본값 [] 가 매 렌더 새 참조가 되어, 이를
 //   dep 로 쓰는 boundary effect 가 무한 재실행되던 근본(참조 churn)을 차단한다.
@@ -1995,15 +2030,15 @@ export function SatongMultiMap({
   // ★P3(라벨 폭주 대응): market은 유형별로 별도 카운트해 아래 labelPlan에서 유형별 서브슬롯
   //   (`market:${type}`)으로 분할한다 — 유형 하나가 전역 버짓을 독식해 다른 유형이 전부 hover로
   //   강등되는 것을 막는다(클러스터링 미도입 — 판단 근거는 커밋/보고 참조).
+  const marketRenderPlan = useMemo(
+    () => resolveMarketRenderPlan(marketPayload, marketTypes, marketKind),
+    [marketPayload, marketKind, marketTypes],
+  );
   const marketTypeMappableCounts = useMemo(() => {
     const out: Record<string, number> = {};
-    if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) return out;
-    for (const type of marketTypes) {
-      const cat = marketPayload.categories?.[`${type}_${marketKind}`];
-      out[type] = (cat?.groups ?? []).filter((g) => !!g.lat && !!g.lon).length;
-    }
+    for (const entry of marketRenderPlan) out[entry.type] = entry.groups.length;
     return out;
-  }, [marketPayload, marketKind, marketTypes]);
+  }, [marketRenderPlan]);
   const presaleMappableCount = useMemo(
     () => (showPresale ? (presaleItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
     [showPresale, presaleItems],
@@ -2101,19 +2136,17 @@ export function SatongMultiMap({
       }).addTo(group);
     }
 
-    // ★POI 이펙트(:2205-2245 부근)와 동형 — 켜진 유형(marketTypes) 전부를 순회하며 유형별
-    //   색상 마커를 동시에 그린다. 라벨 상시 표시는 유형별 서브슬롯(labelPlan[`market:${type}`])
-    //   으로 공평 배분(P3 — 한 유형이 전역 라벨 버짓을 독식하지 않게).
-    for (const type of marketTypes) {
-      const category = marketPayload.categories?.[`${type}_${kind}`];
-      const groups = category?.groups ?? [];
-      const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
+    // ★POI 이펙트(:2205-2245 부근)와 동형 — 켜진 유형(marketRenderPlan, 순수함수로 추출돼
+    //   회귀 테스트됨) 전부를 순회하며 유형별 색상 마커를 동시에 그린다. 라벨 상시 표시는
+    //   유형별 서브슬롯(labelPlan[`market:${type}`])으로 공평 배분(P3 — 한 유형이 전역 라벨
+    //   버짓을 독식하지 않게).
+    for (const entry of marketRenderPlan) {
+      const { type, color: typeColor, groups } = entry;
       const typeLabelLimit = labelPlan[`market:${type}`] ?? 0;
-      cappedTotal += category?.capped_count ?? 0;
+      cappedTotal += entry.cappedCount;
       let typeShown = 0;
 
       groups.forEach((item) => {
-        if (!item.lat || !item.lon) return;
         const ordinal = typeShown;
         typeShown += 1;
         marketCount += 1;
@@ -2152,13 +2185,23 @@ export function SatongMultiMap({
     }
     setMarketTypeCounts(byType);
 
-    // ★P1(절단 정직 고지) — 백엔드가 이미 반환하는 좌표미확보·반경밖·상한초과 건수를
-    //   표면화한다(무음 절단 금지 — #459 ComparableSet "수집=선정+제외" 항등 선례와 동일 원칙).
+    // ★P1(절단 정직 고지) — 백엔드가 이미 반환하는 좌표미확보·반경밖·상한초과·지오코딩
+    //   사전컷 건수를 표면화한다(무음 절단 금지 — #459 ComparableSet "수집=선정+제외" 항등
+    //   선례와 동일 원칙). ★R1 후속(레인G R2 항목4): geocode_precut_count가 타입 선언만
+    //   되고 표면화 누락돼 있었다(대형 시군구 콜드로드에서 가장 큰 절단 계층일 수 있음).
     const cutParts: string[] = [];
+    if ((marketPayload.geocode_precut_count ?? 0) > 0) {
+      cutParts.push(`지오코딩 전 사전컷 ${marketPayload.geocode_precut_count}건 생략`);
+    }
     if ((marketPayload.coords_unresolved_count ?? 0) > 0) {
       cutParts.push(`좌표미확보 ${marketPayload.coords_unresolved_count}건 제외`);
     }
-    if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
+    // radius_applied===false(중심좌표는 있으나 radius_m 미확보 등)면 반경 필터 자체가
+    // 미적용 상태다 — radius_filtered_out_count가 0이어도 "반경 내 상위 N건"이 아니라
+    // "전체"가 표시 중임을 정직하게 고지한다(선언만 되고 미소비이던 필드를 실사용).
+    if (marketPayload.radius_applied === false) {
+      cutParts.push("반경 필터 미적용(전체 표시 중)");
+    } else if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
       cutParts.push(`반경밖 ${marketPayload.radius_filtered_out_count}건 제외`);
     }
     if (cappedTotal > 0) {
@@ -2181,7 +2224,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
-  }, [mapReady, marketKind, marketTypes, marketPayload, labelPlan, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
+  }, [mapReady, marketKind, marketTypes, marketPayload, marketRenderPlan, labelPlan, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */

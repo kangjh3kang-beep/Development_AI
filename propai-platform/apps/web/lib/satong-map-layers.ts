@@ -174,6 +174,13 @@ export const MARKET_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   MARKET_TRADE_TYPES.map((t) => [t.key, t.label]),
 );
 
+/** 전월세(rent) 지원 유형 — 백엔드 `_RENT_TYPES`(apt/villa/house/officetel 4종만, 토지·상업업무용
+ *  전월세 API 자체가 없음) 미러. ★R1 후속(레인G R2): SatongMapShell의 marketLayer가 이 필터
+ *  없이 kind="rent"일 때도 전 6종을 요청해 land_rent/commercial_rent(백엔드 부재) 카테고리를
+ *  조회 → 범례에 "0건"으로 표기되며 "미수집"이 "거래 없음"으로 오인됐다(무음 절단과 동일 결함류).
+ *  NearbyTransactionsMap도 이 배열을 공유해 이중 정의를 막는다. */
+export const MARKET_RENT_TYPES = MARKET_TRADE_TYPES.slice(0, 4);
+
 export const AGE_LEGEND_ITEMS = [
   { color: "#38bdf8", label: "10년 미만 (신축)" },
   { color: "#34d399", label: "10~20년 (준신축)" },

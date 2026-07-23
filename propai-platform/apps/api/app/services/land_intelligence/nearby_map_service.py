@@ -306,10 +306,10 @@ class NearbyMapService:
                 "dong": dong, "jibun": jibun,
                 "_query": self._query_for(sigungu, dong, jibun, name),
                 # ★실무 판단정보(그룹 대표값) — molit_client가 이미 파싱해 넘기는 build_year/
-                #   jimok/land_use(토지 매매 전용)를 종전엔 여기서 폐기했다. 그룹 최초 거래
-                #   기준으로 보존하고, 이후 행에서 값이 채워지면 보강한다(무날조 — 원천에
-                #   없으면 None 유지).
-                "build_year": None, "jimok": None, "land_use": None,
+                #   jimok/land_use(토지 매매 전용)를 종전엔 여기서 폐기했다. 관측된 고유값을
+                #   집합으로 모아두고(대표값 확정은 _finalize에서 — 혼재 검출을 위해), 원천에
+                #   없으면 빈 채로 남는다(무날조).
+                "_build_years": set(), "_jimoks": set(), "_land_uses": set(),
                 "deals": [], "_prices": [], "_areas": [],
             })
             price = int(r.get("price_10k_won") or 0)
@@ -318,12 +318,14 @@ class NearbyMapService:
                 g["_prices"].append(price)
             if area > 0:
                 g["_areas"].append(area)
-            if not g["build_year"] and r.get("build_year"):
-                g["build_year"] = r.get("build_year")
-            if not g["jimok"] and (r.get("jimok") or "").strip():
-                g["jimok"] = (r.get("jimok") or "").strip()
-            if not g["land_use"] and (r.get("land_use") or "").strip():
-                g["land_use"] = (r.get("land_use") or "").strip()
+            if r.get("build_year"):
+                g["_build_years"].add(r.get("build_year"))
+            jimok_v = (r.get("jimok") or "").strip()
+            if jimok_v:
+                g["_jimoks"].add(jimok_v)
+            land_use_v = (r.get("land_use") or "").strip()
+            if land_use_v:
+                g["_land_uses"].add(land_use_v)
             g["deals"].append({
                 "price_10k_won": price, "area_m2": area,
                 "floor": r.get("floor"), "deal_date": r.get("deal_date"),
@@ -368,6 +370,22 @@ class NearbyMapService:
             areas = g.pop("_areas", [])
             g["count"] = cnt
             g["avg_area_m2"] = round(sum(areas) / len(areas), 1) if areas else 0
+            # ★대표값 혼재 완화(R1 후속 — 레인G R2 항목3): 그룹 키가 건물명·지번 없이 법정동
+            #   (dong)으로만 폴백되면 서로 다른 필지의 거래가 한 그룹에 섞일 수 있다(주로 토지
+            #   매매에서 건물명이 없는 행). 이 경우 build_year/jimok/land_use "첫 값"만 대표로
+            #   보이면 실제로는 여러 필지가 섞였는데 그중 하나의 속성만 그룹 전체인 것처럼
+            #   오도한다 — 지목·용도지역은 개발 판단에 직결되는 정보라 피해가 크다.
+            #   무음 위험 비교: (a)혼재 시 미표기(None)는 "정보 없음"으로만 보이는 결측 —
+            #   기존 age_status 무자료 패턴과 동일한 안전한 실패 모드. (b)"대표 필지 기준"
+            #   캡션 부기는 사용자가 캡션을 놓치면 그룹 전체 속성으로 오인하는 정보 왜곡
+            #   실패 모드라 더 위험하다. 따라서 (a) 미표기를 채택 — 고유값이 정확히 1개일
+            #   때만 대표값을 확정하고, 0개(무자료) 또는 2개 이상(혼재)이면 None.
+            build_years = g.pop("_build_years", set())
+            jimoks = g.pop("_jimoks", set())
+            land_uses = g.pop("_land_uses", set())
+            g["build_year"] = next(iter(build_years)) if len(build_years) == 1 else None
+            g["jimok"] = next(iter(jimoks)) if len(jimoks) == 1 else None
+            g["land_use"] = next(iter(land_uses)) if len(land_uses) == 1 else None
             if kind == "trade":
                 p = g.pop("_prices", [])
                 # ★대표통계(이상치 제거) — 지분·정정 등 미미거래·초고가 왜곡 방지(공용 헬퍼).
