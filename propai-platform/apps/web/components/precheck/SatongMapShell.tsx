@@ -196,6 +196,11 @@ type OutputAction = {
  * '연동 필요'가 아니라 실제 연동된 원천을 기술해야 한다.
  * (테스트 검증용으로 export — components/precheck/__tests__/SatongMapShell.layers.test.ts)
  */
+// ★팝오버 헤더 on/off 미노출 레이어(R1 M-3/M-4/M-D — 단발 예외 대신 패턴 상수화).
+//   terrain : on/off 소유자가 베이스맵 스위처(끄면 배경지도가 조용히 롤백·라벨도 거짓)
+//   cadastre: 기반 레이어라 끌 수 없음(토글 무동작 = 죽은 버튼)
+const LAYERS_WITHOUT_POPOVER_TOGGLE = new Set<SatongMapLayerId>(["terrain", "cadastre"]);
+
 const LAYERS: SatongLayer[] = [
   {
     id: "cadastre",
@@ -504,6 +509,9 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     poi: ["station", "school", "commerce", "park", "hospital"],
     development: ["facilities"],
     terrain: ["base"],
+    // ★R1 MEDIUM-E: capacity 키 부재로 켜도 showCapacity=false였다 — "지도 표시 중"이
+    //   거짓이 되는 terrain과 같은 결함 클래스. mapEffect 컨트롤이 하나뿐이라 논쟁 없음.
+    capacity: ["far-headroom"],
   };
 }
 
@@ -1470,9 +1478,21 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   팝오버 안의 컨트롤·헤더 on/off에서 한다. 지도 상태는 전혀 건드리지 않는다.
   //   ★토글이 아니라 '지정'이다 — 롤오버로 항목을 옮길 때 같은 항목 재진입이 닫힘으로
   //   해석되면 깜빡인다(전환은 열림 유지가 계약).
-  // hover로 연 팝오버인지 기록 — 마우스가 레일을 벗어나면 hover 오픈분만 닫는다.
-  // (클릭으로 연 것까지 닫으면 팝오버 컨트롤을 조작하러 가는 중에 닫혀 확정이 불가능.)
-  const openedByHoverRef = useRef(false);
+  // ★고정(pin)된 패널 id — 클릭으로 연 것만 기록한다. boolean이면 레일 안에서 다른 항목을
+  //   '스치기만' 해도 true로 덮여 클릭 확정분이 강등된다(R1 MEDIUM-B 실증).
+  const pinnedPanelRef = useRef<SatongMapLayerId | "basemap" | null>(null);
+  // 레일 이탈 후 닫힘 유예 — 팝오버는 레일의 '형제'라 경계를 넘는 순간 mouseleave가 발화한다.
+  // 유예가 없으면 팝오버에 물리적으로 도달할 수 없다(R1 HIGH-B 실증).
+  const hoverCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (hoverCloseTimerRef.current) clearTimeout(hoverCloseTimerRef.current);
+  }, []);
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current) {
+      clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  }, []);
 
   const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
     // ★R1 HIGH-2: 여기서 setDetailFeature(null)을 하면 레일 위를 '스치기만' 해도 열려 있던
@@ -2404,12 +2424,16 @@ export function SatongMapShell({ locale }: { locale: string }) {
               ref={railRef}
               // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
               //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
-              //   마우스를 옮겨 확정할 수 있다(그래서 출처를 openedByHoverRef로 기록).
+              //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
               onMouseLeave={() => {
-                if (!openedByHoverRef.current) return;
-                openedByHoverRef.current = false;
-                setActiveLayerId(null);
-                setBasemapOpen(false);
+                if (pinnedPanelRef.current) return; // 고정(클릭)분 보존
+                cancelHoverClose();
+                hoverCloseTimerRef.current = setTimeout(() => {
+                  hoverCloseTimerRef.current = null;
+                  if (pinnedPanelRef.current) return;
+                  setActiveLayerId(null);
+                  setBasemapOpen(false);
+                }, 200); // ★HIGH-B 유예 — 팝오버 onMouseEnter가 취소한다
               }}
               // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
               //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
@@ -2453,13 +2477,21 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 type="button"
                 // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
                 //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
-                onMouseEnter={() => { openedByHoverRef.current = true; openBasemapPanel(); }}
+                onMouseEnter={() => { cancelHoverClose(); openBasemapPanel(); }}
+                // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
+                //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
                 onClick={() => {
-                  openedByHoverRef.current = false; // 클릭 확정(레일 이탈로 닫히지 않게)
-                  setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
-                  setDetailFeature(null);
-                  setBasemapOpen((v) => !v);
+                  cancelHoverClose();
+                  const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
+                  if (wasPinned) {
+                    pinnedPanelRef.current = null;
+                    setBasemapOpen(false);
+                    return;
+                  }
+                  pinnedPanelRef.current = "basemap";
+                  openBasemapPanel();
                 }}
+                aria-haspopup="dialog"
                 aria-expanded={basemapOpen}
                 aria-controls="satong-basemap-popover"
                 aria-label="베이스맵 선택"
@@ -2488,13 +2520,23 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
                     //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
                     //   발화하므로 키보드 열기 경로는 그대로다.
-                    onMouseEnter={() => { openedByHoverRef.current = true; openLayerPanel(layer.id); }}
+                    onMouseEnter={() => { cancelHoverClose(); openLayerPanel(layer.id); }}
                     // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
                     //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
+                    // ★R1 HIGH-A: 실브라우저는 click 앞에 mouseenter를 반드시 보낸다. 종전
+                    //   'activeLayerId===id면 닫기'는 hover로 열린 것을 '클릭으로 연 것'으로
+                    //   오인해 첫 클릭이 항상 닫기가 됐다(더블클릭해야 사용 가능). 클릭은
+                    //   hover분을 닫지 말고 '고정(pin)'으로 승격하고, 이미 고정된 것만 닫는다.
                     onClick={() => {
-                      openedByHoverRef.current = false; // 클릭 확정 — 레일 이탈로 닫히지 않게
-                      if (activeLayerId === layer.id) setActiveLayerId(null);
-                      else openLayerPanel(layer.id);
+                      cancelHoverClose();
+                      const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
+                      if (wasPinned) {
+                        pinnedPanelRef.current = null;
+                        setActiveLayerId(null);
+                        return;
+                      }
+                      pinnedPanelRef.current = layer.id;
+                      openLayerPanel(layer.id);
                     }}
                     aria-haspopup="dialog"
                     aria-expanded={activeLayerId === layer.id}
@@ -2525,6 +2567,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
               <div
                 ref={basemapPopoverRef}
                 id="satong-basemap-popover"
+                role="dialog"
+                aria-label="베이스맵"
+                onMouseEnter={cancelHoverClose}
+                onMouseLeave={() => { if (!pinnedPanelRef.current) setBasemapOpen(false); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="mb-3 flex items-center justify-between">
@@ -2548,6 +2594,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {activeLayer && (
               <div
                 ref={popoverRef}
+                role="dialog"
+                aria-label={activeLayer.label}
+                onMouseEnter={cancelHoverClose}
+                onMouseLeave={() => { if (!pinnedPanelRef.current) setActiveLayerId(null); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -2566,7 +2616,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
                         on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
                         않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
-                    {isRenderableSatongMapLayer(activeLayer.id) && activeLayer.id !== "terrain" && (
+                    {isRenderableSatongMapLayer(activeLayer.id) && !LAYERS_WITHOUT_POPOVER_TOGGLE.has(activeLayer.id) && (
                       <button
                         type="button"
                         onClick={() => toggleLayerEnabled(activeLayer.id)}

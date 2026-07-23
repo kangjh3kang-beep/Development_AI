@@ -52,8 +52,16 @@ function resetStores() {
   });
 }
 
+// ★R1 MEDIUM-A: jsdom의 fireEvent.click은 선행 mouseenter를 합성하지 않는다. 실브라우저는
+//   반드시 mouseenter→click 순서라, click만 쏘는 테스트는 '현실에 없는 순서'를 고정한다
+//   (그래서 첫 클릭이 팝오버를 닫는 HIGH-A가 초록으로 통과했다). 레일 상호작용은 전부 이 헬퍼로.
+function hoverClick(el: HTMLElement) {
+  fireEvent.mouseEnter(el);
+  fireEvent.click(el);
+}
+
 function openBasemapPopover() {
-  fireEvent.click(screen.getByRole("button", { name: "베이스맵 선택" }));
+  hoverClick(screen.getByRole("button", { name: "베이스맵 선택" }));
 }
 
 describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
@@ -107,7 +115,7 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
 
     // 레일의 레이어 버튼(지적도)을 누르면 베이스맵 팝오버는 닫힌다.
-    fireEvent.click(screen.getByRole("button", { name: "지적도" }));
+    hoverClick(screen.getByRole("button", { name: "지적도" }));
     expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
 
     // 다시 베이스맵을 열면 정상 표시(토글 무결성).
@@ -119,7 +127,7 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     render(<SatongMapShell locale="ko" />);
     // ★지적도는 초기 활성(cadastre 기본 ON)이라 좌상단 칩이 이미 존재한다.
     //   (레일 클릭은 더 이상 레이어를 켜지 않는다 — 탐색/확정 분리)
-    fireEvent.click(screen.getByRole("button", { name: "지적도" }));
+    hoverClick(screen.getByRole("button", { name: "지적도" }));
     openBasemapPopover();
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
 
@@ -162,7 +170,7 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
   it("★레일 클릭은 팝오버만 열고 레이어를 켜지 않는다(보기=적용 결합 해제)", () => {
     render(<SatongMapShell locale="ko" />);
     // 용도지역는 기본 OFF인 렌더 가능 레이어.
-    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
+    hoverClick(screen.getByRole("button", { name: "용도지역" }));
     // 팝오버는 열렸고
     expect(screen.getByRole("button", { name: /지도에 표시/ })).toBeTruthy();
     // 확정 전이므로 '지도 표시 중'이 아니다(=아직 안 켜짐).
@@ -181,7 +189,7 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
 
   it("★확정은 팝오버 안에서 — 누른 뒤에도 팝오버가 닫히지 않는다", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
+    hoverClick(screen.getByRole("button", { name: "용도지역" }));
 
     fireEvent.click(screen.getByRole("button", { name: "지도에 표시" }));
     // 켜졌고(라벨 전환) 팝오버는 그대로 열려 있다(결과 확인 가능).
@@ -215,23 +223,79 @@ describe("SatongMapShell 레일 — 팝오버 배타·닫힘 계약", () => {
   it("★레일 클릭으로 팝오버를 닫을 수 있다(R1 LOW-1 닫기 경로 복원)", () => {
     render(<SatongMapShell locale="ko" />);
     const btn = screen.getByRole("button", { name: /용도지역/ });
-    fireEvent.click(btn);
+    hoverClick(btn);
     expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
-    fireEvent.click(btn); // 같은 항목 재클릭 = 닫기
+    hoverClick(btn); // 같은 항목 재클릭 = 닫기(고정분만)
     expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
   });
 
   it("★X 버튼으로 닫힌다(닫힘 경로 회귀 보호)", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.click(screen.getByRole("button", { name: /용도지역/ }));
+    hoverClick(screen.getByRole("button", { name: /용도지역/ }));
     fireEvent.click(screen.getByRole("button", { name: "레이어 설정 닫기" }));
     expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
   });
 
   it("★terrain(지형도·항공뷰)은 on/off를 노출하지 않는다 — 끄면 베이스맵이 조용히 롤백되고 라벨이 거짓이 된다", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.click(screen.getByRole("button", { name: /지형도·항공뷰/ }));
+    hoverClick(screen.getByRole("button", { name: /지형도·항공뷰/ }));
     expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
+  });
+});
+
+/**
+ * R1 재검증 HIGH-A/B 자물쇠 — 실브라우저 이벤트 순서에서만 드러나던 결함.
+ */
+describe("SatongMapShell 레일 — 실이벤트 순서 계약", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("★HIGH-A: hover 후 클릭해도 팝오버가 열려 있다(첫 클릭이 닫으면 안 된다)", () => {
+    render(<SatongMapShell locale="ko" />);
+    const btn = screen.getByRole("button", { name: /용도지역/ });
+    fireEvent.mouseEnter(btn);          // 실브라우저는 click 앞에 반드시 발생
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    fireEvent.click(btn);               // 클릭 = 고정 승격(닫기 아님)
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+  });
+
+  it("★HIGH-B: hover로 연 뒤 레일을 벗어나도 팝오버로 이동하면 유지된다(확정 도달성)", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const btn = screen.getByRole("button", { name: /용도지역/ });
+      fireEvent.mouseEnter(btn);
+      const popover = screen.getByRole("dialog", { name: "용도지역" });
+
+      fireEvent.mouseLeave(btn.closest("div")!); // 레일 이탈(유예 시작)
+      fireEvent.mouseEnter(popover);             // 팝오버 진입 → 유예 취소
+      act(() => { vi.advanceTimersByTime(400); });
+
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("★클릭 고정분은 레일 이탈로 닫히지 않는다(컨트롤 조작 도달성)", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const btn = screen.getByRole("button", { name: /용도지역/ });
+      hoverClick(btn); // 고정
+      fireEvent.mouseLeave(btn.closest("div")!);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("★cadastre(지적도)는 on/off 미노출 — 끌 수 없어 토글이 죽은 버튼이 된다", () => {
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: "지적도" }));
+    expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
   });
 });
