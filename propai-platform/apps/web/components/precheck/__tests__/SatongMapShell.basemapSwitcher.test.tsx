@@ -299,3 +299,61 @@ describe("SatongMapShell 레일 — 실이벤트 순서 계약", () => {
     expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
   });
 });
+
+/**
+ * R1 3차 HIGH-1 자물쇠 — 클릭 확정 후 다른 경로로 닫으면 stale 핀이 무관한 hover 팝오버를
+ *   눌러붙게 하던 누수. cross-item 시퀀스라 단일 항목 테스트로는 잡히지 않았다.
+ */
+describe("SatongMapShell 레일 — 핀 stale 누수(HIGH-1)", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("★STALE: 클릭확정→X로 닫음→다른 항목 hover→레일 이탈이면 닫힌다(핀 잔류 누수 방지)", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const rail = screen.getByRole("button", { name: /용도지역/ }).closest("div")!;
+      hoverClick(screen.getByRole("button", { name: /용도지역/ })); // 클릭 확정(pin=용도지역)
+      fireEvent.click(screen.getByRole("button", { name: "레이어 설정 닫기" })); // X로 닫음
+      expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 순수 hover분
+      expect(screen.getByRole("heading", { level: 3, name: "공시지가" })).toBeTruthy();
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      // stale 핀(용도지역)이 있어도 지금 보이는 건 hover분(공시지가)이므로 닫혀야 한다.
+      expect(screen.queryByRole("heading", { level: 3, name: "공시지가" })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("★LEAK: 클릭확정→이탈→재진입→다른 항목 hover→이탈이면 닫힌다", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const rail = screen.getByRole("button", { name: /용도지역/ }).closest("div")!;
+      hoverClick(screen.getByRole("button", { name: /용도지역/ })); // pin
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); }); // 고정분이라 유지
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 다른 hover분
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByRole("heading", { level: 3, name: "공시지가" })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("★유예: 150ms(이내)면 팝오버 유지·250ms(이후)면 닫힘", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const rail = screen.getByRole("button", { name: /용도지역/ }).closest("div")!;
+      fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 순수 hover
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(120); }); // 누적 270ms
+      expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+});

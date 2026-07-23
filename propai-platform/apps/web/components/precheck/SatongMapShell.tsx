@@ -1494,6 +1494,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
     }
   }, []);
 
+  // ★R1 3차 HIGH-1 봉합 — 닫힘은 상태와 '핀'을 함께 정리해야 한다(원자화). 종전엔 핀을
+  //   클릭 토글-닫기 2곳에서만 지워, Esc·X·외부클릭으로 닫으면 핀이 stale로 남고 그 뒤
+  //   hover 미리보기들이 "핀이 있으니 닫지 마라"에 걸려 지도 위에 눌러붙었다(2차 롤아웃
+  //   계약을 가장 흔한 흐름에서 재파괴). 닫힘 근원이 6곳 흩어져 있어 공용 헬퍼로 추출한다.
+  const closeLayerPanel = useCallback(() => {
+    pinnedPanelRef.current = null;
+    setActiveLayerId(null);
+  }, []);
+  const closeBasemapPanel = useCallback(() => {
+    pinnedPanelRef.current = null;
+    setBasemapOpen(false);
+  }, []);
+
   const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
     // ★R1 HIGH-2: 여기서 setDetailFeature(null)을 하면 레일 위를 '스치기만' 해도 열려 있던
     //   필지 상세가 파괴되고 Esc로도 복구되지 않는다(접힌 레일이 지도 우상단이라 상시 발생).
@@ -1860,12 +1873,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
   useEffect(() => {
     if (!activeLayerId) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActiveLayerId(null);
+      if (event.key === "Escape") closeLayerPanel();
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (popoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
-      setActiveLayerId(null);
+      closeLayerPanel();
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -1873,19 +1886,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [activeLayerId]);
+  }, [activeLayerId, closeLayerPanel]);
 
   // 베이스맵 팝오버도 레이어 팝오버와 동일한 닫힘 계약(Esc·외부 포인터다운) — 같은 좌표에
   // 뜨는 형제 UI라 닫힘 규칙이 다르면 사용자가 두 규칙을 학습해야 한다(일관성).
   useEffect(() => {
     if (!basemapOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setBasemapOpen(false);
+      if (event.key === "Escape") closeBasemapPanel();
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (basemapPopoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
-      setBasemapOpen(false);
+      closeBasemapPanel();
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -1893,7 +1906,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [basemapOpen]);
+  }, [basemapOpen, closeBasemapPanel]);
 
   // 베이스맵 스위처 — 우상단 레이어 레일의 '베이스맵' 항목이 여는 팝오버 본문(2026-07-23
   // 사용자 UX 요청: 지도 제어 일원화). 이력: 독립 absolute 섬(bottom-20 right-4) → 하단
@@ -2426,11 +2439,23 @@ export function SatongMapShell({ locale }: { locale: string }) {
               //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
               //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
               onMouseLeave={() => {
-                if (pinnedPanelRef.current) return; // 고정(클릭)분 보존
+                // ★R1 3차 HIGH-1: '핀 존재'가 아니라 '지금 보이는 팝오버가 고정분인가'로
+                //   판정한다. stale 핀(Esc/X로 닫힌 뒤 잔존)이 무관한 hover 팝오버를
+                //   눌러붙게 하던 누수 봉합. (closeLayerPanel/Basemap이 핀을 지우므로
+                //   이제 stale은 안 생기지만, 매칭 가드는 그와 무관히도 안전하다.)
+                const shownIsPinned =
+                  pinnedPanelRef.current === "basemap"
+                    ? basemapOpen
+                    : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+                if (shownIsPinned) return;
                 cancelHoverClose();
                 hoverCloseTimerRef.current = setTimeout(() => {
                   hoverCloseTimerRef.current = null;
-                  if (pinnedPanelRef.current) return;
+                  const stillPinned =
+                    pinnedPanelRef.current === "basemap"
+                      ? basemapOpen
+                      : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+                  if (stillPinned) return;
                   setActiveLayerId(null);
                   setBasemapOpen(false);
                 }, 200); // ★HIGH-B 유예 — 팝오버 onMouseEnter가 취소한다
@@ -2483,11 +2508,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 onClick={() => {
                   cancelHoverClose();
                   const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
-                  if (wasPinned) {
-                    pinnedPanelRef.current = null;
-                    setBasemapOpen(false);
-                    return;
-                  }
+                  if (wasPinned) { closeBasemapPanel(); return; }
                   pinnedPanelRef.current = "basemap";
                   openBasemapPanel();
                 }}
@@ -2530,11 +2551,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     onClick={() => {
                       cancelHoverClose();
                       const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
-                      if (wasPinned) {
-                        pinnedPanelRef.current = null;
-                        setActiveLayerId(null);
-                        return;
-                      }
+                      if (wasPinned) { closeLayerPanel(); return; }
                       pinnedPanelRef.current = layer.id;
                       openLayerPanel(layer.id);
                     }}
@@ -2570,14 +2587,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 role="dialog"
                 aria-label="베이스맵"
                 onMouseEnter={cancelHoverClose}
-                onMouseLeave={() => { if (!pinnedPanelRef.current) setBasemapOpen(false); }}
+                onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
                   <button
                     type="button"
-                    onClick={() => setBasemapOpen(false)}
+                    onClick={closeBasemapPanel}
                     aria-label="베이스맵 닫기"
                     className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
                   >
@@ -2597,7 +2614,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 role="dialog"
                 aria-label={activeLayer.label}
                 onMouseEnter={cancelHoverClose}
-                onMouseLeave={() => { if (!pinnedPanelRef.current) setActiveLayerId(null); }}
+                onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -2633,7 +2650,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     )}
                     <button
                       type="button"
-                      onClick={() => setActiveLayerId(null)}
+                      onClick={closeLayerPanel}
                       className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                       aria-label="레이어 설정 닫기"
                     >
