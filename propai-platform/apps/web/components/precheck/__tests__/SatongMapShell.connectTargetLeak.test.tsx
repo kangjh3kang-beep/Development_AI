@@ -199,4 +199,37 @@ describe("SatongMapShell 연결 대상 전환 — 선택 필지 누수 봉합", 
       screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
     ).not.toBeInTheDocument();
   });
+
+  it("R1b: 선택 0건이어도 clearSignal은 증가한다 — 지도 staged 폴리곤 정리가 조건 없이 실행됨을 고정", () => {
+    // 확정 목록(selectedParcels)은 0건이지만, 사용자가 지도에서 필지를 찍어 SatongMultiMap
+    // 내부 staged(녹색, 아직 [완료] 안 누름)에 쌓아둔 뒤 드롭다운을 바꾸는 순서를 재현한다.
+    // staged는 SatongMultiMap 내부 상태라 이 스텁에서 직접 만들 수는 없지만, clearParcels가
+    // "비울 selectedParcels가 없다"는 이유로 스킵되지 않고 항상 실행돼야 한다는 계약은
+    // selectedParcels가 0인 채로도 clearSignal이 오른다는 사실로 고정할 수 있다(고지만 조건부,
+    // 정리는 무조건 — 게이팅 대상이 다르다).
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: "proj-leak",
+        projectName: "청진동 프로젝트",
+        projectStatus: "draft",
+        siteAnalysis: makeSite({}),
+      });
+    });
+
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.getByText(/필지 선택 0건/)).toBeInTheDocument();
+
+    const clearSignalBefore = capturedMapPropsRef.current?.clearSignal ?? 0;
+
+    const select = screen.getByRole("combobox");
+    act(() => {
+      fireEvent.change(select, { target: { value: "new" } });
+    });
+
+    expect(capturedMapPropsRef.current?.clearSignal).toBeGreaterThan(clearSignalBefore);
+    // 정리는 실행됐지만 비울 확정목록이 없었으므로 고지는 여전히 없다(고지 조건 유지).
+    expect(
+      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
+    ).not.toBeInTheDocument();
+  });
 });

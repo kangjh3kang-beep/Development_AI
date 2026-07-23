@@ -1255,7 +1255,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   정본 clearParcels()를 이어 호출해 선택목록·지도 staged 폴리곤·상세 패널·sessionStorage
   //   미러까지 함께 비운다 — 안 비우면 오염된 선택 그대로 "선택 필지로 새 프로젝트 생성"이
   //   실행돼 백엔드 프로젝트 신규생성+과금+오염 스냅샷 서버영속까지 번진다(데이터 영속 오염).
-  //   무음 금지 — 실제로 비웠을 때만 connectNotice로 1줄 고지한다.
+  //   ★R1b(관심사 분리): 정리(clearParcels)는 조건 없이 항상 실행한다 — 멱등이고, selectedParcels
+  //   가 0이어도 지도에 staged(녹색, 아직 [완료] 안 누른) 폴리곤만 있는 경우가 있어(같은 결함
+  //   클래스: clearNonce 누락 시 그 staged 폴리곤이 그대로 남는다) selectedParcels 카운트만으로는
+  //   "비울 게 없다"고 판단할 수 없다. 고지(connectNotice)만 조건부 — Shell은 staged 존재 여부를
+  //   알 수 없으므로(SatongMultiMap 내부 상태) selectedParcels.length 기준으로 "실제로 확정목록을
+  //   비웠을 때만" 알린다(무음 금지와 과다고지 사이 절충 — 정리 누락은 없다).
   const handleConnectTargetChange = useCallback((value: string) => {
     setConnectNotice("");
     if (value === "new" || value === "none") {
@@ -1264,8 +1269,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
       //   않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
       //   이펙트가 이 해제를 '프로젝트 전환'으로 오인하지 않게 한다(F1).
       if (projectId) detachProjectCarryingSelection();
-      if (selectedParcels.length > 0) {
-        clearParcels();
+      const hadSelection = selectedParcels.length > 0;
+      clearParcels(); // 항상 실행(멱등) — staged 폴리곤·상세 패널·sessionStorage까지 확실히 정리
+      if (hadSelection) {
         setConnectNotice("연결 대상을 바꿔 선택 필지를 비웠습니다.");
       }
       return;
