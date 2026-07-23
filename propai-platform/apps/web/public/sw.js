@@ -114,7 +114,12 @@
 //        생성·과금 발생) + design-audit 화면배관 봉합(#464 — AuditReportView S4/S7 형상·
 //        permit 표면화). 과금에 직결되는 P0 수정이 stale app-shell 캐시에 가려지면
 //        기존 사용자에게 수정이 도달하지 않으므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v460-satong-selection-leak";
+// v461: design-audit 입력배선 복구(#468 — 조례 resolver 부활·규제구역 3분기 센티널·무음
+//        폴백 근절). 프론트 변경 4종(AuditReportView data_gaps 렌더, DesignStudio·
+//        CadBimIntegrationPanel 실효 FAR/BCR 배선, CostAndQuantityDashboard 15층 하드코딩
+//        제거, kr-building-regulations 250% 날조 폴백 제거)이 stale 캐시에 가려지면
+//        과대낙관 수치가 계속 표시되므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v461-design-audit-input-wiring";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
