@@ -107,7 +107,10 @@
 // v457: 조직도 직속 지정 파이프라인+모바일 재설계(#452 — 내조직 카드·아코디언·행 액션시트·
 //        배정 시트). 재설계된 OrgTree 가 stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
 //        구 번들의 흰 히어로가 재생되지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v457-org-pipeline-mobile";
+// v458: 분양앱 로그인 복귀+앱 정체성 분리(#456 — ?next= 복귀 배선·현장앱 전용 manifest
+//        start_url=/ko/sales/sites·목록페이지 fieldapp 이동). 로그인/가드/manifest 변경이
+//        stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v458-fieldapp-app-identity";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
