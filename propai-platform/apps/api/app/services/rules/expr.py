@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import math
 import operator
 from typing import Annotated, Literal
 
@@ -24,9 +25,19 @@ _BinOpCode = Literal["add", "sub", "mul", "div", "min", "max"]
 
 
 def _safe_div(a: float, b: float) -> float | None:
-    if b == 0:
-        return None  # 0으로 나눔 — 무음 fallback 금지, UNKNOWN 전파.
+    if b <= 0:
+        # 0으로 나눔뿐 아니라 음수 분모도 UNKNOWN — 면적 등 정량 도메인에서 분모(대지면적 등)가
+        # 음수인 것은 비물리적 상태라 클램프/부호무시로 조용히 계산하지 않는다(무날조 확장).
+        return None
     return a / b
+
+
+def _finite_or_none(value: float | None) -> float | None:
+    """비유한(inf/-inf/nan) 값은 None(UNKNOWN)으로 전파한다 — 산술 폭주·오염된 외부 입력을
+    조용히 통과시키지 않는다(무날조 원칙 연장)."""
+    if value is None or math.isfinite(value):
+        return value
+    return None
 
 
 # 화이트리스트 연산자만 — 임의 함수 호출 경로 없음(구조적 안전, eval/exec 미사용).
@@ -52,7 +63,7 @@ class ParamRef(BaseModel):
 
 class Const(BaseModel):
     kind: Literal["const"] = "const"
-    value: float
+    value: float = Field(allow_inf_nan=False)  # 리터럴 상수 자체가 inf/nan이면 구성 시점에 거부.
 
 
 class BinOp(BaseModel):
@@ -86,12 +97,12 @@ def eval_expr(
     """
     result: float | None
     if node.kind == "var":
-        result = inputs.get(node.name)
+        result = _finite_or_none(inputs.get(node.name))
         if trace is not None:
             trace.append(ExprTraceStep(node=f"var:{node.name}", value=result))
         return result
     if node.kind == "param":
-        result = params.get(node.name)
+        result = _finite_or_none(params.get(node.name))
         if trace is not None:
             trace.append(ExprTraceStep(node=f"param:{node.name}", value=result))
         return result
@@ -106,11 +117,36 @@ def eval_expr(
             result = None  # 피연산자 결손 — UNKNOWN 전파(무날조).
         else:
             fn = _SAFE_OPS[node.op]
-            result = fn(left, right)  # type: ignore[operator]
+            result = _finite_or_none(fn(left, right))  # type: ignore[operator]
         if trace is not None:
             trace.append(ExprTraceStep(node=f"binop:{node.op}", value=result))
         return result
     raise ValueError(f"unsupported expr node kind: {node.kind}")  # pragma: no cover — 판별 유니온으로 도달 불가
 
 
-__all__ = ["BinOp", "Const", "Expr", "ExprTraceStep", "ParamRef", "VarRef", "eval_expr"]
+def collect_refs(node: Expr) -> tuple[set[str], set[str]]:
+    """산식 노드트리를 walk해 실제로 참조하는 VarRef 이름·ParamRef 이름을 전부 모은다.
+
+    ``bind_rule``은 ``RuleDef.inputs`` 목록 자체가 registry에 등록돼 있는지만 검증하고,
+    formula/limit 산식이 실제로 그 목록과 일치하는 변수만 참조하는지는 보지 않는다(수기
+    작성한 inputs와 산식이 괴리되면, 미선언 변수를 참조해도 eval_expr이 조용히 None을
+    반환해 UNKNOWN으로 강등될 뿐 계약 위반이 표면화되지 않는다). 이 함수는 그 실참조를
+    추출해 evaluate()가 registry/params와 대조(RuleContractError 강제)하도록 돕는다.
+    """
+    var_names: set[str] = set()
+    param_names: set[str] = set()
+
+    def _walk(n: Expr) -> None:
+        if n.kind == "var":
+            var_names.add(n.name)
+        elif n.kind == "param":
+            param_names.add(n.name)
+        elif n.kind == "binop":
+            _walk(n.left)
+            _walk(n.right)
+
+    _walk(node)
+    return var_names, param_names
+
+
+__all__ = ["BinOp", "Const", "Expr", "ExprTraceStep", "ParamRef", "VarRef", "collect_refs", "eval_expr"]

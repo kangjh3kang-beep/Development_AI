@@ -1,9 +1,13 @@
 """Rule DSL 공용 계약 — 단위/비교연산자/변수사전(심의엔진 CalcRule 파일럿 승격).
 
-필드명·시맨틱은 심의엔진(services/deliberation-review) 파일럿을 최대한 보존한다:
-- ``Unit``/``Comparator``: services/deliberation-review/.../app/contracts/enums.py 동형.
-- ``CanonicalVariable``/``VariableRegistry``: .../app/contracts/canonical_vars.py 동형
-  (register/lookup/bind_rule — 미등록 변수 참조는 등록 거부, INV-4 동일 원칙).
+필드명·시맨틱은 심의엔진(services/deliberation-review) 파일럿을 최대한 보존한다(단,
+"동형"은 정확한 표현이 아니라 아래처럼 일치/불일치 범위를 명시한다):
+- ``Unit``/``Comparator``: services/deliberation-review/.../app/contracts/enums.py와
+  멤버(값 목록) 동일·기반클래스는 StrEnum로 현대화(원본 대비 구현이 갱신됨).
+- ``CanonicalVariable``/``VariableRegistry``: .../app/contracts/canonical_vars.py와
+  멤버 동일(register/lookup/bind_rule — 미등록 변수 참조는 등록 거부, INV-4 동일 원칙).
+  단 allowed_sources/required_for_rules 2필드는 apps/api 문맥상 미승계(원본 전용 필드,
+  이 승격 사본 범위 밖).
 
 심의엔진은 독립 마이크로서비스라 import 불가(W3-6 재확증) — 이 파일은 그 설계의
 "동형 재구현"이 아니라 apps/api 전용 승격 사본이다(필드 형태 일치, 코드는 별개).
