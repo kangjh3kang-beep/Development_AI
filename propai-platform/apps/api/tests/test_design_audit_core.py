@@ -551,6 +551,50 @@ class TestSigunguUpzoningRelay:
         s4 = result["sections"]["s4_incentives"]
         assert s4["upzoning"]["data_gaps"] == []
 
+    # ── R1 재지적(HIGH) 봉합 — get_land_use_plan의 None(하드 실패)을 `or []`로 뭉개
+    #    무음 폴백을 이 배선점에서 재도입했던 결함. 4케이스(A 실값·B 빈 리스트 확인완료·
+    #    C 예외·D pnu 없음) 전부를 이 오케스트레이터 레벨에서 직접 검증한다.
+    async def test_special_districts_case_b_confirmed_empty_via_none_sentinel_no_data_gap(
+        self, monkeypatch,
+    ):
+        """케이스 B — get_land_use_plan이 진짜 []를 반환(확인완료·규제 없음)하면 data_gaps가
+        뜨지 않는다(None과 구분 — []는 미수집이 아니다)."""
+        async def fake_get_land_use_plan(_self, pnu):
+            return []
+
+        import app.services.external_api.vworld_service as vw
+        monkeypatch.setattr(vw.VWorldService, "get_land_use_plan", fake_get_land_use_plan)
+
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu="1111010100",
+        )
+        s4 = result["sections"]["s4_incentives"]
+        assert s4["upzoning"]["data_gaps"] == []
+        assert "rfi_register" not in s4
+
+    async def test_special_districts_hard_failure_none_sentinel_yields_data_gap(self, monkeypatch):
+        """★HIGH 회귀 앵커 — get_land_use_plan이 None(하드 실패: 키 미설정/HTTP 실패)을
+        반환하면 `districts_raw or []`처럼 뭉개지 않고 data_gaps + RFI가 정직하게 발화해야
+        한다(R1이 지적한 무음 폴백 재발 지점). 이 테스트는 _run_incentives가
+        `if districts_raw is not None` 대신 `districts_raw or []`로 되돌아가면 즉시 FAIL한다
+        (실제로 되돌려 확인함 — 봉합 커밋 보고 참조)."""
+        async def fake_get_land_use_plan(_self, pnu):
+            return None  # get_land_use_plan의 하드 실패 시그널(키 미설정/HTTP 실패)
+
+        import app.services.external_api.vworld_service as vw
+        monkeypatch.setattr(vw.VWorldService, "get_land_use_plan", fake_get_land_use_plan)
+
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu="1111010100",
+        )
+        s4 = result["sections"]["s4_incentives"]
+        data_gaps = s4["upzoning"]["data_gaps"]
+        assert data_gaps and "미수집" in data_gaps[0], (
+            "get_land_use_plan()=None(하드 실패)이 '확인완료·규제없음'으로 둔갑함 — 무음 폴백 재발"
+        )
+        rfi = s4.get("rfi_register")
+        assert rfi is not None and rfi["item_count"] == 1
+
 
 class TestOrchestratorGraceful:
     async def test_engine_failure_marked_skipped(self, monkeypatch):

@@ -693,13 +693,20 @@ class LandInfoService:
             logger.warning("토지대장 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def _fetch_land_use_plan(self, pnu: str) -> list[dict[str, Any]]:
-        """토지이용계획 조회 (VWORLD NED — 중첩 규제 전부)."""
+    async def _fetch_land_use_plan(self, pnu: str) -> list[dict[str, Any]] | None:
+        """토지이용계획 조회 (VWORLD NED — 중첩 규제 전부).
+
+        ★레인C(R2b) — get_land_use_plan의 None(하드 실패)/[](확인 완료·규제 없음) 구분을
+        그대로 투과한다(뭉개지 않음). 이 함수의 유일 소비처(_collect_comprehensive_impl:463)는
+        `isinstance(land_use, list) and land_use`로 이미 None/[] 모두 "실데이터 없음"과 동일하게
+        graceful 처리하므로 무회귀 — 다만 신호 자체는 보존해 향후 소비처가 구분해 쓸 수 있다.
+        """
         try:
             return await self.vworld.get_land_use_plan(pnu)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — get_land_use_plan은 내부에서 이미 예외를 삼키므로
+            # 이 분기는 사실상 도달하지 않지만(예: import 실패 등 극단 상황) 방어적으로 유지.
             logger.warning("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
-            return []
+            return None
 
     async def _fetch_land_characteristics(self, pnu: str) -> dict[str, Any] | None:
         """토지특성 조회 (VWORLD NED — 면적·지목·용도지역·이용상황)."""

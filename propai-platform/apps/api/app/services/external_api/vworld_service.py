@@ -725,14 +725,23 @@ class VWorldService:
             logger.error("토지특성 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_use_plan(self, pnu: str) -> list[dict]:
+    async def get_land_use_plan(self, pnu: str) -> list[dict] | None:
         """PNU 기반 토지이용계획 조회 (용도지역/지구/구역 + 기타 규제 전부).
 
         하나의 필지에 중첩된 모든 규제를 배열로 반환.
         예: [대공방어협조구역, 도시지역, 제2종일반주거지역, ...]
+
+        ★레인C(R2b) 무음 폴백 재발 봉합: 반환 계약을 3분기로 명확화한다.
+          - None : 하드 실패(키 미설정, 또는 HTTP/파싱 실패로 단 1건도 못 가져옴) —
+                   "조회를 시도했으나 결과를 확정할 수 없음"(호출부는 미수집으로 정직 처리해야 함).
+          - []   : 조회 성공 + 규제 0건(진짜 "이 필지엔 중첩규제 없음").
+          - [..] : 조회 성공 + 규제 N건.
+        과거엔 키 미설정·HTTP 실패가 모두 []로 뭉개져 "조회 못 함"과 "확인 결과 없음"을
+        구분할 수 없었다(design_audit_orchestrator.calc_upzoning 소비처의 무음 낙관화 재발
+        원인). 키 미설정은 애초에 시도조차 안 한 것이라 최우선으로 None을 반환한다.
         """
         if not settings.VWORLD_API_KEY:
-            return []
+            return None
         # ★전수 수집(원칙: 광범위 누락없는 수집): numOfRows=30 단일호출은 중첩규제가 많은 필지에서
         #   무음 절단됐다. totalCount까지 페이지를 순회한다(상한 도달 시 절단 경고).
         results: list[dict] = []
@@ -784,7 +793,9 @@ class VWorldService:
                 return results
         except Exception as e:
             logger.error("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
-            return results  # 부분 수집분이라도 반환(전체 손실 방지)
+            # ★부분 수집분(1페이지 이상 성공 후 실패)은 실데이터라 그대로 반환(전체 손실 방지).
+            #   단 1건도 못 가져온 완전 실패는 None(하드 실패 — []로 뭉개면 "규제 없음"으로 둔갑).
+            return results if results else None
 
     # ── VWORLD 정적 영상(항공/위성 정사영상) ──
     IMAGE_URL = "https://api.vworld.kr/req/image"

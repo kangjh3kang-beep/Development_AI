@@ -1115,31 +1115,36 @@ class DesignAuditOrchestrator:
             base = dict(base)
             base["local_ordinance"] = {**(base_ordinance if isinstance(base_ordinance, dict) else {}), "sigungu": sigungu}
 
-        # ★레인C(R2, MEDIUM 봉합) — 규제구역(special_districts) 서버측 실배선. 실원천은 이미
+        # ★레인C(R2b, HIGH 봉합) — 규제구역(special_districts) 서버측 실배선. 실원천은 이미
         #   존재한다: regulation_analysis_service._detect_special(:362)와 special_parcel.
         #   detect_special_parcel(:1219)이 소비하는 land_use_plan.districts(VWorld NED
         #   getLandUseAttr — 중첩규제 전부)와 동일 계약. 프론트 SSOT(siteAnalysis)엔 이 필드가
         #   없어 릴레이가 불가능하므로, pnu만으로 서버가 직접 조달한다(_run_permit이 이미
         #   address로 PermitAnalysisService를 부르는 것과 동일한 온디맨드 외부조회 관례 —
         #   신규 패턴 아님). base가 이미 명시값을 갖고 있으면(예: 다필지 집계·테스트 주입)
-        #   덮어쓰지 않는다(명시값 우선). 조회 자체가 실패/미가용(VWORLD_API_KEY 미설정 포함)이면
-        #   빈 리스트를 반환하는 게 이 API 자체의 계약(get_land_use_plan)이라 "확인완료·규제없음"과
-        #   "키 미설정" 구분은 상류(VWorldService) 한계로 이 레인 범위 밖 — 기존 소비처
-        #   (regulation_analysis_service 등)와 동일하게 취급한다(무회귀).
+        #   덮어쓰지 않는다(명시값 우선).
+        #   ★R2b 수정(R1 재지적 — 이전 패치가 무음 폴백을 이 배선점에서 재도입했었다):
+        #   get_land_use_plan은 이제 None(하드 실패 — 키 미설정/HTTP 실패, 단 1건도 못 가져옴)과
+        #   [](조회 성공·규제 0건 확인)을 구분해 반환한다. 여기서 `districts_raw or []`처럼
+        #   None을 [] 로 뭉개면 "조회 못 함"이 "확인 결과 규제 없음"으로 둔갑해 P0에서 만든
+        #   None/[] 구분(far_tier_service.calc_upzoning)을 이 배선점이 스스로 무력화한다 —
+        #   districts_raw is None이면 base["special_districts"]를 아예 세팅하지 않아(None
+        #   그대로 유지) 하류 data_gaps·RFI가 정직하게 발화하게 한다.
         if not isinstance(base.get("special_districts"), list) and pnu:
             try:
                 from app.services.external_api.vworld_service import VWorldService
 
                 districts_raw = await VWorldService().get_land_use_plan(pnu)
-                names = [
-                    n for n in (
-                        (d.get("district_name") if isinstance(d, dict) else str(d))
-                        for d in (districts_raw or [])
-                    )
-                    if n
-                ]
-                base = dict(base)
-                base["special_districts"] = names
+                if districts_raw is not None:  # None=하드 실패 → base 미갱신(미수집 유지)
+                    names = [
+                        n for n in (
+                            (d.get("district_name") if isinstance(d, dict) else str(d))
+                            for d in districts_raw
+                        )
+                        if n
+                    ]
+                    base = dict(base)
+                    base["special_districts"] = names
             except Exception as e:  # noqa: BLE001 — 조회 실패는 미수집으로 폴백(무중단·data_gaps로 정직 표기)
                 logger.warning("규제구역(토지이용계획) 조회 실패 — 미수집으로 폴백", error=str(e)[:160])
 
