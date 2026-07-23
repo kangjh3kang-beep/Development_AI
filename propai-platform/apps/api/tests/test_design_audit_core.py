@@ -765,11 +765,128 @@ class TestChangeRiskStringParamRevival:
         assert finding["status"] != "skipped"
 
     async def test_change_risk_engine_ok_in_full_audit_with_string_params(self):
-        """오케스트레이터 전체 실행 — change_risk가 'failed'로 죽지 않고 'ok'로 완주."""
-        params = _clean_params(floors_above="16", units="200")  # 특별피난계단·부대복리 경고 유도
+        """오케스트레이터 전체 실행 — change_risk가 'failed'로 죽지 않고 'ok'로 완주.
+
+        parking도 200대로 맞춰 다른 엔진은 전부 pass 시켜(격리) change_risk 단독 warning이
+        overall.verdict에 정확히 반영되는지까지 계약으로 확인한다(★R1 MEDIUM④ — 이전에
+        `assert overall.verdict == "적합"`을 근거 없이 지웠다는 지적을 받아 복구하되, 실측
+        검증 결과에 맞게 '조건부적합'으로 교정했다: change_risk가 문자열 때문에 skipped로
+        위장되면 warning이 통계에서 빠져 overall이 '적합'으로 거짓 상향될 수 있었다 — 그
+        가려짐이 재발하지 않는지가 이 가드의 실제 의미다).
+        """
+        params = _clean_params(
+            floors_above="16", units="200", parking="200",
+        )  # 특별피난계단·부대복리 경고 유도, parking은 맞춰 pass(격리)
         result = await DesignAuditOrchestrator().audit(params, zone_type=ZONE)
         assert result["engines"]["change_risk"] == "ok"
         cr = next(f for f in result["findings"] if f["engine"] == "change_risk")
         assert cr["status"] != "skipped"
         # 문자열 층수·세대수도 실제 예측 산술에 반영돼 경고가 뜬다(16층·200세대 → 승강기·특별피난 등).
         assert cr["status"] == "warning"
+        # change_risk의 warning이 은폐되지 않고 overall(warning만 존재 → 조건부적합)에 반영된다.
+        assert result["overall"]["verdict"] == "조건부적합"
+        assert result["overall"]["counts"].get("fail", 0) == 0
+
+    async def test_int_preserved_not_float_display(self):
+        """★R1 MEDIUM① — floors_above="16"이 change_risk design dict에서 int 16으로 보존되고
+        (일반 _num()을 썼다면 float 16.0이 돼 "16.0층"으로 표시 회귀했을 것) finding·risks
+        텍스트도 "16.0층"이 아니라 "16층"으로 나온다."""
+        import json as _json
+
+        orchestrator = DesignAuditOrchestrator()
+        params = _clean_params(floors_above="16", units="200")
+        result = await orchestrator._run_change_risk(params, ZONE)
+        section = result["section"][1]
+        dumped = _json.dumps(section, ensure_ascii=False, default=str)
+        assert "16.0층" not in dumped
+        assert "16층" in dumped
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QA 레인B R2(R1 HIGH-1) — rules8/solar_envelope 룰 활성 플래그(엔진 실행 여부가 아니라
+# 해당 룰이 실제로 판정 가능했는지). 세트백 0m·높이 무제한 하드코딩이 "판정 완료"로
+# 오인되지 않도록 라우터 미검사 각주 교정이 참조하는 명시 플래그.
+# ─────────────────────────────────────────────────────────────────────────────
+class TestRules8ActivationFlags:
+
+    async def test_setback_evaluated_always_false(self):
+        """min_setback_m=0.0(SSOT 부재 하드코딩) — 검증기가 이격거리 위반을 원천적으로 낼 수
+        없으므로 setback_evaluated는 실제 데이터 경로가 생기기 전까지 상시 False."""
+        orch = DesignAuditOrchestrator()
+        result = await orch._run_rules8(
+            _clean_params(), _square_shapes(),
+            applied_bcr=60.0, applied_far=250.0, max_height=100.0, sigungu=None,
+        )
+        section = result["section"][1]
+        assert section["setback_evaluated"] is False
+
+    async def test_height_rule_active_true_with_real_max_height(self):
+        """실측 max_height가 주어지면 height_rule_active=True — '높이제한_준수' 차감 대상."""
+        orch = DesignAuditOrchestrator()
+        result = await orch._run_rules8(
+            _clean_params(), _square_shapes(),
+            applied_bcr=60.0, applied_far=250.0, max_height=100.0, sigungu=None,
+        )
+        section = result["section"][1]
+        assert section["height_rule_active"] is True
+
+    async def test_height_rule_active_false_when_max_height_none(self):
+        """★리뷰어 실증 — 높이 무제한(max_height=None)이면 검증기가 inf로 대체돼 위반이
+        안 나지만(violations에 height 타입 없음), 이것이 '높이를 실제로 판정했다'를
+        의미하지 않는다 — height_rule_active=False로 정직 표기."""
+        orch = DesignAuditOrchestrator()
+        result = await orch._run_rules8(
+            _clean_params(), _square_shapes(),
+            applied_bcr=60.0, applied_far=250.0, max_height=None, sigungu=None,
+        )
+        section = result["section"][1]
+        assert section["height_rule_active"] is False
+        assert all(v["type"] != "height" for v in section["violations"])
+
+
+class TestSolarEnvelopeActivationFlag:
+
+    async def test_height_evaluated_false_without_height_input(self):
+        """★리뷰어 실증 — 높이 미입력이면 solar_envelope가 trivial PASS(현재="높이 미입력")를
+        내지만 실제 인벨로프 판정이 아니다 — height_evaluated=False로 정직 표기."""
+        orch = DesignAuditOrchestrator()
+        params = _clean_params()
+        params.pop("building_height_m")
+        result = await orch._run_solar(
+            params, ZONE, applied_bcr=60.0, applied_far=250.0, sigungu=None,
+        )
+        finding = result["findings"][0]
+        section = result["section"][1]
+        assert finding["current"] == "높이 미입력"
+        assert section["height_evaluated"] is False
+
+    async def test_height_evaluated_true_with_applicable_zone_and_height(self):
+        """정북일조 적용 zone + 높이 입력 둘 다 있으면 height_evaluated=True — '일조권_준수'
+        차감 대상이 되는 유일한 경로."""
+        orch = DesignAuditOrchestrator()
+        result = await orch._run_solar(
+            _clean_params(), ZONE, applied_bcr=60.0, applied_far=250.0, sigungu=None,
+        )
+        section = result["section"][1]
+        assert bool(section["envelope"].get("applies_north_light")) is True
+        assert section["height_evaluated"] is True
+
+
+class TestFiniteFloatGuard:
+    """R1 HIGH-2 — finite_float 공용 가드(오케스트레이터 _num·라우터 _coerce_numeric 공유 코어)."""
+
+    def test_nan_and_inf_rejected(self):
+        from app.services.design_audit.numeric import finite_float
+
+        assert finite_float("nan") is None
+        assert finite_float("inf") is None
+        assert finite_float("-inf") is None
+        assert finite_float(float("nan")) is None
+
+    def test_finite_values_pass_through(self):
+        from app.services.design_audit.numeric import finite_float
+
+        assert finite_float("16") == 16.0
+        assert finite_float(3.5) == 3.5
+        assert finite_float(True) is None  # bool은 숫자로 취급하지 않는다
+        assert finite_float("abc") is None

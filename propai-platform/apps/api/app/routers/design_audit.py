@@ -31,6 +31,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.common.job_store import JobStore
+from app.services.design_audit.numeric import finite_float
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -198,15 +199,18 @@ _NUMERIC_PARAM_KEYS: frozenset[str] = frozenset(
 def _coerce_numeric(v: Any) -> Any:
     """숫자로 변환 가능하면 변환(정수면 int, 아니면 float) — 아니면 원문 그대로(무날조).
 
-    bool은 숫자로 취급하지 않는다(True==1 오염 방지).
+    ★R1 HIGH-2 — bool은 숫자로 취급하지 않고(True==1 오염 방지), NaN/Inf는 finite_float
+    (오케스트레이터 _num과 공용 코어)로 걸러 원문을 그대로 보존한다. 가드 없이 float("inf")를
+    통과시키면 8~9엔진 오케스트레이션을 전부 끝낸 뒤 응답 JSON 직렬화 단계에서
+    `ValueError: Out of range float values are not JSON compliant`로 500이 나던 결함(라이브
+    재현: {"params":{"units":"inf"}}) — 변환 전에는 문자열로 남아 정상이었으므로 이 정규화가
+    신규 유입시킨 실패 모드였다.
     """
     if isinstance(v, bool) or not isinstance(v, str):
         return v
-    s = v.strip()
-    try:
-        f = float(s)
-    except (TypeError, ValueError):
-        return v
+    f = finite_float(v.strip())
+    if f is None:
+        return v  # 비수치·NaN·Inf — 원문 보존(무날조·JSON 비적합 값 유입 차단)
     return int(f) if f.is_integer() else f
 
 
@@ -216,9 +220,12 @@ def _normalize_numeric_params(params: dict[str, Any]) -> dict[str, Any]:
     ★근원 봉합(design-audit 배관 봉합 QA 레인B): brief 추출값·수동입력 <input>은 모두
     문자열(예: floors_above="5")로 들어오는데, 오케스트레이터 엔진 중 일부(change_risk)가
     이를 _num() 없이 그대로 비교/산술에 써서 'str'과 'int' 비교 TypeError로 죽고 그 예외를
-    삼켜 'skipped'로 위장 표시하던 결함류를 이 흡수 지점 1곳에서 차단한다(엔진마다 산발적
-    _num 방어에 의존하지 않음). 숫자로 변환 불가한 값(빈 문자열·비수치 텍스트)은 원문 그대로
-    두어 이후 엔진의 정직한 skipped 판정을 그대로 따른다(임의값 발명 금지).
+    삼켜 'skipped'로 위장 표시하던 결함류를 이 흡수 지점에서 차단한다. ★정정(R1 LOW) — 이
+    흡수 지점은 /run-upload(브리프·수동입력이 brief.fields[]/payload.params로 들어오는 경로)만
+    커버한다. 직접 JSON으로 /run을 호출하는 경로(RunRequest.params)는 이 함수를 거치지 않는다
+    (실효 차이는 없음 — 오케스트레이터 쪽 _num()/_num_int_preserving() 이중 안전이 진입 경로와
+    무관하게 change_risk를 보호한다). 숫자로 변환 불가한 값(빈 문자열·비수치 텍스트)은 원문
+    그대로 두어 이후 엔진의 정직한 skipped 판정을 그대로 따른다(임의값 발명 금지).
     """
     for key in _NUMERIC_PARAM_KEYS:
         if key in params:
@@ -565,36 +572,68 @@ async def _execute_run(
 #   스코프 한정 — design_review_service.py:20). 그런데 라우터가 그 서비스의 not_checked_items를
 #   그대로 화면에 실으면, 실제로는 다른 엔진(solar_envelope·parking·bl_rules)이 검사하고
 #   findings로 결과까지 떠 있는 항목(일조·주차·피난·방화)까지 "미검사"로 표기되는 거짓 각주가
-#   생긴다(라이브 재현: 8건 중 4건 거짓). 여기서 실제 findings(engine·status)로 차감해 교정한다.
-_NOT_CHECKED_ENGINE_COVERAGE: dict[str, tuple[str, ...]] = {
-    "일조권_준수": ("solar_envelope", "rules8"),
-    "주차장_설치기준": ("parking",),
-    "피난시설_적합": ("bl_rules",),
-    "방화구획_적합": ("bl_rules",),
-    "이격거리_준수": ("rules8",),
-    "높이제한_준수": ("rules8",),
-    # 장애인_편의시설·에너지절약_기준은 8엔진 어디에도 없음 — 항상 미검사로 정직 유지.
-}
+#   생긴다(라이브 재현: 8건 중 4건 거짓). 여기서 실제 판정 가능 여부로 차감해 교정한다.
+#
+# ★R1 HIGH-1 — 최초 봉합은 "엔진이 실행됐는지"(status != skipped)만 보고 차감했는데, 이는
+#   반대 방향으로 거짓화했다: rules8은 min_setback_m=0.0(SSOT 부재로 하드코딩, 검증기가
+#   "distance < 0.0"은 항상 거짓이라 이격거리 위반을 원천적으로 낼 수 없다)·height_rule_active
+#   조건 없이 max_height=inf 대체(높이 미입력 시 룰 비활성)라 "엔진이 돌았다"가 "그 룰을 실제로
+#   판정했다"를 의미하지 않는다(리뷰어 실증: 세트백 0m·높이 무제한인데 위반 []). 이제는 각 엔진
+#   섹션이 명시로 방출하는 판정-가능 플래그(rules8.height_rule_active/setback_evaluated,
+#   solar_envelope.height_evaluated)와 finding.status 화이트리스트로만 판정하고, 엔진 이름
+#   매핑으로 뭉뚱그리지 않는다. status가 없거나(None) 화이트리스트 밖이면 '실행됨'으로 보지
+#   않는다(LOW-⑦) — 단 bl_rules의 info는 "설계도서에서 확인 필요"(판정 불가)라는 화이트리스트
+#   상의 유효 상태이지만 피난·방화는 pass/fail(실제 판정)일 때만 차감한다(LOW-⑧, 항목별 예외).
+_STATUS_EXECUTED = frozenset({"pass", "fail", "warning", "info"})
+
+
+def _engine_finding_status(findings: list[dict[str, Any]], engine: str) -> str | None:
+    """해당 엔진 finding의 status — 화이트리스트(_STATUS_EXECUTED) 밖·None·부재는 None(미실행 취급)."""
+    for f in findings:
+        if isinstance(f, dict) and f.get("engine") == engine:
+            status = f.get("status")
+            return status if status in _STATUS_EXECUTED else None
+    return None
 
 
 def _reconcile_not_checked_items(
-    not_checked_items: list[str], findings: list[dict[str, Any]],
+    not_checked_items: list[str],
+    findings: list[dict[str, Any]],
+    sections_raw: dict[str, Any] | None,
 ) -> list[str]:
-    """design_review_service의 좁은 시야로 인한 거짓 '미검사' 각주를 findings 기반으로 차감.
+    """design_review_service의 좁은 시야로 인한 거짓 '미검사' 각주를, "그 룰을 실제로 판정
+    가능했는지"(엔진 실행 여부가 아니라) 기준으로 차감한다.
 
-    해당 항목을 커버하는 엔진이 이번 실행에서 실제로 실행(status != skipped)됐으면 제거하고,
-    엔진 자체가 스킵됐으면(예: 기하 데이터 없어 rules8 생략) 여전히 미검사로 정직 유지한다.
+    - 주차장_설치기준: parking finding이 실제 판정(스킵 아님)을 냈으면 커버.
+    - 피난시설_적합/방화구획_적합: bl_rules가 pass/fail(확정 판정)일 때만 커버 — info("설계도서
+      에서 확인 필요")는 판정 불가라는 정직한 신호이므로 커버하지 않는다.
+    - 높이제한_준수: rules8 섹션의 height_rule_active(실측 max_height 존재)가 True일 때만.
+    - 일조권_준수: solar_envelope 섹션의 height_evaluated(적용 zone + 높이 입력 둘 다 실재)가
+      True일 때만 — 미적용 zone이거나 높이 미입력이면 trivial PASS(판정 아님)라 커버하지 않는다.
+    - 이격거리_준수: rules8 섹션의 setback_evaluated가 True일 때만(현재 min_setback_m SSOT
+      부재로 항상 False — 실제 데이터 경로가 생기기 전까지 상시 미검사 유지가 정직하다).
+    - 장애인_편의시설·에너지절약_기준: 8엔진 어디에도 없음 — 항상 미검사로 정직 유지.
     """
     if not not_checked_items:
         return not_checked_items
-    ran_engines = {
-        f.get("engine") for f in findings
-        if isinstance(f, dict) and f.get("engine") and f.get("status") != "skipped"
-    }
-    return [
-        item for item in not_checked_items
-        if not any(e in ran_engines for e in _NOT_CHECKED_ENGINE_COVERAGE.get(item, ()))
-    ]
+    raw = sections_raw if isinstance(sections_raw, dict) else {}
+    rules8_section = raw.get("rules8") if isinstance(raw.get("rules8"), dict) else {}
+    solar_section = raw.get("solar_envelope") if isinstance(raw.get("solar_envelope"), dict) else {}
+
+    covered: set[str] = set()
+    if _engine_finding_status(findings, "parking") is not None:
+        covered.add("주차장_설치기준")
+    if _engine_finding_status(findings, "bl_rules") in {"pass", "fail"}:
+        covered.add("피난시설_적합")
+        covered.add("방화구획_적합")
+    if rules8_section.get("height_rule_active"):
+        covered.add("높이제한_준수")
+    if solar_section.get("height_evaluated"):
+        covered.add("일조권_준수")
+    if rules8_section.get("setback_evaluated"):
+        covered.add("이격거리_준수")
+
+    return [item for item in not_checked_items if item not in covered]
 
 
 def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
@@ -637,7 +676,7 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         else None
     )
     if not_checked_items:
-        not_checked_items = _reconcile_not_checked_items(not_checked_items, findings)
+        not_checked_items = _reconcile_not_checked_items(not_checked_items, findings, raw)
 
     if findings:
         s5: dict[str, Any] = {
@@ -714,11 +753,24 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
             p for p in (feasibility.get("reason"), permit_raw.get("dev_type_basis")) if p
         ]
         senior = analysis.get("senior_consultation") if isinstance(analysis, dict) else None
-        if summary_parts or isinstance(senior, dict):
+        # ★R1 MEDIUM③ — senior_consultation이 dict라는 이유만으로 실으면, verdict='unavailable'
+        #   이거나 consultations가 빈 배열인 경우(SeniorVerdictCard는 이때 null을 렌더)에도
+        #   섹션이 만들어져 헤더만 있고 본문 0픽셀인 케이스가 생긴다 — consultations에 실제
+        #   도메인(agent_key 보유)이 1건 이상 있을 때만 표면화한다(빈 카드 노이즈 방지).
+        senior_consultations = (
+            senior.get("consultations") if isinstance(senior, dict) else None
+        )
+        has_senior = (
+            isinstance(senior, dict)
+            and senior.get("verdict") != "unavailable"
+            and isinstance(senior_consultations, list)
+            and any(isinstance(c, dict) and c.get("agent_key") for c in senior_consultations)
+        )
+        if summary_parts or has_senior:
             permit_section: dict[str, Any] = {"id": "permit", "title": "인허가 가능성·환경분석"}
             if summary_parts:
                 permit_section["summary"] = " · ".join(str(p) for p in summary_parts)
-            if isinstance(senior, dict):
+            if has_senior:
                 permit_section["senior_consultation"] = senior
             sections.append(permit_section)
     # ★로드맵③ — deliberation_result는 표면화 게이트(deliberation_surface_in_audit)가 켜졌을 때만

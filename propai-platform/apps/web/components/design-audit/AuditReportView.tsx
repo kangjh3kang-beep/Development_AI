@@ -909,8 +909,12 @@ export function AuditReportView({
           const upzoningScenarios = Array.isArray(sec.upzoning_scenarios) ? sec.upzoning_scenarios : [];
           const blindSpots = Array.isArray(sec.blind_spots) ? sec.blind_spots : [];
           const evidence = Array.isArray(sec.evidence) ? sec.evidence : [];
+          // ★R1 MEDIUM③ — verdict만으로는 부족(consultations가 빈 배열이면 SeniorVerdictCard가
+          //   null을 렌더해 헤더만 있고 본문 0픽셀이 된다) — 실 도메인 1건 이상 보유 여부까지 확인.
           const hasSeniorConsultation =
-            !!sec.senior_consultation && sec.senior_consultation.verdict !== "unavailable";
+            !!sec.senior_consultation &&
+            sec.senior_consultation.verdict !== "unavailable" &&
+            (sec.senior_consultation.consultations?.length ?? 0) > 0;
           const hasBody =
             !!sec.summary?.trim() ||
             findings.length > 0 ||

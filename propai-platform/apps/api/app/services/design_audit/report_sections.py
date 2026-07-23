@@ -101,22 +101,38 @@ def s4_incentives_to_web(s4: dict[str, Any] | None) -> dict[str, Any]:
             base_far = donation.get("base_far")
             allowed_far = donation.get("allowed_far")
             max_far = donation.get("max_far")
+            incentive_far = donation.get("incentive_far")
             desc_parts: list[str] = []
             if eff_pct is not None:
                 desc_parts.append(f"현재 실효 용적률 {eff_pct}%")
-            if base_far is not None and allowed_far is not None:
-                desc_parts.append(
-                    f"기부채납 시 {base_far}% → 최대 {allowed_far}%"
-                    + (f"(법정상한 {max_far}% 이내)" if max_far is not None else "")
-                )
-            incentives.append({
-                "name": "기부채납 용적률 인센티브",
-                "path": donation.get("legal_basis"),
-                "description": " · ".join(desc_parts) or None,
-                "bonus_far_pp": donation.get("incentive_far"),
-                # 예상치(실현 보장 아님) — far_incentive_potential finding.note와 동일 취지 마커.
-                "estimated": True,
-            })
+            # ★R1 MEDIUM② — incentive_far가 0(이미 법정상한 도달 등 실질 여지 없음)이면
+            #   bonus_far_pp를 실어 "용적률 +0%p"를 볼드 강조하지 않는다(가짜값 0 강조 금지 —
+            #   라우터 docstring의 무날조 원칙과 충돌). 대신 사유를 담은 카드로 정직 표기.
+            if incentive_far and incentive_far > 0:
+                if base_far is not None and allowed_far is not None:
+                    desc_parts.append(
+                        f"기부채납 시 {base_far}% → 최대 {allowed_far}%"
+                        + (f"(법정상한 {max_far}% 이내)" if max_far is not None else "")
+                    )
+                incentives.append({
+                    "name": "기부채납 용적률 인센티브",
+                    "path": donation.get("legal_basis"),
+                    "description": " · ".join(desc_parts) or None,
+                    "bonus_far_pp": incentive_far,
+                    # 예상치(실현 보장 아님) — far_incentive_potential finding.note와 동일 취지 마커.
+                    "estimated": True,
+                })
+            else:
+                if max_far is not None:
+                    desc_parts.append(f"법정상한 {max_far}%에 이미 도달 — 기부채납으로도 추가 용적률 여지 없음")
+                incentives.append({
+                    "name": "기부채납 용적률 인센티브",
+                    "path": donation.get("legal_basis"),
+                    "description": " · ".join(desc_parts) or "기부채납으로 확보 가능한 용적률 여지가 없습니다.",
+                    # bonus_far_pp 생략(0 강조 금지) — IncentiveCards는 bonus_far_pp==null이면
+                    # 보너스 라인 자체를 렌더하지 않는다.
+                    "estimated": True,
+                })
 
     scenarios = upzoning.get("scenarios") if isinstance(upzoning.get("scenarios"), list) else []
 
