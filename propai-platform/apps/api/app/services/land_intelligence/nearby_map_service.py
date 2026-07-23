@@ -187,6 +187,10 @@ class NearbyMapService:
             # 된다(캡을 필터보다 먼저 적용하면 시군구 전체 상위 N건이 되어 radius_m 이 무의미).
             resolved.sort(key=lambda x: x["count"], reverse=True)
             capped = resolved[:_MAX_GROUPS_PER_CAT]
+            # ★절단 정직 고지: 캡(28)에 걸려 응답에서 빠진 그룹 수를 카테고리별로 센다.
+            #   종전엔 이 절단을 아무도 세지 않아 프론트가 "다 보여준다"고 오인할 여지가 있었다
+            #   (geocode_precut_count·radius_filtered_out_count와 동일한 정직 원칙 — #459 계보).
+            cat["capped_count"] = max(0, len(resolved) - _MAX_GROUPS_PER_CAT)
             cat["groups"] = capped + unresolved
             cat["count"] = sum(g["count"] for g in cat["groups"])
 
@@ -301,6 +305,11 @@ class NearbyMapService:
                 "name": name or (f"{dong} {jibun}".strip() or "물건"),
                 "dong": dong, "jibun": jibun,
                 "_query": self._query_for(sigungu, dong, jibun, name),
+                # ★실무 판단정보(그룹 대표값) — molit_client가 이미 파싱해 넘기는 build_year/
+                #   jimok/land_use(토지 매매 전용)를 종전엔 여기서 폐기했다. 그룹 최초 거래
+                #   기준으로 보존하고, 이후 행에서 값이 채워지면 보강한다(무날조 — 원천에
+                #   없으면 None 유지).
+                "build_year": None, "jimok": None, "land_use": None,
                 "deals": [], "_prices": [], "_areas": [],
             })
             price = int(r.get("price_10k_won") or 0)
@@ -309,6 +318,12 @@ class NearbyMapService:
                 g["_prices"].append(price)
             if area > 0:
                 g["_areas"].append(area)
+            if not g["build_year"] and r.get("build_year"):
+                g["build_year"] = r.get("build_year")
+            if not g["jimok"] and (r.get("jimok") or "").strip():
+                g["jimok"] = (r.get("jimok") or "").strip()
+            if not g["land_use"] and (r.get("land_use") or "").strip():
+                g["land_use"] = (r.get("land_use") or "").strip()
             g["deals"].append({
                 "price_10k_won": price, "area_m2": area,
                 "floor": r.get("floor"), "deal_date": r.get("deal_date"),

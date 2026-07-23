@@ -153,6 +153,27 @@ export function capacityColor(
   return CAPACITY_RAMP[idx];
 }
 
+/** 실거래 유형(매매 6종 — 전월세는 앞 4종만 지원, 백엔드 _TRADE_TYPES/_RENT_TYPES 미러) SSOT.
+ *  ★색상 SSOT 통합(분석품질 레인G): 종전 SatongMultiMap.MARKET_TYPE_COLORS와
+ *  NearbyTransactionsMap.TRADE_TYPES가 같은 6색을 각자 하드코딩해 한쪽만 고치면 다른 쪽이
+ *  침묵 발산했다 — AGE_LEGEND_ITEMS/CAPACITY_LEGEND_ITEMS와 동일 계층(이 파일)으로 승격. */
+export const MARKET_TRADE_TYPES: { key: string; label: string; color: string }[] = [
+  { key: "apt", label: "아파트", color: "#14b8a6" },
+  { key: "villa", label: "연립다세대", color: "#3b82f6" },
+  { key: "house", label: "단독다가구", color: "#f59e0b" },
+  { key: "officetel", label: "오피스텔", color: "#8b5cf6" },
+  { key: "land", label: "토지", color: "#65a30d" },
+  { key: "commercial", label: "상업업무용", color: "#ec4899" },
+];
+
+export const MARKET_TYPE_COLORS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.color]),
+);
+
+export const MARKET_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.label]),
+);
+
 export const AGE_LEGEND_ITEMS = [
   { color: "#38bdf8", label: "10년 미만 (신축)" },
   { color: "#34d399", label: "10~20년 (준신축)" },

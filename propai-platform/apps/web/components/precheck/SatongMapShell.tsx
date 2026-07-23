@@ -51,6 +51,7 @@ import type {
   SatongPresaleItem,
 } from "@/components/map/SatongMultiMap";
 import {
+  MARKET_TRADE_TYPES,
   isRenderableSatongMapLayer,
   resolveSelectionAnchor,
   type SatongMapFeature,
@@ -290,8 +291,15 @@ const LAYERS: SatongLayer[] = [
     tone: "bg-blue-100 text-blue-950 border-blue-200",
     source: "국토교통부 실거래가(주변 1km·최근 3개월)",
     controls: [
+      // ★유형 다중 표시(분석품질 레인G P0): 종전 "거래유형" 단일 스텁을 6개 실제 유형
+      // 토글로 승격(다중 선택 — 개발 실무는 토지·상업업무용도 필수). 라벨은 색상 SSOT
+      // (lib/satong-map-layers.MARKET_TRADE_TYPES)와 동일 출처.
+      ...MARKET_TRADE_TYPES.map((t) => ({ id: `type-${t.key}`, label: t.label, mapEffect: true })),
+      // 매매/전월세 — 배타 전환(handleLayerControlClick kind- 분기). kind 자체가 백엔드
+      // 카테고리 키(`${type}_${kind}`)의 축이라 동시선택은 무의미.
+      { id: "kind-trade", label: "매매", mapEffect: true },
+      { id: "kind-rent", label: "전월세", mapEffect: true },
       { id: "deal-year", label: "거래연도", mapEffect: false, description: "거래연도 필터 — 향후 제공" },
-      { id: "deal-type", label: "거래유형", mapEffect: false, description: "거래유형 필터 — 향후 제공" },
       { id: "total-price", label: "총액", mapEffect: false, description: "총액 필터 — 향후 제공" },
       { id: "unit-price", label: "평당가 라벨", mapEffect: true, description: "실거래 라벨을 총액 대신 평당가로 표시" },
     ],
@@ -489,6 +497,9 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     zoning: ["land-use"],
     "official-price": ["unit-price"],
     age: ["building-age"],
+    // ★개발 실무 기본값(레인G 권고) — 아파트만 보이던 종전 하드코딩 대신 토지·상업업무용을
+    //   기본 포함해, 레이어를 켜자마자 개발행위 판단에 필요한 유형이 바로 보이게 한다.
+    transactions: ["kind-trade", "type-apt", "type-land", "type-commercial"],
     poi: ["station", "school", "commerce", "park", "hospital"],
     development: ["facilities"],
     terrain: ["base"],
@@ -1483,6 +1494,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
       if (layerId === "terrain") {
         ["base", "satellite", "hybrid", "aerial", "gray"].forEach((id) => current.delete(id));
         current.add(control.id);
+      } else if (layerId === "transactions" && (control.id === "kind-trade" || control.id === "kind-rent")) {
+        // 매매/전월세는 배타 전환 — kind 자체가 백엔드 카테고리 키(`${type}_${kind}`)의 축이라
+        // 동시선택은 무의미(terrain 베이스맵과 동일한 상호배타 패턴).
+        current.delete("kind-trade");
+        current.delete("kind-rent");
+        current.add(control.id);
       } else if (current.has(control.id)) {
         current.delete(control.id);
       } else {
@@ -2310,17 +2327,20 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 marketPayload={marketEnabled ? marketPayload : null}
                 // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
                 // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
-                marketLayer={useMemo(
-                  () => ({
-                    kind: "trade" as const,
-                    type: "apt",
+                marketLayer={useMemo(() => {
+                  const controls = layerControls.transactions ?? [];
+                  return {
+                    kind: (controls.includes("kind-rent") ? "rent" : "trade") as "trade" | "rent",
+                    // ★하드코딩 제거(분석품질 레인G P0-3): 종전 type:"apt" 상수 고정 →
+                    //   layerState(layerControls) SSOT 참조. 켜진 유형 전부를 SatongMultiMap이
+                    //   동시 렌더한다(다중 표시).
+                    types: MARKET_TRADE_TYPES.map((t) => t.key).filter((key) => controls.includes(`type-${key}`)),
                     showPresale: presaleEnabled,
                     presaleItems: presaleEnabled ? presaleItems : null,
                     showAuction: auctionEnabled,
                     auctionItems: auctionEnabled ? auctionItems : null,
-                  }),
-                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
-                )}
+                  };
+                }, [layerControls.transactions, presaleEnabled, presaleItems, auctionEnabled, auctionItems])}
                 // 상태 노트는 marketLayer 밖 별도 prop — 노트만 바뀔 때 마커 이펙트가 재실행되지
                 // 않게 한다(리뷰 LOW). 건수 라벨보다 우선 표기(정직원칙).
                 presaleNote={presaleEnabled ? presaleNote || null : null}

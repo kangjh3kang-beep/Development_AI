@@ -112,13 +112,18 @@ type TxItem = {
   area_sqm?: number; floor?: number | string; apt_name?: string; distance_m?: number;
 };
 
-type RadiusBucket = { label: string; count: number; avgPrice: number /* 만원 */ };
+type RadiusBucket = { label: string; count: number; avgPrice: number /* 만원 — 아파트 매매 기준(P2b) */ };
+
+/** ★유형별 분리 집계(P2b — 분석품질 레인G): 토지·상업용·아파트는 단가 스케일이 달라
+ *  섞으면 "평균가"가 무의미해진다(deriveResults 주석 참조). 유형별 독립 평균. */
+type TradeTypeBreakdown = { key: string; label: string; count: number; avgPrice: number /* 만원 */ };
 
 type MarketResults = {
   avm: AvmSummary | null;
   totalCount: number;
-  avgPrice: number; // 만원
+  avgPrice: number; // 만원 — 아파트 매매 기준(P2b, AVM과 동일 축)
   radiusGroups: RadiusBucket[];
+  byType: TradeTypeBreakdown[];
   transactions: TxItem[];
   months: number;
   radius: number;
@@ -159,17 +164,31 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     { label: "반경 5km+", max: Infinity, count: 0, pSum: 0, pN: 0 },
   ];
   const transactions: TxItem[] = [];
-  let allPSum = 0, allPN = 0;
+  // ★유형별 분리 집계(P2b — 분석품질 레인G): 종전엔 `_trade`로 끝나는 전 카테고리(아파트·
+  //   연립다세대·단독다가구·오피스텔·토지·상업업무용)의 avg_price_10k를 한 통에 섞어
+  //   가중평균했다 — 아파트(㎡당 수백만원)와 토지·상업용(단가 스케일 자체가 상이)이 뒤섞여
+  //   "평균 실거래가"가 무의미해지는 결함이었다(값의 계산은 맞지만 비교불가 단위 혼합).
+  //   헤드라인 평균·반경버킷 평균은 apt_trade만 사용(AVM·avm 필드와 동일 축으로 정합),
+  //   그 외 유형은 byType에서 유형별 독립 평균으로 분리해 보존한다(무손실 — 값 자체는 유지).
+  let aptPSum = 0, aptPN = 0;
+  const byType: TradeTypeBreakdown[] = [];
 
   for (const [, c] of tradeEntries) {
+    const isApt = c.type === "apt";
+    let typePSum = 0, typePN = 0;
     for (const g of c.groups || []) {
       const dist = center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : 1000;
       const cnt = g.count || 0;
-      if (g.avg_price_10k) { allPSum += g.avg_price_10k * (cnt || 1); allPN += cnt || 1; }
+      if (g.avg_price_10k) {
+        typePSum += g.avg_price_10k * (cnt || 1);
+        typePN += cnt || 1;
+        if (isApt) { aptPSum += g.avg_price_10k * (cnt || 1); aptPN += cnt || 1; }
+      }
       for (const b of buckets) {
         if (dist <= b.max) {
+          // 건수는 유형 무관 커먼저러블(합산 문제 없음) — 가격만 apt로 한정(단위 혼합 방지).
           b.count += cnt;
-          if (g.avg_price_10k) { b.pSum += g.avg_price_10k * (cnt || 1); b.pN += cnt || 1; }
+          if (isApt && g.avg_price_10k) { b.pSum += g.avg_price_10k * (cnt || 1); b.pN += cnt || 1; }
           break;
         }
       }
@@ -180,7 +199,16 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
         });
       }
     }
+    if (c.count) {
+      byType.push({
+        key: c.type || "",
+        label: c.label || c.type || "",
+        count: c.count,
+        avgPrice: typePN ? Math.round(typePSum / typePN) : 0,
+      });
+    }
   }
+  byType.sort((a, b) => b.count - a.count);
 
   // 거래일 desc 정렬(최신 거래가 먼저) — 연/월/일을 zero-pad한 문자열 비교로 결측(day 없음)도 안전.
   transactions.sort((a, b) => {
@@ -202,8 +230,8 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
 
   return {
     avm, totalCount,
-    avgPrice: allPN ? Math.round(allPSum / allPN) : 0,
-    radiusGroups, transactions,
+    avgPrice: aptPN ? Math.round(aptPSum / aptPN) : 0,
+    radiusGroups, byType, transactions,
     months: payload.months?.length || 3,
     radius: payload.radius_m || 1000,
     searchAddress: center?.address || fallbackAddr,
@@ -890,7 +918,10 @@ export function MarketInsightsWorkspaceClient() {
                   <span className="sa-di-stat__value" style={{ color: "var(--data-accent)" }}>{results.totalCount.toLocaleString()}건</span>
                 </div>
                 <div className="sa-di-stat">
-                  <span className="sa-di-stat__label">매매 평균가</span>
+                  {/* ★P2b(레인G) 교정: 종전 "매매 평균가"는 아파트·연립·단독·오피스텔·토지·
+                      상업업무용 단가를 한 통에 섞은 값이라 무의미했다 — 아파트(AVM과 동일 축)
+                      기준으로 좁히고 라벨을 정직화, 유형별 값은 아래 "유형별 거래량 · 평균가"로 분리. */}
+                  <span className="sa-di-stat__label">아파트 매매 평균가</span>
                   <span className="sa-di-stat__value">{results.avgPrice > 0 ? formatPrice(results.avgPrice) : "-"}</span>
                 </div>
                 <div className="sa-di-stat">
@@ -899,15 +930,30 @@ export function MarketInsightsWorkspaceClient() {
                 </div>
               </div>
 
+              {results.byType?.length > 0 && (
+                <div className="sa-di-sub mt-3">
+                  <p className="sa-di-eyebrow mb-2.5">유형별 거래량 · 평균가</p>
+                  <div className="sa-di-tiles sa-di-tiles--4">
+                    {results.byType.map((t) => (
+                      <div key={t.key} className="sa-di-tile">
+                        <span className="sa-di-tile__label">{t.label}</span>
+                        <span className="sa-di-tile__value">{t.count.toLocaleString()}건</span>
+                        <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>{t.avgPrice > 0 ? `평균 ${formatPrice(t.avgPrice)}` : "평균가 미상"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {results.radiusGroups?.length > 0 && (
                 <div className="sa-di-sub mt-3">
-                  <p className="sa-di-eyebrow mb-2.5">반경별 거래량 · 평균가</p>
+                  <p className="sa-di-eyebrow mb-2.5">반경별 거래량 · 평균가(아파트 매매 기준)</p>
                   <div className="sa-di-tiles sa-di-tiles--4">
                     {(results.radiusGroups ?? []).map((group) => (
                       <div key={group.label} className="sa-di-tile">
                         <span className="sa-di-tile__label">{group.label}</span>
                         <span className="sa-di-tile__value">{group.count.toLocaleString()}건</span>
-                        <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>평균 {formatPrice(group.avgPrice)}</span>
+                        <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>{group.avgPrice > 0 ? `평균 ${formatPrice(group.avgPrice)}` : "평균가 미상"}</span>
                       </div>
                     ))}
                   </div>

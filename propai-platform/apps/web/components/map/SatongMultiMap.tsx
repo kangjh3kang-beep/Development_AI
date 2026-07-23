@@ -16,11 +16,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Building2, LandPlot, MapPin, Ruler, Search, X } from "lucide-react";
+import { AlertTriangle, Building2, Home, LandPlot, MapPin, Ruler, Search, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
   AGE_LEGEND_ITEMS,
   CAPACITY_LEGEND_ITEMS,
+  MARKET_TYPE_COLORS,
+  MARKET_TYPE_LABELS,
   capacityColor,
   ageColor,
   ageLabel,
@@ -190,6 +192,15 @@ export type SatongMarketGroup = {
   avg_price_10k?: number;
   avg_deposit_10k?: number;
   avg_monthly_10k?: number;
+  /** ★P2(실무 판단정보) — robust_price_stats(백엔드 이상치 제거 통계) 결과. 매매만 해당. */
+  min_price_10k?: number;
+  max_price_10k?: number;
+  excluded_outliers?: number;
+  /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
+   *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
+  build_year?: number;
+  jimok?: string;
+  land_use?: string;
   deals?: SatongMarketDeal[];
 };
 
@@ -198,6 +209,8 @@ export type SatongMarketCategory = {
   type?: string;
   kind?: string;
   count?: number;
+  /** ★P1(절단 정직 고지) — 카테고리별 마커 상한(28)에 걸려 응답에서 빠진 그룹 수. */
+  capped_count?: number;
   groups?: SatongMarketGroup[];
 };
 
@@ -207,6 +220,11 @@ export type SatongMarketPayload = {
   categories?: Record<string, SatongMarketCategory>;
   fetch_failed?: boolean;
   note?: string;
+  /** ★P1(절단 정직 고지) — 백엔드가 이미 산출하지만 종전엔 프론트가 표면화하지 않던 필드들. */
+  radius_applied?: boolean;
+  geocode_precut_count?: number;
+  coords_unresolved_count?: number;
+  radius_filtered_out_count?: number;
 };
 
 /** /site-score/poi-infra 응답(부분집합) — 카테고리별 POI 항목(좌표 포함). */
@@ -293,7 +311,9 @@ export type SatongAuctionItem = {
 
 export type SatongMarketLayerState = {
   kind?: "trade" | "rent";
-  type?: string;
+  /** ★다중 유형 표시(분석품질 레인G P0) — 켜진 유형 전부를 동시 순회해 유형별 색상 마커를
+   *  그린다(POI 이펙트와 동형). 비었거나 undefined면 표시 유형 없음(레이어 OFF와 동일). */
+  types?: string[];
   showPresale?: boolean;
   presaleItems?: SatongPresaleItem[] | null;
   showAuction?: boolean;
@@ -618,14 +638,8 @@ function pyeongFromM2(m2?: number): string {
   return m2 && m2 > 0 ? `${(m2 / 3.305785).toFixed(1)}평` : "-";
 }
 
-const MARKET_TYPE_COLORS: Record<string, string> = {
-  apt: "#14b8a6",
-  villa: "#3b82f6",
-  house: "#f59e0b",
-  officetel: "#8b5cf6",
-  land: "#65a30d",
-  commercial: "#ec4899",
-};
+// ★색상 SSOT 통합(분석품질 레인G): MARKET_TYPE_COLORS는 lib/satong-map-layers.ts로 승격됐다
+//   (NearbyTransactionsMap.TRADE_TYPES와 공용 — 한 곳 수정이 두 소비처에 전파).
 
 const PRESALE_STATUS_COLORS: Record<string, string> = {
   분양중: "#ef4444",
@@ -645,6 +659,25 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     kind === "trade"
       ? `평균 ${won(group.avg_price_10k)} · 평균 ${pyeong}`
       : `보증금 ${won(group.avg_deposit_10k)}${group.avg_monthly_10k ? ` / 월 ${Math.round(group.avg_monthly_10k).toLocaleString()}만` : ""} · 평균 ${pyeong}`;
+  // ★P2(실무 판단정보) — 백엔드가 이미 산출한 값(robust_price_stats·건축년도·지목·용도지역)을
+  //   표면화한다(신규 API 호출 0). 매매(trade)에서만 의미 있는 필드(전월세는 보증금/월세 축이 별개).
+  const perSqmMan = kind === "trade" && avgArea > 0 && group.avg_price_10k
+    ? Math.round((group.avg_price_10k / avgArea) * 10) / 10
+    : null;
+  const perSqmLine = perSqmMan
+    ? `<div style="font-size:11px;color:#475569;">㎡당 ${perSqmMan.toLocaleString()}만원</div>`
+    : "";
+  const rangeLine =
+    kind === "trade" && (group.min_price_10k || group.max_price_10k)
+      ? `<div style="font-size:11px;color:#475569;">최저 ${won(group.min_price_10k)} ~ 최고 ${won(group.max_price_10k)}${group.excluded_outliers ? ` · 이상치 ${group.excluded_outliers}건 제외` : ""}</div>`
+      : "";
+  const attrLine = [
+    group.build_year ? `${group.build_year}년 준공` : "",
+    group.jimok ? `지목 ${escapeHtml(group.jimok)}` : "",
+    group.land_use ? `용도지역 ${escapeHtml(group.land_use)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const dealRows = (group.deals ?? [])
     .slice(0, 4)
     .map((deal) => {
@@ -659,7 +692,10 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
     `<b>${escapeHtml(group.name)}</b>`,
     `<div style="color:#64748b;font-size:11px;">${escapeHtml([group.dong, group.jibun].filter(Boolean).join(" "))} · ${escapeHtml(group.count)}건</div>`,
+    attrLine ? `<div style="color:#64748b;font-size:11px;">${attrLine}</div>` : "",
     `<div style="margin:6px 0;color:#0f172a;">${escapeHtml(priceLine)}</div>`,
+    perSqmLine,
+    rangeLine,
     dealRows,
     `</div>`,
   ].join("");
@@ -707,6 +743,8 @@ function auctionPopupHtml(item: SatongAuctionItem): string {
 //   생략한 소비처(NearbyTransactionsMap 등)에서 기본값 [] 가 매 렌더 새 참조가 되어, 이를
 //   dep 로 쓰는 boundary effect 가 무한 재실행되던 근본(참조 churn)을 차단한다.
 const EMPTY_SELECTED_PARCELS: SatongMapFeature[] = [];
+// marketLayer.types 생략 소비처(하위호환) 대비 — 위와 동일한 참조 churn 방지 규약.
+const EMPTY_MARKET_TYPES: string[] = [];
 
 export function SatongMultiMap({
   onPick,
@@ -772,6 +810,10 @@ export function SatongMultiMap({
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
+  // ★P1(범례) — 유형별 표시 건수(범례 렌더용). 켜진 유형(marketTypes)을 키로 항상 채운다
+  //   (0건도 명시 — "안 켜짐"과 "켜졌지만 무자료"를 구분하는 정직 표기).
+  const [marketTypeCounts, setMarketTypeCounts] = useState<Record<string, number>>({});
+  const [marketLegendOpen, setMarketLegendOpen] = useState(false);
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
   // ★PR#329 R1 리뷰(MEDIUM2) 반영: 지적 WMS 타일 실패(키 미설정·상류 인증오류 등)를
@@ -1938,7 +1980,10 @@ export function SatongMultiMap({
   const marketKind = marketLayer?.kind ?? "trade";
   // 실거래 라벨 총액/평당 토글(jootek 패리티) — transactions 레이어의 unit-price 컨트롤.
   const pricePerPyeongOn = hasSatongLayerControl(layerState, "transactions", "unit-price");
-  const marketType = marketLayer?.type ?? "apt";
+  // ★다중 유형 표시(분석품질 레인G P0): 켜진 유형 전부를 순회해 유형별 색상 마커를 동시에
+  //   그린다(POI 이펙트와 동형 — SatongMultiMap:2185-2226 패턴 이식). 종전엔 marketLayer.type
+  //   단일값만 받아 `${type}_${kind}` 카테고리 1개만 소비하고 나머지 9종을 버렸다.
+  const marketTypes = marketLayer?.types ?? EMPTY_MARKET_TYPES;
   const showPresale = !!marketLayer?.showPresale;
   const presaleItems = marketLayer?.presaleItems ?? null;
   const showAuction = !!marketLayer?.showAuction;
@@ -1947,11 +1992,18 @@ export function SatongMultiMap({
   // ── 라벨(상시 툴팁) 시스템 — 레이어별 후보 수 집계 → 전역 버짓 배분(줌 LOD) ──
   //   각 레이어는 자기 몫(permanentLimit)만큼만 선두 마커에 상시 라벨을 붙이고 나머지는 hover.
   //   ★후보 수는 '실제로 렌더될 라벨'만 센다(레이어 off → 0). 합산이 버짓(48/16/0)을 넘지 않는다.
-  const marketMappableCount = useMemo(() => {
-    if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) return 0;
-    const cat = marketPayload.categories?.[`${marketType}_${marketKind}`];
-    return (cat?.groups ?? []).filter((g) => !!g.lat && !!g.lon).length;
-  }, [marketPayload, marketKind, marketType]);
+  // ★P3(라벨 폭주 대응): market은 유형별로 별도 카운트해 아래 labelPlan에서 유형별 서브슬롯
+  //   (`market:${type}`)으로 분할한다 — 유형 하나가 전역 버짓을 독식해 다른 유형이 전부 hover로
+  //   강등되는 것을 막는다(클러스터링 미도입 — 판단 근거는 커밋/보고 참조).
+  const marketTypeMappableCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) return out;
+    for (const type of marketTypes) {
+      const cat = marketPayload.categories?.[`${type}_${marketKind}`];
+      out[type] = (cat?.groups ?? []).filter((g) => !!g.lat && !!g.lon).length;
+    }
+    return out;
+  }, [marketPayload, marketKind, marketTypes]);
   const presaleMappableCount = useMemo(
     () => (showPresale ? (presaleItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
     [showPresale, presaleItems],
@@ -1984,15 +2036,16 @@ export function SatongMultiMap({
   const labelPlan = useMemo(
     () =>
       planSatongLabels(mapZoom, [
-        { id: "market", count: marketMappableCount },
+        // market 슬롯을 유형별 서브슬롯으로 분할(P3) — 상대 우선순위(다른 레이어 대비)는
+        // 종전과 동일하게 이 위치에서 소비하되, market 내부에서는 유형별로 공평 분배된다.
+        ...marketTypes.map((type) => ({ id: `market:${type}`, count: marketTypeMappableCounts[type] ?? 0 })),
         { id: "presale", count: presaleMappableCount },
         { id: "auction", count: auctionMappableCount },
         { id: "poi", count: poiMappableCount },
         { id: "development", count: devMappableCount },
       ]),
-    [mapZoom, marketMappableCount, presaleMappableCount, auctionMappableCount, poiMappableCount, devMappableCount],
+    [mapZoom, marketTypes, marketTypeMappableCounts, presaleMappableCount, auctionMappableCount, poiMappableCount, devMappableCount],
   );
-  const marketLabelLimit = labelPlan.market ?? 0;
   const presaleLabelLimit = labelPlan.presale ?? 0;
   const auctionLabelLimit = labelPlan.auction ?? 0;
   const poiLabelLimit = labelPlan.poi ?? 0;
@@ -2011,6 +2064,7 @@ export function SatongMultiMap({
 
     if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) {
       setMarketNote(marketPayload?.fetch_failed ? marketPayload.note || "실거래 공공데이터 조회 실패" : "");
+      setMarketTypeCounts({});
       return;
     }
 
@@ -2018,11 +2072,9 @@ export function SatongMultiMap({
     marketLayerRef.current = group;
     const bounds = L.latLngBounds([]);
     const kind = marketKind;
-    const type = marketType;
-    const category = marketPayload.categories?.[`${type}_${kind}`];
-    const groups = category?.groups ?? [];
-    const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
     let marketCount = 0;
+    let cappedTotal = 0;
+    const byType: Record<string, number> = {};
 
     bounds.extend([marketPayload.center.lat, marketPayload.center.lon]);
     L.circleMarker([marketPayload.center.lat, marketPayload.center.lon], {
@@ -2049,49 +2101,77 @@ export function SatongMultiMap({
       }).addTo(group);
     }
 
-    groups.forEach((item) => {
-      if (!item.lat || !item.lon) return;
-      const ordinal = marketCount;
-      marketCount += 1;
-      const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
-      const marker = L.circleMarker([item.lat, item.lon], {
-        radius,
-        color: "#ffffff",
-        weight: 2,
-        fillColor: typeColor,
-        fillOpacity: 0.9,
-        // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
-        //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
-        bubblingMouseEvents: false,
-      })
-        .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
-        .addTo(group);
-      // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
-      // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
-      // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
-      // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
-      const perPyeong =
-        pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
-          ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
-          : null;
-      const priceTag =
-        kind === "trade" && item.avg_price_10k
-          ? perPyeong
-            ? ` ${perPyeong.toLocaleString()}만/평`
-            : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
-          : "";
-      bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < marketLabelLimit, offsetY: radius });
-      bounds.extend([item.lat, item.lon]);
-    });
+    // ★POI 이펙트(:2205-2245 부근)와 동형 — 켜진 유형(marketTypes) 전부를 순회하며 유형별
+    //   색상 마커를 동시에 그린다. 라벨 상시 표시는 유형별 서브슬롯(labelPlan[`market:${type}`])
+    //   으로 공평 배분(P3 — 한 유형이 전역 라벨 버짓을 독식하지 않게).
+    for (const type of marketTypes) {
+      const category = marketPayload.categories?.[`${type}_${kind}`];
+      const groups = category?.groups ?? [];
+      const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
+      const typeLabelLimit = labelPlan[`market:${type}`] ?? 0;
+      cappedTotal += category?.capped_count ?? 0;
+      let typeShown = 0;
 
+      groups.forEach((item) => {
+        if (!item.lat || !item.lon) return;
+        const ordinal = typeShown;
+        typeShown += 1;
+        marketCount += 1;
+        const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
+        const marker = L.circleMarker([item.lat, item.lon], {
+          radius,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: typeColor,
+          fillOpacity: 0.9,
+          // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
+          //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
+          bubblingMouseEvents: false,
+        })
+          .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
+          .addTo(group);
+        // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
+        // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
+        // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
+        // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
+        const perPyeong =
+          pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
+            ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
+            : null;
+        const priceTag =
+          kind === "trade" && item.avg_price_10k
+            ? perPyeong
+              ? ` ${perPyeong.toLocaleString()}만/평`
+              : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
+            : "";
+        bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
+        bounds.extend([item.lat, item.lon]);
+      });
+
+      if (typeShown) byType[type] = typeShown;
+    }
+    setMarketTypeCounts(byType);
+
+    // ★P1(절단 정직 고지) — 백엔드가 이미 반환하는 좌표미확보·반경밖·상한초과 건수를
+    //   표면화한다(무음 절단 금지 — #459 ComparableSet "수집=선정+제외" 항등 선례와 동일 원칙).
+    const cutParts: string[] = [];
+    if ((marketPayload.coords_unresolved_count ?? 0) > 0) {
+      cutParts.push(`좌표미확보 ${marketPayload.coords_unresolved_count}건 제외`);
+    }
+    if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
+      cutParts.push(`반경밖 ${marketPayload.radius_filtered_out_count}건 제외`);
+    }
+    if (cappedTotal > 0) {
+      cutParts.push(`유형별 상한초과 ${cappedTotal}건 생략`);
+    }
     // 분양·경매 노트는 독립 이펙트(presaleAuctionNote)가 담당 — 실거래만 여기서.
-    setMarketNote(marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료");
+    setMarketNote([marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료", ...cutParts].join(" · "));
 
     // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
     //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
     //   ★fit-key 1회성 가드: 라벨 재부착(줌 임계 교차)로 이 이펙트가 재실행돼도 같은 대상지엔
     //     다시 fit 하지 않아 사용자 줌을 덮지 않는다.
-    const marketFitKey = `${marketPayload.center.lat},${marketPayload.center.lon}|${kind}|${type}|${selectedParcelKey}`;
+    const marketFitKey = `${marketPayload.center.lat},${marketPayload.center.lon}|${kind}|${marketTypes.join(",")}|${selectedParcelKey}`;
     if (bounds.isValid() && selectedParcels.length > 0 && marketFitKey !== lastMarketFitKeyRef.current) {
       lastMarketFitKeyRef.current = marketFitKey;
       try { map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 }); } catch { /* noop */ }
@@ -2101,7 +2181,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
-  }, [mapReady, marketKind, marketType, marketPayload, marketLabelLimit, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
+  }, [mapReady, marketKind, marketTypes, marketPayload, labelPlan, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
@@ -2745,6 +2825,44 @@ export function SatongMultiMap({
                   className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
                 >
                   <Building2 className="size-3" aria-hidden />노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
+                  <span aria-hidden>▸</span>
+                </button>
+              )
+            )}
+            {/* 실거래 유형 범례(P1) — 노후도 범례와 동일한 접기/펼침 + 무자료 정직 패턴 재사용.
+                ★유형 다중 표시(P0)로 마커 색상이 6종까지 섞일 수 있어, 색상 SSOT
+                (MARKET_TYPE_COLORS/MARKET_TYPE_LABELS)로 유형별 표시 건수를 범례화한다. */}
+            {marketPayload && !marketPayload.fetch_failed && marketTypes.length > 0 && (
+              marketLegendOpen ? (
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => setMarketLegendOpen(false)}
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-slate-800"
+                    aria-expanded
+                  >
+                    <span className="inline-flex items-center gap-1"><Home className="size-3" aria-hidden />실거래 유형</span>
+                    <span aria-hidden>▾</span>
+                  </button>
+                  <div className="flex flex-col gap-1 text-[10.5px]">
+                    {marketTypes.map((type) => (
+                      <div key={type} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                        <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
+                        <span>{MARKET_TYPE_LABELS[type] || type}</span>
+                        {/* ★정직 표기: 켜졌지만 0건인 유형도 숨기지 않고 0건으로 명시(무음 금지) */}
+                        <span className="ml-auto text-slate-500">{marketTypeCounts[type] ?? 0}건</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setMarketLegendOpen(true)}
+                  aria-expanded={false}
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
+                >
+                  <Home className="size-3" aria-hidden />실거래 범례 · {marketTypes.length}유형
                   <span aria-hidden>▸</span>
                 </button>
               )
