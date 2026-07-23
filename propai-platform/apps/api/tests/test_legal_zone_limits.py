@@ -205,10 +205,20 @@ def test_legal_limits_far_range_natural_green():
 
 def test_applicable_limits_legal_range_only_when_no_ordinance():
     # 조례·계획 미보유 → 법정범위 반환 + 조례확인필요(False).
+    # ★결함 고정 교정(2026-07-23, QA 레인A): 종전엔 이 단언이 applied_far_pct==100으로
+    #   "구조상한 누락" 버그를 정답으로 고정하고 있었다. 자연녹지는 건폐율 20%(법정)×
+    #   층수상한 4층(국토계획법 시행령 별표17 두문) = 80%가 법정범위(100%)보다 낮은 실질
+    #   상한이라 applicable_limits_for의 4번째 계층(구조상한)이 적용되면 80이 맞다
+    #   (design-audit 4엔진 반사실 재현: far_applied=100·max_far=100 → PASS로 과대낙관,
+    #   max_far=80이면 critical 정상 적발 — precheck_service.calc_effective_far가 이미
+    #   같은 80을 산출해온 정답 기준선과 동치).
     a = applicable_limits_for("자연녹지지역")
     assert a["legal_min_far_pct"] == 50
     assert a["legal_max_far_pct"] == 100
-    assert a["applied_far_pct"] == 100  # 기준은 법정범위 max
+    assert a["applied_far_pct"] == 80  # 구조상한(건폐 20%×4층) 바인딩 — 법정범위 100 아님
+    assert a["structural_cap_pct"] == 80
+    assert a["floor_cap"] == 4
+    assert "구조상한" in a["far_source"]
     assert a["ordinance_confirmed"] is False
     assert "법정범위" in a["sources"]
 
@@ -223,11 +233,20 @@ def test_applicable_limits_ordinance_value_becomes_applied():
 
 
 def test_applicable_limits_plan_ceiling_overrides():
-    # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(법정상한 초과 정당).
+    # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(법정상한 초과 정당) —
+    # 단, 그 위에도 구조상한(건폐율×층수) 계층은 여전히 적용된다(bcr override 없음).
+    # ★결함 고정 교정(2026-07-23, QA 레인A): plan_far_pct(원본 계획값)는 200 그대로 노출하되
+    #   applied_far_pct는 80(=건폐 20%×4층)까지 낮아진다 — calc_effective_far(far_tier_service,
+    #   정답 기준선)로 동일 입력(자연녹지, bcr override 없음, plan_far_pct=200)을 실행해도
+    #   effective_far_pct=80·far_basis="구조상한(건폐율×층수)"이 실측 확인됐다(두 SSOT 동치).
+    #   계획상한 자체가 건폐율까지 완화한다는 명시 근거(plan_bcr_pct 등)가 없으면 층수제한은
+    #   그대로 유효하다(무날조 — 근거 없는 완화 확대 금지).
     plan = {"districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 200}]}
     a = applicable_limits_for("자연녹지지역", plan_payload=plan)
-    assert a["plan_far_pct"] == 200
-    assert a["applied_far_pct"] == 200
+    assert a["plan_far_pct"] == 200  # 계획 원본값은 불변(참고 표시용)
+    assert a["applied_far_pct"] == 80  # 구조상한이 최종 실질 상한
+    assert a["structural_cap_pct"] == 80
+    assert "구조상한" in a["far_source"]
 
 
 # ── 검증기: 조례값·계획상한 반영(정당한 상향 오적발 방지 / 무근거 적발 유지) ──
@@ -334,8 +353,11 @@ def test_applicable_limits_statutory_fallback_not_confirmed():
     a = applicable_limits_for("자연녹지지역", regulation_payload=reg)
     assert a["ordinance_confirmed"] is False
     assert a.get("ordinance_far_pct") is None  # 조례값으로 승격 금지
-    assert a["applied_far_pct"] == 100  # 수치는 법정상한 유지
-    assert "법정상한" in a["far_source"]
+    # ★결함 고정 교정(2026-07-23, QA 레인A): 조례 미확정 폴백이라도 구조상한(건폐 20%×4층=80%)
+    #   은 법정상한(100%)과 무관하게 여전히 적용되는 물리적 상한이다 — "법정상한 유지" 문구가
+    #   뜻하는 건 "조례를 신뢰하지 않는다"이지 "구조상한을 무시한다"가 아니다.
+    assert a["applied_far_pct"] == 80  # 구조상한 바인딩(수치는 법정상한이 아닌 실질상한)
+    assert "구조상한" in a["far_source"]
 
 
 def test_extract_ordinance_far_ignores_effective_only_without_source():
@@ -415,8 +437,11 @@ def test_applicable_limits_limits_trio_fallback_not_confirmed():
     a = applicable_limits_for("자연녹지지역", regulation_payload=payload)
     assert a["ordinance_confirmed"] is False
     assert a.get("ordinance_far_pct") is None
-    assert a["applied_far_pct"] == 100  # 수치는 법정상한 유지
-    assert "법정상한" in a["far_source"]
+    # ★결함 고정 교정(2026-07-23, QA 레인A): 조례 미확정 폴백이라도 구조상한(건폐 20%×4층=80%)
+    #   은 여전히 적용되는 물리적 상한이다(위 test_applicable_limits_statutory_fallback_not_
+    #   confirmed와 동일 사유 — 같은 버그클래스의 다른 경로).
+    assert a["applied_far_pct"] == 80  # 구조상한 바인딩
+    assert "구조상한" in a["far_source"]
 
 
 def test_applicable_limits_limits_trio_explicit_ordinance_confirmed():

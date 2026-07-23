@@ -184,6 +184,38 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
     }
 
 
+def structural_cap_for(
+    zone_type: str | None, applied_bcr_pct: float,
+) -> tuple[float | None, int | None, str | None]:
+    """용도지역 법정 층수상한(이 모듈의 legal_limits_for) × 적용 건폐율 = 구조상한(%).
+
+    ★공용 승격(2026-07-23, QA 레인A): 원래 far_tier_service._structural_cap_for(비공개)로
+    존재하던 산식을 이 모듈(법정 SSOT)로 승격해 applicable_limits_for(법정→조례→계획 3계층)도
+    같은 헬퍼로 4번째 계층(구조상한)을 적용할 수 있게 한다(산식 복제 0 — 호출부는 이 함수
+    하나만 임포트). far_tier_service.calc_effective_far는 이 함수를 임포트해 사용한다.
+
+    ★확정버그(2026-07-12 발견, 2026-07-23 근원봉합): 자연/생산녹지 등은 법정 용적률 '범위'
+    (예: 자연녹지 50~100%)만 보면 100%까지 허용되는 것처럼 보이지만, 국토계획법 시행령
+    별표15~17 두문(4층 이하)이 실질 상한을 만든다(건폐 20%×4층=80% < 법정 100%). 이 물리적
+    상한을 반영하지 않으면 실효 용적률을 과대표시하는 할루시네이션이 된다(90초진단 재현,
+    design-audit 4엔진 판정 과대낙관 재현). 근거 미확인 zone(legal_limits_for.max_floors=None)
+    은 (None,None,None) — 절대 적용하지 않는다(무날조·무회귀).
+
+    Args:
+        zone_type: 용도지역명(정규화 전 — legal_limits_for가 정규화).
+        applied_bcr_pct: 이 시점까지 적용된 건폐율(%) — 법정/조례/계획 계층을 이미 반영한 값.
+
+    Returns:
+        (구조상한(%)|None, 법정 층수상한|None, 층수상한 법령 근거문구|None).
+        층수 제한이 없는 용도지역은 (None, None, None)(완전 무영향).
+    """
+    limits = legal_limits_for(zone_type) or {}
+    floor_cap = limits.get("max_floors")
+    if not floor_cap:
+        return None, None, None
+    return round(applied_bcr_pct * floor_cap, 2), floor_cap, limits.get("floor_cap_basis")
+
+
 # ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
 #   폴백을 뜻하므로 여기 포함하지 않는다(effective_far가 법정값과 같아도 조례값이 아님).
 # ★한계(2026-07-22, live-fix① R2 — LOW#2 명시): 이 판정은 문자열 하드코딩 키워드 결합이다.
@@ -443,6 +475,28 @@ def applicable_limits_for(
     if plan_info["plan_bcr"] is not None:
         result["plan_bcr_pct"] = plan_info["plan_bcr"]
         applied_bcr = plan_info["plan_bcr"]
+
+    # ── 4) 구조상한(건폐율×층수) — 자연/생산/보전녹지 등 층수 제한이 있는 zone은 물리적 상한이
+    #    법정/조례/계획 한도보다 낮을 수 있다(건폐 20%×4층=80% < 법정 100%). 이 계층을 빠뜨리면
+    #    이 함수의 applied_far_pct를 그대로 비교한도로 쓰는 design-audit 4엔진(rules8·
+    #    design_review·solar_envelope·permit)이 판정을 과대낙관한다(용인시 자연녹지 재현:
+    #    applied_far_pct=100 → 실효 80%인데 용적률_초과가 안 잡힘). calc_effective_far
+    #    (far_tier_service)의 마지막 계층과 동일 헬퍼(structural_cap_for)로 산정해 산식
+    #    복제를 피하고, 반환 여부도 동일 규칙(min 연산)이라 두 SSOT가 항상 동치다. 층수 제한이
+    #    없는 zone은 structural_cap_for가 (None,None,None)을 반환해 완전 무영향(무회귀).
+    cap_pct, floor_cap, cap_basis = (
+        structural_cap_for(result["zone_type"], applied_bcr)
+        if applied_bcr is not None
+        else (None, None, None)
+    )
+    result["structural_cap_pct"] = cap_pct
+    result["floor_cap"] = floor_cap
+    result["floor_cap_basis"] = cap_basis
+    if cap_pct is not None and applied_far is not None and cap_pct < applied_far:
+        applied_far = cap_pct
+        _suffix = "" if result["ordinance_confirmed"] else " · 조례 확인 필요"
+        far_source = f"구조상한(건폐율×{floor_cap}층) 적용{_suffix}"
+        sources.append(cap_basis or "구조상한(건폐율×층수)")
 
     result["applied_far_pct"] = applied_far
     result["applied_bcr_pct"] = applied_bcr

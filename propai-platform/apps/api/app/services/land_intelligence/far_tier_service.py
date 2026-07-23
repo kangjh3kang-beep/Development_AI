@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from app.services.zoning.far_incentive_calculator import calculate as calc_far_incentive
+from app.services.zoning.legal_zone_limits import structural_cap_for as _structural_cap_for
 
 logger = structlog.get_logger()
 
@@ -54,28 +55,6 @@ def build_area_annotation(
         f"최대 건축면적 {max_bldg:,.1f}㎡ (약 {max_bldg / _PYEONG:,.0f}평)까지 "
         f"건축이 가능합니다."
     )
-
-
-def _structural_cap_for(
-    zone_type: str | None, effective_bcr: float,
-) -> tuple[float | None, int | None, str | None]:
-    """용도지역 법정 층수상한(legal_zone_limits SSOT) × 실효 건폐율 = 구조상한(%).
-
-    ★확정버그(2026-07-12): 자연/생산녹지 등은 법정 용적률 '범위'(예: 자연녹지 50~100%)만
-    보면 100%까지 허용되는 것처럼 보이지만, 국토계획법 시행령 별표15~17 두문(4층 이하)이
-    실질 상한을 만든다(건폐 20%×4층=80% < 법정 100%). 이 물리적 상한을 반영하지 않으면
-    실효 용적률을 과대표시하는 할루시네이션이 된다(90초진단 재현). 근거 미확인 zone
-    (legal_zone_limits.max_floors=None)은 (None,None,None) — 절대 적용하지 않는다(무날조).
-    단일필지(calc_effective_far)·다필지 통합(rebuild_area_dependent) 양쪽이 이 헬퍼 하나로
-    구조상한을 산정한다(산식 복제 금지).
-    """
-    from app.services.zoning.legal_zone_limits import legal_limits_for
-
-    limits = legal_limits_for(zone_type) or {}
-    floor_cap = limits.get("max_floors")
-    if not floor_cap:
-        return None, None, None
-    return round(effective_bcr * floor_cap, 2), floor_cap, limits.get("floor_cap_basis")
 
 
 def rebuild_area_dependent(

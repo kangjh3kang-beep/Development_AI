@@ -101,8 +101,14 @@ async def test_ssot_failure_honest_degrade(monkeypatch):
 
     monkeypatch.setattr(far_tier_module, "calc_effective_far", _boom)
     legal = await _legal_limits("자연녹지지역")
-    # 폴백은 법정상한(현행 applicable 경로)이되, 신뢰도·근거로 '실효 아님'을 정직 표기.
-    assert legal["applied_far_pct"] == 100
+    # 폴백은 applicable_limits_for(법정→조례→계획→구조상한 4계층) 경로이되, 신뢰도·근거로
+    # calc_effective_far(SSOT) 미경유(='실효' 확정 아님)를 정직 표기.
+    # ★결함 고정 교정(2026-07-23, QA 레인A): applicable_limits_for 자체에 구조상한(건폐
+    # 20%×4층=80%) 계층이 승격되어, calc_effective_far가 실패해도 이 폴백값은 80이다(100이
+    # 아님) — SSOT 실패 시에도 과대표시가 아닌 물리적 실질상한이 유지되는 안전측 개선.
+    # structural_cap_pct/far_basis는 precheck_service가 calc_effective_far 성공 시에만 채우는
+    # 필드라 SSOT 실패 시 여전히 None(아래 두 단언 불변 — 계층 소스가 다름).
+    assert legal["applied_far_pct"] == 80
     assert legal["far_reliable"] is False
     assert legal["far_basis"] is None
     assert legal["structural_cap_pct"] is None
