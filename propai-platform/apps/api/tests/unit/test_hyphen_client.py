@@ -1,6 +1,7 @@
 """하이픈(Hyphen) 등기부 클라이언트 단위 테스트."""
 
 import pytest
+
 from app.services.registry import hyphen_client
 
 
