@@ -688,19 +688,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
     void restoreSnapshot(p.id);
   }, [projects, setProject]);
 
-  const handleConnectTargetChange = useCallback((value: string) => {
-    setConnectNotice("");
-    if (value === "new" || value === "none") {
-      setConnectTarget(value);
-      // 활성 프로젝트가 있으면 해제(스냅샷 보존, 선택 유지) — 이후 선택·커밋이 그 프로젝트를
-      //   덮지 않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
-      //   이펙트가 이 해제를 '프로젝트 전환'으로 오인해 방금 담긴 선택을 지우지 않게 한다(F1).
-      if (projectId) detachProjectCarryingSelection();
-      return;
-    }
-    setConnectTarget(value);
-    handleSelectProject(value); // 기존 경로(setProject+restoreSnapshot) 재사용 — PR#221 시드가 이어짐
-  }, [projectId, detachProjectCarryingSelection, handleSelectProject]);
+  // handleConnectTargetChange 정의는 아래(clearParcels 정의 직후)로 이동했다 — 레인F P0-1:
+  //   전환 시 선택 필지까지 정리하려면 정본 clearParcels()를 호출해야 하는데, clearParcels는
+  //   이 지점보다 한참 뒤에 정의된다(같은 렌더 내 TDZ). 재배치로 정의 순서를 맞췄다(로직은
+  //   그 위치에서 그대로 확인 가능 — 기능 이동 없음).
 
   const selectedMapFeatures = useMemo<SatongMapFeature[]>(
     () =>
@@ -1238,14 +1229,50 @@ export function SatongMapShell({ locale }: { locale: string }) {
     [syncParcelsToStores],
   );
 
-  const clearParcels = useCallback(() => {
-    projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
+  // ★레인F P0-2: clearParcels와 프로젝트 전환 이펙트가 공통으로 손대야 할 4종 청소(목록·
+  //   포커스·상세패널·지도 staged 폴리곤)를 한 곳에 묶는다 — 어느 한쪽만 고치면 반대편이
+  //   새는 비대칭(형제 결함)을 막는다. 스토어/sessionStorage 동기화는 호출부마다 의미가
+  //   달라(사용자 초기화=syncParcelsToStores 전체커밋, 프로젝트 전환=saveSelectionForOutputs
+  //   직접 — 전환 중 store 위로 덮어써 새 프로젝트 복원 데이터와 경합하지 않도록) 이 함수
+  //   밖에 남겨 각 호출부가 스스로 처리한다.
+  const clearSelectionUiArtifacts = useCallback(() => {
     setSelectedParcels([]);
     setFocusTarget(null);
-    setDetailFeature(null); // ★R1 HIGH: 전체초기화 시 상세 패널 잔존 방지
-    syncParcelsToStores([]);
+    setDetailFeature(null); // ★R1 HIGH: 상세 패널(유령 패널) 잔존 방지
     setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
-  }, [syncParcelsToStores]);
+  }, []);
+
+  const clearParcels = useCallback(() => {
+    projectSeedArmedRef.current = false; // 사용자 직접 편집 — 자동시드 중지(선택 소유권 이전)
+    clearSelectionUiArtifacts();
+    syncParcelsToStores([]);
+  }, [clearSelectionUiArtifacts, syncParcelsToStores]);
+
+  // ★레인F P0-1(사용자 버그리포트): "새 프로젝트로 등록"·"연결 안 함"으로 전환해도 이전
+  //   프로젝트의 선택 필지가 잔존하던 결함 수정. detachProjectCarryingSelection은 프로젝트
+  //   연결만 해제할 뿐 선택목록은 그대로 둔다(가드 자동해제 경로 전용 설계 — addParcels
+  //   :1188 참조, 그 경로는 건드리지 않는다). 사용자가 드롭다운을 직접 바꾼 이 경로에서는
+  //   정본 clearParcels()를 이어 호출해 선택목록·지도 staged 폴리곤·상세 패널·sessionStorage
+  //   미러까지 함께 비운다 — 안 비우면 오염된 선택 그대로 "선택 필지로 새 프로젝트 생성"이
+  //   실행돼 백엔드 프로젝트 신규생성+과금+오염 스냅샷 서버영속까지 번진다(데이터 영속 오염).
+  //   무음 금지 — 실제로 비웠을 때만 connectNotice로 1줄 고지한다.
+  const handleConnectTargetChange = useCallback((value: string) => {
+    setConnectNotice("");
+    if (value === "new" || value === "none") {
+      setConnectTarget(value);
+      // 활성 프로젝트가 있으면 해제(스냅샷 보존) — 이후 선택·커밋이 그 프로젝트를 덮지
+      //   않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
+      //   이펙트가 이 해제를 '프로젝트 전환'으로 오인하지 않게 한다(F1).
+      if (projectId) detachProjectCarryingSelection();
+      if (selectedParcels.length > 0) {
+        clearParcels();
+        setConnectNotice("연결 대상을 바꿔 선택 필지를 비웠습니다.");
+      }
+      return;
+    }
+    setConnectTarget(value);
+    handleSelectProject(value); // 기존 경로(setProject+restoreSnapshot) 재사용 — PR#221 시드가 이어짐
+  }, [projectId, detachProjectCarryingSelection, handleSelectProject, selectedParcels, clearParcels]);
 
   const runDirectGeocode = useCallback(
     async (rawQuery: string) => {
@@ -1611,9 +1638,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
       projectSeedArmedRef.current = !!projectId;
       lastSeedKeyRef.current = "";
       projectFocusPendingRef.current = !!projectId;
-      setSelectedParcels([]);
-      setFocusTarget(null);
-      setDetailFeature(null); // ★R1 HIGH: 이전 프로젝트 필지 정보가 새 프로젝트 화면에 잔존 금지
+      // ★레인F P0-2(형제 결함): clearParcels와 동일한 공용 청소(목록·포커스·상세패널·지도
+      //   staged 폴리곤)를 호출한다 — 종전엔 clearNonce를 올리지 않아 A→B 전환 시 A의 staged
+      //   폴리곤이 지도에 잔존했다. store/sessionStorage는 여기서 직접 처리(아래 그대로) —
+      //   syncParcelsToStores를 쓰면 전환 중 방금 복원된 B의 siteAnalysis를 빈 값으로 덮어써
+      //   비동기 restoreSnapshot 결과와 경합한다.
+      clearSelectionUiArtifacts();
       saveSelectionForOutputs([]);
     }
 
@@ -1644,7 +1674,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
         }
       }
     }
-  }, [projectId, storeSiteAnalysis]);
+  }, [projectId, storeSiteAnalysis, clearSelectionUiArtifacts]);
 
   useEffect(() => {
     const trimmed = query.trim();

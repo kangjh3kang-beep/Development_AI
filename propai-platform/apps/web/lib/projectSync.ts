@@ -14,6 +14,7 @@ import {
   purifyPollutedSnapshot,
 } from "@/store/useProjectContextStore";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
+import { SATONG_MAP_SELECTION_KEY } from "@/components/precheck/satong-map-selection";
 
 const CTX_KEYS = [
   "projectId", "projectName", "projectStatus",
@@ -93,10 +94,18 @@ export function clearAllProjectData(): void {
       }
     }
   } catch { /* noop */ }
-  // 세션 저장소의 현장앱 토큰·핸드오프도 정리(계정 전환 시 잔존 방지).
+  // 세션 저장소의 현장앱 토큰·핸드오프·사통맵 선택필지 미러도 정리(계정 전환 시 잔존 방지).
+  //   ★레인F P0-3: 사통맵 선택(SATONG_MAP_SELECTION_KEY)이 빠져 있으면 비밀번호 변경 등
+  //   router.push 소프트 이동(SPA 세션 토큰 유지) 뒤 다음 계정에서 이전 계정 선택 필지가
+  //   복원될 수 있었다(계정 격리 구멍) — 정본 상수를 재사용해 하드코딩 없이 한 곳만 고치면
+  //   전역이 따라오게 한다.
   try {
     for (const k of Object.keys(window.sessionStorage)) {
-      if (k.startsWith("propai_site_token:") || k === "propai_precheck_handoff") {
+      if (
+        k.startsWith("propai_site_token:") ||
+        k === "propai_precheck_handoff" ||
+        k === SATONG_MAP_SELECTION_KEY
+      ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
     }
