@@ -17,11 +17,16 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
 }));
 
+// ★R1(M): 스텁이 슬롯을 '안 그리는' 것만으로는 도크 잔재를 감시할 수 없다(누가
+//   bottomDockSlot을 되돌려도 스텁이 삼켜 테스트가 통과한다). props를 캡처해 전달
+//   계약 자체를 단언한다.
+const capturedMapProps: Record<string, unknown>[] = [];
 vi.mock("next/dynamic", () => ({
   default: () => {
-    // ★레일 통합(2026-07-23): 스위처는 더 이상 SatongMultiMap의 bottomDockSlot이 아니라
-    //   Shell 우상단 레일의 팝오버로 렌더된다 — 지도 스텁은 슬롯을 마운트하지 않는다.
-    const DynamicStub = () => <div data-testid="dynamic-map-stub" />;
+    const DynamicStub = (props: Record<string, unknown>) => {
+      capturedMapProps.push(props);
+      return <div data-testid="dynamic-map-stub" />;
+    };
     return DynamicStub;
   },
 }));
@@ -61,7 +66,14 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     resetStores();
   });
 
-  it("★레일 버튼으로 열기 전에는 스와치가 없다(하단 도크 잔재 회귀 방지)", () => {
+  it("★하단 도크로 스위처를 전달하지 않는다(도크 잔재 회귀 방지 — props 계약 단언)", () => {
+    capturedMapProps.length = 0;
+    render(<SatongMapShell locale="ko" />);
+    expect(capturedMapProps.length).toBeGreaterThan(0);
+    expect(capturedMapProps.at(-1)).not.toHaveProperty("bottomDockSlot");
+  });
+
+  it("★레일 버튼으로 열기 전에는 스와치가 없다", () => {
     render(<SatongMapShell locale="ko" />);
     expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
     openBasemapPopover();
@@ -101,6 +113,23 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     // 다시 베이스맵을 열면 정상 표시(토글 무결성).
     openBasemapPopover();
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+
+  it("★좌상단 활성레이어 칩 경로에서도 닫힌다(근원 봉합=handleLayerClick)", () => {
+    render(<SatongMapShell locale="ko" />);
+    // 레일에서 지적도를 켜면 좌상단에 활성 레이어 칩이 생긴다.
+    fireEvent.click(screen.getByRole("button", { name: "지적도" }));
+    openBasemapPopover();
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+
+    // ★조건부 단언 금지 — 칩을 못 찾으면 조용히 통과하는 약한 테스트가 된다(명시 실패).
+    const railButton = screen.getByRole("button", { name: "지적도" });
+    const chip = screen
+      .getAllByRole("button", { name: /지적/ })
+      .find((el) => el !== railButton);
+    expect(chip, "좌상단 활성 레이어 칩을 찾지 못함").toBeTruthy();
+    fireEvent.click(chip!);
+    expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
   });
 
   it("Esc로 닫힌다(레이어 팝오버와 동일 닫힘 계약)", () => {

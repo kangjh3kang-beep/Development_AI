@@ -14,7 +14,7 @@ import {
   Home,
   Landmark,
   Layers,
-  Image,
+  Image as ImageIcon,
   LineChart,
   Loader2,
   MapIcon,
@@ -612,6 +612,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
+    // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
+    //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
+    //   (좌측 필지 카드·지도 피처 클릭)마다 닫기를 흩뿌리면 새 호출부가 생길 때 또 샌다.
+    setBasemapOpen(false);
     setDetailFeature(feature);
     setActiveLayerId(null);
   }, []);
@@ -1369,6 +1373,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
   const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
     setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
+    setBasemapOpen(false);  // 〃 베이스맵도(레일 버튼·좌상단 칩 행 두 호출부가 함께 따라온다)
     if (!isRenderableSatongMapLayer(layerId)) {
       setActiveLayerId((current) => (current === layerId ? null : layerId));
       return;
@@ -2228,19 +2233,23 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div
               ref={railRef}
-              // ★P1(감사): 고정고 608px는 버튼 12개 필요고(680px)보다 작아 하단(로드뷰 등)이
-              //   클리핑돼 도달 불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
+              // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
+              //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
               // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
               // ★U3(비반응형 레일): 상한을 컨테이너뿐 아니라 브라우저 뷰포트(dvh)로도 걸어,
               //   지도가 화면보다 클 때 레일이 폴드 밑으로 늘어나 하단 버튼 도달 불가·페이지
               //   스크롤 시 hover 전개가 풀리던 문제를 해소. 고정(핀) 시 2열 그리드로 접어
-              //   12버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시.
+              //   버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시(현 14개=7행·400px).
               //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
               //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
+              // ★2026-07-23(R1 M): 접힌 높이 h-16(=버튼 1개)은 두 번째 자식인 베이스맵 버튼을
+              //   숨겨, 터치 기기에서 배경지도 전환이 3탭(앵커→베이스맵→스와치)이 되고 기능
+              //   존재 자체가 비가시였다(종전 하단 도크는 항상 가시·1탭). h-28로 앵커+베이스맵
+              //   2개를 상시 노출해 1탭 경로를 복원한다(전개 어포던스인 앵커는 그대로 유지).
               className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
                 railPinned
                   ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
-                  : "flex w-16 flex-col gap-2 h-16 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
+                  : "flex w-16 flex-col gap-2 h-28 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
               }`}
             >
               {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
@@ -2268,7 +2277,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
                   setBasemapOpen((v) => !v);
                 }}
-                aria-pressed={basemapOpen}
+                aria-expanded={basemapOpen}
+                aria-controls="satong-basemap-popover"
                 aria-label="베이스맵 선택"
                 title="베이스맵 (일반·위성·하이브리드·회색)"
                 className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
@@ -2277,7 +2287,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
                 }`}
               >
-                <Image className="size-5" aria-hidden />
+                <ImageIcon className="size-5" aria-hidden />
               </button>
 
               {/* 내부 레이어 버튼 리스트 (세로 전개) */}
@@ -2289,10 +2299,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <button
                     key={layer.id}
                     type="button"
-                    onClick={() => {
-                      setBasemapOpen(false); // 상호배타(위 주석 참조)
-                      handleLayerClick(layer.id);
-                    }}
+                    onClick={() => handleLayerClick(layer.id)}
                     title={layer.label}
                     className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
                       isActive
@@ -2316,6 +2323,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {basemapOpen && (
               <div
                 ref={basemapPopoverRef}
+                id="satong-basemap-popover"
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="mb-3 flex items-center justify-between">
@@ -2405,7 +2413,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             {/* ── WS-C 필지 상세 패널 — 개요·보유 속성(무자료 '-' 정직표기)·산출물 원클릭 퍼널.
                  레이어 패널과 같은 슬롯(상호 배타 — 단일 팝오버 원칙). ── */}
-            {detailFeature && !activeLayer && (
+            {/* ★렌더 가드도 3패널 전부를 배타 — 상태 봉합(근원 함수)과 이중 방어. 좌표가
+                같은 형제가 늘 때 가드가 따라오지 않으면 겹침이 다시 샌다(07-17 교훈). */}
+            {detailFeature && !activeLayer && !basemapOpen && (
               <div
                 data-testid="parcel-detail-panel"
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
