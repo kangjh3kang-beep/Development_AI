@@ -57,10 +57,9 @@ function SecretCard({
   const canTest = useMemo(
     () =>
       [
-        "APICK_CL_AUTH_KEY",
+        "HYPHEN_HKEY",
+        "HYPHEN_USER_ID",
         "REGISTRY_PROVIDER",
-        "CODEF_CLIENT_ID",
-        "CODEF_CLIENT_SECRET",
         "TILKO_API_KEY",
       ].includes(item.name),
     [item.name],
@@ -143,7 +142,7 @@ function SecretCard({
               <p className="mt-1 text-xs text-[var(--text-secondary)]">{item.desc}</p>
             )}
             {item.is_set && item.masked && item.kind !== "select" && (
-              <p className="cc-num mt-1 text-xs text-[var(--text-secondary)]">
+              <p className="cc-num mt-1 text-xs text-[var(--text-secondary)] break-all max-w-full">
                 현재값: {item.masked}
               </p>
             )}

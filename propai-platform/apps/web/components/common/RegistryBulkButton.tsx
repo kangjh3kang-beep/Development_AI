@@ -2,14 +2,13 @@
 
 /**
  * 등기부(소유관계) 일괄 조회/다운로드 — 단/다필지.
- *
- * /registry/bulk 호출. 상용 등기부 API(REGISTRY_API_*) 설정 시 필지별 소유자·근저당·
- * PDF 다운로드 링크를 제공하고, 미설정 시 안내 메시지를 표시한다.
+ * 하이픈(Hyphen) API 1순위 연동 + 비상 등기부 PDF 직접 업로드 지원.
  */
 
 import { useCallback, useState } from "react";
-import { Files, Settings } from "lucide-react";
+import { FileUp, Files, Settings } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { RegistryUploadModal } from "./RegistryUploadModal";
 
 type RegItem = {
   pnu?: string | null; address?: string | null; status: string;
@@ -34,13 +33,14 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
   const list = addresses.map((s) => s.trim()).filter(Boolean);
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<RegResult | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const run = useCallback(async () => {
     if (!list.length) return;
     setLoading(true); setRes(null);
     try {
       const r = await apiClient.post<RegResult>("/registry/bulk", {
-        body: { addresses: list }, useMock: false, timeoutMs: 120000,
+        body: { items: list.map((a) => ({ address: a })) }, useMock: false, timeoutMs: 120000,
       });
       setRes(r);
     } catch {
@@ -56,19 +56,38 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]"><Files className="size-4" aria-hidden /> 등기부 일괄 조회/다운로드 ({list.length}필지)</p>
-          <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">필지별 소유자·근저당·지분 + 등기부 PDF (상용 등기부 API 연동)</p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
+            <Files className="size-4" aria-hidden /> 등기부 일괄 조회/다운로드 ({list.length}필지)
+          </p>
+          <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+            하이픈(Hyphen) 등기부 API 1순위 연동 + 비상 등기부 PDF 직접 업로드
+          </p>
         </div>
-        <button onClick={run} disabled={loading}
-          className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-          {loading ? "조회 중…" : "등기부 일괄 조회"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-1 rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold text-[var(--text-primary)] hover:bg-[var(--surface-soft)]"
+          >
+            <FileUp className="size-3.5" /> 비상 PDF 업로드
+          </button>
+          <button
+            onClick={run}
+            disabled={loading}
+            className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "조회 중…" : "등기부 일괄 조회"}
+          </button>
+        </div>
       </div>
 
       {res && !res.configured && (
         <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-400">
-          <span className="inline-flex items-center gap-1"><Settings className="size-3.5" aria-hidden /> {res.message || "등기부 발급 API 미설정"}</span> <br />
-          <span className="text-[var(--text-tertiary)]">대법원 IROS는 공개 API가 없어 상용 등기부 API(CODEF 등) 키 설정이 필요합니다(발급 건당 과금). 키 설정 시 자동 활성화됩니다.</span>
+          <span className="inline-flex items-center gap-1 font-bold">
+            <Settings className="size-3.5" aria-hidden /> {res.message || "등기부 발급 API 미설정"}
+          </span> <br />
+          <span className="mt-1 block text-[var(--text-tertiary)]">
+            하이픈(Hyphen) HKey 키 설정 시 자동 연동됩니다. API가 미설정 상태이거나 장기간 접속 지연 발생 시 상단의 <strong>[비상 PDF 업로드]</strong> 버튼을 통해 등기부등본 PDF를 직접 첨부해 주세요.
+          </span>
         </div>
       )}
 
@@ -100,6 +119,8 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
           ))}
         </div>
       )}
+
+      <RegistryUploadModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
     </div>
   );
 }

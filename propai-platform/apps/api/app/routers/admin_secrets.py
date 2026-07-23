@@ -308,8 +308,7 @@ async def test_secret(
         return {"ok": False, "message": "값이 설정되지 않았습니다."}
 
     try:
-        if name in {"APICK_CL_AUTH_KEY", "REGISTRY_PROVIDER", "CODEF_CLIENT_ID",
-                    "CODEF_CLIENT_SECRET", "TILKO_API_KEY"}:
+        if name in {"HYPHEN_HKEY", "HYPHEN_USER_ID", "REGISTRY_PROVIDER", "TILKO_API_KEY"}:
             from app.services.registry.registry_service import RegistryService
             st = RegistryService().status()
             return {"ok": bool(st.get("register_ready") or st.get("configured")),
