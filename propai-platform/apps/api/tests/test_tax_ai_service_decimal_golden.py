@@ -223,6 +223,30 @@ DISCRIMINATING_CASES: list[tuple[str, dict, dict]] = [
          "base_tax": 216060000, "multi_home_surcharge": 0, "tax": 216060000,
          "effective_rate": 0.21606},
     ),
+    (
+        # R2b: M4(경계 전진만 되돌림 — gain_dec = Decimal(str(gain)), 즉 R1 상태) 킬러 케이스.
+        # 리뷰어 확보 입력. gain(float 뺄셈) 자체의 이진오차가 taxable_gain 반올림
+        # 경계를 넘는다 — MED-1(gain_dec를 sale/acq 각각의 Decimal(str())에서 직접
+        # 계산) 없이는 이 케이스가 오라클과 어긋난다.
+        "decimal_boundary_position_1",
+        {"sale_price": 101221006029.84569, "acquisition_price": 1594587558.4171154,
+         "holding_years": 21, "is_single_home": False, "home_count": 3},
+        {"gain": 99626418471.42857, "deduction_rate": 0.3, "deduction_amount": 29887925541,
+         "taxable_gain": 69738492930, "bracket_rate": 0.45, "bracket_deduction": 65940000,
+         "base_tax": 31316381819, "multi_home_surcharge": 20921547879, "tax": 52237929698,
+         "effective_rate": 0.524338},
+    ),
+    (
+        # R2b: M4 킬러 케이스 2건째. deduction_amount가 R1 상태(gain_dec=Decimal(str(gain)))로는
+        # 31,446,215,012, MED-1 적용 후(현재)는 31,446,215,013로 갈린다(리뷰어 확보 입력).
+        "decimal_boundary_position_2",
+        {"sale_price": 46796153996.30562, "acquisition_price": 7488385230.680617,
+         "holding_years": 15, "is_single_home": True, "home_count": 1},
+        {"gain": 39307768765.625, "deduction_rate": 0.8, "deduction_amount": 31446215013,
+         "taxable_gain": 7861553753, "bracket_rate": 0.45, "bracket_deduction": 65940000,
+         "base_tax": 3471759189, "multi_home_surcharge": 0, "tax": 3471759189,
+         "effective_rate": 0.088322},
+    ),
 ]
 
 # ROUND_HALF_UP이었다면 exact_half_tie_rounding_policy의 deduction_amount는
