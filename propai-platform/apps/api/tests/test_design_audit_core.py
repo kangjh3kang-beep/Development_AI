@@ -322,6 +322,38 @@ class TestOrchestratorOverall:
         assert parking["current"] == "미입력"
         assert any(r["key"] == "parking_min" for r in parking["legal_refs"])
 
+    async def test_plan_bcr_relaxation_respected_by_design_review(self):
+        """★R1 리뷰 R2b 신규 HIGH(2026-07-23) — 리뷰어 실증 재현: 자연녹지지역 + 지구단위계획
+        건폐율 40%(법정 20% 완화) + 설계 건폐율 35% → design_review는 '적합'이어야 한다.
+        R2의 결함(applied_bcr_pct 자체를 법정 20%로 클램프)이면 '건폐율_초과'(limit=20.0)로
+        오판된다 — 계획 완화가 표시·한도값에 그대로 반영되는지, 구조상한 수치는 은폐 없이
+        계속 노출되는지(구조상한 계산 입력만 제한됐다는 증거) 오케스트레이터 직접 실행으로
+        확인한다."""
+        params = _clean_params(
+            land_area_sqm=1000.0, bcr_pct=35.0, far_pct=70.0,
+            building_height_m=12.0, floors_above=4, units=6,
+            avg_unit_area_sqm=60.0, total_floor_area_sqm=700.0,
+            building_area_sqm=350.0, parking=6,
+        )
+        plan_payload = {
+            "districts": [
+                {"district_name": "지구단위계획구역", "plan_far_pct": 100.0, "plan_bcr_pct": 40.0}
+            ]
+        }
+        result = await DesignAuditOrchestrator().audit(
+            params, zone_type="자연녹지지역", plan_payload=plan_payload,
+        )
+        assert result["limits"]["applied_bcr_pct"] == 40.0  # 계획 완화 존중(20으로 안 깎임)
+        assert result["limits"]["structural_cap_pct"] == 80.0  # 계산 입력만 제한(은폐 없음)
+        design_review = [f for f in result["findings"] if f["engine"] == "design_review"]
+        assert design_review and design_review[0]["status"] == "pass", (
+            f"계획 건폐율 완화가 무효화됨(오판 재발): {design_review}"
+        )
+        assert not any(
+            f["engine"] == "design_review" and f["status"] == "fail"
+            for f in result["findings"]
+        )
+
     async def test_sections_present(self):
         """리포트 결합용 sections: s1_samples·s4_incentives·efficiency_metrics 원자료."""
         result = await DesignAuditOrchestrator().audit(_clean_params(), zone_type=ZONE)

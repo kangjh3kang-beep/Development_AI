@@ -745,6 +745,25 @@ def test_applicable_limits_bcr_unit_contamination_does_not_collapse_far():
     assert a["applied_bcr_pct"] == 0.2  # 오염값 자체는 그대로 노출(은폐 금지)
     assert a["structural_cap_pct"] is None  # 오염값으로 구조상한 미산정(정직)
     assert a["applied_far_pct"] == 100  # 0.8%로 붕괴하지 않고 법정범위 유지
+    # ★R1 리뷰 LOW#1(2026-07-23): 게이트가 조용히 미산정으로 복귀할 때 소비처가 판별할
+    # 신호(far_source/sources)를 남긴다(무날조 — 정상 "층수제한 없음" 케이스와 구분).
+    assert "구조상한 미산정" in a["far_source"]
+    assert any("구조상한 미산정" in s for s in a["sources"])
+
+
+def test_applicable_limits_plan_bcr_relaxation_not_clamped_but_cap_input_is():
+    """★R1 리뷰 R2b 신규 HIGH(2026-07-23): 지구단위계획이 건폐율을 완화(법정 20%→40%)해도
+    표시·한도값(applied_bcr_pct)은 계획값 그대로여야 한다 — R2가 이 값 자체를 법정상한으로
+    클램프해 계획의 건폐율 완화를 무효화했다(리뷰어 실증: 자연녹지+계획 40%+설계 35% →
+    main 적합, R2 결함판은 '건폐율_초과'로 오판). 구조상한 '계산 입력'만 법정 상한(20%)
+    이내로 제한되어 structural_cap_pct=80(=20%×4층)이어야 한다 — 표시값·계산입력의 분리를
+    동시에 고정(한쪽만 확인하면 재발 가능)."""
+    plan = {"districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 100, "plan_bcr_pct": 40}]}
+    a = applicable_limits_for("자연녹지지역", plan_payload=plan)
+    assert a["plan_bcr_pct"] == 40
+    assert a["applied_bcr_pct"] == 40  # 계획 완화 존중(법정 20%로 안 깎임 — R2 회귀 방지)
+    assert a["structural_cap_pct"] == 80  # 계산 입력만 법정 20% 이내로 제한(20×4층=80)
+    assert a["floor_cap"] == 4
 
 
 # ══════════════════════════════════════════════════════════════════════════
