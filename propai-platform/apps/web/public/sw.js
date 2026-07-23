@@ -110,7 +110,11 @@
 // v458: 분양앱 로그인 복귀+앱 정체성 분리(#456 — ?next= 복귀 배선·현장앱 전용 manifest
 //        start_url=/ko/sales/sites·목록페이지 fieldapp 이동). 로그인/가드/manifest 변경이
 //        stale app-shell 캐시에 가려지지 않도록 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v459-satong-basemap-rail";
+// v460: 사통맵 필지선택 누수 봉합(#466 P0 — 연결 대상 전환 시 선택 잔류로 오염 프로젝트
+//        생성·과금 발생) + design-audit 화면배관 봉합(#464 — AuditReportView S4/S7 형상·
+//        permit 표면화). 과금에 직결되는 P0 수정이 stale app-shell 캐시에 가려지면
+//        기존 사용자에게 수정이 도달하지 않으므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v460-satong-selection-leak";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
