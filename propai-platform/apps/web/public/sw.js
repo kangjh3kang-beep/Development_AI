@@ -119,7 +119,11 @@
 //        CadBimIntegrationPanel 실효 FAR/BCR 배선, CostAndQuantityDashboard 15층 하드코딩
 //        제거, kr-building-regulations 250% 날조 폴백 제거)이 stale 캐시에 가려지면
 //        과대낙관 수치가 계속 표시되므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v461-design-audit-input-wiring";
+// v462: 실거래 유형 다중 표시(#470 — 백엔드 10종 수집분 중 프론트가 apt만 쓰던 것을
+//        6종 동시 렌더로. SatongMultiMap 마켓 이펙트·SatongMapShell transactions 컨트롤·
+//        satong-map-layers 색상 SSOT·범례·절단 고지). 사용자 버그리포트("종류별 실거래를
+//        지도에 표기 안 함") 대응이라 stale 캐시에 가려지면 여전히 아파트만 보이므로 삭제.
+const CACHE_NAME = "propai-v462-realtx-multi-type";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
