@@ -444,6 +444,17 @@ export function DesignAuditWorkspace({
             ifc_filename: ifcFile?.name ?? null,
             dxf_filename: dxfFile?.name ?? null,
           },
+          // ★R1 보류(P1 revert) — designData.massGeom(폭×깊이)에서 geometry를 역산해 rules8에
+          // 넘기는 시도는 되돌렸다. massGeom.footprintSqm은 min(maxGrossArea/floorCount,
+          // buildableArea)로 "이미 법정 한도에 정확히 붙어 있는" 값이라, 이를 정사각 근사해
+          // 되돌려 넣으면 반올림 오차(0.05m 수준)만으로 rules8이 허위 "용적률 초과"를 낸다
+          // (리뷰어 실측: 500~1500㎡ 1000건 스캔 중 483건·48.3%에서 허위 fail — 조건부적합이
+          // 부적합으로 뒤집힘). 게다가 정사각 외곽 4변을 StructuralAnalysisVerifier가
+          // "벽체 경간"으로 오인해 외벽(15m대)이 6m 초과라는 무의미한 오탐도 함께 낸다(외벽은
+          // 벽체가 아니다 — outline↔wall 혼동). 세트백·정북일조도 이 근사 기하로는 여전히
+          // 비활성(setback_distances/north_setback_m 없음·min_setback_m=0 그대로)이라 얻는
+          // 것 없이 허위 판정만 늘어난다. rules8은 실제 도면(IFC/DXF)이나 CAD 에디터의
+          // 사용자 확정 외곽이 있을 때만 켜는 게 맞다 — 정직한 skipped가 허위 fail보다 낫다.
           use_llm: useLlm,
         }),
       );
@@ -736,6 +747,26 @@ export function DesignAuditWorkspace({
                     disabled={running}
                     onChange={handleFieldChange}
                   />
+                  {/* ★레인C(P3) — 입력 유도(강제 아님): 세대수·연면적·건축물 높이가 비어 있으면
+                      어느 검사가 생략/부실화되는지 명시 안내한다(design_audit_orchestrator
+                      _run_parking·_run_solar 정직 skip 사유와 정합 — 여기서 값을 만들지 않고
+                      안내만 한다). 기존 안내 배너 스타일(status-warning) 재사용. */}
+                  {(() => {
+                    const has = (key: string) => fields.some((f) => f.key === key && f.value.trim() !== "");
+                    const notes: string[] = [];
+                    if (!has("units") && !has("total_floor_area_sqm")) {
+                      notes.push("세대수·연면적이 없으면 주차 검사가 생략됩니다");
+                    }
+                    if (!has("building_height_m")) {
+                      notes.push("건축물 높이가 없으면 일조·피난 검사가 정밀하지 않습니다");
+                    }
+                    if (notes.length === 0) return null;
+                    return (
+                      <p className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] px-3 py-2 text-[11px] text-[var(--status-warning)]">
+                        {notes.join(" · ")} — 값을 입력하면 심사 범위가 넓어집니다(선택 입력).
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 

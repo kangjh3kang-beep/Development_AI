@@ -527,7 +527,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     //   돌려주므로 `!= null` 판정은 법정폴백을 "실효"로 오표기한다(R1 P2 — CadBim/seed 의
     //   basis !== "national" 술어와 상반 라벨이 나던 모순 봉합. 판정 술어를 전 표면 동일하게).
     const farIsEffective = effFarPct != null && resolvedFarRes!.basis !== "national";
-    const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
+    // calcMaxGrossArea가 null을 반환하는 경우(용도지역 매칭 실패)는 위 spec 가드(:514 `!spec`이면
+    // 조기 return null)가 동일 zoning 값으로 이미 걸러 도달 불가 — ?? 0은 타입 방어용(무날조: 250%
+    // 임의배율 대신 산출불가 0, 실사용 경로에서 실제로 트리거되지 않음).
+    const maxGross = effFarPct != null ? area * (effFarPct / 100) : (calcMaxGrossArea(area, effectiveZoning) ?? 0);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     // 실효 건폐율 우선: FAR과 동일하게 resolveBcrPct(통합 > 실효 > 법정)가 있으면 법정상한
     // (buildingCoverageMax) 대신 사용. 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch"

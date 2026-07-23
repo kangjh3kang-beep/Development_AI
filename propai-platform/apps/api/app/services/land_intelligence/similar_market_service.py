@@ -113,8 +113,13 @@ async def attach_similar_designs_to_options(
 ) -> list[dict[str, Any]]:
     """Stage 1 buildable_options 상위 top_n개에 similar_designs를 가산(무회귀·가산만).
 
-    각 옵션의 product 라벨 + 옵션 zone(현행/종상향 목표) + 부지면적으로 유사도면을 검색해
-    option["similar_designs"]에 첨부한다. 나머지 옵션은 변형하지 않는다.
+    각 옵션의 product 라벨 + 옵션 zone(현행/종상향 목표) + area_sqm(있으면)으로 유사도면을
+    검색해 option["similar_designs"]에 첨부한다. 나머지 옵션은 변형하지 않는다.
+
+    ★area_sqm은 "건물 연면적(GFA)" 기준이지 대지면적(site/parcel area)이 아니다(과거 문구
+    "부지면적으로 검색"이 이 혼동을 유발했다 — 레인C(R2) 정정). 옵션마다 achievable_far_pct가
+    달라 정확한 per-option GFA를 이 배치 시그니처(단일 area_sqm)로 역산할 수 없으면 호출부는
+    None을 넘겨야 한다(대지면적 대입 금지 — find_similar_designs가 None을 무제약으로 처리).
     """
     if not options:
         return options
@@ -165,14 +170,20 @@ async def similar_market_feasibility(
     )
 
     zone_type = rec.get("zone_type")
-    site_area = rec.get("land_area_sqm") or land_area_sqm
     recommendations = rec.get("recommendations") or []
 
     # 상위 top_n 추천에 유사 설계 도면 가산(사업성 수치는 불변·가산만).
     for r in recommendations[: max(0, top_n)]:
         if not isinstance(r, dict):
             continue
-        gfa = ((r.get("unit_summary") or {}).get("total_gfa_sqm")) or site_area
+        # ★레인C(R2 봉합) 무날조: 연면적(GFA) 미확보 시 대지면적(site_area)을 GFA로 오용해
+        #   검색하던 결함(서로 다른 물리량 혼동)만 근절한다 — area_sqm은 SiteQuery의 **소프트
+        #   신호**(hard_filter 기본 False, 임베딩에만 반영)라 미지정=무제약 검색이 계약이다.
+        #   (R1에서 GFA 미확보 시 검색 자체를 생략하도록 과잉교정했으나, 이는 zone+키워드만으로
+        #   얻던 유용한 결과까지 0으로 만드는 과잉교정이라 되돌린다.) find_similar_designs가
+        #   자체적으로 area_sqm None을 무제약으로 처리하므로 여기서는 GFA를 있는 그대로
+        #   넘기기만 한다(site_area 대체 금지).
+        gfa = (r.get("unit_summary") or {}).get("total_gfa_sqm")
         sd = await find_similar_designs(
             zone_type=zone_type,
             area_sqm=gfa,

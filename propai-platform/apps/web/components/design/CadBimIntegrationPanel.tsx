@@ -29,7 +29,7 @@ import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
-import { resolveFarPct, resolveBcrPct, resolveFarWithBasis } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis, resolveBcrWithBasis } from "@/lib/zoning-ssot";
 import { CadCorrectionSection } from "@/components/design/CadCorrectionSection";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
@@ -698,6 +698,20 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       walls: walls.length > 0 ? walls : null,
     };
   }, [bimMass, spec]);
+
+  // ★레인C(P2) — CADEditor 자체는 zoneCode(문자열)만 받아 법정상한표(resolveLimits)로
+  //   건폐율/용적률 한도를 구하는데, 이 화면(유일 호출부)이 여태 maxBcrPct/maxFarPct를 전혀
+  //   넘기지 않아 부지분석이 확보한 실효(통합/조례) 한도가 항상 무시되고 법정상한만 쓰였다
+  //   (무음 폴백). resolveFarWithBasis/resolveBcrWithBasis(SSOT 리졸버)로 값이 있으면
+  //   우선 전달하고, 없으면 undefined(=CADEditor 내부 법정상한 폴백 그대로 — 무날조).
+  const editorMaxLimits = useMemo(() => {
+    const farRes = resolveFarWithBasis(siteAnalysis);
+    const bcrRes = resolveBcrWithBasis(siteAnalysis);
+    return {
+      maxFarPct: farRes?.value,
+      maxBcrPct: bcrRes?.value,
+    };
+  }, [siteAnalysis]);
 
   // ── 3D 카메라 시점 프리셋(비전문가용 시점 전환) ──
   const camControlsRef = useRef<CameraControls | null>(null);
@@ -2186,6 +2200,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               initialFloorHeightM={spec?.floor_height_m ?? 3}
               zoneCode={spec?.zone_code}
               initialGeometryM={editorSeedGeometry}
+              maxFarPct={editorMaxLimits.maxFarPct}
+              maxBcrPct={editorMaxLimits.maxBcrPct}
               onMetricsChange={setEditMetrics}
             />
           </div>
