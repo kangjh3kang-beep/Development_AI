@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from app.services.zoning.far_incentive_calculator import calculate as calc_far_incentive
+from app.services.zoning.legal_zone_limits import should_apply_structural_cap as _should_apply_structural_cap
 from app.services.zoning.legal_zone_limits import structural_cap_for as _structural_cap_for
 
 logger = structlog.get_logger()
@@ -355,10 +356,27 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     #   _structural_cap_for가 (None,None,None)을 반환해 완전히 무영향(기존값 그대로).
     structural_cap_pct, floor_cap, floor_cap_basis = _structural_cap_for(zone_type, effective_bcr)
     _effective_far_before_structural_cap = effective_far
-    _structural_cap_bound = structural_cap_pct is not None and structural_cap_pct < effective_far
+    # ★R1 리뷰 HIGH-1(2026-07-23): 계획상한(plan_far_ceiling)이 있으면 구조상한을 바인딩하지
+    #   않는다 — applicable_limits_for(legal_zone_limits.py)와 완전히 동일한 공용 술어
+    #   (should_apply_structural_cap)를 써서 두 SSOT의 완화 판정이 갈라지지 않게 한다.
+    _plan_relaxed = plan_far_ceiling is not None
+    _structural_cap_bound = _should_apply_structural_cap(
+        structural_cap_pct, effective_far, plan_relaxed=_plan_relaxed,
+    )
+    _structural_cap_would_bind_but_plan_relaxed = (
+        not _structural_cap_bound and _plan_relaxed
+        and structural_cap_pct is not None and structural_cap_pct < effective_far
+    )
     if _structural_cap_bound:
         effective_far = structural_cap_pct
         far_basis = "구조상한(건폐율×층수)"
+    elif _structural_cap_would_bind_but_plan_relaxed:
+        # ★무날조 원칙: 계획상한이 구조상한(층수제한)을 완화한 것으로 간주해 값은 낮추지
+        #   않되(effective_far 불변), 구조상한 수치·근거는 은폐하지 않고 far_basis에 명시한다.
+        far_basis = (
+            f"{far_basis} — 구조상한 {structural_cap_pct:g}% 대비 완화 전제"
+            "(국토계획법 §52③·시행령 §46, 지구단위계획으로 §76 건축제한 완화 허용)"
+        )
 
     # ── far_basis 상세 메타: 산정 계층·데이터출처를 그라운딩/검증기가 활용하도록 동봉.
     far_basis_detail: dict[str, Any] = {
@@ -454,6 +472,16 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             f"다만 {zone_type}은 층수 제한({floor_cap}층 이하 — {floor_cap_basis})이 있어, "
             f"실효 건폐율({effective_bcr}%) × {floor_cap}층 = 구조상한 {structural_cap_pct:g}%가 "
             f"법정/조례 한도보다 낮은 실질 상한이 되어 실효 용적률은 {effective_far:g}%로 적용됩니다."
+        )
+    elif _structural_cap_would_bind_but_plan_relaxed:
+        # ★무날조 원칙(R1 HIGH-1): 구조상한이 수치상 더 낮지만 계획상한이 우선 적용되므로
+        # 값을 낮추지 않는다는 사실과 그 법적 근거를 은폐 없이 서술한다.
+        annotations.append(
+            f"{zone_type}은 층수 제한({floor_cap}층 이하 — {floor_cap_basis})이 있어 "
+            f"건폐율({effective_bcr}%) × {floor_cap}층 = 구조상한 {structural_cap_pct:g}%이지만, "
+            "도시·군관리계획/지구단위계획이 이보다 높은 용적률을 부여했으므로 그 계획이 "
+            "층수 제한도 함께 완화한 것으로 간주해 구조상한을 적용하지 않습니다"
+            "(국토계획법 §52③·시행령 §46)."
         )
 
     if land_area > 0:

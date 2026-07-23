@@ -309,3 +309,52 @@ def test_golden_two_ssot_agree_on_uncapped_zones(zone_type):
     assert out["effective_far_pct"] == expected
     assert a["structural_cap_pct"] is None
     assert out["structural_cap_pct"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 케이스 7 — R1 리뷰 R2 봉합(2026-07-23, HIGH-1): 계획상한(plan_far_pct) 존재 시 구조상한
+#   미바인딩 계약을 두 SSOT 교차대조로 고정한다. 케이스 6은 base={}만 써서 계획 입력이 없는
+#   경로만 검증했다 — 그 공백이 "계획상한을 구조상한이 덮는" 결합버그를 통과시켰다(리뷰어
+#   실증: 자연녹지+계획상한 200%+설계 150% → main PASS, 결함판 FAIL). 이 골든이 그 공백을
+#   메운다: 두 SSOT 모두 plan_far_pct가 있으면 구조상한을 바인딩하지 않아야 한다.
+# ══════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("zone_type", _FLOOR_CAPPED_ZONES)
+def test_golden_two_ssot_agree_plan_ceiling_relaxes_structural_cap(zone_type):
+    """층수 제한 zone 전수 + 계획상한(200%, 법정·구조상한보다 항상 높게 설정) 입력에서
+    applicable_limits_for·calc_effective_far 둘 다 계획값을 그대로 최종 적용값으로 낸다
+    (구조상한이 계획을 덮지 않음). 구조상한 수치 자체는 은폐되지 않고 여전히 노출된다."""
+    plan_far = 200.0  # 자연/생산/보전녹지 법정상한(80~100%)·구조상한(80%)보다 항상 높음
+    plan_districts = [{"district_name": "지구단위계획구역", "plan_far_pct": plan_far}]
+    plan_payload = {"districts": plan_districts}
+    base = {"local_ordinance": {}, "zone_limits": {}, "special_districts": plan_districts}
+
+    a = applicable_limits_for(zone_type, plan_payload=plan_payload)
+    out = calc_effective_far(base, zone_type=zone_type, land_area=0)
+
+    assert a["applied_far_pct"] == plan_far, (
+        f"{zone_type}: applicable_limits_for가 계획상한을 구조상한으로 덮음 — "
+        f"기대 {plan_far}, 실측 {a['applied_far_pct']}"
+    )
+    assert out["effective_far_pct"] == plan_far, (
+        f"{zone_type}: calc_effective_far가 계획상한을 구조상한으로 덮음 — "
+        f"기대 {plan_far}, 실측 {out['effective_far_pct']}"
+    )
+    assert a["applied_far_pct"] == out["effective_far_pct"], (
+        f"{zone_type}: 두 SSOT 불일치(계획상한 완화 판정 결합버그) — applicable_limits_for="
+        f"{a['applied_far_pct']} calc_effective_far={out['effective_far_pct']}"
+    )
+    # 은폐 금지 — 구조상한 수치는 계획상한 우선에도 불구하고 계속 반환된다.
+    assert a["structural_cap_pct"] is not None
+    assert out["structural_cap_pct"] is not None
+
+
+def test_golden_natural_green_structural_cap_hardcoded_literal_not_table_derived():
+    """★R1 리뷰 LOW(2026-07-23): 케이스 6의 파라미터화 골든은 기대값을 ZONE_LIMITS에서
+    유도하므로, 표 자체가 오염되면(예: 자연녹지 max_bcr이 실수로 30으로 바뀌면) 기대값도
+    같이 틀려버려 통과해버린다(자기참조 오탐 — 표 오염을 못 잡음). 이 테스트는 국토계획법
+    시행령 제84조(자연녹지 건폐율 상한 20%)·별표17 두문(4층 이하)이라는 법령 문언에서 나오는
+    리터럴 상수 80을 직접 박아, ZONE_LIMITS 표 자체의 회귀도 별도로 잡는다."""
+    a = applicable_limits_for("자연녹지지역")
+    out = calc_effective_far({}, zone_type="자연녹지지역", land_area=0)
+    assert a["applied_far_pct"] == 80.0
+    assert out["effective_far_pct"] == 80.0

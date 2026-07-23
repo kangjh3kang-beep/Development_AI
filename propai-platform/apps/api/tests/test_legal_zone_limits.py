@@ -11,6 +11,8 @@ from app.services.zoning.legal_zone_limits import (
     check_against_legal,
     legal_limits_for,
     normalize_zone_name,
+    should_apply_structural_cap,
+    structural_cap_for,
 )
 
 
@@ -233,20 +235,34 @@ def test_applicable_limits_ordinance_value_becomes_applied():
 
 
 def test_applicable_limits_plan_ceiling_overrides():
-    # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(법정상한 초과 정당) —
-    # 단, 그 위에도 구조상한(건폐율×층수) 계층은 여전히 적용된다(bcr override 없음).
-    # ★결함 고정 교정(2026-07-23, QA 레인A): plan_far_pct(원본 계획값)는 200 그대로 노출하되
-    #   applied_far_pct는 80(=건폐 20%×4층)까지 낮아진다 — calc_effective_far(far_tier_service,
-    #   정답 기준선)로 동일 입력(자연녹지, bcr override 없음, plan_far_pct=200)을 실행해도
-    #   effective_far_pct=80·far_basis="구조상한(건폐율×층수)"이 실측 확인됐다(두 SSOT 동치).
-    #   계획상한 자체가 건폐율까지 완화한다는 명시 근거(plan_bcr_pct 등)가 없으면 층수제한은
-    #   그대로 유효하다(무날조 — 근거 없는 완화 확대 금지).
+    # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(법정상한 초과 정당).
+    # ★R1 리뷰 R2 원복(2026-07-23, HIGH-1): 이 테스트 이름 자체가 계약이다("계획상한이
+    #   override 한다"). QA 레인A 1차 수정에서 이 단언을 80(구조상한이 계획을 덮음)으로
+    #   역전시킨 것은 계약 파괴였다 — 리뷰어 실증(자연녹지+계획상한 200%+설계 150% → main
+    #   PASS, 역전판 FAIL) + 법령 논리(건폐율 20% 그대로에 계획이 용적률 200%를 부여했다면
+    #   그 처분은 논리필연적으로 10층을 전제 — 국토계획법 §52③·시행령 §46이 지구단위계획으로
+    #   §76(별표 두문 층수제한 포함) 완화를 허용)로 REVISE·원복. 계획상한 존재 시 구조상한은
+    #   바인딩하지 않되(applied_far_pct==200 그대로), 은폐 금지 원칙상 structural_cap_pct·
+    #   floor_cap은 계속 채워지고 far_source에 완화 전제 근거를 명시한다(아래 대조 테스트
+    #   test_applicable_limits_no_plan_structural_cap_still_binds가 "계획 없으면 구조상한이
+    #   여전히 바인딩된다"는 대칭 계약을 고정한다).
     plan = {"districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 200}]}
     a = applicable_limits_for("자연녹지지역", plan_payload=plan)
-    assert a["plan_far_pct"] == 200  # 계획 원본값은 불변(참고 표시용)
-    assert a["applied_far_pct"] == 80  # 구조상한이 최종 실질 상한
+    assert a["plan_far_pct"] == 200
+    assert a["applied_far_pct"] == 200  # 계획상한이 최종 적용값(구조상한에 덮이지 않음)
+    # 은폐 금지 — 구조상한 수치·근거는 계속 노출(소비처가 참고할 수 있게).
     assert a["structural_cap_pct"] == 80
-    assert "구조상한" in a["far_source"]
+    assert a["floor_cap"] == 4
+    assert "지구단위계획" in a["far_source"]
+    assert "완화" in a["far_source"]  # 구조상한 대비 완화 전제임을 은폐 없이 명시
+
+
+def test_applicable_limits_no_plan_structural_cap_still_binds():
+    """대조 계약(HIGH-1과 대칭): 계획상한이 '없으면' 구조상한은 여전히 정상 바인딩된다 —
+    plan_relaxed 판정 자체가 무너진 게 아니라 '계획상한이 있을 때만' 완화로 간주함을 고정."""
+    a = applicable_limits_for("자연녹지지역")  # plan_payload 없음
+    assert a.get("plan_far_pct") is None
+    assert a["applied_far_pct"] == 80  # 구조상한(건폐 20%×4층) 바인딩 — 계획상한 없음
 
 
 # ── 검증기: 조례값·계획상한 반영(정당한 상향 오적발 방지 / 무근거 적발 유지) ──
@@ -358,6 +374,9 @@ def test_applicable_limits_statutory_fallback_not_confirmed():
     #   뜻하는 건 "조례를 신뢰하지 않는다"이지 "구조상한을 무시한다"가 아니다.
     assert a["applied_far_pct"] == 80  # 구조상한 바인딩(수치는 법정상한이 아닌 실질상한)
     assert "구조상한" in a["far_source"]
+    # ★R1 리뷰 MEDIUM-2 복원(2026-07-23): #157 정직표기 가드 — 조례 미확정임을 far_source에서도
+    #   계속 드러내야 한다(단언 부재 상태로 방치하면 이 문구가 조용히 사라져도 스위트가 그린).
+    assert "조례 확인 필요" in a["far_source"]
 
 
 def test_extract_ordinance_far_ignores_effective_only_without_source():
@@ -442,6 +461,8 @@ def test_applicable_limits_limits_trio_fallback_not_confirmed():
     #   confirmed와 동일 사유 — 같은 버그클래스의 다른 경로).
     assert a["applied_far_pct"] == 80  # 구조상한 바인딩
     assert "구조상한" in a["far_source"]
+    # ★R1 리뷰 MEDIUM-2 복원(2026-07-23): 위 statutory_fallback 테스트와 동일 사유.
+    assert "조례 확인 필요" in a["far_source"]
 
 
 def test_applicable_limits_limits_trio_explicit_ordinance_confirmed():
@@ -683,3 +704,63 @@ def test_verifier_current_baseless_far_still_high_despite_upzoning():
     far_issues = [i for i in issues if i.get("type") == "법정한도초과" and "용적률" in i["claim"]]
     assert far_issues, "현행 200%는 종상향 섹션과 무관하게 적발되어야 함"
     assert far_issues[0]["severity"] == "high", "잠재 시나리오 키워드가 현행 판정을 오염시키면 안 됨"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ── R1 리뷰 R2 봉합(2026-07-23) ──
+# HIGH-2: BCR 단위오염(비율↔퍼센트)·법정초과값이 구조상한을 붕괴/왜곡시키지 않는지 확인.
+# ══════════════════════════════════════════════════════════════════════════
+def test_structural_cap_for_rejects_bcr_ratio_unit_contamination():
+    """★리뷰어 실증 재현(HIGH-2): 조례 BCR을 퍼센트(20) 대신 비율(0.2)로 오입력하면
+    0.2×4층=0.8%로 구조상한이 붕괴해 모든 설계가 부적합·매출이 사실상 0이 된다. 실제
+    건폐율 값은 항상 퍼센트로 전달되며 국내 건축법규상 1% 미만 건폐율 용도지역은 없다
+    (ZONE_LIMITS 최소값 20) — 1.0 미만 입력은 정직하게 미산정한다(붕괴 방지)."""
+    cap, floor_cap, basis = structural_cap_for("자연녹지지역", 0.2)
+    assert cap is None
+    assert floor_cap is None
+    assert basis is None
+
+
+def test_structural_cap_for_rejects_non_positive_bcr():
+    """None·0·음수 건폐율도 동일하게 정직 미산정(구조상한을 0 또는 음수로 계산하지 않음)."""
+    assert structural_cap_for("자연녹지지역", 0) == (None, None, None)
+    assert structural_cap_for("자연녹지지역", -5.0) == (None, None, None)
+    assert structural_cap_for("자연녹지지역", None) == (None, None, None)
+
+
+def test_structural_cap_for_rejects_bcr_exceeding_legal_max():
+    """법정 건폐율 상한(자연녹지 20%)을 초과하는 오염값(예: 90%)도 미산정 — 구조상한이
+    법정초과 입력으로 부풀려져 실제보다 관대해지는 왜곡을 막는다."""
+    cap, floor_cap, basis = structural_cap_for("자연녹지지역", 90.0)
+    assert cap is None
+    assert floor_cap is None
+    assert basis is None
+
+
+def test_applicable_limits_bcr_unit_contamination_does_not_collapse_far():
+    """통합경로 재현: 조례 건폐율이 0.2(비율, 20%의 오입력)로 들어와도 applied_far_pct가
+    0.8%로 붕괴하지 않는다 — 구조상한 산정 자체를 건너뛰고 법정 계층값(100%)을 유지한다."""
+    reg = {"local_ordinance": {"effective_bcr": 0.2, "source": "지자체 조례"}}
+    a = applicable_limits_for("자연녹지지역", regulation_payload=reg)
+    assert a["applied_bcr_pct"] == 0.2  # 오염값 자체는 그대로 노출(은폐 금지)
+    assert a["structural_cap_pct"] is None  # 오염값으로 구조상한 미산정(정직)
+    assert a["applied_far_pct"] == 100  # 0.8%로 붕괴하지 않고 법정범위 유지
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HIGH-1 공용 술어(should_apply_structural_cap) 단위 테스트 — legal_zone_limits.py·
+# far_tier_service.py 양쪽이 공유하는 판정 로직 자체를 직접 고정.
+# ══════════════════════════════════════════════════════════════════════════
+def test_should_apply_structural_cap_binds_when_no_plan():
+    assert should_apply_structural_cap(80.0, 100.0, plan_relaxed=False) is True
+
+
+def test_should_apply_structural_cap_does_not_bind_when_plan_relaxed():
+    assert should_apply_structural_cap(80.0, 200.0, plan_relaxed=True) is False
+
+
+def test_should_apply_structural_cap_false_when_cap_not_lower():
+    # 구조상한이 적용값보다 낮지 않으면(같거나 큼) 애초에 바인딩 대상이 아님.
+    assert should_apply_structural_cap(80.0, 80.0, plan_relaxed=False) is False
+    assert should_apply_structural_cap(None, 100.0, plan_relaxed=False) is False
+    assert should_apply_structural_cap(80.0, None, plan_relaxed=False) is False

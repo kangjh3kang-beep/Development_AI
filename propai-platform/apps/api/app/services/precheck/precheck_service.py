@@ -154,9 +154,15 @@ async def _legal_limits(
     # 완전 무영향(값 불변). 산정 실패 시 위 값 유지 + far_reliable=False(정직강등).
     legal["far_basis"] = None
     legal["far_reliable"] = False
-    legal["structural_cap_pct"] = None
-    legal["floor_cap"] = None
-    legal["floor_cap_basis"] = None
+    # ★R1 리뷰 MEDIUM-3(2026-07-23): applicable_limits_for가 이제 4번째 계층(구조상한)을
+    # 자체 반환하므로, SSOT(calc_effective_far) 실패 폴백 시에도 이 값을 기본으로 채운다 —
+    # 그렇지 않으면 위에서 이미 applied_far_pct=80(구조상한 반영)으로 정해졌는데
+    # structural_cap_pct=None이라 소비처가 "구조상한 없음"으로 오독하는 자기모순이 생긴다.
+    # far_reliable은 여전히 False(calc_effective_far 미경유='실효' 확정 아님) — 아래에서
+    # SSOT가 성공하면 그 최종 확정치로 다시 덮어써 정합을 유지한다.
+    legal["structural_cap_pct"] = applied.get("structural_cap_pct") if applied else None
+    legal["floor_cap"] = applied.get("floor_cap") if applied else None
+    legal["floor_cap_basis"] = applied.get("floor_cap_basis") if applied else None
     try:
         from app.services.land_intelligence.far_tier_service import calc_effective_far
 
