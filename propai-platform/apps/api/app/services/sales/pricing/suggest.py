@@ -213,6 +213,16 @@ async def _trade_per_pyeong(
                 amt = float(r.get("price_10k_won") or 0)
                 ar = float(r.get("area_m2") or 0)
             except (TypeError, ValueError):
+                # ★R1 M-2 봉합: 파싱실패 행도 무음 폐기하지 않는다(수집 N=선정+제외 항등 유지) —
+                # 값 자체가 없어 price/area 는 None 으로 남기고 exclude_reason 으로 사유를 명시한다.
+                if collect_cases:
+                    cases.append({
+                        "ym": ym, "dong": r.get("dong"), "jibun": r.get("jibun"),
+                        "building_name": r.get("building_name"), "deal_date": r.get("deal_date"),
+                        "price_10k_won": None, "area_m2": None, "per_pyeong_10k": None,
+                        "matched_dong": False, "included": False,
+                        "exclude_reason": "수치 파싱 실패(가격/면적 값 형식 오류)",
+                    })
                 continue
             if amt <= 0 or ar <= 0:
                 if collect_cases:
@@ -297,11 +307,19 @@ async def _nearby_presale_reference(sigungu5: str) -> dict[str, Any]:
 async def suggest_base_price(
     db: AsyncSession, site_id: uuid.UUID, bcode: str | None = None,
     construction_cost_per_gfa_won: int | None = None,
+    *, collect_cases: bool = False,
 ) -> dict[str, Any]:
     """기준층 적정분양가 3안 — 주변 실거래 앵커 + 교차검증 신뢰루프. 공급면적(상업=분양면적) 기준.
 
     construction_cost_per_gfa_won(선택): 정밀공사비(연면적㎡당 원). 전달 시 원가 검증에 사용,
     미전달 시 표준단가(SSOT)로 검증한다(2차 가드 — 시장가가 원가를 회수하는지 교차확인).
+
+    collect_cases=True(opt-in, market_precision W3-8 전용 — 기본 False는 반환 shape 완전 불변,
+    무회귀): 내부 ``_trade_per_pyeong`` 호출에 그대로 전달해 개별 MOLIT 사례를 "trade_cases"
+    키에 실어 반환한다. ★R1 M-1 봉합: 종전엔 market_precision 조립 단계(comparables.py)가
+    이 함수가 이미 가져온 행을 버리고 별도로 재수집(총 16개월 조회 = 8개월×2회)했다 —
+    이제 이 함수가 collect_cases=True로 1회만 수집한 원시 행을 그대로 실어 보내고, 조립
+    단계는 그 행을 소비만 한다(총 8개월 조회로 원복, 재수집 없음).
     """
     address, pnu, dev_type = await _site_location(db, site_id)
     if not address:
@@ -345,9 +363,12 @@ async def suggest_base_price(
     prop_type = _PROP_TYPE.get((dev_type or "").upper(), "apt")
 
     # ── 원천: MOLIT 실거래(동·시군구) 전용 평당가 ──
-    pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
+    pp = await _trade_per_pyeong(sigungu5, dong, prop_type, collect_cases=collect_cases)
     d_med, d_n = pp["dong"]["median"], pp["dong"]["n"]
     s_med, s_n = pp["sigungu"]["median"], pp["sigungu"]["n"]
+    # ★R1 M-1: collect_cases=True 일 때만 원시 사례를 보존(기본 False 는 이 변수가 아예 안 쓰임 —
+    # 아래 반환 dict들에 조건부로만 실려 반환 shape 을 불변으로 유지한다).
+    trade_cases_extra: dict[str, Any] = {"trade_cases": pp.get("cases") or []} if collect_cases else {}
 
     # ── 교차검증(신뢰루프): 동(앵커) vs 시군구. 이상치 제외·신뢰도 산출 ──
     signals: list[Signal] = []
@@ -357,7 +378,8 @@ async def suggest_base_price(
         signals.append(Signal("시군구_실거래", float(s_med), sample_size=s_n, source="live", weight=1.0))
     if not signals:
         return {"data_source": "unavailable", "address": address, "lawd_cd": lawd,
-                "note": "주변 실거래가 없어 적정분양가를 산출할 수 없습니다(가짜값 금지)."}
+                "note": "주변 실거래가 없어 적정분양가를 산출할 수 없습니다(가짜값 금지).",
+                **trade_cases_extra}
 
     trust = cross_validate(
         signals, anchor="동_실거래" if d_med else "시군구_실거래",
@@ -366,7 +388,8 @@ async def suggest_base_price(
     if trust.trusted_value is None or trust.verdict == "fail":
         return {"data_source": "unavailable", "address": address, "lawd_cd": lawd,
                 "trust": trust.to_dict(),
-                "note": "주변 실거래 신뢰도 부족으로 적정분양가 산출 보류(가짜값 금지)."}
+                "note": "주변 실거래 신뢰도 부족으로 적정분양가 산출 보류(가짜값 금지).",
+                **trade_cases_extra}
 
     market_pp_exclusive = float(trust.trusted_value)        # 만원/평(전용) — 주변 시세
     # 공급면적 평당가 시세 = 전용 평당가 × 전용률(상업=분양면적도 동일 환산 가정 후 라벨만 구분)
@@ -445,4 +468,5 @@ async def suggest_base_price(
         "note": (f"적정분양가 = 주변 실거래({trust.to_dict()['used_sources']}) 시세에 신축 프리미엄. "
                  f"평당가는 {area_basis_label} 기준(전용률 {_JEONYULRYUL}). 신뢰도 {trust.confidence:.0%}. "
                  "기준단가 채택 후 층/동/라인/평형 가중치로 분산." + cost_note),
+        **trade_cases_extra,
     }

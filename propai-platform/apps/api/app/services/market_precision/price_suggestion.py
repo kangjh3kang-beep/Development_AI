@@ -6,6 +6,12 @@
 ``TimeAdjustment``(시점보정)·``AbsorptionEstimate``(흡수율)를 부가할 뿐, 가격 산식을
 재구현하지 않는다. 기존 ``suggest_base_price()`` 응답/호출부(``routers`` 등)는 전혀
 변경하지 않는다(무회귀).
+
+★R1 M-1 봉합(행 재사용, 재수집 아님): 이 모듈이 소비하는 ``res``는 반드시
+``suggest_base_price(..., collect_cases=True)``로 만들어져야 한다 — 그래야 ``res["trade_cases"]``
+에 이미 수집된 원시 MOLIT 행이 실려 있고, ``ComparableSet``은 그 행을 ``build_comparable_set_
+from_cases``로 순수 조립만 한다(MOLIT 재수집 0회 — 종전엔 여기서 ``build_comparable_set``을
+또 불러 8개월 조회가 중복 발생했다).
 """
 from __future__ import annotations
 
@@ -15,7 +21,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.market_precision.absorption import estimate_absorption
-from app.services.market_precision.comparables import build_comparable_set
+from app.services.market_precision.comparables import build_comparable_set_from_cases
 from app.services.market_precision.contracts import (
     AbsorptionEstimate,
     ComparableSet,
@@ -23,7 +29,7 @@ from app.services.market_precision.contracts import (
     TimeAdjustment,
 )
 from app.services.market_precision.time_adjustment import resolve_time_adjustment
-from app.services.sales.pricing.suggest import _PROP_TYPE, _extract_dong, suggest_base_price
+from app.services.sales.pricing.suggest import suggest_base_price
 
 
 def price_suggestion_from_result(
@@ -81,31 +87,29 @@ def price_suggestion_from_result(
 
 async def _enrich_from_result(
     res: dict[str, Any],
-) -> tuple[ComparableSet | None, TimeAdjustment, AbsorptionEstimate]:
-    """``res``(suggest_base_price 출력)의 위치정보로 ComparableSet/TimeAdjustment/
-    AbsorptionEstimate 3종을 조회한다(``assemble_market_precision``·``build_price_suggestion``
-    공용 — MOLIT 재수집은 ComparableSet 빌드 시 1회뿐, ``_trade_per_pyeong`` 재사용).
+) -> tuple[ComparableSet, TimeAdjustment, AbsorptionEstimate]:
+    """``res``(``suggest_base_price(collect_cases=True)`` 출력)로부터 ComparableSet/
+    TimeAdjustment/AbsorptionEstimate 3종을 조립한다(``assemble_market_precision``·
+    ``build_price_suggestion`` 공용).
+
+    ★R1 M-1 봉합: ComparableSet은 ``res["trade_cases"]``(이미 수집된 원시 행)를
+    ``build_comparable_set_from_cases``로 순수 조립만 한다 — MOLIT을 다시 수집하지 않는다.
     """
-    lawd_cd = res.get("lawd_cd") or ""
     address = res.get("address") or ""
-    dev_type = res.get("development_type")
-
-    comparable_set: ComparableSet | None = None
-    if lawd_cd:
-        dong = _extract_dong(address)
-        prop_type = _PROP_TYPE.get((dev_type or "").upper(), "apt")
-        comparable_set = await build_comparable_set(lawd_cd[:5], dong, prop_type)
-
+    comparable_set = build_comparable_set_from_cases(res.get("trade_cases"))
     time_adjustment = await resolve_time_adjustment(address)
     absorption_estimate = estimate_absorption()
     return comparable_set, time_adjustment, absorption_estimate
 
 
 async def assemble_market_precision(res: dict[str, Any]) -> dict[str, Any]:
-    """이미 계산된 ``suggest_base_price()`` 결과 ``res``로부터 market_precision 번들을 조립한다.
+    """이미 계산된 ``suggest_base_price(collect_cases=True)`` 결과 ``res``로부터
+    market_precision 번들을 조립한다.
 
-    ``suggest_base_price()``를 재호출하지 않는다(무이중화) — 호출부(라우터)가 이미 계산한
-    ``res``를 그대로 전달한다.
+    ``suggest_base_price()``를 재호출하지 않는다(무이중화) — 호출부(라우터)가 이미
+    ``collect_cases=True``로 호출해 얻은 ``res``(그 안의 "trade_cases" 포함)를 그대로
+    전달해야 한다. ``collect_cases=False``로 얻은 ``res``를 넘기면 "trade_cases"가 없어
+    ComparableSet이 정직하게 "unavailable"로 조립된다(재수집으로 보충하지 않는다 — M-1).
     """
     comparable_set, time_adjustment, absorption_estimate = await _enrich_from_result(res)
     suggestion = price_suggestion_from_result(
@@ -124,11 +128,13 @@ async def build_price_suggestion(
     db: AsyncSession, site_id: uuid.UUID, bcode: str | None = None,
     *, construction_cost_per_gfa_won: int | None = None,
 ) -> PriceSuggestion:
-    """DB에서 직접 조립하는 편의 진입점(신규 호출부용) — suggest_base_price() 1회 호출 후,
-    ComparableSet/TimeAdjustment/AbsorptionEstimate를 모두 부착한 PriceSuggestion을 반환한다.
+    """DB에서 직접 조립하는 편의 진입점(신규 호출부용) — suggest_base_price() 1회 호출
+    (collect_cases=True로 원시 MOLIT 사례를 그 안에서 함께 수집) 후, ComparableSet/
+    TimeAdjustment/AbsorptionEstimate를 모두 부착한 PriceSuggestion을 반환한다.
     """
     res = await suggest_base_price(
         db, site_id, bcode=bcode, construction_cost_per_gfa_won=construction_cost_per_gfa_won,
+        collect_cases=True,
     )
     comparable_set, time_adjustment, absorption_estimate = await _enrich_from_result(res)
     return price_suggestion_from_result(

@@ -2,11 +2,20 @@
 
 ★SSOT 재사용(이중화 금지): MOLIT 수집·필터 로직 자체는 ``app.services.sales.pricing.suggest.
 _trade_per_pyeong``(집계 SSOT)를 그대로 호출한다 — ``collect_cases=True``만 추가로 넘겨
-같은 수집 루프에서 개별 사례를 함께 받는다(새 MOLIT 호출 없음, 집계 계산 재구현 없음).
+같은 수집 루프에서 개별 사례를 함께 받는다.
+
+★R1 M-1 봉합(행 재사용 vs 재수집): 이 모듈은 순수 조립(``build_comparable_set_from_cases``,
+I/O 없음)과 단독 수집(``build_comparable_set``, ``_trade_per_pyeong`` 자체 호출)을 분리한다.
+``suggest_base_price(collect_cases=True)``가 이미 원시 사례를 "trade_cases"에 실어 반환하는
+정규 경로(``price_suggestion.py``)는 반드시 ``build_comparable_set_from_cases``로 그 행을
+그대로 소비해야 한다(``build_comparable_set``을 다시 부르면 MOLIT 8개월 조회가 중복된다 —
+전에 있던 결함). ``build_comparable_set``은 ``suggest_base_price`` 경유 없이 독립적으로
+비교사례만 필요한 호출부를 위한 편의 진입점으로만 남긴다.
 """
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 from app.services.market_precision.contracts import ComparableCase, ComparableSet
 from app.services.sales.pricing.suggest import _trade_per_pyeong
@@ -19,13 +28,10 @@ def _case_id(building_name: str, dong: str, jibun: str, deal_ym: str, price: flo
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-async def build_comparable_set(sigungu5: str, dong: str | None, prop_type: str) -> ComparableSet:
-    """시군구/동/유형으로 MOLIT 비교사례를 조회해 ComparableSet으로 조립한다.
-
-    무자료 시 빈 사례(가짜 사례 생성 금지) + anchor_scope="unavailable" + 정직 note.
+def build_comparable_set_from_cases(raw_cases: list[dict[str, Any]] | None) -> ComparableSet:
+    """이미 수집된 원시 MOLIT 사례(``_trade_per_pyeong``의 "cases" 값)를 ComparableSet으로
+    순수 조립한다(I/O 없음 — 재수집하지 않는다). 무자료 시 빈 사례(가짜 사례 생성 금지).
     """
-    pp = await _trade_per_pyeong(sigungu5, dong, prop_type, collect_cases=True)
-    raw_cases = pp.get("cases") or []
     if not raw_cases:
         return ComparableSet(
             cases=(), included_count=0, excluded_count=0,
@@ -77,4 +83,16 @@ async def build_comparable_set(sigungu5: str, dong: str | None, prop_type: str) 
     )
 
 
-__all__ = ["build_comparable_set"]
+async def build_comparable_set(sigungu5: str, dong: str | None, prop_type: str) -> ComparableSet:
+    """시군구/동/유형으로 MOLIT을 직접 수집해 ComparableSet을 조립하는 독립 진입점.
+
+    ★``suggest_base_price`` 결과가 이미 있는 경로(price_suggestion.py)에서는 이 함수를 쓰지
+    않는다 — 그 결과의 "trade_cases"를 ``build_comparable_set_from_cases``로 소비해야
+    MOLIT 재수집(중복 8개월 조회)을 피한다. 이 함수는 ``suggest_base_price`` 없이 비교사례
+    단독이 필요한 호출부 전용이다.
+    """
+    pp = await _trade_per_pyeong(sigungu5, dong, prop_type, collect_cases=True)
+    return build_comparable_set_from_cases(pp.get("cases"))
+
+
+__all__ = ["build_comparable_set", "build_comparable_set_from_cases"]

@@ -6,6 +6,12 @@
 호출하며, None을 받으면 임의 계수를 만들지 않고 UNKNOWN + "미보정" 정직 표기로 반환한다
 (``app.services.cost.unit_price_repository``의 opt-in escalate_to_current와 동일 관례 —
 보정은 부착만 하고 원본 가격을 자동으로 변형하지 않는다).
+
+★R1 M-3 봉합(OBSERVED 경로 정직성 비대칭 해소): R-ONE 실계수가 가용해도(``status=OBSERVED``)
+이 모듈은 그 계수를 표시 가격(ComparableCase/PriceSuggestion)에 실제로 적용하지 않는다 —
+근거로만 부착한다. 종전엔 이 사실이 UNKNOWN 경로의 assumption에만 있고 OBSERVED 경로에는
+없어, "실계수가 있으니 이미 반영됐다"는 오인 소지가 있었다. 두 경로 모두 동일하게
+"계수는 근거 표기용, 표시 가격은 미보정 원본"임을 assumption에 명시한다.
 """
 from __future__ import annotations
 
@@ -36,7 +42,10 @@ async def resolve_time_adjustment(address: str = "") -> TimeAdjustment:
         factor=result.get("factor"),
         source=result.get("source") or "R-ONE",
         basis=result.get("basis") or "주택매매가격지수 누적 변동",
-        assumption=None,
+        assumption=(
+            "이 계수는 근거 표기용입니다 — 표시 가격(비교사례·분양가 제안)은 이 계수를 "
+            "적용하지 않은 미보정 원본 그대로입니다(자동 시점보정 미실시)."
+        ),
         limitation="R-ONE 통계는 광역시도 단위 대표치입니다 — 개별 단지 변동과 다를 수 있습니다(외삽 한계).",
     )
 
