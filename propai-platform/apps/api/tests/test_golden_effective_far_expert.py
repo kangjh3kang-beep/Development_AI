@@ -41,6 +41,8 @@ from __future__ import annotations
 import pytest
 
 from app.services.land_intelligence.far_tier_service import calc_effective_far
+from app.services.zoning.auto_zoning_service import ZONE_LIMITS
+from app.services.zoning.legal_zone_limits import applicable_limits_for
 from app.services.zoning.special_parcel import detect_special_parcel
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -248,3 +250,111 @@ def test_golden_ordinary_residential_ordinance_not_over_capped():
     )
     assert out["structural_cap_pct"] is None  # 층수상한 없는 zone(무회귀)
     assert out["effective_far_pct"] == 180.0  # 정당한 조례값이 그대로 인정(부당한 추가 차단 없음)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 케이스 6 — 교차 SSOT 동치 골든(QA 레인A, 2026-07-23 근원봉합 후속): 구조상한(건폐율×층수)이
+#   applicable_limits_for(design-audit·feasibility 소비)와 calc_effective_far(precheck·
+#   permit·site-analysis 소비) 양쪽에 동일 헬퍼(legal_zone_limits.structural_cap_for)로
+#   승격됐으므로, 두 SSOT는 조례·계획 미보유(법정범위만 있는) 동일 입력에서 항상 같은 최종
+#   적용 용적률을 내야 한다. 한쪽만 계층이 누락되면 표면(설계심사 vs 개략수지)마다 다른
+#   숫자가 보이는 결합버그가 재발한다 — 이 골든이 그 결합을 원천 차단한다.
+# ══════════════════════════════════════════════════════════════════════════
+
+# 층수 제한이 있는 용도지역 전수(FLOOR_CAP 계열 — ZONE_LIMITS SSOT에서 동적 수집,
+# 하드코딩 목록 아님 — 향후 ZONE_LIMITS에 층수제한 zone이 추가/제거되면 자동 반영).
+_FLOOR_CAPPED_ZONES = sorted(zt for zt, lim in ZONE_LIMITS.items() if lim.get("max_floors"))
+# 층수 제한이 없는 대표 용도지역(대조군 — 구조상한 계층 신설이 무관한 zone까지 건드리지
+# 않는지 함께 확인).
+_UNCAPPED_SAMPLE_ZONES = ["제2종일반주거지역", "일반상업지역", "준주거지역"]
+
+
+@pytest.mark.parametrize("zone_type", _FLOOR_CAPPED_ZONES)
+def test_golden_two_ssot_agree_on_floor_capped_zones(zone_type):
+    """층수 제한 zone 전수: applicable_limits_for·calc_effective_far가 조례·계획 미보유
+    (법정범위만 있는) 동일 입력에서 동일한 최종 적용 용적률을 낸다. 기대값은 구현 출력을
+    복붙하지 않고 '법정 건폐율 상한(%) × 법정 층수상한' 손계산(구조상한 산식)으로 독립
+    도출한 뒤, 법정 용적률 상한과 비교해 더 낮은 값을 취한다(min)."""
+    limits = ZONE_LIMITS[zone_type]
+    structural_cap = round(limits["max_bcr"] * limits["max_floors"], 2)  # 건폐율×층수
+    expected = min(limits["max_far"], structural_cap)
+
+    a = applicable_limits_for(zone_type)
+    out = calc_effective_far({}, zone_type=zone_type, land_area=0)
+
+    assert a["applied_far_pct"] == expected, (
+        f"{zone_type}: applicable_limits_for 기대 {expected}, 실측 {a['applied_far_pct']}"
+    )
+    assert out["effective_far_pct"] == expected, (
+        f"{zone_type}: calc_effective_far 기대 {expected}, 실측 {out['effective_far_pct']}"
+    )
+    assert a["applied_far_pct"] == out["effective_far_pct"], (
+        f"{zone_type}: 두 SSOT 불일치(결합버그) — applicable_limits_for="
+        f"{a['applied_far_pct']} calc_effective_far={out['effective_far_pct']}"
+    )
+
+
+@pytest.mark.parametrize("zone_type", _UNCAPPED_SAMPLE_ZONES)
+def test_golden_two_ssot_agree_on_uncapped_zones(zone_type):
+    """층수 제한이 없는 대표 zone도 두 SSOT가 동일값을 낸다(구조상한 계층 신설이 무관한
+    zone까지 값을 건드리면 안 된다 — 무회귀 대조군)."""
+    limits = ZONE_LIMITS[zone_type]
+    assert not limits.get("max_floors"), f"{zone_type}는 대조군(층수제한 없음)이어야 함"
+    expected = limits["max_far"]  # 법정상한 그대로(구조상한 미개입)
+
+    a = applicable_limits_for(zone_type)
+    out = calc_effective_far({}, zone_type=zone_type, land_area=0)
+
+    assert a["applied_far_pct"] == expected
+    assert out["effective_far_pct"] == expected
+    assert a["structural_cap_pct"] is None
+    assert out["structural_cap_pct"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 케이스 7 — R1 리뷰 R2 봉합(2026-07-23, HIGH-1): 계획상한(plan_far_pct) 존재 시 구조상한
+#   미바인딩 계약을 두 SSOT 교차대조로 고정한다. 케이스 6은 base={}만 써서 계획 입력이 없는
+#   경로만 검증했다 — 그 공백이 "계획상한을 구조상한이 덮는" 결합버그를 통과시켰다(리뷰어
+#   실증: 자연녹지+계획상한 200%+설계 150% → main PASS, 결함판 FAIL). 이 골든이 그 공백을
+#   메운다: 두 SSOT 모두 plan_far_pct가 있으면 구조상한을 바인딩하지 않아야 한다.
+# ══════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("zone_type", _FLOOR_CAPPED_ZONES)
+def test_golden_two_ssot_agree_plan_ceiling_relaxes_structural_cap(zone_type):
+    """층수 제한 zone 전수 + 계획상한(200%, 법정·구조상한보다 항상 높게 설정) 입력에서
+    applicable_limits_for·calc_effective_far 둘 다 계획값을 그대로 최종 적용값으로 낸다
+    (구조상한이 계획을 덮지 않음). 구조상한 수치 자체는 은폐되지 않고 여전히 노출된다."""
+    plan_far = 200.0  # 자연/생산/보전녹지 법정상한(80~100%)·구조상한(80%)보다 항상 높음
+    plan_districts = [{"district_name": "지구단위계획구역", "plan_far_pct": plan_far}]
+    plan_payload = {"districts": plan_districts}
+    base = {"local_ordinance": {}, "zone_limits": {}, "special_districts": plan_districts}
+
+    a = applicable_limits_for(zone_type, plan_payload=plan_payload)
+    out = calc_effective_far(base, zone_type=zone_type, land_area=0)
+
+    assert a["applied_far_pct"] == plan_far, (
+        f"{zone_type}: applicable_limits_for가 계획상한을 구조상한으로 덮음 — "
+        f"기대 {plan_far}, 실측 {a['applied_far_pct']}"
+    )
+    assert out["effective_far_pct"] == plan_far, (
+        f"{zone_type}: calc_effective_far가 계획상한을 구조상한으로 덮음 — "
+        f"기대 {plan_far}, 실측 {out['effective_far_pct']}"
+    )
+    assert a["applied_far_pct"] == out["effective_far_pct"], (
+        f"{zone_type}: 두 SSOT 불일치(계획상한 완화 판정 결합버그) — applicable_limits_for="
+        f"{a['applied_far_pct']} calc_effective_far={out['effective_far_pct']}"
+    )
+    # 은폐 금지 — 구조상한 수치는 계획상한 우선에도 불구하고 계속 반환된다.
+    assert a["structural_cap_pct"] is not None
+    assert out["structural_cap_pct"] is not None
+
+
+def test_golden_natural_green_structural_cap_hardcoded_literal_not_table_derived():
+    """★R1 리뷰 LOW(2026-07-23): 케이스 6의 파라미터화 골든은 기대값을 ZONE_LIMITS에서
+    유도하므로, 표 자체가 오염되면(예: 자연녹지 max_bcr이 실수로 30으로 바뀌면) 기대값도
+    같이 틀려버려 통과해버린다(자기참조 오탐 — 표 오염을 못 잡음). 이 테스트는 국토계획법
+    시행령 제84조(자연녹지 건폐율 상한 20%)·별표17 두문(4층 이하)이라는 법령 문언에서 나오는
+    리터럴 상수 80을 직접 박아, ZONE_LIMITS 표 자체의 회귀도 별도로 잡는다."""
+    a = applicable_limits_for("자연녹지지역")
+    out = calc_effective_far({}, zone_type="자연녹지지역", land_area=0)
+    assert a["applied_far_pct"] == 80.0
+    assert out["effective_far_pct"] == 80.0

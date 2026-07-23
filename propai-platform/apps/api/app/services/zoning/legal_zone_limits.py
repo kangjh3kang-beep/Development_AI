@@ -15,8 +15,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 # 데이터 원본(SSOT). auto_zoning_service.ZONE_LIMITS를 단일 출처로 사용.
 from app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+logger = structlog.get_logger()
 
 # 법정 출처 주석(그라운딩/배지 표기에 사용)
 LEGAL_BASIS = "국토계획법 시행령 제84·85조(용도지역별 건폐율·용적률 상한)"
@@ -182,6 +186,94 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
         # 기존 키는 전부 유지하며, 소비자는 이 키를 옵셔널로 읽는다(없어도 무해).
         "legal_ref_keys": {"bcr": LEGAL_REF_KEYS["bcr"], "far": LEGAL_REF_KEYS["far"]},
     }
+
+
+def structural_cap_for(
+    zone_type: str | None, applied_bcr_pct: float,
+) -> tuple[float | None, int | None, str | None]:
+    """용도지역 법정 층수상한(이 모듈의 legal_limits_for) × 적용 건폐율 = 구조상한(%).
+
+    ★공용 승격(2026-07-23, QA 레인A): 원래 far_tier_service._structural_cap_for(비공개)로
+    존재하던 산식을 이 모듈(법정 SSOT)로 승격해 applicable_limits_for(법정→조례→계획 3계층)도
+    같은 헬퍼로 4번째 계층(구조상한)을 적용할 수 있게 한다(산식 복제 0 — 호출부는 이 함수
+    하나만 임포트). far_tier_service.calc_effective_far는 이 함수를 임포트해 사용한다.
+
+    ★확정버그(2026-07-12 발견, 2026-07-23 근원봉합): 자연/생산녹지 등은 법정 용적률 '범위'
+    (예: 자연녹지 50~100%)만 보면 100%까지 허용되는 것처럼 보이지만, 국토계획법 시행령
+    별표15~17 두문(4층 이하)이 실질 상한을 만든다(건폐 20%×4층=80% < 법정 100%). 이 물리적
+    상한을 반영하지 않으면 실효 용적률을 과대표시하는 할루시네이션이 된다(90초진단 재현,
+    design-audit 4엔진 판정 과대낙관 재현). 근거 미확인 zone(legal_limits_for.max_floors=None)
+    은 (None,None,None) — 절대 적용하지 않는다(무날조·무회귀).
+
+    Args:
+        zone_type: 용도지역명(정규화 전 — legal_limits_for가 정규화).
+        applied_bcr_pct: 이 시점까지 적용된 건폐율(%) — 법정/조례/계획 계층을 이미 반영한 값.
+
+    Returns:
+        (구조상한(%)|None, 법정 층수상한|None, 층수상한 법령 근거문구|None).
+        층수 제한이 없는 용도지역은 (None, None, None)(완전 무영향).
+
+    ★R1 리뷰 HIGH-2 타당성 게이트(2026-07-23): 리뷰어 실증 — 조례 건폐율이 퍼센트(20) 대신
+    비율(0.2)로 오입력되면 0.2×4층=0.8%로 구조상한이 붕괴해 모든 설계를 부적합으로 만든다
+    (과대 오염은 `cap < applied_far` 비교에서 자연히 무해화되지만, 과소 방향은 무방비였다).
+    실제 건폐율은 항상 퍼센트(예: 20)로 전달되며 국내 건축법규상 건폐율 1% 미만 용도지역은
+    존재하지 않는다(ZONE_LIMITS 최소값 20) — 1.0 미만은 '비율↔퍼센트 오입력'으로 간주해
+    정직하게 미산정한다. 법정 건폐율 상한을 초과하는 값(오염/오입력)도 동일하게 미산정해
+    구조상한이 부풀려 실제보다 관대해지는 왜곡을 막는다.
+    """
+    limits = legal_limits_for(zone_type) or {}
+    floor_cap = limits.get("max_floors")
+    if not floor_cap:
+        return None, None, None
+    max_bcr = limits.get("max_bcr_pct")
+    if applied_bcr_pct is None or applied_bcr_pct < 1.0:
+        # ★R1 리뷰 LOW#1(2026-07-23): 게이트가 조용히 (None,None,None)만 반환하면 호출부가
+        #   과대낙관(법정/조례 값)으로 조용히 복귀할 수 있다(무날조 원칙상 신호 필요) —
+        #   호출부(applicable_limits_for)가 far_source/sources에 이 사실을 남기도록,
+        #   여기서는 최소한 로그로 이상 입력을 정직 고지한다(은폐 금지).
+        logger.warning(
+            "구조상한 미산정 — 건폐율 입력 이상(비율↔퍼센트 오입력 의심)",
+            zone_type=zone_type, applied_bcr_pct=applied_bcr_pct,
+        )
+        return None, None, None
+    if max_bcr is not None and applied_bcr_pct > max_bcr + 0.5:
+        logger.warning(
+            "구조상한 미산정 — 건폐율이 법정 상한 초과(오염/오입력 의심)",
+            zone_type=zone_type, applied_bcr_pct=applied_bcr_pct, max_bcr_pct=max_bcr,
+        )
+        return None, None, None
+    return round(applied_bcr_pct * floor_cap, 2), floor_cap, limits.get("floor_cap_basis")
+
+
+def should_apply_structural_cap(
+    cap_pct: float | None,
+    applied_far_pct: float | None,
+    *,
+    plan_relaxed: bool = False,
+) -> bool:
+    """구조상한(건폐율×층수)을 최종 적용 용적률로 실제 바인딩할지 판정하는 공용 술어.
+
+    ★R1 리뷰 확정(2026-07-23, HIGH-1): 도시·군관리계획/지구단위계획 상한(plan_far_pct)이
+    존재하면(plan_relaxed=True) 구조상한을 바인딩하지 않는다. 건폐율은 그대로인데 계획이
+    법정 용적률 범위를 넘는 상한을 부여했다면, 그 처분은 논리필연적으로 더 많은 층수를
+    전제한다 — 그렇지 않으면 처분 자체가 실현 불가능한 무효 처분이 되기 때문이다. 국토계획법
+    §52③·시행령 §46은 지구단위계획으로 §76(용도지역 안에서의 건축물 제한 — 별표15~17 두문의
+    층수제한 포함)의 완화를 명시적으로 허용한다.
+
+    ★리뷰어 실증 반박: 자연녹지+계획상한 200%+설계 150% 시나리오에서 main(계획 우선)은
+    적합, 구조상한이 계획을 덮으면 부적합으로 뒤집힌다 — 계획결정 자체를 무효로 만드는
+    판정이므로 오판이다.
+
+    applicable_limits_for(legal_zone_limits.py)·calc_effective_far(far_tier_service.py) 양쪽이
+    이 술어 하나만 공유해 완화 판정이 두 SSOT 사이에서 갈라지지 않게 한다(판정 로직 복제 금지).
+    구조상한 수치 자체(structural_cap_pct/floor_cap)는 이 판정과 무관하게 항상 반환되어야
+    한다(은폐 금지 — 호출부가 이 함수는 '바인딩 여부'만 판정하고 값 계산은 하지 않는다).
+    """
+    if cap_pct is None or applied_far_pct is None:
+        return False
+    if plan_relaxed:
+        return False
+    return cap_pct < applied_far_pct
 
 
 # ★조례 '확정' 출처로 인정하는 키워드(법제처/ELIS/지자체 조례). '법정상한'은 조례 미보유
@@ -442,7 +534,66 @@ def applicable_limits_for(
         sources.append(plan_info["source"] or "도시·군관리계획")
     if plan_info["plan_bcr"] is not None:
         result["plan_bcr_pct"] = plan_info["plan_bcr"]
+        # ★R1 리뷰 R2b 원복(2026-07-23, 신규 HIGH): R2에서 이 값(applied_bcr) 자체를 법정
+        #   상한으로 클램프했더니 지구단위계획의 건폐율 완화 자체가 무효화됐다 — 이 필드가
+        #   design_audit_orchestrator의 design_review 건폐율 하드 한도로 그대로 쓰이므로,
+        #   계획이 40%를 부여해도 20%로 깎여 정당한 설계가 '건폐율_초과'로 오판됐다(리뷰어
+        #   실증). plan_far와 동일하게 계획 완화를 존중한다(원복 — 클램프하지 않음).
         applied_bcr = plan_info["plan_bcr"]
+
+    # ── 4) 구조상한(건폐율×층수) — 자연/생산/보전녹지 등 층수 제한이 있는 zone은 물리적 상한이
+    #    법정/조례/계획 한도보다 낮을 수 있다(건폐 20%×4층=80% < 법정 100%). 이 계층을 빠뜨리면
+    #    이 함수의 applied_far_pct를 그대로 비교한도로 쓰는 design-audit 4엔진(rules8·
+    #    design_review·solar_envelope·permit)이 판정을 과대낙관한다(용인시 자연녹지 재현:
+    #    applied_far_pct=100 → 실효 80%인데 용적률_초과가 안 잡힘). calc_effective_far
+    #    (far_tier_service)의 마지막 계층과 동일 헬퍼(structural_cap_for)로 산정해 산식
+    #    복제를 피하고, 바인딩 여부 판정도 공용 술어(should_apply_structural_cap)로 동일하게
+    #    맞춰 두 SSOT가 항상 동치다. 층수 제한이 없는 zone은 structural_cap_for가
+    #    (None,None,None)을 반환해 완전 무영향(무회귀).
+    # ★R1 리뷰 R2b(2026-07-23): 구조상한 "계산 입력"만 법정 건폐율 상한 이내로 제한한다
+    #   (_bcr_for_cap — 오염되거나 과도한 plan_bcr이 구조상한 수치를 실제보다 부풀리는 것을
+    #   막기 위함) — 표시·한도값인 applied_bcr 자체는 위에서 이미 계획값 그대로 보존했다.
+    #   이 구분(계산 입력 vs 표시값)이 R2의 실수였다 — 한 변수를 양쪽 용도로 겸용해 클램프가
+    #   표시값까지 새어나갔다.
+    if applied_bcr is not None:
+        _bcr_for_cap = (
+            min(applied_bcr, float(legal_max_bcr)) if legal_max_bcr is not None else applied_bcr
+        )
+        cap_pct, floor_cap, cap_basis = structural_cap_for(result["zone_type"], _bcr_for_cap)
+    else:
+        cap_pct, floor_cap, cap_basis = (None, None, None)
+    result["structural_cap_pct"] = cap_pct
+    result["floor_cap"] = floor_cap
+    result["floor_cap_basis"] = cap_basis
+    # ★R1 리뷰 LOW#1(2026-07-23, 정직성): 구조상한이 층수제한 zone인데도 None이면(건폐율
+    #   입력 이상 — 단위오염/법정초과 게이트 발동), 조용히 법정/조례 값(과대낙관 가능)으로
+    #   복귀하지 않고 far_source·sources에 그 사실을 은폐 없이 남긴다(구조적으로 "이 zone은
+    #   층수제한이 없다"는 정상 케이스와 구분 — legal.get("max_floors")로 판별).
+    if legal.get("max_floors") and applied_bcr is not None and cap_pct is None:
+        far_source = f"{far_source} (건폐율 입력 이상으로 구조상한 미산정 — 확인 필요)"
+        sources.append("구조상한 미산정(건폐율 입력 이상)")
+    # ★R1 리뷰 HIGH-1(2026-07-23): 도시·군관리계획/지구단위계획 상한이 있으면(plan_relaxed)
+    #   구조상한을 바인딩하지 않는다 — 건폐율이 그대로인데 계획이 법정 범위를 넘는 용적률을
+    #   부여했다면 그 처분은 논리필연적으로 더 많은 층수를 전제한다(그렇지 않으면 처분 자체가
+    #   실현 불가능한 무효 처분이 된다). 국토계획법 §52③·시행령 §46이 지구단위계획으로 §76
+    #   (별표15~17 두문의 층수제한 포함) 완화를 명시적으로 허용한다.
+    plan_relaxed = plan_info["plan_far"] is not None
+    if should_apply_structural_cap(cap_pct, applied_far, plan_relaxed=plan_relaxed):
+        applied_far = cap_pct
+        _suffix = "" if result["ordinance_confirmed"] else " · 조례 확인 필요"
+        far_source = f"구조상한(건폐율×{floor_cap}층) 적용{_suffix}"
+        sources.append(cap_basis or "구조상한(건폐율×층수)")
+    elif (
+        plan_relaxed and cap_pct is not None and applied_far is not None
+        and cap_pct < applied_far
+    ):
+        # ★무날조 원칙: 계획상한이 구조상한을 완화한 것으로 간주해 값은 낮추지 않되(applied_far
+        #   불변), 구조상한 수치·근거는 은폐하지 않고 far_source에 명시해 소비처가 판단하게 한다.
+        far_source = (
+            f"{far_source} — 구조상한 {cap_pct:g}% 대비 완화 전제"
+            "(국토계획법 §52③·시행령 §46, 지구단위계획으로 §76 건축제한 완화 허용)"
+        )
+        sources.append(cap_basis or "구조상한(건폐율×층수)")
 
     result["applied_far_pct"] = applied_far
     result["applied_bcr_pct"] = applied_bcr

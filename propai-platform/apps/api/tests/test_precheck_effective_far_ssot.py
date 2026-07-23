@@ -101,11 +101,21 @@ async def test_ssot_failure_honest_degrade(monkeypatch):
 
     monkeypatch.setattr(far_tier_module, "calc_effective_far", _boom)
     legal = await _legal_limits("자연녹지지역")
-    # 폴백은 법정상한(현행 applicable 경로)이되, 신뢰도·근거로 '실효 아님'을 정직 표기.
-    assert legal["applied_far_pct"] == 100
+    # 폴백은 applicable_limits_for(법정→조례→계획→구조상한 4계층) 경로이되, 신뢰도·근거로
+    # calc_effective_far(SSOT) 미경유(='실효' 확정 아님)를 정직 표기.
+    # ★결함 고정 교정(2026-07-23, QA 레인A): applicable_limits_for 자체에 구조상한(건폐
+    # 20%×4층=80%) 계층이 승격되어, calc_effective_far가 실패해도 이 폴백값은 80이다(100이
+    # 아님) — SSOT 실패 시에도 과대표시가 아닌 물리적 실질상한이 유지되는 안전측 개선.
+    # ★R1 리뷰 MEDIUM-3(2026-07-23): structural_cap_pct/floor_cap도 이제 applicable_limits_for
+    # 자체 산출값으로 폴백 채워진다(applied_far=80인데 structural_cap_pct=None인 자기모순
+    # 해소 — precheck_service._legal_limits의 초기화 블록이 하드코딩 None 대신
+    # applied.get(...)을 기본값으로 쓰도록 교정됨). far_basis만 SSOT 미경유를 뜻하는 None 유지
+    # (far_reliable=False와 짝 — '실효 확정'은 아니라는 신호는 그대로 보존).
+    assert legal["applied_far_pct"] == 80
     assert legal["far_reliable"] is False
     assert legal["far_basis"] is None
-    assert legal["structural_cap_pct"] is None
+    assert legal["structural_cap_pct"] == 80.0
+    assert legal["floor_cap"] == 4
     # 산출근거 트레이스도 '법정 상한' 라벨로만 표기(실효 라벨 사칭 금지).
     ev = _build_evidence(legal=legal, area_checks=[], legal_refs=[], area_sqm=1000.0)
     ev_far = next(e for e in ev if e["id"] == "ev_far")

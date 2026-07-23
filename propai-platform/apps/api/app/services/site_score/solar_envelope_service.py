@@ -20,7 +20,7 @@ import structlog
 
 from app.services.common.sunlight_setback import max_height_for_north_distance_m
 from app.services.permit.building_code_rules import ZONE_DEFAULTS
-from app.services.zoning.legal_zone_limits import legal_limits_for
+from app.services.zoning.legal_zone_limits import legal_limits_for, structural_cap_for
 
 logger = structlog.get_logger(__name__)
 
@@ -276,9 +276,15 @@ def compute_buildable_envelope(
         if zone_max_floors and bcr > 0 and floors_by_far > zone_max_floors:
             # ★층수 제한이 용적률보다 강한 제약(녹지 4층 등): 현실 연면적 = 건폐율 바닥 × 제한층수.
             #   예) 자연녹지 건폐20%·4층 → 현실 용적률 80%(=20%×4) < 법정 100%. 법정 대신 이 값을 채택.
+            #   ★R1 리뷰 MEDIUM 전역스윕(2026-07-23): 이 산식(건폐율×층수)을 여기서 인라인
+            #   복제하지 않고 legal_zone_limits.structural_cap_for(far_tier_service·
+            #   design-audit과 동일 SSOT)에 위임한다 — 단위는 퍼센트(bcr×100)로 변환해 전달하고
+            #   결과(퍼센트)를 다시 비율로 환산한다. 헬퍼가 None을 반환하면(비정상 입력 등)
+            #   기존 산식으로 안전 폴백(무회귀).
             floors = zone_max_floors
             realistic_gfa = bcr_footprint * floors
-            realistic_far = bcr * floors
+            _cap_pct, _cap_floor, _cap_basis = structural_cap_for(zone, bcr * 100.0)
+            realistic_far = (_cap_pct / 100.0) if _cap_pct is not None else (bcr * floors)
             binding = "층수제한"
         else:
             floors = floors_by_far
