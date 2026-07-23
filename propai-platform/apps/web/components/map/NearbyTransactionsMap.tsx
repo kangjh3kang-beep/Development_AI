@@ -13,7 +13,7 @@ import { AlertTriangle } from "lucide-react";
 import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/SatongMultiMap";
 import { KakaoRoadview } from "@/components/map/KakaoRoadview";
 import { apiClient, ApiClientError } from "@/lib/api-client";
-import { resolveMapCenter } from "@/lib/satong-map-layers";
+import { MARKET_RENT_TYPES, MARKET_TRADE_TYPES, resolveMapCenter } from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 type Deal = {
@@ -92,16 +92,13 @@ type PresaleItem = {
   distance_m: number;
 };
 
-const TRADE_TYPES = [
-  { key: "apt", label: "아파트", color: "#14b8a6" },
-  { key: "villa", label: "연립·다세대", color: "#3b82f6" },
-  { key: "house", label: "단독·다가구", color: "#f59e0b" },
-  { key: "officetel", label: "오피스텔", color: "#8b5cf6" },
-  { key: "land", label: "토지", color: "#65a30d" },
-  { key: "commercial", label: "상업·업무", color: "#ec4899" },
-];
-
-const RENT_TYPES = TRADE_TYPES.slice(0, 4);
+// ★색상 SSOT 통합(분석품질 레인G): 종전 이 파일의 로컬 TRADE_TYPES와 SatongMultiMap의
+//   MARKET_TYPE_COLORS가 같은 6색을 각자 하드코딩했다 — lib/satong-map-layers.ts로 승격.
+// ★RENT_TYPES도 SSOT(MARKET_RENT_TYPES) 참조로 통일(R1 후속) — 이 파일의 slice(0,4)가
+//   "정답 기준선"이었으나, SatongMapShell 경로가 별도로 필터링 없이 6종을 요청하는
+//   비대칭이 있었다. 이제 두 컴포넌트가 같은 배열을 공유해 이중 정의 자체를 제거한다.
+const TRADE_TYPES = MARKET_TRADE_TYPES;
+const RENT_TYPES = MARKET_RENT_TYPES;
 const PRESALE_COLOR: Record<string, string> = {
   접수중: "#ef4444",
   접수예정: "#0ea5e9",
@@ -278,9 +275,11 @@ export function NearbyTransactionsMap({
   );
   const typeList = kind === "trade" ? TRADE_TYPES : RENT_TYPES;
   const marketLayer = useMemo<SatongMarketLayerState>(
+    // ★단일유형 선택 UI(이 컴포넌트의 칩 토글)는 그대로 유지 — 항상 1개 유형만 배열로 감싸
+    //   SatongMultiMap의 다중유형 렌더 계약(types: string[])에 맞춘다(회귀 없음).
     () => ({
       kind,
-      type,
+      types: [type],
       showPresale,
       presaleItems: presale,
     }),

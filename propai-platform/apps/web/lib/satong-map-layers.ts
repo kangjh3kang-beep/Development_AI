@@ -153,6 +153,34 @@ export function capacityColor(
   return CAPACITY_RAMP[idx];
 }
 
+/** 실거래 유형(매매 6종 — 전월세는 앞 4종만 지원, 백엔드 _TRADE_TYPES/_RENT_TYPES 미러) SSOT.
+ *  ★색상 SSOT 통합(분석품질 레인G): 종전 SatongMultiMap.MARKET_TYPE_COLORS와
+ *  NearbyTransactionsMap.TRADE_TYPES가 같은 6색을 각자 하드코딩해 한쪽만 고치면 다른 쪽이
+ *  침묵 발산했다 — AGE_LEGEND_ITEMS/CAPACITY_LEGEND_ITEMS와 동일 계층(이 파일)으로 승격. */
+export const MARKET_TRADE_TYPES: { key: string; label: string; color: string }[] = [
+  { key: "apt", label: "아파트", color: "#14b8a6" },
+  { key: "villa", label: "연립다세대", color: "#3b82f6" },
+  { key: "house", label: "단독다가구", color: "#f59e0b" },
+  { key: "officetel", label: "오피스텔", color: "#8b5cf6" },
+  { key: "land", label: "토지", color: "#65a30d" },
+  { key: "commercial", label: "상업업무용", color: "#ec4899" },
+];
+
+export const MARKET_TYPE_COLORS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.color]),
+);
+
+export const MARKET_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.label]),
+);
+
+/** 전월세(rent) 지원 유형 — 백엔드 `_RENT_TYPES`(apt/villa/house/officetel 4종만, 토지·상업업무용
+ *  전월세 API 자체가 없음) 미러. ★R1 후속(레인G R2): SatongMapShell의 marketLayer가 이 필터
+ *  없이 kind="rent"일 때도 전 6종을 요청해 land_rent/commercial_rent(백엔드 부재) 카테고리를
+ *  조회 → 범례에 "0건"으로 표기되며 "미수집"이 "거래 없음"으로 오인됐다(무음 절단과 동일 결함류).
+ *  NearbyTransactionsMap도 이 배열을 공유해 이중 정의를 막는다. */
+export const MARKET_RENT_TYPES = MARKET_TRADE_TYPES.slice(0, 4);
+
 export const AGE_LEGEND_ITEMS = [
   { color: "#38bdf8", label: "10년 미만 (신축)" },
   { color: "#34d399", label: "10~20년 (준신축)" },

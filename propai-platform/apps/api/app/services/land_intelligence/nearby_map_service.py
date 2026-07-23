@@ -187,6 +187,10 @@ class NearbyMapService:
             # 된다(캡을 필터보다 먼저 적용하면 시군구 전체 상위 N건이 되어 radius_m 이 무의미).
             resolved.sort(key=lambda x: x["count"], reverse=True)
             capped = resolved[:_MAX_GROUPS_PER_CAT]
+            # ★절단 정직 고지: 캡(28)에 걸려 응답에서 빠진 그룹 수를 카테고리별로 센다.
+            #   종전엔 이 절단을 아무도 세지 않아 프론트가 "다 보여준다"고 오인할 여지가 있었다
+            #   (geocode_precut_count·radius_filtered_out_count와 동일한 정직 원칙 — #459 계보).
+            cat["capped_count"] = max(0, len(resolved) - _MAX_GROUPS_PER_CAT)
             cat["groups"] = capped + unresolved
             cat["count"] = sum(g["count"] for g in cat["groups"])
 
@@ -301,6 +305,11 @@ class NearbyMapService:
                 "name": name or (f"{dong} {jibun}".strip() or "물건"),
                 "dong": dong, "jibun": jibun,
                 "_query": self._query_for(sigungu, dong, jibun, name),
+                # ★실무 판단정보(그룹 대표값) — molit_client가 이미 파싱해 넘기는 build_year/
+                #   jimok/land_use(토지 매매 전용)를 종전엔 여기서 폐기했다. 관측된 고유값을
+                #   집합으로 모아두고(대표값 확정은 _finalize에서 — 혼재 검출을 위해), 원천에
+                #   없으면 빈 채로 남는다(무날조).
+                "_build_years": set(), "_jimoks": set(), "_land_uses": set(),
                 "deals": [], "_prices": [], "_areas": [],
             })
             price = int(r.get("price_10k_won") or 0)
@@ -309,6 +318,14 @@ class NearbyMapService:
                 g["_prices"].append(price)
             if area > 0:
                 g["_areas"].append(area)
+            if r.get("build_year"):
+                g["_build_years"].add(r.get("build_year"))
+            jimok_v = (r.get("jimok") or "").strip()
+            if jimok_v:
+                g["_jimoks"].add(jimok_v)
+            land_use_v = (r.get("land_use") or "").strip()
+            if land_use_v:
+                g["_land_uses"].add(land_use_v)
             g["deals"].append({
                 "price_10k_won": price, "area_m2": area,
                 "floor": r.get("floor"), "deal_date": r.get("deal_date"),
@@ -353,6 +370,22 @@ class NearbyMapService:
             areas = g.pop("_areas", [])
             g["count"] = cnt
             g["avg_area_m2"] = round(sum(areas) / len(areas), 1) if areas else 0
+            # ★대표값 혼재 완화(R1 후속 — 레인G R2 항목3): 그룹 키가 건물명·지번 없이 법정동
+            #   (dong)으로만 폴백되면 서로 다른 필지의 거래가 한 그룹에 섞일 수 있다(주로 토지
+            #   매매에서 건물명이 없는 행). 이 경우 build_year/jimok/land_use "첫 값"만 대표로
+            #   보이면 실제로는 여러 필지가 섞였는데 그중 하나의 속성만 그룹 전체인 것처럼
+            #   오도한다 — 지목·용도지역은 개발 판단에 직결되는 정보라 피해가 크다.
+            #   무음 위험 비교: (a)혼재 시 미표기(None)는 "정보 없음"으로만 보이는 결측 —
+            #   기존 age_status 무자료 패턴과 동일한 안전한 실패 모드. (b)"대표 필지 기준"
+            #   캡션 부기는 사용자가 캡션을 놓치면 그룹 전체 속성으로 오인하는 정보 왜곡
+            #   실패 모드라 더 위험하다. 따라서 (a) 미표기를 채택 — 고유값이 정확히 1개일
+            #   때만 대표값을 확정하고, 0개(무자료) 또는 2개 이상(혼재)이면 None.
+            build_years = g.pop("_build_years", set())
+            jimoks = g.pop("_jimoks", set())
+            land_uses = g.pop("_land_uses", set())
+            g["build_year"] = next(iter(build_years)) if len(build_years) == 1 else None
+            g["jimok"] = next(iter(jimoks)) if len(jimoks) == 1 else None
+            g["land_use"] = next(iter(land_uses)) if len(land_uses) == 1 else None
             if kind == "trade":
                 p = g.pop("_prices", [])
                 # ★대표통계(이상치 제거) — 지분·정정 등 미미거래·초고가 왜곡 방지(공용 헬퍼).

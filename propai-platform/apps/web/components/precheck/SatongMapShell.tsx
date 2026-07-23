@@ -51,6 +51,8 @@ import type {
   SatongPresaleItem,
 } from "@/components/map/SatongMultiMap";
 import {
+  MARKET_RENT_TYPES,
+  MARKET_TRADE_TYPES,
   isRenderableSatongMapLayer,
   resolveSelectionAnchor,
   type SatongMapFeature,
@@ -290,8 +292,15 @@ const LAYERS: SatongLayer[] = [
     tone: "bg-blue-100 text-blue-950 border-blue-200",
     source: "국토교통부 실거래가(주변 1km·최근 3개월)",
     controls: [
+      // ★유형 다중 표시(분석품질 레인G P0): 종전 "거래유형" 단일 스텁을 6개 실제 유형
+      // 토글로 승격(다중 선택 — 개발 실무는 토지·상업업무용도 필수). 라벨은 색상 SSOT
+      // (lib/satong-map-layers.MARKET_TRADE_TYPES)와 동일 출처.
+      ...MARKET_TRADE_TYPES.map((t) => ({ id: `type-${t.key}`, label: t.label, mapEffect: true })),
+      // 매매/전월세 — 배타 전환(handleLayerControlClick kind- 분기). kind 자체가 백엔드
+      // 카테고리 키(`${type}_${kind}`)의 축이라 동시선택은 무의미.
+      { id: "kind-trade", label: "매매", mapEffect: true },
+      { id: "kind-rent", label: "전월세", mapEffect: true },
       { id: "deal-year", label: "거래연도", mapEffect: false, description: "거래연도 필터 — 향후 제공" },
-      { id: "deal-type", label: "거래유형", mapEffect: false, description: "거래유형 필터 — 향후 제공" },
       { id: "total-price", label: "총액", mapEffect: false, description: "총액 필터 — 향후 제공" },
       { id: "unit-price", label: "평당가 라벨", mapEffect: true, description: "실거래 라벨을 총액 대신 평당가로 표시" },
     ],
@@ -489,6 +498,9 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     zoning: ["land-use"],
     "official-price": ["unit-price"],
     age: ["building-age"],
+    // ★개발 실무 기본값(레인G 권고) — 아파트만 보이던 종전 하드코딩 대신 토지·상업업무용을
+    //   기본 포함해, 레이어를 켜자마자 개발행위 판단에 필요한 유형이 바로 보이게 한다.
+    transactions: ["kind-trade", "type-apt", "type-land", "type-commercial"],
     poi: ["station", "school", "commerce", "park", "hospital"],
     development: ["facilities"],
     terrain: ["base"],
@@ -1483,6 +1495,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
       if (layerId === "terrain") {
         ["base", "satellite", "hybrid", "aerial", "gray"].forEach((id) => current.delete(id));
         current.add(control.id);
+      } else if (layerId === "transactions" && (control.id === "kind-trade" || control.id === "kind-rent")) {
+        // 매매/전월세는 배타 전환 — kind 자체가 백엔드 카테고리 키(`${type}_${kind}`)의 축이라
+        // 동시선택은 무의미(terrain 베이스맵과 동일한 상호배타 패턴).
+        current.delete("kind-trade");
+        current.delete("kind-rent");
+        current.add(control.id);
       } else if (current.has(control.id)) {
         current.delete(control.id);
       } else {
@@ -2310,17 +2328,28 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 marketPayload={marketEnabled ? marketPayload : null}
                 // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
                 // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
-                marketLayer={useMemo(
-                  () => ({
-                    kind: "trade" as const,
-                    type: "apt",
+                marketLayer={useMemo(() => {
+                  const controls = layerControls.transactions ?? [];
+                  const kind: "trade" | "rent" = controls.includes("kind-rent") ? "rent" : "trade";
+                  // ★R1 후속(레인G R2 — MEDIUM 필수): 백엔드 전월세는 4종만 지원(_RENT_TYPES —
+                  //   토지·상업업무용 전월세 API 자체가 없다). kind로 유형 후보를 좁히지 않으면
+                  //   기본값(type-land/type-commercial 켜짐) 상태에서 "전월세"를 누르는 즉시
+                  //   land_rent/commercial_rent(백엔드 부재)를 요청해 범례에 "0건"으로 뜬다 —
+                  //   미수집을 "거래 없음"으로 오인시키는 결함(무음/오도 클래스). 정답 기준선은
+                  //   형제 NearbyTransactionsMap(RENT_TYPES=MARKET_RENT_TYPES)과 동일 SSOT 적용.
+                  const supportedTypes = kind === "rent" ? MARKET_RENT_TYPES : MARKET_TRADE_TYPES;
+                  return {
+                    kind,
+                    // ★하드코딩 제거(분석품질 레인G P0-3): 종전 type:"apt" 상수 고정 →
+                    //   layerState(layerControls) SSOT 참조. 켜진 유형 전부를 SatongMultiMap이
+                    //   동시 렌더한다(다중 표시).
+                    types: supportedTypes.map((t) => t.key).filter((key) => controls.includes(`type-${key}`)),
                     showPresale: presaleEnabled,
                     presaleItems: presaleEnabled ? presaleItems : null,
                     showAuction: auctionEnabled,
                     auctionItems: auctionEnabled ? auctionItems : null,
-                  }),
-                  [presaleEnabled, presaleItems, auctionEnabled, auctionItems],
-                )}
+                  };
+                }, [layerControls.transactions, presaleEnabled, presaleItems, auctionEnabled, auctionItems])}
                 // 상태 노트는 marketLayer 밖 별도 prop — 노트만 바뀔 때 마커 이펙트가 재실행되지
                 // 않게 한다(리뷰 LOW). 건수 라벨보다 우선 표기(정직원칙).
                 presaleNote={presaleEnabled ? presaleNote || null : null}
@@ -2484,24 +2513,44 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <p className="mt-1 text-sm font-bold text-[var(--text-secondary)]">{activeLayer.source}</p>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {activeLayer.controls.map((control) => (
-                    <button
-                      key={control.id}
-                      type="button"
-                      disabled={!control.mapEffect}
-                      onClick={() => handleLayerControlClick(activeLayer.id, control)}
-                      title={control.mapEffect ? `${control.label} 지도 반영` : control.description || "공식 데이터 소스 연결 후 활성화"}
-                      className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
-                        layerControls[activeLayer.id]?.includes(control.id)
-                          ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
-                          : control.mapEffect
-                            ? "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 hover:text-[var(--accent-strong)]"
-                            : "cursor-not-allowed border-[var(--border-muted)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
-                      }`}
-                    >
-                      {control.label}
-                    </button>
-                  ))}
+                  {activeLayer.controls.map((control) => {
+                    // ★R1 후속(레인G R2): 전월세(kind-rent) 모드에서는 토지·상업업무용 전월세
+                    //   API 자체가 없다(MARKET_RENT_TYPES=4종) — 켜봐야 무의미한 유형 토글을
+                    //   비활성화해 "눌러도 0건"이라는 오도적 UX를 원천 차단한다(marketLayer의
+                    //   kind 필터와 이중 방어).
+                    const rentModeActive =
+                      activeLayer.id === "transactions" &&
+                      (layerControls.transactions ?? []).includes("kind-rent");
+                    const rentUnsupported =
+                      rentModeActive &&
+                      control.id.startsWith("type-") &&
+                      !MARKET_RENT_TYPES.some((t) => `type-${t.key}` === control.id);
+                    const effectiveMapEffect = control.mapEffect && !rentUnsupported;
+                    return (
+                      <button
+                        key={control.id}
+                        type="button"
+                        disabled={!effectiveMapEffect}
+                        onClick={() => handleLayerControlClick(activeLayer.id, control)}
+                        title={
+                          rentUnsupported
+                            ? "전월세는 아파트·연립다세대·단독다가구·오피스텔만 지원합니다(토지·상업업무용 전월세 API 없음)"
+                            : control.mapEffect
+                              ? `${control.label} 지도 반영`
+                              : control.description || "공식 데이터 소스 연결 후 활성화"
+                        }
+                        className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
+                          layerControls[activeLayer.id]?.includes(control.id) && !rentUnsupported
+                            ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                            : effectiveMapEffect
+                              ? "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 hover:text-[var(--accent-strong)]"
+                              : "cursor-not-allowed border-[var(--border-muted)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
+                        }`}
+                      >
+                        {control.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 {!isRenderableSatongMapLayer(activeLayer.id) ? (
                   <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
