@@ -1012,10 +1012,15 @@ class DesignAuditOrchestrator:
             "bcr": _num(params.get("bcr_pct")),
             "far": _num(params.get("far_pct")),
             "height_m": _num(params.get("building_height_m")),
-            "floors": params.get("floors_above"),
+            # ★이중 안전 — floors/units만 _num() 없이 원문(brief 추출은 문자열)을 그대로 써서
+            #   design_change_predictor의 `floors >= 5` 등 수치비교가 'str'≥'int' TypeError로
+            #   죽고, 그 예외가 삼켜져 'skipped'로 위장 표시되던 결함(라이브 재현). 흡수 지점
+            #   (routers/design_audit.py:_normalize_numeric_params)에서 이미 정규화하지만,
+            #   이 dict의 다른 모든 필드처럼 여기서도 _num()으로 재확인한다(근원 봉합).
+            "floors": _num(params.get("floors_above")),
             "floor_height_m": _num(params.get("floor_height_m")),
             "gfa": _num(params.get("total_floor_area_sqm")),
-            "units": params.get("units"),
+            "units": _num(params.get("units")),
             "parking": _num(params.get("parking")),
             "building_type": params.get("building_use"),
             "avg_unit_area_sqm": _num(params.get("avg_unit_area_sqm")),

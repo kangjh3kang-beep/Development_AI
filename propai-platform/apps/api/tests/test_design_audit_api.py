@@ -715,6 +715,179 @@ class TestGrammarSections:
 
 
 # ════════════════════════════════════════════════════════
+# ②-4 QA 레인B — 배관 봉합: S4/S7 형상·permit 표면화·미검사 각주 교정
+# ════════════════════════════════════════════════════════
+
+# 스크린샷 재현 시나리오(자연녹지·용인시) 근사 — rules8은 기하(shapes) 없어 skipped,
+# solar_envelope·parking·bl_rules는 params만으로 실행돼 실제로 검사한다(4/8 거짓 각주 재현).
+_RICH_FINDINGS = [
+    {"check_id": "rules8", "engine": "rules8", "status": "skipped",
+     "current": None, "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "design_review", "engine": "design_review", "status": "pass",
+     "current": 100.0, "limit": 100.0, "legal_refs": [], "improvement": None},
+    {"check_id": "solar_envelope", "engine": "solar_envelope", "status": "pass",
+     "current": "적합", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "parking", "engine": "parking", "status": "warning",
+     "current": "미입력", "limit": "최소 5대", "legal_refs": [], "improvement": None},
+    {"check_id": "permit_feasibility", "engine": "permit", "status": "pass",
+     "current": "공동주택(M06)", "limit": "제2종일반주거지역 허용용도", "legal_refs": [],
+     "improvement": None, "note": "주용도 미입력 — 공동주택 일반분양(M06) 가정"},
+    {"check_id": "design_change_risk", "engine": "change_risk", "status": "pass",
+     "current": "고위험 0건 · 주의 0건 · 참고 0건", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "far_incentive_potential", "engine": "incentives", "status": "info",
+     "current": "실효 용적률 100.0%", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "bl_fire_escape", "engine": "bl_rules", "status": "pass",
+     "current": "적합", "limit": None, "legal_refs": [], "improvement": None},
+]
+
+_RICH_SECTIONS = {
+    "efficiency_metrics": {
+        "efficiency_pct": 78.0, "core_ratio_pct": None,
+        "common_area_ratio_pct": 22.0, "basis": "세대수 × 평균전용면적",
+        "notes": ["코어비율 미산출 — 코어면적(core_area_sqm) 데이터 없음"],
+    },
+    "s1_samples": {"available": False, "note": "PNU 미제공 — 비교 생략"},
+    "s4_incentives": {
+        "effective_far": {"effective_far_pct": 100.0},
+        "donation_simulation": {
+            "base_far": 100.0, "allowed_far": 120.0, "max_far": 250.0,
+            "incentive_far": 20.0, "legal_basis": "국토의 계획 및 이용에 관한 법률 시행령 제46조",
+        },
+        "upzoning": {
+            "current_zone": "자연녹지지역",
+            "scenarios": [{
+                "path": "지구단위계획 수립", "target_zone": "제1종일반주거지역",
+                "feasibility": "중", "expected_far_pct_low": 120, "expected_far_pct_high": 150,
+                "feasibility_reason": "면적 요건 충족", "conditions": ["지구단위계획 수립"],
+                "legal_refs": [], "timeline_est": "2~3년", "caveats": [], "is_estimate": True,
+            }],
+            "potential_far_range": {"min_pct": 120, "max_pct": 150},
+            "summary": "지구단위계획 수립 시 용적률 상향 가능(예상치)",
+        },
+    },
+    "design_review": {
+        "review_status": "pass",
+        "not_checked_items": [
+            "이격거리_준수", "높이제한_준수", "일조권_준수", "주차장_설치기준",
+            "피난시설_적합", "방화구획_적합", "장애인_편의시설", "에너지절약_기준",
+        ],
+    },
+    "permit": {
+        "feasibility": {"reason": "제2종일반주거지역에서 공동주택 개발 가능", "is_permitted": True},
+        "dev_type_basis": "주용도 미입력 — 공동주택 일반분양(M06) 가정",
+        "analysis": {
+            "senior_consultation": {
+                "verdict": "PASS", "evaluations": [], "citations": ["국토계획법 제76조"],
+                "needs_expert_review": False, "honest_notes": "",
+                "consultations": [{
+                    "agent_key": "urban", "name_ko": "도시계획 시니어", "verdict": "PASS",
+                    "evaluations": [], "citations": ["국토계획법 제76조"],
+                    "needs_expert_review": False, "honest_notes": [],
+                }],
+            },
+        },
+    },
+}
+
+_RICH_RESULT = {
+    **_FAKE_RESULT,
+    "findings": _RICH_FINDINGS,
+    "sections": _RICH_SECTIONS,
+}
+
+
+class TestSectionShapePlumbing:
+    """QA 레인B — S4/S7 형상 불일치·permit 미표면화·거짓 '미검사' 각주 봉합 회귀 방지."""
+
+    def test_s4_incentives_becomes_array_contracts(self, monkeypatch):
+        """s4_incentives(dict) → incentives[]·upzoning_scenarios[] 배열 계약(Array.isArray 통과)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        assert resp.status_code == 200
+        sections = resp.json()["sections"]
+        s4 = next(s for s in sections if s["id"] == "s4")
+        assert isinstance(s4["incentives"], list) and s4["incentives"]
+        assert s4["incentives"][0]["bonus_far_pp"] == 20.0
+        assert isinstance(s4["upzoning_scenarios"], list) and s4["upzoning_scenarios"]
+        assert s4["upzoning_scenarios"][0]["target_zone"] == "제1종일반주거지역"
+
+    def test_s7_efficiency_metrics_becomes_evidence_array(self, monkeypatch):
+        """efficiency_metrics(dict) → evidence[{label,value,basis}] 배열 계약."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s7 = next(s for s in sections if s["id"] == "s7")
+        assert isinstance(s7["evidence"], list) and s7["evidence"]
+        labels = {row["label"] for row in s7["evidence"]}
+        assert "전용률" in labels and "참고" in labels
+
+    def test_permit_section_surfaces_reason_and_senior_consultation(self, monkeypatch):
+        """permit 원자료(feasibility.reason·dev_type_basis·senior_consultation)가 표면화된다."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        permit = next(s for s in sections if s["id"] == "permit")
+        assert "공동주택 개발 가능" in permit["summary"]
+        assert "M06" in permit["summary"]  # dev_type_basis(M06 가정 사유) 동봉
+        assert permit["senior_consultation"]["consultations"][0]["agent_key"] == "urban"
+
+    def test_not_checked_items_reconciled_against_findings(self, monkeypatch):
+        """일조·주차·피난·방화(4건)는 실제 검사됨 — 거짓 미검사 각주에서 제거(4/8→나머지 4건만)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s5 = next(s for s in sections if s["id"] == "s5")
+        assert set(s5["not_checked_items"]) == {
+            "이격거리_준수", "높이제한_준수", "장애인_편의시설", "에너지절약_기준",
+        }
+        for falsely_not_checked in ("일조권_준수", "주차장_설치기준", "피난시설_적합", "방화구획_적합"):
+            assert falsely_not_checked not in s5["not_checked_items"]
+
+
+class TestNumericParamNormalization:
+    """brief 필드 흡수 지점(_normalize_numeric_params) — 문자열 수치 정규화(무날조·비수치 보존)."""
+
+    def test_string_numeric_brief_fields_normalized_before_orchestrator_call(self, monkeypatch):
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        payload = {
+            "use_llm": False,
+            "brief": {"fields": [
+                {"key": "floors_above", "value": "5"},
+                {"key": "units", "value": "20"},
+                {"key": "far_pct", "value": "100.5"},
+                {"key": "building_use", "value": "공동주택"},  # 비수치 키 — 원문 보존 확인
+            ]},
+        }
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps(payload)})
+        assert resp.status_code == 200
+        sent_params = fake_orch.calls[0]["params"]
+        assert sent_params["floors_above"] == 5  # 문자열 "5" → int 5
+        assert sent_params["units"] == 20
+        assert sent_params["far_pct"] == 100.5  # 소수는 float 유지
+        assert sent_params["building_use"] == "공동주택"  # 비수치 키는 원문 문자열 그대로
+
+
+# ════════════════════════════════════════════════════════
 # ③ GET /{audit_id} — 조회·소유권·404 정직
 # ════════════════════════════════════════════════════════
 

@@ -189,6 +189,42 @@ _BRIEF_UNITS: dict[str, str | None] = {
     "building_use": None,
 }
 
+# _BRIEF_UNITS에서 단위가 있는 키만 수치 파라미터(zone_type·building_use는 문자열 — unit=None).
+_NUMERIC_PARAM_KEYS: frozenset[str] = frozenset(
+    k for k, unit in _BRIEF_UNITS.items() if unit is not None
+)
+
+
+def _coerce_numeric(v: Any) -> Any:
+    """숫자로 변환 가능하면 변환(정수면 int, 아니면 float) — 아니면 원문 그대로(무날조).
+
+    bool은 숫자로 취급하지 않는다(True==1 오염 방지).
+    """
+    if isinstance(v, bool) or not isinstance(v, str):
+        return v
+    s = v.strip()
+    try:
+        f = float(s)
+    except (TypeError, ValueError):
+        return v
+    return int(f) if f.is_integer() else f
+
+
+def _normalize_numeric_params(params: dict[str, Any]) -> dict[str, Any]:
+    """설계개요 params의 수치 항목(대지면적·용적률·층수·세대수 등)을 한 번에 숫자로 정규화.
+
+    ★근원 봉합(design-audit 배관 봉합 QA 레인B): brief 추출값·수동입력 <input>은 모두
+    문자열(예: floors_above="5")로 들어오는데, 오케스트레이터 엔진 중 일부(change_risk)가
+    이를 _num() 없이 그대로 비교/산술에 써서 'str'과 'int' 비교 TypeError로 죽고 그 예외를
+    삼켜 'skipped'로 위장 표시하던 결함류를 이 흡수 지점 1곳에서 차단한다(엔진마다 산발적
+    _num 방어에 의존하지 않음). 숫자로 변환 불가한 값(빈 문자열·비수치 텍스트)은 원문 그대로
+    두어 이후 엔진의 정직한 skipped 판정을 그대로 따른다(임의값 발명 금지).
+    """
+    for key in _NUMERIC_PARAM_KEYS:
+        if key in params:
+            params[key] = _coerce_numeric(params[key])
+    return params
+
 
 def _extract_pdf_text(data: bytes) -> str:
     """PDF 바이트 → 텍스트(PyMuPDF). 미설치·스캔본·암호화 등은 빈 문자열(정직 안내)."""
@@ -525,6 +561,42 @@ async def _execute_run(
     return attach_ledger_hash(resp_body, ledger_wb)
 
 
+# ★design_review_service.CHECKED_ITEMS는 건폐율·용적률만 판정한다(그 서비스 자신의 정직한
+#   스코프 한정 — design_review_service.py:20). 그런데 라우터가 그 서비스의 not_checked_items를
+#   그대로 화면에 실으면, 실제로는 다른 엔진(solar_envelope·parking·bl_rules)이 검사하고
+#   findings로 결과까지 떠 있는 항목(일조·주차·피난·방화)까지 "미검사"로 표기되는 거짓 각주가
+#   생긴다(라이브 재현: 8건 중 4건 거짓). 여기서 실제 findings(engine·status)로 차감해 교정한다.
+_NOT_CHECKED_ENGINE_COVERAGE: dict[str, tuple[str, ...]] = {
+    "일조권_준수": ("solar_envelope", "rules8"),
+    "주차장_설치기준": ("parking",),
+    "피난시설_적합": ("bl_rules",),
+    "방화구획_적합": ("bl_rules",),
+    "이격거리_준수": ("rules8",),
+    "높이제한_준수": ("rules8",),
+    # 장애인_편의시설·에너지절약_기준은 8엔진 어디에도 없음 — 항상 미검사로 정직 유지.
+}
+
+
+def _reconcile_not_checked_items(
+    not_checked_items: list[str], findings: list[dict[str, Any]],
+) -> list[str]:
+    """design_review_service의 좁은 시야로 인한 거짓 '미검사' 각주를 findings 기반으로 차감.
+
+    해당 항목을 커버하는 엔진이 이번 실행에서 실제로 실행(status != skipped)됐으면 제거하고,
+    엔진 자체가 스킵됐으면(예: 기하 데이터 없어 rules8 생략) 여전히 미검사로 정직 유지한다.
+    """
+    if not not_checked_items:
+        return not_checked_items
+    ran_engines = {
+        f.get("engine") for f in findings
+        if isinstance(f, dict) and f.get("engine") and f.get("status") != "skipped"
+    }
+    return [
+        item for item in not_checked_items
+        if not any(e in ran_engines for e in _NOT_CHECKED_ENGINE_COVERAGE.get(item, ()))
+    ]
+
+
 def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
     """U7 프론트 AuditSection[] 구성 — 존재하는 원자료만(빈 섹션 미생성, 가짜값 0).
 
@@ -564,6 +636,8 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(design_review_raw, dict)
         else None
     )
+    if not_checked_items:
+        not_checked_items = _reconcile_not_checked_items(not_checked_items, findings)
 
     if findings:
         s5: dict[str, Any] = {
@@ -597,20 +671,56 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
             "title": "유사·인근 사례 비교",
             "case_comparison": case_comparison,
         })
+    # ★S4/S7 형상 불일치 봉합 — 오케스트레이터 원자료는 dict({effective_far,
+    #   donation_simulation, upzoning} / {efficiency_pct, ...})인데 예전엔 그 dict를 그대로
+    #   {"incentives": s4}/{"evidence": eff}로 실어 프론트 Array.isArray(...)가 항상 false가
+    #   됐다(항상 빈 섹션). report_sections 공용 헬퍼(웹·PDF 공용)로 배열 계약으로 정규화한다.
     s4 = raw.get("s4_incentives") if isinstance(raw, dict) else None
     if s4:
-        sections.append({
-            "id": "s4",
-            "title": "적용 가능 법규·정책 인센티브",
-            "incentives": s4,
-        })
+        from app.services.design_audit.report_sections import s4_incentives_to_web
+
+        s4_web = s4_incentives_to_web(s4)
+        if s4_web:
+            sections.append({
+                "id": "s4",
+                "title": "적용 가능 법규·정책 인센티브",
+                **s4_web,
+            })
     eff = raw.get("efficiency_metrics") if isinstance(raw, dict) else None
     if eff:
-        sections.append({
-            "id": "s7",
-            "title": "설계 효율 지표",
-            "evidence": eff,
-        })
+        from app.services.design_audit.report_sections import efficiency_metrics_to_evidence
+
+        eff_evidence = efficiency_metrics_to_evidence(eff)
+        if eff_evidence:
+            sections.append({
+                "id": "s7",
+                "title": "설계 효율 지표",
+                "evidence": eff_evidence,
+            })
+
+    # ★permit 섹션 표면화 — _run_permit이 반환하는 sections["permit"]
+    #   ({feasibility, dev_type_basis, analysis})을 라우터가 한 번도 읽지 않아
+    #   PermitAnalysisService의 인허가 환경분석·senior_consultation(도시계획·심의·법무
+    #   3도메인 시니어 자문)이 계산되고도 0픽셀이었다(라이브 재현).
+    permit_raw = raw.get("permit") if isinstance(raw, dict) else None
+    if isinstance(permit_raw, dict) and permit_raw:
+        feasibility = (
+            permit_raw.get("feasibility") if isinstance(permit_raw.get("feasibility"), dict) else {}
+        )
+        analysis = (
+            permit_raw.get("analysis") if isinstance(permit_raw.get("analysis"), dict) else None
+        )
+        summary_parts = [
+            p for p in (feasibility.get("reason"), permit_raw.get("dev_type_basis")) if p
+        ]
+        senior = analysis.get("senior_consultation") if isinstance(analysis, dict) else None
+        if summary_parts or isinstance(senior, dict):
+            permit_section: dict[str, Any] = {"id": "permit", "title": "인허가 가능성·환경분석"}
+            if summary_parts:
+                permit_section["summary"] = " · ".join(str(p) for p in summary_parts)
+            if isinstance(senior, dict):
+                permit_section["senior_consultation"] = senior
+            sections.append(permit_section)
     # ★로드맵③ — deliberation_result는 표면화 게이트(deliberation_surface_in_audit)가 켜졌을 때만
     #   _execute_run 응답에 존재한다(off·구서버는 키 자체가 없어 기존과 동일 — additive).
     deliberation_result = resp.get("deliberation_result")
@@ -743,6 +853,9 @@ async def _prepare_upload_run_request(
     # params를 직접 주는 호출(JSON /run 형태 페이로드)도 수용
     if isinstance(body.get("params"), dict):
         params.update({k: v for k, v in body["params"].items() if v is not None})
+    # ★brief.fields·수동입력 <input>은 문자열이라 흡수 지점에서 한 번에 숫자로 정규화
+    #   (개별 엔진의 산발적 _num 방어에 의존하지 않음 — 근원 봉합).
+    params = _normalize_numeric_params(params)
 
     ifc_file_url: str | None = body.get("ifc_file_url")
     if ifc_file is not None and ifc_file.filename:

@@ -293,9 +293,14 @@ def build_report_model_from_design_audit(data: dict[str, Any]) -> ReportModel:
     sections.append(Section(title="S6. 심의 예상 쟁점 — [AI 추정]", blocks=s6_blocks))
 
     # ── S7. 설계 효율 지표 ──
+    # ★공용 헬퍼(report_sections.efficiency_metrics_rows) — 웹(AuditReportView) S7 섹션과
+    #   동일 원자료를 소비한다. 이 헬퍼는 기존 `[(str(k), v) for k, v in list(metrics.items())
+    #   [:20]]`과 완전히 동형이라 PDF 출력은 바이트 단위로 무회귀다(QA 레인B).
+    from app.services.design_audit.report_sections import efficiency_metrics_rows
+
     metrics = _metrics(data, groups["efficiency"])
     if metrics:
-        s7_blocks: list[Any] = [KVTableBlock(rows=[(str(k), v) for k, v in list(metrics.items())[:20]])]
+        s7_blocks: list[Any] = [KVTableBlock(rows=efficiency_metrics_rows(metrics))]
     else:
         s7_blocks = [NarrativeBlock(paragraphs=["설계 효율 지표 데이터 없음."])]
     sections.append(Section(title="S7. 설계 효율 지표", blocks=s7_blocks))

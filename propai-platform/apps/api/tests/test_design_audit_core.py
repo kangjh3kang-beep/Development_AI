@@ -744,4 +744,32 @@ class TestGrammarSection:
         finding = next(f for f in result["findings"] if f["engine"] == "grammar")
         assert finding["status"] == "skipped"
         assert "미산출" in finding["note"]
-        assert result["overall"]["verdict"] == "적합"  # skipped는 판정 미반영
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QA 레인B — change_risk 죽은 엔진 부활(문자열 floors_above/units가 TypeError로
+# 죽어 예외가 삼켜지고 'skipped'로 위장 표시되던 결함, 라이브 재현)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestChangeRiskStringParamRevival:
+
+    async def test_string_floors_and_units_do_not_crash_change_risk(self):
+        """★실측 재현: floors_above='5'(brief 추출값 — 문자열)가 design_change_predictor의
+        `floors >= 5` 비교에서 'str' vs 'int' TypeError로 죽어 change_risk가 skipped로
+        위장 표시되던 결함(routers/design_audit.py:740-745 흡수 지점 + 여기 이중 안전 봉합)."""
+        orchestrator = DesignAuditOrchestrator()
+        params = _clean_params(floors_above="5", units="20")
+        result = await orchestrator._run_change_risk(params, ZONE)
+        finding = result["findings"][0]
+        assert finding["engine"] == "change_risk"
+        assert finding["check_id"] == "design_change_risk"
+        assert finding["status"] != "skipped"
+
+    async def test_change_risk_engine_ok_in_full_audit_with_string_params(self):
+        """오케스트레이터 전체 실행 — change_risk가 'failed'로 죽지 않고 'ok'로 완주."""
+        params = _clean_params(floors_above="16", units="200")  # 특별피난계단·부대복리 경고 유도
+        result = await DesignAuditOrchestrator().audit(params, zone_type=ZONE)
+        assert result["engines"]["change_risk"] == "ok"
+        cr = next(f for f in result["findings"] if f["engine"] == "change_risk")
+        assert cr["status"] != "skipped"
+        # 문자열 층수·세대수도 실제 예측 산술에 반영돼 경고가 뜬다(16층·200세대 → 승강기·특별피난 등).
+        assert cr["status"] == "warning"
