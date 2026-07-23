@@ -178,8 +178,15 @@ def _extract_dong(address: str | None) -> str | None:
     return m[-1] if m else None
 
 
-async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> dict[str, Any]:
-    """MOLIT 실거래 → 전용 평당가(만원). 동/시군구 각각의 중앙값·표본수."""
+async def _trade_per_pyeong(
+    sigungu5: str, dong: str | None, prop_type: str, *, collect_cases: bool = False,
+) -> dict[str, Any]:
+    """MOLIT 실거래 → 전용 평당가(만원). 동/시군구 각각의 중앙값·표본수.
+
+    collect_cases=True(opt-in — 기본 False는 반환 shape 완전 불변, 무회귀): 같은 수집 루프에서
+    개별 거래 사례를 선정/제외 사유와 함께 "cases" 키에 추가로 담는다(market_precision W3-8
+    ComparableSet 빌더 전용 — 새 MOLIT 호출을 추가하지 않고 이 함수의 기존 수집을 재사용).
+    """
     from datetime import datetime
 
     from apps.api.integrations.molit_client import MolitClient
@@ -195,6 +202,7 @@ async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> 
             mo = 12; y -= 1
     dong_pp: list[float] = []
     sigu_pp: list[float] = []
+    cases: list[dict[str, Any]] = []
     for ym in yms:
         try:
             rows = await m.get_transactions(sigungu5, ym, prop_type=prop_type, num_rows=1000)
@@ -207,17 +215,41 @@ async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> 
             except (TypeError, ValueError):
                 continue
             if amt <= 0 or ar <= 0:
+                if collect_cases:
+                    cases.append({
+                        "ym": ym, "dong": r.get("dong"), "jibun": r.get("jibun"),
+                        "building_name": r.get("building_name"), "deal_date": r.get("deal_date"),
+                        "price_10k_won": amt, "area_m2": ar, "per_pyeong_10k": None,
+                        "matched_dong": False, "included": False,
+                        "exclude_reason": "금액 또는 면적 결측/0",
+                    })
                 continue
             pp = amt / (ar / PYEONG_SQM)   # 만원/평(전용)
-            if not (_PP_MIN <= pp <= _PP_MAX):
+            in_range = _PP_MIN <= pp <= _PP_MAX
+            matched_dong = bool(dong and dong in str(r.get("dong") or ""))
+            if collect_cases:
+                cases.append({
+                    "ym": ym, "dong": r.get("dong"), "jibun": r.get("jibun"),
+                    "building_name": r.get("building_name"), "deal_date": r.get("deal_date"),
+                    "price_10k_won": amt, "area_m2": ar, "per_pyeong_10k": round(pp, 1),
+                    "matched_dong": matched_dong, "included": in_range,
+                    "exclude_reason": (
+                        None if in_range
+                        else f"평당가 sanity 범위({_PP_MIN:.0f}~{_PP_MAX:.0f}만원/평) 벗어남"
+                    ),
+                })
+            if not in_range:
                 continue
             sigu_pp.append(pp)
-            if dong and dong in str(r.get("dong") or ""):
+            if matched_dong:
                 dong_pp.append(pp)
-    return {
+    result: dict[str, Any] = {
         "dong": {"median": round(statistics.median(dong_pp)) if dong_pp else None, "n": len(dong_pp)},
         "sigungu": {"median": round(statistics.median(sigu_pp)) if sigu_pp else None, "n": len(sigu_pp)},
     }
+    if collect_cases:
+        result["cases"] = cases
+    return result
 
 
 async def _nearby_presale_reference(sigungu5: str) -> dict[str, Any]:
