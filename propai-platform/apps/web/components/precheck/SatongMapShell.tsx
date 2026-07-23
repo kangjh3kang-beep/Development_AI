@@ -1464,9 +1464,45 @@ export function SatongMapShell({ locale }: { locale: string }) {
     window.location.href = `${apiV1BaseUrl()}/zoning/land-schedule-template`;
   }, []);
 
+  // ★탐색(browse)과 확정(commit) 분리(2026-07-23 사용자 UX 요청2) — 레일 항목은 '열기만'
+  //   한다. 종전엔 레일 클릭이 지도 레이어를 즉시 토글해, 무슨 레이어인지 보려면 반드시
+  //   켜야 했다(보기=적용). 이제 롤오버/포커스/클릭은 미리보기 팝오버만 열고, 실제 적용은
+  //   팝오버 안의 컨트롤·헤더 on/off에서 한다. 지도 상태는 전혀 건드리지 않는다.
+  //   ★토글이 아니라 '지정'이다 — 롤오버로 항목을 옮길 때 같은 항목 재진입이 닫힘으로
+  //   해석되면 깜빡인다(전환은 열림 유지가 계약).
+  const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
+    setDetailFeature(null); // 단일 팝오버 계약(같은 좌표 3패널 배타)
+    setBasemapOpen(false);
+    setActiveLayerId(layerId);
+  }, []);
+
+  // 베이스맵 패널 열기(지정) — 레일 형제와 동일한 롤오버 계약.
+  const openBasemapPanel = useCallback(() => {
+    setDetailFeature(null);
+    setActiveLayerId(null);
+    setBasemapOpen(true);
+  }, []);
+
+  // 레이어 on/off '만' — 팝오버 헤더 확정 버튼용. handleLayerClick은 패널 토글까지 하므로
+  // 팝오버 안에서 쓰면 누르는 순간 팝오버가 닫혀 결과를 볼 수 없다(확정 후 잔류가 계약).
+  // 지적도는 기반 레이어라 끄지 않는다(기존 handleLayerClick 규칙과 동일).
+  const toggleLayerEnabled = useCallback((layerId: SatongMapLayerId) => {
+    if (!isRenderableSatongMapLayer(layerId)) return;
+    setEnabledLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(layerId)) {
+        if (layerId !== "cadastre") next.delete(layerId);
+      } else {
+        next.add(layerId);
+      }
+      return next;
+    });
+  }, []);
+
+  // 레이어 자체 on/off — 좌상단 활성 칩(끄기 지름길)과 팝오버 헤더 토글의 공용 근원.
   const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
     setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
-    setBasemapOpen(false);  // 〃 베이스맵도(레일 버튼·좌상단 칩 행 두 호출부가 함께 따라온다)
+    setBasemapOpen(false);  // 〃 베이스맵도(좌상단 칩 행·팝오버 헤더 두 호출부가 함께 따라온다)
     if (!isRenderableSatongMapLayer(layerId)) {
       setActiveLayerId((current) => (current === layerId ? null : layerId));
       return;
@@ -2406,8 +2442,13 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   UX 요청). 종전엔 레일=우상단·베이스맵=우하단으로 제어가 분산돼 있었다. */}
               <button
                 type="button"
+                // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
+                //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
+                onMouseEnter={openBasemapPanel}
+                onFocus={openBasemapPanel}
                 onClick={() => {
                   setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
+                  setDetailFeature(null);
                   setBasemapOpen((v) => !v);
                 }}
                 aria-expanded={basemapOpen}
@@ -2432,7 +2473,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <button
                     key={layer.id}
                     type="button"
-                    onClick={() => handleLayerClick(layer.id)}
+                    // ★열기만(확정 아님) — 롤오버·포커스·클릭 모두 미리보기 팝오버를 연다.
+                    //   터치엔 hover가 없으므로 탭(click)도 같은 동작이어야 한다.
+                    onMouseEnter={() => openLayerPanel(layer.id)}
+                    onFocus={() => openLayerPanel(layer.id)}
+                    onClick={() => openLayerPanel(layer.id)}
                     title={layer.label}
                     className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
                       isActive
@@ -2494,14 +2539,34 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     </div>
                     <h3 className="mt-2 text-lg font-black text-[var(--text-primary)]">{activeLayer.label}</h3>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveLayerId(null)}
-                    className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
-                    aria-label="레이어 설정 닫기"
-                  >
-                    <X className="size-4" aria-hidden />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
+                        on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
+                        않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
+                    {isRenderableSatongMapLayer(activeLayer.id) && (
+                      <button
+                        type="button"
+                        onClick={() => toggleLayerEnabled(activeLayer.id)}
+                        aria-pressed={enabledLayers.has(activeLayer.id)}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                          enabledLayers.has(activeLayer.id)
+                            ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                            : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
+                        }`}
+                        title={enabledLayers.has(activeLayer.id) ? "지도에서 이 레이어 끄기" : "지도에 이 레이어 켜기"}
+                      >
+                        {enabledLayers.has(activeLayer.id) ? "지도 표시 중" : "지도에 표시"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveLayerId(null)}
+                      className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+                      aria-label="레이어 설정 닫기"
+                    >
+                      <X className="size-4" aria-hidden />
+                    </button>
+                  </div>
                 </div>
                 <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
                   {activeLayer.description}

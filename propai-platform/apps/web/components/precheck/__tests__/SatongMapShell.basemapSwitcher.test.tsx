@@ -141,3 +141,56 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
   });
 });
+
+/**
+ * 레일 상호작용 재설계(2026-07-23 사용자 UX 요청2) — 탐색(browse)과 확정(commit) 분리.
+ *   ① 레일 롤오버/클릭은 팝오버만 연다(지도 레이어를 켜지 않는다).
+ *   ② 다른 항목으로 이동하면 그 항목 팝오버로 전환된다.
+ *   ③ 확정은 팝오버 안(헤더 on/off·컨트롤)에서만 일어나고, 확정 후에도 팝오버는 열려 있다.
+ */
+describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    resetStores();
+  });
+  afterEach(() => {
+    window.sessionStorage.clear();
+    resetStores();
+  });
+
+  it("★레일 클릭은 팝오버만 열고 레이어를 켜지 않는다(보기=적용 결합 해제)", () => {
+    render(<SatongMapShell locale="ko" />);
+    // 지형도·항공뷰는 기본 OFF인 렌더 가능 레이어.
+    fireEvent.click(screen.getByRole("button", { name: "지형도·항공뷰" }));
+    // 팝오버는 열렸고
+    expect(screen.getByRole("button", { name: /지도에 표시/ })).toBeTruthy();
+    // 확정 전이므로 '지도 표시 중'이 아니다(=아직 안 켜짐).
+    expect(screen.queryByRole("button", { name: "지도 표시 중" })).toBeNull();
+  });
+
+  it("★롤오버로 팝오버가 열리고, 다른 항목으로 이동하면 전환된다", () => {
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "지형도·항공뷰" }));
+    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "지적도" }));
+    expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeNull();
+  });
+
+  it("★확정은 팝오버 안에서 — 누른 뒤에도 팝오버가 닫히지 않는다", () => {
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: "지형도·항공뷰" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "지도에 표시" }));
+    // 켜졌고(라벨 전환) 팝오버는 그대로 열려 있다(결과 확인 가능).
+    expect(screen.getByRole("button", { name: "지도 표시 중" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+  });
+
+  it("베이스맵 롤오버도 팝오버를 연다(레일 형제 동일 계약)", () => {
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "베이스맵 선택" }));
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+});
