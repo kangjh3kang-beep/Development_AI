@@ -14,6 +14,7 @@ Monte Carlo 시뮬레이션 기반 절세 시나리오 생성.
 
 import math
 import random
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -205,41 +206,54 @@ class TaxAIService:
 
         # 장기보유특별공제
         deduction_rate = self._calc_long_hold_deduction(holding_years, is_single_home)
-        deduction_amount = gain * deduction_rate
-        taxable_gain = gain - deduction_amount
 
-        # 누진세율 8구간
-        base_tax, effective_rate = self._calc_transfer_tax_progressive(taxable_gain)
+        # ── 금액 계산(과세표준→세액→중과→합계)은 Decimal로 승격 ──
+        # 입력은 Decimal(str(x))로 변환해 이진 부동소수 오차 유입을 원천 차단하고,
+        # 세율은 Decimal 리터럴로 고정한다. 중간 반올림 없이 전 구간을 정밀 유지하다가
+        # 각 출력 필드에서 1회만 ROUND_HALF_EVEN 양자화한다(Python round()와 동일 정책 —
+        # ROUND_HALF_UP·절사로 정책을 바꾸지 않는다. 기존 round() 결과 바이트 동일 확증됨).
+        gain_dec = Decimal(str(gain))
+        deduction_rate_dec = Decimal(str(deduction_rate))
+        deduction_amount_dec = gain_dec * deduction_rate_dec
+        taxable_gain_dec = gain_dec - deduction_amount_dec
 
-        # 적용된 구간 정보
+        # 누진세율 8구간 (Decimal 리터럴로 재계산 — _calc_transfer_tax_progressive의
+        # float 경로는 다른 호출부(byte-exact 테스트 보유)를 위해 그대로 둔다)
         bracket_rate = 0.0
         bracket_deduction = 0
+        base_tax_dec = Decimal(0)
         for upper, rate, deduction in _TRANSFER_TAX_BRACKETS:
-            if taxable_gain <= upper:
+            upper_dec = None if upper == math.inf else Decimal(str(upper))
+            if upper_dec is None or taxable_gain_dec <= upper_dec:
                 bracket_rate = rate
                 bracket_deduction = deduction
+                base_tax_dec = taxable_gain_dec * Decimal(str(rate)) - Decimal(deduction)
                 break
 
         # 다주택 중과
-        surcharge = 0.0
+        surcharge_dec = Decimal(0)
         if home_count == 2:
-            surcharge = taxable_gain * 0.20
+            surcharge_dec = taxable_gain_dec * Decimal("0.20")
         elif home_count >= 3:
-            surcharge = taxable_gain * 0.30
+            surcharge_dec = taxable_gain_dec * Decimal("0.30")
 
-        total_tax = base_tax + surcharge
-        final_effective = total_tax / gain if gain > 0 else 0.0
+        total_tax_dec = base_tax_dec + surcharge_dec
+        final_effective = float(total_tax_dec / gain_dec) if gain_dec > 0 else 0.0
+
+        def _quantize_won(value: Decimal) -> int:
+            """원단위로 양자화한다(ROUND_HALF_EVEN — Python round()와 동일 정책)."""
+            return int(value.to_integral_value(rounding=ROUND_HALF_EVEN))
 
         return {
             "gain": gain,
             "deduction_rate": deduction_rate,
-            "deduction_amount": round(deduction_amount),
-            "taxable_gain": round(taxable_gain),
+            "deduction_amount": _quantize_won(deduction_amount_dec),
+            "taxable_gain": _quantize_won(taxable_gain_dec),
             "bracket_rate": bracket_rate,
             "bracket_deduction": bracket_deduction,
-            "base_tax": round(base_tax),
-            "multi_home_surcharge": round(surcharge),
-            "tax": round(total_tax),
+            "base_tax": _quantize_won(base_tax_dec),
+            "multi_home_surcharge": _quantize_won(surcharge_dec),
+            "tax": _quantize_won(total_tax_dec),
             "effective_rate": round(final_effective, 6),
         }
 
