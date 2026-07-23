@@ -14,6 +14,7 @@ import {
   Home,
   Landmark,
   Layers,
+  Image,
   LineChart,
   Loader2,
   MapIcon,
@@ -626,11 +627,14 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [clearNonce, setClearNonce] = useState(0);
   // ★WP-M4: 레일(레이어 아이콘 세로바) 클릭 고정 토글 — hover 없이 터치로도 전개 가능하게.
   const [railPinned, setRailPinned] = useState(false);
+  // 베이스맵 팝오버 열림 — 레이어 팝오버(activeLayerId)와 상호배타(같은 좌표를 쓰므로).
+  const [basemapOpen, setBasemapOpen] = useState(false);
   // 새 프로젝트 생성 인플라이트 표시(버튼 disabled용) — 실제 중복차단은 creatingProjectRef(F4).
   const [creatingProject, setCreatingProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const railRef = useRef<HTMLDivElement | null>(null);
+  const basemapPopoverRef = useRef<HTMLDivElement | null>(null);
   const creatingProjectRef = useRef(false);
 
   // ── PR#221 프로젝트 전환/하이드레이션 상태 refs(컴포넌트 상단으로 이동 — F1: 아래 콜백들이
@@ -1689,12 +1693,35 @@ export function SatongMapShell({ locale }: { locale: string }) {
     };
   }, [activeLayerId]);
 
-  // 베이스맵 스위처(jootek 패리티) — 지도 하단 도크의 우측 슬롯으로 전달(2026-07-17 겹침
-  // 구조 단일화). 종전 독립 absolute 섬(bottom-20 right-4)은 칩 행의 암묵 예약값(152px)을
-  // 실폭(≈192px — 3×w-14+간격+패딩)으로 침묵 초과해 칩이 밑으로 파고들었다 — 같은 flex 행에 흘리면 겹침이
-  // 문법적으로 불가능하다. 스위처는 컨트롤(L1 글래스 blur12) — 팝오버(L3 blur24)와 구분.
-  const basemapSwitcherDock = (
-    <div className="flex gap-1.5 rounded-2xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
+  // 베이스맵 팝오버도 레이어 팝오버와 동일한 닫힘 계약(Esc·외부 포인터다운) — 같은 좌표에
+  // 뜨는 형제 UI라 닫힘 규칙이 다르면 사용자가 두 규칙을 학습해야 한다(일관성).
+  useEffect(() => {
+    if (!basemapOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setBasemapOpen(false);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (basemapPopoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
+      setBasemapOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [basemapOpen]);
+
+  // 베이스맵 스위처 — 우상단 레이어 레일의 '베이스맵' 항목이 여는 팝오버 본문(2026-07-23
+  // 사용자 UX 요청: 지도 제어 일원화). 이력: 독립 absolute 섬(bottom-20 right-4) → 하단
+  // 도크 bottomDockSlot(2026-07-17 겹침 구조 단일화) → 레일 팝오버(현재).
+  // ★07-17 겹침 수정은 유지된다 — 도크 슬롯에서 빠져도 칩 행은 자기 flex flow 그대로이고,
+  //   폐기됐던 암묵 예약값(152px)을 되살리지 않는다(레일 팝오버는 칩 행과 다른 코너·레이어).
+  // ★레일 hover 전개와의 경합도 없다 — 팝오버는 레일 좌측(right-20)에 별도로 뜬다(레이어
+  //   팝오버와 동일 좌표 계약). 상호배타: 하나가 열리면 다른 하나는 닫힌다.
+  const basemapSwitcherPanel = (
+    <div className="grid grid-cols-4 gap-1.5">
       {BASEMAP_SWITCHES.map((opt) => {
         const active = resolveVWorldBaseLayer(mapLayerState) === opt.base;
         return (
@@ -1707,7 +1734,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             onClick={() =>
               handleLayerControlClick("terrain", { id: opt.id, label: opt.label, mapEffect: true })
             }
-            className={`w-14 rounded-xl border p-1 text-center transition ${
+            className={`rounded-xl border p-1 text-center transition ${
               active
                 ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
                 : "border-transparent hover:border-[var(--line-strong)]"
@@ -2170,7 +2197,6 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 autoPreviewFocus
                 height={720}
                 chrome="immersive"
-                bottomDockSlot={basemapSwitcherDock}
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
@@ -2234,6 +2260,26 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 <MapIcon className={`size-5 ${railPinned ? "" : "animate-pulse group-hover:animate-none"}`} aria-hidden />
               </button>
 
+              {/* 베이스맵 — 지도 표시 제어를 우상단 한 코너로 모으는 항목(2026-07-23 사용자
+                  UX 요청). 종전엔 레일=우상단·베이스맵=우하단으로 제어가 분산돼 있었다. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
+                  setBasemapOpen((v) => !v);
+                }}
+                aria-pressed={basemapOpen}
+                aria-label="베이스맵 선택"
+                title="베이스맵 (일반·위성·하이브리드·회색)"
+                className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
+                  basemapOpen
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
+                    : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
+                }`}
+              >
+                <Image className="size-5" aria-hidden />
+              </button>
+
               {/* 내부 레이어 버튼 리스트 (세로 전개) */}
               {LAYERS.map((layer) => {
                 const Icon = layer.icon;
@@ -2243,7 +2289,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <button
                     key={layer.id}
                     type="button"
-                    onClick={() => handleLayerClick(layer.id)}
+                    onClick={() => {
+                      setBasemapOpen(false); // 상호배타(위 주석 참조)
+                      handleLayerClick(layer.id);
+                    }}
                     title={layer.label}
                     className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
                       isActive
@@ -2260,10 +2309,32 @@ export function SatongMapShell({ locale }: { locale: string }) {
               })}
             </div>
 
-            {/* 베이스맵 스위처는 독립 absolute 섬(bottom-20 right-4)에서 지도 하단 도크의
-                bottomDockSlot으로 이동(2026-07-17 겹침 구조 단일화 — basemapSwitcherDock 참조).
-                칩 행과 같은 flex flow에 흘러 겹침이 문법적으로 불가능해졌고, 칩 행의 암묵
-                예약값(max-w calc 152px)도 함께 제거됐다. */}
+            {/* 베이스맵 팝오버 — 레일 '베이스맵' 버튼이 여는 패널. 레이어 팝오버와 같은
+                좌표 계약(right-20 top-20)이라 상호배타로 열린다.
+                이력: 독립 absolute 섬(~07-16) → 하단 도크(07-17 겹침 단일화) → 레일 팝오버(07-23).
+                칩 행의 암묵 예약값(152px)은 07-17에 제거됐고 되살리지 않는다(겹침 수정 유지). */}
+            {basemapOpen && (
+              <div
+                ref={basemapPopoverRef}
+                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
+                  <button
+                    type="button"
+                    onClick={() => setBasemapOpen(false)}
+                    aria-label="베이스맵 닫기"
+                    className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
+                  >
+                    <X className="size-4" aria-hidden />
+                  </button>
+                </div>
+                {basemapSwitcherPanel}
+                <p className="mt-3 text-xs font-bold text-[var(--text-tertiary)]">
+                  배경 지도를 바꿔도 선택 필지·레이어는 유지됩니다.
+                </p>
+              </div>
+            )}
 
             {activeLayer && (
               <div
