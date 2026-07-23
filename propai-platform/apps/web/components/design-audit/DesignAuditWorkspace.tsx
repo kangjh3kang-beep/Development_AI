@@ -29,6 +29,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { DesignData } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveDominantZone } from "@/lib/zoning-ssot";
+import { rectangleOutlineShapes, shapesToLegacy } from "@/lib/cad-shapes";
 import type { Locale } from "@/i18n/config";
 import {
   BriefUploadStep,
@@ -162,26 +163,75 @@ function buildRegulationPayload(
         effectiveFar?: number | null;
         effectiveBcr?: number | null;
         source?: string | null;
+        // ★레인C(P0) — 시군구(조례 resolver 키). 백엔드 calc_upzoning이
+        //   base.local_ordinance.sigungu를 읽는다(design_audit_orchestrator._run_incentives가
+        //   오케스트레이터 보유 sigungu로 보강하므로 여기선 있으면 싣는 정도로도 충분하지만,
+        //   이 payload 자체가 다른 소비처(far_tier_service.calc_effective_far 등)에도 재사용되므로
+        //   같이 실어 둔다 — 중복이 아니라 단일 payload의 완전성).
+        sigungu?: string | null;
       }
     | null
     | undefined,
-): { local_ordinance: Record<string, unknown> } | null {
+  // ★레인C(P0) — 규제구역(개발제한·상수원보호 등). 스파이크 결과: 부지분석 SSOT
+  //   (useProjectContextStore.siteAnalysis)에 이 필드가 없어(OrdinanceData·SiteAnalysisData
+  //   미보유) 현재는 항상 undefined다 — 날조 금지 원칙에 따라 값을 지어내지 않고 전달 경로만
+  //   열어둔다(상위 SSOT가 언젠가 채우면 자동으로 실린다). 미확보 시 백엔드가 data_gaps로
+  //   "미수집" 정직 표기(far_tier_service.calc_upzoning/upzoning_potential.analyze 참조).
+  specialDistricts?: string[] | null,
+): { local_ordinance: Record<string, unknown>; special_districts?: string[] } | null {
   if (!ordinance) return null;
   const hasSignal =
     ordinance.ordinanceFar != null ||
     ordinance.ordinanceBcr != null ||
     ordinance.effectiveFar != null ||
     ordinance.effectiveBcr != null ||
-    !!ordinance.source;
+    !!ordinance.source ||
+    !!ordinance.sigungu;
   if (!hasSignal) return null;
-  return {
+  const payload: { local_ordinance: Record<string, unknown>; special_districts?: string[] } = {
     local_ordinance: {
       ordinance_far: ordinance.ordinanceFar ?? null,
       ordinance_bcr: ordinance.ordinanceBcr ?? null,
       effective_far: ordinance.effectiveFar ?? null,
       effective_bcr: ordinance.effectiveBcr ?? null,
       source: ordinance.source || null,
+      sigungu: ordinance.sigungu || null,
     },
+  };
+  if (Array.isArray(specialDistricts) && specialDistricts.length > 0) {
+    payload.special_districts = specialDistricts;
+  }
+  return payload;
+}
+
+/** design-audit 기하 payload에 실을 scale(px per meter) — CADEditor·cad-shapes.ts 기본값과 동일. */
+const MASS_GEOMETRY_SCALE_PX_PER_M = 10;
+
+/** ★기하 브릿지(P1) — 설계 스튜디오 매스(designData.massGeom) → design_payload_from_shapes
+ * 계약(geometry: points/lines/surfaces/floor_count/building_height_m/scale)으로 변환한다.
+ *
+ * massGeom은 폭×깊이(직사각형 근사) + podium/tower 치수만 보유한다(정점 좌표 없음) — 원점(0,0)
+ * 기준 직사각형 외곽을 실치수 그대로 전개한다(좌표 날조 아님, cad-shapes.rectangleOutlineShapes
+ * 재사용). podium-tower 매스는 지표면 건폐(BCR)를 좌우하는 podium 치수를 우선한다
+ * (CadBimIntegrationPanel의 동일 우선순위 관례 재사용 — 국소 로직 신설 금지).
+ * 폭·깊이 둘 다 없으면 null(무날조 — rules8은 정직하게 skipped 유지, 빈 도형 생성 금지).
+ */
+function massGeomToGeometry(
+  massGeom: DesignData["massGeom"],
+  floorCount: number | null | undefined,
+  heightM: number | null | undefined,
+): Record<string, unknown> | null {
+  if (!massGeom) return null;
+  const w = massGeom.podium?.widthM ?? massGeom.buildingWidthM;
+  const d = massGeom.podium?.depthM ?? massGeom.buildingDepthM;
+  if (typeof w !== "number" || !(w > 0) || typeof d !== "number" || !(d > 0)) return null;
+  const legacy = shapesToLegacy(rectangleOutlineShapes(w, d, MASS_GEOMETRY_SCALE_PX_PER_M));
+  if (legacy.surfaces.length === 0) return null; // 방어적(폭·깊이 양수 보장 시 도달 안 함)
+  return {
+    ...legacy,
+    floor_count: typeof floorCount === "number" && floorCount > 0 ? Math.round(floorCount) : 1,
+    building_height_m: typeof heightM === "number" && heightM > 0 ? heightM : 0,
+    scale: MASS_GEOMETRY_SCALE_PX_PER_M,
   };
 }
 
@@ -415,6 +465,13 @@ export function DesignAuditWorkspace({
     setRunError("");
     try {
       const fd = new FormData();
+      // ★기하 브릿지(P1) — 설계 스튜디오 매스(designData.massGeom)를 rules8(8룰 기하검증)
+      //   payload.geometry로 동봉한다. DXF를 첨부한 경우엔 실제 도면(정밀)이 이 근사 사각형보다
+      //   낫고, 백엔드가 "payload.geometry는 DXF 산출보다 우선(덮어쓰기 금지)"으로 처리하므로
+      //   여기서 근사 매스를 실으면 오히려 실제 DXF 기하를 가려버린다 — DXF 첨부 시엔 생략한다.
+      const geometryPayload = dxfFile
+        ? null
+        : massGeomToGeometry(designData?.massGeom, designData?.floorCount, designData?.heightM);
       fd.append(
         "payload",
         JSON.stringify({
@@ -444,6 +501,9 @@ export function DesignAuditWorkspace({
             ifc_filename: ifcFile?.name ?? null,
             dxf_filename: dxfFile?.name ?? null,
           },
+          // 매스 없음/DXF 첨부 시 null(무날조 — 빈 도형을 만들지 않는다). rules8은 그 경우
+          // 기존처럼 "기하 데이터 없음 — 8룰 기하검증 생략"으로 정직하게 skipped 유지.
+          geometry: geometryPayload,
           use_llm: useLlm,
         }),
       );
@@ -736,6 +796,26 @@ export function DesignAuditWorkspace({
                     disabled={running}
                     onChange={handleFieldChange}
                   />
+                  {/* ★레인C(P3) — 입력 유도(강제 아님): 세대수·연면적·건축물 높이가 비어 있으면
+                      어느 검사가 생략/부실화되는지 명시 안내한다(design_audit_orchestrator
+                      _run_parking·_run_solar 정직 skip 사유와 정합 — 여기서 값을 만들지 않고
+                      안내만 한다). 기존 안내 배너 스타일(status-warning) 재사용. */}
+                  {(() => {
+                    const has = (key: string) => fields.some((f) => f.key === key && f.value.trim() !== "");
+                    const notes: string[] = [];
+                    if (!has("units") && !has("total_floor_area_sqm")) {
+                      notes.push("세대수·연면적이 없으면 주차 검사가 생략됩니다");
+                    }
+                    if (!has("building_height_m")) {
+                      notes.push("건축물 높이가 없으면 일조·피난 검사가 정밀하지 않습니다");
+                    }
+                    if (notes.length === 0) return null;
+                    return (
+                      <p className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] px-3 py-2 text-[11px] text-[var(--status-warning)]">
+                        {notes.join(" · ")} — 값을 입력하면 심사 범위가 넓어집니다(선택 입력).
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 

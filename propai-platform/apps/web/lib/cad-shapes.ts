@@ -76,6 +76,36 @@ export function rectToRing(shape: CadShape): CadShapePoint[] {
   ];
 }
 
+/**
+ * 폭×깊이(m) 직사각형 외곽 1개를 CadShape[]로 구성(px 스케일 적용).
+ *
+ * 좌표를 지어내는 게 아니라 실치수(설계 스튜디오 매스 massGeom.buildingWidthM/DepthM 등)의
+ * 원점(0,0) 기준 기하학적 전개다 — 값이 없으면 호출부가 애초에 부르지 않는다(무날조).
+ * design-audit 기하 브릿지(P1 — massGeomToGeometry)의 유일 소비처.
+ */
+export function rectangleOutlineShapes(
+  widthM: number,
+  depthM: number,
+  scalePxPerM = 10,
+): CadShape[] {
+  const id = newShapeId("outline");
+  const w = widthM * scalePxPerM;
+  const d = depthM * scalePxPerM;
+  return [
+    {
+      id,
+      kind: "polygon",
+      layer: "outline",
+      points: [
+        { id: `${id}-p0`, x: 0, y: 0 },
+        { id: `${id}-p1`, x: w, y: 0 },
+        { id: `${id}-p2`, x: w, y: d },
+        { id: `${id}-p3`, x: 0, y: d },
+      ],
+    },
+  ];
+}
+
 /** outline 레이어의 첫 polygon|rect 도형(법규·면적·저장 계약의 기준 외곽). 없으면 null. */
 export function findOutline(shapes: CadShape[]): CadShape | null {
   return (

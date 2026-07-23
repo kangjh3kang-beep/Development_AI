@@ -422,6 +422,77 @@ class TestOrchestratorOverall:
         assert bl["status"] == "skipped"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 레인C(P0) — 입력 배선 복구: sigungu 종상향 relay·special_districts 미수집 정직화
+# ─────────────────────────────────────────────────────────────────────────────
+class TestSigunguUpzoningRelay:
+    """근본원인: _run_incentives가 오케스트레이터 보유 sigungu를 calc_upzoning의 base
+    (regulation_payload)에 병합하지 않아 목표 용도지역 조례 resolver가 영구 미발동했다
+    (요약문 "약 200~200%" 붕괴). audit()이 sigungu=None으로 이미 호출 중이던(레지스트리 조회
+    스킵) 경로를 sigungu 명시 전달만으로 조례값(용인시 제2종일반주거=240%)으로 갈리게 함을
+    실제 값 대조(반사실)로 검증한다 — 두 테스트는 짝이다(단정문 회귀 감지용)."""
+
+    async def test_sigungu_relay_activates_ordinance_resolver(self):
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(land_area_sqm=6000.0),
+            zone_type="제1종일반주거지역", sigungu="용인시",
+        )
+        upzoning = result["sections"]["s4_incentives"]["upzoning"]
+        redev = next(s for s in upzoning["scenarios"] if s["path_key"] == "정비사업")
+        assert redev["target_zone"] == "제2종일반주거지역"
+        # 용인시 조례 240% ≠ 법정상한 250% — resolver가 실제로 발동한 증거(단순 문구뿐 아님).
+        assert redev["expected_far_pct_high"] == 240
+        assert redev["expected_far_source"] == "지자체 도시계획조례(목표지역)"
+
+    async def test_sigungu_absent_falls_back_to_legal_range(self):
+        """대조군(반사실) — sigungu 미제공 시 종전처럼 법정범위 붕괴(회귀 시 위 테스트와 갈라짐)."""
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(land_area_sqm=6000.0),
+            zone_type="제1종일반주거지역", sigungu=None,
+        )
+        upzoning = result["sections"]["s4_incentives"]["upzoning"]
+        redev = next(s for s in upzoning["scenarios"] if s["path_key"] == "정비사업")
+        assert redev["expected_far_pct_high"] == 250
+        assert redev["expected_far_source"] == "국토계획법 시행령 법정 범위(목표지역 조례 확인 필요)"
+
+    async def test_sigungu_relay_does_not_override_explicit_regulation_payload_sigungu(self):
+        """명시값 우선 — regulation_payload.local_ordinance.sigungu가 이미 있으면 오케스트레이터
+        보유 sigungu로 덮어쓰지 않는다(무날조 원칙: 명시값 보존)."""
+        payload = {"local_ordinance": {"sigungu": "서울특별시"}}
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(land_area_sqm=6000.0),
+            zone_type="제1종일반주거지역", sigungu="용인시", regulation_payload=payload,
+        )
+        upzoning = result["sections"]["s4_incentives"]["upzoning"]
+        redev = next(s for s in upzoning["scenarios"] if s["path_key"] == "정비사업")
+        # 서울특별시 조례(제2종일반주거=200) 채택 — 용인시(240) 값으로 덮이지 않아야 함.
+        assert redev["expected_far_pct_high"] == 200
+
+    async def test_special_districts_absent_yields_honest_data_gap_and_rfi(self):
+        """special_districts 미수집 시 upzoning.data_gaps + RFI 방출(무음 가정 금지, W3-6)."""
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", pnu="1111010100",
+        )
+        s4 = result["sections"]["s4_incentives"]
+        data_gaps = s4["upzoning"]["data_gaps"]
+        assert data_gaps and "규제구역" in data_gaps[0] and "미수집" in data_gaps[0]
+        rfi = s4.get("rfi_register")
+        assert rfi is not None
+        assert rfi["item_count"] == 1
+        assert rfi["items"][0]["missing_what"].startswith("규제구역")
+        assert rfi["items"][0]["subject_ref"] == "pnu=1111010100|field=upzoning.special_districts"
+
+    async def test_special_districts_present_empty_list_no_data_gap(self):
+        """확인 결과 규제구역 없음([])은 '미수집'과 달리 data_gaps를 남기지 않는다(과탐지 방지)."""
+        payload = {"local_ordinance": {}, "special_districts": []}
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, sigungu="서울특별시", regulation_payload=payload,
+        )
+        s4 = result["sections"]["s4_incentives"]
+        assert s4["upzoning"]["data_gaps"] == []
+        assert "rfi_register" not in s4
+
+
 class TestOrchestratorGraceful:
     async def test_engine_failure_marked_skipped(self, monkeypatch):
         """엔진 1개가 예외를 던져도 전체는 진행 — failed 표기 + skipped finding(정직)."""

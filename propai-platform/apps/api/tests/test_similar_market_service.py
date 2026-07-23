@@ -145,6 +145,44 @@ async def test_block_and_honest_policy_preserved(monkeypatch) -> None:
     assert out["stage"] == "similar_market_feasibility"
 
 
+async def test_gfa_unavailable_skips_search_instead_of_using_site_area(monkeypatch) -> None:
+    """레인C(P2) 무날조: unit_summary.total_gfa_sqm 미확보 시 대지면적(site_area)을 GFA로
+    오용해 검색하던 결함 근절 — 검색 자체를 생략하고 정직한 skipped_reason으로 표기."""
+    class FakeSvc:
+        async def auto_recommend_top3(self, **kwargs):
+            return {
+                "address": kwargs["address"],
+                "zone_type": "일반상업지역",
+                "land_area_sqm": 1000,  # ★site_area — 이 값이 GFA로 오용되면 안 됨
+                "recommendations": [
+                    {"development_type": "M07", "type_name": "주상복합",
+                     "feasibility": {"roi_pct": 12.0, "grade": "B"},
+                     "unit_summary": {}},  # total_gfa_sqm 미확보
+                ],
+                "land_price_reliable": True,
+            }
+
+    import app.services.feasibility.feasibility_service_v2 as fv2
+    monkeypatch.setattr(fv2, "FeasibilityServiceV2", FakeSvc)
+
+    called = False
+
+    async def fake_find(*, zone_type, area_sqm, label, top_k=4):
+        nonlocal called
+        called = True
+        return {"results": [], "count": 0, "skipped_reason": None, "query_label": label}
+
+    monkeypatch.setattr(sms, "find_similar_designs", fake_find)
+
+    out = await similar_market_feasibility(address="서울 강남구 역삼동 737", top_n=2)
+    assert not called, "GFA 미확보면 site_area(1000)를 GFA로 오용해 검색을 호출하면 안 됨"
+    sd = out["recommendations"][0]["similar_designs"]
+    assert sd == {
+        "results": [], "count": 0,
+        "skipped_reason": "gfa_unavailable", "query_label": "주상복합",
+    }
+
+
 async def test_skipped_reason_passthrough(monkeypatch) -> None:
     """검색 미가용(no_openai_key 등) 사유가 그대로 패스스루된다(정직 표기)."""
     async def fake_search(q, top_k=5):

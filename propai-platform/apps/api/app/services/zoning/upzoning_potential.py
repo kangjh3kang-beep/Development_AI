@@ -227,6 +227,16 @@ class UpzoningPotentialAnalyzer:
         key = normalize_zone_name(zone_type) or (zone_type or "")
         area = float(land_area_sqm or 0)
         blockers = self._blockers(special_districts)
+        # ★레인C(P0) — special_districts가 None(미수집)이면 "확인 결과 규제구역 없음"([])과
+        #   구분해 정직하게 표기한다. 개발제한구역·상수원보호구역 등은 이 데이터 없이는
+        #   차단사유(blocked_reasons)에 전혀 반영되지 않으므로, blockers=[]가 "종상향 제약
+        #   없음"으로 오독되지 않도록 data_gaps로 별도 명시한다(무날조 — 값을 만들지 않음).
+        data_gaps: list[str] = []
+        if special_districts is None:
+            data_gaps.append(
+                "규제구역(개발제한구역·상수원보호구역·문화재보호구역 등) 데이터 미수집 — "
+                "종상향 차단사유(blocked_reasons)가 이 분석에 반영되지 않았을 수 있습니다(별도 확인 필요)."
+            )
 
         targets = UPZONE_TARGETS.get(key, [])
         path_keys = ZONE_PATHS.get(key, [])
@@ -242,6 +252,7 @@ class UpzoningPotentialAnalyzer:
                     "개별 도시·군관리계획·지구단위계획 변경 가능성은 지자체 확인이 필요합니다(예상치 미산출)."
                 ),
                 "disclaimer": self._disclaimer(),
+                "data_gaps": data_gaps,
                 "marker": SCENARIO_MARKER,
             }
 
@@ -296,6 +307,7 @@ class UpzoningPotentialAnalyzer:
             "potential_far_range": far_range,
             "summary": self._summary(key, scenarios, far_range, blockers),
             "disclaimer": self._disclaimer(),
+            "data_gaps": data_gaps,
             "marker": SCENARIO_MARKER,
         }
 

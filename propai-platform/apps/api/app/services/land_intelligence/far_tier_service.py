@@ -596,9 +596,17 @@ def calc_upzoning(
                 if near_station_m is not None and near_station_m <= 500:
                     near_station = True
 
-        special_districts = base.get("special_districts") or (
-            dev_plans.get("special_districts") if isinstance(dev_plans, dict) else []
-        )
+        # ★레인C(P0) — None(미수집)과 [](확인완료·규제구역 없음)을 구분 보존한다. 종전엔
+        #   `base.get(...) or (...)`가 명시 빈 리스트([])까지 falsy로 취급해 dev_plans로
+        #   덮어쓰거나 "[]"로 뭉개, UpzoningPotentialAnalyzer.analyze가 "데이터 미수집"과
+        #   "확인 결과 규제구역 없음"을 구분하지 못했다(과대낙관 방향 — 차단사유 누락을 정직화
+        #   할 신호 자체가 소실). 아래는 값을 만들지 않고 원출처 유무만으로 분기한다(무날조).
+        if isinstance(base.get("special_districts"), list):
+            special_districts = base["special_districts"]
+        elif isinstance(dev_plans, dict) and isinstance(dev_plans.get("special_districts"), list):
+            special_districts = dev_plans["special_districts"]
+        else:
+            special_districts = None  # 미수집 — analyze()가 data_gaps로 정직 표기
 
         analyzer = UpzoningPotentialAnalyzer()
         return analyzer.analyze(

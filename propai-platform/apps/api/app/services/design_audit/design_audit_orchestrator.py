@@ -307,7 +307,7 @@ class DesignAuditOrchestrator:
             self._run_parking(params, sigungu),
             self._run_permit(params, zone_type, address, applied_bcr, applied_far, sigungu),
             self._run_change_risk(params, zone_type),
-            self._run_incentives(params, zone_type, sigungu, regulation_payload, limits),
+            self._run_incentives(params, zone_type, sigungu, regulation_payload, limits, pnu, address),
             self._run_case_compare(params, pnu, sigungu, case_service or self._case_service),
             return_exceptions=True,
         )
@@ -1089,6 +1089,8 @@ class DesignAuditOrchestrator:
         sigungu: str | None,
         regulation_payload: Any,
         limits: dict[str, Any] | None,
+        pnu: str | None = None,
+        address: str | None = None,
     ) -> dict[str, Any]:
         if not zone_type or limits is None:
             return {"findings": [make_finding(
@@ -1100,6 +1102,18 @@ class DesignAuditOrchestrator:
 
         base = regulation_payload if isinstance(regulation_payload, dict) else {}
         land_area = _num(params.get("land_area_sqm")) or 0.0
+
+        # ★레인C(P0) — sigungu는 오케스트레이터가 이미 별도 인자로 보유하지만(위 audit() 1단계
+        #   조례 실효한도 산정에도 쓰인다), calc_upzoning은 base["local_ordinance"]["sigungu"]만
+        #   읽는다. 프론트 buildRegulationPayload가 이 키를 싣지 않으면(과거 5키만 전송) sigungu가
+        #   calc_upzoning에 영구 미도달 → 목표 용도지역 조례 resolver가 발동하지 않고 종상향 예상
+        #   용적률이 항상 "국토계획법 시행령 법정 범위"로 붕괴했다(요약문 "약 200~200%" 등 저해상도
+        #   표기). base에 이미 sigungu가 실려 있으면(향후 buildRegulationPayload가 채우면) 그 값을
+        #   우선하고, 없을 때만 오케스트레이터 보유값으로 보강한다(덮어쓰기 금지 — 명시값 우선).
+        base_ordinance = base.get("local_ordinance")
+        if sigungu and not (isinstance(base_ordinance, dict) and base_ordinance.get("sigungu")):
+            base = dict(base)
+            base["local_ordinance"] = {**(base_ordinance if isinstance(base_ordinance, dict) else {}), "sigungu": sigungu}
 
         # 실효용적률 계층 + 기부채납 인센티브 시뮬레이션(far_tier_service 단일출처).
         effective = far_tier_service.calc_effective_far(base, zone_type, land_area)
@@ -1130,6 +1144,35 @@ class DesignAuditOrchestrator:
             "donation_simulation": donation,
             "upzoning": upzoning,
         }
+        # ★레인C(P0, 가능하면) — 규제구역(special_districts) 미수집 시 RFI 루프(W3-6)로
+        #   구조화 방출(무음 가정 금지). data_gaps는 upzoning_potential.analyze()가 이미
+        #   "미수집 vs 확인완료·규제없음"을 구분해 담아준 신호(위 far_tier_service.calc_upzoning
+        #   수정과 짝을 이룸) — 여기서는 그 신호를 RFI 계약(rfi_register.py)으로 승격만 한다.
+        data_gaps = upzoning.get("data_gaps") or []
+        if data_gaps:
+            try:
+                from app.services.provenance.required_data import RequirementLevel
+                from app.services.rfi.rfi_register import RFIRegister, build_subject_ref, emit_rfi
+
+                register = RFIRegister()
+                emit_rfi(
+                    register,
+                    subject_ref=build_subject_ref(
+                        pnu=pnu, address=address, field_name="upzoning.special_districts",
+                    ),
+                    missing_what="규제구역(개발제한구역·상수원보호구역·문화재보호구역 등) 데이터",
+                    needed_for="종상향/종변경 잠재 시나리오의 차단사유(blocked_reasons) 판정",
+                    blocking_calc="upzoning_potential.UpzoningPotentialAnalyzer.analyze — blocked_reasons",
+                    default_assumption=(
+                        "규제구역 데이터 없이 종상향 시나리오를 산출했습니다 — 실제로 개발제한구역·"
+                        "상수원보호구역 등에 해당하면 종상향이 불가할 수 있습니다."
+                    ),
+                    requirement_level=RequirementLevel.RECOMMENDED.value,
+                    critical=False,
+                )
+                section["rfi_register"] = register.to_dict()
+            except Exception as e:  # noqa: BLE001 — RFI 조립 실패는 기존 인센티브 산출 무손상
+                logger.warning("설계심사 RFI 방출 실패(degrade, 인센티브 산출 무손상)", error=str(e)[:160])
         return {"findings": [finding], "section": ("s4_incentives", section)}
 
     # ── ⑧ case_compare: [S1~S3] 인근 인허가 사례 비교 ────────────────────────

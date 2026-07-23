@@ -165,20 +165,30 @@ async def similar_market_feasibility(
     )
 
     zone_type = rec.get("zone_type")
-    site_area = rec.get("land_area_sqm") or land_area_sqm
     recommendations = rec.get("recommendations") or []
 
     # 상위 top_n 추천에 유사 설계 도면 가산(사업성 수치는 불변·가산만).
     for r in recommendations[: max(0, top_n)]:
         if not isinstance(r, dict):
             continue
-        gfa = ((r.get("unit_summary") or {}).get("total_gfa_sqm")) or site_area
-        sd = await find_similar_designs(
-            zone_type=zone_type,
-            area_sqm=gfa,
-            label=r.get("type_name") or r.get("development_type"),
-            top_k=top_k,
-        )
+        gfa = (r.get("unit_summary") or {}).get("total_gfa_sqm")
+        # ★레인C(P2) 무날조: 연면적(GFA) 미확보 시 대지면적(site_area)을 GFA로 오용해 검색하던
+        #   결함 근절 — 서로 다른 물리량(대지면적 vs 건물 연면적)을 혼동해 "유사 설계"가 실제로는
+        #   부지 크기 기준으로 검색되던 문제. GFA 미확보 시 검색 자체를 생략하고 정직한
+        #   skipped_reason으로 표기한다(find_similar_designs 자체 계약과 동일 shape — 가짜 유사설계 금지).
+        if isinstance(gfa, (int, float)) and gfa > 0:
+            sd = await find_similar_designs(
+                zone_type=zone_type,
+                area_sqm=gfa,
+                label=r.get("type_name") or r.get("development_type"),
+                top_k=top_k,
+            )
+        else:
+            sd = {
+                "results": [], "count": 0,
+                "skipped_reason": "gfa_unavailable",
+                "query_label": r.get("type_name") or r.get("development_type"),
+            }
         r["similar_designs"] = sd
 
     # 매스 백본 레퍼런스 가산(P2·무회귀·graceful): 이 지역 같은 종류 건축물의 실측 전형 규모(건폐/용적/
