@@ -21,6 +21,8 @@ import { useState } from "react";
 import { apiV1BaseUrl } from "@/lib/api-client";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { UpzoningScenarioList, type UpzoningScenarioView } from "@/components/projects/UpzoningScenarioList";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 
 /* ── 보고서 타입(방어적 — 백엔드 결손 필드 graceful 수용) ── */
 
@@ -124,9 +126,17 @@ export interface AuditSection {
   findings?: AuditFinding[] | null;
   case_comparison?: AuditCaseComparison | null;
   incentives?: AuditIncentive[] | null;
+  // ★S4 종상향/종변경 잠재 시나리오 — far_tier_service.calc_upzoning().scenarios[]를
+  //   report_sections.s4_incentives_to_web()가 그대로 통과시킨다(기존 완성 컴포넌트
+  //   UpzoningScenarioList가 소비하는 snake_case 계약과 동일).
+  upzoning_scenarios?: UpzoningScenarioView[] | null;
+  upzoning_summary?: string | null;
   blind_spots?: AuditBlindSpot[] | null;
   evidence?: AuditEvidence[] | null;
   legal_refs?: AuditLegalRef[] | null;
+  // ★permit 섹션(인허가 가능성·환경분석) — PermitAnalysisService.analyze()가 첨부하는
+  //   시니어 자문(도시계획·심의·법무 3도메인) 표준계약. SeniorVerdictCard(공용 카드) 재사용.
+  senior_consultation?: SeniorConsultation | null;
   // ★pass_rate 정직화(design_review_service) — 이 파라미터 검토가 실제 검사하지 않은
   //   항목(일조·주차·피난 등)의 한글 라벨 목록. 있을 때만 "미검사 N항목"으로 표시(정직).
   not_checked_items?: string[] | null;
@@ -552,8 +562,11 @@ function FindingsTable({
               ? f.legal_refs.filter((r) => r?.law_name?.trim())
               : [];
             const ref = resolveLegalRef(f.legal_ref, f.legal_ref_key, pools);
-            // 개선안: recommendation/correction(구계약) → improvement(실 U5) 순.
-            const recommendation = f.recommendation ?? f.correction ?? f.improvement;
+            // 개선안: recommendation/correction(구계약) → improvement(실 U5) → note 순.
+            // ★note 가산 — 예: permit_feasibility는 허가 가능(improvement 없음)이어도
+            //   note에 "주용도 미입력 — 공동주택 일반분양(M06) 가정" 같은 판정 전제가 담긴다.
+            //   그 사유가 폴백 체인에 없어 화면에서 '왜 M06인지' 전혀 보이지 않던 결함 수정.
+            const recommendation = f.recommendation ?? f.correction ?? f.improvement ?? f.note;
             return (
               <tr key={i} className="border-b border-[var(--line)] last:border-b-0 align-top">
                 <td className="py-2 pr-3 font-semibold text-[var(--text-primary)]">
@@ -893,15 +906,24 @@ export function AuditReportView({
           const pools = [sec.legal_refs, report.legal_refs];
           const findings = Array.isArray(sec.findings) ? sec.findings : [];
           const incentives = Array.isArray(sec.incentives) ? sec.incentives : [];
+          const upzoningScenarios = Array.isArray(sec.upzoning_scenarios) ? sec.upzoning_scenarios : [];
           const blindSpots = Array.isArray(sec.blind_spots) ? sec.blind_spots : [];
           const evidence = Array.isArray(sec.evidence) ? sec.evidence : [];
+          // ★R1 MEDIUM③ — verdict만으로는 부족(consultations가 빈 배열이면 SeniorVerdictCard가
+          //   null을 렌더해 헤더만 있고 본문 0픽셀이 된다) — 실 도메인 1건 이상 보유 여부까지 확인.
+          const hasSeniorConsultation =
+            !!sec.senior_consultation &&
+            sec.senior_consultation.verdict !== "unavailable" &&
+            (sec.senior_consultation.consultations?.length ?? 0) > 0;
           const hasBody =
             !!sec.summary?.trim() ||
             findings.length > 0 ||
             !!sec.case_comparison ||
             incentives.length > 0 ||
+            upzoningScenarios.length > 0 ||
             blindSpots.length > 0 ||
             evidence.length > 0 ||
+            hasSeniorConsultation ||
             !!sec.deliberation_result; // 로드맵③ — 게이트 off·구서버는 항상 falsy(회귀 없음)
           return (
             <section
@@ -960,7 +982,24 @@ export function AuditReportView({
                   {incentives.length > 0 && (
                     <IncentiveCards incentives={incentives} pools={pools} />
                   )}
+                  {/* 종상향/종변경 잠재 시나리오 — 기존 완성 컴포넌트 재사용(저실현 강등·접기 내장) */}
+                  {upzoningScenarios.length > 0 && (
+                    <div className="grid gap-2">
+                      {sec.upzoning_summary?.trim() && (
+                        <p className="text-[11px] text-[var(--text-hint)]">{sec.upzoning_summary.trim()}</p>
+                      )}
+                      <UpzoningScenarioList scenarios={upzoningScenarios} />
+                    </div>
+                  )}
                   {blindSpots.length > 0 && <BlindSpotList spots={blindSpots} />}
+                  {/* 인허가 시니어 자문(도시계획·심의·법무) — 공용 카드 재사용(자문 미가용 시 카드 자체가 null).
+                      ★hasSeniorConsultation(verdict·consultations 길이 조건 포함)과 렌더 기준 통일. */}
+                  {hasSeniorConsultation && (
+                    <SeniorVerdictCard
+                      consultation={sec.senior_consultation}
+                      title="인허가 시니어 자문"
+                    />
+                  )}
                   {sec.deliberation_result && (
                     <DeliberationVerdictBlock result={sec.deliberation_result} />
                   )}

@@ -715,6 +715,418 @@ class TestGrammarSections:
 
 
 # ════════════════════════════════════════════════════════
+# ②-4 QA 레인B — 배관 봉합: S4/S7 형상·permit 표면화·미검사 각주 교정
+# ════════════════════════════════════════════════════════
+
+# 스크린샷 재현 시나리오(자연녹지·용인시) 근사 — rules8은 기하(shapes) 없어 skipped,
+# solar_envelope·parking·bl_rules는 params만으로 실행돼 실제로 검사한다(4/8 거짓 각주 재현).
+_RICH_FINDINGS = [
+    {"check_id": "rules8", "engine": "rules8", "status": "skipped",
+     "current": None, "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "design_review", "engine": "design_review", "status": "pass",
+     "current": 100.0, "limit": 100.0, "legal_refs": [], "improvement": None},
+    {"check_id": "solar_envelope", "engine": "solar_envelope", "status": "pass",
+     "current": "적합", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "parking", "engine": "parking", "status": "warning",
+     "current": "미입력", "limit": "최소 5대", "legal_refs": [], "improvement": None},
+    {"check_id": "permit_feasibility", "engine": "permit", "status": "pass",
+     "current": "공동주택(M06)", "limit": "제2종일반주거지역 허용용도", "legal_refs": [],
+     "improvement": None, "note": "주용도 미입력 — 공동주택 일반분양(M06) 가정"},
+    {"check_id": "design_change_risk", "engine": "change_risk", "status": "pass",
+     "current": "고위험 0건 · 주의 0건 · 참고 0건", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "far_incentive_potential", "engine": "incentives", "status": "info",
+     "current": "실효 용적률 100.0%", "limit": None, "legal_refs": [], "improvement": None},
+    {"check_id": "bl_fire_escape", "engine": "bl_rules", "status": "pass",
+     "current": "적합", "limit": None, "legal_refs": [], "improvement": None},
+]
+
+_RICH_SECTIONS = {
+    # rules8은 findings에서 skipped(기하 없음) — section 자체가 없다(오케스트레이터 계약:
+    # skipped 경로는 "section" 키를 반환하지 않는다). 이격거리_준수·높이제한_준수는 실제로
+    # 판정 불가였으므로 아래 테스트에서 not_checked_items에 그대로 남아 있어야 한다.
+    # solar_envelope는 실제로 높이 대비 판정했다(zone 적용 + 높이 입력 실재) — height_evaluated=True.
+    "solar_envelope": {
+        "envelope": {"applies_north_light": True, "daylight_ceiling_m": 20.0},
+        "height_evaluated": True,
+    },
+    "efficiency_metrics": {
+        "efficiency_pct": 78.0, "core_ratio_pct": None,
+        "common_area_ratio_pct": 22.0, "basis": "세대수 × 평균전용면적",
+        "notes": ["코어비율 미산출 — 코어면적(core_area_sqm) 데이터 없음"],
+    },
+    "s1_samples": {"available": False, "note": "PNU 미제공 — 비교 생략"},
+    "s4_incentives": {
+        "effective_far": {"effective_far_pct": 100.0},
+        "donation_simulation": {
+            "base_far": 100.0, "allowed_far": 120.0, "max_far": 250.0,
+            "incentive_far": 20.0, "legal_basis": "국토의 계획 및 이용에 관한 법률 시행령 제46조",
+        },
+        "upzoning": {
+            "current_zone": "자연녹지지역",
+            "scenarios": [{
+                "path": "지구단위계획 수립", "target_zone": "제1종일반주거지역",
+                "feasibility": "중", "expected_far_pct_low": 120, "expected_far_pct_high": 150,
+                "feasibility_reason": "면적 요건 충족", "conditions": ["지구단위계획 수립"],
+                "legal_refs": [], "timeline_est": "2~3년", "caveats": [], "is_estimate": True,
+            }],
+            "potential_far_range": {"min_pct": 120, "max_pct": 150},
+            "summary": "지구단위계획 수립 시 용적률 상향 가능(예상치)",
+        },
+    },
+    "design_review": {
+        "review_status": "pass",
+        "not_checked_items": [
+            "이격거리_준수", "높이제한_준수", "일조권_준수", "주차장_설치기준",
+            "피난시설_적합", "방화구획_적합", "장애인_편의시설", "에너지절약_기준",
+        ],
+    },
+    "permit": {
+        "feasibility": {"reason": "제2종일반주거지역에서 공동주택 개발 가능", "is_permitted": True},
+        "dev_type_basis": "주용도 미입력 — 공동주택 일반분양(M06) 가정",
+        "analysis": {
+            "senior_consultation": {
+                "verdict": "PASS", "evaluations": [], "citations": ["국토계획법 제76조"],
+                "needs_expert_review": False, "honest_notes": "",
+                "consultations": [{
+                    "agent_key": "urban", "name_ko": "도시계획 시니어", "verdict": "PASS",
+                    "evaluations": [], "citations": ["국토계획법 제76조"],
+                    "needs_expert_review": False, "honest_notes": [],
+                }],
+            },
+        },
+    },
+}
+
+_RICH_RESULT = {
+    **_FAKE_RESULT,
+    "findings": _RICH_FINDINGS,
+    "sections": _RICH_SECTIONS,
+}
+
+
+class TestSectionShapePlumbing:
+    """QA 레인B — S4/S7 형상 불일치·permit 미표면화·거짓 '미검사' 각주 봉합 회귀 방지."""
+
+    def test_s4_incentives_becomes_array_contracts(self, monkeypatch):
+        """s4_incentives(dict) → incentives[]·upzoning_scenarios[] 배열 계약(Array.isArray 통과)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        assert resp.status_code == 200
+        sections = resp.json()["sections"]
+        s4 = next(s for s in sections if s["id"] == "s4")
+        assert isinstance(s4["incentives"], list) and s4["incentives"]
+        assert s4["incentives"][0]["bonus_far_pp"] == 20.0
+        assert isinstance(s4["upzoning_scenarios"], list) and s4["upzoning_scenarios"]
+        assert s4["upzoning_scenarios"][0]["target_zone"] == "제1종일반주거지역"
+
+    def test_s7_efficiency_metrics_becomes_evidence_array(self, monkeypatch):
+        """efficiency_metrics(dict) → evidence[{label,value,basis}] 배열 계약."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s7 = next(s for s in sections if s["id"] == "s7")
+        assert isinstance(s7["evidence"], list) and s7["evidence"]
+        labels = {row["label"] for row in s7["evidence"]}
+        assert "전용률" in labels and "참고" in labels
+
+    def test_permit_section_surfaces_reason_and_senior_consultation(self, monkeypatch):
+        """permit 원자료(feasibility.reason·dev_type_basis·senior_consultation)가 표면화된다."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        permit = next(s for s in sections if s["id"] == "permit")
+        assert "공동주택 개발 가능" in permit["summary"]
+        assert "M06" in permit["summary"]  # dev_type_basis(M06 가정 사유) 동봉
+        assert permit["senior_consultation"]["consultations"][0]["agent_key"] == "urban"
+
+    def test_not_checked_items_reconciled_against_findings(self, monkeypatch):
+        """일조·주차·피난·방화(4건)는 실제 검사됨 — 거짓 미검사 각주에서 제거(4/8→나머지 4건만)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=dict(_RICH_RESULT))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s5 = next(s for s in sections if s["id"] == "s5")
+        assert set(s5["not_checked_items"]) == {
+            "이격거리_준수", "높이제한_준수", "장애인_편의시설", "에너지절약_기준",
+        }
+        for falsely_not_checked in ("일조권_준수", "주차장_설치기준", "피난시설_적합", "방화구획_적합"):
+            assert falsely_not_checked not in s5["not_checked_items"]
+
+
+class TestNotCheckedRuleActivationGating:
+    """R1 HIGH-1 리뷰 — 커버리지 판정 기준을 '엔진 실행 여부'가 아니라 '룰이 실제로 판정
+    가능했는지'로 좁힌 회귀 방지. 엔진이 돌았어도(status!=skipped) 그 룰 자체가 구조적으로
+    무력화돼 있으면(세트백 0m 하드코딩·높이 무제한 대체·높이 미입력 trivial PASS·bl_rules
+    info=판정불가) 미검사 각주에서 빠지면 안 된다(반대 방향 거짓화 — 검토 누락 유도)."""
+
+    def _run(self, monkeypatch, result: dict):
+        client = _make_client()
+        fake_orch = _FakeOrchestrator(result=result)
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        assert resp.status_code == 200
+        sections = resp.json()["sections"]
+        return next(s for s in sections if s["id"] == "s5")
+
+    def test_setback_zero_hardcode_never_clears_setback_item(self, monkeypatch):
+        """★리뷰어 실증 — 세트백 0m·높이 무제한: rules8이 돌아 위반 []를 냈어도(설계 없음이
+        아니라 min_setback_m=0.0 하드코딩·height_rule_active=False라서) '이격거리_준수'는
+        미검사 목록에 그대로 남아야 한다(사라지면 검토 누락 유도 — 더 위험한 방향)."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "rules8", "engine": "rules8", "status": "pass",
+             "current": None, "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "이격거리_준수", "높이제한_준수", "일조권_준수", "주차장_설치기준",
+                "피난시설_적합", "방화구획_적합", "장애인_편의시설", "에너지절약_기준",
+            ]},
+            # rules8이 실행되고 위반 0건이어도 setback_evaluated는 상시 False(SSOT 부재).
+            # height_rule_active도 False(이 케이스는 max_height 미상 — '높이 무제한').
+            "rules8": {"violations": [], "issues": [],
+                       "height_rule_active": False, "setback_evaluated": False},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "이격거리_준수" in s5["not_checked_items"]
+        assert "높이제한_준수" in s5["not_checked_items"]
+
+    def test_height_rule_active_true_clears_height_item_only(self, monkeypatch):
+        """rules8이 실측 max_height로 실제 판정했을 때만(height_rule_active=True) '높이제한_준수'가
+        빠진다 — 이격거리_준수는 setback_evaluated가 여전히 False라 그대로 남는다."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "rules8", "engine": "rules8", "status": "pass",
+             "current": None, "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "이격거리_준수", "높이제한_준수", "장애인_편의시설", "에너지절약_기준",
+            ]},
+            "rules8": {"violations": [], "issues": [],
+                       "height_rule_active": True, "setback_evaluated": False},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "높이제한_준수" not in s5["not_checked_items"]
+        assert "이격거리_준수" in s5["not_checked_items"]
+
+    def test_solar_trivial_pass_without_height_input_stays_not_checked(self, monkeypatch):
+        """height_v 미입력이면 solar_envelope는 status=pass(trivial)를 내지만 실제 판정이
+        아니다(height_evaluated=False) — '일조권_준수'가 미검사 목록에서 빠지면 안 된다."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "solar_envelope", "engine": "solar_envelope", "status": "pass",
+             "current": "높이 미입력", "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "일조권_준수", "장애인_편의시설", "에너지절약_기준",
+            ]},
+            "solar_envelope": {"envelope": {}, "height_evaluated": False},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "일조권_준수" in s5["not_checked_items"]
+
+    def test_bl_rules_info_status_does_not_clear_evacuation_items(self, monkeypatch):
+        """bl_rules가 info('설계도서에서 확인 필요' — 판정 불가)만 냈으면 피난시설_적합·
+        방화구획_적합이 미검사 목록에서 빠지면 안 된다(pass/fail일 때만 실제 판정)."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "bl_fire_escape", "engine": "bl_rules", "status": "info",
+             "current": "확인 필요", "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "피난시설_적합", "방화구획_적합", "장애인_편의시설", "에너지절약_기준",
+            ]},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "피난시설_적합" in s5["not_checked_items"]
+        assert "방화구획_적합" in s5["not_checked_items"]
+
+    def test_bl_rules_pass_status_clears_evacuation_items(self, monkeypatch):
+        """bl_rules가 실제 pass 판정을 냈으면 피난시설_적합·방화구획_적합이 정상 차감된다."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "bl_fire_escape", "engine": "bl_rules", "status": "pass",
+             "current": "적합", "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "피난시설_적합", "방화구획_적합", "장애인_편의시설", "에너지절약_기준",
+            ]},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "피난시설_적합" not in s5["not_checked_items"]
+        assert "방화구획_적합" not in s5["not_checked_items"]
+
+    def test_missing_or_none_status_not_treated_as_executed(self, monkeypatch):
+        """status 키 부재·None은 '실행됨'으로 보지 않는다(LOW-⑦) — 화이트리스트 밖."""
+        result = dict(_FAKE_RESULT)
+        result["findings"] = [
+            {"check_id": "parking", "engine": "parking",
+             "current": "미입력", "limit": None, "legal_refs": [], "improvement": None},
+            {"check_id": "bl_fire_escape", "engine": "bl_rules", "status": None,
+             "current": None, "limit": None, "legal_refs": [], "improvement": None},
+        ]
+        result["sections"] = {
+            "design_review": {"review_status": "pass", "not_checked_items": [
+                "주차장_설치기준", "피난시설_적합", "방화구획_적합",
+            ]},
+        }
+        s5 = self._run(monkeypatch, result)
+        assert "주차장_설치기준" in s5["not_checked_items"]
+        assert "피난시설_적합" in s5["not_checked_items"]
+        assert "방화구획_적합" in s5["not_checked_items"]
+
+
+class TestNumericParamNormalization:
+    """brief 필드 흡수 지점(_normalize_numeric_params) — 문자열 수치 정규화(무날조·비수치 보존)."""
+
+    def test_string_numeric_brief_fields_normalized_before_orchestrator_call(self, monkeypatch):
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        payload = {
+            "use_llm": False,
+            "brief": {"fields": [
+                {"key": "floors_above", "value": "5"},
+                {"key": "units", "value": "20"},
+                {"key": "far_pct", "value": "100.5"},
+                {"key": "building_use", "value": "공동주택"},  # 비수치 키 — 원문 보존 확인
+            ]},
+        }
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps(payload)})
+        assert resp.status_code == 200
+        sent_params = fake_orch.calls[0]["params"]
+        assert sent_params["floors_above"] == 5  # 문자열 "5" → int 5
+        assert sent_params["units"] == 20
+        assert sent_params["far_pct"] == 100.5  # 소수는 float 유지
+        assert sent_params["building_use"] == "공동주택"  # 비수치 키는 원문 문자열 그대로
+
+    def test_nan_inf_strings_preserved_not_converted_to_real_float(self, monkeypatch):
+        """★R1 HIGH-2 — "units":"inf"/"nan"/"-inf"가 실수(float)로 변환되면, 그 값이 하류
+        (params_used 에코 등)로 흘러 응답 JSON 직렬화 시
+        `ValueError: Out of range float values are not JSON compliant`로 500이 난다(라이브
+        재현: 변환 전에는 문자열로 남아 정상이었던 신규 실패 모드). 정규화 후에는 finite가
+        아닌 값은 원문 문자열 그대로 보존돼 이 경로로 새지 않는다."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        for bad in ("inf", "-inf", "nan", "Infinity"):
+            payload = {"use_llm": False, "params": {"units": bad, "floors_above": "5"}}
+            resp = client.post("/api/v1/design-audit/run-upload",
+                               data={"payload": json.dumps(payload)})
+            assert resp.status_code == 200, f"{bad!r} 입력이 500을 유발함"
+            sent_params = fake_orch.calls[-1]["params"]
+            assert sent_params["units"] == bad  # 원문 문자열 그대로 보존(실수로 변환되지 않음)
+            assert sent_params["floors_above"] == 5  # 정상 수치는 계속 변환됨(회귀 없음)
+
+
+class TestZeroIncentiveAndEmptySeniorConsultationGuards:
+    """R1 MEDIUM②·③ — 가짜값 0 강조 금지·헤더만 있는 빈 permit 섹션 방지."""
+
+    def test_zero_incentive_far_omits_bonus_and_states_reason(self, monkeypatch):
+        """incentive_far==0(법정상한 도달 등)이면 '+0%p' 볼드 카드 대신 사유 카드로 표기."""
+        client = _make_client()
+        result = dict(_FAKE_RESULT)
+        result["sections"] = {
+            "s4_incentives": {
+                "effective_far": {"effective_far_pct": 250.0},
+                "donation_simulation": {
+                    "base_far": 250.0, "allowed_far": 250.0, "max_far": 250.0,
+                    "incentive_far": 0.0, "legal_basis": "국토의 계획 및 이용에 관한 법률 시행령 제46조",
+                },
+                "upzoning": {"scenarios": []},
+            },
+        }
+        fake_orch = _FakeOrchestrator(result=result)
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        assert resp.status_code == 200
+        sections = resp.json()["sections"]
+        s4 = next(s for s in sections if s["id"] == "s4")
+        card = s4["incentives"][0]
+        assert card.get("bonus_far_pp") is None  # "+0%p" 볼드 강조 금지(가짜값 0)
+        assert "여지 없음" in card["description"] or "여지가 없습니다" in card["description"]
+
+    def test_empty_consultations_omits_senior_consultation_from_permit_section(self, monkeypatch):
+        """senior_consultation.consultations가 빈 배열이면 라우터가 아예 싣지 않는다
+        (SeniorVerdictCard는 이 경우 null을 렌더 — 헤더만 있고 본문 0픽셀인 섹션 방지)."""
+        client = _make_client()
+        result = dict(_FAKE_RESULT)
+        result["sections"] = {
+            "permit": {
+                "feasibility": {"reason": "제2종일반주거지역에서 공동주택 개발 가능"},
+                "dev_type_basis": "주용도 미입력 — 공동주택 일반분양(M06) 가정",
+                "analysis": {
+                    "senior_consultation": {
+                        "verdict": "PASS", "evaluations": [], "citations": [],
+                        "needs_expert_review": False, "honest_notes": "",
+                        "consultations": [],  # ★실제 도메인 없음 — 카드가 렌더할 게 없다.
+                    },
+                },
+            },
+        }
+        fake_orch = _FakeOrchestrator(result=result)
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        permit = next(s for s in sections if s["id"] == "permit")
+        assert "senior_consultation" not in permit
+        assert "공동주택 개발 가능" in permit["summary"]  # summary는 여전히 표시(본문 0픽셀 아님)
+
+    def test_unavailable_verdict_omits_senior_consultation(self, monkeypatch):
+        """verdict='unavailable'(엔진 미가용)이면 consultations가 있어도 싣지 않는다."""
+        client = _make_client()
+        result = dict(_FAKE_RESULT)
+        result["sections"] = {
+            "permit": {
+                "feasibility": {"reason": "제2종일반주거지역에서 공동주택 개발 가능"},
+                "dev_type_basis": None,
+                "analysis": {
+                    "senior_consultation": {
+                        "verdict": "unavailable", "evaluations": [], "citations": [],
+                        "needs_expert_review": True, "honest_notes": "시니어 자문 미가용",
+                        "consultations": [],
+                    },
+                },
+            },
+        }
+        fake_orch = _FakeOrchestrator(result=result)
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        permit = next(s for s in sections if s["id"] == "permit")
+        assert "senior_consultation" not in permit
+
+
+# ════════════════════════════════════════════════════════
 # ③ GET /{audit_id} — 조회·소유권·404 정직
 # ════════════════════════════════════════════════════════
 
